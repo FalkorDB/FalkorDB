@@ -8,7 +8,7 @@
 //------------------------------------------------------------------------------
 
 // This file is configured by cmake from Config/GB_prejit.c.in, which has
-// indexed the following 136 kernels in GraphBLAS/PreJIT:
+// indexed the following 413 kernels in GraphBLAS/PreJIT:
 
 #include "GB.h"
 #include "jitifyer/GB_jitifyer.h"
@@ -19,429 +19,1260 @@
 // prototypes for all PreJIT kernels
 //------------------------------------------------------------------------------
 
-JIT_DOT2 (GB_jit__AxB_dot2__0000000eb94eb9bb__LG_MSF_tupleMin_fp_LG_MSF_combine_fp)
-JIT_DOT2 (GB_jit__AxB_dot2__0000400eb94eb9bb__LG_MSF_tupleMin_fp_LG_MSF_combine_fp)
-JIT_DOT2 (GB_jit__AxB_dot2__0380000eb94eb9b7__LG_MSF_tupleMin_fp_LG_MSF_combine_fp)
-JIT_DOT2 (GB_jit__AxB_dot2__0380400eb94eb9b7__LG_MSF_tupleMin_fp_LG_MSF_combine_fp)
+JIT_DOT2 (GB_jit__AxB_dot2__0000000e894e89bb__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t)
+JIT_DOT2 (GB_jit__AxB_dot2__0000000eb94eb9bb__LG_MSF_tupleMin_double_LG_MSF_combine_double)
+JIT_DOT2 (GB_jit__AxB_dot2__0000034ee62ee6ab__LG_MF_Rxd_Add32_LG_MF_Rxd_Mult32)
+JIT_DOT2 (GB_jit__AxB_dot2__0000034eeb0eeb8b__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32)
+JIT_DOT2 (GB_jit__AxB_dot2__0000400e894e89bb__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t)
+JIT_DOT2 (GB_jit__AxB_dot2__0000400eb94eb9bb__LG_MSF_tupleMin_double_LG_MSF_combine_double)
+JIT_DOT2 (GB_jit__AxB_dot2__0004015bbb0b618b)
+JIT_DOT2 (GB_jit__AxB_dot2__000420fbb00bb08b)
+JIT_DOT2 (GB_jit__AxB_dot2__0004415bbb0b618b)
+JIT_DOT2 (GB_jit__AxB_dot2__0380000eb94eb9b7__LG_MSF_tupleMin_double_LG_MSF_combine_double)
+JIT_DOT2 (GB_jit__AxB_dot2__0380034ee62ee6a7__LG_MF_Rxd_Add32_LG_MF_Rxd_Mult32)
+JIT_DOT2 (GB_jit__AxB_dot2__0380034eeb0eeb87__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32)
+JIT_DOT2 (GB_jit__AxB_dot2__0380034eeb0eebc7__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32)
+JIT_DOT2 (GB_jit__AxB_dot2__0380400e894e89b7__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t)
+JIT_DOT2 (GB_jit__AxB_dot2__0380400eb94eb9b7__LG_MSF_tupleMin_double_LG_MSF_combine_double)
+JIT_DOT2 (GB_jit__AxB_dot2__0380434eeb0eeb87__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32)
+JIT_DOT2 (GB_jit__AxB_dot2__0380434eeb0eebc7__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32)
 JIT_DOT2 (GB_jit__AxB_dot2__038120f1100110c7)
+JIT_DOT2 (GB_jit__AxB_dot2__038420fbb00bb087)
+JIT_DOT2 (GB_jit__AxB_dot2__038420fbb00bb0c7)
+JIT_DOT2 (GB_jit__AxB_dot2__0384410b0b2b0ba6)
 JIT_DOT2 (GB_jit__AxB_dot2__0384410b0b3b0ba6)
-JIT_DOT4 (GB_jit__AxB_dot4__0000800eb90eb9cb__LG_MSF_tupleMin_fp_LG_MSF_combine_fp)
-JIT_DOT4 (GB_jit__AxB_dot4__0000c00eb90eb9cb__LG_MSF_tupleMin_fp_LG_MSF_combine_fp)
+JIT_DOT2 (GB_jit__AxB_dot2__038460f990091087)
+JIT_DOT2 (GB_jit__AxB_dot2__038460f9900910c7)
+JIT_DOT3 (GB_jit__AxB_dot3__ff80034ee62ee657__LG_MF_Rxd_Add32_LG_MF_Rxd_Mult32)
+JIT_DOT3 (GB_jit__AxB_dot3__ff84410b0b2b0b56)
+JIT_DOT4 (GB_jit__AxB_dot4__0000000e1e0e1eca__lg_hll_merge_lg_hll_second)
+JIT_DOT4 (GB_jit__AxB_dot4__0000400e1e0e1eca__lg_hll_merge_lg_hll_second)
+JIT_DOT4 (GB_jit__AxB_dot4__0000800e890e89cb__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t)
+JIT_DOT4 (GB_jit__AxB_dot4__0000800eb90eb9cb__LG_MSF_tupleMin_double_LG_MSF_combine_double)
+JIT_DOT4 (GB_jit__AxB_dot4__0000c00e890e89cb__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t)
+JIT_DOT4 (GB_jit__AxB_dot4__0000c00eb90eb9cb__LG_MSF_tupleMin_double_LG_MSF_combine_double)
 JIT_DOT4 (GB_jit__AxB_dot4__0004c10a0a0a0acb)
-JIT_DOT4 (GB_jit__AxB_dot4__0380400e1e0e1ec6__fdb_hll_merge_fdb_hll_second)
-JIT_DOT4 (GB_jit__AxB_dot4__0380800eb90eb9c7__LG_MSF_tupleMin_fp_LG_MSF_combine_fp)
-JIT_DOT4 (GB_jit__AxB_dot4__0380c00eb90eb9c7__LG_MSF_tupleMin_fp_LG_MSF_combine_fp)
+JIT_DOT4 (GB_jit__AxB_dot4__0380400e1e0e1ec6__lg_hll_merge_lg_hll_second)
+JIT_DOT4 (GB_jit__AxB_dot4__0380800eb90eb9c7__LG_MSF_tupleMin_double_LG_MSF_combine_double)
+JIT_DOT4 (GB_jit__AxB_dot4__0380c00e890e89c7__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t)
+JIT_DOT4 (GB_jit__AxB_dot4__0380c00eb90eb9c7__LG_MSF_tupleMin_double_LG_MSF_combine_double)
 JIT_DOT4 (GB_jit__AxB_dot4__0384c10a0a0a0ac7)
+JIT_SAXB (GB_jit__AxB_saxbit__000420fbb00bb08b)
 JIT_SAXB (GB_jit__AxB_saxbit__000420fbb00bb08f)
+JIT_SAXB (GB_jit__AxB_saxbit__038420fbb00bb083)
+JIT_SAXB (GB_jit__AxB_saxbit__038420fbb00bb087)
 JIT_SAXB (GB_jit__AxB_saxbit__0384610b0b3b0ba6)
-JIT_SAX3 (GB_jit__AxB_saxpy3__e3f120f110011000)
 JIT_SAX3 (GB_jit__AxB_saxpy3__e3f120f110011041)
-JIT_SAX3 (GB_jit__AxB_saxpy3__e3f120f990099000)
-JIT_SAX3 (GB_jit__AxB_saxpy3__e3f120f990099004)
+JIT_SAX3 (GB_jit__AxB_saxpy3__e3f120f110011045)
 JIT_SAX3 (GB_jit__AxB_saxpy3__e3f120f990099041)
 JIT_SAX3 (GB_jit__AxB_saxpy3__e3f120f990099045)
 JIT_SAX3 (GB_jit__AxB_saxpy3__e3f4410b0b2b0b65)
 JIT_SAX3 (GB_jit__AxB_saxpy3__e3f4410b0b3b0b65)
-JIT_SAX3 (GB_jit__AxB_saxpy3__fff120f990399000)
-JIT_SAX4 (GB_jit__AxB_saxpy4__0100400e1e0e1ec7__LG_MSF_tupleMin_fp_LG_MSF_tuple2nd_fp)
+JIT_SAX3 (GB_jit__AxB_saxpy3__e3f4610b0b3b0b65)
+JIT_SAX3 (GB_jit__AxB_saxpy3__fff120f110311055)
+JIT_SAX3 (GB_jit__AxB_saxpy3__fff120f990399055)
+JIT_SAX4 (GB_jit__AxB_saxpy4__0100400e1e0e1ec7__LG_MSF_tupleMin_double_LG_MSF_tuple2nd_double)
+JIT_SAX4 (GB_jit__AxB_saxpy4__0100400e1e0e1ec7__LG_MSF_tupleMin_int64_t_LG_MSF_tuple2nd_int64_t)
+JIT_SAX4 (GB_jit__AxB_saxpy4__0380000e1e0e1ec6__lg_hll_merge_lg_hll_second)
+JIT_ADD  (GB_jit__add__00000288808288a)
+JIT_ADD  (GB_jit__add__00000288808388a)
+JIT_ADD  (GB_jit__add__00000611101b186)
+JIT_ADD  (GB_jit__add__000012aaa0aaacb)
+JIT_ADD  (GB_jit__add__000012aaa0aaacf)
+JIT_ADD  (GB_jit__add__000012aaa0aabcf)
+JIT_ADD  (GB_jit__add__000012bbb0bbb8a)
 JIT_ADD  (GB_jit__add__000203aaa0aaace)
 JIT_ADD  (GB_jit__add__000203aaa0aaacf)
 JIT_ADD  (GB_jit__add__000214aaa0aaacf)
-JIT_ADD  (GB_jit__add__e3f001111019100)
+JIT_ADD  (GB_jit__add__e0700611101b144)
+JIT_ADD  (GB_jit__add__e0700611101b145)
+JIT_ADD  (GB_jit__add__e3f002bbb0bbb45)
+JIT_ADD  (GB_jit__add__e3f010a0a0aaa44)
+JIT_ADD  (GB_jit__add__e3f010b0b0bbb44)
+JIT_ADD  (GB_jit__add__e3f010e0e0eee44__LG_MF_flowEdge)
+JIT_ADD  (GB_jit__add__e3f012bbb0bbb45)
 JIT_ADD  (GB_jit__add__e3f101111019100)
-JIT_AP1  (GB_jit__apply_bind1st__000000eb90ef9c3__LG_MSF_combine_fp)
+JIT_ADD  (GB_jit__add__e3f301111019100)
+JIT_AP1  (GB_jit__apply_bind1st__000000e890ef9c3__LG_MSF_combine_int64_t)
+JIT_AP1  (GB_jit__apply_bind1st__000000eb90ef9c3__LG_MSF_combine_double)
 JIT_AP2  (GB_jit__apply_bind2nd__000014aaa0a8fc8)
 JIT_AP2  (GB_jit__apply_bind2nd__000014aaa0a8fcc)
 JIT_AP2  (GB_jit__apply_bind2nd__000014bbb0bbfcc)
-JIT_AP0  (GB_jit__apply_unop__0040009e09ee__LG_MSF_get_second_fp)
-JIT_AP0  (GB_jit__apply_unop__0040009e09ef__LG_MSF_get_second_fp)
-JIT_AP0  (GB_jit__apply_unop__004000be0bee__LG_MSF_get_first_fp)
+JIT_AP0  (GB_jit__apply_unop__0040006e06ee__LG_MF_ExtractJ32)
+JIT_AP0  (GB_jit__apply_unop__0040006e06ee__LG_MF_ExtractYJ32)
+JIT_AP0  (GB_jit__apply_unop__0040008e08ee__LG_MSF_get_first_int64_t)
+JIT_AP0  (GB_jit__apply_unop__0040009e09ee__LG_MSF_get_second_double)
+JIT_AP0  (GB_jit__apply_unop__0040009e09ee__LG_MSF_get_second_int64_t)
+JIT_AP0  (GB_jit__apply_unop__0040009e09ef__LG_MSF_get_second_double)
+JIT_AP0  (GB_jit__apply_unop__0040009e09ef__LG_MSF_get_second_int64_t)
+JIT_AP0  (GB_jit__apply_unop__004000be0bee__LG_MF_ExtractMatrixFlow)
+JIT_AP0  (GB_jit__apply_unop__004000be0bee__LG_MF_GetResidual)
+JIT_AP0  (GB_jit__apply_unop__004000be0bee__LG_MF_ResidualFlow32)
+JIT_AP0  (GB_jit__apply_unop__004000be0bee__LG_MSF_get_first_double)
+JIT_AP0  (GB_jit__apply_unop__004000be0bef__lg_hll_count)
+JIT_AP0  (GB_jit__apply_unop__004000eb0e8e__LG_MF_ResidualBackward)
+JIT_AP0  (GB_jit__apply_unop__004000eb0e8e__LG_MF_ResidualForward)
+JIT_AP0  (GB_jit__apply_unop__004000eb0ebe__LG_MF_MakeFlow)
+JIT_AP0  (GB_jit__apply_unop__004000eb0ebe__LG_MF_ResidualBackward)
+JIT_AP0  (GB_jit__apply_unop__004000eb0ebe__LG_MF_ResidualForward)
+JIT_AP0  (GB_jit__apply_unop__0040021101be)
 JIT_AP0  (GB_jit__apply_unop__0040021101bf)
 JIT_AP0  (GB_jit__apply_unop__00400222021f)
+JIT_AP0  (GB_jit__apply_unop__0040029909bf)
+JIT_AP0  (GB_jit__apply_unop__004002bb0b8e)
 JIT_AP0  (GB_jit__apply_unop__004005bb0bbe)
 JIT_AP0  (GB_jit__apply_unop__004007aa0aaf)
-JIT_AP0  (GB_jit__apply_unop__03c0009e09ed__LG_MSF_get_second_fp)
-JIT_AP0  (GB_jit__apply_unop__03c000be0bed__LG_MSF_get_first_fp)
+JIT_AP0  (GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractJ32)
+JIT_AP0  (GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractYJ32)
+JIT_AP0  (GB_jit__apply_unop__03c0008e08ed__LG_MSF_get_first_int64_t)
+JIT_AP0  (GB_jit__apply_unop__03c0009e09ed__LG_MSF_get_second_double)
+JIT_AP0  (GB_jit__apply_unop__03c0009e09ed__LG_MSF_get_second_int64_t)
+JIT_AP0  (GB_jit__apply_unop__03c000be0bed__LG_MF_ExtractMatrixFlow)
+JIT_AP0  (GB_jit__apply_unop__03c000be0bed__LG_MF_GetResidual)
+JIT_AP0  (GB_jit__apply_unop__03c000be0bed__LG_MF_ResidualFlow32)
+JIT_AP0  (GB_jit__apply_unop__03c000be0bed__LG_MSF_get_first_double)
+JIT_AP0  (GB_jit__apply_unop__03c000eb0e7d__LG_MF_ResidualBackward)
+JIT_AP0  (GB_jit__apply_unop__03c000eb0e7d__LG_MF_ResidualForward)
+JIT_AP0  (GB_jit__apply_unop__03c000eb0e9d__LG_MF_ResidualBackward)
+JIT_AP0  (GB_jit__apply_unop__03c000eb0e9d__LG_MF_ResidualForward)
+JIT_AP0  (GB_jit__apply_unop__03c000eb0ebd__LG_MF_MakeFlow)
+JIT_AP0  (GB_jit__apply_unop__03c000eb0ebd__LG_MF_ResidualBackward)
+JIT_AP0  (GB_jit__apply_unop__03c000eb0ebd__LG_MF_ResidualForward)
+JIT_AP0  (GB_jit__apply_unop__03c002bb0b7d)
+JIT_AP0  (GB_jit__apply_unop__03c002bb0b9d)
 JIT_AP0  (GB_jit__apply_unop__03c005bb0bbd)
+JIT_SUB  (GB_jit__bitmap_assign_2_whole__0000003f000266a2)
+JIT_SUB  (GB_jit__bitmap_assign_2_whole__0000003f000288a2)
+JIT_SUB  (GB_jit__bitmap_assign_2_whole__0000003f000288a3)
 JIT_SUB  (GB_jit__bitmap_assign_2_whole__0000003f0002aaa3)
+JIT_SUB  (GB_jit__bitmap_assign_2_whole__0000003f0002b8a2)
+JIT_SUB  (GB_jit__bitmap_assign_2_whole__0000003f0002bba2)
+JIT_SUB  (GB_jit__bitmap_assign_2_whole__0000003f0002eea2__LG_MF_flowEdge)
+JIT_SUB  (GB_jit__bitmap_assign_2_whole__0000003f0003bba1)
+JIT_SUB  (GB_jit__bitmap_assign_2_whole__0000003f0003eea2__LG_MF_flowEdge)
 JIT_SUB  (GB_jit__bitmap_assign_2_whole__0000003f000499b3)
+JIT_SUB  (GB_jit__bitmap_assign_2_whole__0000103f000201a2)
+JIT_SUB  (GB_jit__bitmap_assign_2_whole__0000103f000206a2)
 JIT_SUB  (GB_jit__bitmap_assign_2_whole__0000103f00020aa3)
+JIT_SUB  (GB_jit__bitmap_assign_2_whole__0000103f0003eea2__LG_MF_flowEdge)
+JIT_SUB  (GB_jit__bitmap_assign_2_whole__0000203f000268a0)
+JIT_SUB  (GB_jit__bitmap_assign_2_whole__0000203f000269a0)
+JIT_SUB  (GB_jit__bitmap_assign_2_whole__0000203f0003b6a0)
 JIT_SUB  (GB_jit__bitmap_assign_2_whole__0000803f000299a2)
+JIT_SUB  (GB_jit__bitmap_assign_2_whole__0000803f0003bba2)
+JIT_SUB  (GB_jit__bitmap_assign_2_whole__0000903f00030ba2)
 JIT_SUB  (GB_jit__bitmap_assign_2_whole__0000a03f000301a0)
 JIT_SUB  (GB_jit__bitmap_assign_2_whole__001c903f000301a0)
 JIT_SUB  (GB_jit__bitmap_assign_4_whole__00e0203f00026890)
-JIT_SUB  (GB_jit__bitmap_assign_4_whole__00fc103f00020180)
+JIT_SUB  (GB_jit__bitmap_assign_4_whole__00e0203f00026990)
+JIT_SUB  (GB_jit__bitmap_assign_4_whole__00e0803f00028892)
+JIT_SUB  (GB_jit__bitmap_assign_4_whole__00e0803f00028893)
+JIT_SUB  (GB_jit__bitmap_assign_4_whole__00fc003f00026691)
+JIT_SUB  (GB_jit__bitmap_assign_4_whole__00fc003f0002ee91__LG_MF_flowEdge)
+JIT_SUB  (GB_jit__bitmap_assign_5__000001c0eee0ee82__LG_MF_InitForw)
+JIT_SUB  (GB_jit__bitmap_assign_5__00000480eee0ee82__LG_MF_InitBack)
+JIT_SUB  (GB_jit__bitmap_assign_5__000011c0eee0ee82__LG_MF_InitForw)
+JIT_SUB  (GB_jit__bitmap_assign_5__00001480eee0ee82__LG_MF_InitBack)
+JIT_SUB  (GB_jit__bitmap_assign_5__001c01c0eee0ee81__LG_MF_InitForw)
+JIT_SUB  (GB_jit__bitmap_assign_5__001c0480eee0ee80__LG_MF_InitBack)
+JIT_SUB  (GB_jit__bitmap_assign_5__001c11c0eee0ee81__LG_MF_InitForw)
 JIT_SUB  (GB_jit__bitmap_assign_5_whole__00000004bbb0bb82)
+JIT_SUB  (GB_jit__bitmap_assign_5_whole__0000100611101182)
+JIT_SUB  (GB_jit__bitmap_assign_5_whole__001c0004bbb0bb81)
+JIT_SUB  (GB_jit__bitmap_assign_8_whole__00e0803f0003bb92)
+JIT_BLD  (GB_jit__build__a901111b)
 JIT_BLD  (GB_jit__build__e9011119)
+JIT_BLD  (GB_jit__build__e9022222)
+JIT_BLD  (GB_jit__build__e9033333)
+JIT_BLD  (GB_jit__build__e9044444)
+JIT_BLD  (GB_jit__build__e9055555)
 JIT_BLD  (GB_jit__build__e9066668)
+JIT_BLD  (GB_jit__build__e9066669)
+JIT_BLD  (GB_jit__build__e90aaaaa)
 JIT_BLD  (GB_jit__build__e90bbbbb)
+JIT_BLD  (GB_jit__build__f8611117)
 JIT_BLD  (GB_jit__build__f9066668)
+JIT_BLD  (GB_jit__build__f9066669)
+JIT_BLD  (GB_jit__build__f909999b)
+JIT_BLD  (GB_jit__build__f90aaaab)
+JIT_BLD  (GB_jit__build__f90bbbb6)
+JIT_CB2S (GB_jit__convert_b2s__004002ee0ee6__LG_MF_compareTuple32)
+JIT_CS2B (GB_jit__convert_s2b__03c002ee0eec__LG_MF_compareTuple32)
+JIT_EM2  (GB_jit__emult_02__e38000ee60ee647__LG_MF_CreateCompareVec32)
+JIT_EM2  (GB_jit__emult_02__e38002bbb0bbb47)
 JIT_EM2  (GB_jit__emult_02__e38005bbb0bbb46)
+JIT_EM2  (GB_jit__emult_02__e38005bbb0bbb47)
+JIT_EM4  (GB_jit__emult_04__fc0014bbb2bbb5f)
+JIT_EM8  (GB_jit__emult_08__fc700066e266e5d__LG_MF_Relabel32)
+JIT_EM8  (GB_jit__emult_08__fc7000eeb2eeb59__LG_MF_UpdateFlow)
+JIT_EM8  (GB_jit__emult_08__fff000eeb2eeb04__LG_MF_UpdateFlow)
+JIT_EM8  (GB_jit__emult_08__fff000eeb2eeb55__LG_MF_UpdateFlow)
+JIT_EMB  (GB_jit__emult_bitmap__00000066e266eae__LG_MF_Relabel32)
+JIT_EMB  (GB_jit__emult_bitmap__000000ee60ee68b__LG_MF_CreateCompareVec32)
+JIT_EMB  (GB_jit__emult_bitmap__000000eeb2eebaa__LG_MF_UpdateFlow)
+JIT_EMB  (GB_jit__emult_bitmap__000002bbb0bbb8b)
+JIT_EMB  (GB_jit__emult_bitmap__000005bbb0bbb8b)
+JIT_EMB  (GB_jit__emult_bitmap__0000091bb01bb8a)
 JIT_EMB  (GB_jit__emult_bitmap__000014bbb2bbbae)
+JIT_EMB  (GB_jit__emult_bitmap__000014bbb2bbbaf)
 JIT_EMB  (GB_jit__emult_bitmap__000214bbb2bbbae)
-JIT_EWFN (GB_jit__ewise_fulln__0000001ee01eecf__LG_MSF_tupleEq_fp)
-JIT_EWFN (GB_jit__ewise_fulln__000000bee0beecf__fdb_hll_delta)
+JIT_EMB  (GB_jit__emult_bitmap__000214bbb2bbbaf)
+JIT_EWFN (GB_jit__ewise_fulln__0000001ee01eecf__LG_MSF_tupleEq_double)
+JIT_EWFN (GB_jit__ewise_fulln__0000001ee01eecf__LG_MSF_tupleEq_int64_t)
+JIT_EWFN (GB_jit__ewise_fulln__000000bee0beecf__lg_hll_delta)
 JIT_EWFN (GB_jit__ewise_fulln__000014aaa0aaacf)
+JIT_MAS1 (GB_jit__masker_phase1__dc732059)
+JIT_MAS1 (GB_jit__masker_phase1__dc73205d)
+JIT_MAS1 (GB_jit__masker_phase1__dc733059)
+JIT_MAS1 (GB_jit__masker_phase1__dc73405d)
 JIT_MAS1 (GB_jit__masker_phase1__dff32000)
+JIT_MAS1 (GB_jit__masker_phase1__dff32004)
 JIT_MAS1 (GB_jit__masker_phase1__dff32045)
 JIT_MAS1 (GB_jit__masker_phase1__dff33000)
 JIT_MAS1 (GB_jit__masker_phase1__dff33041)
 JIT_MAS1 (GB_jit__masker_phase1__dff33045)
 JIT_MAS1 (GB_jit__masker_phase1__dff33054)
-JIT_MAS2 (GB_jit__masker_phase2__1c004e9e__LG_MSF_tuple_fp)
+JIT_MAS1 (GB_jit__masker_phase1__dff33055)
+JIT_MAS2 (GB_jit__masker_phase2__1c002b9a)
+JIT_MAS2 (GB_jit__masker_phase2__1c002b9e)
+JIT_MAS2 (GB_jit__masker_phase2__1c004e9e__LG_MSF_tuple_double)
+JIT_MAS2 (GB_jit__masker_phase2__1c004e9e__LG_MSF_tuple_int64_t)
+JIT_MAS2 (GB_jit__masker_phase2__fc70215d)
+JIT_MAS2 (GB_jit__masker_phase2__fc702b59)
+JIT_MAS2 (GB_jit__masker_phase2__fc702b5d)
+JIT_MAS2 (GB_jit__masker_phase2__fc70415d)
 JIT_MAS2 (GB_jit__masker_phase2__fff02900)
+JIT_MAS2 (GB_jit__masker_phase2__fff02904)
+JIT_MAS2 (GB_jit__masker_phase2__fff03100)
+JIT_MAS2 (GB_jit__masker_phase2__fff03141)
 JIT_MAS2 (GB_jit__masker_phase2__fff03900)
 JIT_MAS2 (GB_jit__masker_phase2__fff03941)
+JIT_MAS2 (GB_jit__masker_phase2__fff03945)
+JIT_RED  (GB_jit__reduce__12222)
+JIT_RED  (GB_jit__reduce__12332)
+JIT_RED  (GB_jit__reduce__12442)
+JIT_RED  (GB_jit__reduce__12552)
+JIT_RED  (GB_jit__reduce__12aa2)
+JIT_RED  (GB_jit__reduce__12bb2)
+JIT_RED  (GB_jit__reduce__12bb3)
+JIT_RED  (GB_jit__reduce__12bb9)
+JIT_RED  (GB_jit__reduce__13222)
+JIT_RED  (GB_jit__reduce__13332)
+JIT_RED  (GB_jit__reduce__13442)
+JIT_RED  (GB_jit__reduce__13552)
+JIT_RED  (GB_jit__reduce__13862)
+JIT_RED  (GB_jit__reduce__13863)
+JIT_RED  (GB_jit__reduce__13aa2)
+JIT_RED  (GB_jit__reduce__13aa3)
+JIT_RED  (GB_jit__reduce__13bb2)
+JIT_RED  (GB_jit__reduce__13bb3)
+JIT_RED  (GB_jit__reduce__13bb9)
 JIT_RED  (GB_jit__reduce__14823)
+JIT_RED  (GB_jit__reduce__14913)
 JIT_RED  (GB_jit__reduce__14aa2)
 JIT_RED  (GB_jit__reduce__14aa3)
-JIT_ROWS (GB_jit__rowscale__010200e1e0e1ec7__LG_MSF_tuple2nd_fp)
-JIT_SELB (GB_jit__select_bitmap__00331beba__LG_MSF_removeEdge_fp)
-JIT_SELB (GB_jit__select_bitmap__00331beba__LG_MSF_selectEdge_fp)
-JIT_SELB (GB_jit__select_bitmap__00f31beba__LG_MSF_removeEdge_fp)
-JIT_SELB (GB_jit__select_bitmap__00f31beba__LG_MSF_selectEdge_fp)
-JIT_SEL1 (GB_jit__select_phase1__3f331beb5__LG_MSF_removeEdge_fp)
-JIT_SEL1 (GB_jit__select_phase1__3f331beb5__LG_MSF_selectEdge_fp)
-JIT_SEL1 (GB_jit__select_phase1__3ff31beb5__LG_MSF_removeEdge_fp)
-JIT_SEL1 (GB_jit__select_phase1__3ff31beb5__LG_MSF_selectEdge_fp)
-JIT_SEL2 (GB_jit__select_phase2__3f331beb5__LG_MSF_removeEdge_fp)
-JIT_SEL2 (GB_jit__select_phase2__3f331beb5__LG_MSF_selectEdge_fp)
-JIT_SEL2 (GB_jit__select_phase2__3ff31beb5__LG_MSF_removeEdge_fp)
-JIT_SEL2 (GB_jit__select_phase2__3ff31beb5__LG_MSF_selectEdge_fp)
+JIT_RED  (GB_jit__reduce__14b82)
+JIT_RED  (GB_jit__reduce__14bb2)
+JIT_RED  (GB_jit__reduce__14bb9)
+JIT_ROWS (GB_jit__rowscale__010200e1e0e1ec7__LG_MSF_tuple2nd_double)
+JIT_ROWS (GB_jit__rowscale__010200e1e0e1ec7__LG_MSF_tuple2nd_int64_t)
+JIT_SELB (GB_jit__select_bitmap__00131e1ea__LG_MF_Prune32)
+JIT_SELB (GB_jit__select_bitmap__003318e8a__LG_MSF_removeEdge_int64_t)
+JIT_SELB (GB_jit__select_bitmap__003318e8a__LG_MSF_selectEdge_int64_t)
+JIT_SELB (GB_jit__select_bitmap__00331beba__LG_MSF_removeEdge_double)
+JIT_SELB (GB_jit__select_bitmap__00331beba__LG_MSF_selectEdge_double)
+JIT_SELB (GB_jit__select_bitmap__00f318e8a__LG_MSF_removeEdge_int64_t)
+JIT_SELB (GB_jit__select_bitmap__00f318e8a__LG_MSF_selectEdge_int64_t)
+JIT_SELB (GB_jit__select_bitmap__00f31beba__LG_MSF_removeEdge_double)
+JIT_SELB (GB_jit__select_bitmap__00f31beba__LG_MSF_selectEdge_double)
+JIT_SEL1 (GB_jit__select_phase1__3f131e1e5__LG_MF_Prune32)
+JIT_SEL1 (GB_jit__select_phase1__3f331beb5__LG_MSF_removeEdge_double)
+JIT_SEL1 (GB_jit__select_phase1__3f331beb5__LG_MSF_selectEdge_double)
+JIT_SEL1 (GB_jit__select_phase1__3ff318e85__LG_MSF_removeEdge_int64_t)
+JIT_SEL1 (GB_jit__select_phase1__3ff318e85__LG_MSF_selectEdge_int64_t)
+JIT_SEL1 (GB_jit__select_phase1__3ff31beb5__LG_MSF_removeEdge_double)
+JIT_SEL1 (GB_jit__select_phase1__3ff31beb5__LG_MSF_selectEdge_double)
+JIT_SEL2 (GB_jit__select_phase2__3f131e1e5__LG_MF_Prune32)
+JIT_SEL2 (GB_jit__select_phase2__3f331beb5__LG_MSF_removeEdge_double)
+JIT_SEL2 (GB_jit__select_phase2__3f331beb5__LG_MSF_selectEdge_double)
+JIT_SEL2 (GB_jit__select_phase2__3ff318e85__LG_MSF_removeEdge_int64_t)
+JIT_SEL2 (GB_jit__select_phase2__3ff318e85__LG_MSF_selectEdge_int64_t)
+JIT_SEL2 (GB_jit__select_phase2__3ff31beb5__LG_MSF_removeEdge_double)
+JIT_SEL2 (GB_jit__select_phase2__3ff31beb5__LG_MSF_selectEdge_double)
+JIT_SUB  (GB_jit__subassign_01__0800647f000016cc)
+JIT_SUB  (GB_jit__subassign_01__0800647f000099cc)
+JIT_SUB  (GB_jit__subassign_01__08006c7f000016cc)
+JIT_SUB  (GB_jit__subassign_01__08006c7f000099cc)
+JIT_SUB  (GB_jit__subassign_01__0802647f000016cc)
+JIT_SUB  (GB_jit__subassign_01__0802647f000099cc)
+JIT_SUB  (GB_jit__subassign_01__08026c7f000016cc)
+JIT_SUB  (GB_jit__subassign_01__08026c7f000099cc)
+JIT_SUB  (GB_jit__subassign_02__7f02447f00000b47)
+JIT_SUB  (GB_jit__subassign_02__7f02447f00009b47)
+JIT_SUB  (GB_jit__subassign_02__7f02447f0000bb46)
 JIT_SUB  (GB_jit__subassign_02__7f1c417f00001101)
 JIT_SUB  (GB_jit__subassign_02__7f1c517f00000101)
+JIT_SUB  (GB_jit__subassign_04__7f004140eee0ee46__LG_MF_InitForw)
+JIT_SUB  (GB_jit__subassign_04__7f004440eee0ee46__LG_MF_InitBack)
+JIT_SUB  (GB_jit__subassign_04__7f1c4140eee0ee45__LG_MF_InitForw)
+JIT_SUB  (GB_jit__subassign_04__7f1c4440eee0ee44__LG_MF_InitBack)
+JIT_SUB  (GB_jit__subassign_04__7f1c5140eee0ee45__LG_MF_InitForw)
+JIT_SUB  (GB_jit__subassign_04__7f1c5440eee0ee44__LG_MF_InitBack)
+JIT_SUB  (GB_jit__subassign_05__0700207f00026960)
 JIT_SUB  (GB_jit__subassign_05__07e0207f00026850)
-JIT_SUB  (GB_jit__subassign_05d__0000207f0004eef0__LG_MSF_tuple_fp)
+JIT_SUB  (GB_jit__subassign_05__07e0207f00026950)
+JIT_SUB  (GB_jit__subassign_05d__0000207f0004eef0__LG_MSF_tuple_double)
+JIT_SUB  (GB_jit__subassign_05d__0000207f0004eef0__LG_MSF_tuple_int64_t)
+JIT_SUB  (GB_jit__subassign_06n__0700007f00049973)
 JIT_SUB  (GB_jit__subassign_06n__071c007f00029971)
 JIT_SUB  (GB_jit__subassign_06n__07e0007f00021100)
-JIT_SUB  (GB_jit__subassign_06n__07e0007f00021110)
+JIT_SUB  (GB_jit__subassign_06n__07e0007f00049953)
 JIT_SUB  (GB_jit__subassign_06n__07fc007f00020651)
 JIT_SUB  (GB_jit__subassign_06n__07fc007f00020900)
 JIT_SUB  (GB_jit__subassign_06n__07fc007f00021100)
+JIT_SUB  (GB_jit__subassign_06n__07fc007f00021140)
 JIT_SUB  (GB_jit__subassign_06n__07fc007f00026651)
 JIT_SUB  (GB_jit__subassign_06n__07fc007f00029900)
+JIT_SUB  (GB_jit__subassign_06n__07fc007f00029940)
 JIT_SUB  (GB_jit__subassign_06n__07fc007f00029951)
+JIT_SUB  (GB_jit__subassign_06n__07fc007f0002ee40__LG_MF_flowEdge)
+JIT_SUB  (GB_jit__subassign_06n__07fc007f0002ee51__LG_MF_flowEdge)
+JIT_SUB  (GB_jit__subassign_06n__07fc007f00049951)
 JIT_SUB  (GB_jit__subassign_06n__07fc107f00020100)
-JIT_SUB  (GB_jit__subassign_06n__07fc107f00020111)
 JIT_SUB  (GB_jit__subassign_06n__07fc107f00020140)
+JIT_SUB  (GB_jit__subassign_06n__07fc107f00020651)
 JIT_SUB  (GB_jit__subassign_06n__07fc107f00020900)
-JIT_SUB  (GB_jit__subassign_06n__07fc107f00020940)
+JIT_SUB  (GB_jit__subassign_06n__07fc107f00021100)
+JIT_SUB  (GB_jit__subassign_06n__07fc107f00021140)
 JIT_SUB  (GB_jit__subassign_06n__07fc107f00029900)
-JIT_SUB  (GB_jit__subassign_06n__07fc107f00029940)
+JIT_SUB  (GB_jit__subassign_06s__7f00407f00026666)
+JIT_SUB  (GB_jit__subassign_06s__7f00407f0003bb65)
+JIT_SUB  (GB_jit__subassign_06s__7f00407f00049967)
+JIT_SUB  (GB_jit__subassign_06s__7f00507f00020666)
 JIT_SUB  (GB_jit__subassign_06s__7f1c407f00029965)
+JIT_SUB  (GB_jit__subassign_06s__7f1c407f0002bb65)
+JIT_SUB  (GB_jit__subassign_06s__7f1c407f0003bb65)
 JIT_SUB  (GB_jit__subassign_06s__7fe0407f00021100)
 JIT_SUB  (GB_jit__subassign_06s__7fe0407f00021110)
-JIT_SUB  (GB_jit__subassign_06s__7fe0407f00029100)
 JIT_SUB  (GB_jit__subassign_06s__7fe0407f00029110)
+JIT_SUB  (GB_jit__subassign_06s__7ffc407f00029910)
 JIT_SUB  (GB_jit__subassign_06s__7ffc407f00036655)
 JIT_SUB  (GB_jit__subassign_06s__7ffc407f00039900)
+JIT_SUB  (GB_jit__subassign_06s__7ffc407f0003bb55)
+JIT_SUB  (GB_jit__subassign_06s__7ffc407f0003ee55__LG_MF_flowEdge)
 JIT_SUB  (GB_jit__subassign_06s__7ffc507f00020100)
 JIT_SUB  (GB_jit__subassign_06s__7ffc507f00020110)
+JIT_SUB  (GB_jit__subassign_06s__7ffc507f0003ee55__LG_MF_flowEdge)
 JIT_SUB  (GB_jit__subassign_08n__00000042999499f3)
 JIT_SUB  (GB_jit__subassign_08n__00000050999499f3)
+JIT_SUB  (GB_jit__subassign_08n__00fc0044bbb2bbd1)
+JIT_SUB  (GB_jit__subassign_08s__08004043666366ee)
+JIT_SUB  (GB_jit__subassign_08s__08004043666366ef)
+JIT_SUB  (GB_jit__subassign_08s__08004044bbb2bbee)
+JIT_SUB  (GB_jit__subassign_08s__08005043666366ee)
+JIT_SUB  (GB_jit__subassign_08s__08e04043666366de)
+JIT_SUB  (GB_jit__subassign_08s__08e04043666366df)
 JIT_SUB  (GB_jit__subassign_13__7f00607f00030164)
 JIT_SUB  (GB_jit__subassign_13__7fe0607f00030154)
+JIT_SUB  (GB_jit__subassign_13__7fe0607f0003b654)
 JIT_SUB  (GB_jit__subassign_13__7fe0607f00050154)
-JIT_SUB  (GB_jit__subassign_23__00000040eee0eec3__LG_MSF_tupleMin_fp)
+JIT_SUB  (GB_jit__subassign_15__08006043666369ec)
+JIT_SUB  (GB_jit__subassign_15__08006043666369fc)
+JIT_SUB  (GB_jit__subassign_23__00000040eee0eec3__LG_MSF_tupleMin_double)
+JIT_SUB  (GB_jit__subassign_23__00000040eee0eec3__LG_MSF_tupleMin_int64_t)
 JIT_SUB  (GB_jit__subassign_23__00000044bbb0bbc2)
 JIT_SUB  (GB_jit__subassign_23__00000044bbb0bbc3)
 JIT_SUB  (GB_jit__subassign_23__00000052aaa0aac3)
 JIT_SUB  (GB_jit__subassign_23__00001044bbb0bbc3)
 JIT_SUB  (GB_jit__subassign_23__001c0044bbb0bbc1)
 JIT_BREF (GB_jit__subref_bitmap__080009f)
-JIT_BREF (GB_jit__subref_bitmap__08000ef__LG_MSF_tuple_fp)
+JIT_BREF (GB_jit__subref_bitmap__08000ba)
+JIT_BREF (GB_jit__subref_bitmap__08000ef__LG_MSF_tuple_double)
+JIT_BREF (GB_jit__subref_bitmap__08000ef__LG_MSF_tuple_int64_t)
+JIT_BREF (GB_jit__subref_bitmap__080018a)
+JIT_BREF (GB_jit__subref_bitmap__08001ba)
+JIT_BREF (GB_jit__subref_bitmap__080049a)
+JIT_BREF (GB_jit__subref_bitmap__080049f)
+JIT_BREF (GB_jit__subref_bitmap__0800c1f)
+JIT_BREF (GB_jit__subref_bitmap__0800c7f)
+JIT_BREF (GB_jit__subref_bitmap__0800c9a)
 JIT_BREF (GB_jit__subref_bitmap__0800c9f)
-JIT_BREF (GB_jit__subref_bitmap__0800cef__LG_MSF_tuple_fp)
+JIT_BREF (GB_jit__subref_bitmap__0800cef__LG_MSF_tuple_double)
+JIT_BREF (GB_jit__subref_bitmap__0800cef__LG_MSF_tuple_int64_t)
+JIT_BREF (GB_jit__subref_bitmap__080841f)
+JIT_BREF (GB_jit__subref_bitmap__08084ba)
+JIT_BREF (GB_jit__subref_bitmap__08084bf)
 JIT_BREF (GB_jit__subref_bitmap__0808c6f)
+JIT_BREF (GB_jit__subref_bitmap__0808c9f)
+JIT_SREF (GB_jit__subref_sparse__0bf0075)
+JIT_SREF (GB_jit__subref_sparse__0bf0095)
+JIT_SREF (GB_jit__subref_sparse__0bf00b5)
+JIT_SREF (GB_jit__subref_sparse__0bf0491)
+JIT_SREF (GB_jit__subref_sparse__0bf0495)
 JIT_SREF (GB_jit__subref_sparse__0bf8490)
+JIT_SREF (GB_jit__subref_sparse__e3f0c95)
 JIT_SREF (GB_jit__subref_sparse__e3f8c90)
+JIT_SREF (GB_jit__subref_sparse__ebf0c95)
+JIT_TR0  (GB_jit__trans_unop__00480222022a)
+JIT_TR0  (GB_jit__trans_unop__00480233033a)
+JIT_TR0  (GB_jit__trans_unop__00480244044a)
+JIT_TR0  (GB_jit__trans_unop__00480255055a)
+JIT_TR0  (GB_jit__trans_unop__00480288082a)
+JIT_TR0  (GB_jit__trans_unop__00480288083a)
+JIT_TR0  (GB_jit__trans_unop__004802aa0aaa)
+JIT_TR0  (GB_jit__trans_unop__004802bb0bba)
+JIT_TR0  (GB_jit__trans_unop__004802bb0bbf)
+JIT_TR0  (GB_jit__trans_unop__1848021101b5)
+JIT_TR0  (GB_jit__trans_unop__184802aa0aa5)
+JIT_TR0  (GB_jit__trans_unop__184802bb0bb5)
+JIT_TR0  (GB_jit__trans_unop__1bc802bb0bb5)
+JIT_UNI  (GB_jit__union__e3f012bbb0bbb00)
+JIT_UNI  (GB_jit__union__e3f012bbb0bbb44)
+JIT_UNI  (GB_jit__union__e3f012bbb0bbb45)
+JIT_UNI  (GB_jit__union__e3f312bbb0bbb00)
+JIT_UNI  (GB_jit__union__e3f312bbb0bbb44)
+JIT_UNI  (GB_jit__union__e3f312bbb0bbb45)
 
 
 //------------------------------------------------------------------------------
 // prototypes for all PreJIT query kernels
 //------------------------------------------------------------------------------
 
-JIT_Q (GB_jit__AxB_dot2__0000000eb94eb9bb__LG_MSF_tupleMin_fp_LG_MSF_combine_fp_query)
-JIT_Q (GB_jit__AxB_dot2__0000400eb94eb9bb__LG_MSF_tupleMin_fp_LG_MSF_combine_fp_query)
-JIT_Q (GB_jit__AxB_dot2__0380000eb94eb9b7__LG_MSF_tupleMin_fp_LG_MSF_combine_fp_query)
-JIT_Q (GB_jit__AxB_dot2__0380400eb94eb9b7__LG_MSF_tupleMin_fp_LG_MSF_combine_fp_query)
+JIT_Q (GB_jit__AxB_dot2__0000000e894e89bb__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t_query)
+JIT_Q (GB_jit__AxB_dot2__0000000eb94eb9bb__LG_MSF_tupleMin_double_LG_MSF_combine_double_query)
+JIT_Q (GB_jit__AxB_dot2__0000034ee62ee6ab__LG_MF_Rxd_Add32_LG_MF_Rxd_Mult32_query)
+JIT_Q (GB_jit__AxB_dot2__0000034eeb0eeb8b__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32_query)
+JIT_Q (GB_jit__AxB_dot2__0000400e894e89bb__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t_query)
+JIT_Q (GB_jit__AxB_dot2__0000400eb94eb9bb__LG_MSF_tupleMin_double_LG_MSF_combine_double_query)
+JIT_Q (GB_jit__AxB_dot2__0004015bbb0b618b_query)
+JIT_Q (GB_jit__AxB_dot2__000420fbb00bb08b_query)
+JIT_Q (GB_jit__AxB_dot2__0004415bbb0b618b_query)
+JIT_Q (GB_jit__AxB_dot2__0380000eb94eb9b7__LG_MSF_tupleMin_double_LG_MSF_combine_double_query)
+JIT_Q (GB_jit__AxB_dot2__0380034ee62ee6a7__LG_MF_Rxd_Add32_LG_MF_Rxd_Mult32_query)
+JIT_Q (GB_jit__AxB_dot2__0380034eeb0eeb87__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32_query)
+JIT_Q (GB_jit__AxB_dot2__0380034eeb0eebc7__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32_query)
+JIT_Q (GB_jit__AxB_dot2__0380400e894e89b7__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t_query)
+JIT_Q (GB_jit__AxB_dot2__0380400eb94eb9b7__LG_MSF_tupleMin_double_LG_MSF_combine_double_query)
+JIT_Q (GB_jit__AxB_dot2__0380434eeb0eeb87__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32_query)
+JIT_Q (GB_jit__AxB_dot2__0380434eeb0eebc7__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32_query)
 JIT_Q (GB_jit__AxB_dot2__038120f1100110c7_query)
+JIT_Q (GB_jit__AxB_dot2__038420fbb00bb087_query)
+JIT_Q (GB_jit__AxB_dot2__038420fbb00bb0c7_query)
+JIT_Q (GB_jit__AxB_dot2__0384410b0b2b0ba6_query)
 JIT_Q (GB_jit__AxB_dot2__0384410b0b3b0ba6_query)
-JIT_Q (GB_jit__AxB_dot4__0000800eb90eb9cb__LG_MSF_tupleMin_fp_LG_MSF_combine_fp_query)
-JIT_Q (GB_jit__AxB_dot4__0000c00eb90eb9cb__LG_MSF_tupleMin_fp_LG_MSF_combine_fp_query)
+JIT_Q (GB_jit__AxB_dot2__038460f990091087_query)
+JIT_Q (GB_jit__AxB_dot2__038460f9900910c7_query)
+JIT_Q (GB_jit__AxB_dot3__ff80034ee62ee657__LG_MF_Rxd_Add32_LG_MF_Rxd_Mult32_query)
+JIT_Q (GB_jit__AxB_dot3__ff84410b0b2b0b56_query)
+JIT_Q (GB_jit__AxB_dot4__0000000e1e0e1eca__lg_hll_merge_lg_hll_second_query)
+JIT_Q (GB_jit__AxB_dot4__0000400e1e0e1eca__lg_hll_merge_lg_hll_second_query)
+JIT_Q (GB_jit__AxB_dot4__0000800e890e89cb__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t_query)
+JIT_Q (GB_jit__AxB_dot4__0000800eb90eb9cb__LG_MSF_tupleMin_double_LG_MSF_combine_double_query)
+JIT_Q (GB_jit__AxB_dot4__0000c00e890e89cb__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t_query)
+JIT_Q (GB_jit__AxB_dot4__0000c00eb90eb9cb__LG_MSF_tupleMin_double_LG_MSF_combine_double_query)
 JIT_Q (GB_jit__AxB_dot4__0004c10a0a0a0acb_query)
-JIT_Q (GB_jit__AxB_dot4__0380400e1e0e1ec6__fdb_hll_merge_fdb_hll_second_query)
-JIT_Q (GB_jit__AxB_dot4__0380800eb90eb9c7__LG_MSF_tupleMin_fp_LG_MSF_combine_fp_query)
-JIT_Q (GB_jit__AxB_dot4__0380c00eb90eb9c7__LG_MSF_tupleMin_fp_LG_MSF_combine_fp_query)
+JIT_Q (GB_jit__AxB_dot4__0380400e1e0e1ec6__lg_hll_merge_lg_hll_second_query)
+JIT_Q (GB_jit__AxB_dot4__0380800eb90eb9c7__LG_MSF_tupleMin_double_LG_MSF_combine_double_query)
+JIT_Q (GB_jit__AxB_dot4__0380c00e890e89c7__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t_query)
+JIT_Q (GB_jit__AxB_dot4__0380c00eb90eb9c7__LG_MSF_tupleMin_double_LG_MSF_combine_double_query)
 JIT_Q (GB_jit__AxB_dot4__0384c10a0a0a0ac7_query)
+JIT_Q (GB_jit__AxB_saxbit__000420fbb00bb08b_query)
 JIT_Q (GB_jit__AxB_saxbit__000420fbb00bb08f_query)
+JIT_Q (GB_jit__AxB_saxbit__038420fbb00bb083_query)
+JIT_Q (GB_jit__AxB_saxbit__038420fbb00bb087_query)
 JIT_Q (GB_jit__AxB_saxbit__0384610b0b3b0ba6_query)
-JIT_Q (GB_jit__AxB_saxpy3__e3f120f110011000_query)
 JIT_Q (GB_jit__AxB_saxpy3__e3f120f110011041_query)
-JIT_Q (GB_jit__AxB_saxpy3__e3f120f990099000_query)
-JIT_Q (GB_jit__AxB_saxpy3__e3f120f990099004_query)
+JIT_Q (GB_jit__AxB_saxpy3__e3f120f110011045_query)
 JIT_Q (GB_jit__AxB_saxpy3__e3f120f990099041_query)
 JIT_Q (GB_jit__AxB_saxpy3__e3f120f990099045_query)
 JIT_Q (GB_jit__AxB_saxpy3__e3f4410b0b2b0b65_query)
 JIT_Q (GB_jit__AxB_saxpy3__e3f4410b0b3b0b65_query)
-JIT_Q (GB_jit__AxB_saxpy3__fff120f990399000_query)
-JIT_Q (GB_jit__AxB_saxpy4__0100400e1e0e1ec7__LG_MSF_tupleMin_fp_LG_MSF_tuple2nd_fp_query)
+JIT_Q (GB_jit__AxB_saxpy3__e3f4610b0b3b0b65_query)
+JIT_Q (GB_jit__AxB_saxpy3__fff120f110311055_query)
+JIT_Q (GB_jit__AxB_saxpy3__fff120f990399055_query)
+JIT_Q (GB_jit__AxB_saxpy4__0100400e1e0e1ec7__LG_MSF_tupleMin_double_LG_MSF_tuple2nd_double_query)
+JIT_Q (GB_jit__AxB_saxpy4__0100400e1e0e1ec7__LG_MSF_tupleMin_int64_t_LG_MSF_tuple2nd_int64_t_query)
+JIT_Q (GB_jit__AxB_saxpy4__0380000e1e0e1ec6__lg_hll_merge_lg_hll_second_query)
+JIT_Q (GB_jit__add__00000288808288a_query)
+JIT_Q (GB_jit__add__00000288808388a_query)
+JIT_Q (GB_jit__add__00000611101b186_query)
+JIT_Q (GB_jit__add__000012aaa0aaacb_query)
+JIT_Q (GB_jit__add__000012aaa0aaacf_query)
+JIT_Q (GB_jit__add__000012aaa0aabcf_query)
+JIT_Q (GB_jit__add__000012bbb0bbb8a_query)
 JIT_Q (GB_jit__add__000203aaa0aaace_query)
 JIT_Q (GB_jit__add__000203aaa0aaacf_query)
 JIT_Q (GB_jit__add__000214aaa0aaacf_query)
-JIT_Q (GB_jit__add__e3f001111019100_query)
+JIT_Q (GB_jit__add__e0700611101b144_query)
+JIT_Q (GB_jit__add__e0700611101b145_query)
+JIT_Q (GB_jit__add__e3f002bbb0bbb45_query)
+JIT_Q (GB_jit__add__e3f010a0a0aaa44_query)
+JIT_Q (GB_jit__add__e3f010b0b0bbb44_query)
+JIT_Q (GB_jit__add__e3f010e0e0eee44__LG_MF_flowEdge_query)
+JIT_Q (GB_jit__add__e3f012bbb0bbb45_query)
 JIT_Q (GB_jit__add__e3f101111019100_query)
-JIT_Q (GB_jit__apply_bind1st__000000eb90ef9c3__LG_MSF_combine_fp_query)
+JIT_Q (GB_jit__add__e3f301111019100_query)
+JIT_Q (GB_jit__apply_bind1st__000000e890ef9c3__LG_MSF_combine_int64_t_query)
+JIT_Q (GB_jit__apply_bind1st__000000eb90ef9c3__LG_MSF_combine_double_query)
 JIT_Q (GB_jit__apply_bind2nd__000014aaa0a8fc8_query)
 JIT_Q (GB_jit__apply_bind2nd__000014aaa0a8fcc_query)
 JIT_Q (GB_jit__apply_bind2nd__000014bbb0bbfcc_query)
-JIT_Q (GB_jit__apply_unop__0040009e09ee__LG_MSF_get_second_fp_query)
-JIT_Q (GB_jit__apply_unop__0040009e09ef__LG_MSF_get_second_fp_query)
-JIT_Q (GB_jit__apply_unop__004000be0bee__LG_MSF_get_first_fp_query)
+JIT_Q (GB_jit__apply_unop__0040006e06ee__LG_MF_ExtractJ32_query)
+JIT_Q (GB_jit__apply_unop__0040006e06ee__LG_MF_ExtractYJ32_query)
+JIT_Q (GB_jit__apply_unop__0040008e08ee__LG_MSF_get_first_int64_t_query)
+JIT_Q (GB_jit__apply_unop__0040009e09ee__LG_MSF_get_second_double_query)
+JIT_Q (GB_jit__apply_unop__0040009e09ee__LG_MSF_get_second_int64_t_query)
+JIT_Q (GB_jit__apply_unop__0040009e09ef__LG_MSF_get_second_double_query)
+JIT_Q (GB_jit__apply_unop__0040009e09ef__LG_MSF_get_second_int64_t_query)
+JIT_Q (GB_jit__apply_unop__004000be0bee__LG_MF_ExtractMatrixFlow_query)
+JIT_Q (GB_jit__apply_unop__004000be0bee__LG_MF_GetResidual_query)
+JIT_Q (GB_jit__apply_unop__004000be0bee__LG_MF_ResidualFlow32_query)
+JIT_Q (GB_jit__apply_unop__004000be0bee__LG_MSF_get_first_double_query)
+JIT_Q (GB_jit__apply_unop__004000be0bef__lg_hll_count_query)
+JIT_Q (GB_jit__apply_unop__004000eb0e8e__LG_MF_ResidualBackward_query)
+JIT_Q (GB_jit__apply_unop__004000eb0e8e__LG_MF_ResidualForward_query)
+JIT_Q (GB_jit__apply_unop__004000eb0ebe__LG_MF_MakeFlow_query)
+JIT_Q (GB_jit__apply_unop__004000eb0ebe__LG_MF_ResidualBackward_query)
+JIT_Q (GB_jit__apply_unop__004000eb0ebe__LG_MF_ResidualForward_query)
+JIT_Q (GB_jit__apply_unop__0040021101be_query)
 JIT_Q (GB_jit__apply_unop__0040021101bf_query)
 JIT_Q (GB_jit__apply_unop__00400222021f_query)
+JIT_Q (GB_jit__apply_unop__0040029909bf_query)
+JIT_Q (GB_jit__apply_unop__004002bb0b8e_query)
 JIT_Q (GB_jit__apply_unop__004005bb0bbe_query)
 JIT_Q (GB_jit__apply_unop__004007aa0aaf_query)
-JIT_Q (GB_jit__apply_unop__03c0009e09ed__LG_MSF_get_second_fp_query)
-JIT_Q (GB_jit__apply_unop__03c000be0bed__LG_MSF_get_first_fp_query)
+JIT_Q (GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractJ32_query)
+JIT_Q (GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractYJ32_query)
+JIT_Q (GB_jit__apply_unop__03c0008e08ed__LG_MSF_get_first_int64_t_query)
+JIT_Q (GB_jit__apply_unop__03c0009e09ed__LG_MSF_get_second_double_query)
+JIT_Q (GB_jit__apply_unop__03c0009e09ed__LG_MSF_get_second_int64_t_query)
+JIT_Q (GB_jit__apply_unop__03c000be0bed__LG_MF_ExtractMatrixFlow_query)
+JIT_Q (GB_jit__apply_unop__03c000be0bed__LG_MF_GetResidual_query)
+JIT_Q (GB_jit__apply_unop__03c000be0bed__LG_MF_ResidualFlow32_query)
+JIT_Q (GB_jit__apply_unop__03c000be0bed__LG_MSF_get_first_double_query)
+JIT_Q (GB_jit__apply_unop__03c000eb0e7d__LG_MF_ResidualBackward_query)
+JIT_Q (GB_jit__apply_unop__03c000eb0e7d__LG_MF_ResidualForward_query)
+JIT_Q (GB_jit__apply_unop__03c000eb0e9d__LG_MF_ResidualBackward_query)
+JIT_Q (GB_jit__apply_unop__03c000eb0e9d__LG_MF_ResidualForward_query)
+JIT_Q (GB_jit__apply_unop__03c000eb0ebd__LG_MF_MakeFlow_query)
+JIT_Q (GB_jit__apply_unop__03c000eb0ebd__LG_MF_ResidualBackward_query)
+JIT_Q (GB_jit__apply_unop__03c000eb0ebd__LG_MF_ResidualForward_query)
+JIT_Q (GB_jit__apply_unop__03c002bb0b7d_query)
+JIT_Q (GB_jit__apply_unop__03c002bb0b9d_query)
 JIT_Q (GB_jit__apply_unop__03c005bb0bbd_query)
+JIT_Q (GB_jit__bitmap_assign_2_whole__0000003f000266a2_query)
+JIT_Q (GB_jit__bitmap_assign_2_whole__0000003f000288a2_query)
+JIT_Q (GB_jit__bitmap_assign_2_whole__0000003f000288a3_query)
 JIT_Q (GB_jit__bitmap_assign_2_whole__0000003f0002aaa3_query)
+JIT_Q (GB_jit__bitmap_assign_2_whole__0000003f0002b8a2_query)
+JIT_Q (GB_jit__bitmap_assign_2_whole__0000003f0002bba2_query)
+JIT_Q (GB_jit__bitmap_assign_2_whole__0000003f0002eea2__LG_MF_flowEdge_query)
+JIT_Q (GB_jit__bitmap_assign_2_whole__0000003f0003bba1_query)
+JIT_Q (GB_jit__bitmap_assign_2_whole__0000003f0003eea2__LG_MF_flowEdge_query)
 JIT_Q (GB_jit__bitmap_assign_2_whole__0000003f000499b3_query)
+JIT_Q (GB_jit__bitmap_assign_2_whole__0000103f000201a2_query)
+JIT_Q (GB_jit__bitmap_assign_2_whole__0000103f000206a2_query)
 JIT_Q (GB_jit__bitmap_assign_2_whole__0000103f00020aa3_query)
+JIT_Q (GB_jit__bitmap_assign_2_whole__0000103f0003eea2__LG_MF_flowEdge_query)
+JIT_Q (GB_jit__bitmap_assign_2_whole__0000203f000268a0_query)
+JIT_Q (GB_jit__bitmap_assign_2_whole__0000203f000269a0_query)
+JIT_Q (GB_jit__bitmap_assign_2_whole__0000203f0003b6a0_query)
 JIT_Q (GB_jit__bitmap_assign_2_whole__0000803f000299a2_query)
+JIT_Q (GB_jit__bitmap_assign_2_whole__0000803f0003bba2_query)
+JIT_Q (GB_jit__bitmap_assign_2_whole__0000903f00030ba2_query)
 JIT_Q (GB_jit__bitmap_assign_2_whole__0000a03f000301a0_query)
 JIT_Q (GB_jit__bitmap_assign_2_whole__001c903f000301a0_query)
 JIT_Q (GB_jit__bitmap_assign_4_whole__00e0203f00026890_query)
-JIT_Q (GB_jit__bitmap_assign_4_whole__00fc103f00020180_query)
+JIT_Q (GB_jit__bitmap_assign_4_whole__00e0203f00026990_query)
+JIT_Q (GB_jit__bitmap_assign_4_whole__00e0803f00028892_query)
+JIT_Q (GB_jit__bitmap_assign_4_whole__00e0803f00028893_query)
+JIT_Q (GB_jit__bitmap_assign_4_whole__00fc003f00026691_query)
+JIT_Q (GB_jit__bitmap_assign_4_whole__00fc003f0002ee91__LG_MF_flowEdge_query)
+JIT_Q (GB_jit__bitmap_assign_5__000001c0eee0ee82__LG_MF_InitForw_query)
+JIT_Q (GB_jit__bitmap_assign_5__00000480eee0ee82__LG_MF_InitBack_query)
+JIT_Q (GB_jit__bitmap_assign_5__000011c0eee0ee82__LG_MF_InitForw_query)
+JIT_Q (GB_jit__bitmap_assign_5__00001480eee0ee82__LG_MF_InitBack_query)
+JIT_Q (GB_jit__bitmap_assign_5__001c01c0eee0ee81__LG_MF_InitForw_query)
+JIT_Q (GB_jit__bitmap_assign_5__001c0480eee0ee80__LG_MF_InitBack_query)
+JIT_Q (GB_jit__bitmap_assign_5__001c11c0eee0ee81__LG_MF_InitForw_query)
 JIT_Q (GB_jit__bitmap_assign_5_whole__00000004bbb0bb82_query)
+JIT_Q (GB_jit__bitmap_assign_5_whole__0000100611101182_query)
+JIT_Q (GB_jit__bitmap_assign_5_whole__001c0004bbb0bb81_query)
+JIT_Q (GB_jit__bitmap_assign_8_whole__00e0803f0003bb92_query)
+JIT_Q (GB_jit__build__a901111b_query)
 JIT_Q (GB_jit__build__e9011119_query)
+JIT_Q (GB_jit__build__e9022222_query)
+JIT_Q (GB_jit__build__e9033333_query)
+JIT_Q (GB_jit__build__e9044444_query)
+JIT_Q (GB_jit__build__e9055555_query)
 JIT_Q (GB_jit__build__e9066668_query)
+JIT_Q (GB_jit__build__e9066669_query)
+JIT_Q (GB_jit__build__e90aaaaa_query)
 JIT_Q (GB_jit__build__e90bbbbb_query)
+JIT_Q (GB_jit__build__f8611117_query)
 JIT_Q (GB_jit__build__f9066668_query)
+JIT_Q (GB_jit__build__f9066669_query)
+JIT_Q (GB_jit__build__f909999b_query)
+JIT_Q (GB_jit__build__f90aaaab_query)
+JIT_Q (GB_jit__build__f90bbbb6_query)
+JIT_Q (GB_jit__convert_b2s__004002ee0ee6__LG_MF_compareTuple32_query)
+JIT_Q (GB_jit__convert_s2b__03c002ee0eec__LG_MF_compareTuple32_query)
+JIT_Q (GB_jit__emult_02__e38000ee60ee647__LG_MF_CreateCompareVec32_query)
+JIT_Q (GB_jit__emult_02__e38002bbb0bbb47_query)
 JIT_Q (GB_jit__emult_02__e38005bbb0bbb46_query)
+JIT_Q (GB_jit__emult_02__e38005bbb0bbb47_query)
+JIT_Q (GB_jit__emult_04__fc0014bbb2bbb5f_query)
+JIT_Q (GB_jit__emult_08__fc700066e266e5d__LG_MF_Relabel32_query)
+JIT_Q (GB_jit__emult_08__fc7000eeb2eeb59__LG_MF_UpdateFlow_query)
+JIT_Q (GB_jit__emult_08__fff000eeb2eeb04__LG_MF_UpdateFlow_query)
+JIT_Q (GB_jit__emult_08__fff000eeb2eeb55__LG_MF_UpdateFlow_query)
+JIT_Q (GB_jit__emult_bitmap__00000066e266eae__LG_MF_Relabel32_query)
+JIT_Q (GB_jit__emult_bitmap__000000ee60ee68b__LG_MF_CreateCompareVec32_query)
+JIT_Q (GB_jit__emult_bitmap__000000eeb2eebaa__LG_MF_UpdateFlow_query)
+JIT_Q (GB_jit__emult_bitmap__000002bbb0bbb8b_query)
+JIT_Q (GB_jit__emult_bitmap__000005bbb0bbb8b_query)
+JIT_Q (GB_jit__emult_bitmap__0000091bb01bb8a_query)
 JIT_Q (GB_jit__emult_bitmap__000014bbb2bbbae_query)
+JIT_Q (GB_jit__emult_bitmap__000014bbb2bbbaf_query)
 JIT_Q (GB_jit__emult_bitmap__000214bbb2bbbae_query)
-JIT_Q (GB_jit__ewise_fulln__0000001ee01eecf__LG_MSF_tupleEq_fp_query)
-JIT_Q (GB_jit__ewise_fulln__000000bee0beecf__fdb_hll_delta_query)
+JIT_Q (GB_jit__emult_bitmap__000214bbb2bbbaf_query)
+JIT_Q (GB_jit__ewise_fulln__0000001ee01eecf__LG_MSF_tupleEq_double_query)
+JIT_Q (GB_jit__ewise_fulln__0000001ee01eecf__LG_MSF_tupleEq_int64_t_query)
+JIT_Q (GB_jit__ewise_fulln__000000bee0beecf__lg_hll_delta_query)
 JIT_Q (GB_jit__ewise_fulln__000014aaa0aaacf_query)
+JIT_Q (GB_jit__masker_phase1__dc732059_query)
+JIT_Q (GB_jit__masker_phase1__dc73205d_query)
+JIT_Q (GB_jit__masker_phase1__dc733059_query)
+JIT_Q (GB_jit__masker_phase1__dc73405d_query)
 JIT_Q (GB_jit__masker_phase1__dff32000_query)
+JIT_Q (GB_jit__masker_phase1__dff32004_query)
 JIT_Q (GB_jit__masker_phase1__dff32045_query)
 JIT_Q (GB_jit__masker_phase1__dff33000_query)
 JIT_Q (GB_jit__masker_phase1__dff33041_query)
 JIT_Q (GB_jit__masker_phase1__dff33045_query)
 JIT_Q (GB_jit__masker_phase1__dff33054_query)
-JIT_Q (GB_jit__masker_phase2__1c004e9e__LG_MSF_tuple_fp_query)
+JIT_Q (GB_jit__masker_phase1__dff33055_query)
+JIT_Q (GB_jit__masker_phase2__1c002b9a_query)
+JIT_Q (GB_jit__masker_phase2__1c002b9e_query)
+JIT_Q (GB_jit__masker_phase2__1c004e9e__LG_MSF_tuple_double_query)
+JIT_Q (GB_jit__masker_phase2__1c004e9e__LG_MSF_tuple_int64_t_query)
+JIT_Q (GB_jit__masker_phase2__fc70215d_query)
+JIT_Q (GB_jit__masker_phase2__fc702b59_query)
+JIT_Q (GB_jit__masker_phase2__fc702b5d_query)
+JIT_Q (GB_jit__masker_phase2__fc70415d_query)
 JIT_Q (GB_jit__masker_phase2__fff02900_query)
+JIT_Q (GB_jit__masker_phase2__fff02904_query)
+JIT_Q (GB_jit__masker_phase2__fff03100_query)
+JIT_Q (GB_jit__masker_phase2__fff03141_query)
 JIT_Q (GB_jit__masker_phase2__fff03900_query)
 JIT_Q (GB_jit__masker_phase2__fff03941_query)
+JIT_Q (GB_jit__masker_phase2__fff03945_query)
+JIT_Q (GB_jit__reduce__12222_query)
+JIT_Q (GB_jit__reduce__12332_query)
+JIT_Q (GB_jit__reduce__12442_query)
+JIT_Q (GB_jit__reduce__12552_query)
+JIT_Q (GB_jit__reduce__12aa2_query)
+JIT_Q (GB_jit__reduce__12bb2_query)
+JIT_Q (GB_jit__reduce__12bb3_query)
+JIT_Q (GB_jit__reduce__12bb9_query)
+JIT_Q (GB_jit__reduce__13222_query)
+JIT_Q (GB_jit__reduce__13332_query)
+JIT_Q (GB_jit__reduce__13442_query)
+JIT_Q (GB_jit__reduce__13552_query)
+JIT_Q (GB_jit__reduce__13862_query)
+JIT_Q (GB_jit__reduce__13863_query)
+JIT_Q (GB_jit__reduce__13aa2_query)
+JIT_Q (GB_jit__reduce__13aa3_query)
+JIT_Q (GB_jit__reduce__13bb2_query)
+JIT_Q (GB_jit__reduce__13bb3_query)
+JIT_Q (GB_jit__reduce__13bb9_query)
 JIT_Q (GB_jit__reduce__14823_query)
+JIT_Q (GB_jit__reduce__14913_query)
 JIT_Q (GB_jit__reduce__14aa2_query)
 JIT_Q (GB_jit__reduce__14aa3_query)
-JIT_Q (GB_jit__rowscale__010200e1e0e1ec7__LG_MSF_tuple2nd_fp_query)
-JIT_Q (GB_jit__select_bitmap__00331beba__LG_MSF_removeEdge_fp_query)
-JIT_Q (GB_jit__select_bitmap__00331beba__LG_MSF_selectEdge_fp_query)
-JIT_Q (GB_jit__select_bitmap__00f31beba__LG_MSF_removeEdge_fp_query)
-JIT_Q (GB_jit__select_bitmap__00f31beba__LG_MSF_selectEdge_fp_query)
-JIT_Q (GB_jit__select_phase1__3f331beb5__LG_MSF_removeEdge_fp_query)
-JIT_Q (GB_jit__select_phase1__3f331beb5__LG_MSF_selectEdge_fp_query)
-JIT_Q (GB_jit__select_phase1__3ff31beb5__LG_MSF_removeEdge_fp_query)
-JIT_Q (GB_jit__select_phase1__3ff31beb5__LG_MSF_selectEdge_fp_query)
-JIT_Q (GB_jit__select_phase2__3f331beb5__LG_MSF_removeEdge_fp_query)
-JIT_Q (GB_jit__select_phase2__3f331beb5__LG_MSF_selectEdge_fp_query)
-JIT_Q (GB_jit__select_phase2__3ff31beb5__LG_MSF_removeEdge_fp_query)
-JIT_Q (GB_jit__select_phase2__3ff31beb5__LG_MSF_selectEdge_fp_query)
+JIT_Q (GB_jit__reduce__14b82_query)
+JIT_Q (GB_jit__reduce__14bb2_query)
+JIT_Q (GB_jit__reduce__14bb9_query)
+JIT_Q (GB_jit__rowscale__010200e1e0e1ec7__LG_MSF_tuple2nd_double_query)
+JIT_Q (GB_jit__rowscale__010200e1e0e1ec7__LG_MSF_tuple2nd_int64_t_query)
+JIT_Q (GB_jit__select_bitmap__00131e1ea__LG_MF_Prune32_query)
+JIT_Q (GB_jit__select_bitmap__003318e8a__LG_MSF_removeEdge_int64_t_query)
+JIT_Q (GB_jit__select_bitmap__003318e8a__LG_MSF_selectEdge_int64_t_query)
+JIT_Q (GB_jit__select_bitmap__00331beba__LG_MSF_removeEdge_double_query)
+JIT_Q (GB_jit__select_bitmap__00331beba__LG_MSF_selectEdge_double_query)
+JIT_Q (GB_jit__select_bitmap__00f318e8a__LG_MSF_removeEdge_int64_t_query)
+JIT_Q (GB_jit__select_bitmap__00f318e8a__LG_MSF_selectEdge_int64_t_query)
+JIT_Q (GB_jit__select_bitmap__00f31beba__LG_MSF_removeEdge_double_query)
+JIT_Q (GB_jit__select_bitmap__00f31beba__LG_MSF_selectEdge_double_query)
+JIT_Q (GB_jit__select_phase1__3f131e1e5__LG_MF_Prune32_query)
+JIT_Q (GB_jit__select_phase1__3f331beb5__LG_MSF_removeEdge_double_query)
+JIT_Q (GB_jit__select_phase1__3f331beb5__LG_MSF_selectEdge_double_query)
+JIT_Q (GB_jit__select_phase1__3ff318e85__LG_MSF_removeEdge_int64_t_query)
+JIT_Q (GB_jit__select_phase1__3ff318e85__LG_MSF_selectEdge_int64_t_query)
+JIT_Q (GB_jit__select_phase1__3ff31beb5__LG_MSF_removeEdge_double_query)
+JIT_Q (GB_jit__select_phase1__3ff31beb5__LG_MSF_selectEdge_double_query)
+JIT_Q (GB_jit__select_phase2__3f131e1e5__LG_MF_Prune32_query)
+JIT_Q (GB_jit__select_phase2__3f331beb5__LG_MSF_removeEdge_double_query)
+JIT_Q (GB_jit__select_phase2__3f331beb5__LG_MSF_selectEdge_double_query)
+JIT_Q (GB_jit__select_phase2__3ff318e85__LG_MSF_removeEdge_int64_t_query)
+JIT_Q (GB_jit__select_phase2__3ff318e85__LG_MSF_selectEdge_int64_t_query)
+JIT_Q (GB_jit__select_phase2__3ff31beb5__LG_MSF_removeEdge_double_query)
+JIT_Q (GB_jit__select_phase2__3ff31beb5__LG_MSF_selectEdge_double_query)
+JIT_Q (GB_jit__subassign_01__0800647f000016cc_query)
+JIT_Q (GB_jit__subassign_01__0800647f000099cc_query)
+JIT_Q (GB_jit__subassign_01__08006c7f000016cc_query)
+JIT_Q (GB_jit__subassign_01__08006c7f000099cc_query)
+JIT_Q (GB_jit__subassign_01__0802647f000016cc_query)
+JIT_Q (GB_jit__subassign_01__0802647f000099cc_query)
+JIT_Q (GB_jit__subassign_01__08026c7f000016cc_query)
+JIT_Q (GB_jit__subassign_01__08026c7f000099cc_query)
+JIT_Q (GB_jit__subassign_02__7f02447f00000b47_query)
+JIT_Q (GB_jit__subassign_02__7f02447f00009b47_query)
+JIT_Q (GB_jit__subassign_02__7f02447f0000bb46_query)
 JIT_Q (GB_jit__subassign_02__7f1c417f00001101_query)
 JIT_Q (GB_jit__subassign_02__7f1c517f00000101_query)
+JIT_Q (GB_jit__subassign_04__7f004140eee0ee46__LG_MF_InitForw_query)
+JIT_Q (GB_jit__subassign_04__7f004440eee0ee46__LG_MF_InitBack_query)
+JIT_Q (GB_jit__subassign_04__7f1c4140eee0ee45__LG_MF_InitForw_query)
+JIT_Q (GB_jit__subassign_04__7f1c4440eee0ee44__LG_MF_InitBack_query)
+JIT_Q (GB_jit__subassign_04__7f1c5140eee0ee45__LG_MF_InitForw_query)
+JIT_Q (GB_jit__subassign_04__7f1c5440eee0ee44__LG_MF_InitBack_query)
+JIT_Q (GB_jit__subassign_05__0700207f00026960_query)
 JIT_Q (GB_jit__subassign_05__07e0207f00026850_query)
-JIT_Q (GB_jit__subassign_05d__0000207f0004eef0__LG_MSF_tuple_fp_query)
+JIT_Q (GB_jit__subassign_05__07e0207f00026950_query)
+JIT_Q (GB_jit__subassign_05d__0000207f0004eef0__LG_MSF_tuple_double_query)
+JIT_Q (GB_jit__subassign_05d__0000207f0004eef0__LG_MSF_tuple_int64_t_query)
+JIT_Q (GB_jit__subassign_06n__0700007f00049973_query)
 JIT_Q (GB_jit__subassign_06n__071c007f00029971_query)
 JIT_Q (GB_jit__subassign_06n__07e0007f00021100_query)
-JIT_Q (GB_jit__subassign_06n__07e0007f00021110_query)
+JIT_Q (GB_jit__subassign_06n__07e0007f00049953_query)
 JIT_Q (GB_jit__subassign_06n__07fc007f00020651_query)
 JIT_Q (GB_jit__subassign_06n__07fc007f00020900_query)
 JIT_Q (GB_jit__subassign_06n__07fc007f00021100_query)
+JIT_Q (GB_jit__subassign_06n__07fc007f00021140_query)
 JIT_Q (GB_jit__subassign_06n__07fc007f00026651_query)
 JIT_Q (GB_jit__subassign_06n__07fc007f00029900_query)
+JIT_Q (GB_jit__subassign_06n__07fc007f00029940_query)
 JIT_Q (GB_jit__subassign_06n__07fc007f00029951_query)
+JIT_Q (GB_jit__subassign_06n__07fc007f0002ee40__LG_MF_flowEdge_query)
+JIT_Q (GB_jit__subassign_06n__07fc007f0002ee51__LG_MF_flowEdge_query)
+JIT_Q (GB_jit__subassign_06n__07fc007f00049951_query)
 JIT_Q (GB_jit__subassign_06n__07fc107f00020100_query)
-JIT_Q (GB_jit__subassign_06n__07fc107f00020111_query)
 JIT_Q (GB_jit__subassign_06n__07fc107f00020140_query)
+JIT_Q (GB_jit__subassign_06n__07fc107f00020651_query)
 JIT_Q (GB_jit__subassign_06n__07fc107f00020900_query)
-JIT_Q (GB_jit__subassign_06n__07fc107f00020940_query)
+JIT_Q (GB_jit__subassign_06n__07fc107f00021100_query)
+JIT_Q (GB_jit__subassign_06n__07fc107f00021140_query)
 JIT_Q (GB_jit__subassign_06n__07fc107f00029900_query)
-JIT_Q (GB_jit__subassign_06n__07fc107f00029940_query)
+JIT_Q (GB_jit__subassign_06s__7f00407f00026666_query)
+JIT_Q (GB_jit__subassign_06s__7f00407f0003bb65_query)
+JIT_Q (GB_jit__subassign_06s__7f00407f00049967_query)
+JIT_Q (GB_jit__subassign_06s__7f00507f00020666_query)
 JIT_Q (GB_jit__subassign_06s__7f1c407f00029965_query)
+JIT_Q (GB_jit__subassign_06s__7f1c407f0002bb65_query)
+JIT_Q (GB_jit__subassign_06s__7f1c407f0003bb65_query)
 JIT_Q (GB_jit__subassign_06s__7fe0407f00021100_query)
 JIT_Q (GB_jit__subassign_06s__7fe0407f00021110_query)
-JIT_Q (GB_jit__subassign_06s__7fe0407f00029100_query)
 JIT_Q (GB_jit__subassign_06s__7fe0407f00029110_query)
+JIT_Q (GB_jit__subassign_06s__7ffc407f00029910_query)
 JIT_Q (GB_jit__subassign_06s__7ffc407f00036655_query)
 JIT_Q (GB_jit__subassign_06s__7ffc407f00039900_query)
+JIT_Q (GB_jit__subassign_06s__7ffc407f0003bb55_query)
+JIT_Q (GB_jit__subassign_06s__7ffc407f0003ee55__LG_MF_flowEdge_query)
 JIT_Q (GB_jit__subassign_06s__7ffc507f00020100_query)
 JIT_Q (GB_jit__subassign_06s__7ffc507f00020110_query)
+JIT_Q (GB_jit__subassign_06s__7ffc507f0003ee55__LG_MF_flowEdge_query)
 JIT_Q (GB_jit__subassign_08n__00000042999499f3_query)
 JIT_Q (GB_jit__subassign_08n__00000050999499f3_query)
+JIT_Q (GB_jit__subassign_08n__00fc0044bbb2bbd1_query)
+JIT_Q (GB_jit__subassign_08s__08004043666366ee_query)
+JIT_Q (GB_jit__subassign_08s__08004043666366ef_query)
+JIT_Q (GB_jit__subassign_08s__08004044bbb2bbee_query)
+JIT_Q (GB_jit__subassign_08s__08005043666366ee_query)
+JIT_Q (GB_jit__subassign_08s__08e04043666366de_query)
+JIT_Q (GB_jit__subassign_08s__08e04043666366df_query)
 JIT_Q (GB_jit__subassign_13__7f00607f00030164_query)
 JIT_Q (GB_jit__subassign_13__7fe0607f00030154_query)
+JIT_Q (GB_jit__subassign_13__7fe0607f0003b654_query)
 JIT_Q (GB_jit__subassign_13__7fe0607f00050154_query)
-JIT_Q (GB_jit__subassign_23__00000040eee0eec3__LG_MSF_tupleMin_fp_query)
+JIT_Q (GB_jit__subassign_15__08006043666369ec_query)
+JIT_Q (GB_jit__subassign_15__08006043666369fc_query)
+JIT_Q (GB_jit__subassign_23__00000040eee0eec3__LG_MSF_tupleMin_double_query)
+JIT_Q (GB_jit__subassign_23__00000040eee0eec3__LG_MSF_tupleMin_int64_t_query)
 JIT_Q (GB_jit__subassign_23__00000044bbb0bbc2_query)
 JIT_Q (GB_jit__subassign_23__00000044bbb0bbc3_query)
 JIT_Q (GB_jit__subassign_23__00000052aaa0aac3_query)
 JIT_Q (GB_jit__subassign_23__00001044bbb0bbc3_query)
 JIT_Q (GB_jit__subassign_23__001c0044bbb0bbc1_query)
 JIT_Q (GB_jit__subref_bitmap__080009f_query)
-JIT_Q (GB_jit__subref_bitmap__08000ef__LG_MSF_tuple_fp_query)
+JIT_Q (GB_jit__subref_bitmap__08000ba_query)
+JIT_Q (GB_jit__subref_bitmap__08000ef__LG_MSF_tuple_double_query)
+JIT_Q (GB_jit__subref_bitmap__08000ef__LG_MSF_tuple_int64_t_query)
+JIT_Q (GB_jit__subref_bitmap__080018a_query)
+JIT_Q (GB_jit__subref_bitmap__08001ba_query)
+JIT_Q (GB_jit__subref_bitmap__080049a_query)
+JIT_Q (GB_jit__subref_bitmap__080049f_query)
+JIT_Q (GB_jit__subref_bitmap__0800c1f_query)
+JIT_Q (GB_jit__subref_bitmap__0800c7f_query)
+JIT_Q (GB_jit__subref_bitmap__0800c9a_query)
 JIT_Q (GB_jit__subref_bitmap__0800c9f_query)
-JIT_Q (GB_jit__subref_bitmap__0800cef__LG_MSF_tuple_fp_query)
+JIT_Q (GB_jit__subref_bitmap__0800cef__LG_MSF_tuple_double_query)
+JIT_Q (GB_jit__subref_bitmap__0800cef__LG_MSF_tuple_int64_t_query)
+JIT_Q (GB_jit__subref_bitmap__080841f_query)
+JIT_Q (GB_jit__subref_bitmap__08084ba_query)
+JIT_Q (GB_jit__subref_bitmap__08084bf_query)
 JIT_Q (GB_jit__subref_bitmap__0808c6f_query)
+JIT_Q (GB_jit__subref_bitmap__0808c9f_query)
+JIT_Q (GB_jit__subref_sparse__0bf0075_query)
+JIT_Q (GB_jit__subref_sparse__0bf0095_query)
+JIT_Q (GB_jit__subref_sparse__0bf00b5_query)
+JIT_Q (GB_jit__subref_sparse__0bf0491_query)
+JIT_Q (GB_jit__subref_sparse__0bf0495_query)
 JIT_Q (GB_jit__subref_sparse__0bf8490_query)
+JIT_Q (GB_jit__subref_sparse__e3f0c95_query)
 JIT_Q (GB_jit__subref_sparse__e3f8c90_query)
+JIT_Q (GB_jit__subref_sparse__ebf0c95_query)
+JIT_Q (GB_jit__trans_unop__00480222022a_query)
+JIT_Q (GB_jit__trans_unop__00480233033a_query)
+JIT_Q (GB_jit__trans_unop__00480244044a_query)
+JIT_Q (GB_jit__trans_unop__00480255055a_query)
+JIT_Q (GB_jit__trans_unop__00480288082a_query)
+JIT_Q (GB_jit__trans_unop__00480288083a_query)
+JIT_Q (GB_jit__trans_unop__004802aa0aaa_query)
+JIT_Q (GB_jit__trans_unop__004802bb0bba_query)
+JIT_Q (GB_jit__trans_unop__004802bb0bbf_query)
+JIT_Q (GB_jit__trans_unop__1848021101b5_query)
+JIT_Q (GB_jit__trans_unop__184802aa0aa5_query)
+JIT_Q (GB_jit__trans_unop__184802bb0bb5_query)
+JIT_Q (GB_jit__trans_unop__1bc802bb0bb5_query)
+JIT_Q (GB_jit__union__e3f012bbb0bbb00_query)
+JIT_Q (GB_jit__union__e3f012bbb0bbb44_query)
+JIT_Q (GB_jit__union__e3f012bbb0bbb45_query)
+JIT_Q (GB_jit__union__e3f312bbb0bbb00_query)
+JIT_Q (GB_jit__union__e3f312bbb0bbb44_query)
+JIT_Q (GB_jit__union__e3f312bbb0bbb45_query)
 
 
 //------------------------------------------------------------------------------
 // GB_prejit_kernels: a list of function pointers to PreJIT kernels
 //------------------------------------------------------------------------------
 
-#if ( 136 > 0 )
-static void *GB_prejit_kernels [136] =
+#if ( 413 > 0 )
+static void *GB_prejit_kernels [413] =
 {
-GB_jit__AxB_dot2__0000000eb94eb9bb__LG_MSF_tupleMin_fp_LG_MSF_combine_fp,
-GB_jit__AxB_dot2__0000400eb94eb9bb__LG_MSF_tupleMin_fp_LG_MSF_combine_fp,
-GB_jit__AxB_dot2__0380000eb94eb9b7__LG_MSF_tupleMin_fp_LG_MSF_combine_fp,
-GB_jit__AxB_dot2__0380400eb94eb9b7__LG_MSF_tupleMin_fp_LG_MSF_combine_fp,
+GB_jit__AxB_dot2__0000000e894e89bb__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t,
+GB_jit__AxB_dot2__0000000eb94eb9bb__LG_MSF_tupleMin_double_LG_MSF_combine_double,
+GB_jit__AxB_dot2__0000034ee62ee6ab__LG_MF_Rxd_Add32_LG_MF_Rxd_Mult32,
+GB_jit__AxB_dot2__0000034eeb0eeb8b__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32,
+GB_jit__AxB_dot2__0000400e894e89bb__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t,
+GB_jit__AxB_dot2__0000400eb94eb9bb__LG_MSF_tupleMin_double_LG_MSF_combine_double,
+GB_jit__AxB_dot2__0004015bbb0b618b,
+GB_jit__AxB_dot2__000420fbb00bb08b,
+GB_jit__AxB_dot2__0004415bbb0b618b,
+GB_jit__AxB_dot2__0380000eb94eb9b7__LG_MSF_tupleMin_double_LG_MSF_combine_double,
+GB_jit__AxB_dot2__0380034ee62ee6a7__LG_MF_Rxd_Add32_LG_MF_Rxd_Mult32,
+GB_jit__AxB_dot2__0380034eeb0eeb87__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32,
+GB_jit__AxB_dot2__0380034eeb0eebc7__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32,
+GB_jit__AxB_dot2__0380400e894e89b7__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t,
+GB_jit__AxB_dot2__0380400eb94eb9b7__LG_MSF_tupleMin_double_LG_MSF_combine_double,
+GB_jit__AxB_dot2__0380434eeb0eeb87__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32,
+GB_jit__AxB_dot2__0380434eeb0eebc7__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32,
 GB_jit__AxB_dot2__038120f1100110c7,
+GB_jit__AxB_dot2__038420fbb00bb087,
+GB_jit__AxB_dot2__038420fbb00bb0c7,
+GB_jit__AxB_dot2__0384410b0b2b0ba6,
 GB_jit__AxB_dot2__0384410b0b3b0ba6,
-GB_jit__AxB_dot4__0000800eb90eb9cb__LG_MSF_tupleMin_fp_LG_MSF_combine_fp,
-GB_jit__AxB_dot4__0000c00eb90eb9cb__LG_MSF_tupleMin_fp_LG_MSF_combine_fp,
+GB_jit__AxB_dot2__038460f990091087,
+GB_jit__AxB_dot2__038460f9900910c7,
+GB_jit__AxB_dot3__ff80034ee62ee657__LG_MF_Rxd_Add32_LG_MF_Rxd_Mult32,
+GB_jit__AxB_dot3__ff84410b0b2b0b56,
+GB_jit__AxB_dot4__0000000e1e0e1eca__lg_hll_merge_lg_hll_second,
+GB_jit__AxB_dot4__0000400e1e0e1eca__lg_hll_merge_lg_hll_second,
+GB_jit__AxB_dot4__0000800e890e89cb__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t,
+GB_jit__AxB_dot4__0000800eb90eb9cb__LG_MSF_tupleMin_double_LG_MSF_combine_double,
+GB_jit__AxB_dot4__0000c00e890e89cb__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t,
+GB_jit__AxB_dot4__0000c00eb90eb9cb__LG_MSF_tupleMin_double_LG_MSF_combine_double,
 GB_jit__AxB_dot4__0004c10a0a0a0acb,
-GB_jit__AxB_dot4__0380400e1e0e1ec6__fdb_hll_merge_fdb_hll_second,
-GB_jit__AxB_dot4__0380800eb90eb9c7__LG_MSF_tupleMin_fp_LG_MSF_combine_fp,
-GB_jit__AxB_dot4__0380c00eb90eb9c7__LG_MSF_tupleMin_fp_LG_MSF_combine_fp,
+GB_jit__AxB_dot4__0380400e1e0e1ec6__lg_hll_merge_lg_hll_second,
+GB_jit__AxB_dot4__0380800eb90eb9c7__LG_MSF_tupleMin_double_LG_MSF_combine_double,
+GB_jit__AxB_dot4__0380c00e890e89c7__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t,
+GB_jit__AxB_dot4__0380c00eb90eb9c7__LG_MSF_tupleMin_double_LG_MSF_combine_double,
 GB_jit__AxB_dot4__0384c10a0a0a0ac7,
+GB_jit__AxB_saxbit__000420fbb00bb08b,
 GB_jit__AxB_saxbit__000420fbb00bb08f,
+GB_jit__AxB_saxbit__038420fbb00bb083,
+GB_jit__AxB_saxbit__038420fbb00bb087,
 GB_jit__AxB_saxbit__0384610b0b3b0ba6,
-GB_jit__AxB_saxpy3__e3f120f110011000,
 GB_jit__AxB_saxpy3__e3f120f110011041,
-GB_jit__AxB_saxpy3__e3f120f990099000,
-GB_jit__AxB_saxpy3__e3f120f990099004,
+GB_jit__AxB_saxpy3__e3f120f110011045,
 GB_jit__AxB_saxpy3__e3f120f990099041,
 GB_jit__AxB_saxpy3__e3f120f990099045,
 GB_jit__AxB_saxpy3__e3f4410b0b2b0b65,
 GB_jit__AxB_saxpy3__e3f4410b0b3b0b65,
-GB_jit__AxB_saxpy3__fff120f990399000,
-GB_jit__AxB_saxpy4__0100400e1e0e1ec7__LG_MSF_tupleMin_fp_LG_MSF_tuple2nd_fp,
+GB_jit__AxB_saxpy3__e3f4610b0b3b0b65,
+GB_jit__AxB_saxpy3__fff120f110311055,
+GB_jit__AxB_saxpy3__fff120f990399055,
+GB_jit__AxB_saxpy4__0100400e1e0e1ec7__LG_MSF_tupleMin_double_LG_MSF_tuple2nd_double,
+GB_jit__AxB_saxpy4__0100400e1e0e1ec7__LG_MSF_tupleMin_int64_t_LG_MSF_tuple2nd_int64_t,
+GB_jit__AxB_saxpy4__0380000e1e0e1ec6__lg_hll_merge_lg_hll_second,
+GB_jit__add__00000288808288a,
+GB_jit__add__00000288808388a,
+GB_jit__add__00000611101b186,
+GB_jit__add__000012aaa0aaacb,
+GB_jit__add__000012aaa0aaacf,
+GB_jit__add__000012aaa0aabcf,
+GB_jit__add__000012bbb0bbb8a,
 GB_jit__add__000203aaa0aaace,
 GB_jit__add__000203aaa0aaacf,
 GB_jit__add__000214aaa0aaacf,
-GB_jit__add__e3f001111019100,
+GB_jit__add__e0700611101b144,
+GB_jit__add__e0700611101b145,
+GB_jit__add__e3f002bbb0bbb45,
+GB_jit__add__e3f010a0a0aaa44,
+GB_jit__add__e3f010b0b0bbb44,
+GB_jit__add__e3f010e0e0eee44__LG_MF_flowEdge,
+GB_jit__add__e3f012bbb0bbb45,
 GB_jit__add__e3f101111019100,
-GB_jit__apply_bind1st__000000eb90ef9c3__LG_MSF_combine_fp,
+GB_jit__add__e3f301111019100,
+GB_jit__apply_bind1st__000000e890ef9c3__LG_MSF_combine_int64_t,
+GB_jit__apply_bind1st__000000eb90ef9c3__LG_MSF_combine_double,
 GB_jit__apply_bind2nd__000014aaa0a8fc8,
 GB_jit__apply_bind2nd__000014aaa0a8fcc,
 GB_jit__apply_bind2nd__000014bbb0bbfcc,
-GB_jit__apply_unop__0040009e09ee__LG_MSF_get_second_fp,
-GB_jit__apply_unop__0040009e09ef__LG_MSF_get_second_fp,
-GB_jit__apply_unop__004000be0bee__LG_MSF_get_first_fp,
+GB_jit__apply_unop__0040006e06ee__LG_MF_ExtractJ32,
+GB_jit__apply_unop__0040006e06ee__LG_MF_ExtractYJ32,
+GB_jit__apply_unop__0040008e08ee__LG_MSF_get_first_int64_t,
+GB_jit__apply_unop__0040009e09ee__LG_MSF_get_second_double,
+GB_jit__apply_unop__0040009e09ee__LG_MSF_get_second_int64_t,
+GB_jit__apply_unop__0040009e09ef__LG_MSF_get_second_double,
+GB_jit__apply_unop__0040009e09ef__LG_MSF_get_second_int64_t,
+GB_jit__apply_unop__004000be0bee__LG_MF_ExtractMatrixFlow,
+GB_jit__apply_unop__004000be0bee__LG_MF_GetResidual,
+GB_jit__apply_unop__004000be0bee__LG_MF_ResidualFlow32,
+GB_jit__apply_unop__004000be0bee__LG_MSF_get_first_double,
+GB_jit__apply_unop__004000be0bef__lg_hll_count,
+GB_jit__apply_unop__004000eb0e8e__LG_MF_ResidualBackward,
+GB_jit__apply_unop__004000eb0e8e__LG_MF_ResidualForward,
+GB_jit__apply_unop__004000eb0ebe__LG_MF_MakeFlow,
+GB_jit__apply_unop__004000eb0ebe__LG_MF_ResidualBackward,
+GB_jit__apply_unop__004000eb0ebe__LG_MF_ResidualForward,
+GB_jit__apply_unop__0040021101be,
 GB_jit__apply_unop__0040021101bf,
 GB_jit__apply_unop__00400222021f,
+GB_jit__apply_unop__0040029909bf,
+GB_jit__apply_unop__004002bb0b8e,
 GB_jit__apply_unop__004005bb0bbe,
 GB_jit__apply_unop__004007aa0aaf,
-GB_jit__apply_unop__03c0009e09ed__LG_MSF_get_second_fp,
-GB_jit__apply_unop__03c000be0bed__LG_MSF_get_first_fp,
+GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractJ32,
+GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractYJ32,
+GB_jit__apply_unop__03c0008e08ed__LG_MSF_get_first_int64_t,
+GB_jit__apply_unop__03c0009e09ed__LG_MSF_get_second_double,
+GB_jit__apply_unop__03c0009e09ed__LG_MSF_get_second_int64_t,
+GB_jit__apply_unop__03c000be0bed__LG_MF_ExtractMatrixFlow,
+GB_jit__apply_unop__03c000be0bed__LG_MF_GetResidual,
+GB_jit__apply_unop__03c000be0bed__LG_MF_ResidualFlow32,
+GB_jit__apply_unop__03c000be0bed__LG_MSF_get_first_double,
+GB_jit__apply_unop__03c000eb0e7d__LG_MF_ResidualBackward,
+GB_jit__apply_unop__03c000eb0e7d__LG_MF_ResidualForward,
+GB_jit__apply_unop__03c000eb0e9d__LG_MF_ResidualBackward,
+GB_jit__apply_unop__03c000eb0e9d__LG_MF_ResidualForward,
+GB_jit__apply_unop__03c000eb0ebd__LG_MF_MakeFlow,
+GB_jit__apply_unop__03c000eb0ebd__LG_MF_ResidualBackward,
+GB_jit__apply_unop__03c000eb0ebd__LG_MF_ResidualForward,
+GB_jit__apply_unop__03c002bb0b7d,
+GB_jit__apply_unop__03c002bb0b9d,
 GB_jit__apply_unop__03c005bb0bbd,
+GB_jit__bitmap_assign_2_whole__0000003f000266a2,
+GB_jit__bitmap_assign_2_whole__0000003f000288a2,
+GB_jit__bitmap_assign_2_whole__0000003f000288a3,
 GB_jit__bitmap_assign_2_whole__0000003f0002aaa3,
+GB_jit__bitmap_assign_2_whole__0000003f0002b8a2,
+GB_jit__bitmap_assign_2_whole__0000003f0002bba2,
+GB_jit__bitmap_assign_2_whole__0000003f0002eea2__LG_MF_flowEdge,
+GB_jit__bitmap_assign_2_whole__0000003f0003bba1,
+GB_jit__bitmap_assign_2_whole__0000003f0003eea2__LG_MF_flowEdge,
 GB_jit__bitmap_assign_2_whole__0000003f000499b3,
+GB_jit__bitmap_assign_2_whole__0000103f000201a2,
+GB_jit__bitmap_assign_2_whole__0000103f000206a2,
 GB_jit__bitmap_assign_2_whole__0000103f00020aa3,
+GB_jit__bitmap_assign_2_whole__0000103f0003eea2__LG_MF_flowEdge,
+GB_jit__bitmap_assign_2_whole__0000203f000268a0,
+GB_jit__bitmap_assign_2_whole__0000203f000269a0,
+GB_jit__bitmap_assign_2_whole__0000203f0003b6a0,
 GB_jit__bitmap_assign_2_whole__0000803f000299a2,
+GB_jit__bitmap_assign_2_whole__0000803f0003bba2,
+GB_jit__bitmap_assign_2_whole__0000903f00030ba2,
 GB_jit__bitmap_assign_2_whole__0000a03f000301a0,
 GB_jit__bitmap_assign_2_whole__001c903f000301a0,
 GB_jit__bitmap_assign_4_whole__00e0203f00026890,
-GB_jit__bitmap_assign_4_whole__00fc103f00020180,
+GB_jit__bitmap_assign_4_whole__00e0203f00026990,
+GB_jit__bitmap_assign_4_whole__00e0803f00028892,
+GB_jit__bitmap_assign_4_whole__00e0803f00028893,
+GB_jit__bitmap_assign_4_whole__00fc003f00026691,
+GB_jit__bitmap_assign_4_whole__00fc003f0002ee91__LG_MF_flowEdge,
+GB_jit__bitmap_assign_5__000001c0eee0ee82__LG_MF_InitForw,
+GB_jit__bitmap_assign_5__00000480eee0ee82__LG_MF_InitBack,
+GB_jit__bitmap_assign_5__000011c0eee0ee82__LG_MF_InitForw,
+GB_jit__bitmap_assign_5__00001480eee0ee82__LG_MF_InitBack,
+GB_jit__bitmap_assign_5__001c01c0eee0ee81__LG_MF_InitForw,
+GB_jit__bitmap_assign_5__001c0480eee0ee80__LG_MF_InitBack,
+GB_jit__bitmap_assign_5__001c11c0eee0ee81__LG_MF_InitForw,
 GB_jit__bitmap_assign_5_whole__00000004bbb0bb82,
+GB_jit__bitmap_assign_5_whole__0000100611101182,
+GB_jit__bitmap_assign_5_whole__001c0004bbb0bb81,
+GB_jit__bitmap_assign_8_whole__00e0803f0003bb92,
+GB_jit__build__a901111b,
 GB_jit__build__e9011119,
+GB_jit__build__e9022222,
+GB_jit__build__e9033333,
+GB_jit__build__e9044444,
+GB_jit__build__e9055555,
 GB_jit__build__e9066668,
+GB_jit__build__e9066669,
+GB_jit__build__e90aaaaa,
 GB_jit__build__e90bbbbb,
+GB_jit__build__f8611117,
 GB_jit__build__f9066668,
+GB_jit__build__f9066669,
+GB_jit__build__f909999b,
+GB_jit__build__f90aaaab,
+GB_jit__build__f90bbbb6,
+GB_jit__convert_b2s__004002ee0ee6__LG_MF_compareTuple32,
+GB_jit__convert_s2b__03c002ee0eec__LG_MF_compareTuple32,
+GB_jit__emult_02__e38000ee60ee647__LG_MF_CreateCompareVec32,
+GB_jit__emult_02__e38002bbb0bbb47,
 GB_jit__emult_02__e38005bbb0bbb46,
+GB_jit__emult_02__e38005bbb0bbb47,
+GB_jit__emult_04__fc0014bbb2bbb5f,
+GB_jit__emult_08__fc700066e266e5d__LG_MF_Relabel32,
+GB_jit__emult_08__fc7000eeb2eeb59__LG_MF_UpdateFlow,
+GB_jit__emult_08__fff000eeb2eeb04__LG_MF_UpdateFlow,
+GB_jit__emult_08__fff000eeb2eeb55__LG_MF_UpdateFlow,
+GB_jit__emult_bitmap__00000066e266eae__LG_MF_Relabel32,
+GB_jit__emult_bitmap__000000ee60ee68b__LG_MF_CreateCompareVec32,
+GB_jit__emult_bitmap__000000eeb2eebaa__LG_MF_UpdateFlow,
+GB_jit__emult_bitmap__000002bbb0bbb8b,
+GB_jit__emult_bitmap__000005bbb0bbb8b,
+GB_jit__emult_bitmap__0000091bb01bb8a,
 GB_jit__emult_bitmap__000014bbb2bbbae,
+GB_jit__emult_bitmap__000014bbb2bbbaf,
 GB_jit__emult_bitmap__000214bbb2bbbae,
-GB_jit__ewise_fulln__0000001ee01eecf__LG_MSF_tupleEq_fp,
-GB_jit__ewise_fulln__000000bee0beecf__fdb_hll_delta,
+GB_jit__emult_bitmap__000214bbb2bbbaf,
+GB_jit__ewise_fulln__0000001ee01eecf__LG_MSF_tupleEq_double,
+GB_jit__ewise_fulln__0000001ee01eecf__LG_MSF_tupleEq_int64_t,
+GB_jit__ewise_fulln__000000bee0beecf__lg_hll_delta,
 GB_jit__ewise_fulln__000014aaa0aaacf,
+GB_jit__masker_phase1__dc732059,
+GB_jit__masker_phase1__dc73205d,
+GB_jit__masker_phase1__dc733059,
+GB_jit__masker_phase1__dc73405d,
 GB_jit__masker_phase1__dff32000,
+GB_jit__masker_phase1__dff32004,
 GB_jit__masker_phase1__dff32045,
 GB_jit__masker_phase1__dff33000,
 GB_jit__masker_phase1__dff33041,
 GB_jit__masker_phase1__dff33045,
 GB_jit__masker_phase1__dff33054,
-GB_jit__masker_phase2__1c004e9e__LG_MSF_tuple_fp,
+GB_jit__masker_phase1__dff33055,
+GB_jit__masker_phase2__1c002b9a,
+GB_jit__masker_phase2__1c002b9e,
+GB_jit__masker_phase2__1c004e9e__LG_MSF_tuple_double,
+GB_jit__masker_phase2__1c004e9e__LG_MSF_tuple_int64_t,
+GB_jit__masker_phase2__fc70215d,
+GB_jit__masker_phase2__fc702b59,
+GB_jit__masker_phase2__fc702b5d,
+GB_jit__masker_phase2__fc70415d,
 GB_jit__masker_phase2__fff02900,
+GB_jit__masker_phase2__fff02904,
+GB_jit__masker_phase2__fff03100,
+GB_jit__masker_phase2__fff03141,
 GB_jit__masker_phase2__fff03900,
 GB_jit__masker_phase2__fff03941,
+GB_jit__masker_phase2__fff03945,
+GB_jit__reduce__12222,
+GB_jit__reduce__12332,
+GB_jit__reduce__12442,
+GB_jit__reduce__12552,
+GB_jit__reduce__12aa2,
+GB_jit__reduce__12bb2,
+GB_jit__reduce__12bb3,
+GB_jit__reduce__12bb9,
+GB_jit__reduce__13222,
+GB_jit__reduce__13332,
+GB_jit__reduce__13442,
+GB_jit__reduce__13552,
+GB_jit__reduce__13862,
+GB_jit__reduce__13863,
+GB_jit__reduce__13aa2,
+GB_jit__reduce__13aa3,
+GB_jit__reduce__13bb2,
+GB_jit__reduce__13bb3,
+GB_jit__reduce__13bb9,
 GB_jit__reduce__14823,
+GB_jit__reduce__14913,
 GB_jit__reduce__14aa2,
 GB_jit__reduce__14aa3,
-GB_jit__rowscale__010200e1e0e1ec7__LG_MSF_tuple2nd_fp,
-GB_jit__select_bitmap__00331beba__LG_MSF_removeEdge_fp,
-GB_jit__select_bitmap__00331beba__LG_MSF_selectEdge_fp,
-GB_jit__select_bitmap__00f31beba__LG_MSF_removeEdge_fp,
-GB_jit__select_bitmap__00f31beba__LG_MSF_selectEdge_fp,
-GB_jit__select_phase1__3f331beb5__LG_MSF_removeEdge_fp,
-GB_jit__select_phase1__3f331beb5__LG_MSF_selectEdge_fp,
-GB_jit__select_phase1__3ff31beb5__LG_MSF_removeEdge_fp,
-GB_jit__select_phase1__3ff31beb5__LG_MSF_selectEdge_fp,
-GB_jit__select_phase2__3f331beb5__LG_MSF_removeEdge_fp,
-GB_jit__select_phase2__3f331beb5__LG_MSF_selectEdge_fp,
-GB_jit__select_phase2__3ff31beb5__LG_MSF_removeEdge_fp,
-GB_jit__select_phase2__3ff31beb5__LG_MSF_selectEdge_fp,
+GB_jit__reduce__14b82,
+GB_jit__reduce__14bb2,
+GB_jit__reduce__14bb9,
+GB_jit__rowscale__010200e1e0e1ec7__LG_MSF_tuple2nd_double,
+GB_jit__rowscale__010200e1e0e1ec7__LG_MSF_tuple2nd_int64_t,
+GB_jit__select_bitmap__00131e1ea__LG_MF_Prune32,
+GB_jit__select_bitmap__003318e8a__LG_MSF_removeEdge_int64_t,
+GB_jit__select_bitmap__003318e8a__LG_MSF_selectEdge_int64_t,
+GB_jit__select_bitmap__00331beba__LG_MSF_removeEdge_double,
+GB_jit__select_bitmap__00331beba__LG_MSF_selectEdge_double,
+GB_jit__select_bitmap__00f318e8a__LG_MSF_removeEdge_int64_t,
+GB_jit__select_bitmap__00f318e8a__LG_MSF_selectEdge_int64_t,
+GB_jit__select_bitmap__00f31beba__LG_MSF_removeEdge_double,
+GB_jit__select_bitmap__00f31beba__LG_MSF_selectEdge_double,
+GB_jit__select_phase1__3f131e1e5__LG_MF_Prune32,
+GB_jit__select_phase1__3f331beb5__LG_MSF_removeEdge_double,
+GB_jit__select_phase1__3f331beb5__LG_MSF_selectEdge_double,
+GB_jit__select_phase1__3ff318e85__LG_MSF_removeEdge_int64_t,
+GB_jit__select_phase1__3ff318e85__LG_MSF_selectEdge_int64_t,
+GB_jit__select_phase1__3ff31beb5__LG_MSF_removeEdge_double,
+GB_jit__select_phase1__3ff31beb5__LG_MSF_selectEdge_double,
+GB_jit__select_phase2__3f131e1e5__LG_MF_Prune32,
+GB_jit__select_phase2__3f331beb5__LG_MSF_removeEdge_double,
+GB_jit__select_phase2__3f331beb5__LG_MSF_selectEdge_double,
+GB_jit__select_phase2__3ff318e85__LG_MSF_removeEdge_int64_t,
+GB_jit__select_phase2__3ff318e85__LG_MSF_selectEdge_int64_t,
+GB_jit__select_phase2__3ff31beb5__LG_MSF_removeEdge_double,
+GB_jit__select_phase2__3ff31beb5__LG_MSF_selectEdge_double,
+GB_jit__subassign_01__0800647f000016cc,
+GB_jit__subassign_01__0800647f000099cc,
+GB_jit__subassign_01__08006c7f000016cc,
+GB_jit__subassign_01__08006c7f000099cc,
+GB_jit__subassign_01__0802647f000016cc,
+GB_jit__subassign_01__0802647f000099cc,
+GB_jit__subassign_01__08026c7f000016cc,
+GB_jit__subassign_01__08026c7f000099cc,
+GB_jit__subassign_02__7f02447f00000b47,
+GB_jit__subassign_02__7f02447f00009b47,
+GB_jit__subassign_02__7f02447f0000bb46,
 GB_jit__subassign_02__7f1c417f00001101,
 GB_jit__subassign_02__7f1c517f00000101,
+GB_jit__subassign_04__7f004140eee0ee46__LG_MF_InitForw,
+GB_jit__subassign_04__7f004440eee0ee46__LG_MF_InitBack,
+GB_jit__subassign_04__7f1c4140eee0ee45__LG_MF_InitForw,
+GB_jit__subassign_04__7f1c4440eee0ee44__LG_MF_InitBack,
+GB_jit__subassign_04__7f1c5140eee0ee45__LG_MF_InitForw,
+GB_jit__subassign_04__7f1c5440eee0ee44__LG_MF_InitBack,
+GB_jit__subassign_05__0700207f00026960,
 GB_jit__subassign_05__07e0207f00026850,
-GB_jit__subassign_05d__0000207f0004eef0__LG_MSF_tuple_fp,
+GB_jit__subassign_05__07e0207f00026950,
+GB_jit__subassign_05d__0000207f0004eef0__LG_MSF_tuple_double,
+GB_jit__subassign_05d__0000207f0004eef0__LG_MSF_tuple_int64_t,
+GB_jit__subassign_06n__0700007f00049973,
 GB_jit__subassign_06n__071c007f00029971,
 GB_jit__subassign_06n__07e0007f00021100,
-GB_jit__subassign_06n__07e0007f00021110,
+GB_jit__subassign_06n__07e0007f00049953,
 GB_jit__subassign_06n__07fc007f00020651,
 GB_jit__subassign_06n__07fc007f00020900,
 GB_jit__subassign_06n__07fc007f00021100,
+GB_jit__subassign_06n__07fc007f00021140,
 GB_jit__subassign_06n__07fc007f00026651,
 GB_jit__subassign_06n__07fc007f00029900,
+GB_jit__subassign_06n__07fc007f00029940,
 GB_jit__subassign_06n__07fc007f00029951,
+GB_jit__subassign_06n__07fc007f0002ee40__LG_MF_flowEdge,
+GB_jit__subassign_06n__07fc007f0002ee51__LG_MF_flowEdge,
+GB_jit__subassign_06n__07fc007f00049951,
 GB_jit__subassign_06n__07fc107f00020100,
-GB_jit__subassign_06n__07fc107f00020111,
 GB_jit__subassign_06n__07fc107f00020140,
+GB_jit__subassign_06n__07fc107f00020651,
 GB_jit__subassign_06n__07fc107f00020900,
-GB_jit__subassign_06n__07fc107f00020940,
+GB_jit__subassign_06n__07fc107f00021100,
+GB_jit__subassign_06n__07fc107f00021140,
 GB_jit__subassign_06n__07fc107f00029900,
-GB_jit__subassign_06n__07fc107f00029940,
+GB_jit__subassign_06s__7f00407f00026666,
+GB_jit__subassign_06s__7f00407f0003bb65,
+GB_jit__subassign_06s__7f00407f00049967,
+GB_jit__subassign_06s__7f00507f00020666,
 GB_jit__subassign_06s__7f1c407f00029965,
+GB_jit__subassign_06s__7f1c407f0002bb65,
+GB_jit__subassign_06s__7f1c407f0003bb65,
 GB_jit__subassign_06s__7fe0407f00021100,
 GB_jit__subassign_06s__7fe0407f00021110,
-GB_jit__subassign_06s__7fe0407f00029100,
 GB_jit__subassign_06s__7fe0407f00029110,
+GB_jit__subassign_06s__7ffc407f00029910,
 GB_jit__subassign_06s__7ffc407f00036655,
 GB_jit__subassign_06s__7ffc407f00039900,
+GB_jit__subassign_06s__7ffc407f0003bb55,
+GB_jit__subassign_06s__7ffc407f0003ee55__LG_MF_flowEdge,
 GB_jit__subassign_06s__7ffc507f00020100,
 GB_jit__subassign_06s__7ffc507f00020110,
+GB_jit__subassign_06s__7ffc507f0003ee55__LG_MF_flowEdge,
 GB_jit__subassign_08n__00000042999499f3,
 GB_jit__subassign_08n__00000050999499f3,
+GB_jit__subassign_08n__00fc0044bbb2bbd1,
+GB_jit__subassign_08s__08004043666366ee,
+GB_jit__subassign_08s__08004043666366ef,
+GB_jit__subassign_08s__08004044bbb2bbee,
+GB_jit__subassign_08s__08005043666366ee,
+GB_jit__subassign_08s__08e04043666366de,
+GB_jit__subassign_08s__08e04043666366df,
 GB_jit__subassign_13__7f00607f00030164,
 GB_jit__subassign_13__7fe0607f00030154,
+GB_jit__subassign_13__7fe0607f0003b654,
 GB_jit__subassign_13__7fe0607f00050154,
-GB_jit__subassign_23__00000040eee0eec3__LG_MSF_tupleMin_fp,
+GB_jit__subassign_15__08006043666369ec,
+GB_jit__subassign_15__08006043666369fc,
+GB_jit__subassign_23__00000040eee0eec3__LG_MSF_tupleMin_double,
+GB_jit__subassign_23__00000040eee0eec3__LG_MSF_tupleMin_int64_t,
 GB_jit__subassign_23__00000044bbb0bbc2,
 GB_jit__subassign_23__00000044bbb0bbc3,
 GB_jit__subassign_23__00000052aaa0aac3,
 GB_jit__subassign_23__00001044bbb0bbc3,
 GB_jit__subassign_23__001c0044bbb0bbc1,
 GB_jit__subref_bitmap__080009f,
-GB_jit__subref_bitmap__08000ef__LG_MSF_tuple_fp,
+GB_jit__subref_bitmap__08000ba,
+GB_jit__subref_bitmap__08000ef__LG_MSF_tuple_double,
+GB_jit__subref_bitmap__08000ef__LG_MSF_tuple_int64_t,
+GB_jit__subref_bitmap__080018a,
+GB_jit__subref_bitmap__08001ba,
+GB_jit__subref_bitmap__080049a,
+GB_jit__subref_bitmap__080049f,
+GB_jit__subref_bitmap__0800c1f,
+GB_jit__subref_bitmap__0800c7f,
+GB_jit__subref_bitmap__0800c9a,
 GB_jit__subref_bitmap__0800c9f,
-GB_jit__subref_bitmap__0800cef__LG_MSF_tuple_fp,
+GB_jit__subref_bitmap__0800cef__LG_MSF_tuple_double,
+GB_jit__subref_bitmap__0800cef__LG_MSF_tuple_int64_t,
+GB_jit__subref_bitmap__080841f,
+GB_jit__subref_bitmap__08084ba,
+GB_jit__subref_bitmap__08084bf,
 GB_jit__subref_bitmap__0808c6f,
+GB_jit__subref_bitmap__0808c9f,
+GB_jit__subref_sparse__0bf0075,
+GB_jit__subref_sparse__0bf0095,
+GB_jit__subref_sparse__0bf00b5,
+GB_jit__subref_sparse__0bf0491,
+GB_jit__subref_sparse__0bf0495,
 GB_jit__subref_sparse__0bf8490,
-GB_jit__subref_sparse__e3f8c90
+GB_jit__subref_sparse__e3f0c95,
+GB_jit__subref_sparse__e3f8c90,
+GB_jit__subref_sparse__ebf0c95,
+GB_jit__trans_unop__00480222022a,
+GB_jit__trans_unop__00480233033a,
+GB_jit__trans_unop__00480244044a,
+GB_jit__trans_unop__00480255055a,
+GB_jit__trans_unop__00480288082a,
+GB_jit__trans_unop__00480288083a,
+GB_jit__trans_unop__004802aa0aaa,
+GB_jit__trans_unop__004802bb0bba,
+GB_jit__trans_unop__004802bb0bbf,
+GB_jit__trans_unop__1848021101b5,
+GB_jit__trans_unop__184802aa0aa5,
+GB_jit__trans_unop__184802bb0bb5,
+GB_jit__trans_unop__1bc802bb0bb5,
+GB_jit__union__e3f012bbb0bbb00,
+GB_jit__union__e3f012bbb0bbb44,
+GB_jit__union__e3f012bbb0bbb45,
+GB_jit__union__e3f312bbb0bbb00,
+GB_jit__union__e3f312bbb0bbb44,
+GB_jit__union__e3f312bbb0bbb45
 } ;
 #endif
 
@@ -449,145 +1280,422 @@ GB_jit__subref_sparse__e3f8c90
 // GB_prejit_queries: a list of function pointers to PreJIT query kernels
 //------------------------------------------------------------------------------
 
-#if ( 136 > 0 )
-static void *GB_prejit_queries [136] =
+#if ( 413 > 0 )
+static void *GB_prejit_queries [413] =
 {
-GB_jit__AxB_dot2__0000000eb94eb9bb__LG_MSF_tupleMin_fp_LG_MSF_combine_fp_query,
-GB_jit__AxB_dot2__0000400eb94eb9bb__LG_MSF_tupleMin_fp_LG_MSF_combine_fp_query,
-GB_jit__AxB_dot2__0380000eb94eb9b7__LG_MSF_tupleMin_fp_LG_MSF_combine_fp_query,
-GB_jit__AxB_dot2__0380400eb94eb9b7__LG_MSF_tupleMin_fp_LG_MSF_combine_fp_query,
+GB_jit__AxB_dot2__0000000e894e89bb__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t_query,
+GB_jit__AxB_dot2__0000000eb94eb9bb__LG_MSF_tupleMin_double_LG_MSF_combine_double_query,
+GB_jit__AxB_dot2__0000034ee62ee6ab__LG_MF_Rxd_Add32_LG_MF_Rxd_Mult32_query,
+GB_jit__AxB_dot2__0000034eeb0eeb8b__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32_query,
+GB_jit__AxB_dot2__0000400e894e89bb__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t_query,
+GB_jit__AxB_dot2__0000400eb94eb9bb__LG_MSF_tupleMin_double_LG_MSF_combine_double_query,
+GB_jit__AxB_dot2__0004015bbb0b618b_query,
+GB_jit__AxB_dot2__000420fbb00bb08b_query,
+GB_jit__AxB_dot2__0004415bbb0b618b_query,
+GB_jit__AxB_dot2__0380000eb94eb9b7__LG_MSF_tupleMin_double_LG_MSF_combine_double_query,
+GB_jit__AxB_dot2__0380034ee62ee6a7__LG_MF_Rxd_Add32_LG_MF_Rxd_Mult32_query,
+GB_jit__AxB_dot2__0380034eeb0eeb87__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32_query,
+GB_jit__AxB_dot2__0380034eeb0eebc7__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32_query,
+GB_jit__AxB_dot2__0380400e894e89b7__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t_query,
+GB_jit__AxB_dot2__0380400eb94eb9b7__LG_MSF_tupleMin_double_LG_MSF_combine_double_query,
+GB_jit__AxB_dot2__0380434eeb0eeb87__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32_query,
+GB_jit__AxB_dot2__0380434eeb0eebc7__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32_query,
 GB_jit__AxB_dot2__038120f1100110c7_query,
+GB_jit__AxB_dot2__038420fbb00bb087_query,
+GB_jit__AxB_dot2__038420fbb00bb0c7_query,
+GB_jit__AxB_dot2__0384410b0b2b0ba6_query,
 GB_jit__AxB_dot2__0384410b0b3b0ba6_query,
-GB_jit__AxB_dot4__0000800eb90eb9cb__LG_MSF_tupleMin_fp_LG_MSF_combine_fp_query,
-GB_jit__AxB_dot4__0000c00eb90eb9cb__LG_MSF_tupleMin_fp_LG_MSF_combine_fp_query,
+GB_jit__AxB_dot2__038460f990091087_query,
+GB_jit__AxB_dot2__038460f9900910c7_query,
+GB_jit__AxB_dot3__ff80034ee62ee657__LG_MF_Rxd_Add32_LG_MF_Rxd_Mult32_query,
+GB_jit__AxB_dot3__ff84410b0b2b0b56_query,
+GB_jit__AxB_dot4__0000000e1e0e1eca__lg_hll_merge_lg_hll_second_query,
+GB_jit__AxB_dot4__0000400e1e0e1eca__lg_hll_merge_lg_hll_second_query,
+GB_jit__AxB_dot4__0000800e890e89cb__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t_query,
+GB_jit__AxB_dot4__0000800eb90eb9cb__LG_MSF_tupleMin_double_LG_MSF_combine_double_query,
+GB_jit__AxB_dot4__0000c00e890e89cb__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t_query,
+GB_jit__AxB_dot4__0000c00eb90eb9cb__LG_MSF_tupleMin_double_LG_MSF_combine_double_query,
 GB_jit__AxB_dot4__0004c10a0a0a0acb_query,
-GB_jit__AxB_dot4__0380400e1e0e1ec6__fdb_hll_merge_fdb_hll_second_query,
-GB_jit__AxB_dot4__0380800eb90eb9c7__LG_MSF_tupleMin_fp_LG_MSF_combine_fp_query,
-GB_jit__AxB_dot4__0380c00eb90eb9c7__LG_MSF_tupleMin_fp_LG_MSF_combine_fp_query,
+GB_jit__AxB_dot4__0380400e1e0e1ec6__lg_hll_merge_lg_hll_second_query,
+GB_jit__AxB_dot4__0380800eb90eb9c7__LG_MSF_tupleMin_double_LG_MSF_combine_double_query,
+GB_jit__AxB_dot4__0380c00e890e89c7__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t_query,
+GB_jit__AxB_dot4__0380c00eb90eb9c7__LG_MSF_tupleMin_double_LG_MSF_combine_double_query,
 GB_jit__AxB_dot4__0384c10a0a0a0ac7_query,
+GB_jit__AxB_saxbit__000420fbb00bb08b_query,
 GB_jit__AxB_saxbit__000420fbb00bb08f_query,
+GB_jit__AxB_saxbit__038420fbb00bb083_query,
+GB_jit__AxB_saxbit__038420fbb00bb087_query,
 GB_jit__AxB_saxbit__0384610b0b3b0ba6_query,
-GB_jit__AxB_saxpy3__e3f120f110011000_query,
 GB_jit__AxB_saxpy3__e3f120f110011041_query,
-GB_jit__AxB_saxpy3__e3f120f990099000_query,
-GB_jit__AxB_saxpy3__e3f120f990099004_query,
+GB_jit__AxB_saxpy3__e3f120f110011045_query,
 GB_jit__AxB_saxpy3__e3f120f990099041_query,
 GB_jit__AxB_saxpy3__e3f120f990099045_query,
 GB_jit__AxB_saxpy3__e3f4410b0b2b0b65_query,
 GB_jit__AxB_saxpy3__e3f4410b0b3b0b65_query,
-GB_jit__AxB_saxpy3__fff120f990399000_query,
-GB_jit__AxB_saxpy4__0100400e1e0e1ec7__LG_MSF_tupleMin_fp_LG_MSF_tuple2nd_fp_query,
+GB_jit__AxB_saxpy3__e3f4610b0b3b0b65_query,
+GB_jit__AxB_saxpy3__fff120f110311055_query,
+GB_jit__AxB_saxpy3__fff120f990399055_query,
+GB_jit__AxB_saxpy4__0100400e1e0e1ec7__LG_MSF_tupleMin_double_LG_MSF_tuple2nd_double_query,
+GB_jit__AxB_saxpy4__0100400e1e0e1ec7__LG_MSF_tupleMin_int64_t_LG_MSF_tuple2nd_int64_t_query,
+GB_jit__AxB_saxpy4__0380000e1e0e1ec6__lg_hll_merge_lg_hll_second_query,
+GB_jit__add__00000288808288a_query,
+GB_jit__add__00000288808388a_query,
+GB_jit__add__00000611101b186_query,
+GB_jit__add__000012aaa0aaacb_query,
+GB_jit__add__000012aaa0aaacf_query,
+GB_jit__add__000012aaa0aabcf_query,
+GB_jit__add__000012bbb0bbb8a_query,
 GB_jit__add__000203aaa0aaace_query,
 GB_jit__add__000203aaa0aaacf_query,
 GB_jit__add__000214aaa0aaacf_query,
-GB_jit__add__e3f001111019100_query,
+GB_jit__add__e0700611101b144_query,
+GB_jit__add__e0700611101b145_query,
+GB_jit__add__e3f002bbb0bbb45_query,
+GB_jit__add__e3f010a0a0aaa44_query,
+GB_jit__add__e3f010b0b0bbb44_query,
+GB_jit__add__e3f010e0e0eee44__LG_MF_flowEdge_query,
+GB_jit__add__e3f012bbb0bbb45_query,
 GB_jit__add__e3f101111019100_query,
-GB_jit__apply_bind1st__000000eb90ef9c3__LG_MSF_combine_fp_query,
+GB_jit__add__e3f301111019100_query,
+GB_jit__apply_bind1st__000000e890ef9c3__LG_MSF_combine_int64_t_query,
+GB_jit__apply_bind1st__000000eb90ef9c3__LG_MSF_combine_double_query,
 GB_jit__apply_bind2nd__000014aaa0a8fc8_query,
 GB_jit__apply_bind2nd__000014aaa0a8fcc_query,
 GB_jit__apply_bind2nd__000014bbb0bbfcc_query,
-GB_jit__apply_unop__0040009e09ee__LG_MSF_get_second_fp_query,
-GB_jit__apply_unop__0040009e09ef__LG_MSF_get_second_fp_query,
-GB_jit__apply_unop__004000be0bee__LG_MSF_get_first_fp_query,
+GB_jit__apply_unop__0040006e06ee__LG_MF_ExtractJ32_query,
+GB_jit__apply_unop__0040006e06ee__LG_MF_ExtractYJ32_query,
+GB_jit__apply_unop__0040008e08ee__LG_MSF_get_first_int64_t_query,
+GB_jit__apply_unop__0040009e09ee__LG_MSF_get_second_double_query,
+GB_jit__apply_unop__0040009e09ee__LG_MSF_get_second_int64_t_query,
+GB_jit__apply_unop__0040009e09ef__LG_MSF_get_second_double_query,
+GB_jit__apply_unop__0040009e09ef__LG_MSF_get_second_int64_t_query,
+GB_jit__apply_unop__004000be0bee__LG_MF_ExtractMatrixFlow_query,
+GB_jit__apply_unop__004000be0bee__LG_MF_GetResidual_query,
+GB_jit__apply_unop__004000be0bee__LG_MF_ResidualFlow32_query,
+GB_jit__apply_unop__004000be0bee__LG_MSF_get_first_double_query,
+GB_jit__apply_unop__004000be0bef__lg_hll_count_query,
+GB_jit__apply_unop__004000eb0e8e__LG_MF_ResidualBackward_query,
+GB_jit__apply_unop__004000eb0e8e__LG_MF_ResidualForward_query,
+GB_jit__apply_unop__004000eb0ebe__LG_MF_MakeFlow_query,
+GB_jit__apply_unop__004000eb0ebe__LG_MF_ResidualBackward_query,
+GB_jit__apply_unop__004000eb0ebe__LG_MF_ResidualForward_query,
+GB_jit__apply_unop__0040021101be_query,
 GB_jit__apply_unop__0040021101bf_query,
 GB_jit__apply_unop__00400222021f_query,
+GB_jit__apply_unop__0040029909bf_query,
+GB_jit__apply_unop__004002bb0b8e_query,
 GB_jit__apply_unop__004005bb0bbe_query,
 GB_jit__apply_unop__004007aa0aaf_query,
-GB_jit__apply_unop__03c0009e09ed__LG_MSF_get_second_fp_query,
-GB_jit__apply_unop__03c000be0bed__LG_MSF_get_first_fp_query,
+GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractJ32_query,
+GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractYJ32_query,
+GB_jit__apply_unop__03c0008e08ed__LG_MSF_get_first_int64_t_query,
+GB_jit__apply_unop__03c0009e09ed__LG_MSF_get_second_double_query,
+GB_jit__apply_unop__03c0009e09ed__LG_MSF_get_second_int64_t_query,
+GB_jit__apply_unop__03c000be0bed__LG_MF_ExtractMatrixFlow_query,
+GB_jit__apply_unop__03c000be0bed__LG_MF_GetResidual_query,
+GB_jit__apply_unop__03c000be0bed__LG_MF_ResidualFlow32_query,
+GB_jit__apply_unop__03c000be0bed__LG_MSF_get_first_double_query,
+GB_jit__apply_unop__03c000eb0e7d__LG_MF_ResidualBackward_query,
+GB_jit__apply_unop__03c000eb0e7d__LG_MF_ResidualForward_query,
+GB_jit__apply_unop__03c000eb0e9d__LG_MF_ResidualBackward_query,
+GB_jit__apply_unop__03c000eb0e9d__LG_MF_ResidualForward_query,
+GB_jit__apply_unop__03c000eb0ebd__LG_MF_MakeFlow_query,
+GB_jit__apply_unop__03c000eb0ebd__LG_MF_ResidualBackward_query,
+GB_jit__apply_unop__03c000eb0ebd__LG_MF_ResidualForward_query,
+GB_jit__apply_unop__03c002bb0b7d_query,
+GB_jit__apply_unop__03c002bb0b9d_query,
 GB_jit__apply_unop__03c005bb0bbd_query,
+GB_jit__bitmap_assign_2_whole__0000003f000266a2_query,
+GB_jit__bitmap_assign_2_whole__0000003f000288a2_query,
+GB_jit__bitmap_assign_2_whole__0000003f000288a3_query,
 GB_jit__bitmap_assign_2_whole__0000003f0002aaa3_query,
+GB_jit__bitmap_assign_2_whole__0000003f0002b8a2_query,
+GB_jit__bitmap_assign_2_whole__0000003f0002bba2_query,
+GB_jit__bitmap_assign_2_whole__0000003f0002eea2__LG_MF_flowEdge_query,
+GB_jit__bitmap_assign_2_whole__0000003f0003bba1_query,
+GB_jit__bitmap_assign_2_whole__0000003f0003eea2__LG_MF_flowEdge_query,
 GB_jit__bitmap_assign_2_whole__0000003f000499b3_query,
+GB_jit__bitmap_assign_2_whole__0000103f000201a2_query,
+GB_jit__bitmap_assign_2_whole__0000103f000206a2_query,
 GB_jit__bitmap_assign_2_whole__0000103f00020aa3_query,
+GB_jit__bitmap_assign_2_whole__0000103f0003eea2__LG_MF_flowEdge_query,
+GB_jit__bitmap_assign_2_whole__0000203f000268a0_query,
+GB_jit__bitmap_assign_2_whole__0000203f000269a0_query,
+GB_jit__bitmap_assign_2_whole__0000203f0003b6a0_query,
 GB_jit__bitmap_assign_2_whole__0000803f000299a2_query,
+GB_jit__bitmap_assign_2_whole__0000803f0003bba2_query,
+GB_jit__bitmap_assign_2_whole__0000903f00030ba2_query,
 GB_jit__bitmap_assign_2_whole__0000a03f000301a0_query,
 GB_jit__bitmap_assign_2_whole__001c903f000301a0_query,
 GB_jit__bitmap_assign_4_whole__00e0203f00026890_query,
-GB_jit__bitmap_assign_4_whole__00fc103f00020180_query,
+GB_jit__bitmap_assign_4_whole__00e0203f00026990_query,
+GB_jit__bitmap_assign_4_whole__00e0803f00028892_query,
+GB_jit__bitmap_assign_4_whole__00e0803f00028893_query,
+GB_jit__bitmap_assign_4_whole__00fc003f00026691_query,
+GB_jit__bitmap_assign_4_whole__00fc003f0002ee91__LG_MF_flowEdge_query,
+GB_jit__bitmap_assign_5__000001c0eee0ee82__LG_MF_InitForw_query,
+GB_jit__bitmap_assign_5__00000480eee0ee82__LG_MF_InitBack_query,
+GB_jit__bitmap_assign_5__000011c0eee0ee82__LG_MF_InitForw_query,
+GB_jit__bitmap_assign_5__00001480eee0ee82__LG_MF_InitBack_query,
+GB_jit__bitmap_assign_5__001c01c0eee0ee81__LG_MF_InitForw_query,
+GB_jit__bitmap_assign_5__001c0480eee0ee80__LG_MF_InitBack_query,
+GB_jit__bitmap_assign_5__001c11c0eee0ee81__LG_MF_InitForw_query,
 GB_jit__bitmap_assign_5_whole__00000004bbb0bb82_query,
+GB_jit__bitmap_assign_5_whole__0000100611101182_query,
+GB_jit__bitmap_assign_5_whole__001c0004bbb0bb81_query,
+GB_jit__bitmap_assign_8_whole__00e0803f0003bb92_query,
+GB_jit__build__a901111b_query,
 GB_jit__build__e9011119_query,
+GB_jit__build__e9022222_query,
+GB_jit__build__e9033333_query,
+GB_jit__build__e9044444_query,
+GB_jit__build__e9055555_query,
 GB_jit__build__e9066668_query,
+GB_jit__build__e9066669_query,
+GB_jit__build__e90aaaaa_query,
 GB_jit__build__e90bbbbb_query,
+GB_jit__build__f8611117_query,
 GB_jit__build__f9066668_query,
+GB_jit__build__f9066669_query,
+GB_jit__build__f909999b_query,
+GB_jit__build__f90aaaab_query,
+GB_jit__build__f90bbbb6_query,
+GB_jit__convert_b2s__004002ee0ee6__LG_MF_compareTuple32_query,
+GB_jit__convert_s2b__03c002ee0eec__LG_MF_compareTuple32_query,
+GB_jit__emult_02__e38000ee60ee647__LG_MF_CreateCompareVec32_query,
+GB_jit__emult_02__e38002bbb0bbb47_query,
 GB_jit__emult_02__e38005bbb0bbb46_query,
+GB_jit__emult_02__e38005bbb0bbb47_query,
+GB_jit__emult_04__fc0014bbb2bbb5f_query,
+GB_jit__emult_08__fc700066e266e5d__LG_MF_Relabel32_query,
+GB_jit__emult_08__fc7000eeb2eeb59__LG_MF_UpdateFlow_query,
+GB_jit__emult_08__fff000eeb2eeb04__LG_MF_UpdateFlow_query,
+GB_jit__emult_08__fff000eeb2eeb55__LG_MF_UpdateFlow_query,
+GB_jit__emult_bitmap__00000066e266eae__LG_MF_Relabel32_query,
+GB_jit__emult_bitmap__000000ee60ee68b__LG_MF_CreateCompareVec32_query,
+GB_jit__emult_bitmap__000000eeb2eebaa__LG_MF_UpdateFlow_query,
+GB_jit__emult_bitmap__000002bbb0bbb8b_query,
+GB_jit__emult_bitmap__000005bbb0bbb8b_query,
+GB_jit__emult_bitmap__0000091bb01bb8a_query,
 GB_jit__emult_bitmap__000014bbb2bbbae_query,
+GB_jit__emult_bitmap__000014bbb2bbbaf_query,
 GB_jit__emult_bitmap__000214bbb2bbbae_query,
-GB_jit__ewise_fulln__0000001ee01eecf__LG_MSF_tupleEq_fp_query,
-GB_jit__ewise_fulln__000000bee0beecf__fdb_hll_delta_query,
+GB_jit__emult_bitmap__000214bbb2bbbaf_query,
+GB_jit__ewise_fulln__0000001ee01eecf__LG_MSF_tupleEq_double_query,
+GB_jit__ewise_fulln__0000001ee01eecf__LG_MSF_tupleEq_int64_t_query,
+GB_jit__ewise_fulln__000000bee0beecf__lg_hll_delta_query,
 GB_jit__ewise_fulln__000014aaa0aaacf_query,
+GB_jit__masker_phase1__dc732059_query,
+GB_jit__masker_phase1__dc73205d_query,
+GB_jit__masker_phase1__dc733059_query,
+GB_jit__masker_phase1__dc73405d_query,
 GB_jit__masker_phase1__dff32000_query,
+GB_jit__masker_phase1__dff32004_query,
 GB_jit__masker_phase1__dff32045_query,
 GB_jit__masker_phase1__dff33000_query,
 GB_jit__masker_phase1__dff33041_query,
 GB_jit__masker_phase1__dff33045_query,
 GB_jit__masker_phase1__dff33054_query,
-GB_jit__masker_phase2__1c004e9e__LG_MSF_tuple_fp_query,
+GB_jit__masker_phase1__dff33055_query,
+GB_jit__masker_phase2__1c002b9a_query,
+GB_jit__masker_phase2__1c002b9e_query,
+GB_jit__masker_phase2__1c004e9e__LG_MSF_tuple_double_query,
+GB_jit__masker_phase2__1c004e9e__LG_MSF_tuple_int64_t_query,
+GB_jit__masker_phase2__fc70215d_query,
+GB_jit__masker_phase2__fc702b59_query,
+GB_jit__masker_phase2__fc702b5d_query,
+GB_jit__masker_phase2__fc70415d_query,
 GB_jit__masker_phase2__fff02900_query,
+GB_jit__masker_phase2__fff02904_query,
+GB_jit__masker_phase2__fff03100_query,
+GB_jit__masker_phase2__fff03141_query,
 GB_jit__masker_phase2__fff03900_query,
 GB_jit__masker_phase2__fff03941_query,
+GB_jit__masker_phase2__fff03945_query,
+GB_jit__reduce__12222_query,
+GB_jit__reduce__12332_query,
+GB_jit__reduce__12442_query,
+GB_jit__reduce__12552_query,
+GB_jit__reduce__12aa2_query,
+GB_jit__reduce__12bb2_query,
+GB_jit__reduce__12bb3_query,
+GB_jit__reduce__12bb9_query,
+GB_jit__reduce__13222_query,
+GB_jit__reduce__13332_query,
+GB_jit__reduce__13442_query,
+GB_jit__reduce__13552_query,
+GB_jit__reduce__13862_query,
+GB_jit__reduce__13863_query,
+GB_jit__reduce__13aa2_query,
+GB_jit__reduce__13aa3_query,
+GB_jit__reduce__13bb2_query,
+GB_jit__reduce__13bb3_query,
+GB_jit__reduce__13bb9_query,
 GB_jit__reduce__14823_query,
+GB_jit__reduce__14913_query,
 GB_jit__reduce__14aa2_query,
 GB_jit__reduce__14aa3_query,
-GB_jit__rowscale__010200e1e0e1ec7__LG_MSF_tuple2nd_fp_query,
-GB_jit__select_bitmap__00331beba__LG_MSF_removeEdge_fp_query,
-GB_jit__select_bitmap__00331beba__LG_MSF_selectEdge_fp_query,
-GB_jit__select_bitmap__00f31beba__LG_MSF_removeEdge_fp_query,
-GB_jit__select_bitmap__00f31beba__LG_MSF_selectEdge_fp_query,
-GB_jit__select_phase1__3f331beb5__LG_MSF_removeEdge_fp_query,
-GB_jit__select_phase1__3f331beb5__LG_MSF_selectEdge_fp_query,
-GB_jit__select_phase1__3ff31beb5__LG_MSF_removeEdge_fp_query,
-GB_jit__select_phase1__3ff31beb5__LG_MSF_selectEdge_fp_query,
-GB_jit__select_phase2__3f331beb5__LG_MSF_removeEdge_fp_query,
-GB_jit__select_phase2__3f331beb5__LG_MSF_selectEdge_fp_query,
-GB_jit__select_phase2__3ff31beb5__LG_MSF_removeEdge_fp_query,
-GB_jit__select_phase2__3ff31beb5__LG_MSF_selectEdge_fp_query,
+GB_jit__reduce__14b82_query,
+GB_jit__reduce__14bb2_query,
+GB_jit__reduce__14bb9_query,
+GB_jit__rowscale__010200e1e0e1ec7__LG_MSF_tuple2nd_double_query,
+GB_jit__rowscale__010200e1e0e1ec7__LG_MSF_tuple2nd_int64_t_query,
+GB_jit__select_bitmap__00131e1ea__LG_MF_Prune32_query,
+GB_jit__select_bitmap__003318e8a__LG_MSF_removeEdge_int64_t_query,
+GB_jit__select_bitmap__003318e8a__LG_MSF_selectEdge_int64_t_query,
+GB_jit__select_bitmap__00331beba__LG_MSF_removeEdge_double_query,
+GB_jit__select_bitmap__00331beba__LG_MSF_selectEdge_double_query,
+GB_jit__select_bitmap__00f318e8a__LG_MSF_removeEdge_int64_t_query,
+GB_jit__select_bitmap__00f318e8a__LG_MSF_selectEdge_int64_t_query,
+GB_jit__select_bitmap__00f31beba__LG_MSF_removeEdge_double_query,
+GB_jit__select_bitmap__00f31beba__LG_MSF_selectEdge_double_query,
+GB_jit__select_phase1__3f131e1e5__LG_MF_Prune32_query,
+GB_jit__select_phase1__3f331beb5__LG_MSF_removeEdge_double_query,
+GB_jit__select_phase1__3f331beb5__LG_MSF_selectEdge_double_query,
+GB_jit__select_phase1__3ff318e85__LG_MSF_removeEdge_int64_t_query,
+GB_jit__select_phase1__3ff318e85__LG_MSF_selectEdge_int64_t_query,
+GB_jit__select_phase1__3ff31beb5__LG_MSF_removeEdge_double_query,
+GB_jit__select_phase1__3ff31beb5__LG_MSF_selectEdge_double_query,
+GB_jit__select_phase2__3f131e1e5__LG_MF_Prune32_query,
+GB_jit__select_phase2__3f331beb5__LG_MSF_removeEdge_double_query,
+GB_jit__select_phase2__3f331beb5__LG_MSF_selectEdge_double_query,
+GB_jit__select_phase2__3ff318e85__LG_MSF_removeEdge_int64_t_query,
+GB_jit__select_phase2__3ff318e85__LG_MSF_selectEdge_int64_t_query,
+GB_jit__select_phase2__3ff31beb5__LG_MSF_removeEdge_double_query,
+GB_jit__select_phase2__3ff31beb5__LG_MSF_selectEdge_double_query,
+GB_jit__subassign_01__0800647f000016cc_query,
+GB_jit__subassign_01__0800647f000099cc_query,
+GB_jit__subassign_01__08006c7f000016cc_query,
+GB_jit__subassign_01__08006c7f000099cc_query,
+GB_jit__subassign_01__0802647f000016cc_query,
+GB_jit__subassign_01__0802647f000099cc_query,
+GB_jit__subassign_01__08026c7f000016cc_query,
+GB_jit__subassign_01__08026c7f000099cc_query,
+GB_jit__subassign_02__7f02447f00000b47_query,
+GB_jit__subassign_02__7f02447f00009b47_query,
+GB_jit__subassign_02__7f02447f0000bb46_query,
 GB_jit__subassign_02__7f1c417f00001101_query,
 GB_jit__subassign_02__7f1c517f00000101_query,
+GB_jit__subassign_04__7f004140eee0ee46__LG_MF_InitForw_query,
+GB_jit__subassign_04__7f004440eee0ee46__LG_MF_InitBack_query,
+GB_jit__subassign_04__7f1c4140eee0ee45__LG_MF_InitForw_query,
+GB_jit__subassign_04__7f1c4440eee0ee44__LG_MF_InitBack_query,
+GB_jit__subassign_04__7f1c5140eee0ee45__LG_MF_InitForw_query,
+GB_jit__subassign_04__7f1c5440eee0ee44__LG_MF_InitBack_query,
+GB_jit__subassign_05__0700207f00026960_query,
 GB_jit__subassign_05__07e0207f00026850_query,
-GB_jit__subassign_05d__0000207f0004eef0__LG_MSF_tuple_fp_query,
+GB_jit__subassign_05__07e0207f00026950_query,
+GB_jit__subassign_05d__0000207f0004eef0__LG_MSF_tuple_double_query,
+GB_jit__subassign_05d__0000207f0004eef0__LG_MSF_tuple_int64_t_query,
+GB_jit__subassign_06n__0700007f00049973_query,
 GB_jit__subassign_06n__071c007f00029971_query,
 GB_jit__subassign_06n__07e0007f00021100_query,
-GB_jit__subassign_06n__07e0007f00021110_query,
+GB_jit__subassign_06n__07e0007f00049953_query,
 GB_jit__subassign_06n__07fc007f00020651_query,
 GB_jit__subassign_06n__07fc007f00020900_query,
 GB_jit__subassign_06n__07fc007f00021100_query,
+GB_jit__subassign_06n__07fc007f00021140_query,
 GB_jit__subassign_06n__07fc007f00026651_query,
 GB_jit__subassign_06n__07fc007f00029900_query,
+GB_jit__subassign_06n__07fc007f00029940_query,
 GB_jit__subassign_06n__07fc007f00029951_query,
+GB_jit__subassign_06n__07fc007f0002ee40__LG_MF_flowEdge_query,
+GB_jit__subassign_06n__07fc007f0002ee51__LG_MF_flowEdge_query,
+GB_jit__subassign_06n__07fc007f00049951_query,
 GB_jit__subassign_06n__07fc107f00020100_query,
-GB_jit__subassign_06n__07fc107f00020111_query,
 GB_jit__subassign_06n__07fc107f00020140_query,
+GB_jit__subassign_06n__07fc107f00020651_query,
 GB_jit__subassign_06n__07fc107f00020900_query,
-GB_jit__subassign_06n__07fc107f00020940_query,
+GB_jit__subassign_06n__07fc107f00021100_query,
+GB_jit__subassign_06n__07fc107f00021140_query,
 GB_jit__subassign_06n__07fc107f00029900_query,
-GB_jit__subassign_06n__07fc107f00029940_query,
+GB_jit__subassign_06s__7f00407f00026666_query,
+GB_jit__subassign_06s__7f00407f0003bb65_query,
+GB_jit__subassign_06s__7f00407f00049967_query,
+GB_jit__subassign_06s__7f00507f00020666_query,
 GB_jit__subassign_06s__7f1c407f00029965_query,
+GB_jit__subassign_06s__7f1c407f0002bb65_query,
+GB_jit__subassign_06s__7f1c407f0003bb65_query,
 GB_jit__subassign_06s__7fe0407f00021100_query,
 GB_jit__subassign_06s__7fe0407f00021110_query,
-GB_jit__subassign_06s__7fe0407f00029100_query,
 GB_jit__subassign_06s__7fe0407f00029110_query,
+GB_jit__subassign_06s__7ffc407f00029910_query,
 GB_jit__subassign_06s__7ffc407f00036655_query,
 GB_jit__subassign_06s__7ffc407f00039900_query,
+GB_jit__subassign_06s__7ffc407f0003bb55_query,
+GB_jit__subassign_06s__7ffc407f0003ee55__LG_MF_flowEdge_query,
 GB_jit__subassign_06s__7ffc507f00020100_query,
 GB_jit__subassign_06s__7ffc507f00020110_query,
+GB_jit__subassign_06s__7ffc507f0003ee55__LG_MF_flowEdge_query,
 GB_jit__subassign_08n__00000042999499f3_query,
 GB_jit__subassign_08n__00000050999499f3_query,
+GB_jit__subassign_08n__00fc0044bbb2bbd1_query,
+GB_jit__subassign_08s__08004043666366ee_query,
+GB_jit__subassign_08s__08004043666366ef_query,
+GB_jit__subassign_08s__08004044bbb2bbee_query,
+GB_jit__subassign_08s__08005043666366ee_query,
+GB_jit__subassign_08s__08e04043666366de_query,
+GB_jit__subassign_08s__08e04043666366df_query,
 GB_jit__subassign_13__7f00607f00030164_query,
 GB_jit__subassign_13__7fe0607f00030154_query,
+GB_jit__subassign_13__7fe0607f0003b654_query,
 GB_jit__subassign_13__7fe0607f00050154_query,
-GB_jit__subassign_23__00000040eee0eec3__LG_MSF_tupleMin_fp_query,
+GB_jit__subassign_15__08006043666369ec_query,
+GB_jit__subassign_15__08006043666369fc_query,
+GB_jit__subassign_23__00000040eee0eec3__LG_MSF_tupleMin_double_query,
+GB_jit__subassign_23__00000040eee0eec3__LG_MSF_tupleMin_int64_t_query,
 GB_jit__subassign_23__00000044bbb0bbc2_query,
 GB_jit__subassign_23__00000044bbb0bbc3_query,
 GB_jit__subassign_23__00000052aaa0aac3_query,
 GB_jit__subassign_23__00001044bbb0bbc3_query,
 GB_jit__subassign_23__001c0044bbb0bbc1_query,
 GB_jit__subref_bitmap__080009f_query,
-GB_jit__subref_bitmap__08000ef__LG_MSF_tuple_fp_query,
+GB_jit__subref_bitmap__08000ba_query,
+GB_jit__subref_bitmap__08000ef__LG_MSF_tuple_double_query,
+GB_jit__subref_bitmap__08000ef__LG_MSF_tuple_int64_t_query,
+GB_jit__subref_bitmap__080018a_query,
+GB_jit__subref_bitmap__08001ba_query,
+GB_jit__subref_bitmap__080049a_query,
+GB_jit__subref_bitmap__080049f_query,
+GB_jit__subref_bitmap__0800c1f_query,
+GB_jit__subref_bitmap__0800c7f_query,
+GB_jit__subref_bitmap__0800c9a_query,
 GB_jit__subref_bitmap__0800c9f_query,
-GB_jit__subref_bitmap__0800cef__LG_MSF_tuple_fp_query,
+GB_jit__subref_bitmap__0800cef__LG_MSF_tuple_double_query,
+GB_jit__subref_bitmap__0800cef__LG_MSF_tuple_int64_t_query,
+GB_jit__subref_bitmap__080841f_query,
+GB_jit__subref_bitmap__08084ba_query,
+GB_jit__subref_bitmap__08084bf_query,
 GB_jit__subref_bitmap__0808c6f_query,
+GB_jit__subref_bitmap__0808c9f_query,
+GB_jit__subref_sparse__0bf0075_query,
+GB_jit__subref_sparse__0bf0095_query,
+GB_jit__subref_sparse__0bf00b5_query,
+GB_jit__subref_sparse__0bf0491_query,
+GB_jit__subref_sparse__0bf0495_query,
 GB_jit__subref_sparse__0bf8490_query,
-GB_jit__subref_sparse__e3f8c90_query
+GB_jit__subref_sparse__e3f0c95_query,
+GB_jit__subref_sparse__e3f8c90_query,
+GB_jit__subref_sparse__ebf0c95_query,
+GB_jit__trans_unop__00480222022a_query,
+GB_jit__trans_unop__00480233033a_query,
+GB_jit__trans_unop__00480244044a_query,
+GB_jit__trans_unop__00480255055a_query,
+GB_jit__trans_unop__00480288082a_query,
+GB_jit__trans_unop__00480288083a_query,
+GB_jit__trans_unop__004802aa0aaa_query,
+GB_jit__trans_unop__004802bb0bba_query,
+GB_jit__trans_unop__004802bb0bbf_query,
+GB_jit__trans_unop__1848021101b5_query,
+GB_jit__trans_unop__184802aa0aa5_query,
+GB_jit__trans_unop__184802bb0bb5_query,
+GB_jit__trans_unop__1bc802bb0bb5_query,
+GB_jit__union__e3f012bbb0bbb00_query,
+GB_jit__union__e3f012bbb0bbb44_query,
+GB_jit__union__e3f012bbb0bbb45_query,
+GB_jit__union__e3f312bbb0bbb00_query,
+GB_jit__union__e3f312bbb0bbb44_query,
+GB_jit__union__e3f312bbb0bbb45_query
 } ;
 #endif
 
@@ -595,145 +1703,422 @@ GB_jit__subref_sparse__e3f8c90_query
 // GB_prejit_names: a list of names of PreJIT kernels
 //------------------------------------------------------------------------------
 
-#if ( 136 > 0 )
-static char *GB_prejit_names [136] =
+#if ( 413 > 0 )
+static char *GB_prejit_names [413] =
 {
-"GB_jit__AxB_dot2__0000000eb94eb9bb__LG_MSF_tupleMin_fp_LG_MSF_combine_fp",
-"GB_jit__AxB_dot2__0000400eb94eb9bb__LG_MSF_tupleMin_fp_LG_MSF_combine_fp",
-"GB_jit__AxB_dot2__0380000eb94eb9b7__LG_MSF_tupleMin_fp_LG_MSF_combine_fp",
-"GB_jit__AxB_dot2__0380400eb94eb9b7__LG_MSF_tupleMin_fp_LG_MSF_combine_fp",
+"GB_jit__AxB_dot2__0000000e894e89bb__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t",
+"GB_jit__AxB_dot2__0000000eb94eb9bb__LG_MSF_tupleMin_double_LG_MSF_combine_double",
+"GB_jit__AxB_dot2__0000034ee62ee6ab__LG_MF_Rxd_Add32_LG_MF_Rxd_Mult32",
+"GB_jit__AxB_dot2__0000034eeb0eeb8b__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32",
+"GB_jit__AxB_dot2__0000400e894e89bb__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t",
+"GB_jit__AxB_dot2__0000400eb94eb9bb__LG_MSF_tupleMin_double_LG_MSF_combine_double",
+"GB_jit__AxB_dot2__0004015bbb0b618b",
+"GB_jit__AxB_dot2__000420fbb00bb08b",
+"GB_jit__AxB_dot2__0004415bbb0b618b",
+"GB_jit__AxB_dot2__0380000eb94eb9b7__LG_MSF_tupleMin_double_LG_MSF_combine_double",
+"GB_jit__AxB_dot2__0380034ee62ee6a7__LG_MF_Rxd_Add32_LG_MF_Rxd_Mult32",
+"GB_jit__AxB_dot2__0380034eeb0eeb87__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32",
+"GB_jit__AxB_dot2__0380034eeb0eebc7__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32",
+"GB_jit__AxB_dot2__0380400e894e89b7__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t",
+"GB_jit__AxB_dot2__0380400eb94eb9b7__LG_MSF_tupleMin_double_LG_MSF_combine_double",
+"GB_jit__AxB_dot2__0380434eeb0eeb87__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32",
+"GB_jit__AxB_dot2__0380434eeb0eebc7__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32",
 "GB_jit__AxB_dot2__038120f1100110c7",
+"GB_jit__AxB_dot2__038420fbb00bb087",
+"GB_jit__AxB_dot2__038420fbb00bb0c7",
+"GB_jit__AxB_dot2__0384410b0b2b0ba6",
 "GB_jit__AxB_dot2__0384410b0b3b0ba6",
-"GB_jit__AxB_dot4__0000800eb90eb9cb__LG_MSF_tupleMin_fp_LG_MSF_combine_fp",
-"GB_jit__AxB_dot4__0000c00eb90eb9cb__LG_MSF_tupleMin_fp_LG_MSF_combine_fp",
+"GB_jit__AxB_dot2__038460f990091087",
+"GB_jit__AxB_dot2__038460f9900910c7",
+"GB_jit__AxB_dot3__ff80034ee62ee657__LG_MF_Rxd_Add32_LG_MF_Rxd_Mult32",
+"GB_jit__AxB_dot3__ff84410b0b2b0b56",
+"GB_jit__AxB_dot4__0000000e1e0e1eca__lg_hll_merge_lg_hll_second",
+"GB_jit__AxB_dot4__0000400e1e0e1eca__lg_hll_merge_lg_hll_second",
+"GB_jit__AxB_dot4__0000800e890e89cb__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t",
+"GB_jit__AxB_dot4__0000800eb90eb9cb__LG_MSF_tupleMin_double_LG_MSF_combine_double",
+"GB_jit__AxB_dot4__0000c00e890e89cb__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t",
+"GB_jit__AxB_dot4__0000c00eb90eb9cb__LG_MSF_tupleMin_double_LG_MSF_combine_double",
 "GB_jit__AxB_dot4__0004c10a0a0a0acb",
-"GB_jit__AxB_dot4__0380400e1e0e1ec6__fdb_hll_merge_fdb_hll_second",
-"GB_jit__AxB_dot4__0380800eb90eb9c7__LG_MSF_tupleMin_fp_LG_MSF_combine_fp",
-"GB_jit__AxB_dot4__0380c00eb90eb9c7__LG_MSF_tupleMin_fp_LG_MSF_combine_fp",
+"GB_jit__AxB_dot4__0380400e1e0e1ec6__lg_hll_merge_lg_hll_second",
+"GB_jit__AxB_dot4__0380800eb90eb9c7__LG_MSF_tupleMin_double_LG_MSF_combine_double",
+"GB_jit__AxB_dot4__0380c00e890e89c7__LG_MSF_tupleMin_int64_t_LG_MSF_combine_int64_t",
+"GB_jit__AxB_dot4__0380c00eb90eb9c7__LG_MSF_tupleMin_double_LG_MSF_combine_double",
 "GB_jit__AxB_dot4__0384c10a0a0a0ac7",
+"GB_jit__AxB_saxbit__000420fbb00bb08b",
 "GB_jit__AxB_saxbit__000420fbb00bb08f",
+"GB_jit__AxB_saxbit__038420fbb00bb083",
+"GB_jit__AxB_saxbit__038420fbb00bb087",
 "GB_jit__AxB_saxbit__0384610b0b3b0ba6",
-"GB_jit__AxB_saxpy3__e3f120f110011000",
 "GB_jit__AxB_saxpy3__e3f120f110011041",
-"GB_jit__AxB_saxpy3__e3f120f990099000",
-"GB_jit__AxB_saxpy3__e3f120f990099004",
+"GB_jit__AxB_saxpy3__e3f120f110011045",
 "GB_jit__AxB_saxpy3__e3f120f990099041",
 "GB_jit__AxB_saxpy3__e3f120f990099045",
 "GB_jit__AxB_saxpy3__e3f4410b0b2b0b65",
 "GB_jit__AxB_saxpy3__e3f4410b0b3b0b65",
-"GB_jit__AxB_saxpy3__fff120f990399000",
-"GB_jit__AxB_saxpy4__0100400e1e0e1ec7__LG_MSF_tupleMin_fp_LG_MSF_tuple2nd_fp",
+"GB_jit__AxB_saxpy3__e3f4610b0b3b0b65",
+"GB_jit__AxB_saxpy3__fff120f110311055",
+"GB_jit__AxB_saxpy3__fff120f990399055",
+"GB_jit__AxB_saxpy4__0100400e1e0e1ec7__LG_MSF_tupleMin_double_LG_MSF_tuple2nd_double",
+"GB_jit__AxB_saxpy4__0100400e1e0e1ec7__LG_MSF_tupleMin_int64_t_LG_MSF_tuple2nd_int64_t",
+"GB_jit__AxB_saxpy4__0380000e1e0e1ec6__lg_hll_merge_lg_hll_second",
+"GB_jit__add__00000288808288a",
+"GB_jit__add__00000288808388a",
+"GB_jit__add__00000611101b186",
+"GB_jit__add__000012aaa0aaacb",
+"GB_jit__add__000012aaa0aaacf",
+"GB_jit__add__000012aaa0aabcf",
+"GB_jit__add__000012bbb0bbb8a",
 "GB_jit__add__000203aaa0aaace",
 "GB_jit__add__000203aaa0aaacf",
 "GB_jit__add__000214aaa0aaacf",
-"GB_jit__add__e3f001111019100",
+"GB_jit__add__e0700611101b144",
+"GB_jit__add__e0700611101b145",
+"GB_jit__add__e3f002bbb0bbb45",
+"GB_jit__add__e3f010a0a0aaa44",
+"GB_jit__add__e3f010b0b0bbb44",
+"GB_jit__add__e3f010e0e0eee44__LG_MF_flowEdge",
+"GB_jit__add__e3f012bbb0bbb45",
 "GB_jit__add__e3f101111019100",
-"GB_jit__apply_bind1st__000000eb90ef9c3__LG_MSF_combine_fp",
+"GB_jit__add__e3f301111019100",
+"GB_jit__apply_bind1st__000000e890ef9c3__LG_MSF_combine_int64_t",
+"GB_jit__apply_bind1st__000000eb90ef9c3__LG_MSF_combine_double",
 "GB_jit__apply_bind2nd__000014aaa0a8fc8",
 "GB_jit__apply_bind2nd__000014aaa0a8fcc",
 "GB_jit__apply_bind2nd__000014bbb0bbfcc",
-"GB_jit__apply_unop__0040009e09ee__LG_MSF_get_second_fp",
-"GB_jit__apply_unop__0040009e09ef__LG_MSF_get_second_fp",
-"GB_jit__apply_unop__004000be0bee__LG_MSF_get_first_fp",
+"GB_jit__apply_unop__0040006e06ee__LG_MF_ExtractJ32",
+"GB_jit__apply_unop__0040006e06ee__LG_MF_ExtractYJ32",
+"GB_jit__apply_unop__0040008e08ee__LG_MSF_get_first_int64_t",
+"GB_jit__apply_unop__0040009e09ee__LG_MSF_get_second_double",
+"GB_jit__apply_unop__0040009e09ee__LG_MSF_get_second_int64_t",
+"GB_jit__apply_unop__0040009e09ef__LG_MSF_get_second_double",
+"GB_jit__apply_unop__0040009e09ef__LG_MSF_get_second_int64_t",
+"GB_jit__apply_unop__004000be0bee__LG_MF_ExtractMatrixFlow",
+"GB_jit__apply_unop__004000be0bee__LG_MF_GetResidual",
+"GB_jit__apply_unop__004000be0bee__LG_MF_ResidualFlow32",
+"GB_jit__apply_unop__004000be0bee__LG_MSF_get_first_double",
+"GB_jit__apply_unop__004000be0bef__lg_hll_count",
+"GB_jit__apply_unop__004000eb0e8e__LG_MF_ResidualBackward",
+"GB_jit__apply_unop__004000eb0e8e__LG_MF_ResidualForward",
+"GB_jit__apply_unop__004000eb0ebe__LG_MF_MakeFlow",
+"GB_jit__apply_unop__004000eb0ebe__LG_MF_ResidualBackward",
+"GB_jit__apply_unop__004000eb0ebe__LG_MF_ResidualForward",
+"GB_jit__apply_unop__0040021101be",
 "GB_jit__apply_unop__0040021101bf",
 "GB_jit__apply_unop__00400222021f",
+"GB_jit__apply_unop__0040029909bf",
+"GB_jit__apply_unop__004002bb0b8e",
 "GB_jit__apply_unop__004005bb0bbe",
 "GB_jit__apply_unop__004007aa0aaf",
-"GB_jit__apply_unop__03c0009e09ed__LG_MSF_get_second_fp",
-"GB_jit__apply_unop__03c000be0bed__LG_MSF_get_first_fp",
+"GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractJ32",
+"GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractYJ32",
+"GB_jit__apply_unop__03c0008e08ed__LG_MSF_get_first_int64_t",
+"GB_jit__apply_unop__03c0009e09ed__LG_MSF_get_second_double",
+"GB_jit__apply_unop__03c0009e09ed__LG_MSF_get_second_int64_t",
+"GB_jit__apply_unop__03c000be0bed__LG_MF_ExtractMatrixFlow",
+"GB_jit__apply_unop__03c000be0bed__LG_MF_GetResidual",
+"GB_jit__apply_unop__03c000be0bed__LG_MF_ResidualFlow32",
+"GB_jit__apply_unop__03c000be0bed__LG_MSF_get_first_double",
+"GB_jit__apply_unop__03c000eb0e7d__LG_MF_ResidualBackward",
+"GB_jit__apply_unop__03c000eb0e7d__LG_MF_ResidualForward",
+"GB_jit__apply_unop__03c000eb0e9d__LG_MF_ResidualBackward",
+"GB_jit__apply_unop__03c000eb0e9d__LG_MF_ResidualForward",
+"GB_jit__apply_unop__03c000eb0ebd__LG_MF_MakeFlow",
+"GB_jit__apply_unop__03c000eb0ebd__LG_MF_ResidualBackward",
+"GB_jit__apply_unop__03c000eb0ebd__LG_MF_ResidualForward",
+"GB_jit__apply_unop__03c002bb0b7d",
+"GB_jit__apply_unop__03c002bb0b9d",
 "GB_jit__apply_unop__03c005bb0bbd",
+"GB_jit__bitmap_assign_2_whole__0000003f000266a2",
+"GB_jit__bitmap_assign_2_whole__0000003f000288a2",
+"GB_jit__bitmap_assign_2_whole__0000003f000288a3",
 "GB_jit__bitmap_assign_2_whole__0000003f0002aaa3",
+"GB_jit__bitmap_assign_2_whole__0000003f0002b8a2",
+"GB_jit__bitmap_assign_2_whole__0000003f0002bba2",
+"GB_jit__bitmap_assign_2_whole__0000003f0002eea2__LG_MF_flowEdge",
+"GB_jit__bitmap_assign_2_whole__0000003f0003bba1",
+"GB_jit__bitmap_assign_2_whole__0000003f0003eea2__LG_MF_flowEdge",
 "GB_jit__bitmap_assign_2_whole__0000003f000499b3",
+"GB_jit__bitmap_assign_2_whole__0000103f000201a2",
+"GB_jit__bitmap_assign_2_whole__0000103f000206a2",
 "GB_jit__bitmap_assign_2_whole__0000103f00020aa3",
+"GB_jit__bitmap_assign_2_whole__0000103f0003eea2__LG_MF_flowEdge",
+"GB_jit__bitmap_assign_2_whole__0000203f000268a0",
+"GB_jit__bitmap_assign_2_whole__0000203f000269a0",
+"GB_jit__bitmap_assign_2_whole__0000203f0003b6a0",
 "GB_jit__bitmap_assign_2_whole__0000803f000299a2",
+"GB_jit__bitmap_assign_2_whole__0000803f0003bba2",
+"GB_jit__bitmap_assign_2_whole__0000903f00030ba2",
 "GB_jit__bitmap_assign_2_whole__0000a03f000301a0",
 "GB_jit__bitmap_assign_2_whole__001c903f000301a0",
 "GB_jit__bitmap_assign_4_whole__00e0203f00026890",
-"GB_jit__bitmap_assign_4_whole__00fc103f00020180",
+"GB_jit__bitmap_assign_4_whole__00e0203f00026990",
+"GB_jit__bitmap_assign_4_whole__00e0803f00028892",
+"GB_jit__bitmap_assign_4_whole__00e0803f00028893",
+"GB_jit__bitmap_assign_4_whole__00fc003f00026691",
+"GB_jit__bitmap_assign_4_whole__00fc003f0002ee91__LG_MF_flowEdge",
+"GB_jit__bitmap_assign_5__000001c0eee0ee82__LG_MF_InitForw",
+"GB_jit__bitmap_assign_5__00000480eee0ee82__LG_MF_InitBack",
+"GB_jit__bitmap_assign_5__000011c0eee0ee82__LG_MF_InitForw",
+"GB_jit__bitmap_assign_5__00001480eee0ee82__LG_MF_InitBack",
+"GB_jit__bitmap_assign_5__001c01c0eee0ee81__LG_MF_InitForw",
+"GB_jit__bitmap_assign_5__001c0480eee0ee80__LG_MF_InitBack",
+"GB_jit__bitmap_assign_5__001c11c0eee0ee81__LG_MF_InitForw",
 "GB_jit__bitmap_assign_5_whole__00000004bbb0bb82",
+"GB_jit__bitmap_assign_5_whole__0000100611101182",
+"GB_jit__bitmap_assign_5_whole__001c0004bbb0bb81",
+"GB_jit__bitmap_assign_8_whole__00e0803f0003bb92",
+"GB_jit__build__a901111b",
 "GB_jit__build__e9011119",
+"GB_jit__build__e9022222",
+"GB_jit__build__e9033333",
+"GB_jit__build__e9044444",
+"GB_jit__build__e9055555",
 "GB_jit__build__e9066668",
+"GB_jit__build__e9066669",
+"GB_jit__build__e90aaaaa",
 "GB_jit__build__e90bbbbb",
+"GB_jit__build__f8611117",
 "GB_jit__build__f9066668",
+"GB_jit__build__f9066669",
+"GB_jit__build__f909999b",
+"GB_jit__build__f90aaaab",
+"GB_jit__build__f90bbbb6",
+"GB_jit__convert_b2s__004002ee0ee6__LG_MF_compareTuple32",
+"GB_jit__convert_s2b__03c002ee0eec__LG_MF_compareTuple32",
+"GB_jit__emult_02__e38000ee60ee647__LG_MF_CreateCompareVec32",
+"GB_jit__emult_02__e38002bbb0bbb47",
 "GB_jit__emult_02__e38005bbb0bbb46",
+"GB_jit__emult_02__e38005bbb0bbb47",
+"GB_jit__emult_04__fc0014bbb2bbb5f",
+"GB_jit__emult_08__fc700066e266e5d__LG_MF_Relabel32",
+"GB_jit__emult_08__fc7000eeb2eeb59__LG_MF_UpdateFlow",
+"GB_jit__emult_08__fff000eeb2eeb04__LG_MF_UpdateFlow",
+"GB_jit__emult_08__fff000eeb2eeb55__LG_MF_UpdateFlow",
+"GB_jit__emult_bitmap__00000066e266eae__LG_MF_Relabel32",
+"GB_jit__emult_bitmap__000000ee60ee68b__LG_MF_CreateCompareVec32",
+"GB_jit__emult_bitmap__000000eeb2eebaa__LG_MF_UpdateFlow",
+"GB_jit__emult_bitmap__000002bbb0bbb8b",
+"GB_jit__emult_bitmap__000005bbb0bbb8b",
+"GB_jit__emult_bitmap__0000091bb01bb8a",
 "GB_jit__emult_bitmap__000014bbb2bbbae",
+"GB_jit__emult_bitmap__000014bbb2bbbaf",
 "GB_jit__emult_bitmap__000214bbb2bbbae",
-"GB_jit__ewise_fulln__0000001ee01eecf__LG_MSF_tupleEq_fp",
-"GB_jit__ewise_fulln__000000bee0beecf__fdb_hll_delta",
+"GB_jit__emult_bitmap__000214bbb2bbbaf",
+"GB_jit__ewise_fulln__0000001ee01eecf__LG_MSF_tupleEq_double",
+"GB_jit__ewise_fulln__0000001ee01eecf__LG_MSF_tupleEq_int64_t",
+"GB_jit__ewise_fulln__000000bee0beecf__lg_hll_delta",
 "GB_jit__ewise_fulln__000014aaa0aaacf",
+"GB_jit__masker_phase1__dc732059",
+"GB_jit__masker_phase1__dc73205d",
+"GB_jit__masker_phase1__dc733059",
+"GB_jit__masker_phase1__dc73405d",
 "GB_jit__masker_phase1__dff32000",
+"GB_jit__masker_phase1__dff32004",
 "GB_jit__masker_phase1__dff32045",
 "GB_jit__masker_phase1__dff33000",
 "GB_jit__masker_phase1__dff33041",
 "GB_jit__masker_phase1__dff33045",
 "GB_jit__masker_phase1__dff33054",
-"GB_jit__masker_phase2__1c004e9e__LG_MSF_tuple_fp",
+"GB_jit__masker_phase1__dff33055",
+"GB_jit__masker_phase2__1c002b9a",
+"GB_jit__masker_phase2__1c002b9e",
+"GB_jit__masker_phase2__1c004e9e__LG_MSF_tuple_double",
+"GB_jit__masker_phase2__1c004e9e__LG_MSF_tuple_int64_t",
+"GB_jit__masker_phase2__fc70215d",
+"GB_jit__masker_phase2__fc702b59",
+"GB_jit__masker_phase2__fc702b5d",
+"GB_jit__masker_phase2__fc70415d",
 "GB_jit__masker_phase2__fff02900",
+"GB_jit__masker_phase2__fff02904",
+"GB_jit__masker_phase2__fff03100",
+"GB_jit__masker_phase2__fff03141",
 "GB_jit__masker_phase2__fff03900",
 "GB_jit__masker_phase2__fff03941",
+"GB_jit__masker_phase2__fff03945",
+"GB_jit__reduce__12222",
+"GB_jit__reduce__12332",
+"GB_jit__reduce__12442",
+"GB_jit__reduce__12552",
+"GB_jit__reduce__12aa2",
+"GB_jit__reduce__12bb2",
+"GB_jit__reduce__12bb3",
+"GB_jit__reduce__12bb9",
+"GB_jit__reduce__13222",
+"GB_jit__reduce__13332",
+"GB_jit__reduce__13442",
+"GB_jit__reduce__13552",
+"GB_jit__reduce__13862",
+"GB_jit__reduce__13863",
+"GB_jit__reduce__13aa2",
+"GB_jit__reduce__13aa3",
+"GB_jit__reduce__13bb2",
+"GB_jit__reduce__13bb3",
+"GB_jit__reduce__13bb9",
 "GB_jit__reduce__14823",
+"GB_jit__reduce__14913",
 "GB_jit__reduce__14aa2",
 "GB_jit__reduce__14aa3",
-"GB_jit__rowscale__010200e1e0e1ec7__LG_MSF_tuple2nd_fp",
-"GB_jit__select_bitmap__00331beba__LG_MSF_removeEdge_fp",
-"GB_jit__select_bitmap__00331beba__LG_MSF_selectEdge_fp",
-"GB_jit__select_bitmap__00f31beba__LG_MSF_removeEdge_fp",
-"GB_jit__select_bitmap__00f31beba__LG_MSF_selectEdge_fp",
-"GB_jit__select_phase1__3f331beb5__LG_MSF_removeEdge_fp",
-"GB_jit__select_phase1__3f331beb5__LG_MSF_selectEdge_fp",
-"GB_jit__select_phase1__3ff31beb5__LG_MSF_removeEdge_fp",
-"GB_jit__select_phase1__3ff31beb5__LG_MSF_selectEdge_fp",
-"GB_jit__select_phase2__3f331beb5__LG_MSF_removeEdge_fp",
-"GB_jit__select_phase2__3f331beb5__LG_MSF_selectEdge_fp",
-"GB_jit__select_phase2__3ff31beb5__LG_MSF_removeEdge_fp",
-"GB_jit__select_phase2__3ff31beb5__LG_MSF_selectEdge_fp",
+"GB_jit__reduce__14b82",
+"GB_jit__reduce__14bb2",
+"GB_jit__reduce__14bb9",
+"GB_jit__rowscale__010200e1e0e1ec7__LG_MSF_tuple2nd_double",
+"GB_jit__rowscale__010200e1e0e1ec7__LG_MSF_tuple2nd_int64_t",
+"GB_jit__select_bitmap__00131e1ea__LG_MF_Prune32",
+"GB_jit__select_bitmap__003318e8a__LG_MSF_removeEdge_int64_t",
+"GB_jit__select_bitmap__003318e8a__LG_MSF_selectEdge_int64_t",
+"GB_jit__select_bitmap__00331beba__LG_MSF_removeEdge_double",
+"GB_jit__select_bitmap__00331beba__LG_MSF_selectEdge_double",
+"GB_jit__select_bitmap__00f318e8a__LG_MSF_removeEdge_int64_t",
+"GB_jit__select_bitmap__00f318e8a__LG_MSF_selectEdge_int64_t",
+"GB_jit__select_bitmap__00f31beba__LG_MSF_removeEdge_double",
+"GB_jit__select_bitmap__00f31beba__LG_MSF_selectEdge_double",
+"GB_jit__select_phase1__3f131e1e5__LG_MF_Prune32",
+"GB_jit__select_phase1__3f331beb5__LG_MSF_removeEdge_double",
+"GB_jit__select_phase1__3f331beb5__LG_MSF_selectEdge_double",
+"GB_jit__select_phase1__3ff318e85__LG_MSF_removeEdge_int64_t",
+"GB_jit__select_phase1__3ff318e85__LG_MSF_selectEdge_int64_t",
+"GB_jit__select_phase1__3ff31beb5__LG_MSF_removeEdge_double",
+"GB_jit__select_phase1__3ff31beb5__LG_MSF_selectEdge_double",
+"GB_jit__select_phase2__3f131e1e5__LG_MF_Prune32",
+"GB_jit__select_phase2__3f331beb5__LG_MSF_removeEdge_double",
+"GB_jit__select_phase2__3f331beb5__LG_MSF_selectEdge_double",
+"GB_jit__select_phase2__3ff318e85__LG_MSF_removeEdge_int64_t",
+"GB_jit__select_phase2__3ff318e85__LG_MSF_selectEdge_int64_t",
+"GB_jit__select_phase2__3ff31beb5__LG_MSF_removeEdge_double",
+"GB_jit__select_phase2__3ff31beb5__LG_MSF_selectEdge_double",
+"GB_jit__subassign_01__0800647f000016cc",
+"GB_jit__subassign_01__0800647f000099cc",
+"GB_jit__subassign_01__08006c7f000016cc",
+"GB_jit__subassign_01__08006c7f000099cc",
+"GB_jit__subassign_01__0802647f000016cc",
+"GB_jit__subassign_01__0802647f000099cc",
+"GB_jit__subassign_01__08026c7f000016cc",
+"GB_jit__subassign_01__08026c7f000099cc",
+"GB_jit__subassign_02__7f02447f00000b47",
+"GB_jit__subassign_02__7f02447f00009b47",
+"GB_jit__subassign_02__7f02447f0000bb46",
 "GB_jit__subassign_02__7f1c417f00001101",
 "GB_jit__subassign_02__7f1c517f00000101",
+"GB_jit__subassign_04__7f004140eee0ee46__LG_MF_InitForw",
+"GB_jit__subassign_04__7f004440eee0ee46__LG_MF_InitBack",
+"GB_jit__subassign_04__7f1c4140eee0ee45__LG_MF_InitForw",
+"GB_jit__subassign_04__7f1c4440eee0ee44__LG_MF_InitBack",
+"GB_jit__subassign_04__7f1c5140eee0ee45__LG_MF_InitForw",
+"GB_jit__subassign_04__7f1c5440eee0ee44__LG_MF_InitBack",
+"GB_jit__subassign_05__0700207f00026960",
 "GB_jit__subassign_05__07e0207f00026850",
-"GB_jit__subassign_05d__0000207f0004eef0__LG_MSF_tuple_fp",
+"GB_jit__subassign_05__07e0207f00026950",
+"GB_jit__subassign_05d__0000207f0004eef0__LG_MSF_tuple_double",
+"GB_jit__subassign_05d__0000207f0004eef0__LG_MSF_tuple_int64_t",
+"GB_jit__subassign_06n__0700007f00049973",
 "GB_jit__subassign_06n__071c007f00029971",
 "GB_jit__subassign_06n__07e0007f00021100",
-"GB_jit__subassign_06n__07e0007f00021110",
+"GB_jit__subassign_06n__07e0007f00049953",
 "GB_jit__subassign_06n__07fc007f00020651",
 "GB_jit__subassign_06n__07fc007f00020900",
 "GB_jit__subassign_06n__07fc007f00021100",
+"GB_jit__subassign_06n__07fc007f00021140",
 "GB_jit__subassign_06n__07fc007f00026651",
 "GB_jit__subassign_06n__07fc007f00029900",
+"GB_jit__subassign_06n__07fc007f00029940",
 "GB_jit__subassign_06n__07fc007f00029951",
+"GB_jit__subassign_06n__07fc007f0002ee40__LG_MF_flowEdge",
+"GB_jit__subassign_06n__07fc007f0002ee51__LG_MF_flowEdge",
+"GB_jit__subassign_06n__07fc007f00049951",
 "GB_jit__subassign_06n__07fc107f00020100",
-"GB_jit__subassign_06n__07fc107f00020111",
 "GB_jit__subassign_06n__07fc107f00020140",
+"GB_jit__subassign_06n__07fc107f00020651",
 "GB_jit__subassign_06n__07fc107f00020900",
-"GB_jit__subassign_06n__07fc107f00020940",
+"GB_jit__subassign_06n__07fc107f00021100",
+"GB_jit__subassign_06n__07fc107f00021140",
 "GB_jit__subassign_06n__07fc107f00029900",
-"GB_jit__subassign_06n__07fc107f00029940",
+"GB_jit__subassign_06s__7f00407f00026666",
+"GB_jit__subassign_06s__7f00407f0003bb65",
+"GB_jit__subassign_06s__7f00407f00049967",
+"GB_jit__subassign_06s__7f00507f00020666",
 "GB_jit__subassign_06s__7f1c407f00029965",
+"GB_jit__subassign_06s__7f1c407f0002bb65",
+"GB_jit__subassign_06s__7f1c407f0003bb65",
 "GB_jit__subassign_06s__7fe0407f00021100",
 "GB_jit__subassign_06s__7fe0407f00021110",
-"GB_jit__subassign_06s__7fe0407f00029100",
 "GB_jit__subassign_06s__7fe0407f00029110",
+"GB_jit__subassign_06s__7ffc407f00029910",
 "GB_jit__subassign_06s__7ffc407f00036655",
 "GB_jit__subassign_06s__7ffc407f00039900",
+"GB_jit__subassign_06s__7ffc407f0003bb55",
+"GB_jit__subassign_06s__7ffc407f0003ee55__LG_MF_flowEdge",
 "GB_jit__subassign_06s__7ffc507f00020100",
 "GB_jit__subassign_06s__7ffc507f00020110",
+"GB_jit__subassign_06s__7ffc507f0003ee55__LG_MF_flowEdge",
 "GB_jit__subassign_08n__00000042999499f3",
 "GB_jit__subassign_08n__00000050999499f3",
+"GB_jit__subassign_08n__00fc0044bbb2bbd1",
+"GB_jit__subassign_08s__08004043666366ee",
+"GB_jit__subassign_08s__08004043666366ef",
+"GB_jit__subassign_08s__08004044bbb2bbee",
+"GB_jit__subassign_08s__08005043666366ee",
+"GB_jit__subassign_08s__08e04043666366de",
+"GB_jit__subassign_08s__08e04043666366df",
 "GB_jit__subassign_13__7f00607f00030164",
 "GB_jit__subassign_13__7fe0607f00030154",
+"GB_jit__subassign_13__7fe0607f0003b654",
 "GB_jit__subassign_13__7fe0607f00050154",
-"GB_jit__subassign_23__00000040eee0eec3__LG_MSF_tupleMin_fp",
+"GB_jit__subassign_15__08006043666369ec",
+"GB_jit__subassign_15__08006043666369fc",
+"GB_jit__subassign_23__00000040eee0eec3__LG_MSF_tupleMin_double",
+"GB_jit__subassign_23__00000040eee0eec3__LG_MSF_tupleMin_int64_t",
 "GB_jit__subassign_23__00000044bbb0bbc2",
 "GB_jit__subassign_23__00000044bbb0bbc3",
 "GB_jit__subassign_23__00000052aaa0aac3",
 "GB_jit__subassign_23__00001044bbb0bbc3",
 "GB_jit__subassign_23__001c0044bbb0bbc1",
 "GB_jit__subref_bitmap__080009f",
-"GB_jit__subref_bitmap__08000ef__LG_MSF_tuple_fp",
+"GB_jit__subref_bitmap__08000ba",
+"GB_jit__subref_bitmap__08000ef__LG_MSF_tuple_double",
+"GB_jit__subref_bitmap__08000ef__LG_MSF_tuple_int64_t",
+"GB_jit__subref_bitmap__080018a",
+"GB_jit__subref_bitmap__08001ba",
+"GB_jit__subref_bitmap__080049a",
+"GB_jit__subref_bitmap__080049f",
+"GB_jit__subref_bitmap__0800c1f",
+"GB_jit__subref_bitmap__0800c7f",
+"GB_jit__subref_bitmap__0800c9a",
 "GB_jit__subref_bitmap__0800c9f",
-"GB_jit__subref_bitmap__0800cef__LG_MSF_tuple_fp",
+"GB_jit__subref_bitmap__0800cef__LG_MSF_tuple_double",
+"GB_jit__subref_bitmap__0800cef__LG_MSF_tuple_int64_t",
+"GB_jit__subref_bitmap__080841f",
+"GB_jit__subref_bitmap__08084ba",
+"GB_jit__subref_bitmap__08084bf",
 "GB_jit__subref_bitmap__0808c6f",
+"GB_jit__subref_bitmap__0808c9f",
+"GB_jit__subref_sparse__0bf0075",
+"GB_jit__subref_sparse__0bf0095",
+"GB_jit__subref_sparse__0bf00b5",
+"GB_jit__subref_sparse__0bf0491",
+"GB_jit__subref_sparse__0bf0495",
 "GB_jit__subref_sparse__0bf8490",
-"GB_jit__subref_sparse__e3f8c90"
+"GB_jit__subref_sparse__e3f0c95",
+"GB_jit__subref_sparse__e3f8c90",
+"GB_jit__subref_sparse__ebf0c95",
+"GB_jit__trans_unop__00480222022a",
+"GB_jit__trans_unop__00480233033a",
+"GB_jit__trans_unop__00480244044a",
+"GB_jit__trans_unop__00480255055a",
+"GB_jit__trans_unop__00480288082a",
+"GB_jit__trans_unop__00480288083a",
+"GB_jit__trans_unop__004802aa0aaa",
+"GB_jit__trans_unop__004802bb0bba",
+"GB_jit__trans_unop__004802bb0bbf",
+"GB_jit__trans_unop__1848021101b5",
+"GB_jit__trans_unop__184802aa0aa5",
+"GB_jit__trans_unop__184802bb0bb5",
+"GB_jit__trans_unop__1bc802bb0bb5",
+"GB_jit__union__e3f012bbb0bbb00",
+"GB_jit__union__e3f012bbb0bbb44",
+"GB_jit__union__e3f012bbb0bbb45",
+"GB_jit__union__e3f312bbb0bbb00",
+"GB_jit__union__e3f312bbb0bbb44",
+"GB_jit__union__e3f312bbb0bbb45"
 } ;
 #endif
 
@@ -749,8 +2134,8 @@ void GB_prejit
     char ***Name_handle     // return list of kernel names
 )
 {
-    (*nkernels) = 136 ;
-    #if ( 136 == 0 )
+    (*nkernels) = 413 ;
+    #if ( 413 == 0 )
     (*Kernel_handle) = NULL ;
     (*Query_handle) = NULL ;
     (*Name_handle) = NULL ;
