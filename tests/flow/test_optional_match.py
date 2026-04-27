@@ -347,3 +347,27 @@ class testOptionalFlow(FlowTestsBase):
 
         g.delete()
 
+    # multi-edge OPTIONAL MATCH must treat the entire pattern as a single unit
+    # if any edge in the chain fails to match, all pattern variables must be
+    # NULL - we should not bind some variables while leaving others NULL.
+    # see issue #1861
+    def test28_optional_multi_edge_chain_all_or_nothing(self):
+        g = self.db.select_graph("optional_multi_edge_chain")
+        # graph:
+        # (a)<-[:E]-(b:L)  with no other incoming edges to b
+        # so for OPTIONAL MATCH (a)<-[]-(b:L)<-[]-(c) the second edge cannot
+        # be resolved and the entire optional pattern must fail
+        g.query("CREATE (a {name:'a'})<-[:E]-(b:L {name:'b'})")
+
+        q = """MATCH (a {name:'a'})
+               OPTIONAL MATCH (a)<-[]-(b:L)<-[]-(c)
+               RETURN b, c"""
+        result = g.query(q)
+        # the entire OPTIONAL MATCH must fail since (c)-[]->(b) has no match
+        # both b and c must be NULL
+        self.env.assertEquals(len(result.result_set), 1)
+        self.env.assertIsNone(result.result_set[0][0])  # b must be null
+        self.env.assertIsNone(result.result_set[0][1])  # c must be null
+
+        g.delete()
+
