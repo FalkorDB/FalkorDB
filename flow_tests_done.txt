@@ -23,6 +23,7 @@ tests/flow/test_encode_decode.py
 tests/flow/test_entity_update
 tests/flow/test_execution_plan_print.py
 tests/flow/test_expand_into
+tests/flow/test_expiry.py
 tests/flow/test_filters
 tests/flow/test_foreach
 tests/flow/test_function_calls
@@ -80,6 +81,7 @@ tests/flow/test_temporal
 tests/flow/test_timeout.py
 tests/flow/test_traversal_construction.py
 tests/flow/test_udf.py
+tests/flow/test_undo_log.py
 tests/flow/test_union
 tests/flow/test_unwind_clause
 tests/flow/test_value_comparisons

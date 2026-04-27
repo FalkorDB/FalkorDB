@@ -401,6 +401,9 @@ impl ThreadedGraph {
             }
         };
 
+        // Query succeeded — now commit deferred index operations to RediSearch.
+        runtime.commit_deferred_indexes();
+
         // Capture effects buffer before replying (pending data is still available)
         let mut effects_buffer =
             should_use_effects(is_non_deterministic, &runtime, result.stats.execution_time);
@@ -510,6 +513,7 @@ impl ThreadedGraph {
         );
         match runtime.query() {
             Ok(_) => {
+                runtime.commit_deferred_indexes();
                 reply_profile(ctx, &runtime, &plan);
                 Ok((g, None, false))
             }

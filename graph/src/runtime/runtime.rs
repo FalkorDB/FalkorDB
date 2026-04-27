@@ -398,6 +398,12 @@ impl<'a> Runtime<'a> {
         Ok(())
     }
 
+    /// Apply deferred index operations to RediSearch. Must be called only
+    /// after the full query succeeds.
+    pub fn commit_deferred_indexes(&self) {
+        self.pending.borrow_mut().commit_deferred_indexes(&self.g);
+    }
+
     pub fn query(&'a self) -> Result<ResultSummary<'a>, String> {
         let start = Instant::now();
         let idx = self.plan.root().idx();
