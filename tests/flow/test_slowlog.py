@@ -256,34 +256,19 @@ class testSlowLog():
         # issue 2 slower queries
         # expecting to have them replace existing entries
 
-        q0 = "UNWIND range(0, 450000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
-        res0 = self.graph.query(q0)
+        q0 = "UNWIND range(0, 2000000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
+        self.graph.query(q0)
 
-        q1 = "UNWIND range(0, 500000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
-        res1 = self.graph.query(q1)
+        q1 = "UNWIND range(0, 2500000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
+        self.graph.query(q1)
 
         entries = self.graph.slowlog()
-
-        # log debug info
-        print("\n=== test06_force_replace DEBUG ===")
-        print(f"q0 run_time_ms: {res0.run_time_ms:.3f}")
-        print(f"q1 run_time_ms: {res1.run_time_ms:.3f}")
-        for i, entry in enumerate(entries):
-            print(f"  [{i}] latency={entry[3]}, query={entry[2][:100]}...")
-        queries = [entry[2] for entry in entries]
-        print(f"q0 in slowlog: {q0 in queries}")
-        print(f"q1 in slowlog: {q1 in queries}")
-        print(f"q0 = {q0!r}")
-        print(f"q1 = {q1!r}")
-        latencies = [entry[3] for entry in entries]
-        print(f"slowlog latencies: {latencies}")
-        print(f"min latency in slowlog: {min(latencies) if latencies else 'N/A'}")
-        print("=== END DEBUG ===\n")
 
         # expecting 10 entries
         self.env.assertEqual(len(entries), 10)
 
         # make sure both q0 & q1 are in entries
+        queries = [entry[2] for entry in entries]
         self.env.assertContains (q0, queries)
         self.env.assertContains (q1, queries)
 
