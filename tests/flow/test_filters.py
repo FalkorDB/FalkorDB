@@ -100,7 +100,7 @@ class testFilters():
         # to true and the row must be returned by the WHERE filter.
         nan = "0.0 / 0.0"
         for op in ("<", "<=", ">", ">="):
-            q = f"WITH {nan} AS k RETURN ({nan}) {op} (-({nan})) AS p, NOT(({nan}) {op} (-({nan}))) AS np"
+            q = f"WITH {nan} AS k RETURN (k) {op} (-(k)) AS p, NOT((k) {op} (-(k))) AS np"
             res = self.g.query(q)
             self.env.assertEquals(res.result_set, [[False, True]])
 
