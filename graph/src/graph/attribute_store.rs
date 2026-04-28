@@ -557,9 +557,17 @@ impl AttributeStore {
         &mut self,
         keys: &RoaringTreemap,
     ) {
-        // Only track in pending_deletes — no need to add to dirty_entities
-        // since deleted entities don't need cache write-back on flush.
-        // rollback_cache() handles pending_deletes separately.
+        // Save original cache entries for rollback so that bulk deletes
+        // don't lose cache-only attributes when rollback_cache() runs.
+        for key in keys {
+            if !self.saved_for_rollback.contains_key(&key) {
+                let current = self
+                    .cache
+                    .get_entity(key, self.version)
+                    .unwrap_or_else(|| self.populate_cache_from_fjall(key));
+                self.saved_for_rollback.insert(key, current);
+            }
+        }
         self.pending_deletes |= keys;
     }
 
