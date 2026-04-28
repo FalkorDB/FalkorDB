@@ -160,7 +160,7 @@ jobs:
       - name: Restore dependency caches (Docker)
         if: matrix.platform.use_docker
         id: restore-deps
-        uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
             /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/GraphBLAS
@@ -183,7 +183,7 @@ jobs:
       - name: Restore dependency cache (macOS)
         if: matrix.platform.os == 'macos'
         id: restore-deps-macos
-        uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ./bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           key: ${{ steps.cache-key-macos.outputs.key }}
@@ -213,7 +213,7 @@ jobs:
 
       - name: Save dependency cache (macOS)
         if: matrix.platform.os == 'macos' && steps.restore-deps-macos.outputs.cache-hit != 'true'
-        uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ./bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           key: ${{ steps.cache-key-macos.outputs.key }}
@@ -266,7 +266,7 @@ jobs:
       - name: Build compiler image
         if: matrix.platform.use_docker
         id: build_compiler
-        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
         with:
           context: /FalkorDB
           file: /FalkorDB/build/docker/${{ steps.dockerfile.outputs.compiler }}
@@ -289,7 +289,7 @@ jobs:
 
       - name: Save dependency cache (Docker)
         if: matrix.platform.use_docker && steps.restore-deps.outputs.cache-hit != 'true' && steps.build_compiler.outcome == 'success'
-        uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
             /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/GraphBLAS
@@ -320,7 +320,7 @@ jobs:
 
       - name: Build test image
         if: matrix.platform.build_test_image && matrix.platform.use_docker && matrix.build_type == 'release'
-        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
         with:
           context: /FalkorDB
           file: /FalkorDB/tests/${{ steps.dockerfile.outputs.test }}
@@ -333,7 +333,7 @@ jobs:
 
       - name: Upload test image
         if: matrix.platform.use_docker && matrix.build_type == 'release'
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: falkordb-tests-${{ matrix.platform.suffix }}
           path: /tmp/falkordb-tests-${{ matrix.platform.suffix }}.tar
@@ -343,7 +343,7 @@ jobs:
       - name: Build base image
         if: matrix.platform.use_docker && matrix.build_type == 'release'
         id: build_base
-        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
         with:
           context: /FalkorDB
           file: /FalkorDB/build/docker/${{ steps.dockerfile.outputs.final }}
@@ -361,7 +361,7 @@ jobs:
 
       - name: Upload base image
         if: matrix.platform.use_docker && matrix.build_type == 'release'
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: falkordb-${{ matrix.platform.suffix }}
           path: /tmp/falkordb-${{ matrix.platform.suffix }}.tar
@@ -370,7 +370,7 @@ jobs:
 
       - name: Build server image
         if: matrix.platform.use_docker && steps.dockerfile.outputs.build_server == 'true'
-        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
         with:
           context: /FalkorDB
           file: /FalkorDB/build/docker/${{ steps.dockerfile.outputs.server_dockerfile }}
@@ -384,7 +384,7 @@ jobs:
 
       - name: Upload server image
         if: matrix.platform.use_docker && steps.dockerfile.outputs.build_server == 'true'
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: falkordb-server-${{ matrix.platform.suffix }}
           path: /tmp/falkordb-server-${{ matrix.platform.suffix }}.tar
@@ -397,7 +397,7 @@ jobs:
           docker run --rm --entrypoint sh localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }} -c 'cat /FalkorDB/bin/linux*/falkordb.so' > /tmp/falkordb-${{ matrix.build_type == 'release' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
 
       - name: Upload .so file
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: falkordb-${{ matrix.build_type == 'release' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
           path: /tmp/falkordb-${{ matrix.build_type == 'release' && matrix.platform.suffix || format('debug-{0}', matrix.platform.suffix) }}.so
@@ -454,7 +454,7 @@ jobs:
 
       - name: Upload test logs
         if: always()
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ matrix.test_type }}-test-logs-${{ matrix.platform.suffix }}
           path: /tmp/logs
@@ -494,7 +494,7 @@ jobs:
         run: docker load --input /tmp/falkordb-${{ matrix.platform.suffix }}.tar
 
       - name: Run Trivy scan
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
         with:
           image-ref: falkordb/falkordb-${{ matrix.platform.suffix }}
           output: trivy-report.json
@@ -503,7 +503,7 @@ jobs:
           version: 'v0.69.2'
 
       - name: Upload Vulnerability Scan Results
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         id: upload_trivy_report
         with:
           name: trivy-report-${{ matrix.platform.suffix }}
@@ -513,7 +513,7 @@ jobs:
       - name: Fail build on high/critical severity vulnerabilities
         id: trivy_gate
         continue-on-error: true
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
         with:
           image-ref: falkordb/falkordb-${{ matrix.platform.suffix }}
           format: table
@@ -525,7 +525,7 @@ jobs:
 
       - name: Add comment to PR
         if: github.event_name == 'pull_request' && steps.trivy_gate.outcome == 'failure'
-        uses: marocchino/sticky-pull-request-comment@70d2764d1a7d5d9560b100cbea0077fc8f633987 # v3
+        uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0 # v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           header: "Trivy Vulnerability Scan Results for ${{ matrix.platform.suffix }}"
@@ -645,7 +645,7 @@ jobs:
           echo "file_name=${file_name}" >> $GITHUB_OUTPUT
 
       - name: Upload RAMP package
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ steps.create_ramp.outputs.file_name }}
           path: /tmp/ramp/${{ steps.create_ramp.outputs.file_name }}
