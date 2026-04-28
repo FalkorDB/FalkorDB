@@ -472,6 +472,7 @@ impl Binder {
 
                 // Validate yield field names against procedure outputs
                 if yielded && let FnType::Procedure(ref fields) = func.fn_type {
+                    let mut seen_fields = std::collections::HashSet::new();
                     for (i, name) in vars.iter().enumerate() {
                         // The actual field name is the alias (original field) if present,
                         // otherwise the yield name itself
@@ -479,6 +480,12 @@ impl Binder {
                         if !fields.iter().any(|f| f.as_str() == field_name.as_str()) {
                             return Err(format!(
                                 "Unknown yield field '{}' for procedure '{}'",
+                                field_name, func.name
+                            ));
+                        }
+                        if !seen_fields.insert(field_name.as_str().to_lowercase()) {
+                            return Err(format!(
+                                "Duplicate yield field '{}' for procedure '{}'",
                                 field_name, func.name
                             ));
                         }
