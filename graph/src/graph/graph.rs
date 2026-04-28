@@ -2610,6 +2610,25 @@ impl Graph {
             .map(|r| r.map(|(id, score)| (NodeId(id), score)))
     }
 
+    /// Execute a fulltext query against an *edge* index, yielding
+    /// `(src, dst, edge_id, score)` tuples. Mirrors
+    /// [`fulltext_query_nodes`] but goes through the `edge_indexer`
+    /// and reads the 24-byte edge-index key produced by
+    /// `Document::new_edge`.
+    pub fn fulltext_query_edges(
+        &self,
+        label: &Arc<String>,
+        query: &str,
+    ) -> Result<impl Iterator<Item = (NodeId, NodeId, RelationshipId, f64)> + use<>, String> {
+        self.edge_indexer
+            .fulltext_query_edges(label, query)
+            .map(|r| {
+                r.map(|(src, dst, eid, score)| {
+                    (NodeId(src), NodeId(dst), RelationshipId(eid), score)
+                })
+            })
+    }
+
     #[must_use]
     pub fn index_info(&self) -> Vec<IndexInfo> {
         let mut infos = self.node_indexer.index_info();

@@ -49,11 +49,12 @@ use crate::{
         env::Env,
         ops::{
             AggregateOp, AllShortestPathsOp, ApplyOp, CartesianProductOp, CommitOp, CondTraverseOp,
-            CondVarLenTraverseOp, CreateOp, DeleteOp, DistinctOp, EdgeByIndexScanOp, ExpandIntoOp,
-            FilterOp, ForEachOp, LimitOp, LoadCsvOp, MergeOp, NodeByFulltextScanOp, NodeByIdSeekOp,
-            NodeByIndexScanOp, NodeByLabelAndIdScanOp, NodeByLabelScanOp, OptionalOp,
-            OrApplyMultiplexerOp, PathBuilderOp, ProcedureCallOp, ProjectOp, RemoveOp, SemiApplyOp,
-            SetOp, SkipOp, SortOp, UnionOp, UnwindOp, ValueHashJoinOp,
+            CondVarLenTraverseOp, CreateOp, DeleteOp, DistinctOp, EdgeByFulltextScanOp,
+            EdgeByIndexScanOp, ExpandIntoOp, FilterOp, ForEachOp, LimitOp, LoadCsvOp, MergeOp,
+            NodeByFulltextScanOp, NodeByIdSeekOp, NodeByIndexScanOp, NodeByLabelAndIdScanOp,
+            NodeByLabelScanOp, OptionalOp, OrApplyMultiplexerOp, PathBuilderOp, ProcedureCallOp,
+            ProjectOp, RemoveOp, SemiApplyOp, SetOp, SkipOp, SortOp, UnionOp, UnwindOp,
+            ValueHashJoinOp,
         },
         ordermap::OrderMap,
         orderset::OrderSet,
@@ -236,6 +237,12 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                         vars.push(score.clone());
                     }
                 }
+                IR::EdgeByFulltextScan { edge, score, .. } => {
+                    vars.push(edge.clone());
+                    if let Some(score) = score {
+                        vars.push(score.clone());
+                    }
+                }
                 IR::CondTraverse {
                     relationship: query_relationship,
                     ..
@@ -294,6 +301,13 @@ impl ReturnNames for DynNode<'_, IR> {
             } => named_outputs.clone(),
             IR::NodeByFulltextScan { node, score, .. } => {
                 let mut v = vec![node.clone()];
+                if let Some(score) = score {
+                    v.push(score.clone());
+                }
+                v
+            }
+            IR::EdgeByFulltextScan { edge, score, .. } => {
+                let mut v = vec![edge.clone()];
                 if let Some(score) = score {
                     v.push(score.clone());
                 }
@@ -936,6 +950,23 @@ impl<'a> Runtime<'a> {
                     idx,
                 )))
             }
+            IR::EdgeByFulltextScan {
+                edge,
+                label,
+                query,
+                score,
+            } => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::EdgeByFulltextScan(EdgeByFulltextScanOp::new(
+                    self,
+                    Box::new(child),
+                    edge,
+                    label,
+                    query,
+                    score,
+                    idx,
+                )))
+            }
             IR::NodeByLabelAndIdScan { node, filter } => {
                 let child = self.child_batch_op(idx)?;
                 Ok(BatchOp::NodeByLabelAndIdScan(NodeByLabelAndIdScanOp::new(
@@ -1376,10 +1407,24 @@ fn map_to_index_options(
                 None => None,
                 _ => return Err("Nostem must be bool".into()),
             };
+            // Phonetic accepts either a bool (true = enable, false =
+            // disable) or the algorithm code 'dm:en'. The Rust binding
+            // sets only RediSearch's default phonetic flag, which maps
+            // to Double Metaphone English — other algorithm codes
+            // (dm:fr / dm:pt / dm:es) aren't wired up here.
             let phonetic = match get("phonetic") {
                 Some(Value::Bool(b)) => Some(*b),
+                Some(Value::String(s)) => {
+                    if s.eq_ignore_ascii_case("dm:en") {
+                        Some(true)
+                    } else {
+                        return Err(format!(
+                            "Unsupported phonetic algorithm '{s}'; only 'dm:en' is supported"
+                        ));
+                    }
+                }
                 None => None,
-                _ => return Err("Phonetic must be bool".into()),
+                _ => return Err("Phonetic must be bool or string".into()),
             };
             let language = match get("language") {
                 Some(Value::String(s)) => Some(s.clone()),

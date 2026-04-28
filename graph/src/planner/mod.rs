@@ -117,6 +117,13 @@ pub enum IR {
         query: QueryExpr<Variable>,
         score: Option<Variable>,
     },
+    /// Scan edges using a fulltext index
+    EdgeByFulltextScan {
+        edge: Variable,
+        label: QueryExpr<Variable>,
+        query: QueryExpr<Variable>,
+        score: Option<Variable>,
+    },
     /// Lookup node by label and id
     NodeByLabelAndIdScan {
         node: Arc<QueryNode<Arc<String>, Variable>>,
@@ -350,7 +357,8 @@ pub fn plan_is_non_deterministic(plan: &DynTree<IR>) -> bool {
             IR::NodeByIndexScan { query, .. } | IR::EdgeByIndexScan { query, .. } => {
                 index_query_has_non_deterministic(query)
             }
-            IR::NodeByFulltextScan { label, query, .. } => {
+            IR::NodeByFulltextScan { label, query, .. }
+            | IR::EdgeByFulltextScan { label, query, .. } => {
                 expr_has_non_deterministic(label) || expr_has_non_deterministic(query)
             }
             IR::NodeByLabelAndIdScan { filter, .. } | IR::NodeByIdSeek { filter, .. } => {
@@ -425,6 +433,9 @@ impl Display for IR {
             }
             Self::NodeByFulltextScan { .. } => {
                 write!(f, "Node By Fulltext Index Scan")
+            }
+            Self::EdgeByFulltextScan { .. } => {
+                write!(f, "Edge By Fulltext Index Scan")
             }
             Self::NodeByLabelAndIdScan { node, .. } => {
                 write!(f, "Node By Label and ID Scan | {node}")
@@ -1963,12 +1974,40 @@ impl Planner {
                         entity_type: EntityType::Node,
                     });
                 }
+                // Resolve a yield slot by its canonical procedure-field name.
+                // Variable.name carries the original field name (the alias-
+                // before-AS) regardless of `YIELD … AS …` renaming, so this
+                // lookup is order- and alias-independent. The binder
+                // guarantees the entity field is yielded for these
+                // procedures, so `node` / `relationship` are always present.
+                let yield_by_field = |field: &str| -> Option<Variable> {
+                    named_outputs
+                        .iter()
+                        .find(|v| v.name.as_ref().is_some_and(|n| n.as_str() == field))
+                        .cloned()
+                };
                 if proc.name == "db.idx.fulltext.queryNodes" {
                     let scan = tree!(IR::NodeByFulltextScan {
-                        node: named_outputs[0].clone(),
+                        node: yield_by_field("node")
+                            .expect("binder ensures 'node' is yielded for queryNodes"),
                         label: exprs[0].clone(),
                         query: exprs[1].clone(),
-                        score: named_outputs.get(1).cloned(),
+                        score: yield_by_field("score"),
+                    });
+                    return if let Some(filter) = filter {
+                        tree!(IR::Filter(filter), scan)
+                    } else {
+                        scan
+                    };
+                }
+                if proc.name == "db.idx.fulltext.queryRelationships" {
+                    let scan = tree!(IR::EdgeByFulltextScan {
+                        edge: yield_by_field("relationship").expect(
+                            "binder ensures 'relationship' is yielded for queryRelationships"
+                        ),
+                        label: exprs[0].clone(),
+                        query: exprs[1].clone(),
+                        score: yield_by_field("score"),
                     });
                     return if let Some(filter) = filter {
                         tree!(IR::Filter(filter), scan)

@@ -483,6 +483,30 @@ impl Binder {
                             ));
                         }
                     }
+
+                    // The fulltext scan procedures are rewritten to dedicated
+                    // scan operators in the planner; the rewrite needs the
+                    // entity-field slot to bind the matched node/relationship
+                    // into. Reject `YIELD score` without the entity field
+                    // up-front so the planner doesn't have to handle it.
+                    let required_entity = match func.name.as_str() {
+                        "db.idx.fulltext.queryNodes" => Some("node"),
+                        "db.idx.fulltext.queryRelationships" => Some("relationship"),
+                        _ => None,
+                    };
+                    if let Some(entity) = required_entity {
+                        let yielded_entity = vars.iter().enumerate().any(|(i, name)| {
+                            let field_name =
+                                aliases.get(i).and_then(|a| a.as_ref()).unwrap_or(name);
+                            field_name.as_str() == entity
+                        });
+                        if !yielded_entity {
+                            return Err(format!(
+                                "Procedure '{}' requires YIELD of '{}'",
+                                func.name, entity
+                            ));
+                        }
+                    }
                 }
 
                 let mut bound_vars = Vec::with_capacity(vars.len());

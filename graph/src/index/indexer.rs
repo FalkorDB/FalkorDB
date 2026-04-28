@@ -394,6 +394,20 @@ impl Indexer {
         Ok(IndexResultsIter::empty_scored())
     }
 
+    /// Like [`fulltext_query`], but for *edge* indexes: yields
+    /// `(src, dst, edge_id, score)` tuples read from the 24-byte
+    /// document key plus the RediSearch relevance score.
+    pub fn fulltext_query_edges(
+        &self,
+        label: &Arc<String>,
+        query: &str,
+    ) -> Result<super::ScoredEdgeTripleIter, String> {
+        if let Some(index) = self.index.read().get(label) {
+            return index.fulltext_query_edges(query);
+        }
+        Ok(super::ScoredEdgeTripleIter::empty())
+    }
+
     pub fn enable(
         &mut self,
         label: &Arc<String>,
