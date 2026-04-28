@@ -24,7 +24,7 @@
 //!
 //! On error or ROLLBACK, the Pending is simply dropped without applying.
 
-use std::{cell::RefCell, sync::Arc};
+use std::{cell::RefCell, ops::BitOrAssign, sync::Arc};
 
 use rustc_hash::FxHashMap;
 
@@ -128,6 +128,13 @@ pub struct Pending {
     /// from the tensor by the time `commit_edge_index` runs so the
     /// 24-byte RediSearch key must be reconstructable from here.
     index_remove_edge_docs: FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
+    /// Deferred index operations — accumulated across commit cycles,
+    /// applied only after the full query succeeds so that a failed
+    /// query never leaves stale entries in RediSearch.
+    deferred_index_adds: FxHashMap<u64, RoaringTreemap>,
+    deferred_index_removes: FxHashMap<u64, RoaringTreemap>,
+    deferred_edge_index_adds: FxHashMap<u64, RoaringTreemap>,
+    deferred_edge_index_removes: FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
     /// Schema baseline: number of labels when the current commit window started.
     schema_label_count: usize,
     /// Schema baseline: number of relationship types when the current commit window started.
@@ -163,6 +170,10 @@ impl Pending {
             index_remove_docs: FxHashMap::default(),
             index_add_edge_docs: FxHashMap::default(),
             index_remove_edge_docs: FxHashMap::default(),
+            deferred_index_adds: FxHashMap::default(),
+            deferred_index_removes: FxHashMap::default(),
+            deferred_edge_index_adds: FxHashMap::default(),
+            deferred_edge_index_removes: FxHashMap::default(),
             schema_label_count: 0,
             schema_rel_type_count: 0,
             schema_node_attr_count: 0,
@@ -792,20 +803,58 @@ impl Pending {
             g.borrow_mut()
                 .delete_relationships(&explicit_rels, &mut self.index_remove_edge_docs)?;
         }
-        // Commit attribute changes and indexes after all deletions have been
-        // applied. This ensures relationship_attrs.remove() pending_deletes
-        // (staged by delete_relationships) are included in commit_attrs().
+        // Commit attribute changes after all deletions have been applied.
+        // Index operations are deferred — they will be applied only after
+        // the full query succeeds to avoid stale RediSearch entries on
+        // rollback.
         {
             let mut g = g.borrow_mut();
             g.commit_attrs()?;
-            g.commit_index(&mut self.index_add_docs, &mut self.index_remove_docs);
-            g.commit_edge_index(
-                &mut self.index_add_edge_docs,
-                &mut self.index_remove_edge_docs,
-            );
+        }
+        // Accumulate index operations into deferred fields.
+        for (k, v) in self.index_add_docs.drain() {
+            self.deferred_index_adds
+                .entry(k)
+                .or_default()
+                .bitor_assign(&v);
+        }
+        for (k, v) in self.index_remove_docs.drain() {
+            self.deferred_index_removes
+                .entry(k)
+                .or_default()
+                .bitor_assign(&v);
+        }
+        for (k, v) in self.index_add_edge_docs.drain() {
+            self.deferred_edge_index_adds
+                .entry(k)
+                .or_default()
+                .bitor_assign(&v);
+        }
+        for (k, v) in self.index_remove_edge_docs.drain() {
+            self.deferred_edge_index_removes
+                .entry(k)
+                .or_default()
+                .extend(v);
         }
 
         Ok(())
+    }
+
+    /// Apply deferred index operations to RediSearch. Called only after the
+    /// full query succeeds, so a failed query never leaves stale index entries.
+    pub fn commit_deferred_indexes(
+        &mut self,
+        g: &AtomicRefCell<Graph>,
+    ) {
+        let mut g = g.borrow_mut();
+        g.commit_index(
+            &mut self.deferred_index_adds,
+            &mut self.deferred_index_removes,
+        );
+        g.commit_edge_index(
+            &mut self.deferred_edge_index_adds,
+            &mut self.deferred_edge_index_removes,
+        );
     }
 
     /// Clear all pending mutation state.

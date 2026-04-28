@@ -710,14 +710,17 @@ impl<'a> Parser<'a> {
         }
 
         // CALL procedure() — existing procedure call parsing
+        // Parentheses are optional: `CALL db.labels` is equivalent to `CALL db.labels()`.
         let function_name = self.parse_dotted_ident()?;
         let func = get_functions().get(function_name.as_str(), &FnType::Procedure(vec![]))?;
-        match_token!(self.lexer, LParen);
-        let args: Vec<Arc<_>> = self
-            .parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen), false)?
-            .into_iter()
-            .map(Arc::new)
-            .collect();
+        let args: Vec<Arc<_>> = if optional_match_token!(self.lexer, LParen) {
+            self.parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen), false)?
+                .into_iter()
+                .map(Arc::new)
+                .collect()
+        } else {
+            vec![]
+        };
         func.validate(args.len())
             .map_err(|e| e.replace("function", "procedure"))?;
         let mut named_outputs = vec![];

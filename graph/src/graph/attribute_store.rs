@@ -143,6 +143,15 @@ pub struct AttributeStore {
     dirty_entities: RoaringTreemap,
     /// Entity IDs pending full deletion (all attributes) — applied on commit, cleared on rollback.
     pending_deletes: RoaringTreemap,
+    /// Accumulated dirty entity IDs from prior commits within the same write
+    /// transaction. Used by `rollback_cache()` to invalidate cache entries
+    /// that were committed by an earlier `CommitOp` but need to be undone
+    /// because a later operator in the same query failed.
+    committed_dirty: RoaringTreemap,
+    /// Saved original cache entries captured before the first modification
+    /// within a write transaction. On rollback, these are restored to undo
+    /// cache mutations, since the cache is shared with the read version.
+    saved_for_rollback: FxHashMap<u64, Arc<Vec<(u16, Value)>>>,
 }
 
 impl Clone for AttributeStore {
@@ -156,6 +165,8 @@ impl Clone for AttributeStore {
             version: self.version,
             dirty_entities: self.dirty_entities.clone(),
             pending_deletes: self.pending_deletes.clone(),
+            committed_dirty: self.committed_dirty.clone(),
+            saved_for_rollback: self.saved_for_rollback.clone(),
         }
     }
 }
@@ -194,6 +205,8 @@ impl AttributeStore {
             version,
             dirty_entities: RoaringTreemap::new(),
             pending_deletes: RoaringTreemap::new(),
+            committed_dirty: RoaringTreemap::new(),
+            saved_for_rollback: FxHashMap::default(),
         }
     }
 
@@ -256,6 +269,8 @@ impl AttributeStore {
             version,
             dirty_entities: RoaringTreemap::new(),
             pending_deletes: RoaringTreemap::new(),
+            committed_dirty: RoaringTreemap::new(),
+            saved_for_rollback: FxHashMap::default(),
         }
     }
 
@@ -378,6 +393,14 @@ impl AttributeStore {
         &mut self,
         key: u64,
     ) -> Result<(), String> {
+        // Save original cache entry for rollback (only the first time).
+        if !self.saved_for_rollback.contains_key(&key) {
+            let current = self
+                .cache
+                .get_entity(key, self.version)
+                .unwrap_or_else(|| self.populate_cache_from_fjall(key));
+            self.saved_for_rollback.insert(key, current);
+        }
         // Don't invalidate cache — older MVCC versions sharing this cache may
         // still need the dirty entry. pending_deletes guards reads on this
         // version; the cache entry is harmless to older/newer readers because
@@ -534,9 +557,17 @@ impl AttributeStore {
         &mut self,
         keys: &RoaringTreemap,
     ) {
-        // Only track in pending_deletes — no need to add to dirty_entities
-        // since deleted entities don't need cache write-back on flush.
-        // rollback_cache() handles pending_deletes separately.
+        // Save original cache entries for rollback so that bulk deletes
+        // don't lose cache-only attributes when rollback_cache() runs.
+        for key in keys {
+            if !self.saved_for_rollback.contains_key(&key) {
+                let current = self
+                    .cache
+                    .get_entity(key, self.version)
+                    .unwrap_or_else(|| self.populate_cache_from_fjall(key));
+                self.saved_for_rollback.insert(key, current);
+            }
+        }
         self.pending_deletes |= keys;
     }
 
@@ -653,6 +684,11 @@ impl AttributeStore {
                     merged.push((new_entries[ni].0, new_entries[ni].1.clone()));
                     ni += 1;
                 }
+            }
+
+            // Save original cache entry for rollback (only the first time).
+            if !self.saved_for_rollback.contains_key(key) {
+                self.saved_for_rollback.insert(*key, current.clone());
             }
 
             // Write merged attrs to cache as dirty (already sorted, skip re-sort).
@@ -792,6 +828,10 @@ impl AttributeStore {
             let _ = new_snapshot.set(get_database().snapshot());
             self.snapshot = new_snapshot;
         }
+        // Accumulate dirty/deleted entity IDs so rollback_cache() can still
+        // invalidate them if a later operator in the same query fails.
+        self.committed_dirty |= &self.dirty_entities;
+        self.committed_dirty |= &self.pending_deletes;
         self.dirty_entities.clear();
         self.pending_deletes.clear();
         Ok(())
@@ -802,10 +842,29 @@ impl AttributeStore {
     /// Invalidate all dirty entities from the shared cache.
     /// Called on write-transaction rollback.
     pub fn rollback_cache(&mut self) {
-        self.cache.invalidate_batch(&self.dirty_entities);
-        self.cache.invalidate_batch(&self.pending_deletes);
+        // Collect entity IDs that have saved originals so we skip invalidating them.
+        let restored: RoaringTreemap = self.saved_for_rollback.keys().copied().collect();
+
+        // Restore saved original cache entries for entities that were
+        // modified during this write transaction. This is needed because the
+        // cache is shared between MVCC versions — simply invalidating would
+        // lose unflushed data that was never written to fjall.
+        for (entity_id, original_attrs) in self.saved_for_rollback.drain() {
+            self.cache.insert_entity_presorted(
+                entity_id,
+                (*original_attrs).clone(),
+                self.version.saturating_sub(1),
+                true,
+            );
+        }
+        // Invalidate any remaining dirty entities not covered by saved entries
+        // (e.g., newly created entities that had no prior cache entry).
+        let to_invalidate =
+            (&self.dirty_entities | &self.pending_deletes | &self.committed_dirty) - &restored;
+        self.cache.invalidate_batch(&to_invalidate);
         self.dirty_entities.clear();
         self.pending_deletes.clear();
+        self.committed_dirty.clear();
     }
 
     /// Flush dirty cache entries to fjall.
