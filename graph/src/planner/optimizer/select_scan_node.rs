@@ -65,7 +65,7 @@ use crate::{
     tree,
 };
 
-use super::super::{IR, inline_node_attrs_to_filter};
+use super::super::{IR, inline_attrs_to_filter};
 
 /// Scores a candidate scan endpoint for the scan node selection optimizer.
 ///
@@ -141,11 +141,11 @@ fn collect_filtered_vars(
 /// Creates a scan subtree for the given node, with an optional inline attr filter.
 /// Returns a `DynTree<IR>` containing `[Filter →] NodeByLabelScan|AllNodeScan`.
 fn make_scan_subtree(node: &Arc<QueryNode<Arc<String>, Variable>>) -> DynTree<IR> {
-    let (clean_node, attr_filter) = inline_node_attrs_to_filter(node);
-    let mut scan = if clean_node.labels.is_empty() {
-        DynTree::new(IR::AllNodeScan(clean_node))
+    let attr_filter = inline_attrs_to_filter(&node.alias, &node.attrs);
+    let mut scan = if node.labels.is_empty() {
+        DynTree::new(IR::AllNodeScan(node.clone()))
     } else {
-        DynTree::new(IR::NodeByLabelScan(clean_node))
+        DynTree::new(IR::NodeByLabelScan(node.clone()))
     };
     if let Some(filter_expr) = attr_filter {
         scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);

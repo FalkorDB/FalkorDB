@@ -329,6 +329,19 @@ impl Indexer {
     }
 
     #[must_use]
+    pub fn has_field_for_label(
+        &self,
+        label: &Arc<String>,
+        field: &Arc<String>,
+        index_type: &IndexType,
+    ) -> bool {
+        if let Some(index) = self.index.read().get(label) {
+            return index.has_field_with_type(field, index_type);
+        }
+        false
+    }
+
+    #[must_use]
     pub fn is_label_indexed(
         &self,
         label: &Arc<String>,
