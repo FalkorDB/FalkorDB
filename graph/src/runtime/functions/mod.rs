@@ -227,6 +227,32 @@ macro_rules! cypher_fn {
         );
     };
 
+    // ── Internal variable-length argument function (FnType::Internal) ──
+    ($funcs:ident, $name:expr,
+     var_arg: $arg_type:expr,
+     ret: $ret:expr,
+     internal,
+     $(#[$attr:meta])*
+     fn $fn_name:ident($rt:pat, $args:pat) $body:block
+    ) => {
+        $(#[$attr])*
+        fn $fn_name(
+            $rt: &Runtime,
+            $args: ThinVec<Value>,
+        ) -> Result<Value, String>
+        $body
+
+        $funcs.add_var_len(
+            $name,
+            $fn_name,
+            false,
+            false,
+            $arg_type,
+            FnType::Internal,
+            $ret,
+        );
+    };
+
     // ── Internal function (FnType::Internal) ──
     ($funcs:ident, $name:expr,
      args: [$($arg:expr),* $(,)?],
@@ -767,6 +793,11 @@ impl Functions {
         Err(format!("Unknown function '{name}'"))
     }
 
+    /// Iterate over all registered functions.
+    pub fn iter(&self) -> impl Iterator<Item = &Arc<GraphFn>> {
+        self.functions.values()
+    }
+
     #[must_use]
     pub fn is_aggregate(
         &self,
@@ -842,6 +873,15 @@ pub fn flush_udfs() {
         reg.write().clear();
         UDF_VERSION.fetch_add(1, Ordering::Release);
     }
+}
+
+/// Snapshot the current UDF registry entries.
+/// Returns an empty Vec if the registry is not yet initialized.
+pub fn get_udf_functions() -> Vec<Arc<GraphFn>> {
+    UDF_FUNCTIONS
+        .get()
+        .map(|reg| reg.read().values().cloned().collect())
+        .unwrap_or_default()
 }
 
 pub fn get_functions() -> &'static Functions {

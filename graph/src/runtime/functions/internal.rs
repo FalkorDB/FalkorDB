@@ -121,11 +121,7 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "case",
-        args: [
-            Type::Any,
-            Type::Optional(Box::new(Type::Any)),
-            Type::Optional(Box::new(Type::Any)),
-        ],
+        var_arg: Type::Any,
         ret: Type::Any,
         internal,
         fn internal_case(_, args) {
@@ -155,6 +151,21 @@ pub fn register(funcs: &mut Functions) {
                 }
                 _ => unreachable!(),
             }
+        }
+    );
+
+    // ── add (internal, for dbms.functions() enumeration) ──────────────
+    // The actual `+` operator is handled by ExprIR::Add in the evaluator.
+    // This registration exists so dbms.functions() can enumerate it.
+    cypher_fn!(funcs, "add",
+        args: [
+            Type::Union(vec![Type::Map, Type::List(Box::new(Type::Any)), Type::Datetime, Type::Date, Type::Time, Type::Duration, Type::String, Type::Bool, Type::Int, Type::Float, Type::Null]),
+            Type::Union(vec![Type::Map, Type::List(Box::new(Type::Any)), Type::Datetime, Type::Date, Type::Time, Type::Duration, Type::String, Type::Bool, Type::Int, Type::Float, Type::Null]),
+        ],
+        ret: Type::Union(vec![Type::Map, Type::List(Box::new(Type::Any)), Type::Datetime, Type::Date, Type::Time, Type::Duration, Type::String, Type::Bool, Type::Int, Type::Float, Type::Null]),
+        internal,
+        fn internal_add(_, _args) {
+            Err(String::from("Internal function 'add' should not be called directly"))
         }
     );
 }

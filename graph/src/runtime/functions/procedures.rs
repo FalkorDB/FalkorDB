@@ -23,7 +23,7 @@
 
 #![allow(clippy::unnecessary_wraps)]
 
-use super::{FnType, Functions, Type};
+use super::{FnArguments, FnType, Functions, Type, get_functions, get_udf_functions};
 use crate::{
     index::indexer::{IndexInfo, IndexType},
     runtime::{ordermap::OrderMap, runtime::Runtime, value::Value},
@@ -54,8 +54,8 @@ pub fn register(funcs: &mut Functions) {
         }
     );
 
-    // ── db.relationshiptypes ───────────────────────────────────────────
-    cypher_fn!(funcs, "db.relationshiptypes",
+    // ── db.relationshipTypes ───────────────────────────────────────────
+    cypher_fn!(funcs, "db.relationshipTypes",
         args: [],
         ret: Type::Any,
         procedure: ["relationshipType"],
@@ -79,8 +79,8 @@ pub fn register(funcs: &mut Functions) {
         }
     );
 
-    // ── db.propertykeys ────────────────────────────────────────────────
-    cypher_fn!(funcs, "db.propertykeys",
+    // ── db.propertyKeys ────────────────────────────────────────────────
+    cypher_fn!(funcs, "db.propertyKeys",
         args: [],
         ret: Type::Any,
         procedure: ["propertyKey"],
@@ -327,4 +327,257 @@ pub fn register(funcs: &mut Functions) {
             Err(String::from("db.idx.fulltext.queryRelationships() is not supported in this version"))
         }
     );
+
+    // ── db.idx.fulltext.drop ──────────────────────────────────────────
+    cypher_fn!(funcs, "db.idx.fulltext.drop",
+        args: [Type::String],
+        ret: Type::Any,
+        write procedure: [],
+        fn db_fulltext_drop(_runtime, _args) {
+            Err(String::from("db.idx.fulltext.drop() is not supported in this version"))
+        }
+    );
+
+    // ── db.idx.vector.queryNodes ──────────────────────────────────────
+    cypher_fn!(funcs, "db.idx.vector.queryNodes",
+        args: [Type::String, Type::String, Type::Any, Type::Any],
+        ret: Type::Any,
+        procedure: ["node", "score"],
+        fn db_vector_query_nodes(_, _) {
+            Err(String::from("db.idx.vector.queryNodes() is not yet supported"))
+        }
+    );
+
+    // ── db.idx.vector.queryRelationships ──────────────────────────────
+    cypher_fn!(funcs, "db.idx.vector.queryRelationships",
+        args: [Type::String, Type::String, Type::Any, Type::Any],
+        ret: Type::Any,
+        procedure: ["relationship", "score"],
+        fn db_vector_query_relationships(_, _) {
+            Err(String::from("db.idx.vector.queryRelationships() is not yet supported"))
+        }
+    );
+
+    // ── db.constraints ────────────────────────────────────────────────
+    cypher_fn!(funcs, "db.constraints",
+        args: [],
+        ret: Type::Any,
+        procedure: ["type", "label", "properties", "entitytype", "status"],
+        fn db_constraints(_runtime, _args) {
+            // No constraints support yet — return empty result set.
+            Ok(Value::List(Arc::new(thin_vec![])))
+        }
+    );
+
+    // ── dbms.procedures ───────────────────────────────────────────────
+    cypher_fn!(funcs, "dbms.procedures",
+        args: [],
+        ret: Type::Any,
+        procedure: ["name", "mode"],
+        fn dbms_procedures(_, _args) {
+            let funcs = get_functions();
+            let mut rows: Vec<Value> = funcs
+                .iter()
+                .filter(|f| matches!(f.fn_type, FnType::Procedure(_)))
+                .map(|f| {
+                    let mut map = OrderMap::default();
+                    map.insert(
+                        Arc::new(String::from("name")),
+                        Value::String(Arc::new(f.name.clone())),
+                    );
+                    map.insert(
+                        Arc::new(String::from("mode")),
+                        Value::String(Arc::new(String::from(
+                            if f.write { "WRITE" } else { "READ" },
+                        ))),
+                    );
+                    Value::Map(Arc::new(map))
+                })
+                .collect();
+            rows.sort_by(|a, b| {
+                let a_name = if let Value::Map(m) = a {
+                    m.get(&Arc::new(String::from("name")))
+                        .and_then(|v| if let Value::String(s) = v { Some(s.as_str()) } else { None })
+                        .unwrap_or("")
+                } else {
+                    ""
+                };
+                let b_name = if let Value::Map(m) = b {
+                    m.get(&Arc::new(String::from("name")))
+                        .and_then(|v| if let Value::String(s) = v { Some(s.as_str()) } else { None })
+                        .unwrap_or("")
+                } else {
+                    ""
+                };
+                a_name.cmp(b_name)
+            });
+            Ok(Value::List(Arc::new(rows.into())))
+        }
+    );
+
+    // ── dbms.functions ────────────────────────────────────────────────
+    cypher_fn!(funcs, "dbms.functions",
+        args: [],
+        ret: Type::Any,
+        procedure: ["name", "return_type", "arguments", "internal", "reducible", "aggregation", "variable_len", "udf"],
+        fn dbms_functions(_, _args) {
+            let funcs = get_functions();
+            let mut seen_names = std::collections::HashSet::new();
+            let mut rows: Vec<Value> = Vec::new();
+
+            // Built-in functions first (non-procedure entries).
+            for f in funcs.iter().filter(|f| !matches!(f.fn_type, FnType::Procedure(_))) {
+                seen_names.insert(f.name.to_lowercase());
+                rows.push(build_function_row(f));
+            }
+
+            // UDF entries from the dynamic registry.
+            for f in get_udf_functions() {
+                if seen_names.insert(f.name.to_lowercase()) {
+                    rows.push(build_function_row(&f));
+                }
+            }
+
+            rows.sort_by(|a, b| {
+                let a_name = if let Value::Map(m) = a {
+                    m.get(&Arc::new(String::from("name")))
+                        .and_then(|v| if let Value::String(s) = v { Some(s.as_str()) } else { None })
+                        .unwrap_or("")
+                } else {
+                    ""
+                };
+                let b_name = if let Value::Map(m) = b {
+                    m.get(&Arc::new(String::from("name")))
+                        .and_then(|v| if let Value::String(s) = v { Some(s.as_str()) } else { None })
+                        .unwrap_or("")
+                } else {
+                    ""
+                };
+                a_name.cmp(b_name)
+            });
+            Ok(Value::List(Arc::new(rows.into())))
+        }
+    );
+}
+
+/// Build a single result row for `dbms.functions()`.
+fn build_function_row(f: &super::GraphFn) -> Value {
+    let mut map = OrderMap::default();
+    map.insert(
+        Arc::new(String::from("name")),
+        Value::String(Arc::new(f.name.clone())),
+    );
+    map.insert(
+        Arc::new(String::from("return_type")),
+        Value::String(Arc::new(type_to_dbms_string(&f.ret_type))),
+    );
+    let args_list: thin_vec::ThinVec<Value> = match &f.args_type {
+        FnArguments::Fixed(types) => types
+            .iter()
+            .map(|t| Value::String(Arc::new(type_to_dbms_string(t))))
+            .collect(),
+        FnArguments::VarLength(t) => {
+            thin_vec::thin_vec![Value::String(Arc::new(type_to_dbms_string(t)))]
+        }
+    };
+    map.insert(
+        Arc::new(String::from("arguments")),
+        Value::List(Arc::new(args_list)),
+    );
+    map.insert(
+        Arc::new(String::from("internal")),
+        Value::Bool(matches!(f.fn_type, FnType::Internal)),
+    );
+    let reducible = !f.non_deterministic
+        && !matches!(f.fn_type, FnType::Aggregation { .. } | FnType::Procedure(_));
+    map.insert(Arc::new(String::from("reducible")), Value::Bool(reducible));
+    map.insert(
+        Arc::new(String::from("aggregation")),
+        Value::Bool(matches!(f.fn_type, FnType::Aggregation { .. })),
+    );
+    map.insert(
+        Arc::new(String::from("variable_len")),
+        Value::Bool(matches!(f.args_type, FnArguments::VarLength(_))),
+    );
+    map.insert(
+        Arc::new(String::from("udf")),
+        Value::Bool(matches!(f.fn_type, FnType::Udf)),
+    );
+    Value::Map(Arc::new(map))
+}
+
+/// Convert a `Type` to a display string matching the original FalkorDB format.
+fn type_to_dbms_string(t: &Type) -> String {
+    match t {
+        Type::Any => format_union(&[
+            "Map",
+            "Node",
+            "Edge",
+            "List",
+            "Path",
+            "Datetime",
+            "Date",
+            "Time",
+            "Duration",
+            "String",
+            "Boolean",
+            "Integer",
+            "Float",
+            "Null",
+            "Pointer",
+            "Point",
+            "Vectorf32",
+        ]),
+        Type::Null => String::from("Null"),
+        Type::Bool => String::from("Boolean"),
+        Type::Int => String::from("Integer"),
+        Type::Float => String::from("Float"),
+        Type::String => String::from("String"),
+        Type::List(_) => String::from("List"),
+        Type::Map => String::from("Map"),
+        Type::Node => String::from("Node"),
+        Type::Relationship => String::from("Edge"),
+        Type::Path => String::from("Path"),
+        Type::VecF32 => String::from("Vectorf32"),
+        Type::Point => String::from("Point"),
+        Type::Datetime => String::from("Datetime"),
+        Type::Date => String::from("Date"),
+        Type::Time => String::from("Time"),
+        Type::Duration => String::from("Duration"),
+        Type::Union(types) => {
+            let strs: Vec<String> = types.iter().map(type_to_dbms_string).collect();
+            format_union_strings(&strs)
+        }
+        Type::Optional(inner) => type_to_dbms_string(inner),
+    }
+}
+
+fn format_union(types: &[&str]) -> String {
+    match types.len() {
+        0 => String::new(),
+        1 => String::from(types[0]),
+        2 => format!("{} or {}", types[0], types[1]),
+        _ => {
+            let (last, rest) = types.split_last().unwrap();
+            format!("{}, or {last}", rest.join(", "))
+        }
+    }
+}
+
+fn format_union_strings(types: &[String]) -> String {
+    match types.len() {
+        0 => String::new(),
+        1 => types[0].clone(),
+        2 => format!("{} or {}", types[0], types[1]),
+        _ => {
+            let (last, rest) = types.split_last().unwrap();
+            format!(
+                "{}, or {last}",
+                rest.iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
+    }
 }
