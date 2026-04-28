@@ -84,10 +84,11 @@ use crate::{
     entity_type::EntityType,
     graph::{
         attribute_store::AttributeStore,
+        constraint::{Constraint, ConstraintStatus, ConstraintType},
         graphblas::{
             matrix::{
-                Dup, MaskedElementWiseAdd, MaskedElementWiseMultiply, Matrix, MxM, New, Remove,
-                Set, Size, Transpose,
+                Dup, Get, MaskedElementWiseAdd, MaskedElementWiseMultiply, Matrix, MxM, New,
+                Remove, Set, Size, Transpose,
             },
             serialization::{Encode, EncodeState, PayloadEntry, Writer},
             tensor::Tensor,
@@ -278,6 +279,8 @@ pub struct Graph {
     relationship_types: Vec<Arc<String>>,
     /// LRU cache for query plans
     cache: Arc<Mutex<LruCache<String, PlanTree>>>,
+    /// Graph constraints (unique, mandatory)
+    constraints: Vec<Constraint>,
     /// Version counter (incremented on each write transaction)
     pub version: u64,
     /// Schema version (incremented only on schema changes: new labels, relationship types, or attributes)
@@ -588,6 +591,7 @@ impl Graph {
             cache: Arc::new(Mutex::new(LruCache::new(
                 NonZeroUsize::new(cache_size.max(1)).expect("cache_size.max(1) is always >= 1"),
             ))),
+            constraints: Vec::new(),
             version,
             schema_version: 0,
         }
@@ -646,6 +650,7 @@ impl Graph {
             cache: Arc::new(Mutex::new(LruCache::new(
                 NonZeroUsize::new(cache_size.max(1)).expect("cache_size.max(1) is always >= 1"),
             ))),
+            constraints: Vec::new(),
             version: 0,
             schema_version,
         }
@@ -721,6 +726,7 @@ impl Graph {
             node_labels: self.node_labels.clone(),
             relationship_types: self.relationship_types.clone(),
             cache: self.cache.clone(),
+            constraints: self.constraints.clone(),
             version: self.version + 1,
             schema_version: self.schema_version,
         }
@@ -862,6 +868,36 @@ impl Graph {
             .map(TypeId)
     }
 
+    /// Check if a node has a specific label.
+    pub fn node_has_label(
+        &self,
+        node_id: NodeId,
+        label: &str,
+    ) -> bool {
+        if let Some(label_id) = self.get_label_id(label) {
+            self.node_labels_matrix
+                .get(node_id.0, label_id.0 as u64)
+                .is_some()
+        } else {
+            false
+        }
+    }
+
+    /// Check if an edge has a specific relationship type.
+    pub fn edge_has_type(
+        &self,
+        edge_id: RelationshipId,
+        type_name: &str,
+    ) -> bool {
+        if let Some(type_id) = self.get_type_id(type_name) {
+            self.relationship_type_matrix
+                .get(edge_id.0, type_id.0 as u64)
+                .is_some()
+        } else {
+            false
+        }
+    }
+
     /// Get-or-create a relationship type by name, returning its `TypeId`.
     pub fn get_type_id_mut(
         &mut self,
@@ -957,7 +993,7 @@ impl Graph {
         ))
     }
 
-    fn get_label_matrix(
+    pub fn get_label_matrix(
         &self,
         label: &str,
     ) -> Option<&VersionedMatrix> {
@@ -1005,7 +1041,7 @@ impl Graph {
             .expect("relationship type was just inserted")
     }
 
-    fn get_relationship_matrix(
+    pub fn get_relationship_matrix(
         &self,
         relationship_type: &Arc<String>,
     ) -> Option<&Tensor> {
@@ -2502,6 +2538,13 @@ impl Graph {
         label: &Arc<String>,
         attrs: &Vec<Arc<String>>,
     ) -> Result<usize, String> {
+        // Check if any UNIQUE constraint depends on this index
+        for attr in attrs {
+            if self.constraint_depends_on_index(entity_type, label, attr) {
+                return Err("Index supports constraint".to_string());
+            }
+        }
+
         let (indexer, total, kind) = match entity_type {
             EntityType::Node => {
                 let total = self
@@ -2641,6 +2684,251 @@ impl Graph {
         }
         infos.extend(edge_infos);
         infos
+    }
+
+    // ── Constraint management ─────────────────────────────────────────
+
+    pub fn constraints(&self) -> &[Constraint] {
+        &self.constraints
+    }
+
+    pub fn constraints_mut(&mut self) -> &mut Vec<Constraint> {
+        &mut self.constraints
+    }
+
+    /// Create a constraint with validation of existing data.
+    pub fn create_constraint(
+        &mut self,
+        ct: ConstraintType,
+        entity_type: EntityType,
+        label: Arc<String>,
+        properties: Vec<Arc<String>>,
+    ) -> Result<(), String> {
+        // For UNIQUE constraints, check supporting index
+        if ct == ConstraintType::Unique {
+            if !self.has_supporting_index(&entity_type, &label, &properties) {
+                return Err("missing supporting exact-match index".into());
+            }
+        }
+
+        // Check for duplicates
+        let existing_idx = self
+            .constraints
+            .iter()
+            .position(|c| c.matches(&ct, &entity_type, &label, &properties));
+        if let Some(idx) = existing_idx {
+            if self.constraints[idx].status == ConstraintStatus::Failed {
+                // Remove the failed constraint so it can be recreated
+                self.constraints.remove(idx);
+            } else {
+                return Err("Constraint already exists".into());
+            }
+        }
+
+        let mut constraint = Constraint::new(ct, entity_type, label, properties);
+
+        // Get entity count to decide sync vs async validation
+        let count = self.get_constraint_entity_count(&constraint);
+
+        if count <= 10_000 {
+            // Synchronous validation
+            if self.validate_constraint(&constraint) {
+                constraint.status = ConstraintStatus::Operational;
+            } else {
+                constraint.status = ConstraintStatus::Failed;
+            }
+        } else {
+            // Async: mark under construction
+            constraint.status = ConstraintStatus::UnderConstruction;
+        }
+
+        self.constraints.push(constraint);
+        Ok(())
+    }
+
+    /// Add a constraint directly (for replication/restore). No validation.
+    pub fn add_constraint_raw(
+        &mut self,
+        constraint: Constraint,
+    ) {
+        self.constraints.push(constraint);
+    }
+
+    fn get_constraint_entity_count(
+        &self,
+        constraint: &Constraint,
+    ) -> u64 {
+        match constraint.entity_type {
+            EntityType::Node => self.label_node_count(&constraint.label),
+            EntityType::Relationship => self
+                .get_relationship_matrix(&constraint.label)
+                .map_or(0, |t| t.edge_count()),
+        }
+    }
+
+    fn validate_constraint(
+        &self,
+        constraint: &Constraint,
+    ) -> bool {
+        match constraint.ct {
+            ConstraintType::Mandatory => self.validate_mandatory_constraint(constraint),
+            ConstraintType::Unique => self.validate_unique_constraint(constraint),
+        }
+    }
+
+    fn validate_mandatory_constraint(
+        &self,
+        constraint: &Constraint,
+    ) -> bool {
+        match constraint.entity_type {
+            EntityType::Node => {
+                let Some(lm) = self.get_label_matrix(&constraint.label) else {
+                    return true;
+                };
+                for (node_id, _) in lm.iter(0, u64::MAX) {
+                    let attrs = self.get_node_all_attrs(NodeId(node_id));
+                    for prop in &constraint.properties {
+                        if !attrs.iter().any(|(name, _)| name == prop) {
+                            return false;
+                        }
+                    }
+                }
+                true
+            }
+            EntityType::Relationship => {
+                let Some(tensor) = self.get_relationship_matrix(&constraint.label) else {
+                    return true;
+                };
+                for (_, _, edge_id) in tensor.iter(0, u64::MAX, false) {
+                    let attrs = self.get_relationship_all_attrs(RelationshipId(edge_id));
+                    for prop in &constraint.properties {
+                        if !attrs.iter().any(|(name, _)| name == prop) {
+                            return false;
+                        }
+                    }
+                }
+                true
+            }
+        }
+    }
+
+    fn validate_unique_constraint(
+        &self,
+        constraint: &Constraint,
+    ) -> bool {
+        match constraint.entity_type {
+            EntityType::Node => {
+                let Some(lm) = self.get_label_matrix(&constraint.label) else {
+                    return true;
+                };
+                let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
+                for (node_id, _) in lm.iter(0, u64::MAX) {
+                    let attrs = self.get_node_all_attrs(NodeId(node_id));
+                    let key = Self::build_composite_key(&constraint.properties, &attrs);
+                    if key.is_empty() {
+                        continue; // All NULL → skip
+                    }
+                    if !seen.insert(key) {
+                        return false;
+                    }
+                }
+                true
+            }
+            EntityType::Relationship => {
+                let Some(tensor) = self.get_relationship_matrix(&constraint.label) else {
+                    return true;
+                };
+                let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
+                for (_, _, edge_id) in tensor.iter(0, u64::MAX, false) {
+                    let attrs = self.get_relationship_all_attrs(RelationshipId(edge_id));
+                    let key = Self::build_composite_key(&constraint.properties, &attrs);
+                    if key.is_empty() {
+                        continue;
+                    }
+                    if !seen.insert(key) {
+                        return false;
+                    }
+                }
+                true
+            }
+        }
+    }
+
+    pub fn build_composite_key(
+        properties: &[Arc<String>],
+        attrs: &[(Arc<String>, Value)],
+    ) -> Vec<u8> {
+        let mut all_null = true;
+        let mut key = Vec::new();
+        for prop in properties {
+            let value = attrs.iter().find(|(name, _)| name == prop).map(|(_, v)| v);
+            match value {
+                Some(v) if !matches!(v, Value::Null) => {
+                    all_null = false;
+                    key.extend_from_slice(format!("{v:?}").as_bytes());
+                }
+                _ => {
+                    key.push(0); // NULL marker
+                }
+            }
+            key.push(b'|');
+        }
+        if all_null { Vec::new() } else { key }
+    }
+
+    /// Drop a constraint by type, entity type, label and properties.
+    pub fn drop_constraint(
+        &mut self,
+        ct: &ConstraintType,
+        entity_type: &EntityType,
+        label: &str,
+        properties: &[Arc<String>],
+    ) -> Result<(), String> {
+        let idx = self
+            .constraints
+            .iter()
+            .position(|c| c.matches(ct, entity_type, label, properties));
+        match idx {
+            Some(i) => {
+                self.constraints.swap_remove(i);
+                Ok(())
+            }
+            None => Err("Unable to drop constraint, no such constraint.".into()),
+        }
+    }
+
+    /// Check if a unique constraint for the given label and properties has
+    /// a supporting exact-match index for each property.
+    pub fn has_supporting_index(
+        &self,
+        entity_type: &EntityType,
+        label: &Arc<String>,
+        properties: &[Arc<String>],
+    ) -> bool {
+        let indexer = match entity_type {
+            EntityType::Node => &self.node_indexer,
+            EntityType::Relationship => &self.edge_indexer,
+        };
+        // Check if the index exists (regardless of operational status)
+        // since index population may still be in progress
+        properties
+            .iter()
+            .all(|prop| indexer.has_field_for_label(label, prop, &IndexType::Range))
+    }
+
+    /// Check if any UNIQUE constraint depends on an index for the given label and attribute.
+    pub fn constraint_depends_on_index(
+        &self,
+        entity_type: &EntityType,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+    ) -> bool {
+        self.constraints.iter().any(|c| {
+            c.ct == ConstraintType::Unique
+                && c.entity_type == *entity_type
+                && c.label.as_str() == label.as_str()
+                && c.properties.iter().any(|p| p.as_str() == attr.as_str())
+        })
     }
 
     pub fn cancel_indexing(&self) {

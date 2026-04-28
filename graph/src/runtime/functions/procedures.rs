@@ -363,9 +363,35 @@ pub fn register(funcs: &mut Functions) {
         args: [],
         ret: Type::Any,
         procedure: ["type", "label", "properties", "entitytype", "status"],
-        fn db_constraints(_runtime, _args) {
-            // No constraints support yet — return empty result set.
-            Ok(Value::List(Arc::new(thin_vec![])))
+        fn db_constraints(runtime, _args) {
+            let g = runtime.g.borrow();
+            let rows: ThinVec<Value> = g.constraints().iter().map(|c| {
+                let mut map = OrderMap::default();
+                map.insert(
+                    Arc::new(String::from("type")),
+                    Value::String(Arc::new(c.ct.to_string())),
+                );
+                map.insert(
+                    Arc::new(String::from("label")),
+                    Value::String(c.label.clone()),
+                );
+                map.insert(
+                    Arc::new(String::from("properties")),
+                    Value::List(Arc::new(
+                        c.properties.iter().map(|p| Value::String(p.clone())).collect(),
+                    )),
+                );
+                map.insert(
+                    Arc::new(String::from("entitytype")),
+                    Value::String(Arc::new(c.entity_type.to_string())),
+                );
+                map.insert(
+                    Arc::new(String::from("status")),
+                    Value::String(Arc::new(c.status.to_string())),
+                );
+                Value::Map(Arc::new(map))
+            }).collect();
+            Ok(Value::List(Arc::new(rows)))
         }
     );
 

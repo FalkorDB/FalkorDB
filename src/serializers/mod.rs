@@ -6,7 +6,9 @@ use std::collections::HashMap;
 use std::ffi::CString;
 use std::sync::{Arc, LazyLock};
 
+use graph::entity_type::EntityType;
 use graph::graph::attribute_store::AttributeStore;
+use graph::graph::constraint::{Constraint, ConstraintStatus, ConstraintType};
 use graph::graph::graph::Graph;
 use graph::graph::graphblas::serialization::{Decode, Encode, Reader, Writer, index_field_type};
 use graph::graph::graphblas::tensor::Tensor;
@@ -240,6 +242,7 @@ pub struct Schema {
     pub node_labels: Vec<Arc<String>>,
     pub relationship_types: Vec<Arc<String>>,
     pub indexes: Vec<IndexInfo>,
+    pub constraints: Vec<Constraint>,
 }
 
 fn null_terminated(s: &str) -> Vec<u8> {
@@ -289,8 +292,13 @@ impl Encode<19> for Schema {
                 .collect();
             encode_schema_index_block(w, &label_indices);
 
-            // Constraints (not implemented yet)
-            w.write_unsigned(0);
+            // Constraints for this node label
+            let label_constraints: Vec<&Constraint> = self
+                .constraints
+                .iter()
+                .filter(|c| c.entity_type == EntityType::Node && c.label.as_str() == label.as_str())
+                .collect();
+            encode_constraint_block(w, &label_constraints, &self.attribute_names);
         }
 
         // --- Relation schemas ---
@@ -312,8 +320,16 @@ impl Encode<19> for Schema {
                 .collect();
             encode_schema_index_block(w, &type_indices);
 
-            // Constraints (not implemented yet)
-            w.write_unsigned(0);
+            // Constraints for this relationship type
+            let type_constraints: Vec<&Constraint> = self
+                .constraints
+                .iter()
+                .filter(|c| {
+                    c.entity_type == EntityType::Relationship
+                        && c.label.as_str() == type_name.as_str()
+                })
+                .collect();
+            encode_constraint_block(w, &type_constraints, &self.attribute_names);
         }
     }
 }
@@ -398,6 +414,31 @@ fn encode_schema_index_block(
     }
 }
 
+/// Write the constraint block for a schema entry.
+/// Format per constraint: constraint_type (u64), field_count (u64), then attr_id (u64) per field.
+fn encode_constraint_block(
+    w: &mut dyn Writer,
+    constraints: &[&Constraint],
+    attribute_names: &[Arc<String>],
+) {
+    w.write_unsigned(constraints.len() as u64);
+    for c in constraints {
+        let ct = match c.ct {
+            ConstraintType::Unique => 0u64,
+            ConstraintType::Mandatory => 1u64,
+        };
+        w.write_unsigned(ct);
+        w.write_unsigned(c.properties.len() as u64);
+        for prop in &c.properties {
+            let attr_id = attribute_names
+                .iter()
+                .position(|a| a.as_str() == prop.as_str())
+                .unwrap_or(0) as u64;
+            w.write_unsigned(attr_id);
+        }
+    }
+}
+
 impl Decode<19> for Schema {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
         // --- Attribute keys ---
@@ -412,14 +453,19 @@ impl Decode<19> for Schema {
         let node_schema_count = r.read_unsigned()?;
         let mut node_labels = Vec::with_capacity(node_schema_count as usize);
         let mut indexes = Vec::new();
+        let mut constraints = Vec::new();
         for _ in 0..node_schema_count {
-            let (label, info) = decode_schema_entry(r)?;
+            let (label, info, mut schema_constraints) = decode_schema_entry(r, &attribute_names)?;
             let label = Arc::new(label);
             if let Some(mut info) = info {
                 info.label = label.clone();
                 info.entity_type = String::from("NODE");
                 indexes.push(info);
             }
+            for c in &mut schema_constraints {
+                c.entity_type = EntityType::Node;
+            }
+            constraints.extend(schema_constraints);
             node_labels.push(label);
         }
 
@@ -431,13 +477,18 @@ impl Decode<19> for Schema {
         let rel_schema_count = r.read_unsigned()?;
         let mut relationship_types = Vec::with_capacity(rel_schema_count as usize);
         for _ in 0..rel_schema_count {
-            let (type_name, info) = decode_schema_entry(r)?;
+            let (type_name, info, mut schema_constraints) =
+                decode_schema_entry(r, &attribute_names)?;
             let type_name = Arc::new(type_name);
             if let Some(mut info) = info {
                 info.label = type_name.clone();
                 info.entity_type = String::from("RELATIONSHIP");
                 indexes.push(info);
             }
+            for c in &mut schema_constraints {
+                c.entity_type = EntityType::Relationship;
+            }
+            constraints.extend(schema_constraints);
             relationship_types.push(type_name);
         }
 
@@ -446,11 +497,15 @@ impl Decode<19> for Schema {
             node_labels,
             relationship_types,
             indexes,
+            constraints,
         })
     }
 }
 
-fn decode_schema_entry(r: &mut dyn Reader) -> Result<(String, Option<IndexInfo>), String> {
+fn decode_schema_entry(
+    r: &mut dyn Reader,
+    attribute_names: &[Arc<String>],
+) -> Result<(String, Option<IndexInfo>, Vec<Constraint>), String> {
     let _schema_id = r.read_unsigned()?;
     let name_buf = r.read_buffer()?;
     let schema_name = strip_null_terminator(&name_buf);
@@ -498,15 +553,35 @@ fn decode_schema_entry(r: &mut dyn Reader) -> Result<(String, Option<IndexInfo>)
     };
 
     let constraint_count = r.read_unsigned()?;
+    let mut constraints = Vec::with_capacity(constraint_count as usize);
     for _ in 0..constraint_count {
-        let _constraint_type = r.read_unsigned()?;
+        let constraint_type_id = r.read_unsigned()?;
+        let ct = match constraint_type_id {
+            0 => ConstraintType::Unique,
+            _ => ConstraintType::Mandatory,
+        };
         let fields_count = r.read_unsigned()?;
+        let mut properties = Vec::with_capacity(fields_count as usize);
         for _ in 0..fields_count {
-            let _attr_id = r.read_unsigned()?;
+            let attr_id = r.read_unsigned()? as usize;
+            let prop_name = if attr_id < attribute_names.len() {
+                attribute_names[attr_id].clone()
+            } else {
+                Arc::new(format!("attr_{attr_id}"))
+            };
+            properties.push(prop_name);
         }
+        let mut c = Constraint::new(
+            ct,
+            EntityType::Node, // placeholder, caller stamps entity type
+            Arc::new(schema_name.clone()),
+            properties,
+        );
+        c.status = ConstraintStatus::Operational;
+        constraints.push(c);
     }
 
-    Ok((schema_name, index))
+    Ok((schema_name, index, constraints))
 }
 
 fn decode_index_field(r: &mut dyn Reader) -> Result<(Arc<String>, Field), String> {
@@ -595,12 +670,14 @@ impl Schema {
         let node_labels = graph.get_labels().to_vec();
         let relationship_types = graph.get_types().to_vec();
         let indexes = graph.index_info();
+        let constraints = graph.constraints().to_vec();
 
         Self {
             attribute_names,
             node_labels,
             relationship_types,
             indexes,
+            constraints,
         }
     }
 }

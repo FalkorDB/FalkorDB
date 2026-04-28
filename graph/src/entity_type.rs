@@ -21,3 +21,15 @@ pub enum EntityType {
     /// Index on relationship properties
     Relationship,
 }
+
+impl std::fmt::Display for EntityType {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        match self {
+            Self::Node => write!(f, "NODE"),
+            Self::Relationship => write!(f, "RELATIONSHIP"),
+        }
+    }
+}

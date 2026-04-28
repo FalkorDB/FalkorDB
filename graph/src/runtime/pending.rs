@@ -32,7 +32,11 @@ use atomic_refcell::AtomicRefCell;
 use roaring::RoaringTreemap;
 
 use crate::{
-    graph::graph::{Graph, LabelId, NodeId, RelationshipId},
+    entity_type::EntityType,
+    graph::{
+        constraint::{ConstraintStatus, ConstraintType},
+        graph::{Graph, LabelId, NodeId, RelationshipId},
+    },
     runtime::{ordermap::OrderMap, orderset::OrderSet, runtime::QueryStatistics, value::Value},
 };
 
@@ -811,6 +815,10 @@ impl Pending {
             let mut g = g.borrow_mut();
             g.commit_attrs()?;
         }
+
+        // Enforce constraints on affected entities.
+        self.enforce_constraints(g)?;
+
         // Accumulate index operations into deferred fields.
         for (k, v) in self.index_add_docs.drain() {
             self.deferred_index_adds
@@ -837,6 +845,196 @@ impl Pending {
                 .extend(v);
         }
 
+        Ok(())
+    }
+
+    /// Enforce graph constraints on all entities affected by this transaction.
+    fn enforce_constraints(
+        &self,
+        g: &AtomicRefCell<Graph>,
+    ) -> Result<(), String> {
+        let g = g.borrow();
+        let constraints = g.constraints();
+        if constraints.is_empty() {
+            return Ok(());
+        }
+
+        // Collect affected node IDs and their labels
+        // Affected = created + had attributes modified + had labels added
+        let mut affected_node_ids = RoaringTreemap::new();
+        affected_node_ids |= &self.created_nodes;
+        for &id in self.new_nodes_attrs.keys() {
+            affected_node_ids.insert(id);
+        }
+        for &id in self.existing_nodes_attrs.keys() {
+            affected_node_ids.insert(id);
+        }
+        for &id in self.set_labels.keys() {
+            affected_node_ids.insert(id);
+        }
+
+        // Collect affected edge IDs
+        let mut affected_edge_ids = RoaringTreemap::new();
+        for rels in self.created_rels_by_type.values() {
+            for &(rel_id, _, _) in rels {
+                affected_edge_ids.insert(rel_id.into());
+            }
+        }
+        for &id in self.new_relationships_attrs.keys() {
+            affected_edge_ids.insert(id);
+        }
+        for &id in self.existing_relationships_attrs.keys() {
+            affected_edge_ids.insert(id);
+        }
+
+        // Remove deleted entities from affected sets
+        for id in &self.deleted_nodes {
+            affected_node_ids.remove(id);
+        }
+        for &rel_id in self.deleted_relationships.keys() {
+            affected_edge_ids.remove(rel_id.into());
+        }
+
+        // Check each OPERATIONAL constraint
+        for constraint in constraints {
+            if constraint.status != ConstraintStatus::Operational {
+                continue;
+            }
+
+            match constraint.entity_type {
+                EntityType::Node => {
+                    self.check_node_constraint(&g, constraint, &affected_node_ids)?;
+                }
+                EntityType::Relationship => {
+                    self.check_edge_constraint(&g, constraint, &affected_edge_ids)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn check_node_constraint(
+        &self,
+        g: &Graph,
+        constraint: &crate::graph::constraint::Constraint,
+        affected_node_ids: &RoaringTreemap,
+    ) -> Result<(), String> {
+        let label = &constraint.label;
+
+        for node_id in affected_node_ids {
+            // Check if this node has the constrained label
+            if !g.node_has_label(node_id.into(), label) {
+                continue;
+            }
+
+            let attrs = g.get_node_all_attrs(node_id.into());
+
+            match constraint.ct {
+                ConstraintType::Mandatory => {
+                    for prop in &constraint.properties {
+                        let has_prop = attrs
+                            .iter()
+                            .any(|(name, val)| name == prop && !matches!(val, Value::Null));
+                        if !has_prop {
+                            return Err(format!(
+                                "mandatory constraint violation: node with label {} missing property {}",
+                                label, prop
+                            ));
+                        }
+                    }
+                }
+                ConstraintType::Unique => {
+                    let key = Graph::build_composite_key(&constraint.properties, &attrs);
+                    if key.is_empty() {
+                        continue; // All NULL → no violation
+                    }
+
+                    if let Some(lm) = g.get_label_matrix(label) {
+                        for (other_id, _) in lm.iter(0, u64::MAX) {
+                            if other_id == node_id {
+                                continue;
+                            }
+                            let other_attrs = g.get_node_all_attrs(other_id.into());
+                            let other_key =
+                                Graph::build_composite_key(&constraint.properties, &other_attrs);
+                            if key == other_key {
+                                return Err(format!(
+                                    "unique constraint violation on node of type {}",
+                                    label
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn check_edge_constraint(
+        &self,
+        g: &Graph,
+        constraint: &crate::graph::constraint::Constraint,
+        affected_edge_ids: &RoaringTreemap,
+    ) -> Result<(), String> {
+        let type_name = &constraint.label;
+
+        for edge_id in affected_edge_ids {
+            if !g.edge_has_type(edge_id.into(), type_name) {
+                continue;
+            }
+
+            let attrs = g.get_relationship_all_attrs(edge_id.into());
+
+            match constraint.ct {
+                ConstraintType::Mandatory => {
+                    for prop in &constraint.properties {
+                        let has_prop = attrs
+                            .iter()
+                            .any(|(name, val)| name == prop && !matches!(val, Value::Null));
+                        if !has_prop {
+                            return Err(format!(
+                                "mandatory constraint violation: edge with relationship-type {} missing property {}",
+                                type_name, prop
+                            ));
+                        }
+                    }
+                }
+                ConstraintType::Unique => {
+                    let key = Graph::build_composite_key(&constraint.properties, &attrs);
+                    if key.is_empty() {
+                        continue;
+                    }
+
+                    // Check against all other edges of same type
+                    if let Some(tensor) = g.get_relationship_matrix(type_name) {
+                        let mut edge_count = 0u64;
+                        for (_, _, other_eid) in tensor.iter(0, u64::MAX, false) {
+                            edge_count += 1;
+                            if other_eid == edge_id {
+                                continue;
+                            }
+                            let other_attrs = g.get_relationship_all_attrs(other_eid.into());
+                            let other_key =
+                                Graph::build_composite_key(&constraint.properties, &other_attrs);
+                            if key == other_key {
+                                return Err(format!(
+                                    "unique constraint violation, on edge of relationship-type {}",
+                                    type_name
+                                ));
+                            }
+                        }
+                        eprintln!(
+                            "DEBUG: edge unique check for edge_id={edge_id}, type={type_name}, constraint_props={:?}, edge_attrs={:?}, key={key:?}, iterated {edge_count} edges",
+                            constraint.properties, attrs
+                        );
+                    } else {
+                        eprintln!("DEBUG: no tensor found for type={type_name}");
+                    }
+                }
+            }
+        }
         Ok(())
     }
 

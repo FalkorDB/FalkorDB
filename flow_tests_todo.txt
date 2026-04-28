@@ -4,7 +4,6 @@ tests/flow/test_relation_patterns.py
 
 ## Indexing
 tests/flow/test_vecsim.py
-tests/flow/test_constraint.py
 
 ## Concurrency & Multi-writer
 tests/flow/test_stress.py

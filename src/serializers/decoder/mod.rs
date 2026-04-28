@@ -83,6 +83,7 @@ pub fn rdb_load_graph(
                     node_labels: schema.node_labels.clone(),
                     relationship_types: schema.relationship_types.clone(),
                     indexes: schema.indexes,
+                    constraints: schema.constraints,
                 },
                 node_attrs: node_attrs_init,
                 rel_attrs,
@@ -205,6 +206,9 @@ pub fn rdb_load_graph(
 
     graph.rebuild_derived_matrices();
     rebuild_indexes(&mut graph, &schema.indexes);
+    for c in schema.constraints {
+        graph.add_constraint_raw(c);
+    }
     graph.populate_indexes_sync();
 
     Ok(Some(graph))
@@ -289,6 +293,9 @@ pub fn finalize_pending_graph(pg: PendingGraph) -> Result<Graph, String> {
 
     graph.rebuild_derived_matrices();
     rebuild_indexes(&mut graph, &pg.schema.indexes);
+    for c in pg.schema.constraints {
+        graph.add_constraint_raw(c);
+    }
     graph.populate_indexes_sync();
 
     Ok(graph)
