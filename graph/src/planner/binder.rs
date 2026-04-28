@@ -472,9 +472,9 @@ impl Binder {
 
                 // Validate yield field names against procedure outputs
                 if yielded && let FnType::Procedure(ref fields) = func.fn_type {
-                    let mut seen_fields = std::collections::HashSet::new();
+                    let mut seen_projected = std::collections::HashSet::new();
                     for (i, name) in vars.iter().enumerate() {
-                        // The actual field name is the alias (original field) if present,
+                        // The source field name is the alias (original field) if present,
                         // otherwise the yield name itself
                         let field_name = aliases.get(i).and_then(|a| a.as_ref()).unwrap_or(name);
                         if !fields.iter().any(|f| f.as_str() == field_name.as_str()) {
@@ -483,10 +483,15 @@ impl Binder {
                                 field_name, func.name
                             ));
                         }
-                        if !seen_fields.insert(field_name.as_str().to_lowercase()) {
+                        // Deduplicate on the projected/output name (the name
+                        // that enters scope), not the source field. This allows
+                        // `YIELD node AS x, node AS y` (different projected
+                        // names) while rejecting `YIELD node, node` and
+                        // `YIELD node AS x, score AS x` (duplicate projected).
+                        if !seen_projected.insert(name.as_str().to_lowercase()) {
                             return Err(format!(
                                 "Duplicate yield field '{}' for procedure '{}'",
-                                field_name, func.name
+                                name, func.name
                             ));
                         }
                     }

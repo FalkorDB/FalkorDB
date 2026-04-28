@@ -23,7 +23,7 @@
 
 #![allow(clippy::unnecessary_wraps)]
 
-use super::{FnArguments, FnType, Functions, Type, get_functions};
+use super::{FnArguments, FnType, Functions, Type, get_functions, get_udf_functions};
 use crate::{
     index::indexer::{IndexInfo, IndexType},
     runtime::{ordermap::OrderMap, runtime::Runtime, value::Value},
@@ -334,7 +334,7 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Any,
         write procedure: [],
         fn db_fulltext_drop(_runtime, _args) {
-            Ok(Value::List(Arc::new(thin_vec![])))
+            Err(String::from("db.idx.fulltext.drop() is not supported in this version"))
         }
     );
 
@@ -422,57 +422,22 @@ pub fn register(funcs: &mut Functions) {
         procedure: ["name", "return_type", "arguments", "internal", "reducible", "aggregation", "variable_len", "udf"],
         fn dbms_functions(_, _args) {
             let funcs = get_functions();
-            let mut rows: Vec<Value> = funcs
-                .iter()
-                .filter(|f| !matches!(f.fn_type, FnType::Procedure(_)))
-                .map(|f| {
-                    let mut map = OrderMap::default();
-                    map.insert(
-                        Arc::new(String::from("name")),
-                        Value::String(Arc::new(f.name.clone())),
-                    );
-                    map.insert(
-                        Arc::new(String::from("return_type")),
-                        Value::String(Arc::new(type_to_dbms_string(&f.ret_type))),
-                    );
-                    let args_list: thin_vec::ThinVec<Value> = match &f.args_type {
-                        FnArguments::Fixed(types) => types
-                            .iter()
-                            .map(|t| Value::String(Arc::new(type_to_dbms_string(t))))
-                            .collect(),
-                        FnArguments::VarLength(t) => {
-                            thin_vec::thin_vec![Value::String(Arc::new(type_to_dbms_string(t)))]
-                        }
-                    };
-                    map.insert(
-                        Arc::new(String::from("arguments")),
-                        Value::List(Arc::new(args_list)),
-                    );
-                    map.insert(
-                        Arc::new(String::from("internal")),
-                        Value::Bool(matches!(f.fn_type, FnType::Internal)),
-                    );
-                    let reducible = !f.non_deterministic
-                        && !matches!(f.fn_type, FnType::Aggregation { .. } | FnType::Procedure(_));
-                    map.insert(
-                        Arc::new(String::from("reducible")),
-                        Value::Bool(reducible),
-                    );
-                    map.insert(
-                        Arc::new(String::from("aggregation")),
-                        Value::Bool(matches!(f.fn_type, FnType::Aggregation { .. })),
-                    );
-                    map.insert(
-                        Arc::new(String::from("variable_len")),
-                        Value::Bool(matches!(f.args_type, FnArguments::VarLength(_))),
-                    );
-                    map.insert(
-                        Arc::new(String::from("udf")),
-                        Value::Bool(matches!(f.fn_type, FnType::Udf)),
-                    );
-                    Value::Map(Arc::new(map))
-                })
-                .collect();
+            let mut seen_names = std::collections::HashSet::new();
+            let mut rows: Vec<Value> = Vec::new();
+
+            // Built-in functions first (non-procedure entries).
+            for f in funcs.iter().filter(|f| !matches!(f.fn_type, FnType::Procedure(_))) {
+                seen_names.insert(f.name.to_lowercase());
+                rows.push(build_function_row(f));
+            }
+
+            // UDF entries from the dynamic registry.
+            for f in get_udf_functions() {
+                if seen_names.insert(f.name.to_lowercase()) {
+                    rows.push(build_function_row(&f));
+                }
+            }
+
             rows.sort_by(|a, b| {
                 let a_name = if let Value::Map(m) = a {
                     m.get(&Arc::new(String::from("name")))
@@ -493,6 +458,52 @@ pub fn register(funcs: &mut Functions) {
             Ok(Value::List(Arc::new(rows.into())))
         }
     );
+}
+
+/// Build a single result row for `dbms.functions()`.
+fn build_function_row(f: &super::GraphFn) -> Value {
+    let mut map = OrderMap::default();
+    map.insert(
+        Arc::new(String::from("name")),
+        Value::String(Arc::new(f.name.clone())),
+    );
+    map.insert(
+        Arc::new(String::from("return_type")),
+        Value::String(Arc::new(type_to_dbms_string(&f.ret_type))),
+    );
+    let args_list: thin_vec::ThinVec<Value> = match &f.args_type {
+        FnArguments::Fixed(types) => types
+            .iter()
+            .map(|t| Value::String(Arc::new(type_to_dbms_string(t))))
+            .collect(),
+        FnArguments::VarLength(t) => {
+            thin_vec::thin_vec![Value::String(Arc::new(type_to_dbms_string(t)))]
+        }
+    };
+    map.insert(
+        Arc::new(String::from("arguments")),
+        Value::List(Arc::new(args_list)),
+    );
+    map.insert(
+        Arc::new(String::from("internal")),
+        Value::Bool(matches!(f.fn_type, FnType::Internal)),
+    );
+    let reducible = !f.non_deterministic
+        && !matches!(f.fn_type, FnType::Aggregation { .. } | FnType::Procedure(_));
+    map.insert(Arc::new(String::from("reducible")), Value::Bool(reducible));
+    map.insert(
+        Arc::new(String::from("aggregation")),
+        Value::Bool(matches!(f.fn_type, FnType::Aggregation { .. })),
+    );
+    map.insert(
+        Arc::new(String::from("variable_len")),
+        Value::Bool(matches!(f.args_type, FnArguments::VarLength(_))),
+    );
+    map.insert(
+        Arc::new(String::from("udf")),
+        Value::Bool(matches!(f.fn_type, FnType::Udf)),
+    );
+    Value::Map(Arc::new(map))
 }
 
 /// Convert a `Type` to a display string matching the original FalkorDB format.

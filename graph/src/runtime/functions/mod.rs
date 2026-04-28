@@ -875,6 +875,15 @@ pub fn flush_udfs() {
     }
 }
 
+/// Snapshot the current UDF registry entries.
+/// Returns an empty Vec if the registry is not yet initialized.
+pub fn get_udf_functions() -> Vec<Arc<GraphFn>> {
+    UDF_FUNCTIONS
+        .get()
+        .map(|reg| reg.read().values().cloned().collect())
+        .unwrap_or_default()
+}
+
 pub fn get_functions() -> &'static Functions {
     FUNCTIONS.get().expect("Functions not initialized")
 }
