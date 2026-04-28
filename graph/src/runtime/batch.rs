@@ -54,6 +54,7 @@ use super::ops::cond_var_len_traverse::CondVarLenTraverseOp;
 use super::ops::create::CreateOp;
 use super::ops::delete::DeleteOp;
 use super::ops::distinct::DistinctOp;
+use super::ops::edge_by_fulltext_scan::EdgeByFulltextScanOp;
 use super::ops::edge_by_index_scan::EdgeByIndexScanOp;
 use super::ops::expand_into::ExpandIntoOp;
 use super::ops::filter::FilterOp;
@@ -660,6 +661,8 @@ pub enum BatchOp<'a> {
     ProcedureCall(ProcedureCallOp<'a>),
     /// Fulltext index scan.
     NodeByFulltextScan(NodeByFulltextScanOp<'a>),
+    /// Edge fulltext index scan.
+    EdgeByFulltextScan(EdgeByFulltextScanOp<'a>),
     /// Combined label + ID scan.
     NodeByLabelAndIdScan(NodeByLabelAndIdScanOp<'a>),
     /// Variable-length relationship traverse.
@@ -750,6 +753,7 @@ impl<'a> BatchOp<'a> {
             Self::PathBuilder(op) => op.child.set_argument_batch(batch),
             Self::LoadCsv(op) => op.child.set_argument_batch(batch),
             Self::NodeByFulltextScan(op) => op.child.set_argument_batch(batch),
+            Self::EdgeByFulltextScan(op) => op.child.set_argument_batch(batch),
             Self::NodeByLabelAndIdScan(op) => op.child.set_argument_batch(batch),
             Self::CondVarLenTraverse(op) => op.child.set_argument_batch(batch),
             Self::AllShortestPaths(op) => op.child.set_argument_batch(batch),
@@ -807,6 +811,7 @@ impl<'a> BatchOp<'a> {
             Self::LoadCsv(op) => Some((op.runtime, op.idx)),
             Self::ProcedureCall(op) => Some((op.runtime, op.idx)),
             Self::NodeByFulltextScan(op) => Some((op.runtime, op.idx)),
+            Self::EdgeByFulltextScan(op) => Some((op.runtime, op.idx)),
             Self::NodeByLabelAndIdScan(op) => Some((op.runtime, op.idx)),
             Self::CondVarLenTraverse(op) => Some((op.runtime, op.idx)),
             Self::AllShortestPaths(op) => Some((op.runtime, op.idx)),
@@ -871,6 +876,7 @@ impl<'a> Iterator for BatchOp<'a> {
             Self::LoadCsv(op) => op.next(),
             Self::ProcedureCall(op) => op.next(),
             Self::NodeByFulltextScan(op) => op.next(),
+            Self::EdgeByFulltextScan(op) => op.next(),
             Self::NodeByLabelAndIdScan(op) => op.next(),
             Self::CondVarLenTraverse(op) => op.next(),
             Self::AllShortestPaths(op) => op.next(),

@@ -429,6 +429,61 @@ impl Drop for EdgeTripleIter {
     }
 }
 
+/// Iterator yielding `(src, dst, edge_id, score)` tuples from edge
+/// fulltext queries. Like [`EdgeTripleIter`] but also exposes the
+/// relevance score via `RediSearch_ResultsIteratorGetScore`.
+pub struct ScoredEdgeTripleIter {
+    iter: *mut RSResultsIterator,
+    rs_idx: *mut RSIndex,
+}
+
+impl ScoredEdgeTripleIter {
+    const fn new(
+        iter: *mut RSResultsIterator,
+        rs_idx: *mut RSIndex,
+    ) -> Self {
+        Self { iter, rs_idx }
+    }
+
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self {
+            iter: null_mut(),
+            rs_idx: null_mut(),
+        }
+    }
+}
+
+impl Iterator for ScoredEdgeTripleIter {
+    type Item = (u64, u64, u64, f64);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.iter.is_null() {
+            return None;
+        }
+        unsafe {
+            let ptr = RediSearch_ResultsIteratorNext(self.iter, self.rs_idx, null_mut())
+                .cast::<[u64; 3]>();
+            if ptr.is_null() {
+                return None;
+            }
+            let triple = ptr.read_unaligned();
+            let score = RediSearch_ResultsIteratorGetScore(self.iter);
+            Some((triple[0], triple[1], triple[2], score))
+        }
+    }
+}
+
+impl Drop for ScoredEdgeTripleIter {
+    fn drop(&mut self) {
+        if !self.iter.is_null() {
+            unsafe {
+                RediSearch_ResultsIteratorFree(self.iter);
+            }
+        }
+    }
+}
+
 /// A document to be indexed, wrapping a RediSearch document.
 #[derive(Clone)]
 pub struct Document {
@@ -1228,6 +1283,29 @@ impl Index {
                 let score = RediSearch_ResultsIteratorGetScore(iter);
                 (id, score)
             }))
+        }
+    }
+
+    /// Execute a fulltext query on an *edge* index and return matching
+    /// `(src, dst, edge_id, score)` tuples. Mirrors [`fulltext_query`],
+    /// but reads the 24-byte `[u64; 3]` key written by
+    /// `Document::new_edge` instead of treating the result as an 8-byte
+    /// entity id. Should only be called on edge indexes.
+    pub fn fulltext_query_edges(
+        &self,
+        query: &str,
+    ) -> Result<ScoredEdgeTripleIter, String> {
+        let cstr = CString::new(query).map_err(|e| e.to_string())?;
+        let mut err: *mut c_char = null_mut();
+        unsafe {
+            let iter =
+                RediSearch_IterateQuery(self.rs_idx, cstr.as_ptr(), query.len(), &raw mut err);
+            if !err.is_null() {
+                let msg = CStr::from_ptr(err).to_string_lossy().into_owned();
+                drop(CString::from_raw(err));
+                return Err(msg);
+            }
+            Ok(ScoredEdgeTripleIter::new(iter, self.rs_idx))
         }
     }
 
