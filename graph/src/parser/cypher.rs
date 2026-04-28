@@ -255,7 +255,7 @@ impl<'a> Parser<'a> {
             let index = optional_match_token!(self.lexer => Index);
             if !index {
                 if self.lexer.current_str().eq_ignore_ascii_case("constraint") {
-                    return Err(String::from(
+                    return Err(self.lexer.format_error(
                         "Invalid constraint command use the GRAPH.CONSTRAINT command instead",
                     ));
                 }
@@ -350,7 +350,7 @@ impl<'a> Parser<'a> {
             let index = optional_match_token!(self.lexer => Index);
             if !index {
                 if self.lexer.current_str().eq_ignore_ascii_case("constraint") {
-                    return Err(String::from(
+                    return Err(self.lexer.format_error(
                         "Invalid constraint command use the GRAPH.CONSTRAINT command instead",
                     ));
                 }

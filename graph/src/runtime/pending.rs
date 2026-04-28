@@ -807,7 +807,12 @@ impl Pending {
             g.borrow_mut()
                 .delete_relationships(&explicit_rels, &mut self.index_remove_edge_docs)?;
         }
-        // Commit attribute changes after all deletions have been applied.
+        // Enforce constraints before committing attrs to fjall.
+        // The constraint checks read from the in-memory attribute cache
+        // which already has the dirty mutations from this transaction.
+        self.enforce_constraints(g)?;
+
+        // Commit attribute changes after constraint validation passes.
         // Index operations are deferred — they will be applied only after
         // the full query succeeds to avoid stale RediSearch entries on
         // rollback.
@@ -815,9 +820,6 @@ impl Pending {
             let mut g = g.borrow_mut();
             g.commit_attrs()?;
         }
-
-        // Enforce constraints on affected entities.
-        self.enforce_constraints(g)?;
 
         // Accumulate index operations into deferred fields.
         for (k, v) in self.index_add_docs.drain() {
@@ -950,20 +952,25 @@ impl Pending {
                         continue; // All NULL → no violation
                     }
 
+                    // Build a set of all existing keys for this label in one pass
                     if let Some(lm) = g.get_label_matrix(label) {
+                        let mut seen: FxHashMap<Vec<u8>, u64> = FxHashMap::default();
                         for (other_id, _) in lm.iter(0, u64::MAX) {
-                            if other_id == node_id {
-                                continue;
-                            }
                             let other_attrs = g.get_node_all_attrs(other_id.into());
                             let other_key =
                                 Graph::build_composite_key(&constraint.properties, &other_attrs);
-                            if key == other_key {
-                                return Err(format!(
-                                    "unique constraint violation on node of type {}",
-                                    label
-                                ));
+                            if other_key.is_empty() {
+                                continue;
                             }
+                            if let Some(&existing_id) = seen.get(&other_key) {
+                                if existing_id != other_id {
+                                    return Err(format!(
+                                        "unique constraint violation on node of type {}",
+                                        label
+                                    ));
+                                }
+                            }
+                            seen.insert(other_key, other_id);
                         }
                     }
                 }
@@ -1007,30 +1014,26 @@ impl Pending {
                         continue;
                     }
 
-                    // Check against all other edges of same type
+                    // Build a set of all existing keys for this type in one pass
                     if let Some(tensor) = g.get_relationship_matrix(type_name) {
-                        let mut edge_count = 0u64;
+                        let mut seen: FxHashMap<Vec<u8>, u64> = FxHashMap::default();
                         for (_, _, other_eid) in tensor.iter(0, u64::MAX, false) {
-                            edge_count += 1;
-                            if other_eid == edge_id {
-                                continue;
-                            }
                             let other_attrs = g.get_relationship_all_attrs(other_eid.into());
                             let other_key =
                                 Graph::build_composite_key(&constraint.properties, &other_attrs);
-                            if key == other_key {
-                                return Err(format!(
-                                    "unique constraint violation, on edge of relationship-type {}",
-                                    type_name
-                                ));
+                            if other_key.is_empty() {
+                                continue;
                             }
+                            if let Some(&existing_id) = seen.get(&other_key) {
+                                if existing_id != other_eid {
+                                    return Err(format!(
+                                        "unique constraint violation, on edge of relationship-type {}",
+                                        type_name
+                                    ));
+                                }
+                            }
+                            seen.insert(other_key, other_eid);
                         }
-                        eprintln!(
-                            "DEBUG: edge unique check for edge_id={edge_id}, type={type_name}, constraint_props={:?}, edge_attrs={:?}, key={key:?}, iterated {edge_count} edges",
-                            constraint.properties, attrs
-                        );
-                    } else {
-                        eprintln!("DEBUG: no tensor found for type={type_name}");
                     }
                 }
             }

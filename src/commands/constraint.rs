@@ -113,6 +113,13 @@ pub fn graph_constraint(
         properties.push(prop);
     }
 
+    // Reject trailing tokens
+    if args.next().is_some() {
+        return Err(redis_module::RedisError::String(
+            "Unexpected extra arguments".into(),
+        ));
+    }
+
     // Open or create graph
     let key = ctx.open_key_writable(&key_str);
     let graph = if let Some(g) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
@@ -140,18 +147,35 @@ pub fn graph_constraint(
 
     let is_replicated = ctx.get_flags().contains(ContextFlags::REPLICATED);
 
-    let result = {
+    let result: Result<bool, String> = {
         let mut g = g_arc.borrow_mut();
         if is_create {
             g.create_constraint(ct, entity_type, label, properties)
         } else {
             g.drop_constraint(&ct, &entity_type, &label, &properties)
+                .map(|()| false)
         }
     };
 
     match result {
-        Ok(()) => {
+        Ok(needs_async_validation) => {
             tg.graph.commit(g_arc);
+
+            // Spawn background validation for large datasets
+            if needs_async_validation {
+                let graph_clone = graph.clone();
+                graph::threadpool::spawn(
+                    move || {
+                        let mut tg = graph_clone.write();
+                        if let Some(g_arc) = tg.graph.write() {
+                            g_arc.borrow_mut().validate_pending_constraints();
+                            tg.graph.commit(g_arc);
+                        }
+                    },
+                    Some(0),
+                );
+            }
+
             if !is_replicated {
                 ctx.replicate_verbatim();
                 if is_create {

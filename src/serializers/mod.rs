@@ -415,7 +415,7 @@ fn encode_schema_index_block(
 }
 
 /// Write the constraint block for a schema entry.
-/// Format per constraint: constraint_type (u64), field_count (u64), then attr_id (u64) per field.
+/// Format per constraint: constraint_type (u64), status (u64), field_count (u64), then attr_id (u64) per field.
 fn encode_constraint_block(
     w: &mut dyn Writer,
     constraints: &[&Constraint],
@@ -428,6 +428,12 @@ fn encode_constraint_block(
             ConstraintType::Mandatory => 1u64,
         };
         w.write_unsigned(ct);
+        let status = match c.status {
+            ConstraintStatus::Operational => 0u64,
+            ConstraintStatus::UnderConstruction => 1u64,
+            ConstraintStatus::Failed => 2u64,
+        };
+        w.write_unsigned(status);
         w.write_unsigned(c.properties.len() as u64);
         for prop in &c.properties {
             let attr_id = attribute_names
@@ -560,6 +566,12 @@ fn decode_schema_entry(
             0 => ConstraintType::Unique,
             _ => ConstraintType::Mandatory,
         };
+        let status_id = r.read_unsigned()?;
+        let status = match status_id {
+            1 => ConstraintStatus::UnderConstruction,
+            2 => ConstraintStatus::Failed,
+            _ => ConstraintStatus::Operational,
+        };
         let fields_count = r.read_unsigned()?;
         let mut properties = Vec::with_capacity(fields_count as usize);
         for _ in 0..fields_count {
@@ -577,7 +589,7 @@ fn decode_schema_entry(
             Arc::new(schema_name.clone()),
             properties,
         );
-        c.status = ConstraintStatus::Operational;
+        c.status = status;
         constraints.push(c);
     }
 

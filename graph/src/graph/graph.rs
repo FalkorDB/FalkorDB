@@ -2540,7 +2540,7 @@ impl Graph {
     ) -> Result<usize, String> {
         // Check if any UNIQUE constraint depends on this index
         for attr in attrs {
-            if self.constraint_depends_on_index(entity_type, label, attr) {
+            if self.constraint_depends_on_index(entity_type, label, attr, index_type) {
                 return Err("Index supports constraint".to_string());
             }
         }
@@ -2703,8 +2703,7 @@ impl Graph {
         entity_type: EntityType,
         label: Arc<String>,
         properties: Vec<Arc<String>>,
-    ) -> Result<(), String> {
-        // For UNIQUE constraints, check supporting index
+    ) -> Result<bool, String> {
         if ct == ConstraintType::Unique {
             if !self.has_supporting_index(&entity_type, &label, &properties) {
                 return Err("missing supporting exact-match index".into());
@@ -2731,19 +2730,20 @@ impl Graph {
         let count = self.get_constraint_entity_count(&constraint);
 
         if count <= 10_000 {
-            // Synchronous validation
+            // Synchronous validation for small datasets
             if self.validate_constraint(&constraint) {
                 constraint.status = ConstraintStatus::Operational;
             } else {
                 constraint.status = ConstraintStatus::Failed;
             }
+            self.constraints.push(constraint);
+            Ok(false) // no async validation needed
         } else {
-            // Async: mark under construction
+            // Large dataset: mark under construction, caller spawns background validation
             constraint.status = ConstraintStatus::UnderConstruction;
+            self.constraints.push(constraint);
+            Ok(true) // async validation needed
         }
-
-        self.constraints.push(constraint);
-        Ok(())
     }
 
     /// Add a constraint directly (for replication/restore). No validation.
@@ -2776,6 +2776,27 @@ impl Graph {
         }
     }
 
+    /// Validate all constraints currently under construction and update their status.
+    pub fn validate_pending_constraints(&mut self) {
+        // Collect indices of pending constraints to avoid borrow conflicts
+        let pending_indices: Vec<usize> = self
+            .constraints
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.status == ConstraintStatus::UnderConstruction)
+            .map(|(i, _)| i)
+            .collect();
+
+        for i in pending_indices {
+            let valid = self.validate_constraint(&self.constraints[i].clone());
+            self.constraints[i].status = if valid {
+                ConstraintStatus::Operational
+            } else {
+                ConstraintStatus::Failed
+            };
+        }
+    }
+
     fn validate_mandatory_constraint(
         &self,
         constraint: &Constraint,
@@ -2788,7 +2809,10 @@ impl Graph {
                 for (node_id, _) in lm.iter(0, u64::MAX) {
                     let attrs = self.get_node_all_attrs(NodeId(node_id));
                     for prop in &constraint.properties {
-                        if !attrs.iter().any(|(name, _)| name == prop) {
+                        if !attrs
+                            .iter()
+                            .any(|(name, val)| name == prop && !matches!(val, Value::Null))
+                        {
                             return false;
                         }
                     }
@@ -2802,7 +2826,10 @@ impl Graph {
                 for (_, _, edge_id) in tensor.iter(0, u64::MAX, false) {
                     let attrs = self.get_relationship_all_attrs(RelationshipId(edge_id));
                     for prop in &constraint.properties {
-                        if !attrs.iter().any(|(name, _)| name == prop) {
+                        if !attrs
+                            .iter()
+                            .any(|(name, val)| name == prop && !matches!(val, Value::Null))
+                        {
                             return false;
                         }
                     }
@@ -2922,7 +2949,12 @@ impl Graph {
         entity_type: &EntityType,
         label: &Arc<String>,
         attr: &Arc<String>,
+        index_type: &IndexType,
     ) -> bool {
+        // Only Range indexes support UNIQUE constraints
+        if *index_type != IndexType::Range {
+            return false;
+        }
         self.constraints.iter().any(|c| {
             c.ct == ConstraintType::Unique
                 && c.entity_type == *entity_type
