@@ -994,6 +994,11 @@ pub fn profile_mut(
     let query: Arc<str> = Arc::from(query);
     spawn(
         move || {
+            let mem_capacity = QUERY_MEM_CAPACITY.load(Ordering::Relaxed);
+            if mem_capacity > 0 {
+                reset_counter();
+                enable_tracking();
+            }
             let g = graph.clone();
             let binding = graph.clone();
             let graph_read = binding.read();
@@ -1043,6 +1048,9 @@ pub fn profile_mut(
                     unsafe { ffi::free_thread_safe_context(ctx.ctx) };
                 }
             }
+            if mem_capacity > 0 {
+                disable_tracking();
+            }
         },
         None,
     );
@@ -1056,6 +1064,11 @@ fn profile_sync(
     _key_name: &Arc<str>,
     per_query_timeout: Option<i64>,
 ) -> RedisResult {
+    let mem_capacity = QUERY_MEM_CAPACITY.load(Ordering::Relaxed);
+    if mem_capacity > 0 {
+        reset_counter();
+        enable_tracking();
+    }
     let res = {
         let g = graph.read();
         g.execute_profile(ctx, query, per_query_timeout)
@@ -1075,6 +1088,9 @@ fn profile_sync(
                     }
                     Err(err) => {
                         g.graph.rollback();
+                        if mem_capacity > 0 {
+                            disable_tracking();
+                        }
                         return Err(redis_module::RedisError::String(err));
                     }
                 }
@@ -1082,8 +1098,14 @@ fn profile_sync(
             }
         }
         Err(err) => {
+            if mem_capacity > 0 {
+                disable_tracking();
+            }
             return Err(redis_module::RedisError::String(err));
         }
+    }
+    if mem_capacity > 0 {
+        disable_tracking();
     }
     Ok(RedisValue::NoReply)
 }
@@ -1115,8 +1137,16 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                 let wait_ms = write_start.duration_since(enqueue_instant).as_secs_f64() * 1000.0;
                 let ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
                 let ctx = Context::new(ctx);
+                let mem_capacity = QUERY_MEM_CAPACITY.load(Ordering::Relaxed);
+                if mem_capacity > 0 {
+                    reset_counter();
+                    enable_tracking();
+                }
                 let res =
                     graph.execute_query_write(&ctx, &query, compact, cached, per_query_timeout);
+                if mem_capacity > 0 {
+                    disable_tracking();
+                }
                 let write_wall_ms = write_start.elapsed().as_secs_f64() * 1000.0;
                 if let Some(rid) = running_id {
                     telemetry::unregister_running(rid);
