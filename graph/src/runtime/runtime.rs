@@ -228,7 +228,7 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                 | IR::Commit
                 | IR::CreateIndex { .. }
                 | IR::DropIndex { .. } => {}
-                IR::NodeByLabelScan(node)
+                IR::NodeByLabelScan { node, .. }
                 | IR::AllNodeScan(node)
                 | IR::NodeByIndexScan { node, .. }
                 | IR::NodeByLabelAndIdScan { node, .. }
@@ -580,17 +580,22 @@ impl<'a> Runtime<'a> {
         idx: NodeIdx<Dyn<IR>>,
     ) -> Result<BatchOp<'a>, String> {
         match self.plan.node(idx).data() {
-            IR::NodeByLabelScan(_) | IR::AllNodeScan(_) => {
+            IR::NodeByLabelScan { .. } | IR::AllNodeScan(_) => {
                 let child = self.child_batch_op(idx)?;
-                let (IR::NodeByLabelScan(node_pattern) | IR::AllNodeScan(node_pattern)) =
-                    self.plan.node(idx).data()
-                else {
-                    unreachable!()
+                let ir = self.plan.node(idx).data();
+                let (node_pattern, include_pending) = match ir {
+                    IR::NodeByLabelScan {
+                        node,
+                        include_pending,
+                    } => (node, *include_pending),
+                    IR::AllNodeScan(n) => (n, false),
+                    _ => unreachable!(),
                 };
                 Ok(BatchOp::NodeByLabelScan(NodeByLabelScanOp::new(
                     self,
                     Box::new(child),
                     node_pattern,
+                    include_pending,
                     idx,
                 )))
             }
