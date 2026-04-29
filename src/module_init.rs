@@ -233,7 +233,10 @@ pub fn graph_init(
             4, // REDISMODULE_NOTIFY_GENERIC (covers RENAME)
             Some(on_keyspace_event),
         );
-        debug_assert_eq!(res, REDISMODULE_OK as c_int);
+        if res != REDISMODULE_OK as c_int {
+            eprintln!("FalkorDB: failed to subscribe to keyspace events: code {res}");
+            return Status::Err;
+        }
     }
 
     Status::Ok
@@ -268,8 +271,10 @@ unsafe extern "C" fn on_keyspace_event(
     let key_ptr = unsafe {
         redis_module::raw::RedisModule_StringPtrLen.unwrap()(key, &mut key_len as *mut usize)
     };
-    let key_name = unsafe {
-        std::str::from_utf8_unchecked(std::slice::from_raw_parts(key_ptr.cast(), key_len))
+    let key_bytes = unsafe { std::slice::from_raw_parts(key_ptr.cast(), key_len) };
+    let key_name = match std::str::from_utf8(key_bytes) {
+        Ok(s) => s,
+        Err(_) => return 0,
     };
 
     match event_str {

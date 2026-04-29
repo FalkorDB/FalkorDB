@@ -21,9 +21,9 @@ const STR_MAX_LEN: usize = 2048;
 /// Truncate `s` to at most `STR_MAX_LEN` characters, appending `"..."` if
 /// truncated.
 pub(crate) fn truncate(s: &str) -> String {
-    if s.len() > STR_MAX_LEN {
-        let mut t = String::with_capacity(STR_MAX_LEN + 3);
-        t.push_str(&s[..STR_MAX_LEN]);
+    if let Some((byte_idx, _)) = s.char_indices().nth(STR_MAX_LEN) {
+        let mut t = String::with_capacity(byte_idx + 3);
+        t.push_str(&s[..byte_idx]);
         t.push_str("...");
         t
     } else {
@@ -184,7 +184,7 @@ pub(crate) fn register_running(
         id,
         received_at,
         graph_name: graph_name.to_string(),
-        query: query.to_string(),
+        query: truncate(query),
         start: Instant::now(),
         is_replicated,
     };
@@ -198,6 +198,12 @@ pub(crate) fn unregister_running(id: u64) {
     reg.running.retain(|q| q.id != id);
 }
 
+/// Unregister a waiting query.
+pub(crate) fn unregister_waiting(id: u64) {
+    let mut reg = REGISTRY.lock();
+    reg.waiting.retain(|q| q.id != id);
+}
+
 /// Register a query as waiting in the write queue. Returns its unique ID.
 pub(crate) fn register_waiting(
     received_at: i64,
@@ -209,7 +215,7 @@ pub(crate) fn register_waiting(
         id,
         received_at,
         graph_name: graph_name.to_string(),
-        query: query.to_string(),
+        query: truncate(query),
         enqueued: Instant::now(),
     };
     REGISTRY.lock().waiting.push(info);

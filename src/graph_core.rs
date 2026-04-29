@@ -794,7 +794,7 @@ pub fn query_mut(
                         });
                         if let Err(send_err) = graph.sender.send(msg) {
                             let msg = send_err.0;
-                            telemetry::unregister_running(msg.waiting_id);
+                            telemetry::unregister_waiting(msg.waiting_id);
                             let cerr = ffi::sanitise_error(
                                 "ERR graph write queue unavailable".to_string(),
                             );
