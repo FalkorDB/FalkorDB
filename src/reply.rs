@@ -148,12 +148,11 @@ pub fn reply_compact_value(
                 raw::reply_with_long_long(ctx.ctx, usize::from(type_id) as _);
                 raw::reply_with_long_long(ctx.ctx, u64::from(*rel_src) as _);
                 raw::reply_with_long_long(ctx.ctx, u64::from(*rel_dst) as _);
-                let node_attr_offset = bg.node_attribute_count();
                 raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
                 for (key, value) in x.attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 3);
-                    let key = bg.get_relationship_attribute_id(key).unwrap();
-                    raw::reply_with_long_long(ctx.ctx, (key + node_attr_offset) as _);
+                    let key = bg.get_global_attribute_id(key).unwrap();
+                    raw::reply_with_long_long(ctx.ctx, key as _);
                     reply_compact_value(ctx, runtime, value);
                 }
                 drop(bg);
@@ -165,12 +164,11 @@ pub fn reply_compact_value(
                 );
                 raw::reply_with_long_long(ctx.ctx, u64::from(*rel_src) as _);
                 raw::reply_with_long_long(ctx.ctx, u64::from(*rel_dst) as _);
-                let node_attr_offset = bg.node_attribute_count() as i64;
                 let attrs = bg.get_relationship_all_attrs_by_id(*rel_id);
                 raw::reply_with_array(ctx.ctx, attrs.len() as _);
                 for (key, value) in attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 3);
-                    raw::reply_with_long_long(ctx.ctx, i64::from(*key) + node_attr_offset);
+                    raw::reply_with_long_long(ctx.ctx, bg.rel_attr_id_to_global(*key) as _);
                     reply_compact_value(ctx, runtime, value);
                 }
                 drop(bg);

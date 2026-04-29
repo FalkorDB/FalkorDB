@@ -823,10 +823,12 @@ impl Graph {
     }
 
     pub fn get_attrs(&self) -> impl Iterator<Item = &Arc<String>> + '_ {
+        let mut seen = std::collections::HashSet::new();
         self.node_attrs
             .attrs_name
             .iter()
             .chain(self.relationship_attrs.attrs_name.iter())
+            .filter(move |a| seen.insert(a.as_str().to_owned()))
     }
 
     pub fn get_label_id_mut(
@@ -1074,6 +1076,26 @@ impl Graph {
         attr: &Arc<String>,
     ) -> Option<usize> {
         self.relationship_attrs.get_attr_id(attr)
+    }
+
+    /// Return the global property ID for `attr`, matching the index in `get_attrs()`.
+    /// Node attrs come first; relationship-only attrs follow.
+    #[must_use]
+    pub fn get_global_attribute_id(
+        &self,
+        attr: &Arc<String>,
+    ) -> Option<usize> {
+        self.get_attrs().position(|a| a == attr)
+    }
+
+    /// Convert a relationship-local attribute ID to the global property ID.
+    #[must_use]
+    pub fn rel_attr_id_to_global(
+        &self,
+        local_id: u16,
+    ) -> usize {
+        let name = &self.relationship_attrs.attrs_name[local_id as usize];
+        self.get_attrs().position(|a| a == name).unwrap()
     }
 
     pub fn return_node_id(

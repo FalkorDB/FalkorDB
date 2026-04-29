@@ -200,6 +200,14 @@ impl BufferedReader {
         }
     }
 
+    pub const fn from_vec(data: Vec<u8>) -> Self {
+        Self {
+            rdb: std::ptr::null_mut(),
+            buf: data,
+            pos: 0,
+        }
+    }
+
     /// Load the next chunk from Redis.
     fn load_chunk(&mut self) -> Result<(), String> {
         let chunk = raw::load_string_buffer(self.rdb)
@@ -307,4 +315,341 @@ impl BufferedReader {
             )),
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Pipe-based Writer / Reader for GRAPH.COPY (fork + pipe)
+// ---------------------------------------------------------------------------
+
+use std::os::raw::c_int;
+
+unsafe extern "C" {
+    fn write(
+        fd: c_int,
+        buf: *const std::ffi::c_void,
+        count: usize,
+    ) -> isize;
+    fn read(
+        fd: c_int,
+        buf: *mut std::ffi::c_void,
+        count: usize,
+    ) -> isize;
+    fn close(fd: c_int) -> c_int;
+}
+
+/// Buffered writer that sends type-tagged values through a pipe fd.
+///
+/// Each flush writes a length-prefixed chunk: `[len:u64 LE][data:len bytes]`.
+/// A zero-length chunk signals end-of-stream.
+pub struct PipeWriter {
+    fd: i32,
+    buf: Vec<u8>,
+}
+
+impl PipeWriter {
+    pub fn new(fd: i32) -> Self {
+        Self {
+            fd,
+            buf: Vec::with_capacity(BUFFER_SIZE),
+        }
+    }
+
+    fn flush(&mut self) {
+        if !self.buf.is_empty() {
+            let len = self.buf.len() as u64;
+            write_all_fd(self.fd, &len.to_le_bytes());
+            write_all_fd(self.fd, &self.buf);
+            self.buf.clear();
+        }
+    }
+
+    fn accommodate(
+        &mut self,
+        needed: usize,
+    ) {
+        if self.buf.len() + needed > BUFFER_SIZE {
+            self.flush();
+        }
+    }
+
+    /// Flush remaining data, send zero-length terminator, and close the fd.
+    pub fn finish(mut self) {
+        self.flush();
+        // Zero-length chunk signals end-of-stream.
+        let zero = 0u64;
+        write_all_fd(self.fd, &zero.to_le_bytes());
+        unsafe { close(self.fd) };
+    }
+}
+
+impl Writer for PipeWriter {
+    fn write_unsigned(
+        &mut self,
+        val: u64,
+    ) {
+        self.accommodate(1 + 8);
+        self.buf.push(TYPE_UNSIGNED);
+        self.buf.extend_from_slice(&val.to_le_bytes());
+    }
+
+    fn write_signed(
+        &mut self,
+        val: i64,
+    ) {
+        self.accommodate(1 + 8);
+        self.buf.push(TYPE_SIGNED);
+        self.buf.extend_from_slice(&val.to_le_bytes());
+    }
+
+    fn write_double(
+        &mut self,
+        val: f64,
+    ) {
+        self.accommodate(1 + 8);
+        self.buf.push(TYPE_DOUBLE);
+        self.buf.extend_from_slice(&val.to_le_bytes());
+    }
+
+    fn write_buffer(
+        &mut self,
+        data: &[u8],
+    ) {
+        let inline_size = 1 + 8 + data.len();
+        if inline_size <= BUFFER_SIZE {
+            self.accommodate(inline_size);
+            self.buf.push(TYPE_BYTES);
+            self.buf
+                .extend_from_slice(&(data.len() as u64).to_le_bytes());
+            self.buf.extend_from_slice(data);
+        } else {
+            // Blob: write sentinel, flush, then send standalone chunk.
+            self.accommodate(1);
+            self.buf.push(TYPE_BLOB);
+            self.flush();
+            let len = data.len() as u64;
+            write_all_fd(self.fd, &len.to_le_bytes());
+            write_all_fd(self.fd, data);
+        }
+    }
+}
+
+/// Buffered reader that receives type-tagged values from a pipe fd.
+pub struct PipeReader {
+    fd: i32,
+    buf: Vec<u8>,
+    pos: usize,
+}
+
+impl Reader for PipeReader {
+    fn read_unsigned(&mut self) -> Result<u64, String> {
+        self.read_tag(TYPE_UNSIGNED)?;
+        let bytes = self.read_bytes(8)?;
+        Ok(u64::from_le_bytes(bytes.try_into().unwrap()))
+    }
+
+    fn read_signed(&mut self) -> Result<i64, String> {
+        self.read_tag(TYPE_SIGNED)?;
+        let bytes = self.read_bytes(8)?;
+        Ok(i64::from_le_bytes(bytes.try_into().unwrap()))
+    }
+
+    fn read_double(&mut self) -> Result<f64, String> {
+        self.read_tag(TYPE_DOUBLE)?;
+        let bytes = self.read_bytes(8)?;
+        Ok(f64::from_le_bytes(bytes.try_into().unwrap()))
+    }
+
+    fn read_buffer(&mut self) -> Result<Vec<u8>, String> {
+        self.ensure_available()?;
+        let tag = self.buf[self.pos];
+        self.pos += 1;
+
+        match tag {
+            TYPE_BYTES => {
+                let len_bytes = self.read_bytes(8)?;
+                let len = u64::from_le_bytes(len_bytes.try_into().unwrap()) as usize;
+                let data = self.read_bytes(len)?;
+                Ok(data.to_vec())
+            }
+            TYPE_BLOB => {
+                self.load_chunk()?;
+                let data = self.buf[self.pos..].to_vec();
+                self.pos = self.buf.len();
+                Ok(data)
+            }
+            _ => Err(format!(
+                "PipeReader: expected BYTES(0) or BLOB(6) tag, got {tag}"
+            )),
+        }
+    }
+}
+
+impl PipeReader {
+    pub fn new(fd: i32) -> Self {
+        Self {
+            fd,
+            buf: Vec::new(),
+            pos: 0,
+        }
+    }
+
+    /// Load the next length-prefixed chunk from the pipe.
+    /// Returns Err if the stream ended (zero-length chunk).
+    fn load_chunk(&mut self) -> Result<(), String> {
+        let mut len_buf = [0u8; 8];
+        read_all_fd(self.fd, &mut len_buf)?;
+        let len = u64::from_le_bytes(len_buf) as usize;
+        if len == 0 {
+            return Err("PipeReader: end of stream".to_string());
+        }
+        self.buf.resize(len, 0);
+        read_all_fd(self.fd, &mut self.buf)?;
+        self.pos = 0;
+        Ok(())
+    }
+
+    fn ensure_available(&mut self) -> Result<(), String> {
+        if self.pos >= self.buf.len() {
+            self.load_chunk()?;
+        }
+        Ok(())
+    }
+
+    fn read_tag(
+        &mut self,
+        expected: u8,
+    ) -> Result<(), String> {
+        self.ensure_available()?;
+        let tag = self.buf[self.pos];
+        self.pos += 1;
+        if tag != expected {
+            return Err(format!(
+                "PipeReader: expected type tag {expected}, got {tag} at pos {}",
+                self.pos - 1
+            ));
+        }
+        Ok(())
+    }
+
+    fn read_bytes(
+        &mut self,
+        n: usize,
+    ) -> Result<&[u8], String> {
+        if self.pos + n > self.buf.len() {
+            return Err(format!(
+                "PipeReader: need {n} bytes at pos {}, but buffer len is {}",
+                self.pos,
+                self.buf.len()
+            ));
+        }
+        let slice = &self.buf[self.pos..self.pos + n];
+        self.pos += n;
+        Ok(slice)
+    }
+
+    /// Close the underlying pipe fd.
+    pub fn close(self) {
+        unsafe { close(self.fd) };
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Vec-based Writer / Reader for GRAPH.RESTORE replication
+// ---------------------------------------------------------------------------
+
+/// Writer that appends type-tagged values to a `Vec<u8>`.
+///
+/// Same tag format as `BufferedWriter` but no chunking and no BLOB sentinel
+/// (always inlines buffers as TYPE_BYTES). Readable by `BufferedReader::from_vec()`.
+pub struct VecWriter {
+    buf: Vec<u8>,
+}
+
+impl VecWriter {
+    pub fn new() -> Self {
+        Self { buf: Vec::new() }
+    }
+
+    /// Consume the writer and return the serialized bytes.
+    pub fn into_vec(self) -> Vec<u8> {
+        self.buf
+    }
+}
+
+impl Writer for VecWriter {
+    fn write_unsigned(
+        &mut self,
+        val: u64,
+    ) {
+        self.buf.push(TYPE_UNSIGNED);
+        self.buf.extend_from_slice(&val.to_le_bytes());
+    }
+
+    fn write_signed(
+        &mut self,
+        val: i64,
+    ) {
+        self.buf.push(TYPE_SIGNED);
+        self.buf.extend_from_slice(&val.to_le_bytes());
+    }
+
+    fn write_double(
+        &mut self,
+        val: f64,
+    ) {
+        self.buf.push(TYPE_DOUBLE);
+        self.buf.extend_from_slice(&val.to_le_bytes());
+    }
+
+    fn write_buffer(
+        &mut self,
+        data: &[u8],
+    ) {
+        self.buf.push(TYPE_BYTES);
+        self.buf
+            .extend_from_slice(&(data.len() as u64).to_le_bytes());
+        self.buf.extend_from_slice(data);
+    }
+}
+
+/// Write all bytes to a file descriptor, retrying on EINTR.
+fn write_all_fd(
+    fd: i32,
+    mut data: &[u8],
+) {
+    while !data.is_empty() {
+        let n = unsafe { write(fd, data.as_ptr().cast(), data.len()) };
+        if n < 0 {
+            let err = std::io::Error::last_os_error();
+            if err.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            // In fork child, best-effort — just stop.
+            return;
+        }
+        data = &data[n as usize..];
+    }
+}
+
+/// Read exactly `buf.len()` bytes from a file descriptor, retrying on EINTR.
+fn read_all_fd(
+    fd: i32,
+    buf: &mut [u8],
+) -> Result<(), String> {
+    let mut offset = 0;
+    while offset < buf.len() {
+        let n = unsafe { read(fd, buf[offset..].as_mut_ptr().cast(), buf.len() - offset) };
+        if n < 0 {
+            let err = std::io::Error::last_os_error();
+            if err.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(format!("PipeReader: read error: {err}"));
+        }
+        if n == 0 {
+            return Err("PipeReader: unexpected EOF".to_string());
+        }
+        offset += n as usize;
+    }
+    Ok(())
 }
