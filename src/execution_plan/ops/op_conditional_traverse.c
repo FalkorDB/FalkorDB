@@ -154,16 +154,16 @@ OpBase *NewCondTraverseOp
 	const char *dest = AlgebraicExpression_Dest(ae);
 	op->destNodeIdx = OpBase_Modifies((OpBase *)op, dest);
 
-	const char *edge = AlgebraicExpression_Edge(ae);
-	if(edge) {
+	const char *edge = AlgebraicExpression_Edge (ae) ;
+	if (edge != NULL) {
 		// this operation will populate an edge in the Record
 		// prepare all necessary information for collecting matching edges
-		uint edge_idx = OpBase_Modifies((OpBase *)op, edge);
-		QGEdge *e = QueryGraph_GetEdgeByAlias(plan->query_graph, edge);
-		op->edge_ctx = EdgeTraverseCtx_New(ae, e, edge_idx);
+		uint edge_idx = OpBase_Modifies ((OpBase *)op, edge) ;
+		QGEdge *e = QueryGraph_GetEdgeByAlias (plan->query_graph, edge) ;
+		op->edge_ctx = EdgeTraverseCtx_New (ae, e, edge_idx) ;
 	}
 
-	return (OpBase *)op;
+	return (OpBase *)op ;
 }
 
 // make traversal optional
