@@ -29,8 +29,8 @@
 
 use crate::{
     config::{
-        CONFIGURATION_IMPORT_FOLDER, EFFECTS_THRESHOLD, MAX_QUEUED_QUERIES, RESULTSET_SIZE,
-        TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX,
+        CONFIGURATION_IMPORT_FOLDER, EFFECTS_THRESHOLD, MAX_QUEUED_QUERIES, QUERY_MEM_CAPACITY,
+        RESULTSET_SIZE, TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX,
     },
     reply::{reply_compact, reply_verbose},
     slow_log::SlowLog,
@@ -70,7 +70,9 @@ use std::{
     time::Instant,
 };
 
-use crate::allocator::{current_thread_usage, disable_tracking, enable_tracking, reset_counter};
+use crate::allocator::{
+    current_thread_usage, disable_tracking, enable_tracking, net_thread_usage, reset_counter,
+};
 
 pub(crate) struct WriteMessage {
     pub bc: BlockedClient,
@@ -363,6 +365,8 @@ impl ThreadedGraph {
             RESULTSET_SIZE.load(Ordering::Relaxed),
             false,
             timeout_ms,
+            QUERY_MEM_CAPACITY.load(Ordering::Relaxed),
+            Some(net_thread_usage),
         );
         let mut result = runtime.query()?;
         result.stats.cached = cached;
@@ -433,6 +437,8 @@ impl ThreadedGraph {
             RESULTSET_SIZE.load(Ordering::Relaxed),
             false,
             timeout_ms,
+            QUERY_MEM_CAPACITY.load(Ordering::Relaxed),
+            Some(net_thread_usage),
         );
         let mut result = match runtime.query() {
             Ok(r) => r,
@@ -519,6 +525,8 @@ impl ThreadedGraph {
             -1,
             true,
             timeout_ms,
+            QUERY_MEM_CAPACITY.load(Ordering::Relaxed),
+            Some(net_thread_usage),
         );
         let _ = runtime.query()?;
         reply_profile(ctx, &runtime, &plan);
@@ -559,6 +567,8 @@ impl ThreadedGraph {
             -1,
             true,
             timeout_ms,
+            QUERY_MEM_CAPACITY.load(Ordering::Relaxed),
+            Some(net_thread_usage),
         );
         match runtime.query() {
             Ok(_) => {
@@ -736,7 +746,9 @@ pub fn query_mut(
     let received_at = telemetry::unix_now_secs();
     spawn(
         move || {
-            if track_mem {
+            let mem_capacity = QUERY_MEM_CAPACITY.load(Ordering::Relaxed);
+            let enforce_mem = track_mem || mem_capacity > 0;
+            if enforce_mem {
                 reset_counter();
                 enable_tracking();
             }
@@ -764,16 +776,18 @@ pub fn query_mut(
             telemetry::unregister_running(running_id);
 
             // Log memory tracking BEFORE freeing the context.
-            if track_mem {
-                let (allocated, deallocated) = current_thread_usage();
+            if enforce_mem {
+                if track_mem {
+                    let (allocated, deallocated) = current_thread_usage();
+                    ctx.log(
+                        redis_module::logging::RedisLogLevel::Notice,
+                        &format!(
+                            "Allocated: {allocated} bytes, Deallocated: {deallocated} bytes, Net: {}",
+                            allocated as isize - deallocated as isize
+                        ),
+                    );
+                }
                 disable_tracking();
-                ctx.log(
-                    redis_module::logging::RedisLogLevel::Notice,
-                    &format!(
-                        "Allocated: {allocated} bytes, Deallocated: {deallocated} bytes, Net: {}",
-                        allocated as isize - deallocated as isize
-                    ),
-                );
             }
 
             match res {
@@ -860,6 +874,12 @@ fn query_sync(
     // Sync query timeout to UDF JS runtime
     graph::udf::js_context::JS_TIMEOUT_MS
         .store(TIMEOUT_DEFAULT.load(Ordering::Relaxed), Ordering::Relaxed);
+
+    let mem_capacity = QUERY_MEM_CAPACITY.load(Ordering::Relaxed);
+    if mem_capacity > 0 {
+        reset_counter();
+        enable_tracking();
+    }
 
     let received_at = telemetry::unix_now_secs();
     let cmd = if write {

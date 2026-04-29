@@ -66,6 +66,8 @@ fn record_mut(
         -1,
         false,
         None,
+        0,
+        None,
     );
     let _ = runtime.query();
     let ids = plan.root().indices::<Bfs>().collect::<Vec<_>>();

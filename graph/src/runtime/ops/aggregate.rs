@@ -303,7 +303,7 @@ impl<'a> AggregateOp<'a> {
                 Ok(b) => b,
                 Err(e) => {
                     errors.push(e);
-                    continue;
+                    break;
                 }
             };
 
@@ -494,7 +494,7 @@ impl<'a> AggregateOp<'a> {
                 Ok(b) => b,
                 Err(e) => {
                     errors.push(e);
-                    continue;
+                    break;
                 }
             };
             Self::consume_batch_per_row(
