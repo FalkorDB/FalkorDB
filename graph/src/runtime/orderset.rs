@@ -108,6 +108,14 @@ impl<T: PartialEq> OrderSet<T> {
         }
         None
     }
+
+    #[must_use]
+    pub fn get(
+        &self,
+        index: usize,
+    ) -> Option<&T> {
+        self.vec.get(index)
+    }
 }
 
 impl<T: PartialEq> FromIterator<T> for OrderSet<T> {

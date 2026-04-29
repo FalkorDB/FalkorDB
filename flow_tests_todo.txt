@@ -14,7 +14,6 @@ tests/flow/test_replication_states.py
 
 ## Redis Integration & Server Features
 tests/flow/test_bolt.py
-tests/flow/test_graph_copy.py
 tests/flow/test_graph_info.py
 
 ## Memory & Resource Management

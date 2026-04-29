@@ -29,6 +29,7 @@ tests/flow/test_filters
 tests/flow/test_foreach
 tests/flow/test_fulltext_query.py
 tests/flow/test_function_calls
+tests/flow/test_graph_copy.py
 tests/flow/test_graph_create
 tests/flow/test_graph_deletion
 tests/flow/test_graph_merge
