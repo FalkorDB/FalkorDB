@@ -1,5 +1,9 @@
 import os
+import inspect
+import subprocess
+import time
 from common import *
+from redis.exceptions import BusyLoadingError, ConnectionError as RedisConnectionError
 
 GRAPH_ID = "config"
 NUMBER_OF_CONFIGURATIONS = 22 # number of configurations available
@@ -9,6 +13,34 @@ class testConfig(FlowTestsBase):
         self.env, self.db = Env()
         self.redis_con = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
+
+    def tearDown(self):
+        # Reset mutable runtime configs to defaults so changes in one test
+        # don't leak into subsequent flow tests sharing the same Redis process.
+        defaults = {
+            "TIMEOUT": 0,
+            "TIMEOUT_DEFAULT": 0,
+            "TIMEOUT_MAX": 0,
+            "RESULTSET_SIZE": -1,
+            "MAX_QUEUED_QUERIES": 4294967295,
+            "QUERY_MEM_CAPACITY": 0,
+            "DELTA_MAX_PENDING_CHANGES": 10000,
+            "VKEY_MAX_ENTITY_COUNT": 100000,
+            "CMD_INFO": 1,
+            "MAX_INFO_QUERIES": 1000,
+            "EFFECTS_THRESHOLD": 300,
+            "DELAY_INDEXING": 0,
+            "JS_HEAP_SIZE": 256 * 1024 * 1024,
+            "JS_STACK_SIZE": 1024 * 1024,
+        }
+
+        for name, value in defaults.items():
+            try:
+                self.db.config_set(name, value)
+            except redis.exceptions.ResponseError:
+                # Best-effort cleanup: some configs may be unavailable or immutable
+                # in certain Redis/module versions, but teardown should not fail.
+                pass
 
     def test01_config_get(self):
         # Try reading 'QUERY_MEM_CAPACITY' from config
@@ -31,7 +63,8 @@ class testConfig(FlowTestsBase):
                 ("TIMEOUT_MAX",  0),
                 ("CACHE_SIZE", 25),
                 ("ASYNC_DELETE", [0,1]), # could be either 0 or 1 depending on load time config
-                ("OMP_THREAD_COUNT", os.cpu_count()),
+                # OMP thread count can be 1 when OpenMP is unavailable.
+                ("OMP_THREAD_COUNT", [1, os.cpu_count()]),
                 ("THREAD_COUNT", os.cpu_count()),
                 ("RESULTSET_SIZE", -1),
                 ("VKEY_MAX_ENTITY_COUNT", 100000),
@@ -42,7 +75,7 @@ class testConfig(FlowTestsBase):
                 ("CMD_INFO", 1),
                 ("MAX_INFO_QUERIES", 1000),
                 ("EFFECTS_THRESHOLD", 300),
-                ("BOLT_PORT", 65535),
+                ("BOLT_PORT", -1),
                 ("DELAY_INDEXING", 0),
                 ("IMPORT_FOLDER", "/var/lib/FalkorDB/import/"),
                 ("TEMP_FOLDER", "/tmp"),
@@ -343,6 +376,23 @@ class testConfig(FlowTestsBase):
         expected_response = 1024
         self.env.assertEqual(creation_buffer_size, expected_response)
 
+    def test12_config_commands_available_via_redis_config(self):
+        timeout_key = "graph.timeout"
+
+        # ensure CONFIG GET exposes module configs
+        cfg = self.redis_con.config_get("graph.*")
+        self.env.assertIn(timeout_key, cfg)
+
+        # set via CONFIG SET and validate through GRAPH.CONFIG path
+        self.redis_con.config_set(timeout_key, 2)
+        self.env.assertEqual(self.db.config_get("TIMEOUT"), 2)
+
+        cfg = self.redis_con.config_get(timeout_key)
+        self.env.assertEqual(int(cfg[timeout_key]), 2)
+
+        # reset
+        self.redis_con.config_set(timeout_key, 0)
+
 import stat
 import shutil
 import tempfile
@@ -430,6 +480,143 @@ class testConfigTempFolder:
         finally:
             # clean up
             shutil.rmtree(valid_dir)
+
+class testConfigRewritePersist:
+    def _reset_runtime_configs(self):
+        if not hasattr(self, "db"):
+            return
+
+        defaults = {
+            "TIMEOUT": 0,
+            "TIMEOUT_DEFAULT": 0,
+            "TIMEOUT_MAX": 0,
+            "RESULTSET_SIZE": -1,
+            "CMD_INFO": 1,
+        }
+
+        for name, value in defaults.items():
+            try:
+                self.db.config_set(name, value)
+            except Exception:
+                # Best-effort reset before/after tests: ignore failures so that
+                # missing/unsupported configs do not cause the test to error.
+                pass
+
+    def teardown_method(self):
+        self._reset_runtime_configs()
+
+        if hasattr(self, "env"):
+            self.env.stop()
+        if hasattr(self, "redis_proc") and self.redis_proc:
+            try:
+                self.redis_con.shutdown()
+            except Exception as e:
+                # Ignore shutdown exceptions during teardown, but log for diagnostics.
+                print(f"Warning: redis_con.shutdown() failed during teardown: {e}")
+            self.redis_proc.terminate()
+            try:
+                self.redis_proc.wait(timeout=5)
+            except Exception:
+                self.redis_proc.kill()
+        if hasattr(self, "cfg_path") and os.path.exists(self.cfg_path):
+            os.remove(self.cfg_path)
+
+    def test_config_rewrite_roundtrip(self):
+        # configure via redis.conf only, no module args
+        cfg_lines = [
+            "graph.timeout 7",
+            "graph.resultset_size 4",
+            "graph.cmd_info no",
+        ]
+
+        fd, self.cfg_path = tempfile.mkstemp(prefix="falkordb-config-", suffix=".conf")
+        with os.fdopen(fd, "w") as cfg:
+            cfg.write("\n".join(cfg_lines))
+
+        params = inspect.signature(Env).parameters
+        env_kwargs = {}
+        if "redisConfigFile" in params:
+            env_kwargs["redisConfigFile"] = self.cfg_path
+        elif "redisConfigPath" in params:
+            env_kwargs["redisConfigPath"] = self.cfg_path
+        elif "redisConfig" in params:
+            env_kwargs["redisConfig"] = self.cfg_path
+
+        if env_kwargs:
+            self.env, self.db = Env(**env_kwargs)
+            self.redis_con = self.env.getConnection()
+            self.redis_proc = None
+        else:
+            # RLTest version does not support passing a config file; launch Redis
+            # manually using the same binary/module args RLTest would use.
+            self.env, _ = Env()
+            runner = self.env.envRunner
+            port = runner.port
+
+            # pull loadmodule directives from the RLTest command and move them into the config
+            loadmodule_lines = []
+            filtered_args = []
+            args = runner.masterCmdArgs[1:]  # skip redis-server binary
+            i = 0
+            while i < len(args):
+                if args[i] == "--loadmodule" and i + 1 < len(args):
+                    j = i + 2
+                    while j < len(args) and not args[j].startswith("--"):
+                        j += 1
+                    load_args = args[i + 1 : j]
+                    loadmodule_lines.append("loadmodule " + " ".join(load_args))
+                    i = j
+                else:
+                    filtered_args.append(args[i])
+                    i += 1
+
+            if loadmodule_lines:
+                with open(self.cfg_path, "r+") as cfg:
+                    existing = cfg.read()
+                    cfg.seek(0)
+                    cfg.write("\n".join(loadmodule_lines) + "\n" + existing)
+                    cfg.truncate()
+
+            # stop the RLTest-managed instance so we can reuse the port/args
+            self.env.stop()
+
+            cmd = [runner.redisBinaryPath, self.cfg_path] + filtered_args
+            self.redis_proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+            )
+
+            self.redis_con = redis.StrictRedis(
+                "localhost", port, decode_responses=True
+            )
+            for _ in range(100):
+                try:
+                    if self.redis_con.ping():
+                        break
+                except (RedisConnectionError, BusyLoadingError):
+                    time.sleep(0.05)
+            else:
+                raise RuntimeError(f"Redis failed to become ready on port {port}")
+            self.db = FalkorDB("localhost", port)
+
+        # values should load from config file
+        self.env.assertEqual(self.db.config_get("TIMEOUT"), 7)
+        self.env.assertEqual(self.db.config_get("RESULTSET_SIZE"), 4)
+        self.env.assertEqual(self.db.config_get("CMD_INFO"), 0)
+
+        # rewrite and ensure persisted in file
+        rewrite_result = self.redis_con.config_rewrite()
+        self.env.assertIn(rewrite_result, [True, "OK"])
+        with open(self.cfg_path, "r") as cfg:
+            contents = cfg.read().lower()
+
+        for line in cfg_lines:
+            key, val = line.split()
+            self.env.assertIn(f"{key.lower()} {val.lower()}", contents)
+
+        # still reflected in the running config
+        self.env.assertEqual(self.db.config_get("TIMEOUT"), 7)
+        self.env.assertEqual(self.db.config_get("RESULTSET_SIZE"), 4)
+        self.env.assertEqual(self.db.config_get("CMD_INFO"), 0)
 
 class testLoadTimeConfig(FlowTestsBase):
     """

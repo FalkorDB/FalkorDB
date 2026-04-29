@@ -33,6 +33,9 @@ void Cron_AddRecurringTasks(void);
 // add stream finished queries task
 void CronTask_AddStreamFinishedQueries();
 
+// returns true if cron thread is up
+bool Cron_IsRunning(void);
+
 // create a new CRON task
 CronTaskHandle Cron_AddTask
 (
@@ -49,4 +52,3 @@ bool Cron_AbortTask
 (
 	CronTaskHandle t
 );
-

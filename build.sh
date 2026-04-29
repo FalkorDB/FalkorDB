@@ -1566,7 +1566,16 @@ run_flow_tests() {
     elif [[ "$SLOW" == "1" ]]; then
         export PARALLEL=0
     else
-        export PARALLEL=1
+        # Default to serial execution for stability.
+        # RLTest multiprocessing may terminate early under the current
+        # Python/RLTest combination.
+        export PARALLEL=0
+    fi
+
+    # Randomize test ports by default to avoid collisions between concurrent
+    # RLTest workers and any lingering local Redis instances.
+    if [[ -z "${RANDPORTS:-}" ]]; then
+        export RANDPORTS=1
     fi
 
     # Set test options

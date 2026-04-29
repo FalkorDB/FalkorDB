@@ -110,11 +110,29 @@ bool AST_ReadOnly
 	if(root == NULL) return true;
 
 	cypher_astnode_type_t type = cypher_astnode_type(root);
+	if(type == CYPHER_AST_STATEMENT) {
+		return AST_ReadOnly(cypher_ast_statement_get_body(root));
+	}
+
+	if(type == CYPHER_AST_QUERY) {
+		uint n_clauses = cypher_ast_query_nclauses(root);
+		for(uint i = 0; i < n_clauses; i++) {
+			const cypher_astnode_t *clause = cypher_ast_query_get_clause(root, i);
+			if(!AST_ReadOnly(clause)) return false;
+		}
+		return true;
+	}
+
+	if(type == CYPHER_AST_CALL_SUBQUERY) {
+		return AST_ReadOnly(cypher_ast_call_subquery_get_query(root));
+	}
+
 	if(type == CYPHER_AST_CREATE                     ||
 	   type == CYPHER_AST_MERGE                      ||
 	   type == CYPHER_AST_DELETE                     ||
 	   type == CYPHER_AST_SET                        ||
 	   type == CYPHER_AST_REMOVE                     ||
+	   type == CYPHER_AST_FOREACH                    ||
 	   type == CYPHER_AST_CREATE_NODE_PROPS_INDEX    ||
 	   type == CYPHER_AST_CREATE_PATTERN_PROPS_INDEX ||
 	   type == CYPHER_AST_DROP_PROPS_INDEX           ||
@@ -132,12 +150,6 @@ bool AST_ReadOnly
 		Proc_Free(proc);
 
 		if(!read_only) return false;
-	}
-
-	uint num_children = cypher_astnode_nchildren(root);
-	for(uint i = 0; i < num_children; i ++) {
-		const cypher_astnode_t *child = cypher_astnode_get_child(root, i);
-		if(!AST_ReadOnly(child)) return false;
 	}
 
 	return true;

@@ -96,6 +96,17 @@ def Env(
     else:
         # Standard mode - direct port access
         port = env.envRunner.port
+
+    # Keep the exposed env.port aligned with the actual running port.
+    # This is critical when tests run with randomized ports.
+    env.port = port
+
+    if useSlaves:
+        slavePort = None
+        if hasattr(env.envRunner, 'slavePort'):
+            slavePort = env.envRunner.slavePort
+        env.slavePort = slavePort
+
     db = FalkorDB("localhost", port)
 
     if SANITIZER or VALGRIND:
