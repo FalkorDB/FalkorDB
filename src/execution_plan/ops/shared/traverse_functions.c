@@ -186,9 +186,6 @@ void EdgeTraverseCtx_Reset
 			if (s != NULL) {
 				// update relationship type
 				edge_ctx->rel_ids [i] = Schema_GetID (s) ;
-			} else {
-				// cannot update the unkown relationship
-				break ;
 			}
 		}
 	}
