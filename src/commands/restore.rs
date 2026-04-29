@@ -19,7 +19,8 @@ pub fn graph_restore(
     let dest_key_name = args.next_arg()?;
     let data_arg = args.next_arg()?;
 
-    let dest_name = dest_key_name.to_string_lossy();
+    let dest_name = std::str::from_utf8(dest_key_name.as_slice())
+        .map_err(|_| RedisError::Str("ERR destination key is not valid UTF-8"))?;
 
     // Verify dest key does not already exist.
     let dest_key = ctx.open_key_writable(&dest_key_name);
@@ -36,7 +37,7 @@ pub fn graph_restore(
     let cache_size = *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize;
 
     let data = data_arg.as_slice();
-    let new_graph = serializers::decoder::vec_load_graph(data.to_vec(), cache_size, &dest_name)
+    let new_graph = serializers::decoder::vec_load_graph(data, cache_size, dest_name)
         .map_err(RedisError::String)?;
 
     // Wrap the decoded graph and set on dest key.

@@ -200,10 +200,10 @@ impl BufferedReader {
         }
     }
 
-    pub const fn from_vec(data: Vec<u8>) -> Self {
+    pub fn from_slice(data: &[u8]) -> Self {
         Self {
             rdb: std::ptr::null_mut(),
-            buf: data,
+            buf: data.to_vec(),
             pos: 0,
         }
     }
@@ -299,6 +299,13 @@ impl BufferedReader {
                 Ok(data.to_vec())
             }
             TYPE_BLOB => {
+                // BLOB requires a live Redis IO handle to load a standalone chunk.
+                // When constructed via from_vec (rdb is null), reject immediately.
+                if self.rdb.is_null() {
+                    return Err(
+                        "BufferedReader: TYPE_BLOB encountered in Vec-backed reader".to_string()
+                    );
+                }
                 // The current buffer should now be fully consumed
                 // (the blob sentinel was the last byte before flush).
                 // Load the standalone blob chunk.
@@ -321,33 +328,20 @@ impl BufferedReader {
 // Pipe-based Writer / Reader for GRAPH.COPY (fork + pipe)
 // ---------------------------------------------------------------------------
 
-use std::os::raw::c_int;
-
-unsafe extern "C" {
-    fn write(
-        fd: c_int,
-        buf: *const std::ffi::c_void,
-        count: usize,
-    ) -> isize;
-    fn read(
-        fd: c_int,
-        buf: *mut std::ffi::c_void,
-        count: usize,
-    ) -> isize;
-    fn close(fd: c_int) -> c_int;
-}
+use std::io::{Read as IoRead, Write as IoWrite};
+use std::os::unix::io::OwnedFd;
 
 /// Buffered writer that sends type-tagged values through a pipe fd.
 ///
 /// Each flush writes a length-prefixed chunk: `[len:u64 LE][data:len bytes]`.
 /// A zero-length chunk signals end-of-stream.
 pub struct PipeWriter {
-    fd: i32,
+    fd: OwnedFd,
     buf: Vec<u8>,
 }
 
 impl PipeWriter {
-    pub fn new(fd: i32) -> Self {
+    pub fn new(fd: OwnedFd) -> Self {
         Self {
             fd,
             buf: Vec::with_capacity(BUFFER_SIZE),
@@ -357,8 +351,8 @@ impl PipeWriter {
     fn flush(&mut self) {
         if !self.buf.is_empty() {
             let len = self.buf.len() as u64;
-            write_all_fd(self.fd, &len.to_le_bytes());
-            write_all_fd(self.fd, &self.buf);
+            write_all_fd(&self.fd, &len.to_le_bytes());
+            write_all_fd(&self.fd, &self.buf);
             self.buf.clear();
         }
     }
@@ -377,8 +371,8 @@ impl PipeWriter {
         self.flush();
         // Zero-length chunk signals end-of-stream.
         let zero = 0u64;
-        write_all_fd(self.fd, &zero.to_le_bytes());
-        unsafe { close(self.fd) };
+        write_all_fd(&self.fd, &zero.to_le_bytes());
+        // OwnedFd closes on drop.
     }
 }
 
@@ -427,15 +421,15 @@ impl Writer for PipeWriter {
             self.buf.push(TYPE_BLOB);
             self.flush();
             let len = data.len() as u64;
-            write_all_fd(self.fd, &len.to_le_bytes());
-            write_all_fd(self.fd, data);
+            write_all_fd(&self.fd, &len.to_le_bytes());
+            write_all_fd(&self.fd, data);
         }
     }
 }
 
 /// Buffered reader that receives type-tagged values from a pipe fd.
 pub struct PipeReader {
-    fd: i32,
+    fd: Option<OwnedFd>,
     buf: Vec<u8>,
     pos: usize,
 }
@@ -485,9 +479,9 @@ impl Reader for PipeReader {
 }
 
 impl PipeReader {
-    pub fn new(fd: i32) -> Self {
+    pub fn new(fd: OwnedFd) -> Self {
         Self {
-            fd,
+            fd: Some(fd),
             buf: Vec::new(),
             pos: 0,
         }
@@ -496,14 +490,18 @@ impl PipeReader {
     /// Load the next length-prefixed chunk from the pipe.
     /// Returns Err if the stream ended (zero-length chunk).
     fn load_chunk(&mut self) -> Result<(), String> {
+        let fd = self
+            .fd
+            .as_ref()
+            .ok_or_else(|| "PipeReader: fd already closed".to_string())?;
         let mut len_buf = [0u8; 8];
-        read_all_fd(self.fd, &mut len_buf)?;
+        read_all_fd(fd, &mut len_buf)?;
         let len = u64::from_le_bytes(len_buf) as usize;
         if len == 0 {
             return Err("PipeReader: end of stream".to_string());
         }
         self.buf.resize(len, 0);
-        read_all_fd(self.fd, &mut self.buf)?;
+        read_all_fd(fd, &mut self.buf)?;
         self.pos = 0;
         Ok(())
     }
@@ -548,10 +546,13 @@ impl PipeReader {
     }
 
     /// Close the underlying pipe fd.
-    pub fn close(self) {
-        unsafe { close(self.fd) };
+    pub fn close(mut self) {
+        // Drop the OwnedFd to close.
+        self.fd.take();
     }
 }
+
+// No custom Drop needed — Option<OwnedFd> closes the fd on drop automatically.
 
 // ---------------------------------------------------------------------------
 // Vec-based Writer / Reader for GRAPH.RESTORE replication
@@ -613,43 +614,31 @@ impl Writer for VecWriter {
 }
 
 /// Write all bytes to a file descriptor, retrying on EINTR.
+///
+/// Uses `File::write_all` which handles EINTR internally.
+/// In fork child context, write errors are silently ignored (best-effort).
 fn write_all_fd(
-    fd: i32,
-    mut data: &[u8],
+    fd: &OwnedFd,
+    data: &[u8],
 ) {
-    while !data.is_empty() {
-        let n = unsafe { write(fd, data.as_ptr().cast(), data.len()) };
-        if n < 0 {
-            let err = std::io::Error::last_os_error();
-            if err.kind() == std::io::ErrorKind::Interrupted {
-                continue;
-            }
-            // In fork child, best-effort — just stop.
-            return;
-        }
-        data = &data[n as usize..];
-    }
+    use std::os::unix::io::{AsRawFd, FromRawFd};
+    // Temporarily wrap the raw fd in a File for safe I/O.
+    // `forget` prevents the File from closing the fd on drop.
+    let mut f = unsafe { std::fs::File::from_raw_fd(fd.as_raw_fd()) };
+    let _ = f.write_all(data);
+    std::mem::forget(f);
 }
 
 /// Read exactly `buf.len()` bytes from a file descriptor, retrying on EINTR.
+///
+/// Uses `File::read_exact` which handles EINTR internally.
 fn read_all_fd(
-    fd: i32,
+    fd: &OwnedFd,
     buf: &mut [u8],
 ) -> Result<(), String> {
-    let mut offset = 0;
-    while offset < buf.len() {
-        let n = unsafe { read(fd, buf[offset..].as_mut_ptr().cast(), buf.len() - offset) };
-        if n < 0 {
-            let err = std::io::Error::last_os_error();
-            if err.kind() == std::io::ErrorKind::Interrupted {
-                continue;
-            }
-            return Err(format!("PipeReader: read error: {err}"));
-        }
-        if n == 0 {
-            return Err("PipeReader: unexpected EOF".to_string());
-        }
-        offset += n as usize;
-    }
-    Ok(())
+    use std::os::unix::io::{AsRawFd, FromRawFd};
+    let mut f = unsafe { std::fs::File::from_raw_fd(fd.as_raw_fd()) };
+    let result = f.read_exact(buf);
+    std::mem::forget(f);
+    result.map_err(|e| format!("PipeReader: read error: {e}"))
 }

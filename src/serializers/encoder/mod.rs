@@ -35,7 +35,7 @@ pub fn rdb_save_graph_key(
 ///
 /// Uses the same v19 format as RDB, with `PipeWriter` instead of `BufferedWriter`.
 pub fn pipe_save_graph(
-    fd: i32,
+    fd: std::os::unix::io::OwnedFd,
     graph: &Graph,
     snapshots: Option<&RdbSnapshots>,
 ) {

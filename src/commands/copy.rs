@@ -7,12 +7,12 @@ use graph::graph::mvcc_graph::MvccGraph;
 use parking_lot::RwLock;
 use redis_module::{Context, NextArg, RedisError, RedisResult, RedisString, RedisValue};
 use std::os::raw::c_int;
+use std::os::unix::io::{FromRawFd, OwnedFd};
 use std::sync::Arc;
 
 unsafe extern "C" {
     fn pipe(pipefd: *mut c_int) -> c_int;
     fn fork() -> i32;
-    fn close(fd: c_int) -> c_int;
     fn _exit(status: c_int) -> !;
     fn waitpid(
         pid: i32,
@@ -33,7 +33,8 @@ pub fn graph_copy(
     let src_key_name = args.next_arg()?;
     let dest_key_name = args.next_arg()?;
 
-    let dest_name = dest_key_name.to_string_lossy();
+    let dest_name = std::str::from_utf8(dest_key_name.as_slice())
+        .map_err(|_| RedisError::Str("ERR destination key is not valid UTF-8"))?;
 
     // Open src key (read) and verify it holds a graph.
     let src_key = ctx.open_key(&src_key_name);
@@ -74,22 +75,22 @@ pub fn graph_copy(
     if unsafe { pipe(pipe_fds.as_mut_ptr()) } != 0 {
         return Err(RedisError::Str("ERR could not create pipe"));
     }
-    let read_fd = pipe_fds[0];
-    let write_fd = pipe_fds[1];
+    // SAFETY: pipe() just returned two valid, open file descriptors.
+    let read_fd = unsafe { OwnedFd::from_raw_fd(pipe_fds[0]) };
+    let write_fd = unsafe { OwnedFd::from_raw_fd(pipe_fds[1]) };
 
     // Fork.
     let pid = unsafe { fork() };
     if pid < 0 {
-        unsafe {
-            close(read_fd);
-            close(write_fd);
-        }
+        // OwnedFd drop closes both fds automatically.
+        drop(read_fd);
+        drop(write_fd);
         return Err(RedisError::Str("ERR could not fork"));
     }
 
     if pid == 0 {
         // --- Child process ---
-        unsafe { close(read_fd) };
+        drop(read_fd);
         set_nthreads(1);
 
         serializers::encoder::pipe_save_graph(
@@ -103,18 +104,30 @@ pub fn graph_copy(
     }
 
     // --- Parent process ---
-    unsafe { close(write_fd) };
+    drop(write_fd);
 
     // Drop locks before blocking on pipe read (child has its own CoW copy).
     drop(graph);
     drop(g);
     drop(tg);
 
-    let result = serializers::decoder::pipe_load_graph(read_fd, cache_size, &dest_name);
+    let result = serializers::decoder::pipe_load_graph(read_fd, cache_size, dest_name);
 
-    // Wait for child.
+    // Wait for child, retrying on EINTR.
     let mut status = 0i32;
-    unsafe { waitpid(pid, &raw mut status, 0) };
+    loop {
+        let ret = unsafe { waitpid(pid, &raw mut status, 0) };
+        if ret == pid {
+            break;
+        }
+        if ret < 0 {
+            let err = std::io::Error::last_os_error();
+            if err.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(RedisError::String(format!("ERR waitpid failed: {err}")));
+        }
+    }
 
     let new_graph = result.map_err(RedisError::String)?;
 

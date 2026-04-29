@@ -1093,9 +1093,9 @@ impl Graph {
     pub fn rel_attr_id_to_global(
         &self,
         local_id: u16,
-    ) -> usize {
-        let name = &self.relationship_attrs.attrs_name[local_id as usize];
-        self.get_attrs().position(|a| a == name).unwrap()
+    ) -> Option<usize> {
+        let name = self.relationship_attrs.attrs_name.get(local_id as usize)?;
+        self.get_attrs().position(|a| a == name)
     }
 
     pub fn return_node_id(

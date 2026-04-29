@@ -351,7 +351,7 @@ fn rebuild_indexes(
 /// Same single-key decode logic as `rdb_load_graph` but reads from a pipe
 /// via `PipeReader` and overrides the graph name to `dest_name`.
 pub fn pipe_load_graph(
-    fd: i32,
+    fd: std::os::unix::io::OwnedFd,
     cache_size: usize,
     dest_name: &str,
 ) -> Result<Graph, String> {
@@ -363,14 +363,14 @@ pub fn pipe_load_graph(
 
 /// Decode a graph from a byte buffer (for GRAPH.RESTORE on replicas).
 ///
-/// Uses `BufferedReader::from_vec` to read the v19-encoded data produced by
+/// Uses `BufferedReader::from_slice` to read the v19-encoded data produced by
 /// `vec_save_graph`.
 pub fn vec_load_graph(
-    data: Vec<u8>,
+    data: &[u8],
     cache_size: usize,
     dest_name: &str,
 ) -> Result<Graph, String> {
-    let mut r = BufferedReader::from_vec(data);
+    let mut r = BufferedReader::from_slice(data);
     load_graph_from_reader(&mut r, cache_size, dest_name)
 }
 
@@ -381,6 +381,14 @@ fn load_graph_from_reader(
     dest_name: &str,
 ) -> Result<Graph, String> {
     let hdr = Header::decode(r)?;
+
+    if hdr.key_count != 1 {
+        return Err(format!(
+            "expected single-key payload, found {} keys",
+            hdr.key_count
+        ));
+    }
+
     let schema = Schema::decode(r)?;
 
     let payload_count = r.read_unsigned()?;
