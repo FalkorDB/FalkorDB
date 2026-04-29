@@ -27,6 +27,7 @@ use crate::config::{
     OMP_THREAD_COUNT, TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count,
 };
 use crate::redis_type::on_persistence;
+use crate::telemetry;
 use graph::{
     graph::graphblas::matrix::init,
     index::redisearch::{REDISEARCH_INIT_LIBRARY, RediSearch_Init},
@@ -224,6 +225,17 @@ pub fn graph_init(
     let tc = get_thread_count(ctx) as usize;
     let _ = init_thread_pool(tc);
     OMP_THREAD_COUNT.store(tc as i64, std::sync::atomic::Ordering::Relaxed);
+
+    // Subscribe to keyspace notifications for graph key rename handling.
+    unsafe {
+        let res = redis_module::raw::RedisModule_SubscribeToKeyspaceEvents.unwrap()(
+            ctx.ctx,
+            4, // REDISMODULE_NOTIFY_GENERIC (covers RENAME)
+            Some(on_keyspace_event),
+        );
+        debug_assert_eq!(res, REDISMODULE_OK as c_int);
+    }
+
     Status::Ok
 }
 
@@ -233,4 +245,44 @@ const unsafe extern "C" fn on_flush(
     _subevent: u64,
     _data: *mut c_void,
 ) {
+}
+
+/// Tracks the old key name during a two-phase RENAME notification.
+static RENAME_OLD_NAME: parking_lot::Mutex<Option<String>> = parking_lot::Mutex::new(None);
+
+/// Keyspace event callback for handling graph key renames.
+/// Redis RENAME fires two sequential events on the same thread:
+/// 1. `rename_from` with the old key name
+/// 2. `rename_to` with the new key name
+unsafe extern "C" fn on_keyspace_event(
+    ctx: *mut RedisModuleCtx,
+    _type: c_int,
+    event: *const std::os::raw::c_char,
+    key: *mut redis_module::raw::RedisModuleString,
+) -> c_int {
+    let event_str = unsafe { std::ffi::CStr::from_ptr(event) }
+        .to_str()
+        .unwrap_or("");
+
+    let mut key_len: usize = 0;
+    let key_ptr = unsafe {
+        redis_module::raw::RedisModule_StringPtrLen.unwrap()(key, &mut key_len as *mut usize)
+    };
+    let key_name = unsafe {
+        std::str::from_utf8_unchecked(std::slice::from_raw_parts(key_ptr.cast(), key_len))
+    };
+
+    match event_str {
+        "rename_from" => {
+            *RENAME_OLD_NAME.lock() = Some(key_name.to_string());
+        }
+        "rename_to" => {
+            if let Some(old_name) = RENAME_OLD_NAME.lock().take() {
+                let context = Context::new(ctx);
+                telemetry::delete_stream(&context, &old_name);
+            }
+        }
+        _ => {}
+    }
+    0
 }
