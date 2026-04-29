@@ -826,16 +826,16 @@ impl<'a> Iterator for BatchOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // Check timeout before dispatching to the next operator.
-        if let Some((runtime, _idx)) = self.inspect_context()
-            && let Err(e) = runtime.check_timeout()
-        {
-            return Some(Err(e));
-        }
-
-        // Check if profiling is enabled and save state before dispatch.
-        // We must not hold a reference to `self` across the dispatch.
-        let profiling = self.inspect_context().and_then(|(runtime, idx)| {
+        // Check timeout and memory capacity before dispatching to the next operator.
+        // Also capture profiling state. We must not hold a reference to `self`
+        // across the dispatch, so everything is extracted up front.
+        let profiling = if let Some((runtime, idx)) = self.inspect_context() {
+            if let Err(e) = runtime.check_timeout() {
+                return Some(Err(e));
+            }
+            if let Err(e) = runtime.check_mem_capacity() {
+                return Some(Err(e));
+            }
             if runtime.profile {
                 let saved = runtime.profile_child_time.get();
                 runtime.profile_child_time.set(std::time::Duration::ZERO);
@@ -843,7 +843,9 @@ impl<'a> Iterator for BatchOp<'a> {
             } else {
                 None
             }
-        });
+        } else {
+            None
+        };
 
         let result = match self {
             Self::Once(batch) | Self::Argument(batch) => batch.take().map(Ok),
