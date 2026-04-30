@@ -624,17 +624,21 @@ impl Planner {
     fn set_include_pending_on_scans(tree: &mut DynTree<IR>) {
         let indices = tree.root().indices::<Bfs>().collect::<Vec<_>>();
         for idx in indices {
-            let node_pattern = match tree.node(idx).data() {
-                IR::NodeByLabelScan { node } | IR::AllNodeScan(node) => node.clone(),
-                _ => continue,
-            };
-            // Replace the scan data with IncludePending, push original scan as child.
+            if !matches!(
+                tree.node(idx).data(),
+                IR::NodeByLabelScan { .. } | IR::AllNodeScan(_)
+            ) {
+                continue;
+            }
             let original_data = std::mem::replace(
                 tree.node_mut(idx).data_mut(),
-                IR::IncludePending {
-                    node: node_pattern.clone(),
-                },
+                IR::Argument, // temporary placeholder
             );
+            let node = match &original_data {
+                IR::NodeByLabelScan { node } | IR::AllNodeScan(node) => node.clone(),
+                _ => unreachable!(),
+            };
+            *tree.node_mut(idx).data_mut() = IR::IncludePending { node };
             tree.node_mut(idx).push_child(original_data);
         }
     }

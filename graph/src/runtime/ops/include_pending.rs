@@ -142,9 +142,18 @@ impl<'a> Iterator for IncludePendingOp<'a> {
                         // Filter the batch: keep only rows whose node is not deleted/removed
                         let mut envs = Vec::with_capacity(batch.len());
                         for env in batch.active_env_iter() {
-                            if let Some(Value::Node(nid)) = env.get(alias) {
-                                let raw: u64 = (*nid).into();
-                                if deleted.contains(raw) || removed.contains(raw) {
+                            match env.get(alias) {
+                                Some(Value::Node(nid)) => {
+                                    let raw: u64 = (*nid).into();
+                                    if deleted.contains(raw) || removed.contains(raw) {
+                                        continue;
+                                    }
+                                }
+                                _ => {
+                                    debug_assert!(
+                                        false,
+                                        "IncludePendingOp: missing node binding for alias"
+                                    );
                                     continue;
                                 }
                             }

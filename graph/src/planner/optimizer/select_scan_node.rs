@@ -264,7 +264,10 @@ pub(super) fn select_scan_node(
             let child_data = optimized_plan.node(bottom_idx).child(0).data().clone();
             matches!(
                 child_data,
-                IR::AllNodeScan(_) | IR::NodeByLabelScan { .. } | IR::Filter(_)
+                IR::AllNodeScan(_)
+                    | IR::NodeByLabelScan { .. }
+                    | IR::IncludePending { .. }
+                    | IR::Filter(_)
             )
         };
         // Treat CTs with planner-added scans like leaf CTs for scan selection.
