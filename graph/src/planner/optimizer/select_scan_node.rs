@@ -145,10 +145,7 @@ fn make_scan_subtree(node: &Arc<QueryNode<Arc<String>, Variable>>) -> DynTree<IR
     let mut scan = if node.labels.is_empty() {
         DynTree::new(IR::AllNodeScan(node.clone()))
     } else {
-        DynTree::new(IR::NodeByLabelScan {
-            node: node.clone(),
-            include_pending: false,
-        })
+        DynTree::new(IR::NodeByLabelScan { node: node.clone() })
     };
     if let Some(filter_expr) = attr_filter {
         scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);

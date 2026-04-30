@@ -342,7 +342,7 @@ impl Binder {
                 for relationship in pattern.relationships() {
                     self.bind_expr(&relationship.attrs)?;
                     // Check that the relationship variable itself is not already bound
-                    if let Some(_existing) = self.current_env().get(&relationship.alias) {
+                    if self.current_env().contains_key(&relationship.alias) {
                         return Err(format!(
                             "Variable `{}` can't be redeclared in a MERGE clause",
                             relationship.alias

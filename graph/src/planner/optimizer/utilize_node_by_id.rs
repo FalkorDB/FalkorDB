@@ -112,7 +112,7 @@ pub(super) fn utilize_node_by_id(optimized_plan: &mut DynTree<IR>) {
         for idx in indices {
             let mut filters = vec![];
             let node = match optimized_plan.node(idx).data() {
-                IR::NodeByLabelScan { node, .. } | IR::AllNodeScan(node) => node.clone(),
+                IR::NodeByLabelScan { node } | IR::AllNodeScan(node) => node.clone(),
                 _ => continue,
             };
             if let IR::Filter(filter) = optimized_plan.node(idx).parent().unwrap().data() {

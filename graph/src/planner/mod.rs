@@ -96,11 +96,15 @@ pub enum IR {
     /// Scan all nodes (no label filter)
     AllNodeScan(Arc<QueryNode<Arc<String>, Variable>>),
     /// Scan nodes by label.
-    /// When `include_pending` is `true`, the scan includes pending-created
-    /// nodes and excludes pending-deleted nodes (used inside MERGE match sub-plans).
+    /// Scan all nodes with a given label.
     NodeByLabelScan {
         node: Arc<QueryNode<Arc<String>, Variable>>,
-        include_pending: bool,
+    },
+    /// Wraps a scan to include pending-created nodes and exclude pending-deleted
+    /// nodes. Used inside MERGE match sub-plans so they see in-flight mutations.
+    /// The optimizer is free to rewrite the child scan (e.g. to an index scan).
+    IncludePending {
+        node: Arc<QueryNode<Arc<String>, Variable>>,
     },
     /// Scan nodes using an index
     NodeByIndexScan {
@@ -428,6 +432,9 @@ impl Display for IR {
             Self::NodeByLabelScan { node, .. } => {
                 write!(f, "Node By Label Scan | {node}")
             }
+            Self::IncludePending { node } => {
+                write!(f, "Include Pending | {node}")
+            }
             Self::NodeByIndexScan { node, .. } => {
                 write!(f, "Node By Index Scan | {node}")
             }
@@ -611,17 +618,24 @@ impl Planner {
         }
     }
 
-    /// Mark every `NodeByLabelScan` in `tree` to include pending nodes.
-    /// Used for MERGE match sub-plans so they see in-flight mutations.
+    /// Wrap every `NodeByLabelScan` (and `AllNodeScan`) in `tree` with an
+    /// `IncludePending` parent node. Must be called BEFORE `add_argument_to_leaves`
+    /// so scans are still leaves when we restructure them.
     fn set_include_pending_on_scans(tree: &mut DynTree<IR>) {
         let indices = tree.root().indices::<Bfs>().collect::<Vec<_>>();
         for idx in indices {
-            if let IR::NodeByLabelScan {
-                include_pending, ..
-            } = tree.node_mut(idx).data_mut()
-            {
-                *include_pending = true;
-            }
+            let node_pattern = match tree.node(idx).data() {
+                IR::NodeByLabelScan { node } | IR::AllNodeScan(node) => node.clone(),
+                _ => continue,
+            };
+            // Replace the scan data with IncludePending, push original scan as child.
+            let original_data = std::mem::replace(
+                tree.node_mut(idx).data_mut(),
+                IR::IncludePending {
+                    node: node_pattern.clone(),
+                },
+            );
+            tree.node_mut(idx).push_child(original_data);
         }
     }
 
@@ -1199,10 +1213,7 @@ impl Planner {
                         // Multi-label node: the runtime's get_nodes()
                         // intersects all label matrices, so we can pass
                         // all labels directly to NodeByLabelScan.
-                        tree!(IR::NodeByLabelScan {
-                            node: node.clone(),
-                            include_pending: false
-                        })
+                        tree!(IR::NodeByLabelScan { node: node.clone() })
                     };
                     if let Some(filter_expr) = attr_filter {
                         res = tree!(IR::Filter(Arc::new(filter_expr)), res);
@@ -1269,7 +1280,6 @@ impl Planner {
                     } else {
                         tree!(IR::NodeByLabelScan {
                             node: relationship.from.clone(),
-                            include_pending: false
                         })
                     };
                     if let Some(filter_expr) = from_attr_filter {
@@ -1303,7 +1313,6 @@ impl Planner {
                 } else {
                     tree!(IR::NodeByLabelScan {
                         node: relationship.from.clone(),
-                        include_pending: false
                     })
                 };
                 if let Some(filter_expr) = attr_filter {
@@ -1422,7 +1431,6 @@ impl Planner {
                     } else {
                         tree!(IR::NodeByLabelScan {
                             node: relationship.from.clone(),
-                            include_pending: false
                         })
                     };
                     if let Some(filter_expr) = attr_filter {
@@ -2130,8 +2138,8 @@ impl Planner {
             } => {
                 let create_pattern = pattern.filter_visited(&self.visited);
                 let mut match_branch = self.plan_match(&pattern, None);
-                Self::add_argument_to_leaves(&mut match_branch);
                 Self::set_include_pending_on_scans(&mut match_branch);
+                Self::add_argument_to_leaves(&mut match_branch);
 
                 let paths = pattern.paths();
                 let merge = tree!(

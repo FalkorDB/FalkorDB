@@ -59,6 +59,7 @@ use super::ops::edge_by_index_scan::EdgeByIndexScanOp;
 use super::ops::expand_into::ExpandIntoOp;
 use super::ops::filter::FilterOp;
 use super::ops::foreach::ForEachOp;
+use super::ops::include_pending::IncludePendingOp;
 use super::ops::limit::LimitOp;
 use super::ops::load_csv::LoadCsvOp;
 use super::ops::merge::MergeOp;
@@ -605,6 +606,8 @@ pub enum BatchOp<'a> {
     Argument(Option<Batch<'a>>),
     /// Scan nodes by label.
     NodeByLabelScan(NodeByLabelScanOp<'a>),
+    /// Augments child scan with pending-created nodes and filters deleted/removed.
+    IncludePending(IncludePendingOp<'a>),
     /// Filter rows by predicate.
     Filter(FilterOp<'a>),
     /// Project expressions into new columns.
@@ -694,6 +697,7 @@ impl<'a> BatchOp<'a> {
                 op.child.set_argument_batch(batch);
             }
             Self::NodeByLabelScan(op) => op.child.set_argument_batch(batch),
+            Self::IncludePending(op) => op.child.set_argument_batch(batch),
             Self::Filter(op) => op.child.set_argument_batch(batch),
             Self::Project(op) => op.child.set_argument_batch(batch),
             Self::Skip(op) => op.child.set_argument_batch(batch),
@@ -783,6 +787,7 @@ impl<'a> BatchOp<'a> {
         match self {
             Self::Once(_) | Self::Argument(_) => None,
             Self::NodeByLabelScan(op) => Some((op.runtime, op.idx)),
+            Self::IncludePending(op) => Some((op.runtime, op.idx)),
             Self::Filter(op) => Some((op.runtime, op.idx)),
             Self::Project(op) => Some((op.runtime, op.idx)),
             Self::Skip(op) => Some((op.runtime, op.idx)),
@@ -850,6 +855,7 @@ impl<'a> Iterator for BatchOp<'a> {
         let result = match self {
             Self::Once(batch) | Self::Argument(batch) => batch.take().map(Ok),
             Self::NodeByLabelScan(op) => op.next(),
+            Self::IncludePending(op) => op.next(),
             Self::Filter(op) => op.next(),
             Self::Project(op) => op.next(),
             Self::Skip(op) => op.next(),

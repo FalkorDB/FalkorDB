@@ -179,7 +179,7 @@ impl IndexSubject for Arc<QueryNode<Arc<String>, Variable>> {
         try_distance_index_scan(subject, attr, filter, attr_side, constant_node)
     }
     fn match_scan_source(ir: &IR) -> Option<(Self, Self::Metadata)> {
-        let IR::NodeByLabelScan { node, .. } = ir else {
+        let IR::NodeByLabelScan { node } = ir else {
             return None;
         };
         if node.labels.is_empty() {

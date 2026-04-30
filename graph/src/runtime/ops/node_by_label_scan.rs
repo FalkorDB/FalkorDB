@@ -45,9 +45,6 @@ pub struct NodeByLabelScanOp<'a> {
     /// Iterator over node IDs for the current parent row.
     node_iter: Option<Box<dyn Iterator<Item = NodeId> + 'a>>,
     node_pattern: &'a QueryNode<Arc<String>, Variable>,
-    /// When true, include pending-created nodes and exclude pending-deleted
-    /// nodes from scan results. Set only for MERGE match sub-plans.
-    include_pending: bool,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -56,7 +53,6 @@ impl<'a> NodeByLabelScanOp<'a> {
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
         node_pattern: &'a QueryNode<Arc<String>, Variable>,
-        include_pending: bool,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
         Self {
@@ -67,7 +63,6 @@ impl<'a> NodeByLabelScanOp<'a> {
             parent_env: None,
             node_iter: None,
             node_pattern,
-            include_pending,
             idx,
         }
     }
@@ -117,37 +112,9 @@ impl<'a> Iterator for NodeByLabelScanOp<'a> {
                         self.parent_row += 1;
                         let g = self.runtime.g.borrow();
                         let graph_iter = g.get_nodes(&self.node_pattern.labels, 0);
-                        // When inside a MERGE match sub-plan, include pending-created
-                        // nodes and exclude pending-deleted nodes so MERGE can see
-                        // in-flight mutations from prior clauses.
-                        if self.include_pending {
-                            let pending = self.runtime.pending.borrow();
-                            let label_ids: Vec<_> = self
-                                .node_pattern
-                                .labels
-                                .iter()
-                                .filter_map(|l| g.get_label_id(l))
-                                .collect();
-                            let pending_nodes = if label_ids.len() == self.node_pattern.labels.len()
-                            {
-                                pending.get_pending_nodes_with_labels(&label_ids)
-                            } else {
-                                Vec::new()
-                            };
-                            let deleted_nodes = pending.deleted_nodes();
-                            drop(pending);
-                            drop(g);
-                            let filtered_graph_iter =
-                                graph_iter.filter(move |id| !deleted_nodes.contains((*id).into()));
-                            self.parent_env = Some(env.clone_pooled(self.runtime.env_pool));
-                            self.node_iter = Some(Box::new(
-                                filtered_graph_iter.chain(pending_nodes.into_iter()),
-                            ));
-                        } else {
-                            drop(g);
-                            self.parent_env = Some(env.clone_pooled(self.runtime.env_pool));
-                            self.node_iter = Some(graph_iter);
-                        }
+                        drop(g);
+                        self.parent_env = Some(env.clone_pooled(self.runtime.env_pool));
+                        self.node_iter = Some(graph_iter);
                         break;
                     }
                     // Parent batch exhausted

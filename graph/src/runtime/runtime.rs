@@ -50,11 +50,11 @@ use crate::{
         ops::{
             AggregateOp, AllShortestPathsOp, ApplyOp, CartesianProductOp, CommitOp, CondTraverseOp,
             CondVarLenTraverseOp, CreateOp, DeleteOp, DistinctOp, EdgeByFulltextScanOp,
-            EdgeByIndexScanOp, ExpandIntoOp, FilterOp, ForEachOp, LimitOp, LoadCsvOp, MergeOp,
-            NodeByFulltextScanOp, NodeByIdSeekOp, NodeByIndexScanOp, NodeByLabelAndIdScanOp,
-            NodeByLabelScanOp, OptionalOp, OrApplyMultiplexerOp, PathBuilderOp, ProcedureCallOp,
-            ProjectOp, RemoveOp, SemiApplyOp, SetOp, SkipOp, SortOp, UnionOp, UnwindOp,
-            ValueHashJoinOp,
+            EdgeByIndexScanOp, ExpandIntoOp, FilterOp, ForEachOp, IncludePendingOp, LimitOp,
+            LoadCsvOp, MergeOp, NodeByFulltextScanOp, NodeByIdSeekOp, NodeByIndexScanOp,
+            NodeByLabelAndIdScanOp, NodeByLabelScanOp, OptionalOp, OrApplyMultiplexerOp,
+            PathBuilderOp, ProcedureCallOp, ProjectOp, RemoveOp, SemiApplyOp, SetOp, SkipOp,
+            SortOp, UnionOp, UnwindOp, ValueHashJoinOp,
         },
         ordermap::OrderMap,
         orderset::OrderSet,
@@ -226,6 +226,7 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                 | IR::Limit(_)
                 | IR::Distinct
                 | IR::Commit
+                | IR::IncludePending { .. }
                 | IR::CreateIndex { .. }
                 | IR::DropIndex { .. } => {}
                 IR::NodeByLabelScan { node, .. }
@@ -583,19 +584,24 @@ impl<'a> Runtime<'a> {
             IR::NodeByLabelScan { .. } | IR::AllNodeScan(_) => {
                 let child = self.child_batch_op(idx)?;
                 let ir = self.plan.node(idx).data();
-                let (node_pattern, include_pending) = match ir {
-                    IR::NodeByLabelScan {
-                        node,
-                        include_pending,
-                    } => (node, *include_pending),
-                    IR::AllNodeScan(n) => (n, false),
+                let node_pattern = match ir {
+                    IR::NodeByLabelScan { node } => node,
+                    IR::AllNodeScan(n) => n,
                     _ => unreachable!(),
                 };
                 Ok(BatchOp::NodeByLabelScan(NodeByLabelScanOp::new(
                     self,
                     Box::new(child),
                     node_pattern,
-                    include_pending,
+                    idx,
+                )))
+            }
+            IR::IncludePending { node } => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::IncludePending(IncludePendingOp::new(
+                    self,
+                    Box::new(child),
+                    node,
                     idx,
                 )))
             }
