@@ -1433,7 +1433,6 @@ static VISITOR_STRATEGY _Validate_call_subquery
 	 type == CYPHER_AST_REMOVE ||    \
 	 type == CYPHER_AST_FOREACH)
 
-// check if an AST expression contains an aggregation function call
 static bool _expr_contains_aggregation
 (
 	const cypher_astnode_t *expr
@@ -1467,7 +1466,6 @@ static bool _expr_contains_aggregation
 	return false;
 }
 
-// check if an AST expression contains identifiers OUTSIDE of aggregation calls
 static bool _expr_contains_vars_outside_agg
 (
 	const cypher_astnode_t *expr
@@ -1476,11 +1474,22 @@ static bool _expr_contains_vars_outside_agg
 
 	cypher_astnode_type_t type = cypher_astnode_type(expr);
 
-	// count(*) never has variable children
+	// count(*)
 	if(type == CYPHER_AST_APPLY_ALL_OPERATOR) return false;
 
+	// skip scoped constructs
+	if(type == CYPHER_AST_LIST_COMPREHENSION  ||
+	   type == CYPHER_AST_PATTERN_COMPREHENSION ||
+	   type == CYPHER_AST_ANY    ||
+	   type == CYPHER_AST_ALL    ||
+	   type == CYPHER_AST_NONE   ||
+	   type == CYPHER_AST_SINGLE ||
+	   type == CYPHER_AST_REDUCE) {
+		return false;
+	}
+
+	// skip aggregate functions
 	if(type == CYPHER_AST_APPLY_OPERATOR) {
-		// if it's an aggregate function, stop recursing into it
 		uint nchildren = cypher_astnode_nchildren(expr);
 		if(nchildren > 0) {
 			const cypher_astnode_t *fn = cypher_astnode_get_child(expr, 0);
@@ -1491,6 +1500,7 @@ static bool _expr_contains_vars_outside_agg
 		}
 	}
 
+	// identifiers = variables
 	if(type == CYPHER_AST_IDENTIFIER) return true;
 
 	uint nchildren = cypher_astnode_nchildren(expr);
@@ -1577,14 +1587,19 @@ static VISITOR_STRATEGY _Validate_WITH_Clause
 	for(uint i = 0; i < cypher_ast_with_nprojections(n); i++) {
 		const cypher_astnode_t *proj = cypher_ast_with_get_projection(n, i);
 		const cypher_astnode_t *expr = cypher_ast_projection_get_expression(proj);
+
+		if(cypher_astnode_type(expr) == CYPHER_AST_MAP) {
+
 		if(_expr_contains_aggregation(expr) &&
-		   _expr_contains_vars_outside_agg(expr)) {
+		_expr_contains_vars_outside_agg(expr)) {
+
 			ErrorCtx_SetError("Aggregation expression contains implicit "
 				"grouping keys. Rewrite the query by extracting grouping "
 				"expressions into a preceding WITH clause.");
 			return VISITOR_BREAK;
 		}
 	}
+}
 
 	return VISITOR_CONTINUE;
 }
@@ -2048,15 +2063,19 @@ static VISITOR_STRATEGY _Validate_RETURN_Clause
 	for(uint i = 0; i < cypher_ast_return_nprojections(n); i++) {
 		const cypher_astnode_t *proj = cypher_ast_return_get_projection(n, i);
 		const cypher_astnode_t *expr = cypher_ast_projection_get_expression(proj);
-		if(_expr_contains_aggregation(expr) &&
-		   _expr_contains_vars_outside_agg(expr)) {
-			ErrorCtx_SetError("Aggregation expression contains implicit "
-				"grouping keys. Rewrite the query by extracting grouping "
-				"expressions into a preceding WITH clause.");
-			return VISITOR_BREAK;
+	
+		if(cypher_astnode_type(expr) == CYPHER_AST_MAP) {
+
+			if(_expr_contains_aggregation(expr) &&
+			_expr_contains_vars_outside_agg(expr)) {
+
+				ErrorCtx_SetError("Aggregation expression contains implicit "
+					"grouping keys. Rewrite the query by extracting grouping "
+					"expressions into a preceding WITH clause.");
+				return VISITOR_BREAK;
+			}
 		}
 	}
-	
 	// do not traverse children
 	return !ErrorCtx_EncounteredError() ? VISITOR_CONTINUE : VISITOR_BREAK;
 }
