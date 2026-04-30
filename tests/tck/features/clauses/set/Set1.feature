@@ -179,7 +179,6 @@ Feature: Set1 - Set a Property
       """
     Then a SyntaxError should be raised at compile time: UndefinedVariable
 
-  @skip #fixme
   Scenario: [10] Failing when setting a list of maps as a property
     Given any graph
     When executing query:
