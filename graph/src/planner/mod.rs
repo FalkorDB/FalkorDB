@@ -1310,26 +1310,39 @@ impl Planner {
                 )
             } else if relationship.from.alias.id == relationship.to.alias.id {
                 // Self-loop with fixed-length edge: scan + ExpandInto.
-                let attr_filter =
-                    inline_attrs_to_filter(&relationship.from.alias, &relationship.from.attrs);
-                let mut scan = if relationship.from.clone().labels.is_empty() {
-                    tree!(IR::AllNodeScan(relationship.from.clone()))
-                } else {
-                    tree!(IR::NodeByLabelScan {
-                        node: relationship.from.clone(),
-                    })
-                };
-                if let Some(filter_expr) = attr_filter {
-                    scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
-                }
-                tree!(
-                    IR::ExpandInto {
+                // If the node is already bound (visited), don't rescan — the
+                // Argument from the surrounding Apply will provide the binding.
+                let already_bound = self
+                    .visited
+                    .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id));
+                if already_bound {
+                    tree!(IR::ExpandInto {
                         relationship: relationship.clone(),
                         emit_relationship: emit_rel(relationship),
                         sibling_edges: sibling_edges.clone()
-                    },
-                    scan
-                )
+                    })
+                } else {
+                    let attr_filter =
+                        inline_attrs_to_filter(&relationship.from.alias, &relationship.from.attrs);
+                    let mut scan = if relationship.from.clone().labels.is_empty() {
+                        tree!(IR::AllNodeScan(relationship.from.clone()))
+                    } else {
+                        tree!(IR::NodeByLabelScan {
+                            node: relationship.from.clone(),
+                        })
+                    };
+                    if let Some(filter_expr) = attr_filter {
+                        scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
+                    }
+                    tree!(
+                        IR::ExpandInto {
+                            relationship: relationship.clone(),
+                            emit_relationship: emit_rel(relationship),
+                            sibling_edges: sibling_edges.clone()
+                        },
+                        scan
+                    )
+                }
             } else if self
                 .visited
                 .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id))
@@ -1428,27 +1441,43 @@ impl Planner {
                     }
                     cvlt
                 } else if relationship.from.alias.id == relationship.to.alias.id {
-                    let attr_filter =
-                        inline_attrs_to_filter(&relationship.from.alias, &relationship.from.attrs);
-                    let mut scan = if relationship.from.clone().labels.is_empty() {
-                        tree!(IR::AllNodeScan(relationship.from.clone()))
+                    let already_bound = self
+                        .visited
+                        .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id));
+                    if already_bound {
+                        tree!(
+                            IR::ExpandInto {
+                                relationship: relationship.clone(),
+                                emit_relationship: emit_rel(relationship),
+                                sibling_edges: sibling_edges.clone()
+                            },
+                            res
+                        )
                     } else {
-                        tree!(IR::NodeByLabelScan {
-                            node: relationship.from.clone(),
-                        })
-                    };
-                    if let Some(filter_expr) = attr_filter {
-                        scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
+                        let attr_filter = inline_attrs_to_filter(
+                            &relationship.from.alias,
+                            &relationship.from.attrs,
+                        );
+                        let mut scan = if relationship.from.clone().labels.is_empty() {
+                            tree!(IR::AllNodeScan(relationship.from.clone()))
+                        } else {
+                            tree!(IR::NodeByLabelScan {
+                                node: relationship.from.clone(),
+                            })
+                        };
+                        if let Some(filter_expr) = attr_filter {
+                            scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
+                        }
+                        tree!(
+                            IR::ExpandInto {
+                                relationship: relationship.clone(),
+                                emit_relationship: emit_rel(relationship),
+                                sibling_edges: sibling_edges.clone()
+                            },
+                            scan,
+                            res
+                        )
                     }
-                    tree!(
-                        IR::ExpandInto {
-                            relationship: relationship.clone(),
-                            emit_relationship: emit_rel(relationship),
-                            sibling_edges: sibling_edges.clone()
-                        },
-                        scan,
-                        res
-                    )
                 } else if self
                     .visited
                     .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id))

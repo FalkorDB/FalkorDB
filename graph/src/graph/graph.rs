@@ -1466,7 +1466,12 @@ impl Graph {
         };
         matrices
             .into_iter()
-            .flat_map(move |m| m.iter(id.0, id.0, false).chain(m.iter(id.0, id.0, true)))
+            .flat_map(move |m| {
+                m.iter(id.0, id.0, false).chain(
+                    m.iter(id.0, id.0, true)
+                        .filter(move |(src, _, _)| *src != id.0),
+                )
+            })
             .map(|(src, dest, id)| (NodeId(src), NodeId(dest), RelationshipId(id)))
     }
 
