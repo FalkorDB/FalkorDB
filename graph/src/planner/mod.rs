@@ -1316,11 +1316,17 @@ impl Planner {
                     .visited
                     .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id));
                 if already_bound {
-                    tree!(IR::ExpandInto {
+                    let attr_filter =
+                        inline_attrs_to_filter(&relationship.from.alias, &relationship.from.attrs);
+                    let mut ei = tree!(IR::ExpandInto {
                         relationship: relationship.clone(),
                         emit_relationship: emit_rel(relationship),
                         sibling_edges: sibling_edges.clone()
-                    })
+                    });
+                    if let Some(filter_expr) = attr_filter {
+                        ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
+                    }
+                    ei
                 } else {
                     let attr_filter =
                         inline_attrs_to_filter(&relationship.from.alias, &relationship.from.attrs);
@@ -1445,14 +1451,22 @@ impl Planner {
                         .visited
                         .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id));
                     if already_bound {
-                        tree!(
+                        let attr_filter = inline_attrs_to_filter(
+                            &relationship.from.alias,
+                            &relationship.from.attrs,
+                        );
+                        let mut ei = tree!(
                             IR::ExpandInto {
                                 relationship: relationship.clone(),
                                 emit_relationship: emit_rel(relationship),
                                 sibling_edges: sibling_edges.clone()
                             },
                             res
-                        )
+                        );
+                        if let Some(filter_expr) = attr_filter {
+                            ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
+                        }
+                        ei
                     } else {
                         let attr_filter = inline_attrs_to_filter(
                             &relationship.from.alias,
