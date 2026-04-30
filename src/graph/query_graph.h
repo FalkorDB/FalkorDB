@@ -15,9 +15,9 @@
 #include "../../deps/GraphBLAS/Include/GraphBLAS.h"
 
 typedef struct {
-	QGNode **nodes;             // Nodes contained in QueryGraph
-	QGEdge **edges;             // Edges contained in QueryGraph
-	bool unknown_reltype_ids;   // Indicates if the query graph contains unknown relationship ids.
+	QGNode **nodes;             // nodes contained in QueryGraph
+	QGEdge **edges;             // edges contained in QueryGraph
+	bool unknown_reltype_ids;   // indicates if the query graph contains unknown relationship ids
 } QueryGraph;
 
 typedef enum {

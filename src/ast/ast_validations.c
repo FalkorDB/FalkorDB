@@ -179,7 +179,7 @@ static bool _AST_GetWithAliases
 			if(cypher_astnode_type(expr) != CYPHER_AST_IDENTIFIER) {
 				ErrorCtx_SetError(EMSG_WITH_PROJ_MISSING_ALIAS);
 				raxFree(local_env);
-				return false;	
+				return false;
 			}
 			alias = cypher_ast_identifier_get_name(expr);
 		}
@@ -254,11 +254,11 @@ static AST_Validation _ValidateMultiHopTraversal
 		ErrorCtx_SetError(EMSG_VAR_LEN_INVALID_RANGE);
 		return AST_INVALID;
 	}
-	
+
 	return AST_VALID;
 }
 
-// Verify that MERGE doesn't redeclare bound relations, that one reltype is specified for unbound relations, 
+// Verify that MERGE doesn't redeclare bound relations, that one reltype is specified for unbound relations,
 // and that the entity is not a variable length pattern
 static AST_Validation _ValidateMergeRelation
 (
@@ -453,54 +453,66 @@ static VISITOR_STRATEGY _Validate_pattern_comprehension
 
 	// we enter ONLY when start=true, so no check is needed
 
-	const cypher_astnode_t *id = cypher_ast_pattern_comprehension_get_identifier(n);
-	bool is_new;
-	const char *identifier;
-	if(id) {
-		identifier = cypher_ast_identifier_get_name(id);
-		is_new = (_IdentifiersFind(vctx, identifier) == raxNotFound);
+	const cypher_astnode_t *id =
+		cypher_ast_pattern_comprehension_get_identifier (n) ;
+
+	bool is_new ;
+	const char *identifier ;
+	if (id) {
+		identifier = cypher_ast_identifier_get_name (id) ;
+		is_new = (_IdentifiersFind (vctx, identifier) == raxNotFound) ;
 	}
 	else {
-		is_new = false;
+		is_new = false ;
 	}
 
 	// introduce local identifier if it is not yet introduced
-	if(is_new) _IdentifierAdd(vctx, identifier, NULL);
-
-	// Visit expression-children
-	// Visit pattern
-	const cypher_astnode_t *pattern = cypher_ast_pattern_comprehension_get_pattern(n);
-	if(pattern) {
-		AST_Visitor_visit(pattern, visitor);
-		if(ErrorCtx_EncounteredError()) {
-			return VISITOR_BREAK;
-		}
+	if (is_new) {
+		_IdentifierAdd (vctx, identifier, NULL) ;
 	}
 
-	// Visit predicate
-	const cypher_astnode_t *pred = cypher_ast_pattern_comprehension_get_predicate(n);
-	if(pred) {
-		AST_Visitor_visit(pred, visitor);
-		if(ErrorCtx_EncounteredError()) {
-			return VISITOR_BREAK;
-		}
+	// change clause type so that aggregation functions are not allowed
+	// inside the pattern comprehension's predicate and eval expressions
+	cypher_astnode_type_t orig_clause = vctx->clause ;
+	vctx->clause = CYPHER_AST_PATTERN_COMPREHENSION ;
+
+	// visit expression-children
+	// visit pattern
+	const cypher_astnode_t *pattern =
+		cypher_ast_pattern_comprehension_get_pattern (n) ;
+	if (pattern) {
+		AST_Visitor_visit (pattern, visitor) ;
 	}
 
-	// Visit eval
-	const cypher_astnode_t *eval = cypher_ast_pattern_comprehension_get_eval(n);
-	if(eval) {
-		AST_Visitor_visit(eval, visitor);
-		if(ErrorCtx_EncounteredError()) {
-			return VISITOR_BREAK;
-		}
+	// visit predicate
+	const cypher_astnode_t *pred =
+		cypher_ast_pattern_comprehension_get_predicate (n) ;
+	if (pred) {
+		AST_Visitor_visit (pred, visitor) ;
 	}
+
+	// visit eval
+	const cypher_astnode_t *eval =
+		cypher_ast_pattern_comprehension_get_eval (n) ;
+	if (eval) {
+		AST_Visitor_visit (eval, visitor) ;
+	}
+
+	// restore the original clause type
+	vctx->clause = orig_clause ;
 
 	// pattern comprehension identifier is no longer bound, remove it from bound vars
 	// if it was introduced
-	if(is_new) _IdentifierRemove(vctx, identifier);
+	if (is_new) {
+		_IdentifierRemove (vctx, identifier) ;
+	}
 
 	// do not traverse children
-	return VISITOR_CONTINUE;
+	if (ErrorCtx_EncounteredError ()) {
+		return VISITOR_BREAK ;
+	} else {
+		return VISITOR_CONTINUE ;
+	}
 }
 
 // validate LOAD CSV clause
@@ -690,7 +702,7 @@ static VISITOR_STRATEGY _Validate_reduce
 	//     3. list expression              `[1,2,3]`
 	//     4. variable                     `n`
 	//     5. eval expression              `sum + n`
-	
+
 	// make sure that the init expression is a known var or valid exp.
 	const cypher_astnode_t *init_node = cypher_ast_reduce_get_init(n);
 	if(cypher_astnode_type(init_node) == CYPHER_AST_IDENTIFIER) {
@@ -708,7 +720,7 @@ static VISITOR_STRATEGY _Validate_reduce
 		}
 	}
 
-	// make sure that the list expression is a list (or list comprehension) or an 
+	// make sure that the list expression is a list (or list comprehension) or an
 	// alias of an existing one.
 	const cypher_astnode_t *list_var = cypher_ast_reduce_get_expression(n);
 	if(cypher_astnode_type(list_var) == CYPHER_AST_IDENTIFIER) {
@@ -743,7 +755,7 @@ static VISITOR_STRATEGY _Validate_reduce
 	const char *list_var_str = cypher_ast_identifier_get_name(list_var_node);
 	bool introduce_list_var = (_IdentifiersFind(vctx, list_var_str) == raxNotFound);
 	if(introduce_list_var) _IdentifierAdd(vctx, list_var_str, NULL);
-	
+
 	// visit eval expression
 	const cypher_astnode_t *eval_exp = cypher_ast_reduce_get_eval(n);
 	AST_Visitor_visit(eval_exp, visitor);
@@ -783,8 +795,8 @@ static AST_Validation _ValidateInlinedProperties
 	for(uint i = 0; i < prop_count; i++) {
 		const cypher_astnode_t *prop_val = cypher_ast_map_get_value(props, i);
 		const cypher_astnode_t **patterns = AST_GetTypedNodes(prop_val, CYPHER_AST_PATTERN_PATH);
-		uint patterns_count = array_len(patterns);
-		array_free(patterns);
+		uint patterns_count = arr_len(patterns);
+		arr_free(patterns);
 		if(patterns_count > 0) {
 			// encountered query of the form
 			// MATCH (a {prop: ()-[]->()}) RETURN a
@@ -861,7 +873,7 @@ static VISITOR_STRATEGY _Validate_rel_pattern
 			_IdentifierAdd(vctx, alias, (void*)T_EDGE);
 			return VISITOR_RECURSE;
 		}
-			
+
 		if(alias_type != (void *)T_EDGE && alias_type != NULL) {
 			ErrorCtx_SetError(EMSG_SAME_ALIAS_NODE_RELATIONSHIP, alias);
 			return VISITOR_BREAK;
@@ -948,7 +960,7 @@ static VISITOR_STRATEGY _Validate_shortest_path
 		// MATCH (a), (b), p = allShortestPaths((a)-[*2..]->(b)) RETURN p
 		// validate rel pattern range doesn't contains a minimum > 1
 		const cypher_astnode_t **ranges = AST_GetTypedNodes(n, CYPHER_AST_RANGE);
-		int range_count = array_len(ranges);
+		int range_count = arr_len(ranges);
 		for(int i = 0; i < range_count; i++) {
 			long min_hops = 1;
 			const cypher_astnode_t *r = ranges[i];
@@ -959,7 +971,7 @@ static VISITOR_STRATEGY _Validate_shortest_path
 				break;
 			}
 		}
-		array_free(ranges);
+		arr_free(ranges);
 	}
 
 	if(ErrorCtx_EncounteredError()) {
@@ -1027,19 +1039,19 @@ static AST_Validation _ValidateUnion_Clauses
 	AST_Validation res = AST_VALID;
 
 	uint *union_indices = AST_GetClauseIndices(ast, CYPHER_AST_UNION);
-	uint union_clause_count = array_len(union_indices);
-	array_free(union_indices);
+	uint union_clause_count = arr_len(union_indices);
+	arr_free(union_indices);
 
 	if(union_clause_count != 0) {
 		// Require all RETURN clauses to perform the exact same projection
 		uint *return_indices = AST_GetClauseIndices(ast, CYPHER_AST_RETURN);
-		uint return_clause_count = array_len(return_indices);
+		uint return_clause_count = arr_len(return_indices);
 
 		// We should have one more RETURN clauses than we have UNION clauses.
 		if(return_clause_count != union_clause_count + 1) {
 			ErrorCtx_SetError(EMSG_UNION_MISSING_RETURNS, union_clause_count,
 							return_clause_count);
-			array_free(return_indices);
+			arr_free(return_indices);
 			return AST_INVALID;
 		}
 
@@ -1085,7 +1097,7 @@ static AST_Validation _ValidateUnion_Clauses
 		}
 
 	cleanup:
-		array_free(return_indices);
+		arr_free(return_indices);
 		if(res == AST_INVALID) {
 			return res;
 		}
@@ -1094,7 +1106,7 @@ static AST_Validation _ValidateUnion_Clauses
 	// validate union clauses of subqueries
 	uint *call_subquery_indices = AST_GetClauseIndices(ast,
 		CYPHER_AST_CALL_SUBQUERY);
-	uint n_subqueries = array_len(call_subquery_indices);
+	uint n_subqueries = arr_len(call_subquery_indices);
 
 	for(uint i = 0; i < n_subqueries; i++) {
 		AST subquery_ast = {
@@ -1108,7 +1120,7 @@ static AST_Validation _ValidateUnion_Clauses
 			break;
 		}
 	}
-	array_free(call_subquery_indices);
+	arr_free(call_subquery_indices);
 
 	return res;
 }
@@ -1657,7 +1669,7 @@ static VISITOR_STRATEGY _Validate_CREATE_Clause
 	vctx->clause = cypher_astnode_type(n);
 
 	// track new entities (identifier + type) introduced by CREATE clause
-	const char **new_identifiers = array_new(const char*, 1);
+	const char **new_identifiers = arr_new(const char*, 1);
 
 	// manual traverse validation of the CREATE clause
 	// this is done primarily because of identifiers scoping
@@ -1737,8 +1749,8 @@ static VISITOR_STRATEGY _Validate_CREATE_Clause
 			// remove identifier from scope
 			if(hide) {
 				_IdentifierRemove(vctx, alias);
-				array_append(new_identifiers, alias);
-				array_append(new_identifiers, (char*)t); // note identifier type
+				arr_append(new_identifiers, alias);
+				arr_append(new_identifiers, (char*)t); // note identifier type
 			}
 		}
 	}
@@ -1747,7 +1759,7 @@ static VISITOR_STRATEGY _Validate_CREATE_Clause
 	// introduce identifiers to scope
 	//--------------------------------------------------------------------------
 
-	uint l = array_len(new_identifiers);
+	uint l = arr_len(new_identifiers);
 	for(uint i = 0; i < l; i+=2) {
 		const char *alias = new_identifiers[i];
 		SIType t = (SIType)new_identifiers[i+1];
@@ -1761,7 +1773,7 @@ static VISITOR_STRATEGY _Validate_CREATE_Clause
 	}
 
 	cleanup:
-	array_free(new_identifiers);
+	arr_free(new_identifiers);
 	return res;
 }
 
@@ -1916,7 +1928,7 @@ static VISITOR_STRATEGY _Validate_RETURN_Clause
 		// check for duplicate column names
 		rax           *rax          = raxNew();
 		const char   **columns      = AST_BuildReturnColumnNames(n);
-		uint           column_count = array_len(columns);
+		uint           column_count = arr_len(columns);
 
 		for (uint i = 0; i < column_count; i++) {
 			// column with same name is invalid
@@ -1927,7 +1939,7 @@ static VISITOR_STRATEGY _Validate_RETURN_Clause
 		}
 
 		raxFree(rax);
-		array_free(columns);
+		arr_free(columns);
 	}
 
 	// manually traverse children. order by and predicate should be aware of the
@@ -1973,7 +1985,7 @@ static VISITOR_STRATEGY _Validate_MATCH_Clause
 	ast_visitor *visitor        // visitor
 ) {
 	validations_ctx *vctx = AST_Visitor_GetContext(visitor);
-	
+
 	if(!start) {
 		return VISITOR_CONTINUE;
 	}
@@ -2238,7 +2250,7 @@ static AST_Validation _ValidateScopes
 
 	// visit (traverse) the ast
 	AST_Visitor_visit(ast->root, &visitor);
-	
+
 	// cleanup
 	raxFree(ctx.defined_identifiers);
 
@@ -2292,7 +2304,7 @@ bool AST_ValidationsMappingInit(void) {
 	validations_mapping[CYPHER_AST_APPLY_ALL_OPERATOR]         = _Validate_apply_all_operator;
 	validations_mapping[CYPHER_AST_LIST_COMPREHENSION]         = _Validate_list_comprehension;
 	validations_mapping[CYPHER_AST_PATTERN_COMPREHENSION]      = _Validate_pattern_comprehension;
-	validations_mapping[CYPHER_AST_DROP_PATTERN_PROPS_INDEX]   = _Validate_index_deletion;	
+	validations_mapping[CYPHER_AST_DROP_PATTERN_PROPS_INDEX]   = _Validate_index_deletion;
 	validations_mapping[CYPHER_AST_CREATE_PATTERN_PROPS_INDEX] = _Validate_index_creation;
 
 	//--------------------------------------------------------------------------

@@ -19,7 +19,7 @@ void UDF_RegisterGraphObject
 );
 
 // set the implementation of the `graph.*` functions
-void UDF_SetGraphTraverseImpl
+void UDF_SetGraphAPI
 (
 	JSContext *js_ctx,              // the QuickJS context
 	UDF_JSCtxRegisterFuncMode mode  // the registration mode

@@ -773,9 +773,18 @@ build_libcurl() {
         # Use -O3 for optimization, -g for debug symbols
         # On Linux: enable OpenSSL for HTTPS support (required for LOAD CSV from HTTPS URLs)
         # On macOS: use SecureTransport (auto-detected, no --with-ssl needed)
+        # Note: libcurl >= 8.18.0 requires OpenSSL >= 3.0.0.
+        # On RHEL8/UBI8, openssl3-devel installs OpenSSL 3 to a non-standard path
+        # (/usr/lib64/openssl3/pkgconfig/); set PKG_CONFIG_PATH so configure finds it.
         local ssl_flags
         if [[ "$OS" == "linux" ]]; then
             ssl_flags="--with-openssl"
+            if ! pkg-config --atleast-version=3.0.0 openssl 2>/dev/null; then
+                if [[ -f /usr/lib64/openssl3/pkgconfig/openssl.pc ]]; then
+                    export PKG_CONFIG_PATH="/usr/lib64/openssl3/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+                    log_info "Using OpenSSL 3 from /usr/lib64/openssl3 (RHEL8 non-standard path)"
+                fi
+            fi
         else
             ssl_flags="--without-ssl"
         fi
@@ -948,6 +957,7 @@ build_lagraph() {
         -DGRAPHBLAS_ROOT="$GRAPHBLAS_BINDIR"
         -DGRAPHBLAS_INCLUDE_DIR="${ROOT}/deps/GraphBLAS/Include"
         -DGRAPHBLAS_LIBRARY="$GRAPHBLAS"
+        -DGraphBLAS_DIR="$GRAPHBLAS_BINDIR"
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON
         -DCMAKE_C_FLAGS="-fPIC"
         -DCMAKE_CXX_FLAGS="-fPIC"
@@ -1302,6 +1312,71 @@ prepare_cmake_arguments() {
     fi
     if [[ -n "$CXX" ]]; then
         CMAKE_ARGS+=(-DCMAKE_CXX_COMPILER="$CXX")
+    fi
+
+    # On RHEL8/UBI8, openssl3-devel installs OpenSSL 3 to non-standard paths.
+    # Direct CMake's FindOpenSSL to the correct locations so that find_package(OpenSSL)
+    # finds OpenSSL 3 rather than the system OpenSSL 1.1.x from openssl-devel.
+    if [[ -f /usr/lib64/openssl3/pkgconfig/openssl.pc ]]; then
+        CMAKE_ARGS+=(-DOPENSSL_ROOT_DIR=/usr/lib64/openssl3)
+        CMAKE_ARGS+=(-DOPENSSL_INCLUDE_DIR=/usr/include/openssl3)
+    fi
+
+    # On macOS, Homebrew installs openssl@3 keg-only (not symlinked into the
+    # system prefix). Without an explicit hint, CMake's FindOpenSSL may locate
+    # libcrypto but fail to discover libssl, which leaves the OpenSSL::SSL
+    # imported target undefined and breaks target_link_libraries(... OpenSSL::SSL).
+    # This regressed when Homebrew upgraded openssl@3 to 3.6.x.
+    #
+    # We also pass OPENSSL_SSL_LIBRARY / OPENSSL_CRYPTO_LIBRARY explicitly:
+    #   1. Newer openssl@3 builds may ship only the versioned ".3.dylib" files
+    #      without the unsuffixed symlinks that CMake's find_library() expects.
+    #   2. The macOS build directory is restored from cache between runs, so a
+    #      previously cached OPENSSL_SSL_LIBRARY-NOTFOUND value would otherwise
+    #      stick around even after fixing OPENSSL_ROOT_DIR. Passing the value
+    #      on the command line forces an override.
+    if [[ "$OS" == "macos" ]] && command -v brew &>/dev/null; then
+        local brew_openssl
+        brew_openssl="$(brew --prefix openssl@3 2>/dev/null || true)"
+        if [[ -n "$brew_openssl" && -d "$brew_openssl" ]]; then
+            local openssl_include="$brew_openssl/include"
+            local libssl="" libcrypto="" candidate
+
+            for candidate in libssl.dylib libssl.3.dylib; do
+                if [[ -e "$brew_openssl/lib/$candidate" ]]; then
+                    libssl="$brew_openssl/lib/$candidate"
+                    break
+                fi
+            done
+            for candidate in libcrypto.dylib libcrypto.3.dylib; do
+                if [[ -e "$brew_openssl/lib/$candidate" ]]; then
+                    libcrypto="$brew_openssl/lib/$candidate"
+                    break
+                fi
+            done
+
+            # Resolve and verify all four pieces (root, include dir, libssl,
+            # libcrypto) before passing any of them to CMake. Setting only a
+            # subset would let CMake's FindOpenSSL fall back to system / stale
+            # cached *-NOTFOUND values and silently mix Homebrew headers with
+            # other libraries, which is exactly the failure mode this hint is
+            # meant to prevent.
+            if [[ ! -d "$openssl_include" || -z "$libssl" || -z "$libcrypto" ]]; then
+                log_error "Homebrew openssl@3 is installed at '$brew_openssl' but required files are missing:"
+                [[ ! -d "$openssl_include" ]] && log_error "  include directory not found: $openssl_include"
+                [[ -z "$libssl" ]]            && log_error "  libssl(.3).dylib not found in: $brew_openssl/lib"
+                [[ -z "$libcrypto" ]]         && log_error "  libcrypto(.3).dylib not found in: $brew_openssl/lib"
+                log_error "Try: brew reinstall openssl@3"
+                exit 1
+            fi
+
+            CMAKE_ARGS+=(
+                -DOPENSSL_ROOT_DIR="$brew_openssl"
+                -DOPENSSL_INCLUDE_DIR="$openssl_include"
+                -DOPENSSL_SSL_LIBRARY="$libssl"
+                -DOPENSSL_CRYPTO_LIBRARY="$libcrypto"
+            )
+        fi
     fi
 
     # Export platform info

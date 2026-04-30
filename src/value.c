@@ -876,7 +876,11 @@ int SIValue_Compare
 
 		case T_NODE:
 		case T_EDGE:
-			return ENTITY_GET_ID((GraphEntity *)a.ptrval) - ENTITY_GET_ID((GraphEntity *)b.ptrval);
+		{
+			EntityID a_id = ENTITY_GET_ID((GraphEntity *)a.ptrval);
+			EntityID b_id = ENTITY_GET_ID((GraphEntity *)b.ptrval);
+			return (a_id > b_id) - (a_id < b_id);
+		}
 
 		case T_ARRAY:
 			return SIArray_Compare(a, b, disjointOrNull);
@@ -1058,10 +1062,17 @@ void SIValue_HashUpdate
 			XXH64_update(state, &inner_hash, sizeof(inner_hash));
 			return;
 
+		case T_POINT:
+			XXH64_update (state, &t, sizeof (t)) ;
+			XXH64_update (state, &v.point, sizeof (v.point)) ;
+			return ;
+
 		case T_DATE:
 		case T_TIME:
 		case T_DATETIME:
 		case T_DURATION:
+		case T_LOCALTIME:
+		case T_LOCALDATETIME:
 			XXH64_update(state, &t, sizeof(t));
 			XXH64_update(state, &v.datetimeval, sizeof(v.datetimeval));
 			return;
@@ -1246,7 +1257,7 @@ size_t SIValue_memoryUsage
 
 	return n;
 }
-			
+
 // the free routine only performs work if it owns a heap allocation
 void SIValue_Free
 (

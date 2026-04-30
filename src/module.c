@@ -24,7 +24,6 @@
 #include "udf/repository.h"
 #include "udf/replication.h"
 #include "redisearch_api.h"
-#include "commands/cmd_acl.h"
 #include "arithmetic/funcs.h"
 #include "util/thpool/pool.h"
 #include "commands/commands.h"
@@ -38,11 +37,10 @@
 #include "configuration/reconf_handler.h"
 #include "serializers/graphcontext_type.h"
 #include "arithmetic/arithmetic_expression.h"
-#include "commands/util/run_redis_command_as.h"
 
 // minimal supported Redis version
-#define MIN_REDIS_VERSION_MAJOR 7
-#define MIN_REDIS_VERSION_MINOR 2
+#define MIN_REDIS_VERSION_MAJOR 8
+#define MIN_REDIS_VERSION_MINOR 0
 #define MIN_REDIS_VERSION_PATCH 0
 
 
@@ -102,7 +100,7 @@ static int GraphBLAS_Init (RedisModuleCtx *ctx) {
 	}
 
 	// all matrices in CSR format
-	GrB_OK (GxB_set (GxB_FORMAT, GxB_BY_ROW)) ;
+	GrB_OK (GrB_set (GrB_GLOBAL, GxB_BY_ROW, GxB_FORMAT)) ;
 
 	// alow only baked-in JIT kernels (pre-jit)
     GrB_OK (GrB_set (GrB_GLOBAL, GxB_JIT_RUN, GxB_JIT_C_CONTROL)) ;
@@ -186,15 +184,14 @@ int RedisModule_OnLoad
 	if(!Indexer_Init())               return REDISMODULE_ERR;
 	if(!AST_ValidationsMappingInit()) return REDISMODULE_ERR;
 
-	init_acl_admin_username(ctx);  // set ACL ADMIN username
-
 	RedisModule_Log(ctx, "notice", "Thread pool created, using %d threads.",
 			ThreadPool_ThreadCount());
 
 	uint64_t ompThreadCount;
 	Config_Option_get(Config_OPENMP_NTHREAD, &ompThreadCount);
 
-	if(GxB_set(GxB_NTHREADS, ompThreadCount) != GrB_SUCCESS) {
+	if(GrB_set(GrB_GLOBAL, (int32_t) ompThreadCount, GxB_NTHREADS)
+		!= GrB_SUCCESS) {
 		RedisModule_Log(ctx, "warning",
 				"Failed to set OpenMP thread count to %" PRIu64, ompThreadCount);
 		return REDISMODULE_ERR;
@@ -322,24 +319,6 @@ int RedisModule_OnLoad
 				Graph_Restore,
 				"write deny-oom deny-script",
 				1, 1, 1) == REDISMODULE_ERR) {
-		return REDISMODULE_ERR;
-	}
-
-	if(init_cmd_acl(ctx) == REDISMODULE_OK) {
-		if(RedisModule_CreateCommand(ctx,
-					"graph.ACL",
-					Graph_ACL,
-					"write deny-oom deny-script",
-					0, 0, 0) == REDISMODULE_ERR) {
-			return REDISMODULE_ERR;
-		}
-	}
-
-	if(RedisModule_CreateCommand(ctx,
-				"graph.PASSWORD",
-				Graph_SetPassword,
-				"write deny-oom deny-script",
-				0, 0, 0) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 

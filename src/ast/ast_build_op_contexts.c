@@ -41,8 +41,8 @@ static inline NodeCreateCtx _NewNodeCreateCtx
 	NodeCreateCtx new_node;
 	new_node.alias = n->alias;
 	new_node.properties = PropertyMap_New(ast_props);
-	array_clone(new_node.labels, n->labels);
-	array_clone(new_node.labelsId, n->labelsID);
+	arr_clone(new_node.labels, n->labels);
+	arr_clone(new_node.labelsId, n->labelsID);
 
 	return new_node;
 }
@@ -152,7 +152,7 @@ static void _ConvertUpdateItem
 	if(ctx == raxNotFound) {
 		ctx = UpdateCtx_New(alias);
 		raxInsert(updates, (unsigned char *)alias, len, ctx, NULL);
-	} 
+	}
 
 	//--------------------------------------------------------------------------
 	// collect update information
@@ -167,9 +167,9 @@ static void _ConvertUpdateItem
 		uint label_count = cypher_ast_set_labels_nlabels(update_item);
 
 		if(ctx->add_labels == NULL) {
-			ctx->add_labels = array_new(const char *, label_count);
+			ctx->add_labels = arr_new(const char *, label_count);
 		} else {
-			uint count = array_len(ctx->add_labels);
+			uint count = arr_len(ctx->add_labels);
 			for (uint i = 0; i < count; i++) {
 				const char *label = ctx->add_labels[i];
 				raxInsert(labels, (unsigned char *)label, strlen(label)+1,
@@ -184,7 +184,7 @@ static void _ConvertUpdateItem
 			if(raxTryInsert(labels, (unsigned char *)label, strlen(label)+1,
 					NULL, NULL) != 0) {
 				// mark label for addition
-				array_append(ctx->add_labels, label);
+				arr_append(ctx->add_labels, label);
 			}
 		}
 
@@ -194,9 +194,9 @@ static void _ConvertUpdateItem
 		uint label_count = cypher_ast_remove_labels_nlabels(update_item);
 
 		if(ctx->remove_labels == NULL) {
-			ctx->remove_labels = array_new(const char *, label_count);
+			ctx->remove_labels = arr_new(const char *, label_count);
 		} else {
-			uint count = array_len(ctx->remove_labels);
+			uint count = arr_len(ctx->remove_labels);
 			for (uint i = 0; i < count; i++) {
 				const char *label = ctx->remove_labels[i];
 				raxInsert(labels, (unsigned char *)label, strlen(label)+1,
@@ -211,7 +211,7 @@ static void _ConvertUpdateItem
 			if(raxTryInsert(labels, (unsigned char *)label, strlen(label)+1,
 					NULL, NULL) != 0) {
 				// mark label for removal
-				array_append(ctx->remove_labels, label);
+				arr_append(ctx->remove_labels, label);
 			}
 		}
 
@@ -228,12 +228,12 @@ static void _ConvertUpdateItem
 			// remove redundant updates
 			// e.g. SET n.v = 1, n.v = 2
 			if (attribute != NULL) {
-				for (int i = 0; i < array_len (ctx->properties); i++) {
+				for (int i = 0; i < arr_len (ctx->properties); i++) {
 					const char *updated_attr = ctx->properties[i].attr_name ;
 					if (updated_attr != NULL &&
 						strcmp (updated_attr, attribute) == 0) {
 						AR_EXP_Free (ctx->properties[i].exp) ;
-						array_del_fast (ctx->properties, i) ;
+						arr_del_fast (ctx->properties, i) ;
 						break ;
 					}
 				}
@@ -254,7 +254,7 @@ static void _ConvertUpdateItem
 			.attr_name = attribute
 		};
 
-		array_append (ctx->properties, update) ;
+		arr_append (ctx->properties, update) ;
 	}
 }
 
@@ -275,7 +275,7 @@ void AST_PreparePathCreation
 		 * 1. Current entity is NOT bound in a previous clause.
 		 * 2. We have yet to account for this entity. */
 		const cypher_astnode_t *elem = cypher_ast_pattern_path_get_element(path, i);
-		const char *alias = AST_ToString(elem);
+		const char *alias = AST_ToString (elem, NULL) ;
 
 		// Skip entities defined in previous clauses or already represented in our nodes/edges arrays.
 		int rc = raxTryInsert(bound_vars, (unsigned char *)alias, strlen(alias), NULL, NULL);
@@ -285,12 +285,12 @@ void AST_PreparePathCreation
 			// relation
 			QGEdge *e = QueryGraph_GetEdgeByAlias(g, alias);
 			EdgeCreateCtx new_edge = _NewEdgeCreateCtx(gc, e, elem);
-			array_append(*edges, new_edge);
+			arr_append(*edges, new_edge);
 		} else {
 			// node
 			QGNode *n = QueryGraph_GetNodeByAlias(g, alias);
 			NodeCreateCtx new_node = _NewNodeCreateCtx(gc, n, elem);
-			array_append(*nodes, new_node);
+			arr_append(*nodes, new_node);
 		}
 	}
 
@@ -313,7 +313,7 @@ void AST_PrepareSortOp
 	ASSERT (sort_directions != NULL) ;
 
 	unsigned int nitems = cypher_ast_order_by_nitems (order_clause) ;
-	int *directions = array_new (int, nitems) ;
+	int *directions = arr_new (int, nitems) ;
 
 	for (unsigned int i = 0; i < nitems; i ++) {
 		const cypher_astnode_t *item =
@@ -323,7 +323,7 @@ void AST_PrepareSortOp
 			DIR_ASC  :
 			DIR_DESC ;
 
-		array_append (directions, dir) ;
+		arr_append (directions, dir) ;
 	}
 
 	*sort_directions = directions ;
@@ -354,13 +354,13 @@ AR_ExpNode **AST_PrepareDeleteOp
 	const cypher_astnode_t *delete_clause
 ) {
 	uint delete_count = cypher_ast_delete_nexpressions(delete_clause);
-	AR_ExpNode **exps = array_new(AR_ExpNode *, delete_count);
+	AR_ExpNode **exps = arr_new(AR_ExpNode *, delete_count);
 
 	for(uint i = 0; i < delete_count; i ++) {
 		const cypher_astnode_t *ast_expr =
 			cypher_ast_delete_get_expression(delete_clause, i);
 		AR_ExpNode *exp = AR_EXP_FromASTNode(ast_expr);
-		array_append(exps, exp);
+		arr_append(exps, exp);
 	}
 
 	return exps;
@@ -386,8 +386,8 @@ AST_MergeContext AST_PrepareMergeOp
 	// Prepare all create contexts for nodes and edges on Merge path.
 	rax *on_match_items = NULL;
 	rax *on_create_items = NULL;
-	NodeCreateCtx *nodes_to_merge = array_new(NodeCreateCtx, 1);
-	EdgeCreateCtx *edges_to_merge = array_new(EdgeCreateCtx, 1);
+	NodeCreateCtx *nodes_to_merge = arr_new(NodeCreateCtx, 1);
+	EdgeCreateCtx *edges_to_merge = arr_new(EdgeCreateCtx, 1);
 	const cypher_astnode_t *path = cypher_ast_merge_get_pattern_path(merge_clause);
 
 	// Shouldn't operate on the original bound variables map, as this function may insert aliases.
@@ -475,8 +475,8 @@ AST_CreateContext AST_PrepareCreateOp
 	// as this function may insert aliases
 	rax *bound_and_introduced_entities = raxClone(bound_vars);
 
-	NodeCreateCtx *nodes_to_create = array_new(NodeCreateCtx, 1);
-	EdgeCreateCtx *edges_to_create = array_new(EdgeCreateCtx, 1);
+	NodeCreateCtx *nodes_to_create = arr_new(NodeCreateCtx, 1);
+	EdgeCreateCtx *edges_to_create = arr_new(EdgeCreateCtx, 1);
 
 	const cypher_astnode_t *pattern = cypher_ast_create_get_pattern(clause);
 	uint npaths = cypher_ast_pattern_npaths(pattern);

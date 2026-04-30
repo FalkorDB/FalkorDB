@@ -137,7 +137,7 @@ static FT_FilterNode *_convertOperator(const cypher_astnode_t *expr) {
 static FT_FilterNode *_convertComparison(const cypher_astnode_t *comparison_node) {
 	// "x < y <= z"
 	uint nelems = cypher_ast_comparison_get_length(comparison_node);
-	FT_FilterNode **filters = array_new(FT_FilterNode *, nelems);
+	FT_FilterNode **filters = arr_new(FT_FilterNode *, nelems);
 
 	// Create and accumulate simple predicates x < y.
 	for(int i = 0; i < nelems; i++) {
@@ -147,23 +147,23 @@ static FT_FilterNode *_convertComparison(const cypher_astnode_t *comparison_node
 
 		AST_Operator op = AST_ConvertOperatorNode(operator);
 		FT_FilterNode *filter = _CreatePredicateFilterNode(op, lhs, rhs);
-		array_append(filters, filter);
+		arr_append(filters, filter);
 	}
 
 	// Reduce by anding.
-	while(array_len(filters) > 1) {
-		FT_FilterNode *a = array_pop(filters);
-		FT_FilterNode *b = array_pop(filters);
+	while(arr_len(filters) > 1) {
+		FT_FilterNode *a = arr_pop(filters);
+		FT_FilterNode *b = arr_pop(filters);
 		FT_FilterNode *intersec = FilterTree_CreateConditionFilter(OP_AND);
 
 		FilterTree_AppendLeftChild(intersec, a);
 		FilterTree_AppendRightChild(intersec, b);
 
-		array_append(filters, intersec);
+		arr_append(filters, intersec);
 	}
 
-	FT_FilterNode *root = array_pop(filters);
-	array_free(filters);
+	FT_FilterNode *root = arr_pop(filters);
+	arr_free(filters);
 	return root;
 }
 
@@ -179,8 +179,8 @@ static FT_FilterNode *_convertInlinedProperties(const cypher_astnode_t *entity,
 
 	if(!props) return NULL;
 
-	// Retrieve the entity's alias.
-	const char *alias = AST_ToString(entity);
+	// retrieve the entity's alias
+	const char *alias = AST_ToString (entity, NULL) ;
 
 	FT_FilterNode *root = NULL;
 	uint nelems = cypher_ast_map_nentries(props);
@@ -205,9 +205,9 @@ static FT_FilterNode *_convertInlinedProperties(const cypher_astnode_t *entity,
 
 static FT_FilterNode *_convertPatternPath(const cypher_astnode_t *entity) {
 	// Collect aliases specified in pattern.
-	const char **aliases = array_new(const char *, 1);
+	const char **aliases = arr_new(const char *, 1);
 	AST_CollectAliases(&aliases, entity);
-	uint alias_count = array_len(aliases);
+	uint alias_count = arr_len(aliases);
 
 	/* Create a function call expression
 	 * First argument is a pointer to the original AST pattern node.
@@ -219,7 +219,7 @@ static FT_FilterNode *_convertPatternPath(const cypher_astnode_t *entity) {
 		AR_ExpNode *child = AR_EXP_NewVariableOperandNode(aliases[i]);
 		exp->op.children[1 + i] = child;
 	}
-	array_free(aliases);
+	arr_free(aliases);
 	return FilterTree_CreateExpressionFilter(exp);
 }
 
@@ -290,7 +290,7 @@ FT_FilterNode *AST_BuildFilterTree(AST *ast) {
 	FT_FilterNode *filter_tree = NULL;
 	const cypher_astnode_t **match_clauses = AST_GetClauses(ast, CYPHER_AST_MATCH);
 	if(match_clauses) {
-		uint match_count = array_len(match_clauses);
+		uint match_count = arr_len(match_clauses);
 		for(uint i = 0; i < match_count; i ++) {
 			// Optional match clauses are handled separately.
 			if(cypher_ast_match_is_optional(match_clauses[i])) continue;
@@ -299,27 +299,27 @@ FT_FilterNode *AST_BuildFilterTree(AST *ast) {
 			const cypher_astnode_t *predicate = cypher_ast_match_get_predicate(match_clauses[i]);
 			if(predicate) AST_ConvertFilters(&filter_tree, predicate);
 		}
-		array_free(match_clauses);
+		arr_free(match_clauses);
 	}
 
 	const cypher_astnode_t **with_clauses = AST_GetClauses(ast, CYPHER_AST_WITH);
 	if(with_clauses) {
-		uint with_count = array_len(with_clauses);
+		uint with_count = arr_len(with_clauses);
 		for(uint i = 0; i < with_count; i ++) {
 			const cypher_astnode_t *predicate = cypher_ast_with_get_predicate(with_clauses[i]);
 			if(predicate) AST_ConvertFilters(&filter_tree, predicate);
 		}
-		array_free(with_clauses);
+		arr_free(with_clauses);
 	}
 
 	const cypher_astnode_t **call_clauses = AST_GetClauses(ast, CYPHER_AST_CALL);
 	if(call_clauses) {
-		uint call_count = array_len(call_clauses);
+		uint call_count = arr_len(call_clauses);
 		for(uint i = 0; i < call_count; i ++) {
 			const cypher_astnode_t *where_predicate = cypher_ast_call_get_predicate(call_clauses[i]);
 			if(where_predicate) AST_ConvertFilters(&filter_tree, where_predicate);
 		}
-		array_free(call_clauses);
+		arr_free(call_clauses);
 	}
 
 	if(!FilterTree_Valid(filter_tree)) {

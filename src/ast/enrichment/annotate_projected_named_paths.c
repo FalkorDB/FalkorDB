@@ -30,7 +30,7 @@ static void _attach_identifier
 	const cypher_astnode_t **exp_arr = raxFind(identifier_map,
 		(unsigned char *)path_name, strlen(path_name));
 	if(exp_arr != raxNotFound) {
-		uint arrayLen = array_len(exp_arr);
+		uint arrayLen = arr_len(exp_arr);
 		for(uint i = 0; i < arrayLen; i++)
 			cypher_astnode_attach_annotation(named_paths_ctx, exp_arr[i],
 				(void *)path, NULL);
@@ -159,8 +159,8 @@ void _collect_projected_identifier
 					strlen(identifier));
 		// Use array in case of multiple projections for the same named path.
 		if(exp_arr == raxNotFound) exp_arr =
-			array_new(const cypher_astnode_t *, 1);
-		array_append(exp_arr, ast_exp);
+			arr_new(const cypher_astnode_t *, 1);
+		arr_append(exp_arr, ast_exp);
 		raxInsert(identifier_map, (unsigned char *)identifier,
 			strlen(identifier), (void *)exp_arr, NULL);
 	} else {
@@ -193,7 +193,7 @@ static void _annotate_with_clause_projected_named_path
 	}
 	_annotate_relevant_projected_named_path_identifier(ast, identifier_map,
 													   scope_start, scope_end);
-	raxFreeWithCallback(identifier_map, array_free);
+	raxFreeWithCallback(identifier_map, arr_free);
 }
 
 static void _annotate_delete_clause_projected_named_path
@@ -212,7 +212,7 @@ static void _annotate_delete_clause_projected_named_path
 	}
 	_annotate_relevant_projected_named_path_identifier(ast, identifier_map,
 													   scope_start, scope_end);
-	raxFreeWithCallback(identifier_map, array_free);
+	raxFreeWithCallback(identifier_map, arr_free);
 }
 
 static void _annotate_unwind_clause_projected_named_path
@@ -229,7 +229,7 @@ static void _annotate_unwind_clause_projected_named_path
 
 	_annotate_relevant_projected_named_path_identifier(ast, identifier_map,
 													   scope_start, scope_end);
-	raxFreeWithCallback(identifier_map, array_free);
+	raxFreeWithCallback(identifier_map, arr_free);
 }
 
 static void _annotate_return_clause_projected_named_path
@@ -250,7 +250,7 @@ static void _annotate_return_clause_projected_named_path
 	}
 	_annotate_relevant_projected_named_path_identifier(ast, identifier_map,
 													   scope_start, scope_end);
-	raxFreeWithCallback(identifier_map, array_free);
+	raxFreeWithCallback(identifier_map, arr_free);
 }
 
 static void _annotate_match_clause_projected_named_path
@@ -264,7 +264,7 @@ static void _annotate_match_clause_projected_named_path
 	_collect_projected_identifier(match_clause, identifier_map);
 	_annotate_relevant_projected_named_path_identifier(ast, identifier_map,
 													   scope_start, scope_end);
-	raxFreeWithCallback(identifier_map, array_free);
+	raxFreeWithCallback(identifier_map, arr_free);
 }
 
 static void _annotate_foreach_clause_projected_named_path
@@ -285,13 +285,13 @@ static void _annotate_foreach_clause_projected_named_path
 	_annotate_relevant_projected_named_path_identifier(ast,
 		identifier_map, scope_start, scope_end);
 	// remove the list expression from the identifier_map
-	raxFreeWithCallback(identifier_map, array_free);
+	raxFreeWithCallback(identifier_map, arr_free);
 	identifier_map = raxNew();
 
-	cypher_astnode_t **clauses = array_new(cypher_astnode_t *, 1);
+	cypher_astnode_t **clauses = arr_new(cypher_astnode_t *, 1);
 	uint nclauses = cypher_ast_foreach_nclauses(foreach_clause);
 	for(uint i = 0; i < nclauses; i++) {
-		array_append(clauses,
+		arr_append(clauses,
 		(cypher_astnode_t *)cypher_ast_foreach_get_clause(foreach_clause, i));
 	}
 	struct cypher_input_range range = {0};
@@ -313,11 +313,11 @@ static void _annotate_foreach_clause_projected_named_path
 	// annotate named paths referring the outer scope
 	_annotate_relevant_projected_named_path_identifier(ast, identifier_map,
 													   scope_start, scope_end);
-	raxFreeWithCallback(identifier_map, array_free);
+	raxFreeWithCallback(identifier_map, arr_free);
 
 	// annotate named paths defined inside the body
 	_annotate_projected_named_path(&subquery_clauses_ast);
-	array_free(clauses);
+	arr_free(clauses);
 	cypher_astnode_free(query_node);
 }
 
@@ -344,7 +344,7 @@ static void _annotate_callsubquery_clause_projected_named_path
 	// have the value in the record
 	uint *union_indices = AST_GetClauseIndices(&subquery_clauses_ast,
 		CYPHER_AST_UNION);
-	uint n_union_clauses = array_len(union_indices);
+	uint n_union_clauses = arr_len(union_indices);
 	// handle first `UNION` branch
 	const cypher_astnode_t *first_in_branch =
 		cypher_ast_query_get_clause(subquery, 0);
@@ -359,7 +359,7 @@ static void _annotate_callsubquery_clause_projected_named_path
 			_collect_projected_identifier(first_in_branch, identifier_map);
 		}
 	}
-	array_free(union_indices);
+	arr_free(union_indices);
 
 	// annotate named paths referring the outer scope
 	_annotate_relevant_projected_named_path_identifier(ast, identifier_map,
@@ -367,7 +367,7 @@ static void _annotate_callsubquery_clause_projected_named_path
 
 	// annotate named paths defined inside the body
 	_annotate_projected_named_path(&subquery_clauses_ast);
-	raxFreeWithCallback(identifier_map, array_free);
+	raxFreeWithCallback(identifier_map, arr_free);
 }
 
 static void _annotate_projected_named_path(AST *ast) {

@@ -399,7 +399,7 @@ static bool _AR_EXP_ValidateInvocation
 	SIType actual_type;
 	SIType expected_type = T_NULL;
 
-	uint expected_types_count = array_len(fdesc->types);
+	uint expected_types_count = arr_len(fdesc->types);
 	for(int i = 0; i < argc; i++) {
 		actual_type = SI_TYPE(argv[i]);
 		/* For a function that accepts a variable number of arguments.
@@ -855,10 +855,10 @@ AR_ExpNode **AR_EXP_CollectVariableOperands
 ) {
 	ASSERT (root != NULL) ;
 	uint i = 0 ;
-	AR_ExpNode **nodes = array_new (AR_ExpNode*, 1) ;
+	AR_ExpNode **nodes = arr_new (AR_ExpNode*, 1) ;
 
-	array_append (nodes, root) ;
-	while (i < array_len(nodes)) {
+	arr_append (nodes, root) ;
+	while (i < arr_len(nodes)) {
 		AR_ExpNode *node = nodes[i] ;
 
 		switch (node->type) {
@@ -867,7 +867,7 @@ AR_ExpNode **AR_EXP_CollectVariableOperands
 					case AR_EXP_PARAM:
 					case AR_EXP_CONSTANT:
 					case AR_EXP_BORROW_RECORD:
-						array_del_fast (nodes, i) ;
+						arr_del_fast (nodes, i) ;
 						break ;
 
 					case AR_EXP_VARIADIC:
@@ -889,10 +889,10 @@ AR_ExpNode **AR_EXP_CollectVariableOperands
 						continue ;
 					}
 
-					array_append (nodes, child) ;
+					arr_append (nodes, child) ;
 				}
 
-				array_del_fast (nodes, i) ;
+				arr_del_fast (nodes, i) ;
 				break;
 
 			default:
@@ -910,27 +910,27 @@ AR_ExpNode **AR_EXP_CollectFunctions
 ) {
 	ASSERT (root != NULL) ;
 
-	AR_ExpNode **funcs = array_new (AR_ExpNode*, 0) ;
-	AR_ExpNode **nodes = array_new (AR_ExpNode*, 1) ;
+	AR_ExpNode **funcs = arr_new (AR_ExpNode*, 0) ;
+	AR_ExpNode **nodes = arr_new (AR_ExpNode*, 1) ;
 
-	array_append (nodes, root) ;
+	arr_append (nodes, root) ;
 
-	while (array_len (nodes) > 0) {
-		AR_ExpNode *node = array_pop (nodes) ;
+	while (arr_len (nodes) > 0) {
+		AR_ExpNode *node = arr_pop (nodes) ;
 
 		if (node->type == AR_EXP_OP) {
-			array_append (funcs, node) ;
+			arr_append (funcs, node) ;
 
 			for (int i = 0; i < NODE_CHILD_COUNT (node); i++) {
 				AR_ExpNode *child = NODE_CHILD (node, i) ;
 				if (child->type == AR_EXP_OP) {
-					array_append (nodes, child) ;
+					arr_append (nodes, child) ;
 				}
 			}
 		}
 	}
 
-	array_free (nodes) ;
+	arr_free (nodes) ;
 
 	return funcs ;
 }
@@ -944,18 +944,18 @@ AR_ExpNode **AR_EXP_CollectAggregations
 ) {
 	ASSERT (root != NULL) ;
 
-	AR_ExpNode **nodes        = array_new (AR_ExpNode*, 1) ;
-	AR_ExpNode **aggregations = array_new (AR_ExpNode*, 1) ;
+	AR_ExpNode **nodes        = arr_new (AR_ExpNode*, 1) ;
+	AR_ExpNode **aggregations = arr_new (AR_ExpNode*, 1) ;
 
-	array_append (nodes, root) ;
+	arr_append (nodes, root) ;
 
-	while (array_len (nodes) > 0) {
-		AR_ExpNode *node = array_pop (nodes) ;
+	while (arr_len (nodes) > 0) {
+		AR_ExpNode *node = arr_pop (nodes) ;
 
 		if (AGGREGATION_NODE (node)) {
 			// found an aggregation node, as aggregation functions can not be
 			// nested, we can simply continue
-			array_append (aggregations, node) ;
+			arr_append (aggregations, node) ;
 			continue ;
 		}
 
@@ -964,13 +964,13 @@ AR_ExpNode **AR_EXP_CollectAggregations
 			for (uint i = 0; i < NODE_CHILD_COUNT (node); i++) {
 				AR_ExpNode *child = NODE_CHILD (node, i) ;
 				if (child->type == AR_EXP_OP) {
-					array_append (nodes, child) ;
+					arr_append (nodes, child) ;
 				}
 			}
 		}
 	}
 
-	array_free (nodes) ;
+	arr_free (nodes) ;
 
 	return aggregations ;
 }

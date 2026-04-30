@@ -12,8 +12,8 @@ void GraphStatistics_init
 	GraphStatistics *stats
 ) {
 	ASSERT(stats);
-	stats->node_count = array_new(uint64_t, 0);
-	stats->edge_count = array_new(uint64_t, 0);
+	stats->node_count = arr_new(uint64_t, 0);
+	stats->edge_count = arr_new(uint64_t, 0);
 }
 
 void GraphStatistics_IntroduceRelationship
@@ -21,7 +21,7 @@ void GraphStatistics_IntroduceRelationship
 	GraphStatistics *stats
 ) {
 	ASSERT(stats && stats->edge_count);
-	array_append(stats->edge_count, 0);
+	arr_append(stats->edge_count, 0);
 }
 
 void GraphStatistics_IntroduceLabel
@@ -29,7 +29,7 @@ void GraphStatistics_IntroduceLabel
 	GraphStatistics *stats
 ) {
 	ASSERT(stats && stats->node_count);
-	array_append(stats->node_count, 0);
+	arr_append(stats->node_count, 0);
 }
 
 uint64_t GraphStatistics_EdgeCount
@@ -38,7 +38,7 @@ uint64_t GraphStatistics_EdgeCount
 	RelationID r
 ) {
 	ASSERT(stats != NULL);
-	ASSERT(r < ((RelationID)array_len(stats->edge_count)));
+	ASSERT(r < ((RelationID)arr_len(stats->edge_count)));
 
 	if(r < 0) {
 		return 0;
@@ -53,7 +53,7 @@ uint64_t GraphStatistics_NodeCount
 	LabelID l
 ) {
 	ASSERT(stats != NULL);
-	ASSERT(l < ((LabelID)array_len(stats->node_count)));
+	ASSERT(l < ((LabelID)arr_len(stats->node_count)));
 
 	// none existing / unknown label id
 	if(l < 0) {
@@ -68,6 +68,6 @@ void GraphStatistics_FreeInternals
 	GraphStatistics *stats
 ) {
 	ASSERT(stats);
-	if(stats->node_count) array_free(stats->node_count);
-	if(stats->edge_count) array_free(stats->edge_count);
+	if(stats->node_count) arr_free(stats->node_count);
+	if(stats->edge_count) arr_free(stats->edge_count);
 }

@@ -34,7 +34,7 @@ jobs:
     steps:
       - name: Create Runner For Benchmark
         id: create-runner
-        uses: FalkorDB/gce-github-runner@install_docker
+        uses: FalkorDB/gce-github-runner@afc782cd7ea95146eac57b53d27fc08489d14d1b # install_docker
         with:
           token: ${{ secrets.GH_SA_TOKEN }}
           project_id: ${{ secrets.GCP_PROJECT_ID }}
@@ -65,7 +65,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           submodules: true
       - run: |
@@ -76,42 +76,42 @@ jobs:
 
       - name: Cache GraphBLAS
         id: cache_graphblas
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: $GITHUB_WORKSPACE/bin/linux-x64-release/GraphBLAS
           key: graphblas-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c') }}
 
       - name: Cache parser
         id: cache_parser
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: $GITHUB_WORKSPACE/bin/linux-x64-release/libcypher-parser
           key: parser-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
 
       - name: Cache search
         id: cache_search
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: $GITHUB_WORKSPACE/bin/linux-x64-release/search-static
           key: search-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
       - name: Cache libcurl
         id: cache_libcurl
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: $GITHUB_WORKSPACE/bin/linux-x64-release/libcurl
           key: libcurl-${{ hashFiles('./deps/libcurl/RELEASE-NOTES', './build.sh') }}
   
       - name: Cache libcsv
         id: cache_libcsv
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: $GITHUB_WORKSPACE/bin/linux-x64-release/libcsv
           key: libcsv-${{ hashFiles('./deps/libcsv/ChangeLog') }}
     
       # Initializes the CodeQL tools for scanning.
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4
+        uses: github/codeql-action/init@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4
         with:
           languages: ${{ matrix.language }}
           # If you wish to specify custom queries, you can do so here or in a config file.
@@ -138,13 +138,13 @@ jobs:
       #   make release
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v4
+        uses: github/codeql-action/analyze@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4
 
   cleanup-runner:
     needs: analyze
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: ./.github/actions/cleanup-runner
         with:
           service_account_key: ${{ secrets.GCP_SA_KEY }}

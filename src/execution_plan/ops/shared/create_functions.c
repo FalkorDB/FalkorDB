@@ -18,7 +18,7 @@ static void _CommitNodesBlueprint
 	PendingCreations *pending
 ) {
 	GraphContext *gc = QueryCtx_GetGraphCtx();
-	Graph *g = gc->g;
+	Graph *g = GraphContext_GetGraph (gc) ;
 
 	// sync policy should be set to resize to capacity, no need to sync
 	ASSERT(Graph_GetMatrixPolicy(g) == SYNC_POLICY_RESIZE);
@@ -27,10 +27,10 @@ static void _CommitNodesBlueprint
 	// this loop iterates over the CREATE pattern, e.g.
 	// CREATE (p:Person)
 	// as such we're not expecting a large number of iterations
-	uint blueprint_node_count = array_len(pending->nodes.nodes_to_create);
+	uint blueprint_node_count = arr_len(pending->nodes.nodes_to_create);
 	for(uint i = 0; i < blueprint_node_count; i++) {
 		NodeCreateCtx *node_ctx = pending->nodes.nodes_to_create + i;
-		uint label_count = array_len(node_ctx->labels);
+		uint label_count = arr_len(node_ctx->labels);
 
 		for(uint j = 0; j < label_count; j++) {
 			const char *label = node_ctx->labels[j];
@@ -60,8 +60,8 @@ static void _CommitNodes
 ) {
 	Node         *n                   = NULL ;
 	GraphContext *gc                  = QueryCtx_GetGraphCtx () ;
-	Graph        *g                   = gc->g ;
-	uint         node_count           = array_len (pending->nodes.created_nodes) ;
+	Graph        *g                   = GraphContext_GetGraph (gc) ;
+	uint         node_count           = arr_len (pending->nodes.created_nodes) ;
 	bool         constraint_violation = false;
 
 	// sync policy should be set to NOP, no need to sync/resize
@@ -72,7 +72,7 @@ static void _CommitNodes
 
 		AttributeSet attr        = pending->nodes.node_attributes[i] ;
 		LabelID     *labels      = pending->nodes.node_labels[i] ;
-		uint         label_count = array_len (labels) ;
+		uint         label_count = arr_len (labels) ;
 
 		// introduce node into graph
 		GraphHub_CreateNode (gc, n, labels, label_count, attr, true) ;
@@ -104,7 +104,7 @@ static void _CommitEdgesBlueprint
 	PendingCreations *pending
 ) {
 	GraphContext *gc = QueryCtx_GetGraphCtx();
-	Graph *g = gc->g;
+	Graph *g = GraphContext_GetGraph (gc) ;
 
 	// sync policy should be set to resize to capacity, no need to sync
 	ASSERT(Graph_GetMatrixPolicy(g) == SYNC_POLICY_RESIZE);
@@ -113,7 +113,7 @@ static void _CommitEdgesBlueprint
 	// this loop iterates over the CREATE pattern, e.g.
 	// CREATE (p:Person)-[e:VISITED]->(q)
 	// as such we're not expecting a large number of iterations
-	uint blueprint_edge_count = array_len(pending->edges);
+	uint blueprint_edge_count = arr_len(pending->edges);
 	for(uint i = 0; i < blueprint_edge_count; i++) {
 		EdgeCreateCtx *edge_ctx = &pending->edges[i].edges_to_create;
 
@@ -140,14 +140,14 @@ static void _CommitEdges
 ) {
 	Edge         *e                   = NULL;
 	GraphContext *gc                  = QueryCtx_GetGraphCtx();
-	Graph        *g                   = gc->g;
+	Graph        *g                   = GraphContext_GetGraph (gc) ;
 	bool         constraint_violation = false;
 
 	// sync policy should be set to NOP, no need to sync/resize
 	ASSERT (Graph_GetMatrixPolicy (g) == SYNC_POLICY_NOP) ;
 
 	// process batches
-	uint count = array_len (pending->edges) ;
+	uint count = arr_len (pending->edges) ;
 	for (uint i = 0; i < count; i++) {
 		// processing current batch
 		// get batched edges along with their corresponding attribute sets
@@ -163,7 +163,7 @@ static void _CommitEdges
 		int relation_id = Schema_GetID (s) ;
 		Edge        **edges     = pending_edge->created_edges ;
 		AttributeSet *attrs     = pending_edge->edge_attributes ;
-		uint         edge_count = array_len (edges) ;
+		uint         edge_count = arr_len (edges) ;
 
 		// introduce all edges to the graph at once
 		GraphHub_CreateEdges (gc, edges, relation_id, attrs, true) ;
@@ -204,24 +204,24 @@ void NewPendingCreationsContainer
 	ASSERT(pending != NULL);
 
 	pending->nodes.nodes_to_create = nodes;
-	pending->nodes.node_labels     = array_new(LabelID *, 0);
-	pending->nodes.created_nodes   = array_new(Node *, 0);
-	pending->nodes.node_attributes = array_new(AttributeSet, 0);
+	pending->nodes.node_labels     = arr_new(LabelID *, 0);
+	pending->nodes.created_nodes   = arr_new(Node *, 0);
+	pending->nodes.node_attributes = arr_new(AttributeSet, 0);
 
-	pending->edges = array_new(PendingEdgeCreations, array_len(edges));
+	pending->edges = arr_new(PendingEdgeCreations, arr_len(edges));
 
 	// create containers for each edge in the CREATE pattern
 	// for example CREATE ()-[a:A]->()-[b:B]->()
 	// we'll create two containers, one for all 'a' edges and their attributes and another one for the 'b' edges
-	for(uint i = 0; i < array_len(edges); i++) {
-		array_append(pending->edges, ((PendingEdgeCreations) {
+	for(uint i = 0; i < arr_len(edges); i++) {
+		arr_append(pending->edges, ((PendingEdgeCreations) {
 			.edges_to_create = edges[i],
-			.edge_attributes = array_new(AttributeSet, 0),
-			.created_edges = array_new(Edge *, 0)
+			.edge_attributes = arr_new(AttributeSet, 0),
+			.created_edges = arr_new(Edge *, 0)
 		}));
 	}
 
-	array_free(edges);
+	arr_free(edges);
 }
 
 void PendingCreations_Reset
@@ -232,24 +232,24 @@ void PendingCreations_Reset
 
 	// clear nodes pending changes
 	if (ctx->nodes.node_labels != NULL) {
-		array_clear (ctx->nodes.node_labels) ;
+		arr_clear (ctx->nodes.node_labels) ;
 	}
 
 	if (ctx->nodes.created_nodes != NULL) {
-		array_clear (ctx->nodes.created_nodes) ;
+		arr_clear (ctx->nodes.created_nodes) ;
 	}
 
 	if (ctx->nodes.node_attributes != NULL) {
-		uint n = array_len (ctx->nodes.node_attributes) ;
+		uint n = arr_len (ctx->nodes.node_attributes) ;
 		for (uint i = 0; i < n; i++) {
 			AttributeSet_Free (ctx->nodes.node_attributes + i) ;
 		}
-		array_clear (ctx->nodes.node_attributes) ;
+		arr_clear (ctx->nodes.node_attributes) ;
 	}
 
-	for(uint i = 0; i < array_len(ctx->edges); i++) {
-		array_clear (ctx->edges[i].created_edges) ;
-		array_clear (ctx->edges[i].edge_attributes) ;
+	for(uint i = 0; i < arr_len(ctx->edges); i++) {
+		arr_clear (ctx->edges[i].created_edges) ;
+		arr_clear (ctx->edges[i].edge_attributes) ;
 	}
 }
 
@@ -259,16 +259,16 @@ void CommitNewEntities
 	PendingCreations *pending
 ) {
 	Graph *g = QueryCtx_GetGraph();
-	uint node_count = array_len(pending->nodes.created_nodes);
+	uint node_count = arr_len(pending->nodes.created_nodes);
 	// count number of edges created
 	// edges are distributed among multiple containers, one for each edge in the CREATE/MERGE pattern
 	uint edge_count = 0;
-	for(uint i = 0; i < array_len(pending->edges); i++) {
-		edge_count += array_len(pending->edges[i].created_edges);
+	for(uint i = 0; i < arr_len(pending->edges); i++) {
+		edge_count += arr_len(pending->edges[i].created_edges);
 	}
 
 	// lock everything
-	QueryCtx_LockForCommit();
+	QueryCtx_AcquireWriteLock () ;
 
 	//--------------------------------------------------------------------------
 	// commit nodes
@@ -288,7 +288,7 @@ void CommitNewEntities
 		_CommitNodes(pending);
 
 		// clear pending attributes array
-		array_clear(pending->nodes.node_attributes);
+		arr_clear(pending->nodes.node_attributes);
 
 		if(unlikely(ErrorCtx_EncounteredError())) {
 			goto cleanup;
@@ -313,8 +313,8 @@ void CommitNewEntities
 		_CommitEdges(pending);
 
 		// clear pending attributes array
-		for(uint i = 0; i < array_len(pending->edges); i++) {
-			array_clear (pending->edges[i].edge_attributes) ;
+		for(uint i = 0; i < arr_len(pending->edges); i++) {
+			arr_clear (pending->edges[i].edge_attributes) ;
 		}
 
 		if(unlikely(ErrorCtx_EncounteredError())) {
@@ -337,7 +337,7 @@ void ConvertPropertyMap
 	PropertyMap *map,
 	bool fail_on_null
 ) {
-	uint property_count = array_len (map->keys) ;
+	uint property_count = arr_len (map->keys) ;
 	uint attrs_count    = 0;
 
 	SIValue     vals[property_count] ;
@@ -413,53 +413,53 @@ void PendingCreationsFree
 	PendingCreations *pending
 ) {
 	if(pending->nodes.nodes_to_create) {
-		uint nodes_to_create_count = array_len(pending->nodes.nodes_to_create);
+		uint nodes_to_create_count = arr_len(pending->nodes.nodes_to_create);
 		for(uint i = 0; i < nodes_to_create_count; i++) {
 			NodeCreateCtx_Free(pending->nodes.nodes_to_create[i]);
 		}
-		array_free(pending->nodes.nodes_to_create);
+		arr_free(pending->nodes.nodes_to_create);
 		pending->nodes.nodes_to_create = NULL;
 	}
 
 	if(pending->nodes.node_attributes) {
-		uint prop_count = array_len(pending->nodes.node_attributes);
+		uint prop_count = arr_len(pending->nodes.node_attributes);
 		for(uint i = 0; i < prop_count; i++) {
 			AttributeSet_Free(pending->nodes.node_attributes + i);
 		}
-		array_free(pending->nodes.node_attributes);
+		arr_free(pending->nodes.node_attributes);
 		pending->nodes.node_attributes = NULL;
 	}
 
 	if(pending->nodes.node_labels) {
-		array_free(pending->nodes.node_labels);
+		arr_free(pending->nodes.node_labels);
 		pending->nodes.node_labels = NULL;
 	}
 
 	if(pending->nodes.created_nodes) {
-		array_free(pending->nodes.created_nodes);
+		arr_free(pending->nodes.created_nodes);
 		pending->nodes.created_nodes = NULL;
 	}
 
 	if(pending->edges) {
-		uint edges_count = array_len(pending->edges);
+		uint edges_count = arr_len(pending->edges);
 		for(uint i = 0; i < edges_count; i++) {
 			PendingEdgeCreations *pending_edge = pending->edges + i;
 			PropertyMap_Free(pending_edge->edges_to_create.properties);
 			if(pending_edge->edge_attributes) {
-				uint prop_count = array_len(pending_edge->edge_attributes);
+				uint prop_count = arr_len(pending_edge->edge_attributes);
 				for(uint j = 0; j < prop_count; j ++) {
 					AttributeSet_Free(pending_edge->edge_attributes + j);
 				}
-				array_free(pending_edge->edge_attributes);
+				arr_free(pending_edge->edge_attributes);
 				pending_edge->edge_attributes = NULL;
 			}
 
 			if(pending_edge->created_edges) {
-				array_free(pending_edge->created_edges);
+				arr_free(pending_edge->created_edges);
 				pending_edge->created_edges = NULL;
 			}
 		}
-		array_free(pending->edges);
+		arr_free(pending->edges);
 		pending->edges = NULL;
 	}
 }

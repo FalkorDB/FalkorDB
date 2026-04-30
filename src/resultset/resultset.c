@@ -47,7 +47,7 @@ static void _ResultSet_SetColumns
 			set->columns = AST_BuildCallColumnNames(last_clause);
 		}
 
-		set->column_count = array_len(set->columns);
+		set->column_count = arr_len(set->columns);
 	}
 }
 
@@ -269,7 +269,7 @@ void ResultSet_Free
 	if(set == NULL) return;
 
 	if(set->columns) {
-		array_free(set->columns);
+		arr_free(set->columns);
 	}
 
 	if(set->columns_record_map) {

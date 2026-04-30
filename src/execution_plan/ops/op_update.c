@@ -22,7 +22,7 @@ static Record _handoff
 (
 	OpUpdate *op
 ) {
-	if(op->rec_idx < array_len(op->records)) {
+	if(op->rec_idx < arr_len(op->records)) {
 		return op->records[op->rec_idx++];
 	} else {
 		return NULL;
@@ -59,7 +59,7 @@ OpBase *NewUpdateOp
 	OpUpdate *op = rm_calloc(1, sizeof(OpUpdate));
 
 	op->gc           = QueryCtx_GetGraphCtx();
-	op->records      = array_new(Record, 64);
+	op->records      = arr_new(Record, 64);
 	op->update_ctxs  = update_exps;
 	op->node_updates = HashTableCreate(&_dt);
 	op->edge_updates = HashTableCreate(&_dt);
@@ -89,7 +89,7 @@ static Record UpdateConsume
 	Record r ;
 
 	// updates already performed
-	if (array_len (op->records) > 0) {
+	if (arr_len (op->records) > 0) {
 		return _handoff (op) ;
 	}
 
@@ -102,7 +102,7 @@ static Record UpdateConsume
 					ctx, true) ;
 		}
 
-		array_append (op->records, r) ;
+		arr_append (op->records, r) ;
 	}
 	
 	uint node_updates_count = HashTableElemCount (op->node_updates) ;
@@ -116,7 +116,7 @@ static Record UpdateConsume
 		OpBase_PropagateReset (child) ;
 
 		// lock everything
-		QueryCtx_LockForCommit () ;
+		QueryCtx_AcquireWriteLock () ;
 
 		// in cases such as:
 		// MATCH (n) SET n:L
@@ -162,12 +162,12 @@ static OpResult UpdateReset
 	HashTableEmpty(op->node_updates, NULL);
 	HashTableEmpty(op->edge_updates, NULL);
 
-	uint records_count = array_len(op->records);
+	uint records_count = arr_len(op->records);
 	// records[0..op->record_idx] had been already emitted, skip them
 	for(uint i = op->rec_idx; i < records_count; i++) {
 		OpBase_DeleteRecord(op->records+i);
 	}
-	array_clear(op->records);
+	arr_clear(op->records);
 	op->rec_idx = 0;
 
 	return OP_OK;
@@ -193,12 +193,12 @@ static void UpdateFree(OpBase *ctx) {
 	}
 
 	if (op->records) {
-		uint64_t n = array_len (op->records) ;
+		uint64_t n = arr_len (op->records) ;
 		for (uint64_t i = op->rec_idx; i < n; i++) {
 			OpBase_DeleteRecord (op->records+i) ;
 		}
 
-		array_free (op->records) ;
+		arr_free (op->records) ;
 		op->records = NULL ;
 	}
 

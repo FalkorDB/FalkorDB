@@ -136,7 +136,7 @@ static JSValue js_edge_type
 
 	RelationID r = Edge_GetRelationID (e) ;
 
-	const GraphContext *gc = QueryCtx_GetGraphCtx () ;
+	GraphContext *gc = QueryCtx_GetGraphCtx () ;
 	Schema *s = GraphContext_GetSchemaByID (gc, r, SCHEMA_EDGE) ;
 	ASSERT (s != NULL) ;
 

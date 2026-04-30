@@ -320,7 +320,7 @@ static void _Encode_Delta_Matrix
 }
 
 // encode label matrices to rdb
-void RdbSaveLabelMatrices_v18
+void RdbSaveLabelMatrices_v19
 (
 	SerializerIO rdb,  // RDB
 	Graph *g           // graph
@@ -351,7 +351,7 @@ void RdbSaveLabelMatrices_v18
 }
 
 // encode relationship matrices to rdb
-void RdbSaveRelationMatrices_v18
+void RdbSaveRelationMatrices_v19
 (
 	SerializerIO rdb,  // RDB
 	Graph *g           // graph
@@ -394,7 +394,7 @@ void RdbSaveRelationMatrices_v18
 }
 
 // encode graph's adjacency matrix
-void RdbSaveAdjMatrix_v18
+void RdbSaveAdjMatrix_v19
 (
 	SerializerIO rdb,  // RDB
 	Graph *g           // graph
@@ -412,7 +412,7 @@ void RdbSaveAdjMatrix_v18
 }
 
 // encode graph's node labels matrix
-void RdbSaveLblsMatrix_v18
+void RdbSaveLblsMatrix_v19
 (
 	SerializerIO rdb,  // RDB
 	Graph *g           // graph
