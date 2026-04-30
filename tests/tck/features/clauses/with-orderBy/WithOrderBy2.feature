@@ -32,7 +32,6 @@ Feature: WithOrderBy2 - Order by a single expression
 # LIMIT is used in the following scenarios to surface the effects or WITH ... ORDER BY ...
 # which are otherwise lost after the WITH clause according to Cypher semantics
 
-  @skip
   Scenario Outline: [1] Sort by a boolean expression in ascending order
     Given an empty graph
     And having executed:
@@ -63,7 +62,6 @@ Feature: WithOrderBy2 - Order by a single expression
       | NOT (a.bool AND a.bool2) ASC       |
       | NOT (a.bool AND a.bool2) ASCENDING |
 
-  @skip
   Scenario Outline: [2] Sort by a boolean expression in descending order
     Given an empty graph
     And having executed:
@@ -94,7 +92,6 @@ Feature: WithOrderBy2 - Order by a single expression
       | NOT (a.bool AND a.bool2) DESC       |
       | NOT (a.bool AND a.bool2) DESCENDING |
 
-  @skip
   Scenario Outline: [3] Sort by an integer expression in ascending order
     Given an empty graph
     And having executed:
@@ -126,7 +123,6 @@ Feature: WithOrderBy2 - Order by a single expression
       | (a.num2 + (a.num * 2)) * -1 ASC       |
       | (a.num2 + (a.num * 2)) * -1 ASCENDING |
 
-  @skip
   Scenario Outline: [4] Sort by an integer expression in descending order
     Given an empty graph
     And having executed:
@@ -157,7 +153,6 @@ Feature: WithOrderBy2 - Order by a single expression
       | (a.num2 + (a.num * 2)) * -1 DESC       |
       | (a.num2 + (a.num * 2)) * -1 DESCENDING |
 
-  @skip
   Scenario Outline: [5] Sort by a float expression in ascending order
     Given an empty graph
     And having executed:
@@ -189,7 +184,6 @@ Feature: WithOrderBy2 - Order by a single expression
       | (a.num + a.num2 * 2) * -1.01 ASC       |
       | (a.num + a.num2 * 2) * -1.01 ASCENDING |
 
-  @skip
   Scenario Outline: [6] Sort by a float expression in descending order
     Given an empty graph
     And having executed:
@@ -220,7 +214,6 @@ Feature: WithOrderBy2 - Order by a single expression
       | (a.num + a.num2 * 2) * -1.01 DESC       |
       | (a.num + a.num2 * 2) * -1.01 DESCENDING |
 
-  @skip
   Scenario Outline: [7] Sort by a string expression in ascending order
     Given an empty graph
     And having executed:
@@ -252,7 +245,6 @@ Feature: WithOrderBy2 - Order by a single expression
       | a.title + ' ' + a.name ASC       |
       | a.title + ' ' + a.name ASCENDING |
 
-  @skip
   Scenario Outline: [8] Sort by a string expression in descending order
     Given an empty graph
     And having executed:
@@ -283,7 +275,6 @@ Feature: WithOrderBy2 - Order by a single expression
       | a.title + ' ' + a.name DESC       |
       | a.title + ' ' + a.name DESCENDING |
 
-  @skip
   Scenario Outline: [9] Sort by a list expression in ascending order
     Given an empty graph
     And having executed:
@@ -315,7 +306,6 @@ Feature: WithOrderBy2 - Order by a single expression
       | [a.list2[1], a.list2[0], a.list[1]] + a.list + a.list2 ASC       |
       | [a.list2[1], a.list2[0], a.list[1]] + a.list + a.list2 ASCENDING |
 
-  @skip
   Scenario Outline: [10] Sort by a list expression in descending order
     Given an empty graph
     And having executed:
@@ -661,7 +651,6 @@ Feature: WithOrderBy2 - Order by a single expression
       | a.datetime + duration({days: 4, minutes: 6}) DESC       |
       | a.datetime + duration({days: 4, minutes: 6}) DESCENDING |
 
-  @skip
   Scenario Outline: [21] Sort by an expression that is only partially orderable on a non-distinct binding table
     Given an empty graph
     And having executed:
@@ -691,7 +680,6 @@ Feature: WithOrderBy2 - Order by a single expression
       | ASC  | 'A' |
       | DESC | 'C' |
 
-  @skip
   Scenario Outline: [22] Sort by an expression that is only partially orderable on a non-distinct binding table, but used as a grouping key
     Given an empty graph
     And having executed:
@@ -720,7 +708,6 @@ Feature: WithOrderBy2 - Order by a single expression
       | ASC  | 'A' |
       | DESC | 'C' |
 
-  @skip
   Scenario Outline: [23] Sort by an expression that is only partially orderable on a non-distinct binding table, but used in parts as a grouping key
     Given an empty graph
     And having executed:
