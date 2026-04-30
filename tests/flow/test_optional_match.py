@@ -347,3 +347,33 @@ class testOptionalFlow(FlowTestsBase):
 
         g.delete()
 
+    def test28_limited_optional_match(self):
+        """
+        make sure limit is handled and enforced by the
+        optional conditional traverse operation
+        """
+
+        # start fresh
+        self.graph.delete()
+
+        # create the graph
+        q = "UNWIND range(0, 2) AS x CREATE (:Label)-[:REL]->()"
+        self.graph.query(q)
+
+        q = "CREATE (:Label)"
+        self.graph.query(q)
+
+        q = "MATCH (a:Label) OPTIONAL MATCH (a)-[:REL]->(b) RETURN a, b LIMIT 10"
+        res = self.graph.query(q).result_set
+
+        self.env.assertEquals(len(res), 4)
+
+        # enlarge the graph
+        q = "UNWIND range(0, 9) AS x CREATE (:Label)-[:REL]->()"
+        self.graph.query(q)
+
+        q = "MATCH (a:Label) OPTIONAL MATCH (a)-[:REL]->(b) RETURN a, b LIMIT 10"
+        res = self.graph.query(q).result_set
+
+        self.env.assertEquals(len(res), 10)
+
