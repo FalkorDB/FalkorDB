@@ -349,7 +349,7 @@ class testOptionalFlow(FlowTestsBase):
 
     def test28_limited_optional_match(self):
         """
-        make sure limit is handeled and enforced by the
+        make sure limit is handled and enforced by the
         optional conditional traverse operation
         """
 
