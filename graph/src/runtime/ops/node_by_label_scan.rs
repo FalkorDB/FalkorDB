@@ -110,13 +110,11 @@ impl<'a> Iterator for NodeByLabelScanOp<'a> {
                     if self.parent_row < parent_batch.len() {
                         let env = parent_batch.env_ref(self.parent_row);
                         self.parent_row += 1;
-                        let nodes_iter = self
-                            .runtime
-                            .g
-                            .borrow()
-                            .get_nodes(&self.node_pattern.labels, 0);
+                        let g = self.runtime.g.borrow();
+                        let graph_iter = g.get_nodes(&self.node_pattern.labels, 0);
+                        drop(g);
                         self.parent_env = Some(env.clone_pooled(self.runtime.env_pool));
-                        self.node_iter = Some(nodes_iter);
+                        self.node_iter = Some(graph_iter);
                         break;
                     }
                     // Parent batch exhausted

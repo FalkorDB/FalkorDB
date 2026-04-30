@@ -139,7 +139,7 @@ impl<'a> MergeOp<'a> {
             let mut batch = Batch::from_envs(vec![vars]);
             self.runtime.create_batch(resolved_pattern, &mut batch)?;
 
-            // Cache only the created entity bindings (node/relationship IDs)
+            // Cache the created entity bindings (node/relationship IDs)
             let env_ref = batch.env_ref(0);
             let pattern_vars: Vec<(u32, Value)> = resolved_pattern
                 .nodes()

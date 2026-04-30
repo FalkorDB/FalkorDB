@@ -320,12 +320,51 @@ impl Binder {
                 // don't reference entities being merged.  Entity aliases are
                 // not yet in scope, so any such reference is caught here, e.g.:
                 //   MERGE (a:L {v: a.v})   → "'a' not defined"
+                // Also validate that already-bound variables don't get new labels
+                // in MERGE.  E.g. CREATE (a:Foo) MERGE (a)-[:R]->(a:Bar)
+                // is illegal because `a` is already bound as :Foo.
                 for node in pattern.nodes() {
                     self.bind_expr(&node.attrs)?;
+                    if let Some(existing) = self.current_env().get(&node.alias) {
+                        let key = (existing.scope_id, existing.id);
+                        if let Some(existing_labels) = self.node_labels.get(&key) {
+                            for label in node.labels.iter() {
+                                if !existing_labels.contains(label) {
+                                    return Err(format!(
+                                        "Variable `{}` can't be redeclared in a MERGE clause",
+                                        node.alias
+                                    ));
+                                }
+                            }
+                        }
+                    }
                 }
                 for relationship in pattern.relationships() {
                     self.bind_expr(&relationship.attrs)?;
+                    // Check that the relationship variable itself is not already bound
+                    if self.current_env().contains_key(&relationship.alias) {
+                        return Err(format!(
+                            "Variable `{}` can't be redeclared in a MERGE clause",
+                            relationship.alias
+                        ));
+                    }
+                    for endpoint in [&relationship.from, &relationship.to] {
+                        if let Some(existing) = self.current_env().get(&endpoint.alias) {
+                            let key = (existing.scope_id, existing.id);
+                            if let Some(existing_labels) = self.node_labels.get(&key) {
+                                for label in endpoint.labels.iter() {
+                                    if !existing_labels.contains(label) {
+                                        return Err(format!(
+                                            "Variable `{}` can't be redeclared in a MERGE clause",
+                                            endpoint.alias
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
+
                 let pattern = self.bind_graph(&pattern, false)?;
                 let on_create = self.bind_set_items(on_create)?;
                 let on_match = self.bind_set_items(on_match)?;

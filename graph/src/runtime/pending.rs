@@ -572,6 +572,44 @@ impl Pending {
         self.created_nodes.contains(id.into())
     }
 
+    /// Returns pending-created node IDs that have ALL of the given labels.
+    /// When `label_ids` is empty, returns all pending-created nodes.
+    pub fn get_pending_nodes_with_labels(
+        &self,
+        label_ids: &[LabelId],
+    ) -> RoaringTreemap {
+        if label_ids.is_empty() {
+            return self.created_nodes.clone();
+        }
+        let label_ids_u64: Vec<u64> = label_ids.iter().map(|l| usize::from(*l) as u64).collect();
+        let mut result = RoaringTreemap::new();
+        for (&node_id, node_labels) in &self.set_labels {
+            if label_ids_u64.iter().all(|lid| node_labels.contains(lid)) {
+                result.insert(node_id);
+            }
+        }
+        result
+    }
+
+    /// Returns existing (non-created) node IDs that have pending label REMOVEs
+    /// for ANY of the given label_ids.
+    pub fn nodes_with_pending_label_removes(
+        &self,
+        label_ids: &[LabelId],
+    ) -> RoaringTreemap {
+        if label_ids.is_empty() {
+            return RoaringTreemap::new();
+        }
+        let label_ids_u64: Vec<u64> = label_ids.iter().map(|l| usize::from(*l) as u64).collect();
+        let mut result = RoaringTreemap::new();
+        for (&node_id, removed_labels) in &self.remove_labels {
+            if label_ids_u64.iter().any(|lid| removed_labels.contains(lid)) {
+                result.insert(node_id);
+            }
+        }
+        result
+    }
+
     #[must_use]
     pub fn is_relationship_created(
         &self,
@@ -601,6 +639,12 @@ impl Pending {
         id: NodeId,
     ) -> bool {
         self.deleted_nodes.contains(id.into())
+    }
+
+    /// Returns a clone of the pending-deleted nodes bitmap.
+    #[must_use]
+    pub fn deleted_nodes(&self) -> RoaringTreemap {
+        self.deleted_nodes.clone()
     }
 
     #[must_use]

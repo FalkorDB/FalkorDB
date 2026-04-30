@@ -42,7 +42,7 @@ use std::{
 use crate::runtime::functions::Type;
 use crate::tree;
 
-use orx_tree::{DynNode, DynTree, NodeRef, Side, Traversal, Traverser};
+use orx_tree::{Bfs, DynNode, DynTree, NodeRef, Side, Traversal, Traverser};
 
 use crate::{
     entity_type::EntityType,
@@ -95,8 +95,17 @@ pub enum IR {
     Remove(Vec<QueryExpr<Variable>>),
     /// Scan all nodes (no label filter)
     AllNodeScan(Arc<QueryNode<Arc<String>, Variable>>),
-    /// Scan nodes by label
-    NodeByLabelScan(Arc<QueryNode<Arc<String>, Variable>>),
+    /// Scan nodes by label.
+    /// Scan all nodes with a given label.
+    NodeByLabelScan {
+        node: Arc<QueryNode<Arc<String>, Variable>>,
+    },
+    /// Wraps a scan to include pending-created nodes and exclude pending-deleted
+    /// nodes. Used inside MERGE match sub-plans so they see in-flight mutations.
+    /// The optimizer is free to rewrite the child scan (e.g. to an index scan).
+    IncludePending {
+        node: Arc<QueryNode<Arc<String>, Variable>>,
+    },
     /// Scan nodes using an index
     NodeByIndexScan {
         node: Arc<QueryNode<Arc<String>, Variable>>,
@@ -420,8 +429,11 @@ impl Display for IR {
             Self::AllNodeScan(node) => {
                 write!(f, "All Node Scan | {node}")
             }
-            Self::NodeByLabelScan(node) => {
+            Self::NodeByLabelScan { node, .. } => {
                 write!(f, "Node By Label Scan | {node}")
+            }
+            Self::IncludePending { node } => {
+                write!(f, "Include Pending | {node}")
             }
             Self::NodeByIndexScan { node, .. } => {
                 write!(f, "Node By Index Scan | {node}")
@@ -603,6 +615,31 @@ impl Planner {
         // Add Argument node as a child to each leaf.
         for leaf_idx in leaves {
             tree.node_mut(leaf_idx).push_child(IR::Argument);
+        }
+    }
+
+    /// Wrap every `NodeByLabelScan` (and `AllNodeScan`) in `tree` with an
+    /// `IncludePending` parent node. Must be called BEFORE `add_argument_to_leaves`
+    /// so scans are still leaves when we restructure them.
+    fn set_include_pending_on_scans(tree: &mut DynTree<IR>) {
+        let indices = tree.root().indices::<Bfs>().collect::<Vec<_>>();
+        for idx in indices {
+            if !matches!(
+                tree.node(idx).data(),
+                IR::NodeByLabelScan { .. } | IR::AllNodeScan(_)
+            ) {
+                continue;
+            }
+            let original_data = std::mem::replace(
+                tree.node_mut(idx).data_mut(),
+                IR::Argument, // temporary placeholder
+            );
+            let node = match &original_data {
+                IR::NodeByLabelScan { node } | IR::AllNodeScan(node) => node.clone(),
+                _ => unreachable!(),
+            };
+            *tree.node_mut(idx).data_mut() = IR::IncludePending { node };
+            tree.node_mut(idx).push_child(original_data);
         }
     }
 
@@ -1180,7 +1217,7 @@ impl Planner {
                         // Multi-label node: the runtime's get_nodes()
                         // intersects all label matrices, so we can pass
                         // all labels directly to NodeByLabelScan.
-                        tree!(IR::NodeByLabelScan(node.clone()))
+                        tree!(IR::NodeByLabelScan { node: node.clone() })
                     };
                     if let Some(filter_expr) = attr_filter {
                         res = tree!(IR::Filter(Arc::new(filter_expr)), res);
@@ -1245,7 +1282,9 @@ impl Planner {
                     let mut scan = if relationship.from.clone().labels.is_empty() {
                         tree!(IR::AllNodeScan(relationship.from.clone()))
                     } else {
-                        tree!(IR::NodeByLabelScan(relationship.from.clone()))
+                        tree!(IR::NodeByLabelScan {
+                            node: relationship.from.clone(),
+                        })
                     };
                     if let Some(filter_expr) = from_attr_filter {
                         scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
@@ -1276,7 +1315,9 @@ impl Planner {
                 let mut scan = if relationship.from.clone().labels.is_empty() {
                     tree!(IR::AllNodeScan(relationship.from.clone()))
                 } else {
-                    tree!(IR::NodeByLabelScan(relationship.from.clone()))
+                    tree!(IR::NodeByLabelScan {
+                        node: relationship.from.clone(),
+                    })
                 };
                 if let Some(filter_expr) = attr_filter {
                     scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
@@ -1392,7 +1433,9 @@ impl Planner {
                     let mut scan = if relationship.from.clone().labels.is_empty() {
                         tree!(IR::AllNodeScan(relationship.from.clone()))
                     } else {
-                        tree!(IR::NodeByLabelScan(relationship.from.clone()))
+                        tree!(IR::NodeByLabelScan {
+                            node: relationship.from.clone(),
+                        })
                     };
                     if let Some(filter_expr) = attr_filter {
                         scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
@@ -1904,7 +1947,7 @@ impl Planner {
         loop {
             match n.node(idx).data() {
                 // Scan/traversal nodes come from MATCH — add as CP child
-                IR::NodeByLabelScan(_)
+                IR::NodeByLabelScan { .. }
                 | IR::AllNodeScan(_)
                 | IR::NodeByIndexScan { .. }
                 | IR::NodeByIdSeek { .. }
@@ -2099,16 +2142,24 @@ impl Planner {
             } => {
                 let create_pattern = pattern.filter_visited(&self.visited);
                 let mut match_branch = self.plan_match(&pattern, None);
+                Self::set_include_pending_on_scans(&mut match_branch);
                 Self::add_argument_to_leaves(&mut match_branch);
 
-                tree!(
+                let paths = pattern.paths();
+                let merge = tree!(
                     IR::Merge {
                         pattern: create_pattern,
                         on_create: on_create_set_items,
                         on_match: on_match_set_items
                     },
                     match_branch
-                )
+                );
+
+                if paths.is_empty() {
+                    merge
+                } else {
+                    tree!(IR::PathBuilder(paths.to_vec()), merge)
+                }
             }
             // CREATE: only create entities not already bound.
             QueryIR::Create(pattern) => {

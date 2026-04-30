@@ -5,6 +5,7 @@ clauses/delete
 clauses/match/Match1.feature
 clauses/match/Match2.feature
 clauses/match-where
+clauses/merge
 clauses/remove
 clauses/return/
 clauses/return-orderby
