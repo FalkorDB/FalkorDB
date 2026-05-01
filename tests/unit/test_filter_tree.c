@@ -400,36 +400,47 @@ void test_collectModified() {
 	AST_Free(ast);
 }
 
+// verify that a filter expression node's string representation matches
+// the expected string
+void _assertExpStr
+(
+	const FT_FilterNode *node,
+	const char *expected_str
+) {
+	TEST_ASSERT(node->t == FT_N_EXP);
+	char *str = NULL;
+	AR_EXP_ToString(node->exp.exp, &str);
+	TEST_ASSERT(strcmp(str, expected_str) == 0);
+	rm_free(str);
+}
+
 void test_NOTReduction() {
-	const char *filters[8] = {
+	FT_FilterNode *actual_tree;
+	FT_FilterNode *expected_tree;
+	AST *ast;
+
+	//--------------------------------------------------------------------------
+	// cases where equality operators are negated by swapping the operator
+	//--------------------------------------------------------------------------
+
+	const char *eq_filters[4] = {
 		"MATCH (n) WHERE NOT n.v = 1 RETURN n",
 		"MATCH (n) WHERE NOT NOT n.v = 1 RETURN n",
-		"MATCH (n) WHERE NOT (n.v > 5 AND n.v < 20) RETURN n",
-		"MATCH (n) WHERE NOT (n.v <= 5 OR n.v <> 20) RETURN n",
-		"MATCH (n) WHERE NOT( NOT( NOT( n.v >= 1 AND (n.v < 5 OR n.v <> 3) ) ) ) RETURN n",
-		"MATCH (n) WHERE n.v = 2 AND NOT n.x > 4 RETURN n",
 		"MATCH (n) WHERE NOT n.v = 1 MATCH (n2) WHERE ID(n2) = ID(n) RETURN n",
 		"MATCH (n) WHERE NOT NOT n.v = 1 MATCH (n2) WHERE ID(n2) = ID(n) RETURN n",
 	};
 
-	const char *expected[8] = {
+	const char *eq_expected[4] = {
 		"MATCH (n) WHERE n.v <> 1 RETURN n",
 		"MATCH (n) WHERE n.v = 1 RETURN n",
-		"MATCH (n) WHERE n.v <= 5 OR n.v >= 20 RETURN n",
-		"MATCH (n) WHERE n.v > 5 AND n.v = 20 RETURN n",
-		"MATCH (n) WHERE (n.v < 1 OR (n.v >= 5 AND n.v = 3)) RETURN n",
-		"MATCH (n) WHERE n.v = 2 AND n.x <= 4 RETURN n",
 		"MATCH (n) WHERE n.v <> 1 MATCH (n2) WHERE ID(n2) = ID(n) RETURN n",
 		"MATCH (n) WHERE n.v = 1 MATCH (n2) WHERE ID(n2) = ID(n) RETURN n",
 	};
 
-	for(int i = 0; i < 8; i++) {
-		const char *actual = filters[i];
-		const char *expected_q = expected[i];
-
-		FT_FilterNode *actual_tree = build_tree_from_query(actual);
-		AST *ast = QueryCtx_GetAST();
-		FT_FilterNode *expected_tree = build_tree_from_query(expected_q);
+	for(int i = 0; i < 4; i++) {
+		actual_tree = build_tree_from_query(eq_filters[i]);
+		ast = QueryCtx_GetAST();
+		expected_tree = build_tree_from_query(eq_expected[i]);
 
 		compareFilterTrees(actual_tree, expected_tree);
 
@@ -439,6 +450,62 @@ void test_NOTReduction() {
 		ast = QueryCtx_GetAST();
 		AST_Free(ast);
 	}
+
+	//--------------------------------------------------------------------------
+	// cases where ordering operators are negated by wrapping in not(cmp(...))
+	// expression nodes (NaN-safe negation)
+	//--------------------------------------------------------------------------
+
+	// NOT (n.v > 5 AND n.v < 20) → not(gt(n.v,5)) OR not(lt(n.v,20))
+	actual_tree = build_tree_from_query(
+		"MATCH (n) WHERE NOT (n.v > 5 AND n.v < 20) RETURN n");
+	TEST_ASSERT(actual_tree->t == FT_N_COND);
+	TEST_ASSERT(actual_tree->cond.op == OP_OR);
+	TEST_ASSERT(actual_tree->cond.left->t == FT_N_EXP);
+	TEST_ASSERT(actual_tree->cond.right->t == FT_N_EXP);
+	FilterTree_Free(actual_tree);
+	ast = QueryCtx_GetAST();
+	AST_Free(ast);
+
+	// NOT (n.v <= 5 OR n.v <> 20) → not(le(n.v,5)) AND n.v = 20
+	actual_tree = build_tree_from_query(
+		"MATCH (n) WHERE NOT (n.v <= 5 OR n.v <> 20) RETURN n");
+	TEST_ASSERT(actual_tree->t == FT_N_COND);
+	TEST_ASSERT(actual_tree->cond.op == OP_AND);
+	TEST_ASSERT(actual_tree->cond.left->t == FT_N_EXP);
+	TEST_ASSERT(actual_tree->cond.right->t == FT_N_PRED);
+	TEST_ASSERT(actual_tree->cond.right->pred.op == OP_EQUAL);
+	FilterTree_Free(actual_tree);
+	ast = QueryCtx_GetAST();
+	AST_Free(ast);
+
+	// NOT(NOT(NOT(n.v >= 1 AND (n.v < 5 OR n.v <> 3))))
+	// → not(ge(n.v,1)) OR (not(lt(n.v,5)) AND n.v = 3)
+	actual_tree = build_tree_from_query(
+		"MATCH (n) WHERE NOT( NOT( NOT( n.v >= 1 AND (n.v < 5 OR n.v <> 3) ) ) ) RETURN n");
+	TEST_ASSERT(actual_tree->t == FT_N_COND);
+	TEST_ASSERT(actual_tree->cond.op == OP_OR);
+	TEST_ASSERT(actual_tree->cond.left->t == FT_N_EXP);
+	TEST_ASSERT(actual_tree->cond.right->t == FT_N_COND);
+	TEST_ASSERT(actual_tree->cond.right->cond.op == OP_AND);
+	TEST_ASSERT(actual_tree->cond.right->cond.left->t == FT_N_EXP);
+	TEST_ASSERT(actual_tree->cond.right->cond.right->t == FT_N_PRED);
+	TEST_ASSERT(actual_tree->cond.right->cond.right->pred.op == OP_EQUAL);
+	FilterTree_Free(actual_tree);
+	ast = QueryCtx_GetAST();
+	AST_Free(ast);
+
+	// n.v = 2 AND NOT n.x > 4 → n.v = 2 AND not(gt(n.x,4))
+	actual_tree = build_tree_from_query(
+		"MATCH (n) WHERE n.v = 2 AND NOT n.x > 4 RETURN n");
+	TEST_ASSERT(actual_tree->t == FT_N_COND);
+	TEST_ASSERT(actual_tree->cond.op == OP_AND);
+	TEST_ASSERT(actual_tree->cond.left->t == FT_N_PRED);
+	TEST_ASSERT(actual_tree->cond.left->pred.op == OP_EQUAL);
+	TEST_ASSERT(actual_tree->cond.right->t == FT_N_EXP);
+	FilterTree_Free(actual_tree);
+	ast = QueryCtx_GetAST();
+	AST_Free(ast);
 }
 
 void test_containsFunc() {
