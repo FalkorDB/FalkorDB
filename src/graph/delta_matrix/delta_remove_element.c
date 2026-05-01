@@ -73,7 +73,6 @@ GrB_Info Delta_Matrix_removeElements
 	//GrB_OK (GrB_transpose (dp, A, NULL, dp, GrB_DESC_RSCT0)) ;
 	GrB_Scalar s ;
 	GrB_OK (GrB_Scalar_new (&s, GrB_BOOL)) ;
-	GrB_OK (GrB_Scalar_setElement_BOOL (s, false)) ;
 	GrB_OK (GrB_Matrix_assign_Scalar (dp, A, NULL, s, GrB_ALL, 0, GrB_ALL, 0,
 				GrB_DESC_S)) ;
 	GrB_OK (GrB_free (&s)) ;
