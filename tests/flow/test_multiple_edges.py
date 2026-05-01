@@ -94,3 +94,53 @@ class testGraphMultipleEdgeFlow(FlowTestsBase):
         edge_count = actual_result.result_set[0][0]
         self.env.assertEquals(edge_count, 1)
 
+    # validate count(*) over parallel edges of different relationship types
+    # between the same pair of endpoints
+    def test_count_parallel_edges_of_different_types(self):
+        graph = self.db.select_graph("count_parallel_edges_of_different_types")
+
+        # build a small graph:
+        # (Alice)-[:FRIENDS_WITH]->(Bob)
+        # (Alice)-[:WORKS_WITH]->(Bob)
+        graph.query("""CREATE (a:Person {name: 'Alice'}),
+                              (b:Person {name: 'Bob'}),
+                              (a)-[:FRIENDS_WITH]->(b),
+                              (a)-[:WORKS_WITH]->(b)""")
+
+        # count(*) without an edge alias must count both matching edges
+        # for multiple relationship types between the same endpoints
+        query = """MATCH (p:Person {name: 'Alice'})
+                   MATCH (p)-[:FRIENDS_WITH|WORKS_WITH]->(friend)
+                   WITH friend, count(*) AS connectionCount
+                   RETURN friend.name AS friendName, connectionCount
+                   ORDER BY friendName"""
+        actual_result = graph.query(query)
+        self.env.assertEquals(actual_result.result_set, [['Bob', 2]])
+
+        # the same query, but counting rows directly
+        query = """MATCH (:Person {name: 'Alice'})-[:FRIENDS_WITH|WORKS_WITH]->(b)
+                   RETURN count(*)"""
+        actual_result = graph.query(query)
+        self.env.assertEquals(actual_result.result_set, [[2]])
+
+        # add a second WORKS_WITH edge, exercising the multi-edge path
+        # within the multi-reltype pattern
+        graph.query("""MATCH (a:Person {name: 'Alice'}),
+                            (b:Person {name: 'Bob'})
+                       CREATE (a)-[:WORKS_WITH]->(b)""")
+
+        # we now expect 3 matching edges: 1 FRIENDS_WITH + 2 WORKS_WITH
+        query = """MATCH (:Person {name: 'Alice'})-[:FRIENDS_WITH|WORKS_WITH]->(b)
+                   RETURN count(*)"""
+        actual_result = graph.query(query)
+        self.env.assertEquals(actual_result.result_set, [[3]])
+
+        # bidirectional variant exercises the undirected branch of the
+        # algebraic expression construction; with Alice anchored as one
+        # endpoint and 3 outgoing edges (and 0 incoming), every matching
+        # edge must be counted (3), not collapsed by the boolean ADD
+        query = """MATCH (:Person {name: 'Alice'})-[:FRIENDS_WITH|WORKS_WITH]-(b)
+                   RETURN count(*)"""
+        actual_result = graph.query(query)
+        self.env.assertEquals(actual_result.result_set, [[3]])
+
