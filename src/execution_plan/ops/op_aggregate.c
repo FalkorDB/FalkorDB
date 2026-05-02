@@ -38,6 +38,33 @@ static void freeCallback
 static dictType _dt = {_id_hash, NULL, NULL, NULL, NULL, freeCallback, NULL,
 	NULL, NULL, NULL};
 
+static void _collect_entities_outside_agg
+(
+	AR_ExpNode *exp,
+	rax *entities
+) {
+	if(exp->type == AR_EXP_OPERAND) {
+		if(exp->operand.type == AR_EXP_VARIADIC) {
+			const char *alias = exp->operand.variadic.entity_alias;
+			if(alias) {
+				raxInsert(entities, (unsigned char*)alias,
+					strlen(alias), NULL, NULL);
+			}
+		}
+		return;
+	}
+
+	// stop at agg function boundaries — their children are consumed
+	// during AR_EXP_Aggregate, not during finalization
+	if(AR_EXP_IsAggregation(exp)) {
+		return;
+	}
+
+	for(uint i = 0; i < exp->op.child_count; i++) {
+		_collect_entities_outside_agg(exp->op.children[i], entities);
+	}
+}
+
 // migrate each expression projected by this operation to either
 // the array of keys or the array of aggregate functions as appropriate
 static void _migrate_expressions
@@ -60,6 +87,54 @@ static void _migrate_expressions
 
 	op->key_count       = arr_len(op->key_exps);
 	op->aggregate_count = arr_len(op->aggregate_exps);
+
+	// collect aliases referenced inside aggregate expressions
+	// that are not already covered by key expressions
+	// e.g. in { statement: l.value, facts: collect(f.value) }
+	// 'l' is not a key but must survive into the representative record
+	rax *key_aliases = raxNew();
+	for(uint i = 0; i < op->key_count; i++) {
+		AR_ExpNode *kexp = op->key_exps[i];
+		// only treat as a resolved key if the expression IS a direct variadic
+		// (plain alias like `t`), not a map projection containing entities
+		if(!AR_EXP_IsOperation(kexp) &&
+		kexp->operand.type == AR_EXP_VARIADIC) {
+			const char *alias = kexp->operand.variadic.entity_alias;
+			if(alias != NULL &&
+			   kexp->resolved_name != NULL &&
+			   strcmp(alias, kexp->resolved_name) == 0) {
+				raxInsert(key_aliases, (unsigned char *)alias, strlen(alias), NULL, NULL);
+			}
+		}
+	}
+
+	rax *seen = raxNew();
+	op->mixed_aliases = arr_new(char *, 0);
+
+	for(uint i = 0; i < op->aggregate_count; i++) {
+		rax *entities = raxNew();
+		_collect_entities_outside_agg(op->aggregate_exps[i], entities);
+
+		raxIterator it;
+		raxStart(&it, entities);
+		raxSeek(&it, "^", NULL, 0);
+		while(raxNext(&it)) {
+			if(raxFind(key_aliases, it.key, it.key_len) == raxNotFound &&
+			raxFind(seen,       it.key, it.key_len) == raxNotFound) {
+				char *alias = rm_malloc(it.key_len + 1);
+				memcpy(alias, it.key, it.key_len);
+				alias[it.key_len] = '\0';
+				arr_append(op->mixed_aliases, alias);
+				raxInsert(seen, it.key, it.key_len, NULL, NULL);
+			}
+		}
+		raxStop(&it);
+		raxFree(entities);
+	}
+
+	raxFree(key_aliases);
+	raxFree(seen);
+	op->mixed_count = arr_len(op->mixed_aliases);
 }
 
 // clone all aggregate expression templates to associate with a new group
@@ -160,6 +235,24 @@ static Group *_GetGroup
 			}
 		}
 
+		// copy mixed alias values from original record into representative record
+		// so they're available when finalizing aggregate expressions
+		for(uint i = 0; i < op->mixed_count; i++) {
+			const char *alias = op->mixed_aliases[i];
+			int src_idx = Record_GetEntryIdx(r, alias, strlen(alias));
+			ASSERT(src_idx != INVALID_INDEX && "mixed alias not found in record");
+			if(src_idx == INVALID_INDEX) continue;
+			SIValue val = Record_Get(r, src_idx);
+			SIType t = val.type;
+			// graph entities are pointers into graph storage — do NOT deep copy them
+			// scalars must be persisted so they survive after r is deleted
+			if(!(t & SI_GRAPHENTITY)) {
+				val = SI_CloneValue(val);
+			}
+			int dst_idx = op->mixed_record_offsets[i];
+			Record_Add(representative, dst_idx, val);
+		}
+
 		g = _CreateGroup(op, representative);
 
 		HashTableSetVal(op->groups, entry, g);
@@ -254,6 +347,13 @@ OpBase *NewAggregateOp
 		int record_idx = OpBase_Modifies((OpBase *)op,
 				op->aggregate_exps[i]->resolved_name);
 		arr_append(op->record_offsets, record_idx);
+	}
+	// reserve internal record slots for mixed aliases
+	// use OpBase_Modifies to allocate a slot but store separately
+	// so mixed aliases are not exposed as public outputs
+	op->mixed_record_offsets = rm_malloc(op->mixed_count * sizeof(uint));
+	for(uint i = 0; i < op->mixed_count; i++) {
+		op->mixed_record_offsets[i] = OpBase_Modifies((OpBase *)op, op->mixed_aliases[i]);
 	}
 
 	return (OpBase *)op;
@@ -386,6 +486,9 @@ void AggregateBindToPlan
 				op->aggregate_exps[i]->resolved_name);
 		arr_append(op->record_offsets, record_idx);
 	}
+	for(uint i = 0; i < op->mixed_count; i++) {
+		op->mixed_record_offsets[i] = OpBase_Modifies((OpBase *)op, op->mixed_aliases[i]);
+	}
 }
 
 static void AggregateFree
@@ -428,8 +531,20 @@ static void AggregateFree
 		op->record_offsets = NULL;
 	}
 
+	if(op->mixed_aliases) {
+		for(uint i = 0; i < op->mixed_count; i++) {
+			rm_free(op->mixed_aliases[i]);
+		}
+		arr_free(op->mixed_aliases);
+		op->mixed_aliases = NULL;
+	}
+
+	if(op->mixed_record_offsets) {
+		rm_free(op->mixed_record_offsets);
+		op->mixed_record_offsets = NULL;
+	}
+
 	if(op->r) {
 		OpBase_DeleteRecord(&op->r);
 	}
 }
-

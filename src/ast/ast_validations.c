@@ -179,7 +179,7 @@ static bool _AST_GetWithAliases
 			if(cypher_astnode_type(expr) != CYPHER_AST_IDENTIFIER) {
 				ErrorCtx_SetError(EMSG_WITH_PROJ_MISSING_ALIAS);
 				raxFree(local_env);
-				return false;
+				return false;	
 			}
 			alias = cypher_ast_identifier_get_name(expr);
 		}
@@ -254,11 +254,11 @@ static AST_Validation _ValidateMultiHopTraversal
 		ErrorCtx_SetError(EMSG_VAR_LEN_INVALID_RANGE);
 		return AST_INVALID;
 	}
-
+	
 	return AST_VALID;
 }
 
-// Verify that MERGE doesn't redeclare bound relations, that one reltype is specified for unbound relations,
+// Verify that MERGE doesn't redeclare bound relations, that one reltype is specified for unbound relations, 
 // and that the entity is not a variable length pattern
 static AST_Validation _ValidateMergeRelation
 (
@@ -442,6 +442,35 @@ static VISITOR_STRATEGY _Validate_list_comprehension
 	return VISITOR_CONTINUE;
 }
 
+// check if an AST expression contains an aggregation function
+static bool _expr_contains_aggregation
+(
+	const cypher_astnode_t *expr
+) {
+	if(expr == NULL) return false;
+
+	cypher_astnode_type_t type = cypher_astnode_type(expr);
+
+	if(type == CYPHER_AST_APPLY_OPERATOR) {
+		const cypher_astnode_t *fn =
+			cypher_ast_apply_operator_get_func_name(expr);
+		if(fn != NULL) {
+			const char *name = cypher_ast_function_name_get_value(fn);
+			if(name != NULL && AR_FuncIsAggregate(name)) return true;
+		}
+	} else if(type == CYPHER_AST_APPLY_ALL_OPERATOR) {
+		return true; // count(*) is always an aggregation
+	}
+
+	uint nchildren = cypher_astnode_nchildren(expr);
+	for(uint i = 0; i < nchildren; i++) {
+		if(_expr_contains_aggregation(cypher_astnode_get_child(expr, i)))
+			return true;
+	}
+
+	return false;
+}
+
 // validate a pattern comprehension
 static VISITOR_STRATEGY _Validate_pattern_comprehension
 (
@@ -453,66 +482,63 @@ static VISITOR_STRATEGY _Validate_pattern_comprehension
 
 	// we enter ONLY when start=true, so no check is needed
 
-	const cypher_astnode_t *id =
-		cypher_ast_pattern_comprehension_get_identifier (n) ;
-
-	bool is_new ;
-	const char *identifier ;
-	if (id) {
-		identifier = cypher_ast_identifier_get_name (id) ;
-		is_new = (_IdentifiersFind (vctx, identifier) == raxNotFound) ;
+	const cypher_astnode_t *id = cypher_ast_pattern_comprehension_get_identifier(n);
+	bool is_new;
+	const char *identifier;
+	if(id) {
+		identifier = cypher_ast_identifier_get_name(id);
+		is_new = (_IdentifiersFind(vctx, identifier) == raxNotFound);
 	}
 	else {
-		is_new = false ;
+		is_new = false;
 	}
 
 	// introduce local identifier if it is not yet introduced
-	if (is_new) {
-		_IdentifierAdd (vctx, identifier, NULL) ;
+	if(is_new) _IdentifierAdd(vctx, identifier, NULL);
+
+	// Visit expression-children
+	// Visit pattern
+	const cypher_astnode_t *pattern = cypher_ast_pattern_comprehension_get_pattern(n);
+	if(pattern) {
+		AST_Visitor_visit(pattern, visitor);
+		if(ErrorCtx_EncounteredError()) {
+			return VISITOR_BREAK;
+		}
 	}
 
-	// change clause type so that aggregation functions are not allowed
-	// inside the pattern comprehension's predicate and eval expressions
-	cypher_astnode_type_t orig_clause = vctx->clause ;
-	vctx->clause = CYPHER_AST_PATTERN_COMPREHENSION ;
-
-	// visit expression-children
-	// visit pattern
-	const cypher_astnode_t *pattern =
-		cypher_ast_pattern_comprehension_get_pattern (n) ;
-	if (pattern) {
-		AST_Visitor_visit (pattern, visitor) ;
+	// Visit predicate
+	const cypher_astnode_t *pred = cypher_ast_pattern_comprehension_get_predicate(n);
+	if(pred) {
+			if(_expr_contains_aggregation(pred)) {
+					ErrorCtx_SetError(EMSG_INVALID_USE_OF_AGGREGATION_FUNCTION,
+							"aggregating function");
+					return VISITOR_BREAK;
+			}
+			AST_Visitor_visit(pred, visitor);
+			if(ErrorCtx_EncounteredError()) {
+					return VISITOR_BREAK;
+			}
 	}
-
-	// visit predicate
-	const cypher_astnode_t *pred =
-		cypher_ast_pattern_comprehension_get_predicate (n) ;
-	if (pred) {
-		AST_Visitor_visit (pred, visitor) ;
+	// Visit eval
+	const cypher_astnode_t *eval = cypher_ast_pattern_comprehension_get_eval(n);
+	if(eval) {
+			if(_expr_contains_aggregation(eval)) {
+					ErrorCtx_SetError(EMSG_INVALID_USE_OF_AGGREGATION_FUNCTION,
+							"aggregating function");
+					return VISITOR_BREAK;
+			}
+			AST_Visitor_visit(eval, visitor);
+			if(ErrorCtx_EncounteredError()) {
+					return VISITOR_BREAK;
+			}
 	}
-
-	// visit eval
-	const cypher_astnode_t *eval =
-		cypher_ast_pattern_comprehension_get_eval (n) ;
-	if (eval) {
-		AST_Visitor_visit (eval, visitor) ;
-	}
-
-	// restore the original clause type
-	vctx->clause = orig_clause ;
 
 	// pattern comprehension identifier is no longer bound, remove it from bound vars
 	// if it was introduced
-	if (is_new) {
-		_IdentifierRemove (vctx, identifier) ;
-	}
+	if(is_new) _IdentifierRemove(vctx, identifier);
 
 	// do not traverse children
-	if (ErrorCtx_EncounteredError ()) {
-		return VISITOR_BREAK ;
-	} else {
-		return VISITOR_CONTINUE ;
-	}
+	return VISITOR_CONTINUE;
 }
 
 // validate LOAD CSV clause
@@ -702,7 +728,7 @@ static VISITOR_STRATEGY _Validate_reduce
 	//     3. list expression              `[1,2,3]`
 	//     4. variable                     `n`
 	//     5. eval expression              `sum + n`
-
+	
 	// make sure that the init expression is a known var or valid exp.
 	const cypher_astnode_t *init_node = cypher_ast_reduce_get_init(n);
 	if(cypher_astnode_type(init_node) == CYPHER_AST_IDENTIFIER) {
@@ -720,7 +746,7 @@ static VISITOR_STRATEGY _Validate_reduce
 		}
 	}
 
-	// make sure that the list expression is a list (or list comprehension) or an
+	// make sure that the list expression is a list (or list comprehension) or an 
 	// alias of an existing one.
 	const cypher_astnode_t *list_var = cypher_ast_reduce_get_expression(n);
 	if(cypher_astnode_type(list_var) == CYPHER_AST_IDENTIFIER) {
@@ -755,7 +781,7 @@ static VISITOR_STRATEGY _Validate_reduce
 	const char *list_var_str = cypher_ast_identifier_get_name(list_var_node);
 	bool introduce_list_var = (_IdentifiersFind(vctx, list_var_str) == raxNotFound);
 	if(introduce_list_var) _IdentifierAdd(vctx, list_var_str, NULL);
-
+	
 	// visit eval expression
 	const cypher_astnode_t *eval_exp = cypher_ast_reduce_get_eval(n);
 	AST_Visitor_visit(eval_exp, visitor);
@@ -873,7 +899,7 @@ static VISITOR_STRATEGY _Validate_rel_pattern
 			_IdentifierAdd(vctx, alias, (void*)T_EDGE);
 			return VISITOR_RECURSE;
 		}
-
+			
 		if(alias_type != (void *)T_EDGE && alias_type != NULL) {
 			ErrorCtx_SetError(EMSG_SAME_ALIAS_NODE_RELATIONSHIP, alias);
 			return VISITOR_BREAK;
@@ -1985,7 +2011,7 @@ static VISITOR_STRATEGY _Validate_MATCH_Clause
 	ast_visitor *visitor        // visitor
 ) {
 	validations_ctx *vctx = AST_Visitor_GetContext(visitor);
-
+	
 	if(!start) {
 		return VISITOR_CONTINUE;
 	}
@@ -2250,7 +2276,7 @@ static AST_Validation _ValidateScopes
 
 	// visit (traverse) the ast
 	AST_Visitor_visit(ast->root, &visitor);
-
+	
 	// cleanup
 	raxFree(ctx.defined_identifiers);
 
@@ -2304,7 +2330,7 @@ bool AST_ValidationsMappingInit(void) {
 	validations_mapping[CYPHER_AST_APPLY_ALL_OPERATOR]         = _Validate_apply_all_operator;
 	validations_mapping[CYPHER_AST_LIST_COMPREHENSION]         = _Validate_list_comprehension;
 	validations_mapping[CYPHER_AST_PATTERN_COMPREHENSION]      = _Validate_pattern_comprehension;
-	validations_mapping[CYPHER_AST_DROP_PATTERN_PROPS_INDEX]   = _Validate_index_deletion;
+	validations_mapping[CYPHER_AST_DROP_PATTERN_PROPS_INDEX]   = _Validate_index_deletion;	
 	validations_mapping[CYPHER_AST_CREATE_PATTERN_PROPS_INDEX] = _Validate_index_creation;
 
 	//--------------------------------------------------------------------------
