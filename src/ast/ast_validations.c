@@ -442,6 +442,35 @@ static VISITOR_STRATEGY _Validate_list_comprehension
 	return VISITOR_CONTINUE;
 }
 
+// check if an AST expression contains an aggregation function
+static bool _expr_contains_aggregation
+(
+	const cypher_astnode_t *expr
+) {
+	if(expr == NULL) return false;
+
+	cypher_astnode_type_t type = cypher_astnode_type(expr);
+
+	if(type == CYPHER_AST_APPLY_OPERATOR) {
+		const cypher_astnode_t *fn =
+			cypher_ast_apply_operator_get_func_name(expr);
+		if(fn != NULL) {
+			const char *name = cypher_ast_function_name_get_value(fn);
+			if(name != NULL && AR_FuncIsAggregate(name)) return true;
+		}
+	} else if(type == CYPHER_AST_APPLY_ALL_OPERATOR) {
+		return true; // count(*) is always an aggregation
+	}
+
+	uint nchildren = cypher_astnode_nchildren(expr);
+	for(uint i = 0; i < nchildren; i++) {
+		if(_expr_contains_aggregation(cypher_astnode_get_child(expr, i)))
+			return true;
+	}
+
+	return false;
+}
+
 // validate a pattern comprehension
 static VISITOR_STRATEGY _Validate_pattern_comprehension
 (
@@ -480,19 +509,28 @@ static VISITOR_STRATEGY _Validate_pattern_comprehension
 	// Visit predicate
 	const cypher_astnode_t *pred = cypher_ast_pattern_comprehension_get_predicate(n);
 	if(pred) {
-		AST_Visitor_visit(pred, visitor);
-		if(ErrorCtx_EncounteredError()) {
-			return VISITOR_BREAK;
-		}
+			if(_expr_contains_aggregation(pred)) {
+					ErrorCtx_SetError(EMSG_INVALID_USE_OF_AGGREGATION_FUNCTION,
+							"aggregating function");
+					return VISITOR_BREAK;
+			}
+			AST_Visitor_visit(pred, visitor);
+			if(ErrorCtx_EncounteredError()) {
+					return VISITOR_BREAK;
+			}
 	}
-
 	// Visit eval
 	const cypher_astnode_t *eval = cypher_ast_pattern_comprehension_get_eval(n);
 	if(eval) {
-		AST_Visitor_visit(eval, visitor);
-		if(ErrorCtx_EncounteredError()) {
-			return VISITOR_BREAK;
-		}
+			if(_expr_contains_aggregation(eval)) {
+					ErrorCtx_SetError(EMSG_INVALID_USE_OF_AGGREGATION_FUNCTION,
+							"aggregating function");
+					return VISITOR_BREAK;
+			}
+			AST_Visitor_visit(eval, visitor);
+			if(ErrorCtx_EncounteredError()) {
+					return VISITOR_BREAK;
+			}
 	}
 
 	// pattern comprehension identifier is no longer bound, remove it from bound vars
