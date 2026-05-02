@@ -327,4 +327,31 @@ pub fn register(funcs: &mut Functions) {
             Err(String::from("db.idx.fulltext.queryRelationships() is not supported in this version"))
         }
     );
+
+    // ── db.idx.vector.queryNodes ───────────────────────────────────────
+    // Registered for binder-side arg-type checking and YIELD validation.
+    // Execution is rewritten to `IR::NodeByVectorScan` in the planner,
+    // so this body is never reached at runtime.
+    //
+    // Args: (label, attribute, k, vector). The binder rejects mismatches
+    // with `"Invalid arguments for procedure ..."`, which the
+    // `test_vecsim::test06_validate_arguments` negative cases pin to.
+    cypher_fn!(funcs, "db.idx.vector.queryNodes",
+        args: [Type::String, Type::String, Type::Int, Type::VecF32],
+        ret: Type::Any,
+        procedure: ["node", "score"],
+        fn db_vector_query_nodes(_, _) {
+            Err(String::from("db.idx.vector.queryNodes() is rewritten by the planner"))
+        }
+    );
+
+    // ── db.idx.vector.queryRelationships ───────────────────────────────
+    cypher_fn!(funcs, "db.idx.vector.queryRelationships",
+        args: [Type::String, Type::String, Type::Int, Type::VecF32],
+        ret: Type::Any,
+        procedure: ["relationship", "score"],
+        fn db_vector_query_relationships(_, _) {
+            Err(String::from("db.idx.vector.queryRelationships() is rewritten by the planner"))
+        }
+    );
 }

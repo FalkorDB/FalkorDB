@@ -50,11 +50,11 @@ use crate::{
         ops::{
             AggregateOp, AllShortestPathsOp, ApplyOp, CartesianProductOp, CommitOp, CondTraverseOp,
             CondVarLenTraverseOp, CreateOp, DeleteOp, DistinctOp, EdgeByFulltextScanOp,
-            EdgeByIndexScanOp, ExpandIntoOp, FilterOp, ForEachOp, LimitOp, LoadCsvOp, MergeOp,
-            NodeByFulltextScanOp, NodeByIdSeekOp, NodeByIndexScanOp, NodeByLabelAndIdScanOp,
-            NodeByLabelScanOp, OptionalOp, OrApplyMultiplexerOp, PathBuilderOp, ProcedureCallOp,
-            ProjectOp, RemoveOp, SemiApplyOp, SetOp, SkipOp, SortOp, UnionOp, UnwindOp,
-            ValueHashJoinOp,
+            EdgeByIndexScanOp, EdgeByVectorScanOp, ExpandIntoOp, FilterOp, ForEachOp, LimitOp,
+            LoadCsvOp, MergeOp, NodeByFulltextScanOp, NodeByIdSeekOp, NodeByIndexScanOp,
+            NodeByLabelAndIdScanOp, NodeByLabelScanOp, NodeByVectorScanOp, OptionalOp,
+            OrApplyMultiplexerOp, PathBuilderOp, ProcedureCallOp, ProjectOp, RemoveOp, SemiApplyOp,
+            SetOp, SkipOp, SortOp, UnionOp, UnwindOp, ValueHashJoinOp,
         },
         ordermap::OrderMap,
         orderset::OrderSet,
@@ -231,13 +231,15 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                 | IR::NodeByIdSeek { node, .. } => {
                     vars.push(node.alias.clone());
                 }
-                IR::NodeByFulltextScan { node, score, .. } => {
+                IR::NodeByFulltextScan { node, score, .. }
+                | IR::NodeByVectorScan { node, score, .. } => {
                     vars.push(node.clone());
                     if let Some(score) = score {
                         vars.push(score.clone());
                     }
                 }
-                IR::EdgeByFulltextScan { edge, score, .. } => {
+                IR::EdgeByFulltextScan { edge, score, .. }
+                | IR::EdgeByVectorScan { edge, score, .. } => {
                     vars.push(edge.clone());
                     if let Some(score) = score {
                         vars.push(score.clone());
@@ -299,14 +301,16 @@ impl ReturnNames for DynNode<'_, IR> {
                 yields: named_outputs,
                 ..
             } => named_outputs.clone(),
-            IR::NodeByFulltextScan { node, score, .. } => {
+            IR::NodeByFulltextScan { node, score, .. }
+            | IR::NodeByVectorScan { node, score, .. } => {
                 let mut v = vec![node.clone()];
                 if let Some(score) = score {
                     v.push(score.clone());
                 }
                 v
             }
-            IR::EdgeByFulltextScan { edge, score, .. } => {
+            IR::EdgeByFulltextScan { edge, score, .. }
+            | IR::EdgeByVectorScan { edge, score, .. } => {
                 let mut v = vec![edge.clone()];
                 if let Some(score) = score {
                     v.push(score.clone());
@@ -969,6 +973,48 @@ impl<'a> Runtime<'a> {
                     edge,
                     label,
                     query,
+                    score,
+                    idx,
+                )))
+            }
+            IR::NodeByVectorScan {
+                node,
+                label,
+                attr,
+                k,
+                vector,
+                score,
+            } => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::NodeByVectorScan(NodeByVectorScanOp::new(
+                    self,
+                    Box::new(child),
+                    node,
+                    label,
+                    attr,
+                    k,
+                    vector,
+                    score,
+                    idx,
+                )))
+            }
+            IR::EdgeByVectorScan {
+                edge,
+                label,
+                attr,
+                k,
+                vector,
+                score,
+            } => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::EdgeByVectorScan(EdgeByVectorScanOp::new(
+                    self,
+                    Box::new(child),
+                    edge,
+                    label,
+                    attr,
+                    k,
+                    vector,
                     score,
                     idx,
                 )))

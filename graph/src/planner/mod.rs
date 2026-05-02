@@ -124,6 +124,28 @@ pub enum IR {
         query: QueryExpr<Variable>,
         score: Option<Variable>,
     },
+    /// Scan nodes using a KNN vector index. Mirrors
+    /// [`NodeByFulltextScan`] but takes four input expressions
+    /// (label, attribute, k, vector) and yields rows ordered by
+    /// ascending distance.
+    NodeByVectorScan {
+        node: Variable,
+        label: QueryExpr<Variable>,
+        attr: QueryExpr<Variable>,
+        k: QueryExpr<Variable>,
+        vector: QueryExpr<Variable>,
+        score: Option<Variable>,
+    },
+    /// Scan edges using a KNN vector index. Mirrors
+    /// [`EdgeByFulltextScan`] but for vector indexes.
+    EdgeByVectorScan {
+        edge: Variable,
+        label: QueryExpr<Variable>,
+        attr: QueryExpr<Variable>,
+        k: QueryExpr<Variable>,
+        vector: QueryExpr<Variable>,
+        score: Option<Variable>,
+    },
     /// Lookup node by label and id
     NodeByLabelAndIdScan {
         node: Arc<QueryNode<Arc<String>, Variable>>,
@@ -361,6 +383,25 @@ pub fn plan_is_non_deterministic(plan: &DynTree<IR>) -> bool {
             | IR::EdgeByFulltextScan { label, query, .. } => {
                 expr_has_non_deterministic(label) || expr_has_non_deterministic(query)
             }
+            IR::NodeByVectorScan {
+                label,
+                attr,
+                k,
+                vector,
+                ..
+            }
+            | IR::EdgeByVectorScan {
+                label,
+                attr,
+                k,
+                vector,
+                ..
+            } => {
+                expr_has_non_deterministic(label)
+                    || expr_has_non_deterministic(attr)
+                    || expr_has_non_deterministic(k)
+                    || expr_has_non_deterministic(vector)
+            }
             IR::NodeByLabelAndIdScan { filter, .. } | IR::NodeByIdSeek { filter, .. } => {
                 filter.iter().any(|(e, _)| expr_has_non_deterministic(e))
             }
@@ -436,6 +477,12 @@ impl Display for IR {
             }
             Self::EdgeByFulltextScan { .. } => {
                 write!(f, "Edge By Fulltext Index Scan")
+            }
+            Self::NodeByVectorScan { .. } => {
+                write!(f, "Node By Vector Index Scan")
+            }
+            Self::EdgeByVectorScan { .. } => {
+                write!(f, "Edge By Vector Index Scan")
             }
             Self::NodeByLabelAndIdScan { node, .. } => {
                 write!(f, "Node By Label and ID Scan | {node}")
@@ -2007,6 +2054,39 @@ impl Planner {
                         ),
                         label: exprs[0].clone(),
                         query: exprs[1].clone(),
+                        score: yield_by_field("score"),
+                    });
+                    return if let Some(filter) = filter {
+                        tree!(IR::Filter(filter), scan)
+                    } else {
+                        scan
+                    };
+                }
+                if proc.name == "db.idx.vector.queryNodes" {
+                    let scan = tree!(IR::NodeByVectorScan {
+                        node: yield_by_field("node")
+                            .expect("binder ensures 'node' is yielded for queryNodes"),
+                        label: exprs[0].clone(),
+                        attr: exprs[1].clone(),
+                        k: exprs[2].clone(),
+                        vector: exprs[3].clone(),
+                        score: yield_by_field("score"),
+                    });
+                    return if let Some(filter) = filter {
+                        tree!(IR::Filter(filter), scan)
+                    } else {
+                        scan
+                    };
+                }
+                if proc.name == "db.idx.vector.queryRelationships" {
+                    let scan = tree!(IR::EdgeByVectorScan {
+                        edge: yield_by_field("relationship").expect(
+                            "binder ensures 'relationship' is yielded for queryRelationships"
+                        ),
+                        label: exprs[0].clone(),
+                        attr: exprs[1].clone(),
+                        k: exprs[2].clone(),
+                        vector: exprs[3].clone(),
                         score: yield_by_field("score"),
                     });
                     return if let Some(filter) = filter {

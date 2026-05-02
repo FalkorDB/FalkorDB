@@ -100,7 +100,9 @@ use crate::{
     },
     parser::{ast::ExprIR, cypher::Parser},
     planner::{IR, Planner, binder::Binder, optimizer::optimize},
-    runtime::{eval::evaluate_param, ordermap::OrderMap, orderset::OrderSet, value::Value},
+    runtime::{
+        eval::evaluate_param, ordermap::OrderMap, orderset::OrderSet, value::Value, vec_distance,
+    },
     threadpool::spawn,
 };
 
@@ -2627,6 +2629,89 @@ impl Graph {
                     (NodeId(src), NodeId(dst), RelationshipId(eid), score)
                 })
             })
+    }
+
+    /// Execute a KNN vector query against a node label's index,
+    /// yielding `(NodeId, distance)` pairs ordered by ascending
+    /// distance.
+    ///
+    /// Distances are computed manually from the query vector and each
+    /// entity's stored vector — RediSearch's per-result score is *not*
+    /// the KNN distance, and reading it returns 0. For each result we
+    /// look up the entity's vector property and apply the index's
+    /// similarity function. Results are eagerly materialized into a
+    /// `Vec` so the caller can drop the graph borrow before iterating.
+    pub fn vector_query_nodes(
+        &self,
+        label: &Arc<String>,
+        field: &str,
+        vector: Arc<thin_vec::ThinVec<f32>>,
+        k: usize,
+    ) -> Result<impl Iterator<Item = (NodeId, f64)> + use<>, String> {
+        let attr = Arc::new(field.to_string());
+        if let Some(expected) = self.node_indexer.get_vector_dimension(label, &attr)
+            && expected as usize != vector.len()
+        {
+            return Err(format!(
+                "Vector dimension mismatch, expected {expected} but got {}",
+                vector.len()
+            ));
+        }
+        let metric = self.node_indexer.get_vector_metric(label, &attr);
+        let query_vec = Arc::clone(&vector);
+        let raw_iter = self.node_indexer.vector_query(label, field, vector, k)?;
+
+        let mut out: Vec<(NodeId, f64)> = Vec::new();
+        for (id, _score) in raw_iter {
+            let node_id = NodeId(id);
+            let Some(Value::VecF32(entity_vec)) = self.get_node_attribute(node_id, &attr) else {
+                continue;
+            };
+            if let Some(d) = vec_distance::distance(metric.as_deref(), &query_vec, &entity_vec) {
+                out.push((node_id, d));
+            }
+        }
+        Ok(out.into_iter())
+    }
+
+    /// Execute a KNN vector query against an *edge* index, yielding
+    /// `(src, dst, edge_id, distance)` tuples. Distances are computed
+    /// from the query vector and each edge's stored vector — see
+    /// [`vector_query_nodes`] for why.
+    pub fn vector_query_edges(
+        &self,
+        label: &Arc<String>,
+        field: &str,
+        vector: Arc<thin_vec::ThinVec<f32>>,
+        k: usize,
+    ) -> Result<impl Iterator<Item = (NodeId, NodeId, RelationshipId, f64)> + use<>, String> {
+        let attr = Arc::new(field.to_string());
+        if let Some(expected) = self.edge_indexer.get_vector_dimension(label, &attr)
+            && expected as usize != vector.len()
+        {
+            return Err(format!(
+                "Vector dimension mismatch, expected {expected} but got {}",
+                vector.len()
+            ));
+        }
+        let metric = self.edge_indexer.get_vector_metric(label, &attr);
+        let query_vec = Arc::clone(&vector);
+        let raw_iter = self
+            .edge_indexer
+            .vector_query_edges(label, field, vector, k)?;
+
+        let mut out: Vec<(NodeId, NodeId, RelationshipId, f64)> = Vec::new();
+        for (src, dst, eid, _score) in raw_iter {
+            let edge_id = RelationshipId(eid);
+            let Some(Value::VecF32(entity_vec)) = self.get_relationship_attribute(edge_id, &attr)
+            else {
+                continue;
+            };
+            if let Some(d) = vec_distance::distance(metric.as_deref(), &query_vec, &entity_vec) {
+                out.push((NodeId(src), NodeId(dst), edge_id, d));
+            }
+        }
+        Ok(out.into_iter())
     }
 
     #[must_use]
