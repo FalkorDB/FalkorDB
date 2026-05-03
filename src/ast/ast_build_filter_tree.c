@@ -182,6 +182,18 @@ static FT_FilterNode *_convertInlinedProperties(const cypher_astnode_t *entity,
 	// retrieve the entity's alias
 	const char *alias = AST_ToString (entity, NULL) ;
 
+	// inlined properties supplied as a single expression that should evaluate
+	// to a map at runtime, e.g. a parameter:
+	//   MATCH (n $p) RETURN n
+	// build a single expression filter that, at runtime, checks the entity
+	// has every (k, v) entry of the map
+	if(cypher_astnode_type(props) != CYPHER_AST_MAP) {
+		AR_ExpNode *exp = AR_EXP_NewOpNode("_inline_props_filter", true, 2);
+		exp->op.children[0] = AR_EXP_NewVariableOperandNode(alias);
+		exp->op.children[1] = AR_EXP_FromASTNode(props);
+		return FilterTree_CreateExpressionFilter(exp);
+	}
+
 	FT_FilterNode *root = NULL;
 	uint nelems = cypher_ast_map_nentries(props);
 	for(uint i = 0; i < nelems; i ++) {

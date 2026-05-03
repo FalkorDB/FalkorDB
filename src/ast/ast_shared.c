@@ -82,12 +82,22 @@ PropertyMap *PropertyMap_New
 
 	GraphContext *gc = QueryCtx_GetGraphCtx () ;
 
-	// TODO: add parameter support
-	ASSERT (cypher_astnode_type (props) == CYPHER_AST_MAP) ;
+	PropertyMap *m = rm_malloc (sizeof (PropertyMap)) ;
+	m->keys       = NULL ;
+	m->values     = NULL ;
+	m->attr_ids   = NULL ;
+	m->expression = NULL ;
+
+	// inlined properties supplied as a single expression that should evaluate
+	// to a map at runtime, e.g. a parameter:
+	//   CREATE (n:label $p) / MERGE (n:label $p)
+	// store the expression and defer key/value extraction to runtime
+	if (cypher_astnode_type (props) != CYPHER_AST_MAP) {
+		m->expression = AR_EXP_FromASTNode (props) ;
+		return m ;
+	}
 
 	uint prop_count = cypher_ast_map_nentries (props) ;
-
-	PropertyMap *m = rm_malloc (sizeof (PropertyMap)) ;
 
 	// allocate arrays
 	m->keys     = arr_new (const char *, prop_count) ;
@@ -152,6 +162,15 @@ static PropertyMap *_PropertyMap_Clone
 	const PropertyMap *map
 ) {
 	PropertyMap *clone = rm_malloc (sizeof (PropertyMap)) ;
+	clone->keys       = NULL ;
+	clone->values     = NULL ;
+	clone->attr_ids   = NULL ;
+	clone->expression = NULL ;
+
+	if (map->expression != NULL) {
+		clone->expression = AR_EXP_Clone (map->expression) ;
+		return clone ;
+	}
 
 	arr_clone (clone->keys, map->keys) ;
 	arr_clone (clone->attr_ids, map->attr_ids) ;
@@ -166,6 +185,10 @@ void PropertyMap_Free
 ) {
 	if (map == NULL) {
 		return ;
+	}
+
+	if (map->expression != NULL) {
+		AR_EXP_Free (map->expression) ;
 	}
 
 	arr_free (map->keys) ;
