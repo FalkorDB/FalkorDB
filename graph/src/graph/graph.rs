@@ -885,6 +885,18 @@ impl Graph {
         }
     }
 
+    /// Check if a node has a specific label by id (no string lookup).
+    #[must_use]
+    pub fn node_has_label_id(
+        &self,
+        node_id: NodeId,
+        label_id: LabelId,
+    ) -> bool {
+        self.node_labels_matrix
+            .get(node_id.0, label_id.0 as u64)
+            .is_some()
+    }
+
     /// Check if an edge has a specific relationship type.
     pub fn edge_has_type(
         &self,
@@ -2003,6 +2015,46 @@ impl Graph {
         iters
             .into_iter()
             .flat_map(|iter| iter.map(|(_, id)| RelationshipId(id)))
+    }
+
+    /// Build a relationship matrix summing only the given types (no
+    /// source/destination label restriction). Returns `None` when `types` is
+    /// non-empty but none of the types exist in the schema (caller should
+    /// short-circuit to an empty result).
+    pub fn build_relationship_matrix_unrestricted(
+        &self,
+        types: &[Arc<String>],
+    ) -> Option<Matrix> {
+        let matrices = types
+            .iter()
+            .filter_map(|relationship_type| self.get_relationship_matrix(relationship_type))
+            .collect::<Vec<_>>();
+        if !types.is_empty() && matrices.is_empty() {
+            return None;
+        }
+        let mut iter = matrices.into_iter();
+        let mut m = iter.next().map_or_else(
+            || self.adjacancy_matrix.to_matrix(),
+            |t| t.matrix().to_matrix(),
+        );
+        for relationship_matrix in iter {
+            m.element_wise_add(
+                None,
+                None,
+                Some(&relationship_matrix.matrix().to_matrix()),
+                None,
+            );
+        }
+        Some(m)
+    }
+
+    /// Resolve a set of label names to ids. Returns `None` if any label is not
+    /// in the schema (which means no node could match).
+    pub fn resolve_label_ids(
+        &self,
+        labels: &OrderSet<Arc<String>>,
+    ) -> Option<Vec<LabelId>> {
+        labels.iter().map(|l| self.get_label_id(l)).collect()
     }
 
     /// Build a relationship matrix combining the given types and filtering by

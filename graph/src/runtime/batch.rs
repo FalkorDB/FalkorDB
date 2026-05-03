@@ -82,7 +82,8 @@ use super::ops::union::UnionOp;
 use super::ops::unwind::UnwindOp;
 use super::ops::value_hash_join::ValueHashJoinOp;
 
-/// Maximum number of rows in a single batch.
+/// Maximum number of rows in a single batch. Used by every operator that
+/// throttles output to one batch per `next()` call.
 pub const BATCH_SIZE: usize = 1024;
 
 // ---------------------------------------------------------------------------

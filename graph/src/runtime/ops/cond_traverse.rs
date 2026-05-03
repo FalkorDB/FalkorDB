@@ -27,8 +27,8 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use crate::graph::graph::{NodeId, RelationshipId};
-use crate::graph::graphblas::matrix::Iter as MatrixIter;
+use crate::graph::graph::{LabelId, NodeId, RelationshipId};
+use crate::graph::graphblas::matrix::{Iter as MatrixIter, Matrix, New};
 use crate::graph::graphblas::tensor::compound_key;
 use crate::graph::graphblas::versioned_matrix::Iter as EdgeIter;
 use crate::parser::ast::{QueryRelationship, Variable};
@@ -74,6 +74,19 @@ pub struct CondTraverseOp<'a> {
     fwd_iter: std::cell::RefCell<MatrixIter>,
     /// Persistent reverse-matrix iterator (only for bidirectional patterns).
     rev_iter: Option<std::cell::RefCell<MatrixIter>>,
+    /// Source/destination label ids resolved once at construction time.
+    /// Per-pair `node_has_label_id` checks replace the per-query rmxm/lmxm
+    /// label restriction on the relationship matrix. When `from_labels_match`
+    /// is `false`, no node could match the requested src labels — the op
+    /// short-circuits to empty output.
+    fwd_src_label_ids: Vec<LabelId>,
+    fwd_dst_label_ids: Vec<LabelId>,
+    rev_src_label_ids: Vec<LabelId>,
+    rev_dst_label_ids: Vec<LabelId>,
+    /// True when one of the requested label sets contained an unknown label,
+    /// or when a requested type doesn't exist in the schema. The op produces
+    /// no output in that case.
+    no_match: bool,
     /// Persistent per-relationship-type edge-id iterators (over each
     /// tensor's `me` matrix). Reused via `seek` to fetch the edge IDs
     /// for a specific (src, dst) pair without allocating fresh
@@ -110,18 +123,56 @@ impl<'a> CondTraverseOp<'a> {
         } else {
             (&rp.from.labels, &rp.to.labels)
         };
-        let fwd_matrix = g.build_relationship_matrix(&rp.types, fwd_src_labels, fwd_dst_labels);
 
-        let rev_matrix = if rp.bidirectional {
+        // Resolve label ids once. If any label is unknown the op produces
+        // nothing; track it so we can short-circuit `next()`.
+        let fwd_src_label_ids = g.resolve_label_ids(fwd_src_labels);
+        let fwd_dst_label_ids = g.resolve_label_ids(fwd_dst_labels);
+
+        let (rev_src_label_ids, rev_dst_label_ids) = if rp.bidirectional {
             let (rev_src_labels, rev_dst_labels) = if transposed {
                 (&rp.from.labels, &rp.to.labels)
             } else {
                 (&rp.to.labels, &rp.from.labels)
             };
-            Some(g.build_relationship_matrix(&rp.types, rev_src_labels, rev_dst_labels))
+            (
+                g.resolve_label_ids(rev_src_labels),
+                g.resolve_label_ids(rev_dst_labels),
+            )
+        } else {
+            (Some(Vec::new()), Some(Vec::new()))
+        };
+
+        // Build the type-summed relationship matrix without label restriction.
+        // Per-pair `node_has_label_id` checks (below in `process_pairs`) take
+        // over the role of the rmxm/lmxm label filtering.
+        let fwd_matrix = g.build_relationship_matrix_unrestricted(&rp.types);
+        let rev_matrix = if rp.bidirectional {
+            g.build_relationship_matrix_unrestricted(&rp.types)
         } else {
             None
         };
+
+        let no_match = fwd_src_label_ids.is_none()
+            || fwd_dst_label_ids.is_none()
+            || rev_src_label_ids.is_none()
+            || rev_dst_label_ids.is_none()
+            || fwd_matrix.is_none()
+            || (rp.bidirectional && rev_matrix.is_none());
+
+        let fwd_src_label_ids = fwd_src_label_ids.unwrap_or_default();
+        let fwd_dst_label_ids = fwd_dst_label_ids.unwrap_or_default();
+        let rev_src_label_ids = rev_src_label_ids.unwrap_or_default();
+        let rev_dst_label_ids = rev_dst_label_ids.unwrap_or_default();
+
+        let fwd_matrix = fwd_matrix.unwrap_or_else(|| Matrix::new(0, 0));
+        let rev_matrix = rev_matrix.or_else(|| {
+            if rp.bidirectional {
+                Some(Matrix::new(0, 0))
+            } else {
+                None
+            }
+        });
 
         let edge_iters: Vec<_> = if rp.types.is_empty() {
             g.relationship_matrices_iter()
@@ -193,6 +244,11 @@ impl<'a> CondTraverseOp<'a> {
             rev_iter: rev_matrix
                 .as_ref()
                 .map(|m| std::cell::RefCell::new(m.iter(0, u64::MAX))),
+            fwd_src_label_ids,
+            fwd_dst_label_ids,
+            rev_src_label_ids,
+            rev_dst_label_ids,
+            no_match,
             edge_iters,
             bidir_dedup,
             dedup_source_alias,
@@ -279,6 +335,8 @@ impl<'a> CondTraverseOp<'a> {
                 self.emit_relationship,
                 self.sibling_edges,
                 &self.edge_iters,
+                &self.fwd_src_label_ids,
+                &self.fwd_dst_label_ids,
             );
         }
 
@@ -314,6 +372,8 @@ impl<'a> CondTraverseOp<'a> {
                 self.emit_relationship,
                 self.sibling_edges,
                 &self.edge_iters,
+                &self.rev_src_label_ids,
+                &self.rev_dst_label_ids,
             );
         }
 
@@ -368,8 +428,25 @@ impl<'a> CondTraverseOp<'a> {
         emit_relationship: bool,
         sibling_edges: &[u32],
         edge_iters: &[std::cell::RefCell<EdgeIter>],
+        src_label_ids: &[LabelId],
+        dst_label_ids: &[LabelId],
     ) {
         for (src, dst) in pairs {
+            // Per-pair label validation replaces the per-query rmxm/lmxm
+            // restriction on the relationship matrix. `(src, dst)` here are
+            // the raw matrix coordinates (before `is_reverse` swap).
+            if !src_label_ids
+                .iter()
+                .all(|&lid| g.node_has_label_id(src, lid))
+            {
+                continue;
+            }
+            if !dst_label_ids
+                .iter()
+                .all(|&lid| g.node_has_label_id(dst, lid))
+            {
+                continue;
+            }
             let (from_node, to_node) = if is_reverse { (dst, src) } else { (src, dst) };
             if from_id.is_some() && from_id.unwrap() != from_node {
                 continue;
@@ -492,6 +569,12 @@ impl<'a> Iterator for CondTraverseOp<'a> {
         if let Some(cap) = self.record_cap
             && self.produced >= cap
         {
+            return None;
+        }
+
+        // Short-circuit when a requested label/type doesn't exist in the
+        // schema — no row can possibly match.
+        if self.no_match {
             return None;
         }
 
