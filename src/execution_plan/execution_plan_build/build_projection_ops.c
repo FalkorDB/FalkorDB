@@ -29,7 +29,7 @@ static AR_ExpNode **_BuildOrderExpressions
 			cypher_ast_sort_item_get_expression (item) ;
 
 		AR_ExpNode *exp = AR_EXP_FromASTNode (ast_exp) ;
-		exp->resolved_name = AST_ToString (ast_exp) ;
+		exp->resolved_name = AST_ToString (ast_exp, NULL) ;
 		arr_append (order_exps, exp) ;
 	}
 
@@ -49,7 +49,7 @@ AR_ExpNode **_BuildProjectionExpressions
 	ASSERT (t == CYPHER_AST_RETURN || t == CYPHER_AST_WITH) ;
 
 	if (t == CYPHER_AST_RETURN) {
-		// if we have a "RETURN *" at this point, it is because we raised 
+		// if we have a "RETURN *" at this point, it is because we raised
 		// an error in AST rewriting
 		if (cypher_ast_return_has_include_existing(clause)) {
 			return NULL ;

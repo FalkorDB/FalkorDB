@@ -236,10 +236,16 @@ AST_AnnotationCtxCollection *AST_GetAnnotationCtxCollection
 	AST *ast
 );
 
+// get a string representation of an AST node
+// usually used by to get either a node or an edge alias
+// the function will auto generate an `anon_x` alias for anonymous entities
+// e.g. MATCH (a)-[]->()
+// both the edge [] and the destination node are anonymous
 const char *AST_ToString
 (
-	const cypher_astnode_t *node
-);
+	const cypher_astnode_t *node,  // AST node
+	bool *anonymous                // [optional] whether or not node is anonymous
+) ;
 
 void AST_Free
 (
