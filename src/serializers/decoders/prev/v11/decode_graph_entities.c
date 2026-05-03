@@ -81,15 +81,23 @@ static void _RdbLoadEntity
 	// (name, value type, value) X N
 
 	uint64_t n = RedisModule_LoadUnsigned(rdb);
-	SIValue vals[n];
-	AttributeID ids[n];
 
-	for(int i = 0; i < n; i++) {
+	if(n == 0) return;
+
+	ASSERT(n <= 65536);
+
+	SIValue     *vals = rm_malloc(n * sizeof(SIValue));
+	AttributeID *ids  = rm_malloc(n * sizeof(AttributeID));
+
+	for(uint64_t i = 0; i < n; i++) {
 		ids[i]  = RedisModule_LoadUnsigned(rdb);
 		vals[i] = _RdbLoadSIValue(rdb);
 	}
 
-	AttributeSet_Add (e->attributes, ids, vals, n, false) ;
+	AttributeSet_Add(e->attributes, ids, vals, n, false);
+
+	rm_free(vals);
+	rm_free(ids);
 }
 
 void RdbLoadNodes_v11

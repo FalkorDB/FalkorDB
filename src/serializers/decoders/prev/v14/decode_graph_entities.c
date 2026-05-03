@@ -113,17 +113,23 @@ static void _RdbLoadEntity
 	// (name, value type, value) X N
 
 	uint64_t n = SerializerIO_ReadUnsigned(rdb);
+
 	if(n == 0) return;
 
-	SIValue vals[n];
-	AttributeID ids[n];
+	ASSERT(n <= 65536);
 
-	for(int i = 0; i < n; i++) {
+	SIValue     *vals = rm_malloc(n * sizeof(SIValue));
+	AttributeID *ids  = rm_malloc(n * sizeof(AttributeID));
+
+	for(uint64_t i = 0; i < n; i++) {
 		ids[i]  = SerializerIO_ReadUnsigned(rdb);
 		vals[i] = _RdbLoadSIValue(rdb);
 	}
 
-	AttributeSet_Add (e->attributes, ids, vals, n, false) ;
+	AttributeSet_Add(e->attributes, ids, vals, n, false);
+
+	rm_free(vals);
+	rm_free(ids);
 }
 
 void RdbLoadNodes_v14
