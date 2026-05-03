@@ -13,6 +13,7 @@
 static Record MergeCreateConsume(OpBase *opBase);
 static OpBase *MergeCreateClone(const ExecutionPlan *plan, const OpBase *opBase);
 static OpResult MergeCreateInit(OpBase* opBase);
+static OpResult MergeCreateReset(OpBase *opBase);
 static void MergeCreateFree(OpBase *opBase);
 
 // convert a graph entity's components into an identifying hash code
@@ -75,8 +76,8 @@ OpBase *NewMergeCreateOp
 
 	// set our Op operations
 	OpBase_Init((OpBase *)op, OPType_MERGE_CREATE, "MergeCreate",
-			MergeCreateInit, MergeCreateConsume, NULL, NULL, MergeCreateClone,
-			MergeCreateFree, true, plan);
+			MergeCreateInit, MergeCreateConsume, MergeCreateReset, NULL,
+			MergeCreateClone, MergeCreateFree, true, plan);
 
 	uint node_blueprint_count = arr_len(nodes);
 	uint edge_blueprint_count = arr_len(edges);
@@ -376,6 +377,42 @@ static OpBase *MergeCreateClone
 }
 
 // free any memory allocated by operation
+// reset the operation state so it can be re-executed for a fresh batch
+// of input records (e.g. when invoked as the right hand side of an Apply
+// op driven by a CALL { ... } subquery)
+static OpResult MergeCreateReset
+(
+	OpBase *opBase
+) {
+	OpMergeCreate *op = (OpMergeCreate *)opBase;
+
+	// drop any records that were accumulated and not yet handed off
+	if (op->records != NULL) {
+		uint rec_count = arr_len (op->records) ;
+		// records[0] is a NULL terminator, the rest are real records
+		for (uint i = 1; i < rec_count; i++) {
+			OpBase_DeleteRecord (op->records + i) ;
+		}
+		arr_clear (op->records) ;
+		// re-insert the NULL terminator that drives _handoff
+		arr_append (op->records, NULL) ;
+	}
+
+	// reset uniqueness map so the next batch starts fresh
+	if (op->unique_entities != NULL) {
+		raxFree (op->unique_entities) ;
+		op->unique_entities = raxNew () ;
+	}
+
+	// reset pending creations buffers
+	PendingCreations_Reset (&op->pending) ;
+
+	// switch back to consume mode
+	op->handoff_mode = false ;
+
+	return OP_OK ;
+}
+
 static void MergeCreateFree
 (
 	OpBase *ctx
