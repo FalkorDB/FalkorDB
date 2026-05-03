@@ -179,6 +179,7 @@ macro_rules! cypher_fn {
      args: [$($arg:expr),* $(,)?],
      ret: $ret:expr,
      agg_init: $init:expr,
+     $(batch_agg: $batch:expr,)?
      $(#[$attr:meta])*
      fn $fn_name:ident($rt:pat, $args:pat) $body:block
     ) => {
@@ -189,13 +190,17 @@ macro_rules! cypher_fn {
         ) -> Result<Value, String>
         $body
 
+        #[allow(unused_mut, unused_assignments)]
+        let mut __batch: Option<crate::runtime::functions::BatchAggFn> = None;
+        $( __batch = Some($batch); )?
+
         $funcs.add(
             $name,
             $fn_name,
             false,
             false,
             vec![$($arg),*],
-            FnType::Aggregation { initial: $init, finalizer: None },
+            FnType::Aggregation { initial: $init, finalizer: None, batch_agg: __batch },
             $ret,
         );
     };
@@ -206,6 +211,7 @@ macro_rules! cypher_fn {
      ret: $ret:expr,
      agg_init: $init:expr,
      finalizer: $finalizer:expr,
+     $(batch_agg: $batch:expr,)?
      $(#[$attr:meta])*
      fn $fn_name:ident($rt:pat, $args:pat) $body:block
     ) => {
@@ -216,13 +222,17 @@ macro_rules! cypher_fn {
         ) -> Result<Value, String>
         $body
 
+        #[allow(unused_mut, unused_assignments)]
+        let mut __batch: Option<crate::runtime::functions::BatchAggFn> = None;
+        $( __batch = Some($batch); )?
+
         $funcs.add(
             $name,
             $fn_name,
             false,
             false,
             vec![$($arg),*],
-            FnType::Aggregation { initial: $init, finalizer: Some(Box::new($finalizer)) },
+            FnType::Aggregation { initial: $init, finalizer: Some(Box::new($finalizer)), batch_agg: __batch },
             $ret,
         );
     };
@@ -367,6 +377,15 @@ use thin_vec::ThinVec;
 /// Function type for runtime function implementations.
 type RuntimeFn = Arc<dyn Fn(&Runtime, ThinVec<Value>) -> Result<Value, String> + Send + Sync>;
 
+/// Optional bulk-aggregation entry point. Receives the column of input
+/// values for one batch (`inputs`), the number of rows being aggregated
+/// (`num_rows` — used by no-input aggregates like `count(*)` where
+/// `inputs` is empty), and the previous accumulator. Returns the new
+/// accumulator. When supplied, the keyless-single-aggregate path in
+/// `AggregateOp` skips per-row evaluation and calls this once per batch.
+pub type BatchAggFn =
+    fn(&Runtime, inputs: &[Value], num_rows: usize, acc: Value) -> Result<Value, String>;
+
 /// Classification of function types.
 pub enum FnType {
     /// Regular scalar function (e.g., `toUpper()`)
@@ -379,6 +398,10 @@ pub enum FnType {
     Aggregation {
         initial: Value,
         finalizer: Option<Box<dyn Fn(Value) -> Value + Send + Sync>>,
+        /// Optional bulk path used by the vectorized aggregate operator
+        /// for keyless single-aggregate queries. When `None`, the
+        /// per-row `func` is called instead.
+        batch_agg: Option<BatchAggFn>,
     },
     /// User-defined function routed through the UDF bridge
     Udf,
