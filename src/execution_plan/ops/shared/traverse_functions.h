@@ -12,10 +12,13 @@
 // container struct for traversing and populating referenced edges in
 // traversal ops like CondTraverse and ExpandInto
 typedef struct {
-	QGEdge *e;                 // query graph edge being traversed
-	Edge *edges;               // flexible array of all matching edges for the current endpoints
+	Edge *edges;               // dynamic array of all matching edges
 	int edgeRecIdx;            // the record index for the referenced edge
 	GRAPH_EDGE_DIR direction;  // the direction of the referenced edge being traversed
+	uint8_t n_rels;            // length of `rels`
+	RelationID *rel_ids;       // points into _rels
+	const char **rel_names;    // points into _rels
+	char* _rels[];             // array of edge's relationship types
 } EdgeTraverseCtx;
 
 // initialize an EdgeTraverseCtx struct to populate edges appropriately
@@ -23,7 +26,7 @@ typedef struct {
 EdgeTraverseCtx *EdgeTraverseCtx_New
 (
 	AlgebraicExpression *ae,
-	QGEdge *e,
+	const QGEdge *e,
 	int idx
 );
 

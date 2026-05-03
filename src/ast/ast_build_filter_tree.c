@@ -179,8 +179,8 @@ static FT_FilterNode *_convertInlinedProperties(const cypher_astnode_t *entity,
 
 	if(!props) return NULL;
 
-	// Retrieve the entity's alias.
-	const char *alias = AST_ToString(entity);
+	// retrieve the entity's alias
+	const char *alias = AST_ToString (entity, NULL) ;
 
 	// inlined properties supplied as a single expression that should evaluate
 	// to a map at runtime, e.g. a parameter:
