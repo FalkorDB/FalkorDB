@@ -258,11 +258,13 @@ impl<'a> AggregateOp<'a> {
                         return None;
                     }
                 }
-                ExprIR::Bool(true) | ExprIR::Integer(_) | ExprIR::Float(_) | ExprIR::String(_) => {
+                ExprIR::Bool(true) | ExprIR::Integer(_) | ExprIR::Float(_) | ExprIR::String(_)
+                    if func.name.eq_ignore_ascii_case("count") =>
+                {
                     // count(*) is represented as count(1) (or other non-null literal).
                     None
                 }
-                _ => return None, // complex expression
+                _ => return None, // complex expression or non-count literal
             }
         } else {
             // Multi-argument aggregation (e.g., percentileDisc(n.age, 0.5)).
