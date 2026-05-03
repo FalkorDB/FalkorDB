@@ -52,6 +52,11 @@ struct CtState {
     rev_src_label_ids: Vec<LabelId>,
     rev_dst_label_ids: Vec<LabelId>,
     edge_iters: Vec<std::cell::RefCell<EdgeIter>>,
+    /// True when one of the requested labels was unknown at state-build
+    /// time.  We still drain the child (for side effects) but produce no
+    /// output rows, since `unwrap_or_default()` would otherwise turn an
+    /// unknown label into "no label restriction".
+    no_match: bool,
 }
 
 pub struct CondTraverseOp<'a> {
@@ -207,6 +212,13 @@ impl<'a> CondTraverseOp<'a> {
             None
         };
 
+        let no_match = fwd_src_label_ids.is_none()
+            || fwd_dst_label_ids.is_none()
+            || rev_src_label_ids.is_none()
+            || rev_dst_label_ids.is_none()
+            || fwd_matrix.is_none()
+            || (rp.bidirectional && rev_matrix.is_none());
+
         let fwd_src_label_ids = fwd_src_label_ids.unwrap_or_default();
         let fwd_dst_label_ids = fwd_dst_label_ids.unwrap_or_default();
         let rev_src_label_ids = rev_src_label_ids.unwrap_or_default();
@@ -243,6 +255,7 @@ impl<'a> CondTraverseOp<'a> {
             rev_src_label_ids,
             rev_dst_label_ids,
             edge_iters,
+            no_match,
         }
     }
 
@@ -304,6 +317,9 @@ impl<'a> CondTraverseOp<'a> {
             // (g re-borrowed below)
         }
         let state = state_ref.as_mut().unwrap();
+        if state.no_match {
+            return Ok(());
+        }
         let g = runtime.g.borrow();
 
         let transposed = self.transposed;
