@@ -42,6 +42,18 @@ use crate::runtime::{
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
+/// Lazily resolved state — built on first `expand_row`, after any sibling
+/// Commit in the subtree has had a chance to create new labels/types.
+struct CtState {
+    fwd_iter: std::cell::RefCell<MatrixIter>,
+    rev_iter: Option<std::cell::RefCell<MatrixIter>>,
+    fwd_src_label_ids: Vec<LabelId>,
+    fwd_dst_label_ids: Vec<LabelId>,
+    rev_src_label_ids: Vec<LabelId>,
+    rev_dst_label_ids: Vec<LabelId>,
+    edge_iters: Vec<std::cell::RefCell<EdgeIter>>,
+}
+
 pub struct CondTraverseOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
@@ -71,27 +83,11 @@ pub struct CondTraverseOp<'a> {
     /// Persistent forward-matrix iterator. Reused across `expand_row` calls
     /// via `seek` so we pay the GxB_Iterator allocation only once per
     /// operator (not per input row).
-    fwd_iter: std::cell::RefCell<MatrixIter>,
-    /// Persistent reverse-matrix iterator (only for bidirectional patterns).
-    rev_iter: Option<std::cell::RefCell<MatrixIter>>,
-    /// Source/destination label ids resolved once at construction time.
-    /// Per-pair `node_has_label_id` checks replace the per-query rmxm/lmxm
-    /// label restriction on the relationship matrix. When `from_labels_match`
-    /// is `false`, no node could match the requested src labels — the op
-    /// short-circuits to empty output.
-    fwd_src_label_ids: Vec<LabelId>,
-    fwd_dst_label_ids: Vec<LabelId>,
-    rev_src_label_ids: Vec<LabelId>,
-    rev_dst_label_ids: Vec<LabelId>,
-    /// True when one of the requested label sets contained an unknown label,
-    /// or when a requested type doesn't exist in the schema. The op produces
-    /// no output in that case.
-    no_match: bool,
-    /// Persistent per-relationship-type edge-id iterators (over each
-    /// tensor's `me` matrix). Reused via `seek` to fetch the edge IDs
-    /// for a specific (src, dst) pair without allocating fresh
-    /// GxB_Iterators per pair.
-    edge_iters: Vec<std::cell::RefCell<EdgeIter>>,
+    ///
+    /// Lazily initialized on first `expand_row`: matrices/labels referenced
+    /// by this CT may be created by a sibling Commit earlier in the same
+    /// query, so capturing them at construction would miss them.
+    state: std::cell::RefCell<Option<CtState>>,
     /// For bidirectional anonymous-edge CTs, tracks (source, dest) pairs
     /// already emitted to deduplicate rows that reach the same pair via
     /// different intermediate nodes — matching C FalkorDB's matrix-multiply
@@ -116,77 +112,6 @@ impl<'a> CondTraverseOp<'a> {
         record_cap: Option<usize>,
     ) -> Self {
         let rp = relationship_pattern;
-        let g = runtime.g.borrow();
-
-        let (fwd_src_labels, fwd_dst_labels) = if transposed {
-            (&rp.to.labels, &rp.from.labels)
-        } else {
-            (&rp.from.labels, &rp.to.labels)
-        };
-
-        // Resolve label ids once. If any label is unknown the op produces
-        // nothing; track it so we can short-circuit `next()`.
-        let fwd_src_label_ids = g.resolve_label_ids(fwd_src_labels);
-        let fwd_dst_label_ids = g.resolve_label_ids(fwd_dst_labels);
-
-        let (rev_src_label_ids, rev_dst_label_ids) = if rp.bidirectional {
-            let (rev_src_labels, rev_dst_labels) = if transposed {
-                (&rp.from.labels, &rp.to.labels)
-            } else {
-                (&rp.to.labels, &rp.from.labels)
-            };
-            (
-                g.resolve_label_ids(rev_src_labels),
-                g.resolve_label_ids(rev_dst_labels),
-            )
-        } else {
-            (Some(Vec::new()), Some(Vec::new()))
-        };
-
-        // Build the type-summed relationship matrix without label restriction.
-        // Per-pair `node_has_label_id` checks (below in `process_pairs`) take
-        // over the role of the rmxm/lmxm label filtering.
-        let fwd_matrix = g.build_relationship_matrix_unrestricted(&rp.types);
-        let rev_matrix = if rp.bidirectional {
-            g.build_relationship_matrix_unrestricted(&rp.types)
-        } else {
-            None
-        };
-
-        let no_match = fwd_src_label_ids.is_none()
-            || fwd_dst_label_ids.is_none()
-            || rev_src_label_ids.is_none()
-            || rev_dst_label_ids.is_none()
-            || fwd_matrix.is_none()
-            || (rp.bidirectional && rev_matrix.is_none());
-
-        let fwd_src_label_ids = fwd_src_label_ids.unwrap_or_default();
-        let fwd_dst_label_ids = fwd_dst_label_ids.unwrap_or_default();
-        let rev_src_label_ids = rev_src_label_ids.unwrap_or_default();
-        let rev_dst_label_ids = rev_dst_label_ids.unwrap_or_default();
-
-        let fwd_matrix = fwd_matrix.unwrap_or_else(|| Matrix::new(0, 0));
-        let rev_matrix = rev_matrix.or_else(|| {
-            if rp.bidirectional {
-                Some(Matrix::new(0, 0))
-            } else {
-                None
-            }
-        });
-
-        let edge_iters: Vec<_> = if rp.types.is_empty() {
-            g.relationship_matrices_iter()
-                .map(|tensor| std::cell::RefCell::new(tensor.edge_iter(0, u64::MAX)))
-                .collect()
-        } else {
-            rp.types
-                .iter()
-                .filter_map(|t| g.get_relationship_matrix(t))
-                .map(|tensor| std::cell::RefCell::new(tensor.edge_iter(0, u64::MAX)))
-                .collect()
-        };
-
-        drop(g);
 
         // When this CT and its child CT are both anonymous bidirectional
         // edges, enable cross-row (from, to) deduplication to replicate
@@ -208,7 +133,7 @@ impl<'a> CondTraverseOp<'a> {
         let (bidir_dedup, dedup_source_alias) =
             if !emit_relationship && rp.bidirectional && intermediate_is_anon {
                 if let BatchOp::CondTraverse(ref child_ct) = *child {
-                    if !child_ct.emit_relationship && child_ct.rev_iter.is_some() {
+                    if !child_ct.emit_relationship && child_ct.relationship_pattern.bidirectional {
                         (
                             Some(std::cell::RefCell::new(std::collections::HashSet::<(
                                 u64,
@@ -240,6 +165,75 @@ impl<'a> CondTraverseOp<'a> {
             idx,
             record_cap,
             produced: 0,
+            state: std::cell::RefCell::new(None),
+            bidir_dedup,
+            dedup_source_alias,
+        }
+    }
+
+    /// Build the lazy state from current graph contents.  Called on the
+    /// first `expand_row` invocation, after any sibling Commit in the
+    /// subtree has executed.
+    fn build_state(&self) -> CtState {
+        let rp = self.relationship_pattern;
+        let g = self.runtime.g.borrow();
+
+        let (fwd_src_labels, fwd_dst_labels) = if self.transposed {
+            (&rp.to.labels, &rp.from.labels)
+        } else {
+            (&rp.from.labels, &rp.to.labels)
+        };
+
+        let fwd_src_label_ids = g.resolve_label_ids(fwd_src_labels);
+        let fwd_dst_label_ids = g.resolve_label_ids(fwd_dst_labels);
+        let (rev_src_label_ids, rev_dst_label_ids) = if rp.bidirectional {
+            let (rev_src_labels, rev_dst_labels) = if self.transposed {
+                (&rp.from.labels, &rp.to.labels)
+            } else {
+                (&rp.to.labels, &rp.from.labels)
+            };
+            (
+                g.resolve_label_ids(rev_src_labels),
+                g.resolve_label_ids(rev_dst_labels),
+            )
+        } else {
+            (Some(Vec::new()), Some(Vec::new()))
+        };
+
+        let fwd_matrix = g.build_relationship_matrix_unrestricted(&rp.types);
+        let rev_matrix = if rp.bidirectional {
+            g.build_relationship_matrix_unrestricted(&rp.types)
+        } else {
+            None
+        };
+
+        let fwd_src_label_ids = fwd_src_label_ids.unwrap_or_default();
+        let fwd_dst_label_ids = fwd_dst_label_ids.unwrap_or_default();
+        let rev_src_label_ids = rev_src_label_ids.unwrap_or_default();
+        let rev_dst_label_ids = rev_dst_label_ids.unwrap_or_default();
+
+        let fwd_matrix = fwd_matrix.unwrap_or_else(|| Matrix::new(0, 0));
+        let rev_matrix = rev_matrix.or_else(|| {
+            if rp.bidirectional {
+                Some(Matrix::new(0, 0))
+            } else {
+                None
+            }
+        });
+
+        let edge_iters: Vec<_> = if rp.types.is_empty() {
+            g.relationship_matrices_iter()
+                .map(|tensor| std::cell::RefCell::new(tensor.edge_iter(0, u64::MAX)))
+                .collect()
+        } else {
+            rp.types
+                .iter()
+                .filter_map(|t| g.get_relationship_matrix(t))
+                .map(|tensor| std::cell::RefCell::new(tensor.edge_iter(0, u64::MAX)))
+                .collect()
+        };
+
+        CtState {
             fwd_iter: std::cell::RefCell::new(fwd_matrix.iter(0, u64::MAX)),
             rev_iter: rev_matrix
                 .as_ref()
@@ -248,10 +242,7 @@ impl<'a> CondTraverseOp<'a> {
             fwd_dst_label_ids,
             rev_src_label_ids,
             rev_dst_label_ids,
-            no_match,
             edge_iters,
-            bidir_dedup,
-            dedup_source_alias,
         }
     }
 
@@ -299,6 +290,22 @@ impl<'a> CondTraverseOp<'a> {
 
         let g = runtime.g.borrow();
 
+        // Lazily initialize state from current graph contents on first use,
+        // ensuring sibling Commits in the subtree have already had a chance
+        // to add new labels/relationship types.
+        let mut state_ref = self.state.borrow_mut();
+        if state_ref.is_none() {
+            drop(state_ref);
+            drop(g);
+            let new_state = self.build_state();
+            *self.state.borrow_mut() = Some(new_state);
+            state_ref = self.state.borrow_mut();
+            // Re-borrow after building state.
+            // (g re-borrowed below)
+        }
+        let state = state_ref.as_mut().unwrap();
+        let g = runtime.g.borrow();
+
         let transposed = self.transposed;
 
         // Map from_id/to_id to the matrix's src/dst dimensions.
@@ -311,7 +318,7 @@ impl<'a> CondTraverseOp<'a> {
         // instead of allocating a fresh GxB_Iterator per input row.
         let start = out.len();
         {
-            let mut iter = self.fwd_iter.borrow_mut();
+            let mut iter = state.fwd_iter.borrow_mut();
             let (min_row, max_row) =
                 fwd_src_id.map_or((0, u64::MAX), |id| (u64::from(id), u64::from(id)));
             iter.seek(min_row, max_row);
@@ -334,14 +341,14 @@ impl<'a> CondTraverseOp<'a> {
                 out,
                 self.emit_relationship,
                 self.sibling_edges,
-                &self.edge_iters,
-                &self.fwd_src_label_ids,
-                &self.fwd_dst_label_ids,
+                &state.edge_iters,
+                &state.fwd_src_label_ids,
+                &state.fwd_dst_label_ids,
             );
         }
 
         // Process reverse relationships for bidirectional patterns.
-        if let Some(ref rev_iter_cell) = self.rev_iter {
+        if let Some(ref rev_iter_cell) = state.rev_iter {
             let (rev_src_id, rev_dst_id) = if transposed {
                 (from_id, to_id)
             } else {
@@ -371,9 +378,9 @@ impl<'a> CondTraverseOp<'a> {
                 out,
                 self.emit_relationship,
                 self.sibling_edges,
-                &self.edge_iters,
-                &self.rev_src_label_ids,
-                &self.rev_dst_label_ids,
+                &state.edge_iters,
+                &state.rev_src_label_ids,
+                &state.rev_dst_label_ids,
             );
         }
 
@@ -572,11 +579,11 @@ impl<'a> Iterator for CondTraverseOp<'a> {
             return None;
         }
 
-        // Short-circuit when a requested label/type doesn't exist in the
-        // schema — no row can possibly match.
-        if self.no_match {
-            return None;
-        }
+        // NOTE: we no longer short-circuit when requested labels/types are
+        // unknown.  A sibling Commit in the subtree may add them while this
+        // operator is running, and skipping the child here would skip its
+        // side effects.  Empty matrices/iters in the lazy state naturally
+        // produce zero rows, which is the desired behavior.
 
         let mut envs = Vec::with_capacity(BATCH_SIZE);
 

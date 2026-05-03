@@ -53,7 +53,11 @@ pub struct ExpandIntoOp<'a> {
     /// Persistent per-relationship-type edge-id iterators. Reused via `seek`
     /// to fetch edge IDs for a specific (src, dst) pair without allocating
     /// fresh GxB_Iterators per pair.
-    edge_iters: Vec<std::cell::RefCell<EdgeIter>>,
+    ///
+    /// Lazily initialized on first use rather than at construction: the
+    /// relationship type may be created by a sibling Commit earlier in the
+    /// same query, so capturing matrices in `new()` would miss them.
+    edge_iters: std::cell::RefCell<Option<Vec<std::cell::RefCell<EdgeIter>>>>,
 }
 
 impl<'a> ExpandIntoOp<'a> {
@@ -66,21 +70,6 @@ impl<'a> ExpandIntoOp<'a> {
         idx: NodeIdx<Dyn<IR>>,
         record_cap: Option<usize>,
     ) -> Self {
-        let g = runtime.g.borrow();
-        let edge_iters: Vec<_> = if relationship_pattern.types.is_empty() {
-            g.relationship_matrices_iter()
-                .map(|tensor| std::cell::RefCell::new(tensor.edge_iter(0, u64::MAX)))
-                .collect()
-        } else {
-            relationship_pattern
-                .types
-                .iter()
-                .filter_map(|t| g.get_relationship_matrix(t))
-                .map(|tensor| std::cell::RefCell::new(tensor.edge_iter(0, u64::MAX)))
-                .collect()
-        };
-        drop(g);
-
         Self {
             runtime,
             child,
@@ -93,7 +82,7 @@ impl<'a> ExpandIntoOp<'a> {
             idx,
             record_cap,
             produced: 0,
-            edge_iters,
+            edge_iters: std::cell::RefCell::new(None),
         }
     }
 
@@ -167,11 +156,25 @@ impl<'a> ExpandIntoOp<'a> {
 
         let g = runtime.g.borrow();
         let pending = runtime.pending.borrow();
+        let mut iters_ref = self.edge_iters.borrow_mut();
+        let edge_iters = iters_ref.get_or_insert_with(|| {
+            if rp.types.is_empty() {
+                g.relationship_matrices_iter()
+                    .map(|tensor| std::cell::RefCell::new(tensor.edge_iter(0, u64::MAX)))
+                    .collect()
+            } else {
+                rp.types
+                    .iter()
+                    .filter_map(|t| g.get_relationship_matrix(t))
+                    .map(|tensor| std::cell::RefCell::new(tensor.edge_iter(0, u64::MAX)))
+                    .collect()
+            }
+        });
         for (edge_src, edge_dst) in &edge_pairs {
             let key = compound_key(u64::from(*edge_src), u64::from(*edge_dst));
             if !self.emit_relationship && !has_edge_filter {
                 let mut found_id: Option<RelationshipId> = None;
-                'outer: for cell in &self.edge_iters {
+                'outer: for cell in edge_iters.iter() {
                     let mut it = cell.borrow_mut();
                     it.seek(key, key);
                     for (_, raw_id) in &mut *it {
@@ -196,7 +199,7 @@ impl<'a> ExpandIntoOp<'a> {
                 }
                 continue;
             }
-            for cell in &self.edge_iters {
+            for cell in edge_iters.iter() {
                 let mut it = cell.borrow_mut();
                 it.seek(key, key);
                 for (_, raw_id) in &mut *it {

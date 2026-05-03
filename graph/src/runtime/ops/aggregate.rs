@@ -375,6 +375,30 @@ impl<'a> AggregateOp<'a> {
                 } else {
                     &[]
                 };
+                // Validate each input — the per-row path runs validate_args_type
+                // before each call; without this, batch kernels relying on
+                // `unreachable!()` for unexpected types would panic on bad data
+                // (e.g., `sum(n.flag)` where `flag` holds a Bool).
+                let mut validation_err: Option<String> = None;
+                for val in inputs {
+                    if matches!(val, Value::Null) {
+                        continue;
+                    }
+                    let single = thin_vec![val.clone()];
+                    if let Err(e) = agg.func.validate_args_type(&single) {
+                        validation_err = Some(e);
+                        break;
+                    }
+                    if let Err(e) = agg.func.validate_args_domain(&single) {
+                        validation_err = Some(e);
+                        break;
+                    }
+                }
+                if let Some(e) = validation_err {
+                    acc.insert(&agg.acc_var, prev);
+                    errors.push(e);
+                    break;
+                }
                 match batch_fn(self.runtime, inputs, num_active, prev) {
                     Ok(new_val) => acc.insert(&agg.acc_var, new_val),
                     Err(e) => {
