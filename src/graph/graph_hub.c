@@ -332,6 +332,7 @@ void GraphHub_UpdateNodeProperty
 	Node n;  // node to update
 	int res = Graph_GetNode (g, id, &n) ;
 	ASSERT(res == true);  // make sure entity was found
+	if (res != true) return;  // tombstoned id → no-op write (prevents AOF-replay SIGSEGV)
 
 	if(attr_id == ATTRIBUTE_ID_ALL) {
 		AttributeSet_Free(n.attributes);
@@ -382,6 +383,7 @@ void GraphHub_UpdateEdgeProperty
 	// get src node, dest node and edge from the graph
 	int res = Graph_GetEdge (GraphContext_GetGraph (gc), id, &e);
 	ASSERT(res != 0);
+	if (res == 0) return;  // tombstoned id → no-op write (prevents AOF-replay SIGSEGV)
 
 	// set edge relation, src and destination node
 	Edge_SetRelationID(&e, r_id);
