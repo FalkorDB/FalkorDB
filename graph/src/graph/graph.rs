@@ -2006,8 +2006,7 @@ impl Graph {
     }
 
     /// Build a relationship matrix combining the given types and filtering by
-    /// source/destination labels.  The returned matrix can be cached and reused
-    /// across multiple calls to [`iter_relationship_matrix`].
+    /// source/destination labels.
     pub fn build_relationship_matrix(
         &self,
         types: &[Arc<String>],
@@ -2078,20 +2077,6 @@ impl Graph {
             }
             m
         }
-    }
-
-    /// Iterate a prebuilt relationship matrix, optionally restricting to a
-    /// single source row (`from_id`) and/or a single destination column
-    /// (`to_id`).
-    pub fn iter_relationship_matrix(
-        m: &Matrix,
-        from_id: Option<NodeId>,
-        to_id: Option<NodeId>,
-    ) -> impl Iterator<Item = (NodeId, NodeId)> + use<> {
-        let (min_row, max_row) = from_id.map_or((0, u64::MAX), |id| (id.0, id.0));
-        m.iter(min_row, max_row)
-            .filter(move |(_, dest)| to_id.is_none() || to_id.unwrap().0 == *dest)
-            .map(|(src, dest)| (NodeId(src), NodeId(dest)))
     }
 
     /// Convenience wrapper: build the matrix and iterate it in one call.

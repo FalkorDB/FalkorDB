@@ -18,6 +18,9 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
+use crate::graph::graph::RelationshipId;
+use crate::graph::graphblas::tensor::compound_key;
+use crate::graph::graphblas::versioned_matrix::Iter as EdgeIter;
 use crate::parser::ast::{QueryRelationship, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
@@ -47,10 +50,14 @@ pub struct ExpandIntoOp<'a> {
     record_cap: Option<usize>,
     /// Number of records produced so far (tracked when `record_cap` is set).
     produced: usize,
+    /// Persistent per-relationship-type edge-id iterators. Reused via `seek`
+    /// to fetch edge IDs for a specific (src, dst) pair without allocating
+    /// fresh GxB_Iterators per pair.
+    edge_iters: Vec<std::cell::RefCell<EdgeIter>>,
 }
 
 impl<'a> ExpandIntoOp<'a> {
-    pub const fn new(
+    pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
         relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
@@ -59,6 +66,21 @@ impl<'a> ExpandIntoOp<'a> {
         idx: NodeIdx<Dyn<IR>>,
         record_cap: Option<usize>,
     ) -> Self {
+        let g = runtime.g.borrow();
+        let edge_iters: Vec<_> = if relationship_pattern.types.is_empty() {
+            g.relationship_matrices_iter()
+                .map(|tensor| std::cell::RefCell::new(tensor.edge_iter(0, u64::MAX)))
+                .collect()
+        } else {
+            relationship_pattern
+                .types
+                .iter()
+                .filter_map(|t| g.get_relationship_matrix(t))
+                .map(|tensor| std::cell::RefCell::new(tensor.edge_iter(0, u64::MAX)))
+                .collect()
+        };
+        drop(g);
+
         Self {
             runtime,
             child,
@@ -71,6 +93,7 @@ impl<'a> ExpandIntoOp<'a> {
             idx,
             record_cap,
             produced: 0,
+            edge_iters,
         }
     }
 
@@ -145,14 +168,23 @@ impl<'a> ExpandIntoOp<'a> {
         let g = runtime.g.borrow();
         let pending = runtime.pending.borrow();
         for (edge_src, edge_dst) in &edge_pairs {
+            let key = compound_key(u64::from(*edge_src), u64::from(*edge_dst));
             if !self.emit_relationship && !has_edge_filter {
-                if let Some(id) = g
-                    .get_src_dest_relationships(*edge_src, *edge_dst, &rp.types)
-                    .find(|id| {
-                        !pending.is_relationship_deleted(*id, *edge_src, *edge_dst)
-                            && !super::edge_already_used(env, *id, rp.alias.id, self.sibling_edges)
-                    })
-                {
+                let mut found_id: Option<RelationshipId> = None;
+                'outer: for cell in &self.edge_iters {
+                    let mut it = cell.borrow_mut();
+                    it.seek(key, key);
+                    for (_, raw_id) in &mut *it {
+                        let id = RelationshipId::from(raw_id);
+                        if !pending.is_relationship_deleted(id, *edge_src, *edge_dst)
+                            && !super::edge_already_used(env, id, rp.alias.id, self.sibling_edges)
+                        {
+                            found_id = Some(id);
+                            break 'outer;
+                        }
+                    }
+                }
+                if let Some(id) = found_id {
                     let mut row = env.clone_pooled(runtime.env_pool);
                     row.insert(
                         &rp.alias,
@@ -164,42 +196,47 @@ impl<'a> ExpandIntoOp<'a> {
                 }
                 continue;
             }
-            for id in g.get_src_dest_relationships(*edge_src, *edge_dst, &rp.types) {
-                if pending.is_relationship_deleted(id, *edge_src, *edge_dst) {
-                    continue;
-                }
-                // Relationship uniqueness: skip edges already bound to other
-                // relationship variables in this MATCH clause.
-                if super::edge_already_used(env, id, rp.alias.id, self.sibling_edges) {
-                    continue;
-                }
-                if let Value::Map(ref filter_map) = filter_attrs
-                    && !filter_map.is_empty()
-                {
-                    let mut matches = true;
-                    for (attr, avalue) in filter_map.iter() {
-                        if let Some(pvalue) = g.get_relationship_attribute(id, attr) {
-                            if *avalue == pvalue {
-                                continue;
+            for cell in &self.edge_iters {
+                let mut it = cell.borrow_mut();
+                it.seek(key, key);
+                for (_, raw_id) in &mut *it {
+                    let id = RelationshipId::from(raw_id);
+                    if pending.is_relationship_deleted(id, *edge_src, *edge_dst) {
+                        continue;
+                    }
+                    // Relationship uniqueness: skip edges already bound to other
+                    // relationship variables in this MATCH clause.
+                    if super::edge_already_used(env, id, rp.alias.id, self.sibling_edges) {
+                        continue;
+                    }
+                    if let Value::Map(ref filter_map) = filter_attrs
+                        && !filter_map.is_empty()
+                    {
+                        let mut matches = true;
+                        for (attr, avalue) in filter_map.iter() {
+                            if let Some(pvalue) = g.get_relationship_attribute(id, attr) {
+                                if *avalue == pvalue {
+                                    continue;
+                                }
+                                matches = false;
+                                break;
                             }
                             matches = false;
                             break;
                         }
-                        matches = false;
-                        break;
+                        if !matches {
+                            continue;
+                        }
                     }
-                    if !matches {
-                        continue;
-                    }
+                    let mut row = env.clone_pooled(runtime.env_pool);
+                    row.insert(
+                        &rp.alias,
+                        Value::Relationship(Box::new((id, *edge_src, *edge_dst))),
+                    );
+                    row.insert(&rp.from.alias, Value::Node(src));
+                    row.insert(&rp.to.alias, Value::Node(dst));
+                    out.push(row);
                 }
-                let mut row = env.clone_pooled(runtime.env_pool);
-                row.insert(
-                    &rp.alias,
-                    Value::Relationship(Box::new((id, *edge_src, *edge_dst))),
-                );
-                row.insert(&rp.from.alias, Value::Node(src));
-                row.insert(&rp.to.alias, Value::Node(dst));
-                out.push(row);
             }
         }
         drop(g);
