@@ -115,7 +115,7 @@ static void _RdbLoadEntity
 
 	if(n == 0) return;
 
-	ASSERT(n <= 65536);
+	ASSERT(n <= UINT16_MAX);
 
 	SIValue     *vals = rm_malloc(n * sizeof(SIValue));
 	AttributeID *ids  = rm_malloc(n * sizeof(AttributeID));
