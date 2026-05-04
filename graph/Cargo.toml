@@ -36,4 +36,4 @@ rquickjs = { version = "0.11", features = ["bindgen", "classes", "macro", "paral
 ureq = { version = "3.3.0", default-features = false, features = ["rustls"] }
 roaring = "0.11.4"
 rustc-hash = "2"
-thin-vec = "0.2.16"
+thin-vec = "0.2.18"
