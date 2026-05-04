@@ -97,7 +97,73 @@ use roaring::RoaringTreemap;
 
 use super::attribute_cache::AttributeCache;
 use super::graphblas::serialization::{Decode, Encode, Reader, Writer};
-use crate::runtime::{ordermap::OrderMap, orderset::OrderSet, value::Value};
+use crate::runtime::{ordermap::OrderMap, value::Value};
+
+/// Insertion-ordered map of attribute names to attribute indices.
+///
+/// Maintains both a `Vec<Arc<String>>` (for stable index → name lookup and
+/// deterministic iteration order) and a `FxHashMap<Arc<String>, u16>` for
+/// O(1) name → index resolution on the hot read path.
+#[derive(Default, Clone)]
+pub struct AttrNameMap {
+    vec: Vec<Arc<String>>,
+    index: FxHashMap<Arc<String>, u16>,
+}
+
+impl AttrNameMap {
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.vec.len()
+    }
+
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.vec.is_empty()
+    }
+
+    #[must_use]
+    pub fn get(
+        &self,
+        idx: usize,
+    ) -> Option<&Arc<String>> {
+        self.vec.get(idx)
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, Arc<String>> {
+        self.vec.iter()
+    }
+
+    #[must_use]
+    pub fn get_index_of(
+        &self,
+        name: &Arc<String>,
+    ) -> Option<usize> {
+        self.index.get(name).map(|&i| i as usize)
+    }
+
+    pub fn insert(
+        &mut self,
+        name: Arc<String>,
+    ) {
+        if self.index.contains_key(&name) {
+            return;
+        }
+        let idx = self.vec.len() as u16;
+        self.vec.push(name.clone());
+        self.index.insert(name, idx);
+    }
+}
+
+impl std::ops::Index<usize> for AttrNameMap {
+    type Output = Arc<String>;
+
+    fn index(
+        &self,
+        idx: usize,
+    ) -> &Arc<String> {
+        &self.vec[idx]
+    }
+}
 
 /// Shared empty attribute vector to avoid per-entity allocations when an
 /// entity has no properties.
@@ -134,7 +200,7 @@ pub struct AttributeStore {
     keyspace: OnceCell<Keyspace>,
     keyspace_name: Arc<String>,
     /// Attribute names in insertion order (name → column index)
-    pub attrs_name: OrderSet<Arc<String>>,
+    pub attrs_name: AttrNameMap,
     /// Shared in-memory LRU cache (cheap Arc clone across MVCC versions).
     cache: Arc<AttributeCache>,
     /// MVCC version of this store's snapshot.
@@ -200,7 +266,7 @@ impl AttributeStore {
             snapshot: OnceCell::new(),
             keyspace: OnceCell::new(),
             keyspace_name: Arc::new(keyspace.to_owned()),
-            attrs_name: OrderSet::default(),
+            attrs_name: AttrNameMap::default(),
             cache: Arc::new(AttributeCache::new(DEFAULT_ATTR_CACHE_BYTES)),
             version,
             dirty_entities: RoaringTreemap::new(),
