@@ -479,7 +479,6 @@ class testLoadTimeConfig(FlowTestsBase):
         ]
 
         loadtime_args = " ".join(str(token) for pair in defaults for token in pair)
-        print (f"loadtime_args: {loadtime_args}")
 
         env, db = Env(moduleArgs=loadtime_args)
 

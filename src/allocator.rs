@@ -101,6 +101,13 @@ pub fn current_thread_usage() -> (usize, usize) {
     )
 }
 
+/// Returns the net memory usage (allocated - deallocated) for the current thread.
+pub fn net_thread_usage() -> usize {
+    let allocated = THREAD_ALLOCATED.with(std::cell::Cell::get);
+    let deallocated = THREAD_DEALLOCATED.with(std::cell::Cell::get);
+    allocated.saturating_sub(deallocated)
+}
+
 /// Resets allocation counters for the current thread to zero.
 ///
 /// Call this before a query to measure per-query memory usage.

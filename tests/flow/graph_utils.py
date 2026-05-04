@@ -46,11 +46,10 @@ def graph_eq(A, B):
                ORDER BY label, properties, types, language, stopwords, entitytype"""),
 
             # constraints
-            # TODO: enable once constraints are supported
-            # ('constraints', """CALL db.constraints()
-            #    YIELD type, label, properties, entitytype, status
-            #    RETURN type, label, properties, entitytype, status
-            #    ORDER BY type, label, properties, entitytype, status""")
+            ('constraints', """CALL db.constraints()
+               YIELD type, label, properties, entitytype, status
+               RETURN type, label, properties, entitytype, status
+               ORDER BY type, label, properties, entitytype, status""")
             ]
 
     for category, q in queries:

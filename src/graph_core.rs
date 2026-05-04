@@ -29,11 +29,12 @@
 
 use crate::{
     config::{
-        CONFIGURATION_IMPORT_FOLDER, EFFECTS_THRESHOLD, MAX_QUEUED_QUERIES, RESULTSET_SIZE,
-        TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX,
+        CONFIGURATION_IMPORT_FOLDER, EFFECTS_THRESHOLD, MAX_QUEUED_QUERIES, QUERY_MEM_CAPACITY,
+        RESULTSET_SIZE, TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX,
     },
     reply::{reply_compact, reply_verbose},
     slow_log::SlowLog,
+    telemetry,
 };
 use atomic_refcell::AtomicRefCell;
 use crossfire::{
@@ -69,10 +70,40 @@ use std::{
     time::Instant,
 };
 
-use crate::allocator::{current_thread_usage, disable_tracking, enable_tracking, reset_counter};
+use crate::allocator::{
+    current_thread_usage, disable_tracking, enable_tracking, net_thread_usage, reset_counter,
+};
 
-type WriteMessage = (BlockedClient, Arc<str>, bool, bool, Arc<str>, Option<i64>);
-type WriteQueryResult = Result<(Arc<AtomicRefCell<Graph>>, Option<Vec<u8>>, bool), String>;
+pub(crate) struct WriteMessage {
+    pub bc: BlockedClient,
+    pub query: Arc<str>,
+    pub compact: bool,
+    pub cached: bool,
+    pub key_name: Arc<str>,
+    pub timeout: Option<i64>,
+    pub received_at: i64,
+    pub enqueue_instant: Instant,
+    pub waiting_id: u64,
+}
+
+pub(crate) struct WriteQueryOk {
+    pub graph: Arc<AtomicRefCell<Graph>>,
+    pub effects_buffer: Option<Vec<u8>>,
+    pub modified: bool,
+    pub execution_time_ms: f64,
+    pub params_offset: usize,
+}
+type WriteQueryResult = Result<WriteQueryOk, String>;
+
+/// Result from a read-path `execute_query` call, surfacing timing metadata
+/// needed for telemetry.
+pub(crate) struct ReadQueryResult {
+    pub is_write: bool,
+    pub cached: bool,
+    pub execution_time_ms: f64,
+    pub params_offset: usize,
+    pub timed_out: bool,
+}
 
 /// Safe wrappers over Redis module FFI function pointers.
 ///
@@ -235,8 +266,8 @@ pub(crate) mod ffi {
 
 pub struct ThreadedGraph {
     pub graph: MvccGraph,
-    pub sender: Tx<Array<WriteMessage>>,
-    pub receiver: Rx<Array<WriteMessage>>,
+    pub sender: Tx<Array<Box<WriteMessage>>>,
+    pub receiver: Rx<Array<Box<WriteMessage>>>,
     pub write_loop: AtomicBool,
     pub slow_log: SlowLog,
 }
@@ -286,7 +317,7 @@ impl ThreadedGraph {
         write: bool,
         cmd: &str,
         per_query_timeout: Option<i64>,
-    ) -> Result<(bool, bool), String> {
+    ) -> Result<ReadQueryResult, String> {
         let wall_start = Instant::now();
         let Plan {
             plan,
@@ -311,7 +342,13 @@ impl ThreadedGraph {
                     "graph.RO_QUERY is to be executed only on read-only queries",
                 ));
             }
-            return Ok((is_write, cached));
+            return Ok(ReadQueryResult {
+                is_write: true,
+                cached,
+                execution_time_ms: 0.0,
+                params_offset,
+                timed_out: false,
+            });
         } else {
             self.graph.read()
         };
@@ -328,6 +365,8 @@ impl ThreadedGraph {
             RESULTSET_SIZE.load(Ordering::Relaxed),
             false,
             timeout_ms,
+            QUERY_MEM_CAPACITY.load(Ordering::Relaxed),
+            Some(net_thread_usage),
         );
         let mut result = runtime.query()?;
         result.stats.cached = cached;
@@ -337,10 +376,17 @@ impl ThreadedGraph {
             reply_verbose(ctx, &runtime, &result);
         }
         let latency = wall_start.elapsed().as_secs_f64() * 1000.0;
+        let execution_time_ms = result.stats.execution_time;
         drop(result);
         drop(runtime);
         self.slow_log.add(cmd, query, params_offset, latency);
-        Ok((is_write, cached))
+        Ok(ReadQueryResult {
+            is_write: false,
+            cached,
+            execution_time_ms,
+            params_offset,
+            timed_out: false,
+        })
     }
 
     pub fn execute_query_write(
@@ -391,6 +437,8 @@ impl ThreadedGraph {
             RESULTSET_SIZE.load(Ordering::Relaxed),
             false,
             timeout_ms,
+            QUERY_MEM_CAPACITY.load(Ordering::Relaxed),
+            Some(net_thread_usage),
         );
         let mut result = match runtime.query() {
             Ok(r) => r,
@@ -418,6 +466,7 @@ impl ThreadedGraph {
             reply_verbose(ctx, &runtime, &result);
         }
         let latency = wall_start.elapsed().as_secs_f64() * 1000.0;
+        let execution_time_ms = result.stats.execution_time;
         let modified = result.stats.nodes_created > 0
             || result.stats.nodes_deleted > 0
             || result.stats.relationships_created > 0
@@ -430,7 +479,13 @@ impl ThreadedGraph {
             || result.stats.indexes_dropped > 0;
         self.slow_log
             .add("GRAPH.QUERY", query, params_offset, latency);
-        Ok((g, effects_buffer, modified))
+        Ok(WriteQueryOk {
+            graph: g,
+            effects_buffer,
+            modified,
+            execution_time_ms,
+            params_offset,
+        })
     }
 
     /// Execute a query with profiling enabled (read path).
@@ -470,6 +525,8 @@ impl ThreadedGraph {
             -1,
             true,
             timeout_ms,
+            QUERY_MEM_CAPACITY.load(Ordering::Relaxed),
+            Some(net_thread_usage),
         );
         let _ = runtime.query()?;
         reply_profile(ctx, &runtime, &plan);
@@ -510,12 +567,20 @@ impl ThreadedGraph {
             -1,
             true,
             timeout_ms,
+            QUERY_MEM_CAPACITY.load(Ordering::Relaxed),
+            Some(net_thread_usage),
         );
         match runtime.query() {
             Ok(_) => {
                 runtime.commit_deferred_indexes();
                 reply_profile(ctx, &runtime, &plan);
-                Ok((g, None, false))
+                Ok(WriteQueryOk {
+                    graph: g,
+                    effects_buffer: None,
+                    modified: false,
+                    execution_time_ms: 0.0,
+                    params_offset: 0,
+                })
             }
             Err(err) => {
                 g.borrow_mut().rollback_cache();
@@ -678,9 +743,12 @@ pub fn query_mut(
     let bc = unsafe { BlockedClient::new(ctx.ctx) };
     let graph = graph.clone();
     let query: Arc<str> = Arc::from(query);
+    let received_at = telemetry::unix_now_secs();
     spawn(
         move || {
-            if track_mem {
+            let mem_capacity = QUERY_MEM_CAPACITY.load(Ordering::Relaxed);
+            let enforce_mem = track_mem || mem_capacity > 0;
+            if enforce_mem {
                 reset_counter();
                 enable_tracking();
             }
@@ -700,41 +768,52 @@ pub fn query_mut(
             } else {
                 "GRAPH.RO_QUERY"
             };
+
+            let running_id = telemetry::register_running(received_at, &key_name, &query, false);
+            let wall_start = Instant::now();
             let res = graph.execute_query(&ctx, &query, compact, write, cmd, per_query_timeout);
+            let wall_ms = wall_start.elapsed().as_secs_f64() * 1000.0;
+            telemetry::unregister_running(running_id);
 
             // Log memory tracking BEFORE freeing the context.
-            if track_mem {
-                let (allocated, deallocated) = current_thread_usage();
+            if enforce_mem {
+                if track_mem {
+                    let (allocated, deallocated) = current_thread_usage();
+                    ctx.log(
+                        redis_module::logging::RedisLogLevel::Notice,
+                        &format!(
+                            "Allocated: {allocated} bytes, Deallocated: {deallocated} bytes, Net: {}",
+                            allocated as isize - deallocated as isize
+                        ),
+                    );
+                }
                 disable_tracking();
-                ctx.log(
-                    redis_module::logging::RedisLogLevel::Notice,
-                    &format!(
-                        "Allocated: {allocated} bytes, Deallocated: {deallocated} bytes, Net: {}",
-                        allocated as isize - deallocated as isize
-                    ),
-                );
             }
 
             match res {
-                Ok((is_write, cached)) => {
-                    if is_write {
-                        if let Err(send_err) = graph.sender.send((
+                Ok(read_result) => {
+                    if read_result.is_write {
+                        let waiting_id =
+                            telemetry::register_waiting(received_at, &key_name, &query);
+                        let msg = Box::new(WriteMessage {
                             bc,
                             query,
                             compact,
-                            cached,
+                            cached: read_result.cached,
                             key_name,
-                            per_query_timeout,
-                        )) {
-                            // Receiver closed — the write-queue worker is gone.
-                            // Recover by replying with an error and releasing
-                            // the channel slot instead of panicking the module.
-                            let (bc, _q, _c, _cached, _k, _t) = send_err.0;
+                            timeout: per_query_timeout,
+                            received_at,
+                            enqueue_instant: Instant::now(),
+                            waiting_id,
+                        });
+                        if let Err(send_err) = graph.sender.send(msg) {
+                            let msg = send_err.0;
+                            telemetry::unregister_waiting(msg.waiting_id);
                             let cerr = ffi::sanitise_error(
                                 "ERR graph write queue unavailable".to_string(),
                             );
                             unsafe { ffi::reply_error(ctx.ctx, cerr.as_ptr()) };
-                            drop(bc);
+                            drop(msg.bc);
                             drop(graph);
                             unsafe { ffi::free_thread_safe_context(ctx.ctx) };
                             return;
@@ -742,6 +821,27 @@ pub fn query_mut(
                         drop(graph);
                         process_write_queued_query(&g);
                     } else {
+                        // Read query completed — write telemetry
+                        let query_text = &query[read_result.params_offset..];
+                        let params_text = &query[..read_result.params_offset];
+                        let exec_ms = read_result.execution_time_ms;
+                        let report_ms = (wall_ms - exec_ms).max(0.0);
+
+                        let entry = telemetry::TelemetryEntry {
+                            received_at,
+                            query: telemetry::truncate(query_text.trim_start()),
+                            params: telemetry::truncate(params_text.trim()),
+
+                            wait_duration_ms: 0.0,
+                            execution_duration_ms: exec_ms,
+                            report_duration_ms: report_ms,
+                            utilized_cache: read_result.cached,
+                            is_write: false,
+                            timed_out: read_result.timed_out,
+                        };
+                        unsafe { ffi::lock_thread_safe_ctx(ctx.ctx) };
+                        telemetry::write_to_stream(&ctx, &key_name, &entry);
+                        unsafe { ffi::unlock_thread_safe_ctx(ctx.ctx) };
                         drop(bc);
                         unsafe { ffi::free_thread_safe_context(ctx.ctx) };
                     }
@@ -775,32 +875,72 @@ fn query_sync(
     graph::udf::js_context::JS_TIMEOUT_MS
         .store(TIMEOUT_DEFAULT.load(Ordering::Relaxed), Ordering::Relaxed);
 
+    let mem_capacity = QUERY_MEM_CAPACITY.load(Ordering::Relaxed);
+    if mem_capacity > 0 {
+        reset_counter();
+        enable_tracking();
+    }
+
+    let received_at = telemetry::unix_now_secs();
     let cmd = if write {
         "GRAPH.QUERY"
     } else {
         "GRAPH.RO_QUERY"
     };
+    let wall_start = Instant::now();
+    let running_id = telemetry::register_running(received_at, key_name, query, false);
     let res = {
         let g = graph.read();
         g.execute_query(ctx, query, compact, write, cmd, per_query_timeout)
     };
+    let wall_ms = wall_start.elapsed().as_secs_f64() * 1000.0;
+    telemetry::unregister_running(running_id);
     match res {
-        Ok((is_write, cached)) => {
-            if is_write {
+        Ok(read_result) => {
+            if read_result.is_write {
                 // Write path: acquire exclusive lock and execute.
+                let write_start = Instant::now();
+                let running_id2 = telemetry::register_running(received_at, key_name, query, false);
                 let mut g = graph.write();
-                let res = g.execute_query_write(ctx, query, compact, cached, per_query_timeout);
+                let res = g.execute_query_write(
+                    ctx,
+                    query,
+                    compact,
+                    read_result.cached,
+                    per_query_timeout,
+                );
+                let write_wall_ms = write_start.elapsed().as_secs_f64() * 1000.0;
+                telemetry::unregister_running(running_id2);
                 match res {
-                    Ok((new_graph, effects_buffer, modified)) => {
-                        g.graph.commit(new_graph);
-                        if modified {
-                            replicate_effects(ctx, key_name, effects_buffer, query);
+                    Ok(wq) => {
+                        g.graph.commit(wq.graph);
+                        if wq.modified {
+                            replicate_effects(ctx, key_name, wq.effects_buffer, query);
                         }
                         // Flush dirty cache entries to fjall if over budget.
                         let value = g.graph.read().borrow().maybe_flush_caches();
                         if let Err(e) = value {
                             ctx.log_warning(&format!("FalkorDB: cache flush failed: {e}"));
                         }
+                        // Write telemetry
+                        let query_text = &query[wq.params_offset..];
+                        let params_text = &query[..wq.params_offset];
+                        let exec_ms = wq.execution_time_ms;
+                        let report_ms = (write_wall_ms - exec_ms).max(0.0);
+
+                        let entry = telemetry::TelemetryEntry {
+                            received_at,
+                            query: telemetry::truncate(query_text.trim_start()),
+                            params: telemetry::truncate(params_text.trim()),
+
+                            wait_duration_ms: 0.0,
+                            execution_duration_ms: exec_ms,
+                            report_duration_ms: report_ms,
+                            utilized_cache: read_result.cached,
+                            is_write: true,
+                            timed_out: false,
+                        };
+                        telemetry::write_to_stream(ctx, key_name, &entry);
                     }
                     Err(err) => {
                         g.graph.rollback();
@@ -808,6 +948,25 @@ fn query_sync(
                     }
                 }
                 drop(g);
+            } else {
+                // Read completed — write telemetry
+                let query_text = &query[read_result.params_offset..];
+                let params_text = &query[..read_result.params_offset];
+                let exec_ms = read_result.execution_time_ms;
+                let report_ms = (wall_ms - exec_ms).max(0.0);
+                let entry = telemetry::TelemetryEntry {
+                    received_at,
+                    query: telemetry::truncate(query_text.trim_start()),
+                    params: telemetry::truncate(params_text.trim()),
+
+                    wait_duration_ms: 0.0,
+                    execution_duration_ms: exec_ms,
+                    report_duration_ms: report_ms,
+                    utilized_cache: read_result.cached,
+                    is_write: false,
+                    timed_out: read_result.timed_out,
+                };
+                telemetry::write_to_stream(ctx, key_name, &entry);
             }
         }
         Err(err) => {
@@ -835,6 +994,11 @@ pub fn profile_mut(
     let query: Arc<str> = Arc::from(query);
     spawn(
         move || {
+            let mem_capacity = QUERY_MEM_CAPACITY.load(Ordering::Relaxed);
+            if mem_capacity > 0 {
+                reset_counter();
+                enable_tracking();
+            }
             let g = graph.clone();
             let binding = graph.clone();
             let graph_read = binding.read();
@@ -857,8 +1021,8 @@ pub fn profile_mut(
                         let res =
                             graph_write.execute_profile_write(&ctx2, &query, per_query_timeout);
                         match res {
-                            Ok((new_graph, _, _)) => {
-                                graph_write.graph.commit(new_graph);
+                            Ok(wq) => {
+                                graph_write.graph.commit(wq.graph);
                                 let value = graph_write.graph.read().borrow().maybe_flush_caches();
                                 if let Err(e) = value {
                                     ctx2.log_warning(&format!("FalkorDB: cache flush failed: {e}"));
@@ -884,6 +1048,9 @@ pub fn profile_mut(
                     unsafe { ffi::free_thread_safe_context(ctx.ctx) };
                 }
             }
+            if mem_capacity > 0 {
+                disable_tracking();
+            }
         },
         None,
     );
@@ -897,6 +1064,11 @@ fn profile_sync(
     _key_name: &Arc<str>,
     per_query_timeout: Option<i64>,
 ) -> RedisResult {
+    let mem_capacity = QUERY_MEM_CAPACITY.load(Ordering::Relaxed);
+    if mem_capacity > 0 {
+        reset_counter();
+        enable_tracking();
+    }
     let res = {
         let g = graph.read();
         g.execute_profile(ctx, query, per_query_timeout)
@@ -907,8 +1079,8 @@ fn profile_sync(
                 let mut g = graph.write();
                 let res = g.execute_profile_write(ctx, query, per_query_timeout);
                 match res {
-                    Ok((new_graph, _, _)) => {
-                        g.graph.commit(new_graph);
+                    Ok(wq) => {
+                        g.graph.commit(wq.graph);
                         let value = g.graph.read().borrow().maybe_flush_caches();
                         if let Err(e) = value {
                             ctx.log_warning(&format!("FalkorDB: cache flush failed: {e}"));
@@ -916,6 +1088,9 @@ fn profile_sync(
                     }
                     Err(err) => {
                         g.graph.rollback();
+                        if mem_capacity > 0 {
+                            disable_tracking();
+                        }
                         return Err(redis_module::RedisError::String(err));
                     }
                 }
@@ -923,8 +1098,14 @@ fn profile_sync(
             }
         }
         Err(err) => {
+            if mem_capacity > 0 {
+                disable_tracking();
+            }
             return Err(redis_module::RedisError::String(err));
         }
+    }
+    if mem_capacity > 0 {
+        disable_tracking();
     }
     Ok(RedisValue::NoReply)
 }
@@ -937,41 +1118,75 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
     {
         drop(g);
         let mut graph = graph.write();
-        // Outer loop guards against a lost-wakeup race: a sender may enqueue
-        // a message between the inner `try_recv` returning empty and the
-        // `store(false)` below. Such a sender's CAS would fail (write_loop
-        // was still true) and it would return without processing, leaving
-        // the message stranded. After clearing the flag we re-check the
-        // queue and re-acquire the flag if work remains.
         loop {
-            while let Ok((bc, query, compact, cached, key_name, per_query_timeout)) =
-                { graph.receiver.try_recv() }
-            {
+            while let Ok(msg) = { graph.receiver.try_recv() } {
+                let WriteMessage {
+                    bc,
+                    query,
+                    compact,
+                    cached,
+                    key_name,
+                    timeout: per_query_timeout,
+                    received_at,
+                    enqueue_instant,
+                    waiting_id,
+                } = *msg;
+                // Transition from waiting to running
+                let running_id = telemetry::transition_waiting_to_running(waiting_id);
+                let write_start = Instant::now();
+                let wait_ms = write_start.duration_since(enqueue_instant).as_secs_f64() * 1000.0;
                 let ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
                 let ctx = Context::new(ctx);
+                let mem_capacity = QUERY_MEM_CAPACITY.load(Ordering::Relaxed);
+                if mem_capacity > 0 {
+                    reset_counter();
+                    enable_tracking();
+                }
                 let res =
                     graph.execute_query_write(&ctx, &query, compact, cached, per_query_timeout);
+                if mem_capacity > 0 {
+                    disable_tracking();
+                }
+                let write_wall_ms = write_start.elapsed().as_secs_f64() * 1000.0;
+                if let Some(rid) = running_id {
+                    telemetry::unregister_running(rid);
+                }
                 match res {
-                    Ok((g, effects_buffer, modified)) => {
+                    Ok(wq) => {
                         // Signal the key as modified so WATCH gets triggered.
                         unsafe {
                             ffi::lock_thread_safe_ctx(ctx.ctx);
                             ffi::signal_modified_key(ctx.ctx, key_name.as_bytes());
                         };
                         // Send replication while GIL is held
-                        if modified {
-                            replicate_effects(&ctx, &key_name, effects_buffer, &query);
+                        if wq.modified {
+                            replicate_effects(&ctx, &key_name, wq.effects_buffer, &query);
                         }
+                        // Write telemetry while GIL is held
+                        let query_text = &query[wq.params_offset..];
+                        let params_text = &query[..wq.params_offset];
+                        let exec_ms = wq.execution_time_ms;
+                        let report_ms = (write_wall_ms - exec_ms).max(0.0);
+
+                        let entry = telemetry::TelemetryEntry {
+                            received_at,
+                            query: telemetry::truncate(query_text.trim_start()),
+                            params: telemetry::truncate(params_text.trim()),
+
+                            wait_duration_ms: wait_ms,
+                            execution_duration_ms: exec_ms,
+                            report_duration_ms: report_ms,
+                            utilized_cache: cached,
+                            is_write: true,
+                            timed_out: false,
+                        };
+                        telemetry::write_to_stream(&ctx, &key_name, &entry);
                         unsafe {
                             ffi::unlock_thread_safe_ctx(ctx.ctx);
                             ffi::free_thread_safe_context(ctx.ctx);
                         };
                         drop(bc);
-                        graph.graph.commit(g);
-                        // Flush dirty cache entries to fjall if over budget.
-                        // No Context is available here (thread-safe ctx already freed
-                        // to release the GIL before this non-Redis I/O), so log via
-                        // the module-level logging helper instead of borrowing one.
+                        graph.graph.commit(wq.graph);
                         let value = graph.graph.read().borrow().maybe_flush_caches();
                         if let Err(e) = value {
                             redis_module::logging::log_warning(format!(
@@ -987,15 +1202,9 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                         graph.graph.rollback();
                     }
                 }
-                // Yield between batched writes so other graph write loops
-                // (on different threadpool workers) can make progress.
                 std::thread::yield_now();
             }
             graph.write_loop.store(false, Ordering::Release);
-            // Re-check the queue: if a sender enqueued between the last
-            // `try_recv` and `store(false)`, its CAS failed and we must
-            // drain here. Try to re-acquire the flag; if another thread
-            // already grabbed it, it will drain the queue for us.
             if graph.receiver.is_empty() {
                 return;
             }

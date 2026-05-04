@@ -24,7 +24,9 @@
 //! write-serialization thread, and freeing GraphBLAS matrices) happens
 //! when Redis removes the key and the custom type's `free` callback fires.
 
-use crate::{commands::EMPTY_KEY_ERR, graph_core::ThreadedGraph, redis_type::GRAPH_TYPE};
+use crate::{
+    commands::EMPTY_KEY_ERR, graph_core::ThreadedGraph, redis_type::GRAPH_TYPE, telemetry,
+};
 use parking_lot::RwLock;
 use redis_module::{Context, NextArg, RedisError, RedisResult, RedisString};
 use std::sync::Arc;
@@ -39,11 +41,14 @@ pub fn graph_delete(
 
     let mut args = args.into_iter().skip(1);
     let key = args.next_arg()?;
+    let key_name = key.to_string_lossy();
     let key = ctx.open_key_writable(&key);
     if key
         .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?
         .is_some()
     {
+        // Delete the telemetry stream before removing the graph key.
+        telemetry::delete_stream(ctx, &key_name);
         key.delete()
     } else {
         EMPTY_KEY_ERR

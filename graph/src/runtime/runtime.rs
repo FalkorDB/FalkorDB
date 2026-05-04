@@ -50,11 +50,11 @@ use crate::{
         ops::{
             AggregateOp, AllShortestPathsOp, ApplyOp, CartesianProductOp, CommitOp, CondTraverseOp,
             CondVarLenTraverseOp, CreateOp, DeleteOp, DistinctOp, EdgeByFulltextScanOp,
-            EdgeByIndexScanOp, EdgeByVectorScanOp, ExpandIntoOp, FilterOp, ForEachOp, LimitOp,
-            LoadCsvOp, MergeOp, NodeByFulltextScanOp, NodeByIdSeekOp, NodeByIndexScanOp,
-            NodeByLabelAndIdScanOp, NodeByLabelScanOp, NodeByVectorScanOp, OptionalOp,
-            OrApplyMultiplexerOp, PathBuilderOp, ProcedureCallOp, ProjectOp, RemoveOp, SemiApplyOp,
-            SetOp, SkipOp, SortOp, UnionOp, UnwindOp, ValueHashJoinOp,
+            EdgeByIndexScanOp, EdgeByVectorScanOp, ExpandIntoOp, FilterOp, ForEachOp,
+            IncludePendingOp, LimitOp, LoadCsvOp, MergeOp, NodeByFulltextScanOp, NodeByIdSeekOp,
+            NodeByIndexScanOp, NodeByLabelAndIdScanOp, NodeByLabelScanOp, NodeByVectorScanOp,
+            OptionalOp, OrApplyMultiplexerOp, PathBuilderOp, ProcedureCallOp, ProjectOp, RemoveOp,
+            SemiApplyOp, SetOp, SkipOp, SortOp, UnionOp, UnwindOp, ValueHashJoinOp,
         },
         ordermap::OrderMap,
         orderset::OrderSet,
@@ -168,6 +168,10 @@ pub struct Runtime<'a> {
     pub profile_child_time: Cell<Duration>,
     /// Optional deadline for query timeout enforcement.
     pub deadline: Option<Instant>,
+    /// Maximum memory (bytes) a single query may consume. 0 = unlimited.
+    pub mem_capacity: i64,
+    /// Function pointer to read the current thread's net memory usage.
+    pub current_usage_fn: Option<fn() -> usize>,
 }
 
 pub trait GetVariables {
@@ -222,9 +226,10 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                 | IR::Limit(_)
                 | IR::Distinct
                 | IR::Commit
+                | IR::IncludePending { .. }
                 | IR::CreateIndex { .. }
                 | IR::DropIndex { .. } => {}
-                IR::NodeByLabelScan(node)
+                IR::NodeByLabelScan { node, .. }
                 | IR::AllNodeScan(node)
                 | IR::NodeByIndexScan { node, .. }
                 | IR::NodeByLabelAndIdScan { node, .. }
@@ -371,6 +376,8 @@ impl<'a> Runtime<'a> {
         result_set_size: i64,
         profile: bool,
         timeout_ms: Option<u64>,
+        mem_capacity: i64,
+        current_usage_fn: Option<fn() -> usize>,
     ) -> Self {
         let return_names = plan.root().get_return_names();
         let pending = Lazy::new((|| RefCell::new(Pending::new())) as fn() -> RefCell<Pending>);
@@ -401,6 +408,8 @@ impl<'a> Runtime<'a> {
             profile_data: RefCell::new(HashMap::new()),
             profile_child_time: Cell::new(Duration::ZERO),
             deadline: timeout_ms.map(|ms| Instant::now() + Duration::from_millis(ms)),
+            mem_capacity,
+            current_usage_fn,
         }
     }
 
@@ -412,6 +421,17 @@ impl<'a> Runtime<'a> {
             && Instant::now() >= deadline
         {
             return Err("Query timed out".to_string());
+        }
+        Ok(())
+    }
+
+    #[inline]
+    pub fn check_mem_capacity(&self) -> Result<(), String> {
+        if self.mem_capacity > 0
+            && let Some(usage_fn) = self.current_usage_fn
+            && usage_fn() as i64 > self.mem_capacity
+        {
+            return Err("Query's mem consumption exceeded capacity".to_string());
         }
         Ok(())
     }
@@ -565,17 +585,27 @@ impl<'a> Runtime<'a> {
         idx: NodeIdx<Dyn<IR>>,
     ) -> Result<BatchOp<'a>, String> {
         match self.plan.node(idx).data() {
-            IR::NodeByLabelScan(_) | IR::AllNodeScan(_) => {
+            IR::NodeByLabelScan { .. } | IR::AllNodeScan(_) => {
                 let child = self.child_batch_op(idx)?;
-                let (IR::NodeByLabelScan(node_pattern) | IR::AllNodeScan(node_pattern)) =
-                    self.plan.node(idx).data()
-                else {
-                    unreachable!()
+                let ir = self.plan.node(idx).data();
+                let node_pattern = match ir {
+                    IR::NodeByLabelScan { node } => node,
+                    IR::AllNodeScan(n) => n,
+                    _ => unreachable!(),
                 };
                 Ok(BatchOp::NodeByLabelScan(NodeByLabelScanOp::new(
                     self,
                     Box::new(child),
                     node_pattern,
+                    idx,
+                )))
+            }
+            IR::IncludePending { node } => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::IncludePending(IncludePendingOp::new(
+                    self,
+                    Box::new(child),
+                    node,
                     idx,
                 )))
             }

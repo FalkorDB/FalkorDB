@@ -72,6 +72,7 @@
 
 pub mod attribute_cache;
 pub mod attribute_store;
+pub mod constraint;
 pub mod cow;
 pub mod graph;
 pub mod graphblas;

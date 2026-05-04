@@ -69,7 +69,6 @@ Feature: Precedence3 - On list values
       | [[1], [2, 3], [4, 5], [6, 7], [8, 9]] | [[1], [2, 3], [4, 5], [6, 7], [8, 9]] | [[2, 3], [4, 5]] |
     And no side effects
 
-  @skip
   Scenario: [4] List appending takes precedence over list element containment
     Given an empty graph
     When executing query:
@@ -83,7 +82,6 @@ Feature: Precedence3 - On list values
       | false | false | [1, false, 4] |
     And no side effects
 
-  @skip
   Scenario: [5] List concatenation takes precedence over list element containment
     Given an empty graph
     When executing query:

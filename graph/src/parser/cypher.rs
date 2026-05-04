@@ -254,6 +254,11 @@ impl<'a> Parser<'a> {
             let vector = !fulltext && optional_match_token!(self.lexer => Vector);
             let index = optional_match_token!(self.lexer => Index);
             if !index {
+                if self.lexer.current_str().eq_ignore_ascii_case("constraint") {
+                    return Err(self.lexer.format_error(
+                        "Invalid constraint command use the GRAPH.CONSTRAINT command instead",
+                    ));
+                }
                 return Ok(None);
             }
             if !fulltext && !vector && optional_match_token!(self.lexer => On) {
@@ -344,6 +349,11 @@ impl<'a> Parser<'a> {
             let vector = !fulltext && optional_match_token!(self.lexer => Vector);
             let index = optional_match_token!(self.lexer => Index);
             if !index {
+                if self.lexer.current_str().eq_ignore_ascii_case("constraint") {
+                    return Err(self.lexer.format_error(
+                        "Invalid constraint command use the GRAPH.CONSTRAINT command instead",
+                    ));
+                }
                 return Ok(None);
             }
             if !fulltext && !vector && optional_match_token!(self.lexer => On) {

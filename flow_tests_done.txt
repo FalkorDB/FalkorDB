@@ -13,6 +13,7 @@ tests/flow/test_commands_registration.py
 tests/flow/test_comprehension_functions
 tests/flow/test_concurrent_query.py
 tests/flow/test_config.py
+tests/flow/test_constraint.py
 tests/flow/test_create_clause
 tests/flow/test_distinct
 tests/flow/test_edge_index_scans.py
@@ -28,8 +29,10 @@ tests/flow/test_filters
 tests/flow/test_foreach
 tests/flow/test_fulltext_query.py
 tests/flow/test_function_calls
+tests/flow/test_graph_copy.py
 tests/flow/test_graph_create
 tests/flow/test_graph_deletion
+tests/flow/test_graph_info.py
 tests/flow/test_graph_merge
 tests/flow/test_graph_versioning.py
 tests/flow/test_hashjoin.py
@@ -66,7 +69,9 @@ tests/flow/test_path_projections.py
 tests/flow/test_pending_queries_limit.py
 tests/flow/test_persistency.py
 tests/flow/test_point
+tests/flow/test_procedures.py
 tests/flow/test_profile.py
+tests/flow/test_query_mem_limit.py
 tests/flow/test_query_validation
 tests/flow/test_rdb_load.py
 tests/flow/test_reduce.py

@@ -44,12 +44,13 @@ mod redis_type;
 mod reply;
 mod serializers;
 mod slow_log;
+mod telemetry;
 
 use allocator::ThreadCountingAllocator;
 use commands::{
-    graph_bulk_insert, graph_config, graph_debug, graph_delete, graph_effect, graph_explain,
-    graph_list, graph_memory, graph_profile, graph_query, graph_record, graph_ro_query,
-    graph_slowlog, graph_udf,
+    graph_bulk_insert, graph_config, graph_constraint, graph_copy, graph_debug, graph_delete,
+    graph_effect, graph_explain, graph_info, graph_list, graph_memory, graph_profile, graph_query,
+    graph_record, graph_restore, graph_ro_query, graph_slowlog, graph_udf,
 };
 use config::{
     CONFIGURATION_CACHE_SIZE, CONFIGURATION_CMD_INFO, CONFIGURATION_DELAY_INDEXING,
@@ -69,6 +70,8 @@ redis_module! {
     init: graph_init,
     commands: [
         ["graph.DELETE", graph_delete, "write deny-script", 1, 1, 1, ""],
+        ["graph.COPY", graph_copy, "write deny-script", 1, 2, 1, ""],
+        ["graph.RESTORE", graph_restore, "write deny-script", 1, 1, 1, ""],
         ["graph.QUERY", graph_query, "write deny-oom deny-script blocking", 1, 1, 1, ""],
         ["graph.RO_QUERY", graph_ro_query, "readonly deny-script blocking", 1, 1, 1, ""],
         ["graph.EXPLAIN", graph_explain, "write deny-oom deny-script", 1, 1, 1, ""],
@@ -80,8 +83,10 @@ redis_module! {
         ["graph.UDF", graph_udf, "write deny-script", 0, 0, 0, ""],
         ["graph.DEBUG", graph_debug, "write deny-script", 0, 0, 0, ""],
         ["graph.EFFECT", graph_effect, "write deny-script", 1, 1, 1, ""],
+        ["graph.CONSTRAINT", graph_constraint, "write deny-script", 2, 2, 1, ""],
         ["graph.BULK", graph_bulk_insert, "write deny-oom deny-script", 1, 1, 1, ""],
         ["graph.SLOWLOG", graph_slowlog, "readonly deny-script", 1, 1, 1, ""],
+        ["graph.INFO", graph_info, "readonly deny-script allow-busy", 1, 1, 1, ""],
     ],
     configurations: [
         i64: [

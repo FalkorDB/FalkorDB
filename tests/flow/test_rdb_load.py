@@ -30,14 +30,14 @@ class testRdbLoad():
         aux = self.conn.execute_command("GRAPH.DEBUG", "AUX", "START")
         self.env.assertEqual(aux, 1)
 
-        # Dump all keys (graphdata + graphmeta virtual keys)
+        # Dump all keys (graphdata + graphmeta virtual keys + telemetry stream)
         all_keys = self.conn.keys('*')
-        self.env.assertEqual(len(all_keys), 3)  # 1 graphdata key + 2 graphmeta keys
+        self.env.assertEqual(len(all_keys), 4)  # 1 graphdata key + 2 graphmeta keys + 1 telemetry stream
         dumps = {}
         for key in all_keys:
             dumps[key] = self.conn.dump(key)
 
-        # Separate graphdata key from graphmeta keys
+        # Separate graphdata key from graphmeta keys (skip telemetry stream)
         graphdata_key = None
         graphmeta_keys = []
         for key in all_keys:
@@ -45,6 +45,8 @@ class testRdbLoad():
             key_str = key.decode() if isinstance(key, bytes) else key
             if key_str == 'x':
                 graphdata_key = key
+            elif key_str.startswith('telemetry'):
+                continue  # skip telemetry stream
             else:
                 graphmeta_keys.append(key)
 

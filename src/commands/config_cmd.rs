@@ -108,6 +108,14 @@ fn validate_config_set(
             }
             Ok(ConfigValue::Int(v))
         }
+        "ASYNC_DELETE" => {
+            let v = match value.to_lowercase().as_str() {
+                "yes" | "1" | "true" => 1i64,
+                "no" | "0" | "false" => 0i64,
+                _ => return Err(format!("Failed to set config value {name} to {value}")),
+            };
+            Ok(ConfigValue::Int(v))
+        }
         "RESULTSET_SIZE" => {
             let v: i64 = value
                 .parse()
@@ -145,7 +153,6 @@ fn validate_config_set(
         "THREAD_COUNT"
         | "OMP_THREAD_COUNT"
         | "CACHE_SIZE"
-        | "ASYNC_DELETE"
         | "NODE_CREATION_BUFFER"
         | "CMD_INFO"
         | "MAX_INFO_QUERIES"
@@ -222,6 +229,7 @@ fn apply_config_set(
             DELTA_MAX_PENDING_CHANGES.store(val.as_i64(), Ordering::Relaxed);
         }
         "EFFECTS_THRESHOLD" => EFFECTS_THRESHOLD.store(val.as_i64(), Ordering::Relaxed),
+        "ASYNC_DELETE" => ASYNC_DELETE.store(val.as_i64(), Ordering::Relaxed),
         "VKEY_MAX_ENTITY_COUNT" => {
             *CONFIGURATION_VKEY_MAX_ENTITY_COUNT.lock(ctx) = val.as_i64();
         }
