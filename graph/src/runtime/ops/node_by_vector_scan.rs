@@ -31,7 +31,11 @@ use thin_vec::ThinVec;
 pub struct NodeByVectorScanOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
-    pending: VecDeque<(Env<'a>, Box<dyn Iterator<Item = (NodeId, f64)>>)>,
+    /// Buffered KNN results pending emission across `next()` calls.
+    /// Must be cleared on `set_argument_batch` so a correlated plan
+    /// (Apply) doesn't replay stale rows from a previous outer
+    /// iteration when the inner side stops early.
+    pub(crate) pending: VecDeque<(Env<'a>, Box<dyn Iterator<Item = (NodeId, f64)>>)>,
     node: &'a Variable,
     label: &'a QueryExpr<Variable>,
     attr: &'a QueryExpr<Variable>,

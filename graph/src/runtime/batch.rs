@@ -764,8 +764,18 @@ impl<'a> BatchOp<'a> {
             Self::LoadCsv(op) => op.child.set_argument_batch(batch),
             Self::NodeByFulltextScan(op) => op.child.set_argument_batch(batch),
             Self::EdgeByFulltextScan(op) => op.child.set_argument_batch(batch),
-            Self::NodeByVectorScan(op) => op.child.set_argument_batch(batch),
-            Self::EdgeByVectorScan(op) => op.child.set_argument_batch(batch),
+            Self::NodeByVectorScan(op) => {
+                // Drop any KNN rows still queued from the previous
+                // outer iteration; otherwise correlated plans (Apply)
+                // can leak rows across outer batches when the inner
+                // side stops early.
+                op.pending.clear();
+                op.child.set_argument_batch(batch);
+            }
+            Self::EdgeByVectorScan(op) => {
+                op.pending.clear();
+                op.child.set_argument_batch(batch);
+            }
             Self::NodeByLabelAndIdScan(op) => op.child.set_argument_batch(batch),
             Self::CondVarLenTraverse(op) => op.child.set_argument_batch(batch),
             Self::AllShortestPaths(op) => op.child.set_argument_batch(batch),

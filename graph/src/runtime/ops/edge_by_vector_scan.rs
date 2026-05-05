@@ -25,7 +25,10 @@ use orx_tree::{Dyn, NodeIdx};
 pub struct EdgeByVectorScanOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
-    pending: VecDeque<(
+    /// Buffered KNN results pending emission — see the corresponding
+    /// field on `NodeByVectorScanOp` for why this must be cleared on
+    /// `set_argument_batch`.
+    pub(crate) pending: VecDeque<(
         Env<'a>,
         Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId, f64)>>,
     )>,

@@ -1367,11 +1367,14 @@ impl Index {
         }
     }
 
-    /// Execute a KNN vector query and yield `(entity_id, distance)`
-    /// pairs ordered by ascending distance. The C API's
-    /// `RediSearch_CreateVecSimNode` defaults to `BY_SCORE` ordering,
-    /// so the iterator yields results in distance order; the per-row
-    /// distance is read via `RediSearch_ResultsIteratorGetScore`.
+    /// Execute a KNN vector query and yield `(entity_id, score)`
+    /// pairs in HNSW iteration order. The yielded `score` is the
+    /// raw RediSearch relevance score read via
+    /// `RediSearch_ResultsIteratorGetScore` — *not* the metric
+    /// distance. Callers that need the actual distance under the
+    /// configured similarity function should look up each entity's
+    /// vector and compute it themselves
+    /// (see [`Graph::vector_query_nodes`]).
     ///
     /// `vector` must be a dense `f32` slice whose length matches the
     /// indexed dimension; `field` is the property name used at index
@@ -1427,9 +1430,10 @@ impl Index {
     }
 
     /// Like [`vector_query`], but for *edge* indexes: yields
-    /// `(src, dst, edge_id, distance)` tuples. Mirrors
-    /// [`fulltext_query_edges`] in how the 24-byte `[u64; 3]` key is
-    /// read. Should only be called on edge indexes.
+    /// `(src, dst, edge_id, score)` tuples — same caveat applies,
+    /// `score` is the raw RediSearch score, not the metric distance.
+    /// Mirrors [`fulltext_query_edges`] in how the 24-byte `[u64; 3]`
+    /// key is read. Should only be called on edge indexes.
     pub fn vector_query_edges(
         &self,
         field: &str,

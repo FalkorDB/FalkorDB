@@ -2741,6 +2741,12 @@ impl Graph {
                 out.push((node_id, d));
             }
         }
+        // HNSW returns rows in (approximate) score order, but the
+        // distance we recompute here may diverge slightly from
+        // VecSim's internal ranking (different precision, different
+        // reduction order). Sort by the value we actually expose so
+        // the documented ascending-distance contract holds.
+        out.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         Ok(out.into_iter())
     }
 
@@ -2781,6 +2787,9 @@ impl Graph {
                 out.push((NodeId(src), NodeId(dst), edge_id, d));
             }
         }
+        // See `vector_query_nodes` for why we sort by recomputed
+        // distance instead of trusting the upstream HNSW order.
+        out.sort_by(|a, b| a.3.partial_cmp(&b.3).unwrap_or(std::cmp::Ordering::Equal));
         Ok(out.into_iter())
     }
 

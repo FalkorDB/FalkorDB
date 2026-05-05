@@ -255,6 +255,11 @@ impl Indexer {
             // structures, breaking searches against the previously-
             // indexed fields. Mirrors C `Index_Disable`'s drop+rebuild
             // — see `_Index_PopulateNodeIndex` semantics in C FalkorDB.
+            //
+            // `recreate_index` re-registers every field in
+            // `self.fields()` (which already includes `new_fields`
+            // inserted above), so no separate `register_fields` call
+            // is needed in this branch.
             label_indexes.recreate_index(label)?;
         } else {
             let effective_stopwords = stopwords
@@ -268,9 +273,8 @@ impl Indexer {
                 effective_stopwords.as_ref(),
                 effective_language.as_ref(),
             )?;
+            label_indexes.register_fields(&new_fields, field_options.as_ref())?;
         }
-
-        label_indexes.register_fields(&new_fields, field_options.as_ref())?;
 
         // Update the label indexes with global settings
         // Default to "english" for fulltext indexes when no language is specified,
