@@ -148,6 +148,24 @@ void UpdateCtx_Clear
 	EntityUpdateDesc *ctx
 ) ;
 
+// clean up redundant expressions
+// following last write wins
+//
+// e.g.
+// SET n.v = 1, n.v = 2
+//
+// should result in a single expression n.v = 2
+//
+// similarly
+// SET n.v = 1, n.v = 2, n = m, n.v = 3
+//
+// should result in two expressions
+// n = m and n.v = 3
+void UpdateCtx_RemoveRedundancies
+(
+	EntityUpdateDesc *desc
+) ;
+
 void UpdateCtx_Free
 (
 	EntityUpdateDesc *ctx

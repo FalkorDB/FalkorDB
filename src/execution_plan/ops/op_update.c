@@ -13,10 +13,10 @@
 #include "../../util/rax_extensions.h"
 
 // forward declarations
-static Record UpdateConsume(OpBase *opBase);
-static OpResult UpdateReset(OpBase *opBase);
-static OpBase *UpdateClone(const ExecutionPlan *plan, const OpBase *opBase);
-static void UpdateFree(OpBase *opBase);
+static Record UpdateConsume (OpBase *opBase) ;
+static OpResult UpdateReset (OpBase *opBase) ;
+static OpBase *UpdateClone (const ExecutionPlan *plan, const OpBase *opBase) ;
+static void UpdateFree (OpBase *opBase) ;
 
 static Record _handoff
 (
@@ -52,7 +52,7 @@ OpBase *NewUpdateOp
 	raxSeek (&op->it, "^", NULL, 0) ;
 	while (raxNext (&op->it)) {
 		EntityUpdateDesc *desc = op->it.data ;
-		ctx->record_idx = OpBase_Modifies ((OpBase *)op, desc->alias) ;
+		desc->record_idx = OpBase_Modifies ((OpBase *)op, desc->alias) ;
 	}
 
 	return (OpBase *)op ;
@@ -62,26 +62,37 @@ static Record UpdateConsume
 (
 	OpBase *opBase
 ) {
-	OpUpdate *op = (OpUpdate *)opBase ;
-	OpBase *child = op->op.children[0] ;
+	OpUpdate *op = (OpUpdate *) opBase ;
+	OpBase *child = op->op.children [0] ;
 
 	// updates already performed
 	if (array_len (op->records) > 0) {
 		return _handoff (op) ;
 	}
 
+	// drain child
 	Record r ;
 	while ((r = OpBase_Consume (child))) {
-		// evaluate update expressions
-		raxSeek (&op->it, "^", NULL, 0) ;
-		while (raxNext (&op->it)) {
-			EntityUpdateDesc *desc = op->it.data ;
-			EvalEntityUpdates (op->gc, op->staged_updates, r, desc, true) ;
-		}
-
 		array_append (op->records, r) ;
 	}
-	
+
+	// evaluate update expressions
+	raxSeek (&op->it, "^", NULL, 0) ;
+	while (raxNext (&op->it)) {
+		EntityUpdateDesc *desc = op->it.data ;
+
+		if (!EvalUpdates (op->gc, op->staged_updates, op->records,
+				array_len (op->records), &desc, 1, true)) {
+			break ;
+		}
+	}
+
+	// quickly return NULL incase we've encountered an error while evaluating
+	// updates
+	if (ErrorCtx_EncounteredError ()) {
+		return NULL ;
+	}
+
 	if (StagedUpdatesCtx_HasNodeUpdates (op->staged_updates) ||
 		StagedUpdatesCtx_HasEdgeUpdates (op->staged_updates)) {
 		// done reading; we're not going to call Consume any longer
@@ -90,15 +101,15 @@ static Record UpdateConsume
 		// free all ExecutionPlan operations up the chain
 		OpBase_PropagateReset (child) ;
 
-		// lock everything
-		QueryCtx_LockForCommit () ;
-
 		// in cases such as:
 		// MATCH (n) SET n:L
 		// make sure L is of the right dimensions
 		if (StagedUpdatesCtx_HasNodeUpdates (op->staged_updates)) {
-			ensureMatrixDim (op->gc, op->update_ctxs) ;
+			ensureMatrixDim (op->gc, op->staged_updates) ;
 		}
+
+		// lock everything
+		QueryCtx_LockForCommit () ;
 
 		CommitUpdates (op->gc, op->staged_updates) ;
 	}

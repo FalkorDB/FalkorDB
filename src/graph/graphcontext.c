@@ -630,11 +630,11 @@ AttributeID GraphContext_FindOrAddAttribute
 	// release the lock
 	pthread_rwlock_unlock(&gc->_attribute_rwlock);
 
-	if(created) {
-		*created = created_flag;
+	if (created) {
+		*created = created_flag ;
 	}
 
-	return (uintptr_t)attribute_id;
+	return (uintptr_t) attribute_id ;
 }
 
 const char *GraphContext_GetAttributeString

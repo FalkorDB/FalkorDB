@@ -408,8 +408,8 @@ class testEntityUpdate():
                 self.multiple_entity_graph.query(query)
                 self.env.assertTrue(False)
             except ResponseError as e:
-                self.env.assertContains("Type mismatch: expected Node but was Relationship", str(e))
-    
+                self.env.assertContains("Label addition / removal can't be performed on an edge", str(e))
+
 
     def test_26_fail_update_label_for_constant(self):
         queries = ["WITH 1 AS x SET x:L"]
@@ -514,13 +514,14 @@ class testEntityUpdate():
                 self.env.assertContains("Invalid input 'R':", str(e))
 
     def test_34_fail_remove_labels_for_edge(self):
-        queries = ["MATCH ()-[r]->() REMOVE r:L RETURN 1", "MATCH (n)-[r]->(m) WITH n, r, m UNWIND [n, r, m] AS x REMOVE x:L RETURN 1"]
+        queries = ["MATCH ()-[r]->() REMOVE r:L RETURN 1",
+                   "MATCH (n)-[r]->(m) WITH n, r, m UNWIND [n, r, m] AS x REMOVE x:L RETURN 1"]
         for query in queries:
             try:
                 self.multiple_entity_graph.query(query)
                 self.env.assertTrue(False)
             except ResponseError as e:
-                self.env.assertContains("Type mismatch: expected Node but was Relationship", str(e))
+                self.env.assertContains("Label addition / removal can't be performed on an edge", str(e))
     
     def test_35_fail_remove_label_for_constant(self):
         queries = ["WITH 1 AS x REMOVE x:L RETURN x"]

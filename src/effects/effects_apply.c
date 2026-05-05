@@ -247,9 +247,9 @@ static void ApplyCreateEdge
 
 static void ApplyLabels
 (
-	FILE *stream,     // effects stream
-	GraphContext *gc, // graph to operate on
-	bool add          // add or remove labels
+	FILE *stream,      // effects stream
+	GraphContext *gc,  // graph to operate on
+	bool add           // add or remove labels
 ) {
 	//--------------------------------------------------------------------------
 	// effect format:
@@ -272,9 +272,7 @@ static void ApplyLabels
 
 	Node  n ;
 	Graph *g = gc->g ;
-
-	bool found = Graph_GetNode (g, id, &n) ;
-	ASSERT (found == true) ;
+	ASSERT (Graph_GetNode (g, id, &n) == true) ;
 
 	//--------------------------------------------------------------------------
 	// read labels count
@@ -284,21 +282,7 @@ static void ApplyLabels
 	fread_assert (&lbl_count, sizeof (lbl_count), stream) ;
 	ASSERT (lbl_count > 0) ;
 
-	// TODO: move to LabelID
-	uint n_add_labels          = 0 ;
-	uint n_remove_labels       = 0 ;
-	const char **add_labels    = NULL ;
-	const char **remove_labels = NULL ;
-	const char *lbl[lbl_count] ;
-
-	// assign lbl to the appropriate array
-	if (add) {
-		add_labels = lbl ;
-		n_add_labels = lbl_count ;
-	} else {
-		remove_labels = lbl ;
-		n_remove_labels = lbl_count ;
-	}
+	GrB_Vector lbls [lbl_count] ;
 
 	//--------------------------------------------------------------------------
 	// read labels
@@ -309,15 +293,60 @@ static void ApplyLabels
 		fread_assert (&l, sizeof (LabelID), stream) ;
 		Schema *s = GraphContext_GetSchemaByID (gc, l, SCHEMA_NODE) ;
 		ASSERT (s != NULL) ;
-		lbl[i] = Schema_GetName (s) ;
+
+		GrB_Vector V = NULL ;
+		GrB_OK (GrB_Vector_new (&V, GrB_BOOL, Graph_NodeCap (g))) ;
+		GrB_OK (GrB_set (V, (char*) Schema_GetName (s), GrB_NAME)) ;
+		GrB_OK (GrB_Vector_setElement (V, true, id)) ;
+		lbls [i] = V ;
 	}
 
 	//--------------------------------------------------------------------------
 	// update node labels
 	//--------------------------------------------------------------------------
 
-	GraphHub_UpdateNodeLabels (gc, &n, add_labels, remove_labels, n_add_labels,
-			n_remove_labels, false) ;
+	if (add) {
+		GraphHub_UpdateNodeLabels (gc, lbls, lbl_count, NULL, 0, false) ;
+	} else {
+		GraphHub_UpdateNodeLabels (gc, NULL, 0, lbls, lbl_count, false) ;
+	}
+
+	// clean up
+	for (uint16_t i = 0; i < lbl_count; i++) {
+		GrB_OK (GrB_free (lbls + i)) ;
+	}
+}
+
+// effect format:
+//   [EffectType]         effect type tag
+//   [GxB serialized]     GxB_Vector_serialize blob of the node vector
+static void ApplyLabels_V2
+(
+	FILE *stream,      // effects stream
+	GraphContext *gc,  // graph to operate on
+	bool add           // add or remove labels
+) {
+
+	GrB_Index blob_size = 0 ;
+	fread_assert (&blob_size, sizeof(blob_size), stream) ;
+	ASSERT (blob_size > 0) ;
+
+	void *blob = rm_malloc (blob_size) ;
+	fread_assert (blob, blob_size, stream) ;
+
+	GrB_Vector w = NULL ;
+	GrB_OK (GxB_Vector_deserialize (&w, NULL, blob, blob_size, NULL)) ;
+
+	rm_free (blob) ;
+
+	if (add) {
+		GraphHub_UpdateNodeLabels (gc, &w, 1, NULL, 0, false) ;
+	} else {
+		GraphHub_UpdateNodeLabels (gc, NULL, 0, &w, 1, false) ;
+	}
+
+	// clean up
+	GrB_OK (GrB_free (&w)) ;
 }
 
 static void ApplyAddSchema
@@ -617,23 +646,24 @@ static void ApplyDeleteEdge
 // returns false in case of effect encode/decode version mismatch
 static bool ValidateVersion
 (
-	FILE *stream  // effects stream
+	FILE *stream,  // effects stream
+	uint8_t *v
 ) {
-	ASSERT(stream != NULL);
+	ASSERT (v      != NULL) ;
+	ASSERT (stream != NULL) ;
 
 	// read version
-	uint8_t v;
-	fread_assert(&v, sizeof(uint8_t), stream);
+	fread_assert (v, sizeof (uint8_t), stream) ;
 
-	if(v != EFFECTS_VERSION) {
+	if (*v > EFFECTS_VERSION) {
 		// unexpected effects version
-		RedisModule_Log(NULL, "warning",
-				"GRAPH.EFFECT version mismatch expected: %d got: %d",
-				EFFECTS_VERSION, v);
-		return false;
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT version mismatch expected version <= %d got: %d",
+				EFFECTS_VERSION, *v) ;
+		return false ;
 	}
 
-	return true;
+	return true ;
 }
 
 // applys effects encoded in buffer
@@ -644,24 +674,25 @@ void Effects_Apply
 	size_t l                   // size of buffer
 ) {
 	// validations
-	ASSERT(l > 0);  // buffer can't be empty
-	ASSERT(effects_buff != NULL);  // buffer can't be NULL
+	ASSERT (l > 0) ;  // buffer can't be empty
+	ASSERT (effects_buff != NULL) ;  // buffer can't be NULL
 
 	// read buffer in a stream fashion
 	FILE *stream = fmemopen((void*)effects_buff, l, "r");
 
 	// validate effects version
-	if(ValidateVersion(stream) == false) {
+	uint8_t version ;
+	if (ValidateVersion(stream, &version) == false) {
 		// replica/primary out of sync
-		exit(1);
+		exit (1) ;
 	}
 
 	// lock graph for writing
-	Graph *g = GraphContext_GetGraph(gc);
-	Graph_AcquireWriteLock(g);
+	Graph *g = GraphContext_GetGraph (gc) ;
+	Graph_AcquireWriteLock (g) ;
 
 	// update graph sync policy
-	MATRIX_POLICY policy = Graph_SetMatrixPolicy(g, SYNC_POLICY_RESIZE);
+	MATRIX_POLICY policy = Graph_SetMatrixPolicy (g, SYNC_POLICY_RESIZE) ;
 
 	// as long as there's data in stream
 	while (ftell (stream) < l) {
@@ -671,33 +702,51 @@ void Effects_Apply
 			case EFFECT_DELETE_NODE:
 				ApplyDeleteNode (stream, gc, l) ;
 				break ;
+
 			case EFFECT_DELETE_EDGE:
 				ApplyDeleteEdge (stream, gc, l) ;
 				break ;
+
 			case EFFECT_UPDATE_NODE:
 				ApplyUpdateNode (stream, gc) ;
 				break ;
+
 			case EFFECT_UPDATE_EDGE:
 				ApplyUpdateEdge (stream, gc) ;
 				break ;
+
 			case EFFECT_CREATE_NODE:    
 				ApplyCreateNode (stream, gc) ;
 				break ;
+
 			case EFFECT_CREATE_EDGE:
 				ApplyCreateEdge (stream, gc, l) ;
 				break ;
+
 			case EFFECT_SET_LABELS:
-				ApplyLabels (stream, gc, true) ;
+				if (unlikely (version == 1)) {
+					ApplyLabels (stream, gc, true) ;
+				} else {
+					ApplyLabels_V2 (stream, gc, true) ;
+				}
 				break ;
+
 			case EFFECT_REMOVE_LABELS: 
-				ApplyLabels (stream, gc, false) ;
+				if (unlikely (version == 1)) {
+					ApplyLabels (stream, gc, false) ;
+				} else {
+					ApplyLabels_V2 (stream, gc, false) ;
+				}
 				break ;
+
 			case EFFECT_ADD_SCHEMA:
 				ApplyAddSchema (stream, gc) ;
 				break ;
+
 			case EFFECT_ADD_ATTRIBUTE:
 				ApplyAddAttribute (stream, gc) ;
 				break ;
+
 			default:
 				ASSERT (false && "unknown effect type") ;
 				break ;
@@ -705,12 +754,12 @@ void Effects_Apply
 	}
 
 	// restore graph sync policy
-	Graph_SetMatrixPolicy(g, policy);
+	Graph_SetMatrixPolicy (g, policy) ;
 
 	// release write lock
-	Graph_ReleaseLock(g);
+	Graph_ReleaseLock (g) ;
 
 	// close stream
-	fclose(stream);
+	fclose (stream) ;
 }
 

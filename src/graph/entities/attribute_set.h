@@ -15,6 +15,10 @@
 // indicates all attributes for SET clauses that replace a property map
 #define ATTRIBUTE_ID_ALL USHRT_MAX - 1
 
+// turn MSB of attribute-set on, marking it read-only
+#define ATTRIBUTE_SET_MARK_READONLY(set) \
+	do { *(set) = (AttributeSet)((intptr_t)*(set) | MSB_MASK); } while(0)
+
 typedef uint16_t AttributeID;
 
 // forward-declare the struct, without defining it

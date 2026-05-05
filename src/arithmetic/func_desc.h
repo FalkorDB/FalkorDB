@@ -73,7 +73,7 @@ AR_FuncDesc *AR_FuncDescNew
 	SIType ret_type,  // return type
 	bool internal,    // is function internal
 	bool reducible,   // is function reducible
-  bool deterministic  // true if return value is predictable
+	bool deterministic  // true if return value is predictable
 );
 
 // register function to repository
@@ -112,7 +112,7 @@ AR_FuncDesc *AR_GetFunc
 // get function return type
 SIType AR_FuncDesc_RetType
 (
-	const AR_FuncDesc *func	
+	const AR_FuncDesc *func
 );
 
 // check to see if function exists

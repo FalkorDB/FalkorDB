@@ -741,79 +741,70 @@ void EffectsBuffer_AddEntityUpdateAttributeEffect
 	}
 }
 
-// add a node add label effect to buffer
-void EffectsBuffer_AddSetRemoveLabelsEffect
-(
-	EffectsBuffer *buff,     // effect buffer
-	const Node *node,        // updated node
-	const LabelID *lbl_ids,  // labels
-	uint8_t lbl_count,       // number of labels
-	EffectType t             // effect type
-) {
-	//--------------------------------------------------------------------------
-	// effect format:
-	//    effect type
-	//    node ID
-	//    labels count
-	//    label IDs
-	//--------------------------------------------------------------------------
-
-	EffectsBuffer_WriteBytes(&t, sizeof(t), buff);
-
-	// write node ID
-	EffectsBuffer_WriteBytes(&ENTITY_GET_ID(node), sizeof(EntityID), buff); 
-	
-	// write labels count
-	EffectsBuffer_WriteBytes(&lbl_count, sizeof(lbl_count), buff); 
-	
-	// write label IDs
-	EffectsBuffer_WriteBytes(lbl_ids, sizeof(LabelID) * lbl_count, buff);
-
-	EffectsBuffer_IncEffectCount(buff);
-}
-
-// add a node add labels effect to buffer
+// records a SET_LABELS effect into the buffer:
+// writes the effect type followed by the serialized node vector
+//
+// effect format:
+//   [EffectType]         effect type tag
+//   [GxB serialized]     GxB_Vector_serialize blob of the node vector
+//
+// TODO: move result-set stats update out of here
 void EffectsBuffer_AddLabelsEffect
 (
-	EffectsBuffer *buff,     // effect buffer
-	const Node *node,        // updated node
-	const LabelID *lbl_ids,  // added labels
-	size_t lbl_count         // number of removed labels
+	EffectsBuffer *buff,  // effect buffer to write into
+	GrB_Vector nodes      // nodes that received the label
 ) {
-	//--------------------------------------------------------------------------
-	// effect format:
-	//    effect type
-	//    node ID
-	//    labels count
-	//    label IDs
-	//--------------------------------------------------------------------------
-
-	QueryCtx_GetResultSetStatistics()->labels_added += lbl_count;
+	GrB_Index nvals ;
+	GrB_OK (GrB_Vector_nvals (&nvals, nodes)) ;
+	QueryCtx_GetResultSetStatistics ()->labels_added += nvals ;
 
 	EffectType t = EFFECT_SET_LABELS;
-	EffectsBuffer_AddSetRemoveLabelsEffect(buff, node, lbl_ids, lbl_count, t);
+	EffectsBuffer_WriteBytes (&t, sizeof (t), buff) ;
+
+	// encode vector
+	void *blob ;
+	GrB_Index blob_size ;
+	GrB_OK (GxB_Vector_serialize (&blob, &blob_size, nodes, NULL)) ;
+
+	EffectsBuffer_WriteBytes (&blob_size, sizeof (blob_size), buff) ;
+	EffectsBuffer_WriteBytes (blob, blob_size, buff) ;
+
+	rm_free (blob) ;
+
+	EffectsBuffer_IncEffectCount (buff) ;
 }
 
-// add a node remove labels effect to buffer
+// records a REMOVE_LABELS effect into the buffer:
+// writes the effect type followed by the serialized node vector
+//
+// effect format:
+//   [EffectType]         effect type tag
+//   [GxB serialized]     GxB_Vector_serialize blob of the node vector
+//
+// TODO: move result-set stats update out of here
 void EffectsBuffer_AddRemoveLabelsEffect
 (
-	EffectsBuffer *buff,     // effect buffer
-	const Node *node,        // updated node
-	const LabelID *lbl_ids,  // removed labels
-	size_t lbl_count         // number of removed labels
+	EffectsBuffer *buff,  // effect buffer to write into
+	GrB_Vector     nodes  // nodes that lost the label
 ) {
-	//--------------------------------------------------------------------------
-	// effect format:
-	//    effect type
-	//    node ID
-	//    labels count
-	//    label IDs
-	//--------------------------------------------------------------------------
+	GrB_Index nvals ;
+	GrB_OK (GrB_Vector_nvals (&nvals, nodes)) ;
+	QueryCtx_GetResultSetStatistics ()->labels_removed += nvals ;
 
-	QueryCtx_GetResultSetStatistics()->labels_removed += lbl_count;
+	EffectType t = EFFECT_REMOVE_LABELS ;
+	EffectsBuffer_WriteBytes (&t, sizeof (t), buff) ;
 
-	EffectType t = EFFECT_REMOVE_LABELS;
-	EffectsBuffer_AddSetRemoveLabelsEffect(buff, node, lbl_ids, lbl_count, t);
+	// encode vector
+	void *blob ;
+	GrB_Index blob_size ;
+	GrB_OK (GxB_Vector_serialize (&blob, &blob_size, nodes, NULL)) ;
+
+	EffectsBuffer_WriteBytes (&blob_size, sizeof (blob_size), buff) ;
+	EffectsBuffer_WriteBytes (blob, blob_size, buff) ;
+
+	rm_free (blob) ;
+
+	EffectsBuffer_IncEffectCount (buff) ;
 }
 
 // add a schema addition effect to buffer

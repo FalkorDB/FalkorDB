@@ -279,14 +279,15 @@ Graph *QueryCtx_GetGraph(void) {
 }
 
 // retrieve undo log
-UndoLog QueryCtx_GetUndoLog(void) {
-	QueryCtx *ctx = _QueryCtx_GetCtx();
-	ASSERT(ctx != NULL);
+UndoLog QueryCtx_GetUndoLog (void) {
+	QueryCtx *ctx = _QueryCtx_GetCtx () ;
+	ASSERT (ctx != NULL) ;
 	
-	if(ctx->undo_log == NULL) {
-		ctx->undo_log = UndoLog_New();
+	if (ctx->undo_log == NULL) {
+		ctx->undo_log = UndoLog_New () ;
 	}
-	return ctx->undo_log;
+
+	return ctx->undo_log ;
 }
 
 // rollback the current command
@@ -296,10 +297,11 @@ void QueryCtx_Rollback(void) {
 
 	Graph_ResetReservedNode(ctx->gc->g);
 
-	if(ctx->undo_log == NULL) return;
+	if (ctx->undo_log == NULL) {
+		return ;
+	}
 	
-	UndoLog_Rollback(ctx->undo_log, ctx->gc);
-	ctx->undo_log = NULL;
+	UndoLog_Rollback (&ctx->undo_log) ;
 }
 
 // retrieve effects-buffer
@@ -513,13 +515,12 @@ uint64_t QueryCtx_GetReceivedTS (void) {
 }
 
 // free the allocations within the QueryCtx and reset it for the next query
-void QueryCtx_Free(void) {
-	QueryCtx *ctx = _QueryCtx_GetCtx();
-	ASSERT(ctx != NULL);
+void QueryCtx_Free (void) {
+	QueryCtx *ctx = _QueryCtx_GetCtx () ;
+	ASSERT (ctx != NULL) ;
 
 	if (ctx->undo_log) {
-		UndoLog_Free (ctx->undo_log) ;
-		ctx->undo_log = NULL ;
+		UndoLog_Free (&ctx->undo_log) ;
 	}
 
 	EffectsBuffer_Free (ctx->effects_buffer) ;

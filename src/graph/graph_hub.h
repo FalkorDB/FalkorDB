@@ -133,19 +133,34 @@ void GraphHub_UpdateEdgeProperty
 	SIValue v                     // new attribute value
 );
 
-// this function sets the labels given in the rax "labels" to the given node
-// creates the label matrix if not exists
-// adds node to the label matrix
-// updates the relevant indexes of the entity
+// applies pending label additions and removals to the graph, dispatching to
+// single-element or bulk GraphBLAS operations based on the number of affected
+// nodes per label
+//
+// for each label vector in add_labels:
+//   - if nvals < LABEL_BATCH_THRESHOLD: _LabelNodes_Single
+//   - otherwise:                        _LabelNodes_Bulk
+//
+// for each label vector in rmv_labels:
+//   - if nvals < LABEL_BATCH_THRESHOLD: _UnLabelNodes_Single
+//   - otherwise:                        _UnLabelNodes_Bulk
+//
+// both add and remove passes are applied when both arrays are provided
+// each vector in add_labels and rmv_labels must be named (GrB_NAME) with
+// the target label name — unnamed vectors are a programming error
+//
+// add_labels and rmv_labels are assumed to be disjoint; a label appearing
+// in both arrays in the same call produces undefined behavior
 void GraphHub_UpdateNodeLabels
 (
-	GraphContext *gc,            // graph context to update the entity
-	Node *node,                  // the node to be updated
-	const char **add_labels,     // labels to add to the node
-	const char **remove_labels,  // labels to add to the node
-	uint n_add_labels,           // number of labels to add
-	uint n_remove_labels,        // number of labels to remove
-	bool log                     // log this operation in undo-log
+    GraphContext  *gc,           // graph context
+    GrB_Vector    *add_labels,   // per-label vectors for nodes to label;
+                                 // NULL if no labels to add
+    uint           n_add_labels, // number of vectors in add_labels (0 if NULL)
+    GrB_Vector    *rmv_labels,   // per-label vectors for nodes to unlabel;
+                                 // NULL if no labels to remove
+    uint           n_rmv_labels, // number of vectors in rmv_labels (0 if NULL)
+    bool           log           // if true, record in undo-log and effects buffer
 );
 
 // Adds a schema to the graph. The schema is tracked by the undo log

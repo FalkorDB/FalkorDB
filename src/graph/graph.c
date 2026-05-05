@@ -767,29 +767,29 @@ void Graph_LabelNode
 	uint lbl_count  // number of labels
 ) {
 	// validations
-	ASSERT(g != NULL);
-	ASSERT(lbls != NULL);
-	ASSERT(lbl_count > 0);
-	ASSERT(id != INVALID_ENTITY_ID);
+	ASSERT (g         != NULL) ;
+	ASSERT (id        != INVALID_ENTITY_ID) ;
+	ASSERT (lbls      != NULL) ;
+	ASSERT (lbl_count > 0) ;
 
-	GrB_Info info;
-	UNUSED(info);
+	GrB_Info info ;
+	UNUSED (info) ;
 
-	Delta_Matrix nl = Graph_GetNodeLabelMatrix(g);
-	for(uint i = 0; i < lbl_count; i++) {
-		LabelID l = lbls[i];
-		Delta_Matrix L = Graph_GetLabelMatrix(g, l);
+	Delta_Matrix nl = Graph_GetNodeLabelMatrix (g) ;
+	for (uint i = 0; i < lbl_count; i++) {
+		LabelID l = lbls [i] ;
+		Delta_Matrix L = Graph_GetLabelMatrix (g, l) ;
 
 		// set matrix at position [id, id]
-		info = Delta_Matrix_setElement_BOOL(L, id, id);
-		ASSERT(info == GrB_SUCCESS);
+		info = Delta_Matrix_setElement_BOOL (L, id, id) ;
+		ASSERT (info == GrB_SUCCESS) ;
 
 		// map this label in this node's set of labels
-		info = Delta_Matrix_setElement_BOOL(nl, id, l);
-		ASSERT(info == GrB_SUCCESS);
+		info = Delta_Matrix_setElement_BOOL (nl, id, l) ;
+		ASSERT (info == GrB_SUCCESS) ;
 
 		// update labels statistics
-		GraphStatistics_IncNodeCount(&g->stats, l, 1);
+		GraphStatistics_IncNodeCount (&g->stats, l, 1) ;
 	}
 }
 
@@ -1308,11 +1308,11 @@ bool Graph_LookupEdgeRelationID
 	ASSERT(g    != NULL);
 	ASSERT(edge != NULL);
 	ASSERT((rels && n_rels > 0) || (rels == NULL && n_rels == 0));
-	
+
 	GrB_Info info;
 
 	uint64_t  x      = 0;
-	Tensor    R      = NULL; 
+	Tensor    R      = NULL;
 	EntityID  id     = ENTITY_GET_ID(edge);
 	bool      found  = false;
 	GrB_Index srcID  = Edge_GetSrcNodeID(edge);
