@@ -482,18 +482,22 @@ setup_build_environment() {
 
     # Setup compiler flags
     if [[ "$OS" == "macos" ]]; then
-        export CC="${CC:-clang}"
-        export CXX="${CXX:-clang++}"
-
         # Prefer Homebrew LLVM (has OpenMP) over Apple's clang (does not)
         # This prevents cmake from restarting mid-configure due to compiler change
-        if command -v brew &>/dev/null; then
-            _llvm_prefix="$(brew --prefix llvm 2>/dev/null || true)"
-            if [[ -n "$_llvm_prefix" && -x "$_llvm_prefix/bin/clang" ]]; then
-                export CC="${CC:-${_llvm_prefix}/bin/clang}"
-                export CXX="${CXX:-${_llvm_prefix}/bin/clang++}"
-            fi
-        fi
+		if command -v brew &>/dev/null; then
+			_llvm_prefix="$(brew --prefix llvm 2>/dev/null || true)"
+
+			if [[ -z "${CC:-}" && -n "$_llvm_prefix" && -x "$_llvm_prefix/bin/clang" ]]; then
+				export CC="${_llvm_prefix}/bin/clang"
+			fi
+
+			if [[ -z "${CXX:-}" && -n "$_llvm_prefix" && -x "$_llvm_prefix/bin/clang++" ]]; then
+				export CXX="${_llvm_prefix}/bin/clang++"
+			fi
+		fi
+
+        export CC="${CC:-clang}"
+        export CXX="${CXX:-clang++}"
 
         # Set macOS deployment target if not already set
         if [[ -z "$CMAKE_OSX_DEPLOYMENT_TARGET" ]]; then

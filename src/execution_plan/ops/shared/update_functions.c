@@ -474,6 +474,14 @@ static bool _UpdateEntity
 		//----------------------------------------------------------------------
 
 		if (attribute != NULL) {
+			AttributeID attr_id = prop->attr_id ;
+			ASSERT (attr_id != ATTRIBUTE_ID_NONE) ;
+
+			// accumulate update
+			attr_vals [n_updates] = v ;
+			attr_ids  [n_updates] = attr_id ;
+			n_updates ++ ;
+
 			// validate attribute's type
 			if (!_ValidateAttrType (accepted_types, v)) {
 				// TODO: free accumulated updates
@@ -482,13 +490,6 @@ static bool _UpdateEntity
 				goto cleanup ;
 			}
 
-			AttributeID attr_id = prop->attr_id ;
-			ASSERT (attr_id != ATTRIBUTE_ID_NONE) ;
-
-			// accumulate update
-			attr_vals [n_updates] = v ;
-			attr_ids  [n_updates] = attr_id ;
-			n_updates ++ ;
 			continue ;
 		}
 
