@@ -804,16 +804,24 @@ bool EvalUpdates
 			// make sure we're updating a graph entity
 			if (unlikely (entry_type != REC_TYPE_NODE &&
 						  entry_type != REC_TYPE_EDGE)) {
+				arr_free (node_ids) ;
+				node_ids = NULL ;
+
 				ErrorCtx_RaiseRuntimeException (
 					"Update error: alias '%s' did not resolve to a graph entity",
 					desc->alias) ;
+
 				goto cleanup ;
 			}
 
 			// label(s) update can only be performed on nodes
 			if (unlikely (labels_modified && entry_type != REC_TYPE_NODE)) {
+				arr_free (node_ids) ;
+				node_ids = NULL ;
+
 				ErrorCtx_RaiseRuntimeException (
 					"Label addition / removal can't be performed on an edge") ;
+
 				goto cleanup ;
 			}
 
@@ -847,13 +855,13 @@ bool EvalUpdates
 			}
 
 			// label addition
-			for (uint16_t j = 0 ; j < arr_len (desc->add_labels) ; j++) {
+			for (uint32_t j = 0 ; j < arr_len (desc->add_labels) ; j++) {
 				StagedUpdatesCtx_LabelNodes (staged_updates, node_ids,
 						n_nodes, (char*) desc->add_labels [j]) ;
 			}
 
 			// label removal
-			for (uint16_t j = 0 ; j < arr_len (desc->remove_labels) ; j++) {
+			for (uint32_t j = 0 ; j < arr_len (desc->remove_labels) ; j++) {
 				StagedUpdatesCtx_UnLabelNodes (staged_updates, node_ids,
 						n_nodes, (char*) desc->remove_labels [j]) ;
 			}
@@ -863,10 +871,7 @@ bool EvalUpdates
 	} // end foreach update descriptor
 
 cleanup:
-	if (node_ids != NULL) {
-		arr_free (node_ids) ;
-	}
-
+	arr_free (node_ids) ;
 	return !ErrorCtx_EncounteredError () ;
 }
 
