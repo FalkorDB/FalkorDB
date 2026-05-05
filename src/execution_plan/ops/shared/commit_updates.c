@@ -154,8 +154,8 @@ static void _CommitEdgeUpdates
 	ASSERT (StagedUpdatesCtx_HasEdgeUpdates (ctx)) ;
 
 	Graph *g = GraphContext_GetGraph (gc) ;
-	MATRIX_POLICY policy = Graph_GetMatrixPolicy (gc->g) ;
-	Graph_SetMatrixPolicy (gc->g, SYNC_POLICY_NOP) ;
+	MATRIX_POLICY policy = Graph_GetMatrixPolicy (g) ;
+	Graph_SetMatrixPolicy (g, SYNC_POLICY_NOP) ;
 
 	dictEntry *entry ;
 	dict *updates = StagedUpdatesCtx_EdgeUpdates (ctx) ;
@@ -177,7 +177,7 @@ static void _CommitEdgeUpdates
 		_EnforceConstraints (gc, g, updates, GETYPE_EDGE) ;
 	}
 
-	Graph_SetMatrixPolicy (gc->g, policy) ;
+	Graph_SetMatrixPolicy (g, policy) ;
 }
 
 // commit all updates described in the array of pending updates

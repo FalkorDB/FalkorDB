@@ -25,12 +25,13 @@ static void _index_node
 	Node *n
 ) {
 	uint label_count;
-	NODE_GET_LABELS(ctx->gc->g, n, label_count);
-	for(uint j = 0; j < label_count; j++) {
-		Schema *s = GraphContext_GetSchemaByID(ctx->gc, labels[j], SCHEMA_NODE);
-		ASSERT(s);
+	NODE_GET_LABELS (GraphContext_GetGraph (ctx->gc), n, label_count) ;
 
-		Schema_AddNodeToIndex(s, n);
+	for (uint j = 0 ; j < label_count;  j++) {
+		Schema *s = GraphContext_GetSchemaByID (ctx->gc, labels[j], SCHEMA_NODE) ;
+		ASSERT (s) ;
+
+		Schema_AddNodeToIndex (s, n) ;
 	}
 }
 
@@ -67,14 +68,15 @@ static void _index_delete_node
 	QueryCtx *ctx,
 	Node *n
 ) {
-	uint label_count;
-	NODE_GET_LABELS(ctx->gc->g, n, label_count);
-	for(uint j = 0; j < label_count; j++) {
-		Schema *s = GraphContext_GetSchemaByID(ctx->gc, labels[j], SCHEMA_NODE);
-		ASSERT(s);
+	uint label_count ;
+	NODE_GET_LABELS (GraphContext_GetGraph (ctx->gc), n, label_count) ;
+
+	for (uint j = 0 ; j < label_count ; j++) {
+		Schema *s = GraphContext_GetSchemaByID (ctx->gc, labels [j], SCHEMA_NODE) ;
+		ASSERT (s) ;
 
 		// update index
-		Schema_RemoveNodeFromIndex(s, n);
+		Schema_RemoveNodeFromIndex (s, n) ;
 	}
 }
 
@@ -209,21 +211,21 @@ static void _UndoLog_Rollback_Create_Node
 	int seq_start,
 	int seq_end
 ) {
-	ASSERT(seq_start > seq_end);
+	ASSERT (seq_start > seq_end) ;
 
-	uint node_count = seq_start - seq_end;
+	uint node_count = seq_start - seq_end ;
 
-	Node *nodes = rm_malloc(sizeof(Node) * node_count);
+	Node *nodes = rm_malloc (sizeof (Node) * node_count) ;
 
-	for(int i = seq_start; i > seq_end; --i) {
-		UndoOp *op = UNDOLOG_GET_ITEM(ctx->undo_log, i);
-		Node *n = &op->create_op.n;
-		nodes[seq_start - i] = *n;
-		_index_delete_node(ctx, n);
+	for (int i = seq_start ; i > seq_end ; --i) {
+		UndoOp *op = UNDOLOG_GET_ITEM (ctx->undo_log, i) ;
+		Node *n = &op->create_op.n ;
+		nodes [seq_start - i] = *n ;
+		_index_delete_node (ctx, n) ;
 	}
 
-	Graph_DeleteNodes(ctx->gc->g, nodes, node_count);
-	rm_free(nodes);
+	Graph_DeleteNodes (GraphContext_GetGraph (ctx->gc), nodes, node_count) ;
+	rm_free (nodes) ;
 }
 
 // undo edge creation
@@ -246,7 +248,8 @@ static void _UndoLog_Rollback_Create_Edge
 		_index_delete_edge (ctx, e) ;
 	}
 
-	Graph_DeleteEdges (ctx->gc->g, edges, edge_count, false) ;
+	Graph_DeleteEdges (GraphContext_GetGraph (ctx->gc), edges, edge_count,
+			false) ;
 	rm_free (edges) ;
 }
 
@@ -257,20 +260,21 @@ static void _UndoLog_Rollback_Delete_Node
 	int seq_start,
 	int seq_end
 ) {
-	for(int i = seq_start; i > seq_end; --i) {
-		Node n = GE_NEW_NODE();
-		UndoOp *op = UNDOLOG_GET_ITEM(ctx->undo_log, i);
-		UndoDeleteNodeOp *delete_op = &(op->delete_node_op);
+	Graph *g = GraphContext_GetGraph (ctx->gc) ;
 
-		Graph_CreateNode(ctx->gc->g, &n, delete_op->labels,
-				delete_op->label_count);
-		*n.attributes = delete_op->set;
+	for (int i = seq_start ; i > seq_end ; --i) {
+		Node n = GE_NEW_NODE () ;
+		UndoOp *op = UNDOLOG_GET_ITEM (ctx->undo_log, i) ;
+		UndoDeleteNodeOp *delete_op = &(op->delete_node_op) ;
+
+		Graph_CreateNode (g, &n, delete_op->labels, delete_op->label_count) ;
+		*n.attributes = delete_op->set ;
 
 		// re-introduce node to indices
-		_index_node(ctx, &n);
+		_index_node (ctx, &n) ;
 
 		// cleanup after undo rollback, as the op D'tor is not called
-		rm_free(delete_op->labels);
+		rm_free (delete_op->labels) ;
 	}
 }
 
@@ -281,16 +285,18 @@ static void _UndoLog_Rollback_Delete_Edge
 	int seq_start,
 	int seq_end
 ) {
-	for(int i = seq_start; i > seq_end; --i) {
-		Edge e;
-		UndoOp *op = UNDOLOG_GET_ITEM(ctx->undo_log, i);
-		UndoDeleteEdgeOp delete_op = op->delete_edge_op;
+	Graph *g = GraphContext_GetGraph (ctx->gc) ;
 
-		Graph_CreateEdge(ctx->gc->g, delete_op.src_id, delete_op.dest_id,
-				delete_op.relationID, &e);
-		*e.attributes = delete_op.set;
+	for (int i = seq_start; i > seq_end; --i) {
+		Edge e ;
+		UndoOp *op = UNDOLOG_GET_ITEM (ctx->undo_log, i) ;
+		UndoDeleteEdgeOp delete_op = op->delete_edge_op ;
 
-		_index_edge(ctx, &e);
+		Graph_CreateEdge (g, delete_op.src_id, delete_op.dest_id,
+				delete_op.relationID, &e) ;
+		*e.attributes = delete_op.set ;
+
+		_index_edge (ctx, &e) ;
 	}
 }
 
@@ -301,18 +307,20 @@ static void _UndoLog_Rollback_Add_Schema
 	int seq_start,
 	int seq_end
 ) {
-	for(int i = seq_start; i > seq_end; --i) {
-		Edge e;
-		UndoOp *op = UNDOLOG_GET_ITEM(ctx->undo_log, i);
-		UndoAddSchemaOp schema_op = op->schema_op;
-		int schema_id = schema_op.schema_id;
-		int schema_count = GraphContext_SchemaCount(ctx->gc, schema_op.t);
-		ASSERT(schema_id == schema_count - 1);
-		GraphContext_RemoveSchema(ctx->gc, schema_id, schema_op.t);
-		if(schema_op.t == SCHEMA_NODE) {
-			Graph_RemoveLabel(ctx->gc->g, schema_id);
+	Graph *g = GraphContext_GetGraph (ctx->gc) ;
+
+	for (int i = seq_start ; i > seq_end ; --i) {
+		Edge e ;
+		UndoOp *op = UNDOLOG_GET_ITEM (ctx->undo_log, i) ;
+		UndoAddSchemaOp schema_op = op->schema_op ;
+		int schema_id = schema_op.schema_id ;
+		int schema_count = GraphContext_SchemaCount (ctx->gc, schema_op.t) ;
+		ASSERT (schema_id == schema_count - 1) ;
+		GraphContext_RemoveSchema (ctx->gc, schema_id, schema_op.t) ;
+		if (schema_op.t == SCHEMA_NODE) {
+			Graph_RemoveLabel (g, schema_id) ;
 		} else {
-			Graph_RemoveRelation(ctx->gc->g, schema_id);
+			Graph_RemoveRelation (g, schema_id) ;
 		}
 	}
 }

@@ -22,7 +22,7 @@ static Record _handoff
 (
 	OpUpdate *op
 ) {
-	if (op->rec_idx < array_len (op->records)) {
+	if (op->rec_idx < arr_len (op->records)) {
 		return op->records [op->rec_idx++] ;
 	} else {
 		return NULL ;
@@ -38,7 +38,7 @@ OpBase *NewUpdateOp
 	OpUpdate *op = rm_calloc (1, sizeof (OpUpdate)) ;
 
 	op->gc             = QueryCtx_GetGraphCtx () ;
-	op->records        = array_new (Record, 64) ;
+	op->records        = arr_new (Record, 64) ;
 	op->update_ctxs    = update_exps ;
 	op->staged_updates = StagedUpdatesCtx_New () ;
 
@@ -73,7 +73,7 @@ static Record UpdateConsume
 	// drain child
 	Record r ;
 	while ((r = OpBase_Consume (child))) {
-		array_append (op->records, r) ;
+		arr_append (op->records, r) ;
 	}
 
 	// evaluate update expressions
@@ -82,7 +82,7 @@ static Record UpdateConsume
 		EntityUpdateDesc *desc = op->it.data ;
 
 		if (!EvalUpdates (op->gc, op->staged_updates, op->records,
-				array_len (op->records), &desc, 1, true)) {
+				arr_len (op->records), &desc, 1, true)) {
 			break ;
 		}
 	}
@@ -104,12 +104,13 @@ static Record UpdateConsume
 		// in cases such as:
 		// MATCH (n) SET n:L
 		// make sure L is of the right dimensions
-		if (StagedUpdatesCtx_HasNodeUpdates (op->staged_updates)) {
+		if (StagedUpdatesCtx_AddLabelCount (op->staged_updates) +
+			StagedUpdatesCtx_RmvLabelCount (op->staged_updates) > 0) {
 			ensureMatrixDim (op->gc, op->staged_updates) ;
 		}
 
 		// lock everything
-		QueryCtx_LockForCommit () ;
+		QueryCtx_AcquireWriteLock () ;
 
 		CommitUpdates (op->gc, op->staged_updates) ;
 	}
@@ -148,12 +149,12 @@ static OpResult UpdateReset
 	StagedUpdatesCtx_Free (&op->staged_updates) ;
 	op->staged_updates = StagedUpdatesCtx_New () ;
 
-	uint records_count = array_len (op->records) ;
+	uint records_count = arr_len (op->records) ;
 	// records[0..op->record_idx] had been already emitted, skip them
 	for (uint i = op->rec_idx; i < records_count; i++) {
 		OpBase_DeleteRecord (op->records+i) ;
 	}
-	array_clear (op->records) ;
+	arr_clear (op->records) ;
 	op->rec_idx = 0 ;
 
 	return OP_OK ;
@@ -176,7 +177,7 @@ static void UpdateFree
 	}
 
 	if (op->records != NULL) {
-		uint64_t n = array_len (op->records) ;
+		uint64_t n = arr_len (op->records) ;
 		for (uint64_t i = op->rec_idx; i < n; i++) {
 			OpBase_DeleteRecord (op->records+i) ;
 		}

@@ -130,7 +130,7 @@ PropertyMap *PropertyMap_New
 			// new entry
 			arr_append (m->keys, attr) ;
 			arr_append (m->values, exp) ;
-			//array_append (m->attr_ids, GraphContext_GetAttributeID (gc, attr)) ;
+			//arr_append (m->attr_ids, GraphContext_GetAttributeID (gc, attr)) ;
 
 			// NOTE: might introduce a change to the graph schema!
 			arr_append (m->attr_ids,
@@ -220,7 +220,7 @@ EntityUpdateDesc *UpdateCtx_New
 
 	ctx->alias         = alias;
 	ctx->record_idx    = INVALID_INDEX;
-	ctx->properties    = array_new(PropertySetDesc, 1);
+	ctx->properties    = arr_new(PropertySetDesc, 1);
 	ctx->add_labels    = NULL;
 	ctx->remove_labels = NULL;
 
@@ -237,7 +237,7 @@ EntityUpdateDesc *UpdateCtx_Clone
 
 	clone->alias         = orig->alias;
 	clone->record_idx    = orig->record_idx;
-	clone->properties    = array_new(PropertySetDesc, count);
+	clone->properties    = arr_new(PropertySetDesc, count);
 	clone->add_labels    = NULL;
 	clone->remove_labels = NULL;
 	if(orig->add_labels != NULL) {
@@ -264,11 +264,11 @@ void UpdateCtx_Clear
 (
 	EntityUpdateDesc *ctx
 ) {
-	uint count = array_len (ctx->properties) ;
+	uint count = arr_len (ctx->properties) ;
 	for (uint i = 0; i < count; i ++) {
 		AR_EXP_Free (ctx->properties [i].exp) ;
 	}
-	array_clear (ctx->properties) ;
+	arr_clear (ctx->properties) ;
 }
 
 // clean up redundant expressions
@@ -290,7 +290,7 @@ void UpdateCtx_RemoveRedundancies
 ) {
 	ASSERT (desc != NULL) ;
 
-	int16_t prop_count = array_len (desc->properties) ;
+	int16_t prop_count = arr_len (desc->properties) ;
 
 	// remove all expressions leading to an overriding expression
 	//
@@ -317,14 +317,14 @@ void UpdateCtx_RemoveRedundancies
 					sizeof (PropertySetDesc) * remaining) ;
 
 			// update properties array pointer
-			desc->properties = array_trimm_cap (desc->properties, remaining) ;
+			desc->properties = arr_trimm_cap (desc->properties, remaining) ;
 
 			// done, we're not going to find additional n = x type expressions
 			break ;
 		}
 	}
 
-	prop_count = array_len (desc->properties) ;
+	prop_count = arr_len (desc->properties) ;
 
 	//--------------------------------------------------------------------------
 	// remove duplicates
@@ -349,7 +349,7 @@ void UpdateCtx_RemoveRedundancies
 				strcmp (prev->attr_name, prop->attr_name) == 0) {
 
 				AR_EXP_Free (prev->exp) ;
-				desc->properties = array_del (desc->properties, j) ;
+				desc->properties = arr_del (desc->properties, j) ;
 
 				// reset
 				break ;

@@ -409,8 +409,8 @@ static Record MergeConsume
 		return _handoff (op) ;
 	}
 
-	op->output_records  = array_new (Record, 32) ;
-	op->postponed_match = array_new (Record, 0) ;
+	op->output_records  = arr_new (Record, 32) ;
+	op->postponed_match = arr_new (Record, 0) ;
 
 	// phase 1: consume the bound variable stream into op->input_records
 	_ConsumeBoundStream (op) ;
@@ -435,7 +435,7 @@ static Record MergeConsume
 	}
 
 	// lock everything
-	QueryCtx_LockForCommit ();
+	QueryCtx_AcquireWriteLock ();
 
 	// phase 3: commit create stream, pull created records
 	// calls ON CREATE updates

@@ -39,98 +39,6 @@ static bool _ValidateAttrType
 	return true;
 }
 
-<<<<<<< batch-label-update
-=======
-// commits delayed updates
-void CommitUpdates
-(
-	GraphContext *gc,
-	dict *updates,
-	EntityType type
-) {
-	ASSERT(gc      != NULL);
-	ASSERT(updates != NULL);
-	ASSERT(type    != ENTITY_UNKNOWN);
-
-	uint update_count         = HashTableElemCount(updates);
-	bool enforce_constraints  = GraphContext_HasConstraints (gc) ;
-	bool constraint_violation = false;
-
-	// return early if no updates are enqueued
-	if (update_count == 0) {
-		return ;
-	}
-
-	dictEntry *entry ;
-	dictIterator *it = HashTableGetIterator (updates) ;
-
-	Graph *g = GraphContext_GetGraph (gc) ;
-	MATRIX_POLICY policy = Graph_GetMatrixPolicy (g) ;
-	Graph_SetMatrixPolicy (g, SYNC_POLICY_NOP) ;
-
-	while ((entry = HashTableNext(it)) != NULL) {
-		PendingUpdateCtx *update = HashTableGetVal (entry) ;
-
-		// if entity has been deleted, perform no updates
-		if (GraphEntity_IsDeleted (update->ge)) {
-			continue ;
-		}
-
-		AttributeSet old_set = GraphEntity_GetAttributes (update->ge) ;
-		AttributeSet_TransferOwnership (old_set, update->attributes) ;
-
-		// update the attributes on the graph entity
-		GraphHub_UpdateEntityProperties (gc, update->ge, update->attributes,
-				type == ENTITY_NODE ? GETYPE_NODE : GETYPE_EDGE, true) ;
-		update->attributes = NULL ;
-
-		if (type == ENTITY_NODE) {
-			GraphHub_UpdateNodeLabels (gc, (Node*)update->ge,
-					update->add_labels, update->remove_labels,
-					arr_len (update->add_labels),
-					arr_len (update->remove_labels), true) ;
-		}
-
-		//----------------------------------------------------------------------
-		// enforce constraints
-		//----------------------------------------------------------------------
-
-		if (enforce_constraints && constraint_violation == false) {
-			// retrieve labels/rel-type
-			uint label_count = 1 ;
-			if (type == ENTITY_NODE) {
-				label_count = Graph_LabelTypeCount (g) ;
-			}
-			LabelID labels[label_count] ;
-			if (type == ENTITY_NODE) {
-				label_count = Graph_GetNodeLabels (g, (Node*)update->ge,
-						labels, label_count) ;
-			} else {
-				labels[0] = Edge_GetRelationID ((Edge*)update->ge) ;
-			}
-
-			SchemaType stype = type == ENTITY_NODE ? SCHEMA_NODE : SCHEMA_EDGE ;
-			for (uint i = 0; i < label_count; i ++) {
-				Schema *s = GraphContext_GetSchemaByID (gc, labels[i], stype) ;
-				// TODO: a bit wasteful need to target relevant constraints only
-				char *err_msg = NULL ;
-				if (!Schema_EnforceConstraints (s, update->ge, &err_msg)) {
-					// constraint violation
-					ASSERT (err_msg != NULL) ;
-					constraint_violation = true ;
-					ErrorCtx_SetError ("%s", err_msg) ;
-					free (err_msg) ;
-					break ;
-				}
-			}
-		}
-	}
-
-	Graph_SetMatrixPolicy (g, policy) ;
-	HashTableReleaseIterator (it) ;
-}
-
->>>>>>> master
 static void _WriteUpdatesToEffectsBuffer
 (
 	EffectsBuffer *eb,                // effects buffer
@@ -501,7 +409,7 @@ static bool _UpdateEntity
 	ASSERT (entity_type == GETYPE_NODE || entity_type == GETYPE_EDGE) ;
 
 	PropertySetDesc *props = desc->properties ;
-	uint16_t prop_count = array_len (props) ;
+	uint16_t prop_count = arr_len (props) ;
 
 	if (unlikely (prop_count == 0)) {
 		// quick return, no updates to entity's attributes
@@ -704,7 +612,7 @@ static void _UpdateSchemas
 		// introduce missing attributes to graph's schema
 		//----------------------------------------------------------------------
 
-		uint32_t prop_count = array_len (desc->properties) ;
+		uint32_t prop_count = arr_len (desc->properties) ;
 		for (uint32_t j = 0 ; j < prop_count ; j++) {
 			PropertySetDesc *property = desc->properties + j ;
 			const char *attr_name = property->attr_name ;
@@ -720,7 +628,7 @@ static void _UpdateSchemas
 		// introduce missing labels to graph's schema
 		//----------------------------------------------------------------------
 
-		uint32_t add_lbl_count = array_len (desc->add_labels) ;
+		uint32_t add_lbl_count = arr_len (desc->add_labels) ;
 		for (uint32_t j = 0 ; j < add_lbl_count ; j++) {
 			const char *lbl = desc->add_labels [j] ;
 			ASSERT (lbl != NULL) ;
@@ -743,13 +651,13 @@ static void _UpdateSchemas
 		// a nonexistent schema ID
 
 		// signed: decremented during loop
-		int32_t rmv_lbl_count = array_len (desc->remove_labels) ;
+		int32_t rmv_lbl_count = arr_len (desc->remove_labels) ;
 		for (int32_t j = 0 ; j < rmv_lbl_count ; j++) {
 			const char *lbl = desc->remove_labels [j] ;
 			ASSERT (lbl != NULL) ;
 
 			if (GraphContext_GetSchema (gc, lbl, SCHEMA_NODE) == NULL) {
-				array_del_fast (desc->remove_labels, j) ;
+				arr_del_fast (desc->remove_labels, j) ;
 				j-- ;
 				rmv_lbl_count-- ;
 			}
@@ -863,12 +771,12 @@ bool EvalUpdates
 		EntityUpdateDesc *desc = descs [i] ;
 
 		bool labels_modified =
-			(array_len (desc->add_labels)    > 0 ||
-			 array_len (desc->remove_labels) > 0 ) ;
+			(arr_len (desc->add_labels)    > 0 ||
+			 arr_len (desc->remove_labels) > 0 ) ;
 
 		if (labels_modified) {
 			if (node_ids == NULL) {
-				node_ids = array_new (EntityID, n_recs) ;
+				node_ids = arr_new (EntityID, n_recs) ;
 			}
 		}
 
@@ -928,35 +836,35 @@ bool EvalUpdates
 			}
 
 			if (labels_modified) {
-				array_append (node_ids, ENTITY_GET_ID (entity)) ;
+				arr_append (node_ids, ENTITY_GET_ID (entity)) ;
 			}
 		} // end foreach record
 
 		if (labels_modified) {
-			uint32_t n_nodes = array_len (node_ids) ;
+			uint32_t n_nodes = arr_len (node_ids) ;
 			if (unlikely (n_nodes == 0)) {
 				continue ;
 			}
 
 			// label addition
-			for (uint16_t j = 0 ; j < array_len (desc->add_labels) ; j++) {
+			for (uint16_t j = 0 ; j < arr_len (desc->add_labels) ; j++) {
 				StagedUpdatesCtx_LabelNodes (staged_updates, node_ids,
 						n_nodes, (char*) desc->add_labels [j]) ;
 			}
 
 			// label removal
-			for (uint16_t j = 0 ; j < array_len (desc->remove_labels) ; j++) {
+			for (uint16_t j = 0 ; j < arr_len (desc->remove_labels) ; j++) {
 				StagedUpdatesCtx_UnLabelNodes (staged_updates, node_ids,
 						n_nodes, (char*) desc->remove_labels [j]) ;
 			}
 
-			array_clear (node_ids) ;
+			arr_clear (node_ids) ;
 		}
 	} // end foreach update descriptor
 
 cleanup:
 	if (node_ids != NULL) {
-		array_free (node_ids) ;
+		arr_free (node_ids) ;
 	}
 
 	return !ErrorCtx_EncounteredError () ;
