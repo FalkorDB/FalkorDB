@@ -484,6 +484,7 @@ rax *AST_PrepareUpdateOp
 			EntityUpdateDesc *desc = it.data ;
 			UpdateCtx_RemoveRedundancies (desc) ;
 		}
+		raxStop (&it) ;
 	} else {
 		uint nitems = cypher_ast_remove_nitems (clause) ;
 		for (uint i = 0; i < nitems; i++) {

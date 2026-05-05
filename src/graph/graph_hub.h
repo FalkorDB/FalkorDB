@@ -133,17 +133,7 @@ void GraphHub_UpdateEdgeProperty
 	SIValue v                     // new attribute value
 );
 
-// applies pending label additions and removals to the graph, dispatching to
-// single-element or bulk GraphBLAS operations based on the number of affected
-// nodes per label
-//
-// for each label vector in add_labels:
-//   - if nvals < LABEL_BATCH_THRESHOLD: _LabelNodes_Single
-//   - otherwise:                        _LabelNodes_Bulk
-//
-// for each label vector in rmv_labels:
-//   - if nvals < LABEL_BATCH_THRESHOLD: _UnLabelNodes_Single
-//   - otherwise:                        _UnLabelNodes_Bulk
+// applies pending label additions and removals to the graph
 //
 // both add and remove passes are applied when both arrays are provided
 // each vector in add_labels and rmv_labels must be named (GrB_NAME) with

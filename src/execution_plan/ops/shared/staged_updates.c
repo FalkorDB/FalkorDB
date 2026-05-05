@@ -233,22 +233,20 @@ static void _RemoveRedundancies
     GrB_OK (GxB_Vector_diag (DP_V, DP, 0, NULL)) ;
     GrB_OK (GxB_Vector_diag (DM_V, DM, 0, NULL)) ;
 
-    // subtract pending deletes from M to get the effective label membership
-    GrB_OK (GrB_transpose ((GrB_Matrix) M_V, (const GrB_Matrix) DM_V, NULL,
-            (GrB_Matrix) M_V, GrB_DESC_RSCT0)) ;
-    GrB_OK (GrB_free (&DM_V)) ;
+	// computing (M ∪ DP) \ DM
+	GrB_OK (GrB_eWiseAdd (M_V, DM_V, NULL, GrB_ONEB_BOOL, M_V, DP_V,
+				GrB_DESC_RSC)) ;
 
 	// for addition: clear v[i] where L[i,i] is already set (GrB_DESC_RSCT0)
 	// for removal:  clear v[i] where L[i,i] is not set     (GrB_DESC_RST0)
     GrB_Descriptor desc = (addition) ? GrB_DESC_RSCT0 : GrB_DESC_RST0 ;
 
-    GrB_OK (GrB_transpose ((GrB_Matrix) v, (const GrB_Matrix) DP_V, NULL,
-                (GrB_Matrix) v, desc)) ;
-    GrB_OK (GrB_free (&DP_V)) ;
-
     GrB_OK (GrB_transpose ((GrB_Matrix) v, (const GrB_Matrix) M_V, NULL,
                 (GrB_Matrix) v, desc)) ;
-    GrB_OK (GrB_free (&M_V)) ;
+
+    GrB_OK (GrB_free (&M_V))  ;
+    GrB_OK (GrB_free (&DP_V)) ;
+    GrB_OK (GrB_free (&DM_V)) ;
 }
 
 // populate either added_labels or removed_labels depending on `add`
@@ -313,8 +311,9 @@ static void _PopulateVector
 	GxB_Scalar s ;
 	GrB_OK (GxB_Scalar_new (&s, GrB_BOOL)) ;
 	GrB_OK (GxB_Scalar_setElement_BOOL (s, true)) ;
-	GrB_OK (GxB_Vector_build_Scalar (v, (GrB_Index*) node_ids, s,
-				(GrB_Index) node_count)) ;
+
+	GrB_OK (GrB_assign (v, NULL, NULL, s, (GrB_Index*) node_ids, node_count,
+				NULL)) ;
 
 	GrB_OK (GrB_free (&s)) ;
 

@@ -55,6 +55,8 @@ static void _EnforceConstraints
 				break ;
 			}
 		}
+
+		HashTableReleaseIterator (it) ;
 		return ;
 	}
 
@@ -88,6 +90,8 @@ static void _EnforceConstraints
 			}
 		}
 	}
+
+	HashTableReleaseIterator (it) ;
 }
 
 // commit node updates
@@ -122,9 +126,6 @@ static void _CommitNodeUpdates
 
 	uint8_t n_add = StagedUpdatesCtx_AddLabelCount (ctx) ;
 	uint8_t n_rmv = StagedUpdatesCtx_RmvLabelCount (ctx) ;
-
-	// a single UPDATE clause can't add and remove labels
-	ASSERT (n_add == 0 || n_rmv == 0) ;
 
 	if (n_add > 0 || n_rmv > 0) {
 		GrB_Vector *add = StagedUpdatesCtx_AddLabels (ctx) ;

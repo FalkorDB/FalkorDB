@@ -144,20 +144,27 @@ static void _UndoLog_Rollback_Set_Labels
 	ASSERT (ctx != NULL) ;
 	ASSERT (seq_start >= seq_end) ;
 
-	GraphContext *gc = QueryCtx_GetGraphCtx () ;
+	UndoOp       *op        = NULL ;
+	UndoLabelsOp *labels_op = NULL ;
+	GraphContext *gc        = QueryCtx_GetGraphCtx () ;
 
-	uint8_t count = seq_start - seq_end ;
+	int count = seq_start - seq_end ;
 	GrB_Vector nodes [count] ;
 
 	for (int i = 0; i < count; i++) {
-		UndoOp *op = UNDOLOG_GET_ITEM (ctx->undo_log, seq_start - i) ;
+		op = UNDOLOG_GET_ITEM (ctx->undo_log, seq_start - i) ;
 		ASSERT (op->type == UNDO_SET_LABELS) ;
 
-		UndoLabelsOp *labels_op = &op->labels_op ;
+		labels_op = &op->labels_op ;
 		nodes [i] = labels_op->nodes ;
 	}
 
 	GraphHub_UpdateNodeLabels (gc, NULL, 0, nodes, count, false) ;
+
+	// free vectors
+	for (int i = 0; i < count; i++) {
+		GrB_OK (GrB_free (nodes + i)) ;
+	}
 }
 
 // rolls back a sequence of UNDO_REMOVE_LABELS operations by re-applying
@@ -172,20 +179,27 @@ static void _UndoLog_Rollback_Remove_Labels
 	ASSERT (ctx != NULL) ;
 	ASSERT (seq_start >= seq_end) ;
 
-	GraphContext *gc = QueryCtx_GetGraphCtx () ;
+	UndoOp       *op        = NULL ;
+	UndoLabelsOp *labels_op = NULL ;
+	GraphContext *gc        = QueryCtx_GetGraphCtx () ;
 
-	uint8_t count = seq_start - seq_end ;
+	int count = seq_start - seq_end ;
 	GrB_Vector nodes [count] ;
 
 	for (int i = 0; i < count; i++) {
-		UndoOp *op = UNDOLOG_GET_ITEM (ctx->undo_log, seq_start - i) ;
+		op = UNDOLOG_GET_ITEM (ctx->undo_log, seq_start - i) ;
 		ASSERT (op->type == UNDO_REMOVE_LABELS) ;
 
-		UndoLabelsOp *labels_op = &op->labels_op ;
+		labels_op = &op->labels_op ;
 		nodes [i] = labels_op->nodes ;
 	}
 
 	GraphHub_UpdateNodeLabels (gc, nodes, count, NULL, 0, false) ;
+
+	// free vectors
+	for (int i = 0; i < count; i++) {
+		GrB_OK (GrB_free (nodes + i)) ;
+	}
 }
 
 // undo node creation

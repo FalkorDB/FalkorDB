@@ -842,7 +842,7 @@ bool EvalUpdates
 		if (labels_modified) {
 			uint32_t n_nodes = array_len (node_ids) ;
 			if (unlikely (n_nodes == 0)) {
-				goto cleanup ;
+				continue ;
 			}
 
 			// label addition

@@ -74,9 +74,12 @@ static void _LabelNodes_Single
 		GrB_Index node_id = GxB_Vector_Iterator_getIndex (it) ;
 		Graph_LabelNode (g, node_id, &lbl_id, 1) ;
 
-		if (index) {
+		if (index || enforce_constraints) {
 			bool found = Graph_GetNode (g, node_id, &node) ;
 			ASSERT (found == true) ;
+		}
+
+		if (index) {
 			Schema_AddNodeToIndex (s, &node) ;
 		}
 
@@ -215,9 +218,6 @@ void GraphHub_UpdateNodeLabels
 	// if rmv_labels is specified its count must be > 0
 	ASSERT (rmv_labels != NULL && n_rmv_labels > 0 ||
 			rmv_labels == NULL && n_rmv_labels == 0) ;
-
-	GrB_Vector V ;
-	GrB_Index nvals ;
 
 	// associate label(s) with nodes
 	for (uint i = 0 ; i < n_add_labels; i++) {

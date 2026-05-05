@@ -175,6 +175,9 @@ void UndoLog_UpdateEntity
 // 'nodes' is a GrB_Vector acting as a node-ID set — the same vector
 // passed to the original labeling operation — and must remain valid
 // for the lifetime of the undo log entry
+//
+// ownership of `nodes` is transferred to the undo log;
+// *nodes is set to NULL
 void UndoLog_AddLabels
 (
 	UndoLog    log,     // undo log to append the operation to
@@ -187,6 +190,9 @@ void UndoLog_AddLabels
 // 'nodes' is a GrB_Vector acting as a node-ID set — the same vector
 // passed to the original label-removal operation — and must remain valid
 // for the lifetime of the undo log entry
+//
+// ownership of `nodes` is transferred to the undo log;
+// *nodes is set to NULL
 void UndoLog_RemoveLabels
 (
 	UndoLog    log,     // undo log to append the operation to
