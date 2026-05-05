@@ -404,8 +404,8 @@ void StagedUpdatesCtx_Free
 
 	StagedUpdatesCtx *_ctx = *ctx ;
 
-	HashTableEmpty (_ctx->node_updates, NULL) ;
-	HashTableEmpty (_ctx->edge_updates, NULL) ;
+	HashTableRelease (_ctx->node_updates) ;
+	HashTableRelease (_ctx->edge_updates) ;
 
 	if (_ctx->added_labels != NULL) {
 		ASSERT (_ctx->n_added_labels > 0) ;
