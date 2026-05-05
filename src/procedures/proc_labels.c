@@ -26,7 +26,7 @@ ProcedureResult Proc_LabelsInvoke
 	const SIValue *args,
 	const char **yield
 ) {
-	if(array_len((SIValue *)args) != 0) return PROCEDURE_ERR;
+	if(arr_len((SIValue *)args) != 0) return PROCEDURE_ERR;
 
 	LabelsContext *pdata = rm_malloc(sizeof(LabelsContext));
 
@@ -71,9 +71,9 @@ ProcedureResult Proc_LabelsFree
 
 ProcedureCtx *Proc_LabelsCtx() {
 	void *privateData = NULL;
-	ProcedureOutput *outputs = array_new(ProcedureOutput, 1);
+	ProcedureOutput *outputs = arr_new(ProcedureOutput, 1);
 	ProcedureOutput output = {.name = "label", .type = T_STRING};
-	array_append(outputs, output);
+	arr_append(outputs, output);
 
 	ProcedureCtx *ctx = ProcCtxNew("db.labels",
 								   0,

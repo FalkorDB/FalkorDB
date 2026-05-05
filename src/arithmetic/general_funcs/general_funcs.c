@@ -66,8 +66,8 @@ void Register_GeneralFuncs() {
 	SIType ret_type;
 	AR_FuncDesc *func_desc;
 
-	types = array_new(SIType, 1);
-	array_append(types, T_NULL | SI_ALL);
+	types = arr_new(SIType, 1);
+	arr_append(types, T_NULL | SI_ALL);
 	ret_type = SI_ALL;
 	func_desc = AR_FuncDescNew("prev", AR_PREV, 1, 1, types, ret_type, false,
 			false, true);

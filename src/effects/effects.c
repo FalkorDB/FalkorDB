@@ -227,7 +227,7 @@ static void EffectsBuffer_WriteSIArray
 	// elements
 
 	SIValue *elements = arr->array;
-	uint32_t len = array_len(elements);
+	uint32_t len = arr_len(elements);
 
 	// write number of elements
 	EffectsBuffer_WriteBytes(&len, sizeof(uint32_t), buff);

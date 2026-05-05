@@ -66,7 +66,7 @@ static Record UpdateConsume
 	OpBase *child = op->op.children [0] ;
 
 	// updates already performed
-	if (array_len (op->records) > 0) {
+	if (arr_len (op->records) > 0) {
 		return _handoff (op) ;
 	}
 
@@ -181,7 +181,7 @@ static void UpdateFree
 			OpBase_DeleteRecord (op->records+i) ;
 		}
 
-		array_free (op->records) ;
+		arr_free (op->records) ;
 		op->records = NULL ;
 	}
 

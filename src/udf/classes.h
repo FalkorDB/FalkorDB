@@ -6,6 +6,8 @@
 #pragma once
 
 #include "quickjs.h"
+#include "node_iter.h"
+#include "edge_iter.h"
 #include "node_class.h"
 #include "edge_class.h"
 #include "path_class.h"

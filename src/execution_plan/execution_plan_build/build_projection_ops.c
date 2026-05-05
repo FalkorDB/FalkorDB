@@ -19,7 +19,7 @@ static AR_ExpNode **_BuildOrderExpressions
 	const cypher_astnode_t *order_clause
 ) {
 	uint count = cypher_ast_order_by_nitems (order_clause) ;
-	AR_ExpNode **order_exps = array_new (AR_ExpNode *, count) ;
+	AR_ExpNode **order_exps = arr_new (AR_ExpNode *, count) ;
 
 	for (uint i = 0; i < count; i++) {
 		const cypher_astnode_t *item =
@@ -29,8 +29,8 @@ static AR_ExpNode **_BuildOrderExpressions
 			cypher_ast_sort_item_get_expression (item) ;
 
 		AR_ExpNode *exp = AR_EXP_FromASTNode (ast_exp) ;
-		exp->resolved_name = AST_ToString (ast_exp) ;
-		array_append (order_exps, exp) ;
+		exp->resolved_name = AST_ToString (ast_exp, NULL) ;
+		arr_append (order_exps, exp) ;
 	}
 
 	return order_exps ;
@@ -49,7 +49,7 @@ AR_ExpNode **_BuildProjectionExpressions
 	ASSERT (t == CYPHER_AST_RETURN || t == CYPHER_AST_WITH) ;
 
 	if (t == CYPHER_AST_RETURN) {
-		// if we have a "RETURN *" at this point, it is because we raised 
+		// if we have a "RETURN *" at this point, it is because we raised
 		// an error in AST rewriting
 		if (cypher_ast_return_has_include_existing(clause)) {
 			return NULL ;
@@ -60,7 +60,7 @@ AR_ExpNode **_BuildProjectionExpressions
 		count = cypher_ast_with_nprojections (clause) ;
 	}
 
-	expressions = array_new (AR_ExpNode *, count) ;
+	expressions = arr_new (AR_ExpNode *, count) ;
 
 	rax *identifiers = raxNew () ;
 
@@ -99,7 +99,7 @@ AR_ExpNode **_BuildProjectionExpressions
 			// construction an AR_ExpNode to represent this projected entity
 			AR_ExpNode *exp = AR_EXP_FromASTNode (ast_exp) ;
 			exp->resolved_name = identifier ;
-			array_append (expressions, exp) ;
+			arr_append (expressions, exp) ;
 		}
 	}
 
@@ -151,7 +151,7 @@ static inline void _buildProjectionOps
 		//
 		// MATCH (a), (b) WITH b.v AS v ORDER BY a.v
 		// in which case `a.v` is added to the projected expressions
-		uint n = array_len (projections) ;
+		uint n = arr_len (projections) ;
 
 		// populate a stack array with the aliases to perform Distinct on
 		const char *aliases[n] ;

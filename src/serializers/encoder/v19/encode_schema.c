@@ -3,7 +3,7 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
-#include "encode_v18.h"
+#include "encode_v19.h"
 #include "../../../util/arr.h"
 
 static void _RdbSaveAttributeKeys
@@ -15,11 +15,12 @@ static void _RdbSaveAttributeKeys
 	// #attribute keys
 	// attribute keys
 
-	uint count = GraphContext_AttributeCount(gc);
-	SerializerIO_WriteUnsigned(rdb, count);
-	for(uint i = 0; i < count; i ++) {
-		char *key = gc->string_mapping[i];
-		SerializerIO_WriteBuffer(rdb, key, strlen(key) + 1);
+	uint count = GraphContext_AttributeCount (gc) ;
+	SerializerIO_WriteUnsigned (rdb, count) ;
+
+	for (uint i = 0; i < count; i ++) {
+		const char *key = GraphContext_GetAttributeString (gc, i) ;
+		SerializerIO_WriteBuffer (rdb, key, strlen (key) + 1) ;
 	}
 }
 
@@ -154,19 +155,19 @@ static void _RdbSaveConstraintsData
 	SerializerIO rdb,
 	Constraint *constraints
 ) {
-	uint n_constraints = array_len(constraints);
-	Constraint *active_constraints = array_new(Constraint, n_constraints);
+	uint n_constraints = arr_len(constraints);
+	Constraint *active_constraints = arr_new(Constraint, n_constraints);
 
 	// collect active constraints
 	for (uint i = 0; i < n_constraints; i++) {
 		Constraint c = constraints[i];
 		if (Constraint_GetStatus(c) == CT_ACTIVE) {
-			array_append(active_constraints, c);
+			arr_append(active_constraints, c);
 		}
 	}
 
 	// encode number of active constraints
-	uint n_active_constraints = array_len(active_constraints);
+	uint n_active_constraints = arr_len(active_constraints);
 	SerializerIO_WriteUnsigned(rdb, n_active_constraints);
 
 	// encode constraints
@@ -176,7 +177,7 @@ static void _RdbSaveConstraintsData
 	}
 
 	// clean up
-	array_free(active_constraints);
+	arr_free(active_constraints);
 }
 
 static void _RdbSaveSchema
@@ -212,7 +213,7 @@ static void _RdbSaveSchema
 	_RdbSaveConstraintsData(rdb, s->constraints);
 }
 
-void RdbSaveGraphSchema_v18
+void RdbSaveGraphSchema_v19
 (
 	SerializerIO rdb,
 	GraphContext *gc
@@ -225,26 +226,26 @@ void RdbSaveGraphSchema_v18
 	// relation schema X #relation schemas
 
 	// Serialize all attribute keys
-	_RdbSaveAttributeKeys(rdb, gc);
+	_RdbSaveAttributeKeys (rdb, gc) ;
 
 	// #Node schemas.
-	unsigned short schema_count = GraphContext_SchemaCount(gc, SCHEMA_NODE);
-	SerializerIO_WriteUnsigned(rdb, schema_count);
+	unsigned short schema_count = GraphContext_SchemaCount (gc, SCHEMA_NODE) ;
+	SerializerIO_WriteUnsigned (rdb, schema_count) ;
 
 	// Name of label X #node schemas.
-	for(int i = 0; i < schema_count; i++) {
-		Schema *s = gc->node_schemas[i];
-		_RdbSaveSchema(rdb, s);
+	for (int i = 0; i < schema_count; i++) {
+		Schema *s = GraphContext_GetSchemaByID (gc, i, SCHEMA_NODE) ;
+		_RdbSaveSchema (rdb, s) ;
 	}
 
 	// #Relation schemas.
-	unsigned short relation_count = GraphContext_SchemaCount(gc, SCHEMA_EDGE);
-	SerializerIO_WriteUnsigned(rdb, relation_count);
+	unsigned short relation_count = GraphContext_SchemaCount (gc, SCHEMA_EDGE) ;
+	SerializerIO_WriteUnsigned (rdb, relation_count) ;
 
 	// Name of label X #relation schemas.
-	for(unsigned short i = 0; i < relation_count; i++) {
-		Schema *s = gc->relation_schemas[i];
-		_RdbSaveSchema(rdb, s);
+	for (unsigned short i = 0; i < relation_count; i++) {
+		Schema *s = GraphContext_GetSchemaByID (gc, i, SCHEMA_EDGE) ;
+		_RdbSaveSchema (rdb, s) ;
 	}
 }
 

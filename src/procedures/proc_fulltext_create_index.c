@@ -171,10 +171,10 @@ static void extract_index_level_config
 			   SIArray_AllOfType(stopwords_val, T_STRING));
 
 		uint nstopwords = SIArray_Length(stopwords_val);
-		*stopwords = array_new(char*, nstopwords);
+		*stopwords = arr_new(char*, nstopwords);
 		for(uint i = 0; i < nstopwords; i++) {
 			SIValue stopword = SIArray_Get(stopwords_val, i);
-			array_append((*stopwords), rm_strdup(stopword.stringval));
+			arr_append((*stopwords), rm_strdup(stopword.stringval));
 		}
 	}
 }
@@ -190,7 +190,7 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 	const char **yield
 ) {
 	bool res = true;
-	uint arg_count = array_len((SIValue *)args);
+	uint arg_count = arr_len((SIValue *)args);
 	if(arg_count < 2) {
 		ErrorCtx_SetError(EMSG_FULLTEXT_MIN_ARGS);
 		return PROCEDURE_ERR;
@@ -327,7 +327,7 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 	}
 
 cleanup:
-	if(stopwords != NULL) array_free_cb(stopwords, rm_free);
+	if(stopwords != NULL) arr_free_cb(stopwords, rm_free);
 	Map_Free(options);
 
 	return (res) ? PROCEDURE_OK : PROCEDURE_ERR;
@@ -341,7 +341,7 @@ SIValue *Proc_FulltextCreateNodeIdxStep
 }
 
 ProcedureCtx *Proc_FulltextCreateNodeIdxGen() {
-	ProcedureOutput *output = array_new(ProcedureOutput, 0);
+	ProcedureOutput *output = arr_new(ProcedureOutput, 0);
 	return ProcCtxNew("db.idx.fulltext.createNodeIndex",
 			PROCEDURE_VARIABLE_ARG_COUNT, output,
 			Proc_FulltextCreateNodeIdxStep, Proc_FulltextCreateNodeIdxInvoke,

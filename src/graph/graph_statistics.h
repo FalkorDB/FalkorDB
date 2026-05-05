@@ -43,7 +43,7 @@ static inline void GraphStatistics_IncEdgeCount
 	RelationID r,
 	uint64_t amount
 ) {
-	ASSERT(r < array_len(stats->edge_count));
+	ASSERT(r < arr_len(stats->edge_count));
 	stats->edge_count[r] += amount;
 }
 
@@ -54,7 +54,7 @@ static inline void GraphStatistics_DecEdgeCount
 	RelationID r,
 	uint64_t amount
 ) {
-	ASSERT(r < array_len(stats->edge_count) && stats->edge_count[r] >= amount);
+	ASSERT(r < arr_len(stats->edge_count) && stats->edge_count[r] >= amount);
 	stats->edge_count[r] -= amount;
 }
 
@@ -65,7 +65,7 @@ static inline void GraphStatistics_IncNodeCount
 	LabelID l,
 	uint64_t amount
 ) {
-	ASSERT(l < array_len(stats->node_count));
+	ASSERT(l < arr_len(stats->node_count));
 	stats->node_count[l] += amount;
 }
 
@@ -76,7 +76,7 @@ static inline void GraphStatistics_DecNodeCount
 	int l,
 	uint64_t amount
 ) {
-	ASSERT(l < array_len(stats->node_count) && stats->node_count[l] >= amount);
+	ASSERT(l < arr_len(stats->node_count) && stats->node_count[l] >= amount);
 	stats->node_count[l] -= amount;
 }
 

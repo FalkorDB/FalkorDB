@@ -39,6 +39,98 @@ static bool _ValidateAttrType
 	return true;
 }
 
+<<<<<<< batch-label-update
+=======
+// commits delayed updates
+void CommitUpdates
+(
+	GraphContext *gc,
+	dict *updates,
+	EntityType type
+) {
+	ASSERT(gc      != NULL);
+	ASSERT(updates != NULL);
+	ASSERT(type    != ENTITY_UNKNOWN);
+
+	uint update_count         = HashTableElemCount(updates);
+	bool enforce_constraints  = GraphContext_HasConstraints (gc) ;
+	bool constraint_violation = false;
+
+	// return early if no updates are enqueued
+	if (update_count == 0) {
+		return ;
+	}
+
+	dictEntry *entry ;
+	dictIterator *it = HashTableGetIterator (updates) ;
+
+	Graph *g = GraphContext_GetGraph (gc) ;
+	MATRIX_POLICY policy = Graph_GetMatrixPolicy (g) ;
+	Graph_SetMatrixPolicy (g, SYNC_POLICY_NOP) ;
+
+	while ((entry = HashTableNext(it)) != NULL) {
+		PendingUpdateCtx *update = HashTableGetVal (entry) ;
+
+		// if entity has been deleted, perform no updates
+		if (GraphEntity_IsDeleted (update->ge)) {
+			continue ;
+		}
+
+		AttributeSet old_set = GraphEntity_GetAttributes (update->ge) ;
+		AttributeSet_TransferOwnership (old_set, update->attributes) ;
+
+		// update the attributes on the graph entity
+		GraphHub_UpdateEntityProperties (gc, update->ge, update->attributes,
+				type == ENTITY_NODE ? GETYPE_NODE : GETYPE_EDGE, true) ;
+		update->attributes = NULL ;
+
+		if (type == ENTITY_NODE) {
+			GraphHub_UpdateNodeLabels (gc, (Node*)update->ge,
+					update->add_labels, update->remove_labels,
+					arr_len (update->add_labels),
+					arr_len (update->remove_labels), true) ;
+		}
+
+		//----------------------------------------------------------------------
+		// enforce constraints
+		//----------------------------------------------------------------------
+
+		if (enforce_constraints && constraint_violation == false) {
+			// retrieve labels/rel-type
+			uint label_count = 1 ;
+			if (type == ENTITY_NODE) {
+				label_count = Graph_LabelTypeCount (g) ;
+			}
+			LabelID labels[label_count] ;
+			if (type == ENTITY_NODE) {
+				label_count = Graph_GetNodeLabels (g, (Node*)update->ge,
+						labels, label_count) ;
+			} else {
+				labels[0] = Edge_GetRelationID ((Edge*)update->ge) ;
+			}
+
+			SchemaType stype = type == ENTITY_NODE ? SCHEMA_NODE : SCHEMA_EDGE ;
+			for (uint i = 0; i < label_count; i ++) {
+				Schema *s = GraphContext_GetSchemaByID (gc, labels[i], stype) ;
+				// TODO: a bit wasteful need to target relevant constraints only
+				char *err_msg = NULL ;
+				if (!Schema_EnforceConstraints (s, update->ge, &err_msg)) {
+					// constraint violation
+					ASSERT (err_msg != NULL) ;
+					constraint_violation = true ;
+					ErrorCtx_SetError ("%s", err_msg) ;
+					free (err_msg) ;
+					break ;
+				}
+			}
+		}
+	}
+
+	Graph_SetMatrixPolicy (g, policy) ;
+	HashTableReleaseIterator (it) ;
+}
+
+>>>>>>> master
 static void _WriteUpdatesToEffectsBuffer
 (
 	EffectsBuffer *eb,                // effects buffer

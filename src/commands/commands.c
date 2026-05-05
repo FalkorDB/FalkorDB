@@ -9,7 +9,6 @@
 
 // convert from string representation to an enum
 GRAPH_Commands CommandFromString(const char *cmd_name) {
-	if (!strcasecmp(cmd_name, "graph.ACL"))      return CMD_ACL;
 	if (!strcasecmp(cmd_name, "graph.UDF"))      return CMD_UDF;
 	if (!strcasecmp(cmd_name, "graph.BULK"))     return CMD_BULK_INSERT;
 	if (!strcasecmp(cmd_name, "graph.INFO"))     return CMD_INFO;
@@ -25,7 +24,6 @@ GRAPH_Commands CommandFromString(const char *cmd_name) {
 	if (!strcasecmp(cmd_name, "graph.EXPLAIN"))  return CMD_EXPLAIN;
 	if (!strcasecmp(cmd_name, "graph.SLOWLOG"))  return CMD_SLOWLOG;
 	if (!strcasecmp(cmd_name, "graph.RO_QUERY")) return CMD_RO_QUERY;
-	if (!strcasecmp(cmd_name, "graph.PASSWORD")) return CMD_PASSWORD;
 
 	// we shouldn't reach this point
 	ASSERT(false);

@@ -116,6 +116,23 @@ void test_hashDouble() {
 	TEST_ASSERT(origHashCode == otherHashCode);
 }
 
+void test_hashPoint() {
+	SIValue siPoint      = SI_Point (0.1, -2.1) ;
+	SIValue siPointOther = SI_Point (0.1, -2.1) ;
+
+	uint64_t origHashCode  = SIValue_HashCode (siPoint) ;
+	uint64_t otherHashCode = SIValue_HashCode (siPointOther) ;
+	TEST_ASSERT (origHashCode == otherHashCode) ;
+
+	siPoint = SI_Point (-1.2, 0.1) ;
+	origHashCode = SIValue_HashCode (siPoint) ;
+	TEST_ASSERT (origHashCode != otherHashCode) ;
+
+	siPointOther = SI_Point (-1.2, 0.1) ;
+	otherHashCode = SIValue_HashCode (siPointOther) ;
+	TEST_ASSERT (origHashCode == otherHashCode) ;
+}
+
 void test_edge() {
 	AttributeSet attr;
 
@@ -337,7 +354,7 @@ void test_set() {
 
 	TEST_ASSERT(Set_Size(set) == 0);
 	Set_Free(set);
-	
+
 	SIValue_Free(arr);
 }
 
@@ -357,7 +374,7 @@ void test_path() {
 	Edge es[2];
 	for (uint i = 0; i < 2; i++) {
 		ns[i].id = i;
-				
+
 		es[i].id = i;
 		es[i].src_id = i;
 		es[i].dest_id = i + 1;
@@ -365,7 +382,7 @@ void test_path() {
 	ns[2].id = 2;
 
 	for (uint i = 0; i < 2; i++) {
-		Path_AppendNode(path, ns[i]);	
+		Path_AppendNode(path, ns[i]);
 		Path_AppendEdge(path, es[i]);
 	}
 	Path_AppendNode(path, ns[2]);
@@ -377,7 +394,7 @@ void test_path() {
 	// Make sure all nodes and edges are in path.
 	for (uint i = 0; i < 2; i++) {
 		n = Path_GetNode(path, i);
-		TEST_ASSERT(n->id == i);		
+		TEST_ASSERT(n->id == i);
 		e = Path_GetEdge(path, i);
 		TEST_ASSERT(e->id == i);
 	}
@@ -448,6 +465,103 @@ void test_path() {
 	Path_Free(clone);
 }
 
+// Regression test for uint64_t comparator overflow in SIValue_Compare.
+// Before the fix, subtracting two uint64_t entity IDs and returning as int
+// would silently truncate, producing 0 (equality) for IDs differing by
+// a multiple of 2^32. See issue #1813.
+void test_compare_node_large_ids() {
+	AttributeSet attr;
+	Node na, nb;
+	na.attributes = &attr;
+	nb.attributes = &attr;
+
+	// Case 1: IDs differ by exactly 2^32
+	// Old bug: (0 - 0x100000000) = 0xFFFFFFFF00000000, truncated to int = 0
+	na.id = 0;
+	nb.id = UINT64_C(0x100000000);
+	SIValue a = SI_Node(&na);
+	SIValue b = SI_Node(&nb);
+	TEST_ASSERT(SIValue_Compare(a, b, NULL) < 0);
+	TEST_ASSERT(SIValue_Compare(b, a, NULL) > 0);
+
+	// Case 2: symmetry — reversed operands
+	na.id = UINT64_C(0x100000000);
+	nb.id = 0;
+	a = SI_Node(&na);
+	b = SI_Node(&nb);
+	TEST_ASSERT(SIValue_Compare(a, b, NULL) > 0);
+	TEST_ASSERT(SIValue_Compare(b, a, NULL) < 0);
+
+	// Case 3: equality at large ID
+	na.id = UINT64_C(0x100000000);
+	nb.id = UINT64_C(0x100000000);
+	a = SI_Node(&na);
+	b = SI_Node(&nb);
+	TEST_ASSERT(SIValue_Compare(a, b, NULL) == 0);
+
+	// Case 4: IDs differ by 2*2^32
+	// Old bug: (0 - 0x200000000) = 0xFFFFFFFE00000000, truncated to int = 0
+	na.id = 0;
+	nb.id = UINT64_C(0x200000000);
+	a = SI_Node(&na);
+	b = SI_Node(&nb);
+	TEST_ASSERT(SIValue_Compare(a, b, NULL) < 0);
+	TEST_ASSERT(SIValue_Compare(b, a, NULL) > 0);
+
+	// Case 5: near-UINT64_MAX vs 0
+	na.id = 0;
+	nb.id = UINT64_MAX;
+	a = SI_Node(&na);
+	b = SI_Node(&nb);
+	TEST_ASSERT(SIValue_Compare(a, b, NULL) < 0);
+	TEST_ASSERT(SIValue_Compare(b, a, NULL) > 0);
+
+	// Case 6: normal small IDs still work (control)
+	na.id = 5;
+	nb.id = 10;
+	a = SI_Node(&na);
+	b = SI_Node(&nb);
+	TEST_ASSERT(SIValue_Compare(a, b, NULL) < 0);
+	TEST_ASSERT(SIValue_Compare(b, a, NULL) > 0);
+
+	na.id = 10;
+	nb.id = 10;
+	a = SI_Node(&na);
+	b = SI_Node(&nb);
+	TEST_ASSERT(SIValue_Compare(a, b, NULL) == 0);
+}
+
+// Same regression test for T_EDGE path through SIValue_Compare
+void test_compare_edge_large_ids() {
+	AttributeSet attr;
+	Edge ea, eb;
+	ea.attributes = &attr;
+	eb.attributes = &attr;
+
+	// IDs differ by exactly 2^32 — the canonical overflow trigger
+	ea.id = 0;
+	eb.id = UINT64_C(0x100000000);
+	SIValue a = SI_Edge(&ea);
+	SIValue b = SI_Edge(&eb);
+	TEST_ASSERT(SIValue_Compare(a, b, NULL) < 0);
+	TEST_ASSERT(SIValue_Compare(b, a, NULL) > 0);
+
+	// equality at large ID
+	ea.id = UINT64_C(0x100000000);
+	eb.id = UINT64_C(0x100000000);
+	a = SI_Edge(&ea);
+	b = SI_Edge(&eb);
+	TEST_ASSERT(SIValue_Compare(a, b, NULL) == 0);
+
+	// near-UINT64_MAX
+	ea.id = 1;
+	eb.id = UINT64_MAX;
+	a = SI_Edge(&ea);
+	b = SI_Edge(&eb);
+	TEST_ASSERT(SIValue_Compare(a, b, NULL) < 0);
+	TEST_ASSERT(SIValue_Compare(b, a, NULL) > 0);
+}
+
 TEST_LIST = {
 	{"numerics", test_numerics},
 	{"strings", test_strings},
@@ -455,6 +569,7 @@ TEST_LIST = {
 	{"hashBool", test_hashBool},
 	{"hashLong", test_hashLong},
 	{"hashDouble", test_hashDouble},
+	{"hashPoint", test_hashPoint},
 	{"edge", test_edge},
 	{"node", test_node},
 	{"array", test_array},
@@ -463,5 +578,7 @@ TEST_LIST = {
 	{"edgeAndNode", test_edgeAndNode},
 	{"set", test_set},
 	{"path", test_path},
+	{"compare_node_large_ids", test_compare_node_large_ids},
+	{"compare_edge_large_ids", test_compare_edge_large_ids},
 	{NULL, NULL}
 };

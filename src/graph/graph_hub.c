@@ -23,7 +23,7 @@ void GraphHub_CreateNode
 	ASSERT(n  != NULL);
 	ASSERT(gc != NULL);
 
-	Graph_CreateNode(gc->g, n, labels, label_count);
+	Graph_CreateNode (GraphContext_GetGraph (gc), n, labels, label_count);
 	*n->attributes = set;
 
 	// add node labels
@@ -64,7 +64,8 @@ void GraphHub_CreateNodes
 	ASSERT (label_count == 0 || labels != NULL) ;
 
 	// introduce nodes to graph
-	Graph_CreateNodes (gc->g, nodes, sets, node_count, labels, label_count) ;
+	Graph_CreateNodes (GraphContext_GetGraph (gc), nodes, sets, node_count,
+			labels, label_count) ;
 
 	//--------------------------------------------------------------------------
 	// collect schemas with indices
@@ -123,7 +124,7 @@ void GraphHub_CreateEdge
 	ASSERT(e  != NULL);
 	ASSERT(gc != NULL);
 
-	Graph_CreateEdge(gc->g, src, dst, r, e);
+	Graph_CreateEdge (GraphContext_GetGraph (gc), src, dst, r, e);
 	*e->attributes = set;
 
 	Schema *s = GraphContext_GetSchemaByID(gc, r, SCHEMA_EDGE);
@@ -152,14 +153,14 @@ void GraphHub_CreateEdges
 	ASSERT (gc    != NULL) ;
 	ASSERT (edges != NULL) ;
 
-	Graph_CreateEdges (gc->g, r, edges, sets) ;
+	Graph_CreateEdges (GraphContext_GetGraph (gc), r, edges, sets) ;
 
 	Schema *s = GraphContext_GetSchemaByID (gc, r, SCHEMA_EDGE) ;
 	ASSERT (s != NULL) ;
 	bool has_indices = Schema_HasIndices (s) ;
 
 	if (has_indices || log) {
-		uint count = array_len (edges) ;
+		uint count = arr_len (edges) ;
 		UndoLog undo_log = NULL ;
 		EffectsBuffer *eb = NULL ;
 
@@ -231,7 +232,7 @@ void GraphHub_DeleteNodes
 		}
 	}
 
-	Graph_DeleteNodes (gc->g, nodes, n) ;
+	Graph_DeleteNodes (GraphContext_GetGraph (gc), nodes, n) ;
 }
 
 // delete an edge
@@ -278,7 +279,7 @@ void GraphHub_DeleteEdges
 		}
 	}
 
-	Graph_DeleteEdges (gc->g, edges, n, implicit) ;
+	Graph_DeleteEdges (GraphContext_GetGraph (gc), edges, n, implicit) ;
 }
 
 // updates a graph entity attribute set
@@ -321,8 +322,10 @@ void GraphHub_UpdateNodeProperty
 	ASSERT(id      != INVALID_ENTITY_ID);
 	ASSERT(attr_id != ATTRIBUTE_ID_NONE);
 
+	Graph *g = GraphContext_GetGraph (gc) ;
+
 	Node n;  // node to update
-	int res = Graph_GetNode(gc->g, id, &n);
+	int res = Graph_GetNode (g, id, &n) ;
 	ASSERT(res == true);  // make sure entity was found
 
 	if(attr_id == ATTRIBUTE_ID_ALL) {
@@ -333,7 +336,7 @@ void GraphHub_UpdateNodeProperty
 
 	// retrieve node labels
 	uint label_count;
-	NODE_GET_LABELS(gc->g, &n, label_count);
+	NODE_GET_LABELS (g, &n, label_count) ;
 
 	Schema *s;
 	for(uint i = 0; i < label_count; i++) {
@@ -372,7 +375,7 @@ void GraphHub_UpdateEdgeProperty
 	Edge e; // edge to update
 
 	// get src node, dest node and edge from the graph
-	int res = Graph_GetEdge(gc->g, id, &e);
+	int res = Graph_GetEdge (GraphContext_GetGraph (gc), id, &e);
 	ASSERT(res != 0);
 
 	// set edge relation, src and destination node

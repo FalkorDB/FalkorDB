@@ -7,7 +7,7 @@
 #include "../../../../udf/utils.h"
 #include "../../../../redismodule.h"
 
-void AUXLoadUDF_latest
+void AUXLoadUDF_v18
 (
 	RedisModuleIO *io
 ) {
@@ -21,10 +21,10 @@ void AUXLoadUDF_latest
 
 	ASSERT (io != NULL) ;
 
-	// write the library count
+	// read the library count
 	uint64_t n = RedisModule_LoadUnsigned (io) ;
 
-	for (unsigned int i = 0; i < n; i++) {
+	for (uint64_t i = 0; i < n; i++) {
 		size_t lib_len ;
 		size_t script_len ;
 		const char *lib    = RedisModule_LoadStringBuffer (io, &lib_len) ;

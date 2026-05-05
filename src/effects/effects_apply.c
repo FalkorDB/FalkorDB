@@ -121,12 +121,12 @@ static inline void FlushEdges
 	ASSERT (batch != NULL) ;
 
 	if (*i > 0) {
-		ASSERT (array_len (batch) == *i) ;
-		ASSERT (array_len (batch) == array_len (sets)) ;
+		ASSERT (arr_len (batch) == *i) ;
+		ASSERT (arr_len (batch) == arr_len (sets)) ;
 
 		GraphHub_CreateEdges (gc, batch, r, sets, false) ;
-		array_clear (sets) ;
-		array_clear (batch) ;
+		arr_clear (sets) ;
+		arr_clear (batch) ;
 		*i = 0 ;
 	}
 }
@@ -164,8 +164,8 @@ static void ApplyCreateEdge
 	const size_t batch_size = 4096 ;  // max batch size
 	Edge edges[batch_size] ;          // edges
 
-	Edge **batch = array_new (Edge *, 1) ;  // batch, points to edges
-	AttributeSet *sets = array_new (AttributeSet, 1) ;  // attribute-sets
+	Edge **batch = arr_new (Edge *, 1) ;  // batch, points to edges
+	AttributeSet *sets = arr_new (AttributeSet, 1) ;  // attribute-sets
 
 	RelationID r      = GRAPH_UNKNOWN_RELATION ;  // current edge relation id
 	RelationID prev_r = GRAPH_UNKNOWN_RELATION ;  // last processed relation id
@@ -202,7 +202,7 @@ static void ApplyCreateEdge
 		// read attributes
 		//----------------------------------------------------------------------
 
-		array_append (sets, ReadAttributeSet(stream)) ;
+		arr_append (sets, ReadAttributeSet(stream)) ;
 
 		//----------------------------------------------------------------------
 		// add edge to batch
@@ -215,7 +215,7 @@ static void ApplyCreateEdge
 		Edge_SetDestNodeID (e, _edge_desc.dest_id) ;
 		Edge_SetRelationID (e, _edge_desc.r) ;
 
-		array_append (batch, e) ;
+		arr_append (batch, e) ;
 		i++ ;
 
 		// check if batch is full
@@ -241,8 +241,8 @@ static void ApplyCreateEdge
 	FlushEdges (gc, batch, sets, r, &i) ;
 
 	// clean up
-	array_free (sets) ;
-	array_free (batch) ;
+	arr_free (sets) ;
+	arr_free (batch) ;
 }
 
 static void ApplyLabels
@@ -271,7 +271,8 @@ static void ApplyLabels
 	//--------------------------------------------------------------------------
 
 	Node  n ;
-	Graph *g = gc->g ;
+
+	Graph *g = GraphContext_GetGraph (gc) ;
 	ASSERT (Graph_GetNode (g, id, &n) == true) ;
 
 	//--------------------------------------------------------------------------
@@ -524,8 +525,8 @@ static void ApplyDeleteNode
 	//    node ID
 	//--------------------------------------------------------------------------
 	
-	EntityID id;       // node ID
-	Graph *g = gc->g;  // graph to delete node from
+	EntityID id;                             // node ID
+	Graph *g = GraphContext_GetGraph (gc) ;  // graph to delete node from
 
 	int i = 0 ;                      // size of batch
 	const size_t batch_size = 4096 ; // max batch size
@@ -597,7 +598,7 @@ static void ApplyDeleteEdge
 	} _edge_desc ;
 	#pragma pack(pop)
 
-	Graph *g = gc->g ;  // graph to delete edge from
+	Graph *g = GraphContext_GetGraph (gc) ;  // graph to delete edge from
 
 	while (true) {
 		// read edge description from stream

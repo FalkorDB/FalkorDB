@@ -17,6 +17,7 @@
 #include "arithmetic/arithmetic_expression.h"
 #include "arithmetic/arithmetic_expression_construct.h"
 
+#include <ctype.h>
 #include <inttypes.h>
 
 // TODO duplicated logic, find shared place for it
@@ -269,11 +270,11 @@ uint *AST_GetClauseIndices
 	const AST *ast,
 	cypher_astnode_type_t clause_type
 ) {
-	uint *clause_indices = array_new(uint, 1);
+	uint *clause_indices = arr_new(uint, 1);
 	uint clause_count = cypher_ast_query_nclauses(ast->root);
 	for(uint i = 0; i < clause_count; i ++) {
 		if(cypher_astnode_type(cypher_ast_query_get_clause(ast->root, i)) == clause_type) {
-			array_append(clause_indices, i);
+			arr_append(clause_indices, i);
 		}
 	}
 	return clause_indices;
@@ -297,13 +298,13 @@ const cypher_astnode_t **AST_GetClauses
 	const AST *ast,
 	cypher_astnode_type_t type
 ) {
-	const cypher_astnode_t **clauses = array_new(const cypher_astnode_t *, 0);
+	const cypher_astnode_t **clauses = arr_new(const cypher_astnode_t *, 0);
 	uint clause_count = cypher_ast_query_nclauses(ast->root);
 
 	for(uint i = 0; i < clause_count; i ++) {
 		const cypher_astnode_t *child = cypher_ast_query_get_clause(ast->root, i);
 		if(cypher_astnode_type(child) != type) continue;
-		array_append(clauses, child);
+		arr_append(clauses, child);
 	}
 
 	return clauses;
@@ -316,7 +317,7 @@ static void _AST_GetTypedNodes
 	cypher_astnode_type_t type
 ) {
 	if (cypher_astnode_type(root) == type) {
-		array_append (*nodes, root) ;
+		arr_append (*nodes, root) ;
 	}
 
 	uint nchildren = cypher_astnode_nchildren (root) ;
@@ -337,7 +338,7 @@ const cypher_astnode_t **AST_GetTypedNodes
 	const cypher_astnode_t *root,
 	cypher_astnode_type_t type
 ) {
-	const cypher_astnode_t **nodes = array_new(const cypher_astnode_t *, 0);
+	const cypher_astnode_t **nodes = arr_new(const cypher_astnode_t *, 0);
 	_AST_GetTypedNodes(&nodes, root, type);
 	return nodes;
 }
@@ -350,13 +351,13 @@ void AST_CollectAliases
 	if(entity == NULL) return;
 
 	const  cypher_astnode_t **identifier_nodes =  AST_GetTypedNodes(entity, CYPHER_AST_IDENTIFIER);
-	uint nodes_count = array_len(identifier_nodes);
+	uint nodes_count = arr_len(identifier_nodes);
 	for(uint i = 0 ; i < nodes_count; i ++) {
 		const char *identifier = cypher_ast_identifier_get_name(identifier_nodes[i]);
-		array_append(*aliases, identifier);
+		arr_append(*aliases, identifier);
 	}
 
-	array_free(identifier_nodes);
+	arr_free(identifier_nodes);
 }
 
 AST *AST_Build
@@ -544,14 +545,14 @@ const char **AST_BuildReturnColumnNames
 
 	// Collect every alias from the RETURN projections.
 	uint projection_count = cypher_ast_return_nprojections(return_clause);
-	const char **columns = array_new(const char *, projection_count);
+	const char **columns = arr_new(const char *, projection_count);
 	for(uint i = 0; i < projection_count; i++) {
 		const cypher_astnode_t *projection = cypher_ast_return_get_projection(return_clause, i);
 		const cypher_astnode_t *ast_alias = cypher_ast_projection_get_alias(projection);
 		// If the projection was not aliased, the projection itself is an identifier.
 		if(ast_alias == NULL) ast_alias = cypher_ast_projection_get_expression(projection);
 		const char *alias = cypher_ast_identifier_get_name(ast_alias);
-		array_append(columns, alias);
+		arr_append(columns, alias);
 	}
 
 	return columns;
@@ -564,7 +565,7 @@ const char **AST_BuildCallColumnNames
 	const char **proc_output_columns = NULL;
 	uint yield_count = cypher_ast_call_nprojections(call_clause);
 	if(yield_count > 0) {
-		proc_output_columns = array_new(const char *, yield_count);
+		proc_output_columns = arr_new(const char *, yield_count);
 		for(uint i = 0; i < yield_count; i ++) {
 			const cypher_astnode_t *projection = cypher_ast_call_get_projection(call_clause, i);
 			const cypher_astnode_t *ast_exp = cypher_ast_projection_get_expression(projection);
@@ -580,7 +581,7 @@ const char **AST_BuildCallColumnNames
 				// Retrieve "a" from "RETURN a" or "RETURN a AS e" (theoretically; the latter case is already handled)
 				identifier = cypher_ast_identifier_get_name(ast_exp);
 			}
-			array_append(proc_output_columns, identifier);
+			arr_append(proc_output_columns, identifier);
 		}
 	} else {
 		// If the procedure call is missing its yield part, include procedure outputs.
@@ -588,9 +589,9 @@ const char **AST_BuildCallColumnNames
 		ProcedureCtx *proc = Proc_Get(proc_name);
 		ASSERT(proc);
 		unsigned int output_count = Procedure_OutputCount(proc);
-		proc_output_columns = array_new(const char *, output_count);
+		proc_output_columns = arr_new(const char *, output_count);
 		for(uint i = 0; i < output_count; i++) {
-			array_append(proc_output_columns, Procedure_GetOutput(proc, i));
+			arr_append(proc_output_columns, Procedure_GetOutput(proc, i));
 		}
 		Proc_Free(proc);
 	}
@@ -614,47 +615,75 @@ static inline char *_create_anon_alias
 	return alias;
 }
 
+// get a string representation of an AST node
+// usually used by to get either a node or an edge alias
+// the function will auto generate an `anon_x` alias for anonymous entities
+// e.g. MATCH (a)-[]->()
+// both the edge [] and the destination node are anonymous
 const char *AST_ToString
 (
-	const cypher_astnode_t *node
+	const cypher_astnode_t *node,  // AST node
+	bool *anonymous                // [optional] whether or not node is anonymous
 ) {
-	QueryCtx *ctx = QueryCtx_GetQueryCtx();
-	AST *ast = QueryCtx_GetAST();
-	AnnotationCtx *to_string_ctx = AST_AnnotationCtxCollection_GetToStringCtx(ast->anot_ctx_collection);
+	AST *ast = QueryCtx_GetAST () ;
+	QueryCtx *ctx = QueryCtx_GetQueryCtx () ;
 
-	char *str = (char *)cypher_astnode_get_annotation(to_string_ctx, node);
-	if(str == NULL) {
-		cypher_astnode_type_t t = cypher_astnode_type(node);
-		const cypher_astnode_t *ast_identifier = NULL;
-		if(t == CYPHER_AST_NODE_PATTERN) {
-			ast_identifier = cypher_ast_node_pattern_get_identifier(node);
-		} else if(t == CYPHER_AST_REL_PATTERN) {
-			ast_identifier = cypher_ast_rel_pattern_get_identifier(node);
-		} else {
-			struct cypher_input_range range = cypher_astnode_range(node);
-			uint length = range.end.offset - range.start.offset + 1;
-			str = malloc(sizeof(char) * length);
-			strncpy(str, ctx->query_data.query_no_params + range.start.offset, length - 1);
-			str[length - 1] = '\0';
+	AnnotationCtx *to_string_ctx =
+		AST_AnnotationCtxCollection_GetToStringCtx (ast->anot_ctx_collection) ;
+
+	char *str = (char *)cypher_astnode_get_annotation (to_string_ctx, node) ;
+
+	// string annotation exists
+	if (str != NULL) {
+		if (anonymous != NULL) {
+			*anonymous = true ;
 		}
-		if(ast_identifier) {
-			// Graph entity has a user-defined alias return it.
-			return cypher_ast_identifier_get_name(ast_identifier);
-		} else if(str == NULL) {
-			str = _create_anon_alias(ast->anot_ctx_collection->anon_count++);
-		}
-		cypher_astnode_attach_annotation(to_string_ctx, node, (void *)str, NULL);
+		return str ;
 	}
-	return str;
+
+	const cypher_astnode_t *ast_identifier = NULL ;
+	cypher_astnode_type_t t = cypher_astnode_type (node) ;
+
+	if (t == CYPHER_AST_NODE_PATTERN) {
+		ast_identifier = cypher_ast_node_pattern_get_identifier (node) ;
+	} else if (t == CYPHER_AST_REL_PATTERN) {
+		ast_identifier = cypher_ast_rel_pattern_get_identifier (node) ;
+	} else {
+		struct cypher_input_range range = cypher_astnode_range (node) ;
+		uint length = range.end.offset - range.start.offset + 1;
+		str = malloc(sizeof(char) * length);
+		strncpy(str, ctx->query_data.query_no_params + range.start.offset, length - 1);
+		str[length - 1] = '\0';
+	}
+
+	if (ast_identifier) {
+		if (anonymous != NULL) {
+			*anonymous = false ;
+		}
+		// graph entity has a user-defined alias return it
+		return cypher_ast_identifier_get_name (ast_identifier) ;
+	}
+
+	if (str == NULL) {
+		str = _create_anon_alias (ast->anot_ctx_collection->anon_count++) ;
+	}
+
+	if (anonymous != NULL) {
+		*anonymous = true ;
+	}
+
+	cypher_astnode_attach_annotation (to_string_ctx, node, (void *)str, NULL) ;
+
+	return str ;
 }
 
 cypher_parse_result_t *parse_query
 (
 	const char *query  // query to parse
 ) {
-	// remove trailing semicolons
-	int len = strlen(query);
-	while(len > 0 && query[len - 1] == ';') {
+	// remove trailing whitespace and semicolons
+	size_t len = strlen(query);
+	while(len > 0 && (query[len - 1] == ';' || isspace((unsigned char)query[len - 1]))) {
 		len--;
 	}
 

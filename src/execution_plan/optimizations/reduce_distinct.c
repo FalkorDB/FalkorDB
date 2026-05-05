@@ -23,7 +23,7 @@ void reduceDistinct
 	OpBase **distinct_ops = ExecutionPlan_CollectOps(plan->root,
 			OPType_DISTINCT);
 
-	for(uint i = 0; i < array_len(distinct_ops); i++) {
+	for(uint i = 0; i < arr_len(distinct_ops); i++) {
 		OpBase *distinct = distinct_ops[i];
 		ASSERT(distinct->childCount == 1);
 		if(distinct->children[0]->type == OPType_AGGREGATE) {
@@ -34,6 +34,6 @@ void reduceDistinct
 		}
 	}
 
-	array_free(distinct_ops);
+	arr_free(distinct_ops);
 }
 

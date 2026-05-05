@@ -70,13 +70,13 @@ static OpFilter **_locate_filters
 	OpBase *cp
 ) {
 	OpBase *parent = cp->parent;
-	OpFilter **filters = array_new(OpFilter *, 0);
+	OpFilter **filters = arr_new(OpFilter *, 0);
 
 	while(parent && parent->type == OPType_FILTER) {
 		OpFilter *filter_op = (OpFilter *)parent;
 
 		if(_applicableFilter(filter_op->filterTree)) {
-			array_append(filters, filter_op);
+			arr_append(filters, filter_op);
 		}
 
 		parent = parent->parent;
@@ -134,7 +134,7 @@ static void _reduce_cp_to_hashjoin
 	// retrieve all equality filter operations located upstream
 	// from the Cartesian Product
 	OpFilter **filter_ops = _locate_filters(cp);
-	uint filter_count = array_len(filter_ops);
+	uint filter_count = arr_len(filter_ops);
 
 	// for each stream joined by the Cartesian product
 	// collect all entities the stream resolves
@@ -243,7 +243,7 @@ static void _reduce_cp_to_hashjoin
 	for(int i = 0; i < stream_count; i++) {
 		raxFree(stream_entities[i]);
 	}
-	array_free(filter_ops);
+	arr_free(filter_ops);
 }
 
 // TODO: consider changing Cartesian Products such that each has exactly two
@@ -259,13 +259,13 @@ void applyJoin
 ) {
 	OpBase **cps = ExecutionPlan_CollectOps(plan->root,
 			OPType_CARTESIAN_PRODUCT);
-	uint cp_count = array_len(cps);
+	uint cp_count = arr_len(cps);
 
 	for(uint i = 0; i < cp_count; i++) {
 		OpBase *cp = cps[i];
 		_reduce_cp_to_hashjoin(plan, cp);
 	}
 
-	array_free(cps);
+	arr_free(cps);
 }
 

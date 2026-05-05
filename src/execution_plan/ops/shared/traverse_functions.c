@@ -14,14 +14,12 @@ static void _Traverse_CollectEdges
 	NodeID dest
 ) {
 	Graph *g = QueryCtx_GetGraph () ;
-	uint count = QGEdge_RelationCount (edge_ctx->e) ;
-	if (count == 0) {
+	if (edge_ctx->n_rels == 0) {
 		Graph_GetEdgesConnectingNodes (g, src, dest, GRAPH_NO_RELATION,
 				&edge_ctx->edges) ;
 	} else {
-		for (uint i = 0; i < count; i++) {
-			RelationID rel_id = QGEdge_RelationID (edge_ctx->e, i) ;
-			Graph_GetEdgesConnectingNodes (g, src, dest, rel_id,
+		for (uint i = 0; i < edge_ctx->n_rels; i++) {
+			Graph_GetEdgesConnectingNodes (g, src, dest, edge_ctx->rel_ids [i],
 					&edge_ctx->edges) ;
 		}
 	}
@@ -66,19 +64,31 @@ static GRAPH_EDGE_DIR _Traverse_SetDirection
 EdgeTraverseCtx *EdgeTraverseCtx_New
 (
 	AlgebraicExpression *ae,
-	QGEdge *e,
+	const QGEdge *e,
 	int idx
 ) {
 	ASSERT (e  != NULL) ;
 	ASSERT (ae != NULL) ;
 
-	EdgeTraverseCtx *edge_ctx = rm_malloc (sizeof (EdgeTraverseCtx)) ;
 
-	edge_ctx->e = e ;
-	edge_ctx->edges = array_new (Edge, 32) ;   // instantiate array to collect matching edges
+	uint8_t n_rels = QGEdge_RelationCount (e) ;
+	size_t  n      = sizeof (EdgeTraverseCtx) + (n_rels * sizeof (char *) * 2) ;
 
+	EdgeTraverseCtx *edge_ctx = rm_malloc (n) ;
+
+	edge_ctx->edges = arr_new (Edge, 32) ;   // instantiate array to collect matching edges
+
+	edge_ctx->n_rels     = n_rels ;
 	edge_ctx->edgeRecIdx = idx ;
-	edge_ctx->direction = _Traverse_SetDirection (ae, e) ;
+	edge_ctx->direction  = _Traverse_SetDirection (ae, e) ;
+
+	edge_ctx->rel_ids   = (RelationID *)  (&edge_ctx->_rels [0]) ;
+	edge_ctx->rel_names = (const char **) (&edge_ctx->_rels [n_rels]) ;
+
+	for (uint8_t i = 0 ; i < n_rels ; i++) {
+		edge_ctx->rel_names [i] = QGEdge_Relation   (e, i) ;
+		edge_ctx->rel_ids   [i] = QGEdge_RelationID (e, i) ;
+	}
 
 	return edge_ctx ;
 }
@@ -88,10 +98,9 @@ uint EdgeTraverseCtx_RelationCount
 (
 	const EdgeTraverseCtx *edge_ctx  // edge traverse context
 ) {
-	ASSERT (edge_ctx    != NULL) ;
-	ASSERT (edge_ctx->e != NULL) ;
+	ASSERT (edge_ctx  != NULL) ;
 
-	return QGEdge_RelationCount (edge_ctx->e) ;
+	return edge_ctx->n_rels ;
 }
 
 // get the ith relationship type used in this context
@@ -100,11 +109,10 @@ RelationID EdgeTraverseCtx_GetRelationIdx
 	const EdgeTraverseCtx *edge_ctx,  // edge traverse context
 	uint idx                          // edge ith rel type
 ) {
-	ASSERT (edge_ctx    != NULL) ;
-	ASSERT (edge_ctx->e != NULL) ;
-	ASSERT (QGEdge_RelationCount (edge_ctx->e) > idx) ;
+	ASSERT (edge_ctx != NULL) ;
+	ASSERT (edge_ctx->n_rels > idx) ;
 
-	return QGEdge_RelationID (edge_ctx->e, idx) ;
+	return edge_ctx->rel_ids [idx] ;
 }
 
 // populate the traverse context's edges array with all edges of the appropriate
@@ -143,10 +151,10 @@ bool EdgeTraverseCtx_SetEdge
 	ASSERT(edge_ctx != NULL);
 
 	// return false if all edges have been consumed
-	if(array_len(edge_ctx->edges) == 0) return false;
+	if(arr_len(edge_ctx->edges) == 0) return false;
 
 	// pop an edge and add it to the Record
-	Edge e = array_pop(edge_ctx->edges);
+	Edge e = arr_pop(edge_ctx->edges);
 	Record_AddEdge(r, edge_ctx->edgeRecIdx, e);
 
 	return true;
@@ -157,7 +165,7 @@ int EdgeTraverseCtx_EdgeCount
 	const EdgeTraverseCtx *edge_ctx
 ) {
 	ASSERT(edge_ctx != NULL);
-	return array_len(edge_ctx->edges);
+	return arr_len(edge_ctx->edges);
 }
 
 void EdgeTraverseCtx_Reset
@@ -166,8 +174,21 @@ void EdgeTraverseCtx_Reset
 ) {
 	ASSERT (edge_ctx != NULL) ;
 
-	array_clear (edge_ctx->edges) ;
-	QGEdge_ResolveUnknownRelIDS (edge_ctx->e) ;
+	arr_clear (edge_ctx->edges) ;
+
+	for (uint8_t i = 0 ; i < edge_ctx->n_rels ; i++) {
+		if (unlikely (edge_ctx->rel_ids [i] == GRAPH_UNKNOWN_RELATION)) {
+			GraphContext *gc = QueryCtx_GetGraphCtx () ;
+			// try to resolve an unknown relationship type
+			const Schema *s = GraphContext_GetSchema (gc,
+					edge_ctx->rel_names [i], SCHEMA_EDGE) ;
+
+			if (s != NULL) {
+				// update relationship type
+				edge_ctx->rel_ids [i] = Schema_GetID (s) ;
+			}
+		}
+	}
 }
 
 void EdgeTraverseCtx_Free
@@ -178,7 +199,7 @@ void EdgeTraverseCtx_Free
 		return ;
 	}
 
-	array_free (edge_ctx->edges) ;
+	arr_free (edge_ctx->edges) ;
 	rm_free (edge_ctx) ;
 }
 

@@ -50,7 +50,7 @@ static int Map_KeyIdx
 	ASSERT(SI_TYPE(key) & T_STRING);
 
 	Map  m = map.map;
-	uint n = array_len(m);
+	uint n = arr_len(m);
 
 	// search for key in map
 	for(uint i = 0; i < n; i++) {
@@ -73,7 +73,7 @@ static int Map_KeyIdxCaseInsensitive
 	ASSERT(SI_TYPE(key) & T_STRING);
 
 	Map  m = map.map;
-	uint n = array_len(m);
+	uint n = arr_len(m);
 
 	// search for key in map
 	for(uint i = 0; i < n; i++) {
@@ -94,7 +94,7 @@ SIValue Map_New
 ) {
 	SIValue map;
 
-	map.map        = array_new(Pair, capacity);
+	map.map        = arr_new(Pair, capacity);
 	map.type       = T_MAP;
 	map.allocation = M_SELF;
 
@@ -115,7 +115,7 @@ SIValue Map_FromArrays
 	SIValue map = Map_New(n);
 
 	for(uint i = 0; i < n; i++) {
-		array_append(map.map, Pair_New(SI_CloneValue(keys[i]),
+		arr_append(map.map, Pair_New(SI_CloneValue(keys[i]),
 					SI_CloneValue(values[i])));
 	}
 
@@ -157,7 +157,7 @@ void Map_Add
 	Pair pair = Pair_New(SI_CloneValue(key), SI_CloneValue(value));
 
 	// add pair to the end of map
-	array_append(map->map, pair);
+	arr_append(map->map, pair);
 }
 
 // adds key/value to map
@@ -178,7 +178,7 @@ void Map_AddNoClone
 	Pair pair = Pair_New(key, value);
 
 	// add pair to the end of map
-	array_append(map->map, pair);
+	arr_append(map->map, pair);
 }
 
 // removes key from map
@@ -200,7 +200,7 @@ void Map_Remove
 
 	// override removed key with last pair
 	Pair_Free(m[idx]);
-	array_del_fast(m, idx);
+	arr_del_fast(m, idx);
 }
 
 // clears map
@@ -211,13 +211,13 @@ void Map_Clear
 	ASSERT(SI_TYPE(map) & T_MAP);
 
 	Map m  = map.map;
-	uint n = array_len(m);
+	uint n = arr_len(m);
 
 	for(uint i = 0; i < n; i++) {
 		Pair_Free(m[i]);
 	}
 
-	array_clear(m);
+	arr_clear(m);
 }
 
 // retrieves value under key, map[key]
@@ -304,7 +304,7 @@ uint Map_KeyCount
 	SIValue map
 ) {
 	ASSERT(SI_TYPE(map) & T_MAP);
-	return array_len(map.map);
+	return arr_len(map.map);
 }
 
 SIValue Map_Keys
@@ -475,13 +475,13 @@ bool Map_Defrag
 	ASSERT (ctx != NULL) ;
 
 	// pointer to map's elements
-	void *p     = array_hdr (map->map) ;  // array header points to allocation
+	void *p     = arr_hdr (map->map) ;  // array header points to allocation
 	void *moved = RedisModule_DefragAlloc (ctx, p) ;
 
 	// update map if p been relocated
 	if (moved != NULL) {
 		// assign back array's buffer
-		map->map = (struct Pair *) (((array_hdr_t *)moved)->buf) ;
+		map->map = (struct Pair *) (((arr_hdr_t *)moved)->buf) ;
 		return true ;
 	}
 
@@ -503,6 +503,6 @@ void Map_Free
 		Pair_Free(p);
 	}
 
-	array_free(map.map);
+	arr_free(map.map);
 }
 
