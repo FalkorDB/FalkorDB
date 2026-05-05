@@ -117,8 +117,8 @@ static Record UpdateConsume
 
 	StagedUpdatesCtx_Free (&op->staged_updates) ;
 
-	// no one consumes our output, return NULL
-	if (opBase->parent == NULL) {
+	// in case of a runtime error or no one consumes our output, return NULL
+	if (opBase->parent == NULL || ErrorCtx_EncounteredError ()) {
 		return NULL ;
 	}
 

@@ -452,6 +452,10 @@ static Record MergeConsume
 	// phase 5: commit all pending node/edge updates
 	_CommitPendingUpdates (op, gc) ;
 
+	if (likely (ErrorCtx_EncounteredError ())) {
+		return NULL ;
+	}
+
 	return _handoff (op) ;
 }
 
