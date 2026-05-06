@@ -40,8 +40,6 @@ typedef enum {
 	SYNC_POLICY_NOP,
 } MATRIX_POLICY;
 
-struct GraphContext;
-
 // forward declaration of Graph struct
 typedef struct Graph Graph;
 
@@ -57,7 +55,6 @@ struct Graph {
 	Delta_Matrix node_labels;          // mapping of all node IDs to all labels possessed by each node
 	Tensor *relations;                 // relation matrices
 	Delta_Matrix _zero_matrix;         // zero matrix
-	struct GraphContext *context;      // owning graph context
 	pthread_rwlock_t _rwlock;          // read-write lock scoped to this specific graph
 	bool _writelocked;                 // true if the read-write lock was acquired by a writer
 	SyncMatrixFunc SynchronizeMatrix;  // function pointer to matrix synchronization routine
@@ -554,3 +551,4 @@ void Graph_Free
 (
 	Graph *g
 );
+

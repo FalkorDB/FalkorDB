@@ -107,12 +107,11 @@ typedef _Delta_Matrix *Delta_Matrix;
 
 struct _Delta_Matrix {
 	bool locked;
-	GrB_Matrix matrix;          // Underlying GrB_Matrix
-	GrB_Matrix delta_plus;      // Pending additions
-	GrB_Matrix delta_minus;     // Pending deletions
-	Delta_Matrix transposed;    // Transposed matrix
-	uint64_t last_sync_txn_id;  // last graph write transaction this matrix was synced for
-	pthread_mutex_t mutex;      // Lock
+	GrB_Matrix matrix;        // Underlying GrB_Matrix
+	GrB_Matrix delta_plus;    // Pending additions
+	GrB_Matrix delta_minus;   // Pending deletions
+	Delta_Matrix transposed;  // Transposed matrix
+	pthread_mutex_t mutex;    // Lock
 };
 
 GrB_Info Delta_Matrix_new
@@ -306,10 +305,9 @@ GrB_Info Delta_Matrix_wait
 // requires waiting then these matrices will be synchronized
 GrB_Info Delta_Matrix_synchronize
 (
-	Delta_Matrix C,      // the DeltaMatrix to synchronize
-	GrB_Index nrows,     // the required number of rows
-	GrB_Index ncols,     // the required number of columns
-	uint64_t write_txn_id
+	Delta_Matrix C,   // the DeltaMatrix to synchronize
+	GrB_Index nrows,  // the required number of rows
+	GrB_Index ncols   // the required number of columns
 );
 
 bool Delta_Matrix_Synced
@@ -339,3 +337,4 @@ void Delta_Matrix_free
 (
 	Delta_Matrix *C
 );
+

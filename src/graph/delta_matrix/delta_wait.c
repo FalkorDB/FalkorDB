@@ -105,11 +105,9 @@ static GrB_Info Delta_Matrix_sync
 	GrB_RETURN_IF_FAIL (GrB_wait (DP, GrB_MATERIALIZE)) ;
 
 	// C shouldn't have any pending operations
-#if RG_DEBUG
 	bool will_wait = true ;
 	GrB_OK (Delta_Matrix_willWait (C, &will_wait)) ;
 	ASSERT (will_wait == false) ;
-#endif
 
 	return GrB_SUCCESS ;
 }
@@ -141,30 +139,17 @@ GrB_Info Delta_Matrix_wait
 // requires waiting then these matrices will be synchronized
 GrB_Info Delta_Matrix_synchronize
 (
-	Delta_Matrix C,      // the DeltaMatrix to synchronize
-	GrB_Index nrows,     // the required number of rows
-	GrB_Index ncols,     // the required number of columns
-	uint64_t write_txn_id
+	Delta_Matrix C,   // the DeltaMatrix to synchronize
+	GrB_Index nrows,  // the required number of rows
+	GrB_Index ncols   // the required number of columns
 ) {
 	ASSERT (C != NULL) ;
-
-	// short cut
-	if (__atomic_load_n (&C->last_sync_txn_id, __ATOMIC_RELAXED) ==
-		write_txn_id) {
-		return GrB_SUCCESS ;
-	}
 
 	GrB_Info info = GrB_SUCCESS ;
 	uint64_t C_nrows = 0 ;
 	uint64_t C_ncols = 0 ;
 
 	Delta_Matrix_lock (C) ;
-
-	// short cut
-	if (__atomic_load_n (&C->last_sync_txn_id, __ATOMIC_RELAXED) ==
-		write_txn_id) {
-		goto unlock ;
-	}
 
 	//--------------------------------------------------------------------------
 	// get C's number of rows and columns
@@ -180,15 +165,17 @@ GrB_Info Delta_Matrix_synchronize
 		goto unlock ;
 	}
 
-	bool will_wait = false ;
+	bool will_wait = true ;
 	info = Delta_Matrix_willWait (C, &will_wait) ;
 	if (info != GrB_SUCCESS) {
 		goto unlock ;
 	}
 
-	if (C_nrows >= nrows && C_ncols >= ncols && !will_wait) {
-		__atomic_store_n (&C->last_sync_txn_id, write_txn_id,
-				__ATOMIC_RELAXED) ;
+	bool already_sync = (C_nrows >= nrows &&
+						 C_ncols >= ncols &&
+						 !will_wait) ;
+
+	if (already_sync == true) {
 		goto unlock ;
 	}
 
@@ -204,7 +191,7 @@ GrB_Info Delta_Matrix_synchronize
 		}
 
 		// recheck pending work
-		will_wait = false ;
+		will_wait = true ;
 		info = Delta_Matrix_willWait (C, &will_wait) ;
 		if (info != GrB_SUCCESS) {
 			goto unlock ;
@@ -217,13 +204,10 @@ GrB_Info Delta_Matrix_synchronize
 
 	if (will_wait) {
 		info = Delta_Matrix_wait (C, false) ;
-		if (info == GrB_SUCCESS) {
-			__atomic_store_n (&C->last_sync_txn_id, write_txn_id,
-					__ATOMIC_RELAXED) ;
-		}
-	} else {
-		__atomic_store_n (&C->last_sync_txn_id, write_txn_id,
-				__ATOMIC_RELAXED) ;
+		GrB_OK (Delta_Matrix_willWait (C, &will_wait)) ;
+
+		ASSERT ((info == GrB_SUCCESS && will_wait == false) ||
+				 info != GrB_SUCCESS) ;
 	}
 
 unlock:
@@ -231,3 +215,4 @@ unlock:
 
 	return info ;
 }
+

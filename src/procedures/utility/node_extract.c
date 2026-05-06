@@ -208,28 +208,20 @@ bool get_node_attribute
 	// free container value
 	GrB_OK (GrB_free (&cont->x)) ;
 
-	switch (allowed_types) {
-		case T_BOOL:
-		case T_INT64:
-		case T_BOOL | T_INT64:
-			type = GrB_INT64 ;
-			GrB_OK (GrB_IndexUnaryOp_new (
-				&getValue, (GxB_index_unary_function) _getAtt_int64_t,
-				type, type, ctx_type)) ;
-
-		break ;
-
-		case T_DOUBLE:
-			type = GrB_FP64 ;
-			GrB_OK (GrB_IndexUnaryOp_new (
-				&getValue, (GxB_index_unary_function) _getAtt_double,
-				type, type, ctx_type)) ;
-		break ;
-		
-		default:
-			// non-integer typecasting and certain types not currently supported
-			ASSERT (false) ;
-			break ;
+	if (allowed_types & T_DOUBLE) {
+		type = GrB_FP64 ;
+		GrB_OK (GrB_IndexUnaryOp_new (
+					&getValue, (GxB_index_unary_function) _getAtt_double,
+					type, type, ctx_type)) ;
+	}
+	else if (allowed_types & (T_BOOL | T_INT64)) {
+		type = GrB_INT64 ;
+		GrB_OK (GrB_IndexUnaryOp_new (
+					&getValue, (GxB_index_unary_function) _getAtt_int64_t,
+					type, type, ctx_type)) ;
+	} else {
+		// non-integer typecasting and certain types not currently supported
+		ASSERT (false) ;
 	}
 
 	GrB_OK (GrB_Vector_new (&x, type, nrows)) ;

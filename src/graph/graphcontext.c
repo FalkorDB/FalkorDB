@@ -94,7 +94,6 @@ GraphContext *GraphContext_New
 
 	// initial graph's write in progress atomic flag to false
 	atomic_init (&gc->write_in_progress, false) ;
-	atomic_init (&gc->write_txn_id, 0) ;
 
 	// create graph's pending write queries queue
 	gc->pending_write_queue = CircularBuffer_New (sizeof (void*), 1024) ;
@@ -110,7 +109,6 @@ GraphContext *GraphContext_New
 	edge_cap = node_cap;
 
 	gc->g = Graph_New (node_cap, edge_cap) ;
-	gc->g->context = gc ;
 	gc->graph_name = rm_strdup (graph_name) ;
 	gc->telemetry_stream = RedisModule_CreateStringPrintf (NULL,
 			TELEMETRY_FORMAT, gc->graph_name) ;
@@ -265,22 +263,6 @@ void GraphContext_UnlockCommit
 
 	// unlock GIL
 	RedisModule_ThreadSafeContextUnlock(ctx);
-}
-
-uint64_t GraphContext_GetWriteTransactionID
-(
-	const GraphContext *gc
-) {
-	ASSERT(gc != NULL);
-	return atomic_load(&gc->write_txn_id);
-}
-
-uint64_t GraphContext_AdvanceWriteTransactionID
-(
-	GraphContext *gc
-) {
-	ASSERT(gc != NULL);
-	return atomic_fetch_add(&gc->write_txn_id, 1) + 1;
 }
 
 // attempt to acquire exclusive write access to the given graph
@@ -1360,3 +1342,4 @@ static void _GraphContext_Free
 	rm_free(gc->graph_name);
 	rm_free(gc);
 }
+
