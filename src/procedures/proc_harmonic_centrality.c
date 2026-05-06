@@ -54,13 +54,14 @@ static void _process_yield
 	const char **yield
 ) {
 	int idx = 0 ;
-	for (uint i = 0; i < arr_len(yield); i++) {
+
+	for (uint i = 0 ; i < arr_len (yield) ; i++) {
 		if (strcasecmp ("node", yield [i]) == 0) {
 			ctx->yield_node = ctx->output + idx ;
 			idx++ ;
 		}
 
-		else if (strcasecmp ("score", yield[i]) == 0) {
+		else if (strcasecmp ("score", yield [i]) == 0) {
 			ctx->yield_score = ctx->output + idx ;
 			idx++ ;
 		}
@@ -210,16 +211,17 @@ static bool _read_config
 	}
 
 	//--------------------------------------------------------------------------
-	// read objective (min/max)
+	// read default weight value
 	//--------------------------------------------------------------------------
 
 	if (MAP_GETCASEINSENSITIVE (config, "defaultWeight", v)) {
-		if (SI_TYPE (v) != T_INT64) {
+		if (SI_TYPE (v) != T_INT64 || v.longval < 0) {
 			ErrorCtx_SetError ("harmonic centrality configuration, "
-					"'defaultWeight' should be an integer") ;
-			goto error;
+					"'defaultWeight' should be non negative integer") ;
+			goto error ;
 		}
 		*defaultW = v ;
+
 		match_fields++ ;
 	}
 
@@ -296,10 +298,10 @@ ProcedureResult Proc_CentralityInvoke
 	//	defaultWeight: 0
 	// }
 
-	LabelID    *lbls      ;  // filtered labels
-	RelationID *rels      ;  // filtered relationships
-	SIValue     defaultW  ;  // default weight
-	AttributeID weightAtt ;
+	LabelID    *lbls = NULL ;  // filtered labels
+	RelationID *rels = NULL ;  // filtered relationships
+	SIValue     defaultW = SI_NullVal () ;  // default weight
+	AttributeID weightAtt = ATTRIBUTE_ID_NONE ;
 
 	//--------------------------------------------------------------------------
 	// load configuration map
@@ -335,18 +337,14 @@ ProcedureResult Proc_CentralityInvoke
 	// run centrality
 	//--------------------------------------------------------------------------
 
-	GrB_Matrix    A              = NULL;   // Matrix with the edges of specified types
-	GrB_Vector    nodes          = NULL;   // Vector of participating nodes
-	GrB_Vector    scores         = NULL;   // score[i] is the centrality of node i
-	GrB_Vector    reachable_nodes = NULL;  // reachable[i] is the estimated reachable count
-	LAGraph_Graph G              = NULL;
-	bool sym                     = false;  // matrix is directed
-	bool compact                 = true;
+	GrB_Matrix A               = NULL;   // matrix with the edges of specified types
+	GrB_Vector nodes           = NULL;   // vector of participating nodes
+	GrB_Vector scores          = NULL;   // score[i] is the centrality of node i
+	GrB_Vector reachable_nodes = NULL;   // reachable[i] is the estimated reachable count
 
-	// simple_timer_t t_invoke;
-	// simple_timer_t t_phase;
-	// simple_tic(t_invoke);
-	// simple_tic(t_phase);
+	LAGraph_Graph G = NULL ;
+	bool sym        = false ;  // matrix is directed
+	bool compact    = true ;
 
 	GrB_OK (Build_Matrix (&A, &nodes, g, lbls, arr_len (lbls), rels,
 			arr_len(rels), sym, compact)) ;
@@ -354,17 +352,18 @@ ProcedureResult Proc_CentralityInvoke
 	ASSERT (A     != NULL) ;
 	ASSERT (nodes != NULL) ;
 
-	// printf("[centrality] Build_Matrix: %.2f ms\n",
-	// 	TIMER_GET_ELAPSED_MILLISECONDS(t_phase));
+	if (lbls != NULL) {
+		arr_free (lbls) ;
+	}
 
-	arr_free (lbls) ;
-	arr_free (rels) ;
+	if (rels != NULL) {
+		arr_free (rels) ;
+	}
 
 	if (weightAtt == ATTRIBUTE_ID_NONE) {
-		GrB_OK (GrB_Vector_assign_BOOL(
+		GrB_OK (GrB_Vector_assign_BOOL (
 			nodes, nodes, NULL, true, GrB_ALL, 0, GrB_DESC_S));
 	} else {
-		// simple_tic(t_phase);
 		if (!get_node_attribute (nodes, g, weightAtt, defaultW,
 			T_BOOL | T_INT64)) {
 			ErrorCtx_SetError ("harmonic centrality weight attribute specified"
@@ -374,11 +373,9 @@ ProcedureResult Proc_CentralityInvoke
 			GrB_free (&nodes) ;
 			return PROCEDURE_ERR;
 		}
-		// printf("[centrality] get_node_attribute: %.2f ms\n",
-		// 	TIMER_GET_ELAPSED_MILLISECONDS(t_phase));
 	}
 
-	char msg[LAGRAPH_MSG_LEN] ;
+	char msg [LAGRAPH_MSG_LEN] ;
 	GrB_Info info = LAGraph_New (&G, &A, LAGraph_ADJACENCY_DIRECTED, msg) ;
 	ASSERT (info == GrB_SUCCESS) ;
 
@@ -393,9 +390,6 @@ ProcedureResult Proc_CentralityInvoke
 		return PROCEDURE_ERR ;
 	}
 
-	// printf("[centrality] Proc_CentralityInvoke total: %.2f ms\n",
-	// 	TIMER_GET_ELAPSED_MILLISECONDS(t_invoke));
-
 	pdata->scores          = scores ;
 	pdata->reachable_nodes = reachable_nodes ;
 
@@ -403,15 +397,17 @@ ProcedureResult Proc_CentralityInvoke
 	// initialize iterator directly over scores (index = nodeID, value = score)
 	//--------------------------------------------------------------------------
 
-	GrB_OK (GxB_Iterator_new (&pdata->it)) ;
-	GrB_OK (GxB_Vector_Iterator_attach (pdata->it, pdata->scores, NULL)) ;
-	pdata->info = GxB_Vector_Iterator_seek (pdata->it, 0) ;
+	if (pdata->yield_node != NULL || pdata->yield_score != NULL) {
+		GrB_OK (GxB_Iterator_new (&pdata->it)) ;
+		GrB_OK (GxB_Vector_Iterator_attach (pdata->it, pdata->scores, NULL)) ;
+		pdata->info = GxB_Vector_Iterator_seek (pdata->it, 0) ;
+	}
 
 	//--------------------------------------------------------------------------
 	// initialize iterator over reachable_nodes (same sparsity pattern as scores)
 	//--------------------------------------------------------------------------
 
-	if (pdata->reachable_nodes != NULL) {
+	if (pdata->yield_reachable != NULL) {
 		GrB_OK (GxB_Iterator_new (&pdata->it_reach)) ;
 		GrB_OK (GxB_Vector_Iterator_attach (pdata->it_reach,
 			pdata->reachable_nodes, NULL)) ;
@@ -515,10 +511,10 @@ ProcedureResult Proc_CentralityFree
 // })
 // YIELD node, score
 ProcedureCtx *Proc_HarmonicCentralityCtx(void) {
-	ProcedureOutput *outputs      = arr_new (ProcedureOutput, 3) ;
-	ProcedureOutput output_node      = {.name = "node",      .type = T_NODE} ;
+	ProcedureOutput *outputs         = arr_new (ProcedureOutput, 3) ;
+	ProcedureOutput output_node      = {.name = "node",      .type = T_NODE}   ;
 	ProcedureOutput output_score     = {.name = "score",     .type = T_DOUBLE} ;
-	ProcedureOutput output_reachable = {.name = "reachable", .type = T_INT64} ;
+	ProcedureOutput output_reachable = {.name = "reachable", .type = T_INT64}  ;
 
 	arr_append (outputs, output_node) ;
 	arr_append (outputs, output_score) ;

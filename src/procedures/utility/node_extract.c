@@ -18,10 +18,10 @@ typedef struct
 	void *defaultA;    // default value of the attribute
 } selectContext;
 
-// outputs true if the current nodeID has the given attribute
+// outputs true if the current nodeID has the given attribute of a valid type
 void _selectID_withAttribute
 (
-	bool *z,                  // node has attribute?
+	bool *z,                  // node has attribute of valid type?
 	const void *x,            // unused
 	GrB_Index ix,             // unused
 	GrB_Index jx,             // nodeID
@@ -30,9 +30,9 @@ void _selectID_withAttribute
 	GrB_Index jy,             // unused
 	const selectContext *ctx  // theta
 ) {
-	Node n;
-	bool found = Graph_GetNode (ctx->g, (NodeID) jx, &n);
-	ASSERT (found == true);
+	Node n ;
+	bool found = Graph_GetNode (ctx->g, (NodeID) jx, &n) ;
+	ASSERT (found == true) ;
 
 	SIValue v ;
 	GraphEntity_GetProperty ((GraphEntity *) &n, ctx->attr, &v) ;
@@ -121,54 +121,61 @@ void get_nodes_with_lbls
 }
 
 // returns true if all attributes exist and are of correct type, false otherwise
-bool _valid_attributes
+static bool _valid_attributes
 (
-	const GrB_Vector rows,
-	const GrB_Scalar ctx,
-	const GrB_Type ctx_type
+	const GrB_Vector V,      // vector [i] check entity i
+	const GrB_Scalar ctx,    // theta
+	const GrB_Type ctx_type  // theta type
 ) {
-	GrB_Index         nrows     = 0 ;
-	GrB_Vector        x         = NULL ; // full vector to multiply by
-	GrB_Scalar        isValid   = NULL ; // all nodes have valid type
-	GxB_IndexBinaryOp valid_idx = NULL ; // true if node has a valid attribute
-	GrB_BinaryOp      valid_1st = NULL ; // true if node has a valid attribute
-	GrB_Semiring      and_valid = NULL ; // true if node has a valid attribute
-	GrB_OK (GrB_Vector_size (&nrows, rows)) ;
+	GrB_Index         nrows     = 0 ;     // length of V
+	GrB_Vector        x         = NULL ;  // full vector to multiply by
+	GrB_Scalar        isValid   = NULL ;  // all nodes have valid type?
+	GxB_IndexBinaryOp valid_idx = NULL ;  // index op of `valid_1st`
+	GrB_BinaryOp      valid_1st = NULL ;  // true if node has a valid attribute
+	GrB_Semiring      and_valid = NULL ;  // LAND, valid_1st
+
+	GrB_OK (GrB_Vector_size (&nrows, V)) ;
 	GrB_OK (GrB_Vector_new (&x, GrB_BOOL, nrows)) ;
 	GrB_OK (GrB_Scalar_new (&isValid, GrB_BOOL)) ;
 	GrB_OK (GrB_assign(x, NULL, NULL, (bool) true, GrB_ALL, 0, NULL));
+
 	GrB_OK (GxB_IndexBinaryOp_new (
 		&valid_idx, (GxB_index_binary_function) _selectID_withAttribute,
 		GrB_BOOL, GrB_BOOL, GrB_BOOL, ctx_type, NULL, NULL)) ;
-	GrB_OK (GxB_BinaryOp_new_IndexOp(&valid_1st, valid_idx, ctx));
-	GrB_OK (GrB_Semiring_new(&and_valid, GrB_LAND_MONOID_BOOL, valid_1st));
 
-	// Vector dot product: isValid = <rows,x>
-	GrB_OK (GrB_mxv((GrB_Vector) isValid, NULL, NULL, and_valid,
-	  (GrB_Matrix) rows, x, GrB_DESC_T0));
+	GrB_OK (GxB_BinaryOp_new_IndexOp (&valid_1st, valid_idx, ctx)) ;
+	GrB_OK (GrB_Semiring_new (&and_valid, GrB_LAND_MONOID_BOOL, valid_1st)) ;
 
+	// vector dot product: isValid = <V,x>
+	GrB_OK (GrB_mxv ((GrB_Vector) isValid, NULL, NULL, and_valid,
+	  (GrB_Matrix) V, x, GrB_DESC_T0));
+
+	bool ok = false ;
+	GrB_Scalar_extractElement_BOOL (&ok, isValid) ;
+
+	GrB_OK (GrB_free (&x)) ;
+	GrB_OK (GrB_free (&isValid)) ;
 	GrB_OK (GrB_free (&and_valid)) ;
 	GrB_OK (GrB_free (&valid_1st)) ;
 	GrB_OK (GrB_free (&valid_idx)) ;
-	bool ok = false;
-	GrB_Scalar_extractElement_BOOL(&ok, isValid);
-	return ok;
+
+	return ok ;
 }
 
 // get attributes of the given nodes returns true if successful
 bool get_node_attribute
 (
-	GrB_Vector rows,       // [input/output] the nodes for which to get values
+	GrB_Vector nodes,      // [input/output] the nodes for which to get values
 	const Graph *g,        // graph
 	AttributeID attr,      // attribute to get
 	SIValue default_val,   // the default value if attribute does not exist
 	SIType allowed_types   // allowed types (will return error on allowed type
 	                       // if default value is not specified)
 ) {
-	ASSERT (g    != NULL) ;
-	ASSERT (rows != NULL) ;
-	ASSERT (attr != ATTRIBUTE_ID_ALL) ;
-	ASSERT (attr != ATTRIBUTE_ID_NONE) ;
+	ASSERT (g     != NULL) ;
+	ASSERT (nodes != NULL) ;
+	ASSERT (attr  != ATTRIBUTE_ID_ALL) ;
+	ASSERT (attr  != ATTRIBUTE_ID_NONE) ;
 
 	// default is either null or of allowedtype
 	ASSERT ((T_NULL | allowed_types) & SI_TYPE (default_val)) ;
@@ -177,30 +184,32 @@ bool get_node_attribute
 	                     .defaultA = &default_val.longval} ;
 
 	GrB_Index         nrows     = 0 ;
-	GrB_Vector        x         = NULL ;
-	GrB_Type          ctx_type  = NULL ; // type, context passed into index ops
-	GrB_Scalar        ctx_s     = NULL ; // "theta", context passed into index ops
-	GrB_IndexUnaryOp  getValue  = NULL ; // get the value of the requested attribute
-	GxB_Container     cont      = NULL ; // to unload rows
-	GrB_Scalar        iso_val   = NULL ; // isoval of new rows vector
+	GrB_Type          ctx_type  = NULL ;  // type, context passed into index ops
+	GrB_Scalar        ctx_s     = NULL ;  // "theta", context passed into index ops
+	GrB_IndexUnaryOp  getValue  = NULL ;  // get the value of the requested attribute
+	GxB_Container     cont      = NULL ;  // to unload nodes
+	GrB_Scalar        iso_val   = NULL ;  // isoval of new nodes vector
 	GrB_Type          type      = NULL ;
 
 	GrB_OK (GrB_Type_new (&ctx_type, sizeof (selectContext))) ;
 	GrB_OK (GrB_Scalar_new (&ctx_s, ctx_type)) ;
 	GrB_OK (GrB_Scalar_setElement_UDT (ctx_s, (void *) &ctx)) ;
-	GrB_OK (GrB_Vector_size (&nrows, rows)) ;
+	GrB_OK (GrB_Vector_size (&nrows, nodes)) ;
 
+	// no default value provided
+	// weight attribute provided
+	// need to check that all weight values are of the allowed types
 	if (SI_TYPE (default_val) == T_NULL &&
-		!_valid_attributes(rows, ctx_s, ctx_type)) {
-		GrB_free(&ctx_type);
-		GrB_free(&ctx_s);
-		return false;
+		!_valid_attributes (nodes, ctx_s, ctx_type)) {
+		GrB_free (&ctx_type) ;
+		GrB_free (&ctx_s) ;
+		return false ;
 	}
 
 	GrB_OK (GxB_Container_new (&cont)) ;
 
-	// prepare to switch GrB_Type of rows
-	GrB_OK (GxB_unload_Vector_into_Container (rows, cont, NULL)) ;
+	// prepare to switch GrB_Type of nodes
+	GrB_OK (GxB_unload_Vector_into_Container (nodes, cont, NULL)) ;
 
 	// row should be an isovalued vector
 	ASSERT (cont->iso) ;
@@ -224,7 +233,6 @@ bool get_node_attribute
 		ASSERT (false) ;
 	}
 
-	GrB_OK (GrB_Vector_new (&x, type, nrows)) ;
 	GrB_OK (GrB_Scalar_new (&iso_val, type)) ;
 
 	// doesn't really matter if this casts correctly
@@ -232,15 +240,16 @@ bool get_node_attribute
 	GrB_OK (GrB_Scalar_setElement_INT64 (iso_val, 0)) ;
 
 	cont->x = (GrB_Vector) iso_val;
-	GrB_OK (GxB_load_Vector_from_Container (rows, cont, NULL)) ;
+	GrB_OK (GxB_load_Vector_from_Container (nodes, cont, NULL)) ;
 
 	GrB_OK (GrB_Vector_apply_IndexOp_Scalar (
-		rows, NULL, NULL, getValue, rows, ctx_s, NULL)) ;
+		nodes, NULL, NULL, getValue, nodes, ctx_s, NULL)) ;
 
 	GrB_OK (GrB_free (&cont)) ;
 	GrB_OK (GrB_free (&ctx_s)) ;
 	GrB_OK (GrB_free (&iso_val)) ;
 	GrB_OK (GrB_free (&getValue)); 
+
 	return true;
 }
 
