@@ -519,6 +519,19 @@ impl AttributeCache {
         self.memory_usage_atomic() as usize
     }
 
+    /// Structural overhead of the cache slot vectors, excluding attribute
+    /// payload heap.  Reflects "block storage" semantics: grows monotonically
+    /// as ids are allocated, does not shrink when entries are removed and
+    /// does not grow when attributes are added to existing entries.
+    #[must_use]
+    pub fn structural_memory_usage(&self) -> usize {
+        let slot_size = std::mem::size_of::<Option<CachedEntity>>();
+        self.shards
+            .iter()
+            .map(|s| s.entries.read().len() * slot_size)
+            .sum()
+    }
+
     /// Best-effort lazy eviction of *clean* entries from the given shard
     /// when its slice of the byte budget is exhausted.
     #[inline]

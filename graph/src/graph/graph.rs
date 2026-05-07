@@ -3165,11 +3165,11 @@ impl Graph {
 
         // --- node block storage ---
         let node_block_storage_sz: usize =
-            self.node_attrs.memory_usage() + self.deleted_nodes.serialized_size();
+            self.node_attrs.structural_memory_usage() + self.deleted_nodes.serialized_size();
 
         // --- edge block storage ---
-        let edge_block_storage_sz: usize =
-            self.relationship_attrs.memory_usage() + self.deleted_relationships.serialized_size();
+        let edge_block_storage_sz: usize = self.relationship_attrs.structural_memory_usage()
+            + self.deleted_relationships.serialized_size();
 
         // --- node attributes by label (sampling) ---
         let mut node_attr_by_label: Vec<(Arc<String>, usize)> = Vec::new();

@@ -890,6 +890,12 @@ impl AttributeStore {
         self.cache.memory_usage()
     }
 
+    /// Structural slot-storage overhead, excluding attribute payload heap.
+    #[must_use]
+    pub fn structural_memory_usage(&self) -> usize {
+        self.cache.structural_memory_usage()
+    }
+
     pub fn commit(&mut self) -> Result<(), String> {
         // Apply pending full entity deletions to fjall.
         if !self.pending_deletes.is_empty() {
