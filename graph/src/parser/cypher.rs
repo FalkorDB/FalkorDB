@@ -1665,6 +1665,7 @@ impl<'a> Parser<'a> {
                                 &FnType::Aggregation {
                                     initial: Value::Null,
                                     finalizer: None,
+                                    batch_agg: None,
                                 },
                             )
                         })?;

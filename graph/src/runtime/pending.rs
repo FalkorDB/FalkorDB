@@ -255,11 +255,26 @@ impl Pending {
     }
 
     #[must_use]
+    #[inline]
+    pub fn has_node_attrs(&self) -> bool {
+        !self.new_nodes_attrs.is_empty() || !self.existing_nodes_attrs.is_empty()
+    }
+
+    #[must_use]
+    #[inline]
+    pub fn has_relationship_attrs(&self) -> bool {
+        !self.new_relationships_attrs.is_empty() || !self.existing_relationships_attrs.is_empty()
+    }
+
+    #[must_use]
     pub fn get_node_attribute(
         &self,
         id: NodeId,
         key: &Arc<String>,
     ) -> Option<&Value> {
+        if !self.has_node_attrs() {
+            return None;
+        }
         self.new_nodes_attrs
             .get(&id.into())
             .and_then(|attrs| attrs.get(key))
@@ -517,6 +532,9 @@ impl Pending {
         id: RelationshipId,
         key: &Arc<String>,
     ) -> Option<&Value> {
+        if !self.has_relationship_attrs() {
+            return None;
+        }
         self.new_relationships_attrs
             .get(&id.into())
             .and_then(|attrs| attrs.get(key))
