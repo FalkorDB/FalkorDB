@@ -55,6 +55,7 @@ tests/flow/test_multi_pattern
 tests/flow/test_multi_writer.py
 tests/flow/test_multiple_edges
 tests/flow/test_node_by_id
+tests/flow/test_null_handling.py
 tests/flow/test_opening_node.py
 tests/flow/test_optimizations_plan.py
 tests/flow/test_optional_match
@@ -75,6 +76,7 @@ tests/flow/test_query_mem_limit.py
 tests/flow/test_query_validation
 tests/flow/test_rdb_load.py
 tests/flow/test_reduce.py
+tests/flow/test_relation_patterns.py
 tests/flow/test_results.py
 tests/flow/test_reversed_patterns
 tests/flow/test_ro_query.py

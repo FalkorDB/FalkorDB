@@ -60,7 +60,7 @@ class testOpeningNode():
         for q in queries:
             plan = str(self.graph.explain(q))
             self.env.assertContains("Node By Label Scan | (b:B)", plan)
-            self.env.assertContains("Conditional Traverse | (b)->(a:A)", plan)
+            self.env.assertContains("Conditional Traverse | (b)<-(a:A)", plan)
 
     # when there are multiple labels to pick from
     # make sure the label with the least number of nodes associated with it is

@@ -421,9 +421,22 @@ pub fn plan_is_non_deterministic(plan: &DynTree<IR>) -> bool {
 /// Formats a relationship for CondTraverse/ExpandInto display.
 /// Shows node labels and hides anonymous edge aliases.
 fn fmt_rel_with_labels(rel: &QueryRelationship<Arc<String>, Arc<String>, Variable>) -> String {
+    fmt_rel_with_labels_dir(rel, false)
+}
+
+fn fmt_rel_with_labels_dir(
+    rel: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
+    transposed: bool,
+) -> String {
     use itertools::Itertools;
 
-    let direction = if rel.bidirectional { "" } else { ">" };
+    let (left_arrow, right_arrow) = if rel.bidirectional {
+        ("", "")
+    } else if transposed {
+        ("<", "")
+    } else {
+        ("", ">")
+    };
 
     let fmt_node = |node: &QueryNode<Arc<String>, Variable>| -> String {
         if node.labels.is_empty() {
@@ -439,14 +452,14 @@ fn fmt_rel_with_labels(rel: &QueryRelationship<Arc<String>, Arc<String>, Variabl
     let is_anon = alias_str.starts_with("_anon");
 
     if is_anon {
-        format!("({from_str})-{direction}({to_str})")
+        format!("({from_str}){left_arrow}-{right_arrow}({to_str})")
     } else if rel.types.is_empty() {
         let alias = &rel.alias;
-        format!("({from_str})-[{alias}]-{direction}({to_str})")
+        format!("({from_str}){left_arrow}-[{alias}]-{right_arrow}({to_str})")
     } else {
         let alias = &rel.alias;
         let types = rel.types.iter().join("|");
-        format!("({from_str})-[{alias}:{types}]-{direction}({to_str})")
+        format!("({from_str}){left_arrow}-[{alias}:{types}]-{right_arrow}({to_str})")
     }
 }
 
@@ -501,9 +514,15 @@ impl Display for IR {
             }
             Self::NodeByIdSeek { .. } => write!(f, "NodeByIdSeek"),
             Self::CondTraverse {
-                relationship: rel, ..
+                relationship: rel,
+                transposed,
+                ..
             } => {
-                write!(f, "Conditional Traverse | {}", fmt_rel_with_labels(rel))
+                write!(
+                    f,
+                    "Conditional Traverse | {}",
+                    fmt_rel_with_labels_dir(rel, *transposed)
+                )
             }
             Self::CondVarLenTraverse {
                 relationship: rel, ..

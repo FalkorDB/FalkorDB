@@ -374,8 +374,11 @@ pub(super) fn select_scan_node(
             true
         };
 
-        if need_swap && chain.len() == 1 {
-            // Simple case: single CondTraverse, swap from/to.
+        if need_swap && (chain.len() == 1 || best_pos == 0) {
+            // Best endpoint is the `to` of the bottom CT.  Swap the bottom
+            // CT only — upper CTs in the chain remain unchanged because the
+            // shared node (best_node) is still produced into env by the
+            // transposed bottom CT and consumed by the next CT's `from`.
             let ct_idx = chain[0];
             if let IR::CondTraverse {
                 relationship,
@@ -425,8 +428,7 @@ pub(super) fn select_scan_node(
                 // else: child is from outer context, keep it.
             }
         } else if need_swap && chain.len() > 1 {
-            // Chain reversal: reverse the order of CondTraverse nodes and
-            // swap from/to on each.
+            // Best is at a parent CT (best_pos > 0). Reverse the chain.
 
             // Collect relationship data from each CT in the chain (bottom to root).
             let mut rels: Vec<(

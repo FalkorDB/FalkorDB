@@ -54,6 +54,11 @@ pub struct Binder {
     /// n's (scope_id, variable ID) → {N, O} so the planner can create a single
     /// NodeByLabelScan with the full label set.
     node_labels: HashMap<(u32, u32), OrderSet<Arc<String>>>,
+    /// Variables bound from variable-length relationship patterns (e.g. `[r*]`).
+    /// These are typed as `Type::Path` but represent a list of edges, so
+    /// property access like `r.prop` is allowed (per-edge predicate)
+    /// whereas it is rejected on named-path Path variables.
+    varlen_rel_var_ids: std::collections::HashSet<(u32, u32)>,
 }
 
 impl Default for Binder {
@@ -64,6 +69,7 @@ impl Default for Binder {
             parent_to_child_scope: HashMap::new(),
             copy_from_parent: HashMap::new(),
             node_labels: HashMap::new(),
+            varlen_rel_var_ids: std::collections::HashSet::new(),
         }
     }
 }
@@ -799,6 +805,7 @@ impl Binder {
                         parent_to_child_scope: HashMap::new(),
                         copy_from_parent: HashMap::new(),
                         node_labels: HashMap::new(),
+                        varlen_rel_var_ids: std::collections::HashSet::new(),
                     };
 
                     // Build bound clauses: explicit import WITH + remaining
@@ -1228,8 +1235,11 @@ impl Binder {
 
         // Pre-register path variables in scope so they can be resolved
         // when binding node/relationship inline properties below.
+        let mut named_path_names: std::collections::HashSet<Arc<String>> =
+            std::collections::HashSet::new();
         for raw_path in graph.paths() {
             self.define_name_in_scope(raw_path.var.clone(), Type::Path, true)?;
+            named_path_names.insert(raw_path.var.clone());
         }
 
         // Bind all nodes in the graph, merging duplicates by alias.
@@ -1257,11 +1267,27 @@ impl Binder {
 
         // Bind relationships, binding any referenced nodes that weren't in the graph
         for relationship in graph.relationships() {
+            if relationship.min_hops.is_some()
+                && !relationship.alias.starts_with("_anon")
+                && named_path_names.contains(&relationship.alias)
+            {
+                return Err(format!(
+                    "The alias '{}' was specified for both a node and a relationship.",
+                    relationship.alias
+                ));
+            }
             let alias = self.define_name_in_scope(
                 relationship.alias.clone(),
-                Type::Relationship,
+                if relationship.min_hops.is_some() {
+                    Type::Path
+                } else {
+                    Type::Relationship
+                },
                 !is_create,
             )?;
+            if relationship.min_hops.is_some() {
+                self.varlen_rel_var_ids.insert((alias.scope_id, alias.id));
+            }
             let attrs = self.bind_expr(&relationship.attrs)?;
 
             // Resolve 'from' node by alias, binding if missing and merging labels if present
@@ -1853,7 +1879,10 @@ impl Binder {
                     ExprIR::Modulo => ExprIR::Modulo,
                     ExprIR::Distinct => ExprIR::Distinct,
                     ExprIR::Property(prop) => {
-                        // Property access is not valid on Path types.
+                        // Property access is not valid on Path types,
+                        // except when the Path comes from a variable-length
+                        // relationship pattern (e.g. `[r*]`) — in that case
+                        // `r.prop` is treated as a per-edge predicate.
                         if let Some(first_child) = children.first() {
                             let root = first_child.root();
                             let inner = if matches!(root.data(), ExprIR::Paren) {
@@ -1861,9 +1890,11 @@ impl Binder {
                             } else {
                                 Some(root)
                             };
-                            if inner.is_some_and(
-                                |n| matches!(n.data(), ExprIR::Variable(v) if v.ty == Type::Path),
-                            ) {
+                            if let Some(node) = inner
+                                && let ExprIR::Variable(v) = node.data()
+                                && v.ty == Type::Path
+                                && !self.varlen_rel_var_ids.contains(&(v.scope_id, v.id))
+                            {
                                 return Err("Type mismatch: expected Map, Node, Edge, \
                                              Datetime, Date, Time, Duration, Null, \
                                              or Point but was Path"

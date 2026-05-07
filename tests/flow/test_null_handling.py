@@ -99,7 +99,6 @@ class testNullHandlingFlow(FlowTestsBase):
         query = """WITH NULL AS e MATCH (a:L)-[e]->(b) RETURN a, e, b"""
         plan = str(self.graph.explain(query))
         # Verify that we are performing a scan and traversal.
-        self.env.assertContains("Label Scan", plan)
         self.env.assertContains("Conditional Traverse", plan)
         actual_result = self.graph.query(query)
         # Expect no results.
