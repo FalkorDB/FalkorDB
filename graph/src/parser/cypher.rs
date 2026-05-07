@@ -2560,9 +2560,9 @@ impl<'a> Parser<'a> {
             if let Some((min, Some(max))) = var_len
                 && min > max
             {
-                return Err(
-                    "Variable length path, maximum number of hops must be greater or equal to minimum number of hops.".to_string(),
-                );
+                return Err(self.lexer.format_error(
+                    "Variable length path, maximum number of hops must be greater or equal to minimum number of hops.",
+                ));
             }
             // Collapse [*1..1] / [*1] to a fixed single-hop edge so the
             // binding is a single Relationship value, matching FalkorDB.

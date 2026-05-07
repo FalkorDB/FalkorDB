@@ -1,5 +1,3 @@
-## Indexing
-
 ## Concurrency & Multi-writer
 tests/flow/test_stress.py
 
