@@ -281,8 +281,10 @@ impl AttributeStore {
     ///
     /// Uses a version-aware insert to avoid overwriting in-flight dirty writes:
     /// the cache entry is only updated if no newer/dirty entry already exists.
-    /// Empty entries are cached to prevent repeated fjall scans for non-existent
-    /// entities. Returns empty if the entity is pending full deletion.
+    /// Empty results are NOT cached: caching one entry per prop-less entity
+    /// reintroduces the per-entity cache overhead the C version avoids by
+    /// representing empty AttributeSets as NULL.
+    /// Returns empty if the entity is pending full deletion.
     fn populate_cache_from_fjall(
         &self,
         entity_id: u64,
@@ -308,7 +310,10 @@ impl AttributeStore {
                 Some((idx, value))
             })
             .collect();
-        // Always cache the result (even empty entries) using safe insert that
+        if attrs.is_empty() {
+            return EMPTY_ATTRS.clone();
+        }
+        // Cache only non-empty results using safe insert that
         // respects in-flight writes: only insert if no newer/dirty entry exists.
         let _ = self
             .cache
@@ -602,6 +607,12 @@ impl AttributeStore {
         let mut merged: Vec<(u16, Value)> = Vec::new();
 
         for (key, entity_attrs) in attrs {
+            // Skip entities whose pending map is empty: no entries to write, no nulls
+            // to remove, and no need to touch fjall. Avoids creating an empty pinned
+            // dirty cache entry per entity (matches C's NULL AttributeSet behaviour).
+            if entity_attrs.is_empty() {
+                continue;
+            }
             // Resolve attribute indices using pre-resolved map.
             let mut new_entries: Vec<(u16, Value)> = Vec::with_capacity(entity_attrs.len());
             let mut null_indices: Vec<u16> = Vec::new();
@@ -742,6 +753,11 @@ impl AttributeStore {
             }
 
             entries.sort_by_key(|(idx, _)| *idx);
+            // Skip empty entities to avoid per-entity cache overhead (matches C's
+            // NULL AttributeSet behaviour for prop-less entities).
+            if entries.is_empty() {
+                continue;
+            }
             self.cache
                 .insert_entity_presorted(*key, entries, self.version, true);
             self.dirty_entities.insert(*key);
@@ -757,6 +773,9 @@ impl AttributeStore {
     ) -> usize {
         let mut nset = 0;
         for (entity_id, entries) in data.drain(..) {
+            if entries.is_empty() {
+                continue;
+            }
             nset += entries.len();
             self.cache
                 .insert_entity_presorted(entity_id, entries, self.version, true);
