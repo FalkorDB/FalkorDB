@@ -11,7 +11,7 @@ FROM falkordb/falkordb-browser:$BROWSER_TAG AS browser
 
 FROM node:24-bookworm-slim AS node
 
-FROM redis:8.6.2
+FROM redis:8.6.3
 
 ENV FALKORDB_HOME=/var/lib/falkordb
 
