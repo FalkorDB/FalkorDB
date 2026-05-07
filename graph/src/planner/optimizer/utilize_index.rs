@@ -65,6 +65,7 @@ use crate::{
 use super::super::IR;
 
 use crate::parser::ast::QueryRelationship;
+use crate::runtime::orderset::OrderSet;
 
 /// Build a `hasLabels(variable, [label1, label2, ...])` filter expression.
 fn build_has_labels_filter(
@@ -99,13 +100,8 @@ trait IndexSubject: Clone {
 
     fn alias(&self) -> &Variable;
 
-    /// The label or relationship type the index scan keys on. When a
-    /// pattern declares multiple labels/types, only the first is used
-    /// for the scan; other labels become post-scan filters.
-    fn primary_label(&self) -> &Arc<String>;
-
-    /// All labels/types on the pattern — iterated by the inline-attr
-    /// path to find any indexed label/type match.
+    /// All labels/types on the pattern — iterated to find an indexed
+    /// label/type match.
     fn all_labels(&self) -> Box<dyn Iterator<Item = &Arc<String>> + '_>;
 
     /// Inline property attributes (e.g. `{age: 30}` on the pattern).
@@ -128,6 +124,7 @@ trait IndexSubject: Clone {
         filter: &DynTree<ExprIR<Variable>>,
         attr_side: NodeIdx<Dyn<ExprIR<Variable>>>,
         constant_node: DynTree<ExprIR<Variable>>,
+        label: Arc<String>,
     ) -> Scan<Self>;
 
     /// Recognize the IR variant that's a candidate for an index scan
@@ -144,6 +141,14 @@ trait IndexSubject: Clone {
         query: Arc<IndexQuery<QueryExpr<Variable>>>,
         metadata: Self::Metadata,
     ) -> IR;
+
+    /// Returns a copy of the subject whose labels/types list places
+    /// `label` first. The runtime index-scan ops treat `labels[0]` /
+    /// `types[0]` as the index key and post-filter the rest.
+    fn with_primary_label(
+        &self,
+        label: &Arc<String>,
+    ) -> Self;
 }
 
 impl IndexSubject for Arc<QueryNode<Arc<String>, Variable>> {
@@ -151,9 +156,6 @@ impl IndexSubject for Arc<QueryNode<Arc<String>, Variable>> {
 
     fn alias(&self) -> &Variable {
         &self.alias
-    }
-    fn primary_label(&self) -> &Arc<String> {
-        &self.labels[0]
     }
     fn all_labels(&self) -> Box<dyn Iterator<Item = &Arc<String>> + '_> {
         Box::new(self.labels.iter())
@@ -175,8 +177,9 @@ impl IndexSubject for Arc<QueryNode<Arc<String>, Variable>> {
         filter: &DynTree<ExprIR<Variable>>,
         attr_side: NodeIdx<Dyn<ExprIR<Variable>>>,
         constant_node: DynTree<ExprIR<Variable>>,
+        label: Arc<String>,
     ) -> Scan<Self> {
-        try_distance_index_scan(subject, attr, filter, attr_side, constant_node)
+        try_distance_index_scan(subject, attr, filter, attr_side, constant_node, label)
     }
     fn match_scan_source(ir: &IR) -> Option<(Self, Self::Metadata)> {
         let IR::NodeByLabelScan { node } = ir else {
@@ -199,6 +202,23 @@ impl IndexSubject for Arc<QueryNode<Arc<String>, Variable>> {
             query,
         }
     }
+    fn with_primary_label(
+        &self,
+        label: &Arc<String>,
+    ) -> Self {
+        let mut reordered = OrderSet::default();
+        reordered.insert(label.clone());
+        for l in self.labels.iter() {
+            if l != label {
+                reordered.insert(l.clone());
+            }
+        }
+        Arc::new(QueryNode::new(
+            self.alias.clone(),
+            reordered,
+            self.attrs.clone(),
+        ))
+    }
 }
 
 impl IndexSubject for Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>> {
@@ -206,9 +226,6 @@ impl IndexSubject for Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>
 
     fn alias(&self) -> &Variable {
         &self.alias
-    }
-    fn primary_label(&self) -> &Arc<String> {
-        &self.types[0]
     }
     fn all_labels(&self) -> Box<dyn Iterator<Item = &Arc<String>> + '_> {
         Box::new(self.types.iter())
@@ -230,6 +247,7 @@ impl IndexSubject for Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>
         _filter: &DynTree<ExprIR<Variable>>,
         _attr_side: NodeIdx<Dyn<ExprIR<Variable>>>,
         _constant_node: DynTree<ExprIR<Variable>>,
+        _label: Arc<String>,
     ) -> Scan<Self> {
         None
     }
@@ -273,6 +291,30 @@ impl IndexSubject for Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>
             query,
             transposed,
         }
+    }
+    fn with_primary_label(
+        &self,
+        label: &Arc<String>,
+    ) -> Self {
+        let mut reordered = Vec::with_capacity(self.types.len());
+        reordered.push(label.clone());
+        for t in &self.types {
+            if t != label {
+                reordered.push(t.clone());
+            }
+        }
+        let mut new_rel = QueryRelationship::new(
+            self.alias.clone(),
+            reordered,
+            self.attrs.clone(),
+            self.from.clone(),
+            self.to.clone(),
+            self.bidirectional,
+            self.min_hops,
+            self.max_hops,
+        );
+        new_rel.all_shortest_paths = self.all_shortest_paths;
+        Arc::new(new_rel)
     }
 }
 
@@ -392,6 +434,7 @@ fn try_distance_index_scan(
     filter: &DynTree<ExprIR<Variable>>,
     attribute_side: NodeIdx<Dyn<ExprIR<Variable>>>,
     constant_node: DynTree<ExprIR<Variable>>,
+    label: Arc<String>,
 ) -> Scan<Arc<QueryNode<Arc<String>, Variable>>> {
     let operand = filter.root().data();
     // distance() must be on the "less than" side of the comparison:
@@ -418,7 +461,7 @@ fn try_distance_index_scan(
     ) {
         (Some(_), None) => Some((
             node.clone(),
-            node.labels[0].clone(),
+            label,
             IndexQuery::Point {
                 key: attr.clone(),
                 point: Arc::new(filter.node(child_1_idx).clone_as_tree()),
@@ -427,7 +470,7 @@ fn try_distance_index_scan(
         )),
         (None, Some(_)) => Some((
             node.clone(),
-            node.labels[0].clone(),
+            label,
             IndexQuery::Point {
                 key: attr.clone(),
                 point: Arc::new(filter.node(child_0_idx).clone_as_tree()),
@@ -594,9 +637,10 @@ fn try_in_filter_scan<T: IndexSubject>(
     };
 
     let attr = extract_attribute_from_subtree(filter, attr_side)?;
-    if !T::is_indexed(graph, subject.primary_label(), &attr, &IndexType::Range) {
-        return None;
-    }
+    let label = subject
+        .all_labels()
+        .find(|l| T::is_indexed(graph, l, &attr, &IndexType::Range))?
+        .clone();
 
     let query = if is_property_in_list {
         // Pattern: p.age IN [1, 2, 3]
@@ -620,7 +664,7 @@ fn try_in_filter_scan<T: IndexSubject>(
         }
     };
 
-    Some((subject.clone(), subject.primary_label().clone(), query))
+    Some((subject.clone(), label, query))
 }
 
 /// Tries to convert a single comparison filter into an index scan against `subject`.
@@ -640,13 +684,14 @@ fn try_single_filter_scan<T: IndexSubject>(
     }
     let (attr, attr_side, constant_side) =
         extract_attribute_and_expression_from_filter(filter, Some(subject.alias()))?;
-    if !T::is_indexed(graph, subject.primary_label(), &attr, &IndexType::Range) {
-        return None;
-    }
+    let label = subject
+        .all_labels()
+        .find(|l| T::is_indexed(graph, l, &attr, &IndexType::Range))?
+        .clone();
     match filter.node(attr_side).data() {
         ExprIR::FuncInvocation(func) if func.name.as_str() == "distance" => {
             let constant_node = filter.node(constant_side).clone_as_tree();
-            T::try_func_scan(subject, &attr, filter, attr_side, constant_node)
+            T::try_func_scan(subject, &attr, filter, attr_side, constant_node, label)
         }
         ExprIR::Property(attr_ref) => {
             let constant_node = filter.node(constant_side).clone_as_tree();
@@ -665,7 +710,7 @@ fn try_single_filter_scan<T: IndexSubject>(
                 }
             };
             let query = build_op_query(attr_ref, &op, constant_node)?;
-            Some((subject.clone(), subject.primary_label().clone(), query))
+            Some((subject.clone(), label, query))
         }
         _ => None,
     }
@@ -705,9 +750,11 @@ fn get_inline_attr_index<T: IndexSubject>(
 }
 
 /// Result of pushing a whole `Filter` predicate into a single index
-/// scan: the merged index query and any conjuncts that couldn't be
-/// indexed and must stay as a reduced post-filter.
+/// scan: the label/type the index lives on, the merged index query and
+/// any conjuncts that couldn't be indexed and must stay as a reduced
+/// post-filter.
 type FilterPushdown = (
+    Arc<String>,
     IndexQuery<QueryExpr<Variable>>,
     Vec<DynTree<ExprIR<Variable>>>,
 );
@@ -730,34 +777,42 @@ fn try_filter_pushdown<T: IndexSubject>(
 ) -> Option<FilterPushdown> {
     match filter.root().data() {
         ExprIR::And => {
-            let mut merged: Option<IndexQuery<QueryExpr<Variable>>> = None;
+            let mut merged: Option<(Arc<String>, IndexQuery<QueryExpr<Variable>>)> = None;
             let mut remaining = Vec::new();
             for child in filter.root().children() {
                 let conjunct = child.clone_as_tree();
-                if let Some((_, _, query)) = try_single_filter_scan(subject, &conjunct, graph) {
+                if let Some((_, label, query)) = try_single_filter_scan(subject, &conjunct, graph) {
                     merged = Some(match merged {
-                        None => query,
-                        Some(prev) => merge_range_queries(prev, query),
+                        None => (label, query),
+                        Some((prev_label, prev_q)) => {
+                            (prev_label, merge_range_queries(prev_q, query))
+                        }
                     });
                 } else {
                     remaining.push(conjunct);
                 }
             }
-            merged.map(|q| (q, remaining))
+            merged.map(|(label, q)| (label, q, remaining))
         }
         ExprIR::Or => {
             let mut or_queries = Vec::new();
+            let mut or_label: Option<Arc<String>> = None;
             for child in filter.root().children() {
                 let branch = child.clone_as_tree();
-                if let Some((_, _, q)) = try_single_filter_scan(subject, &branch, graph) {
+                if let Some((_, label, q)) = try_single_filter_scan(subject, &branch, graph) {
+                    if or_label.is_none() {
+                        or_label = Some(label);
+                    }
                     or_queries.push(q);
                 } else {
                     return None;
                 }
             }
-            (!or_queries.is_empty()).then(|| (IndexQuery::Or(or_queries), Vec::new()))
+            or_label.and_then(|label| {
+                (!or_queries.is_empty()).then(|| (label, IndexQuery::Or(or_queries), Vec::new()))
+            })
         }
-        _ => try_single_filter_scan(subject, filter, graph).map(|(_, _, q)| {
+        _ => try_single_filter_scan(subject, filter, graph).map(|(_, label, q)| {
             // For "value IN property" (array-contains), keep the filter
             // as a post-filter — the index may return false positives
             // for non-indexable array elements.
@@ -765,9 +820,9 @@ fn try_filter_pushdown<T: IndexSubject>(
                 && !subtree_has_property_of(filter, filter.root().child(0).idx(), subject.alias())
                 && subtree_has_property_of(filter, filter.root().child(1).idx(), subject.alias());
             if is_array_contains {
-                (q, vec![filter.root().clone_as_tree()])
+                (label, q, vec![filter.root().clone_as_tree()])
             } else {
-                (q, Vec::new())
+                (label, q, Vec::new())
             }
         }),
     }
@@ -917,6 +972,23 @@ fn match_scan_with_filter<T: IndexSubject>(
     Some((subject, filter.clone(), metadata))
 }
 
+/// Reorders the subject's labels so the indexed label is first.
+/// `NodeByIndexScanOp` and `EdgeByIndexScanOp` both use the first
+/// label/type as the index's primary and post-filter the rest.
+fn reorder_subject_labels<T: IndexSubject>(
+    subject: T,
+    index_label: &Arc<String>,
+) -> T {
+    if subject
+        .all_labels()
+        .next()
+        .is_some_and(|l| l == index_label)
+    {
+        return subject;
+    }
+    subject.with_primary_label(index_label)
+}
+
 /// Apply a successful filter pushdown in place: replace the scan with
 /// an index scan, then either drop the parent `Filter` entirely, keep
 /// it as a runtime safety net, or narrow it to the conjuncts that
@@ -925,13 +997,14 @@ fn apply_filter_pushdown<T: IndexSubject>(
     plan: &mut DynTree<IR>,
     idx: NodeIdx<Dyn<IR>>,
     subject: T,
+    index: Arc<String>,
     query: IndexQuery<QueryExpr<Variable>>,
     remaining: Vec<DynTree<ExprIR<Variable>>>,
     original_filter: &QueryExpr<Variable>,
     metadata: T::Metadata,
 ) {
     let keep_filter = needs_post_filter(original_filter, subject.alias().id);
-    let index = subject.primary_label().clone();
+    let subject = reorder_subject_labels(subject, &index);
     let scan_ir = subject.build_scan_ir(index, Arc::new(query), metadata);
     let mut op = plan.node_mut(idx);
     *op.data_mut() = scan_ir;
@@ -979,6 +1052,7 @@ fn apply_inline_rewrite<T: IndexSubject>(
         key: attr,
         value: Arc::new(inline_filter.root().child(1).clone_as_tree()),
     });
+    let subject = reorder_subject_labels(subject, &label);
     *plan.node_mut(idx).data_mut() = subject.build_scan_ir(label, query, metadata);
 }
 
@@ -992,9 +1066,11 @@ fn try_index_rewrite<T: IndexSubject>(
     graph: &Graph,
 ) -> bool {
     if let Some((subject, filter, metadata)) = match_scan_with_filter::<T>(plan, idx)
-        && let Some((query, remaining)) = try_filter_pushdown(&subject, &filter, graph)
+        && let Some((label, query, remaining)) = try_filter_pushdown(&subject, &filter, graph)
     {
-        apply_filter_pushdown(plan, idx, subject, query, remaining, &filter, metadata);
+        apply_filter_pushdown(
+            plan, idx, subject, label, query, remaining, &filter, metadata,
+        );
         return true;
     }
 

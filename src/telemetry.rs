@@ -7,9 +7,9 @@
 use crossfire::mpmc::{self, List};
 use crossfire::{MRx, MTx};
 use parking_lot::Mutex;
-use redis_module::{Context, RedisString, RedisValue, raw};
+use redis_module::{CallOptions, CallOptionsBuilder, Context, RedisString, RedisValue, raw};
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -116,7 +116,17 @@ fn write_to_stream(
     .map(|s| ctx.create_string(*s))
     .collect();
 
-    let _ = ctx.call("XADD", args.iter().collect::<Vec<_>>().as_slice());
+    let _: redis_module::CallResult = ctx.call_ext(
+        "XADD",
+        &replicated_call_options(),
+        args.iter().collect::<Vec<_>>().as_slice(),
+    );
+}
+
+/// CallOptions used by the flusher: replicate the XADD to attached replicas
+/// so the telemetry stream stays mirrored across master/replica.
+fn replicated_call_options() -> CallOptions {
+    CallOptionsBuilder::new().replicate().build()
 }
 
 /// Delete the telemetry stream for a graph.
@@ -333,12 +343,28 @@ pub(crate) fn enqueue_entry(
     graph_name: &str,
     entry: TelemetryEntry,
 ) {
+    // Skip on replicas: the master's XADDs are replicated to us, so writing
+    // here would duplicate entries (and direct writes to a replica must not
+    // create a stream).
+    if IS_REPLICA.load(Ordering::Relaxed) {
+        return;
+    }
     if let Some(tx) = SENDER.get() {
         let _ = tx.send(PendingEntry {
             graph_name: graph_name.to_string(),
             entry,
         });
     }
+}
+
+/// Tracks whether this Redis instance is currently a replica. Updated on
+/// module load and on `RedisModuleEvent_ReplicationRoleChanged` notifications.
+static IS_REPLICA: AtomicBool = AtomicBool::new(false);
+
+/// Update the cached replica state. Called from module init and the role
+/// change event handler.
+pub(crate) fn set_is_replica(is_replica: bool) {
+    IS_REPLICA.store(is_replica, Ordering::Relaxed);
 }
 
 /// Spawn the background flusher thread. Must be called once at module init.

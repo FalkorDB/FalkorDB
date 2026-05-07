@@ -476,7 +476,8 @@ impl ThreadedGraph {
             || result.stats.labels_added > 0
             || result.stats.labels_removed > 0
             || result.stats.indexes_created > 0
-            || result.stats.indexes_dropped > 0;
+            || result.stats.indexes_dropped > 0
+            || runtime.effects_count.get() > 0;
         self.slow_log
             .add("GRAPH.QUERY", query, params_offset, latency);
         Ok(WriteQueryOk {

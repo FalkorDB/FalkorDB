@@ -160,26 +160,24 @@ impl Binder {
         for rel in graph.relationships_mut() {
             let from_key = (rel.from.alias.scope_id, rel.from.alias.id);
             let to_key = (rel.to.alias.scope_id, rel.to.alias.id);
-            let from_changed = node_labels
-                .get(&from_key)
-                .is_some_and(|l| rel.from.labels != *l);
-            let to_changed = node_labels
-                .get(&to_key)
-                .is_some_and(|l| rel.to.labels != *l);
+            let from_new = node_labels.get(&from_key);
+            let to_new = node_labels.get(&to_key);
+            let from_changed = from_new.is_some_and(|l| rel.from.labels != *l);
+            let to_changed = to_new.is_some_and(|l| rel.to.labels != *l);
             if from_changed || to_changed {
-                let from = if let Some(labels) = node_labels.get(&from_key) {
+                let from = if from_changed {
                     Arc::new(QueryNode::new(
                         rel.from.alias.clone(),
-                        labels.clone(),
+                        from_new.unwrap().clone(),
                         rel.from.attrs.clone(),
                     ))
                 } else {
                     rel.from.clone()
                 };
-                let to = if let Some(labels) = node_labels.get(&to_key) {
+                let to = if to_changed {
                     Arc::new(QueryNode::new(
                         rel.to.alias.clone(),
-                        labels.clone(),
+                        to_new.unwrap().clone(),
                         rel.to.attrs.clone(),
                     ))
                 } else {

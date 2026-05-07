@@ -36,7 +36,7 @@ use graph::{
     udf,
 };
 use redis_module::{
-    Context, REDISMODULE_OK, RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free,
+    Context, ContextFlags, REDISMODULE_OK, RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free,
     RedisModule_Realloc, RedisModule_SubscribeToServerEvent, RedisModuleCtx, RedisModuleEvent,
     Status,
 };
@@ -49,6 +49,14 @@ static RedisModuleEvent_FlushDB: RedisModuleEvent = RedisModuleEvent { id: 2, da
 /// Redis event ID for Persistence events (RDB save start/end).
 #[allow(non_upper_case_globals)]
 static RedisModuleEvent_Persistence: RedisModuleEvent = RedisModuleEvent { id: 1, dataver: 1 };
+
+/// Redis event ID for replication role changes (master <-> replica).
+#[allow(non_upper_case_globals)]
+static RedisModuleEvent_ReplicationRoleChanged: RedisModuleEvent =
+    RedisModuleEvent { id: 0, dataver: 1 };
+
+/// Subevent: this instance is now a replica.
+const REDISMODULE_EVENT_REPLROLECHANGED_NOW_REPLICA: u64 = 1;
 
 unsafe extern "C" {
     fn pthread_atfork(
@@ -231,6 +239,19 @@ pub fn graph_init(
     // GIL acquisition per batch.
     telemetry::start_flusher_thread();
 
+    // Initialize cached replica state and subscribe to role-change events
+    // so telemetry is suppressed when this instance is a replica (master's
+    // XADDs replicate to us automatically).
+    telemetry::set_is_replica(ctx.get_flags().contains(ContextFlags::SLAVE));
+    unsafe {
+        let res = RedisModule_SubscribeToServerEvent.unwrap()(
+            ctx.ctx,
+            RedisModuleEvent_ReplicationRoleChanged,
+            Some(on_role_change),
+        );
+        debug_assert_eq!(res, REDISMODULE_OK as c_int);
+    }
+
     // Subscribe to keyspace notifications for graph key rename handling.
     unsafe {
         let res = redis_module::raw::RedisModule_SubscribeToKeyspaceEvents.unwrap()(
@@ -253,6 +274,15 @@ const unsafe extern "C" fn on_flush(
     _subevent: u64,
     _data: *mut c_void,
 ) {
+}
+
+unsafe extern "C" fn on_role_change(
+    _ctx: *mut RedisModuleCtx,
+    _eid: RedisModuleEvent,
+    subevent: u64,
+    _data: *mut c_void,
+) {
+    telemetry::set_is_replica(subevent == REDISMODULE_EVENT_REPLROLECHANGED_NOW_REPLICA);
 }
 
 /// Tracks the old key name during a two-phase RENAME notification.
