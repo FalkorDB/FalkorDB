@@ -56,6 +56,7 @@ use super::ops::delete::DeleteOp;
 use super::ops::distinct::DistinctOp;
 use super::ops::edge_by_fulltext_scan::EdgeByFulltextScanOp;
 use super::ops::edge_by_index_scan::EdgeByIndexScanOp;
+use super::ops::edge_by_vector_scan::EdgeByVectorScanOp;
 use super::ops::expand_into::ExpandIntoOp;
 use super::ops::filter::FilterOp;
 use super::ops::foreach::ForEachOp;
@@ -68,6 +69,7 @@ use super::ops::node_by_id_seek::NodeByIdSeekOp;
 use super::ops::node_by_index_scan::NodeByIndexScanOp;
 use super::ops::node_by_label_and_id_scan::NodeByLabelAndIdScanOp;
 use super::ops::node_by_label_scan::NodeByLabelScanOp;
+use super::ops::node_by_vector_scan::NodeByVectorScanOp;
 use super::ops::optional::OptionalOp;
 use super::ops::or_apply_multiplexer::OrApplyMultiplexerOp;
 use super::ops::path_builder::PathBuilderOp;
@@ -667,6 +669,10 @@ pub enum BatchOp<'a> {
     NodeByFulltextScan(NodeByFulltextScanOp<'a>),
     /// Edge fulltext index scan.
     EdgeByFulltextScan(EdgeByFulltextScanOp<'a>),
+    /// KNN vector index scan over node labels.
+    NodeByVectorScan(NodeByVectorScanOp<'a>),
+    /// KNN vector index scan over relationship types.
+    EdgeByVectorScan(EdgeByVectorScanOp<'a>),
     /// Combined label + ID scan.
     NodeByLabelAndIdScan(NodeByLabelAndIdScanOp<'a>),
     /// Variable-length relationship traverse.
@@ -759,6 +765,18 @@ impl<'a> BatchOp<'a> {
             Self::LoadCsv(op) => op.child.set_argument_batch(batch),
             Self::NodeByFulltextScan(op) => op.child.set_argument_batch(batch),
             Self::EdgeByFulltextScan(op) => op.child.set_argument_batch(batch),
+            Self::NodeByVectorScan(op) => {
+                // Drop any KNN rows still queued from the previous
+                // outer iteration; otherwise correlated plans (Apply)
+                // can leak rows across outer batches when the inner
+                // side stops early.
+                op.pending.clear();
+                op.child.set_argument_batch(batch);
+            }
+            Self::EdgeByVectorScan(op) => {
+                op.pending.clear();
+                op.child.set_argument_batch(batch);
+            }
             Self::NodeByLabelAndIdScan(op) => op.child.set_argument_batch(batch),
             Self::CondVarLenTraverse(op) => op.child.set_argument_batch(batch),
             Self::AllShortestPaths(op) => op.child.set_argument_batch(batch),
@@ -818,6 +836,8 @@ impl<'a> BatchOp<'a> {
             Self::ProcedureCall(op) => Some((op.runtime, op.idx)),
             Self::NodeByFulltextScan(op) => Some((op.runtime, op.idx)),
             Self::EdgeByFulltextScan(op) => Some((op.runtime, op.idx)),
+            Self::NodeByVectorScan(op) => Some((op.runtime, op.idx)),
+            Self::EdgeByVectorScan(op) => Some((op.runtime, op.idx)),
             Self::NodeByLabelAndIdScan(op) => Some((op.runtime, op.idx)),
             Self::CondVarLenTraverse(op) => Some((op.runtime, op.idx)),
             Self::AllShortestPaths(op) => Some((op.runtime, op.idx)),
@@ -886,6 +906,8 @@ impl<'a> Iterator for BatchOp<'a> {
             Self::ProcedureCall(op) => op.next(),
             Self::NodeByFulltextScan(op) => op.next(),
             Self::EdgeByFulltextScan(op) => op.next(),
+            Self::NodeByVectorScan(op) => op.next(),
+            Self::EdgeByVectorScan(op) => op.next(),
             Self::NodeByLabelAndIdScan(op) => op.next(),
             Self::CondVarLenTraverse(op) => op.next(),
             Self::AllShortestPaths(op) => op.next(),

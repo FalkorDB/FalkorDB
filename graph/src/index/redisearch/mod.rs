@@ -518,6 +518,21 @@ unsafe extern "C" {
     ) -> *mut RSQNode;
 }
 unsafe extern "C" {
+    /// Create a vector-similarity (KNN) query node.
+    /// `vector` points to `nbytes` of dense float32 data; `k` is the
+    /// number of nearest neighbours to retrieve. The returned QueryNode
+    /// can be passed to `RediSearch_GetResultsIterator` exactly like
+    /// any other QueryNode; per-row distance is then read via
+    /// `RediSearch_ResultsIteratorGetScore`.
+    pub fn RediSearch_CreateVecSimNode(
+        sp: *mut RSIndex,
+        field: *const ::std::os::raw::c_char,
+        vector: *const ::std::os::raw::c_char,
+        nbytes: usize,
+        k: usize,
+    ) -> *mut RSQNode;
+}
+unsafe extern "C" {
     pub fn RediSearch_CreateTagTokenNode(
         sp: *mut RSIndex,
         token: *const ::std::os::raw::c_char,
