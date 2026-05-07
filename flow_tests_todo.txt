@@ -1,7 +1,3 @@
-## Query Language & Cypher Features
-tests/flow/test_null_handling.py
-tests/flow/test_relation_patterns.py
-
 ## Indexing
 tests/flow/test_vecsim.py
 

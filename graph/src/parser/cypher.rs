@@ -2557,6 +2557,20 @@ impl<'a> Parser<'a> {
             } else {
                 None
             };
+            if let Some((min, Some(max))) = var_len
+                && min > max
+            {
+                return Err(
+                    "Variable length path, maximum number of hops must be greater or equal to minimum number of hops.".to_string(),
+                );
+            }
+            // Collapse [*1..1] / [*1] to a fixed single-hop edge so the
+            // binding is a single Relationship value, matching FalkorDB.
+            let var_len = if var_len == Some((1, Some(1))) {
+                None
+            } else {
+                var_len
+            };
             if var_len.is_some() && matches!(clause, Keyword::Create | Keyword::Merge) {
                 let clause_name = if *clause == Keyword::Create {
                     "CREATE"

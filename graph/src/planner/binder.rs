@@ -1257,7 +1257,11 @@ impl Binder {
         for relationship in graph.relationships() {
             let alias = self.define_name_in_scope(
                 relationship.alias.clone(),
-                Type::Relationship,
+                if relationship.min_hops.is_some() {
+                    Type::Path
+                } else {
+                    Type::Relationship
+                },
                 !is_create,
             )?;
             let attrs = self.bind_expr(&relationship.attrs)?;
