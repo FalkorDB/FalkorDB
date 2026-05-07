@@ -94,5 +94,6 @@ tests/flow/test_union
 tests/flow/test_unwind_clause
 tests/flow/test_value_comparisons
 tests/flow/test_variable_length_traversals.py
+tests/flow/test_vecsim.py
 tests/flow/test_wcc.py
 tests/flow/test_with_clause

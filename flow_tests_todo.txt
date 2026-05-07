@@ -1,5 +1,4 @@
 ## Indexing
-tests/flow/test_vecsim.py
 
 ## Concurrency & Multi-writer
 tests/flow/test_stress.py

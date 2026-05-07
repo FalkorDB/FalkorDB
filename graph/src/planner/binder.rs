@@ -535,14 +535,16 @@ impl Binder {
                         }
                     }
 
-                    // The fulltext scan procedures are rewritten to dedicated
-                    // scan operators in the planner; the rewrite needs the
-                    // entity-field slot to bind the matched node/relationship
-                    // into. Reject `YIELD score` without the entity field
-                    // up-front so the planner doesn't have to handle it.
+                    // The fulltext / vector scan procedures are rewritten
+                    // to dedicated scan operators in the planner; the
+                    // rewrite needs the entity-field slot to bind the
+                    // matched node/relationship into. Reject `YIELD score`
+                    // (without the entity field) up-front so the planner
+                    // doesn't have to handle it.
                     let required_entity = match func.name.as_str() {
-                        "db.idx.fulltext.queryNodes" => Some("node"),
-                        "db.idx.fulltext.queryRelationships" => Some("relationship"),
+                        "db.idx.fulltext.queryNodes" | "db.idx.vector.queryNodes" => Some("node"),
+                        "db.idx.fulltext.queryRelationships"
+                        | "db.idx.vector.queryRelationships" => Some("relationship"),
                         _ => None,
                     };
                     if let Some(entity) = required_entity {
