@@ -51,12 +51,9 @@ struct CachedEntity {
 
 impl CachedEntity {
     fn compute_weight(attrs: &[(u16, Value)]) -> u32 {
-        let base = attrs.len() * (std::mem::size_of::<u16>() + std::mem::size_of::<Value>());
+        let base = attrs.len() * std::mem::size_of::<(u16, Value)>();
         let heap: usize = attrs.iter().map(|(_, v)| v.heap_size()).sum();
-        let total = base
-            + heap
-            + std::mem::size_of::<CachedEntity>()
-            + std::mem::size_of::<Arc<Vec<(u16, Value)>>>();
+        let total = base + heap + std::mem::size_of::<CachedEntity>();
         u32::try_from(total).unwrap_or(u32::MAX).max(1)
     }
 }
@@ -350,7 +347,7 @@ impl AttributeCache {
         let new_w = u64::from(weight);
         let shard = self.shard(entity_id);
         let slot = slot_idx(entity_id);
-        let prev_w = {
+        let (prev_w, prev_dirty) = {
             let mut entries = shard.entries.write();
             if entries.len() <= slot {
                 entries.resize(slot + 1, None);
@@ -358,7 +355,7 @@ impl AttributeCache {
             // SAFETY: just resized to cover `slot`.
             let cell = unsafe { entries.get_unchecked_mut(slot) };
             let prev = cell.replace(entry);
-            prev.map_or(0, |p| u64::from(p.weight))
+            prev.map_or((0, false), |p| (u64::from(p.weight), p.dirty))
         };
         if new_w >= prev_w {
             shard.bytes.fetch_add(new_w - prev_w, Ordering::Relaxed);
@@ -367,6 +364,8 @@ impl AttributeCache {
         }
         if dirty {
             self.mark_dirty(entity_id);
+        } else if prev_dirty {
+            self.unmark_dirty(entity_id);
         }
         self.maybe_evict_clean(shard);
     }
@@ -376,21 +375,42 @@ impl AttributeCache {
     pub fn insert_entity_if_older(
         &self,
         entity_id: u64,
-        attrs: Vec<(u16, Value)>,
+        mut attrs: Vec<(u16, Value)>,
         version: u64,
     ) -> bool {
+        attrs.sort_by_key(|item| item.0);
+        let weight = CachedEntity::compute_weight(&attrs);
+        let new_w = u64::from(weight);
         let shard = self.shard(entity_id);
         let slot = slot_idx(entity_id);
-        // Fast path: read-lock peek.
-        {
-            let entries = shard.entries.read();
+        let prev_w = {
+            let mut entries = shard.entries.write();
             if let Some(Some(existing)) = entries.get(slot)
                 && (existing.version >= version || existing.dirty)
             {
                 return false;
             }
+            if entries.len() <= slot {
+                entries.resize(slot + 1, None);
+            }
+            let entry = CachedEntity {
+                attrs: Arc::new(attrs),
+                weight,
+                version,
+                dirty: false,
+            };
+            // SAFETY: just resized to cover `slot`.
+            let cell = unsafe { entries.get_unchecked_mut(slot) };
+            let prev = cell.replace(entry);
+            // prev was either None or non-dirty (dirty would have early-returned).
+            prev.map_or(0, |p| u64::from(p.weight))
+        };
+        if new_w >= prev_w {
+            shard.bytes.fetch_add(new_w - prev_w, Ordering::Relaxed);
+        } else {
+            shard.bytes.fetch_sub(prev_w - new_w, Ordering::Relaxed);
         }
-        self.insert_entity(entity_id, attrs, version, false);
+        self.maybe_evict_clean(shard);
         true
     }
 

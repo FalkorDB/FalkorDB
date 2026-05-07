@@ -398,4 +398,8 @@ fn flusher_loop() {
             raw::RedisModule_ThreadSafeContextUnlock.expect("ThreadSafeContextUnlock")(tsc);
         }
     }
+
+    unsafe {
+        raw::RedisModule_FreeThreadSafeContext.expect("RedisModule_FreeThreadSafeContext")(tsc);
+    }
 }

@@ -20,7 +20,7 @@
 //!
 //! Each worker has its own bounded SPSC (single-producer, single-consumer)
 //! channel. When a job is dispatched without a specific worker index, the
-//! pool picks the worker with the shortest queue (or the first empty one),
+//! pool selects a worker round-robin via [`ThreadPool::next_worker`],
 //! spreading load across threads. When an explicit index is provided, the
 //! job is pinned to that worker (modulo worker count) for thread affinity.
 //!
