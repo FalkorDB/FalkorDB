@@ -36,9 +36,9 @@ use graph::{
     udf,
 };
 use redis_module::{
-    Context, ContextFlags, REDISMODULE_OK, RedisModule_Alloc, RedisModule_Calloc,
-    RedisModule_Free, RedisModule_Realloc, RedisModule_SubscribeToServerEvent, RedisModuleCtx,
-    RedisModuleEvent, Status,
+    Context, ContextFlags, REDISMODULE_OK, RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free,
+    RedisModule_Realloc, RedisModule_SubscribeToServerEvent, RedisModuleCtx, RedisModuleEvent,
+    Status,
 };
 use std::{os::raw::c_int, os::raw::c_void, panic};
 

@@ -7,9 +7,7 @@
 use crossfire::mpmc::{self, List};
 use crossfire::{MRx, MTx};
 use parking_lot::Mutex;
-use redis_module::{
-    CallOptions, CallOptionsBuilder, Context, RedisString, RedisValue, raw,
-};
+use redis_module::{CallOptions, CallOptionsBuilder, Context, RedisString, RedisValue, raw};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
