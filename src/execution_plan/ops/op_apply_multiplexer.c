@@ -187,6 +187,8 @@ static Record XorMultiplexer_Consume
 	OpBase *opBase
 ) {
 	OpApplyMultiplexer *op = (OpApplyMultiplexer *)opBase;
+	// XOR is a binary operator: bound branch + exactly two branches
+	ASSERT(op->op.childCount == 3);
 	while(true) {
 		// try to get a record from bound stream
 		op->r = OpBase_Consume(op->bound_branch);
