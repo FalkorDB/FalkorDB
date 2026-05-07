@@ -10,7 +10,7 @@ redis-debug.log
 *.iml
 myenv
 coverage.sh
-codecov.*
+codecov.txt*
 temp-*
 /coverage
 dump.rdb

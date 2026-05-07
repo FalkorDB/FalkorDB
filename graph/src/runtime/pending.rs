@@ -215,6 +215,11 @@ impl Pending {
         for value in attrs.values() {
             validate_node_property(value)?;
         }
+        // Empty attribute maps from CREATE without `{...}` props would otherwise
+        // create an empty pinned cache entry per node on commit; skip them.
+        if attrs.is_empty() {
+            return Ok(());
+        }
         let is_new = self.created_nodes.contains(id.into());
         if is_new {
             self.new_nodes_attrs.insert(id.into(), attrs);
@@ -490,6 +495,11 @@ impl Pending {
     ) -> Result<(), String> {
         for value in attrs.values() {
             validate_relationship_property(value)?;
+        }
+        // Empty attribute maps from CREATE without `{...}` props would otherwise
+        // create an empty pinned cache entry per relationship on commit; skip them.
+        if attrs.is_empty() {
+            return Ok(());
         }
         if self.created_rel_types.contains_key(&id) {
             self.new_relationships_attrs.insert(id.into(), attrs);
