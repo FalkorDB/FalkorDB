@@ -36,3 +36,17 @@ lagraph_lib
 attrs/
 .cargo-cache
 logs/
+
+# Local perf-branch artifacts (profiles, ad-hoc benchmarks)
+*.profile.json
+*.profile.json.gz
+profile.json.gz
+day6_*.json
+falkordb-arm.so
+rust_out
+_thread_bench_data/
+bench_*.py
+phase_stats.py
+profile_day6.py
+thread_benchmarks*
+twitter_thread.md

@@ -20,7 +20,7 @@
 //!
 //! Each worker has its own bounded SPSC (single-producer, single-consumer)
 //! channel. When a job is dispatched without a specific worker index, the
-//! pool picks the worker with the shortest queue (or the first empty one),
+//! pool selects a worker round-robin via [`ThreadPool::next_worker`],
 //! spreading load across threads. When an explicit index is provided, the
 //! job is pinned to that worker (modulo worker count) for thread affinity.
 //!
@@ -29,9 +29,10 @@
 //! The pool is stored in a global `OnceCell` and must be initialized once
 //! via [`init_thread_pool`] before any calls to [`spawn`].
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
 
-use crossfire::{BlockingTxTrait, Tx, spsc::Array};
+use crossfire::{Tx, spsc::Array};
 use once_cell::sync::OnceCell;
 
 /// A closure that can be sent to a worker thread.
@@ -41,6 +42,8 @@ type Job = Box<dyn FnOnce() + Send + 'static>;
 struct ThreadPool {
     workers: Vec<JoinHandle<()>>,
     sender: Vec<Tx<Array<Job>>>,
+    /// Round-robin counter for `spawn` calls without explicit affinity.
+    next_worker: AtomicUsize,
 }
 
 unsafe impl Sync for ThreadPool {}
@@ -59,7 +62,11 @@ impl ThreadPool {
             });
             workers.push(worker);
         }
-        Self { workers, sender }
+        Self {
+            workers,
+            sender,
+            next_worker: AtomicUsize::new(0),
+        }
     }
 
     pub fn spawn<F>(
@@ -69,26 +76,12 @@ impl ThreadPool {
     ) where
         F: FnOnce() + Send + 'static,
     {
-        let sender = if let Some(i) = idx {
-            &self.sender[i % self.workers.len()]
-        } else {
-            let mut min_tx = &self.sender[0];
-            let mut min_len = usize::MAX;
-            for tx in &self.sender {
-                if tx.is_empty() {
-                    return tx
-                        .send(Box::new(job))
-                        .expect("thread pool worker died: cannot dispatch job");
-                }
-                let len = tx.len();
-                if len < min_len {
-                    min_len = len;
-                    min_tx = tx;
-                }
-            }
-            min_tx
-        };
-        sender
+        let n = self.workers.len();
+        let target = idx.map_or_else(
+            || self.next_worker.fetch_add(1, Ordering::Relaxed) % n,
+            |i| i % n,
+        );
+        self.sender[target]
             .send(Box::new(job))
             .expect("thread pool worker died: cannot dispatch job");
     }

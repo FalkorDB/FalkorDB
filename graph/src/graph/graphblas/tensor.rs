@@ -78,7 +78,8 @@ pub const GrB_INDEX_MAX: u64 = (1u64 << 60) - 1;
 /// `debug_assert!`) because silent truncation would corrupt the key and
 /// conflate edges between different node pairs.
 #[inline]
-fn compound_key(
+#[must_use]
+pub fn compound_key(
     src: u64,
     dst: u64,
 ) -> u64 {
@@ -258,6 +259,19 @@ impl Tensor {
     #[must_use]
     pub const fn matrix(&self) -> &VersionedMatrix {
         &self.m
+    }
+
+    /// Iterate the edge-id matrix (`me`) keyed by `compound_key(src, dst)`.
+    /// Hot-loop callers build a persistent iterator and `seek` to a specific
+    /// (src, dst) per row, avoiding the per-pair iterator allocation that
+    /// `get(src, dst)` does.
+    #[must_use]
+    pub fn edge_iter(
+        &self,
+        min_row: u64,
+        max_row: u64,
+    ) -> versioned_matrix::Iter {
+        self.me.iter(min_row, max_row)
     }
 
     /// Total number of edges (including multi-edges between the same node pair).

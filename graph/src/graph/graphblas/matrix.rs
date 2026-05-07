@@ -1101,6 +1101,35 @@ impl<E: IterExtract> Iter<E> {
     }
 }
 
+impl<E: IterExtract> Iter<E> {
+    /// Re-seek an existing iterator to a new row range without re-allocating
+    /// the underlying GxB_Iterator. Used by hot-loop callers (e.g.
+    /// `CondTraverseOp`) to amortize the iterator allocation across many
+    /// per-row scans of the same matrix.
+    pub fn seek(
+        &mut self,
+        min_row: u64,
+        max_row: u64,
+    ) {
+        unsafe {
+            let mut info = GxB_rowIterator_seekRow(self.inner, min_row);
+            debug_assert!(
+                info == GrB_Info::GrB_SUCCESS
+                    || info == GrB_Info::GrB_NO_VALUE
+                    || info == GrB_Info::GxB_EXHAUSTED
+            );
+            while info == GrB_Info::GrB_NO_VALUE
+                && GxB_rowIterator_getRowIndex(self.inner) < max_row
+            {
+                info = GxB_rowIterator_nextRow(self.inner);
+            }
+            self.max_row = max_row;
+            self.depleted =
+                info != GrB_Info::GrB_SUCCESS || GxB_rowIterator_getRowIndex(self.inner) > max_row;
+        }
+    }
+}
+
 impl<E: IterExtract> Iterator for Iter<E> {
     type Item = E::Item;
 

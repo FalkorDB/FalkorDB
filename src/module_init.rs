@@ -226,6 +226,11 @@ pub fn graph_init(
     let _ = init_thread_pool(tc);
     OMP_THREAD_COUNT.store(tc as i64, std::sync::atomic::Ordering::Relaxed);
 
+    // Start the background telemetry flusher: workers enqueue entries
+    // lock-free; this thread batches them and writes XADDs under a single
+    // GIL acquisition per batch.
+    telemetry::start_flusher_thread();
+
     // Subscribe to keyspace notifications for graph key rename handling.
     unsafe {
         let res = redis_module::raw::RedisModule_SubscribeToKeyspaceEvents.unwrap()(

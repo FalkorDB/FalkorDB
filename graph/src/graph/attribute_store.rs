@@ -97,7 +97,73 @@ use roaring::RoaringTreemap;
 
 use super::attribute_cache::AttributeCache;
 use super::graphblas::serialization::{Decode, Encode, Reader, Writer};
-use crate::runtime::{ordermap::OrderMap, orderset::OrderSet, value::Value};
+use crate::runtime::{ordermap::OrderMap, value::Value};
+
+/// Insertion-ordered map of attribute names to attribute indices.
+///
+/// Maintains both a `Vec<Arc<String>>` (for stable index → name lookup and
+/// deterministic iteration order) and a `FxHashMap<Arc<String>, u16>` for
+/// O(1) name → index resolution on the hot read path.
+#[derive(Default, Clone)]
+pub struct AttrNameMap {
+    vec: Vec<Arc<String>>,
+    index: FxHashMap<Arc<String>, u16>,
+}
+
+impl AttrNameMap {
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.vec.len()
+    }
+
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.vec.is_empty()
+    }
+
+    #[must_use]
+    pub fn get(
+        &self,
+        idx: usize,
+    ) -> Option<&Arc<String>> {
+        self.vec.get(idx)
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, Arc<String>> {
+        self.vec.iter()
+    }
+
+    #[must_use]
+    pub fn get_index_of(
+        &self,
+        name: &Arc<String>,
+    ) -> Option<usize> {
+        self.index.get(name).map(|&i| i as usize)
+    }
+
+    pub fn insert(
+        &mut self,
+        name: Arc<String>,
+    ) {
+        if self.index.contains_key(&name) {
+            return;
+        }
+        let idx = self.vec.len() as u16;
+        self.vec.push(name.clone());
+        self.index.insert(name, idx);
+    }
+}
+
+impl std::ops::Index<usize> for AttrNameMap {
+    type Output = Arc<String>;
+
+    fn index(
+        &self,
+        idx: usize,
+    ) -> &Arc<String> {
+        &self.vec[idx]
+    }
+}
 
 /// Shared empty attribute vector to avoid per-entity allocations when an
 /// entity has no properties.
@@ -134,7 +200,7 @@ pub struct AttributeStore {
     keyspace: OnceCell<Keyspace>,
     keyspace_name: Arc<String>,
     /// Attribute names in insertion order (name → column index)
-    pub attrs_name: OrderSet<Arc<String>>,
+    pub attrs_name: AttrNameMap,
     /// Shared in-memory LRU cache (cheap Arc clone across MVCC versions).
     cache: Arc<AttributeCache>,
     /// MVCC version of this store's snapshot.
@@ -200,7 +266,7 @@ impl AttributeStore {
             snapshot: OnceCell::new(),
             keyspace: OnceCell::new(),
             keyspace_name: Arc::new(keyspace.to_owned()),
-            attrs_name: OrderSet::default(),
+            attrs_name: AttrNameMap::default(),
             cache: Arc::new(AttributeCache::new(DEFAULT_ATTR_CACHE_BYTES)),
             version,
             dirty_entities: RoaringTreemap::new(),
@@ -439,6 +505,41 @@ impl AttributeStore {
             .binary_search_by_key(&attr_idx, |(idx, _)| *idx)
             .ok()
             .map(|pos| attrs[pos].1.clone())
+    }
+
+    /// Batch variant of `get_attr_by_idx` for a list of keys with the same
+    /// `attr_idx`. Avoids re-doing the per-call setup (function dispatch,
+    /// `pending_deletes` check) for every key when the deletion set is empty.
+    /// Pushes one `Value` per key into `out`, substituting `default` for
+    /// missing or pending-deleted entries.
+    pub fn get_attrs_by_idx_batch_into(
+        &self,
+        keys: &[u64],
+        attr_idx: u16,
+        default: &Value,
+        out: &mut Vec<Value>,
+    ) {
+        out.reserve(keys.len());
+        let pending_deletes_empty = self.pending_deletes.is_empty();
+        let version = self.version;
+        // First pass: batch cache lookups (one shard lock per shard run).
+        let mut cache_results: Vec<Option<Option<Value>>> = Vec::with_capacity(keys.len());
+        self.cache
+            .get_attrs_batch(keys, attr_idx, version, &mut cache_results);
+        for (i, &key) in keys.iter().enumerate() {
+            if !pending_deletes_empty && self.pending_deletes.contains(key) {
+                out.push(default.clone());
+                continue;
+            }
+            let v = cache_results[i].take().unwrap_or_else(|| {
+                let attrs = self.populate_cache_from_fjall(key);
+                attrs
+                    .binary_search_by_key(&attr_idx, |(idx, _)| *idx)
+                    .ok()
+                    .map(|pos| attrs[pos].1.clone())
+            });
+            out.push(v.unwrap_or_else(|| default.clone()));
+        }
     }
 
     #[must_use]
@@ -787,6 +888,12 @@ impl AttributeStore {
     #[must_use]
     pub fn memory_usage(&self) -> usize {
         self.cache.memory_usage()
+    }
+
+    /// Structural slot-storage overhead, excluding attribute payload heap.
+    #[must_use]
+    pub fn structural_memory_usage(&self) -> usize {
+        self.cache.structural_memory_usage()
     }
 
     pub fn commit(&mut self) -> Result<(), String> {
