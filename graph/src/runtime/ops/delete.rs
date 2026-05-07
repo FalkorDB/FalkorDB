@@ -159,12 +159,14 @@ impl Runtime<'_> {
             return Ok(());
         }
 
-        // Build a set of committed IDs for O(1) lookups
-        let committed_set: std::collections::HashSet<NodeId> = committed.iter().copied().collect();
-
-        // Snapshot relationships for all committed nodes using a single scan
-        // per relationship type instead of one iterator per node.
-        {
+        // Snapshot implicit-edge type/attrs only when a RETURN clause may
+        // reference them. The actual cascade delete and effects/replication
+        // bookkeeping is handled at commit time by `delete_implicit_edges`,
+        // which is O(E) once instead of O(E) per batch.
+        if !self.return_names.is_empty() {
+            // Build a set of committed IDs for O(1) lookups
+            let committed_set: std::collections::HashSet<NodeId> =
+                committed.iter().copied().collect();
             let g = self.g.borrow();
             let n = g.node_cap();
             for tensor in g.relationship_matrices_iter() {
