@@ -222,7 +222,7 @@ impl<'a> AggregateOp<'a> {
         }
 
         let num_children = root.num_children();
-        if num_children < 2 {
+        if num_children < 1 {
             return None;
         }
 
@@ -237,7 +237,10 @@ impl<'a> AggregateOp<'a> {
         }
 
         // Analyze the input argument (child 0).
-        let input = if num_children == 2 {
+        let input = if num_children == 1 {
+            // No input args — this is count(*) / count() — only the accumulator var.
+            None
+        } else if num_children == 2 {
             // Single argument: check if it's a simple variable or property.
             let arg = root.child(0);
             match arg.data() {
@@ -255,11 +258,13 @@ impl<'a> AggregateOp<'a> {
                         return None;
                     }
                 }
-                ExprIR::Bool(true) => {
-                    // count(*) is represented as count(true)
+                ExprIR::Bool(true) | ExprIR::Integer(_) | ExprIR::Float(_) | ExprIR::String(_)
+                    if func.name.eq_ignore_ascii_case("count") =>
+                {
+                    // count(*) is represented as count(1) (or other non-null literal).
                     None
                 }
-                _ => return None, // complex expression
+                _ => return None, // complex expression or non-count literal
             }
         } else {
             // Multi-argument aggregation (e.g., percentileDisc(n.age, 0.5)).
@@ -350,6 +355,60 @@ impl<'a> AggregateOp<'a> {
             };
 
             // --- Phase 3: Group rows and accumulate ---
+            // Fast path: keyless single-aggregate where the function registered
+            // a `batch_agg`. Skips per-row function calls, validation, and
+            // per-row `acc.take`/`acc.insert`.
+            if self.keys.is_empty()
+                && self.copy_from_parent.is_empty()
+                && analysis.agg_kinds.len() == 1
+                && let FnType::Aggregation {
+                    batch_agg: Some(batch_fn),
+                    ..
+                } = &analysis.agg_kinds[0].func.fn_type
+            {
+                let agg = &analysis.agg_kinds[0];
+                let entry = groups.get_mut(&GroupKey(vec![])).unwrap();
+                let acc = &mut entry.1;
+                let prev = acc.take(&agg.acc_var).unwrap_or(Value::Null);
+                let inputs: &[Value] = if agg.input.is_some() {
+                    &agg_input_columns[0]
+                } else {
+                    &[]
+                };
+                // Validate each input — the per-row path runs validate_args_type
+                // before each call; without this, batch kernels relying on
+                // `unreachable!()` for unexpected types would panic on bad data
+                // (e.g., `sum(n.flag)` where `flag` holds a Bool).
+                let mut validation_err: Option<String> = None;
+                for val in inputs {
+                    if matches!(val, Value::Null) {
+                        continue;
+                    }
+                    let single = thin_vec![val.clone()];
+                    if let Err(e) = agg.func.validate_args_type(&single) {
+                        validation_err = Some(e);
+                        break;
+                    }
+                    if let Err(e) = agg.func.validate_args_domain(&single) {
+                        validation_err = Some(e);
+                        break;
+                    }
+                }
+                if let Some(e) = validation_err {
+                    acc.insert(&agg.acc_var, prev);
+                    errors.push(e);
+                    break;
+                }
+                match batch_fn(self.runtime, inputs, num_active, prev) {
+                    Ok(new_val) => acc.insert(&agg.acc_var, new_val),
+                    Err(e) => {
+                        errors.push(e);
+                        break;
+                    }
+                }
+                continue;
+            }
+
             for row_idx in 0..num_active {
                 let key_values: Vec<Value> =
                     key_columns.iter().map(|col| col[row_idx].clone()).collect();

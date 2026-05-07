@@ -137,6 +137,7 @@ pub struct TypeId(pub(crate) usize);
 
 /// Opaque identifier for a node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(transparent)]
 pub struct NodeId(u64);
 
 /// Opaque identifier for a relationship (edge).
@@ -887,6 +888,18 @@ impl Graph {
         }
     }
 
+    /// Check if a node has a specific label by id (no string lookup).
+    #[must_use]
+    pub fn node_has_label_id(
+        &self,
+        node_id: NodeId,
+        label_id: LabelId,
+    ) -> bool {
+        self.node_labels_matrix
+            .get(node_id.0, label_id.0 as u64)
+            .is_some()
+    }
+
     /// Check if an edge has a specific relationship type.
     pub fn edge_has_type(
         &self,
@@ -1617,6 +1630,22 @@ impl Graph {
         self.node_attrs.get_attr_by_idx(id.0, attr_idx)
     }
 
+    /// Batch variant of `get_node_attribute_by_idx`.
+    /// Pushes one `Value` per id into `out`, substituting `default` for
+    /// missing entries (so callers don't allocate a temp `Vec<Option<_>>`).
+    pub fn get_node_attributes_by_idx(
+        &self,
+        ids: &[NodeId],
+        attr_idx: u16,
+        default: &Value,
+        out: &mut Vec<Value>,
+    ) {
+        // SAFETY: NodeId is `#[repr(transparent)]` over u64.
+        let keys: &[u64] = unsafe { std::slice::from_raw_parts(ids.as_ptr().cast(), ids.len()) };
+        self.node_attrs
+            .get_attrs_by_idx_batch_into(keys, attr_idx, default, out);
+    }
+
     pub fn reserve_relationship(&mut self) -> RelationshipId {
         if self.reserved_relationship_count < self.deleted_relationships.len() {
             let id = self
@@ -2007,9 +2036,48 @@ impl Graph {
             .flat_map(|iter| iter.map(|(_, id)| RelationshipId(id)))
     }
 
+    /// Build a relationship matrix summing only the given types (no
+    /// source/destination label restriction). Returns `None` when `types` is
+    /// non-empty but none of the types exist in the schema (caller should
+    /// short-circuit to an empty result).
+    pub fn build_relationship_matrix_unrestricted(
+        &self,
+        types: &[Arc<String>],
+    ) -> Option<Matrix> {
+        let matrices = types
+            .iter()
+            .filter_map(|relationship_type| self.get_relationship_matrix(relationship_type))
+            .collect::<Vec<_>>();
+        if !types.is_empty() && matrices.is_empty() {
+            return None;
+        }
+        let mut iter = matrices.into_iter();
+        let mut m = iter.next().map_or_else(
+            || self.adjacancy_matrix.to_matrix(),
+            |t| t.matrix().to_matrix(),
+        );
+        for relationship_matrix in iter {
+            m.element_wise_add(
+                None,
+                None,
+                Some(&relationship_matrix.matrix().to_matrix()),
+                None,
+            );
+        }
+        Some(m)
+    }
+
+    /// Resolve a set of label names to ids. Returns `None` if any label is not
+    /// in the schema (which means no node could match).
+    pub fn resolve_label_ids(
+        &self,
+        labels: &OrderSet<Arc<String>>,
+    ) -> Option<Vec<LabelId>> {
+        labels.iter().map(|l| self.get_label_id(l)).collect()
+    }
+
     /// Build a relationship matrix combining the given types and filtering by
-    /// source/destination labels.  The returned matrix can be cached and reused
-    /// across multiple calls to [`iter_relationship_matrix`].
+    /// source/destination labels.
     pub fn build_relationship_matrix(
         &self,
         types: &[Arc<String>],
@@ -2080,20 +2148,6 @@ impl Graph {
             }
             m
         }
-    }
-
-    /// Iterate a prebuilt relationship matrix, optionally restricting to a
-    /// single source row (`from_id`) and/or a single destination column
-    /// (`to_id`).
-    pub fn iter_relationship_matrix(
-        m: &Matrix,
-        from_id: Option<NodeId>,
-        to_id: Option<NodeId>,
-    ) -> impl Iterator<Item = (NodeId, NodeId)> + use<> {
-        let (min_row, max_row) = from_id.map_or((0, u64::MAX), |id| (id.0, id.0));
-        m.iter(min_row, max_row)
-            .filter(move |(_, dest)| to_id.is_none() || to_id.unwrap().0 == *dest)
-            .map(|(src, dest)| (NodeId(src), NodeId(dest)))
     }
 
     /// Convenience wrapper: build the matrix and iterate it in one call.
@@ -3205,11 +3259,11 @@ impl Graph {
 
         // --- node block storage ---
         let node_block_storage_sz: usize =
-            self.node_attrs.memory_usage() + self.deleted_nodes.serialized_size();
+            self.node_attrs.structural_memory_usage() + self.deleted_nodes.serialized_size();
 
         // --- edge block storage ---
-        let edge_block_storage_sz: usize =
-            self.relationship_attrs.memory_usage() + self.deleted_relationships.serialized_size();
+        let edge_block_storage_sz: usize = self.relationship_attrs.structural_memory_usage()
+            + self.deleted_relationships.serialized_size();
 
         // --- node attributes by label (sampling) ---
         let mut node_attr_by_label: Vec<(Arc<String>, usize)> = Vec::new();

@@ -1229,12 +1229,16 @@ impl<'a> Runtime<'a> {
         id: NodeId,
         attr: &Arc<String>,
     ) -> Option<Value> {
-        if let Some(dn) = self.deleted_nodes.borrow().get(&id) {
+        let deleted = self.deleted_nodes.borrow();
+        if !deleted.is_empty()
+            && let Some(dn) = deleted.get(&id)
+        {
             if let Some(value) = dn.attrs.get(attr) {
                 return Some(value.clone());
             }
             return None;
         }
+        drop(deleted);
         self.get_node_attribute_no_delete_check(id, attr)
     }
 
@@ -1268,12 +1272,16 @@ impl<'a> Runtime<'a> {
         id: RelationshipId,
         attr: &Arc<String>,
     ) -> Option<Value> {
-        if let Some(dn) = self.deleted_relationships.borrow().get(&id) {
+        let deleted = self.deleted_relationships.borrow();
+        if !deleted.is_empty()
+            && let Some(dn) = deleted.get(&id)
+        {
             if let Some(value) = dn.attrs.get(attr) {
                 return Some(value.clone());
             }
             return None;
         }
+        drop(deleted);
         if let Some(value) = self.pending.borrow().get_relationship_attribute(id, attr) {
             return Some(value.clone());
         }
@@ -1290,29 +1298,41 @@ impl<'a> Runtime<'a> {
         node_ids: &[NodeId],
         attr: &Arc<String>,
     ) -> (Column, NullBitmap) {
+        let attr_idx = self
+            .g
+            .borrow()
+            .get_node_attribute_id(attr)
+            .map(|i| i as u16);
         let g = self.g.borrow();
-
-        let attr_idx = g.get_node_attribute_id(attr).map(|idx| idx as u16);
 
         let deleted = self.deleted_nodes.borrow();
         let pending = self.pending.borrow();
 
         let mut values = Vec::with_capacity(node_ids.len());
-        for &id in node_ids {
-            let val = deleted.get(&id).map_or_else(
-                || {
-                    pending.get_node_attribute(id, attr).map_or_else(
-                        || {
-                            attr_idx
-                                .and_then(|idx| g.get_node_attribute_by_idx(id, idx))
-                                .unwrap_or(Value::Null)
-                        },
-                        Clone::clone,
-                    )
-                },
-                |dn| dn.attrs.get(attr).cloned().unwrap_or(Value::Null),
-            );
-            values.push(val);
+        if deleted.is_empty() && !pending.has_node_attrs() {
+            // Hot read-only path: a single batch call covers all node ids.
+            if let Some(idx) = attr_idx {
+                g.get_node_attributes_by_idx(node_ids, idx, &Value::Null, &mut values);
+            } else {
+                values.resize(node_ids.len(), Value::Null);
+            }
+        } else {
+            for &id in node_ids {
+                let val = deleted.get(&id).map_or_else(
+                    || {
+                        pending.get_node_attribute(id, attr).map_or_else(
+                            || {
+                                attr_idx
+                                    .and_then(|idx| g.get_node_attribute_by_idx(id, idx))
+                                    .unwrap_or(Value::Null)
+                            },
+                            Clone::clone,
+                        )
+                    },
+                    |dn| dn.attrs.get(attr).cloned().unwrap_or(Value::Null),
+                );
+                values.push(val);
+            }
         }
         drop(g);
         drop(deleted);

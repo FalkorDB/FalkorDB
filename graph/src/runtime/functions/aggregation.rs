@@ -51,6 +51,7 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Any],
         ret: Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
         agg_init: Value::List(Arc::new(thin_vec![])),
+        batch_agg: collect_batch,
         fn collect(_, args) {
             let mut iter = args.into_iter();
             match (iter.next(), iter.next()) {
@@ -72,6 +73,7 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Any],
         ret: Type::Int,
         agg_init: Value::Int(0),
+        batch_agg: count_batch,
         fn count(_, args) {
             let mut iter = args.into_iter();
             let first = iter.next();
@@ -89,6 +91,7 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         ret: Type::Union(vec![Type::Float, Type::Null]),
         agg_init: Value::Float(0.0),
+        batch_agg: sum_batch,
         fn sum(_, args) {
             let mut iter = args.into_iter();
             let first = iter.next();
@@ -112,6 +115,7 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Any],
         ret: Type::Any,
         agg_init: Value::Null,
+        batch_agg: max_batch,
         fn max(_, args) {
             let mut iter = args.into_iter();
             match (iter.next(), iter.next()) {
@@ -132,6 +136,7 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Any],
         ret: Type::Any,
         agg_init: Value::Null,
+        batch_agg: min_batch,
         fn min(_, args) {
             let mut iter = args.into_iter();
             match (iter.next(), iter.next()) {
@@ -265,6 +270,7 @@ pub fn register(funcs: &mut Functions) {
                 Value::List(Arc::new(thin_vec![]))
             ])),
             finalizer: Some(Box::new(finalize_percentile_cont)),
+            batch_agg: None,
         },
         Type::Union(vec![Type::Float, Type::Null]),
     );
@@ -313,6 +319,7 @@ pub fn register(funcs: &mut Functions) {
                 Value::List(Arc::new(thin_vec![]))
             ])),
             finalizer: Some(Box::new(finalize_stdevp)),
+            batch_agg: None,
         },
         Type::Union(vec![Type::Float, Type::Null]),
     );
@@ -323,6 +330,125 @@ fn about_to_overflow(
     b: f64,
 ) -> bool {
     a.signum() == b.signum() && a.abs() >= (f64::MAX - b.abs())
+}
+
+/// Bulk `count` aggregator. When `inputs` is empty (no input column —
+/// `count(*)`) every one of the `num_rows` rows contributes; otherwise
+/// only non-null inputs are counted. Cypher spec: `count(x)` ignores
+/// nulls; `count(*)` counts every row.
+fn count_batch(
+    _: &Runtime,
+    inputs: &[Value],
+    num_rows: usize,
+    acc: Value,
+) -> Result<Value, String> {
+    let prev = match acc {
+        Value::Int(n) => n,
+        Value::Null => 0,
+        _ => unreachable!("count accumulator must be Int"),
+    };
+    let added = if inputs.is_empty() {
+        num_rows as i64
+    } else {
+        inputs.iter().filter(|v| !matches!(v, Value::Null)).count() as i64
+    };
+    Ok(Value::Int(prev + added))
+}
+
+/// Bulk `collect` aggregator. Appends all non-null inputs into the
+/// accumulator list in a single pass, avoiding per-row `Arc::make_mut`.
+fn collect_batch(
+    _: &Runtime,
+    inputs: &[Value],
+    _num_rows: usize,
+    acc: Value,
+) -> Result<Value, String> {
+    let mut list = match acc {
+        Value::List(l) => l,
+        Value::Null => Arc::new(thin_vec![]),
+        _ => unreachable!("collect accumulator must be a List"),
+    };
+    let v = Arc::make_mut(&mut list);
+    v.reserve(inputs.len());
+    for val in inputs {
+        if !matches!(val, Value::Null) {
+            v.push(val.clone());
+        }
+    }
+    Ok(Value::List(list))
+}
+
+/// Bulk `sum` aggregator. Sums non-null numeric inputs in one pass.
+fn sum_batch(
+    _: &Runtime,
+    inputs: &[Value],
+    _num_rows: usize,
+    acc: Value,
+) -> Result<Value, String> {
+    let mut total = match acc {
+        Value::Float(f) => f,
+        Value::Int(i) => i as f64,
+        Value::Null => 0.0,
+        _ => unreachable!("sum accumulator must be numeric"),
+    };
+    for val in inputs {
+        match val {
+            Value::Null => {}
+            Value::Int(i) => total += *i as f64,
+            Value::Float(f) => total += *f,
+            _ => unreachable!("sum expects Integer, Float, or Null"),
+        }
+    }
+    Ok(Value::Float(total))
+}
+
+/// Bulk `max` aggregator. Walks all inputs once; keeps the max via
+/// `compare_value`, ignoring null/disjoint comparisons.
+fn max_batch(
+    _: &Runtime,
+    inputs: &[Value],
+    _num_rows: usize,
+    acc: Value,
+) -> Result<Value, String> {
+    let mut best = acc;
+    for val in inputs {
+        if matches!(val, Value::Null) {
+            continue;
+        }
+        if matches!(best, Value::Null) {
+            best = val.clone();
+            continue;
+        }
+        let (ord, cmp) = val.compare_value(&best);
+        if ord == Ordering::Greater && cmp != DisjointOrNull::ComparedNull {
+            best = val.clone();
+        }
+    }
+    Ok(best)
+}
+
+/// Bulk `min` aggregator. Mirror of `max_batch`.
+fn min_batch(
+    _: &Runtime,
+    inputs: &[Value],
+    _num_rows: usize,
+    acc: Value,
+) -> Result<Value, String> {
+    let mut best = acc;
+    for val in inputs {
+        if matches!(val, Value::Null) {
+            continue;
+        }
+        if matches!(best, Value::Null) {
+            best = val.clone();
+            continue;
+        }
+        let (ord, cmp) = val.compare_value(&best);
+        if ord == Ordering::Less && cmp != DisjointOrNull::ComparedNull {
+            best = val.clone();
+        }
+    }
+    Ok(best)
 }
 
 pub fn finalize_avg(value: Value) -> Value {

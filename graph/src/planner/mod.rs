@@ -827,6 +827,7 @@ impl Planner {
                 &FnType::Aggregation {
                     initial: Value::Null,
                     finalizer: None,
+                    batch_agg: None,
                 },
             )
             .expect("collect function not registered");
