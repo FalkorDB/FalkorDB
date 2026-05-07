@@ -507,6 +507,41 @@ impl AttributeStore {
             .map(|pos| attrs[pos].1.clone())
     }
 
+    /// Batch variant of `get_attr_by_idx` for a list of keys with the same
+    /// `attr_idx`. Avoids re-doing the per-call setup (function dispatch,
+    /// `pending_deletes` check) for every key when the deletion set is empty.
+    /// Pushes one `Value` per key into `out`, substituting `default` for
+    /// missing or pending-deleted entries.
+    pub fn get_attrs_by_idx_batch_into(
+        &self,
+        keys: &[u64],
+        attr_idx: u16,
+        default: &Value,
+        out: &mut Vec<Value>,
+    ) {
+        out.reserve(keys.len());
+        let pending_deletes_empty = self.pending_deletes.is_empty();
+        let version = self.version;
+        // First pass: batch cache lookups (one shard lock per shard run).
+        let mut cache_results: Vec<Option<Option<Value>>> = Vec::with_capacity(keys.len());
+        self.cache
+            .get_attrs_batch(keys, attr_idx, version, &mut cache_results);
+        for (i, &key) in keys.iter().enumerate() {
+            if !pending_deletes_empty && self.pending_deletes.contains(key) {
+                out.push(default.clone());
+                continue;
+            }
+            let v = cache_results[i].take().unwrap_or_else(|| {
+                let attrs = self.populate_cache_from_fjall(key);
+                attrs
+                    .binary_search_by_key(&attr_idx, |(idx, _)| *idx)
+                    .ok()
+                    .map(|pos| attrs[pos].1.clone())
+            });
+            out.push(v.unwrap_or_else(|| default.clone()));
+        }
+    }
+
     #[must_use]
     pub fn has_attributes(
         &self,

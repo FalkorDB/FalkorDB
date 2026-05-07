@@ -1263,21 +1263,30 @@ impl<'a> Runtime<'a> {
         let pending = self.pending.borrow();
 
         let mut values = Vec::with_capacity(node_ids.len());
-        for &id in node_ids {
-            let val = deleted.get(&id).map_or_else(
-                || {
-                    pending.get_node_attribute(id, attr).map_or_else(
-                        || {
-                            attr_idx
-                                .and_then(|idx| g.get_node_attribute_by_idx(id, idx))
-                                .unwrap_or(Value::Null)
-                        },
-                        Clone::clone,
-                    )
-                },
-                |dn| dn.attrs.get(attr).cloned().unwrap_or(Value::Null),
-            );
-            values.push(val);
+        if deleted.is_empty() && !pending.has_node_attrs() {
+            // Hot read-only path: a single batch call covers all node ids.
+            if let Some(idx) = attr_idx {
+                g.get_node_attributes_by_idx(node_ids, idx, &Value::Null, &mut values);
+            } else {
+                values.resize(node_ids.len(), Value::Null);
+            }
+        } else {
+            for &id in node_ids {
+                let val = deleted.get(&id).map_or_else(
+                    || {
+                        pending.get_node_attribute(id, attr).map_or_else(
+                            || {
+                                attr_idx
+                                    .and_then(|idx| g.get_node_attribute_by_idx(id, idx))
+                                    .unwrap_or(Value::Null)
+                            },
+                            Clone::clone,
+                        )
+                    },
+                    |dn| dn.attrs.get(attr).cloned().unwrap_or(Value::Null),
+                );
+                values.push(val);
+            }
         }
         drop(g);
         drop(deleted);

@@ -4,10 +4,14 @@
 //! named `telemetry{graph_name}`. The GRAPH.INFO command reads the global
 //! query registry to report currently running and waiting queries.
 
+use crossfire::mpmc::{self, List};
+use crossfire::{MRx, MTx};
 use parking_lot::Mutex;
-use redis_module::{Context, RedisString, RedisValue};
+use redis_module::{Context, RedisString, RedisValue, raw};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::MAX_INFO_QUERIES;
 
@@ -57,7 +61,7 @@ pub(crate) struct TelemetryEntry {
 ///
 /// The stream is trimmed to approximately `MAX_INFO_QUERIES` entries.
 /// Must be called with the GIL held (or from the main thread).
-pub(crate) fn write_to_stream(
+fn write_to_stream(
     ctx: &Context,
     graph_name: &str,
     entry: &TelemetryEntry,
@@ -293,4 +297,105 @@ pub(crate) fn waiting_queries_reply() -> Vec<RedisValue> {
             ])
         })
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Batched telemetry flusher
+// ---------------------------------------------------------------------------
+//
+// Worker threads enqueue telemetry entries onto a lock-free MPMC channel
+// instead of performing an XADD under the Redis module lock. A single
+// background thread drains the channel and issues all pending XADDs under one
+// GIL acquisition per batch. This amortizes the cost of acquiring the global
+// module lock across many entries and removes lock contention from the read
+// query hot path. Mirrors the FalkorDB C implementation.
+
+/// Maximum entries drained per flush iteration. Caps the time the GIL is held.
+const FLUSH_BATCH_MAX: usize = 256;
+
+/// How long the flusher waits for the first entry before parking again.
+const FLUSH_INTERVAL: Duration = Duration::from_millis(5);
+
+struct PendingEntry {
+    graph_name: String,
+    entry: TelemetryEntry,
+}
+
+/// Producer side of the telemetry channel. `None` until `start_flusher_thread`
+/// has been called; entries enqueued before that point are silently dropped.
+static SENDER: OnceLock<MTx<List<PendingEntry>>> = OnceLock::new();
+/// Receiver, parked here only between `start_flusher_thread` being called and
+/// the flusher thread taking ownership.
+static RECEIVER: Mutex<Option<MRx<List<PendingEntry>>>> = Mutex::new(None);
+
+/// Push a telemetry entry to the background channel. Lock-free hot path.
+pub(crate) fn enqueue_entry(
+    graph_name: &str,
+    entry: TelemetryEntry,
+) {
+    if let Some(tx) = SENDER.get() {
+        let _ = tx.send(PendingEntry {
+            graph_name: graph_name.to_string(),
+            entry,
+        });
+    }
+}
+
+/// Spawn the background flusher thread. Must be called once at module init.
+pub(crate) fn start_flusher_thread() {
+    let (tx, rx) = mpmc::unbounded_blocking::<PendingEntry>();
+    if SENDER.set(tx).is_err() {
+        // Already initialized.
+        return;
+    }
+    *RECEIVER.lock() = Some(rx);
+
+    thread::Builder::new()
+        .name("falkordb-telemetry".to_string())
+        .spawn(flusher_loop)
+        .expect("failed to spawn telemetry flusher thread");
+}
+
+fn flusher_loop() {
+    let rx = RECEIVER
+        .lock()
+        .take()
+        .expect("flusher started without a receiver");
+
+    // Detached thread-safe context: no associated client, used purely to
+    // hold the module lock while issuing XADDs.
+    let tsc = unsafe {
+        let f = raw::RedisModule_GetThreadSafeContext.expect("RedisModule_GetThreadSafeContext");
+        f(std::ptr::null_mut())
+    };
+
+    let mut batch: Vec<PendingEntry> = Vec::with_capacity(FLUSH_BATCH_MAX);
+
+    loop {
+        // Block until at least one entry is available (or the channel closes).
+        match rx.recv_timeout(FLUSH_INTERVAL) {
+            Ok(first) => batch.push(first),
+            Err(crossfire::RecvTimeoutError::Timeout) => continue,
+            Err(crossfire::RecvTimeoutError::Disconnected) => break,
+        }
+        // Drain any additional entries non-blockingly, up to the batch cap.
+        while batch.len() < FLUSH_BATCH_MAX {
+            match rx.try_recv() {
+                Ok(pe) => batch.push(pe),
+                Err(_) => break,
+            }
+        }
+
+        // Single GIL acquisition for the whole batch.
+        unsafe {
+            raw::RedisModule_ThreadSafeContextLock.expect("ThreadSafeContextLock")(tsc);
+        }
+        let ctx = Context::new(tsc);
+        for pe in batch.drain(..) {
+            write_to_stream(&ctx, &pe.graph_name, &pe.entry);
+        }
+        unsafe {
+            raw::RedisModule_ThreadSafeContextUnlock.expect("ThreadSafeContextUnlock")(tsc);
+        }
+    }
 }

@@ -839,9 +839,7 @@ pub fn query_mut(
                             is_write: false,
                             timed_out: read_result.timed_out,
                         };
-                        unsafe { ffi::lock_thread_safe_ctx(ctx.ctx) };
-                        telemetry::write_to_stream(&ctx, &key_name, &entry);
-                        unsafe { ffi::unlock_thread_safe_ctx(ctx.ctx) };
+                        telemetry::enqueue_entry(&key_name, entry);
                         drop(bc);
                         unsafe { ffi::free_thread_safe_context(ctx.ctx) };
                     }
@@ -940,7 +938,7 @@ fn query_sync(
                             is_write: true,
                             timed_out: false,
                         };
-                        telemetry::write_to_stream(ctx, key_name, &entry);
+                        telemetry::enqueue_entry(key_name, entry);
                     }
                     Err(err) => {
                         g.graph.rollback();
@@ -966,7 +964,7 @@ fn query_sync(
                     is_write: false,
                     timed_out: read_result.timed_out,
                 };
-                telemetry::write_to_stream(ctx, key_name, &entry);
+                telemetry::enqueue_entry(key_name, entry);
             }
         }
         Err(err) => {
@@ -1180,7 +1178,7 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                             is_write: true,
                             timed_out: false,
                         };
-                        telemetry::write_to_stream(&ctx, &key_name, &entry);
+                        telemetry::enqueue_entry(&key_name, entry);
                         unsafe {
                             ffi::unlock_thread_safe_ctx(ctx.ctx);
                             ffi::free_thread_safe_context(ctx.ctx);

@@ -135,6 +135,7 @@ pub struct TypeId(pub(crate) usize);
 
 /// Opaque identifier for a node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(transparent)]
 pub struct NodeId(u64);
 
 /// Opaque identifier for a relationship (edge).
@@ -1625,6 +1626,22 @@ impl Graph {
         attr_idx: u16,
     ) -> Option<Value> {
         self.node_attrs.get_attr_by_idx(id.0, attr_idx)
+    }
+
+    /// Batch variant of `get_node_attribute_by_idx`.
+    /// Pushes one `Value` per id into `out`, substituting `default` for
+    /// missing entries (so callers don't allocate a temp `Vec<Option<_>>`).
+    pub fn get_node_attributes_by_idx(
+        &self,
+        ids: &[NodeId],
+        attr_idx: u16,
+        default: &Value,
+        out: &mut Vec<Value>,
+    ) {
+        // SAFETY: NodeId is `#[repr(transparent)]` over u64.
+        let keys: &[u64] = unsafe { std::slice::from_raw_parts(ids.as_ptr().cast(), ids.len()) };
+        self.node_attrs
+            .get_attrs_by_idx_batch_into(keys, attr_idx, default, out);
     }
 
     pub fn reserve_relationship(&mut self) -> RelationshipId {
