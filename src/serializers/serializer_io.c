@@ -418,43 +418,45 @@ void *BufferSerializerIOv2_ReadBuffer
 	void *io,       // stream
 	size_t *lenptr  // number of bytes to read
 ) {
-	BufferedIO *buffer = (BufferedIO*)io;
+	BufferedIO *buffer = (BufferedIO*) io ;
+
+	ASSERT (buffer->count <= buffer->cap) ;
 
 	// load buffer if depleted
-	if(unlikely(buffer->count == buffer->cap)) {
-		_load_buffer(buffer);
+	if (unlikely (buffer->count == buffer->cap)) {
+		_load_buffer (buffer) ;
 	}
 
-	ASSERT(buffer->cap > 0);
+	ASSERT (buffer->cap > 0) ;
 
 	// ensure at least 1 byte available for the type field
-	if(buffer->count >= buffer->cap) {
-		RedisModule_Log(NULL, "warning",
+	if (buffer->count >= buffer->cap) {
+		RedisModule_Log (NULL, "warning",
 			"BufferSerializer ReadBuffer: no bytes available for type field "
-			"(count: %zu, cap: %zu)", buffer->count, buffer->cap);
-		RedisModule_Assert(false);
+			"(count: %zu, cap: %zu)", buffer->count, buffer->cap) ;
+		RedisModule_Assert (false) ;
 	}
 
 	// find the type
-	uint8_t info_type;
-	SERIALIZER_READ_TYPE(info_type);
+	uint8_t info_type ;
+	SERIALIZER_READ_TYPE (info_type) ;
 
-	void *ret = NULL;
+	void *ret = NULL ;
 
 	// large string stand on their own
 	// they're not encoded within the buffer, they are the buffer
-	if (info_type == TYPE_ENCODE(blob_t)) {
+	if (info_type == TYPE_ENCODE (blob_t)) {
 		// blob marker is only valid at the end of a buffer
-		if(buffer->count != buffer->cap) {
-			RedisModule_Log(NULL, "warning",
+		if (buffer->count != buffer->cap) {
+			RedisModule_Log (NULL, "warning",
 				"BufferSerializer ReadBuffer: blob type found at unexpected "
-				"position (count: %zu, cap: %zu)", buffer->count, buffer->cap);
-			RedisModule_Assert(false);
+				"position (count: %zu, cap: %zu)", buffer->count, buffer->cap) ;
+			RedisModule_Assert (false) ;
 		}
 
-		_load_buffer(buffer);
+		_load_buffer (buffer) ;
 
-		ret = buffer->buffer;
+		ret = buffer->buffer ;
 
 		if(lenptr != NULL) {
 			*lenptr = buffer->cap;
@@ -464,54 +466,54 @@ void *BufferSerializerIOv2_ReadBuffer
 		buffer->cap    = 0;
 		buffer->count  = 0;
 		buffer->buffer = NULL;
-	} else if(info_type == TYPE_ENCODE(char *)) {
+
+	} else if (info_type == TYPE_ENCODE (char *)) {
 		// ensure enough bytes remain for the length field
-		if((buffer->cap - buffer->count) < sizeof(size_t)) {
-			RedisModule_Log(NULL, "warning",
+		if ((buffer->cap - buffer->count) < sizeof (size_t)) {
+			RedisModule_Log (NULL, "warning",
 				"BufferSerializer ReadBuffer: insufficient bytes for length "
 				"field (remaining: %zu, needed: %zu)",
-				(size_t)(buffer->cap - buffer->count), sizeof(size_t));
-			RedisModule_Assert(false);
+				(size_t) (buffer->cap - buffer->count), sizeof (size_t)) ;
+			RedisModule_Assert (false) ;
 		}
 
-		// read buffer length (use memcpy to avoid unaligned access)
-		size_t l;
-		memcpy(&l, buffer->buffer + buffer->count, sizeof(size_t));
-
-		buffer->count += sizeof(size_t);
+		// read buffer len
+		size_t l = *(size_t*) (buffer->buffer + buffer->count) ;
+		buffer->count += sizeof (size_t) ;
 
 		// ensure the declared buffer fits within the remaining bytes
-		if(l > (buffer->cap - buffer->count)) {
-			RedisModule_Log(NULL, "warning",
+		if (l > (buffer->cap - buffer->count)) {
+			RedisModule_Log (NULL, "warning",
 				"BufferSerializer ReadBuffer: sub-buffer length %zu exceeds "
 				"remaining bytes %zu",
-				l, (size_t)(buffer->cap - buffer->count));
-			RedisModule_Assert(false);
+				l, (size_t) (buffer->cap - buffer->count)) ;
+			RedisModule_Assert (false) ;
 		}
 
 		// copy buffer
-		ret = rm_malloc(sizeof(char) * l);
+		ret = rm_malloc (sizeof(char) * l) ;
 
-		if(l > 0) {
-			memcpy(ret, buffer->buffer + buffer->count, l);
+		if (l > 0) {
+			memcpy (ret, buffer->buffer + buffer->count, l) ;
 		}
 
-		buffer->count += l;
-		if(lenptr != NULL) {
-			*lenptr = l;
+		buffer->count += l ;
+		if (lenptr != NULL) {
+			*lenptr = l ;
 		}
 	} else {
 		// unexpected type — malformed buffer
-		RedisModule_Log(NULL, "warning",
+		RedisModule_Log (NULL, "warning",
 			"BufferSerializer ReadBuffer: unexpected type %u, "
 			"expected bytes (%u) or blob (%u)",
-			(unsigned)info_type,
-			(unsigned)TYPE_ENCODE(char *),
-			(unsigned)TYPE_ENCODE(blob_t));
-		RedisModule_Assert(false);
+			(unsigned) info_type,
+			(unsigned) TYPE_ENCODE (char *),
+			(unsigned) TYPE_ENCODE (blob_t)) ;
+
+		RedisModule_Assert (false) ;
 	}
 
-	return ret;
+	return ret ;
 }
 
 //------------------------------------------------------------------------------
