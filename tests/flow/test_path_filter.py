@@ -386,6 +386,13 @@ class testPathFilter(FlowTestsBase):
         result_set = self.graph.query(query)
         self.env.assertEqual(result_set.result_set, [['Alice']])
 
+        # path XOR NULL-producing predicate should not pass rows; a missing
+        # property comparison evaluates to NULL, and true XOR NULL is NULL
+        query = ("MATCH (n:Person) WHERE ()-[:KNOWS]-() XOR "
+                 "n.missing = 'Alice' RETURN n.name ORDER BY n.name")
+        result_set = self.graph.query(query)
+        self.env.assertEqual(result_set.result_set, [])
+
         # server must remain healthy after the XOR-path-filter queries
         self.env.assertEqual(self.conn.ping(), True)
 
