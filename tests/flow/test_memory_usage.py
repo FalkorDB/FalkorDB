@@ -263,8 +263,8 @@ class testGraphMemoryUsage(FlowTestsBase):
     def test_restricted_samples_size(self):
         """make sure samples size is restricted"""
 
-        # create a graph with only nodes
-        q = "UNWIND range(0, 250000) AS x CREATE ()"
+        # create nodes with a property so node_block_storage is populated
+        q = "UNWIND range(0, 250000) AS x CREATE ({v:x})"
         self.graph.query(q)
 
         # ask for a huge number of samples
@@ -275,13 +275,10 @@ class testGraphMemoryUsage(FlowTestsBase):
         self.env.assertEqual(res.indices_sz_mb, 0)
         self.env.assertEqual(res.edge_block_storage_sz_mb, 0)
         self.env.assertEqual(res.label_matrices_sz_mb, 0)
-        self.env.assertEqual(res.unlabeled_node_attributes_sz_mb, 0)
         self.env.assertEqual(res.relation_matrices_sz_mb, 0)
 
         self.env.assertGreater(res.total_graph_sz_mb, 0)
         self.env.assertGreater(res.node_block_storage_sz_mb, 0)
-
-        self.env.assertEqual(res.total_graph_sz_mb, res.node_block_storage_sz_mb)
 
     def test_memory_usage_empty_graph(self):
         """test memory consumption of an empty graph"""
@@ -553,7 +550,7 @@ class testGraphMemoryUsage(FlowTestsBase):
         edge_count = node_count * 2 - 2
 
         q = """UNWIND range (1, $node_count) AS x
-               CREATE (a)"""
+               CREATE (a {v:x})"""
 
         res = self.graph.query(q, {'node_count': node_count})
         self.env.assertEqual(res.nodes_created, node_count)
@@ -563,7 +560,7 @@ class testGraphMemoryUsage(FlowTestsBase):
                WITH a, ID(a) + 1 AS b_id
                MATCH (b)
                WHERE ID(b) = b_id
-               CREATE (a)-[:R]->(a), (a)-[:R]->(b)"""
+               CREATE (a)-[:R {v:1}]->(a), (a)-[:R {v:2}]->(b)"""
 
         res = self.graph.query(q, {'node_count': node_count})
         self.env.assertEqual(res.relationships_created, edge_count)
