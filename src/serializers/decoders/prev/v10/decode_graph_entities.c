@@ -61,26 +61,56 @@ static SIValue _RdbLoadSIArray(RedisModuleIO *rdb) {
 	return list;
 }
 
+#define ENTITY_PROP_STACK_THRESHOLD 256
+
 static void _RdbLoadEntity
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,
 	GraphEntity *e
 ) {
-	/* Format:
-	 * #properties N
-	 * (name, value type, value) X N
-	*/
-	uint64_t n = RedisModule_LoadUnsigned(rdb);
-	SIValue vals[n];
-	AttributeID ids[n];
+	// format:
+	// #properties N
+	// (name, value type, value) X N
 
-	for(int i = 0; i < n; i++) {
-		ids[i]  = RedisModule_LoadUnsigned(rdb);
-		vals[i] = _RdbLoadSIValue(rdb);
+	uint64_t n = RedisModule_LoadUnsigned (rdb) ;
+
+	if (n == 0) {
+		return ;
+	}
+
+	ASSERT (n <= UINT16_MAX) ;
+
+	// small path: all storage lives on the stack, no allocation needed
+	if (likely (n <= ENTITY_PROP_STACK_THRESHOLD)) {
+		SIValue     vals [n] ;
+		AttributeID ids  [n] ;
+
+		for (uint64_t i = 0 ; i < n ; i++) {
+			ids  [i] = RedisModule_LoadUnsigned (rdb) ;
+			vals [i] = _RdbLoadSIValue (rdb) ;
+		}
+
+		AttributeSet_Add (e->attributes, ids, vals, n, false) ;
+		return ;
+	}
+
+	// large path: heap allocation required
+	SIValue     *vals = rm_malloc (n * sizeof (SIValue)) ;
+	AttributeID *ids  = rm_malloc (n * sizeof (AttributeID)) ;
+
+	// rm_malloc aborts on failure, so no null-check is needed;
+	// remove this comment if that assumption ever changes
+
+	for (uint64_t i = 0 ; i < n ; i++) {
+		ids  [i] = RedisModule_LoadUnsigned (rdb) ;
+		vals [i] = _RdbLoadSIValue (rdb) ;
 	}
 
 	AttributeSet_Add (e->attributes, ids, vals, n, false) ;
+
+	rm_free (ids) ;
+	rm_free (vals) ;
 }
 
 void RdbLoadNodes_v10
