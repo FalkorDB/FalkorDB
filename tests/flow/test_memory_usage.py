@@ -600,7 +600,7 @@ class testGraphMemoryUsage(FlowTestsBase):
         # restore entities
         #-----------------------------------------------------------------------
 
-        q = "UNWIND range (1, $node_count) AS x CREATE (a)"
+        q = "UNWIND range (1, $node_count) AS x CREATE (a {v:x})"
 
         res = self.graph.query(q, {'node_count': node_count})
         self.env.assertEqual(res.nodes_created, node_count)
@@ -609,7 +609,7 @@ class testGraphMemoryUsage(FlowTestsBase):
                WITH a, ID(a) + 1 AS b_id
                MATCH (b)
                WHERE ID(b) = b_id
-               CREATE (a)-[:R]->(a), (a)-[:R]->(b)"""
+               CREATE (a)-[:R {v:1}]->(a), (a)-[:R {v:2}]->(b)"""
 
         res = self.graph.query(q, {'node_count': node_count})
         self.env.assertEqual(res.relationships_created, edge_count)
