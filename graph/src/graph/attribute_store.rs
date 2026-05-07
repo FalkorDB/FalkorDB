@@ -343,7 +343,7 @@ impl AttributeStore {
     // ---- helpers --------------------------------------------------------
 
     /// Fetch ALL attributes for `entity_id` from the fjall snapshot and
-    /// populate the cache as a clean entry.
+    /// populate the cache if the result is non-empty.
     ///
     /// Uses a version-aware insert to avoid overwriting in-flight dirty writes:
     /// the cache entry is only updated if no newer/dirty entry already exists.
@@ -968,20 +968,25 @@ impl AttributeStore {
     /// Invalidate all dirty entities from the shared cache.
     /// Called on write-transaction rollback.
     pub fn rollback_cache(&mut self) {
-        // Collect entity IDs that have saved originals so we skip invalidating them.
-        let restored: RoaringTreemap = self.saved_for_rollback.keys().copied().collect();
-
         // Restore saved original cache entries for entities that were
         // modified during this write transaction. This is needed because the
         // cache is shared between MVCC versions — simply invalidating would
         // lose unflushed data that was never written to fjall.
+        let mut restored = RoaringTreemap::new();
+
         for (entity_id, original_attrs) in self.saved_for_rollback.drain() {
+            if original_attrs.is_empty() {
+                // Entity had no prior attrs — skip re-inserting an empty dirty
+                // entry. Let to_invalidate evict the dirty write instead.
+                continue;
+            }
             self.cache.insert_entity_presorted(
                 entity_id,
                 (*original_attrs).clone(),
                 self.version.saturating_sub(1),
                 true,
             );
+            restored.insert(entity_id);
         }
         // Invalidate any remaining dirty entities not covered by saved entries
         // (e.g., newly created entities that had no prior cache entry).
