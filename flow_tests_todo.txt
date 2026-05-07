@@ -12,5 +12,4 @@ tests/flow/test_bolt.py
 tests/flow/test_defrag.py
 
 ## Metadata & Internals
-tests/flow/test_multi_label.py
 tests/flow/test_intern_string.py

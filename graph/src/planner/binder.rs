@@ -140,6 +140,14 @@ impl Binder {
         }
     }
 
+    /// Sort labels alphabetically for deterministic display and stable
+    /// primary-label selection (e.g. for index utilization).
+    fn sort_labels(labels: &OrderSet<Arc<String>>) -> OrderSet<Arc<String>> {
+        let mut v: Vec<Arc<String>> = labels.iter().cloned().collect();
+        v.sort();
+        OrderSet::from_vec(v)
+    }
+
     /// Replace QueryNode labels in the graph with the full accumulated set.
     fn update_graph_labels(
         graph: &mut QueryGraph<Arc<String>, Arc<String>, Variable>,
@@ -147,12 +155,15 @@ impl Binder {
     ) {
         for node in graph.nodes_mut() {
             let key = (node.alias.scope_id, node.alias.id);
-            if let Some(labels) = node_labels.get(&key)
-                && node.labels != *labels
-            {
+            let sorted = if let Some(labels) = node_labels.get(&key) {
+                Self::sort_labels(labels)
+            } else {
+                Self::sort_labels(&node.labels)
+            };
+            if node.labels != sorted {
                 *node = Arc::new(QueryNode::new(
                     node.alias.clone(),
-                    labels.clone(),
+                    sorted,
                     node.attrs.clone(),
                 ));
             }
@@ -160,26 +171,32 @@ impl Binder {
         for rel in graph.relationships_mut() {
             let from_key = (rel.from.alias.scope_id, rel.from.alias.id);
             let to_key = (rel.to.alias.scope_id, rel.to.alias.id);
-            let from_changed = node_labels
-                .get(&from_key)
-                .is_some_and(|l| rel.from.labels != *l);
-            let to_changed = node_labels
-                .get(&to_key)
-                .is_some_and(|l| rel.to.labels != *l);
+            let from_sorted = if let Some(labels) = node_labels.get(&from_key) {
+                Self::sort_labels(labels)
+            } else {
+                Self::sort_labels(&rel.from.labels)
+            };
+            let to_sorted = if let Some(labels) = node_labels.get(&to_key) {
+                Self::sort_labels(labels)
+            } else {
+                Self::sort_labels(&rel.to.labels)
+            };
+            let from_changed = rel.from.labels != from_sorted;
+            let to_changed = rel.to.labels != to_sorted;
             if from_changed || to_changed {
-                let from = if let Some(labels) = node_labels.get(&from_key) {
+                let from = if from_changed {
                     Arc::new(QueryNode::new(
                         rel.from.alias.clone(),
-                        labels.clone(),
+                        from_sorted,
                         rel.from.attrs.clone(),
                     ))
                 } else {
                     rel.from.clone()
                 };
-                let to = if let Some(labels) = node_labels.get(&to_key) {
+                let to = if to_changed {
                     Arc::new(QueryNode::new(
                         rel.to.alias.clone(),
-                        labels.clone(),
+                        to_sorted,
                         rel.to.attrs.clone(),
                     ))
                 } else {

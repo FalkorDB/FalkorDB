@@ -49,7 +49,9 @@ pub fn graph_delete(
     {
         // Delete the telemetry stream before removing the graph key.
         telemetry::delete_stream(ctx, &key_name);
-        key.delete()
+        let result = key.delete();
+        ctx.replicate_verbatim();
+        result
     } else {
         EMPTY_KEY_ERR
     }
