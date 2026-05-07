@@ -11,6 +11,7 @@
 static OpResult OpApplyMultiplexerInit(OpBase *opBase);
 static Record OrMultiplexer_Consume(OpBase *opBase);
 static Record AndMultiplexer_Consume(OpBase *opBase);
+static Record XorMultiplexer_Consume(OpBase *opBase);
 static OpResult OpApplyMultiplexerReset(OpBase *opBase);
 static OpBase *OpApplyMultiplexerClone(const ExecutionPlan *plan, const OpBase *opBase);
 static void OpApplyMultiplexerFree(OpBase *opBase);
@@ -47,8 +48,13 @@ OpBase *NewApplyMultiplexerOp
 				"AND Apply Multiplexer", OpApplyMultiplexerInit,
 				AndMultiplexer_Consume, OpApplyMultiplexerReset, NULL,
 				OpApplyMultiplexerClone, OpApplyMultiplexerFree, false, plan);
+	} else if(boolean_operator == OP_XOR) {
+		OpBase_Init((OpBase *)op, OPType_XOR_APPLY_MULTIPLEXER,
+				"XOR Apply Multiplexer", OpApplyMultiplexerInit,
+				XorMultiplexer_Consume, OpApplyMultiplexerReset, NULL,
+				OpApplyMultiplexerClone, OpApplyMultiplexerFree, false, plan);
 	} else {
-		ASSERT("apply multiplexer boolean operator should be AND or OR only" && false);
+		ASSERT("apply multiplexer boolean operator should be AND, OR or XOR only" && false);
 	}
 
 	return (OpBase *) op;
@@ -173,6 +179,42 @@ static Record AndMultiplexer_Consume
 	}
 }
 
+// XOR is a binary boolean operator
+// the bounded record is emitted iff exactly one of the two branches
+// produced a record (i.e. exactly one branch evaluated to true)
+static Record XorMultiplexer_Consume
+(
+	OpBase *opBase
+) {
+	OpApplyMultiplexer *op = (OpApplyMultiplexer *)opBase;
+	while(true) {
+		// try to get a record from bound stream
+		op->r = OpBase_Consume(op->bound_branch);
+		if(!op->r) return NULL; // depleted
+
+		// pull from every branch and count how many produced a record
+		int true_count = 0;
+		for(int i = 1; i < op->op.childCount; i++) {
+			Record branch_record = _pullFromBranchStream(op, i);
+			if(branch_record) {
+				true_count++;
+				OpBase_DeleteRecord(&branch_record);
+			}
+		}
+
+		// XOR over a binary filter tree node:
+		// the bounded record passes iff exactly one branch returned a record
+		if(true_count == 1) {
+			Record r = op->r;
+			op->r = NULL;  // Null to avoid double free
+			return r;
+		}
+
+		// XOR did not hold for this bounded record, try the next one
+		OpBase_DeleteRecord(&op->r);
+	}
+}
+
 static OpResult OpApplyMultiplexerReset
 (
 	OpBase *opBase
@@ -192,7 +234,8 @@ static inline OpBase *OpApplyMultiplexerClone
 	const OpBase *opBase
 ) {
 	ASSERT(opBase->type == OPType_OR_APPLY_MULTIPLEXER ||
-		   opBase->type == OPType_AND_APPLY_MULTIPLEXER);
+		   opBase->type == OPType_AND_APPLY_MULTIPLEXER ||
+		   opBase->type == OPType_XOR_APPLY_MULTIPLEXER);
 
 	OpApplyMultiplexer *op = (OpApplyMultiplexer *)opBase;
 
