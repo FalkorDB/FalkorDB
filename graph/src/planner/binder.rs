@@ -1228,8 +1228,11 @@ impl Binder {
 
         // Pre-register path variables in scope so they can be resolved
         // when binding node/relationship inline properties below.
+        let mut named_path_names: std::collections::HashSet<Arc<String>> =
+            std::collections::HashSet::new();
         for raw_path in graph.paths() {
             self.define_name_in_scope(raw_path.var.clone(), Type::Path, true)?;
+            named_path_names.insert(raw_path.var.clone());
         }
 
         // Bind all nodes in the graph, merging duplicates by alias.
@@ -1257,6 +1260,15 @@ impl Binder {
 
         // Bind relationships, binding any referenced nodes that weren't in the graph
         for relationship in graph.relationships() {
+            if relationship.min_hops.is_some()
+                && !relationship.alias.starts_with("_anon")
+                && named_path_names.contains(&relationship.alias)
+            {
+                return Err(format!(
+                    "The alias '{}' was specified for both a node and a relationship.",
+                    relationship.alias
+                ));
+            }
             let alias = self.define_name_in_scope(
                 relationship.alias.clone(),
                 if relationship.min_hops.is_some() {
