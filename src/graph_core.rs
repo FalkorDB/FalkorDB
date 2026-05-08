@@ -1285,6 +1285,9 @@ const fn entity_type_tag(et: &graph::entity_type::EntityType) -> u8 {
 
 /// Scan the plan for CreateIndex / DropIndex IR nodes and append their
 /// effects to the buffer. Returns the (possibly new) effects buffer.
+/// If any CreateIndex carries OPTIONS, the binary effect format can't
+/// currently round-trip them — fall back to verbatim GRAPH.QUERY
+/// replication by returning None.
 fn build_index_effects(
     runtime: &Runtime,
     mut effects_buffer: Option<Vec<u8>>,
@@ -1296,8 +1299,11 @@ fn build_index_effects(
                 attrs,
                 index_type,
                 entity_type,
-                ..
+                options,
             } => {
+                if options.is_some() {
+                    return None;
+                }
                 let buf = effects_buffer.get_or_insert_with(|| vec![EFFECTS_VERSION]);
                 buf.push(EFFECT_CREATE_INDEX);
                 buf.push(index_type_tag(index_type));

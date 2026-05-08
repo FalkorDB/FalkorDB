@@ -247,20 +247,13 @@ impl Indexer {
             }
         }
         if label_indexes.has_rs_index() {
-            // Adding fields to a label whose RediSearch index already
-            // exists: drop the existing index and reconstruct with the
-            // full field set. Otherwise stale documents (indexed only
-            // under the previous field schema) interleave with newly-
-            // populated documents in the underlying HNSW / inverted
-            // structures, breaking searches against the previously-
-            // indexed fields. Mirrors C `Index_Disable`'s drop+rebuild
-            // — see `_Index_PopulateNodeIndex` semantics in C FalkorDB.
-            //
-            // `recreate_index` re-registers every field in
-            // `self.fields()` (which already includes `new_fields`
-            // inserted above), so no separate `register_fields` call
-            // is needed in this branch.
-            label_indexes.recreate_index(label)?;
+            // Adding fields to an existing RediSearch index: append the
+            // new fields to the live spec rather than dropping and
+            // rebuilding. Drop+rebuild used to be the strategy here, but
+            // it triggered a RediSearch numeric-index quirk that loses
+            // value 0 entries on the second recreate. Appending is also
+            // closer to RediSearch's intended LLAPI usage.
+            label_indexes.register_fields(&new_fields, field_options.as_ref())?;
         } else {
             let effective_stopwords = stopwords
                 .clone()
@@ -309,7 +302,20 @@ impl Indexer {
         if let Some(index) = index.get_mut(label) {
             let before = index.index_count();
             let mut removed = false;
-            for attr in attrs {
+            // Empty `attrs` means "drop all fields of this index_type"
+            // (e.g. db.idx.fulltext.drop('L') drops every fulltext field
+            // on label L without requiring callers to enumerate them).
+            let target_attrs: Vec<Arc<String>> = if attrs.is_empty() {
+                index
+                    .fields()
+                    .iter()
+                    .filter(|(_, fields)| fields.iter().any(|f| f.ty == *index_type))
+                    .map(|(attr, _)| attr.clone())
+                    .collect()
+            } else {
+                attrs.clone()
+            };
+            for attr in &target_attrs {
                 let (has_type, field_count) = if let Some(fields) = index.get_fields(attr) {
                     (fields.iter().any(|f| f.ty == *index_type), fields.len())
                 } else {
@@ -649,7 +655,8 @@ impl Indexer {
 
     #[must_use]
     pub fn index_info(&self) -> Vec<IndexInfo> {
-        self.index
+        let mut infos: Vec<IndexInfo> = self
+            .index
             .read()
             .iter()
             .filter(|(_, index)| !index.is_empty())
@@ -666,7 +673,9 @@ impl Indexer {
                     entity_type: String::new(),
                 }
             })
-            .collect()
+            .collect();
+        infos.sort_by(|a, b| a.label.cmp(&b.label));
+        infos
     }
 
     #[must_use]

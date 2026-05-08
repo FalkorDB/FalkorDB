@@ -78,6 +78,7 @@ tests/flow/test_query_validation
 tests/flow/test_rdb_load.py
 tests/flow/test_reduce.py
 tests/flow/test_relation_patterns.py
+tests/flow/test_replication.py
 tests/flow/test_results.py
 tests/flow/test_reversed_patterns
 tests/flow/test_ro_query.py
