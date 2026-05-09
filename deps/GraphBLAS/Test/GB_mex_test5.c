@@ -924,12 +924,12 @@ void mexFunction
     //--------------------------------------------------------------------------
 
     blob = NULL ;
-    uint64_t blob_size = 0, blob_size2 = 0 ;
-    OK (GxB_Matrix_serialize (&blob, &blob_size, A, NULL)) ;
-    OK (GxB_Matrix_deserialize (&C, MyType, blob, blob_size, NULL)) ;
+    uint64_t blob_memsize = 0, blob_memsize2 = 0 ;
+    OK (GxB_Matrix_serialize (&blob, &blob_memsize, A, NULL)) ;
+    OK (GxB_Matrix_deserialize (&C, MyType, blob, blob_memsize, NULL)) ;
     OK (GxB_Matrix_fprint (C, "C of MyType", 3, NULL)) ;
 
-    OK (GxB_deserialize_type_name (type_name, blob, blob_size)) ;
+    OK (GxB_deserialize_type_name (type_name, blob, blob_memsize)) ;
     CHECK (MATCH (type_name, "gb_mytype11")) ;
 
     // mangle the blob
@@ -940,28 +940,28 @@ void mexFunction
 
     ERR (GxB_deserialize_type_name (type_name, blob, 200000)) ;
     int64_t *blob64 = (int64_t *) blob ;
-    blob_size2 = GB_BLOB_HEADER_SIZE + 2 ;
-    blob64 [0] = blob_size2 ;
-    ERR (GxB_deserialize_type_name (type_name, blob, blob_size2)) ;
-    ERR (GxB_Matrix_deserialize (&E, MyType, blob, blob_size2, NULL)) ;
+    blob_memsize2 = GB_BLOB_HEADER_SIZE + 2 ;
+    blob64 [0] = blob_memsize2 ;
+    ERR (GxB_deserialize_type_name (type_name, blob, blob_memsize2)) ;
+    ERR (GxB_Matrix_deserialize (&E, MyType, blob, blob_memsize2, NULL)) ;
     CHECK (E == NULL) ;
-    blob64 [0] = blob_size ;
+    blob64 [0] = blob_memsize ;
 
-    OK (GxB_deserialize_type_name (type_name, blob, blob_size)) ;
+    OK (GxB_deserialize_type_name (type_name, blob, blob_memsize)) ;
     CHECK (MATCH (type_name, "gb_mytype11")) ;
 
     int32_t *blob32 = (int32_t *) blob ;
     blob32 [2] = -1 ;
-    ERR (GxB_deserialize_type_name (type_name, blob, blob_size)) ;
+    ERR (GxB_deserialize_type_name (type_name, blob, blob_memsize)) ;
     blob32 [2] = GB_UDT_code ;
 
-    OK (GxB_deserialize_type_name (type_name, blob, blob_size)) ;
+    OK (GxB_deserialize_type_name (type_name, blob, blob_memsize)) ;
     CHECK (MATCH (type_name, "gb_mytype11")) ;
 
     expected = GrB_DOMAIN_MISMATCH ;
-    ERR (GxB_Matrix_deserialize (&E, NULL, blob, blob_size, NULL)) ;
-    ERR (GxB_Matrix_deserialize (&E, GrB_BOOL, blob, blob_size, NULL)) ;
-    ERR (GxB_Matrix_deserialize (&E, GrB_FP64, blob, blob_size, NULL)) ;
+    ERR (GxB_Matrix_deserialize (&E, NULL, blob, blob_memsize, NULL)) ;
+    ERR (GxB_Matrix_deserialize (&E, GrB_BOOL, blob, blob_memsize, NULL)) ;
+    ERR (GxB_Matrix_deserialize (&E, GrB_FP64, blob, blob_memsize, NULL)) ;
     printf ("size of gb_mytype11: %d\n", sizeof (gb_mytype11)) ;
 
     OK (GrB_Matrix_free_ (&A)) ;
@@ -976,20 +976,20 @@ void mexFunction
     OK (GrB_Matrix_setElement_FP32 (A, (float) 9.1, 1, 1)) ;
     OK (GrB_Matrix_wait_ (A, GrB_MATERIALIZE)) ;
     OK (GxB_Matrix_fprint (A, "A for serialize", 3, NULL)) ;
-    OK (GxB_Matrix_serialize (&blob, &blob_size, A, NULL)) ;
+    OK (GxB_Matrix_serialize (&blob, &blob_memsize, A, NULL)) ;
     expected = GrB_DOMAIN_MISMATCH ;
-    ERR (GxB_Matrix_deserialize (&C, GrB_INT32, blob, blob_size, NULL)) ;
-    OK (GxB_Matrix_deserialize (&C, GrB_FP32, blob, blob_size, NULL)) ;
+    ERR (GxB_Matrix_deserialize (&C, GrB_INT32, blob, blob_memsize, NULL)) ;
+    OK (GxB_Matrix_deserialize (&C, GrB_FP32, blob, blob_memsize, NULL)) ;
     OK (GxB_Matrix_fprint (C, "C from deserialize", 3, NULL)) ;
 #endif
 
     MXFREE (blob) ;
 
 #if 1
-    blob_size = 2 ;
+    blob_memsize = 2 ;
     blob = mxMalloc (2) ;
     expected = GrB_INSUFFICIENT_SPACE ;
-    ERR (GrB_Matrix_serialize (blob, &blob_size, A)) ;
+    ERR (GrB_Matrix_serialize (blob, &blob_memsize, A)) ;
 #endif
 
     OK (GrB_Matrix_free_ (&A)) ;

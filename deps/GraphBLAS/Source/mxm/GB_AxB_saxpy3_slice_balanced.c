@@ -23,7 +23,7 @@
 
 #define GB_FREE_WORKSPACE                   \
 {                                           \
-    GB_FREE_MEMORY (&Bflops, Bflops_size) ; \
+    GB_FREE_MEMORY (&Bflops, Bflops_mem) ;  \
     GB_WERK_POP (Fine_fl, int64_t) ;        \
     GB_WERK_POP (Fine_slice, int64_t) ;     \
     GB_WERK_POP (Coarse_Work, int64_t) ;    \
@@ -33,18 +33,18 @@
 #define GB_FREE_ALL                                 \
 {                                                   \
     GB_FREE_WORKSPACE ;                             \
-    GB_FREE_MEMORY (&SaxpyTasks, SaxpyTasks_size) ; \
+    GB_FREE_MEMORY (&SaxpyTasks, SaxpyTasks_mem) ;  \
 }
 
 //------------------------------------------------------------------------------
-// GB_hash_table_size
+// GB_hash_table_nitems
 //------------------------------------------------------------------------------
 
 // flmax is the max flop count for computing A*B(:,j), for any vector j that
 // this task computes.  If the mask M is present, flmax also includes the
-// number of entries in M(:,j).  GB_hash_table_size determines the hash table
+// number of entries in M(:,j).  GB_hash_table_nitems determines the hash table
 // size for this task, which is twice the smallest power of 2 larger than
-// flmax.  If flmax is large enough, the hash_size is returned as cvlen, so
+// flmax.  If flmax is large enough, the hash_nitems is returned as cvlen, so
 // that Gustavson's method will be used instead of the Hash method.
 
 // By default, Gustavson vs Hash is selected automatically.  AxB_method can be
@@ -53,14 +53,14 @@
 // either of those methods.  However, if Hash is selected but the hash table
 // equals or exceeds cvlen, then Gustavson's method is used instead.
 
-static inline uint64_t GB_hash_table_size
+static inline uint64_t GB_hash_table_nitems
 (
     int64_t flmax,      // max flop count for any vector computed by this task
     int64_t cvlen,      // vector length of C
     const int AxB_method     // Default, Gustavson, or Hash
 )
 {
-    uint64_t hash_size ;
+    uint64_t hash_nitems ;
 
     if (AxB_method == GxB_AxB_GUSTAVSON || flmax >= cvlen/2)
     { 
@@ -69,7 +69,7 @@ static inline uint64_t GB_hash_table_size
         // use Gustavson if selected explicitly or if flmax is large
         //----------------------------------------------------------------------
 
-        hash_size = cvlen ;
+        hash_nitems = cvlen ;
 
     }
     else
@@ -79,23 +79,23 @@ static inline uint64_t GB_hash_table_size
         // flmax is small; consider hash vs Gustavson
         //----------------------------------------------------------------------
 
-        // hash_size = 2 * (smallest power of 2 >= flmax)
-        hash_size = ((uint64_t) 2) << (GB_FLOOR_LOG2 (flmax) + 1) ;
+        // hash_nitems = 2 * (smallest power of 2 >= flmax)
+        hash_nitems = ((uint64_t) 2) << (GB_FLOOR_LOG2 (flmax) + 1) ;
         bool use_Gustavson ;
         if (AxB_method == GxB_AxB_HASH)
         { 
-            // always use Hash method, unless the hash_size >= cvlen
-            use_Gustavson = (hash_size >= cvlen) ;
+            // always use Hash method, unless the hash_nitems >= cvlen
+            use_Gustavson = (hash_nitems >= cvlen) ;
         }
         else
         { 
             // default: auto selection:
-            // use Gustavson's method if hash_size is too big
-            use_Gustavson = (hash_size >= cvlen/12) ;
+            // use Gustavson's method if hash_nitems is too big
+            use_Gustavson = (hash_nitems >= cvlen/12) ;
         }
         if (use_Gustavson)
         { 
-            hash_size = cvlen ;
+            hash_nitems = cvlen ;
         }
     }
 
@@ -103,7 +103,7 @@ static inline uint64_t GB_hash_table_size
     // return result
     //--------------------------------------------------------------------------
 
-    return (hash_size) ;
+    return (hash_nitems) ;
 }
 
 //------------------------------------------------------------------------------
@@ -176,13 +176,13 @@ static inline void GB_create_coarse_task
     SaxpyTasks [taskid].start  = kfirst ;
     SaxpyTasks [taskid].end    = klast ;
     SaxpyTasks [taskid].vector = -1 ;
-    SaxpyTasks [taskid].hsize  = GB_hash_table_size (flmax, cvlen, AxB_method) ;
+    SaxpyTasks [taskid].hash_nitems  = GB_hash_table_nitems (flmax, cvlen, AxB_method) ;
     SaxpyTasks [taskid].Hi     = NULL ;      // assigned later
     SaxpyTasks [taskid].Hf     = NULL ;      // assigned later
     SaxpyTasks [taskid].Hx     = NULL ;      // assigned later
     SaxpyTasks [taskid].my_cjnz = 0 ;        // for fine tasks only
     SaxpyTasks [taskid].leader  = taskid ;
-    SaxpyTasks [taskid].team_size = 1 ;
+    SaxpyTasks [taskid].team_nfine = 1 ;
 }
 
 //------------------------------------------------------------------------------
@@ -201,7 +201,7 @@ GrB_Info GB_AxB_saxpy3_slice_balanced
     bool builtin_semiring,          // if true, semiring is builtin
     // outputs
     GB_saxpy3task_struct **SaxpyTasks_handle,
-    size_t *SaxpyTasks_size_handle,
+    uint64_t *SaxpyTasks_mem_handle,
     bool *apply_mask,               // if true, apply M during sapxy3
     bool *M_in_place,               // if true, use M in-place
     int *ntasks,                    // # of tasks created (coarse and fine)
@@ -216,6 +216,10 @@ GrB_Info GB_AxB_saxpy3_slice_balanced
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
+
+    ASSERT (C != NULL) ;
+    int memlane = GB_memlane (C->header_mem) ;
+    uint64_t mem = GB_mem (memlane, 0) ;
 
     (*apply_mask) = false ;
     (*M_in_place) = false ;
@@ -256,7 +260,7 @@ GrB_Info GB_AxB_saxpy3_slice_balanced
     //--------------------------------------------------------------------------
 
     GB_saxpy3task_struct *restrict SaxpyTasks = NULL ;
-    size_t SaxpyTasks_size = 0 ;
+    uint64_t SaxpyTasks_mem = mem ;
 
     GB_WERK_DECLARE (Coarse_initial, int64_t) ; // initial coarse tasks
     GB_WERK_DECLARE (Coarse_Work, int64_t) ;    // workspace for flop counts
@@ -296,9 +300,10 @@ GrB_Info GB_AxB_saxpy3_slice_balanced
 
     int64_t Mwork = 0 ;
 
-    int64_t *restrict Bflops = NULL ; size_t Bflops_size = 0 ;
+    int64_t *restrict Bflops = NULL ;
+    uint64_t Bflops_mem = mem ;
     // allocate Bflops workspace
-    Bflops = GB_MALLOC_MEMORY (bnvec+1, sizeof (uint64_t), &Bflops_size) ;
+    Bflops = GB_MALLOC_MEMORY (bnvec+1, sizeof (uint64_t), &Bflops_mem) ;
     if (Bflops == NULL)
     {
         // out of memory
@@ -453,10 +458,10 @@ GrB_Info GB_AxB_saxpy3_slice_balanced
     // determine target task size
     //--------------------------------------------------------------------------
 
-    double target_task_size = total_flops / ((double) ntasks_initial) ;
-    target_task_size = GB_IMAX (target_task_size, chunk) ;
-    double target_fine_size = target_task_size / GB_FINE_WORK ;
-    target_fine_size = GB_IMAX (target_fine_size, chunk) ;
+    double target_work_per_task = total_flops / ((double) ntasks_initial) ;
+    target_work_per_task = GB_IMAX (target_work_per_task, chunk) ;
+    double target_work_per_fine_task = target_work_per_task / GB_FINE_WORK ;
+    target_work_per_fine_task = GB_IMAX (target_work_per_fine_task, chunk) ;
     double very_costly = GB_Global_hack_get (0) ;       // modified for testing
     if (very_costly <= GxB_DEFAULT)
     {
@@ -513,7 +518,7 @@ GrB_Info GB_AxB_saxpy3_slice_balanced
                 // This coarse task is empty, having been squeezed out by
                 // costly vectors in adjacent coarse tasks.
             }
-            else if (task_flops > very_costly * GB_COSTLY * target_task_size)
+            else if (task_flops > very_costly * GB_COSTLY * target_work_per_task)
             {
                 // This coarse task is too costly, because it contains one or
                 // more costly vectors.  Split its vectors into a mixture of
@@ -530,7 +535,7 @@ GrB_Info GB_AxB_saxpy3_slice_balanced
                     int64_t bjnz = (Bp == NULL) ? bvlen :
                         (GB_IGET (Bp, kk+1) - GB_IGET (Bp, kk)) ;
 
-                    if (jflops > GB_COSTLY * target_task_size && bjnz > 1)
+                    if (jflops > GB_COSTLY * target_work_per_task && bjnz > 1)
                     {
                         // A*B(:,j) is costly; split it into 2 or more fine
                         // tasks.  First flush the prior coarse task, if any.
@@ -546,8 +551,9 @@ GrB_Info GB_AxB_saxpy3_slice_balanced
 
                         // vectors kk will be split into multiple fine tasks
                         max_bjnz = GB_IMAX (max_bjnz, bjnz) ;
-                        int team_size = ceil (jflops / target_fine_size) ;
-                        (*nfine) += team_size ;
+                        int team_nfine =
+                            ceil (jflops / target_work_per_fine_task) ;
+                        (*nfine) += team_nfine ;
                     }
                 }
 
@@ -587,7 +593,7 @@ GrB_Info GB_AxB_saxpy3_slice_balanced
     //--------------------------------------------------------------------------
 
     SaxpyTasks = GB_MALLOC_MEMORY ((*ntasks), sizeof (GB_saxpy3task_struct),
-        &SaxpyTasks_size) ;
+        &SaxpyTasks_mem) ;
     GB_WERK_PUSH (Coarse_Work, nthreads_max, int64_t) ;
     if (max_bjnz > 0)
     { 
@@ -608,7 +614,7 @@ GrB_Info GB_AxB_saxpy3_slice_balanced
     }
 
     // clear SaxpyTasks
-    memset (SaxpyTasks, 0, SaxpyTasks_size) ;
+    memset (SaxpyTasks, 0, SaxpyTasks_mem) ;
 
     //--------------------------------------------------------------------------
     // create the tasks
@@ -637,7 +643,7 @@ GrB_Info GB_AxB_saxpy3_slice_balanced
                 // This coarse task is empty, having been squeezed out by
                 // costly vectors in adjacent coarse tasks.
             }
-            else if (task_flops > very_costly * GB_COSTLY * target_task_size)
+            else if (task_flops > very_costly * GB_COSTLY * target_work_per_task)
             {
                 // This coarse task is too costly, because it contains one or
                 // more costly vectors.  Split its vectors into a mixture of
@@ -653,7 +659,7 @@ GrB_Info GB_AxB_saxpy3_slice_balanced
                     int64_t bjnz = (Bp == NULL) ? bvlen :
                         (GB_IGET (Bp, kk+1) - GB_IGET (Bp, kk)) ;
 
-                    if (jflops > GB_COSTLY * target_task_size && bjnz > 1)
+                    if (jflops > GB_COSTLY * target_work_per_task && bjnz > 1)
                     {
                         // A*B(:,j) is costly; split it into 2 or more fine
                         // tasks.  First flush the prior coarse task, if any.
@@ -710,18 +716,19 @@ GrB_Info GB_AxB_saxpy3_slice_balanced
                         GB_cumsum (Fine_fl, false, bjnz, NULL, nth, Werk) ;
 
                         // slice B(:,j) into fine tasks
-                        int team_size = ceil (jflops / target_fine_size) ;
+                        int team_nfine =
+                            ceil (jflops / target_work_per_fine_task) ;
                         ASSERT (Fine_slice != NULL) ;
                         GB_p_slice (Fine_slice, Fine_fl, false, bjnz,
-                            team_size, false) ;
+                            team_nfine, false) ;
 
                         // shared hash table for all fine tasks for A*B(:,j)
-                        uint64_t hsize =
-                            GB_hash_table_size (jflops, cvlen, AxB_method) ;
+                        uint64_t hash_nitems =
+                            GB_hash_table_nitems (jflops, cvlen, AxB_method) ;
 
                         // construct the fine tasks for C(:,j)=A*B(:,j)
                         int leader = nf ;
-                        for (int fid = 0 ; fid < team_size ; fid++)
+                        for (int fid = 0 ; fid < team_nfine ; fid++)
                         { 
                             int64_t pstart = Fine_slice [fid] ;
                             int64_t pend   = Fine_slice [fid+1] ;
@@ -729,13 +736,13 @@ GrB_Info GB_AxB_saxpy3_slice_balanced
                             SaxpyTasks [nf].start  = pB_start + pstart ;
                             SaxpyTasks [nf].end    = pB_start + pend - 1 ;
                             SaxpyTasks [nf].vector = kk ;
-                            SaxpyTasks [nf].hsize  = hsize ;
+                            SaxpyTasks [nf].hash_nitems  = hash_nitems ;
                             SaxpyTasks [nf].Hi = NULL ;   // assigned later
                             SaxpyTasks [nf].Hf = NULL ;   // assigned later
                             SaxpyTasks [nf].Hx = NULL ;   // assigned later
                             SaxpyTasks [nf].my_cjnz = 0 ;
                             SaxpyTasks [nf].leader = leader ;
-                            SaxpyTasks [nf].team_size = team_size ;
+                            SaxpyTasks [nf].team_nfine = team_nfine ;
                             nf++ ;
                         }
                     }
@@ -772,8 +779,8 @@ GrB_Info GB_AxB_saxpy3_slice_balanced
         GB_create_coarse_task (0, bnvec-1, SaxpyTasks, 0, Bflops, cvlen, 1, 1,
             Coarse_Work, AxB_method) ;
 
-        uint64_t hash_size = SaxpyTasks [0].hsize ;
-        bool use_Gustavson = (hash_size == cvlen) ;
+        uint64_t hash_nitems = SaxpyTasks [0].hash_nitems ;
+        bool use_Gustavson = (hash_nitems == cvlen) ;
         if (bnvec == 1 && !use_Gustavson)
         { 
             // convert the single coarse hash task into a single fine hash task
@@ -791,7 +798,7 @@ GrB_Info GB_AxB_saxpy3_slice_balanced
     GB_FREE_WORKSPACE ;
     (*nthreads) = GB_IMIN (*nthreads, *ntasks) ;
     (*SaxpyTasks_handle) = SaxpyTasks ;
-    (*SaxpyTasks_size_handle) = SaxpyTasks_size ;
+    (*SaxpyTasks_mem_handle) = SaxpyTasks_mem ;
     return (GrB_SUCCESS) ;
 }
 

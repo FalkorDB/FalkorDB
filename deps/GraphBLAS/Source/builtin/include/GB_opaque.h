@@ -361,17 +361,20 @@ GB_Opcode ;
 struct GB_Type_opaque       // content of GrB_Type
 {
     int64_t magic ;         // for detecting uninitialized objects
-    size_t header_size ;    // size of the malloc'd block for this struct, or 0
+    uint64_t header_mem ;   // size of the malloc'd block for this struct, or 0,
+                            // and memlane = 0
     // ---------------------//
     char *user_name ;       // user name for GrB_get/GrB_set
-    size_t user_name_size ; // allocated size of user_name for GrB_get/GrB_set
+    uint64_t user_name_mem ; // allocated size of user_name for GrB_get/GrB_set
+                            // and memlane = 0
     // ---------------------//
-    size_t size ;           // size of the type
+    uint64_t size ;         // size of the type
     GB_Type_code code ;     // the type code
     int32_t name_len ;      // length of JIT C name; 0 for builtin
     char name [GxB_MAX_NAME_LEN] ;  // JIT C name of the type
     char *defn ;            // type definition
-    size_t defn_size ;      // allocated size of the definition
+    uint64_t defn_mem ;     // allocated size of the definition,
+                            // and memlane = 0
     uint64_t hash ;         // if 0, type is builtin.
                             // if UINT64_MAX, the type cannot be JIT'd.
     GxB_print_function print_function ; // for printing user-defined types
@@ -414,16 +417,18 @@ typedef struct GB_Operator_opaque *GB_Operator ;
 struct GB_Monoid_opaque     // content of GrB_Monoid
 {
     int64_t magic ;         // for detecting uninitialized objects
-    size_t header_size ;    // size of the malloc'd block for this struct, or 0
+    uint64_t header_mem ;   // size of the malloc'd block for this struct, or 0,
+                            // and memlane = 0
     // ---------------------//
     char *user_name ;       // user name for GrB_get/GrB_set
-    size_t user_name_size ; // allocated size of user_name for GrB_get/GrB_set
+    uint64_t user_name_mem ; // allocated size of user_name for GrB_get/GrB_set
+                            // and memlane = 0
     // ---------------------//
     GrB_BinaryOp op ;       // binary operator of the monoid
     void *identity ;        // identity of the monoid; type is op->ztype
     void *terminal ;        // early-exit (NULL if no value); type is op->ztype
-    size_t identity_size ;  // allocated size of identity, or 0
-    size_t terminal_size ;  // allocated size of terminal, or 0
+    uint64_t identity_mem ; // allocated size of identity, or 0, and memlane=0
+    uint64_t terminal_mem ; // allocated size of terminal, or 0, and memlane=0
     uint64_t hash ;         // if 0, monoid uses only builtin ops and types.
                             // if UINT64_MAX, the monoid cannot be JIT'd.
 } ;
@@ -431,16 +436,18 @@ struct GB_Monoid_opaque     // content of GrB_Monoid
 struct GB_Semiring_opaque   // content of GrB_Semiring
 {
     int64_t magic ;         // for detecting uninitialized objects
-    size_t header_size ;    // size of the malloc'd block for this struct, or 0
+    uint64_t header_mem ;   // size of the malloc'd block for this struct, or 0,
+                            // and memlane = 0
     // ---------------------//
     char *user_name ;       // user name for GrB_get/GrB_set
-    size_t user_name_size ; // allocated size of user_name for GrB_get/GrB_set
+    uint64_t user_name_mem ; // allocated size of user_name for GrB_get/GrB_set
+                            // and memlane = 0
     // ---------------------//
     GrB_Monoid add ;        // add operator of the semiring
     GrB_BinaryOp multiply ; // multiply operator of the semiring
     char *name ;            // name of the semiring; NULL for builtin
     int32_t name_len ;      // length of name; 0 for builtin
-    size_t name_size ;      // allocated size of the name
+    uint64_t name_mem ;     // allocated size of the name, and memlane = 0
     uint64_t hash ;         // if 0, semiring uses only builtin ops and types
 } ;
 
@@ -448,13 +455,16 @@ struct GB_Descriptor_opaque // content of GrB_Descriptor
 {
     // first 6 items exactly match GrB_Matrix, GrB_Vector, GrB_Scalar structs:
     int64_t magic ;         // for detecting uninitialized objects
-    size_t header_size ;    // size of the malloc'd block for this struct, or 0
+    uint64_t header_mem ;   // size of the malloc'd block for this struct, or 0,
+                            // and memlane = 0
     // ---------------------//
     char *user_name ;       // user name for GrB_get/GrB_set
-    size_t user_name_size ; // allocated size of user_name for GrB_get/GrB_set
+    uint64_t user_name_mem ; // allocated size of user_name for GrB_get/GrB_set
+                            // and memlane = 0
     // ---------------------//
     char *logger ;          // error logger string
-    size_t logger_size ;    // size of the malloc'd block for logger, or 0
+    uint64_t logger_mem ;   // memsize of the malloc'd block for logger, or 0,
+                            // and memlane
     // ---------------------//
     // specific to the descriptor struct:
     GrB_Desc_Value out ;    // output descriptor
@@ -470,15 +480,17 @@ struct GB_Descriptor_opaque // content of GrB_Descriptor
     int val_list ;          // how to use the value list, X
 } ;
 
-#define GB_MAX_NGPUS 1024
+#define GB_MAX_NGPUS 64
 
 struct GB_Context_opaque    // content of GxB_Context
 {
     int64_t magic ;         // for detecting uninitialized objects
-    size_t header_size ;    // size of the malloc'd block for this struct, or 0
+    uint64_t header_mem ;   // size of the malloc'd block for this struct, or 0,
+                            // and memlane = 0
     // ---------------------//
     char *user_name ;       // user name for GrB_get/GrB_set
-    size_t user_name_size ; // allocated size of user_name for GrB_get/GrB_set
+    uint64_t user_name_mem ; // allocated size of user_name for GrB_get/GrB_set
+                            // and memlane = 0
     // ---------------------//
     // OpenMP thread(s):
     double chunk ;          // chunk size for # of threads for small problems
@@ -488,6 +500,8 @@ struct GB_Context_opaque    // content of GxB_Context
                             // (in range 0 to GB_MAX_NGPUS)
     uint16_t gpu_ids [GB_MAX_NGPUS] ;   // using GPUs gpu_ids [0..ngpus-1],
                             // or no GPU if ngpus == 0.
+    // memlane:
+    int32_t memlane ;       // 0 (CPU) or 1 (typically Rapids for the GPU)
 } ;
 
 //------------------------------------------------------------------------------
@@ -500,18 +514,19 @@ struct GB_Context_opaque    // content of GxB_Context
 
 struct GB_Pending_struct    // list of pending tuples for a matrix
 {
-    size_t header_size ;    // size of the malloc'd block for this struct, or 0
+    uint64_t header_mem ;   // size of the malloc'd block for this struct, or 0,
+                            // and memlane = 0 or 1
     int64_t n ;         // number of pending tuples to add to matrix
     int64_t nmax ;      // size of i,j,x
     bool sorted ;       // true if pending tuples are in sorted order
     void *i ;           // row indices of pending tuples
-    size_t i_size ;
+    uint64_t i_mem ;    // allocated size of i, and memlane = 0 or 1
     void *j ;           // col indices of pending tuples; NULL if A->vdim <= 1
-    size_t j_size ;
+    uint64_t j_mem ;    // allocated size of j, and memlane = 0 or 1
     GB_void *x ;        // values of pending tuples
-    size_t x_size ;
+    uint64_t x_mem ;    // allocated size of x, and memlane = 0 or 1
     GrB_Type type ;     // the type of x
-    size_t size ;       // type->size
+    uint64_t size ;     // type->size
     GrB_BinaryOp op ;   // operator to assemble pending tuples
 } ;
 
@@ -534,6 +549,11 @@ typedef struct GB_Pending_struct *GB_Pending ;
 
 // true if A is sparse (but not hypersparse)
 #define GB_IS_SPARSE(A) ((A) != NULL && ((A)->h == NULL) && (A)->p != NULL)
+
+// these parameters define the hyper_switch needed to ensure matrix stays
+// either always hypersparse, or never hypersparse.
+#define GB_ALWAYS_HYPER (1.0)
+#define GB_NEVER_HYPER  (-1.0)
 
 struct GB_Scalar_opaque     // content of GrB_Scalar: 1-by-1 standard CSC matrix
 {

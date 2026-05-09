@@ -107,8 +107,8 @@ GrB_Info GB_cast_array              // typecast an array
     if (info == GrB_NO_VALUE)
     { 
         GB_BURBLE_N (anz, "(generic cast array) ") ;
-        int64_t csize = GB_code_size (ccode, 0) ;
-        int64_t asize = GB_code_size (acode, 0) ;
+        int64_t csize = GB_code_typesize (ccode, 0) ;
+        int64_t asize = GB_code_typesize (acode, 0) ;
         GB_cast_function cast_A_to_C = GB_cast_factory (ccode, acode) ;
         #define GB_A_IS_BITMAP (Ab != NULL)
         #define GB_APPLY_OP(pC,pA) \

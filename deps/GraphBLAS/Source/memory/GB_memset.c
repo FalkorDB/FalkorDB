@@ -9,7 +9,8 @@
 
 // Note that this function uses its own hard-coded chunk size.
 
-// FIXME for CUDA: use CUDA memset if the array is on the GPU
+// FIXME for CUDA: use CUDA memset if the array is on the GPU;
+// need to pass in the memlane of dest
 
 #include "GB.h"
 

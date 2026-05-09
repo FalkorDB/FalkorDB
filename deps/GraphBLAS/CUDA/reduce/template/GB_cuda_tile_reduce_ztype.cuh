@@ -14,9 +14,9 @@
 //
 // Suppose we have a tile that defines a single warp of 32 threads:
 //
-//      #define tile_sz 32
-//      thread_block_tile<tile_sz> tile =
-//          tiled_partition<tile_sz> (this_thread_block()) ;
+//      #define GB_CUDA_TILE_SIZE 32
+//      thread_block_tile<GB_CUDA_TILE_SIZE> tile =
+//          tiled_partition<GB_CUDA_TILE_SIZE> (this_thread_block()) ;
 //
 // Suppose each thread has two scalars dest and src of type T.  Then:
 //
@@ -25,18 +25,19 @@
 //
 // performs the following computation for each thread tid:
 //
-//      if (tid+offset < tile_sz)
+//      if (tid+offset < GB_CUDA_TILE_SIZE)
 //      {
 //          dest = (the value of src on thread tid+offset)
 //      }
 //
-// Where tid ranges from 0 to the tile_sz-1, which is the warp size of 32
-// (the size of the tile, given by tile.num_threads() and also the #define'd
-// value tile_sz), minus one.  If tid+offset >= tile_sz for the ith thread,
-// then nothing happens for that thread, and the thread is inactive.
+// Where tid ranges from 0 to the GB_CUDA_TILE_SIZE-1, which is the warp size
+// of 32 (the size of the tile, given by tile.num_threads() and also the
+// #define'd value GB_CUDA_TILE_SIZE), minus one.  If tid+offset >=
+// GB_CUDA_TILE_SIZE for the ith thread, then nothing happens for that thread,
+// and the thread is inactive.
 //
-// Restrictions:  tile_sz must be a power of 2, and it must be 32 or less for
-// tile.shfl_down().  The type T must be trivially-copyable (that is
+// Restrictions:  GB_CUDA_TILE_SIZE must be a power of 2, and it must be 32 or
+// less for tile.shfl_down().  The type T must be trivially-copyable (that is
 // is_trivially_copyable<T>::value must be true), and sizeof (T) <= 32 must
 // hold (that is, the size of T must be 32 bytes or less).  The 32-byte limit
 // is handled by GB_cuda_shfl_down_large_ztype, which uses repeated calls to
@@ -69,7 +70,7 @@
     __device__ __inline__ void GB_cuda_shfl_down_large_ztype
     (
         GB_Z_TYPE *result,
-        thread_block_tile<tile_sz> tile,
+        thread_block_tile<GB_CUDA_TILE_SIZE> tile,
         GB_Z_TYPE *value,
         int offset
     )
@@ -102,7 +103,7 @@
 
 __device__ __inline__ GB_Z_TYPE GB_cuda_tile_reduce_ztype
 (
-    thread_block_tile<tile_sz> tile,
+    thread_block_tile<GB_CUDA_TILE_SIZE> tile,
     GB_Z_TYPE value
 )
 {
@@ -114,7 +115,7 @@ __device__ __inline__ GB_Z_TYPE GB_cuda_tile_reduce_ztype
         // GB_Z_TYPE can done with a single shfl_down
         //----------------------------------------------------------------------
 
-        #if ( tile_sz == 32 )
+        #if ( GB_CUDA_TILE_SIZE == 32 )
         {
             // this is the typical case
             GB_Z_TYPE next ;
@@ -126,9 +127,9 @@ __device__ __inline__ GB_Z_TYPE GB_cuda_tile_reduce_ztype
         }
         #else
         {
-
+            // the tile size is less than 32 (code currently unused)
             #pragma unroll
-            for (int offset = tile_sz >> 1 ; offset > 0 ; offset >>= 1)
+            for (int offset = GB_CUDA_TILE_SIZE >> 1 ; offset > 0 ; offset >>= 1)
             {
                 GB_Z_TYPE next = tile.shfl_down (value, offset) ;
                 GB_ADD (value, value, next) ;
@@ -145,7 +146,7 @@ __device__ __inline__ GB_Z_TYPE GB_cuda_tile_reduce_ztype
         //----------------------------------------------------------------------
 
         #pragma unroll
-        for (int offset = tile_sz >> 1 ; offset > 0 ; offset >>= 1)
+        for (int offset = GB_CUDA_TILE_SIZE >> 1 ; offset > 0 ; offset >>= 1)
         {
             GB_Z_TYPE next ;
             GB_cuda_shfl_down_large_ztype (&next, tile, &value, offset) ;

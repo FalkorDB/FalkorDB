@@ -31,7 +31,7 @@ int64_t gb_43_print         // print the gb_43_type
     // output:
     char *string,           // value is printed to the string 
     // input:
-    size_t string_size,     // size of the string array
+    size_t string_memsize,     // size of the string array
     const void *value,      // value to print
     int verbose             // if >0, print verbosely; else tersely
 ) ;
@@ -41,7 +41,7 @@ int64_t gb_43_print         // print the gb_43_type
     // output:
     char *string,           // value is printed to the string 
     // input:
-    size_t string_size,     // size of the string array
+    size_t string_memsize,     // size of the string array
     const void *value,      // value to print
     int verbose             // if >0, print verbosely; else tersely
 )
@@ -50,11 +50,11 @@ int64_t gb_43_print         // print the gb_43_type
     if (g->z == 42)
     { 
         // tell GraphBLAS the string needs to be longer
-        if (string_size < 8000)
+        if (string_memsize < 8000)
         {
             return (8000) ;
         }
-        return ((int64_t) snprintf (string, string_size, "the answer is 42")) ;
+        return ((int64_t) snprintf (string, string_memsize, "the answer is 42")) ;
     }
     else if (g->z < 0)
     {
@@ -64,7 +64,7 @@ int64_t gb_43_print         // print the gb_43_type
     else
     {
         // typical case
-        return ((int64_t) snprintf (string, string_size,
+        return ((int64_t) snprintf (string, string_memsize,
                 verbose ?  "(x: %.16g, y: %d, z: %d)" : "(x: %g, y: %d, z: %d)",
                 g->x, g->y, g->z)) ;
     }

@@ -1,4 +1,4 @@
-// SuiteSparse:GraphBLAS 10.3.1
+// SuiteSparse:GraphBLAS 10.4.0
 //------------------------------------------------------------------------------
 // GraphBLAS.h: definitions for the GraphBLAS package
 //------------------------------------------------------------------------------
@@ -286,10 +286,10 @@
 
 // The version of this implementation, and the GraphBLAS API version:
 #define GxB_IMPLEMENTATION_NAME "SuiteSparse:GraphBLAS"
-#define GxB_IMPLEMENTATION_DATE "Jan 21, 2026"
+#define GxB_IMPLEMENTATION_DATE "FIXME, 2026"
 #define GxB_IMPLEMENTATION_MAJOR 10
-#define GxB_IMPLEMENTATION_MINOR 3
-#define GxB_IMPLEMENTATION_SUB   1
+#define GxB_IMPLEMENTATION_MINOR 4
+#define GxB_IMPLEMENTATION_SUB   0
 #define GxB_SPEC_DATE "Dec 22, 2023"
 #define GxB_SPEC_MAJOR 2
 #define GxB_SPEC_MINOR 1
@@ -1475,6 +1475,17 @@ GB_GLOBAL GrB_IndexUnaryOp
 // options have no effect on the result (except for minor roundoff differences
 // for floating-point types). They only affect the time and memory usage of the
 // computations.
+
+/* FIXME: add GrB get/set to move a matrix between memlanes:
+
+    GrB_Matrix_set_INT32 (A, memlane, GxB_MEMLANE) ;
+    GrB_Vector_set_INT32 (V, memlane, GxB_MEMLANE) ;
+    GrB_Scalar_set_INT32 (S, memlane, GxB_MEMLANE) ;
+
+    GrB_Matrix_get_INT32 (A, &memlane, GxB_MEMLANE) ;
+    GrB_Vector_get_INT32 (V, &memlane, GxB_MEMLANE) ;
+    GrB_Scalar_get_INT32 (S, &memlane, GxB_MEMLANE) ;
+*/
 
 typedef enum    // GxB_Option_Field ;
 {
@@ -2746,7 +2757,7 @@ typedef int64_t (*GxB_print_function)
     // output:
     char *string,           // value is printed to the string
     // input:
-    size_t string_size,     // size of the string array
+    size_t string_len,      // size of the string array in bytes
     const void *value,      // value to print
     int verbose             // if >0, print verbosely; else tersely
 ) ;
@@ -2814,7 +2825,12 @@ GrB_Info GrB_init           // start up GraphBLAS
     int mode                // blocking or non-blocking mode, no GPU (GrB_Mode)
 ) ;
 
+GrB_Info GrB_finalize (void) ;     // finish GraphBLAS
+
 #ifndef GRAPHBLAS_VANILLA
+
+// FIXME: GxB_init sets malloc/calloc/realloc/free for memlane 0;
+// CUDA always uses RMM for lane 1.
 GrB_Info GxB_init           // start up GraphBLAS and also define malloc, etc
 (
     int mode,               // blocking or non-blocking mode (GrB_Mode)
@@ -2824,9 +2840,33 @@ GrB_Info GxB_init           // start up GraphBLAS and also define malloc, etc
     void * (* user_realloc_function ) (void *, size_t),
     void   (* user_free_function    ) (void *)
 ) ;
-#endif
 
-GrB_Info GrB_finalize (void) ;     // finish GraphBLAS
+// SuiteSparse:GraphBLAS can be initialized and finalized any number of times.
+// Each call to GrB_init/GxB_init must be followed by a call to GrB_finalize.
+// Between those to calls, any GraphBLAS method can be used except GrB_init/
+// GxB_init.  Before the first call to GrB_init/GxB_init, or after a call to
+// GrB_finalize, the only methods that can be called are GrB_init, GxB_init,
+// GxB_initialized, and GxB_finalized.
+
+// GrB_init and GxB_init return GrB_INVALID_VALUE if GraphBLAS is already
+// initialized.  GrB_finalize returns GrB_INVALID_VALUE if GraphBLAS has not
+// been initialized, and sets the state of GraphBLAS to not-initialized.
+
+GrB_Info GxB_initialized    // determine if GraphBLAS is initialized
+(
+    int *flag               // returns true if GrB_init or GxB_init has been
+                            // called (and the corresponding GrB_finalize
+                            // has not), false otherwise
+) ;
+
+GrB_Info GxB_finalized      // determine if GraphBLAS is finalized
+(
+    int *flag               // returns true if GrB_init or GxB_init has not
+                            // yet been called or if GrB_finalize has been
+                            // called, false otherwise
+) ;
+
+#endif
 
 //==============================================================================
 // GrB_Descriptor: the GraphBLAS descriptor
@@ -6490,7 +6530,9 @@ struct GxB_Container_struct
     int32_t format ;                // GxB_HYPERSPARSE, GxB_SPARSE, GxB_BITMAP,
                                     // or GxB_FULL
     int32_t orientation ;           // GrB_ROWMAJOR or GrB_COLMAJOR
-    uint32_t u32_future [14] ;      // for future expansion
+    int32_t memlane ;               // memlane of the Container struct itself,
+                                    // for GxB_Container_free.  Do NOT modify.
+    uint32_t u32_future [13] ;      // for future expansion
 
     // 16 GrB_Vector objects:
     GrB_Vector p ;
@@ -6556,10 +6598,11 @@ GrB_Info GxB_Vector_load
     // input:
     GrB_Type type,          // type of X
     uint64_t n,             // # of entries in X
-    uint64_t X_size,        // size of X in bytes (at least n*(sizeof the type))
+    uint64_t X_memsize,     // size of X in bytes (at least n*(sizeof the type))
     int handling,           // GrB_DEFAULT (0): transfer ownership to GraphBLAS
                             // GxB_IS_READONLY: X treated as readonly;
                             //      ownership kept by the user application
+                            // handling+memlane is returned
     const GrB_Descriptor desc   // currently unused; for future expansion
 ) ;
 
@@ -6571,7 +6614,7 @@ GrB_Info GxB_Vector_unload
     // output:
     GrB_Type *type,         // type of X
     uint64_t *n,            // # of entries in X
-    uint64_t *X_size,       // size of X in bytes (at least n*(sizeof the type))
+    uint64_t *X_memsize,    // size of X in bytes (at least n*(sizeof the type))
     int *handling,          // see GxB_Vector_load
     const GrB_Descriptor desc   // currently unused; for future expansion
 ) ;
@@ -6788,11 +6831,12 @@ GrB_Info GrB_Matrix_exportHint  // suggest the best export format
 // level 1).
 
 #ifndef GRAPHBLAS_VANILLA
+// FIXME: GxB_Matrix_serialize: **blob_handle: assume memlane 0
 GrB_Info GxB_Matrix_serialize       // serialize a GrB_Matrix to a blob
 (
     // output:
     void **blob_handle,             // the blob, allocated on output
-    GrB_Index *blob_size_handle,    // size of the blob on output
+    GrB_Index *blob_size,           // size of the blob on output
     // input:
     GrB_Matrix A,                   // matrix to serialize
     const GrB_Descriptor desc       // descriptor to select compression method
@@ -6805,18 +6849,19 @@ GrB_Info GrB_Matrix_serialize       // serialize a GrB_Matrix to a blob
     // output:
     void *blob,                     // the blob, already allocated in input
     // input/output:
-    GrB_Index *blob_size_handle,    // size of the blob on input.  On output,
+    GrB_Index *blob_size,           // size of the blob on input.  On output,
                                     // the # of bytes used in the blob.
     // input:
     GrB_Matrix A                    // matrix to serialize
 ) ;
 
 #ifndef GRAPHBLAS_VANILLA
+// FIXME: GxB_Vector_serialize: **blob_handle: assume memlane 0
 GrB_Info GxB_Vector_serialize       // serialize a GrB_Vector to a blob
 (
     // output:
     void **blob_handle,             // the blob, allocated on output
-    GrB_Index *blob_size_handle,    // size of the blob on output
+    GrB_Index *blob_size,           // size of the blob on output
     // input:
     GrB_Vector u,                   // vector to serialize
     const GrB_Descriptor desc       // descriptor to select compression method
@@ -6827,7 +6872,7 @@ GrB_Info GxB_Vector_serialize       // serialize a GrB_Vector to a blob
 GrB_Info GrB_Matrix_serializeSize   // estimate the size of a blob
 (
     // output:
-    GrB_Index *blob_size_handle,    // upper bound on the required size of the
+    GrB_Index *blob_size,           // upper bound on the required size of the
                                     // blob on output.
     // input:
     GrB_Matrix A                    // matrix to serialize
@@ -6836,6 +6881,8 @@ GrB_Info GrB_Matrix_serializeSize   // estimate the size of a blob
 // The GrB* and GxB* deserialize methods are nearly identical.  The GxB*
 // deserialize methods simply add the descriptor, which allows for optional
 // control of the # of threads used to deserialize the blob.
+
+// FIXME: what memlane to deserialize to?
 
 #ifndef GRAPHBLAS_VANILLA
 GrB_Info GxB_Matrix_deserialize     // deserialize blob into a GrB_Matrix
@@ -7077,7 +7124,8 @@ struct GB_Iterator_opaque
     int64_t k ;                 // the current vector
 
     // only changes when the iterator is created:
-    size_t header_size ;        // size of this iterator object
+    size_t header_size ;        // size of this iterator object in bytes
+                                // (always using memlane of 0)
 
     // these components only change when the iterator is attached:
     int64_t pmax ;              // avlen*avdim for bitmap; nvals(A) otherwise
@@ -8011,6 +8059,23 @@ GB_DECLARE (GxB_Iterator     )
 #endif
 
 //==============================================================================
+// GxB_atfork_* methods: handling the POSIX fork()
+//==============================================================================
+
+// If a process using GraphBLAS calls the POSIX fork() method, the new child
+// must restrict itself to using only async-signal-safe methods.  See
+// https://man7.org/linux/man-pages/man7/signal-safety.7.html .  The child
+// cannot use malloc/free, nor can it use OpenMP.
+
+// These methods are suitable for passing to pthread_atfork
+// (see https://man7.org/linux/man-pages/man3/pthread_atfork.3.html ), or for
+// non-POSIX systems such as Windows, they can be directly called.
+
+void GxB_atfork_prepare (void) ;    // the parent must call this before fork()
+void GxB_atfork_parent (void) ;     // the parent must call this after fork()
+void GxB_atfork_child (void) ;      // the child must call this after fork()
+
+//==============================================================================
 //=== Historical methods =======================================================
 //==============================================================================
 
@@ -8030,8 +8095,8 @@ GB_DECLARE (GxB_Iterator     )
 
 #ifndef NHISTORICAL
 
-typedef int GrB_Field ; // STRONGLY DEPRECATED: will be removed in v11.0.0,
-    // to allow the creation of a GraphBLAS object that represents a
+typedef int GrB_Field ; // STRONGLY DEPRECATED: will be removed in a future
+    // version to allow the creation of a GraphBLAS object that represents a
     // mathematical field: https://en.wikipedia.org/wiki/Field_(mathematics)
 
 // GrB_getVersion: use GrB_get instead

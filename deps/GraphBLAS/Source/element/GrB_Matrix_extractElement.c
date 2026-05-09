@@ -19,6 +19,10 @@
 
 #define GB_FREE_ALL ;
 
+//------------------------------------------------------------------------------
+// GrB_Matrix_extractElement_Scalar
+//------------------------------------------------------------------------------
+
 GrB_Info GrB_Matrix_extractElement_Scalar   // S = A(i,j)
 (
     GrB_Scalar S,                       // extracted scalar
@@ -123,6 +127,110 @@ GrB_Info GrB_Matrix_extractElement_Scalar   // S = A(i,j)
     S->nvals = entry_present ? 1 : 0 ;
     return ((entry_present || no_entry) ? GrB_SUCCESS : info) ;
 }
+
+//------------------------------------------------------------------------------
+// GB_Matrix_find_entry: finds the position of a single entry A(i,j)
+//------------------------------------------------------------------------------
+
+// Finds A(i,j) in the matrix A, which must not be jumbled.  The matrix may
+// have zombies.  Pending tuples are ignored and not searched; the method
+// returns false if A(i,j) is a pending tuple.
+
+GB_STATIC_INLINE void GB_Matrix_find_entry
+(
+    // output:
+    int64_t *pleft,     // position of the entry, if A(i,j) found
+    bool *found,        // true if A(i,j) found
+    bool *is_zombie,    // true if A(i,j) is found, but is a zombie
+    // input
+    const GrB_Matrix A,
+    int64_t i,
+    int64_t j
+)
+{
+
+    ASSERT (!A->jumbled) ;
+    GB_Ap_DECLARE (Ap, const) ; GB_Ap_PTR (Ap, A) ;
+
+    if (Ap != NULL)
+    {
+
+        //----------------------------------------------------------------------
+        // A is sparse or hypersparse
+        //----------------------------------------------------------------------
+
+        int64_t pA_start, pA_end ;
+        if (A->h != NULL)
+        { 
+
+            //------------------------------------------------------------------
+            // A is hypersparse: look for j in hyperlist A->h [0 ... A->nvec-1]
+            //------------------------------------------------------------------
+
+            void *A_Yp = (A->Y == NULL) ? NULL : A->Y->p ;
+            void *A_Yi = (A->Y == NULL) ? NULL : A->Y->i ;
+            void *A_Yx = (A->Y == NULL) ? NULL : A->Y->x ;
+            const int64_t A_hash_bits = (A->Y == NULL) ? 0 : (A->Y->vdim - 1) ;
+            int64_t k = GB_hyper_hash_lookup (A->p_is_32, A->j_is_32,
+                A->h, A->nvec, Ap, A_Yp, A_Yi, A_Yx, A_hash_bits,
+                j, &pA_start, &pA_end) ;
+            (*found) = (k >= 0) ;
+
+            #ifdef GB_DEBUG
+            if (*found)
+            {
+                GB_Ah_DECLARE (Ah, const) ; GB_Ah_PTR (Ah, A) ;
+                ASSERT (j == GB_IGET (Ah, k)) ;
+            }
+            #endif
+
+        }
+        else
+        { 
+
+            //------------------------------------------------------------------
+            // A is sparse: look in the jth vector
+            //------------------------------------------------------------------
+
+            pA_start = GB_IGET (Ap, j);
+            pA_end   = GB_IGET (Ap, j+1) ;
+        }
+
+        // vector j has been found, now look for index i
+        (*pleft) = pA_start ;
+        int64_t pright = pA_end - 1 ;
+
+        // Time taken for this step is at most O(log(nnz(A(:,j))).
+        (*found) = GB_binary_search_zombie (i, A->i, A->i_is_32, pleft,
+            &pright, A->nzombies > 0, is_zombie) ;
+
+    }
+    else
+    {
+
+        //----------------------------------------------------------------------
+        // A is bitmap or full
+        //----------------------------------------------------------------------
+
+        (*pleft) = i + j * (A->vlen) ;
+        const int8_t *restrict Ab = A->b ;
+        if (Ab != NULL)
+        { 
+            // A is bitmap
+            (*found) = (Ab [(*pleft)] == 1) ;
+        }
+        else
+        { 
+            // A is full
+            (*found) = true ;
+        }
+        (*is_zombie) = false ;
+    }
+}
+
+//------------------------------------------------------------------------------
+// GrB_Matrix_extractElement_TYPE and GxB_Matrix_isStoredElement
+//------------------------------------------------------------------------------
 
 #define GB_WHERE_STRING "GrB_Matrix_extractElement (&x, A, row, col)"
 

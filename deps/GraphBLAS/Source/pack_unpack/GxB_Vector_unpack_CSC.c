@@ -16,8 +16,8 @@ GrB_Info GxB_Vector_unpack_CSC  // unpack a CSC vector
     GrB_Vector v,       // vector to unpack (type and length unchanged)
     uint64_t **vi,      // indices
     void **vx,          // values
-    uint64_t *vi_size,  // size of vi in bytes
-    uint64_t *vx_size,  // size of vx in bytes
+    uint64_t *vi_memsize,  // size of vi in bytes
+    uint64_t *vx_memsize,  // size of vx in bytes
     bool *iso,          // if true, v is iso
     uint64_t *nvals,    // # of entries in vector
     bool *jumbled,      // if true, indices may be unsorted
@@ -32,8 +32,8 @@ GrB_Info GxB_Vector_unpack_CSC  // unpack a CSC vector
     GB_RETURN_IF_NULL (v) ;
     GB_RETURN_IF_NULL (nvals) ;
     GB_RETURN_IF_OUTPUT_IS_READONLY (v) ;
-    GB_WHERE_1 (v, "GxB_Vector_unpack_CSC (v, &vi, &vx, &vi_size, &vx_size,"
-        " &iso, &nvals, &jumbled, desc)") ;
+    GB_WHERE_1 (v, "GxB_Vector_unpack_CSC (v, &vi, &vx, &vi_memsize, "
+        "&vx_memsize, &iso, &nvals, &jumbled, desc)") ;
     GB_BURBLE_START ("GxB_Vector_unpack_CSC") ;
 
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
@@ -78,8 +78,8 @@ GrB_Info GxB_Vector_unpack_CSC  // unpack a CSC vector
         NULL, NULL,     // Ap
         NULL, NULL,     // Ah
         NULL, NULL,     // Ab
-        vi,   vi_size,  // Ai
-        vx,   vx_size,  // Ax
+        vi,   vi_memsize,  // Ai
+        vx,   vx_memsize,  // Ax
         nvals, jumbled, NULL,               // jumbled or not
         &sparsity, &is_csc,                 // sparse by col
         iso, Werk) ;

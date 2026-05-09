@@ -7,6 +7,25 @@
 
 //------------------------------------------------------------------------------
 
+// This method is used for many JIT kernels:
+//
+//      GB_apply_unop_jit
+//      GB_concat_bitmap_jit
+//      GB_concat_full_jit
+//      GB_concat_sparse_jit
+//      GB_convert_b2s_jit
+//      GB_convert_s2b_jit
+//      GB_iso_expand_jit
+//      GB_split_bitmap_jit
+//      GB_split_full_jit
+//      GB_split_sparse_jit
+//      GB_transpose_unop_jit
+//      GB_unjumble_jit
+//
+// For many of these methods, the op is constructed by GB_unop_identity.
+// Typecasting is handled from atype to ctype; the operator is typically
+// of ctype.
+
 #include "GB.h"
 #include "jitifyer/GB_stringify.h"
 
@@ -23,8 +42,8 @@ uint64_t GB_encodify_apply      // encode an apply problem
     const bool C_is_matrix,     // true for C=op(A), false for Cx=op(A)
     const GrB_Type ctype,
     const bool Cp_is_32,        // if true, Cp is uint32_t, else uint64_t
-    const bool Ci_is_32,        // if true, Ci is uint32_t, else uint64_t
     const bool Cj_is_32,        // if true, Cj is uint32_t, else uint64_t
+    const bool Ci_is_32,        // if true, Ci is uint32_t, else uint64_t
     // operator:
     const GB_Operator op,       // not JIT'd if NULL
     const bool flipij,
@@ -58,7 +77,7 @@ uint64_t GB_encodify_apply      // encode an apply problem
 
     GB_encodify_kcode (encoding, kcode) ;
     GB_enumify_apply (&encoding->code, C_sparsity, C_is_matrix, ctype,
-        Cp_is_32, Ci_is_32, Cj_is_32, op, flipij, A_sparsity, A_is_matrix,
+        Cp_is_32, Cj_is_32, Ci_is_32, op, flipij, A_sparsity, A_is_matrix,
         atype, Ap_is_32, Aj_is_32, Ai_is_32, A_iso, A_nzombies) ;
 
     //--------------------------------------------------------------------------

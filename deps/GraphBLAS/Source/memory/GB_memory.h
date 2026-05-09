@@ -17,29 +17,21 @@
 void GB_memoryUsage         // count # allocated blocks and their sizes
 (
     int64_t *nallocs,       // # of allocated memory blocks
-    size_t *mem_deep,       // # of bytes in blocks owned by this matrix
-    size_t *mem_shallow,    // # of bytes in blocks owned by another matrix
+    uint64_t *mem_deep,       // # of bytes in blocks owned by this matrix
+    uint64_t *mem_shallow,    // # of bytes in blocks owned by another matrix
     const GrB_Matrix A,     // matrix to query
     bool count_hyper_hash   // if true, include A->Y
 ) ;
 
-void *GB_calloc_memory      // pointer to allocated block of memory
-(
-    size_t nitems,          // number of items to allocate
-    size_t size_of_item,    // sizeof each item
-    // output
-    size_t *size_allocated  // # of bytes actually allocated
-) ;
-
 void *GB_realloc_memory     // pointer to reallocated block of memory, or
-                            // to original block if the realloc failed.
+                            // to original block if the reallocation failed.
 (
-    size_t nitems_new,      // new number of items in the object
-    size_t size_of_item,    // sizeof each item
+    uint64_t nitems_new,    // new number of items in the object
+    uint64_t size_of_item,  // size of each item
     // input/output
     void *p,                // old object to reallocate
+    uint64_t *p_mem,        // memsize and memlane of object p to reallocate
     // output
-    size_t *size_allocated, // # of bytes actually allocated
     bool *ok                // true if successful, false otherwise
 ) ;
 
@@ -48,10 +40,10 @@ void *GB_xalloc_memory      // return the newly-allocated space
     // input
     bool use_calloc,        // if true, use calloc
     bool iso,               // if true, only allocate a single entry
-    int64_t n,              // # of entries to allocate if non iso
-    size_t type_size,       // size of each entry
-    // output
-    size_t *size            // resulting size
+    uint64_t nentries,      // # of entries to allocate if non iso
+    uint64_t sizeof_entry,  // size of each entry
+    // input/output
+    uint64_t *mem           // resulting memsize and memlane
 ) ;
 
 //------------------------------------------------------------------------------

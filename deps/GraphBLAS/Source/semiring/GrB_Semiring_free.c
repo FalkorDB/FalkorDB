@@ -22,16 +22,16 @@ GrB_Info GrB_Semiring_free          // free a user-created semiring
         if (s != NULL)
         {
             // free the semiring name
-            GB_FREE_MEMORY (&(s->name), s->name_size) ;
+            GB_FREE_MEMORY (&(s->name), s->name_mem) ;
             // free the semiring user_name
-            GB_FREE_MEMORY (&(s->user_name), s->user_name_size) ;
+            GB_FREE_MEMORY (&(s->user_name), s->user_name_mem) ;
             // free the semiring header
-            size_t header_size = s->header_size ;
-            if (header_size > 0)
+            uint64_t header_mem = s->header_mem ;
+            if (GB_memsize (header_mem) > 0)
             { 
-                s->magic = GB_FREED ;  // to help detect dangling pointers
-                s->header_size = 0 ;
-                GB_FREE_MEMORY (semiring, header_size) ;
+                s->magic = GB_FREED ;   // to help detect dangling pointers
+                s->header_mem = 0 ;     // header is freed
+                GB_FREE_MEMORY (semiring, header_mem) ;
             }
         }
     }

@@ -63,10 +63,10 @@
 
 #define GB_FREE_ALL                         \
 {                                           \
-    GB_FREE_MEMORY (&Ch, Ch_size) ;                \
-    GB_FREE_MEMORY (&C_to_M, C_to_M_size) ;   \
-    GB_FREE_MEMORY (&C_to_A, C_to_A_size) ;   \
-    GB_FREE_MEMORY (&C_to_B, C_to_B_size) ;   \
+    GB_FREE_MEMORY (&Ch, Ch_mem) ;          \
+    GB_FREE_MEMORY (&C_to_M, C_to_M_mem) ;  \
+    GB_FREE_MEMORY (&C_to_A, C_to_A_mem) ;  \
+    GB_FREE_MEMORY (&C_to_B, C_to_B_mem) ;  \
     GB_FREE_WORKSPACE ;                     \
 }
 
@@ -79,34 +79,34 @@
 static inline bool GB_allocate_result
 (
     int64_t Cnvec,
-    void **Ch_handle,                size_t *Ch_size_handle, size_t cjsize,
-    int64_t *restrict *C_to_M_handle, size_t *C_to_M_size_handle,
-    int64_t *restrict *C_to_A_handle, size_t *C_to_A_size_handle,
-    int64_t *restrict *C_to_B_handle, size_t *C_to_B_size_handle
+    void **Ch_handle,                 uint64_t *Ch_mem_handle, size_t cjsize,
+    int64_t *restrict *C_to_M_handle, uint64_t *C_to_M_mem_handle,
+    int64_t *restrict *C_to_A_handle, uint64_t *C_to_A_mem_handle,
+    int64_t *restrict *C_to_B_handle, uint64_t *C_to_B_mem_handle
 )
 {
     bool ok = true ;
     if (Ch_handle != NULL)
     { 
-        (*Ch_handle) = GB_MALLOC_MEMORY (Cnvec, cjsize, Ch_size_handle) ;
+        (*Ch_handle) = GB_MALLOC_MEMORY (Cnvec, cjsize, Ch_mem_handle) ;
         ok = (*Ch_handle != NULL) ;
     }
     if (C_to_M_handle != NULL)
     { 
         (*C_to_M_handle) = GB_MALLOC_MEMORY (Cnvec, sizeof (int64_t),
-            C_to_M_size_handle) ;
+            C_to_M_mem_handle) ;
         ok = ok && (*C_to_M_handle != NULL) ;
     }
     if (C_to_A_handle != NULL)
     { 
         *C_to_A_handle = GB_MALLOC_MEMORY (Cnvec, sizeof (int64_t),
-            C_to_A_size_handle) ;
+            C_to_A_mem_handle) ;
         ok = ok && (*C_to_A_handle != NULL) ;
     }
     if (C_to_B_handle != NULL)
     { 
         *C_to_B_handle = GB_MALLOC_MEMORY (Cnvec, sizeof (int64_t),
-            C_to_B_size_handle) ;
+            C_to_B_mem_handle) ;
         ok = ok && (*C_to_B_handle != NULL) ;
     }
     return (ok) ;
@@ -120,13 +120,13 @@ static inline bool GB_allocate_result
 //  (
 //      int64_t *p_Cnvec,           // # of vectors to compute in C
 //      void **Ch_handle,           // Ch: size Cnvec, or NULL
-//      size_t *Ch_size_handle,              // size of Ch in bytes
-//      int64_t *restrict *C_to_M_handle,    // C_to_M: size Cnvec, or NULL
-//      size_t *C_to_M_size_handle,          // size of C_to_M in bytes
-//      int64_t *restrict *C_to_A_handle,    // C_to_A: size Cnvec, or NULL
-//      size_t *C_to_A_size_handle,          // size of C_to_A in bytes
-//      int64_t *restrict *C_to_B_handle,    // C_to_B: size Cnvec, or NULL
-//      size_t *C_to_B_size_handle,          // size of C_to_A in bytes
+//      uint64_t *Ch_mem_handle,            // memsize of Ch in bytes; memlane
+//      int64_t *restrict *C_to_M_handle,   // C_to_M: size Cnvec, or NULL
+//      uint64_t *C_to_M_mem_handle,        // memsize of C_to_M and memlane
+//      int64_t *restrict *C_to_A_handle,   // C_to_A: size Cnvec, or NULL
+//      uint64_t *C_to_A_mem_handle,        // memsize of C_to_A and memlane
+//      int64_t *restrict *C_to_B_handle,   // C_to_B: size Cnvec, or NULL
+//      uint64_t *C_to_B_mem_handle,        // memsize of C_to_A and memlane
 //      bool *p_Ch_is_Mh,           // if true, then Ch == Mh
 //      bool *p_Cp_is_32,           // if true, Cp is 32-bit; else 64-bit
 //      bool *p_Cj_is_32,           // if true, Ch is 32-bit; else 64-bit
@@ -135,6 +135,7 @@ static inline bool GB_allocate_result
 //      const GrB_Matrix M,         // optional mask, may be NULL; not compl.
 //      const GrB_Matrix A,         // first input matrix
 //      const GrB_Matrix B,         // second input matrix
+//      int memlane,                // memlane to use
 //      GB_Werk Werk
 //  )
 
@@ -176,6 +177,8 @@ GB_CALLBACK_ADD_PHASE0_PROTO (GB_add_phase0)
     ASSERT (GB_IMPLIES (M != NULL, A->vdim == M->vdim)) ;
     ASSERT (GB_IMPLIES (M != NULL, A->vlen == M->vlen)) ;
 
+    uint64_t mem = GB_mem (memlane, 0) ;
+
     //--------------------------------------------------------------------------
     // initializations and check for quick return
     //--------------------------------------------------------------------------
@@ -203,11 +206,11 @@ GB_CALLBACK_ADD_PHASE0_PROTO (GB_add_phase0)
         return (GrB_SUCCESS) ;
     }
 
-    GB_MDECL (Ch, , u) ; size_t Ch_size = 0 ;
-
-    int64_t *restrict C_to_M = NULL ; size_t C_to_M_size = 0 ;
-    int64_t *restrict C_to_A = NULL ; size_t C_to_A_size = 0 ;
-    int64_t *restrict C_to_B = NULL ; size_t C_to_B_size = 0 ;
+    GB_MDECL (Ch, , u) ;
+    uint64_t Ch_mem = mem ;
+    int64_t *restrict C_to_M = NULL ; uint64_t C_to_M_mem = mem ;
+    int64_t *restrict C_to_A = NULL ; uint64_t C_to_A_mem = mem ;
+    int64_t *restrict C_to_B = NULL ; uint64_t C_to_B_mem = mem ;
 
     GB_WERK_DECLARE (Work, int64_t) ;
     int ntasks = 0 ;
@@ -284,10 +287,10 @@ GB_CALLBACK_ADD_PHASE0_PROTO (GB_add_phase0)
         nthreads = GB_nthreads (Cnvec, chunk, nthreads_max) ;
 
         if (!GB_allocate_result (Cnvec,
-            &Ch, &Ch_size, cjsize,
+            &Ch, &Ch_mem, cjsize,
             NULL, NULL,
-            (A_is_hyper) ? (&C_to_A) : NULL, &C_to_A_size,
-            (B_is_hyper) ? (&C_to_B) : NULL, &C_to_B_size))
+            (A_is_hyper) ? (&C_to_A) : NULL, &C_to_A_mem,
+            (B_is_hyper) ? (&C_to_B) : NULL, &C_to_B_mem))
         { 
             // out of memory
             GB_FREE_ALL ;
@@ -448,10 +451,10 @@ GB_CALLBACK_ADD_PHASE0_PROTO (GB_add_phase0)
         // for computing Ch.  Ch is the set union of Ah and Bh.
 
         if (!GB_allocate_result (Cnvec,
-            &Ch, &Ch_size, cjsize,
-            (M_is_hyper) ? (&C_to_M) : NULL, &C_to_M_size,
-            &C_to_A, &C_to_A_size,
-            &C_to_B, &C_to_B_size))
+            &Ch, &Ch_mem, cjsize,
+            (M_is_hyper) ? (&C_to_M) : NULL, &C_to_M_mem,
+            &C_to_A, &C_to_A_mem,
+            &C_to_B, &C_to_B_mem))
         { 
             // out of memory
             GB_FREE_ALL ;
@@ -604,8 +607,8 @@ GB_CALLBACK_ADD_PHASE0_PROTO (GB_add_phase0)
 
         if (!GB_allocate_result (Cnvec,
             NULL, NULL, 0,
-            (M_is_hyper) ? (&C_to_M) : NULL, &C_to_M_size,
-            &C_to_A, &C_to_A_size,
+            (M_is_hyper) ? (&C_to_M) : NULL, &C_to_M_mem,
+            &C_to_A, &C_to_A_mem,
             NULL, NULL))
         { 
             // out of memory
@@ -644,9 +647,9 @@ GB_CALLBACK_ADD_PHASE0_PROTO (GB_add_phase0)
 
         if (!GB_allocate_result (Cnvec,
             NULL, NULL, 0,
-            (M_is_hyper) ? (&C_to_M) : NULL, &C_to_M_size,
+            (M_is_hyper) ? (&C_to_M) : NULL, &C_to_M_mem,
             NULL, NULL,
-            &C_to_B, &C_to_B_size))
+            &C_to_B, &C_to_B_mem))
         { 
             // out of memory
             GB_FREE_ALL ;
@@ -683,7 +686,7 @@ GB_CALLBACK_ADD_PHASE0_PROTO (GB_add_phase0)
 
         if (!GB_allocate_result (Cnvec,
             NULL, NULL, 0,
-            (M_is_hyper) ? (&C_to_M) : NULL, &C_to_M_size,
+            (M_is_hyper) ? (&C_to_M) : NULL, &C_to_M_mem,
             NULL, NULL,
             NULL, NULL))
         { 
@@ -750,13 +753,13 @@ GB_CALLBACK_ADD_PHASE0_PROTO (GB_add_phase0)
     //--------------------------------------------------------------------------
 
     (*p_Cnvec) = Cnvec ;
-    (*Ch_handle) = Ch ;             (*Ch_size_handle) = Ch_size ;
+    (*Ch_handle) = Ch ;             (*Ch_mem_handle) = Ch_mem ;
     if (C_to_M_handle != NULL)
     { 
-        (*C_to_M_handle) = C_to_M ; (*C_to_M_size_handle) = C_to_M_size ;
+        (*C_to_M_handle) = C_to_M ; (*C_to_M_mem_handle) = C_to_M_mem ;
     }
-    (*C_to_A_handle) = C_to_A ;     (*C_to_A_size_handle) = C_to_A_size ;
-    (*C_to_B_handle) = C_to_B ;     (*C_to_B_size_handle) = C_to_B_size ;
+    (*C_to_A_handle) = C_to_A ;     (*C_to_A_mem_handle) = C_to_A_mem ;
+    (*C_to_B_handle) = C_to_B ;     (*C_to_B_mem_handle) = C_to_B_mem ;
     if (p_Ch_is_Mh != NULL)
     { 
         // return Ch_is_Mh to GB_add.  For GB_masker, Ch is never Mh.

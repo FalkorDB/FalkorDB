@@ -26,14 +26,24 @@ void GB_macrofy_build           // construct all macros for GB_build
     // extract the method_code
     //--------------------------------------------------------------------------
 
-    // 32/64 bit (4 bits, 1 hex digit)
+    // (3 bits, 1 hex digits):
+    int sorted    = GB_RSHIFT (method_code, 38, 1) ;
+    int Key_pre   = GB_RSHIFT (method_code, 37, 1) ;
+    int Key_is_32 = GB_RSHIFT (method_code, 36, 1) ;
+
+    // 32/64 bit (8 bits, 2 hex digits)
+    int is_mat    = GB_RSHIFT (method_code, 35, 1) ;
+    int J_is_32   = GB_RSHIFT (method_code, 34, 1) ;
+    int Tp_is_32  = GB_RSHIFT (method_code, 33, 1) ;
+    int Tj_is_32  = GB_RSHIFT (method_code, 32, 1) ;
     int Ti_is_32  = GB_RSHIFT (method_code, 31, 1) ;
     int I_is_32   = GB_RSHIFT (method_code, 30, 1) ;
     int K_is_32   = GB_RSHIFT (method_code, 29, 1) ;
     int K_is_null = GB_RSHIFT (method_code, 28, 1) ;
 
-    // dup, z = f(x,y) (6 hex digits)
+    // dup, z = f(x,y) (5 hex digits)
     int no_dupl   = GB_RSHIFT (method_code, 27, 1) ;
+    int iso       = GB_RSHIFT (method_code, 26, 1) ;
 //  int dup_code  = GB_RSHIFT (method_code, 20, 6) ;
 //  int zcode     = GB_RSHIFT (method_code, 16, 4) ;
     int xcode     = GB_RSHIFT (method_code, 12, 4) ;
@@ -47,6 +57,7 @@ void GB_macrofy_build           // construct all macros for GB_build
     // describe the operator
     //--------------------------------------------------------------------------
 
+    ASSERT (dup != NULL) ;
     ASSERT_BINARYOP_OK (dup, "dup for macrofy build", GB0) ;
 
     GrB_Type xtype = dup->xtype ;
@@ -71,7 +82,8 @@ void GB_macrofy_build           // construct all macros for GB_build
     }
     else
     { 
-        // user-defined operator, or created by GB_build
+        // user-defined operator, or z=2nd(x,y) created by GB_build when
+        // dup was NULL or GxB_IGNORE_DUP on input
         fprintf (fp,
             "// op: %s%s, ztype: %s, xtype: %s, ytype: %s\n\n",
             (dup_opcode == GB_SECOND_binop_code) ? "2nd_" : "",
@@ -112,8 +124,12 @@ void GB_macrofy_build           // construct all macros for GB_build
     fprintf (fp, "\n// build copy/dup methods:\n") ;
 
     // no typecasting if all 5 types are the same
-    bool nocasting = (ttype == stype) &&
+    bool stype_is_ttype = (ttype == stype) ;
+    bool nocasting = stype_is_ttype &&
         (ttype == xtype) && (ttype == ytype) && (ttype == ztype) ;
+
+    fprintf (fp, "#define GB_BLD_SXTYPE_IS_TXTYPE %d\n", stype_is_ttype) ;
+    fprintf (fp, "#define GB_BLD_NO_CASTING %d\n", nocasting) ;
 
     if (nocasting)
     { 
@@ -175,7 +191,7 @@ void GB_macrofy_build           // construct all macros for GB_build
         fprintf (fp, "#define GB_BLD_DUP(Tx,p,Sx,k) \\\n") ;
 
         // ytype y = (ytype) Sx [k] ;
-        fprintf (fp, "    %s ", ytype_name) ;
+        fprintf (fp, "{ \\\n    %s ", ytype_name) ;
         if (cast_s_to_y == NULL)
         { 
             fprintf (fp, "y = (%s) Sx [k]", ytype_name) ;
@@ -223,21 +239,46 @@ void GB_macrofy_build           // construct all macros for GB_build
         { 
             fprintf (fp, cast_z_to_t, "    Tx [p]", "z") ;
         }
-        fprintf (fp, " ;\n") ;
+        fprintf (fp, " ; \\\n}\n") ;
     }
+
+    //--------------------------------------------------------------------------
+    // iso, is_matrix, duplicates, sorted
+    //--------------------------------------------------------------------------
+
+    fprintf (fp, "\n// type of build:\n") ;
+    fprintf (fp, "#define GB_MTX_BUILD %d\n", is_mat) ;
+    fprintf (fp, "#define GB_ISO_BUILD %d\n", iso) ;
+    fprintf (fp, "#define GB_KNOWN_NO_DUPLICATES %d\n", no_dupl) ;
+    fprintf (fp, "#define GB_KNOWN_SORTED %d\n", sorted) ;
 
     //--------------------------------------------------------------------------
     // 32/64 integer arrays
     //--------------------------------------------------------------------------
 
     fprintf (fp, "\n// 32/64 integer types:\n") ;
+    fprintf (fp, "#define GB_Tp_TYPE %s\n", Tp_is_32 ? "int32_t" : "int64_t") ;
+    fprintf (fp, "#define GB_Tp_BITS %d\n", Tp_is_32 ? 32 : 64) ;
+    fprintf (fp, "#define GB_Tj_TYPE %s\n", Tj_is_32 ? "int32_t" : "int64_t") ;
+    fprintf (fp, "#define GB_Tj_BITS %d\n", Tj_is_32 ? 32 : 64) ;
     fprintf (fp, "#define GB_Ti_TYPE %s\n", Ti_is_32 ? "int32_t" : "int64_t") ;
     fprintf (fp, "#define GB_Ti_BITS %d\n", Ti_is_32 ? 32 : 64) ;
     fprintf (fp, "#define GB_I_TYPE  %s\n", I_is_32  ? "uint32_t":"uint64_t") ;
+    fprintf (fp, "#define GB_J_TYPE  %s\n", J_is_32  ? "uint32_t":"uint64_t") ;
+
+    // K array for CPU kernels only:
     fprintf (fp, "#define GB_K_TYPE  %s\n", K_is_32  ? "uint32_t":"uint64_t") ;
     fprintf (fp, "#define GB_K_WORK(k) %s\n", K_is_null ? "k" : "K_work [k]") ;
     fprintf (fp, "#define GB_K_IS_NULL %d\n", K_is_null) ;
-    fprintf (fp, "#define GB_NO_DUPLICATES %d\n", no_dupl) ;
+
+    //--------------------------------------------------------------------------
+    // construct the macros for A and Key (for CUDA kernels only)
+    //--------------------------------------------------------------------------
+
+    // Key type for CUDA kernels only:
+    fprintf (fp, "#define GB_KEY_PRELOADED %d\n", Key_pre) ;
+    fprintf (fp, "#define GB_KEY_TYPE %s\n", Key_is_32 ? "uint32_t":"uint64_t");
+    fprintf (fp, "#define GB_KEY_BITS %d\n", Key_is_32 ? 32 : 64) ;
 
     //--------------------------------------------------------------------------
     // include the final default definitions

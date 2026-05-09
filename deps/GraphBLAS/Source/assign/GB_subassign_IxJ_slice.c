@@ -47,7 +47,7 @@
 #undef  GB_FREE_ALL
 #define GB_FREE_ALL                             \
 {                                               \
-    GB_FREE_MEMORY (&TaskList, TaskList_size) ;   \
+    GB_FREE_MEMORY (&TaskList, TaskList_mem) ;  \
 }
 
 //------------------------------------------------------------------------------
@@ -59,12 +59,13 @@ GrB_Info GB_subassign_IxJ_slice
 (
     // output:
     GB_task_struct **p_TaskList,    // array of structs
-    size_t *p_TaskList_size,        // size of TaskList
+    uint64_t *p_TaskList_mem,       // size of TaskList
     int *p_ntasks,                  // # of tasks constructed
     int *p_nthreads,                // # of threads to use
     // input:
     const int64_t nI,
     const int64_t nJ,
+    int memlane,                    // memlane to use
     GB_Werk Werk
 )
 #endif
@@ -77,16 +78,18 @@ GB_CALLBACK_SUBASSIGN_IXJ_SLICE_PROTO (GB_subassign_IxJ_slice)
     //--------------------------------------------------------------------------
 
     ASSERT (p_TaskList != NULL) ;
-    ASSERT (p_TaskList_size != NULL) ;
+    ASSERT (p_TaskList_mem != NULL) ;
     ASSERT (p_ntasks != NULL) ;
     ASSERT (p_nthreads != NULL) ;
 
+    uint64_t mem = GB_mem (memlane, 0) ;
+
     (*p_TaskList  ) = NULL ;
-    (*p_TaskList_size) = 0 ;
+    (*p_TaskList_mem) = mem ;
     (*p_ntasks    ) = 0 ;
     (*p_nthreads  ) = 1 ;
     int ntasks, max_ntasks = 0, nthreads ;
-    GB_task_struct *TaskList = NULL ; size_t TaskList_size = 0 ;
+    GB_task_struct *TaskList = NULL ; uint64_t TaskList_mem = mem ;
 
     //--------------------------------------------------------------------------
     // determine # of threads to use
@@ -114,7 +117,7 @@ GB_CALLBACK_SUBASSIGN_IXJ_SLICE_PROTO (GB_subassign_IxJ_slice)
         TaskList [0].kfirst = 0 ;
         TaskList [0].klast  = nJ-1 ;
         (*p_TaskList  ) = TaskList ;
-        (*p_TaskList_size) = TaskList_size ;
+        (*p_TaskList_mem) = TaskList_mem ;
         (*p_ntasks    ) = (nJ == 0) ? 0 : 1 ;
         (*p_nthreads  ) = 1 ;
         return (GrB_SUCCESS) ;
@@ -191,7 +194,7 @@ GB_CALLBACK_SUBASSIGN_IXJ_SLICE_PROTO (GB_subassign_IxJ_slice)
     //--------------------------------------------------------------------------
 
     (*p_TaskList  ) = TaskList ;
-    (*p_TaskList_size) = TaskList_size ;
+    (*p_TaskList_mem) = TaskList_mem ;
     (*p_ntasks    ) = ntasks ;
     (*p_nthreads  ) = nthreads ;
     return (GrB_SUCCESS) ;

@@ -16,14 +16,14 @@
 
 /*
     void *blob = NULL ;
-    uint64_t blob_size = 0 ;
+    uint64_t blob_memsize = 0 ;
     GrB_Matrix A, B = NULL ;
     // construct a matrix A, then serialized it:
-    GrB_Matrix_serializeSize (&blob_size, A) ;      // loose upper bound
-    blob = malloc (blob_size) ;                     // user mallocs the blob
-    GrB_Matrix_serialize (blob, &blob_size, A) ;    // returns actual size
-    blob = realloc (blob, blob_size) ;              // user can shrink the blob
-    GrB_Matrix_deserialize (&B, atype, blob, blob_size) ;
+    GrB_Matrix_serializeSize (&blob_memsize, A) ;      // loose upper bound
+    blob = malloc (blob_memsize) ;                     // user mallocs the blob
+    GrB_Matrix_serialize (blob, &blob_memsize, A) ;    // returns actual size
+    blob = realloc (blob, blob_memsize) ;              // user can shrink the blob
+    GrB_Matrix_deserialize (&B, atype, blob, blob_memsize) ;
     free (blob) ;                                   // user frees the blob
 */
 
@@ -35,7 +35,7 @@ GrB_Info GrB_Matrix_serialize       // serialize a GrB_Matrix to a blob
     // output:
     void *blob,                     // the blob, already allocated in input
     // input/output:
-    uint64_t *blob_size_handle,     // size of the blob on input.  On output,
+    uint64_t *blob_memsize_handle,     // size of the blob on input.  On output,
                                     // the # of bytes used in the blob.
     // input:
     GrB_Matrix A                    // matrix to serialize
@@ -47,9 +47,9 @@ GrB_Info GrB_Matrix_serialize       // serialize a GrB_Matrix to a blob
     //--------------------------------------------------------------------------
 
     GB_RETURN_IF_NULL (blob) ;
-    GB_RETURN_IF_NULL (blob_size_handle) ;
+    GB_RETURN_IF_NULL (blob_memsize_handle) ;
     GB_RETURN_IF_NULL (A) ;
-    GB_WHERE_1 (A, "GrB_Matrix_serialize (blob, &blob_size, A)") ;
+    GB_WHERE_1 (A, "GrB_Matrix_serialize (blob, &blob_memsize, A)") ;
     GB_BURBLE_START ("GrB_Matrix_serialize") ;
 
     // no descriptor, so assume the default method
@@ -62,11 +62,11 @@ GrB_Info GrB_Matrix_serialize       // serialize a GrB_Matrix to a blob
     // serialize the matrix into the preallocated blob
     //--------------------------------------------------------------------------
 
-    size_t blob_size = (size_t) (*blob_size_handle) ;
-    info = GB_serialize ((GB_void **) &blob, &blob_size, A, method, Werk) ;
+    uint64_t blob_memsize = (*blob_memsize_handle) ;
+    info = GB_serialize ((GB_void **) &blob, &blob_memsize, A, method, Werk) ;
     if (info == GrB_SUCCESS)
     { 
-        (*blob_size_handle) = (uint64_t) blob_size ;
+        (*blob_memsize_handle) = (uint64_t) blob_memsize ;
     }
     GB_BURBLE_END ;
     #pragma omp flush

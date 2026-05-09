@@ -53,6 +53,10 @@ GrB_Info GB_subassign_zombie
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
+
+    ASSERT (C != NULL) ;
+    int memlane = GB_memlane (C->header_mem) ;
+
     GrB_Matrix S = NULL ;
     ASSERT (!GB_IS_BITMAP (C)) ; ASSERT (!GB_IS_FULL (C)) ;
 
@@ -60,8 +64,7 @@ GrB_Info GB_subassign_zombie
     // S = C(I,J), but do not construct the S->H hyper_hash
     //--------------------------------------------------------------------------
 
-    struct GB_Matrix_opaque S_header ;
-    GB_CLEAR_MATRIX_HEADER (S, &S_header) ;
+    GB_OK (GB_matrix_header_new (&S, memlane)) ;
     GB_OK (GB_subassign_symbolic (S, C, I, I_is_32, ni, J, J_is_32, nj,
         /* S_can_be_jumbled: */ false, Werk)) ;
     ASSERT (GB_JUMBLED_OK (S)) ;        // S can be returned as jumbled

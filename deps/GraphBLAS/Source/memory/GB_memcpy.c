@@ -27,6 +27,7 @@ void GB_memcpy                  // parallel memcpy
     //  cpu <- gpu (effectively done below but could be better)
     //  gpu <- cpu (need this)
     //  gpu <- gpu (need this)
+    // need to pass in the memlane of src and dest
 
     if (nthreads <= 1 || n <= GB_MEM_CHUNK)
     { 

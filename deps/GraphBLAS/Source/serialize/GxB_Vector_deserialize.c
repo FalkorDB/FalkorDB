@@ -25,7 +25,7 @@ GrB_Info GxB_Vector_deserialize     // deserialize blob into a GrB_Vector
                         // holds a built-in type; otherwise must match the
                         // type of w.
     const void *blob,   // the blob
-    uint64_t blob_size, // size of the blob
+    uint64_t blob_memsize, // size of the blob
     const GrB_Descriptor desc       // to control # of threads used
 )
 { 
@@ -47,7 +47,7 @@ GrB_Info GxB_Vector_deserialize     // deserialize blob into a GrB_Vector
     //--------------------------------------------------------------------------
 
     info = GB_deserialize ((GrB_Matrix *) w, type, (const GB_void *) blob,
-        (size_t) blob_size) ;
+        blob_memsize) ;
     GB_BURBLE_END ;
     return (info) ;
 }

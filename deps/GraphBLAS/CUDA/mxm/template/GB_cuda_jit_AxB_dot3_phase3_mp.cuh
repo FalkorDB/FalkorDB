@@ -104,8 +104,8 @@ __global__ void GB_cuda_AxB_dot3_phase3_mp_kernel
 //  int tid_global = threadIdx.x+ blockDim.x* blockIdx.x;
     int tid = threadIdx.x;
 
-
-    thread_block_tile<tile_sz> tile = tiled_partition<tile_sz>( this_thread_block());
+    thread_block_tile<GB_CUDA_TILE_SIZE> tile =
+        tiled_partition<GB_CUDA_TILE_SIZE>( this_thread_block());
     int all_in_one = ( (end - start) == Mp [(M->nvec)] ) ;
 
     // Main loop over pairs 

@@ -40,6 +40,8 @@ GrB_Info GrB_Vector_new     // create a new vector with no entries
         return (GrB_INVALID_VALUE) ;
     }
 
+    int memlane = GB_Context_memlane ( ) ;
+
     //--------------------------------------------------------------------------
     // create the vector
     //--------------------------------------------------------------------------
@@ -55,7 +57,7 @@ GrB_Info GrB_Vector_new     // create a new vector with no entries
         type, vlen, 1, GB_ph_calloc,
         true,  // a GrB_Vector is always held by-column
         GxB_SPARSE, GB_Global_hyper_switch_get ( ), 1,
-        Vp_is_32, Vj_is_32, Vi_is_32)) ;
+        Vp_is_32, Vj_is_32, Vi_is_32, memlane)) ;
 
     return (GrB_SUCCESS) ;
 }

@@ -61,7 +61,10 @@ GrB_Info GB_wait                // finish all pending computations
     //--------------------------------------------------------------------------
 
     GrB_Info info = GrB_SUCCESS ;
-    struct GB_Matrix_opaque T_header, W_header, S_header ;
+
+    ASSERT (A != NULL) ;
+    int memlane = GB_memlane (A->header_mem) ;
+
     GrB_Matrix T = NULL, W = NULL, S = NULL, Y = NULL ;
 
     ASSERT_MATRIX_OK (A, "A to wait", GB0_Z) ;
@@ -166,19 +169,19 @@ GrB_Info GB_wait                // finish all pending computations
         GB_void *S_input = (A_iso) ? ((GB_void *) A->x) : NULL ;
         GrB_Type stype = (A_iso) ? A->type : A->Pending->type ;
 
-        GB_CLEAR_MATRIX_HEADER (T, &T_header) ;
+        GB_OK (GB_matrix_header_new (&T, memlane)) ;
         info = GB_builder (
-            T,                      // create T using a static header
+            T,                      // create T using an existing header
             A->type,                // T->type = A->type
             A->vlen,                // T->vlen = A->vlen
             A->vdim,                // T->vdim = A->vdim
             A->is_csc,              // T->is_csc = A->is_csc
             &(A->Pending->i),       // iwork_handle, becomes T->i on output
-            &(A->Pending->i_size),
+            &(A->Pending->i_mem),
             &(A->Pending->j),       // jwork_handle, free on output
-            &(A->Pending->j_size),
+            &(A->Pending->j_mem),
             &(A->Pending->x),       // Swork_handle, free on output
-            &(A->Pending->x_size),
+            &(A->Pending->x_mem),
             A->Pending->sorted,     // tuples may or may not be sorted
             false,                  // there might be duplicates; look for them
             A->Pending->nmax,       // size of Pending->[ijx] arrays
@@ -253,7 +256,7 @@ GrB_Info GB_wait                // finish all pending computations
         struct GB_Scalar_opaque scalar_header ;
         int64_t k = 0 ;
         GrB_Scalar scalar = GB_Scalar_wrap (&scalar_header, GrB_INT64, &k) ;
-        GB_CLEAR_MATRIX_HEADER (W, &W_header) ;
+        GB_OK (GB_matrix_header_new (&W, memlane)) ;
         GB_OK (GB_selector (W, GxB_NONZOMBIE, false, A, scalar, Werk)) ;
         GB_OK (GB_transplant (A, A->type, &W, Werk)) ;
         A->nzombies = 0 ;
@@ -332,7 +335,7 @@ GrB_Info GB_wait                // finish all pending computations
     int64_t anvec = A->nvec ;
     bool ignore ;
 
-    GB_CLEAR_MATRIX_HEADER (S, &S_header) ;
+    GB_OK (GB_matrix_header_new (&S, memlane)) ;
     GB_OK (GB_add (S, A->type, A->is_csc, NULL, 0, 0, &ignore, A, T,
         false, NULL, NULL, op_2nd, false, true, Werk)) ;
     GB_Matrix_free (&T) ;

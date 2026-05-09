@@ -7,11 +7,11 @@
 
 //------------------------------------------------------------------------------
 
-#define GB_FREE_WORKSPACE               \
-{                                       \
-    GB_FREE_MEMORY (&I_work, I_work_size) ;    \
-    GB_FREE_MEMORY (&J_work, J_work_size) ;    \
-    GB_FREE_MEMORY (&X_work, X_work_size) ;    \
+#define GB_FREE_WORKSPACE                   \
+{                                           \
+    GB_FREE_MEMORY (&I_work, I_work_mem) ;  \
+    GB_FREE_MEMORY (&J_work, J_work_mem) ;  \
+    GB_FREE_MEMORY (&X_work, X_work_mem) ;  \
 }
 
 #define GB_FREE_ALL                     \
@@ -21,6 +21,14 @@
 }
 
 #include "builder/GB_build.h"
+
+#if 0
+GrB_Info GB_hyper_hash_build    // construct the A->Y hyper_hash for A
+(
+    GrB_Matrix A,       // does not depend on A->type
+    GB_Werk Werk
+)
+#endif
 
 GB_CALLBACK_HYPER_HASH_BUILD_PROTO (GB_hyper_hash_build)
 {
@@ -36,10 +44,13 @@ GB_CALLBACK_HYPER_HASH_BUILD_PROTO (GB_hyper_hash_build)
         return (GrB_SUCCESS) ;
     }
 
+    int memlane = GB_memlane (A->header_mem) ;
+    uint64_t mem = GB_mem (memlane, 0) ;
+
     GrB_Info info ;
-    GB_MDECL (I_work, , u) ; size_t I_work_size = 0 ;
-    GB_MDECL (J_work, , u) ; size_t J_work_size = 0 ;
-    GB_MDECL (X_work, , u) ; size_t X_work_size = 0 ;
+    GB_MDECL (I_work, , u) ; uint64_t I_work_mem = mem ;
+    GB_MDECL (J_work, , u) ; uint64_t J_work_mem = mem ;
+    GB_MDECL (X_work, , u) ; uint64_t X_work_mem = mem ;
 
     ASSERT_MATRIX_OK (A, "A for hyper_hash", GB0) ;
     GB_BURBLE_MATRIX (A, "(build hyper hash) ") ;
@@ -66,7 +77,7 @@ GB_CALLBACK_HYPER_HASH_BUILD_PROTO (GB_hyper_hash_build)
 
     GB_OK (GB_new (&(A->Y), // new dynamic header, do not allocate any content
         GrB_UINT64, yvlen, yvdim, GB_ph_null, true, GxB_SPARSE, -1, 0,
-        Aj_is_32, Aj_is_32, Aj_is_32)) ;
+        Aj_is_32, Aj_is_32, Aj_is_32, memlane)) ;
     GrB_Matrix Y = A->Y ;
 
     //--------------------------------------------------------------------------
@@ -74,9 +85,9 @@ GB_CALLBACK_HYPER_HASH_BUILD_PROTO (GB_hyper_hash_build)
     //--------------------------------------------------------------------------
 
     size_t jsize = (Aj_is_32) ? sizeof (uint32_t) : sizeof (uint64_t) ;
-    I_work = GB_MALLOC_MEMORY (anvec, jsize, &I_work_size) ;
-    J_work = GB_MALLOC_MEMORY (anvec, jsize, &J_work_size) ;
-    X_work = GB_MALLOC_MEMORY (anvec, jsize, &X_work_size) ;
+    I_work = GB_MALLOC_MEMORY (anvec, jsize, &I_work_mem) ;
+    J_work = GB_MALLOC_MEMORY (anvec, jsize, &J_work_mem) ;
+    X_work = GB_MALLOC_MEMORY (anvec, jsize, &X_work_mem) ;
     if (I_work == NULL || J_work == NULL || X_work == NULL)
     { 
         // out of memory
@@ -119,11 +130,11 @@ GB_CALLBACK_HYPER_HASH_BUILD_PROTO (GB_hyper_hash_build)
         yvdim,                  // Y->vdim
         true,                   // Y->is_csc
         &I_work,                // row indices
-        &I_work_size,
+        &I_work_mem,
         &J_work,                // column indices
-        &J_work_size,
+        &J_work_mem,
         (GB_void **) &X_work,   // values
-        &X_work_size,
+        &X_work_mem,
         false,                  // tuples need to be sorted
         true,                   // no duplicates
         anvec,                  // size of I_work and J_work in # of tuples

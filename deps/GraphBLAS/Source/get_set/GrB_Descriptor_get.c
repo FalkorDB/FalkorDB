@@ -228,7 +228,7 @@ GrB_Info GrB_Descriptor_get_SIZE
 
     if (desc != NULL && desc->user_name != NULL)
     { 
-        (*value) = desc->user_name_size ;
+        (*value) = GB_memsize (desc->user_name_mem) ;
     }
     else
     { 

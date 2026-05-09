@@ -23,8 +23,8 @@
 #define GB_FREE_ALL                         \
 {                                           \
     GB_FREE_WORKSPACE ;                     \
-    GB_FREE_MEMORY (&Cx_new, Cx_size) ;            \
-    GB_FREE_MEMORY (&Cb, Cb_size) ;                \
+    GB_FREE_MEMORY (&Cx_new, Cx_mem) ;      \
+    GB_FREE_MEMORY (&Cb, Cb_mem) ;          \
 }
 
 GrB_Info GB_convert_s2b    // convert sparse/hypersparse to bitmap
@@ -39,9 +39,14 @@ GrB_Info GB_convert_s2b    // convert sparse/hypersparse to bitmap
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
+
+    ASSERT (A != NULL) ;
+    int memlane = GB_memlane (A->header_mem) ;
+    uint64_t mem = GB_mem (memlane, 0) ;
+
     GB_WERK_DECLARE (A_ek_slicing, int64_t) ;
-    int8_t  *restrict Cb      = NULL ; size_t Cb_size = 0 ;
-    GB_void *restrict Cx_new  = NULL ; size_t Cx_size = 0 ;
+    int8_t  *restrict Cb      = NULL ; uint64_t Cb_mem = mem ;
+    GB_void *restrict Cx_new  = NULL ; uint64_t Cx_mem = mem ;
     GB_void *restrict Ax_keep = NULL ;
 
     ASSERT_MATRIX_OK (A, "A converting sparse/hypersparse to bitmap", GB0) ;
@@ -83,7 +88,7 @@ GrB_Info GB_convert_s2b    // convert sparse/hypersparse to bitmap
         return (GrB_OUT_OF_MEMORY) ;
     }
     anzmax = GB_IMAX (anzmax, 1) ;
-    Cb = GB_MALLOC_MEMORY (anzmax, sizeof (int8_t), &Cb_size) ;
+    Cb = GB_MALLOC_MEMORY (anzmax, sizeof (int8_t), &Cb_mem) ;
     if (Cb == NULL)
     { 
         // out of memory
@@ -101,14 +106,14 @@ GrB_Info GB_convert_s2b    // convert sparse/hypersparse to bitmap
     { 
         // keep the existing A->x
         Ax_keep = (GB_void *) A->x ;
-        Ax_shallow = A->x_shallow ; Cx_size = A->x_size ;
+        Ax_shallow = A->x_shallow ; Cx_mem = A->x_mem ;
     }
     else
     {
         // A->x must be modified to fit the bitmap structure.  A->x is calloc'd
         // since otherwise it would contain uninitialized values where A->b is
         // false and entries are not present.
-        Cx_new = GB_CALLOC_MEMORY (anzmax, asize, &Cx_size) ;
+        Cx_new = GB_CALLOC_MEMORY (anzmax, asize, &Cx_mem) ;
         Ax_shallow = false ;
         if (Cx_new == NULL)
         { 
@@ -271,10 +276,10 @@ GrB_Info GB_convert_s2b    // convert sparse/hypersparse to bitmap
     GB_phybix_free (A) ;
     A->iso = A_iso ;
 
-    A->b = Cb ; A->b_size = Cb_size ; A->b_shallow = false ;
+    A->b = Cb ; A->b_mem = Cb_mem ; A->b_shallow = false ;
     Cb = NULL ;
 
-    A->x = Ax_keep ; A->x_size = Cx_size ; A->x_shallow = Ax_shallow ;
+    A->x = Ax_keep ; A->x_mem = Cx_mem ; A->x_shallow = Ax_shallow ;
 
     A->nvals = anz - nzombies ;
     ASSERT (A->nzombies == 0) ;

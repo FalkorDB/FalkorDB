@@ -8,6 +8,7 @@
 //------------------------------------------------------------------------------
 
 // The new matrix is nrows-by-ncols, with no entries in it.
+// The memlane of A is determined by the Context.
 
 #include "GB.h"
 
@@ -19,6 +20,7 @@ GrB_Info GrB_Matrix_new     // create a new matrix with no entries
     uint64_t ncols
 )
 { 
-    return (GB_Matrix_new (A, type, nrows, ncols)) ;
+    int memlane = GB_Context_memlane ( ) ;
+    return (GB_Matrix_new (A, type, nrows, ncols, memlane)) ;
 }
 

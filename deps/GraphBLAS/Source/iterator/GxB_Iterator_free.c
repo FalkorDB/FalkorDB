@@ -17,7 +17,8 @@ GrB_Info GxB_Iterator_free (GxB_Iterator *iterator)
         if (header_size > 0)
         { 
             (*iterator)->header_size = 0 ;
-            GB_FREE_MEMORY (iterator, header_size) ;
+            int memlane = 0 ;       // always using memlane = 0
+            GB_FREE_MEMORY (iterator, GB_mem (memlane, header_size)) ;
         }
     }
     return (GrB_SUCCESS) ;

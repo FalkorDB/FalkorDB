@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// GraphBLAS/CUDA/template/GB_jit_kernel_cuda_select_sparse
+// GraphBLAS/CUDA/template/GB_jit_kernel_cuda_select_sparse.cu
 //------------------------------------------------------------------------------
 
 // SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
@@ -57,10 +57,10 @@ using namespace cooperative_groups ;
 
 #define GB_FREE_WORKSPACE               \
 {                                       \
-    GB_FREE_MEMORY (&W_0, W_0_size) ;   \
-    GB_FREE_MEMORY (&W_1, W_1_size) ;   \
-    GB_FREE_MEMORY (&W_2, W_2_size) ;   \
-    GB_FREE_MEMORY (&W_3, W_3_size) ;   \
+    GB_FREE_MEMORY (&W_0, W_0_mem) ;    \
+    GB_FREE_MEMORY (&W_1, W_1_mem) ;    \
+    GB_FREE_MEMORY (&W_2, W_2_mem) ;    \
+    GB_FREE_MEMORY (&W_3, W_3_mem) ;    \
 }
 
 #undef  GB_FREE_ALL
@@ -134,16 +134,7 @@ __global__ void GB_cuda_select_sparse_phase1
     __shared__ Int Local_Map [CHUNKSIZE1] ;
 
     // cub::Block* workspace:
-    using BlockLoad  = cub::BlockLoad  <Int, BLOCKDIM1, ITEMS_PER_THREAD1> ;
-    using BlockScan  = cub::BlockScan  <Int, BLOCKDIM1,
-                                             cub::BLOCK_SCAN_WARP_SCANS> ;
-    using BlockStore = cub::BlockStore <Int, BLOCKDIM1, ITEMS_PER_THREAD1> ;
-    __shared__ union
-    {
-        typename BlockLoad::TempStorage load ;
-        typename BlockScan::TempStorage scan ;
-        typename BlockStore::TempStorage store ;
-    } W ;
+    GB_CUB_BLOCK_WORKSPACE (W, Int, BLOCKDIM1, ITEMS_PER_THREAD1) ;
 
     //--------------------------------------------------------------------------
     // compute Ak, and each local chunk of Map
@@ -151,16 +142,17 @@ __global__ void GB_cuda_select_sparse_phase1
 
     for (int64_t chunk = blockIdx.x ;
                  chunk < nchunks_in_A ;
-                 chunk += gridDim.x)        // "grid-stride" loop
+                 chunk += gridDim.x)        // grid-stride loop
     {
 
         //----------------------------------------------------------------------
-        // determine the chunk and its slope
+        // determine the chunk
         //----------------------------------------------------------------------
 
         int64_t pfirst = chunk << LOG2_CHUNKSIZE1 ;
         int64_t my_chunk_size ;
         #if ( Ak_SAVE ) || ( GB_DEPENDS_ON_J )
+        // detemine the slope, for computing Ak and j
         int64_t anvec1, kfirst, klast ;
         float slope ;
         GB_cuda_ek_slice_setup<GB_Ap_TYPE> (Ap, anvec, anz, pfirst,
@@ -172,40 +164,45 @@ __global__ void GB_cuda_select_sparse_phase1
         #endif
 
         //----------------------------------------------------------------------
-        // find the kA-th vector that contains each entry pA = pfirst:plast-1
+        // find the kA-th vector that contains each entry p = pfirst:plast-1
         //----------------------------------------------------------------------
 
         int64_t pdelta = threadIdx.x ;
         for ( ; pdelta < my_chunk_size ;
-                pdelta += blockDim.x)       // "block-stride" loop
+                pdelta += blockDim.x)       // block-stride loop
         {
 
             //------------------------------------------------------------------
-            // determine the kA-th vector that contains the pA-th entry
+            // this thread works on the p-th entry
             //------------------------------------------------------------------
 
-            int64_t pA = pfirst + pdelta ;
+            int64_t p = pfirst + pdelta ;
+
+            //------------------------------------------------------------------
+            // determine if the p-th entry is kept
+            //------------------------------------------------------------------
+
             #if ( Ak_SAVE ) || ( GB_DEPENDS_ON_J )
-            int64_t kA = GB_cuda_ek_slice_entry<GB_Ap_TYPE> (pA, pdelta, Ap,
+            int64_t kA = GB_cuda_ek_slice_entry<GB_Ap_TYPE> (p, pdelta, Ap,
                 anvec1, kfirst, slope) ;
             #endif
-
-            //------------------------------------------------------------------
-            // save the vector index kA, and determine if this entry is kept
-            //------------------------------------------------------------------
-
             #if Ak_SAVE
-            // FIXME: try recomputing Ak, not saving it
-            Ak [pA] = kA ;
+            // save kA for future use (this is now disabled)
+            Ak [p] = kA ;
             #endif
             #if ( GB_DEPENDS_ON_J )
             int64_t j = GBh_A (Ah, kA) ;
             #endif
             #if ( GB_DEPENDS_ON_I )
-            int64_t i = Ai [pA] ;
+            int64_t i = Ai [p] ;
             #endif
             // keep = fselect (A (i,j)), 1 if A(i,j) is kept, else 0
-            GB_TEST_VALUE_OF_ENTRY (keep, pA) ;
+            GB_TEST_VALUE_OF_ENTRY (keep, p) ;
+
+            //------------------------------------------------------------------
+            // save the result in Local_Map, cumsum'd below
+            //------------------------------------------------------------------
+
             Local_Map [pdelta] = keep ;
         }
 
@@ -258,7 +255,6 @@ __global__ void GB_cuda_select_sparse_phase1
             {
                 Map [pfirst + ITEMS_PER_THREAD1 * threadIdx.x + k] = t [k] ;
             }
-        }
         */
         BlockStore (W.store).Store (Map + pfirst, t) ;
 
@@ -423,16 +419,7 @@ __global__ void GB_cuda_select_sparse_phase4
     __shared__ Int Local_Ck_Delta [CHUNKSIZE2] ;
 
     // cub::Block* workspace:
-    using BlockLoad  = cub::BlockLoad  <Int, BLOCKDIM2, ITEMS_PER_THREAD2> ;
-    using BlockScan  = cub::BlockScan  <Int, BLOCKDIM2,
-                                             cub::BLOCK_SCAN_WARP_SCANS> ;
-    using BlockStore = cub::BlockStore <Int, BLOCKDIM2, ITEMS_PER_THREAD2> ;
-    __shared__ union
-    {
-        typename BlockLoad::TempStorage load ;
-        typename BlockScan::TempStorage scan ;
-        typename BlockStore::TempStorage store ;
-    } W ;
+    GB_CUB_BLOCK_WORKSPACE (W, Int, BLOCKDIM2, ITEMS_PER_THREAD2) ;
 
     //--------------------------------------------------------------------------
     // construct Ck_Delta and then cumsum each block
@@ -615,7 +602,7 @@ extern "C"
 GB_JIT_CUDA_KERNEL_SELECT_SPARSE_PROTO (GB_jit_kernel)
 {
     #ifdef TIMING
-    double t = omp_get_wtime ( ) ;
+    double t = GB_OPENMP_GET_WTIME ;
     #endif
 
     //--------------------------------------------------------------------------
@@ -637,12 +624,12 @@ GB_JIT_CUDA_KERNEL_SELECT_SPARSE_PROTO (GB_jit_kernel)
     GrB_Info info ;
 
     // workspaces of size anz+2
-    void *W_0 = NULL ; size_t W_0_size = 0 ;
-    void *W_1 = NULL ; size_t W_1_size = 0 ;
+    void *W_0 = NULL ; uint64_t W_0_mem = GB_MEMLANE_RMM ;
+    void *W_1 = NULL ; uint64_t W_1_mem = GB_MEMLANE_RMM ;
     // workspace of size max (nchunks_in_A, nchunks_in_C)+1
-    void *W_2 = NULL ; size_t W_2_size = 0 ;
+    void *W_2 = NULL ; uint64_t W_2_mem = GB_MEMLANE_RMM ;
     // workspace of size cnz+2, where cnz <= anz
-    void *W_3 = NULL ; size_t W_3_size = 0 ;
+    void *W_3 = NULL ; uint64_t W_3_mem = GB_MEMLANE_RMM ;
 
     GB_A_NHELD (anz) ;          // # of entries in A
     int64_t cnz = 0 ;           // # of entries in C (which is <= anz)
@@ -710,10 +697,10 @@ GB_JIT_CUDA_KERNEL_SELECT_SPARSE_PROTO (GB_jit_kernel)
     // could be used for them.  However, the RMM memory manager gives better
     // performance than cudaMalloc.
     #if Ak_SAVE
-    W_0 = GB_MALLOC_MEMORY (anz+2, sizeof (GB_Aj_SIGNED_TYPE), &W_0_size) ;
+    W_0 = GB_MALLOC_MEMORY (anz+2, sizeof (GB_Aj_SIGNED_TYPE), &W_0_mem) ;
     #endif
-    W_1 = GB_MALLOC_MEMORY (anz+2 + CHUNKSIZE1, sizeof (Int), &W_1_size) ;
-    W_2 = GB_MALLOC_MEMORY (nchunks_max+2, sizeof (GB_Ap_TYPE), &W_2_size) ;
+    W_1 = GB_MALLOC_MEMORY (anz+2 + CHUNKSIZE1, sizeof (Int), &W_1_mem) ;
+    W_2 = GB_MALLOC_MEMORY (nchunks_max+2, sizeof (GB_Ap_TYPE), &W_2_mem) ;
     if ((Ak_SAVE && W_0 == NULL) || W_1 == NULL || W_2 == NULL)
     {
         // out of memory
@@ -746,9 +733,9 @@ GB_JIT_CUDA_KERNEL_SELECT_SPARSE_PROTO (GB_jit_kernel)
     CUDA_OK (cudaStreamSynchronize (stream)) ;
 
     #ifdef TIMING
-    t = omp_get_wtime ( ) - t ;
+    t = GB_OPENMP_GET_WTIME - t ;
     printf ("\nselect sparse phase1: %g sec (gpu: Map, with cumsum)\n", t) ;
-    t = omp_get_wtime ( ) ;
+    t = GB_OPENMP_GET_WTIME ;
     #endif
 
     //--------------------------------------------------------------------------
@@ -761,10 +748,9 @@ GB_JIT_CUDA_KERNEL_SELECT_SPARSE_PROTO (GB_jit_kernel)
     // This phase computes an exclusive cumulative sum:
     //       0 [       0       3       4       6       9]    11
 
-    // FIXME: do this on the GPU?  Or in parallel on the CPU?
-    // FIXME: if on the CPU, use GB_cumsum.c (need both int32_t and int64_t)
+    // This is best done in a single thread on the CPU.
 
-    // overwrite ChunkSum [0..gridsdz] with its cumulative sum
+    // overwrite ChunkSum [0..gridsz] with its cumulative sum
     for (int64_t chunk = 0 ; chunk < nchunks_in_A ; chunk++)
     {
         // get the # of entries found by this threadblock
@@ -777,9 +763,9 @@ GB_JIT_CUDA_KERNEL_SELECT_SPARSE_PROTO (GB_jit_kernel)
     ChunkSum [nchunks_in_A] = cnz ;
 
     #ifdef TIMING
-    t = omp_get_wtime ( ) - t ;
+    t = GB_OPENMP_GET_WTIME - t ;
     printf ("select sparse phase2: %g sec (cpu: ChunkSum of Map)\n", t) ;
-    t = omp_get_wtime ( ) ;
+    t = GB_OPENMP_GET_WTIME ;
     #endif
 
     //--------------------------------------------------------------------------
@@ -801,7 +787,7 @@ GB_JIT_CUDA_KERNEL_SELECT_SPARSE_PROTO (GB_jit_kernel)
     C->jumbled = A->jumbled ;
 
     // allocate workspace of size cnz+2
-    W_3 = GB_MALLOC_MEMORY (cnz+2, sizeof (GB_Aj_SIGNED_TYPE), &W_3_size) ;
+    W_3 = GB_MALLOC_MEMORY (cnz+2, sizeof (GB_Aj_SIGNED_TYPE), &W_3_mem) ;
     if (W_3 == NULL)
     {
         // out of memory
@@ -857,14 +843,14 @@ GB_JIT_CUDA_KERNEL_SELECT_SPARSE_PROTO (GB_jit_kernel)
     CUDA_OK (cudaStreamSynchronize (stream)) ;
 
     // Ak (in W_0) no longer needed, and W_0 is no longer needed, so free it
-    GB_FREE_MEMORY (&W_0, W_0_size) ;
+    GB_FREE_MEMORY (&W_0, W_0_mem) ;
 
     // Map (in W_1) no longer needed; reused below for Ck_Delta
 
     #ifdef TIMING
-    t = omp_get_wtime ( ) - t ;
+    t = GB_OPENMP_GET_WTIME - t ;
     printf ("select sparse phase3: %g sec (gpu: create Ci,Cx,Ck)\n", t) ;
-    t = omp_get_wtime ( ) ;
+    t = GB_OPENMP_GET_WTIME ;
     #endif
 
     //--------------------------------------------------------------------------
@@ -905,17 +891,16 @@ GB_JIT_CUDA_KERNEL_SELECT_SPARSE_PROTO (GB_jit_kernel)
     CUDA_OK (cudaStreamSynchronize (stream)) ;
 
     #ifdef TIMING
-    t = omp_get_wtime ( ) - t ;
+    t = GB_OPENMP_GET_WTIME - t ;
     printf ("select sparse phase4: %g sec (gpu: Ck_Delta, with cumsum)\n", t) ;
-    t = omp_get_wtime ( ) ;
+    t = GB_OPENMP_GET_WTIME ;
     #endif
 
     //--------------------------------------------------------------------------
     // phase 5: construct global cumsum of Ck_Delta on the CPU
     //--------------------------------------------------------------------------
 
-    // FIXME: do this on the GPU?  Or in parallel on the CPU?
-    // FIXME: if on the CPU, use GB_cumsum.c (need both int32_t and int64_t)
+    // This is done on a single thread on the CPU.
 
     // overwrite ChunkSum [0..nchunks_in_C] with its cumulative sum
     int64_t cnvec = 0 ;
@@ -937,9 +922,9 @@ GB_JIT_CUDA_KERNEL_SELECT_SPARSE_PROTO (GB_jit_kernel)
     //       0 [       0|      2|    4 ]  5
 
     #ifdef TIMING
-    t = omp_get_wtime ( ) - t ;
+    t = GB_OPENMP_GET_WTIME - t ;
     printf ("select sparse phase5: %g sec (cpu: ChunkSum for Ck_Delta\n", t) ;
-    t = omp_get_wtime ( ) ;
+    t = GB_OPENMP_GET_WTIME ;
     #endif
 
     //--------------------------------------------------------------------------
@@ -948,17 +933,19 @@ GB_JIT_CUDA_KERNEL_SELECT_SPARSE_PROTO (GB_jit_kernel)
 
     // The caller has already allocated C->p, C->h for a user-returnable empty
     // hypersparse matrix.  Free them here before reallocating them.
-    GB_FREE_MEMORY (&(C->p), C->p_size) ;
-    GB_FREE_MEMORY (&(C->h), C->h_size) ;
+    GB_FREE_MEMORY (&(C->p), C->p_mem) ;
+    GB_FREE_MEMORY (&(C->h), C->h_mem) ;
 
     // Allocate Cp and Ch
     C->plen = cnvec ;
     C->nvec = cnvec ;
     C->nvec_nonempty = cnvec ;
+    C->p_mem = GB_MEMLANE_RMM ;
+    C->h_mem = GB_MEMLANE_RMM ;
     C->p = (GB_Cp_TYPE *) GB_MALLOC_MEMORY (C->plen+1, sizeof (GB_Cp_TYPE),
-        &(C->p_size)) ;
+        &(C->p_mem)) ;
     C->h = (GB_Cj_TYPE *) GB_MALLOC_MEMORY (C->plen, sizeof (GB_Cj_TYPE),
-        &(C->h_size)) ;
+        &(C->h_mem)) ;
     if (C->p == NULL || C->h == NULL)
     {
         // out of memory
@@ -993,7 +980,7 @@ GB_JIT_CUDA_KERNEL_SELECT_SPARSE_PROTO (GB_jit_kernel)
     CUDA_OK (cudaStreamSynchronize (stream)) ;
 
     #ifdef TIMING
-    t = omp_get_wtime ( ) - t ;
+    t = GB_OPENMP_GET_WTIME - t ;
     printf ("select sparse phase6: %g sec (gpu: Cp,Ch)\n", t) ;
     #endif
 

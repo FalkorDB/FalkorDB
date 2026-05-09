@@ -29,7 +29,7 @@
 
 GrB_Info GB_shallow_op      // create shallow matrix and apply operator
 (
-    GrB_Matrix C,           // output C, of type op*->ztype, static header
+    GrB_Matrix C,           // output C, of type op*->ztype
     const bool C_is_csc,    // desired CSR/CSC format of C
         const GB_Operator op,       // unary/index-unary/binop to apply
         const GrB_Scalar scalar,    // scalar to bind to binary operator
@@ -44,7 +44,9 @@ GrB_Info GB_shallow_op      // create shallow matrix and apply operator
     // check inputs
     //--------------------------------------------------------------------------
 
-    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
+    ASSERT (C != NULL) ;
+    int memlane = GB_memlane (C->header_mem) ;
+    uint64_t mem = GB_mem (memlane, 0) ;
     ASSERT_MATRIX_OK (A, "A for shallow_op", GB0) ;
     ASSERT_OP_OK (op, "unop/binop for shallow_op", GB0) ;
     ASSERT (!GB_ZOMBIES (A)) ;
@@ -94,7 +96,7 @@ GrB_Info GB_shallow_op      // create shallow matrix and apply operator
     info = GB_new (&C, // any sparsity, existing header
         ztype, A->vlen, A->vdim, GB_ph_null, C_is_csc,
         GB_sparsity (A), A->hyper_switch, 0,
-        A->p_is_32, A->j_is_32, A->i_is_32) ;
+        A->p_is_32, A->j_is_32, A->i_is_32, memlane) ;
     ASSERT (info == GrB_SUCCESS) ;
 
     //--------------------------------------------------------------------------
@@ -105,8 +107,8 @@ GrB_Info GB_shallow_op      // create shallow matrix and apply operator
     C->h_shallow = (A->h != NULL) ;     // C->h not freed when freeing C
     C->p = A->p ;                       // C->p is of size A->plen + 1
     C->h = A->h ;                       // C->h is of size A->plen
-    C->p_size = A->p_size ;
-    C->h_size = A->h_size ;
+    C->p_mem = A->p_mem ;
+    C->h_mem = A->h_mem ;
     C->p_is_32 = A->p_is_32 ;
     C->j_is_32 = A->j_is_32 ;
     C->i_is_32 = A->i_is_32 ;
@@ -154,8 +156,8 @@ GrB_Info GB_shallow_op      // create shallow matrix and apply operator
     // make a shallow copy of the pattern
     //--------------------------------------------------------------------------
 
-    C->b = A->b ; C->b_shallow = (A->b != NULL) ; C->b_size = A->b_size ;
-    C->i = A->i ; C->i_shallow = (A->i != NULL) ; C->i_size = A->i_size ;
+    C->b = A->b ; C->b_shallow = (A->b != NULL) ; C->b_mem = A->b_mem ;
+    C->i = A->i ; C->i_shallow = (A->i != NULL) ; C->i_mem = A->i_mem ;
 
     //--------------------------------------------------------------------------
     // make a shallow copy of the values, if possible
@@ -175,7 +177,7 @@ GrB_Info GB_shallow_op      // create shallow matrix and apply operator
         GBURBLE ("(pure shallow) ") ;
         C->x = A->x ;
         C->x_shallow = true ;       // C->x will not be freed when freeing C
-        C->x_size = A->x_size ;
+        C->x_mem = A->x_mem ;
         C->iso = A->iso ;           // C has the same iso property as A
         ASSERT_MATRIX_OK (C, "C = pure shallow (A)", GB0) ;
         return (GrB_SUCCESS) ;
@@ -186,8 +188,9 @@ GrB_Info GB_shallow_op      // create shallow matrix and apply operator
     //--------------------------------------------------------------------------
 
     // allocate new space for the numerical values of C; use calloc if bitmap
+    C->x_mem = mem ;
     C->x = GB_XALLOC_MEMORY (GB_IS_BITMAP (C), C_iso, anz,
-        C->type->size, &(C->x_size)) ;
+        C->type->size, &(C->x_mem)) ;
     C->x_shallow = false ;          // free C->x when freeing C
     if (C->x == NULL)
     { 

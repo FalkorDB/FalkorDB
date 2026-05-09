@@ -2,7 +2,7 @@ function testmake (what)
 %TESTMAKE compiles the test interface to GraphBLAS
 % and dynamically links it with the libraries in ../build/libgraphblas.
 %
-% This @GrB interface to GraphBLAS is meant for testing and development,
+% This interface to GraphBLAS is meant for testing and development,
 % not for general use.
 %
 % Usage:

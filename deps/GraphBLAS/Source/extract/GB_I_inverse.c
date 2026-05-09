@@ -16,7 +16,7 @@
 
 #define GB_FREE_WORKSPACE                       \
 {                                               \
-    GB_FREE_MEMORY (&W, W_size) ;               \
+    GB_FREE_MEMORY (&W, W_mem) ;                \
 }
 
 #define GB_FREE_ALL                             \
@@ -37,6 +37,7 @@ GrB_Info GB_I_inverse           // invert the I list for C=A(I,:)
     // outputs:
     GrB_Matrix *R_handle,       // R = inverse (I)
     GB_Werk Werk
+    // FIXME memlane param
 )
 {
 
@@ -45,8 +46,12 @@ GrB_Info GB_I_inverse           // invert the I list for C=A(I,:)
     //--------------------------------------------------------------------------
 
     GrB_Info info = GrB_SUCCESS ;
+
+    int memlane = 0 ;   // FIXME memlane param
+    uint64_t mem = GB_mem (memlane, 0) ;
+
     GrB_Matrix R = NULL ;
-    GB_MDECL (W, , u) ; size_t W_size = 0 ;
+    GB_MDECL (W, , u) ; uint64_t W_mem = mem ;
     (*R_handle) = NULL ;
     GB_IDECL (I, const, u) ; GB_IPTR (I, I_is_32) ;
 
@@ -63,7 +68,7 @@ GrB_Info GB_I_inverse           // invert the I list for C=A(I,:)
 
     bool W_is_32 = (nI < INT32_MAX) ;
     size_t wsize = (W_is_32) ? sizeof (uint32_t) : sizeof (uint64_t) ;
-    W = GB_MALLOC_MEMORY (nI, wsize, &W_size) ;
+    W = GB_MALLOC_MEMORY (nI, wsize, &W_mem) ;
     if (W == NULL)
     { 
         // out of memory
@@ -72,6 +77,7 @@ GrB_Info GB_I_inverse           // invert the I list for C=A(I,:)
     }
 
     GB_IPTR (W, W_is_32) ;
+    // FIXME: do this in parallel:
     for (int64_t k = 0 ; k < nI ; k++)
     { 
         // W [k] = k
@@ -81,14 +87,14 @@ GrB_Info GB_I_inverse           // invert the I list for C=A(I,:)
     // create R: rvdim-by-rvlen (avlen-by-nI), held by row, iso-valued
     GB_OK (GB_new (&R,  // new dynamic header, do not allocate content
         GrB_UINT64, rvlen, rvdim, GB_ph_null, false, GxB_HYPERSPARSE, -1, 0,
-        Rp_is_32, Rj_is_32, Ri_is_32)) ;
+        Rp_is_32, Rj_is_32, Ri_is_32, memlane)) ;
 
     uint64_t S_input [1] ;
     S_input [0] = 1 ;
 
-    void *no_I_work = NULL ; size_t I_work_size = 0 ;
-    void *no_J_work = NULL ; size_t J_work_size = 0 ;
-    GB_void *no_X_work = NULL ; size_t X_work_size = 0 ;
+    void *no_I_work = NULL    ; uint64_t I_work_mem = 0 ;   // OK: not used
+    void *no_J_work = NULL    ; uint64_t J_work_mem = 0 ;   // OK: not used
+    GB_void *no_X_work = NULL ; uint64_t X_work_mem = 0 ;   // OK: not used
 
     GB_OK (GB_builder (
         // T
@@ -102,11 +108,11 @@ GrB_Info GB_I_inverse           // invert the I list for C=A(I,:)
         // is_csc
         false,              // R is CSR
         // I_work_handle and size
-        &no_I_work, &I_work_size,            // I_work not used
+        &no_I_work, &I_work_mem,            // I_work not used
         // J_work_handle and size
-        &no_J_work, &J_work_size,            // J_work not used
+        &no_J_work, &J_work_mem,            // J_work not used
         // X_work_handle and size
-        &no_X_work, &X_work_size,            // X_work not used
+        &no_X_work, &X_work_mem,            // X_work not used
         // known_sorted
         false,              // tuples might not be sorted
         // known_no_duplicates
@@ -120,7 +126,7 @@ GrB_Info GB_I_inverse           // invert the I list for C=A(I,:)
         // J_input
         I,                  // row indices are in I [0..nI-1]
         // S_input
-        S_input,            // values of R (iso-valued)
+        (const GB_void *) S_input,  // values of R (iso-valued)
         // S_iso
         true,               // R is iso-valued
         // nvals
@@ -214,7 +220,7 @@ GrB_Info GB_I_inverse           // invert the I list for C=A(I,:)
     //--------------------------------------------------------------------------
 
     GB_FREE_WORKSPACE ;
-    ASSERT_MATRIX_OK (R, "R = I_inverse matrix", GB2) ;
+    ASSERT_MATRIX_OK (R, "R = I_inverse matrix", GB0) ;
     (*R_handle) = R ;
     return (GrB_SUCCESS) ;
 }

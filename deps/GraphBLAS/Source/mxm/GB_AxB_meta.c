@@ -40,11 +40,11 @@
 
 GrB_Info GB_AxB_meta                // C<M>=A*B meta algorithm
 (
-    GrB_Matrix C,                   // output, static header (if not in-place)
+    GrB_Matrix C,                   // output, existing header (if not in-place)
     GrB_Matrix C_in,                // input/output matrix, if done in-place
     bool C_replace,                 // C matrix descriptor
     const bool C_is_csc,            // desired CSR/CSC format of C
-    GrB_Matrix MT,                  // return MT = M' (static header)
+    GrB_Matrix MT,                  // return MT = M' (existing header)
     bool *M_transposed,             // true if MT = M' was computed
     const GrB_Matrix M_in,          // mask for C<M> (not complemented)
     const bool Mask_comp,           // if true, use !M
@@ -88,15 +88,16 @@ GrB_Info GB_AxB_meta                // C<M>=A*B meta algorithm
 
     ASSERT_SEMIRING_OK (semiring_in, "semiring_in for numeric A*B", GB0) ;
     ASSERT (mask_applied != NULL) ;
-    ASSERT (C  != NULL && ( C->header_size == 0 || GBNSTATIC)) ;
-    ASSERT (MT != NULL && (MT->header_size == 0 || GBNSTATIC)) ;
+    ASSERT (C  != NULL) ;
+    ASSERT (MT != NULL) ;
+
+    int memlane = GB_memlane (C->header_mem) ;
 
     //--------------------------------------------------------------------------
     // declare workspace
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    struct GB_Matrix_opaque AT_header, BT_header ;
     GrB_Matrix AT = NULL, BT = NULL ;
 
     (*mask_applied) = false ;
@@ -459,7 +460,7 @@ GrB_Info GB_AxB_meta                // C<M>=A*B meta algorithm
     struct GB_Semiring_opaque semiring_struct ;
     GrB_Semiring semiring = &semiring_struct ;
     memcpy (semiring, semiring_in, sizeof (struct GB_Semiring_opaque)) ;
-    semiring->header_size = 0 ;
+    semiring->header_mem = 0 ;  // static header
     semiring->multiply = GB_flip_binop (semiring_in->multiply, &flipxy) ;
 
     opcode = semiring->multiply->opcode  ;
@@ -584,7 +585,7 @@ GrB_Info GB_AxB_meta                // C<M>=A*B meta algorithm
             // This is currently unused, since C=A'*B' and C'=A'*B' are always
             // converted to C=(B*A)' and C=B*A, respectively.  It is left here
             // in case the swap_rule changes.
-            GB_CLEAR_MATRIX_HEADER (BT, &BT_header) ;
+            GB_OK (GB_matrix_header_new (&BT, memlane)) ;
             GB_OK (GB_transpose_cast (BT, btype_cast, true, B, B_is_pattern,
                 Werk)) ;
             B = BT ;
@@ -605,7 +606,7 @@ GrB_Info GB_AxB_meta                // C<M>=A*B meta algorithm
         if (axb_method == GB_USE_COLSCALE || axb_method == GB_USE_SAXPY)
         {
             // AT = A', or AT=one(A') if only the pattern is needed.
-            GB_CLEAR_MATRIX_HEADER (AT, &AT_header) ;
+            GB_OK (GB_matrix_header_new (&AT, memlane)) ;
             GB_OK (GB_transpose_cast (AT, atype_cast, true, A, A_is_pattern,
                 Werk)) ;
             // do not use colscale if AT is now bitmap
@@ -686,7 +687,7 @@ GrB_Info GB_AxB_meta                // C<M>=A*B meta algorithm
         if (axb_method != GB_USE_COLSCALE)
         {
             // BT = B', or BT=one(B') if only the pattern of B is needed
-            GB_CLEAR_MATRIX_HEADER (BT, &BT_header) ;
+            GB_OK (GB_matrix_header_new (&BT, memlane)) ;
             GB_OK (GB_transpose_cast (BT, btype_cast, true, B, B_is_pattern,
                 Werk)) ;
             // do not use rowscale if BT is now bitmap
@@ -718,7 +719,7 @@ GrB_Info GB_AxB_meta                // C<M>=A*B meta algorithm
                 // C<M>=A*B' via dot product, or C_in<M>+=A*B' if in-place
                 GBURBLE ("C%s=A*B', dot_product (transposed %s) "
                     "(transposed %s) ", M_str, A_str, B_str) ;
-                GB_CLEAR_MATRIX_HEADER (AT, &AT_header) ;
+                GB_OK (GB_matrix_header_new (&AT, memlane)) ;
                 GB_OK (GB_transpose_cast (AT, atype_cast, true, A, A_is_pattern,
                     Werk)) ;
                 GB_OK (GB_AxB_dot (C, can_do_in_place ? C_in : NULL, M,
@@ -822,7 +823,7 @@ GrB_Info GB_AxB_meta                // C<M>=A*B meta algorithm
                 // C<M>=A*B via dot product, or C_in<M>+=A*B if in-place.
                 GBURBLE ("C%s=A*B', dot_product (transposed %s) ",
                     M_str, A_str) ;
-                GB_CLEAR_MATRIX_HEADER (AT, &AT_header) ;
+                GB_OK (GB_matrix_header_new (&AT, memlane)) ;
                 GB_OK (GB_transpose_cast (AT, atype_cast, true, A, A_is_pattern,
                     Werk)) ;
                 GB_OK (GB_AxB_dot (C, can_do_in_place ? C_in : NULL, M,

@@ -1,3 +1,12 @@
+//------------------------------------------------------------------------------
+// GraphBLAS/CUDA/select/GB_cuda_select_branch
+//------------------------------------------------------------------------------
+
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//------------------------------------------------------------------------------
+
 #include "GB_cuda.hpp"
 
 bool GB_cuda_select_branch
@@ -21,13 +30,10 @@ bool GB_cuda_select_branch
         return false ;
     }
 
-    if (A->header_size == 0)
+    if (A->header_mem == 0)
     {
-        // see Source/matrix/GB_clear_matrix_header.h for details.  If A has a
-        // static header, it cannot be done on the GPU.  However, if GraphBLAS
-        // is compiled to use CUDA, there should be no static headers anyway,
-        // so this is likely dead code.  Just a sanity check.
-        return false ;
+        // FIXME memlane: check all of A
+        return (false) ;
     }
 
     bool ok = (GB_cuda_type_branch (A->type)) ;
@@ -47,6 +53,8 @@ bool GB_cuda_select_branch
 
     double work = GB_nnz_held (A) ;
     int gpu_count = GB_ngpus_to_use (work) ;
+    int ngpus_max = GB_Context_gpu_ids (NULL) ;     // FIXME: get gpu_ids
+    gpu_count = std::min (gpu_count, ngpus_max) ;
     ok = ok && (gpu_count > 0);
     return ok ;
 }

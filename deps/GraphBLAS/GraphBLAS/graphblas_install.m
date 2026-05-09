@@ -1,4 +1,4 @@
-function graphblas_install (cmake_options)
+function graphblas_install (cmake_options, cmake_config)
 %GRAPHBLAS_INSTALL compile SuiteSparse:GraphBLAS for MATLAB or Octave
 %
 % Usage:
@@ -50,6 +50,15 @@ end
 
 if (nargin < 1)
     cmake_options = '' ;
+end
+
+if (nargin < 2)
+    cmake_config = 'Release' ;
+end
+
+cmake_options2 = '' ;
+if (isequal (cmake_config, 'Debug'))
+    cmake_options2 = '-DCMAKE_BUILD_TYPE=Debug' ;
 end
 
 % by default, use OpenMP as found by cmake
@@ -108,11 +117,11 @@ try
 
     % cmd1: configure with cmake
     build_folder = pwd ;
-    cmd1 = sprintf ('%s cmake %s ..', ld_path, cmake_options) ;
+    cmd1 = sprintf ('%s cmake %s %s ..', ld_path, cmake_options, cmake_options2) ;
 
     % build the GraphBLAS library
-    cmd2 = sprintf ('%s cmake --build . --config Release -j%d', ...
-        ld_path, threads) ;
+    cmd2 = sprintf ('%s cmake --build . --config %s -j%d', ...
+        ld_path, cmake_config, threads) ;
 
     % execute cmd1: configure with cmake
     clear mex

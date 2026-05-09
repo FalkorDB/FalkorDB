@@ -66,7 +66,7 @@
 
 GrB_Info GB_masker          // R = masker (C, M, Z)
 (
-    GrB_Matrix R,           // output matrix, static header
+    GrB_Matrix R,           // output matrix, existing header
     const bool R_is_csc,    // format of output matrix R
     const GrB_Matrix M,     // required input mask
     const bool Mask_comp,   // descriptor for M
@@ -83,7 +83,10 @@ GrB_Info GB_masker          // R = masker (C, M, Z)
 
     GrB_Info info ;
 
-    ASSERT (R != NULL && (R->header_size == 0 || GBNSTATIC)) ;
+    ASSERT (R != NULL) ;
+
+    int memlane = GB_memlane (R->header_mem) ;
+    uint64_t mem = GB_mem (memlane, 0) ;
 
     ASSERT_MATRIX_OK (M, "M for masker", GB0) ;
     ASSERT (!GB_PENDING (M)) ;
@@ -118,15 +121,16 @@ GrB_Info GB_masker          // R = masker (C, M, Z)
     //--------------------------------------------------------------------------
 
     int64_t Rnvec, Rnvec_nonempty = 0 ;
-    void *Rp = NULL ; size_t Rp_size = 0 ;
-    void *Rh = NULL ; size_t Rh_size = 0 ;
+    void *Rp = NULL ; uint64_t Rp_mem = mem ;
+    void *Rh = NULL ; uint64_t Rh_mem = mem ;
 
-    int64_t *R_to_M = NULL ; size_t R_to_M_size = 0 ;
-    int64_t *R_to_C = NULL ; size_t R_to_C_size = 0 ;
-    int64_t *R_to_Z = NULL ; size_t R_to_Z_size = 0 ;
+    int64_t *R_to_M = NULL ; uint64_t R_to_M_mem = mem ;
+    int64_t *R_to_C = NULL ; uint64_t R_to_C_mem = mem ;
+    int64_t *R_to_Z = NULL ; uint64_t R_to_Z_mem = mem ;
 
     int R_ntasks = 0 ;
-    size_t TaskList_size = 0 ; GB_task_struct *TaskList = NULL ;
+    GB_task_struct *TaskList = NULL ;
+    uint64_t TaskList_mem = mem ;
     bool Rp_is_32, Rj_is_32, Ri_is_32 ;
 
     //--------------------------------------------------------------------------
@@ -138,15 +142,15 @@ GrB_Info GB_masker          // R = masker (C, M, Z)
 
     GB_OK (GB_add_phase0 (
         // computed by phase0:
-        &Rnvec, &Rh, &Rh_size,
-        &R_to_M, &R_to_M_size,
-        &R_to_C, &R_to_C_size,
-        &R_to_Z, &R_to_Z_size, /* Rh_is_Mh is false: */ NULL,
+        &Rnvec, &Rh, &Rh_mem,
+        &R_to_M, &R_to_M_mem,
+        &R_to_C, &R_to_C_mem,
+        &R_to_Z, &R_to_Z_mem, /* Rh_is_Mh is false: */ NULL,
         &Rp_is_32, &Rj_is_32, &Ri_is_32,
         // input/output to phase0:
         &R_sparsity,
         // original input:
-        M, C, Z, Werk)) ;
+        M, C, Z, memlane, Werk)) ;
 
     GBURBLE ("masker:(%s:%s%s%s%s%s=%s) ",
         GB_sparsity_char (R_sparsity),
@@ -175,9 +179,9 @@ GrB_Info GB_masker          // R = masker (C, M, Z)
 
         // This assertion fails on AppleClang 16.0.0 with -O3, even though the
         // assertion exactly matches the enclosing if condition.  Optimization
-        // is not critical for this file, so it is turned off when using any
-        // clang compiler.
-        GB_assert (R_sparsity == GxB_SPARSE || R_sparsity == GxB_HYPERSPARSE) ;
+        // is not critical for this file, so optimization for this file is
+        // turned off when using any clang compiler.
+        // ASSERT (R_sparsity == GxB_SPARSE || R_sparsity == GxB_HYPERSPARSE) ;
 
         //----------------------------------------------------------------------
         // slice and analyze the R matrix
@@ -186,7 +190,7 @@ GrB_Info GB_masker          // R = masker (C, M, Z)
         // phase1a: split R into tasks
         info = GB_ewise_slice (
             // computed by phase1a
-            &TaskList, &TaskList_size, &R_ntasks, &R_nthreads,
+            &TaskList, &TaskList_mem, &R_ntasks, &R_nthreads,
             // computed by phase0:
             Rnvec, Rh, Rj_is_32, R_to_M, R_to_C, R_to_Z, /* Rh_is_Mh: */ false,
             // original input:
@@ -194,17 +198,17 @@ GrB_Info GB_masker          // R = masker (C, M, Z)
         if (info != GrB_SUCCESS)
         { 
             // out of memory; free everything allocated by GB_add_phase0
-            GB_FREE_MEMORY (&Rh, Rh_size) ;
-            GB_FREE_MEMORY (&R_to_M, R_to_M_size) ;
-            GB_FREE_MEMORY (&R_to_C, R_to_C_size) ;
-            GB_FREE_MEMORY (&R_to_Z, R_to_Z_size) ;
+            GB_FREE_MEMORY (&Rh, Rh_mem) ;
+            GB_FREE_MEMORY (&R_to_M, R_to_M_mem) ;
+            GB_FREE_MEMORY (&R_to_C, R_to_C_mem) ;
+            GB_FREE_MEMORY (&R_to_Z, R_to_Z_mem) ;
             return (info) ;
         }
 
         // count the number of entries in each vector of R
         info = GB_masker_phase1 (
             // computed or used by phase1:
-            &Rp, &Rp_size, &Rnvec_nonempty,
+            &Rp, &Rp_mem, &Rnvec_nonempty,
             // from phase1a:
             TaskList, R_ntasks, R_nthreads,
             // from phase0:
@@ -214,11 +218,11 @@ GrB_Info GB_masker          // R = masker (C, M, Z)
         if (info != GrB_SUCCESS)
         { 
             // out of memory; free everything allocated by GB_add_phase0
-            GB_FREE_MEMORY (&TaskList, TaskList_size) ;
-            GB_FREE_MEMORY (&Rh, Rh_size) ;
-            GB_FREE_MEMORY (&R_to_M, R_to_M_size) ;
-            GB_FREE_MEMORY (&R_to_C, R_to_C_size) ;
-            GB_FREE_MEMORY (&R_to_Z, R_to_Z_size) ;
+            GB_FREE_MEMORY (&TaskList, TaskList_mem) ;
+            GB_FREE_MEMORY (&Rh, Rh_mem) ;
+            GB_FREE_MEMORY (&R_to_M, R_to_M_mem) ;
+            GB_FREE_MEMORY (&R_to_C, R_to_C_mem) ;
+            GB_FREE_MEMORY (&R_to_Z, R_to_Z_mem) ;
             return (info) ;
         }
 
@@ -235,11 +239,11 @@ GrB_Info GB_masker          // R = masker (C, M, Z)
         // computed or used by phase2:
         R, R_is_csc,
         // from phase1:
-        &Rp, Rp_size, Rnvec_nonempty,
+        &Rp, Rp_mem, Rnvec_nonempty,
         // from phase1a:
         TaskList, R_ntasks, R_nthreads,
         // from phase0:
-        Rnvec, &Rh, Rh_size, R_to_M, R_to_C, R_to_Z,
+        Rnvec, &Rh, Rh_mem, R_to_M, R_to_C, R_to_Z,
         Rp_is_32, Rj_is_32, Ri_is_32, R_sparsity,
         // original input:
         M, Mask_comp, Mask_struct, C, Z, Werk) ;
@@ -247,10 +251,10 @@ GrB_Info GB_masker          // R = masker (C, M, Z)
     // if successful, Rh and Rp must not be freed; they are now R->h and R->p
 
     // free workspace
-    GB_FREE_MEMORY (&TaskList, TaskList_size) ;
-    GB_FREE_MEMORY (&R_to_M, R_to_M_size) ;
-    GB_FREE_MEMORY (&R_to_C, R_to_C_size) ;
-    GB_FREE_MEMORY (&R_to_Z, R_to_Z_size) ;
+    GB_FREE_MEMORY (&TaskList, TaskList_mem) ;
+    GB_FREE_MEMORY (&R_to_M, R_to_M_mem) ;
+    GB_FREE_MEMORY (&R_to_C, R_to_C_mem) ;
+    GB_FREE_MEMORY (&R_to_Z, R_to_Z_mem) ;
 
     if (info != GrB_SUCCESS)
     { 

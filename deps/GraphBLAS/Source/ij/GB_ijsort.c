@@ -21,16 +21,16 @@
 
 #define GB_FREE_WORKSPACE               \
 {                                       \
-    GB_FREE_MEMORY (&I1, I1_size) ;       \
-    GB_FREE_MEMORY (&I1k, I1k_size) ;     \
+    GB_FREE_MEMORY (&I1, I1_mem) ;      \
+    GB_FREE_MEMORY (&I1k, I1k_mem) ;    \
     GB_WERK_POP (W, uint64_t) ;         \
 }
 
 #define GB_FREE_ALL                     \
 {                                       \
     GB_FREE_WORKSPACE ;                 \
-    GB_FREE_MEMORY (&I2, I2_size) ;       \
-    GB_FREE_MEMORY (&I2k, I2k_size) ;     \
+    GB_FREE_MEMORY (&I2, I2_mem) ;      \
+    GB_FREE_MEMORY (&I2k, I2k_mem) ;    \
 }
 
 GrB_Info GB_ijsort
@@ -45,11 +45,12 @@ GrB_Info GB_ijsort
     void **p_I2,                // size ni2, where I2 [0..ni2-1] contains the
                                 // sorted indices with duplicates removed.
     bool *I2_is_32_handle,      // if I2_is_32 true, I2 is 32 bits; else 64 bits
-    size_t *I2_size_handle,
+    uint64_t *I2_mem_handle,
     void **p_I2k,               // output array of size ni2
     bool *I2k_is_32_handle,     // if I2k_is_32 true, I2 is 32 bits; else 64
-    size_t *I2k_size_handle,
+    uint64_t *I2k_mem_handle,
     GB_Werk Werk
+    // FIXME memlane
 )
 {
 
@@ -63,18 +64,21 @@ GrB_Info GB_ijsort
     ASSERT (p_I2 != NULL) ;
     ASSERT (p_I2k != NULL) ;
     ASSERT (I2_is_32_handle != NULL) ;
-    ASSERT (I2_size_handle != NULL) ;
+    ASSERT (I2_mem_handle != NULL) ;
     ASSERT (I2k_is_32_handle != NULL) ;
-    ASSERT (I2k_size_handle != NULL) ;
+    ASSERT (I2k_mem_handle != NULL) ;
+
+    int memlane = 0 ;   // FIXME memlane param
+    uint64_t mem = GB_mem (memlane, 0) ;
 
     //--------------------------------------------------------------------------
     // declare workspace and get inputs
     //--------------------------------------------------------------------------
 
-    GB_MDECL (I2 , , u) ; size_t I2_size  = 0 ;
-    GB_MDECL (I2k, , u) ; size_t I2k_size = 0 ;
-    GB_MDECL (I1 , , u) ; size_t I1_size = 0 ;
-    GB_MDECL (I1k, , u) ; size_t I1k_size = 0 ;
+    GB_MDECL (I2 , , u) ; uint64_t I2_mem  = mem ;
+    GB_MDECL (I2k, , u) ; uint64_t I2k_mem = mem ;
+    GB_MDECL (I1 , , u) ; uint64_t I1_mem  = mem ;
+    GB_MDECL (I1k, , u) ; uint64_t I1k_mem = mem ;
     GB_WERK_DECLARE (W, uint64_t) ;
 
     ASSERT (ni > 1) ;
@@ -106,8 +110,8 @@ GrB_Info GB_ijsort
     bool I1k_is_32 = (ni <= UINT32_MAX) ;
     size_t i1size  = (I1_is_32 ) ? sizeof (uint32_t) : sizeof (uint64_t) ;
     size_t i1ksize = (I1k_is_32) ? sizeof (uint32_t) : sizeof (uint64_t) ;
-    I1  = GB_MALLOC_MEMORY (ni, i1size , &I1_size) ;
-    I1k = GB_MALLOC_MEMORY (ni, i1ksize, &I1k_size) ;
+    I1  = GB_MALLOC_MEMORY (ni, i1size , &I1_mem) ;
+    I1k = GB_MALLOC_MEMORY (ni, i1ksize, &I1k_mem) ;
     GB_IPTR (I1 , I1_is_32) ;
     GB_IPTR (I1k, I1k_is_32) ;
     if (W == NULL || I1 == NULL || I1k == NULL)
@@ -175,8 +179,8 @@ GrB_Info GB_ijsort
 
     const bool I2_is_32  = I1_is_32 ;
     const bool I2k_is_32 = I1k_is_32 ;
-    I2  = GB_MALLOC_MEMORY (ni2, i1size , &I2_size) ;
-    I2k = GB_MALLOC_MEMORY (ni2, i1ksize, &I2k_size) ;
+    I2  = GB_MALLOC_MEMORY (ni2, i1size , &I2_mem) ;
+    I2k = GB_MALLOC_MEMORY (ni2, i1ksize, &I2k_mem) ;
     if (I2 == NULL || I2k == NULL)
     { 
         // out of memory
@@ -249,10 +253,10 @@ GrB_Info GB_ijsort
     GB_FREE_WORKSPACE ;
     (*p_ni2)            = ni2 ;
     (*p_I2 )            = I2  ;
-    (*I2_size_handle )  = I2_size ;
+    (*I2_mem_handle )   = I2_mem ;
     (*I2_is_32_handle)  = I2_is_32 ;
     (*p_I2k)            = I2k ;
-    (*I2k_size_handle)  = I2k_size ;
+    (*I2k_mem_handle)   = I2k_mem ;
     (*I2k_is_32_handle) = I2k_is_32 ;
     return (GrB_SUCCESS) ;
 }

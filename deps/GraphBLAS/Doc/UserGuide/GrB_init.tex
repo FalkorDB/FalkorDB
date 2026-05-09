@@ -326,13 +326,14 @@ the user application control over this is particularly important when using the
 \ref{serialize_deserialize} and \ref{container}, since they require the user
 application and GraphBLAS to use the same memory manager.
 \verb'user_calloc_func' and \verb'user_realloc_func' are optional, and may be
-\verb'NULL'.  If \verb'NULL', then the \verb'user_malloc_func' is relied on
-instead, for all memory allocations.  These functions can only be set once,
-when GraphBLAS starts.  They can be queried using \verb'GrB_get' (see
-Section~\ref{get_set_global}).  Either \verb'GrB_init' or \verb'GxB_init' must
-be called before any other GraphBLAS operation, but not both.  The functions
-passed to \verb'GxB_init' must be thread-safe.  The following usage is
-identical to \verb'GrB_init(mode)':
+\verb'NULL'.  If \verb'user_realloc_func' is \verb'NULL', then
+\verb'user_malloc_func' is relied on instead.
+
+These functions can only be set once, when GraphBLAS starts.  They can be
+queried using \verb'GrB_get' (see Section~\ref{get_set_global}).  Either
+\verb'GrB_init' or \verb'GxB_init' must be called before any other GraphBLAS
+operation, but not both.  The functions passed to \verb'GxB_init' must be
+thread-safe.  The following usage is identical to \verb'GrB_init(mode)':
 
     {\footnotesize
     \begin{verbatim}
@@ -340,6 +341,11 @@ identical to \verb'GrB_init(mode)':
 
 If a GPU mode is used, the memory manager functions are ignored, and
 the Rapids Memory Manager (RMM) versions are used instead.
+
+GraphBLAS itself does not use the system \verb'calloc' nor the
+\verb'user_calloc_func', except the function pointer is returned by the
+\verb'GrB_get' method via the \verb'GxB_CALLOC_FUNCTION' enum;
+see Sections~\ref{get_set_enums} and \ref{get_set_global}.
 
 %===============================================================================
 \subsection{{\sf GrB\_Info:} status code returned by GraphBLAS} %===============

@@ -20,7 +20,7 @@ GrB_Info GB_subref_phase2               // count nnz in each C(:,j)
     // computed by phase2:
     void **Cp_handle,                   // output of size Cnvec+1
     bool *p_Cp_is_32,                   // if true, Cp is 32-bit; else 64 bit
-    size_t *Cp_size_handle,
+    uint64_t *Cp_mem_handle,
     int64_t *Cnvec_nonempty,            // # of non-empty vectors in C
     // tasks from phase1:
     GB_task_struct *restrict TaskList,  // array of structs
@@ -28,7 +28,7 @@ GrB_Info GB_subref_phase2               // count nnz in each C(:,j)
     const int nthreads,                 // # of threads to use
     const GrB_Matrix R,                 // R = inverse (I), if needed
     uint64_t **p_Cwork,                 // workspace of size max(2,C->nvec+1)
-    size_t Cwork_size,
+    uint64_t Cwork_mem,
     // analysis from phase0:
     const void *Ap_start,
     const void *Ap_end,
@@ -44,6 +44,7 @@ GrB_Info GB_subref_phase2               // count nnz in each C(:,j)
     const bool I_is_32,         // if true, I is 32-bit; else 64-bit
     const bool symbolic,
     GB_Werk Werk
+    // FIXME memlane param
 )
 {
 
@@ -51,8 +52,11 @@ GrB_Info GB_subref_phase2               // count nnz in each C(:,j)
     // check inputs
     //--------------------------------------------------------------------------
 
+    int memlane = 0 ;   // FIXME memlane param
+    uint64_t mem = GB_mem (memlane, 0) ;
+
     ASSERT (Cp_handle != NULL) ;
-    ASSERT (Cp_size_handle != NULL) ;
+    ASSERT (Cp_mem_handle != NULL) ;
     ASSERT_MATRIX_OK (A, "A for subref phase2", GB0) ;
     ASSERT (GB_IS_SPARSE (A) || GB_IS_HYPERSPARSE (A)) ;
 
@@ -94,7 +98,7 @@ GrB_Info GB_subref_phase2               // count nnz in each C(:,j)
     }
 
     (*Cp_handle) = NULL ;
-    (*Cp_size_handle) = 0 ;
+    (*Cp_mem_handle) = 0 ;
     uint64_t *restrict Cwork = (*p_Cwork) ;
     const bool Ai_is_32 = A->i_is_32 ;
     ASSERT (Cwork != NULL) ;
@@ -162,13 +166,13 @@ GrB_Info GB_subref_phase2               // count nnz in each C(:,j)
     GB_determine_pji_is_32 (&Cp_is_32, &Cj_is_32, &Ci_is_32,
         GxB_AUTO_SPARSITY, cnz, nI, nJ, Werk) ;
 
-    void *Cp = NULL ; size_t Cp_size = 0 ;
+    void *Cp = NULL ; uint64_t Cp_mem = mem ;
 
     if (Cp_is_32)
     { 
         // Cp is 32-bit; allocate and typecast from Cwork
         Cp = GB_MALLOC_MEMORY (GB_IMAX (2, Cnvec+1), sizeof (uint32_t),
-            &Cp_size) ;
+            &Cp_mem) ;
         if (Cp == NULL)
         { 
             // out of memory
@@ -182,7 +186,7 @@ GrB_Info GB_subref_phase2               // count nnz in each C(:,j)
     { 
         // Cp is 64-bit; transplant Cwork as Cp
         Cp = Cwork ;
-        Cp_size = Cwork_size ;
+        Cp_mem = Cwork_mem ;
         (*p_Cwork) = NULL ;
     }
 
@@ -190,9 +194,9 @@ GrB_Info GB_subref_phase2               // count nnz in each C(:,j)
     // return the result
     //--------------------------------------------------------------------------
 
-    (*Cp_handle     ) = Cp ;
-    (*Cp_size_handle) = Cp_size ;
-    (*p_Cp_is_32    ) = Cp_is_32 ;
+    (*Cp_handle    ) = Cp ;
+    (*Cp_mem_handle) = Cp_mem ;
+    (*p_Cp_is_32   ) = Cp_is_32 ;
     return (GrB_SUCCESS) ;
 }
 

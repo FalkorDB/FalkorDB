@@ -25,6 +25,11 @@
 // The vector V may have readonly components on input; they are simply removed
 // from V and not modified.
 
+// The handling parameter can be one of:
+//
+//      GrB_DEFAULT + memlane
+//      GxB_IS_READONLY + memlane
+
 #include "GB_container.h"
 
 GrB_Info GxB_Vector_load
@@ -35,7 +40,7 @@ GrB_Info GxB_Vector_load
     // input:
     GrB_Type type,          // type of X
     uint64_t n,             // # of entries in X
-    uint64_t X_size,        // size of X in bytes (at least n*(sizeof the type))
+    uint64_t X_memsize,     // size of X in bytes (at least n*(sizeof the type))
     int handling,           // GrB_DEFAULT (0): transfer ownership to GraphBLAS
                             // GxB_IS_READONLY: X treated as readonly;
                             //  ownership kept by the user application
@@ -55,12 +60,26 @@ GrB_Info GxB_Vector_load
     { 
         GB_RETURN_IF_NULL (*X) ;
     }
-    if (X_size < n * type->size)
+    if (X_memsize < n * type->size)
     { 
         // X is too small
         return (GrB_INVALID_VALUE) ;
     }
     ASSERT_VECTOR_OK (V, "V to load (contents mostly ignored)", GB0) ;
+
+    int memlane ;
+    bool readonly ;
+
+    switch (handling)
+    {
+        case GrB_DEFAULT       : memlane = 0 ; readonly = false ; break ;
+        case GrB_DEFAULT+1     : memlane = 1 ; readonly = false ; break ;
+        case GxB_IS_READONLY   : memlane = 0 ; readonly = true  ; break ;
+        case GxB_IS_READONLY+1 : memlane = 1 ; readonly = true  ; break ;
+        default : return (GrB_INVALID_VALUE) ;  // invalid handling
+    }
+
+    uint64_t X_mem = GB_mem (memlane, X_memsize) ;
 
     //--------------------------------------------------------------------------
     // clear prior content of V and load X, making V a dense GrB_Vector
@@ -70,15 +89,14 @@ GrB_Info GxB_Vector_load
     // (hyper_switch, bitmap_switch, [pji]_control, etc) are preserved, except
     // that V->sparsity_control is revised to allow V to become a full vector.
 
-    bool readonly = (handling != GrB_DEFAULT) ;
     if (!readonly)
     { 
         // *X is given to GraphBLAS to be owned by the vector V, so add it to
         // the global debug memtable.
-        GB_Global_memtable_add (*X, X_size) ;
+        GB_Global_memtable_add (*X, X_mem) ;
     }
 
-    GB_vector_load (V, X, type, n, X_size, readonly) ;
+    GB_vector_load (V, X, type, n, X_mem, readonly) ;
 
     //--------------------------------------------------------------------------
     // return result

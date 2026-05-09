@@ -16,10 +16,8 @@
 //      rmm_wrap_is_initialized: query if the RMM resource has been created
 //      rmm_wrap_finalize: destroy the RMM resource
 
-// C-style malloc/calloc/realloc/free methods:
+// C-style malloc/free methods:
 //      rmm_wrap_malloc:  malloc a block of memory using RMM
-//      rmm_wrap_calloc:  calloc a block of memory using RMM
-//      rmm_wrap_realloc: realloc a block of allocated by this RMM wrapper
 //      rmm_wrap_free:    free a block of memory allocated by this RMM wrapper
 
 // PMR-based allocate/deallocate methods (C-callable):
@@ -215,9 +213,8 @@ int rmm_wrap_initialize     // returns -1 on error, 0 on success
 (
     uint32_t device_id,     // GPU device id, for cudaSetDevice
     RMM_MODE mode,          // TODO: describe. Should we default this?
-    size_t init_pool_size,  // TODO: describe. Should we default this?
-    size_t max_pool_size    // TODO: describe. Should we default this?
-//  , size_t stream_pool_size // TODO: describe. Should we default this?
+    size_t init_pool_memsize,  // TODO: describe. Should we default this?
+    size_t max_pool_memsize    // TODO: describe. Should we default this?
 )
 {
     
@@ -233,15 +230,6 @@ int rmm_wrap_initialize     // returns -1 on error, 0 on success
             return (-1) ;
         }
 
-#if 0
-        if(stream_pool_size <= 0)
-        {
-            // std::cout << "Stream pool size must be >=0" << std::endl;
-            // failed to create the alloc_map
-            return (-1) ;
-        }
-#endif
-
         RMM_WRAP_CHECK_CUDA (cudaSetDevice (device_id)) ;
 
         // create the RMM wrap handle and save it as a global pointer.
@@ -249,43 +237,36 @@ int rmm_wrap_initialize     // returns -1 on error, 0 on success
         // FIXME: check for error?
 
         //  std::cout<< " init called with mode "<<mode<<" init_size "
-        // <<init_pool_size<<" max_size "<<max_pool_size<<"\n";
+        // <<init_pool_memsize<<" max_size "<<max_pool_memsize<<"\n";
 
         //----------------------------------------------------------------------
         // Construct a resource that uses a coalescing best-fit pool allocator
         //----------------------------------------------------------------------
 
-#if 0
-        // Set CUDA stream pool
-        // std::cout << "Creating rmm_wrap stream pool" << std::endl;
-        rmm_wrap_context[device_id]->stream_pool = make_and_set_cuda_stream_pool(stream_pool_size);
-        RMM_WRAP_CHECK_CUDA(cudaStreamCreate(&(rmm_wrap_context[device_id]->main_stream)));
-#endif
-
         if (mode == rmm_wrap_host )
         {
             // rmm_wrap_context->host_resource =
             //  std::pmr::synchronized_pool_resource() ;
-            //  // (init_pool_size, max_pool_size) ;
+            //  // (init_pool_memsize, max_pool_memsize) ;
             // rmm_wrap_context->host_resource =  make_and_set_host_pool() ;
-            //  // (init_pool_size, max_pool_size) ;
+            //  // (init_pool_memsize, max_pool_memsize) ;
         }
         else if (mode == rmm_wrap_host_pinned )
         {
             // rmm_wrap_context->host_resource =
             //  std::pmr::synchronized_pool_resource() ;
-            //  // (init_pool_size, max_pool_size) ;
+            //  // (init_pool_memsize, max_pool_memsize) ;
         }
         else if (mode == rmm_wrap_device )
         {
             rmm_wrap_context[device_id]->resource =
-                make_and_set_device_pool( init_pool_size, max_pool_size) ;
+                make_and_set_device_pool( init_pool_memsize, max_pool_memsize) ;
         }
         else if ( mode == rmm_wrap_managed )
         {
             // std::cout << "Seting managed pool" << std::endl;
             rmm_wrap_context[device_id]->resource = 
-                make_and_set_managed_pool( init_pool_size, max_pool_size);
+                make_and_set_managed_pool( init_pool_memsize, max_pool_memsize);
         }
         else
         {
@@ -325,9 +306,8 @@ int rmm_wrap_initialize     // returns -1 on error, 0 on success
 int rmm_wrap_initialize_all_same
 (
     RMM_MODE mode,              // TODO: describe. Should we default this?
-    size_t init_pool_size,      // TODO: describe. Should we default this?
-    size_t max_pool_size        // TODO: describe. Should we default this?
-//  , size_t stream_pool_size     // TODO: describe. Should we default this?
+    size_t init_pool_memsize,      // TODO: describe. Should we default this?
+    size_t max_pool_memsize        // TODO: describe. Should we default this?
 )
 {
     try
@@ -357,7 +337,8 @@ int rmm_wrap_initialize_all_same
             std::string intermediate;
             for (int i = 0; getline(check1, intermediate, ','); ++i)
             {
-                intermediate.erase(std::remove_if(intermediate.begin(), intermediate.end(), ::isspace), intermediate.end());
+                intermediate.erase(std::remove_if(intermediate.begin(),
+                    intermediate.end(), ::isspace), intermediate.end());
 
                 // GPUs represented by UUIDs from "nvidia-smi -L" or MIG
                 if (std::strncmp("GPU-", intermediate.c_str(), 4) == 0 ||
@@ -394,8 +375,7 @@ int rmm_wrap_initialize_all_same
         for(int i = 0; i < devices.size(); ++i) {
             rmm_wrap_context[i] = NULL;
             uint32_t device_id = devices[i];
-            // std::cout << "Creating rmm_wrap_context for device_id " << device_id << std::endl;
-            int ret = rmm_wrap_initialize(device_id, mode, init_pool_size, max_pool_size ) ; // , stream_pool_size);
+            int ret = rmm_wrap_initialize(device_id, mode, init_pool_memsize, max_pool_memsize ) ;
             if(ret < 0) {
                 return ret;
             }
@@ -458,9 +438,10 @@ void *rmm_wrap_malloc (std::size_t size)
 }
 
 //------------------------------------------------------------------------------
-// rmm_wrap_calloc: calloc-equivalent method using RMM
+// rmm_wrap_calloc: calloc-equivalent method using RMM (not used)
 //------------------------------------------------------------------------------
 
+#if 0
 // rmm_wrap_calloc is identical to the C11 calloc function, except that
 // it uses RMM underneath to allocate the space.
 
@@ -477,10 +458,13 @@ void *rmm_wrap_calloc (std::size_t n, std::size_t size)
     }
     return (p) ;
 }
+#endif
 
 //------------------------------------------------------------------------------
-// rmm_wrap_realloc: realloc-equivalent method using RMM
+// rmm_wrap_realloc: realloc-equivalent method using RMM (not used)
 //------------------------------------------------------------------------------
+
+#if 0
 
 // rmm_wrap_realloc is identical to the C11 realloc function, except that
 // it uses RMM underneath to allocate the space.
@@ -549,6 +533,7 @@ void *rmm_wrap_realloc (void *p, std::size_t newsize)
         return (NULL) ;
     }
 }
+#endif
 
 //------------------------------------------------------------------------------
 // rmm_wrap_free: free a block of memory, size not needed

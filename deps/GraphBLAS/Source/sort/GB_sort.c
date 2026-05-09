@@ -335,19 +335,22 @@ GrB_Info GB_sort
     ASSERT_MATRIX_OK (A, "A for GB_sort", GB0) ;
     ASSERT_BINARYOP_OK (op, "op for GB_sort", GB0) ;
 
-    GrB_Matrix T = NULL ;
-    struct GB_Matrix_opaque T_header ;
-    GB_WERK_DECLARE (C_ek_slicing, int64_t) ;
-
-    int nthreads_max = GB_Context_nthreads_max ( ) ;
-    double chunk = GB_Context_chunk ( ) ;
-
     bool C_is_NULL = (C == NULL) ;
     if (C_is_NULL && P == NULL)
     { 
         // either C, or P, or both must be present
         return (GrB_NULL_POINTER) ;
     }
+
+    int memlane = (C != NULL) ? GB_memlane (C->header_mem) :
+                                GB_memlane (P->header_mem) ;
+    uint64_t mem = GB_mem (memlane, 0) ;
+
+    GrB_Matrix T = NULL ;
+    GB_WERK_DECLARE (C_ek_slicing, int64_t) ;
+
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
+    double chunk = GB_Context_chunk ( ) ;
 
     GrB_Type atype = A->type ;
     GrB_Type ctype = (C_is_NULL) ? atype : C->type ;
@@ -413,7 +416,7 @@ GrB_Info GB_sort
     if (C_is_NULL)
     { 
         // C is a temporary matrix, which is freed when done
-        GB_CLEAR_MATRIX_HEADER (T, &T_header) ;
+        GB_OK (GB_matrix_header_new (&T, memlane)) ;
         C = T ;
     }
 
@@ -426,7 +429,7 @@ GrB_Info GB_sort
             if (!sort_in_place)
             { 
                 // C = A
-                GB_OK (GB_dup_worker (&C, A_iso, A, true, atype)) ;
+                GB_OK (GB_dup_worker (&C, A_iso, A, true, atype, memlane)) ;
             }
         }
         else
@@ -453,7 +456,7 @@ GrB_Info GB_sort
             if (!sort_in_place)
             { 
                 // C = A
-                GB_OK (GB_dup_worker (&C, A_iso, A, true, atype)) ;
+                GB_OK (GB_dup_worker (&C, A_iso, A, true, atype, memlane)) ;
             }
         }
         else
@@ -720,7 +723,8 @@ GrB_Info GB_sort
     {
         // allocate P->i and use it to construct the new indices
         size_t pisize = P->i_is_32 ? sizeof (uint32_t) : sizeof (uint64_t) ;
-        P->i = GB_MALLOC_MEMORY (cnz, pisize, &(P->i_size)) ;
+        P->i_mem = mem ;
+        P->i = GB_MALLOC_MEMORY (cnz, pisize, &(P->i_mem)) ;
         if (P->i == NULL)
         { 
             // out of memory
@@ -793,9 +797,9 @@ GrB_Info GB_sort
             // C is a temporary matrix T, and its contents are not needed.  The
             // indices of C become the values of P, Cp becomes Pp, and Ch (if
             // present) becomes Ph.
-            P->x = C->i ; C->i = NULL ; P->x_size = C->i_size ;
-            P->p = C->p ; C->p = NULL ; P->p_size = C->p_size ;
-            P->h = C->h ; C->h = NULL ; P->h_size = C->h_size ;
+            P->x = C->i ; C->i = NULL ; P->x_mem = C->i_mem ;
+            P->p = C->p ; C->p = NULL ; P->p_mem = C->p_mem ;
+            P->h = C->h ; C->h = NULL ; P->h_mem = C->h_mem ;
             P->plen = C->plen ;
         }
         else
@@ -805,12 +809,15 @@ GrB_Info GB_sort
             // copied to Pp, and Ch (if present) is copied to Ph.
             int64_t pplen = GB_IMAX (1, cnvec) ;
             P->plen = pplen ;
-            P->x = GB_MALLOC_MEMORY (cnz, pxsize, &(P->x_size)) ;
-            P->p = GB_MALLOC_MEMORY (pplen+1, ppsize, &(P->p_size)) ;
+            P->x_mem = mem ;
+            P->p_mem = mem ;
+            P->h_mem = mem ;
+            P->x = GB_MALLOC_MEMORY (cnz, pxsize, &(P->x_mem)) ;
+            P->p = GB_MALLOC_MEMORY (pplen+1, ppsize, &(P->p_mem)) ;
             P->h = NULL ;
             if (C_is_hyper)
             { 
-                P->h = GB_MALLOC_MEMORY (pplen, pjsize, &(P->h_size)) ;
+                P->h = GB_MALLOC_MEMORY (pplen, pjsize, &(P->h_mem)) ;
             }
             if (P->x == NULL || P->p == NULL || (C_is_hyper && P->h == NULL))
             { 
@@ -820,13 +827,10 @@ GrB_Info GB_sort
             }
 
             // copy from C to P
-//          GB_memcpy (P->x, C->i, cnz * sizeof (int64_t), nthreads_max) ;
             GB_cast_int (P->x, pxcode, C->i, cicode, cnz, nthreads_max) ;
-//          GB_memcpy (P->p, C->p, (cnvec+1) * sizeof (int64_t), nthreads_max) ;
             GB_cast_int (P->p, ppcode, C->p, cpcode, cnvec+1, nthreads_max) ;
             if (C_is_hyper)
             { 
-//              GB_memcpy (P->h, C->h, cnvec * sizeof (int64_t), nthreads_max) ;
                 GB_cast_int (P->h, pjcode, C->h, cjcode, cnvec, nthreads_max) ;
             }
         }
@@ -842,7 +846,6 @@ GrB_Info GB_sort
     if (!C_is_NULL && P != NULL)
     { 
         // copy P->i into C->i
-//      GB_memcpy (C->i, P->i, cnz * sizeof (int64_t), nthreads_max) ;
         GB_cast_int (C->i, cicode, P->i, picode, cnz, nthreads_max) ;
     }
 

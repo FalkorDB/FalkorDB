@@ -5,7 +5,27 @@
 
 #pragma once
 
+#include "RG.h"
 #include "delta_matrix.h"
+
+#if RG_DEBUG
+#define GRB_MATRIX_TYPE_ASSERT(M, TYPE)  \
+do {                                     \
+	GrB_Type _ty = NULL;                 \
+	GrB_OK(GxB_Matrix_type(&_ty, M));    \
+	ASSERT(_ty == TYPE);                 \
+} while(0);
+#else
+#define GRB_MATRIX_TYPE_ASSERT(M, TYPE)
+#endif
+
+typedef enum
+{
+	VAL_NO_T,
+	VAL_BASIC,
+	VAL_T_SHORT,
+	VAL_T_FULL
+} DM_validation_level;
 
 void Delta_Matrix_checkBounds
 (
@@ -49,6 +69,6 @@ void Delta_Matrix_mulCompatible
 void Delta_Matrix_validate
 (
 	const Delta_Matrix C,
-	bool check_transpose
+	DM_validation_level lvl
 ) ;
 

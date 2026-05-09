@@ -18,8 +18,8 @@ GrB_Info GxB_Matrix_import_BitmapC  // import a bitmap matrix, held by column
 
     int8_t **Ab,        // bitmap
     void **Ax,          // values
-    uint64_t Ab_size,   // size of Ab in bytes
-    uint64_t Ax_size,   // size of Ax in bytes
+    uint64_t Ab_memsize,   // size of Ab in bytes
+    uint64_t Ax_memsize,   // size of Ax in bytes
     bool iso,           // if true, A is iso
 
     uint64_t nvals,     // # of entries in bitmap
@@ -32,7 +32,7 @@ GrB_Info GxB_Matrix_import_BitmapC  // import a bitmap matrix, held by column
     //--------------------------------------------------------------------------
 
     GB_WHERE0 ("GxB_Matrix_import_BitmapC (&A, type, nrows, ncols, "
-        "&Ab, &Ax, Ab_size, Ax_size, iso, nvals, desc)") ;
+        "&Ab, &Ax, Ab_memsize, Ax_memsize, iso, nvals, desc)") ;
 
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
     GB_GET_DESCRIPTOR_IMPORT (desc, fast_import) ;
@@ -44,9 +44,9 @@ GrB_Info GxB_Matrix_import_BitmapC  // import a bitmap matrix, held by column
     info = GB_import (false, A, type, nrows, ncols, false,
         NULL, 0,        // Ap
         NULL, 0,        // Ah
-        Ab,   Ab_size,  // Ab
+        Ab,   Ab_memsize,  // Ab
         NULL, 0,        // Ai
-        Ax,   Ax_size,  // Ax
+        Ax,   Ax_memsize,  // Ax
         nvals, false, 0,                    // nvals for bitmap
         GxB_BITMAP, true,                   // bitmap by col
         iso, fast_import, true, Werk) ;

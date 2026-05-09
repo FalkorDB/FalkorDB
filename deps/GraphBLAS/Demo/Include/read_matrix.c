@@ -17,6 +17,8 @@
 
 #include "graphblas_demos.h"
 
+// FIXME: use same malloc/free as GraphBLAS
+
 // free all workspace; this used by the OK(...) macro if an error occurs
 #undef  FREE_ALL
 #define FREE_ALL                    \

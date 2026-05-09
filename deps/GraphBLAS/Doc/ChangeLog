@@ -1,3 +1,11 @@
+FIXME, version 10.4.0
+
+    * GrB_Matrix_extractElement: no longer waits if the entry can be
+        found without finalizing pending tuples
+    * GxB_atfork_(prepare,parent,child): added to support an application
+        needing to fork, while still using GraphBLAS.
+    * static headers: removed, except for GB_Scalar_wrap, and unary/binary ops
+
 Jan 21, 2026, version 10.3.1
 
     * (67) bug fix:  incorrect JIT kernel constructed for R=masker(C,M,Z)
@@ -487,7 +495,7 @@ Version 6.2.0 Feb 14, 2022
 
     * added row/column/entry/vector iterators
     * @GrB C=A*B: revised sparse-times-full rule
-    * static_header: no longer used if CUDA enabled
+    * static header: no longer used if CUDA enabled
     * GB_BURBLE: removed.  Burble can no longer be disabled at compile-time.
 
 Version 6.1.4, Jan 13, 2022
@@ -677,7 +685,7 @@ Version 5.1.0, June 28, 2021
     * GxB_*_pack/unpack methods added
     * GrB.argmin/argmax: added to @GrB interface
     * GxB_PRINT_1BASED: added to the global settings
-    * GxB_*_memoryUsage added
+    * GxB_Matrix_memoryUsage and related methods: added
     * Source/Generated: split into Source/Generated1 and Source/Generated2
         for faster compilation when GBCOMPACT is enabled
     * port to Octave:  gbmake and gbtest work in Octave7 to build and test

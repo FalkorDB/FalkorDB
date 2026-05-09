@@ -51,15 +51,16 @@ GrB_BinaryOp GB_binop_second    // return SECOND operator, or NULL on error
             // SECOND_UDT opertor except for this method.
             if (op == NULL) return (NULL) ;
             // op = &op_header has been provided by the caller
-            op->header_size = 0 ;
+            op->header_mem = 0 ;      // the op header is static 
             #ifdef GB_DEBUG
             GrB_Info info =
             #endif
-            GB_binop_new (op, NULL, // op->binop_function NULL for 2nd
-                type, type, type,   // type is user-defined
-                type->name,         // same name as type
-                NULL,               // no op->defn for the SECOND_UDT operator
-                GB_SECOND_binop_code) ; // using a built-in opcode
+            GB_binop_new (op, NULL,   // op->binop_function NULL for 2nd
+                type, type, type,     // type is user-defined
+                type->name,           // same name as type
+                NULL,                 // no op->defn for the SECOND_UDT operator
+                GB_SECOND_binop_code, // using a built-in opcode
+                GB_MEMLANE_DEFAULT) ; // memlane not used
             ASSERT (info == GrB_SUCCESS) ;
             if (GB_Global_burble_get ( ))
             { 

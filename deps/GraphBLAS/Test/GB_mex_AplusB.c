@@ -22,7 +22,6 @@
     GB_mx_put_global (true) ;   \
 }
 
-
 void mexFunction
 (
     int nargout,
@@ -31,8 +30,8 @@ void mexFunction
     const mxArray *pargin [ ]
 )
 {
-    struct GB_Matrix_opaque C_header ;
-    GrB_Matrix C = GB_clear_matrix_header (&C_header) ;
+    GrB_Matrix C = NULL ;
+    GB_matrix_header_new (&C, GB_MEMLANE_MATLAB) ;
 
     bool malloc_debug = GB_mx_get_global (true) ;
     GrB_Matrix A = NULL ;

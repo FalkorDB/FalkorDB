@@ -19,6 +19,10 @@ GB_CALLBACK_SAXPY3_CUMSUM_PROTO (GB_AxB_saxpy3_cumsum)
     // get C
     //--------------------------------------------------------------------------
 
+    ASSERT (C != NULL) ;
+    int memlane = GB_memlane (C->header_mem) ;
+    uint64_t mem = GB_mem (memlane, 0) ;
+
     ASSERT (!GB_IS_BITMAP (C)) ;
     ASSERT (!GB_IS_FULL (C)) ;
 
@@ -42,9 +46,9 @@ GB_CALLBACK_SAXPY3_CUMSUM_PROTO (GB_AxB_saxpy3_cumsum)
         //----------------------------------------------------------------------
 
         // int64_t kk = SaxpyTasks [taskid].vector ;
-        uint64_t hash_size = SaxpyTasks [taskid].hsize ;
-        bool use_Gustavson = (hash_size == cvlen) ;
-        int team_size = SaxpyTasks [taskid].team_size ;
+        uint64_t hash_nitems = SaxpyTasks [taskid].hash_nitems ;
+        bool use_Gustavson = (hash_nitems == cvlen) ;
+        int team_nfine = SaxpyTasks [taskid].team_nfine ;
         int leader    = SaxpyTasks [taskid].leader ;
         int my_teamid = taskid - leader ;
         int64_t my_cjnz = 0 ;
@@ -61,7 +65,7 @@ GB_CALLBACK_SAXPY3_CUMSUM_PROTO (GB_AxB_saxpy3_cumsum)
             int8_t *restrict Hf ;
             Hf = (int8_t *restrict) SaxpyTasks [taskid].Hf ;
             int64_t istart, iend ;
-            GB_PARTITION (istart, iend, cvlen, my_teamid, team_size) ;
+            GB_PARTITION (istart, iend, cvlen, my_teamid, team_nfine) ;
             for (int64_t i = istart ; i < iend ; i++)
             {
                 if (Hf [i] == 2)
@@ -83,7 +87,7 @@ GB_CALLBACK_SAXPY3_CUMSUM_PROTO (GB_AxB_saxpy3_cumsum)
 
             uint64_t *restrict Hf = (uint64_t *restrict) SaxpyTasks [taskid].Hf;
             uint64_t mystart, myend ;
-            GB_PARTITION (mystart, myend, hash_size, my_teamid, team_size) ;
+            GB_PARTITION (mystart, myend, hash_nitems, my_teamid, team_nfine) ;
             for (uint64_t hash = mystart ; hash < myend ; hash++)
             {
                 if ((Hf [hash] & 3) == 2)
@@ -174,17 +178,17 @@ GB_CALLBACK_SAXPY3_CUMSUM_PROTO (GB_AxB_saxpy3_cumsum)
         ASSERT (Cp_is_32) ;
         ASSERT (!C->p_shallow) ;
         void *Cp_new = NULL ;
-        size_t Cp_new_size = 0 ;
-        Cp_new = GB_MALLOC_MEMORY (cnvec+1, sizeof (uint64_t), &Cp_new_size) ;
+        uint64_t Cp_new_mem = mem ;
+        Cp_new = GB_MALLOC_MEMORY (cnvec+1, sizeof (uint64_t), &Cp_new_mem) ;
         if (Cp_new == NULL)
         { 
             return (GrB_OUT_OF_MEMORY) ;
         }
         // Cp_new = (uint64_t) Cp, casting from 32-bit to 64-bit
         GB_cast_int (Cp_new, GB_UINT64_code, Cp, GB_UINT32_code, cnvec+1, nth) ;
-        GB_FREE_MEMORY (&Cp, C->p_size) ;
+        GB_FREE_MEMORY (&Cp, C->p_mem) ;
         C->p = Cp_new ;
-        C->p_size = Cp_new_size ;
+        C->p_mem = Cp_new_mem ;
         C->p_is_32 = false ;
         // redo the cumsum (this will always succeed)
         GB_cumsum (C->p, false, cnvec, &nvec_nonempty, nth, Werk) ;

@@ -30,11 +30,6 @@
 #error "kernel undefined for C or A iso"
 #endif
 
-// tile_sz can vary per algorithm.  It must a power of 2, and because we
-// use tile.shfl_down(), it must also be <= 32.
-#define tile_sz 32
-#define log2_tile_sz 5
-
 #include "template/GB_cuda_tile_sum_uint64.cuh"
 #include "template/GB_cuda_tile_reduce_ztype.cuh"
 #include "template/GB_cuda_threadblock_reduce_ztype.cuh"

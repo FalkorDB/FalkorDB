@@ -11,7 +11,7 @@
 
 GrB_Info GxB_Matrix_memoryUsage  // return # of bytes used for a matrix
 (
-    size_t *size,           // # of bytes used by the matrix A
+    size_t *memsize,        // # of bytes used by the matrix A
     const GrB_Matrix A      // matrix to query
 )
 { 
@@ -22,7 +22,7 @@ GrB_Info GxB_Matrix_memoryUsage  // return # of bytes used for a matrix
 
     GrB_Info info ;
     GB_CHECK_INIT ;
-    GB_RETURN_IF_NULL (size) ;
+    GB_RETURN_IF_NULL (memsize) ;
     GB_RETURN_IF_NULL_OR_INVALID (A) ;
 
     //--------------------------------------------------------------------------
@@ -30,11 +30,12 @@ GrB_Info GxB_Matrix_memoryUsage  // return # of bytes used for a matrix
     //--------------------------------------------------------------------------
 
     int64_t nallocs ;
-    size_t mem_shallow ;
-    GB_memoryUsage (&nallocs, size, &mem_shallow, A, true) ;
+    uint64_t mem_deep, mem_shallow ;
+    GB_memoryUsage (&nallocs, &mem_deep, &mem_shallow, A, true) ;
+    (*memsize) = (size_t) mem_deep ;
     if (GB_Global_stats_mem_shallow_get ( ))
     { 
-        (*size) += mem_shallow ;
+        (*memsize) += (size_t) mem_shallow ;
     }
     return (GrB_SUCCESS) ;
 }

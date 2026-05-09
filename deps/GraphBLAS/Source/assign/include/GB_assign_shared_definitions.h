@@ -35,12 +35,12 @@
 {                                               \
     GB_FREE_WORKSPACE ;                         \
     GB_WERK_POP (Npending, int64_t) ;           \
-    GB_FREE_MEMORY (&TaskList, TaskList_size) ; \
-    GB_FREE_MEMORY (&Zh, Zh_size) ;             \
-    GB_FREE_MEMORY (&Z_to_X, Z_to_X_size) ;     \
-    GB_FREE_MEMORY (&Z_to_S, Z_to_S_size) ;     \
-    GB_FREE_MEMORY (&Z_to_A, Z_to_A_size) ;     \
-    GB_FREE_MEMORY (&Z_to_M, Z_to_M_size) ;     \
+    GB_FREE_MEMORY (&TaskList, TaskList_mem) ;  \
+    GB_FREE_MEMORY (&Zh, Zh_mem) ;              \
+    GB_FREE_MEMORY (&Z_to_X, Z_to_X_mem) ;      \
+    GB_FREE_MEMORY (&Z_to_S, Z_to_S_mem) ;      \
+    GB_FREE_MEMORY (&Z_to_A, Z_to_A_mem) ;      \
+    GB_FREE_MEMORY (&Z_to_M, Z_to_M_mem) ;      \
     GB_FREE_S ;                                 \
 }
 
@@ -209,14 +209,17 @@
 
 #define GB_EMPTY_TASKLIST                                                   \
     GrB_Info info ;                                                         \
+    ASSERT (C != NULL) ;                                                    \
+    int memlane = GB_memlane (C->header_mem) ;                              \
+    uint64_t mem = GB_mem (memlane, 0) ;                                    \
     int taskid, ntasks = 0, nthreads = 0 ;                                  \
-    GB_task_struct *TaskList = NULL ; size_t TaskList_size = 0 ;            \
+    GB_task_struct *TaskList = NULL ; uint64_t TaskList_mem = mem ;         \
     GB_WERK_DECLARE (Npending, int64_t) ;                                   \
-    GB_MDECL (Zh, , u) ; size_t Zh_size = 0 ;                               \
-    int64_t *restrict Z_to_X = NULL ; size_t Z_to_X_size = 0 ;              \
-    int64_t *restrict Z_to_S = NULL ; size_t Z_to_S_size = 0 ;              \
-    int64_t *restrict Z_to_A = NULL ; size_t Z_to_A_size = 0 ;              \
-    int64_t *restrict Z_to_M = NULL ; size_t Z_to_M_size = 0 ;
+    GB_MDECL (Zh, , u) ; uint64_t Zh_mem = mem ;                            \
+    int64_t *restrict Z_to_X = NULL ; uint64_t Z_to_X_mem = mem ;           \
+    int64_t *restrict Z_to_S = NULL ; uint64_t Z_to_S_mem = mem ;           \
+    int64_t *restrict Z_to_A = NULL ; uint64_t Z_to_A_mem = mem ;           \
+    int64_t *restrict Z_to_M = NULL ; uint64_t Z_to_M_mem = mem
 
 //------------------------------------------------------------------------------
 // GB_GET_C: get the C matrix (cannot be bitmap)
@@ -271,7 +274,7 @@
     const int8_t *Mb = M->b ;                                               \
     const GB_M_TYPE *Mx = (GB_M_TYPE *) (GB_MASK_STRUCT ? NULL : (M->x)) ;  \
     const size_t msize = M->type->size ;                                    \
-    const size_t Mvlen = M->vlen ;                                          \
+    const int64_t Mvlen = M->vlen ;                                         \
     const int64_t Mnvec = M->nvec ;                                         \
     const bool M_is_hyper = GB_IS_HYPERSPARSE (M) ;                         \
     const bool M_is_bitmap = GB_IS_BITMAP (M) ;
@@ -1311,10 +1314,10 @@
 
 #define GB_SUBASSIGN_ONE_SLICE(M)                                           \
     GB_OK (GB_subassign_one_slice (                                         \
-        &TaskList, &TaskList_size, &ntasks, &nthreads, C,                   \
+        &TaskList, &TaskList_mem, &ntasks, &nthreads, C,                    \
         I, GB_I_IS_32, nI, GB_I_KIND, Icolon,                               \
         J, GB_J_IS_32, nJ, GB_J_KIND, Jcolon,                               \
-        M, Werk)) ;                                                         \
+        M, memlane, Werk)) ;                                                \
     GB_ALLOCATE_NPENDING_WERK ;
 
 //------------------------------------------------------------------------------
@@ -1335,12 +1338,12 @@
     int64_t Znvec ;                                                         \
     bool Zp_is_32, Zj_is_32, Zi_is_32 ;                                     \
     GB_OK (GB_add_phase0 (                                                  \
-        &Znvec, &Zh, &Zh_size, NULL, NULL, &Z_to_X, &Z_to_X_size,           \
-        &Z_to_S, &Z_to_S_size, NULL, &Zp_is_32, &Zj_is_32, &Zi_is_32,       \
-        &Z_sparsity, NULL, X, S, Werk)) ;                                   \
+        &Znvec, &Zh, &Zh_mem, NULL, NULL, &Z_to_X, &Z_to_X_mem,             \
+        &Z_to_S, &Z_to_S_mem, NULL, &Zp_is_32, &Zj_is_32, &Zi_is_32,        \
+        &Z_sparsity, NULL, X, S, memlane, Werk)) ;                          \
     GB_IPTR (Zh, Zj_is_32) ;                                                \
     GB_OK (GB_ewise_slice (                                                 \
-        &TaskList, &TaskList_size, &ntasks, &nthreads,                      \
+        &TaskList, &TaskList_mem, &ntasks, &nthreads,                       \
         Znvec, Zh, Zj_is_32, NULL, Z_to_X, Z_to_S, false,                   \
         NULL, X, S, Werk)) ;                                                \
     GB_ALLOCATE_NPENDING_WERK ;
@@ -1353,8 +1356,8 @@
 // 10_and_18, 13, 15, 17, 19, and bitmap assignment.
 
 #define GB_SUBASSIGN_IXJ_SLICE                                              \
-    GB_OK (GB_subassign_IxJ_slice (&TaskList, &TaskList_size, &ntasks,      \
-        &nthreads, nI, nJ, Werk)) ;                                         \
+    GB_OK (GB_subassign_IxJ_slice (&TaskList, &TaskList_mem, &ntasks,       \
+        &nthreads, nI, nJ, memlane, Werk)) ;                                \
     GB_ALLOCATE_NPENDING_WERK ;
 
 //------------------------------------------------------------------------------
@@ -1763,7 +1766,7 @@
 #define GB_FREE_ALL_FOR_BITMAP                          \
     GB_WERK_POP (A_ek_slicing, int64_t) ;               \
     GB_WERK_POP (M_ek_slicing, int64_t) ;               \
-    GB_FREE_MEMORY (&TaskList_IxJ, TaskList_IxJ_size) ;
+    GB_FREE_MEMORY (&TaskList_IxJ, TaskList_IxJ_mem) ;
 
 //------------------------------------------------------------------------------
 // GB_GET_C_A_SCALAR_FOR_BITMAP: get the C and A matrices and the scalar
@@ -1775,9 +1778,12 @@
 #define GB_GET_C_A_SCALAR_FOR_BITMAP                                        \
     GrB_Info info ;                                                         \
     /* workspace: */                                                        \
+    int memlane = GB_memlane (C->header_mem) ;                              \
+    uint64_t mem = GB_mem (memlane, 0) ;                                    \
     GB_WERK_DECLARE (M_ek_slicing, int64_t) ;                               \
     int M_ntasks = 0, M_nthreads = 0 ;                                      \
-    GB_task_struct *TaskList_IxJ = NULL ; size_t TaskList_IxJ_size = 0 ;    \
+    GB_task_struct *TaskList_IxJ = NULL ;                                   \
+    uint64_t TaskList_IxJ_mem = mem ;                                       \
     int ntasks_IxJ = 0, nthreads_IxJ = 0 ;                                  \
     GB_WERK_DECLARE (A_ek_slicing, int64_t) ;                               \
     int A_ntasks = 0, A_nthreads = 0 ;                                      \

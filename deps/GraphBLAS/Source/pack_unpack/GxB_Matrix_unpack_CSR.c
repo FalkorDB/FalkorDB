@@ -17,9 +17,9 @@ GrB_Info GxB_Matrix_unpack_CSR  // unpack a CSR matrix
     uint64_t **Ap,      // row "pointers"
     uint64_t **Aj,      // column indices
     void **Ax,          // values
-    uint64_t *Ap_size,  // size of Ap in bytes
-    uint64_t *Aj_size,  // size of Aj in bytes
-    uint64_t *Ax_size,  // size of Ax in bytes
+    uint64_t *Ap_memsize,  // size of Ap in bytes
+    uint64_t *Aj_memsize,  // size of Aj in bytes
+    uint64_t *Ax_memsize,  // size of Ax in bytes
     bool *iso,          // if true, A is iso
     bool *jumbled,      // if true, indices in each row may be unsorted
     const GrB_Descriptor desc
@@ -32,8 +32,8 @@ GrB_Info GxB_Matrix_unpack_CSR  // unpack a CSR matrix
 
     GB_RETURN_IF_NULL (A) ;
     GB_RETURN_IF_OUTPUT_IS_READONLY (A) ;
-    GB_WHERE_1 (A, "GxB_Matrix_unpack_CSR (A, &Ap, &Aj, &Ax, &Ap_size,"
-        " &Aj_size, &Ax_size, &iso, &jumbled, desc)") ;
+    GB_WHERE_1 (A, "GxB_Matrix_unpack_CSR (A, &Ap, &Aj, &Ax, &Ap_memsize,"
+        " &Aj_memsize, &Ax_memsize, &iso, &jumbled, desc)") ;
     GB_BURBLE_START ("GxB_Matrix_unpack_CSR") ;
 
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
@@ -85,11 +85,11 @@ GrB_Info GxB_Matrix_unpack_CSR  // unpack a CSR matrix
     uint64_t vlen, vdim ;
 
     info = GB_export (true, &A, &type, &vlen, &vdim, false,
-        Ap,   Ap_size,  // Ap
+        Ap,   Ap_memsize,  // Ap
         NULL, NULL,     // Ah
         NULL, NULL,     // Ab
-        Aj,   Aj_size,  // Ai
-        Ax,   Ax_size,  // Ax
+        Aj,   Aj_memsize,  // Ai
+        Ax,   Ax_memsize,  // Ax
         NULL, jumbled, NULL,                // jumbled or not
         &sparsity, &is_csc,                 // sparse by row
         iso, Werk) ;

@@ -20,7 +20,7 @@
 // A->is_csc is ignored.
 
 // The input can be hypersparse or non-hypersparse.  The output C is always
-// non-hypersparse, and never shallow.  On input, C is a static header.
+// non-hypersparse, and never shallow.  On input, C is an existing header.
 
 // If A is m-by-n in CSC format, with e nonzeros, the time and memory taken is
 // O(m+n+e) if A is non-hypersparse, or O(m+e) if hypersparse.  This is fine if
@@ -35,29 +35,29 @@
 
 #include "transpose/GB_transpose.h"
 
-#define GB_FREE_WORKSPACE                                               \
-{                                                                       \
-    if (Workspaces != NULL && Workspaces_size != NULL)                  \
-    {                                                                   \
-        for (int tid = 0 ; tid < nworkspaces ; tid++)                   \
-        {                                                               \
-            GB_FREE_MEMORY (&(Workspaces [tid]), Workspaces_size [tid]) ; \
-        }                                                               \
-    }                                                                   \
-    GB_WERK_POP (A_slice, int64_t) ;                                    \
-    GB_WERK_POP (Workspaces_size, size_t) ;                             \
-    GB_WERK_POP (Workspaces, void *) ;                                  \
+#define GB_FREE_WORKSPACE                                                   \
+{                                                                           \
+    if (Workspaces != NULL && Workspaces_mems != NULL)                      \
+    {                                                                       \
+        for (int tid = 0 ; tid < nworkspaces ; tid++)                       \
+        {                                                                   \
+            GB_FREE_MEMORY (&(Workspaces [tid]), Workspaces_mems [tid]) ;   \
+        }                                                                   \
+    }                                                                       \
+    GB_WERK_POP (A_slice, int64_t) ;                                        \
+    GB_WERK_POP (Workspaces_mems, uint64_t) ;                               \
+    GB_WERK_POP (Workspaces, void *) ;                                      \
 }
 
-#define GB_FREE_ALL                                                     \
-{                                                                       \
-    GB_phybix_free (C) ;                                                \
-    GB_FREE_WORKSPACE ;                                                 \
+#define GB_FREE_ALL                                                         \
+{                                                                           \
+    GB_phybix_free (C) ;                                                    \
+    GB_FREE_WORKSPACE ;                                                     \
 }
 
 GrB_Info GB_transpose_bucket    // bucket transpose; typecast and apply op
 (
-    GrB_Matrix C,               // output matrix (static header)
+    GrB_Matrix C,               // output matrix (existing header)
     const GB_iso_code C_code_iso,   // iso code for C
     const GrB_Type ctype,       // type of output matrix C
     const bool C_is_csc,        // format of output matrix C
@@ -76,13 +76,16 @@ GrB_Info GB_transpose_bucket    // bucket transpose; typecast and apply op
     // check inputs
     //--------------------------------------------------------------------------
 
-    // C is an empty header and not yet allocated
-    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
+    // C is an empty header and its contents have not yet allocated
+    ASSERT (C != NULL) ;
     ASSERT_TYPE_OK (ctype, "ctype for transpose", GB0) ;
     ASSERT_MATRIX_OK (A, "A input for transpose_bucket", GB0) ;
     ASSERT (!GB_PENDING (A)) ;
     ASSERT (!GB_ZOMBIES (A)) ;
     ASSERT (GB_JUMBLED_OK (A)) ;
+
+    int memlane = GB_memlane (C->header_mem) ;
+    uint64_t mem = GB_mem (memlane, 0) ;
 
     // if op is NULL, then no operator is applied
 
@@ -94,7 +97,7 @@ GrB_Info GB_transpose_bucket    // bucket transpose; typecast and apply op
 
     GB_WERK_DECLARE (A_slice, int64_t) ;            // size nthreads+1
     GB_WERK_DECLARE (Workspaces, void *) ;          // size nworkspaces
-    GB_WERK_DECLARE (Workspaces_size, size_t) ;     // size nworkspaces
+    GB_WERK_DECLARE (Workspaces_mems, uint64_t) ;   // size nworkspaces
 
     //--------------------------------------------------------------------------
     // get A
@@ -134,7 +137,7 @@ GrB_Info GB_transpose_bucket    // bucket transpose; typecast and apply op
     GB_OK (GB_new_bix (&C, // sparse, existing header
         ctype, avdim, avlen, GB_ph_malloc, C_is_csc, GxB_SPARSE, true,
         A->hyper_switch, avlen, anz, true, C_iso,
-        Cp_is_32, Cj_is_32, Ci_is_32)) ;
+        Cp_is_32, Cj_is_32, Ci_is_32, memlane)) ;
 
     C->nvals = anz ;
     size_t cpsize = (Cp_is_32) ? sizeof (uint32_t) : sizeof (uint64_t) ;
@@ -144,8 +147,8 @@ GrB_Info GB_transpose_bucket    // bucket transpose; typecast and apply op
     //--------------------------------------------------------------------------
 
     GB_WERK_PUSH (Workspaces, nworkspaces, void *) ;
-    GB_WERK_PUSH (Workspaces_size, nworkspaces, size_t) ;
-    if (Workspaces == NULL || Workspaces_size == NULL)
+    GB_WERK_PUSH (Workspaces_mems, nworkspaces, uint64_t) ;
+    if (Workspaces == NULL || Workspaces_mems == NULL)
     { 
         // out of memory
         GB_FREE_ALL ;
@@ -156,8 +159,9 @@ GrB_Info GB_transpose_bucket    // bucket transpose; typecast and apply op
     for (int tid = 0 ; tid < nworkspaces ; tid++)
     { 
         // each workspace has the same size integer as Cp
+        Workspaces_mems [tid] = mem ;
         Workspaces [tid] = GB_MALLOC_MEMORY (avlen + 1, cpsize,
-            &Workspaces_size [tid]) ;
+            &Workspaces_mems [tid]) ;
         ok = ok && (Workspaces [tid] != NULL) ;
     }
 

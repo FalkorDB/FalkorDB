@@ -41,7 +41,6 @@ GrB_Info GB_reduce_to_vector        // C<M> = accum (C,reduce(A))
     GB_RETURN_IF_FAULTY_OR_POSITIONAL (accum) ;
     GB_RETURN_IF_FAULTY (desc) ;
 
-    struct GB_Matrix_opaque B_header ;
     GrB_Matrix B = NULL ;
     struct GB_Semiring_opaque semiring_header ;
     GrB_Semiring semiring = NULL ;
@@ -54,6 +53,8 @@ GrB_Info GB_reduce_to_vector        // C<M> = accum (C,reduce(A))
     ASSERT_DESCRIPTOR_OK_OR_NULL (desc, "desc for reduce-to-vector", GB0) ;
     ASSERT (GB_VECTOR_OK (C)) ;
     ASSERT (GB_IMPLIES (M_in != NULL, GB_VECTOR_OK (M_in))) ;
+
+    int memlane = GB_memlane (C->header_mem) ;
 
     // get the descriptor
     GrB_Info info ;
@@ -107,23 +108,19 @@ GrB_Info GB_reduce_to_vector        // C<M> = accum (C,reduce(A))
     // create B as full iso vector
     //--------------------------------------------------------------------------
 
-    // B is constructed with a static header in O(1) time and space, even
-    // though it is m-by-1.  It contains no dynamically-allocated content and
-    // does not need to be freed.
+    // B is constructed in O(1) time and space, even though it is m-by-1.
     int64_t m = A_transpose ? GB_NROWS (A) : GB_NCOLS (A) ;
-    GB_CLEAR_MATRIX_HEADER (B, &B_header) ;
-    info = GB_new (&B, // full, existing header
+    GB_OK (GB_new (&B, // full, new header
         ztype, m, 1, GB_ph_null, true, GxB_FULL, GB_NEVER_HYPER, 1,
-        /* OK: */ false, false, false) ;
-    ASSERT (info == GrB_SUCCESS) ;
+        /* OK: */ false, false, false, memlane)) ;
     B->magic = GB_MAGIC ;
     B->iso = true ;
     size_t zsize = ztype->size ;
-    GB_void bscalar [GB_VLA(zsize)] ;
+    GB_void bscalar [GB_VLA(zsize)] ;   // FIXME allocate this in memlane
     memset (bscalar, 0, zsize) ;
     B->x = bscalar ;
     B->x_shallow = true ;
-    B->x_size = zsize ;
+    B->x_mem = GB_mem (0, zsize) ;
     ASSERT_MATRIX_OK (B, "B for reduce-to-vector", GB0) ;
 
     //--------------------------------------------------------------------------
@@ -167,12 +164,13 @@ GrB_Info GB_reduce_to_vector        // C<M> = accum (C,reduce(A))
             // leading "1" character in its name.  So "reduce_1st" must be
             // unique.
             op = &op_header ;
-            op->header_size = 0 ;
+            op->header_mem = 0 ;        // static header for binary op
             info = GB_binop_new (op, NULL, // op->binop_func. NULL for FIRST_UDT
                 ztype, ztype, ztype,    // ztype is user-defined
                 "1st",                  // a simple name for FIRST_UDT
-                NULL,   // no op->defn for the FIRST_UDT operator
-                GB_FIRST_binop_code) ;  // using a built-in opcode
+                NULL,                   // no op->defn for FIRST_UDT
+                GB_FIRST_binop_code,    // using a built-in opcode
+                0) ;                    // memlane not used
             break ;
     }
 
@@ -185,7 +183,7 @@ GrB_Info GB_reduce_to_vector        // C<M> = accum (C,reduce(A))
     //--------------------------------------------------------------------------
 
     semiring = &semiring_header ;
-    semiring->header_size = 0 ;
+    semiring->header_mem = 0 ;  // static header for semiring
     info = GB_Semiring_new (semiring, monoid, op) ;
     if (info != GrB_SUCCESS)
     { 

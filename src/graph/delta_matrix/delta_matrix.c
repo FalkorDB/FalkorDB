@@ -136,7 +136,7 @@ GrB_Info Delta_Matrix_clear
 		GrB_OK (Delta_Matrix_clear (A->transposed)) ;
 	}
 
-	return GrB_SUCCESS;
+	return GrB_SUCCESS ;
 }
 
 GrB_Info Delta_Matrix_type

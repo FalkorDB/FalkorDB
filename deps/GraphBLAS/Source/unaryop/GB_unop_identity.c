@@ -43,7 +43,7 @@ GB_Operator GB_unop_identity    // return IDENTITY operator, or NULL on error
             // is the name of its type.
             if (op == NULL) return (NULL) ;
             // op = &op_header has been provided by the caller
-            op->header_size = 0 ;
+            op->header_mem = 0 ;    // static header for unary op
             #ifdef GB_DEBUG
             GrB_Info info =
             #endif
@@ -52,7 +52,8 @@ GB_Operator GB_unop_identity    // return IDENTITY operator, or NULL on error
                 type, type,     // type is user-defined
                 type->name,     // name is same as the type
                 NULL,           // no op->defn
-                GB_IDENTITY_unop_code) ;    // using a built-in opcode
+                GB_IDENTITY_unop_code,  // using a built-in opcode
+                GB_MEMLANE_DEFAULT) ;   // memlane not used
             ASSERT (info == GrB_SUCCESS) ;
             return ((GB_Operator) op) ;
         }

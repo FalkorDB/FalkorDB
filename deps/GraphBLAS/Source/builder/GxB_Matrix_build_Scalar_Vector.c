@@ -15,9 +15,17 @@
 
 #include "builder/GB_build.h"
 #include "ij/GB_ij.h"
-#define GB_FREE_ALL                             \
-    if (I_size > 0) GB_FREE_MEMORY (&I, I_size) ;      \
-    if (J_size > 0) GB_FREE_MEMORY (&J, J_size) ;
+#define GB_FREE_ALL                     \
+{                                       \
+    if (GB_memsize (I_mem) > 0)         \
+    {                                   \
+        GB_FREE_MEMORY (&I, I_mem) ;    \
+    }                                   \
+    if (GB_memsize (J_mem) > 0)         \
+    {                                   \
+        GB_FREE_MEMORY (&J, J_mem) ;    \
+    }                                   \
+}
 
 GrB_Info GxB_Matrix_build_Scalar_Vector // build a matrix from (I,J,s) tuples
 (
@@ -42,12 +50,15 @@ GrB_Info GxB_Matrix_build_Scalar_Vector // build a matrix from (I,J,s) tuples
     ASSERT (GB_VECTOR_OK (I_vector)) ;
     ASSERT (GB_VECTOR_OK (J_vector)) ;
 
+    int memlane = GB_memlane (C->header_mem) ;
+    uint64_t mem = GB_mem (memlane, 0) ;
+
     //--------------------------------------------------------------------------
     // finish any pending work
     //--------------------------------------------------------------------------
 
     void *I = NULL, *J = NULL ;
-    size_t I_size = 0, J_size = 0 ;
+    uint64_t I_mem = mem, J_mem = mem ;
 
     GB_MATRIX_WAIT (scalar) ;
     if (GB_nnz ((GrB_Matrix) scalar) != 1)
@@ -73,9 +84,9 @@ GrB_Info GxB_Matrix_build_Scalar_Vector // build a matrix from (I,J,s) tuples
     int64_t ni = 0, nj = 0 ;
     GrB_Type I_type = NULL, J_type = NULL ;
     GB_OK (GB_ijxvector (I_vector, false, 0, desc, true,
-        &I, &ni, &I_size, &I_type, Werk)) ;
+        &I, &ni, &I_mem, &I_type, Werk)) ;
     GB_OK (GB_ijxvector (J_vector, false, 1, desc, true,
-        &J, &nj, &J_size, &J_type, Werk)) ;
+        &J, &nj, &J_mem, &J_type, Werk)) ;
     bool I_is_32 = (I_type == GrB_UINT32) ;
     bool J_is_32 = (J_type == GrB_UINT32) ;
 

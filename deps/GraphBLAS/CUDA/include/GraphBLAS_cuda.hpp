@@ -42,6 +42,7 @@ extern "C"
 extern "C"
 { 
     #include "include/GB_abort.h"
+    #include "include/GB_ph_code.h"
 }
 
 #include "include/GB_cuda_geometry.hpp"

@@ -62,17 +62,17 @@ void mexFunction
     CHECK (!will_wait) ;
 
     printf ("\ninvalid A->p:\n") ;
-    size_t save = A->p_size ;
-    A->p_size = 3 ;
+    uint64_t save = A->p_mem ;
+    A->p_mem = GB_mem (0, 3) ;
     expected = GrB_INVALID_OBJECT ;
     ERR (GxB_Matrix_fprint (A, "A with invalid A->p", 3, NULL)) ;
-    A->p_size = save ;
+    A->p_mem = save ;
 
     printf ("\ninvalid A->h:\n") ;
-    save = A->h_size ;
-    A->h_size = 3 ;
+    save = A->h_mem ;
+    A->h_mem = GB_mem (0, 3) ;
     ERR (GxB_Matrix_fprint (A, "A with invalid A->h", 3, NULL)) ;
-    A->h_size = save ;
+    A->h_mem = save ;
 
     printf ("\ninvalid A->Y:\n") ;
     CHECK (A->Y != NULL) ;

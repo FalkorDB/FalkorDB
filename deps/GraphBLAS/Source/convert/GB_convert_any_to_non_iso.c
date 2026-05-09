@@ -44,17 +44,17 @@ GrB_Info GB_convert_any_to_non_iso // convert iso matrix to non-iso
 
     int64_t anz = GB_nnz_held (A) ;
     anz = GB_IMAX (anz, 1) ;
-    int64_t Ax_size_required = anz * asize ;
+    int64_t Ax_memsize_required = anz * asize ;
 
-    if (A->x_size < Ax_size_required || A->x_shallow)
+    if (GB_memsize (A->x_mem) < Ax_memsize_required || A->x_shallow)
     {
         if (!A->x_shallow)
         { 
             // free the old space
-            GB_FREE_MEMORY (&(A->x), A->x_size) ;
+            GB_FREE_MEMORY (&(A->x), A->x_mem) ;
         }
         // allocate the new space
-        A->x = GB_MALLOC_MEMORY (anz, asize, &(A->x_size)) ;
+        A->x = GB_MALLOC_MEMORY (anz, asize, &(A->x_mem)) ;
         A->x_shallow = false ;
         if (A->x == NULL)
         { 
@@ -89,12 +89,12 @@ GrB_Info GB_convert_any_to_non_iso // convert iso matrix to non-iso
         // NULL if and only if A is iso, when Pending tuples are present.
         // The A->Pending->op is NULL and remains so.
         ASSERT (A->Pending->x == NULL) ;
-        ASSERT (A->Pending->x_size == 0) ;
+        ASSERT (GB_memsize (A->Pending->x_mem) == 0) ;
         ASSERT (A->Pending->op == NULL) ;
         A->Pending->type = A->type ;
         A->Pending->size = A->type->size ;
         A->Pending->x = GB_MALLOC_MEMORY (A->Pending->nmax, A->Pending->size,
-            &(A->Pending->x_size)) ;
+            &(A->Pending->x_mem)) ;
         if (A->Pending->x == NULL)
         { 
             return (GrB_OUT_OF_MEMORY) ;

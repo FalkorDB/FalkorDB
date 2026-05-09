@@ -3,7 +3,7 @@
 #undef  GB_FREE_WORKSPACE
 #define GB_FREE_WORKSPACE                                   \
 {                                                           \
-    GB_FREE_MEMORY (&ythunk_cuda, ythunk_cuda_size) ;       \
+    GB_FREE_MEMORY (&ythunk_cuda, ythunk_cuda_mem) ;        \
 }
 
 #undef  GB_FREE_ALL
@@ -28,8 +28,8 @@ GrB_Info GB_cuda_apply_unop
 {
 
     GrB_Info info ;
-    GB_void *ythunk_cuda = NULL ;
-    size_t ythunk_cuda_size = 0 ;
+    GB_void *ythunk_cuda = nullptr ;
+    uint64_t ythunk_cuda_mem = GB_MEMLANE_RMM ;
 
     cudaStream_t stream = nullptr ;
 
@@ -45,7 +45,7 @@ GrB_Info GB_cuda_apply_unop
         // make a copy of ythunk, since ythunk might be allocated on
         // the CPU stack and thus not accessible to the CUDA kernel.
         ythunk_cuda = (GB_void *) GB_MALLOC_MEMORY (1, op->ytype->size,
-            &ythunk_cuda_size) ;
+            &ythunk_cuda_mem) ;
         if (ythunk_cuda == NULL)
         {
             GB_FREE_ALL ;

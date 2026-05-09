@@ -10,11 +10,6 @@
 #ifndef GB_CONVERT_H
 #define GB_CONVERT_H
 
-// these parameters define the hyper_switch needed to ensure matrix stays
-// either always hypersparse, or never hypersparse.
-#define GB_ALWAYS_HYPER (1.0)
-#define GB_NEVER_HYPER  (-1.0)
-
 // determine the sparsity_control for a matrix
 int GB_sparsity_control     // revised sparsity_control
 (
@@ -123,10 +118,11 @@ GrB_Info GB_convert_b2s   // extract CSC/CSR or triplets from bitmap
     int64_t *cnvec_nonempty,    // # of non-empty vectors
     // inputs: not modified
     const bool Cp_is_32,        // if true, Cp is uint32_t; otherwise uint64_t
-    const bool Ci_is_32,        // if true, Ci is uint32_t; otherwise uint64_t
     const bool Cj_is_32,        // if true, Cj is uint32_t; otherwise uint64_t
+    const bool Ci_is_32,        // if true, Ci is uint32_t; otherwise uint64_t
     const GrB_Type ctype,       // type of Cx
     const GrB_Matrix A,         // matrix to extract; not modified
+    const int memlane,
     GB_Werk Werk
 ) ;
 

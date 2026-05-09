@@ -115,7 +115,7 @@ GrB_Info GxB_Context_get_String
         // built-in Context
         strcpy (value, "GxB_CONTEXT_WORLD") ;
     }
-    else if (Context->user_name_size > 0)
+    else if (GB_memsize (Context->user_name_mem) > 0)
     { 
         // user-defined Context, with name defined by GrB_set
         strcpy (value, Context->user_name) ;
@@ -206,7 +206,7 @@ GrB_Info GxB_Context_get_SIZE
     { 
         if (Context->user_name != NULL)
         { 
-            (*value) = Context->user_name_size ;
+            (*value) = GB_memsize (Context->user_name_mem) ;
         }
         else
         { 

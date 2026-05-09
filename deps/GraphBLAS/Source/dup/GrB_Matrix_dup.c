@@ -27,11 +27,13 @@ GrB_Info GrB_Matrix_dup     // make an exact copy of a matrix
     GB_WHERE_1 (A, "GrB_Matrix_dup (&C, A)") ;
     GB_BURBLE_START ("GrB_Matrix_dup") ;
 
+    int memlane = GB_Context_memlane ( ) ;
+
     //--------------------------------------------------------------------------
     // duplicate the matrix
     //--------------------------------------------------------------------------
 
-    info = GB_dup (C, A, Werk) ;
+    info = GB_dup (C, A, memlane, Werk) ;
     GB_BURBLE_END ;
     return (info) ;
 }

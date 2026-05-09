@@ -37,10 +37,9 @@ void GB_phy_free                // free A->p, A->h, and A->Y of a matrix
     // free A->p unless it is shallow
     if (!A->p_shallow)
     { 
-        GB_FREE_MEMORY (&(A->p), A->p_size) ;
+        GB_FREE_MEMORY (&(A->p), A->p_mem) ;
     }
-    A->p = NULL ;
-    A->p_size = 0 ;
+    A->p = NULL ; A->p_mem = 0 ;
     A->p_shallow = false ;
 
     // free A->h and A->Y

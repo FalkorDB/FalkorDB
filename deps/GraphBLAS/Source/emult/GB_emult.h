@@ -26,7 +26,7 @@
 
 GrB_Info GB_emult           // C=A.*B or C<M>=A.*B
 (
-    GrB_Matrix C,           // output matrix, static header
+    GrB_Matrix C,           // output matrix, existing header
     const GrB_Type ctype,   // type of output matrix C
     const bool C_is_csc,    // format of output matrix C
     const GrB_Matrix M,     // optional mask, unused if NULL.  Not complemented
@@ -56,13 +56,13 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
 (
     int64_t *p_Cnvec,           // # of vectors to compute in C
     const void **Ch_handle,     // Ch is M->h, A->h, B->h, or NULL
-    size_t *Ch_size_handle,
+    uint64_t *Ch_mem,
     int64_t *restrict *C_to_M_handle,    // C_to_M: size Cnvec, or NULL
-    size_t *C_to_M_size_handle,
+    uint64_t *C_to_M_mem_handle,
     int64_t *restrict *C_to_A_handle,    // C_to_A: size Cnvec, or NULL
-    size_t *C_to_A_size_handle,
+    uint64_t *C_to_A_mem_handle,
     int64_t *restrict *C_to_B_handle,    // C_to_B: size Cnvec, or NULL
-    size_t *C_to_B_size_handle,
+    uint64_t *C_to_B_mem_handle,
     bool *p_Cp_is_32,           // if true, Cp is 32-bit; else 64-bit
     bool *p_Cj_is_32,           // if true, Ch is 32-bit; else 64-bit
     bool *p_Ci_is_32,           // if true, Ci is 32-bit; else 64-bit
@@ -79,7 +79,7 @@ GrB_Info GB_emult_08_phase1                 // count nnz in each C(:,j)
 (
     // computed by phase1:
     void **Cp_handle,               // output of size Cnvec+1
-    size_t *Cp_size_handle,
+    uint64_t *Cp_mem_handle,
     int64_t *Cnvec_nonempty,        // # of non-empty vectors in C
     // tasks from phase1a:
     GB_task_struct *restrict TaskList,   // array of structs
@@ -104,14 +104,14 @@ GrB_Info GB_emult_08_phase1                 // count nnz in each C(:,j)
 
 GrB_Info GB_emult_08_phase2             // C=A.*B or C<M>=A.*B
 (
-    GrB_Matrix C,           // output matrix, static header
+    GrB_Matrix C,           // output matrix, existing header
     const GrB_Type ctype,   // type of output matrix C
     const bool C_is_csc,    // format of output matrix C
     const GrB_BinaryOp op,  // op to perform C = op (A,B)
     const bool flipij,      // if true, i,j must be flipped
     // from phase1:
     void **Cp_handle,       // vector pointers for C
-    size_t Cp_size,
+    uint64_t Cp_mem,
     const int64_t Cnvec_nonempty,       // # of non-empty vectors in C
     // tasks from phase1a:
     const GB_task_struct *restrict TaskList, // array of structs
@@ -120,7 +120,7 @@ GrB_Info GB_emult_08_phase2             // C=A.*B or C<M>=A.*B
     // analysis from phase0:
     const int64_t Cnvec,
     const void *Ch,
-    size_t Ch_size,
+    uint64_t Ch_mem,
     const int64_t *restrict C_to_M,
     const int64_t *restrict C_to_A,
     const int64_t *restrict C_to_B,
@@ -141,7 +141,7 @@ GrB_Info GB_emult_08_phase2             // C=A.*B or C<M>=A.*B
 
 GrB_Info GB_emult_02        // C=A.*B when A is sparse/hyper, B bitmap/full
 (
-    GrB_Matrix C,           // output matrix, static header
+    GrB_Matrix C,           // output matrix, existing header
     const GrB_Type ctype,   // type of output matrix C
     const bool C_is_csc,    // format of output matrix C
     const GrB_Matrix M,     // optional mask, unused if NULL
@@ -178,7 +178,7 @@ GrB_Info GB_emult_02_phase1 // symbolic analysis for GB_emult_02 and GB_emult_03
 
 GrB_Info GB_emult_03        // C=A.*B when A is bitmap/full, B sparse/hyper
 (
-    GrB_Matrix C,           // output matrix, static header
+    GrB_Matrix C,           // output matrix, existing header
     const GrB_Type ctype,   // type of output matrix C
     const bool C_is_csc,    // format of output matrix C
     const GrB_Matrix M,     // optional mask, unused if NULL
@@ -193,7 +193,7 @@ GrB_Info GB_emult_03        // C=A.*B when A is bitmap/full, B sparse/hyper
 
 GrB_Info GB_emult_04        // C<M>=A.*B, M sparse/hyper, A and B bitmap/full
 (
-    GrB_Matrix C,           // output matrix, static header
+    GrB_Matrix C,           // output matrix, existing header
     const GrB_Type ctype,   // type of output matrix C
     const bool C_is_csc,    // format of output matrix C
     const GrB_Matrix M,     // sparse/hyper, not NULL
@@ -208,7 +208,7 @@ GrB_Info GB_emult_04        // C<M>=A.*B, M sparse/hyper, A and B bitmap/full
 
 GrB_Info GB_emult_bitmap    // C=A.*B, C<M>=A.*B, or C<!M>=A.*B
 (
-    GrB_Matrix C,           // output matrix, static header
+    GrB_Matrix C,           // output matrix, existing header
     const int ewise_method,
     const GrB_Type ctype,   // type of output matrix C
     const bool C_is_csc,    // format of output matrix C
@@ -237,7 +237,7 @@ bool GB_emult_iso           // c = op(a,b), return true if C is iso
 GrB_Info GB_emult_generic       // generic emult
 (
     // input/output:
-    GrB_Matrix C,           // output matrix, static header
+    GrB_Matrix C,           // output matrix, existing header
     // input:
     const GrB_BinaryOp op,  // op to perform C = op (A,B)
     const bool flipij,      // if true, i,j must be flipped

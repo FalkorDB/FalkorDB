@@ -69,7 +69,7 @@ void mexFunction
     }
     else
     {
-        // test the new GrB functions
+        // test the new resize functions
         if (GB_VECTOR_OK (C) && vdim_new == 1)
         {
             // resize C as a vector

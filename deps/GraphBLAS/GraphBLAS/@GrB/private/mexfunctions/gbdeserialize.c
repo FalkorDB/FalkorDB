@@ -41,14 +41,14 @@ void mexFunction
     void *blob = mxGetData (pargin [0]) ;
     uint64_t m = (uint64_t) mxGetM (pargin [0]) ;
     uint64_t n = (uint64_t) mxGetN (pargin [0]) ;
-    uint64_t blob_size = m*n ;
+    uint64_t blob_memsize = m*n ;
 
     //--------------------------------------------------------------------------
     // deserialize the blob into a matrix
     //--------------------------------------------------------------------------
 
     GrB_Matrix C = NULL ;
-    OK (GrB_Matrix_deserialize (&C, NULL, blob, blob_size)) ;
+    OK (GrB_Matrix_deserialize (&C, NULL, blob, blob_memsize)) ;
 
     //--------------------------------------------------------------------------
     // export the output matrix C

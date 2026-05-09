@@ -13,8 +13,13 @@
 
 #include "assign/GB_subassign.h"
 #include "ij/GB_ij.h"
-#define GB_FREE_ALL                             \
-    if (I_size > 0) GB_FREE_MEMORY (&I, I_size) ;
+#define GB_FREE_ALL                     \
+{                                       \
+    if (GB_memsize (I_mem) > 0)         \
+    {                                   \
+        GB_FREE_MEMORY (&I, I_mem) ;    \
+    }                                   \
+}
 
 GrB_Info GxB_Vector_subassign_Scalar_Vector   // w(I)<mask> = accum (w(I),x)
 (
@@ -35,16 +40,20 @@ GrB_Info GxB_Vector_subassign_Scalar_Vector   // w(I)<mask> = accum (w(I),x)
         "GxB_Vector_subassign_Scalar_Vector (w, M, accum, s, I, desc)") ;
     GB_BURBLE_START ("GxB_Vector_subassign_Scalar_Vector") ;
 
+    ASSERT (w != NULL) ;
+    int memlane = GB_memlane (w->header_mem) ;
+    uint64_t mem = GB_mem (memlane, 0) ;
+
     //--------------------------------------------------------------------------
     // get the index vectors
     //--------------------------------------------------------------------------
 
     void *I = NULL ;
-    size_t I_size = 0 ;
+    uint64_t I_mem = mem ;
     int64_t ni = 0 ;
     GrB_Type I_type = NULL ;
     GB_OK (GB_ijxvector (I_vector, (w == I_vector), 0, desc, false,
-        &I, &ni, &I_size, &I_type, Werk)) ;
+        &I, &ni, &I_mem, &I_type, Werk)) ;
     bool I_is_32 = (I_type == GrB_UINT32) ;
 
     //--------------------------------------------------------------------------

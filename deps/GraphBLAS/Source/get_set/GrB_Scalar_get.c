@@ -130,7 +130,7 @@ GrB_Info GrB_Scalar_get_SIZE
     // get the field
     //--------------------------------------------------------------------------
 
-    return (GB_matvec_name_size_get ((GrB_Matrix) s, value, field)) ;
+    return (GB_matvec_namesize_get ((GrB_Matrix) s, value, field)) ;
 }
 
 //------------------------------------------------------------------------------

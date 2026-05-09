@@ -35,26 +35,24 @@ GrB_Scalar GB_Scalar_wrap   // create a new GrB_Scalar with one entry
     //--------------------------------------------------------------------------
 
     s->magic = GB_MAGIC ;
-    s->header_size = 0 ;
-    s->user_name = NULL ;
-    s->user_name_size = 0 ;
+    s->header_mem = 0 ;     // static header for scalar
+    s->user_name = NULL ; s->user_name_mem = 0 ;
     s->type = (type == NULL) ? GrB_BOOL : type ;
-    s->logger = NULL ;
-    s->logger_size = 0 ;
+    s->logger = NULL ; s->logger_mem = 0 ;
 
     s->plen = -1 ;
     s->vlen = 1 ;
     s->vdim = 1 ;
     s->nvec = 1 ;
 
-//  s->nvec_nonempty = 1 ;
-    GB_nvec_nonempty_set ((GrB_Matrix) s, 1) ;
+    GB_nvec_nonempty_set ((GrB_Matrix) s, 1) ;  //  s->nvec_nonempty = 1 ;
 
-    s->p = NULL ; s->p_size = 0 ; s->p_shallow = false ;
-    s->h = NULL ; s->h_size = 0 ; s->h_shallow = false ;
-    s->b = NULL ; s->b_size = 0 ; s->b_shallow = false ;
-    s->i = NULL ; s->i_size = 0 ; s->i_shallow = false ;
-    s->x = Sx   ; s->x_size = type->size ; s->x_shallow = true ;
+    s->p = NULL ; s->p_mem = 0 ; s->p_shallow = false ;
+    s->h = NULL ; s->h_mem = 0 ; s->h_shallow = false ;
+    s->b = NULL ; s->b_mem = 0 ; s->b_shallow = false ;
+    s->i = NULL ; s->i_mem = 0 ; s->i_shallow = false ;
+    s->x = Sx   ; s->x_mem = type->size ; // no memlane for static Sx entry
+    s->x_shallow = true ;
 
     s->Y = NULL ;
     s->Y_shallow = false ;

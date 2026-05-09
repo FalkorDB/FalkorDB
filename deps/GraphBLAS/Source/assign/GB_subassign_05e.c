@@ -61,6 +61,8 @@ GrB_Info GB_subassign_05e
     ASSERT (GB_JUMBLED_OK (M)) ;
     ASSERT (!GB_PENDING (M)) ;
 
+    int memlane = GB_memlane (C->header_mem) ;
+
     //--------------------------------------------------------------------------
     // Method 05e: C(:,:)<M> = x ; C is empty, x is a scalar, M is structural
     //--------------------------------------------------------------------------
@@ -78,8 +80,7 @@ GrB_Info GB_subassign_05e
 
     bool C_is_csc = C->is_csc ;
     GB_phybix_free (C) ;
-    // set C->iso = true    OK
-    GB_OK (GB_dup_worker (&C, true, M, false, C->type)) ;   // OK: C is empty
+    GB_OK (GB_dup_worker (&C, /* C_iso: */ true, M, false, C->type, memlane)) ;
     C->is_csc = C_is_csc ;
     GB_cast_scalar (C->x, C->type->code, scalar, scalar_type->code,
         scalar_type->size) ;

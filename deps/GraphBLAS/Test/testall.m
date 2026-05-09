@@ -119,6 +119,11 @@ F100 = {4,4,0,0} ;
 %===============================================================================
 
 % < 1 second: debug_on
+logstat ('test304'    ,t, J0   , F0   ) ; % extractElement
+logstat ('test302'    ,t, J0   , F0   ) ; % GPU controls
+logstat ('test277'    ,t, J0   , F1   ) ; % context get/set
+
+% < 1 second: debug_on
 set_malloc_debug (mdebug, 1) ;
 logstat ('test303'    ,t, J404 , F110 ) ; % C=A(I,J), method 6
 logstat ('test300'    ,t, J0   , F0   ) ; % print function for a type

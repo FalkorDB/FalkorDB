@@ -16,11 +16,11 @@
 
 GrB_Info GB_subref_phase3   // C=A(I,J)
 (
-    GrB_Matrix C,               // output matrix, static header
+    GrB_Matrix C,               // output matrix, existing header
     // from phase2:
     void **Cp_handle,           // vector pointers for C
     const bool Cp_is_32,        // if true, Cp is 32-bit; else 64-bit
-    size_t Cp_size,
+    uint64_t Cp_mem,
     const int64_t Cnvec_nonempty,       // # of non-empty vectors in C
     // from phase1:
     const GB_task_struct *restrict TaskList,    // array of structs
@@ -32,7 +32,7 @@ GrB_Info GB_subref_phase3   // C=A(I,J)
     void **Ch_handle,
     const bool Cj_is_32,        // if true, C->h is 32-bit; else 64-bit
     const bool Ci_is_32,        // if true, C->i is 32-bit; else 64-bit
-    size_t Ch_size,
+    uint64_t Ch_mem,
     const void *Ap_start,
     const void *Ap_end,
     const int64_t Cnvec,
@@ -59,9 +59,11 @@ GrB_Info GB_subref_phase3   // C=A(I,J)
     // check inputs
     //--------------------------------------------------------------------------
 
-    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
+    ASSERT (C != NULL) ;
     ASSERT (Cp_handle != NULL) ;
     ASSERT (Ch_handle != NULL) ;
+
+    int memlane = GB_memlane (C->header_mem) ;
 
     GB_MDECL (Cp, const, u) ;
     Cp = (*Cp_handle) ;
@@ -127,24 +129,24 @@ GrB_Info GB_subref_phase3   // C=A(I,J)
     GrB_Info info = GB_new_bix (&C, // sparse or hyper, existing header
         ctype, nI, nJ, GB_ph_null, C_is_csc,
         sparsity, true, A->hyper_switch, Cnvec, cnz, true, C_iso,
-        Cp_is_32, Cj_is_32, Ci_is_32) ;
+        Cp_is_32, Cj_is_32, Ci_is_32, memlane) ;
     if (info != GrB_SUCCESS)
     { 
         // out of memory
-        GB_FREE_MEMORY (Cp_handle, Cp_size) ;
-        GB_FREE_MEMORY (Ch_handle, Ch_size) ;
+        GB_FREE_MEMORY (Cp_handle, Cp_mem) ;
+        GB_FREE_MEMORY (Ch_handle, Ch_mem) ;
         return (info) ;
     }
 
     // add Cp as the vector pointers for C, from GB_subref_phase2
-    C->p = (*Cp_handle) ; C->p_size = Cp_size ;
+    C->p = (*Cp_handle) ; C->p_mem = Cp_mem ;
     (*Cp_handle) = NULL ;
 
     // add Ch as the hypersparse list for C, from GB_subref_phase0
     if (C_is_hyper)
     { 
         // transplant Ch into C
-        C->h = Ch ; C->h_size = Ch_size ;
+        C->h = Ch ; C->h_mem = Ch_mem ;
         (*Ch_handle) = NULL ;
         C->nvec = Cnvec ;
     }
@@ -197,11 +199,11 @@ GrB_Info GB_subref_phase3   // C=A(I,J)
             {                                                           \
                 if (Ci_is_32)                                           \
                 {                                                       \
-                    GB_qsort_1b_32_size4 (Ci32 + pC, Cx + pC, clen) ;   \
+                    GB_qsort_1b_32_4 (Ci32 + pC, Cx + pC, clen) ;       \
                 }                                                       \
                 else                                                    \
                 {                                                       \
-                    GB_qsort_1b_64_size4 (Ci64 + pC, Cx + pC, clen) ;   \
+                    GB_qsort_1b_64_4 (Ci64 + pC, Cx + pC, clen) ;       \
                 }                                                       \
             }
             #define GB_SYMBOLIC
@@ -222,11 +224,11 @@ GrB_Info GB_subref_phase3   // C=A(I,J)
             {                                                           \
                 if (Ci_is_32)                                           \
                 {                                                       \
-                    GB_qsort_1b_32_size8 (Ci32 + pC, Cx + pC, clen) ;   \
+                    GB_qsort_1b_32_8 (Ci32 + pC, Cx + pC, clen) ;       \
                 }                                                       \
                 else                                                    \
                 {                                                       \
-                    GB_qsort_1b_64_size8 (Ci64 + pC, Cx + pC, clen) ;   \
+                    GB_qsort_1b_64_8 (Ci64 + pC, Cx + pC, clen) ;       \
                 }                                                       \
             }
             #define GB_SYMBOLIC

@@ -19,8 +19,8 @@ GrB_Info GxB_Vector_export_CSC  // export and free a CSC vector
 
     uint64_t **vi,      // indices
     void **vx,          // values
-    uint64_t *vi_size,  // size of Ai in bytes
-    uint64_t *vx_size,  // size of Ax in bytes
+    uint64_t *vi_memsize,  // size of Ai in bytes
+    uint64_t *vx_memsize,  // size of Ax in bytes
     bool *iso,          // if true, A is iso
 
     uint64_t *nvals,    // # of entries in vector
@@ -36,7 +36,7 @@ GrB_Info GxB_Vector_export_CSC  // export and free a CSC vector
     GB_RETURN_IF_NULL (v) ;
     GB_RETURN_IF_NULL (*v) ;
     GB_WHERE_1 (*v, "GxB_Vector_export_CSC (&v, &type, &n, "
-        "&vi, &vx, &vi_size, &vx_size, &iso, &nvals, &jumbled, desc)") ;
+        "&vi, &vx, &vi_memsize, &vx_memsize, &iso, &nvals, &jumbled, desc)") ;
 
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
     GB_RETURN_IF_NULL (nvals) ;
@@ -81,8 +81,8 @@ GrB_Info GxB_Vector_export_CSC  // export and free a CSC vector
         NULL, NULL,     // Ap
         NULL, NULL,     // Ah
         NULL, NULL,     // Ab
-        vi,   vi_size,  // Ai
-        vx,   vx_size,  // Ax
+        vi,   vi_memsize,  // Ai
+        vx,   vx_memsize,  // Ax
         nvals, jumbled, NULL,               // jumbled or not
         &sparsity, &is_csc,                 // sparse by col
         iso, Werk) ;

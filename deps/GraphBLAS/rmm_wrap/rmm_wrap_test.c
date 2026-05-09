@@ -11,35 +11,34 @@
 int main()
 {
 
-    size_t init_size, max_size, stream_pool_size = 1;
-    init_size = 256*(1ULL<<10);
-    max_size  = 256*(1ULL<<20);
+    uint64_t init_memsize, max_memsize ;
+    init_memsize = 256*(1ULL<<10);
+    max_memsize  = 256*(1ULL<<20);
 
-    //printf(" pool init size %ld, max size %ld\n", init_size, max_size);
-    rmm_wrap_initialize_all_same( rmm_wrap_managed, init_size, max_size /*, stream_pool_size */);
+    rmm_wrap_initialize_all_same( rmm_wrap_managed, init_memsize, max_memsize);
     printf("RMM initialized!  in managed mode\n");
 
     void *p;
-    size_t buff_size = (1ULL<<13)+152;
+    size_t buff_memsize = (1ULL<<13)+152;
 
-    printf(" asked for %ld", buff_size);
+    printf(" asked for %ld", buff_memsize);
     fflush(stdout);
-    p = (void *)rmm_wrap_allocate( &buff_size );
-    printf(" actually allocated  %ld\n", buff_size);
+    p = (void *)rmm_wrap_allocate( &buff_memsize );
+    printf(" actually allocated  %ld\n", buff_memsize);
     fflush(stdout);
-    rmm_wrap_deallocate( p, buff_size);
+    rmm_wrap_deallocate( p, buff_memsize);
     rmm_wrap_finalize();
 
-    rmm_wrap_initialize_all_same(rmm_wrap_device, init_size, max_size /*, stream_pool_size */);
+    rmm_wrap_initialize_all_same(rmm_wrap_device, init_memsize, max_memsize);
     printf("RMM initialized!  in device mode\n");
 
-    buff_size = (1ULL<<13)+157;
-    printf(" asked for %ld", buff_size);
+    buff_memsize = (1ULL<<13)+157;
+    printf(" asked for %ld", buff_memsize);
     fflush(stdout);
-    p = (void *)rmm_wrap_allocate( &buff_size );
-    printf(" actually allocated  %ld\n", buff_size);
+    p = (void *)rmm_wrap_allocate( &buff_memsize );
+    printf(" actually allocated  %ld\n", buff_memsize);
     fflush(stdout);
-    rmm_wrap_deallocate( p, buff_size);
+    rmm_wrap_deallocate( p, buff_memsize);
     rmm_wrap_finalize();
 }
 

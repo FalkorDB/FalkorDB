@@ -114,25 +114,25 @@ GrB_Matrix gb_get_shallow   // shallow copy of MATLAB sparse matrix or struct
         CHECK_ERROR (mx_type == NULL, "not a GraphBLAS struct") ;
 
         GrB_Type Ax_type = gb_mxstring_to_type (mx_type) ;
-        size_t type_size ;
-        OK (GrB_Type_get_SIZE (Ax_type, &type_size, GrB_SIZE)) ;
+        size_t typesize ;
+        OK (GrB_Type_get_SIZE (Ax_type, &typesize, GrB_SIZE)) ;
 
         // get the scalar info
         mxArray *opaque = mxGetField (X, 0, "s") ;
         IF (opaque == NULL, ".s missing") ;
         IF (mxGetM (opaque) != 1, ".s wrong size") ;
-        size_t s_size = mxGetN (opaque) ;
+        size_t s_nentries = mxGetN (opaque) ;
         if (GraphBLASv3)
         {
-            IF (s_size != 8, ".s wrong size") ;
+            IF (s_nentries != 8, ".s wrong size") ;
         }
         else if (GraphBLASv4)
         {
-            IF (s_size != 9, ".s wrong size") ;
+            IF (s_nentries != 9, ".s wrong size") ;
         }
         else
         {
-            IF (s_size != 10, ".s wrong size") ;
+            IF (s_nentries != 10, ".s wrong size") ;
         }
         int64_t *s = (int64_t *) mxGetData (opaque) ;
         int64_t plen          = s [0] ;
@@ -205,14 +205,14 @@ GrB_Matrix gb_get_shallow   // shallow copy of MATLAB sparse matrix or struct
         }
 
         // each component
-        void   *Ap = NULL ; uint64_t Ap_size = 0 ;
-        void   *Ah = NULL ; uint64_t Ah_size = 0 ;
-        void   *Ai = NULL ; uint64_t Ai_size = 0 ;
-        int8_t *Ab = NULL ; uint64_t Ab_size = 0, Ab_len = 0 ;
-        void   *Ax = NULL ; uint64_t Ax_size = 0, Ax_len = 0 ;
-        void   *Yp = NULL ; uint64_t Yp_size = 0, Yp_len = 0 ;
-        void   *Yi = NULL ; uint64_t Yi_size = 0, Yi_len = 0 ;
-        void   *Yx = NULL ; uint64_t Yx_size = 0, Yx_len = 0 ;
+        void   *Ap = NULL ; uint64_t Ap_memsize = 0 ;
+        void   *Ah = NULL ; uint64_t Ah_memsize = 0 ;
+        void   *Ai = NULL ; uint64_t Ai_memsize = 0 ;
+        int8_t *Ab = NULL ; uint64_t Ab_memsize = 0, Ab_len = 0 ;
+        void   *Ax = NULL ; uint64_t Ax_memsize = 0, Ax_len = 0 ;
+        void   *Yp = NULL ; uint64_t Yp_memsize = 0, Yp_len = 0 ;
+        void   *Yi = NULL ; uint64_t Yi_memsize = 0, Yi_len = 0 ;
+        void   *Yx = NULL ; uint64_t Yx_memsize = 0, Yx_len = 0 ;
         int64_t yvdim = 0 ;
 
         // these are revised below:
@@ -241,7 +241,7 @@ GrB_Matrix gb_get_shallow   // shallow copy of MATLAB sparse matrix or struct
             psize = Ap_is_32 ? sizeof (uint32_t) : sizeof (uint64_t) ;
             Ap_type = Ap_is_32 ? GrB_UINT32 : GrB_UINT64 ;
             Ap = (void *) mxGetData (Ap_mx) ;
-            Ap_size = mxGetN (Ap_mx) * psize ;
+            Ap_memsize = mxGetN (Ap_mx) * psize ;
             IF (mxGetN (Ap_mx) < plen+1, ".p wrong size")
             if (GraphBLASv3)
             {
@@ -259,18 +259,18 @@ GrB_Matrix gb_get_shallow   // shallow copy of MATLAB sparse matrix or struct
             Ai_is_32 = (class == mxUINT32_CLASS) ;
             isize = Ai_is_32 ? sizeof (uint32_t) : sizeof (uint64_t) ;
             Ai_type = Ai_is_32 ? GrB_UINT32 : GrB_UINT64 ;
-            Ai_size = mxGetN (Ai_mx) * isize ;
+            Ai_memsize = mxGetN (Ai_mx) * isize ;
             IF (mxGetN (Ai_mx) < nvals, ".i wrong size") ;
-            Ai = (Ai_size == 0) ? NULL : ((void *) mxGetData (Ai_mx)) ;
+            Ai = (Ai_memsize == 0) ? NULL : ((void *) mxGetData (Ai_mx)) ;
         }
 
         // get the values
         mxArray *Ax_mx = mxGetField (X, 0, "x") ;
         IF (Ax_mx == NULL, ".x missing") ;
         IF (mxGetM (Ax_mx) != 1, ".x wrong size") ;
-        Ax_size = mxGetN (Ax_mx) ;
-        Ax_len = Ax_size / type_size ;
-        Ax = (Ax_size == 0) ? NULL : ((void *) mxGetData (Ax_mx)) ;
+        Ax_memsize = mxGetN (Ax_mx) ;
+        Ax_len = Ax_memsize / typesize ;
+        Ax = (Ax_memsize == 0) ? NULL : ((void *) mxGetData (Ax_mx)) ;
 
         if (sparsity_status == GxB_SPARSE)
         {
@@ -293,8 +293,8 @@ GrB_Matrix gb_get_shallow   // shallow copy of MATLAB sparse matrix or struct
             Aj_is_32 = (Ah_class == mxUINT32_CLASS) ;
             Aj_type = Aj_is_32 ? GrB_UINT32 : GrB_UINT64 ;
             jsize = Aj_is_32 ? sizeof (uint32_t) : sizeof (uint64_t) ;
-            Ah_size = mxGetN (Ah_mx) * jsize ;
-            Ah = (Ah_size == 0) ? NULL : ((void *) mxGetData (Ah_mx)) ;
+            Ah_memsize = mxGetN (Ah_mx) * jsize ;
+            Ah = (Ah_memsize == 0) ? NULL : ((void *) mxGetData (Ah_mx)) ;
 
             // get the hyper_hash, if it exists
 
@@ -309,8 +309,8 @@ GrB_Matrix gb_get_shallow   // shallow copy of MATLAB sparse matrix or struct
                 yvdim = mxGetN (Yp_mx) - 1 ;
                 IF (mxGetClassID (Yp_mx) != Ah_class, ".Yp wrong class") ;
                 Yp_len = mxGetN (Yp_mx) ;
-                Yp_size = Yp_len * jsize ;
-                Yp = (Yp_size == 0) ? NULL : ((void *) mxGetData (Yp_mx)) ;
+                Yp_memsize = Yp_len * jsize ;
+                Yp = (Yp_memsize == 0) ? NULL : ((void *) mxGetData (Yp_mx)) ;
 
                 // Yi must be 1-by-nvec, with the same class as Ah
                 mxArray *Yi_mx = mxGetField (X, 0, "Yi") ;
@@ -319,8 +319,8 @@ GrB_Matrix gb_get_shallow   // shallow copy of MATLAB sparse matrix or struct
                 IF (mxGetN (Yi_mx) != nvec, ".Yi wrong size") ;
                 IF (mxGetClassID (Yi_mx) != Ah_class, ".Yi wrong class") ;
                 Yi_len = mxGetN (Yi_mx) ;
-                Yi_size = Yi_len * jsize ;
-                Yi = (Yi_size == 0) ? NULL : ((void *) mxGetData (Yi_mx)) ;
+                Yi_memsize = Yi_len * jsize ;
+                Yi = (Yi_memsize == 0) ? NULL : ((void *) mxGetData (Yi_mx)) ;
 
                 // Yx must be 1-by-nvec
                 mxArray *Yx_mx = mxGetField (X, 0, "Yx") ;
@@ -329,8 +329,8 @@ GrB_Matrix gb_get_shallow   // shallow copy of MATLAB sparse matrix or struct
                 IF (mxGetN (Yx_mx) != nvec, ".Yx wrong size") ;
                 IF (mxGetClassID (Yx_mx) != Ah_class, ".Yx wrong class") ;
                 Yx_len = mxGetN (Yx_mx) ;
-                Yx_size = Yi_len * jsize ;
-                Yx = (Yx_size == 0) ? NULL : ((void *) mxGetData (Yx_mx)) ;
+                Yx_memsize = Yi_len * jsize ;
+                Yx = (Yx_memsize == 0) ? NULL : ((void *) mxGetData (Yx_mx)) ;
             }
         }
 
@@ -343,8 +343,8 @@ GrB_Matrix gb_get_shallow   // shallow copy of MATLAB sparse matrix or struct
             IF (mxGetM (Ab_mx) != 1, ".b wrong size") ;
             IF (mxGetClassID (Ab_mx) != mxINT8_CLASS, ".Ab wrong class") ;
             Ab_len = mxGetN (Ab_mx) ;
-            Ab_size = Ab_len ;
-            Ab = (Ab_size == 0) ? NULL : ((int8_t *) mxGetData (Ab_mx)) ;
+            Ab_memsize = Ab_len ;
+            Ab = (Ab_memsize == 0) ? NULL : ((int8_t *) mxGetData (Ab_mx)) ;
         }
 
         //----------------------------------------------------------------------
@@ -369,11 +369,11 @@ GrB_Matrix gb_get_shallow   // shallow copy of MATLAB sparse matrix or struct
             Container->iso = false ;
             Container->jumbled = false ;
             OK (GxB_Vector_load (Container->p, (void **) &Yp, Aj_type, Yp_len,
-                Yp_size, GxB_IS_READONLY, NULL)) ;
+                Yp_memsize, GxB_IS_READONLY, NULL)) ;
             OK (GxB_Vector_load (Container->i, (void **) &Yi, Aj_type, Yi_len,
-                Yi_size, GxB_IS_READONLY, NULL)) ;
+                Yi_memsize, GxB_IS_READONLY, NULL)) ;
             OK (GxB_Vector_load (Container->x, (void **) &Yx, Aj_type, nvec,
-                Yx_size, GxB_IS_READONLY, NULL)) ;
+                Yx_memsize, GxB_IS_READONLY, NULL)) ;
             OK (GxB_load_Matrix_from_Container (Y, Container, NULL)) ;
         }
 
@@ -394,19 +394,19 @@ GrB_Matrix gb_get_shallow   // shallow copy of MATLAB sparse matrix or struct
                 Container->Y = Y ;
                 Y = NULL ;
                 OK (GxB_Vector_load (Container->h, (void **) &Ah, Aj_type,
-                    plen, Ah_size, GxB_IS_READONLY, NULL)) ;
+                    plen, Ah_memsize, GxB_IS_READONLY, NULL)) ;
                 // fall through to sparse case
 
             case GxB_SPARSE : 
                 OK (GxB_Vector_load (Container->p, (void **) &Ap, Ap_type,
-                    plen+1, Ap_size, GxB_IS_READONLY, NULL)) ;
+                    plen+1, Ap_memsize, GxB_IS_READONLY, NULL)) ;
                 OK (GxB_Vector_load (Container->i, (void **) &Ai, Ai_type,
-                    nvals, Ai_size, GxB_IS_READONLY, NULL)) ;
+                    nvals, Ai_memsize, GxB_IS_READONLY, NULL)) ;
                 break ;
 
             case GxB_BITMAP : 
                 OK (GxB_Vector_load (Container->b, (void **) &Ab, GrB_INT8,
-                    Ab_len, Ab_size, GxB_IS_READONLY, NULL)) ;
+                    Ab_len, Ab_memsize, GxB_IS_READONLY, NULL)) ;
                 break ;
 
             case GxB_FULL : 
@@ -416,7 +416,7 @@ GrB_Matrix gb_get_shallow   // shallow copy of MATLAB sparse matrix or struct
         }
 
         OK (GxB_Vector_load (Container->x, (void **) &Ax, Ax_type, Ax_len,
-            Ax_size, GxB_IS_READONLY, NULL)) ;
+            Ax_memsize, GxB_IS_READONLY, NULL)) ;
 
         OK (GxB_load_Matrix_from_Container (A, Container, NULL)) ;
 
@@ -453,24 +453,24 @@ GrB_Matrix gb_get_shallow   // shallow copy of MATLAB sparse matrix or struct
 
         // get the numeric data
         void *Xx = NULL ;
-        size_t type_size = 0 ;
+        size_t typesize = 0 ;
         if (Ax_type == GrB_FP64)
         { 
             // built-in sparse or full double matrix
             Xx = mxGetData (X) ;
-            type_size = sizeof (double) ;
+            typesize = sizeof (double) ;
         }
         else if (Ax_type == GxB_FC64)
         { 
             // built-in sparse or full double complex matrix
             Xx = mxGetData (X) ;
-            type_size = 2 * sizeof (double) ;
+            typesize = 2 * sizeof (double) ;
         }
         else if (Ax_type == GrB_BOOL)
         { 
             // built-in sparse or full logical matrix
             Xx = mxGetData (X) ;
-            type_size = sizeof (bool) ;
+            typesize = sizeof (bool) ;
         }
         else if (X_is_sparse)
         {
@@ -481,68 +481,68 @@ GrB_Matrix gb_get_shallow   // shallow copy of MATLAB sparse matrix or struct
         { 
             // full int8 matrix
             Xx = mxGetData (X) ;
-            type_size = sizeof (int8_t) ;
+            typesize = sizeof (int8_t) ;
         }
         else if (Ax_type == GrB_INT16)
         { 
             // full int16 matrix
             Xx = mxGetData (X) ;
-            type_size = sizeof (int16_t) ;
+            typesize = sizeof (int16_t) ;
         }
         else if (Ax_type == GrB_INT32)
         { 
             // full int32 matrix
             Xx = mxGetData (X) ;
-            type_size = sizeof (int32_t) ;
+            typesize = sizeof (int32_t) ;
         }
         else if (Ax_type == GrB_INT64)
         { 
             // full int64 matrix
             Xx = mxGetData (X) ;
-            type_size = sizeof (int64_t) ;
+            typesize = sizeof (int64_t) ;
         }
         else if (Ax_type == GrB_UINT8)
         { 
             // full uint8 matrix
             Xx = mxGetData (X) ;
-            type_size = sizeof (uint8_t) ;
+            typesize = sizeof (uint8_t) ;
         }
         else if (Ax_type == GrB_UINT16)
         { 
             // full uint16 matrix
             Xx = mxGetData (X) ;
-            type_size = sizeof (uint16_t) ;
+            typesize = sizeof (uint16_t) ;
         }
         else if (Ax_type == GrB_UINT32)
         { 
             // full uint32 matrix
             Xx = mxGetData (X) ;
-            type_size = sizeof (uint32_t) ;
+            typesize = sizeof (uint32_t) ;
         }
         else if (Ax_type == GrB_UINT64)
         { 
             // full uint64 matrix
             Xx = mxGetData (X) ;
-            type_size = sizeof (uint64_t) ;
+            typesize = sizeof (uint64_t) ;
         }
         else if (Ax_type == GrB_FP32)
         { 
             // full single matrix
             Xx = mxGetData (X) ;
-            type_size = sizeof (float) ;
+            typesize = sizeof (float) ;
         }
         else if (Ax_type == GxB_FC32)
         { 
             // full single complex matrix
             Xx = mxGetData (X) ;
-            type_size = 2 * sizeof (float) ;
+            typesize = 2 * sizeof (float) ;
         }
         else
         {
             ERROR ("unsupported type") ;
         }
 
-        uint64_t Xx_size = (nvals) * type_size  ;
+        uint64_t Xx_memsize = (nvals) * typesize  ;
 
         GxB_Container Container = GB_helper_container ( ) ;
         Container->nrows = nrows ;
@@ -557,12 +557,12 @@ GrB_Matrix gb_get_shallow   // shallow copy of MATLAB sparse matrix or struct
         if (X_is_sparse)
         { 
             // import the matrix in CSC format (all-64-bit)
-            uint64_t Xp_size = (ncols + 1) * sizeof (uint64_t) ;
-            uint64_t Xi_size = (nvals) * sizeof (uint64_t) ;
+            uint64_t Xp_memsize = (ncols + 1) * sizeof (uint64_t) ;
+            uint64_t Xi_memsize = (nvals) * sizeof (uint64_t) ;
             OK (GxB_Vector_load (Container->p, (void **) &Xp, GrB_UINT64,
-                ncols+1, Xp_size, GxB_IS_READONLY, NULL)) ;
+                ncols+1, Xp_memsize, GxB_IS_READONLY, NULL)) ;
             OK (GxB_Vector_load (Container->i, (void **) &Xi, GrB_UINT64,
-                nvals, Xi_size, GxB_IS_READONLY, NULL)) ;
+                nvals, Xi_memsize, GxB_IS_READONLY, NULL)) ;
             Container->format = GxB_SPARSE ;
         }
         else
@@ -572,7 +572,7 @@ GrB_Matrix gb_get_shallow   // shallow copy of MATLAB sparse matrix or struct
         }
 
         OK (GxB_Vector_load (Container->x, (void **) &Xx, Ax_type, nvals,
-            Xx_size, GxB_IS_READONLY, NULL)) ;
+            Xx_memsize, GxB_IS_READONLY, NULL)) ;
 
         OK (GxB_load_Matrix_from_Container (A, Container, NULL)) ;
     }

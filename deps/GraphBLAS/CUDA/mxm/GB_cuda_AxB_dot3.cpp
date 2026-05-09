@@ -49,12 +49,11 @@ GrB_Info GB_cuda_AxB_dot3           // C<M> = A'*B using dot product method
     // check inputs
     //--------------------------------------------------------------------------
 
-    // when CUDA is enabled, no static headers are used in all of GraphBLAS
     GrB_Info info ;
-    ASSERT (C != NULL && !(C->header_size == 0)) ;
-    ASSERT (M != NULL && !(M->header_size == 0)) ;
-    ASSERT (A != NULL && !(A->header_size == 0)) ;
-    ASSERT (B != NULL && !(B->header_size == 0)) ;
+    ASSERT (C != NULL) ;
+    ASSERT (M != NULL) ;
+    ASSERT (A != NULL) ;
+    ASSERT (B != NULL) ;
 
     ASSERT_MATRIX_OK (M, "M for dot3 cuda A'*B", GB0) ;
     ASSERT_MATRIX_OK (A, "A for dot3 cuda A'*B", GB0) ;
@@ -83,6 +82,7 @@ GrB_Info GB_cuda_AxB_dot3           // C<M> = A'*B using dot product method
 
     int device = -1;
     cudaStream_t stream = nullptr ;
+    int memlane = GB_MEMLANE_RMM ;
 
     CUDA_OK (cudaGetDevice (&device)) ;     // FIXME: use the Context
     printf ("dot3 using cuda device %d\n", device) ;
@@ -142,7 +142,7 @@ GrB_Info GB_cuda_AxB_dot3           // C<M> = A'*B using dot product method
         M_sparsity, /* bitmap_calloc: */ false, M->hyper_switch, cnvec,
         cnz+1,  // add one to cnz for cumsum of Cwork
         /* numeric: */ true, /* iso: */ C_iso,
-        /* C pji_is_32: */ M->p_is_32, M->j_is_32, M->i_is_32)) ;
+        /* C pji_is_32: */ M->p_is_32, M->j_is_32, M->i_is_32, memlane)) ;
 
     //--------------------------------------------------------------------------
     // Pre-fetch arrays that will be used on the device

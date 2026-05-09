@@ -115,7 +115,7 @@ GrB_Info GxB_Context_set_String
     //--------------------------------------------------------------------------
 
     return (GB_user_name_set (&(Context->user_name),
-        &(Context->user_name_size), value, false)) ;
+        &(Context->user_name_mem), value, false)) ;
 }
 
 //------------------------------------------------------------------------------

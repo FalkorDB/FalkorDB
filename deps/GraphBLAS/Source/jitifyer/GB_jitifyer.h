@@ -189,11 +189,15 @@ typedef enum
 
     // apply methods:
     GB_JIT_CUDA_KERNEL_APPLYUNOP = 1026,
+    GB_JIT_CUDA_KERNEL_TRANSPOSE_PREP = 1027,
     //... (up to 9 apply methods?)
 
     // select methods:
     GB_JIT_CUDA_KERNEL_SELECT_BITMAP = 1035,
-    GB_JIT_CUDA_KERNEL_SELECT_SPARSE = 1036
+    GB_JIT_CUDA_KERNEL_SELECT_SPARSE = 1036,
+
+    // build:
+    GB_JIT_CUDA_KERNEL_BUILD = 1037
 
 }
 GB_jit_kcode ;
@@ -248,7 +252,7 @@ static inline void GB_encodify_kcode
     {
         // CUDA kernel
         int device = 0 ;
-        GB_cuda_get_device (&device) ;
+        GB_cuda_get_device (&device) ;  // FIXME: this assumes device is set OK
         int major = GB_Global_gpu_compute_capability_major_get (device) ;
         int minor = GB_Global_gpu_compute_capability_minor_get (device) ;
         encoding->major = (uint8_t) major ;

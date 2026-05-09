@@ -28,13 +28,17 @@ GrB_Info GB_convert_full_to_bitmap      // convert matrix from full to bitmap
     ASSERT (!GB_JUMBLED (A)) ;
     ASSERT (!GB_PENDING (A)) ;
 
+    int memlane = GB_memlane (A->header_mem) ;
+    uint64_t mem = GB_mem (memlane, 0) ;
+
     //--------------------------------------------------------------------------
     // allocate A->b
     //--------------------------------------------------------------------------
 
     int64_t anz = GB_nnz_full (A) ;
     GB_BURBLE_N (anz, "(full to bitmap) ") ;
-    A->b = GB_MALLOC_MEMORY (anz, sizeof (int8_t), &(A->b_size)) ;
+    A->b_mem = mem ;
+    A->b = GB_MALLOC_MEMORY (anz, sizeof (int8_t), &(A->b_mem)) ;
     if (A->b == NULL)
     { 
         // out of memory

@@ -20,18 +20,18 @@ void *GB_werk_pop     // free the top block of werkspace memory
 (
     // input/output
     void *p,                    // werkspace to free
-    size_t *size_allocated,     // # of bytes actually allocated for p
+    uint64_t *mem,              // memsize and memlane of p
     // input
     bool on_stack,              // true if werkspace is from Werk stack
-    size_t nitems,              // # of items to allocate
-    size_t size_of_item,        // size of each item
+    uint64_t nitems,            // # of items to allocate
+    uint64_t size_of_item,      // size of each item
     GB_Werk Werk
 ) ;
 #endif
 
 GB_CALLBACK_WERK_POP_PROTO (GB_werk_pop)
 {
-    ASSERT (size_allocated != NULL) ;
+    ASSERT (mem != NULL) ;
 
     if (p == NULL)
     { 
@@ -40,18 +40,19 @@ GB_CALLBACK_WERK_POP_PROTO (GB_werk_pop)
     else if (on_stack)
     { 
         // werkspace was allocated from the Werk stack
-        ASSERT ((*size_allocated) == GB_ROUND8 (nitems * size_of_item)) ;
+        ASSERT (GB_memsize (*mem) == GB_ROUND8 (nitems * size_of_item)) ;
         ASSERT (Werk != NULL) ;
-        ASSERT ((*size_allocated) % 8 == 0) ;
-        ASSERT (((GB_void *) p) + (*size_allocated) ==
+        ASSERT (GB_memsize (*mem) % 8 == 0) ;
+        ASSERT (((GB_void *) p) + GB_memsize (*mem) ==
                 Werk->Stack + Werk->pwerk) ;
         Werk->pwerk = ((GB_void *) p) - Werk->Stack ;
-        (*size_allocated) = 0 ;
+        (*mem) = 0 ;
     }
     else
     { 
         // werkspace was allocated from malloc
-        GB_free_memory (&p, *size_allocated) ;
+        GB_free_memory (&p, *mem) ;
+        (*mem) = 0 ;
     }
     return (NULL) ;                 // return NULL to indicate p was freed
 }

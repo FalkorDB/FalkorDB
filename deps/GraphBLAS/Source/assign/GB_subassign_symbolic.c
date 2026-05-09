@@ -19,7 +19,7 @@
 GrB_Info GB_subassign_symbolic  // S = C(I,J), extracting pattern not values
 (
     // output
-    GrB_Matrix S,           // S = symbolic(C(I,J)), static header
+    GrB_Matrix S,           // S = symbolic(C(I,J)), existing header
     // inputs, not modified:
     const GrB_Matrix C,     // matrix to extract the pattern of
     const void *I,          // I index list
@@ -39,7 +39,7 @@ GrB_Info GB_subassign_symbolic  // S = C(I,J), extracting pattern not values
 
     GrB_Info info ;
     ASSERT (!GB_IS_BITMAP (C)) ;    // the caller cannot tolerate C bitmap
-    ASSERT (S != NULL && (S->header_size == 0 || GBNSTATIC)) ;
+    ASSERT (S != NULL) ;
 
     //--------------------------------------------------------------------------
     // extract the pattern: S = C(I,J) for S_Extraction method, and quick mask

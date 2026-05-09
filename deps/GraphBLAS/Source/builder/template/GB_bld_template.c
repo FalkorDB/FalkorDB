@@ -12,21 +12,25 @@
 // about which vectors the entries appear.
 
 // Sx and Tx are either both iso or both non-iso.  For the iso case,
-// GB_ISO_BUILD is defined, and K_work is NULL.  The iso case is not handled by
-// the FactoryKernels/GB_bld__* workers, since it doesn't access the values at
-// all.
+// GB_ISO_BUILD is defined as 1, and K_work is NULL.  The iso case is not
+// handled by the FactoryKernels/GB_bld__* workers, since it doesn't access the
+// values at all.
+
+#ifndef GB_ISO_BUILD
+#define GB_ISO_BUILD 0
+#endif
 
 {
 
-    #ifndef GB_NO_DUPLICATES
-    #define GB_NO_DUPLICATES (ndupl == 0)
+    #ifndef GB_KNOWN_NO_DUPLICATES
+    #define GB_KNOWN_NO_DUPLICATES (ndupl == 0)
     #endif
 
     #ifndef GB_K_IS_NULL
     #define GB_K_IS_NULL (K_work == NULL)
     #endif
 
-    if (GB_NO_DUPLICATES)
+    if (GB_KNOWN_NO_DUPLICATES)
     {
 
         //----------------------------------------------------------------------
@@ -38,7 +42,7 @@
         // construct T->i.  The tuple values, in Sx, are copied or permuted
         // into T->x.  This step is skipped if T and Sx are iso.
 
-        #ifndef GB_ISO_BUILD
+        #if !GB_ISO_BUILD
 
             if (GB_K_IS_NULL)
             {
@@ -112,7 +116,7 @@
                 // get the t-th tuple, a unique tuple
                 int64_t i = GB_IGET (I_work, t) ;
                 ASSERT (i != duplicate_entry) ;
-                #ifndef GB_ISO_BUILD
+                #if !GB_ISO_BUILD
                 int64_t k = GB_K_WORK (t) ;
                 // Tx [my_tnz] = (ttype) Sx [k] ;
                 GB_BLD_COPY (Tx, my_tnz, Sx, k) ;
@@ -126,7 +130,7 @@
                     GB_IGET (I_work, t+1) == duplicate_entry ; t++)
                 { 
                     // assemble the duplicate tuple
-                    #if !(defined (GB_ISO_BUILD) || defined (GB_DUP_IS_FIRST))
+                    #if !(GB_ISO_BUILD || defined (GB_DUP_IS_FIRST))
                     int64_t k = GB_K_WORK (t+1) ;
                     // Tx [my_tnz] += Sx [k], typecasting as needed
                     GB_BLD_DUP (Tx, my_tnz, Sx, k) ;
@@ -137,6 +141,4 @@
         }
     }
 }
-
-#undef GB_ISO_BUILD
 

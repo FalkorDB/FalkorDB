@@ -13,20 +13,21 @@
 #include "GB.h"
 
 // ensure a Container->component exists and is valid
-#define GB_CHECK_CONTAINER_COMPONENT(Container,component,type)               \
+#define GB_CHECK_CONTAINER_COMPONENT(Container,component,type,memlane)       \
     if (Container->component == NULL)                                        \
     {                                                                        \
-        GB_OK (GB_container_component_new (&(Container->component), type)) ; \
+        GB_OK (GB_container_component_new (&(Container->component), type,    \
+            memlane)) ;                                                      \
     }                                                                        \
     GB_RETURN_IF_INVALID (Container->component) ;                            \
     ASSERT_VECTOR_OK (Container->component, "Container component", GB0) ;
 
-#define GB_CHECK_CONTAINER(Container)                           \
-    GB_CHECK_CONTAINER_COMPONENT (Container, p, GrB_UINT32) ;   \
-    GB_CHECK_CONTAINER_COMPONENT (Container, h, GrB_UINT32) ;   \
-    GB_CHECK_CONTAINER_COMPONENT (Container, b, GrB_INT8) ;     \
-    GB_CHECK_CONTAINER_COMPONENT (Container, i, GrB_UINT32) ;   \
-    GB_CHECK_CONTAINER_COMPONENT (Container, x, GrB_BOOL) ;
+#define GB_CHECK_CONTAINER(Container,memlane)                           \
+    GB_CHECK_CONTAINER_COMPONENT (Container, p, GrB_UINT32, memlane) ;  \
+    GB_CHECK_CONTAINER_COMPONENT (Container, h, GrB_UINT32, memlane) ;  \
+    GB_CHECK_CONTAINER_COMPONENT (Container, b, GrB_INT8  , memlane) ;  \
+    GB_CHECK_CONTAINER_COMPONENT (Container, i, GrB_UINT32, memlane) ;  \
+    GB_CHECK_CONTAINER_COMPONENT (Container, x, GrB_BOOL  , memlane) ;
 
 void GB_vector_load
 (
@@ -36,7 +37,8 @@ void GB_vector_load
     // input:
     GrB_Type type,          // type of X
     uint64_t n,             // # of entries in X
-    uint64_t X_size,        // size of X in bytes (at least n*(sizeof the type))
+    uint64_t X_mem,         // memsize of X in bytes (>= n*(sizeof the type))
+                            // and memlane
     bool readonly           // if true, X is treated as readonly
 ) ;
 
@@ -48,7 +50,8 @@ GrB_Info GB_vector_unload
     // output:
     GrB_Type *type,         // type of X
     uint64_t *n,            // # of entries in X
-    uint64_t *X_size,       // size of X in bytes (at least n*(sizeof the type))
+    uint64_t *X_mem,        // memsize of X in bytes (>= n*(sizeof the type))
+                            // and memlane
     bool *readonly,         // if true, X is treated as readonly
     GB_Werk Werk
 ) ;
@@ -74,8 +77,11 @@ void GB_vector_reset    // clear almost all prior content; making V length 0
 
 GrB_Info GB_container_component_new
 (
+    // output:
     GrB_Vector *component,
-    GrB_Type type
+    // inputs
+    GrB_Type type,
+    int memlane
 ) ;
 
 #endif

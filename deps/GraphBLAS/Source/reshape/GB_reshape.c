@@ -19,9 +19,9 @@
 #define GB_FREE_WORKSPACE                       \
 {                                               \
     GB_WERK_POP (T_ek_slicing, int64_t) ;       \
-    GB_FREE_MEMORY (&I_work, I_work_size) ;     \
-    GB_FREE_MEMORY (&J_work, J_work_size) ;     \
-    GB_FREE_MEMORY (&S_work, S_work_size) ;     \
+    GB_FREE_MEMORY (&I_work, I_work_mem) ;      \
+    GB_FREE_MEMORY (&J_work, J_work_mem) ;      \
+    GB_FREE_MEMORY (&S_work, S_work_mem) ;      \
     if (T != A && T != C)                       \
     {                                           \
         GB_Matrix_free (&T) ;                   \
@@ -62,9 +62,12 @@ GrB_Info GB_reshape         // reshape a GrB_Matrix into another GrB_Matrix
     GrB_Info info ;
     ASSERT_MATRIX_OK (A, "A for reshape", GB0) ;
 
-    GB_MDECL (I_work, , u) ; size_t I_work_size = 0 ;
-    GB_MDECL (J_work, , u) ; size_t J_work_size = 0 ;
-    GB_void *S_work = NULL ; size_t S_work_size = 0 ;
+    int memlane = GB_memlane (A->header_mem) ;
+    uint64_t mem = GB_mem (memlane, 0) ;
+
+    GB_MDECL (I_work, , u) ; uint64_t I_work_mem = mem ;
+    GB_MDECL (J_work, , u) ; uint64_t J_work_mem = mem ;
+    GB_void *S_work = NULL ; uint64_t S_work_mem = mem ;
     GB_void *S_input = NULL ;
     bool I_work_is_32 = false ;
     bool J_work_is_32 = false ;
@@ -78,18 +81,18 @@ GrB_Info GB_reshape         // reshape a GrB_Matrix into another GrB_Matrix
         (*Chandle) = NULL ;
     }
 
-    uint64_t matrix_size, s ;
+    uint64_t nentries_old, nentries_new ;
     int64_t nrows_old = GB_NROWS (A) ;
     int64_t ncols_old = GB_NCOLS (A) ;
-    bool ok = GB_int64_multiply (&matrix_size, nrows_old, ncols_old) ;
+    bool ok = GB_int64_multiply (&nentries_old, nrows_old, ncols_old) ;
     if (!ok)
     { 
         // problem too large
         return (GrB_OUT_OF_MEMORY) ;
     }
 
-    ok = GB_int64_multiply (&s, nrows_new, ncols_new) ;
-    if (!ok || s != matrix_size)
+    ok = GB_int64_multiply (&nentries_new, nrows_new, ncols_new) ;
+    if (!ok || nentries_new != nentries_old)
     { 
         // dimensions are invalid
         return (GrB_DIMENSION_MISMATCH) ;
@@ -118,7 +121,7 @@ GrB_Info GB_reshape         // reshape a GrB_Matrix into another GrB_Matrix
             GB_OK (GB_new (&T,  // new header
                 type, A->vdim, A->vlen, GB_ph_null, by_col, GxB_AUTO_SPARSITY,
                 GB_Global_hyper_switch_get ( ), 0,
-                A->p_is_32, A->j_is_32, A->i_is_32)) ;
+                A->p_is_32, A->j_is_32, A->i_is_32, memlane)) ;
             GB_OK (GB_transpose_cast (T, type, by_col, A, false, Werk)) ;
             // now T can be reshaped in-place to construct C
             in_place = true ;
@@ -171,7 +174,7 @@ GrB_Info GB_reshape         // reshape a GrB_Matrix into another GrB_Matrix
         else
         { 
             // copy T into C
-            GB_OK (GB_dup (&C, T, Werk)) ;
+            GB_OK (GB_dup (&C, T, memlane, Werk)) ;
         }
 
     }
@@ -191,7 +194,7 @@ GrB_Info GB_reshape         // reshape a GrB_Matrix into another GrB_Matrix
         else
         { 
             // copy T into C
-            GB_OK (GB_dup (&C, T, Werk)) ;
+            GB_OK (GB_dup (&C, T, memlane, Werk)) ;
         }
 
         // change the size of C
@@ -245,12 +248,12 @@ GrB_Info GB_reshape         // reshape a GrB_Matrix into another GrB_Matrix
             //------------------------------------------------------------------
 
             // remove T->i from T; it becomes I_work
-            I_work = T->i ; I_work_size = T->i_size ;
-            T->i = NULL   ; T->i_size = 0 ;
+            I_work = T->i ; I_work_mem = T->i_mem ;
+            T->i = NULL   ; T->i_mem = 0 ;
 
             // remove T->x from T; it becomes S_work
-            S_work = T->x ; S_work_size = T->x_size ;
-            T->x = NULL   ; T->x_size = 0 ;
+            S_work = T->x ; S_work_mem = T->x_mem ;
+            T->x = NULL   ; T->x_mem = 0 ;
 
             // move T into C
             C = T ;
@@ -268,10 +271,10 @@ GrB_Info GB_reshape         // reshape a GrB_Matrix into another GrB_Matrix
             GB_OK (GB_new (&C, // new header
                 type, vlen_new, vdim_new, GB_ph_null, T_is_csc,
                 GxB_AUTO_SPARSITY, GB_Global_hyper_switch_get ( ), 0,
-                Cp_is_32, Cj_is_32, Ci_is_32)) ;
+                Cp_is_32, Cj_is_32, Ci_is_32, memlane)) ;
 
             // allocate new space for the future C->i
-            I_work = GB_MALLOC_MEMORY (nvals, iwsize, &I_work_size) ;
+            I_work = GB_MALLOC_MEMORY (nvals, iwsize, &I_work_mem) ;
             if (I_work == NULL)
             { 
                 // out of memory
@@ -287,7 +290,7 @@ GrB_Info GB_reshape         // reshape a GrB_Matrix into another GrB_Matrix
         if (vdim_new > 1)
         {
             // J_work is not needed if vdim_new == 1
-            J_work = GB_MALLOC_MEMORY (nvals, jwsize, &J_work_size) ;
+            J_work = GB_MALLOC_MEMORY (nvals, jwsize, &J_work_mem) ;
             if (J_work == NULL)
             { 
                 // out of memory
@@ -387,11 +390,11 @@ GrB_Info GB_reshape         // reshape a GrB_Matrix into another GrB_Matrix
             vdim_new,       // new vdim
             T_is_csc,       // same format as T
             (void **) &I_work,        // transplanted into C->i
-            &I_work_size,
+            &I_work_mem,
             (void **) &J_work,        // freed when done
-            &J_work_size,
+            &J_work_mem,
             &S_work,        // array of values; transplanted into C->x in-place
-            &S_work_size,
+            &S_work_mem,
             !T_jumbled,     // indices may be jumbled on input
             true,           // no duplicates exist
             nvals,          // number of entries in T and C

@@ -15,7 +15,7 @@
 GrB_Info GB_subref              // C = A(I,J): either symbolic or numeric
 (
     // output
-    GrB_Matrix C,               // output matrix, static header
+    GrB_Matrix C,               // output matrix, existing header
     // input, not modified
     bool C_iso,                 // if true, return C as iso, regardless of A
     const bool C_is_csc,        // requested format of C
@@ -36,11 +36,11 @@ GrB_Info GB_subref_phase0
     void **p_Ch,            // Ch = C->h hyperlist, or NULL
     bool *p_Cj_is_32,       // if true, C->h is 32-bit; else 64-bit
     bool *p_Ci_is_32,       // if true, C->i is 32-bit; else 64-bit
-    size_t *p_Ch_size,
+    uint64_t *p_Ch_mem,
     void **p_Ap_start,      // A(:,kA) starts at Ap_start [kC]
-    size_t *p_Ap_start_size,
+    uint64_t *p_Ap_start_mem,
     void **p_Ap_end,        // ... and ends at Ap_end [kC] - 1
-    size_t *p_Ap_end_size,
+    uint64_t *p_Ap_end_mem,
     int64_t *p_Cnvec,       // # of vectors in C
     bool *p_need_qsort,     // true if C must be sorted
     int *p_Ikind,           // kind of I
@@ -73,13 +73,13 @@ GrB_Info GB_subref_slice    // phase 1 of GB_subref
 (
     // output:
     GB_task_struct **p_TaskList,    // array of structs
-    size_t *p_TaskList_size,        // size of TaskList
+    uint64_t *p_TaskList_mem,        // size of TaskList
     int *p_ntasks,              // # of tasks constructed
     int *p_nthreads,            // # of threads for subref operation
     bool *p_post_sort,          // true if a final post-sort is needed
     GrB_Matrix *R_handle,       // R = inverse (I), if needed
     uint64_t **p_Cwork,         // workspace of size max(2,C->nvec+1)
-    size_t *p_Cwork_size,
+    uint64_t *p_Cwork_mem,
     // from phase0:
     const void *Ap_start,       // location of A(imin:imax,kA)
     const void *Ap_end,
@@ -102,7 +102,7 @@ GrB_Info GB_subref_phase2               // count nnz in each C(:,j)
     // computed by phase2:
     void **Cp_handle,                   // output of size Cnvec+1
     bool *p_Cp_is_32,                   // if true, Cp is 32-bit; else 64 bit
-    size_t *Cp_size_handle,
+    uint64_t *Cp_mem_handle,
     int64_t *Cnvec_nonempty,            // # of non-empty vectors in C
     // tasks from phase1:
     GB_task_struct *restrict TaskList,  // array of structs
@@ -110,7 +110,7 @@ GrB_Info GB_subref_phase2               // count nnz in each C(:,j)
     const int nthreads,                 // # of threads to use
     const GrB_Matrix R,                 // R = inverse (I), if needed
     uint64_t **p_Cwork,                 // workspace of size max(2,C->nvec+1)
-    size_t Cwork_size,
+    uint64_t Cwork_mem,
     // analysis from phase0:
     const void *Ap_start,
     const void *Ap_end,
@@ -130,11 +130,11 @@ GrB_Info GB_subref_phase2               // count nnz in each C(:,j)
 
 GrB_Info GB_subref_phase3   // C=A(I,J)
 (
-    GrB_Matrix C,               // output matrix, static header
+    GrB_Matrix C,               // output matrix, existing header
     // from phase2:
     void **Cp_handle,           // vector pointers for C
     const bool Cp_is_32,        // if true, Cp is 32-bit; else 64-bit
-    size_t Cp_size,
+    uint64_t Cp_mem,
     const int64_t Cnvec_nonempty,       // # of non-empty vectors in C
     // from phase1:
     const GB_task_struct *restrict TaskList,    // array of structs
@@ -146,7 +146,7 @@ GrB_Info GB_subref_phase3   // C=A(I,J)
     void **Ch_handle,
     const bool Cj_is_32,        // if true, C->h is 32-bit; else 64-bit
     const bool Ci_is_32,        // if true, C->i is 32-bit; else 64-bit
-    size_t Ch_size,
+    uint64_t Ch_mem,
     const void *Ap_start,
     const void *Ap_end,
     const int64_t Cnvec,
@@ -171,7 +171,7 @@ GrB_Info GB_subref_phase3   // C=A(I,J)
 GrB_Info GB_bitmap_subref       // C = A(I,J): either symbolic or numeric
 (
     // output:
-    GrB_Matrix C,               // output matrix, static header
+    GrB_Matrix C,               // output matrix, existing header
     // inputs, not modified:
     const GrB_Type ctype,       // type of C to create
     const bool C_iso,           // if true, C is iso
