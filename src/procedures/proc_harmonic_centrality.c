@@ -379,7 +379,8 @@ ProcedureResult Proc_CentralityInvoke
 	GrB_Info info = LAGraph_New (&G, &A, LAGraph_ADJACENCY_DIRECTED, msg) ;
 	ASSERT (info == GrB_SUCCESS) ;
 
-	info = LAGr_HarmonicCentrality (&scores, &reachable_nodes, G, nodes, msg) ;
+	GrB_Vector *rnodes = pdata->yield_reachable ? &reachable_nodes : NULL;
+	info = LAGr_HarmonicCentrality (&scores, rnodes, G, nodes, msg) ;
 
 	LAGraph_Delete (&G, msg) ;
 	GrB_free (&nodes) ;
@@ -397,11 +398,11 @@ ProcedureResult Proc_CentralityInvoke
 	// initialize iterator directly over scores (index = nodeID, value = score)
 	//--------------------------------------------------------------------------
 
-	if (pdata->yield_node != NULL || pdata->yield_score != NULL) {
-		GrB_OK (GxB_Iterator_new (&pdata->it)) ;
-		GrB_OK (GxB_Vector_Iterator_attach (pdata->it, pdata->scores, NULL)) ;
-		pdata->info = GxB_Vector_Iterator_seek (pdata->it, 0) ;
-	}
+	// score must be returned by LAGraph, so to simplify the code, we always
+	// add an iterator to the scores vector
+	GrB_OK (GxB_Iterator_new (&pdata->it)) ;
+	GrB_OK (GxB_Vector_Iterator_attach (pdata->it, pdata->scores, NULL)) ;
+	pdata->info = GxB_Vector_Iterator_seek (pdata->it, 0) ;
 
 	//--------------------------------------------------------------------------
 	// initialize iterator over reachable_nodes (same sparsity pattern as scores)
@@ -509,7 +510,18 @@ ProcedureResult Proc_CentralityFree
 //     weightAttribute:    'Power',
 //     defaultWeight:      0
 // })
-// YIELD node, score
+// YIELD node, score, reachable
+//
+// nodeLabels: optional array of strings. Error on non-existent lable name.
+// relationshipTypes: optional array of strings. Error on non-existent
+//                    relationship name.
+// weightAttribute:   optional string. Error on non-existent name.
+// defaultWeight:     optional default weight, non-negative integer.
+//                    weightAttribute must have been specified already.
+//                    If not given, will error on non-integer or non-existent
+//                    weight attribute values. If given, these values will be
+//                    treated as the default.
+
 ProcedureCtx *Proc_HarmonicCentralityCtx(void) {
 	ProcedureOutput *outputs         = arr_new (ProcedureOutput, 3) ;
 	ProcedureOutput output_node      = {.name = "node",      .type = T_NODE}   ;

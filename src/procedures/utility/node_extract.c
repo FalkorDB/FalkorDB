@@ -55,19 +55,20 @@ void _getAtt_##ctype                                                           \
                                                                                \
 	SIValue v ;                                                                \
 	GraphEntity_GetProperty ((GraphEntity *) &e, ctx->attr, &v) ;              \
-	ASSERT (sizeof(ctype) == sizeof(v.longval)) ;                              \
 	ctype *val = (ctype *) &v.longval;                                         \
                                                                                \
 	if (SI_TYPE (v) & ctx->type) {                                             \
 		*z = *val ;                                                            \
-	} else {                                                                   \
+	} else { /* set the output to the default value */                         \
 		*z = *((ctype *) ctx->defaultA);                                       \
 	}                                                                          \
 }
 
 // funtion definitions for _getAtt_* functions
 FDB_GETATT_FUNC(int64_t);
-FDB_GETATT_FUNC(double);
+// TODO: if doubles are to be used, this function should do a better job at
+// casting values
+// FDB_GETATT_FUNC(double);
 
 void get_nodes_with_lbls
 (
@@ -177,6 +178,9 @@ bool get_node_attribute
 	ASSERT (attr  != ATTRIBUTE_ID_ALL) ;
 	ASSERT (attr  != ATTRIBUTE_ID_NONE) ;
 
+	// Not implemented: non-integer types
+	ASSERT ((allowed_types & (T_BOOL | T_INT64)) == allowed_types));
+
 	// default is either null or of allowedtype
 	ASSERT ((T_NULL | allowed_types) & SI_TYPE (default_val)) ;
 
@@ -217,21 +221,10 @@ bool get_node_attribute
 	// free container value
 	GrB_OK (GrB_free (&cont->x)) ;
 
-	if (allowed_types & T_DOUBLE) {
-		type = GrB_FP64 ;
-		GrB_OK (GrB_IndexUnaryOp_new (
-					&getValue, (GxB_index_unary_function) _getAtt_double,
-					type, type, ctx_type)) ;
-	}
-	else if (allowed_types & (T_BOOL | T_INT64)) {
-		type = GrB_INT64 ;
-		GrB_OK (GrB_IndexUnaryOp_new (
-					&getValue, (GxB_index_unary_function) _getAtt_int64_t,
-					type, type, ctx_type)) ;
-	} else {
-		// non-integer typecasting and certain types not currently supported
-		ASSERT (false) ;
-	}
+	type = GrB_INT64 ;
+	GrB_OK (GrB_IndexUnaryOp_new (
+				&getValue, (GxB_index_unary_function) _getAtt_int64_t,
+				type, type, ctx_type)) ;
 
 	GrB_OK (GrB_Scalar_new (&iso_val, type)) ;
 
@@ -248,7 +241,7 @@ bool get_node_attribute
 	GrB_OK (GrB_free (&cont)) ;
 	GrB_OK (GrB_free (&ctx_s)) ;
 	GrB_OK (GrB_free (&iso_val)) ;
-	GrB_OK (GrB_free (&getValue)); 
+	GrB_OK (GrB_free (&getValue));
 
 	return true;
 }
