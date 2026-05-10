@@ -60,22 +60,3 @@ GrB_Info get_sub_weight_matrix
 	bool symmetric                 // build a symmetric matrix
 ) ;
 
-// Get attributes of the given nodes
-bool get_node_attribute
-(
-	GrB_Vector rows,       // [input / output] the nodes for which to get values
-	const Graph *g,        // graph
-	AttributeID attr,      // attribute to get
-	SIValue default_val,   // the default value if attribute does not exist
-	SIType allowed_types   // allowed types (other attributes as DNE)
-) ;
-
-// return a vector with row[i] present if i is a node with one or more of the
-// given lables
-void get_nodes_with_lbls
-(
-	GrB_Vector *rows,      // [output] filtered rows
-	const Graph *g,        // graph
-	const LabelID *lbls,   // [optional] labels to consider
-	unsigned short n_lbls  // number of labels
-) ;
