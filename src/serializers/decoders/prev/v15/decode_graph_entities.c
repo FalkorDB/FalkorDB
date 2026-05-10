@@ -102,29 +102,55 @@ static SIValue _RdbLoadVector
 	return vector;
 }
 
+#define ENTITY_PROP_STACK_THRESHOLD 256
+
 static void _RdbLoadEntity
 (
 	SerializerIO rdb,
-	GraphContext *gc,
 	GraphEntity *e
 ) {
-	// Format:
+	// format:
 	// #properties N
 	// (name, value type, value) X N
 
-	uint64_t n = SerializerIO_ReadUnsigned(rdb);
+	uint64_t n = SerializerIO_ReadUnsigned (rdb) ;
 
-	if(n == 0) return;
+	if (n == 0) {
+		return ;
+	}
 
-	SIValue vals[n];
-	AttributeID ids[n];
+	ASSERT (n <= UINT16_MAX) ;
 
-	for(int i = 0; i < n; i++) {
-		ids[i]  = SerializerIO_ReadUnsigned(rdb);
-		vals[i] = _RdbLoadSIValue(rdb);
+	// small path: all storage lives on the stack, no allocation needed
+	if (likely (n <= ENTITY_PROP_STACK_THRESHOLD)) {
+		SIValue     vals [n] ;
+		AttributeID ids  [n] ;
+
+		for (uint64_t i = 0 ; i < n ; i++) {
+			ids  [i] = SerializerIO_ReadUnsigned (rdb) ;
+			vals [i] = _RdbLoadSIValue (rdb) ;
+		}
+
+		AttributeSet_Add (e->attributes, ids, vals, n, false) ;
+		return ;
+	}
+
+	// large path: heap allocation required
+	SIValue     *vals = rm_malloc (n * sizeof (SIValue)) ;
+	AttributeID *ids  = rm_malloc (n * sizeof (AttributeID)) ;
+
+	// rm_malloc aborts on failure, so no null-check is needed;
+	// remove this comment if that assumption ever changes
+
+	for (uint64_t i = 0 ; i < n ; i++) {
+		ids  [i] = SerializerIO_ReadUnsigned (rdb) ;
+		vals [i] = _RdbLoadSIValue (rdb) ;
 	}
 
 	AttributeSet_Add (e->attributes, ids, vals, n, false) ;
+
+	rm_free (ids) ;
+	rm_free (vals) ;
 }
 
 void RdbLoadNodes_v15
@@ -143,35 +169,37 @@ void RdbLoadNodes_v15
 	Graph *g = GraphContext_GetGraph (gc) ;
 
 	// get delay indexing configuration
-	bool delay_indexing;
-	Config_Option_get(Config_DELAY_INDEXING, &delay_indexing);
+	bool delay_indexing ;
+	Config_Option_get (Config_DELAY_INDEXING, &delay_indexing) ;
 
-	for(uint64_t i = 0; i < node_count; i++) {
-		Node n;
-		NodeID id = SerializerIO_ReadUnsigned(rdb);
+	for (uint64_t i = 0 ; i < node_count ; i++) {
+		Node n ;
+		NodeID id = SerializerIO_ReadUnsigned (rdb) ;
 
 		// #labels M
-		uint64_t nodeLabelCount = SerializerIO_ReadUnsigned(rdb);
+		uint64_t nodeLabelCount = SerializerIO_ReadUnsigned (rdb) ;
 
 		// * (labels) x M
-		LabelID labels[nodeLabelCount];
-		for(uint64_t i = 0; i < nodeLabelCount; i ++){
-			labels[i] = SerializerIO_ReadUnsigned(rdb);
+		LabelID labels [nodeLabelCount] ;
+		for (uint64_t i = 0 ; i < nodeLabelCount ; i ++){
+			labels [i] = SerializerIO_ReadUnsigned (rdb) ;
 		}
 
 		Serializer_Graph_SetNode (g, id, labels, nodeLabelCount, &n) ;
 
-		_RdbLoadEntity(rdb, gc, (GraphEntity *)&n);
+		_RdbLoadEntity (rdb, (GraphEntity *)&n) ;
 
 		// introduce n to each relevant index
-		if(!delay_indexing) {
-			for (int i = 0; i < nodeLabelCount; i++) {
-				Schema *s = GraphContext_GetSchemaByID(gc, labels[i],
-						SCHEMA_NODE);
-				ASSERT(s != NULL);
+		if (!delay_indexing) {
+			for (int i = 0 ; i < nodeLabelCount ; i++) {
+				Schema *s = GraphContext_GetSchemaByID (gc, labels [i],
+						SCHEMA_NODE) ;
+				ASSERT (s != NULL) ;
 
 				// index node
-				if(PENDING_IDX(s)) Index_IndexNode(PENDING_IDX(s), &n);
+				if (PENDING_IDX (s)) {
+					Index_IndexNode (PENDING_IDX (s), &n) ;
+				}
 			}
 		}
 	}
@@ -269,7 +297,7 @@ void RdbLoadEdges_v15
 		//----------------------------------------------------------------------
 
 		Serializer_Graph_AllocEdgeAttributes (g, e.id, &e) ;
-		_RdbLoadEntity(rdb, gc, (GraphEntity *)&e);
+		_RdbLoadEntity (rdb, (GraphEntity *)&e) ;
 
 		//----------------------------------------------------------------------
 		// index edge
