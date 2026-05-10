@@ -406,7 +406,7 @@ pub unsafe fn create_virtual_keys(ctx: *mut RedisModuleCtx) {
     }
 }
 
-unsafe fn delete_virtual_keys(ctx: *mut RedisModuleCtx) {
+pub unsafe fn delete_virtual_keys(ctx: *mut RedisModuleCtx) {
     unsafe {
         let mut vkey_state = VKEY_STATE.lock();
 

@@ -452,12 +452,25 @@ impl ThreadedGraph {
         // Query succeeded — now commit deferred index operations to RediSearch.
         runtime.commit_deferred_indexes();
 
+        // If any CreateIndex carries OPTIONS, the binary effect format can't
+        // currently round-trip them — fall back to verbatim GRAPH.QUERY
+        // replication by skipping the effects buffer entirely.
+        let has_unencodable_index = runtime
+            .plan
+            .iter()
+            .any(|node| matches!(node, IR::CreateIndex { options, .. } if options.is_some()));
+
         // Capture effects buffer before replying (pending data is still available)
-        let mut effects_buffer =
-            should_use_effects(is_non_deterministic, &runtime, result.stats.execution_time);
+        let mut effects_buffer = if has_unencodable_index {
+            None
+        } else {
+            should_use_effects(is_non_deterministic, &runtime, result.stats.execution_time)
+        };
 
         // Build index effects for CreateIndex / DropIndex IR nodes (not tracked by Pending)
-        effects_buffer = build_index_effects(&runtime, effects_buffer);
+        if !has_unencodable_index {
+            effects_buffer = build_index_effects(&runtime, effects_buffer);
+        }
 
         result.stats.cached = cached;
         if compact {
@@ -1285,9 +1298,8 @@ const fn entity_type_tag(et: &graph::entity_type::EntityType) -> u8 {
 
 /// Scan the plan for CreateIndex / DropIndex IR nodes and append their
 /// effects to the buffer. Returns the (possibly new) effects buffer.
-/// If any CreateIndex carries OPTIONS, the binary effect format can't
-/// currently round-trip them — fall back to verbatim GRAPH.QUERY
-/// replication by returning None.
+/// Caller must ensure no CreateIndex carries OPTIONS — those can't currently
+/// round-trip in the binary effect format and require verbatim replication.
 fn build_index_effects(
     runtime: &Runtime,
     mut effects_buffer: Option<Vec<u8>>,
@@ -1299,11 +1311,8 @@ fn build_index_effects(
                 attrs,
                 index_type,
                 entity_type,
-                options,
+                options: _,
             } => {
-                if options.is_some() {
-                    return None;
-                }
                 let buf = effects_buffer.get_or_insert_with(|| vec![EFFECTS_VERSION]);
                 buf.push(EFFECT_CREATE_INDEX);
                 buf.push(index_type_tag(index_type));

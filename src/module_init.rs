@@ -50,6 +50,15 @@ static RedisModuleEvent_FlushDB: RedisModuleEvent = RedisModuleEvent { id: 2, da
 #[allow(non_upper_case_globals)]
 static RedisModuleEvent_Persistence: RedisModuleEvent = RedisModuleEvent { id: 1, dataver: 1 };
 
+/// Redis event ID for Loading events (RDB/AOF/replication load lifecycle).
+#[allow(non_upper_case_globals)]
+static RedisModuleEvent_Loading: RedisModuleEvent = RedisModuleEvent { id: 3, dataver: 1 };
+
+/// Subevent: loading completed successfully.
+const REDISMODULE_SUBEVENT_LOADING_ENDED: u64 = 3;
+/// Subevent: loading failed.
+const REDISMODULE_SUBEVENT_LOADING_FAILED: u64 = 4;
+
 /// Redis event ID for replication role changes (master <-> replica).
 #[allow(non_upper_case_globals)]
 static RedisModuleEvent_ReplicationRoleChanged: RedisModuleEvent =
@@ -177,6 +186,19 @@ pub fn graph_init(
             eprintln!("FalkorDB: failed to subscribe to persistence events: code {res}");
             return Status::Err;
         }
+
+        // Subscribe to loading events to clean up virtual keys after the
+        // slave finishes a full RDB resync (mirrors C's
+        // ModuleEventHandler_AUXAfterKeyspaceEvent path).
+        let res = RedisModule_SubscribeToServerEvent.unwrap()(
+            ctx.ctx,
+            RedisModuleEvent_Loading,
+            Some(on_loading),
+        );
+        if res != REDISMODULE_OK as c_int {
+            eprintln!("FalkorDB: failed to subscribe to loading events: code {res}");
+            return Status::Err;
+        }
     }
     match init_functions() {
         Ok(()) => {}
@@ -283,6 +305,23 @@ unsafe extern "C" fn on_role_change(
     _data: *mut c_void,
 ) {
     telemetry::set_is_replica(subevent == REDISMODULE_EVENT_REPLROLECHANGED_NOW_REPLICA);
+}
+
+/// Loading event callback. After a slave finishes a full RDB resync from
+/// the master, drop any virtual keys that came along in the snapshot —
+/// their content has already been merged into the main graph key.
+unsafe extern "C" fn on_loading(
+    ctx: *mut RedisModuleCtx,
+    _eid: RedisModuleEvent,
+    subevent: u64,
+    _data: *mut c_void,
+) {
+    if subevent == REDISMODULE_SUBEVENT_LOADING_ENDED
+        || subevent == REDISMODULE_SUBEVENT_LOADING_FAILED
+    {
+        crate::redis_type::finalize_pending_graphs();
+        unsafe { crate::redis_type::delete_stale_virtual_keys(ctx) };
+    }
 }
 
 /// Tracks the old key name during a two-phase RENAME notification.
