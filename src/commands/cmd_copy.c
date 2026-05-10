@@ -468,7 +468,6 @@ static void _Graph_Copy
 
 	// acquire READ lock on gc
 	// we do not want to fork while the graph is modified
-	// might be redundant, see: GraphContext_LockForCommit
 	Graph *g = GraphContext_GetGraph (gc) ;
 	Graph_AcquireReadLock (g) ;
 	Graph_ApplyAllPending (g, false) ;  // flush all pending changes

@@ -33,7 +33,7 @@ extern RedisModuleType *GraphContextRedisModuleType;
 
 // forward declarations
 static void _GraphContext_Free(void *arg);
-static void _GraphContext_UpdateVersion(GraphContext *gc, const char *str);
+static void _GraphContext_UpdateHash(GraphContext *gc, const char *str);
 static void _DeleteTelemetryStream(RedisModuleCtx *ctx, const GraphContext *gc);
 
 // increase graph context ref count by 1
@@ -72,6 +72,46 @@ inline void GraphContext_DecreaseRefCount
 }
 
 //------------------------------------------------------------------------------
+// pending array accessors
+//------------------------------------------------------------------------------
+
+static Schema **_GetNodeSchemas
+(
+	GraphContext *gc
+) {
+	if (unlikely (gc->_node_schemas != NULL &&
+		QueryCtx_GetExecutionType () & QueryExecutionTypeFlag_WRITE)) {
+		return gc->_node_schemas ;
+	}
+
+	return gc->node_schemas ;
+}
+
+static Schema **_GetRelationSchemas
+(
+	GraphContext *gc
+) {
+	if (unlikely (gc->_relation_schemas != NULL &&
+		QueryCtx_GetExecutionType () & QueryExecutionTypeFlag_WRITE)) {
+		return gc->_relation_schemas ;
+	}
+
+	return gc->relation_schemas ;
+}
+
+static char **_GetAttributes
+(
+	GraphContext *gc
+) {
+	if (unlikely (gc->_attributes != NULL &&
+		QueryCtx_GetExecutionType () & QueryExecutionTypeFlag_WRITE)) {
+		return gc->_attributes ;
+	}
+
+	return gc->attributes ;
+}
+
+//------------------------------------------------------------------------------
 // GraphContext API
 //------------------------------------------------------------------------------
 
@@ -82,13 +122,15 @@ GraphContext *GraphContext_New
 ) {
 	GraphContext *gc = rm_calloc (1, sizeof (GraphContext)) ;
 
-	gc->version          = 0 ;  // initial graph version
-	gc->slowlog          = SlowLog_New () ;
-	gc->queries_log      = QueriesLog_New () ;
-	gc->ref_count        = 0 ;  // no refences
-	gc->attributes       = raxNew () ;
+	gc->hash        = 0 ;  // initial graph hash
+	gc->slowlog     = SlowLog_New () ;
+	gc->queries_log = QueriesLog_New () ;
+	gc->ref_count   = 0 ;  // no refences
+
+	gc->attributes  = NULL ;
+	gc->_attributes = NULL ;
+
 	gc->index_count      = 0 ;  // no indicies
-	gc->string_mapping   = arr_new (char *, 64) ;
 	gc->encoding_context = GraphEncodeContext_New () ;
 	gc->decoding_context = GraphDecodeContext_New () ;
 
@@ -102,11 +144,11 @@ GraphContext *GraphContext_New
 	// this value controls how much extra room we're willing to spend for:
 	// 1. graph entity storage
 	// 2. matrices dimensions
-	size_t node_cap;
-	size_t edge_cap;
-	bool rc = Config_Option_get(Config_NODE_CREATION_BUFFER, &node_cap);
-	assert(rc);
-	edge_cap = node_cap;
+	size_t node_cap ;
+	size_t edge_cap ;
+	bool rc = Config_Option_get (Config_NODE_CREATION_BUFFER, &node_cap) ;
+	assert (rc) ;
+	edge_cap = node_cap ;
 
 	gc->g = Graph_New (node_cap, edge_cap) ;
 	gc->graph_name = rm_strdup (graph_name) ;
@@ -114,12 +156,10 @@ GraphContext *GraphContext_New
 			TELEMETRY_FORMAT, gc->graph_name) ;
 
 	// allocate the default space for schemas and indices
-	gc->node_schemas = arr_new (Schema *, GRAPH_DEFAULT_LABEL_CAP) ;
-	gc->relation_schemas = arr_new (Schema *, GRAPH_DEFAULT_RELATION_TYPE_CAP) ;
-
-	// initialize the read-write lock to protect access to the graph's schema
-	int init = pthread_rwlock_init (&gc->_schema_rwlock, NULL) ;
-	assert (init == 0) ;
+	gc->node_schemas      = NULL ;
+	gc->_node_schemas     = NULL ;
+	gc->relation_schemas  = NULL ;
+	gc->_relation_schemas = NULL ;
 
 	// build the execution plans cache
 	uint64_t cache_size ;
@@ -241,30 +281,6 @@ cleanup:
 	RedisModule_FreeString (ctx, graphID) ;
 }
 
-void GraphContext_LockForCommit
-(
-	RedisModuleCtx *ctx,
-	GraphContext *gc
-) {
-	// aquire GIL
-	RedisModule_ThreadSafeContextLock (ctx) ;
-
-	// acquire graph write lock
-	Graph_AcquireWriteLock (gc->g) ;
-}
-
-void GraphContext_UnlockCommit
-(
-	RedisModuleCtx *ctx,
-	GraphContext *gc
-) {
-	// release graph R/W lock
-	Graph_ReleaseLock(gc->g);
-
-	// unlock GIL
-	RedisModule_ThreadSafeContextUnlock(ctx);
-}
-
 // attempt to acquire exclusive write access to the given graph
 // returns true if the calling thread successfully acquired write ownership
 // returns false if another write is already in progress
@@ -381,13 +397,44 @@ void GraphContext_Rename
 			TELEMETRY_FORMAT, gc->graph_name);
 }
 
-XXH32_hash_t GraphContext_GetVersion
+XXH32_hash_t GraphContext_GetHash
 (
 	const GraphContext *gc
 ) {
-	ASSERT(gc != NULL);
+	ASSERT (gc != NULL) ;
 
-	return gc->version;
+	return gc->hash ;
+}
+
+// commit graph's pending schema changes
+void GraphContext_CommitPendings
+(
+	GraphContext *gc  // graph context
+) {
+	ASSERT (gc != NULL) ;
+
+	ASSERT (Graph_IsWriteLocked (gc->g)) ;
+
+	// commit pending attributes
+	if (gc->_attributes != NULL) {
+		arr_free (gc->attributes) ;
+		gc->attributes  = gc->_attributes ;
+		gc->_attributes = NULL ;
+	}
+
+	// commit pending node schemas
+	if (gc->_node_schemas != NULL) {
+		arr_free (gc->node_schemas) ;
+		gc->node_schemas  = gc->_node_schemas ;
+		gc->_node_schemas = NULL ;
+	}
+
+	// commit pending relationship schemas
+	if (gc->_relation_schemas != NULL) {
+		arr_free (gc->relation_schemas) ;
+		gc->relation_schemas  = gc->_relation_schemas ;
+		gc->_relation_schemas = NULL ;
+	}
 }
 
 // get graph from graph context
@@ -400,8 +447,8 @@ Graph *GraphContext_GetGraph
 	return gc->g;
 }
 
-// Update graph context version
-static void _GraphContext_UpdateVersion
+// Update graph context hash
+static void _GraphContext_UpdateHash
 (
 	GraphContext *gc,
 	const char *str
@@ -409,18 +456,18 @@ static void _GraphContext_UpdateVersion
 	ASSERT (gc  != NULL) ;
 	ASSERT (str != NULL) ;
 
-	/* Update graph version by hashing 'str' representing the current
-	 * addition to the graph schema: (Label, Relationship-type, Attribute)
-	 *
-	 * Using the current graph version as a seed, by doing so we avoid
-	 * hashing the entire graph schema on each change, while guaranteeing the
-	 * exact same version across a cluster: same graph version on both
-	 * primary and replica shards. */
+	// update graph hash by hashing 'str' representing the current
+	// addition to the graph schema: (Label, Relationship-type, Attribute)
+	//
+	// Using the current graph hash as a seed, by doing so we avoid
+	// hashing the entire graph schema on each change, while guaranteeing the
+	// exact same hash across a cluster: same graph hash on both
+	// primary and replica shards
 
 	XXH32_state_t *state = XXH32_createState();
-	XXH32_reset(state, gc->version);
+	XXH32_reset(state, gc->hash);
 	XXH32_update(state, str, strlen(str));
-	gc->version = XXH32_digest(state);
+	gc->hash = XXH32_digest(state);
 	XXH32_freeState(state);
 }
 
@@ -428,76 +475,20 @@ static void _GraphContext_UpdateVersion
 // Schema API
 //------------------------------------------------------------------------------
 
-static inline void _GraphContext_ReadLockSchemas
-(
-	GraphContext *gc
-) {
-	int res = pthread_rwlock_rdlock (&gc->_schema_rwlock) ;
-	ASSERT (res == 0) ;
-}
-
-static inline void _GraphContext_WriteLockSchemas
-(
-	GraphContext *gc
-) {
-	int res = pthread_rwlock_wrlock (&gc->_schema_rwlock) ;
-	ASSERT (res == 0) ;
-}
-
-static inline void _GraphContext_UnLockSchemas
-(
-	GraphContext *gc
-) {
-	int res = pthread_rwlock_unlock (&((GraphContext *)gc)->_schema_rwlock) ;
-	ASSERT (res == 0) ;
-}
-
-// find the ID associated with a label for schema and matrix access
-static int _GraphContext_GetLabelID
-(
-	GraphContext *gc,
-	const char *label,
-	SchemaType t
-) {
-	_GraphContext_ReadLockSchemas (gc) ;
-
-	// choose the appropriate schema array given the entity type
-	Schema **schemas = (t == SCHEMA_NODE) ?
-		gc->node_schemas :
-		gc->relation_schemas ;
-
-	// TODO: optimize lookup
-	uint32_t l = arr_len (schemas) ;
-	int result = GRAPH_NO_LABEL ;
-
-	for (uint32_t i = 0; i < l; i++) {
-		if (!strcmp (label, schemas[i]->name)) {
-			result = i ;
-			break ;
-		}
-	}
-
-	_GraphContext_UnLockSchemas (gc) ;
-
-	return result ;
-}
-
+// returns the number of schemas of the given type visible
+// schemas are stored in insertion order
 unsigned short GraphContext_SchemaCount
 (
 	GraphContext *gc,
 	SchemaType t
 ) {
-	ASSERT (gc) ;
+	ASSERT (gc != NULL) ;
 
-	_GraphContext_ReadLockSchemas (gc) ;
-
-	unsigned short count = (t == SCHEMA_NODE) ?
-		arr_len (gc->node_schemas) :
-		arr_len (gc->relation_schemas) ;
-
-	_GraphContext_UnLockSchemas (gc) ;
-
-	return count ;
+	if (t == SCHEMA_NODE) {
+		return arr_len (_GetNodeSchemas (gc)) ;
+	} else {
+		return arr_len (_GetRelationSchemas (gc)) ;
+	}
 }
 
 // checks if graph has constraints
@@ -507,32 +498,27 @@ bool GraphContext_HasConstraints
 ) {
 	ASSERT (gc != NULL) ;
 
-	bool has_constraints = false ;
+	Schema **schemas = _GetNodeSchemas (gc) ;
+	uint n = arr_len (schemas) ;
 
-	_GraphContext_ReadLockSchemas (gc) ;
-
-	uint n = arr_len (gc->node_schemas) ;
 	for (uint i = 0 ; i < n ; i++) {
-		Schema *s = gc->node_schemas [i] ;
+		Schema *s = schemas [i] ;
 		if (Schema_HasConstraints (s)) {
-			has_constraints = true ;
-			goto cleanup ;
+			return true ;
 		}
 	}
 
-	n = arr_len (gc->relation_schemas) ;
+	schemas = _GetRelationSchemas (gc) ;
+	n = arr_len (schemas) ;
+
 	for (uint i = 0 ; i < n ; i++) {
-		Schema *s = gc->relation_schemas [i] ;
+		Schema *s = schemas [i] ;
 		if (Schema_HasConstraints (s)) {
-			has_constraints = true ;
-			goto cleanup ;
+			return true ;
 		}
 	}
 
-cleanup:
-
-	_GraphContext_UnLockSchemas (gc) ;
-	return has_constraints ;
+	return false ;
 }
 
 // enable all constraints
@@ -542,25 +528,25 @@ void GraphContext_EnableConstrains
 ) {
 	ASSERT (gc != NULL) ;
 
-	_GraphContext_ReadLockSchemas (gc) ;
+	Schema **schemas = _GetNodeSchemas (gc) ;
+	uint n = arr_len (schemas) ;
 
-	uint n = arr_len (gc->node_schemas) ;
 	for (uint i = 0; i < n; i ++) {
-		Schema *s = gc->node_schemas [i] ;
+		Schema *s = schemas [i] ;
 		for (uint j = 0; j < arr_len (s->constraints) ; j ++) {
 			Constraint_Enable (s->constraints [j]) ;
 		}
 	}
 
-	n = arr_len (gc->relation_schemas) ;
+	schemas = _GetRelationSchemas (gc) ;
+	n = arr_len (schemas) ;
+
 	for (uint i = 0; i < n; i ++) {
-		Schema *s = gc->relation_schemas[i];
-		for (uint j = 0; j < arr_len(s->constraints); j ++) {
+		Schema *s = schemas [i] ;
+		for (uint j = 0; j < arr_len (s->constraints); j ++) {
 			Constraint_Enable (s->constraints [j]) ;
 		}
 	}
-
-	_GraphContext_UnLockSchemas (gc) ;
 }
 
 // disable all constraints
@@ -570,27 +556,28 @@ void GraphContext_DisableConstrains
 ) {
 	ASSERT (gc != NULL) ;
 
-	_GraphContext_ReadLockSchemas (gc) ;
+	Schema **schemas = _GetNodeSchemas (gc) ;
+	uint n = arr_len (schemas) ;
 
-	uint n = arr_len (gc->node_schemas) ;
 	for (uint i = 0; i < n; i ++) {
-		Schema *s = gc->node_schemas [i] ;
+		Schema *s = schemas [i] ;
 		for (uint j = 0; j < arr_len (s->constraints) ; j ++) {
 			Constraint_Disable (s->constraints [j]) ;
 		}
 	}
 
-	n = arr_len (gc->relation_schemas) ;
+	schemas = _GetRelationSchemas (gc) ;
+	n = arr_len (schemas) ;
+
 	for (uint i = 0; i < n; i ++) {
-		Schema *s = gc->relation_schemas [i] ;
+		Schema *s = schemas [i] ;
 		for (uint j = 0; j < arr_len (s->constraints); j ++) {
 			Constraint_Disable (s->constraints [j]) ;
 		}
 	}
-
-	_GraphContext_UnLockSchemas (gc) ;
 }
 
+// retrieve the specific schema for the provided ID
 Schema *GraphContext_GetSchemaByID
 (
 	GraphContext *gc,
@@ -601,86 +588,118 @@ Schema *GraphContext_GetSchemaByID
 		return NULL ;
 	}
 
-	_GraphContext_ReadLockSchemas (gc) ;
-
 	Schema **schemas = (t == SCHEMA_NODE) ?
-		gc->node_schemas :
-		gc->relation_schemas ;
-	Schema *s = schemas [id] ;
+		_GetNodeSchemas (gc) :
+		_GetRelationSchemas (gc) ;
 
-	_GraphContext_UnLockSchemas (gc) ;
-
-	return s ;
+	ASSERT (id < arr_len (schemas)) ;
+	return schemas [id] ;
 }
 
+// returns the Schema matching 'name' for the given entity type
+//
+// TODO: optimize — currently O(n); consider indexing by name via rax
 Schema *GraphContext_GetSchema
 (
-	GraphContext *gc,
-	const char *label,
-	SchemaType t
+	GraphContext *gc,    // graph context
+	const char   *name,  // label or relation-type name to look up
+	SchemaType    t      // SCHEMA_NODE or SCHEMA_EDGE
 ) {
-	ASSERT (gc    != NULL) ;
-	ASSERT (label != NULL) ;
+	ASSERT (gc   != NULL) ;
+	ASSERT (name != NULL) ;
 
-	int id = _GraphContext_GetLabelID (gc, label, t) ;
-	Schema *s = GraphContext_GetSchemaByID (gc, id, t) ;
+	Schema *res = NULL ;
+
+	// choose the appropriate schema array given the entity type
+	Schema **schemas = (t == SCHEMA_NODE) ?
+		_GetNodeSchemas (gc) : 
+		_GetRelationSchemas (gc) ;
+
+	uint32_t n = arr_len (schemas) ;
+	for (uint32_t i = 0; i < n; i++) {
+		Schema *s = schemas [i] ;
+		ASSERT (s != NULL) ;
+
+		if (strcmp (name, Schema_GetName (s)) == 0) {
+			res = s ;
+			break ;
+		}
+	}
+
+	return res ;
+}
+
+// registers a new schema and its backing matrix for the given type:
+// allocates a label matrix (node) or relation-type matrix (edge) in the graph
+// then appends the schema to the corresponding schema array
+Schema *GraphContext_AddSchema
+(
+	GraphContext *gc,  // graph context
+	const char *name,  // schema name
+	SchemaType t       // SCHEMA_NODE or SCHEMA_EDGE
+) {
+	ASSERT (gc   != NULL) ;
+	ASSERT (name != NULL) ;
+
+	Schema *s = NULL ;
+
+	if (t == SCHEMA_NODE) {
+		LabelID id = Graph_AddLabel (gc->g) ;
+		s = Schema_New (SCHEMA_NODE, id, name) ;
+
+		if (gc->_node_schemas == NULL) {
+			arr_clone (gc->_node_schemas, gc->node_schemas) ;
+		}
+
+		arr_append (gc->_node_schemas, s) ;
+	} else {
+		LabelID id = Graph_AddRelationType (gc->g) ;
+		s = Schema_New (SCHEMA_EDGE, id, name) ;
+
+		if (gc->_relation_schemas == NULL) {
+			arr_clone (gc->_relation_schemas, gc->relation_schemas) ;
+		}
+
+		arr_append (gc->_relation_schemas, s) ;
+	}
+
+	// new schema registered — update graph hash
+	_GraphContext_UpdateHash (gc, name) ;
 
 	return s ;
 }
 
-Schema *GraphContext_AddSchema
-(
-	GraphContext *gc,
-	const char *label,
-	SchemaType t
-) {
-	ASSERT (gc    != NULL) ;
-	ASSERT (label != NULL) ;
-
-	int id ;
-	Schema *schema ;
-
-	if(t == SCHEMA_NODE) {
-		id = Graph_AddLabel (gc->g) ;
-		schema = Schema_New (SCHEMA_NODE, id, label) ;
-
-		_GraphContext_WriteLockSchemas (gc) ;
-		arr_append (gc->node_schemas, schema) ;
-		_GraphContext_UnLockSchemas (gc) ;
-	} else {
-		id = Graph_AddRelationType (gc->g) ;
-		schema = Schema_New (SCHEMA_EDGE, id, label) ;
-
-		_GraphContext_WriteLockSchemas (gc) ;
-		arr_append (gc->relation_schemas, schema) ;
-		_GraphContext_UnLockSchemas (gc) ;
-	}
-
-	// new schema added, update graph version
-	_GraphContext_UpdateVersion (gc, label) ;
-
-	return schema ;
-}
-
+// removes the schema at index 'id', frees it, and removes its backing
+// matrix from the graph
+//
+// after removal the schema array is compacted: every schema with index > id
+// shifts down by one
+// callers must invalidate any cached schema IDs
 void GraphContext_RemoveSchema
 (
-	GraphContext *gc,
-	int schema_id,
-	SchemaType t
+	GraphContext *gc,  // graph context
+	int id,            // schema ID to remove
+	SchemaType t       // SCHEMA_NODE or SCHEMA_EDGE
 ) {
-	_GraphContext_WriteLockSchemas (gc) ;
+	ASSERT (gc != NULL) ;
+	ASSERT (id >= 0 && id < GraphContext_SchemaCount (gc, t)) ;
 
-	if(t == SCHEMA_NODE) {
-		Schema *schema = gc->node_schemas [schema_id] ;
-		Schema_Free (schema) ;
-		gc->node_schemas = arr_del (gc->node_schemas, schema_id) ;
+	Graph *g = GraphContext_GetGraph (gc) ;
+
+	Schema ***schemas = (t == SCHEMA_NODE) ?
+		&gc->_node_schemas :
+		&gc->_relation_schemas ;
+
+	Schema *s = (*schemas) [id] ;
+	Schema_Free (s) ;
+
+	*schemas = arr_del (*schemas, id) ;
+
+	if (t == SCHEMA_NODE) {
+		Graph_RemoveLabel (g, id) ;
 	} else {
-		Schema *schema = gc->relation_schemas [schema_id] ;
-		Schema_Free (schema) ;
-		gc->relation_schemas = arr_del (gc->relation_schemas, schema_id) ;
+		Graph_RemoveRelation (g, id) ;
 	}
-
-	_GraphContext_UnLockSchemas (gc) ;
 }
 
 // returns the relation type string for a given edge object
@@ -689,16 +708,17 @@ const char *GraphContext_GetEdgeRelationType
 	GraphContext *gc,
 	Edge *e
 ) {
-	int reltype_id = Edge_GetRelationID (e) ;
-	ASSERT (reltype_id != GRAPH_NO_RELATION) ;
+	ASSERT (e  != NULL) ;
+	ASSERT (gc != NULL) ;
 
-	_GraphContext_ReadLockSchemas (gc) ;
+	RelationID id = Edge_GetRelationID (e) ;
+	ASSERT (id != GRAPH_NO_RELATION) ;
+	ASSERT (id < GraphContext_SchemaCount (gc, SCHEMA_EDGE)) ;
 
-	const char *rel_name = gc->relation_schemas [reltype_id]->name ;
+	Schema *s = _GetRelationSchemas (gc) [id] ;
+	ASSERT (s != NULL) ;
 
-	_GraphContext_UnLockSchemas (gc) ;
-
-	return rel_name ;
+	return Schema_GetName (s) ;
 }
 
 // returns number of unique attribute keys
@@ -706,13 +726,9 @@ uint GraphContext_AttributeCount
 (
 	GraphContext *gc
 ) {
-	_GraphContext_ReadLockSchemas (gc) ;
+	ASSERT (gc != NULL) ;
 
-	uint size = arr_len (gc->string_mapping) ;
-
-	_GraphContext_UnLockSchemas (gc) ;
-
-	return size ;
+	return arr_len (_GetAttributes (gc)) ;
 }
 
 // returns an attribute ID given a string, creating one if not found
@@ -722,68 +738,52 @@ AttributeID GraphContext_FindOrAddAttribute
 	const char *attribute,
 	bool *created
 ) {
-	ASSERT(gc);
-
-	bool created_flag = false;
-	unsigned char *attr = (unsigned char*)attribute;
-	uint l = strlen(attribute);
-
-	// acquire a read lock for looking up the attribute
-	_GraphContext_ReadLockSchemas (gc) ;
-
-	// see if attribute already exists
-	void *attribute_id = raxFind (gc->attributes, attr, l) ;
-
-	if (attribute_id == raxNotFound) {
-		// we are writing to the shared GraphContext
-		// release the held lock and re-acquire as a writer
-		_GraphContext_UnLockSchemas    (gc) ;
-		_GraphContext_WriteLockSchemas (gc) ;
-
-		// lookup the attribute again now that we are in a critical region
-		attribute_id = raxFind (gc->attributes, attr, l) ;
-
-		// if set by another thread, use the retrieved value
-		if (attribute_id == raxNotFound) {
-			// otherwise, it will be assigned an ID
-			// equal to the current mapping size
-			attribute_id = (void *) raxSize (gc->attributes) ;
-			// insert the new attribute key and ID
-			raxInsert (gc->attributes, attr, l, attribute_id, NULL) ;
-			arr_append (gc->string_mapping, rm_strdup(attribute)) ;
-			created_flag = true ;
-
-			// new attribute been added, update graph version
-			_GraphContext_UpdateVersion (gc, attribute) ;
-		}
-	}
-
-	// release the lock
-	_GraphContext_UnLockSchemas (gc) ;
+	ASSERT (gc        != NULL) ;
+	ASSERT (attribute != NULL) ;
 
 	if (created) {
-		*created = created_flag ;
+		*created = false ;
 	}
 
-	return (uintptr_t) attribute_id ;
+	// see if attribute already exists
+	AttributeID id = GraphContext_GetAttributeID (gc, attribute) ;
+	if (id != ATTRIBUTE_ID_NONE) {
+		return id ;	
+	}
+
+	// attribute missing
+	// add it as a pendding attribute
+	if (gc->_attributes == NULL) {
+		arr_clone (gc->_attributes, gc->attributes) ;
+	}
+
+	id = arr_len (gc->_attributes) ;
+
+	arr_append (gc->_attributes, rm_strdup (attribute)) ;
+	if (created) {
+		*created = true ;
+	}
+
+	// new attribute been added, update graph hash
+	_GraphContext_UpdateHash (gc, attribute) ;
+
+	return id ;
 }
 
-// returns an attribute string given an ID
-const char *GraphContext_GetAttributeString
+// returns attribute name given an ID
+const char *GraphContext_GetAttributeName
 (
 	GraphContext *gc,
 	AttributeID id
 ) {
 	ASSERT (gc != NULL) ;
-	ASSERT (id >= 0 && id < arr_len (gc->string_mapping)) ;
 
-	_GraphContext_ReadLockSchemas (gc) ;
+	// pick attributes array
+	char **attributes = _GetAttributes(gc) ;
 
-	const char *name = gc->string_mapping [id] ;
+	ASSERT (id < arr_len (attributes)) ;
 
-	_GraphContext_UnLockSchemas (gc) ;
-
-	return name ;
+	return attributes [id] ;
 }
 
 // returns an attribute ID given a string
@@ -793,42 +793,46 @@ AttributeID GraphContext_GetAttributeID
 	GraphContext *gc,
 	const char *attribute
 ) {
-	// acquire a read lock for looking up the attribute
-	_GraphContext_ReadLockSchemas (gc) ;
+	// pick attributes array
+	char **attributes = _GetAttributes (gc) ;
 
 	// look up the attribute ID
-	void *id = raxFind (gc->attributes, (unsigned char *) attribute,
-			strlen (attribute)) ;
+	AttributeID id = ATTRIBUTE_ID_NONE ;
+	uint16_t n = arr_len (attributes) ;
 
-	// release the lock
-	_GraphContext_UnLockSchemas (gc) ;
-
-	if (id == raxNotFound) {
-		return ATTRIBUTE_ID_NONE ;
+	for (uint16_t i = 0 ; i < n ; i++) {
+		if (strcmp (attribute, attributes [i]) == 0) {
+			id = i ;
+			break  ;
+		}
 	}
 
-	return (uintptr_t) id ;
+	return id ;
 }
 
-// removes an attribute from the graph
-void GraphContext_RemoveAttribute
+// drops pending attributes
+void GraphContext_DropAttributes
 (
-	GraphContext *gc,
-	AttributeID id
+	GraphContext *gc
 ) {
-	ASSERT (gc) ;
-	ASSERT (id == arr_len (gc->string_mapping) - 1) ;
+	ASSERT (gc != NULL) ;
 
-	_GraphContext_WriteLockSchemas (gc) ;
+	// no pending attributes
+	if (gc->_attributes == NULL) {
+		return ;
+	}
 
-	const char *attribute = gc->string_mapping [id] ;
-	int ret = raxRemove (gc->attributes,  (unsigned char *) attribute,
-			strlen (attribute), NULL) ;
-	ASSERT (ret == 1) ;
+	// determine number of pending attributes
+	int16_t n = arr_len (gc->_attributes) - arr_len (gc->attributes) ;
+	ASSERT (n >= 0) ;
 
-	rm_free (gc->string_mapping [id]) ;
-	gc->string_mapping = arr_del (gc->string_mapping, id) ;
-	_GraphContext_UnLockSchemas (gc) ;
+	// free pending attributes
+	while (n-- > 0) {
+		rm_free (gc->_attributes [n]) ;	
+	}
+
+	arr_free (gc->_attributes) ;
+	gc->_attributes = NULL ;
 }
 
 //------------------------------------------------------------------------------
@@ -850,15 +854,15 @@ bool GraphContext_HasIndices
 
 static uint16_t _count_indices_from_schemas
 (
-	const Schema** schemas
+	Schema **schemas
 ) {
-	ASSERT (schemas) ;
 	uint16_t count = 0;
 
 	const uint16_t length = arr_len (schemas) ;
-	for (uint16_t i = 0; i < length; ++i) {
-		const Schema *s = schemas [i] ;
+	for (uint16_t i = 0 ; i < length ; i++) {
+		Schema *s = schemas [i] ;
 		ASSERT (s != NULL) ;
+
 		if (Schema_HasIndices (s)) {
 			count++ ;
 		}
@@ -872,16 +876,10 @@ uint16_t GraphContext_NodeIndexCount
 (
 	GraphContext *gc
 ) {
-	ASSERT (gc) ;
+	ASSERT (gc != NULL) ;
 
-	_GraphContext_ReadLockSchemas (gc) ;
-
-	uint16_t n =
-		_count_indices_from_schemas ((const Schema**)gc->node_schemas) ;
-
-	_GraphContext_UnLockSchemas (gc) ;
-
-	return n ;
+	Schema **schemas = _GetNodeSchemas (gc) ;
+	return _count_indices_from_schemas (schemas) ;
 }
 
 // returns the number of edge indices within the passed graph context.
@@ -889,16 +887,10 @@ uint16_t GraphContext_EdgeIndexCount
 (
 	GraphContext *gc
 ) {
-	ASSERT (gc) ;
+	ASSERT (gc != NULL) ;
 
-	_GraphContext_ReadLockSchemas (gc) ;
-
-	uint16_t n =
-		_count_indices_from_schemas ((const Schema**)gc->relation_schemas) ;
-
-	_GraphContext_UnLockSchemas (gc) ;
-
-	return n ;
+	Schema **schemas = _GetRelationSchemas (gc) ;
+	return _count_indices_from_schemas (schemas) ;
 }
 
 // attempt to retrieve an index on the given label and attribute IDs
@@ -957,6 +949,7 @@ int GraphContext_DeleteIndex
 ) {
 	ASSERT (gc    != NULL) ;
 	ASSERT (label != NULL) ;
+	ASSERT (field != NULL) ;
 
 	// retrieve the schema for this label
 	int res = INDEX_FAIL ;
@@ -982,21 +975,22 @@ static void _DeleteNodeFromIndices
 	LabelID *lbls,     // [optional] node labels to remove from index
 	uint label_count   // [optional] number of labels
 ) {
-	ASSERT(n  != NULL);
-	ASSERT(gc != NULL);
-	ASSERT(lbls != NULL);
+	ASSERT (n    != NULL) ;
+	ASSERT (gc   != NULL) ;
+	ASSERT (lbls != NULL) ;
 
 	Schema   *s      = NULL;
-	EntityID node_id = ENTITY_GET_ID(n);
+	EntityID node_id = ENTITY_GET_ID (n) ;
 
-	for(uint i = 0; i < label_count; i++) {
-		int label_id = lbls[i];
-		ASSERT(Graph_IsNodeLabeled(gc->g, ENTITY_GET_ID(n), label_id));
-		s = GraphContext_GetSchemaByID(gc, label_id, SCHEMA_NODE);
-		ASSERT(s != NULL);
+	for (uint i = 0 ; i < label_count ; i++) {
+		LabelID label_id = lbls [i] ;
+		ASSERT (Graph_IsNodeLabeled (gc->g, ENTITY_GET_ID (n), label_id)) ;
+
+		s = GraphContext_GetSchemaByID (gc, label_id, SCHEMA_NODE) ;
+		ASSERT (s != NULL) ;
 
 		// update any indices this entity is represented in
-		Schema_RemoveNodeFromIndex(s, n);
+		Schema_RemoveNodeFromIndex (s, n) ;
 	}
 }
 
@@ -1008,8 +1002,8 @@ void GraphContext_DeleteNodeFromIndices
 	LabelID *lbls,     // [optional] node labels to remove from index
 	uint label_count   // [optional] number of labels
 ) {
-	ASSERT (n  != NULL) ;
-	ASSERT (gc != NULL) ;
+	ASSERT (n    != NULL) ;
+	ASSERT (gc   != NULL) ;
 	ASSERT (lbls != NULL || label_count == 0) ;
 
 	EntityID node_id = ENTITY_GET_ID (n) ;
@@ -1029,16 +1023,19 @@ void GraphContext_DeleteEdgeFromIndices
 	GraphContext *gc,  // graph context
 	Edge *e            // edge to remove from index
 ) {
+	ASSERT (e  != NULL) ;
+	ASSERT (gc != NULL) ;
+
 	Schema *s = NULL;
 	Graph  *g = gc->g;
 
-	int relation_id = Edge_GetRelationID(e);
+	RelationID relation_id = Edge_GetRelationID (e) ;
 
-	s = GraphContext_GetSchemaByID(gc, relation_id, SCHEMA_EDGE);
-	ASSERT(s != NULL);
+	s = GraphContext_GetSchemaByID (gc, relation_id, SCHEMA_EDGE) ;
+	ASSERT (s != NULL) ;
 
 	// update any indices this entity is represented in
-	Schema_RemoveEdgeFromIndex(s, e);
+	Schema_RemoveEdgeFromIndex (s, e) ;
 }
 
 // add node to any relevant index
@@ -1059,7 +1056,7 @@ void GraphContext_AddNodeToIndices
 	NODE_GET_LABELS (g, n, label_count) ;
 
 	for (uint i = 0; i < label_count; i++) {
-		int label_id = labels[i] ;
+		LabelID label_id = labels [i] ;
 		s = GraphContext_GetSchemaByID (gc, label_id, SCHEMA_NODE) ;
 		ASSERT (s != NULL) ;
 		Schema_AddNodeToIndex (s, n) ;
@@ -1072,15 +1069,18 @@ void GraphContext_AddEdgeToIndices
 	GraphContext *gc,  // graph context
 	Edge *e            // edge to add to index
 ) {
-	Schema *s = NULL;
-	Graph  *g = gc->g;
+	ASSERT (e  != NULL) ;
+	ASSERT (gc != NULL) ;
 
-	int relation_id = Edge_GetRelationID(e);
+	Schema *s = NULL ;
+	Graph  *g = gc->g ;
 
-	s = GraphContext_GetSchemaByID(gc, relation_id, SCHEMA_EDGE);
-	ASSERT(s != NULL);
+	RelationID relation_id = Edge_GetRelationID (e) ;
 
-	Schema_AddEdgeToIndex(s, e);
+	s = GraphContext_GetSchemaByID (gc, relation_id, SCHEMA_EDGE) ;
+	ASSERT (s != NULL) ;
+
+	Schema_AddEdgeToIndex (s, e) ;
 }
 
 //------------------------------------------------------------------------------
@@ -1272,74 +1272,81 @@ static void _GraphContext_Free
 	// free node schemas
 	//--------------------------------------------------------------------------
 
-	if(gc->node_schemas) {
-		len = arr_len(gc->node_schemas);
-		for(uint32_t i = 0; i < len; i ++) {
-			Schema_Free(gc->node_schemas[i]);
+	ASSERT (gc->_node_schemas == NULL) ;
+
+	if (gc->node_schemas) {
+		len = arr_len (gc->node_schemas) ;
+		for (uint32_t i = 0; i < len; i ++) {
+			Schema_Free (gc->node_schemas [i]) ;
 		}
-		arr_free(gc->node_schemas);
+		arr_free (gc->node_schemas) ;
 	}
 
 	//--------------------------------------------------------------------------
 	// free relation schemas
 	//--------------------------------------------------------------------------
 
-	if(gc->relation_schemas) {
-		len = arr_len(gc->relation_schemas);
-		for(uint32_t i = 0; i < len; i ++) {
-			Schema_Free(gc->relation_schemas[i]);
+	ASSERT (gc->_relation_schemas == NULL) ;
+
+	if (gc->relation_schemas) {
+		len = arr_len (gc->relation_schemas) ;
+		for (uint32_t i = 0 ; i < len ; i ++) {
+			Schema_Free (gc->relation_schemas [i]) ;
 		}
-		arr_free(gc->relation_schemas);
+		arr_free (gc->relation_schemas) ;
 	}
 
-	if(should_lock) {
-		RedisModule_ThreadSafeContextUnlock(ctx);
-		RedisModule_FreeThreadSafeContext(ctx);
+	if (should_lock) {
+		RedisModule_ThreadSafeContextUnlock (ctx) ;
+		RedisModule_FreeThreadSafeContext (ctx) ;
 	}
 
 	//--------------------------------------------------------------------------
 	// free queries log
 	//--------------------------------------------------------------------------
 
-	QueriesLog_Free(gc->queries_log);
+	QueriesLog_Free (gc->queries_log) ;
 
 	//--------------------------------------------------------------------------
 	// free attribute mappings
 	//--------------------------------------------------------------------------
 
-	if(gc->attributes) raxFree(gc->attributes);
+	ASSERT (gc->_attributes == NULL) ;
 
-	if(gc->string_mapping) {
-		len = arr_len(gc->string_mapping);
-		for(uint32_t i = 0; i < len; i ++) {
-			rm_free(gc->string_mapping[i]);
+	if (gc->attributes) {
+		uint16_t n = arr_len (gc->attributes) ;
+		for (uint16_t i = 0 ; i < n ; i++) {
+			rm_free (gc->attributes [i]) ;
 		}
-		arr_free(gc->string_mapping);
+
+		arr_free (gc->attributes) ;
+		gc->attributes = NULL ;
 	}
 
-	int res = pthread_rwlock_destroy (&gc->_schema_rwlock) ;
-	ASSERT (res == 0) ;
-
-	if(gc->slowlog) SlowLog_Free(gc->slowlog);
+	if (gc->slowlog) {
+		SlowLog_Free (gc->slowlog) ;
+	}
 
 	//--------------------------------------------------------------------------
 	// clear cache
 	//--------------------------------------------------------------------------
 
-	if(gc->cache) Cache_Free(gc->cache);
+	if (gc->cache) {
+		Cache_Free (gc->cache) ;
+	}
 
 	//--------------------------------------------------------------------------
 	// free pending write queue
 	//--------------------------------------------------------------------------
 
-	if(gc->pending_write_queue != NULL) {
-		ASSERT(CircularBuffer_Empty(gc->pending_write_queue));
-		CircularBuffer_Free(gc->pending_write_queue, NULL);
+	if (gc->pending_write_queue != NULL) {
+		ASSERT (CircularBuffer_Empty (gc->pending_write_queue)) ;
+		CircularBuffer_Free (gc->pending_write_queue, NULL) ;
 	}
 
-	GraphEncodeContext_Free(gc->encoding_context);
-	GraphDecodeContext_Free(gc->decoding_context);
-	rm_free(gc->graph_name);
-	rm_free(gc);
+	GraphEncodeContext_Free (gc->encoding_context) ;
+	GraphDecodeContext_Free (gc->decoding_context) ;
+	rm_free (gc->graph_name) ;
+	rm_free (gc) ;
 }
 

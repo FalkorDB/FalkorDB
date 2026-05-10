@@ -64,18 +64,6 @@ void GraphContext_MarkWriter
 	GraphContext *gc
 );
 
-void GraphContext_LockForCommit
-(
-	RedisModuleCtx *ctx,
-	GraphContext *gc
-);
-
-void GraphContext_UnlockCommit
-(
-	RedisModuleCtx *ctx,
-	GraphContext *gc
-);
-
 // attempt to acquire exclusive write access to the given graph
 // returns true if the calling thread successfully acquired write ownership
 // returns false if another write is already in progress
@@ -141,11 +129,22 @@ void GraphContext_Rename
 	const char *name      // new name
 );
 
-// Get graph context version
-XXH32_hash_t GraphContext_GetVersion
+// get graph context hash
+XXH32_hash_t GraphContext_GetHash
 (
 	const GraphContext *gc
 );
+
+// commit graph's pending schema changes
+void GraphContext_CommitPendings
+(
+	GraphContext *gc  // graph context
+);
+
+void GraphContext_BumpReadVersion
+(
+	GraphContext *gc
+) ;
 
 // get graph from graph context
 Graph *GraphContext_GetGraph
@@ -157,7 +156,15 @@ Graph *GraphContext_GetGraph
 // Schema API
 //------------------------------------------------------------------------------
 
-// retrieve number of schemas created for given type
+// returns the number of schemas of the given type visible at the current
+// graph version
+//
+// schemas are stored in insertion order, so any schema introduced after
+// the current reader's version will appear at the tail of the array
+// invisible schemas are peeled from the tail until a visible one is found
+//
+// relies on the invariant that schemas are always appended in strictly
+// increasing version order — newer schemas never appear before older ones
 unsigned short GraphContext_SchemaCount
 (
 	GraphContext *gc,
@@ -195,24 +202,35 @@ Schema *GraphContext_GetSchemaByID
 Schema *GraphContext_GetSchema
 (
 	GraphContext *gc,
-	const char *label,
+	const char *name,
 	SchemaType t
 );
 
-// add a new schema and matrix for the given label
+// registers a new schema and its backing matrix for the given type:
+// allocates a label matrix (node) or relation-type matrix (edge) in the graph
+// then appends the schema to the corresponding schema array
 Schema *GraphContext_AddSchema
 (
-	GraphContext *gc,
-	const char *label,
-	SchemaType t
+	GraphContext *gc,  // graph context
+	const char *name,  // schema name
+	SchemaType t       // SCHEMA_NODE or SCHEMA_EDGE
 );
 
-// removes a schema with a specific id
+// removes the schema at index 'id', frees it, and removes its backing
+// matrix from the graph
+//
+// after removal the schema array is compacted: every schema with index > id
+// shifts down by one
+// callers must invalidate any cached schema IDs
+//
+// the schema's version must equal the current write version — only schemas
+// introduced within the current write transaction may be removed
+// this ensures committed schemas remain stable from concurrent readers
 void GraphContext_RemoveSchema
 (
-	GraphContext *gc,
-	int schema_id,
-	SchemaType t
+	GraphContext *gc,  // graph context
+	int id,            // schema ID to remove
+	SchemaType t       // SCHEMA_NODE or SCHEMA_EDGE
 );
 
 // returns the relation type string for a given edge object
@@ -237,7 +255,7 @@ AttributeID GraphContext_FindOrAddAttribute
 );
 
 // returns an attribute string given an ID
-const char *GraphContext_GetAttributeString
+const char *GraphContext_GetAttributeName
 (
 	GraphContext *gc,
 	AttributeID id
@@ -251,11 +269,10 @@ AttributeID GraphContext_GetAttributeID
 	const char *str
 );
 
-// removes an attribute from the graph
-void GraphContext_RemoveAttribute
+// drops pending attributes
+void GraphContext_DropAttributes
 (
-	GraphContext *gc,
-	AttributeID id
+	GraphContext *gc
 );
 
 //------------------------------------------------------------------------------

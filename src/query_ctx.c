@@ -345,6 +345,17 @@ ResultSetStatistics *QueryCtx_GetResultSetStatistics(void) {
 	return stats;
 }
 
+// retrive the query execution type
+QueryExecutionTypeFlag QueryCtx_GetExecutionType (void) {
+	QueryCtx *ctx = _QueryCtx_GetCtx () ;
+
+	if (ctx == NULL) {
+		return QueryExecutionTypeFlag_READ ;
+	}
+
+	return ctx->flags ;
+}
+
 // print the current query
 void QueryCtx_PrintQuery(void) {
 	QueryCtx *ctx = _QueryCtx_GetCreateCtx();
@@ -517,16 +528,25 @@ void QueryCtx_ReleaseLock (void) {
 	// 2. close key
 	// 3. unlock GIL
 
-	// release graph lock
-	Graph_ReleaseLock (QueryCtx_GetGraph ()) ;
-
 	// release WRITE lock
 	if (ctx->internal_exec_ctx.write_locked == true) {
+		// commit pendding schema changes
+		GraphContext_CommitPendings (ctx->gc) ;
+
+		// release graph lock
+		Graph_ReleaseLock (QueryCtx_GetGraph ()) ;
+
 		// close Key
 		RedisModule_CloseKey (ctx->internal_exec_ctx.key) ;
 
 		// unlock GIL
 		_QueryCtx_ThreadSafeContextUnlock (ctx) ;
+	}
+	
+	// release READ lock
+	else {
+		// release graph lock
+		Graph_ReleaseLock (QueryCtx_GetGraph ()) ;
 	}
 
 	ctx->internal_exec_ctx.read_locked  = false ;

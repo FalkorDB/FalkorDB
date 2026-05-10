@@ -421,6 +421,7 @@ Schema *GraphHub_AddSchema
 ) {
 	ASSERT (gc    != NULL) ;
 	ASSERT (label != NULL) ;
+
 	Schema *s = GraphContext_AddSchema (gc, label, t) ;
 	ASSERT (s != NULL) ;
 

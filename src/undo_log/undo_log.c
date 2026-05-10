@@ -317,11 +317,6 @@ static void _UndoLog_Rollback_Add_Schema
 		int schema_count = GraphContext_SchemaCount (ctx->gc, schema_op.t) ;
 		ASSERT (schema_id == schema_count - 1) ;
 		GraphContext_RemoveSchema (ctx->gc, schema_id, schema_op.t) ;
-		if (schema_op.t == SCHEMA_NODE) {
-			Graph_RemoveLabel (g, schema_id) ;
-		} else {
-			Graph_RemoveRelation (g, schema_id) ;
-		}
 	}
 }
 
@@ -332,11 +327,10 @@ static void _UndoLog_Rollback_Add_Attribute
 	int seq_start,
 	int seq_end
 ) {
-	for(int i = seq_start; i > seq_end; --i) {
-		UndoOp *op = UNDOLOG_GET_ITEM(ctx->undo_log, i);
-		UndoAddAttributeOp attribute_op = op->attribute_op;
-		int attribute_id = attribute_op.attribute_id;
-		GraphContext_RemoveAttribute(ctx->gc, attribute_id);
+	for (int i = seq_start; i > seq_end; --i) {
+		UndoOp *op = UNDOLOG_GET_ITEM (ctx->undo_log, i) ;
+		UndoAddAttributeOp attribute_op = op->attribute_op ;
+		GraphContext_DropAttributes (ctx->gc) ;
 	}
 }
 

@@ -179,8 +179,8 @@ static void _RdbLoadConstaint
 	// read fields
 	for(uint8_t i = 0; i < n; i++) {
 		AttributeID attr = SerializerIO_ReadUnsigned(rdb);
-		attr_ids[i]  = attr;
-		attr_strs[i] = GraphContext_GetAttributeString(gc, attr);
+		attr_ids  [i] = attr ;
+		attr_strs [i] = GraphContext_GetAttributeName (gc, attr) ;
 	}
 
 	if(!already_loaded) {
