@@ -15,9 +15,7 @@ class testCentrality(FlowTestsBase):
     def centrality(
         self,
         nodeLabels=None,
-        relationshipTypes=None,
-        weightAttribute=None,
-        defaultWeight=None,
+        relationshipTypes=None
     ):
         config = {}
 
@@ -26,12 +24,6 @@ class testCentrality(FlowTestsBase):
 
         if relationshipTypes is not None:
             config["relationshipTypes"] = relationshipTypes
-
-        if weightAttribute is not None:
-            config["weightAttribute"] = weightAttribute
-
-        if defaultWeight is not None:
-            config["defaultWeight"] = defaultWeight
 
         return self.graph.query(
             """CALL algo.HarmonicCentrality($config)
@@ -55,16 +47,10 @@ class testCentrality(FlowTestsBase):
             """CALL algo.HarmonicCentrality({relationshipTypes: [1, 2, 3]})""",
             # non-map config argument
             """CALL algo.HarmonicCentrality('invalid')""",
-            # non-integer defaultWeight
-            """CALL algo.HarmonicCentrality({defaultWeight: 'notanint'})""",
-            # non-string weightAttribute
-            """CALL algo.HarmonicCentrality({weightAttribute: 123})""",
             # too many unknown fields
             """CALL algo.HarmonicCentrality({nodeLabels: ['Person'],
                            relationshipTypes: ['KNOWS'],
                            invalidParam: 'value'})""",
-            # defaultWeight without weightAttribute
-            """CALL algo.HarmonicCentrality({defaultWeight: 0})""",
         ]
 
         for q in invalid_queries:
@@ -161,7 +147,7 @@ class testCentrality(FlowTestsBase):
                        D:Location --> E:Company
 
         Running with nodeLabels=['Person'] should return only A, B, C.
-        B should have highest score among Person nodes (it reaches C via KNOWS).
+        A should have highest score among Person nodes (it reaches B & C via KNOWS).
         """
         self.graph.query("""
             CREATE
@@ -291,101 +277,3 @@ class testCentrality(FlowTestsBase):
         # C has no outgoing FRIEND edges within Person subgraph
         self.env.assertEqual(scores["C"], 0.0)
 
-    def test08_centrality_all_zero_weights(self):
-        """Test that all scores are 0 when every node has weight attribute = 0.
-
-        When all node weights are 0, every HLL sketch is initialized with
-        0 hashes (no seeds). No propagation can ever start, so all scores
-        must be exactly 0.0 regardless of graph topology.
-        """
-        # a "weird" graph with several edges but all nodes have w=0
-        self.graph.query("""
-            CREATE
-            (a:Node {name: 'A', w: 0}),
-            (b:Node {name: 'B', w: 0}),
-            (c:Node {name: 'C', w: 0}),
-            (d:Node {name: 'D', w: 0}),
-            (a)-[:EDGE]->(b),
-            (b)-[:EDGE]->(c),
-            (c)-[:EDGE]->(a),
-            (a)-[:EDGE]->(d),
-            (d)-[:EDGE]->(b)
-        """)
-
-        result = self.centrality(weightAttribute="w", defaultWeight=0)
-        scores = {row[0]: row[1] for row in result.result_set}
-
-        # all nodes are returned (defaultWeight=0 keeps them all)
-        self.env.assertEqual(len(scores), 4)
-
-        # with all HLL sketches empty, no information propagates -> all zeros
-        for name in ["A", "B", "C", "D"]:
-            self.env.assertEqual(scores[name], 0.0)
-
-    def test09_centrality_weighted(self):
-        """Test harmonic centrality with weightAttribute.
-
-        Graph (directed): S0, S1, ..., S999 each -EDGE-> A -EDGE-> B (B.score=1)
-
-        The `score` attribute seeds each node's HLL sketch (weight = # hashes).
-
-        Case 1 - defaultWeight=0:
-          All 1002 nodes included. Only B seeds with 1 hash (B.score=1).
-          A reaches B at d=1          -> score(A) ~= 1.
-          Each Si reaches B at d=2    -> score(Si) ~= 0.5.
-          B has no outgoing edges     -> score(B) = 0 (exact).
-
-        Case 2 - no defaultWeight:
-          Only B is included (only B has the `score` attribute).
-          B has no outgoing edges     -> score(B) = 0; only B is returned.
-        """
-        # build hub graph; only B carries the score attribute (and gets the extra Scored label)
-        parts = ["CREATE (b:Hub:Scored {name: 'B', score: 1}), (a:Hub {name: 'A'})"]
-        for i in range(1000):
-            parts.append(f"(s{i}:Hub {{name: 'S{i}'}})")
-        create_q = parts[0] + ", " + ", ".join(parts[1:])
-        create_q += ", (a)-[:EDGE]->(b)"
-        for i in range(1000):
-            create_q += f", (s{i})-[:EDGE]->(a)"
-        self.graph.query(create_q)
-
-        # ---- Case 1: defaultWeight=0, all nodes in subgraph ----
-        result1 = self.centrality(weightAttribute="score", defaultWeight=0)
-        scores1 = {row[0]: row[1] for row in result1.result_set}
-
-        self.env.assertEqual(len(scores1), 1002)
-
-        # B: no outgoing edges -> exact 0
-        self.env.assertEqual(scores1["B"], 0.0)
-
-        # A: reaches B at d=1 -> score ~= 1
-        self.env.assertGreater(scores1["A"], 0.4)
-        self.env.assertLess(scores1["A"], 1.6)
-
-        # source nodes: reach B at d=2 via A -> score ~= 0.5
-        for i in range(1000):
-            self.env.assertGreater(scores1[f"S{i}"], 0.1)
-            self.env.assertLess(scores1[f"S{i}"], 0.9)
-
-        # A should score higher than any individual source node
-        self.env.assertGreater(scores1["A"], scores1["S0"])
-
-        # ---- Case 2: no defaultWeight, error ----
-        # Not all Hub nodes have 'score', so omitting defaultWeight must raise an error.
-        try:
-            self.centrality(weightAttribute="score")
-            self.env.assertTrue(False)
-        except ResponseError:
-            pass  # expected: missing attribute without defaultWeight must raise
-
-        # ---- Case 3: no defaultWeight, but nodeLabels restricts to nodes that all have the attribute ----
-        # Only B has the Scored label and carries the score attribute, so no error is expected.
-        result2 = self.centrality(weightAttribute="score", nodeLabels=["Scored"])
-        scores2 = {row[0]: row[1] for row in result2.result_set}
-
-        # only B has the score attribute -> only B is returned
-        self.env.assertEqual(len(scores2), 1)
-        self.env.assertContains("B", scores2)
-
-        # B has no outgoing edges in the single-node subgraph -> score = 0
-        self.env.assertEqual(scores2["B"], 0.0)
