@@ -21,9 +21,14 @@ void Index_IndexNode
 	ASSERT(n    !=  NULL);
 	ASSERT(idx  !=  NULL);
 
+	// Acquire a strong ref for the duration of this op. Returns NULL
+	// if the spec was dropped concurrently; in that case there's
+	// nothing to index.
+	RSIndex *rsIdx = Index_AcquireRSIndex(idx);
+	if(rsIdx == NULL) return;
+
 	EntityID key             = ENTITY_GET_ID(n);
 	RSDoc    *doc            = NULL;
-	RSIndex  *rsIdx          = Index_RSIndex(idx);
 	size_t   key_len         = sizeof(EntityID);
 	uint     doc_field_count = 0;
 
@@ -33,15 +38,21 @@ void Index_IndexNode
 
 	if(doc_field_count == 0) {
 		// entity doesn't poses any attributes which are indexed
-		// remove entity from index and delete document
-		Index_RemoveNode(idx, n);
+		// remove entity from index and delete document. Use the
+		// already-acquired ref directly to avoid re-entering
+		// Index_RemoveNode (which would Acquire again).
+		EntityID id = ENTITY_GET_ID(n);
+		RediSearch_DeleteDocument(rsIdx, &id, sizeof(EntityID));
 		RediSearch_FreeDocument(doc);
+		Index_ReleaseRSIndex(rsIdx);
 		return;
 	}
 
 	// add document to RediSearch index
 	int res = RediSearch_SpecAddDocument(rsIdx, doc);
 	ASSERT(res == REDISMODULE_OK);
+
+	Index_ReleaseRSIndex(rsIdx);
 }
 
 void Index_RemoveNode
@@ -52,9 +63,12 @@ void Index_RemoveNode
 	ASSERT(n   != NULL);
 	ASSERT(idx != NULL);
 
-	EntityID id     = ENTITY_GET_ID(n);
-	RSIndex  *rsIdx = Index_RSIndex(idx);
+	RSIndex *rsIdx = Index_AcquireRSIndex(idx);
+	if(rsIdx == NULL) return;
 
+	EntityID id = ENTITY_GET_ID(n);
 	RediSearch_DeleteDocument(rsIdx, &id, sizeof(EntityID));
+
+	Index_ReleaseRSIndex(rsIdx);
 }
 

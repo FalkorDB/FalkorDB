@@ -21,8 +21,11 @@ void Index_IndexEdge
 	ASSERT(e   != NULL);
 	ASSERT(idx != NULL);
 
+	// Acquire a strong ref for the duration of this op.
+	RSIndex *rsIdx = Index_AcquireRSIndex(idx);
+	if(rsIdx == NULL) return;
+
 	RSDoc    *doc    = NULL;
-	RSIndex  *rsIdx  = Index_RSIndex(idx);
 	EntityID src_id  = Edge_GetSrcNodeID(e);
 	EntityID dest_id = Edge_GetDestNodeID(e);
 	EntityID edge_id = ENTITY_GET_ID(e);
@@ -36,9 +39,12 @@ void Index_IndexEdge
 
 	if(doc_field_count == 0) {
 		// entity doesn't possess any attributes which are indexed
-		// remove entity from index and delete document
-		Index_RemoveEdge(idx, e);
+		// remove entity from index and delete document. Use the
+		// already-acquired ref directly to avoid re-entering
+		// Index_RemoveEdge (which would Acquire again).
+		RediSearch_DeleteDocument(rsIdx, &key, key_len);
 		RediSearch_FreeDocument(doc);
+		Index_ReleaseRSIndex(rsIdx);
 		return;
 	}
 
@@ -50,6 +56,8 @@ void Index_IndexEdge
 			dest_id, RSFLDTYPE_NUMERIC);
 	int res = RediSearch_SpecAddDocument(rsIdx, doc);
 	ASSERT(res == REDISMODULE_OK);
+
+	Index_ReleaseRSIndex(rsIdx);
 }
 
 void Index_RemoveEdge
@@ -60,7 +68,9 @@ void Index_RemoveEdge
 	ASSERT(e   != NULL);
 	ASSERT(idx != NULL);
 
-	RSIndex  *rsIdx  = Index_RSIndex(idx);
+	RSIndex *rsIdx = Index_AcquireRSIndex(idx);
+	if(rsIdx == NULL) return;
+
 	EntityID src_id  = Edge_GetSrcNodeID(e);
 	EntityID dest_id = Edge_GetDestNodeID(e);
 	EntityID edge_id = ENTITY_GET_ID(e);
@@ -68,5 +78,7 @@ void Index_RemoveEdge
 	EdgeIndexKey key = {.src_id = src_id, .dest_id = dest_id, .edge_id = edge_id};
 	size_t key_len = sizeof(EdgeIndexKey);
 	RediSearch_DeleteDocument(rsIdx, &key, key_len);
+
+	Index_ReleaseRSIndex(rsIdx);
 }
 
