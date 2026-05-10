@@ -18,6 +18,9 @@
 #include "../datatypes/temporal_value.h"
 #include "../datatypes/array.h"
 #include "../ast/ast_shared.h"
+#include "../filter_tree/filter_tree.h"
+#include "list_funcs/list_funcs.h"
+#include "comprehension_funcs/comprehension_funcs.h"
 
 #include <ctype.h>
 
@@ -791,6 +794,64 @@ void AR_EXP_CollectEntities
 	if(AR_EXP_IsOperation(root)) {
 		for(int i = 0; i < root->op.child_count; i++) {
 			AR_EXP_CollectEntities(root->op.children[i], aliases);
+		}
+
+		// comprehension functions (any/all/single/none/list_comprehension) and
+		// reduce store their predicate filter and/or eval expression as private
+		// data rather than as children
+		// walk those so that entities referenced inside the comprehension's
+		// WHERE/eval clauses are also collected
+		// the comprehension's locally-bound variable(s) are then removed since
+		// they are introduced by the comprehension itself and are not free
+		// variables in the surrounding scope
+		if(root->op.private_data != NULL && root->op.f != NULL) {
+			const char *fname = root->op.f->name;
+			if(fname != NULL && (
+					strcasecmp(fname, "any")                == 0 ||
+					strcasecmp(fname, "all")                == 0 ||
+					strcasecmp(fname, "single")             == 0 ||
+					strcasecmp(fname, "none")               == 0 ||
+					strcasecmp(fname, "list_comprehension") == 0)) {
+				ListComprehensionCtx *ctx =
+					(ListComprehensionCtx *)root->op.private_data;
+				if(ctx->ft != NULL) {
+					rax *inner = FilterTree_CollectModified(ctx->ft);
+					raxIterator it;
+					raxStart(&it, inner);
+					raxSeek(&it, "^", NULL, 0);
+					while(raxNext(&it)) {
+						raxInsert(aliases, it.key, it.key_len, NULL, NULL);
+					}
+					raxStop(&it);
+					raxFree(inner);
+				}
+				if(ctx->eval_exp != NULL) {
+					AR_EXP_CollectEntities(ctx->eval_exp, aliases);
+				}
+				// remove the locally-bound variable
+				if(ctx->variable_str != NULL) {
+					raxRemove(aliases,
+							(unsigned char *)ctx->variable_str,
+							strlen(ctx->variable_str), NULL);
+				}
+			} else if(fname != NULL && strcasecmp(fname, "REDUCE") == 0) {
+				ListReduceCtx *ctx =
+					(ListReduceCtx *)root->op.private_data;
+				if(ctx->exp != NULL) {
+					AR_EXP_CollectEntities(ctx->exp, aliases);
+				}
+				// remove the locally-bound variable and accumulator
+				if(ctx->variable != NULL) {
+					raxRemove(aliases,
+							(unsigned char *)ctx->variable,
+							strlen(ctx->variable), NULL);
+				}
+				if(ctx->accumulator != NULL) {
+					raxRemove(aliases,
+							(unsigned char *)ctx->accumulator,
+							strlen(ctx->accumulator), NULL);
+				}
+			}
 		}
 	} else { // type == AR_EXP_OPERAND
 		if(root->operand.type == AR_EXP_VARIADIC) {

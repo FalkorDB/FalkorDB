@@ -521,3 +521,73 @@ class testComprehensionFunctions(FlowTestsBase):
         except redis.exceptions.ResponseError as e:
             self.env.assertIn("Invalid use of aggregating function", str(e))
 
+    def test22_comprehension_predicate_after_with(self):
+        # Validate that a comprehension predicate (any/all/single/none) used in a
+        # WHERE clause after a WITH carrying a variable can correctly access that
+        # variable.
+        # Previously, AR_EXP_CollectEntities did not descend into the
+        # comprehension's private predicate, so the resulting filter op was
+        # placed above the projection and could not see the carried variable,
+        # causing matching rows to be incorrectly filtered out.
+        # See https://github.com/FalkorDB/FalkorDB/issues for the original bug.
+        g = self.db.select_graph("comprehension_after_with")
+        g.query("CREATE (n:Person {name: 'Alice', tags: ['friend', 'colleague']})")
+
+        # all() over a carried variable
+        query = """MATCH (a:Person)
+                   WITH a
+                   WHERE all(item IN ['friend', 'colleague'] WHERE item IN a.tags)
+                   RETURN a.name AS name"""
+        self.env.assertEquals(g.query(query).result_set, [['Alice']])
+
+        # all() over a renamed carried variable
+        query = """MATCH (a:Person)
+                   WITH a AS p
+                   WHERE all(item IN ['friend', 'colleague'] WHERE item IN p.tags)
+                   RETURN p.name AS name"""
+        self.env.assertEquals(g.query(query).result_set, [['Alice']])
+
+        # any() over a carried variable
+        query = """MATCH (a:Person)
+                   WITH a
+                   WHERE any(item IN ['friend', 'missing'] WHERE item IN a.tags)
+                   RETURN a.name AS name"""
+        self.env.assertEquals(g.query(query).result_set, [['Alice']])
+
+        # none() over a carried variable
+        query = """MATCH (a:Person)
+                   WITH a
+                   WHERE none(item IN ['x', 'y'] WHERE item IN a.tags)
+                   RETURN a.name AS name"""
+        self.env.assertEquals(g.query(query).result_set, [['Alice']])
+
+        # single() over a carried variable
+        query = """MATCH (a:Person)
+                   WITH a
+                   WHERE single(item IN ['friend', 'x'] WHERE item IN a.tags)
+                   RETURN a.name AS name"""
+        self.env.assertEquals(g.query(query).result_set, [['Alice']])
+
+        # list comprehension with predicate over a carried variable
+        query = """MATCH (a:Person)
+                   WITH a
+                   WHERE size([item IN ['friend', 'colleague'] WHERE item IN a.tags]) = 2
+                   RETURN a.name AS name"""
+        self.env.assertEquals(g.query(query).result_set, [['Alice']])
+
+        # reduce over a carried variable
+        query = """MATCH (a:Person)
+                   WITH a
+                   WHERE reduce(s = 0, x IN a.tags | s + 1) = 2
+                   RETURN a.name AS name"""
+        self.env.assertEquals(g.query(query).result_set, [['Alice']])
+
+        # negative case - predicate that should filter the row out
+        query = """MATCH (a:Person)
+                   WITH a
+                   WHERE all(item IN ['x', 'y'] WHERE item IN a.tags)
+                   RETURN a.name AS name"""
+        self.env.assertEquals(g.query(query).result_set, [])
+
+        g.delete()
+
