@@ -86,7 +86,10 @@ typedef enum {
  * and 0 if argument is zero.*/
 #define SIGN(a) ((a) > 0) - ((a) < 0)
 
-#define DISJOINT INT_MAX
+/* Renamed from DISJOINT to SIV_DISJOINT to avoid colliding with the
+ * `DISJOINT` enumerator in RediSearch's geometry_types.h, which we now
+ * pull in transitively as part of the LLAPI surface. */
+#define SIV_DISJOINT INT_MAX
 #define COMPARED_NULL INT_MIN
 #define COMPARED_NAN INT_MIN+1
 
@@ -249,7 +252,7 @@ SIValue SIValue_Modulo(const SIValue a, const SIValue b);
 
 // compares two SIValues and returns a value similar to strcmp
 // if one of the values is null, the macro COMPARED_NULL is returned in disjointOrNull value.
-// if the the values are not of the same type, the macro DISJOINT is returned in disjointOrNull value. */
+// if the the values are not of the same type, the macro SIV_DISJOINT is returned in disjointOrNull value. */
 int SIValue_Compare(const SIValue a, const SIValue b, int *disjointOrNull);
 
 /* Update the provided hash state with the given SIValue. */

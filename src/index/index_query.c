@@ -81,8 +81,8 @@ static RSQNode *_StringRangeToQueryNode
 		// range search
 		max = (max == NULL) ? RSLECRANGE_INF     : max;
 		min = (min == NULL) ? RSLEXRANGE_NEG_INF : min;
-		child = RediSearch_CreateTagLexRangeNode(idx, min, max,
-				range->include_min, range->include_max);
+		child = RediSearch_CreateTagLexRangeNode(idx, type_aware_field_name,
+				min, max, range->include_min, range->include_max);
 	}
 
 	RediSearch_QueryNodeAddChild(root, child);

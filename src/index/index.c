@@ -150,11 +150,31 @@ static void _Index_ConstructStructure
 		//----------------------------------------------------------------------
 
 		if(field->type & INDEX_FLD_VECTOR) {
-			RSFieldID fieldID = RediSearch_CreateVectorField(rsIdx,
-					field->vector_name);
+			RSFieldID fieldID = RediSearch_CreateField(rsIdx,
+					field->vector_name, RSFLDTYPE_VECTOR, RSFLDOPT_NONE);
 
-			RediSearch_VectorFieldSetDim(rsIdx, fieldID, field->hnsw_options.dimension);
-			RediSearch_VectorFieldSetHNSWParams(rsIdx, fieldID, IndexField_OptionsGetM(field), IndexField_OptionsGetEfConstruction(field), IndexField_OptionsGetEfRuntime(field), IndexField_OptionsGetSimFunc(field));
+			// Build a TIERED-HNSW VecSimParams shaped from the schema's
+			// HNSW options. RediSearch_VecSimTieredParams_Init wires the
+			// runtime context (worker pool, weak-ref jobQueueCtx,
+			// flatBufferLimit, logCtx) using RediSearch's own
+			// infrastructure.
+			VecSimParams primary = {
+				.algo = VecSimAlgo_HNSWLIB,
+				.algoParams.hnswParams = {
+					.type           = VecSimType_FLOAT32,
+					.dim            = field->hnsw_options.dimension,
+					.metric         = IndexField_OptionsGetSimFunc(field),
+					.M              = IndexField_OptionsGetM(field),
+					.efConstruction = IndexField_OptionsGetEfConstruction(field),
+					.efRuntime      = IndexField_OptionsGetEfRuntime(field),
+				},
+			};
+			VecSimParams params = {
+				.algo = VecSimAlgo_TIERED,
+				.algoParams.tieredParams.primaryIndexParams = &primary,
+			};
+			RediSearch_VecSimTieredParams_Init(&params, rsIdx, field->vector_name);
+			RediSearch_VectorFieldSetParams(rsIdx, fieldID, &params);
 		}
 
 		//----------------------------------------------------------------------
@@ -331,8 +351,11 @@ static inline void _addArrayField
 	//--------------------------------------------------------------------------
 
 	if(n_numerics > 0) {
+		// numerics is an arr.h array (double*); pass the data pointer
+		// and explicit count to the LLAPI.
 		RediSearch_DocumentAddFieldNumericArray(doc,
-				field->range_numeric_arr_name, &numerics, RSFLDTYPE_NUMERIC);
+				field->range_numeric_arr_name, numerics, n_numerics,
+				RSFLDTYPE_NUMERIC);
 	}
 
 	//--------------------------------------------------------------------------
@@ -340,9 +363,10 @@ static inline void _addArrayField
 	//--------------------------------------------------------------------------
 
 	if(n_strings > 0) {
+		// strings is an arr.h array (char**); pass the data pointer.
 		RediSearch_DocumentAddFieldStringArray(doc,
-				field->range_string_arr_name, &strings, n_strings,
-				RSFLDTYPE_TAG);
+				field->range_string_arr_name, (const char**)strings,
+				n_strings, RSFLDTYPE_TAG);
 	}
 
 	// clean up
@@ -476,13 +500,13 @@ RSDoc *Index_IndexGraphEntity
 
 			*doc_field_count += 1;
 
-			size_t   n        = SIVector_ElementsByteSize(v);
-			uint32_t dim      = SIVector_Dim(v);
-			void*    elements = SIVector_Elements(v);
+			size_t n        = SIVector_ElementsByteSize(v);
+			void*  elements = SIVector_Elements(v);
 
-			// value must be of type array
-			RediSearch_DocumentAddFieldVector(doc, field->vector_name, elements,
-					dim, n);
+			// New-API signature: (doc, fieldname, vector, nbytes). The
+			// dimensionality is already captured in the field schema.
+			RediSearch_DocumentAddFieldVector(doc, field->vector_name,
+					elements, n);
 		}
 	}
 
