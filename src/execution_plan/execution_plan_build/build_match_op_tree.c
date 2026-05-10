@@ -173,6 +173,22 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 		}
 	}
 
+	// if every connected component reduced to a no-op (e.g. an OPTIONAL MATCH
+	// that re-binds two already-bound, label-less variables), the cartesian
+	// product has no children to combine; building such a tree would crash
+	// at runtime. Tear the empty cartesian product (and its apply wrapper)
+	// down and keep the original plan root, which carries the bound vars.
+	if(cartesianProduct != NULL && OpBase_ChildCount(cartesianProduct) == 0) {
+		ExecutionPlan_RemoveOp(plan, cartesianProduct);
+		OpBase_Free(cartesianProduct);
+		cartesianProduct = NULL;
+		if(apply != NULL) {
+			ExecutionPlan_RemoveOp(plan, apply);
+			OpBase_Free(apply);
+			apply = NULL;
+		}
+	}
+
 	if(cartesianProduct != NULL && apply != NULL) {
 		rax *bound_args = raxNew();
 		ExecutionPlan_BoundVariables(OpBase_GetChild(apply, 0), bound_args,

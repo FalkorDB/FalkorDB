@@ -377,3 +377,40 @@ class testOptionalFlow(FlowTestsBase):
 
         self.env.assertEquals(len(res), 10)
 
+    def test29_optional_match_multiple_bound_vars(self):
+        """OPTIONAL MATCH that re-binds two (or more) already-bound,
+        label-less variables in a single comma-separated pattern used to
+        crash the server (issue: empty Cartesian Product). It should now
+        behave as a no-op pass-through, yielding a single row per input."""
+
+        # start fresh
+        self.graph.delete()
+
+        self.graph.query("CREATE (:Person {name:'Alice'}), (:Person {name:'Bob'})")
+
+        # original repro: count(*)
+        q = """MATCH (a:Person {name:'Alice'}), (b:Person {name:'Bob'})
+               OPTIONAL MATCH (a), (b) RETURN count(*) AS cnt"""
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res, [[1]])
+
+        # variant: return the bound values
+        q = """MATCH (a:Person {name:'Alice'}), (b:Person {name:'Bob'})
+               OPTIONAL MATCH (a), (b)
+               RETURN a.name AS aname, b.name AS bname"""
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res, [['Alice', 'Bob']])
+
+        # variant: carry through WITH
+        q = """MATCH (a:Person {name:'Alice'}), (b:Person {name:'Bob'})
+               WITH a, b
+               OPTIONAL MATCH (a), (b) RETURN count(*) AS cnt"""
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res, [[1]])
+
+        # variant: three already-bound variables
+        q = """MATCH (a:Person {name:'Alice'}), (b:Person {name:'Bob'})
+               WITH a, b, a AS c
+               OPTIONAL MATCH (a), (b), (c) RETURN count(*) AS cnt"""
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res, [[1]])
