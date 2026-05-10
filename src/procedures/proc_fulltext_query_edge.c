@@ -21,6 +21,7 @@ typedef struct {
 	RelationID r;                 // edge relation ID
 	SIValue output[2];            // output
 	Index idx;                    // index
+	RSIndex *rsIdx;               // strong ref on RediSearch index, held for the procedure's lifetime
 	RSResultsIterator *iter;      // iterator
 	SIValue *yield_relationship;  // yield relationship
 	SIValue *yield_score;         // yield score
@@ -71,7 +72,7 @@ SIValue *Proc_FulltextQueryRelationshipStep
 	// NULL is returned if iterator id depleted
 	size_t len = 0;
 	const EdgeIndexKey *edge_key = (EdgeIndexKey *)
-		RediSearch_ResultsIteratorNext(pdata->iter, Index_RSIndex(pdata->idx),
+		RediSearch_ResultsIteratorNext(pdata->iter, pdata->rsIdx,
 				&len);
 
 	// depleted
@@ -118,6 +119,8 @@ ProcedureResult Proc_FulltextQueryRelationshipFree
 	QueryRelationshipContext *pdata = ctx->privateData;
 
 	if(pdata->iter) RediSearch_ResultsIteratorFree(pdata->iter);
+	// release the strong ref on the RediSearch index, AFTER iter free.
+	if(pdata->rsIdx) Index_ReleaseRSIndex(pdata->rsIdx);
 
 	rm_free(pdata);
 
@@ -159,9 +162,17 @@ ProcedureResult Proc_FulltextQueryRelationshipInvoke
 	QueryRelationshipContext *pdata = ctx->privateData;
 
 	// populate context
-	pdata->g   = GraphContext_GetGraph (gc) ;
-	pdata->r   = Schema_GetID(s);
-	pdata->idx = idx;
+	pdata->g     = GraphContext_GetGraph (gc) ;
+	pdata->r     = Schema_GetID(s);
+	pdata->idx   = idx;
+	// Strong ref on the RediSearch index for the procedure's lifetime;
+	// released in the proc's free path.
+	pdata->rsIdx = Index_AcquireRSIndex(idx);
+	if(pdata->rsIdx == NULL) {
+		rm_free(pdata);
+		ctx->privateData = NULL;
+		return PROCEDURE_ERR;
+	}
 
 	_relationship_process_yield(pdata, yield);
 

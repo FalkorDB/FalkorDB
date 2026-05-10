@@ -40,6 +40,12 @@ OpBase *NewIndexScanOp
 	op->n      = n;
 	op->idx    = idx;
 	op->filter = filter;
+	// Acquire a strong ref on the RediSearch index for the op's lifetime.
+	// Released in IndexScanFree. Asserts non-null because the index can't
+	// have been dropped between the planner resolving it and op
+	// construction (both run under the same query critical section).
+	op->rsIdx  = Index_AcquireRSIndex(idx);
+	ASSERT(op->rsIdx != NULL);
 
 	// Set our Op operations
 	OpBase_Init((OpBase *)op, OPType_NODE_BY_INDEX_SCAN, "Node By Index Scan", IndexScanInit, IndexScanConsume,
@@ -98,7 +104,7 @@ static Record IndexScanConsumeFromChild
 ) {
 	const EntityID *nodeId = NULL;
 	IndexScan *op  = (IndexScan *)opBase;
-	RSIndex *rsIdx = Index_RSIndex(op->idx);
+	RSIndex *rsIdx = op->rsIdx;
 
 pull_index:
 	//--------------------------------------------------------------------------
@@ -194,7 +200,7 @@ pull_index:
 
 static Record IndexScanConsume(OpBase *opBase) {
 	IndexScan *op = (IndexScan *)opBase;
-	RSIndex *rsIdx = Index_RSIndex(op->idx);
+	RSIndex *rsIdx = op->rsIdx;
 
 	// create iterator on first call
 	if(op->iter == NULL) {
@@ -268,6 +274,12 @@ static void IndexScanFree(OpBase *opBase) {
 	if(op->n != NULL) {
 		NodeScanCtx_Free(op->n);
 		op->n = NULL;
+	}
+
+	// release the strong ref on the RediSearch index
+	if(op->rsIdx != NULL) {
+		Index_ReleaseRSIndex(op->rsIdx);
+		op->rsIdx = NULL;
 	}
 }
 
