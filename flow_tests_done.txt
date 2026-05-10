@@ -88,6 +88,7 @@ tests/flow/test_shortest_path.py
 tests/flow/test_slowlog.py
 tests/flow/test_social.py
 tests/flow/test_star_projections.py
+tests/flow/test_stress.py
 tests/flow/test_temporal
 tests/flow/test_timeout.py
 tests/flow/test_traversal_construction.py

@@ -38,8 +38,8 @@ use crate::{
 };
 use atomic_refcell::AtomicRefCell;
 use crossfire::{
-    Rx, Tx,
-    spsc::{Array, bounded_blocking},
+    MTx, Rx,
+    mpsc::{Array, bounded_blocking},
 };
 use graph::{
     graph::{
@@ -266,7 +266,7 @@ pub(crate) mod ffi {
 
 pub struct ThreadedGraph {
     pub graph: MvccGraph,
-    pub sender: Tx<Array<Box<WriteMessage>>>,
+    pub sender: MTx<Array<Box<WriteMessage>>>,
     pub receiver: Rx<Array<Box<WriteMessage>>>,
     pub write_loop: AtomicBool,
     pub slow_log: SlowLog,

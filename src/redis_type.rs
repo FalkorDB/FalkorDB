@@ -733,13 +733,16 @@ fn install_graph(
     let mvcc = MvccGraph::from_graph(graph);
     let graph_arc = mvcc.read();
     graph_arc.borrow_mut().set_indexer_graph(graph_arc.clone());
-    let tg = ThreadedGraph::from_mvcc(mvcc);
+    drop(graph_arc);
 
     if let Some(ph) = placeholder {
         let mut placeholder_tg = ph.write();
-        // Replace entire ThreadedGraph (graph, sender, receiver, write_loop)
-        // to ensure the write queue is properly bound to the new graph
-        *placeholder_tg = tg;
+        // Replace ONLY the inner MvccGraph. Preserving the existing sender,
+        // receiver, write_loop, and slow_log keeps any WriteMessages that
+        // were already enqueued against the placeholder reachable by the
+        // write loop — otherwise blocked clients in `waiting` state would
+        // never be replied to.
+        placeholder_tg.graph = mvcc;
     } else {
         eprintln!(
             "FalkorDB: WARNING - no placeholder pointer for graph '{graph_name}', graph data will be lost"
