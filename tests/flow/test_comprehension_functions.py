@@ -529,7 +529,6 @@ class testComprehensionFunctions(FlowTestsBase):
         # comprehension's private predicate, so the resulting filter op was
         # placed above the projection and could not see the carried variable,
         # causing matching rows to be incorrectly filtered out.
-        # See https://github.com/FalkorDB/FalkorDB/issues for the original bug.
         g = self.db.select_graph("comprehension_after_with")
         g.query("CREATE (n:Person {name: 'Alice', tags: ['friend', 'colleague']})")
 
