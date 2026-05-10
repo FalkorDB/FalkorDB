@@ -656,9 +656,28 @@ pub struct Index {
 
 impl Drop for Index {
     fn drop(&mut self) {
+        if self.rs_idx.is_null() {
+            return;
+        }
+        // RediSearch_DropIndex transitively calls RM_StopTimer, which mutates
+        // Redis-internal state (the timer rax). The Redis main thread holds
+        // the module GIL implicitly during command execution, so off-thread
+        // callers must acquire it explicitly. Mirrors the C FalkorDB pattern
+        // in `_GraphContext_Free` (FalkorDB/src/graph/graphcontext.c).
         unsafe {
-            if !self.rs_idx.is_null() {
-                RediSearch_DropIndex(self.rs_idx);
+            let ctx = if crate::thread_id::is_main_thread() {
+                None
+            } else {
+                redisearch::redis::RedisModule_GetThreadSafeContext
+                    .map(|f| f(std::ptr::null_mut()))
+            };
+            if let Some(ctx) = ctx {
+                redisearch::redis::RedisModule_ThreadSafeContextLock.unwrap()(ctx);
+            }
+            RediSearch_DropIndex(self.rs_idx);
+            if let Some(ctx) = ctx {
+                redisearch::redis::RedisModule_ThreadSafeContextUnlock.unwrap()(ctx);
+                redisearch::redis::RedisModule_FreeThreadSafeContext.unwrap()(ctx);
             }
         }
     }

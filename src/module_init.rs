@@ -53,6 +53,7 @@ pub fn graph_init(
     ctx: &Context,
     _: &Vec<redis_module::RedisString>,
 ) -> Status {
+    graph::thread_id::set_main_thread();
     panic::set_hook(Box::new(|info| {
         eprintln!("FalkorDB panic: {info}");
         std::process::exit(1);
