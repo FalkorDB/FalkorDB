@@ -69,7 +69,7 @@ pub mod graph;
 pub mod index;
 pub mod parser;
 pub mod planner;
-pub mod thread_id;
 pub mod runtime;
+pub mod thread_id;
 pub mod threadpool;
 pub mod udf;
