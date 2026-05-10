@@ -698,3 +698,41 @@ class testQueryValidationFlow(FlowTestsBase):
 
         q = "OPTIONAL MATCH (a) RETURN a UNION MATCH (a) RETURN a"
         self.graph.query(q)
+
+    # repeated relationship variable in a pattern path must be rejected
+    # rather than crashing the server
+    # see https://github.com/FalkorDB/FalkorDB/issues for the original report
+    def test46_repeated_rel_in_pattern_predicate_after_with(self):
+        # ensure a baseline graph exists
+        self.graph.query("CREATE (:Person {name:'Alice'})-[:KNOWS]->(:Person {name:'Bob'})")
+
+        # the same relationship variable 'r' is reused inside a pattern
+        # predicate after being projected through a WITH clause
+        # this combination used to crash the server (segfault, exit 139)
+        invalid_queries = [
+            # WITH p, r form
+            "MATCH (p:Person)-[r:KNOWS]-() "
+            "WITH p, r "
+            "WHERE (p)-[r:KNOWS]->()<-[r:KNOWS]-() "
+            "RETURN p.name",
+
+            # WITH * form
+            "MATCH (p:Person)-[r:KNOWS]-() "
+            "WITH * "
+            "WHERE (p)-[r:KNOWS]->()<-[r:KNOWS]-() "
+            "RETURN p",
+
+            # repeated rel inside a single MATCH path (no WITH)
+            "MATCH (a)-[r]->()-[r]->(a) RETURN r",
+        ]
+
+        for q in invalid_queries:
+            try:
+                self.graph.query(q)
+                self.env.assertTrue(False)
+            except redis.exceptions.ResponseError as e:
+                self.env.assertIn("Cannot use the same relationship variable", str(e))
+
+        # the server must still be responsive after the rejected queries
+        self.env.assertEquals(
+            self.graph.query("RETURN 1").result_set, [[1]])
