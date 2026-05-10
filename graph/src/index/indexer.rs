@@ -247,13 +247,20 @@ impl Indexer {
             }
         }
         if label_indexes.has_rs_index() {
-            // Adding fields to an existing RediSearch index: append the
-            // new fields to the live spec rather than dropping and
-            // rebuilding. Drop+rebuild used to be the strategy here, but
-            // it triggered a RediSearch numeric-index quirk that loses
-            // value 0 entries on the second recreate. Appending is also
-            // closer to RediSearch's intended LLAPI usage.
-            label_indexes.register_fields(&new_fields, field_options.as_ref())?;
+            // Adding fields to an existing RediSearch index. For most
+            // field types we append to the live spec, but adding a
+            // vector field forces a drop+rebuild: RediSearch's HNSW
+            // state on the existing vector field gets corrupted when
+            // the subsequent populate phase re-adds documents with
+            // ADD_REPLACE, leaving KNN queries returning fewer hits
+            // than the data warrants. Matches the C FalkorDB behavior
+            // (Index_Disable + Index_ConstructStructure).
+            let adds_vector = *index_type == IndexType::Vector;
+            if adds_vector {
+                label_indexes.recreate_index(label)?;
+            } else {
+                label_indexes.register_fields(&new_fields, field_options.as_ref())?;
+            }
         } else {
             let effective_stopwords = stopwords
                 .clone()
