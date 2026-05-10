@@ -297,15 +297,17 @@ class testResultSetFlow(FlowTestsBase):
         self.env.assertEquals(end_node.labels, None)
         self.env.assertEquals(end_node.properties, {})
 
-    # Test returning a deleted edge with properties
+    # Test returning a deleted edge
     def test14_deleted_edge_reply(self):
-        # returning a deleted edge should include its relation type and properties
+        # the edge is implicitly deleted along with its endpoint;
+        # returning the deleted edge value should yield its relation type
+        # but no properties, matching Cypher semantics
         query = """CREATE (a:Person {name: 'Alice'})-[r:KNOWS {since: 2020, weight: 0.5}]->(a) WITH r, a DELETE a RETURN r"""
         result = self.graph.query(query)
         self.env.assertEquals(len(result.result_set), 1)
         edge = result.result_set[0][0]
         self.env.assertEquals(edge.relation, "KNOWS")
-        self.env.assertEquals(edge.properties, {'since': 2020, 'weight': 0.5})
+        self.env.assertEquals(edge.properties, {})
 
     # Test entity functions on deleted node accessed via startNode
     # the node has a NULL attribute-set
