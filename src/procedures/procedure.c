@@ -5,7 +5,6 @@
  */
 
 #include "RG.h"
-#include "procedures/proc_harmonic_centrality.h"
 #include "rax.h"
 #include "./procedure.h"
 #include "procedures.h"

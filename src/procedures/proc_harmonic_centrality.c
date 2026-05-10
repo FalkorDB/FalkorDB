@@ -12,14 +12,13 @@
 #include "../query_ctx.h"
 #include "../util/rmalloc.h"
 #include "../datatypes/map.h"
-#include "../util/mt19937-64.h"
 #include "../datatypes/array.h"
 #include "./utility/internal.h"
 #include "../graph/graphcontext.h"
 #include "proc_harmonic_centrality.h"
 
-#include <string.h>
 #include <stdio.h>
+#include <string.h>
 #include "procedures/proc_ctx.h"
 
 // closeness invoke examples:
@@ -28,13 +27,10 @@
 // CALL algo.closeness(NULL) YIELD node, score
 // CALL algo.closeness({nodeLabels: ['L', 'P']}) YIELD node, score
 // CALL algo.closeness({relationshipTypes: ['R', 'E']}) YIELD node, score
-// CALL algo.closeness({nodeLabels: ['L'], relationshipTypes: ['E'],
-//   weightAttribute: 'value', default:0}) YIELD node, score
 
 // Harmonic Centrality procedure context
 typedef struct {
 	const Graph *g;                // graph
-	AttributeID  weight_prop;      // weight attribute id
 	GrB_Vector   scores;           // harmonic centrality scores (FP64)
 	GrB_Vector   reachable_nodes;  // reachable node estimates (INT64)
 	GrB_Info     info;             // iterator state
@@ -81,27 +77,21 @@ static void _process_yield
 // process procedure configuration argument
 static bool _read_config
 (
-	SIValue config,          // procedure configuration
-	LabelID **lbls,          // [output] labels
-	RelationID **rels,       // [output] relationships
-	AttributeID *weightAtt,  // [output] relationship used as weight
-	SIValue *defaultW        // [output] the default value of the weightAtt
+	SIValue config,    // procedure configuration
+	LabelID **lbls,    // [output] labels
+	RelationID **rels  // [output] relationships
 ) {
 	ASSERT (lbls             != NULL) ;
 	ASSERT (rels             != NULL) ;
-	ASSERT (defaultW         != NULL) ;
-	ASSERT (weightAtt        != NULL) ;
 	ASSERT (SI_TYPE (config) == T_MAP) ;  // expecting configuration to be a map
 
 	// initialize outputs
-	*lbls      = NULL ;
-	*rels      = NULL ;
-	*defaultW  = SI_NullVal();
-	*weightAtt = ATTRIBUTE_ID_NONE ;
+	*lbls = NULL ;
+	*rels = NULL ;
 
 	uint match_fields = 0 ;
 	uint n = Map_KeyCount (config) ;
-	if (n > 4) {
+	if (n > 2) {
 		// error config contains unknown key
 		ErrorCtx_SetError ("invalid HarmonicCentrality configuration") ;
 		return false ;
@@ -189,52 +179,9 @@ static bool _read_config
 		match_fields++ ;
 	}
 
-	//--------------------------------------------------------------------------
-	// read weight attribute
-	//--------------------------------------------------------------------------
-
-	if (MAP_GETCASEINSENSITIVE (config, "weightAttribute", v)) {
-		if (SI_TYPE (v) != T_STRING) {
-			ErrorCtx_SetError ("harmonic centrality configuration, "
-					"'weightAttribute' should be a string") ;
-			goto error ;
-		}
-
-		const char *attr = v.stringval ;
-		*weightAtt = GraphContext_GetAttributeID (gc, attr) ;
-		if (*weightAtt == ATTRIBUTE_ID_NONE) {
-			ErrorCtx_SetError ("harmonic centrality configuration, "
-					"unknown attribute: %s", attr) ;
-			goto error ;
-		}
-		match_fields++ ;
-	}
-
-	//--------------------------------------------------------------------------
-	// read default weight value
-	//--------------------------------------------------------------------------
-
-	if (MAP_GETCASEINSENSITIVE (config, "defaultWeight", v)) {
-		if (SI_TYPE (v) != T_INT64 || v.longval < 0) {
-			ErrorCtx_SetError ("harmonic centrality configuration, "
-					"'defaultWeight' should be non negative integer") ;
-			goto error ;
-		}
-		*defaultW = v ;
-
-		match_fields++ ;
-	}
-
 	// validate no unknown configuration fields
 	if (n != match_fields) {
 		ErrorCtx_SetError ("harmonic centrality configuration contains unknown key") ;
-		goto error ;
-	}
-
-	// defaultWeight requires weightAttribute
-	if (!SIValue_IsNull (*defaultW) && *weightAtt == ATTRIBUTE_ID_NONE) {
-		ErrorCtx_SetError ("harmonic centrality configuration, "
-				"'defaultWeight' requires 'weightAttribute'") ;
 		goto error ;
 	}
 
@@ -294,20 +241,16 @@ ProcedureResult Proc_CentralityInvoke
 	// {
 	//	nodeLabels: ['A', 'B'],
 	//	relationshipTypes: ['R'],
-	//	weightAttribute: 'score',
-	//	defaultWeight: 0
 	// }
 
 	LabelID    *lbls = NULL ;  // filtered labels
 	RelationID *rels = NULL ;  // filtered relationships
-	SIValue     defaultW = SI_NullVal () ;  // default weight
-	AttributeID weightAtt = ATTRIBUTE_ID_NONE ;
 
 	//--------------------------------------------------------------------------
 	// load configuration map
 	//--------------------------------------------------------------------------
 
-	bool config_ok = _read_config (config, &lbls, &rels, &weightAtt, &defaultW) ;
+	bool config_ok = _read_config (config, &lbls, &rels) ;
 
 	// free input config
 	SIValue_Free (config) ;
@@ -325,8 +268,7 @@ ProcedureResult Proc_CentralityInvoke
 	HarmonicCentrality_Context *pdata =
 		rm_calloc (1, sizeof (HarmonicCentrality_Context)) ;
 
-	pdata->g           = g ;
-	pdata->weight_prop = weightAtt ;
+	pdata->g = g ;
 
 	_process_yield (pdata, yield) ;
 
@@ -360,20 +302,8 @@ ProcedureResult Proc_CentralityInvoke
 		arr_free (rels) ;
 	}
 
-	if (weightAtt == ATTRIBUTE_ID_NONE) {
-		GrB_OK (GrB_Vector_assign_BOOL (
-			nodes, nodes, NULL, true, GrB_ALL, 0, GrB_DESC_S));
-	} else {
-		if (!get_node_attribute (nodes, g, weightAtt, defaultW,
-			T_BOOL | T_INT64)) {
-			ErrorCtx_SetError ("harmonic centrality weight attribute specified"
-				" with no default value and non-existent or non-integer"
-				" attribute was found");
-			GrB_free (&A) ;
-			GrB_free (&nodes) ;
-			return PROCEDURE_ERR;
-		}
-	}
+	GrB_OK (GrB_Vector_assign_BOOL (nodes, nodes, NULL, true, GrB_ALL, 0,
+				GrB_DESC_S));
 
 	char msg [LAGRAPH_MSG_LEN] ;
 	GrB_Info info = LAGraph_New (&G, &A, LAGraph_ADJACENCY_DIRECTED, msg) ;
@@ -506,9 +436,7 @@ ProcedureResult Proc_CentralityFree
 
 // CALL algo.HarmonicCentrality({
 //     nodeLabels:         ['Person'],
-//     relationshipTypes:  ['KNOWS'],
-//     weightAttribute:    'Power',
-//     defaultWeight:      0
+//     relationshipTypes:  ['KNOWS']
 // })
 // YIELD node, score, reachable
 //
