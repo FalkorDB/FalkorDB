@@ -53,6 +53,10 @@ OpBase *NewEdgeIndexScanOp
 	op->idx             = idx;
 	op->edge            = e;
 	op->filter          = filter;
+	// Strong ref on the RediSearch index for the op's lifetime;
+	// released in EdgeIndexScanFree.
+	op->rsIdx           = Index_AcquireRSIndex(idx);
+	ASSERT(op->rsIdx != NULL);
 
 	// set our Op operations
 	OpBase_Init(
@@ -213,7 +217,7 @@ static Record EdgeIndexScanConsumeFromChild
 	OpBase *opBase
 ) {
 	OpEdgeIndexScan	*op = (OpEdgeIndexScan*) opBase ;
-	RSIndex *rsIdx = Index_RSIndex (op->idx) ;
+	RSIndex *rsIdx = op->rsIdx ;
 	const EdgeIndexKey *edgeKey = NULL ;
 
 pull_index:
@@ -334,7 +338,7 @@ static Record EdgeIndexScanConsume
 	OpBase *opBase
 ) {
 	OpEdgeIndexScan *op = (OpEdgeIndexScan *)opBase;
-	RSIndex *rsIdx = Index_RSIndex(op->idx);
+	RSIndex *rsIdx = op->rsIdx;
 
 	// create iterator on first call
 	if(op->iter == NULL) {
@@ -404,6 +408,12 @@ static void EdgeIndexScanFree(OpBase *opBase) {
 	if(op->unresolved_filters) {
 		FilterTree_Free(op->unresolved_filters);
 		op->unresolved_filters = NULL;
+	}
+
+	// release the strong ref on the RediSearch index
+	if(op->rsIdx != NULL) {
+		Index_ReleaseRSIndex(op->rsIdx);
+		op->rsIdx = NULL;
 	}
 }
 

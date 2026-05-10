@@ -172,9 +172,11 @@ static bool _EmitIndex
 	GraphContext *gc = ctx->gc;
 	Graph        *g = GraphContext_GetGraph(gc);
 
-	// get index info
+	// get index info; hold a strong ref on the spec for the duration of
+	// this read so a concurrent DropIndex can't invalidate it mid-walk.
 	RSIdxInfo info = { .version = RS_INFO_CURRENT_VERSION };
-	RSIndex *rsIdx = Index_RSIndex(idx);
+	RSIndex *rsIdx = Index_AcquireRSIndex(idx);
+	if(rsIdx == NULL) return false;  // spec dropped concurrently
 	RediSearch_IndexInfo(rsIdx, &info);
 
 	//--------------------------------------------------------------------------
@@ -413,6 +415,7 @@ static bool _EmitIndex
 
 	// clean up
 	RediSearch_IndexInfoFree(&info);
+	Index_ReleaseRSIndex(rsIdx);
 
 	return true;
 }

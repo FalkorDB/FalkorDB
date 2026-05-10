@@ -16,6 +16,7 @@ typedef struct {
 	Graph *g;
 	bool rebuild_index_query;           // should we rebuild RediSearch index query for each input record
 	Index idx;                          // index to query
+	RSIndex *rsIdx;                     // strong ref on the underlying RediSearch index, held for the op's lifetime
 	QGEdge *edge;                       // edge scanned
 	int edgeRecIdx;                     // record index of edge
 	int srcRecIdx;                      // record index of source node

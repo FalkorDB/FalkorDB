@@ -282,8 +282,14 @@ static ProcedureResult Proc_VectorQueryInvoke
 	// create a redisearch query node
 	RSQNode *root = Index_BuildVectorQueryTree(idx, attribute, vec, nbytes, k);
 
-	// create procedure private data
-	RSIndex *rsIdx = Index_RSIndex(idx);
+	// Acquire a strong ref on the RediSearch index for the procedure's
+	// lifetime; released in Proc_VectorQueryFree.
+	RSIndex *rsIdx = Index_AcquireRSIndex(idx);
+	if(rsIdx == NULL) {
+		// index was dropped concurrently
+		RediSearch_QueryNodeFree(root);
+		return PROCEDURE_ERR;
+	}
 	ctx->privateData = _create_private_data(gc, query_vector, attr_id, rsIdx,
 			root, et, sim_func);
 
@@ -390,6 +396,12 @@ ProcedureResult Proc_VectorKNNFree
 	// free index iterator
 	if(pdata->iter) {
 		RediSearch_ResultsIteratorFree(pdata->iter);
+	}
+
+	// release the strong ref on the RediSearch index acquired in
+	// Proc_VectorQueryInvoke. Must come AFTER iterator free.
+	if(pdata->idx) {
+		Index_ReleaseRSIndex(pdata->idx);
 	}
 
 	rm_free(pdata);
