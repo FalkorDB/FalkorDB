@@ -47,6 +47,7 @@ use graph::graph::mvcc_graph::MvccGraph;
 use graph::runtime::functions::{GraphFn, register_udf};
 use graph::udf::get_udf_repo;
 use parking_lot::RwLock;
+use redis_module::logging::log_notice;
 use redis_module::raw::{
     self, RedisModuleCtx, load_string_buffer, load_unsigned, save_string, save_unsigned,
 };
@@ -402,6 +403,11 @@ pub unsafe fn create_virtual_keys(ctx: *mut RedisModuleCtx) {
             vkey_state
                 .graph_vkeys
                 .insert(graph_name.clone(), vkey_names);
+
+            log_notice(format!(
+                "Created {} virtual keys for graph {graph_name}",
+                virtual_key_count
+            ));
         }
     }
 }
@@ -411,6 +417,7 @@ pub unsafe fn delete_virtual_keys(ctx: *mut RedisModuleCtx) {
         let mut vkey_state = VKEY_STATE.lock();
 
         for (_graph_name, vkey_names) in &vkey_state.graph_vkeys {
+            let count = vkey_names.len();
             for vkey_name in vkey_names {
                 let rm_str = raw::RedisModule_CreateString.unwrap()(
                     ctx,
@@ -423,6 +430,9 @@ pub unsafe fn delete_virtual_keys(ctx: *mut RedisModuleCtx) {
                 raw::RedisModule_CloseKey.unwrap()(key);
                 raw::RedisModule_FreeString.unwrap()(ctx, rm_str);
             }
+            log_notice(format!(
+                "Deleted {count} virtual keys for graph {_graph_name}"
+            ));
         }
 
         vkey_state.clear();
