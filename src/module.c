@@ -153,6 +153,23 @@ int RedisModule_OnLoad
 		return REDISMODULE_ERR;
 	}
 
+	// RediSearch 8.6 changed the default scorer from TFIDF to BM25STD.
+	// FalkorDB callers comparing absolute fulltext scores depend on the
+	// legacy TFIDF magnitudes, so opt back in.
+	if(RediSearch_SetDefaultScorer("TFIDF") != REDISMODULE_OK) {
+		RedisModule_Log(ctx, "warning",
+				"Failed to set RediSearch default scorer to TFIDF");
+	}
+
+	// RediSearch's default worker-thread count is 0, which means VecSim
+	// TIERED background promotion jobs queue up but never run -- vector
+	// inserts effectively stall. Any FalkorDB index using TIERED-HNSW
+	// (the path FalkorDB takes for vector indexes) requires n >= 1.
+	if(RediSearch_SetNumWorkerThreads(4) != REDISMODULE_OK) {
+		RedisModule_Log(ctx, "warning",
+				"Failed to set RediSearch worker thread count");
+	}
+
 	RedisModule_Log(ctx, "notice", "Starting up FalkorDB version %d.%d.%d.",
 					FALKOR_VERSION_MAJOR, FALKOR_VERSION_MINOR, FALKOR_VERSION_PATCH);
 

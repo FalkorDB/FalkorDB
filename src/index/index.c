@@ -919,8 +919,30 @@ RSIndex *Index_RSIndex
 	const Index idx  // index to get internal RediSearch index from
 ) {
 	ASSERT(idx != NULL);
-	
+
 	return idx->rsIdx;
+}
+
+// acquire a strong reference on the underlying RediSearch index;
+// returns NULL if the spec has been invalidated.
+RSIndex *Index_AcquireRSIndex
+(
+	const Index idx  // index to acquire RediSearch handle from
+) {
+	ASSERT(idx != NULL);
+
+	if(idx->rsIdx == NULL) return NULL;
+	return RediSearch_IndexClone(idx->rsIdx);
+}
+
+// release a strong reference acquired by Index_AcquireRSIndex
+void Index_ReleaseRSIndex
+(
+	RSIndex *rsIdx  // handle to release
+) {
+	if(rsIdx != NULL) {
+		RediSearch_IndexRelease(rsIdx);
+	}
 }
 
 // free index

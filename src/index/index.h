@@ -106,9 +106,29 @@ bool Index_Enabled
 );
 
 // returns RediSearch index
+//
+// NOTE: borrowed pointer; valid only as long as `idx` is alive and no
+// other thread is racing a `Index_Free` / `RediSearch_DropIndex`.
+// Prefer Index_AcquireRSIndex / Index_ReleaseRSIndex when sharing the
+// handle across threads or with the async populator.
 RSIndex *Index_RSIndex
 (
 	const Index idx  // index to get internal RediSearch index from
+);
+
+// acquire a strong reference on the underlying RediSearch index
+// returns NULL if the spec has been invalidated (e.g. by a concurrent
+// RediSearch_DropIndex). The returned handle must be released with
+// Index_ReleaseRSIndex when the caller is done.
+RSIndex *Index_AcquireRSIndex
+(
+	const Index idx  // index to acquire RediSearch handle from
+);
+
+// release a strong reference acquired by Index_AcquireRSIndex
+void Index_ReleaseRSIndex
+(
+	RSIndex *rsIdx  // handle to release
 );
 
 // responsible for creating the index structure only!
