@@ -135,6 +135,7 @@ pub fn graph_constraint(
             &key_str.to_string(),
         )));
         key.set_value(&GRAPH_TYPE, g.clone())?;
+        crate::graph_core::register_graph(key_str.to_string(), g.clone());
         g
     };
 

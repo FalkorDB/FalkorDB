@@ -74,6 +74,20 @@ use crate::allocator::{
     current_thread_usage, disable_tracking, enable_tracking, net_thread_usage, reset_counter,
 };
 
+/// Global registry of all live graph instances.
+/// Used by the pthread_atfork prepare handler to sync all GraphBLAS matrices
+/// before fork, preventing deadlocks in the BGSAVE child process.
+pub static GRAPH_REGISTRY: std::sync::LazyLock<
+    parking_lot::Mutex<HashMap<String, Arc<RwLock<ThreadedGraph>>>>,
+> = std::sync::LazyLock::new(|| parking_lot::Mutex::new(HashMap::new()));
+
+pub fn register_graph(
+    name: String,
+    arc: Arc<RwLock<ThreadedGraph>>,
+) {
+    GRAPH_REGISTRY.lock().insert(name, arc);
+}
+
 pub(crate) struct WriteMessage {
     pub bc: BlockedClient,
     pub query: Arc<str>,
@@ -301,12 +315,6 @@ impl ThreadedGraph {
             write_loop: AtomicBool::new(false),
             slow_log: SlowLog::new(),
         }
-    }
-
-    /// Returns the graph name.
-    pub fn name(&self) -> String {
-        let g = self.graph.read();
-        g.borrow().name().to_string()
     }
 
     pub fn execute_query(
@@ -1129,104 +1137,112 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
         .is_ok()
     {
         drop(g);
-        let mut graph = graph.write();
         loop {
-            while let Ok(msg) = { graph.receiver.try_recv() } {
-                let WriteMessage {
-                    bc,
-                    query,
-                    compact,
-                    cached,
-                    key_name,
-                    timeout: per_query_timeout,
-                    received_at,
-                    enqueue_instant,
-                    waiting_id,
-                } = *msg;
-                // Transition from waiting to running
-                let running_id = telemetry::transition_waiting_to_running(waiting_id);
-                let write_start = Instant::now();
-                let wait_ms = write_start.duration_since(enqueue_instant).as_secs_f64() * 1000.0;
-                let ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
-                let ctx = Context::new(ctx);
-                let mem_capacity = QUERY_MEM_CAPACITY.load(Ordering::Relaxed);
-                if mem_capacity > 0 {
-                    reset_counter();
-                    enable_tracking();
-                }
-                let res =
-                    graph.execute_query_write(&ctx, &query, compact, cached, per_query_timeout);
-                if mem_capacity > 0 {
-                    disable_tracking();
-                }
-                let write_wall_ms = write_start.elapsed().as_secs_f64() * 1000.0;
-                if let Some(rid) = running_id {
-                    telemetry::unregister_running(rid);
-                }
-                match res {
-                    Ok(wq) => {
-                        // Signal the key as modified so WATCH gets triggered.
-                        unsafe {
-                            ffi::lock_thread_safe_ctx(ctx.ctx);
-                            ffi::signal_modified_key(ctx.ctx, key_name.as_bytes());
-                        };
-                        // Send replication while GIL is held
-                        if wq.modified {
-                            replicate_effects(&ctx, &key_name, wq.effects_buffer, &query);
-                        }
-                        unsafe {
-                            ffi::unlock_thread_safe_ctx(ctx.ctx);
-                            ffi::free_thread_safe_context(ctx.ctx);
-                        };
-                        let query_text = &query[wq.params_offset..];
-                        let params_text = &query[..wq.params_offset];
-                        let exec_ms = wq.execution_time_ms;
-                        let report_ms = (write_wall_ms - exec_ms).max(0.0);
-
-                        let entry = telemetry::TelemetryEntry {
-                            received_at,
-                            query: telemetry::truncate(query_text.trim_start()),
-                            params: telemetry::truncate(params_text.trim()),
-
-                            wait_duration_ms: wait_ms,
-                            execution_duration_ms: exec_ms,
-                            report_duration_ms: report_ms,
-                            utilized_cache: cached,
-                            is_write: true,
-                            timed_out: false,
-                        };
-                        // Enqueue telemetry entry for background flusher
-                        telemetry::enqueue_entry(&key_name, entry);
-                        drop(bc);
-                        graph.graph.commit(wq.graph);
-                        let value = graph.graph.read().borrow().maybe_flush_caches();
-                        if let Err(e) = value {
-                            redis_module::logging::log_warning(format!(
-                                "FalkorDB: cache flush failed: {e}"
-                            ));
-                        }
+            // Acquire write lock per-message, releasing between messages.
+            // This allows BGSAVE's create_virtual_keys (which needs a read
+            // lock) to interleave between write operations.
+            let mut g = graph.write();
+            let msg = match g.receiver.try_recv() {
+                Ok(msg) => msg,
+                Err(_) => {
+                    g.write_loop.store(false, Ordering::Release);
+                    if g.receiver.is_empty() {
+                        return;
                     }
-                    Err(err) => {
-                        let cerr = ffi::sanitise_error(err);
-                        unsafe { ffi::reply_error(ctx.ctx, cerr.as_ptr()) };
-                        drop(bc);
-                        unsafe { ffi::free_thread_safe_context(ctx.ctx) };
-                        graph.graph.rollback();
+                    if g.write_loop
+                        .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
+                        .is_err()
+                    {
+                        return;
+                    }
+                    // Retry with fresh lock acquisition.
+                    drop(g);
+                    continue;
+                }
+            };
+            let WriteMessage {
+                bc,
+                query,
+                compact,
+                cached,
+                key_name,
+                timeout: per_query_timeout,
+                received_at,
+                enqueue_instant,
+                waiting_id,
+            } = *msg;
+            // Transition from waiting to running
+            let running_id = telemetry::transition_waiting_to_running(waiting_id);
+            let write_start = Instant::now();
+            let wait_ms = write_start.duration_since(enqueue_instant).as_secs_f64() * 1000.0;
+            let ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
+            let ctx = Context::new(ctx);
+            let mem_capacity = QUERY_MEM_CAPACITY.load(Ordering::Relaxed);
+            if mem_capacity > 0 {
+                reset_counter();
+                enable_tracking();
+            }
+            let res = g.execute_query_write(&ctx, &query, compact, cached, per_query_timeout);
+            if mem_capacity > 0 {
+                disable_tracking();
+            }
+            let write_wall_ms = write_start.elapsed().as_secs_f64() * 1000.0;
+            if let Some(rid) = running_id {
+                telemetry::unregister_running(rid);
+            }
+            match res {
+                Ok(wq) => {
+                    // Signal the key as modified so WATCH gets triggered.
+                    unsafe {
+                        ffi::lock_thread_safe_ctx(ctx.ctx);
+                        ffi::signal_modified_key(ctx.ctx, key_name.as_bytes());
+                    };
+                    // Send replication while GIL is held
+                    if wq.modified {
+                        replicate_effects(&ctx, &key_name, wq.effects_buffer, &query);
+                    }
+                    unsafe {
+                        ffi::unlock_thread_safe_ctx(ctx.ctx);
+                        ffi::free_thread_safe_context(ctx.ctx);
+                    };
+                    let query_text = &query[wq.params_offset..];
+                    let params_text = &query[..wq.params_offset];
+                    let exec_ms = wq.execution_time_ms;
+                    let report_ms = (write_wall_ms - exec_ms).max(0.0);
+
+                    let entry = telemetry::TelemetryEntry {
+                        received_at,
+                        query: telemetry::truncate(query_text.trim_start()),
+                        params: telemetry::truncate(params_text.trim()),
+
+                        wait_duration_ms: wait_ms,
+                        execution_duration_ms: exec_ms,
+                        report_duration_ms: report_ms,
+                        utilized_cache: cached,
+                        is_write: true,
+                        timed_out: false,
+                    };
+                    // Enqueue telemetry entry for background flusher
+                    telemetry::enqueue_entry(&key_name, entry);
+                    drop(bc);
+                    g.graph.commit(wq.graph);
+                    let value = g.graph.read().borrow().maybe_flush_caches();
+                    if let Err(e) = value {
+                        redis_module::logging::log_warning(format!(
+                            "FalkorDB: cache flush failed: {e}"
+                        ));
                     }
                 }
-                std::thread::yield_now();
+                Err(err) => {
+                    let cerr = ffi::sanitise_error(err);
+                    unsafe { ffi::reply_error(ctx.ctx, cerr.as_ptr()) };
+                    drop(bc);
+                    unsafe { ffi::free_thread_safe_context(ctx.ctx) };
+                    g.graph.rollback();
+                }
             }
-            graph.write_loop.store(false, Ordering::Release);
-            if graph.receiver.is_empty() {
-                return;
-            }
-            if graph
-                .write_loop
-                .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
-                .is_err()
-            {
-                return;
-            }
+            // Release write lock after each message.
+            drop(g);
         }
     }
 }
@@ -1348,6 +1364,10 @@ fn build_index_effects(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn graph_free(value: *mut c_void) {
     unsafe {
+        let raw_ptr = value as usize;
+        GRAPH_REGISTRY
+            .lock()
+            .retain(|_, arc| arc.data_ptr() as usize != raw_ptr);
         drop(Box::from_raw(value.cast::<Arc<RwLock<ThreadedGraph>>>()));
     }
 }

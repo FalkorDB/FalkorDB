@@ -1298,12 +1298,8 @@ impl<'a> Runtime<'a> {
         node_ids: &[NodeId],
         attr: &Arc<String>,
     ) -> (Column, NullBitmap) {
-        let attr_idx = self
-            .g
-            .borrow()
-            .get_node_attribute_id(attr)
-            .map(|i| i as u16);
         let g = self.g.borrow();
+        let attr_idx = g.get_node_attribute_id(attr).map(|i| i as u16);
 
         let deleted = self.deleted_nodes.borrow();
         let pending = self.pending.borrow();
@@ -1345,24 +1341,14 @@ impl<'a> Runtime<'a> {
         &self,
         id: NodeId,
     ) -> OrderSet<Arc<String>> {
+        let g = self.g.borrow();
         if let Some(dn) = self.deleted_nodes.borrow().get(&id) {
-            return dn
-                .labels
-                .iter()
-                .map(|l| self.g.borrow().get_label_by_id(*l))
-                .collect();
+            return dn.labels.iter().map(|l| g.get_label_by_id(*l)).collect();
         }
-        let mut labels = self
-            .g
-            .borrow()
-            .get_node_label_ids(id)
-            .collect::<OrderSet<_>>();
+        let mut labels = g.get_node_label_ids(id).collect::<OrderSet<_>>();
         self.pending.borrow().update_node_labels(id, &mut labels);
 
-        labels
-            .iter()
-            .map(|l| self.g.borrow().get_label_by_id(*l))
-            .collect()
+        labels.iter().map(|l| g.get_label_by_id(*l)).collect()
     }
 
     pub fn get_node_attrs(
@@ -1411,9 +1397,8 @@ impl<'a> Runtime<'a> {
         if let Some(type_name) = self.pending.borrow().get_relationship_type(id) {
             return Some(type_name);
         }
-        self.g
-            .borrow()
-            .get_type(self.g.borrow().get_relationship_type_id(id))
+        let g = self.g.borrow();
+        g.get_type(g.get_relationship_type_id(id))
     }
 
     pub fn get_node_indegree(

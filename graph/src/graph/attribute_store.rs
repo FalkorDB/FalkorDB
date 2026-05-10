@@ -1137,7 +1137,11 @@ impl AttributeStore {
         // This is O(total_fjall_entries) instead of O(N × log(M)) for N
         // individual prefix scans, dramatically speeding up RDB encoding
         // when many entities have been flushed from cache to fjall.
-        self.bulk_populate_cache_from_fjall();
+        // Skip when an RDB snapshot is provided — the fork child uses
+        // snapshots instead of cache/fjall (fjall is unsafe after fork).
+        if rdb_snapshot.is_none() {
+            self.bulk_populate_cache_from_fjall();
+        }
 
         let mut skipped = 0u64;
         let mut encoded = 0u64;

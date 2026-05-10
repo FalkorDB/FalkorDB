@@ -1754,6 +1754,23 @@ impl Graph {
         self.relationship_type_matrix.flush();
     }
 
+    /// Materialize all pending GraphBLAS operations on every matrix.
+    /// Called from pthread_atfork prepare handler to ensure no internal
+    /// GraphBLAS locks are held at fork time.
+    pub fn wait_all(&self) {
+        self.zero_matrix.wait_all();
+        self.adjacancy_matrix.wait_all();
+        self.node_labels_matrix.wait_all();
+        self.relationship_type_matrix.wait_all();
+        self.all_nodes_matrix.wait_all();
+        for m in &self.labels_matices {
+            m.wait_all();
+        }
+        for t in &self.relationship_matrices {
+            t.wait_all();
+        }
+    }
+
     pub fn set_relationships_attributes(
         &mut self,
         attrs: &FxHashMap<u64, OrderMap<Arc<String>, Value>>,

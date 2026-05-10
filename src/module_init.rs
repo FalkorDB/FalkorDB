@@ -166,8 +166,13 @@ pub fn graph_init(
         }
 
         // Register fork child handler to make GraphBLAS/OpenMP single-threaded
-        // in bgsave child processes.
-        pthread_atfork(None, None, Some(on_fork_child));
+        // in bgsave child processes. Prepare handler materializes all GraphBLAS
+        // matrices so the child doesn't hit held internal locks.
+        pthread_atfork(
+            Some(crate::redis_type::pre_fork_prepare),
+            None,
+            Some(on_fork_child),
+        );
 
         let res = RedisModule_SubscribeToServerEvent.unwrap()(
             ctx.ctx,
