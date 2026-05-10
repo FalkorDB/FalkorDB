@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.13)
+cmake_minimum_required(VERSION 3.15)
 
 get_filename_component(root ${CMAKE_CURRENT_LIST_DIR} ABSOLUTE)
 
@@ -158,8 +158,19 @@ set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${CMAKE_LD_FLAGS} ${
 # of its own, causing crashes due to ABI incompatibility (Redis 8.x dictType has
 # more fields than RediSearch's dictType).
 # Note: Both flags are used together as in the original readies build system.
-if(NOT APPLE)
+if(APPLE)
+    # FalkorDB's own Rust archive (FalkorDB-core-rs) and RediSearch's
+    # redisearch_rs each statically include the Rust standard library,
+    # which exports rust_eh_personality regardless of the panic strategy.
+    # When both archives are linked into the same falkordb.so, Apple's
+    # modern ld (ld_prime, since Xcode 15) errors on the duplicate.
+    # Switch to ld_classic for this link only, which accepts the
+    # -multiply_defined,suppress flag and silently picks one definition.
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-ld_classic -Wl,-multiply_defined,suppress")
+else()
     set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-Bsymbolic,-Bsymbolic-functions")
+    # gnu-ld equivalent of Apple ld's -multiply_defined,suppress.
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--allow-multiple-definition")
 endif()
 
 # Set C standard
@@ -182,14 +193,6 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang" OR CMAKE_C_COMPILER_ID MATCHES "AppleClan
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-gnu-zero-variadic-macro-arguments -Wno-error=vla-extension")
 endif()
 
-# Remove NDEBUG to match RediSearch's RS_LOG_ASSERT macro signature (expects 2 args without NDEBUG)
-# The RS_LOG_ASSERT macro in RediSearch has different signatures depending on NDEBUG:
-#   - With NDEBUG: RS_LOG_ASSERT(ctx, condition, fmt, ...) - 4 arguments
-#   - Without NDEBUG: RS_LOG_ASSERT(condition, str) - 2 arguments
-# The code uses the 2-argument version, so we must ensure NDEBUG is not defined.
-# Using -UNDEBUG explicitly undefines it, overriding any -DNDEBUG from CMake defaults.
-add_compile_options(-UNDEBUG)
-
 #-----------------------------------------------------------------------------
 # Build RediSearch as subdirectory
 #-----------------------------------------------------------------------------
@@ -198,15 +201,11 @@ add_compile_options(-UNDEBUG)
 # This must be set before adding RediSearch subdirectory
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# Set RediSearch build options - use static library without coordinator
-set(BUILD_STATIC ON CACHE BOOL "Build RediSearch as static library" FORCE)
-set(BUILD_COORDINATOR OFF CACHE BOOL "Disable coordinator" FORCE)
+# RediSearch builds as a static library when added as a subdirectory.
+# REDISEARCH_BUILD_AS_LIBRARY=ON excludes src/module_main.c so we can
+# supply our own RedisModule_OnLoad without colliding on the symbol.
+set(REDISEARCH_BUILD_AS_LIBRARY ON CACHE BOOL "Embed RediSearch (omit RedisModule_OnLoad)" FORCE)
 set(BUILD_SEARCH_UNIT_TESTS OFF CACHE BOOL "Don't build RediSearch unit tests" FORCE)
-
-# RediSearch expects BINROOT to be set
-if(NOT DEFINED BINROOT)
-    set(BINROOT ${CMAKE_BINARY_DIR})
-endif()
 
 # Add RediSearch subdirectory
 add_subdirectory(${root}/deps/RediSearch ${CMAKE_BINARY_DIR}/search-static)
@@ -219,6 +218,21 @@ file(GLOB_RECURSE SOURCES "src/*.c")
 
 add_library(falkordb SHARED ${SOURCES})
 
+# Make src/util/rmalloc.h the single source of `rm_*` allocator wrappers
+# for FalkorDB sources. Pre-defining RediSearch's rmalloc.h include guard
+# turns its body into a no-op when it's pulled in transitively (via
+# arr.h, redisearch_api.h, etc.) from any FalkorDB TU, so the static
+# inlines are defined exactly once -- by FalkorDB. PRIVATE scope leaves
+# RediSearch's own .c files untouched.
+target_compile_definitions(falkordb PRIVATE __REDISEARCH_ALLOC__)
+
+# Force-include FalkorDB's rmalloc.h ahead of every FalkorDB TU so the
+# rm_* prototypes are in scope before any RediSearch header (whose code
+# uses rm_realloc / rm_malloc internally) gets parsed. Without this,
+# RediSearch's arr.h would implicitly declare those functions as int(),
+# clashing with FalkorDB's actual void*-returning definitions.
+target_compile_options(falkordb PRIVATE -include "${root}/src/util/rmalloc.h")
+
 include_directories(
     ${root}
     ${root}/src
@@ -229,6 +243,9 @@ include_directories(
     ${root}/deps/utf8proc
     ${root}/deps/oniguruma
     ${root}/deps/RediSearch/src
+    ${root}/deps/RediSearch/deps
+    ${root}/deps/RediSearch/src/redisearch_rs/headers
+    ${root}/deps/RediSearch/deps/VectorSimilarity/src
     ${root}/deps/LAGraph/include
     ${root}/deps/GraphBLAS/Include
     ${root}/deps/libcurl/include/curl
@@ -277,10 +294,10 @@ set(LIBCYPHER_PARSER $ENV{LIBCYPHER_PARSER})
 set(UTF8PROC $ENV{UTF8PROC})
 set(ONIGURUMA $ENV{ONIGURUMA})
 
-# Build library list - redisearch-static and VectorSimilarity are CMake targets
-# Note: VectorSimilarity must be explicitly linked because redisearch-static (a static library)
-# doesn't transitively link its dependencies. Only the shared redisearch library links VectorSimilarity,
-# but we can't use that because it would make falkordb.so depend on redisearch.so at runtime.
+# Build library list. `redisearch` is the static archive (configured by
+# REDISEARCH_BUILD_AS_LIBRARY=ON) and VectorSimilarity is the vector
+# search engine. VectorSimilarity must be explicitly linked because
+# `redisearch` (static) doesn't transitively link its dependencies.
 set(FALKORDB_LIBS
     ${LAGRAPHX}
     ${LAGRAPH}
@@ -293,7 +310,7 @@ set(FALKORDB_LIBS
     ${LIBCYPHER_PARSER}
     ${UTF8PROC}
     ${ONIGURUMA}
-    redisearch-static
+    redisearch
     VectorSimilarity
     OpenSSL::SSL
     ${CMAKE_DL_LIBS}
@@ -304,7 +321,7 @@ if(APPLE)
 endif()
 
 # Ensure RediSearch is built before falkordb
-add_dependencies(falkordb redisearch-static)
+add_dependencies(falkordb redisearch)
 
 target_link_options(falkordb PRIVATE ${CMAKE_LD_FLAGS_LIST} ${CMAKE_SO_LD_FLAGS_LIST})
 target_link_libraries(falkordb PRIVATE ${FALKORDB_LIBS} ${CMAKE_LD_LIBS})
