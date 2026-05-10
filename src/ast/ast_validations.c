@@ -1019,8 +1019,12 @@ static VISITOR_STRATEGY _Validate_pattern_path
 	}
 
 	uint nelems = cypher_ast_pattern_path_nelements(n);
-	// a path with a single edge cannot collide with itself
-	if(nelems < 4) {
+	// a pattern path interleaves nodes and edges, so it has the form
+	// node (edge node)*; the smallest path that can contain a duplicate
+	// edge alias has 2 edges, i.e. node-edge-node-edge-node = 5 elements
+	// any path with fewer elements (a single edge or just a node) cannot
+	// collide with itself, so skip the scan
+	if(nelems < 5) {
 		return VISITOR_RECURSE;
 	}
 

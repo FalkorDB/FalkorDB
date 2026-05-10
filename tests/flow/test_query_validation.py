@@ -700,8 +700,8 @@ class testQueryValidationFlow(FlowTestsBase):
         self.graph.query(q)
 
     # repeated relationship variable in a pattern path must be rejected
-    # rather than crashing the server
-    # see https://github.com/FalkorDB/FalkorDB/issues for the original report
+    # rather than crashing the server (regression test: this used to
+    # produce a segfault when the predicate followed a WITH clause)
     def test46_repeated_rel_in_pattern_predicate_after_with(self):
         # ensure a baseline graph exists
         self.graph.query("CREATE (:Person {name:'Alice'})-[:KNOWS]->(:Person {name:'Bob'})")
