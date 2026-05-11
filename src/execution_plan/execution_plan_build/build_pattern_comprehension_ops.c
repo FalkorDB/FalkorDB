@@ -151,8 +151,12 @@ void buildPatternComprehensionOps
 		eval_node = cypher_ast_pattern_comprehension_get_eval (pc) ;
 		AR_ExpNode *eval_exp = AR_EXP_FromASTNode (eval_node) ;
 
-		// collect evaluation results into an array using `collect`
-		AR_ExpNode *collect_exp = AR_EXP_NewOpNode ("collect", false, 1) ;
+		// collect evaluation results into an array using `pc_collect`
+		// (a pattern-comprehension specific variant of `collect` that
+		// preserves null projection values so a matched row whose
+		// projected expression is null contributes a `null` element
+		// rather than being dropped)
+		AR_ExpNode *collect_exp = AR_EXP_NewOpNode ("pc_collect", true, 1) ;
 		collect_exp->op.children [0] = eval_exp ;
 		collect_exp->resolved_name = AST_ToString (pc, NULL) ;
 

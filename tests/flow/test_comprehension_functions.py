@@ -521,3 +521,55 @@ class testComprehensionFunctions(FlowTestsBase):
         except redis.exceptions.ResponseError as e:
             self.env.assertIn("Invalid use of aggregating function", str(e))
 
+    def test22_pattern_comprehension_null_projection(self):
+        # A pattern comprehension whose pattern matches but whose projection
+        # expression evaluates to null must preserve the matched slot and
+        # return [null], not [].
+        # See https://neo4j.com/docs/cypher-manual/current/syntax/lists/#cypher-pattern-comprehension
+        # for the expected behavior.
+
+        # use a fresh graph for this test
+        g = self.db.select_graph("pattern_comprehension_null_projection")
+
+        # (Alice)-[:FRIEND_OF]->()  -- target node has no `name` property
+        # (Bob)-[:WORKS_WITH]->(Carol)
+        g.query("CREATE (:Person {name:'Alice'})-[:FRIEND_OF]->(:Person)")
+        g.query("CREATE (:Person {name:'Bob'})-[:WORKS_WITH]->(:Person {name:'Carol'})")
+
+        query = """MATCH (n:Person)
+                   RETURN n.name AS nodeName,
+                          [(n)-[:FRIEND_OF]-(m) | m.name] AS friendNames
+                   ORDER BY nodeName"""
+
+        actual_result = g.query(query)
+        # Alice has a matched FRIEND_OF whose `m.name` is null -> [null]
+        # Bob and Carol have no FRIEND_OF match              -> []
+        # The unnamed node is matched as `n` for the reverse edge from Alice
+        #     and projects Alice's name                      -> ['Alice']
+        expected_result = [['Alice', [None]],
+                           ['Bob',   []],
+                           ['Carol', []],
+                           [None,    ['Alice']]]
+        self.env.assertEquals(actual_result.result_set, expected_result)
+
+        # control: when the projection is non-null, behavior is unchanged
+        g2 = self.db.select_graph("pattern_comprehension_null_projection_ctrl")
+        g2.query("CREATE (:Person {name:'Alice'})-[:FRIEND_OF]->(:Person {name:'Bob'})")
+        actual_result = g2.query(
+            """MATCH (n:Person {name:'Alice'})
+               RETURN [(n)-[:FRIEND_OF]-(m) | m.name] AS friendNames""")
+        self.env.assertEquals(actual_result.result_set, [[['Bob']]])
+
+        # mixed: some matched rows have null projections, others don't
+        g3 = self.db.select_graph("pattern_comprehension_null_projection_mixed")
+        # one outgoing edge to a node with name='val', one to a node without name
+        g3.query("CREATE (a:N), (:N)<-[:T]-(a)-[:T]->(:N {name:'val'})")
+        actual_result = g3.query(
+            "MATCH (n:N) WHERE NOT (n)<-[:T]-() RETURN [(n)-[:T]->(b) | b.name] AS list")
+        # one row, two matches (null + 'val'), order is implementation-defined
+        self.env.assertEquals(len(actual_result.result_set), 1)
+        lst = actual_result.result_set[0][0]
+        self.env.assertEquals(sorted(lst, key=lambda x: (x is None, x)),
+                              ['val', None])
+
+
