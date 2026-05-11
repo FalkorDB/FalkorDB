@@ -65,6 +65,8 @@ COPY --from=compiler /FalkorDB/bin/linux*/falkordb.so ${FALKORDB_BIN_PATH}/falko
 
 COPY --from=browser /app ${FALKORDB_BROWSER_PATH}
 
+COPY --from=browser /usr/local/bin/docker-entrypoint.sh ${FALKORDB_BROWSER_PATH}
+
 ENV ARCH=${TARGETPLATFORM}
 
 ENV TLS=0
