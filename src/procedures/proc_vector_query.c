@@ -53,7 +53,8 @@ static VectorKNNCtx *_create_private_data
 	ctx->q           = q;
 	ctx->g           = GraphContext_GetGraph (gc) ;
 	ctx->idx         = idx;
-	ctx->iter        = RediSearch_GetResultsIterator(root, idx);
+	ctx->iter        = RediSearch_GetResultsIteratorWithTimeout(root, idx,
+			QueryCtx_GetTimeoutMS());
 	ctx->attr_id     = attr_id;
 	ctx->distance_fp = sim_func == VecSimMetric_L2
 			? SIVector_EuclideanDistance

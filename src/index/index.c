@@ -716,7 +716,8 @@ RSResultsIterator *Index_Query
 	ASSERT(idx   != NULL);
 	ASSERT(query != NULL);
 
-	return RediSearch_IterateQuery(idx->rsIdx, query, strlen(query), err);
+	return RediSearch_IterateQueryWithTimeout(idx->rsIdx, query, strlen(query),
+			QueryCtx_GetTimeoutMS(), err);
 }
 
 // returns index graph entity type
