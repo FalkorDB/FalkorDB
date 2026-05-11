@@ -122,7 +122,10 @@ bool EnforceUniqueEntity
 		const EntityID *id =
 			(EntityID*)RediSearch_ResultsIteratorNext(iter, rs_idx, NULL);
 
-		ASSERT(id != NULL);
+		if(id == NULL) {
+			holds = true;
+			goto cleanup;
+		}
 
 		if(*id != ENTITY_GET_ID(e)) {
 			holds = false;
@@ -133,7 +136,10 @@ bool EnforceUniqueEntity
 		const EdgeIndexKey *id =
 			(EdgeIndexKey*)RediSearch_ResultsIteratorNext(iter, rs_idx, NULL);
 
-		ASSERT(id != NULL);
+		if(id == NULL) {
+			holds = true;
+			goto cleanup;
+		}
 
 		if(id->edge_id != ENTITY_GET_ID(e)) {
 			holds = false;
