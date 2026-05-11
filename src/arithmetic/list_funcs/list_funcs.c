@@ -42,6 +42,33 @@ void ListReduceCtx_Free
 	rm_free(ctx);
 }
 
+// collect referenced entities within a reduce context
+// MATCH (n) RETURN reduce (sum = 0, n IN n.v | sum + n)
+void ListReduceCtx_CollectAliases
+(
+	const void *ctx_ptr,  // reduce context
+	rax *entities         // [input/output] collected entities
+) {
+	const ListReduceCtx *ctx = ctx_ptr ;
+
+	if (ctx->exp != NULL) {
+		AR_EXP_CollectEntities (ctx->exp, entities) ;
+	}
+
+	// remove the locally-bound variable and accumulator
+	if (ctx->variable != NULL) {
+		raxRemove (entities,
+				(unsigned char *)ctx->variable,
+				strlen (ctx->variable), NULL) ;
+	}
+
+	if (ctx->accumulator != NULL) {
+		raxRemove (entities,
+				(unsigned char *)ctx->accumulator,
+				strlen (ctx->accumulator), NULL) ;
+	}
+}
+
 // Routine for cloning a comprehension function's private data.
 void *ListReduceCtx_Clone
 (
