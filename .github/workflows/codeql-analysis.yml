@@ -76,42 +76,42 @@ jobs:
 
       - name: Cache GraphBLAS
         id: cache_graphblas
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: $GITHUB_WORKSPACE/bin/linux-x64-release/GraphBLAS
           key: graphblas-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c') }}
 
       - name: Cache parser
         id: cache_parser
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: $GITHUB_WORKSPACE/bin/linux-x64-release/libcypher-parser
           key: parser-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
 
       - name: Cache search
         id: cache_search
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: $GITHUB_WORKSPACE/bin/linux-x64-release/search-static
           key: search-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
       - name: Cache libcurl
         id: cache_libcurl
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: $GITHUB_WORKSPACE/bin/linux-x64-release/libcurl
           key: libcurl-${{ hashFiles('./deps/libcurl/RELEASE-NOTES', './build.sh') }}
   
       - name: Cache libcsv
         id: cache_libcsv
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: $GITHUB_WORKSPACE/bin/linux-x64-release/libcsv
           key: libcsv-${{ hashFiles('./deps/libcsv/ChangeLog') }}
     
       # Initializes the CodeQL tools for scanning.
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@c10b8064de6f491fea524254123dbe5e09572f13 # v4
+        uses: github/codeql-action/init@68bde559dea0fdcac2102bfdf6230c5f70eb485e # v4
         with:
           languages: ${{ matrix.language }}
           # If you wish to specify custom queries, you can do so here or in a config file.
@@ -138,7 +138,7 @@ jobs:
       #   make release
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@c10b8064de6f491fea524254123dbe5e09572f13 # v4
+        uses: github/codeql-action/analyze@68bde559dea0fdcac2102bfdf6230c5f70eb485e # v4
 
   cleanup-runner:
     needs: analyze
