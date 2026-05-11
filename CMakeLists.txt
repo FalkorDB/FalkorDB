@@ -326,6 +326,27 @@ add_dependencies(falkordb redisearch)
 target_link_options(falkordb PRIVATE ${CMAKE_LD_FLAGS_LIST} ${CMAKE_SO_LD_FLAGS_LIST})
 target_link_libraries(falkordb PRIVATE ${FALKORDB_LIBS} ${CMAKE_LD_LIBS})
 
+# On macOS, when building with Homebrew LLVM clang++ (required for OpenMP),
+# the compiled .so references Apple's /usr/lib/libc++.1.dylib as the install_name
+# for libc++. That dylib is only present in the dyld cache and ships an older
+# ABI; brew-LLVM compiles against its own libc++ headers which export newer
+# symbols (e.g. std::__1::__hash_memory). Rewrite the install_name reference to
+# @rpath/libc++.1.dylib and stamp an rpath that points at brew's libc++ dir, so
+# dyld resolves the symbols at load time without manual install_name_tool steps.
+if(APPLE AND CMAKE_CXX_COMPILER MATCHES "(opt/llvm|llvm@|homebrew/Cellar/llvm)")
+    get_filename_component(_brew_clang_bindir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    get_filename_component(_brew_llvm_prefix  "${_brew_clang_bindir}"  DIRECTORY)
+    set(_brew_llvm_libcpp_dir "${_brew_llvm_prefix}/lib/c++")
+    if(EXISTS "${_brew_llvm_libcpp_dir}/libc++.1.dylib")
+        target_link_options(falkordb PRIVATE "-Wl,-rpath,${_brew_llvm_libcpp_dir}")
+        add_custom_command(TARGET falkordb POST_BUILD
+            COMMAND install_name_tool -change /usr/lib/libc++.1.dylib
+                @rpath/libc++.1.dylib "$<TARGET_FILE:falkordb>"
+            COMMENT "Repointing libc++ install_name to @rpath for Homebrew LLVM"
+            VERBATIM)
+    endif()
+endif()
+
 # Extract debug symbols and strip the binary for non-debug Linux builds
 # This reduces binary size significantly while preserving debug info in a separate .debug file
 if(UNIX AND NOT APPLE AND (CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo"))
