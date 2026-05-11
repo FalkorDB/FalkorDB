@@ -126,7 +126,8 @@ bool EnforceUniqueEntity
 	}
 
 	// constraint holds if there are no duplicates, a single index match
-	RSResultsIterator *iter = RediSearch_GetResultsIterator(root, rs_idx);
+	RSResultsIterator *iter = RediSearch_GetResultsIteratorWithTimeout(root,
+			rs_idx, QueryCtx_GetTimeoutMS());
 	if(Constraint_GetEntityType(c) == GETYPE_NODE) {
 		// first call, expecting to find 'e' in the index
 		const EntityID *id =
