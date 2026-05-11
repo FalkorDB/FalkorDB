@@ -106,8 +106,22 @@ class testNullHandlingFlow(FlowTestsBase):
         expected_result = []
         self.env.assertEquals(actual_result.result_set, expected_result)
 
+    # Duplicate attribute IDs in SET should not cause double-free
+    def test08_duplicate_set_attribute_double_free(self):
+        # Create a node with a property
+        self.graph.query("CREATE (:L {v: 'test'})")
+        # SET the same property to NULL twice should not crash
+        result = self.graph.query("MATCH (n:L) SET n.v = NULL, n.v = NULL")
+        self.env.assertEquals(result.nodes_created, 0)
+        # Verify the property was removed
+        result = self.graph.query("MATCH (n:L) RETURN n.v")
+        self.env.assertEquals(result.result_set, [[None]])
+
+        # Cleanup
+        self.graph.query("MATCH (n:L) DELETE n")
+
     # ValueHashJoin ops should not treat null values as equal.
-    def test08_null_value_hash_join(self):
+    def test09_null_value_hash_join(self):
         query = """MATCH (a), (b) WHERE a.fakeval = b.fakeval RETURN a, b"""
         plan = str(self.graph.explain(query))
         # Verify that we are performing a ValueHashJoin
