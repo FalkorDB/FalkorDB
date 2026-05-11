@@ -233,3 +233,13 @@ class testBFS(FlowTestsBase):
         expected_result = [[['b'], ['e']]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
+    # variable-length traversal with labels of different cardinalities
+    # should not crash in _costBaseLabelScan
+    def test08_variable_length_traversal_label_scan(self):
+        # create nodes with labels of different cardinalities
+        self.graph.query("CREATE (:X), (:Y), (:Y)")
+        self.graph.query("MATCH (a:X), (b:Y) CREATE (a)-[:R]->(b)")
+        # variable-length traversal with different labels
+        result = self.graph.query("MATCH (a:X)-[*]-(b:Y) RETURN count(a)")
+        self.env.assertEquals(result.result_set[0][0], 2)
+
