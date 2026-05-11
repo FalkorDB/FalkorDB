@@ -767,12 +767,60 @@ pub struct Index {
     stopwords: Option<Vec<Arc<String>>>,
 }
 
-impl Drop for Index {
+/// RAII guard for the Redis module GIL. Constructed by [`GilGuard::acquire`],
+/// which returns `None` if any required FFI symbol is unresolved or the
+/// context allocation returned null — so callers fall through to the
+/// unlocked path rather than panicking in `Drop`.
+struct GilGuard(*mut redisearch::redis::RedisModuleCtx);
+
+impl GilGuard {
+    /// Acquire the Redis module GIL. All four FFI symbols are checked
+    /// up-front so the matching `Drop` impl below can never see a missing
+    /// `Unlock`/`FreeThreadSafeContext` (panic in `Drop` would abort).
+    unsafe fn acquire() -> Option<Self> {
+        unsafe {
+            let get = redisearch::redis::RedisModule_GetThreadSafeContext?;
+            let lock = redisearch::redis::RedisModule_ThreadSafeContextLock?;
+            redisearch::redis::RedisModule_ThreadSafeContextUnlock?;
+            redisearch::redis::RedisModule_FreeThreadSafeContext?;
+            let ctx = get(std::ptr::null_mut());
+            if ctx.is_null() {
+                return None;
+            }
+            lock(ctx);
+            Some(Self(ctx))
+        }
+    }
+}
+
+impl Drop for GilGuard {
     fn drop(&mut self) {
         unsafe {
-            if !self.rs_idx.is_null() {
-                RediSearch_DropIndex(self.rs_idx);
-            }
+            // Both symbols verified `Some` in `acquire`.
+            redisearch::redis::RedisModule_ThreadSafeContextUnlock.unwrap()(self.0);
+            redisearch::redis::RedisModule_FreeThreadSafeContext.unwrap()(self.0);
+        }
+    }
+}
+
+impl Drop for Index {
+    fn drop(&mut self) {
+        if self.rs_idx.is_null() {
+            return;
+        }
+        // RediSearch_DropIndex transitively calls RM_StopTimer, which mutates
+        // Redis-internal state (the timer rax). The Redis main thread holds
+        // the module GIL implicitly during command execution, so off-thread
+        // callers must acquire it explicitly. Mirrors the C FalkorDB pattern
+        // in `_GraphContext_Free` (FalkorDB/src/graph/graphcontext.c).
+        unsafe {
+            let _gil = if crate::thread_id::is_main_thread() {
+                None
+            } else {
+                GilGuard::acquire()
+            };
+            RediSearch_DropIndex(self.rs_idx);
+            // _gil drops here, releasing the GIL if it was acquired.
         }
     }
 }
