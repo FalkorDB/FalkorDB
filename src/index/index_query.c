@@ -617,30 +617,37 @@ static bool _FilterTreePredicateToQueryNode
 	Index_RangeFieldName(type_aware_field_name, field, NULL);
 
 	if(t & T_STRING) {
+		// the TOKEN / LEXRANGE children below all sit under a TAG parent
+		// (line below). Read-side tag_strtolower mangles each literal,
+		// so encode symmetrically with the write path.
+		char *encoded;
+		size_t encoded_len;
+		TagEncode_Lower(v.stringval, strlen(v.stringval), &encoded, &encoded_len);
 		switch(tree->pred.op) {
 			case OP_LT:    // <
 				node = RediSearch_CreateLexRangeNode(idx, type_aware_field_name,
-						RSLEXRANGE_NEG_INF, v.stringval, 0, 0);
+						RSLEXRANGE_NEG_INF, encoded, 0, 0);
 				break;
 			case OP_LE:    // <=
 				node = RediSearch_CreateLexRangeNode(idx, type_aware_field_name,
-						RSLEXRANGE_NEG_INF, v.stringval, 0, 1);
+						RSLEXRANGE_NEG_INF, encoded, 0, 1);
 				break;
 			case OP_GT:    // >
 				node = RediSearch_CreateLexRangeNode(idx, type_aware_field_name,
-						v.stringval, RSLECRANGE_INF, 0, 0);
+						encoded, RSLECRANGE_INF, 0, 0);
 				break;
 			case OP_GE:    // >=
 				node = RediSearch_CreateLexRangeNode(idx, type_aware_field_name,
-						v.stringval, RSLECRANGE_INF, 1, 0);
+						encoded, RSLECRANGE_INF, 1, 0);
 				break;
 			case OP_EQUAL:  // ==
 				node = RediSearch_CreateTokenNode(idx, type_aware_field_name,
-						v.stringval);
+						encoded);
 				break;
 			default:
 				ASSERT(false && "unexpected operation");
 		}
+		rm_free(encoded);
 
 		RSQNode *parent = RediSearch_CreateTagNode(idx, type_aware_field_name);
 		RediSearch_QueryNodeAddChild(parent, node);
