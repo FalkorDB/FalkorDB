@@ -350,7 +350,21 @@ fn populate_index(
     indexer: Indexer,
 ) {
     let attrs = indexer.get_fields(&label);
-    populate_index_batch(kind, label, indexer, attrs, 0, BatchCursor::default());
+    // Capture the Index's unique id at spawn time so background batches
+    // can detect (and skip) a DROP + CREATE round-trip that recreates a
+    // different `Index` under the same label.
+    let Some(index_id) = indexer.get_id(&label) else {
+        return;
+    };
+    populate_index_batch(
+        kind,
+        label,
+        indexer,
+        attrs,
+        0,
+        BatchCursor::default(),
+        index_id,
+    );
 }
 
 /// Processes one batch of index population and spawns the next batch.
@@ -365,25 +379,31 @@ fn populate_index_batch(
     attrs: HashMap<Arc<String>, Vec<Arc<Field>>>,
     mut progress: u64,
     cursor: BatchCursor,
+    index_id: u64,
 ) {
     spawn(
         move || {
             const BATCH_SIZE: usize = 10_000;
 
-            if indexer.is_cancelled() || indexer.pending_changes(&label) > 1 {
-                indexer.enable(&label);
-                return;
-            }
-
             let exhausted;
             let mut next_cursor = cursor;
+            let mut do_recurse = false;
 
-            // Hold the Indexer's serialization lock for the entire batch so
-            // that write-path `commit_index` calls wait until this batch
-            // finishes.  This guarantees no concurrent index mutations.
+            // Hold the Indexer's serialization lock for the entire batch
+            // AND through the final `enable()` / recurse decision. Without
+            // this, `drop_index_bg` can remove the index entry between
+            // batch completion and `enable()`. If a subsequent CREATE
+            // recreates an entry under the same label, our late `enable()`
+            // would decrement the *new* entry's pending counter, eventually
+            // underflowing it past zero.
             {
                 let lock = indexer.write_lock();
                 let guard = lock.lock();
+
+                if indexer.is_cancelled() || indexer.pending_changes(&label) > 1 {
+                    indexer.enable_if(&label, index_id);
+                    return;
+                }
 
                 let Some(graph) = indexer.get_graph() else {
                     // Graph not yet committed — reschedule this batch.
@@ -392,7 +412,7 @@ fn populate_index_batch(
                     drop(guard);
                     drop(lock);
                     std::thread::sleep(Duration::from_millis(1));
-                    populate_index_batch(kind, label, indexer, attrs, progress, cursor);
+                    populate_index_batch(kind, label, indexer, attrs, progress, cursor, index_id);
                     return;
                 };
 
@@ -534,13 +554,17 @@ fn populate_index_batch(
                     indexer.commit(&mut add_docs, &mut HashMap::new());
                     indexer.update_progress(&label, progress);
                 }
-                // guard dropped here — lock released between batches
+
+                if exhausted {
+                    indexer.enable_if(&label, index_id);
+                } else {
+                    do_recurse = true;
+                }
+                // guard dropped here
             }
 
-            if exhausted {
-                indexer.enable(&label);
-            } else {
-                populate_index_batch(kind, label, indexer, attrs, progress, next_cursor);
+            if do_recurse {
+                populate_index_batch(kind, label, indexer, attrs, progress, next_cursor, index_id);
             }
         },
         Some(0),
@@ -553,6 +577,13 @@ fn drop_index_bg(
 ) {
     spawn(
         move || {
+            // Serialize with `populate_index_batch`, which holds the same
+            // lock for the duration of a batch. Without this, the populate
+            // worker can be mid-batch when we remove the label and then
+            // hit `enable()`/`decrement_pending()` on an index that has
+            // already been torn down, tripping the `res > 0` assertion.
+            let lock = node_indexer.write_lock();
+            let _guard = lock.lock();
             node_indexer.remove(&label);
         },
         Some(0),

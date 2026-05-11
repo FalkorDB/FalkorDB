@@ -546,6 +546,37 @@ impl Indexer {
         false
     }
 
+    /// Look up the unique id of the `Index` currently stored under `label`.
+    /// Returns `None` if no entry exists.
+    #[must_use]
+    pub fn get_id(
+        &self,
+        label: &Arc<String>,
+    ) -> Option<u64> {
+        self.index.read().get(label).map(super::Index::id)
+    }
+
+    /// Like [`enable`], but only decrements when the entry stored under
+    /// `label` still has the expected `id`. If the entry has been removed
+    /// or replaced by a fresh `Index` (after a DROP + CREATE round-trip),
+    /// this is a no-op — preventing background populate batches from
+    /// underflowing an unrelated index's pending counter.
+    pub fn enable_if(
+        &mut self,
+        label: &Arc<String>,
+        expected_id: u64,
+    ) -> bool {
+        let index = self.index.read();
+        if let Some(index) = index.get(label)
+            && index.id() == expected_id
+        {
+            let res = index.decrement_pending();
+            debug_assert!(res > 0);
+            return res == 1;
+        }
+        false
+    }
+
     pub fn disable(
         &mut self,
         label: &Arc<String>,

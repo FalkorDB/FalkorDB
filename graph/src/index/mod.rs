@@ -59,7 +59,7 @@ use std::{
     ptr::null_mut,
     sync::{
         Arc,
-        atomic::{AtomicI32, Ordering},
+        atomic::{AtomicI32, AtomicU64, Ordering},
     },
 };
 
@@ -756,8 +756,13 @@ impl Document {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Index {
+    /// Unique identity assigned at construction. Lets background workers
+    /// (e.g. `populate_index_batch`) detect when the indexer's entry under
+    /// their label has been replaced by a fresh `Index` after a DROP +
+    /// CREATE round-trip, so they don't decrement the wrong counter.
+    id: u64,
     rs_idx: *mut RSIndex,
     fields: HashMap<Arc<String>, Vec<Arc<Field>>>,
     pending_changes: AtomicI32,
@@ -822,6 +827,32 @@ impl Drop for Index {
             RediSearch_DropIndex(self.rs_idx);
             // _gil drops here, releasing the GIL if it was acquired.
         }
+    }
+}
+
+impl Default for Index {
+    fn default() -> Self {
+        static NEXT_INDEX_ID: AtomicU64 = AtomicU64::new(1);
+        Self {
+            id: NEXT_INDEX_ID.fetch_add(1, Ordering::Relaxed),
+            rs_idx: std::ptr::null_mut(),
+            fields: HashMap::new(),
+            pending_changes: AtomicI32::new(0),
+            progress: 0,
+            total: 0,
+            language: None,
+            stopwords: None,
+        }
+    }
+}
+
+impl Index {
+    /// Process-unique identity for this `Index` instance. Used by
+    /// background workers to verify the indexer's entry hasn't been
+    /// replaced under their label before mutating its counters.
+    #[must_use]
+    pub const fn id(&self) -> u64 {
+        self.id
     }
 }
 
