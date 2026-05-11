@@ -42,6 +42,33 @@ void ListReduceCtx_Free
 	rm_free(ctx);
 }
 
+// collect referenced entities within a reduce context
+// MATCH (n) RETURN reduce (sum = 0, n IN n.v | sum + n)
+void ListReduceCtx_CollectEntities
+(
+	const void *ctx_ptr,  // reduce context
+	rax *entities         // [input/output] collected entities
+) {
+	const ListReduceCtx *ctx = ctx_ptr ;
+
+	if (ctx->exp != NULL) {
+		AR_EXP_CollectEntities (ctx->exp, entities) ;
+	}
+
+	// remove the locally-bound variable and accumulator
+	if (ctx->variable != NULL) {
+		raxRemove (entities,
+				(unsigned char *)ctx->variable,
+				strlen (ctx->variable), NULL) ;
+	}
+
+	if (ctx->accumulator != NULL) {
+		raxRemove (entities,
+				(unsigned char *)ctx->accumulator,
+				strlen (ctx->accumulator), NULL) ;
+	}
+}
+
 // Routine for cloning a comprehension function's private data.
 void *ListReduceCtx_Clone
 (
@@ -893,14 +920,16 @@ void Register_ListFuncs() {
 			false, true, true);
 	AR_FuncRegister(func_desc);
 
-	types = arr_new(SIType, 4);
-	arr_append(types, SI_ALL);            // accumulator initial value
-	arr_append(types, T_ARRAY | T_NULL);  // array to iterate over
-	arr_append(types, T_PTR);             // input record
-	ret_type = SI_ALL;
-	func_desc = AR_FuncDescNew("reduce", AR_REDUCE, 3, 3, types, ret_type, true,
-			true, true);
-	AR_SetPrivateDataRoutines(func_desc, ListReduceCtx_Free,
-							  ListReduceCtx_Clone);
-	AR_FuncRegister(func_desc);
+	types = arr_new (SIType, 4) ;
+	arr_append (types, SI_ALL) ;            // accumulator initial value
+	arr_append (types, T_ARRAY | T_NULL) ;  // array to iterate over
+	arr_append (types, T_PTR) ;             // input record
+	ret_type = SI_ALL ;
+	func_desc = AR_FuncDescNew ("reduce", AR_REDUCE, 3, 3, types, ret_type,
+			true, true, true) ;
+	AR_SetPrivateDataRoutines (func_desc, ListReduceCtx_Free,
+							  ListReduceCtx_Clone,
+							  ListReduceCtx_CollectEntities) ;
+	AR_FuncRegister (func_desc) ;
 }
+

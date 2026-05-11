@@ -321,14 +321,15 @@ void Register_PathFuncs() {
 			ret_type, true, false, true);
 	AR_FuncRegister(func_desc);
 
-	types = arr_new(SIType, 3);
-	arr_append(types, T_NULL | T_NODE);
-	arr_append(types, T_NULL | T_NODE);
-	ret_type = T_PATH | T_NULL;
-	func_desc = AR_FuncDescNew("shortestpath", AR_SHORTEST_PATH, 2, 2, types,
-			ret_type, true, false, true);
-	AR_SetPrivateDataRoutines(func_desc, ShortestPath_Free, ShortestPath_Clone);
-	AR_FuncRegister(func_desc);
+	types = arr_new (SIType, 3) ;
+	arr_append (types, T_NULL | T_NODE) ;
+	arr_append (types, T_NULL | T_NODE) ;
+	ret_type = T_PATH | T_NULL ;
+	func_desc = AR_FuncDescNew ("shortestpath", AR_SHORTEST_PATH, 2, 2, types,
+			ret_type, true, false, true) ;
+	AR_SetPrivateDataRoutines (func_desc, ShortestPath_Free, ShortestPath_Clone,
+			NULL) ;
+	AR_FuncRegister (func_desc) ;
 
 	types = arr_new(SIType, 1);
 	arr_append(types, T_NULL | T_PATH);

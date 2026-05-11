@@ -256,16 +256,18 @@ AR_ExpNode *AR_EXP_NewRecordNode() {
 
 void AR_SetPrivateData
 (
-	AR_ExpNode *node, void *pdata
+	AR_ExpNode *node,
+	void *pdata
 ) {
 	// validations
 	// node must be an operation
 	// operation private data must be NULL
-	ASSERT(node != NULL);
-	ASSERT(node->type == AR_EXP_OP);
-	ASSERT(node->op.private_data == NULL);
+	ASSERT (node                  != NULL) ;
+	ASSERT (pdata                 != NULL) ;
+	ASSERT (node->type            == AR_EXP_OP) ;
+	ASSERT (node->op.private_data == NULL) ;
 
-	node->op.private_data = pdata;
+	node->op.private_data = pdata ;
 }
 
 // compact tree by evaluating constant expressions
@@ -788,15 +790,22 @@ void AR_EXP_CollectEntities
 	ASSERT (root    != NULL) ;
 	ASSERT (aliases != NULL) ;
 
-	if(AR_EXP_IsOperation(root)) {
-		for(int i = 0; i < root->op.child_count; i++) {
-			AR_EXP_CollectEntities(root->op.children[i], aliases);
+	if (AR_EXP_IsOperation (root)) {
+		for (int i = 0 ; i < root->op.child_count ; i++) {
+			AR_EXP_CollectEntities (root->op.children [i], aliases) ;
 		}
+
+		// collect refered aliases within function's private data
+		if (unlikely (root->op.private_data != NULL &&
+			root->op.f->callbacks.aliases   != NULL)) {
+			root->op.f->callbacks.aliases (root->op.private_data, aliases) ;
+		}
+
 	} else { // type == AR_EXP_OPERAND
-		if(root->operand.type == AR_EXP_VARIADIC) {
-			const char *entity = root->operand.variadic.entity_alias;
-			raxInsert(aliases, (unsigned char *)entity, strlen(entity), NULL,
-					NULL);
+		if (root->operand.type == AR_EXP_VARIADIC) {
+			const char *entity = root->operand.variadic.entity_alias ;
+			raxInsert (aliases, (unsigned char *)entity, strlen (entity), NULL,
+					NULL) ;
 		}
 	}
 }

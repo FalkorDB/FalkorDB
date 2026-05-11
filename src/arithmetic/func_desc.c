@@ -218,10 +218,16 @@ inline void AR_SetPrivateDataRoutines
 (
 	AR_FuncDesc *func_desc,
 	AR_Func_Free free,
-	AR_Func_Clone clone
+	AR_Func_Clone clone,
+	AR_Func_PrivateDataAliases aliases
 ) {
-	func_desc->callbacks.free = free;
-	func_desc->callbacks.clone = clone;
+	ASSERT (func_desc->callbacks.free    == NULL) ;
+	ASSERT (func_desc->callbacks.clone   == NULL) ;
+	ASSERT (func_desc->callbacks.aliases == NULL) ;
+
+	func_desc->callbacks.free    = free ;
+	func_desc->callbacks.clone   = clone ;
+	func_desc->callbacks.aliases = aliases ;
 }
 
 // get arithmetic function
