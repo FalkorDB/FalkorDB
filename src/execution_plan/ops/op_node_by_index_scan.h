@@ -17,6 +17,7 @@ typedef struct {
 	Graph *g;
 	bool rebuild_index_query;           // should we rebuild RediSearch index query for each input record
 	Index idx;                          // index to query
+	RSIndex *rsIdx;                     // strong ref on the underlying RediSearch index, held for the op's lifetime
 	NodeScanCtx *n;                     // label data of node being scanned
 	uint nodeRecIdx;                    // index of the node being scanned in the Record
 	RSResultsIterator *iter;            // rediSearch iterator over an index with the appropriate filters

@@ -6,6 +6,7 @@
 
 #include "RG.h"
 #include "index.h"
+#include "tag_encode.h"
 #include "../value.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"
@@ -150,11 +151,31 @@ static void _Index_ConstructStructure
 		//----------------------------------------------------------------------
 
 		if(field->type & INDEX_FLD_VECTOR) {
-			RSFieldID fieldID = RediSearch_CreateVectorField(rsIdx,
-					field->vector_name);
+			RSFieldID fieldID = RediSearch_CreateField(rsIdx,
+					field->vector_name, RSFLDTYPE_VECTOR, RSFLDOPT_NONE);
 
-			RediSearch_VectorFieldSetDim(rsIdx, fieldID, field->hnsw_options.dimension);
-			RediSearch_VectorFieldSetHNSWParams(rsIdx, fieldID, IndexField_OptionsGetM(field), IndexField_OptionsGetEfConstruction(field), IndexField_OptionsGetEfRuntime(field), IndexField_OptionsGetSimFunc(field));
+			// Build a TIERED-HNSW VecSimParams shaped from the schema's
+			// HNSW options. RediSearch_VecSimTieredParams_Init wires the
+			// runtime context (worker pool, weak-ref jobQueueCtx,
+			// flatBufferLimit, logCtx) using RediSearch's own
+			// infrastructure.
+			VecSimParams primary = {
+				.algo = VecSimAlgo_HNSWLIB,
+				.algoParams.hnswParams = {
+					.type           = VecSimType_FLOAT32,
+					.dim            = field->hnsw_options.dimension,
+					.metric         = IndexField_OptionsGetSimFunc(field),
+					.M              = IndexField_OptionsGetM(field),
+					.efConstruction = IndexField_OptionsGetEfConstruction(field),
+					.efRuntime      = IndexField_OptionsGetEfRuntime(field),
+				},
+			};
+			VecSimParams params = {
+				.algo = VecSimAlgo_TIERED,
+				.algoParams.tieredParams.primaryIndexParams = &primary,
+			};
+			RediSearch_VecSimTieredParams_Init(&params, rsIdx, field->vector_name);
+			RediSearch_VectorFieldSetParams(rsIdx, fieldID, &params);
 		}
 
 		//----------------------------------------------------------------------
@@ -258,7 +279,12 @@ static inline void _addStringField
 	const char *name,  // field name
 	const char *str    // string value
 ) {
-	RediSearch_DocumentAddFieldCString(doc, name, str, RSFLDTYPE_TAG);
+	char *encoded;
+	size_t encoded_len;
+	TagEncode_Lower(str, strlen(str), &encoded, &encoded_len);
+	RediSearch_DocumentAddFieldString(doc, name, encoded, encoded_len,
+			RSFLDTYPE_TAG);
+	rm_free(encoded);
 }
 
 // add a new numeric field to document
@@ -331,8 +357,11 @@ static inline void _addArrayField
 	//--------------------------------------------------------------------------
 
 	if(n_numerics > 0) {
+		// numerics is an arr.h array (double*); pass the data pointer
+		// and explicit count to the LLAPI.
 		RediSearch_DocumentAddFieldNumericArray(doc,
-				field->range_numeric_arr_name, &numerics, RSFLDTYPE_NUMERIC);
+				field->range_numeric_arr_name, numerics, n_numerics,
+				RSFLDTYPE_NUMERIC);
 	}
 
 	//--------------------------------------------------------------------------
@@ -340,9 +369,21 @@ static inline void _addArrayField
 	//--------------------------------------------------------------------------
 
 	if(n_strings > 0) {
+		// encode each element so the trie key survives tag_strtolower
+		// unchanged. The LLAPI deep-copies the array; free our encoded
+		// buffers immediately afterwards.
+		char **encoded = arr_new(char *, n_strings);
+		for(size_t i = 0; i < n_strings; i++) {
+			char *enc;
+			size_t enc_len;
+			TagEncode_Lower(strings[i], strlen(strings[i]), &enc, &enc_len);
+			arr_append(encoded, enc);
+		}
 		RediSearch_DocumentAddFieldStringArray(doc,
-				field->range_string_arr_name, &strings, n_strings,
-				RSFLDTYPE_TAG);
+				field->range_string_arr_name, (const char**)encoded,
+				n_strings, RSFLDTYPE_TAG);
+		for(size_t i = 0; i < n_strings; i++) rm_free(encoded[i]);
+		arr_free(encoded);
 	}
 
 	// clean up
@@ -476,13 +517,13 @@ RSDoc *Index_IndexGraphEntity
 
 			*doc_field_count += 1;
 
-			size_t   n        = SIVector_ElementsByteSize(v);
-			uint32_t dim      = SIVector_Dim(v);
-			void*    elements = SIVector_Elements(v);
+			size_t n        = SIVector_ElementsByteSize(v);
+			void*  elements = SIVector_Elements(v);
 
-			// value must be of type array
-			RediSearch_DocumentAddFieldVector(doc, field->vector_name, elements,
-					dim, n);
+			// New-API signature: (doc, fieldname, vector, nbytes). The
+			// dimensionality is already captured in the field schema.
+			RediSearch_DocumentAddFieldVector(doc, field->vector_name,
+					elements, n);
 		}
 	}
 
@@ -692,7 +733,8 @@ RSResultsIterator *Index_Query
 	ASSERT(idx   != NULL);
 	ASSERT(query != NULL);
 
-	return RediSearch_IterateQuery(idx->rsIdx, query, strlen(query), err);
+	return RediSearch_IterateQueryWithTimeout(idx->rsIdx, query, strlen(query),
+			QueryCtx_GetTimeoutMS(), err);
 }
 
 // returns index graph entity type
@@ -895,8 +937,30 @@ RSIndex *Index_RSIndex
 	const Index idx  // index to get internal RediSearch index from
 ) {
 	ASSERT(idx != NULL);
-	
+
 	return idx->rsIdx;
+}
+
+// acquire a strong reference on the underlying RediSearch index;
+// returns NULL if the spec has been invalidated.
+RSIndex *Index_AcquireRSIndex
+(
+	const Index idx  // index to acquire RediSearch handle from
+) {
+	ASSERT(idx != NULL);
+
+	if(idx->rsIdx == NULL) return NULL;
+	return RediSearch_IndexClone(idx->rsIdx);
+}
+
+// release a strong reference acquired by Index_AcquireRSIndex
+void Index_ReleaseRSIndex
+(
+	RSIndex *rsIdx  // handle to release
+) {
+	if(rsIdx != NULL) {
+		RediSearch_IndexRelease(rsIdx);
+	}
 }
 
 // free index

@@ -6,7 +6,9 @@
 
 #include "RG.h"
 #include "index.h"
+#include "tag_encode.h"
 #include "../util/arr.h"
+#include "../util/rmalloc.h"
 #include "../index/index.h"
 #include "../datatypes/point.h"
 #include "../datatypes/array.h"
@@ -75,14 +77,32 @@ static RSQNode *_StringRangeToQueryNode
 	const char *min = range->min;
 
 	if(max != NULL && min != NULL && strcmp(max, min) == 0) {
-		// exact match
-		child = RediSearch_CreateTagTokenNode(idx, max);
+		// exact match: encode the literal symmetrically with the write path
+		// so the trie key survives tag_strtolower's strip pass.
+		char *encoded;
+		size_t encoded_len;
+		TagEncode_Lower(max, strlen(max), &encoded, &encoded_len);
+		child = RediSearch_CreateTagTokenNode(idx, encoded);
+		rm_free(encoded);
 	} else {
-		// range search
-		max = (max == NULL) ? RSLECRANGE_INF     : max;
-		min = (min == NULL) ? RSLEXRANGE_NEG_INF : min;
-		child = RediSearch_CreateTagLexRangeNode(idx, min, max,
-				range->include_min, range->include_max);
+		// range search: encode both ends so they sit in the trie's space
+		// alongside the encoded stored values.
+		char *encoded_min = NULL;
+		char *encoded_max = NULL;
+		size_t encoded_min_len = 0;
+		size_t encoded_max_len = 0;
+		if(min != NULL) {
+			TagEncode_Lower(min, strlen(min), &encoded_min, &encoded_min_len);
+		}
+		if(max != NULL) {
+			TagEncode_Lower(max, strlen(max), &encoded_max, &encoded_max_len);
+		}
+		const char *q_min = (min == NULL) ? RSLEXRANGE_NEG_INF : encoded_min;
+		const char *q_max = (max == NULL) ? RSLECRANGE_INF     : encoded_max;
+		child = RediSearch_CreateTagLexRangeNode(idx, type_aware_field_name,
+				q_min, q_max, range->include_min, range->include_max);
+		if(encoded_min != NULL) rm_free(encoded_min);
+		if(encoded_max != NULL) rm_free(encoded_max);
 	}
 
 	RediSearch_QueryNodeAddChild(root, child);
@@ -159,15 +179,21 @@ static bool _FilterTreeToMultiValQueryNode
 		SIValue v = SIArray_Get(list, i);
 		switch(SI_TYPE(v)) {
 			case T_STRING:
-			case T_INTERN_STRING:
+			case T_INTERN_STRING: {
 				parent = RediSearch_CreateTagNode(idx, type_aware_field_name);
-				node   = RediSearch_CreateTokenNode(idx, type_aware_field_name,
-						v.stringval);
+				char *encoded;
+				size_t encoded_len;
+				TagEncode_Lower(v.stringval, strlen(v.stringval), &encoded,
+						&encoded_len);
+				node = RediSearch_CreateTokenNode(idx, type_aware_field_name,
+						encoded);
+				rm_free(encoded);
 				RediSearch_QueryNodeAddChild(parent, node);
 				node = parent;
 
 				RediSearch_QueryNodeAddChild(U, node);
 				break;
+			}
 
 			case T_BOOL:
 			case T_INT64:
@@ -257,14 +283,20 @@ static bool _FilterTreeToInQueryNode
 			res = true;
 			break;
 		case T_STRING:
-		case T_INTERN_STRING:
+		case T_INTERN_STRING: {
 				parent = RediSearch_CreateTagNode(idx, type_aware_field_name);
+				char *encoded;
+				size_t encoded_len;
+				TagEncode_Lower(v.stringval, strlen(v.stringval), &encoded,
+						&encoded_len);
 				child  = RediSearch_CreateTokenNode(idx, type_aware_field_name,
-						v.stringval);
+						encoded);
+				rm_free(encoded);
 				RediSearch_QueryNodeAddChild(parent, child);
 				*node = parent;
 				res = true;
 			break;
+		}
 		default:
 			ASSERT(false && "unsupported IN filter operand");
 			break;
@@ -585,30 +617,37 @@ static bool _FilterTreePredicateToQueryNode
 	Index_RangeFieldName(type_aware_field_name, field, NULL);
 
 	if(t & T_STRING) {
+		// the TOKEN / LEXRANGE children below all sit under a TAG parent
+		// (line below). Read-side tag_strtolower mangles each literal,
+		// so encode symmetrically with the write path.
+		char *encoded;
+		size_t encoded_len;
+		TagEncode_Lower(v.stringval, strlen(v.stringval), &encoded, &encoded_len);
 		switch(tree->pred.op) {
 			case OP_LT:    // <
 				node = RediSearch_CreateLexRangeNode(idx, type_aware_field_name,
-						RSLEXRANGE_NEG_INF, v.stringval, 0, 0);
+						RSLEXRANGE_NEG_INF, encoded, 0, 0);
 				break;
 			case OP_LE:    // <=
 				node = RediSearch_CreateLexRangeNode(idx, type_aware_field_name,
-						RSLEXRANGE_NEG_INF, v.stringval, 0, 1);
+						RSLEXRANGE_NEG_INF, encoded, 0, 1);
 				break;
 			case OP_GT:    // >
 				node = RediSearch_CreateLexRangeNode(idx, type_aware_field_name,
-						v.stringval, RSLECRANGE_INF, 0, 0);
+						encoded, RSLECRANGE_INF, 0, 0);
 				break;
 			case OP_GE:    // >=
 				node = RediSearch_CreateLexRangeNode(idx, type_aware_field_name,
-						v.stringval, RSLECRANGE_INF, 1, 0);
+						encoded, RSLECRANGE_INF, 1, 0);
 				break;
 			case OP_EQUAL:  // ==
 				node = RediSearch_CreateTokenNode(idx, type_aware_field_name,
-						v.stringval);
+						encoded);
 				break;
 			default:
 				ASSERT(false && "unexpected operation");
 		}
+		rm_free(encoded);
 
 		RSQNode *parent = RediSearch_CreateTagNode(idx, type_aware_field_name);
 		RediSearch_QueryNodeAddChild(parent, node);
@@ -859,8 +898,13 @@ RSQNode *Index_BuildUniqueConstraintQuery
 		if (t & T_STRING) {
 			node =
 				RediSearch_CreateTagNode (rsIdx, field) ;
+			char *encoded;
+			size_t encoded_len;
+			TagEncode_Lower(v.stringval, strlen(v.stringval), &encoded,
+					&encoded_len);
 			RSQNode *child =
-				RediSearch_CreateTagTokenNode (rsIdx, v.stringval) ;
+				RediSearch_CreateTagTokenNode (rsIdx, encoded) ;
+			rm_free(encoded);
 
 			RediSearch_QueryNodeAddChild (node, child) ;
 		} else {

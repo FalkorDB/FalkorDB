@@ -7,6 +7,7 @@
 #include "op_node_by_index_scan.h"
 #include "../../query_ctx.h"
 #include "../../index/index.h"
+#include "../../index/index_doc_key.h"
 #include "shared/print_functions.h"
 
 // forward declarations
@@ -40,6 +41,12 @@ OpBase *NewIndexScanOp
 	op->n      = n;
 	op->idx    = idx;
 	op->filter = filter;
+	// Acquire a strong ref on the RediSearch index for the op's lifetime.
+	// Released in IndexScanFree. Asserts non-null because the index can't
+	// have been dropped between the planner resolving it and op
+	// construction (both run under the same query critical section).
+	op->rsIdx  = Index_AcquireRSIndex(idx);
+	ASSERT(op->rsIdx != NULL);
 
 	// Set our Op operations
 	OpBase_Init((OpBase *)op, OPType_NODE_BY_INDEX_SCAN, "Node By Index Scan", IndexScanInit, IndexScanConsume,
@@ -96,9 +103,9 @@ static Record IndexScanConsumeFromChild
 (
 	OpBase *opBase
 ) {
-	const EntityID *nodeId = NULL;
+	const char *doc_key = NULL;
 	IndexScan *op  = (IndexScan *)opBase;
-	RSIndex *rsIdx = Index_RSIndex(op->idx);
+	RSIndex *rsIdx = op->rsIdx;
 
 pull_index:
 	//--------------------------------------------------------------------------
@@ -106,10 +113,12 @@ pull_index:
 	//--------------------------------------------------------------------------
 
 	if(op->iter != NULL && op->child_record != NULL) {
-		while((nodeId = RediSearch_ResultsIteratorNext(op->iter, rsIdx, NULL))
+		while((doc_key = RediSearch_ResultsIteratorNext(op->iter, rsIdx, NULL))
 				!= NULL) {
+			EntityID nodeId;
+			IndexDocKey_DecodeNode(doc_key, &nodeId);
 			// populate record with node
-			_UpdateRecord(op, op->child_record, *nodeId);
+			_UpdateRecord(op, op->child_record, nodeId);
 			// apply unresolved filters
 			if(_PassUnresolvedFilters(op, op->child_record)) {
 				// clone the held Record, as it will be freed upstream
@@ -172,7 +181,8 @@ pull_index:
 
 		// create iterator
 		ASSERT(rs_query_node != NULL);
-		op->iter = RediSearch_GetResultsIterator(rs_query_node, rsIdx);
+		op->iter = RediSearch_GetResultsIteratorWithTimeout(rs_query_node, rsIdx,
+				QueryCtx_GetTimeoutMS());
 	} else {
 		// build index query only once (first call)
 		// reset it if already initialized
@@ -181,7 +191,8 @@ pull_index:
 			RSQNode *rs_query_node = Index_BuildQueryTree(
 					&op->unresolved_filters, op->idx, op->filter);
 			ASSERT(rs_query_node != NULL);
-			op->iter = RediSearch_GetResultsIterator(rs_query_node, rsIdx);
+			op->iter = RediSearch_GetResultsIteratorWithTimeout(rs_query_node,
+					rsIdx, QueryCtx_GetTimeoutMS());
 		} else {
 			// reset existing iterator
 			RediSearch_ResultsIteratorReset(op->iter);
@@ -194,24 +205,27 @@ pull_index:
 
 static Record IndexScanConsume(OpBase *opBase) {
 	IndexScan *op = (IndexScan *)opBase;
-	RSIndex *rsIdx = Index_RSIndex(op->idx);
+	RSIndex *rsIdx = op->rsIdx;
 
 	// create iterator on first call
 	if(op->iter == NULL) {
 		RSQNode *rs_query_node = Index_BuildQueryTree(&op->unresolved_filters,
 				op->idx, op->filter);
 
-		op->iter = RediSearch_GetResultsIterator(rs_query_node, rsIdx);
+		op->iter = RediSearch_GetResultsIteratorWithTimeout(rs_query_node, rsIdx,
+				QueryCtx_GetTimeoutMS());
 	}
 
-	const EntityID *nodeId = NULL;
+	const char *doc_key = NULL;
 
 	// populate the Record with the actual node
 	Record r = OpBase_CreateRecord((OpBase *)op);
-	while((nodeId = RediSearch_ResultsIteratorNext(op->iter, rsIdx, NULL))
+	while((doc_key = RediSearch_ResultsIteratorNext(op->iter, rsIdx, NULL))
 			!= NULL) {
+		EntityID nodeId;
+		IndexDocKey_DecodeNode(doc_key, &nodeId);
 		// populate record with node
-		_UpdateRecord(op, r, *nodeId);
+		_UpdateRecord(op, r, nodeId);
 
 		// apply unresolved filters
 		if(_PassUnresolvedFilters(op, r)) {
@@ -268,6 +282,12 @@ static void IndexScanFree(OpBase *opBase) {
 	if(op->n != NULL) {
 		NodeScanCtx_Free(op->n);
 		op->n = NULL;
+	}
+
+	// release the strong ref on the RediSearch index
+	if(op->rsIdx != NULL) {
+		Index_ReleaseRSIndex(op->rsIdx);
+		op->rsIdx = NULL;
 	}
 }
 

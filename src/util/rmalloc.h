@@ -1,5 +1,5 @@
-#ifndef __REDISGRAPH_ALLOC__
-#define __REDISGRAPH_ALLOC__
+
+#pragma once
 
 #include <stdlib.h>
 #include <string.h>
@@ -46,8 +46,7 @@ static inline char *rm_strndup(const char *s, size_t n) {
 	return ret;
 }
 
-#endif
-#ifndef REDIS_MODULE_TARGET
+#else
 /* for non redis module targets */
 #define rm_malloc malloc
 #define rm_free free
@@ -64,6 +63,4 @@ static inline char *rm_strndup(const char *s, size_t n) {
  * for use when executing code from non-Redis
  * contexts like unit tests. */
 void Alloc_Reset(void);
-
-#endif
 

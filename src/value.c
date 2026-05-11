@@ -936,7 +936,7 @@ int SIValue_Compare
 		if(disjointOrNull) *disjointOrNull = COMPARED_NULL;
 	} else {
 		// check if indication is required, and inform about disjoint comparison
-		if(disjointOrNull) *disjointOrNull = DISJOINT;
+		if(disjointOrNull) *disjointOrNull = SIV_DISJOINT;
 	}
 
 	// return base type difference, ignoring intern flag (used for disjoint or null comparisons)

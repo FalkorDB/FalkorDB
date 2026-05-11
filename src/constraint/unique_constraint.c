@@ -8,6 +8,7 @@
 #include "constraint.h"
 #include "../query_ctx.h"
 #include "../index/index.h"
+#include "../index/index_doc_key.h"
 #include "redisearch_api.h"
 #include "../src/datatypes/point.h"
 #include "../graph/entities/attribute_set.h"
@@ -114,28 +115,45 @@ bool EnforceUniqueEntity
 
 	bool holds = false;  // return value none-optimistic
 
+	// Hold a strong ref on the RediSearch index for the iterator's
+	// lifetime; the spec must outlive the iterator even if a concurrent
+	// DROP INDEX runs against this label.
+	RSIndex *rs_idx = Index_AcquireRSIndex(idx);
+	if(rs_idx == NULL) {
+		// index was dropped; treat as constraint-not-holding so caller
+		// reports the violation rather than asserting on a NULL iter.
+		RediSearch_QueryNodeFree(root);
+		return false;
+	}
+
 	// constraint holds if there are no duplicates, a single index match
-	RSIndex *rs_idx = Index_RSIndex(idx);
-	RSResultsIterator *iter = RediSearch_GetResultsIterator(root, rs_idx);
+	RSResultsIterator *iter = RediSearch_GetResultsIteratorWithTimeout(root,
+			rs_idx, QueryCtx_GetTimeoutMS());
 	if(Constraint_GetEntityType(c) == GETYPE_NODE) {
 		// first call, expecting to find 'e' in the index
-		const EntityID *id =
-			(EntityID*)RediSearch_ResultsIteratorNext(iter, rs_idx, NULL);
+		const char *doc_key =
+			(const char *)RediSearch_ResultsIteratorNext(iter, rs_idx, NULL);
 
-		ASSERT(id != NULL);
+		ASSERT(doc_key != NULL);
 
-		if(*id != ENTITY_GET_ID(e)) {
+		EntityID id;
+		IndexDocKey_DecodeNode(doc_key, &id);
+
+		if(id != ENTITY_GET_ID(e)) {
 			holds = false;
 			goto cleanup;
 		}
 	} else {
 		// first call, expecting to find 'e' in the index
-		const EdgeIndexKey *id =
-			(EdgeIndexKey*)RediSearch_ResultsIteratorNext(iter, rs_idx, NULL);
+		const char *doc_key =
+			(const char *)RediSearch_ResultsIteratorNext(iter, rs_idx, NULL);
 
-		ASSERT(id != NULL);
+		ASSERT(doc_key != NULL);
 
-		if(id->edge_id != ENTITY_GET_ID(e)) {
+		EdgeIndexKey id;
+		IndexDocKey_DecodeEdge(doc_key, &id);
+
+		if(id.edge_id != ENTITY_GET_ID(e)) {
 			holds = false;
 			goto cleanup;
 		}
@@ -146,6 +164,7 @@ bool EnforceUniqueEntity
 
 cleanup:
 	RediSearch_ResultsIteratorFree(iter);
+	Index_ReleaseRSIndex(rs_idx);
 
 	if(holds == false && err_msg != NULL) {
 		int res;

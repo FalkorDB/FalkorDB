@@ -172,9 +172,11 @@ static bool _EmitIndex
 	GraphContext *gc = ctx->gc;
 	Graph        *g = GraphContext_GetGraph(gc);
 
-	// get index info
+	// get index info; hold a strong ref on the spec for the duration of
+	// this read so a concurrent DropIndex can't invalidate it mid-walk.
 	RSIdxInfo info = { .version = RS_INFO_CURRENT_VERSION };
-	RSIndex *rsIdx = Index_RSIndex(idx);
+	RSIndex *rsIdx = Index_AcquireRSIndex(idx);
+	if(rsIdx == NULL) return false;  // spec dropped concurrently
 	RediSearch_IndexInfo(rsIdx, &info);
 
 	//--------------------------------------------------------------------------
@@ -375,8 +377,10 @@ static bool _EmitIndex
 		for (uint i = 0; i < info.numFields; i++) {
 			struct RSIdxField f = info.fields[i];
 			SIValue field = SI_Map(6);
-			Map_Add(&field, SI_ConstStringVal("path"),             SI_ConstStringVal(f.path));
-			Map_Add(&field, SI_ConstStringVal("name"),             SI_ConstStringVal(f.name));
+			// In RediSearch 8.6, RSIdxField.path / .name are HiddenString*.
+			// Unwrap to a printable C string for the SI value.
+			Map_Add(&field, SI_ConstStringVal("path"),             SI_ConstStringVal(RediSearch_HiddenStringGet(f.path)));
+			Map_Add(&field, SI_ConstStringVal("name"),             SI_ConstStringVal(RediSearch_HiddenStringGet(f.name)));
 			Map_Add(&field, SI_ConstStringVal("options"),          SI_LongVal(f.options));
 			Map_Add(&field, SI_ConstStringVal("textWeight"),       SI_DoubleVal(f.textWeight));
 			Map_Add(&field, SI_ConstStringVal("tagCaseSensitive"), SI_BoolVal(f.tagCaseSensitive));
@@ -411,6 +415,7 @@ static bool _EmitIndex
 
 	// clean up
 	RediSearch_IndexInfoFree(&info);
+	Index_ReleaseRSIndex(rsIdx);
 
 	return true;
 }

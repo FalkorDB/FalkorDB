@@ -87,6 +87,7 @@ typedef struct QueryCtx {
 	bool deterministic;                          // false if query contains a non deterministic element
 	QueryExecutionStatus status;                 // query execution status
 	QueryExecutionTypeFlag flags;                // execution flags
+	uint64_t timeout_ms;                         // configured per-query timeout budget; 0 = unlimited
 	EffectsBuffer *effects_buffer;               // effects-buffer for replication, used when write query succeed and replication is needed
 	QueryCtx_QueryData query_data;               // data related to the query syntax
 	QueryCtx_GlobalExecCtx global_exec_ctx;      // data related to global redis execution
@@ -248,6 +249,9 @@ double QueryCtx_GetRuntime(void);
 
 // returns query received timestamp
 uint64_t QueryCtx_GetReceivedTS (void) ;
+
+// returns the configured per-query timeout budget in ms; 0 = unlimited
+uint64_t QueryCtx_GetTimeoutMS (void) ;
 
 // free the allocations within the QueryCtx and reset it for the next query
 void QueryCtx_Free(void);

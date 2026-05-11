@@ -9,6 +9,7 @@
 #include "../util/arr.h"
 #include "../query_ctx.h"
 #include "../index/index.h"
+#include "../index/index_doc_key.h"
 #include "../util/rmalloc.h"
 #include "../errors/errors.h"
 #include "proc_fulltext_query.h"
@@ -21,6 +22,7 @@ typedef struct {
 	RelationID r;                 // edge relation ID
 	SIValue output[2];            // output
 	Index idx;                    // index
+	RSIndex *rsIdx;               // strong ref on RediSearch index, held for the procedure's lifetime
 	RSResultsIterator *iter;      // iterator
 	SIValue *yield_relationship;  // yield relationship
 	SIValue *yield_score;         // yield score
@@ -70,12 +72,14 @@ SIValue *Proc_FulltextQueryRelationshipStep
 	// try to get a result out of the iterator
 	// NULL is returned if iterator id depleted
 	size_t len = 0;
-	const EdgeIndexKey *edge_key = (EdgeIndexKey *)
-		RediSearch_ResultsIteratorNext(pdata->iter, Index_RSIndex(pdata->idx),
-				&len);
+	const char *doc_key = (const char *)
+		RediSearch_ResultsIteratorNext(pdata->iter, pdata->rsIdx, &len);
 
 	// depleted
-	if(!edge_key) return NULL;
+	if(!doc_key) return NULL;
+
+	EdgeIndexKey edge_key;
+	IndexDocKey_DecodeEdge(doc_key, &edge_key);
 
 	//--------------------------------------------------------------------------
 	// set up edge
@@ -84,11 +88,11 @@ SIValue *Proc_FulltextQueryRelationshipStep
 	// get edge
 	Edge *e = &pdata->e;
 
-	e->src_id     = edge_key->src_id;
-	e->dest_id    = edge_key->dest_id;
+	e->src_id     = edge_key.src_id;
+	e->dest_id    = edge_key.dest_id;
 	e->relationID = pdata->r;
 
-	EntityID edge_id = edge_key->edge_id;
+	EntityID edge_id = edge_key.edge_id;
 	bool edge_exists = Graph_GetEdge(pdata->g, edge_id, e);
 	ASSERT(edge_exists);
 	
@@ -118,6 +122,8 @@ ProcedureResult Proc_FulltextQueryRelationshipFree
 	QueryRelationshipContext *pdata = ctx->privateData;
 
 	if(pdata->iter) RediSearch_ResultsIteratorFree(pdata->iter);
+	// release the strong ref on the RediSearch index, AFTER iter free.
+	if(pdata->rsIdx) Index_ReleaseRSIndex(pdata->rsIdx);
 
 	rm_free(pdata);
 
@@ -159,9 +165,17 @@ ProcedureResult Proc_FulltextQueryRelationshipInvoke
 	QueryRelationshipContext *pdata = ctx->privateData;
 
 	// populate context
-	pdata->g   = GraphContext_GetGraph (gc) ;
-	pdata->r   = Schema_GetID(s);
-	pdata->idx = idx;
+	pdata->g     = GraphContext_GetGraph (gc) ;
+	pdata->r     = Schema_GetID(s);
+	pdata->idx   = idx;
+	// Strong ref on the RediSearch index for the procedure's lifetime;
+	// released in the proc's free path.
+	pdata->rsIdx = Index_AcquireRSIndex(idx);
+	if(pdata->rsIdx == NULL) {
+		rm_free(pdata);
+		ctx->privateData = NULL;
+		return PROCEDURE_ERR;
+	}
 
 	_relationship_process_yield(pdata, yield);
 
