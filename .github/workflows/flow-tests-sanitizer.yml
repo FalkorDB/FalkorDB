@@ -20,8 +20,41 @@ jobs:
     runs-on: ubuntu-latest
     container: aviavni/falkordb-build:latest
     timeout-minutes: 90
+    env:
+      REDIS_ASAN_VER: "8.6.2"
+      REDIS_ASAN_DIR: /tmp/redis-san-build
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      # LeakSanitizer needs the host process to be ASAN-instrumented to do
+      # its scan-the-world reachability pass reliably. Stock Redis from the
+      # image is not instrumented, so we build a sanitized Redis ourselves.
+      - name: Cache ASAN-built Redis
+        id: redis-asan-cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: ${{ env.REDIS_ASAN_DIR }}/src/redis-server
+          key: redis-asan-${{ env.REDIS_ASAN_VER }}-clang22-${{ hashFiles('tests/memcheck/redis.san-ignorelist') }}
+
+      - name: Build Redis with ASAN
+        if: steps.redis-asan-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$REDIS_ASAN_DIR"
+          curl -fsSL "https://github.com/redis/redis/archive/refs/tags/${REDIS_ASAN_VER}.tar.gz" \
+            | tar xz -C "$REDIS_ASAN_DIR" --strip-components=1
+          cd "$REDIS_ASAN_DIR"
+          IGNORELIST="$GITHUB_WORKSPACE/tests/memcheck/redis.san-ignorelist"
+          # Redis's own Makefile handles ASAN: forces MALLOC=libc, propagates
+          # -fsanitize=address to deps. We append -fsanitize-ignorelist so the
+          # blacklisted symbols (e.g. THPIsEnabled) stay uninstrumented.
+          make -j"$(nproc)" \
+            SANITIZER=address \
+            CC=clang-22 CXX=clang++-22 \
+            CFLAGS="-fsanitize-ignorelist=$IGNORELIST"
+          nm src/redis-server | grep -q __asan_init \
+            || { echo "ERROR: Redis binary is not ASAN-instrumented"; exit 1; }
+
       - run: rustup default nightly
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
@@ -41,13 +74,15 @@ jobs:
           SANITIZER: address
           TARGET_DIR: target/x86_64-unknown-linux-gnu/debug
           PARALLELISM: "--parallelism 2"
-          ASAN_OPTIONS: "detect_leaks=0:abort_on_error=0:halt_on_error=1:exitcode=66:symbolize=1:print_stacktrace=1:strict_string_checks=1:detect_stack_use_after_return=1"
+          ASAN_OPTIONS: "detect_leaks=1:detect_odr_violation=0:halt_on_error=0:abort_on_error=0:symbolize=1:print_stacktrace=1:strict_string_checks=1:detect_stack_use_after_return=1"
+          LSAN_OPTIONS: "suppressions=tests/memcheck/asan.supp:use_tls=0"
           ASAN_SYMBOLIZER_PATH: /usr/bin/llvm-symbolizer-22
+          RS_GLOBAL_DTORS: "1"
         run: |
           . /data/venv/bin/activate
-          ASAN_RT=$(clang-22 -print-file-name=libclang_rt.asan-x86_64.so)
-          echo "ASAN runtime: $ASAN_RT"
-          export LD_PRELOAD="$ASAN_RT"
+          # Prepend the ASAN-built Redis so RLTest spawns it instead of stock.
+          export PATH="$REDIS_ASAN_DIR/src:$PATH"
+          redis-server --version
           ./flow.sh
 
       - name: Upload flow test logs on failure
