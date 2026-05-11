@@ -9,30 +9,29 @@
 //! ```text
 //! Redis Main Thread                Thread Pool
 //!       |                              |
-//!   GRAPH.QUERY ───spawn()───>  [Worker 1] -> execute query
-//!       |                       [Worker 2]
-//!   (continues)                 [Worker N]
-//!       |                              |
-//!   BlockedClient <────────────── result
+//!   GRAPH.QUERY ───spawn()───>  [shared MPMC queue]
+//!       |                       /     |        \
+//!       |                  [Worker 1] [Worker 2] [Worker N]
+//!   BlockedClient <──────────── result
 //! ```
 //!
 //! ## Scheduling
 //!
-//! Each worker has its own bounded SPSC (single-producer, single-consumer)
-//! channel. When a job is dispatched without a specific worker index, the
-//! pool selects a worker round-robin via [`ThreadPool::next_worker`],
-//! spreading load across threads. When an explicit index is provided, the
-//! job is pinned to that worker (modulo worker count) for thread affinity.
+//! All workers consume from a single shared MPMC channel. Whichever worker
+//! is idle picks up the next job, so a long-running job on one worker does
+//! not block jobs queued behind it. This avoids the head-of-line blocking
+//! that arose with per-worker SPSC queues + round-robin dispatch (e.g. a
+//! write-queue drain held its assigned worker, blocking unrelated jobs that
+//! happened to be dispatched to the same worker).
 //!
 //! ## Initialization
 //!
 //! The pool is stored in a global `OnceCell` and must be initialized once
 //! via [`init_thread_pool`] before any calls to [`spawn`].
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
 
-use crossfire::{Tx, spsc::Array};
+use crossfire::{MRx, MTx, mpmc::Array};
 use once_cell::sync::OnceCell;
 
 /// A closure that can be sent to a worker thread.
@@ -40,10 +39,8 @@ type Job = Box<dyn FnOnce() + Send + 'static>;
 
 /// A pool of worker threads for executing jobs.
 struct ThreadPool {
-    workers: Vec<JoinHandle<()>>,
-    sender: Vec<Tx<Array<Job>>>,
-    /// Round-robin counter for `spawn` calls without explicit affinity.
-    next_worker: AtomicUsize,
+    _workers: Vec<JoinHandle<()>>,
+    sender: MTx<Array<Job>>,
 }
 
 unsafe impl Sync for ThreadPool {}
@@ -51,10 +48,10 @@ unsafe impl Sync for ThreadPool {}
 impl ThreadPool {
     pub fn new(size: usize) -> Self {
         let mut workers = Vec::with_capacity(size);
-        let mut sender = Vec::with_capacity(size);
+        let (sender, receiver): (MTx<Array<Job>>, MRx<Array<Job>>) =
+            crossfire::mpmc::bounded_blocking(1024);
         for _ in 0..size {
-            let (tx, rx) = crossfire::spsc::bounded_blocking::<Job>(1024);
-            sender.push(tx);
+            let rx = receiver.clone();
             let worker = thread::spawn(move || {
                 while let Ok(job) = rx.recv() {
                     job();
@@ -63,33 +60,24 @@ impl ThreadPool {
             workers.push(worker);
         }
         Self {
-            workers,
+            _workers: workers,
             sender,
-            next_worker: AtomicUsize::new(0),
         }
     }
 
     pub fn spawn<F>(
         &self,
         job: F,
-        idx: Option<usize>,
+        _idx: Option<usize>,
     ) where
         F: FnOnce() + Send + 'static,
     {
-        let n = self.workers.len();
-        let target = idx.map_or_else(
-            || self.next_worker.fetch_add(1, Ordering::Relaxed) % n,
-            |i| i % n,
-        );
-        self.sender[target]
+        self.sender
             .send(Box::new(job))
             .expect("thread pool worker died: cannot dispatch job");
     }
     pub fn pending_count(&self) -> usize {
-        self.sender
-            .iter()
-            .map(crossfire::BlockingTxTrait::len)
-            .sum()
+        crossfire::BlockingTxTrait::len(&self.sender)
     }
 }
 
