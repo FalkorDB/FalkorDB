@@ -44,7 +44,7 @@ void ListReduceCtx_Free
 
 // collect referenced entities within a reduce context
 // MATCH (n) RETURN reduce (sum = 0, n IN n.v | sum + n)
-void ListReduceCtx_CollectEntities
+void ListReduceCtx_CollectAliases
 (
 	const void *ctx_ptr,  // reduce context
 	rax *entities         // [input/output] collected entities
@@ -929,7 +929,7 @@ void Register_ListFuncs() {
 			true, true, true) ;
 	AR_SetPrivateDataRoutines (func_desc, ListReduceCtx_Free,
 							  ListReduceCtx_Clone,
-							  ListReduceCtx_CollectEntities) ;
+							  ListReduceCtx_CollectAliases) ;
 	AR_FuncRegister (func_desc) ;
 }
 

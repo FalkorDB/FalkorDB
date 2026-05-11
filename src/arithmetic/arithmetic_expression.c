@@ -795,7 +795,7 @@ void AR_EXP_CollectEntities
 			AR_EXP_CollectEntities (root->op.children [i], aliases) ;
 		}
 
-		// collect refered aliases within function's private data
+		// collect referred aliases within function's private data
 		if (unlikely (root->op.private_data != NULL &&
 			root->op.f->callbacks.aliases   != NULL)) {
 			root->op.f->callbacks.aliases (root->op.private_data, aliases) ;
