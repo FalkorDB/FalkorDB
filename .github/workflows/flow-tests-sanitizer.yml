@@ -1,0 +1,67 @@
+name: Flow tests (sanitizer)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [ "main" ]
+
+concurrency:
+  group: asan-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  asan-flow-tests:
+    runs-on: ubuntu-latest
+    container: aviavni/falkordb-build:latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - run: rustup default nightly
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: "asan"
+          env-vars: "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS CFLAGS_x86_64-unknown-linux-gnu CXXFLAGS_x86_64-unknown-linux-gnu"
+
+      - name: Build module with ASAN
+        env:
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-Zsanitizer=address -Cdebuginfo=2"
+          CFLAGS_x86_64-unknown-linux-gnu: "-fsanitize=address -fno-omit-frame-pointer"
+          CXXFLAGS_x86_64-unknown-linux-gnu: "-fsanitize=address -fno-omit-frame-pointer"
+          CXX: clang++-22
+        run: cargo build --target x86_64-unknown-linux-gnu
+
+      - name: Run flow tests with ASAN
+        env:
+          SANITIZER: address
+          TARGET_DIR: target/x86_64-unknown-linux-gnu/debug
+          PARALLELISM: "--parallelism 2"
+          ASAN_OPTIONS: "detect_leaks=0:abort_on_error=0:halt_on_error=1:exitcode=66:symbolize=1:print_stacktrace=1:strict_string_checks=1:detect_stack_use_after_return=1"
+          ASAN_SYMBOLIZER_PATH: /usr/bin/llvm-symbolizer-22
+        run: |
+          . /data/venv/bin/activate
+          ASAN_RT=$(clang-22 -print-file-name=libclang_rt.asan-x86_64.so)
+          echo "ASAN runtime: $ASAN_RT"
+          export LD_PRELOAD="$ASAN_RT"
+          ./flow.sh
+
+      - name: Upload flow test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: asan-flow-logs-${{ github.run_id }}
+          path: tests/flow/logs/
+          retention-days: 7
+
+      - name: Upload sanitized module on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: asan-libfalkordb-${{ github.run_id }}
+          path: target/x86_64-unknown-linux-gnu/debug/libfalkordb.so
+          retention-days: 7
