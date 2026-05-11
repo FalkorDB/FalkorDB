@@ -22,16 +22,16 @@ name = "falkordb"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-atomic_refcell = "0.1.13"
-crossfire = "3.1.7"
+atomic_refcell = "0.1.14"
+crossfire = "3.1.10"
 graph = { path = "graph", version = "0.1.0" }
 lazy_static = "1.5.0"
 parking_lot = "0.12.5"
 redis-module = { git = "https://github.com/AviAvni/redismodule-rs", branch = "master" }
-roaring = "0.11.3"
+roaring = "0.11.4"
 rustc-hash = "2"
 ryu = "1.0.23"
-thin-vec = "0.2.16"
+thin-vec = "0.2.18"
 orx-tree = "2.2.0"
 
 [build-dependencies]

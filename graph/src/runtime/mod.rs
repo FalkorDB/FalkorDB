@@ -60,4 +60,5 @@ pub mod pending;
 pub mod pool;
 pub mod runtime;
 pub mod value;
+pub mod vec_distance;
 pub mod vectorized;

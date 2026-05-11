@@ -57,7 +57,7 @@ use roaring::RoaringTreemap;
 use super::Index;
 pub use super::{
     Document, Field, IdIter, IndexInfo, IndexQuery, IndexResultsIter, IndexType, ScoredIdIter,
-    TextIndexOptions, VectorIndexOptions,
+    TextIndexOptions, VectorIndexOptions, VectorScoredEdgeTripleIter, VectorScoredIdIter,
 };
 use crate::{graph::graph::Graph, runtime::value::Value};
 
@@ -246,7 +246,22 @@ impl Indexer {
                 label_indexes.insert_field(attr.clone(), field);
             }
         }
-        if !label_indexes.has_rs_index() {
+        if label_indexes.has_rs_index() {
+            // Adding fields to a label whose RediSearch index already
+            // exists: drop the existing index and reconstruct with the
+            // full field set. Otherwise stale documents (indexed only
+            // under the previous field schema) interleave with newly-
+            // populated documents in the underlying HNSW / inverted
+            // structures, breaking searches against the previously-
+            // indexed fields. Mirrors C `Index_Disable`'s drop+rebuild
+            // — see `_Index_PopulateNodeIndex` semantics in C FalkorDB.
+            //
+            // `recreate_index` re-registers every field in
+            // `self.fields()` (which already includes `new_fields`
+            // inserted above), so no separate `register_fields` call
+            // is needed in this branch.
+            label_indexes.recreate_index(label)?;
+        } else {
             let effective_stopwords = stopwords
                 .clone()
                 .or_else(|| label_indexes.stopwords().cloned());
@@ -258,9 +273,8 @@ impl Indexer {
                 effective_stopwords.as_ref(),
                 effective_language.as_ref(),
             )?;
+            label_indexes.register_fields(&new_fields, field_options.as_ref())?;
         }
-
-        label_indexes.register_fields(&new_fields, field_options.as_ref())?;
 
         // Update the label indexes with global settings
         // Default to "english" for fulltext indexes when no language is specified,
@@ -329,6 +343,19 @@ impl Indexer {
     }
 
     #[must_use]
+    pub fn has_field_for_label(
+        &self,
+        label: &Arc<String>,
+        field: &Arc<String>,
+        index_type: &IndexType,
+    ) -> bool {
+        if let Some(index) = self.index.read().get(label) {
+            return index.has_field_with_type(field, index_type);
+        }
+        false
+    }
+
+    #[must_use]
     pub fn is_label_indexed(
         &self,
         label: &Arc<String>,
@@ -392,6 +419,104 @@ impl Indexer {
             return index.fulltext_query(query);
         }
         Ok(IndexResultsIter::empty_scored())
+    }
+
+    /// Like [`fulltext_query`], but for *edge* indexes: yields
+    /// `(src, dst, edge_id, score)` tuples read from the 24-byte
+    /// document key plus the RediSearch relevance score.
+    pub fn fulltext_query_edges(
+        &self,
+        label: &Arc<String>,
+        query: &str,
+    ) -> Result<super::ScoredEdgeTripleIter, String> {
+        if let Some(index) = self.index.read().get(label) {
+            return index.fulltext_query_edges(query);
+        }
+        Ok(super::ScoredEdgeTripleIter::empty())
+    }
+
+    /// Execute a KNN vector query against the per-label index and
+    /// yield `(entity_id, distance)` pairs ordered by ascending
+    /// distance. Returns an empty iterator if no index exists for
+    /// `label`.
+    ///
+    /// Takes the vector by `Arc` so the underlying `f32` buffer can be
+    /// pinned for the iterator's lifetime — see
+    /// [`super::Index::vector_query`].
+    pub fn vector_query(
+        &self,
+        label: &Arc<String>,
+        field: &str,
+        vector: Arc<thin_vec::ThinVec<f32>>,
+        k: usize,
+    ) -> Result<VectorScoredIdIter, String> {
+        if let Some(index) = self.index.read().get(label) {
+            return index.vector_query(field, vector, k);
+        }
+        Ok(VectorScoredIdIter::empty(vector))
+    }
+
+    /// Like [`vector_query`], but for *edge* indexes: yields
+    /// `(src, dst, edge_id, distance)` tuples.
+    pub fn vector_query_edges(
+        &self,
+        label: &Arc<String>,
+        field: &str,
+        vector: Arc<thin_vec::ThinVec<f32>>,
+        k: usize,
+    ) -> Result<VectorScoredEdgeTripleIter, String> {
+        if let Some(index) = self.index.read().get(label) {
+            return index.vector_query_edges(field, vector, k);
+        }
+        Ok(VectorScoredEdgeTripleIter::empty(vector))
+    }
+
+    /// Look up the similarity-function name (`"euclidean"`,
+    /// `"cosine"`, or `"ip"`) for the vector field on the given label.
+    /// Returns `None` if the label has no index, the attribute has no
+    /// vector field, or the field is missing similarity metadata.
+    /// Used by the runtime to compute distances when materializing
+    /// KNN results — RediSearch's iterator-level score is not the
+    /// distance, so the caller must compute it manually using the
+    /// query and entity vectors plus this metric.
+    pub fn get_vector_metric(
+        &self,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+    ) -> Option<String> {
+        let guard = self.index.read();
+        let index = guard.get(label)?;
+        let fields = index.get_fields(attr)?;
+        for field in fields {
+            if field.ty == super::IndexType::Vector
+                && let Some(opts) = field.vector_options()
+                && let Some(sim) = opts.similarity_function.as_ref()
+            {
+                return Some(sim.clone());
+            }
+        }
+        None
+    }
+
+    /// Look up the configured dimension for the vector field on the
+    /// given label, if any. Returns `None` if no such vector field
+    /// exists on the index.
+    pub fn get_vector_dimension(
+        &self,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+    ) -> Option<u32> {
+        let guard = self.index.read();
+        let index = guard.get(label)?;
+        let fields = index.get_fields(attr)?;
+        for field in fields {
+            if field.ty == super::IndexType::Vector
+                && let Some(opts) = field.vector_options()
+            {
+                return Some(opts.dimension);
+            }
+        }
+        None
     }
 
     pub fn enable(

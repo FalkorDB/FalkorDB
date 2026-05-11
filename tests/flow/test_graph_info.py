@@ -461,89 +461,89 @@ class testGraphInfo():
         for t in threads:
             t.join()
 
-#class testGraphInfoReplication():
-#    def __init__(self):
-#        self.env, self.db = Env(env='oss', useSlaves=True)
-#
-#        # skip test if we're running under Sanitizer
-#        if SANITIZER:
-#            self.env.skip()
-#
-#        self.env.flush()  # clean slate
-#
-#        self.master  = self.env.getConnection()
-#        self.replica = self.env.getSlaveConnection()
-#        self.master_graph  = Graph(self.master, GRAPH_ID)
-#        self.replica_graph = Graph(self.replica, GRAPH_ID)
-#
-#        self.master_host = self.master.connection_pool.connection_kwargs['host']
-#        self.master_port = self.master.connection_pool.connection_kwargs['port']
-#        self.replica_host  = self.replica.connection_pool.connection_kwargs['host']
-#        self.replica_port  = self.replica.connection_pool.connection_kwargs['port']
-#
-#    def test01_stream_replication(self):
-#        """validate telemetry stream writer in the event of a failover
-#           only the master should be writing data to the telemetry stream
-#           and stream right should be replicated"""
-#
-#        # test flow:
-#        # 1. write to replica, expect no telemetry
-#        # 2. write to master, expect telemetry on both master & replica
-#        # 3. failover
-#        # 4. write to new replica, expect no telemetry
-#        # 5. write to new master, expect telemetry on both master & replica
-#
-#        performed_failover = False
-#        self.master_graph  = Graph(self.master, "start")
-#        self.replica_graph = Graph(self.replica, "start")
-#
-#        for i in range(2):
-#            # alow writes on replica
-#            self.replica.config_set("replica-read-only", "no")
-#
-#            # write some queries directly on the replica
-#            # assert that a telemetry stream is NOT created
-#            for _ in range(0, 20):
-#                self.replica_graph.query("CREATE ()")
-#
-#            # wait a bit before checking if a telemetry stream been created
-#            time.sleep(4)
-#
-#            # telemetry key shouldn't exists
-#            self.env.assertFalse(self.replica.exists(StreamName(self.replica_graph)))
-#
-#            # write some queries to the master and validate that a telemetry stream
-#            # is created
-#            for _ in range(20):
-#                self.master_graph.query("CREATE ()")
-#
-#            # ensure replication is caught up
-#            self.master.wait(1, 2000)
-#
-#            # read stream from master
-#            logged_queries = consumeStream(self.master, self.env, StreamName(self.master_graph), drop=False, n_items=20)
-#            self.env.assertEqual(len(logged_queries), 20)
-#
-#            # ensure stream replicated to replica
-#            logged_queries = consumeStream(self.replica, self.env, StreamName(self.replica_graph), drop=False, n_items=20)
-#            self.env.assertEqual(len(logged_queries), 20)
-#
-#            if performed_failover:
-#                return
-#
-#            # Trigger failover
-#            # make replica become master
-#            self.replica.execute_command("REPLICAOF", "NO", "ONE")
-#
-#            # make old master a replica of new master
-#            self.master.execute_command("REPLICAOF", self.replica_host, self.replica_port)
-#
-#            performed_failover = True
-#
-#            # reset variables
-#            t = self.master
-#            self.master  = self.replica
-#            self.replica = t
-#            self.master_graph  = Graph(self.master, "after_failover")
-#            self.replica_graph = Graph(self.replica, "after_failover")
-#
+class testGraphInfoReplication():
+   def __init__(self):
+       self.env, self.db = Env(env='oss', useSlaves=True)
+
+       # skip test if we're running under Sanitizer
+       if SANITIZER:
+           self.env.skip()
+
+       self.env.flush()  # clean slate
+
+       self.master  = self.env.getConnection()
+       self.replica = self.env.getSlaveConnection()
+       self.master_graph  = Graph(self.master, GRAPH_ID)
+       self.replica_graph = Graph(self.replica, GRAPH_ID)
+
+       self.master_host = self.master.connection_pool.connection_kwargs['host']
+       self.master_port = self.master.connection_pool.connection_kwargs['port']
+       self.replica_host  = self.replica.connection_pool.connection_kwargs['host']
+       self.replica_port  = self.replica.connection_pool.connection_kwargs['port']
+
+   def test01_stream_replication(self):
+       """validate telemetry stream writer in the event of a failover
+          only the master should be writing data to the telemetry stream
+          and stream right should be replicated"""
+
+       # test flow:
+       # 1. write to replica, expect no telemetry
+       # 2. write to master, expect telemetry on both master & replica
+       # 3. failover
+       # 4. write to new replica, expect no telemetry
+       # 5. write to new master, expect telemetry on both master & replica
+
+       performed_failover = False
+       self.master_graph  = Graph(self.master, "start")
+       self.replica_graph = Graph(self.replica, "start")
+
+       for i in range(2):
+           # alow writes on replica
+           self.replica.config_set("replica-read-only", "no")
+
+           # write some queries directly on the replica
+           # assert that a telemetry stream is NOT created
+           for _ in range(0, 20):
+               self.replica_graph.query("CREATE ()")
+
+           # wait a bit before checking if a telemetry stream been created
+           time.sleep(4)
+
+           # telemetry key shouldn't exists
+           self.env.assertFalse(self.replica.exists(StreamName(self.replica_graph)))
+
+           # write some queries to the master and validate that a telemetry stream
+           # is created
+           for _ in range(20):
+               self.master_graph.query("CREATE ()")
+
+           # ensure replication is caught up
+           self.master.wait(1, 2000)
+
+           # read stream from master
+           logged_queries = consumeStream(self.master, self.env, StreamName(self.master_graph), drop=False, n_items=20)
+           self.env.assertEqual(len(logged_queries), 20)
+
+           # ensure stream replicated to replica
+           logged_queries = consumeStream(self.replica, self.env, StreamName(self.replica_graph), drop=False, n_items=20)
+           self.env.assertEqual(len(logged_queries), 20)
+
+           if performed_failover:
+               return
+
+           # Trigger failover
+           # make replica become master
+           self.replica.execute_command("REPLICAOF", "NO", "ONE")
+
+           # make old master a replica of new master
+           self.master.execute_command("REPLICAOF", self.replica_host, self.replica_port)
+
+           performed_failover = True
+
+           # reset variables
+           t = self.master
+           self.master  = self.replica
+           self.replica = t
+           self.master_graph  = Graph(self.master, "after_failover")
+           self.replica_graph = Graph(self.replica, "after_failover")
+

@@ -96,36 +96,18 @@ impl<'a> MergeOp<'a> {
     }
 
     fn resolve_pattern(&self) -> &QueryGraph<Arc<String>, LabelId, Variable> {
-        self.resolved_pattern.get_or_init(|| {
-            let resolved = self.runtime.resolve_pattern(self.pattern);
-            self.runtime.pending.borrow_mut().resize(
-                self.runtime.g.borrow().node_cap(),
-                self.runtime.g.borrow().labels_count(),
-            );
-            resolved
-        })
+        self.resolved_pattern
+            .get_or_init(|| self.runtime.resolve_pattern(self.pattern))
     }
 
     fn resolve_on_create_set_items(&self) -> &Vec<SetItem<LabelId, Variable>> {
-        self.resolved_on_create_set_items.get_or_init(|| {
-            let resolved = self.runtime.resolve_set_items(self.on_create_set_items);
-            self.runtime.pending.borrow_mut().resize(
-                self.runtime.g.borrow().node_cap(),
-                self.runtime.g.borrow().labels_count(),
-            );
-            resolved
-        })
+        self.resolved_on_create_set_items
+            .get_or_init(|| self.runtime.resolve_set_items(self.on_create_set_items))
     }
 
     fn resolve_on_match_set_items(&self) -> &Vec<SetItem<LabelId, Variable>> {
-        self.resolved_on_match_set_items.get_or_init(|| {
-            let resolved = self.runtime.resolve_set_items(self.on_match_set_items);
-            self.runtime.pending.borrow_mut().resize(
-                self.runtime.g.borrow().node_cap(),
-                self.runtime.g.borrow().labels_count(),
-            );
-            resolved
-        })
+        self.resolved_on_match_set_items
+            .get_or_init(|| self.runtime.resolve_set_items(self.on_match_set_items))
     }
 
     fn do_create_fallback(
@@ -157,7 +139,7 @@ impl<'a> MergeOp<'a> {
             let mut batch = Batch::from_envs(vec![vars]);
             self.runtime.create_batch(resolved_pattern, &mut batch)?;
 
-            // Cache only the created entity bindings (node/relationship IDs)
+            // Cache the created entity bindings (node/relationship IDs)
             let env_ref = batch.env_ref(0);
             let pattern_vars: Vec<(u32, Value)> = resolved_pattern
                 .nodes()

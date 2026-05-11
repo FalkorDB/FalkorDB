@@ -42,7 +42,7 @@ use std::{
 use crate::runtime::functions::Type;
 use crate::tree;
 
-use orx_tree::{DynNode, DynTree, NodeRef, Side, Traversal, Traverser};
+use orx_tree::{Bfs, DynNode, DynTree, NodeRef, Side, Traversal, Traverser};
 
 use crate::{
     entity_type::EntityType,
@@ -95,8 +95,17 @@ pub enum IR {
     Remove(Vec<QueryExpr<Variable>>),
     /// Scan all nodes (no label filter)
     AllNodeScan(Arc<QueryNode<Arc<String>, Variable>>),
-    /// Scan nodes by label
-    NodeByLabelScan(Arc<QueryNode<Arc<String>, Variable>>),
+    /// Scan nodes by label.
+    /// Scan all nodes with a given label.
+    NodeByLabelScan {
+        node: Arc<QueryNode<Arc<String>, Variable>>,
+    },
+    /// Wraps a scan to include pending-created nodes and exclude pending-deleted
+    /// nodes. Used inside MERGE match sub-plans so they see in-flight mutations.
+    /// The optimizer is free to rewrite the child scan (e.g. to an index scan).
+    IncludePending {
+        node: Arc<QueryNode<Arc<String>, Variable>>,
+    },
     /// Scan nodes using an index
     NodeByIndexScan {
         node: Arc<QueryNode<Arc<String>, Variable>>,
@@ -115,6 +124,35 @@ pub enum IR {
         node: Variable,
         label: QueryExpr<Variable>,
         query: QueryExpr<Variable>,
+        score: Option<Variable>,
+    },
+    /// Scan edges using a fulltext index
+    EdgeByFulltextScan {
+        edge: Variable,
+        label: QueryExpr<Variable>,
+        query: QueryExpr<Variable>,
+        score: Option<Variable>,
+    },
+    /// Scan nodes using a KNN vector index. Mirrors
+    /// [`NodeByFulltextScan`] but takes four input expressions
+    /// (label, attribute, k, vector) and yields rows ordered by
+    /// ascending distance.
+    NodeByVectorScan {
+        node: Variable,
+        label: QueryExpr<Variable>,
+        attr: QueryExpr<Variable>,
+        k: QueryExpr<Variable>,
+        vector: QueryExpr<Variable>,
+        score: Option<Variable>,
+    },
+    /// Scan edges using a KNN vector index. Mirrors
+    /// [`EdgeByFulltextScan`] but for vector indexes.
+    EdgeByVectorScan {
+        edge: Variable,
+        label: QueryExpr<Variable>,
+        attr: QueryExpr<Variable>,
+        k: QueryExpr<Variable>,
+        vector: QueryExpr<Variable>,
         score: Option<Variable>,
     },
     /// Lookup node by label and id
@@ -350,8 +388,28 @@ pub fn plan_is_non_deterministic(plan: &DynTree<IR>) -> bool {
             IR::NodeByIndexScan { query, .. } | IR::EdgeByIndexScan { query, .. } => {
                 index_query_has_non_deterministic(query)
             }
-            IR::NodeByFulltextScan { label, query, .. } => {
+            IR::NodeByFulltextScan { label, query, .. }
+            | IR::EdgeByFulltextScan { label, query, .. } => {
                 expr_has_non_deterministic(label) || expr_has_non_deterministic(query)
+            }
+            IR::NodeByVectorScan {
+                label,
+                attr,
+                k,
+                vector,
+                ..
+            }
+            | IR::EdgeByVectorScan {
+                label,
+                attr,
+                k,
+                vector,
+                ..
+            } => {
+                expr_has_non_deterministic(label)
+                    || expr_has_non_deterministic(attr)
+                    || expr_has_non_deterministic(k)
+                    || expr_has_non_deterministic(vector)
             }
             IR::NodeByLabelAndIdScan { filter, .. } | IR::NodeByIdSeek { filter, .. } => {
                 filter.iter().any(|(e, _)| expr_has_non_deterministic(e))
@@ -363,9 +421,22 @@ pub fn plan_is_non_deterministic(plan: &DynTree<IR>) -> bool {
 /// Formats a relationship for CondTraverse/ExpandInto display.
 /// Shows node labels and hides anonymous edge aliases.
 fn fmt_rel_with_labels(rel: &QueryRelationship<Arc<String>, Arc<String>, Variable>) -> String {
+    fmt_rel_with_labels_dir(rel, false)
+}
+
+fn fmt_rel_with_labels_dir(
+    rel: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
+    transposed: bool,
+) -> String {
     use itertools::Itertools;
 
-    let direction = if rel.bidirectional { "" } else { ">" };
+    let (left_arrow, right_arrow) = if rel.bidirectional {
+        ("", "")
+    } else if transposed {
+        ("<", "")
+    } else {
+        ("", ">")
+    };
 
     let fmt_node = |node: &QueryNode<Arc<String>, Variable>| -> String {
         if node.labels.is_empty() {
@@ -381,14 +452,14 @@ fn fmt_rel_with_labels(rel: &QueryRelationship<Arc<String>, Arc<String>, Variabl
     let is_anon = alias_str.starts_with("_anon");
 
     if is_anon {
-        format!("({from_str})-{direction}({to_str})")
+        format!("({from_str}){left_arrow}-{right_arrow}({to_str})")
     } else if rel.types.is_empty() {
         let alias = &rel.alias;
-        format!("({from_str})-[{alias}]-{direction}({to_str})")
+        format!("({from_str}){left_arrow}-[{alias}]-{right_arrow}({to_str})")
     } else {
         let alias = &rel.alias;
         let types = rel.types.iter().join("|");
-        format!("({from_str})-[{alias}:{types}]-{direction}({to_str})")
+        format!("({from_str}){left_arrow}-[{alias}:{types}]-{right_arrow}({to_str})")
     }
 }
 
@@ -412,8 +483,11 @@ impl Display for IR {
             Self::AllNodeScan(node) => {
                 write!(f, "All Node Scan | {node}")
             }
-            Self::NodeByLabelScan(node) => {
+            Self::NodeByLabelScan { node, .. } => {
                 write!(f, "Node By Label Scan | {node}")
+            }
+            Self::IncludePending { node } => {
+                write!(f, "Include Pending | {node}")
             }
             Self::NodeByIndexScan { node, .. } => {
                 write!(f, "Node By Index Scan | {node}")
@@ -426,14 +500,29 @@ impl Display for IR {
             Self::NodeByFulltextScan { .. } => {
                 write!(f, "Node By Fulltext Index Scan")
             }
+            Self::EdgeByFulltextScan { .. } => {
+                write!(f, "Edge By Fulltext Index Scan")
+            }
+            Self::NodeByVectorScan { .. } => {
+                write!(f, "Node By Vector Index Scan")
+            }
+            Self::EdgeByVectorScan { .. } => {
+                write!(f, "Edge By Vector Index Scan")
+            }
             Self::NodeByLabelAndIdScan { node, .. } => {
                 write!(f, "Node By Label and ID Scan | {node}")
             }
             Self::NodeByIdSeek { .. } => write!(f, "NodeByIdSeek"),
             Self::CondTraverse {
-                relationship: rel, ..
+                relationship: rel,
+                transposed,
+                ..
             } => {
-                write!(f, "Conditional Traverse | {}", fmt_rel_with_labels(rel))
+                write!(
+                    f,
+                    "Conditional Traverse | {}",
+                    fmt_rel_with_labels_dir(rel, *transposed)
+                )
             }
             Self::CondVarLenTraverse {
                 relationship: rel, ..
@@ -472,20 +561,17 @@ impl Display for IR {
     }
 }
 
-/// Extracts inline attributes from a node pattern into a filter expression.
+/// Builds an equality filter expression from inline attributes on a pattern.
 ///
-/// Given a node like `(n:Person {name: 'Alice', age: 30})`, returns a new node
-/// with empty attrs and an equivalent filter expression `n.name = 'Alice' AND n.age = 30`.
-/// Returns `None` for the filter if the node has no inline attributes.
-pub(super) fn inline_node_attrs_to_filter(
-    node: &Arc<QueryNode<Arc<String>, Variable>>
-) -> (
-    Arc<QueryNode<Arc<String>, Variable>>,
-    Option<DynTree<ExprIR<Variable>>>,
-) {
+/// Given an alias and attrs like `{name: 'Alice', age: 30}`, returns
+/// `alias.name = 'Alice' AND alias.age = 30`. Returns `None` if empty.
+pub(super) fn inline_attrs_to_filter(
+    alias: &Variable,
+    attrs: &DynTree<ExprIR<Variable>>,
+) -> Option<DynTree<ExprIR<Variable>>> {
     let mut filters: Vec<DynTree<ExprIR<Variable>>> = vec![];
 
-    for attr in node.attrs.root().children() {
+    for attr in attrs.root().children() {
         let ExprIR::String(attr_str) = attr.data() else {
             unreachable!("inline attrs map children must be ExprIR::String keys");
         };
@@ -493,32 +579,20 @@ pub(super) fn inline_node_attrs_to_filter(
             ExprIR::Eq,
             tree!(
                 ExprIR::Property(attr_str.clone()),
-                tree!(ExprIR::Variable(node.alias.clone()))
+                tree!(ExprIR::Variable(alias.clone()))
             ),
             attr.child(0).as_cloned_subtree()
         );
         filters.push(eq);
     }
 
-    let filter = if filters.is_empty() {
+    if filters.is_empty() {
         None
     } else if filters.len() == 1 {
         Some(filters.pop().unwrap())
     } else {
         Some(tree!(ExprIR::And; filters))
-    };
-
-    filter.map_or_else(
-        || (node.clone(), None),
-        |f| {
-            let clean_node = Arc::new(QueryNode::new(
-                node.alias.clone(),
-                node.labels.clone(),
-                Arc::new(tree!(ExprIR::Map)),
-            ));
-            (clean_node, Some(f))
-        },
-    )
+    }
 }
 
 /// Converts a bound Cypher AST into a logical execution plan (IR tree).
@@ -607,6 +681,31 @@ impl Planner {
         // Add Argument node as a child to each leaf.
         for leaf_idx in leaves {
             tree.node_mut(leaf_idx).push_child(IR::Argument);
+        }
+    }
+
+    /// Wrap every `NodeByLabelScan` (and `AllNodeScan`) in `tree` with an
+    /// `IncludePending` parent node. Must be called BEFORE `add_argument_to_leaves`
+    /// so scans are still leaves when we restructure them.
+    fn set_include_pending_on_scans(tree: &mut DynTree<IR>) {
+        let indices = tree.root().indices::<Bfs>().collect::<Vec<_>>();
+        for idx in indices {
+            if !matches!(
+                tree.node(idx).data(),
+                IR::NodeByLabelScan { .. } | IR::AllNodeScan(_)
+            ) {
+                continue;
+            }
+            let original_data = std::mem::replace(
+                tree.node_mut(idx).data_mut(),
+                IR::Argument, // temporary placeholder
+            );
+            let node = match &original_data {
+                IR::NodeByLabelScan { node } | IR::AllNodeScan(node) => node.clone(),
+                _ => unreachable!(),
+            };
+            *tree.node_mut(idx).data_mut() = IR::IncludePending { node };
+            tree.node_mut(idx).push_child(original_data);
         }
     }
 
@@ -747,6 +846,7 @@ impl Planner {
                 &FnType::Aggregation {
                     initial: Value::Null,
                     finalizer: None,
+                    batch_agg: None,
                 },
             )
             .expect("collect function not registered");
@@ -1130,7 +1230,7 @@ impl Planner {
                 if self.visited.contains(&(node.alias.id, node.alias.scope_id)) {
                     // Already bound: check for inline property constraints and
                     // additional labels that need verifying.
-                    let (_, attr_filter) = inline_node_attrs_to_filter(&node);
+                    let attr_filter = inline_attrs_to_filter(&node.alias, &node.attrs);
                     if let Some(filter_expr) = attr_filter {
                         bound_filters.push(filter_expr);
                     }
@@ -1175,16 +1275,16 @@ impl Planner {
                         ));
                     }
                 } else {
-                    let (clean_node, attr_filter) = inline_node_attrs_to_filter(&node);
+                    let attr_filter = inline_attrs_to_filter(&node.alias, &node.attrs);
                     // The binder's post-processing already set the full
                     // accumulated label set on each QueryNode directly.
-                    let mut res = if clean_node.labels.is_empty() {
-                        tree!(IR::AllNodeScan(clean_node))
+                    let mut res = if node.labels.is_empty() {
+                        tree!(IR::AllNodeScan(node.clone()))
                     } else {
                         // Multi-label node: the runtime's get_nodes()
                         // intersects all label matrices, so we can pass
                         // all labels directly to NodeByLabelScan.
-                        tree!(IR::NodeByLabelScan(clean_node))
+                        tree!(IR::NodeByLabelScan { node: node.clone() })
                     };
                     if let Some(filter_expr) = attr_filter {
                         res = tree!(IR::Filter(Arc::new(filter_expr)), res);
@@ -1244,12 +1344,14 @@ impl Planner {
                 {
                     None
                 } else {
-                    let (clean_node, from_attr_filter) =
-                        inline_node_attrs_to_filter(&relationship.from);
-                    let mut scan = if clean_node.labels.is_empty() {
-                        tree!(IR::AllNodeScan(clean_node))
+                    let from_attr_filter =
+                        inline_attrs_to_filter(&relationship.from.alias, &relationship.from.attrs);
+                    let mut scan = if relationship.from.clone().labels.is_empty() {
+                        tree!(IR::AllNodeScan(relationship.from.clone()))
                     } else {
-                        tree!(IR::NodeByLabelScan(clean_node))
+                        tree!(IR::NodeByLabelScan {
+                            node: relationship.from.clone(),
+                        })
                     };
                     if let Some(filter_expr) = from_attr_filter {
                         scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
@@ -1275,23 +1377,45 @@ impl Planner {
                 )
             } else if relationship.from.alias.id == relationship.to.alias.id {
                 // Self-loop with fixed-length edge: scan + ExpandInto.
-                let (clean_node, attr_filter) = inline_node_attrs_to_filter(&relationship.from);
-                let mut scan = if clean_node.labels.is_empty() {
-                    tree!(IR::AllNodeScan(clean_node))
-                } else {
-                    tree!(IR::NodeByLabelScan(clean_node))
-                };
-                if let Some(filter_expr) = attr_filter {
-                    scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
-                }
-                tree!(
-                    IR::ExpandInto {
+                // If the node is already bound (visited), don't rescan — the
+                // Argument from the surrounding Apply will provide the binding.
+                let already_bound = self
+                    .visited
+                    .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id));
+                if already_bound {
+                    let attr_filter =
+                        inline_attrs_to_filter(&relationship.from.alias, &relationship.from.attrs);
+                    let mut ei = tree!(IR::ExpandInto {
                         relationship: relationship.clone(),
                         emit_relationship: emit_rel(relationship),
                         sibling_edges: sibling_edges.clone()
-                    },
-                    scan
-                )
+                    });
+                    if let Some(filter_expr) = attr_filter {
+                        ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
+                    }
+                    ei
+                } else {
+                    let attr_filter =
+                        inline_attrs_to_filter(&relationship.from.alias, &relationship.from.attrs);
+                    let mut scan = if relationship.from.clone().labels.is_empty() {
+                        tree!(IR::AllNodeScan(relationship.from.clone()))
+                    } else {
+                        tree!(IR::NodeByLabelScan {
+                            node: relationship.from.clone(),
+                        })
+                    };
+                    if let Some(filter_expr) = attr_filter {
+                        scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
+                    }
+                    tree!(
+                        IR::ExpandInto {
+                            relationship: relationship.clone(),
+                            emit_relationship: emit_rel(relationship),
+                            sibling_edges: sibling_edges.clone()
+                        },
+                        scan
+                    )
+                }
             } else if self
                 .visited
                 .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id))
@@ -1307,22 +1431,30 @@ impl Planner {
                 // Both endpoints already bound — check for inline attrs
                 // that need filtering (e.g. reversed patterns where attrs
                 // appear on a later occurrence of an already-bound node).
-                let (_, from_attr_filter) = inline_node_attrs_to_filter(&relationship.from);
+                let from_attr_filter =
+                    inline_attrs_to_filter(&relationship.from.alias, &relationship.from.attrs);
                 if let Some(filter_expr) = from_attr_filter {
                     ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
                 }
-                let (_, to_attr_filter) = inline_node_attrs_to_filter(&relationship.to);
+                let to_attr_filter =
+                    inline_attrs_to_filter(&relationship.to.alias, &relationship.to.attrs);
                 if let Some(filter_expr) = to_attr_filter {
                     ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
                 }
                 ei
             } else {
-                tree!(IR::CondTraverse {
+                let edge_attr_filter =
+                    inline_attrs_to_filter(&relationship.alias, &relationship.attrs);
+                let mut ct = tree!(IR::CondTraverse {
                     relationship: relationship.clone(),
                     emit_relationship: emit_rel(relationship),
                     sibling_edges: sibling_edges.clone(),
                     transposed: false
-                })
+                });
+                if let Some(filter_expr) = edge_attr_filter {
+                    ct = tree!(IR::Filter(Arc::new(filter_expr)), ct);
+                }
+                ct
             };
             // Check destination node for inline attributes (e.g., (b {val: 'v2'}))
             // and add a Filter if present.
@@ -1330,7 +1462,8 @@ impl Planner {
                 .visited
                 .contains(&(relationship.to.alias.id, relationship.to.alias.scope_id))
             {
-                let (_, to_attr_filter) = inline_node_attrs_to_filter(&relationship.to);
+                let to_attr_filter =
+                    inline_attrs_to_filter(&relationship.to.alias, &relationship.to.attrs);
                 if let Some(filter_expr) = to_attr_filter {
                     res = tree!(IR::Filter(Arc::new(filter_expr)), res);
                 }
@@ -1342,7 +1475,8 @@ impl Planner {
                 .visited
                 .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id))
             {
-                let (_, from_attr_filter) = inline_node_attrs_to_filter(&relationship.from);
+                let from_attr_filter =
+                    inline_attrs_to_filter(&relationship.from.alias, &relationship.from.attrs);
                 if let Some(filter_expr) = from_attr_filter {
                     res = tree!(IR::Filter(Arc::new(filter_expr)), res);
                 }
@@ -1370,31 +1504,61 @@ impl Planner {
                         .visited
                         .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id))
                     {
-                        let (_, from_attr_filter) = inline_node_attrs_to_filter(&relationship.from);
+                        let from_attr_filter = inline_attrs_to_filter(
+                            &relationship.from.alias,
+                            &relationship.from.attrs,
+                        );
                         if let Some(filter_expr) = from_attr_filter {
                             cvlt = tree!(IR::Filter(Arc::new(filter_expr)), cvlt);
                         }
                     }
                     cvlt
                 } else if relationship.from.alias.id == relationship.to.alias.id {
-                    let (clean_node, attr_filter) = inline_node_attrs_to_filter(&relationship.from);
-                    let mut scan = if clean_node.labels.is_empty() {
-                        tree!(IR::AllNodeScan(clean_node))
+                    let already_bound = self
+                        .visited
+                        .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id));
+                    if already_bound {
+                        let attr_filter = inline_attrs_to_filter(
+                            &relationship.from.alias,
+                            &relationship.from.attrs,
+                        );
+                        let mut ei = tree!(
+                            IR::ExpandInto {
+                                relationship: relationship.clone(),
+                                emit_relationship: emit_rel(relationship),
+                                sibling_edges: sibling_edges.clone()
+                            },
+                            res
+                        );
+                        if let Some(filter_expr) = attr_filter {
+                            ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
+                        }
+                        ei
                     } else {
-                        tree!(IR::NodeByLabelScan(clean_node))
-                    };
-                    if let Some(filter_expr) = attr_filter {
-                        scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
+                        let attr_filter = inline_attrs_to_filter(
+                            &relationship.from.alias,
+                            &relationship.from.attrs,
+                        );
+                        let mut scan = if relationship.from.clone().labels.is_empty() {
+                            tree!(IR::AllNodeScan(relationship.from.clone()))
+                        } else {
+                            tree!(IR::NodeByLabelScan {
+                                node: relationship.from.clone(),
+                            })
+                        };
+                        if let Some(filter_expr) = attr_filter {
+                            scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
+                        }
+                        tree!(
+                            IR::ExpandInto {
+                                relationship: relationship.clone(),
+                                emit_relationship: emit_rel(relationship),
+                                sibling_edges: sibling_edges.clone()
+                            },
+                            scan,
+                            res
+                        )
                     }
-                    tree!(
-                        IR::ExpandInto {
-                            relationship: relationship.clone(),
-                            emit_relationship: emit_rel(relationship),
-                            sibling_edges: sibling_edges.clone()
-                        },
-                        scan,
-                        res
-                    )
                 } else if self
                     .visited
                     .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id))
@@ -1410,17 +1574,21 @@ impl Planner {
                         },
                         res
                     );
-                    let (_, from_attr_filter) = inline_node_attrs_to_filter(&relationship.from);
+                    let from_attr_filter =
+                        inline_attrs_to_filter(&relationship.from.alias, &relationship.from.attrs);
                     if let Some(filter_expr) = from_attr_filter {
                         ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
                     }
-                    let (_, to_attr_filter) = inline_node_attrs_to_filter(&relationship.to);
+                    let to_attr_filter =
+                        inline_attrs_to_filter(&relationship.to.alias, &relationship.to.attrs);
                     if let Some(filter_expr) = to_attr_filter {
                         ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
                     }
                     ei
                 } else {
-                    tree!(
+                    let edge_attr_filter =
+                        inline_attrs_to_filter(&relationship.alias, &relationship.attrs);
+                    let mut ct = tree!(
                         IR::CondTraverse {
                             relationship: relationship.clone(),
                             emit_relationship: emit_rel(relationship),
@@ -1428,7 +1596,11 @@ impl Planner {
                             transposed: false
                         },
                         res
-                    )
+                    );
+                    if let Some(filter_expr) = edge_attr_filter {
+                        ct = tree!(IR::Filter(Arc::new(filter_expr)), ct);
+                    }
+                    ct
                 };
                 // Check destination node for inline attributes (e.g., (b {val: 'v2'}))
                 // and add a Filter if present.
@@ -1436,7 +1608,8 @@ impl Planner {
                     .visited
                     .contains(&(relationship.to.alias.id, relationship.to.alias.scope_id))
                 {
-                    let (_, to_attr_filter) = inline_node_attrs_to_filter(&relationship.to);
+                    let to_attr_filter =
+                        inline_attrs_to_filter(&relationship.to.alias, &relationship.to.attrs);
                     if let Some(filter_expr) = to_attr_filter {
                         res = tree!(IR::Filter(Arc::new(filter_expr)), res);
                     }
@@ -1884,7 +2057,7 @@ impl Planner {
         loop {
             match n.node(idx).data() {
                 // Scan/traversal nodes come from MATCH — add as CP child
-                IR::NodeByLabelScan(_)
+                IR::NodeByLabelScan { .. }
                 | IR::AllNodeScan(_)
                 | IR::NodeByIndexScan { .. }
                 | IR::NodeByIdSeek { .. }
@@ -1963,12 +2136,73 @@ impl Planner {
                         entity_type: EntityType::Node,
                     });
                 }
+                // Resolve a yield slot by its canonical procedure-field name.
+                // Variable.name carries the original field name (the alias-
+                // before-AS) regardless of `YIELD … AS …` renaming, so this
+                // lookup is order- and alias-independent. The binder
+                // guarantees the entity field is yielded for these
+                // procedures, so `node` / `relationship` are always present.
+                let yield_by_field = |field: &str| -> Option<Variable> {
+                    named_outputs
+                        .iter()
+                        .find(|v| v.name.as_ref().is_some_and(|n| n.as_str() == field))
+                        .cloned()
+                };
                 if proc.name == "db.idx.fulltext.queryNodes" {
                     let scan = tree!(IR::NodeByFulltextScan {
-                        node: named_outputs[0].clone(),
+                        node: yield_by_field("node")
+                            .expect("binder ensures 'node' is yielded for queryNodes"),
                         label: exprs[0].clone(),
                         query: exprs[1].clone(),
-                        score: named_outputs.get(1).cloned(),
+                        score: yield_by_field("score"),
+                    });
+                    return if let Some(filter) = filter {
+                        tree!(IR::Filter(filter), scan)
+                    } else {
+                        scan
+                    };
+                }
+                if proc.name == "db.idx.fulltext.queryRelationships" {
+                    let scan = tree!(IR::EdgeByFulltextScan {
+                        edge: yield_by_field("relationship").expect(
+                            "binder ensures 'relationship' is yielded for queryRelationships"
+                        ),
+                        label: exprs[0].clone(),
+                        query: exprs[1].clone(),
+                        score: yield_by_field("score"),
+                    });
+                    return if let Some(filter) = filter {
+                        tree!(IR::Filter(filter), scan)
+                    } else {
+                        scan
+                    };
+                }
+                if proc.name == "db.idx.vector.queryNodes" {
+                    let scan = tree!(IR::NodeByVectorScan {
+                        node: yield_by_field("node")
+                            .expect("binder ensures 'node' is yielded for queryNodes"),
+                        label: exprs[0].clone(),
+                        attr: exprs[1].clone(),
+                        k: exprs[2].clone(),
+                        vector: exprs[3].clone(),
+                        score: yield_by_field("score"),
+                    });
+                    return if let Some(filter) = filter {
+                        tree!(IR::Filter(filter), scan)
+                    } else {
+                        scan
+                    };
+                }
+                if proc.name == "db.idx.vector.queryRelationships" {
+                    let scan = tree!(IR::EdgeByVectorScan {
+                        edge: yield_by_field("relationship").expect(
+                            "binder ensures 'relationship' is yielded for queryRelationships"
+                        ),
+                        label: exprs[0].clone(),
+                        attr: exprs[1].clone(),
+                        k: exprs[2].clone(),
+                        vector: exprs[3].clone(),
+                        score: yield_by_field("score"),
                     });
                     return if let Some(filter) = filter {
                         tree!(IR::Filter(filter), scan)
@@ -2051,16 +2285,24 @@ impl Planner {
             } => {
                 let create_pattern = pattern.filter_visited(&self.visited);
                 let mut match_branch = self.plan_match(&pattern, None);
+                Self::set_include_pending_on_scans(&mut match_branch);
                 Self::add_argument_to_leaves(&mut match_branch);
 
-                tree!(
+                let paths = pattern.paths();
+                let merge = tree!(
                     IR::Merge {
                         pattern: create_pattern,
                         on_create: on_create_set_items,
                         on_match: on_match_set_items
                     },
                     match_branch
-                )
+                );
+
+                if paths.is_empty() {
+                    merge
+                } else {
+                    tree!(IR::PathBuilder(paths.to_vec()), merge)
+                }
             }
             // CREATE: only create entities not already bound.
             QueryIR::Create(pattern) => {

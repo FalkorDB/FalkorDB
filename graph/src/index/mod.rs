@@ -121,11 +121,12 @@ use redisearch::{
     RediSearch_CreateField, RediSearch_CreateGeoNode, RediSearch_CreateIndex,
     RediSearch_CreateIndexOptions, RediSearch_CreateIntersectNode, RediSearch_CreateNumericNode,
     RediSearch_CreateTagLexRangeNode, RediSearch_CreateTagNode, RediSearch_CreateTagTokenNode,
-    RediSearch_CreateUnionNode, RediSearch_DeleteDocument, RediSearch_DocumentAddFieldGeo,
-    RediSearch_DocumentAddFieldNumber, RediSearch_DocumentAddFieldNumericArray,
-    RediSearch_DocumentAddFieldString, RediSearch_DocumentAddFieldStringArray,
-    RediSearch_DocumentAddFieldVector, RediSearch_DropIndex, RediSearch_FreeIndexOptions,
-    RediSearch_GetResultsIterator, RediSearch_IndexAddDocument, RediSearch_IndexOptionsSetGCPolicy,
+    RediSearch_CreateUnionNode, RediSearch_CreateVecSimNode, RediSearch_DeleteDocument,
+    RediSearch_DocumentAddFieldGeo, RediSearch_DocumentAddFieldNumber,
+    RediSearch_DocumentAddFieldNumericArray, RediSearch_DocumentAddFieldString,
+    RediSearch_DocumentAddFieldStringArray, RediSearch_DocumentAddFieldVector,
+    RediSearch_DropIndex, RediSearch_FreeIndexOptions, RediSearch_GetResultsIterator,
+    RediSearch_IndexAddDocument, RediSearch_IndexOptionsSetGCPolicy,
     RediSearch_IndexOptionsSetLanguage, RediSearch_IndexOptionsSetStopwords,
     RediSearch_IterateQuery, RediSearch_MemUsage, RediSearch_QueryNodeAddChild,
     RediSearch_ResultsIteratorFree, RediSearch_ResultsIteratorGetScore,
@@ -414,7 +415,7 @@ impl Iterator for EdgeTripleIter {
                 return None;
             }
             let triple = ptr.read_unaligned();
-            Some((triple[0], triple[1], triple[2]))
+            Some(triple.into())
         }
     }
 }
@@ -426,6 +427,118 @@ impl Drop for EdgeTripleIter {
                 RediSearch_ResultsIteratorFree(self.iter);
             }
         }
+    }
+}
+
+/// Iterator yielding `(src, dst, edge_id, score)` tuples from edge
+/// fulltext queries. Like [`EdgeTripleIter`] but also exposes the
+/// relevance score via `RediSearch_ResultsIteratorGetScore`.
+pub struct ScoredEdgeTripleIter {
+    iter: *mut RSResultsIterator,
+    rs_idx: *mut RSIndex,
+}
+
+impl ScoredEdgeTripleIter {
+    const fn new(
+        iter: *mut RSResultsIterator,
+        rs_idx: *mut RSIndex,
+    ) -> Self {
+        Self { iter, rs_idx }
+    }
+
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self {
+            iter: null_mut(),
+            rs_idx: null_mut(),
+        }
+    }
+}
+
+impl Iterator for ScoredEdgeTripleIter {
+    type Item = (u64, u64, u64, f64);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.iter.is_null() {
+            return None;
+        }
+        unsafe {
+            let ptr = RediSearch_ResultsIteratorNext(self.iter, self.rs_idx, null_mut())
+                .cast::<[u64; 3]>();
+            if ptr.is_null() {
+                return None;
+            }
+            let triple = ptr.read_unaligned();
+            let score = RediSearch_ResultsIteratorGetScore(self.iter);
+            Some((triple[0], triple[1], triple[2], score))
+        }
+    }
+}
+
+impl Drop for ScoredEdgeTripleIter {
+    fn drop(&mut self) {
+        if !self.iter.is_null() {
+            unsafe {
+                RediSearch_ResultsIteratorFree(self.iter);
+            }
+        }
+    }
+}
+
+/// `ScoredIdIter` wrapped with the `Arc<ThinVec<f32>>` whose data was
+/// passed to `RediSearch_CreateVecSimNode`. The C API stores the vector
+/// pointer *without copying*, so the underlying `f32` slice must outlive
+/// the iterator: HNSW iteration is lazy and may dereference that
+/// pointer on every `next()`. Holding the `Arc` here ties the data's
+/// lifetime to the iterator.
+pub struct VectorScoredIdIter {
+    inner: ScoredIdIter,
+    _vector_owner: Arc<thin_vec::ThinVec<f32>>,
+}
+
+impl VectorScoredIdIter {
+    /// Empty iterator that still pins the vector arc — used when the
+    /// label has no index.
+    #[must_use]
+    pub fn empty(vector: Arc<thin_vec::ThinVec<f32>>) -> Self {
+        Self {
+            inner: IndexResultsIter::empty_scored(),
+            _vector_owner: vector,
+        }
+    }
+}
+
+impl Iterator for VectorScoredIdIter {
+    type Item = (u64, f64);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next()
+    }
+}
+
+/// Edge variant of [`VectorScoredIdIter`]: yields
+/// `(src, dst, edge_id, distance)` tuples while pinning the source
+/// vector buffer.
+pub struct VectorScoredEdgeTripleIter {
+    inner: ScoredEdgeTripleIter,
+    _vector_owner: Arc<thin_vec::ThinVec<f32>>,
+}
+
+impl VectorScoredEdgeTripleIter {
+    #[must_use]
+    pub fn empty(vector: Arc<thin_vec::ThinVec<f32>>) -> Self {
+        Self {
+            inner: ScoredEdgeTripleIter::empty(),
+            _vector_owner: vector,
+        }
+    }
+}
+
+impl Iterator for VectorScoredEdgeTripleIter {
+    type Item = (u64, u64, u64, f64);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next()
     }
 }
 
@@ -759,7 +872,9 @@ impl Index {
             }
 
             let clabel = CString::new(label.as_str()).map_err(|e| e.to_string())?;
+
             self.rs_idx = RediSearch_CreateIndex(clabel.as_ptr().cast::<c_char>(), options);
+
             RediSearch_FreeIndexOptions(options);
 
             // Create the special NONE_INDEXABLE_FIELDS tag field used for
@@ -1274,6 +1389,133 @@ impl Index {
                 let score = RediSearch_ResultsIteratorGetScore(iter);
                 (id, score)
             }))
+        }
+    }
+
+    /// Execute a fulltext query on an *edge* index and return matching
+    /// `(src, dst, edge_id, score)` tuples. Mirrors [`fulltext_query`],
+    /// but reads the 24-byte `[u64; 3]` key written by
+    /// `Document::new_edge` instead of treating the result as an 8-byte
+    /// entity id. Should only be called on edge indexes.
+    pub fn fulltext_query_edges(
+        &self,
+        query: &str,
+    ) -> Result<ScoredEdgeTripleIter, String> {
+        let cstr = CString::new(query).map_err(|e| e.to_string())?;
+        let mut err: *mut c_char = null_mut();
+        unsafe {
+            let iter =
+                RediSearch_IterateQuery(self.rs_idx, cstr.as_ptr(), query.len(), &raw mut err);
+            if !err.is_null() {
+                let msg = CStr::from_ptr(err).to_string_lossy().into_owned();
+                drop(CString::from_raw(err));
+                return Err(msg);
+            }
+            Ok(ScoredEdgeTripleIter::new(iter, self.rs_idx))
+        }
+    }
+
+    /// Execute a KNN vector query and yield `(entity_id, score)`
+    /// pairs in HNSW iteration order. The yielded `score` is the
+    /// raw RediSearch relevance score read via
+    /// `RediSearch_ResultsIteratorGetScore` — *not* the metric
+    /// distance. Callers that need the actual distance under the
+    /// configured similarity function should look up each entity's
+    /// vector and compute it themselves
+    /// (see [`Graph::vector_query_nodes`]).
+    ///
+    /// `vector` must be a dense `f32` slice whose length matches the
+    /// indexed dimension; `field` is the property name used at index
+    /// creation. The iterator returned holds onto the `Arc` so the
+    /// underlying buffer outlives lazy HNSW iteration — RediSearch
+    /// stores the pointer without copying. Caller is responsible for
+    /// using this only on indexes that actually have a vector field
+    /// for `field`.
+    pub fn vector_query(
+        &self,
+        field: &str,
+        vector: Arc<thin_vec::ThinVec<f32>>,
+        k: usize,
+    ) -> Result<VectorScoredIdIter, String> {
+        // The field name in the underlying RediSearch index is prefixed
+        // with `vector:` (see `Indexer::create_index`). Without this
+        // prefix the C-level KNN query silently matches no documents.
+        let cstr = CString::new(format!("vector:{field}")).map_err(|e| e.to_string())?;
+        // SAFETY: `f32` is `repr(C)` and 4-byte aligned; we expose it as a
+        // bag of bytes for RediSearch's KNN API which expects raw float32
+        // memory. The `Arc<ThinVec<f32>>` is moved into the returned
+        // iterator so the buffer stays valid for the iterator's lifetime.
+        let nbytes = std::mem::size_of_val(vector.as_slice());
+        unsafe {
+            let query_node = RediSearch_CreateVecSimNode(
+                self.rs_idx,
+                cstr.as_ptr(),
+                vector.as_ptr().cast::<c_char>(),
+                nbytes,
+                k,
+            );
+            if query_node.is_null() {
+                return Ok(VectorScoredIdIter {
+                    inner: IndexResultsIter::empty_scored(),
+                    _vector_owner: vector,
+                });
+            }
+            let iter = RediSearch_GetResultsIterator(query_node, self.rs_idx);
+            if iter.is_null() {
+                return Ok(VectorScoredIdIter {
+                    inner: IndexResultsIter::empty_scored(),
+                    _vector_owner: vector,
+                });
+            }
+            Ok(VectorScoredIdIter {
+                inner: IndexResultsIter::new(iter, self.rs_idx, |it, id| {
+                    let score = RediSearch_ResultsIteratorGetScore(it);
+                    (id, score)
+                }),
+                _vector_owner: vector,
+            })
+        }
+    }
+
+    /// Like [`vector_query`], but for *edge* indexes: yields
+    /// `(src, dst, edge_id, score)` tuples — same caveat applies,
+    /// `score` is the raw RediSearch score, not the metric distance.
+    /// Mirrors [`fulltext_query_edges`] in how the 24-byte `[u64; 3]`
+    /// key is read. Should only be called on edge indexes.
+    pub fn vector_query_edges(
+        &self,
+        field: &str,
+        vector: Arc<thin_vec::ThinVec<f32>>,
+        k: usize,
+    ) -> Result<VectorScoredEdgeTripleIter, String> {
+        // See [`vector_query`] — RediSearch field name is `vector:<attr>`.
+        let cstr = CString::new(format!("vector:{field}")).map_err(|e| e.to_string())?;
+        let nbytes = std::mem::size_of_val(vector.as_slice());
+        unsafe {
+            let query_node = RediSearch_CreateVecSimNode(
+                self.rs_idx,
+                cstr.as_ptr(),
+                vector.as_ptr().cast::<c_char>(),
+                nbytes,
+                k,
+            );
+            if query_node.is_null() {
+                return Ok(VectorScoredEdgeTripleIter {
+                    inner: ScoredEdgeTripleIter::empty(),
+                    _vector_owner: vector,
+                });
+            }
+            let iter = RediSearch_GetResultsIterator(query_node, self.rs_idx);
+            if iter.is_null() {
+                return Ok(VectorScoredEdgeTripleIter {
+                    inner: ScoredEdgeTripleIter::empty(),
+                    _vector_owner: vector,
+                });
+            }
+            Ok(VectorScoredEdgeTripleIter {
+                inner: ScoredEdgeTripleIter::new(iter, self.rs_idx),
+                _vector_owner: vector,
+            })
         }
     }
 

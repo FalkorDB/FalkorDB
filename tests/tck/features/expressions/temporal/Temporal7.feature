@@ -30,7 +30,6 @@
 
 Feature: Temporal7 - Compare Temporal Values
 
-  @skip
   Scenario Outline: [1] Should compare dates
     Given any graph
     When executing query:
@@ -48,7 +47,6 @@ Feature: Temporal7 - Compare Temporal Values
       | {year: 1980, month: 12, day: 24} | {year: 1984, month: 10, day: 11} | false | true  | false | true | false |
       | {year: 1984, month: 10, day: 11} | {year: 1984, month: 10, day: 11} | false | false | true  | true | true  |
 
-  @skip
   Scenario Outline: [2] Should compare local times
     Given any graph
     When executing query:
@@ -84,7 +82,6 @@ Feature: Temporal7 - Compare Temporal Values
       | {hour: 10, minute: 0, timezone: '+01:00'}                                    | {hour: 9, minute: 35, second: 14, nanosecond: 645876123, timezone: '+00:00'} | false | true  | false | true | false |
       | {hour: 9, minute: 35, second: 14, nanosecond: 645876123, timezone: '+00:00'} | {hour: 9, minute: 35, second: 14, nanosecond: 645876123, timezone: '+00:00'} | false | false | true  | true | true  |
 
-  @skip
   Scenario Outline: [4] Should compare local date times
     Given any graph
     When executing query:

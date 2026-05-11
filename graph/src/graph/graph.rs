@@ -72,7 +72,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 
 use atomic_refcell::AtomicRefCell;
 use lru::LruCache;
@@ -84,10 +84,11 @@ use crate::{
     entity_type::EntityType,
     graph::{
         attribute_store::AttributeStore,
+        constraint::{Constraint, ConstraintStatus, ConstraintType},
         graphblas::{
             matrix::{
-                Dup, MaskedElementWiseAdd, MaskedElementWiseMultiply, Matrix, MxM, New, Remove,
-                Set, Size, Transpose,
+                Dup, Get, MaskedElementWiseAdd, MaskedElementWiseMultiply, Matrix, MxM, New,
+                Remove, Set, Size, Transpose,
             },
             serialization::{Encode, EncodeState, PayloadEntry, Writer},
             tensor::Tensor,
@@ -101,8 +102,7 @@ use crate::{
     parser::{ast::ExprIR, cypher::Parser},
     planner::{IR, Planner, binder::Binder, optimizer::optimize},
     runtime::{
-        eval::evaluate_param, ordermap::OrderMap, orderset::OrderSet, pending::PendingRelationship,
-        value::Value,
+        eval::evaluate_param, ordermap::OrderMap, orderset::OrderSet, value::Value, vec_distance,
     },
     threadpool::spawn,
 };
@@ -121,6 +121,10 @@ pub struct Plan {
     pub parse_duration: Duration,
     /// Time spent planning/optimizing the query
     pub plan_duration: Duration,
+    /// Byte offset in the original query where the actual query (without
+    /// CYPHER params prefix) begins. Used by the slowlog to separate the
+    /// parameter portion from the query text.
+    pub params_offset: usize,
 }
 
 /// Opaque identifier for a node label.
@@ -133,6 +137,7 @@ pub struct TypeId(pub(crate) usize);
 
 /// Opaque identifier for a node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(transparent)]
 pub struct NodeId(u64);
 
 /// Opaque identifier for a relationship (edge).
@@ -183,6 +188,7 @@ impl Plan {
         parameters: HashMap<String, DynTree<ExprIR<Arc<String>>>>,
         parse_duration: Duration,
         plan_duration: Duration,
+        params_offset: usize,
     ) -> Self {
         Self {
             plan,
@@ -190,6 +196,7 @@ impl Plan {
             parameters,
             parse_duration,
             plan_duration,
+            params_offset,
         }
     }
 }
@@ -275,6 +282,8 @@ pub struct Graph {
     relationship_types: Vec<Arc<String>>,
     /// LRU cache for query plans
     cache: Arc<Mutex<LruCache<String, PlanTree>>>,
+    /// Graph constraints (unique, mandatory)
+    constraints: Vec<Constraint>,
     /// Version counter (incremented on each write transaction)
     pub version: u64,
     /// Schema version (incremented only on schema changes: new labels, relationship types, or attributes)
@@ -585,6 +594,7 @@ impl Graph {
             cache: Arc::new(Mutex::new(LruCache::new(
                 NonZeroUsize::new(cache_size.max(1)).expect("cache_size.max(1) is always >= 1"),
             ))),
+            constraints: Vec::new(),
             version,
             schema_version: 0,
         }
@@ -643,6 +653,7 @@ impl Graph {
             cache: Arc::new(Mutex::new(LruCache::new(
                 NonZeroUsize::new(cache_size.max(1)).expect("cache_size.max(1) is always >= 1"),
             ))),
+            constraints: Vec::new(),
             version: 0,
             schema_version,
         }
@@ -718,6 +729,7 @@ impl Graph {
             node_labels: self.node_labels.clone(),
             relationship_types: self.relationship_types.clone(),
             cache: self.cache.clone(),
+            constraints: self.constraints.clone(),
             version: self.version + 1,
             schema_version: self.schema_version,
         }
@@ -814,10 +826,12 @@ impl Graph {
     }
 
     pub fn get_attrs(&self) -> impl Iterator<Item = &Arc<String>> + '_ {
+        let mut seen = std::collections::HashSet::new();
         self.node_attrs
             .attrs_name
             .iter()
             .chain(self.relationship_attrs.attrs_name.iter())
+            .filter(move |a| seen.insert(a.as_str().to_owned()))
     }
 
     pub fn get_label_id_mut(
@@ -859,6 +873,48 @@ impl Graph {
             .map(TypeId)
     }
 
+    /// Check if a node has a specific label.
+    pub fn node_has_label(
+        &self,
+        node_id: NodeId,
+        label: &str,
+    ) -> bool {
+        if let Some(label_id) = self.get_label_id(label) {
+            self.node_labels_matrix
+                .get(node_id.0, label_id.0 as u64)
+                .is_some()
+        } else {
+            false
+        }
+    }
+
+    /// Check if a node has a specific label by id (no string lookup).
+    #[must_use]
+    pub fn node_has_label_id(
+        &self,
+        node_id: NodeId,
+        label_id: LabelId,
+    ) -> bool {
+        self.node_labels_matrix
+            .get(node_id.0, label_id.0 as u64)
+            .is_some()
+    }
+
+    /// Check if an edge has a specific relationship type.
+    pub fn edge_has_type(
+        &self,
+        edge_id: RelationshipId,
+        type_name: &str,
+    ) -> bool {
+        if let Some(type_id) = self.get_type_id(type_name) {
+            self.relationship_type_matrix
+                .get(edge_id.0, type_id.0 as u64)
+                .is_some()
+        } else {
+            false
+        }
+    }
+
     /// Get-or-create a relationship type by name, returning its `TypeId`.
     pub fn get_type_id_mut(
         &mut self,
@@ -890,7 +946,9 @@ impl Graph {
         let mut plan_duration = Duration::ZERO;
 
         let mut parser = Parser::new(query);
-        let (parameters, query) = parser.parse_parameters()?;
+        let (parameters, query_no_params) = parser.parse_parameters()?;
+        let params_offset = query.len() - query_no_params.len();
+        let query = query_no_params;
 
         // Evaluate parameter expressions to values for the optimizer.
         let param_values: HashMap<String, Value> = parameters
@@ -911,6 +969,7 @@ impl Graph {
                         parameters,
                         parse_duration,
                         plan_duration,
+                        params_offset,
                     ));
                 }
                 // UDF version mismatch — discard stale cache entry
@@ -947,10 +1006,11 @@ impl Graph {
             parameters,
             parse_duration,
             plan_duration,
+            params_offset,
         ))
     }
 
-    fn get_label_matrix(
+    pub fn get_label_matrix(
         &self,
         label: &str,
     ) -> Option<&VersionedMatrix> {
@@ -998,7 +1058,7 @@ impl Graph {
             .expect("relationship type was just inserted")
     }
 
-    fn get_relationship_matrix(
+    pub fn get_relationship_matrix(
         &self,
         relationship_type: &Arc<String>,
     ) -> Option<&Tensor> {
@@ -1031,6 +1091,26 @@ impl Graph {
         attr: &Arc<String>,
     ) -> Option<usize> {
         self.relationship_attrs.get_attr_id(attr)
+    }
+
+    /// Return the global property ID for `attr`, matching the index in `get_attrs()`.
+    /// Node attrs come first; relationship-only attrs follow.
+    #[must_use]
+    pub fn get_global_attribute_id(
+        &self,
+        attr: &Arc<String>,
+    ) -> Option<usize> {
+        self.get_attrs().position(|a| a == attr)
+    }
+
+    /// Convert a relationship-local attribute ID to the global property ID.
+    #[must_use]
+    pub fn rel_attr_id_to_global(
+        &self,
+        local_id: u16,
+    ) -> Option<usize> {
+        let name = self.relationship_attrs.attrs_name.get(local_id as usize)?;
+        self.get_attrs().position(|a| a == name)
     }
 
     pub fn return_node_id(
@@ -1178,6 +1258,39 @@ impl Graph {
         nset
     }
 
+    /// Import pre-resolved node attributes directly into the cache.
+    /// Used by bulk insert to avoid per-node OrderMap allocations.
+    pub fn import_node_attrs_resolved(
+        &mut self,
+        data: &mut Vec<(u64, Vec<(u16, Value)>)>,
+    ) -> usize {
+        self.node_attrs.import_attrs_resolved(data)
+    }
+
+    /// Resolve a node attribute name to its index, creating if needed.
+    pub fn get_or_create_node_attr_id(
+        &mut self,
+        attr: &Arc<String>,
+    ) -> u16 {
+        self.node_attrs.get_or_create_attr_id(attr)
+    }
+
+    /// Import pre-resolved relationship attributes directly into the cache.
+    pub fn import_relationship_attrs_resolved(
+        &mut self,
+        data: &mut Vec<(u64, Vec<(u16, Value)>)>,
+    ) -> usize {
+        self.relationship_attrs.import_attrs_resolved(data)
+    }
+
+    /// Resolve a relationship attribute name to its index, creating if needed.
+    pub fn get_or_create_rel_attr_id(
+        &mut self,
+        attr: &Arc<String>,
+    ) -> u16 {
+        self.relationship_attrs.get_or_create_attr_id(attr)
+    }
+
     pub fn import_relationship_attrs(
         &mut self,
         attrs: &FxHashMap<u64, OrderMap<Arc<String>, Value>>,
@@ -1213,20 +1326,20 @@ impl Graph {
         }
     }
 
-    pub fn set_nodes_labels(
+    /// Bulk set node labels using parallel row/col slices (2 FFI calls per matrix).
+    pub fn set_nodes_labels_bulk(
         &mut self,
-        nodes_labels: &mut Matrix,
+        label_rows: &[u64],
+        label_cols: &[u64],
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) {
         self.resize();
 
-        // Collect entries grouped by label for bulk set_all on per-label matrices
+        // Collect entries grouped by label for per-label matrices
         let num_labels = self.labels_matices.len();
         let mut by_label: Vec<Vec<u64>> = vec![Vec::new(); num_labels];
-        let mut nl_entries: Vec<(u64, u64)> = Vec::new();
 
-        for (id, label_id) in nodes_labels.iter(0, u64::MAX) {
-            nl_entries.push((id, label_id));
+        for (&id, &label_id) in label_rows.iter().zip(label_cols.iter()) {
             by_label[label_id as usize].push(id);
 
             let label = &self.node_labels[label_id as usize];
@@ -1235,23 +1348,25 @@ impl Graph {
             }
         }
 
-        self.node_labels_matrix.set_all(nl_entries.into_iter());
+        self.node_labels_matrix
+            .set_all(label_rows.iter().copied().zip(label_cols.iter().copied()));
 
         for (lid, ids) in by_label.into_iter().enumerate() {
             if !ids.is_empty() {
-                self.labels_matices[lid].set_all(ids.into_iter().map(|id| (id, id)));
+                self.labels_matices[lid].set_all(ids.iter().map(|&id| (id, id)));
             }
         }
     }
 
     pub fn remove_nodes_labels(
         &mut self,
-        nodes_labels: &mut Matrix,
+        label_rows: &[u64],
+        label_cols: &[u64],
         remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) {
         self.resize();
 
-        for (id, label_id) in nodes_labels.iter(0, u64::MAX) {
+        for (&id, &label_id) in label_rows.iter().zip(label_cols.iter()) {
             self.node_labels_matrix.remove(id, label_id);
             self.labels_matices[label_id as usize].remove(id, id);
             let label = &self.node_labels[label_id as usize];
@@ -1366,7 +1481,12 @@ impl Graph {
         };
         matrices
             .into_iter()
-            .flat_map(move |m| m.iter(id.0, id.0, false).chain(m.iter(id.0, id.0, true)))
+            .flat_map(move |m| {
+                m.iter(id.0, id.0, false).chain(
+                    m.iter(id.0, id.0, true)
+                        .filter(move |(src, _, _)| *src != id.0),
+                )
+            })
             .map(|(src, dest, id)| (NodeId(src), NodeId(dest), RelationshipId(id)))
     }
 
@@ -1510,6 +1630,22 @@ impl Graph {
         self.node_attrs.get_attr_by_idx(id.0, attr_idx)
     }
 
+    /// Batch variant of `get_node_attribute_by_idx`.
+    /// Pushes one `Value` per id into `out`, substituting `default` for
+    /// missing entries (so callers don't allocate a temp `Vec<Option<_>>`).
+    pub fn get_node_attributes_by_idx(
+        &self,
+        ids: &[NodeId],
+        attr_idx: u16,
+        default: &Value,
+        out: &mut Vec<Value>,
+    ) {
+        // SAFETY: NodeId is `#[repr(transparent)]` over u64.
+        let keys: &[u64] = unsafe { std::slice::from_raw_parts(ids.as_ptr().cast(), ids.len()) };
+        self.node_attrs
+            .get_attrs_by_idx_batch_into(keys, attr_idx, default, out);
+    }
+
     pub fn reserve_relationship(&mut self) -> RelationshipId {
         if self.reserved_relationship_count < self.deleted_relationships.len() {
             let id = self
@@ -1556,23 +1692,27 @@ impl Graph {
         ids
     }
 
-    pub fn create_relationships(
+    /// Create relationships of a single type using flat arrays.
+    /// Avoids HashMap overhead while using individual GraphBLAS set calls.
+    pub fn create_relationships_bulk(
         &mut self,
-        relationships: &FxHashMap<RelationshipId, PendingRelationship>,
+        type_name: &Arc<String>,
+        srcs: &[u64],
+        dsts: &[u64],
+        rel_ids: &[u64],
     ) {
-        self.relationship_count += relationships.len() as u64;
-        self.reserved_relationship_count -= relationships.len() as u64;
+        let count = srcs.len() as u64;
+        self.relationship_count += count;
+        self.reserved_relationship_count -= count;
 
-        for id in relationships.keys() {
+        for &id in rel_ids {
             if self.deleted_relationships.is_empty() {
                 break;
             }
-            self.deleted_relationships.remove(id.0);
+            self.deleted_relationships.remove(id);
         }
 
-        // Ensure capacity covers the highest relationship ID (effects replay
-        // may insert IDs above the current count when applied one-by-one).
-        if let Some(max_id) = relationships.keys().map(|id| id.0).max() {
+        if let Some(&max_id) = rel_ids.iter().max() {
             let needed = max_id + 1;
             if needed > self.relationship_cap {
                 while needed > self.relationship_cap {
@@ -1582,46 +1722,36 @@ impl Graph {
             }
         }
 
-        // Pre-resolve type names → (matrix index, type_id) ONCE.
-        let mut type_cache: FxHashMap<*const String, (usize, u64)> = FxHashMap::default();
-        for rel in relationships.values() {
-            let ptr = Arc::as_ptr(&rel.type_name);
-            if let std::collections::hash_map::Entry::Vacant(e) = type_cache.entry(ptr) {
-                // Ensure the type + matrix exist
-                self.get_relationship_matrix_mut(&rel.type_name);
-                let type_idx = self
-                    .relationship_types
-                    .iter()
-                    .position(|t| t.as_str() == rel.type_name.as_str())
-                    .unwrap();
-                e.insert((type_idx, type_idx as u64));
-            }
-        }
+        self.get_relationship_matrix_mut(type_name);
+        let type_idx = self
+            .relationship_types
+            .iter()
+            .position(|t| t.as_str() == type_name.as_str())
+            .unwrap();
 
         self.resize();
 
-        // Collect entries per-tensor, plus adjacency and type matrix entries
-        let mut by_tensor: FxHashMap<usize, Vec<(u64, u64, u64)>> = FxHashMap::default();
-        let mut adj_entries: Vec<(u64, u64)> = Vec::with_capacity(relationships.len());
-        let mut type_entries: Vec<(u64, u64)> = Vec::with_capacity(relationships.len());
+        self.relationship_matrices[type_idx].set_all_from_slices(srcs, dsts, rel_ids);
 
-        for (id, rel) in relationships {
-            let ptr = Arc::as_ptr(&rel.type_name);
-            let (matrix_idx, type_id) = type_cache[&ptr];
-            by_tensor
-                .entry(matrix_idx)
-                .or_default()
-                .push((rel.from.0, rel.to.0, id.0));
-            adj_entries.push((rel.from.0, rel.to.0));
-            type_entries.push((id.0, type_id));
-        }
+        self.adjacancy_matrix
+            .set_all(srcs.iter().copied().zip(dsts.iter().copied()));
 
-        for (matrix_idx, entries) in by_tensor {
-            self.relationship_matrices[matrix_idx].set_all(entries.into_iter());
-        }
-        self.adjacancy_matrix.set_all(adj_entries.into_iter());
+        let type_id = type_idx as u64;
+        let type_ids: Vec<u64> = vec![type_id; rel_ids.len()];
         self.relationship_type_matrix
-            .set_all(type_entries.into_iter());
+            .set_all(rel_ids.iter().copied().zip(type_ids.iter().copied()));
+    }
+
+    /// Flush delta-plus into base for all shared matrices.
+    /// Reduces dp accumulation across multiple GRAPH.BULK commands.
+    pub fn flush_for_bulk(&mut self) {
+        self.all_nodes_matrix.flush();
+        self.node_labels_matrix.flush();
+        for m in &mut self.labels_matices {
+            m.flush();
+        }
+        self.adjacancy_matrix.flush();
+        self.relationship_type_matrix.flush();
     }
 
     pub fn set_relationships_attributes(
@@ -1906,9 +2036,48 @@ impl Graph {
             .flat_map(|iter| iter.map(|(_, id)| RelationshipId(id)))
     }
 
+    /// Build a relationship matrix summing only the given types (no
+    /// source/destination label restriction). Returns `None` when `types` is
+    /// non-empty but none of the types exist in the schema (caller should
+    /// short-circuit to an empty result).
+    pub fn build_relationship_matrix_unrestricted(
+        &self,
+        types: &[Arc<String>],
+    ) -> Option<Matrix> {
+        let matrices = types
+            .iter()
+            .filter_map(|relationship_type| self.get_relationship_matrix(relationship_type))
+            .collect::<Vec<_>>();
+        if !types.is_empty() && matrices.is_empty() {
+            return None;
+        }
+        let mut iter = matrices.into_iter();
+        let mut m = iter.next().map_or_else(
+            || self.adjacancy_matrix.to_matrix(),
+            |t| t.matrix().to_matrix(),
+        );
+        for relationship_matrix in iter {
+            m.element_wise_add(
+                None,
+                None,
+                Some(&relationship_matrix.matrix().to_matrix()),
+                None,
+            );
+        }
+        Some(m)
+    }
+
+    /// Resolve a set of label names to ids. Returns `None` if any label is not
+    /// in the schema (which means no node could match).
+    pub fn resolve_label_ids(
+        &self,
+        labels: &OrderSet<Arc<String>>,
+    ) -> Option<Vec<LabelId>> {
+        labels.iter().map(|l| self.get_label_id(l)).collect()
+    }
+
     /// Build a relationship matrix combining the given types and filtering by
-    /// source/destination labels.  The returned matrix can be cached and reused
-    /// across multiple calls to [`iter_relationship_matrix`].
+    /// source/destination labels.
     pub fn build_relationship_matrix(
         &self,
         types: &[Arc<String>],
@@ -1979,20 +2148,6 @@ impl Graph {
             }
             m
         }
-    }
-
-    /// Iterate a prebuilt relationship matrix, optionally restricting to a
-    /// single source row (`from_id`) and/or a single destination column
-    /// (`to_id`).
-    pub fn iter_relationship_matrix(
-        m: &Matrix,
-        from_id: Option<NodeId>,
-        to_id: Option<NodeId>,
-    ) -> impl Iterator<Item = (NodeId, NodeId)> + use<> {
-        let (min_row, max_row) = from_id.map_or((0, u64::MAX), |id| (id.0, id.0));
-        m.iter(min_row, max_row)
-            .filter(move |(_, dest)| to_id.is_none() || to_id.unwrap().0 == *dest)
-            .map(|(src, dest)| (NodeId(src), NodeId(dest)))
     }
 
     /// Convenience wrapper: build the matrix and iterate it in one call.
@@ -2364,7 +2519,7 @@ impl Graph {
             // — skipped below.
             let mut pending: FxHashSet<u64> = ids.iter().collect();
             let mut endpoints: FxHashMap<u64, (u64, u64)> =
-                FxHashMap::with_capacity_and_hasher(ids.len() as usize, Default::default());
+                FxHashMap::with_capacity_and_hasher(ids.len() as usize, FxBuildHasher);
             if let Some(t) = self.relationship_matrices.get(type_id as usize) {
                 for (src, dst, eid) in t.iter(0, u64::MAX, false) {
                     if pending.remove(&eid) {
@@ -2466,6 +2621,13 @@ impl Graph {
         label: &Arc<String>,
         attrs: &Vec<Arc<String>>,
     ) -> Result<usize, String> {
+        // Check if any UNIQUE constraint depends on this index
+        for attr in attrs {
+            if self.constraint_depends_on_index(entity_type, label, attr, index_type) {
+                return Err("Index supports constraint".to_string());
+            }
+        }
+
         let (indexer, total, kind) = match entity_type {
             EntityType::Node => {
                 let total = self
@@ -2476,7 +2638,7 @@ impl Graph {
             EntityType::Relationship => {
                 let total = self
                     .get_relationship_matrix(label)
-                    .map_or(0, |t| t.edge_count());
+                    .map_or(0, Tensor::edge_count);
                 (&mut self.edge_indexer, total, IndexKind::Edge)
             }
         };
@@ -2555,14 +2717,13 @@ impl Graph {
         &self,
         label: &Arc<String>,
     ) -> Vec<(NodeId, NodeId, RelationshipId)> {
-        if let Some(tensor) = self.get_relationship_matrix(label) {
-            tensor
-                .iter(0, u64::MAX, false)
-                .map(|(src, dst, eid)| (NodeId(src), NodeId(dst), RelationshipId(eid)))
-                .collect()
-        } else {
-            vec![]
-        }
+        self.get_relationship_matrix(label)
+            .map_or_else(std::vec::Vec::new, |tensor| {
+                tensor
+                    .iter(0, u64::MAX, false)
+                    .map(|(src, dst, eid)| (NodeId(src), NodeId(dst), RelationshipId(eid)))
+                    .collect()
+            })
     }
 
     pub fn fulltext_query_nodes(
@@ -2573,6 +2734,117 @@ impl Graph {
         self.node_indexer
             .fulltext_query(label, query)
             .map(|r| r.map(|(id, score)| (NodeId(id), score)))
+    }
+
+    /// Execute a fulltext query against an *edge* index, yielding
+    /// `(src, dst, edge_id, score)` tuples. Mirrors
+    /// [`fulltext_query_nodes`] but goes through the `edge_indexer`
+    /// and reads the 24-byte edge-index key produced by
+    /// `Document::new_edge`.
+    pub fn fulltext_query_edges(
+        &self,
+        label: &Arc<String>,
+        query: &str,
+    ) -> Result<impl Iterator<Item = (NodeId, NodeId, RelationshipId, f64)> + use<>, String> {
+        self.edge_indexer
+            .fulltext_query_edges(label, query)
+            .map(|r| {
+                r.map(|(src, dst, eid, score)| {
+                    (NodeId(src), NodeId(dst), RelationshipId(eid), score)
+                })
+            })
+    }
+
+    /// Execute a KNN vector query against a node label's index,
+    /// yielding `(NodeId, distance)` pairs ordered by ascending
+    /// distance.
+    ///
+    /// Distances are computed manually from the query vector and each
+    /// entity's stored vector — RediSearch's per-result score is *not*
+    /// the KNN distance, and reading it returns 0. For each result we
+    /// look up the entity's vector property and apply the index's
+    /// similarity function. Results are eagerly materialized into a
+    /// `Vec` so the caller can drop the graph borrow before iterating.
+    pub fn vector_query_nodes(
+        &self,
+        label: &Arc<String>,
+        field: &str,
+        vector: Arc<thin_vec::ThinVec<f32>>,
+        k: usize,
+    ) -> Result<impl Iterator<Item = (NodeId, f64)> + use<>, String> {
+        let attr = Arc::new(field.to_string());
+        if let Some(expected) = self.node_indexer.get_vector_dimension(label, &attr)
+            && expected as usize != vector.len()
+        {
+            return Err(format!(
+                "Vector dimension mismatch, expected {expected} but got {}",
+                vector.len()
+            ));
+        }
+        let metric = self.node_indexer.get_vector_metric(label, &attr);
+        let query_vec = Arc::clone(&vector);
+        let raw_iter = self.node_indexer.vector_query(label, field, vector, k)?;
+
+        let mut out: Vec<(NodeId, f64)> = Vec::new();
+        for (id, _score) in raw_iter {
+            let node_id = NodeId(id);
+            let Some(Value::VecF32(entity_vec)) = self.get_node_attribute(node_id, &attr) else {
+                continue;
+            };
+            if let Some(d) = vec_distance::distance(metric.as_deref(), &query_vec, &entity_vec) {
+                out.push((node_id, d));
+            }
+        }
+        // HNSW returns rows in (approximate) score order, but the
+        // distance we recompute here may diverge slightly from
+        // VecSim's internal ranking (different precision, different
+        // reduction order). Sort by the value we actually expose so
+        // the documented ascending-distance contract holds.
+        out.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        Ok(out.into_iter())
+    }
+
+    /// Execute a KNN vector query against an *edge* index, yielding
+    /// `(src, dst, edge_id, distance)` tuples. Distances are computed
+    /// from the query vector and each edge's stored vector — see
+    /// [`vector_query_nodes`] for why.
+    pub fn vector_query_edges(
+        &self,
+        label: &Arc<String>,
+        field: &str,
+        vector: Arc<thin_vec::ThinVec<f32>>,
+        k: usize,
+    ) -> Result<impl Iterator<Item = (NodeId, NodeId, RelationshipId, f64)> + use<>, String> {
+        let attr = Arc::new(field.to_string());
+        if let Some(expected) = self.edge_indexer.get_vector_dimension(label, &attr)
+            && expected as usize != vector.len()
+        {
+            return Err(format!(
+                "Vector dimension mismatch, expected {expected} but got {}",
+                vector.len()
+            ));
+        }
+        let metric = self.edge_indexer.get_vector_metric(label, &attr);
+        let query_vec = Arc::clone(&vector);
+        let raw_iter = self
+            .edge_indexer
+            .vector_query_edges(label, field, vector, k)?;
+
+        let mut out: Vec<(NodeId, NodeId, RelationshipId, f64)> = Vec::new();
+        for (src, dst, eid, _score) in raw_iter {
+            let edge_id = RelationshipId(eid);
+            let Some(Value::VecF32(entity_vec)) = self.get_relationship_attribute(edge_id, &attr)
+            else {
+                continue;
+            };
+            if let Some(d) = vec_distance::distance(metric.as_deref(), &query_vec, &entity_vec) {
+                out.push((NodeId(src), NodeId(dst), edge_id, d));
+            }
+        }
+        // See `vector_query_nodes` for why we sort by recomputed
+        // distance instead of trusting the upstream HNSW order.
+        out.sort_by(|a, b| a.3.partial_cmp(&b.3).unwrap_or(std::cmp::Ordering::Equal));
+        Ok(out.into_iter())
     }
 
     #[must_use]
@@ -2587,6 +2859,283 @@ impl Graph {
         }
         infos.extend(edge_infos);
         infos
+    }
+
+    // ── Constraint management ─────────────────────────────────────────
+
+    pub fn constraints(&self) -> &[Constraint] {
+        &self.constraints
+    }
+
+    pub fn constraints_mut(&mut self) -> &mut Vec<Constraint> {
+        &mut self.constraints
+    }
+
+    /// Create a constraint with validation of existing data.
+    pub fn create_constraint(
+        &mut self,
+        ct: ConstraintType,
+        entity_type: EntityType,
+        label: Arc<String>,
+        properties: Vec<Arc<String>>,
+    ) -> Result<bool, String> {
+        if ct == ConstraintType::Unique {
+            if !self.has_supporting_index(&entity_type, &label, &properties) {
+                return Err("missing supporting exact-match index".into());
+            }
+        }
+
+        // Check for duplicates
+        let existing_idx = self
+            .constraints
+            .iter()
+            .position(|c| c.matches(&ct, &entity_type, &label, &properties));
+        if let Some(idx) = existing_idx {
+            if self.constraints[idx].status == ConstraintStatus::Failed {
+                // Remove the failed constraint so it can be recreated
+                self.constraints.remove(idx);
+            } else {
+                return Err("Constraint already exists".into());
+            }
+        }
+
+        let mut constraint = Constraint::new(ct, entity_type, label, properties);
+
+        // Get entity count to decide sync vs async validation
+        let count = self.get_constraint_entity_count(&constraint);
+
+        if count <= 10_000 {
+            // Synchronous validation for small datasets
+            if self.validate_constraint(&constraint) {
+                constraint.status = ConstraintStatus::Operational;
+            } else {
+                constraint.status = ConstraintStatus::Failed;
+            }
+            self.constraints.push(constraint);
+            Ok(false) // no async validation needed
+        } else {
+            // Large dataset: mark under construction, caller spawns background validation
+            constraint.status = ConstraintStatus::UnderConstruction;
+            self.constraints.push(constraint);
+            Ok(true) // async validation needed
+        }
+    }
+
+    /// Add a constraint directly (for replication/restore). No validation.
+    pub fn add_constraint_raw(
+        &mut self,
+        constraint: Constraint,
+    ) {
+        self.constraints.push(constraint);
+    }
+
+    fn get_constraint_entity_count(
+        &self,
+        constraint: &Constraint,
+    ) -> u64 {
+        match constraint.entity_type {
+            EntityType::Node => self.label_node_count(&constraint.label),
+            EntityType::Relationship => self
+                .get_relationship_matrix(&constraint.label)
+                .map_or(0, |t| t.edge_count()),
+        }
+    }
+
+    fn validate_constraint(
+        &self,
+        constraint: &Constraint,
+    ) -> bool {
+        match constraint.ct {
+            ConstraintType::Mandatory => self.validate_mandatory_constraint(constraint),
+            ConstraintType::Unique => self.validate_unique_constraint(constraint),
+        }
+    }
+
+    /// Validate all constraints currently under construction and update their status.
+    pub fn validate_pending_constraints(&mut self) {
+        // Collect indices of pending constraints to avoid borrow conflicts
+        let pending_indices: Vec<usize> = self
+            .constraints
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.status == ConstraintStatus::UnderConstruction)
+            .map(|(i, _)| i)
+            .collect();
+
+        for i in pending_indices {
+            let valid = self.validate_constraint(&self.constraints[i].clone());
+            self.constraints[i].status = if valid {
+                ConstraintStatus::Operational
+            } else {
+                ConstraintStatus::Failed
+            };
+        }
+    }
+
+    fn validate_mandatory_constraint(
+        &self,
+        constraint: &Constraint,
+    ) -> bool {
+        match constraint.entity_type {
+            EntityType::Node => {
+                let Some(lm) = self.get_label_matrix(&constraint.label) else {
+                    return true;
+                };
+                for (node_id, _) in lm.iter(0, u64::MAX) {
+                    let attrs = self.get_node_all_attrs(NodeId(node_id));
+                    for prop in &constraint.properties {
+                        if !attrs
+                            .iter()
+                            .any(|(name, val)| name == prop && !matches!(val, Value::Null))
+                        {
+                            return false;
+                        }
+                    }
+                }
+                true
+            }
+            EntityType::Relationship => {
+                let Some(tensor) = self.get_relationship_matrix(&constraint.label) else {
+                    return true;
+                };
+                for (_, _, edge_id) in tensor.iter(0, u64::MAX, false) {
+                    let attrs = self.get_relationship_all_attrs(RelationshipId(edge_id));
+                    for prop in &constraint.properties {
+                        if !attrs
+                            .iter()
+                            .any(|(name, val)| name == prop && !matches!(val, Value::Null))
+                        {
+                            return false;
+                        }
+                    }
+                }
+                true
+            }
+        }
+    }
+
+    fn validate_unique_constraint(
+        &self,
+        constraint: &Constraint,
+    ) -> bool {
+        match constraint.entity_type {
+            EntityType::Node => {
+                let Some(lm) = self.get_label_matrix(&constraint.label) else {
+                    return true;
+                };
+                let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
+                for (node_id, _) in lm.iter(0, u64::MAX) {
+                    let attrs = self.get_node_all_attrs(NodeId(node_id));
+                    let key = Self::build_composite_key(&constraint.properties, &attrs);
+                    if key.is_empty() {
+                        continue; // All NULL → skip
+                    }
+                    if !seen.insert(key) {
+                        return false;
+                    }
+                }
+                true
+            }
+            EntityType::Relationship => {
+                let Some(tensor) = self.get_relationship_matrix(&constraint.label) else {
+                    return true;
+                };
+                let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
+                for (_, _, edge_id) in tensor.iter(0, u64::MAX, false) {
+                    let attrs = self.get_relationship_all_attrs(RelationshipId(edge_id));
+                    let key = Self::build_composite_key(&constraint.properties, &attrs);
+                    if key.is_empty() {
+                        continue;
+                    }
+                    if !seen.insert(key) {
+                        return false;
+                    }
+                }
+                true
+            }
+        }
+    }
+
+    pub fn build_composite_key(
+        properties: &[Arc<String>],
+        attrs: &[(Arc<String>, Value)],
+    ) -> Vec<u8> {
+        let mut all_null = true;
+        let mut key = Vec::new();
+        for prop in properties {
+            let value = attrs.iter().find(|(name, _)| name == prop).map(|(_, v)| v);
+            match value {
+                Some(v) if !matches!(v, Value::Null) => {
+                    all_null = false;
+                    key.extend_from_slice(format!("{v:?}").as_bytes());
+                }
+                _ => {
+                    key.push(0); // NULL marker
+                }
+            }
+            key.push(b'|');
+        }
+        if all_null { Vec::new() } else { key }
+    }
+
+    /// Drop a constraint by type, entity type, label and properties.
+    pub fn drop_constraint(
+        &mut self,
+        ct: &ConstraintType,
+        entity_type: &EntityType,
+        label: &str,
+        properties: &[Arc<String>],
+    ) -> Result<(), String> {
+        let idx = self
+            .constraints
+            .iter()
+            .position(|c| c.matches(ct, entity_type, label, properties));
+        match idx {
+            Some(i) => {
+                self.constraints.swap_remove(i);
+                Ok(())
+            }
+            None => Err("Unable to drop constraint, no such constraint.".into()),
+        }
+    }
+
+    /// Check if a unique constraint for the given label and properties has
+    /// a supporting exact-match index for each property.
+    pub fn has_supporting_index(
+        &self,
+        entity_type: &EntityType,
+        label: &Arc<String>,
+        properties: &[Arc<String>],
+    ) -> bool {
+        let indexer = match entity_type {
+            EntityType::Node => &self.node_indexer,
+            EntityType::Relationship => &self.edge_indexer,
+        };
+        // Check if the index exists (regardless of operational status)
+        // since index population may still be in progress
+        properties
+            .iter()
+            .all(|prop| indexer.has_field_for_label(label, prop, &IndexType::Range))
+    }
+
+    /// Check if any UNIQUE constraint depends on an index for the given label and attribute.
+    pub fn constraint_depends_on_index(
+        &self,
+        entity_type: &EntityType,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+        index_type: &IndexType,
+    ) -> bool {
+        // Only Range indexes support UNIQUE constraints
+        if *index_type != IndexType::Range {
+            return false;
+        }
+        self.constraints.iter().any(|c| {
+            c.ct == ConstraintType::Unique
+                && c.entity_type == *entity_type
+                && c.label.as_str() == label.as_str()
+                && c.properties.iter().any(|p| p.as_str() == attr.as_str())
+        })
     }
 
     pub fn cancel_indexing(&self) {
@@ -2710,11 +3259,11 @@ impl Graph {
 
         // --- node block storage ---
         let node_block_storage_sz: usize =
-            self.node_attrs.memory_usage() + self.deleted_nodes.serialized_size();
+            self.node_attrs.structural_memory_usage() + self.deleted_nodes.serialized_size();
 
         // --- edge block storage ---
-        let edge_block_storage_sz: usize =
-            self.relationship_attrs.memory_usage() + self.deleted_relationships.serialized_size();
+        let edge_block_storage_sz: usize = self.relationship_attrs.structural_memory_usage()
+            + self.deleted_relationships.serialized_size();
 
         // --- node attributes by label (sampling) ---
         let mut node_attr_by_label: Vec<(Arc<String>, usize)> = Vec::new();

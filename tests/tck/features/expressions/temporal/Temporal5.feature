@@ -30,7 +30,6 @@
 
 Feature: Temporal5 - Access Components of Temporal Values
 
-  @skip
   Scenario: [1] Should provide accessors for date
     Given an empty graph
     And having executed:
@@ -48,7 +47,6 @@ Feature: Temporal5 - Access Components of Temporal Values
       | 1984   | 4         | 10      | 41     | 1984       | 11    | 285          | 4         | 11             |
     And no side effects
 
-  @skip
   Scenario: [2] Should provide accessors for date in last weekYear
     Given an empty graph
     And having executed:

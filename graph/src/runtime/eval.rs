@@ -235,15 +235,17 @@ impl<'a> ExprEval<'a> {
             _ => {}
         }
 
-        // Stack-based iterative evaluation.
-        let mut res: Vec<Value> = self.pool.map_or_else(Vec::new, |pool| {
-            let mut p = pool.acquire(0);
-            p.clear();
-            // Move the Vec out so we can work with it directly.
-            // We lose pool recycling for sub-evals but that's acceptable;
-            // the top-level call from Runtime still acquires from pool.
-            std::mem::take(&mut *p)
-        });
+        // Stack-based iterative evaluation. When a pool is available, use a
+        // Pooled handle so early-return paths (errors, breaks) recycle the
+        // buffer via Pooled's Drop. Constant-only eval has no pool — fall
+        // back to a heap Vec.
+        let mut res_pooled = self.pool.map(|pool| pool.acquire(0));
+        let mut res_owned: Vec<Value> = Vec::new();
+        let res: &mut Vec<Value> = match res_pooled.as_mut() {
+            Some(p) => &mut *p,
+            None => &mut res_owned,
+        };
+        res.clear();
 
         let mut stack = thin_vec![(idx, false)];
         while let Some((idx, reenter)) = stack.pop() {

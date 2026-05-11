@@ -108,6 +108,14 @@ fn validate_config_set(
             }
             Ok(ConfigValue::Int(v))
         }
+        "ASYNC_DELETE" => {
+            let v = match value.to_lowercase().as_str() {
+                "yes" | "1" | "true" => 1i64,
+                "no" | "0" | "false" => 0i64,
+                _ => return Err(format!("Failed to set config value {name} to {value}")),
+            };
+            Ok(ConfigValue::Int(v))
+        }
         "RESULTSET_SIZE" => {
             let v: i64 = value
                 .parse()
@@ -145,7 +153,6 @@ fn validate_config_set(
         "THREAD_COUNT"
         | "OMP_THREAD_COUNT"
         | "CACHE_SIZE"
-        | "ASYNC_DELETE"
         | "NODE_CREATION_BUFFER"
         | "CMD_INFO"
         | "MAX_INFO_QUERIES"
@@ -157,6 +164,47 @@ fn validate_config_set(
         }
         _ => Err(format!("Unknown configuration field '{name}'")),
     }
+}
+
+/// Cross-validate timeout configuration constraints.
+///
+/// Rules:
+/// - Cannot set deprecated TIMEOUT when TIMEOUT_DEFAULT or TIMEOUT_MAX are active
+/// - TIMEOUT_DEFAULT cannot exceed TIMEOUT_MAX (when TIMEOUT_MAX > 0)
+/// - TIMEOUT_MAX cannot be lower than TIMEOUT_DEFAULT (when TIMEOUT_DEFAULT > 0)
+fn validate_timeout_cross_constraints(validated: &[(&str, ConfigValue)]) -> Result<(), String> {
+    // Compute what the new values will be after applying.
+    let mut new_timeout_default = TIMEOUT_DEFAULT.load(Ordering::Relaxed);
+    let mut new_timeout_max = TIMEOUT_MAX.load(Ordering::Relaxed);
+
+    let mut setting_timeout = false;
+    for (name, val) in validated {
+        match *name {
+            "TIMEOUT" => {
+                setting_timeout = true;
+            }
+            "TIMEOUT_DEFAULT" => new_timeout_default = val.as_i64(),
+            "TIMEOUT_MAX" => new_timeout_max = val.as_i64(),
+            _ => {}
+        }
+    }
+
+    // Cannot set deprecated TIMEOUT when new configs are active
+    if setting_timeout && (new_timeout_default > 0 || new_timeout_max > 0) {
+        return Err("The TIMEOUT configuration parameter is deprecated. Please set TIMEOUT_MAX and TIMEOUT_DEFAULT instead".to_string());
+    }
+
+    // TIMEOUT_DEFAULT cannot exceed TIMEOUT_MAX (when TIMEOUT_MAX > 0)
+    if new_timeout_default > 0 && new_timeout_max > 0 && new_timeout_default > new_timeout_max {
+        // Determine which one is being set to produce the right error message
+        let setting_default = validated.iter().any(|(n, _)| *n == "TIMEOUT_DEFAULT");
+        if setting_default {
+            return Err("TIMEOUT_DEFAULT configuration parameter cannot be set to a value higher than TIMEOUT_MAX".to_string());
+        }
+        return Err("TIMEOUT_MAX configuration parameter cannot be set to a value lower than TIMEOUT_DEFAULT".to_string());
+    }
+
+    Ok(())
 }
 
 enum ConfigValue {
@@ -181,6 +229,7 @@ fn apply_config_set(
             DELTA_MAX_PENDING_CHANGES.store(val.as_i64(), Ordering::Relaxed);
         }
         "EFFECTS_THRESHOLD" => EFFECTS_THRESHOLD.store(val.as_i64(), Ordering::Relaxed),
+        "ASYNC_DELETE" => ASYNC_DELETE.store(val.as_i64(), Ordering::Relaxed),
         "VKEY_MAX_ENTITY_COUNT" => {
             *CONFIGURATION_VKEY_MAX_ENTITY_COUNT.lock(ctx) = val.as_i64();
         }
@@ -261,6 +310,10 @@ pub fn graph_config(
                     validate_config_set(name, value).map_err(redis_module::RedisError::String)?;
                 validated.push((name.as_str(), v));
             }
+
+            // Cross-validate timeout configuration constraints.
+            validate_timeout_cross_constraints(&validated)
+                .map_err(redis_module::RedisError::String)?;
 
             // Apply all validated values.
             let mut js_config_changed = false;

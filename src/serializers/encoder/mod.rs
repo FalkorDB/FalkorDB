@@ -1,5 +1,5 @@
 use graph::graph::graph::{Graph, RdbSnapshots};
-use graph::graph::graphblas::serialization::{Encode, EncodeState, PayloadEntry};
+use graph::graph::graphblas::serialization::{Encode, EncodeState, PayloadEntry, Writer};
 use redis_module::RedisModuleIO;
 
 use super::buffered_io::BufferedWriter;
@@ -26,29 +26,62 @@ pub fn rdb_save_graph_key(
     snapshots: Option<&RdbSnapshots>,
 ) {
     let mut w = BufferedWriter::new(rdb);
-
-    // Compute global attrs once — reused by Schema and all payload encodes.
     let global_attrs = graph.build_global_attrs();
+    encode_graph(&mut w, graph, payloads, key_count, &global_attrs, snapshots);
+    w.finish();
+}
 
-    // --- Header ---
-    Header::from_graph(graph, key_count).encode(&mut w);
+/// Encode a full graph into a pipe fd (for GRAPH.COPY fork+pipe).
+///
+/// Uses the same v19 format as RDB, with `PipeWriter` instead of `BufferedWriter`.
+pub fn pipe_save_graph(
+    fd: std::os::unix::io::OwnedFd,
+    graph: &Graph,
+    snapshots: Option<&RdbSnapshots>,
+) {
+    let payloads = build_payloads(graph);
+    let mut w = super::buffered_io::PipeWriter::new(fd);
+    let global_attrs = graph.build_global_attrs();
+    encode_graph(&mut w, graph, &payloads, 1, &global_attrs, snapshots);
+    w.finish();
+}
 
-    // --- Schema (inline in header) ---
-    Schema::from_graph(graph, global_attrs.clone()).encode(&mut w);
+/// Encode a full graph into a `Vec<u8>` (for GRAPH.RESTORE replication).
+///
+/// Uses the same v19 format as RDB, with `VecWriter` instead of `BufferedWriter`.
+/// The returned bytes can be decoded with `BufferedReader::from_vec()`.
+pub fn vec_save_graph(
+    graph: &Graph,
+    snapshots: Option<&RdbSnapshots>,
+) -> Vec<u8> {
+    let payloads = build_payloads(graph);
+    let mut w = super::buffered_io::VecWriter::new();
+    let global_attrs = graph.build_global_attrs();
+    encode_graph(&mut w, graph, &payloads, 1, &global_attrs, snapshots);
+    w.into_vec()
+}
 
-    // --- Key Schema (payload directory) ---
+/// Shared encoding logic: header, schema, payload directory, payload data.
+fn encode_graph(
+    w: &mut dyn Writer,
+    graph: &Graph,
+    payloads: &[PayloadEntry],
+    key_count: u64,
+    global_attrs: &[std::sync::Arc<String>],
+    snapshots: Option<&RdbSnapshots>,
+) {
+    Header::from_graph(graph, key_count).encode(w);
+    Schema::from_graph(graph, global_attrs.to_vec()).encode(w);
+
     w.write_unsigned(payloads.len() as u64);
     for p in payloads {
         w.write_unsigned(p.state as u64);
         w.write_unsigned(p.count);
     }
 
-    // --- Payload data ---
     for p in payloads {
-        graph.encode_payload(&mut w, p, &global_attrs, snapshots);
+        graph.encode_payload(w, p, global_attrs, snapshots);
     }
-
-    w.finish();
 }
 
 /// Build per-key payload distributions for multi-key encoding.

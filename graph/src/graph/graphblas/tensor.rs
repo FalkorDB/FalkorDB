@@ -78,12 +78,13 @@ pub const GrB_INDEX_MAX: u64 = (1u64 << 60) - 1;
 /// `debug_assert!`) because silent truncation would corrupt the key and
 /// conflate edges between different node pairs.
 #[inline]
-fn compound_key(
+#[must_use]
+pub fn compound_key(
     src: u64,
     dst: u64,
 ) -> u64 {
     assert!(
-        src <= u64::from(u32::MAX) && dst <= u64::from(u32::MAX),
+        u32::try_from(src).is_ok() && u32::try_from(dst).is_ok(),
         "Tensor compound key overflow: src={src}, dst={dst} (each must fit in u32)",
     );
     (src << 32) | dst
@@ -137,22 +138,28 @@ impl Tensor {
         self.me.set(compound_key(src, dest), id, true);
     }
 
-    /// Set multiple entries, checking dm emptiness once per sub-matrix.
-    pub fn set_all(
+    /// Set entries from parallel slices, updating all three sub-matrices.
+    pub fn set_all_from_slices(
         &mut self,
-        entries: impl Iterator<Item = (u64, u64, u64)>,
+        srcs: &[u64],
+        dsts: &[u64],
+        ids: &[u64],
     ) {
-        // Collect entries since we need to iterate 3 times (once per sub-matrix)
-        let entries: Vec<_> = entries.collect();
+        debug_assert_eq!(srcs.len(), dsts.len());
+        debug_assert_eq!(srcs.len(), ids.len());
+        if srcs.is_empty() {
+            return;
+        }
         self.m
-            .set_all(entries.iter().map(|&(src, dst, _)| (src, dst)));
+            .set_all(srcs.iter().copied().zip(dsts.iter().copied()));
         self.mt
-            .set_all(entries.iter().map(|&(src, dst, _)| (dst, src)));
-        self.me.set_all(
-            entries
-                .iter()
-                .map(|&(src, dst, id)| (compound_key(src, dst), id)),
-        );
+            .set_all(dsts.iter().copied().zip(srcs.iter().copied()));
+        let compound_iter = srcs
+            .iter()
+            .zip(dsts.iter())
+            .zip(ids.iter())
+            .map(|((&s, &d), &id)| (compound_key(s, d), id));
+        self.me.set_all(compound_iter);
     }
 
     /// Bulk-remove specific edges from this tensor.
@@ -252,6 +259,19 @@ impl Tensor {
     #[must_use]
     pub const fn matrix(&self) -> &VersionedMatrix {
         &self.m
+    }
+
+    /// Iterate the edge-id matrix (`me`) keyed by `compound_key(src, dst)`.
+    /// Hot-loop callers build a persistent iterator and `seek` to a specific
+    /// (src, dst) per row, avoiding the per-pair iterator allocation that
+    /// `get(src, dst)` does.
+    #[must_use]
+    pub fn edge_iter(
+        &self,
+        min_row: u64,
+        max_row: u64,
+    ) -> versioned_matrix::Iter {
+        self.me.iter(min_row, max_row)
     }
 
     /// Total number of edges (including multi-edges between the same node pair).

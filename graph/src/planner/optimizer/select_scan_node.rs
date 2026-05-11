@@ -65,7 +65,7 @@ use crate::{
     tree,
 };
 
-use super::super::{IR, inline_node_attrs_to_filter};
+use super::super::{IR, inline_attrs_to_filter};
 
 /// Scores a candidate scan endpoint for the scan node selection optimizer.
 ///
@@ -141,11 +141,11 @@ fn collect_filtered_vars(
 /// Creates a scan subtree for the given node, with an optional inline attr filter.
 /// Returns a `DynTree<IR>` containing `[Filter →] NodeByLabelScan|AllNodeScan`.
 fn make_scan_subtree(node: &Arc<QueryNode<Arc<String>, Variable>>) -> DynTree<IR> {
-    let (clean_node, attr_filter) = inline_node_attrs_to_filter(node);
-    let mut scan = if clean_node.labels.is_empty() {
-        DynTree::new(IR::AllNodeScan(clean_node))
+    let attr_filter = inline_attrs_to_filter(&node.alias, &node.attrs);
+    let mut scan = if node.labels.is_empty() {
+        DynTree::new(IR::AllNodeScan(node.clone()))
     } else {
-        DynTree::new(IR::NodeByLabelScan(clean_node))
+        DynTree::new(IR::NodeByLabelScan { node: node.clone() })
     };
     if let Some(filter_expr) = attr_filter {
         scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
@@ -178,7 +178,7 @@ fn swap_relationship(
 fn collect_output_aliases(ir: &IR) -> HashSet<u32> {
     let mut aliases = HashSet::new();
     match ir {
-        IR::AllNodeScan(n) | IR::NodeByLabelScan(n) => {
+        IR::AllNodeScan(n) | IR::NodeByLabelScan { node: n, .. } => {
             aliases.insert(n.alias.id);
         }
         IR::NodeByIndexScan { node, .. }
@@ -264,7 +264,10 @@ pub(super) fn select_scan_node(
             let child_data = optimized_plan.node(bottom_idx).child(0).data().clone();
             matches!(
                 child_data,
-                IR::AllNodeScan(_) | IR::NodeByLabelScan(_) | IR::Filter(_)
+                IR::AllNodeScan(_)
+                    | IR::NodeByLabelScan { .. }
+                    | IR::IncludePending { .. }
+                    | IR::Filter(_)
             )
         };
         // Treat CTs with planner-added scans like leaf CTs for scan selection.
@@ -313,7 +316,7 @@ pub(super) fn select_scan_node(
             let child_data = optimized_plan.node(child_idx).data();
             match child_data {
                 IR::AllNodeScan(_)
-                | IR::NodeByLabelScan(_)
+                | IR::NodeByLabelScan { .. }
                 | IR::NodeByIndexScan { .. }
                 | IR::NodeByLabelAndIdScan { .. }
                 | IR::Filter(_) => HashSet::new(),
@@ -371,8 +374,11 @@ pub(super) fn select_scan_node(
             true
         };
 
-        if need_swap && chain.len() == 1 {
-            // Simple case: single CondTraverse, swap from/to.
+        if need_swap && (chain.len() == 1 || best_pos == 0) {
+            // Best endpoint is the `to` of the bottom CT.  Swap the bottom
+            // CT only — upper CTs in the chain remain unchanged because the
+            // shared node (best_node) is still produced into env by the
+            // transposed bottom CT and consumed by the next CT's `from`.
             let ct_idx = chain[0];
             if let IR::CondTraverse {
                 relationship,
@@ -394,7 +400,7 @@ pub(super) fn select_scan_node(
                 } else {
                     matches!(
                         optimized_plan.node(ct_idx).child(0).data(),
-                        IR::AllNodeScan(_) | IR::NodeByLabelScan(_) | IR::Filter(_)
+                        IR::AllNodeScan(_) | IR::NodeByLabelScan { .. } | IR::Filter(_)
                     )
                 };
 
@@ -422,8 +428,7 @@ pub(super) fn select_scan_node(
                 // else: child is from outer context, keep it.
             }
         } else if need_swap && chain.len() > 1 {
-            // Chain reversal: reverse the order of CondTraverse nodes and
-            // swap from/to on each.
+            // Best is at a parent CT (best_pos > 0). Reverse the chain.
 
             // Collect relationship data from each CT in the chain (bottom to root).
             let mut rels: Vec<(
@@ -480,7 +485,7 @@ pub(super) fn select_scan_node(
                 let child_idx = optimized_plan.node(bottom_idx).child(0).idx();
                 let child_is_planner_scan = matches!(
                     optimized_plan.node(child_idx).data(),
-                    IR::AllNodeScan(_) | IR::NodeByLabelScan(_) | IR::Filter(_)
+                    IR::AllNodeScan(_) | IR::NodeByLabelScan { .. } | IR::Filter(_)
                 );
                 if child_is_planner_scan {
                     None // Will create a new scan for best_node instead

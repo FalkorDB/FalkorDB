@@ -254,6 +254,11 @@ impl<'a> Parser<'a> {
             let vector = !fulltext && optional_match_token!(self.lexer => Vector);
             let index = optional_match_token!(self.lexer => Index);
             if !index {
+                if self.lexer.current_str().eq_ignore_ascii_case("constraint") {
+                    return Err(self.lexer.format_error(
+                        "Invalid constraint command use the GRAPH.CONSTRAINT command instead",
+                    ));
+                }
                 return Ok(None);
             }
             if !fulltext && !vector && optional_match_token!(self.lexer => On) {
@@ -344,6 +349,11 @@ impl<'a> Parser<'a> {
             let vector = !fulltext && optional_match_token!(self.lexer => Vector);
             let index = optional_match_token!(self.lexer => Index);
             if !index {
+                if self.lexer.current_str().eq_ignore_ascii_case("constraint") {
+                    return Err(self.lexer.format_error(
+                        "Invalid constraint command use the GRAPH.CONSTRAINT command instead",
+                    ));
+                }
                 return Ok(None);
             }
             if !fulltext && !vector && optional_match_token!(self.lexer => On) {
@@ -710,14 +720,17 @@ impl<'a> Parser<'a> {
         }
 
         // CALL procedure() — existing procedure call parsing
+        // Parentheses are optional: `CALL db.labels` is equivalent to `CALL db.labels()`.
         let function_name = self.parse_dotted_ident()?;
         let func = get_functions().get(function_name.as_str(), &FnType::Procedure(vec![]))?;
-        match_token!(self.lexer, LParen);
-        let args: Vec<Arc<_>> = self
-            .parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen), false)?
-            .into_iter()
-            .map(Arc::new)
-            .collect();
+        let args: Vec<Arc<_>> = if optional_match_token!(self.lexer, LParen) {
+            self.parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen), false)?
+                .into_iter()
+                .map(Arc::new)
+                .collect()
+        } else {
+            vec![]
+        };
         func.validate(args.len())
             .map_err(|e| e.replace("function", "procedure"))?;
         let mut named_outputs = vec![];
@@ -1652,6 +1665,7 @@ impl<'a> Parser<'a> {
                                 &FnType::Aggregation {
                                     initial: Value::Null,
                                     finalizer: None,
+                                    batch_agg: None,
                                 },
                             )
                         })?;
@@ -2542,6 +2556,20 @@ impl<'a> Parser<'a> {
                 }
             } else {
                 None
+            };
+            if let Some((min, Some(max))) = var_len
+                && min > max
+            {
+                return Err(self.lexer.format_error(
+                    "Variable length path, maximum number of hops must be greater or equal to minimum number of hops.",
+                ));
+            }
+            // Collapse [*1..1] / [*1] to a fixed single-hop edge so the
+            // binding is a single Relationship value, matching FalkorDB.
+            let var_len = if var_len == Some((1, Some(1))) {
+                None
+            } else {
+                var_len
             };
             if var_len.is_some() && matches!(clause, Keyword::Create | Keyword::Merge) {
                 let clause_name = if *clause == Keyword::Create {

@@ -49,11 +49,12 @@ use crate::{
         env::Env,
         ops::{
             AggregateOp, AllShortestPathsOp, ApplyOp, CartesianProductOp, CommitOp, CondTraverseOp,
-            CondVarLenTraverseOp, CreateOp, DeleteOp, DistinctOp, EdgeByIndexScanOp, ExpandIntoOp,
-            FilterOp, ForEachOp, LimitOp, LoadCsvOp, MergeOp, NodeByFulltextScanOp, NodeByIdSeekOp,
-            NodeByIndexScanOp, NodeByLabelAndIdScanOp, NodeByLabelScanOp, OptionalOp,
-            OrApplyMultiplexerOp, PathBuilderOp, ProcedureCallOp, ProjectOp, RemoveOp, SemiApplyOp,
-            SetOp, SkipOp, SortOp, UnionOp, UnwindOp, ValueHashJoinOp,
+            CondVarLenTraverseOp, CreateOp, DeleteOp, DistinctOp, EdgeByFulltextScanOp,
+            EdgeByIndexScanOp, EdgeByVectorScanOp, ExpandIntoOp, FilterOp, ForEachOp,
+            IncludePendingOp, LimitOp, LoadCsvOp, MergeOp, NodeByFulltextScanOp, NodeByIdSeekOp,
+            NodeByIndexScanOp, NodeByLabelAndIdScanOp, NodeByLabelScanOp, NodeByVectorScanOp,
+            OptionalOp, OrApplyMultiplexerOp, PathBuilderOp, ProcedureCallOp, ProjectOp, RemoveOp,
+            SemiApplyOp, SetOp, SkipOp, SortOp, UnionOp, UnwindOp, ValueHashJoinOp,
         },
         ordermap::OrderMap,
         orderset::OrderSet,
@@ -165,6 +166,12 @@ pub struct Runtime<'a> {
     pub profile_data: RefCell<HashMap<NodeIdx<Dyn<IR>>, (usize, Duration)>>,
     /// Accumulator for child time subtraction during profiling.
     pub profile_child_time: Cell<Duration>,
+    /// Optional deadline for query timeout enforcement.
+    pub deadline: Option<Instant>,
+    /// Maximum memory (bytes) a single query may consume. 0 = unlimited.
+    pub mem_capacity: i64,
+    /// Function pointer to read the current thread's net memory usage.
+    pub current_usage_fn: Option<fn() -> usize>,
 }
 
 pub trait GetVariables {
@@ -219,17 +226,26 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                 | IR::Limit(_)
                 | IR::Distinct
                 | IR::Commit
+                | IR::IncludePending { .. }
                 | IR::CreateIndex { .. }
                 | IR::DropIndex { .. } => {}
-                IR::NodeByLabelScan(node)
+                IR::NodeByLabelScan { node, .. }
                 | IR::AllNodeScan(node)
                 | IR::NodeByIndexScan { node, .. }
                 | IR::NodeByLabelAndIdScan { node, .. }
                 | IR::NodeByIdSeek { node, .. } => {
                     vars.push(node.alias.clone());
                 }
-                IR::NodeByFulltextScan { node, score, .. } => {
+                IR::NodeByFulltextScan { node, score, .. }
+                | IR::NodeByVectorScan { node, score, .. } => {
                     vars.push(node.clone());
+                    if let Some(score) = score {
+                        vars.push(score.clone());
+                    }
+                }
+                IR::EdgeByFulltextScan { edge, score, .. }
+                | IR::EdgeByVectorScan { edge, score, .. } => {
+                    vars.push(edge.clone());
                     if let Some(score) = score {
                         vars.push(score.clone());
                     }
@@ -290,8 +306,17 @@ impl ReturnNames for DynNode<'_, IR> {
                 yields: named_outputs,
                 ..
             } => named_outputs.clone(),
-            IR::NodeByFulltextScan { node, score, .. } => {
+            IR::NodeByFulltextScan { node, score, .. }
+            | IR::NodeByVectorScan { node, score, .. } => {
                 let mut v = vec![node.clone()];
+                if let Some(score) = score {
+                    v.push(score.clone());
+                }
+                v
+            }
+            IR::EdgeByFulltextScan { edge, score, .. }
+            | IR::EdgeByVectorScan { edge, score, .. } => {
+                let mut v = vec![edge.clone()];
                 if let Some(score) = score {
                     v.push(score.clone());
                 }
@@ -350,6 +375,9 @@ impl<'a> Runtime<'a> {
         env_pool: &'a Pool<Value>,
         result_set_size: i64,
         profile: bool,
+        timeout_ms: Option<u64>,
+        mem_capacity: i64,
+        current_usage_fn: Option<fn() -> usize>,
     ) -> Self {
         let return_names = plan.root().get_return_names();
         let pending = Lazy::new((|| RefCell::new(Pending::new())) as fn() -> RefCell<Pending>);
@@ -379,7 +407,39 @@ impl<'a> Runtime<'a> {
             profile,
             profile_data: RefCell::new(HashMap::new()),
             profile_child_time: Cell::new(Duration::ZERO),
+            deadline: timeout_ms.map(|ms| Instant::now() + Duration::from_millis(ms)),
+            mem_capacity,
+            current_usage_fn,
         }
+    }
+
+    /// Check if the query has exceeded its timeout deadline.
+    /// Returns `Err("Query timed out")` if the deadline has passed.
+    #[inline]
+    pub fn check_timeout(&self) -> Result<(), String> {
+        if let Some(deadline) = self.deadline
+            && Instant::now() >= deadline
+        {
+            return Err("Query timed out".to_string());
+        }
+        Ok(())
+    }
+
+    #[inline]
+    pub fn check_mem_capacity(&self) -> Result<(), String> {
+        if self.mem_capacity > 0
+            && let Some(usage_fn) = self.current_usage_fn
+            && usage_fn() as i64 > self.mem_capacity
+        {
+            return Err("Query's mem consumption exceeded capacity".to_string());
+        }
+        Ok(())
+    }
+
+    /// Apply deferred index operations to RediSearch. Must be called only
+    /// after the full query succeeds.
+    pub fn commit_deferred_indexes(&self) {
+        self.pending.borrow_mut().commit_deferred_indexes(&self.g);
     }
 
     pub fn query(&'a self) -> Result<ResultSummary<'a>, String> {
@@ -525,17 +585,27 @@ impl<'a> Runtime<'a> {
         idx: NodeIdx<Dyn<IR>>,
     ) -> Result<BatchOp<'a>, String> {
         match self.plan.node(idx).data() {
-            IR::NodeByLabelScan(_) | IR::AllNodeScan(_) => {
+            IR::NodeByLabelScan { .. } | IR::AllNodeScan(_) => {
                 let child = self.child_batch_op(idx)?;
-                let (IR::NodeByLabelScan(node_pattern) | IR::AllNodeScan(node_pattern)) =
-                    self.plan.node(idx).data()
-                else {
-                    unreachable!()
+                let ir = self.plan.node(idx).data();
+                let node_pattern = match ir {
+                    IR::NodeByLabelScan { node } => node,
+                    IR::AllNodeScan(n) => n,
+                    _ => unreachable!(),
                 };
                 Ok(BatchOp::NodeByLabelScan(NodeByLabelScanOp::new(
                     self,
                     Box::new(child),
                     node_pattern,
+                    idx,
+                )))
+            }
+            IR::IncludePending { node } => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::IncludePending(IncludePendingOp::new(
+                    self,
+                    Box::new(child),
+                    node,
                     idx,
                 )))
             }
@@ -920,6 +990,65 @@ impl<'a> Runtime<'a> {
                     idx,
                 )))
             }
+            IR::EdgeByFulltextScan {
+                edge,
+                label,
+                query,
+                score,
+            } => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::EdgeByFulltextScan(EdgeByFulltextScanOp::new(
+                    self,
+                    Box::new(child),
+                    edge,
+                    label,
+                    query,
+                    score,
+                    idx,
+                )))
+            }
+            IR::NodeByVectorScan {
+                node,
+                label,
+                attr,
+                k,
+                vector,
+                score,
+            } => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::NodeByVectorScan(NodeByVectorScanOp::new(
+                    self,
+                    Box::new(child),
+                    node,
+                    label,
+                    attr,
+                    k,
+                    vector,
+                    score,
+                    idx,
+                )))
+            }
+            IR::EdgeByVectorScan {
+                edge,
+                label,
+                attr,
+                k,
+                vector,
+                score,
+            } => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::EdgeByVectorScan(EdgeByVectorScanOp::new(
+                    self,
+                    Box::new(child),
+                    edge,
+                    label,
+                    attr,
+                    k,
+                    vector,
+                    score,
+                    idx,
+                )))
+            }
             IR::NodeByLabelAndIdScan { node, filter } => {
                 let child = self.child_batch_op(idx)?;
                 Ok(BatchOp::NodeByLabelAndIdScan(NodeByLabelAndIdScanOp::new(
@@ -1100,12 +1229,16 @@ impl<'a> Runtime<'a> {
         id: NodeId,
         attr: &Arc<String>,
     ) -> Option<Value> {
-        if let Some(dn) = self.deleted_nodes.borrow().get(&id) {
+        let deleted = self.deleted_nodes.borrow();
+        if !deleted.is_empty()
+            && let Some(dn) = deleted.get(&id)
+        {
             if let Some(value) = dn.attrs.get(attr) {
                 return Some(value.clone());
             }
             return None;
         }
+        drop(deleted);
         self.get_node_attribute_no_delete_check(id, attr)
     }
 
@@ -1139,12 +1272,16 @@ impl<'a> Runtime<'a> {
         id: RelationshipId,
         attr: &Arc<String>,
     ) -> Option<Value> {
-        if let Some(dn) = self.deleted_relationships.borrow().get(&id) {
+        let deleted = self.deleted_relationships.borrow();
+        if !deleted.is_empty()
+            && let Some(dn) = deleted.get(&id)
+        {
             if let Some(value) = dn.attrs.get(attr) {
                 return Some(value.clone());
             }
             return None;
         }
+        drop(deleted);
         if let Some(value) = self.pending.borrow().get_relationship_attribute(id, attr) {
             return Some(value.clone());
         }
@@ -1161,29 +1298,41 @@ impl<'a> Runtime<'a> {
         node_ids: &[NodeId],
         attr: &Arc<String>,
     ) -> (Column, NullBitmap) {
+        let attr_idx = self
+            .g
+            .borrow()
+            .get_node_attribute_id(attr)
+            .map(|i| i as u16);
         let g = self.g.borrow();
-
-        let attr_idx = g.get_node_attribute_id(attr).map(|idx| idx as u16);
 
         let deleted = self.deleted_nodes.borrow();
         let pending = self.pending.borrow();
 
         let mut values = Vec::with_capacity(node_ids.len());
-        for &id in node_ids {
-            let val = deleted.get(&id).map_or_else(
-                || {
-                    pending.get_node_attribute(id, attr).map_or_else(
-                        || {
-                            attr_idx
-                                .and_then(|idx| g.get_node_attribute_by_idx(id, idx))
-                                .unwrap_or(Value::Null)
-                        },
-                        Clone::clone,
-                    )
-                },
-                |dn| dn.attrs.get(attr).cloned().unwrap_or(Value::Null),
-            );
-            values.push(val);
+        if deleted.is_empty() && !pending.has_node_attrs() {
+            // Hot read-only path: a single batch call covers all node ids.
+            if let Some(idx) = attr_idx {
+                g.get_node_attributes_by_idx(node_ids, idx, &Value::Null, &mut values);
+            } else {
+                values.resize(node_ids.len(), Value::Null);
+            }
+        } else {
+            for &id in node_ids {
+                let val = deleted.get(&id).map_or_else(
+                    || {
+                        pending.get_node_attribute(id, attr).map_or_else(
+                            || {
+                                attr_idx
+                                    .and_then(|idx| g.get_node_attribute_by_idx(id, idx))
+                                    .unwrap_or(Value::Null)
+                            },
+                            Clone::clone,
+                        )
+                    },
+                    |dn| dn.attrs.get(attr).cloned().unwrap_or(Value::Null),
+                );
+                values.push(val);
+            }
         }
         drop(g);
         drop(deleted);
@@ -1360,10 +1509,24 @@ fn map_to_index_options(
                 None => None,
                 _ => return Err("Nostem must be bool".into()),
             };
+            // Phonetic accepts either a bool (true = enable, false =
+            // disable) or the algorithm code 'dm:en'. The Rust binding
+            // sets only RediSearch's default phonetic flag, which maps
+            // to Double Metaphone English — other algorithm codes
+            // (dm:fr / dm:pt / dm:es) aren't wired up here.
             let phonetic = match get("phonetic") {
                 Some(Value::Bool(b)) => Some(*b),
+                Some(Value::String(s)) => {
+                    if s.eq_ignore_ascii_case("dm:en") {
+                        Some(true)
+                    } else {
+                        return Err(format!(
+                            "Unsupported phonetic algorithm '{s}'; only 'dm:en' is supported"
+                        ));
+                    }
+                }
                 None => None,
-                _ => return Err("Phonetic must be bool".into()),
+                _ => return Err("Phonetic must be bool or string".into()),
             };
             let language = match get("language") {
                 Some(Value::String(s)) => Some(s.clone()),

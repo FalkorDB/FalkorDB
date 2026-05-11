@@ -141,6 +141,7 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                                 | IR::Aggregate { .. }
                                 | IR::Merge { .. }
                                 | IR::Argument
+                                | IR::IncludePending { .. }
                                 | IR::SemiApply
                                 | IR::AntiSemiApply
                                 | IR::OrApplyMultiplexer(_)

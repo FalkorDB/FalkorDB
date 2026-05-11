@@ -54,10 +54,13 @@ use super::ops::cond_var_len_traverse::CondVarLenTraverseOp;
 use super::ops::create::CreateOp;
 use super::ops::delete::DeleteOp;
 use super::ops::distinct::DistinctOp;
+use super::ops::edge_by_fulltext_scan::EdgeByFulltextScanOp;
 use super::ops::edge_by_index_scan::EdgeByIndexScanOp;
+use super::ops::edge_by_vector_scan::EdgeByVectorScanOp;
 use super::ops::expand_into::ExpandIntoOp;
 use super::ops::filter::FilterOp;
 use super::ops::foreach::ForEachOp;
+use super::ops::include_pending::IncludePendingOp;
 use super::ops::limit::LimitOp;
 use super::ops::load_csv::LoadCsvOp;
 use super::ops::merge::MergeOp;
@@ -66,6 +69,7 @@ use super::ops::node_by_id_seek::NodeByIdSeekOp;
 use super::ops::node_by_index_scan::NodeByIndexScanOp;
 use super::ops::node_by_label_and_id_scan::NodeByLabelAndIdScanOp;
 use super::ops::node_by_label_scan::NodeByLabelScanOp;
+use super::ops::node_by_vector_scan::NodeByVectorScanOp;
 use super::ops::optional::OptionalOp;
 use super::ops::or_apply_multiplexer::OrApplyMultiplexerOp;
 use super::ops::path_builder::PathBuilderOp;
@@ -80,7 +84,8 @@ use super::ops::union::UnionOp;
 use super::ops::unwind::UnwindOp;
 use super::ops::value_hash_join::ValueHashJoinOp;
 
-/// Maximum number of rows in a single batch.
+/// Maximum number of rows in a single batch. Used by every operator that
+/// throttles output to one batch per `next()` call.
 pub const BATCH_SIZE: usize = 1024;
 
 // ---------------------------------------------------------------------------
@@ -604,6 +609,8 @@ pub enum BatchOp<'a> {
     Argument(Option<Batch<'a>>),
     /// Scan nodes by label.
     NodeByLabelScan(NodeByLabelScanOp<'a>),
+    /// Augments child scan with pending-created nodes and filters deleted/removed.
+    IncludePending(IncludePendingOp<'a>),
     /// Filter rows by predicate.
     Filter(FilterOp<'a>),
     /// Project expressions into new columns.
@@ -660,6 +667,12 @@ pub enum BatchOp<'a> {
     ProcedureCall(ProcedureCallOp<'a>),
     /// Fulltext index scan.
     NodeByFulltextScan(NodeByFulltextScanOp<'a>),
+    /// Edge fulltext index scan.
+    EdgeByFulltextScan(EdgeByFulltextScanOp<'a>),
+    /// KNN vector index scan over node labels.
+    NodeByVectorScan(NodeByVectorScanOp<'a>),
+    /// KNN vector index scan over relationship types.
+    EdgeByVectorScan(EdgeByVectorScanOp<'a>),
     /// Combined label + ID scan.
     NodeByLabelAndIdScan(NodeByLabelAndIdScanOp<'a>),
     /// Variable-length relationship traverse.
@@ -691,6 +704,7 @@ impl<'a> BatchOp<'a> {
                 op.child.set_argument_batch(batch);
             }
             Self::NodeByLabelScan(op) => op.child.set_argument_batch(batch),
+            Self::IncludePending(op) => op.child.set_argument_batch(batch),
             Self::Filter(op) => op.child.set_argument_batch(batch),
             Self::Project(op) => op.child.set_argument_batch(batch),
             Self::Skip(op) => op.child.set_argument_batch(batch),
@@ -750,6 +764,19 @@ impl<'a> BatchOp<'a> {
             Self::PathBuilder(op) => op.child.set_argument_batch(batch),
             Self::LoadCsv(op) => op.child.set_argument_batch(batch),
             Self::NodeByFulltextScan(op) => op.child.set_argument_batch(batch),
+            Self::EdgeByFulltextScan(op) => op.child.set_argument_batch(batch),
+            Self::NodeByVectorScan(op) => {
+                // Drop any KNN rows still queued from the previous
+                // outer iteration; otherwise correlated plans (Apply)
+                // can leak rows across outer batches when the inner
+                // side stops early.
+                op.pending.clear();
+                op.child.set_argument_batch(batch);
+            }
+            Self::EdgeByVectorScan(op) => {
+                op.pending.clear();
+                op.child.set_argument_batch(batch);
+            }
             Self::NodeByLabelAndIdScan(op) => op.child.set_argument_batch(batch),
             Self::CondVarLenTraverse(op) => op.child.set_argument_batch(batch),
             Self::AllShortestPaths(op) => op.child.set_argument_batch(batch),
@@ -779,6 +806,7 @@ impl<'a> BatchOp<'a> {
         match self {
             Self::Once(_) | Self::Argument(_) => None,
             Self::NodeByLabelScan(op) => Some((op.runtime, op.idx)),
+            Self::IncludePending(op) => Some((op.runtime, op.idx)),
             Self::Filter(op) => Some((op.runtime, op.idx)),
             Self::Project(op) => Some((op.runtime, op.idx)),
             Self::Skip(op) => Some((op.runtime, op.idx)),
@@ -807,6 +835,9 @@ impl<'a> BatchOp<'a> {
             Self::LoadCsv(op) => Some((op.runtime, op.idx)),
             Self::ProcedureCall(op) => Some((op.runtime, op.idx)),
             Self::NodeByFulltextScan(op) => Some((op.runtime, op.idx)),
+            Self::EdgeByFulltextScan(op) => Some((op.runtime, op.idx)),
+            Self::NodeByVectorScan(op) => Some((op.runtime, op.idx)),
+            Self::EdgeByVectorScan(op) => Some((op.runtime, op.idx)),
             Self::NodeByLabelAndIdScan(op) => Some((op.runtime, op.idx)),
             Self::CondVarLenTraverse(op) => Some((op.runtime, op.idx)),
             Self::AllShortestPaths(op) => Some((op.runtime, op.idx)),
@@ -821,9 +852,16 @@ impl<'a> Iterator for BatchOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // Check if profiling is enabled and save state before dispatch.
-        // We must not hold a reference to `self` across the dispatch.
-        let profiling = self.inspect_context().and_then(|(runtime, idx)| {
+        // Check timeout and memory capacity before dispatching to the next operator.
+        // Also capture profiling state. We must not hold a reference to `self`
+        // across the dispatch, so everything is extracted up front.
+        let profiling = if let Some((runtime, idx)) = self.inspect_context() {
+            if let Err(e) = runtime.check_timeout() {
+                return Some(Err(e));
+            }
+            if let Err(e) = runtime.check_mem_capacity() {
+                return Some(Err(e));
+            }
             if runtime.profile {
                 let saved = runtime.profile_child_time.get();
                 runtime.profile_child_time.set(std::time::Duration::ZERO);
@@ -831,11 +869,14 @@ impl<'a> Iterator for BatchOp<'a> {
             } else {
                 None
             }
-        });
+        } else {
+            None
+        };
 
         let result = match self {
             Self::Once(batch) | Self::Argument(batch) => batch.take().map(Ok),
             Self::NodeByLabelScan(op) => op.next(),
+            Self::IncludePending(op) => op.next(),
             Self::Filter(op) => op.next(),
             Self::Project(op) => op.next(),
             Self::Skip(op) => op.next(),
@@ -864,6 +905,9 @@ impl<'a> Iterator for BatchOp<'a> {
             Self::LoadCsv(op) => op.next(),
             Self::ProcedureCall(op) => op.next(),
             Self::NodeByFulltextScan(op) => op.next(),
+            Self::EdgeByFulltextScan(op) => op.next(),
+            Self::NodeByVectorScan(op) => op.next(),
+            Self::EdgeByVectorScan(op) => op.next(),
             Self::NodeByLabelAndIdScan(op) => op.next(),
             Self::CondVarLenTraverse(op) => op.next(),
             Self::AllShortestPaths(op) => op.next(),

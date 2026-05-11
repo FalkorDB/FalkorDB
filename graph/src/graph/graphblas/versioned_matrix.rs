@@ -411,6 +411,19 @@ impl Iter {
             dm: m.dm.clone(),
         }
     }
+
+    /// Re-seek both inner GraphBLAS iterators to a new row range without
+    /// re-allocating them. Hot-loop callers (e.g. `CondTraverseOp` and
+    /// `ExpandInto` looking up edges by `(src, dst)`) use this to amortize
+    /// the per-pair iterator allocation.
+    pub fn seek(
+        &mut self,
+        min_row: u64,
+        max_row: u64,
+    ) {
+        self.mit.seek(min_row, max_row);
+        self.dpit.seek(min_row, max_row);
+    }
 }
 
 impl Iterator for Iter {

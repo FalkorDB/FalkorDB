@@ -97,7 +97,73 @@ use roaring::RoaringTreemap;
 
 use super::attribute_cache::AttributeCache;
 use super::graphblas::serialization::{Decode, Encode, Reader, Writer};
-use crate::runtime::{ordermap::OrderMap, orderset::OrderSet, value::Value};
+use crate::runtime::{ordermap::OrderMap, value::Value};
+
+/// Insertion-ordered map of attribute names to attribute indices.
+///
+/// Maintains both a `Vec<Arc<String>>` (for stable index → name lookup and
+/// deterministic iteration order) and a `FxHashMap<Arc<String>, u16>` for
+/// O(1) name → index resolution on the hot read path.
+#[derive(Default, Clone)]
+pub struct AttrNameMap {
+    vec: Vec<Arc<String>>,
+    index: FxHashMap<Arc<String>, u16>,
+}
+
+impl AttrNameMap {
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.vec.len()
+    }
+
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.vec.is_empty()
+    }
+
+    #[must_use]
+    pub fn get(
+        &self,
+        idx: usize,
+    ) -> Option<&Arc<String>> {
+        self.vec.get(idx)
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, Arc<String>> {
+        self.vec.iter()
+    }
+
+    #[must_use]
+    pub fn get_index_of(
+        &self,
+        name: &Arc<String>,
+    ) -> Option<usize> {
+        self.index.get(name).map(|&i| i as usize)
+    }
+
+    pub fn insert(
+        &mut self,
+        name: Arc<String>,
+    ) {
+        if self.index.contains_key(&name) {
+            return;
+        }
+        let idx = self.vec.len() as u16;
+        self.vec.push(name.clone());
+        self.index.insert(name, idx);
+    }
+}
+
+impl std::ops::Index<usize> for AttrNameMap {
+    type Output = Arc<String>;
+
+    fn index(
+        &self,
+        idx: usize,
+    ) -> &Arc<String> {
+        &self.vec[idx]
+    }
+}
 
 /// Shared empty attribute vector to avoid per-entity allocations when an
 /// entity has no properties.
@@ -134,7 +200,7 @@ pub struct AttributeStore {
     keyspace: OnceCell<Keyspace>,
     keyspace_name: Arc<String>,
     /// Attribute names in insertion order (name → column index)
-    pub attrs_name: OrderSet<Arc<String>>,
+    pub attrs_name: AttrNameMap,
     /// Shared in-memory LRU cache (cheap Arc clone across MVCC versions).
     cache: Arc<AttributeCache>,
     /// MVCC version of this store's snapshot.
@@ -143,6 +209,15 @@ pub struct AttributeStore {
     dirty_entities: RoaringTreemap,
     /// Entity IDs pending full deletion (all attributes) — applied on commit, cleared on rollback.
     pending_deletes: RoaringTreemap,
+    /// Accumulated dirty entity IDs from prior commits within the same write
+    /// transaction. Used by `rollback_cache()` to invalidate cache entries
+    /// that were committed by an earlier `CommitOp` but need to be undone
+    /// because a later operator in the same query failed.
+    committed_dirty: RoaringTreemap,
+    /// Saved original cache entries captured before the first modification
+    /// within a write transaction. On rollback, these are restored to undo
+    /// cache mutations, since the cache is shared with the read version.
+    saved_for_rollback: FxHashMap<u64, Arc<Vec<(u16, Value)>>>,
 }
 
 impl Clone for AttributeStore {
@@ -156,6 +231,8 @@ impl Clone for AttributeStore {
             version: self.version,
             dirty_entities: self.dirty_entities.clone(),
             pending_deletes: self.pending_deletes.clone(),
+            committed_dirty: self.committed_dirty.clone(),
+            saved_for_rollback: self.saved_for_rollback.clone(),
         }
     }
 }
@@ -189,11 +266,13 @@ impl AttributeStore {
             snapshot: OnceCell::new(),
             keyspace: OnceCell::new(),
             keyspace_name: Arc::new(keyspace.to_owned()),
-            attrs_name: OrderSet::default(),
+            attrs_name: AttrNameMap::default(),
             cache: Arc::new(AttributeCache::new(DEFAULT_ATTR_CACHE_BYTES)),
             version,
             dirty_entities: RoaringTreemap::new(),
             pending_deletes: RoaringTreemap::new(),
+            committed_dirty: RoaringTreemap::new(),
+            saved_for_rollback: FxHashMap::default(),
         }
     }
 
@@ -256,18 +335,22 @@ impl AttributeStore {
             version,
             dirty_entities: RoaringTreemap::new(),
             pending_deletes: RoaringTreemap::new(),
+            committed_dirty: RoaringTreemap::new(),
+            saved_for_rollback: FxHashMap::default(),
         }
     }
 
     // ---- helpers --------------------------------------------------------
 
     /// Fetch ALL attributes for `entity_id` from the fjall snapshot and
-    /// populate the cache as a clean entry.
+    /// populate the cache if the result is non-empty.
     ///
     /// Uses a version-aware insert to avoid overwriting in-flight dirty writes:
     /// the cache entry is only updated if no newer/dirty entry already exists.
-    /// Empty entries are cached to prevent repeated fjall scans for non-existent
-    /// entities. Returns empty if the entity is pending full deletion.
+    /// Empty results are NOT cached: caching one entry per prop-less entity
+    /// reintroduces the per-entity cache overhead the C version avoids by
+    /// representing empty AttributeSets as NULL.
+    /// Returns empty if the entity is pending full deletion.
     fn populate_cache_from_fjall(
         &self,
         entity_id: u64,
@@ -293,7 +376,10 @@ impl AttributeStore {
                 Some((idx, value))
             })
             .collect();
-        // Always cache the result (even empty entries) using safe insert that
+        if attrs.is_empty() {
+            return EMPTY_ATTRS.clone();
+        }
+        // Cache only non-empty results using safe insert that
         // respects in-flight writes: only insert if no newer/dirty entry exists.
         let _ = self
             .cache
@@ -378,6 +464,14 @@ impl AttributeStore {
         &mut self,
         key: u64,
     ) -> Result<(), String> {
+        // Save original cache entry for rollback (only the first time).
+        if !self.saved_for_rollback.contains_key(&key) {
+            let current = self
+                .cache
+                .get_entity(key, self.version)
+                .unwrap_or_else(|| self.populate_cache_from_fjall(key));
+            self.saved_for_rollback.insert(key, current);
+        }
         // Don't invalidate cache — older MVCC versions sharing this cache may
         // still need the dirty entry. pending_deletes guards reads on this
         // version; the cache entry is harmless to older/newer readers because
@@ -416,6 +510,41 @@ impl AttributeStore {
             .binary_search_by_key(&attr_idx, |(idx, _)| *idx)
             .ok()
             .map(|pos| attrs[pos].1.clone())
+    }
+
+    /// Batch variant of `get_attr_by_idx` for a list of keys with the same
+    /// `attr_idx`. Avoids re-doing the per-call setup (function dispatch,
+    /// `pending_deletes` check) for every key when the deletion set is empty.
+    /// Pushes one `Value` per key into `out`, substituting `default` for
+    /// missing or pending-deleted entries.
+    pub fn get_attrs_by_idx_batch_into(
+        &self,
+        keys: &[u64],
+        attr_idx: u16,
+        default: &Value,
+        out: &mut Vec<Value>,
+    ) {
+        out.reserve(keys.len());
+        let pending_deletes_empty = self.pending_deletes.is_empty();
+        let version = self.version;
+        // First pass: batch cache lookups (one shard lock per shard run).
+        let mut cache_results: Vec<Option<Option<Value>>> = Vec::with_capacity(keys.len());
+        self.cache
+            .get_attrs_batch(keys, attr_idx, version, &mut cache_results);
+        for (i, &key) in keys.iter().enumerate() {
+            if !pending_deletes_empty && self.pending_deletes.contains(key) {
+                out.push(default.clone());
+                continue;
+            }
+            let v = cache_results[i].take().unwrap_or_else(|| {
+                let attrs = self.populate_cache_from_fjall(key);
+                attrs
+                    .binary_search_by_key(&attr_idx, |(idx, _)| *idx)
+                    .ok()
+                    .map(|pos| attrs[pos].1.clone())
+            });
+            out.push(v.unwrap_or_else(|| default.clone()));
+        }
     }
 
     #[must_use]
@@ -534,9 +663,17 @@ impl AttributeStore {
         &mut self,
         keys: &RoaringTreemap,
     ) {
-        // Only track in pending_deletes — no need to add to dirty_entities
-        // since deleted entities don't need cache write-back on flush.
-        // rollback_cache() handles pending_deletes separately.
+        // Save original cache entries for rollback so that bulk deletes
+        // don't lose cache-only attributes when rollback_cache() runs.
+        for key in keys {
+            if !self.saved_for_rollback.contains_key(&key) {
+                let current = self
+                    .cache
+                    .get_entity(key, self.version)
+                    .unwrap_or_else(|| self.populate_cache_from_fjall(key));
+                self.saved_for_rollback.insert(key, current);
+            }
+        }
         self.pending_deletes |= keys;
     }
 
@@ -571,6 +708,12 @@ impl AttributeStore {
         let mut merged: Vec<(u16, Value)> = Vec::new();
 
         for (key, entity_attrs) in attrs {
+            // Skip entities whose pending map is empty: no entries to write, no nulls
+            // to remove, and no need to touch fjall. Avoids creating an empty pinned
+            // dirty cache entry per entity (matches C's NULL AttributeSet behaviour).
+            if entity_attrs.is_empty() {
+                continue;
+            }
             // Resolve attribute indices using pre-resolved map.
             let mut new_entries: Vec<(u16, Value)> = Vec::with_capacity(entity_attrs.len());
             let mut null_indices: Vec<u16> = Vec::new();
@@ -655,6 +798,11 @@ impl AttributeStore {
                 }
             }
 
+            // Save original cache entry for rollback (only the first time).
+            if !self.saved_for_rollback.contains_key(key) {
+                self.saved_for_rollback.insert(*key, current.clone());
+            }
+
             // Write merged attrs to cache as dirty (already sorted, skip re-sort).
             self.cache.insert_entity_presorted(
                 *key,
@@ -706,11 +854,46 @@ impl AttributeStore {
             }
 
             entries.sort_by_key(|(idx, _)| *idx);
+            // Skip empty entities to avoid per-entity cache overhead (matches C's
+            // NULL AttributeSet behaviour for prop-less entities).
+            if entries.is_empty() {
+                continue;
+            }
             self.cache
                 .insert_entity_presorted(*key, entries, self.version, true);
             self.dirty_entities.insert(*key);
         }
         nset
+    }
+
+    /// Import pre-resolved attribute data directly into the cache.
+    /// Skips name resolution and OrderMap construction; used by bulk insert.
+    pub fn import_attrs_resolved(
+        &mut self,
+        data: &mut Vec<(u64, Vec<(u16, Value)>)>,
+    ) -> usize {
+        let mut nset = 0;
+        for (entity_id, entries) in data.drain(..) {
+            if entries.is_empty() {
+                continue;
+            }
+            nset += entries.len();
+            self.cache
+                .insert_entity_presorted(entity_id, entries, self.version, true);
+            self.dirty_entities.insert(entity_id);
+        }
+        nset
+    }
+
+    /// Resolve an attribute name to its index, creating a new mapping if needed.
+    pub fn get_or_create_attr_id(
+        &mut self,
+        attr: &Arc<String>,
+    ) -> u16 {
+        self.attrs_name.get_index_of(attr).unwrap_or_else(|| {
+            self.attrs_name.insert(attr.clone());
+            self.attrs_name.len() - 1
+        }) as u16
     }
 
     #[must_use]
@@ -724,6 +907,12 @@ impl AttributeStore {
     #[must_use]
     pub fn memory_usage(&self) -> usize {
         self.cache.memory_usage()
+    }
+
+    /// Structural slot-storage overhead, excluding attribute payload heap.
+    #[must_use]
+    pub fn structural_memory_usage(&self) -> usize {
+        self.cache.structural_memory_usage()
     }
 
     pub fn commit(&mut self) -> Result<(), String> {
@@ -765,6 +954,10 @@ impl AttributeStore {
             let _ = new_snapshot.set(get_database().snapshot());
             self.snapshot = new_snapshot;
         }
+        // Accumulate dirty/deleted entity IDs so rollback_cache() can still
+        // invalidate them if a later operator in the same query fails.
+        self.committed_dirty |= &self.dirty_entities;
+        self.committed_dirty |= &self.pending_deletes;
         self.dirty_entities.clear();
         self.pending_deletes.clear();
         Ok(())
@@ -775,10 +968,34 @@ impl AttributeStore {
     /// Invalidate all dirty entities from the shared cache.
     /// Called on write-transaction rollback.
     pub fn rollback_cache(&mut self) {
-        self.cache.invalidate_batch(&self.dirty_entities);
-        self.cache.invalidate_batch(&self.pending_deletes);
+        // Restore saved original cache entries for entities that were
+        // modified during this write transaction. This is needed because the
+        // cache is shared between MVCC versions — simply invalidating would
+        // lose unflushed data that was never written to fjall.
+        let mut restored = RoaringTreemap::new();
+
+        for (entity_id, original_attrs) in self.saved_for_rollback.drain() {
+            if original_attrs.is_empty() {
+                // Entity had no prior attrs — skip re-inserting an empty dirty
+                // entry. Let to_invalidate evict the dirty write instead.
+                continue;
+            }
+            self.cache.insert_entity_presorted(
+                entity_id,
+                (*original_attrs).clone(),
+                self.version.saturating_sub(1),
+                true,
+            );
+            restored.insert(entity_id);
+        }
+        // Invalidate any remaining dirty entities not covered by saved entries
+        // (e.g., newly created entities that had no prior cache entry).
+        let to_invalidate =
+            (&self.dirty_entities | &self.pending_deletes | &self.committed_dirty) - &restored;
+        self.cache.invalidate_batch(&to_invalidate);
         self.dirty_entities.clear();
         self.pending_deletes.clear();
+        self.committed_dirty.clear();
     }
 
     /// Flush dirty cache entries to fjall.

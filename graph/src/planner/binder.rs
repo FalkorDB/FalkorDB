@@ -54,6 +54,11 @@ pub struct Binder {
     /// n's (scope_id, variable ID) → {N, O} so the planner can create a single
     /// NodeByLabelScan with the full label set.
     node_labels: HashMap<(u32, u32), OrderSet<Arc<String>>>,
+    /// Variables bound from variable-length relationship patterns (e.g. `[r*]`).
+    /// These are typed as `Type::Path` but represent a list of edges, so
+    /// property access like `r.prop` is allowed (per-edge predicate)
+    /// whereas it is rejected on named-path Path variables.
+    varlen_rel_var_ids: std::collections::HashSet<(u32, u32)>,
 }
 
 impl Default for Binder {
@@ -64,6 +69,7 @@ impl Default for Binder {
             parent_to_child_scope: HashMap::new(),
             copy_from_parent: HashMap::new(),
             node_labels: HashMap::new(),
+            varlen_rel_var_ids: std::collections::HashSet::new(),
         }
     }
 }
@@ -154,26 +160,24 @@ impl Binder {
         for rel in graph.relationships_mut() {
             let from_key = (rel.from.alias.scope_id, rel.from.alias.id);
             let to_key = (rel.to.alias.scope_id, rel.to.alias.id);
-            let from_changed = node_labels
-                .get(&from_key)
-                .is_some_and(|l| rel.from.labels != *l);
-            let to_changed = node_labels
-                .get(&to_key)
-                .is_some_and(|l| rel.to.labels != *l);
+            let from_new = node_labels.get(&from_key);
+            let to_new = node_labels.get(&to_key);
+            let from_changed = from_new.is_some_and(|l| rel.from.labels != *l);
+            let to_changed = to_new.is_some_and(|l| rel.to.labels != *l);
             if from_changed || to_changed {
-                let from = if let Some(labels) = node_labels.get(&from_key) {
+                let from = if from_changed {
                     Arc::new(QueryNode::new(
                         rel.from.alias.clone(),
-                        labels.clone(),
+                        from_new.unwrap().clone(),
                         rel.from.attrs.clone(),
                     ))
                 } else {
                     rel.from.clone()
                 };
-                let to = if let Some(labels) = node_labels.get(&to_key) {
+                let to = if to_changed {
                     Arc::new(QueryNode::new(
                         rel.to.alias.clone(),
-                        labels.clone(),
+                        to_new.unwrap().clone(),
                         rel.to.attrs.clone(),
                     ))
                 } else {
@@ -320,12 +324,51 @@ impl Binder {
                 // don't reference entities being merged.  Entity aliases are
                 // not yet in scope, so any such reference is caught here, e.g.:
                 //   MERGE (a:L {v: a.v})   → "'a' not defined"
+                // Also validate that already-bound variables don't get new labels
+                // in MERGE.  E.g. CREATE (a:Foo) MERGE (a)-[:R]->(a:Bar)
+                // is illegal because `a` is already bound as :Foo.
                 for node in pattern.nodes() {
                     self.bind_expr(&node.attrs)?;
+                    if let Some(existing) = self.current_env().get(&node.alias) {
+                        let key = (existing.scope_id, existing.id);
+                        if let Some(existing_labels) = self.node_labels.get(&key) {
+                            for label in node.labels.iter() {
+                                if !existing_labels.contains(label) {
+                                    return Err(format!(
+                                        "Variable `{}` can't be redeclared in a MERGE clause",
+                                        node.alias
+                                    ));
+                                }
+                            }
+                        }
+                    }
                 }
                 for relationship in pattern.relationships() {
                     self.bind_expr(&relationship.attrs)?;
+                    // Check that the relationship variable itself is not already bound
+                    if self.current_env().contains_key(&relationship.alias) {
+                        return Err(format!(
+                            "Variable `{}` can't be redeclared in a MERGE clause",
+                            relationship.alias
+                        ));
+                    }
+                    for endpoint in [&relationship.from, &relationship.to] {
+                        if let Some(existing) = self.current_env().get(&endpoint.alias) {
+                            let key = (existing.scope_id, existing.id);
+                            if let Some(existing_labels) = self.node_labels.get(&key) {
+                                for label in endpoint.labels.iter() {
+                                    if !existing_labels.contains(label) {
+                                        return Err(format!(
+                                            "Variable `{}` can't be redeclared in a MERGE clause",
+                                            endpoint.alias
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
+
                 let pattern = self.bind_graph(&pattern, false)?;
                 let on_create = self.bind_set_items(on_create)?;
                 let on_match = self.bind_set_items(on_match)?;
@@ -472,14 +515,52 @@ impl Binder {
 
                 // Validate yield field names against procedure outputs
                 if yielded && let FnType::Procedure(ref fields) = func.fn_type {
+                    let mut seen_projected = std::collections::HashSet::new();
                     for (i, name) in vars.iter().enumerate() {
-                        // The actual field name is the alias (original field) if present,
+                        // The source field name is the alias (original field) if present,
                         // otherwise the yield name itself
                         let field_name = aliases.get(i).and_then(|a| a.as_ref()).unwrap_or(name);
                         if !fields.iter().any(|f| f.as_str() == field_name.as_str()) {
                             return Err(format!(
                                 "Unknown yield field '{}' for procedure '{}'",
                                 field_name, func.name
+                            ));
+                        }
+                        // Deduplicate on the projected/output name (the name
+                        // that enters scope), not the source field. This allows
+                        // `YIELD node AS x, node AS y` (different projected
+                        // names) while rejecting `YIELD node, node` and
+                        // `YIELD node AS x, score AS x` (duplicate projected).
+                        if !seen_projected.insert(name.as_str().to_lowercase()) {
+                            return Err(format!(
+                                "Duplicate yield field '{}' for procedure '{}'",
+                                name, func.name
+                            ));
+                        }
+                    }
+
+                    // The fulltext / vector scan procedures are rewritten
+                    // to dedicated scan operators in the planner; the
+                    // rewrite needs the entity-field slot to bind the
+                    // matched node/relationship into. Reject `YIELD score`
+                    // (without the entity field) up-front so the planner
+                    // doesn't have to handle it.
+                    let required_entity = match func.name.as_str() {
+                        "db.idx.fulltext.queryNodes" | "db.idx.vector.queryNodes" => Some("node"),
+                        "db.idx.fulltext.queryRelationships"
+                        | "db.idx.vector.queryRelationships" => Some("relationship"),
+                        _ => None,
+                    };
+                    if let Some(entity) = required_entity {
+                        let yielded_entity = vars.iter().enumerate().any(|(i, name)| {
+                            let field_name =
+                                aliases.get(i).and_then(|a| a.as_ref()).unwrap_or(name);
+                            field_name.as_str() == entity
+                        });
+                        if !yielded_entity {
+                            return Err(format!(
+                                "Procedure '{}' requires YIELD of '{}'",
+                                func.name, entity
                             ));
                         }
                     }
@@ -722,6 +803,7 @@ impl Binder {
                         parent_to_child_scope: HashMap::new(),
                         copy_from_parent: HashMap::new(),
                         node_labels: HashMap::new(),
+                        varlen_rel_var_ids: std::collections::HashSet::new(),
                     };
 
                     // Build bound clauses: explicit import WITH + remaining
@@ -1151,8 +1233,11 @@ impl Binder {
 
         // Pre-register path variables in scope so they can be resolved
         // when binding node/relationship inline properties below.
+        let mut named_path_names: std::collections::HashSet<Arc<String>> =
+            std::collections::HashSet::new();
         for raw_path in graph.paths() {
             self.define_name_in_scope(raw_path.var.clone(), Type::Path, true)?;
+            named_path_names.insert(raw_path.var.clone());
         }
 
         // Bind all nodes in the graph, merging duplicates by alias.
@@ -1180,11 +1265,27 @@ impl Binder {
 
         // Bind relationships, binding any referenced nodes that weren't in the graph
         for relationship in graph.relationships() {
+            if relationship.min_hops.is_some()
+                && !relationship.alias.starts_with("_anon")
+                && named_path_names.contains(&relationship.alias)
+            {
+                return Err(format!(
+                    "The alias '{}' was specified for both a node and a relationship.",
+                    relationship.alias
+                ));
+            }
             let alias = self.define_name_in_scope(
                 relationship.alias.clone(),
-                Type::Relationship,
+                if relationship.min_hops.is_some() {
+                    Type::Path
+                } else {
+                    Type::Relationship
+                },
                 !is_create,
             )?;
+            if relationship.min_hops.is_some() {
+                self.varlen_rel_var_ids.insert((alias.scope_id, alias.id));
+            }
             let attrs = self.bind_expr(&relationship.attrs)?;
 
             // Resolve 'from' node by alias, binding if missing and merging labels if present
@@ -1776,7 +1877,10 @@ impl Binder {
                     ExprIR::Modulo => ExprIR::Modulo,
                     ExprIR::Distinct => ExprIR::Distinct,
                     ExprIR::Property(prop) => {
-                        // Property access is not valid on Path types.
+                        // Property access is not valid on Path types,
+                        // except when the Path comes from a variable-length
+                        // relationship pattern (e.g. `[r*]`) — in that case
+                        // `r.prop` is treated as a per-edge predicate.
                         if let Some(first_child) = children.first() {
                             let root = first_child.root();
                             let inner = if matches!(root.data(), ExprIR::Paren) {
@@ -1784,9 +1888,11 @@ impl Binder {
                             } else {
                                 Some(root)
                             };
-                            if inner.is_some_and(
-                                |n| matches!(n.data(), ExprIR::Variable(v) if v.ty == Type::Path),
-                            ) {
+                            if let Some(node) = inner
+                                && let ExprIR::Variable(v) = node.data()
+                                && v.ty == Type::Path
+                                && !self.varlen_rel_var_ids.contains(&(v.scope_id, v.id))
+                            {
                                 return Err("Type mismatch: expected Map, Node, Edge, \
                                              Datetime, Date, Time, Duration, Null, \
                                              or Point but was Path"

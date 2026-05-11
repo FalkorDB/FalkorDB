@@ -6,4 +6,4 @@ pytest
 pytest-benchmark
 textual
 textual-dev
-RLTest
+RLTest>=0.7.25

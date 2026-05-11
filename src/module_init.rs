@@ -24,9 +24,10 @@
 
 use crate::config::{
     CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE, CONFIGURATION_TEMP_FOLDER,
-    OMP_THREAD_COUNT, get_thread_count,
+    OMP_THREAD_COUNT, TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count,
 };
 use crate::redis_type::on_persistence;
+use crate::telemetry;
 use graph::{
     graph::graphblas::matrix::init,
     index::redisearch::{REDISEARCH_INIT_LIBRARY, RediSearch_Init},
@@ -35,7 +36,7 @@ use graph::{
     udf,
 };
 use redis_module::{
-    Context, REDISMODULE_OK, RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free,
+    Context, ContextFlags, REDISMODULE_OK, RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free,
     RedisModule_Realloc, RedisModule_SubscribeToServerEvent, RedisModuleCtx, RedisModuleEvent,
     Status,
 };
@@ -49,16 +50,96 @@ static RedisModuleEvent_FlushDB: RedisModuleEvent = RedisModuleEvent { id: 2, da
 #[allow(non_upper_case_globals)]
 static RedisModuleEvent_Persistence: RedisModuleEvent = RedisModuleEvent { id: 1, dataver: 1 };
 
+/// Redis event ID for replication role changes (master <-> replica).
+#[allow(non_upper_case_globals)]
+static RedisModuleEvent_ReplicationRoleChanged: RedisModuleEvent =
+    RedisModuleEvent { id: 0, dataver: 1 };
+
+/// Subevent: this instance is now a replica.
+const REDISMODULE_EVENT_REPLROLECHANGED_NOW_REPLICA: u64 = 1;
+
+unsafe extern "C" {
+    fn pthread_atfork(
+        prepare: Option<unsafe extern "C" fn()>,
+        parent: Option<unsafe extern "C" fn()>,
+        child: Option<unsafe extern "C" fn()>,
+    ) -> c_int;
+}
+
+/// Called in the forked child process (via `pthread_atfork`).
+/// Forces GraphBLAS/OpenMP to single-threaded mode so they don't
+/// touch the parent's (now-invalid) thread pool handles.
+unsafe extern "C" fn on_fork_child() {
+    graph::graph::graphblas::matrix::set_nthreads(1);
+}
+
 pub fn graph_init(
     ctx: &Context,
-    _: &Vec<redis_module::RedisString>,
+    args: &Vec<redis_module::RedisString>,
 ) -> Status {
     graph::thread_id::set_main_thread();
     panic::set_hook(Box::new(|info| {
         eprintln!("FalkorDB panic: {info}");
         std::process::exit(1);
     }));
+
+    // Parse timeout-related module args (TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX).
+    // These are AtomicI64 statics not registered in the redis_module! config section,
+    // so we parse them manually here.
+    {
+        let args_str: Vec<String> = args
+            .iter()
+            .map(redis_module::RedisString::to_string_lossy)
+            .collect();
+        let mut i = 0;
+        while i < args_str.len() {
+            match args_str[i].to_uppercase().as_str() {
+                "TIMEOUT" => {
+                    if i + 1 < args_str.len()
+                        && let Ok(v) = args_str[i + 1].parse::<i64>()
+                    {
+                        TIMEOUT.store(v, std::sync::atomic::Ordering::Relaxed);
+                        i += 2;
+                        continue;
+                    }
+                    ctx.log_warning("Invalid value for TIMEOUT module argument");
+                    return Status::Err;
+                }
+                "TIMEOUT_DEFAULT" => {
+                    if i + 1 < args_str.len()
+                        && let Ok(v) = args_str[i + 1].parse::<i64>()
+                    {
+                        TIMEOUT_DEFAULT.store(v, std::sync::atomic::Ordering::Relaxed);
+                        i += 2;
+                        continue;
+                    }
+                    ctx.log_warning("Invalid value for TIMEOUT_DEFAULT module argument");
+                    return Status::Err;
+                }
+                "TIMEOUT_MAX" => {
+                    if i + 1 < args_str.len()
+                        && let Ok(v) = args_str[i + 1].parse::<i64>()
+                    {
+                        TIMEOUT_MAX.store(v, std::sync::atomic::Ordering::Relaxed);
+                        i += 2;
+                        continue;
+                    }
+                    ctx.log_warning("Invalid value for TIMEOUT_MAX module argument");
+                    return Status::Err;
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+        }
+    }
     unsafe {
+        // Disable OpenMP's pthread_atfork handlers. Without this, the
+        // libomp atfork child handler crashes (SIGSEGV in __kmpc_set_lock)
+        // when Redis forks for bgsave because the OMP thread pool state
+        // is invalid in the child process.
+        std::env::set_var("KMP_INIT_AT_FORK", "FALSE");
+
         let result = RediSearch_Init(ctx.ctx.cast(), REDISEARCH_INIT_LIBRARY as c_int);
         if result == REDISMODULE_OK as c_int {
             ctx.log_notice("RediSearch initialized successfully.");
@@ -75,6 +156,11 @@ pub fn graph_init(
             ctx.log_warning(&format!("Failed to initialize GraphBLAS/LAGraph: {err}"));
             return Status::Err;
         }
+
+        // Register fork child handler to make GraphBLAS/OpenMP single-threaded
+        // in bgsave child processes.
+        pthread_atfork(None, None, Some(on_fork_child));
+
         let res = RedisModule_SubscribeToServerEvent.unwrap()(
             ctx.ctx,
             RedisModuleEvent_FlushDB,
@@ -127,11 +213,59 @@ pub fn graph_init(
         }
     }
 
+    // Validate timeout mutual exclusion: cannot use deprecated TIMEOUT
+    // together with TIMEOUT_DEFAULT / TIMEOUT_MAX.
+    {
+        let timeout = TIMEOUT.load(std::sync::atomic::Ordering::Relaxed);
+        let timeout_default = TIMEOUT_DEFAULT.load(std::sync::atomic::Ordering::Relaxed);
+        let timeout_max = TIMEOUT_MAX.load(std::sync::atomic::Ordering::Relaxed);
+        if timeout > 0 && (timeout_default > 0 || timeout_max > 0) {
+            ctx.log_warning("Cannot specify TIMEOUT together with TIMEOUT_DEFAULT or TIMEOUT_MAX");
+            return Status::Err;
+        }
+        if timeout_default > 0 && timeout_max > 0 && timeout_default > timeout_max {
+            ctx.log_warning("TIMEOUT_DEFAULT cannot exceed TIMEOUT_MAX");
+            return Status::Err;
+        }
+    }
+
     // Initialize the thread pool with the configured thread count.
     // THREAD_COUNT may come from module args (parsed by redis_module macro).
     let tc = get_thread_count(ctx) as usize;
     let _ = init_thread_pool(tc);
     OMP_THREAD_COUNT.store(tc as i64, std::sync::atomic::Ordering::Relaxed);
+
+    // Start the background telemetry flusher: workers enqueue entries
+    // lock-free; this thread batches them and writes XADDs under a single
+    // GIL acquisition per batch.
+    telemetry::start_flusher_thread();
+
+    // Initialize cached replica state and subscribe to role-change events
+    // so telemetry is suppressed when this instance is a replica (master's
+    // XADDs replicate to us automatically).
+    telemetry::set_is_replica(ctx.get_flags().contains(ContextFlags::SLAVE));
+    unsafe {
+        let res = RedisModule_SubscribeToServerEvent.unwrap()(
+            ctx.ctx,
+            RedisModuleEvent_ReplicationRoleChanged,
+            Some(on_role_change),
+        );
+        debug_assert_eq!(res, REDISMODULE_OK as c_int);
+    }
+
+    // Subscribe to keyspace notifications for graph key rename handling.
+    unsafe {
+        let res = redis_module::raw::RedisModule_SubscribeToKeyspaceEvents.unwrap()(
+            ctx.ctx,
+            4, // REDISMODULE_NOTIFY_GENERIC (covers RENAME)
+            Some(on_keyspace_event),
+        );
+        if res != REDISMODULE_OK as c_int {
+            eprintln!("FalkorDB: failed to subscribe to keyspace events: code {res}");
+            return Status::Err;
+        }
+    }
+
     Status::Ok
 }
 
@@ -141,4 +275,55 @@ const unsafe extern "C" fn on_flush(
     _subevent: u64,
     _data: *mut c_void,
 ) {
+}
+
+unsafe extern "C" fn on_role_change(
+    _ctx: *mut RedisModuleCtx,
+    _eid: RedisModuleEvent,
+    subevent: u64,
+    _data: *mut c_void,
+) {
+    telemetry::set_is_replica(subevent == REDISMODULE_EVENT_REPLROLECHANGED_NOW_REPLICA);
+}
+
+/// Tracks the old key name during a two-phase RENAME notification.
+static RENAME_OLD_NAME: parking_lot::Mutex<Option<String>> = parking_lot::Mutex::new(None);
+
+/// Keyspace event callback for handling graph key renames.
+/// Redis RENAME fires two sequential events on the same thread:
+/// 1. `rename_from` with the old key name
+/// 2. `rename_to` with the new key name
+unsafe extern "C" fn on_keyspace_event(
+    ctx: *mut RedisModuleCtx,
+    _type: c_int,
+    event: *const std::os::raw::c_char,
+    key: *mut redis_module::raw::RedisModuleString,
+) -> c_int {
+    let event_str = unsafe { std::ffi::CStr::from_ptr(event) }
+        .to_str()
+        .unwrap_or("");
+
+    let mut key_len: usize = 0;
+    let key_ptr = unsafe {
+        redis_module::raw::RedisModule_StringPtrLen.unwrap()(key, &mut key_len as *mut usize)
+    };
+    let key_bytes = unsafe { std::slice::from_raw_parts(key_ptr.cast(), key_len) };
+    let key_name = match std::str::from_utf8(key_bytes) {
+        Ok(s) => s,
+        Err(_) => return 0,
+    };
+
+    match event_str {
+        "rename_from" => {
+            *RENAME_OLD_NAME.lock() = Some(key_name.to_string());
+        }
+        "rename_to" => {
+            if let Some(old_name) = RENAME_OLD_NAME.lock().take() {
+                let context = Context::new(ctx);
+                telemetry::delete_stream(&context, &old_name);
+            }
+        }
+        _ => {}
+    }
+    0
 }

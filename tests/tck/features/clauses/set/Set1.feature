@@ -124,7 +124,6 @@ Feature: Set1 - Set a Property
     And the side effects should be:
       | +properties | 1 |
 
-  @skip
   Scenario: [6] Concatenate elements onto a list property
     Given any graph
     When executing query:
@@ -140,7 +139,6 @@ Feature: Set1 - Set a Property
       | +nodes      | 1 |
       | +properties | 1 |
 
-  @skip
   Scenario: [7] Concatenate elements in reverse onto a list property
     Given any graph
     When executing query:
@@ -179,7 +177,6 @@ Feature: Set1 - Set a Property
       """
     Then a SyntaxError should be raised at compile time: UndefinedVariable
 
-  @skip #fixme
   Scenario: [10] Failing when setting a list of maps as a property
     Given any graph
     When executing query:

@@ -320,25 +320,23 @@ class testQueryValidationFlow(FlowTestsBase):
             assert("not defined" in str(e))
             pass
 
-        #@todo barak implement aliasing yield	
         # refer to procedure call original output when output is aliased.
-        #try:
-        #    query = """CALL db.idx.fulltext.queryNodes('A', 'B') YIELD node AS n RETURN node"""
-        #    self.graph.query(query)
-        #    assert(False)
-        #except redis.ResponseError as e:
-        #    # Expecting an error.
-        #    assert("not defined" in str(e))
-        #    pass
+        try:
+           query = """CALL db.idx.fulltext.queryNodes('A', 'B') YIELD node AS n RETURN node"""
+           self.graph.query(query)
+           self.env.assertTrue(False)
+        except redis.ResponseError as e:
+           # Expecting an error.
+           assert("not defined" in str(e))
+           pass
 
         # valid procedure call, no output aliasing
         query = """CALL db.idx.fulltext.queryNodes('A', 'B') YIELD node RETURN node"""
         self.graph.query(query)
         
-        #@todo barak implement aliasing yield
         # valid procedure call, output aliasing
-        #query = """CALL db.idx.fulltext.queryNodes('A', 'B') YIELD node AS n RETURN n"""
-        #self.graph.query(query)
+        query = """CALL db.idx.fulltext.queryNodes('A', 'B') YIELD node AS n RETURN n"""
+        self.graph.query(query)
 
     # Referencing a variable before defining it should raise a compile-time error.
     def test24_reference_before_definition(self):
@@ -511,15 +509,14 @@ class testQueryValidationFlow(FlowTestsBase):
         actual_result = self.graph.query(query)
         self.env.assertEqual(actual_result.result_set[0][0], retval)
 
-    #@todo barak implement algo.BFS
-    #def test36_multiple_proc_calls(self):
-    #    query = """MATCH (a)
-    #               CALL algo.BFS(a, 3, NULL) YIELD nodes as ns1
-    #               MATCH (b)
-    #               CALL algo.BFS(b, 3, NULL) YIELD nodes as ns2
-    #               RETURN ns1"""
-    #    plan = str(self.graph.explain(query))
-    #    self.env.assertTrue(plan.count("ProcedureCall") == 2)
+    def test36_multiple_proc_calls(self):
+       query = """MATCH (a)
+                  CALL algo.BFS(a, 3, NULL) YIELD nodes as ns1
+                  MATCH (b)
+                  CALL algo.BFS(b, 3, NULL) YIELD nodes as ns2
+                  RETURN ns1"""
+       plan = str(self.graph.explain(query))
+       self.env.assertTrue(plan.count("ProcedureCall") == 2)
 
     def test37_list_comprehension_missuse(self):
         # all expect list comprehension,

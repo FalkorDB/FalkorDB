@@ -263,11 +263,27 @@ impl<'a> NodeByIndexScanOp<'a> {
         &mut self,
         envs: &mut Vec<Env<'a>>,
     ) {
+        // Additional labels (beyond the index's primary label) must be
+        // verified post-hoc since the index only filters on the primary.
+        let extra_labels: Vec<&Arc<String>> = if self.node_pattern.labels.len() > 1 {
+            self.node_pattern.labels.iter().skip(1).collect()
+        } else {
+            Vec::new()
+        };
         while envs.len() < BATCH_SIZE {
             let Some((env, iter)) = self.pending.front_mut() else {
                 break;
             };
             if let Some(nid) = iter.next() {
+                if !extra_labels.is_empty() {
+                    let node_labels = self.runtime.get_node_labels(nid);
+                    if !extra_labels
+                        .iter()
+                        .all(|l| node_labels.iter().any(|nl| nl == *l))
+                    {
+                        continue;
+                    }
+                }
                 let mut row = env.clone_pooled(self.runtime.env_pool);
                 row.insert(&self.node_pattern.alias, Value::Node(nid));
                 envs.push(row);

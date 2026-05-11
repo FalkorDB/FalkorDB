@@ -104,7 +104,6 @@ Feature: Match9 - Match deprecated scenarios
       | [[:REL {num: 1}], [:REL {num: 2}]] |
     And no side effects
 
-  @skip
   Scenario: [5] Variable length pattern with label predicate on both sides
     Given an empty graph
     And having executed:

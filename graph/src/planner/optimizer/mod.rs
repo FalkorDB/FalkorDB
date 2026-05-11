@@ -50,6 +50,7 @@ mod eliminate_true_filters;
 mod push_filters_down;
 mod reduce_count;
 mod reduce_expand_into;
+mod reorder_labels;
 mod replace_cartesian_with_hash_join;
 mod select_scan_node;
 mod utilize_index;
@@ -72,6 +73,7 @@ use eliminate_true_filters::eliminate_true_filters;
 use push_filters_down::push_filters_down;
 use reduce_count::reduce_count;
 use reduce_expand_into::reduce_expand_into;
+use reorder_labels::reorder_labels;
 use replace_cartesian_with_hash_join::replace_cartesian_with_hash_join;
 use select_scan_node::select_scan_node;
 use utilize_index::utilize_index;
@@ -127,6 +129,8 @@ pub fn optimize(
     absorb_edge_filters_into_vlt(&mut optimized_plan);
     utilize_index(&mut optimized_plan, graph);
     utilize_node_by_id(&mut optimized_plan);
+
+    reorder_labels(&mut optimized_plan, graph);
 
     optimized_plan
 }

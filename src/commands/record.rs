@@ -65,6 +65,9 @@ fn record_mut(
         &env_pool,
         -1,
         false,
+        None,
+        0,
+        None,
     );
     let _ = runtime.query();
     let ids = plan.root().indices::<Bfs>().collect::<Vec<_>>();

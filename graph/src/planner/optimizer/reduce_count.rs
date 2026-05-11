@@ -97,7 +97,7 @@ pub(super) fn reduce_count(
                 Some(graph.node_count() as i64)
             }
             // MATCH (n:Label) RETURN COUNT(n)
-            IR::NodeByLabelScan(node)
+            IR::NodeByLabelScan { node, .. }
                 if node.alias.id == count_var_id
                     && child.num_children() == 0
                     && node.labels.len() == 1 =>
