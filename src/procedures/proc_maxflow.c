@@ -668,8 +668,8 @@ ProcedureResult Proc_MaxFlowInvoke
 
 	// execute maxflow
 	GrB_Matrix flow_mtx = NULL ;
-	GrB_Info info = LAGr_MaxFlow (&pdata->max_flow, &flow_mtx, G, src_id,
-			sink_id, msg) ;
+	GrB_Info info = LAGr_MaxFlow (
+		&pdata->max_flow, &flow_mtx, NULL, G, src_id, sink_id, msg) ;
 
 	res = (info == GrB_SUCCESS) ? PROCEDURE_OK : PROCEDURE_ERR ;
 
