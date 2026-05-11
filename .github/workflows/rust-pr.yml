@@ -337,7 +337,7 @@ jobs:
           . /data/venv/bin/activate
           pytest tests/test_bench.py --benchmark-json output.json -vv
       - name: Store benchmark result
-        uses: benchmark-action/github-action-benchmark@a60cea5bc7b49e15c1f58f411161f99e0df48372
+        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba
         with:
           name: FalkorDB Benchmark
           tool: 'pytest'
