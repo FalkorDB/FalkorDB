@@ -7,6 +7,7 @@
 #include "op_node_by_index_scan.h"
 #include "../../query_ctx.h"
 #include "../../index/index.h"
+#include "../../index/index_doc_key.h"
 #include "shared/print_functions.h"
 
 // forward declarations
@@ -102,7 +103,7 @@ static Record IndexScanConsumeFromChild
 (
 	OpBase *opBase
 ) {
-	const EntityID *nodeId = NULL;
+	const char *doc_key = NULL;
 	IndexScan *op  = (IndexScan *)opBase;
 	RSIndex *rsIdx = op->rsIdx;
 
@@ -112,10 +113,12 @@ pull_index:
 	//--------------------------------------------------------------------------
 
 	if(op->iter != NULL && op->child_record != NULL) {
-		while((nodeId = RediSearch_ResultsIteratorNext(op->iter, rsIdx, NULL))
+		while((doc_key = RediSearch_ResultsIteratorNext(op->iter, rsIdx, NULL))
 				!= NULL) {
+			EntityID nodeId;
+			IndexDocKey_DecodeNode(doc_key, &nodeId);
 			// populate record with node
-			_UpdateRecord(op, op->child_record, *nodeId);
+			_UpdateRecord(op, op->child_record, nodeId);
 			// apply unresolved filters
 			if(_PassUnresolvedFilters(op, op->child_record)) {
 				// clone the held Record, as it will be freed upstream
@@ -213,14 +216,16 @@ static Record IndexScanConsume(OpBase *opBase) {
 				QueryCtx_GetTimeoutMS());
 	}
 
-	const EntityID *nodeId = NULL;
+	const char *doc_key = NULL;
 
 	// populate the Record with the actual node
 	Record r = OpBase_CreateRecord((OpBase *)op);
-	while((nodeId = RediSearch_ResultsIteratorNext(op->iter, rsIdx, NULL))
+	while((doc_key = RediSearch_ResultsIteratorNext(op->iter, rsIdx, NULL))
 			!= NULL) {
+		EntityID nodeId;
+		IndexDocKey_DecodeNode(doc_key, &nodeId);
 		// populate record with node
-		_UpdateRecord(op, r, *nodeId);
+		_UpdateRecord(op, r, nodeId);
 
 		// apply unresolved filters
 		if(_PassUnresolvedFilters(op, r)) {

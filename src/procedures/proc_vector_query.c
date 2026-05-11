@@ -8,6 +8,7 @@
 #include "../query_ctx.h"
 #include "../graph/graph.h"
 #include "../index/index.h"
+#include "../index/index_doc_key.h"
 #include "proc_vector_query.h"
 #include "../datatypes/map.h"
 #include "../datatypes/vector.h"
@@ -128,16 +129,19 @@ static SIValue *Proc_NodeStep
 	// try to get a result out of the iterator
 	// NULL is returned if iterator id depleted
 	size_t len = 0 ;
-	const NodeID *id = (NodeID*)RediSearch_ResultsIteratorNext (pdata->iter,
+	const char *doc_key = (const char*)RediSearch_ResultsIteratorNext (pdata->iter,
 			pdata->idx, &len) ;
 
 	// depleted
-	if (!id) {
+	if (!doc_key) {
 		return NULL ;
 	}
 
+	NodeID id ;
+	IndexDocKey_DecodeNode (doc_key, &id) ;
+
 	Node *n  = &pdata->n ;
-	bool res = Graph_GetNode (pdata->g, *(NodeID*)id, n) ;
+	bool res = Graph_GetNode (pdata->g, id, n) ;
 	ASSERT (res == true) ;
 
 	// yield graph entity
@@ -170,18 +174,21 @@ static SIValue *Proc_EdgeStep
 	// try to get a result out of the iterator
 	// NULL is returned if iterator id depleted
 	size_t len = 0;
-	const EdgeIndexKey *edge_key = RediSearch_ResultsIteratorNext(pdata->iter,
+	const char *doc_key = (const char*)RediSearch_ResultsIteratorNext(pdata->iter,
 			pdata->idx, &len);
 
 	// depleted
-	if(!edge_key) {
+	if(!doc_key) {
 		return NULL;
 	}
 
+	EdgeIndexKey edge_key;
+	IndexDocKey_DecodeEdge(doc_key, &edge_key);
+
 	Edge *e = &pdata->e;
-	pdata->e.src_id  = edge_key->src_id;
-	pdata->e.dest_id = edge_key->dest_id;
-	EntityID edge_id = edge_key->edge_id;
+	pdata->e.src_id  = edge_key.src_id;
+	pdata->e.dest_id = edge_key.dest_id;
+	EntityID edge_id = edge_key.edge_id;
 
 	bool res = Graph_GetEdge(pdata->g, edge_id, e);
 	ASSERT(res == true);
