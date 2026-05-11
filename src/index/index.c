@@ -6,6 +6,7 @@
 
 #include "RG.h"
 #include "index.h"
+#include "tag_encode.h"
 #include "../value.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"
@@ -278,7 +279,12 @@ static inline void _addStringField
 	const char *name,  // field name
 	const char *str    // string value
 ) {
-	RediSearch_DocumentAddFieldCString(doc, name, str, RSFLDTYPE_TAG);
+	char *encoded;
+	size_t encoded_len;
+	TagEncode_Lower(str, strlen(str), &encoded, &encoded_len);
+	RediSearch_DocumentAddFieldString(doc, name, encoded, encoded_len,
+			RSFLDTYPE_TAG);
+	rm_free(encoded);
 }
 
 // add a new numeric field to document
@@ -363,10 +369,21 @@ static inline void _addArrayField
 	//--------------------------------------------------------------------------
 
 	if(n_strings > 0) {
-		// strings is an arr.h array (char**); pass the data pointer.
+		// encode each element so the trie key survives tag_strtolower
+		// unchanged. The LLAPI deep-copies the array; free our encoded
+		// buffers immediately afterwards.
+		char **encoded = arr_new(char *, n_strings);
+		for(size_t i = 0; i < n_strings; i++) {
+			char *enc;
+			size_t enc_len;
+			TagEncode_Lower(strings[i], strlen(strings[i]), &enc, &enc_len);
+			arr_append(encoded, enc);
+		}
 		RediSearch_DocumentAddFieldStringArray(doc,
-				field->range_string_arr_name, (const char**)strings,
+				field->range_string_arr_name, (const char**)encoded,
 				n_strings, RSFLDTYPE_TAG);
+		for(size_t i = 0; i < n_strings; i++) rm_free(encoded[i]);
+		arr_free(encoded);
 	}
 
 	// clean up
