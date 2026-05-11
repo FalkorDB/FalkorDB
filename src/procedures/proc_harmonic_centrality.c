@@ -441,14 +441,11 @@ ProcedureResult Proc_CentralityFree
 // YIELD node, score, reachable
 //
 // nodeLabels: optional array of strings. Error on non-existent lable name.
+//             only nodes of the given lable will get a harmonic centrality
+//             score or be traversed.
 // relationshipTypes: optional array of strings. Error on non-existent
-//                    relationship name.
-// weightAttribute:   optional string. Error on non-existent name.
-// defaultWeight:     optional default weight, non-negative integer.
-//                    weightAttribute must have been specified already.
-//                    If not given, will error on non-integer or non-existent
-//                    weight attribute values. If given, these values will be
-//                    treated as the default.
+//                    relationship name. Only edges of the given type will be
+//                    traversed.
 
 ProcedureCtx *Proc_HarmonicCentralityCtx(void) {
 	ProcedureOutput *outputs         = arr_new (ProcedureOutput, 3) ;
