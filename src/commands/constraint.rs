@@ -162,26 +162,49 @@ pub fn graph_constraint(
         Ok(needs_async_validation) => {
             tg.graph.commit(g_arc);
 
-            // Spawn background validation for large datasets
+            // Spawn background validation for large datasets on a dedicated
+            // OS thread (not the query threadpool). Validation can take
+            // seconds for large datasets, and we don't want it to occupy a
+            // query worker — that would block unrelated reads queued behind
+            // it on the shared MPMC dispatch.
+            //
+            // Two-phase under different locks: the long-running validation
+            // runs under a *read* lock on the outer `RwLock<ThreadedGraph>`,
+            // so concurrent `db.constraints()` queries continue to see the
+            // constraint in UNDER CONSTRUCTION state. The outer write lock is
+            // taken only briefly at the end to commit the status update.
             if needs_async_validation {
                 let graph_clone = graph.clone();
-                graph::threadpool::spawn(
-                    move || {
-                        let mut tg = graph_clone.write();
-                        if let Some(g_arc) = tg.graph.write() {
-                            g_arc.borrow_mut().validate_pending_constraints();
-                            tg.graph.commit(g_arc);
-                        }
-                    },
-                    Some(0),
-                );
+                std::thread::spawn(move || {
+                    let results = {
+                        let tg = graph_clone.read();
+                        let g = tg.graph.read();
+                        g.borrow().compute_pending_constraint_results()
+                    };
+                    let mut tg = graph_clone.write();
+                    if let Some(g_arc) = tg.graph.write() {
+                        g_arc
+                            .borrow_mut()
+                            .apply_constraint_validation_results(results);
+                        tg.graph.commit(g_arc);
+                    }
+                });
             }
 
             if !is_replicated {
+                // Two-phase replication protocol (matches C FalkorDB):
+                //   1. The CREATE/DROP itself.
+                //   2. A second copy of the same command, which the replica
+                //      treats as the "activation" signal — its handler hits
+                //      the `Constraint already exists` branch below and
+                //      silently succeeds.
+                // Calling `replicate_verbatim()` twice queues two separate
+                // entries via `alsoPropagate`. We use verbatim (not the
+                // parameterized `RM_Replicate`) because in this Redis
+                // version `RM_Replicate` from a module command handler
+                // returns OK but does not actually propagate to replicas.
                 ctx.replicate_verbatim();
                 if is_create {
-                    // Replicate a second time to signal constraint activation,
-                    // matching C FalkorDB's two-phase create + activate protocol.
                     ctx.replicate_verbatim();
                 }
             }

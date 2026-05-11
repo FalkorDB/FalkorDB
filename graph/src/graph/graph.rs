@@ -2989,6 +2989,39 @@ impl Graph {
         }
     }
 
+    /// Read-only phase of async constraint validation: compute the outcome
+    /// (valid / invalid) for every constraint currently under construction,
+    /// without mutating state. Pair with
+    /// [`apply_constraint_validation_results`] under a write lock.
+    pub fn compute_pending_constraint_results(&self) -> Vec<(usize, bool)> {
+        self.constraints
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.status == ConstraintStatus::UnderConstruction)
+            .map(|(i, c)| (i, self.validate_constraint(c)))
+            .collect()
+    }
+
+    /// Apply results computed by [`compute_pending_constraint_results`].
+    /// Status is updated only for constraints that are still under
+    /// construction (defensive: a concurrent drop may have removed them).
+    pub fn apply_constraint_validation_results(
+        &mut self,
+        results: Vec<(usize, bool)>,
+    ) {
+        for (i, valid) in results {
+            if i < self.constraints.len()
+                && self.constraints[i].status == ConstraintStatus::UnderConstruction
+            {
+                self.constraints[i].status = if valid {
+                    ConstraintStatus::Operational
+                } else {
+                    ConstraintStatus::Failed
+                };
+            }
+        }
+    }
+
     fn validate_mandatory_constraint(
         &self,
         constraint: &Constraint,
