@@ -64,7 +64,7 @@ typedef struct jobqueue {
 	job *front;              		/* pointer to front of queue */
 	job *rear;               		/* pointer to rear  of queue */
 	bsem *has_jobs;          		/* flag as binary semaphore  */
-	int len;                 		/* number of jobs in queue   */
+	atomic_int len;                /* number of jobs in queue   */
 	uint64_t cap;                   /* capacity of the queue     */
 } jobqueue;
 
@@ -191,7 +191,7 @@ int thpool_add_work(thpool_* thpool_p, void (*function_p)(void *), void *arg_p) 
 /* Wait until all jobs have finished */
 void thpool_wait(thpool_* thpool_p) {
 	pthread_mutex_lock(&thpool_p->thcount_lock);
-	while(thpool_p->jobqueue.len || thpool_p->num_threads_working) {
+	while(atomic_load(&thpool_p->jobqueue.len) || thpool_p->num_threads_working) {
 		pthread_cond_wait(&thpool_p->threads_all_idle, &thpool_p->thcount_lock);
 	}
 	pthread_mutex_unlock(&thpool_p->thcount_lock);
@@ -251,7 +251,7 @@ bool thpool_queue_full(thpool_* thpool_p) {
 	ASSERT(thpool_p != NULL);
 
 	// test if there's enough room in thread pool queue
-	return (thpool_p->jobqueue.len >= thpool_p->jobqueue.cap);
+	return (atomic_load(&thpool_p->jobqueue.len) >= thpool_p->jobqueue.cap);
 }
 
 void thpool_set_jobqueue_cap
@@ -276,7 +276,7 @@ uint64_t thpool_get_jobqueue_len
 	thpool_* thpool_p
 ) {
 	ASSERT(thpool_p);
-	return thpool_p->jobqueue.len;
+	return atomic_load(&thpool_p->jobqueue.len);
 }
 
 // collects tasks matching given handler
@@ -303,7 +303,7 @@ void thpool_get_tasks
 
 	// iterate through job queue
 	uint32_t k = 0;  // number of matched tasks
-	for(uint32_t i = 0; i < jobqueue_p->len && i < *num_tasks; i++) {
+	for(uint32_t i = 0; i < atomic_load(&jobqueue_p->len) && i < *num_tasks; i++) {
 		// check if job matches given handler
 		if(job->function == handler) {
 			tasks[k++] = job->arg;
@@ -427,7 +427,7 @@ static void thread_destroy(thread *thread_p) {
 
 /* Initialize queue */
 static int jobqueue_init(jobqueue *jobqueue_p) {
-	jobqueue_p->len         =  0;
+	atomic_init(&jobqueue_p->len, 0);
 	jobqueue_p->front       =  NULL;
 	jobqueue_p->rear        =  NULL;
 
@@ -447,14 +447,14 @@ static int jobqueue_init(jobqueue *jobqueue_p) {
 /* Clear the queue */
 static void jobqueue_clear(jobqueue *jobqueue_p) {
 
-	while(jobqueue_p->len) {
+	while(atomic_load(&jobqueue_p->len)) {
 		rm_free(jobqueue_pull(jobqueue_p));
 	}
 
 	jobqueue_p->front = NULL;
 	jobqueue_p->rear = NULL;
 	bsem_reset(jobqueue_p->has_jobs);
-	jobqueue_p->len = 0;
+	atomic_store(&jobqueue_p->len, 0);
 }
 
 /* Add (allocated) job to queue */
@@ -463,7 +463,7 @@ static void jobqueue_push(jobqueue *jobqueue_p, struct job *newjob) {
 
 	pthread_mutex_lock(&jobqueue_p->rwmutex);
 
-	switch(jobqueue_p->len) {
+	switch(atomic_load(&jobqueue_p->len)) {
 		case 0: /* no jobs in queue */
 			jobqueue_p->front = newjob;
 			jobqueue_p->rear = newjob;
@@ -473,7 +473,7 @@ static void jobqueue_push(jobqueue *jobqueue_p, struct job *newjob) {
 			jobqueue_p->rear = newjob;
 	}
 
-	jobqueue_p->len++;
+	atomic_fetch_add(&jobqueue_p->len, 1);
 	bsem_post(jobqueue_p->has_jobs);
 
 	pthread_mutex_unlock(&jobqueue_p->rwmutex);
@@ -488,7 +488,7 @@ static struct job *jobqueue_pull(jobqueue *jobqueue_p) {
 	pthread_mutex_lock(&jobqueue_p->rwmutex);
 	job *job_p = jobqueue_p->front;
 
-	switch(jobqueue_p->len) {
+	switch(atomic_load(&jobqueue_p->len)) {
 
 	case 0: /* if no jobs in queue */
 		break;
@@ -496,12 +496,12 @@ static struct job *jobqueue_pull(jobqueue *jobqueue_p) {
 	case 1: /* if one job in queue */
 		jobqueue_p->front = NULL;
 		jobqueue_p->rear = NULL;
-		jobqueue_p->len = 0;
+		atomic_store(&jobqueue_p->len, 0);
 		break;
 
 	default: /* if >1 jobs in queue */
 		jobqueue_p->front = job_p->prev;
-		jobqueue_p->len--;
+		atomic_fetch_sub(&jobqueue_p->len, 1);
 		/* more than one job in queue -> post it */
 		bsem_post(jobqueue_p->has_jobs);
 	}
