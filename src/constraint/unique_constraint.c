@@ -8,6 +8,7 @@
 #include "constraint.h"
 #include "../query_ctx.h"
 #include "../index/index.h"
+#include "../index/index_doc_key.h"
 #include "redisearch_api.h"
 #include "../src/datatypes/point.h"
 #include "../graph/entities/attribute_set.h"
@@ -130,23 +131,29 @@ bool EnforceUniqueEntity
 			rs_idx, QueryCtx_GetTimeoutMS());
 	if(Constraint_GetEntityType(c) == GETYPE_NODE) {
 		// first call, expecting to find 'e' in the index
-		const EntityID *id =
-			(EntityID*)RediSearch_ResultsIteratorNext(iter, rs_idx, NULL);
+		const char *doc_key =
+			(const char *)RediSearch_ResultsIteratorNext(iter, rs_idx, NULL);
 
-		ASSERT(id != NULL);
+		ASSERT(doc_key != NULL);
 
-		if(*id != ENTITY_GET_ID(e)) {
+		EntityID id;
+		IndexDocKey_DecodeNode(doc_key, &id);
+
+		if(id != ENTITY_GET_ID(e)) {
 			holds = false;
 			goto cleanup;
 		}
 	} else {
 		// first call, expecting to find 'e' in the index
-		const EdgeIndexKey *id =
-			(EdgeIndexKey*)RediSearch_ResultsIteratorNext(iter, rs_idx, NULL);
+		const char *doc_key =
+			(const char *)RediSearch_ResultsIteratorNext(iter, rs_idx, NULL);
 
-		ASSERT(id != NULL);
+		ASSERT(doc_key != NULL);
 
-		if(id->edge_id != ENTITY_GET_ID(e)) {
+		EdgeIndexKey id;
+		IndexDocKey_DecodeEdge(doc_key, &id);
+
+		if(id.edge_id != ENTITY_GET_ID(e)) {
 			holds = false;
 			goto cleanup;
 		}

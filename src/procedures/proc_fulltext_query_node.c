@@ -9,6 +9,7 @@
 #include "../util/arr.h"
 #include "../query_ctx.h"
 #include "../index/index.h"
+#include "../index/index_doc_key.h"
 #include "../util/rmalloc.h"
 #include "../errors/errors.h"
 #include "proc_fulltext_query.h"
@@ -126,17 +127,20 @@ SIValue *Proc_FulltextQueryNodeStep
 	// try to get a result out of the iterator
 	// NULL is returned if iterator id depleted
 	size_t len = 0;
-	NodeID *id = (NodeID *)RediSearch_ResultsIteratorNext(pdata->iter,
+	const char *doc_key = (const char *)RediSearch_ResultsIteratorNext(pdata->iter,
 			pdata->rsIdx, &len);
 
 	// depleted
-	if(!id) return NULL;
+	if(!doc_key) return NULL;
+
+	NodeID id;
+	IndexDocKey_DecodeNode(doc_key, &id);
 
 	double score = RediSearch_ResultsIteratorGetScore(pdata->iter);
 
 	// get node
 	Node *n = &pdata->n;
-	Graph_GetNode(pdata->g, *id, n);
+	Graph_GetNode(pdata->g, id, n);
 
 	if(pdata->yield_node)  *pdata->yield_node  = SI_Node(n);
 	if(pdata->yield_score) *pdata->yield_score = SI_DoubleVal(score);

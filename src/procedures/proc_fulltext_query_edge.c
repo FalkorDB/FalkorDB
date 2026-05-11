@@ -9,6 +9,7 @@
 #include "../util/arr.h"
 #include "../query_ctx.h"
 #include "../index/index.h"
+#include "../index/index_doc_key.h"
 #include "../util/rmalloc.h"
 #include "../errors/errors.h"
 #include "proc_fulltext_query.h"
@@ -71,12 +72,14 @@ SIValue *Proc_FulltextQueryRelationshipStep
 	// try to get a result out of the iterator
 	// NULL is returned if iterator id depleted
 	size_t len = 0;
-	const EdgeIndexKey *edge_key = (EdgeIndexKey *)
-		RediSearch_ResultsIteratorNext(pdata->iter, pdata->rsIdx,
-				&len);
+	const char *doc_key = (const char *)
+		RediSearch_ResultsIteratorNext(pdata->iter, pdata->rsIdx, &len);
 
 	// depleted
-	if(!edge_key) return NULL;
+	if(!doc_key) return NULL;
+
+	EdgeIndexKey edge_key;
+	IndexDocKey_DecodeEdge(doc_key, &edge_key);
 
 	//--------------------------------------------------------------------------
 	// set up edge
@@ -85,11 +88,11 @@ SIValue *Proc_FulltextQueryRelationshipStep
 	// get edge
 	Edge *e = &pdata->e;
 
-	e->src_id     = edge_key->src_id;
-	e->dest_id    = edge_key->dest_id;
+	e->src_id     = edge_key.src_id;
+	e->dest_id    = edge_key.dest_id;
 	e->relationID = pdata->r;
 
-	EntityID edge_id = edge_key->edge_id;
+	EntityID edge_id = edge_key.edge_id;
 	bool edge_exists = Graph_GetEdge(pdata->g, edge_id, e);
 	ASSERT(edge_exists);
 	

@@ -7,6 +7,7 @@
 #include "op_edge_by_index_scan.h"
 #include "../../query_ctx.h"
 #include "../../index/index.h"
+#include "../../index/index_doc_key.h"
 #include "shared/print_functions.h"
 
 // forward declarations
@@ -218,7 +219,7 @@ static Record EdgeIndexScanConsumeFromChild
 ) {
 	OpEdgeIndexScan	*op = (OpEdgeIndexScan*) opBase ;
 	RSIndex *rsIdx = op->rsIdx ;
-	const EdgeIndexKey *edgeKey = NULL ;
+	const char *doc_key = NULL ;
 
 pull_index:
 
@@ -227,10 +228,12 @@ pull_index:
 	//--------------------------------------------------------------------------
 
 	if (op->iter != NULL && op->child_record != NULL) {
-		while ((edgeKey = RediSearch_ResultsIteratorNext (op->iter, rsIdx, NULL))
+		while ((doc_key = RediSearch_ResultsIteratorNext (op->iter, rsIdx, NULL))
 				!= NULL) {
+			EdgeIndexKey edgeKey ;
+			IndexDocKey_DecodeEdge (doc_key, &edgeKey) ;
 			// populate record with edge
-			_UpdateRecord (op, op->child_record, edgeKey) ;
+			_UpdateRecord (op, op->child_record, &edgeKey) ;
 			// apply unresolved filters
 			if (_PassUnresolvedFilters (op, op->child_record)) {
 				// clone the held Record, as it will be freed upstream
@@ -353,14 +356,16 @@ static Record EdgeIndexScanConsume
 				QueryCtx_GetTimeoutMS());
 	}
 
-	const EdgeIndexKey *edgeKey = NULL;
+	const char *doc_key = NULL;
 
 	// populate the Record with the actual edge
 	Record r = OpBase_CreateRecord((OpBase *)op);
-	while((edgeKey = RediSearch_ResultsIteratorNext(op->iter, rsIdx, NULL))
+	while((doc_key = RediSearch_ResultsIteratorNext(op->iter, rsIdx, NULL))
 			!= NULL) {
+		EdgeIndexKey edgeKey;
+		IndexDocKey_DecodeEdge(doc_key, &edgeKey);
 		// populate record with edge
-		_UpdateRecord(op, r, edgeKey);
+		_UpdateRecord(op, r, &edgeKey);
 		// apply unresolved filters
 		if(_PassUnresolvedFilters(op, r)) {
 			return r;
