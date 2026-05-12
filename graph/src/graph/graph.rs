@@ -400,6 +400,15 @@ fn populate_index_batch(
                 let lock = indexer.write_lock();
                 let guard = lock.lock();
 
+                if indexer.get_id(&label) != Some(index_id) {
+                    // Index entry was recreated under us — our captured
+                    // `attrs` is stale and would commit partial-spec docs
+                    // into the new rs_idx. The fresh populate spawned by
+                    // recreate will repopulate from cursor 0 with the full
+                    // current schema.
+                    return;
+                }
+
                 if indexer.is_cancelled() || indexer.pending_changes(&label) > 1 {
                     indexer.enable_if(&label, index_id);
                     return;

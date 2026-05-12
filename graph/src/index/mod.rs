@@ -854,6 +854,25 @@ impl Index {
     pub const fn id(&self) -> u64 {
         self.id
     }
+
+    /// Assign a fresh id to this `Index`. Called when the underlying
+    /// RediSearch IndexSpec is rebuilt from scratch (`recreate_index`),
+    /// so background workers spawned against the previous incarnation
+    /// observe the change and bail out instead of writing partial-spec
+    /// docs into the freshly recreated index.
+    pub fn bump_id(&mut self) {
+        static NEXT_INDEX_ID: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(u64::MAX / 2);
+        self.id = NEXT_INDEX_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Reset the pending-changes counter to zero. Used by `recreate_index`
+    /// to discard any decrement still owed by a prior background populate
+    /// — that populate is about to be invalidated by the id bump above.
+    pub fn reset_pending(&self) {
+        self.pending_changes
+            .store(0, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 impl Index {
