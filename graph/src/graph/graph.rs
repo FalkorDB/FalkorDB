@@ -405,7 +405,12 @@ fn populate_index_batch(
                     // `attrs` is stale and would commit partial-spec docs
                     // into the new rs_idx. The fresh populate spawned by
                     // recreate will repopulate from cursor 0 with the full
-                    // current schema.
+                    // current schema. Release this populate's pending
+                    // ticket against the *current* entry so it can settle;
+                    // `drop_index` incremented `pending_changes` for the
+                    // new populate, so this stray decrement just cancels
+                    // out the increment that was owed to *us*.
+                    indexer.release_orphan_pending(&label);
                     return;
                 }
 

@@ -594,6 +594,22 @@ impl Indexer {
         }
     }
 
+    /// Decrement `pending_changes` on the current entry under `label`
+    /// without an id check. Used by `populate_index_batch` when it
+    /// detects a recreated index entry and bails out — its ticket on
+    /// the prior `Index` would otherwise leak, leaving `pending_changes`
+    /// stuck above zero.
+    pub fn release_orphan_pending(
+        &mut self,
+        label: &Arc<String>,
+    ) {
+        let index = self.index.read();
+        if let Some(index) = index.get(label) {
+            let res = index.decrement_pending();
+            debug_assert!(res > 0);
+        }
+    }
+
     #[must_use]
     pub fn enabled(
         &self,

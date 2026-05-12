@@ -868,14 +868,6 @@ impl Index {
             std::sync::atomic::AtomicU64::new(u64::MAX / 2);
         self.id = NEXT_INDEX_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
-
-    /// Reset the pending-changes counter to zero. Used by `recreate_index`
-    /// to discard any decrement still owed by a prior background populate
-    /// — that populate is about to be invalidated by the id bump above.
-    pub fn reset_pending(&self) {
-        self.pending_changes
-            .store(0, std::sync::atomic::Ordering::SeqCst);
-    }
 }
 
 impl Index {
@@ -1833,8 +1825,12 @@ impl Index {
         let language = self.language.clone();
         self.create_rs_index(label, stopwords.as_ref(), language.as_ref())?;
         self.register_fields(self.fields(), None)?;
+        // Bump id so any background populate still running against the
+        // previous rs_idx detects the recreation and bails out. We do not
+        // reset `pending_changes`: `drop_index` already incremented it for
+        // the new populate spawned below, and resetting to 0 would cause
+        // that populate's terminal `enable_if` to underflow the counter.
         self.bump_id();
-        self.reset_pending();
         Ok(())
     }
 }
