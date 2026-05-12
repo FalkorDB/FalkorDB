@@ -11,7 +11,7 @@ FROM falkordb/falkordb-browser:$BROWSER_TAG AS browser
 
 FROM node:24-bookworm-slim AS node
 
-FROM redis:8.6.2
+FROM redis:8.6.3
 
 ENV FALKORDB_HOME=/var/lib/falkordb
 
@@ -64,6 +64,8 @@ COPY ./build/docker/gen-certs.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 COPY --from=compiler /FalkorDB/bin/linux*/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
 
 COPY --from=browser /app ${FALKORDB_BROWSER_PATH}
+
+COPY --from=browser /usr/local/bin/docker-entrypoint.sh ${FALKORDB_BROWSER_PATH}
 
 ENV ARCH=${TARGETPLATFORM}
 

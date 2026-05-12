@@ -125,7 +125,7 @@ void Register_ConditionalFuncs() {
 	arr_append(types, SI_ALL);
 	func_desc = AR_FuncDescNew("distinct", AR_DISTINCT, 1, 1, types, ret_type,
 			true, false, true);
-	AR_SetPrivateDataRoutines(func_desc, Distinct_Free, Distinct_Clone);
+	AR_SetPrivateDataRoutines(func_desc, Distinct_Free, Distinct_Clone, NULL);
 	AR_FuncRegister(func_desc);
 }
 

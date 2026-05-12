@@ -100,14 +100,14 @@ jobs:
         run: |
           # Generate a single combined hash of all dependencies to avoid 512 char key limit
           # build.sh is included so that changes to dep build flags (e.g. libcurl SSL) invalidate the cache
-          DEPS_HASH=$(cat ./deps/GraphBLAS/Include/GraphBLAS.h ./deps/GraphBLAS/Config/GB_prejit.c ./deps/libcypher-parser/lib/src/parser.c ./deps/RediSearch/src/version.h ./deps/libcurl/RELEASE-NOTES ./deps/libcsv/ChangeLog ./deps/LAGraph/include/LAGraph.h ./deps/rax/rax.h ./deps/xxHash/xxhash.h ./deps/utf8proc/utf8proc.h ./deps/oniguruma/src/oniguruma.h ./deps/FalkorDB-core-rs/Cargo.toml ./build.sh 2>/dev/null | sha256sum | cut -d' ' -f1 || echo "no-hash")
+          DEPS_HASH=$(cat ./deps/GraphBLAS/Include/GraphBLAS.h ./deps/GraphBLAS/Config/GB_prejit.c ./deps/libcypher-parser/lib/src/parser.c ./deps/RediSearch/src/version.h ./deps/libcurl/RELEASE-NOTES ./deps/libcsv/ChangeLog ./deps/LAGraph/include/LAGraph.h ./deps/LAGraph/include/LAGraphX.h ./deps/rax/rax.h ./deps/xxHash/xxhash.h ./deps/utf8proc/utf8proc.h ./deps/oniguruma/src/oniguruma.h ./deps/FalkorDB-core-rs/Cargo.toml ./build.sh 2>/dev/null | sha256sum | cut -d' ' -f1 || echo "no-hash")
           echo "combined=${DEPS_HASH}" >> $GITHUB_OUTPUT
 
       - name: Generate cache key (macOS)
         if: matrix.platform.os == 'macos'
         id: cache-key-macos
         run: |
-          DEPS_HASH=$(cat deps/GraphBLAS/Include/GraphBLAS.h deps/libcypher-parser/lib/src/parser.c deps/RediSearch/src/version.h deps/libcurl/RELEASE-NOTES deps/libcsv/ChangeLog deps/LAGraph/include/LAGraph.h deps/rax/rax.h deps/xxHash/xxhash.h deps/utf8proc/utf8proc.h deps/oniguruma/src/oniguruma.h deps/FalkorDB-core-rs/Cargo.toml build.sh | shasum -a 256 | cut -d' ' -f1)
+          DEPS_HASH=$(cat deps/GraphBLAS/Include/GraphBLAS.h deps/libcypher-parser/lib/src/parser.c deps/RediSearch/src/version.h deps/libcurl/RELEASE-NOTES deps/libcsv/ChangeLog deps/LAGraph/include/LAGraph.h deps/LAGraph/include/LAGraphX.h deps/rax/rax.h deps/xxHash/xxhash.h deps/utf8proc/utf8proc.h deps/oniguruma/src/oniguruma.h deps/FalkorDB-core-rs/Cargo.toml build.sh | shasum -a 256 | cut -d' ' -f1)
           echo "key=macos-deps-${{ matrix.build_type }}-${DEPS_HASH}" >> $GITHUB_OUTPUT
 
       - name: Restore dependency caches (Docker)
@@ -423,7 +423,7 @@ jobs:
         run: docker load --input /tmp/falkordb-${{ matrix.platform.suffix }}.tar
 
       - name: Run Trivy scan
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
         with:
           image-ref: falkordb/falkordb-${{ matrix.platform.suffix }}
           output: trivy-report.json
@@ -442,7 +442,7 @@ jobs:
       - name: Fail build on high/critical severity vulnerabilities
         id: trivy_gate
         continue-on-error: true
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
         with:
           image-ref: falkordb/falkordb-${{ matrix.platform.suffix }}
           format: table
