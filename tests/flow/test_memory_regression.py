@@ -122,6 +122,8 @@ class testMemoryRegression(FlowTestsBase):
         try:
             self.graph.delete()
         except ResponseError:
+            # Best-effort cleanup: the graph may not exist (or may already be
+            # deleted), which is acceptable during teardown.
             pass
         self.graph = self.db.select_graph(GRAPH_ID)
 
