@@ -1144,6 +1144,15 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                     reset_counter();
                     enable_tracking();
                 }
+                // Hold the GIL across the write. Index creation triggers
+                // RediSearch GC → RM_CreateTimer, which modifies a Redis
+                // global rax without taking the GIL itself. Without the
+                // GIL here, that rax mutation races with the main thread
+                // (ASAN catches the resulting heap-use-after-free).
+                // Writes are already serialized through this single
+                // worker, so the only contention this adds is against
+                // the main thread.
+                unsafe { ffi::lock_thread_safe_ctx(ctx.ctx) };
                 let res =
                     graph.execute_query_write(&ctx, &query, compact, cached, per_query_timeout);
                 if mem_capacity > 0 {
@@ -1155,12 +1164,8 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                 }
                 match res {
                     Ok(wq) => {
-                        // Signal the key as modified so WATCH gets triggered.
-                        unsafe {
-                            ffi::lock_thread_safe_ctx(ctx.ctx);
-                            ffi::signal_modified_key(ctx.ctx, key_name.as_bytes());
-                        };
-                        // Send replication while GIL is held
+                        // GIL still held from before execute_query_write.
+                        unsafe { ffi::signal_modified_key(ctx.ctx, key_name.as_bytes()) };
                         if wq.modified {
                             replicate_effects(&ctx, &key_name, wq.effects_buffer, &query);
                         }
@@ -1197,10 +1202,14 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                         }
                     }
                     Err(err) => {
+                        // GIL still held from before execute_query_write.
                         let cerr = ffi::sanitise_error(err);
-                        unsafe { ffi::reply_error(ctx.ctx, cerr.as_ptr()) };
+                        unsafe {
+                            ffi::reply_error(ctx.ctx, cerr.as_ptr());
+                            ffi::unlock_thread_safe_ctx(ctx.ctx);
+                            ffi::free_thread_safe_context(ctx.ctx);
+                        };
                         drop(bc);
-                        unsafe { ffi::free_thread_safe_context(ctx.ctx) };
                         graph.graph.rollback();
                     }
                 }

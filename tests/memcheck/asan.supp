@@ -24,6 +24,15 @@ leak:__newTrieMapNode
 leak:__trieMapNode_AddChildIdx
 leak:__trieMapNode_Split
 
+# RediSearch indexed-document storage: documents persist with their index
+# until the index is explicitly dropped. We don't explicitly drop indices on
+# Redis shutdown — the process just exits — so all accumulated indexed
+# state shows as leaked. Suppress; real-leak detection in this path would
+# require explicit index teardown on shutdown.
+leak:RediSearch_CreateDocument2
+leak:DocTable_Put
+leak:RediSearch_CreateIndexOptions
+
 # Per-thread mempool used by RediSearch's RSValue pool (value.c:getPool).
 # Allocated lazily via pthread_setspecific with mempool_destroy as the
 # TLS destructor. When the process exits via exit(2) without joining the
