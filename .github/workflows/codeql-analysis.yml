@@ -34,12 +34,12 @@ jobs:
     steps:
       - name: Create Runner For Benchmark
         id: create-runner
-        uses: FalkorDB/gce-github-runner@afc782cd7ea95146eac57b53d27fc08489d14d1b # install_docker
+        uses: FalkorDB/gce-github-runner@0caf8406cd6353630fcd0b2eade420d3da124e01 # install_docker
         with:
           token: ${{ secrets.GH_SA_TOKEN }}
           project_id: ${{ secrets.GCP_PROJECT_ID }}
           service_account_key: ${{ secrets.GCP_SA_KEY }}
-          machine_zone: ${{ vars.GCP_ZONE }}
+          machine_zones: us-central1-a,us-central1-b,us-central1-c,us-central1-f
           machine_type: n4-highcpu-8
           network: gh-runner
           disk_size: 50GB
