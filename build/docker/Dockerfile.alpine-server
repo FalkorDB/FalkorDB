@@ -4,7 +4,7 @@ ARG TARGETPLATFORM=linux/amd64
 
 FROM $BASE_IMAGE AS compiler
 
-FROM redis:8.6.2-alpine
+FROM redis:8.6.3-alpine
 
 ENV FALKORDB_HOME=/var/lib/falkordb
 

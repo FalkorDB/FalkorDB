@@ -154,7 +154,7 @@ void buildPatternComprehensionOps
 		// collect evaluation results into an array using `collect`
 		AR_ExpNode *collect_exp = AR_EXP_NewOpNode ("collect", false, 1) ;
 		collect_exp->op.children [0] = eval_exp ;
-		collect_exp->resolved_name = AST_ToString (pc) ;
+		collect_exp->resolved_name = AST_ToString (pc, NULL) ;
 
 		// add collect expression to an AGGREGATION Operation
 		AR_ExpNode **exps = arr_new (AR_ExpNode*, 1) ;
@@ -316,7 +316,7 @@ void buildPatternPathOps
 		// we're require to return an ARRAY of paths, use `collect` to aggregate paths
 		AR_ExpNode *collect_exp = AR_EXP_NewOpNode("collect", false, 1);
 		collect_exp->op.children[0] = path_exp;
-		collect_exp->resolved_name = AST_ToString(path);
+		collect_exp->resolved_name = AST_ToString (path, NULL) ;
 
 		// constuct aggregation operation
 		AR_ExpNode **exps = arr_new(AR_ExpNode *, 1);

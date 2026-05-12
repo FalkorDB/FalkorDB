@@ -11,6 +11,7 @@
 #include "proc_wcc.h"
 #include "proc_cdlp.h"
 #include "proc_labels.h"
+#include "proc_maxflow.h"
 #include "proc_pagerank.h"
 #include "proc_sp_paths.h"
 #include "proc_ss_paths.h"
@@ -24,6 +25,7 @@
 #include "proc_property_keys.h"
 #include "proc_fulltext_query.h"
 #include "proc_list_constraints.h"
+#include "proc_harmonic_centrality.h"
 #include "proc_fulltext_drop_index.h"
 #include "proc_fulltext_create_index.h"
 
