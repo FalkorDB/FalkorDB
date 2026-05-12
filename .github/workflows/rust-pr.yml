@@ -242,6 +242,14 @@ jobs:
           llvm-profdata-22 merge --sparse `find . -name "*.profraw"` -o cov.profdata
           llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
+      - name: Upload flow logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: coverage-flow-logs-${{ strategy.job-index }}
+          path: |
+            tests/flow/logs/
+          if-no-files-found: ignore
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2
         with:
