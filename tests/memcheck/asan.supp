@@ -24,5 +24,20 @@ leak:__newTrieMapNode
 leak:__trieMapNode_AddChildIdx
 leak:__trieMapNode_Split
 
+# Per-thread mempool used by RediSearch's RSValue pool (value.c:getPool).
+# Allocated lazily via pthread_setspecific with mempool_destroy as the
+# TLS destructor. When the process exits via exit(2) without joining the
+# threadpool workers, the destructors don't run, so LSan reports the
+# pool struct as leaked. Not a real leak.
+leak:mempool_new
+
+# Per-thread rwlock context used by RediSearch's RWLOCK macros
+# (rwlock.c:RediSearch_GetLockThreadData). Same TLS-destructor pattern
+# as mempool_new — not freed when threads are killed at process exit.
+leak:RediSearch_GetLockThreadData
+
 # libc thread-local destructor registrations (used by RediSearch's TLS).
 leak:__cxa_thread_atexit_impl
+
+# Dynamic linker (ld-linux.so) startup allocations — not freed at exit.
+leak:ld-linux-x86-64.so

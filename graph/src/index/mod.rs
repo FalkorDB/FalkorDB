@@ -1460,6 +1460,11 @@ impl Index {
                     _vector_owner: vector,
                 });
             }
+            // GetResultsIterator takes ownership of `query_node`: on success
+            // the iter owns it (freed by ResultsIteratorFree on Drop); on
+            // failure RediSearch already frees `query_node` internally
+            // before returning NULL (handleIterCommon → ResultsIteratorFree
+            // → QAST_Destroy(qast.root)).
             let iter = RediSearch_GetResultsIterator(query_node, self.rs_idx);
             if iter.is_null() {
                 return Ok(VectorScoredIdIter {
@@ -1505,6 +1510,9 @@ impl Index {
                     _vector_owner: vector,
                 });
             }
+            // See `vector_query` — RediSearch owns and frees `query_node`
+            // in both branches (success: iter owns it; failure: freed
+            // internally before NULL is returned).
             let iter = RediSearch_GetResultsIterator(query_node, self.rs_idx);
             if iter.is_null() {
                 return Ok(VectorScoredEdgeTripleIter {
