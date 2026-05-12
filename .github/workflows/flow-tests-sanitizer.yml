@@ -38,35 +38,27 @@ jobs:
 
       - name: Build Redis with ASAN
         if: steps.redis-asan-cache.outputs.cache-hit != 'true'
+        env:
+          # Passed via env (not make CLI) so Redis's `CFLAGS+=-fsanitize=address`
+          # from the SANITIZER block still gets to append. Command-line CFLAGS
+          # would take precedence and silently no-op the SANITIZER additions.
+          CFLAGS: "-fsanitize-ignorelist=${{ github.workspace }}/tests/memcheck/redis.san-ignorelist"
         run: |
           set -euo pipefail
           mkdir -p "$REDIS_ASAN_DIR"
           curl -fsSL "https://github.com/redis/redis/archive/refs/tags/${REDIS_ASAN_VER}.tar.gz" \
             | tar xz -C "$REDIS_ASAN_DIR" --strip-components=1
           cd "$REDIS_ASAN_DIR"
-          IGNORELIST="$GITHUB_WORKSPACE/tests/memcheck/redis.san-ignorelist"
-          SAN_FLAGS="-fsanitize=address -fno-sanitize-recover=all -fno-omit-frame-pointer -fsanitize-ignorelist=$IGNORELIST"
-          # - Pass sanitizer flags via CFLAGS/LDFLAGS directly instead of
-          #   SANITIZER=address: GNU make's command-line CFLAGS would override
-          #   the Makefile's `CFLAGS+=-fsanitize=address` from the SANITIZER block.
-          # - MALLOC=libc — jemalloc conflicts with ASAN allocator interceptors.
-          # - OPTIMIZATION=-O1 — default -O3 implicitly enables -flto, which
-          #   makes the linker discard ASAN ctor/dtor sections and break the link.
+          # SANITIZER=address triggers Redis's built-in ASAN config:
+          #   MALLOC=libc, CFLAGS+=-fsanitize=address ..., LDFLAGS+=-fsanitize=address
+          # OPTIMIZATION=-O1 disables the default -flto, which clashes with ASAN
+          # ctor/dtor sections at link time.
           make -j"$(nproc)" \
+            SANITIZER=address \
             CC=clang-22 CXX=clang++-22 \
-            MALLOC=libc \
-            OPTIMIZATION="-O1" \
-            CFLAGS="$SAN_FLAGS" \
-            CXXFLAGS="$SAN_FLAGS" \
-            LDFLAGS="-fsanitize=address"
-          # Sanity check that ASAN runtime got linked into the binary.
-          # clang may link the static ASAN runtime (symbols in .symtab) or the
-          # dynamic one (symbols only in .dynsym) depending on toolchain defaults,
-          # so look in both.
-          echo "--- nm static __asan_* ---"
-          nm src/redis-server 2>/dev/null | grep '__asan_' | head -5 || echo "(none in .symtab)"
-          echo "--- nm -D dynamic __asan_* ---"
-          nm -D src/redis-server 2>/dev/null | grep '__asan_' | head -5 || echo "(none in .dynsym)"
+            OPTIMIZATION="-O1"
+          # Sanity check the ASAN runtime got linked. clang may link the static
+          # runtime (.symtab) or the dynamic one (.dynsym only) so look in both.
           { nm src/redis-server 2>/dev/null; nm -D src/redis-server 2>/dev/null; } \
             | grep -q __asan_init \
             || { echo "ERROR: Redis binary has no ASAN runtime linked"; exit 1; }
