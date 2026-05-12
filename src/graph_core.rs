@@ -1390,14 +1390,20 @@ pub unsafe extern "C" fn graph_free(value: *mut c_void) {
         // registry entry whose clone shares this inner allocation is removed.
         let boxed = Box::from_raw(value.cast::<Arc<RwLock<ThreadedGraph>>>());
         let data_ptr = boxed.data_ptr() as usize;
-        GRAPH_REGISTRY
-            .lock()
-            .retain(|_, arc| arc.data_ptr() as usize != data_ptr);
-        // Drop inline on the Redis main thread: Index::drop's `is_main_thread`
-        // check skips GIL acquisition, so RediSearch_DropIndex runs under the
-        // implicit module GIL and RM_StopTimer succeeds synchronously --
-        // avoiding the destroyCallback race seen when Index drops on a
-        // worker thread.
-        drop(boxed);
+        let removed: Vec<Arc<RwLock<ThreadedGraph>>> = {
+            let mut reg = GRAPH_REGISTRY.lock();
+            let keys: Vec<String> = reg
+                .iter()
+                .filter(|(_, arc)| arc.data_ptr() as usize == data_ptr)
+                .map(|(k, _)| k.clone())
+                .collect();
+            keys.into_iter().filter_map(|k| reg.remove(&k)).collect()
+        };
+        // Drop off the main Redis thread so Index::drop routes through the
+        // GIL-acquiring path (see register_graph for the rationale).
+        std::thread::spawn(move || {
+            drop(boxed);
+            drop(removed);
+        });
     }
 }
