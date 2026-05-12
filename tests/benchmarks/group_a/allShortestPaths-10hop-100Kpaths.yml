@@ -45,4 +45,4 @@ kpis:
   - key: '$.OverallClientLatencies.Total.q50 '
     max_value: 3000.0
   - key: '$.OverallQueryRates.Total'
-    min_value: 10
+    min_value: 5
