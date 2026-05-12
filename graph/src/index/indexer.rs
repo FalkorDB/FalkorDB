@@ -577,8 +577,12 @@ impl Indexer {
         if let Some(index) = index.get(label)
             && index.id() == expected_id
         {
-            let res = index.decrement_pending();
-            debug_assert!(res > 0);
+            // Saturating: multiple batches can race here when the indexer
+            // is cancelled or when `pending_changes > 1` triggers the
+            // early-exit path for several batches in flight against the
+            // same label. The first decrement to 0 settles the counter;
+            // later decrements would underflow.
+            let res = index.try_decrement_pending();
             return res == 1;
         }
         false

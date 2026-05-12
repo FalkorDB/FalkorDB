@@ -89,6 +89,7 @@ pub fn graph_init(
     graph::thread_id::set_main_thread();
     panic::set_hook(Box::new(|info| {
         eprintln!("FalkorDB panic: {info}");
+        eprintln!("Backtrace:\n{}", std::backtrace::Backtrace::force_capture());
         std::process::exit(1);
     }));
 
