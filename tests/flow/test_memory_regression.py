@@ -61,7 +61,7 @@ Updating baselines after an intentional change
 import json
 import os
 
-from common import *
+from common import FlowTestsBase
 
 GRAPH_ID = "memory_regression"
 
