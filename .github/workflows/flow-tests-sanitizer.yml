@@ -45,15 +45,25 @@ jobs:
             | tar xz -C "$REDIS_ASAN_DIR" --strip-components=1
           cd "$REDIS_ASAN_DIR"
           IGNORELIST="$GITHUB_WORKSPACE/tests/memcheck/redis.san-ignorelist"
-          # Redis's own Makefile handles ASAN: forces MALLOC=libc, propagates
-          # -fsanitize=address to deps. We append -fsanitize-ignorelist so the
-          # blacklisted symbols (e.g. THPIsEnabled) stay uninstrumented.
+          SAN_FLAGS="-fsanitize=address -fno-sanitize-recover=all -fno-omit-frame-pointer -fsanitize-ignorelist=$IGNORELIST"
+          # - Pass sanitizer flags via CFLAGS/LDFLAGS directly instead of
+          #   SANITIZER=address: GNU make's command-line CFLAGS would override
+          #   the Makefile's `CFLAGS+=-fsanitize=address` from the SANITIZER block.
+          # - MALLOC=libc — jemalloc conflicts with ASAN allocator interceptors.
+          # - OPTIMIZATION=-O1 — default -O3 implicitly enables -flto, which
+          #   makes the linker discard ASAN ctor/dtor sections and break the link.
           make -j"$(nproc)" \
-            SANITIZER=address \
             CC=clang-22 CXX=clang++-22 \
-            CFLAGS="-fsanitize-ignorelist=$IGNORELIST"
-          nm src/redis-server | grep -q __asan_init \
-            || { echo "ERROR: Redis binary is not ASAN-instrumented"; exit 1; }
+            MALLOC=libc \
+            OPTIMIZATION="-O1" \
+            CFLAGS="$SAN_FLAGS" \
+            CXXFLAGS="$SAN_FLAGS" \
+            LDFLAGS="-fsanitize=address"
+          # Stricter check than just __asan_init (which the runtime provides
+          # even when nothing is instrumented): verify actual code-side ASAN
+          # report calls are present, proving the .c files were instrumented.
+          nm src/redis-server | grep -qE ' [TU] __asan_report_load' \
+            || { echo "ERROR: Redis binary is not actually ASAN-instrumented (no __asan_report_* references)"; exit 1; }
 
       - run: rustup default nightly
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
