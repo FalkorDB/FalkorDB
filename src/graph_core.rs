@@ -1384,10 +1384,26 @@ fn build_index_effects(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn graph_free(value: *mut c_void) {
     unsafe {
-        let raw_ptr = value as usize;
-        GRAPH_REGISTRY
-            .lock()
-            .retain(|_, arc| arc.data_ptr() as usize != raw_ptr);
-        drop(Box::from_raw(value.cast::<Arc<RwLock<ThreadedGraph>>>()));
+        // `value` is the Box pointer Redis received from `Box::into_raw`; it
+        // points to the heap slot holding the Arc, NOT to the RwLock inside
+        // ArcInner. Compare against the boxed Arc's `data_ptr()` so the
+        // registry entry whose clone shares this inner allocation is removed.
+        let boxed = Box::from_raw(value.cast::<Arc<RwLock<ThreadedGraph>>>());
+        let data_ptr = boxed.data_ptr() as usize;
+        let removed: Vec<Arc<RwLock<ThreadedGraph>>> = {
+            let mut reg = GRAPH_REGISTRY.lock();
+            let keys: Vec<String> = reg
+                .iter()
+                .filter(|(_, arc)| arc.data_ptr() as usize == data_ptr)
+                .map(|(k, _)| k.clone())
+                .collect();
+            keys.into_iter().filter_map(|k| reg.remove(&k)).collect()
+        };
+        // Drop off the main Redis thread so Index::drop routes through the
+        // GIL-acquiring path (see register_graph for the rationale).
+        std::thread::spawn(move || {
+            drop(boxed);
+            drop(removed);
+        });
     }
 }
