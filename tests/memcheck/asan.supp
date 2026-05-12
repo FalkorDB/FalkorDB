@@ -15,3 +15,14 @@ leak:createRawStringObject
 leak:createEmbeddedStringObject
 leak:readQueryFromClient
 leak:_sdsnewlen
+
+# RediSearch module-level state: scoring/query-expander registries and
+# the global trie are allocated at module load and intentionally never freed.
+leak:Ext_RegisterScoringFunction
+leak:Ext_RegisterQueryExpander
+leak:__newTrieMapNode
+leak:__trieMapNode_AddChildIdx
+leak:__trieMapNode_Split
+
+# libc thread-local destructor registrations (used by RediSearch's TLS).
+leak:__cxa_thread_atexit_impl
