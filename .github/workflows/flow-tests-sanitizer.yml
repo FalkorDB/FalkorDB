@@ -38,13 +38,16 @@ jobs:
 
       - name: Build Redis with ASAN
         if: steps.redis-asan-cache.outputs.cache-hit != 'true'
-        env:
-          # Passed via env (not make CLI) so Redis's `CFLAGS+=-fsanitize=address`
-          # from the SANITIZER block still gets to append. Command-line CFLAGS
-          # would take precedence and silently no-op the SANITIZER additions.
-          CFLAGS: "-fsanitize-ignorelist=${{ github.workspace }}/tests/memcheck/redis.san-ignorelist"
         run: |
           set -euo pipefail
+          # Exported here (not via the step `env:` block) so the path resolves
+          # to $GITHUB_WORKSPACE inside the container (/__w/...) rather than
+          # `${{ github.workspace }}` which expands to the host path on the
+          # runner (/home/runner/work/...) and isn't visible from the container.
+          # Passed via env, not the make command line: GNU make's command-line
+          # CFLAGS would override the SANITIZER block's `CFLAGS+=-fsanitize=address`,
+          # silently no-op'ing the instrumentation.
+          export CFLAGS="-fsanitize-ignorelist=$GITHUB_WORKSPACE/tests/memcheck/redis.san-ignorelist"
           mkdir -p "$REDIS_ASAN_DIR"
           curl -fsSL "https://github.com/redis/redis/archive/refs/tags/${REDIS_ASAN_VER}.tar.gz" \
             | tar xz -C "$REDIS_ASAN_DIR" --strip-components=1
