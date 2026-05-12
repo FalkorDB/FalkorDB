@@ -14,8 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      workflows: write
       pull-requests: write
+      issues: read
     steps:
       - name: Validate version format
         run: |
@@ -30,12 +30,17 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GH_SA_TOKEN || github.token }}
+
+      - name: Fetch version branch and tags
+        run: |
+          git fetch --force --tags origin
+          git fetch origin "$VERSION"
 
       - name: Find latest tag for version
         id: find_tag
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_SA_TOKEN || github.token }}
         run: |
           echo "Finding latest tag for version $VERSION..."
 
@@ -64,7 +69,7 @@ jobs:
       - name: Find PRs with version label
         id: find_prs
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_SA_TOKEN || github.token }}
         run: |
           echo "Searching for merged PRs with label '$VERSION' since ${{ steps.tag_date.outputs.TAG_DATE }}..."
 
@@ -91,7 +96,7 @@ jobs:
       - name: Get merge commit SHAs
         id: get_commits
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_SA_TOKEN || github.token }}
         run: |
           echo "Getting merge commit SHAs for each PR..."
 
@@ -194,7 +199,7 @@ jobs:
       - name: Create Pull Request
         id: create_pr
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_SA_TOKEN || github.token }}
         run: |
           SUCCESS_COUNT="${{ steps.cherry_pick.outputs.SUCCESS_COUNT }}"
           FAIL_COUNT="${{ steps.cherry_pick.outputs.FAIL_COUNT }}"
