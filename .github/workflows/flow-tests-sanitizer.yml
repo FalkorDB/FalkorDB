@@ -88,14 +88,20 @@ jobs:
           SANITIZER: address
           TARGET_DIR: target/x86_64-unknown-linux-gnu/debug
           PARALLELISM: "--parallelism 2"
-          ASAN_OPTIONS: "detect_leaks=1:detect_odr_violation=0:halt_on_error=0:abort_on_error=0:symbolize=1:print_stacktrace=1:strict_string_checks=1:detect_stack_use_after_return=1"
-          LSAN_OPTIONS: "suppressions=tests/memcheck/asan.supp:use_tls=0"
           ASAN_SYMBOLIZER_PATH: /usr/bin/llvm-symbolizer-22
           RS_GLOBAL_DTORS: "1"
         run: |
           . /data/venv/bin/activate
           # Prepend the ASAN-built Redis so RLTest spawns it instead of stock.
           export PATH="$REDIS_ASAN_DIR/src:$PATH"
+          # Send ASAN/LSan reports to files under tests/flow/logs/ (uploaded
+          # as artifact on failure). Their default stderr destination gets
+          # swallowed when RLTest spawns redis-server with its own logfile.
+          # log_path=<path> writes to <path>.<pid>; log_exe_name=1 appends the
+          # binary name so reports are clearly attributable.
+          mkdir -p tests/flow/logs
+          export ASAN_OPTIONS="detect_leaks=1:detect_odr_violation=0:halt_on_error=0:abort_on_error=0:symbolize=1:print_stacktrace=1:strict_string_checks=1:detect_stack_use_after_return=1:log_path=$GITHUB_WORKSPACE/tests/flow/logs/asan:log_exe_name=1"
+          export LSAN_OPTIONS="suppressions=$GITHUB_WORKSPACE/tests/memcheck/asan.supp:use_tls=0"
           redis-server --version
           ./flow.sh
 
