@@ -777,8 +777,6 @@ impl Indexer {
         let mut index = self.index.write();
         if let Some(index) = index.get_mut(label) {
             index.recreate_index(label)?;
-            index.bump_id();
-            index.reset_pending();
         }
         drop(index);
         Ok(())

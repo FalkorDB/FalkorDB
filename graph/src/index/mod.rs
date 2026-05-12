@@ -1822,6 +1822,8 @@ impl Index {
         let language = self.language.clone();
         self.create_rs_index(label, stopwords.as_ref(), language.as_ref())?;
         self.register_fields(self.fields(), None)?;
+        self.bump_id();
+        self.reset_pending();
         Ok(())
     }
 }
