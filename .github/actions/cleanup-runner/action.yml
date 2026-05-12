@@ -8,8 +8,8 @@ inputs:
   project_id:
     description: GCP Project ID
     required: true
-  zone:
-    description: GCP Zone
+  zones:
+    description: GCP Zones (comma-separated)
     required: true
   instance_label:
     description: Label to identify the instance
@@ -32,4 +32,8 @@ runs:
         echo "runner_id=$runner_id" >> $GITHUB_OUTPUT
     - id: kill-runner
       shell: bash
-      run: gcloud compute instances delete ${{ steps.get-runner-id.outputs.runner_id }} --zone=${{ inputs.zone }} --quiet
+      run: |
+        IFS=',' read -ra ZONES <<< "${{ inputs.zones }}"
+        for zone in "${ZONES[@]}"; do
+          gcloud compute instances delete ${{ steps.get-runner-id.outputs.runner_id }} --zone=$zone --quiet
+        done

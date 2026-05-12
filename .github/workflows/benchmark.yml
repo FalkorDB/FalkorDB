@@ -159,7 +159,7 @@ jobs:
         with:
           service_account_key: ${{ secrets.GCP_SA_KEY }}
           project_id: ${{ secrets.GCP_PROJECT_ID }}
-          zone: ${{ vars.GCP_ZONE }}
+          zones: us-central1-a,us-central1-b,us-central1-c,us-central1-f
           instance_label: benchmark-${{ github.run_id }}-${{ github.run_number }}-group_${{ matrix.benchmark_group }}
 
   merge-results:
