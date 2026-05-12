@@ -1754,6 +1754,18 @@ impl Index {
         self.pending_changes.fetch_sub(1, Ordering::SeqCst)
     }
 
+    /// Decrement `pending_changes` only if it is currently > 0. Returns
+    /// the previous value, or 0 if no decrement happened. Used by
+    /// orphan-ticket release paths that must not underflow if the
+    /// counter was already drained by another completion.
+    pub fn try_decrement_pending(&self) -> i32 {
+        self.pending_changes
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
+                if v > 0 { Some(v - 1) } else { None }
+            })
+            .unwrap_or(0)
+    }
+
     /// Get the current pending changes count.
     #[must_use]
     pub fn pending_count(&self) -> i32 {

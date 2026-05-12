@@ -598,15 +598,16 @@ impl Indexer {
     /// without an id check. Used by `populate_index_batch` when it
     /// detects a recreated index entry and bails out — its ticket on
     /// the prior `Index` would otherwise leak, leaving `pending_changes`
-    /// stuck above zero.
+    /// stuck above zero. Saturating: if the new populate already
+    /// completed and brought the counter to 0, we skip the decrement
+    /// rather than underflow.
     pub fn release_orphan_pending(
         &mut self,
         label: &Arc<String>,
     ) {
         let index = self.index.read();
         if let Some(index) = index.get(label) {
-            let res = index.decrement_pending();
-            debug_assert!(res > 0);
+            index.try_decrement_pending();
         }
     }
 
