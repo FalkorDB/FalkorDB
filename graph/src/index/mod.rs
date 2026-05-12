@@ -846,7 +846,15 @@ impl Index {
             let options = RediSearch_CreateIndexOptions();
             RediSearch_IndexOptionsSetGCPolicy(options, GC_POLICY_FORK as _);
 
-            if let Some(stop_words) = stopwords {
+            // SAFETY: `RediSearch_IndexOptionsSetStopwords` and
+            // `RediSearch_IndexOptionsSetLanguage` store the raw pointers
+            // we hand them inside `options`; `RediSearch_CreateIndex`
+            // dereferences them later. The owning `CString`/`Vec<CString>`
+            // therefore must outlive `RediSearch_CreateIndex`, which means
+            // they need to live at this scope, not inside the if-let.
+            // (Bug uncovered by ASAN: a heap-use-after-free in
+            // `RSLanguage_Find` after the inner `c_lang` was dropped.)
+            let _stopwords_owner: Option<Vec<CString>> = if let Some(stop_words) = stopwords {
                 let c_stopwords: Vec<CString> = stop_words
                     .iter()
                     .map(|s| CString::new(s.as_str()).map_err(|e| e.to_string()))
@@ -858,18 +866,22 @@ impl Index {
                     ptrs.as_mut_ptr(),
                     ptrs.len() as c_int,
                 );
+                Some(c_stopwords)
             } else {
                 RediSearch_IndexOptionsSetStopwords(options, null_mut(), 0);
-            }
+                None
+            };
 
-            if let Some(lang) = language {
+            let _language_owner: Option<CString> = if let Some(lang) = language {
                 let c_lang = CString::new(lang.as_str()).map_err(|e| e.to_string())?;
                 if RediSearch_IndexOptionsSetLanguage(options, c_lang.as_ptr()) != 0 {
                     return Err(format!("Language is not supported: {lang}"));
                 }
+                Some(c_lang)
             } else {
                 RediSearch_IndexOptionsSetLanguage(options, null_mut());
-            }
+                None
+            };
 
             let clabel = CString::new(label.as_str()).map_err(|e| e.to_string())?;
 
