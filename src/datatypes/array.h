@@ -13,7 +13,7 @@
 // returns initialized array
 SIValue SIArray_New
 (
-	u_int32_t initialCapacity // initial capacity
+	uint32_t initialCapacity // initial capacity
 );
 
 // creates an SIArray from a raw 'arr.h' array
@@ -48,7 +48,7 @@ void SIArray_AppendAsOwner
 SIValue SIArray_Get
 (
 	SIValue siarray,  // siarray: array
-	u_int32_t index   // index: index
+	uint32_t index   // index: index
 );
 
 // get a reference to the 'idx' element on the array
@@ -56,11 +56,11 @@ SIValue SIArray_Get
 SIValue *SIArray_GetRef
 (
 	SIValue siarray,  // array
-	u_int32_t index   // index
+	uint32_t index   // index
 );
 
 // get the array length
-u_int32_t SIArray_Length
+uint32_t SIArray_Length
 (
 	SIValue siarray  // array to return length of
 );
