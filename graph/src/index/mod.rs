@@ -824,6 +824,9 @@ impl Drop for Index {
             } else {
                 GilGuard::acquire()
             };
+            if self.rs_idx.is_null() {
+                return;
+            }
             RediSearch_DropIndex(self.rs_idx);
             // _gil drops here, releasing the GIL if it was acquired.
         }
@@ -892,7 +895,15 @@ impl Index {
         stopwords: Option<&Vec<Arc<String>>>,
         language: Option<&Arc<String>>,
     ) -> Result<(), String> {
+        // RediSearch_CreateIndex transitively calls RM_CreateTimer (via
+        // GCContext_Start), which mutates Redis-internal timer state. Off-thread
+        // callers (background populate / write worker) must hold the module GIL.
         unsafe {
+            let _gil = if crate::thread_id::is_main_thread() {
+                None
+            } else {
+                GilGuard::acquire()
+            };
             let options = RediSearch_CreateIndexOptions();
             RediSearch_IndexOptionsSetGCPolicy(options, GC_POLICY_FORK as _);
 

@@ -85,7 +85,17 @@ pub fn register_graph(
     name: String,
     arc: Arc<RwLock<ThreadedGraph>>,
 ) {
-    GRAPH_REGISTRY.lock().insert(name, arc);
+    let displaced = GRAPH_REGISTRY.lock().insert(name, arc);
+    // Drop the displaced graph off the main Redis thread. Index::drop ->
+    // RediSearch_DropIndex queues a destroyCallback to RediSearch's GC
+    // thread pool when its timer can't be stopped synchronously; that
+    // callback asserts gc->stopped == 1 and aborts under the resulting
+    // race. Moving the drop to a background thread also routes Index::drop
+    // through the GIL-acquiring path (mirroring drop_index_bg), which the
+    // synchronous main-thread drop intentionally skips.
+    if let Some(displaced) = displaced {
+        std::thread::spawn(move || drop(displaced));
+    }
 }
 
 pub(crate) struct WriteMessage {

@@ -149,6 +149,13 @@ impl Indexer {
         total: u64,
         options: Option<IndexOptions>,
     ) -> Result<(), String> {
+        // Serialize with any in-flight populate batch. Without this,
+        // a recreate (e.g. adding a second vector field) can land
+        // between a batch's id check and its commit, causing the
+        // batch to flush docs built against a stale field set into
+        // the freshly recreated rs_idx — corrupting HNSW state.
+        let lock = self.write_lock.clone();
+        let _guard = lock.lock();
         let mut index = self.index.write();
 
         let (language, stopwords, field_options, vector_options) = match options {
