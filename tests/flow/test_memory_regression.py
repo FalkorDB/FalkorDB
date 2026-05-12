@@ -121,7 +121,7 @@ class testMemoryRegression(FlowTestsBase):
         # empty graph (we recreate the dataset inside every test).
         try:
             self.graph.delete()
-        except Exception:
+        except ResponseError:
             pass
         self.graph = self.db.select_graph(GRAPH_ID)
 
@@ -245,7 +245,7 @@ class testMemoryRegression(FlowTestsBase):
         # Create the index first so every CREATE feeds the index.
         try:
             self.graph.query("CREATE INDEX FOR (n:A) ON (n.v)")
-        except Exception:
+        except ResponseError:
             # Index may already exist if a previous teardown left state;
             # in that case the failure is benign.
             pass
