@@ -14,7 +14,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      workflows: write
       pull-requests: write
     steps:
       - name: Validate version format
@@ -30,7 +29,11 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # A PAT with `workflow` scope is required so that the cherry-picked
+          # commits (which may modify files under `.github/workflows/`) can be
+          # pushed back to the repository. The default GITHUB_TOKEN cannot
+          # update workflow files.
+          token: ${{ secrets.BACKPORT_PAT }}
 
       - name: Find latest tag for version
         id: find_tag
