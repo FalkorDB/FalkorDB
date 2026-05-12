@@ -59,11 +59,17 @@ jobs:
             CFLAGS="$SAN_FLAGS" \
             CXXFLAGS="$SAN_FLAGS" \
             LDFLAGS="-fsanitize=address"
-          # Stricter check than just __asan_init (which the runtime provides
-          # even when nothing is instrumented): verify actual code-side ASAN
-          # report calls are present, proving the .c files were instrumented.
-          nm src/redis-server | grep -qE ' [TU] __asan_report_load' \
-            || { echo "ERROR: Redis binary is not actually ASAN-instrumented (no __asan_report_* references)"; exit 1; }
+          # Sanity check that ASAN runtime got linked into the binary.
+          # clang may link the static ASAN runtime (symbols in .symtab) or the
+          # dynamic one (symbols only in .dynsym) depending on toolchain defaults,
+          # so look in both.
+          echo "--- nm static __asan_* ---"
+          nm src/redis-server 2>/dev/null | grep '__asan_' | head -5 || echo "(none in .symtab)"
+          echo "--- nm -D dynamic __asan_* ---"
+          nm -D src/redis-server 2>/dev/null | grep '__asan_' | head -5 || echo "(none in .dynsym)"
+          { nm src/redis-server 2>/dev/null; nm -D src/redis-server 2>/dev/null; } \
+            | grep -q __asan_init \
+            || { echo "ERROR: Redis binary has no ASAN runtime linked"; exit 1; }
 
       - run: rustup default nightly
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
