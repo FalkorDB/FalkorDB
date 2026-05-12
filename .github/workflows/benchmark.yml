@@ -140,6 +140,7 @@ jobs:
           . venv/bin/activate
           if ! python3 run_benchmarks.py group_${{ matrix.benchmark_group }}; then
             echo "Benchmark run failed on first attempt, retrying once..."
+            sleep 10
             python3 run_benchmarks.py group_${{ matrix.benchmark_group }} || {
               echo "Benchmark run failed on retry attempt."
               exit 1
