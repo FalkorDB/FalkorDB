@@ -5,6 +5,7 @@
  */
 
 #include "src/util/rmalloc.h"
+#include "tests/utils/mock_log.h"
 #include "src/graph/query_graph.h"
 #include "src/execution_plan/ops/ops.h"
 #include "src/execution_plan/execution_plan.h"
@@ -27,6 +28,7 @@ void setup() {
 
 	// use the malloc family for allocations
 	Alloc_Reset();
+	Logging_Reset();
 }
 
 static ExecutionPlan *_EmptyExecutionPlan(void) {

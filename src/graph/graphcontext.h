@@ -16,7 +16,9 @@
 #include "../serializers/encode_context.h"
 #include "../serializers/decode_context.h"
 
-typedef struct GraphContext GraphContext;
+#include <stdatomic.h>
+
+#include "graphcontext_struct.h"
 
 //------------------------------------------------------------------------------
 // GraphContext API

@@ -6,6 +6,7 @@
 
 #include "src/cron/cron.h"
 #include "src/util/rmalloc.h"
+#include "tests/utils/mock_log.h"
 #include "src/util/simple_timer.h"
 
 #include <assert.h>
@@ -218,6 +219,7 @@ static void setup() {
 	// Use the malloc family for allocations
 	Alloc_Reset();
 	Cron_Start();
+	Logging_Reset();
 }
 
 static void tearDown() {

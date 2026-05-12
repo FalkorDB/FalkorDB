@@ -57,6 +57,8 @@ deps/GraphBLAS/Config/GraphBLAS.h.tmp
 /tests/flow/logs/
 /tests/tck/logs/
 tests/**/*.csv
+tests/micro_benchmarks/results/
+
 # gcov
 *.gcda
 *.gcno
