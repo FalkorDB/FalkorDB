@@ -138,10 +138,10 @@ jobs:
         working-directory: tests/benchmarks
         run: |
           . venv/bin/activate
-          python3 run_benchmarks.py group_${{ matrix.benchmark_group }} || (
+          if ! python3 run_benchmarks.py group_${{ matrix.benchmark_group }}; then
             echo "Benchmark run failed on first attempt, retrying once..."
             python3 run_benchmarks.py group_${{ matrix.benchmark_group }}
-          )
+          fi
 
       - name: Upload results
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
