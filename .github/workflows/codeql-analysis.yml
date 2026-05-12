@@ -39,7 +39,7 @@ jobs:
           token: ${{ secrets.GH_SA_TOKEN }}
           project_id: ${{ secrets.GCP_PROJECT_ID }}
           service_account_key: ${{ secrets.GCP_SA_KEY }}
-          machine_zones: us-central1-a,us-central1-b,us-central1-c,us-central1-f
+          machine_zones: ${{ vars.GCP_ZONES }}
           machine_type: n4-highcpu-8
           network: gh-runner
           disk_size: 50GB
