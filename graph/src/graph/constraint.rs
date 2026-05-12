@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::entity_type::EntityType;
 
@@ -45,6 +46,9 @@ impl std::fmt::Display for ConstraintStatus {
 /// A graph constraint (unique or mandatory) on a label/type and set of properties.
 #[derive(Clone, Debug)]
 pub struct Constraint {
+    /// Process-unique identifier. Stable across `Vec::swap_remove`, used by
+    /// async validation to refer to a constraint after releasing the read lock.
+    pub id: u64,
     pub ct: ConstraintType,
     pub entity_type: EntityType,
     pub label: Arc<String>,
@@ -59,7 +63,9 @@ impl Constraint {
         label: Arc<String>,
         properties: Vec<Arc<String>>,
     ) -> Self {
+        static NEXT_CONSTRAINT_ID: AtomicU64 = AtomicU64::new(1);
         Self {
+            id: NEXT_CONSTRAINT_ID.fetch_add(1, Ordering::Relaxed),
             ct,
             entity_type,
             label,

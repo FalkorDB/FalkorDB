@@ -104,9 +104,21 @@ unsafe extern "C" fn graph_rdb_load(
                     let mvcc = MvccGraph::from_graph(graph);
                     let graph_arc = mvcc.read();
                     graph_arc.borrow_mut().set_indexer_graph(graph_arc.clone());
-                    let tg = ThreadedGraph::from_mvcc(mvcc);
-                    let arc = Arc::new(RwLock::new(tg));
-                    crate::graph_core::register_graph(key_name.clone(), arc.clone());
+                    drop(graph_arc);
+                    // If a placeholder Arc was already registered for this
+                    // key (main key loaded in middle of stream), mutate it
+                    // in place rather than re-registering a fresh Arc --
+                    // that would displace the placeholder and leak any
+                    // WriteMessages already routed through it.
+                    let arc = if let Some(ph) = decode_state.placeholders.remove(&key_name) {
+                        ph.write().graph = mvcc;
+                        ph
+                    } else {
+                        let tg = ThreadedGraph::from_mvcc(mvcc);
+                        let arc = Arc::new(RwLock::new(tg));
+                        crate::graph_core::register_graph(key_name.clone(), arc.clone());
+                        arc
+                    };
                     let boxed: Box<Arc<RwLock<ThreadedGraph>>> = Box::new(arc);
                     return Box::into_raw(boxed).cast();
                 }

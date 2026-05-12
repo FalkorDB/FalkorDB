@@ -85,14 +85,24 @@ pub fn register_graph(
     name: String,
     arc: Arc<RwLock<ThreadedGraph>>,
 ) {
+    // Invariant: every registered name must have been removed from the
+    // registry before being re-inserted. `graph_free` removes entries on
+    // Redis key delete/overwrite/expire, and the RDB multi-key load path
+    // mutates the placeholder Arc in place rather than rebinding the name.
+    // If this assert fires, a caller is leaking the previously-registered
+    // Arc and likely racing index/teardown shutdown.
     let displaced = GRAPH_REGISTRY.lock().insert(name, arc);
-    // Drop the displaced graph off the main Redis thread. Index::drop ->
+    debug_assert!(
+        displaced.is_none(),
+        "register_graph: name already registered; missing graph_free or placeholder swap"
+    );
+    // Drop any displaced graph off the main Redis thread. Index::drop ->
     // RediSearch_DropIndex queues a destroyCallback to RediSearch's GC
     // thread pool when its timer can't be stopped synchronously; that
     // callback asserts gc->stopped == 1 and aborts under the resulting
     // race. Moving the drop to a background thread also routes Index::drop
-    // through the GIL-acquiring path (mirroring drop_index_bg), which the
-    // synchronous main-thread drop intentionally skips.
+    // through the GIL-acquiring path, which the synchronous main-thread
+    // drop intentionally skips.
     if let Some(displaced) = displaced {
         std::thread::spawn(move || drop(displaced));
     }

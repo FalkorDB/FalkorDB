@@ -2678,8 +2678,26 @@ impl Graph {
         label: &Arc<String>,
         attrs: &Vec<Arc<String>>,
     ) -> Result<usize, String> {
+        // Expand an empty `attrs` to the full set of fields of `index_type`
+        // (matches the `target_attrs` derivation in `Indexer::drop_index`);
+        // otherwise an empty-attr drop would bypass constraint protection.
+        let indexer = match entity_type {
+            EntityType::Node => &self.node_indexer,
+            EntityType::Relationship => &self.edge_indexer,
+        };
+        let effective_attrs: Vec<Arc<String>> = if attrs.is_empty() {
+            indexer
+                .get_fields(label)
+                .into_iter()
+                .filter(|(_, fields)| fields.iter().any(|f| f.ty == *index_type))
+                .map(|(attr, _)| attr)
+                .collect()
+        } else {
+            attrs.clone()
+        };
+
         // Check if any UNIQUE constraint depends on this index
-        for attr in attrs {
+        for attr in &effective_attrs {
             if self.constraint_depends_on_index(entity_type, label, attr, index_type) {
                 return Err("Index supports constraint".to_string());
             }
@@ -3033,27 +3051,33 @@ impl Graph {
     /// (valid / invalid) for every constraint currently under construction,
     /// without mutating state. Pair with
     /// [`apply_constraint_validation_results`] under a write lock.
-    pub fn compute_pending_constraint_results(&self) -> Vec<(usize, bool)> {
+    ///
+    /// Returns `(constraint_id, valid)` rather than indices because
+    /// `drop_constraint` uses `swap_remove`, which invalidates positional
+    /// references between the compute and apply phases.
+    pub fn compute_pending_constraint_results(&self) -> Vec<(u64, bool)> {
         self.constraints
             .iter()
-            .enumerate()
-            .filter(|(_, c)| c.status == ConstraintStatus::UnderConstruction)
-            .map(|(i, c)| (i, self.validate_constraint(c)))
+            .filter(|c| c.status == ConstraintStatus::UnderConstruction)
+            .map(|c| (c.id, self.validate_constraint(c)))
             .collect()
     }
 
     /// Apply results computed by [`compute_pending_constraint_results`].
     /// Status is updated only for constraints that are still under
-    /// construction (defensive: a concurrent drop may have removed them).
+    /// construction and still present (a concurrent drop may have removed
+    /// them, and `swap_remove` may have shuffled others into their slot).
     pub fn apply_constraint_validation_results(
         &mut self,
-        results: Vec<(usize, bool)>,
+        results: Vec<(u64, bool)>,
     ) {
-        for (i, valid) in results {
-            if i < self.constraints.len()
-                && self.constraints[i].status == ConstraintStatus::UnderConstruction
+        for (id, valid) in results {
+            if let Some(c) = self
+                .constraints
+                .iter_mut()
+                .find(|c| c.id == id && c.status == ConstraintStatus::UnderConstruction)
             {
-                self.constraints[i].status = if valid {
+                c.status = if valid {
                     ConstraintStatus::Operational
                 } else {
                     ConstraintStatus::Failed
