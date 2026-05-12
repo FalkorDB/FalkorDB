@@ -48,9 +48,7 @@ jobs:
           # CFLAGS would override the SANITIZER block's `CFLAGS+=-fsanitize=address`,
           # silently no-op'ing the instrumentation.
           export CFLAGS="-fsanitize-ignorelist=$GITHUB_WORKSPACE/tests/memcheck/redis.san-ignorelist"
-          mkdir -p "$REDIS_ASAN_DIR"
-          curl -fsSL "https://github.com/redis/redis/archive/refs/tags/${REDIS_ASAN_VER}.tar.gz" \
-            | tar xz -C "$REDIS_ASAN_DIR" --strip-components=1
+          git clone --depth 1 --branch "$REDIS_ASAN_VER" https://github.com/redis/redis.git "$REDIS_ASAN_DIR"
           cd "$REDIS_ASAN_DIR"
           # SANITIZER=address triggers Redis's built-in ASAN config:
           #   MALLOC=libc, CFLAGS+=-fsanitize=address ..., LDFLAGS+=-fsanitize=address
