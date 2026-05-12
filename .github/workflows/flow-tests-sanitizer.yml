@@ -60,11 +60,25 @@ jobs:
             SANITIZER=address \
             CC=clang-22 CXX=clang++-22 \
             OPTIMIZATION="-O1"
-          # Sanity check the ASAN runtime got linked. clang may link the static
-          # runtime (.symtab) or the dynamic one (.dynsym only) so look in both.
+          # Diagnostic dump so future failures here are debuggable from the log.
+          echo "==== Redis binary verification ===="
+          ls -la src/redis-server 2>&1 || { echo "no src/redis-server"; exit 1; }
+          echo "---- file type ----"
+          readelf -h src/redis-server 2>&1 | head -10 || true
+          echo "---- ldd ----"
+          ldd src/redis-server 2>&1 | head -15 || true
+          echo "---- nm | grep __asan_ (.symtab) — first 5 ----"
+          nm src/redis-server 2>&1 | grep __asan_ | head -5 || true
+          echo "---- nm -D | grep __asan_ (.dynsym) — first 5 ----"
+          nm -D src/redis-server 2>&1 | grep __asan_ | head -5 || true
+          echo "---- counts ----"
+          echo "symtab __asan_ count: $(nm src/redis-server 2>/dev/null | grep -c __asan_ || true)"
+          echo "dynsym __asan_ count: $(nm -D src/redis-server 2>/dev/null | grep -c __asan_ || true)"
+          echo "==== verification check ===="
           { nm src/redis-server 2>/dev/null; nm -D src/redis-server 2>/dev/null; } \
             | grep -q __asan_init \
             || { echo "ERROR: Redis binary has no ASAN runtime linked"; exit 1; }
+          echo "OK: __asan_init found"
 
       - run: rustup default nightly
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
