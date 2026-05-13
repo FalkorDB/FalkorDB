@@ -921,15 +921,10 @@ impl Index {
             let options = RediSearch_CreateIndexOptions();
             RediSearch_IndexOptionsSetGCPolicy(options, GC_POLICY_FORK as _);
 
-            // SAFETY: `RediSearch_IndexOptionsSetStopwords` and
-            // `RediSearch_IndexOptionsSetLanguage` store the raw pointers
-            // we hand them inside `options`; `RediSearch_CreateIndex`
-            // dereferences them later. The owning `CString`/`Vec<CString>`
-            // therefore must outlive `RediSearch_CreateIndex`, which means
-            // they need to live at this scope, not inside the if-let.
-            // (Bug uncovered by ASAN: a heap-use-after-free in
-            // `RSLanguage_Find` after the inner `c_lang` was dropped.)
-            let _stopwords_owner: Option<Vec<CString>> = if let Some(stop_words) = stopwords {
+            // `RediSearch_IndexOptionsSetStopwords` deep-copies via
+            // `rm_strdup`, so our CStrings can drop as soon as the call
+            // returns.
+            if let Some(stop_words) = stopwords {
                 let c_stopwords: Vec<CString> = stop_words
                     .iter()
                     .map(|s| CString::new(s.as_str()).map_err(|e| e.to_string()))
@@ -941,12 +936,16 @@ impl Index {
                     ptrs.as_mut_ptr(),
                     ptrs.len() as c_int,
                 );
-                Some(c_stopwords)
             } else {
                 RediSearch_IndexOptionsSetStopwords(options, null_mut(), 0);
-                None
-            };
+            }
 
+            // `RediSearch_IndexOptionsSetLanguage`, in contrast, only stores
+            // the raw pointer (`options->lang = lang`); `_CreateIndex` later
+            // reads it via `RSLanguage_Find` to convert to an enum, so the
+            // backing `CString` must outlive that call.
+            // (Bug uncovered by ASAN: heap-use-after-free in `RSLanguage_Find`
+            // when the inner `c_lang` was dropped at end of its if-let block.)
             let _language_owner: Option<CString> = if let Some(lang) = language {
                 let c_lang = CString::new(lang.as_str()).map_err(|e| e.to_string())?;
                 if RediSearch_IndexOptionsSetLanguage(options, c_lang.as_ptr()) != 0 {
@@ -960,21 +959,9 @@ impl Index {
 
             let clabel = CString::new(label.as_str()).map_err(|e| e.to_string())?;
 
-            // RediSearch_CreateIndex transitively calls GCContext_Start →
-            // scheduleNext → RM_CreateTimer, which mutates Redis-internal
-            // state (the timer rax). The Redis main thread holds the
-            // module GIL implicitly during command execution, so off-thread
-            // callers must acquire it explicitly. Mirrors the symmetric
-            // acquisition in `Drop for Index` around RediSearch_DropIndex.
-            {
-                let _gil = if crate::thread_id::is_main_thread() {
-                    None
-                } else {
-                    GilGuard::acquire()
-                };
-                self.rs_idx = RediSearch_CreateIndex(clabel.as_ptr().cast::<c_char>(), options);
-                // _gil drops here, releasing the GIL if it was acquired.
-            }
+            // GIL is already held at the top of this unsafe block, covering
+            // CreateIndex's transitive RM_CreateTimer call.
+            self.rs_idx = RediSearch_CreateIndex(clabel.as_ptr().cast::<c_char>(), options);
 
             RediSearch_FreeIndexOptions(options);
 
