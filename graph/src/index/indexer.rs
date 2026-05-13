@@ -72,6 +72,12 @@ pub struct PopulationTicket {
     generation_id: u64,
 }
 
+#[derive(Clone, Debug)]
+pub struct PopulationSnapshot {
+    pub fields: HashMap<Arc<String>, Vec<Arc<Field>>>,
+    pub ticket: PopulationTicket,
+}
+
 impl PopulationTicket {
     #[must_use]
     pub fn generation_id(&self) -> u64 {
@@ -571,6 +577,50 @@ impl Indexer {
             label: label.clone(),
             generation_id,
         })
+    }
+
+    /// Capture a field snapshot and ticket for one label while holding the
+    /// same index read lock, so the schema used to build documents matches
+    /// the generation the ticket was taken from.
+    #[must_use]
+    pub fn acquire_population_snapshot(
+        &self,
+        label: &Arc<String>,
+    ) -> Option<PopulationSnapshot> {
+        let index = self.index.read();
+        let index = index.get(label)?;
+        let generation_id = index.id();
+        let fields = index.fields().clone();
+        index.increment_pending_for_generation(generation_id);
+        Some(PopulationSnapshot {
+            fields,
+            ticket: PopulationTicket {
+                label: label.clone(),
+                generation_id,
+            },
+        })
+    }
+
+    /// Capture field snapshots and tickets for all currently indexed labels.
+    /// Used by synchronous population so each label's field set is coupled to
+    /// the ticket acquired for the same read-side snapshot.
+    #[must_use]
+    pub fn acquire_population_snapshots(&self) -> Vec<PopulationSnapshot> {
+        self.index
+            .read()
+            .iter()
+            .map(|(label, index)| {
+                let generation_id = index.id();
+                index.increment_pending_for_generation(generation_id);
+                PopulationSnapshot {
+                    fields: index.fields().clone(),
+                    ticket: PopulationTicket {
+                        label: label.clone(),
+                        generation_id,
+                    },
+                }
+            })
+            .collect()
     }
 
     /// Release a previously-acquired population ticket.

@@ -97,9 +97,7 @@ use crate::{
     },
     index::{
         Field,
-        indexer::{
-            Document, IndexInfo, IndexOptions, IndexQuery, IndexType, Indexer, PopulationTicket,
-        },
+        indexer::{Document, IndexInfo, IndexOptions, IndexQuery, IndexType, Indexer},
     },
     parser::{ast::ExprIR, cypher::Parser},
     planner::{IR, Planner, binder::Binder, optimizer::optimize},
@@ -351,21 +349,19 @@ fn populate_index(
     label: Arc<String>,
     indexer: Indexer,
 ) {
-    let attrs = indexer.get_fields(&label);
-    // Acquire one generation-scoped ticket for this populate worker.
-    // Releasing the ticket later decrements only that generation,
-    // even if the label is recreated while we run.
-    let Some(ticket) = indexer.acquire_population_ticket(&label) else {
+    // Capture the field snapshot and ticket in one read-side critical
+    // section so the documents we build match the generation we own.
+    let Some(snapshot) = indexer.acquire_population_snapshot(&label) else {
         return;
     };
     populate_index_batch(
         kind,
         label,
         indexer,
-        attrs,
+        snapshot.fields,
         0,
         BatchCursor::default(),
-        ticket,
+        snapshot.ticket,
     );
 }
 
@@ -381,7 +377,7 @@ fn populate_index_batch(
     attrs: HashMap<Arc<String>, Vec<Arc<Field>>>,
     mut progress: u64,
     cursor: BatchCursor,
-    ticket: PopulationTicket,
+    ticket: crate::index::indexer::PopulationTicket,
 ) {
     spawn(
         move || {
@@ -2424,11 +2420,10 @@ impl Graph {
     /// Synchronously populate all pending indexes.
     /// Used after RDB load when the graph is fully constructed.
     pub fn populate_indexes_sync(&mut self) {
-        let fields_by_label = self.node_indexer.get_all_fields();
-        for (label, attrs) in fields_by_label {
-            let Some(ticket) = self.node_indexer.acquire_population_ticket(&label) else {
-                continue;
-            };
+        let node_snapshots = self.node_indexer.acquire_population_snapshots();
+        for snapshot in node_snapshots {
+            let label = snapshot.ticket.label().clone();
+            let attrs = snapshot.fields;
             if let Some(lm) = self.get_label_matrix(&label) {
                 // Pre-resolve attribute indices to avoid string lookups per node
                 let resolved_attrs: Vec<(u16, Vec<_>)> = attrs
@@ -2462,7 +2457,8 @@ impl Graph {
                     self.node_indexer.commit(&mut add_docs, &mut HashMap::new());
                 }
             }
-            self.node_indexer.release_population_ticket(&ticket);
+            self.node_indexer
+                .release_population_ticket(&snapshot.ticket);
         }
 
         // Edge indexes: symmetric to the node path, but walk the
@@ -2472,11 +2468,10 @@ impl Graph {
         // the tensor iterator directly so we don't materialize every
         // `(src, dst, eid)` triple for large relationship types on
         // RDB load.
-        let edge_fields_by_type = self.edge_indexer.get_all_fields();
-        for (type_name, attrs) in edge_fields_by_type {
-            let Some(ticket) = self.edge_indexer.acquire_population_ticket(&type_name) else {
-                continue;
-            };
+        let edge_snapshots = self.edge_indexer.acquire_population_snapshots();
+        for snapshot in edge_snapshots {
+            let type_name = snapshot.ticket.label().clone();
+            let attrs = snapshot.fields;
             if let Some(tensor) = self.get_relationship_matrix(&type_name) {
                 let mut batch = Vec::new();
                 for (src, dst, eid) in tensor.iter(0, u64::MAX, false) {
@@ -2500,7 +2495,8 @@ impl Graph {
                     self.edge_indexer.commit(&mut add_docs, &mut HashMap::new());
                 }
             }
-            self.edge_indexer.release_population_ticket(&ticket);
+            self.edge_indexer
+                .release_population_ticket(&snapshot.ticket);
         }
     }
 
@@ -2725,6 +2721,9 @@ impl Graph {
                 (&mut self.edge_indexer, total, IndexKind::Edge)
             }
         };
+
+        let lock = indexer.write_lock();
+        let _guard = lock.lock();
 
         let reindex = indexer.drop_index(label, attrs, index_type, total);
 
