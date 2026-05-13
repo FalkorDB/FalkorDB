@@ -150,7 +150,8 @@ pub fn graph_copy(
     let tg = ThreadedGraph::from_mvcc(mvcc);
     let boxed = Arc::new(RwLock::new(tg));
 
-    dest_key.set_value(&GRAPH_TYPE, boxed)?;
+    dest_key.set_value(&GRAPH_TYPE, boxed.clone())?;
+    crate::graph_core::register_graph(dest_name.to_string(), boxed);
 
     // Replicate via GRAPH.RESTORE so replicas receive the serialized graph data.
     ctx.replicate("GRAPH.RESTORE", &[dest_name.as_bytes(), &serialized]);

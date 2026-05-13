@@ -66,6 +66,30 @@ pub enum IndexOptions {
     Vector(VectorIndexOptions),
 }
 
+#[derive(Clone, Debug)]
+pub struct PopulationTicket {
+    label: Arc<String>,
+    generation_id: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct PopulationSnapshot {
+    pub fields: HashMap<Arc<String>, Vec<Arc<Field>>>,
+    pub ticket: PopulationTicket,
+}
+
+impl PopulationTicket {
+    #[must_use]
+    pub fn generation_id(&self) -> u64 {
+        self.generation_id
+    }
+
+    #[must_use]
+    pub fn label(&self) -> &Arc<String> {
+        &self.label
+    }
+}
+
 impl IndexOptions {
     /// Extract language from the options (only applicable for Text index options).
     #[must_use]
@@ -149,6 +173,13 @@ impl Indexer {
         total: u64,
         options: Option<IndexOptions>,
     ) -> Result<(), String> {
+        // Serialize with any in-flight populate batch. Without this,
+        // a recreate (e.g. adding a second vector field) can land
+        // between a batch's id check and its commit, causing the
+        // batch to flush docs built against a stale field set into
+        // the freshly recreated rs_idx — corrupting HNSW state.
+        let lock = self.write_lock.clone();
+        let _guard = lock.lock();
         let mut index = self.index.write();
 
         let (language, stopwords, field_options, vector_options) = match options {
@@ -247,20 +278,20 @@ impl Indexer {
             }
         }
         if label_indexes.has_rs_index() {
-            // Adding fields to a label whose RediSearch index already
-            // exists: drop the existing index and reconstruct with the
-            // full field set. Otherwise stale documents (indexed only
-            // under the previous field schema) interleave with newly-
-            // populated documents in the underlying HNSW / inverted
-            // structures, breaking searches against the previously-
-            // indexed fields. Mirrors C `Index_Disable`'s drop+rebuild
-            // — see `_Index_PopulateNodeIndex` semantics in C FalkorDB.
-            //
-            // `recreate_index` re-registers every field in
-            // `self.fields()` (which already includes `new_fields`
-            // inserted above), so no separate `register_fields` call
-            // is needed in this branch.
-            label_indexes.recreate_index(label)?;
+            // Adding fields to an existing RediSearch index. For most
+            // field types we append to the live spec, but adding a
+            // vector field forces a drop+rebuild: RediSearch's HNSW
+            // state on the existing vector field gets corrupted when
+            // the subsequent populate phase re-adds documents with
+            // ADD_REPLACE, leaving KNN queries returning fewer hits
+            // than the data warrants. Matches the C FalkorDB behavior
+            // (Index_Disable + Index_ConstructStructure).
+            let adds_vector = *index_type == IndexType::Vector;
+            if adds_vector {
+                label_indexes.recreate_index(label)?;
+            } else {
+                label_indexes.register_fields(&new_fields, field_options.as_ref())?;
+            }
         } else {
             let effective_stopwords = stopwords
                 .clone()
@@ -292,7 +323,6 @@ impl Indexer {
         }
 
         label_indexes.set_progress(0, total);
-        label_indexes.increment_pending();
         Ok(())
     }
 
@@ -309,7 +339,20 @@ impl Indexer {
         if let Some(index) = index.get_mut(label) {
             let before = index.index_count();
             let mut removed = false;
-            for attr in attrs {
+            // Empty `attrs` means "drop all fields of this index_type"
+            // (e.g. db.idx.fulltext.drop('L') drops every fulltext field
+            // on label L without requiring callers to enumerate them).
+            let target_attrs: Vec<Arc<String>> = if attrs.is_empty() {
+                index
+                    .fields()
+                    .iter()
+                    .filter(|(_, fields)| fields.iter().any(|f| f.ty == *index_type))
+                    .map(|(attr, _)| attr.clone())
+                    .collect()
+            } else {
+                attrs.clone()
+            };
+            for attr in &target_attrs {
                 let (has_type, field_count) = if let Some(fields) = index.get_fields(attr) {
                     (fields.iter().any(|f| f.ty == *index_type), fields.len())
                 } else {
@@ -326,7 +369,6 @@ impl Indexer {
             }
             if removed {
                 index.set_progress(0, total);
-                index.increment_pending();
             }
             let after = index.index_count();
             return Some((before - after, after));
@@ -519,28 +561,103 @@ impl Indexer {
         None
     }
 
-    pub fn enable(
-        &mut self,
+    /// Reserve one population ticket for the current generation of `label`.
+    ///
+    /// The returned ticket is generation-scoped: releasing it later decrements
+    /// only that generation's pending counter, even if the label was recreated.
+    pub fn acquire_population_ticket(
+        &self,
         label: &Arc<String>,
-    ) -> bool {
+    ) -> Option<PopulationTicket> {
         let index = self.index.read();
-        if let Some(index) = index.get(label) {
-            let res = index.decrement_pending();
-            debug_assert!(res > 0);
-            return res == 1;
-        }
-        drop(index);
-        false
+        let index = index.get(label)?;
+        let generation_id = index.id();
+        index.increment_pending_for_generation(generation_id);
+        Some(PopulationTicket {
+            label: label.clone(),
+            generation_id,
+        })
     }
 
-    pub fn disable(
-        &mut self,
+    /// Capture a field snapshot and ticket for one label while holding the
+    /// same index read lock, so the schema used to build documents matches
+    /// the generation the ticket was taken from.
+    #[must_use]
+    pub fn acquire_population_snapshot(
+        &self,
         label: &Arc<String>,
+    ) -> Option<PopulationSnapshot> {
+        let index = self.index.read();
+        let index = index.get(label)?;
+        let generation_id = index.id();
+        let fields = index.fields().clone();
+        index.increment_pending_for_generation(generation_id);
+        Some(PopulationSnapshot {
+            fields,
+            ticket: PopulationTicket {
+                label: label.clone(),
+                generation_id,
+            },
+        })
+    }
+
+    /// Capture field snapshots and tickets for all currently indexed labels.
+    /// Used by synchronous population so each label's field set is coupled to
+    /// the ticket acquired for the same read-side snapshot.
+    #[must_use]
+    pub fn acquire_population_snapshots(&self) -> Vec<PopulationSnapshot> {
+        self.index
+            .read()
+            .iter()
+            .map(|(label, index)| {
+                let generation_id = index.id();
+                index.increment_pending_for_generation(generation_id);
+                PopulationSnapshot {
+                    fields: index.fields().clone(),
+                    ticket: PopulationTicket {
+                        label: label.clone(),
+                        generation_id,
+                    },
+                }
+            })
+            .collect()
+    }
+
+    /// Release a previously-acquired population ticket.
+    ///
+    /// Saturating for that ticket's generation: if the counter was already 0,
+    /// no decrement happens.
+    pub fn release_population_ticket(
+        &self,
+        ticket: &PopulationTicket,
     ) {
-        let mut index = self.index.write();
-        if let Some(index) = index.get_mut(label) {
-            index.increment_pending();
+        let index = self.index.read();
+        if let Some(index) = index.get(ticket.label()) {
+            index.try_decrement_pending_for_generation(ticket.generation_id());
         }
+    }
+
+    /// Returns true if `ticket` still targets the current generation.
+    #[must_use]
+    pub fn is_ticket_current(
+        &self,
+        ticket: &PopulationTicket,
+    ) -> bool {
+        self.index
+            .read()
+            .get(ticket.label())
+            .is_some_and(|index| index.id() == ticket.generation_id())
+    }
+
+    /// Return pending count for the ticket's generation.
+    #[must_use]
+    pub fn ticket_pending_changes(
+        &self,
+        ticket: &PopulationTicket,
+    ) -> i32 {
+        self.index.read().get(ticket.label()).map_or(0, |index| {
+            index.pending_count_for_generation(ticket.generation_id())
+        })
     }
 
     #[must_use]
@@ -552,17 +669,6 @@ impl Indexer {
             return index.pending_count() == 0;
         }
         false
-    }
-
-    #[must_use]
-    pub fn pending_changes(
-        &self,
-        label: &Arc<String>,
-    ) -> i32 {
-        if let Some(index) = self.index.read().get(label) {
-            return index.pending_count();
-        }
-        0
     }
 
     pub fn commit(
@@ -634,22 +740,21 @@ impl Indexer {
             .unwrap_or_default()
     }
 
-    /// Get fields for all labels with pending population.
+    /// Get fields for all labels.
     #[must_use]
-    pub fn get_all_pending_fields(
-        &self
-    ) -> Vec<(Arc<String>, HashMap<Arc<String>, Vec<Arc<Field>>>)> {
+    pub fn get_all_fields(&self) -> Vec<(Arc<String>, HashMap<Arc<String>, Vec<Arc<Field>>>)> {
         self.index
             .read()
             .iter()
-            .filter(|(_, index)| index.pending_count() > 0)
+            .filter(|(_, index)| !index.is_empty())
             .map(|(label, index)| (label.clone(), index.fields().clone()))
             .collect()
     }
 
     #[must_use]
     pub fn index_info(&self) -> Vec<IndexInfo> {
-        self.index
+        let mut infos: Vec<IndexInfo> = self
+            .index
             .read()
             .iter()
             .filter(|(_, index)| !index.is_empty())
@@ -666,7 +771,9 @@ impl Indexer {
                     entity_type: String::new(),
                 }
             })
-            .collect()
+            .collect();
+        infos.sort_by(|a, b| a.label.cmp(&b.label));
+        infos
     }
 
     #[must_use]

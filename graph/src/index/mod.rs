@@ -59,9 +59,11 @@ use std::{
     ptr::null_mut,
     sync::{
         Arc,
-        atomic::{AtomicI32, Ordering},
+        atomic::{AtomicU64, Ordering},
     },
 };
+
+use parking_lot::Mutex;
 
 use crate::runtime::value::Value;
 
@@ -756,15 +758,30 @@ impl Document {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Index {
+    /// Unique identity assigned at construction. Lets background workers
+    /// (e.g. `populate_index_batch`) detect when the indexer's entry under
+    /// their label has been replaced by a fresh `Index` after a DROP +
+    /// CREATE round-trip, so they don't decrement the wrong counter.
+    id: u64,
     rs_idx: *mut RSIndex,
     fields: HashMap<Arc<String>, Vec<Arc<Field>>>,
-    pending_changes: AtomicI32,
+    pending_slots: Mutex<PendingSlots>,
     progress: u64,
     total: u64,
     language: Option<Arc<String>>,
     stopwords: Option<Vec<Arc<String>>>,
+}
+
+#[derive(Debug, Default)]
+struct PendingSlots {
+    /// Generation currently stored in `Index::id`.
+    current_generation: u64,
+    /// Pending tickets for `current_generation`.
+    current_pending: i32,
+    /// Pending tickets for older generations aggregated together.
+    stale_pending: i32,
 }
 
 /// RAII guard for the Redis module GIL. Constructed by [`GilGuard::acquire`],
@@ -819,9 +836,59 @@ impl Drop for Index {
             } else {
                 GilGuard::acquire()
             };
+            if self.rs_idx.is_null() {
+                return;
+            }
             RediSearch_DropIndex(self.rs_idx);
             // _gil drops here, releasing the GIL if it was acquired.
         }
+    }
+}
+
+impl Default for Index {
+    fn default() -> Self {
+        static NEXT_INDEX_ID: AtomicU64 = AtomicU64::new(1);
+        let id = NEXT_INDEX_ID.fetch_add(1, Ordering::Relaxed);
+        Self {
+            id,
+            rs_idx: std::ptr::null_mut(),
+            fields: HashMap::new(),
+            pending_slots: Mutex::new(PendingSlots {
+                current_generation: id,
+                current_pending: 0,
+                stale_pending: 0,
+            }),
+            progress: 0,
+            total: 0,
+            language: None,
+            stopwords: None,
+        }
+    }
+}
+
+impl Index {
+    /// Process-unique identity for this `Index` instance. Used by
+    /// background workers to verify the indexer's entry hasn't been
+    /// replaced under their label before mutating its counters.
+    #[must_use]
+    pub const fn id(&self) -> u64 {
+        self.id
+    }
+
+    /// Assign a fresh id to this `Index`. Called when the underlying
+    /// RediSearch IndexSpec is rebuilt from scratch (`recreate_index`),
+    /// so background workers spawned against the previous incarnation
+    /// observe the change and bail out instead of writing partial-spec
+    /// docs into the freshly recreated index.
+    pub fn bump_id(&mut self) {
+        static NEXT_INDEX_ID: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(u64::MAX / 2);
+        self.id = NEXT_INDEX_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut slots = self.pending_slots.lock();
+        // Rotate slots on recreation: previous current work becomes stale.
+        slots.stale_pending += slots.current_pending;
+        slots.current_generation = self.id;
+        slots.current_pending = 0;
     }
 }
 
@@ -842,7 +909,15 @@ impl Index {
         stopwords: Option<&Vec<Arc<String>>>,
         language: Option<&Arc<String>>,
     ) -> Result<(), String> {
+        // RediSearch_CreateIndex transitively calls RM_CreateTimer (via
+        // GCContext_Start), which mutates Redis-internal timer state. Off-thread
+        // callers (background populate / write worker) must hold the module GIL.
         unsafe {
+            let _gil = if crate::thread_id::is_main_thread() {
+                None
+            } else {
+                GilGuard::acquire()
+            };
             let options = RediSearch_CreateIndexOptions();
             RediSearch_IndexOptionsSetGCPolicy(options, GC_POLICY_FORK as _);
 
@@ -1704,7 +1779,7 @@ impl Index {
     /// An index is operational when there are no pending changes.
     #[must_use]
     pub fn is_operational(&self) -> bool {
-        self.pending_changes.load(Ordering::SeqCst) == 0
+        self.pending_count() == 0
     }
 
     /// Set the index population progress.
@@ -1725,20 +1800,64 @@ impl Index {
 
     // --- pending_changes ---
 
-    /// Increment the pending changes counter. Returns the previous value.
-    pub fn increment_pending(&self) -> i32 {
-        self.pending_changes.fetch_add(1, Ordering::SeqCst)
+    /// Increment pending counter for a specific generation and return its
+    /// previous value.
+    pub fn increment_pending_for_generation(
+        &self,
+        generation_id: u64,
+    ) -> i32 {
+        let mut slots = self.pending_slots.lock();
+        if generation_id == slots.current_generation {
+            let prev = slots.current_pending;
+            slots.current_pending += 1;
+            prev
+        } else {
+            let prev = slots.stale_pending;
+            slots.stale_pending += 1;
+            prev
+        }
     }
 
-    /// Decrement the pending changes counter. Returns the previous value.
-    pub fn decrement_pending(&self) -> i32 {
-        self.pending_changes.fetch_sub(1, Ordering::SeqCst)
+    /// Decrement pending counter for a specific generation only if > 0.
+    /// Returns the previous value, or 0 if no decrement happened.
+    pub fn try_decrement_pending_for_generation(
+        &self,
+        generation_id: u64,
+    ) -> i32 {
+        let mut slots = self.pending_slots.lock();
+        if generation_id == slots.current_generation {
+            let prev = slots.current_pending;
+            if prev > 0 {
+                slots.current_pending -= 1;
+            }
+            prev
+        } else {
+            let prev = slots.stale_pending;
+            if prev > 0 {
+                slots.stale_pending -= 1;
+            }
+            prev
+        }
+    }
+
+    /// Get pending changes count for a specific generation.
+    #[must_use]
+    pub fn pending_count_for_generation(
+        &self,
+        generation_id: u64,
+    ) -> i32 {
+        let slots = self.pending_slots.lock();
+        if generation_id == slots.current_generation {
+            slots.current_pending
+        } else {
+            slots.stale_pending
+        }
     }
 
     /// Get the current pending changes count.
     #[must_use]
     pub fn pending_count(&self) -> i32 {
-        self.pending_changes.load(Ordering::SeqCst)
+        self.pending_slots.lock().current_pending
     }
 
     // --- language ---
@@ -1806,6 +1925,11 @@ impl Index {
         let language = self.language.clone();
         self.create_rs_index(label, stopwords.as_ref(), language.as_ref())?;
         self.register_fields(self.fields(), None)?;
+        // Bump id so any background populate still running against the
+        // previous rs_idx detects the recreation and bails out. Pending is
+        // tracked per generation, so stale workers release against their own
+        // generation counter and never touch this fresh generation.
+        self.bump_id();
         Ok(())
     }
 }

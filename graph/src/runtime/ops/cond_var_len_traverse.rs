@@ -192,7 +192,7 @@ impl<'a> CondVarLenTraverseOp<'a> {
                 ));
             }
 
-            while let Some((current, path, used_edges, nodes_in_path)) = stack.pop() {
+            while let Some((current, mut path, mut used_edges, mut nodes_in_path)) = stack.pop() {
                 // path is in alternating format: [Node, Rel, Node, Rel, ...Node]
                 // Number of hops so far = number of Relationship elements = (path.len() - 1) / 2
                 let hops_so_far = (path.len() as u32).saturating_sub(1) / 2;
@@ -269,12 +269,11 @@ impl<'a> CondVarLenTraverseOp<'a> {
                 }
 
                 // Process valid neighbors with clone optimization:
-                // The last neighbor can take ownership of `path` instead of cloning.
-                for &(_, _, edge_id, dest) in &valid_neighbors {
-                    let mut new_path = path.clone();
-
-                    new_path.push(Value::Relationship(Box::new((edge_id, current, dest))));
-                    new_path.push(Value::Node(dest));
+                // The last neighbor can take ownership of `path`, `used_edges`,
+                // and `nodes_in_path` instead of cloning.
+                let n_valid = valid_neighbors.len();
+                for (ni, &(_, _, edge_id, dest)) in valid_neighbors.iter().enumerate() {
+                    let is_last = ni + 1 == n_valid;
 
                     let will_emit = hop >= min_hops
                         && (dest_id.is_none() || dest_id == Some(dest))
@@ -285,6 +284,19 @@ impl<'a> CondVarLenTraverseOp<'a> {
 
                     let node_already_in_path = nodes_in_path.contains(u64::from(dest));
                     let will_continue = hop < max_hops && !node_already_in_path;
+
+                    if !will_emit && !will_continue {
+                        continue;
+                    }
+
+                    // Build the new path: reuse `path` for the last neighbor, clone otherwise
+                    let mut new_path = if is_last {
+                        std::mem::replace(&mut path, ThinVec::new())
+                    } else {
+                        path.clone()
+                    };
+                    new_path.push(Value::Relationship(Box::new((edge_id, current, dest))));
+                    new_path.push(Value::Node(dest));
 
                     if will_emit && will_continue {
                         // Both emit and continue: wrap in Arc to share, avoid double clone
@@ -301,9 +313,17 @@ impl<'a> CondVarLenTraverseOp<'a> {
                         out.push(env);
                         // Unwrap Arc for stack push — if ref count is 1, no clone needed
                         let owned = Arc::try_unwrap(shared).unwrap_or_else(|arc| (*arc).clone());
-                        let mut next_used = used_edges.clone();
+                        let mut next_used = if is_last {
+                            std::mem::replace(&mut used_edges, RoaringTreemap::new())
+                        } else {
+                            used_edges.clone()
+                        };
                         next_used.insert(u64::from(edge_id));
-                        let mut next_nodes = nodes_in_path.clone();
+                        let mut next_nodes = if is_last {
+                            std::mem::replace(&mut nodes_in_path, RoaringTreemap::new())
+                        } else {
+                            nodes_in_path.clone()
+                        };
                         next_nodes.insert(u64::from(dest));
                         stack.push((dest, owned, next_used, next_nodes));
                     } else if will_emit {
@@ -320,13 +340,20 @@ impl<'a> CondVarLenTraverseOp<'a> {
                         out.push(env);
                     } else if will_continue {
                         // Continue only — move path to stack
-                        let mut next_used = used_edges.clone();
+                        let mut next_used = if is_last {
+                            std::mem::replace(&mut used_edges, RoaringTreemap::new())
+                        } else {
+                            used_edges.clone()
+                        };
                         next_used.insert(u64::from(edge_id));
-                        let mut next_nodes = nodes_in_path.clone();
+                        let mut next_nodes = if is_last {
+                            std::mem::replace(&mut nodes_in_path, RoaringTreemap::new())
+                        } else {
+                            nodes_in_path.clone()
+                        };
                         next_nodes.insert(u64::from(dest));
                         stack.push((dest, new_path, next_used, next_nodes));
                     }
-                    // else: neither emit nor continue — drop path
                 }
             }
         }

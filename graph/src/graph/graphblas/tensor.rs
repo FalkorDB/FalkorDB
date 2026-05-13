@@ -302,6 +302,13 @@ impl Tensor {
         self.me.wait();
     }
 
+    /// Wait on all matrices for fork safety (takes &self, not &mut self).
+    pub fn wait_all(&self) {
+        self.m.wait_all();
+        self.mt.wait_all();
+        self.me.wait_all();
+    }
+
     #[must_use]
     pub fn memory_usage(&self) -> usize {
         self.m.memory_usage() + self.mt.memory_usage() + self.me.memory_usage()
