@@ -885,7 +885,21 @@ impl Index {
 
             let clabel = CString::new(label.as_str()).map_err(|e| e.to_string())?;
 
-            self.rs_idx = RediSearch_CreateIndex(clabel.as_ptr().cast::<c_char>(), options);
+            // RediSearch_CreateIndex transitively calls GCContext_Start →
+            // scheduleNext → RM_CreateTimer, which mutates Redis-internal
+            // state (the timer rax). The Redis main thread holds the
+            // module GIL implicitly during command execution, so off-thread
+            // callers must acquire it explicitly. Mirrors the symmetric
+            // acquisition in `Drop for Index` around RediSearch_DropIndex.
+            {
+                let _gil = if crate::thread_id::is_main_thread() {
+                    None
+                } else {
+                    GilGuard::acquire()
+                };
+                self.rs_idx = RediSearch_CreateIndex(clabel.as_ptr().cast::<c_char>(), options);
+                // _gil drops here, releasing the GIL if it was acquired.
+            }
 
             RediSearch_FreeIndexOptions(options);
 
