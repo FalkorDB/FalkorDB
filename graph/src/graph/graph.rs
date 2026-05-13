@@ -97,7 +97,9 @@ use crate::{
     },
     index::{
         Field,
-        indexer::{Document, IndexInfo, IndexOptions, IndexQuery, IndexType, Indexer},
+        indexer::{
+            Document, IndexInfo, IndexOptions, IndexQuery, IndexType, Indexer, PopulationTicket,
+        },
     },
     parser::{ast::ExprIR, cypher::Parser},
     planner::{IR, Planner, binder::Binder, optimizer::optimize},
@@ -350,10 +352,10 @@ fn populate_index(
     indexer: Indexer,
 ) {
     let attrs = indexer.get_fields(&label);
-    // Capture the Index's unique id at spawn time so background batches
-    // can detect (and skip) a DROP + CREATE round-trip that recreates a
-    // different `Index` under the same label.
-    let Some(index_id) = indexer.get_id(&label) else {
+    // Acquire one generation-scoped ticket for this populate worker.
+    // Releasing the ticket later decrements only that generation,
+    // even if the label is recreated while we run.
+    let Some(ticket) = indexer.acquire_population_ticket(&label) else {
         return;
     };
     populate_index_batch(
@@ -363,7 +365,7 @@ fn populate_index(
         attrs,
         0,
         BatchCursor::default(),
-        index_id,
+        ticket,
     );
 }
 
@@ -379,7 +381,7 @@ fn populate_index_batch(
     attrs: HashMap<Arc<String>, Vec<Arc<Field>>>,
     mut progress: u64,
     cursor: BatchCursor,
-    index_id: u64,
+    ticket: PopulationTicket,
 ) {
     spawn(
         move || {
@@ -390,32 +392,29 @@ fn populate_index_batch(
             let mut do_recurse = false;
 
             // Hold the Indexer's serialization lock for the entire batch
-            // AND through the final `enable()` / recurse decision. Without
+            // AND through the final ticket-release / recurse decision. Without
             // this, `drop_index_bg` can remove the index entry between
-            // batch completion and `enable()`. If a subsequent CREATE
-            // recreates an entry under the same label, our late `enable()`
-            // would decrement the *new* entry's pending counter, eventually
-            // underflowing it past zero.
+            // batch completion and ticket release. If a subsequent CREATE
+            // recreates an entry under the same label, release still targets
+            // the original generation via `ticket.generation_id`.
             {
                 let lock = indexer.write_lock();
                 let guard = lock.lock();
 
-                if indexer.get_id(&label) != Some(index_id) {
+                if !indexer.is_ticket_current(&ticket) {
                     // Index entry was recreated under us — our captured
                     // `attrs` is stale and would commit partial-spec docs
                     // into the new rs_idx. The fresh populate spawned by
                     // recreate will repopulate from cursor 0 with the full
-                    // current schema. Release this populate's pending
-                    // ticket against the *current* entry so it can settle;
-                    // `drop_index` incremented `pending_changes` for the
-                    // new populate, so this stray decrement just cancels
-                    // out the increment that was owed to *us*.
-                    indexer.release_orphan_pending(&label);
+                    // current schema. Release only this generation's
+                    // ticket so stale workers never decrement the fresh
+                    // generation's pending counter.
+                    indexer.release_population_ticket(&ticket);
                     return;
                 }
 
-                if indexer.is_cancelled() || indexer.pending_changes(&label) > 1 {
-                    indexer.enable_if(&label, index_id);
+                if indexer.is_cancelled() || indexer.ticket_pending_changes(&ticket) > 1 {
+                    indexer.release_population_ticket(&ticket);
                     return;
                 }
 
@@ -426,7 +425,7 @@ fn populate_index_batch(
                     drop(guard);
                     drop(lock);
                     std::thread::sleep(Duration::from_millis(1));
-                    populate_index_batch(kind, label, indexer, attrs, progress, cursor, index_id);
+                    populate_index_batch(kind, label, indexer, attrs, progress, cursor, ticket);
                     return;
                 };
 
@@ -570,7 +569,7 @@ fn populate_index_batch(
                 }
 
                 if exhausted {
-                    indexer.enable_if(&label, index_id);
+                    indexer.release_population_ticket(&ticket);
                 } else {
                     do_recurse = true;
                 }
@@ -578,7 +577,7 @@ fn populate_index_batch(
             }
 
             if do_recurse {
-                populate_index_batch(kind, label, indexer, attrs, progress, next_cursor, index_id);
+                populate_index_batch(kind, label, indexer, attrs, progress, next_cursor, ticket);
             }
         },
         Some(0),
@@ -593,9 +592,7 @@ fn drop_index_bg(
         move || {
             // Serialize with `populate_index_batch`, which holds the same
             // lock for the duration of a batch. Without this, the populate
-            // worker can be mid-batch when we remove the label and then
-            // hit `enable()`/`decrement_pending()` on an index that has
-            // already been torn down, tripping the `res > 0` assertion.
+            // worker can be mid-batch when we remove the label.
             let lock = node_indexer.write_lock();
             let _guard = lock.lock();
             node_indexer.remove(&label);
@@ -2427,8 +2424,11 @@ impl Graph {
     /// Synchronously populate all pending indexes.
     /// Used after RDB load when the graph is fully constructed.
     pub fn populate_indexes_sync(&mut self) {
-        let fields_by_label = self.node_indexer.get_all_pending_fields();
+        let fields_by_label = self.node_indexer.get_all_fields();
         for (label, attrs) in fields_by_label {
+            let Some(ticket) = self.node_indexer.acquire_population_ticket(&label) else {
+                continue;
+            };
             if let Some(lm) = self.get_label_matrix(&label) {
                 // Pre-resolve attribute indices to avoid string lookups per node
                 let resolved_attrs: Vec<(u16, Vec<_>)> = attrs
@@ -2461,8 +2461,8 @@ impl Graph {
                     add_docs.insert(label.clone(), batch);
                     self.node_indexer.commit(&mut add_docs, &mut HashMap::new());
                 }
-                self.node_indexer.enable(&label);
             }
+            self.node_indexer.release_population_ticket(&ticket);
         }
 
         // Edge indexes: symmetric to the node path, but walk the
@@ -2472,8 +2472,11 @@ impl Graph {
         // the tensor iterator directly so we don't materialize every
         // `(src, dst, eid)` triple for large relationship types on
         // RDB load.
-        let edge_fields_by_type = self.edge_indexer.get_all_pending_fields();
+        let edge_fields_by_type = self.edge_indexer.get_all_fields();
         for (type_name, attrs) in edge_fields_by_type {
+            let Some(ticket) = self.edge_indexer.acquire_population_ticket(&type_name) else {
+                continue;
+            };
             if let Some(tensor) = self.get_relationship_matrix(&type_name) {
                 let mut batch = Vec::new();
                 for (src, dst, eid) in tensor.iter(0, u64::MAX, false) {
@@ -2496,8 +2499,8 @@ impl Graph {
                     add_docs.insert(type_name.clone(), batch);
                     self.edge_indexer.commit(&mut add_docs, &mut HashMap::new());
                 }
-                self.edge_indexer.enable(&type_name);
             }
+            self.edge_indexer.release_population_ticket(&ticket);
         }
     }
 

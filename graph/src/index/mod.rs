@@ -59,9 +59,11 @@ use std::{
     ptr::null_mut,
     sync::{
         Arc,
-        atomic::{AtomicI32, AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering},
     },
 };
+
+use parking_lot::Mutex;
 
 use crate::runtime::value::Value;
 
@@ -765,11 +767,21 @@ pub struct Index {
     id: u64,
     rs_idx: *mut RSIndex,
     fields: HashMap<Arc<String>, Vec<Arc<Field>>>,
-    pending_changes: AtomicI32,
+    pending_slots: Mutex<PendingSlots>,
     progress: u64,
     total: u64,
     language: Option<Arc<String>>,
     stopwords: Option<Vec<Arc<String>>>,
+}
+
+#[derive(Debug, Default)]
+struct PendingSlots {
+    /// Generation currently stored in `Index::id`.
+    current_generation: u64,
+    /// Pending tickets for `current_generation`.
+    current_pending: i32,
+    /// Pending tickets for older generations aggregated together.
+    stale_pending: i32,
 }
 
 /// RAII guard for the Redis module GIL. Constructed by [`GilGuard::acquire`],
@@ -836,11 +848,16 @@ impl Drop for Index {
 impl Default for Index {
     fn default() -> Self {
         static NEXT_INDEX_ID: AtomicU64 = AtomicU64::new(1);
+        let id = NEXT_INDEX_ID.fetch_add(1, Ordering::Relaxed);
         Self {
-            id: NEXT_INDEX_ID.fetch_add(1, Ordering::Relaxed),
+            id,
             rs_idx: std::ptr::null_mut(),
             fields: HashMap::new(),
-            pending_changes: AtomicI32::new(0),
+            pending_slots: Mutex::new(PendingSlots {
+                current_generation: id,
+                current_pending: 0,
+                stale_pending: 0,
+            }),
             progress: 0,
             total: 0,
             language: None,
@@ -867,6 +884,11 @@ impl Index {
         static NEXT_INDEX_ID: std::sync::atomic::AtomicU64 =
             std::sync::atomic::AtomicU64::new(u64::MAX / 2);
         self.id = NEXT_INDEX_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut slots = self.pending_slots.lock();
+        // Rotate slots on recreation: previous current work becomes stale.
+        slots.stale_pending += slots.current_pending;
+        slots.current_generation = self.id;
+        slots.current_pending = 0;
     }
 }
 
@@ -1723,7 +1745,7 @@ impl Index {
     /// An index is operational when there are no pending changes.
     #[must_use]
     pub fn is_operational(&self) -> bool {
-        self.pending_changes.load(Ordering::SeqCst) == 0
+        self.pending_count() == 0
     }
 
     /// Set the index population progress.
@@ -1744,32 +1766,64 @@ impl Index {
 
     // --- pending_changes ---
 
-    /// Increment the pending changes counter. Returns the previous value.
-    pub fn increment_pending(&self) -> i32 {
-        self.pending_changes.fetch_add(1, Ordering::SeqCst)
+    /// Increment pending counter for a specific generation and return its
+    /// previous value.
+    pub fn increment_pending_for_generation(
+        &self,
+        generation_id: u64,
+    ) -> i32 {
+        let mut slots = self.pending_slots.lock();
+        if generation_id == slots.current_generation {
+            let prev = slots.current_pending;
+            slots.current_pending += 1;
+            prev
+        } else {
+            let prev = slots.stale_pending;
+            slots.stale_pending += 1;
+            prev
+        }
     }
 
-    /// Decrement the pending changes counter. Returns the previous value.
-    pub fn decrement_pending(&self) -> i32 {
-        self.pending_changes.fetch_sub(1, Ordering::SeqCst)
+    /// Decrement pending counter for a specific generation only if > 0.
+    /// Returns the previous value, or 0 if no decrement happened.
+    pub fn try_decrement_pending_for_generation(
+        &self,
+        generation_id: u64,
+    ) -> i32 {
+        let mut slots = self.pending_slots.lock();
+        if generation_id == slots.current_generation {
+            let prev = slots.current_pending;
+            if prev > 0 {
+                slots.current_pending -= 1;
+            }
+            prev
+        } else {
+            let prev = slots.stale_pending;
+            if prev > 0 {
+                slots.stale_pending -= 1;
+            }
+            prev
+        }
     }
 
-    /// Decrement `pending_changes` only if it is currently > 0. Returns
-    /// the previous value, or 0 if no decrement happened. Used by
-    /// orphan-ticket release paths that must not underflow if the
-    /// counter was already drained by another completion.
-    pub fn try_decrement_pending(&self) -> i32 {
-        self.pending_changes
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
-                if v > 0 { Some(v - 1) } else { None }
-            })
-            .unwrap_or(0)
+    /// Get pending changes count for a specific generation.
+    #[must_use]
+    pub fn pending_count_for_generation(
+        &self,
+        generation_id: u64,
+    ) -> i32 {
+        let slots = self.pending_slots.lock();
+        if generation_id == slots.current_generation {
+            slots.current_pending
+        } else {
+            slots.stale_pending
+        }
     }
 
     /// Get the current pending changes count.
     #[must_use]
     pub fn pending_count(&self) -> i32 {
-        self.pending_changes.load(Ordering::SeqCst)
+        self.pending_slots.lock().current_pending
     }
 
     // --- language ---
@@ -1838,10 +1892,9 @@ impl Index {
         self.create_rs_index(label, stopwords.as_ref(), language.as_ref())?;
         self.register_fields(self.fields(), None)?;
         // Bump id so any background populate still running against the
-        // previous rs_idx detects the recreation and bails out. We do not
-        // reset `pending_changes`: `drop_index` already incremented it for
-        // the new populate spawned below, and resetting to 0 would cause
-        // that populate's terminal `enable_if` to underflow the counter.
+        // previous rs_idx detects the recreation and bails out. Pending is
+        // tracked per generation, so stale workers release against their own
+        // generation counter and never touch this fresh generation.
         self.bump_id();
         Ok(())
     }

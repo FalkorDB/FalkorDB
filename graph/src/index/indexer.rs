@@ -66,6 +66,24 @@ pub enum IndexOptions {
     Vector(VectorIndexOptions),
 }
 
+#[derive(Clone, Debug)]
+pub struct PopulationTicket {
+    label: Arc<String>,
+    generation_id: u64,
+}
+
+impl PopulationTicket {
+    #[must_use]
+    pub fn generation_id(&self) -> u64 {
+        self.generation_id
+    }
+
+    #[must_use]
+    pub fn label(&self) -> &Arc<String> {
+        &self.label
+    }
+}
+
 impl IndexOptions {
     /// Extract language from the options (only applicable for Text index options).
     #[must_use]
@@ -299,7 +317,6 @@ impl Indexer {
         }
 
         label_indexes.set_progress(0, total);
-        label_indexes.increment_pending();
         Ok(())
     }
 
@@ -346,7 +363,6 @@ impl Indexer {
             }
             if removed {
                 index.set_progress(0, total);
-                index.increment_pending();
             }
             let after = index.index_count();
             return Some((before - after, after));
@@ -539,80 +555,59 @@ impl Indexer {
         None
     }
 
-    pub fn enable(
-        &mut self,
-        label: &Arc<String>,
-    ) -> bool {
-        let index = self.index.read();
-        if let Some(index) = index.get(label) {
-            let res = index.decrement_pending();
-            debug_assert!(res > 0);
-            return res == 1;
-        }
-        drop(index);
-        false
-    }
-
-    /// Look up the unique id of the `Index` currently stored under `label`.
-    /// Returns `None` if no entry exists.
-    #[must_use]
-    pub fn get_id(
+    /// Reserve one population ticket for the current generation of `label`.
+    ///
+    /// The returned ticket is generation-scoped: releasing it later decrements
+    /// only that generation's pending counter, even if the label was recreated.
+    pub fn acquire_population_ticket(
         &self,
         label: &Arc<String>,
-    ) -> Option<u64> {
-        self.index.read().get(label).map(super::Index::id)
+    ) -> Option<PopulationTicket> {
+        let index = self.index.read();
+        let index = index.get(label)?;
+        let generation_id = index.id();
+        index.increment_pending_for_generation(generation_id);
+        Some(PopulationTicket {
+            label: label.clone(),
+            generation_id,
+        })
     }
 
-    /// Like [`enable`], but only decrements when the entry stored under
-    /// `label` still has the expected `id`. If the entry has been removed
-    /// or replaced by a fresh `Index` (after a DROP + CREATE round-trip),
-    /// this is a no-op — preventing background populate batches from
-    /// underflowing an unrelated index's pending counter.
-    pub fn enable_if(
-        &mut self,
-        label: &Arc<String>,
-        expected_id: u64,
+    /// Release a previously-acquired population ticket.
+    ///
+    /// Saturating for that ticket's generation: if the counter was already 0,
+    /// no decrement happens.
+    pub fn release_population_ticket(
+        &self,
+        ticket: &PopulationTicket,
+    ) {
+        let index = self.index.read();
+        if let Some(index) = index.get(ticket.label()) {
+            index.try_decrement_pending_for_generation(ticket.generation_id());
+        }
+    }
+
+    /// Returns true if `ticket` still targets the current generation.
+    #[must_use]
+    pub fn is_ticket_current(
+        &self,
+        ticket: &PopulationTicket,
     ) -> bool {
-        let index = self.index.read();
-        if let Some(index) = index.get(label)
-            && index.id() == expected_id
-        {
-            // Saturating: multiple batches can race here when the indexer
-            // is cancelled or when `pending_changes > 1` triggers the
-            // early-exit path for several batches in flight against the
-            // same label. The first decrement to 0 settles the counter;
-            // later decrements would underflow.
-            let res = index.try_decrement_pending();
-            return res == 1;
-        }
-        false
+        self.index
+            .read()
+            .get(ticket.label())
+            .is_some_and(|index| index.id() == ticket.generation_id())
     }
 
-    pub fn disable(
-        &mut self,
-        label: &Arc<String>,
-    ) {
-        let mut index = self.index.write();
-        if let Some(index) = index.get_mut(label) {
-            index.increment_pending();
-        }
-    }
-
-    /// Decrement `pending_changes` on the current entry under `label`
-    /// without an id check. Used by `populate_index_batch` when it
-    /// detects a recreated index entry and bails out — its ticket on
-    /// the prior `Index` would otherwise leak, leaving `pending_changes`
-    /// stuck above zero. Saturating: if the new populate already
-    /// completed and brought the counter to 0, we skip the decrement
-    /// rather than underflow.
-    pub fn release_orphan_pending(
-        &mut self,
-        label: &Arc<String>,
-    ) {
-        let index = self.index.read();
-        if let Some(index) = index.get(label) {
-            index.try_decrement_pending();
-        }
+    /// Return pending count for the ticket's generation.
+    #[must_use]
+    pub fn ticket_pending_changes(
+        &self,
+        ticket: &PopulationTicket,
+    ) -> i32 {
+        self.index.read().get(ticket.label()).map_or(0, |index| {
+            index.pending_count_for_generation(ticket.generation_id())
+        })
     }
 
     #[must_use]
@@ -624,17 +619,6 @@ impl Indexer {
             return index.pending_count() == 0;
         }
         false
-    }
-
-    #[must_use]
-    pub fn pending_changes(
-        &self,
-        label: &Arc<String>,
-    ) -> i32 {
-        if let Some(index) = self.index.read().get(label) {
-            return index.pending_count();
-        }
-        0
     }
 
     pub fn commit(
@@ -706,15 +690,13 @@ impl Indexer {
             .unwrap_or_default()
     }
 
-    /// Get fields for all labels with pending population.
+    /// Get fields for all labels.
     #[must_use]
-    pub fn get_all_pending_fields(
-        &self
-    ) -> Vec<(Arc<String>, HashMap<Arc<String>, Vec<Arc<Field>>>)> {
+    pub fn get_all_fields(&self) -> Vec<(Arc<String>, HashMap<Arc<String>, Vec<Arc<Field>>>)> {
         self.index
             .read()
             .iter()
-            .filter(|(_, index)| index.pending_count() > 0)
+            .filter(|(_, index)| !index.is_empty())
             .map(|(label, index)| (label.clone(), index.fields().clone()))
             .collect()
     }
