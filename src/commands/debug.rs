@@ -25,7 +25,7 @@ fn debug_aux(
     mut args: impl Iterator<Item = RedisString>,
 ) -> RedisResult {
     let action = args.next_str()?;
-    match action.to_uppercase().as_str() {
+    let result = match action.to_uppercase().as_str() {
         "START" => {
             DECODE_STATE.lock().clear();
             unsafe { create_virtual_keys(ctx.ctx) };
@@ -37,5 +37,7 @@ fn debug_aux(
             Ok(RedisValue::Integer(0))
         }
         _ => Err(RedisError::String(format!("Unknown AUX action: {action}"))),
-    }
+    };
+    ctx.replicate_verbatim();
+    result
 }

@@ -149,6 +149,14 @@ impl VersionedMatrix {
         self.dm.wait();
     }
 
+    /// Wait on all three internal matrices (m, dp, dm).
+    /// Used for fork safety — ensures no GrB internal locks are held.
+    pub fn wait_all(&self) {
+        self.m.wait();
+        self.dp.wait();
+        self.dm.wait();
+    }
+
     #[must_use]
     pub fn memory_usage(&self) -> usize {
         self.m.memory_usage() + self.dp.memory_usage() + self.dm.memory_usage()

@@ -349,8 +349,20 @@ fn populate_index(
     label: Arc<String>,
     indexer: Indexer,
 ) {
-    let attrs = indexer.get_fields(&label);
-    populate_index_batch(kind, label, indexer, attrs, 0, BatchCursor::default());
+    // Capture the field snapshot and ticket in one read-side critical
+    // section so the documents we build match the generation we own.
+    let Some(snapshot) = indexer.acquire_population_snapshot(&label) else {
+        return;
+    };
+    populate_index_batch(
+        kind,
+        label,
+        indexer,
+        snapshot.fields,
+        0,
+        BatchCursor::default(),
+        snapshot.ticket,
+    );
 }
 
 /// Processes one batch of index population and spawns the next batch.
@@ -365,25 +377,42 @@ fn populate_index_batch(
     attrs: HashMap<Arc<String>, Vec<Arc<Field>>>,
     mut progress: u64,
     cursor: BatchCursor,
+    ticket: crate::index::indexer::PopulationTicket,
 ) {
     spawn(
         move || {
             const BATCH_SIZE: usize = 10_000;
 
-            if indexer.is_cancelled() || indexer.pending_changes(&label) > 1 {
-                indexer.enable(&label);
-                return;
-            }
-
             let exhausted;
             let mut next_cursor = cursor;
+            let mut do_recurse = false;
 
-            // Hold the Indexer's serialization lock for the entire batch so
-            // that write-path `commit_index` calls wait until this batch
-            // finishes.  This guarantees no concurrent index mutations.
+            // Hold the Indexer's serialization lock for the entire batch
+            // AND through the final ticket-release / recurse decision. Without
+            // this, `drop_index_bg` can remove the index entry between
+            // batch completion and ticket release. If a subsequent CREATE
+            // recreates an entry under the same label, release still targets
+            // the original generation via `ticket.generation_id`.
             {
                 let lock = indexer.write_lock();
                 let guard = lock.lock();
+
+                if !indexer.is_ticket_current(&ticket) {
+                    // Index entry was recreated under us — our captured
+                    // `attrs` is stale and would commit partial-spec docs
+                    // into the new rs_idx. The fresh populate spawned by
+                    // recreate will repopulate from cursor 0 with the full
+                    // current schema. Release only this generation's
+                    // ticket so stale workers never decrement the fresh
+                    // generation's pending counter.
+                    indexer.release_population_ticket(&ticket);
+                    return;
+                }
+
+                if indexer.is_cancelled() || indexer.ticket_pending_changes(&ticket) > 1 {
+                    indexer.release_population_ticket(&ticket);
+                    return;
+                }
 
                 let Some(graph) = indexer.get_graph() else {
                     // Graph not yet committed — reschedule this batch.
@@ -392,7 +421,7 @@ fn populate_index_batch(
                     drop(guard);
                     drop(lock);
                     std::thread::sleep(Duration::from_millis(1));
-                    populate_index_batch(kind, label, indexer, attrs, progress, cursor);
+                    populate_index_batch(kind, label, indexer, attrs, progress, cursor, ticket);
                     return;
                 };
 
@@ -534,13 +563,17 @@ fn populate_index_batch(
                     indexer.commit(&mut add_docs, &mut HashMap::new());
                     indexer.update_progress(&label, progress);
                 }
-                // guard dropped here — lock released between batches
+
+                if exhausted {
+                    indexer.release_population_ticket(&ticket);
+                } else {
+                    do_recurse = true;
+                }
+                // guard dropped here
             }
 
-            if exhausted {
-                indexer.enable(&label);
-            } else {
-                populate_index_batch(kind, label, indexer, attrs, progress, next_cursor);
+            if do_recurse {
+                populate_index_batch(kind, label, indexer, attrs, progress, next_cursor, ticket);
             }
         },
         Some(0),
@@ -553,6 +586,11 @@ fn drop_index_bg(
 ) {
     spawn(
         move || {
+            // Serialize with `populate_index_batch`, which holds the same
+            // lock for the duration of a batch. Without this, the populate
+            // worker can be mid-batch when we remove the label.
+            let lock = node_indexer.write_lock();
+            let _guard = lock.lock();
             node_indexer.remove(&label);
         },
         Some(0),
@@ -1754,6 +1792,23 @@ impl Graph {
         self.relationship_type_matrix.flush();
     }
 
+    /// Materialize all pending GraphBLAS operations on every matrix.
+    /// Called from pthread_atfork prepare handler to ensure no internal
+    /// GraphBLAS locks are held at fork time.
+    pub fn wait_all(&self) {
+        self.zero_matrix.wait_all();
+        self.adjacancy_matrix.wait_all();
+        self.node_labels_matrix.wait_all();
+        self.relationship_type_matrix.wait_all();
+        self.all_nodes_matrix.wait_all();
+        for m in &self.labels_matices {
+            m.wait_all();
+        }
+        for t in &self.relationship_matrices {
+            t.wait_all();
+        }
+    }
+
     pub fn set_relationships_attributes(
         &mut self,
         attrs: &FxHashMap<u64, OrderMap<Arc<String>, Value>>,
@@ -2365,8 +2420,10 @@ impl Graph {
     /// Synchronously populate all pending indexes.
     /// Used after RDB load when the graph is fully constructed.
     pub fn populate_indexes_sync(&mut self) {
-        let fields_by_label = self.node_indexer.get_all_pending_fields();
-        for (label, attrs) in fields_by_label {
+        let node_snapshots = self.node_indexer.acquire_population_snapshots();
+        for snapshot in node_snapshots {
+            let label = snapshot.ticket.label().clone();
+            let attrs = snapshot.fields;
             if let Some(lm) = self.get_label_matrix(&label) {
                 // Pre-resolve attribute indices to avoid string lookups per node
                 let resolved_attrs: Vec<(u16, Vec<_>)> = attrs
@@ -2399,8 +2456,9 @@ impl Graph {
                     add_docs.insert(label.clone(), batch);
                     self.node_indexer.commit(&mut add_docs, &mut HashMap::new());
                 }
-                self.node_indexer.enable(&label);
             }
+            self.node_indexer
+                .release_population_ticket(&snapshot.ticket);
         }
 
         // Edge indexes: symmetric to the node path, but walk the
@@ -2410,8 +2468,10 @@ impl Graph {
         // the tensor iterator directly so we don't materialize every
         // `(src, dst, eid)` triple for large relationship types on
         // RDB load.
-        let edge_fields_by_type = self.edge_indexer.get_all_pending_fields();
-        for (type_name, attrs) in edge_fields_by_type {
+        let edge_snapshots = self.edge_indexer.acquire_population_snapshots();
+        for snapshot in edge_snapshots {
+            let type_name = snapshot.ticket.label().clone();
+            let attrs = snapshot.fields;
             if let Some(tensor) = self.get_relationship_matrix(&type_name) {
                 let mut batch = Vec::new();
                 for (src, dst, eid) in tensor.iter(0, u64::MAX, false) {
@@ -2434,8 +2494,9 @@ impl Graph {
                     add_docs.insert(type_name.clone(), batch);
                     self.edge_indexer.commit(&mut add_docs, &mut HashMap::new());
                 }
-                self.edge_indexer.enable(&type_name);
             }
+            self.edge_indexer
+                .release_population_ticket(&snapshot.ticket);
         }
     }
 
@@ -2621,8 +2682,26 @@ impl Graph {
         label: &Arc<String>,
         attrs: &Vec<Arc<String>>,
     ) -> Result<usize, String> {
+        // Expand an empty `attrs` to the full set of fields of `index_type`
+        // (matches the `target_attrs` derivation in `Indexer::drop_index`);
+        // otherwise an empty-attr drop would bypass constraint protection.
+        let indexer = match entity_type {
+            EntityType::Node => &self.node_indexer,
+            EntityType::Relationship => &self.edge_indexer,
+        };
+        let effective_attrs: Vec<Arc<String>> = if attrs.is_empty() {
+            indexer
+                .get_fields(label)
+                .into_iter()
+                .filter(|(_, fields)| fields.iter().any(|f| f.ty == *index_type))
+                .map(|(attr, _)| attr)
+                .collect()
+        } else {
+            attrs.clone()
+        };
+
         // Check if any UNIQUE constraint depends on this index
-        for attr in attrs {
+        for attr in &effective_attrs {
             if self.constraint_depends_on_index(entity_type, label, attr, index_type) {
                 return Err("Index supports constraint".to_string());
             }
@@ -2642,6 +2721,9 @@ impl Graph {
                 (&mut self.edge_indexer, total, IndexKind::Edge)
             }
         };
+
+        let lock = indexer.write_lock();
+        let _guard = lock.lock();
 
         let reindex = indexer.drop_index(label, attrs, index_type, total);
 
@@ -2969,6 +3051,45 @@ impl Graph {
             } else {
                 ConstraintStatus::Failed
             };
+        }
+    }
+
+    /// Read-only phase of async constraint validation: compute the outcome
+    /// (valid / invalid) for every constraint currently under construction,
+    /// without mutating state. Pair with
+    /// [`apply_constraint_validation_results`] under a write lock.
+    ///
+    /// Returns `(constraint_id, valid)` rather than indices because
+    /// `drop_constraint` uses `swap_remove`, which invalidates positional
+    /// references between the compute and apply phases.
+    pub fn compute_pending_constraint_results(&self) -> Vec<(u64, bool)> {
+        self.constraints
+            .iter()
+            .filter(|c| c.status == ConstraintStatus::UnderConstruction)
+            .map(|c| (c.id, self.validate_constraint(c)))
+            .collect()
+    }
+
+    /// Apply results computed by [`compute_pending_constraint_results`].
+    /// Status is updated only for constraints that are still under
+    /// construction and still present (a concurrent drop may have removed
+    /// them, and `swap_remove` may have shuffled others into their slot).
+    pub fn apply_constraint_validation_results(
+        &mut self,
+        results: Vec<(u64, bool)>,
+    ) {
+        for (id, valid) in results {
+            if let Some(c) = self
+                .constraints
+                .iter_mut()
+                .find(|c| c.id == id && c.status == ConstraintStatus::UnderConstruction)
+            {
+                c.status = if valid {
+                    ConstraintStatus::Operational
+                } else {
+                    ConstraintStatus::Failed
+                };
+            }
         }
     }
 

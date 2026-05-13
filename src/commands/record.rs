@@ -152,7 +152,8 @@ pub fn graph_record(
             &key_str.to_string(),
         )));
         record_mut(ctx, &graph, query)?;
-        key.set_value(&GRAPH_TYPE, graph)?;
+        key.set_value(&GRAPH_TYPE, graph.clone())?;
+        crate::graph_core::register_graph(key_str.to_string(), graph);
     }
 
     RedisResult::Ok(RedisValue::NoReply)

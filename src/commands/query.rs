@@ -162,6 +162,7 @@ pub fn graph_query(
         key_name,
         timeout,
     );
-    key.set_value(&GRAPH_TYPE, graph)?;
+    key.set_value(&GRAPH_TYPE, graph.clone())?;
+    crate::graph_core::register_graph(key_str.to_string(), graph);
     result
 }

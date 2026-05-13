@@ -32,8 +32,6 @@ pub struct VirtualKeyState {
     pub vkey_map: HashMap<String, (String, usize, Vec<PayloadEntry>)>,
     /// graph_name → list of virtual key names
     pub graph_vkeys: HashMap<String, Vec<String>>,
-    /// Graph references keyed by graph_name for use by virtual key rdb_save.
-    graph_refs: HashMap<String, Arc<RwLock<ThreadedGraph>>>,
     /// Pre-built attribute snapshots (cache + fjall) built before fork.
     pub rdb_snapshots: HashMap<String, Arc<graph::graph::graph::RdbSnapshots>>,
 }
@@ -43,7 +41,6 @@ impl VirtualKeyState {
         Self {
             vkey_map: HashMap::new(),
             graph_vkeys: HashMap::new(),
-            graph_refs: HashMap::new(),
             rdb_snapshots: HashMap::new(),
         }
     }
@@ -51,34 +48,7 @@ impl VirtualKeyState {
     pub fn clear(&mut self) {
         self.vkey_map.clear();
         self.graph_vkeys.clear();
-        self.graph_refs.clear();
         self.rdb_snapshots.clear();
-    }
-
-    pub fn get_vkey_payloads(
-        &self,
-        vkey_name: &str,
-    ) -> Option<(&str, &[PayloadEntry])> {
-        self.vkey_map
-            .get(vkey_name)
-            .map(|(graph_name, _key_idx, payloads)| (graph_name.as_str(), payloads.as_slice()))
-    }
-
-    /// Store a graph reference for use during RDB save.
-    pub fn store_graph_ref(
-        &mut self,
-        graph_name: &str,
-        graph: Arc<RwLock<ThreadedGraph>>,
-    ) {
-        self.graph_refs.insert(graph_name.to_string(), graph);
-    }
-
-    /// Retrieve the stored graph reference for RDB save.
-    pub fn get_graph_ref(
-        &self,
-        graph_name: &str,
-    ) -> Option<&Arc<RwLock<ThreadedGraph>>> {
-        self.graph_refs.get(graph_name)
     }
 }
 
