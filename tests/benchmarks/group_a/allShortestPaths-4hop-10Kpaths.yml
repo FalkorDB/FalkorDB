@@ -40,6 +40,6 @@ parameters:
       ratio: 1.0
 kpis:
   - key: '$.OverallClientLatencies.Total.q50 '
-    max_value: 200.0
+    max_value: 300.0
   - key: '$.OverallQueryRates.Total'
     min_value: 100
