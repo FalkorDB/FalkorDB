@@ -724,14 +724,14 @@ impl Matrix {
     }
 
     pub fn wait(&self) {
+        let lock = self.lock.lock();
         if self.pending() {
-            let lock = self.lock.lock();
             unsafe {
                 let info = GrB_Matrix_wait(*self.m, GrB_WaitMode::GrB_MATERIALIZE as _);
                 debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             }
-            drop(lock);
         }
+        drop(lock);
     }
 
     #[must_use]
