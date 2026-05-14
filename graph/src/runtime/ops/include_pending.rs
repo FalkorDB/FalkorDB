@@ -126,7 +126,7 @@ impl<'a> Iterator for IncludePendingOp<'a> {
                 match self.child.next() {
                     Some(Ok(batch)) => {
                         // Save a parent env for later pending emission.
-                        if self.parent_env.is_none() && batch.len() > 0 {
+                        if self.parent_env.is_none() && !batch.is_empty() {
                             // Use the first row (without the node binding) as template.
                             // The child scan already inserted the node var, but we need
                             // the base env. We'll just use the first env as-is since

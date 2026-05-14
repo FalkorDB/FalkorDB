@@ -51,7 +51,7 @@ struct CachedEntity {
 
 impl CachedEntity {
     fn compute_weight(attrs: &[(u16, Value)]) -> u32 {
-        let base = attrs.len() * std::mem::size_of::<(u16, Value)>();
+        let base = std::mem::size_of_val(attrs);
         let heap: usize = attrs.iter().map(|(_, v)| v.heap_size()).sum();
         let total = base + heap + std::mem::size_of::<CachedEntity>();
         u32::try_from(total).unwrap_or(u32::MAX).max(1)

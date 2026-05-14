@@ -196,10 +196,7 @@ impl<'a> ProjectOp<'a> {
                     Some(env),
                     None,
                 );
-                match res {
-                    Ok(value) => return_vars.insert(name, value),
-                    Err(e) => return Err(e),
-                }
+                return_vars.insert(name, res?);
             }
             let mut vars = env.clone_pooled(self.runtime.env_pool);
             for (old_var, new_var) in self.copy_from_parent {

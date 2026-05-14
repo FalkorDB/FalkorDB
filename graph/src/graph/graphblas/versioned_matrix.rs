@@ -120,6 +120,23 @@ impl New for VersionedMatrix {
     }
 }
 
+impl VersionedMatrix {
+    /// Wrap an owned `Matrix` as a `VersionedMatrix` with empty delta-plus /
+    /// delta-minus.  Used when callers materialize a merged matrix and then
+    /// want to expose it through the versioned-matrix iter API without the
+    /// dup overhead of re-building inside the versioned wrapper.
+    #[must_use]
+    pub fn from_matrix(m: Matrix) -> Self {
+        let nrows = m.nrows();
+        let ncols = m.ncols();
+        Self {
+            m: Cow::new(m),
+            dp: Cow::new(Matrix::new(nrows, ncols)),
+            dm: Cow::new(Matrix::new(nrows, ncols)),
+        }
+    }
+}
+
 impl Dup<Self> for VersionedMatrix {
     fn dup(&self) -> Self {
         Self {
@@ -395,6 +412,11 @@ pub struct Iter {
     mit: matrix::Iter,
     dpit: matrix::Iter,
     dm: Cow<Matrix>,
+    /// True when both the deletion mask and the delta-plus matrix are empty,
+    /// so iteration can stream `mit` without per-edge `dm.get` lookups or a
+    /// `dpit` tail. Hot path for read-only queries on a freshly loaded graph.
+    dm_empty: bool,
+    dp_empty: bool,
 }
 
 unsafe impl Send for Iter {}
@@ -413,10 +435,14 @@ impl Iter {
         min_row: u64,
         max_row: u64,
     ) -> Self {
+        let dm_empty = m.dm.nvals() == 0;
+        let dp_empty = m.dp.nvals() == 0;
         Self {
             mit: m.m.iter(min_row, max_row),
             dpit: m.dp.iter(min_row, max_row),
             dm: m.dm.clone(),
+            dm_empty,
+            dp_empty,
         }
     }
 
@@ -443,6 +469,15 @@ impl Iterator for Iter {
     /// - `Some((u64, u64))`: The next element in the matrix.
     /// - `None`: The iterator is depleted.
     fn next(&mut self) -> Option<Self::Item> {
+        if self.dm_empty {
+            if let Some(item) = self.mit.next() {
+                return Some(item);
+            }
+            if self.dp_empty {
+                return None;
+            }
+            return self.dpit.next();
+        }
         for (i, j) in &mut self.mit {
             if self.dm.get(i, j).is_none() {
                 return Some((i, j));

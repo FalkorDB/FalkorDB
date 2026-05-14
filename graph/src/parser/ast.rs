@@ -782,7 +782,7 @@ impl<L: Display + PartialEq, TVar: Display + std::fmt::Debug> Display for SetIte
                         write!(f, ":")?;
                     }
                     first = false;
-                    write!(f, "{}", &labels[i])?;
+                    write!(f, "{}", labels[i])?;
                 }
                 Ok(())
             }
