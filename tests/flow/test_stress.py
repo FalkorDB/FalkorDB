@@ -1,4 +1,4 @@
-from common import Env, Graph
+from common import Env, Graph, SANITIZER
 import time
 import random
 import threading
@@ -135,6 +135,13 @@ class testStressFlow():
         task_queue.join()
 
     def test01_bgsave_stress(self):
+        # Under ASAN, an instrumented Redis writes the RDB slowly enough that
+        # BGSAVE doesn't finish within the 6 s window BGSAVE_loop asserts on.
+        # The assertion is about BGSAVE responsiveness, not graph correctness,
+        # so skip rather than relax the bound.
+        if SANITIZER:
+            self.env.skip()
+
         n_tasks     = 10000 # number of tasks to run
         n_creations = 0.35  # create ratio
         n_deletions = 0.7   # delete ratio
