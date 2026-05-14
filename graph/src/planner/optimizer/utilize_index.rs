@@ -606,12 +606,11 @@ fn list_has_nested_list(
     false
 }
 
-/// Tries to convert an IN filter into an index scan.
+/// Tries to convert an `IN` filter into an index scan against `subject`.
 ///
 /// Handles two patterns:
 /// 1. `property IN [list]` — converts to InList index query
 /// 2. `value IN property` — converts to ArrayContains index query
-/// Tries to convert an `IN` filter into an index scan against `subject`.
 fn try_in_filter_scan<T: IndexSubject>(
     subject: &T,
     filter: &DynTree<ExprIR<Variable>>,
@@ -993,6 +992,7 @@ fn reorder_subject_labels<T: IndexSubject>(
 /// an index scan, then either drop the parent `Filter` entirely, keep
 /// it as a runtime safety net, or narrow it to the conjuncts that
 /// weren't pushed down.
+#[allow(clippy::too_many_arguments)]
 fn apply_filter_pushdown<T: IndexSubject>(
     plan: &mut DynTree<IR>,
     idx: NodeIdx<Dyn<IR>>,

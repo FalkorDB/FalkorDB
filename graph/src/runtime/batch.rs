@@ -600,6 +600,7 @@ impl ExactSizeIterator for ActiveEnvIter<'_, '_> {}
 
 /// Batch-mode operator enum. Each variant wraps a concrete operator that
 /// processes data in batches of up to [`BATCH_SIZE`] rows.
+#[allow(clippy::large_enum_variant)]
 pub enum BatchOp<'a> {
     /// Yields a single batch containing one default Env row. Used as the
     /// leaf of operator trees when no child exists (e.g. `RETURN 1`).

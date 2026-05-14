@@ -338,10 +338,10 @@ impl Pending {
         for label in labels {
             let label_id = usize::from(*label) as u64;
             // Remove from pending set labels
-            if let Some(set) = self.set_labels.get_mut(&raw_id) {
-                if let Some(pos) = set.iter().position(|&l| l == label_id) {
-                    set.swap_remove(pos);
-                }
+            if let Some(set) = self.set_labels.get_mut(&raw_id)
+                && let Some(pos) = set.iter().position(|&l| l == label_id)
+            {
+                set.swap_remove(pos);
             }
             self.remove_labels.entry(raw_id).or_default().push(label_id);
         }
@@ -408,10 +408,10 @@ impl Pending {
 
         for (rel_id, _, _, type_name) in &rels {
             self.created_rel_types.remove(rel_id);
-            if let Some(entries) = self.created_rels_by_type.get_mut(type_name) {
-                if let Some(pos) = entries.iter().position(|(rid, _, _)| rid == rel_id) {
-                    entries.swap_remove(pos);
-                }
+            if let Some(entries) = self.created_rels_by_type.get_mut(type_name)
+                && let Some(pos) = entries.iter().position(|(rid, _, _)| rid == rel_id)
+            {
+                entries.swap_remove(pos);
             }
         }
         let rels: Vec<_> = rels
@@ -448,10 +448,10 @@ impl Pending {
         let mut result = Vec::with_capacity(rels.len());
         for (rel_id, from, to, type_name) in rels {
             self.created_rel_types.remove(&rel_id);
-            if let Some(entries) = self.created_rels_by_type.get_mut(&type_name) {
-                if let Some(pos) = entries.iter().position(|(rid, _, _)| *rid == rel_id) {
-                    entries.swap_remove(pos);
-                }
+            if let Some(entries) = self.created_rels_by_type.get_mut(&type_name)
+                && let Some(pos) = entries.iter().position(|(rid, _, _)| *rid == rel_id)
+            {
+                entries.swap_remove(pos);
             }
             let attrs = self.new_relationships_attrs.remove(&rel_id.into());
             self.deleted_relationships.remove(&rel_id);
@@ -1034,13 +1034,13 @@ impl Pending {
                             if other_key.is_empty() {
                                 continue;
                             }
-                            if let Some(&existing_id) = seen.get(&other_key) {
-                                if existing_id != other_id {
-                                    return Err(format!(
-                                        "unique constraint violation on node of type {}",
-                                        label
-                                    ));
-                                }
+                            if let Some(&existing_id) = seen.get(&other_key)
+                                && existing_id != other_id
+                            {
+                                return Err(format!(
+                                    "unique constraint violation on node of type {}",
+                                    label
+                                ));
                             }
                             seen.insert(other_key, other_id);
                         }
@@ -1096,13 +1096,13 @@ impl Pending {
                             if other_key.is_empty() {
                                 continue;
                             }
-                            if let Some(&existing_id) = seen.get(&other_key) {
-                                if existing_id != other_eid {
-                                    return Err(format!(
-                                        "unique constraint violation, on edge of relationship-type {}",
-                                        type_name
-                                    ));
-                                }
+                            if let Some(&existing_id) = seen.get(&other_key)
+                                && existing_id != other_eid
+                            {
+                                return Err(format!(
+                                    "unique constraint violation, on edge of relationship-type {}",
+                                    type_name
+                                ));
                             }
                             seen.insert(other_key, other_eid);
                         }

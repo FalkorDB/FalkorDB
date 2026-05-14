@@ -415,7 +415,7 @@ impl<'a> CondTraverseOp<'a> {
         } else {
             &rp.to.alias
         };
-        for (row_i, dest_raw) in row_is.into_iter().zip(col_is.into_iter()) {
+        for (row_i, dest_raw) in row_is.into_iter().zip(col_is) {
             let dest_id = NodeId::from(dest_raw);
             // Post-filter dst label (= F * A * R_dst in C's algebra).
             if !state
@@ -450,12 +450,12 @@ impl<'a> CondTraverseOp<'a> {
             let mat_dst = u64::from(dest_id);
             let key = compound_key(mat_src, mat_dst);
             let mut found_id: Option<RelationshipId> = None;
-            'outer: for cell in &state.edge_iters {
+            for cell in &state.edge_iters {
                 let mut it = cell.borrow_mut();
                 it.seek(key, key);
-                for (_, raw_id) in &mut *it {
+                if let Some((_, raw_id)) = it.next() {
                     found_id = Some(RelationshipId::from(raw_id));
-                    break 'outer;
+                    break;
                 }
             }
             let Some(edge_id) = found_id else { continue };
