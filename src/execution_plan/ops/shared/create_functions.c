@@ -249,6 +249,10 @@ void PendingCreations_Reset
 
 	for(uint i = 0; i < arr_len(ctx->edges); i++) {
 		arr_clear (ctx->edges[i].created_edges) ;
+		uint n_attrs = arr_len (ctx->edges[i].edge_attributes) ;
+		for (uint j = 0; j < n_attrs; j++) {
+			AttributeSet_Free (ctx->edges[i].edge_attributes + j) ;
+		}
 		arr_clear (ctx->edges[i].edge_attributes) ;
 	}
 }
