@@ -87,8 +87,8 @@ use crate::{
         constraint::{Constraint, ConstraintStatus, ConstraintType},
         graphblas::{
             matrix::{
-                Dup, Get, MaskedElementWiseAdd, MaskedElementWiseMultiply, Matrix, MxM, New,
-                Remove, Set, Size, Transpose,
+                Descriptor, Dup, Get, MaskedElementWiseAdd, MaskedElementWiseMultiply, Matrix, MxM,
+                New, Remove, Set, Size, Transpose,
             },
             serialization::{Encode, EncodeState, PayloadEntry, Writer},
             tensor::Tensor,
@@ -2118,11 +2118,12 @@ impl Graph {
         );
         for relationship_matrix in iter {
             m.element_wise_add(
+                Some(relationship_matrix.matrix().dm()),
                 None,
-                None,
-                Some(&relationship_matrix.matrix().to_matrix()),
-                None,
+                Some(relationship_matrix.matrix().m()),
+                Some(Descriptor::C),
             );
+            m.element_wise_add(None, None, Some(relationship_matrix.matrix().dp()), None);
         }
         Some(m)
     }
