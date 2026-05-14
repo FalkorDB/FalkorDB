@@ -121,6 +121,18 @@ impl New for VersionedMatrix {
 }
 
 impl VersionedMatrix {
+    pub fn m(&self) -> &Matrix {
+        &self.m
+    }
+
+    pub fn dp(&self) -> &Matrix {
+        &self.dp
+    }
+
+    pub fn dm(&self) -> &Matrix {
+        &self.dm
+    }
+
     /// Wrap an owned `Matrix` as a `VersionedMatrix` with empty delta-plus /
     /// delta-minus.  Used when callers materialize a merged matrix and then
     /// want to expose it through the versioned-matrix iter API without the
