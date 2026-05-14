@@ -190,17 +190,22 @@ static AlgebraicExpression **_AlgebraicExpression_IsolateVariableLenExps
 		QGNode *dest = QueryGraph_GetNodeByAlias(qg,
 				AlgebraicExpression_Dest(exp));
 
+		bool same_endpoint_alias = (src == dest);
+
 		if(QGNode_Labeled(dest)) {
 			// remove dest node matrix from expression
 			op = AlgebraicExpression_RemoveDest(&exp);
 		}
 
 		if(op != NULL) {
-			// remove destination if following expression isn't a
-			// variable length edge (src/dest sharing) otherwise introduce a new
-			// label expression
-			if(expIdx < expCount - 1 &&
+			if(same_endpoint_alias) {
+				// already represented by the source label expression
+				AlgebraicExpression_Free(op);
+			} else if(expIdx < expCount - 1 &&
 			   !_AlgebraicExpression_ContainsVariableLengthEdge(qg, expressions[expIdx + 1])) {
+				// remove destination if following expression isn't a
+				// variable length edge (src/dest sharing) otherwise introduce a new
+				// label expression
 				AlgebraicExpression_Free(op);
 			} else {
 				arr_append(res, op);
@@ -698,4 +703,3 @@ AlgebraicExpression **AlgebraicExpression_FromQueryGraph
 	QueryGraph_Free(g);
 	return exps;
 }
-
