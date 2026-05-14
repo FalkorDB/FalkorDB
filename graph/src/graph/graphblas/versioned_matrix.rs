@@ -69,6 +69,7 @@ use crate::graph::cow::Cow;
 ///
 /// Wraps a base matrix with separate matrices for tracking additions
 /// and deletions, enabling concurrent reads during writes.
+#[derive(Clone)]
 pub struct VersionedMatrix {
     /// Base committed matrix
     m: Cow<Matrix>,
@@ -121,6 +122,18 @@ impl New for VersionedMatrix {
 }
 
 impl VersionedMatrix {
+    pub fn m(&self) -> &Matrix {
+        &self.m
+    }
+
+    pub fn dp(&self) -> &Matrix {
+        &self.dp
+    }
+
+    pub fn dm(&self) -> &Matrix {
+        &self.dm
+    }
+
     /// Wrap an owned `Matrix` as a `VersionedMatrix` with empty delta-plus /
     /// delta-minus.  Used when callers materialize a merged matrix and then
     /// want to expose it through the versioned-matrix iter API without the

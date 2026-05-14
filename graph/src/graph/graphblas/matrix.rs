@@ -448,6 +448,96 @@ impl MxM for Matrix {
     }
 }
 
+impl Matrix {
+    /// Delta-aware matrix-multiply: `self = self * vm` operating directly on
+    /// the versioned matrix's base/dp/dm components, mirroring C FalkorDB's
+    /// `Delta_mxm`.
+    ///
+    /// Computes `(self * (m + dp))<!(self * dm)>` without first materializing
+    /// the merged matrix. In the common read-only case (`dp.nvals() == 0 &&
+    /// dm.nvals() == 0`) this is a single `GrB_mxm` against `vm.m()`, avoiding
+    /// the eWiseAdd that `to_matrix()` would otherwise pay.
+    pub fn delta_lmxm(
+        &mut self,
+        vm: &super::versioned_matrix::VersionedMatrix,
+    ) {
+        let dp = vm.dp();
+        let dm = vm.dm();
+        let dp_nvals = dp.nvals();
+        let dm_nvals = dm.nvals();
+
+        if dp_nvals == 0 && dm_nvals == 0 {
+            // Hot path: clean snapshot, just self * vm.m()
+            self.lmxm(vm.m());
+            return;
+        }
+
+        let nrows = self.nrows();
+        let ncols = vm.ncols();
+
+        let mut mask: Option<Matrix> = None;
+        if dm_nvals > 0 {
+            let mut mk = Matrix::new(nrows, ncols);
+            unsafe {
+                let info = GrB_mxm(
+                    *mk.m,
+                    null_mut(),
+                    null_mut(),
+                    GxB_ANY_PAIR_BOOL,
+                    *self.m,
+                    *dm.m,
+                    null_mut(),
+                );
+                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            }
+            if mk.nvals() > 0 {
+                mask = Some(mk);
+            }
+        }
+
+        let mut accum: Option<Matrix> = None;
+        if dp_nvals > 0 {
+            let mut ac = Matrix::new(nrows, ncols);
+            unsafe {
+                let info = GrB_mxm(
+                    *ac.m,
+                    null_mut(),
+                    null_mut(),
+                    GxB_ANY_PAIR_BOOL,
+                    *self.m,
+                    *dp.m,
+                    null_mut(),
+                );
+                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            }
+            if ac.nvals() > 0 {
+                accum = Some(ac);
+            }
+        }
+
+        unsafe {
+            let (mask_ptr, desc) = match &mask {
+                Some(m) => (*m.m, GrB_DESC_RSC),
+                None => (null_mut(), null_mut()),
+            };
+            let info = GrB_mxm(
+                *self.m,
+                mask_ptr,
+                null_mut(),
+                GxB_ANY_PAIR_BOOL,
+                *self.m,
+                *vm.m().m,
+                desc,
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+
+        if let Some(ac) = accum {
+            self.element_wise_add(None, None, Some(&ac), None);
+        }
+    }
+}
+
 /// A wrapper around a GraphBLAS boolean matrix.
 #[derive(Clone)]
 pub struct Matrix {
@@ -634,12 +724,14 @@ impl Matrix {
     }
 
     pub fn wait(&self) {
-        let lock = self.lock.lock();
-        unsafe {
-            let info = GrB_Matrix_wait(*self.m, GrB_WaitMode::GrB_MATERIALIZE as _);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        if self.pending() {
+            let lock = self.lock.lock();
+            unsafe {
+                let info = GrB_Matrix_wait(*self.m, GrB_WaitMode::GrB_MATERIALIZE as _);
+                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            }
+            drop(lock);
         }
-        drop(lock);
     }
 
     #[must_use]
