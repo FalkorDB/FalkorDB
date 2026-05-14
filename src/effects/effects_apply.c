@@ -9,6 +9,7 @@
 #include "../graph/graph_hub.h"
 
 #include <stdio.h>
+#include <unistd.h>
 
 // read effect type from stream
 static inline EffectType ReadEffectType
@@ -308,7 +309,15 @@ static void ApplyLabels
 		LabelID l ;
 		fread_assert (&l, sizeof (LabelID), stream) ;
 		Schema *s = GraphContext_GetSchemaByID (gc, l, SCHEMA_NODE) ;
-		ASSERT (s != NULL) ;
+		if (s == NULL) {
+			// schema desync: label `l` does not exist locally - exit
+			// cleanly so Redis triggers a full RDB resync on restart
+			RedisModule_Log (NULL, "warning",
+					"ApplyLabels: label ID %d schema not found"
+					" - replica/primary schema desync detected, aborting",
+					l) ;
+			_exit (1) ;
+		}
 		lbl[i] = Schema_GetName (s) ;
 	}
 
@@ -653,7 +662,7 @@ void Effects_Apply
 	// validate effects version
 	if(ValidateVersion(stream) == false) {
 		// replica/primary out of sync
-		exit(1);
+		_exit(1);
 	}
 
 	// lock graph for writing

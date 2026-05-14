@@ -606,6 +606,18 @@ Schema *GraphContext_GetSchemaByID
 	Schema **schemas = (t == SCHEMA_NODE) ?
 		gc->node_schemas :
 		gc->relation_schemas ;
+
+	// bounds check: replica may receive a GRAPH.EFFECT referencing a schema
+	// ID that does not yet exist locally if master/replica state diverged
+	// (e.g. failed query rolled back schema on master but the EFFECT was
+	// already replicated, or a previous replication step was lost).
+	// returning NULL lets callers detect the desync instead of OOB-reading
+	// the schemas array and segfaulting.
+	if (id < 0 || (uint)id >= arr_len (schemas)) {
+		_GraphContext_UnLockSchemas (gc) ;
+		return NULL ;
+	}
+
 	Schema *s = schemas [id] ;
 
 	_GraphContext_UnLockSchemas (gc) ;
