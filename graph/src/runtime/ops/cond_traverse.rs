@@ -28,7 +28,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use crate::graph::graph::{LabelId, NodeId, RelationshipId};
-use crate::graph::graphblas::matrix::{Matrix, MxM, New, Size};
+use crate::graph::graphblas::matrix::{Matrix, New, Size};
 use crate::graph::graphblas::tensor::compound_key;
 use crate::graph::graphblas::versioned_matrix::{Iter as EdgeIter, VersionedMatrix};
 use crate::parser::ast::{ExprIR, QueryExpr, QueryRelationship, Variable};
@@ -60,10 +60,10 @@ struct CtState {
     /// Materialized base matrix for batched mxm path. Built lazily on
     /// first `expand_batch`. Cached for op lifetime; safe because writes
     /// are serialized w.r.t. read queries.
-    batched_matrix: Option<Matrix>,
+    batched_matrix: Option<VersionedMatrix>,
     /// Per-hop matrices for fused chain (same lifetime/safety rules as
     /// `batched_matrix`). `chain_matrices[i]` corresponds to `chain[i]`.
-    chain_matrices: Vec<Matrix>,
+    chain_matrices: Vec<VersionedMatrix>,
     /// Per-hop label IDs for `chain[i].to` (post-multiply dst filter).
     chain_dst_label_ids: Vec<Vec<LabelId>>,
 }
@@ -362,10 +362,18 @@ impl<'a> CondTraverseOp<'a> {
 
         if state.batched_matrix.is_none() {
             let m = if rp.types.is_empty() {
-                g.adjacency_matrix().to_matrix()
+                g.adjacency_matrix().clone()
+            } else if rp.types.len() == 1 {
+                match g.get_relationship_matrix(&rp.types[0]) {
+                    Some(t) => t.matrix().clone(),
+                    None => {
+                        state.no_match = true;
+                        return Ok(true);
+                    }
+                }
             } else {
                 match g.build_relationship_matrix_unrestricted(&rp.types) {
-                    Some(m) => m,
+                    Some(m) => VersionedMatrix::from_matrix(m),
                     None => {
                         state.no_match = true;
                         return Ok(true);
@@ -380,10 +388,18 @@ impl<'a> CondTraverseOp<'a> {
             // either.
             for hop in self.chain {
                 let hm = if hop.types.is_empty() {
-                    g.adjacency_matrix().to_matrix()
+                    g.adjacency_matrix().clone()
+                } else if hop.types.len() == 1 {
+                    match g.get_relationship_matrix(&hop.types[0]) {
+                        Some(t) => t.matrix().clone(),
+                        None => {
+                            state.no_match = true;
+                            return Ok(true);
+                        }
+                    }
                 } else {
                     match g.build_relationship_matrix_unrestricted(&hop.types) {
-                        Some(m) => m,
+                        Some(m) => VersionedMatrix::from_matrix(m),
                         None => {
                             state.no_match = true;
                             return Ok(true);
@@ -452,9 +468,9 @@ impl<'a> CondTraverseOp<'a> {
 
         let mut f = Matrix::new(nrows, ncols);
         f.build_bool(&row_idx_buf, &col_idx_buf);
-        f.lmxm(m_merged);
+        f.delta_lmxm(m_merged);
         for hop_m in &state.chain_matrices {
-            f.lmxm(hop_m);
+            f.delta_lmxm(hop_m);
         }
 
         let (row_is, col_is) = f.extract_tuples_bool();
