@@ -249,8 +249,10 @@ pub(super) fn fuse_anonymous_traverse(plan: &mut DynTree<IR>) {
             .map(|g_idx| plan.node_mut(g_idx).clone_as_tree())
             .collect();
 
-        // Replace parent's data with the merged CondTraverse, then prune
-        // and reattach grandchildren.
+        // Replace parent's data with the merged CondTraverse, then attach
+        // grandchildren and prune the original child CT last — pruning may
+        // invalidate other NodeIdx values under orx-tree's default memory
+        // policy, so it must be the final mutation that uses parent_idx.
         *plan.node_mut(parent_idx).data_mut() = IR::CondTraverse {
             relationship: child_rel,
             emit_relationship: parent_emit,
@@ -258,14 +260,12 @@ pub(super) fn fuse_anonymous_traverse(plan: &mut DynTree<IR>) {
             transposed: false,
             chain: merged_chain,
         };
-        // Prune all current children of parent (only the child CT).
-        while plan.node(parent_idx).num_children() > 0 {
-            let c_idx = plan.node(parent_idx).child(0).idx();
-            plan.node_mut(c_idx).prune();
-        }
-        // Attach the original grandchildren under the merged op.
+        // Attach the original grandchildren under the merged op (now parent
+        // has [child_CT, g1, g2, ...]).
         for g_tree in grandchild_trees {
             plan.node_mut(parent_idx).push_child_tree(g_tree);
         }
+        // Prune the original child CT, leaving [g1, g2, ...].
+        plan.node_mut(child_idx).prune();
     }
 }
