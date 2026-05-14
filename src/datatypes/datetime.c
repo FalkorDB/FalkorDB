@@ -6,6 +6,7 @@
 #include "RG.h"
 #include "../value.h"
 #include "../util/rmalloc.h"
+#include "temporal_value.h"
 
 #define _XOPEN_SOURCE  700 // needed for gmtime_r
 
@@ -252,14 +253,6 @@ SIValue DateTime_fromComponents
     time_t sec_since_epoch = timegm(&timeinfo);
 
 	return SI_DateTime(sec_since_epoch);
-}
-
-// Helper function to check if a year is a leap year
-static bool is_leap_year
-(
-	int year
-) {
-    return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
 }
 
 // Helper function to get ISO week number and week year
