@@ -165,6 +165,10 @@ static Record AndMultiplexer_Consume
 				break;
 			}
 		}
+
+		// a branch failed, discard the bound record and try the next one
+		if(op->r == NULL) continue;
+
 		// all branches returned record =>
 		// all filters are satisfied by the bounded record
 		Record r = op->r;
