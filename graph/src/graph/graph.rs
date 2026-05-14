@@ -1853,6 +1853,11 @@ impl Graph {
     }
 
     #[must_use]
+    pub const fn adjacency_matrix(&self) -> &VersionedMatrix {
+        &self.adjacancy_matrix
+    }
+
+    #[must_use]
     pub fn relationship_tensors(&self) -> &[Tensor] {
         &self.relationship_matrices
     }
