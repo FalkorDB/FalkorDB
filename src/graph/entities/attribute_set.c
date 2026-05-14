@@ -628,7 +628,7 @@ void AttributeSet_Update
 		SIValue     _vals[n] ;  // attribute values
 		AttributeID _ids [n] ;  // attribute ids
 
-		// discard NULLs
+		// discard NULLs and duplicate attribute IDs
 		for (uint16_t i = 0; i < n; i++) {
 			SIValue     v       = vals[i] ;
 			AttributeID attr_id = ids [i] ;
@@ -640,14 +640,28 @@ void AttributeSet_Update
 				if (change) {
 					change[i] = CT_NONE ;
 				}
-			} else {
-				_ids [m] = ids [i] ;
-				_vals[m] = vals[i] ;
-				m++ ;
+				continue ;
+			}
 
-				if (change) {
-					change[i] = CT_ADD ;
+			// skip if same attr_id appears again later (last occurrence wins)
+			bool dup = false ;
+			for (uint16_t j = i + 1; j < n; j++) {
+				if (ids[j] == attr_id) {
+					dup = true ;
+					break ;
 				}
+			}
+			if (dup) {
+				if (change) change[i] = CT_NONE ;
+				continue ;
+			}
+
+			_ids [m] = ids [i] ;
+			_vals[m] = vals[i] ;
+			m++ ;
+
+			if (change) {
+				change[i] = CT_ADD ;
 			}
 		}
 
@@ -674,6 +688,20 @@ void AttributeSet_Update
 		AttributeID attr_id = ids [i] ;
 
 		ASSERT (SI_TYPE (v) & t) ;
+
+		// if this attr_id appears again later, skip this occurrence
+		// to prevent duplicate entries in remove_idx/add_idx
+		bool skip = false;
+		for(uint16_t j = i + 1; j < n; j++) {
+			if(ids[j] == attr_id) {
+				skip = true;
+				break;
+			}
+		}
+		if(skip) {
+			if(change) change[i] = CT_NONE;
+			continue;
+		}
 
 		bool remove   = SIValue_IsNull (v) ;
 		bool contains = AttributeSet_Contains (_set, attr_id, &idx) ;
