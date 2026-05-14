@@ -61,6 +61,11 @@ struct CtState {
     /// first `expand_batch`. Cached for op lifetime; safe because writes
     /// are serialized w.r.t. read queries.
     batched_matrix: Option<Matrix>,
+    /// Per-hop matrices for fused chain (same lifetime/safety rules as
+    /// `batched_matrix`). `chain_matrices[i]` corresponds to `chain[i]`.
+    chain_matrices: Vec<Matrix>,
+    /// Per-hop label IDs for `chain[i].to` (post-multiply dst filter).
+    chain_dst_label_ids: Vec<Vec<LabelId>>,
 }
 
 pub struct CondTraverseOp<'a> {
@@ -83,6 +88,11 @@ pub struct CondTraverseOp<'a> {
     /// edge direction in the graph. The scan labels and node assignments are
     /// transposed accordingly.
     transposed: bool,
+    /// Additional fused hops (anonymous-edge, anonymous-intermediate-node)
+    /// to chain after this CT in the F·A path. Empty for single-hop. Each
+    /// hop's `from` is the previous hop's `to` (anonymous & unreferenced);
+    /// only the final hop's `to` alias is bound on the output env.
+    chain: &'a [Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>],
     pub(crate) idx: NodeIdx<Dyn<IR>>,
     /// Maximum number of records this operator should produce. Once reached,
     /// subsequent `next()` calls return `None`. Set by limit propagation.
@@ -153,6 +163,7 @@ impl<'a> CondTraverseOp<'a> {
         emit_relationship: bool,
         sibling_edges: &'a [u32],
         transposed: bool,
+        chain: &'a [Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>],
         idx: NodeIdx<Dyn<IR>>,
         record_cap: Option<usize>,
     ) -> Self {
@@ -197,13 +208,22 @@ impl<'a> CondTraverseOp<'a> {
                 (None, None)
             };
 
+        // For fused chains the batched path is the ONLY correct path —
+        // expand_row only handles single-hop. The planner inserts a Filter
+        // for any non-empty inline attrs, so attribute predicates are
+        // enforced by surrounding Filter nodes regardless of which path runs.
+        // Single-hop ops keep the existing strict check (expand_row applies
+        // attrs redundantly, but the Filter is still the source of truth).
+        let chain_is_empty = chain.is_empty();
         let batched_eligible = !emit_relationship
             && !rp.bidirectional
             && bidir_dedup.is_none()
             && sibling_edges.is_empty()
-            && attrs_is_static_empty(&rp.attrs)
-            && attrs_is_static_empty(&rp.from.attrs)
-            && attrs_is_static_empty(&rp.to.attrs);
+            && (!chain_is_empty
+                || (attrs_is_static_empty(&rp.attrs)
+                    && attrs_is_static_empty(&rp.from.attrs)
+                    && attrs_is_static_empty(&rp.to.attrs)))
+            && chain.iter().all(|hop| !hop.bidirectional);
 
         Self {
             runtime,
@@ -215,6 +235,7 @@ impl<'a> CondTraverseOp<'a> {
             emit_relationship,
             sibling_edges,
             transposed,
+            chain,
             idx,
             record_cap,
             produced: 0,
@@ -302,6 +323,8 @@ impl<'a> CondTraverseOp<'a> {
             edge_iters,
             no_match,
             batched_matrix: None,
+            chain_matrices: Vec::new(),
+            chain_dst_label_ids: Vec::new(),
         }
     }
 
@@ -350,6 +373,33 @@ impl<'a> CondTraverseOp<'a> {
                 }
             };
             state.batched_matrix = Some(m);
+
+            // Build per-hop matrices and label-id vectors for the fused chain.
+            // If any hop's relationship type is unknown, mark no_match — that
+            // hop can produce no rows, so the overall fused traversal can't
+            // either.
+            for hop in self.chain {
+                let hm = if hop.types.is_empty() {
+                    g.adjacency_matrix().to_matrix()
+                } else {
+                    match g.build_relationship_matrix_unrestricted(&hop.types) {
+                        Some(m) => m,
+                        None => {
+                            state.no_match = true;
+                            return Ok(true);
+                        }
+                    }
+                };
+                state.chain_matrices.push(hm);
+                let dst_labels = match g.resolve_label_ids(&hop.to.labels) {
+                    Some(ids) => ids,
+                    None => {
+                        state.no_match = true;
+                        return Ok(true);
+                    }
+                };
+                state.chain_dst_label_ids.push(dst_labels);
+            }
         }
         let m_merged = state.batched_matrix.as_ref().unwrap();
         let ncols = m_merged.ncols();
@@ -403,23 +453,35 @@ impl<'a> CondTraverseOp<'a> {
         let mut f = Matrix::new(nrows, ncols);
         f.build_bool(&row_idx_buf, &col_idx_buf);
         f.lmxm(m_merged);
+        for hop_m in &state.chain_matrices {
+            f.lmxm(hop_m);
+        }
 
         let (row_is, col_is) = f.extract_tuples_bool();
+        // For fused chains all hops are storage-direction (the fusion pass
+        // refuses to fuse when transposed differs), so `transposed` applies
+        // only to the first hop and the final destination alias comes from
+        // the last hop in `self.chain`.
         let from_alias = if transposed {
             &rp.to.alias
         } else {
             &rp.from.alias
         };
-        let to_alias = if transposed {
-            &rp.from.alias
+        let (to_alias, dst_label_ids) = if let Some(last_hop) = self.chain.last() {
+            (
+                &last_hop.to.alias,
+                state.chain_dst_label_ids.last().unwrap().as_slice(),
+            )
+        } else if transposed {
+            (&rp.from.alias, state.fwd_dst_label_ids.as_slice())
         } else {
-            &rp.to.alias
+            (&rp.to.alias, state.fwd_dst_label_ids.as_slice())
         };
+        let chain_is_empty = self.chain.is_empty();
         for (row_i, dest_raw) in row_is.into_iter().zip(col_is) {
             let dest_id = NodeId::from(dest_raw);
-            // Post-filter dst label (= F * A * R_dst in C's algebra).
-            if !state
-                .fwd_dst_label_ids
+            // Post-filter final-hop dst label (= F * A * R_dst in C's algebra).
+            if !dst_label_ids
                 .iter()
                 .all(|&lid| g.node_has_label_id(dest_id, lid))
             {
@@ -434,42 +496,51 @@ impl<'a> CondTraverseOp<'a> {
             {
                 continue;
             }
-            // Look up one representative edge id (mirrors expand_row's
-            // anonymous-edge fast path). Required because downstream
-            // PathBuilder reads the edge alias even when emit_relationship
-            // is false. Storage matrix orientation: src=F's seed
-            // (matrix-src), dst=F*A result (matrix-dst), regardless of
-            // self.transposed (which only affects alias→storage mapping,
-            // not the underlying matrix orientation since
-            // build_relationship_matrix_unrestricted is non-transposed).
-            let src_id = match env.get(from_alias) {
-                Some(Value::Node(id)) => *id,
-                _ => continue,
-            };
-            let mat_src = u64::from(src_id);
-            let mat_dst = u64::from(dest_id);
-            let key = compound_key(mat_src, mat_dst);
-            let mut found_id: Option<RelationshipId> = None;
-            for cell in &state.edge_iters {
-                let mut it = cell.borrow_mut();
-                it.seek(key, key);
-                if let Some((_, raw_id)) = it.next() {
-                    found_id = Some(RelationshipId::from(raw_id));
-                    break;
+            if chain_is_empty {
+                // Look up one representative edge id (mirrors expand_row's
+                // anonymous-edge fast path). Required because downstream
+                // PathBuilder reads the edge alias even when emit_relationship
+                // is false. Storage matrix orientation: src=F's seed
+                // (matrix-src), dst=F*A result (matrix-dst), regardless of
+                // self.transposed (which only affects alias→storage mapping,
+                // not the underlying matrix orientation since
+                // build_relationship_matrix_unrestricted is non-transposed).
+                let src_id = match env.get(from_alias) {
+                    Some(Value::Node(id)) => *id,
+                    _ => continue,
+                };
+                let mat_src = u64::from(src_id);
+                let mat_dst = u64::from(dest_id);
+                let key = compound_key(mat_src, mat_dst);
+                let mut found_id: Option<RelationshipId> = None;
+                for cell in &state.edge_iters {
+                    let mut it = cell.borrow_mut();
+                    it.seek(key, key);
+                    if let Some((_, raw_id)) = it.next() {
+                        found_id = Some(RelationshipId::from(raw_id));
+                        break;
+                    }
                 }
+                let Some(edge_id) = found_id else { continue };
+                let mut row = env.clone_pooled(runtime.env_pool);
+                row.insert(to_alias, Value::Node(dest_id));
+                row.insert(
+                    &rp.alias,
+                    Value::Relationship(Box::new((
+                        edge_id,
+                        NodeId::from(mat_src),
+                        NodeId::from(mat_dst),
+                    ))),
+                );
+                out.push(row);
+            } else {
+                // Fused chain: edges across hops are anonymous & unreferenced
+                // (enforced by the fusion pass), so no edge id is bound and
+                // no intermediate node alias is exposed.
+                let mut row = env.clone_pooled(runtime.env_pool);
+                row.insert(to_alias, Value::Node(dest_id));
+                out.push(row);
             }
-            let Some(edge_id) = found_id else { continue };
-            let mut row = env.clone_pooled(runtime.env_pool);
-            row.insert(to_alias, Value::Node(dest_id));
-            row.insert(
-                &rp.alias,
-                Value::Relationship(Box::new((
-                    edge_id,
-                    NodeId::from(mat_src),
-                    NodeId::from(mat_dst),
-                ))),
-            );
-            out.push(row);
         }
 
         drop(g);

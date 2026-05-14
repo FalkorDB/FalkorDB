@@ -19,7 +19,7 @@ use super::super::IR;
 
 /// Check if any expression in an IR node references a variable with the
 /// given (id, scope_id) pair.
-fn ir_references_variable(
+pub(super) fn ir_references_variable(
     ir: &IR,
     var_id: u32,
     scope_id: u32,
