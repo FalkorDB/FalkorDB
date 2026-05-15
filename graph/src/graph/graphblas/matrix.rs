@@ -59,7 +59,10 @@ use std::{
     mem::{ManuallyDrop, MaybeUninit},
     os::raw::c_void,
     ptr::null_mut,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use parking_lot::Mutex;
@@ -83,16 +86,15 @@ use super::{
     GrB_Matrix_build_BOOL, GrB_Matrix_build_UINT64, GrB_Matrix_clear, GrB_Matrix_dup,
     GrB_Matrix_eWiseAdd_Semiring, GrB_Matrix_eWiseMult_Semiring, GrB_Matrix_extractElement_BOOL,
     GrB_Matrix_extractElement_UINT64, GrB_Matrix_extractTuples_BOOL, GrB_Matrix_free,
-    GrB_Matrix_get_INT32, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals,
-    GrB_Matrix_removeElement, GrB_Matrix_resize, GrB_Matrix_setElement_BOOL,
-    GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode, GrB_UINT64, GrB_WaitMode,
-    GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64,
-    GxB_Container_free, GxB_Container_new, GxB_Global_Option_set_INT32, GxB_Iterator,
-    GxB_Iterator_free, GxB_Iterator_new, GxB_Matrix_fprint, GxB_Matrix_memoryUsage,
-    GxB_Matrix_type, GxB_NTHREADS, GxB_Option_Field, GxB_Print_Level, GxB_init,
-    GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
-    GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol, GxB_rowIterator_nextRow,
-    GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
+    GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_removeElement,
+    GrB_Matrix_resize, GrB_Matrix_setElement_BOOL, GrB_Matrix_setElement_UINT64, GrB_Matrix_wait,
+    GrB_Mode, GrB_UINT64, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL,
+    GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64, GxB_Container_free, GxB_Container_new,
+    GxB_Global_Option_set_INT32, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_new,
+    GxB_Matrix_fprint, GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_NTHREADS, GxB_Option_Field,
+    GxB_Print_Level, GxB_init, GxB_load_Matrix_from_Container, GxB_rowIterator_attach,
+    GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol,
+    GxB_rowIterator_nextRow, GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
 };
 
 /// Initializes the GraphBLAS library in non-blocking mode.
@@ -272,6 +274,7 @@ impl MaskedElementWiseAdd for Matrix {
         b: Option<&Self>,
         descriptor: Option<Descriptor>,
     ) {
+        self.mark_pending();
         unsafe {
             let info = GrB_Matrix_eWiseAdd_Semiring(
                 *self.m,
@@ -379,6 +382,7 @@ impl MaskedElementWiseMultiply for Matrix {
         b: Option<&Self>,
         descriptor: Option<Descriptor>,
     ) {
+        self.mark_pending();
         unsafe {
             let info = GrB_Matrix_eWiseMult_Semiring(
                 *self.m,
@@ -415,6 +419,7 @@ impl MxM for Matrix {
         &mut self,
         b: &Self,
     ) {
+        self.mark_pending();
         unsafe {
             let info = GrB_mxm(
                 *self.m,
@@ -433,6 +438,7 @@ impl MxM for Matrix {
         &mut self,
         b: &Self,
     ) {
+        self.mark_pending();
         unsafe {
             let info = GrB_mxm(
                 *self.m,
@@ -478,6 +484,7 @@ impl Matrix {
         let mut mask: Option<Matrix> = None;
         if dm_nvals > 0 {
             let mut mk = Matrix::new(nrows, ncols);
+            mk.mark_pending();
             unsafe {
                 let info = GrB_mxm(
                     *mk.m,
@@ -498,6 +505,7 @@ impl Matrix {
         let mut accum: Option<Matrix> = None;
         if dp_nvals > 0 {
             let mut ac = Matrix::new(nrows, ncols);
+            ac.mark_pending();
             unsafe {
                 let info = GrB_mxm(
                     *ac.m,
@@ -515,6 +523,7 @@ impl Matrix {
             }
         }
 
+        self.mark_pending();
         unsafe {
             let (mask_ptr, desc) = match &mask {
                 Some(m) => (*m.m, GrB_DESC_RSC),
@@ -544,6 +553,11 @@ pub struct Matrix {
     /// The underlying GraphBLAS matrix.
     m: Arc<GrB_Matrix>,
     lock: Arc<Mutex<()>>,
+    /// Rust-side flag tracking whether GraphBLAS may have pending work on the
+    /// handle. Set by every mutating op; cleared by `wait()` after materialize.
+    /// Allows `wait()` to skip the GraphBLAS `pending` query (which is unsafe
+    /// to call concurrently with writers) and the lock when nothing's pending.
+    pending: Arc<AtomicBool>,
 }
 
 unsafe impl Send for Matrix {}
@@ -625,6 +639,7 @@ impl Decode<19> for Matrix {
             Ok(Self {
                 m: Arc::new(m),
                 lock: Arc::new(Mutex::new(())),
+                pending: Arc::new(AtomicBool::new(true)),
             })
         }
     }
@@ -707,29 +722,28 @@ impl Matrix {
 
     #[must_use]
     pub fn pending(&self) -> bool {
-        unsafe {
-            let mut pending = MaybeUninit::uninit();
-            let info = GrB_Matrix_get_INT32(
-                *self.m,
-                pending.as_mut_ptr(),
-                GxB_Option_Field::GxB_WILL_WAIT as _,
-            );
-            assert_eq!(
-                info,
-                GrB_Info::GrB_SUCCESS,
-                "GrB_Matrix_get_INT32 failed: {info:?}"
-            );
-            pending.assume_init() == 1
-        }
+        self.pending.load(Ordering::Acquire)
+    }
+
+    /// Mark the matrix as having pending GraphBLAS work. Called by every
+    /// mutating operation. The flag lives on the Rust side so `wait()` can
+    /// short-circuit without invoking GraphBLAS (which is unsafe to query
+    /// concurrently with writers).
+    fn mark_pending(&self) {
+        self.pending.store(true, Ordering::Release);
     }
 
     pub fn wait(&self) {
+        if !self.pending.load(Ordering::Acquire) {
+            return;
+        }
         let lock = self.lock.lock();
-        if self.pending() {
+        if self.pending.load(Ordering::Acquire) {
             unsafe {
                 let info = GrB_Matrix_wait(*self.m, GrB_WaitMode::GrB_MATERIALIZE as _);
                 debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             }
+            self.pending.store(false, Ordering::Release);
         }
         drop(lock);
     }
@@ -745,6 +759,7 @@ impl Matrix {
     }
 
     pub fn clear(&mut self) {
+        self.mark_pending();
         unsafe {
             let info = GrB_Matrix_clear(*self.m);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -755,6 +770,7 @@ impl Matrix {
         &mut self,
         b: &Self,
     ) {
+        self.mark_pending();
         unsafe {
             let info = GrB_transpose(*self.m, *b.m, null_mut(), *self.m, GrB_DESC_RCT0);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -766,6 +782,7 @@ impl Matrix {
         mask: &Matrix,
         a: &Matrix,
     ) {
+        self.mark_pending();
         unsafe {
             let info = GrB_transpose(*self.m, *mask.m, null_mut(), *a.m, GrB_DESC_RCT0);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -797,6 +814,7 @@ impl Size for Matrix {
         nrows: u64,
         ncols: u64,
     ) {
+        self.mark_pending();
         unsafe {
             let info = GrB_Matrix_resize(*self.m, nrows, ncols);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -836,6 +854,7 @@ impl New for Matrix {
             Self {
                 m: Arc::new(m.assume_init()),
                 lock: Arc::new(Mutex::new(())),
+                pending: Arc::new(AtomicBool::new(false)),
             }
         }
     }
@@ -859,6 +878,7 @@ impl Dup<Self> for Matrix {
                 m.assume_init()
             }),
             lock: Arc::new(Mutex::new(())),
+            pending: Arc::new(AtomicBool::new(self.pending.load(Ordering::Relaxed))),
         }
     }
 }
@@ -881,6 +901,7 @@ impl Matrix {
             Self {
                 m: Arc::new(m.assume_init()),
                 lock: Arc::new(Mutex::new(())),
+                pending: Arc::new(AtomicBool::new(false)),
             }
         }
     }
@@ -892,6 +913,7 @@ impl Matrix {
         j: u64,
         value: u64,
     ) {
+        self.mark_pending();
         unsafe {
             let info = GrB_Matrix_setElement_UINT64(*self.m, value, i, j);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -925,6 +947,7 @@ impl Remove for Matrix {
         i: u64,
         j: u64,
     ) {
+        self.mark_pending();
         unsafe {
             let info = GrB_Matrix_removeElement(*self.m, i, j);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -967,6 +990,7 @@ impl Set for Matrix {
         j: u64,
         value: bool,
     ) {
+        self.mark_pending();
         unsafe {
             let info = GrB_Matrix_setElement_BOOL(*self.m, value, i, j);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -986,6 +1010,7 @@ impl Matrix {
         if rows.is_empty() {
             return;
         }
+        self.mark_pending();
         let nvals = rows.len() as u64;
         let vals = vec![true; rows.len()];
         unsafe {
@@ -1013,6 +1038,7 @@ impl Matrix {
         if rows.is_empty() {
             return;
         }
+        self.mark_pending();
         let nvals = rows.len() as u64;
         unsafe {
             let info = GrB_Matrix_build_UINT64(
@@ -1063,6 +1089,7 @@ where
     /// A new matrix that is the transpose of the original.
     fn transpose(&self) -> Self {
         let transpose = Self::new(self.ncols(), self.nrows());
+        transpose.mark_pending();
         unsafe {
             let info = GrB_transpose(*transpose.m, null_mut(), null_mut(), *self.m, null_mut());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
