@@ -458,6 +458,7 @@ class testVariableLengthTraversals(FlowTestsBase):
         ))
 
     def test16_var_len_same_alias_with_labels(self):
+        """Label filters must survive variable-length traversals to the same alias."""
         self.graph.delete()
 
         q = "CREATE (:A), (:B)<-[:R0]-()<-[:R1]-(), (:A)-[:R]->(:A)"
