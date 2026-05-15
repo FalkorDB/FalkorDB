@@ -113,8 +113,10 @@ void reduceTraversal(ExecutionPlan *plan) {
 			 * to perform label filtering, but in case a node is already
 			 * resolved this filtering is redundent and should be removed. */
 			OpBase *t;
+			bool same_endpoint_alias =
+				!strcmp(AlgebraicExpression_Src(ae), AlgebraicExpression_Dest(ae));
 			QGNode *src = QueryGraph_GetNodeByAlias(traverse_plan->query_graph, AlgebraicExpression_Src(ae));
-			if(QGNode_Labeled(src)) {
+			if(QGNode_Labeled(src) && !same_endpoint_alias) {
 				t = op->children[0];
 				if(t->type == OPType_CONDITIONAL_TRAVERSE && !_isInSubExecutionPlan(op)) {
 					// Queue traversal for removal.
@@ -123,7 +125,7 @@ void reduceTraversal(ExecutionPlan *plan) {
 			}
 			QGNode *dest = QueryGraph_GetNodeByAlias(traverse_plan->query_graph,
 													 AlgebraicExpression_Dest(ae));
-			if(QGNode_Labeled(dest)) {
+			if(QGNode_Labeled(dest) && !same_endpoint_alias) {
 				t = op->parent;
 				if(t->type == OPType_CONDITIONAL_TRAVERSE && !_isInSubExecutionPlan(op)) {
 					// Queue traversal for removal.
@@ -141,4 +143,3 @@ void reduceTraversal(ExecutionPlan *plan) {
 	// Clean up.
 	arr_free(traversals);
 }
-
