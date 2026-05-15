@@ -1077,6 +1077,16 @@ void SIValue_HashUpdate
 			XXH64_update(state, &v.datetimeval, sizeof(v.datetimeval));
 			return;
 
+		case T_POINT:
+		{
+			float lat = Point_lat(v);
+			float lon = Point_lon(v);
+			XXH64_update(state, &t, sizeof(t));
+			XXH64_update(state, &lat, sizeof(lat));
+			XXH64_update(state, &lon, sizeof(lon));
+			return;
+		}
+
 		default:
 			ASSERT(false);
 			break;
