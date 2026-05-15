@@ -315,8 +315,8 @@ class testGraphCopy():
         master_con.execute_command("WAIT", "1", "0")
 
         # make sure dest graph was replicated
-        # assuming replica port is env port+1
-        replica_db = FalkorDB("localhost", self.env.port+1)
+        replica_port = self.env.envRunner.slavePort
+        replica_db = FalkorDB("localhost", replica_port)
         replica_cloned_graph = replica_db.select_graph(copy_graph_id)
         
         # make sure src graph on master is the same as cloned graph on replica
