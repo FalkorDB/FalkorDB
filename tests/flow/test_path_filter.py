@@ -349,3 +349,50 @@ class testPathFilter(FlowTestsBase):
         # clean up
         self.graph.query ("MATCH (s:Service) DELETE s")
 
+    def test18_xor_path_filter(self):
+        # regression test: XOR with anonymous pattern predicate used to crash
+        # the server. Verify the query now returns the expected rows and
+        # the server stays healthy.
+        node0 = Node(alias="n0", node_id=0, labels="Person",
+                     properties={'name':'Alice'})
+        node1 = Node(alias="n1", node_id=1, labels="Person",
+                     properties={'name':'Bob'})
+        edge01 = Edge(src_node=node0, dest_node=node1, relation="KNOWS")
+        self.graph.query(f"CREATE {node0}, {node1}, {edge01}")
+
+        # ()-[:KNOWS]-() is true for every row, n.name='Alice' is true only
+        # for Alice => XOR yields Bob only
+        query = ("MATCH (n:Person) WHERE ()-[:KNOWS]-() XOR n.name = 'Alice' "
+                 "RETURN n.name ORDER BY n.name")
+        result_set = self.graph.query(query)
+        self.env.assertEqual(result_set.result_set, [['Bob']])
+
+        # same predicate after WITH
+        query = ("MATCH (n:Person) WITH n WHERE ()-[:KNOWS]-() XOR "
+                 "n.name = 'Alice' RETURN n.name ORDER BY n.name")
+        result_set = self.graph.query(query)
+        self.env.assertEqual(result_set.result_set, [['Bob']])
+
+        # path XOR path (one true, one false) => every row passes
+        query = ("MATCH (n:Person) WHERE ()-[:KNOWS]-() XOR ()-[:NOPE]-() "
+                 "RETURN n.name ORDER BY n.name")
+        result_set = self.graph.query(query)
+        self.env.assertEqual(result_set.result_set, [['Alice'], ['Bob']])
+
+        # NOT path XOR property => for Alice: NOT true XOR true = true
+        #                         for Bob:   NOT true XOR false = false
+        query = ("MATCH (n:Person) WHERE NOT ()-[:KNOWS]-() XOR "
+                 "n.name = 'Alice' RETURN n.name ORDER BY n.name")
+        result_set = self.graph.query(query)
+        self.env.assertEqual(result_set.result_set, [['Alice']])
+
+        # path XOR NULL-producing predicate should not pass rows; a missing
+        # property comparison evaluates to NULL, and true XOR NULL is NULL
+        query = ("MATCH (n:Person) WHERE ()-[:KNOWS]-() XOR "
+                 "n.missing = 'Alice' RETURN n.name ORDER BY n.name")
+        result_set = self.graph.query(query)
+        self.env.assertEqual(result_set.result_set, [])
+
+        # server must remain healthy after the XOR-path-filter queries
+        self.env.assertEqual(self.conn.ping(), True)
+
