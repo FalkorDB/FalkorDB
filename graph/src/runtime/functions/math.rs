@@ -301,7 +301,7 @@ pub fn register(funcs: &mut Functions) {
                     Ok(Value::List(Arc::new(
                         (end..=start)
                             .rev()
-                            .step_by((-(step as i128)) as usize)
+                            .step_by(step.unsigned_abs() as usize)
                             .map(Value::Int)
                             .collect(),
                     )))
