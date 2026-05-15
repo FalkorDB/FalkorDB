@@ -418,7 +418,9 @@ impl<'a> ExprEval<'a> {
                     }
                 },
                 ExprIR::Negate => match self.eval(ir, node.child(0).idx(), env, agg_group_key)? {
-                    Value::Int(i) => res.push(Value::Int(-i)),
+                    Value::Int(i) => res.push(Value::Int(i.checked_neg().ok_or_else(|| {
+                        String::from("ArgumentError: integer overflow in unary minus")
+                    })?)),
                     Value::Float(f) => res.push(Value::Float(-f)),
                     Value::Null => res.push(Value::Null),
                     v => {
@@ -1373,7 +1375,9 @@ pub fn evaluate_param(expr: &DynNode<ExprIR<Arc<String>>>) -> Result<Value, Stri
         ExprIR::Negate => {
             let v = evaluate_param(&expr.child(0))?;
             match v {
-                Value::Int(i) => Ok(Value::Int(-i)),
+                Value::Int(i) => Ok(Value::Int(i.checked_neg().ok_or_else(|| {
+                    String::from("ArgumentError: integer overflow in unary minus")
+                })?)),
                 Value::Float(f) => Ok(Value::Float(-f)),
                 _ => Ok(Value::Null),
             }
