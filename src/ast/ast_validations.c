@@ -1002,6 +1002,56 @@ static VISITOR_STRATEGY _Validate_named_path
 	return VISITOR_RECURSE;
 }
 
+// validate a pattern path
+// ensures that the same relationship variable does not appear multiple
+// times within the same pattern path, e.g.
+// (a)-[r]->(b)<-[r]-(c)
+// reusing the same edge alias within a single path can never match and is
+// rejected as a semantic error rather than allowing the query to crash later
+static VISITOR_STRATEGY _Validate_pattern_path
+(
+	const cypher_astnode_t *n,  // ast-node (pattern-path)
+	bool start,                 // first traversal
+	ast_visitor *visitor        // visitor
+) {
+	if(!start) {
+		return VISITOR_CONTINUE;
+	}
+
+	uint nelems = cypher_ast_pattern_path_nelements(n);
+	// a pattern path interleaves nodes and edges, so it has the form
+	// node (edge node)*; the smallest path that can contain a duplicate
+	// edge alias has 2 edges, i.e. node-edge-node-edge-node = 5 elements
+	// any path with fewer elements (a single edge or just a node) cannot
+	// collide with itself, so skip the scan
+	if(nelems < 5) {
+		return VISITOR_RECURSE;
+	}
+
+	// collect edge aliases used within this pattern path and detect duplicates
+	rax *seen = raxNew();
+	VISITOR_STRATEGY res = VISITOR_RECURSE;
+	for(uint i = 1; i < nelems; i += 2) {
+		const cypher_astnode_t *edge =
+			cypher_ast_pattern_path_get_element(n, i);
+		const cypher_astnode_t *id =
+			cypher_ast_rel_pattern_get_identifier(edge);
+		if(id == NULL) continue;
+
+		const char *alias = cypher_ast_identifier_get_name(id);
+		if(raxInsert(seen, (unsigned char *)alias, strlen(alias),
+					NULL, NULL) == 0) {
+			// duplicate edge alias within the same pattern path
+			ErrorCtx_SetError(EMSG_SAME_ALIAS_MULTIPLE_PATTERNS, alias);
+			res = VISITOR_BREAK;
+			break;
+		}
+	}
+
+	raxFree(seen);
+	return res;
+}
+
 // validate limit and skip modifiers
 static AST_Validation _Validate_LIMIT_SKIP_Modifiers
 (
@@ -2294,6 +2344,7 @@ bool AST_ValidationsMappingInit(void) {
 	validations_mapping[CYPHER_AST_IDENTIFIER]                 = _Validate_identifier;
 	validations_mapping[CYPHER_AST_PROJECTION]                 = _Validate_projection;
 	validations_mapping[CYPHER_AST_NAMED_PATH]                 = _Validate_named_path;
+	validations_mapping[CYPHER_AST_PATTERN_PATH]               = _Validate_pattern_path;
 	validations_mapping[CYPHER_AST_REL_PATTERN]                = _Validate_rel_pattern;
 	validations_mapping[CYPHER_AST_SET_PROPERTY]               = _Validate_set_property;
 	validations_mapping[CYPHER_AST_NODE_PATTERN]               = _Validate_node_pattern;
