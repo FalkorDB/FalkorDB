@@ -728,6 +728,7 @@ impl<'a> Runtime<'a> {
                 emit_relationship,
                 sibling_edges,
                 transposed,
+                chain,
             } => {
                 // Account for both limit and skip so the traverse produces
                 // enough rows for a downstream SkipOp + LimitOp pipeline.
@@ -742,6 +743,7 @@ impl<'a> Runtime<'a> {
                     *emit_relationship,
                     sibling_edges,
                     *transposed,
+                    chain,
                     idx,
                     record_cap,
                 )))

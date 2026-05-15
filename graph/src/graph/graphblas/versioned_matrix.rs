@@ -69,6 +69,7 @@ use crate::graph::cow::Cow;
 ///
 /// Wraps a base matrix with separate matrices for tracking additions
 /// and deletions, enabling concurrent reads during writes.
+#[derive(Clone)]
 pub struct VersionedMatrix {
     /// Base committed matrix
     m: Cow<Matrix>,

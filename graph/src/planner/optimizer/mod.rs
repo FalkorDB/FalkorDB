@@ -47,6 +47,7 @@
 
 mod absorb_edge_filters_into_vlt;
 mod eliminate_true_filters;
+mod fuse_anonymous_traverse;
 mod push_filters_down;
 mod reduce_count;
 mod reduce_expand_into;
@@ -70,6 +71,7 @@ use super::IR;
 
 use absorb_edge_filters_into_vlt::absorb_edge_filters_into_vlt;
 use eliminate_true_filters::eliminate_true_filters;
+use fuse_anonymous_traverse::fuse_anonymous_traverse;
 use push_filters_down::push_filters_down;
 use reduce_count::reduce_count;
 use reduce_expand_into::reduce_expand_into;
@@ -125,6 +127,7 @@ pub fn optimize(
     eliminate_true_filters(&mut optimized_plan, params);
     select_scan_node(&mut optimized_plan, graph);
     push_filters_down(&mut optimized_plan);
+    fuse_anonymous_traverse(&mut optimized_plan);
     replace_cartesian_with_hash_join(&mut optimized_plan);
     absorb_edge_filters_into_vlt(&mut optimized_plan);
     utilize_index(&mut optimized_plan, graph);

@@ -419,6 +419,7 @@ pub(super) fn select_scan_node(
                     emit_relationship: emit,
                     sibling_edges: edges,
                     transposed: true,
+                    chain: Vec::new(),
                 };
 
                 if is_leaf || child_is_planner_scan {
@@ -523,7 +524,8 @@ pub(super) fn select_scan_node(
                         relationship: rel,
                         emit_relationship: emit,
                         sibling_edges: edges,
-                        transposed
+                        transposed,
+                        chain: Vec::new(),
                     },
                     subtree
                 );
@@ -591,6 +593,7 @@ pub(super) fn select_scan_node(
                         emit_relationship: emit,
                         sibling_edges: edges,
                         transposed: trans,
+                        chain: Vec::new(),
                     };
 
                     op.push_child_tree(scan_subtree);
