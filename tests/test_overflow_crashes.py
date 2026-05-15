@@ -37,33 +37,33 @@ def _ensure_alive():
 
 
 def test_abs_i64_min_does_not_crash():
-    with pytest.raises(ResponseError, match="(?i)overflow"):
+    with pytest.raises(ResponseError, match=r"(?i)overflow"):
         common.g.query("RETURN abs(-9223372036854775808)")
     _ensure_alive()
 
 
 def test_unary_minus_i64_min_does_not_crash():
-    with pytest.raises(ResponseError, match="(?i)overflow"):
+    with pytest.raises(ResponseError, match=r"(?i)overflow"):
         common.g.query("WITH -9223372036854775808 AS x RETURN -x")
     _ensure_alive()
 
 
 def test_unary_minus_i64_min_param_does_not_crash():
     # Same bug, exercised through the parameter-evaluation path.
-    with pytest.raises(ResponseError, match="(?i)overflow"):
+    with pytest.raises(ResponseError, match=r"(?i)overflow"):
         common.g.query("CYPHER x=-9223372036854775808 RETURN -$x")
     _ensure_alive()
 
 
 def test_range_to_i64_max_does_not_crash():
-    with pytest.raises(ResponseError, match="(?i)range too large"):
+    with pytest.raises(ResponseError, match=r"(?i)range too large"):
         common.g.query("RETURN range(0, 9223372036854775807)")
     _ensure_alive()
 
 
 def test_range_full_int_span_does_not_crash():
     # Spans the entire i64 domain; old code overflowed `end - start`.
-    with pytest.raises(ResponseError, match="(?i)range too large"):
+    with pytest.raises(ResponseError, match=r"(?i)range too large"):
         common.g.query(
             "RETURN range(-9223372036854775808, 9223372036854775807)"
         )
