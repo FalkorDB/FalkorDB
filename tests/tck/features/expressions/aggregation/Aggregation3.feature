@@ -52,7 +52,7 @@ Feature: Aggregation3 - Sum
     Given any graph
     When executing query:
       """
-      UNWIND range(1000000, 2000000) AS i
+      UNWIND range(1000000, 1999999) AS i
       WITH i
       LIMIT 3000
       RETURN sum(i)

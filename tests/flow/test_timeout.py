@@ -18,7 +18,7 @@ class testQueryTimeout():
         self.graph = self.db.select_graph(GRAPH_ID)
 
     def test01_read_write_query_timeout(self):
-        query = "UNWIND range(0, 1000000) AS x WITH x AS x WHERE x = 10000 RETURN x"
+        query = "UNWIND range(0, 999999) AS x WITH x AS x WHERE x = 10000 RETURN x"
         try:
             # The query is expected to timeout
             self.graph.query(query, timeout=1)
@@ -32,7 +32,7 @@ class testQueryTimeout():
         except:
             self.env.assertTrue(False)
 
-        query = """UNWIND range(0, 1000000) AS x CREATE (p:Person {age: x%90, height: x%200, weight: x%80})"""
+        query = """UNWIND range(0, 999999) AS x CREATE (p:Person {age: x%90, height: x%200, weight: x%80})"""
         try:
             # The query is expected to succeed
             self.graph.query(query, timeout=1)
@@ -51,7 +51,7 @@ class testQueryTimeout():
         self.env.assertEquals(timeout, 1)
 
         # Validate that a read query times out
-        query = "UNWIND range(0,1000000) AS x WITH x AS x WHERE x = 10000 RETURN x"
+        query = "UNWIND range(0, 999999) AS x WITH x AS x WHERE x = 10000 RETURN x"
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
@@ -111,7 +111,7 @@ class testQueryTimeout():
                 self.env.assertContains("Query timed out", str(error))
 
     def test04_query_timeout_free_resultset(self):
-        query = "UNWIND range(0,3000000) AS x RETURN toString(x)"
+        query = "UNWIND range(0, 999999) AS x RETURN toString(x)"
 
         res = None
         try:
@@ -179,8 +179,8 @@ class testQueryTimeout():
 
     def test07_read_write_query_timeout_default(self):
         queries = [
-            "UNWIND range(0,1000000) AS x WITH x AS x WHERE x = 10000 RETURN x",
-            "UNWIND range(0,1000000) AS x CREATE (:N {v: x})"
+            "UNWIND range(0, 999999) AS x WITH x AS x WHERE x = 10000 RETURN x",
+            "UNWIND range(0, 999999) AS x CREATE (:N {v: x})"
         ]
 
         for _ in range(1, 2):
@@ -224,7 +224,7 @@ class testQueryTimeout():
             self.db.config_set(config, 10)
             self.db.config_set(config, 0)
 
-            query = "UNWIND range(0,1000000) AS x WITH x AS x WHERE x = 10000 RETURN x"
+            query = "UNWIND range(0, 999999) AS x WITH x AS x WHERE x = 10000 RETURN x"
             try:
                 # The query is expected to timeout
                 self.graph.query(query)
@@ -232,7 +232,7 @@ class testQueryTimeout():
             except ResponseError:
                 self.env.assertTrue(True)
 
-            query = "UNWIND range(0, 1000000) AS x CREATE (:N {v: x})"
+            query = "UNWIND range(0, 999999) AS x CREATE (:N {v: x})"
             try:
                 # The query is expected to succeed
                 self.graph.query(query)
