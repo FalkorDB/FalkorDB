@@ -381,9 +381,17 @@ pub fn construct_duration_secs(
     minutes: i64,
     seconds: i64,
 ) -> Result<i64, String> {
-    let total_month_offset = years * 12 + months;
-    let base_year = 1970i32 + (total_month_offset as i32).div_euclid(12);
-    let base_month = ((total_month_offset as i32).rem_euclid(12) + 1) as u32;
+    let total_month_offset = years
+        .checked_mul(12)
+        .and_then(|y| y.checked_add(months))
+        .ok_or_else(|| format!("Duration overflow: years={years}, months={months}"))?;
+    let total_month_offset_i32: i32 = total_month_offset
+        .try_into()
+        .map_err(|_| format!("Duration out of range: years={years}, months={months}"))?;
+    let base_year = 1970i32
+        .checked_add(total_month_offset_i32.div_euclid(12))
+        .ok_or_else(|| format!("Duration out of range: years={years}, months={months}"))?;
+    let base_month = (total_month_offset_i32.rem_euclid(12) + 1) as u32;
 
     let anchor = NaiveDate::from_ymd_opt(base_year, base_month, 1)
         .ok_or_else(|| format!("Invalid duration: years={years}, months={months}"))?
@@ -391,8 +399,21 @@ pub fn construct_duration_secs(
         .ok_or("Invalid anchor time")?;
 
     let anchor_ts = anchor.and_utc().timestamp();
-    let extra = (weeks * 7 + days) * 86400 + hours * 3600 + minutes * 60 + seconds;
-    Ok(anchor_ts + extra)
+    let extra = weeks
+        .checked_mul(7)
+        .and_then(|w| w.checked_add(days))
+        .and_then(|wd| wd.checked_mul(86400))
+        .and_then(|s| hours.checked_mul(3600).and_then(|h| s.checked_add(h)))
+        .and_then(|s| minutes.checked_mul(60).and_then(|m| s.checked_add(m)))
+        .and_then(|s| s.checked_add(seconds))
+        .ok_or_else(|| {
+            format!(
+                "Duration overflow: weeks={weeks}, days={days}, hours={hours}, minutes={minutes}, seconds={seconds}"
+            )
+        })?;
+    anchor_ts
+        .checked_add(extra)
+        .ok_or_else(|| "Duration overflow when combining components".to_string())
 }
 
 /// Decompose a duration (seconds from epoch) into (years, months, remaining_seconds).

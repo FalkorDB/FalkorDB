@@ -85,3 +85,56 @@ def test_range_normal_values_still_work():
     assert res.result_set == [[[1, 2, 3, 4, 5]]]
     res = common.g.query("RETURN range(10, 2, -2)")
     assert res.result_set == [[[10, 8, 6, 4, 2]]]
+
+
+# --- Iterator-path tests (UNWIND uses eval_iter_expr, a separate code path) ---
+
+def test_unwind_range_to_i64_max_does_not_crash():
+    with pytest.raises(ResponseError, match=r"(?i)range too large"):
+        common.g.query("UNWIND range(0, 9223372036854775807) AS x RETURN x")
+    _ensure_alive()
+
+
+def test_unwind_range_full_int_span_does_not_crash():
+    with pytest.raises(ResponseError, match=r"(?i)range too large"):
+        common.g.query(
+            "UNWIND range(-9223372036854775808, 9223372036854775807) AS x RETURN x"
+        )
+    _ensure_alive()
+
+
+def test_unwind_range_normal_values_still_work():
+    res = common.g.query("UNWIND range(1, 5) AS x RETURN collect(x)")
+    assert res.result_set == [[[1, 2, 3, 4, 5]]]
+    res = common.g.query("UNWIND range(10, 2, -2) AS x RETURN collect(x)")
+    assert res.result_set == [[[10, 8, 6, 4, 2]]]
+
+
+# --- Duration overflow tests --------------------------------------------------
+# `construct_duration_secs` previously used unchecked i64 arithmetic on the
+# user-supplied duration components, panicking (and crashing the server) on
+# values such as i64::MAX or i64::MIN.
+
+@pytest.mark.parametrize("query", [
+    "RETURN duration({years: 9223372036854775807})",
+    "RETURN duration({years: -9223372036854775808})",
+    "RETURN duration({days: 9223372036854775807})",
+    "RETURN duration({days: -9223372036854775808})",
+    "RETURN duration({weeks: 9223372036854775807})",
+    "RETURN duration({hours: 9223372036854775807})",
+    "RETURN duration({minutes: 9223372036854775807})",
+    "RETURN date('2024-01-01') + duration({days: 9223372036854775807})",
+    "RETURN duration({days: 1}) + duration({days: 9223372036854775807})",
+])
+def test_duration_overflow_does_not_crash(query):
+    with pytest.raises(ResponseError, match=r"(?i)overflow|out of range"):
+        common.g.query(query)
+    _ensure_alive()
+
+
+def test_duration_normal_values_still_work():
+    res = common.g.query(
+        "RETURN duration({days: 1, hours: 2, minutes: 3, seconds: 4})"
+    )
+    # Duration is rendered as its string form; just ensure we got one row.
+    assert len(res.result_set) == 1

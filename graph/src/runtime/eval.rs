@@ -767,9 +767,16 @@ impl<'a> ExprEval<'a> {
                         if (start > end && step > 0) || (start < end && step < 0) {
                             return Ok(ValueIter::Empty);
                         }
-                        let length = (end - start) / step + 1;
-                        #[allow(clippy::cast_lossless)]
-                        if length > u32::MAX as i64 {
+                        let span = if end >= start {
+                            (end as i128) - (start as i128)
+                        } else {
+                            (start as i128) - (end as i128)
+                        };
+                        let abs_step = (step as i128).unsigned_abs();
+                        let length = (span.unsigned_abs() / abs_step)
+                            .checked_add(1)
+                            .ok_or_else(|| String::from("Range too large"))?;
+                        if length > u32::MAX as u128 {
                             return Err(String::from("Range too large"));
                         }
 
@@ -783,7 +790,7 @@ impl<'a> ExprEval<'a> {
                         Ok(ValueIter::RangeDown {
                             current: start,
                             end,
-                            step: (-step) as usize,
+                            step: step.unsigned_abs() as usize,
                         })
                     }
                     _ => {
