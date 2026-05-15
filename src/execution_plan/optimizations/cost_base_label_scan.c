@@ -100,9 +100,27 @@ static bool _transposeExpression(
 	// Bt * At
 	// placing the operands in their correct position
 
-	AlgebraicExpression *ae = (parent_type == OPType_CONDITIONAL_TRAVERSE)
-								  ? ((OpCondTraverse *)parent)->ae
-								  : ((OpExpandInto *)parent)->ae;
+	AlgebraicExpression *ae = NULL;
+	switch (parent_type)
+	{
+	case OPType_CONDITIONAL_TRAVERSE:
+		ae = ((OpCondTraverse *)parent)->ae;
+		break;
+	case OPType_EXPAND_INTO:
+		ae = ((OpExpandInto *)parent)->ae;
+		break;
+	case OPType_CONDITIONAL_VAR_LEN_TRAVERSE:
+		ae = ((OpCondVarLenTraverse *)parent)->ae;
+		break;
+	case OPType_OPTIONAL_CONDITIONAL_TRAVERSE:
+		ae = ((OpOptionalCondTraverse *)parent)->ae;
+		break;
+	case OPType_CONDITIONAL_VAR_LEN_TRAVERSE_EXPAND_INTO:
+		ae = ((OpCondVarLenTraverseExpandInto *)parent)->ae;
+		break;
+	default:
+		return false;
+	}
 	AlgebraicExpression_PushDownTranspose(ae);
 	const char *dest_alias = AlgebraicExpression_Dest(ae);
 
@@ -285,9 +303,29 @@ static bool _transposeExpression(
 	OpBase_Free((OpBase *)scan);
 
 	// replace current traversal with new one
-	OpBase *new_traversal = NewCondTraverseOp((ExecutionPlan *)plan, g, ae);
-	ExecutionPlan_ReplaceOp((ExecutionPlan *)plan, (OpBase *)parent,
-							(OpBase *)new_traversal);
+	OpBase *new_op = NULL;
+	switch (parent_type)
+	{
+	case OPType_CONDITIONAL_TRAVERSE:
+		new_op = NewCondTraverseOp((ExecutionPlan *)plan, g, ae);
+		break;
+	case OPType_EXPAND_INTO:
+		new_op = NewExpandIntoOp((ExecutionPlan *)plan, g, ae);
+		break;
+	case OPType_CONDITIONAL_VAR_LEN_TRAVERSE:
+		new_op = NewCondVarLenTraverseOp((ExecutionPlan *)plan, g, ae);
+		break;
+	case OPType_OPTIONAL_CONDITIONAL_TRAVERSE:
+		new_op = NewOptionalCondTraverseOp((ExecutionPlan *)plan, g, ae);
+		break;
+	case OPType_CONDITIONAL_VAR_LEN_TRAVERSE_EXPAND_INTO:
+		new_op = NewCondVarLenTraverseExpandIntoOp((ExecutionPlan *)plan, g, ae);
+		break;
+	default:
+		ASSERT(false);
+		return false;
+	}
+	ExecutionPlan_ReplaceOp((ExecutionPlan *)plan, (OpBase *)parent, new_op);
 	OpBase_Free((OpBase *)parent);
 
 	return true;
