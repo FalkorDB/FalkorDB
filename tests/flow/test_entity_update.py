@@ -775,6 +775,55 @@ class testEntityUpdate():
         self.env.assertEqual(actual_node.properties['a'], 4)
         self.env.assertEqual(actual_node.properties['c'], 'str')
 
+    # regression for issue:
+    # "Incorrect property updates: non-null values are not set,
+    #  null values are not removed on first update"
+    # ensures that a single SET clause mixing null assignments (removals)
+    # and non-null assignments on multiple existing properties produces
+    # the correct attribute set on the first execution.
+    def test42_mix_null_and_value_updates(self):
+        self.graph.delete()
+
+        # create a node with 7 properties, including one with a heap-owned
+        # array value (exercises the batch attribute removal path with
+        # heap-owning surviving values)
+        self.graph.query("""CREATE (l:X {id: 285858})
+                            SET
+                              l.a = 357538,
+                              l.b = 357539,
+                              l.c = [
+                                [201.35, -308.9],
+                                [210.24, -308.9],
+                                [210.24, -305.66],
+                                [212.51, -305.66]
+                              ],
+                              l.d = 3,
+                              l.e = 285440,
+                              l.f = 285859""")
+
+        # in a single SET clause, remove four properties (a, b, e, f) by
+        # assigning null and update two properties (c, d) to new values
+        result = self.graph.query("""MATCH (de:X { id: 285858 })
+                                     SET
+                                       de.a = null,
+                                       de.b = null,
+                                       de.c = [],
+                                       de.d = 0,
+                                       de.e = null,
+                                       de.f = null""")
+
+        # 4 properties were deleted, 2 were updated;
+        # CT_UPDATE counts as both a remove and a set
+        self.env.assertEqual(result.properties_set, 2)
+        self.env.assertEqual(result.properties_removed, 6)
+
+        # verify the resulting attribute-set is exactly {id, c, d}
+        result = self.graph.query("""MATCH (l:X)
+                                     WHERE l.id = 285858
+                                     RETURN properties(l)""")
+        props = result.result_set[0][0]
+        self.env.assertEqual(props, {'id': 285858, 'c': [], 'd': 0})
+
 class testEntityUpdateReplication():
     def __init__(self):
         self.env, self.db = Env(env='oss', useSlaves=True)
