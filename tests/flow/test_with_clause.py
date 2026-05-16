@@ -247,6 +247,33 @@ class testWithClause(FlowTestsBase):
         expected = [['projected']] # The projected string should be returned
         self.env.assertTrue(re.search('Filter\s+Project', plan))
 
+    # Verify that aggregation following a WITH ... WHERE that filters out all
+    # rows still yields a default aggregation result (e.g. count(*) = 0),
+    # matching the behavior of the equivalent MATCH ... WHERE form.
+    def test10b_aggregation_after_with_where_filters_all(self):
+        # use a dedicated graph so we don't interfere with the populated graph
+        g = self.db.select_graph(GRAPH_ID + "_aggr_with_where_false")
+        try:
+            g.query("CREATE (:t0), (:t0)")
+
+            # WITH ... WHERE false RETURN count(*) should match the equivalent
+            # MATCH ... WHERE false RETURN count(*) and yield a single row of 0
+            with_query    = "MATCH (t0:t0) WITH t0 WHERE false RETURN COUNT(*) AS ref0"
+            plain_query   = "MATCH (t0:t0) WHERE false RETURN COUNT(*) AS ref0"
+            expected = [[0]]
+            self.env.assertEqual(g.query(with_query).result_set,  expected)
+            self.env.assertEqual(g.query(plain_query).result_set, expected)
+
+            # other aggregations should also receive their default value
+            # (sum -> 0)
+            sum_query = "MATCH (t0:t0) WITH t0 WHERE false RETURN sum(1) AS s"
+            self.env.assertEqual(g.query(sum_query).result_set, [[0]])
+        finally:
+            # ensure the temporary graph is always removed even if an
+            # assertion above fails, so re-runs and later tests are not
+            # affected by leftover state
+            g.delete()
+
     def test11_valid_order_by_aliases(self):
         # Verify that ORDER BY aliases match previously defined references
         query = """UNWIND [1,2,3] AS a WITH a ORDER BY a RETURN a"""
