@@ -22,7 +22,8 @@ class testAccessDelNode():
     
     def test02_return_deleted_node(self):
         # try to return a deleted node
-        # expecting node ID and attributes to be returned
+        # the deleted node should be returned with an empty value
+        # (no labels and no properties), matching Cypher semantics
 
         # create a node
         n = Node(labels="A", properties = {'v':1})
@@ -33,7 +34,7 @@ class testAccessDelNode():
         res = self.graph.query(q)
         deleted_node = res.result_set[0][0]
 
-        self.env.assertEquals(n.properties, deleted_node.properties)
+        self.env.assertEquals(deleted_node.properties, {})
         self.env.assertEquals(deleted_node.labels, None)
 
     def test03_deleted_node_as_argument(self):
@@ -207,7 +208,9 @@ class testAccessDelNode():
         self.env.assertEquals(nodes[0].properties['v'], 'a')
         self.env.assertIn('A', nodes[0].labels);
 
-        self.env.assertEquals(nodes[1].properties['v'], 'b')
+        # the deleted node should be returned with an empty value
+        # (no labels and no properties), matching Cypher semantics
+        self.env.assertEquals(nodes[1].properties, {})
         self.env.assertEquals(nodes[1].labels, None)
 
         self.env.assertEquals(nodes[2].properties['v'], 'c')
@@ -235,6 +238,8 @@ class testAccessDelEdge():
     
     def test02_return_deleted_edge(self):
         # try to return a deleted edge
+        # the deleted edge should be returned with an empty value
+        # (no properties), matching Cypher semantics
 
         # create an edge
         src  = Node(alias="src",  labels="A", properties = {'v':1})
@@ -248,7 +253,7 @@ class testAccessDelEdge():
         deleted_edge = res.result_set[0][0]
 
         self.env.assertEquals(e.relation, deleted_edge.relation)
-        self.env.assertEquals(e.properties, deleted_edge.properties)
+        self.env.assertEquals(deleted_edge.properties, {})
 
     def test03_deleted_edge_as_argument(self):
         # try to invoke a function on a deleted edge
@@ -372,7 +377,9 @@ class testAccessDelEdge():
         self.env.assertEquals(len(edges), 2)
 
         # assert individual edges
-        self.env.assertEquals(edges[0].properties['v'], 1)
+        # the deleted edge should be returned with an empty value
+        # (no properties), matching Cypher semantics
+        self.env.assertEquals(edges[0].properties, {})
         self.env.assertEquals(edges[0].relation, 'R1')
 
         self.env.assertEquals(edges[1].properties['v'], 2)

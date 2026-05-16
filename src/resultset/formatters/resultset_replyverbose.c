@@ -9,6 +9,7 @@
 #include "../../query_ctx.h"
 #include "resultset_formatters.h"
 #include "../../datatypes/datatypes.h"
+#include "../../graph/graph.h"
 
 // forward declarations
 static void _ResultSet_VerboseReplyWithMap(RedisModuleCtx *ctx, SIValue map);
@@ -108,6 +109,13 @@ static void _ResultSet_VerboseReplyWithProperties
 	GraphContext *gc,
 	const GraphEntity *e
 ) {
+	// a deleted entity is returned as an empty value
+	// (no properties), matching Cypher semantics
+	if (Graph_EntityIsDeleted (e)) {
+		RedisModule_ReplyWithArray (ctx, 0) ;
+		return ;
+	}
+
 	const AttributeSet set = GraphEntity_GetAttributes (e) ;
 	int prop_count = AttributeSet_Count(set);
 	RedisModule_ReplyWithArray (ctx, prop_count) ;
