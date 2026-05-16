@@ -17,6 +17,7 @@
 // forward declarations
 static OpResult MergeInit(OpBase *opBase);
 static Record MergeConsume(OpBase *opBase);
+static OpResult MergeReset(OpBase *opBase);
 static OpBase *MergeClone(const ExecutionPlan *plan, const OpBase *opBase);
 static void MergeFree(OpBase *opBase);
 
@@ -134,7 +135,7 @@ OpBase *NewMergeOp
 	
 	// set our Op operations
 	OpBase_Init ((OpBase *)op, OPType_MERGE, "Merge", MergeInit, MergeConsume,
-			NULL, NULL, MergeClone, MergeFree, true, plan) ;
+			MergeReset, NULL, MergeClone, MergeFree, true, plan) ;
 
 	if (op->on_match) {
 		_InitializeUpdates (op, op->on_match, &op->on_match_it) ;
@@ -523,6 +524,51 @@ static OpBase *MergeClone
 			(void *(*)(void *))UpdateCtx_Clone);
 
 	return NewMergeOp(plan, on_match, on_create);
+}
+
+static OpResult MergeReset
+(
+	OpBase *opBase
+) {
+	OpMerge *op = (OpMerge *)opBase;
+
+	// drain any unconsumed input records left over from the previous
+	// invocation (e.g. when reset is triggered before the bound stream
+	// was fully consumed)
+	if (op->input_records != NULL) {
+		uint input_count = arr_len (op->input_records) ;
+		for (uint i = 0; i < input_count; i++) {
+			OpBase_DeleteRecord (op->input_records + i) ;
+		}
+		arr_clear (op->input_records) ;
+	}
+
+	// free postponed match records
+	if (op->postponed_match != NULL) {
+		uint n = arr_len (op->postponed_match) ;
+		for (uint i = 0; i < n; i++) {
+			OpBase_DeleteRecord (op->postponed_match + i) ;
+		}
+		arr_free (op->postponed_match) ;
+		op->postponed_match = NULL ;
+	}
+
+	// free output records that were not yet emitted to a downstream op
+	if (op->output_records != NULL) {
+		uint output_count = arr_len (op->output_records) ;
+		for (uint i = op->output_rec_idx; i < output_count; i++) {
+			OpBase_DeleteRecord (op->output_records + i) ;
+		}
+		arr_free (op->output_records) ;
+		op->output_records = NULL ;
+	}
+	op->output_rec_idx = 0 ;
+
+	// free pending update hashtables, they will be re-created during the
+	// next MergeConsume invocation
+	_free_pending_updates (op) ;
+
+	return OP_OK ;
 }
 
 static void MergeFree
