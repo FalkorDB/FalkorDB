@@ -140,6 +140,36 @@ static AR_ExpNode *_AR_EXP_FromApplyExpression
 		op->op.children[0] = distinct;
 	}
 
+	// rewrite `EXISTS(<pattern path>)` as `size(<pattern path>) > 0`
+	// the pattern path argument is lifted by buildPatternPathOps into an
+	// Apply over a `collect` aggregation, binding to a variable that holds
+	// an array of matching paths (possibly empty). the standard `exists`
+	// function only checks for NULL, so an empty array would incorrectly
+	// evaluate to true. rewriting to `size(...) > 0` correctly reports
+	// pattern existence relative to the currently bound variables
+	if(arg_count == 1 && strcasecmp(func_name, "exists") == 0) {
+		const cypher_astnode_t *arg =
+			cypher_ast_apply_operator_get_argument(expr, 0);
+		cypher_astnode_type_t arg_type = cypher_astnode_type(arg);
+		if(arg_type == CYPHER_AST_PATTERN_PATH ||
+		   arg_type == CYPHER_AST_PATTERN_COMPREHENSION) {
+			// reparent the child onto a fresh `size(...) > 0` tree and
+			// free the now-empty `exists` op without recursively freeing
+			// the child (same pattern used in the error path above)
+			AR_ExpNode *child = op->op.children[0];
+			op->op.child_count = 0;
+			AR_EXP_Free(op);
+
+			AR_ExpNode *size_op = AR_EXP_NewOpNode("size", true, 1);
+			size_op->op.children[0] = child;
+
+			AR_ExpNode *gt = AR_EXP_NewOpNode("gt", true, 2);
+			gt->op.children[0] = size_op;
+			gt->op.children[1] = AR_EXP_NewConstOperandNode(SI_LongVal(0));
+			return gt;
+		}
+	}
+
 	return op;
 }
 
