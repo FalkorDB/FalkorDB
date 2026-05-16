@@ -87,8 +87,8 @@ use crate::{
         constraint::{Constraint, ConstraintStatus, ConstraintType},
         graphblas::{
             matrix::{
-                Dup, Get, MaskedElementWiseAdd, MaskedElementWiseMultiply, Matrix, MxM, New,
-                Remove, Set, Size, Transpose,
+                Descriptor, Dup, Get, MaskedElementWiseAdd, MaskedElementWiseMultiply, Matrix, MxM,
+                New, Remove, Set, Size, Transpose,
             },
             serialization::{Encode, EncodeState, PayloadEntry, Writer},
             tensor::Tensor,
@@ -1853,6 +1853,11 @@ impl Graph {
     }
 
     #[must_use]
+    pub const fn adjacency_matrix(&self) -> &VersionedMatrix {
+        &self.adjacancy_matrix
+    }
+
+    #[must_use]
     pub fn relationship_tensors(&self) -> &[Tensor] {
         &self.relationship_matrices
     }
@@ -2113,11 +2118,12 @@ impl Graph {
         );
         for relationship_matrix in iter {
             m.element_wise_add(
+                Some(relationship_matrix.matrix().dm()),
                 None,
-                None,
-                Some(&relationship_matrix.matrix().to_matrix()),
-                None,
+                Some(relationship_matrix.matrix().m()),
+                Some(Descriptor::C),
             );
+            m.element_wise_add(None, None, Some(relationship_matrix.matrix().dp()), None);
         }
         Some(m)
     }
@@ -2680,7 +2686,7 @@ impl Graph {
         index_type: &IndexType,
         entity_type: &EntityType,
         label: &Arc<String>,
-        attrs: &Vec<Arc<String>>,
+        attrs: &[Arc<String>],
     ) -> Result<usize, String> {
         // Expand an empty `attrs` to the full set of fields of `index_type`
         // (matches the `target_attrs` derivation in `Indexer::drop_index`);
@@ -2697,7 +2703,7 @@ impl Graph {
                 .map(|(attr, _)| attr)
                 .collect()
         } else {
-            attrs.clone()
+            attrs.to_vec()
         };
 
         // Check if any UNIQUE constraint depends on this index
@@ -2961,10 +2967,10 @@ impl Graph {
         label: Arc<String>,
         properties: Vec<Arc<String>>,
     ) -> Result<bool, String> {
-        if ct == ConstraintType::Unique {
-            if !self.has_supporting_index(&entity_type, &label, &properties) {
-                return Err("missing supporting exact-match index".into());
-            }
+        if ct == ConstraintType::Unique
+            && !self.has_supporting_index(&entity_type, &label, &properties)
+        {
+            return Err("missing supporting exact-match index".into());
         }
 
         // Check for duplicates

@@ -290,10 +290,7 @@ pub fn try_extract_vectorizable_predicate(
         let mut preds = Vec::new();
         for child in root.children() {
             let child_tree = child.clone_as_tree();
-            match try_extract_single_predicate(&child_tree) {
-                Some(pred) => preds.push(pred),
-                None => return None,
-            }
+            preds.push(try_extract_single_predicate(&child_tree)?);
         }
         if preds.is_empty() {
             return None;

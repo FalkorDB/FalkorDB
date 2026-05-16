@@ -178,6 +178,11 @@ pub enum IR {
         /// direction in the graph. The runtime transposes the relationship
         /// scan accordingly.
         transposed: bool,
+        /// Additional hops fused by `fuse_anonymous_traverse`, in traversal
+        /// order. Empty for a single-hop CondTraverse. Each chain hop is an
+        /// anonymous-edge, anonymous-intermediate-node traversal — only the
+        /// final hop's `to` alias is bound at runtime.
+        chain: Vec<Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>>,
     },
     /// Variable-length traversal (BFS) from known nodes
     CondVarLenTraverse {
@@ -516,13 +521,24 @@ impl Display for IR {
             Self::CondTraverse {
                 relationship: rel,
                 transposed,
+                chain,
                 ..
             } => {
-                write!(
-                    f,
-                    "Conditional Traverse | {}",
-                    fmt_rel_with_labels_dir(rel, *transposed)
-                )
+                if chain.is_empty() {
+                    write!(
+                        f,
+                        "Conditional Traverse | {}",
+                        fmt_rel_with_labels_dir(rel, *transposed)
+                    )
+                } else {
+                    write!(
+                        f,
+                        "Conditional Traverse | {} (+ {} fused hop{})",
+                        fmt_rel_with_labels_dir(rel, *transposed),
+                        chain.len(),
+                        if chain.len() == 1 { "" } else { "s" }
+                    )
+                }
             }
             Self::CondVarLenTraverse {
                 relationship: rel, ..
@@ -1449,7 +1465,8 @@ impl Planner {
                     relationship: relationship.clone(),
                     emit_relationship: emit_rel(relationship),
                     sibling_edges: sibling_edges.clone(),
-                    transposed: false
+                    transposed: false,
+                    chain: Vec::new(),
                 });
                 if let Some(filter_expr) = edge_attr_filter {
                     ct = tree!(IR::Filter(Arc::new(filter_expr)), ct);
@@ -1593,7 +1610,8 @@ impl Planner {
                             relationship: relationship.clone(),
                             emit_relationship: emit_rel(relationship),
                             sibling_edges: sibling_edges.clone(),
-                            transposed: false
+                            transposed: false,
+                            chain: Vec::new(),
                         },
                         res
                     );

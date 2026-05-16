@@ -278,7 +278,7 @@ unsafe extern "C" fn graph_aux_load(
 /// Called by libc before fork. Accesses graphs via data_ptr() (bypassing RwLock).
 pub unsafe extern "C" fn pre_fork_prepare() {
     let registry = crate::graph_core::GRAPH_REGISTRY.lock();
-    for (_name, graph_arc) in registry.iter() {
+    for graph_arc in registry.values() {
         let tg: &ThreadedGraph = unsafe { &*graph_arc.data_ptr() };
         let g = tg.graph.read();
         let graph = g.borrow();
@@ -567,8 +567,6 @@ unsafe fn scan_and_clean_graphdata_keys(
             raw::RedisModule_CloseKey.unwrap()(key);
             raw::RedisModule_FreeString.unwrap()(ctx, rm_str);
         }
-
-        if !stale_keys.is_empty() {}
 
         result
     }

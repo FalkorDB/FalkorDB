@@ -744,6 +744,7 @@ fn compute_effective_timeout(
 }
 
 #[inline]
+#[allow(clippy::too_many_arguments)]
 pub fn query_mut(
     ctx: &Context,
     graph: &Arc<RwLock<ThreadedGraph>>,

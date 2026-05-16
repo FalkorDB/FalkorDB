@@ -331,7 +331,7 @@ impl Indexer {
     pub fn drop_index(
         &mut self,
         label: &Arc<String>,
-        attrs: &Vec<Arc<String>>,
+        attrs: &[Arc<String>],
         index_type: &IndexType,
         total: u64,
     ) -> Option<(usize, usize)> {
@@ -350,7 +350,7 @@ impl Indexer {
                     .map(|(attr, _)| attr.clone())
                     .collect()
             } else {
-                attrs.clone()
+                attrs.to_vec()
             };
             for attr in &target_attrs {
                 let (has_type, field_count) = if let Some(fields) = index.get_fields(attr) {

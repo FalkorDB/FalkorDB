@@ -45,7 +45,10 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Union(vec![Type::Int, Type::Float, Type::Null]),
         fn abs(_, args) {
             match args.into_iter().next() {
-                Some(Value::Int(n)) => Ok(Value::Int(n.abs())),
+                Some(Value::Int(n)) => n
+                    .checked_abs()
+                    .map(Value::Int)
+                    .ok_or_else(|| String::from("ArgumentError: integer overflow in abs()")),
                 Some(Value::Float(f)) => Ok(Value::Float(f.abs())),
                 Some(Value::Null) => Ok(Value::Null),
 
@@ -271,9 +274,20 @@ pub fn register(funcs: &mut Functions) {
                         return Ok(Value::List(Arc::new(thin_vec![])));
                     }
 
-                    let length = (end - start) / step + 1;
-                    #[allow(clippy::cast_lossless)]
-                    if length > u32::MAX as i64 {
+                    // Compute (|end - start| / |step|) + 1 with overflow checks.
+                    // We use unsigned absolute differences so that
+                    // `range(i64::MIN, i64::MAX)` doesn't overflow the
+                    // intermediate subtraction.
+                    let span = if end >= start {
+                        (end as i128) - (start as i128)
+                    } else {
+                        (start as i128) - (end as i128)
+                    };
+                    let abs_step = (step as i128).unsigned_abs();
+                    let length = (span.unsigned_abs() / abs_step)
+                        .checked_add(1)
+                        .ok_or_else(|| String::from("Range too large"))?;
+                    if length > u32::MAX as u128 {
                         return Err(String::from("Range too large"));
                     }
                     if step > 0 {
@@ -287,7 +301,7 @@ pub fn register(funcs: &mut Functions) {
                     Ok(Value::List(Arc::new(
                         (end..=start)
                             .rev()
-                            .step_by((-step) as usize)
+                            .step_by(step.unsigned_abs() as usize)
                             .map(Value::Int)
                             .collect(),
                     )))
