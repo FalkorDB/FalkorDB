@@ -2884,3 +2884,38 @@ updating clause.")
         res = self.graph.query(q).result_set
         self.env.assertEquals(res[0][0], 2) # avgX
 
+    def test_54_merge_with_alias_from_subquery_scope(self):
+        # Reusing an alias from the CALL {} subquery body in an outer MERGE
+        # pattern should not cause MERGE to treat the alias as bound. The
+        # alias is out of scope after the subquery (only the returned
+        # projections are visible), so MERGE must scan/create the node like
+        # any other unbound entity.
+        # Regression test for "Failed to create relationship; endpoint was
+        # not found." when MERGE references a subquery-scoped alias.
+        self.graph.delete()
+
+        self.graph.query("CREATE (:Country {name: 'France'})")
+        self.graph.query("CREATE (:Person {name: 'John'})")
+        self.graph.query("CREATE (:Person {name: 'Harry'})")
+        self.graph.query("""MATCH (p:Person {name: 'John'}),
+                                  (c:Country {name: 'France'})
+                            CREATE (p)-[:WORKING_IN]->(c)""")
+        self.graph.query("""MATCH (p:Person {name: 'John'}),
+                                  (f:Person {name: 'Harry'})
+                            CREATE (p)-[:FRIENDS_WITH]->(f)""")
+
+        res = self.graph.query("""
+            MATCH (p:Person)-[:WORKING_IN]->(:Country)
+            CALL {
+                WITH p
+                MATCH (p)-[:FRIENDS_WITH]->(f:Person)
+                RETURN f.name AS friend_name
+                LIMIT 1
+            }
+            MERGE (p)-[:HAS_FRIEND]->(f:Person {name: friend_name})
+            RETURN p.name AS person_name, friend_name
+            """)
+        self.env.assertEquals(res.result_set, [['John', 'Harry']])
+        # the HAS_FRIEND relationship should be created exactly once
+        self.env.assertEquals(res.relationships_created, 1)
+
