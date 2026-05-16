@@ -461,6 +461,23 @@ class testBolt():
             self.env.assertEquals(record[0], 1)
         driver.close()
 
+    def test27b_auth_arbitrary_username(self):
+        """Verify that Bolt authentication accepts any username (not only
+        'falkordb') when no password is configured. The server should allow
+        the connection regardless of the principal name."""
+        # the test env has no requirepass; any username with empty password
+        # should be accepted
+        for username in ("neo4j", "admin", "myuser", "default"):
+            driver = GraphDatabase.driver(
+                f"bolt://localhost:{BOLT_PORT}", auth=(username, ""))
+            try:
+                with driver.session() as session:
+                    result = session.run("RETURN 1")
+                    record = result.single()
+                    self.env.assertEquals(record[0], 1)
+            finally:
+                driver.close()
+
     def test28_deeply_nested_map_parameter_rejected(self):
         """Test that deeply nested parameters beyond the recursion limit
         cause query construction to fail gracefully rather than crash.
