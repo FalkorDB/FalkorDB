@@ -71,7 +71,7 @@ SIValue GraphEntity_Keys
 	SIValue keys = SIArray_New(prop_count);
 	for(int i = 0; i < prop_count; i++) {
 		AttributeID attr_id = AttributeSet_GetKey (set, i) ;
-		const char *key = GraphContext_GetAttributeString(gc, attr_id);
+		const char *key = GraphContext_GetAttributeName (gc, attr_id) ;
 		SIArray_Append(&keys, SI_ConstStringVal(key));
 	}
 	return keys;
@@ -91,7 +91,7 @@ SIValue GraphEntity_Properties
 		SIValue value ;
 		AttributeID attr_id;
 		AttributeSet_GetIdx (set, i, &attr_id, &value) ;
-		const char *key = GraphContext_GetAttributeString (gc, attr_id) ;
+		const char *key = GraphContext_GetAttributeName (gc, attr_id) ;
 		Map_Add(&map, SI_ConstStringVal(key), value);
 	}
 
@@ -121,7 +121,7 @@ size_t GraphEntity_PropertiesToString
 		AttributeID attr_id;
 		AttributeSet_GetIdx (set, i, &attr_id, &value) ;
 		// print key
-		const char *key = GraphContext_GetAttributeString(gc, attr_id);
+		const char *key = GraphContext_GetAttributeName (gc, attr_id) ;
 		// check for enough space
 		size_t keyLen = strlen(key);
 		if(*bufferLen - *bytesWritten < keyLen) {

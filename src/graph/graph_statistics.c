@@ -28,8 +28,8 @@ void GraphStatistics_IntroduceLabel
 (
 	GraphStatistics *stats
 ) {
-	ASSERT(stats && stats->node_count);
-	arr_append(stats->node_count, 0);
+	ASSERT (stats && stats->node_count) ;
+	arr_append (stats->node_count, 0) ;
 }
 
 uint64_t GraphStatistics_EdgeCount

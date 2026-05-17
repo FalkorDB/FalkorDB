@@ -292,10 +292,10 @@ static bool _Constraint_Create
 	// must be aligned with attribute names array
 	for(uint i = 0; i < n; i++) {
 		// get attribute id for attribute name
-		AttributeID attr_id = attr_ids[i];
+		AttributeID attr_id = attr_ids [i] ;
 
 		// update props to hold graph context's attribute name
-		props[i] = GraphContext_GetAttributeString(gc, attr_id);
+		props [i] = GraphContext_GetAttributeName (gc, attr_id) ;
 	}
 
 	//--------------------------------------------------------------------------

@@ -41,18 +41,22 @@ SIValue *Proc_PropKeysStep
 (
 	ProcedureCtx *ctx
 ) {
-	ASSERT(ctx->privateData != NULL);
+	ASSERT (ctx->privateData != NULL) ;
 
-	RelationsContext *pdata = (RelationsContext *)ctx->privateData;
+	RelationsContext *pdata = (RelationsContext *)ctx->privateData ;
 
 	// depleted?
-	if(pdata->prop_id >= GraphContext_AttributeCount(pdata->gc))
-		return NULL;
+	if (pdata->prop_id >= GraphContext_AttributeCount (pdata->gc)) {
+		return NULL ;
+	}
 
 	// get attribute name
-	char *name = (char *)GraphContext_GetAttributeString(pdata->gc, pdata->prop_id++);
-	pdata->output[0] = SI_ConstStringVal(name);
-	return pdata->output;
+	const char *name =
+		GraphContext_GetAttributeName (pdata->gc, pdata->prop_id++) ;
+
+	pdata->output [0] = SI_ConstStringVal (name) ;
+
+	return pdata->output ;
 }
 
 ProcedureResult Proc_PropKeysFree

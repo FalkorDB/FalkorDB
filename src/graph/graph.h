@@ -20,12 +20,10 @@
 #include "../util/datablock/datablock.h"
 #include "../util/datablock/datablock_iterator.h"
 
-#define GRAPH_DEFAULT_RELATION_TYPE_CAP 16  // default number of different relationship types a graph can hold before resizing.
-#define GRAPH_DEFAULT_LABEL_CAP 16          // default number of different labels a graph can hold before resizing.
-#define GRAPH_NO_LABEL -1                   // labels are numbered [0-N], -1 represents no label.
-#define GRAPH_UNKNOWN_LABEL -2              // labels are numbered [0-N], -2 represents an unknown relation.
-#define GRAPH_NO_RELATION -1                // relations are numbered [0-N], -1 represents no relation.
-#define GRAPH_UNKNOWN_RELATION -2           // relations are numbered [0-N], -2 represents an unknown relation.
+#define GRAPH_NO_LABEL -1          // labels are numbered [0-N], -1 represents no label.
+#define GRAPH_UNKNOWN_LABEL -2     // labels are numbered [0-N], -2 represents an unknown relation.
+#define GRAPH_NO_RELATION -1       // relations are numbered [0-N], -1 represents no relation.
+#define GRAPH_UNKNOWN_RELATION -2  // relations are numbered [0-N], -2 represents an unknown relation.
 
 typedef enum {
 	GRAPH_EDGE_DIR_INCOMING,
@@ -56,6 +54,7 @@ struct Graph {
 	Tensor *relations;                 // relation matrices
 	Delta_Matrix _zero_matrix;         // zero matrix
 	pthread_rwlock_t _rwlock;          // read-write lock scoped to this specific graph
+	pthread_rwlock_t _type_rwlock;     // protects labels and relations arrays
 	bool _writelocked;                 // true if the read-write lock was acquired by a writer
 	SyncMatrixFunc SynchronizeMatrix;  // function pointer to matrix synchronization routine
 	GraphStatistics stats;             // graph related statistics
@@ -498,8 +497,8 @@ Delta_Matrix Graph_GetAdjacencyMatrix
 // matrix is resized if its size doesn't match graph's node count
 Delta_Matrix Graph_GetLabelMatrix
 (
-	const Graph *g,     // graph from which to get adjacency matrix
-	int label           // label described by matrix
+	const Graph *g,  // graph from which to get adjacency matrix
+	LabelID label    // label described by matrix
 );
 
 // retrieves a typed adjacency matrix

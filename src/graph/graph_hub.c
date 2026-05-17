@@ -222,9 +222,7 @@ void GraphHub_DeleteNodes
 
 			if (log) {
 				// add node deletion operation to undo log
-				size_t label_count ;
-				NODE_GET_LABELS (g, node, label_count) ;
-				UndoLog_DeleteNode (undo_log, node, labels, label_count) ;
+				UndoLog_DeleteNode (undo_log, node) ;
 				EffectsBuffer_AddDeleteNodeEffect (eb, node) ;
 			}
 
@@ -296,15 +294,12 @@ void GraphHub_UpdateEntityProperties
 	ASSERT (gc != NULL) ;
 	ASSERT (ge != NULL) ;
 
-	AttributeSet old_set = GraphEntity_GetAttributes (ge) ;
+	AttributeSet prev_set = GraphEntity_GetAttributes (ge) ;
+	AttributeSet_TransferOwnership (prev_set, set) ;
 
 	if (log == true) {
 		UndoLog log = QueryCtx_GetUndoLog () ;
-		if (entity_type == GETYPE_NODE) {
-			UndoLog_UpdateNode (log, (Node *)ge, old_set) ;
-		} else {
-			UndoLog_UpdateEdge (log, (Edge *)ge, old_set) ;
-		}
+		UndoLog_UpdateEntity (log, ge, prev_set, entity_type) ;
 	}
 
 	*ge->attributes = set ;
@@ -417,122 +412,6 @@ void GraphHub_UpdateEdgeProperty
 	}
 }
 
-void GraphHub_UpdateNodeLabels
-(
-	GraphContext *gc,            // graph context to update the entity
-	Node *node,                  // the node to be updated
-	const char **add_labels,     // labels to add to the node
-	const char **remove_labels,  // labels to add to the node
-	uint n_add_labels,           // number of labels to add
-	uint n_remove_labels,        // number of labels to remove
-	bool log                     // log this operation in undo-log
-) {
-	ASSERT(gc   != NULL);
-	ASSERT(node != NULL);
-
-	// quick return if there are no labels
-	if(add_labels == NULL && remove_labels == NULL) {
-		return;
-	}
-
-	// if add_labels is specified its count must be > 0
-	ASSERT((add_labels != NULL && n_add_labels > 0) ||
-		   (add_labels == NULL && n_add_labels == 0));
-
-	// if remove_labels is specified its count must be > 0
-	ASSERT((remove_labels != NULL && n_remove_labels > 0) ||
-		   (remove_labels == NULL && n_remove_labels == 0));
-
-	UndoLog undo_log  = NULL ;
-	EffectsBuffer *eb = NULL ;
-	Graph *g = GraphContext_GetGraph (gc) ;
-
-	if (log == true) {
-		eb = QueryCtx_GetEffectsBuffer () ;
-		undo_log = QueryCtx_GetUndoLog () ;
-	}
-
-	if (add_labels != NULL) {
-		uint add_labels_index = 0;
-		int add_labels_ids[n_add_labels];
-
-		for (uint i = 0; i < n_add_labels; i++) {
-			// get or create label matrix
-			const char *label = add_labels[i] ;
-			const Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE) ;
-			bool schema_created = false ;
-			if (s == NULL) {
-				s = GraphHub_AddSchema (gc, label, SCHEMA_NODE, log) ;
-				schema_created = true ;
-			}
-
-			int  schema_id = Schema_GetID (s) ;
-			bool node_labeled = Graph_IsNodeLabeled (g, ENTITY_GET_ID(node),
-					schema_id) ;
-
-			if (!node_labeled) {
-				// append label id
-				add_labels_ids[add_labels_index++] = schema_id ;
-				// add to index
-				Schema_AddNodeToIndex (s, node) ;
-			}
-		}
-
-		if (add_labels_index > 0) {
-			// update node's labels
-			Graph_LabelNode (g, ENTITY_GET_ID (node), add_labels_ids,
-					add_labels_index) ;
-
-			if (log == true) {
-				UndoLog_AddLabels (undo_log, node, add_labels_ids,
-						add_labels_index) ;
-				EffectsBuffer_AddLabelsEffect (eb, node, add_labels_ids,
-						add_labels_index) ;
-			}
-		}
-	}
-
-	if (remove_labels != NULL) {
-		int remove_labels_ids[n_remove_labels] ;
-		uint remove_labels_index = 0 ;
-
-		for (uint i = 0; i < n_remove_labels; i++) {
-			const char *label = remove_labels[i] ;
-
-			// label removal
-			// get or create label matrix
-			const Schema *s = GraphContext_GetSchema (gc, label, SCHEMA_NODE) ;
-			if (s == NULL) {
-				// skip removal of none existing label
-				continue ;
-			}
-
-			if (!Graph_IsNodeLabeled (g, ENTITY_GET_ID (node),
-						Schema_GetID (s))) {
-				// skip removal of none existing label
-				continue ;
-			}
-
-			// append label id
-			remove_labels_ids[remove_labels_index++] = Schema_GetID (s) ;
-			// remove node from index
-			Schema_RemoveNodeFromIndex (s, node) ;
-		}
-
-		if (remove_labels_index > 0) {
-			// update node's labels
-			Graph_RemoveNodeLabels (g, ENTITY_GET_ID(node),
-					remove_labels_ids, remove_labels_index) ;
-			if (log == true) {
-				UndoLog_RemoveLabels (undo_log, node, remove_labels_ids,
-						remove_labels_index) ;
-				EffectsBuffer_AddRemoveLabelsEffect (eb, node,
-						remove_labels_ids, remove_labels_index) ;
-			}
-		}
-	}
-}
-
 Schema *GraphHub_AddSchema
 (
 	GraphContext *gc,   // graph context to add the schema
@@ -540,18 +419,21 @@ Schema *GraphHub_AddSchema
 	SchemaType t,       // schema type (node/edge)
 	bool log            // should operation be logged in the undo-log
 ) {
-	ASSERT(gc != NULL);
-	ASSERT(label != NULL);
-	Schema *s = GraphContext_AddSchema(gc, label, t);
+	ASSERT (gc    != NULL) ;
+	ASSERT (label != NULL) ;
+
+	Schema *s = GraphContext_AddSchema (gc, label, t) ;
+	ASSERT (s != NULL) ;
 
 	if(log == true) {
-		UndoLog undo_log = QueryCtx_GetUndoLog();
-		UndoLog_AddSchema(undo_log, s->id, s->type);
-		EffectsBuffer *eb = QueryCtx_GetEffectsBuffer();
-		EffectsBuffer_AddNewSchemaEffect(eb, Schema_GetName(s), s->type);
+		UndoLog undo_log = QueryCtx_GetUndoLog () ;
+		UndoLog_AddSchema (undo_log, s->id, s->type) ;
+
+		EffectsBuffer *eb = QueryCtx_GetEffectsBuffer () ;
+		EffectsBuffer_AddNewSchemaEffect (eb, Schema_GetName (s), s->type) ;
 	}
 
-	return s;
+	return s ;
 }
 
 AttributeID GraphHub_FindOrAddAttribute
@@ -563,9 +445,9 @@ AttributeID GraphHub_FindOrAddAttribute
 	ASSERT(gc != NULL);
 	ASSERT(attribute != NULL);
 
-	bool created;
-	AttributeID attr_id = GraphContext_FindOrAddAttribute(gc, attribute,
-			&created);
+	bool created = false ;
+	AttributeID attr_id = GraphContext_FindOrAddAttribute (gc, attribute,
+			&created) ;
 
 	// in case there was an append, the latest id should be tracked
 	if(created == true && log == true) {

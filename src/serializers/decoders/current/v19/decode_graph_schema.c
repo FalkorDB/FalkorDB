@@ -196,10 +196,10 @@ static void _RdbLoadConstraint
 	const char *attr_strs[n];
 
 	// read fields
-	for(uint8_t i = 0; i < n; i++) {
-		AttributeID attr = SerializerIO_ReadUnsigned(rdb);
-		attr_ids[i]  = attr;
-		attr_strs[i] = GraphContext_GetAttributeString(gc, attr);
+	for (uint8_t i = 0; i < n; i++) {
+		AttributeID attr = SerializerIO_ReadUnsigned (rdb) ;
+		attr_ids  [i] = attr ;
+		attr_strs [i] = GraphContext_GetAttributeName (gc, attr) ;
 	}
 
 	if(!already_loaded) {

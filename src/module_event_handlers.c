@@ -511,9 +511,9 @@ static void _ForkPrepare() {
 		// synchronize all matrices, make sure they're in a consistent state
 		// do not force-flush as this can take awhile
 
-		//------------------------------------------------------------------
+		//----------------------------------------------------------------------
 		// sync graph's matrices
-		//------------------------------------------------------------------
+		//----------------------------------------------------------------------
 
 		// calling Graph_Get* will sync the retrieved matrix
 
@@ -530,14 +530,6 @@ static void _ForkPrepare() {
 		for (int j = 0; j < n_rels; j++) {
 			Graph_GetRelationMatrix (g, j, false) ;
 		}
-
-		// NOTE: yield had been commented out due to:
-		// https://github.com/redis/redis/issues/14266
-		// only the master thread (= Redis main thread) may yield
-		//if (pthread_equal (pthread_self (), redis_main_thread_id)) {
-		//	RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
-		//			"preparing to fork") ;
-		//}
 	}
 
 	// decrease graph context ref count

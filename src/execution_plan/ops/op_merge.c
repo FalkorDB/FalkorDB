@@ -20,28 +20,6 @@ static Record MergeConsume(OpBase *opBase);
 static OpBase *MergeClone(const ExecutionPlan *plan, const OpBase *opBase);
 static void MergeFree(OpBase *opBase);
 
-// fake hash function
-// hash of key is simply key
-static uint64_t _id_hash
-(
-	const void *key
-) {
-	return ((uint64_t)key);
-}
-
-// hashtable value destructor callback
-static void dictValDest
-(
-	dict *d,
-	void *val
-) {
-	PendingUpdateCtx_Free ((PendingUpdateCtx*)val) ;
-}
-
-// hashtable callbacks
-static dictType _dt = { _id_hash, NULL, NULL, NULL, NULL, dictValDest, NULL,
-	NULL, NULL, NULL};
-
 //------------------------------------------------------------------------------
 // ON MATCH / ON CREATE logic
 //------------------------------------------------------------------------------
@@ -49,8 +27,7 @@ static dictType _dt = { _id_hash, NULL, NULL, NULL, NULL, dictValDest, NULL,
 // apply a set of updates to the given records
 static void _UpdateProperties
 (
-	dict *node_pending_updates,
-	dict *edge_pending_updates,
+	OpMerge *op,
 	raxIterator updates,
 	Record *records,
 	uint record_count
@@ -58,16 +35,12 @@ static void _UpdateProperties
 	ASSERT (record_count > 0) ;
 	GraphContext *gc = QueryCtx_GetGraphCtx () ;
 
-	// for each record to update
-	for (uint i = 0 ; i < record_count ; i++) {
-		Record r = records[i] ;
-		// evaluate update expressions
-		raxSeek (&updates, "^", NULL, 0) ;
-		while (raxNext (&updates)) {
-			EntityUpdateEvalCtx *ctx = updates.data ;
-			EvalEntityUpdates (gc, node_pending_updates, edge_pending_updates,
-					r, ctx, true) ;
-		}
+	// evaluate update expressions
+	raxSeek (&updates, "^", NULL, 0) ;
+	while (raxNext (&updates)) {
+		EntityUpdateDesc *desc = updates.data ;
+		EvalUpdates (gc, op->staged_updates, records, record_count, &desc,
+				1, true) ;
 	}
 }
 
@@ -90,30 +63,14 @@ static void _InitializeUpdates
 ) {
 	// if we have ON MATCH / ON CREATE directives
 	// set the appropriate record IDs of entities to be updated
-	raxStart(it, updates);
-	raxSeek(it, "^", NULL, 0);
+	raxStart (it, updates) ;
+	raxSeek  (it, "^", NULL, 0) ;
+
 	// iterate over all expressions
-	while(raxNext(it)) {
-		EntityUpdateEvalCtx *ctx = it->data;
+	while (raxNext (it)) {
+		EntityUpdateDesc *ctx = it->data ;
 		// set the record index for every entity modified by this operation
-		ctx->record_idx = OpBase_Modifies((OpBase *)op, ctx->alias);
-	}
-
-}
-
-// free node and edge pending updates
-static inline void _free_pending_updates
-(
-	OpMerge *op
-) {
-	if(op->node_pending_updates) {
-		HashTableRelease(op->node_pending_updates);
-		op->node_pending_updates = NULL;
-	}
-
-	if(op->edge_pending_updates) {
-		HashTableRelease(op->edge_pending_updates);
-		op->edge_pending_updates = NULL;
+		ctx->record_idx = OpBase_Modifies ((OpBase *)op, ctx->alias) ;
 	}
 }
 
@@ -129,9 +86,10 @@ OpBase *NewMergeOp
 	// (see CartesianProduct and ValueHashJoin)
 	OpMerge *op = rm_calloc (1, sizeof (OpMerge)) ;
 
-	op->on_match  = on_match ;
-	op->on_create = on_create ;
-	
+	op->on_match       = on_match ;
+	op->on_create      = on_create ;
+	op->staged_updates = StagedUpdatesCtx_New () ;
+
 	// set our Op operations
 	OpBase_Init ((OpBase *)op, OPType_MERGE, "Merge", MergeInit, MergeConsume,
 			NULL, NULL, MergeClone, MergeFree, true, plan) ;
@@ -271,8 +229,7 @@ static void _processPostponedRecords
 
 	// if we are setting properties with ON MATCH, compute pending updates
 	if (op->on_match && n > 0) {
-		_UpdateProperties (op->node_pending_updates, op->edge_pending_updates,
-				op->on_match_it, op->output_records + offset, n) ;
+		_UpdateProperties (op, op->on_match_it, op->output_records + offset, n) ;
 	}
 }
 
@@ -399,10 +356,8 @@ static void _RunCreatePhase
 	// TODO: note we're under lock at this point! is there a way
 	// to compute these changes before locking ?
 	if (op->on_create != NULL && create_count > 0) {
-		ensureMatrixDim (gc, op->on_create) ;
-		_UpdateProperties (op->node_pending_updates,
-				op->edge_pending_updates, op->on_create_it,
-				op->output_records + offset, create_count) ;
+		_UpdateProperties (op, op->on_create_it, op->output_records + offset,
+				create_count) ;
 	}
 }
 
@@ -427,12 +382,14 @@ static void _CommitPendingUpdates
 	OpMerge *op,
 	GraphContext *gc
 ) {
-	if (HashTableElemCount (op->node_pending_updates) > 0 ||
-		HashTableElemCount (op->edge_pending_updates) > 0) {
-		CommitUpdates (gc, op->node_pending_updates, ENTITY_NODE) ;
-		if (likely (!ErrorCtx_EncounteredError ())) {
-			CommitUpdates (gc, op->edge_pending_updates, ENTITY_EDGE) ;
+	bool node_updates = StagedUpdatesCtx_HasNodeUpdates (op->staged_updates) ;
+	bool edge_updates = StagedUpdatesCtx_HasEdgeUpdates (op->staged_updates) ;
+	if (node_updates || edge_updates) {
+		if (node_updates) {
+			ensureMatrixDim (gc, op->staged_updates) ;
 		}
+
+		CommitUpdates (gc, op->staged_updates) ;
 	}
 }
 
@@ -452,10 +409,8 @@ static Record MergeConsume
 		return _handoff (op) ;
 	}
 
-	op->output_records       = arr_new (Record, 32) ;
-	op->postponed_match      = arr_new (Record, 0) ;
-	op->node_pending_updates = HashTableCreate (&_dt) ;
-	op->edge_pending_updates = HashTableCreate (&_dt) ;
+	op->output_records  = arr_new (Record, 32) ;
+	op->postponed_match = arr_new (Record, 0) ;
 
 	// phase 1: consume the bound variable stream into op->input_records
 	_ConsumeBoundStream (op) ;
@@ -470,19 +425,17 @@ static Record MergeConsume
 	}
 	OpBase_PropagateReset (op->match_stream) ;
 
-	// lock everything
-	QueryCtx_AcquireWriteLock ();
-
 	// in cases such as:
 	// MERGE (n) ON MATCH SET n:L ON CREATE n:M
 	// make sure L & M are of the right dimensions
 
 	// if we are setting properties with ON MATCH, compute all pending updates
 	if (op->on_match && match_count > 0) {
-		ensureMatrixDim (gc, op->on_match) ;
-		_UpdateProperties (op->node_pending_updates, op->edge_pending_updates,
-			op->on_match_it, op->output_records, match_count) ;
+		_UpdateProperties (op, op->on_match_it, op->output_records, match_count) ;
 	}
+
+	// lock everything
+	QueryCtx_AcquireWriteLock ();
 
 	// phase 3: commit create stream, pull created records
 	// calls ON CREATE updates
@@ -492,15 +445,16 @@ static Record MergeConsume
 	// calls ON MATCH updates for them
 	_RunPostponedPhase (op) ;
 
+	if (likely (ErrorCtx_EncounteredError ())) {
+		return NULL ;
+	}
+
 	// phase 5: commit all pending node/edge updates
 	_CommitPendingUpdates (op, gc) ;
 
-	//--------------------------------------------------------------------------
-	// free updates
-	//--------------------------------------------------------------------------
-
-	HashTableEmpty (op->node_pending_updates, NULL) ;
-	HashTableEmpty (op->edge_pending_updates, NULL) ;
+	if (likely (ErrorCtx_EncounteredError ())) {
+		return NULL ;
+	}
 
 	return _handoff (op) ;
 }
@@ -530,6 +484,10 @@ static void MergeFree
 	OpBase *opBase
 ) {
 	OpMerge *op = (OpMerge *)opBase;
+
+	if (op->staged_updates != NULL) {
+		StagedUpdatesCtx_Free (&op->staged_updates) ;
+	}
 
 	// free input records
 	if(op->input_records) {
@@ -562,18 +520,16 @@ static void MergeFree
 		op->output_records = NULL;
 	}
 
-	_free_pending_updates(op);
-
-	if(op->on_match) {
-		raxFreeWithCallback(op->on_match, (void(*)(void *))UpdateCtx_Free);
-		op->on_match = NULL;
-		raxStop(&op->on_match_it);
+	if (op->on_match) {
+		raxFreeWithCallback (op->on_match, (void(*)(void *))UpdateCtx_Free) ;
+		op->on_match = NULL ;
+		raxStop (&op->on_match_it) ;
 	}
 
-	if(op->on_create) {
-		raxFreeWithCallback(op->on_create, (void(*)(void *))UpdateCtx_Free);
-		op->on_create = NULL;
-		raxStop(&op->on_create_it);
+	if (op->on_create) {
+		raxFreeWithCallback (op->on_create, (void(*)(void *))UpdateCtx_Free) ;
+		op->on_create = NULL ;
+		raxStop (&op->on_create_it) ;
 	}
 }
 

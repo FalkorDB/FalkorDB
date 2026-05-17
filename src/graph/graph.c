@@ -24,7 +24,7 @@ extern pthread_t redis_main_thread_id;
 // Synchronization functions
 //------------------------------------------------------------------------------
 
-static void _CreateRWLock
+static void _CreateRWLocks
 (
 	Graph *g
 ) {
@@ -40,21 +40,45 @@ static void _CreateRWLock
 
 	// specify prefer write in lock creation attributes
 	int res = 0 ;
-	UNUSED(res) ;
+	UNUSED (res) ;
 
 	pthread_rwlockattr_t attr ;
-	res = pthread_rwlockattr_init(&attr) ;
-	ASSERT(res == 0) ;
+	res = pthread_rwlockattr_init (&attr) ;
+	ASSERT (res == 0) ;
 
 #ifdef PTHREAD_RWLOCK_PREFER_WRITER_NONRECURSIVE_NP
 	int pref = PTHREAD_RWLOCK_PREFER_WRITER_NONRECURSIVE_NP ;
-	res = pthread_rwlockattr_setkind_np(&attr, pref) ;
-	ASSERT(res == 0) ;
+	res = pthread_rwlockattr_setkind_np (&attr, pref) ;
+	ASSERT (res == 0) ;
 #endif
 
-	res = pthread_rwlock_init(&g->_rwlock, &attr);
-	ASSERT(res == 0) ;
+	res = pthread_rwlock_init (&g->_rwlock, &attr) ;
+	ASSERT (res == 0) ;
+
+	res = pthread_rwlock_init (&g->_type_rwlock, &attr) ;
+	ASSERT (res == 0) ;
 }
+
+// acquire types read/write lock for reading
+#define _Graph_ReadLockTypes(g)                                           \
+	do {                                                                  \
+		int res = pthread_rwlock_rdlock (&((Graph*)(g))->_type_rwlock) ;  \
+		ASSERT (res == 0) ;                                               \
+	} while (0)
+
+// acquire types read/write lock for writing
+#define _Graph_WriteLockTypes(g)                                          \
+	do {                                                                  \
+		int res = pthread_rwlock_wrlock (&((Graph*)(g))->_type_rwlock) ;  \
+		ASSERT (res == 0) ;                                               \
+	} while (0)
+
+// release types read/write lock
+#define _Graph_UnLockTypes(g)                                             \
+	do {                                                                  \
+		int res = pthread_rwlock_unlock (&((Graph*)(g))->_type_rwlock) ;  \
+		ASSERT (res == 0) ;                                               \
+	} while (0)
 
 // acquire a lock that does not restrict access from additional reader threads
 void Graph_AcquireReadLock
@@ -150,13 +174,12 @@ static void _Graph_GetEdgesConnectingNodes
 	RelationID r,    // Edge type.
 	Edge **edges     // array_t of edges connecting src to dest of type r
 ) {
-	ASSERT(g);
-	ASSERT(r      != GRAPH_NO_RELATION);
-	ASSERT(r      < Graph_RelationTypeCount(g));
-	ASSERT(srcID  < Graph_NodeCap(g));
-	ASSERT(destID < Graph_NodeCap(g));
+	ASSERT (g) ;
+	ASSERT (r      != GRAPH_NO_RELATION) ;
+	ASSERT (srcID  < Graph_NodeCap (g)) ;
+	ASSERT (destID < Graph_NodeCap (g)) ;
 
-	Tensor R = Graph_GetRelationMatrix(g, r, false);
+	Tensor R = Graph_GetRelationMatrix (g, r, false);
 	Edge e = {.src_id = srcID, .dest_id = destID, .relationID = r};
 	GrB_Index edge_id;
 	TensorIterator it;
@@ -336,10 +359,10 @@ void Graph_ApplyAllPending
 	Delta_Matrix_wait(M, force_flush);
 
 	// sync each label matrix
-	n = arr_len(g->labels);
-	for(int i = 0; i < n; i ++) {
-		M = Graph_GetLabelMatrix(g, i);
-		Delta_Matrix_wait(M, force_flush);
+	n = arr_len (g->labels) ;
+	for (int i = 0 ; i < n ; i ++) {
+		M = Graph_GetLabelMatrix (g, i) ;
+		Delta_Matrix_wait (M, force_flush) ;
 	}
 
 	// sync each relation matrix
@@ -393,13 +416,13 @@ bool Graph_Pending
 	// see if any label matrix contains pending changes
 	//--------------------------------------------------------------------------
 
-	n = arr_len(g->labels);
-	for(int i = 0; i < n; i ++) {
-		M = g->labels[i];
+	n = arr_len (g->labels) ;
+	for (int i = 0 ; i < n ; i ++) {
+		M = g->labels [i] ;
 		info = Delta_Matrix_willWait (M, &pending) ;
-		ASSERT(info == GrB_SUCCESS);
-		if(pending) {
-			return true;
+		ASSERT (info == GrB_SUCCESS) ;
+		if (pending) {
+			return true ;
 		}
 	}
 
@@ -433,30 +456,30 @@ Graph *Graph_New
 	fpDestructor cb = (fpDestructor)AttributeSet_Free;
 	Graph *g = rm_calloc(1, sizeof(Graph));
 
-	g->nodes     = DataBlock_New(node_cap, node_cap, sizeof(AttributeSet), cb);
-	g->edges     = DataBlock_New(edge_cap, edge_cap, sizeof(AttributeSet), cb);
-	g->labels    = arr_new(Delta_Matrix, GRAPH_DEFAULT_LABEL_CAP);
-	g->relations = arr_new(Tensor, GRAPH_DEFAULT_RELATION_TYPE_CAP);
+	g->nodes     = DataBlock_New (node_cap, node_cap, sizeof (AttributeSet), cb) ;
+	g->edges     = DataBlock_New (edge_cap, edge_cap, sizeof (AttributeSet), cb) ;
+	g->labels    = arr_new (Delta_Matrix, 0) ;
+	g->relations = arr_new (Tensor, 0) ;
 
-	GrB_Info info;
-	UNUSED(info);
+	GrB_Info info ;
+	UNUSED (info) ;
 
-	GrB_Index n = Graph_RequiredMatrixDim(g);
-	Delta_Matrix_new(&g->node_labels, GrB_BOOL, n, n, false);
-	Delta_Matrix_new(&g->adjacency_matrix, GrB_BOOL, n, n, true);
-	Delta_Matrix_new(&g->_zero_matrix, GrB_BOOL, n, n, false);
+	GrB_Index n = Graph_RequiredMatrixDim (g) ;
+	Delta_Matrix_new (&g->node_labels, GrB_BOOL, n, n, false) ;
+	Delta_Matrix_new (&g->adjacency_matrix, GrB_BOOL, n, n, true) ;
+	Delta_Matrix_new (&g->_zero_matrix, GrB_BOOL, n, n, false) ;
 
 	// init graph statistics
-	GraphStatistics_init(&g->stats);
+	GraphStatistics_init (&g->stats) ;
 
 	// initialize a read-write lock scoped to the individual graph
-	_CreateRWLock(g);
-	g->_writelocked = false;
+	_CreateRWLocks (g) ;
+	g->_writelocked = false ;
 
 	// force GraphBLAS updates and resize matrices to node count by default
-	g->SynchronizeMatrix = _MatrixSynchronize;
+	g->SynchronizeMatrix = _MatrixSynchronize ;
 
-	return g;
+	return g ;
 }
 
 // get outgoing edges of node 'n'
@@ -552,11 +575,17 @@ LabelID Graph_AddLabel
 	size_t n = Graph_RequiredMatrixDim (g) ;
 	Delta_Matrix_new (&m, GrB_BOOL, n, n, false) ;
 
-	arr_append (g->labels, m) ;
-	// adding a new label, update the stats structures to support it
-	GraphStatistics_IntroduceLabel (&g->stats) ;
+	LabelID l ;
 
-	LabelID l = Graph_LabelTypeCount (g) - 1 ;
+	_Graph_WriteLockTypes (g) ;
+		arr_append (g->labels, m) ;
+
+		// adding a new label, update the stats structures to support it
+		GraphStatistics_IntroduceLabel (&g->stats) ;
+
+		l = arr_len (g->labels) - 1 ;
+	_Graph_UnLockTypes (g) ;
+
 	return l ;
 }
 
@@ -566,18 +595,24 @@ void Graph_RemoveLabel
 	Graph *g,
 	LabelID label_id
 ) {
-	ASSERT(g != NULL);
-	ASSERT(label_id == Graph_LabelTypeCount(g) - 1);
+	ASSERT (g != NULL) ;
+	ASSERT (label_id == Graph_LabelTypeCount (g) - 1) ;
+
+	Delta_Matrix L ;
+
+	_Graph_WriteLockTypes (g) ;
+		L = g->labels [label_id] ;
+		g->labels = arr_del (g->labels, label_id) ;
+	_Graph_UnLockTypes (g) ;
 
 	#ifdef RG_DEBUG
-	GrB_Index nvals;
-	GrB_Info info = Delta_Matrix_nvals(&nvals, g->labels[label_id]);
-	ASSERT(info == GrB_SUCCESS);
-	ASSERT(nvals == 0);
+	GrB_Index nvals ;
+	GrB_Info info = Delta_Matrix_nvals (&nvals, L) ;
+	ASSERT (info == GrB_SUCCESS) ;
+	ASSERT (nvals == 0) ;
 	#endif
 
-	Delta_Matrix_free(&g->labels[label_id]);
-	g->labels = arr_del(g->labels, label_id);
+	Delta_Matrix_free (&L) ;
 }
 
 // creates a new relation matrix, returns id given to relation
@@ -587,16 +622,22 @@ RelationID Graph_AddRelationType
 ) {
 	ASSERT(g);
 
-	size_t n = Graph_RequiredMatrixDim(g);
+	size_t n = Graph_RequiredMatrixDim (g) ;
+	Tensor R = Tensor_new (n, n) ;
 
-	Tensor R = Tensor_new(n, n);
-	arr_append(g->relations, R);
+	RelationID relationID ;
 
-	// adding a new relationship type, update the stats structures to support it
-	GraphStatistics_IntroduceRelationship(&g->stats);
+	_Graph_WriteLockTypes (g) ;
+		arr_append (g->relations, R) ;
 
-	RelationID relationID = Graph_RelationTypeCount(g) - 1;
-	return relationID;
+		// adding a new relationship type
+		// update the stats structures to support it
+		GraphStatistics_IntroduceRelationship (&g->stats) ;
+
+		relationID = arr_len (g->relations) - 1 ;
+	_Graph_UnLockTypes (g) ;
+
+	return relationID ;
 }
 
 // removes a relation from the graph
@@ -605,20 +646,24 @@ void Graph_RemoveRelation
 	Graph *g,
 	RelationID relation_id
 ) {
-	ASSERT(g != NULL);
-	ASSERT(relation_id == Graph_RelationTypeCount(g) - 1);
+	ASSERT (g != NULL) ;
+	ASSERT (relation_id == Graph_RelationTypeCount (g) - 1) ;
 
-	Tensor R = g->relations[relation_id];
+	Tensor R ;
+
+	_Graph_WriteLockTypes (g) ;
+		R = g->relations [relation_id] ;
+		g->relations = arr_del (g->relations, relation_id) ;
+	_Graph_UnLockTypes (g) ;
 
 	#ifdef RG_DEBUG
-	GrB_Index nvals;
-	GrB_Info info = Delta_Matrix_nvals(&nvals, R);
-	ASSERT(info == GrB_SUCCESS);
-	ASSERT(nvals == 0);
+	GrB_Index nvals ;
+	GrB_Info info = Delta_Matrix_nvals (&nvals, R) ;
+	ASSERT (info == GrB_SUCCESS) ;
+	ASSERT (nvals == 0) ;
 	#endif
 
-	Tensor_free(&R);
-	g->relations = arr_del(g->relations, relation_id);
+	Tensor_free (&R) ;
 }
 
 // make sure graph can hold an additional N nodes
@@ -768,29 +813,29 @@ void Graph_LabelNode
 	uint lbl_count  // number of labels
 ) {
 	// validations
-	ASSERT(g != NULL);
-	ASSERT(lbls != NULL);
-	ASSERT(lbl_count > 0);
-	ASSERT(id != INVALID_ENTITY_ID);
+	ASSERT (g         != NULL) ;
+	ASSERT (id        != INVALID_ENTITY_ID) ;
+	ASSERT (lbls      != NULL) ;
+	ASSERT (lbl_count > 0) ;
 
-	GrB_Info info;
-	UNUSED(info);
+	GrB_Info info ;
+	UNUSED (info) ;
 
-	Delta_Matrix nl = Graph_GetNodeLabelMatrix(g);
-	for(uint i = 0; i < lbl_count; i++) {
-		LabelID l = lbls[i];
-		Delta_Matrix L = Graph_GetLabelMatrix(g, l);
+	Delta_Matrix nl = Graph_GetNodeLabelMatrix (g) ;
+	for (uint i = 0; i < lbl_count; i++) {
+		LabelID l = lbls [i] ;
+		Delta_Matrix L = Graph_GetLabelMatrix (g, l) ;
 
 		// set matrix at position [id, id]
-		info = Delta_Matrix_setElement_BOOL(L, id, id);
-		ASSERT(info == GrB_SUCCESS);
+		info = Delta_Matrix_setElement_BOOL (L, id, id) ;
+		ASSERT (info == GrB_SUCCESS) ;
 
 		// map this label in this node's set of labels
-		info = Delta_Matrix_setElement_BOOL(nl, id, l);
-		ASSERT(info == GrB_SUCCESS);
+		info = Delta_Matrix_setElement_BOOL (nl, id, l) ;
+		ASSERT (info == GrB_SUCCESS) ;
 
 		// update labels statistics
-		GraphStatistics_IncNodeCount(&g->stats, l, 1);
+		GraphStatistics_IncNodeCount (&g->stats, l, 1) ;
 	}
 }
 
@@ -1188,7 +1233,11 @@ int Graph_RelationTypeCount
 (
 	const Graph *g
 ) {
-	return arr_len(g->relations);
+	_Graph_ReadLockTypes (g) ;
+		int count = arr_len (g->relations) ;
+	_Graph_UnLockTypes (g) ;
+
+	return count ;
 }
 
 // returns number of different node types
@@ -1196,7 +1245,11 @@ int Graph_LabelTypeCount
 (
 	const Graph *g
 ) {
-	return arr_len(g->labels);
+	_Graph_ReadLockTypes (g) ;
+		int count = arr_len (g->labels) ;
+	_Graph_UnLockTypes (g) ;
+
+	return count ;
 }
 
 // returns true if relationship matrix 'r' contains multi-edge entries,
@@ -1309,11 +1362,11 @@ bool Graph_LookupEdgeRelationID
 	ASSERT(g    != NULL);
 	ASSERT(edge != NULL);
 	ASSERT((rels && n_rels > 0) || (rels == NULL && n_rels == 0));
-	
+
 	GrB_Info info;
 
 	uint64_t  x      = 0;
-	Tensor    R      = NULL; 
+	Tensor    R      = NULL;
 	EntityID  id     = ENTITY_GET_ID(edge);
 	bool      found  = false;
 	GrB_Index srcID  = Edge_GetSrcNodeID(edge);
@@ -1528,20 +1581,25 @@ Delta_Matrix Graph_GetAdjacencyMatrix
 // matrix is resized if its size doesn't match graph's node count
 Delta_Matrix Graph_GetLabelMatrix
 (
-	const Graph *g,
-	LabelID label_idx
+	const Graph *g,  // graph from which to get adjacency matrix
+	LabelID label    // label described by matrix
 ) {
-	ASSERT(g != NULL);
-	ASSERT(label_idx < Graph_LabelTypeCount(g));
+	ASSERT (g != NULL) ;
+	ASSERT (label < Graph_LabelTypeCount (g)) ;
 
-	// return zero matrix if label_idx is out of range
-	if(label_idx < 0) return Graph_GetZeroMatrix(g);
+	// return zero matrix if label is out of range
+	if (label < 0) {
+		return Graph_GetZeroMatrix (g) ;
+	}
 
-	Delta_Matrix m = g->labels[label_idx];
-	size_t n = Graph_RequiredMatrixDim(g);
-	g->SynchronizeMatrix(g, m, n, n);
+	_Graph_ReadLockTypes (g) ;
+		Delta_Matrix L = g->labels [label] ;
+	_Graph_UnLockTypes (g) ;
 
-	return m;
+	size_t n = Graph_RequiredMatrixDim (g) ;
+	g->SynchronizeMatrix (g, L, n, n) ;
+
+	return L ;
 }
 
 // retrieves a typed adjacency matrix
@@ -1552,24 +1610,28 @@ Tensor Graph_GetRelationMatrix
 	RelationID relation_idx,  // relation described by matrix
 	bool transposed           // transposed
 ) {
-	ASSERT(g);
-	ASSERT(relation_idx == GRAPH_NO_RELATION ||
-		   relation_idx < Graph_RelationTypeCount(g));
+	ASSERT (g) ;
+	ASSERT (relation_idx == GRAPH_NO_RELATION ||
+		   relation_idx < Graph_RelationTypeCount (g)) ;
 
-	Tensor m = GrB_NULL;
+	Tensor M = GrB_NULL ;
 
-	if(relation_idx == GRAPH_NO_RELATION) {
-		m = g->adjacency_matrix;
+	if (relation_idx == GRAPH_NO_RELATION) {
+		M = g->adjacency_matrix ;
 	} else {
-		m = g->relations[relation_idx];
+		_Graph_ReadLockTypes (g) ;
+			M = g->relations [relation_idx] ;
+		_Graph_UnLockTypes (g) ;
 	}
 
-	size_t n = Graph_RequiredMatrixDim(g);
-	g->SynchronizeMatrix(g, m, n, n);
+	size_t n = Graph_RequiredMatrixDim (g) ;
+	g->SynchronizeMatrix (g, M, n, n) ;
 
-	if(transposed) m = Delta_Matrix_getTranspose(m);
+	if (transposed) {
+		M = Delta_Matrix_getTranspose (M) ;
+	}
 
-	return m;
+	return M ;
 }
 
 // retrieves the node-label mapping matrix,
@@ -1706,6 +1768,9 @@ static void _Graph_Free
 	res = pthread_rwlock_destroy (&g->_rwlock) ;
 	ASSERT (res == 0) ;
 
+	res = pthread_rwlock_destroy (&g->_type_rwlock) ;
+	ASSERT (res == 0) ;
+
 	rm_free (g) ;
 }
 
@@ -1785,6 +1850,6 @@ void Graph_Free
 (
 	Graph *g
 ) {
-	_Graph_Free(g, true);
+	_Graph_Free (g, true) ;
 }
 

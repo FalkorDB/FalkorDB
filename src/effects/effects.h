@@ -8,7 +8,7 @@
 
 #include "../graph/graphcontext.h"
 
-#define EFFECTS_VERSION 1  // current effects encoding/decoding version
+#define EFFECTS_VERSION 2  // current effects encoding/decoding version
 
 // EffectsBuffer is an opaque data structure
 typedef struct _EffectsBuffer EffectsBuffer;
@@ -121,22 +121,20 @@ void EffectsBuffer_AddEntityUpdateAttributeEffect
 	GraphEntityType entity_type  // entity type
 );
 
-// add a node add label effect to buffer
+// records a SET_LABELS effect into the buffer:
+// writes the effect type followed by the serialized node vector
 void EffectsBuffer_AddLabelsEffect
 (
-	EffectsBuffer *buff,     // effect buffer
-	const Node *node,        // updated node
-	const LabelID *lbl_ids,  // added labels
-	size_t lbl_count         // number of removed labels
+	EffectsBuffer *buff,  // effect buffer to write into
+	GrB_Vector nodes      // nodes that received the label
 );
 
-// add a node remove label effect to buffer
+// records a REMOVE_LABELS effect into the buffer:
+// writes the effect type followed by the serialized node vector
 void EffectsBuffer_AddRemoveLabelsEffect
 (
-	EffectsBuffer *buff,     // effect buffer
-	const Node *node,        // updated node
-	const LabelID *lbl_ids,  // removed labels
-	size_t lbl_count         // number of removed labels
+	EffectsBuffer *buff,  // effect buffer to write into
+	GrB_Vector     nodes  // nodes that lost the label
 );
 
 // add a schema addition effect to buffer

@@ -67,22 +67,19 @@ static void _fake_graph_context() {
 
 	gc->g = Graph_New(16, 16);
 
-	gc->ref_count        = 1;
-	gc->index_count      = 0;
-	gc->graph_name       = strdup("G");
-	gc->attributes       = raxNew();
-	gc->string_mapping   = (char**)arr_new(char*, 64);
-	gc->node_schemas     = (Schema**)arr_new(Schema*, GRAPH_DEFAULT_LABEL_CAP);
-	gc->relation_schemas = (Schema**)arr_new(Schema*, GRAPH_DEFAULT_RELATION_TYPE_CAP);
-	gc->queries_log      = QueriesLog_New();
+	gc->ref_count        = 1 ;
+	gc->index_count      = 0 ;
+	gc->graph_name       = strdup ("G") ;
+	gc->attributes       = NULL ;
+	gc->node_schemas     = (Schema**)arr_new (Schema*, 0) ;
+	gc->relation_schemas = (Schema**)arr_new (Schema*, 0) ;
+	gc->queries_log      = QueriesLog_New () ;
 
-	pthread_rwlock_init(&gc->_schema_rwlock,  NULL);
-
-	GraphContext_AddSchema(gc, "Person", SCHEMA_NODE);
-	GraphContext_AddSchema(gc, "City", SCHEMA_NODE);
-	GraphContext_AddSchema(gc, "friend", SCHEMA_EDGE);
-	GraphContext_AddSchema(gc, "visit", SCHEMA_EDGE);
-	GraphContext_AddSchema(gc, "war", SCHEMA_EDGE);
+	GraphContext_AddSchema (gc, "Person", SCHEMA_NODE) ;
+	GraphContext_AddSchema (gc, "City",   SCHEMA_NODE) ;
+	GraphContext_AddSchema (gc, "friend", SCHEMA_EDGE) ;
+	GraphContext_AddSchema (gc, "visit",  SCHEMA_EDGE) ;
+	GraphContext_AddSchema (gc, "war",    SCHEMA_EDGE) ;
 
 	TEST_ASSERT(QueryCtx_Init());
 	QueryCtx_SetGraphCtx(gc);

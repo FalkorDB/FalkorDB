@@ -279,14 +279,15 @@ Graph *QueryCtx_GetGraph (void) {
 }
 
 // retrieve undo log
-UndoLog QueryCtx_GetUndoLog(void) {
-	QueryCtx *ctx = _QueryCtx_GetCtx();
-	ASSERT(ctx != NULL);
+UndoLog QueryCtx_GetUndoLog (void) {
+	QueryCtx *ctx = _QueryCtx_GetCtx () ;
+	ASSERT (ctx != NULL) ;
 	
-	if(ctx->undo_log == NULL) {
-		ctx->undo_log = UndoLog_New();
+	if (ctx->undo_log == NULL) {
+		ctx->undo_log = UndoLog_New () ;
 	}
-	return ctx->undo_log;
+
+	return ctx->undo_log ;
 }
 
 // rollback the current command
@@ -300,8 +301,7 @@ void QueryCtx_Rollback (void) {
 		return ;
 	}
 	
-	UndoLog_Rollback (ctx->undo_log, ctx->gc) ;
-	ctx->undo_log = NULL ;
+	UndoLog_Rollback (&ctx->undo_log) ;
 }
 
 // retrieve effects-buffer
@@ -343,6 +343,17 @@ ResultSetStatistics *QueryCtx_GetResultSetStatistics(void) {
 	ResultSet            *result_set  =  QueryCtx_GetResultSet();
 	if(result_set) stats = &result_set->stats;
 	return stats;
+}
+
+// retrive the query execution type
+QueryExecutionTypeFlag QueryCtx_GetExecutionType (void) {
+	QueryCtx *ctx = _QueryCtx_GetCtx () ;
+
+	if (ctx == NULL) {
+		return QueryExecutionTypeFlag_READ ;
+	}
+
+	return ctx->flags ;
 }
 
 // print the current query
@@ -517,16 +528,25 @@ void QueryCtx_ReleaseLock (void) {
 	// 2. close key
 	// 3. unlock GIL
 
-	// release graph lock
-	Graph_ReleaseLock (QueryCtx_GetGraph ()) ;
-
 	// release WRITE lock
 	if (ctx->internal_exec_ctx.write_locked == true) {
+		// commit pendding schema changes
+		GraphContext_CommitPendings (ctx->gc) ;
+
+		// release graph lock
+		Graph_ReleaseLock (QueryCtx_GetGraph ()) ;
+
 		// close Key
 		RedisModule_CloseKey (ctx->internal_exec_ctx.key) ;
 
 		// unlock GIL
 		_QueryCtx_ThreadSafeContextUnlock (ctx) ;
+	}
+	
+	// release READ lock
+	else {
+		// release graph lock
+		Graph_ReleaseLock (QueryCtx_GetGraph ()) ;
 	}
 
 	ctx->internal_exec_ctx.read_locked  = false ;
@@ -566,13 +586,12 @@ uint64_t QueryCtx_GetReceivedTS (void) {
 }
 
 // free the allocations within the QueryCtx and reset it for the next query
-void QueryCtx_Free(void) {
+void QueryCtx_Free (void) {
 	QueryCtx *ctx = _QueryCtx_GetCtx () ;
 	ASSERT (ctx != NULL) ;
 
 	if (ctx->undo_log) {
-		UndoLog_Free (ctx->undo_log) ;
-		ctx->undo_log = NULL ;
+		UndoLog_Free (&ctx->undo_log) ;
 	}
 
 	EffectsBuffer_Free (ctx->effects_buffer) ;

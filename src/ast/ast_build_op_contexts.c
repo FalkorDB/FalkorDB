@@ -148,7 +148,7 @@ static void _ConvertUpdateItem
 
 	// see if we need to create an update context for updated entity
 	int len = strlen(alias);
-	EntityUpdateEvalCtx *ctx = raxFind(updates, (unsigned char *)alias, len);
+	EntityUpdateDesc *ctx = raxFind(updates, (unsigned char *)alias, len);
 	if(ctx == raxNotFound) {
 		ctx = UpdateCtx_New(alias);
 		raxInsert(updates, (unsigned char *)alias, len, ctx, NULL);
@@ -247,7 +247,7 @@ static void _ConvertUpdateItem
 			exp = AR_EXP_NewConstOperandNode (SI_NullVal ()) ;
 		}
 
-		PropertySetCtx update = {
+		PropertySetDesc update = {
 			.exp       = exp,
 			.mode      = update_mode,
 			.attr_id   = ATTRIBUTE_ID_NONE,
@@ -433,32 +433,68 @@ AST_MergeContext AST_PrepareMergeOp
 // UPDATE operation
 //------------------------------------------------------------------------------
 
+// returns a dict mapping each entity to its set of update expressions
+//
+// e.g.
+// SET n.v = $v, n.x = $v/2, m.z = 'z'
+//
+// will return:
+//
+// {'n': [$v, $v/2],
+//  'm': ['z']
+// }
 rax *AST_PrepareUpdateOp
 (
 	GraphContext *gc,
 	const cypher_astnode_t *clause
 ) {
-	cypher_astnode_type_t type = cypher_astnode_type(clause);
-	ASSERT(type == CYPHER_AST_SET || type == CYPHER_AST_REMOVE);
+	ASSERT (gc     != NULL) ;
+	ASSERT (clause != NULL) ;
 
-	rax *updates = raxNew(); // entity alias -> EntityUpdateEvalCtx
-	if(type == CYPHER_AST_SET) {
-		uint nitems = cypher_ast_set_nitems(clause);
-		for(uint i = 0; i < nitems; i++) {
+	cypher_astnode_type_t type = cypher_astnode_type (clause) ;
+	ASSERT (type == CYPHER_AST_SET || type == CYPHER_AST_REMOVE) ;
+
+	rax *updates = raxNew () ; // entity alias -> EntityUpdateDesc
+	if (type == CYPHER_AST_SET) {
+		uint nitems = cypher_ast_set_nitems (clause) ;
+		for (uint i = 0; i < nitems; i++) {
 			const cypher_astnode_t *set_item =
-				cypher_ast_set_get_item(clause, i);
-			_ConvertUpdateItem(gc, updates, set_item);
+				cypher_ast_set_get_item (clause, i) ;
+			_ConvertUpdateItem (gc, updates, set_item) ;
 		}
+
+		// clean up redundant expressions
+		// following last write wins
+		//
+		// e.g.
+		// SET n.v = 1, n.v = 2
+		//
+		// should result in a single expression n.v = 2
+		//
+		// similarly
+		// SET n.v = 1, n.v = 2, n = m, n.v = 3
+		//
+		// should result in a two expressions
+		// n = m and n.v = 3
+
+		raxIterator it ;
+		raxStart (&it, updates) ;
+		raxSeek  (&it, "^", NULL, 0) ;
+		while (raxNext (&it)) {
+			EntityUpdateDesc *desc = it.data ;
+			UpdateCtx_RemoveRedundancies (desc) ;
+		}
+		raxStop (&it) ;
 	} else {
-		uint nitems = cypher_ast_remove_nitems(clause);
-		for(uint i = 0; i < nitems; i++) {
+		uint nitems = cypher_ast_remove_nitems (clause) ;
+		for (uint i = 0; i < nitems; i++) {
 			const cypher_astnode_t *remove_item =
 				cypher_ast_remove_get_item(clause, i);
-			_ConvertUpdateItem(gc, updates, remove_item);
+			_ConvertUpdateItem (gc, updates, remove_item) ;
 		}
 	}
 
-	return updates;
+	return updates ;
 }
 
 //------------------------------------------------------------------------------

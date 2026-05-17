@@ -130,7 +130,7 @@ PropertyMap *PropertyMap_New
 			// new entry
 			arr_append (m->keys, attr) ;
 			arr_append (m->values, exp) ;
-			//array_append (m->attr_ids, GraphContext_GetAttributeID (gc, attr)) ;
+			//arr_append (m->attr_ids, GraphContext_GetAttributeID (gc, attr)) ;
 
 			// NOTE: might introduce a change to the graph schema!
 			arr_append (m->attr_ids,
@@ -212,32 +212,32 @@ EdgeCreateCtx EdgeCreateCtx_Clone
 	return clone ;
 }
 
-EntityUpdateEvalCtx *UpdateCtx_New
+EntityUpdateDesc *UpdateCtx_New
 (
 	const char *alias
 ) {
-	EntityUpdateEvalCtx *ctx = rm_malloc(sizeof(EntityUpdateEvalCtx));
+	EntityUpdateDesc *ctx = rm_malloc(sizeof(EntityUpdateDesc));
 
 	ctx->alias         = alias;
 	ctx->record_idx    = INVALID_INDEX;
-	ctx->properties    = arr_new(PropertySetCtx, 1);
+	ctx->properties    = arr_new(PropertySetDesc, 1);
 	ctx->add_labels    = NULL;
 	ctx->remove_labels = NULL;
 
 	return ctx;
 }
 
-EntityUpdateEvalCtx *UpdateCtx_Clone
+EntityUpdateDesc *UpdateCtx_Clone
 (
-	const EntityUpdateEvalCtx *orig
+	const EntityUpdateDesc *orig
 ) {
-	EntityUpdateEvalCtx *clone = rm_malloc(sizeof(EntityUpdateEvalCtx));
+	EntityUpdateDesc *clone = rm_malloc(sizeof(EntityUpdateDesc));
 
 	uint count = arr_len(orig->properties);
 
 	clone->alias         = orig->alias;
 	clone->record_idx    = orig->record_idx;
-	clone->properties    = arr_new(PropertySetCtx, count);
+	clone->properties    = arr_new(PropertySetDesc, count);
 	clone->add_labels    = NULL;
 	clone->remove_labels = NULL;
 	if(orig->add_labels != NULL) {
@@ -248,7 +248,7 @@ EntityUpdateEvalCtx *UpdateCtx_Clone
 	}
 
 	for(uint i = 0; i < count; i ++) {
-		PropertySetCtx update = {
+		PropertySetDesc update = {
 			.exp       = AR_EXP_Clone(orig->properties[i].exp),
 			.mode      = orig->properties[i].mode,
 			.attr_id   = orig->properties[i].attr_id,
@@ -262,16 +262,105 @@ EntityUpdateEvalCtx *UpdateCtx_Clone
 
 void UpdateCtx_Clear
 (
-	EntityUpdateEvalCtx *ctx
+	EntityUpdateDesc *ctx
 ) {
-	uint count = arr_len(ctx->properties);
-	for(uint i = 0; i < count; i ++) AR_EXP_Free(ctx->properties[i].exp);
-	arr_clear(ctx->properties);
+	uint count = arr_len (ctx->properties) ;
+	for (uint i = 0; i < count; i ++) {
+		AR_EXP_Free (ctx->properties [i].exp) ;
+	}
+	arr_clear (ctx->properties) ;
+}
+
+// clean up redundant expressions
+// following last write wins
+//
+// e.g.
+// SET n.v = 1, n.v = 2
+//
+// should result in a single expression n.v = 2
+//
+// similarly
+// SET n.v = 1, n.v = 2, n = m, n.v = 3
+//
+// should result in two expressions
+// n = m and n.v = 3
+void UpdateCtx_RemoveRedundancies
+(
+	EntityUpdateDesc *desc  // update descriptor
+) {
+	ASSERT (desc != NULL) ;
+
+	int16_t prop_count = arr_len (desc->properties) ;
+
+	// remove all expressions leading to an overriding expression
+	//
+	// e.g.
+	// SET n.v = 1, n = m, n = k, n.x = 2
+	//
+	// should result in:
+	// SET n = k, n.x = 2
+	for (int16_t i = prop_count - 1 ; i > 0 ; i--) {
+		PropertySetDesc *prop = desc->properties + i ;
+
+		if (prop->attr_name == NULL && prop->mode == UPDATE_REPLACE) {
+
+			// remove previous expressions
+			for (int16_t j = 0; j < i; j ++) {
+				AR_EXP_Free (desc->properties [j].exp) ;
+			}
+
+			// compute new array length
+			size_t remaining = prop_count - i ;
+
+			// override elements
+			memmove (desc->properties, desc->properties + i,
+					sizeof (PropertySetDesc) * remaining) ;
+
+			// update properties array pointer
+			desc->properties = arr_trimm_cap (desc->properties, remaining) ;
+
+			// done, we're not going to find additional n = x type expressions
+			break ;
+		}
+	}
+
+	prop_count = arr_len (desc->properties) ;
+
+	//--------------------------------------------------------------------------
+	// remove duplicates
+	//--------------------------------------------------------------------------
+
+	// SET n.v = 2, n.v = 3
+	// should become
+	// SET n.v = 3
+
+	for (int16_t i = prop_count - 1 ; i > 0 ; i--) {
+		PropertySetDesc *prop = desc->properties + i ;
+
+		// skip updates of type n = m and n += m
+		if (prop->attr_name == NULL) {
+			continue ;
+		}
+
+		// search for duplicate expressions
+		for (int16_t j = i - 1 ; j >= 0 ; j--) {
+			PropertySetDesc *prev = desc->properties + j ;
+			if (prev->attr_name != NULL &&
+				strcmp (prev->attr_name, prop->attr_name) == 0) {
+
+				AR_EXP_Free (prev->exp) ;
+				desc->properties = arr_del (desc->properties, j) ;
+
+				// reset
+				break ;
+			}
+		}
+	}
 }
 
 void UpdateCtx_Free
 (
-	EntityUpdateEvalCtx *ctx
+	EntityUpdateDesc *ctx
 ) {
 	uint count = arr_len(ctx->properties);
 	for(uint i = 0; i < count; i ++) {
@@ -372,7 +461,8 @@ static void _collect_with_projections
 	}
 }
 
-static void _collect_call_projections(
+static void _collect_call_projections
+(
 	const cypher_astnode_t *call_clause,
 	rax *identifiers
 ) {
@@ -492,3 +582,4 @@ void collect_aliases_in_scope
 		}
 	}
 }
+
