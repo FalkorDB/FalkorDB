@@ -262,8 +262,12 @@ void buildMatchOpTree
 		_ExecutionPlan_ProcessQueryGraph (plan, optional, sub_qg, ast) ;
 
 	if (stream == NULL || ErrorCtx_EncounteredError ()) {
+		if (ErrorCtx_EncounteredError () && stream != NULL) {
+			ExecutionPlan_FreeBranch (&stream) ;
+		}
 		goto cleanup ;
 	}
+
 	ASSERT (stream->parent == NULL) ;
 
 	OpBase *op = stream ;

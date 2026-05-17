@@ -272,6 +272,25 @@ void ExecutionPlan_DetachOp
 	_OpBase_RemoveChild(op->parent, op);
 }
 
+// free every operation reachable from `root` including `root`
+void ExecutionPlan_FreeBranch
+(
+	OpBase **root  // root of branch to free
+) {
+	if (root == NULL || *root == NULL) {
+		return ;
+	}
+
+	uint n = OpBase_ChildCount (*root) ;
+	for (uint i = 0 ; i < n ; i++) {
+		OpBase *child = OpBase_GetChild (*root, i) ;
+		ExecutionPlan_FreeBranch (&child) ;
+	}
+
+	OpBase_Free (*root) ;
+	*root = NULL ;
+}
+
 static void _ExecutionPlan_BindOpsToPlan
 (
 	ExecutionPlan *plan,  // plan to bind the operations to
