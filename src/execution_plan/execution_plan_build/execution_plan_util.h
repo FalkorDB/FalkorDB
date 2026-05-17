@@ -103,6 +103,19 @@ OpBase **ExecutionPlan_CollectOps
     OPType type
 );
 
+// performs a DFS traversal of the execution plan rooted at `root`,
+// collecting all leaf operations — those with no children
+// these are called "taps" because they are the entry points where
+// data flows into the plan (e.g. scan operations)
+//
+// returns a heap-allocated array of leaf OpBase pointers (may be empty),
+// or NULL if `root` is NULL
+// the caller is responsible for freeing the returned array via arr_free()
+OpBase **ExecutionPlan_CollectTaps
+(
+	OpBase *root  // root of the execution plan subtree to scan
+) ;
+
 // fills `ops` with all operations from `op` an upward (towards parent) in the
 // execution plan
 // returns the amount of ops collected

@@ -257,9 +257,9 @@ OpBase *ExecutionPlan_BuildOpsFromPath
 		cypher_ast_match_get_pattern (match_clauses [0]) ;
 
 	arr_free (match_clauses) ;
-	QueryGraph *sub_qg =
+
+	match_stream_plan->query_graph =
 		QueryGraph_ExtractPatterns (plan->query_graph, &pattern, 1) ;
-	match_stream_plan->query_graph = sub_qg ;
 
 	ExecutionPlan_PopulateExecutionPlan (match_stream_plan) ;
 
@@ -269,20 +269,13 @@ OpBase *ExecutionPlan_BuildOpsFromPath
 	// associate all new ops with the correct ExecutionPlan and QueryGraph
 	OpBase *match_stream_root = match_stream_plan->root ;
 
-	// in case the match stream is just arg
-	// we can discard the entire match stream
-	if (arg != NULL && arg == match_stream_root) {
-		// NULL-set map shared between the match_stream_plan and the overall plan
-		match_stream_plan->record_map = NULL ;
-
-		// free the temporary plan
-		ExecutionPlan_Free (match_stream_plan) ;
-
-		return NULL ;
+	if (match_stream_root == NULL) {
+		goto cleanup ;
 	}
 
 	ExecutionPlan_BindOpsToPlan (plan, match_stream_root) ;
 
+cleanup:
 	// NULL-set map shared between the match_stream_plan and the overall plan
 	match_stream_plan->record_map = NULL ;
 
@@ -303,7 +296,7 @@ void ExecutionPlanSegment_ConvertClause
 	// because 't' is set using the offsetof() call
 	// it cannot be used in switch statements
 	if(t == CYPHER_AST_MATCH) {
-		buildMatchOpTree(plan, ast, clause);
+		buildMatchOpTree (plan, ast, clause) ;
 	} else if(t == CYPHER_AST_CALL) {
 		buildCallOp(ast, plan, clause);
 	} else if(t == CYPHER_AST_CREATE) {
@@ -311,7 +304,7 @@ void ExecutionPlanSegment_ConvertClause
 	} else if(t == CYPHER_AST_UNWIND) {
 		_buildUnwindOp(plan, clause);
 	} else if(t == CYPHER_AST_MERGE) {
-		buildMergeOp(plan, ast, clause, gc);
+		buildMergeOp (plan, ast, clause, gc) ;
 	} else if(t == CYPHER_AST_SET || t == CYPHER_AST_REMOVE) {
 		_buildUpdateOp(gc, plan, clause);
 	} else if(t == CYPHER_AST_DELETE) {

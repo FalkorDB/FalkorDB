@@ -170,22 +170,27 @@ void ExecutionPlan_UpdateRoot
 	ExecutionPlan *plan,  // plan set root of
 	OpBase *new_root      // new root operation
 ) {
-	ASSERT(plan             != NULL);
-	ASSERT(new_root         != NULL);
-	ASSERT(new_root->parent == NULL);
+	ASSERT (plan             != NULL) ;
+	ASSERT (new_root         != NULL) ;
+	ASSERT (new_root->parent == NULL) ;
 
-	if(plan->root) {
-		ASSERT(new_root != plan->root);
-		ASSERT(plan->root->parent == NULL);
+	if (plan->root) {
+		ASSERT (plan->root->parent == NULL) ;
+
+		if (new_root == plan->root) {
+			return ;
+		}
 
 		// find the deepest child of the new root operation
 		// currently, we can only follow the first child
 		// since we don't call this function when
 		// introducing a multiple-stream operation at this stage
 		// this may be inadequate later
-		OpBase *tail = new_root;
-		ASSERT(tail->childCount <= 1);
-		while(tail->childCount > 0) tail = tail->children[0];
+		OpBase *tail = new_root ;
+		ASSERT (tail->childCount <= 1) ;
+		while (tail->childCount > 0) {
+			tail = tail->children [0] ;
+		}
 
 		// append the old root to the tail of the new root's chain
 		_OpBase_AddChild(tail, plan->root);

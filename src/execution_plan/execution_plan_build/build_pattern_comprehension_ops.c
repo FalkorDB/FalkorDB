@@ -179,7 +179,7 @@ void buildPatternComprehensionOps
 				FilterTree_DeMorgan (&filter_tree) ;
 
 				// place filters
-				ExecutionPlan_PlaceFilterOps (plan, aggregate, filter_tree) ;
+				ExecutionPlan_PlaceFilterOps (plan, match_stream, filter_tree) ;
 
 				// update match stream op
 				match_streams [i] = OpBase_GetChild (aggregate, 0) ;
