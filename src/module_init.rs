@@ -40,7 +40,7 @@ use redis_module::{
     RedisModule_Realloc, RedisModule_SubscribeToServerEvent, RedisModuleCtx, RedisModuleEvent,
     Status,
 };
-use std::{os::raw::c_int, os::raw::c_void, panic};
+use std::{io::Write, os::raw::c_int, os::raw::c_void, panic};
 
 /// Redis event ID for FlushDB event (database flush/clear).
 #[allow(non_upper_case_globals)]
@@ -88,8 +88,30 @@ pub fn graph_init(
 ) -> Status {
     graph::thread_id::set_main_thread();
     panic::set_hook(Box::new(|info| {
-        eprintln!("FalkorDB panic: {info}");
-        eprintln!("Backtrace:\n{}", std::backtrace::Backtrace::force_capture());
+        // Format the panic message + backtrace once, then emit it to:
+        //   1. the Redis log file (via RedisModule_Log), which is the
+        //      artifact uploaded by CI on test failure, so the panic
+        //      details survive even when stderr is not captured;
+        //   2. stderr, for interactive runs and any test harness that
+        //      tees the module process stderr.
+        // `std::process::exit` skips stdio buffer flushes, so we flush
+        // stderr explicitly before exiting.
+        let msg = format!(
+            "FalkorDB panic: {info}\nBacktrace:\n{}",
+            std::backtrace::Backtrace::force_capture()
+        );
+        unsafe {
+            if let Some(log) = graph::index::redisearch::redis::RedisModule_Log {
+                // Strip any internal NUL bytes so CString::new succeeds.
+                let sanitized: String =
+                    msg.chars().map(|c| if c == '\0' { ' ' } else { c }).collect();
+                if let Ok(c_msg) = std::ffi::CString::new(sanitized) {
+                    log(std::ptr::null_mut(), c"warning".as_ptr(), c"%s".as_ptr(), c_msg.as_ptr());
+                }
+            }
+        }
+        let _ = writeln!(std::io::stderr(), "{msg}");
+        let _ = std::io::stderr().flush();
         std::process::exit(1);
     }));
 
