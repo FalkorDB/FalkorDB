@@ -64,7 +64,11 @@ class testSlowLog():
             return
 
         # Issue a long running query, this should replace an existing entry in the slowlog.
-        q = "UNWIND range(0, 1000) AS i UNWIND range(0, 1000) AS j WITH i, j WHERE i > 0 AND j < 500 RETURN SUM(i + j)"
+        # NOTE: the range must be large enough that this query is deterministically
+        # slower than the queries used by populate_slowlog above (UNWIND range(0, 250000))
+        # even under coverage instrumentation, where per-row work is amplified
+        # non-uniformly. See issue: flaky test under coverage-flow.
+        q = "UNWIND range(0, 2500) AS i UNWIND range(0, 2500) AS j WITH i, j WHERE i > 0 AND j < 500 RETURN SUM(i + j)"
 
         self.graph.query(q)
         B = self.graph.slowlog()
