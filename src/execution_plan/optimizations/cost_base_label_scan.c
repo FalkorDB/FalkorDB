@@ -9,6 +9,7 @@
 #include "../ops/op_expand_into.h"
 #include "../ops/op_node_by_label_scan.h"
 #include "../ops/op_conditional_traverse.h"
+#include "../ops/op_cond_var_len_traverse.h"
 #include "../execution_plan_build/execution_plan_util.h"
 #include "../execution_plan_build/execution_plan_modify.h"
 #include "../../arithmetic/algebraic_expression/utils.h"
@@ -297,14 +298,29 @@ static void _costBaseLabelScan
 	}
 
 	OPType t = (parent != NULL) ? OpBase_Type (parent) : OPType_AGGREGATE ;
-	if (t != OPType_CONDITIONAL_TRAVERSE && t != OPType_EXPAND_INTO) {
+	if (t != OPType_CONDITIONAL_TRAVERSE && t != OPType_EXPAND_INTO &&
+		t != OPType_CONDITIONAL_VAR_LEN_TRAVERSE &&
+		t != OPType_CONDITIONAL_VAR_LEN_TRAVERSE_EXPAND_INTO) {
 		// no AE to swap operands on; nothing to do here
 		return ;
 	}
 
-	AlgebraicExpression *ae = (t == OPType_CONDITIONAL_TRAVERSE)
-		? ((OpCondTraverse*) parent)->ae
-		: ((OpExpandInto*)   parent)->ae ;
+	AlgebraicExpression *ae;
+	switch(t) {
+		case OPType_CONDITIONAL_TRAVERSE:
+			ae = ((OpCondTraverse*) parent)->ae;
+			break;
+		case OPType_EXPAND_INTO:
+			ae = ((OpExpandInto*) parent)->ae;
+			break;
+		case OPType_CONDITIONAL_VAR_LEN_TRAVERSE:
+		case OPType_CONDITIONAL_VAR_LEN_TRAVERSE_EXPAND_INTO:
+			ae = ((CondVarLenTraverse*) parent)->ae;
+			break;
+		default:
+			ASSERT(false && "unknown operation type");
+			return;
+	}
 
 	// collect operands from the parent AE
 	uint operand_n = 0 ;
