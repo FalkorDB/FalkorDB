@@ -2,64 +2,6 @@ from common import *
 
 GRAPH_ID = "redundant_ops"
 
-class testRedundantOps(FlowTestsBase):
-    def __init__(self):
-        self.env, self.db = Env()
-        self.graph = self.db.select_graph(GRAPH_ID)
-
-    def tearDown(self):
-        self.graph.delete()
-
-    def test01_redundant_optional_cartesian_product(self):
-        query = "CREATE (:Person {name:'Alice'}), (:Person {name:'Bob'})"
-        self.graph.query(query)
-
-        # both `a` is already matched upon reaching the OPTIONAL MATCH
-        # part of the query, as such that part is redundant and could be removed
-        query = """MATCH (a:Person {name:'Alice'}), (b:Person {name:'Bob'})
-                   OPTIONAL MATCH (a)
-                   RETURN count(*) AS cnt"""
-
-        # validate that OPTIONAL MATCH isn't included in the generated plan
-        plan = self.graph.explain(query)
-        root = plan.structured_plan
-        self.env.assertEquals(root.name, "")
-        root.children[0]
-
-        # validate results
-        res = self.graph.query(query).result_set
-        self.env.assertEquals(res[0][0], 1)
-
-    def test02_redundant_optional_cartesian_product(self):
-        query = "CREATE (:Person {name:'Alice'}), (:Person {name:'Bob'})"
-        self.graph.query(query)
-
-        # both `a` and `b` are already matched upon reaching the OPTIONAL MATCH
-        # part of the query, as such that part is redundant and could be removed
-        query = """MATCH (a:Person {name:'Alice'}), (b:Person {name:'Bob'})
-                   OPTIONAL MATCH (a), (b)
-                   RETURN count(*) AS cnt"""
-
-        # validate that OPTIONAL MATCH isn't included in the generated plan
-        plan = self.graph.explain(query)
-        root = plan.structured_plan
-        self.env.assertEquals(root.name, "")
-        root.children[0]
-
-        # validate results
-        res = self.graph.query(query).result_set
-        self.env.assertEquals(res[0][0], 1)
-
-
-
-
-
-
-
-from common import *
-
-GRAPH_ID = "redundant_ops"
-
 
 class testRedundantOps(FlowTestsBase):
     def __init__(self):
