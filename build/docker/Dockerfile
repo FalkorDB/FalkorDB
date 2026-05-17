@@ -35,7 +35,7 @@ RUN ln -s ${FALKORDB_BIN_PATH} /FalkorDB/build/docker && \
     ln -s ${FALKORDB_DATA_PATH} /data
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends libgomp1 ca-certificates && \
+    apt-get install -y --no-install-recommends libgomp1 ca-certificates bash && \
     apt-get upgrade -y && \
     # Remove packages not needed at runtime to reduce CVE surface
     (apt-get purge -y python3.13 python3.13-minimal libpython3.13-minimal libpython3.13-stdlib || true) && \
