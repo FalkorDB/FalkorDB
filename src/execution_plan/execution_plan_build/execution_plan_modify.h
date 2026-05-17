@@ -67,6 +67,12 @@ void ExecutionPlan_DetachOp
 	OpBase *op
 );
 
+// free every operation reachable from `root` including `root`
+void ExecutionPlan_FreeBranch
+(
+	OpBase **root  // root of branch to free
+);
+
 //------------------------------------------------------------------------------
 //  API for binding ops to plans.
 //------------------------------------------------------------------------------

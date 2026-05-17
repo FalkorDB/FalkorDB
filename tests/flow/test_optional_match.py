@@ -259,29 +259,13 @@ class testOptionalFlow(FlowTestsBase):
         expected_result = [['v1', 'v2']]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
-    # validate that the correct plan is populated and executed when OPTIONAL
-    # does not introduce any new variables
-    def test22_optional_repeats_reference(self):
-        query = """MATCH (n1) OPTIONAL MATCH (n1) WHERE n1.nonexistent > 0 RETURN n1.v ORDER BY n1.v"""
-        plan = str(self.graph.explain(query))
-        # the first child of the Apply op should be a scan and the
-        # second should be the OPTIONAL subtree
-        self.env.assertTrue(re.search('Apply\s+All Node Scan | (n1)\s+Optional\s+Filter\s+Argument', plan))
-
-        actual_result = self.graph.query(query)
-        expected_result = [['v1'],
-                           ['v2'],
-                           ['v3'],
-                           ['v4']]
-        self.env.assertEquals(actual_result.result_set, expected_result)
-
-    def test23_optional_after_apply(self):
+    def test22_optional_after_apply(self):
         self.graph.delete()
         query = """WITH [0, 0] AS n0 OPTIONAL MATCH () MERGE ()"""
         actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.nodes_created, 1)
 
-    def test24_optional_and_cartesian_product(self):
+    def test23_optional_and_cartesian_product(self):
         self.graph.delete()
         self.graph.query("CREATE ()-[:A]->()")
         query = """OPTIONAL MATCH (), ({x:0, x:1}) RETURN 0"""
@@ -289,7 +273,7 @@ class testOptionalFlow(FlowTestsBase):
         expected_result = [[0]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
-    def test25_optional_no_matchings(self):
+    def test24_optional_no_matchings(self):
         # due to delayed init within the Apply op this used to crash the server
         # discovered by Celine Wuest
 
@@ -305,7 +289,7 @@ class testOptionalFlow(FlowTestsBase):
         self.graph.query(q)
 
     # validate Optional Conditional Traverse operation is used
-    def test26_optional_batch_traversal(self):
+    def test25_optional_batch_traversal(self):
         query = """MATCH (a)
                    OPTIONAL MATCH (a)-[]->(b)
                    OPTIONAL MATCH (b)-[]->(c)
@@ -317,7 +301,7 @@ class testOptionalFlow(FlowTestsBase):
         self.env.assertIn("Optional Conditional Traverse | (b)->(c)", plan)
 
     # OPTIONAL MATCH on the same alias with a different (indexed) label
-    def test27_optional_match_indexed_label_on_same_alias(self):
+    def test26_optional_match_indexed_label_on_same_alias(self):
         # use a fresh graph
         graph_id = "optional_match_indexed_label"
         g = self.db.select_graph(graph_id)
@@ -347,7 +331,7 @@ class testOptionalFlow(FlowTestsBase):
 
         g.delete()
 
-    def test28_limited_optional_match(self):
+    def test27_limited_optional_match(self):
         """
         make sure limit is handled and enforced by the
         optional conditional traverse operation

@@ -550,8 +550,10 @@ class testOptimizationsPlan(FlowTestsBase):
 
         # make sure `N` is the first label traversed, even though there are less
         # labels with label `M`
+        # enforcing label `M` is redundant
+        # the planner should discard the second OPTIONAL MATCH
         self.env.assertIn("Node By Label Scan | (n:N)", plan)
-        self.env.assertIn("Conditional Traverse | (n:M)->(n:M)", plan)
+        self.env.assertNotIn("Conditional Traverse | (n:M)->(n:M)", plan)
 
     def test32_remove_redundant_filters(self):
         # test that filter reduction is a run-time optimization

@@ -219,54 +219,70 @@ OpBase *ExecutionPlan_BuildOpsFromPath
 	const cypher_astnode_t *node
 ) {
 	// initialize an ExecutionPlan that shares this plan's Record mapping
-	ExecutionPlan *match_stream_plan = ExecutionPlan_NewEmptyExecutionPlan();
-	match_stream_plan->record_map = plan->record_map;
+	ExecutionPlan *match_stream_plan = ExecutionPlan_NewEmptyExecutionPlan () ;
+	match_stream_plan->record_map = plan->record_map ;
 
 	// if we have bound variables, build an Argument op that represents them
-	if(bound_vars) match_stream_plan->root = NewArgumentOp(match_stream_plan,
-															   bound_vars);
+	OpBase *arg = NULL ;
+	if (bound_vars) {
+		arg = NewArgumentOp (match_stream_plan, bound_vars) ;
+		match_stream_plan->root = arg ;
+	}
 
-	AST *ast = QueryCtx_GetAST();
+	AST *ast = QueryCtx_GetAST () ;
 	// build a temporary AST holding a MATCH clause
-	cypher_astnode_type_t type = cypher_astnode_type(node);
+	cypher_astnode_type_t type = cypher_astnode_type (node) ;
 
 	// the AST node we're building a mock MATCH clause for will be a path
 	// if we're converting a MERGE clause or WHERE filter, and we must build
 	// and later free a CYPHER_AST_PATTERN node to contain it
 	// if instead we're converting an OPTIONAL MATCH, the node is itself a MATCH clause
 	// and we will reuse its CYPHER_AST_PATTERN node rather than building a new one
-	bool node_is_path = (type == CYPHER_AST_PATTERN_PATH || type == CYPHER_AST_NAMED_PATH);
-	AST *match_stream_ast = AST_MockMatchClause(ast, (cypher_astnode_t *)node, node_is_path);
+	bool node_is_path =
+		(type == CYPHER_AST_PATTERN_PATH || type == CYPHER_AST_NAMED_PATH) ;
+
+	AST *match_stream_ast =
+		AST_MockMatchClause (ast, (cypher_astnode_t *)node, node_is_path) ;
 
 	//--------------------------------------------------------------------------
 	// build plan's query graph
 	//--------------------------------------------------------------------------
 
 	// extract pattern from holistic query graph
-	const cypher_astnode_t **match_clauses = AST_GetClauses(match_stream_ast, CYPHER_AST_MATCH);
-	ASSERT(arr_len(match_clauses) == 1);
+	const cypher_astnode_t **match_clauses =
+		AST_GetClauses (match_stream_ast, CYPHER_AST_MATCH) ;
+	ASSERT (arr_len (match_clauses) == 1) ;
 
-	const cypher_astnode_t *pattern = cypher_ast_match_get_pattern(match_clauses[0]);
-	arr_free(match_clauses);
-	QueryGraph *sub_qg = QueryGraph_ExtractPatterns(plan->query_graph, &pattern, 1);
-	match_stream_plan->query_graph = sub_qg;
+	const cypher_astnode_t *pattern =
+		cypher_ast_match_get_pattern (match_clauses [0]) ;
 
-	ExecutionPlan_PopulateExecutionPlan(match_stream_plan);
+	arr_free (match_clauses) ;
 
-	AST_MockFree(match_stream_ast, node_is_path);
-	QueryCtx_SetAST(ast); // reset the AST
+	match_stream_plan->query_graph =
+		QueryGraph_ExtractPatterns (plan->query_graph, &pattern, 1) ;
+
+	ExecutionPlan_PopulateExecutionPlan (match_stream_plan) ;
+
+	AST_MockFree (match_stream_ast, node_is_path) ;
+	QueryCtx_SetAST (ast) ; // reset the AST
 
 	// associate all new ops with the correct ExecutionPlan and QueryGraph
-	OpBase *match_stream_root = match_stream_plan->root;
-	ExecutionPlan_BindOpsToPlan(plan, match_stream_root);
+	OpBase *match_stream_root = match_stream_plan->root ;
 
+	if (match_stream_root == NULL) {
+		goto cleanup ;
+	}
+
+	ExecutionPlan_BindOpsToPlan (plan, match_stream_root) ;
+
+cleanup:
 	// NULL-set map shared between the match_stream_plan and the overall plan
-	match_stream_plan->record_map = NULL;
+	match_stream_plan->record_map = NULL ;
 
 	// free the temporary plan
-	ExecutionPlan_Free(match_stream_plan);
+	ExecutionPlan_Free (match_stream_plan) ;
 
-	return match_stream_root;
+	return match_stream_root ;
 }
 
 void ExecutionPlanSegment_ConvertClause
@@ -280,7 +296,7 @@ void ExecutionPlanSegment_ConvertClause
 	// because 't' is set using the offsetof() call
 	// it cannot be used in switch statements
 	if(t == CYPHER_AST_MATCH) {
-		buildMatchOpTree(plan, ast, clause);
+		buildMatchOpTree (plan, ast, clause) ;
 	} else if(t == CYPHER_AST_CALL) {
 		buildCallOp(ast, plan, clause);
 	} else if(t == CYPHER_AST_CREATE) {
@@ -288,7 +304,7 @@ void ExecutionPlanSegment_ConvertClause
 	} else if(t == CYPHER_AST_UNWIND) {
 		_buildUnwindOp(plan, clause);
 	} else if(t == CYPHER_AST_MERGE) {
-		buildMergeOp(plan, ast, clause, gc);
+		buildMergeOp (plan, ast, clause, gc) ;
 	} else if(t == CYPHER_AST_SET || t == CYPHER_AST_REMOVE) {
 		_buildUpdateOp(gc, plan, clause);
 	} else if(t == CYPHER_AST_DELETE) {
