@@ -1822,9 +1822,9 @@ fn register_maxflow(funcs: &mut Functions) {
                     rel_types[0],
                 ));
             }
-            if g.get_global_attribute_id(&capacity_attr).is_none() {
+            if g.get_relationship_attribute_id(&capacity_attr).is_none() {
                 return Err(String::from(
-                    "algo.maxFlow: 'capacityProperty' does not exists key",
+                    "algo.maxFlow: 'capacityProperty' does not exist",
                 ));
             }
 
@@ -2000,8 +2000,8 @@ fn register_maxflow(funcs: &mut Functions) {
                         edges_out.push(Value::Relationship(
                             Box::new((rel_id, src_n, dst_n)),
                         ));
+                        flows_out.push(Value::Float(v));
                     }
-                    flows_out.push(Value::Float(v));
                 }
 
                 let nodes_out: ThinVec<Value> = used_nodes

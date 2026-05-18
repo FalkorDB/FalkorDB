@@ -1,4 +1,4 @@
-from common import *
+from common import FlowTestsBase, Env
 
 GRAPH_ID = "max_flow"
 
@@ -13,7 +13,9 @@ class testMaxFlow(FlowTestsBase):
         self.graph = self.db.select_graph(GRAPH_ID)
 
     def max_flow(self, sourceNodes, targetNodes, capacityProperty=None,
-                 nodeLabels=[], relationshipTypes=None):
+                 nodeLabels=None, relationshipTypes=None):
+        if nodeLabels is None:
+            nodeLabels = []
         config = {
             'srcs': sourceNodes,
             'snks': targetNodes,
@@ -205,7 +207,7 @@ class testMaxFlow(FlowTestsBase):
     # ------------------------------------------------------------------ #
 
     def test_02_max_flow_empty_graph(self):
-        """Flow on an empty graph should throw an exceptiont."""
+        """Flow on an empty graph should throw an exception."""
         self.graph.query("CREATE (a)-[e:PIPE]->(b) DELETE a,e,b")
 
         try:
