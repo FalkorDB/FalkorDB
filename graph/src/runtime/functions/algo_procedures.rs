@@ -405,6 +405,8 @@ pub fn register(funcs: &mut Functions) {
     register_msf(funcs);
     register_sp_paths(funcs);
     register_ss_paths(funcs);
+    register_harmonic_centrality(funcs);
+    register_maxflow(funcs);
 }
 
 // ── algo.pageRank ───────────────────────────────────────────────────────
@@ -1613,6 +1615,411 @@ fn register_ss_paths(funcs: &mut Functions) {
         fn algo_ss_paths(runtime, args) {
             let config = parse_ss_config(&args)?;
             run_path_algo(runtime, &config)
+        }
+    );
+}
+
+// ── algo.HarmonicCentrality ─────────────────────────────────────────────
+
+fn register_harmonic_centrality(funcs: &mut Functions) {
+    cypher_fn!(funcs, "algo.HarmonicCentrality",
+        args: [Type::Optional(Box::new(Type::Any))],
+        ret: Type::Any,
+        procedure: ["node", "score", "reachable"],
+        fn algo_harmonic_centrality(runtime, args) {
+            use crate::runtime::orderset::OrderSet;
+
+            let config = parse_config(&args)?;
+            if !config.is_empty() {
+                validate_config_map(&config, &["nodeLabels", "relationshipTypes"])?;
+            }
+            let node_labels = extract_node_labels(&config)?;
+            let rel_types = extract_rel_types(&config)?;
+
+            let g = runtime.g.borrow();
+            for rt in &rel_types {
+                if g.get_type_id(rt).is_none() {
+                    return Err(format!("Relationship type '{rt}' does not exist"));
+                }
+            }
+
+            if g.node_count() == 0 {
+                return Ok(Value::List(Arc::new(thin_vec![])));
+            }
+
+            let nodes_in_set: Vec<u64> = if node_labels.is_empty() {
+                let mut v: Vec<u64> = active_node_set(&g).into_iter().collect();
+                v.sort_unstable();
+                v
+            } else {
+                collect_node_ids(&g, &node_labels)
+            };
+
+            if nodes_in_set.is_empty() {
+                return Ok(Value::List(Arc::new(thin_vec![])));
+            }
+
+            let node_set: std::collections::HashSet<u64> =
+                nodes_in_set.iter().copied().collect();
+
+            let empty_label_set: OrderSet<Arc<String>> = OrderSet::default();
+            let mut adj: std::collections::HashMap<u64, Vec<u64>> =
+                std::collections::HashMap::with_capacity(nodes_in_set.len());
+            for (src, dst) in g.get_relationships(
+                &rel_types, &empty_label_set, &empty_label_set, None, None,
+            ) {
+                let s = u64::from(src);
+                let d = u64::from(dst);
+                if node_set.contains(&s) && node_set.contains(&d) && s != d {
+                    adj.entry(s).or_default().push(d);
+                }
+            }
+
+            let mut results: ThinVec<Value> = thin_vec![];
+            let mut dist: std::collections::HashMap<u64, u64> =
+                std::collections::HashMap::new();
+            let mut queue: std::collections::VecDeque<u64> =
+                std::collections::VecDeque::new();
+            for &start in &nodes_in_set {
+                dist.clear();
+                queue.clear();
+                dist.insert(start, 0);
+                queue.push_back(start);
+                let mut score: f64 = 0.0;
+                let mut reachable: i64 = 0;
+                while let Some(u) = queue.pop_front() {
+                    let du = dist[&u];
+                    if let Some(neighbors) = adj.get(&u) {
+                        for &v in neighbors {
+                            if let std::collections::hash_map::Entry::Vacant(e) =
+                                dist.entry(v)
+                            {
+                                let dv = du + 1;
+                                e.insert(dv);
+                                queue.push_back(v);
+                                #[allow(clippy::cast_precision_loss)]
+                                {
+                                    score += 1.0 / (dv as f64);
+                                }
+                                reachable += 1;
+                            }
+                        }
+                    }
+                }
+                results.push(make_row(vec![
+                    ("node", node_value(NodeId::from(start))),
+                    ("score", Value::Float(score)),
+                    ("reachable", Value::Int(reachable)),
+                ]));
+            }
+
+            Ok(Value::List(Arc::new(results)))
+        }
+    );
+}
+
+// ── algo.maxFlow ────────────────────────────────────────────────────────
+
+fn register_maxflow(funcs: &mut Functions) {
+    cypher_fn!(funcs, "algo.maxFlow",
+        args: [Type::Any],
+        ret: Type::Any,
+        procedure: ["nodes", "edges", "edgeFlows", "maxFlow"],
+        fn algo_maxflow(runtime, args) {
+            use crate::runtime::orderset::OrderSet;
+
+            let config = match &args[0] {
+                Value::Map(m) => (**m).clone(),
+                _ => return Err(String::from(
+                    "algo.maxFlow expects a single configuration map",
+                )),
+            };
+
+            validate_config_map(&config, &[
+                "sourceNodes", "targetNodes", "relationshipTypes",
+                "capacityProperty", "nodeLabels", "defaultCapacity",
+            ])?;
+
+            let node_labels = extract_node_labels(&config)?;
+            let rel_types = extract_rel_types(&config)?;
+
+            if rel_types.len() != 1 {
+                return Err(String::from(
+                    "algo.maxFlow: 'relationshipTypes' is required and must contain exactly one type",
+                ));
+            }
+
+            let parse_nodes = |key: &str| -> Result<Vec<NodeId>, String> {
+                match config.get(&Arc::new(String::from(key))) {
+                    Some(Value::List(list)) => {
+                        let mut nodes = Vec::with_capacity(list.len());
+                        for v in list.iter() {
+                            match v {
+                                Value::Node(id) => nodes.push(*id),
+                                _ => return Err(format!(
+                                    "algo.maxFlow: '{key}' must be an array of nodes",
+                                )),
+                            }
+                        }
+                        Ok(nodes)
+                    }
+                    _ => Err(format!(
+                        "algo.maxFlow: '{key}' must be an array of nodes",
+                    )),
+                }
+            };
+
+            let srcs = parse_nodes("sourceNodes")?;
+            let sinks = parse_nodes("targetNodes")?;
+
+            if srcs.is_empty() || sinks.is_empty() {
+                return Err(String::from(
+                    "algo.maxFlow: expects at least one source and one sink",
+                ));
+            }
+
+            let src_set: std::collections::HashSet<u64> =
+                srcs.iter().map(|n| u64::from(*n)).collect();
+            if sinks.iter().any(|s| src_set.contains(&u64::from(*s))) {
+                return Err(String::from(
+                    "algo.maxFlow: source and sink sets must be disjoint",
+                ));
+            }
+
+            let capacity_attr: Arc<String> = match config
+                .get(&Arc::new(String::from("capacityProperty")))
+            {
+                Some(Value::String(s)) => s.clone(),
+                _ => return Err(String::from(
+                    "algo.maxFlow: 'capacityProperty' is required and must be a string",
+                )),
+            };
+
+            let default_cap: Option<f64> = match config
+                .get(&Arc::new(String::from("defaultCapacity")))
+            {
+                None | Some(Value::Null) => None,
+                Some(Value::Float(f)) if *f >= 0.0 => Some(*f),
+                #[allow(clippy::cast_precision_loss)]
+                Some(Value::Int(i)) if *i >= 0 => Some(*i as f64),
+                _ => return Err(String::from(
+                    "algo.maxFlow: 'defaultCapacity' must be a non-negative number",
+                )),
+            };
+
+            let g = runtime.g.borrow();
+
+            let type_id = match g.get_type_id(&rel_types[0]) {
+                Some(t) => t,
+                None => return Err(format!(
+                    "algo.maxFlow: relationship type '{}' does not exist",
+                    rel_types[0],
+                )),
+            };
+            if g.relationship_tensors()[type_id.0].has_multi_edge() {
+                return Err(format!(
+                    "algo.maxFlow: relationship type '{}' contains multi-edges; maxFlow requires a simple adjacency matrix",
+                    rel_types[0],
+                ));
+            }
+            if g.get_relationship_attribute_id(&capacity_attr).is_none()
+                && default_cap.is_none()
+            {
+                return Err(String::from(
+                    "algo.maxFlow: invalid or missing attribute and no default attribute specified",
+                ));
+            }
+
+            let label_filter: Option<std::collections::HashSet<u64>> =
+                if node_labels.is_empty() {
+                    None
+                } else {
+                    Some(collect_node_ids(&g, &node_labels).into_iter().collect())
+                };
+
+            let empty_label_set: OrderSet<Arc<String>> = OrderSet::default();
+
+            let mut edges_with_cap: Vec<(u64, u64, f64)> = Vec::new();
+            for (src, dst) in g.get_relationships(
+                &rel_types, &empty_label_set, &empty_label_set, None, None,
+            ) {
+                let s = u64::from(src);
+                let d = u64::from(dst);
+                if let Some(ref filter) = label_filter
+                    && (!filter.contains(&s) || !filter.contains(&d))
+                {
+                    continue;
+                }
+                let mut cap: Option<f64> = None;
+                for rel_id in g.get_src_dest_relationships(src, dst, &rel_types) {
+                    let parsed = match g.get_relationship_attribute(rel_id, &capacity_attr) {
+                        Some(Value::Float(f)) if f >= 0.0 => Some(f),
+                        #[allow(clippy::cast_precision_loss)]
+                        Some(Value::Int(i)) if i >= 0 => Some(i as f64),
+                        _ => None,
+                    };
+                    if parsed.is_some() {
+                        cap = parsed;
+                        break;
+                    }
+                }
+                let cap_value = match cap.or(default_cap) {
+                    Some(c) => c,
+                    None => return Err(String::from(
+                        "algo.maxFlow: invalid or missing attribute and no default attribute specified",
+                    )),
+                };
+                edges_with_cap.push((s, d, cap_value));
+            }
+
+            if edges_with_cap.is_empty() {
+                let result = make_row(vec![
+                    ("nodes", Value::List(Arc::new(thin_vec![]))),
+                    ("edges", Value::List(Arc::new(thin_vec![]))),
+                    ("edgeFlows", Value::List(Arc::new(thin_vec![]))),
+                    ("maxFlow", Value::Float(0.0)),
+                ]);
+                return Ok(Value::List(Arc::new(thin_vec![result])));
+            }
+
+            unsafe {
+                use crate::graph::graphblas::{
+                    GrB_FP64, GrB_Index, GrB_Matrix, GrB_Matrix_extractTuples_FP64,
+                    GrB_Matrix_free, GrB_Matrix_new, GrB_Matrix_nvals,
+                    GrB_Matrix_setElement_FP64, GrB_Matrix_wait, GrB_WaitMode,
+                    lagraph_bindings, lagraphx_bindings,
+                };
+
+                let multi_srcs = srcs.len() > 1;
+                let multi_sinks = sinks.len() > 1;
+                let base_dim = g.node_cap();
+                let dim = base_dim + u64::from(multi_srcs) + u64::from(multi_sinks);
+
+                let mut cap_mtx: GrB_Matrix = null_mut();
+                GrB_Matrix_new(&raw mut cap_mtx, GrB_FP64, dim, dim);
+
+                let mut min_cap = f64::INFINITY;
+                let mut max_cap = 0.0_f64;
+                for (s, d, c) in &edges_with_cap {
+                    if *c > 0.0 {
+                        GrB_Matrix_setElement_FP64(cap_mtx, *c, *s, *d);
+                        if *c < min_cap { min_cap = *c; }
+                        if *c > max_cap { max_cap = *c; }
+                    }
+                }
+
+                let mut src_id = u64::from(srcs[0]);
+                let mut sink_id = u64::from(sinks[0]);
+                #[allow(clippy::cast_lossless)]
+                let big_cap: f64 = i32::MAX as f64;
+                if multi_srcs {
+                    src_id = base_dim;
+                    for s in &srcs {
+                        GrB_Matrix_setElement_FP64(cap_mtx, big_cap, src_id, u64::from(*s));
+                    }
+                }
+                if multi_sinks {
+                    sink_id = base_dim + u64::from(multi_srcs);
+                    for s in &sinks {
+                        GrB_Matrix_setElement_FP64(cap_mtx, big_cap, u64::from(*s), sink_id);
+                    }
+                }
+
+                GrB_Matrix_wait(cap_mtx, GrB_WaitMode::GrB_COMPLETE as i32);
+
+                #[allow(clippy::cast_lossless)]
+                let overflow_factor = u32::MAX as f64;
+                if min_cap.is_finite() && max_cap >= min_cap * overflow_factor {
+                    GrB_Matrix_free(&raw mut cap_mtx);
+                    return Err(String::from(
+                        "algo.maxFlow: capacity range too wide (max >= min * 2^32); narrow the capacity values to avoid internal overflow",
+                    ));
+                }
+
+                let mut lag_g = create_lagraph_graph(
+                    cap_mtx, LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED,
+                )?;
+
+                let mut msg = new_msg();
+                lagraph_bindings::LAGraph_Cached_AT(lag_g, msg.as_mut_ptr());
+                lagraph_bindings::LAGraph_Cached_EMin(lag_g, msg.as_mut_ptr());
+
+                let mut max_flow: f64 = 0.0;
+                let mut flow_mtx: GrB_Matrix = null_mut();
+                let info = lagraphx_bindings::LAGr_MaxFlow(
+                    &raw mut max_flow,
+                    &raw mut flow_mtx,
+                    lag_g,
+                    src_id,
+                    sink_id,
+                    msg.as_mut_ptr(),
+                );
+
+                delete_lagraph_graph(&mut lag_g);
+
+                if info != 0 {
+                    if !flow_mtx.is_null() {
+                        GrB_Matrix_free(&raw mut flow_mtx);
+                    }
+                    return Err(format!("LAGr_MaxFlow failed: {info}"));
+                }
+
+                let mut nvals: GrB_Index = 0;
+                GrB_Matrix_nvals(&raw mut nvals, flow_mtx);
+                let mut rows = vec![0u64; nvals as usize];
+                let mut cols = vec![0u64; nvals as usize];
+                let mut vals = vec![0.0f64; nvals as usize];
+                let mut nvals_out = nvals;
+                GrB_Matrix_extractTuples_FP64(
+                    rows.as_mut_ptr(),
+                    cols.as_mut_ptr(),
+                    vals.as_mut_ptr(),
+                    &raw mut nvals_out,
+                    flow_mtx,
+                );
+                GrB_Matrix_free(&raw mut flow_mtx);
+
+                let mut used_nodes: std::collections::BTreeSet<u64> =
+                    std::collections::BTreeSet::new();
+                let mut edges_out: ThinVec<Value> = thin_vec![];
+                let mut flows_out: ThinVec<Value> = thin_vec![];
+
+                for i in 0..nvals_out as usize {
+                    let r = rows[i];
+                    let c = cols[i];
+                    let v = vals[i];
+                    if r >= base_dim || c >= base_dim || v == 0.0 {
+                        continue;
+                    }
+                    let src_n = NodeId::from(r);
+                    let dst_n = NodeId::from(c);
+                    used_nodes.insert(r);
+                    used_nodes.insert(c);
+                    if let Some(rel_id) = g
+                        .get_src_dest_relationships(src_n, dst_n, &rel_types)
+                        .next()
+                    {
+                        edges_out.push(Value::Relationship(
+                            Box::new((rel_id, src_n, dst_n)),
+                        ));
+                        flows_out.push(Value::Float(v));
+                    }
+                }
+
+                let nodes_out: ThinVec<Value> = used_nodes
+                    .iter()
+                    .map(|&n| node_value(NodeId::from(n)))
+                    .collect();
+
+                let result = make_row(vec![
+                    ("nodes", Value::List(Arc::new(nodes_out))),
+                    ("edges", Value::List(Arc::new(edges_out))),
+                    ("edgeFlows", Value::List(Arc::new(flows_out))),
+                    ("maxFlow", Value::Float(max_flow)),
+                ]);
+
+                Ok(Value::List(Arc::new(thin_vec![result])))
+            }
         }
     );
 }
