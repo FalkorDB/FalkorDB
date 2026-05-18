@@ -1822,9 +1822,11 @@ fn register_maxflow(funcs: &mut Functions) {
                     rel_types[0],
                 ));
             }
-            if g.get_relationship_attribute_id(&capacity_attr).is_none() {
+            if g.get_relationship_attribute_id(&capacity_attr).is_none()
+                && default_cap.is_none()
+            {
                 return Err(String::from(
-                    "algo.maxFlow: 'capacityProperty' does not exist",
+                    "algo.maxFlow: invalid or missing attribute and no default attribute specified",
                 ));
             }
 
