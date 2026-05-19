@@ -28,11 +28,26 @@
 #![allow(clippy::unnecessary_wraps)]
 
 use super::{FnType, Functions, Type};
-use crate::runtime::{runtime::Runtime, value::Value};
+use crate::runtime::{runtime::Runtime, string_pool, value::Value};
 use std::sync::Arc;
 use thin_vec::{ThinVec, thin_vec};
 
 pub fn register(funcs: &mut Functions) {
+    cypher_fn!(funcs, "intern",
+        args: [Type::Union(vec![Type::String, Type::Null])],
+        ret: Type::Union(vec![Type::String, Type::Null]),
+        non_deterministic,
+        fn intern(_runtime, args) {
+            match args.into_iter().next() {
+                Some(Value::String(s)) => {
+                    Ok(Value::String(string_pool::global().intern(s)))
+                }
+                Some(Value::Null) => Ok(Value::Null),
+                _ => unreachable!(),
+            }
+        }
+    );
+
     cypher_fn!(funcs, "substring",
         args: [
             Type::Union(vec![Type::String, Type::Null]),
