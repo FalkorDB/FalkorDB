@@ -1,0 +1,139 @@
+# Reusable workflow: build + push the falkordb-next runtime image (both targets, both arches)
+# and assemble multi-arch manifests. Callers (release-image.yml, rust-pr.yml) supply the tag
+# and decide whether to push to Docker Hub or only to GHCR.
+
+name: Build image (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "Image tag (e.g. edge, 0.1.0, rc-pr-42)"
+        required: true
+        type: string
+      commit_sha:
+        description: "Commit SHA to check out and build"
+        required: true
+        type: string
+      browser_tag:
+        description: "Tag of falkordb/falkordb-browser to bundle into the full target (edge or latest)"
+        required: true
+        type: string
+      push_to_dockerhub:
+        description: "Also push to Docker Hub (release flow only — RC/edge stay on GHCR)"
+        required: false
+        type: boolean
+        default: false
+      is_latest:
+        description: "Also tag :latest on the multi-arch manifest"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64,     platform: linux/amd64, runner: ubuntu-latest,    target: full,   repo: falkordb-next        }
+          - { arch: x64,     platform: linux/amd64, runner: ubuntu-latest,    target: server, repo: falkordb-next-server }
+          - { arch: arm64v8, platform: linux/arm64, runner: ubuntu-24.04-arm, target: full,   repo: falkordb-next        }
+          - { arch: arm64v8, platform: linux/arm64, runner: ubuntu-24.04-arm, target: server, repo: falkordb-next-server }
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.commit_sha }}
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Login to Docker Hub
+        if: ${{ inputs.push_to_dockerhub }}
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (${{ matrix.arch }} / ${{ matrix.target }})
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
+        with:
+          context: .
+          file: build/runtime/Dockerfile
+          target: ${{ matrix.target }}
+          platforms: ${{ matrix.platform }}
+          push: true
+          provenance: false
+          build-args: |
+            BROWSER_TAG=${{ inputs.browser_tag }}
+          # The Docker Hub line evaluates to empty when push_to_dockerhub is false;
+          # docker/build-push-action skips blank entries in this multi-line tags input.
+          tags: |
+            ghcr.io/falkordb/${{ matrix.repo }}:${{ inputs.tag }}-${{ matrix.arch }}
+            ${{ inputs.push_to_dockerhub && format('falkordb/{0}:{1}-{2}', matrix.repo, inputs.tag, matrix.arch) || '' }}
+          cache-from: type=registry,ref=ghcr.io/falkordb/${{ matrix.repo }}:buildcache-${{ matrix.arch }}
+          cache-to:   type=registry,ref=ghcr.io/falkordb/${{ matrix.repo }}:buildcache-${{ matrix.arch }},mode=max
+
+  manifest:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        repo: [falkordb-next, falkordb-next-server]
+    steps:
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Login to Docker Hub
+        if: ${{ inputs.push_to_dockerhub }}
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Assemble multi-arch manifests
+        env:
+          TAG:       ${{ inputs.tag }}
+          IS_LATEST: ${{ inputs.is_latest }}
+          PUSH_HUB:  ${{ inputs.push_to_dockerhub }}
+          REPO:      ${{ matrix.repo }}
+        run: |
+          set -euo pipefail
+
+          REGISTRIES="ghcr.io/falkordb"
+          if [ "$PUSH_HUB" = "true" ]; then
+            REGISTRIES="$REGISTRIES falkordb"
+          fi
+
+          for REGISTRY in $REGISTRIES; do
+            EXTRA_TAGS=""
+            if [ "$IS_LATEST" = "true" ]; then
+              EXTRA_TAGS="$EXTRA_TAGS -t ${REGISTRY}/${REPO}:latest"
+            fi
+
+            docker buildx imagetools create \
+              -t "${REGISTRY}/${REPO}:${TAG}" \
+              $EXTRA_TAGS \
+              "${REGISTRY}/${REPO}:${TAG}-x64" \
+              "${REGISTRY}/${REPO}:${TAG}-arm64v8"
+          done

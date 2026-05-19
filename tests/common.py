@@ -14,7 +14,11 @@ shutdown = False
 
 def start_redis(release=None, moduleEnvs=[]):
     global redis_server, client, g, shutdown
-    port = os.environ.get("PORT", "6379")
+    host = os.environ.get("FALKORDB_HOST", "localhost")
+    port = os.environ.get("FALKORDB_PORT", os.environ.get("PORT", "6379"))
+    # In CI's services-container mode an external redis is already running with
+    # the module loaded; spawning locally would race the port. Fail loudly instead.
+    existing_env = os.environ.get("EXISTING_ENV", "").lower() == "1"
     if release is None:
         release = True if os.environ.get("RELEASE", "").lower() == "1" else False
     default_target = "target/debug/libfalkordb.so"
@@ -23,13 +27,17 @@ def start_redis(release=None, moduleEnvs=[]):
     if release:
         default_target = default_target.replace("debug", "release")
     target = os.environ.get("TARGET", default_target)
-    r = Redis(port=port)
+    r = Redis(host=host, port=port)
     try:
         r.ping()
-        client = FalkorDB(port=port)
+        client = FalkorDB(host=host, port=port)
         g = client.select_graph("test")
         return
     except:
+        if existing_env:
+            raise RuntimeError(
+                f"EXISTING_ENV=1 but cannot reach redis at {host}:{port}"
+            )
         shutdown = True
         if os.path.exists("redis-test.log"):
             os.remove("redis-test.log")
@@ -41,7 +49,7 @@ def start_redis(release=None, moduleEnvs=[]):
     while True:
         try:
             r.ping()
-            client = FalkorDB(port=port)
+            client = FalkorDB(host=host, port=port)
             g = client.select_graph("test")
             return
         except:

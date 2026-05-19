@@ -56,6 +56,25 @@ jobs:
           push: true
           tags: aviavni/falkordb-build:${{ github.event.pull_request.number }}
           context: ./build
+
+  # Build the runtime image (rc-pr-<N>) once, push to GHCR. All flow / e2e test
+  # jobs below pull this image as a services container instead of dynamically
+  # loading a locally-built .so.
+  build-rc-image:
+    needs: [check-files, docker]
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
+    uses: ./.github/workflows/build-image.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      tag: rc-pr-${{ github.event.pull_request.number }}
+      commit_sha: ${{ github.event.pull_request.head.sha }}
+      browser_tag: edge
+      push_to_dockerhub: false
+      is_latest: false
+    secrets: inherit
+
   lint:
     runs-on: ubuntu-latest
     container: aviavni/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && github.event.pull_request.number || 'latest' }}
@@ -80,49 +99,37 @@ jobs:
     needs:
       - check-files
       - docker
-    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
+      - build-rc-image
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.build-rc-image.result == 'success' }}
+    services:
+      falkordb:
+        image: ghcr.io/falkordb/falkordb-next-server:rc-pr-${{ github.event.pull_request.number }}
+        credentials:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+        ports: ["6379:6379"]
+    env:
+      EXISTING_ENV: "1"
+      FALKORDB_HOST: falkordb
+      FALKORDB_PORT: "6379"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - run: rustup default stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           shared-key: "release"
-      - name: Build
-        run: |
-          cargo build --release
-      - name: Run unit tests
+      # Cargo unit tests run against in-process code and don't touch redis.
+      - name: Run cargo unit tests
         run: |
           cargo test --release -p graph
-      - name: Run tests
+      - name: Run pytest tests against the RC image
         run: |
           . /data/venv/bin/activate
-          RELEASE=1 pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
-      - name: Run TCK tests
+          pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
+      - name: Run TCK tests against the RC image
         run: |
           . /data/venv/bin/activate
-          RELEASE=1 TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
-  build-release:
-    runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:${{ needs.check-files.outputs.file_changed ==
-      'true' && github.event.pull_request.number || 'latest' }}
-    needs:
-      - check-files
-      - docker
-    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - run: rustup default stable
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          shared-key: "release"
-      - name: Build
-        run: |
-          cargo build --release
-      - name: Upload release binary
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: release-binary
-          path: target/release/libfalkordb.so
+          TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
   flow-test-matrix:
     runs-on: ubuntu-latest
     outputs:
@@ -141,24 +148,29 @@ jobs:
       - check-files
       - docker
       - flow-test-matrix
-      - build-release
-    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.flow-test-matrix.result == 'success' && needs.build-release.result == 'success' }}
+      - build-rc-image
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.flow-test-matrix.result == 'success' && needs.build-rc-image.result == 'success' }}
+    services:
+      falkordb:
+        image: ghcr.io/falkordb/falkordb-next-server:rc-pr-${{ github.event.pull_request.number }}
+        credentials:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+        ports: ["6379:6379"]
+    env:
+      EXISTING_ENV: "1"
+      FALKORDB_HOST: falkordb
+      FALKORDB_PORT: "6379"
     strategy:
       fail-fast: false
       matrix:
         test_file: ${{ fromJson(needs.flow-test-matrix.outputs.test_files) }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - name: Download release binary
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: release-binary
-          path: target/release
-      - run: chmod +x target/release/libfalkordb.so
       - name: Run Flow test - ${{ matrix.test_file }}
         run: |
           . /data/venv/bin/activate
-          RELEASE=1 TEST="${{ matrix.test_file }}" FAIL_FAST=1 ./flow.sh
+          TEST="${{ matrix.test_file }}" FAIL_FAST=1 ./flow.sh
       - name: Upload flow logs on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -335,21 +347,28 @@ jobs:
     needs:
       - check-files
       - docker
-    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
+      - build-rc-image
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.build-rc-image.result == 'success' }}
     permissions:
       contents: write
+    services:
+      falkordb:
+        image: ghcr.io/falkordb/falkordb-next-server:rc-pr-${{ github.event.pull_request.number }}
+        credentials:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+        ports: ["6379:6379"]
+    env:
+      EXISTING_ENV: "1"
+      FALKORDB_HOST: falkordb
+      FALKORDB_PORT: "6379"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Setup
         run: |
           git config --global --add safe.directory $GITHUB_WORKSPACE
-          rustup default stable
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          shared-key: "release"
-      - name: Build and run benchmark
+      - name: Run benchmark against the RC image
         run: |
-          cargo build --release
           . /data/venv/bin/activate
           pytest tests/test_bench.py --benchmark-json output.json -vv
       - name: Store benchmark result
@@ -365,11 +384,17 @@ jobs:
           auto-push: false
   falkordb-e2e-compatibility:
     runs-on: ubuntu-latest
+    needs: [build-rc-image]
+    if: ${{ !cancelled() && needs.build-rc-image.result == 'success' }}
     permissions:
       contents: read
+      packages: read
     services:
       falkordb:
-        image: falkordb/falkordb:latest
+        image: ghcr.io/falkordb/falkordb-next-server:rc-pr-${{ github.event.pull_request.number }}
+        credentials:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
         ports:
           - 6379:6379
         volumes:
