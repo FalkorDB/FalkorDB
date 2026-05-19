@@ -346,12 +346,14 @@ class testProcedures(FlowTestsBase):
         # validates list of available procedures
         actual_resultset = self.graph.query("CALL dbms.procedures() YIELD mode, name RETURN mode, name ORDER BY name").result_set
         expected_result = [["READ",  "algo.BFS"],
+                           ["READ",  "algo.HarmonicCentrality"],
                            ["READ",  "algo.MSF"],
                            ["READ",  "algo.SPpaths"],
                            ["READ",  "algo.SSpaths"],
                            ["READ",  "algo.WCC"],
                            ["READ",  "algo.betweenness"],
                            ["READ",  "algo.labelPropagation"],
+                           ["READ",  "algo.maxFlow"],
                            ["READ",  "algo.pageRank"],
                            ["READ",  "db.constraints"],
                            ["WRITE", "db.idx.fulltext.createNodeIndex"],

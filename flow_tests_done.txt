@@ -32,6 +32,7 @@ tests/flow/test_function_calls
 tests/flow/test_graph_copy.py
 tests/flow/test_graph_create
 tests/flow/test_graph_deletion
+tests/flow/test_harmonic_centrality.py
 tests/flow/test_graph_info.py
 tests/flow/test_graph_merge
 tests/flow/test_graph_versioning.py
@@ -46,6 +47,7 @@ tests/flow/test_list
 tests/flow/test_load_csv
 tests/flow/test_maintain_record_order.py
 tests/flow/test_map
+tests/flow/test_maxflow.py
 tests/flow/test_memory_usage.py
 tests/flow/test_meta_stats.py
 tests/flow/test_mix_labels

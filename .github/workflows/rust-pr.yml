@@ -159,6 +159,14 @@ jobs:
         run: |
           . /data/venv/bin/activate
           RELEASE=1 TEST="${{ matrix.test_file }}" FAIL_FAST=1 ./flow.sh
+      - name: Upload flow logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: test-flow-logs-${{ strategy.job-index }}
+          path: |
+            tests/flow/logs/
+          if-no-files-found: ignore
   coverage:
     runs-on: ubuntu-latest
     container: aviavni/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && github.event.pull_request.number || 'latest' }}
