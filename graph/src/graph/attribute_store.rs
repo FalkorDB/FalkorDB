@@ -963,6 +963,16 @@ impl AttributeStore {
         Ok(())
     }
 
+    /// Drop rollback-saved state after a query commits successfully.
+    /// Called by graph_core once the query reaches its final commit boundary,
+    /// not per-operator (intermediate `commit_attrs` calls must preserve
+    /// `saved_for_rollback` so a later failing operator can roll the whole
+    /// transaction back to the pre-query state).
+    pub fn clear_rollback_state(&mut self) {
+        self.saved_for_rollback.clear();
+        self.committed_dirty.clear();
+    }
+
     // ---- flush / rollback -----------------------------------------------
 
     /// Invalidate all dirty entities from the shared cache.

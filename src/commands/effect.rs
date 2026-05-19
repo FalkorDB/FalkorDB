@@ -301,6 +301,7 @@ fn apply_effects(
     }
 
     g.commit_attrs()?;
+    g.clear_rollback_state();
     g.commit_index(&mut index_add_docs, &mut index_remove_docs);
     g.commit_edge_index(&mut index_add_edge_docs, &mut index_remove_edge_docs);
 
