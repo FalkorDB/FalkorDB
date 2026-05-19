@@ -4,11 +4,6 @@
 # at exit by design (long-lived globals; daemons rely on the OS to
 # reclaim). These are not bugs in falkordb-rs.
 
-# GraphBLAS global workspace and matrices. `LAGraph_Finalize` releases
-# user-visible matrices but GraphBLAS keeps internal global slabs alive
-# until process exit.
-leak:GB_Global_malloc_function
-
 # Dynamic loader thread-local error buffer.
 leak:_dlerror_run
 
@@ -17,11 +12,6 @@ leak:createRawStringObject
 leak:createEmbeddedStringObject
 leak:readQueryFromClient
 leak:_sdsnewlen
-
-# libc-internal thread-local destructor registrations. The main thread's
-# entries fire via the libc atexit machinery, which runs after ASAN's
-# leak check has already printed its report.
-leak:__cxa_thread_atexit_impl
 
 # Dynamic linker (ld-linux.so) startup allocations — not freed at exit.
 leak:ld-linux-x86-64.so
