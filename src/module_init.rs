@@ -40,7 +40,7 @@ use redis_module::{
     RedisModule_Realloc, RedisModule_SubscribeToServerEvent, RedisModuleCtx, RedisModuleEvent,
     Status,
 };
-use std::{io::Write, os::raw::c_int, os::raw::c_void, panic};
+use std::{os::raw::c_int, os::raw::c_void, panic};
 
 /// Redis event ID for FlushDB event (database flush/clear).
 #[allow(non_upper_case_globals)]
@@ -88,14 +88,11 @@ pub fn graph_init(
 ) -> Status {
     graph::thread_id::set_main_thread();
     panic::set_hook(Box::new(|info| {
-        // Format the panic message + backtrace once, then emit it to:
-        //   1. the Redis log file (via RedisModule_Log), which is the
-        //      artifact uploaded by CI on test failure, so the panic
-        //      details survive even when stderr is not captured;
-        //   2. stderr, for interactive runs and any test harness that
-        //      tees the module process stderr.
-        // `std::process::exit` skips stdio buffer flushes, so we flush
-        // stderr explicitly before exiting.
+        // Route the panic message + backtrace through RedisModule_Log so
+        // it lands in the Redis log file uploaded by CI on test failure.
+        // Redis itself writes its log to stderr/stdout when no `logfile`
+        // is configured, so this path also covers interactive runs — no
+        // need for an extra eprintln! that would double-print there.
         let msg = format!(
             "FalkorDB panic: {info}\nBacktrace:\n{}",
             std::backtrace::Backtrace::force_capture()
@@ -110,8 +107,6 @@ pub fn graph_init(
                 }
             }
         }
-        let _ = writeln!(std::io::stderr(), "{msg}");
-        let _ = std::io::stderr().flush();
         std::process::exit(1);
     }));
 
