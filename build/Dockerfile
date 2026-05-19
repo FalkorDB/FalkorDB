@@ -1,6 +1,3 @@
-# TODO: relocate this toolchain image from aviavni/falkordb-build to the official
-# falkordb/falkordb-build org repo. Needs a Rust-specific tag namespace to coexist
-# with the C port's tags on that repo (separate PR).
 FROM redis:8.6.2
 
 ENV PATH="/root/.cargo/bin:${PATH}"
