@@ -16,10 +16,10 @@ permissions:
   contents: read
 
 jobs:
-  asan-flow-tests:
+  asan-build:
     runs-on: ubuntu-latest
     container: aviavni/falkordb-build:latest
-    timeout-minutes: 90
+    timeout-minutes: 60
     env:
       REDIS_ASAN_VER: "8.6.2"
       REDIS_ASAN_DIR: /tmp/redis-san-build
@@ -81,17 +81,75 @@ jobs:
           CXX: clang++-22
         run: cargo build --target x86_64-unknown-linux-gnu
 
-      - name: Run flow tests with ASAN
+      - name: Upload ASAN module
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: asan-libfalkordb
+          path: target/x86_64-unknown-linux-gnu/debug/libfalkordb.so
+          retention-days: 1
+
+      - name: Upload ASAN Redis
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: asan-redis-server
+          path: ${{ env.REDIS_ASAN_DIR }}/src/redis-server
+          retention-days: 1
+
+  flow-test-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      test_files: ${{ steps.set-matrix.outputs.test_files }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Generate test matrix
+        id: set-matrix
+        run: |
+          echo "test_files=$(jq -Rc '[., inputs] | map(select(length > 0))' flow_tests_done.txt)" >> $GITHUB_OUTPUT
+
+  asan-flow-tests:
+    runs-on: ubuntu-latest
+    container: aviavni/falkordb-build:latest
+    timeout-minutes: 60
+    needs:
+      - asan-build
+      - flow-test-matrix
+    strategy:
+      fail-fast: false
+      matrix:
+        test_file: ${{ fromJson(needs.flow-test-matrix.outputs.test_files) }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Download ASAN module
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: asan-libfalkordb
+          path: target/x86_64-unknown-linux-gnu/debug
+
+      - name: Download ASAN Redis
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: asan-redis-server
+          path: /tmp/asan-redis
+
+      - name: Restore executable bits
+        run: |
+          chmod +x target/x86_64-unknown-linux-gnu/debug/libfalkordb.so
+          chmod +x /tmp/asan-redis/redis-server
+
+      - name: Run flow test - ${{ matrix.test_file }}
         env:
           SANITIZER: address
           TARGET_DIR: target/x86_64-unknown-linux-gnu/debug
+          # Per-file parallelism: ASAN shadow memory + ~3× heap per
+          # redis-server can OOM the 7GB runner if we let RLTest fan out.
           PARALLELISM: "--parallelism 2"
           ASAN_SYMBOLIZER_PATH: /usr/bin/llvm-symbolizer-22
           RS_GLOBAL_DTORS: "1"
         run: |
           . /data/venv/bin/activate
           # Prepend the ASAN-built Redis so RLTest spawns it instead of stock.
-          export PATH="$REDIS_ASAN_DIR/src:$PATH"
+          export PATH="/tmp/asan-redis:$PATH"
           # Send ASAN/LSan reports to files under tests/flow/logs/ (uploaded
           # as artifact on failure). Their default stderr destination gets
           # swallowed when RLTest spawns redis-server with its own logfile.
@@ -101,20 +159,12 @@ jobs:
           export ASAN_OPTIONS="detect_leaks=1:detect_odr_violation=0:halt_on_error=0:abort_on_error=0:symbolize=1:print_stacktrace=1:strict_string_checks=1:detect_stack_use_after_return=1:log_path=$GITHUB_WORKSPACE/tests/flow/logs/asan:log_exe_name=1"
           export LSAN_OPTIONS="suppressions=$GITHUB_WORKSPACE/tests/memcheck/asan.supp:use_tls=0"
           redis-server --version
-          ./flow.sh
+          TEST="${{ matrix.test_file }}" ./flow.sh
 
       - name: Upload flow test logs on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: asan-flow-logs-${{ github.run_id }}
+          name: asan-flow-logs-${{ strategy.job-index }}
           path: tests/flow/logs/
-          retention-days: 7
-
-      - name: Upload sanitized module on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: asan-libfalkordb-${{ github.run_id }}
-          path: target/x86_64-unknown-linux-gnu/debug/libfalkordb.so
           retention-days: 7
