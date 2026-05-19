@@ -16,20 +16,20 @@ generate_cert() {
     local keyfile=${FALKORDB_TLS_PATH}/${name}.key
     local certfile=${FALKORDB_TLS_PATH}/${name}.crt
 
-    [ -f $keyfile ] || openssl genrsa -out $keyfile 2048
+    [ -f "$keyfile" ] || openssl genrsa -out "$keyfile" 2048
     openssl req \
         -new -sha256 \
         -subj "/O=FalkorDB/CN=$cn" \
-        -key $keyfile | \
+        -key "$keyfile" | \
         openssl x509 \
             -req -sha256 \
-            -CA ${FALKORDB_TLS_PATH}/ca.crt \
-            -CAkey ${FALKORDB_TLS_PATH}/ca.key \
-            -CAserial ${FALKORDB_TLS_PATH}/ca.txt \
+            -CA "${FALKORDB_TLS_PATH}/ca.crt" \
+            -CAkey "${FALKORDB_TLS_PATH}/ca.key" \
+            -CAserial "${FALKORDB_TLS_PATH}/ca.txt" \
             -CAcreateserial \
             -days 365 \
             $opts \
-            -out $certfile
+            -out "$certfile"
 }
 
 mkdir -p ${FALKORDB_TLS_PATH}

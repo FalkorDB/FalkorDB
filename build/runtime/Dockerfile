@@ -16,12 +16,7 @@ FROM chef AS builder
 COPY --from=planner /src/recipe.json recipe.json
 RUN CXX=clang++-22 cargo chef cook --release --recipe-path recipe.json
 COPY . .
-# cargo chef cook produces a cdylib for falkordb-rs linked against stub sources, so
-# by-need static archive resolution leaves symbols like LAGraph_Init undefined.
-# Clean only this crate's artifacts before the real build so cargo re-links the cdylib
-# against the actual source; deps stay cached.
-RUN CXX=clang++-22 cargo clean --release -p falkordb-rs && \
-    CXX=clang++-22 cargo build --release && \
+RUN CXX=clang++-22 cargo build --release && \
     mkdir -p /out && cp target/release/libfalkordb.so /out/falkordb.so
 
 FROM redis:8.6.3 AS server
@@ -39,9 +34,11 @@ ENV FALKORDB_HOME=/var/lib/falkordb \
 RUN mkdir -p ${FALKORDB_DATA_PATH} && ln -s ${FALKORDB_DATA_PATH} /data
 
 # ncurses is removable; bash + libtinfo6 are kept because the browser stage's
-# docker-entrypoint.sh chain (and node child processes) rely on bash.
+# docker-entrypoint.sh chain (and node child processes) rely on bash. libgomp1
+# (GCC OpenMP) is not installed — libfalkordb.so links against LLVM's libomp
+# (libomp.so.5 is COPYed in from the builder a few lines below).
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends libgomp1 ca-certificates bash && \
+    apt-get install -y --no-install-recommends ca-certificates bash && \
     apt-get upgrade -y && \
     (apt-get purge -y python3.13 python3.13-minimal libpython3.13-minimal libpython3.13-stdlib || true) && \
     apt-get autoremove -y && \
