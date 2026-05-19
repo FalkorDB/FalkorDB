@@ -95,8 +95,28 @@ pub fn graph_init(
 ) -> Status {
     graph::thread_id::set_main_thread();
     panic::set_hook(Box::new(|info| {
-        eprintln!("FalkorDB panic: {info}");
-        eprintln!("Backtrace:\n{}", std::backtrace::Backtrace::force_capture());
+        // Route the panic message + backtrace through RedisModule_Log so
+        // it lands in the Redis log file uploaded by CI on test failure.
+        // Redis itself writes its log to stderr/stdout when no `logfile`
+        // is configured, so this path also covers interactive runs — no
+        // need for an extra eprintln! that would double-print there.
+        let msg = format!(
+            "FalkorDB panic: {info}\nBacktrace:\n{}",
+            std::backtrace::Backtrace::force_capture()
+        )
+        .replace('\0', " ");
+        unsafe {
+            if let Some(log) = graph::index::redisearch::redis::RedisModule_Log {
+                if let Ok(c_msg) = std::ffi::CString::new(msg) {
+                    log(
+                        std::ptr::null_mut(),
+                        c"warning".as_ptr(),
+                        c"%s".as_ptr(),
+                        c_msg.as_ptr(),
+                    );
+                }
+            }
+        }
         std::process::exit(1);
     }));
 
