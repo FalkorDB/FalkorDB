@@ -711,12 +711,15 @@ impl Graph {
         self.relationship_type_matrix
             .resize(rc, self.relationship_types.len() as u64);
 
-        // Rebuild all_nodes_matrix from per-label matrices
-        // Each label matrix is diagonal (node_id, node_id), so we just need
-        // to collect all live node IDs across all labels
-        for lm in &self.labels_matices {
-            for (node_id, _) in lm.iter(0, u64::MAX) {
-                self.all_nodes_matrix.set(node_id, node_id, true);
+        // Rebuild all_nodes_matrix from all live node IDs (0..=max_id skipping deleted).
+        // Cannot rebuild only from label matrices: unlabeled nodes do not appear in any
+        // label matrix but still need to be in all_nodes_matrix for MATCH (n) scans.
+        if self.node_count > 0 {
+            let max_id = self.node_count + self.deleted_nodes.len() - 1;
+            for id in 0..=max_id {
+                if !self.deleted_nodes.contains(id) {
+                    self.all_nodes_matrix.set(id, id, true);
+                }
             }
         }
 
@@ -2516,6 +2519,12 @@ impl Graph {
     pub fn rollback_cache(&mut self) {
         self.node_attrs.rollback_cache();
         self.relationship_attrs.rollback_cache();
+    }
+
+    /// Drop rollback-saved state after a query commits successfully.
+    pub fn clear_rollback_state(&mut self) {
+        self.node_attrs.clear_rollback_state();
+        self.relationship_attrs.clear_rollback_state();
     }
 
     /// Flush dirty cache entries to fjall and evict clean entries if over budget.

@@ -3,6 +3,3 @@ tests/flow/test_bolt.py
 
 ## Memory & Resource Management
 tests/flow/test_defrag.py
-
-## Metadata & Internals
-tests/flow/test_intern_string.py
