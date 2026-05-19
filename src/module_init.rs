@@ -93,19 +93,12 @@ pub fn graph_init(
         // Redis itself writes its log to stderr/stdout when no `logfile`
         // is configured, so this path also covers interactive runs — no
         // need for an extra eprintln! that would double-print there.
-        let mut msg = format!(
+        let msg = format!(
             "FalkorDB panic: {info}\nBacktrace:\n{}",
             std::backtrace::Backtrace::force_capture()
-        );
-        // Strip any internal NUL bytes in place so CString::new succeeds.
-        // Safe: replacing the single-byte ASCII NUL (0x00) with ASCII space
-        // (0x20) preserves UTF-8 validity.
+        )
+        .replace('\0', " ");
         unsafe {
-            for b in msg.as_bytes_mut() {
-                if *b == 0 {
-                    *b = b' ';
-                }
-            }
             if let Some(log) = graph::index::redisearch::redis::RedisModule_Log {
                 if let Ok(c_msg) = std::ffi::CString::new(msg) {
                     log(
