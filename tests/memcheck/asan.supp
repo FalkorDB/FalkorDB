@@ -1,51 +1,33 @@
 # LeakSanitizer suppressions for FalkorDB-rs flow tests.
 #
 # Suppress leaks from C dependencies and Redis itself that are reachable
-# at exit by design (long-lived globals, daemons rely on OS to reclaim).
-# These are not bugs in falkordb-rs.
+# at exit by design (long-lived globals; daemons rely on the OS to
+# reclaim). These are not bugs in falkordb-rs.
+#
+# Module-level RediSearch state (doc table, index options, global trie,
+# scoring functions, query expanders) and per-thread RediSearch state
+# (mempool, rwlock context) used to be suppressed here. They are now
+# released by `RediSearch_CleanupModule` and by joining worker threads
+# in the `RedisModuleEvent_Shutdown` handler — see `on_shutdown` in
+# `src/module_init.rs`, gated by the `RS_GLOBAL_DTORS` env var.
 
-# GraphBLAS global workspace and matrices
+# GraphBLAS global workspace and matrices. `LAGraph_Finalize` releases
+# user-visible matrices but GraphBLAS keeps internal global slabs alive
+# until process exit.
 leak:GB_Global_malloc_function
 
-# Dynamic loader thread-local error buffer
+# Dynamic loader thread-local error buffer.
 leak:_dlerror_run
 
-# Redis client/server allocations that live until process exit
+# Redis client/server allocations that live until process exit.
 leak:createRawStringObject
 leak:createEmbeddedStringObject
 leak:readQueryFromClient
 leak:_sdsnewlen
 
-# RediSearch module-level state: scoring/query-expander registries and
-# the global trie are allocated at module load and intentionally never freed.
-leak:Ext_RegisterScoringFunction
-leak:Ext_RegisterQueryExpander
-leak:__newTrieMapNode
-leak:__trieMapNode_AddChildIdx
-leak:__trieMapNode_Split
-
-# RediSearch indexed-document storage: documents persist with their index
-# until the index is explicitly dropped. We don't explicitly drop indices on
-# Redis shutdown — the process just exits — so all accumulated indexed
-# state shows as leaked. Suppress; real-leak detection in this path would
-# require explicit index teardown on shutdown.
-leak:RediSearch_CreateDocument2
-leak:DocTable_Put
-leak:RediSearch_CreateIndexOptions
-
-# Per-thread mempool used by RediSearch's RSValue pool (value.c:getPool).
-# Allocated lazily via pthread_setspecific with mempool_destroy as the
-# TLS destructor. When the process exits via exit(2) without joining the
-# threadpool workers, the destructors don't run, so LSan reports the
-# pool struct as leaked. Not a real leak.
-leak:mempool_new
-
-# Per-thread rwlock context used by RediSearch's RWLOCK macros
-# (rwlock.c:RediSearch_GetLockThreadData). Same TLS-destructor pattern
-# as mempool_new — not freed when threads are killed at process exit.
-leak:RediSearch_GetLockThreadData
-
-# libc thread-local destructor registrations (used by RediSearch's TLS).
+# libc-internal thread-local destructor registrations. The main thread's
+# entries fire via the libc atexit machinery, which runs after ASAN's
+# leak check has already printed its report.
 leak:__cxa_thread_atexit_impl
 
 # Dynamic linker (ld-linux.so) startup allocations — not freed at exit.

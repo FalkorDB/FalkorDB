@@ -33,14 +33,17 @@ use std::thread::{self, JoinHandle};
 
 use crossfire::{MRx, MTx, mpmc::Array};
 use once_cell::sync::OnceCell;
+use parking_lot::Mutex;
 
-/// A closure that can be sent to a worker thread.
-type Job = Box<dyn FnOnce() + Send + 'static>;
+/// A closure dispatched to a worker thread. `None` is a sentinel that asks
+/// the receiving worker to exit its recv loop so it can be joined.
+type Job = Option<Box<dyn FnOnce() + Send + 'static>>;
 
 /// A pool of worker threads for executing jobs.
 struct ThreadPool {
-    _workers: Vec<JoinHandle<()>>,
+    workers: Mutex<Vec<JoinHandle<()>>>,
     sender: MTx<Array<Job>>,
+    size: usize,
 }
 
 unsafe impl Sync for ThreadPool {}
@@ -54,14 +57,18 @@ impl ThreadPool {
             let rx = receiver.clone();
             let worker = thread::spawn(move || {
                 while let Ok(job) = rx.recv() {
-                    job();
+                    match job {
+                        Some(j) => j(),
+                        None => break,
+                    }
                 }
             });
             workers.push(worker);
         }
         Self {
-            _workers: workers,
+            workers: Mutex::new(workers),
             sender,
+            size,
         }
     }
 
@@ -73,11 +80,27 @@ impl ThreadPool {
         F: FnOnce() + Send + 'static,
     {
         self.sender
-            .send(Box::new(job))
+            .send(Some(Box::new(job)))
             .expect("thread pool worker died: cannot dispatch job");
     }
     pub fn pending_count(&self) -> usize {
         crossfire::BlockingTxTrait::len(&self.sender)
+    }
+
+    /// Drain queued work, signal every worker to exit, and join them.
+    ///
+    /// Joining matters under sanitizers: pthread TLS destructors only fire
+    /// on a clean thread exit (`pthread_exit`/return from the start
+    /// routine), not when the process is torn down via `exit(2)`. Without
+    /// the join, LSan reports every per-thread allocation as leaked.
+    pub fn shutdown(&self) {
+        for _ in 0..self.size {
+            let _ = self.sender.send(None);
+        }
+        let mut workers = self.workers.lock();
+        for worker in workers.drain(..) {
+            let _ = worker.join();
+        }
     }
 }
 
@@ -111,4 +134,13 @@ pub fn init_thread_pool(size: usize) -> Result<(), ()> {
     GLOBAL_THREAD_POOL
         .set(ThreadPool::new(size))
         .map_err(|_| ())
+}
+
+/// Drain pending work, signal every worker to exit, and join them.
+/// No-op if the pool was never initialized. Intended for module shutdown
+/// under sanitizers so per-worker TLS destructors fire.
+pub fn shutdown() {
+    if let Some(pool) = GLOBAL_THREAD_POOL.get() {
+        pool.shutdown();
+    }
 }
