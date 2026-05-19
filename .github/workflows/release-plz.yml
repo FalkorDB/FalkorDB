@@ -1,0 +1,33 @@
+name: release-plz
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write       # create tags + GitHub Releases
+  pull-requests: write  # open / update the release PR
+
+concurrency:
+  group: release-plz-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-plz:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # RELEASE_PLZ_TOKEN must be a PAT or GH-App installation token; using the default
+          # GITHUB_TOKEN would prevent the published release from triggering release-image.yml.
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run release-plz
+        uses: MarcoIeni/release-plz-action@v0.5
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}

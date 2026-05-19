@@ -64,7 +64,7 @@ use redis_type::{GRAPH_TYPE, GRAPHMETA_TYPE};
 
 redis_module! {
     name: "graph",
-    version: 1,
+    version: env!("FALKORDB_VERSION_INT").parse::<i32>().unwrap(),
     allocator: (ThreadCountingAllocator, ThreadCountingAllocator),
     data_types: [GRAPH_TYPE, GRAPHMETA_TYPE],
     init: graph_init,

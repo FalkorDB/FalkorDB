@@ -1,0 +1,197 @@
+name: Release image
+
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag (no v prefix). If it matches X.Y.Z it must equal Cargo.toml version."
+        required: true
+      commit_sha:
+        description: "Commit SHA to build"
+        required: true
+      mark_latest:
+        description: "Also tag :latest (moves the latest pointer — use with care)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+concurrency:
+  group: release-image-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.derive.outputs.tag }}
+      is_latest: ${{ steps.derive.outputs.is_latest }}
+      browser_tag: ${{ steps.derive.outputs.browser_tag }}
+      commit_sha: ${{ steps.derive.outputs.commit_sha }}
+      short_sha: ${{ steps.derive.outputs.short_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.commit_sha || github.sha }}
+
+      - name: Derive tag, latest flag, browser tag, commit SHA
+        id: derive
+        run: |
+          set -euo pipefail
+          case "${{ github.event_name }}" in
+            push)
+              TAG="edge"
+              IS_LATEST=0
+              BROWSER_TAG="edge"
+              COMMIT_SHA="${{ github.sha }}"
+              ;;
+            release)
+              TAG_RAW="${{ github.event.release.tag_name }}"
+              TAG="${TAG_RAW#v}"
+              IS_LATEST=1
+              BROWSER_TAG="latest"
+              COMMIT_SHA="${{ github.sha }}"
+              ;;
+            workflow_dispatch)
+              TAG="${{ inputs.tag }}"
+              IS_LATEST="${{ inputs.mark_latest && '1' || '0' }}"
+              BROWSER_TAG="latest"
+              COMMIT_SHA="${{ inputs.commit_sha }}"
+              ;;
+            *)
+              echo "::error::unsupported event ${{ github.event_name }}"
+              exit 1
+              ;;
+          esac
+
+          # Validate Cargo.toml against any semver-shaped tag (always on release;
+          # on dispatch only when the tag looks like X.Y.Z, so operators can still
+          # dispatch ad-hoc tags like 'edge-test' without enforcement).
+          VALIDATE=0
+          if [ "${{ github.event_name }}" = "release" ]; then
+            VALIDATE=1
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && \
+               echo "$TAG" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            VALIDATE=1
+          fi
+          if [ "$VALIDATE" = "1" ]; then
+            CARGO_VERSION=$(cargo metadata --no-deps --format-version=1 \
+              | jq -r '.packages[] | select(.name=="falkordb-rs") | .version')
+            if [ "$CARGO_VERSION" != "$TAG" ]; then
+              echo "::error::Cargo.toml version ($CARGO_VERSION) does not match tag ($TAG)"
+              exit 1
+            fi
+          fi
+
+          SHORT_SHA=$(echo "$COMMIT_SHA" | cut -c1-7)
+          {
+            echo "tag=${TAG}"
+            echo "is_latest=${IS_LATEST}"
+            echo "browser_tag=${BROWSER_TAG}"
+            echo "commit_sha=${COMMIT_SHA}"
+            echo "short_sha=${SHORT_SHA}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Derived: tag=${TAG} is_latest=${IS_LATEST} browser_tag=${BROWSER_TAG} commit_sha=${COMMIT_SHA} short_sha=${SHORT_SHA}"
+
+  build:
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64,     platform: linux/amd64, runner: ubuntu-latest,    target: full,   repo: falkordb-next        }
+          - { arch: x64,     platform: linux/amd64, runner: ubuntu-latest,    target: server, repo: falkordb-next-server }
+          - { arch: arm64v8, platform: linux/arm64, runner: ubuntu-24.04-arm, target: full,   repo: falkordb-next        }
+          - { arch: arm64v8, platform: linux/arm64, runner: ubuntu-24.04-arm, target: server, repo: falkordb-next-server }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit_sha }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (${{ matrix.arch }} / ${{ matrix.target }})
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: build/runtime/Dockerfile
+          target: ${{ matrix.target }}
+          platforms: ${{ matrix.platform }}
+          push: true
+          provenance: false
+          build-args: |
+            BROWSER_TAG=${{ needs.prepare.outputs.browser_tag }}
+          tags: |
+            falkordb/${{ matrix.repo }}:${{ needs.prepare.outputs.tag }}-${{ matrix.arch }}
+            ghcr.io/falkordb/${{ matrix.repo }}:${{ needs.prepare.outputs.tag }}-${{ matrix.arch }}
+          cache-from: type=registry,ref=ghcr.io/falkordb/${{ matrix.repo }}:buildcache-${{ matrix.arch }}
+          cache-to:   type=registry,ref=ghcr.io/falkordb/${{ matrix.repo }}:buildcache-${{ matrix.arch }},mode=max
+
+  manifest:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        repo: [falkordb-next, falkordb-next-server]
+    steps:
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Assemble multi-arch manifests
+        env:
+          TAG:        ${{ needs.prepare.outputs.tag }}
+          IS_LATEST:  ${{ needs.prepare.outputs.is_latest }}
+          SHORT_SHA:  ${{ needs.prepare.outputs.short_sha }}
+          REPO:       ${{ matrix.repo }}
+        run: |
+          set -euo pipefail
+
+          for REGISTRY in "falkordb" "ghcr.io/falkordb"; do
+            EXTRA_TAGS=""
+            if [ "$IS_LATEST" = "1" ]; then
+              EXTRA_TAGS="$EXTRA_TAGS -t ${REGISTRY}/${REPO}:latest"
+            fi
+            if [ "$TAG" = "edge" ]; then
+              EXTRA_TAGS="$EXTRA_TAGS -t ${REGISTRY}/${REPO}:edge-${SHORT_SHA}"
+            fi
+
+            docker buildx imagetools create \
+              -t "${REGISTRY}/${REPO}:${TAG}" \
+              $EXTRA_TAGS \
+              "${REGISTRY}/${REPO}:${TAG}-x64" \
+              "${REGISTRY}/${REPO}:${TAG}-arm64v8"
+          done
