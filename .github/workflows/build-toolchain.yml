@@ -1,0 +1,88 @@
+# Build the toolchain image (build/Dockerfile) for both linux/amd64 and linux/arm64
+# and push it to ghcr.io/falkordb/falkordb-build:latest as a multi-arch manifest.
+# This image is the BUILD_IMAGE that build/runtime/Dockerfile's chef stage uses to
+# compile libfalkordb.so — having it multi-arch is what unblocks arm64 in
+# .github/workflows/build-image.yml.
+#
+# Triggers:
+#   - workflow_dispatch: explicit refresh
+#   - push to main when build/Dockerfile or this workflow changes
+#
+# Note: this does NOT replace aviavni/falkordb-build (still used by the rest of
+# rust-pr.yml's containerized jobs). Migrating those is a separate concern.
+
+name: Build toolchain image
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'build/Dockerfile'
+      - '.github/workflows/build-toolchain.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-toolchain-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64,     platform: linux/amd64, runner: ubuntu-latest }
+          - { arch: arm64v8, platform: linux/arm64, runner: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (${{ matrix.arch }})
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
+        with:
+          context: ./build
+          platforms: ${{ matrix.platform }}
+          push: true
+          provenance: false
+          tags: ghcr.io/falkordb/falkordb-build:latest-${{ matrix.arch }}
+          cache-from: type=registry,ref=ghcr.io/falkordb/falkordb-build:buildcache-${{ matrix.arch }}
+          cache-to:   type=registry,ref=ghcr.io/falkordb/falkordb-build:buildcache-${{ matrix.arch }},mode=max
+
+  manifest:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Assemble multi-arch manifest
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            -t ghcr.io/falkordb/falkordb-build:latest \
+            ghcr.io/falkordb/falkordb-build:latest-x64 \
+            ghcr.io/falkordb/falkordb-build:latest-arm64v8

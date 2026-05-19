@@ -15,8 +15,12 @@ RUN python3 -m venv venv
 
 RUN venv/bin/pip install behave falkordb falkordb-bulk-loader hypothesis pytest pytest-benchmark RLTest
 
-RUN git clone --branch dev2 --single-branch https://github.com/DrTimothyAldenDavis/GraphBLAS.git
-# RUN git clone --branch v10.3.1 --single-branch https://github.com/DrTimothyAldenDavis/GraphBLAS.git
+# GraphBLAS pinned to the latest tagged release (v10.3.1, May 2025). The
+# previous `dev2` branch tracking led to non-reproducible builds and broke
+# entirely when upstream landed a mid-flight arena rewrite — the build/Dockerfile
+# can't be rebuilt cleanly off dev2 HEAD today. v10.3.1 is what the C-port
+# vendors as well.
+RUN git clone --branch v10.3.1 --single-branch https://github.com/DrTimothyAldenDavis/GraphBLAS.git
 
 RUN cd GraphBLAS && \
     make static CMAKE_OPTIONS='-DGRAPHBLAS_COMPACT=1 -DCMAKE_POSITION_INDEPENDENT_CODE=on' JOBS=2 CC=clang-22 CXX=clang++-22 && \
