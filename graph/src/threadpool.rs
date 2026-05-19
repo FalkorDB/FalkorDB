@@ -41,6 +41,10 @@ type Job = Option<Box<dyn FnOnce() + Send + 'static>>;
 
 /// A pool of worker threads for executing jobs.
 struct ThreadPool {
+    /// Interior mutability only: the pool lives in a `&'static OnceCell`,
+    /// so reaching the workers via `&self` from `shutdown` needs a lock
+    /// to call `drain(..).join()`. Never touched by `spawn` — the hot
+    /// path is lock-free.
     workers: Mutex<Vec<JoinHandle<()>>>,
     sender: MTx<Array<Job>>,
     size: usize,

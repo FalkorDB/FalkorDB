@@ -3,13 +3,6 @@
 # Suppress leaks from C dependencies and Redis itself that are reachable
 # at exit by design (long-lived globals; daemons rely on the OS to
 # reclaim). These are not bugs in falkordb-rs.
-#
-# Module-level RediSearch state (doc table, index options, global trie,
-# scoring functions, query expanders) and per-thread RediSearch state
-# (mempool, rwlock context) used to be suppressed here. They are now
-# released by `RediSearch_CleanupModule` and by joining worker threads
-# in the `RedisModuleEvent_Shutdown` handler — see `on_shutdown` in
-# `src/module_init.rs`, gated by the `RS_GLOBAL_DTORS` env var.
 
 # GraphBLAS global workspace and matrices. `LAGraph_Finalize` releases
 # user-visible matrices but GraphBLAS keeps internal global slabs alive
