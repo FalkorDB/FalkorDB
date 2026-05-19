@@ -39,11 +39,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # arm64 cells temporarily disabled: aviavni/falkordb-build:latest (the
+        # BUILD_IMAGE this chef stage pulls) is amd64-only on Docker Hub. The
+        # follow-up multi-arch toolchain PR (build-toolchain.yml + GraphBLAS
+        # pin) will produce ghcr.io/falkordb/falkordb-build:latest as a
+        # multi-arch manifest; once it lands, re-add the two arm64 rows below.
         include:
-          - { arch: x64,     platform: linux/amd64, runner: ubuntu-latest,    target: full,   repo: falkordb-next        }
-          - { arch: x64,     platform: linux/amd64, runner: ubuntu-latest,    target: server, repo: falkordb-next-server }
-          - { arch: arm64v8, platform: linux/arm64, runner: ubuntu-24.04-arm, target: full,   repo: falkordb-next        }
-          - { arch: arm64v8, platform: linux/arm64, runner: ubuntu-24.04-arm, target: server, repo: falkordb-next-server }
+          - { arch: x64, platform: linux/amd64, runner: ubuntu-latest, target: full,   repo: falkordb-next        }
+          - { arch: x64, platform: linux/amd64, runner: ubuntu-latest, target: server, repo: falkordb-next-server }
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -131,9 +134,11 @@ jobs:
               EXTRA_TAGS="$EXTRA_TAGS -t ${REGISTRY}/${REPO}:latest"
             fi
 
+            # Single-arch (amd64) manifest until the multi-arch toolchain
+            # image lands; re-add "${REGISTRY}/${REPO}:${TAG}-arm64v8" here
+            # alongside the multi-arch matrix rows above.
             docker buildx imagetools create \
               -t "${REGISTRY}/${REPO}:${TAG}" \
               $EXTRA_TAGS \
-              "${REGISTRY}/${REPO}:${TAG}-x64" \
-              "${REGISTRY}/${REPO}:${TAG}-arm64v8"
+              "${REGISTRY}/${REPO}:${TAG}-x64"
           done
