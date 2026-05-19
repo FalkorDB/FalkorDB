@@ -58,11 +58,18 @@ COPY ./build/runtime/run.sh       ${FALKORDB_BIN_PATH}/run.sh
 COPY ./build/runtime/gen-certs.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 COPY --from=builder /out/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
 
-# libomp.so.5 (LLVM OpenMP runtime) is linked by libfalkordb.so but absent from the redis
-# base. Copy from the builder so the ABI matches what the binary was compiled against.
-# Path below is amd64-specific; arm64 readiness needs a TARGETARCH-aware branch.
-COPY --from=builder /usr/lib/x86_64-linux-gnu/libomp.so.5 /usr/local/lib/libomp.so.5
-RUN ldconfig
+# libomp.so.5 (LLVM OpenMP runtime) is linked by libfalkordb.so but absent from
+# the redis base. TARGETARCH selects the correct multiarch path so the ABI
+# matches what the binary was compiled against on both linux/amd64 and linux/arm64.
+ARG TARGETARCH
+RUN --mount=from=builder,target=/builder,readonly \
+    case "${TARGETARCH}" in \
+        amd64) LIBOMP=/builder/usr/lib/x86_64-linux-gnu/libomp.so.5 ;; \
+        arm64) LIBOMP=/builder/usr/lib/aarch64-linux-gnu/libomp.so.5 ;; \
+        *) echo "unsupported TARGETARCH=${TARGETARCH}"; exit 1 ;; \
+    esac && \
+    cp "${LIBOMP}" /usr/local/lib/libomp.so.5 && \
+    ldconfig
 
 ENV ARCH=${TARGETPLATFORM} \
     TLS=0 \

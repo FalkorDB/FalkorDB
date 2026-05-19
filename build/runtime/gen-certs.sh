@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 
 # Generate some test certificates which are used by the regression test suite:
 #
