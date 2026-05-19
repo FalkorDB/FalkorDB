@@ -1569,6 +1569,7 @@ enum ValueTypeTag {
     Time = 11,
     Duration = 12,
     Arc = 13,
+    InternString = 14,
 }
 
 impl Value {
@@ -1612,7 +1613,12 @@ impl Value {
                 buf.extend_from_slice(&f.to_be_bytes());
             }
             Self::String(s) => {
-                buf.push(ValueTypeTag::String.into());
+                let tag = if crate::runtime::string_pool::global().is_interned(s) {
+                    ValueTypeTag::InternString
+                } else {
+                    ValueTypeTag::String
+                };
+                buf.push(tag.into());
                 let bytes = s.as_bytes();
                 buf.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
                 buf.extend_from_slice(bytes);
@@ -1691,6 +1697,16 @@ impl Value {
                 let len = u32::from_be_bytes(rest.get(..4)?.try_into().ok()?) as usize;
                 let s = std::str::from_utf8(rest.get(4..4 + len)?).ok()?;
                 Some((Self::String(Arc::new(s.to_owned())), 1 + 4 + len))
+            }
+            ValueTypeTag::InternString => {
+                let len = u32::from_be_bytes(rest.get(..4)?.try_into().ok()?) as usize;
+                let s = std::str::from_utf8(rest.get(4..4 + len)?).ok()?;
+                Some((
+                    Self::String(
+                        crate::runtime::string_pool::global().intern(Arc::new(s.to_owned())),
+                    ),
+                    1 + 4 + len,
+                ))
             }
             ValueTypeTag::List => {
                 let len = u32::from_be_bytes(rest.get(..4)?.try_into().ok()?) as usize;
@@ -1781,7 +1797,12 @@ impl Encode<19> for Value {
                 w.write_double(*f);
             }
             Self::String(s) => {
-                w.write_unsigned(si_type::T_STRING);
+                let tag = if crate::runtime::string_pool::global().is_interned(s) {
+                    si_type::T_INTERN | si_type::T_STRING
+                } else {
+                    si_type::T_STRING
+                };
+                w.write_unsigned(tag);
                 let bytes: Vec<u8> = s
                     .as_bytes()
                     .iter()
@@ -1859,7 +1880,13 @@ impl Decode<19> for Value {
                 } else {
                     String::from_utf8_lossy(&buf).to_string()
                 };
-                Ok(Self::String(Arc::new(s)))
+                if t == (si_type::T_INTERN | si_type::T_STRING) {
+                    Ok(Self::String(
+                        crate::runtime::string_pool::global().intern(Arc::new(s)),
+                    ))
+                } else {
+                    Ok(Self::String(Arc::new(s)))
+                }
             }
             si_type::T_ARRAY => {
                 let len = r.read_unsigned()?;

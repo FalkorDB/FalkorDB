@@ -476,6 +476,7 @@ impl ThreadedGraph {
                 return Err(err);
             }
         };
+        g.borrow_mut().clear_rollback_state();
 
         // Query succeeded — now commit deferred index operations to RediSearch.
         runtime.commit_deferred_indexes();
@@ -614,6 +615,7 @@ impl ThreadedGraph {
         );
         match runtime.query() {
             Ok(_) => {
+                g.borrow_mut().clear_rollback_state();
                 runtime.commit_deferred_indexes();
                 reply_profile(ctx, &runtime, &plan);
                 Ok(WriteQueryOk {

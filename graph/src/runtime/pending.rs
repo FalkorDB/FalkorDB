@@ -1403,6 +1403,7 @@ const VALUE_DATETIME: u8 = 8;
 const VALUE_DATE: u8 = 9;
 const VALUE_TIME: u8 = 10;
 const VALUE_DURATION: u8 = 11;
+const VALUE_INTERN_STRING: u8 = 12;
 
 pub fn write_u16(
     buf: &mut Vec<u8>,
@@ -1438,7 +1439,11 @@ fn write_value(
             buf.extend_from_slice(&f.to_le_bytes());
         }
         Value::String(s) => {
-            buf.push(VALUE_STRING);
+            if crate::runtime::string_pool::global().is_interned(s) {
+                buf.push(VALUE_INTERN_STRING);
+            } else {
+                buf.push(VALUE_STRING);
+            }
             write_string(buf, s);
         }
         Value::List(items) => {
@@ -1567,6 +1572,12 @@ pub fn read_value(
         VALUE_STRING => {
             let s = read_string(buf, offset)?;
             Ok(Value::String(s))
+        }
+        VALUE_INTERN_STRING => {
+            let s = read_string(buf, offset)?;
+            Ok(Value::String(
+                crate::runtime::string_pool::global().intern(s),
+            ))
         }
         VALUE_LIST => {
             let len = read_u64(buf, offset)? as usize;
