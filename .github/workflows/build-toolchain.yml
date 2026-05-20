@@ -1,15 +1,10 @@
-# Build the toolchain image (build/Dockerfile) for both linux/amd64 and linux/arm64
-# and push it to ghcr.io/falkordb/falkordb-build:latest as a multi-arch manifest.
-# This image is the BUILD_IMAGE that build/runtime/Dockerfile's chef stage uses to
-# compile libfalkordb.so — having it multi-arch is what unblocks arm64 in
-# .github/workflows/build-image.yml.
+# Builds the toolchain image (build/Dockerfile) for linux/amd64 and linux/arm64
+# and publishes it as a multi-arch manifest at ghcr.io/falkordb/falkordb-build:latest.
 #
 # Triggers:
-#   - workflow_dispatch: explicit refresh
 #   - push to main when build/Dockerfile or this workflow changes
-#
-# Note: this does NOT replace aviavni/falkordb-build (still used by the rest of
-# rust-pr.yml's containerized jobs). Migrating those is a separate concern.
+#   - workflow_dispatch (UI / API) — runs only publish from refs/heads/main, so
+#     dispatching from a feature branch is a no-op (won't overwrite :latest).
 
 name: Build toolchain image
 
@@ -30,6 +25,7 @@ concurrency:
 
 jobs:
   build:
+    if: github.ref == 'refs/heads/main'
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
@@ -65,6 +61,7 @@ jobs:
 
   manifest:
     needs: build
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
