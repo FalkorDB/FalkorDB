@@ -1,12 +1,19 @@
-name: Cleanup RC images
+name: Cleanup PR images
 
-# Sweeps GHCR `rc-pr-*` runtime image tags older than the TTL window.
+# Sweeps GHCR PR-scoped image tags older than the TTL window. Two families:
 #
-# RC images live past PR close (rust-pr-close.yml no longer deletes them)
-# because they may be retagged into a release tag by release-image.yml's
-# release-event flow. 30 days is long enough to cut a release for a PR's
-# content but short enough that orphan tags from un-released PRs don't
-# accumulate indefinitely.
+#   - falkordb / falkordb-server : `rc-pr-*` runtime images. They live past
+#     PR close because they may be retagged into a release tag by
+#     release-image.yml. 30 days is long enough to cut a release for a PR's
+#     content but short enough that orphans from un-released PRs don't
+#     accumulate indefinitely.
+#
+#   - falkordb-build : `pr-*` toolchain images. After a PR merges, the
+#     toolchain has already been retagged to :latest by rust-push.yml, so
+#     the pr-<N> tag is dead weight; if the PR closed un-merged, it never
+#     mattered. Could be deleted immediately on PR close, but the volume is
+#     tiny (only PRs that touch build/Dockerfile produce one), so folding
+#     into the same TTL sweep keeps the cleanup surface small.
 #
 # Triggers: daily cron + workflow_dispatch (manual sweep, e.g. to verify
 # logic after editing the filter). The dry-run input lets operators see what
@@ -42,44 +49,49 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # falkordb-build is intentionally NOT in this list — its pr-<N> tags
-        # are deleted on PR close by rust-pr-close.yml, so there's nothing to
-        # sweep.
-        repo: [falkordb, falkordb-server]
+        include:
+          # Runtime RC images — both targets, both architectures all share the
+          # rc-pr-<N>(...) tag prefix produced by build-image.yml.
+          - { repo: falkordb,        pattern: '^rc-pr-' }
+          - { repo: falkordb-server, pattern: '^rc-pr-' }
+          # Toolchain — pr-<N>(-x64|-arm64v8)? produced by build-toolchain.yml.
+          - { repo: falkordb-build,  pattern: '^pr-' }
     steps:
-      - name: Sweep rc-pr-* tags older than TTL
+      - name: Sweep tags older than TTL (${{ matrix.repo }}, /${{ matrix.pattern }}/)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ matrix.repo }}
+          TAG_PATTERN: ${{ matrix.pattern }}
           TTL_DAYS: ${{ inputs.ttl_days || '30' }}
           DRY_RUN: ${{ inputs.dry_run || 'false' }}
         run: |
           set -euo pipefail
 
-          cutoff=$(date -u -d "${TTL_DAYS} days ago" +%Y-%m-%dT%H:%M:%SZ)
-          echo "Sweeping ghcr.io/falkordb/${REPO} versions created before ${cutoff} (TTL=${TTL_DAYS}d)"
+          # Exported so the jq expression below can read it as env.cutoff —
+          # safer than string-interpolating the shell var into the jq filter.
+          export cutoff=$(date -u -d "${TTL_DAYS} days ago" +%Y-%m-%dT%H:%M:%SZ)
+          echo "Sweeping ghcr.io/falkordb/${REPO} versions created before ${cutoff} matching /${TAG_PATTERN}/ (TTL=${TTL_DAYS}d)"
           echo "DRY_RUN=${DRY_RUN}"
 
           # Pull every version's id, tags, and created_at. Then in jq:
           #   - filter by created_at < cutoff
-          #   - keep only versions where EVERY tag matches ^rc-pr- (so we never
-          #     remove a version that also carries a production tag, e.g. :edge-rs
-          #     promoted from rc-pr-<N> — that retag creates a new manifest with
-          #     a different created_at, but be defensive anyway)
+          #   - keep only versions where EVERY tag matches the per-repo
+          #     pattern (env.TAG_PATTERN). The "all" check is a safety net:
+          #     after promotion, a version may carry both the PR-scoped tag
+          #     and a channel tag (:edge-rs, :latest, semver). Such versions
+          #     must NOT be swept — `:latest`/`:edge-rs` failing the regex
+          #     fails the `all()` check and the version is preserved.
           #   - drop untagged versions (those are layer remnants, separate concern)
-          #
-          # `tags|length > 0` excludes untagged versions. `all(test("^rc-pr-"))`
-          # is the safety check above.
           candidates=$(gh api \
             -X GET "/orgs/falkordb/packages/container/${REPO}/versions?per_page=100" \
             --paginate \
-            --jq "
+            --jq '
               .[]
-              | select(.created_at < \"${cutoff}\")
+              | select(.created_at < env.cutoff)
               | select(.metadata.container.tags | length > 0)
-              | select(.metadata.container.tags | all(test(\"^rc-pr-\")))
+              | select(.metadata.container.tags | all(test(env.TAG_PATTERN)))
               | {id: .id, tags: .metadata.container.tags, created: .created_at}
-            ")
+            ')
 
           if [ -z "$candidates" ]; then
             echo "Nothing to sweep."
