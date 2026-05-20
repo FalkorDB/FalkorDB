@@ -361,6 +361,10 @@ unsafe extern "C" fn on_shutdown(
     _subevent: u64,
     _data: *mut c_void,
 ) {
+    // Stop the telemetry flusher first: it issues RM_Call("XADD") on a
+    // thread-safe context, which races with Redis tearing down server state
+    // and produces a SIGSEGV under ASAN if left running.
+    telemetry::shutdown_flusher_thread();
     threadpool::shutdown();
     graph::graph::graphblas::matrix::shutdown();
     unsafe { RediSearch_CleanupModule() };
