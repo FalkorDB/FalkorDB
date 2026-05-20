@@ -66,14 +66,24 @@ RUN mkdir -p ${FALKORDB_DATA_PATH} && ln -s ${FALKORDB_DATA_PATH} /data
 # Pull LLVM 22 from apt.llvm.org for libasan-version-matched libomp + symbolizer.
 # Same approach build/Dockerfile takes; we need apt-add-repository helpers
 # first, then the LLVM packages, then drop the helpers to keep the image lean.
+# - `software-properties-common` provides `add-apt-repository` — llvm.sh
+#   aborts with "Missing required tools" without it. The toolchain image
+#   (build/Dockerfile) doesn't need it explicitly because its `redis:8.6.2`
+#   base already includes it transitively; debian:bookworm-slim does not.
+# - `libomp5` (not `libomp5-22`): apt.llvm.org publishes the LLVM 22 OpenMP
+#   runtime under the unversioned `libomp5` name. Verified with apt-cache
+#   policy: candidate version is 1:22.1.0~++…, served from the
+#   llvm-toolchain-bookworm-22 repo, so we get the version-matched runtime.
+# - No `libomp-22-dev` (dev package, only needed by the builder stage which
+#   uses the toolchain image's headers, not by the runtime image).
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        ca-certificates bash openssl wget gnupg lsb-release libasan8 && \
+        ca-certificates bash openssl wget gnupg lsb-release libasan8 \
+        software-properties-common && \
     wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && ./llvm.sh 22 && \
     apt-get update && \
-    apt-get install -y --no-install-recommends \
-        libomp5-22 libomp-22-dev llvm-22 && \
-    apt-get purge -y wget gnupg lsb-release && \
+    apt-get install -y --no-install-recommends libomp5 llvm-22 && \
+    apt-get purge -y wget gnupg lsb-release software-properties-common && \
     apt-get autoremove -y && \
     apt-get clean && rm -rf /var/lib/apt/lists/* /llvm.sh
 
