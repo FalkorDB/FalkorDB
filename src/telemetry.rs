@@ -8,9 +8,8 @@ use crossfire::mpmc::{self, List};
 use crossfire::{MRx, MTx};
 use parking_lot::Mutex;
 use redis_module::{CallOptions, CallOptionsBuilder, Context, RedisString, RedisValue, raw};
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::MAX_INFO_QUERIES;
@@ -331,12 +330,17 @@ struct PendingEntry {
     entry: TelemetryEntry,
 }
 
-/// Producer side of the telemetry channel. `None` until `start_flusher_thread`
-/// has been called; entries enqueued before that point are silently dropped.
-static SENDER: OnceLock<MTx<List<PendingEntry>>> = OnceLock::new();
+/// Producer side of the telemetry channel. `None` before
+/// `start_flusher_thread` and after `shutdown_flusher_thread`; entries
+/// enqueued outside that window are silently dropped. Wrapped in a `Mutex`
+/// so shutdown can drop the sender, closing the channel and letting the
+/// flusher loop observe `Disconnected` and exit cleanly.
+static SENDER: Mutex<Option<MTx<List<PendingEntry>>>> = Mutex::new(None);
 /// Receiver, parked here only between `start_flusher_thread` being called and
 /// the flusher thread taking ownership.
 static RECEIVER: Mutex<Option<MRx<List<PendingEntry>>>> = Mutex::new(None);
+/// Handle for the flusher thread, joined during `shutdown_flusher_thread`.
+static FLUSHER: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
 
 /// Push a telemetry entry to the background channel. Lock-free hot path.
 pub(crate) fn enqueue_entry(
@@ -349,7 +353,7 @@ pub(crate) fn enqueue_entry(
     if IS_REPLICA.load(Ordering::Relaxed) {
         return;
     }
-    if let Some(tx) = SENDER.get() {
+    if let Some(tx) = SENDER.lock().as_ref() {
         let _ = tx.send(PendingEntry {
             graph_name: graph_name.to_string(),
             entry,
@@ -370,16 +374,34 @@ pub(crate) fn set_is_replica(is_replica: bool) {
 /// Spawn the background flusher thread. Must be called once at module init.
 pub(crate) fn start_flusher_thread() {
     let (tx, rx) = mpmc::unbounded_blocking::<PendingEntry>();
-    if SENDER.set(tx).is_err() {
-        // Already initialized.
-        return;
+    {
+        let mut sender = SENDER.lock();
+        if sender.is_some() {
+            // Already initialized.
+            return;
+        }
+        *sender = Some(tx);
     }
     *RECEIVER.lock() = Some(rx);
 
-    thread::Builder::new()
+    let handle = thread::Builder::new()
         .name("falkordb-telemetry".to_string())
         .spawn(flusher_loop)
         .expect("failed to spawn telemetry flusher thread");
+    *FLUSHER.lock() = Some(handle);
+}
+
+/// Stop the background flusher: drop the sender so the channel disconnects,
+/// then join the thread. Must be called on module unload before tearing down
+/// Redis state the flusher's `RM_Call("XADD")` touches.
+pub(crate) fn shutdown_flusher_thread() {
+    // Drop the sender to close the channel; the flusher loop exits on
+    // `Disconnected` after draining any pending entries.
+    drop(SENDER.lock().take());
+    let handle = FLUSHER.lock().take();
+    if let Some(h) = handle {
+        let _ = h.join();
+    }
 }
 
 fn flusher_loop() {
