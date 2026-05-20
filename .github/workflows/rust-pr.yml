@@ -121,6 +121,49 @@ jobs:
           cache-from: type=registry,ref=ghcr.io/falkordb/falkordb:buildcache-asan
           cache-to:   type=registry,ref=ghcr.io/falkordb/falkordb:buildcache-asan,mode=max
 
+  # Extract the falkordb.so from each RC image and upload as an artifact. Tests
+  # that pass load-time-immutable moduleArgs (CACHE_SIZE, THREAD_COUNT, ...)
+  # fall back to RLTest's `env=oss` spawn mode (see tests/flow/common.py); that
+  # spawn needs the .so locally. We extract here on a host runner because the
+  # test-flow job runs inside the toolchain container which has no docker CLI.
+  extract-so:
+    needs: [build-rc-image, build-rc-asan-image]
+    if: ${{ !cancelled() && needs.build-rc-image.result == 'success' && needs.build-rc-asan-image.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { image_repo: falkordb-server, image_suffix: '',      artifact_name: rc-so      }
+          - { image_repo: falkordb,        image_suffix: '-asan', artifact_name: rc-asan-so }
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract falkordb.so
+        env:
+          IMAGE: ghcr.io/falkordb/${{ matrix.image_repo }}:rc-pr-${{ github.event.pull_request.number }}${{ matrix.image_suffix }}
+        run: |
+          set -euo pipefail
+          docker pull "$IMAGE"
+          CID=$(docker create "$IMAGE")
+          docker cp "${CID}:/var/lib/falkordb/bin/falkordb.so" libfalkordb.so
+          docker rm "$CID" >/dev/null
+          ls -lh libfalkordb.so
+      - name: Upload .so artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: libfalkordb.so
+          retention-days: 1
+          if-no-files-found: error
+
   lint:
     runs-on: ubuntu-latest
     container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
@@ -207,7 +250,8 @@ jobs:
       - flow-test-matrix
       - build-rc-image
       - build-rc-asan-image
-    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.flow-test-matrix.result == 'success' && needs.build-rc-image.result == 'success' && needs.build-rc-asan-image.result == 'success' }}
+      - extract-so
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.flow-test-matrix.result == 'success' && needs.build-rc-image.result == 'success' && needs.build-rc-asan-image.result == 'success' && needs.extract-so.result == 'success' }}
     permissions:
       contents: read
       packages: read
@@ -243,18 +287,15 @@ jobs:
       # Tests that pass load-time-only moduleArgs (CACHE_SIZE, THREAD_COUNT,
       # IMPORT_FOLDER, ...) can't reconfigure the running service container.
       # For those, the Env() helper falls back to RLTest's `env=oss` mode,
-      # which spawns its own redis with --loadmodule + moduleArgs. We need
-      # the .so locally for that spawn. Extract it from the service container
-      # so it's byte-identical to what the service is running.
-      - name: Extract falkordb.so from service container
-        env:
-          FALKORDB_CID: ${{ job.services.falkordb.id }}
-        run: |
-          mkdir -p target/release
-          # Path inside the image is /var/lib/falkordb/bin/falkordb.so; flow.sh
-          # expects libfalkordb.so at target/release/ (or target/debug/).
-          docker cp "${FALKORDB_CID}:/var/lib/falkordb/bin/falkordb.so" target/release/libfalkordb.so
-          ls -lh target/release/libfalkordb.so
+      # which spawns its own redis with --loadmodule + moduleArgs. The .so
+      # is downloaded here from the extract-so job (we can't `docker cp`
+      # from inside the toolchain container — no docker CLI).
+      - name: Download .so artifact (byte-identical to service-container .so)
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ${{ matrix.sanitizer && 'rc-asan-so' || 'rc-so' }}
+          path: target/release/
+      - run: chmod +x target/release/libfalkordb.so
       - name: Run Flow test - ${{ matrix.test_file }} (sanitizer=${{ matrix.sanitizer }})
         env:
           TEST_FILE: ${{ matrix.test_file }}
