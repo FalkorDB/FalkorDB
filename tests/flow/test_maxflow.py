@@ -1313,3 +1313,32 @@ class testMaxFlow(FlowTestsBase):
             YIELD maxFlow
         """)
         self.env.assertAlmostEqual(result.result_set[0][0], 4.5, 5)
+
+    def test_37_no_edges_of_relationship_type(self):
+        """When the relationship type exists but no edges survive the label
+        filter, maxFlow should return one row with maxFlow=0 and empty arrays."""
+        # Create a PIPE edge (registers the rel-type in the schema) between
+        # nodes labelled 'X', then query between nodes labelled 'Y' where no
+        # PIPE edges exist – Build_Matrix produces an empty matrix.
+        self.graph.query("""
+            CREATE (:X {name:'P'})-[:PIPE {cap:5}]->(:X {name:'Q'}),
+                   (:Y {name:'A'}),
+                   (:Y {name:'B'})
+        """)
+        result = self.graph.query("""
+            MATCH (s:Y {name:'A'}), (t:Y {name:'B'})
+            CALL algo.maxFlow({
+                sourceNodes:       [s],
+                targetNodes:       [t],
+                capacityProperty:  'cap',
+                nodeLabels:        ['Y'],
+                relationshipTypes: ['PIPE']
+            })
+            YIELD nodes, edges, edgeFlows, maxFlow
+        """)
+        self.env.assertEqual(len(result.result_set), 1)
+        row = result.result_set[0]
+        self.env.assertEqual(row[0], [])       # nodes
+        self.env.assertEqual(row[1], [])       # edges
+        self.env.assertEqual(row[2], [])       # edgeFlows
+        self.env.assertEqual(row[3], 0.0)      # maxFlow

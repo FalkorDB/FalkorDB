@@ -8,9 +8,6 @@ inputs:
   project_id:
     description: GCP Project ID
     required: true
-  zone:
-    description: GCP Zone
-    required: true
   instance_label:
     description: Label to identify the instance
     required: true
@@ -24,12 +21,16 @@ runs:
     - id: get-runner-id
       shell: bash
       run: |
-        runner_id=$(gcloud compute instances list --filter=labels=${{ inputs.instance_label }} | awk '{print $1}' | tail +2)
+        runner_info=$(gcloud compute instances list --filter=labels=${{ inputs.instance_label }} --format="value(name,zone)" | head -1)
+        runner_id=$(echo "$runner_info" | awk '{print $1}')
+        runner_zone=$(echo "$runner_info" | awk '{print $2}')
         if [ -z "$runner_id" ]; then
           echo "Instance with label ${{ inputs.instance_label }} not found"
           exit 1
         fi
         echo "runner_id=$runner_id" >> $GITHUB_OUTPUT
+        echo "runner_zone=$runner_zone" >> $GITHUB_OUTPUT
     - id: kill-runner
       shell: bash
-      run: gcloud compute instances delete ${{ steps.get-runner-id.outputs.runner_id }} --zone=${{ inputs.zone }} --quiet
+      run: |
+        gcloud compute instances delete ${{ steps.get-runner-id.outputs.runner_id }} --zone=${{ steps.get-runner-id.outputs.runner_zone }} --quiet

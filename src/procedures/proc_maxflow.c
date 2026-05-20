@@ -102,8 +102,8 @@ static void _get_edge_capacity
 	// set invalid flag if value is still negative
 	// meaning we have encountered an invalid value and the default was not set
 	bool valid = *z >= 0.0 ;
-	if (!valid && !(*(ctx->invalid))) {
-		atomic_store(ctx->invalid, true) ;
+	if (!valid && !atomic_load_explicit(ctx->invalid, memory_order_relaxed)) {
+		atomic_store_explicit(ctx->invalid, true, memory_order_relaxed) ;
 	}
 }
 
@@ -512,6 +512,27 @@ ProcedureResult Proc_MaxFlowInvoke
 	GrB_OK (Build_Matrix (&A, NULL, g, lbls, arr_len (lbls), rels,
 			arr_len(rels), false, false)) ;
 
+	GrB_Index nvals_A = 0;
+	GrB_OK (GrB_Matrix_nvals(&nvals_A, A));
+	if (nvals_A == 0) {
+		GrB_OK (GrB_free (&A)) ;
+
+		// No edges match the label/relationship filter: max flow is 0.
+		// Build an empty flow matrix so Step yields one row with maxFlow=0
+		// and empty nodes/edges/edgeFlows arrays.
+		GrB_Index nrows, ncols ;
+		GrB_OK (GrB_Matrix_nrows (&nrows, U)) ;
+		GrB_OK (GrB_Matrix_ncols (&ncols, U)) ;
+		GrB_Matrix empty_flow ;
+		GrB_OK (GrB_Matrix_new (&empty_flow, GrB_FP64, nrows, ncols)) ;
+
+		pdata->R         = U ;
+		pdata->max_flow  = 0.0 ;
+		pdata->flow_mtx  = empty_flow ;
+		ctx->privateData = pdata ;
+		goto cleanup ;
+	}
+
 	//--------------------------------------------------------------------------
 	// cast A to uint64 matrix
 	//--------------------------------------------------------------------------
@@ -560,6 +581,7 @@ ProcedureResult Proc_MaxFlowInvoke
 	GrB_OK (GrB_free (&cap_ctx_s)) ;
 	GrB_OK (GrB_free (&cap_ctx_type)) ;
 	GrB_OK (GrB_free (&get_capacity)) ;
+
 
 	if (invalid_attributes) {
 		ErrorCtx_SetError ("algo.maxFlow: invalid or missing attribute and no"
