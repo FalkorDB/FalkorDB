@@ -51,12 +51,17 @@ RUN CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-Zsanitizer=address -Cdebug
     cargo build --target x86_64-unknown-linux-gnu && \
     mkdir -p /out && cp target/x86_64-unknown-linux-gnu/debug/libfalkordb.so /out/falkordb.so
 
-# Stage 3 — runtime. debian:bookworm-slim because the stock redis:8.6.x
-# base bundles its own (non-ASAN) redis-server we'd overwrite anyway. We
-# need libasan8 (ASAN runtime), libomp5-22 (LLVM OpenMP for the module),
-# and llvm-22 (symbolizer for stack traces). No apt purge — sanitizer
-# diagnostics need symbols and the libasan runtime kept intact.
-FROM debian:bookworm-slim AS server
+# Stage 3 — runtime. debian:trixie-slim because the asan redis-server
+# (built in stage 1 against the toolchain image's glibc) needs GLIBC_2.38
+# and GLIBCXX_3.4.32 — bookworm-slim's glibc 2.36 can't satisfy these and
+# the binary fails to load with "version not found" errors. trixie-slim
+# ships glibc 2.41 / GLIBCXX_3.4.33 which is compatible with everything
+# the toolchain (redis:8.6.x base, also trixie-derived) produces.
+#
+# We replace redis-server with our ASAN-instrumented one so the stock
+# binary that would come from the redis:8.6.x base is irrelevant. Going
+# directly to debian:trixie-slim keeps the image lean.
+FROM debian:trixie-slim AS server
 ARG TARGETPLATFORM
 
 ENV FALKORDB_HOME=/var/lib/falkordb \
@@ -68,26 +73,21 @@ ENV FALKORDB_HOME=/var/lib/falkordb \
 RUN mkdir -p ${FALKORDB_DATA_PATH} && ln -s ${FALKORDB_DATA_PATH} /data
 
 # Pull LLVM 22 from apt.llvm.org for libasan-version-matched libomp + symbolizer.
-# Same approach build/Dockerfile takes; we need apt-add-repository helpers
-# first, then the LLVM packages, then drop the helpers to keep the image lean.
-# - `software-properties-common` provides `add-apt-repository` — llvm.sh
-#   aborts with "Missing required tools" without it. The toolchain image
-#   (build/Dockerfile) doesn't need it explicitly because its `redis:8.6.2`
-#   base already includes it transitively; debian:bookworm-slim does not.
 # - `libomp5` (not `libomp5-22`): apt.llvm.org publishes the LLVM 22 OpenMP
 #   runtime under the unversioned `libomp5` name. Verified with apt-cache
-#   policy: candidate version is 1:22.1.0~++…, served from the
-#   llvm-toolchain-bookworm-22 repo, so we get the version-matched runtime.
+#   policy: candidate version is 1:22.1.x~++…, served from the
+#   llvm-toolchain-trixie-22 repo, so we get the version-matched runtime.
 # - No `libomp-22-dev` (dev package, only needed by the builder stage which
 #   uses the toolchain image's headers, not by the runtime image).
+# - trixie's llvm.sh no longer requires `software-properties-common`; the
+#   helper script writes the apt source list directly.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        ca-certificates bash openssl wget gnupg lsb-release libasan8 \
-        software-properties-common && \
+        ca-certificates bash openssl wget gnupg lsb-release libasan8 && \
     wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && ./llvm.sh 22 && \
     apt-get update && \
     apt-get install -y --no-install-recommends libomp5 llvm-22 && \
-    apt-get purge -y wget gnupg lsb-release software-properties-common && \
+    apt-get purge -y wget gnupg lsb-release && \
     apt-get autoremove -y && \
     apt-get clean && rm -rf /var/lib/apt/lists/* /llvm.sh
 

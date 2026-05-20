@@ -195,6 +195,10 @@ jobs:
   # ASAN_OPTIONS forced via service env). The ASAN_OPTIONS env on the service
   # is harmless for non-sanitizer cells — libasan isn't loaded there.
   test-flow:
+    # Display the asan vs normal cells distinctly in the GitHub Actions UI.
+    # Default matrix interpolation renders as "test-flow (test_foo, true)"
+    # which is hard to scan; this gives "asan-flow test_foo" / "flow test_foo".
+    name: ${{ matrix.sanitizer && 'asan-flow' || 'flow' }} ${{ matrix.test_file }}
     runs-on: ubuntu-latest
     container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
     needs:
