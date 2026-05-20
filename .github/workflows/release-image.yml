@@ -47,7 +47,10 @@ jobs:
           set -euo pipefail
           case "${{ github.event_name }}" in
             push)
-              TAG="edge"
+              # edge-rs distinguishes the Rust port's edge channel from the
+              # C port's :edge on the same falkordb/falkordb Docker Hub repo
+              # (once we start pushing to Docker Hub from this pipeline).
+              TAG="edge-rs"
               IS_LATEST=false
               BROWSER_TAG="edge"
               COMMIT_SHA="${{ github.sha }}"

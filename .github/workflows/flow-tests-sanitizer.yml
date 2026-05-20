@@ -62,9 +62,9 @@ jobs:
           platforms: linux/amd64
           push: true
           provenance: false
-          tags: ghcr.io/falkordb/falkordb-next:${{ needs.prepare.outputs.tag }}
-          cache-from: type=registry,ref=ghcr.io/falkordb/falkordb-next:buildcache-asan
-          cache-to:   type=registry,ref=ghcr.io/falkordb/falkordb-next:buildcache-asan,mode=max
+          tags: ghcr.io/falkordb/falkordb:${{ needs.prepare.outputs.tag }}
+          cache-from: type=registry,ref=ghcr.io/falkordb/falkordb:buildcache-asan
+          cache-to:   type=registry,ref=ghcr.io/falkordb/falkordb:buildcache-asan,mode=max
 
   flow-test-matrix:
     runs-on: ubuntu-latest
@@ -87,7 +87,7 @@ jobs:
       packages: read
     services:
       falkordb:
-        image: ghcr.io/falkordb/falkordb-next:${{ needs.prepare.outputs.tag }}
+        image: ghcr.io/falkordb/falkordb:${{ needs.prepare.outputs.tag }}
         credentials:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
@@ -122,7 +122,7 @@ jobs:
           # ASAN_OPTIONS.log_path inside the service container writes to
           # /tmp/asan-logs/asan.<pid>. Pull them out for the artifact step.
           mkdir -p tests/flow/logs/asan
-          docker cp "$(docker ps -q --filter "ancestor=ghcr.io/falkordb/falkordb-next:${{ needs.prepare.outputs.tag }}")":/tmp/asan-logs/. tests/flow/logs/asan/ 2>/dev/null || true
+          docker cp "$(docker ps -q --filter "ancestor=ghcr.io/falkordb/falkordb:${{ needs.prepare.outputs.tag }}")":/tmp/asan-logs/. tests/flow/logs/asan/ 2>/dev/null || true
 
       - name: Upload flow test logs on failure
         if: failure()

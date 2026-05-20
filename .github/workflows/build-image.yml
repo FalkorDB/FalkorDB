@@ -1,4 +1,4 @@
-# Reusable workflow: build + push the falkordb-next runtime image (both targets, both arches)
+# Reusable workflow: build + push the falkordb runtime image (both targets, both arches)
 # and assemble multi-arch manifests. Callers (release-image.yml, rust-pr.yml) supply the tag
 # and decide whether to push to Docker Hub or only to GHCR.
 
@@ -45,10 +45,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { arch: x64,     platform: linux/amd64, runner: ubuntu-latest,    target: full,   repo: falkordb-next        }
-          - { arch: x64,     platform: linux/amd64, runner: ubuntu-latest,    target: server, repo: falkordb-next-server }
-          - { arch: arm64v8, platform: linux/arm64, runner: ubuntu-24.04-arm, target: full,   repo: falkordb-next        }
-          - { arch: arm64v8, platform: linux/arm64, runner: ubuntu-24.04-arm, target: server, repo: falkordb-next-server }
+          - { arch: x64,     platform: linux/amd64, runner: ubuntu-latest,    target: full,   repo: falkordb        }
+          - { arch: x64,     platform: linux/amd64, runner: ubuntu-latest,    target: server, repo: falkordb-server }
+          - { arch: arm64v8, platform: linux/arm64, runner: ubuntu-24.04-arm, target: full,   repo: falkordb        }
+          - { arch: arm64v8, platform: linux/arm64, runner: ubuntu-24.04-arm, target: server, repo: falkordb-server }
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -99,7 +99,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        repo: [falkordb-next, falkordb-next-server]
+        repo: [falkordb, falkordb-server]
     steps:
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 

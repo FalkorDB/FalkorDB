@@ -17,8 +17,8 @@ jobs:
     steps:
       # Delete the GHCR PR-scoped images this repo's workflows publish:
       #   - falkordb-build:pr-<N>         (toolchain image rebuilt by rust-pr.yml `docker` job when build/Dockerfile changed)
-      #   - falkordb-next:rc-pr-<N>       (runtime image, full target, built by rust-pr.yml `build-rc-image`)
-      #   - falkordb-next-server:rc-pr-<N> (runtime image, server target, same)
+      #   - falkordb:rc-pr-<N>       (runtime image, full target, built by rust-pr.yml `build-rc-image`)
+      #   - falkordb-server:rc-pr-<N> (runtime image, server target, same)
       # Each runtime repo also carries -x64 and -arm64v8 per-arch tags alongside
       # the multi-arch manifest; the toolchain image is the same.
       - name: Delete GHCR PR image tags
@@ -49,10 +49,10 @@ jobs:
           done
           # Runtime RC images (full + server, both arches via per-arch tags
           # and the multi-arch manifest)
-          for repo in falkordb-next falkordb-next-server; do
+          for repo in falkordb falkordb-server; do
             for suffix in "" -x64 -arm64v8; do
               delete_tag "$repo" "rc-pr-${PR}${suffix}"
             done
           done
           # Sanitizer RC image (amd64-only, no arch suffix variants)
-          delete_tag falkordb-next "rc-pr-${PR}-asan"
+          delete_tag falkordb "rc-pr-${PR}-asan"

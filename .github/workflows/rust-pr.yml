@@ -99,7 +99,7 @@ jobs:
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.build-rc-image.result == 'success' }}
     services:
       falkordb:
-        image: ghcr.io/falkordb/falkordb-next-server:rc-pr-${{ github.event.pull_request.number }}
+        image: ghcr.io/falkordb/falkordb-server:rc-pr-${{ github.event.pull_request.number }}
         credentials:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
@@ -147,7 +147,7 @@ jobs:
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.flow-test-matrix.result == 'success' && needs.build-rc-image.result == 'success' }}
     services:
       falkordb:
-        image: ghcr.io/falkordb/falkordb-next-server:rc-pr-${{ github.event.pull_request.number }}
+        image: ghcr.io/falkordb/falkordb-server:rc-pr-${{ github.event.pull_request.number }}
         credentials:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
@@ -347,7 +347,7 @@ jobs:
       contents: write
     services:
       falkordb:
-        image: ghcr.io/falkordb/falkordb-next-server:rc-pr-${{ github.event.pull_request.number }}
+        image: ghcr.io/falkordb/falkordb-server:rc-pr-${{ github.event.pull_request.number }}
         credentials:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
@@ -385,7 +385,7 @@ jobs:
       packages: read
     services:
       falkordb:
-        image: ghcr.io/falkordb/falkordb-next-server:rc-pr-${{ github.event.pull_request.number }}
+        image: ghcr.io/falkordb/falkordb-server:rc-pr-${{ github.event.pull_request.number }}
         credentials:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}

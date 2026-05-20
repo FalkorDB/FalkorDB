@@ -6,7 +6,7 @@ members = [
 
 [package]
 name = "falkordb-rs"
-version = "0.1.0"
+version = "99.99.99"
 edition = "2024"
 description = "Graph database"
 license = "MIT"
