@@ -40,6 +40,9 @@ unsafe extern "C" fn UndoLog_DeleteNode(
     labels_count: usize,
 ) {
     let n = node.read();
+    if n.attributes.is_null() {
+        return;
+    }
     let set = n.attributes.read_unaligned();
     n.attributes
         .write((set as u64 | (1u64 << (u64::BITS as usize - 1))) as *mut _);
@@ -52,6 +55,9 @@ unsafe extern "C" fn UndoLog_DeleteEdge(
     edge: *const Edge,
 ) {
     let e = edge.read();
+    if e.attributes.is_null() {
+        return;
+    }
     let set = e.attributes.read_unaligned();
     e.attributes
         .write((set as u64 | (1u64 << (u64::BITS as usize - 1))) as *mut _);
