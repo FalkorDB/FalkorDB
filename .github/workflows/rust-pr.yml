@@ -2,7 +2,13 @@ name: Rust PR
 
 on:
   pull_request:
-    branches: [ "main" ]
+    # Fire on PRs to main AND to version branches (e.g. "6.0", "7.1"). Backport
+    # PRs from batch-backport.yml target the version branch directly, so they
+    # need the same RC build + flow gate as main PRs. rc-pr-<N> tags are
+    # globally unique by PR number so there's no collision across base branches.
+    branches:
+      - "main"
+      - "[0-9]+.[0-9]+"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
@@ -76,6 +82,45 @@ jobs:
     # push_to_dockerhub is hard-coded false for PR RC builds, so no Docker Hub
     # token is needed. The reusable workflow's GITHUB_TOKEN is auto-injected.
 
+  # Build the ASAN-instrumented runtime image (amd64-only) alongside the
+  # regular RC. Same toolchain plumbing — when the PR rebuilt the toolchain,
+  # the sanitizer .so also uses the PR's toolchain.
+  build-rc-asan-image:
+    needs: [check-files, docker]
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push sanitizer image
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
+        with:
+          context: .
+          file: build/runtime/Dockerfile.asan
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          build-args: |
+            BUILD_IMAGE=${{ needs.check-files.outputs.file_changed == 'true' && format('ghcr.io/falkordb/falkordb-build:pr-{0}', github.event.pull_request.number) || 'ghcr.io/falkordb/falkordb-build:latest' }}
+          tags: ghcr.io/falkordb/falkordb:rc-pr-${{ github.event.pull_request.number }}-asan
+          cache-from: type=registry,ref=ghcr.io/falkordb/falkordb:buildcache-asan
+          cache-to:   type=registry,ref=ghcr.io/falkordb/falkordb:buildcache-asan,mode=max
+
   lint:
     runs-on: ubuntu-latest
     container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
@@ -144,6 +189,11 @@ jobs:
         id: set-matrix
         run: |
           echo "test_files=$(jq -Rc '[., inputs] | map(select(length > 0))' flow_tests_done.txt)" >> $GITHUB_OUTPUT
+  # Flow tests against the RC image. The sanitizer matrix dimension lets one
+  # job drive both the standard run (services: falkordb-server:rc-pr-N) and
+  # the ASAN run (services: falkordb:rc-pr-N-asan, with SANITIZER=address +
+  # ASAN_OPTIONS forced via service env). The ASAN_OPTIONS env on the service
+  # is harmless for non-sanitizer cells — libasan isn't loaded there.
   test-flow:
     runs-on: ubuntu-latest
     container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
@@ -152,33 +202,49 @@ jobs:
       - docker
       - flow-test-matrix
       - build-rc-image
-    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.flow-test-matrix.result == 'success' && needs.build-rc-image.result == 'success' }}
+      - build-rc-asan-image
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.flow-test-matrix.result == 'success' && needs.build-rc-image.result == 'success' && needs.build-rc-asan-image.result == 'success' }}
     permissions:
       contents: read
       packages: read
     services:
       falkordb:
-        image: ghcr.io/falkordb/falkordb-server:rc-pr-${{ github.event.pull_request.number }}
+        image: ${{ matrix.sanitizer && format('ghcr.io/falkordb/falkordb:rc-pr-{0}-asan', github.event.pull_request.number) || format('ghcr.io/falkordb/falkordb-server:rc-pr-{0}', github.event.pull_request.number) }}
         credentials:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
         ports: ["6379:6379"]
+        # Sanitizer cells need log_path overridden to a path we can `docker cp`
+        # out of the service container. Non-sanitizer service ignores it.
+        env:
+          ASAN_OPTIONS: "detect_leaks=1:detect_odr_violation=0:halt_on_error=0:abort_on_error=0:symbolize=1:print_stacktrace=1:strict_string_checks=1:detect_stack_use_after_return=1:log_path=/tmp/asan-logs/asan:log_exe_name=1"
     env:
       EXISTING_ENV: "1"
       FALKORDB_HOST: falkordb
       FALKORDB_PORT: "6379"
+      SANITIZER: ${{ matrix.sanitizer && 'address' || '' }}
     strategy:
       fail-fast: false
       matrix:
         test_file: ${{ fromJson(needs.flow-test-matrix.outputs.test_files) }}
+        sanitizer: [false, true]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - name: Run Flow test - ${{ matrix.test_file }}
+      - name: Run Flow test - ${{ matrix.test_file }} (sanitizer=${{ matrix.sanitizer }})
         env:
           TEST_FILE: ${{ matrix.test_file }}
         run: |
           . /data/venv/bin/activate
           TEST="$TEST_FILE" FAIL_FAST=1 ./flow.sh
+      - name: Collect ASAN logs from service container
+        if: failure() && matrix.sanitizer
+        env:
+          FALKORDB_CID: ${{ job.services.falkordb.id }}
+        run: |
+          # ASAN_OPTIONS.log_path inside the service container writes to
+          # /tmp/asan-logs/asan.<pid>. Pull them out for the artifact step.
+          mkdir -p tests/flow/logs/asan
+          docker cp "${FALKORDB_CID}:/tmp/asan-logs/." tests/flow/logs/asan/ 2>/dev/null || true
       - name: Upload flow logs on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

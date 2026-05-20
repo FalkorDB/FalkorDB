@@ -2,7 +2,12 @@ name: Rust Push
 
 on:
   push:
-    branches: [ "main" ]
+    # Mirror rust-pr.yml's filter so post-merge CI on version branches works
+    # the same as on main. Channel-pointer promotion (toolchain :latest, edge-rs)
+    # is still gated to main further down — see the `if:` on those jobs.
+    branches:
+      - "main"
+      - "[0-9]+.[0-9]+"
 
 permissions:
   # deployments permission to deploy GitHub pages website
@@ -39,17 +44,18 @@ jobs:
             echo "changed=false"
             echo "changed=false" >> $GITHUB_OUTPUT
           fi
-  # Promote the merging PR's toolchain image (ghcr.io/falkordb/falkordb-build:pr-<N>)
-  # to :latest by retagging the existing multi-arch manifest — no rebuild, so
-  # what was validated in PR CI is byte-identically what becomes :latest.
-  docker:
+  # Look up the merging PR once and share the number with the promote-* jobs.
+  # Same SHA→PR API call used by release-image.yml's release-event flow.
+  # Main-only: version branches don't promote toolchain or edge-rs.
+  find-pr:
     needs: check-files
-    if: needs.check-files.outputs.file_changed == 'true'
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
       pull-requests: read
+    outputs:
+      pr_n: ${{ steps.pr.outputs.n }}
     steps:
       - name: Find merging PR number
         id: pr
@@ -70,6 +76,19 @@ jobs:
           fi
           echo "n=$N" >> "$GITHUB_OUTPUT"
 
+  # Promote the merging PR's toolchain image (ghcr.io/falkordb/falkordb-build:pr-<N>)
+  # to :latest by retagging the existing multi-arch manifest — no rebuild, so
+  # what was validated in PR CI is byte-identically what becomes :latest.
+  # Gated on file_changed because the toolchain only gets a per-PR tag when
+  # build/Dockerfile actually changed in that PR.
+  docker:
+    needs: [check-files, find-pr]
+    if: ${{ needs.check-files.outputs.file_changed == 'true' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Login to GHCR
@@ -79,14 +98,50 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Promote :pr-${{ steps.pr.outputs.n }} → :latest
+      - name: Promote :pr-${{ needs.find-pr.outputs.pr_n }} → :latest
         env:
-          PR_NUM: ${{ steps.pr.outputs.n }}
+          PR_NUM: ${{ needs.find-pr.outputs.pr_n }}
         run: |
           set -euo pipefail
           docker buildx imagetools create \
             -t ghcr.io/falkordb/falkordb-build:latest \
             "ghcr.io/falkordb/falkordb-build:pr-${PR_NUM}"
+
+  # Promote the merging PR's runtime RC images (rc-pr-<N>) to the edge-rs
+  # channel on every main merge — same byte-identical retag, no rebuild.
+  # `edge-rs` distinguishes the Rust port from the C port's `:edge` on the
+  # shared falkordb/falkordb Docker Hub repo. GHCR-only; Docker Hub publish
+  # happens at release time via release-image.yml.
+  promote-edge:
+    needs: find-pr
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        repo: [falkordb, falkordb-server]
+    steps:
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote rc-pr-${{ needs.find-pr.outputs.pr_n }} → edge-rs (${{ matrix.repo }})
+        env:
+          PR_NUM: ${{ needs.find-pr.outputs.pr_n }}
+          REPO:   ${{ matrix.repo }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            -t "ghcr.io/falkordb/${REPO}:edge-rs" \
+            "ghcr.io/falkordb/${REPO}:rc-pr-${PR_NUM}"
   lint:
     runs-on: ubuntu-latest
     container: ghcr.io/falkordb/falkordb-build:latest
