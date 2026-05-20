@@ -34,15 +34,19 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
 COPY --from=planner /src/recipe.json recipe.json
+# Target-specific env vars use cc-rs's envified form (uppercase + underscores,
+# lookup logic in cc-rs's envify()) rather than the literal target triple
+# `CFLAGS_x86_64-unknown-linux-gnu`. POSIX `/bin/sh` (dash on debian) rejects
+# hyphens in variable assignments and would fail with "command not found".
 RUN CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-Zsanitizer=address -Cdebuginfo=2" \
-    CFLAGS_x86_64-unknown-linux-gnu="-fsanitize=address -fno-omit-frame-pointer" \
-    CXXFLAGS_x86_64-unknown-linux-gnu="-fsanitize=address -fno-omit-frame-pointer" \
+    CFLAGS_X86_64_UNKNOWN_LINUX_GNU="-fsanitize=address -fno-omit-frame-pointer" \
+    CXXFLAGS_X86_64_UNKNOWN_LINUX_GNU="-fsanitize=address -fno-omit-frame-pointer" \
     CXX=clang++-22 \
     cargo chef cook --target x86_64-unknown-linux-gnu --recipe-path recipe.json
 COPY . .
 RUN CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-Zsanitizer=address -Cdebuginfo=2" \
-    CFLAGS_x86_64-unknown-linux-gnu="-fsanitize=address -fno-omit-frame-pointer" \
-    CXXFLAGS_x86_64-unknown-linux-gnu="-fsanitize=address -fno-omit-frame-pointer" \
+    CFLAGS_X86_64_UNKNOWN_LINUX_GNU="-fsanitize=address -fno-omit-frame-pointer" \
+    CXXFLAGS_X86_64_UNKNOWN_LINUX_GNU="-fsanitize=address -fno-omit-frame-pointer" \
     CXX=clang++-22 \
     cargo build --target x86_64-unknown-linux-gnu && \
     mkdir -p /out && cp target/x86_64-unknown-linux-gnu/debug/libfalkordb.so /out/falkordb.so
