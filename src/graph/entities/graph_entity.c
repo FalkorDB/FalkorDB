@@ -243,6 +243,13 @@ inline bool GraphEntity_IsDeleted
 	return Graph_EntityIsDeleted(e);
 }
 
+inline bool GraphEntity_CanModify
+(
+	const GraphEntity *e
+) {
+	return e != NULL && e->attributes != NULL && !Graph_EntityIsDeleted (e) ;
+}
+
 inline AttributeSet GraphEntity_GetAttributes
 (
 	const GraphEntity *e

@@ -100,6 +100,12 @@ bool GraphEntity_IsDeleted
 	const GraphEntity *e
 );
 
+// returns true if the given graph entity can be mutated
+bool GraphEntity_CanModify
+(
+	const GraphEntity *e
+);
+
 // returns attribute-set of entity
 AttributeSet GraphEntity_GetAttributes
 (
