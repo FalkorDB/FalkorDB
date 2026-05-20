@@ -218,9 +218,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
         ports: ["6379:6379"]
+        # FALKORDB_ARGS="" overrides the Dockerfile-baked production defaults
+        # ("TIMEOUT 1000 MAX_QUEUED_QUERIES 25 RESULTSET_SIZE 10000"). Tests
+        # are written against RLTest's spawned-redis defaults (no TIMEOUT etc.);
+        # the production knobs cause spurious "Query timed out" / queue-full
+        # failures during testing.
         # Sanitizer cells need log_path overridden to a path we can `docker cp`
         # out of the service container. Non-sanitizer service ignores it.
         env:
+          FALKORDB_ARGS: ""
           ASAN_OPTIONS: "detect_leaks=1:detect_odr_violation=0:halt_on_error=0:abort_on_error=0:symbolize=1:print_stacktrace=1:strict_string_checks=1:detect_stack_use_after_return=1:log_path=/tmp/asan-logs/asan:log_exe_name=1"
     env:
       EXISTING_ENV: "1"
@@ -234,12 +240,27 @@ jobs:
         sanitizer: [false, true]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      # Tests that pass load-time-only moduleArgs (CACHE_SIZE, THREAD_COUNT,
+      # IMPORT_FOLDER, ...) can't reconfigure the running service container.
+      # For those, the Env() helper falls back to RLTest's `env=oss` mode,
+      # which spawns its own redis with --loadmodule + moduleArgs. We need
+      # the .so locally for that spawn. Extract it from the service container
+      # so it's byte-identical to what the service is running.
+      - name: Extract falkordb.so from service container
+        env:
+          FALKORDB_CID: ${{ job.services.falkordb.id }}
+        run: |
+          mkdir -p target/release
+          # Path inside the image is /var/lib/falkordb/bin/falkordb.so; flow.sh
+          # expects libfalkordb.so at target/release/ (or target/debug/).
+          docker cp "${FALKORDB_CID}:/var/lib/falkordb/bin/falkordb.so" target/release/libfalkordb.so
+          ls -lh target/release/libfalkordb.so
       - name: Run Flow test - ${{ matrix.test_file }} (sanitizer=${{ matrix.sanitizer }})
         env:
           TEST_FILE: ${{ matrix.test_file }}
         run: |
           . /data/venv/bin/activate
-          TEST="$TEST_FILE" FAIL_FAST=1 ./flow.sh
+          TEST="$TEST_FILE" FAIL_FAST=1 RELEASE=1 ./flow.sh
       - name: Collect ASAN logs from service container
         if: failure() && matrix.sanitizer
         env:

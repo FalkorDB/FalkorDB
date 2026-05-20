@@ -41,8 +41,15 @@ fi
 # Existing-env mode: RLTest connects to a pre-running redis (typically a CI
 # services-block container) instead of spawning one with --loadmodule. Parallel
 # tests would share the same redis and collide, so force serial execution.
+#
+# --parallelism is set safely below to 1. We pass --module too so per-test
+# Env(env='oss') overrides (tests/flow/common.py uses this when a test's
+# moduleArgs include load-time-immutable config that the running redis can't
+# apply on the fly) have the module path to spawn redis with. In CI the .so
+# is extracted from the service container before flow.sh runs; locally the
+# developer flow still builds it via cargo.
 if [[ "$EXISTING_ENV" == 1 ]]; then
-    MODULE_ARGS=(--env existing-env --existing-env-addr "${FALKORDB_HOST:-localhost}:${FALKORDB_PORT:-6379}")
+    MODULE_ARGS=(--env existing-env --existing-env-addr "${FALKORDB_HOST:-localhost}:${FALKORDB_PORT:-6379}" --module "$TARGET_DIR/$TARGET")
     PARALLELISM="--parallelism 1"
 else
     MODULE_ARGS=(--module "$TARGET_DIR/$TARGET")
