@@ -9,6 +9,7 @@
 #include "../ops/op_expand_into.h"
 #include "../ops/op_node_by_label_scan.h"
 #include "../ops/op_conditional_traverse.h"
+#include "../ops/op_cond_var_len_traverse.h"
 #include "../execution_plan_build/execution_plan_util.h"
 #include "../execution_plan_build/execution_plan_modify.h"
 #include "../../arithmetic/algebraic_expression/utils.h"
@@ -273,6 +274,28 @@ static bool _transposeExpression
 	return true;
 }
 
+static AlgebraicExpression *_traversalExpression
+(
+	OpBase *op
+) {
+	if(op == NULL) {
+		return NULL;
+	}
+
+	switch(OpBase_Type(op)) {
+		case OPType_CONDITIONAL_TRAVERSE:
+		case OPType_OPTIONAL_CONDITIONAL_TRAVERSE:
+			return ((OpCondTraverse*)op)->ae;
+		case OPType_EXPAND_INTO:
+			return ((OpExpandInto*)op)->ae;
+		case OPType_CONDITIONAL_VAR_LEN_TRAVERSE:
+		case OPType_CONDITIONAL_VAR_LEN_TRAVERSE_EXPAND_INTO:
+			return ((CondVarLenTraverse*)op)->ae;
+		default:
+			return NULL;
+	}
+}
+
 static void _costBaseLabelScan
 (
 	NodeByLabelScan *scan
@@ -296,15 +319,11 @@ static void _costBaseLabelScan
 		parent = parent->parent ;
 	}
 
-	OPType t = (parent != NULL) ? OpBase_Type (parent) : OPType_AGGREGATE ;
-	if (t != OPType_CONDITIONAL_TRAVERSE && t != OPType_EXPAND_INTO) {
+	AlgebraicExpression *ae = _traversalExpression(parent) ;
+	if (ae == NULL) {
 		// no AE to swap operands on; nothing to do here
 		return ;
 	}
-
-	AlgebraicExpression *ae = (t == OPType_CONDITIONAL_TRAVERSE)
-		? ((OpCondTraverse*) parent)->ae
-		: ((OpExpandInto*)   parent)->ae ;
 
 	// collect operands from the parent AE
 	uint operand_n = 0 ;
@@ -416,4 +435,3 @@ void costBaseLabelScan
 
 	arr_free(label_scan_ops);
 }
-
