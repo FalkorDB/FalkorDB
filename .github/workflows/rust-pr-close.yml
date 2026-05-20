@@ -47,9 +47,12 @@ jobs:
           for suffix in "" -x64 -arm64v8; do
             delete_tag falkordb-build "pr-${PR}${suffix}"
           done
-          # Runtime RC images
+          # Runtime RC images (full + server, both arches via per-arch tags
+          # and the multi-arch manifest)
           for repo in falkordb-next falkordb-next-server; do
             for suffix in "" -x64 -arm64v8; do
               delete_tag "$repo" "rc-pr-${PR}${suffix}"
             done
           done
+          # Sanitizer RC image (amd64-only, no arch suffix variants)
+          delete_tag falkordb-next "rc-pr-${PR}-asan"

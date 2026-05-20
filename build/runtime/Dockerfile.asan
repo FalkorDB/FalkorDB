@@ -1,0 +1,104 @@
+ARG BUILD_IMAGE=ghcr.io/falkordb/falkordb-build:latest
+ARG REDIS_ASAN_VER=8.6.2
+
+# Stage 1: ASAN-instrumented redis-server built from source.
+# Redis's Makefile honors SANITIZER=address (sets MALLOC=libc, adds
+# -fsanitize=address to CFLAGS/LDFLAGS). OPTIMIZATION=-O1 disables LTO,
+# which clashes with ASAN ctor/dtor sections at link time.
+FROM $BUILD_IMAGE AS redis-asan
+ARG REDIS_ASAN_VER
+WORKDIR /tmp
+COPY tests/memcheck/redis.san-ignorelist /tmp/redis.san-ignorelist
+RUN git clone --depth 1 --branch ${REDIS_ASAN_VER} https://github.com/redis/redis.git redis-src && \
+    cd redis-src && \
+    CFLAGS="-fsanitize-ignorelist=/tmp/redis.san-ignorelist" \
+    make -j"$(nproc)" SANITIZER=address CC=clang-22 CXX=clang++-22 OPTIMIZATION="-O1" && \
+    mkdir -p /out && cp src/redis-server /out/redis-server && \
+    # Sanity check: a working ASAN binary has 100+ __asan_ symbols (init,
+    # poison/unpoison, shadow memory bookkeeping). Mangled symbol names
+    # like __asan_init_v8 vary by clang version, so just count occurrences.
+    SYMS=$({ nm /out/redis-server 2>/dev/null; nm -D /out/redis-server 2>/dev/null; } | grep -c __asan_ || true) && \
+    echo "ASAN symbols: $SYMS" && \
+    test "$SYMS" -gt 10
+
+# Stage 2 — chef/planner/builder: ASAN-instrumented libfalkordb.so.
+# Nightly toolchain required for -Zsanitizer=address. Cargo profile is dev
+# (no --release) so debuginfo and frame pointers are preserved for stack traces.
+FROM $BUILD_IMAGE AS chef
+RUN cargo install cargo-chef --locked && rustup install nightly && rustup default nightly
+WORKDIR /src
+
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder
+COPY --from=planner /src/recipe.json recipe.json
+RUN CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-Zsanitizer=address -Cdebuginfo=2" \
+    CFLAGS_x86_64-unknown-linux-gnu="-fsanitize=address -fno-omit-frame-pointer" \
+    CXXFLAGS_x86_64-unknown-linux-gnu="-fsanitize=address -fno-omit-frame-pointer" \
+    CXX=clang++-22 \
+    cargo chef cook --target x86_64-unknown-linux-gnu --recipe-path recipe.json
+COPY . .
+RUN CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-Zsanitizer=address -Cdebuginfo=2" \
+    CFLAGS_x86_64-unknown-linux-gnu="-fsanitize=address -fno-omit-frame-pointer" \
+    CXXFLAGS_x86_64-unknown-linux-gnu="-fsanitize=address -fno-omit-frame-pointer" \
+    CXX=clang++-22 \
+    cargo build --target x86_64-unknown-linux-gnu && \
+    mkdir -p /out && cp target/x86_64-unknown-linux-gnu/debug/libfalkordb.so /out/falkordb.so
+
+# Stage 3 — runtime. debian:bookworm-slim because the stock redis:8.6.x
+# base bundles its own (non-ASAN) redis-server we'd overwrite anyway. We
+# need libasan8 (ASAN runtime), libomp5-22 (LLVM OpenMP for the module),
+# and llvm-22 (symbolizer for stack traces). No apt purge — sanitizer
+# diagnostics need symbols and the libasan runtime kept intact.
+FROM debian:bookworm-slim AS server
+ARG TARGETPLATFORM
+
+ENV FALKORDB_HOME=/var/lib/falkordb \
+    FALKORDB_DATA_PATH=/var/lib/falkordb/data \
+    FALKORDB_BIN_PATH=/var/lib/falkordb/bin \
+    FALKORDB_IMPORT_PATH=/var/lib/falkordb/import \
+    FALKORDB_TLS_PATH=/var/lib/falkordb/tls
+
+RUN mkdir -p ${FALKORDB_DATA_PATH} && ln -s ${FALKORDB_DATA_PATH} /data
+
+# Pull LLVM 22 from apt.llvm.org for libasan-version-matched libomp + symbolizer.
+# Same approach build/Dockerfile takes; we need apt-add-repository helpers
+# first, then the LLVM packages, then drop the helpers to keep the image lean.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates bash openssl wget gnupg lsb-release libasan8 && \
+    wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && ./llvm.sh 22 && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        libomp5-22 libomp-22-dev llvm-22 && \
+    apt-get purge -y wget gnupg lsb-release && \
+    apt-get autoremove -y && \
+    apt-get clean && rm -rf /var/lib/apt/lists/* /llvm.sh
+
+WORKDIR ${FALKORDB_HOME}
+
+COPY ./build/runtime/run.sh        ${FALKORDB_BIN_PATH}/run.sh
+COPY ./build/runtime/gen-certs.sh  ${FALKORDB_BIN_PATH}/gen-certs.sh
+# LSan suppressions bundled so LSAN_OPTIONS=suppressions=... can find them.
+COPY ./tests/memcheck/asan.supp    ${FALKORDB_HOME}/asan.supp
+
+# ASAN-instrumented binaries
+COPY --from=redis-asan /out/redis-server  /usr/local/bin/redis-server
+COPY --from=builder    /out/falkordb.so   ${FALKORDB_BIN_PATH}/falkordb.so
+
+# Sanitizer env defaults — overridable at runtime via `docker run -e …` or
+# GitHub Actions services.<svc>.env.
+ENV ARCH=${TARGETPLATFORM} \
+    TLS=0 \
+    BROWSER=0 \
+    FALKORDB_ARGS="MAX_QUEUED_QUERIES 25 TIMEOUT 1000 RESULTSET_SIZE 10000" \
+    ASAN_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer-22 \
+    RS_GLOBAL_DTORS=1 \
+    ASAN_OPTIONS="detect_leaks=1:detect_odr_violation=0:halt_on_error=0:abort_on_error=0:symbolize=1:print_stacktrace=1:strict_string_checks=1:detect_stack_use_after_return=1" \
+    LSAN_OPTIONS="suppressions=/var/lib/falkordb/asan.supp:use_tls=0"
+
+EXPOSE 6379/tcp
+ENTRYPOINT ["/var/lib/falkordb/bin/run.sh"]
+CMD ["redis-server", "--loadmodule", "/var/lib/falkordb/bin/falkordb.so"]
