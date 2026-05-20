@@ -15,6 +15,11 @@ Defaults.decode_responses = True
 SANITIZER     = os.getenv('SANITIZER', '')      != ''
 CODE_COVERAGE = os.getenv('CODE_COVERAGE', '0') == '1'
 
+# Normalized OS name for cross-platform test guards (matches the C FalkorDB
+# convention used by tests/memcheck): "macos", "linux", "windows", or the
+# raw sys.platform value if unrecognized.
+OS = {'darwin': 'macos', 'linux': 'linux', 'win32': 'windows'}.get(sys.platform, sys.platform)
+
 def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, shardsCount=None):
     env = Environment(decodeResponses=True, moduleArgs=moduleArgs, env=env,
                       useSlaves=useSlaves, enableDebugCommand=enableDebugCommand, shardsCount=shardsCount)

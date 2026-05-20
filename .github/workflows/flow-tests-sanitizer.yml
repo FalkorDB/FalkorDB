@@ -1,0 +1,170 @@
+name: Flow tests (sanitizer)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [ "main" ]
+
+concurrency:
+  group: asan-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  asan-build:
+    runs-on: ubuntu-latest
+    container: aviavni/falkordb-build:latest
+    timeout-minutes: 60
+    env:
+      REDIS_ASAN_VER: "8.6.2"
+      REDIS_ASAN_DIR: /tmp/redis-san-build
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      # LeakSanitizer needs the host process to be ASAN-instrumented to do
+      # its scan-the-world reachability pass reliably. Stock Redis from the
+      # image is not instrumented, so we build a sanitized Redis ourselves.
+      - name: Cache ASAN-built Redis
+        id: redis-asan-cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: ${{ env.REDIS_ASAN_DIR }}/src/redis-server
+          key: redis-asan-${{ env.REDIS_ASAN_VER }}-clang22-${{ hashFiles('tests/memcheck/redis.san-ignorelist') }}
+
+      - name: Build Redis with ASAN
+        if: steps.redis-asan-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          # Exported here (not via the step `env:` block) so the path resolves
+          # to $GITHUB_WORKSPACE inside the container (/__w/...) rather than
+          # `${{ github.workspace }}` which expands to the host path on the
+          # runner (/home/runner/work/...) and isn't visible from the container.
+          # Passed via env, not the make command line: GNU make's command-line
+          # CFLAGS would override the SANITIZER block's `CFLAGS+=-fsanitize=address`,
+          # silently no-op'ing the instrumentation.
+          export CFLAGS="-fsanitize-ignorelist=$GITHUB_WORKSPACE/tests/memcheck/redis.san-ignorelist"
+          git clone --depth 1 --branch "$REDIS_ASAN_VER" https://github.com/redis/redis.git "$REDIS_ASAN_DIR"
+          cd "$REDIS_ASAN_DIR"
+          # SANITIZER=address triggers Redis's built-in ASAN config:
+          #   MALLOC=libc, CFLAGS+=-fsanitize=address ..., LDFLAGS+=-fsanitize=address
+          # OPTIMIZATION=-O1 disables the default -flto, which clashes with ASAN
+          # ctor/dtor sections at link time.
+          make -j"$(nproc)" \
+            SANITIZER=address \
+            CC=clang-22 CXX=clang++-22 \
+            OPTIMIZATION="-O1"
+          # Sanity check that ASAN runtime got linked. The init symbol is
+          # version-mangled in some clang builds (e.g. __asan_init_v8) so
+          # just look for any __asan_ symbol in either symbol table — a
+          # working build has hundreds.
+          SYMS=$({ nm src/redis-server 2>/dev/null; nm -D src/redis-server 2>/dev/null; } | grep -c __asan_ || true)
+          echo "ASAN symbols found: $SYMS"
+          test "$SYMS" -gt 10 \
+            || { echo "ERROR: Redis binary has no ASAN runtime linked (only $SYMS __asan_ symbols)"; exit 1; }
+
+      - run: rustup default nightly
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: "asan"
+          env-vars: "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS CFLAGS_x86_64-unknown-linux-gnu CXXFLAGS_x86_64-unknown-linux-gnu"
+
+      - name: Build module with ASAN
+        env:
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-Zsanitizer=address -Cdebuginfo=2"
+          CFLAGS_x86_64-unknown-linux-gnu: "-fsanitize=address -fno-omit-frame-pointer"
+          CXXFLAGS_x86_64-unknown-linux-gnu: "-fsanitize=address -fno-omit-frame-pointer"
+          CXX: clang++-22
+        run: cargo build --target x86_64-unknown-linux-gnu
+
+      - name: Upload ASAN module
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: asan-libfalkordb
+          path: target/x86_64-unknown-linux-gnu/debug/libfalkordb.so
+          retention-days: 1
+
+      - name: Upload ASAN Redis
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: asan-redis-server
+          path: ${{ env.REDIS_ASAN_DIR }}/src/redis-server
+          retention-days: 1
+
+  flow-test-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      test_files: ${{ steps.set-matrix.outputs.test_files }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Generate test matrix
+        id: set-matrix
+        run: |
+          echo "test_files=$(jq -Rc '[., inputs] | map(select(length > 0))' flow_tests_done.txt)" >> $GITHUB_OUTPUT
+
+  asan-flow-tests:
+    runs-on: ubuntu-latest
+    container: aviavni/falkordb-build:latest
+    timeout-minutes: 60
+    needs:
+      - asan-build
+      - flow-test-matrix
+    strategy:
+      fail-fast: false
+      matrix:
+        test_file: ${{ fromJson(needs.flow-test-matrix.outputs.test_files) }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Download ASAN module
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: asan-libfalkordb
+          path: target/x86_64-unknown-linux-gnu/debug
+
+      - name: Download ASAN Redis
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: asan-redis-server
+          path: /tmp/asan-redis
+
+      - name: Restore executable bits
+        run: |
+          chmod +x target/x86_64-unknown-linux-gnu/debug/libfalkordb.so
+          chmod +x /tmp/asan-redis/redis-server
+
+      - name: Run flow test - ${{ matrix.test_file }}
+        env:
+          SANITIZER: address
+          TARGET_DIR: target/x86_64-unknown-linux-gnu/debug
+          # Per-file parallelism: ASAN shadow memory + ~3× heap per
+          # redis-server can OOM the 7GB runner if we let RLTest fan out.
+          PARALLELISM: "--parallelism 2"
+          ASAN_SYMBOLIZER_PATH: /usr/bin/llvm-symbolizer-22
+          RS_GLOBAL_DTORS: "1"
+        run: |
+          . /data/venv/bin/activate
+          # Prepend the ASAN-built Redis so RLTest spawns it instead of stock.
+          export PATH="/tmp/asan-redis:$PATH"
+          # Send ASAN/LSan reports to files under tests/flow/logs/ (uploaded
+          # as artifact on failure). Their default stderr destination gets
+          # swallowed when RLTest spawns redis-server with its own logfile.
+          # log_path=<path> writes to <path>.<pid>; log_exe_name=1 appends the
+          # binary name so reports are clearly attributable.
+          mkdir -p tests/flow/logs
+          export ASAN_OPTIONS="detect_leaks=1:detect_odr_violation=0:halt_on_error=0:abort_on_error=0:symbolize=1:print_stacktrace=1:strict_string_checks=1:detect_stack_use_after_return=1:log_path=$GITHUB_WORKSPACE/tests/flow/logs/asan:log_exe_name=1"
+          export LSAN_OPTIONS="suppressions=$GITHUB_WORKSPACE/tests/memcheck/asan.supp:use_tls=0"
+          redis-server --version
+          TEST="${{ matrix.test_file }}" ./flow.sh
+
+      - name: Upload flow test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: asan-flow-logs-${{ strategy.job-index }}
+          path: tests/flow/logs/
+          retention-days: 7

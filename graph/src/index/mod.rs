@@ -921,6 +921,9 @@ impl Index {
             let options = RediSearch_CreateIndexOptions();
             RediSearch_IndexOptionsSetGCPolicy(options, GC_POLICY_FORK as _);
 
+            // `RediSearch_IndexOptionsSetStopwords` deep-copies via
+            // `rm_strdup`, so our CStrings can drop as soon as the call
+            // returns.
             if let Some(stop_words) = stopwords {
                 let c_stopwords: Vec<CString> = stop_words
                     .iter()
@@ -937,17 +940,27 @@ impl Index {
                 RediSearch_IndexOptionsSetStopwords(options, null_mut(), 0);
             }
 
-            if let Some(lang) = language {
+            // `RediSearch_IndexOptionsSetLanguage`, in contrast, only stores
+            // the raw pointer (`options->lang = lang`); `_CreateIndex` later
+            // reads it via `RSLanguage_Find` to convert to an enum, so the
+            // backing `CString` must outlive that call.
+            // (Bug uncovered by ASAN: heap-use-after-free in `RSLanguage_Find`
+            // when the inner `c_lang` was dropped at end of its if-let block.)
+            let _language_owner: Option<CString> = if let Some(lang) = language {
                 let c_lang = CString::new(lang.as_str()).map_err(|e| e.to_string())?;
                 if RediSearch_IndexOptionsSetLanguage(options, c_lang.as_ptr()) != 0 {
                     return Err(format!("Language is not supported: {lang}"));
                 }
+                Some(c_lang)
             } else {
                 RediSearch_IndexOptionsSetLanguage(options, null_mut());
-            }
+                None
+            };
 
             let clabel = CString::new(label.as_str()).map_err(|e| e.to_string())?;
 
+            // GIL is already held at the top of this unsafe block, covering
+            // CreateIndex's transitive RM_CreateTimer call.
             self.rs_idx = RediSearch_CreateIndex(clabel.as_ptr().cast::<c_char>(), options);
 
             RediSearch_FreeIndexOptions(options);
@@ -1535,6 +1548,11 @@ impl Index {
                     _vector_owner: vector,
                 });
             }
+            // GetResultsIterator takes ownership of `query_node`: on success
+            // the iter owns it (freed by ResultsIteratorFree on Drop); on
+            // failure RediSearch already frees `query_node` internally
+            // before returning NULL (handleIterCommon → ResultsIteratorFree
+            // → QAST_Destroy(qast.root)).
             let iter = RediSearch_GetResultsIterator(query_node, self.rs_idx);
             if iter.is_null() {
                 return Ok(VectorScoredIdIter {
@@ -1580,6 +1598,9 @@ impl Index {
                     _vector_owner: vector,
                 });
             }
+            // See `vector_query` — RediSearch owns and frees `query_node`
+            // in both branches (success: iter owns it; failure: freed
+            // internally before NULL is returned).
             let iter = RediSearch_GetResultsIterator(query_node, self.rs_idx);
             if iter.is_null() {
                 return Ok(VectorScoredEdgeTripleIter {

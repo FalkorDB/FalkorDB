@@ -714,3 +714,9 @@ unsafe extern "C" {
         mode: ::std::os::raw::c_int,
     ) -> ::std::os::raw::c_int;
 }
+unsafe extern "C" {
+    #[doc = " Cleans up all module-level globals (doc table, index options, trie,"]
+    #[doc = " scoring functions, query expanders). Idempotent and only safe to call"]
+    #[doc = " once Redis is shutting down and no more queries can arrive."]
+    pub fn RediSearch_CleanupModule();
+}

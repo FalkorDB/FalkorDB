@@ -864,6 +864,9 @@ pub fn query_mut(
                             return;
                         }
                         drop(graph);
+                        // BlockedClient now lives in the queued WriteMessage; this
+                        // worker's thread-safe context is no longer needed.
+                        unsafe { ffi::free_thread_safe_context(ctx.ctx) };
                         process_write_queued_query(&g);
                     } else {
                         // Read query completed — write telemetry

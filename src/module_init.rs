@@ -30,9 +30,9 @@ use crate::redis_type::on_persistence;
 use crate::telemetry;
 use graph::{
     graph::graphblas::matrix::init,
-    index::redisearch::{REDISEARCH_INIT_LIBRARY, RediSearch_Init},
+    index::redisearch::{REDISEARCH_INIT_LIBRARY, RediSearch_CleanupModule, RediSearch_Init},
     runtime::functions::{init_functions, init_udf_functions},
-    threadpool::init_thread_pool,
+    threadpool::{self, init_thread_pool},
     udf,
 };
 use redis_module::{
@@ -63,6 +63,13 @@ const REDISMODULE_SUBEVENT_LOADING_FAILED: u64 = 4;
 #[allow(non_upper_case_globals)]
 static RedisModuleEvent_ReplicationRoleChanged: RedisModuleEvent =
     RedisModuleEvent { id: 0, dataver: 1 };
+
+/// Redis event ID for shutdown. Only wired up under sanitizer/valgrind
+/// runs (gated by `RS_GLOBAL_DTORS`) so workers join cleanly and per-thread
+/// + module-level RediSearch/LAGraph state is released — otherwise these
+/// allocations are reported as leaks at process exit.
+#[allow(non_upper_case_globals)]
+static RedisModuleEvent_Shutdown: RedisModuleEvent = RedisModuleEvent { id: 5, dataver: 1 };
 
 /// Subevent: this instance is now a replica.
 const REDISMODULE_EVENT_REPLROLECHANGED_NOW_REPLICA: u64 = 1;
@@ -314,6 +321,24 @@ pub fn graph_init(
         }
     }
 
+    // Wire shutdown cleanup only when the runner sets `RS_GLOBAL_DTORS`
+    // (sanitizer/valgrind). The handler joins worker threads, finalizes
+    // LAGraph, and frees module-level RediSearch state — work that is
+    // pointless when the kernel is about to reap the process anyway.
+    if std::env::var_os("RS_GLOBAL_DTORS").is_some() {
+        unsafe {
+            let res = RedisModule_SubscribeToServerEvent.unwrap()(
+                ctx.ctx,
+                RedisModuleEvent_Shutdown,
+                Some(on_shutdown),
+            );
+            if res != REDISMODULE_OK as c_int {
+                eprintln!("FalkorDB: failed to subscribe to shutdown event: code {res}");
+                return Status::Err;
+            }
+        }
+    }
+
     Status::Ok
 }
 
@@ -323,6 +348,22 @@ const unsafe extern "C" fn on_flush(
     _subevent: u64,
     _data: *mut c_void,
 ) {
+}
+
+/// Shutdown event handler — runs only under `RS_GLOBAL_DTORS` (sanitizer
+/// or valgrind). Mirrors the C implementation's `_ShutdownEventHandler`:
+/// join worker threads (so their TLS destructors fire), finalize LAGraph,
+/// then free RediSearch module-level state. Skipped in normal production
+/// runs to avoid spending time on cleanup the kernel will do for us.
+unsafe extern "C" fn on_shutdown(
+    _ctx: *mut RedisModuleCtx,
+    _eid: RedisModuleEvent,
+    _subevent: u64,
+    _data: *mut c_void,
+) {
+    threadpool::shutdown();
+    graph::graph::graphblas::matrix::shutdown();
+    unsafe { RediSearch_CleanupModule() };
 }
 
 unsafe extern "C" fn on_role_change(
