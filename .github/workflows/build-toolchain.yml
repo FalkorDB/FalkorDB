@@ -1,31 +1,43 @@
 # Builds the toolchain image (build/Dockerfile) for linux/amd64 and linux/arm64
-# and publishes it as a multi-arch manifest at ghcr.io/falkordb/falkordb-build:latest.
+# and publishes it as a multi-arch manifest at ghcr.io/falkordb/falkordb-build:<tag>.
 #
 # Triggers:
-#   - push to main when build/Dockerfile or this workflow changes
-#   - workflow_dispatch (UI / API) — runs only publish from refs/heads/main, so
-#     dispatching from a feature branch is a no-op (won't overwrite :latest).
+#   - workflow_call from another workflow (rust-pr.yml's `docker` job)
+#       → caller-supplied tag (typically pr-<N>)
+#   - workflow_dispatch (UI / API)
+#       → :latest, main only — manual escape hatch when apt deps drift but
+#         build/Dockerfile didn't change
+#
+# Main-branch :latest is normally produced via PROMOTION, not rebuild:
+# rust-push.yml's `promote-toolchain` job retags the merging PR's :pr-<N> to
+# :latest. That gives byte-identical guarantee (what PR CI validated == what
+# main publishes). Keep workflow_dispatch as the rebuild path when retag isn't
+# applicable (e.g. apt repo refresh, no related PR).
 
 name: Build toolchain image
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'build/Dockerfile'
-      - '.github/workflows/build-toolchain.yml'
+  workflow_call:
+    inputs:
+      tag:
+        description: "Image tag to push (e.g. pr-42). Defaults to 'latest' when called via dispatch."
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: build-toolchain-${{ github.ref }}
+  group: build-toolchain-${{ inputs.tag || github.ref }}
   cancel-in-progress: false
 
 jobs:
   build:
-    if: github.ref == 'refs/heads/main'
+    # Allow when called from another workflow (caller-supplied tag); otherwise
+    # only publish from main so a feature-branch workflow_dispatch can't
+    # accidentally overwrite :latest.
+    if: ${{ inputs.tag != '' || github.ref == 'refs/heads/main' }}
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
@@ -55,13 +67,13 @@ jobs:
           platforms: ${{ matrix.platform }}
           push: true
           provenance: false
-          tags: ghcr.io/falkordb/falkordb-build:latest-${{ matrix.arch }}
+          tags: ghcr.io/falkordb/falkordb-build:${{ inputs.tag || 'latest' }}-${{ matrix.arch }}
           cache-from: type=registry,ref=ghcr.io/falkordb/falkordb-build:buildcache-${{ matrix.arch }}
           cache-to:   type=registry,ref=ghcr.io/falkordb/falkordb-build:buildcache-${{ matrix.arch }},mode=max
 
   manifest:
     needs: build
-    if: github.ref == 'refs/heads/main'
+    if: ${{ inputs.tag != '' || github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -77,9 +89,11 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Assemble multi-arch manifest
+        env:
+          TAG: ${{ inputs.tag || 'latest' }}
         run: |
           set -euo pipefail
           docker buildx imagetools create \
-            -t ghcr.io/falkordb/falkordb-build:latest \
-            ghcr.io/falkordb/falkordb-build:latest-x64 \
-            ghcr.io/falkordb/falkordb-build:latest-arm64v8
+            -t ghcr.io/falkordb/falkordb-build:${TAG} \
+            ghcr.io/falkordb/falkordb-build:${TAG}-x64 \
+            ghcr.io/falkordb/falkordb-build:${TAG}-arm64v8

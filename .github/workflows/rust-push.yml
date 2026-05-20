@@ -39,30 +39,49 @@ jobs:
             echo "changed=false"
             echo "changed=false" >> $GITHUB_OUTPUT
           fi
+  # Promote the merging PR's toolchain image (ghcr.io/falkordb/falkordb-build:pr-<N>)
+  # to :latest by retagging the existing multi-arch manifest — no rebuild, so
+  # what was validated in PR CI is byte-identically what becomes :latest.
   docker:
     needs: check-files
     if: needs.check-files.outputs.file_changed == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - name: Login to Docker Hub
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121
+      - name: Find merging PR number
+        id: pr
+        run: |
+          set -euo pipefail
+          # Merge commit subject is "Merge pull request #N from <branch>".
+          # Squash-merge subjects end in "(#N)" — both forms covered.
+          MSG=${{ toJSON(github.event.head_commit.message) }}
+          N=$(echo "$MSG" | head -1 | grep -oE '#[0-9]+' | head -1 | tr -d '#')
+          if [ -z "$N" ]; then
+            echo "::error::could not extract PR number from merge commit subject"
+            exit 1
+          fi
+          echo "n=$N" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
-      - name: Build and push
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
-        with:
-          push: true
-          tags: aviavni/falkordb-build:latest
-          context: ./build
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote :pr-${{ steps.pr.outputs.n }} → :latest
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            -t ghcr.io/falkordb/falkordb-build:latest \
+            ghcr.io/falkordb/falkordb-build:pr-${{ steps.pr.outputs.n }}
   lint:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:latest
+    container: ghcr.io/falkordb/falkordb-build:latest
     needs:
       - check-files
       - docker
@@ -80,7 +99,7 @@ jobs:
           CXX=clang++-22 cargo clippy --all-targets
   test:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:latest
+    container: ghcr.io/falkordb/falkordb-build:latest
     needs:
       - check-files
       - docker
@@ -107,7 +126,7 @@ jobs:
           RELEASE=1 TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
   build-release:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:latest
+    container: ghcr.io/falkordb/falkordb-build:latest
     needs:
       - check-files
       - docker
@@ -138,7 +157,7 @@ jobs:
           echo "test_files=$(jq -Rc '[., inputs] | map(select(length > 0))' flow_tests_done.txt)" >> $GITHUB_OUTPUT
   test-flow:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:latest
+    container: ghcr.io/falkordb/falkordb-build:latest
     needs:
       - check-files
       - docker
@@ -171,7 +190,7 @@ jobs:
           if-no-files-found: ignore
   coverage:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:latest
+    container: ghcr.io/falkordb/falkordb-build:latest
     needs: docker
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
     steps:
@@ -197,7 +216,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
   build-coverage:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:latest
+    container: ghcr.io/falkordb/falkordb-build:latest
     needs:
       - check-files
       - docker
@@ -219,7 +238,7 @@ jobs:
           path: target/debug/libfalkordb.so
   coverage-flow:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:latest
+    container: ghcr.io/falkordb/falkordb-build:latest
     needs:
       - docker
       - flow-test-matrix
@@ -258,7 +277,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
   fuzz:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:latest
+    container: ghcr.io/falkordb/falkordb-build:latest
     needs: docker
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
     steps:
@@ -322,7 +341,7 @@ jobs:
           fi                                                                
   benchmark:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:latest
+    container: ghcr.io/falkordb/falkordb-build:latest
     needs: docker
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
     steps:

@@ -18,7 +18,7 @@ permissions:
 jobs:
   asan-build:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:latest
+    container: ghcr.io/falkordb/falkordb-build:latest
     timeout-minutes: 60
     env:
       REDIS_ASAN_VER: "8.6.2"
@@ -108,7 +108,7 @@ jobs:
 
   asan-flow-tests:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:latest
+    container: ghcr.io/falkordb/falkordb-build:latest
     timeout-minutes: 60
     needs:
       - asan-build

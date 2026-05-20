@@ -15,41 +15,41 @@ jobs:
       contents: read
       packages: write
     steps:
-      - name: Login to Docker Hub
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121
-        with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Delete Docker Hub build-image tag (aviavni/falkordb-build:<PR#>)
-        run: |
-          curl -X DELETE -H "Authorization: Bearer ${{ secrets.DOCKERHUB_TOKEN }}" \
-            "https://hub.docker.com/v2/repositories/aviavni/falkordb-build/tags/${{ github.event.pull_request.number }}"
-
-      # Delete the GHCR RC image family pushed by build-rc-image. Each repo
-      # carries three tags per PR (bare manifest, -x64, -arm64v8). Versions
-      # are addressed by id; we look them up via the package versions API.
-      - name: Delete GHCR RC image tags
+      # Delete the GHCR PR-scoped images this repo's workflows publish:
+      #   - falkordb-build:pr-<N>         (toolchain image rebuilt by rust-pr.yml `docker` job when build/Dockerfile changed)
+      #   - falkordb-next:rc-pr-<N>       (runtime image, full target, built by rust-pr.yml `build-rc-image`)
+      #   - falkordb-next-server:rc-pr-<N> (runtime image, server target, same)
+      # Each runtime repo also carries -x64 and -arm64v8 per-arch tags alongside
+      # the multi-arch manifest; the toolchain image is the same.
+      - name: Delete GHCR PR image tags
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
+          delete_tag() {
+            local repo="$1" tag="$2"
+            local vid
+            vid=$(gh api -X GET \
+              "/orgs/falkordb/packages/container/${repo}/versions?per_page=100" \
+              --paginate \
+              --jq ".[] | select(.metadata.container.tags[]? == \"${tag}\") | .id" \
+              | head -1)
+            if [ -n "$vid" ]; then
+              echo "deleting ${repo}:${tag} (version id ${vid})"
+              gh api -X DELETE \
+                "/orgs/falkordb/packages/container/${repo}/versions/${vid}" || true
+            else
+              echo "no version found for ${repo}:${tag}"
+            fi
+          }
+          # Toolchain image (single tag family — multi-arch manifest + per-arch tags)
+          for suffix in "" -x64 -arm64v8; do
+            delete_tag falkordb-build "pr-${PR}${suffix}"
+          done
+          # Runtime RC images
           for repo in falkordb-next falkordb-next-server; do
             for suffix in "" -x64 -arm64v8; do
-              TAG="rc-pr-${PR}${suffix}"
-              echo "looking up ${repo}:${TAG}"
-              VID=$(gh api -X GET \
-                "/orgs/falkordb/packages/container/${repo}/versions?per_page=100" \
-                --paginate \
-                --jq ".[] | select(.metadata.container.tags[]? == \"${TAG}\") | .id" \
-                | head -1)
-              if [ -n "$VID" ]; then
-                echo "deleting ${repo}:${TAG} (version id ${VID})"
-                gh api -X DELETE \
-                  "/orgs/falkordb/packages/container/${repo}/versions/${VID}" || true
-              else
-                echo "no version found for ${repo}:${TAG}"
-              fi
+              delete_tag "$repo" "rc-pr-${PR}${suffix}"
             done
           done

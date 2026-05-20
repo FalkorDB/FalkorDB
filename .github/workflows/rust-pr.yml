@@ -35,31 +35,26 @@ jobs:
             echo "changed=false"
             echo "changed=false" >> $GITHUB_OUTPUT
           fi
+  # When build/Dockerfile changes, rebuild the toolchain image at a PR-scoped
+  # tag (ghcr.io/falkordb/falkordb-build:pr-<N>, multi-arch). Other jobs in
+  # this workflow pick up the new toolchain via the `container:` references
+  # and the build-rc-image's build_image input.
   docker:
     needs: check-files
     if: needs.check-files.outputs.file_changed == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - name: Login to Docker Hub
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121
-        with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
-      - name: Build and push
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
-        with:
-          push: true
-          tags: aviavni/falkordb-build:${{ github.event.pull_request.number }}
-          context: ./build
+    uses: ./.github/workflows/build-toolchain.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      tag: pr-${{ github.event.pull_request.number }}
+    secrets: inherit
 
   # Build the runtime image (rc-pr-<N>) once, push to GHCR. All flow / e2e test
   # jobs below pull this image as a services container instead of dynamically
-  # loading a locally-built .so.
+  # loading a locally-built .so. When the toolchain was rebuilt this PR
+  # (build/Dockerfile changed), the runtime build uses the PR's toolchain too —
+  # so test feedback reflects the same image bytes main will publish on merge.
   build-rc-image:
     needs: [check-files, docker]
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
@@ -73,11 +68,12 @@ jobs:
       browser_tag: edge
       push_to_dockerhub: false
       is_latest: false
+      build_image: ${{ needs.check-files.outputs.file_changed == 'true' && format('ghcr.io/falkordb/falkordb-build:pr-{0}', github.event.pull_request.number) || 'ghcr.io/falkordb/falkordb-build:latest' }}
     secrets: inherit
 
   lint:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && github.event.pull_request.number || 'latest' }}
+    container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
     needs:
       - check-files
       - docker
@@ -95,7 +91,7 @@ jobs:
           CXX=clang++-22 cargo clippy --all-targets
   test:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && github.event.pull_request.number || 'latest' }}
+    container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
     needs:
       - check-files
       - docker
@@ -142,8 +138,7 @@ jobs:
           echo "test_files=$(jq -Rc '[., inputs] | map(select(length > 0))' flow_tests_done.txt)" >> $GITHUB_OUTPUT
   test-flow:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:${{ needs.check-files.outputs.file_changed ==
-      'true' && github.event.pull_request.number || 'latest' }}
+    container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
     needs:
       - check-files
       - docker
@@ -181,7 +176,7 @@ jobs:
           if-no-files-found: ignore
   coverage:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && github.event.pull_request.number || 'latest' }}
+    container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
     needs:
       - check-files
       - docker
@@ -211,8 +206,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
   build-coverage:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:${{ needs.check-files.outputs.file_changed ==
-      'true' && github.event.pull_request.number || 'latest' }}
+    container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
     needs:
       - check-files
       - docker
@@ -234,7 +228,7 @@ jobs:
           path: target/debug/libfalkordb.so
   coverage-flow:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && github.event.pull_request.number || 'latest' }}
+    container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
     needs:
       - check-files
       - docker
@@ -276,7 +270,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
   fuzz:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && github.event.pull_request.number || 'latest' }}
+    container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
     needs:
       - check-files
       - docker
@@ -343,7 +337,7 @@ jobs:
           fi                                                                
   benchmark:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && github.event.pull_request.number || 'latest' }}
+    container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
     needs:
       - check-files
       - docker
