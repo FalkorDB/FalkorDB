@@ -1,4 +1,4 @@
-ARG BUILD_IMAGE=aviavni/falkordb-build:latest
+ARG BUILD_IMAGE=ghcr.io/falkordb/falkordb-build:latest
 ARG BROWSER_TAG=latest
 ARG TARGETPLATFORM=linux/amd64
 
@@ -53,6 +53,7 @@ WORKDIR ${FALKORDB_HOME}
 
 COPY ./build/runtime/run.sh       ${FALKORDB_BIN_PATH}/run.sh
 COPY ./build/runtime/gen-certs.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
+RUN chmod +x ${FALKORDB_BIN_PATH}/run.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 COPY --from=builder /out/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
 
 # libomp.so.5 (LLVM OpenMP runtime) is linked by libfalkordb.so but absent from

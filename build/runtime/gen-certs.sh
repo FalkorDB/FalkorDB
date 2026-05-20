@@ -32,16 +32,16 @@ generate_cert() {
             -out "$certfile"
 }
 
-mkdir -p ${FALKORDB_TLS_PATH}
-[ -f "${FALKORDB_TLS_PATH}/ca.key" ] || openssl genrsa -out ${FALKORDB_TLS_PATH}/ca.key 4096
+mkdir -p "${FALKORDB_TLS_PATH}"
+[ -f "${FALKORDB_TLS_PATH}/ca.key" ] || openssl genrsa -out "${FALKORDB_TLS_PATH}/ca.key" 4096
 [ -f "${FALKORDB_TLS_PATH}/ca.crt" ] || openssl req \
     -x509 -new -nodes -sha256 \
-    -key ${FALKORDB_TLS_PATH}/ca.key \
+    -key "${FALKORDB_TLS_PATH}/ca.key" \
     -days 3650 \
     -subj '/O=Redis Test/CN=Certificate Authority' \
-    -out ${FALKORDB_TLS_PATH}/ca.crt
+    -out "${FALKORDB_TLS_PATH}/ca.crt"
 
-[ -f "${FALKORDB_TLS_PATH}/openssl.cnf" ] || cat > ${FALKORDB_TLS_PATH}/openssl.cnf <<_END_
+[ -f "${FALKORDB_TLS_PATH}/openssl.cnf" ] || cat > "${FALKORDB_TLS_PATH}/openssl.cnf" <<_END_
 [ server_cert ]
 keyUsage = digitalSignature, keyEncipherment
 nsCertType = server
@@ -55,4 +55,4 @@ generate_cert server "Server-only" "-extfile ${FALKORDB_TLS_PATH}/openssl.cnf -e
 generate_cert client "Client-only" "-extfile ${FALKORDB_TLS_PATH}/openssl.cnf -extensions client_cert"
 generate_cert redis "Generic-cert"
 
-[ -f ${FALKORDB_TLS_PATH}/redis.dh ] || openssl dhparam -out ${FALKORDB_TLS_PATH}/redis.dh 2048
+[ -f "${FALKORDB_TLS_PATH}/redis.dh" ] || openssl dhparam -out "${FALKORDB_TLS_PATH}/redis.dh" 2048

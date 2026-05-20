@@ -17,13 +17,14 @@ jobs:
       pull-requests: write
     steps:
       - name: Validate version format
+        env:
+          VERSION_INPUT: ${{ github.event.inputs.version_branch }}
         run: |
-          VERSION="${{ github.event.inputs.version_branch }}"
-          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Invalid version format '$VERSION'. Expected format: X.Y (e.g., 0.1)"
+          if [[ ! "$VERSION_INPUT" =~ ^[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version format. Expected format: X.Y (e.g., 0.1)"
             exit 1
           fi
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "VERSION=$VERSION_INPUT" >> $GITHUB_ENV
 
       - name: Checkout repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -143,7 +144,18 @@ jobs:
 
             echo "Cherry-picking #$PR_NUMBER ($MERGE_SHA): $PR_TITLE"
 
-            if git cherry-pick "$MERGE_SHA" --allow-empty -m 1; then
+            # Squash-merge commits have a single parent (-m 1 would error);
+            # true-merge commits have 2+ parents and need -m 1 to pick the
+            # mainline diff. rev-list --parents emits "<sha> <p1> [<p2> ...]".
+            PARENT_COUNT=$(git rev-list --parents -n 1 "$MERGE_SHA" | awk '{print NF-1}')
+            if [ "$PARENT_COUNT" -ge 2 ]; then
+              CP_ARGS="-m 1"
+            else
+              CP_ARGS=""
+            fi
+
+            # shellcheck disable=SC2086
+            if git cherry-pick --allow-empty $CP_ARGS "$MERGE_SHA"; then
               echo "  ✓ Success"
               SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
               jq --argjson item "$COMMIT_INFO" '. + [$item]' /tmp/success.json > /tmp/success_tmp.json

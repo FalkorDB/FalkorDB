@@ -27,8 +27,11 @@ jobs:
           fetch-depth: 0
       - name: Check if specific file changed
         id: check
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          if git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} | grep -q "build/Dockerfile"; then
+          if git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -q "build/Dockerfile"; then
             echo "changed=true"
             echo "changed=true" >> $GITHUB_OUTPUT
           else
@@ -48,7 +51,8 @@ jobs:
       packages: write
     with:
       tag: pr-${{ github.event.pull_request.number }}
-    secrets: inherit
+    # build-toolchain.yml only uses the auto-injected GITHUB_TOKEN; no
+    # custom secrets to forward, so we don't need `secrets: inherit`.
 
   # Build the runtime image (rc-pr-<N>) once, push to GHCR. All flow / e2e test
   # jobs below pull this image as a services container instead of dynamically
@@ -69,7 +73,8 @@ jobs:
       push_to_dockerhub: false
       is_latest: false
       build_image: ${{ needs.check-files.outputs.file_changed == 'true' && format('ghcr.io/falkordb/falkordb-build:pr-{0}', github.event.pull_request.number) || 'ghcr.io/falkordb/falkordb-build:latest' }}
-    secrets: inherit
+    # push_to_dockerhub is hard-coded false for PR RC builds, so no Docker Hub
+    # token is needed. The reusable workflow's GITHUB_TOKEN is auto-injected.
 
   lint:
     runs-on: ubuntu-latest
@@ -97,6 +102,9 @@ jobs:
       - docker
       - build-rc-image
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.build-rc-image.result == 'success' }}
+    permissions:
+      contents: read
+      packages: read
     services:
       falkordb:
         image: ghcr.io/falkordb/falkordb-server:rc-pr-${{ github.event.pull_request.number }}
@@ -145,6 +153,9 @@ jobs:
       - flow-test-matrix
       - build-rc-image
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.flow-test-matrix.result == 'success' && needs.build-rc-image.result == 'success' }}
+    permissions:
+      contents: read
+      packages: read
     services:
       falkordb:
         image: ghcr.io/falkordb/falkordb-server:rc-pr-${{ github.event.pull_request.number }}
@@ -163,9 +174,11 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Run Flow test - ${{ matrix.test_file }}
+        env:
+          TEST_FILE: ${{ matrix.test_file }}
         run: |
           . /data/venv/bin/activate
-          TEST="${{ matrix.test_file }}" FAIL_FAST=1 ./flow.sh
+          TEST="$TEST_FILE" FAIL_FAST=1 ./flow.sh
       - name: Upload flow logs on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -250,9 +263,11 @@ jobs:
           path: target/debug
       - run: chmod +x target/debug/libfalkordb.so
       - name: Run coverage - ${{ matrix.test_file }}
+        env:
+          TEST_FILE: ${{ matrix.test_file }}
         run: |
           . /data/venv/bin/activate
-          TEST="${{ matrix.test_file }}" FAIL_FAST=1 ./flow.sh
+          TEST="$TEST_FILE" FAIL_FAST=1 ./flow.sh
           llvm-profdata-22 merge --sparse `find . -name "*.profraw"` -o cov.profdata
           llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
@@ -345,6 +360,7 @@ jobs:
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.build-rc-image.result == 'success' }}
     permissions:
       contents: write
+      packages: read
     services:
       falkordb:
         image: ghcr.io/falkordb/falkordb-server:rc-pr-${{ github.event.pull_request.number }}

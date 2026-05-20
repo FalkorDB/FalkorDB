@@ -40,12 +40,20 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.commit_sha || github.sha }}
+          persist-credentials: false
 
       - name: Derive tag, latest flag, browser tag, commit SHA
         id: derive
+        env:
+          EVENT_NAME:     ${{ github.event_name }}
+          GH_SHA:         ${{ github.sha }}
+          RELEASE_TAG:    ${{ github.event.release.tag_name }}
+          INPUT_TAG:      ${{ inputs.tag }}
+          INPUT_LATEST:   ${{ inputs.mark_latest }}
+          INPUT_COMMIT:   ${{ inputs.commit_sha }}
         run: |
           set -euo pipefail
-          case "${{ github.event_name }}" in
+          case "$EVENT_NAME" in
             push)
               # edge-rs distinguishes the Rust port's edge channel from the
               # C port's :edge on the same falkordb/falkordb Docker Hub repo
@@ -53,27 +61,26 @@ jobs:
               TAG="edge-rs"
               IS_LATEST=false
               BROWSER_TAG="edge"
-              COMMIT_SHA="${{ github.sha }}"
+              COMMIT_SHA="$GH_SHA"
               PUSH_HUB=false
               ;;
             release)
-              TAG_RAW="${{ github.event.release.tag_name }}"
-              TAG="${TAG_RAW#v}"
+              TAG="${RELEASE_TAG#v}"
               IS_LATEST=true
               BROWSER_TAG="latest"
-              COMMIT_SHA="${{ github.sha }}"
+              COMMIT_SHA="$GH_SHA"
               PUSH_HUB=true
               ;;
             workflow_dispatch)
-              TAG="${{ inputs.tag }}"
-              IS_LATEST="${{ inputs.mark_latest }}"
+              TAG="$INPUT_TAG"
+              IS_LATEST="$INPUT_LATEST"
               BROWSER_TAG="latest"
-              COMMIT_SHA="${{ inputs.commit_sha }}"
+              COMMIT_SHA="$INPUT_COMMIT"
               # Manual dispatch publishes to Docker Hub too — that's the "promote" escape hatch.
               PUSH_HUB=true
               ;;
             *)
-              echo "::error::unsupported event ${{ github.event_name }}"
+              echo "::error::unsupported event $EVENT_NAME"
               exit 1
               ;;
           esac
@@ -82,9 +89,9 @@ jobs:
           # on dispatch only when the tag looks like X.Y.Z, so operators can still
           # dispatch ad-hoc tags like 'edge-test' without enforcement).
           VALIDATE=0
-          if [ "${{ github.event_name }}" = "release" ]; then
+          if [ "$EVENT_NAME" = "release" ]; then
             VALIDATE=1
-          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && \
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ] && \
                echo "$TAG" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
             VALIDATE=1
           fi
@@ -118,4 +125,5 @@ jobs:
       browser_tag: ${{ needs.prepare.outputs.browser_tag }}
       push_to_dockerhub: ${{ fromJSON(needs.prepare.outputs.push_to_dockerhub) }}
       is_latest: ${{ fromJSON(needs.prepare.outputs.is_latest) }}
-    secrets: inherit
+    secrets:
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}

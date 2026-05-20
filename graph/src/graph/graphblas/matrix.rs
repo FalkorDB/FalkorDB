@@ -128,7 +128,9 @@ pub fn init(
         }
 
         // Initialize LAGraph after GraphBLAS
-        let mut msg = [0i8; 256];
+        // `c_char` (not `i8`) because char signedness is platform-dependent:
+        // signed on amd64, unsigned on arm64 Linux. LAGraph FFI takes *mut c_char.
+        let mut msg: [std::os::raw::c_char; 256] = [0; 256];
         let rc = LAGraph_Init(msg.as_mut_ptr());
         if rc != 0 {
             return Err(format!(
@@ -171,7 +173,7 @@ pub fn burble(burble: bool) {
 /// Finalizes LAGraph and GraphBLAS, releasing all resources.
 pub fn shutdown() {
     unsafe {
-        let mut msg = [0i8; 256];
+        let mut msg: [std::os::raw::c_char; 256] = [0; 256];
         LAGraph_Finalize(msg.as_mut_ptr());
     }
 }

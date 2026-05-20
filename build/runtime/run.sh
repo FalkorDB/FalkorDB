@@ -6,9 +6,11 @@ if [ "${BROWSER:-1}" -eq "1" ]; then
     fi
 fi
 
-# Create /var/lib/falkordb/data directory if it does not exist
+# Create /var/lib/falkordb/data directory if it does not exist.
+# -p so the call is idempotent and creates parents if a bind-mount points
+# at a deeper path that hasn't been pre-staged.
 if [ ! -d "${FALKORDB_DATA_PATH}" ]; then
-    mkdir "${FALKORDB_DATA_PATH}"
+    mkdir -p "${FALKORDB_DATA_PATH}"
 fi
 
 if [ "${TLS:-0}" -eq "1" ]; then

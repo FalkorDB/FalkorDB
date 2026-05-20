@@ -34,6 +34,10 @@ on:
         required: false
         type: string
         default: "ghcr.io/falkordb/falkordb-build:latest"
+    secrets:
+      DOCKERHUB_TOKEN:
+        description: "Docker Hub token (only needed when push_to_dockerhub=true)"
+        required: false
 
 jobs:
   build:
@@ -53,6 +57,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
 
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 

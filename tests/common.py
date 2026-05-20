@@ -33,11 +33,11 @@ def start_redis(release=None, moduleEnvs=[]):
         client = FalkorDB(host=host, port=port)
         g = client.select_graph("test")
         return
-    except:
+    except Exception as e:
         if existing_env:
             raise RuntimeError(
-                f"EXISTING_ENV=1 but cannot reach redis at {host}:{port}"
-            )
+                f"EXISTING_ENV=1 but cannot reach redis at {host}:{port}: {e}"
+            ) from e
         shutdown = True
         if os.path.exists("redis-test.log"):
             os.remove("redis-test.log")
@@ -52,7 +52,7 @@ def start_redis(release=None, moduleEnvs=[]):
             client = FalkorDB(host=host, port=port)
             g = client.select_graph("test")
             return
-        except:
+        except Exception:
             pass
 
 def shutdown_redis():

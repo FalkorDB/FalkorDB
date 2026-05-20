@@ -32,7 +32,13 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
                       useSlaves=useSlaves, enableDebugCommand=enableDebugCommand, shardsCount=shardsCount)
     if existing_env:
         host = os.getenv("FALKORDB_HOST", "localhost")
-        port = int(os.getenv("FALKORDB_PORT", "6379"))
+        port_str = os.getenv("FALKORDB_PORT", "6379")
+        try:
+            port = int(port_str)
+        except ValueError as e:
+            raise RuntimeError(
+                f"FALKORDB_PORT must be an integer, got {port_str!r}"
+            ) from e
     else:
         host = "localhost"
         port = env.port

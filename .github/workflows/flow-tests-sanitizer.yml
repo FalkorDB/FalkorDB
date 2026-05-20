@@ -16,6 +16,50 @@ permissions:
   contents: read
 
 jobs:
+  # Detect a build/Dockerfile change so the rest of the workflow knows whether
+  # to (a) rebuild the toolchain image at pr-<N> and (b) use that pr-<N>
+  # toolchain for the runtime build + the test container. Same pattern as
+  # rust-pr.yml so PR validation always runs against the same toolchain bytes.
+  check-files:
+    runs-on: ubuntu-latest
+    outputs:
+      file_changed: ${{ steps.check.outputs.changed }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: check
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # workflow_dispatch path: no PR diff, fall through to "false" and
+          # the rest of the workflow uses :latest.
+          if [ -z "$BASE_SHA" ] || [ -z "$HEAD_SHA" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -q "build/Dockerfile"; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # When build/Dockerfile changed, rebuild the toolchain at pr-<N>. Shares
+  # the concurrency group with rust-pr.yml's `docker` job (group key =
+  # build-toolchain-pr-<N>), so the two callers serialize and the second one
+  # is a no-op against the just-pushed registry cache.
+  docker:
+    needs: check-files
+    if: needs.check-files.outputs.file_changed == 'true'
+    uses: ./.github/workflows/build-toolchain.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      tag: pr-${{ github.event.pull_request.number }}
+
   # Resolve the image tag once so build + tests reference the same name.
   prepare:
     runs-on: ubuntu-latest
@@ -23,20 +67,26 @@ jobs:
       tag: ${{ steps.derive.outputs.tag }}
     steps:
       - id: derive
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_SHA:    ${{ github.sha }}
         run: |
           set -euo pipefail
-          if [ -n "${{ github.event.pull_request.number }}" ]; then
-            echo "tag=rc-pr-${{ github.event.pull_request.number }}-asan" >> "$GITHUB_OUTPUT"
+          if [ -n "$PR_NUMBER" ]; then
+            echo "tag=rc-pr-${PR_NUMBER}-asan" >> "$GITHUB_OUTPUT"
           else
-            SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+            SHORT_SHA=${GH_SHA:0:7}
             echo "tag=manual-${SHORT_SHA}-asan" >> "$GITHUB_OUTPUT"
           fi
 
   # Build the sanitizer runtime image (amd64-only). Pushes to GHCR; runtime
   # tests below pull it as a services container. Replaces the artifact-based
-  # asan-build → upload → download dance.
+  # asan-build → upload → download dance. When the toolchain was rebuilt
+  # this PR (build/Dockerfile changed), point Dockerfile.asan at the PR's
+  # toolchain so the sanitizer .so reflects those changes too.
   build-rc-asan-image:
-    needs: prepare
+    needs: [check-files, docker, prepare]
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -44,6 +94,8 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
 
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
@@ -62,6 +114,8 @@ jobs:
           platforms: linux/amd64
           push: true
           provenance: false
+          build-args: |
+            BUILD_IMAGE=${{ needs.check-files.outputs.file_changed == 'true' && format('ghcr.io/falkordb/falkordb-build:pr-{0}', github.event.pull_request.number) || 'ghcr.io/falkordb/falkordb-build:latest' }}
           tags: ghcr.io/falkordb/falkordb:${{ needs.prepare.outputs.tag }}
           cache-from: type=registry,ref=ghcr.io/falkordb/falkordb:buildcache-asan
           cache-to:   type=registry,ref=ghcr.io/falkordb/falkordb:buildcache-asan,mode=max
@@ -72,6 +126,8 @@ jobs:
       test_files: ${{ steps.set-matrix.outputs.test_files }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
       - name: Generate test matrix
         id: set-matrix
         run: |
@@ -79,9 +135,10 @@ jobs:
 
   asan-flow-tests:
     runs-on: ubuntu-latest
-    container: ghcr.io/falkordb/falkordb-build:latest
+    container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
     timeout-minutes: 60
-    needs: [prepare, build-rc-asan-image, flow-test-matrix]
+    needs: [check-files, docker, prepare, build-rc-asan-image, flow-test-matrix]
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.build-rc-asan-image.result == 'success' && needs.flow-test-matrix.result == 'success' }}
     permissions:
       contents: read
       packages: read
@@ -112,17 +169,24 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Run flow test - ${{ matrix.test_file }}
+        env:
+          TEST_FILE: ${{ matrix.test_file }}
         run: |
           . /data/venv/bin/activate
-          TEST="${{ matrix.test_file }}" FAIL_FAST=1 ./flow.sh
+          TEST="$TEST_FILE" FAIL_FAST=1 ./flow.sh
 
       - name: Collect ASAN logs from service container
         if: failure()
+        env:
+          FALKORDB_CID: ${{ job.services.falkordb.id }}
         run: |
           # ASAN_OPTIONS.log_path inside the service container writes to
           # /tmp/asan-logs/asan.<pid>. Pull them out for the artifact step.
+          # `job.services.falkordb.id` is the actual container ID GitHub
+          # assigned — robust to multiple containers built from the same image
+          # and to image-tag changes.
           mkdir -p tests/flow/logs/asan
-          docker cp "$(docker ps -q --filter "ancestor=ghcr.io/falkordb/falkordb:${{ needs.prepare.outputs.tag }}")":/tmp/asan-logs/. tests/flow/logs/asan/ 2>/dev/null || true
+          docker cp "${FALKORDB_CID}:/tmp/asan-logs/." tests/flow/logs/asan/ 2>/dev/null || true
 
       - name: Upload flow test logs on failure
         if: failure()
