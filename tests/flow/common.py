@@ -3,6 +3,7 @@ import os
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from functools import wraps
@@ -82,27 +83,53 @@ def _job_mounts():
 
 def _host_path_for(in_container_path):
     """Translate an in-container absolute path to the host path that backs it,
-    via the job container's mount table. If no mount covers the path, return
-    it unchanged (local dev: the spawn happens directly on the host, so the
-    path is already the host path)."""
+    via the job container's mount table. Returns (host_path, covered_by_mount).
+    When not covered, host_path is the input unchanged — callers must NOT
+    bind-mount in that case, because the host daemon would interpret it as a
+    fresh path and create an empty directory there."""
     for src, dest in _job_mounts():
         if in_container_path == dest or in_container_path.startswith(dest.rstrip("/") + "/"):
-            return src + in_container_path[len(dest):]
-    return in_container_path
+            return src + in_container_path[len(dest):], True
+    return in_container_path, False
 
 
-def _import_folder_arg(falkordb_args):
-    """Extract IMPORT_FOLDER's value from a module-args string. moduleArgs is
-    a space-separated `KEY VALUE KEY VALUE ...` sequence (matches the format
-    redis-server's --loadmodule consumes), so the value is the token directly
-    after IMPORT_FOLDER. Returns None if absent."""
+_PATH_ARG_KEYS = ("IMPORT_FOLDER", "TEMP_FOLDER")
+
+
+def _path_args_in(falkordb_args):
+    """Yield (key, value) for path-shaped module args present in the args
+    string. moduleArgs is a space-separated `KEY VALUE KEY VALUE ...`
+    sequence (matches what redis-server's --loadmodule consumes), so the
+    value is the token directly after the key."""
     if not falkordb_args:
-        return None
+        return
     toks = falkordb_args.split()
     for i, t in enumerate(toks):
-        if t == "IMPORT_FOLDER" and i + 1 < len(toks):
-            return toks[i + 1]
-    return None
+        if t in _PATH_ARG_KEYS and i + 1 < len(toks):
+            yield t, toks[i + 1]
+
+
+def mountable_mkdtemp(*args, **kwargs):
+    """tempfile.mkdtemp(), but under FALKORDB_TEST_IMAGE the dir is rooted in
+    a workspace-relative location that's covered by the job container's
+    bind-mount table. Spawned sibling containers then see the same directory
+    via _spawn_falkordb's bind-mount logic. Local dev gets plain mkdtemp."""
+    if os.getenv("FALKORDB_TEST_IMAGE") and "dir" not in kwargs:
+        kwargs["dir"] = _ci_tmpdir()
+    return tempfile.mkdtemp(*args, **kwargs)
+
+
+def mountable_mkstemp(*args, **kwargs):
+    """Workspace-rooted tempfile.mkstemp(). See mountable_mkdtemp() for why."""
+    if os.getenv("FALKORDB_TEST_IMAGE") and "dir" not in kwargs:
+        kwargs["dir"] = _ci_tmpdir()
+    return tempfile.mkstemp(*args, **kwargs)
+
+
+def _ci_tmpdir():
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".ci-tmp")
+    os.makedirs(p, exist_ok=True)
+    return p
 
 
 def _job_network():
@@ -177,17 +204,20 @@ def _spawn_falkordb(image, falkordb_args="", redis_args="", alias=None,
     alias = alias or f"falkordb-{uuid.uuid4().hex[:8]}"
     if enable_debug_command:
         redis_args = f"--enable-debug-command yes {redis_args}".strip()
-    # If moduleArgs sets IMPORT_FOLDER to a job-container path (e.g.
-    # tests/flow/test_load_csv.py points it at .../tests/flow/csvs/), bind-mount
-    # the matching host path into the spawned container at the same path so
-    # LOAD CSV's file:// resolution under that folder sees the test fixtures.
-    # _host_path_for translates via the job container's mount table; on local
-    # dev (no mounts to traverse) it returns the path unchanged.
+    # Bind-mount path-shaped module args (IMPORT_FOLDER, TEMP_FOLDER) so the
+    # spawned sibling container resolves them to the same content the test
+    # set up on the job-container side. Two guards:
+    #   - the path must be covered by the job container's mount table, so
+    #     docker run -v <host>:<dest> targets a real host directory rather
+    #     than silently creating an empty one
+    #   - the path must currently exist, so tests that intentionally pass
+    #     non-existent paths (testConfigTempFolder.test_02) still see the
+    #     module fail validation
     extra_args = []
-    import_folder = _import_folder_arg(falkordb_args)
-    if import_folder:
-        host_path = _host_path_for(import_folder)
-        extra_args += ["-v", f"{host_path}:{import_folder}"]
+    for key, val in _path_args_in(falkordb_args):
+        host_path, covered = _host_path_for(val)
+        if covered and os.path.exists(val):
+            extra_args += ["-v", f"{host_path}:{val}"]
     cmd = [
         "docker", "run", "-d",
         "--network", _job_network(),
