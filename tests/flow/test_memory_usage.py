@@ -450,6 +450,22 @@ class testGraphMemoryUsage(FlowTestsBase):
 
         self.graph.query("RETURN 1")
 
+    def test_node_label_overlap_counted_once(self):
+        """test overlapping node attributes are assigned to one label"""
+
+        long_string = 'A' * 1000
+        q = "UNWIND range(0, 4000) AS x CREATE (:A:B:C {v:$long_string})"
+        self.graph.query(q, {'long_string': long_string})
+
+        res = self._graph_memory_usage(20)
+        by_label = dict(zip(res.node_attributes_by_label_storage_sz_mb[0::2],
+                            res.node_attributes_by_label_storage_sz_mb[1::2]))
+
+        self.env.assertEquals(set(by_label.keys()), {'A', 'B', 'C'})
+        self.env.assertGreater(by_label['A'], 0)
+        self.env.assertEquals(by_label['B'], 0)
+        self.env.assertEquals(by_label['C'], 0)
+
     def test_node_count_smaller_than_sample_size(self):
         """test memory consumption report when graph size is smaller than
            number of entities in the graph"""
@@ -630,4 +646,3 @@ class testGraphMemoryUsage(FlowTestsBase):
 
         self.env.assertEquals(reconstructed_memory_consumption.node_block_storage_sz_mb, original_memory_consumption.node_block_storage_sz_mb)
         self.env.assertEquals(reconstructed_memory_consumption.edge_block_storage_sz_mb, original_memory_consumption.edge_block_storage_sz_mb)
-

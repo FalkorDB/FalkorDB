@@ -18,96 +18,83 @@ typedef struct {
 	RedisModuleBlockedClient *bc;  // blocked client
 } GraphMemoryCtx;
 
-// checks whether any node in the graph is associated with more than one label
-// returns true if there exists at least one node with multiple labels
-static bool _Overlapping
+// collects label assignment statistics by streaming label matrices
+static void _CollectLabeledNodes
 (
-	const GrB_Matrix lbls,  // [input] Node-label adjacency matrix
-	GrB_Vector *V           // [output] Boolean vector: V[i] = true
-							// if node i has at least one label
+	const Graph *g,                  // graph
+	bool *labeled_nodes,             // [output] node ID -> labeled
+	size_t node_cap,                 // number of addressable node IDs
+	uint64_t *labeled_node_count,    // [output] distinct labeled nodes
+	uint64_t *label_assignment_count // [output] node-label assignments
 ) {
-	ASSERT(lbls != NULL);
-	ASSERT(V != NULL && *V == NULL);
+	ASSERT(g                      != NULL);
+	ASSERT(labeled_nodes          != NULL);
+	ASSERT(labeled_node_count     != NULL);
+	ASSERT(label_assignment_count != NULL);
 
-	GrB_Info info;
-	GrB_Index nrows;
+	int n_lbls = Graph_LabelTypeCount(g);
+	for(LabelID l = 0; l < n_lbls; l++) {
+		GrB_Info info;
+		GrB_Index id;
+		Delta_MatrixTupleIter it;
+		Delta_Matrix L = Graph_GetLabelMatrix(g, l);
 
-	// create V
-	info = GrB_Matrix_nrows(&nrows, lbls);
-	ASSERT(info == GrB_SUCCESS);
+		// attach iterator to label matrix
+		info = Delta_MatrixTupleIter_attach(&it, L);
+		ASSERT(info == GrB_SUCCESS);
 
-	info = GrB_Vector_new(V, GrB_BOOL, nrows);
-	ASSERT(info == GrB_SUCCESS);
+		info = Delta_MatrixTupleIter_iterate_range(&it, 0, UINT64_MAX);
+		ASSERT(info == GrB_SUCCESS);
 
-	//----------------------------------------------------------------------
-    // reduce each row of the labels matrix to indicate if a node is labeled
-    // V[i] = any(lbls(i,:))
-    //----------------------------------------------------------------------
+		while((info = Delta_MatrixTupleIter_next_BOOL(&it, &id, NULL, NULL))
+				== GrB_SUCCESS) {
+			ASSERT(id < node_cap);
+			(*label_assignment_count)++;
 
-	info = GrB_Matrix_reduce_Monoid(*V, NULL, NULL, GxB_ANY_BOOL_MONOID, lbls,
-			NULL);
-	ASSERT(info == GrB_SUCCESS);
+			if(!labeled_nodes[id]) {
+				labeled_nodes[id] = true;
+				(*labeled_node_count)++;
+			}
+		}
+		ASSERT(info == GxB_EXHAUSTED);
 
-	//----------------------------------------------------------------------
-    // if total label assignments > number of non-zero entries in V,
-    // at least one node has more than one label
-    //----------------------------------------------------------------------
-
-	GrB_Index lbls_nvals;
-	info = GrB_Matrix_nvals(&lbls_nvals, lbls);
-	ASSERT(info == GrB_SUCCESS);
-
-	GrB_Index v_nvals;
-	info = GrB_Vector_nvals(&v_nvals, *V);
-	ASSERT(info == GrB_SUCCESS);
-
-	return (lbls_nvals > v_nvals);
+		Delta_MatrixTupleIter_detach(&it);
+	}
 }
 
-// estimates the memory consumption for a vector of nodes by sampling
-// returns estimated total memory usage for all nodes in vector V
-static size_t _SampleVector
+// estimates memory consumption of unlabeled nodes in the graph
+// this function identifies nodes not assigned any label and samples them
+static size_t _UnlabeledNodesMemory
 (
-    const Graph *g,      // graph
-    const GrB_Vector V,  // vector of node IDs (non-zero entries)
-    GxB_Iterator it,     // [input/output] reusable vector iterator
-    int64_t samples      // max samples to collect per label
+	const Graph *g,                 // graph
+	const bool *labeled_nodes,      // node ID -> labeled
+	uint64_t unlabeled_node_count,  // number of unlabeled nodes
+	int64_t samples                 // number of nodes to sample
 ) {
-	GrB_Info  info;
-	GrB_Index nvals;
+	ASSERT(g != NULL);
+	ASSERT(samples > 0);
 
-	info = GrB_Vector_nvals(&nvals, V);
-	ASSERT(info == GrB_SUCCESS);
+	// if there are no unlabeled nodes, nothing to sample
+	if(unlabeled_node_count == 0) return 0;
 
-	// if the vector is empty, nothing to sample
-	if(nvals == 0) return 0;
+	size_t memory_usage = 0;
+	uint64_t remaining_samples = MIN(unlabeled_node_count, (uint64_t)samples);
+	uint64_t attempted_samples = remaining_samples;
 
-	size_t  memory_usage      = 0;
-	int64_t remaining_samples = MIN(nvals, samples);
-	int64_t attempted_samples = remaining_samples;
+	DataBlockIterator *it = Graph_ScanNodes(g);
+	ASSERT(it != NULL);
 
-	// attach iterator to vector V
-	info = GxB_Vector_Iterator_attach(it, V, NULL);
-	ASSERT(info == GrB_SUCCESS);
+	uint64_t id;
+	AttributeSet *set;
+	while((set = DataBlockIterator_Next(it, &id)) != NULL &&
+			remaining_samples > 0) {
+		if(labeled_nodes != NULL && labeled_nodes[id]) continue;
 
-	// seek to the first entry
-	info = GxB_Vector_Iterator_seek(it, 0);
-	while(info != GxB_EXHAUSTED && remaining_samples > 0) {
-		// get the entry V(i)
-		GrB_Index i = GxB_Vector_Iterator_getIndex(it);
-
-		Node n;
-		bool node_found = Graph_GetNode(g, i, &n);
-		ASSERT(node_found == true);
-
-		AttributeSet set = GraphEntity_GetAttributes((GraphEntity*)&n);
-		memory_usage += AttributeSet_memoryUsage(set);
-
+		memory_usage += AttributeSet_memoryUsage(*set);
 		remaining_samples--;
-
-		// advance iterator
-		info = GxB_Vector_Iterator_next(it);
 	}
+
+	DataBlockIterator_Free(it);
 
 	// ensure at least one sample was successfully collected
 	ASSERT((attempted_samples - remaining_samples) > 0);
@@ -115,73 +102,7 @@ static size_t _SampleVector
 	// estimate total memory usage by scaling the average sample
 	float avg = memory_usage / (float)(attempted_samples - remaining_samples);
 
-	return (size_t)(avg * nvals);
-}
-
-// estimates memory consumption of unlabeled nodes in the graph
-// this function identifies nodes not assigned any label and samples them
-static size_t _UnlabeledNodesMemory
-(
-	const Graph *g,      // graph
-    GrB_Vector V,        // vector where V[i] = 1 marks labeled nodes
-                         // will be inversed
-    int64_t samples      // number of nodes to sample
-) {
-	ASSERT(g != NULL);
-	ASSERT(V != NULL);
-	ASSERT(samples > 0);
-
-    GrB_Info info;
-    GrB_Scalar x;
-
-	// Create a scalar 'true' to assign to unlabeled entries
-	info = GrB_Scalar_new(&x, GrB_BOOL);
-	ASSERT(info == GrB_SUCCESS);
-
-	info = GrB_Scalar_setElement(x, true);
-	ASSERT(info == GrB_SUCCESS);
-
-	// fill in complement of V (i.e., unlabeled nodes)
-	GrB_Index len;
-	info = GrB_Vector_size(&len, V);
-	ASSERT(info == GrB_SUCCESS);
-
-	// V<!V> = true --> (mark unlabeled nodes)
-	info = GrB_Vector_assign_Scalar(V, V, NULL, x, GrB_ALL, len, GrB_DESC_RC);
-	ASSERT(info == GrB_SUCCESS);
-
-	info = GrB_free(&x);
-	ASSERT(info == GrB_SUCCESS);
-
-	// sample memory usage for unlabeled nodes
-	GxB_Iterator it;
-	info = GxB_Iterator_new(&it);
-	ASSERT(info == GrB_SUCCESS);
-
-	//--------------------------------------------------------------------------
-	// remove deleted nodes from V
-	//--------------------------------------------------------------------------
-
-	NodeID *nodes;     // array of deleted node IDs
-	uint64_t n_nodes;  // number of deleted nodes
-
-	// populate nodes with deleted node IDs
-	Graph_DeletedNodes(g, &nodes, &n_nodes);
-	ASSERT(nodes != NULL);
-
-	// remove deleted node IDs from V
-	for(uint64_t i = 0; i < n_nodes; i++) {
-		info = GrB_Vector_removeElement(V, nodes[i]);
-		ASSERT(info == GrB_SUCCESS);
-	}
-
-	size_t memory_usage = _SampleVector(g, V, it, samples);
-
-	// cleanup
-	GrB_free(&it);
-	rm_free(nodes);
-
-	return memory_usage;
+	return (size_t)(avg * unlabeled_node_count);
 }
 
 // estimates amortized memory usage for nodes with overlapping labels
@@ -192,67 +113,67 @@ static size_t _UnlabeledNodesMemory
 static void _EstimateOverlapingNodeAttributeMemory
 (
 	const Graph *g,            // graph
-	GrB_Matrix lbls,           // labels matrix
 	int64_t samples,           // max samples per label
 	MemoryUsageResult *result  // [output] memory usage
 ) {
 	ASSERT(g != NULL);
 	ASSERT(samples > 0);
 
-	size_t node_memory_usage = 0;
 	int n_lbls = Graph_LabelTypeCount(g);
+	size_t node_cap = Graph_RequiredMatrixDim(g);
+	bool *processed_nodes = rm_calloc(node_cap, sizeof(bool));
+	ASSERT(processed_nodes != NULL);
 
-	GrB_Info info;
-	GrB_Scalar     x     = NULL;
-	GrB_Vector     V     = NULL;          // vector for current label column
-	GrB_Vector     P     = NULL;          // tracks processed nodes
-	GxB_Iterator   it    = NULL;          // iterator for sampling
-	GrB_Index      nrows = 0;             // number of nodes
-	GrB_Descriptor desc  = GrB_DESC_RSC;  // descriptor for masked extraction
+	for(LabelID l = 0; l < n_lbls; l++) {
+		GrB_Info info;
+		GrB_Index id;
+		Delta_MatrixTupleIter it;
+		Delta_Matrix L = Graph_GetLabelMatrix(g, l);
 
-	// get the number of rows (nodes)
-	info = GrB_Matrix_nrows(&nrows, lbls);
-	ASSERT(info == GrB_SUCCESS);
+		size_t label_memory_usage = 0;
+		uint64_t label_node_count = 0;
+		uint64_t sampled = 0;
 
-	// set column-major layout for efficient column extraction
-	info = GxB_Matrix_Option_set(lbls, GrB_STORAGE_ORIENTATION_HINT,
-			GrB_COLMAJOR);
-	ASSERT(info == GrB_SUCCESS);
-
-	// create a vector to mark processed nodes
-	info = GrB_Vector_new(&P, GrB_BOOL, nrows);
-	ASSERT(info == GrB_SUCCESS);
-
-	// create a reusable vector for label columns
-	info = GrB_Vector_new(&V, GrB_BOOL, nrows);
-	ASSERT(info == GrB_SUCCESS);
-
-	// create a reusable iterator
-	info = GxB_Iterator_new(&it);
-	ASSERT(info == GrB_SUCCESS);
-
-	// iterate over each label
-	for(int i = 0; i < n_lbls; i++) {
-		// extract column i (label i), skipping already processed entries
-        // V<!P> = lbls[:, i]
-		info = GrB_Col_extract(V, P, NULL, lbls, GrB_ALL, nrows, i, desc);
+		// attach iterator to label matrix
+		info = Delta_MatrixTupleIter_attach(&it, L);
 		ASSERT(info == GrB_SUCCESS);
 
-		// sample attribute memory usage from unprocessed nodes within label
-		node_memory_usage = _SampleVector(g, V, it, samples);
-		arr_append(result->node_attr_by_label_sz, node_memory_usage);
-
-		// mark these nodes as processed: P = P + V
-		info = GrB_Vector_eWiseAdd_Semiring(P, NULL, NULL, GxB_ANY_PAIR_BOOL,
-				P, V, GrB_DESC_S);
+		info = Delta_MatrixTupleIter_iterate_range(&it, 0, UINT64_MAX);
 		ASSERT(info == GrB_SUCCESS);
+
+		while((info = Delta_MatrixTupleIter_next_BOOL(&it, &id, NULL, NULL))
+				== GrB_SUCCESS) {
+			ASSERT(id < node_cap);
+			if(processed_nodes[id]) continue;
+
+			// assign each multi-label node to the first label encountered
+			processed_nodes[id] = true;
+			label_node_count++;
+
+			if(sampled < (uint64_t)samples) {
+				Node n;
+				bool node_found = Graph_GetNode(g, id, &n);
+				ASSERT(node_found == true);
+
+				AttributeSet set = GraphEntity_GetAttributes((GraphEntity*)&n);
+				label_memory_usage += AttributeSet_memoryUsage(set);
+				sampled++;
+			}
+		}
+		ASSERT(info == GxB_EXHAUSTED);
+
+		Delta_MatrixTupleIter_detach(&it);
+
+		if(label_node_count > 0) {
+			ASSERT(sampled > 0);
+			float avg_label_mem = (float)label_memory_usage / sampled;
+			label_memory_usage = avg_label_mem * label_node_count;
+		}
+
+		arr_append(result->node_attr_by_label_sz, label_memory_usage);
 	}
 
-	// clean up
-	GrB_free(&x);
-	GrB_free(&V);
-	GrB_free(&P);
-	GrB_free(&it);
+	rm_free(processed_nodes);
 }
 
 // estimate total memory usage for all labeled nodes,
@@ -331,52 +252,48 @@ static void _EstimateNodeAttributeMemory
 	ASSERT(gc      != NULL);
     ASSERT(samples > 0);
 
-	GrB_Info info;
-	GrB_Vector V    = NULL;
-	GrB_Matrix lbls = NULL;
-
 	size_t  node_memory_usage = 0;                        // node memory usage
 	int64_t node_count        = Graph_NodeCount(g);       // number of nodes
 	int64_t sample_size       = MIN(node_count, samples); // sample size
+	size_t  node_cap          = Graph_RequiredMatrixDim(g);
+	int     n_lbls            = Graph_LabelTypeCount(g);
+	uint64_t labeled_node_count     = 0;
+	uint64_t label_assignment_count = 0;
+	bool *labeled_nodes             = NULL;
 
 	//--------------------------------------------------------------------------
-	// determine if the graph has overlapping labels
+	// collect label statistics
 	//--------------------------------------------------------------------------
 
-	Delta_Matrix D = Graph_GetNodeLabelMatrix(g);
-	info = Delta_Matrix_export(&lbls, D, GrB_BOOL);
-	ASSERT(info == GrB_SUCCESS);
+	if(n_lbls > 0 && node_cap > 0) {
+		labeled_nodes = rm_calloc(node_cap, sizeof(bool));
+		ASSERT(labeled_nodes != NULL);
 
-	bool overlapping = _Overlapping(lbls, &V);
+		_CollectLabeledNodes(g, labeled_nodes, node_cap, &labeled_node_count,
+				&label_assignment_count);
+	}
+
+	bool overlapping = label_assignment_count > labeled_node_count;
 
 	//--------------------------------------------------------------------------
 	// check for unlabeled nodes
 	//--------------------------------------------------------------------------
 
-	GrB_Index nvals;
-	info = GrB_Vector_nvals(&nvals, V);
-	ASSERT(info == GrB_SUCCESS);
-
-	bool has_unlabeled_nodes = Graph_NodeCount(g) > nvals;  // unlabeled nodes
+	bool has_unlabeled_nodes = Graph_NodeCount(g) > labeled_node_count;
 	if(has_unlabeled_nodes) {
-		// resize vector to match actual number of nodes in the graph
-		info = GrB_Vector_resize(V, Graph_UncompactedNodeCount(g));
-		ASSERT(info == GrB_SUCCESS);
-
-		node_memory_usage = _UnlabeledNodesMemory(g, V, samples);
+		uint64_t unlabeled_node_count = Graph_NodeCount(g) - labeled_node_count;
+		node_memory_usage = _UnlabeledNodesMemory(g, labeled_nodes,
+				unlabeled_node_count, samples);
 		result->unlabeled_node_attr_sz = node_memory_usage;
 	}
 
-	info = GrB_free(&V);
-	ASSERT(info == GrB_SUCCESS);
-
 	if(overlapping) {
-		_EstimateOverlapingNodeAttributeMemory(g, lbls, sample_size, result);
+		_EstimateOverlapingNodeAttributeMemory(g, sample_size, result);
 	} else {
 		_EstimateNonOverlapingNodeAttributeMemory(g, sample_size, result);
 	}
 
-	GrB_free(&lbls);
+	rm_free(labeled_nodes);
 }
 
 // estimate edges attribute-set memory consumption
@@ -749,4 +666,3 @@ int Graph_Memory
 
 	return REDISMODULE_OK;
 }
-
