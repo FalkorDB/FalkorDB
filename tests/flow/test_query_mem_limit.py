@@ -33,7 +33,7 @@ class testQueryMemoryLimit():
             thread_count = int(self.db.config_get("THREAD_COUNT"))
 
             # connection pool blocking when there's no available connections 
-            pool = BlockingConnectionPool(max_connections=thread_count, timeout=None, port=self.env.port, decode_responses=True)
+            pool = BlockingConnectionPool(max_connections=thread_count, timeout=None, host=self.env.host, port=self.env.port, decode_responses=True)
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 

@@ -36,7 +36,7 @@ class testPendingQueryLimit():
             # blocking when there's no connections available
             n = self.db.config_get("THREAD_COUNT") * 5
             limit = self.db.config_get("MAX_QUEUED_QUERIES")
-            pool = BlockingConnectionPool(max_connections=n, timeout=None, port=self.env.port, decode_responses=True)
+            pool = BlockingConnectionPool(max_connections=n, timeout=None, host=self.env.host, port=self.env.port, decode_responses=True)
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 

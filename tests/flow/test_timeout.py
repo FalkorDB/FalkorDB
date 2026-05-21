@@ -286,6 +286,7 @@ class testQueryTimeout():
             # connection pool with 16 connections
             # blocking when there's no connections available
             pool = BlockingConnectionPool(max_connections=16, timeout=None,
+                                          host=self.env.host,
                                           port=self.env.port,
                                           decode_responses=True)
 

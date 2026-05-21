@@ -254,6 +254,7 @@ class testIndexCreationFlow:
             pool = BlockingConnectionPool(
                 max_connections=16,
                 timeout=None,
+                host=self.env.host,
                 port=self.env.port,
                 decode_responses=True,
             )

@@ -38,18 +38,24 @@ if [[ "$FAIL_FAST" == 1 ]]; then
 	PARALLELISM="--parallelism 1"
 fi
 
-# Existing-env mode: RLTest connects to a pre-running redis (typically a CI
-# services-block container) instead of spawning one with --loadmodule. Parallel
-# tests would share the same redis and collide, so force serial execution.
+# Two execution modes, selected by FALKORDB_TEST_IMAGE:
 #
-# --parallelism is set safely below to 1. We pass --module too so per-test
-# Env(env='oss') overrides (tests/flow/common.py uses this when a test's
-# moduleArgs include load-time-immutable config that the running redis can't
-# apply on the fly) have the module path to spawn redis with. In CI the .so
-# is extracted from the service container before flow.sh runs; locally the
-# developer flow still builds it via cargo.
-if [[ "$EXISTING_ENV" == 1 ]]; then
-    MODULE_ARGS=(--env existing-env --existing-env-addr "${FALKORDB_HOST:-localhost}:${FALKORDB_PORT:-6379}" --module "$TARGET_DIR/$TARGET")
+# - CI mode (FALKORDB_TEST_IMAGE set, e.g. ghcr.io/falkordb/falkordb-server:rc-pr-N):
+#   tests/flow/common.py Env() handles all redis lifecycle (connects to the
+#   shared `master` GHA service, or spawns a private container when the test
+#   passes load-time moduleArgs). RLTest gets --env existing-env so it doesn't
+#   try to spawn redis itself; the --existing-env-addr is bogus-but-required
+#   syntax — the helper bypasses it entirely.
+#
+# - Local dev (FALKORDB_TEST_IMAGE unset):
+#   Original behavior — RLTest spawns redis-server locally with --loadmodule.
+#   Cargo-build the .so, run ./flow.sh — works the same as before this PR.
+#
+# --parallelism 1 in CI because the shared `master` service is process-singleton;
+# parallel RLTest classes would collide on its state. Locally RLTest spawns one
+# redis per class, so concurrency is safe.
+if [[ "$FALKORDB_TEST_IMAGE" != "" ]]; then
+    MODULE_ARGS=(--env existing-env --existing-env-addr "${FALKORDB_HOST:-master}:${FALKORDB_PORT:-6379}")
     PARALLELISM="--parallelism 1"
 else
     MODULE_ARGS=(--module "$TARGET_DIR/$TARGET")
@@ -66,7 +72,7 @@ fi
 # To run all tests in a specific file, use:
 # TEST="tests/flow/test_function_calls" FAIL_FAST=1 ./flow.sh
 # To run against an already-running redis (e.g. a service container):
-# EXISTING_ENV=1 FALKORDB_HOST=falkordb FALKORDB_PORT=6379 ./flow.sh
+# FALKORDB_TEST_IMAGE=ghcr.io/falkordb/falkordb-server:edge-rs ./flow.sh
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REDIS_CONF="$SCRIPT_DIR/tests/flow/redis.conf"

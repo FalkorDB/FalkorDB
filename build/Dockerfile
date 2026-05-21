@@ -11,6 +11,14 @@ RUN apt update -y && \
 
 RUN apt install -y git make cmake curl zlib1g zlib1g-dev libpolly-22-dev libomp-22-dev libc++-22-dev libc++abi-22-dev libzstd-dev python3-venv lcov
 
+# Docker CLI for per-test-class container orchestration in flow tests:
+# tests/flow/common.py spawns dedicated containers from the RC image so each
+# class gets its own fresh redis with the right load-time module args. The
+# CLI talks to the host docker daemon via /var/run/docker.sock (mounted via
+# the rust-pr.yml `container.options`). docker.io includes the daemon binary
+# we never run — only the client matters here.
+RUN apt install -y docker.io
+
 RUN python3 -m venv venv
 
 RUN venv/bin/pip install behave falkordb falkordb-bulk-loader hypothesis pytest pytest-benchmark RLTest

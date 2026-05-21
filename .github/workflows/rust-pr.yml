@@ -121,49 +121,6 @@ jobs:
           cache-from: type=registry,ref=ghcr.io/falkordb/falkordb:buildcache-asan
           cache-to:   type=registry,ref=ghcr.io/falkordb/falkordb:buildcache-asan,mode=max
 
-  # Extract the falkordb.so from each RC image and upload as an artifact. Tests
-  # that pass load-time-immutable moduleArgs (CACHE_SIZE, THREAD_COUNT, ...)
-  # fall back to RLTest's `env=oss` spawn mode (see tests/flow/common.py); that
-  # spawn needs the .so locally. We extract here on a host runner because the
-  # test-flow job runs inside the toolchain container which has no docker CLI.
-  extract-so:
-    needs: [build-rc-image, build-rc-asan-image]
-    if: ${{ !cancelled() && needs.build-rc-image.result == 'success' && needs.build-rc-asan-image.result == 'success' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { image_repo: falkordb-server, image_suffix: '',      artifact_name: rc-so      }
-          - { image_repo: falkordb,        image_suffix: '-asan', artifact_name: rc-asan-so }
-    steps:
-      - name: Login to GHCR
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Extract falkordb.so
-        env:
-          IMAGE: ghcr.io/falkordb/${{ matrix.image_repo }}:rc-pr-${{ github.event.pull_request.number }}${{ matrix.image_suffix }}
-        run: |
-          set -euo pipefail
-          docker pull "$IMAGE"
-          CID=$(docker create "$IMAGE")
-          docker cp "${CID}:/var/lib/falkordb/bin/falkordb.so" libfalkordb.so
-          docker rm "$CID" >/dev/null
-          ls -lh libfalkordb.so
-      - name: Upload .so artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: ${{ matrix.artifact_name }}
-          path: libfalkordb.so
-          retention-days: 1
-          if-no-files-found: error
-
   lint:
     runs-on: ubuntu-latest
     container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
@@ -232,50 +189,68 @@ jobs:
         id: set-matrix
         run: |
           echo "test_files=$(jq -Rc '[., inputs] | map(select(length > 0))' flow_tests_done.txt)" >> $GITHUB_OUTPUT
-  # Flow tests against the RC image. The sanitizer matrix dimension lets one
-  # job drive both the standard run (services: falkordb-server:rc-pr-N) and
-  # the ASAN run (services: falkordb:rc-pr-N-asan, with SANITIZER=address +
-  # ASAN_OPTIONS forced via service env). The ASAN_OPTIONS env on the service
-  # is harmless for non-sanitizer cells — libasan isn't loaded there.
+  # Flow tests against the RC image with a hybrid execution model:
+  #
+  # 1. Default: master + replica are declared as GHA services, both backed
+  #    by the same RC image. Tests that don't pass moduleArgs and don't use
+  #    useSlaves connect to `master`. Tests using useSlaves=True transparently
+  #    get the replica via Env().getSlaveConnection() — no separate orchestration.
+  #
+  # 2. Override: tests that pass load-time-immutable moduleArgs (CACHE_SIZE,
+  #    NODE_CREATION_BUFFER, IMPORT_FOLDER, …) need a fresh redis with those
+  #    args baked into --loadmodule. The Env() helper in tests/flow/common.py
+  #    detects this and spawns a private container via `docker run` from
+  #    inside the toolchain (docker CLI installed in build/Dockerfile; host
+  #    socket bind-mounted via container.options). That private container's
+  #    lifecycle is scoped to the one Env() call.
   test-flow:
     # Display the asan vs normal cells distinctly in the GitHub Actions UI.
-    # Default matrix interpolation renders as "test-flow (test_foo, true)"
-    # which is hard to scan; this gives "asan-flow test_foo" / "flow test_foo".
     name: ${{ matrix.sanitizer && 'asan-flow' || 'flow' }} ${{ matrix.test_file }}
     runs-on: ubuntu-latest
-    container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
+    container:
+      image: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
+      options: --volume /var/run/docker.sock:/var/run/docker.sock
     needs:
       - check-files
       - docker
       - flow-test-matrix
       - build-rc-image
       - build-rc-asan-image
-      - extract-so
-    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.flow-test-matrix.result == 'success' && needs.build-rc-image.result == 'success' && needs.build-rc-asan-image.result == 'success' && needs.extract-so.result == 'success' }}
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.flow-test-matrix.result == 'success' && needs.build-rc-image.result == 'success' && needs.build-rc-asan-image.result == 'success' }}
     permissions:
       contents: read
       packages: read
     services:
-      falkordb:
+      master:
         image: ${{ matrix.sanitizer && format('ghcr.io/falkordb/falkordb:rc-pr-{0}-asan', github.event.pull_request.number) || format('ghcr.io/falkordb/falkordb-server:rc-pr-{0}', github.event.pull_request.number) }}
         credentials:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-        ports: ["6379:6379"]
-        # FALKORDB_ARGS="" overrides the Dockerfile-baked production defaults
-        # ("TIMEOUT 1000 MAX_QUEUED_QUERIES 25 RESULTSET_SIZE 10000"). Tests
-        # are written against RLTest's spawned-redis defaults (no TIMEOUT etc.);
-        # the production knobs cause spurious "Query timed out" / queue-full
-        # failures during testing.
-        # Sanitizer cells need log_path overridden to a path we can `docker cp`
-        # out of the service container. Non-sanitizer service ignores it.
+        env:
+          # Override the image's production defaults ("TIMEOUT 1000 ..."); tests
+          # expect RLTest's spawned-redis defaults (no TIMEOUT cap).
+          FALKORDB_ARGS: ""
+          # log_path on the sanitizer cell only — harmless when libasan isn't loaded.
+          ASAN_OPTIONS: "detect_leaks=1:detect_odr_violation=0:halt_on_error=0:abort_on_error=0:symbolize=1:print_stacktrace=1:strict_string_checks=1:detect_stack_use_after_return=1:log_path=/tmp/asan-logs/asan:log_exe_name=1"
+      replica:
+        image: ${{ matrix.sanitizer && format('ghcr.io/falkordb/falkordb:rc-pr-{0}-asan', github.event.pull_request.number) || format('ghcr.io/falkordb/falkordb-server:rc-pr-{0}', github.event.pull_request.number) }}
+        credentials:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
         env:
           FALKORDB_ARGS: ""
+          # REDIS_ARGS is interpolated by run.sh into the redis-server command
+          # line; --replicaof points at the master service via its network alias.
+          REDIS_ARGS: "--replicaof master 6379"
           ASAN_OPTIONS: "detect_leaks=1:detect_odr_violation=0:halt_on_error=0:abort_on_error=0:symbolize=1:print_stacktrace=1:strict_string_checks=1:detect_stack_use_after_return=1:log_path=/tmp/asan-logs/asan:log_exe_name=1"
     env:
-      EXISTING_ENV: "1"
-      FALKORDB_HOST: falkordb
+      # Connection target for the default (no-override) test path.
+      FALKORDB_HOST: master
       FALKORDB_PORT: "6379"
+      FALKORDB_REPLICA_HOST: replica
+      FALKORDB_REPLICA_PORT: "6379"
+      # Image used when Env() spawns a private container for moduleArgs override.
+      FALKORDB_TEST_IMAGE: ${{ matrix.sanitizer && format('ghcr.io/falkordb/falkordb:rc-pr-{0}-asan', github.event.pull_request.number) || format('ghcr.io/falkordb/falkordb-server:rc-pr-{0}', github.event.pull_request.number) }}
       SANITIZER: ${{ matrix.sanitizer && 'address' || '' }}
     strategy:
       fail-fast: false
@@ -284,33 +259,23 @@ jobs:
         sanitizer: [false, true]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      # Tests that pass load-time-only moduleArgs (CACHE_SIZE, THREAD_COUNT,
-      # IMPORT_FOLDER, ...) can't reconfigure the running service container.
-      # For those, the Env() helper falls back to RLTest's `env=oss` mode,
-      # which spawns its own redis with --loadmodule + moduleArgs. The .so
-      # is downloaded here from the extract-so job (we can't `docker cp`
-      # from inside the toolchain container — no docker CLI).
-      - name: Download .so artifact (byte-identical to service-container .so)
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+
+      # Log into GHCR so the private-spawn path (`docker run` from Env()) can
+      # pull the RC image when needed. The default-service path doesn't need
+      # this — GHA already pulled the image via the services credentials.
+      - name: Login to GHCR (for private container spawns)
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
-          name: ${{ matrix.sanitizer && 'rc-asan-so' || 'rc-so' }}
-          path: target/release/
-      - run: chmod +x target/release/libfalkordb.so
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run Flow test - ${{ matrix.test_file }} (sanitizer=${{ matrix.sanitizer }})
         env:
           TEST_FILE: ${{ matrix.test_file }}
         run: |
           . /data/venv/bin/activate
           TEST="$TEST_FILE" FAIL_FAST=1 RELEASE=1 ./flow.sh
-      - name: Collect ASAN logs from service container
-        if: failure() && matrix.sanitizer
-        env:
-          FALKORDB_CID: ${{ job.services.falkordb.id }}
-        run: |
-          # ASAN_OPTIONS.log_path inside the service container writes to
-          # /tmp/asan-logs/asan.<pid>. Pull them out for the artifact step.
-          mkdir -p tests/flow/logs/asan
-          docker cp "${FALKORDB_CID}:/tmp/asan-logs/." tests/flow/logs/asan/ 2>/dev/null || true
       - name: Upload flow logs on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
