@@ -292,10 +292,18 @@ def _attach_slave(env_obj, host, port):
 
     RLTest's env.getSlaveConnection() normally returns a redis client for the
     replica spawned by RLTest. Under our existing-env stub we override it to
-    return a client pointing at the supplied (host, port)."""
+    return a client pointing at the supplied (host, port).
+
+    Also stash `replica_host`/`replica_port` on the env so test code that
+    constructs its own clients (FalkorDB, AsyncRedis, etc.) at the replica
+    can address it directly. RLTest's original model puts the replica at
+    port+1 on localhost — that assumption doesn't hold under docker-per-class
+    where the replica is a sibling container on a network alias."""
     def _get_slave_connection(*_args, **_kwargs):
         return redis.Redis(host=host, port=port, decode_responses=True)
     env_obj.getSlaveConnection = _get_slave_connection
+    env_obj.replica_host = host
+    env_obj.replica_port = port
 
 
 def skip():
