@@ -101,12 +101,18 @@ def _wait_for_redis(host, port, cid, attempts=50, interval=0.1):
     raise RuntimeError(f"redis at {host}:{port} did not become ready after {attempts * interval:.1f}s")
 
 
-def _spawn_falkordb(image, falkordb_args="", redis_args="", alias=None):
+def _spawn_falkordb(image, falkordb_args="", redis_args="", alias=None,
+                    enable_debug_command=False):
     """Start a falkordb container, return (host, port, container_id).
 
     `falkordb_args` becomes the module's load-time arg string (CACHE_SIZE 16 ...).
-    `redis_args` is forwarded as the redis-server CLI args (for --replicaof, etc.)."""
+    `redis_args` is forwarded as the redis-server CLI args (for --replicaof, etc.).
+    `enable_debug_command=True` adds `--enable-debug-command yes` to redis-server,
+    matching what tests that pass enableDebugCommand=True to Env() expect under
+    the old RLTest model (RLTest's --enable-debug-command CLI flag did the same)."""
     alias = alias or f"falkordb-{uuid.uuid4().hex[:8]}"
+    if enable_debug_command:
+        redis_args = f"--enable-debug-command yes {redis_args}".strip()
     cmd = [
         "docker", "run", "-d",
         "--network", _job_network(),
@@ -176,7 +182,8 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
     # raises before we can override anything. flow.sh's --existing-env-addr
     # is a placeholder that gets superseded here.
     master_alias, master_port, _ = _spawn_falkordb(
-        test_image, falkordb_args=moduleArgs or "")
+        test_image, falkordb_args=moduleArgs or "",
+        enable_debug_command=enableDebugCommand)
     host, port = master_alias, master_port
     Defaults.external_addr = f"{master_alias}:{master_port}"
     env_obj = Environment(decodeResponses=True, env='existing-env')
@@ -185,6 +192,7 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
             test_image,
             falkordb_args=moduleArgs or "",
             redis_args=f"--replicaof {master_alias} 6379",
+            enable_debug_command=enableDebugCommand,
         )
         _attach_slave(env_obj, replica_alias, 6379)
 
