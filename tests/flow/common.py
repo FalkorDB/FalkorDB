@@ -147,12 +147,17 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
         return (env_obj, db)
 
     # Mode 2: CI. Always private spawn — every Env() call gets a fresh master
-    # (plus replica when useSlaves=True). The RLTest Environment is a stub
-    # (env='existing-env') so it doesn't try to manage redis lifecycle itself.
-    env_obj = Environment(decodeResponses=True, env='existing-env')
+    # (plus replica when useSlaves=True). Order matters: spawn the container
+    # *first*, then point RLTest's existing-env address at it via Defaults
+    # before constructing the Environment. Environment(env='existing-env')'s
+    # startEnv() pings the address; if it doesn't resolve, construction
+    # raises before we can override anything. flow.sh's --existing-env-addr
+    # is a placeholder that gets superseded here.
     master_alias, master_port, _ = _spawn_falkordb(
         test_image, falkordb_args=moduleArgs or "")
     host, port = master_alias, master_port
+    Defaults.external_addr = f"{master_alias}:{master_port}"
+    env_obj = Environment(decodeResponses=True, env='existing-env')
     if useSlaves:
         replica_alias, _, _ = _spawn_falkordb(
             test_image,
