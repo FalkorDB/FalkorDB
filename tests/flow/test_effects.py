@@ -98,7 +98,9 @@ class testEffects():
 
         self.effects_enable()
 
-        self.monitor_thread = threading.Thread(target=self.monitor_thread)
+        # daemon=True so a stuck listen() (replica killed mid-MONITOR, container
+        # gone, …) doesn't keep the test process alive past test completion.
+        self.monitor_thread = threading.Thread(target=self.monitor_thread, daemon=True)
         self.monitor_thread.start()
         # wait for monitor thread to attach
         while MONITOR_ATTACHED is False:

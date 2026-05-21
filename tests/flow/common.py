@@ -68,9 +68,31 @@ def _job_network():
     )
 
 
-def _wait_for_redis(host, port, attempts=100, interval=0.1):
-    r = redis.Redis(host=host, port=port, socket_connect_timeout=1)
+def _wait_for_redis(host, port, cid, attempts=50, interval=0.1):
+    """Wait for redis at host:port to PING. Bails out fast if the container
+    has already exited (some tests intentionally pass invalid moduleArgs that
+    abort module load; we shouldn't wait the full budget for those).
+
+    Note `retry=Retry(NoBackoff(),0)`: redis-py 7.4 enables connection
+    retries by default with effectively no upper bound on ConnectionError,
+    so a normal `redis.Redis(...).ping()` against a dead container hangs
+    indefinitely regardless of socket_connect_timeout. We need an explicit
+    no-retry policy to honor our per-attempt budget."""
+    from redis.retry import Retry
+    from redis.backoff import NoBackoff
+    r = redis.Redis(host=host, port=port,
+                    socket_connect_timeout=1,
+                    retry=Retry(NoBackoff(), 0))
     for _ in range(attempts):
+        # If the container exited (e.g. module load failed), don't bother
+        # waiting more — raise immediately so the caller's try/except sees
+        # the failure as the test expects.
+        inspect_out = subprocess.run(
+            ["docker", "inspect", "-f", "{{.State.Running}}", cid],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False,
+        ).stdout.decode().strip()
+        if inspect_out == "false":
+            raise RuntimeError(f"container {cid[:12]} for {host}:{port} exited before becoming ready")
         try:
             if r.ping():
                 return
@@ -95,7 +117,7 @@ def _spawn_falkordb(image, falkordb_args="", redis_args="", alias=None):
     ]
     cid = subprocess.check_output(cmd, stderr=subprocess.STDOUT).decode().strip()
     _SPAWNED_CIDS.append(cid)
-    _wait_for_redis(alias, 6379)
+    _wait_for_redis(alias, 6379, cid)
     return alias, 6379, cid
 
 
