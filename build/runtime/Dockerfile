@@ -2,26 +2,18 @@ ARG BUILD_IMAGE=ghcr.io/falkordb/falkordb-build:latest
 ARG BROWSER_TAG=latest
 ARG TARGETPLATFORM=linux/amd64
 
-# cargo-chef splits dep compilation into a layer cached on Cargo.toml/Cargo.lock,
-# so source-only changes skip dep rebuild.
-FROM $BUILD_IMAGE AS chef
-RUN cargo install cargo-chef --locked
+# Experiment: drop cargo-chef while keeping CXX=clang++-22 from the
+# original Dockerfile config. CXX-drop alone (commit 28f05ce) did not
+# fix the index/edge-SET bugs the RC image triggers, so restore CXX
+# and isolate cargo-chef as the single variable: if this build passes
+# the previously-failing tests, the two-pass cook+build pattern was
+# the culprit. (cargo-chef cooks stub-lib.rs deps then rebuilds the
+# real crate; with our heavy build.rs FFI that may produce subtly
+# different objects than a single-pass build.)
+FROM $BUILD_IMAGE AS builder
 WORKDIR /src
-
-FROM chef AS planner
 COPY . .
-RUN cargo chef prepare --recipe-path recipe.json
-
-FROM chef AS builder
-COPY --from=planner /src/recipe.json recipe.json
-# Experiment: drop CXX=clang++-22 to match main's local-build .so (which uses
-# the toolchain image's default g++). Index-mutation and edge-SET bugs
-# reproduce against the RC image but pass on main's locally-built .so; the
-# only meaningful build difference is the linker driver. If this rebuild's
-# .so passes those tests, the link path was the culprit.
-RUN cargo chef cook --release --recipe-path recipe.json
-COPY . .
-RUN cargo build --release && \
+RUN CXX=clang++-22 cargo build --release && \
     mkdir -p /out && cp target/release/libfalkordb.so /out/falkordb.so
 
 FROM redis:8.6.3 AS server
