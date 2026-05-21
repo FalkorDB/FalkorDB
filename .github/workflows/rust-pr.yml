@@ -203,13 +203,6 @@ jobs:
   test-flow:
     # Display the asan vs normal cells distinctly in the GitHub Actions UI.
     name: ${{ matrix.sanitizer && 'asan-flow' || 'flow' }} ${{ matrix.test_file }}
-    # ASAN cells are advisory until the GraphBLAS-JIT-under-ASAN issue
-    # (matrix.rs:287 debug_assert_eq!(info, GrB_SUCCESS) panicking on
-    # GxB_JIT_ERROR returned by GrB_Matrix_eWiseAdd_Semiring) is fixed in
-    # a separate falkordb-rs PR. Tracked separately so the docker-per-class
-    # test infra can land; once the runtime bug is fixed the line below
-    # should be removed so ASAN gating returns.
-    continue-on-error: ${{ matrix.sanitizer }}
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
