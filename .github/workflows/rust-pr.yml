@@ -262,15 +262,30 @@ jobs:
           # module's true zero-config defaults; tests that need specific
           # config bring it via GRAPH.CONFIG SET.
           FALKORDB_ARGS: ""
-          # Some classified-as-no-args tests still use DEBUG SLEEP / DEBUG
-          # JMAP through other code paths; enabling DEBUG on the shared
-          # service is cheap (CI-only) and avoids surprise breakage.
+          # enableDebugCommand=True is no longer a spawn trigger — files
+          # routed to services can use DEBUG RELOAD / DEBUG SLEEP because
+          # the shared service starts with --enable-debug-command yes.
           REDIS_ARGS: "--enable-debug-command yes"
+      # Second service container reachable as `replica:6379` on the docker
+      # network the runner manages. Tests with Env(useSlaves=True) reach
+      # it through common.py services-mode (env.replica_host/port +
+      # _attach_slave). --replicaof retries until master is up, so the
+      # services come up in any order.
+      replica:
+        image: ${{ matrix.sanitizer && format('ghcr.io/falkordb/falkordb:rc-pr-{0}-asan', github.event.pull_request.number) || format('ghcr.io/falkordb/falkordb-server:rc-pr-{0}', github.event.pull_request.number) }}
+        credentials:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          FALKORDB_ARGS: ""
+          REDIS_ARGS: "--replicaof falkordb 6379 --enable-debug-command yes"
     env:
       FALKORDB_TEST_IMAGE: ${{ matrix.sanitizer && format('ghcr.io/falkordb/falkordb:rc-pr-{0}-asan', github.event.pull_request.number) || format('ghcr.io/falkordb/falkordb-server:rc-pr-{0}', github.event.pull_request.number) }}
       FALKORDB_USE_SERVICE: "1"
       FALKORDB_HOST: falkordb
       FALKORDB_PORT: "6379"
+      FALKORDB_REPLICA_HOST: replica
+      FALKORDB_REPLICA_PORT: "6379"
       SANITIZER: ${{ matrix.sanitizer && 'address' || '' }}
     strategy:
       fail-fast: false

@@ -313,15 +313,19 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
         return (env_obj, db)
 
     # Mode 2: services — shared GHA service container per matrix cell.
+    # enableDebugCommand=True is a no-op here because the services job runs
+    # the falkordb container with REDIS_ARGS=--enable-debug-command yes; the
+    # flag was historically a spawn-trigger but the classifier no longer
+    # routes on it. useSlaves=True is supported via a second `replica`
+    # service the job runs with --replicaof falkordb 6379.
     if use_service:
-        if moduleArgs or useSlaves or enableDebugCommand or env != 'oss' or shardsCount:
+        if moduleArgs or env != 'oss' or shardsCount:
             raise RuntimeError(
-                "Services-mode Env() doesn't support moduleArgs / useSlaves / "
-                "enableDebugCommand / oss-cluster / shardsCount. This file was "
-                "routed to the services bucket but uses a special flag; either "
-                "reclassify in tests/flow/test_matrix_split.py or remove the flag. "
-                f"Got moduleArgs={moduleArgs!r} useSlaves={useSlaves} "
-                f"enableDebugCommand={enableDebugCommand} env={env!r} "
+                "Services-mode Env() doesn't support moduleArgs / "
+                "oss-cluster / shardsCount. This file was routed to the "
+                "services bucket but uses a special flag; either reclassify "
+                "in tests/flow/test_matrix_split.py or remove the flag. "
+                f"Got moduleArgs={moduleArgs!r} env={env!r} "
                 f"shardsCount={shardsCount}."
             )
         host = os.getenv("FALKORDB_HOST", "falkordb")
@@ -336,6 +340,16 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
         if hasattr(env_obj, "envRunner") and env_obj.envRunner is not None:
             env_obj.envRunner.port = port
             env_obj.envRunner.host = host
+        if useSlaves:
+            replica_host = os.getenv("FALKORDB_REPLICA_HOST", "replica")
+            replica_port = int(os.getenv("FALKORDB_REPLICA_PORT", "6379"))
+            # Both service containers come up in parallel; the replica may
+            # need a few seconds to discover and sync from master before
+            # the test starts querying it. Block until INFO replication
+            # reports master_link_status=up so the test never hits a
+            # half-replicated state.
+            _wait_for_replication(replica_host, replica_port)
+            _attach_slave(env_obj, replica_host, replica_port)
         db = FalkorDB(host, port)
         return (env_obj, db)
 
@@ -378,6 +392,27 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
 
     db = FalkorDB(host, port)
     return (env_obj, db)
+
+
+def _wait_for_replication(host, port, attempts=50, interval=0.2):
+    """Block until the replica at host:port reports it has finished syncing
+    from its master (master_link_status=up, master_sync_in_progress=0).
+    Services come up in parallel and the replica's `--replicaof` only
+    starts trying to connect once redis is initialized, so the first few
+    INFO replication calls may show 'down' or 'connecting'."""
+    r = redis.Redis(host=host, port=port)
+    for _ in range(attempts):
+        try:
+            info = r.info('replication')
+            if (info.get('master_link_status') == 'up'
+                    and int(info.get('master_sync_in_progress', 1)) == 0):
+                return
+        except Exception:
+            pass
+        time.sleep(interval)
+    raise RuntimeError(
+        f"replica at {host}:{port} did not reach master_link_status=up "
+        f"in {attempts * interval:.1f}s")
 
 
 def _make_docker_log_reader(cid):

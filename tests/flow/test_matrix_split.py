@@ -3,15 +3,21 @@
 test file calls Env() with arguments that require a private redis instance.
 
 A file goes to `spawn_files` if ANY Env() invocation passes one of:
-  - moduleArgs       — load-time module config (some keys are immutable)
-  - useSlaves        — needs a replica spawned by RLTest's framework
-  - enableDebugCommand — needs --enable-debug-command yes (we could pass this
-                         on the service container too, but for simplicity we
-                         keep these on spawn for now)
+  - moduleArgs       — load-time module config (some keys like CACHE_SIZE,
+                       IMPORT_FOLDER, NODE_CREATION_BUFFER are immutable)
   - env='oss-cluster' — needs a multi-node cluster
   - shardsCount      — same as above
 
-Otherwise the file goes to `services_files` — it can reuse a shared GHA
+NOT spawn-forcing (the services job handles these directly):
+  - enableDebugCommand — the services container is launched with
+                         REDIS_ARGS=--enable-debug-command yes, so DEBUG
+                         RELOAD / DEBUG SLEEP work out of the box
+  - useSlaves          — the services job runs a second `replica` container
+                         configured with --replicaof falkordb 6379;
+                         common.py services mode wires it through
+                         env.replica_host/port + _attach_slave
+
+Otherwise the file goes to `services_files` — it can reuse the shared GHA
 service container that's brought up once per matrix cell.
 
 Outputs are emitted as `services_files=<json>` and `spawn_files=<json>` lines
@@ -26,8 +32,7 @@ import sys
 # spawn-forcing keywords. re.DOTALL makes . match newlines for multi-line
 # Env() calls. We anchor on Env( to avoid matching the keywords elsewhere.
 SPAWN_RE = re.compile(
-    r"\bEnv\s*\([^)]*\b(moduleArgs|useSlaves|enableDebugCommand|"
-    r"oss-cluster|shardsCount)\b",
+    r"\bEnv\s*\([^)]*\b(moduleArgs|oss-cluster|shardsCount)\b",
     re.DOTALL,
 )
 
