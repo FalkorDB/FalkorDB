@@ -39,6 +39,70 @@ OS = {'darwin': 'macos', 'linux': 'linux', 'win32': 'windows'}.get(sys.platform,
 
 _SPAWNED_CIDS = []
 _JOB_NETWORK = None
+_JOB_MOUNTS = None
+
+
+def _job_mounts():
+    """The job container's mount table: list of (host_source, in_container_dest)
+    tuples, sorted by destination length (longest first) so the deepest mount
+    matches before any parent. Used to translate an in-container path to its
+    host-side equivalent for bind-mounting into spawned sibling containers.
+
+    The spawned containers go through the host docker daemon (via the bind-
+    mounted /var/run/docker.sock), so `-v <src>:<dest>` interprets <src> as a
+    *host* path — not as a path inside the job container. Without this
+    translation, mounting e.g. /__w/repo/repo/tests/flow/csvs (a job-container
+    path) silently creates a fresh empty directory on the host instead of
+    surfacing the test's CSV files."""
+    global _JOB_MOUNTS
+    if _JOB_MOUNTS is not None:
+        return _JOB_MOUNTS
+    hostname = socket.gethostname()
+    # On bare-metal-host dev runs the hostname doesn't match any container,
+    # so `docker inspect` exits non-zero. Treat that as "no mount table" —
+    # _host_path_for then returns paths unchanged, which is correct because
+    # IMPORT_FOLDER is already a host path in that scenario.
+    proc = subprocess.run(
+        ["docker", "inspect", hostname,
+         "-f", "{{range .Mounts}}{{.Source}}={{.Destination}}\n{{end}}"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False,
+    )
+    mounts = []
+    if proc.returncode == 0:
+        for line in proc.stdout.decode().splitlines():
+            line = line.strip()
+            if "=" not in line:
+                continue
+            src, dest = line.split("=", 1)
+            mounts.append((src, dest))
+        mounts.sort(key=lambda m: len(m[1]), reverse=True)
+    _JOB_MOUNTS = mounts
+    return mounts
+
+
+def _host_path_for(in_container_path):
+    """Translate an in-container absolute path to the host path that backs it,
+    via the job container's mount table. If no mount covers the path, return
+    it unchanged (local dev: the spawn happens directly on the host, so the
+    path is already the host path)."""
+    for src, dest in _job_mounts():
+        if in_container_path == dest or in_container_path.startswith(dest.rstrip("/") + "/"):
+            return src + in_container_path[len(dest):]
+    return in_container_path
+
+
+def _import_folder_arg(falkordb_args):
+    """Extract IMPORT_FOLDER's value from a module-args string. moduleArgs is
+    a space-separated `KEY VALUE KEY VALUE ...` sequence (matches the format
+    redis-server's --loadmodule consumes), so the value is the token directly
+    after IMPORT_FOLDER. Returns None if absent."""
+    if not falkordb_args:
+        return None
+    toks = falkordb_args.split()
+    for i, t in enumerate(toks):
+        if t == "IMPORT_FOLDER" and i + 1 < len(toks):
+            return toks[i + 1]
+    return None
 
 
 def _job_network():
@@ -113,12 +177,24 @@ def _spawn_falkordb(image, falkordb_args="", redis_args="", alias=None,
     alias = alias or f"falkordb-{uuid.uuid4().hex[:8]}"
     if enable_debug_command:
         redis_args = f"--enable-debug-command yes {redis_args}".strip()
+    # If moduleArgs sets IMPORT_FOLDER to a job-container path (e.g.
+    # tests/flow/test_load_csv.py points it at .../tests/flow/csvs/), bind-mount
+    # the matching host path into the spawned container at the same path so
+    # LOAD CSV's file:// resolution under that folder sees the test fixtures.
+    # _host_path_for translates via the job container's mount table; on local
+    # dev (no mounts to traverse) it returns the path unchanged.
+    extra_args = []
+    import_folder = _import_folder_arg(falkordb_args)
+    if import_folder:
+        host_path = _host_path_for(import_folder)
+        extra_args += ["-v", f"{host_path}:{import_folder}"]
     cmd = [
         "docker", "run", "-d",
         "--network", _job_network(),
         "--network-alias", alias,
         "-e", f"FALKORDB_ARGS={falkordb_args}",
         "-e", f"REDIS_ARGS={redis_args}",
+        *extra_args,
         image,
     ]
     cid = subprocess.check_output(cmd, stderr=subprocess.STDOUT).decode().strip()
