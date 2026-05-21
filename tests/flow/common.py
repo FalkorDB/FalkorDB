@@ -270,13 +270,22 @@ def _cleanup_spawned():
 def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, shardsCount=None):
     """Construct an RLTest Environment and a FalkorDB client.
 
-    Two execution modes:
+    Three execution modes:
 
     1. Local dev (FALKORDB_TEST_IMAGE unset):
        RLTest spawns its own redis-server with --loadmodule + moduleArgs.
        Behavior identical to the original Env(). Untouched by the CI path.
 
-    2. CI (FALKORDB_TEST_IMAGE set):
+    2. CI services mode (FALKORDB_TEST_IMAGE set, FALKORDB_USE_SERVICE=1):
+       Connect to a long-running GHA `services:` container at
+       FALKORDB_HOST:FALKORDB_PORT — no docker run, no per-class spawn.
+       Selected by the matrix for test files whose Env() invocations carry
+       no special flags (classified by tests/flow/test_matrix_split.py).
+       FLUSHALL between Env() calls gives class-level isolation since the
+       service is shared across all classes in the cell.
+       Passing any special flag here is a classifier miss and raises.
+
+    3. CI spawn mode (FALKORDB_TEST_IMAGE set, FALKORDB_USE_SERVICE unset):
        Spawn a dedicated container from the RC image per Env() call, with
        -e FALKORDB_ARGS=... baked from moduleArgs so cross-key validation
        (TIMEOUT vs TIMEOUT_MAX, immutable CACHE_SIZE/THREAD_COUNT/...) fires
@@ -290,6 +299,7 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
        startup; cells run in parallel so wall-clock impact is small.
     """
     test_image = os.getenv("FALKORDB_TEST_IMAGE", "")
+    use_service = os.getenv("FALKORDB_USE_SERVICE", "") != ""
 
     # Mode 1: local dev — original RLTest spawn behavior, untouched.
     if not test_image:
@@ -302,7 +312,34 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
         db = FalkorDB("localhost", env_obj.port)
         return (env_obj, db)
 
-    # Mode 2: CI. Always private spawn — every Env() call gets a fresh master
+    # Mode 2: services — shared GHA service container per matrix cell.
+    if use_service:
+        if moduleArgs or useSlaves or enableDebugCommand or env != 'oss' or shardsCount:
+            raise RuntimeError(
+                "Services-mode Env() doesn't support moduleArgs / useSlaves / "
+                "enableDebugCommand / oss-cluster / shardsCount. This file was "
+                "routed to the services bucket but uses a special flag; either "
+                "reclassify in tests/flow/test_matrix_split.py or remove the flag. "
+                f"Got moduleArgs={moduleArgs!r} useSlaves={useSlaves} "
+                f"enableDebugCommand={enableDebugCommand} env={env!r} "
+                f"shardsCount={shardsCount}."
+            )
+        host = os.getenv("FALKORDB_HOST", "falkordb")
+        port = int(os.getenv("FALKORDB_PORT", "6379"))
+        # Wipe the shared service back to a clean state so each class starts
+        # fresh — mirrors the per-class isolation spawn-mode gets for free.
+        redis.Redis(host=host, port=port).flushall()
+        Defaults.external_addr = f"{host}:{port}"
+        env_obj = Environment(decodeResponses=True, env='existing-env')
+        env_obj.port = port
+        env_obj.host = host
+        if hasattr(env_obj, "envRunner") and env_obj.envRunner is not None:
+            env_obj.envRunner.port = port
+            env_obj.envRunner.host = host
+        db = FalkorDB(host, port)
+        return (env_obj, db)
+
+    # Mode 3: CI spawn — every Env() call gets a fresh master container
     # (plus replica when useSlaves=True). Order matters: spawn the container
     # *first*, then point RLTest's existing-env address at it via Defaults
     # before constructing the Environment. Environment(env='existing-env')'s

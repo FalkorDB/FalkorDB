@@ -210,21 +210,103 @@ jobs:
   flow-test-matrix:
     runs-on: ubuntu-latest
     outputs:
+      services_files: ${{ steps.set-matrix.outputs.services_files }}
+      spawn_files: ${{ steps.set-matrix.outputs.spawn_files }}
+      # Union of services_files + spawn_files for callers like coverage-flow
+      # that don't go through docker and just need every test file.
       test_files: ${{ steps.set-matrix.outputs.test_files }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Generate test matrix
         id: set-matrix
+        # tests/flow/test_matrix_split.py classifies each entry in
+        # flow_tests_done.txt: files whose Env() invocations never pass
+        # special flags (moduleArgs / useSlaves / enableDebugCommand /
+        # oss-cluster / shardsCount) go to services_files (cheap shared
+        # service); the rest go to spawn_files (private docker run per class).
         run: |
-          echo "test_files=$(jq -Rc '[., inputs] | map(select(length > 0))' flow_tests_done.txt)" >> $GITHUB_OUTPUT
-  # Flow tests against the RC image — one fresh container per RLTest class.
-  # The Env() helper in tests/flow/common.py issues `docker run` for each call,
-  # talking to the host docker daemon via the bind-mounted socket. Per-class
-  # isolation eliminates the cross-test state leakage that broke a shared
-  # services-block model (TIMEOUT_MAX surviving FLUSHALL, MONITOR seeing
-  # previous-test traffic, etc.).
-  test-flow:
-    # Display the asan vs normal cells distinctly in the GitHub Actions UI.
+          python3 tests/flow/test_matrix_split.py >> $GITHUB_OUTPUT
+  # Flow tests — services bucket. Files whose Env() invocations never pass
+  # special flags (moduleArgs / useSlaves / enableDebugCommand / oss-cluster /
+  # shardsCount) reuse a long-running GHA service container per matrix cell.
+  # common.py's services mode (FALKORDB_USE_SERVICE=1) connects directly to
+  # `falkordb:6379` and FLUSHALLs between Env() calls for class-level isolation.
+  # No `docker run` per class → no docker socket mount needed for the test
+  # itself; the on-failure capture step still uses the socket to dump service
+  # logs, so we mount it for that.
+  test-flow-services:
+    name: ${{ matrix.sanitizer && 'asan-flow-svc' || 'flow-svc' }} ${{ matrix.test_file }}
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
+      options: --volume /var/run/docker.sock:/var/run/docker.sock
+    needs:
+      - check-files
+      - docker
+      - flow-test-matrix
+      - build-rc-image
+      - build-rc-asan-image
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.flow-test-matrix.result == 'success' && needs.build-rc-image.result == 'success' && needs.build-rc-asan-image.result == 'success' }}
+    permissions:
+      contents: read
+      packages: read
+    services:
+      falkordb:
+        image: ${{ matrix.sanitizer && format('ghcr.io/falkordb/falkordb:rc-pr-{0}-asan', github.event.pull_request.number) || format('ghcr.io/falkordb/falkordb-server:rc-pr-{0}', github.event.pull_request.number) }}
+        credentials:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          # Empty FALKORDB_ARGS overrides the image's compiled-in default
+          # (MAX_QUEUED_QUERIES 25 ...) so the service starts with the
+          # module's true zero-config defaults; tests that need specific
+          # config bring it via GRAPH.CONFIG SET.
+          FALKORDB_ARGS: ""
+          # Some classified-as-no-args tests still use DEBUG SLEEP / DEBUG
+          # JMAP through other code paths; enabling DEBUG on the shared
+          # service is cheap (CI-only) and avoids surprise breakage.
+          REDIS_ARGS: "--enable-debug-command yes"
+    env:
+      FALKORDB_TEST_IMAGE: ${{ matrix.sanitizer && format('ghcr.io/falkordb/falkordb:rc-pr-{0}-asan', github.event.pull_request.number) || format('ghcr.io/falkordb/falkordb-server:rc-pr-{0}', github.event.pull_request.number) }}
+      FALKORDB_USE_SERVICE: "1"
+      FALKORDB_HOST: falkordb
+      FALKORDB_PORT: "6379"
+      SANITIZER: ${{ matrix.sanitizer && 'address' || '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        test_file: ${{ fromJson(needs.flow-test-matrix.outputs.services_files) }}
+        sanitizer: [false, true]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Run Flow test - ${{ matrix.test_file }} (sanitizer=${{ matrix.sanitizer }})
+        env:
+          TEST_FILE: ${{ matrix.test_file }}
+        run: |
+          . /data/venv/bin/activate
+          TEST="$TEST_FILE" FAIL_FAST=1 RELEASE=1 ./flow.sh
+      - name: Capture service container logs on failure
+        if: failure()
+        run: |
+          mkdir -p tests/flow/logs
+          for cid in $(docker ps -aq); do
+            name=$(docker inspect -f '{{.Name}}' "$cid" 2>/dev/null | sed 's|^/||')
+            docker logs "$cid" > "tests/flow/logs/service-${name:-$cid}.log" 2>&1 || true
+          done
+      - name: Upload flow logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: test-flow-svc-logs-${{ strategy.job-index }}
+          path: |
+            tests/flow/logs/
+          if-no-files-found: ignore
+
+  # Flow tests — spawn bucket. Files whose Env() invocations pass at least
+  # one special flag (moduleArgs / useSlaves / enableDebugCommand / oss-cluster
+  # / shardsCount) need per-class load-time config or topology. common.py
+  # issues `docker run` for each Env() call via the bind-mounted socket.
+  test-flow-spawn:
     name: ${{ matrix.sanitizer && 'asan-flow' || 'flow' }} ${{ matrix.test_file }}
     runs-on: ubuntu-latest
     container:
@@ -241,14 +323,12 @@ jobs:
       contents: read
       packages: read
     env:
-      # The RC image to spawn containers from. Env() in tests/flow/common.py
-      # picks it up and runs `docker run -e FALKORDB_ARGS=<moduleArgs> ...`.
       FALKORDB_TEST_IMAGE: ${{ matrix.sanitizer && format('ghcr.io/falkordb/falkordb:rc-pr-{0}-asan', github.event.pull_request.number) || format('ghcr.io/falkordb/falkordb-server:rc-pr-{0}', github.event.pull_request.number) }}
       SANITIZER: ${{ matrix.sanitizer && 'address' || '' }}
     strategy:
       fail-fast: false
       matrix:
-        test_file: ${{ fromJson(needs.flow-test-matrix.outputs.test_files) }}
+        test_file: ${{ fromJson(needs.flow-test-matrix.outputs.spawn_files) }}
         sanitizer: [false, true]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -278,7 +358,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: test-flow-logs-${{ strategy.job-index }}
+          name: test-flow-spawn-logs-${{ strategy.job-index }}
           path: |
             tests/flow/logs/
           if-no-files-found: ignore
