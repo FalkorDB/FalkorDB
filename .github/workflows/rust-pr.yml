@@ -6,9 +6,14 @@ on:
     # PRs from batch-backport.yml target the version branch directly, so they
     # need the same RC build + flow gate as main PRs. rc-pr-<N> tags are
     # globally unique by PR number so there's no collision across base branches.
+    #
+    # `feat/docker-release` is included temporarily so this PR
+    # (feat/docker-per-class-tests → feat/docker-release) can run its own CI.
+    # Drop the entry before merging back to main.
     branches:
       - "main"
       - "[0-9]+.[0-9]+"
+      - "feat/docker-release"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
