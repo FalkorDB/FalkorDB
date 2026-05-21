@@ -14,9 +14,14 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
 COPY --from=planner /src/recipe.json recipe.json
-RUN CXX=clang++-22 cargo chef cook --release --recipe-path recipe.json
+# Experiment: drop CXX=clang++-22 to match main's local-build .so (which uses
+# the toolchain image's default g++). Index-mutation and edge-SET bugs
+# reproduce against the RC image but pass on main's locally-built .so; the
+# only meaningful build difference is the linker driver. If this rebuild's
+# .so passes those tests, the link path was the culprit.
+RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
-RUN CXX=clang++-22 cargo build --release && \
+RUN cargo build --release && \
     mkdir -p /out && cp target/release/libfalkordb.so /out/falkordb.so
 
 FROM redis:8.6.3 AS server
