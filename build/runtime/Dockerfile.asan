@@ -91,10 +91,17 @@ RUN apt-get update && \
         ca-certificates bash openssl wget gnupg lsb-release libasan8 && \
     wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && ./llvm.sh 22 && \
     apt-get update && \
-    apt-get install -y --no-install-recommends libomp5 llvm-22 && \
+    apt-get install -y --no-install-recommends libomp5 llvm-22 gcc && \
     apt-get purge -y wget gnupg lsb-release && \
     apt-get autoremove -y && \
     apt-get clean && rm -rf /var/lib/apt/lists/* /llvm.sh
+# GraphBLAS JIT compiles matrix operations dynamically at runtime via cc.
+# Without a C compiler in PATH, JIT returns GxB_JIT_ERROR and our
+# debug_assert_eq!(info, GrB_SUCCESS) in matrix.rs:287 panics the module —
+# crashing redis on every MATCH/DELETE query. aviavni/falkordb-build (used
+# by the old asan workflow on main) had gcc installed by default; the slim
+# debian:trixie-slim base does not. The `gcc` apt package provides
+# /usr/bin/cc and /usr/bin/gcc, enough for GraphBLAS JIT.
 
 WORKDIR ${FALKORDB_HOME}
 
