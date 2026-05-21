@@ -2,16 +2,21 @@ ARG BUILD_IMAGE=ghcr.io/falkordb/falkordb-build:latest
 ARG BROWSER_TAG=latest
 ARG TARGETPLATFORM=linux/amd64
 
-# Experiment: drop cargo-chef while keeping CXX=clang++-22 from the
-# original Dockerfile config. CXX-drop alone (commit 28f05ce) did not
-# fix the index/edge-SET bugs the RC image triggers, so restore CXX
-# and isolate cargo-chef as the single variable: if this build passes
-# the previously-failing tests, the two-pass cook+build pattern was
-# the culprit. (cargo-chef cooks stub-lib.rs deps then rebuilds the
-# real crate; with our heavy build.rs FFI that may produce subtly
-# different objects than a single-pass build.)
-FROM $BUILD_IMAGE AS builder
+# cargo-chef splits dep compilation into a layer cached on
+# Cargo.toml/Cargo.lock, so source-only changes skip dep rebuild.
+# Confirmed not the trigger for the index/edge-SET regressions:
+# dropping it (commit c51c730) didn't change the failing test set.
+FROM $BUILD_IMAGE AS chef
+RUN cargo install cargo-chef --locked
 WORKDIR /src
+
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder
+COPY --from=planner /src/recipe.json recipe.json
+RUN CXX=clang++-22 cargo chef cook --release --recipe-path recipe.json
 COPY . .
 RUN CXX=clang++-22 cargo build --release && \
     mkdir -p /out && cp target/release/libfalkordb.so /out/falkordb.so
