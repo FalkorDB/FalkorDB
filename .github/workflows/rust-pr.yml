@@ -184,6 +184,29 @@ jobs:
         run: |
           . /data/venv/bin/activate
           TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
+      # Capture the GHA service container's stdout/stderr so a failing run
+      # carries the redis lifecycle, module RedisModule_Log output, and any
+      # ASAN/LSan reports off the runner. The service container is named
+      # after its YAML key ("falkordb"); `docker logs` is run via the
+      # /var/run/docker.sock the runner shares with the job container.
+      - name: Capture service container logs on failure
+        if: failure()
+        run: |
+          mkdir -p tests/flow/logs
+          # Dump every container the runner can see — GHA service containers
+          # are named after their YAML key but a workflow-run prefix can show
+          # up too; iterating all containers is safer than matching by name.
+          for cid in $(docker ps -aq); do
+            name=$(docker inspect -f '{{.Name}}' "$cid" 2>/dev/null | sed 's|^/||')
+            docker logs "$cid" > "tests/flow/logs/service-${name:-$cid}.log" 2>&1 || true
+          done
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: test-service-logs
+          path: tests/flow/logs/
+          if-no-files-found: ignore
   flow-test-matrix:
     runs-on: ubuntu-latest
     outputs:
@@ -464,6 +487,24 @@ jobs:
           summary-always: true
           # Don't push to gh-pages branch in the PR
           auto-push: false
+      - name: Capture service container logs on failure
+        if: failure()
+        run: |
+          mkdir -p tests/flow/logs
+          # Dump every container the runner can see — GHA service containers
+          # are named after their YAML key but a workflow-run prefix can show
+          # up too; iterating all containers is safer than matching by name.
+          for cid in $(docker ps -aq); do
+            name=$(docker inspect -f '{{.Name}}' "$cid" 2>/dev/null | sed 's|^/||')
+            docker logs "$cid" > "tests/flow/logs/service-${name:-$cid}.log" 2>&1 || true
+          done
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: benchmark-service-logs
+          path: tests/flow/logs/
+          if-no-files-found: ignore
   falkordb-e2e-compatibility:
     runs-on: ubuntu-latest
     needs: [build-rc-image]
@@ -506,3 +547,18 @@ jobs:
         run: |
           pip install -r tests/requirements.txt
           pytest -v -m "not extra" tests/test_e2e.py tests/test_functions.py -vv
+      - name: Capture service container logs on failure
+        if: failure()
+        run: |
+          mkdir -p tests/flow/logs
+          for cid in $(docker ps -aq); do
+            name=$(docker inspect -f '{{.Name}}' "$cid" 2>/dev/null | sed 's|^/||')
+            docker logs "$cid" > "tests/flow/logs/service-${name:-$cid}.log" 2>&1 || true
+          done
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: e2e-compatibility-service-logs
+          path: tests/flow/logs/
+          if-no-files-found: ignore

@@ -235,7 +235,29 @@ def _spawn_falkordb(image, falkordb_args="", redis_args="", alias=None,
 
 @atexit.register
 def _cleanup_spawned():
+    # Capture docker stdout/stderr for each spawned container before tearing
+    # it down. tests/flow/logs/ is the directory RLTest uses for its own
+    # per-test logs and is uploaded as a GHA artifact on failure, so dropping
+    # files there means a failed run carries everything needed for post-mortem:
+    #   - redis-server lifecycle messages (default destination: stderr)
+    #   - module RedisModule_Log output (routes through redis's logger)
+    #   - ASAN/LSan reports (default destination: stderr, no log_path set)
+    log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+    os.makedirs(log_dir, exist_ok=True)
     for cid in _SPAWNED_CIDS:
+        short = cid[:12]
+        # Graceful SIGTERM with a 10s grace before SIGKILL gives ASAN's
+        # at-exit leak detection time to print before the container dies;
+        # `docker rm -f` alone would SIGKILL immediately and drop those.
+        subprocess.run(
+            ["docker", "stop", "--time", "10", cid],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+        )
+        with open(os.path.join(log_dir, f"spawned-{short}.log"), "wb") as f:
+            subprocess.run(
+                ["docker", "logs", cid],
+                stdout=f, stderr=subprocess.STDOUT, check=False,
+            )
         subprocess.run(
             ["docker", "rm", "-f", cid],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
