@@ -287,12 +287,16 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
     # startEnv() pings the address; if it doesn't resolve, construction
     # raises before we can override anything. flow.sh's --existing-env-addr
     # is a placeholder that gets superseded here.
-    master_alias, master_port, _ = _spawn_falkordb(
+    master_alias, master_port, master_cid = _spawn_falkordb(
         test_image, falkordb_args=moduleArgs or "",
         enable_debug_command=enableDebugCommand)
     host, port = master_alias, master_port
     Defaults.external_addr = f"{master_alias}:{master_port}"
     env_obj = Environment(decodeResponses=True, env='existing-env')
+    # Expose a file-handle-like reader over the container's stdout/stderr,
+    # which holds the same messages RLTest's master.log would. Tests that
+    # parse redis logs (test_encode_decode.test_10) use this when present.
+    env_obj.read_log = _make_docker_log_reader(master_cid)
     if useSlaves:
         replica_alias, _, _ = _spawn_falkordb(
             test_image,
@@ -315,6 +319,24 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
 
     db = FalkorDB(host, port)
     return (env_obj, db)
+
+
+def _make_docker_log_reader(cid):
+    """Returns a callable read(role='master') that mimics RLTest's file-handle
+    log access: each call returns only the new bytes appended since the prior
+    call, decoded. Backed by `docker logs <cid>`, which captures both redis's
+    stdout (where it logs by default when no --logfile is given) and the
+    module's RedisModule_Log output."""
+    state = {"offset": 0}
+    def read(_role="master"):
+        out = subprocess.run(
+            ["docker", "logs", cid],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
+        ).stdout
+        new_bytes = out[state["offset"]:]
+        state["offset"] = len(out)
+        return new_bytes.decode("utf-8", errors="replace")
+    return read
 
 
 def _attach_slave(env_obj, host, port):

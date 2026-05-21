@@ -98,8 +98,11 @@ class testQueryTimeout():
             try:
                 res = self.graph.query(q, timeout=5)
                 timeouts.append(res.run_time_ms)
-            except:
-                timeouts.append(res.run_time_ms)
+            except Exception:
+                # query timed out before `res` was bound; the loop below
+                # only needs a number we can clamp into a tighter retry
+                # timeout, so use the timeout we just spent as the upper bound
+                timeouts.append(5)
 
         for i, q in enumerate(queries):
             try:

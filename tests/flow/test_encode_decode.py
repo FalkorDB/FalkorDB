@@ -191,9 +191,18 @@ class test_encode_decode(FlowTestsBase):
     # test changes to the VKEY_MAX_ENTITY_COUNT configuration are reflected in
     # the number of virtual keys created
     def test_10_vkey_max_entity_count(self):
-        logfilename = self.env.envRunner._getFileName("master", ".log")
-        logfile = open(f"{self.env.logDir}/{logfilename}")
-        log = logfile.read()
+        # Under docker-per-class the redis log lives in the container's
+        # stdout, exposed via env.read_log() (file-handle-like read()).
+        # Under RLTest the log is a real file on disk addressed via
+        # envRunner._getFileName + env.logDir.
+        if hasattr(self.env, "read_log"):
+            read_log = self.env.read_log
+        else:
+            logfilename = self.env.envRunner._getFileName("master", ".log")
+            logfile = open(f"{self.env.logDir}/{logfilename}")
+            read_log = logfile.read
+        # advance past startup logs; the regex below only matches save events
+        read_log()
 
         # Set configuration
         response = self.db.config_set("VKEY_MAX_ENTITY_COUNT", 10)
@@ -212,7 +221,7 @@ class test_encode_decode(FlowTestsBase):
         # Save RDB & Load from RDB
         self.redis_con.save()
 
-        log = logfile.read()
+        log = read_log()
 
         matches = re.findall(
             f"Created (.) virtual keys for graph {GRAPH_ID}", log)
