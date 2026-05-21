@@ -114,23 +114,24 @@ def _cleanup_spawned():
 def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, shardsCount=None):
     """Construct an RLTest Environment and a FalkorDB client.
 
-    Three execution modes:
+    Two execution modes:
 
     1. Local dev (FALKORDB_TEST_IMAGE unset):
        RLTest spawns its own redis-server with --loadmodule + moduleArgs.
        Behavior identical to the original Env(). Untouched by the CI path.
 
-    2. CI default (FALKORDB_TEST_IMAGE set, no moduleArgs, no useSlaves):
-       Connect to the shared `master` GHA service container declared in
-       rust-pr.yml. Cheapest path — no per-class container spin-up.
+    2. CI (FALKORDB_TEST_IMAGE set):
+       Spawn a dedicated container from the RC image per Env() call, with
+       -e FALKORDB_ARGS=... baked from moduleArgs so cross-key validation
+       (TIMEOUT vs TIMEOUT_MAX, immutable CACHE_SIZE/THREAD_COUNT/...) fires
+       the same way it would under --loadmodule. For useSlaves=True, an
+       additional replica container is spawned on the same docker network
+       with REDIS_ARGS='--replicaof <alias> 6379'. Containers live for the
+       test process's lifetime and are cleaned up by atexit.
 
-    3. CI private spawn (FALKORDB_TEST_IMAGE set, moduleArgs OR useSlaves):
-       Spawn a dedicated container from the RC image with -e FALKORDB_ARGS=...
-       baked from moduleArgs (so cross-key validation fires the same way it
-       would under --loadmodule). For useSlaves=True, additionally spawn a
-       paired replica with -e REDIS_ARGS='--replicaof <alias> 6379' on the
-       same docker network. Containers live for the test process's lifetime
-       and are cleaned up by atexit.
+       Every Env() call gets a fresh container — full per-class isolation,
+       no cross-test state leakage. Each call adds ~1-2s of container
+       startup; cells run in parallel so wall-clock impact is small.
     """
     test_image = os.getenv("FALKORDB_TEST_IMAGE", "")
 
@@ -145,34 +146,20 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
         db = FalkorDB("localhost", env_obj.port)
         return (env_obj, db)
 
-    # Modes 2 & 3: CI. The RLTest Environment is a stub (env='existing-env');
-    # we manage connectivity ourselves so it doesn't try to spawn redis.
+    # Mode 2: CI. Always private spawn — every Env() call gets a fresh master
+    # (plus replica when useSlaves=True). The RLTest Environment is a stub
+    # (env='existing-env') so it doesn't try to manage redis lifecycle itself.
     env_obj = Environment(decodeResponses=True, env='existing-env')
-
-    # Private-spawn when the test cares about something the shared `master`
-    # service can't deliver:
-    #   - moduleArgs (any kind, not just load-time-immutable): the args go
-    #     in -e FALKORDB_ARGS so cross-key validation (TIMEOUT vs TIMEOUT_MAX,
-    #     immutable-key load-time checks, etc.) fires the same way it would
-    #     under RLTest's spawned-redis model.
-    #   - useSlaves: monitor-style assertions need a master that's seen *only*
-    #     this test's traffic. The shared master has earlier-test history.
-    if moduleArgs or useSlaves:
-        # Mode 3: private spawn.
-        master_alias, master_port, _ = _spawn_falkordb(
-            test_image, falkordb_args=moduleArgs or "")
-        host, port = master_alias, master_port
-        if useSlaves:
-            replica_alias, _, _ = _spawn_falkordb(
-                test_image,
-                falkordb_args=moduleArgs or "",
-                redis_args=f"--replicaof {master_alias} 6379",
-            )
-            _attach_slave(env_obj, replica_alias, 6379)
-    else:
-        # Mode 2: shared services (no module config customization needed).
-        host = os.getenv("FALKORDB_HOST", "master")
-        port = int(os.getenv("FALKORDB_PORT", "6379"))
+    master_alias, master_port, _ = _spawn_falkordb(
+        test_image, falkordb_args=moduleArgs or "")
+    host, port = master_alias, master_port
+    if useSlaves:
+        replica_alias, _, _ = _spawn_falkordb(
+            test_image,
+            falkordb_args=moduleArgs or "",
+            redis_args=f"--replicaof {master_alias} 6379",
+        )
+        _attach_slave(env_obj, replica_alias, 6379)
 
     # Some flow tests construct their own connection pools from self.env.port
     # (assuming RLTest's spawned redis on localhost). Override the env stub's

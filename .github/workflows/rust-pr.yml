@@ -194,20 +194,12 @@ jobs:
         id: set-matrix
         run: |
           echo "test_files=$(jq -Rc '[., inputs] | map(select(length > 0))' flow_tests_done.txt)" >> $GITHUB_OUTPUT
-  # Flow tests against the RC image with a hybrid execution model:
-  #
-  # 1. Default: master + replica are declared as GHA services, both backed
-  #    by the same RC image. Tests that don't pass moduleArgs and don't use
-  #    useSlaves connect to `master`. Tests using useSlaves=True transparently
-  #    get the replica via Env().getSlaveConnection() — no separate orchestration.
-  #
-  # 2. Override: tests that pass load-time-immutable moduleArgs (CACHE_SIZE,
-  #    NODE_CREATION_BUFFER, IMPORT_FOLDER, …) need a fresh redis with those
-  #    args baked into --loadmodule. The Env() helper in tests/flow/common.py
-  #    detects this and spawns a private container via `docker run` from
-  #    inside the toolchain (docker CLI installed in build/Dockerfile; host
-  #    socket bind-mounted via container.options). That private container's
-  #    lifecycle is scoped to the one Env() call.
+  # Flow tests against the RC image — one fresh container per RLTest class.
+  # The Env() helper in tests/flow/common.py issues `docker run` for each call,
+  # talking to the host docker daemon via the bind-mounted socket. Per-class
+  # isolation eliminates the cross-test state leakage that broke a shared
+  # services-block model (TIMEOUT_MAX surviving FLUSHALL, MONITOR seeing
+  # previous-test traffic, etc.).
   test-flow:
     # Display the asan vs normal cells distinctly in the GitHub Actions UI.
     name: ${{ matrix.sanitizer && 'asan-flow' || 'flow' }} ${{ matrix.test_file }}
@@ -225,36 +217,9 @@ jobs:
     permissions:
       contents: read
       packages: read
-    services:
-      master:
-        image: ${{ matrix.sanitizer && format('ghcr.io/falkordb/falkordb:rc-pr-{0}-asan', github.event.pull_request.number) || format('ghcr.io/falkordb/falkordb-server:rc-pr-{0}', github.event.pull_request.number) }}
-        credentials:
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-        env:
-          # Override the image's production defaults ("TIMEOUT 1000 ..."); tests
-          # expect RLTest's spawned-redis defaults (no TIMEOUT cap).
-          FALKORDB_ARGS: ""
-          # log_path on the sanitizer cell only — harmless when libasan isn't loaded.
-          ASAN_OPTIONS: "detect_leaks=1:detect_odr_violation=0:halt_on_error=0:abort_on_error=0:symbolize=1:print_stacktrace=1:strict_string_checks=1:detect_stack_use_after_return=1:log_path=/tmp/asan-logs/asan:log_exe_name=1"
-      replica:
-        image: ${{ matrix.sanitizer && format('ghcr.io/falkordb/falkordb:rc-pr-{0}-asan', github.event.pull_request.number) || format('ghcr.io/falkordb/falkordb-server:rc-pr-{0}', github.event.pull_request.number) }}
-        credentials:
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-        env:
-          FALKORDB_ARGS: ""
-          # REDIS_ARGS is interpolated by run.sh into the redis-server command
-          # line; --replicaof points at the master service via its network alias.
-          REDIS_ARGS: "--replicaof master 6379"
-          ASAN_OPTIONS: "detect_leaks=1:detect_odr_violation=0:halt_on_error=0:abort_on_error=0:symbolize=1:print_stacktrace=1:strict_string_checks=1:detect_stack_use_after_return=1:log_path=/tmp/asan-logs/asan:log_exe_name=1"
     env:
-      # Connection target for the default (no-override) test path.
-      FALKORDB_HOST: master
-      FALKORDB_PORT: "6379"
-      FALKORDB_REPLICA_HOST: replica
-      FALKORDB_REPLICA_PORT: "6379"
-      # Image used when Env() spawns a private container for moduleArgs override.
+      # The RC image to spawn containers from. Env() in tests/flow/common.py
+      # picks it up and runs `docker run -e FALKORDB_ARGS=<moduleArgs> ...`.
       FALKORDB_TEST_IMAGE: ${{ matrix.sanitizer && format('ghcr.io/falkordb/falkordb:rc-pr-{0}-asan', github.event.pull_request.number) || format('ghcr.io/falkordb/falkordb-server:rc-pr-{0}', github.event.pull_request.number) }}
       SANITIZER: ${{ matrix.sanitizer && 'address' || '' }}
     strategy:
@@ -265,15 +230,20 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      # Log into GHCR so the private-spawn path (`docker run` from Env()) can
-      # pull the RC image when needed. The default-service path doesn't need
-      # this — GHA already pulled the image via the services credentials.
-      - name: Login to GHCR (for private container spawns)
+      # Log into GHCR so the in-container docker CLI can pull the RC image
+      # the first time Env() spawns. Subsequent spawns hit the daemon's
+      # local image cache.
+      - name: Login to GHCR (for in-container docker pull)
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pre-pull RC image
+        env:
+          IMAGE: ${{ env.FALKORDB_TEST_IMAGE }}
+        run: docker pull "$IMAGE"
 
       - name: Run Flow test - ${{ matrix.test_file }} (sanitizer=${{ matrix.sanitizer }})
         env:
