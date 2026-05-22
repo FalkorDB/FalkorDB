@@ -33,12 +33,34 @@ ENV FALKORDB_HOME=/var/lib/falkordb \
 
 RUN mkdir -p ${FALKORDB_DATA_PATH} && ln -s ${FALKORDB_DATA_PATH} /data
 
-# ncurses is removable; bash + libtinfo6 are kept because the browser stage's
-# docker-entrypoint.sh chain (and node child processes) rely on bash. libgomp1
-# (GCC OpenMP) is not installed — libfalkordb.so links against LLVM's libomp
-# (libomp.so.5 is COPYed in from the builder a few lines below).
+# Runtime-image apt install. Beyond the obvious CVE trim, we need GraphBLAS
+# JIT runtime dependencies: on first matrix-op call GraphBLAS generates C
+# source under ~/.SuiteSparse/GrBN.M.K/c/ and shells out to `cc` to compile
+# it into a per-kernel .so. Without these the JIT call returns GxB_JIT_ERROR
+# and matrix.rs's `assert_eq!(info, GrB_SUCCESS)` panics the module on every
+# matrix-op (MATCH, SET, DELETE, ...).
+#
+# We install the LLVM 22 toolchain (clang-22 + libomp-22-dev) and point
+# `/usr/bin/cc` at clang-22 so the JIT-compiled kernels are built by the
+# same compiler that produced our pre-baked libgraphblas.a / liblagraph.a
+# / libredisearch-static.a / libfalkordb.so. Heterogeneous toolchains
+# (clang-baked statics + gcc-JIT kernels) are technically workable per the
+# asan Dockerfile in commit 4215713, but a consistent clang-22 stack
+# removes a class of subtle codegen / libomp ABI risks.
+#
+# - `clang-22`: provides /usr/bin/clang-22; symlinked to /usr/bin/cc below.
+# - `libomp5`: LLVM OpenMP runtime (libomp.so.5). Replaces the libomp.so.5
+#   we used to COPY from the builder.
+# - `libomp-22-dev`: omp.h header for the JIT-compiled kernels.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates bash && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates bash wget gnupg lsb-release && \
+    wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && ./llvm.sh 22 && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        clang-22 libomp5 libomp-22-dev && \
+    ln -sf /usr/bin/clang-22 /usr/bin/cc && \
+    apt-get purge -y wget gnupg lsb-release && \
     apt-get upgrade -y && \
     (apt-get purge -y python3.13 python3.13-minimal libpython3.13-minimal libpython3.13-stdlib || true) && \
     apt-get autoremove -y && \
@@ -47,7 +69,7 @@ RUN apt-get update && \
     (dpkg --force-remove-protected --force-remove-essential --purge login || true) && \
     (dpkg --purge passwd || true) && \
     apt-get autoremove -y --purge 2>/dev/null || true && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+    apt-get clean && rm -rf /var/lib/apt/lists/* /llvm.sh
 
 WORKDIR ${FALKORDB_HOME}
 
