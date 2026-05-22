@@ -39,10 +39,22 @@ jobs:
       - name: Check if specific file changed
         id: check
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        # Diff against the merge-base with main, not the immediate PR base.
+        # On a regular main-targeting PR these are identical. On a stacked PR
+        # (whose base is itself a branch like feat/docker-per-class-tests) the
+        # immediate-base diff hides toolchain changes from the parent stack,
+        # which causes downstream jobs to fall back to :latest — but :latest
+        # doesn't exist on GHCR (it's only populated when the stack lands on
+        # main). Diffing from main detects any build/Dockerfile change
+        # anywhere in the stack and rebuilds pr-<N> for this PR.
         run: |
-          if git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -q "build/Dockerfile"; then
+          # actions/checkout above used fetch-depth: 0 so we have full history,
+          # but only the PR's branch is fetched by default — pull main as a ref
+          # too so merge-base can find the actual divergence point.
+          git fetch --no-tags origin main
+          MERGE_BASE=$(git merge-base origin/main "$HEAD_SHA")
+          if git diff --name-only "$MERGE_BASE" "$HEAD_SHA" | grep -q "build/Dockerfile"; then
             echo "changed=true"
             echo "changed=true" >> $GITHUB_OUTPUT
           else
