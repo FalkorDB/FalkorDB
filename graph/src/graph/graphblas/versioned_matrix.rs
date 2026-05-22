@@ -364,27 +364,10 @@ impl VersionedMatrix {
     ///
     /// If dm is empty, uses the fast path (1 FFI call per entry).
     /// Otherwise falls back to the full `set` path (2+ FFI calls per entry).
-    ///
-    /// When both `dm` and `dp` are empty (the hot path for the first bulk
-    /// CREATE on a fresh graph) we collect the iterator and issue a single
-    /// `GrB_Matrix_build_BOOL` instead of looping setElement. Looping
-    /// setElement accumulates GraphBLAS internal pending tuples; at certain
-    /// sizes on linux glibc the internal flush leaves the matrix in
-    /// `GrB_INVALID_OBJECT` state — count() then reads 0 and the next write
-    /// crashes on `GrB_Matrix_dup(invalid)`. `Matrix::set` swallows the
-    /// error in release because the check is a `debug_assert_eq!`.
     pub fn set_all(
         &mut self,
         entries: impl Iterator<Item = (u64, u64)>,
     ) {
-        if self.dm.nvals() == 0 && self.dp.nvals() == 0 {
-            // Hot path: build into empty dp in one FFI call
-            let (rows, cols): (Vec<u64>, Vec<u64>) = entries.unzip();
-            if !rows.is_empty() {
-                self.dp.build_bool(&rows, &cols);
-            }
-            return;
-        }
         if self.dm.nvals() == 0 {
             for (i, j) in entries {
                 self.dp.set(i, j, true);
