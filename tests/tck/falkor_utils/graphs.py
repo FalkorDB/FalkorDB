@@ -1,3 +1,5 @@
+import os
+
 from falkordb import FalkorDB, Graph, Node, Edge
 
 r = None
@@ -10,7 +12,10 @@ def _brand_new_redis():
     if r is not None:
         r.flush()
 
-    return FalkorDB()
+    return FalkorDB(
+        host=os.environ.get("FALKORDB_HOST", "localhost"),
+        port=int(os.environ.get("FALKORDB_PORT", os.environ.get("PORT", "6379"))),
+    )
 
 
 def empty_graph():
