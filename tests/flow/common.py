@@ -319,20 +319,26 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
     # routes on it. useSlaves=True is supported via a second `replica`
     # service the job runs with --replicaof falkordb 6379.
     if use_service:
-        if moduleArgs or env != 'oss' or shardsCount:
+        if env != 'oss' or shardsCount:
             raise RuntimeError(
-                "Services-mode Env() doesn't support moduleArgs / "
-                "oss-cluster / shardsCount. This file was routed to the "
-                "services bucket but uses a special flag; either reclassify "
-                "in tests/flow/test_matrix_split.py or remove the flag. "
-                f"Got moduleArgs={moduleArgs!r} env={env!r} "
-                f"shardsCount={shardsCount}."
+                "Services-mode Env() doesn't support oss-cluster / "
+                "shardsCount. This file was routed to the services bucket "
+                "but uses a cluster flag; either reclassify in "
+                "tests/flow/test_matrix_split.py or remove the flag. "
+                f"Got env={env!r} shardsCount={shardsCount}."
             )
         host = os.getenv("FALKORDB_HOST", "falkordb")
         port = int(os.getenv("FALKORDB_PORT", "6379"))
         # Wipe the shared service back to a clean state so each class starts
         # fresh — mirrors the per-class isolation spawn-mode gets for free.
         redis.Redis(host=host, port=port).flushall()
+        # moduleArgs (runtime-mutable keys only — the classifier guarantees
+        # immutable keys go to spawn) are applied via GRAPH.CONFIG SET.
+        # A failed SET propagates as RuntimeError so tests that expect
+        # invalid-args to raise still catch via their try/except wrappers
+        # (e.g. test_timeout.test05_invalid_loadtime_config relies on this).
+        if moduleArgs:
+            _apply_module_args_via_config_set(host, port, moduleArgs)
         Defaults.external_addr = f"{host}:{port}"
         env_obj = Environment(decodeResponses=True, env='existing-env')
         env_obj.port = port
@@ -392,6 +398,36 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
 
     db = FalkorDB(host, port)
     return (env_obj, db)
+
+
+def _apply_module_args_via_config_set(host, port, module_args):
+    """Apply space-separated `KEY VALUE` pairs via GRAPH.CONFIG SET.
+
+    The classifier (tests/flow/test_matrix_split.py) only routes files to
+    services if every moduleArgs key is runtime-mutable. So this can apply
+    each pair without checking. If a SET returns an error (e.g. invalid
+    value, or a combination the module rejects like TIMEOUT alongside
+    TIMEOUT_DEFAULT), we surface it as RuntimeError — tests that
+    intentionally expect Env() to raise (test_timeout.test05) still catch
+    via their bare except."""
+    toks = module_args.split()
+    if len(toks) % 2 != 0:
+        raise RuntimeError(
+            f"moduleArgs must be space-separated KEY VALUE pairs: "
+            f"got {module_args!r}"
+        )
+    conn = redis.Redis(host=host, port=port)
+    for i in range(0, len(toks), 2):
+        key, value = toks[i], toks[i + 1]
+        try:
+            conn.execute_command("GRAPH.CONFIG", "SET", key, value)
+        except redis.ResponseError as e:
+            raise RuntimeError(
+                f"GRAPH.CONFIG SET {key} {value} failed: {e}. "
+                "If this key is actually immutable, add it to "
+                "IMMUTABLE_MODULE_ARGS in tests/flow/test_matrix_split.py "
+                "so this file routes to the spawn bucket."
+            ) from e
 
 
 def _wait_for_replication(host, port, attempts=50, interval=0.2):

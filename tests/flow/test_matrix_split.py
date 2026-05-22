@@ -3,22 +3,22 @@
 test file calls Env() with arguments that require a private redis instance.
 
 A file goes to `spawn_files` if ANY Env() invocation passes one of:
-  - moduleArgs       — load-time module config (some keys like CACHE_SIZE,
-                       IMPORT_FOLDER, NODE_CREATION_BUFFER are immutable)
+  - moduleArgs WITH an immutable key (see IMMUTABLE_MODULE_ARGS below) —
+    immutable keys can't be set at runtime via GRAPH.CONFIG SET, so the
+    test genuinely needs a private redis loaded with those args
   - env='oss-cluster' — needs a multi-node cluster
   - shardsCount      — same as above
 
 NOT spawn-forcing (the services job handles these directly):
-  - enableDebugCommand — the services container is launched with
-                         REDIS_ARGS=--enable-debug-command yes, so DEBUG
-                         RELOAD / DEBUG SLEEP work out of the box
-  - useSlaves          — the services job runs a second `replica` container
-                         configured with --replicaof falkordb 6379;
-                         common.py services mode wires it through
-                         env.replica_host/port + _attach_slave
-
-Otherwise the file goes to `services_files` — it can reuse the shared GHA
-service container that's brought up once per matrix cell.
+  - enableDebugCommand — services container is launched with
+                         REDIS_ARGS=--enable-debug-command yes
+  - useSlaves          — services job runs a second `replica` container
+                         (common.py services mode + _attach_slave)
+  - moduleArgs with only runtime-mutable keys (TIMEOUT*, MAX_QUEUED_QUERIES,
+                         RESULTSET_SIZE, QUERY_MEM_CAPACITY,
+                         DELTA_MAX_PENDING_CHANGES, VKEY_MAX_ENTITY_COUNT) —
+                         common.py applies these via GRAPH.CONFIG SET on the
+                         shared service after FLUSHALL.
 
 Outputs are emitted as `services_files=<json>` and `spawn_files=<json>` lines
 suitable for `>> $GITHUB_OUTPUT`."""
@@ -28,11 +28,39 @@ import os
 import re
 import sys
 
-# `Env(` followed by anything (across lines) that contains one of the
-# spawn-forcing keywords. re.DOTALL makes . match newlines for multi-line
-# Env() calls. We anchor on Env( to avoid matching the keywords elsewhere.
-SPAWN_RE = re.compile(
-    r"\bEnv\s*\([^)]*\b(moduleArgs|oss-cluster|shardsCount)\b",
+# Cluster topology forces spawn regardless of moduleArgs.
+CLUSTER_RE = re.compile(
+    r"\bEnv\s*\([^)]*\b(oss-cluster|shardsCount)\b",
+    re.DOTALL,
+)
+
+# moduleArgs keys that can't be changed at runtime — these force spawn so
+# the module loads with the right value baked in. Anything not on this list
+# is assumed runtime-mutable via GRAPH.CONFIG SET and can ride a shared
+# service container. The list is conservative; add to it (don't remove from
+# it) if a key turns out to be load-time-only.
+IMMUTABLE_MODULE_ARGS = (
+    "CACHE_SIZE",
+    "THREAD_COUNT",
+    "OMP_THREAD_COUNT",
+    "IMPORT_FOLDER",
+    "TEMP_FOLDER",
+    "NODE_CREATION_BUFFER",
+    "BOLT_PORT",
+    "EFFECTS_THRESHOLD",
+    "MAX_INFO_QUERIES",
+    "ASYNC_DELETE",
+    "CMD_INFO",
+    "DELAY_INDEXING",
+    "JS_HEAP_SIZE",
+    "JS_STACK_SIZE",
+)
+
+# `Env(...moduleArgs="...string...")` — capture the literal string content.
+# Handles f-strings (`f"..."`) and both quote styles. re.DOTALL so the
+# literal can span multiple lines.
+MODULE_ARGS_RE = re.compile(
+    r"\bmoduleArgs\s*=\s*f?['\"]([^'\"]*)['\"]",
     re.DOTALL,
 )
 
@@ -63,10 +91,17 @@ def needs_spawn(paths):
     for p in paths:
         try:
             with open(p, encoding="utf-8") as f:
-                if SPAWN_RE.search(f.read()):
-                    return True
+                content = f.read()
         except OSError:
             continue
+        # Cluster topology — always spawn.
+        if CLUSTER_RE.search(content):
+            return True
+        # moduleArgs with at least one immutable key — spawn.
+        for match in MODULE_ARGS_RE.finditer(content):
+            args_str = match.group(1)
+            if any(key in args_str for key in IMMUTABLE_MODULE_ARGS):
+                return True
     return False
 
 
