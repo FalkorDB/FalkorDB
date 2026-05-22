@@ -27,7 +27,7 @@ ENV FALKORDB_BROWSER_PATH=${FALKORDB_HOME}/browser
 # Install only runtime dependencies (openssl for TLS cert generation, libgomp for GraphBLAS,
 # ca-certificates for HTTPS in LOAD CSV)
 RUN apk upgrade --no-cache && \
-    apk add --no-cache libgomp openssl ca-certificates
+    apk add --no-cache bash libgomp openssl ca-certificates
 
 WORKDIR ${FALKORDB_HOME}
 
@@ -42,6 +42,8 @@ COPY --from=compiler /FalkorDB/bin/linux*/falkordb.so ${FALKORDB_BIN_PATH}/falko
 
 # Copy browser files from the Alpine-based browser image
 COPY --from=browser /app ${FALKORDB_BROWSER_PATH}
+
+COPY --from=browser /usr/local/bin/docker-entrypoint.sh ${FALKORDB_BROWSER_PATH}
 
 ENV ARCH=${TARGETPLATFORM}
 

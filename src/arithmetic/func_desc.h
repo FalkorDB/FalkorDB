@@ -33,15 +33,27 @@ typedef void (*AR_Func_Free)(void *ctx);
 // AR_Func_Clone - function pointer to a routine for cloning a function's private data
 typedef void *(*AR_Func_Clone)(void *orig);
 
+// AR_Func_PrivateDataAliases - function pointers to a routine which
+// collects aliases referenced within function's private data
+//
+// e.g.
+//
+// for the 'ALL' predicate there's a private data context: 'ListComprehensionCtx'
+// MATCH (a)
+// WHERE ALL (item IN ['x', 'z'] WHERE item IN a.tags)
+// RETURN count(1)
+typedef void (*AR_Func_PrivateDataAliases)(const void*, rax*) ;
+
 // AR_Func_PrivateData - function pointer to a routine which produce function's private data
 typedef AggregateCtx *(*AR_Func_PrivateData)(void);
 
 // aggregation function callbacks
 typedef struct {
-	AR_Func_Free free;                  // [optional] function pointer to cleanup routine
-	AR_Func_Clone clone;                // [optional] function pointer to clone routine
-	AR_Func_Finalize finalize;          // [optional] function pointer to finalizing aggregate value routine
-	AR_Func_PrivateData private_data;   // function pointer to private data generator
+	AR_Func_Free free;                   // [optional] function pointer to cleanup routine
+	AR_Func_Clone clone;                 // [optional] function pointer to clone routine
+	AR_Func_Finalize finalize;           // [optional] function pointer to finalizing aggregate value routine
+	AR_Func_PrivateDataAliases aliases;  // [optional] function pointer to collect private data referenced entities
+	AR_Func_PrivateData private_data;    // function pointer to private data generator
 } AR_FuncCBs;
 
 typedef struct {
@@ -56,7 +68,7 @@ typedef struct {
 	bool udf;              // user define function
 	bool deterministic;    // true if return value is predictable
 	char *name;            // function name
-	AR_FuncCBs callbacks;  // aggregation callbacks
+	AR_FuncCBs callbacks;  // function's callbacks
 } AR_FuncDesc;
 
 // initialize functions repository
@@ -99,7 +111,8 @@ void AR_SetPrivateDataRoutines
 (
 	AR_FuncDesc *func_desc,
 	AR_Func_Free free,
-	AR_Func_Clone clone
+	AR_Func_Clone clone,
+	AR_Func_PrivateDataAliases aliases
 );
 
 // get arithmetic function

@@ -53,12 +53,12 @@ jobs:
     steps:
       - name: Create Runner For Benchmark
         id: create-runner
-        uses: FalkorDB/gce-github-runner@afc782cd7ea95146eac57b53d27fc08489d14d1b # install_docker
+        uses: FalkorDB/gce-github-runner@0caf8406cd6353630fcd0b2eade420d3da124e01 # install_docker
         with:
           token: ${{ secrets.GH_SA_TOKEN }}
           project_id: ${{ secrets.GCP_PROJECT_ID }}
           service_account_key: ${{ secrets.GCP_SA_KEY }}
-          machine_zone: ${{ vars.GCP_ZONE }}
+          machine_zones: ${{ vars.GCP_ZONES }}
           machine_type: n4-highcpu-8
           network: gh-runner
           runner_label: benchmark-${{ github.run_id }}-${{ github.run_number }}-group_${{ matrix.benchmark_group }}
@@ -138,7 +138,14 @@ jobs:
         working-directory: tests/benchmarks
         run: |
           . venv/bin/activate
-          python3 run_benchmarks.py group_${{ matrix.benchmark_group }}
+          if ! python3 run_benchmarks.py group_${{ matrix.benchmark_group }}; then
+            echo "Benchmark run failed on first attempt, retrying once..."
+            sleep 10
+            python3 run_benchmarks.py group_${{ matrix.benchmark_group }} || {
+              echo "Benchmark run failed on retry attempt."
+              exit 1
+            }
+          fi
 
       - name: Upload results
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -159,7 +166,7 @@ jobs:
         with:
           service_account_key: ${{ secrets.GCP_SA_KEY }}
           project_id: ${{ secrets.GCP_PROJECT_ID }}
-          zone: ${{ vars.GCP_ZONE }}
+          zones: ${{ vars.GCP_ZONES }}
           instance_label: benchmark-${{ github.run_id }}-${{ github.run_number }}-group_${{ matrix.benchmark_group }}
 
   merge-results:

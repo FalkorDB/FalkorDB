@@ -35,15 +35,14 @@ RUN ln -s ${FALKORDB_BIN_PATH} /FalkorDB/build/docker && \
     ln -s ${FALKORDB_DATA_PATH} /data
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends libgomp1 ca-certificates && \
+    apt-get install -y --no-install-recommends libgomp1 ca-certificates bash && \
     apt-get upgrade -y && \
     # Remove packages not needed at runtime to reduce CVE surface
     (apt-get purge -y python3.13 python3.13-minimal libpython3.13-minimal libpython3.13-stdlib || true) && \
     apt-get autoremove -y && \
-    # Remove ncurses (CVE-2025-69720 HIGH) and bash - not needed by redis-server or falkordb.so
-    # run.sh uses #!/bin/sh (dash), so bash is not required
-    (dpkg --force-remove-essential --purge ncurses-base ncurses-bin bash || true) && \
-    (dpkg --force-remove-essential --force-depends --purge libtinfo6 || true) && \
+    # Remove ncurses display utilities (CVE-2025-69720 HIGH) - not needed by redis-server or falkordb.so
+    # Note: libtinfo6 is kept because bash links against libtinfo.so.6
+    (dpkg --force-remove-essential --purge ncurses-base ncurses-bin || true) && \
     # Remove additional packages not needed at runtime
     (dpkg --force-remove-essential --purge perl-base || true) && \
     (dpkg --force-remove-protected --force-remove-essential --purge login || true) && \
@@ -64,6 +63,8 @@ COPY ./build/docker/gen-certs.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 COPY --from=compiler /FalkorDB/bin/linux*/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
 
 COPY --from=browser /app ${FALKORDB_BROWSER_PATH}
+
+COPY --from=browser /usr/local/bin/docker-entrypoint.sh ${FALKORDB_BROWSER_PATH}
 
 ENV ARCH=${TARGETPLATFORM}
 

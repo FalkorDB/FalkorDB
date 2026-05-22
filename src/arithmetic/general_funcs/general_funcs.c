@@ -61,17 +61,18 @@ SIValue AR_PREV
 	return value;
 }
 
-void Register_GeneralFuncs() {
-	SIType *types;
-	SIType ret_type;
-	AR_FuncDesc *func_desc;
+void Register_GeneralFuncs(void) {
+	SIType *types ;
+	SIType ret_type ;
+	AR_FuncDesc *func_desc ;
 
-	types = arr_new(SIType, 1);
-	arr_append(types, T_NULL | SI_ALL);
-	ret_type = SI_ALL;
-	func_desc = AR_FuncDescNew("prev", AR_PREV, 1, 1, types, ret_type, false,
-			false, true);
-	AR_SetPrivateDataRoutines(func_desc, AR_PrevPrivateData_Free, AR_PrevPrivateData_Clone);
-	AR_FuncRegister(func_desc);
+	types = arr_new (SIType, 1) ;
+	arr_append (types, T_NULL | SI_ALL) ;
+	ret_type = SI_ALL ;
+	func_desc = AR_FuncDescNew ("prev", AR_PREV, 1, 1, types, ret_type, false,
+			false, true) ;
+	AR_SetPrivateDataRoutines (func_desc, AR_PrevPrivateData_Free,
+			AR_PrevPrivateData_Clone, NULL) ;
+	AR_FuncRegister (func_desc) ;
 }
 

@@ -2,7 +2,7 @@
 
 if [ "${BROWSER:-1}" -eq "1" ]; then
     if [ -d "${FALKORDB_BROWSER_PATH}" ]; then
-        cd "${FALKORDB_BROWSER_PATH}" && HOSTNAME="0.0.0.0" node server.js &
+        cd "${FALKORDB_BROWSER_PATH}" && HOSTNAME="0.0.0.0" ./docker-entrypoint.sh node server.js &
     fi
 fi
 

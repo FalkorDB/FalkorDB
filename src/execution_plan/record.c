@@ -77,14 +77,20 @@ void Record_Clone
 		// locate coresponding entry in clone
 		// if such exists shallow clone it
 		raxIterator it;
-		raxStart(&it, clone->mapping);
-		raxSeek(&it, "^", NULL, 0);
+		raxStart (&it, clone->mapping) ;
+		raxSeek (&it, "^", NULL, 0) ;
 
-		while(raxNext(&it)) {
-			uint src_idx = Record_GetEntryIdx(r, (const char*)it.key, it.key_len);
+		while (raxNext (&it)) {
+			uint src_idx =
+				Record_GetEntryIdx (r, (const char*)it.key, it.key_len) ;
 
-			if(src_idx == INVALID_INDEX) continue;
-			if(Record_GetType(r, src_idx) == REC_TYPE_UNKNOWN) continue;
+			if (src_idx == INVALID_INDEX) {
+				continue ;
+			}
+
+			if (Record_GetType (r, src_idx) == REC_TYPE_UNKNOWN) {
+				continue ;
+			}
 
 			intptr_t target_idx = (intptr_t)it.data;
 			Record_Add(clone, target_idx, Record_Get(r, src_idx));
