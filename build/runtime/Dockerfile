@@ -59,6 +59,11 @@ RUN apt-get update && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
         clang-22 libomp5 libomp-22-dev && \
+    # apt-get install does not flip already-installed packages to "manual";
+    # llvm.sh installed clang-22 (and pulled libomp-22-dev as an auto dep), so
+    # without this mark the autoremove on line below purges libomp-22-dev along
+    # with the python3.13 cleanup, leaving the JIT without omp.h.
+    apt-mark manual clang-22 libomp5 libomp-22-dev && \
     ln -sf /usr/bin/clang-22 /usr/bin/cc && \
     apt-get purge -y wget gnupg lsb-release && \
     apt-get upgrade -y && \
