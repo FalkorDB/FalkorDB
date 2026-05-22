@@ -54,6 +54,14 @@ IMMUTABLE_MODULE_ARGS = (
     "DELAY_INDEXING",
     "JS_HEAP_SIZE",
     "JS_STACK_SIZE",
+    # TIMEOUT is *conditionally* immutable: settable via GRAPH.CONFIG SET only
+    # when both TIMEOUT_DEFAULT and TIMEOUT_MAX are 0 (see config_cmd.rs's
+    # validate_timeout_cross_constraints). In a shared service container,
+    # earlier tests in the same file that set TIMEOUT_DEFAULT/TIMEOUT_MAX make
+    # later TIMEOUT writes fail with "deprecated" errors. Force tests that
+    # pass `moduleArgs=...TIMEOUT...` into the spawn bucket so each Env() gets
+    # a fresh container with TIMEOUT applied at module load.
+    "TIMEOUT",
 )
 
 # `Env(...moduleArgs="...string...")` — capture the literal string content.
@@ -98,9 +106,14 @@ def needs_spawn(paths):
         if CLUSTER_RE.search(content):
             return True
         # moduleArgs with at least one immutable key — spawn.
+        # Word-boundary match so e.g. "TIMEOUT" doesn't false-positive against
+        # "TIMEOUT_DEFAULT" or "TIMEOUT_MAX" (those are genuinely runtime-mutable).
         for match in MODULE_ARGS_RE.finditer(content):
             args_str = match.group(1)
-            if any(key in args_str for key in IMMUTABLE_MODULE_ARGS):
+            if any(
+                re.search(rf"\b{re.escape(key)}\b", args_str)
+                for key in IMMUTABLE_MODULE_ARGS
+            ):
                 return True
     return False
 
