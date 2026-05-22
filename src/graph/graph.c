@@ -12,154 +12,14 @@
 #include "delta_matrix/delta_matrix_iter.h"
 #include "../util/datablock/oo_datablock.h"
 
-// assert caller can drop matrix sync policy from
-// SYNC_POLICY_FLUSH_RESIZE to either SYNC_POLICY_RESIZE or SYNC_POLICY_RESIZE
-#define ASSERT_ALLOW_POLICY_LOOSE()                               \
-ASSERT (g->_writelocked == true ||                                \
-		pthread_equal (pthread_self (), redis_main_thread_id)) ;
-
 extern pthread_t redis_main_thread_id;
 
-//------------------------------------------------------------------------------
-// Synchronization functions
-//------------------------------------------------------------------------------
-
-static void _CreateRWLocks
-(
-	Graph *g
-) {
-	// create a read write lock which favors writes
-	//
-	// consider the following locking sequence:
-	// T0 read lock  (acquired)
-	// T1 write lock (waiting)
-	// T2 read lock  (acquired if lock favor reads, waiting if favor writes)
-	//
-	// we don't want to cause write starvation as this can impact overall
-	// system performance
-
-	// specify prefer write in lock creation attributes
-	int res = 0 ;
-	UNUSED (res) ;
-
-	pthread_rwlockattr_t attr ;
-	res = pthread_rwlockattr_init (&attr) ;
-	ASSERT (res == 0) ;
-
-#ifdef PTHREAD_RWLOCK_PREFER_WRITER_NONRECURSIVE_NP
-	int pref = PTHREAD_RWLOCK_PREFER_WRITER_NONRECURSIVE_NP ;
-	res = pthread_rwlockattr_setkind_np (&attr, pref) ;
-	ASSERT (res == 0) ;
-#endif
-
-	res = pthread_rwlock_init (&g->_rwlock, &attr) ;
-	ASSERT (res == 0) ;
-
-	res = pthread_rwlock_init (&g->_type_rwlock, &attr) ;
-	ASSERT (res == 0) ;
-}
-
-// acquire types read/write lock for reading
-#define _Graph_ReadLockTypes(g)                                           \
-	do {                                                                  \
-		int res = pthread_rwlock_rdlock (&((Graph*)(g))->_type_rwlock) ;  \
-		ASSERT (res == 0) ;                                               \
-	} while (0)
-
-// acquire types read/write lock for writing
-#define _Graph_WriteLockTypes(g)                                          \
-	do {                                                                  \
-		int res = pthread_rwlock_wrlock (&((Graph*)(g))->_type_rwlock) ;  \
-		ASSERT (res == 0) ;                                               \
-	} while (0)
-
-// release types read/write lock
-#define _Graph_UnLockTypes(g)                                             \
-	do {                                                                  \
-		int res = pthread_rwlock_unlock (&((Graph*)(g))->_type_rwlock) ;  \
-		ASSERT (res == 0) ;                                               \
-	} while (0)
-
-// acquire a lock that does not restrict access from additional reader threads
-void Graph_AcquireReadLock
-(
-	Graph *g
-) {
-	ASSERT(g != NULL);
-
-	pthread_rwlock_rdlock(&g->_rwlock);
-}
-
-// acquire a lock for exclusive access to this graph's data
-void Graph_AcquireWriteLock
-(
-	Graph *g
-) {
-	ASSERT (g != NULL) ;
-	ASSERT (g->_writelocked == false) ;
-
-	pthread_rwlock_wrlock (&g->_rwlock) ;
-	g->_writelocked = true ;
-}
-
-// acquire the graph write lock with a timeout
-// attempts to acquire the write lock on the given graph
-// if the lock is not acquired immediately the function will block until either
-// the lock becomes available or the timeout elapses
+// assert caller can drop matrix sync policy from
+// SYNC_POLICY_FLUSH_RESIZE to either SYNC_POLICY_RESIZE or SYNC_POLICY_RESIZE
+//#define ASSERT_ALLOW_POLICY_LOOSE()                               \
+//ASSERT (g->_writelocked == true ||                                \
+//		pthread_equal (pthread_self (), redis_main_thread_id)) ;
 //
-// returns:
-// - 0 on success (lock acquired)
-// - ETIMEDOUT if the timeout expired before acquiring the lock
-// - EBUSY if called with timeout_ms == 0 and the lock could not be acquired
-// - other nonzero error codes may be returned for unexpected failures
-int Graph_TimeAcquireWriteLock
-(
-	Graph *g,       // graph to lock
-	int timeout_ms  // maximum time in milliseconds to wait for the lock:
-                    // - timeout_ms < 0 : block until the lock is acquired
-                    // - timeout_ms = 0 : non-blocking attempt (try-lock)
-                    // - timeout_ms > 0 : wait up to timeout_ms milliseconds
-) {
-	ASSERT (g != NULL) ;
-	ASSERT (g->_writelocked == false) ;
-
-	int res = rwlock_timedwrlock (&g->_rwlock, timeout_ms) ;
-	g->_writelocked = (res == 0) ;
-
-	return res ;
-}
-
-// returns rather or not graph is locked for writing
-bool Graph_IsWriteLocked
-(
-	const Graph *g
-) {
-	ASSERT (g != NULL) ;
-
-	return g->_writelocked ;
-}
-
-// Release the held lock
-void Graph_ReleaseLock
-(
-	Graph *g
-) {
-	ASSERT (g != NULL) ;
-
-	// set _writelocked to false BEFORE unlocking
-	// if this is a reader thread no harm done,
-	// if this is a writer thread the writer is about to unlock so once again
-	// no harm done, if we set `_writelocked` to false after unlocking it is possible
-	// for a reader thread to be considered as writer, performing illegal access to
-	// underline matrices, consider a context switch after unlocking `_rwlock` but
-	// before setting `_writelocked` to false
-	g->_writelocked = false ;
-
-	// set default synchronization behavior
-	Graph_SetMatrixPolicy (g, SYNC_POLICY_FLUSH_RESIZE) ;
-
-	pthread_rwlock_unlock (&g->_rwlock) ;
-}
 
 //------------------------------------------------------------------------------
 // Graph utility functions
@@ -228,7 +88,7 @@ static bool _MatrixResizeToCapacity
 ) {
 	// resize sync policy should be used only by writers or Redis main thread
 	// e.g. while loading an RDB
-	ASSERT_ALLOW_POLICY_LOOSE () ;
+	//ASSERT_ALLOW_POLICY_LOOSE () ;
 
 	GrB_Index n_rows ;
 	GrB_Index n_cols ;
@@ -261,7 +121,7 @@ static bool _MatrixNOP
 ) {
 	// resize sync policy should be used only by writers or Redis main thread
 	// e.g. while loading an RDB
-	ASSERT_ALLOW_POLICY_LOOSE () ;
+	//ASSERT_ALLOW_POLICY_LOOSE () ;
 
 	return true ;
 }
@@ -308,7 +168,7 @@ MATRIX_POLICY Graph_SetMatrixPolicy
 			// bulk insertion and creation behavior
 			// does not force pending operations
 			// resizes matrices to the graph's current node capacity
-			ASSERT_ALLOW_POLICY_LOOSE () ;
+			//ASSERT_ALLOW_POLICY_LOOSE () ;
 
 			g->SynchronizeMatrix = _MatrixResizeToCapacity ;
 			break ;
@@ -316,7 +176,7 @@ MATRIX_POLICY Graph_SetMatrixPolicy
 		case SYNC_POLICY_NOP:
 			// used when deleting or freeing a graph
 			// forces no matrix updates or resizes
-			ASSERT_ALLOW_POLICY_LOOSE () ;
+			//ASSERT_ALLOW_POLICY_LOOSE () ;
 
 			g->SynchronizeMatrix = _MatrixNOP ;
 			break ;
@@ -472,10 +332,6 @@ Graph *Graph_New
 	// init graph statistics
 	GraphStatistics_init (&g->stats) ;
 
-	// initialize a read-write lock scoped to the individual graph
-	_CreateRWLocks (g) ;
-	g->_writelocked = false ;
-
 	// force GraphBLAS updates and resize matrices to node count by default
 	g->SynchronizeMatrix = _MatrixSynchronize ;
 
@@ -577,16 +433,12 @@ LabelID Graph_AddLabel
 
 	LabelID l ;
 
-	_Graph_WriteLockTypes (g) ;
-		arr_append (g->labels, m) ;
+	arr_append (g->labels, m) ;
 
-		// adding a new label, update the stats structures to support it
-		GraphStatistics_IntroduceLabel (&g->stats) ;
+	// adding a new label, update the stats structures to support it
+	GraphStatistics_IntroduceLabel (&g->stats) ;
 
-		l = arr_len (g->labels) - 1 ;
-	_Graph_UnLockTypes (g) ;
-
-	return l ;
+	return arr_len (g->labels) - 1 ;
 }
 
 // adds a label from the graph
@@ -600,10 +452,8 @@ void Graph_RemoveLabel
 
 	Delta_Matrix L ;
 
-	_Graph_WriteLockTypes (g) ;
-		L = g->labels [label_id] ;
-		g->labels = arr_del (g->labels, label_id) ;
-	_Graph_UnLockTypes (g) ;
+	L = g->labels [label_id] ;
+	g->labels = arr_del (g->labels, label_id) ;
 
 	#ifdef RG_DEBUG
 	GrB_Index nvals ;
@@ -625,17 +475,13 @@ RelationID Graph_AddRelationType
 	size_t n = Graph_RequiredMatrixDim (g) ;
 	Tensor R = Tensor_new (n, n) ;
 
-	RelationID relationID ;
+	arr_append (g->relations, R) ;
 
-	_Graph_WriteLockTypes (g) ;
-		arr_append (g->relations, R) ;
+	// adding a new relationship type
+	// update the stats structures to support it
+	GraphStatistics_IntroduceRelationship (&g->stats) ;
 
-		// adding a new relationship type
-		// update the stats structures to support it
-		GraphStatistics_IntroduceRelationship (&g->stats) ;
-
-		relationID = arr_len (g->relations) - 1 ;
-	_Graph_UnLockTypes (g) ;
+	RelationID relationID = arr_len (g->relations) - 1 ;
 
 	return relationID ;
 }
@@ -649,12 +495,8 @@ void Graph_RemoveRelation
 	ASSERT (g != NULL) ;
 	ASSERT (relation_id == Graph_RelationTypeCount (g) - 1) ;
 
-	Tensor R ;
-
-	_Graph_WriteLockTypes (g) ;
-		R = g->relations [relation_id] ;
-		g->relations = arr_del (g->relations, relation_id) ;
-	_Graph_UnLockTypes (g) ;
+	Tensor R = g->relations [relation_id] ;
+	g->relations = arr_del (g->relations, relation_id) ;
 
 	#ifdef RG_DEBUG
 	GrB_Index nvals ;
@@ -1233,11 +1075,7 @@ int Graph_RelationTypeCount
 (
 	const Graph *g
 ) {
-	_Graph_ReadLockTypes (g) ;
-		int count = arr_len (g->relations) ;
-	_Graph_UnLockTypes (g) ;
-
-	return count ;
+	return  arr_len (g->relations) ;
 }
 
 // returns number of different node types
@@ -1245,11 +1083,7 @@ int Graph_LabelTypeCount
 (
 	const Graph *g
 ) {
-	_Graph_ReadLockTypes (g) ;
-		int count = arr_len (g->labels) ;
-	_Graph_UnLockTypes (g) ;
-
-	return count ;
+	return arr_len (g->labels) ;
 }
 
 // returns true if relationship matrix 'r' contains multi-edge entries,
@@ -1592,9 +1426,7 @@ Delta_Matrix Graph_GetLabelMatrix
 		return Graph_GetZeroMatrix (g) ;
 	}
 
-	_Graph_ReadLockTypes (g) ;
-		Delta_Matrix L = g->labels [label] ;
-	_Graph_UnLockTypes (g) ;
+	Delta_Matrix L = g->labels [label] ;
 
 	size_t n = Graph_RequiredMatrixDim (g) ;
 	g->SynchronizeMatrix (g, L, n, n) ;
@@ -1619,9 +1451,7 @@ Tensor Graph_GetRelationMatrix
 	if (relation_idx == GRAPH_NO_RELATION) {
 		M = g->adjacency_matrix ;
 	} else {
-		_Graph_ReadLockTypes (g) ;
-			M = g->relations [relation_idx] ;
-		_Graph_UnLockTypes (g) ;
+		M = g->relations [relation_idx] ;
 	}
 
 	size_t n = Graph_RequiredMatrixDim (g) ;
@@ -1757,19 +1587,6 @@ static void _Graph_Free
 	DataBlock_Free (g->edges) ;
 
 	GraphStatistics_FreeInternals (&g->stats) ;
-
-	int res ;
-	UNUSED (res) ;
-
-	if (g->_writelocked) {
-		Graph_ReleaseLock (g) ;
-	}
-
-	res = pthread_rwlock_destroy (&g->_rwlock) ;
-	ASSERT (res == 0) ;
-
-	res = pthread_rwlock_destroy (&g->_type_rwlock) ;
-	ASSERT (res == 0) ;
 
 	rm_free (g) ;
 }

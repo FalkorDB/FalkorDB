@@ -158,8 +158,8 @@ class testLabelUpdate():
         self.query_master_and_wait("UNWIND [{name:2},{name:3},{name:1},{name:4}] AS d CREATE ({name: d.name})")
         
         try:
-            # Attempt to assign label C to every unlabelled node.
-            # The node with p=1 duplicates the existing :C node and must
+            # Attempt to assign label X to every unlabelled node.
+            # The node with p=1 duplicates the existing :X node and must
             # trigger a constraint violation.
             self.query_master_and_wait("MATCH (n) WHERE NOT n:X SET n:X")
             self.env.assertTrue(False)
@@ -167,16 +167,15 @@ class testLabelUpdate():
             self.env.assertIn("constraint", str(e).lower())
         
         print("After 'try'")
-        # Rollback must restore the graph to exactly one :C node.
-        res = self.query_master_and_wait("MATCH (n:X) RETURN count(n) AS c")
+        # Rollback must restore the graph to exactly one :X node.
+        res = self.query_master_and_wait("MATCH (n:X) RETURN count(n)")
         self.env.assertEquals(res.result_set[0][0], 1)
         
         # The original seed node must still be intact.
-        res = self.query_master_and_wait("MATCH (n:X {name: 1}) RETURN count(n) AS c")
+        res = self.query_master_and_wait("MATCH (n:X {name: 1}) RETURN count(n)")
         self.env.assertEquals(res.result_set[0][0], 1)
 
         self.env.assertTrue(graph_eq(self.master_graph, self.replica_graph))
 
-    def test_failed_update_on_first_attempt(self):
-        # 
+    #def test_failed_update_on_first_attempt(self):
 

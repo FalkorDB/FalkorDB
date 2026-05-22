@@ -11,6 +11,7 @@
 #include "../util/uuid.h"
 #include "../query_ctx.h"
 #include "../redismodule.h"
+#include "../util/rwlock.h"
 #include "../util/rmalloc.h"
 #include "../util/thpool/pool.h"
 #include "../constraint/constraint.h"
@@ -28,12 +29,12 @@
 #include "graphcontext_struct.h"
 
 extern uint aux_field_counter;
+extern pthread_t redis_main_thread_id;
 // GraphContext type as it is registered at Redis.
 extern RedisModuleType *GraphContextRedisModuleType;
 
 // forward declarations
 static void _GraphContext_Free(void *arg);
-static void _GraphContext_UpdateHash(GraphContext *gc, const char *str);
 static void _DeleteTelemetryStream(RedisModuleCtx *ctx, const GraphContext *gc);
 
 // increase graph context ref count by 1
@@ -80,7 +81,7 @@ static Schema **_GetNodeSchemas
 	GraphContext *gc
 ) {
 	if (unlikely (gc->_node_schemas != NULL &&
-		QueryCtx_GetExecutionType () & QueryExecutionTypeFlag_WRITE)) {
+				  pthread_equal (gc->writer_tid, pthread_self ()) != 0)) {
 		return gc->_node_schemas ;
 	}
 
@@ -92,7 +93,7 @@ static Schema **_GetRelationSchemas
 	GraphContext *gc
 ) {
 	if (unlikely (gc->_relation_schemas != NULL &&
-		QueryCtx_GetExecutionType () & QueryExecutionTypeFlag_WRITE)) {
+				  pthread_equal (gc->writer_tid, pthread_self ()) != 0)) {
 		return gc->_relation_schemas ;
 	}
 
@@ -104,11 +105,189 @@ static char **_GetAttributes
 	GraphContext *gc
 ) {
 	if (unlikely (gc->_attributes != NULL &&
-		QueryCtx_GetExecutionType () & QueryExecutionTypeFlag_WRITE)) {
+				  pthread_equal (gc->writer_tid, pthread_self ()) != 0)) {
 		return gc->_attributes ;
 	}
 
 	return gc->attributes ;
+}
+
+static void _CreateRWLocks
+(
+	GraphContext *gc
+) {
+	// create a read write lock which favors writes
+	//
+	// consider the following locking sequence:
+	// T0 read lock  (acquired)
+	// T1 write lock (waiting)
+	// T2 read lock  (acquired if lock favor reads, waiting if favor writes)
+	//
+	// we don't want to cause write starvation as this can impact overall
+	// system performance
+
+	// specify prefer write in lock creation attributes
+	int res = 0 ;
+	UNUSED (res) ;
+
+	pthread_rwlockattr_t attr ;
+	res = pthread_rwlockattr_init (&attr) ;
+	ASSERT (res == 0) ;
+
+#ifdef PTHREAD_RWLOCK_PREFER_WRITER_NONRECURSIVE_NP
+	int pref = PTHREAD_RWLOCK_PREFER_WRITER_NONRECURSIVE_NP ;
+	res = pthread_rwlockattr_setkind_np (&attr, pref) ;
+	ASSERT (res == 0) ;
+#endif
+
+	res = pthread_rwlock_init (&gc->rwlock, &attr) ;
+	ASSERT (res == 0) ;
+}
+
+// update graph context hash
+static void _GraphContext_UpdateHash
+(
+	GraphContext *gc
+) {
+	// update graph hash by hashing newly added schema additions
+	//
+	// Using the current graph hash as a seed, by doing so we avoid
+	// hashing the entire graph schema on each change, while guaranteeing the
+	// exact same hash across a cluster: same graph hash on both
+	// primary and replica shards
+
+	ASSERT (gc->_attributes       != NULL ||
+			gc->_node_schemas     != NULL ||
+			gc->_relation_schemas != NULL) ;
+
+	uint new_count   ;  // number of elements in pending array
+	uint prev_count  ;  // number of elements in current array
+	const char *name ;  // name of attribute / schema
+
+	// update graph's hash with new attributes / schemas
+	XXH32_state_t *state = XXH32_createState () ;
+	XXH32_reset (state, gc->hash) ;
+
+	//--------------------------------------------------------------------------
+	// hash attributes
+	//--------------------------------------------------------------------------
+
+	if (gc->_attributes != NULL) {
+		new_count  = arr_len (gc->_attributes) ;
+		prev_count = arr_len (gc->attributes)  ;
+
+		for (uint i = prev_count ; i < new_count ; i++) {
+			const char *name = gc->_attributes [i] ;
+			XXH32_update (state, name, strlen (name)) ;
+		}
+	}
+
+	//--------------------------------------------------------------------------
+	// hash node schemas
+	//--------------------------------------------------------------------------
+
+	if (gc->_node_schemas != NULL) {
+		new_count  = arr_len (gc->_node_schemas) ;
+		prev_count = arr_len (gc->node_schemas)  ;
+
+		for (uint i = prev_count ; i < new_count ; i++) {
+			Schema *s = gc->_node_schemas [i] ;
+			const char *name = Schema_GetName (s) ; 
+			XXH32_update (state, name, strlen (name)) ;
+		}
+	}
+
+	//--------------------------------------------------------------------------
+	// hash relation schemas
+	//--------------------------------------------------------------------------
+
+	if (gc->_relation_schemas != NULL) {
+		new_count  = arr_len (gc->_relation_schemas) ;
+		prev_count = arr_len (gc->relation_schemas)  ;
+
+		for (uint i = prev_count ; i < new_count ; i++) {
+			Schema *s = gc->_relation_schemas [i] ;
+			const char *name = Schema_GetName (s) ; 
+			XXH32_update (state, name, strlen (name)) ;
+		}
+	}
+
+	// finalize hash
+	gc->hash = XXH32_digest (state) ;
+	XXH32_freeState (state) ;
+}
+
+// commit graph's pending schema changes
+static void _GraphContext_CommitPendings
+(
+	GraphContext *gc  // graph context
+) {
+	ASSERT (gc != NULL) ;
+
+	// only writer thread is allowed to commit pending changes
+	if (pthread_equal (gc->writer_tid, pthread_self ()) == 0) {
+		return ;
+	}
+
+	if (gc->_attributes       == NULL &&
+		gc->_node_schemas     == NULL &&
+		gc->_relation_schemas == NULL) {
+		// no changes
+		return ;
+	}
+
+	_GraphContext_UpdateHash (gc) ;
+
+	//--------------------------------------------------------------------------
+	// commit pending attributes
+	//--------------------------------------------------------------------------
+
+	if (gc->_attributes != NULL) {
+		if (arr_len (gc->_attributes) == arr_len(gc->attributes)) {
+			// no new attributes
+			arr_free (gc->_attributes) ;
+		} else {
+			// introduce new attributes
+			arr_free (gc->attributes) ;
+			gc->attributes = gc->_attributes ;
+		}
+		gc->_attributes = NULL ;
+	}
+
+	//--------------------------------------------------------------------------
+	// commit pending node schemas
+	//--------------------------------------------------------------------------
+
+	if (gc->_node_schemas != NULL) {
+		if (arr_len (gc->_node_schemas) == arr_len (gc->node_schemas)) {
+			// no new node schemas
+			arr_free (gc->_node_schemas) ;
+		} else {
+			// introduce new node schemas
+			arr_free (gc->node_schemas) ;
+			gc->node_schemas = gc->_node_schemas ;
+		}
+		gc->_node_schemas = NULL ;
+	}
+
+	//--------------------------------------------------------------------------
+	// commit pending relationship schemas
+	//--------------------------------------------------------------------------
+
+	if (gc->_relation_schemas != NULL) {
+		if (arr_len (gc->_relation_schemas) == arr_len (gc->relation_schemas)) {
+			// no new relationship schemas
+			arr_free (gc->_relation_schemas) ;
+		} else {
+			// introduce new relationship schemas
+			arr_free (gc->relation_schemas) ;
+			gc->relation_schemas = gc->_relation_schemas ;
+		}
+		gc->_relation_schemas = NULL ;
+	}
+
+	// reset tid to 0
+	gc->writer_tid = (pthread_t)0 ;
 }
 
 //------------------------------------------------------------------------------
@@ -133,6 +312,10 @@ GraphContext *GraphContext_New
 	gc->index_count      = 0 ;  // no indicies
 	gc->encoding_context = GraphEncodeContext_New () ;
 	gc->decoding_context = GraphDecodeContext_New () ;
+
+	// initialize a read-write lock scoped to the individual graph
+	_CreateRWLocks (gc) ;
+	gc->writelocked = false ;
 
 	// initial graph's write in progress atomic flag to false
 	atomic_init (&gc->write_in_progress, false) ;
@@ -200,6 +383,7 @@ static GraphContext *_GraphContext_Create
 	return gc;
 }
 
+// counter to GraphContext_Retrieve
 // retrive the graph context according to the graph name
 // readOnly is the access mode to the graph key
 GraphContext *GraphContext_Retrieve
@@ -247,14 +431,113 @@ GraphContext *GraphContext_Retrieve
 	return gc ;
 }
 
-// decrease graph context reference count
-// graph context will be free once reference count reaches 0
-void GraphContext_Release
+//------------------------------------------------------------------------------
+// Synchronization functions
+//------------------------------------------------------------------------------
+
+// acquires a READ lock on the graph context
+void GraphContext_AcquireReadLock
 (
-	GraphContext *gc // graph context to release
+	GraphContext *gc
 ) {
 	ASSERT (gc != NULL) ;
-	GraphContext_DecreaseRefCount (gc) ;
+
+	int res = pthread_rwlock_rdlock (&gc->rwlock) ;
+	ASSERT (res == 0) ;
+
+	gc->writelocked = false ;
+}
+
+// acquires a WRITE lock on the graph context
+void GraphContext_AcquireWriteLock 
+(
+	GraphContext *gc  // graph context
+) {
+	ASSERT (gc != NULL) ;
+
+	if (gc->writelocked == true) {
+		return ;
+	}
+
+	pthread_rwlock_wrlock (&gc->rwlock) ;
+	gc->writelocked = true ;
+}
+
+// acquire the graph context write lock with a timeout
+// attempts to acquire the write lock on the given graphcontext
+// if the lock is not acquired immediately the function will block until either
+// the lock becomes available or the timeout elapses
+//
+// returns:
+// - 0 on success (lock acquired)
+// - ETIMEDOUT if the timeout expired before acquiring the lock
+// - EBUSY if called with timeout_ms == 0 and the lock could not be acquired
+// - other nonzero error codes may be returned for unexpected failures
+int GraphContext_TimeAcquireWriteLock
+(
+	GraphContext *gc,  // graph to lock
+	int timeout_ms     // maximum time in milliseconds to wait for the lock:
+                       // - timeout_ms < 0 : block until the lock is acquired
+                       // - timeout_ms = 0 : non-blocking attempt (try-lock)
+                       // - timeout_ms > 0 : wait up to timeout_ms milliseconds
+) {
+	ASSERT (gc != NULL) ;
+	if (gc->writelocked == true) {
+		return 0 ;
+	}
+
+	int res = rwlock_timedwrlock (&gc->rwlock, timeout_ms) ;
+	gc->writelocked = (res == 0) ;
+
+	return res ;
+}
+
+void GraphContext_ReleaseReadLock
+(
+	GraphContext *gc
+) {
+	ASSERT (gc != NULL) ;
+	ASSERT (gc->writelocked == false) ;
+
+	// set default synchronization behavior
+	Graph_SetMatrixPolicy (gc->g, SYNC_POLICY_FLUSH_RESIZE) ;
+
+	pthread_rwlock_unlock (&gc->rwlock) ;
+}
+
+// releases the lock currently held on the graph context
+// must be called exactly once for every successful acquire call
+void GraphContext_ReleaseLock
+(
+	GraphContext *gc
+) {
+	ASSERT (gc != NULL) ;
+
+	_GraphContext_CommitPendings (gc) ;
+
+	// set writelocked to false BEFORE unlocking
+	// if this is a reader thread no harm done,
+	// if this is a writer thread the writer is about to unlock so once again
+	// no harm done, if we set `writelocked` to false after unlocking
+	// it is possible for a reader thread to be considered as writer
+	// performing illegal access to underline graph
+	// consider a context switch after unlocking `rwlock`
+	// but before setting `writelocked` to false
+	gc->writelocked = false ;
+
+	// set default synchronization behavior
+	Graph_SetMatrixPolicy (gc->g, SYNC_POLICY_FLUSH_RESIZE) ;
+
+	pthread_rwlock_unlock (&gc->rwlock) ;
+}
+
+// returns rather or not graph is locked for writing
+bool GraphContext_IsWriteLocked
+(
+	const GraphContext *gc
+) {
+	ASSERT (gc != NULL) ;
+	return gc->writelocked ;
 }
 
 // mark graph key as "dirty" for Redis to pick up on
@@ -406,37 +689,6 @@ XXH32_hash_t GraphContext_GetHash
 	return gc->hash ;
 }
 
-// commit graph's pending schema changes
-void GraphContext_CommitPendings
-(
-	GraphContext *gc  // graph context
-) {
-	ASSERT (gc != NULL) ;
-
-	ASSERT (Graph_IsWriteLocked (gc->g)) ;
-
-	// commit pending attributes
-	if (gc->_attributes != NULL) {
-		arr_free (gc->attributes) ;
-		gc->attributes  = gc->_attributes ;
-		gc->_attributes = NULL ;
-	}
-
-	// commit pending node schemas
-	if (gc->_node_schemas != NULL) {
-		arr_free (gc->node_schemas) ;
-		gc->node_schemas  = gc->_node_schemas ;
-		gc->_node_schemas = NULL ;
-	}
-
-	// commit pending relationship schemas
-	if (gc->_relation_schemas != NULL) {
-		arr_free (gc->relation_schemas) ;
-		gc->relation_schemas  = gc->_relation_schemas ;
-		gc->_relation_schemas = NULL ;
-	}
-}
-
 // get graph from graph context
 Graph *GraphContext_GetGraph
 (
@@ -445,30 +697,6 @@ Graph *GraphContext_GetGraph
 	ASSERT(gc != NULL);
 	
 	return gc->g;
-}
-
-// Update graph context hash
-static void _GraphContext_UpdateHash
-(
-	GraphContext *gc,
-	const char *str
-) {
-	ASSERT (gc  != NULL) ;
-	ASSERT (str != NULL) ;
-
-	// update graph hash by hashing 'str' representing the current
-	// addition to the graph schema: (Label, Relationship-type, Attribute)
-	//
-	// Using the current graph hash as a seed, by doing so we avoid
-	// hashing the entire graph schema on each change, while guaranteeing the
-	// exact same hash across a cluster: same graph hash on both
-	// primary and replica shards
-
-	XXH32_state_t *state = XXH32_createState();
-	XXH32_reset(state, gc->hash);
-	XXH32_update(state, str, strlen(str));
-	gc->hash = XXH32_digest(state);
-	XXH32_freeState(state);
 }
 
 //------------------------------------------------------------------------------
@@ -629,42 +857,56 @@ Schema *GraphContext_GetSchema
 	return res ;
 }
 
+// tries to located schema, in case schema doesn't exists
 // registers a new schema and its backing matrix for the given type:
 // allocates a label matrix (node) or relation-type matrix (edge) in the graph
 // then appends the schema to the corresponding schema array
-Schema *GraphContext_AddSchema
+Schema *GraphContext_FindOrAddSchema
 (
 	GraphContext *gc,  // graph context
 	const char *name,  // schema name
-	SchemaType t       // SCHEMA_NODE or SCHEMA_EDGE
+	SchemaType t,      // SCHEMA_NODE or SCHEMA_EDGE
+	bool *created      // true if schema was created
 ) {
 	ASSERT (gc   != NULL) ;
 	ASSERT (name != NULL) ;
 
-	Schema *s = NULL ;
+	// quick return if schema already exists
+	Schema *s = GraphContext_GetSchema (gc, name, t) ;
+	if (s != NULL) {
+		if (created != NULL) {
+			*created = false ;
+		}
+		return s ;
+	}
 
+	// create schema
 	if (t == SCHEMA_NODE) {
 		LabelID id = Graph_AddLabel (gc->g) ;
 		s = Schema_New (SCHEMA_NODE, id, name) ;
 
 		if (gc->_node_schemas == NULL) {
+			gc->writer_tid = pthread_self () ;
 			arr_clone (gc->_node_schemas, gc->node_schemas) ;
 		}
-
 		arr_append (gc->_node_schemas, s) ;
 	} else {
-		LabelID id = Graph_AddRelationType (gc->g) ;
+		RelationID id = Graph_AddRelationType (gc->g) ;
 		s = Schema_New (SCHEMA_EDGE, id, name) ;
 
 		if (gc->_relation_schemas == NULL) {
+			gc->writer_tid = pthread_self () ;
 			arr_clone (gc->_relation_schemas, gc->relation_schemas) ;
 		}
 
 		arr_append (gc->_relation_schemas, s) ;
 	}
 
-	// new schema registered — update graph hash
-	_GraphContext_UpdateHash (gc, name) ;
+	ASSERT (pthread_equal (gc->writer_tid, pthread_self ())) ;
+
+	if (created != NULL) {
+		*created = true ;
+	}
 
 	return s ;
 }
@@ -689,6 +931,9 @@ void GraphContext_RemoveSchema
 	Schema ***schemas = (t == SCHEMA_NODE) ?
 		&gc->_node_schemas :
 		&gc->_relation_schemas ;
+
+	ASSERT (schemas != NULL) ;
+	ASSERT (arr_len (*schemas) -1 == id) ;
 
 	Schema *s = (*schemas) [id] ;
 	Schema_Free (s) ;
@@ -754,6 +999,7 @@ AttributeID GraphContext_FindOrAddAttribute
 	// attribute missing
 	// add it as a pendding attribute
 	if (gc->_attributes == NULL) {
+		gc->writer_tid = pthread_self () ;
 		arr_clone (gc->_attributes, gc->attributes) ;
 	}
 
@@ -764,8 +1010,7 @@ AttributeID GraphContext_FindOrAddAttribute
 		*created = true ;
 	}
 
-	// new attribute been added, update graph hash
-	_GraphContext_UpdateHash (gc, attribute) ;
+	ASSERT (pthread_equal (gc->writer_tid, pthread_self ())) ;
 
 	return id ;
 }
@@ -810,29 +1055,18 @@ AttributeID GraphContext_GetAttributeID
 	return id ;
 }
 
-// drops pending attributes
-void GraphContext_DropAttributes
+// removes an attribute from the graph
+void GraphContext_RemoveAttribute
 (
-	GraphContext *gc
+	GraphContext *gc,
+	AttributeID id
 ) {
 	ASSERT (gc != NULL) ;
+	ASSERT (gc->_attributes != NULL) ;
+	ASSERT (id == arr_len (gc->_attributes) - 1) ;
 
-	// no pending attributes
-	if (gc->_attributes == NULL) {
-		return ;
-	}
-
-	// determine number of pending attributes
-	int16_t n = arr_len (gc->_attributes) - arr_len (gc->attributes) ;
-	ASSERT (n >= 0) ;
-
-	// free pending attributes
-	while (n-- > 0) {
-		rm_free (gc->_attributes [n]) ;	
-	}
-
-	arr_free (gc->_attributes) ;
-	gc->_attributes = NULL ;
+	rm_free (gc->_attributes [id]) ;
+	arr_del (gc->_attributes, id) ;
 }
 
 //------------------------------------------------------------------------------
@@ -1268,11 +1502,31 @@ static void _GraphContext_Free
 		}
 	}
 
+	if (should_lock) {
+		RedisModule_ThreadSafeContextUnlock (ctx) ;
+		RedisModule_FreeThreadSafeContext (ctx) ;
+	}
+
 	//--------------------------------------------------------------------------
 	// free node schemas
 	//--------------------------------------------------------------------------
 
-	ASSERT (gc->_node_schemas == NULL) ;
+	if (gc->_node_schemas     != NULL ||
+		gc->_relation_schemas != NULL ||
+		gc->_attributes       != NULL) {
+		// should not happen
+		// unless a graph wasn't fully loaded
+		// and its virtual keys are being deleted
+		// TODO: should be logged?
+
+		ASSERT (gc->attributes       == NULL) ;
+		ASSERT (gc->node_schemas     == NULL) ;
+		ASSERT (gc->relation_schemas == NULL) ;
+
+		gc->attributes       = gc->_attributes ;
+		gc->node_schemas     = gc->_node_schemas ;
+		gc->relation_schemas = gc->_relation_schemas ;
+	}
 
 	if (gc->node_schemas) {
 		len = arr_len (gc->node_schemas) ;
@@ -1280,13 +1534,12 @@ static void _GraphContext_Free
 			Schema_Free (gc->node_schemas [i]) ;
 		}
 		arr_free (gc->node_schemas) ;
+		gc->node_schemas = NULL ;
 	}
 
 	//--------------------------------------------------------------------------
 	// free relation schemas
 	//--------------------------------------------------------------------------
-
-	ASSERT (gc->_relation_schemas == NULL) ;
 
 	if (gc->relation_schemas) {
 		len = arr_len (gc->relation_schemas) ;
@@ -1294,24 +1547,12 @@ static void _GraphContext_Free
 			Schema_Free (gc->relation_schemas [i]) ;
 		}
 		arr_free (gc->relation_schemas) ;
+		gc->relation_schemas = NULL ;
 	}
-
-	if (should_lock) {
-		RedisModule_ThreadSafeContextUnlock (ctx) ;
-		RedisModule_FreeThreadSafeContext (ctx) ;
-	}
-
-	//--------------------------------------------------------------------------
-	// free queries log
-	//--------------------------------------------------------------------------
-
-	QueriesLog_Free (gc->queries_log) ;
 
 	//--------------------------------------------------------------------------
 	// free attribute mappings
 	//--------------------------------------------------------------------------
-
-	ASSERT (gc->_attributes == NULL) ;
 
 	if (gc->attributes) {
 		uint16_t n = arr_len (gc->attributes) ;
@@ -1322,6 +1563,12 @@ static void _GraphContext_Free
 		arr_free (gc->attributes) ;
 		gc->attributes = NULL ;
 	}
+
+	//--------------------------------------------------------------------------
+	// free queries log
+	//--------------------------------------------------------------------------
+
+	QueriesLog_Free (gc->queries_log) ;
 
 	if (gc->slowlog) {
 		SlowLog_Free (gc->slowlog) ;
@@ -1346,6 +1593,14 @@ static void _GraphContext_Free
 
 	GraphEncodeContext_Free (gc->encoding_context) ;
 	GraphDecodeContext_Free (gc->decoding_context) ;
+
+	if (gc->writelocked) {
+		pthread_rwlock_unlock (&gc->rwlock) ;
+	}
+
+	int res = pthread_rwlock_destroy (&gc->rwlock) ;
+	ASSERT (res == 0) ;
+
 	rm_free (gc->graph_name) ;
 	rm_free (gc) ;
 }

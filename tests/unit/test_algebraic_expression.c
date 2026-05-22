@@ -75,11 +75,11 @@ static void _fake_graph_context() {
 	gc->relation_schemas = (Schema**)arr_new (Schema*, 0) ;
 	gc->queries_log      = QueriesLog_New () ;
 
-	GraphContext_AddSchema (gc, "Person", SCHEMA_NODE) ;
-	GraphContext_AddSchema (gc, "City",   SCHEMA_NODE) ;
-	GraphContext_AddSchema (gc, "friend", SCHEMA_EDGE) ;
-	GraphContext_AddSchema (gc, "visit",  SCHEMA_EDGE) ;
-	GraphContext_AddSchema (gc, "war",    SCHEMA_EDGE) ;
+	GraphContext_FindOrAddSchema (gc, "Person", SCHEMA_NODE, NULL) ;
+	GraphContext_FindOrAddSchema (gc, "City",   SCHEMA_NODE, NULL) ;
+	GraphContext_FindOrAddSchema (gc, "friend", SCHEMA_EDGE, NULL) ;
+	GraphContext_FindOrAddSchema (gc, "visit",  SCHEMA_EDGE, NULL) ;
+	GraphContext_FindOrAddSchema (gc, "war",    SCHEMA_EDGE, NULL) ;
 
 	TEST_ASSERT(QueryCtx_Init());
 	QueryCtx_SetGraphCtx(gc);
@@ -93,7 +93,7 @@ static void _build_graph() {
 
 	Node n;
 	Graph *g = GraphContext_GetGraph (gc) ;
-	Graph_AcquireWriteLock(g);
+	GraphContext_AcquireWriteLock (gc) ;
 
 	size_t city_count = 2;
 	size_t person_count = 2;
@@ -132,7 +132,7 @@ static void _build_graph() {
 	Graph_CreateEdge(g, 3, 2, war_relation_id, &e);
 
 	Graph_ApplyAllPending(g, true);
-	Graph_ReleaseLock(g);
+	GraphContext_ReleaseLock (gc) ;
 }
 
 static void _bind_matrices() {

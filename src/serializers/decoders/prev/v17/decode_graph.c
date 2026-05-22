@@ -64,7 +64,7 @@ static GraphContext *_GetOrCreateGraphContext
 
 		// while loading the graph
 		// minimize matrix realloc and synchronization calls
-		Graph_AcquireWriteLock (g) ;
+		GraphContext_AcquireWriteLock (gc) ;
 		Graph_SetMatrixPolicy (g, SYNC_POLICY_RESIZE) ;
 	}
 
@@ -330,7 +330,7 @@ GraphContext *RdbLoadGraphContext_v17
 		_ComputeTransposeMatrices(g);
 
 		// release graph write lock
-		Graph_ReleaseLock (g) ;
+		GraphContext_ReleaseLock (gc) ;
 
 		// flush graph matrices
 		Graph_ApplyAllPending(g, true);
@@ -369,7 +369,7 @@ GraphContext *RdbLoadGraphContext_v17
 					Indexer_PopulateIndex(gc, s, idx);
 				} else {
 					// populate index
-					Index_Populate(idx, g);
+					Index_Populate(idx, gc);
 					Index_Enable(idx);
 					Schema_ActivateIndex(s);
 				}
@@ -388,7 +388,7 @@ GraphContext *RdbLoadGraphContext_v17
 					Indexer_PopulateIndex(gc, s, idx);
 				} else {
 					// populate index
-					Index_Populate(idx, g);
+					Index_Populate(idx, gc);
 					Index_Enable(idx);
 					Schema_ActivateIndex(s);
 				}

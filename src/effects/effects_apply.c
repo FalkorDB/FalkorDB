@@ -376,7 +376,11 @@ static void ApplyAddSchema
 	fread_assert(schema_name, l, stream);
 
 	// create schema
-	GraphHub_AddSchema(gc, schema_name, t, false);
+	// GraphHub_AddSchema (gc, schema_name, t, false) ;
+	bool created = false ;
+	Schema *s = GraphContext_FindOrAddSchema (gc, schema_name, t, &created) ;
+	ASSERT (s       != NULL) ;
+	ASSERT (created == true) ;
 }
 
 static void ApplyAddAttribute
@@ -679,21 +683,14 @@ void Effects_Apply
 	ASSERT (effects_buff != NULL) ;  // buffer can't be NULL
 
 	// read buffer in a stream fashion
-	FILE *stream = fmemopen((void*)effects_buff, l, "r");
+	FILE *stream = fmemopen ((void*)effects_buff, l, "r") ;
 
 	// validate effects version
 	uint8_t version ;
-	if (ValidateVersion(stream, &version) == false) {
+	if (ValidateVersion (stream, &version) == false) {
 		// replica/primary out of sync
 		exit (1) ;
 	}
-
-	// lock graph for writing
-	Graph *g = GraphContext_GetGraph (gc) ;
-	Graph_AcquireWriteLock (g) ;
-
-	// update graph sync policy
-	MATRIX_POLICY policy = Graph_SetMatrixPolicy (g, SYNC_POLICY_RESIZE) ;
 
 	// as long as there's data in stream
 	while (ftell (stream) < l) {
@@ -753,12 +750,6 @@ void Effects_Apply
 				break ;
 		}
 	}
-
-	// restore graph sync policy
-	Graph_SetMatrixPolicy (g, policy) ;
-
-	// release write lock
-	Graph_ReleaseLock (g) ;
 
 	// close stream
 	fclose (stream) ;

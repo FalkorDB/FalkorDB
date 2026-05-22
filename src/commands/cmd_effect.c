@@ -16,33 +16,46 @@ int Graph_Effect
 	int argc                   // number of arguments
 ) {
 	// GRAPH.EFFECT <key> <effects>
-	if(argc != 3) {
-		return RedisModule_WrongArity(ctx);
+	if (argc != 3) {
+		return RedisModule_WrongArity (ctx) ;
 	}
 
 	// get graph context
-	GraphContext *gc = GraphContext_Retrieve(ctx, argv[1], false, true);
-	ASSERT(gc != NULL);
+	GraphContext *gc = GraphContext_Retrieve (ctx, argv[1], false, true) ;
+	ASSERT (gc != NULL) ;
+
+	// lock graph for writing
+	GraphContext_AcquireWriteLock (gc) ;
+
+	// update graph sync policy
+	Graph *g = GraphContext_GetGraph (gc) ;
+	MATRIX_POLICY policy = Graph_SetMatrixPolicy (g, SYNC_POLICY_RESIZE) ;
 
 	//--------------------------------------------------------------------------
 	// process effects
 	//--------------------------------------------------------------------------
 
-	size_t l = 0;  // effects buffer length
-	const char *effects_buff = RedisModule_StringPtrLen(argv[2], &l);
+	size_t l = 0 ;  // effects buffer length
+	const char *effects_buff = RedisModule_StringPtrLen (argv[2], &l) ;
 
 	// apply effects
-	Effects_Apply(gc, effects_buff, l);
+	Effects_Apply (gc, effects_buff, l) ;
+
+	// restore graph sync policy
+	Graph_SetMatrixPolicy (g, policy) ;
+
+	// release write lock
+	GraphContext_ReleaseLock (gc) ;
 
 	// release GraphContext
-	GraphContext_DecreaseRefCount(gc);
+	GraphContext_DecreaseRefCount (gc) ;
 
 	// replicate effect
-	RedisModule_ReplicateVerbatim(ctx);
+	RedisModule_ReplicateVerbatim (ctx) ;
 
 	// reply back to caller
-	RedisModule_ReplyWithSimpleString(ctx, "OK");
+	RedisModule_ReplyWithSimpleString (ctx, "OK") ;
 
-	return REDISMODULE_OK;
+	return REDISMODULE_OK ;
 }
 

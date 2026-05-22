@@ -422,10 +422,16 @@ Schema *GraphHub_AddSchema
 	ASSERT (gc    != NULL) ;
 	ASSERT (label != NULL) ;
 
-	Schema *s = GraphContext_AddSchema (gc, label, t) ;
+	bool created = false ;
+	Schema *s = GraphContext_FindOrAddSchema (gc, label, t, &created) ;
 	ASSERT (s != NULL) ;
 
-	if(log == true) {
+	// return is schema already exists
+	if (!created) {
+		return s ;
+	}
+
+	if (log == true) {
 		UndoLog undo_log = QueryCtx_GetUndoLog () ;
 		UndoLog_AddSchema (undo_log, s->id, s->type) ;
 

@@ -330,7 +330,7 @@ static void _UndoLog_Rollback_Add_Attribute
 	for (int i = seq_start; i > seq_end; --i) {
 		UndoOp *op = UNDOLOG_GET_ITEM (ctx->undo_log, i) ;
 		UndoAddAttributeOp attribute_op = op->attribute_op ;
-		GraphContext_DropAttributes (ctx->gc) ;
+		GraphContext_RemoveAttribute (ctx->gc, attribute_op.attribute_id) ;
 	}
 }
 

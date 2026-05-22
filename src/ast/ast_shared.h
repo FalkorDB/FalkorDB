@@ -81,7 +81,7 @@ typedef struct {
 	int src_idx;              // source node record index
 	int dest_idx;             // destination node record index
 	int edge_idx;             // edge record index
-	int reltypeId;            // edge relationship type id
+	RelationID reltypeId;     // edge relationship type id
 	const char *src;          // source node alias
 	const char *dest;         // destination node alias
 	const char *alias;        // edge alias
@@ -92,7 +92,7 @@ typedef struct {
 // context describing a node in a CREATE or MERGE clause
 typedef struct {
 	int node_idx;             // node record index
-	int *labelsId;            // array of node labels id
+	LabelID *labelsId;        // array of node labels id
 	const char *alias;        // node alias
 	const char **labels;      // node labels
 	PropertyMap *properties;  // node properties set

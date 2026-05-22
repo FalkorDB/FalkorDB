@@ -431,9 +431,14 @@ void EffectsBuffer_AddCreateNodeEffect
 	// attributes (id,value) pair
 	//--------------------------------------------------------------------------
 	
-	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics();
-	stats->nodes_created++;
-	stats->properties_set += AttributeSet_Count(*n->attributes);
+	//--------------------------------------------------------------------------
+	// update queyr stats
+	//--------------------------------------------------------------------------
+
+	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics () ;
+	stats->nodes_created++ ;
+	stats->labels_added   += label_count ;
+	stats->properties_set += AttributeSet_Count (*n->attributes) ;
 
 	EffectType t = EFFECT_CREATE_NODE;
 	EffectsBuffer_WriteBytes(&t, sizeof(t), buff);
@@ -531,7 +536,9 @@ void EffectsBuffer_AddDeleteNodeEffect
 	//    node ID
 	//--------------------------------------------------------------------------
 
-	QueryCtx_GetResultSetStatistics()->nodes_deleted++;
+	// update query statistics
+	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics () ;
+	stats->nodes_deleted++ ;
 
 	#pragma pack(push, 1)
 	struct {
@@ -564,7 +571,8 @@ void EffectsBuffer_AddDeleteEdgeEffect
 	//    dest ID
 	//--------------------------------------------------------------------------
 
-	QueryCtx_GetResultSetStatistics()->relationships_deleted++;
+	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics () ;
+	stats->relationships_deleted++ ;
 
 	// encoded edge struct
 	#pragma pack(push, 1)
@@ -691,8 +699,8 @@ void EffectsBuffer_AddEntityRemoveAttributeEffect
 		? AttributeSet_Count(*entity->attributes)
 		: 1;
 
-	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics();
-	stats->properties_removed += n;
+	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics () ;
+	stats->properties_removed += n ;
 
 	SIValue v = SI_NullVal();
 	if(entity_type == GETYPE_NODE) {
@@ -712,7 +720,8 @@ void EffectsBuffer_AddEntityAddAttributeEffect
 	GraphEntityType entity_type  // entity type
 ) {
 	// attribute was added
-	QueryCtx_GetResultSetStatistics()->properties_set++;
+	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics () ;
+	stats->properties_set++ ;
 
 	if(entity_type == GETYPE_NODE) {
 		EffectsBuffer_AddNodeUpdateEffect(buff, (Node*)entity, attr_id, value);
@@ -730,9 +739,9 @@ void EffectsBuffer_AddEntityUpdateAttributeEffect
 	SIValue value,               // value
 	GraphEntityType entity_type  // entity type
 ) {
-	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics();
-	stats->properties_set++; // attribute was set
-	stats->properties_removed++; // old attribute was deleted
+	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics () ;
+	stats->properties_set++ ;     // attribute was set
+	stats->properties_removed++ ; // old attribute was deleted
 
 	if(entity_type == GETYPE_NODE) {
 		EffectsBuffer_AddNodeUpdateEffect(buff, (Node*)entity, attr_id, value);
@@ -747,21 +756,28 @@ void EffectsBuffer_AddEntityUpdateAttributeEffect
 // effect format:
 //   [EffectType]         effect type tag
 //   [GxB serialized]     GxB_Vector_serialize blob of the node vector
-//
-// TODO: move result-set stats update out of here
 void EffectsBuffer_AddLabelsEffect
 (
 	EffectsBuffer *buff,  // effect buffer to write into
 	GrB_Vector nodes      // nodes that received the label
 ) {
+	//--------------------------------------------------------------------------
+	// update query statistics
+	//--------------------------------------------------------------------------
+
 	GrB_Index nvals ;
 	GrB_OK (GrB_Vector_nvals (&nvals, nodes)) ;
-	QueryCtx_GetResultSetStatistics ()->labels_added += nvals ;
+
+	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics () ;
+	stats->labels_added += nvals ;
 
 	EffectType t = EFFECT_SET_LABELS;
 	EffectsBuffer_WriteBytes (&t, sizeof (t), buff) ;
 
+	//--------------------------------------------------------------------------
 	// encode vector
+	//--------------------------------------------------------------------------
+
 	void *blob ;
 	GrB_Index blob_size ;
 	GrB_OK (GxB_Vector_serialize (&blob, &blob_size, nodes, NULL)) ;
@@ -780,16 +796,19 @@ void EffectsBuffer_AddLabelsEffect
 // effect format:
 //   [EffectType]         effect type tag
 //   [GxB serialized]     GxB_Vector_serialize blob of the node vector
-//
-// TODO: move result-set stats update out of here
 void EffectsBuffer_AddRemoveLabelsEffect
 (
 	EffectsBuffer *buff,  // effect buffer to write into
 	GrB_Vector     nodes  // nodes that lost the label
 ) {
+	//--------------------------------------------------------------------------
+	// update query statistics
+	//--------------------------------------------------------------------------
+
 	GrB_Index nvals ;
 	GrB_OK (GrB_Vector_nvals (&nvals, nodes)) ;
-	QueryCtx_GetResultSetStatistics ()->labels_removed += nvals ;
+	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics () ;
+	stats->labels_removed += nvals ;
 
 	EffectType t = EFFECT_REMOVE_LABELS ;
 	EffectsBuffer_WriteBytes (&t, sizeof (t), buff) ;

@@ -50,12 +50,58 @@ GraphContext *GraphContext_Retrieve
 	bool shouldCreate
 );
 
-// decrease graph context reference count
-// graph context will be free once reference count reaches 0
-void GraphContext_Release
+//------------------------------------------------------------------------------
+// Synchronization functions
+//------------------------------------------------------------------------------
+
+// acquires a READ lock on the graph context
+void GraphContext_AcquireReadLock
 (
-	GraphContext *gc // graph context to release
+	GraphContext *gc  // graph context
 );
+
+// acquires a WRITE lock on the graph context
+void GraphContext_AcquireWriteLock 
+(
+	GraphContext *gc  // graph context
+);
+
+// acquire the graph context write lock with a timeout
+// attempts to acquire the write lock on the given graphcontext
+// if the lock is not acquired immediately the function will block until either
+// the lock becomes available or the timeout elapses
+//
+// returns:
+// - 0 on success (lock acquired)
+// - ETIMEDOUT if the timeout expired before acquiring the lock
+// - EBUSY if called with timeout_ms == 0 and the lock could not be acquired
+// - other nonzero error codes may be returned for unexpected failures
+int GraphContext_TimeAcquireWriteLock
+(
+	GraphContext *gc,  // graph to lock
+	int timeout_ms     // maximum time in milliseconds to wait for the lock:
+                       // - timeout_ms < 0 : block until the lock is acquired
+                       // - timeout_ms = 0 : non-blocking attempt (try-lock)
+                       // - timeout_ms > 0 : wait up to timeout_ms milliseconds
+);
+
+void GraphContext_ReleaseReadLock
+(
+	GraphContext *gc
+);
+
+// releases the lock currently held on the graph context
+// must be called exactly once for every successful acquire call
+void GraphContext_ReleaseLock
+(
+	GraphContext *gc
+);
+
+// returns rather or not graph is locked for writing
+bool GraphContext_IsWriteLocked
+(
+	const GraphContext *gc
+) ;
 
 // mark graph key as "dirty" for Redis to pick up on
 void GraphContext_MarkWriter
@@ -135,12 +181,6 @@ XXH32_hash_t GraphContext_GetHash
 	const GraphContext *gc
 );
 
-// commit graph's pending schema changes
-void GraphContext_CommitPendings
-(
-	GraphContext *gc  // graph context
-);
-
 void GraphContext_BumpReadVersion
 (
 	GraphContext *gc
@@ -206,14 +246,16 @@ Schema *GraphContext_GetSchema
 	SchemaType t
 );
 
+// tries to located schema, in case schema doesn't exists
 // registers a new schema and its backing matrix for the given type:
 // allocates a label matrix (node) or relation-type matrix (edge) in the graph
 // then appends the schema to the corresponding schema array
-Schema *GraphContext_AddSchema
+Schema *GraphContext_FindOrAddSchema
 (
 	GraphContext *gc,  // graph context
 	const char *name,  // schema name
-	SchemaType t       // SCHEMA_NODE or SCHEMA_EDGE
+	SchemaType t,      // SCHEMA_NODE or SCHEMA_EDGE
+	bool *created      // true if schema was created
 );
 
 // removes the schema at index 'id', frees it, and removes its backing
@@ -251,7 +293,7 @@ AttributeID GraphContext_FindOrAddAttribute
 (
 	GraphContext *gc,
 	const char *attribute,
-	bool* created
+	bool *created
 );
 
 // returns an attribute string given an ID
@@ -269,10 +311,11 @@ AttributeID GraphContext_GetAttributeID
 	const char *str
 );
 
-// drops pending attributes
-void GraphContext_DropAttributes
+// removes an attribute from the graph
+void GraphContext_RemoveAttribute
 (
-	GraphContext *gc
+	GraphContext *gc,
+	AttributeID id
 );
 
 //------------------------------------------------------------------------------

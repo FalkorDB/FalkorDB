@@ -130,12 +130,7 @@ PropertyMap *PropertyMap_New
 			// new entry
 			arr_append (m->keys, attr) ;
 			arr_append (m->values, exp) ;
-			//arr_append (m->attr_ids, GraphContext_GetAttributeID (gc, attr)) ;
-
-			// NOTE: might introduce a change to the graph schema!
-			arr_append (m->attr_ids,
-					GraphHub_FindOrAddAttribute (gc, attr, true)) ;
-
+			arr_append (m->attr_ids, GraphContext_GetAttributeID (gc, attr)) ;
 		} else {
 			// replace duplicate
 			AR_EXP_Free (m->values[insert_idx]) ;

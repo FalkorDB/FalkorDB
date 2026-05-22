@@ -502,7 +502,7 @@ static void _ForkPrepare() {
 		GraphContext *gc = graphs [i] ;
 		Graph *g = GraphContext_GetGraph (gc) ;
 
-		Graph_AcquireReadLock (g) ;  // release in _AfterForkParent
+		GraphContext_AcquireReadLock (gc) ;  // release in _AfterForkParent
 		locked [i] = true ;
 
 		// set matrix synchronization policy to default
@@ -570,10 +570,8 @@ static void _AfterForkParent(void) {
 	int i = 0 ;
 	while ((gc = GraphIterator_Next (&it)) != NULL) {
 		// release read lock
-		Graph *g = GraphContext_GetGraph (gc) ;
-
 		if (locked [i++]) {
-			Graph_ReleaseLock (g) ;
+			GraphContext_ReleaseLock (gc) ;
 		}
 
 		// decrease graph context ref count
@@ -623,7 +621,7 @@ static void _AfterForkChild() {
 
 		bool synced = Graph_Synced (g) ;
 
-		ASSERT (!Graph_IsWriteLocked (g)) ;
+		ASSERT (!GraphContext_IsWriteLocked (gc)) ;
 
 		// abort BGSAVE if graph isn't synced
 		// it's the parent process responsibility (_ForkPrepare) to synchronize

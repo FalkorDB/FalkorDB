@@ -338,11 +338,15 @@ ResultSet *QueryCtx_GetResultSet(void) {
 }
 
 // retrive the resultset statistics
-ResultSetStatistics *QueryCtx_GetResultSetStatistics(void) {
-	ResultSetStatistics  *stats       =  NULL;
-	ResultSet            *result_set  =  QueryCtx_GetResultSet();
-	if(result_set) stats = &result_set->stats;
-	return stats;
+ResultSetStatistics *QueryCtx_GetResultSetStatistics (void) {
+	ResultSetStatistics  *stats      = NULL ;
+	ResultSet            *result_set = QueryCtx_GetResultSet () ;
+
+	if (result_set) {
+		stats = &result_set->stats ;
+	}
+
+	return stats ;
 }
 
 // retrive the query execution type
@@ -417,13 +421,14 @@ void QueryCtx_AcquireReadLock (void) {
 
 	// acquire read lock
 	// TODO: change to TryAcquireReadLock with the appropriate timeout
-	Graph_AcquireReadLock (QueryCtx_GetGraph ()) ;
+	GraphContext_AcquireReadLock (QueryCtx_GetGraphCtx ()) ;
 	ctx->internal_exec_ctx.read_locked = true ;
 }
 
 // acquire graph's write lock
 bool QueryCtx_AcquireWriteLock (void) {
 	QueryCtx *ctx = _QueryCtx_GetCreateCtx () ;
+	GraphContext *gc = ctx->gc ;
 
 	// return if we've already acquired write lock
 	if (ctx->internal_exec_ctx.write_locked == true) {
@@ -448,7 +453,8 @@ bool QueryCtx_AcquireWriteLock (void) {
 	// must release before acquiring GIL to avoid deadlock:
 	//   worker: READ lock → GIL  vs  main thread: GIL → WRITE lock
 	if (ctx->internal_exec_ctx.read_locked == true) {
-		Graph_ReleaseLock (GraphContext_GetGraph (ctx->gc)) ;
+		//GraphContext_ReleaseLock (gc) ;
+		GraphContext_ReleaseReadLock (gc) ;
 		ctx->internal_exec_ctx.read_locked = false ;
 	}
 
@@ -456,7 +462,6 @@ bool QueryCtx_AcquireWriteLock (void) {
 	// lock GIL
 	//--------------------------------------------------------------------------
 
-	GraphContext   *gc         = ctx->gc ;
 	RedisModuleCtx *redis_ctx  = ctx->global_exec_ctx.redis_ctx ;
 	const char     *graph_name = GraphContext_GetName (gc) ;
 
@@ -492,7 +497,7 @@ bool QueryCtx_AcquireWriteLock (void) {
 
 	// acquire graph write lock
 	// TODO: change to TryAcquireWriteLock with the appropriate timeout
-	Graph_AcquireWriteLock (GraphContext_GetGraph (gc)) ;
+	GraphContext_AcquireWriteLock (gc) ;
 	ctx->internal_exec_ctx.write_locked = true ;
 	ASSERT (ctx->internal_exec_ctx.read_locked == false) ;
 
@@ -530,11 +535,8 @@ void QueryCtx_ReleaseLock (void) {
 
 	// release WRITE lock
 	if (ctx->internal_exec_ctx.write_locked == true) {
-		// commit pendding schema changes
-		GraphContext_CommitPendings (ctx->gc) ;
-
 		// release graph lock
-		Graph_ReleaseLock (QueryCtx_GetGraph ()) ;
+		GraphContext_ReleaseLock (QueryCtx_GetGraphCtx ()) ;
 
 		// close Key
 		RedisModule_CloseKey (ctx->internal_exec_ctx.key) ;
@@ -546,7 +548,7 @@ void QueryCtx_ReleaseLock (void) {
 	// release READ lock
 	else {
 		// release graph lock
-		Graph_ReleaseLock (QueryCtx_GetGraph ()) ;
+		GraphContext_ReleaseLock (QueryCtx_GetGraphCtx ()) ;
 	}
 
 	ctx->internal_exec_ctx.read_locked  = false ;
@@ -588,13 +590,18 @@ uint64_t QueryCtx_GetReceivedTS (void) {
 // free the allocations within the QueryCtx and reset it for the next query
 void QueryCtx_Free (void) {
 	QueryCtx *ctx = _QueryCtx_GetCtx () ;
-	ASSERT (ctx != NULL) ;
 
-	if (ctx->undo_log) {
+	ASSERT (ctx != NULL) ;
+	ASSERT (ctx->internal_exec_ctx.read_locked  == false) ;
+	ASSERT (ctx->internal_exec_ctx.write_locked == false) ;
+
+	if (ctx->undo_log != NULL) {
 		UndoLog_Free (&ctx->undo_log) ;
 	}
 
-	EffectsBuffer_Free (ctx->effects_buffer) ;
+	if (ctx->effects_buffer != NULL) {
+		EffectsBuffer_Free (ctx->effects_buffer) ;
+	}
 
 	if (ctx->query_data.params != NULL) {
 		HashTableRelease (ctx->query_data.params) ;
