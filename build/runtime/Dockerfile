@@ -33,20 +33,28 @@ ENV FALKORDB_HOME=/var/lib/falkordb \
 
 RUN mkdir -p ${FALKORDB_DATA_PATH} && ln -s ${FALKORDB_DATA_PATH} /data
 
-# Runtime-image apt install. Two distinct phases:
+# Runtime-image apt install. GraphBLAS JIT shells out to `cc` and #include
+# <omp.h> at runtime, so we need clang-22 + libomp-22-dev present in the
+# final image. The ordering below is load-bearing:
 #
-# Phase 1 — CVE trim of the redis base image (purge python3.13, force-remove
-# ncurses/perl/login/passwd, autoremove orphaned auto deps).
+#   1. CVE trim of python3.13 MUST happen BEFORE the LLVM install. Otherwise
+#      `apt-get purge -y python3.13 ...` cascades through reverse-deps
+#      (llvm-22-tools → python3, etc.) and silently removes the just-installed
+#      libomp-22-dev along with clang-tools-22 / liblldb-22 / libpython3.13.
+#      Verified: build log on 618a276 (LLVM-first) showed libomp-22-dev
+#      installed at 35.84 and then purged at 37.27 by the python cascade.
 #
-# Phase 2 — install the LLVM 22 toolchain LAST, after all autoremoves, so the
-# JIT-dep packages can't be purged as collateral. Earlier attempts placed the
-# LLVM install before the cleanup and relied on `apt-mark manual` to protect
-# libomp-22-dev; that fails because `apt-get autoremove --purge` after the
-# dpkg force-removes of essential packages breaks the dep graph and removes
-# manually-marked packages anyway (the debian/apt --purge variant ignores the
-# manual flag once a package has unmet deps). Installing LLVM after the last
-# autoremove sidesteps the issue: there is no subsequent cleanup pass to nuke
-# omp.h.
+#   2. llvm.sh MUST run BEFORE the dpkg force-removes of essential packages
+#      (ncurses-base, perl-base, login, passwd). Once `passwd` is gone the
+#      `_apt` user disappears and apt can no longer read its keyring files —
+#      llvm.sh's repo would then come back as unsigned. Verified locally.
+#
+#   3. No `apt-get autoremove` anywhere. Earlier attempts to use
+#      `apt-mark manual` to protect libomp-22-dev failed: apt's autoremove
+#      --purge ignores the manual flag once the dpkg force-removes have
+#      broken the dep graph. We just don't autoremove. Image gains ~100MB of
+#      leftover LLVM tooling (llvm-22-tools etc.) — acceptable for working
+#      JIT.
 #
 # JIT lifecycle: on first matrix-op GraphBLAS generates C source under
 # ~/.SuiteSparse/GrBN.M.K/c/ and shells out to `cc` to compile per-kernel
@@ -63,23 +71,20 @@ RUN mkdir -p ${FALKORDB_DATA_PATH} && ln -s ${FALKORDB_DATA_PATH} /data
 # removes a class of subtle codegen / libomp ABI risks.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates bash && \
-    # ---- Phase 1: CVE trim of the redis base ----
+    # ---- CVE trim: purge python3.13 FIRST, before LLVM is installed ----
     apt-get upgrade -y && \
     (apt-get purge -y python3.13 python3.13-minimal libpython3.13-minimal libpython3.13-stdlib || true) && \
-    apt-get autoremove -y && \
-    (dpkg --force-remove-essential --purge ncurses-base ncurses-bin || true) && \
-    (dpkg --force-remove-essential --purge perl-base || true) && \
-    (dpkg --force-remove-protected --force-remove-essential --purge login || true) && \
-    (dpkg --purge passwd || true) && \
-    apt-get autoremove -y --purge 2>/dev/null || true && \
-    # ---- Phase 2: install LLVM toolchain LAST ----
+    # ---- LLVM toolchain: install after the python cascade ----
     apt-get install -y --no-install-recommends wget gnupg lsb-release && \
     wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && ./llvm.sh 22 && \
     apt-get install -y --no-install-recommends clang-22 libomp5 libomp-22-dev && \
     ln -sf /usr/bin/clang-22 /usr/bin/cc && \
     apt-get purge -y wget gnupg lsb-release && \
-    # No autoremove or autoremove --purge after this — those would reach the
-    # JIT deps via the unmet-dep edge case explained above.
+    # ---- Essential dpkg force-removes: LAST (these break apt afterwards) ----
+    (dpkg --force-remove-essential --purge ncurses-base ncurses-bin || true) && \
+    (dpkg --force-remove-essential --purge perl-base || true) && \
+    (dpkg --force-remove-protected --force-remove-essential --purge login || true) && \
+    (dpkg --purge passwd || true) && \
     apt-get clean && rm -rf /var/lib/apt/lists/* /llvm.sh
 
 WORKDIR ${FALKORDB_HOME}
