@@ -55,6 +55,19 @@ def start_redis(release=None, moduleEnvs=[]):
         except Exception:
             pass
 
+def falkordb():
+    """Construct a FalkorDB client honoring FALKORDB_HOST / FALKORDB_PORT.
+
+    Bare `FalkorDB()` defaults to localhost:6379, which silently bypasses
+    the docker-services CI mode (where redis runs as a sibling container).
+    Use this helper instead so EXISTING_ENV tests connect to the right place.
+    """
+    return FalkorDB(
+        host=os.environ.get("FALKORDB_HOST", "localhost"),
+        port=int(os.environ.get("FALKORDB_PORT", os.environ.get("PORT", "6379"))),
+    )
+
+
 def shutdown_redis():
     if shutdown:
         client.connection.shutdown(nosave=True)

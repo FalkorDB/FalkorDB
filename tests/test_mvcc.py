@@ -21,7 +21,7 @@ def setup_function(function):
 
 
 def run_write_attribute(id):
-    db = FalkorDB()
+    db = common.falkordb()
     g = db.select_graph("test")
     if id % 2 == 0:
         res = g.query("MATCH (n:Node) WHERE n.id = $id SET n.id = 0", params={"id": id})
@@ -32,14 +32,14 @@ def run_write_attribute(id):
 
 
 def run_read_attribute(id):
-    db = FalkorDB()
+    db = common.falkordb()
     g = db.select_graph("test")
     res = g.query("MATCH (n) RETURN n.id")
     version = int(res._raw_stats[2][15:])
     return (id, res.result_set, version)
 
 def run_read_indexed_attribute(id):
-    db = FalkorDB()
+    db = common.falkordb()
     g = db.select_graph("test")
     res = g.query("MATCH (n:Node) WHERE n.id >= 0 RETURN n.id")
     version = int(res._raw_stats[2][15:])
@@ -47,7 +47,7 @@ def run_read_indexed_attribute(id):
 
 
 def run_write_label(id):
-    db = FalkorDB()
+    db = common.falkordb()
     g = db.select_graph("test")
     if id % 2 == 0:
         res = g.query("MATCH (n:Node) WHERE n.id = $id SET n:L", params={"id": id})
@@ -60,7 +60,7 @@ def run_write_label(id):
 
 
 def run_read_label(id):
-    db = FalkorDB()
+    db = common.falkordb()
     g = db.select_graph("test")
     res = g.query("MATCH (n) RETURN labels(n)")
     version = int(res._raw_stats[-1][15:])
@@ -68,7 +68,7 @@ def run_read_label(id):
 
 
 def run_write_relationship(id):
-    db = FalkorDB()
+    db = common.falkordb()
     g = db.select_graph("test")
     if id % 2 == 0:
         res = g.query(
@@ -87,7 +87,7 @@ def run_write_relationship(id):
 
 
 def run_read_relationship(id):
-    db = FalkorDB()
+    db = common.falkordb()
     g = db.select_graph("test")
     res = g.query("MATCH (n)-[r]->(m) RETURN r.id")
     version = int(res._raw_stats[2][15:])

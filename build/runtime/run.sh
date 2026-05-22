@@ -6,13 +6,21 @@ if [ "${BROWSER:-1}" -eq "1" ]; then
     fi
 fi
 
-# Create /var/lib/falkordb/data directory if it does not exist.
+# Create /var/lib/falkordb/{data,import} directories if they do not exist.
 # -p so the call is idempotent and creates parents if a bind-mount points
 # at a deeper path that hasn't been pre-staged.
 if [ ! -d "${FALKORDB_DATA_PATH}" ]; then
     mkdir -p "${FALKORDB_DATA_PATH}"
 fi
+if [ ! -d "${FALKORDB_IMPORT_PATH}" ]; then
+    mkdir -p "${FALKORDB_IMPORT_PATH}"
+fi
 
+# IMPORT_FOLDER is prepended to FALKORDB_ARGS so the image's lowercase path
+# (/var/lib/falkordb/import) overrides the module's default capital-F path
+# (/var/lib/FalkorDB/import/, used outside Docker). A user-supplied
+# FALKORDB_ARGS containing IMPORT_FOLDER will still take precedence
+# because moduleArgs are processed left-to-right with last-occurrence-wins.
 if [ "${TLS:-0}" -eq "1" ]; then
     # shellcheck disable=SC2086
     ${FALKORDB_BIN_PATH}/gen-certs.sh
@@ -24,10 +32,12 @@ if [ "${TLS:-0}" -eq "1" ]; then
         --tls-ca-cert-file ${FALKORDB_TLS_PATH}/ca.crt \
         --tls-auth-clients no \
         --dir "${FALKORDB_DATA_PATH}" \
-        --loadmodule "${FALKORDB_BIN_PATH}/falkordb.so" ${FALKORDB_ARGS}
+        --loadmodule "${FALKORDB_BIN_PATH}/falkordb.so" \
+            IMPORT_FOLDER "${FALKORDB_IMPORT_PATH}" ${FALKORDB_ARGS}
 else
     # shellcheck disable=SC2086
     exec redis-server ${REDIS_ARGS} --protected-mode no \
         --dir "${FALKORDB_DATA_PATH}" \
-        --loadmodule "${FALKORDB_BIN_PATH}/falkordb.so" ${FALKORDB_ARGS}
+        --loadmodule "${FALKORDB_BIN_PATH}/falkordb.so" \
+            IMPORT_FOLDER "${FALKORDB_IMPORT_PATH}" ${FALKORDB_ARGS}
 fi

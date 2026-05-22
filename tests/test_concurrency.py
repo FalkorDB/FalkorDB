@@ -20,7 +20,7 @@ def setup_function(function):
         common.g.delete()
 
 def run_write(id):
-    db = FalkorDB()
+    db = common.falkordb()
     g = db.select_graph("test")
     res = g.query("CREATE (n:Node {id: $id})", params={"id": id})
     version = int(res._raw_stats[-1][15:])
