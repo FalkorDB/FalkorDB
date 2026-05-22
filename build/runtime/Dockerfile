@@ -33,39 +33,37 @@ ENV FALKORDB_HOME=/var/lib/falkordb \
 
 RUN mkdir -p ${FALKORDB_DATA_PATH} && ln -s ${FALKORDB_DATA_PATH} /data
 
-# Runtime-image apt install. Beyond the obvious CVE trim, we need GraphBLAS
-# JIT runtime dependencies: on first matrix-op call GraphBLAS generates C
-# source under ~/.SuiteSparse/GrBN.M.K/c/ and shells out to `cc` to compile
-# it into a per-kernel .so. Without these the JIT call returns GxB_JIT_ERROR
-# and matrix.rs's `assert_eq!(info, GrB_SUCCESS)` panics the module on every
-# matrix-op (MATCH, SET, DELETE, ...).
+# Runtime-image apt install. Two distinct phases:
 #
-# We install the LLVM 22 toolchain (clang-22 + libomp-22-dev) and point
+# Phase 1 — CVE trim of the redis base image (purge python3.13, force-remove
+# ncurses/perl/login/passwd, autoremove orphaned auto deps).
+#
+# Phase 2 — install the LLVM 22 toolchain LAST, after all autoremoves, so the
+# JIT-dep packages can't be purged as collateral. Earlier attempts placed the
+# LLVM install before the cleanup and relied on `apt-mark manual` to protect
+# libomp-22-dev; that fails because `apt-get autoremove --purge` after the
+# dpkg force-removes of essential packages breaks the dep graph and removes
+# manually-marked packages anyway (the debian/apt --purge variant ignores the
+# manual flag once a package has unmet deps). Installing LLVM after the last
+# autoremove sidesteps the issue: there is no subsequent cleanup pass to nuke
+# omp.h.
+#
+# JIT lifecycle: on first matrix-op GraphBLAS generates C source under
+# ~/.SuiteSparse/GrBN.M.K/c/ and shells out to `cc` to compile per-kernel
+# .so files. Without `cc` + omp.h the JIT call returns GxB_JIT_ERROR and
+# matrix.rs's `assert_eq!(info, GrB_SUCCESS)` panics the module on every
+# matrix op (MATCH, SET, DELETE, ...).
+#
+# We install clang-22 + libomp-22-dev (header) + libomp5 (runtime) and point
 # `/usr/bin/cc` at clang-22 so the JIT-compiled kernels are built by the
-# same compiler that produced our pre-baked libgraphblas.a / liblagraph.a
-# / libredisearch-static.a / libfalkordb.so. Heterogeneous toolchains
+# same compiler that produced our pre-baked libgraphblas.a / liblagraph.a /
+# libredisearch-static.a / libfalkordb.so. Heterogeneous toolchains
 # (clang-baked statics + gcc-JIT kernels) are technically workable per the
 # asan Dockerfile in commit 4215713, but a consistent clang-22 stack
 # removes a class of subtle codegen / libomp ABI risks.
-#
-# - `clang-22`: provides /usr/bin/clang-22; symlinked to /usr/bin/cc below.
-# - `libomp5`: LLVM OpenMP runtime (libomp.so.5). Replaces the libomp.so.5
-#   we used to COPY from the builder.
-# - `libomp-22-dev`: omp.h header for the JIT-compiled kernels.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        ca-certificates bash wget gnupg lsb-release && \
-    wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && ./llvm.sh 22 && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
-        clang-22 libomp5 libomp-22-dev && \
-    # apt-get install does not flip already-installed packages to "manual";
-    # llvm.sh installed clang-22 (and pulled libomp-22-dev as an auto dep), so
-    # without this mark the autoremove on line below purges libomp-22-dev along
-    # with the python3.13 cleanup, leaving the JIT without omp.h.
-    apt-mark manual clang-22 libomp5 libomp-22-dev && \
-    ln -sf /usr/bin/clang-22 /usr/bin/cc && \
-    apt-get purge -y wget gnupg lsb-release && \
+    apt-get install -y --no-install-recommends ca-certificates bash && \
+    # ---- Phase 1: CVE trim of the redis base ----
     apt-get upgrade -y && \
     (apt-get purge -y python3.13 python3.13-minimal libpython3.13-minimal libpython3.13-stdlib || true) && \
     apt-get autoremove -y && \
@@ -74,6 +72,14 @@ RUN apt-get update && \
     (dpkg --force-remove-protected --force-remove-essential --purge login || true) && \
     (dpkg --purge passwd || true) && \
     apt-get autoremove -y --purge 2>/dev/null || true && \
+    # ---- Phase 2: install LLVM toolchain LAST ----
+    apt-get install -y --no-install-recommends wget gnupg lsb-release && \
+    wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && ./llvm.sh 22 && \
+    apt-get install -y --no-install-recommends clang-22 libomp5 libomp-22-dev && \
+    ln -sf /usr/bin/clang-22 /usr/bin/cc && \
+    apt-get purge -y wget gnupg lsb-release && \
+    # No autoremove or autoremove --purge after this — those would reach the
+    # JIT deps via the unmet-dep edge case explained above.
     apt-get clean && rm -rf /var/lib/apt/lists/* /llvm.sh
 
 WORKDIR ${FALKORDB_HOME}
