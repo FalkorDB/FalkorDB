@@ -66,7 +66,7 @@ impl<T> Drop for Vector<T> {
     fn drop(&mut self) {
         unsafe {
             let info = GrB_Vector_free(addr_of_mut!(self.v));
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 }
@@ -93,7 +93,7 @@ impl<T> Vector<T> {
     pub fn clear(&mut self) {
         unsafe {
             let info = GrB_Vector_clear(self.v);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 }
@@ -122,14 +122,14 @@ impl Vector<bool> {
     ) {
         unsafe {
             let info = GrB_Vector_setElement_BOOL(self.v, value, i);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 
     pub fn wait(&mut self) {
         unsafe {
             let info = GrB_Vector_wait(self.v, GrB_WaitMode::GrB_MATERIALIZE as _);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 
@@ -155,7 +155,7 @@ impl Encode<19> for Vector<u64> {
             let mut blob_size: u64 = 0;
 
             let info = GxB_Vector_serialize(&raw mut blob, &raw mut blob_size, self.v, null_mut());
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS);
 
             let blob_slice = std::slice::from_raw_parts(blob.cast::<u8>(), blob_size as usize);
             w.write_buffer(blob_slice);
@@ -223,7 +223,7 @@ impl Encode<19> for Vector<bool> {
                 t_name.as_mut_ptr().cast(),
                 GxB_Option_Field::GrB_NAME as _,
             );
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS);
 
             let t_name_len = t_name
                 .iter()
@@ -253,7 +253,7 @@ impl Encode<19> for Vector<bool> {
                 handling,
                 null_mut(),
             );
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 }
@@ -303,7 +303,7 @@ impl Decode<19> for Vector<bool> {
                 handling,
                 null_mut(),
             );
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS);
 
             Ok(Self::from(v))
         }
@@ -334,7 +334,7 @@ impl Vector<u64> {
     ) {
         unsafe {
             let info = GrB_Vector_setElement_UINT64(self.v, value, i);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 
@@ -374,7 +374,7 @@ impl Size<bool> for Vector<bool> {
         unsafe {
             let mut size: u64 = 0;
             let info = GrB_Vector_size(&raw mut size, self.v);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS);
             size
         }
     }
@@ -386,7 +386,7 @@ impl Size<bool> for Vector<bool> {
     ) {
         unsafe {
             let info = GrB_Vector_resize(self.v, nrows);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 }
@@ -399,7 +399,7 @@ impl Set<bool> for Vector<bool> {
     ) {
         unsafe {
             let info = GrB_Vector_setElement_BOOL(self.v, value, i);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 }
@@ -411,7 +411,7 @@ impl Remove<bool> for Vector<bool> {
     ) {
         unsafe {
             let info = GrB_Vector_removeElement(self.v, i);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 }
@@ -426,7 +426,7 @@ impl<T> Drop for Iter<T> {
     fn drop(&mut self) {
         unsafe {
             let info = GxB_Iterator_free(addr_of_mut!(self.inner));
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 }
