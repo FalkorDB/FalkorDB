@@ -11,8 +11,6 @@ class testLabelUpdate():
         self.replica = self.env.getSlaveConnection()
         self.master_graph = Graph(self.master, GRAPH_ID)
         self.replica_graph = Graph(self.replica, GRAPH_ID)
-        #self.master_graph = self.db.select_graph(self.master, GRAPH_ID)
-        #self.replica_graph = self.db.select_graph(self.replica, GRAPH_ID)
 
         # enable effects replication
         self.db.config_set("EFFECTS_THRESHOLD", 0)
@@ -147,7 +145,7 @@ class testLabelUpdate():
         # Unique constraint on label C, property p.
         #self.master_graph.create_node_unique_constraint("X", "p")
         create_unique_node_constraint(self.master_graph, "X", "name", sync=True)
-        wait_on_constraint(self.replica_graph, "UNIQUE", "NODE", "X", "name")
+        wait_on_constraint(self.master_graph, "UNIQUE", "NODE", "X", "name")
         # wait for replica to activate constraint
         
         # Seed one node that already satisfies the constraint.
@@ -166,7 +164,6 @@ class testLabelUpdate():
         except Exception as e:
             self.env.assertIn("constraint", str(e).lower())
         
-        print("After 'try'")
         # Rollback must restore the graph to exactly one :X node.
         res = self.query_master_and_wait("MATCH (n:X) RETURN count(n)")
         self.env.assertEquals(res.result_set[0][0], 1)
