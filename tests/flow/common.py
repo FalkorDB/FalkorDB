@@ -42,18 +42,6 @@ _SPAWNED_CIDS = []
 _JOB_NETWORK = None
 _JOB_MOUNTS = None
 
-# Per-process "current master" / "current replica" tracking for spawn-mode
-# Env() rotation. When a test calls `self.env, self.db = Env(...)` more than
-# once, we stop the previous master and reuse its docker network alias for
-# the new one. That way `self.graph` (set once in __init__ from the original
-# self.db) reconnects transparently to the new container — matching the
-# C-port's "Env() restarts redis on the same port" semantics. Without this,
-# stale references from __init__ keep talking to the old container with
-# its old config, and any test that reassigns Env() mid-flow (test_timeout,
-# test_config, test_udf) sees the new moduleArgs silently ignored.
-_CURRENT_MASTER = None  # dict(alias=str, cid=str) or None
-_CURRENT_REPLICA = None  # dict(alias=str, cid=str) or None
-
 
 def _job_mounts():
     """The job container's mount table: list of (host_source, in_container_dest)
@@ -245,41 +233,6 @@ def _spawn_falkordb(image, falkordb_args="", redis_args="", alias=None,
     return alias, 6379, cid
 
 
-def _stop_container(cid):
-    """Capture logs then stop+remove a previously-spawned container.
-
-    Called from Env() before spawning a replacement master/replica so the new
-    container can rebind the same alias. Logs are dumped to tests/flow/logs/
-    immediately (rather than at process exit) since the CID would otherwise
-    disappear before atexit captures it. Best-effort: failures don't propagate.
-    """
-    log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
-    os.makedirs(log_dir, exist_ok=True)
-    short = cid[:12]
-    try:
-        with open(os.path.join(log_dir, f"spawned-{short}.log"), "wb") as f:
-            subprocess.run(
-                ["docker", "logs", cid],
-                stdout=f, stderr=subprocess.STDOUT, check=False,
-            )
-        # SIGTERM with 10s grace so ASAN's at-exit reports land before SIGKILL.
-        subprocess.run(
-            ["docker", "stop", "--time", "10", cid],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
-        )
-        subprocess.run(
-            ["docker", "rm", "-f", cid],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
-        )
-    except Exception:
-        pass
-    # Best-effort removal from the cleanup list so atexit doesn't double-stop.
-    try:
-        _SPAWNED_CIDS.remove(cid)
-    except ValueError:
-        pass
-
-
 @atexit.register
 def _cleanup_spawned():
     # Capture docker stdout/stderr for each spawned container before tearing
@@ -413,26 +366,9 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
     # startEnv() pings the address; if it doesn't resolve, construction
     # raises before we can override anything. flow.sh's --existing-env-addr
     # is a placeholder that gets superseded here.
-    #
-    # If we already have a master from a previous Env() call in this test
-    # process, stop it and reuse its docker network alias for the new
-    # container. The reused alias means `self.graph` (set once in __init__
-    # via the original self.db) reconnects transparently to the new master
-    # — matching the C-port's "Env() restarts redis on the same port"
-    # semantics that tests like test_timeout.test07 depend on. Same for the
-    # replica.
-    global _CURRENT_MASTER, _CURRENT_REPLICA
-    if _CURRENT_MASTER is not None:
-        _stop_container(_CURRENT_MASTER["cid"])
-        master_alias_reuse = _CURRENT_MASTER["alias"]
-        _CURRENT_MASTER = None
-    else:
-        master_alias_reuse = None
     master_alias, master_port, master_cid = _spawn_falkordb(
         test_image, falkordb_args=moduleArgs or "",
-        alias=master_alias_reuse,
         enable_debug_command=enableDebugCommand)
-    _CURRENT_MASTER = {"alias": master_alias, "cid": master_cid}
     host, port = master_alias, master_port
     Defaults.external_addr = f"{master_alias}:{master_port}"
     env_obj = Environment(decodeResponses=True, env='existing-env')
@@ -441,26 +377,13 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
     # parse redis logs (test_encode_decode.test_10) use this when present.
     env_obj.read_log = _make_docker_log_reader(master_cid)
     if useSlaves:
-        if _CURRENT_REPLICA is not None:
-            _stop_container(_CURRENT_REPLICA["cid"])
-            replica_alias_reuse = _CURRENT_REPLICA["alias"]
-            _CURRENT_REPLICA = None
-        else:
-            replica_alias_reuse = None
-        replica_alias, _, replica_cid = _spawn_falkordb(
+        replica_alias, _, _ = _spawn_falkordb(
             test_image,
             falkordb_args=moduleArgs or "",
             redis_args=f"--replicaof {master_alias} 6379",
-            alias=replica_alias_reuse,
             enable_debug_command=enableDebugCommand,
         )
-        _CURRENT_REPLICA = {"alias": replica_alias, "cid": replica_cid}
         _attach_slave(env_obj, replica_alias, 6379)
-    elif _CURRENT_REPLICA is not None:
-        # New master came up without a replica; stop the old one so it can't
-        # try to replicate from a container that no longer exists.
-        _stop_container(_CURRENT_REPLICA["cid"])
-        _CURRENT_REPLICA = None
 
     # Some flow tests construct their own connection pools from self.env.port
     # (assuming RLTest's spawned redis on localhost). Override the env stub's
