@@ -98,6 +98,7 @@ static void jobqueue_clear(jobqueue *jobqueue_p);
 static void jobqueue_push(jobqueue *jobqueue_p, struct job *newjob_p);
 static struct job *jobqueue_pull(jobqueue *jobqueue_p);
 static int jobqueue_len(jobqueue *jobqueue_p);
+static bool jobqueue_full(jobqueue *jobqueue_p);
 static void jobqueue_destroy(jobqueue *jobqueue_p);
 
 static void bsem_init(struct bsem *bsem_p, int value);
@@ -252,7 +253,7 @@ bool thpool_queue_full(thpool_* thpool_p) {
 	ASSERT(thpool_p != NULL);
 
 	// test if there's enough room in thread pool queue
-	return (jobqueue_len(&thpool_p->jobqueue) >= thpool_p->jobqueue.cap);
+	return jobqueue_full(&thpool_p->jobqueue);
 }
 
 void thpool_set_jobqueue_cap
@@ -261,7 +262,9 @@ void thpool_set_jobqueue_cap
 	uint64_t val
 ) {
 	ASSERT(thpool_p);
+	pthread_mutex_lock(&thpool_p->jobqueue.rwmutex);
 	thpool_p->jobqueue.cap = val;
+	pthread_mutex_unlock(&thpool_p->jobqueue.rwmutex);
 }
 
 uint64_t thpool_get_jobqueue_cap
@@ -269,7 +272,11 @@ uint64_t thpool_get_jobqueue_cap
 	thpool_* thpool_p
 ) {
 	ASSERT(thpool_p);
-	return thpool_p->jobqueue.cap;
+	pthread_mutex_lock(&thpool_p->jobqueue.rwmutex);
+	uint64_t cap = thpool_p->jobqueue.cap;
+	pthread_mutex_unlock(&thpool_p->jobqueue.rwmutex);
+
+	return cap;
 }
 
 uint64_t thpool_get_jobqueue_len
@@ -521,6 +528,15 @@ static int jobqueue_len(jobqueue *jobqueue_p) {
 	pthread_mutex_unlock(&jobqueue_p->rwmutex);
 
 	return len;
+}
+
+/* Return true if queue is full */
+static bool jobqueue_full(jobqueue *jobqueue_p) {
+	pthread_mutex_lock(&jobqueue_p->rwmutex);
+	bool full = (jobqueue_p->len >= jobqueue_p->cap);
+	pthread_mutex_unlock(&jobqueue_p->rwmutex);
+
+	return full;
 }
 
 /* Free all queue resources back to the system */
