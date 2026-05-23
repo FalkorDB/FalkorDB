@@ -140,6 +140,11 @@ class testQueryTimeout():
 
     def test06_error_timeout_default_higher_than_timeout_max(self):
         self.env, self.db = Env(moduleArgs="TIMEOUT_DEFAULT 10 TIMEOUT_MAX 10")
+        # Refresh self.graph: spawn-mode Env() returns a new client/container,
+        # so the self.graph captured in __init__ would still talk to the old
+        # one (with its now-stale config). Subsequent tests in this class
+        # query via self.graph and rely on the new TIMEOUT_DEFAULT.
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         # get current timeout configuration
         max_timeout = self.db.config_get("TIMEOUT_MAX")
@@ -219,6 +224,7 @@ class testQueryTimeout():
     def test09_fallback(self):
         self.env.stop()
         self.env, self.db = Env(moduleArgs="TIMEOUT 1")
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         configs = ["TIMEOUT_DEFAULT", "TIMEOUT_MAX"]
 
@@ -259,6 +265,7 @@ class testQueryTimeout():
         # reset timeout params to default
         self.env.stop()
         self.env, self.db = Env()
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         # Set timeout parameters to small values (1 millisecond)
         self.db.config_set("TIMEOUT_MAX", 1)
@@ -282,6 +289,7 @@ class testQueryTimeout():
     def test12_concurrent_timeout(self):
         self.env.stop()
         self.env, self.db = Env()
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         self.graph.query("UNWIND range(1, 1000) AS x CREATE (:N {v:x})")
 
