@@ -349,15 +349,10 @@ ResultSetStatistics *QueryCtx_GetResultSetStatistics (void) {
 	return stats ;
 }
 
-// retrive the query execution type
+// retrieve the query execution type
 QueryExecutionTypeFlag QueryCtx_GetExecutionType (void) {
 	QueryCtx *ctx = _QueryCtx_GetCtx () ;
-
-	if (ctx == NULL) {
-		return QueryExecutionTypeFlag_READ ;
-	}
-
-	return ctx->flags ;
+	return (ctx) ? ctx->flags : QueryExecutionTypeFlag_READ ;
 }
 
 // print the current query

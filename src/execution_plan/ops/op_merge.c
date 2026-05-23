@@ -445,14 +445,14 @@ static Record MergeConsume
 	// calls ON MATCH updates for them
 	_RunPostponedPhase (op) ;
 
-	if (likely (ErrorCtx_EncounteredError ())) {
+	if (unlikely (ErrorCtx_EncounteredError ())) {
 		return NULL ;
 	}
 
 	// phase 5: commit all pending node/edge updates
 	_CommitPendingUpdates (op, gc) ;
 
-	if (likely (ErrorCtx_EncounteredError ())) {
+	if (unlikely (ErrorCtx_EncounteredError ())) {
 		return NULL ;
 	}
 

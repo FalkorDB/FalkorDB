@@ -306,9 +306,6 @@ GraphContext *GraphContext_New
 	gc->queries_log = QueriesLog_New () ;
 	gc->ref_count   = 0 ;  // no refences
 
-	gc->attributes  = NULL ;
-	gc->_attributes = NULL ;
-
 	gc->index_count      = 0 ;  // no indicies
 	gc->encoding_context = GraphEncodeContext_New () ;
 	gc->decoding_context = GraphDecodeContext_New () ;
@@ -337,12 +334,6 @@ GraphContext *GraphContext_New
 	gc->graph_name = rm_strdup (graph_name) ;
 	gc->telemetry_stream = RedisModule_CreateStringPrintf (NULL,
 			TELEMETRY_FORMAT, gc->graph_name) ;
-
-	// allocate the default space for schemas and indices
-	gc->node_schemas      = NULL ;
-	gc->_node_schemas     = NULL ;
-	gc->relation_schemas  = NULL ;
-	gc->_relation_schemas = NULL ;
 
 	// build the execution plans cache
 	uint64_t cache_size ;
@@ -881,6 +872,9 @@ Schema *GraphContext_FindOrAddSchema
 	}
 
 	// create schema
+	ASSERT (gc->writer_tid == (pthread_t) 0 ||
+			pthread_equal (gc->writer_tid, pthread_self ())) ;
+
 	if (t == SCHEMA_NODE) {
 		LabelID id = Graph_AddLabel (gc->g) ;
 		s = Schema_New (SCHEMA_NODE, id, name) ;
@@ -997,7 +991,7 @@ AttributeID GraphContext_FindOrAddAttribute
 	}
 
 	// attribute missing
-	// add it as a pendding attribute
+	// add it as a pending attribute
 	if (gc->_attributes == NULL) {
 		gc->writer_tid = pthread_self () ;
 		arr_clone (gc->_attributes, gc->attributes) ;
@@ -1528,41 +1522,14 @@ static void _GraphContext_Free
 		gc->relation_schemas = gc->_relation_schemas ;
 	}
 
-	if (gc->node_schemas) {
-		len = arr_len (gc->node_schemas) ;
-		for (uint32_t i = 0; i < len; i ++) {
-			Schema_Free (gc->node_schemas [i]) ;
-		}
-		arr_free (gc->node_schemas) ;
-		gc->node_schemas = NULL ;
-	}
+	arr_free_cb (gc->node_schemas, Schema_Free) ;
+	gc->node_schemas = NULL ;
 
-	//--------------------------------------------------------------------------
-	// free relation schemas
-	//--------------------------------------------------------------------------
+	arr_free_cb (gc->relation_schemas, Schema_Free) ;
+	gc->relation_schemas = NULL ;
 
-	if (gc->relation_schemas) {
-		len = arr_len (gc->relation_schemas) ;
-		for (uint32_t i = 0 ; i < len ; i ++) {
-			Schema_Free (gc->relation_schemas [i]) ;
-		}
-		arr_free (gc->relation_schemas) ;
-		gc->relation_schemas = NULL ;
-	}
-
-	//--------------------------------------------------------------------------
-	// free attribute mappings
-	//--------------------------------------------------------------------------
-
-	if (gc->attributes) {
-		uint16_t n = arr_len (gc->attributes) ;
-		for (uint16_t i = 0 ; i < n ; i++) {
-			rm_free (gc->attributes [i]) ;
-		}
-
-		arr_free (gc->attributes) ;
-		gc->attributes = NULL ;
-	}
+	arr_free_cb (gc->attributes, rm_free) ;
+	gc->attributes = NULL ;
 
 	//--------------------------------------------------------------------------
 	// free queries log

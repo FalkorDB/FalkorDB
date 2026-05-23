@@ -75,6 +75,8 @@ static void _fake_graph_context() {
 	gc->relation_schemas = (Schema**)arr_new (Schema*, 0) ;
 	gc->queries_log      = QueriesLog_New () ;
 
+	pthread_rwlock_init (&gc->rwlock, NULL) ;
+
 	GraphContext_FindOrAddSchema (gc, "Person", SCHEMA_NODE, NULL) ;
 	GraphContext_FindOrAddSchema (gc, "City",   SCHEMA_NODE, NULL) ;
 	GraphContext_FindOrAddSchema (gc, "friend", SCHEMA_EDGE, NULL) ;

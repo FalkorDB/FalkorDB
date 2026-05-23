@@ -118,7 +118,7 @@ class testGraphVersioning(FlowTestsBase):
 
         def get_version(con):
             """
-            Execute a no-op query and read the graph version from the
+            Execute a no-op query and read the graph version
             """
             res = con.execute_command("GRAPH.RO_QUERY", GRAPH_ID, "RETURN 1", "version", VERSION)
             return int(res[1])

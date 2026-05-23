@@ -889,7 +889,7 @@ void ensureMatrixDim
 	Graph *g = GraphContext_GetGraph (gc) ;
 
 	// set matrix sync policy to resize
-	//MATRIX_POLICY policy = Graph_SetMatrixPolicy (g, SYNC_POLICY_RESIZE) ;
+	MATRIX_POLICY policy = Graph_SetMatrixPolicy (g, SYNC_POLICY_RESIZE) ;
 
 	//--------------------------------------------------------------------------
 	// sync added label matrices
@@ -933,7 +933,7 @@ void ensureMatrixDim
 	}
 
 	// restore matrix sync policy
-	//Graph_SetMatrixPolicy (g, policy) ;
+	Graph_SetMatrixPolicy (g, policy) ;
 }
 
 void PendingUpdateCtx_Free

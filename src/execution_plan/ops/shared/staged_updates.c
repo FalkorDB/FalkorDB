@@ -100,6 +100,7 @@ bool StagedUpdatesCtx_HasEdgeUpdates
 }
 
 // retrieve an entity update context
+// creates one if entity's context doesn't exists
 PendingUpdateCtx *StagedUpdatesCtx_GetEntityUpdateCtx
 (
 	StagedUpdatesCtx *ctx,  // staged updates

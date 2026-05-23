@@ -14,13 +14,6 @@
 
 extern pthread_t redis_main_thread_id;
 
-// assert caller can drop matrix sync policy from
-// SYNC_POLICY_FLUSH_RESIZE to either SYNC_POLICY_RESIZE or SYNC_POLICY_RESIZE
-//#define ASSERT_ALLOW_POLICY_LOOSE()                               \
-//ASSERT (g->_writelocked == true ||                                \
-//		pthread_equal (pthread_self (), redis_main_thread_id)) ;
-//
-
 //------------------------------------------------------------------------------
 // Graph utility functions
 //------------------------------------------------------------------------------
@@ -168,16 +161,12 @@ MATRIX_POLICY Graph_SetMatrixPolicy
 			// bulk insertion and creation behavior
 			// does not force pending operations
 			// resizes matrices to the graph's current node capacity
-			//ASSERT_ALLOW_POLICY_LOOSE () ;
-
 			g->SynchronizeMatrix = _MatrixResizeToCapacity ;
 			break ;
 
 		case SYNC_POLICY_NOP:
 			// used when deleting or freeing a graph
 			// forces no matrix updates or resizes
-			//ASSERT_ALLOW_POLICY_LOOSE () ;
-
 			g->SynchronizeMatrix = _MatrixNOP ;
 			break ;
 

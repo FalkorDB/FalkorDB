@@ -294,6 +294,11 @@ void GraphHub_UpdateEntityProperties
 	ASSERT (gc != NULL) ;
 	ASSERT (ge != NULL) ;
 
+	// in cases such as
+	// MATCH (n) SET n.v = n.v + 1
+	// the new attribute-set is a clone of the original one (prev_set)
+	// once the update is committed, we need to transfer ownership of all
+	// remaining cloned attributes from the previous set to the new one
 	AttributeSet prev_set = GraphEntity_GetAttributes (ge) ;
 	AttributeSet_TransferOwnership (prev_set, set) ;
 

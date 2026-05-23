@@ -432,7 +432,7 @@ void EffectsBuffer_AddCreateNodeEffect
 	//--------------------------------------------------------------------------
 	
 	//--------------------------------------------------------------------------
-	// update queyr stats
+	// update query stats
 	//--------------------------------------------------------------------------
 
 	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics () ;

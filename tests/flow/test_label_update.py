@@ -131,7 +131,7 @@ class testLabelUpdate():
         res = self.query_master_and_wait("MATCH (n:A) REMOVE n:X RETURN n")
         self.env.assertEquals(res.labels_removed, 0)
 
-        # nake sure label 'X' wasn't added to the graph's schema
+        # make sure label 'X' wasn't added to the graph's schema
         labels = self.query_master_and_wait("CALL db.labels()").result_set[0][0]
         self.env.assertNotIn("X", labels)
 
