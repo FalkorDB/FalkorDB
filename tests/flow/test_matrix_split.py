@@ -72,6 +72,15 @@ MODULE_ARGS_RE = re.compile(
     re.DOTALL,
 )
 
+# `Env(..., moduleArgs=<variable_or_expression>, ...)` — anything where the
+# value isn't a string literal. The classifier can't introspect the
+# variable's runtime value, so it has to conservatively force the file into
+# the spawn bucket (immutable keys might be in there). Negative lookahead
+# excludes the literal forms MODULE_ARGS_RE already covers.
+MODULE_ARGS_NONLITERAL_RE = re.compile(
+    r"\bmoduleArgs\s*=\s*(?!f?['\"])\S",
+)
+
 
 def files_for_entry(entry):
     """Resolve a flow_tests_done.txt entry to the list of .py files to scan.
@@ -87,8 +96,12 @@ def files_for_entry(entry):
         return [entry + ".py"]
     if os.path.isdir(entry):
         out = []
-        for root, _, names in os.walk(entry):
-            for n in names:
+        # Sort to make the matrix-cell ordering deterministic across runs;
+        # otherwise os.walk's directory-entry order varies by filesystem and
+        # diffing CI logs across runs becomes harder.
+        for root, dirs, names in os.walk(entry):
+            dirs.sort()
+            for n in sorted(names):
                 if n.endswith(".py"):
                     out.append(os.path.join(root, n))
         return out
@@ -115,6 +128,11 @@ def needs_spawn(paths):
                 for key in IMMUTABLE_MODULE_ARGS
             ):
                 return True
+        # moduleArgs passed via variable/expression — we can't introspect
+        # the value, so conservatively force spawn. Better to over-spawn
+        # than to misclassify a file that needs load-time args.
+        if MODULE_ARGS_NONLITERAL_RE.search(content):
+            return True
     return False
 
 
@@ -137,6 +155,11 @@ def main():
                 continue
             (spawn if needs_spawn(paths) else services).append(entry)
 
+    # Sort each bucket so the matrix cells come out in the same order across
+    # runs. Without this the order is whatever flow_tests_done.txt happens to
+    # be in, which is usually stable but not guaranteed.
+    services.sort()
+    spawn.sort()
     print(f"services_files={json.dumps(services)}")
     print(f"spawn_files={json.dumps(spawn)}")
     # `test_files` is the union for callers that don't care about the split
