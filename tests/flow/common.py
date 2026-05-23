@@ -279,11 +279,19 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
     2. CI services mode (FALKORDB_TEST_IMAGE set, FALKORDB_USE_SERVICE=1):
        Connect to a long-running GHA `services:` container at
        FALKORDB_HOST:FALKORDB_PORT — no docker run, no per-class spawn.
-       Selected by the matrix for test files whose Env() invocations carry
-       no special flags (classified by tests/flow/test_matrix_split.py).
-       FLUSHALL between Env() calls gives class-level isolation since the
-       service is shared across all classes in the cell.
-       Passing any special flag here is a classifier miss and raises.
+       Selected by the matrix for test files whose Env() invocations stay
+       within the runtime-mutable set (classified by
+       tests/flow/test_matrix_split.py). FLUSHALL between Env() calls
+       gives class-level isolation since the service is shared across all
+       classes in the cell.
+       Supported flags here:
+         - moduleArgs (runtime-mutable keys only — applied via GRAPH.CONFIG SET)
+         - useSlaves=True — a second `replica` service container is run by
+           the GHA job with --replicaof falkordb 6379
+         - enableDebugCommand=True — no-op; the service is launched with
+           REDIS_ARGS=--enable-debug-command yes regardless
+       Unsupported (classifier miss → raises): env='oss-cluster',
+       shardsCount (cluster topology requires per-class spawn).
 
     3. CI spawn mode (FALKORDB_TEST_IMAGE set, FALKORDB_USE_SERVICE unset):
        Spawn a dedicated container from the RC image per Env() call, with
@@ -383,6 +391,12 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
             redis_args=f"--replicaof {master_alias} 6379",
             enable_debug_command=enableDebugCommand,
         )
+        # Replica handshake is async — wait for INFO replication to report
+        # master_link_status=up before any test queries hit it, mirroring
+        # what services mode does. Without this gate, tests that read from
+        # the replica immediately after Env() can observe a half-synced
+        # state.
+        _wait_for_replication(replica_alias, 6379)
         _attach_slave(env_obj, replica_alias, 6379)
 
     # Some flow tests construct their own connection pools from self.env.port

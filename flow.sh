@@ -72,7 +72,13 @@ fi
 # To run all tests in a specific file, use:
 # TEST="tests/flow/test_function_calls" FAIL_FAST=1 ./flow.sh
 # To run against an already-running redis (e.g. a service container):
-# FALKORDB_TEST_IMAGE=ghcr.io/falkordb/falkordb-server:edge-rs ./flow.sh
+#   FALKORDB_TEST_IMAGE=ghcr.io/falkordb/falkordb-server:edge-rs \
+#   FALKORDB_USE_SERVICE=1 \
+#   FALKORDB_HOST=<host> FALKORDB_PORT=<port> \
+#   ./flow.sh
+# Setting FALKORDB_TEST_IMAGE alone selects spawn mode (Env() docker-runs a
+# sibling container per call); add FALKORDB_USE_SERVICE=1 to skip the spawn
+# and connect to the existing service at FALKORDB_HOST:FALKORDB_PORT.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REDIS_CONF="$SCRIPT_DIR/tests/flow/redis.conf"
