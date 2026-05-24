@@ -130,5 +130,5 @@ ENV ARCH=${TARGETPLATFORM} \
     LSAN_OPTIONS="suppressions=/var/lib/falkordb/asan.supp:use_tls=0"
 
 EXPOSE 6379/tcp
+# run.sh is self-contained — no CMD because args wouldn't be forwarded.
 ENTRYPOINT ["/var/lib/falkordb/bin/run.sh"]
-CMD ["redis-server", "--loadmodule", "/var/lib/falkordb/bin/falkordb.so"]

@@ -112,8 +112,10 @@ ENV ARCH=${TARGETPLATFORM} \
 
 EXPOSE 6379/tcp
 
+# run.sh is self-contained — it execs `redis-server ...` with the right
+# args based on TLS/BROWSER env vars and doesn't forward $@. No CMD
+# stanza so it's clear that container args are ignored.
 ENTRYPOINT ["/var/lib/falkordb/bin/run.sh"]
-CMD ["redis-server", "--loadmodule", "/var/lib/falkordb/bin/falkordb.so"]
 
 FROM falkordb/falkordb-browser:$BROWSER_TAG AS browser
 FROM node:24-bookworm-slim AS node

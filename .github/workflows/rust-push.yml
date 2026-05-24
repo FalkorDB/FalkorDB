@@ -5,9 +5,10 @@ on:
     # Mirror rust-pr.yml's filter so post-merge CI on version branches works
     # the same as on main. Channel-pointer promotion (toolchain :latest, edge-rs)
     # is still gated to main further down — see the `if:` on those jobs.
+    # The version glob is `[0-9]*.[0-9]*` (glob, not regex; `*` is multi-char).
     branches:
       - "main"
-      - "[0-9]+.[0-9]+"
+      - "[0-9]*.[0-9]*"
 
 permissions:
   # deployments permission to deploy GitHub pages website

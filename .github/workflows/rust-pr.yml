@@ -6,14 +6,12 @@ on:
     # PRs from batch-backport.yml target the version branch directly, so they
     # need the same RC build + flow gate as main PRs. rc-pr-<N> tags are
     # globally unique by PR number so there's no collision across base branches.
-    #
-    # `feat/docker-release` is included temporarily so this PR
-    # (feat/docker-per-class-tests → feat/docker-release) can run its own CI.
-    # Drop the entry before merging back to main.
+    # GHA branch filters are glob patterns, not regex — `*` matches a run of
+    # chars, `[0-9]` is a digit class, so `[0-9]*.[0-9]*` matches `6.0`, `7.1`,
+    # `10.5`, etc. (A literal `+` would NOT have matched anything.)
     branches:
       - "main"
-      - "[0-9]+.[0-9]+"
-      - "feat/docker-release"
+      - "[0-9]*.[0-9]*"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}

@@ -15,7 +15,7 @@ shutdown = False
 def start_redis(release=None, moduleEnvs=[]):
     global redis_server, client, g, shutdown
     host = os.environ.get("FALKORDB_HOST", "localhost")
-    port = os.environ.get("FALKORDB_PORT", os.environ.get("PORT", "6379"))
+    port = int(os.environ.get("FALKORDB_PORT", os.environ.get("PORT", "6379")))
     # In CI's services-container mode an external redis is already running with
     # the module loaded; spawning locally would race the port. Fail loudly instead.
     existing_env = os.environ.get("EXISTING_ENV", "").lower() == "1"
@@ -43,7 +43,7 @@ def start_redis(release=None, moduleEnvs=[]):
             os.remove("redis-test.log")
         redis_server = subprocess.Popen(
             ["/usr/local/bin/redis-server",
-             "--save", "", "--port", port, "--logfile", "redis-test.log",
+             "--save", "", "--port", str(port), "--logfile", "redis-test.log",
              "--loadmodule", target] + moduleEnvs,
             stdout=subprocess.PIPE)
     while True:

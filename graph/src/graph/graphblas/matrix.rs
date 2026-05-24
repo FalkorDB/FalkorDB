@@ -556,7 +556,10 @@ impl Drop for Matrix {
         if let Some(m) = Arc::get_mut(&mut self.m) {
             unsafe {
                 let info = GrB_Matrix_free(m);
-                assert_eq!(info, GrB_Info::GrB_SUCCESS);
+                // debug_assert in Drop: panicking while unwinding aborts the
+                // process. A GrB_*_free failure is logically a leak, not
+                // state corruption — surface in debug, swallow in release.
+                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             }
         }
     }
@@ -1141,7 +1144,8 @@ impl<E: IterExtract> Drop for Iter<E> {
         unsafe {
             if let Some(m) = Arc::get_mut(&mut self.m) {
                 let info = GrB_Matrix_free(m);
-                assert_eq!(info, GrB_Info::GrB_SUCCESS);
+                // debug_assert: don't panic in Drop (see Matrix::drop above).
+                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             }
             GxB_Iterator_free(&raw mut self.inner);
         }
