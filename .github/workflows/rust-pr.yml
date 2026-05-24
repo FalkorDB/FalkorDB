@@ -146,6 +146,45 @@ jobs:
           cache-from: type=registry,ref=ghcr.io/falkordb/falkordb:buildcache-asan
           cache-to:   type=registry,ref=ghcr.io/falkordb/falkordb:buildcache-asan,mode=max
 
+  # Build the coverage-instrumented runtime image (amd64-only) so flow tests
+  # can run as a `coverage` matrix cell and emit profraw files into a
+  # bind-mounted /var/lib/falkordb/cov for llvm-cov post-processing.
+  build-rc-coverage-image:
+    needs: [check-files, docker]
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push coverage image
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
+        with:
+          context: .
+          file: build/runtime/Dockerfile.coverage
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          build-args: |
+            BUILD_IMAGE=${{ needs.check-files.outputs.file_changed == 'true' && format('ghcr.io/falkordb/falkordb-build:pr-{0}', github.event.pull_request.number) || 'ghcr.io/falkordb/falkordb-build:latest' }}
+          tags: ghcr.io/falkordb/falkordb-server:rc-pr-${{ github.event.pull_request.number }}-coverage
+          cache-from: type=registry,ref=ghcr.io/falkordb/falkordb-server:buildcache-coverage
+          cache-to:   type=registry,ref=ghcr.io/falkordb/falkordb-server:buildcache-coverage,mode=max
+
   lint:
     runs-on: ubuntu-latest
     container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
