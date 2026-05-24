@@ -1,17 +1,11 @@
 import os
 
-from falkordb import FalkorDB, Graph, Node, Edge
+from falkordb import FalkorDB
 
-r = None
-graph_name = "G"
 graph = None
 
 
 def _brand_new_redis():
-    global r
-    if r is not None:
-        r.flush()
-
     return FalkorDB(
         host=os.environ.get("FALKORDB_HOST", "localhost"),
         port=int(os.environ.get("FALKORDB_PORT", os.environ.get("PORT", "6379"))),
