@@ -568,7 +568,10 @@ class testQueryValidationFlow(FlowTestsBase):
                 self.env.assertContains("query with more than one statement is not supported", str(e))
 
         queries = ["RETURN 1;",
-                   "RETURN 1;;"]
+                   "RETURN 1;;",
+                   "RETURN 1; ",
+                   "RETURN 1;\n",
+                   "RETURN 1; \n;"]
         for q in queries:
             res = self.graph.query(q)
             self.env.assertEquals(res.result_set, [[1]])

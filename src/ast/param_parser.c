@@ -7,6 +7,7 @@
 #include "param_parser.h"
 
 #include "../value.h"
+#include "../errors/errors.h"
 #include "../datatypes/map.h"
 #include "../datatypes/array.h"
 
@@ -312,7 +313,7 @@ static bool parse_escaped_string
 	while ((t = consume_char(&_head)) != '\0') {
 		if (t == '\\') {
 			// handle escape
-			t = consume_char(&_head); 
+			t = consume_char(&_head);
 			switch(t) {
 				case 'a':  APPEND_CHAR(*str, len, cap, '\a'); break;
 				case 'b':  APPEND_CHAR(*str, len, cap, '\b'); break;
@@ -369,7 +370,7 @@ static bool parse_string
 	char *_head = *head;
 	char quote  = consume_char(&_head);
 	char *str   = _head;
-	
+
 	while ((t = consume_char(&_head)) != '\0') {
 		// escape
 		if (t == '\\') {
@@ -394,7 +395,7 @@ static bool parse_string
 			break;
 		}
 	}
-	
+
 	// did we found matching closing quote
 	if (t != quote) {
 		return false;
@@ -655,7 +656,7 @@ static bool parse_value
 
 	else if (p == '-' || p == '.' || (p >= '0' && p <= '9')) {
 		if (!parse_number(head, v)) {
-			return false;	
+			return false;
 		}
 
 		return true;
@@ -686,7 +687,7 @@ static bool parse_value
 		*v = SI_BoolVal(false);
 		return true;
 	}
-	
+
 	else if (accept(head, "null", 4)) {
 		*v = SI_NullVal();
 		return true;
@@ -702,7 +703,7 @@ dict *ParamParser_Parse
 	ASSERT(input  != NULL && *input != NULL);
 
 	char *head = *input;  // parser head
-	
+
 	skip_spaces(&head);
 
 	// expecting opening keyword: CYPHER
@@ -725,12 +726,14 @@ dict *ParamParser_Parse
 			break;
 		}
 
-		SIValue *v = rm_malloc(sizeof(SIValue));
-		if (!parse_value(&head, v)) {
-			rm_free(v);
-			// todo: release individual values
-			HashTableRelease(params);
-			return NULL;
+		SIValue *v = rm_malloc (sizeof (SIValue)) ;
+		if (!parse_value (&head, v)) {
+			rm_free (v) ;
+			// report a clear error citing the failing parameter name
+			// (the param name was already null-terminated by parse_param_name)
+			ErrorCtx_SetError (EMSG_INVALID_PARAMETER_VALUE, param) ;
+			HashTableRelease (params) ;
+			return NULL ;
 		}
 
 		// repeat param name

@@ -15,7 +15,7 @@
 // returns initialized array
 SIValue SIArray_New
 (
-	u_int32_t initialCapacity // initial capacity
+	uint32_t initialCapacity // initial capacity
 ) {
 	SIValue siarray;
 
@@ -86,7 +86,7 @@ void SIArray_AppendAsOwner
 SIValue SIArray_Get
 (
 	SIValue siarray,  // siarray: array
-	u_int32_t index   // index: index
+	uint32_t index   // index: index
 ) {
 	SIValue *v = SIArray_GetRef (siarray, index) ;
 
@@ -102,7 +102,7 @@ SIValue SIArray_Get
 SIValue *SIArray_GetRef
 (
 	SIValue siarray,  // array
-	u_int32_t index   // index
+	uint32_t index   // index
 ) {
 	// check index
 	if (unlikely (index >= SIArray_Length (siarray))) {
@@ -113,7 +113,7 @@ SIValue *SIArray_GetRef
 }
 
 // get the array length
-u_int32_t SIArray_Length
+uint32_t SIArray_Length
 (
 	SIValue siarray  // array to return length of
 ) {

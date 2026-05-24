@@ -34,6 +34,42 @@ void ListComprehension_Free(void *ctx_ptr) {
 	rm_free(ctx);
 }
 
+// collect referenced aliases within a list comprehension context
+void ListComprehension_CollectAliases
+(
+	const void *ctx_ptr,  // list comprehension context
+	rax *entities         // [input/output] collected entities
+) {
+	ASSERT (ctx_ptr  != NULL) ;
+	ASSERT (entities != NULL) ;
+
+	const ListComprehensionCtx *ctx = ctx_ptr ;
+
+	if (ctx->ft != NULL) {
+		rax *inner = FilterTree_CollectModified (ctx->ft) ;
+		raxIterator it ;
+		raxStart (&it, inner) ;
+		raxSeek (&it, "^", NULL, 0) ;
+
+		while (raxNext(&it)) {
+			raxInsert(entities, it.key, it.key_len, NULL, NULL) ;
+		}
+
+		raxStop (&it) ;
+		raxFree (inner) ;
+	}
+
+	if (ctx->eval_exp != NULL) {
+		AR_EXP_CollectEntities (ctx->eval_exp, entities) ;
+	}
+
+	// remove the locally-bound variable
+	if (ctx->variable_str != NULL) {
+		raxRemove (entities, (unsigned char *)ctx->variable_str,
+				strlen (ctx->variable_str), NULL) ;
+	}
+}
+
 // Routine for cloning a comprehension function's private data.
 void *ListComprehension_Clone(void *orig) {
 	if(orig == NULL) return NULL;
@@ -60,16 +96,17 @@ static void _PopulateComprehensionCtx
 	ListComprehensionCtx *ctx,
 	Record outer_record
 ) {
-	rax *local_record_map = raxClone(outer_record->mapping);
-	intptr_t id = raxSize(local_record_map);
-	raxTryInsert(local_record_map, (unsigned char *)ctx->variable_str,
-						  strlen(ctx->variable_str), (void *)id, NULL);
-	ctx->local_record = Record_New(local_record_map);
+	rax *local_record_map = raxClone (outer_record->mapping) ;
+	intptr_t id = raxSize (local_record_map) ;
+	raxTryInsert (local_record_map, (unsigned char *)ctx->variable_str,
+						  strlen (ctx->variable_str), (void *)id, NULL) ;
+	ctx->local_record = Record_New (local_record_map) ;
 
 	// this could just be assigned to 'id'
 	// but for safety we'll use a Record lookup
-	ctx->variable_idx = Record_GetEntryIdx(ctx->local_record, ctx->variable_str, strlen(ctx->variable_str));
-	ASSERT(ctx->variable_idx != INVALID_INDEX);
+	ctx->variable_idx = Record_GetEntryIdx (ctx->local_record,
+			ctx->variable_str, strlen(ctx->variable_str)) ;
+	ASSERT (ctx->variable_idx != INVALID_INDEX) ;
 }
 
 SIValue AR_ANY(SIValue *argv, int argc, void *private_data) {
@@ -110,42 +147,58 @@ SIValue AR_ANY(SIValue *argv, int argc, void *private_data) {
 	return SI_BoolVal(false);
 }
 
-SIValue AR_ALL(SIValue *argv, int argc, void *private_data) {
-	if(SI_TYPE(argv[0]) == T_NULL) return SI_NullVal();
+SIValue AR_ALL
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
+	if (SI_TYPE (argv [0]) == T_NULL) {
+		return SI_NullVal () ;
+	}
+
 	// ALL comprehensions are invoked with three children:
-	// The list to iterate over.
-	// The current Record.
-	// The function context.
-	SIValue list = argv[0];
-	Record outer_record = argv[1].ptrval;
-	ListComprehensionCtx *ctx = private_data;
+	// the list to iterate over
+	// the current Record
+	// the function context
+	SIValue list = argv [0] ;
+	Record outer_record = argv [1].ptrval ;
+	ListComprehensionCtx *ctx = private_data ;
 
-	// On the first invocation, build the local Record.
-	if(ctx->local_record == NULL) _PopulateComprehensionCtx(ctx, outer_record);
-	Record r = ctx->local_record;
-
-	// Populate the local Record with the contents of the outer Record.
-	Record_Clone(outer_record, r);
-
-	bool is_null = false;
-	uint len = SIArray_Length(list);
-	for(uint i = 0; i < len; i++) {
-		// Retrieve the current element.
-		SIValue current_elem = SIArray_Get(list, i);
-		// Add the current element to the record at its allocated position.
-		Record_AddScalar(r, ctx->variable_idx, current_elem);
-
-		// If any element in an ALL function does not pass the predicate, return false.
-		FT_Result res = FilterTree_applyFilters(ctx->ft, r);
-		if(res == FILTER_FAIL) return SI_BoolVal(false);
-		is_null |= (res == FILTER_NULL);
+	// on the first invocation, build the local Record
+	if (ctx->local_record == NULL) {
+		_PopulateComprehensionCtx (ctx, outer_record) ;
 	}
 
-	if(is_null) {
-		return SI_NullVal();
+	Record r = ctx->local_record ;
+
+	// populate the local Record with the contents of the outer Record
+	Record_Clone (outer_record, r) ;
+
+	bool is_null = false ;
+	uint len = SIArray_Length (list) ;
+	for (uint i = 0; i < len; i++) {
+		// retrieve the current element
+		SIValue current_elem = SIArray_Get (list, i) ;
+		// add the current element to the record at its allocated position
+		Record_AddScalar (r, ctx->variable_idx, current_elem) ;
+
+		// if any element in an ALL function does not pass the predicate
+		// return false
+		FT_Result res = FilterTree_applyFilters (ctx->ft, r) ;
+		if (res == FILTER_FAIL) {
+			return SI_BoolVal (false) ;
+		}
+
+		is_null |= (res == FILTER_NULL) ;
 	}
-	// All elements passed, return true.
-	return SI_BoolVal(true);
+
+	if (is_null) {
+		return SI_NullVal () ;
+	}
+
+	// all elements passed, return true
+	return SI_BoolVal (true) ;
 }
 
 SIValue AR_SINGLE(SIValue *argv, int argc, void *private_data) {
@@ -283,49 +336,75 @@ SIValue AR_LIST_COMPREHENSION
 	return retval;
 }
 
-void Register_ComprehensionFuncs() {
-	SIType *types;
-	SIType ret_type = T_BOOL | T_NULL;
-	AR_FuncDesc *func_desc;
+void Register_ComprehensionFuncs (void) {
+	SIType *types ;
+	SIType ret_type = T_BOOL | T_NULL ;
+	AR_FuncDesc *func_desc ;
 
-	types = arr_new(SIType, 3);
-	arr_append(types, T_ARRAY | T_NULL);
-	arr_append(types, T_PTR);
-	func_desc = AR_FuncDescNew("any", AR_ANY, 2, 2, types, ret_type, true, true,
-			true);
-	AR_SetPrivateDataRoutines(func_desc, ListComprehension_Free, ListComprehension_Clone);
-	AR_FuncRegister(func_desc);
+	//--------------------------------------------------------------------------
+	// ANY
+	//--------------------------------------------------------------------------
 
-	types = arr_new(SIType, 3);
-	arr_append(types, T_ARRAY | T_NULL);
-	arr_append(types, T_PTR);
-	func_desc = AR_FuncDescNew("all", AR_ALL, 2, 2, types, ret_type, true, true,
-			true);
-	AR_SetPrivateDataRoutines(func_desc, ListComprehension_Free, ListComprehension_Clone);
-	AR_FuncRegister(func_desc);
+	types = arr_new (SIType, 3) ;
+	arr_append (types, T_ARRAY | T_NULL) ;
+	arr_append (types, T_PTR) ;
+	func_desc = AR_FuncDescNew ("any", AR_ANY, 2, 2, types, ret_type, true,
+			true, true) ;
+	AR_SetPrivateDataRoutines (func_desc, ListComprehension_Free,
+			ListComprehension_Clone, ListComprehension_CollectAliases) ;
+	AR_FuncRegister (func_desc) ;
 
-	types = arr_new(SIType, 3);
-	arr_append(types, T_ARRAY | T_NULL);
-	arr_append(types, T_PTR);
-	func_desc = AR_FuncDescNew("single", AR_SINGLE, 2, 2, types, ret_type, true,
-			true, true);
-	AR_SetPrivateDataRoutines(func_desc, ListComprehension_Free, ListComprehension_Clone);
-	AR_FuncRegister(func_desc);
+	//--------------------------------------------------------------------------
+	// ALL
+	//--------------------------------------------------------------------------
 
-	types = arr_new(SIType, 3);
-	arr_append(types, T_ARRAY | T_NULL);
-	arr_append(types, T_PTR);
-	func_desc = AR_FuncDescNew("none", AR_NONE, 2, 2, types, ret_type, true,
-			true, true);
-	AR_SetPrivateDataRoutines(func_desc, ListComprehension_Free, ListComprehension_Clone);
-	AR_FuncRegister(func_desc);
+	types = arr_new (SIType, 3) ;
+	arr_append (types, T_ARRAY | T_NULL) ;
+	arr_append (types, T_PTR) ;
+	func_desc = AR_FuncDescNew ("all", AR_ALL, 2, 2, types, ret_type, true,
+			true, true) ;
+	AR_SetPrivateDataRoutines (func_desc, ListComprehension_Free,
+			ListComprehension_Clone, ListComprehension_CollectAliases) ;
+	AR_FuncRegister (func_desc) ;
 
-	types = arr_new(SIType, 3);
-	arr_append(types, T_ARRAY | T_NULL);
-	arr_append(types, T_PTR);
-	ret_type = T_ARRAY | T_NULL;
-	func_desc = AR_FuncDescNew("list_comprehension", AR_LIST_COMPREHENSION, 2,
-			2, types, ret_type, true, true, true);
-	AR_SetPrivateDataRoutines(func_desc, ListComprehension_Free, ListComprehension_Clone);
-	AR_FuncRegister(func_desc);
+	//--------------------------------------------------------------------------
+	// SINGLE
+	//--------------------------------------------------------------------------
+
+	types = arr_new (SIType, 3) ;
+	arr_append (types, T_ARRAY | T_NULL) ;
+	arr_append (types, T_PTR) ;
+	func_desc = AR_FuncDescNew ("single", AR_SINGLE, 2, 2, types, ret_type,
+			true, true, true) ;
+	AR_SetPrivateDataRoutines (func_desc, ListComprehension_Free,
+			ListComprehension_Clone, ListComprehension_CollectAliases) ;
+	AR_FuncRegister (func_desc) ;
+
+	//--------------------------------------------------------------------------
+	// NONE
+	//--------------------------------------------------------------------------
+
+	types = arr_new (SIType, 3) ;
+	arr_append (types, T_ARRAY | T_NULL) ;
+	arr_append (types, T_PTR) ;
+	func_desc = AR_FuncDescNew ("none", AR_NONE, 2, 2, types, ret_type, true,
+			true, true) ;
+	AR_SetPrivateDataRoutines (func_desc, ListComprehension_Free,
+			ListComprehension_Clone, ListComprehension_CollectAliases) ;
+	AR_FuncRegister (func_desc) ;
+
+	//--------------------------------------------------------------------------
+	// list_comprehension
+	//--------------------------------------------------------------------------
+
+	types = arr_new (SIType, 3) ;
+	arr_append (types, T_ARRAY | T_NULL) ;
+	arr_append (types, T_PTR) ;
+	ret_type = T_ARRAY | T_NULL ;
+	func_desc = AR_FuncDescNew ("list_comprehension", AR_LIST_COMPREHENSION, 2,
+			2, types, ret_type, true, true, true) ;
+	AR_SetPrivateDataRoutines (func_desc, ListComprehension_Free,
+			ListComprehension_Clone, ListComprehension_CollectAliases) ;
+	AR_FuncRegister (func_desc) ;
 }
+

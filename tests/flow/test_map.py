@@ -106,6 +106,25 @@ class testMap(FlowTestsBase):
         query_result = self.graph.query(query)
         self.env.assertEquals(query_result.result_set, expected_result)
 
+        # map projection on a null entity should evaluate to null
+        # (Neo4j semantics) e.g. via OPTIONAL MATCH that did not match
+        queries = [
+            """OPTIONAL MATCH (n:unexisting) RETURN n {.foo}""",
+            """OPTIONAL MATCH (n:unexisting) RETURN n {.foo, bar: 5}""",
+            """OPTIONAL MATCH (n:unexisting) RETURN n {.*}""",
+            """OPTIONAL MATCH (n:unexisting) RETURN n {.*, .foo}""",
+        ]
+        expected_result = [[None]]
+        for query in queries:
+            query_result = self.graph.query(query)
+            self.env.assertEquals(query_result.result_set, expected_result)
+
+        # collect() on a map projection of a null entity should skip nulls,
+        # producing an empty list (matches Neo4j behavior)
+        query = """OPTIONAL MATCH (n:unexisting) RETURN collect(DISTINCT n {.foo, .bar}) AS items"""
+        query_result = self.graph.query(query)
+        self.env.assertEquals(query_result.result_set, [[[]]])
+
         # nested projections
         queries = [
             """MATCH (a), (b) RETURN a{.*, b {.*} }""",

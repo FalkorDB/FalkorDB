@@ -102,8 +102,8 @@ static OpResult EdgeIndexScanInit
 		const char *alias =  QGEdge_Alias(op->edge);
 		if(op->srcAware) {
 			op->current_src_node_id  = AR_EXP_NewConstOperandNode(SI_NullVal());
-			FT_FilterNode *ft = FilterTree_CreatePredicateFilter(OP_EQUAL, 
-				AR_EXP_NewAttributeAccessNode(AR_EXP_NewVariableOperandNode(alias), "_src_id"), 
+			FT_FilterNode *ft = FilterTree_CreatePredicateFilter(OP_EQUAL,
+				AR_EXP_NewAttributeAccessNode(AR_EXP_NewVariableOperandNode(alias), "_src_id"),
 				op->current_src_node_id);
 			FT_FilterNode *root = FilterTree_CreateConditionFilter(OP_AND);
 			FilterTree_AppendLeftChild(root, op->filter);
@@ -114,8 +114,8 @@ static OpResult EdgeIndexScanInit
 
 		if(op->destAware) {
 			op->current_dest_node_id  = AR_EXP_NewConstOperandNode(SI_NullVal());
-			FT_FilterNode *ft = FilterTree_CreatePredicateFilter(OP_EQUAL, 
-				AR_EXP_NewAttributeAccessNode(AR_EXP_NewVariableOperandNode(alias), "_dest_id"), 
+			FT_FilterNode *ft = FilterTree_CreatePredicateFilter(OP_EQUAL,
+				AR_EXP_NewAttributeAccessNode(AR_EXP_NewVariableOperandNode(alias), "_dest_id"),
 				op->current_dest_node_id);
 			FT_FilterNode *root = FilterTree_CreateConditionFilter(OP_AND);
 			FilterTree_AppendLeftChild(root, op->filter);
@@ -125,7 +125,7 @@ static OpResult EdgeIndexScanInit
 		}
 
 		if(!op->rebuild_index_query) {
-			// find out how many different entities are refered to 
+			// find out how many different entities are refered to
 			// within the filter tree, if number of entities equals 1
 			// (current edge being scanned) there's no need to re-build the index
 			// query for every input record
@@ -149,28 +149,28 @@ static inline void _UpdateRecord
 	// populate Record with edge, src and destination node
 	int res;
 	UNUSED(res);
-	
+
 	Edge e = GE_NEW_LABELED_EDGE(op->edge->reltypes[0], op->edge->reltypeIDs[0]);
 
-	e.src_id   =  edge_key->src_id;
-	e.dest_id  =  edge_key->dest_id;
-	EntityID  edge_id  =  edge_key->edge_id;
+	e.src_id          = edge_key->src_id  ;
+	e.dest_id         = edge_key->dest_id ;
+	EntityID  edge_id = edge_key->edge_id ;
 
-	res = Graph_GetEdge(op->g, edge_id, &e);
-	ASSERT(res != 0);
+	res = Graph_GetEdge (op->g, edge_id, &e) ;
+	ASSERT (res != 0) ;
 
-	if(!op->srcAware) {
-		Node src = GE_NEW_NODE();
-		res = Graph_GetNode(op->g, e.src_id, &src);
-		ASSERT(res != 0);
-		Record_AddNode(r, op->srcRecIdx, src);
+	if (!op->srcAware) {
+		Node src = GE_NEW_NODE ();
+		res = Graph_GetNode (op->g, e.src_id, &src) ;
+		ASSERT (res != 0) ;
+		Record_AddNode (r, op->srcRecIdx, src) ;
 	}
 
-	if(!op->destAware) {
-		Node dest = GE_NEW_NODE();
-		res = Graph_GetNode(op->g, e.dest_id, &dest);
-		ASSERT(res != 0);
-		Record_AddNode(r, op->destRecIdx, dest);
+	if (!op->destAware) {
+		Node dest = GE_NEW_NODE () ;
+		res = Graph_GetNode (op->g, e.dest_id, &dest) ;
+		ASSERT (res != 0) ;
+		Record_AddNode (r, op->destRecIdx, dest) ;
 	}
 
 	Record_AddEdge(r, op->edgeRecIdx, e);
@@ -181,21 +181,30 @@ static inline bool _PassUnresolvedFilters
 	const OpEdgeIndexScan *op,
 	Record r
 ) {
-	FT_FilterNode *unresolved_filters = op->unresolved_filters;
-	if(unresolved_filters == NULL) return true; // no filters
-
-	return FilterTree_applyFilters(unresolved_filters, r) == FILTER_PASS;
-}
-
-static void UpdateCurrentAwareIds(const OpEdgeIndexScan *op) {
-	if(op->current_src_node_id) {
-		Node *n = Record_GetNode(op->child_record, op->srcRecIdx);
-		op->current_src_node_id->operand.constant = SI_LongVal(ENTITY_GET_ID(n));
+	FT_FilterNode *unresolved_filters = op->unresolved_filters ;
+	if (unresolved_filters == NULL) {
+		return true ; // no filters
 	}
 
-	if(op->current_dest_node_id) {
-		Node *n = Record_GetNode(op->child_record, op->destRecIdx);
-		op->current_dest_node_id->operand.constant = SI_LongVal(ENTITY_GET_ID(n));
+	return FilterTree_applyFilters (unresolved_filters, r) == FILTER_PASS ;
+}
+
+static void UpdateCurrentAwareIds
+(
+	const OpEdgeIndexScan *op
+) {
+	if (op->current_src_node_id) {
+		Node *n = Record_GetNode (op->child_record, op->srcRecIdx) ;
+		ASSERT (n != NULL) ;
+		op->current_src_node_id->operand.constant =
+			SI_LongVal (ENTITY_GET_ID (n)) ;
+	}
+
+	if (op->current_dest_node_id) {
+		Node *n = Record_GetNode (op->child_record, op->destRecIdx) ;
+		ASSERT (n != NULL) ;
+		op->current_dest_node_id->operand.constant =
+			SI_LongVal (ENTITY_GET_ID (n)) ;
 	}
 }
 
@@ -203,24 +212,25 @@ static Record EdgeIndexScanConsumeFromChild
 (
 	OpBase *opBase
 ) {
-	OpEdgeIndexScan	*op = (OpEdgeIndexScan*)opBase;
-	RSIndex *rsIdx = Index_RSIndex(op->idx);
-	const EdgeIndexKey *edgeKey = NULL;
+	OpEdgeIndexScan	*op = (OpEdgeIndexScan*) opBase ;
+	RSIndex *rsIdx = Index_RSIndex (op->idx) ;
+	const EdgeIndexKey *edgeKey = NULL ;
 
 pull_index:
+
 	//--------------------------------------------------------------------------
 	// pull from index
 	//--------------------------------------------------------------------------
 
-	if(op->iter != NULL && op->child_record != NULL) {
-		while((edgeKey = RediSearch_ResultsIteratorNext(op->iter, rsIdx, NULL))
+	if (op->iter != NULL && op->child_record != NULL) {
+		while ((edgeKey = RediSearch_ResultsIteratorNext (op->iter, rsIdx, NULL))
 				!= NULL) {
 			// populate record with edge
-			_UpdateRecord(op, op->child_record, edgeKey);
+			_UpdateRecord (op, op->child_record, edgeKey) ;
 			// apply unresolved filters
-			if(_PassUnresolvedFilters(op, op->child_record)) {
+			if (_PassUnresolvedFilters (op, op->child_record)) {
 				// clone the held Record, as it will be freed upstream
-				return OpBase_CloneRecord(op->child_record);
+				return OpBase_CloneRecord (op->child_record) ;
 			}
 		}
 	}
@@ -229,36 +239,54 @@ pull_index:
 	// index depleted
 	//--------------------------------------------------------------------------
 
-	// free input record
-	if(op->child_record != NULL) {
-		OpBase_DeleteRecord(&op->child_record);
+	// find a new record to operate on
+	while (true) {
+		// free previous record
+		if (op->child_record != NULL) {
+			OpBase_DeleteRecord (&op->child_record) ;
+		}
+
+		//----------------------------------------------------------------------
+		// pull from child
+		//----------------------------------------------------------------------
+
+		op->child_record = OpBase_Consume (op->op.children [0]) ;
+		if (op->child_record == NULL) {
+			return NULL ; // depleted
+		}
+
+		// make sure bounded nodes exists
+		if (op->srcAware &&
+			Record_GetType (op->child_record, op->srcRecIdx) != REC_TYPE_NODE) {
+				continue ;
+		}
+
+		if (op->destAware &&
+			Record_GetType (op->child_record, op->destRecIdx) != REC_TYPE_NODE) {
+				continue ;
+		}
+
+		break ;
 	}
-
-	//--------------------------------------------------------------------------
-	// pull from child
-	//--------------------------------------------------------------------------
-
-	op->child_record = OpBase_Consume(op->op.children[0]);
-	if(op->child_record == NULL) return NULL; // depleted
 
 	//--------------------------------------------------------------------------
 	// reset index iterator
 	//--------------------------------------------------------------------------
 
-	if(op->rebuild_index_query) {
+	if (op->rebuild_index_query) {
 		// free previous iterator
-		if(op->iter != NULL) {
-			RediSearch_ResultsIteratorFree(op->iter);
-			op->iter = NULL;
+		if (op->iter != NULL) {
+			RediSearch_ResultsIteratorFree (op->iter) ;
+			op->iter = NULL ;
 		}
 
 		// free previous unresolved filters
-		if(op->unresolved_filters != NULL) {
-			FilterTree_Free(op->unresolved_filters);
-			op->unresolved_filters = NULL;
+		if (op->unresolved_filters != NULL) {
+			FilterTree_Free (op->unresolved_filters) ;
+			op->unresolved_filters = NULL ;
 		}
 
-		UpdateCurrentAwareIds(op);
+		UpdateCurrentAwareIds (op) ;
 
 		// rebuild index query, probably relies on runtime values
 		// resolve runtime variables within filter

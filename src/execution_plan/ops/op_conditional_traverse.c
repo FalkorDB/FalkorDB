@@ -154,16 +154,16 @@ OpBase *NewCondTraverseOp
 	const char *dest = AlgebraicExpression_Dest(ae);
 	op->destNodeIdx = OpBase_Modifies((OpBase *)op, dest);
 
-	const char *edge = AlgebraicExpression_Edge(ae);
-	if(edge) {
+	const char *edge = AlgebraicExpression_Edge (ae) ;
+	if (edge != NULL) {
 		// this operation will populate an edge in the Record
 		// prepare all necessary information for collecting matching edges
-		uint edge_idx = OpBase_Modifies((OpBase *)op, edge);
-		QGEdge *e = QueryGraph_GetEdgeByAlias(plan->query_graph, edge);
-		op->edge_ctx = EdgeTraverseCtx_New(ae, e, edge_idx);
+		uint edge_idx = OpBase_Modifies ((OpBase *)op, edge) ;
+		QGEdge *e = QueryGraph_GetEdgeByAlias (plan->query_graph, edge) ;
+		op->edge_ctx = EdgeTraverseCtx_New (ae, e, edge_idx) ;
 	}
 
-	return (OpBase *)op;
+	return (OpBase *)op ;
 }
 
 // make traversal optional
@@ -173,23 +173,18 @@ void CondTraverse_MakeOptional
 (
 	OpCondTraverse *op
 ) {
-	ASSERT (op != NULL) ;
-	ASSERT (op->optional == false) ;
-	ASSERT (op->optional_records == NULL) ;
+	ASSERT (op                   != NULL)  ;
+	ASSERT (op->optional         == false) ;
+	ASSERT (op->optional_records == NULL)  ;
 
-	op->optional = true ;
-	op->op.name  = "Optional Conditional Traverse" ;
-	op->op.type  = OPType_OPTIONAL_CONDITIONAL_TRAVERSE ;
+	op->optional         = true ;
+	op->op.name          = "Optional Conditional Traverse" ;
+	op->op.type          = OPType_OPTIONAL_CONDITIONAL_TRAVERSE ;
 	op->optional_records = arr_new (Record, op->record_cap) ;
 
 	// s = true
 	GrB_OK (GxB_Scalar_new (&op->s, GrB_BOOL)) ;
 	GrB_OK (GxB_Scalar_setElement_BOOL (op->s, true)) ;
-
-	// allocate reduction & neighborless vectors
-	GrB_Index nrows = op->record_cap ;
-	GrB_OK (GrB_Vector_new (&op->w, GrB_BOOL, nrows)) ;
-	GrB_OK (GrB_Vector_new (&op->e, GrB_BOOL, nrows)) ;
 }
 
 static OpResult CondTraverseInit
@@ -200,14 +195,23 @@ static OpResult CondTraverseInit
 
 	// in case this operation is restricted by a limit
 	// set record_cap to the specified limit
-	ExecutionPlan_ContainsLimit(opBase, &op->record_cap);
+	ExecutionPlan_ContainsLimit (opBase, &op->record_cap) ;
 
 	// record_cap should not be greater than BATCH_SIZE
-	if(op->record_cap > BATCH_SIZE) op->record_cap = BATCH_SIZE;
+	if (op->record_cap > BATCH_SIZE) {
+		op->record_cap = BATCH_SIZE ;
+	}
 
-	op->records = rm_calloc(op->record_cap, sizeof(Record));
+	op->records = rm_calloc (op->record_cap, sizeof (Record)) ;
 
-	return OP_OK;
+	if (op->optional) {
+		// allocate reduction & neighborless vectors
+		GrB_Index nrows = op->record_cap ;
+		GrB_OK (GrB_Vector_new (&op->w, GrB_BOOL, nrows)) ;
+		GrB_OK (GrB_Vector_new (&op->e, GrB_BOOL, nrows)) ;
+	}
+
+	return OP_OK ;
 }
 
 // each call to CondTraverseConsume emits a Record containing the

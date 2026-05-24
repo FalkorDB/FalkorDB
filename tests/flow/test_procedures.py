@@ -24,11 +24,11 @@ class testProcedures(FlowTestsBase):
         if GRAPH_ID in self.db.list_graphs():
             return
 
-        edge = Edge(node1, 'goWellWith', node5)
+        edge = Edge(node1, "goWellWith", node5)
         self.graph.query(f"CREATE {node1}, {node2}, {node3}, {node4}, {node5}, {edge}")
 
         # Create full-text index.
-        create_node_fulltext_index(self.graph, 'fruit', 'name', sync=True)
+        create_node_fulltext_index(self.graph, "fruit", "name", sync=True)
 
     # Compares two nodes based on their properties.
     def _compareNodes(self, a, b):
@@ -47,38 +47,43 @@ class testProcedures(FlowTestsBase):
         actual_resultset = self.graph.query(query, query_params).result_set
         self.env.assertEquals(len(actual_resultset), len(expected_results))
         for i in range(len(actual_resultset)):
-            self.env.assertTrue(self._inResultSet(expected_results[i], actual_resultset))
+            self.env.assertTrue(
+                self._inResultSet(expected_results[i], actual_resultset)
+            )
 
     # Call procedure, omit yield, expecting all procedure outputs to
     # be included in result-set.
     def test01_no_yield(self):
-        actual_result = self.graph.call_procedure("db.idx.fulltext.queryNodes",
-                                                  args=["fruit", "Orange1"])
-        assert(len(actual_result.result_set) == 1)
+        actual_result = self.graph.call_procedure(
+            "db.idx.fulltext.queryNodes", args=["fruit", "Orange1"]
+        )
+        assert len(actual_result.result_set) == 1
 
         header = actual_result.header
         data = actual_result.result_set[0]
-        assert(header[0][1] == 'node')
-        assert(data[0] is not None)
+        assert header[0][1] == "node"
+        assert data[0] is not None
 
     # Call procedure specify different outputs.
     def test02_yield(self):
-        actual_result = self.graph.call_procedure("db.idx.fulltext.queryNodes",
-                                                  args=['fruit', 'Orange1'],
-                                                  emit=['node'])
-        assert(len(actual_result.result_set) == 1)
+        actual_result = self.graph.call_procedure(
+            "db.idx.fulltext.queryNodes", args=["fruit", "Orange1"], emit=["node"]
+        )
+        assert len(actual_result.result_set) == 1
 
         header = actual_result.header
         data = actual_result.result_set[0]
-        assert(header[0][1] == 'node')
-        assert(data[0] is not None)
+        assert header[0][1] == "node"
+        assert data[0] is not None
 
         # Yield an unknown output.
         # Expect an error when trying to use an unknown procedure output.
         try:
-            self.graph.call_procedure("db.idx.fulltext.queryNodes",
-                                      args=["fruit", "Orange1"],
-                                      emit=["unknown"])
+            self.graph.call_procedure(
+                "db.idx.fulltext.queryNodes",
+                args=["fruit", "Orange1"],
+                emit=["unknown"],
+            )
             self.env.assertFalse(1)
         except redis.exceptions.ResponseError:
             # Expecting an error.
@@ -87,9 +92,11 @@ class testProcedures(FlowTestsBase):
         # Yield the same output multiple times.
         # Expect an error when trying to use the same output multiple times.
         try:
-            self.graph.call_procedure("db.idx.fulltext.queryNodes",
-                                      args=["fruit", "Orange1"],
-                                      emit=["node", "node"])
+            self.graph.call_procedure(
+                "db.idx.fulltext.queryNodes",
+                args=["fruit", "Orange1"],
+                emit=["node", "node"],
+            )
             self.env.assertFalse(1)
         except redis.exceptions.ResponseError:
             # Expecting an error.
@@ -117,9 +124,11 @@ class testProcedures(FlowTestsBase):
         # Overload arguments.
         # Expect an error when trying to send too many arguments.
         try:
-            self.graph.call_procedure("db.idx.fulltext.queryNodes",
-                                      args=["fruit", "query", "fruit", "query"],
-                                      emit=["node"])
+            self.graph.call_procedure(
+                "db.idx.fulltext.queryNodes",
+                args=["fruit", "query", "fruit", "query"],
+                emit=["node"],
+            )
             self.env.assertFalse(1)
         except redis.exceptions.ResponseError:
             # Expecting an error.
@@ -127,14 +136,13 @@ class testProcedures(FlowTestsBase):
 
     # Test procedure call while mixing a number of addition clauses.
     def test04_mix_clauses(self):
-        query_params = {'prefix': 'Orange*'}
+        query_params = {"prefix": "Orange*"}
         # CALL + RETURN.
 
         query = """CALL db.idx.fulltext.queryNodes('fruit', $prefix) YIELD node
                     RETURN node"""
         expected_results = [node4, node2, node3, node1]
         self.queryAndValidate(query, expected_results, query_params=query_params)
-
 
         # The combination of CALL and WHERE currently creates a syntax error in libcypher-parser.
         # CALL + WHERE + RETURN + ORDER.
@@ -145,7 +153,6 @@ class testProcedures(FlowTestsBase):
         expected_results = [node3, node4]
         self.queryAndValidate(query, expected_results, query_params=query_params)
 
-
         # CALL + WHERE + RETURN + ORDER + SKIP.
         query = """CALL db.idx.fulltext.queryNodes('fruit', $prefix) YIELD node
                     WHERE node.value > 2
@@ -155,7 +162,6 @@ class testProcedures(FlowTestsBase):
         expected_results = [node4]
         self.queryAndValidate(query, expected_results, query_params=query_params)
 
-
         # CALL + WHERE + RETURN + LIMIT.
         query = """CALL db.idx.fulltext.queryNodes('fruit', $prefix) YIELD node
                     WHERE node.value > 2
@@ -163,7 +169,6 @@ class testProcedures(FlowTestsBase):
                     LIMIT 2"""
         expected_results = [node3, node4]
         self.queryAndValidate(query, expected_results, query_params=query_params)
-
 
         # CALL + WHERE + RETURN + ORDER + SKIP + LIMIT.
         query = """CALL db.idx.fulltext.queryNodes('fruit', $prefix) YIELD node
@@ -183,7 +188,6 @@ class testProcedures(FlowTestsBase):
         expected_results = [node1, node2, node3, node4]
         self.queryAndValidate(query, expected_results, query_params=query_params)
 
-
         # CALL + RETURN + ORDER + SKIP.
         query = """CALL db.idx.fulltext.queryNodes('fruit', $prefix) YIELD node
                     RETURN node
@@ -193,7 +197,6 @@ class testProcedures(FlowTestsBase):
         expected_results = [node2, node3, node4]
         self.queryAndValidate(query, expected_results, query_params=query_params)
 
-
         # CALL + RETURN + ORDER + LIMIT.
         query = """CALL db.idx.fulltext.queryNodes('fruit', $prefix) YIELD node
                     RETURN node
@@ -202,7 +205,6 @@ class testProcedures(FlowTestsBase):
                     """
         expected_results = [node1, node2]
         self.queryAndValidate(query, expected_results, query_params=query_params)
-
 
         # CALL + RETURN + ORDER + SKIP + LIMIT.
         query = """CALL db.idx.fulltext.queryNodes('fruit', $prefix) YIELD node
@@ -214,7 +216,6 @@ class testProcedures(FlowTestsBase):
         expected_results = [node2]
         self.queryAndValidate(query, expected_results, query_params=query_params)
 
-
         # CALL + WHERE + RETURN + ORDER.
         query = """CALL db.idx.fulltext.queryNodes('fruit', $prefix) YIELD node
                     WHERE node.value > 2
@@ -222,7 +223,6 @@ class testProcedures(FlowTestsBase):
                     ORDER BY node.value"""
         expected_results = [node3, node4]
         self.queryAndValidate(query, expected_results, query_params=query_params)
-
 
         # CALL + WHERE + RETURN + ORDER + SKIP.
         query = """CALL db.idx.fulltext.queryNodes('fruit', $prefix) YIELD node
@@ -233,7 +233,6 @@ class testProcedures(FlowTestsBase):
         expected_results = [node4]
         self.queryAndValidate(query, expected_results, query_params=query_params)
 
-
         # CALL + WHERE + RETURN + ORDER + LIMIT.
         query = """CALL db.idx.fulltext.queryNodes('fruit', $prefix) YIELD node
                     WHERE node.value > 2
@@ -242,7 +241,6 @@ class testProcedures(FlowTestsBase):
                     LIMIT 1"""
         expected_results = [node3]
         self.queryAndValidate(query, expected_results, query_params=query_params)
-
 
         # CALL + WHERE + RETURN + ORDER + SKIP + LIMIT.
         query = """CALL db.idx.fulltext.queryNodes('fruit', $prefix) YIELD node
@@ -307,7 +305,9 @@ class testProcedures(FlowTestsBase):
             pass
 
         try:
-            self.graph.call_procedure("db.IDX.FulLText.QueRyNoDes", args=["fruit", "or"])
+            self.graph.call_procedure(
+                "db.IDX.FulLText.QueRyNoDes", args=["fruit", "or"]
+            )
         except redis.exceptions.ResponseError:
             # This should not cause an error
             self.env.assertFalse(1)
@@ -315,25 +315,33 @@ class testProcedures(FlowTestsBase):
 
     def test10_procedure_indexes(self):
         # Verify that the full-text index is reported properly.
-        actual_resultset = self.graph.query("CALL db.indexes() YIELD label, properties").result_set
+        actual_resultset = self.graph.query(
+            "CALL db.indexes() YIELD label, properties"
+        ).result_set
         expected_results = [["fruit", ["name"]]]
         self.env.assertEquals(actual_resultset, expected_results)
 
         # Add an exact-match index to a different property on the same label..
-        result = create_node_range_index(self.graph, 'fruit', 'other_property', sync=True)
+        result = create_node_range_index(
+            self.graph, "fruit", "other_property", sync=True
+        )
         self.env.assertEquals(result.indices_created, 1)
 
         # Verify that all indexes are reported.
-        actual_resultset = self.graph.query("CALL db.indexes() YIELD label, properties RETURN * ORDER BY properties").result_set
+        actual_resultset = self.graph.query(
+            "CALL db.indexes() YIELD label, properties RETURN * ORDER BY properties"
+        ).result_set
         expected_results = [["fruit", ["name", "other_property"]]]
         self.env.assertEquals(actual_resultset, expected_results)
 
         # Add an exact-match index to the full-text indexed property on the same label..
-        result = create_node_range_index(self.graph, 'fruit', 'name', sync=True)
+        result = create_node_range_index(self.graph, "fruit", "name", sync=True)
         self.env.assertEquals(result.indices_created, 1)
 
         # Verify that all indexes are reported.
-        actual_resultset = self.graph.query("CALL db.indexes() YIELD label, properties RETURN * ORDER BY properties").result_set
+        actual_resultset = self.graph.query(
+            "CALL db.indexes() YIELD label, properties RETURN * ORDER BY properties"
+        ).result_set
         expected_results = [["fruit", ["name", "other_property"]]]
         self.env.assertEquals(actual_resultset, expected_results)
 
@@ -344,29 +352,35 @@ class testProcedures(FlowTestsBase):
 
     def test11_list_procedures(self):
         # validates list of available procedures
-        actual_resultset = self.graph.query("CALL dbms.procedures() YIELD mode, name RETURN mode, name ORDER BY name").result_set
-        expected_result = [["READ",  "algo.BFS"],
-                           ["READ",  "algo.MSF"],
-                           ["READ",  "algo.SPpaths"],
-                           ["READ",  "algo.SSpaths"],
-                           ["READ",  "algo.WCC"],
-                           ["READ",  "algo.betweenness"],
-                           ["READ",  "algo.labelPropagation"],
-                           ["READ",  "algo.pageRank"],
-                           ["READ",  "db.constraints"],
-                           ["WRITE", "db.idx.fulltext.createNodeIndex"],
-                           ["WRITE", "db.idx.fulltext.drop"],
-                           ["READ",  "db.idx.fulltext.queryNodes"],
-                           ["READ",  "db.idx.fulltext.queryRelationships"],
-                           ["READ",  "db.idx.vector.queryNodes"],
-                           ["READ",  "db.idx.vector.queryRelationships"],
-                           ["READ",  "db.indexes"],
-                           ["READ",  "db.labels"],
-                           ["READ", "db.meta.stats"],
-                           ["READ",  "db.propertyKeys"],
-                           ["READ",  "db.relationshipTypes"],
-                           ["READ",  "dbms.functions"],
-                           ["READ",  "dbms.procedures"]]
+        actual_resultset = self.graph.query(
+            "CALL dbms.procedures() YIELD mode, name RETURN mode, name ORDER BY name"
+        ).result_set
+        expected_result = [
+            ["READ", "algo.BFS"],
+            ["READ", "algo.HarmonicCentrality"],
+            ["READ", "algo.MSF"],
+            ["READ", "algo.SPpaths"],
+            ["READ", "algo.SSpaths"],
+            ["READ", "algo.WCC"],
+            ["READ", "algo.betweenness"],
+            ["READ", "algo.labelPropagation"],
+            ["READ", "algo.maxFlow"],
+            ["READ", "algo.pageRank"],
+            ["READ", "db.constraints"],
+            ["WRITE", "db.idx.fulltext.createNodeIndex"],
+            ["WRITE", "db.idx.fulltext.drop"],
+            ["READ", "db.idx.fulltext.queryNodes"],
+            ["READ", "db.idx.fulltext.queryRelationships"],
+            ["READ", "db.idx.vector.queryNodes"],
+            ["READ", "db.idx.vector.queryRelationships"],
+            ["READ", "db.indexes"],
+            ["READ", "db.labels"],
+            ["READ", "db.meta.stats"],
+            ["READ", "db.propertyKeys"],
+            ["READ", "db.relationshipTypes"],
+            ["READ", "dbms.functions"],
+            ["READ", "dbms.procedures"],
+        ]
         self.env.assertEquals(actual_resultset, expected_result)
 
     def test12_list_functions(self):
@@ -380,67 +394,83 @@ class testProcedures(FlowTestsBase):
                RETURN name, return_type, arguments, internal, reducible,
                       aggregation, variable_len, udf"""
 
-        f = self.graph.query(q, {'name': 'add'}).result_set[0]
+        f = self.graph.query(q, {"name": "add"}).result_set[0]
 
-        name         = f[0]
-        return_type  = f[1]
-        arguments    = f[2]
-        internal     = f[3]
-        reducible    = f[4]
-        aggregation  = f[5]
+        name = f[0]
+        return_type = f[1]
+        arguments = f[2]
+        internal = f[3]
+        reducible = f[4]
+        aggregation = f[5]
         variable_len = f[6]
-        udf          = f[7]
+        udf = f[7]
 
-        self.env.assertEquals(name,         "add")
-        self.env.assertEquals(return_type,  "Map, List, Datetime, Date, Time, Duration, String, Boolean, Integer, Float, or Null")
-        self.env.assertEquals(arguments,    ['Map, List, Datetime, Date, Time, Duration, String, Boolean, Integer, Float, or Null', 'Map, List, Datetime, Date, Time, Duration, String, Boolean, Integer, Float, or Null'])
-        self.env.assertEquals(internal,     True)
-        self.env.assertEquals(reducible,    True)
-        self.env.assertEquals(aggregation,  False)
+        self.env.assertEquals(name, "add")
+        self.env.assertEquals(
+            return_type,
+            "Map, List, Datetime, Date, Time, Duration, String, Boolean, Integer, Float, or Null",
+        )
+        self.env.assertEquals(
+            arguments,
+            [
+                "Map, List, Datetime, Date, Time, Duration, String, Boolean, Integer, Float, or Null",
+                "Map, List, Datetime, Date, Time, Duration, String, Boolean, Integer, Float, or Null",
+            ],
+        )
+        self.env.assertEquals(internal, True)
+        self.env.assertEquals(reducible, True)
+        self.env.assertEquals(aggregation, False)
         self.env.assertEquals(variable_len, False)
-        self.env.assertEquals(udf,          False)
+        self.env.assertEquals(udf, False)
 
-        #-----------------------------------------------------------------------
+        # -----------------------------------------------------------------------
 
-        f = self.graph.query(q, {'name': 'avg'}).result_set[0]
+        f = self.graph.query(q, {"name": "avg"}).result_set[0]
 
-        name         = f[0]
-        return_type  = f[1]
-        arguments    = f[2]
-        internal     = f[3]
-        reducible    = f[4]
-        aggregation  = f[5]
+        name = f[0]
+        return_type = f[1]
+        arguments = f[2]
+        internal = f[3]
+        reducible = f[4]
+        aggregation = f[5]
         variable_len = f[6]
-        udf          = f[7]
+        udf = f[7]
 
-        self.env.assertEquals(name,         "avg")
-        self.env.assertEquals(return_type,  "Float or Null")
-        self.env.assertEquals(arguments,    ["Integer, Float, or Null"])
-        self.env.assertEquals(internal,     False)
-        self.env.assertEquals(reducible,    False)
-        self.env.assertEquals(aggregation,  True)
+        self.env.assertEquals(name, "avg")
+        self.env.assertEquals(return_type, "Float or Null")
+        self.env.assertEquals(arguments, ["Integer, Float, or Null"])
+        self.env.assertEquals(internal, False)
+        self.env.assertEquals(reducible, False)
+        self.env.assertEquals(aggregation, True)
         self.env.assertEquals(variable_len, False)
-        self.env.assertEquals(udf,          False)
+        self.env.assertEquals(udf, False)
 
-        #-----------------------------------------------------------------------
+        # -----------------------------------------------------------------------
 
-        f = self.graph.query(q, {'name': 'case'}).result_set[0]
+        f = self.graph.query(q, {"name": "case"}).result_set[0]
 
-        name         = f[0]
-        return_type  = f[1]
-        arguments    = f[2]
-        internal     = f[3]
-        reducible    = f[4]
-        aggregation  = f[5]
+        name = f[0]
+        return_type = f[1]
+        arguments = f[2]
+        internal = f[3]
+        reducible = f[4]
+        aggregation = f[5]
         variable_len = f[6]
-        udf          = f[7]
+        udf = f[7]
 
-        self.env.assertEquals(name,         "case")
-        self.env.assertEquals(return_type,  "Map, Node, Edge, List, Path, Datetime, Date, Time, Duration, String, Boolean, Integer, Float, Null, Pointer, Point, or Vectorf32")
-        self.env.assertEquals(arguments,    ['Map, Node, Edge, List, Path, Datetime, Date, Time, Duration, String, Boolean, Integer, Float, Null, Pointer, Point, or Vectorf32'])
-        self.env.assertEquals(internal,     True)
-        self.env.assertEquals(reducible,    True)
-        self.env.assertEquals(aggregation,  False)
+        self.env.assertEquals(name, "case")
+        self.env.assertEquals(
+            return_type,
+            "Map, Node, Edge, List, Path, Datetime, Date, Time, Duration, String, Boolean, Integer, Float, Null, Pointer, Point, or Vectorf32",
+        )
+        self.env.assertEquals(
+            arguments,
+            [
+                "Map, Node, Edge, List, Path, Datetime, Date, Time, Duration, String, Boolean, Integer, Float, Null, Pointer, Point, or Vectorf32"
+            ],
+        )
+        self.env.assertEquals(internal, True)
+        self.env.assertEquals(reducible, True)
+        self.env.assertEquals(aggregation, False)
         self.env.assertEquals(variable_len, True)
-        self.env.assertEquals(udf,          False)
-
+        self.env.assertEquals(udf, False)

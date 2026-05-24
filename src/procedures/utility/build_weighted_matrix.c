@@ -460,7 +460,7 @@ GrB_Info get_sub_weight_matrix
 	if (A_w) {
 		GrB_OK(GrB_Matrix_new(A_w, GrB_FP64, rows_nvals, rows_nvals));
 
-		// if no attribute was specified by the user return any EdgeID and 
+		// if no attribute was specified by the user return any EdgeID and
 		// zero weight
 		if (weight == ATTRIBUTE_ID_NONE) {
 			// if no weight specified, weights are zero

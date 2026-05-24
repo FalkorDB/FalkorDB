@@ -5,7 +5,6 @@ GRAPH_ID = "betweenness"
 class testBetweenness(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
-        self.conn = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
 
     def tearDown(self):

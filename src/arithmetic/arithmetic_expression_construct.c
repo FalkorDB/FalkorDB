@@ -460,7 +460,11 @@ static AR_ExpNode *_AR_ExpFromMapProjection(const cypher_astnode_t *expr) {
 		}
 	}
 
-	tomapOp = AR_EXP_NewOpNode("tomap", true, (n_selectors - allProps_selectors) * 2);
+	tomapOp = AR_EXP_NewOpNode("tomap_projection", true,
+			1 + (n_selectors - allProps_selectors) * 2);
+	// first child is the projected entity itself; if it evaluates to NULL
+	// the entire map projection evaluates to NULL (Neo4j semantics)
+	tomapOp->op.children[0] = AR_EXP_NewVariableOperandNode(entity_name);
 
 	uint j = 0;
 	for(uint i = 0; i < n_selectors; i++) {
@@ -474,9 +478,9 @@ static AR_ExpNode *_AR_ExpFromMapProjection(const cypher_astnode_t *expr) {
 			// { .name }
 			prop = cypher_ast_map_projection_property_get_prop_name(selector);
 			prop_name = cypher_ast_prop_name_get_value(prop);
-			tomapOp->op.children[j * 2] = AR_EXP_NewConstOperandNode(SI_ConstStringVal((char *)prop_name));
+			tomapOp->op.children[1 + j * 2] = AR_EXP_NewConstOperandNode(SI_ConstStringVal((char *)prop_name));
 			AR_ExpNode *entity = AR_EXP_NewVariableOperandNode(entity_name);
-			tomapOp->op.children[j * 2 + 1] = AR_EXP_NewAttributeAccessNode(entity, prop_name);
+			tomapOp->op.children[1 + j * 2 + 1] = AR_EXP_NewAttributeAccessNode(entity, prop_name);
 			j++;
 		} else if(t == CYPHER_AST_MAP_PROJECTION_LITERAL) {
 			// { v: n.v }
@@ -484,15 +488,15 @@ static AR_ExpNode *_AR_ExpFromMapProjection(const cypher_astnode_t *expr) {
 			prop_name = cypher_ast_prop_name_get_value(prop);
 			const cypher_astnode_t *literal_exp =
 				cypher_ast_map_projection_literal_get_expression(selector);
-			tomapOp->op.children[j * 2] = AR_EXP_NewConstOperandNode(SI_ConstStringVal((char *)prop_name));
-			tomapOp->op.children[j * 2 + 1] = AR_EXP_FromASTNode(literal_exp);
+			tomapOp->op.children[1 + j * 2] = AR_EXP_NewConstOperandNode(SI_ConstStringVal((char *)prop_name));
+			tomapOp->op.children[1 + j * 2 + 1] = AR_EXP_FromASTNode(literal_exp);
 			j++;
 		} else if(t == CYPHER_AST_MAP_PROJECTION_IDENTIFIER) {
 			// { v }
 			prop = cypher_ast_map_projection_identifier_get_identifier(selector);
 			prop_name = cypher_ast_identifier_get_name(prop);
-			tomapOp->op.children[j * 2] = AR_EXP_NewConstOperandNode(SI_ConstStringVal((char *)prop_name));
-			tomapOp->op.children[j * 2 + 1] = AR_EXP_NewVariableOperandNode(prop_name);
+			tomapOp->op.children[1 + j * 2] = AR_EXP_NewConstOperandNode(SI_ConstStringVal((char *)prop_name));
+			tomapOp->op.children[1 + j * 2 + 1] = AR_EXP_NewVariableOperandNode(prop_name);
 			j++;
 		} else if(t == CYPHER_AST_MAP_PROJECTION_ALL_PROPERTIES) {
 			continue;
@@ -650,7 +654,7 @@ static AR_ExpNode *_AR_ExpFromShortestPath
 }
 
 static AR_ExpNode *_AR_ExpNodeFromGraphEntity(const cypher_astnode_t *entity) {
-	const char *alias = AST_ToString(entity);
+	const char *alias = AST_ToString(entity, NULL);
 	return AR_EXP_NewVariableOperandNode(alias);
 }
 
@@ -665,12 +669,18 @@ static AR_ExpNode *_AR_ExpNodeFromComprehensionFunction
 	cypher_astnode_type_t type
 ) {
 	// set the appropriate function name according to the node type
-	const char *func_name;
-	if(type == CYPHER_AST_ANY)         func_name = "ANY";
-	else if(type == CYPHER_AST_ALL)    func_name = "ALL";
-	else if(type == CYPHER_AST_SINGLE) func_name = "SINGLE";
-	else if(type == CYPHER_AST_NONE)   func_name = "NONE";
-	else                               func_name = "LIST_COMPREHENSION";
+	const char *func_name ;
+	if (type == CYPHER_AST_ANY) {
+		func_name = "ANY";
+	} else if (type == CYPHER_AST_ALL) {
+		func_name = "ALL";
+	} else if (type == CYPHER_AST_SINGLE) {
+		func_name = "SINGLE";
+	} else if (type == CYPHER_AST_NONE) {
+		func_name = "NONE";
+	} else {
+		func_name = "LIST_COMPREHENSION";
+	}
 
 	// using the sample query:
 	// WITH [1,2,3] AS arr
@@ -679,35 +689,31 @@ static AR_ExpNode *_AR_ExpNodeFromComprehensionFunction
 	// the comprehension's local variable, WHERE expression, and eval routine
 	// do not change for each invocation
 	// so are bundled together in the function's context
-	ListComprehensionCtx *ctx = rm_malloc(sizeof(ListComprehensionCtx));
-	ctx->ft           = NULL;
-	ctx->eval_exp     = NULL;
-	ctx->local_record = NULL;
-	ctx->variable_str = NULL;
-	ctx->variable_idx = INVALID_INDEX;
+	ListComprehensionCtx *ctx = rm_calloc (1, sizeof (ListComprehensionCtx)) ;
+	ctx->variable_idx = INVALID_INDEX ;
 
 	// retrieve the variable name introduced in this context to iterate over
 	// list elements in the above query, this is 'val'
 	const cypher_astnode_t *variable_node =
-		cypher_ast_list_comprehension_get_identifier(comp_exp);
-	ASSERT(cypher_astnode_type(variable_node) == CYPHER_AST_IDENTIFIER);
+		cypher_ast_list_comprehension_get_identifier (comp_exp) ;
+	ASSERT (cypher_astnode_type (variable_node) == CYPHER_AST_IDENTIFIER) ;
 
 	// retrieve the variable string for the local variable
-	ctx->variable_str = cypher_ast_identifier_get_name(variable_node);
+	ctx->variable_str = cypher_ast_identifier_get_name (variable_node) ;
 
 	// the predicate node is the set of WHERE conditions in the comprehension
 	// if any
 	const cypher_astnode_t *predicate_node =
-		cypher_ast_list_comprehension_get_predicate(comp_exp);
+		cypher_ast_list_comprehension_get_predicate (comp_exp) ;
 
 	// build a FilterTree to represent this predicate
-	if(predicate_node) {
-		AST_ConvertFilters(&ctx->ft, predicate_node);
-	} else if(type != CYPHER_AST_LIST_COMPREHENSION) {
+	if (predicate_node) {
+		AST_ConvertFilters (&ctx->ft, predicate_node) ;
+	} else if (type != CYPHER_AST_LIST_COMPREHENSION) {
 		// functions like any() and all() must have a predicate node
-		ErrorCtx_SetError(EMSG_FUNCTION_REQUIER_PREDICATE, func_name);
-		rm_free(ctx);
-		return AR_EXP_NewConstOperandNode(SI_NullVal());
+		ErrorCtx_SetError (EMSG_FUNCTION_REQUIER_PREDICATE, func_name) ;
+		rm_free (ctx) ;
+		return AR_EXP_NewConstOperandNode (SI_NullVal ()) ;
 	}
 
 	// construct the operator node that will generate updated values,
@@ -715,40 +721,42 @@ static AR_ExpNode *_AR_ExpNodeFromComprehensionFunction
 	// in the above query, this will be an operation node representing "val * 2"
 	// this will always be NULL for comprehensions like any() and all()
 	const cypher_astnode_t *eval_node =
-		cypher_ast_list_comprehension_get_eval(comp_exp);
-	if(eval_node) ctx->eval_exp = _AR_EXP_FromASTNode(eval_node);
+		cypher_ast_list_comprehension_get_eval (comp_exp) ;
+	if (eval_node) {
+		ctx->eval_exp = _AR_EXP_FromASTNode (eval_node) ;
+	}
 
 	// 'arr' is the list expression
 	// note that this value could resolve to an alias, a literal array,
 	// a function call, and so on
 	const cypher_astnode_t *list_node =
-		cypher_ast_list_comprehension_get_expression(comp_exp);
-	AR_ExpNode *list = AR_EXP_FromASTNode(list_node);
+		cypher_ast_list_comprehension_get_expression (comp_exp) ;
+	AR_ExpNode *list = AR_EXP_FromASTNode (list_node) ;
 
 	// no evaluation expression
 	// no filter
 	// e.g.
 	// RETURN [x IN [1,2,3]] -> [1,2,3]
 	// in this case we can simply use the internal array expression
-	if(eval_node == NULL && predicate_node == NULL) {
-		ASSERT(type == CYPHER_AST_LIST_COMPREHENSION);
-		rm_free(ctx);
-		return list;
+	if (eval_node == NULL && predicate_node == NULL) {
+		ASSERT (type == CYPHER_AST_LIST_COMPREHENSION) ;
+		rm_free (ctx) ;
+		return list ;
 	}
 
 	// build an operation node to represent the list comprehension
-	AR_ExpNode *op = AR_EXP_NewOpNode(func_name, true, 2);
+	AR_ExpNode *op = AR_EXP_NewOpNode (func_name, true, 2) ;
 
 	// add the context as function's private data
-	AR_SetPrivateData(op, ctx);
+	AR_SetPrivateData (op, ctx) ;
 
 	// the list expression is the function's first child
-	op->op.children[0] = list;
+	op->op.children [0] = list ;
 
 	// the second child will be a pointer to the Record being evaluated
-	op->op.children[1] = AR_EXP_NewRecordNode();
+	op->op.children [1] = AR_EXP_NewRecordNode () ;
 
-	return op;
+	return op ;
 }
 
 static AR_ExpNode *_AR_ExpNodeFromReduceFunction
@@ -909,7 +917,7 @@ static AR_ExpNode *_AR_EXP_FromASTNode(const cypher_astnode_t *expr) {
 		return _AR_ExpNodeFromReduceFunction(expr);
 	} else if(t == CYPHER_AST_PATTERN_PATH || t == CYPHER_AST_PATTERN_COMPREHENSION) {
 		// this variable is assign by operitions that created in build_pattern_comprehension_ops.c
-		const char *alias = AST_ToString(expr);
+		const char *alias = AST_ToString(expr, NULL);
 		return AR_EXP_NewVariableOperandNode(alias);
 	} else {
 		/*

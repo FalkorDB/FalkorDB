@@ -12,14 +12,12 @@
 #include "cron/cron.h"
 #include "index/indexer.h"
 #include "bolt/bolt_api.h"
-#include "commands/cmd_acl.h"
 #include "util/thpool/pool.h"
 #include "util/redis_version.h"
 #include "graph/graphcontext.h"
 #include "configuration/config.h"
 #include "serializers/graphmeta_type.h"
 #include "serializers/graphcontext_type.h"
-#include "commands/util/run_redis_command_as.h"
 
 #include <pthread.h>
 #include <stdbool.h>
@@ -372,9 +370,6 @@ static void _ShutdownEventHandler
 
 	// server is shutting down, finalize GraphBLAS
 	LAGraph_Finalize (NULL) ;
-
-	free_cmd_acl () ;
-	free_run_cmd_as () ;
 
 	BoltApi_Unregister () ;
 

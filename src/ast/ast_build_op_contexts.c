@@ -152,7 +152,7 @@ static void _ConvertUpdateItem
 	if(ctx == raxNotFound) {
 		ctx = UpdateCtx_New(alias);
 		raxInsert(updates, (unsigned char *)alias, len, ctx, NULL);
-	} 
+	}
 
 	//--------------------------------------------------------------------------
 	// collect update information
@@ -275,7 +275,7 @@ void AST_PreparePathCreation
 		 * 1. Current entity is NOT bound in a previous clause.
 		 * 2. We have yet to account for this entity. */
 		const cypher_astnode_t *elem = cypher_ast_pattern_path_get_element(path, i);
-		const char *alias = AST_ToString(elem);
+		const char *alias = AST_ToString (elem, NULL) ;
 
 		// Skip entities defined in previous clauses or already represented in our nodes/edges arrays.
 		int rc = raxTryInsert(bound_vars, (unsigned char *)alias, strlen(alias), NULL, NULL);

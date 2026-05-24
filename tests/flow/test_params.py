@@ -15,7 +15,7 @@ class testParams(FlowTestsBase):
 
     def tearDown(self):
         self.graph.delete()
-    
+
     def test_simple_params(self):
         params = [1, 2.3, -1, -2.3, "str", True, False, None, [0, 1, 2]]
         query = "RETURN $param"
@@ -55,7 +55,7 @@ class testParams(FlowTestsBase):
             ("CYPHER x = -1.2e2", -1.2e2),
             ("CYPHER x = -1.2e+2", -1.2e+2),
             ("CYPHER x = -1.2e-2", -1.2e-2),
-    
+
             # --- Strings ---
 
             ("CYPHER x = ''", ''),           # Empty single-quoted
@@ -68,7 +68,7 @@ class testParams(FlowTestsBase):
             ("CYPHER x = 'a\\nb'", "a\nb"),  # Escaped newline
             ("CYPHER x = 'a\\\\b'", "a\\b"), # Escaped backslash
             ("CYPHER x = 'aBc'", "aBc"),     # "aBc"
-    
+
             # --- Booleans ---
 
             ("CYPHER x = true",  True),
@@ -77,12 +77,12 @@ class testParams(FlowTestsBase):
             ("CYPHER x = false", False),
             ("CYPHER x = False", False),
             ("CYPHER x = FALSE", False),
-    
+
             # --- Null ---
             ("CYPHER x = null", None),
             ("CYPHER x = Null", None),
             ("CYPHER x = NULL", None),
-    
+
             # --- Arrays ---
             ("CYPHER x = []", []),
             ("CYPHER x = [1, 2, 3]", [1, 2, 3]),
@@ -91,7 +91,7 @@ class testParams(FlowTestsBase):
             ("CYPHER x = [[1, 2], [3, 4]]", [[1, 2], [3, 4]]),
             ("CYPHER x = [[1, [2]], [3]]", [[1, [2]], [3]]),
             ("CYPHER x = [[], []]", [[], []]),
-    
+
             # --- Maps ---
             ("CYPHER x = {}", {}),
             ("CYPHER x = {a: 1}", {'a': 1}),
@@ -276,7 +276,7 @@ class testParams(FlowTestsBase):
         params = {'param': 1}
         query = "RETURN $param + 1"
         expected_results = [[2]]
-            
+
         query_info = QueryInfo(query = query, description="Tests expression on param", expected_result = expected_results)
         self._assert_resultset_equals_expected(self.graph.query(query, params), query_info)
 
@@ -289,7 +289,7 @@ class testParams(FlowTestsBase):
         params = {'name': 'a'}
         query = "MATCH (n :Person {name:$name}) RETURN n"
         expected_results = [[p0]]
-            
+
         query_info = QueryInfo(query = query, description="Tests expression on param", expected_result = expected_results)
         self._assert_resultset_equals_expected(self.graph.query(query, params), query_info)
 
@@ -297,7 +297,7 @@ class testParams(FlowTestsBase):
         params = {'skip': 1, 'limit': 1}
         query = "UNWIND [1,2,3] AS X RETURN X SKIP $skip LIMIT $limit"
         expected_results = [[2]]
-            
+
         query_info = QueryInfo(query = query, description="Tests skip limit as params", expected_result = expected_results)
         self._assert_resultset_equals_expected(self.graph.query(query, params), query_info)
 
@@ -373,4 +373,63 @@ class testParams(FlowTestsBase):
         self._assert_resultset_equals_expected(self.graph.query(query, params), query_info)
         plan = str(self.graph.explain(query, params=params))
         self.env.assertIn('NodeByIdSeek', plan)
+
+    def test_map_param(self):
+        # test passing a map as a parameter value via the Python client dict interface
+        # this exercises the RESP protocol path for map parameters
+
+        # simple map parameter returned as-is
+        m = {'key': 'val'}
+        result = self.graph.query("RETURN $m", {'m': m})
+        self.env.assertEqual(result.result_set, [[m]])
+
+        # nested map
+        nested = {'outer': {'inner': 42}}
+        result = self.graph.query("RETURN $m", {'m': nested})
+        self.env.assertEqual(result.result_set, [[nested]])
+
+        # map used in SET +=
+        self.graph.query("CREATE (n:MP {id: 1})")
+        props = {'title': 'Hello', 'count': 99}
+        result = self.graph.query(
+            "MATCH (n:MP {id: 1}) SET n += $props RETURN n.title, n.count",
+            {'props': props})
+        self.env.assertEqual(result.result_set, [['Hello', 99]])
+
+        # map with multiple parameters (scalar + map)
+        result = self.graph.query(
+            "RETURN $id, $props",
+            {'id': 'abc', 'props': {'x': 1, 'y': 2}})
+        self.env.assertEqual(result.result_set, [['abc', {'x': 1, 'y': 2}]])
+
+    def test_invalid_param_value_error(self):
+        # When a parameter value is malformed (e.g. a Java client sending a Map
+        # using Java's default toString '{key=value}' instead of the Cypher
+        # '{key:value}' syntax), the server must report a clear error citing
+        # the parameter that failed, not the cryptic Cypher parse error
+        # 'Invalid input ... expected =' that resulted from buffer corruption.
+        bad_queries = [
+            # Map with '=' instead of ':' (Java Map.toString() format)
+            "CYPHER properties={title=Test} RETURN $properties",
+            # Map with non-identifier key (no quoting)
+            "CYPHER properties={my-key:1} RETURN $properties",
+            # Mixed scalar + bad map (the JFalkorDB scenario from the issue)
+            ('CYPHER id="abc" properties={title=Test, uri=http://example.com} '
+             + 'MERGE (e:Node {id: $id}) SET e += $properties'),
+        ]
+        for q in bad_queries:
+            try:
+                self.graph.query(q)
+                self.env.assertTrue(False,
+                    f"Expected error for malformed query: {q}")
+            except ResponseError as e:
+                # error must reference the parameter name that failed and
+                # must NOT be the cryptic Cypher parse error 'Invalid input
+                # ... expected =' that resulted from the corrupted-buffer bug
+                msg = str(e)
+                msg_lower = msg.lower()
+                self.env.assertContains("parameter", msg_lower)
+                self.env.assertContains("properties", msg)
+                self.env.assertNotIn("invalid input", msg_lower)
+                self.env.assertNotIn("expected '='", msg_lower)
 

@@ -80,6 +80,7 @@
 #define EMSG_SHORTESTPATH_SUPPORT "FalkorDB currently only supports shortestPaths in WITH or RETURN clauses"
 #define EMSG_EXPLAIN_PROFILE_USAGE "Please use GRAPH.%s 'key' 'query' command instead of GRAPH.QUERY 'key' '%s query'"
 #define EMSG_DUPLICATE_PARAMETERS "Duplicated parameter: %s"
+#define EMSG_INVALID_PARAMETER_VALUE "Failed to parse query parameter '%s' value"
 #define EMSG_PARSER_ERROR "errMsg: %s line: %u, column: %u, offset: %zu errCtx: %s errCtxOffset: %zu"
 #define EMSG_QUERY_WITH_MULTIPLE_STATEMENTS "Error: query with more than one statement is not supported."
 #define EMSG_QUERY_TIMEOUT "Query timed out"

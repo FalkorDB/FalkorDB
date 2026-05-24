@@ -73,8 +73,6 @@ cov.all
 cov.json
 *~
 redis.conf
-aclfile.acl
-perm.sh
 
 # ctags
 tags
