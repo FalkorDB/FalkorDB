@@ -291,223 +291,72 @@ jobs:
         # service); the rest go to spawn_files (private docker run per class).
         run: |
           python3 tests/flow/test_matrix_split.py >> $GITHUB_OUTPUT
-  # Flow tests — services bucket. Files whose Env() invocations never pass
-  # special flags (moduleArgs / useSlaves / enableDebugCommand / oss-cluster /
-  # shardsCount) reuse a long-running GHA service container per matrix cell.
-  # common.py's services mode (FALKORDB_USE_SERVICE=1) connects directly to
-  # `falkordb:6379` and FLUSHALLs between Env() calls for class-level isolation.
-  # No `docker run` per class → no docker socket mount needed for the test
-  # itself; the on-failure capture step still uses the socket to dump service
-  # logs, so we mount it for that.
-  test-flow-services:
-    name: ${{ matrix.flavour == 'a-sanitizer' && 'a-sanitizer-flow-svc' || 'release-flow-svc' }} ${{ matrix.test_file }} (${{ matrix.arch }})
-    # arm64 cells need a native arm64 runner; everything else stays on the
-    # default ubuntu-latest amd64 runner.
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
-    container:
-      image: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
-      options: --volume /var/run/docker.sock:/var/run/docker.sock
-    needs:
-      - check-files
-      - docker
-      - flow-test-matrix
-      - build-rc-image
-      - build-rc-asan-image
-      - build-rc-coverage-image
-    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.flow-test-matrix.result == 'success' && needs.build-rc-image.result == 'success' && needs.build-rc-asan-image.result == 'success' && needs.build-rc-coverage-image.result == 'success' }}
+  # Per-flavour flow-test cells. Each `flow-<flavour>` block calls
+  # _flow-flavour.yml, which runs the services + spawn matrices for that
+  # one flavour. Calling the reusable workflow once per flavour gives each
+  # call its own 256-cell GHA matrix budget — splitting the otherwise
+  # over-the-limit (97 × multi-flavour × multi-arch) matrix into chunks.
+  # Adding a new flavour later = one more block here + one Dockerfile.<f> +
+  # one build-rc-<f>-image job.
+
+  flow-release:
+    needs: [check-files, docker, flow-test-matrix, build-rc-image]
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.flow-test-matrix.result == 'success' && needs.build-rc-image.result == 'success' }}
+    uses: ./.github/workflows/_flow-flavour.yml
     permissions:
       contents: read
       packages: read
-    services:
-      falkordb:
-        image: ${{ matrix.flavour == 'a-sanitizer' && format('ghcr.io/falkordb/falkordb:rc-pr-{0}-asan', github.event.pull_request.number) || matrix.flavour == 'coverage' && format('ghcr.io/falkordb/falkordb-server:rc-pr-{0}-coverage', github.event.pull_request.number) || format('ghcr.io/falkordb/falkordb-server:rc-pr-{0}', github.event.pull_request.number) }}
-        credentials:
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-        # Bind-mount the host cov/ dir so coverage cells can collect the
-        # profraw files the instrumented .so writes to /var/lib/falkordb/cov
-        # (via LLVM_PROFILE_FILE in Dockerfile.coverage). Harmless for non-
-        # coverage cells — only the coverage image emits profraw.
-        volumes:
-          - ${{ github.workspace }}/cov:/var/lib/falkordb/cov
-        env:
-          # Empty FALKORDB_ARGS overrides the image's compiled-in default
-          # (MAX_QUEUED_QUERIES 25 ...) so the service starts with the
-          # module's true zero-config defaults; tests that need specific
-          # config bring it via GRAPH.CONFIG SET.
-          FALKORDB_ARGS: ""
-          # enableDebugCommand=True is no longer a spawn trigger — files
-          # routed to services can use DEBUG RELOAD / DEBUG SLEEP because
-          # the shared service starts with --enable-debug-command yes.
-          REDIS_ARGS: "--enable-debug-command yes"
-      # Second service container reachable as `replica:6379` on the docker
-      # network the runner manages. Tests with Env(useSlaves=True) reach
-      # it through common.py services-mode (env.replica_host/port +
-      # _attach_slave). --replicaof retries until master is up, so the
-      # services come up in any order.
-      replica:
-        image: ${{ matrix.flavour == 'a-sanitizer' && format('ghcr.io/falkordb/falkordb:rc-pr-{0}-asan', github.event.pull_request.number) || matrix.flavour == 'coverage' && format('ghcr.io/falkordb/falkordb-server:rc-pr-{0}-coverage', github.event.pull_request.number) || format('ghcr.io/falkordb/falkordb-server:rc-pr-{0}', github.event.pull_request.number) }}
-        credentials:
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-        volumes:
-          - ${{ github.workspace }}/cov:/var/lib/falkordb/cov
-        env:
-          FALKORDB_ARGS: ""
-          REDIS_ARGS: "--replicaof falkordb 6379 --enable-debug-command yes"
-    env:
-      FALKORDB_TEST_IMAGE: ${{ matrix.flavour == 'a-sanitizer' && format('ghcr.io/falkordb/falkordb:rc-pr-{0}-asan', github.event.pull_request.number) || matrix.flavour == 'coverage' && format('ghcr.io/falkordb/falkordb-server:rc-pr-{0}-coverage', github.event.pull_request.number) || format('ghcr.io/falkordb/falkordb-server:rc-pr-{0}', github.event.pull_request.number) }}
-      FALKORDB_USE_SERVICE: "1"
-      FALKORDB_HOST: falkordb
-      FALKORDB_PORT: "6379"
-      FALKORDB_REPLICA_HOST: replica
-      FALKORDB_REPLICA_PORT: "6379"
-      SANITIZER: ${{ matrix.flavour == 'a-sanitizer' && 'address' || '' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        test_file: ${{ fromJson(needs.flow-test-matrix.outputs.services_files) }}
-        flavour: [release, a-sanitizer, coverage]
-        arch: [amd64, arm64]
-        # The asan RC image is amd64-only (Dockerfile.asan + the build-rc-asan-image
-        # job both pin platforms: linux/amd64). Skip the sanitizer cells on arm64
-        # until an arm64 asan image is available.
-        exclude:
-          - { flavour: a-sanitizer, arch: arm64 }
-          # Coverage image is amd64-only too (no arm64 llvm-tools-22 in our toolchain).
-          - { flavour: coverage, arch: arm64 }
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      # The service container's volume mount targets ${{ github.workspace }}/cov.
-      # Docker would auto-create it root-owned, but pre-creating gives us a
-      # predictable mode so the in-container redis (uid varies by image) can
-      # actually write profraw files.
-      - name: Pre-create cov dir (coverage cells)
-        if: matrix.flavour == 'coverage'
-        run: mkdir -p "${GITHUB_WORKSPACE}/cov" && chmod 0777 "${GITHUB_WORKSPACE}/cov"
-      - name: Run Flow test - ${{ matrix.test_file }} (flavour=${{ matrix.flavour }}, arch=${{ matrix.arch }})
-        env:
-          TEST_FILE: ${{ matrix.test_file }}
-        run: |
-          . /data/venv/bin/activate
-          TEST="$TEST_FILE" FAIL_FAST=1 RELEASE=1 ./flow.sh
-      # Coverage post-processing: pull the instrumented .so out of the
-      # coverage image (we need its on-disk path for llvm-cov), merge the
-      # profraw files the service container wrote into cov/, then export to
-      # lcov format. The codecov uploader (next step) picks up codecov.txt.
-      - name: Collect coverage (profraw → lcov)
-        if: ${{ !cancelled() && matrix.flavour == 'coverage' }}
-        env:
-          COV_IMAGE: ghcr.io/falkordb/falkordb-server:rc-pr-${{ github.event.pull_request.number }}-coverage
-        run: |
-          set -euo pipefail
-          # Extract the instrumented .so from the coverage image so llvm-cov
-          # has the binary to map profraw → source lines.
-          CID=$(docker create "$COV_IMAGE")
-          docker cp "${CID}:/var/lib/falkordb/bin/falkordb.so" ./libfalkordb-coverage.so
-          docker rm "$CID" >/dev/null
-          # find + merge all profraw files the service wrote during the test.
-          PROFRAW=$(find "${GITHUB_WORKSPACE}/cov" -name "*.profraw" 2>/dev/null || true)
-          if [ -z "$PROFRAW" ]; then
-            echo "::warning::no profraw files produced — skipping coverage export"
-            exit 0
-          fi
-          llvm-profdata-22 merge --sparse $PROFRAW -o cov.profdata
-          llvm-cov-22 export --format=lcov --instr-profile cov.profdata ./libfalkordb-coverage.so > codecov.txt.all
-          lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
-      - name: Upload coverage to Codecov
-        if: ${{ !cancelled() && matrix.flavour == 'coverage' }}
-        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-      - name: Capture service container logs on failure
-        if: failure()
-        run: |
-          mkdir -p tests/flow/logs
-          for cid in $(docker ps -aq); do
-            name=$(docker inspect -f '{{.Name}}' "$cid" 2>/dev/null | sed 's|^/||')
-            docker logs "$cid" > "tests/flow/logs/service-${name:-$cid}.log" 2>&1 || true
-          done
-      - name: Upload flow logs on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: test-flow-svc-logs-${{ strategy.job-index }}
-          path: |
-            tests/flow/logs/
-          if-no-files-found: ignore
+    with:
+      flavour: release
+      image: ghcr.io/falkordb/falkordb-server:rc-pr-${{ github.event.pull_request.number }}
+      archs: '["amd64", "arm64"]'
+      services_files: ${{ needs.flow-test-matrix.outputs.services_files }}
+      spawn_files: ${{ needs.flow-test-matrix.outputs.spawn_files }}
+      build_image: ${{ needs.check-files.outputs.file_changed == 'true' && format('ghcr.io/falkordb/falkordb-build:pr-{0}', github.event.pull_request.number) || 'ghcr.io/falkordb/falkordb-build:latest' }}
+      pr_number: ${{ github.event.pull_request.number }}
+    secrets: inherit
 
-  # Flow tests — spawn bucket. Files whose Env() invocations pass at least
-  # one special flag (moduleArgs / useSlaves / enableDebugCommand / oss-cluster
-  # / shardsCount) need per-class load-time config or topology. common.py
-  # issues `docker run` for each Env() call via the bind-mounted socket.
-  test-flow-spawn:
-    name: ${{ matrix.flavour == 'a-sanitizer' && 'a-sanitizer-flow' || 'release-flow' }} ${{ matrix.test_file }} (${{ matrix.arch }})
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
-    container:
-      image: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
-      options: --volume /var/run/docker.sock:/var/run/docker.sock
-    needs:
-      - check-files
-      - docker
-      - flow-test-matrix
-      - build-rc-image
-      - build-rc-asan-image
-      - build-rc-coverage-image
-    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.flow-test-matrix.result == 'success' && needs.build-rc-image.result == 'success' && needs.build-rc-asan-image.result == 'success' && needs.build-rc-coverage-image.result == 'success' }}
+  flow-asan:
+    needs: [check-files, docker, flow-test-matrix, build-rc-asan-image]
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.flow-test-matrix.result == 'success' && needs.build-rc-asan-image.result == 'success' }}
+    uses: ./.github/workflows/_flow-flavour.yml
     permissions:
       contents: read
       packages: read
-    env:
-      FALKORDB_TEST_IMAGE: ${{ matrix.flavour == 'a-sanitizer' && format('ghcr.io/falkordb/falkordb:rc-pr-{0}-asan', github.event.pull_request.number) || matrix.flavour == 'coverage' && format('ghcr.io/falkordb/falkordb-server:rc-pr-{0}-coverage', github.event.pull_request.number) || format('ghcr.io/falkordb/falkordb-server:rc-pr-{0}', github.event.pull_request.number) }}
-      SANITIZER: ${{ matrix.flavour == 'a-sanitizer' && 'address' || '' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        test_file: ${{ fromJson(needs.flow-test-matrix.outputs.spawn_files) }}
-        flavour: [release, a-sanitizer, coverage]
-        arch: [amd64, arm64]
-        # arm64 sanitizer cells: skip (asan image is amd64-only — see comment
-        # in test-flow-services above).
-        exclude:
-          - { flavour: a-sanitizer, arch: arm64 }
-          # Coverage image is amd64-only too (no arm64 llvm-tools-22 in our toolchain).
-          - { flavour: coverage, arch: arm64 }
-          # Spawn-mode coverage requires a host bind-mount via tests/flow/common.py
-          # so profraw files survive container teardown. Skip until that lands.
-          - { flavour: coverage, arch: amd64 }
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+    with:
+      flavour: a-sanitizer
+      # Note: asan image lives under the `falkordb` repo (not `falkordb-server`)
+      # — historical from when the asan image bundled the browser stage.
+      image: ghcr.io/falkordb/falkordb:rc-pr-${{ github.event.pull_request.number }}-asan
+      archs: '["amd64"]'
+      services_files: ${{ needs.flow-test-matrix.outputs.services_files }}
+      spawn_files: ${{ needs.flow-test-matrix.outputs.spawn_files }}
+      build_image: ${{ needs.check-files.outputs.file_changed == 'true' && format('ghcr.io/falkordb/falkordb-build:pr-{0}', github.event.pull_request.number) || 'ghcr.io/falkordb/falkordb-build:latest' }}
+      pr_number: ${{ github.event.pull_request.number }}
+      sanitizer_env: address
+    secrets: inherit
 
-      # Log into GHCR so the in-container docker CLI can pull the RC image
-      # the first time Env() spawns. Subsequent spawns hit the daemon's
-      # local image cache.
-      - name: Login to GHCR (for in-container docker pull)
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+  flow-coverage:
+    needs: [check-files, docker, flow-test-matrix, build-rc-coverage-image]
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.flow-test-matrix.result == 'success' && needs.build-rc-coverage-image.result == 'success' }}
+    uses: ./.github/workflows/_flow-flavour.yml
+    permissions:
+      contents: read
+      packages: read
+    with:
+      flavour: coverage
+      image: ghcr.io/falkordb/falkordb-server:rc-pr-${{ github.event.pull_request.number }}-coverage
+      archs: '["amd64"]'
+      services_files: ${{ needs.flow-test-matrix.outputs.services_files }}
+      spawn_files: ${{ needs.flow-test-matrix.outputs.spawn_files }}
+      build_image: ${{ needs.check-files.outputs.file_changed == 'true' && format('ghcr.io/falkordb/falkordb-build:pr-{0}', github.event.pull_request.number) || 'ghcr.io/falkordb/falkordb-build:latest' }}
+      pr_number: ${{ github.event.pull_request.number }}
+      collect_coverage: true
+      # Spawn-mode coverage needs a host bind-mount via tests/flow/common.py
+      # so profraw files survive container teardown. Skip until that lands.
+      include_spawn: false
+    secrets: inherit
 
-      - name: Pre-pull RC image
-        env:
-          IMAGE: ${{ env.FALKORDB_TEST_IMAGE }}
-        run: docker pull "$IMAGE"
-
-      - name: Run Flow test - ${{ matrix.test_file }} (flavour=${{ matrix.flavour }}, arch=${{ matrix.arch }})
-        env:
-          TEST_FILE: ${{ matrix.test_file }}
-        run: |
-          . /data/venv/bin/activate
-          TEST="$TEST_FILE" FAIL_FAST=1 RELEASE=1 ./flow.sh
-      - name: Upload flow logs on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: test-flow-spawn-logs-${{ strategy.job-index }}
-          path: |
-            tests/flow/logs/
-          if-no-files-found: ignore
   coverage:
     runs-on: ubuntu-latest
     container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
