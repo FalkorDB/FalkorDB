@@ -1499,11 +1499,6 @@ static void _GraphContext_Free
 		}
 	}
 
-	if (should_lock) {
-		RedisModule_ThreadSafeContextUnlock (ctx) ;
-		RedisModule_FreeThreadSafeContext (ctx) ;
-	}
-
 	//--------------------------------------------------------------------------
 	// free node schemas
 	//--------------------------------------------------------------------------
@@ -1530,6 +1525,11 @@ static void _GraphContext_Free
 
 	arr_free_cb (gc->relation_schemas, Schema_Free) ;
 	gc->relation_schemas = NULL ;
+
+	if (should_lock) {
+		RedisModule_ThreadSafeContextUnlock (ctx) ;
+		RedisModule_FreeThreadSafeContext (ctx) ;
+	}
 
 	arr_free_cb (gc->attributes, rm_free) ;
 	gc->attributes = NULL ;
