@@ -261,8 +261,10 @@ jobs:
   # itself; the on-failure capture step still uses the socket to dump service
   # logs, so we mount it for that.
   test-flow-services:
-    name: ${{ matrix.sanitizer && 'asan-flow-svc' || 'flow-svc' }} ${{ matrix.test_file }}
-    runs-on: ubuntu-latest
+    name: ${{ matrix.sanitizer && 'asan-flow-svc' || 'flow-svc' }} ${{ matrix.test_file }} (${{ matrix.arch }})
+    # arm64 cells need a native arm64 runner; everything else stays on the
+    # default ubuntu-latest amd64 runner.
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     container:
       image: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
       options: --volume /var/run/docker.sock:/var/run/docker.sock
@@ -318,9 +320,15 @@ jobs:
       matrix:
         test_file: ${{ fromJson(needs.flow-test-matrix.outputs.services_files) }}
         sanitizer: [false, true]
+        arch: [amd64, arm64]
+        # The asan RC image is amd64-only (Dockerfile.asan + the build-rc-asan-image
+        # job both pin platforms: linux/amd64). Skip the sanitizer cells on arm64
+        # until an arm64 asan image is available.
+        exclude:
+          - { sanitizer: true, arch: arm64 }
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - name: Run Flow test - ${{ matrix.test_file }} (sanitizer=${{ matrix.sanitizer }})
+      - name: Run Flow test - ${{ matrix.test_file }} (sanitizer=${{ matrix.sanitizer }}, arch=${{ matrix.arch }})
         env:
           TEST_FILE: ${{ matrix.test_file }}
         run: |
@@ -348,8 +356,8 @@ jobs:
   # / shardsCount) need per-class load-time config or topology. common.py
   # issues `docker run` for each Env() call via the bind-mounted socket.
   test-flow-spawn:
-    name: ${{ matrix.sanitizer && 'asan-flow' || 'flow' }} ${{ matrix.test_file }}
-    runs-on: ubuntu-latest
+    name: ${{ matrix.sanitizer && 'asan-flow' || 'flow' }} ${{ matrix.test_file }} (${{ matrix.arch }})
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     container:
       image: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
       options: --volume /var/run/docker.sock:/var/run/docker.sock
@@ -371,6 +379,11 @@ jobs:
       matrix:
         test_file: ${{ fromJson(needs.flow-test-matrix.outputs.spawn_files) }}
         sanitizer: [false, true]
+        arch: [amd64, arm64]
+        # arm64 sanitizer cells: skip (asan image is amd64-only — see comment
+        # in test-flow-services above).
+        exclude:
+          - { sanitizer: true, arch: arm64 }
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
@@ -389,7 +402,7 @@ jobs:
           IMAGE: ${{ env.FALKORDB_TEST_IMAGE }}
         run: docker pull "$IMAGE"
 
-      - name: Run Flow test - ${{ matrix.test_file }} (sanitizer=${{ matrix.sanitizer }})
+      - name: Run Flow test - ${{ matrix.test_file }} (sanitizer=${{ matrix.sanitizer }}, arch=${{ matrix.arch }})
         env:
           TEST_FILE: ${{ matrix.test_file }}
         run: |
