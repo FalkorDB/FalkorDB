@@ -62,11 +62,62 @@ on:
         required: false
         type: boolean
         default: true
+      dockerfile:
+        description: "Path to the Dockerfile for this flavour. If empty (the default), the build step is skipped — the caller is responsible for having pre-built the image at `inputs.image`. Set this for instrumented flavours (asan / coverage / future tsan / ubsan) so the build is folded into this workflow and rust-pr.yml doesn't need a per-flavour build-rc-<f>-image job."
+        required: false
+        type: string
+        default: ""
+      build_platforms:
+        description: "Comma-separated platforms passed to docker/build-push-action when the build step runs (e.g. 'linux/amd64' or 'linux/amd64,linux/arm64')."
+        required: false
+        type: string
+        default: "linux/amd64"
 
 jobs:
+  # Build the flavour-specific RC image when `dockerfile:` is provided.
+  # Skipped by default (release flavour uses build-rc-image in rust-pr.yml).
+  # When run, pushes to `inputs.image` so the services + spawn jobs below
+  # can pull it.
+  build:
+    if: ${{ inputs.dockerfile != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push ${{ inputs.flavour }} image
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
+        with:
+          context: .
+          file: ${{ inputs.dockerfile }}
+          platforms: ${{ inputs.build_platforms }}
+          push: true
+          provenance: false
+          build-args: |
+            BUILD_IMAGE=${{ inputs.build_image }}
+          tags: ${{ inputs.image }}
+          # Buildcache key based on flavour so each flavour's cache is independent.
+          cache-from: type=registry,ref=ghcr.io/falkordb/falkordb-server:buildcache-${{ inputs.flavour }}
+          cache-to: type=registry,ref=ghcr.io/falkordb/falkordb-server:buildcache-${{ inputs.flavour }},mode=max
+
   # Services-bucket flow tests for this flavour. Cells matrix on
   # test_file × arch; the flavour is fixed by the caller.
   services:
+    needs: build
+    # Run when build succeeded OR was skipped (release flavour skips build —
+    # the caller pre-builds the image via rust-pr.yml's build-rc-image).
+    if: ${{ !cancelled() && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
     name: ${{ inputs.flavour }}-flow-svc ${{ matrix.test_file }} (${{ matrix.arch }})
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     container:
@@ -170,7 +221,8 @@ jobs:
   # Disabled when the caller passes include_spawn=false (coverage, until
   # spawn-mode profraw bind-mount lands in tests/flow/common.py).
   spawn:
-    if: ${{ inputs.include_spawn }}
+    needs: build
+    if: ${{ !cancelled() && (needs.build.result == 'success' || needs.build.result == 'skipped') && inputs.include_spawn }}
     name: ${{ inputs.flavour }}-flow ${{ matrix.test_file }} (${{ matrix.arch }})
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     container:
