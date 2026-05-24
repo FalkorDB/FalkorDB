@@ -53,7 +53,8 @@ def start_redis(release=None, moduleEnvs=[]):
             g = client.select_graph("test")
             return
         except Exception:
-            pass
+            # Backoff so a slow redis startup doesn't peg a CPU core.
+            time.sleep(0.05)
 
 def falkordb():
     """Construct a FalkorDB client honoring FALKORDB_HOST / FALKORDB_PORT.

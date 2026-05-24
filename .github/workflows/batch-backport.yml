@@ -199,8 +199,12 @@ jobs:
             { print }
           ' Cargo.toml > Cargo.toml.new && mv Cargo.toml.new Cargo.toml
 
-          # Keep Cargo.lock in sync with the bumped version.
-          cargo update --workspace --offline 2>/dev/null || cargo update --workspace
+          # Keep Cargo.lock in sync with the bumped version. Scope to the
+          # workspace root package only so we don't drag in unrelated dep
+          # upgrades on backport branches (which want a minimal Cargo.lock
+          # diff).
+          cargo update --package falkordb-rs --offline 2>/dev/null \
+            || cargo update --package falkordb-rs
 
           git add Cargo.toml Cargo.lock
           git commit -m "Bump version to ${NEW_VERSION}"

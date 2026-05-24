@@ -1,4 +1,3 @@
-import os
 import random
 import asyncio
 from common import *

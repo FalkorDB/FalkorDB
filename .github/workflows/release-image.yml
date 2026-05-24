@@ -187,7 +187,11 @@ jobs:
           SRC="ghcr.io/falkordb/${REPO}:rc-pr-${RC_PR_N}"
           EXTRA_TAGS=""
           if [ "$IS_LATEST" = "true" ]; then
-            EXTRA_TAGS="$EXTRA_TAGS -t ghcr.io/falkordb/${REPO}:latest -t falkordb/${REPO}:latest"
+            # GHCR gets :latest (Rust port is the only thing there).
+            # Docker Hub gets :latest-rs — the bare :latest tag on Docker
+            # Hub currently points at the C-port image and we don't want
+            # to clobber it until/unless we decide to flip the default.
+            EXTRA_TAGS="$EXTRA_TAGS -t ghcr.io/falkordb/${REPO}:latest -t falkordb/${REPO}:latest-rs"
           fi
           docker buildx imagetools create \
             -t "ghcr.io/falkordb/${REPO}:${TAG}" \
