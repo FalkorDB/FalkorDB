@@ -180,22 +180,27 @@ _sanitizer_summary() {
     local logdir="$1"
     local E=0
 
-    # ASAN checks
-    if ! _sanitizer_check "$logdir" "Direct leak" "leaks"; then
-        E=1
-    elif ! _sanitizer_check "$logdir" "detected memory leaks" "leaks"; then
-        E=1
+    # Gate by the active sanitizer so stale logs from a previous run
+    # (e.g. *.tsan.log* left under CLEAR_LOGS=0 during an ASAN run) are
+    # not mistakenly reported against the current run.
+    if [[ $SAN == thread ]]; then
+        # TSAN checks only
+        _tsan_check "$logdir" "WARNING: ThreadSanitizer" "data races" || E=1
+        _tsan_check "$logdir" "data race" "data races" || E=1
+    else
+        # ASAN checks (default: address/addr/leak/memory)
+        if ! _sanitizer_check "$logdir" "Direct leak" "leaks"; then
+            E=1
+        elif ! _sanitizer_check "$logdir" "detected memory leaks" "leaks"; then
+            E=1
+        fi
+
+        _sanitizer_check "$logdir" "dynamic-stack-buffer-overflow" "buffer overflow" || E=1
+        _sanitizer_check "$logdir" "memcpy-param-overlap" "memory errors" || E=1
+        _sanitizer_check "$logdir" "stack-use-after-scope" "stack use after scope" || E=1
+        _sanitizer_check "$logdir" "heap-use-after-free" "use after free" || E=1
+        _sanitizer_check "$logdir" "signal 11" "signal 11" 1  # warn only
     fi
-
-    _sanitizer_check "$logdir" "dynamic-stack-buffer-overflow" "buffer overflow" || E=1
-    _sanitizer_check "$logdir" "memcpy-param-overlap" "memory errors" || E=1
-    _sanitizer_check "$logdir" "stack-use-after-scope" "stack use after scope" || E=1
-    _sanitizer_check "$logdir" "heap-use-after-free" "use after free" || E=1
-    _sanitizer_check "$logdir" "signal 11" "signal 11" 1  # warn only
-
-    # TSAN checks
-    _tsan_check "$logdir" "WARNING: ThreadSanitizer" "data races" || E=1
-    _tsan_check "$logdir" "data race" "data races" || E=1
 
     return $E
 }

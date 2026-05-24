@@ -345,7 +345,7 @@ WRAPPER_EOF
 		fi
 
 		local tsan_options="halt_on_error=0:second_deadlock_stack=1:history_size=4"
-		tsan_options="$tsan_options:log_path=$ROOT/tests/flow/logs/redis-tsan"
+		tsan_options="$tsan_options:log_path=$ROOT/tests/flow/logs/redis.tsan.log"
 		local tsan_supp="$ROOT/tests/memcheck/tsan.supp"
 		if [[ -f "$tsan_supp" ]]; then
 			tsan_options="$tsan_options:suppressions=$tsan_supp"

@@ -22,6 +22,7 @@ jobs:
     continue-on-error: ${{ matrix.san == 'thread' }}
     permissions:
       contents: read
+      actions: write
     strategy:
       fail-fast: false
       matrix:

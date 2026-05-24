@@ -65,13 +65,6 @@ signal:logServerInfo
 race:redisearch_thpool_init
 race:redisearch_thpool_destroy
 
-# RediSearch worker thread entry point — benign init race.
-race:thread_do
-
-# RediSearch inverted index lifecycle — concurrent add during free.
-race:InvertedIndex_AddBlock
-race:InvertedIndex_Free
-
 # OpenMP runtime (libomp.so) — internal allocator and lock races.
 race:___kmp_free
 race:libomp.so
