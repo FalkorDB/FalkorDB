@@ -261,7 +261,7 @@ jobs:
   # itself; the on-failure capture step still uses the socket to dump service
   # logs, so we mount it for that.
   test-flow-services:
-    name: ${{ matrix.sanitizer && 'asan-flow-svc' || 'flow-svc' }} ${{ matrix.test_file }} (${{ matrix.arch }})
+    name: ${{ matrix.flavour == 'a-sanitizer' && 'a-sanitizer-flow-svc' || 'release-flow-svc' }} ${{ matrix.test_file }} (${{ matrix.arch }})
     # arm64 cells need a native arm64 runner; everything else stays on the
     # default ubuntu-latest amd64 runner.
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
@@ -280,7 +280,7 @@ jobs:
       packages: read
     services:
       falkordb:
-        image: ${{ matrix.sanitizer && format('ghcr.io/falkordb/falkordb:rc-pr-{0}-asan', github.event.pull_request.number) || format('ghcr.io/falkordb/falkordb-server:rc-pr-{0}', github.event.pull_request.number) }}
+        image: ${{ matrix.flavour == 'a-sanitizer' && format('ghcr.io/falkordb/falkordb:rc-pr-{0}-asan', github.event.pull_request.number) || format('ghcr.io/falkordb/falkordb-server:rc-pr-{0}', github.event.pull_request.number) }}
         credentials:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
@@ -300,7 +300,7 @@ jobs:
       # _attach_slave). --replicaof retries until master is up, so the
       # services come up in any order.
       replica:
-        image: ${{ matrix.sanitizer && format('ghcr.io/falkordb/falkordb:rc-pr-{0}-asan', github.event.pull_request.number) || format('ghcr.io/falkordb/falkordb-server:rc-pr-{0}', github.event.pull_request.number) }}
+        image: ${{ matrix.flavour == 'a-sanitizer' && format('ghcr.io/falkordb/falkordb:rc-pr-{0}-asan', github.event.pull_request.number) || format('ghcr.io/falkordb/falkordb-server:rc-pr-{0}', github.event.pull_request.number) }}
         credentials:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
@@ -308,27 +308,27 @@ jobs:
           FALKORDB_ARGS: ""
           REDIS_ARGS: "--replicaof falkordb 6379 --enable-debug-command yes"
     env:
-      FALKORDB_TEST_IMAGE: ${{ matrix.sanitizer && format('ghcr.io/falkordb/falkordb:rc-pr-{0}-asan', github.event.pull_request.number) || format('ghcr.io/falkordb/falkordb-server:rc-pr-{0}', github.event.pull_request.number) }}
+      FALKORDB_TEST_IMAGE: ${{ matrix.flavour == 'a-sanitizer' && format('ghcr.io/falkordb/falkordb:rc-pr-{0}-asan', github.event.pull_request.number) || format('ghcr.io/falkordb/falkordb-server:rc-pr-{0}', github.event.pull_request.number) }}
       FALKORDB_USE_SERVICE: "1"
       FALKORDB_HOST: falkordb
       FALKORDB_PORT: "6379"
       FALKORDB_REPLICA_HOST: replica
       FALKORDB_REPLICA_PORT: "6379"
-      SANITIZER: ${{ matrix.sanitizer && 'address' || '' }}
+      SANITIZER: ${{ matrix.flavour == 'a-sanitizer' && 'address' || '' }}
     strategy:
       fail-fast: false
       matrix:
         test_file: ${{ fromJson(needs.flow-test-matrix.outputs.services_files) }}
-        sanitizer: [false, true]
+        flavour: [release, a-sanitizer]
         arch: [amd64, arm64]
         # The asan RC image is amd64-only (Dockerfile.asan + the build-rc-asan-image
         # job both pin platforms: linux/amd64). Skip the sanitizer cells on arm64
         # until an arm64 asan image is available.
         exclude:
-          - { sanitizer: true, arch: arm64 }
+          - { flavour: a-sanitizer, arch: arm64 }
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - name: Run Flow test - ${{ matrix.test_file }} (sanitizer=${{ matrix.sanitizer }}, arch=${{ matrix.arch }})
+      - name: Run Flow test - ${{ matrix.test_file }} (flavour=${{ matrix.flavour }}, arch=${{ matrix.arch }})
         env:
           TEST_FILE: ${{ matrix.test_file }}
         run: |
@@ -356,7 +356,7 @@ jobs:
   # / shardsCount) need per-class load-time config or topology. common.py
   # issues `docker run` for each Env() call via the bind-mounted socket.
   test-flow-spawn:
-    name: ${{ matrix.sanitizer && 'asan-flow' || 'flow' }} ${{ matrix.test_file }} (${{ matrix.arch }})
+    name: ${{ matrix.flavour == 'a-sanitizer' && 'a-sanitizer-flow' || 'release-flow' }} ${{ matrix.test_file }} (${{ matrix.arch }})
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     container:
       image: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
@@ -372,18 +372,18 @@ jobs:
       contents: read
       packages: read
     env:
-      FALKORDB_TEST_IMAGE: ${{ matrix.sanitizer && format('ghcr.io/falkordb/falkordb:rc-pr-{0}-asan', github.event.pull_request.number) || format('ghcr.io/falkordb/falkordb-server:rc-pr-{0}', github.event.pull_request.number) }}
-      SANITIZER: ${{ matrix.sanitizer && 'address' || '' }}
+      FALKORDB_TEST_IMAGE: ${{ matrix.flavour == 'a-sanitizer' && format('ghcr.io/falkordb/falkordb:rc-pr-{0}-asan', github.event.pull_request.number) || format('ghcr.io/falkordb/falkordb-server:rc-pr-{0}', github.event.pull_request.number) }}
+      SANITIZER: ${{ matrix.flavour == 'a-sanitizer' && 'address' || '' }}
     strategy:
       fail-fast: false
       matrix:
         test_file: ${{ fromJson(needs.flow-test-matrix.outputs.spawn_files) }}
-        sanitizer: [false, true]
+        flavour: [release, a-sanitizer]
         arch: [amd64, arm64]
         # arm64 sanitizer cells: skip (asan image is amd64-only — see comment
         # in test-flow-services above).
         exclude:
-          - { sanitizer: true, arch: arm64 }
+          - { flavour: a-sanitizer, arch: arm64 }
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
@@ -402,7 +402,7 @@ jobs:
           IMAGE: ${{ env.FALKORDB_TEST_IMAGE }}
         run: docker pull "$IMAGE"
 
-      - name: Run Flow test - ${{ matrix.test_file }} (sanitizer=${{ matrix.sanitizer }}, arch=${{ matrix.arch }})
+      - name: Run Flow test - ${{ matrix.test_file }} (flavour=${{ matrix.flavour }}, arch=${{ matrix.arch }})
         env:
           TEST_FILE: ${{ matrix.test_file }}
         run: |
