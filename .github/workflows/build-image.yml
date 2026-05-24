@@ -35,8 +35,11 @@ on:
         type: string
         default: "ghcr.io/falkordb/falkordb-build:latest"
     secrets:
-      DOCKERHUB_TOKEN:
-        description: "Docker Hub token (only needed when push_to_dockerhub=true)"
+      DOCKER_USERNAME:
+        description: "Docker Hub username (only needed when push_to_dockerhub=true)"
+        required: false
+      DOCKER_PASSWORD:
+        description: "Docker Hub password/token (only needed when push_to_dockerhub=true)"
         required: false
 
 jobs:
@@ -65,8 +68,8 @@ jobs:
         if: ${{ inputs.push_to_dockerhub }}
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Login to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -112,8 +115,8 @@ jobs:
         if: ${{ inputs.push_to_dockerhub }}
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Login to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3

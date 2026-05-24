@@ -166,8 +166,8 @@ jobs:
       - name: Login to Docker Hub
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Login to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -214,5 +214,6 @@ jobs:
       browser_tag: ${{ needs.prepare.outputs.browser_tag }}
       push_to_dockerhub: ${{ fromJSON(needs.prepare.outputs.push_to_dockerhub) }}
       is_latest: ${{ fromJSON(needs.prepare.outputs.is_latest) }}
-    secrets:
-      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+    # Forward DOCKER_USERNAME + DOCKER_PASSWORD (org-level secrets) to the
+    # reusable workflow's Docker Hub login.
+    secrets: inherit
