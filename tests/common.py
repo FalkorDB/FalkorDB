@@ -5,6 +5,8 @@ import time
 
 from falkordb import FalkorDB
 from redis import Redis
+from redis.retry import Retry
+from redis.backoff import NoBackoff
 
 redis_server: subprocess.Popen = None
 client = None
@@ -27,7 +29,12 @@ def start_redis(release=None, moduleEnvs=[]):
     if release:
         default_target = default_target.replace("debug", "release")
     target = os.environ.get("TARGET", default_target)
-    r = Redis(host=host, port=port)
+    # Bounded connect timeout + no-retry policy: redis-py 7.4 defaults retry
+    # ConnectionError indefinitely, which would hang the EXISTING_ENV probe
+    # if the service container isn't reachable. Fail fast so the caller's
+    # except branch fires within ~1s instead of after a long stall.
+    r = Redis(host=host, port=port, socket_connect_timeout=1,
+              retry=Retry(NoBackoff(), 0))
     try:
         r.ping()
         client = FalkorDB(host=host, port=port)

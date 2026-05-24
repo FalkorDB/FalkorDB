@@ -12,6 +12,8 @@ from RLTest import Env as Environment, Defaults
 
 import redis
 from redis import ResponseError
+from redis.retry import Retry
+from redis.backoff import NoBackoff
 from falkordb import FalkorDB, Graph, Node, Edge, Path, ExecutionPlan
 
 from base import FlowTestsBase
@@ -361,7 +363,10 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
         port = int(os.getenv("FALKORDB_PORT", "6379"))
         # Wipe the shared service back to a clean state so each class starts
         # fresh — mirrors the per-class isolation spawn-mode gets for free.
-        redis.Redis(host=host, port=port).flushall()
+        # Bounded connect timeout + no-retry so a not-yet-ready service raises
+        # quickly instead of stalling under redis-py's default retry policy.
+        redis.Redis(host=host, port=port, socket_connect_timeout=1,
+                    retry=Retry(NoBackoff(), 0)).flushall()
         # moduleArgs (runtime-mutable keys only — the classifier guarantees
         # immutable keys go to spawn) are applied via GRAPH.CONFIG SET.
         # A failed SET propagates as RuntimeError so tests that expect
@@ -472,19 +477,25 @@ def _wait_for_replication(host, port, attempts=50, interval=0.2):
     Services come up in parallel and the replica's `--replicaof` only
     starts trying to connect once redis is initialized, so the first few
     INFO replication calls may show 'down' or 'connecting'."""
-    r = redis.Redis(host=host, port=port)
+    r = redis.Redis(host=host, port=port, socket_connect_timeout=1,
+                    retry=Retry(NoBackoff(), 0))
+    # Track the last exception so the final timeout message can show *why*
+    # the polls were failing (connection refused vs auth vs INFO parse).
+    last_exc = None
     for _ in range(attempts):
         try:
             info = r.info('replication')
             if (info.get('master_link_status') == 'up'
                     and int(info.get('master_sync_in_progress', 1)) == 0):
                 return
-        except Exception:
-            pass
+        except Exception as e:
+            last_exc = e
         time.sleep(interval)
-    raise RuntimeError(
-        f"replica at {host}:{port} did not reach master_link_status=up "
-        f"in {attempts * interval:.1f}s")
+    msg = (f"replica at {host}:{port} did not reach master_link_status=up "
+           f"in {attempts * interval:.1f}s")
+    if last_exc is not None:
+        msg += f"; last error: {last_exc!r}"
+    raise RuntimeError(msg)
 
 
 def _make_docker_log_reader(cid):
