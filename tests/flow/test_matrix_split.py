@@ -54,13 +54,6 @@ IMMUTABLE_MODULE_ARGS = (
     "DELAY_INDEXING",
     "JS_HEAP_SIZE",
     "JS_STACK_SIZE",
-    # TIMEOUT is *conditionally* immutable: settable via GRAPH.CONFIG SET only
-    # when both TIMEOUT_DEFAULT and TIMEOUT_MAX are 0 (see config_cmd.rs's
-    # validate_timeout_cross_constraints). In a shared service container,
-    # earlier tests in the same file that set TIMEOUT_DEFAULT/TIMEOUT_MAX make
-    # later TIMEOUT writes fail with "deprecated" errors. Force tests that
-    # pass `moduleArgs=...TIMEOUT...` into the spawn bucket so each Env() gets
-    # a fresh container with TIMEOUT applied at module load.
     "TIMEOUT",
 )
 

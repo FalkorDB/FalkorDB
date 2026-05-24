@@ -98,10 +98,15 @@ class testQueryTimeout():
             try:
                 res = self.graph.query(q, timeout=5)
                 timeouts.append(res.run_time_ms)
-            except Exception:
-                # query timed out before `res` was bound; the loop below
-                # only needs a number we can clamp into a tighter retry
-                # timeout, so use the timeout we just spent as the upper bound
+            except ResponseError as error:
+                # The only ResponseError we expect here is "Query timed out"
+                # — anything else (Cypher error, wrong arity, ...) is a real
+                # problem and should surface, not be papered over.
+                self.env.assertContains("Query timed out", str(error))
+                # `res` is unbound when the query raises, so we can't use
+                # res.run_time_ms. The second loop only needs a number that
+                # clamps into [1, 10] ms; the just-attempted 5 ms is a
+                # reasonable upper-bound proxy (the query took at least that).
                 timeouts.append(5)
 
         for i, q in enumerate(queries):

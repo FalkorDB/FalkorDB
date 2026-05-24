@@ -168,7 +168,13 @@ jobs:
           CXX=clang++-22 cargo clippy --all-targets
   test:
     runs-on: ubuntu-latest
-    container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
+    container:
+      image: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
+      # Mount the runner's docker socket so the "Capture service container
+      # logs on failure" step below can run `docker ps`/`docker logs` against
+      # the GHA service container. Without this the log-capture step is a
+      # silent no-op (and could mask the upload-artifact step).
+      options: --volume /var/run/docker.sock:/var/run/docker.sock
     needs:
       - check-files
       - docker
@@ -564,7 +570,11 @@ jobs:
           fi                                                                
   benchmark:
     runs-on: ubuntu-latest
-    container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
+    container:
+      image: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
+      # Mount docker.sock so the failure-path log-capture step can dump the
+      # benchmark service container's stdout (same pattern as `test` above).
+      options: --volume /var/run/docker.sock:/var/run/docker.sock
     needs:
       - check-files
       - docker

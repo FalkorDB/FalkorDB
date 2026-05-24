@@ -23,15 +23,6 @@ RUN python3 -m venv venv
 
 RUN venv/bin/pip install behave falkordb falkordb-bulk-loader hypothesis pytest pytest-benchmark RLTest
 
-# Pin GraphBLAS to the same tagged release graphblas.sh uses (v10.3.1).
-# Previously this image cloned `--branch dev2` (upstream-dev, advances daily),
-# so each toolchain-image rebuild produced a different libgraphblas.a even
-# though graphblas.sh in the repo pinned to v10.3.1 — local builds and
-# Docker builds were on diverging GraphBLAS sources. The drift surfaced as
-# index/edge-SET regressions in the RC image's runtime (count(edges) was
-# right but RETURN/SET on the same MATCH returned 0). Tagged source keeps
-# both build paths in lockstep and matches what main's aviavni/falkordb-build
-# image was originally built against.
 RUN git clone --branch v10.3.1 --single-branch --depth 1 https://github.com/DrTimothyAldenDavis/GraphBLAS.git
 
 RUN cd GraphBLAS && \
