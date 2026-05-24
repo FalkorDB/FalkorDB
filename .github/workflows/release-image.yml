@@ -200,17 +200,20 @@ jobs:
             "${SRC}"
 
   # Rebuild path: workflow_dispatch only. Same code path as the original
-  # release pipeline — build from source at the supplied commit.
+  # release pipeline — build from source at the supplied commit. The
+  # `cells:` input describes the release matrix shape (2 archs × 2 variants).
   build:
     needs: prepare
     if: needs.prepare.outputs.mode == 'rebuild'
-    uses: ./.github/workflows/build-image.yml
+    uses: ./.github/workflows/_build-flavour.yml
     permissions:
       contents: read
       packages: write
     with:
+      flavour: release
       tag: ${{ needs.prepare.outputs.tag }}
       commit_sha: ${{ needs.prepare.outputs.commit_sha }}
+      cells: '[{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"full","repo":"falkordb"},{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"server","repo":"falkordb-server"},{"arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","target":"full","repo":"falkordb"},{"arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","target":"server","repo":"falkordb-server"}]'
       browser_tag: ${{ needs.prepare.outputs.browser_tag }}
       push_to_dockerhub: ${{ fromJSON(needs.prepare.outputs.push_to_dockerhub) }}
       is_latest: ${{ fromJSON(needs.prepare.outputs.is_latest) }}
