@@ -20,7 +20,10 @@ def udf_list(db, lib=None, with_code=None):
 
 class testUDF():
     def __init__(self):
-        self.env, self.db = Env()
+        # Three tests in this class call env.restart_and_reload(), which is
+        # backed by DEBUG RELOAD. Redis rejects DEBUG by default; the flag
+        # adds --enable-debug-command yes to the spawn.
+        self.env, self.db = Env(enableDebugCommand=True)
         self.graph = self.db.select_graph(GRAPH_ID)
         self.conn = self.env.getConnection()
 

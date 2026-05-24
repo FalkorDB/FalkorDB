@@ -11,11 +11,19 @@ RUN apt update -y && \
 
 RUN apt install -y git make cmake curl zlib1g zlib1g-dev libpolly-22-dev libomp-22-dev libc++-22-dev libc++abi-22-dev libzstd-dev python3-venv lcov
 
+# Docker CLI for per-test-class container orchestration in flow tests:
+# tests/flow/common.py spawns dedicated containers from the RC image so each
+# class gets its own fresh redis with the right load-time module args. The
+# CLI talks to the host docker daemon via /var/run/docker.sock (mounted via
+# the rust-pr.yml `container.options`). docker.io includes the daemon binary
+# we never run — only the client matters here.
+RUN apt install -y docker.io
+
 RUN python3 -m venv venv
 
 RUN venv/bin/pip install behave falkordb falkordb-bulk-loader hypothesis pytest pytest-benchmark RLTest
 
-RUN git clone --branch dev2 --single-branch --depth 1 https://github.com/DrTimothyAldenDavis/GraphBLAS.git
+RUN git clone --branch v10.3.1 --single-branch --depth 1 https://github.com/DrTimothyAldenDavis/GraphBLAS.git
 
 RUN cd GraphBLAS && \
     make static CMAKE_OPTIONS='-DGRAPHBLAS_COMPACT=1 -DCMAKE_POSITION_INDEPENDENT_CODE=on -DCMAKE_C_FLAGS=-Wno-incompatible-pointer-types -DCMAKE_CXX_FLAGS=-Wno-incompatible-pointer-types' JOBS=2 CC=clang-22 CXX=clang++-22 && \

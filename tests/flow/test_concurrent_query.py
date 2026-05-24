@@ -23,7 +23,7 @@ async def delete_graph(g):
 class testConcurrentQueryFlow(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
-        self.conn = redis.Redis(os.getenv("FALKORDB_HOST", "localhost"), self.env.port)
+        self.conn = redis.Redis(self.env.host, self.env.port)
         self.graph = self.db.select_graph(GRAPH_ID)
 
     def setUp(self):
@@ -32,7 +32,7 @@ class testConcurrentQueryFlow(FlowTestsBase):
 
     def run_queries_concurrently(self, queries):
         async def run(self, queries):            
-            pool = BlockingConnectionPool(max_connections=16, timeout=None, host=os.getenv("FALKORDB_HOST", "localhost"), port=self.env.port, decode_responses=True)
+            pool = BlockingConnectionPool(max_connections=16, timeout=None, host=self.env.host, port=self.env.port, decode_responses=True)
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 
@@ -109,7 +109,7 @@ class testConcurrentQueryFlow(FlowTestsBase):
     def test_04_concurrent_delete(self):
         async def run(self):
             self.graph.query("RETURN 1")
-            pool = BlockingConnectionPool(max_connections=16, timeout=None, host=os.getenv("FALKORDB_HOST", "localhost"), port=self.env.port, decode_responses=True)
+            pool = BlockingConnectionPool(max_connections=16, timeout=None, host=self.env.host, port=self.env.port, decode_responses=True)
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 
@@ -130,8 +130,8 @@ class testConcurrentQueryFlow(FlowTestsBase):
     # Try to delete a graph while multiple queries are executing.
     def test_05_concurrent_read_delete(self):
         async def run(self):
-            async_conn = AsyncRedis(host=os.getenv("FALKORDB_HOST", "localhost"), port=self.env.port)
-            pool = BlockingConnectionPool(max_connections=16, timeout=None, host=os.getenv("FALKORDB_HOST", "localhost"), port=self.env.port, decode_responses=True)
+            async_conn = AsyncRedis(host=self.env.host, port=self.env.port)
+            pool = BlockingConnectionPool(max_connections=16, timeout=None, host=self.env.host, port=self.env.port, decode_responses=True)
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 
@@ -198,10 +198,10 @@ class testConcurrentQueryFlow(FlowTestsBase):
         async def run(self):
             # connect to async graph via a connection pool
             # which will block if there are no available connections
-            pool = BlockingConnectionPool(max_connections=16, timeout=None, host=os.getenv("FALKORDB_HOST", "localhost"), port=self.env.port, decode_responses=True)
+            pool = BlockingConnectionPool(max_connections=16, timeout=None, host=self.env.host, port=self.env.port, decode_responses=True)
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
-            async_conn = AsyncRedis(host=os.getenv("FALKORDB_HOST", "localhost"), port=self.env.port)
+            async_conn = AsyncRedis(host=self.env.host, port=self.env.port)
 
             # Test setup - validate that graph exists and possible results are None
             self.graph.query("RETURN 1")
@@ -233,12 +233,12 @@ class testConcurrentQueryFlow(FlowTestsBase):
         async def run(self):
             # connect to async graph via a connection pool
             # which will block if there are no available connections
-            pool = BlockingConnectionPool(max_connections=16, timeout=None, host=os.getenv("FALKORDB_HOST", "localhost"), port=self.env.port, decode_responses=True)
+            pool = BlockingConnectionPool(max_connections=16, timeout=None, host=self.env.host, port=self.env.port, decode_responses=True)
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 
             # single async connection
-            async_conn = AsyncRedis(host=os.getenv("FALKORDB_HOST", "localhost"), port=self.env.port)
+            async_conn = AsyncRedis(host=self.env.host, port=self.env.port)
 
             # Test setup - validate that graph exists and possible results are None
             # Create new empty graph with ID SECONDARY_GRAPH_ID
@@ -284,12 +284,12 @@ class testConcurrentQueryFlow(FlowTestsBase):
         async def run(self):
             # connect to async graph via a connection pool
             # which will block if there are no available connections
-            pool = BlockingConnectionPool(max_connections=16, timeout=None, host=os.getenv("FALKORDB_HOST", "localhost"), port=self.env.port, decode_responses=True)
+            pool = BlockingConnectionPool(max_connections=16, timeout=None, host=self.env.host, port=self.env.port, decode_responses=True)
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 
             # single async connection
-            async_conn = AsyncRedis(host=os.getenv("FALKORDB_HOST", "localhost"), port=self.env.port)
+            async_conn = AsyncRedis(host=self.env.host, port=self.env.port)
 
             # Test setup - validate that graph exists and possible results are None
             self.graph.query("MATCH (n) RETURN n")
@@ -349,7 +349,7 @@ class testConcurrentQueryFlow(FlowTestsBase):
         async def run(self):
             self.graph.query("RETURN 1")
 
-            pool = BlockingConnectionPool(max_connections=16, timeout=None, host=os.getenv("FALKORDB_HOST", "localhost"), port=self.env.port, decode_responses=True)
+            pool = BlockingConnectionPool(max_connections=16, timeout=None, host=self.env.host, port=self.env.port, decode_responses=True)
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 
@@ -400,7 +400,7 @@ class testConcurrentQueryFlow(FlowTestsBase):
 
     def test_11_concurrent_resize_zero_matrix(self):
         async def run(self):
-            pool = BlockingConnectionPool(max_connections=16, timeout=None, host=os.getenv("FALKORDB_HOST", "localhost"), port=self.env.port, decode_responses=True)
+            pool = BlockingConnectionPool(max_connections=16, timeout=None, host=self.env.host, port=self.env.port, decode_responses=True)
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 

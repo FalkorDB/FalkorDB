@@ -2,8 +2,6 @@ ARG BUILD_IMAGE=ghcr.io/falkordb/falkordb-build:latest
 ARG BROWSER_TAG=latest
 ARG TARGETPLATFORM=linux/amd64
 
-# cargo-chef splits dep compilation into a layer cached on Cargo.toml/Cargo.lock,
-# so source-only changes skip dep rebuild.
 FROM $BUILD_IMAGE AS chef
 RUN cargo install cargo-chef --locked
 WORKDIR /src
