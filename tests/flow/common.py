@@ -192,6 +192,27 @@ def _wait_for_redis(host, port, cid, attempts=50, interval=0.1):
     raise RuntimeError(f"redis at {host}:{port} did not become ready after {attempts * interval:.1f}s")
 
 
+def _coverage_mount_args():
+    """When CODE_COVERAGE=1 under CI, bind-mount a per-spawn subdir of
+    ${GITHUB_WORKSPACE}/cov onto /var/lib/falkordb/cov inside the spawned
+    container. The coverage image's LLVM_PROFILE_FILE writes profraws there;
+    the bind-mount surfaces them on the host runner where _flow-flavour.yml's
+    collect step picks them up. Per-spawn UUID subdir prevents PID-1 filename
+    collisions across containers in the same cell (every container's main pid
+    is 1, so the %p substitution alone isn't unique)."""
+    if not CODE_COVERAGE:
+        return []
+    ws = os.environ.get("GITHUB_WORKSPACE")
+    if not ws:
+        return []
+    in_container = os.path.join(ws, "cov", uuid.uuid4().hex)
+    os.makedirs(in_container, mode=0o777, exist_ok=True)
+    host_path, covered = _host_path_for(in_container)
+    if not covered:
+        return []
+    return ["-v", f"{host_path}:/var/lib/falkordb/cov"]
+
+
 def _spawn_falkordb(image, falkordb_args="", redis_args="", alias=None,
                     enable_debug_command=False):
     """Start a falkordb container, return (host, port, container_id).
@@ -218,6 +239,7 @@ def _spawn_falkordb(image, falkordb_args="", redis_args="", alias=None,
         host_path, covered = _host_path_for(val)
         if covered and os.path.exists(val):
             extra_args += ["-v", f"{host_path}:{val}"]
+    extra_args += _coverage_mount_args()
     cmd = [
         "docker", "run", "-d",
         "--network", _job_network(),

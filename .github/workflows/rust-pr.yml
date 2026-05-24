@@ -311,9 +311,6 @@ jobs:
       build_image: ${{ needs.check-files.outputs.file_changed == 'true' && format('ghcr.io/falkordb/falkordb-build:pr-{0}', github.event.pull_request.number) || 'ghcr.io/falkordb/falkordb-build:latest' }}
       pr_number: ${{ github.event.pull_request.number }}
       collect_coverage: true
-      # Spawn-mode coverage needs a host bind-mount via tests/flow/common.py
-      # so profraw files survive container teardown. Skip until that lands.
-      include_spawn: false
     secrets: inherit
 
   coverage:

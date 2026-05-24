@@ -183,6 +183,11 @@ jobs:
     env:
       FALKORDB_TEST_IMAGE: ${{ inputs.image }}
       SANITIZER: ${{ inputs.sanitizer_env }}
+      # Signals common.py:_coverage_mount_args() to bind-mount a per-spawn
+      # subdir of ${GITHUB_WORKSPACE}/cov into each spawned falkordb container
+      # so the coverage image's LLVM_PROFILE_FILE writes profraws onto the
+      # host runner. Empty string for non-coverage flavours = no mount.
+      CODE_COVERAGE: ${{ inputs.collect_coverage && '1' || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -190,6 +195,9 @@ jobs:
         arch: ${{ fromJson(inputs.archs) }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Pre-create cov dir (coverage flavour only)
+        if: inputs.collect_coverage
+        run: mkdir -p "${GITHUB_WORKSPACE}/cov" && chmod 0777 "${GITHUB_WORKSPACE}/cov"
       - name: Login to GHCR (for in-container docker pull)
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
@@ -206,6 +214,28 @@ jobs:
         run: |
           . /data/venv/bin/activate
           TEST="$TEST_FILE" FAIL_FAST=1 RELEASE=1 ./flow.sh
+      - name: Collect coverage (profraw → lcov)
+        if: ${{ !cancelled() && inputs.collect_coverage }}
+        env:
+          COV_IMAGE: ${{ inputs.image }}
+        run: |
+          set -euo pipefail
+          CID=$(docker create "$COV_IMAGE")
+          docker cp "${CID}:/var/lib/falkordb/bin/falkordb.so" ./libfalkordb-coverage.so
+          docker rm "$CID" >/dev/null
+          PROFRAW=$(find "${GITHUB_WORKSPACE}/cov" -name "*.profraw" 2>/dev/null || true)
+          if [ -z "$PROFRAW" ]; then
+            echo "::warning::no profraw files produced — skipping coverage export"
+            exit 0
+          fi
+          llvm-profdata-22 merge --sparse $PROFRAW -o cov.profdata
+          llvm-cov-22 export --format=lcov --instr-profile cov.profdata ./libfalkordb-coverage.so > codecov.txt.all
+          lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
+      - name: Upload coverage to Codecov
+        if: ${{ !cancelled() && inputs.collect_coverage }}
+        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
       - name: Upload flow logs on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
