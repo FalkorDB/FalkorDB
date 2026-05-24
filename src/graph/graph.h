@@ -52,6 +52,10 @@ struct Graph {
 	Delta_Matrix _zero_matrix;         // zero matrix
 	SyncMatrixFunc SynchronizeMatrix;  // function pointer to matrix synchronization routine
 	GraphStatistics stats;             // graph related statistics
+
+	Delta_Matrix *_labels;             // pending label matrices
+	Tensor *_relations;                // pending relation matrices
+	pthread_t writer_tid ;             // writer thread id
 };
 
 // retrieve graph matrix synchronization policy
@@ -491,6 +495,12 @@ void Graph_PartialFree
 void Graph_PrintMatrices
 (
 	Graph *g
+);
+
+// commit graph's pending schema changes
+void Graph_CommitPendingsMatrices
+(
+	Graph *g  // graph
 );
 
 // free graph

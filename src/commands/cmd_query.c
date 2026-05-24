@@ -267,7 +267,13 @@ static void _ExecuteQuery
 		}
 	} else {
 		// replicate if graph was modified
-		if (ResultSetStat_IndicateModification (&result_set->stats)) {
+		// check both effect-buffer and result-set statistics
+		// in some edge cases the effect-buffer can have data which the
+		// result-set statistics won't cover
+		bool replicate =
+			(EffectsBuffer_Length (QueryCtx_GetEffectsBuffer ()) > 0 ||
+			 ResultSetStat_IndicateModification (&result_set->stats)) ;
+		if (replicate) {
 			// determine rather or not to replicate via effects
 			// effect replication is mandatory if query is non deterministic
 			if (EffectsBuffer_Length (QueryCtx_GetEffectsBuffer ()) > 0 &&

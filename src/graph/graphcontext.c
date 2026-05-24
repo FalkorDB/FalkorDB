@@ -243,7 +243,7 @@ static void _GraphContext_CommitPendings
 	//--------------------------------------------------------------------------
 
 	if (gc->_attributes != NULL) {
-		if (arr_len (gc->_attributes) == arr_len(gc->attributes)) {
+		if (arr_len (gc->_attributes) == arr_len (gc->attributes)) {
 			// no new attributes
 			arr_free (gc->_attributes) ;
 		} else {
@@ -288,6 +288,9 @@ static void _GraphContext_CommitPendings
 
 	// reset tid to 0
 	gc->writer_tid = (pthread_t)0 ;
+
+	// commit graph's pending schema changes
+	Graph_CommitPendingsMatrices (gc->g) ;
 }
 
 //------------------------------------------------------------------------------
