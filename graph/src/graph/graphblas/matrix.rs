@@ -284,7 +284,7 @@ impl MaskedElementWiseAdd for Matrix {
                 b.map_or(*self.m, |b| *b.m),
                 descriptor.map_or(null_mut(), std::convert::Into::into),
             );
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 }
@@ -391,7 +391,7 @@ impl MaskedElementWiseMultiply for Matrix {
                 b.map_or(*self.m, |b| *b.m),
                 descriptor.map_or(null_mut(), std::convert::Into::into),
             );
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 }
@@ -427,7 +427,7 @@ impl MxM for Matrix {
                 *b.m,
                 null_mut(),
             );
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 
@@ -445,7 +445,7 @@ impl MxM for Matrix {
                 *self.m,
                 null_mut(),
             );
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 }
@@ -490,7 +490,7 @@ impl Matrix {
                     *dm.m,
                     null_mut(),
                 );
-                assert_eq!(info, GrB_Info::GrB_SUCCESS);
+                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             }
             if mk.nvals() > 0 {
                 mask = Some(mk);
@@ -510,7 +510,7 @@ impl Matrix {
                     *dp.m,
                     null_mut(),
                 );
-                assert_eq!(info, GrB_Info::GrB_SUCCESS);
+                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             }
             if ac.nvals() > 0 {
                 accum = Some(ac);
@@ -531,7 +531,7 @@ impl Matrix {
                 *vm.m().m,
                 desc,
             );
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
 
         if let Some(ac) = accum {
@@ -621,11 +621,11 @@ impl Decode<19> for Matrix {
             let m = m.assume_init();
 
             let info = GxB_load_Matrix_from_Container(m, container, null_mut());
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
 
             let mut c = container;
             let info = GxB_Container_free(&raw mut c);
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
 
             Ok(Self {
                 m: Arc::new(m),
@@ -651,7 +651,7 @@ impl Encode<19> for Matrix {
             let container = container.assume_init();
 
             let info = GxB_unload_Matrix_into_Container(self.inner(), container, null_mut());
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
 
             // Write container struct bytes
             let container_bytes =
@@ -666,11 +666,11 @@ impl Encode<19> for Matrix {
             ManuallyDrop::new(Vector::<bool>::from((*container).b)).encode(w);
 
             let info = GxB_load_Matrix_from_Container(self.inner(), container, null_mut());
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
 
             let mut c = container;
             let info = GxB_Container_free(&raw mut c);
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 }
@@ -732,7 +732,7 @@ impl Matrix {
         let lock = self.lock.lock();
         unsafe {
             let info = GrB_Matrix_wait(*self.m, GrB_WaitMode::GrB_MATERIALIZE as _);
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
         drop(lock);
     }
@@ -742,7 +742,7 @@ impl Matrix {
         unsafe {
             let mut usage = 0usize;
             let info = GxB_Matrix_memoryUsage(&raw mut usage, *self.m);
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             usage
         }
     }
@@ -750,7 +750,7 @@ impl Matrix {
     pub fn clear(&mut self) {
         unsafe {
             let info = GrB_Matrix_clear(*self.m);
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 
@@ -760,7 +760,7 @@ impl Matrix {
     ) {
         unsafe {
             let info = GrB_transpose(*self.m, *b.m, null_mut(), *self.m, GrB_DESC_RCT0);
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 
@@ -771,7 +771,7 @@ impl Matrix {
     ) {
         unsafe {
             let info = GrB_transpose(*self.m, *mask.m, null_mut(), *a.m, GrB_DESC_RCT0);
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 }
@@ -781,7 +781,7 @@ impl Size for Matrix {
         unsafe {
             let mut nrows = 0u64;
             let info = GrB_Matrix_nrows(&raw mut nrows, *self.m);
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             nrows
         }
     }
@@ -790,7 +790,7 @@ impl Size for Matrix {
         unsafe {
             let mut ncols = 0u64;
             let info = GrB_Matrix_ncols(&raw mut ncols, *self.m);
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             ncols
         }
     }
@@ -802,7 +802,7 @@ impl Size for Matrix {
     ) {
         unsafe {
             let info = GrB_Matrix_resize(*self.m, nrows, ncols);
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 
@@ -810,7 +810,7 @@ impl Size for Matrix {
         unsafe {
             let mut nvals = 0u64;
             let info = GrB_Matrix_nvals(&raw mut nvals, *self.m);
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             nvals
         }
     }
@@ -897,7 +897,7 @@ impl Matrix {
     ) {
         unsafe {
             let info = GrB_Matrix_setElement_UINT64(*self.m, value, i, j);
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 
@@ -917,7 +917,7 @@ impl Matrix {
     ) {
         unsafe {
             let info = GxB_Matrix_fprint(*self.m, null_mut(), level as _, null_mut());
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 }
@@ -930,7 +930,7 @@ impl Remove for Matrix {
     ) {
         unsafe {
             let info = GrB_Matrix_removeElement(*self.m, i, j);
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 }
@@ -972,7 +972,7 @@ impl Set for Matrix {
     ) {
         unsafe {
             let info = GrB_Matrix_setElement_BOOL(*self.m, value, i, j);
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 }
@@ -1000,7 +1000,7 @@ impl Matrix {
                 nvals,
                 GxB_ANY_BOOL,
             );
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 
@@ -1026,7 +1026,7 @@ impl Matrix {
                 nvals,
                 GxB_ANY_UINT64,
             );
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 
@@ -1048,7 +1048,7 @@ impl Matrix {
                 &raw mut nvals,
                 *self.m,
             );
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
         rows.truncate(nvals as usize);
         cols.truncate(nvals as usize);
@@ -1068,7 +1068,7 @@ where
         let transpose = Self::new(self.ncols(), self.nrows());
         unsafe {
             let info = GrB_transpose(*transpose.m, null_mut(), null_mut(), *self.m, null_mut());
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
         transpose
     }
@@ -1175,7 +1175,7 @@ impl<E: IterExtract> Iter<E> {
             );
             let iter = iter.assume_init();
             let info = GxB_rowIterator_attach(iter, *m.m, null_mut());
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             let mut info = GxB_rowIterator_seekRow(iter, min_row);
             debug_assert!(
                 info == GrB_Info::GrB_SUCCESS
