@@ -40,7 +40,7 @@ RUN mkdir -p ${FALKORDB_DATA_PATH} ${FALKORDB_COV_PATH} && ln -s ${FALKORDB_DATA
 # purge first, then LLVM install). The instrumented .so still needs the
 # GraphBLAS JIT toolchain (cc + omp.h) so matrix ops compile at runtime.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates bash && \
+    apt-get install -y --no-install-recommends ca-certificates bash openssl && \
     apt-get upgrade -y && \
     (apt-get purge -y python3.13 python3.13-minimal libpython3.13-minimal libpython3.13-stdlib || true) && \
     apt-get install -y --no-install-recommends wget gnupg lsb-release && \

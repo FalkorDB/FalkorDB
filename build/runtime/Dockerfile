@@ -71,7 +71,7 @@ RUN mkdir -p ${FALKORDB_DATA_PATH} && ln -s ${FALKORDB_DATA_PATH} /data
 # asan Dockerfile in commit 4215713, but a consistent clang-22 stack
 # removes a class of subtle codegen / libomp ABI risks.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates bash && \
+    apt-get install -y --no-install-recommends ca-certificates bash openssl && \
     # ---- CVE trim: purge python3.13 FIRST, before LLVM is installed ----
     apt-get upgrade -y && \
     (apt-get purge -y python3.13 python3.13-minimal libpython3.13-minimal libpython3.13-stdlib || true) && \
