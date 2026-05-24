@@ -1,6 +1,9 @@
 ARG BUILD_IMAGE=ghcr.io/falkordb/falkordb-build:latest
 ARG BROWSER_TAG=latest
 ARG TARGETPLATFORM=linux/amd64
+# Redis base image version. Override via `--build-arg REDIS_VERSION=X.Y.Z`
+# to ship against a different redis release without editing the Dockerfile.
+ARG REDIS_VERSION=8.6.3
 
 FROM $BUILD_IMAGE AS chef
 RUN cargo install cargo-chef --locked
@@ -17,7 +20,7 @@ COPY . .
 RUN CXX=clang++-22 cargo build --release && \
     mkdir -p /out && cp target/release/libfalkordb.so /out/falkordb.so
 
-FROM redis:8.6.3 AS server
+FROM redis:${REDIS_VERSION} AS server
 
 # BuildKit auto-ARGs (TARGETPLATFORM, TARGETARCH, ...) must be re-declared in each
 # stage that consumes them, else they expand to empty.

@@ -1,5 +1,6 @@
 ARG BUILD_IMAGE=ghcr.io/falkordb/falkordb-build:latest
 ARG TARGETPLATFORM=linux/amd64
+ARG REDIS_VERSION=8.6.3
 
 # Stage 1: chef/planner — same cache split as the regular Dockerfile so a
 # source-only change skips the dep cook.
@@ -22,7 +23,7 @@ COPY . .
 RUN CXX=clang++-22 RUSTFLAGS="-C instrument-coverage" cargo build && \
     mkdir -p /out && cp target/debug/libfalkordb.so /out/falkordb.so
 
-FROM redis:8.6.3 AS server
+FROM redis:${REDIS_VERSION} AS server
 
 ARG TARGETPLATFORM
 
