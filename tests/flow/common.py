@@ -194,6 +194,39 @@ def _wait_for_redis(host, port, cid, attempts=50, interval=0.1):
     raise RuntimeError(f"redis at {host}:{port} did not become ready after {attempts * interval:.1f}s")
 
 
+# Path inside the spawned container where redis writes --logfile output
+# (and where _log_mount_args bind-mounts the host-side per-spawn dir).
+LOG_DIR_IN_CONTAINER = "/var/lib/falkordb/logs"
+LOG_FILE_NAME = "redis.log"
+
+
+def _log_mount_args(alias):
+    """Bind-mount a per-spawn logs dir into the spawned container so redis's
+    --logfile output is reachable from the test process. Job container and
+    spawned container share the host workspace bind-mount, so writing under
+    ${GITHUB_WORKSPACE}/redis-logs/<alias>/ lets the test open the file
+    directly (no `docker logs` subprocess).
+
+    Returns (docker -v args, in-container path of the log file). The path is
+    the value the test process passes to open() — same workspace path the
+    container sees, because both sides share the bind-mount. When the
+    workspace isn't bind-mountable (local dev, no GITHUB_WORKSPACE), returns
+    ([], None) and the caller skips both the mount and --logfile injection,
+    leaving redis on its default stdout logger."""
+    ws = os.environ.get("GITHUB_WORKSPACE")
+    if not ws:
+        return [], None
+    log_dir = os.path.join(ws, "redis-logs", alias)
+    os.makedirs(log_dir, mode=0o777, exist_ok=True)
+    host_path, covered = _host_path_for(log_dir)
+    if not covered:
+        return [], None
+    return (
+        ["-v", f"{host_path}:{LOG_DIR_IN_CONTAINER}"],
+        os.path.join(log_dir, LOG_FILE_NAME),
+    )
+
+
 def _coverage_mount_args():
     """When CODE_COVERAGE=1 under CI, bind-mount a per-spawn subdir of
     ${GITHUB_WORKSPACE}/cov onto /var/lib/falkordb/cov inside the spawned
@@ -217,13 +250,18 @@ def _coverage_mount_args():
 
 def _spawn_falkordb(image, falkordb_args="", redis_args="", alias=None,
                     enable_debug_command=False):
-    """Start a falkordb container, return (host, port, container_id).
+    """Start a falkordb container, return (host, port, container_id, log_path).
 
     `falkordb_args` becomes the module's load-time arg string (CACHE_SIZE 16 ...).
     `redis_args` is forwarded as the redis-server CLI args (for --replicaof, etc.).
     `enable_debug_command=True` adds `--enable-debug-command yes` to redis-server,
     matching what tests that pass enableDebugCommand=True to Env() expect under
-    the old RLTest model (RLTest's --enable-debug-command CLI flag did the same)."""
+    the old RLTest model (RLTest's --enable-debug-command CLI flag did the same).
+
+    `log_path` is the test-process-visible path of redis's --logfile output,
+    or None when the workspace isn't bind-mountable (e.g. bare-metal local
+    spawn). Tests that need to read the log (test_encode_decode.test_10) open
+    it via env.log_path."""
     alias = alias or f"falkordb-{uuid.uuid4().hex[:8]}"
     if enable_debug_command:
         redis_args = f"--enable-debug-command yes {redis_args}".strip()
@@ -242,6 +280,15 @@ def _spawn_falkordb(image, falkordb_args="", redis_args="", alias=None,
         if covered and os.path.exists(val):
             extra_args += ["-v", f"{host_path}:{val}"]
     extra_args += _coverage_mount_args()
+    log_mount, log_path = _log_mount_args(alias)
+    extra_args += log_mount
+    if log_path is not None:
+        # --logfile redirects redis's own logger (RedisModule_Log routes
+        # through it too) to the bind-mounted file. Stderr-only output —
+        # ASAN/LSan reports, Rust panic backtraces, redis pre-init noise —
+        # still hits the container's stdout/stderr and is captured by the
+        # atexit `docker logs <cid>` cleanup. Both signals coexist.
+        redis_args = f"--logfile {LOG_DIR_IN_CONTAINER}/{LOG_FILE_NAME} {redis_args}".strip()
     cmd = [
         "docker", "run", "-d",
         "--network", _job_network(),
@@ -254,7 +301,7 @@ def _spawn_falkordb(image, falkordb_args="", redis_args="", alias=None,
     cid = subprocess.check_output(cmd, stderr=subprocess.STDOUT).decode().strip()
     _SPAWNED_CIDS.append(cid)
     _wait_for_redis(alias, 6379, cid)
-    return alias, 6379, cid
+    return alias, 6379, cid, log_path
 
 
 @atexit.register
@@ -341,6 +388,10 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
         # Expose host so tests can use BlockingConnectionPool(host=self.env.host, ...)
         # uniformly across local dev and CI without per-mode branches.
         env_obj.host = "localhost"
+        # log_path mirrors what RLTest writes the master log to — same attribute
+        # spawn mode sets — so tests can read self.env.log_path without per-mode
+        # branching.
+        env_obj.log_path = f"{env_obj.logDir}/{env_obj.envRunner._getFileName('master', '.log')}"
         db = FalkorDB("localhost", env_obj.port)
         return (env_obj, db)
 
@@ -378,6 +429,9 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
         env_obj = Environment(decodeResponses=True, env='existing-env')
         env_obj.port = port
         env_obj.host = host
+        # Services-mode shared container doesn't bind-mount its log; any test
+        # that needs to read it should route to the spawn bucket instead.
+        env_obj.log_path = None
         if hasattr(env_obj, "envRunner") and env_obj.envRunner is not None:
             env_obj.envRunner.port = port
             env_obj.envRunner.host = host
@@ -416,18 +470,17 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
             "image-based CI or add multi-node cluster support here. "
             f"Got env={env!r} shardsCount={shardsCount}."
         )
-    master_alias, master_port, master_cid = _spawn_falkordb(
+    master_alias, master_port, master_cid, master_log_path = _spawn_falkordb(
         test_image, falkordb_args=moduleArgs or "",
         enable_debug_command=enableDebugCommand)
     host, port = master_alias, master_port
     Defaults.external_addr = f"{master_alias}:{master_port}"
     env_obj = Environment(decodeResponses=True, env='existing-env')
-    # Expose a file-handle-like reader over the container's stdout/stderr,
-    # which holds the same messages RLTest's master.log would. Tests that
-    # parse redis logs (test_encode_decode.test_10) use this when present.
-    env_obj.read_log = _make_docker_log_reader(master_cid)
+    # log_path points at redis's --logfile output, bind-mounted into the
+    # workspace by _log_mount_args. Same attribute name as Mode 1.
+    env_obj.log_path = master_log_path
     if useSlaves:
-        replica_alias, _, _ = _spawn_falkordb(
+        replica_alias, _, _, _ = _spawn_falkordb(
             test_image,
             falkordb_args=moduleArgs or "",
             redis_args=f"--replicaof {master_alias} 6379",
@@ -511,24 +564,6 @@ def _wait_for_replication(host, port, attempts=50, interval=0.2):
     if last_exc is not None:
         msg += f"; last error: {last_exc!r}"
     raise RuntimeError(msg)
-
-
-def _make_docker_log_reader(cid):
-    """Returns a callable read(role='master') that mimics RLTest's file-handle
-    log access: each call returns only the new bytes appended since the prior
-    call, decoded. Backed by `docker logs <cid>`, which captures both redis's
-    stdout (where it logs by default when no --logfile is given) and the
-    module's RedisModule_Log output."""
-    state = {"offset": 0}
-    def read(_role="master"):
-        out = subprocess.run(
-            ["docker", "logs", cid],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
-        ).stdout
-        new_bytes = out[state["offset"]:]
-        state["offset"] = len(out)
-        return new_bytes.decode("utf-8", errors="replace")
-    return read
 
 
 def _attach_slave(env_obj, host, port):
