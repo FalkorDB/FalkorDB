@@ -650,7 +650,15 @@ PARALLEL=${PARALLEL:-1}
 # at 2 workers to balance speed vs memory on CI runners.  RLTest parallelism
 # forks Python workers that exec fresh Redis instances, so the fork is safe
 # (TSAN state is not inherited across exec).
-[[ $SAN == thread ]] && PARALLEL=2
+# Only apply the cap when parallelism is enabled; preserve serial mode forced
+# above for GDB/EXT/BB/single-test runs.
+if [[ $SAN == thread && $PARALLEL != 0 ]]; then
+	# PARALLEL=1 means "use nproc", which can be far more than 2 — cap it.
+	# Any explicit PARALLEL > 2 is also capped at 2.
+	if [[ $PARALLEL == 1 || $PARALLEL -gt 2 ]]; then
+		PARALLEL=2
+	fi
+fi
 
 if [[ -n $PARALLEL && $PARALLEL != 0 ]]; then
 	if [[ $PARALLEL == 1 ]]; then

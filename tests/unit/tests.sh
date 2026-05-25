@@ -21,7 +21,8 @@ help() {
 		BINROOT=path   Path to repo binary root dir
 		TEST=name      Operate in single-test mode
 
-		SAN=addr|mem|thread   Run with sanitizer (address, memory, or thread)
+		SAN=address|addr|memory|mem|thread   Run with sanitizer
+		                                     (address, memory, or thread)
 		VG=1           Run with Valgrind
 		LEAK=1         Run test that leaks (for sanitizer diagnostics)
 
