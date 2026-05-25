@@ -1222,8 +1222,7 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
             // deadlock.
             let res = {
                 let _fork_guard = graph::fork_sync::GraphOpGuard::new();
-                let res =
-                    g.execute_query_write(&ctx, &query, compact, cached, per_query_timeout);
+                let res = g.execute_query_write(&ctx, &query, compact, cached, per_query_timeout);
                 match &res {
                     Ok(wq) => g.graph.commit(Arc::clone(&wq.graph)),
                     Err(_) => g.graph.rollback(),
