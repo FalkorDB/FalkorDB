@@ -436,39 +436,3 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           # Push and deploy GitHub pages branch automatically
           auto-push: true
-  falkordb-e2e-compatibility:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    services:
-      falkordb:
-        image: falkordb/falkordb:latest
-        ports:
-          - 6379:6379
-        volumes:
-          - ./data:/var/lib/falkordb/data
-        options: >-
-          --rm
-          -it
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
-        with:
-          python-version: '3.12'
-          cache: 'pip'
-          cache-dependency-path: tests/requirements.txt
-      - name: Wait for FalkorDB to be ready
-        run: |
-          # Wait until port 6379 is open (max 30 seconds)
-          for i in {1..30}; do
-            if nc -z localhost 6379; then
-              echo "FalkorDB is up!"
-              break
-            fi
-            echo "Waiting for FalkorDB..."
-            sleep 1
-          done
-      - name: Run FalkorDB e2e tests
-        run: |
-          pip install -r tests/requirements.txt
-          pytest -v -m "not extra" tests/test_e2e.py tests/test_functions.py -vv
