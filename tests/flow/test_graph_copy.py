@@ -314,9 +314,13 @@ class testGraphCopy():
         # the WAIT command forces master slave sync to complete
         master_con.execute_command("WAIT", "1", "0")
 
-        # make sure dest graph was replicated
-        # assuming replica port is env port+1
-        replica_db = FalkorDB("localhost", self.env.port+1)
+        # make sure dest graph was replicated.
+        # Under RLTest (local dev) the replica lives on the same host at
+        # port+1; under docker-per-class the replica is a sibling container
+        # exposed via env.replica_host:env.replica_port.
+        replica_host = getattr(self.env, "replica_host", "localhost")
+        replica_port = getattr(self.env, "replica_port", self.env.port + 1)
+        replica_db = FalkorDB(replica_host, replica_port)
         replica_cloned_graph = replica_db.select_graph(copy_graph_id)
         
         # make sure src graph on master is the same as cloned graph on replica

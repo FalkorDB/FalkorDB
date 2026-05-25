@@ -41,7 +41,14 @@ class testGraphMemoryUsage(FlowTestsBase):
         self.graph = self.db.select_graph(GRAPH_ID)
 
     def __init__(self):
-        self.env, self.db = Env(env='oss-cluster')
+        # Dropped env='oss-cluster' — the tests below never use shardId
+        # or cross-shard semantics; they only call self.env.getConnection()
+        # and run queries against a single connection. Under RLTest the
+        # cluster flag spawned a multi-process cluster locally and we just
+        # talked to the master; same observable behavior against a single
+        # node. Image-based CI doesn't implement cluster spawn, so dropping
+        # the flag is the correct fix (vs. carrying dead cluster scaffolding).
+        self.env, self.db = Env()
         self.conn = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
 

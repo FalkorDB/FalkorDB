@@ -66,6 +66,9 @@ impl<T> Drop for Vector<T> {
     fn drop(&mut self) {
         unsafe {
             let info = GrB_Vector_free(addr_of_mut!(self.v));
+            // debug_assert in Drop: panicking while unwinding aborts the
+            // process. A GrB_*_free failure is logically a leak, not state
+            // corruption — surface it in debug, swallow in release.
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
@@ -426,6 +429,7 @@ impl<T> Drop for Iter<T> {
     fn drop(&mut self) {
         unsafe {
             let info = GxB_Iterator_free(addr_of_mut!(self.inner));
+            // debug_assert: don't panic in Drop (see Vector::drop above).
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }

@@ -50,3 +50,7 @@ phase_stats.py
 profile_day6.py
 thread_benchmarks*
 twitter_thread.md
+# Editor/agent scratch
+.claude/scheduled_tasks.lock
+.claude/worktrees/
+local-build.so

@@ -2,7 +2,13 @@ name: Rust Push
 
 on:
   push:
-    branches: [ "main" ]
+    # Mirror rust-pr.yml's filter so post-merge CI on version branches works
+    # the same as on main. Channel-pointer promotion (toolchain :latest, edge-rs)
+    # is still gated to main further down — see the `if:` on those jobs.
+    # The version glob is `[0-9]*.[0-9]*` (glob, not regex; `*` is multi-char).
+    branches:
+      - "main"
+      - "[0-9]*.[0-9]*"
 
 permissions:
   # deployments permission to deploy GitHub pages website
@@ -39,30 +45,107 @@ jobs:
             echo "changed=false"
             echo "changed=false" >> $GITHUB_OUTPUT
           fi
-  docker:
+  # Look up the merging PR once and share the number with the promote-* jobs.
+  # Same SHA→PR API call used by release-image.yml's release-event flow.
+  # Main-only: version branches don't promote toolchain or edge-rs.
+  find-pr:
     needs: check-files
-    if: needs.check-files.outputs.file_changed == 'true'
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      pr_n: ${{ steps.pr.outputs.n }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - name: Login to Docker Hub
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121
+      - name: Find merging PR number
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Authoritative lookup: ask the API which PR(s) this commit landed via.
+          # Avoids parsing the merge-commit subject (squash subjects, merge subjects
+          # and rebase-and-merge subjects all differ; some workflows rewrite them).
+          N=$(gh api "/repos/${REPO}/commits/${SHA}/pulls" \
+            --jq 'map(select(.state == "closed" and .merged_at != null)) | .[0].number // empty')
+          if [ -z "$N" ]; then
+            echo "::error::no merged PR associated with commit ${SHA}"
+            exit 1
+          fi
+          echo "n=$N" >> "$GITHUB_OUTPUT"
+
+  # Promote the merging PR's toolchain image (ghcr.io/falkordb/falkordb-build:pr-<N>)
+  # to :latest by retagging the existing multi-arch manifest — no rebuild, so
+  # what was validated in PR CI is byte-identically what becomes :latest.
+  # Gated on file_changed because the toolchain only gets a per-PR tag when
+  # build/Dockerfile actually changed in that PR.
+  docker:
+    needs: [check-files, find-pr]
+    if: ${{ needs.check-files.outputs.file_changed == 'true' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
-      - name: Build and push
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote :pr-${{ needs.find-pr.outputs.pr_n }} → :latest
+        env:
+          PR_NUM: ${{ needs.find-pr.outputs.pr_n }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            -t ghcr.io/falkordb/falkordb-build:latest \
+            "ghcr.io/falkordb/falkordb-build:pr-${PR_NUM}"
+
+  # Promote the merging PR's runtime RC images (rc-pr-<N>) to the edge-rs
+  # channel on every main merge — same byte-identical retag, no rebuild.
+  # `edge-rs` distinguishes the Rust port from the C port's `:edge` on the
+  # shared falkordb/falkordb Docker Hub repo. GHCR-only; Docker Hub publish
+  # happens at release time via release-image.yml.
+  promote-edge:
+    needs: find-pr
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        repo: [falkordb, falkordb-server]
+    steps:
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
-          push: true
-          tags: aviavni/falkordb-build:latest
-          context: ./build
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote rc-pr-${{ needs.find-pr.outputs.pr_n }} → edge-rs (${{ matrix.repo }})
+        env:
+          PR_NUM: ${{ needs.find-pr.outputs.pr_n }}
+          REPO:   ${{ matrix.repo }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            -t "ghcr.io/falkordb/${REPO}:edge-rs" \
+            "ghcr.io/falkordb/${REPO}:rc-pr-${PR_NUM}"
   lint:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:latest
+    container: ghcr.io/falkordb/falkordb-build:latest
     needs:
       - check-files
       - docker
@@ -80,7 +163,7 @@ jobs:
           CXX=clang++-22 cargo clippy --all-targets
   test:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:latest
+    container: ghcr.io/falkordb/falkordb-build:latest
     needs:
       - check-files
       - docker
@@ -107,7 +190,7 @@ jobs:
           RELEASE=1 TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
   build-release:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:latest
+    container: ghcr.io/falkordb/falkordb-build:latest
     needs:
       - check-files
       - docker
@@ -138,7 +221,7 @@ jobs:
           echo "test_files=$(jq -Rc '[., inputs] | map(select(length > 0))' flow_tests_done.txt)" >> $GITHUB_OUTPUT
   test-flow:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:latest
+    container: ghcr.io/falkordb/falkordb-build:latest
     needs:
       - check-files
       - docker
@@ -158,9 +241,11 @@ jobs:
           path: target/release
       - run: chmod +x target/release/libfalkordb.so
       - name: Run Flow test - ${{ matrix.test_file }}
+        env:
+          TEST_FILE: ${{ matrix.test_file }}
         run: |
           . /data/venv/bin/activate
-          RELEASE=1 TEST="${{ matrix.test_file }}" FAIL_FAST=1 ./flow.sh
+          RELEASE=1 TEST="$TEST_FILE" FAIL_FAST=1 ./flow.sh
       - name: Upload flow logs on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -171,7 +256,7 @@ jobs:
           if-no-files-found: ignore
   coverage:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:latest
+    container: ghcr.io/falkordb/falkordb-build:latest
     needs: docker
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
     steps:
@@ -197,7 +282,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
   build-coverage:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:latest
+    container: ghcr.io/falkordb/falkordb-build:latest
     needs:
       - check-files
       - docker
@@ -219,7 +304,7 @@ jobs:
           path: target/debug/libfalkordb.so
   coverage-flow:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:latest
+    container: ghcr.io/falkordb/falkordb-build:latest
     needs:
       - docker
       - flow-test-matrix
@@ -238,9 +323,11 @@ jobs:
           path: target/debug
       - run: chmod +x target/debug/libfalkordb.so
       - name: Run coverage - ${{ matrix.test_file }}
+        env:
+          TEST_FILE: ${{ matrix.test_file }}
         run: |
           . /data/venv/bin/activate
-          TEST="${{ matrix.test_file }}" FAIL_FAST=1 ./flow.sh
+          TEST="$TEST_FILE" FAIL_FAST=1 ./flow.sh
           llvm-profdata-22 merge --sparse `find . -name "*.profraw"` -o cov.profdata
           llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
@@ -258,7 +345,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
   fuzz:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:latest
+    container: ghcr.io/falkordb/falkordb-build:latest
     needs: docker
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
     steps:
@@ -322,7 +409,7 @@ jobs:
           fi                                                                
   benchmark:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:latest
+    container: ghcr.io/falkordb/falkordb-build:latest
     needs: docker
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
     steps:

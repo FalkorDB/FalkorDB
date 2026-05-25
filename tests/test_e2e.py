@@ -1,4 +1,5 @@
 from decimal import Decimal
+import os
 import subprocess
 import sys
 from time import sleep
@@ -1789,6 +1790,11 @@ def test_index():
 
 
 @pytest.mark.extra
+@pytest.mark.skipif(
+    os.environ.get("EXISTING_ENV", "").lower() == "1",
+    reason="LOAD CSV reads from the redis process's filesystem; under EXISTING_ENV "
+    "redis runs in a sibling container that can't see test-written files.",
+)
 def test_load_csv():
     subprocess.run(["mkdir", "-p", "data"], check=True)
     with open("data/test.csv", "w") as f:

@@ -1,0 +1,237 @@
+name: Release image
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag (no v prefix). If it matches X.Y.Z it must equal Cargo.toml version."
+        required: true
+      commit_sha:
+        description: "Commit SHA to build"
+        required: true
+      mark_latest:
+        description: "Also tag :latest (moves the latest pointer — use with care)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-image-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
+# Two modes:
+#   - release event → RETAG the validated rc-pr-<N> images to semver + maybe
+#     :latest. No source rebuild — the artifact that PR CI tested is exactly
+#     what ships. Requires the rc-pr-<N> tag to still exist on GHCR (lives
+#     for the TTL window set by cleanup-rc-images.yml).
+#   - workflow_dispatch → REBUILD from source at the supplied commit. Escape
+#     hatch when the RC was swept, when the commit never had a PR, or when an
+#     operator just wants to rebuild a specific SHA.
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      mode:              ${{ steps.derive.outputs.mode }}
+      tag:               ${{ steps.derive.outputs.tag }}
+      is_latest:         ${{ steps.derive.outputs.is_latest }}
+      browser_tag:       ${{ steps.derive.outputs.browser_tag }}
+      commit_sha:        ${{ steps.derive.outputs.commit_sha }}
+      rc_pr_n:           ${{ steps.derive.outputs.rc_pr_n }}
+      push_to_dockerhub: ${{ steps.derive.outputs.push_to_dockerhub }}
+    steps:
+      # Refuse workflow_dispatch from anywhere except main or a version branch
+      # (X.Y). Release events are unaffected — they're triggered by tagging a
+      # release, which in practice only happens off main / a version branch
+      # anyway. This guards against a dispatch from a feature branch pushing
+      # user-facing tags (latest-rs, semver) built from un-merged code.
+      - name: Reject dispatch from non-release-bearing ref
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [[ "$REF_NAME" != "main" && ! "$REF_NAME" =~ ^[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::workflow_dispatch must run from main or a version branch (X.Y); got ref_name=$REF_NAME"
+            exit 1
+          fi
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.commit_sha || github.sha }}
+          persist-credentials: false
+
+      - name: Derive mode, tag, latest flag, commit SHA, RC PR number
+        id: derive
+        env:
+          EVENT_NAME:     ${{ github.event_name }}
+          GH_SHA:         ${{ github.sha }}
+          REPO:           ${{ github.repository }}
+          RELEASE_TAG:    ${{ github.event.release.tag_name }}
+          INPUT_TAG:      ${{ inputs.tag }}
+          INPUT_LATEST:   ${{ inputs.mark_latest }}
+          INPUT_COMMIT:   ${{ inputs.commit_sha }}
+          GH_TOKEN:       ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          case "$EVENT_NAME" in
+            release)
+              MODE="retag"
+              TAG="${RELEASE_TAG#v}"
+              BROWSER_TAG="latest"
+              COMMIT_SHA="$GH_SHA"
+              PUSH_HUB=true
+
+              # PR lookup — the validated artifact is keyed by PR number, not
+              # by commit SHA, because squash/rebase merges produce new SHAs
+              # that were never built. Fail loudly if the release commit has
+              # no associated merged PR; the operator can fall back to
+              # workflow_dispatch for a fresh build from that SHA.
+              RC_PR_N=$(gh api "/repos/${REPO}/commits/${COMMIT_SHA}/pulls" \
+                --jq 'map(select(.merged_at != null)) | .[0].number // empty')
+              if [ -z "$RC_PR_N" ]; then
+                echo "::error::no merged PR associated with release commit ${COMMIT_SHA}"
+                echo "::error::if you need to ship this commit, re-run via workflow_dispatch with commit_sha=${COMMIT_SHA}"
+                exit 1
+              fi
+
+              # IS_LATEST=true only when this release is the highest semver
+              # across all (non-draft, non-prerelease) releases. A backport
+              # patch on an old version branch shouldn't clobber :latest.
+              HIGHEST=$(gh api "/repos/${REPO}/releases" --paginate \
+                --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' \
+                | sed 's/^v//' \
+                | sort -V \
+                | tail -1)
+              if [ "$HIGHEST" = "$TAG" ]; then
+                IS_LATEST=true
+              else
+                IS_LATEST=false
+              fi
+              ;;
+            workflow_dispatch)
+              MODE="rebuild"
+              TAG="$INPUT_TAG"
+              IS_LATEST="$INPUT_LATEST"
+              BROWSER_TAG="latest"
+              COMMIT_SHA="$INPUT_COMMIT"
+              # Manual dispatch publishes to Docker Hub too — that's the "promote" escape hatch.
+              PUSH_HUB=true
+              RC_PR_N=""
+              ;;
+            *)
+              echo "::error::unsupported event $EVENT_NAME"
+              exit 1
+              ;;
+          esac
+
+          # Validate Cargo.toml against any semver-shaped tag (always on release;
+          # on dispatch only when the tag looks like X.Y.Z, so operators can still
+          # dispatch ad-hoc tags like 'edge-test' without enforcement).
+          VALIDATE=0
+          if [ "$EVENT_NAME" = "release" ]; then
+            VALIDATE=1
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ] && \
+               echo "$TAG" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            VALIDATE=1
+          fi
+          if [ "$VALIDATE" = "1" ]; then
+            CARGO_VERSION=$(cargo metadata --no-deps --format-version=1 \
+              | jq -r '.packages[] | select(.name=="falkordb-rs") | .version')
+            if [ "$CARGO_VERSION" != "$TAG" ]; then
+              echo "::error::Cargo.toml version ($CARGO_VERSION) does not match tag ($TAG)"
+              exit 1
+            fi
+          fi
+
+          {
+            echo "mode=${MODE}"
+            echo "tag=${TAG}"
+            echo "is_latest=${IS_LATEST}"
+            echo "browser_tag=${BROWSER_TAG}"
+            echo "commit_sha=${COMMIT_SHA}"
+            echo "rc_pr_n=${RC_PR_N}"
+            echo "push_to_dockerhub=${PUSH_HUB}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Derived: mode=${MODE} tag=${TAG} is_latest=${IS_LATEST} commit_sha=${COMMIT_SHA} rc_pr=${RC_PR_N} push_hub=${PUSH_HUB}"
+
+  # Retag path: release event. docker buildx imagetools create copies the
+  # multi-arch manifest from rc-pr-<N> to the release tags on both registries
+  # in one go. No layer rebuild — what PR CI validated is what ships.
+  retag:
+    needs: prepare
+    if: needs.prepare.outputs.mode == 'retag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        repo: [falkordb, falkordb-server]
+    steps:
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Retag rc-pr-${{ needs.prepare.outputs.rc_pr_n }} → ${{ needs.prepare.outputs.tag }} (${{ matrix.repo }})
+        env:
+          TAG:       ${{ needs.prepare.outputs.tag }}
+          IS_LATEST: ${{ needs.prepare.outputs.is_latest }}
+          RC_PR_N:   ${{ needs.prepare.outputs.rc_pr_n }}
+          REPO:      ${{ matrix.repo }}
+        run: |
+          set -euo pipefail
+          SRC="ghcr.io/falkordb/${REPO}:rc-pr-${RC_PR_N}"
+          EXTRA_TAGS=""
+          if [ "$IS_LATEST" = "true" ]; then
+            # GHCR gets :latest (Rust port is the only thing there).
+            # Docker Hub gets :latest-rs — the bare :latest tag on Docker
+            # Hub currently points at the C-port image and we don't want
+            # to clobber it until/unless we decide to flip the default.
+            EXTRA_TAGS="$EXTRA_TAGS -t ghcr.io/falkordb/${REPO}:latest -t falkordb/${REPO}:latest-rs"
+          fi
+          docker buildx imagetools create \
+            -t "ghcr.io/falkordb/${REPO}:${TAG}" \
+            -t "falkordb/${REPO}:${TAG}" \
+            $EXTRA_TAGS \
+            "${SRC}"
+
+  # Rebuild path: workflow_dispatch only. Same code path as the original
+  # release pipeline — build from source at the supplied commit. The
+  # `cells:` input describes the release matrix shape (2 archs × 2 variants).
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.mode == 'rebuild'
+    uses: ./.github/workflows/_build-flavour.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      flavour: release
+      tag: ${{ needs.prepare.outputs.tag }}
+      commit_sha: ${{ needs.prepare.outputs.commit_sha }}
+      cells: '[{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"full","repo":"falkordb"},{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"server","repo":"falkordb-server"},{"arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","target":"full","repo":"falkordb"},{"arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","target":"server","repo":"falkordb-server"}]'
+      browser_tag: ${{ needs.prepare.outputs.browser_tag }}
+      push_to_dockerhub: ${{ fromJSON(needs.prepare.outputs.push_to_dockerhub) }}
+      is_latest: ${{ fromJSON(needs.prepare.outputs.is_latest) }}
+    # Forward DOCKER_USERNAME + DOCKER_PASSWORD (org-level secrets) to the
+    # reusable workflow's Docker Hub login.
+    secrets: inherit

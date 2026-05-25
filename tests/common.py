@@ -5,6 +5,8 @@ import time
 
 from falkordb import FalkorDB
 from redis import Redis
+from redis.retry import Retry
+from redis.backoff import NoBackoff
 
 redis_server: subprocess.Popen = None
 client = None
@@ -14,7 +16,11 @@ shutdown = False
 
 def start_redis(release=None, moduleEnvs=[]):
     global redis_server, client, g, shutdown
-    port = os.environ.get("PORT", "6379")
+    host = os.environ.get("FALKORDB_HOST", "localhost")
+    port = int(os.environ.get("FALKORDB_PORT", os.environ.get("PORT", "6379")))
+    # In CI's services-container mode an external redis is already running with
+    # the module loaded; spawning locally would race the port. Fail loudly instead.
+    existing_env = os.environ.get("EXISTING_ENV", "").lower() == "1"
     if release is None:
         release = True if os.environ.get("RELEASE", "").lower() == "1" else False
     default_target = "target/debug/libfalkordb.so"
@@ -23,29 +29,52 @@ def start_redis(release=None, moduleEnvs=[]):
     if release:
         default_target = default_target.replace("debug", "release")
     target = os.environ.get("TARGET", default_target)
-    r = Redis(port=port)
+    # Bounded connect timeout + no-retry policy: redis-py 7.4 defaults retry
+    # ConnectionError indefinitely, which would hang the EXISTING_ENV probe
+    # if the service container isn't reachable. Fail fast so the caller's
+    # except branch fires within ~1s instead of after a long stall.
+    r = Redis(host=host, port=port, socket_connect_timeout=1,
+              retry=Retry(NoBackoff(), 0))
     try:
         r.ping()
-        client = FalkorDB(port=port)
+        client = FalkorDB(host=host, port=port)
         g = client.select_graph("test")
         return
-    except:
+    except Exception as e:
+        if existing_env:
+            raise RuntimeError(
+                f"EXISTING_ENV=1 but cannot reach redis at {host}:{port}: {e}"
+            ) from e
         shutdown = True
         if os.path.exists("redis-test.log"):
             os.remove("redis-test.log")
         redis_server = subprocess.Popen(
             ["/usr/local/bin/redis-server",
-             "--save", "", "--port", port, "--logfile", "redis-test.log",
+             "--save", "", "--port", str(port), "--logfile", "redis-test.log",
              "--loadmodule", target] + moduleEnvs,
             stdout=subprocess.PIPE)
     while True:
         try:
             r.ping()
-            client = FalkorDB(port=port)
+            client = FalkorDB(host=host, port=port)
             g = client.select_graph("test")
             return
-        except:
-            pass
+        except Exception:
+            # Backoff so a slow redis startup doesn't peg a CPU core.
+            time.sleep(0.05)
+
+def falkordb():
+    """Construct a FalkorDB client honoring FALKORDB_HOST / FALKORDB_PORT.
+
+    Bare `FalkorDB()` defaults to localhost:6379, which silently bypasses
+    the docker-services CI mode (where redis runs as a sibling container).
+    Use this helper instead so EXISTING_ENV tests connect to the right place.
+    """
+    return FalkorDB(
+        host=os.environ.get("FALKORDB_HOST", "localhost"),
+        port=int(os.environ.get("FALKORDB_PORT", os.environ.get("PORT", "6379"))),
+    )
+
 
 def shutdown_redis():
     if shutdown:

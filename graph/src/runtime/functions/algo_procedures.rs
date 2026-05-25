@@ -81,11 +81,14 @@ use thin_vec::{ThinVec, thin_vec};
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-/// LAGraph message buffer type.
-type LagMsg = [i8; 256];
+/// LAGraph message buffer type. Element type is `c_char` (not `i8`) because
+/// `char` signedness is platform-dependent — signed on amd64, **unsigned on
+/// arm64 Linux**. The LAGraph FFI expects `*mut c_char`, so the buffer must
+/// match or the call site fails to compile on arm64.
+type LagMsg = [std::os::raw::c_char; 256];
 
 const fn new_msg() -> LagMsg {
-    [0i8; 256]
+    [0; 256]
 }
 
 /// Extract an optional string-or-null from a Value, returning an error if

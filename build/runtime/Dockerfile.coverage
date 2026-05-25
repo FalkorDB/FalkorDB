@@ -1,0 +1,89 @@
+ARG BUILD_IMAGE=ghcr.io/falkordb/falkordb-build:latest
+ARG TARGETPLATFORM=linux/amd64
+ARG REDIS_VERSION=8.6.3
+
+# Stage 1: chef/planner — same cache split as the regular Dockerfile so a
+# source-only change skips the dep cook.
+FROM $BUILD_IMAGE AS chef
+RUN cargo install cargo-chef --locked
+WORKDIR /src
+
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# Stage 2: builder — instrumented .so via -C instrument-coverage. Dev profile
+# (no --release) preserves debuginfo + line tables that llvm-cov needs for
+# accurate source mapping. Output lands in target/debug/.
+FROM chef AS builder
+COPY --from=planner /src/recipe.json recipe.json
+RUN CXX=clang++-22 RUSTFLAGS="-C instrument-coverage" \
+    cargo chef cook --recipe-path recipe.json
+COPY . .
+RUN CXX=clang++-22 RUSTFLAGS="-C instrument-coverage" cargo build && \
+    mkdir -p /out && cp target/debug/libfalkordb.so /out/falkordb.so
+
+FROM redis:${REDIS_VERSION} AS server
+
+ARG TARGETPLATFORM
+
+ENV FALKORDB_HOME=/var/lib/falkordb \
+    FALKORDB_DATA_PATH=/var/lib/falkordb/data \
+    FALKORDB_BIN_PATH=/var/lib/falkordb/bin \
+    FALKORDB_IMPORT_PATH=/var/lib/falkordb/import \
+    FALKORDB_TLS_PATH=/var/lib/falkordb/tls \
+    FALKORDB_COV_PATH=/var/lib/falkordb/cov
+
+RUN mkdir -p ${FALKORDB_DATA_PATH} ${FALKORDB_COV_PATH} && ln -s ${FALKORDB_DATA_PATH} /data
+
+# Runtime apt install — same shape as build/runtime/Dockerfile (python3.13
+# purge first, then LLVM install). The instrumented .so still needs the
+# GraphBLAS JIT toolchain (cc + omp.h) so matrix ops compile at runtime.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates bash openssl && \
+    apt-get upgrade -y && \
+    (apt-get purge -y python3.13 python3.13-minimal libpython3.13-minimal libpython3.13-stdlib || true) && \
+    apt-get install -y --no-install-recommends wget gnupg lsb-release && \
+    wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && ./llvm.sh 22 && \
+    apt-get install -y --no-install-recommends clang-22 libomp5 libomp-22-dev && \
+    ln -sf /usr/bin/clang-22 /usr/bin/cc && \
+    apt-get purge -y wget gnupg lsb-release && \
+    (dpkg --force-remove-essential --purge ncurses-base ncurses-bin || true) && \
+    (dpkg --force-remove-essential --purge perl-base || true) && \
+    (dpkg --force-remove-protected --force-remove-essential --purge login || true) && \
+    (dpkg --purge passwd || true) && \
+    apt-get clean && rm -rf /var/lib/apt/lists/* /llvm.sh
+
+WORKDIR ${FALKORDB_HOME}
+
+COPY ./build/runtime/run.sh       ${FALKORDB_BIN_PATH}/run.sh
+COPY ./build/runtime/gen-certs.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
+RUN chmod +x ${FALKORDB_BIN_PATH}/run.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
+COPY --from=builder /out/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
+
+# libomp.so.5 for the instrumented .so. amd64 only — this image is built
+# `platforms: linux/amd64` in build-rc-coverage-image (arm64 coverage isn't
+# part of the matrix yet).
+ARG TARGETARCH
+RUN --mount=from=builder,target=/builder,readonly \
+    case "${TARGETARCH}" in \
+        amd64) LIBOMP=/builder/usr/lib/x86_64-linux-gnu/libomp.so.5 ;; \
+        arm64) LIBOMP=/builder/usr/lib/aarch64-linux-gnu/libomp.so.5 ;; \
+        *) echo "unsupported TARGETARCH=${TARGETARCH}"; exit 1 ;; \
+    esac && \
+    cp "${LIBOMP}" /usr/local/lib/libomp.so.5 && \
+    ldconfig
+
+# Instrumentation runtime: every llvm-cov-aware binary writes profraw files
+# named per the LLVM_PROFILE_FILE template. %p = pid, %m = module hash; both
+# substitutions are needed because redis forks (BGSAVE / RDB) and the test
+# loads the module fresh per Env(). FALKORDB_COV_PATH should be bind-mounted
+# from the host so the test job can collect the files after the run.
+ENV ARCH=${TARGETPLATFORM} \
+    TLS=0 \
+    BROWSER=0 \
+    FALKORDB_ARGS="MAX_QUEUED_QUERIES 25 TIMEOUT 1000 RESULTSET_SIZE 10000" \
+    LLVM_PROFILE_FILE=/var/lib/falkordb/cov/profraw_%p_%m.profraw
+
+EXPOSE 6379/tcp
+ENTRYPOINT ["/var/lib/falkordb/bin/run.sh"]

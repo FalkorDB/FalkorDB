@@ -1,16 +1,15 @@
-from falkordb import FalkorDB, Graph, Node, Edge
+import os
 
-r = None
-graph_name = "G"
+from falkordb import FalkorDB
+
 graph = None
 
 
 def _brand_new_redis():
-    global r
-    if r is not None:
-        r.flush()
-
-    return FalkorDB()
+    return FalkorDB(
+        host=os.environ.get("FALKORDB_HOST", "localhost"),
+        port=int(os.environ.get("FALKORDB_PORT", os.environ.get("PORT", "6379"))),
+    )
 
 
 def empty_graph():
@@ -36,6 +35,13 @@ def binary_tree_graph1():
 
     falkordb_con = _brand_new_redis()
     graph = falkordb_con.select_graph("G1")
+    # Reset so scenarios that call this fixture multiple times (or that run
+    # against a long-running shared redis under image-based CI) don't observe
+    # accumulated data from a prior invocation.
+    try:
+        graph.delete()
+    except:
+        pass
     graph.query("CREATE(a: A {name: 'a'}),    \
                       (b1: X {name: 'b1'}),         \
                       (b2: X {name: 'b2'}),         \
@@ -73,6 +79,12 @@ def binary_tree_graph2():
 
     falkordb_con = _brand_new_redis()
     graph = falkordb_con.select_graph("G2")
+    # Same reset as binary_tree_graph1 — fixture must produce identical state
+    # regardless of whether prior scenarios populated this key.
+    try:
+        graph.delete()
+    except:
+        pass
     graph.query("CREATE(a: A {name: 'a'}),    \
                       (b1: X {name: 'b1'}),         \
                       (b2: X {name: 'b2'}),         \
