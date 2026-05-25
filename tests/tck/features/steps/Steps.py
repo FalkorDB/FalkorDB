@@ -65,10 +65,21 @@ def step_impl(context):
         query = params + query
 
     try:
+        context.pre_label_count = graphs.schema_label_count()
+    except Exception:
+        context.pre_label_count = 0
+
+    try:
         resultset = graphs.query(query.replace("\r", ""))
     except Exception as error:
         resultset = None
         exception = error
+
+    try:
+        context.post_label_count = graphs.schema_label_count()
+    except Exception:
+        pass
+
     params = None
 
 @then(u'the result should be empty')
@@ -77,14 +88,17 @@ def step_impl(context):
 
 @then(u'the side effects should be:')
 def step_impl(context):
+    labels_added = (getattr(context, 'post_label_count', 0) or 0) \
+                 - (getattr(context, 'pre_label_count', 0) or 0)
+
     stat = context.table.headings[0]
     value = int(context.table.headings[1])
-    assertions.assert_statistics(resultset, stat, value)
+    assertions.assert_statistics(resultset, stat, value, labels_added=labels_added)
 
     for row in context.table:
         stat = row[0]
         value = int(row[1])
-        assertions.assert_statistics(resultset, stat, value)
+        assertions.assert_statistics(resultset, stat, value, labels_added=labels_added)
 
 @then(u'no side effects')
 def step_impl(context):
