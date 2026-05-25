@@ -281,7 +281,7 @@ pub struct Graph {
     /// Relationship type names (ID → name mapping)
     relationship_types: Vec<Arc<String>>,
     /// LRU cache for query plans
-    cache: Arc<Mutex<LruCache<String, PlanTree>>>,
+    cache: Arc<Mutex<LruCache<String, Arc<PlanTree>>>>,
     /// Graph constraints (unique, mandatory)
     constraints: Vec<Constraint>,
     /// Version counter (incremented on each write transaction)
@@ -1003,6 +1003,8 @@ impl Graph {
             let mut cache = self.cache.lock();
             if let Some(plan) = cache.get(query) {
                 if plan.udf_version == current_udf_version {
+                    let plan = plan.clone();
+                    drop(cache);
                     let optimize_plan = optimize(&plan.plan, self, &param_values);
                     return Ok(Plan::new(
                         Arc::new(optimize_plan),
@@ -1013,8 +1015,6 @@ impl Graph {
                         params_offset,
                     ));
                 }
-                // UDF version mismatch — discard stale cache entry
-                cache.pop(query);
             }
         }
 
@@ -1035,10 +1035,10 @@ impl Graph {
         if crate::runtime::functions::udf_version() == current_udf_version {
             self.cache.lock().push(
                 query.to_string(),
-                PlanTree {
+                Arc::new(PlanTree {
                     plan,
                     udf_version: current_udf_version,
-                },
+                }),
             );
         }
         Ok(Plan::new(
