@@ -290,11 +290,12 @@ checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
 
 [[package]]
 name = "crossfire"
-version = "3.1.12"
+version = "3.1.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72bdfcf389b100bb85fcf39ad434f67b617813cf0608095c905b79f6b2194aea"
+checksum = "4d8c4de3db833e7ef74050bae09d5f3fa8f9d1507d3c2689c6e8c50b71208b18"
 dependencies = [
  "crossbeam-utils",
+ "embed-collections",
  "futures-core",
  "parking_lot",
  "smallvec",
@@ -340,6 +341,12 @@ name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
+
+[[package]]
+name = "embed-collections"
+version = "0.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82e4033966f8f27b67150cff46840aa0cf68da9d83454e84c903d76f939ff698"
 
 [[package]]
 name = "enum_dispatch"
