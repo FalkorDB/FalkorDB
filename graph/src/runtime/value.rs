@@ -1515,16 +1515,26 @@ fn compare_floats(
 }
 #[derive(Default, Debug)]
 pub struct ValuesDeduper {
-    seen: RefCell<HashSet<u64>>,
+    seen: RefCell<rustc_hash::FxHashSet<u64>>,
 }
 
 impl ValuesDeduper {
+    #[must_use]
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            seen: RefCell::new(rustc_hash::FxHashSet::with_capacity_and_hasher(
+                capacity,
+                rustc_hash::FxBuildHasher,
+            )),
+        }
+    }
+
     #[must_use]
     pub fn is_seen(
         &self,
         values: &[Value],
     ) -> bool {
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = rustc_hash::FxHasher::default();
         values.hash(&mut hasher);
         let hash = hasher.finish();
         self.check_and_insert_hash(hash)
