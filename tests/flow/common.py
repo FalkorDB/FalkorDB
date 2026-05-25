@@ -401,6 +401,21 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
     # startEnv() pings the address; if it doesn't resolve, construction
     # raises before we can override anything. flow.sh's --existing-env-addr
     # is a placeholder that gets superseded here.
+    #
+    # Cluster guard: tests/flow/test_matrix_split.py's CLUSTER_RE routes
+    # oss-cluster / shardsCount files here, but actual multi-node cluster
+    # orchestration isn't implemented — we'd silently spawn a single node
+    # and tests would run against the wrong topology. Raise loudly until
+    # real cluster support lands.
+    if env != 'oss' or shardsCount:
+        raise RuntimeError(
+            "Spawn-mode Env() doesn't implement oss-cluster / shardsCount — "
+            "only single-node redis is spawned. The classifier routes "
+            "cluster-shaped tests to the spawn bucket but actual cluster "
+            "orchestration is not wired up. Either skip this test under "
+            "image-based CI or add multi-node cluster support here. "
+            f"Got env={env!r} shardsCount={shardsCount}."
+        )
     master_alias, master_port, master_cid = _spawn_falkordb(
         test_image, falkordb_args=moduleArgs or "",
         enable_debug_command=enableDebugCommand)
