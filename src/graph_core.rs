@@ -1208,7 +1208,28 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                 reset_counter();
                 enable_tracking();
             }
-            let res = g.execute_query_write(&ctx, &query, compact, cached, per_query_timeout);
+            // Gate matrix-mutation AND the MvccGraph snapshot swap (commit)
+            // against fork. Both phases mutate state that pre_fork_prepare
+            // reads (via data_ptr bypass) — without the guard, the swap of
+            // MvccGraph.graph in commit can race with pre_fork's clone of
+            // that field, leading to use-after-free of the old snapshot's
+            // GraphBLAS matrices.
+            //
+            // The guard MUST drop before the GIL phase (lock_thread_safe_ctx
+            // below). If we held it through the GIL phase, pre_fork_prepare
+            // on the main thread would wait for us to drain while we wait
+            // for the main thread's event loop to release the GIL — classic
+            // deadlock.
+            let res = {
+                let _fork_guard = graph::fork_sync::GraphOpGuard::new();
+                let res =
+                    g.execute_query_write(&ctx, &query, compact, cached, per_query_timeout);
+                match &res {
+                    Ok(wq) => g.graph.commit(Arc::clone(&wq.graph)),
+                    Err(_) => g.graph.rollback(),
+                }
+                res
+            };
             if mem_capacity > 0 {
                 disable_tracking();
             }
@@ -1251,7 +1272,7 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                     // Enqueue telemetry entry for background flusher
                     telemetry::enqueue_entry(&key_name, entry);
                     drop(bc);
-                    g.graph.commit(wq.graph);
+                    // commit was already performed inside the fork_guard above
                     let value = g.graph.read().borrow().maybe_flush_caches();
                     if let Err(e) = value {
                         redis_module::logging::log_warning(format!(
@@ -1264,7 +1285,7 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                     unsafe { ffi::reply_error(ctx.ctx, cerr.as_ptr()) };
                     drop(bc);
                     unsafe { ffi::free_thread_safe_context(ctx.ctx) };
-                    g.graph.rollback();
+                    // rollback was already performed inside the fork_guard above
                 }
             }
             // Release write lock after each message.

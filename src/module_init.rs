@@ -194,12 +194,15 @@ pub fn graph_init(
             return Status::Err;
         }
 
-        // Register fork child handler to make GraphBLAS/OpenMP single-threaded
-        // in bgsave child processes. Prepare handler materializes all GraphBLAS
-        // matrices so the child doesn't hit held internal locks.
+        // Register fork handlers:
+        // - PREPARE: drain in-flight graph writers (fork_sync barrier), then
+        //   materialize all GraphBLAS matrices.
+        // - PARENT:  release blocked writers (fork_sync barrier cleared).
+        // - CHILD:   force GraphBLAS/OpenMP to single-threaded mode so they
+        //            don't touch the parent's (now-invalid) thread pools.
         pthread_atfork(
             Some(crate::redis_type::pre_fork_prepare),
-            None,
+            Some(crate::redis_type::after_fork_parent),
             Some(on_fork_child),
         );
 
