@@ -28,7 +28,8 @@ use crate::runtime::{
     value::ValuesDeduper,
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
-use std::hash::{DefaultHasher, Hash, Hasher};
+use rustc_hash::FxHasher;
+use std::hash::{Hash, Hasher};
 
 pub struct DistinctOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
@@ -69,10 +70,10 @@ impl<'a> Iterator for DistinctOp<'a> {
                 &child_names
             };
 
-            let mut passing = Vec::new();
+            let mut passing = Vec::with_capacity(batch.active_len());
 
             for row in batch.active_indices() {
-                let mut hasher = DefaultHasher::new();
+                let mut hasher = FxHasher::default();
                 for name in names {
                     batch.get(row, name.id).hash(&mut hasher);
                 }

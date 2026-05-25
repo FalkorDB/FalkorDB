@@ -70,8 +70,8 @@ impl<'a> Env<'a> {
         id: u32,
         value: Value,
     ) {
-        while self.values.len() <= id as _ {
-            self.values.push(Value::Null);
+        if self.values.len() <= id as usize {
+            self.values.resize_with(id as usize + 1, || Value::Null);
         }
         self.values[id as usize] = value;
         self.bound.set(id as usize);
@@ -163,8 +163,8 @@ impl<'a> Env<'a> {
         &mut self,
         other: &Self,
     ) {
-        while self.values.len() < other.values.len() {
-            self.values.push(Value::Null);
+        if self.values.len() < other.values.len() {
+            self.values.resize_with(other.values.len(), || Value::Null);
         }
         for (key, value) in other.values.iter().enumerate() {
             if !other.bound.test(key) {
