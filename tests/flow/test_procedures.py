@@ -85,9 +85,9 @@ class testProcedures(FlowTestsBase):
                 emit=["unknown"],
             )
             self.env.assertFalse(1)
-        except redis.exceptions.ResponseError:
+        except redis.exceptions.ResponseError as e:
             # Expecting an error.
-            pass
+            self.env.assertContains("Procedure `db.idx.fulltext.queryNodes` does not yield output `unknown`", str(e))
 
         # Yield the same output multiple times.
         # Expect an error when trying to use the same output multiple times.
@@ -98,9 +98,9 @@ class testProcedures(FlowTestsBase):
                 emit=["node", "node"],
             )
             self.env.assertFalse(1)
-        except redis.exceptions.ResponseError:
+        except redis.exceptions.ResponseError as e:
             # Expecting an error.
-            pass
+            self.env.assertContains("Variable `node` already declared", str(e))
 
     def test03_arguments(self):
         # Omit arguments.
@@ -300,9 +300,9 @@ class testProcedures(FlowTestsBase):
             # looking for a non existing procedure
             self.graph.call_procedure("db.nonExistingProc")
             self.env.assertFalse(1)
-        except redis.exceptions.ResponseError:
+        except redis.exceptions.ResponseError as e:
             # Expecting an error.
-            pass
+            self.env.assertContains("Procedure `db.nonExistingProc` is not registered", str(e))
 
         try:
             self.graph.call_procedure(
@@ -423,6 +423,21 @@ class testProcedures(FlowTestsBase):
         self.env.assertEquals(variable_len, False)
         self.env.assertEquals(udf, False)
 
+        actual_resultset = self.graph.query(
+            "CALL dbms.functions() YIELD name RETURN name ORDER BY name"
+        ).result_set
+        names = {row[0] for row in actual_resultset}
+        for name in [
+            "endNode",
+            "property",
+            "randomuuid",
+            "startNode",
+            "string.matchRegEx",
+            "typeof",
+            "xor",
+        ]:
+            self.env.assertIn(name, names)
+
         # -----------------------------------------------------------------------
 
         f = self.graph.query(q, {"name": "avg"}).result_set[0]
@@ -474,3 +489,34 @@ class testProcedures(FlowTestsBase):
         self.env.assertEquals(aggregation, False)
         self.env.assertEquals(variable_len, True)
         self.env.assertEquals(udf, False)
+
+    def test13_index_catalog_raw_response(self):
+        graph_name = "procedure_index_catalog"
+        graph = self.db.select_graph(graph_name)
+        self.redis_con.delete(graph_name)
+
+        create_node_fulltext_index(graph, "Person", "name", sync=True)
+        result = self.redis_con.execute_command("GRAPH.QUERY", graph_name, "CALL db.indexes()")
+
+        expected_header = [
+            "label",
+            "properties",
+            "types",
+            "options",
+            "language",
+            "stopwords",
+            "entitytype",
+            "status",
+            "info",
+        ]
+        self.env.assertEqual(result[0][: len(expected_header)], expected_header)
+
+        row_by_column = dict(zip(result[0], result[1][0]))
+        self.env.assertEqual(row_by_column["label"], "Person")
+        self.env.assertEqual(row_by_column["properties"], "[name]")
+        self.env.assertEqual(row_by_column["types"], "{name: [FULLTEXT]}")
+        self.env.assertEqual(row_by_column["options"], "{name: {}}")
+        self.env.assertEqual(row_by_column["language"], "english")
+        self.env.assertEqual(row_by_column["stopwords"], "[]")
+        self.env.assertEqual(row_by_column["entitytype"], "NODE")
+        self.env.assertEqual(row_by_column["status"], "OPERATIONAL")

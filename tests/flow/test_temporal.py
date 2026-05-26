@@ -433,6 +433,7 @@ class testTemporalDuration(FlowTestsBase):
     def test_duration_from_string(self):
         test_cases = [
                 ('P1Y',            relativedelta(years=1,)),
+                ('P1M',            relativedelta(months=1)),
                 ('P1Y2M',          relativedelta(years=1, months=2)),
                 ('P1Y2M3D',        relativedelta(years=1, months=2, days=3)),
                 ('P1Y2M3DT4H',     relativedelta(years=1, months=2, days=3, hours=4)),
@@ -445,6 +446,24 @@ class testTemporalDuration(FlowTestsBase):
             result = self.graph.query(query, {'str': str_input})
             actual = result.result_set[0][0]
             self.env.assertEquals(actual, expected)
+
+        raw = self.env.getConnection().execute_command(
+            "GRAPH.QUERY",
+            GRAPH_ID,
+            "RETURN duration('P1M') AS d, toString(duration('P1M')) AS s",
+        )
+        self.env.assertEquals(raw[1], [["P1M", "P1M"]])
+
+    def test_month_end_duration_arithmetic(self):
+        raw = self.env.getConnection().execute_command(
+            "GRAPH.QUERY",
+            GRAPH_ID,
+            """
+            RETURN date('2024-01-31') + duration('P1M') AS d,
+                   localdatetime('2024-01-31T00:00:00') + duration('P1M') AS l
+            """,
+        )
+        self.env.assertEquals(raw[1], [["2024-03-02", "2024-03-02T00:00:00"]])
 
     def test_duration_components(self):
         q = """WITH duration({years: 2, months:3, weeks:1, days:4, hours:5, minutes:22, seconds:7}) AS d
@@ -633,4 +652,3 @@ class testTemporalDuration(FlowTestsBase):
             self.env.assertFalse(True)
         except Exception:
             pass
-

@@ -819,3 +819,18 @@ class testIndexCreationFlow():
             # re-pull index status
             status = self.graph.query("CALL db.indexes() yield status").result_set[0][0]
 
+    def test16_index_creation_raw_stats(self):
+        graph_name = "index_create_stats_contract"
+        redis_con = self.env.getConnection()
+        redis_con.delete(graph_name)
+
+        result = redis_con.execute_command(
+            "GRAPH.QUERY",
+            graph_name,
+            "CREATE INDEX FOR (n:N) ON (n.a)",
+        )
+        stats = result[-1]
+        self.env.assertIn("Indices created: 1", stats)
+        self.env.assertNotIn("Labels added: 1", stats)
+        for stat in stats:
+            self.env.assertFalse(stat.startswith("Graph version"))

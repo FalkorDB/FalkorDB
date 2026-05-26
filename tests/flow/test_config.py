@@ -307,6 +307,12 @@ class testConfig(FlowTestsBase):
             except redis.exceptions.ResponseError as e:
                 assert(("Failed to set config value %s to invalid" % config) in str(e))
 
+        try:
+            self.redis_con.execute_command("GRAPH.CONFIG", "SET", "ASYNC_DELETE", 1)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            self.env.assertIn("Failed to set config value ASYNC_DELETE to 1", str(e))
+
     def test10_set_get_vkey_max_entity_count(self):
         config_name = "VKEY_MAX_ENTITY_COUNT"
         config_value = 100
@@ -490,4 +496,3 @@ class testLoadTimeConfig(FlowTestsBase):
                 val = False
 
             env.assertEqual(db.config_get(name), val)
-

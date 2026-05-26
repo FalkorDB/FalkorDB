@@ -22,6 +22,13 @@ class testCmdReg(FlowTestsBase):
         self.env, self.db = Env()
         self.conn = self.env.getConnection()
 
+    def _command_flags(self, command):
+        info = self.conn.execute_command("COMMAND", "INFO", command)
+        if isinstance(info, dict):
+            command_info = next(iter(info.values()))
+            return set(command_info["flags"])
+        return set(info[0][2])
+
     def test_deny_script(self):
         """Make sure none of the graph commands can run within LUA"""
 
@@ -39,3 +46,12 @@ class testCmdReg(FlowTestsBase):
             except ResponseError as e:
                 self.env.assertContains("This Redis command is not allowed from script", str(e))
 
+    def test_command_metadata_flags(self):
+        self.env.assertIn("denyoom", self._command_flags("graph.query"))
+        self.env.assertIn("denyoom", self._command_flags("graph.profile"))
+        self.env.assertIn("denyoom", self._command_flags("graph.constraint"))
+        self.env.assertIn("denyoom", self._command_flags("graph.copy"))
+
+        self.env.assertIn("allow_busy", self._command_flags("graph.config"))
+        self.env.assertIn("allow_busy", self._command_flags("graph.slowlog"))
+        self.env.assertNotIn("allow_busy", self._command_flags("graph.query"))

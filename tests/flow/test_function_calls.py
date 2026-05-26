@@ -2532,6 +2532,8 @@ class testFunctionCallsFlow(FlowTestsBase):
             self.get_res_and_assertEquals(query, expected_result)
 
     def test91_MATCHREGEX(self):
+        self.expect_error("RETURN 'abc' =~ 'a.*'", "FalkorDB does not currently support =~")
+
         # NULL input should return empty list
         expected_result = [[]]
         query = """WITH NULL as string RETURN string.matchRegEx(null, "bla")"""
@@ -2773,6 +2775,7 @@ class testFunctionCallsFlow(FlowTestsBase):
             "RETURN pow(100,200), 5" : [[float('inf'), 5]],
             "RETURN 9223372036854775807" : [[9223372036854775807]],
             "RETURN -9223372036854775808" : [[-9223372036854775808]],
+            "RETURN abs(-9223372036854775808)" : [[-9223372036854775808]],
         }
         for query, expected_result in query_to_expected_result.items():
             self.get_res_and_assertEquals(query, expected_result)
