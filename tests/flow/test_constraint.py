@@ -998,13 +998,6 @@ class testConstraintReplication():
         self.monitor = []
         self.g = self.db.select_graph(GRAPH_ID)
 
-        self.monitor_thread = threading.Thread(target=self.monitor_thread, daemon=True)
-        self.monitor_thread.start()
-
-        # wait for monitor thread to attach
-        while MONITOR_ATTACHED is False:
-            time.sleep(0.2)
-
         # clear DB
         self.source.delete(GRAPH_ID)
 
@@ -1023,6 +1016,16 @@ class testConstraintReplication():
             pass
 
     def test_01_constraint_replication(self):
+        # start monitor thread here (not in __init__) so it doesn't capture
+        # GRAPH.CONSTRAINT events from earlier test classes that share the
+        # same redis (RLTest instantiates classes eagerly during collection)
+        global MONITOR_ATTACHED
+        MONITOR_ATTACHED = False
+        self.monitor_t = threading.Thread(target=self.monitor_thread, daemon=True)
+        self.monitor_t.start()
+        while MONITOR_ATTACHED is False:
+            time.sleep(0.2)
+
         # create mandatory node constraint over Person height
         create_mandatory_node_constraint(self.g, 'Person', 'height')
 

@@ -128,7 +128,7 @@ jobs:
           TEST_FILE: ${{ matrix.test_file }}
         run: |
           . /data/venv/bin/activate
-          TEST="$TEST_FILE" FAIL_FAST=1 RELEASE=1 PARALLELISM="--parallelism 1" ./flow.sh
+          TEST="$TEST_FILE" FAIL_FAST=1 RELEASE=1 ./flow.sh
       - name: Collect coverage (profraw → lcov)
         if: ${{ !cancelled() && inputs.collect_coverage }}
         env:
@@ -213,7 +213,7 @@ jobs:
           TEST_FILE: ${{ matrix.test_file }}
         run: |
           . /data/venv/bin/activate
-          TEST="$TEST_FILE" FAIL_FAST=1 RELEASE=1 PARALLELISM="--parallelism 1" ./flow.sh
+          TEST="$TEST_FILE" FAIL_FAST=1 RELEASE=1 ./flow.sh
       - name: Collect coverage (profraw → lcov)
         if: ${{ !cancelled() && inputs.collect_coverage }}
         env:
