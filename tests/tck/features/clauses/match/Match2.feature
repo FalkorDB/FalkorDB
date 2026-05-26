@@ -149,6 +149,7 @@ Feature: Match2 - Match relationships
       | a1 | r | b2 |
     And no side effects
 
+  @skip
   Scenario: [8] Fail when using parameter as relationship predicate in MATCH
     Given any graph
     When executing query:

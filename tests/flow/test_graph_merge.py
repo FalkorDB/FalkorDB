@@ -504,7 +504,7 @@ class testGraphMergeFlow():
             assert(False)
         except redis.exceptions.ResponseError as e:
             # Expecting an error.
-            self.env.assertIn("Cannot merge node using null property value", str(e))
+            self.env.assertIn("Cannot merge entity using null property value", str(e))
             pass
 
         # Verify that no entities were created.
@@ -519,7 +519,7 @@ class testGraphMergeFlow():
             assert(False)
         except redis.exceptions.ResponseError as e:
             # Expecting an error.
-            self.env.assertIn("Cannot merge node using null property value", str(e))
+            self.env.assertIn("Cannot merge entity using null property value", str(e))
 
     def test28_merge_reset_label_scan(self):
         # Starting with an empty graph.

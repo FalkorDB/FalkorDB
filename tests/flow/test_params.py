@@ -402,6 +402,90 @@ class testParams(FlowTestsBase):
             {'id': 'abc', 'props': {'x': 1, 'y': 2}})
         self.env.assertEqual(result.result_set, [['abc', {'x': 1, 'y': 2}]])
 
+    def test_map_param_as_inlined_properties(self):
+        # parameter used as inlined pattern properties, e.g.
+        #   CREATE (n:label $p)
+        # this is openCypher syntax and used to fail with
+        # 'Encountered unhandled type in inlined properties.'
+        # see issue: parameter as inlined pattern properties
+
+        # CREATE node with parameter as inlined properties
+        result = self.graph.query(
+            "CREATE (n:Pip $p) RETURN n.name, n.age",
+            {'p': {'name': 'a', 'age': 1}})
+        self.env.assertEqual(result.nodes_created, 1)
+        self.env.assertEqual(result.properties_set, 2)
+        self.env.assertEqual(result.result_set, [['a', 1]])
+
+        # MATCH with parameter as inlined properties: matches existing entity
+        result = self.graph.query(
+            "MATCH (n:Pip $p) RETURN n.name, n.age",
+            {'p': {'name': 'a'}})
+        self.env.assertEqual(result.result_set, [['a', 1]])
+
+        # MATCH with parameter that does not match: empty result
+        result = self.graph.query(
+            "MATCH (n:Pip $p) RETURN n.name",
+            {'p': {'name': 'missing'}})
+        self.env.assertEqual(result.result_set, [])
+
+        # MATCH with parameter requesting a property the entity doesn't have:
+        # empty result (no error)
+        result = self.graph.query(
+            "MATCH (n:Pip $p) RETURN n.name",
+            {'p': {'unknown_attr': 1}})
+        self.env.assertEqual(result.result_set, [])
+
+        # MATCH with empty-map parameter: no constraints, returns all
+        result = self.graph.query(
+            "MATCH (n:Pip $p) RETURN count(n)",
+            {'p': {}})
+        self.env.assertEqual(result.result_set, [[1]])
+
+        # MERGE with parameter as inlined properties: matches existing
+        result = self.graph.query(
+            "MERGE (n:Pip $p) RETURN n.name, n.age",
+            {'p': {'name': 'a', 'age': 1}})
+        self.env.assertEqual(result.nodes_created, 0)
+        self.env.assertEqual(result.result_set, [['a', 1]])
+
+        # MERGE with parameter as inlined properties: creates new
+        result = self.graph.query(
+            "MERGE (n:Pip $p) RETURN n.name, n.age",
+            {'p': {'name': 'b', 'age': 2}})
+        self.env.assertEqual(result.nodes_created, 1)
+        self.env.assertEqual(result.result_set, [['b', 2]])
+
+        # CREATE with parameter as inlined properties on a relationship
+        result = self.graph.query(
+            "MATCH (a:Pip {name:'a'}), (b:Pip {name:'b'}) "
+            "CREATE (a)-[r:R $p]->(b) RETURN r.weight",
+            {'p': {'weight': 7}})
+        self.env.assertEqual(result.relationships_created, 1)
+        self.env.assertEqual(result.properties_set, 1)
+        self.env.assertEqual(result.result_set, [[7]])
+
+        # MATCH with parameter as inlined properties on a relationship
+        result = self.graph.query(
+            "MATCH ()-[r:R $p]->() RETURN r.weight",
+            {'p': {'weight': 7}})
+        self.env.assertEqual(result.result_set, [[7]])
+
+        # the same query with a different parameter value reuses the cached
+        # plan but produces results based on the new parameter value
+        result = self.graph.query(
+            "MATCH (n:Pip $p) RETURN n.name",
+            {'p': {'name': 'b'}})
+        self.env.assertEqual(result.result_set, [['b']])
+
+        # parameter that is not a map should produce a runtime type error
+        try:
+            self.graph.query("CREATE (n:Pip $p)", {'p': 1})
+            self.env.assertTrue(False,
+                "Expected type-mismatch error for non-map parameter")
+        except ResponseError as e:
+            self.env.assertContains("Map", str(e))
+
     def test_invalid_param_value_error(self):
         # When a parameter value is malformed (e.g. a Java client sending a Map
         # using Java's default toString '{key=value}' instead of the Cypher

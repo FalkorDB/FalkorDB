@@ -415,6 +415,76 @@ SIValue AR_TYPEOF(SIValue *argv, int argc, void *private_data) {
 	return SI_ConstStringVal(SIType_ToString(SI_TYPE(argv[0])));
 }
 
+// internal predicate used by inlined pattern properties given as a parameter
+// or other map-yielding expression, e.g.
+//   MATCH (n $p) RETURN n
+// returns true iff `entity` has, for every (k, v) entry in `map`,
+// a property `k` whose value equals `v`
+SIValue AR_INLINE_PROPS_FILTER
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
+	SIValue entity = argv[0] ;
+	SIValue map    = argv[1] ;
+
+	// missing entity → false
+	if (SI_TYPE (entity) == T_NULL) {
+		return SI_BoolVal (false) ;
+	}
+
+	// null map → no constraints, treat as a match
+	if (SI_TYPE (map) == T_NULL) {
+		return SI_BoolVal (true) ;
+	}
+
+	if (SI_TYPE (map) != T_MAP) {
+		Error_SITypeMismatch (map, T_MAP) ;
+		return SI_NullVal () ;
+	}
+
+	if (!(SI_TYPE (entity) & (T_NODE | T_EDGE))) {
+		Error_SITypeMismatch (entity, T_NODE | T_EDGE) ;
+		return SI_NullVal () ;
+	}
+
+	GraphEntity *e   = (GraphEntity *) entity.ptrval ;
+	GraphContext *gc = QueryCtx_GetGraphCtx () ;
+
+	uint n = Map_KeyCount (map) ;
+	for (uint i = 0; i < n; i++) {
+		SIValue key ;
+		SIValue expected ;
+		Map_GetIdx (map, i, &key, &expected) ;
+
+		// key in a Cypher map is always a string
+		AttributeID attr_id =
+			GraphContext_GetAttributeID (gc, key.stringval) ;
+		if (attr_id == ATTRIBUTE_ID_NONE) {
+			// unknown attribute → cannot match
+			return SI_BoolVal (false) ;
+		}
+
+		SIValue actual ;
+		if (!GraphEntity_GetProperty (e, attr_id, &actual)) {
+			// entity does not contain this property
+			return SI_BoolVal (false) ;
+		}
+
+		int disjointOrNull = 0 ;
+		int cmp = SIValue_Compare (actual, expected, &disjointOrNull) ;
+		if (disjointOrNull == COMPARED_NULL || disjointOrNull == DISJOINT) {
+			return SI_BoolVal (false) ;
+		}
+		if (cmp != 0) {
+			return SI_BoolVal (false) ;
+		}
+	}
+
+	return SI_BoolVal (true) ;
+}
+
 void Register_EntityFuncs() {
 	SIType *types;
 	SIType ret_type;
@@ -500,6 +570,16 @@ void Register_EntityFuncs() {
 	ret_type = T_STRING;
 	func_desc = AR_FuncDescNew("typeof", AR_TYPEOF, 1, 1, types, ret_type,
 			false, true, true);
+	AR_FuncRegister(func_desc);
+
+	// internal predicate: _inline_props_filter(entity, map) -> bool
+	// see AR_INLINE_PROPS_FILTER for semantics
+	types = arr_new(SIType, 2);
+	arr_append(types, T_NULL | T_NODE | T_EDGE);
+	arr_append(types, T_NULL | T_MAP);
+	ret_type = T_NULL | T_BOOL;
+	func_desc = AR_FuncDescNew("_inline_props_filter", AR_INLINE_PROPS_FILTER,
+			2, 2, types, ret_type, true, true, true);
 	AR_FuncRegister(func_desc);
 }
 

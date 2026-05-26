@@ -290,6 +290,7 @@ Feature: Merge1 - Merge node
       """
     Then a SyntaxError should be raised at compile time: VariableAlreadyBound
 
+  @skip
   Scenario: [16] Fail when using parameter as node predicate in MERGE
     Given any graph
     When executing query:

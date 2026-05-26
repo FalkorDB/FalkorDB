@@ -783,11 +783,21 @@ static AST_Validation _ValidateInlinedProperties
 		return AST_VALID;
 	}
 
-	// emit an error if the properties are not presented as a map, as in:
+	// emit an error if the properties are not presented as a map or as a
+	// parameter, as in:
 	// MATCH (p {invalid_property_construction}) RETURN p
-	if(cypher_astnode_type(props) != CYPHER_AST_MAP) {
+	// the parameter form, e.g. MATCH (p $param), is resolved at runtime to a
+	// map by PropertyMap_New / the inlined-properties filter
+	cypher_astnode_type_t props_type = cypher_astnode_type(props);
+	if(props_type != CYPHER_AST_MAP && props_type != CYPHER_AST_PARAMETER) {
 		ErrorCtx_SetError(EMSG_UNHANDLED_TYPE_INLINE_PROPERTIES);
 		return AST_INVALID;
+	}
+
+	// no further sub-validation for parameters; the actual map is supplied at
+	// runtime
+	if(props_type == CYPHER_AST_PARAMETER) {
+		return AST_VALID;
 	}
 
 	// traverse map entries

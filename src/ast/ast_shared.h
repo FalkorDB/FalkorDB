@@ -46,10 +46,15 @@ typedef enum {
 // used in CREATE context to describe the new entity attributes
 // e.g.
 // CREATE (n {v: n.x * 2, x: $k})
+//
+// when the inlined properties are supplied as a single expression (e.g. a
+// parameter, as in `CREATE (n $p)`), `expression` is set and `keys`/`values`/
+// `attr_ids` are NULL; the expression is evaluated to a map at runtime
 typedef struct {
 	const char **keys;           // properties
 	AttributeID *attr_ids;       // ids
 	struct AR_ExpNode **values;  // values
+	struct AR_ExpNode *expression;  // single-expression form (e.g. parameter)
 } PropertyMap;
 
 // enum describing how a SET directive should treat pre-existing properties

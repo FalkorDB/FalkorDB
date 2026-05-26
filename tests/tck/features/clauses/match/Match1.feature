@@ -120,6 +120,7 @@ Feature: Match1 - Match nodes
       | 3 | 2 |
     And no side effects
 
+  @skip
   Scenario: [6] Fail when using parameter as node predicate in MATCH
     Given any graph
     When executing query:

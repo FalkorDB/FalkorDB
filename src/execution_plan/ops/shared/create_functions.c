@@ -10,6 +10,7 @@
 #include "../../../errors/errors.h"
 #include "../../../ast/ast_shared.h"
 #include "../../../datatypes/array.h"
+#include "../../../datatypes/map.h"
 #include "../../../graph/graph_hub.h"
 
 // commit node blueprints
@@ -328,6 +329,57 @@ cleanup:
 	Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);
 }
 
+// validate a property value
+// on success: returns true
+// for nulls that should be skipped: returns true and sets *skip = true
+// on validation error: sets the error context (without raising) and
+//                      returns false; the caller is responsible for releasing
+//                      any resources and then calling
+//                      ErrorCtx_RaiseRuntimeException
+static bool _ValidatePropValue
+(
+	SIValue val,             // value to validate
+	bool fail_on_null,       // if true, null is treated as error
+	bool *skip               // [out] true when value should be skipped (null)
+) {
+	*skip = false;
+
+	if (!(SI_TYPE(val) & SI_VALID_PROPERTY_VALUE)) {
+		// this value is of an invalid type
+		if (!SIValue_IsNull(val)) {
+			// invalid property type (e.g. node, edge, path, map)
+			Error_InvalidPropertyValue () ;
+			return false ;
+		}
+
+		// the value was NULL
+		// if this was prohibited in this context, set an error
+		// otherwise skip this value
+		if (fail_on_null) {
+			ErrorCtx_SetError (
+				"Cannot merge entity using null property value") ;
+			return false ;
+		}
+
+		// don't add null to attribute set
+		*skip = true ;
+		return true ;
+	}
+
+	// set an error and exit if we're trying to add
+	// an array containing an invalid type
+	if (unlikely (SI_TYPE(val) == T_ARRAY)) {
+		SIType invalid_properties = ~SI_VALID_PROPERTY_VALUE ;
+		bool res = SIArray_ContainsType (val, invalid_properties) ;
+		if (res) {
+			Error_InvalidPropertyValue () ;
+			return false ;
+		}
+	}
+
+	return true ;
+}
+
 // resolve the properties specified in the query into constant values
 void ConvertPropertyMap
 (
@@ -337,6 +389,64 @@ void ConvertPropertyMap
 	PropertyMap *map,
 	bool fail_on_null
 ) {
+	//--------------------------------------------------------------------------
+	// expression form: e.g. CREATE (n $p)
+	// evaluate the expression at runtime; expect a map and apply its entries
+	//--------------------------------------------------------------------------
+	if (map->expression != NULL) {
+		SIValue v = AR_EXP_Evaluate (map->expression, r) ;
+
+		if (SIValue_IsNull (v)) {
+			// nothing to add
+			return ;
+		}
+
+		if (SI_TYPE (v) != T_MAP) {
+			Error_SITypeMismatch (v, T_MAP) ;
+			SIValue_Free (v) ;
+			ErrorCtx_RaiseRuntimeException (NULL) ;
+			return ;
+		}
+
+		uint property_count = Map_KeyCount (v) ;
+		if (property_count == 0) {
+			SIValue_Free (v) ;
+			return ;
+		}
+
+		SIValue     vals[property_count] ;
+		AttributeID ids [property_count] ;
+		uint attrs_count = 0 ;
+
+		for (uint i = 0; i < property_count; i++) {
+			SIValue key ;
+			SIValue val ;
+			Map_GetIdx (v, i, &key, &val) ;
+
+			bool skip = false ;
+			if (!_ValidatePropValue (val, fail_on_null, &skip)) {
+				// release everything, then raise after cleanup
+				for (uint j = 0; j < attrs_count; j++) SIValue_Free (vals[j]) ;
+				SIValue_Free (v) ;
+				ErrorCtx_RaiseRuntimeException (NULL) ;
+				return ;
+			}
+			if (skip) continue ;
+
+			ids [attrs_count] =
+				GraphHub_FindOrAddAttribute (gc, key.stringval, true) ;
+			vals[attrs_count] = SI_CloneValue (val) ;
+			attrs_count++ ;
+		}
+
+		AttributeSet_Add (attributes, ids, vals, attrs_count, false) ;
+		SIValue_Free (v) ;
+		return ;
+	}
+
+	//--------------------------------------------------------------------------
+	// per-key form
+	//--------------------------------------------------------------------------
 	uint property_count = arr_len (map->keys) ;
 	uint attrs_count    = 0;
 
@@ -350,50 +460,16 @@ void ConvertPropertyMap
 		// CREATE (a {val: 2}), (b {val: a.val})
 		SIValue val = AR_EXP_Evaluate (map->values[i], r) ;
 
-		if (!(SI_TYPE(val) & SI_VALID_PROPERTY_VALUE)) {
-			// this value is of an invalid type
-			if (!SIValue_IsNull(val)) {
-				// if the value was a complex type, emit an exception
-				SIValue_Free (val) ;
-				for (int j = 0; j < i; j++) {
-					SIValue_Free (vals[j]) ;
-				}
-
-				Error_InvalidPropertyValue () ;
-				ErrorCtx_RaiseRuntimeException (NULL) ;
-			}
-
-			// the value was NULL
-			// if this was prohibited in this context, raise an exception,
-			// otherwise skip this value
-			if (fail_on_null) {
-				// emit an error and exit
-				for (int j = 0; j < i; j++) {
-					SIValue_Free (vals[j]) ;
-				}
-
-				ErrorCtx_RaiseRuntimeException ("Cannot merge node using null property value") ;
-			}
-
-			// don't add null to attrribute set
-			continue ;
+		bool skip = false ;
+		if (!_ValidatePropValue (val, fail_on_null, &skip)) {
+			SIValue_Free (val) ;
+			for (int j = 0; j < attrs_count; j++) SIValue_Free (vals[j]) ;
+			ErrorCtx_RaiseRuntimeException (NULL) ;
+			return ;
 		}
-
-		// emit an error and exit if we're trying to add
-		// an array containing an invalid type
-		if (unlikely (SI_TYPE(val) == T_ARRAY)) {
-			SIType invalid_properties = ~SI_VALID_PROPERTY_VALUE ;
-			bool res = SIArray_ContainsType (val, invalid_properties) ;
-			if (res) {
-				// validation failed
-				SIValue_Free (val) ;
-				for (int j = 0; j < i; j++) {
-					SIValue_Free (vals[j]) ;
-				}
-
-				Error_InvalidPropertyValue () ;
-				ErrorCtx_RaiseRuntimeException (NULL) ;
-			}
+		if (skip) {
+			SIValue_Free (val) ;
+			continue ;
 		}
 
 		// set the converted attribute
