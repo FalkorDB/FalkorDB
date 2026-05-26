@@ -1014,13 +1014,27 @@ class testConstraintReplication():
     def monitor_thread(self):
         global MONITOR_ATTACHED
         try:
-            with self.replica.monitor() as m:
-                MONITOR_ATTACHED = True
-                for cmd in m.listen():
-                    if 'GRAPH.CONSTRAINT' in cmd['command']:
-                        self.monitor.append(cmd)
-        except:
-            pass
+            conn = self.replica.connection_pool.make_connection()
+            conn.connect()
+            conn.send_command("MONITOR")
+            conn.read_response()
+            MONITOR_ATTACHED = True
+            sock = conn._sock
+            sock.settimeout(None)
+            buf = b""
+            while True:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    line = line.rstrip(b"\r").decode("utf-8", errors="replace")
+                    print(f"DEBUG MONITOR: {line}", flush=True)
+                    if "GRAPH.CONSTRAINT" in line:
+                        self.monitor.append({"command": line})
+        except Exception as e:
+            print(f"DEBUG MONITOR exception: {e}", flush=True)
 
     def test_01_constraint_replication(self):
         # create mandatory node constraint over Person height
@@ -1057,5 +1071,9 @@ class testConstraintReplication():
         while len(self.monitor) < 12 and elapsed > 0:
             time.sleep(0.2)
             elapsed -= 0.2
+
+        print(f"DEBUG monitor captured {len(self.monitor)} GRAPH.CONSTRAINT entries:", flush=True)
+        for i, cmd in enumerate(self.monitor):
+            print(f"  [{i}] {cmd}", flush=True)
 
         self.env.assertEqual(len(self.monitor), 12)
