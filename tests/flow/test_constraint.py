@@ -996,7 +996,6 @@ class testConstraintReplication():
         self.source  = self.env.getConnection()
         self.replica = self.env.getSlaveConnection()
         self.monitor = []
-        self.monitor_start_ts = 0.0
         self.g = self.db.select_graph(GRAPH_ID)
 
         self.monitor_thread = threading.Thread(target=self.monitor_thread, daemon=True)
@@ -1015,47 +1014,15 @@ class testConstraintReplication():
     def monitor_thread(self):
         global MONITOR_ATTACHED
         try:
-            conn = self.replica.connection_pool.make_connection()
-            conn.connect()
-            conn.send_command("MONITOR")
-            conn.read_response()
-            MONITOR_ATTACHED = True
-            sock = conn._sock
-            sock.settimeout(None)
-            buf = b""
-            while True:
-                chunk = sock.recv(4096)
-                if not chunk:
-                    break
-                buf += chunk
-                while b"\n" in buf:
-                    line, buf = buf.split(b"\n", 1)
-                    line = line.rstrip(b"\r").decode("utf-8", errors="replace")
-                    print(f"DEBUG MONITOR: {line}", flush=True)
-                    if "GRAPH.CONSTRAINT" not in line:
-                        continue
-                    # parse "+<unix-time> [...] ..." -> unix-time
-                    ts = 0.0
-                    if line.startswith("+"):
-                        try:
-                            ts = float(line[1:].split(" ", 1)[0])
-                        except ValueError:
-                            pass
-                    if ts < self.monitor_start_ts:
-                        continue
-                    self.monitor.append({"command": line})
-        except Exception as e:
-            print(f"DEBUG MONITOR exception: {e}", flush=True)
+            with self.replica.monitor() as m:
+                MONITOR_ATTACHED = True
+                for cmd in m.listen():
+                    if 'GRAPH.CONSTRAINT' in cmd['command']:
+                        self.monitor.append(cmd)
+        except:
+            pass
 
     def test_01_constraint_replication(self):
-        # Ignore any GRAPH.CONSTRAINT events captured before this test starts
-        # (eager class init means the monitor thread sees events from earlier
-        # test classes). WAIT on master ensures replica has applied everything
-        # so far; then we set a timestamp gate and discard prior captures.
-        self.source.execute_command("WAIT", 1, 0)
-        self.monitor_start_ts = time.time()
-        self.monitor.clear()
-
         # create mandatory node constraint over Person height
         create_mandatory_node_constraint(self.g, 'Person', 'height')
 
@@ -1090,9 +1057,5 @@ class testConstraintReplication():
         while len(self.monitor) < 12 and elapsed > 0:
             time.sleep(0.2)
             elapsed -= 0.2
-
-        print(f"DEBUG monitor captured {len(self.monitor)} GRAPH.CONSTRAINT entries:", flush=True)
-        for i, cmd in enumerate(self.monitor):
-            print(f"  [{i}] {cmd}", flush=True)
 
         self.env.assertEqual(len(self.monitor), 12)
