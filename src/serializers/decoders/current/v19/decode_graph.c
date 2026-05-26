@@ -69,16 +69,41 @@ static void _ComputeTransposeMatrices
 
 static GraphContext *_GetOrCreateGraphContext
 (
-	char *graph_name
+	const char *key_name,  // destination key name (from Redis)
+	char *graph_name,      // embedded graph name (from the serialized payload)
+	uint64_t key_number    // total number of virtual keys for this graph
 ) {
 	GraphContext *gc = GraphContext_UnsafeGetGraphContext (graph_name) ;
-	if (!gc) {
-		// new graph is being decoded
-		// inform the module and create new graph context
-		gc = GraphContext_New (graph_name) ;
+
+	// detect a single-key RESTORE to a different key name
+	// e.g. DUMP a | RESTORE c — the payload embeds "a" but the destination is "c"
+	bool renamed_single_key =
+		(key_number == 1 && strcmp(key_name, graph_name) != 0) ;
+
+	if (gc != NULL) {
+		GraphDecodeContext *decoding_context = GraphContext_GetDecodingCtx (gc) ;
+		uint64_t processed =
+			GraphDecodeContext_GetProcessedKeyCount (decoding_context) ;
+
+		// a fully-loaded graph already exists under the embedded name, but this
+		// is a single-key restore to a different key: reusing it would re-load
+		// the schema onto the live graph, corrupting it and crashing the server
+		// (issue #2048). fall through and create an independent new graph instead
+		if (processed == 0 && renamed_single_key) {
+			gc = NULL ;
+		}
+		// else: multi-key continuation (processed > 0) - reuse the existing gc
 	}
 
-	// free the name string, as it either not in used or copied
+	if (gc == NULL) {
+		// new graph is being decoded
+		// use the destination key name for a renamed single-key restore so the
+		// restored graph is independent; otherwise use the embedded graph name
+		// (normal load and multi-key meta-key decodes)
+		gc = GraphContext_New (renamed_single_key ? key_name : graph_name) ;
+	}
+
+	// free the name string, as it is either unused or was copied
 	RedisModule_Free (graph_name) ;
 
 	return gc ;
@@ -101,7 +126,8 @@ static void _InitGraphDataStructure
 
 static GraphContext *_DecodeHeader
 (
-	SerializerIO rdb
+	SerializerIO rdb,
+	const char *key_name  // destination key name (from Redis)
 ) {
 	// Header format:
 	// Graph name
@@ -135,7 +161,7 @@ static GraphContext *_DecodeHeader
 	// total keys representing the graph
 	uint64_t key_number = SerializerIO_ReadUnsigned(rdb);
 
-	GraphContext *gc = _GetOrCreateGraphContext(graph_name);
+	GraphContext *gc = _GetOrCreateGraphContext(key_name, graph_name, key_number);
 	Graph *g = GraphContext_GetGraph (gc) ;
 	GraphDecodeContext *decoding_context = GraphContext_GetDecodingCtx (gc) ;
 
@@ -212,7 +238,11 @@ GraphContext *RdbLoadGraphContext_latest
 	//      Entities in payload
 	//  Payload(s) X N
 
-	GraphContext *gc = _DecodeHeader(rdb);
+	// destination key name (from Redis); used both to detect a renamed
+	// single-key restore during header decode and to record meta-keys below
+	const char *key_name = RedisModule_StringPtrLen(rm_key_name, NULL);
+
+	GraphContext *gc = _DecodeHeader(rdb, key_name);
 	Graph        *g  = GraphContext_GetGraph (gc) ;
 	GraphDecodeContext *decoding_context = GraphContext_GetDecodingCtx (gc) ;
 
@@ -326,8 +356,6 @@ GraphContext *RdbLoadGraphContext_latest
 	GraphDecodeContext_IncreaseProcessedKeyCount(decoding_context);
 
 	// before finalizing keep encountered meta keys names, for future deletion
-	const char *key_name = RedisModule_StringPtrLen(rm_key_name, NULL);
-
 	// the virtual key name is not equal the graph name
 	if(strcmp(key_name, GraphContext_GetName (gc)) != 0) {
 		GraphDecodeContext_AddMetaKey(decoding_context, key_name);
