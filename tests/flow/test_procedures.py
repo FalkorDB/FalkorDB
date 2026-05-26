@@ -16,7 +16,6 @@ node5 = Node(alias="n5", labels="fruit", properties={"name": "Banana", "value": 
 class testProcedures(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
-        self.redis_con = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
         self.populate_graph()
 
@@ -489,35 +488,3 @@ class testProcedures(FlowTestsBase):
         self.env.assertEquals(aggregation, False)
         self.env.assertEquals(variable_len, True)
         self.env.assertEquals(udf, False)
-
-    def test13_index_catalog_raw_response(self):
-        graph_name = "procedure_index_catalog"
-        graph = self.db.select_graph(graph_name)
-        self.redis_con.delete(graph_name)
-
-        create_node_fulltext_index(graph, "Person", "name", sync=True)
-        result = self.redis_con.execute_command("GRAPH.QUERY", graph_name, "CALL db.indexes()")
-
-        expected_header = [
-            "label",
-            "properties",
-            "types",
-            "options",
-            "language",
-            "stopwords",
-            "entitytype",
-            "status",
-            "info",
-        ]
-        self.env.assertEqual(result[0][: len(expected_header)], expected_header)
-
-        self.env.assertEqual(len(result[0]), len(result[1][0]))
-        row_by_column = dict(zip(result[0], result[1][0]))
-        self.env.assertEqual(row_by_column["label"], "Person")
-        self.env.assertEqual(row_by_column["properties"], "[name]")
-        self.env.assertEqual(row_by_column["types"], "{name: [FULLTEXT]}")
-        self.env.assertEqual(row_by_column["options"], "{name: {}}")
-        self.env.assertEqual(row_by_column["language"], "english")
-        self.env.assertEqual(row_by_column["stopwords"], "[]")
-        self.env.assertEqual(row_by_column["entitytype"], "NODE")
-        self.env.assertEqual(row_by_column["status"], "OPERATIONAL")

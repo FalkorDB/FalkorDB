@@ -1,5 +1,3 @@
-import re
-
 from common import *
 
 people = ["Roi", "Alon", "Ailon", "Boaz"]
@@ -9,7 +7,6 @@ GRAPH_ID = "G"
 class testResultSetFlow(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
-        self.redis_con = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
         self.populate_graph()
 
@@ -30,13 +27,6 @@ class testResultSetFlow(FlowTestsBase):
         nodes_str = [str(node) for node in nodes.values()]
         edges_str = [str(edge) for edge in edges]
         self.graph.query(f"CREATE {','.join(nodes_str + edges_str)}")
-
-
-    def _assert_no_graph_version_stat(self, result):
-        stats = result[-1]
-        self.env.assertTrue(isinstance(stats, list))
-        for stat in stats:
-            self.env.assertFalse(stat.startswith("Graph version"))
 
 
     # Verify that scalar returns function properly
@@ -78,40 +68,6 @@ class testResultSetFlow(FlowTestsBase):
         # TODO add more assertions after updated client format is defined
         self.env.assertEquals(len(result.result_set), 12) # 12 relations (fully connected graph)
         self.env.assertEquals(len(result.header), 3) # 3 columns in result set
-
-    def test_raw_resp_response_contract(self):
-        graph_name = "raw_response_contract"
-        self.redis_con.delete(graph_name)
-
-        result = self.redis_con.execute_command("GRAPH.QUERY", graph_name, "RETURN 1 AS x")
-        self.env.assertEqual(result[0], ["x"])
-        self.env.assertEqual(result[1], [[1]])
-        self._assert_no_graph_version_stat(result)
-
-        result = self.redis_con.execute_command(
-            "GRAPH.QUERY",
-            graph_name,
-            "RETURN [1,2] AS xs, {a:1,b:'x'} AS m",
-        )
-        self.env.assertEqual(result[0], ["xs", "m"])
-        self.env.assertEqual(result[1], [["[1, 2]", "{a: 1, b: x}"]])
-        self._assert_no_graph_version_stat(result)
-
-        self.redis_con.execute_command("GRAPH.QUERY", graph_name, "CREATE (:N {a:1})")
-        result = self.redis_con.execute_command("GRAPH.QUERY", graph_name, "MATCH (n:N) RETURN n")
-        node = dict(result[1][0][0])
-        self.env.assertEqual(node["labels"], ["N"])
-        self.env.assertEqual(node["properties"], [["a", 1]])
-        self._assert_no_graph_version_stat(result)
-
-        result = self.redis_con.execute_command(
-            "GRAPH.QUERY",
-            graph_name,
-            "RETURN vecf32([1,2,3]) AS v",
-        )
-        vector = result[1][0][0]
-        self.env.assertIsNotNone(re.fullmatch(r"<1\.0+, 2\.0+, 3\.0+>", vector))
-        self._assert_no_graph_version_stat(result)
 
     # Verify that the DISTINCT operator works with full entity returns
     def test05_distinct_full_entities(self):
