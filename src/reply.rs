@@ -549,8 +549,12 @@ fn reply_result<const COMPACT: bool>(
     raw::reply_with_array(ctx.ctx, 3);
     raw::reply_with_array(ctx.ctx, runtime.return_names.len() as _);
     for name in &runtime.return_names {
-        raw::reply_with_array(ctx.ctx, 2);
-        raw::reply_with_long_long(ctx.ctx, 1);
+        if COMPACT {
+            raw::reply_with_array(ctx.ctx, 2);
+            raw::reply_with_long_long(ctx.ctx, 1);
+        } else {
+            raw::reply_with_array(ctx.ctx, 1);
+        }
         raw::reply_with_string_buffer(
             ctx.ctx,
             name.as_str().as_ptr().cast::<c_char>(),
