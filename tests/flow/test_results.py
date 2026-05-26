@@ -110,7 +110,7 @@ class testResultSetFlow(FlowTestsBase):
             "RETURN vecf32([1,2,3]) AS v",
         )
         vector = result[1][0][0]
-        self.env.assertTrue(re.fullmatch(r"<1\.0+, 2\.0+, 3\.0+>", vector) is not None)
+        self.env.assertIsNotNone(re.fullmatch(r"<1\.0+, 2\.0+, 3\.0+>", vector))
         self._assert_no_graph_version_stat(result)
 
     # Verify that the DISTINCT operator works with full entity returns
