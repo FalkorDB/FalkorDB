@@ -990,22 +990,31 @@ class testConstraintEdges():
 
 MONITOR_ATTACHED = False
 
+REPL_GRAPH_ID = "replication_constraints"
+
+
 class testConstraintReplication():
     def __init__(self):
         self.env, self.db = Env(env='oss', useSlaves=True)
         self.source  = self.env.getConnection()
         self.replica = self.env.getSlaveConnection()
         self.monitor = []
-        self.g = self.db.select_graph(GRAPH_ID)
+        self.g = self.db.select_graph(REPL_GRAPH_ID)
 
         # clear DB
-        self.source.delete(GRAPH_ID)
+        self.source.delete(REPL_GRAPH_ID)
 
         # the WAIT command forces master slave sync to complete
         self.source.execute_command("WAIT", 1, 0)
 
     def monitor_thread(self):
+        # In svc CI mode all test classes share one master+replica pair, so
+        # earlier classes' GRAPH.CONSTRAINT commands on the shared "constraints"
+        # graph can still be replicating when this test starts. Filtering on
+        # this class's own unique graph name (REPL_GRAPH_ID) is the only
+        # reliable way to ignore leaked events from those other classes.
         global MONITOR_ATTACHED
+        graph_token = f'"{REPL_GRAPH_ID}"'
         try:
             conn = self.replica.connection_pool.make_connection()
             conn.connect()
@@ -1023,20 +1032,12 @@ class testConstraintReplication():
                 while b"\n" in buf:
                     line, buf = buf.split(b"\n", 1)
                     line = line.rstrip(b"\r").decode("utf-8", errors="replace")
-                    print(f"DEBUG MONITOR: {line}", flush=True)
-                    if 'GRAPH.CONSTRAINT' in line:
+                    if 'GRAPH.CONSTRAINT' in line and graph_token in line:
                         self.monitor.append({"command": line})
-        except Exception as e:
-            print(f"DEBUG MONITOR exception: {e}", flush=True)
+        except Exception:
+            pass
 
     def test_01_constraint_replication(self):
-        # In svc CI mode all test classes share one master+replica pair, so
-        # earlier classes' GRAPH.CONSTRAINT commands may still be replicating
-        # when this test starts. WAIT here forces the replica to drain every
-        # prior master command BEFORE we attach MONITOR, so the monitor
-        # only sees this test's own activity.
-        self.source.execute_command("WAIT", 1, 0)
-
         global MONITOR_ATTACHED
         MONITOR_ATTACHED = False
         self.monitor_t = threading.Thread(target=self.monitor_thread, daemon=True)
@@ -1079,7 +1080,4 @@ class testConstraintReplication():
             time.sleep(0.2)
             elapsed -= 0.2
 
-        print(f"DEBUG monitor captured {len(self.monitor)} GRAPH.CONSTRAINT entries:", flush=True)
-        for i, cmd in enumerate(self.monitor):
-            print(f"  [{i}] {cmd}", flush=True)
         self.env.assertEqual(len(self.monitor), 12)
