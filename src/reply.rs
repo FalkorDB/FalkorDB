@@ -27,7 +27,95 @@ use graph::runtime::{
     value::Value,
 };
 use redis_module::{Context, raw};
+use std::fmt::Write;
 use std::os::raw::c_char;
+use std::sync::Arc;
+
+/// Build a Cypher-style string representation of a value, matching the C
+/// FalkorDB `SIValue_ToString` output used for verbose list/map/path/vector.
+fn format_value_to_string(
+    runtime: &Runtime<'_>,
+    v: &Value,
+    out: &mut String,
+) {
+    match v {
+        Value::Null => out.push_str("NULL"),
+        Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+        Value::Int(i) => {
+            let _ = write!(out, "{i}");
+        }
+        Value::Float(f) => {
+            let _ = write!(out, "{f:.6}");
+        }
+        Value::String(s) => out.push_str(s),
+        Value::Datetime(ts) => out.push_str(&Value::format_datetime(*ts)),
+        Value::Date(ts) => out.push_str(&Value::format_date(*ts)),
+        Value::Time(ts) => out.push_str(&Value::format_time(*ts)),
+        Value::Duration(d) => out.push_str(&Value::format_duration(*d)),
+        Value::List(values) => {
+            out.push('[');
+            for (i, item) in values.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                format_value_to_string(runtime, item, out);
+            }
+            out.push(']');
+        }
+        Value::Map(map) => {
+            out.push('{');
+            for (i, (k, val)) in map.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(k);
+                out.push_str(": ");
+                format_value_to_string(runtime, val, out);
+            }
+            out.push('}');
+        }
+        Value::Node(id) => {
+            let _ = write!(out, "({})", u64::from(*id));
+        }
+        Value::Relationship(rel) => {
+            let _ = write!(out, "[{}]", u64::from(rel.0));
+        }
+        Value::Path(values) => {
+            out.push('[');
+            for (i, item) in values.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                format_value_to_string(runtime, item, out);
+            }
+            out.push(']');
+        }
+        Value::VecF32(vec) => {
+            out.push('[');
+            for (i, f) in vec.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                let _ = write!(out, "{:.6}", f64::from(*f));
+            }
+            out.push(']');
+        }
+        Value::Point(point) => {
+            let _ = write!(
+                out,
+                "point({{latitude: {:.6}, longitude: {:.6}}})",
+                point.latitude, point.longitude
+            );
+        }
+    }
+}
+
+fn reply_with_str(
+    ctx: &Context,
+    s: &str,
+) {
+    raw::reply_with_string_buffer(ctx.ctx, s.as_ptr().cast::<c_char>(), s.len());
+}
 
 #[allow(clippy::too_many_lines)]
 pub fn reply_compact_value(
@@ -305,144 +393,119 @@ pub fn reply_verbose_value(
                 formatted.len(),
             );
         }
-        Value::List(values) => {
-            raw::reply_with_array(ctx.ctx, values.len() as _);
-            for v in values.iter() {
-                reply_verbose_value(ctx, runtime, v);
-            }
-        }
-        Value::Map(map) => {
-            raw::reply_with_array(ctx.ctx, (map.len() * 2) as _);
-
-            for (key, value) in map.iter() {
-                raw::reply_with_string_buffer(
-                    ctx.ctx,
-                    key.as_str().as_ptr().cast::<c_char>(),
-                    key.len(),
-                );
-                reply_verbose_value(ctx, runtime, value);
-            }
+        Value::List(_) | Value::Map(_) | Value::Path(_) | Value::VecF32(_) => {
+            let mut s = String::new();
+            format_value_to_string(runtime, r, &mut s);
+            reply_with_str(ctx, &s);
         }
         Value::Node(id) => {
+            // [ ["id", id], ["labels", [...]], ["properties", [[name,value]…]] ]
             raw::reply_with_array(ctx.ctx, 3);
+
+            raw::reply_with_array(ctx.ctx, 2);
+            reply_with_str(ctx, "id");
             raw::reply_with_long_long(ctx.ctx, u64::from(*id) as _);
+
+            raw::reply_with_array(ctx.ctx, 2);
+            reply_with_str(ctx, "labels");
+
             let bg = runtime.g.borrow();
             let dn = runtime.deleted_nodes.borrow();
             if let Some(x) = dn.get(id) {
                 raw::reply_with_array(ctx.ctx, x.labels.len() as _);
                 for label in &x.labels {
                     let label = bg.get_label_by_id(*label);
-                    raw::reply_with_string_buffer(
-                        ctx.ctx,
-                        label.as_ptr().cast::<c_char>(),
-                        label.len(),
-                    );
+                    reply_with_str(ctx, &label);
                 }
+
+                raw::reply_with_array(ctx.ctx, 2);
+                reply_with_str(ctx, "properties");
                 raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
                 for (key, value) in x.attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 2);
-                    raw::reply_with_string_buffer(
-                        ctx.ctx,
-                        key.as_ptr().cast::<c_char>(),
-                        key.len(),
-                    );
+                    reply_with_str(ctx, key);
                     reply_verbose_value(ctx, runtime, value);
                 }
             } else {
                 raw::reply_with_array(ctx.ctx, i64::from(raw::REDISMODULE_POSTPONED_LEN));
                 let labels_len = bg
                     .get_node_labels(*id)
-                    .inspect(|label| {
-                        raw::reply_with_string_buffer(
-                            ctx.ctx,
-                            label.as_ptr().cast::<c_char>(),
-                            label.len(),
-                        );
-                    })
+                    .inspect(|label| reply_with_str(ctx, label))
                     .count();
                 unsafe {
                     raw::RedisModule_ReplySetArrayLength.unwrap()(ctx.ctx, labels_len as _);
                 }
 
+                raw::reply_with_array(ctx.ctx, 2);
+                reply_with_str(ctx, "properties");
                 let attrs = bg.get_node_all_attrs(*id);
                 raw::reply_with_array(ctx.ctx, attrs.len() as _);
                 for (key, value) in &attrs {
                     raw::reply_with_array(ctx.ctx, 2);
-                    raw::reply_with_string_buffer(
-                        ctx.ctx,
-                        key.as_ptr().cast::<c_char>(),
-                        key.len(),
-                    );
+                    reply_with_str(ctx, key);
                     reply_verbose_value(ctx, runtime, value);
                 }
                 drop(bg);
             }
         }
         Value::Relationship(rel) => {
+            // [ ["id",id], ["type",name], ["src_node",s], ["dest_node",d],
+            //   ["properties", [[name,value]…]] ]
             let (rel_id, rel_src, rel_dst) = (&rel.0, &rel.1, &rel.2);
             raw::reply_with_array(ctx.ctx, 5);
-            raw::reply_with_long_long(ctx.ctx, u64::from(*rel_id) as _);
-            let dr = runtime.deleted_relationships.borrow();
-            if let Some(x) = dr.get(rel_id) {
-                let bg = runtime.g.borrow();
-                let type_id = bg.get_type_id(&x.type_name).unwrap();
-                raw::reply_with_long_long(ctx.ctx, usize::from(type_id) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(*rel_src) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(*rel_dst) as _);
-                raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
-                for (key, value) in x.attrs.iter() {
-                    raw::reply_with_array(ctx.ctx, 2);
-                    raw::reply_with_string_buffer(
-                        ctx.ctx,
-                        key.as_ptr().cast::<c_char>(),
-                        key.len(),
-                    );
-                    reply_verbose_value(ctx, runtime, value);
-                }
-            } else {
-                let bg = runtime.g.borrow();
-                let rel_type = bg.get_relationship_type_id(*rel_id);
-                raw::reply_with_long_long(ctx.ctx, usize::from(rel_type) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(*rel_src) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(*rel_dst) as _);
-                let attrs = bg.get_relationship_all_attrs(*rel_id);
-                raw::reply_with_array(ctx.ctx, attrs.len() as _);
-                for (key, value) in attrs {
-                    raw::reply_with_array(ctx.ctx, 2);
-                    raw::reply_with_string_buffer(
-                        ctx.ctx,
-                        key.as_ptr().cast::<c_char>(),
-                        key.len(),
-                    );
-                    reply_verbose_value(ctx, runtime, &value);
-                }
-                drop(bg);
-            }
-        }
-        Value::Path(path) => {
-            raw::reply_with_array(ctx.ctx, path.len() as _);
 
-            for node in path.iter() {
-                match node {
-                    Value::Relationship(_) | Value::Node(_) => {
-                        reply_verbose_value(ctx, runtime, node);
-                    }
-                    _ => unreachable!("Path should only contain nodes and relationships"),
-                }
+            raw::reply_with_array(ctx.ctx, 2);
+            reply_with_str(ctx, "id");
+            raw::reply_with_long_long(ctx.ctx, u64::from(*rel_id) as _);
+
+            let bg = runtime.g.borrow();
+            let dr = runtime.deleted_relationships.borrow();
+            let (type_name, attrs_iter): (Arc<String>, Vec<(Arc<String>, Value)>) =
+                if let Some(x) = dr.get(rel_id) {
+                    (
+                        x.type_name.clone(),
+                        x.attrs
+                            .iter()
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect(),
+                    )
+                } else {
+                    let type_id = bg.get_relationship_type_id(*rel_id);
+                    let name = bg
+                        .get_type(type_id)
+                        .unwrap_or_else(|| Arc::new(String::new()));
+                    let attrs = bg.get_relationship_all_attrs(*rel_id);
+                    (name, attrs)
+                };
+
+            raw::reply_with_array(ctx.ctx, 2);
+            reply_with_str(ctx, "type");
+            reply_with_str(ctx, &type_name);
+
+            raw::reply_with_array(ctx.ctx, 2);
+            reply_with_str(ctx, "src_node");
+            raw::reply_with_long_long(ctx.ctx, u64::from(*rel_src) as _);
+
+            raw::reply_with_array(ctx.ctx, 2);
+            reply_with_str(ctx, "dest_node");
+            raw::reply_with_long_long(ctx.ctx, u64::from(*rel_dst) as _);
+
+            raw::reply_with_array(ctx.ctx, 2);
+            reply_with_str(ctx, "properties");
+            raw::reply_with_array(ctx.ctx, attrs_iter.len() as _);
+            for (key, value) in &attrs_iter {
+                raw::reply_with_array(ctx.ctx, 2);
+                reply_with_str(ctx, key);
+                reply_verbose_value(ctx, runtime, value);
             }
-        }
-        Value::VecF32(vec) => {
-            raw::reply_with_array(ctx.ctx, vec.len() as _);
-            for f in vec.iter() {
-                raw::reply_with_double(ctx.ctx, f64::from(*f));
-            }
+            drop(bg);
         }
         Value::Point(point) => {
             let str = format!(
-                "point({{latitude:{}, longitude:{}}})",
+                "point({{latitude: {:.6}, longitude: {:.6}}})",
                 point.latitude, point.longitude
             );
-            raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+            reply_with_str(ctx, &str);
         }
     }
 }
@@ -552,14 +615,14 @@ fn reply_result<const COMPACT: bool>(
         if COMPACT {
             raw::reply_with_array(ctx.ctx, 2);
             raw::reply_with_long_long(ctx.ctx, 1);
+            raw::reply_with_string_buffer(
+                ctx.ctx,
+                name.as_str().as_ptr().cast::<c_char>(),
+                name.as_str().len(),
+            );
         } else {
-            raw::reply_with_array(ctx.ctx, 1);
+            reply_with_str(ctx, name.as_str());
         }
-        raw::reply_with_string_buffer(
-            ctx.ctx,
-            name.as_str().as_ptr().cast::<c_char>(),
-            name.as_str().len(),
-        );
     }
     let total: usize = result
         .result
