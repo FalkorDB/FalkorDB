@@ -103,18 +103,9 @@ echo "         Press Enter to continue or Ctrl-C to abort and update it first."
 read -r
 
 # ---------------------------------------------------------------------------
-# Step 2 – Remove the previous build output so the warm-up is done from
-#           scratch (prevents stale kernels from being reused instead of
-#           regenerated).
+# Step 2 – Clear the existing PreJIT kernel sources.
 # ---------------------------------------------------------------------------
-echo "[Step 2] Removing previous build output (bin/)..."
-cd "${FALKORDB_DIR}" || die "Cannot cd to ${FALKORDB_DIR}"
-rm -rf bin/
-
-# ---------------------------------------------------------------------------
-# Step 3 – Clear the existing PreJIT kernel sources.
-# ---------------------------------------------------------------------------
-echo "[Step 3] Clearing existing PreJIT kernel sources..."
+echo "[Step 2] Clearing existing PreJIT kernel sources..."
 PREJIT_DIR="${FALKORDB_DIR}/deps/GraphBLAS/PreJIT"
 [[ -d "$PREJIT_DIR" ]] || die "PreJIT directory not found: ${PREJIT_DIR}"
 # Use find so the command is a no-op (rather than an error) when no .c files exist.
@@ -122,10 +113,10 @@ find "${PREJIT_DIR}" -maxdepth 1 -name 'GB*.c' -delete
 echo "   PreJIT directory cleared."
 
 # ---------------------------------------------------------------------------
-# Step 4 – Clear the GraphBLAS JIT runtime cache so kernels are regenerated
+# Step 3 – Clear the GraphBLAS JIT runtime cache so kernels are regenerated
 #           fresh rather than loaded from a previous warm-up run.
 # ---------------------------------------------------------------------------
-echo "[Step 4] Clearing GraphBLAS JIT runtime cache (${SUITESPARSE_GRB})..."
+echo "[Step 3] Clearing GraphBLAS JIT runtime cache (${SUITESPARSE_GRB})..."
 [[ -n "${SUITESPARSE_GRB}" ]] || die "SUITESPARSE_GRB is empty – refusing to rm -rf"
 if [[ -d "${SUITESPARSE_GRB}" ]]; then
     rm -rf "${SUITESPARSE_GRB}/tmp" \
@@ -137,16 +128,23 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 5 – Run the JIT warm-up: FalkorDB flow tests + LAGraph algorithm tests.
+# Step 4a – Run the JIT warm-up: FalkorDB flow tests + LAGraph algorithm tests.
 # ---------------------------------------------------------------------------
-echo "[Step 5] Running jit-warmup (this will take a while)..."
+echo "[Step 4a] Build with JIT enabled"
 cd "${FALKORDB_DIR}" || die "Cannot cd to ${FALKORDB_DIR}"
-run_with_retry "make jit-warmup" make jit-warmup JIT=1
+make JIT=1 FORCE=1
 
 # ---------------------------------------------------------------------------
-# Step 6 – Harvest the generated kernel sources from the JIT cache /c dir.
+# Step 4b – Run the JIT warm-up: FalkorDB flow tests + LAGraph algorithm tests.
 # ---------------------------------------------------------------------------
-echo "[Step 6] Harvesting JIT kernels from cache..."
+echo "[Step 4b] Running jit-warmup"
+cd "${FALKORDB_DIR}" || die "Cannot cd to ${FALKORDB_DIR}"
+run_with_retry "make test" make test JIT=1
+
+# ---------------------------------------------------------------------------
+# Step 5 – Harvest the generated kernel sources from the JIT cache /c dir.
+# ---------------------------------------------------------------------------
+echo "[Step 5] Harvesting JIT kernels from cache..."
 KERNEL_SRC_DIR="${SUITESPARSE_GRB}/c"
 [[ -d "$KERNEL_SRC_DIR" ]] || die "JIT kernel source directory not found: ${KERNEL_SRC_DIR}
 Did GraphBLAS JIT run during the warm-up? Check that JIT is not disabled (JIT=0)."
@@ -163,24 +161,24 @@ find "${KERNEL_SRC_DIR}" -name 'GB*.c' \
     -exec mv {} "${PREJIT_DIR}/" \;
 
 # ---------------------------------------------------------------------------
-# Step 7 – Confirm new files arrived in PreJIT/.
+# Step 6 – Confirm new files arrived in PreJIT/.
 # ---------------------------------------------------------------------------
-echo "[Step 7] Verifying harvested kernels..."
+echo "[Step 6] Verifying harvested kernels..."
 NEW_COUNT=$(find "${PREJIT_DIR}" -maxdepth 1 -name 'GB*.c' | wc -l)
 echo "   PreJIT kernel sources: ${NEW_COUNT}"
 [[ "$NEW_COUNT" -gt 0 ]] || die "No kernel files in PreJIT after harvest – something went wrong."
 echo "   OK – ${NEW_COUNT} kernel source(s) in place."
 
 # ---------------------------------------------------------------------------
-# Step 8 – Rebuild from scratch so the new PreJIT kernels are compiled in,
+# Step 7 – Rebuild from scratch so the new PreJIT kernels are compiled in,
 #           then run the full test suite to verify them.
 # ---------------------------------------------------------------------------
-echo "[Step 8] Clearing build output and rebuilding with new PreJIT kernels..."
+echo "[Step 7] Clearing build output and rebuilding with new PreJIT kernels..."
 cd "${FALKORDB_DIR}" || die "Cannot cd to ${FALKORDB_DIR}"
-rm -rf bin/
+make JIT=0 FORCE=1
 
-echo "[Step 8] Running make test to verify new kernels..."
-run_with_retry "make test" make test
+echo "[Step 7] Running make test to verify new kernels..."
+run_with_retry "make test" make test JIT=0
 
 echo ""
 echo "============================================================"

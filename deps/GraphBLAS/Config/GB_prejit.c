@@ -8,7 +8,7 @@
 //------------------------------------------------------------------------------
 
 // This file is configured by cmake from Config/GB_prejit.c.in, which has
-// indexed the following 187 kernels in GraphBLAS/PreJIT:
+// indexed the following 194 kernels in GraphBLAS/PreJIT:
 
 #include "GB.h"
 #include "jitifyer/GB_jitifyer.h"
@@ -88,6 +88,7 @@ JIT_SUB  (GB_jit__bitmap_assign_2_whole__0000a03f000301a0)
 JIT_SUB  (GB_jit__bitmap_assign_2_whole__001c903f000301a0)
 JIT_SUB  (GB_jit__bitmap_assign_4_whole__00e0203f00026890)
 JIT_SUB  (GB_jit__bitmap_assign_4_whole__00fc003f00026691)
+JIT_SUB  (GB_jit__bitmap_assign_4_whole__00fc103f00020180)
 JIT_SUB  (GB_jit__bitmap_assign_5_whole__00000004bbb0bb82)
 JIT_SUB  (GB_jit__bitmap_assign_8_whole__00e0803f0003bb92)
 JIT_BLD  (GB_jit__build__e9011119)
@@ -119,6 +120,7 @@ JIT_MAS2 (GB_jit__masker_phase2__fff02900)
 JIT_MAS2 (GB_jit__masker_phase2__fff02904)
 JIT_MAS2 (GB_jit__masker_phase2__fff02b54)
 JIT_MAS2 (GB_jit__masker_phase2__fff02e00__LG_MF_flowEdge)
+JIT_MAS2 (GB_jit__masker_phase2__fff03100)
 JIT_MAS2 (GB_jit__masker_phase2__fff03141)
 JIT_MAS2 (GB_jit__masker_phase2__fff03900)
 JIT_MAS2 (GB_jit__masker_phase2__fff03941)
@@ -152,6 +154,7 @@ JIT_SUB  (GB_jit__subassign_05__07e0207f00026850)
 JIT_SUB  (GB_jit__subassign_05d__0000207f0004eef0__LG_MSF_tuple_double)
 JIT_SUB  (GB_jit__subassign_06n__071c007f00029971)
 JIT_SUB  (GB_jit__subassign_06n__07e0007f00021100)
+JIT_SUB  (GB_jit__subassign_06n__07e0007f00021110)
 JIT_SUB  (GB_jit__subassign_06n__07fc007f00020651)
 JIT_SUB  (GB_jit__subassign_06n__07fc007f00020900)
 JIT_SUB  (GB_jit__subassign_06n__07fc007f00021100)
@@ -162,10 +165,14 @@ JIT_SUB  (GB_jit__subassign_06n__07fc007f00029940)
 JIT_SUB  (GB_jit__subassign_06n__07fc007f00029951)
 JIT_SUB  (GB_jit__subassign_06n__07fc007f0002ee00__LG_MF_flowEdge)
 JIT_SUB  (GB_jit__subassign_06n__07fc107f00020100)
+JIT_SUB  (GB_jit__subassign_06n__07fc107f00020111)
 JIT_SUB  (GB_jit__subassign_06n__07fc107f00020140)
 JIT_SUB  (GB_jit__subassign_06n__07fc107f00020900)
+JIT_SUB  (GB_jit__subassign_06n__07fc107f00020940)
+JIT_SUB  (GB_jit__subassign_06n__07fc107f00021100)
 JIT_SUB  (GB_jit__subassign_06n__07fc107f00021140)
 JIT_SUB  (GB_jit__subassign_06n__07fc107f00029900)
+JIT_SUB  (GB_jit__subassign_06n__07fc107f00029940)
 JIT_SUB  (GB_jit__subassign_06s__7f1c407f00029965)
 JIT_SUB  (GB_jit__subassign_06s__7fe0407f00021100)
 JIT_SUB  (GB_jit__subassign_06s__7fe0407f00021110)
@@ -281,6 +288,7 @@ JIT_Q (GB_jit__bitmap_assign_2_whole__0000a03f000301a0_query)
 JIT_Q (GB_jit__bitmap_assign_2_whole__001c903f000301a0_query)
 JIT_Q (GB_jit__bitmap_assign_4_whole__00e0203f00026890_query)
 JIT_Q (GB_jit__bitmap_assign_4_whole__00fc003f00026691_query)
+JIT_Q (GB_jit__bitmap_assign_4_whole__00fc103f00020180_query)
 JIT_Q (GB_jit__bitmap_assign_5_whole__00000004bbb0bb82_query)
 JIT_Q (GB_jit__bitmap_assign_8_whole__00e0803f0003bb92_query)
 JIT_Q (GB_jit__build__e9011119_query)
@@ -312,6 +320,7 @@ JIT_Q (GB_jit__masker_phase2__fff02900_query)
 JIT_Q (GB_jit__masker_phase2__fff02904_query)
 JIT_Q (GB_jit__masker_phase2__fff02b54_query)
 JIT_Q (GB_jit__masker_phase2__fff02e00__LG_MF_flowEdge_query)
+JIT_Q (GB_jit__masker_phase2__fff03100_query)
 JIT_Q (GB_jit__masker_phase2__fff03141_query)
 JIT_Q (GB_jit__masker_phase2__fff03900_query)
 JIT_Q (GB_jit__masker_phase2__fff03941_query)
@@ -345,6 +354,7 @@ JIT_Q (GB_jit__subassign_05__07e0207f00026850_query)
 JIT_Q (GB_jit__subassign_05d__0000207f0004eef0__LG_MSF_tuple_double_query)
 JIT_Q (GB_jit__subassign_06n__071c007f00029971_query)
 JIT_Q (GB_jit__subassign_06n__07e0007f00021100_query)
+JIT_Q (GB_jit__subassign_06n__07e0007f00021110_query)
 JIT_Q (GB_jit__subassign_06n__07fc007f00020651_query)
 JIT_Q (GB_jit__subassign_06n__07fc007f00020900_query)
 JIT_Q (GB_jit__subassign_06n__07fc007f00021100_query)
@@ -355,10 +365,14 @@ JIT_Q (GB_jit__subassign_06n__07fc007f00029940_query)
 JIT_Q (GB_jit__subassign_06n__07fc007f00029951_query)
 JIT_Q (GB_jit__subassign_06n__07fc007f0002ee00__LG_MF_flowEdge_query)
 JIT_Q (GB_jit__subassign_06n__07fc107f00020100_query)
+JIT_Q (GB_jit__subassign_06n__07fc107f00020111_query)
 JIT_Q (GB_jit__subassign_06n__07fc107f00020140_query)
 JIT_Q (GB_jit__subassign_06n__07fc107f00020900_query)
+JIT_Q (GB_jit__subassign_06n__07fc107f00020940_query)
+JIT_Q (GB_jit__subassign_06n__07fc107f00021100_query)
 JIT_Q (GB_jit__subassign_06n__07fc107f00021140_query)
 JIT_Q (GB_jit__subassign_06n__07fc107f00029900_query)
+JIT_Q (GB_jit__subassign_06n__07fc107f00029940_query)
 JIT_Q (GB_jit__subassign_06s__7f1c407f00029965_query)
 JIT_Q (GB_jit__subassign_06s__7fe0407f00021100_query)
 JIT_Q (GB_jit__subassign_06s__7fe0407f00021110_query)
@@ -405,8 +419,8 @@ JIT_Q (GB_jit__union__e3f312bbb0bbb00_query)
 // GB_prejit_kernels: a list of function pointers to PreJIT kernels
 //------------------------------------------------------------------------------
 
-#if ( 187 > 0 )
-static void *GB_prejit_kernels [187] =
+#if ( 194 > 0 )
+static void *GB_prejit_kernels [194] =
 {
 GB_jit__AxB_dot2__0000000eb94eb9bb__LG_MSF_tupleMin_double_LG_MSF_combine_double,
 GB_jit__AxB_dot2__0000400eb94eb9bb__LG_MSF_tupleMin_double_LG_MSF_combine_double,
@@ -477,6 +491,7 @@ GB_jit__bitmap_assign_2_whole__0000a03f000301a0,
 GB_jit__bitmap_assign_2_whole__001c903f000301a0,
 GB_jit__bitmap_assign_4_whole__00e0203f00026890,
 GB_jit__bitmap_assign_4_whole__00fc003f00026691,
+GB_jit__bitmap_assign_4_whole__00fc103f00020180,
 GB_jit__bitmap_assign_5_whole__00000004bbb0bb82,
 GB_jit__bitmap_assign_8_whole__00e0803f0003bb92,
 GB_jit__build__e9011119,
@@ -508,6 +523,7 @@ GB_jit__masker_phase2__fff02900,
 GB_jit__masker_phase2__fff02904,
 GB_jit__masker_phase2__fff02b54,
 GB_jit__masker_phase2__fff02e00__LG_MF_flowEdge,
+GB_jit__masker_phase2__fff03100,
 GB_jit__masker_phase2__fff03141,
 GB_jit__masker_phase2__fff03900,
 GB_jit__masker_phase2__fff03941,
@@ -541,6 +557,7 @@ GB_jit__subassign_05__07e0207f00026850,
 GB_jit__subassign_05d__0000207f0004eef0__LG_MSF_tuple_double,
 GB_jit__subassign_06n__071c007f00029971,
 GB_jit__subassign_06n__07e0007f00021100,
+GB_jit__subassign_06n__07e0007f00021110,
 GB_jit__subassign_06n__07fc007f00020651,
 GB_jit__subassign_06n__07fc007f00020900,
 GB_jit__subassign_06n__07fc007f00021100,
@@ -551,10 +568,14 @@ GB_jit__subassign_06n__07fc007f00029940,
 GB_jit__subassign_06n__07fc007f00029951,
 GB_jit__subassign_06n__07fc007f0002ee00__LG_MF_flowEdge,
 GB_jit__subassign_06n__07fc107f00020100,
+GB_jit__subassign_06n__07fc107f00020111,
 GB_jit__subassign_06n__07fc107f00020140,
 GB_jit__subassign_06n__07fc107f00020900,
+GB_jit__subassign_06n__07fc107f00020940,
+GB_jit__subassign_06n__07fc107f00021100,
 GB_jit__subassign_06n__07fc107f00021140,
 GB_jit__subassign_06n__07fc107f00029900,
+GB_jit__subassign_06n__07fc107f00029940,
 GB_jit__subassign_06s__7f1c407f00029965,
 GB_jit__subassign_06s__7fe0407f00021100,
 GB_jit__subassign_06s__7fe0407f00021110,
@@ -602,8 +623,8 @@ GB_jit__union__e3f312bbb0bbb00
 // GB_prejit_queries: a list of function pointers to PreJIT query kernels
 //------------------------------------------------------------------------------
 
-#if ( 187 > 0 )
-static void *GB_prejit_queries [187] =
+#if ( 194 > 0 )
+static void *GB_prejit_queries [194] =
 {
 GB_jit__AxB_dot2__0000000eb94eb9bb__LG_MSF_tupleMin_double_LG_MSF_combine_double_query,
 GB_jit__AxB_dot2__0000400eb94eb9bb__LG_MSF_tupleMin_double_LG_MSF_combine_double_query,
@@ -674,6 +695,7 @@ GB_jit__bitmap_assign_2_whole__0000a03f000301a0_query,
 GB_jit__bitmap_assign_2_whole__001c903f000301a0_query,
 GB_jit__bitmap_assign_4_whole__00e0203f00026890_query,
 GB_jit__bitmap_assign_4_whole__00fc003f00026691_query,
+GB_jit__bitmap_assign_4_whole__00fc103f00020180_query,
 GB_jit__bitmap_assign_5_whole__00000004bbb0bb82_query,
 GB_jit__bitmap_assign_8_whole__00e0803f0003bb92_query,
 GB_jit__build__e9011119_query,
@@ -705,6 +727,7 @@ GB_jit__masker_phase2__fff02900_query,
 GB_jit__masker_phase2__fff02904_query,
 GB_jit__masker_phase2__fff02b54_query,
 GB_jit__masker_phase2__fff02e00__LG_MF_flowEdge_query,
+GB_jit__masker_phase2__fff03100_query,
 GB_jit__masker_phase2__fff03141_query,
 GB_jit__masker_phase2__fff03900_query,
 GB_jit__masker_phase2__fff03941_query,
@@ -738,6 +761,7 @@ GB_jit__subassign_05__07e0207f00026850_query,
 GB_jit__subassign_05d__0000207f0004eef0__LG_MSF_tuple_double_query,
 GB_jit__subassign_06n__071c007f00029971_query,
 GB_jit__subassign_06n__07e0007f00021100_query,
+GB_jit__subassign_06n__07e0007f00021110_query,
 GB_jit__subassign_06n__07fc007f00020651_query,
 GB_jit__subassign_06n__07fc007f00020900_query,
 GB_jit__subassign_06n__07fc007f00021100_query,
@@ -748,10 +772,14 @@ GB_jit__subassign_06n__07fc007f00029940_query,
 GB_jit__subassign_06n__07fc007f00029951_query,
 GB_jit__subassign_06n__07fc007f0002ee00__LG_MF_flowEdge_query,
 GB_jit__subassign_06n__07fc107f00020100_query,
+GB_jit__subassign_06n__07fc107f00020111_query,
 GB_jit__subassign_06n__07fc107f00020140_query,
 GB_jit__subassign_06n__07fc107f00020900_query,
+GB_jit__subassign_06n__07fc107f00020940_query,
+GB_jit__subassign_06n__07fc107f00021100_query,
 GB_jit__subassign_06n__07fc107f00021140_query,
 GB_jit__subassign_06n__07fc107f00029900_query,
+GB_jit__subassign_06n__07fc107f00029940_query,
 GB_jit__subassign_06s__7f1c407f00029965_query,
 GB_jit__subassign_06s__7fe0407f00021100_query,
 GB_jit__subassign_06s__7fe0407f00021110_query,
@@ -799,8 +827,8 @@ GB_jit__union__e3f312bbb0bbb00_query
 // GB_prejit_names: a list of names of PreJIT kernels
 //------------------------------------------------------------------------------
 
-#if ( 187 > 0 )
-static char *GB_prejit_names [187] =
+#if ( 194 > 0 )
+static char *GB_prejit_names [194] =
 {
 "GB_jit__AxB_dot2__0000000eb94eb9bb__LG_MSF_tupleMin_double_LG_MSF_combine_double",
 "GB_jit__AxB_dot2__0000400eb94eb9bb__LG_MSF_tupleMin_double_LG_MSF_combine_double",
@@ -871,6 +899,7 @@ static char *GB_prejit_names [187] =
 "GB_jit__bitmap_assign_2_whole__001c903f000301a0",
 "GB_jit__bitmap_assign_4_whole__00e0203f00026890",
 "GB_jit__bitmap_assign_4_whole__00fc003f00026691",
+"GB_jit__bitmap_assign_4_whole__00fc103f00020180",
 "GB_jit__bitmap_assign_5_whole__00000004bbb0bb82",
 "GB_jit__bitmap_assign_8_whole__00e0803f0003bb92",
 "GB_jit__build__e9011119",
@@ -902,6 +931,7 @@ static char *GB_prejit_names [187] =
 "GB_jit__masker_phase2__fff02904",
 "GB_jit__masker_phase2__fff02b54",
 "GB_jit__masker_phase2__fff02e00__LG_MF_flowEdge",
+"GB_jit__masker_phase2__fff03100",
 "GB_jit__masker_phase2__fff03141",
 "GB_jit__masker_phase2__fff03900",
 "GB_jit__masker_phase2__fff03941",
@@ -935,6 +965,7 @@ static char *GB_prejit_names [187] =
 "GB_jit__subassign_05d__0000207f0004eef0__LG_MSF_tuple_double",
 "GB_jit__subassign_06n__071c007f00029971",
 "GB_jit__subassign_06n__07e0007f00021100",
+"GB_jit__subassign_06n__07e0007f00021110",
 "GB_jit__subassign_06n__07fc007f00020651",
 "GB_jit__subassign_06n__07fc007f00020900",
 "GB_jit__subassign_06n__07fc007f00021100",
@@ -945,10 +976,14 @@ static char *GB_prejit_names [187] =
 "GB_jit__subassign_06n__07fc007f00029951",
 "GB_jit__subassign_06n__07fc007f0002ee00__LG_MF_flowEdge",
 "GB_jit__subassign_06n__07fc107f00020100",
+"GB_jit__subassign_06n__07fc107f00020111",
 "GB_jit__subassign_06n__07fc107f00020140",
 "GB_jit__subassign_06n__07fc107f00020900",
+"GB_jit__subassign_06n__07fc107f00020940",
+"GB_jit__subassign_06n__07fc107f00021100",
 "GB_jit__subassign_06n__07fc107f00021140",
 "GB_jit__subassign_06n__07fc107f00029900",
+"GB_jit__subassign_06n__07fc107f00029940",
 "GB_jit__subassign_06s__7f1c407f00029965",
 "GB_jit__subassign_06s__7fe0407f00021100",
 "GB_jit__subassign_06s__7fe0407f00021110",
@@ -1004,8 +1039,8 @@ void GB_prejit
     char ***Name_handle     // return list of kernel names
 )
 {
-    (*nkernels) = 187 ;
-    #if ( 187 == 0 )
+    (*nkernels) = 194 ;
+    #if ( 194 == 0 )
     (*Kernel_handle) = NULL ;
     (*Query_handle) = NULL ;
     (*Name_handle) = NULL ;
