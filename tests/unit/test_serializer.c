@@ -8,6 +8,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 void setup() {
@@ -80,7 +81,7 @@ void test_serializer(void) {
 	size_t read_len;
 	char *read_buff = SerializerIO_ReadBuffer(reader, &read_len);
 	TEST_ASSERT(read_len == write_len);
-	TEST_ASSERT(strcmp(read_buff, write_buff) == 0);
+	TEST_ASSERT(memcmp(read_buff, write_buff, read_len) == 0);
 	rm_free(read_buff);
 
 	// read double
