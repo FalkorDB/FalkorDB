@@ -24,7 +24,7 @@ pub fn graph_constraint(
     args: Vec<RedisString>,
 ) -> RedisResult {
     // GRAPH.CONSTRAINT CREATE|DROP <key> UNIQUE|MANDATORY NODE|RELATIONSHIP <label> PROPERTIES <count> <prop1>...
-    if args.len() < 9 {
+    if args.len() < 8 {
         return Err(redis_module::RedisError::WrongArity);
     }
     let mut args = args.into_iter().skip(1);
