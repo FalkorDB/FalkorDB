@@ -511,6 +511,7 @@ class testProcedures(FlowTestsBase):
         ]
         self.env.assertEqual(result[0][: len(expected_header)], expected_header)
 
+        self.env.assertEqual(len(result[0]), len(result[1][0]))
         row_by_column = dict(zip(result[0], result[1][0]))
         self.env.assertEqual(row_by_column["label"], "Person")
         self.env.assertEqual(row_by_column["properties"], "[name]")
