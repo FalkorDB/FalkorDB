@@ -766,6 +766,7 @@ impl Indexer {
                     progress,
                     total,
                     fields: index.fields().clone(),
+                    field_order: index.field_order().to_vec(),
                     language: index.language().cloned(),
                     stopwords: index.stopwords().cloned(),
                     entity_type: String::new(),

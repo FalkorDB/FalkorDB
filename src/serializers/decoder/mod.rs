@@ -317,7 +317,10 @@ fn rebuild_indexes(
             _ => EntityType::Node,
         };
 
-        for (attr_name, fields) in &info.fields {
+        for attr_name in &info.field_order {
+            let Some(fields) = info.fields.get(attr_name) else {
+                continue;
+            };
             for field in fields {
                 // The Field.name includes the type prefix (e.g. "range:val").
                 // The attr_name key in the HashMap is the raw attribute name.

@@ -122,17 +122,16 @@ pub fn register(funcs: &mut Functions) {
                              progress,
                              total,
                              fields,
+                             field_order,
                              language,
                              stopwords,
                              entity_type,
                          }| {
                             let mut map = OrderMap::default();
                             map.insert(Arc::new(String::from("label")), Value::String(label));
-                            let mut sorted_keys: Vec<_> = fields.keys().cloned().collect();
-                            sorted_keys.sort();
                             map.insert(
                                 Arc::new(String::from("properties")),
-                                Value::List(Arc::new(sorted_keys.iter().map(|f| Value::String(f.clone())).collect())),
+                                Value::List(Arc::new(field_order.iter().map(|f| Value::String(f.clone())).collect())),
                             );
                             let mut types_map = OrderMap::default();
                             // Per-attribute index types. A single attribute
@@ -141,7 +140,7 @@ pub fn register(funcs: &mut Functions) {
                             // `range:a:numeric:arr`, `range:a:string:arr`),
                             // so dedupe — but do not impose an order; callers
                             // that care should compare as sets.
-                            for attr in &sorted_keys {
+                            for attr in &field_order {
                                 let mut seen = [false; 3];
                                 let mut types = thin_vec![];
                                 for field in &fields[attr] {
@@ -163,10 +162,13 @@ pub fn register(funcs: &mut Functions) {
                                 Arc::new(String::from("language")),
                                 language.map_or_else(|| Value::Null, Value::String),
                             );
+                            let is_fulltext = field_order.iter().any(|attr| {
+                                fields.get(attr).is_some_and(|fs| fs.iter().any(|f| f.ty == IndexType::Fulltext))
+                            });
                             map.insert(
                                 Arc::new(String::from("stopwords")),
                                 stopwords.map_or_else(
-                                    || Value::Null,
+                                    || if is_fulltext { Value::List(Arc::new(thin_vec![])) } else { Value::Null },
                                     |sw| Value::List(Arc::new(sw.into_iter().map(Value::String).collect())),
                                 ),
                             );
@@ -194,14 +196,12 @@ pub fn register(funcs: &mut Functions) {
                             // lookups (`a:numeric:arr`, `a:string:arr`) —
                             // and we surface all of them here for parity
                             // with the original FalkorDB implementation.
-                            // Walk attributes in `sorted_keys` order
-                            // (not the underlying HashMap's random
-                            // iteration order) so the output is
-                            // deterministic across runs — tests and
-                            // clients parsing this list can rely on
-                            // stable ordering.
+                            // Walk attributes in `field_order` (declaration
+                            // order) so the output is deterministic across
+                            // runs — tests and clients parsing this list
+                            // can rely on stable ordering.
                             let mut rs_field_names = thin_vec![];
-                            for attr_key in &sorted_keys {
+                            for attr_key in &field_order {
                                 let Some(field_list) = fields.get(attr_key) else {
                                     continue;
                                 };

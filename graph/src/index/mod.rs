@@ -260,6 +260,11 @@ pub struct IndexInfo {
     pub progress: u64,
     pub total: u64,
     pub fields: HashMap<Arc<String>, Vec<Arc<Field>>>,
+    /// Attribute names in insertion order. Mirrors `fields.keys()` but
+    /// preserves the order the user added them, since `HashMap` iteration
+    /// is non-deterministic and `CALL db.indexes()` must surface
+    /// properties in the order they were declared for parity with edge.
+    pub field_order: Vec<Arc<String>>,
     pub language: Option<Arc<String>>,
     pub stopwords: Option<Vec<Arc<String>>>,
     pub entity_type: String,
@@ -767,6 +772,9 @@ pub struct Index {
     id: u64,
     rs_idx: *mut RSIndex,
     fields: HashMap<Arc<String>, Vec<Arc<Field>>>,
+    /// Attribute keys in insertion order. Tracked alongside `fields` so
+    /// `CALL db.indexes()` can return `properties` in declaration order.
+    field_order: Vec<Arc<String>>,
     pending_slots: Mutex<PendingSlots>,
     progress: u64,
     total: u64,
@@ -853,6 +861,7 @@ impl Default for Index {
             id,
             rs_idx: std::ptr::null_mut(),
             fields: HashMap::new(),
+            field_order: Vec::new(),
             pending_slots: Mutex::new(PendingSlots {
                 current_generation: id,
                 current_pending: 0,
@@ -1716,6 +1725,9 @@ impl Index {
         attr: Arc<String>,
         field: Arc<Field>,
     ) {
+        if !self.fields.contains_key(&attr) {
+            self.field_order.push(attr.clone());
+        }
         self.fields.insert(attr, vec![field]);
     }
 
@@ -1724,7 +1736,11 @@ impl Index {
         &mut self,
         attr: &Arc<String>,
     ) -> bool {
-        self.fields.remove(attr).is_some()
+        let removed = self.fields.remove(attr).is_some();
+        if removed {
+            self.field_order.retain(|a| a != attr);
+        }
+        removed
     }
 
     /// Retain only fields that don't match the given index type for a specific attribute.
@@ -1754,6 +1770,12 @@ impl Index {
     #[must_use]
     pub const fn fields(&self) -> &HashMap<Arc<String>, Vec<Arc<Field>>> {
         &self.fields
+    }
+
+    /// Attribute keys in insertion order.
+    #[must_use]
+    pub fn field_order(&self) -> &[Arc<String>] {
+        &self.field_order
     }
 
     /// Iterate over all Field objects (flattened across all attributes).
