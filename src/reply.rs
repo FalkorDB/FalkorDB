@@ -117,6 +117,26 @@ fn reply_with_str(
     raw::reply_with_string_buffer(ctx.ctx, s.as_ptr().cast::<c_char>(), s.len());
 }
 
+/// Format a double using C's `%.15g` (15 significant digits, shortest of %e/%f
+/// with trailing zeros stripped). Calls libc snprintf for exact parity with
+/// FalkorDB C compact replies.
+fn format_g15(d: f64) -> String {
+    let fmt = c"%.15g";
+    let mut buf = [0u8; 64];
+    let n = unsafe {
+        libc::snprintf(
+            buf.as_mut_ptr().cast::<c_char>(),
+            buf.len(),
+            fmt.as_ptr(),
+            d,
+        )
+    };
+    let n = n.max(0) as usize;
+    std::str::from_utf8(&buf[..n.min(buf.len() - 1)])
+        .unwrap_or("")
+        .to_owned()
+}
+
 #[allow(clippy::too_many_lines)]
 pub fn reply_compact_value(
     ctx: &Context,
@@ -139,8 +159,8 @@ pub fn reply_compact_value(
         }
         Value::Float(x) => {
             raw::reply_with_long_long(ctx.ctx, 5);
-            let str = format!("{x:.14e}");
-            raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+            let str = format_g15(*x);
+            reply_with_str(ctx, &str);
         }
         Value::String(x) => {
             raw::reply_with_long_long(ctx.ctx, 2);
@@ -318,21 +338,10 @@ pub fn reply_compact_value(
             raw::reply_with_long_long(ctx.ctx, 11);
             raw::reply_with_array(ctx.ctx, 2);
 
-            let lat_str = format!("{:.15}", point.latitude);
-            let lat_str = lat_str.trim_end_matches('0').trim_end_matches('.');
-            raw::reply_with_string_buffer(
-                ctx.ctx,
-                lat_str.as_ptr().cast::<c_char>(),
-                lat_str.len(),
-            );
-
-            let lon_str = format!("{:.15}", point.longitude);
-            let lon_str = lon_str.trim_end_matches('0').trim_end_matches('.');
-            raw::reply_with_string_buffer(
-                ctx.ctx,
-                lon_str.as_ptr().cast::<c_char>(),
-                lon_str.len(),
-            );
+            let lat_str = format_g15(f64::from(point.latitude));
+            reply_with_str(ctx, &lat_str);
+            let lon_str = format_g15(f64::from(point.longitude));
+            reply_with_str(ctx, &lon_str);
         }
     }
 }
@@ -550,52 +559,53 @@ pub fn reply_stats(
     raw::reply_with_array(ctx.ctx, stats_len.into());
     if stats.labels_added > 0 {
         let str = format!("Labels added: {}", stats.labels_added);
-        raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+        reply_with_str(ctx, &str);
     }
     if stats.labels_removed > 0 {
         let str = format!("Labels removed: {}", stats.labels_removed);
-        raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+        reply_with_str(ctx, &str);
     }
     if stats.nodes_created > 0 {
         let str = format!("Nodes created: {}", stats.nodes_created);
-        raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
-    }
-    if stats.nodes_deleted > 0 {
-        let str = format!("Nodes deleted: {}", stats.nodes_deleted);
-        raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+        reply_with_str(ctx, &str);
     }
     if stats.properties_set > 0 {
         let str = format!("Properties set: {}", stats.properties_set);
-        raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+        reply_with_str(ctx, &str);
     }
     if stats.properties_removed > 0 {
         let str = format!("Properties removed: {}", stats.properties_removed);
-        raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+        reply_with_str(ctx, &str);
     }
     if stats.relationships_created > 0 {
         let str = format!("Relationships created: {}", stats.relationships_created);
-        raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+        reply_with_str(ctx, &str);
+    }
+    if stats.nodes_deleted > 0 {
+        let str = format!("Nodes deleted: {}", stats.nodes_deleted);
+        reply_with_str(ctx, &str);
     }
     if stats.relationships_deleted > 0 {
         let str = format!("Relationships deleted: {}", stats.relationships_deleted);
-        raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+        reply_with_str(ctx, &str);
     }
     if stats.indexes_created > 0 {
         let str = format!("Indices created: {}", stats.indexes_created);
-        raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+        reply_with_str(ctx, &str);
     }
     if stats.indexes_dropped > 0 {
         let str = format!("Indices deleted: {}", stats.indexes_dropped);
-        raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+        reply_with_str(ctx, &str);
     }
     let str = format!("Cached execution: {}", i32::from(stats.cached));
-    raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
-    let mut buffer = ryu::Buffer::new();
-    let str = buffer.format(stats.execution_time);
-    let str = format!("Query internal execution time: {str} milliseconds");
-    raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+    reply_with_str(ctx, &str);
+    let str = format!(
+        "Query internal execution time: {:.6} milliseconds",
+        stats.execution_time
+    );
+    reply_with_str(ctx, &str);
     let str = format!("Graph version: {version}");
-    raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+    reply_with_str(ctx, &str);
 }
 
 fn reply_result<const COMPACT: bool>(
