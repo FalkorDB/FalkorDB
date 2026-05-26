@@ -91,14 +91,14 @@ fn format_value_to_string(
             out.push(']');
         }
         Value::VecF32(vec) => {
-            out.push('[');
+            out.push('<');
             for (i, f) in vec.iter().enumerate() {
                 if i > 0 {
                     out.push_str(", ");
                 }
                 let _ = write!(out, "{:.6}", f64::from(*f));
             }
-            out.push(']');
+            out.push('>');
         }
         Value::Point(point) => {
             let _ = write!(
