@@ -1037,6 +1037,9 @@ class testConstraintReplication():
             print(f"DEBUG MONITOR exception: {e}", flush=True)
 
     def test_01_constraint_replication(self):
+        # discard any GRAPH.CONSTRAINT events captured from earlier test classes
+        self.monitor.clear()
+
         # create mandatory node constraint over Person height
         create_mandatory_node_constraint(self.g, 'Person', 'height')
 
