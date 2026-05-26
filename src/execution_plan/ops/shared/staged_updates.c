@@ -177,14 +177,11 @@ static void _RemoveRedundancies
 			bool is_set = (Delta_Matrix_isStoredElement (L, node_id, node_id)
 				 == GrB_SUCCESS) ;
 
-			if (is_set && addition) {
+			// node is associated with label and we're doing addition
+			// or
+			// node isn't associated with label and we're doing removal
+			if (is_set == addition) {
 				// node already carries the label — adding it again is redundant
-				GrB_OK (GrB_Vector_setElement (v, false, node_id)) ;
-				redundancies = true ;
-			}
-
-			else if (!is_set && !addition) {
-				// node does not carry the label — removing it is redundant
 				GrB_OK (GrB_Vector_setElement (v, false, node_id)) ;
 				redundancies = true ;
 			}
@@ -197,11 +194,8 @@ static void _RemoveRedundancies
 
 		// clear redundancies
 		if (redundancies) {
-			GxB_Scalar s ;
-			GrB_OK (GxB_Scalar_new (&s, GrB_BOOL)) ;
-			GrB_OK (GxB_Scalar_setElement_BOOL (s, true)) ;
-			GrB_OK (GrB_select (v, NULL, NULL, GrB_VALUEEQ_BOOL, v, s, NULL)) ;
-			GrB_OK (GrB_free (&s)) ;
+			GrB_OK (GrB_Vector_select_BOOL (v, NULL, NULL, GrB_VALUEEQ_BOOL, v,
+						true, NULL)) ;
 		}
 
 		return ;
@@ -240,10 +234,9 @@ static void _RemoveRedundancies
 
 	// for addition: clear v[i] where L[i,i] is already set (GrB_DESC_RSCT0)
 	// for removal:  clear v[i] where L[i,i] is not set     (GrB_DESC_RST0)
-    GrB_Descriptor desc = (addition) ? GrB_DESC_RSCT0 : GrB_DESC_RST0 ;
+    GrB_Descriptor desc = (addition) ? GrB_DESC_RSC : GrB_DESC_RS ;
 
-    GrB_OK (GrB_transpose ((GrB_Matrix) v, (const GrB_Matrix) M_V, NULL,
-                (GrB_Matrix) v, desc)) ;
+	GrB_OK (GrB_Vector_assign (v, M_V, NULL, v, GrB_ALL, 0, desc)) ;
 
     GrB_OK (GrB_free (&M_V))  ;
     GrB_OK (GrB_free (&DP_V)) ;
@@ -309,14 +302,8 @@ static void _PopulateVector
 	// populate vector with node IDs
     //--------------------------------------------------------------------------
 
-	GxB_Scalar s ;
-	GrB_OK (GxB_Scalar_new (&s, GrB_BOOL)) ;
-	GrB_OK (GxB_Scalar_setElement_BOOL (s, true)) ;
-
-	GrB_OK (GrB_assign (v, NULL, NULL, s, (GrB_Index*) node_ids, node_count,
-				NULL)) ;
-
-	GrB_OK (GrB_free (&s)) ;
+	GrB_OK (GrB_Vector_assign_BOOL (v, NULL, NULL, true, (GrB_Index*) node_ids,
+				node_count, NULL)) ;
 
 	// make sure vector `v` does not contains redundant information
 	_RemoveRedundancies (v, add, gc, g, label) ;
