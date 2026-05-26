@@ -364,8 +364,8 @@ pub fn reply_verbose_value(
             raw::reply_with_long_long(ctx.ctx, *x as _);
         }
         Value::Float(x) => {
-            let str = format!("{x:.14e}");
-            raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+            let str = format_g15(*x);
+            reply_with_str(ctx, &str);
         }
         Value::String(x) => {
             raw::reply_with_string_buffer(ctx.ctx, x.as_str().as_ptr().cast::<c_char>(), x.len());
