@@ -213,6 +213,57 @@ class testAccessDelNode():
         self.env.assertEquals(nodes[2].properties['v'], 'c')
         self.env.assertIn('C', nodes[2].labels)
 
+    def test10_delete_deleted_endpoint(self):
+        # startNode/endNode can materialize a deleted endpoint as a node with
+        # NULL attributes. Deleting that stale value should be a no-op.
+        q = """CREATE (a:EdgeCluster)-[r:R]->(a)
+               WITH r, a
+               DETACH DELETE a
+               WITH startNode(r) AS ec
+               DETACH DELETE ec"""
+        res = self.graph.query(q)
+        self.env.assertEquals(res.nodes_created, 1)
+        self.env.assertEquals(res.relationships_created, 1)
+        self.env.assertEquals(res.nodes_deleted, 1)
+        self.env.assertEquals(res.relationships_deleted, 1)
+
+        q = """CREATE (a:Start)-[r:R]->(b:End)
+               WITH r, b
+               DETACH DELETE b
+               WITH endNode(r) AS ec
+               DETACH DELETE ec"""
+        res = self.graph.query(q)
+        self.env.assertEquals(res.nodes_created, 2)
+        self.env.assertEquals(res.relationships_created, 1)
+        self.env.assertEquals(res.nodes_deleted, 1)
+        self.env.assertEquals(res.relationships_deleted, 1)
+
+        q = """CREATE (a:EdgeCluster)-[r:R]->(a), (b:Valid)
+               WITH r, a, b
+               DETACH DELETE a
+               WITH startNode(r) AS ec, b
+               DETACH DELETE ec, b"""
+        res = self.graph.query(q)
+        self.env.assertEquals(res.nodes_created, 2)
+        self.env.assertEquals(res.relationships_created, 1)
+        self.env.assertEquals(res.nodes_deleted, 2)
+        self.env.assertEquals(res.relationships_deleted, 1)
+
+    def test11_update_deleted_endpoint(self):
+        # Updating a deleted endpoint materialized by startNode/endNode should
+        # be a no-op rather than dereferencing its NULL attributes.
+        q = """CREATE (a:EdgeCluster)-[r:R]->(a)
+               WITH r, a
+               DETACH DELETE a
+               WITH startNode(r) AS ec
+               SET ec.v = 1"""
+        res = self.graph.query(q)
+        self.env.assertEquals(res.nodes_created, 1)
+        self.env.assertEquals(res.relationships_created, 1)
+        self.env.assertEquals(res.nodes_deleted, 1)
+        self.env.assertEquals(res.relationships_deleted, 1)
+        self.env.assertEquals(res.properties_set, 0)
+
 class testAccessDelEdge():
     def __init__(self):
         GRAPH_ID = "access_del_edge"
@@ -377,4 +428,3 @@ class testAccessDelEdge():
 
         self.env.assertEquals(edges[1].properties['v'], 2)
         self.env.assertEquals(edges[1].relation, 'R2')
-

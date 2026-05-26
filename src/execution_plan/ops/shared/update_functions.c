@@ -69,7 +69,7 @@ void CommitUpdates
 		PendingUpdateCtx *update = HashTableGetVal (entry) ;
 
 		// if entity has been deleted, perform no updates
-		if (GraphEntity_IsDeleted (update->ge)) {
+		if (!GraphEntity_CanModify (update->ge)) {
 			continue ;
 		}
 
@@ -470,8 +470,8 @@ void EvalEntityUpdates
 	// get the updated entity
 	GraphEntity *entity = Record_GetGraphEntity (r, ctx->record_idx) ;
 
-	// if the entity is marked as deleted, make no updates but do not error
-	if (unlikely (Graph_EntityIsDeleted (entity))) {
+	// if the entity can't be modified, make no updates but do not error
+	if (unlikely (!GraphEntity_CanModify (entity))) {
 		return ;
 	}
 
@@ -674,4 +674,3 @@ void PendingUpdateCtx_Free
 	arr_free(ctx->remove_labels);
 	rm_free(ctx);
 }
-

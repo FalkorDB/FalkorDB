@@ -249,8 +249,8 @@ static inline void _CollectDeletedEntities
 		if (type & T_NODE) {
 			Node *n = (Node *)value.ptrval ;
 
-			// skip duplicated & deleted nodes
-			if (!Graph_EntityIsDeleted ((GraphEntity *)n) &&
+			// skip duplicated and non-modifiable nodes
+			if (GraphEntity_CanModify ((GraphEntity *)n) &&
 				roaring64_bitmap_add_checked (op->node_bitmap, ENTITY_GET_ID (n))) {
 				arr_append (op->deleted_nodes, *n) ;
 			}
@@ -259,8 +259,8 @@ static inline void _CollectDeletedEntities
 		else if (type & T_EDGE) {
 			Edge *e = (Edge *)value.ptrval ;
 
-			// skip already deleted edges
-			if (!Graph_EntityIsDeleted ((GraphEntity *)e)                &&
+			// skip non-modifiable edges
+			if (GraphEntity_CanModify ((GraphEntity *)e)                 &&
 				!roaring64_bitmap_contains (op->node_bitmap, e->src_id)  &&
 				!roaring64_bitmap_contains (op->node_bitmap, e->dest_id) &&
 				roaring64_bitmap_add_checked (op->edge_bitmap, ENTITY_GET_ID (e))) {
@@ -276,8 +276,8 @@ static inline void _CollectDeletedEntities
 			for (size_t j = 0; j < nodeCount; j++) {
 				Node *n = Path_GetNode (p, j) ;
 
-				// skip duplicated & deleted nodes
-				if (!Graph_EntityIsDeleted ((GraphEntity *)n) &&
+				// skip duplicated and non-modifiable nodes
+				if (GraphEntity_CanModify ((GraphEntity *)n) &&
 					roaring64_bitmap_add_checked (op->node_bitmap, ENTITY_GET_ID (n))) {
 					arr_append (op->deleted_nodes, *n) ;
 				}
@@ -415,4 +415,3 @@ static void DeleteFree
 		op->edge_bitmap = NULL ;
 	}
 }
-
