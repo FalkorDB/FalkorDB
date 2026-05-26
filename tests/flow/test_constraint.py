@@ -996,8 +996,7 @@ class testConstraintReplication():
         self.source  = self.env.getConnection()
         self.replica = self.env.getSlaveConnection()
         self.monitor = []
-        self.monitor_drain_marker = None
-        self.monitor_drain_seen = False
+        self.monitor_start_ts = 0.0
         self.g = self.db.select_graph(GRAPH_ID)
 
         self.monitor_thread = threading.Thread(target=self.monitor_thread, daemon=True)
@@ -1033,28 +1032,29 @@ class testConstraintReplication():
                     line, buf = buf.split(b"\n", 1)
                     line = line.rstrip(b"\r").decode("utf-8", errors="replace")
                     print(f"DEBUG MONITOR: {line}", flush=True)
-                    if self.monitor_drain_marker and self.monitor_drain_marker in line:
-                        self.monitor_drain_seen = True
+                    if "GRAPH.CONSTRAINT" not in line:
                         continue
-                    if "GRAPH.CONSTRAINT" in line:
-                        self.monitor.append({"command": line})
+                    # parse "+<unix-time> [...] ..." -> unix-time
+                    ts = 0.0
+                    if line.startswith("+"):
+                        try:
+                            ts = float(line[1:].split(" ", 1)[0])
+                        except ValueError:
+                            pass
+                    if ts < self.monitor_start_ts:
+                        continue
+                    self.monitor.append({"command": line})
         except Exception as e:
             print(f"DEBUG MONITOR exception: {e}", flush=True)
 
     def test_01_constraint_replication(self):
-        # drain any in-flight monitor events from earlier test classes:
-        #   1. WAIT on master ensures replica has applied all prior replicated commands.
-        #   2. ECHO directly on replica gives us a unique marker we can wait for in
-        #      the MONITOR stream — once it arrives, every earlier event has too.
+        # Ignore any GRAPH.CONSTRAINT events captured before this test starts
+        # (eager class init means the monitor thread sees events from earlier
+        # test classes). WAIT on master ensures replica has applied everything
+        # so far; then we set a timestamp gate and discard prior captures.
         self.source.execute_command("WAIT", 1, 0)
-        self.monitor_drain_marker = "DRAIN_TEST_01_CONSTRAINT_REPLICATION"
-        self.monitor_drain_seen = False
-        self.replica.execute_command("ECHO", self.monitor_drain_marker)
-        deadline = time.time() + 10
-        while not self.monitor_drain_seen and time.time() < deadline:
-            time.sleep(0.05)
+        self.monitor_start_ts = time.time()
         self.monitor.clear()
-        self.monitor_drain_marker = None
 
         # create mandatory node constraint over Person height
         create_mandatory_node_constraint(self.g, 'Person', 'height')
