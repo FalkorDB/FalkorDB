@@ -7,6 +7,8 @@
 #include "graph_hub.h"
 #include "../query_ctx.h"
 
+#include <unistd.h>
+
 // create a node
 // set the node labels and attributes
 // add the node to the relevant indexes
@@ -153,10 +155,24 @@ void GraphHub_CreateEdges
 	ASSERT (gc    != NULL) ;
 	ASSERT (edges != NULL) ;
 
+	// validate that the relation schema exists locally BEFORE touching the
+	// graph. on a replica a GRAPH.EFFECT may reference a relation type that
+	// is missing from the replica's schema (e.g. master/replica state
+	// diverged). passing an out-of-range relation ID into Graph_CreateEdges
+	// would segfault inside Graph_GetRelationMatrix / Delta_Matrix_nrows.
+	// detect the desync, log a warning and exit cleanly so Redis triggers
+	// a full RDB resync on restart - matches the existing ValidateVersion
+	// pattern in Effects_Apply (effects_apply.c).
+	Schema *s = GraphContext_GetSchemaByID (gc, r, SCHEMA_EDGE) ;
+	if (s == NULL) {
+		RedisModule_Log (NULL, "warning",
+				"GraphHub_CreateEdges: relation ID %d schema not found"
+				" - replica/primary schema desync detected, aborting", r) ;
+		_exit (1) ;
+	}
+
 	Graph_CreateEdges (GraphContext_GetGraph (gc), r, edges, sets) ;
 
-	Schema *s = GraphContext_GetSchemaByID (gc, r, SCHEMA_EDGE) ;
-	ASSERT (s != NULL) ;
 	bool has_indices = Schema_HasIndices (s) ;
 
 	if (has_indices || log) {
