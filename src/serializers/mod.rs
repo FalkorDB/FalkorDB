@@ -336,7 +336,12 @@ fn encode_schema_index_block(
 
     let all_fields: Vec<_> = infos
         .iter()
-        .flat_map(|info| info.fields.values().flatten())
+        .flat_map(|info| {
+            info.field_order
+                .iter()
+                .filter_map(move |attr| info.fields.get(attr))
+                .flatten()
+        })
         .collect();
     w.write_unsigned(all_fields.len() as u64);
     for f in &all_fields {
@@ -501,8 +506,12 @@ fn decode_schema_entry(
 
         let field_count = r.read_unsigned()?;
         let mut fields: HashMap<Arc<String>, Vec<Arc<Field>>> = HashMap::new();
+        let mut field_order: Vec<Arc<String>> = Vec::new();
         for _ in 0..field_count {
             let (attr_name, field) = decode_index_field(r)?;
+            if !fields.contains_key(&attr_name) {
+                field_order.push(attr_name.clone());
+            }
             fields.entry(attr_name).or_default().push(Arc::new(field));
         }
 
@@ -512,6 +521,7 @@ fn decode_schema_entry(
             progress: 0,
             total: 0,
             fields,
+            field_order,
             language: Some(Arc::new(language)),
             stopwords: if stopwords.is_empty() {
                 None
