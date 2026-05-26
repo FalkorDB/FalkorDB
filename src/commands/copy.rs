@@ -49,11 +49,11 @@ pub fn graph_copy(
         .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?
         .is_some()
     {
-        return Err(RedisError::Str("ERR destination key already exists"));
+        return Err(RedisError::Str("destination key already exists"));
     }
     // Also check if dest key exists as any other type.
     if dest_key.key_type() != redis_module::KeyType::Empty {
-        return Err(RedisError::Str("ERR destination key already exists"));
+        return Err(RedisError::Str("destination key already exists"));
     }
 
     let cache_size = *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize;

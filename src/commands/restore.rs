@@ -28,10 +28,10 @@ pub fn graph_restore(
         .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?
         .is_some()
     {
-        return Err(RedisError::Str("ERR destination key already exists"));
+        return Err(RedisError::Str("restore graph failed, key already exists"));
     }
     if dest_key.key_type() != redis_module::KeyType::Empty {
-        return Err(RedisError::Str("ERR destination key already exists"));
+        return Err(RedisError::Str("restore graph failed, key already exists"));
     }
 
     let cache_size = *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize;
