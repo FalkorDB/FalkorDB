@@ -40,6 +40,14 @@ void GraphContext_DecreaseRefCount
 	GraphContext *gc
 );
 
+// attach graph context to key  and register it with FalkorDB's
+// global graph registry
+void GraphContext_SetKey
+(
+	RedisModuleCtx *ctx,  // redis module context
+    GraphContext *gc      // graph context
+);
+
 // retrive the graph context according to the graph name
 // readOnly is the access mode to the graph key
 GraphContext *GraphContext_Retrieve

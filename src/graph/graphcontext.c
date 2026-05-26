@@ -142,22 +142,35 @@ static GraphContext *_GraphContext_Create
 	const char *graph_name
 ) {
 	// create and initialize a graph context
-	GraphContext *gc = GraphContext_New(graph_name);
-	RedisModuleString *graphID = RedisModule_CreateString(ctx, graph_name,
-			strlen(graph_name));
+	GraphContext *gc = GraphContext_New (graph_name) ;
+	GraphContext_SetKey (ctx, gc) ;
+	return gc ;
+}
 
-	RedisModuleKey *key = RedisModule_OpenKey(ctx, graphID, REDISMODULE_WRITE);
+// attach graph context to key  and register it with FalkorDB's
+// global graph registry
+void GraphContext_SetKey
+(
+	RedisModuleCtx *ctx,  // redis module context
+    GraphContext *gc      // graph context
+) {
+	ASSERT (gc != NULL) ;
+
+	const char *graph_name = GraphContext_GetName (gc) ;
+	RedisModuleString *graphID = RedisModule_CreateString (ctx, graph_name,
+			strlen (graph_name));
+
+	RedisModuleKey *key = RedisModule_OpenKey (ctx, graphID, REDISMODULE_WRITE) ;
+	ASSERT (key != NULL) ;
 
 	// set value in key
-	RedisModule_ModuleTypeSetValue(key, GraphContextRedisModuleType, gc);
+	RedisModule_ModuleTypeSetValue (key, GraphContextRedisModuleType, gc) ;
 
 	// register graph context for BGSave
-	GraphContext_RegisterWithModule(gc);
+	GraphContext_RegisterWithModule (gc) ;
 
-	RedisModule_FreeString(ctx, graphID);
-	RedisModule_CloseKey(key);
-
-	return gc;
+	RedisModule_FreeString (ctx, graphID) ;
+	RedisModule_CloseKey (key) ;
 }
 
 // retrive the graph context according to the graph name
