@@ -1016,15 +1016,19 @@ class testConstraintReplication():
             pass
 
     def test_01_constraint_replication(self):
-        # start monitor thread here (not in __init__) so it doesn't capture
-        # GRAPH.CONSTRAINT events from earlier test classes that share the
-        # same redis (RLTest instantiates classes eagerly during collection)
+        # In svc CI mode all test classes share one master+replica pair, so
+        # earlier classes' GRAPH.CONSTRAINT commands may still be replicating
+        # when this test starts. WAIT here forces the replica to drain every
+        # prior master command BEFORE we attach MONITOR, so the monitor
+        # only sees this test's own activity.
+        self.source.execute_command("WAIT", 1, 0)
+
         global MONITOR_ATTACHED
         MONITOR_ATTACHED = False
         self.monitor_t = threading.Thread(target=self.monitor_thread, daemon=True)
         self.monitor_t.start()
         while MONITOR_ATTACHED is False:
-            time.sleep(0.2)
+            time.sleep(0.05)
 
         # create mandatory node constraint over Person height
         create_mandatory_node_constraint(self.g, 'Person', 'height')
