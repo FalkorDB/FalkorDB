@@ -24,7 +24,8 @@
 
 use crate::config::{
     CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE, CONFIGURATION_TEMP_FOLDER,
-    OMP_THREAD_COUNT, TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count,
+    DELTA_MAX_PENDING_CHANGES, EFFECTS_THRESHOLD, MAX_QUEUED_QUERIES, OMP_THREAD_COUNT,
+    QUERY_MEM_CAPACITY, RESULTSET_SIZE, TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count,
 };
 use crate::redis_type::on_persistence;
 use crate::telemetry;
@@ -40,7 +41,7 @@ use redis_module::{
     RedisModule_Realloc, RedisModule_SubscribeToServerEvent, RedisModuleCtx, RedisModuleEvent,
     Status,
 };
-use std::{os::raw::c_int, os::raw::c_void, panic};
+use std::{os::raw::c_int, os::raw::c_void, panic, sync::atomic::AtomicI64};
 
 /// Redis event ID for FlushDB event (database flush/clear).
 #[allow(non_upper_case_globals)]
@@ -120,9 +121,8 @@ pub fn graph_init(
         std::process::exit(1);
     }));
 
-    // Parse timeout-related module args (TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX).
-    // These are AtomicI64 statics not registered in the redis_module! config section,
-    // so we parse them manually here.
+    // Parse module args for AtomicI64/AtomicU64 statics not registered in the
+    // redis_module! config section.
     {
         let args_str: Vec<String> = args
             .iter()
@@ -130,44 +130,40 @@ pub fn graph_init(
             .collect();
         let mut i = 0;
         while i < args_str.len() {
-            match args_str[i].to_uppercase().as_str() {
-                "TIMEOUT" => {
-                    if i + 1 < args_str.len()
-                        && let Ok(v) = args_str[i + 1].parse::<i64>()
-                    {
-                        TIMEOUT.store(v, std::sync::atomic::Ordering::Relaxed);
-                        i += 2;
-                        continue;
-                    }
-                    ctx.log_warning("Invalid value for TIMEOUT module argument");
-                    return Status::Err;
+            let name = args_str[i].to_uppercase();
+            let target_i64: Option<&AtomicI64> = match name.as_str() {
+                "TIMEOUT" => Some(&TIMEOUT),
+                "TIMEOUT_DEFAULT" => Some(&TIMEOUT_DEFAULT),
+                "TIMEOUT_MAX" => Some(&TIMEOUT_MAX),
+                "RESULTSET_SIZE" => Some(&RESULTSET_SIZE),
+                "QUERY_MEM_CAPACITY" => Some(&QUERY_MEM_CAPACITY),
+                "DELTA_MAX_PENDING_CHANGES" => Some(&DELTA_MAX_PENDING_CHANGES),
+                "EFFECTS_THRESHOLD" => Some(&EFFECTS_THRESHOLD),
+                _ => None,
+            };
+            if let Some(target) = target_i64 {
+                if i + 1 < args_str.len()
+                    && let Ok(v) = args_str[i + 1].parse::<i64>()
+                {
+                    target.store(v, std::sync::atomic::Ordering::Relaxed);
+                    i += 2;
+                    continue;
                 }
-                "TIMEOUT_DEFAULT" => {
-                    if i + 1 < args_str.len()
-                        && let Ok(v) = args_str[i + 1].parse::<i64>()
-                    {
-                        TIMEOUT_DEFAULT.store(v, std::sync::atomic::Ordering::Relaxed);
-                        i += 2;
-                        continue;
-                    }
-                    ctx.log_warning("Invalid value for TIMEOUT_DEFAULT module argument");
-                    return Status::Err;
-                }
-                "TIMEOUT_MAX" => {
-                    if i + 1 < args_str.len()
-                        && let Ok(v) = args_str[i + 1].parse::<i64>()
-                    {
-                        TIMEOUT_MAX.store(v, std::sync::atomic::Ordering::Relaxed);
-                        i += 2;
-                        continue;
-                    }
-                    ctx.log_warning("Invalid value for TIMEOUT_MAX module argument");
-                    return Status::Err;
-                }
-                _ => {
-                    i += 1;
-                }
+                ctx.log_warning(&format!("Invalid value for {name} module argument"));
+                return Status::Err;
             }
+            if name == "MAX_QUEUED_QUERIES" {
+                if i + 1 < args_str.len()
+                    && let Ok(v) = args_str[i + 1].parse::<u64>()
+                {
+                    MAX_QUEUED_QUERIES.store(v, std::sync::atomic::Ordering::Relaxed);
+                    i += 2;
+                    continue;
+                }
+                ctx.log_warning("Invalid value for MAX_QUEUED_QUERIES module argument");
+                return Status::Err;
+            }
+            i += 1;
         }
     }
     unsafe {
