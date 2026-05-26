@@ -689,6 +689,7 @@ cypher_parse_result_t *parse_query
 
 	// empty query
 	if(len == 0) {
+		ErrorCtx_SetError(EMSG_EMPTY_QUERY);
 		return NULL;
 	}
 
@@ -808,4 +809,3 @@ void AST_Free
 
 	rm_free(ast);
 }
-
