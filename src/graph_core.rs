@@ -1237,10 +1237,6 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
             // MvccGraph::commit when fork() runs — the original #452
             // panic.
             let res = g.execute_query_write(&ctx, &query, compact, cached, per_query_timeout);
-            if res.is_err() {
-                // Pure atomic store — no Redis API, no GIL needed.
-                g.graph.rollback();
-            }
             if mem_capacity > 0 {
                 disable_tracking();
             }
@@ -1290,6 +1286,7 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                     }
                 }
                 Err(err) => {
+                    g.graph.rollback();
                     let cerr = ffi::sanitise_error(err);
                     // reply_error on a blocked-client ThreadSafeContext
                     // writes into the client's reply buffer; the buffer is
