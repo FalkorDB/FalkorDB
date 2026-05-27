@@ -24,6 +24,9 @@ pub fn graph_constraint(
     args: Vec<RedisString>,
 ) -> RedisResult {
     // GRAPH.CONSTRAINT CREATE|DROP <key> UNIQUE|MANDATORY NODE|RELATIONSHIP <label> PROPERTIES <count> <prop1>...
+    if args.len() < 8 {
+        return Err(redis_module::RedisError::WrongArity);
+    }
     let mut args = args.into_iter().skip(1);
 
     // Operation: CREATE or DROP
@@ -212,7 +215,11 @@ pub fn graph_constraint(
             if let Err(e) = value {
                 ctx.log_warning(&format!("FalkorDB: cache flush failed: {e}"));
             }
-            Ok(RedisValue::SimpleStringStatic("OK"))
+            if is_create {
+                Ok(RedisValue::SimpleStringStatic("PENDING"))
+            } else {
+                Ok(RedisValue::SimpleStringStatic("OK"))
+            }
         }
         Err(e) if is_replicated && e == "Constraint already exists" => {
             // Activation signal on replica — constraint already created by

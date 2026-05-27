@@ -760,7 +760,13 @@ pub fn query_mut(
     per_query_timeout: Option<i64>,
 ) -> RedisResult {
     // Inside MULTI/EXEC: execute synchronously (blocking commands not allowed).
-    if ctx.get_flags().contains(ContextFlags::MULTI) {
+    // Also run replicated commands synchronously on the main thread (matches
+    // FalkorDB C): otherwise the replica's handler returns NoReply before the
+    // query actually executes, Redis advances the replication offset, and
+    // master's WAIT reports the replica in-sync while writes are still queued.
+    if ctx.get_flags().contains(ContextFlags::MULTI)
+        || ctx.get_flags().contains(ContextFlags::REPLICATED)
+    {
         return query_sync(
             ctx,
             graph,
@@ -1033,7 +1039,10 @@ pub fn profile_mut(
     per_query_timeout: Option<i64>,
 ) -> RedisResult {
     // Inside MULTI/EXEC: execute synchronously.
-    if ctx.get_flags().contains(ContextFlags::MULTI) {
+    // Also run replicated commands synchronously (see query_mut for rationale).
+    if ctx.get_flags().contains(ContextFlags::MULTI)
+        || ctx.get_flags().contains(ContextFlags::REPLICATED)
+    {
         return profile_sync(ctx, graph, query, key_name, per_query_timeout);
     }
 
