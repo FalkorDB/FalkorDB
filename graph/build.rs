@@ -12,12 +12,20 @@ fn main() {
 
     #[cfg(target_os = "linux")]
     {
-        // Common libomp install locations when building RediSearch/VecSim with LLVM.
+        // libomp.a is built from llvm-project source by build/libomp.sh and
+        // installed under /opt/libomp. Linking statically here makes
+        // libfalkordb.so self-contained for OpenMP — no libomp.so.5 /
+        // libgomp.so.1 dynamic dependency in the runtime image.
+        println!("cargo:rustc-link-search=/opt/libomp/lib");
+        // Fallback search paths for local/dev environments without /opt/libomp.
         println!("cargo:rustc-link-search=/usr/lib/llvm-22/lib");
         println!("cargo:rustc-link-search=/usr/lib/llvm-21/lib");
         println!("cargo:rustc-link-search=/usr/lib/llvm-20/lib");
     }
 
+    #[cfg(target_os = "linux")]
+    println!("cargo:rustc-link-lib=static=omp");
+    #[cfg(target_os = "macos")]
     println!("cargo:rustc-link-lib=omp");
 
     println!("cargo:rustc-link-search=/usr/local/lib");

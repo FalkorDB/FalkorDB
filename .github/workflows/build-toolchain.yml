@@ -71,7 +71,8 @@ jobs:
       - name: Build and push (${{ matrix.arch }})
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
         with:
-          context: ./build
+          context: .
+          file: build/Dockerfile
           platforms: ${{ matrix.platform }}
           push: true
           provenance: false

@@ -1,5 +1,12 @@
 FROM redis:8.6.2
 
+# Pinned LLVM source release used to build libomp.a from source (see
+# build/libomp.sh). apt.llvm.org's libomp-22-dev ships only the shared
+# library; we need the static archive to embed in libfalkordb.so so the
+# final runtime image has no libomp dynamic dependency. Bump in lock-step
+# with the clang-22 apt package whose ABI must match.
+ARG LLVMORG_VERSION=22.1.6
+
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 RUN apt update -y && \
@@ -9,7 +16,15 @@ RUN apt update -y && \
     ./llvm.sh 22 && \
     apt update -y
 
-RUN apt install -y git make cmake curl zlib1g zlib1g-dev libpolly-22-dev libomp-22-dev libc++-22-dev libc++abi-22-dev libzstd-dev python3-venv lcov
+RUN apt install -y git make cmake curl zlib1g zlib1g-dev libpolly-22-dev libc++-22-dev libc++abi-22-dev libzstd-dev python3-venv lcov
+
+# Build LLVM libomp as a static archive (/opt/libomp/lib/libomp.a + headers).
+# Isolated in its own layer + pinned via ARG so the registry buildcache hits
+# whenever LLVMORG_VERSION and libomp.sh are unchanged. Placed before the
+# slower-churning GraphBLAS/LAGraph/RediSearch builds so it stays cached
+# across most PRs.
+COPY build/libomp.sh /tmp/libomp.sh
+RUN /tmp/libomp.sh "${LLVMORG_VERSION}" && rm -f /tmp/libomp.sh
 
 # Docker CLI for per-test-class container orchestration in flow tests:
 # tests/flow/common.py spawns dedicated containers from the RC image so each
@@ -23,13 +38,14 @@ RUN python3 -m venv venv
 
 RUN venv/bin/pip install behave falkordb falkordb-bulk-loader hypothesis pytest pytest-benchmark RLTest
 
-RUN git clone --branch v10.3.1 --single-branch --depth 1 https://github.com/DrTimothyAldenDavis/GraphBLAS.git
-
-RUN cd GraphBLAS && \
-    make static CMAKE_OPTIONS='-DGRAPHBLAS_COMPACT=1 -DCMAKE_POSITION_INDEPENDENT_CODE=on' JOBS=2 CC=clang-22 CXX=clang++-22 && \
-    make install && \
-    cd .. && \
-    rm -rf GraphBLAS
+# Build SuiteSparse:GraphBLAS v10.3.1 with the FalkorDB-specific tweaks:
+# GB_control.h patch, vendored PreJIT kernels from the FalkorDB C repo, and
+# the same cmake flags the C engine uses. Single source of truth is
+# graphblas.sh at the repo root — devs invoke it directly, CI invokes the
+# same script here. See graphblas.sh for rationale.
+COPY graphblas.sh /data/graphblas.sh
+COPY build/graphblas /data/build/graphblas
+RUN cd /data && ./graphblas.sh && rm -rf /data/graphblas.sh /data/build
 
 RUN git clone --branch v1.2.1 --single-branch https://github.com/GraphBLAS/LAGraph.git && \
     cd LAGraph && \
@@ -45,7 +61,14 @@ RUN git clone --branch v1.2.1 --single-branch https://github.com/GraphBLAS/LAGra
         -DGRAPHBLAS_LIBRARY=/usr/local/lib/libgraphblas.a \
         -DSUITESPARSE_USE_FORTRAN=OFF \
         -DCMAKE_C_COMPILER=clang-22 \
-        -DCMAKE_CXX_COMPILER=clang++-22 && \
+        -DCMAKE_CXX_COMPILER=clang++-22 \
+        -DCMAKE_C_FLAGS="-I/opt/libomp/include" \
+        -DCMAKE_CXX_FLAGS="-I/opt/libomp/include" \
+        -DOpenMP_C_FLAGS=-fopenmp=libomp \
+        -DOpenMP_CXX_FLAGS=-fopenmp=libomp \
+        -DOpenMP_C_LIB_NAMES=omp \
+        -DOpenMP_CXX_LIB_NAMES=omp \
+        -DOpenMP_omp_LIBRARY=/opt/libomp/lib/libomp.a && \
     make -j2 && \
     mkdir -p /data/lagraph_lib && \
     cp src/liblagraph.a /data/lagraph_lib/ && \
