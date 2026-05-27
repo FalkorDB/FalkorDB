@@ -721,9 +721,22 @@ impl<'a> AggregateOp<'a> {
                     return Err(e);
                 }
 
-                args.push(prev_value);
-
-                let new_value = func.func.call(runtime, &args)?;
+                // Prefer batch_agg when registered: it takes the accumulator
+                // by owned `Value`, so functions like `collect` get a unique
+                // `Arc` and avoid an O(n^2) deep clone per row caused by the
+                // shared ref `args` would hold if we pushed `prev_value` and
+                // called `func.func.call(&args)`.
+                let new_value = if let FnType::Aggregation {
+                    batch_agg: Some(batch_fn),
+                    ..
+                } = &func.fn_type
+                {
+                    let inputs: &[Value] = if args.is_empty() { &[] } else { &args[..] };
+                    batch_fn(runtime, inputs, 1, prev_value)?
+                } else {
+                    args.push(prev_value);
+                    func.func.call(runtime, &args)?
+                };
                 acc.insert(key, new_value);
             }
             _ => {
