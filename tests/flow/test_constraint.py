@@ -990,6 +990,9 @@ class testConstraintEdges():
 
 MONITOR_ATTACHED = False
 
+# Unique graph for this class so the MONITOR filter can ignore GRAPH.CONSTRAINT
+# events from testConstraintNodes/Edges (which share GRAPH_ID) when all classes
+# run against the same master+replica pair in svc CI mode.
 REPL_GRAPH_ID = "replication_constraints"
 
 
@@ -1001,6 +1004,13 @@ class testConstraintReplication():
         self.monitor = []
         self.g = self.db.select_graph(REPL_GRAPH_ID)
 
+        self.monitor_thread = threading.Thread(target=self.monitor_thread, daemon=True)
+        self.monitor_thread.start()
+
+        # wait for monitor thread to attach
+        while MONITOR_ATTACHED is False:
+            time.sleep(0.2)
+
         # clear DB
         self.source.delete(REPL_GRAPH_ID)
 
@@ -1008,43 +1018,17 @@ class testConstraintReplication():
         self.source.execute_command("WAIT", 1, 0)
 
     def monitor_thread(self):
-        # In svc CI mode all test classes share one master+replica pair, so
-        # earlier classes' GRAPH.CONSTRAINT commands on the shared "constraints"
-        # graph can still be replicating when this test starts. Filtering on
-        # this class's own unique graph name (REPL_GRAPH_ID) is the only
-        # reliable way to ignore leaked events from those other classes.
         global MONITOR_ATTACHED
-        graph_token = f'"{REPL_GRAPH_ID}"'
         try:
-            conn = self.replica.connection_pool.make_connection()
-            conn.connect()
-            conn.send_command("MONITOR")
-            conn.read_response()
-            MONITOR_ATTACHED = True
-            sock = conn._sock
-            sock.settimeout(None)
-            buf = b""
-            while True:
-                chunk = sock.recv(4096)
-                if not chunk:
-                    break
-                buf += chunk
-                while b"\n" in buf:
-                    line, buf = buf.split(b"\n", 1)
-                    line = line.rstrip(b"\r").decode("utf-8", errors="replace")
-                    if 'GRAPH.CONSTRAINT' in line and graph_token in line:
-                        self.monitor.append({"command": line})
-        except Exception:
+            with self.replica.monitor() as m:
+                MONITOR_ATTACHED = True
+                for cmd in m.listen():
+                    if 'GRAPH.CONSTRAINT' in cmd['command'] and REPL_GRAPH_ID in cmd['command']:
+                        self.monitor.append(cmd)
+        except:
             pass
 
     def test_01_constraint_replication(self):
-        global MONITOR_ATTACHED
-        MONITOR_ATTACHED = False
-        self.monitor_t = threading.Thread(target=self.monitor_thread, daemon=True)
-        self.monitor_t.start()
-        while MONITOR_ATTACHED is False:
-            time.sleep(0.05)
-
         # create mandatory node constraint over Person height
         create_mandatory_node_constraint(self.g, 'Person', 'height')
 
