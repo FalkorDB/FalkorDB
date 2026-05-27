@@ -274,9 +274,24 @@ unsafe extern "C" fn graph_aux_load(
 /// pthread_atfork prepare handler: materialize all pending GraphBLAS operations
 /// before fork so the child process doesn't encounter held internal locks.
 ///
+/// Only runs on the main thread (BGSAVE path). For non-main-thread forks
+/// (RediSearch's ForkGC), we return immediately — mirroring the C port's
+/// `_ForkPrepare`, which also opts out of graph-side synchronization for
+/// ForkGC forks. That avoids a three-way deadlock between the writer's
+/// RediSearch FFI calls (which take RediSearch's internal RWLock) and
+/// ForkGC (which holds that RWLock across `fork()`).
+///
+/// On the main thread, BGSAVE is invoked from the Redis command loop which
+/// already holds the GIL. Writers cannot be mid-mutation against the graph
+/// at the moment BGSAVE forks because every writer must briefly take the
+/// GIL during its commit phase, and the main thread holds it now.
+///
 /// # Safety
 /// Called by libc before fork. Accesses graphs via data_ptr() (bypassing RwLock).
 pub unsafe extern "C" fn pre_fork_prepare() {
+    if !graph::thread_id::is_main_thread() {
+        return;
+    }
     let registry = crate::graph_core::GRAPH_REGISTRY.lock();
     for graph_arc in registry.values() {
         let tg: &ThreadedGraph = unsafe { &*graph_arc.data_ptr() };

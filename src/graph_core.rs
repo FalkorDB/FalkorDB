@@ -478,7 +478,9 @@ impl ThreadedGraph {
         };
         g.borrow_mut().clear_rollback_state();
 
-        // Query succeeded — now commit deferred index operations to RediSearch.
+        // Query succeeded — commit deferred index operations to RediSearch
+        // without holding the GIL; RediSearch's ForkGC would deadlock against
+        // a held GIL during its fork+exec cycle.
         runtime.commit_deferred_indexes();
 
         // If any CreateIndex carries OPTIONS, the binary effect format can't
@@ -1217,6 +1219,23 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                 reset_counter();
                 enable_tracking();
             }
+            // Lock order:
+            //   outer RwLock<ThreadedGraph> write (acquired above)
+            //     → execute_query_write WITHOUT the GIL (matrix mutations
+            //       + RediSearch FFI live here; RediSearch's ForkGC
+            //       deadlocks against a held GIL during its fork cycle)
+            //     → success path: GIL → MvccGraph::commit + signal +
+            //       replicate (one window shared by everything that
+            //       needs the GIL).
+            //     → error path: rollback runs WITHOUT the GIL (atomic
+            //       store only). GIL acquired afterwards just for
+            //       reply_error.
+            //
+            // BGSAVE forks on the main thread which holds the GIL during
+            // command dispatch. Taking the GIL immediately before
+            // `commit` guarantees no writer is mid-Arc-swap in
+            // MvccGraph::commit when fork() runs — the original #452
+            // panic.
             let res = g.execute_query_write(&ctx, &query, compact, cached, per_query_timeout);
             if mem_capacity > 0 {
                 disable_tracking();
@@ -1227,11 +1246,10 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
             }
             match res {
                 Ok(wq) => {
+                    unsafe { ffi::lock_thread_safe_ctx(ctx.ctx) };
+                    g.graph.commit(Arc::clone(&wq.graph));
                     // Signal the key as modified so WATCH gets triggered.
-                    unsafe {
-                        ffi::lock_thread_safe_ctx(ctx.ctx);
-                        ffi::signal_modified_key(ctx.ctx, key_name.as_bytes());
-                    };
+                    unsafe { ffi::signal_modified_key(ctx.ctx, key_name.as_bytes()) };
                     // Send replication while GIL is held
                     if wq.modified {
                         replicate_effects(&ctx, &key_name, wq.effects_buffer, &query);
@@ -1260,7 +1278,6 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                     // Enqueue telemetry entry for background flusher
                     telemetry::enqueue_entry(&key_name, entry);
                     drop(bc);
-                    g.graph.commit(wq.graph);
                     let value = g.graph.read().borrow().maybe_flush_caches();
                     if let Err(e) = value {
                         redis_module::logging::log_warning(format!(
@@ -1269,11 +1286,17 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                     }
                 }
                 Err(err) => {
-                    let cerr = ffi::sanitise_error(err);
-                    unsafe { ffi::reply_error(ctx.ctx, cerr.as_ptr()) };
-                    drop(bc);
-                    unsafe { ffi::free_thread_safe_context(ctx.ctx) };
                     g.graph.rollback();
+                    let cerr = ffi::sanitise_error(err);
+                    // reply_error on a blocked-client ThreadSafeContext
+                    // writes into the client's reply buffer; the buffer is
+                    // synchronized by the blocked-client machinery, so the
+                    // module GIL is not required.
+                    unsafe {
+                        ffi::reply_error(ctx.ctx, cerr.as_ptr());
+                        ffi::free_thread_safe_context(ctx.ctx);
+                    };
+                    drop(bc);
                 }
             }
             // Release write lock after each message.

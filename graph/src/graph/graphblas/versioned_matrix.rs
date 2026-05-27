@@ -187,6 +187,13 @@ impl VersionedMatrix {
         self.dm.wait();
     }
 
+    /// Returns true if every internal matrix has no pending GraphBLAS
+    /// operations — i.e. wait_all was effective.
+    #[must_use]
+    pub fn is_synced(&self) -> bool {
+        self.m.is_synced() && self.dp.is_synced() && self.dm.is_synced()
+    }
+
     #[must_use]
     pub fn memory_usage(&self) -> usize {
         self.m.memory_usage() + self.dp.memory_usage() + self.dm.memory_usage()

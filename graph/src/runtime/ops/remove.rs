@@ -94,7 +94,7 @@ impl Runtime<'_> {
                         .child(1)
                         .children()
                         .filter_map(|c| match c.data() {
-                            ExprIR::String(label) => Some(label.clone()),
+                            ExprIR::Constant(Value::String(label)) => Some(label.clone()),
                             _ => None,
                         })
                         .collect::<OrderSet<_>>();
