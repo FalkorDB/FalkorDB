@@ -190,7 +190,8 @@ static AlgebraicExpression **_AlgebraicExpression_IsolateVariableLenExps
 		QGNode *dest = QueryGraph_GetNodeByAlias(qg,
 				AlgebraicExpression_Dest(exp));
 
-		if(QGNode_Labeled(dest)) {
+		if(QGNode_Labeled(dest) &&
+		   AlgebraicExpression_Diagonal(AlgebraicExpression_DestOperand(exp))) {
 			// remove dest node matrix from expression
 			op = AlgebraicExpression_RemoveDest(&exp);
 		}
@@ -698,4 +699,3 @@ AlgebraicExpression **AlgebraicExpression_FromQueryGraph
 	QueryGraph_Free(g);
 	return exps;
 }
-
