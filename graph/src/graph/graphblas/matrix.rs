@@ -763,7 +763,7 @@ impl Matrix {
     }
 
     pub fn wait(&self) {
-        if !self.has_pending.load(Ordering::Relaxed) {
+        if !self.has_pending.load(Ordering::Acquire) {
             return;
         }
         let lock = self.lock.lock();
@@ -775,7 +775,7 @@ impl Matrix {
             let info = GrB_Matrix_wait(*self.m, GrB_WaitMode::GrB_MATERIALIZE as _);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
-        self.has_pending.store(false, Ordering::Relaxed);
+        self.has_pending.store(false, Ordering::Release);
         drop(lock);
     }
 
@@ -905,6 +905,24 @@ pub trait Dup<T> {
 
 impl Dup<Self> for Matrix {
     fn dup(&self) -> Self {
+        // Serialize against concurrent `wait()` on a shared-handle clone
+        // (e.g. BGSAVE main thread calling `wait_all` on the committed
+        // snapshot while a writer thread duplicates the same Matrix to
+        // build a new MVCC version). `Cow<Matrix>::new_version` performs
+        // a shallow clone, so both Cow instances share `lock` and
+        // `has_pending` — taking the lock here closes the race with
+        // `wait()`, which takes the same lock before mutating GrB state.
+        let pending = self.has_pending.load(Ordering::Acquire);
+        let _guard = if pending {
+            Some(self.lock.lock())
+        } else {
+            None
+        };
+        let dup_pending = if pending {
+            self.has_pending.load(Ordering::Relaxed)
+        } else {
+            false
+        };
         Self {
             m: Arc::new(unsafe {
                 let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
@@ -917,7 +935,7 @@ impl Dup<Self> for Matrix {
                 m.assume_init()
             }),
             lock: Arc::new(Mutex::new(())),
-            has_pending: Arc::new(AtomicBool::new(self.has_pending.load(Ordering::Relaxed))),
+            has_pending: Arc::new(AtomicBool::new(dup_pending)),
         }
     }
 }
