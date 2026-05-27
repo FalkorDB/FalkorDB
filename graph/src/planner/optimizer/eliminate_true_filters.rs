@@ -90,15 +90,7 @@ fn substitute_params(
         if let ExprIR::Parameter(name) = result.node(idx).data()
             && let Some(val) = params.get(name)
         {
-            let replacement = match val {
-                Value::Null => ExprIR::Null,
-                Value::Bool(b) => ExprIR::Bool(*b),
-                Value::Int(n) => ExprIR::Integer(*n),
-                Value::Float(f) => ExprIR::Float(*f),
-                Value::String(s) => ExprIR::String(s.clone()),
-                _ => continue,
-            };
-            *result.node_mut(idx).data_mut() = replacement;
+            *result.node_mut(idx).data_mut() = ExprIR::Constant(val.clone());
         }
     }
     result

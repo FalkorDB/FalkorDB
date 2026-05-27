@@ -30,7 +30,7 @@
 use super::{FnType, Functions, Type};
 use crate::runtime::{runtime::Runtime, string_pool, value::Value};
 use std::sync::Arc;
-use thin_vec::{ThinVec, thin_vec};
+use thin_vec::thin_vec;
 
 pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "intern",
@@ -38,9 +38,9 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Union(vec![Type::String, Type::Null]),
         non_deterministic,
         fn intern(_runtime, args) {
-            match args.into_iter().next() {
+            match args.first() {
                 Some(Value::String(s)) => {
-                    Ok(Value::String(string_pool::global().intern(s)))
+                    Ok(Value::String(string_pool::global().intern(Arc::clone(s))))
                 }
                 Some(Value::Null) => Ok(Value::Null),
                 _ => unreachable!(),
@@ -56,12 +56,12 @@ pub fn register(funcs: &mut Functions) {
         ],
         ret: Type::Union(vec![Type::String, Type::Null]),
         fn substring(_runtime, args) {
-            let mut iter = args.into_iter();
+            let mut iter = args.iter();
             match (iter.next(), iter.next(), iter.next()) {
                 // Handle NULL input case
                 (Some(Value::Null), _, _) => Ok(Value::Null),
                 // Two-argument version: (string, start)
-                (Some(Value::String(s)), Some(Value::Int(start)), None) => {
+                (Some(Value::String(s)), Some(&Value::Int(start)), None) => {
                     if start < 0 {
                         return Err("start must be a non-negative integer".into());
                     }
@@ -74,7 +74,7 @@ pub fn register(funcs: &mut Functions) {
                 }
 
                 // Three-argument version: (string, start, length)
-                (Some(Value::String(s)), Some(Value::Int(start)), Some(Value::Int(length))) => {
+                (Some(Value::String(s)), Some(&Value::Int(start)), Some(&Value::Int(length))) => {
                     if start < 0 {
                         return Err("start must be a non-negative integer".into());
                     }
@@ -107,7 +107,7 @@ pub fn register(funcs: &mut Functions) {
         ],
         ret: Type::Union(vec![Type::List(Box::new(Type::String)), Type::Null]),
         fn split(_runtime, args) {
-            let mut iter = args.into_iter();
+            let mut iter = args.iter();
             match (iter.next(), iter.next()) {
                 (Some(Value::String(string)), Some(Value::String(delimiter))) => {
                     if string.is_empty() {
@@ -140,7 +140,7 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::String, Type::Null])],
         ret: Type::Union(vec![Type::String, Type::Null]),
         fn string_to_lower(_runtime, args) {
-            match args.into_iter().next() {
+            match args.first() {
                 Some(Value::String(s)) => {
                     // Match C behavior: detect replacement character which indicates invalid UTF-8
                     // In the C version, str_tolower returns NULL on invalid UTF-8 (c == -1)
@@ -162,7 +162,7 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::String, Type::Null])],
         ret: Type::Union(vec![Type::String, Type::Null]),
         fn string_to_upper(_runtime, args) {
-            match args.into_iter().next() {
+            match args.first() {
                 Some(Value::String(s)) => {
                     // Match C behavior: detect replacement character which indicates invalid UTF-8
                     // In the C version, str_toupper returns NULL on invalid UTF-8 (c == -1)
@@ -188,7 +188,7 @@ pub fn register(funcs: &mut Functions) {
         ],
         ret: Type::Union(vec![Type::String, Type::Null]),
         fn string_replace(_runtime, args) {
-            let mut iter = args.into_iter();
+            let mut iter = args.iter();
             match (iter.next(), iter.next(), iter.next()) {
                 (Some(Value::String(s)), Some(Value::String(search)), Some(Value::String(replacement))) => {
                     Ok(Value::String(Arc::new(
@@ -211,9 +211,9 @@ pub fn register(funcs: &mut Functions) {
         ],
         ret: Type::Union(vec![Type::String, Type::Null]),
         fn string_left(_runtime, args) {
-            let mut iter = args.into_iter();
+            let mut iter = args.iter();
             match (iter.next(), iter.next()) {
-                (Some(Value::String(s)), Some(Value::Int(n))) => {
+                (Some(Value::String(s)), Some(&Value::Int(n))) => {
                     if n < 0 {
                         Err(String::from("length must be a non-negative integer"))
                     } else {
@@ -234,7 +234,7 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::String, Type::Null])],
         ret: Type::Union(vec![Type::String, Type::Null]),
         fn string_ltrim(_runtime, args) {
-            match args.into_iter().next() {
+            match args.first() {
                 Some(Value::String(s)) => Ok(Value::String(Arc::new(String::from(
                     s.trim_start_matches(' '),
                 )))),
@@ -249,7 +249,7 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::String, Type::Null])],
         ret: Type::Union(vec![Type::String, Type::Null]),
         fn string_rtrim(_runtime, args) {
-            match args.into_iter().next() {
+            match args.first() {
                 Some(Value::String(s)) => Ok(Value::String(Arc::new(String::from(
                     s.trim_end_matches(' '),
                 )))),
@@ -264,7 +264,7 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::String, Type::Null])],
         ret: Type::Union(vec![Type::String, Type::Null]),
         fn string_trim(_runtime, args) {
-            match args.into_iter().next() {
+            match args.first() {
                 Some(Value::String(s)) => Ok(Value::String(Arc::new(String::from(s.trim_matches(' '))))),
                 Some(Value::Null) => Ok(Value::Null),
 
@@ -280,9 +280,9 @@ pub fn register(funcs: &mut Functions) {
         ],
         ret: Type::Union(vec![Type::String, Type::Null]),
         fn string_right(_runtime, args) {
-            let mut iter = args.into_iter();
+            let mut iter = args.iter();
             match (iter.next(), iter.next()) {
-                (Some(Value::String(s)), Some(Value::Int(n))) => {
+                (Some(Value::String(s)), Some(&Value::Int(n))) => {
                     if n < 0 {
                         Err(String::from("length must be a non-negative integer"))
                     } else {
@@ -385,19 +385,19 @@ pub fn register(funcs: &mut Functions) {
                 result
             }
 
-            let mut iter = args.into_iter();
+            let mut iter = args.iter();
 
             let first = iter.next().unwrap();
 
             match (first, iter.next()) {
                 (Value::List(vec), Some(Value::String(s))) => {
-                    let strings = to_string_vec(&vec)?;
+                    let strings = to_string_vec(vec)?;
                     let size = compute_join_length(&strings, s.as_str())?;
                     let joined = join_with_preallocate(&strings, s.as_str(), size);
                     Ok(Value::String(Arc::new(joined)))
                 }
                 (Value::List(vec), None) => {
-                    let strings = to_string_vec(&vec)?;
+                    let strings = to_string_vec(vec)?;
                     let size = compute_join_length(&strings, "")?;
                     let joined = join_with_preallocate(&strings, "", size);
                     Ok(Value::String(Arc::new(joined)))
@@ -415,7 +415,7 @@ pub fn register(funcs: &mut Functions) {
         ],
         ret: Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
         fn string_match_reg_ex(_runtime, args) {
-            let mut iter = args.into_iter();
+            let mut iter = args.iter();
             match (iter.next(), iter.next()) {
                 (Some(Value::String(text)), Some(Value::String(pattern))) => {
                     match regex::Regex::new(pattern.as_str()) {
@@ -457,7 +457,7 @@ pub fn register(funcs: &mut Functions) {
         ],
         ret: Type::Union(vec![Type::String, Type::Null]),
         fn string_replace_reg_ex(_runtime, args) {
-            let mut iter = args.into_iter();
+            let mut iter = args.iter();
             let text = iter.next();
             let pattern = iter.next();
             let replacement = iter.next(); // May be None (optional third argument)

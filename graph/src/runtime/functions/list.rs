@@ -43,10 +43,10 @@ pub fn register(funcs: &mut Functions) {
         ])],
         ret: Type::Union(vec![Type::Int, Type::Null]),
         fn size(_, args) {
-            match args.into_iter().next() {
-                Some(Value::String(s)) => Ok(Value::Int(s.chars().count() as i64)),
-                Some(Value::List(v)) => Ok(Value::Int(v.len() as i64)),
-                Some(Value::Null) => Ok(Value::Null),
+            match &args[0] {
+                Value::String(s) => Ok(Value::Int(s.chars().count() as i64)),
+                Value::List(v) => Ok(Value::Int(v.len() as i64)),
+                Value::Null => Ok(Value::Null),
                 _ => unreachable!(),
             }
         }
@@ -59,15 +59,15 @@ pub fn register(funcs: &mut Functions) {
         ])],
         ret: Type::Any,
         fn head(_, args) {
-            match args.into_iter().next() {
-                Some(Value::List(v)) => {
+            match &args[0] {
+                Value::List(v) => {
                     if v.is_empty() {
                         Ok(Value::Null)
                     } else {
                         Ok(v[0].clone())
                     }
                 }
-                Some(Value::Null) => Ok(Value::Null),
+                Value::Null => Ok(Value::Null),
                 _ => unreachable!(),
             }
         }
@@ -80,9 +80,9 @@ pub fn register(funcs: &mut Functions) {
         ])],
         ret: Type::Any,
         fn last(_, args) {
-            match args.into_iter().next() {
-                Some(Value::List(v)) => Ok(v.last().cloned().unwrap_or(Value::Null)),
-                Some(Value::Null) => Ok(Value::Null),
+            match &args[0] {
+                Value::List(v) => Ok(v.last().cloned().unwrap_or(Value::Null)),
+                Value::Null => Ok(Value::Null),
                 _ => unreachable!(),
             }
         }
@@ -95,15 +95,15 @@ pub fn register(funcs: &mut Functions) {
         ])],
         ret: Type::Any,
         fn tail(_, args) {
-            match args.into_iter().next() {
-                Some(Value::List(v)) => {
+            match &args[0] {
+                Value::List(v) => {
                     if v.is_empty() {
                         Ok(Value::List(Arc::new(thin_vec![])))
                     } else {
                         Ok(Value::List(Arc::new(v[1..].iter().cloned().collect::<ThinVec<_>>())))
                     }
                 }
-                Some(Value::Null) => Ok(Value::Null),
+                Value::Null => Ok(Value::Null),
                 _ => unreachable!(),
             }
         }
@@ -121,13 +121,14 @@ pub fn register(funcs: &mut Functions) {
             Type::Null,
         ]),
         fn reverse(_, args) {
-            match args.into_iter().next() {
-                Some(Value::List(mut v)) => {
+            match &args[0] {
+                Value::List(v) => {
+                    let mut v = Arc::clone(v);
                     Arc::make_mut(&mut v).reverse();
                     Ok(Value::List(v))
                 }
-                Some(Value::String(s)) => Ok(Value::String(Arc::new(s.chars().rev().collect()))),
-                Some(Value::Null) => Ok(Value::Null),
+                Value::String(s) => Ok(Value::String(Arc::new(s.chars().rev().collect()))),
+                Value::Null => Ok(Value::Null),
                 _ => unreachable!(),
             }
         }
@@ -143,17 +144,16 @@ pub fn register(funcs: &mut Functions) {
         ],
         ret: Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
         fn list_remove(_, args) {
-            let mut it = args.into_iter();
-            let list = it.next();
-            let index = it.next();
-            let count = it.next();
+            let list = args.first();
+            let index = args.get(1);
+            let count = args.get(2);
 
             match list {
                 Some(Value::Null) => Ok(Value::Null),
                 Some(Value::List(vs)) => {
-                    let Some(Value::Int(idx)) = index else { return Ok(Value::Null) };
+                    let Some(&Value::Int(idx)) = index else { return Ok(Value::Null) };
                     let count = match count {
-                        Some(Value::Int(c)) => c,
+                        Some(&Value::Int(c)) => c,
                         None => 1,
                         _ => return Ok(Value::Null),
                     };
@@ -162,7 +162,7 @@ pub fn register(funcs: &mut Functions) {
                     let normalized = if idx < 0 { len + idx } else { idx };
                     // Out of range or non-positive count: return original
                     if normalized < 0 || normalized >= len || count <= 0 {
-                        return Ok(Value::List(vs));
+                        return Ok(Value::List(Arc::clone(vs)));
                     }
                     let start = normalized as usize;
                     let end = ((normalized + count) as usize).min(vs.len());
@@ -185,15 +185,14 @@ pub fn register(funcs: &mut Functions) {
         ],
         ret: Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
         fn list_sort(_, args) {
-            let mut it = args.into_iter();
-            let list = it.next();
-            let ascending = it.next();
+            let list = args.first();
+            let ascending = args.get(1);
 
             match list {
                 Some(Value::Null) => Ok(Value::Null),
                 Some(Value::List(vs)) => {
                     let asc = match ascending {
-                        Some(Value::Bool(b)) => b,
+                        Some(&Value::Bool(b)) => b,
                         None => true,
                         _ => return Ok(Value::Null),
                     };
@@ -220,22 +219,21 @@ pub fn register(funcs: &mut Functions) {
         ],
         ret: Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
         fn list_insert(_, args) {
-            let mut it = args.into_iter();
-            let list = it.next();
-            let index = it.next();
-            let value = it.next();
-            let allow_dup = it.next();
+            let list = args.first();
+            let index = args.get(1);
+            let value = args.get(2);
+            let allow_dup = args.get(3);
 
             match list {
                 Some(Value::Null) => Ok(Value::Null),
                 Some(Value::List(vs)) => {
-                    let Some(Value::Int(idx)) = index else { return Ok(Value::Null) };
+                    let Some(&Value::Int(idx)) = index else { return Ok(Value::Null) };
                     let val = match value {
-                        Some(Value::Null) | None => return Ok(Value::List(vs)),
-                        Some(v) => v,
+                        Some(Value::Null) | None => return Ok(Value::List(Arc::clone(vs))),
+                        Some(v) => v.clone(),
                     };
                     let allow_dup = match allow_dup {
-                        Some(Value::Bool(b)) => b,
+                        Some(&Value::Bool(b)) => b,
                         None => true,
                         _ => return Ok(Value::Null),
                     };
@@ -244,10 +242,10 @@ pub fn register(funcs: &mut Functions) {
                     let normalized = if idx < 0 { len + idx + 1 } else { idx };
                     // Out of range: return original
                     if normalized < 0 || normalized > len {
-                        return Ok(Value::List(vs));
+                        return Ok(Value::List(Arc::clone(vs)));
                     }
                     if !allow_dup && vs.contains(&val) {
-                        return Ok(Value::List(vs));
+                        return Ok(Value::List(Arc::clone(vs)));
                     }
                     let pos = normalized as usize;
                     let mut result = ThinVec::with_capacity(vs.len() + 1);
@@ -272,30 +270,29 @@ pub fn register(funcs: &mut Functions) {
         ],
         ret: Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
         fn list_insert_list_elements(_, args) {
-            let mut it = args.into_iter();
-            let list = it.next();
-            let list2 = it.next();
-            let index = it.next();
-            let allow_dup = it.next();
+            let list = args.first();
+            let list2 = args.get(1);
+            let index = args.get(2);
+            let allow_dup = args.get(3);
 
             match list {
                 Some(Value::Null) => Ok(Value::Null),
                 Some(Value::List(vs)) => {
                     let vals = match list2 {
-                        Some(Value::Null) | None => return Ok(Value::List(vs)),
+                        Some(Value::Null) | None => return Ok(Value::List(Arc::clone(vs))),
                         Some(Value::List(v)) => v,
                         _ => unreachable!(),
                     };
-                    let Some(Value::Int(idx)) = index else { return Ok(Value::Null) };
+                    let Some(&Value::Int(idx)) = index else { return Ok(Value::Null) };
                     let allow_dup = match allow_dup {
-                        Some(Value::Bool(b)) => b,
+                        Some(&Value::Bool(b)) => b,
                         None => true,
                         _ => return Ok(Value::Null),
                     };
                     let len = vs.len() as i64;
                     let normalized = if idx < 0 { len + idx + 1 } else { idx };
                     if normalized < 0 || normalized > len {
-                        return Ok(Value::List(vs));
+                        return Ok(Value::List(Arc::clone(vs)));
                     }
                     let pos = normalized as usize;
                     // Filter for duplicates if needed
@@ -329,9 +326,9 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null])],
         ret: Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
         fn list_dedup(_, args) {
-            match args.into_iter().next() {
-                Some(Value::Null) => Ok(Value::Null),
-                Some(Value::List(vs)) => {
+            match &args[0] {
+                Value::Null => Ok(Value::Null),
+                Value::List(vs) => {
                     let mut seen = ThinVec::<Value>::new();
                     for v in vs.iter() {
                         if !seen.contains(v) {

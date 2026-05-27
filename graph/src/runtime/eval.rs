@@ -178,11 +178,7 @@ impl<'a> ExprEval<'a> {
     ) -> Result<Value, String> {
         // Fast-path early returns for leaf / simple nodes.
         match ir.node(idx).data() {
-            ExprIR::Null => return Ok(Value::Null),
-            ExprIR::Bool(x) => return Ok(Value::Bool(*x)),
-            ExprIR::Integer(x) => return Ok(Value::Int(*x)),
-            ExprIR::Float(x) => return Ok(Value::Float(*x)),
-            ExprIR::String(x) => return Ok(Value::String(x.clone())),
+            ExprIR::Constant(v) => return Ok(v.clone()),
             ExprIR::Variable(x) => {
                 return Self::resolve_var(env, x);
             }
@@ -199,7 +195,7 @@ impl<'a> ExprEval<'a> {
                         .children()
                         .map(|child| {
                             Ok((
-                                if let ExprIR::String(key) = child.data() {
+                                if let ExprIR::Constant(Value::String(key)) = child.data() {
                                     key.clone()
                                 } else {
                                     return Err("Map key must be a string".into());
@@ -251,11 +247,7 @@ impl<'a> ExprEval<'a> {
         while let Some((idx, reenter)) = stack.pop() {
             let node = ir.node(idx);
             match node.data() {
-                ExprIR::Null => res.push(Value::Null),
-                ExprIR::Bool(x) => res.push(Value::Bool(*x)),
-                ExprIR::Integer(x) => res.push(Value::Int(*x)),
-                ExprIR::Float(x) => res.push(Value::Float(*x)),
-                ExprIR::String(x) => res.push(Value::String(x.clone())),
+                ExprIR::Constant(v) => res.push(v.clone()),
                 ExprIR::Variable(x) => res.push(Self::resolve_var(env, x)?),
                 ExprIR::Parameter(x) => res.push(self.rt()?.parameters.get(x).map_or_else(
                     || Err(format!("Parameter {x} not found")),
@@ -588,12 +580,42 @@ impl<'a> ExprEval<'a> {
                             None => Ok(acc),
                         };
                     }
-                    let mut args = node
-                        .children()
-                        .map(|child| self.eval(ir, child.idx(), env, agg_group_key))
-                        .collect::<Result<ThinVec<_>, _>>()?;
+                    // Fast path for struct-constructor functions (duration,
+                    // date, point, ...): when the binder rewrote a
+                    // `{key: value}` map call into positional children, write
+                    // child values into a stack array and dispatch the
+                    // slice-based struct_fn directly. Bypasses the per-row
+                    // ThinVec<Value> heap alloc, the validate_args_type walk,
+                    // and the Arc<RuntimeFn> dispatch hop. The
+                    // `num_children > 1` guard distinguishes the rewritten
+                    // positional form from the regular `duration({...})` call
+                    // with a single Map argument. Max 10 slots
+                    // (matches `localdatetime`).
+                    if let Some(struct_fn) = func.struct_fn
+                        && node.num_children() > 1
+                    {
+                        let n = node.num_children();
+                        debug_assert!(n <= 10);
+                        let mut slots: [Value; 10] = std::array::from_fn(|_| Value::Null);
+                        for (i, child) in node.children().enumerate() {
+                            if !matches!(child.data(), ExprIR::Constant(Value::Null)) {
+                                slots[i] = self.eval(ir, child.idx(), env, agg_group_key)?;
+                            }
+                        }
+                        res.push(struct_fn(&slots[..n])?);
+                        continue;
+                    }
+                    // Distinct-prefixed aggregate (e.g. `count(DISTINCT x, acc)`):
+                    // the first child carries the already-deduplicated list;
+                    // flatten it with the accumulator. Needs owned ownership of
+                    // the inner list to avoid a copy, so it stays on the
+                    // ThinVec path.
                     if node.num_children() == 2 && matches!(node.child(0).data(), ExprIR::Distinct)
                     {
+                        let mut args = node
+                            .children()
+                            .map(|child| self.eval(ir, child.idx(), env, agg_group_key))
+                            .collect::<Result<ThinVec<_>, _>>()?;
                         match args.remove(0) {
                             Value::List(values) => {
                                 let mut values = Arc::unwrap_or_clone(values);
@@ -602,22 +624,41 @@ impl<'a> ExprEval<'a> {
                             }
                             _ => unreachable!(),
                         }
+                        func.validate_args_type(&args)?;
+                        if !rt.write && func.write {
+                            return Err(String::from(
+                                "graph.RO_QUERY is to be executed only on read-only queries",
+                            ));
+                        }
+                        res.push(func.func.call(rt, &args)?);
+                        continue;
                     }
 
-                    func.validate_args_type(&args)?;
+                    // Common path: evaluate children directly onto the shared
+                    // `res` stack and pass a slice to the function. Eliminates
+                    // the per-call ThinVec<Value> heap allocation that an
+                    // intermediate `args` collection would do — same trick the
+                    // struct_fn fast path above uses with a stack array.
+                    let base = res.len();
+                    for child in node.children() {
+                        let v = self.eval(ir, child.idx(), env, agg_group_key)?;
+                        res.push(v);
+                    }
+                    func.validate_args_type(&res[base..])?;
                     if !rt.write && func.write {
                         return Err(String::from(
                             "graph.RO_QUERY is to be executed only on read-only queries",
                         ));
                     }
-
-                    res.push((func.func)(rt, args)?);
+                    let out = func.func.call(rt, &res[base..])?;
+                    res.truncate(base);
+                    res.push(out);
                 }
                 ExprIR::Map => res.push(Value::Map(Arc::new(
                     node.children()
                         .map(|child| {
                             Ok((
-                                if let ExprIR::String(key) = child.data() {
+                                if let ExprIR::Constant(Value::String(key)) = child.data() {
                                     key.clone()
                                 } else {
                                     return Err("Map key must be a string".into());
@@ -1188,8 +1229,8 @@ impl<'a> ExprEval<'a> {
                     };
                     result.insert(prop_name.clone(), value);
                 }
-                ExprIR::String(_) => {
-                    let key = if let ExprIR::String(k) = item.data() {
+                ExprIR::Constant(Value::String(_)) => {
+                    let key = if let ExprIR::Constant(Value::String(k)) = item.data() {
                         k.clone()
                     } else {
                         unreachable!();
@@ -1359,11 +1400,7 @@ pub(crate) const fn logical_xor(
 
 pub fn evaluate_param(expr: &DynNode<ExprIR<Arc<String>>>) -> Result<Value, String> {
     match expr.data() {
-        ExprIR::Null => Ok(Value::Null),
-        ExprIR::Bool(x) => Ok(Value::Bool(*x)),
-        ExprIR::Integer(x) => Ok(Value::Int(*x)),
-        ExprIR::Float(x) => Ok(Value::Float(*x)),
-        ExprIR::String(x) => Ok(Value::String(x.clone())),
+        ExprIR::Constant(v) => Ok(v.clone()),
         ExprIR::List => Ok(Value::List(Arc::new(
             expr.children()
                 .map(|c| evaluate_param(&c))
@@ -1372,7 +1409,7 @@ pub fn evaluate_param(expr: &DynNode<ExprIR<Arc<String>>>) -> Result<Value, Stri
         ExprIR::Map => Ok(Value::Map(Arc::new(
             expr.children()
                 .map(|ir| match ir.data() {
-                    ExprIR::String(key) => {
+                    ExprIR::Constant(Value::String(key)) => {
                         Ok::<_, String>((key.clone(), evaluate_param(&ir.child(0))?))
                     }
                     _ => Err("Map parameter key must be a string".into()),

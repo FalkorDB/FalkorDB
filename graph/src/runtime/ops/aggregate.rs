@@ -258,9 +258,12 @@ impl<'a> AggregateOp<'a> {
                         return None;
                     }
                 }
-                ExprIR::Bool(true) | ExprIR::Integer(_) | ExprIR::Float(_) | ExprIR::String(_)
-                    if func.name.eq_ignore_ascii_case("count") =>
-                {
+                ExprIR::Constant(
+                    Value::Bool(true)
+                    | Value::Int(_ | _)
+                    | Value::Float(_ | _)
+                    | Value::String(_ | _),
+                ) if func.name.eq_ignore_ascii_case("count") => {
                     // count(*) is represented as count(1) (or other non-null literal).
                     None
                 }
@@ -452,7 +455,7 @@ impl<'a> AggregateOp<'a> {
                         break;
                     }
 
-                    match (agg.func.func)(self.runtime, args) {
+                    match agg.func.func.call(self.runtime, &args) {
                         Ok(new_val) => acc.insert(&agg.acc_var, new_val),
                         Err(e) => {
                             errors.push(e);
@@ -624,13 +627,12 @@ impl<'a> AggregateOp<'a> {
             // Compute group hash for DISTINCT tracking.
             let agg_group_key = entry.0.hash_u64();
 
-            let mut curr = vars.clone_pooled(runtime.env_pool);
             for (_, tree) in agg {
                 if let Err(e) = Self::run_agg_expr(
                     runtime,
                     tree,
                     tree.root().idx(),
-                    &mut curr,
+                    vars,
                     &mut entry.1,
                     agg_group_key,
                 ) {
@@ -649,7 +651,7 @@ impl<'a> AggregateOp<'a> {
         runtime: &Runtime,
         ir: &DynTree<ExprIR<Variable>>,
         idx: NodeIdx<Dyn<ExprIR<Variable>>>,
-        curr: &mut Env<'a>,
+        curr: &Env<'a>,
         acc: &mut Env<'a>,
         agg_group_key: u64,
     ) -> Result<(), String> {
@@ -719,9 +721,22 @@ impl<'a> AggregateOp<'a> {
                     return Err(e);
                 }
 
-                args.push(prev_value);
-
-                let new_value = (func.func)(runtime, args)?;
+                // Prefer batch_agg when registered: it takes the accumulator
+                // by owned `Value`, so functions like `collect` get a unique
+                // `Arc` and avoid an O(n^2) deep clone per row caused by the
+                // shared ref `args` would hold if we pushed `prev_value` and
+                // called `func.func.call(&args)`.
+                let new_value = if let FnType::Aggregation {
+                    batch_agg: Some(batch_fn),
+                    ..
+                } = &func.fn_type
+                {
+                    let inputs: &[Value] = if args.is_empty() { &[] } else { &args[..] };
+                    batch_fn(runtime, inputs, 1, prev_value)?
+                } else {
+                    args.push(prev_value);
+                    func.func.call(runtime, &args)?
+                };
                 acc.insert(key, new_value);
             }
             _ => {

@@ -17,11 +17,12 @@
 //!  Next acquire() pops from free_vecs instead of allocating.
 //! ```
 //!
-//! The pool uses `RefCell` for interior mutability, which is safe because
-//! each query runs on a single thread. A fresh pool is created per query
-//! in `graph_core.rs` / `record.rs`.
+//! The pool uses `UnsafeCell` for interior mutability. Each query runs on a
+//! single thread and `Pool` is `!Sync`, so there are no concurrent borrows;
+//! the `RefCell` runtime flag would just be dead overhead on a per-row hot
+//! path.
 
-use std::cell::RefCell;
+use std::cell::UnsafeCell;
 use std::ops::{Deref, DerefMut};
 
 /// Per-query object pool for `Vec<T>` buffers.
@@ -29,7 +30,11 @@ use std::ops::{Deref, DerefMut};
 /// Reuses previously allocated `Vec`s to amortise allocation cost
 /// across millions of clones in scan/traversal loops.
 pub struct Pool<T> {
-    free_vecs: RefCell<Vec<Vec<T>>>,
+    // SAFETY invariant: only one mutable reference exists at a time. Enforced
+    // by Pool being !Sync (UnsafeCell), each query owning its own Pool, and
+    // all access being scoped inside `acquire_raw` / `release` — neither
+    // re-enters the other.
+    free_vecs: UnsafeCell<Vec<Vec<T>>>,
 }
 
 impl<T> Default for Pool<T> {
@@ -42,30 +47,33 @@ impl<T> Pool<T> {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            free_vecs: RefCell::new(Vec::new()),
+            free_vecs: UnsafeCell::new(Vec::new()),
         }
     }
 
     /// Acquire a raw `Vec<T>` from the pool (or allocate if empty).
     /// Prefer [`acquire`](Self::acquire) which returns a [`Pooled`] handle.
+    #[inline]
     pub(crate) fn acquire_raw(
         &self,
         capacity: usize,
     ) -> Vec<T> {
-        let mut free = self.free_vecs.borrow_mut();
-        free.pop().map_or_else(
-            || Vec::with_capacity(capacity),
-            |mut v| {
+        // SAFETY: see struct-level invariant.
+        let free = unsafe { &mut *self.free_vecs.get() };
+        match free.pop() {
+            Some(mut v) => {
                 v.clear();
                 if v.capacity() < capacity {
                     v.reserve(capacity - v.capacity());
                 }
                 v
-            },
-        )
+            }
+            None => Vec::with_capacity(capacity),
+        }
     }
 
     /// Acquire a [`Pooled`] handle that automatically returns the buffer on drop.
+    #[inline]
     pub fn acquire(
         &self,
         capacity: usize,
@@ -77,11 +85,14 @@ impl<T> Pool<T> {
     }
 
     /// Return a `Vec<T>` to the pool for later reuse.
+    #[inline]
     pub fn release(
         &self,
         v: Vec<T>,
     ) {
-        self.free_vecs.borrow_mut().push(v);
+        // SAFETY: see struct-level invariant.
+        let free = unsafe { &mut *self.free_vecs.get() };
+        free.push(v);
     }
 }
 
@@ -95,6 +106,7 @@ pub struct Pooled<'a, T> {
 }
 
 impl<T> Drop for Pooled<'_, T> {
+    #[inline]
     fn drop(&mut self) {
         let v = std::mem::take(&mut self.value);
         self.pool.release(v);

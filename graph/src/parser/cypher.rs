@@ -643,7 +643,9 @@ impl<'a> Parser<'a> {
                 let delimiter = if optional_match_token!(self.lexer => Fieldterminator) {
                     Arc::new(self.parse_expr(false)?)
                 } else {
-                    Arc::new(tree!(ExprIR::String(Arc::new(String::from(',')))))
+                    Arc::new(tree!(ExprIR::Constant(Value::String(Arc::new(
+                        String::from(',')
+                    )))))
                 };
                 Ok(QueryIR::LoadCsv {
                     file_path,
@@ -919,7 +921,7 @@ impl<'a> Parser<'a> {
         let skip = if optional_match_token!(self.lexer => Skip) {
             let skip = Arc::new(self.parse_expr(false)?);
             match skip.root().data() {
-                ExprIR::Integer(i) => {
+                ExprIR::Constant(Value::Int(i)) => {
                     if *i < 0 {
                         return Err(self.lexer.format_error(
                             "SKIP specified value of invalid type, must be a positive integer",
@@ -940,7 +942,7 @@ impl<'a> Parser<'a> {
         let limit = if optional_match_token!(self.lexer => Limit) {
             let limit = Arc::new(self.parse_expr(false)?);
             match limit.root().data() {
-                ExprIR::Integer(i) => {
+                ExprIR::Constant(Value::Int(i)) => {
                     if *i < 0 {
                         return Err(self.lexer.format_error(
                             "LIMIT specified value of invalid type, must be a positive integer",
@@ -1262,7 +1264,7 @@ impl<'a> Parser<'a> {
         if optional_match_token!(self.lexer => Else) {
             children.push(self.parse_expr(false)?);
         } else {
-            children.push(tree!(ExprIR::Null));
+            children.push(tree!(ExprIR::Constant(Value::Null)));
         }
         match_token!(self.lexer => End);
         Ok(tree!(
@@ -1622,21 +1624,21 @@ impl<'a> Parser<'a> {
                 ..
             } => {
                 self.lexer.next();
-                Ok((tree!(ExprIR::Null), false))
+                Ok((tree!(ExprIR::Constant(Value::Null)), false))
             }
             Token::IdentifierOrKeyword {
                 keyword: Some(Keyword::True),
                 ..
             } => {
                 self.lexer.next();
-                Ok((tree!(ExprIR::Bool(true)), false))
+                Ok((tree!(ExprIR::Constant(Value::Bool(true))), false))
             }
             Token::IdentifierOrKeyword {
                 keyword: Some(Keyword::False),
                 ..
             } => {
                 self.lexer.next();
-                Ok((tree!(ExprIR::Bool(false)), false))
+                Ok((tree!(ExprIR::Constant(Value::Bool(false))), false))
             }
             Token::IdentifierOrKeyword { .. } => {
                 let state = self.save_state();
@@ -1685,7 +1687,7 @@ impl<'a> Parser<'a> {
                                     .format_error("COUNT(DISTINCT *) is not supported"));
                             }
                             // Create args array like count(x) does
-                            let mut args = vec![tree!(ExprIR::Integer(1))]; // Dummy value for count(*)
+                            let mut args = vec![tree!(ExprIR::Constant(Value::Int(1)))]; // Dummy value for count(*)
 
                             if distinct {
                                 args = vec![tree!(ExprIR::Distinct; args)];
@@ -1745,15 +1747,15 @@ impl<'a> Parser<'a> {
             }
             Token::Integer(i) => {
                 self.lexer.next();
-                Ok((tree!(ExprIR::Integer(i)), false))
+                Ok((tree!(ExprIR::Constant(Value::Int(i))), false))
             }
             Token::Float(f) => {
                 self.lexer.next();
-                Ok((tree!(ExprIR::Float(f)), false))
+                Ok((tree!(ExprIR::Constant(Value::Float(f))), false))
             }
             Token::String(s) => {
                 self.lexer.next();
-                Ok((tree!(ExprIR::String(s)), false))
+                Ok((tree!(ExprIR::Constant(Value::String(s))), false))
             }
             Token::LBrace => {
                 self.lexer.next();
@@ -1792,8 +1794,8 @@ impl<'a> Parser<'a> {
             lhs = tree!(
                 ExprIR::GetElements,
                 lhs,
-                from.unwrap_or_else(|_| tree!(ExprIR::Integer(0))),
-                to.unwrap_or_else(|_| tree!(ExprIR::Integer(i64::MAX)))
+                from.unwrap_or_else(|_| tree!(ExprIR::Constant(Value::Int(0)))),
+                to.unwrap_or_else(|_| tree!(ExprIR::Constant(Value::Int(i64::MAX))))
             );
         } else {
             match_token!(self.lexer, RBrace);
@@ -2022,8 +2024,9 @@ impl<'a> Parser<'a> {
                             ..
                         } => {
                             while optional_match_token!(self.lexer => Is) {
-                                let is_not =
-                                    tree!(ExprIR::Bool(optional_match_token!(self.lexer => Not)));
+                                let is_not = tree!(ExprIR::Constant(Value::Bool(
+                                    optional_match_token!(self.lexer => Not)
+                                )));
                                 match_token!(self.lexer => Null);
                                 res = tree!(
                                     ExprIR::FuncInvocation(
@@ -2142,12 +2145,15 @@ impl<'a> Parser<'a> {
                 9 => {
                     // unary add or subtract
                     if matches!(res.root().data(), ExprIR::Negate)
-                        && matches!(res.root().child(0).data(), ExprIR::Integer(i64::MIN))
+                        && matches!(
+                            res.root().child(0).data(),
+                            ExprIR::Constant(Value::Int(i64::MIN))
+                        )
                     {
-                        let res = tree!(ExprIR::Integer(i64::MIN));
+                        let res = tree!(ExprIR::Constant(Value::Int(i64::MIN)));
                         parse_expr_return!(stack, res);
                         continue;
-                    } else if matches!(res.root().data(), ExprIR::Integer(i64::MIN)) {
+                    } else if matches!(res.root().data(), ExprIR::Constant(Value::Int(i64::MIN))) {
                         // This case should not happen with proper error handling
                         // i64::MIN without negation means the literal was i64::MAX + 1
                         return Err(format!(
@@ -2178,7 +2184,7 @@ impl<'a> Parser<'a> {
                         }
                     }
                     if self.lexer.current()? == Token::Colon {
-                        let labels = tree!(ExprIR::List; self.parse_labels()?.into_iter().map(|l| tree!(ExprIR::String(l))));
+                        let labels = tree!(ExprIR::List; self.parse_labels()?.into_iter().map(|l| tree!(ExprIR::Constant(Value::String(l)))));
                         res = tree!(
                             ExprIR::FuncInvocation(
                                 get_functions().get("hasLabels", &FnType::Function)?
@@ -2405,7 +2411,7 @@ impl<'a> Parser<'a> {
         Ok(tree!(
             ExprIR::ListComprehension(var.clone()),
             list_expr,
-            condition.unwrap_or_else(|| tree!(ExprIR::Bool(true))),
+            condition.unwrap_or_else(|| tree!(ExprIR::Constant(Value::Bool(true)))),
             expression.map_or_else(|| Ok::<_, String>(tree!(ExprIR::Variable(var))), Ok)?
         ))
     }
@@ -2447,7 +2453,7 @@ impl<'a> Parser<'a> {
         let condition = if optional_match_token!(self.lexer => Where) {
             self.parse_expr(allow_pattern_predicate)?
         } else {
-            tree!(ExprIR::Bool(true))
+            tree!(ExprIR::Constant(Value::Bool(true)))
         };
 
         // Pipe + result expression
@@ -2671,7 +2677,7 @@ impl<'a> Parser<'a> {
             let key = self.parse_ident()?;
             match_token!(self.lexer, Colon);
             let value = self.parse_expr(false)?;
-            attrs.push(tree!(ExprIR::String(key), value));
+            attrs.push(tree!(ExprIR::Constant(Value::String(key)), value));
 
             match self.lexer.current()? {
                 Token::Comma => self.lexer.next(),
@@ -2714,11 +2720,11 @@ impl<'a> Parser<'a> {
                 let ident = self.parse_ident()?;
                 if optional_match_token!(self.lexer, Colon) {
                     let value = self.parse_expr(false)?;
-                    items.push(tree!(ExprIR::String(ident), value));
+                    items.push(tree!(ExprIR::Constant(Value::String(ident)), value));
                 } else {
                     // variable shorthand: name -> name: name
                     items.push(tree!(
-                        ExprIR::String(ident.clone()),
+                        ExprIR::Constant(Value::String(ident.clone())),
                         tree!(ExprIR::Variable(ident))
                     ));
                 }
@@ -2860,7 +2866,7 @@ impl<'a> Parser<'a> {
                 expr = tree!(
                     ExprIR::FuncInvocation(get_functions().get("hasLabels", &FnType::Function)?),
                     expr,
-                    tree!(ExprIR::List; self.parse_labels()?.into_iter().map(|l| tree!(ExprIR::String(l))))
+                    tree!(ExprIR::List; self.parse_labels()?.into_iter().map(|l| tree!(ExprIR::Constant(Value::String(l)))))
                 );
                 remove_items.push(Arc::new(expr));
             } else {

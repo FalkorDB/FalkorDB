@@ -31,7 +31,7 @@ use std::{
     cmp::Ordering,
     collections::HashSet,
     fmt::{self},
-    hash::{DefaultHasher, Hash, Hasher},
+    hash::{Hash, Hasher},
     ops::{Add, Div, Mul, Rem, Sub},
     sync::Arc,
 };
@@ -219,9 +219,17 @@ impl Value {
 
     #[must_use]
     pub fn format_datetime(timestamp_secs: i64) -> String {
-        use chrono::{TimeZone, Utc};
+        use chrono::{Datelike, TimeZone, Timelike, Utc};
         match Utc.timestamp_opt(timestamp_secs, 0) {
-            chrono::LocalResult::Single(dt) => dt.format("%Y-%m-%dT%H:%M:%S").to_string(),
+            chrono::LocalResult::Single(dt) => format!(
+                "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
+                dt.year(),
+                dt.month(),
+                dt.day(),
+                dt.hour(),
+                dt.minute(),
+                dt.second()
+            ),
             _ => format!("<invalid timestamp: {timestamp_secs}>"),
         }
     }
@@ -229,19 +237,22 @@ impl Value {
     // Format date as ISO-8601: "2025-04-14"
     #[must_use]
     pub fn format_date(timestamp_secs: i64) -> String {
-        use chrono::{TimeZone, Utc};
-        match Utc.timestamp_opt(timestamp_secs, 0) {
-            chrono::LocalResult::Single(dt) => dt.format("%Y-%m-%d").to_string(),
-            _ => format!("<invalid timestamp: {timestamp_secs}>"),
-        }
+        let days = timestamp_secs.div_euclid(86400);
+        let (y, m, d) = civil_from_days(days);
+        let mut buf = [0u8; 10];
+        write_date_into(&mut buf, y, m, d);
+        // Safe: ASCII digits and '-'
+        unsafe { String::from_utf8_unchecked(buf.to_vec()) }
     }
 
     // Format time as ISO-8601: "06:08:21"
     #[must_use]
     pub fn format_time(timestamp_secs: i64) -> String {
-        use chrono::{TimeZone, Utc};
+        use chrono::{TimeZone, Timelike, Utc};
         match Utc.timestamp_opt(timestamp_secs, 0) {
-            chrono::LocalResult::Single(dt) => dt.format("%H:%M:%S").to_string(),
+            chrono::LocalResult::Single(dt) => {
+                format!("{:02}:{:02}:{:02}", dt.hour(), dt.minute(), dt.second())
+            }
             _ => format!("<invalid timestamp: {timestamp_secs}>"),
         }
     }
@@ -592,21 +603,19 @@ fn add_duration_to_timestamp(
     dur_secs: i64,
 ) -> Result<i64, String> {
     use crate::runtime::functions::temporal::decompose_duration;
-    use chrono::{Datelike, NaiveDate, TimeZone, Timelike, Utc};
 
     let (years, months, remaining_secs) = decompose_duration(dur_secs)?;
-    let dt = Utc
-        .timestamp_opt(ts, 0)
-        .single()
-        .ok_or("Invalid timestamp")?;
+    let days = ts.div_euclid(86400);
+    let time_of_day = ts.rem_euclid(86400);
+    let (y, m, d) = civil_from_days(days);
 
-    let new_year = dt.year() + years;
-    let new_month_raw = dt.month() as i32 + months;
+    let new_year = y + years;
+    let new_month_raw = m as i32 + months;
     let adj_year = new_year + (new_month_raw - 1).div_euclid(12);
     let adj_month = ((new_month_raw - 1).rem_euclid(12) + 1) as u32;
     let max_day = days_in_month(adj_year, adj_month);
-    let (final_year, final_month, final_day) = if dt.day() > max_day {
-        let overflow = dt.day() - max_day;
+    let (final_year, final_month, final_day) = if d > max_day {
+        let overflow = d - max_day;
         let nm = adj_month + 1;
         let (ny, nm) = if nm > 12 {
             (adj_year + 1, 1)
@@ -615,24 +624,11 @@ fn add_duration_to_timestamp(
         };
         (ny, nm, overflow)
     } else {
-        (adj_year, adj_month, dt.day())
+        (adj_year, adj_month, d)
     };
-    let _ = NaiveDate::from_ymd_opt(final_year, final_month, final_day)
-        .ok_or("Invalid resulting date")?;
 
-    let new_dt = Utc
-        .with_ymd_and_hms(
-            final_year,
-            final_month,
-            final_day,
-            dt.hour(),
-            dt.minute(),
-            dt.second(),
-        )
-        .single()
-        .ok_or("Invalid resulting date")?;
-
-    Ok(new_dt.timestamp() + remaining_secs)
+    let new_days = days_from_civil(final_year, final_month, final_day);
+    Ok(new_days * 86400 + time_of_day + remaining_secs)
 }
 
 /// Subtract a duration from a timestamp.
@@ -641,47 +637,91 @@ fn sub_duration_from_timestamp(
     dur_secs: i64,
 ) -> Result<i64, String> {
     use crate::runtime::functions::temporal::decompose_duration;
-    use chrono::{Datelike, TimeZone, Timelike, Utc};
 
     let (years, months, remaining_secs) = decompose_duration(dur_secs)?;
-    let dt = Utc
-        .timestamp_opt(ts, 0)
-        .single()
-        .ok_or("Invalid timestamp")?;
+    let days = ts.div_euclid(86400);
+    let time_of_day = ts.rem_euclid(86400);
+    let (y, m, d) = civil_from_days(days);
 
-    let new_year = dt.year() - years;
-    let new_month_raw = dt.month() as i32 - months;
+    let new_year = y - years;
+    let new_month_raw = m as i32 - months;
     let adj_year = new_year + (new_month_raw - 1).div_euclid(12);
     let adj_month = ((new_month_raw - 1).rem_euclid(12) + 1) as u32;
     let max_day = days_in_month(adj_year, adj_month);
-    let day = dt.day().min(max_day);
+    let day = d.min(max_day);
 
-    let new_dt = Utc
-        .with_ymd_and_hms(
-            adj_year,
-            adj_month,
-            day,
-            dt.hour(),
-            dt.minute(),
-            dt.second(),
-        )
-        .single()
-        .ok_or("Invalid resulting date")?;
-
-    Ok(new_dt.timestamp() - remaining_secs)
+    let new_days = days_from_civil(adj_year, adj_month, day);
+    Ok(new_days * 86400 + time_of_day - remaining_secs)
 }
 
 fn days_in_month(
     year: i32,
     month: u32,
 ) -> u32 {
-    use chrono::{Datelike, NaiveDate};
-    if month == 12 {
-        NaiveDate::from_ymd_opt(year + 1, 1, 1)
+    const DAYS: [u32; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    if month == 2 && is_leap(year) {
+        29
     } else {
-        NaiveDate::from_ymd_opt(year, month + 1, 1)
+        DAYS[(month - 1) as usize]
     }
-    .map_or(30, |d| d.pred_opt().unwrap().day())
+}
+
+const fn is_leap(year: i32) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+}
+
+/// Howard Hinnant's `days_from_civil`: civil (y/m/d) -> days since 1970-01-01.
+/// Works for any proleptic Gregorian date.
+#[must_use]
+pub const fn days_from_civil(
+    y: i32,
+    m: u32,
+    d: u32,
+) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400) as i64;
+    let yoe = y.rem_euclid(400) as i64; // [0, 399]
+    let m = m as i64;
+    let d = d as i64;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1; // [0, 365]
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // [0, 146096]
+    era * 146097 + doe - 719468
+}
+
+/// Howard Hinnant's `civil_from_days`: days since 1970-01-01 -> (y, m, d).
+#[must_use]
+pub const fn civil_from_days(z: i64) -> (i32, u32, u32) {
+    let z = z + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z.rem_euclid(146097); // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; // [0, 399]
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
+    let y = if m <= 2 { y + 1 } else { y };
+    (y as i32, m, d)
+}
+
+/// Write "YYYY-MM-DD" into buf[0..10]. buf must be at least 10 bytes.
+fn write_date_into(
+    buf: &mut [u8],
+    y: i32,
+    m: u32,
+    d: u32,
+) {
+    let yr = y.unsigned_abs();
+    buf[0] = b'0' + ((yr / 1000) % 10) as u8;
+    buf[1] = b'0' + ((yr / 100) % 10) as u8;
+    buf[2] = b'0' + ((yr / 10) % 10) as u8;
+    buf[3] = b'0' + (yr % 10) as u8;
+    buf[4] = b'-';
+    buf[5] = b'0' + ((m / 10) % 10) as u8;
+    buf[6] = b'0' + (m % 10) as u8;
+    buf[7] = b'-';
+    buf[8] = b'0' + ((d / 10) % 10) as u8;
+    buf[9] = b'0' + (d % 10) as u8;
 }
 
 impl Hash for Value {

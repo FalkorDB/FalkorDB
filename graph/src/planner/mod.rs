@@ -40,6 +40,7 @@ use std::{
 };
 
 use crate::runtime::functions::Type;
+use crate::runtime::value::Value;
 use crate::tree;
 
 use orx_tree::{Bfs, DynNode, DynTree, NodeRef, Side, Traversal, Traverser};
@@ -588,8 +589,8 @@ pub(super) fn inline_attrs_to_filter(
     let mut filters: Vec<DynTree<ExprIR<Variable>>> = vec![];
 
     for attr in attrs.root().children() {
-        let ExprIR::String(attr_str) = attr.data() else {
-            unreachable!("inline attrs map children must be ExprIR::String keys");
+        let ExprIR::Constant(Value::String(attr_str)) = attr.data() else {
+            unreachable!("inline attrs map children must be ExprIR::Constant(Value::String) keys");
         };
         let eq = tree!(
             ExprIR::Eq,
@@ -770,7 +771,7 @@ impl Planner {
                 let where_tree = {
                     let t =
                         self.extract_pattern_comprehensions(&node.child(0), scope_id, extracted);
-                    if matches!(t.root().data(), ExprIR::Bool(true)) {
+                    if matches!(t.root().data(), ExprIR::Constant(Value::Bool(true))) {
                         None
                     } else {
                         Some(Arc::new(t))
@@ -837,7 +838,6 @@ impl Planner {
         paths: &[Arc<QueryPath<Variable>>],
     ) -> DynTree<IR> {
         use crate::runtime::functions::{FnType, get_functions};
-        use crate::runtime::value::Value;
 
         let saved = self.visited.clone();
         let mut sub_plan = self.plan_match(graph, None);
@@ -1053,7 +1053,7 @@ impl Planner {
                 non_scalar_trees.push(child_tree);
             } else {
                 // Skip trivial Bool(true) from extractable pattern replacement
-                if !matches!(child.data(), ExprIR::Bool(true)) {
+                if !matches!(child.data(), ExprIR::Constant(Value::Bool(true))) {
                     scalar_parts.push(child.clone_as_tree());
                 }
             }
@@ -1111,7 +1111,7 @@ impl Planner {
                 if can_extract {
                     // Top-level conjunct: extract for SemiApply, replace with true.
                     extractable.push((graph.clone(), false));
-                    DynTree::new(ExprIR::Bool(true))
+                    DynTree::new(ExprIR::Constant(Value::Bool(true)))
                 } else {
                     // Under OR/NOT: replace with a fresh boolean variable and
                     // record for inline handling via expr_to_plan.
@@ -1136,7 +1136,7 @@ impl Planner {
                     if can_extract {
                         // Extract for AntiSemiApply (is_anti = true).
                         extractable.push((graph.clone(), true));
-                        return DynTree::new(ExprIR::Bool(true));
+                        return DynTree::new(ExprIR::Constant(Value::Bool(true)));
                     }
                     // Inline: create NOT(synth_var) so expr_to_plan can
                     // recognize the negation and use AntiSemiApply.
@@ -1671,7 +1671,7 @@ impl Planner {
             // rebuilt expression into multiplexer / semi-apply / filter nodes.
             if !inline.is_empty() {
                 res = self.expr_to_plan(&rebuilt.root(), &inline, res);
-            } else if !matches!(rebuilt.root().data(), ExprIR::Bool(true)) {
+            } else if !matches!(rebuilt.root().data(), ExprIR::Constant(Value::Bool(true))) {
                 res = tree!(IR::Filter(Arc::new(rebuilt)), res);
             }
 
@@ -1891,7 +1891,7 @@ impl Planner {
                 true,
             );
 
-            if !matches!(rebuilt.root().data(), ExprIR::Bool(true)) {
+            if !matches!(rebuilt.root().data(), ExprIR::Constant(Value::Bool(true))) {
                 if inline.is_empty() {
                     res = tree!(IR::Filter(Arc::new(rebuilt)), res);
                 } else {
@@ -2144,7 +2144,7 @@ impl Planner {
                 explicit_yield: _yielded,
             } => {
                 if proc.name == "db.idx.fulltext.drop" {
-                    let ExprIR::String(label) = exprs[0].root().data() else {
+                    let ExprIR::Constant(Value::String(label)) = exprs[0].root().data() else {
                         unreachable!()
                     };
                     return tree!(IR::DropIndex {
