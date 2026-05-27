@@ -304,6 +304,144 @@ def _spawn_falkordb(image, falkordb_args="", redis_args="", alias=None,
     return alias, 6379, cid, log_path
 
 
+def _spawn_falkordb_cluster(image, shards, falkordb_args="",
+                            enable_debug_command=False):
+    """Spawn `shards` falkordb sibling containers wired up as a Redis Cluster.
+
+    Each shard runs with --cluster-enabled yes and announces its docker
+    --network-alias as the cluster bus hostname so peers reach it by the
+    same name the test process uses (no docker-network IP discovery needed).
+    Slots are split evenly across shards by `_bootstrap_cluster`; no
+    replicas are provisioned (the spawn-mode cluster path is masters-only
+    until a test needs replicas).
+
+    Returns the list of per-shard (alias, port, cid, log_path) tuples in
+    shard order — caller uses tuple 0 as the "head" shard for the FalkorDB
+    client and the RLTest Defaults.external_addr.
+    """
+    # Pre-allocate aliases so the announce-hostname flag knows the final
+    # name before the container is created. Sharing the falkordb-cl-<hex>
+    # prefix makes leaked containers easy to spot in `docker ps`.
+    aliases = [f"falkordb-cl-{uuid.uuid4().hex[:8]}" for _ in range(shards)]
+    nodes = []
+    for alias in aliases:
+        # cluster-require-full-coverage=no: during bootstrap not every slot
+        # is owned yet, so the default 'yes' would refuse client traffic
+        # until the very last ADDSLOTSRANGE lands. Off keeps the shards
+        # answering CLUSTER MEET / CLUSTER INFO throughout.
+        # cluster-announce-hostname + preferred-endpoint-type=hostname:
+        # peers receive `<alias>` as the contact address (resolves via the
+        # job network's DNS) instead of the container's internal IP, which
+        # may not be reachable from sibling containers across docker
+        # network reattachments.
+        cluster_args = (
+            "--cluster-enabled yes "
+            f"--cluster-config-file /tmp/nodes-{alias}.conf "
+            "--cluster-node-timeout 5000 "
+            "--cluster-require-full-coverage no "
+            f"--cluster-announce-hostname {alias} "
+            "--cluster-preferred-endpoint-type hostname"
+        )
+        host, port, cid, log_path = _spawn_falkordb(
+            image,
+            falkordb_args=falkordb_args,
+            redis_args=cluster_args,
+            alias=alias,
+            enable_debug_command=enable_debug_command,
+        )
+        nodes.append((host, port, cid, log_path))
+    _bootstrap_cluster([(a, p) for a, p, _, _ in nodes])
+    return nodes
+
+
+def _bootstrap_cluster(shard_addrs, attempts=100, interval=0.2):
+    """Form a Redis cluster from `shard_addrs` (list of (host, port)) using
+    pure redis-py — no redis-cli dependency in the job/RC images.
+
+    Three phases:
+      1. CLUSTER ADDSLOTSRANGE — split 16384 slots into N contiguous ranges
+         and assign one per shard.
+      2. CLUSTER MEET — from shard 0, meet every other shard. Cluster bus
+         gossip propagates the full topology to the remaining nodes.
+      3. Poll CLUSTER INFO on every shard until cluster_state=ok and
+         cluster_known_nodes equals the shard count. Bounded retry mirrors
+         _wait_for_redis's shape.
+    """
+    n = len(shard_addrs)
+    if n == 0:
+        return
+    clients = [
+        redis.Redis(host=h, port=p, socket_connect_timeout=1,
+                    retry=Retry(NoBackoff(), 0))
+        for h, p in shard_addrs
+    ]
+    total = 16384
+    for i, c in enumerate(clients):
+        # Integer slot split: shard i owns [i*total/n, (i+1)*total/n - 1].
+        # Last shard absorbs the rounding remainder so the union covers
+        # all 16384 slots without gaps or overlap.
+        start = (i * total) // n
+        end = ((i + 1) * total) // n - 1
+        c.execute_command("CLUSTER", "ADDSLOTSRANGE", start, end)
+    head = clients[0]
+    for (h, p) in shard_addrs[1:]:
+        # CLUSTER MEET requires an IP literal (it rejects hostnames with
+        # "Invalid node address"). Resolve the docker --network-alias via
+        # DNS first; the gossip layer still propagates the announced
+        # hostname (--cluster-announce-hostname) once nodes are paired.
+        ip = socket.gethostbyname(h)
+        head.execute_command("CLUSTER", "MEET", ip, p)
+    for c, (h, p) in zip(clients, shard_addrs):
+        last_exc = None
+        ok = False
+        for _ in range(attempts):
+            try:
+                info = c.execute_command("CLUSTER", "INFO")
+                if isinstance(info, bytes):
+                    info = info.decode()
+                fields = dict(
+                    line.split(":", 1)
+                    for line in info.splitlines() if ":" in line
+                )
+                if (fields.get("cluster_state", "").strip() == "ok"
+                        and int(fields.get("cluster_known_nodes", "0")) == n):
+                    ok = True
+                    break
+            except Exception as e:
+                last_exc = e
+            time.sleep(interval)
+        if not ok:
+            msg = (f"cluster shard {h}:{p} never reached cluster_state=ok "
+                   f"with {n} known nodes in {attempts * interval:.1f}s")
+            if last_exc is not None:
+                msg += f"; last error: {last_exc!r}"
+            raise RuntimeError(msg)
+
+
+def _attach_cluster(env_obj, shard_addrs):
+    """Expose getConnection(shardId=N) on the RLTest Environment, matching
+    RLTest's native oss-cluster Env contract. shardId is 1-based to mirror
+    RLTest's API (test code uses shardId=1..N directly).
+
+    Also stash env.shards as a list of (host, port) so test code that wants
+    to build its own clients (FalkorDB per shard, async pools, etc.) can
+    address each node without going through getConnection.
+    """
+    shards = list(shard_addrs)
+
+    def _get_connection(shardId=1, *_args, **_kwargs):
+        idx = int(shardId) - 1
+        if idx < 0 or idx >= len(shards):
+            raise IndexError(
+                f"shardId {shardId} out of range; have {len(shards)} shards"
+            )
+        h, p = shards[idx]
+        return redis.Redis(host=h, port=p, decode_responses=True)
+
+    env_obj.getConnection = _get_connection
+    env_obj.shards = shards
+
+
 @atexit.register
 def _cleanup_spawned():
     # Capture docker stdout/stderr for each spawned container before tearing
@@ -390,8 +528,13 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
         env_obj.host = "localhost"
         # log_path mirrors what RLTest writes the master log to — same attribute
         # spawn mode sets — so tests can read self.env.log_path without per-mode
-        # branching.
-        env_obj.log_path = f"{env_obj.logDir}/{env_obj.envRunner._getFileName('master', '.log')}"
+        # branching. Only StandardEnv exposes _getFileName; ClusterEnv (oss-
+        # cluster) doesn't have a single master log, so leave log_path=None
+        # there (matches what services mode does for cluster-shaped tests).
+        if hasattr(env_obj.envRunner, "_getFileName"):
+            env_obj.log_path = f"{env_obj.logDir}/{env_obj.envRunner._getFileName('master', '.log')}"
+        else:
+            env_obj.log_path = None
         db = FalkorDB("localhost", env_obj.port)
         return (env_obj, db)
 
@@ -449,27 +592,57 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
         return (env_obj, db)
 
     # Mode 3: CI spawn — every Env() call gets a fresh master container
-    # (plus replica when useSlaves=True). Order matters: spawn the container
-    # *first*, then point RLTest's existing-env address at it via Defaults
-    # before constructing the Environment. Environment(env='existing-env')'s
+    # (plus replica when useSlaves=True, or N shards when env='oss-cluster'
+    # / shardsCount is set). Order matters: spawn the container *first*,
+    # then point RLTest's existing-env address at it via Defaults before
+    # constructing the Environment. Environment(env='existing-env')'s
     # startEnv() pings the address; if it doesn't resolve, construction
     # raises before we can override anything. flow.sh's --existing-env-addr
     # is a placeholder that gets superseded here.
-    #
-    # Cluster guard: tests/flow/test_matrix_split.py's CLUSTER_RE routes
-    # oss-cluster / shardsCount files here, but actual multi-node cluster
-    # orchestration isn't implemented — we'd silently spawn a single node
-    # and tests would run against the wrong topology. Raise loudly until
-    # real cluster support lands.
-    if env != 'oss' or shardsCount:
+    if env not in ('oss', 'oss-cluster'):
         raise RuntimeError(
-            "Spawn-mode Env() doesn't implement oss-cluster / shardsCount — "
-            "only single-node redis is spawned. The classifier routes "
-            "cluster-shaped tests to the spawn bucket but actual cluster "
-            "orchestration is not wired up. Either skip this test under "
-            "image-based CI or add multi-node cluster support here. "
-            f"Got env={env!r} shardsCount={shardsCount}."
+            f"Spawn-mode Env() doesn't support env={env!r}; only 'oss' "
+            "(single-node) and 'oss-cluster' (multi-shard) are wired up."
         )
+
+    cluster = env == 'oss-cluster' or bool(shardsCount)
+    if cluster:
+        # RLTest's native oss-cluster Env defaults to 3 shards when
+        # shardsCount is omitted; mirror that so test classes can write
+        # `Env(env='oss-cluster')` without specifying a count.
+        nshards = int(shardsCount) if shardsCount else 3
+        if useSlaves:
+            # Cluster + replicas isn't needed by any current test and adds
+            # a non-trivial bootstrap step (CLUSTER REPLICATE per replica,
+            # per-shard slave wait). Bail loudly until something needs it.
+            raise NotImplementedError(
+                "Spawn-mode cluster Env() doesn't support useSlaves=True "
+                "(masters-only). Add cluster-replica orchestration to "
+                "_spawn_falkordb_cluster when a test needs it."
+            )
+        nodes = _spawn_falkordb_cluster(
+            test_image,
+            shards=nshards,
+            falkordb_args=moduleArgs or "",
+            enable_debug_command=enableDebugCommand,
+        )
+        head_alias, head_port, _, head_log_path = nodes[0]
+        host, port = head_alias, head_port
+        Defaults.external_addr = f"{head_alias}:{head_port}"
+        env_obj = Environment(decodeResponses=True, env='existing-env')
+        env_obj.log_path = head_log_path
+        _attach_cluster(env_obj, [(a, p) for a, p, _, _ in nodes])
+        env_obj.port = port
+        env_obj.host = host
+        if hasattr(env_obj, "envRunner") and env_obj.envRunner is not None:
+            env_obj.envRunner.port = port
+            env_obj.envRunner.host = host
+        # FalkorDB(host, port) auto-detects cluster mode via Is_Cluster
+        # (checks INFO for cluster_enabled:1) and returns a cluster-aware
+        # client, so udf_load / queries route through the cluster.
+        db = FalkorDB(host, port)
+        return (env_obj, db)
+
     master_alias, master_port, master_cid, master_log_path = _spawn_falkordb(
         test_image, falkordb_args=moduleArgs or "",
         enable_debug_command=enableDebugCommand)
