@@ -31,7 +31,38 @@ use crate::runtime::{
     vec_distance,
 };
 use std::sync::Arc;
-use thin_vec::ThinVec;
+
+/// Slot order: [latitude, longitude]
+const POINT_SLOTS: &[&str] = &["latitude", "longitude"];
+
+pub fn point_struct_pure(args: &[Value]) -> Result<Value, String> {
+    debug_assert_eq!(args.len(), 2);
+    let latitude = match &args[0] {
+        Value::Float(f) => *f as f32,
+        Value::Int(i) => *i as f32,
+        Value::Null => return Err(String::from("point() requires 'latitude' field")),
+        other => {
+            return Err(format!(
+                "Type mismatch: 'latitude' must be a number, got {}",
+                other.name()
+            ));
+        }
+    };
+    let longitude = match &args[1] {
+        Value::Float(f) => *f as f32,
+        Value::Int(i) => *i as f32,
+        Value::Null => return Err(String::from("point() requires 'longitude' field")),
+        other => {
+            return Err(format!(
+                "Type mismatch: 'longitude' must be a number, got {}",
+                other.name()
+            ));
+        }
+    };
+    let point = Point::new(latitude, longitude);
+    point.validate()?;
+    Ok(Value::Point(point))
+}
 
 pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "vecf32",
@@ -41,8 +72,7 @@ pub fn register(funcs: &mut Functions) {
         ])],
         ret: Type::Union(vec![Type::VecF32, Type::Null]),
         fn vecf32(_, args) {
-            let mut iter = args.into_iter();
-            match iter.next() {
+            match args.first() {
                 Some(Value::List(vec)) => {
                     for v in vec.iter() {
                         if !matches!(v, Value::Int(_) | Value::Float(_)) {
@@ -137,7 +167,7 @@ pub fn register(funcs: &mut Functions) {
                     // SIMD path delegates to `simsimd` (AVX-512 / AVX2 /
                     // NEON / scalar runtime dispatch). `None` only on
                     // length mismatch, ruled out above.
-                    Ok(Value::Float(vec_distance::euclidean(&a, &b).unwrap_or(0.0)))
+                    Ok(Value::Float(vec_distance::euclidean(a.as_slice(), b.as_slice()).unwrap_or(0.0)))
                 }
                 (Some(Value::Null), _) | (_, Some(Value::Null)) => Ok(Value::Null),
                 _ => unreachable!(),
@@ -164,11 +194,13 @@ pub fn register(funcs: &mut Functions) {
                             a.len(), b.len()
                         ));
                     }
-                    Ok(Value::Float(vec_distance::cosine(&a, &b).unwrap_or(1.0)))
+                    Ok(Value::Float(vec_distance::cosine(a.as_slice(), b.as_slice()).unwrap_or(1.0)))
                 }
                 (Some(Value::Null), _) | (_, Some(Value::Null)) => Ok(Value::Null),
                 _ => unreachable!(),
             }
         }
     );
+
+    funcs.set_struct_fn("point", point_struct_pure, POINT_SLOTS);
 }

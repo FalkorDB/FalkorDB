@@ -198,14 +198,15 @@ impl<'a> ProjectOp<'a> {
                 );
                 return_vars.insert(name, res?);
             }
-            let mut vars = env.clone_pooled(self.runtime.env_pool);
             for (old_var, new_var) in self.copy_from_parent {
-                match vars.take(old_var) {
-                    Some(value) => return_vars.insert(new_var, value),
-                    None if vars.is_bound(old_var) => {
+                match env.get(old_var) {
+                    Some(value) if !matches!(value, Value::Null) => {
+                        return_vars.insert(new_var, value.clone());
+                    }
+                    _ if env.is_bound(old_var) => {
                         return_vars.insert(new_var, Value::Null);
                     }
-                    None => {}
+                    _ => {}
                 }
             }
             result_envs.push(return_vars);

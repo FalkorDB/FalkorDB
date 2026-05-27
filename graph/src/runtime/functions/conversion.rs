@@ -42,7 +42,7 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::String, Type::Bool, Type::Int, Type::Float, Type::Null])],
         ret: Type::Union(vec![Type::Int, Type::Null]),
         fn value_to_integer(_runtime, args) {
-            match args.into_iter().next() {
+            match args.first() {
                 Some(Value::String(s)) => {
                     if s.is_empty() {
                         return Ok(Value::Null);
@@ -66,8 +66,8 @@ pub fn register(funcs: &mut Functions) {
                         _ => Ok(Value::Null),
                     }
                 }
-                Some(Value::Int(i)) => Ok(Value::Int(i)),
-                Some(Value::Float(f)) => {
+                Some(&Value::Int(i)) => Ok(Value::Int(i)),
+                Some(&Value::Float(f)) => {
                     if !f.is_finite() {
                         return Ok(Value::Null);
                     }
@@ -75,7 +75,7 @@ pub fn register(funcs: &mut Functions) {
                     #[allow(clippy::cast_possible_truncation)]
                     Ok(Value::Int(floored as i64))
                 }
-                Some(Value::Bool(b)) => Ok(Value::Int(i64::from(b))),
+                Some(&Value::Bool(b)) => Ok(Value::Int(i64::from(b))),
                 _ => Ok(Value::Null),
             }
         }
@@ -94,10 +94,10 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::String, Type::Float, Type::Int, Type::Null])],
         ret: Type::Union(vec![Type::Float, Type::Null]),
         fn value_to_float(_runtime, args) {
-            match args.into_iter().next() {
+            match args.first() {
                 Some(Value::String(s)) => s.parse::<f64>().map(Value::Float).or(Ok(Value::Null)),
-                Some(Value::Float(f)) => Ok(Value::Float(f)),
-                Some(Value::Int(i)) => Ok(Value::Float(i as f64)),
+                Some(&Value::Float(f)) => Ok(Value::Float(f)),
+                Some(&Value::Int(i)) => Ok(Value::Float(i as f64)),
                 _ => Ok(Value::Null),
             }
         }
@@ -116,8 +116,8 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::Datetime, Type::Date, Type::Time, Type::Duration, Type::String, Type::Bool, Type::Int, Type::Float, Type::Null, Type::Point])],
         ret: Type::Union(vec![Type::String, Type::Null]),
         fn value_to_string(_runtime, args) {
-            match args.into_iter().next() {
-                Some(Value::String(s)) => Ok(Value::String(s)),
+            match args.first() {
+                Some(Value::String(s)) => Ok(Value::String(Arc::clone(s))),
                 Some(Value::Int(i)) => Ok(Value::String(Arc::new(i.to_string()))),
                 Some(Value::Float(f)) => {
                     // Format without trailing zeros; ensure at least one decimal
@@ -129,10 +129,10 @@ pub fn register(funcs: &mut Functions) {
                     "point({{latitude: {:.6}, longitude: {:.6}}})",
                     p.latitude, p.longitude
                 )))),
-                Some(Value::Datetime(ts)) => Ok(Value::String(Arc::new(Value::format_datetime(ts)))),
-                Some(Value::Date(ts)) => Ok(Value::String(Arc::new(Value::format_date(ts)))),
-                Some(Value::Time(ts)) => Ok(Value::String(Arc::new(Value::format_time(ts)))),
-                Some(Value::Duration(dur)) => Ok(Value::String(Arc::new(Value::format_duration(dur)))),
+                Some(&Value::Datetime(ts)) => Ok(Value::String(Arc::new(Value::format_datetime(ts)))),
+                Some(&Value::Date(ts)) => Ok(Value::String(Arc::new(Value::format_date(ts)))),
+                Some(&Value::Time(ts)) => Ok(Value::String(Arc::new(Value::format_time(ts)))),
+                Some(&Value::Duration(dur)) => Ok(Value::String(Arc::new(Value::format_duration(dur)))),
                 Some(_) => Ok(Value::Null),
                 None => unreachable!(),
             }
@@ -152,7 +152,7 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Any],
         ret: Type::Union(vec![Type::String, Type::Null]),
         fn to_json(runtime, args) {
-            args.into_iter().next().map_or_else(
+            args.first().map_or_else(
                 || unreachable!(),
                 |v| {
                     let json_string = v.to_json_string(runtime);
@@ -166,7 +166,7 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::Map, Type::List(Box::new(Type::Any)), Type::String, Type::Null])],
         ret: Type::Union(vec![Type::Bool, Type::Null]),
         fn is_empty(_, args) {
-            match args.into_iter().next() {
+            match args.first() {
                 Some(Value::Null) => Ok(Value::Null),
                 Some(Value::String(s)) => Ok(Value::Bool(s.is_empty())),
                 Some(Value::List(v)) => Ok(Value::Bool(v.is_empty())),
@@ -180,8 +180,8 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::String, Type::Bool, Type::Int, Type::Null])],
         ret: Type::Union(vec![Type::Bool, Type::Null]),
         fn to_boolean(_, args) {
-            match args.into_iter().next() {
-                Some(Value::Bool(b)) => Ok(Value::Bool(b)),
+            match args.first() {
+                Some(&Value::Bool(b)) => Ok(Value::Bool(b)),
                 Some(Value::String(s)) => {
                     if s.eq_ignore_ascii_case("true") {
                         Ok(Value::Bool(true))
@@ -191,7 +191,7 @@ pub fn register(funcs: &mut Functions) {
                         Ok(Value::Null)
                     }
                 }
-                Some(Value::Int(n)) => Ok(Value::Bool(n != 0)),
+                Some(&Value::Int(n)) => Ok(Value::Bool(n != 0)),
                 _ => Ok(Value::Null),
             }
         }
@@ -210,7 +210,7 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null])],
         ret: Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
         fn to_boolean_list(_, args) {
-            match args.into_iter().next() {
+            match args.first() {
                 Some(Value::List(vs)) => {
                     let result: ThinVec<Value> = vs.iter().map(|v| match v {
                         Value::Bool(b) => Value::Bool(*b),
@@ -237,7 +237,7 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null])],
         ret: Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
         fn to_float_list(_, args) {
-            match args.into_iter().next() {
+            match args.first() {
                 Some(Value::List(vs)) => {
                     let result: ThinVec<Value> = vs.iter().map(|v| match v {
                         Value::Float(f) => Value::Float(*f),
@@ -256,11 +256,10 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null])],
         ret: Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
         fn to_integer_list(runtime, args) {
-            match args.into_iter().next() {
+            match args.first() {
                 Some(Value::List(vs)) => {
                     let result: ThinVec<Value> = vs.iter().map(|v| {
-                        let elem_args = thin_vec::thin_vec![v.clone()];
-                        value_to_integer(runtime, elem_args).unwrap_or(Value::Null)
+                        value_to_integer(runtime, &[v.clone()]).unwrap_or(Value::Null)
                     }).collect();
                     Ok(Value::List(Arc::new(result)))
                 }
@@ -273,11 +272,10 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null])],
         ret: Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
         fn to_string_list(runtime, args) {
-            match args.into_iter().next() {
+            match args.first() {
                 Some(Value::List(vs)) => {
                     let result: ThinVec<Value> = vs.iter().map(|v| {
-                        let elem_args = thin_vec::thin_vec![v.clone()];
-                        value_to_string(runtime, elem_args).unwrap_or(Value::Null)
+                        value_to_string(runtime, &[v.clone()]).unwrap_or(Value::Null)
                     }).collect();
                     Ok(Value::List(Arc::new(result)))
                 }

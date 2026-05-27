@@ -344,11 +344,7 @@ fn try_property_vs_constant(
     // const_side must be a leaf literal
     let const_node = tree.node(const_idx);
     let constant = match const_node.data() {
-        ExprIR::Integer(i) => Value::Int(*i),
-        ExprIR::Float(f) => Value::Float(*f),
-        ExprIR::String(s) => Value::String(s.clone()),
-        ExprIR::Bool(b) => Value::Bool(*b),
-        ExprIR::Null => Value::Null,
+        ExprIR::Constant(v) => v.clone(),
         _ => return None,
     };
     if const_node.num_children() != 0 {

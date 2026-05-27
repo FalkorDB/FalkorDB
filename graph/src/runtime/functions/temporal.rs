@@ -44,9 +44,8 @@
 
 use super::{FnType, Functions, Type};
 use crate::runtime::{ordermap::OrderMap, runtime::Runtime, value::Value};
-use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use std::sync::Arc;
-use thin_vec::ThinVec;
 
 fn get_int_field(
     map: &OrderMap<Arc<String>, Value>,
@@ -59,32 +58,36 @@ fn get_int_field(
     })
 }
 
-// Build a NaiveDate from map components: supports year/month/day, week, quarter modes.
-fn date_from_map(map: &OrderMap<Arc<String>, Value>) -> Result<NaiveDate, String> {
-    let year = get_int_field(map, "year").unwrap_or(1970) as i32;
+/// Build a NaiveDate from optional components. Supports ymd, week, and quarter modes.
+fn date_from_components(
+    year: Option<i64>,
+    month: Option<i64>,
+    day: Option<i64>,
+    week: Option<i64>,
+    day_of_week: Option<i64>,
+    quarter: Option<i64>,
+    day_of_quarter: Option<i64>,
+) -> Result<NaiveDate, String> {
+    let year = year.unwrap_or(1970) as i32;
 
-    if let Some(week) = get_int_field(map, "week") {
-        let dow_raw = get_int_field(map, "dayOfWeek").unwrap_or(1);
+    if let Some(week) = week {
+        let dow_raw = day_of_week.unwrap_or(1);
         if !(0..=6).contains(&dow_raw) {
             return Err(format!("Invalid dayOfWeek: {dow_raw}, expected 0..6"));
         }
         let dow = dow_raw as u32;
-        // Find Monday of ISO week 1 for the given year
         let jan4 =
             NaiveDate::from_ymd_opt(year, 1, 4).ok_or_else(|| format!("Invalid year: {year}"))?;
-        let weekday_of_jan4 = jan4.weekday().num_days_from_monday(); // Mon=0..Sun=6
+        let weekday_of_jan4 = jan4.weekday().num_days_from_monday();
         let iso_week1_monday = jan4 - chrono::Duration::days(i64::from(weekday_of_jan4));
-        // Add (week-1)*7 days to get to target week Monday
         let target_monday = iso_week1_monday + chrono::Duration::days((week - 1) * 7);
-        // Add dayOfWeek offset: dow 0=Sun,1=Mon,...,6=Sat
-        // Monday is already our base, so offset from Monday
         let day_offset = if dow == 0 { 6 } else { i64::from(dow) - 1 };
         let result = target_monday + chrono::Duration::days(day_offset);
         return Ok(result);
     }
 
-    if let Some(quarter) = get_int_field(map, "quarter") {
-        let doq = get_int_field(map, "dayOfQuarter").unwrap_or(1);
+    if let Some(quarter) = quarter {
+        let doq = day_of_quarter.unwrap_or(1);
         let quarter_start_month = ((quarter - 1) * 3 + 1) as u32;
         let base = NaiveDate::from_ymd_opt(year, quarter_start_month, 1)
             .ok_or_else(|| format!("Invalid quarter: year={year}, quarter={quarter}"))?;
@@ -93,18 +96,52 @@ fn date_from_map(map: &OrderMap<Arc<String>, Value>) -> Result<NaiveDate, String
             .ok_or_else(|| format!("Invalid dayOfQuarter: {doq}"));
     }
 
-    let month = get_int_field(map, "month").unwrap_or(1) as u32;
-    let day = get_int_field(map, "day").unwrap_or(1) as u32;
+    let month = month.unwrap_or(1) as u32;
+    let day = day.unwrap_or(1) as u32;
     NaiveDate::from_ymd_opt(year, month, day)
         .ok_or_else(|| format!("Invalid date: year={year}, month={month}, day={day}"))
 }
 
-fn time_from_map(map: &OrderMap<Arc<String>, Value>) -> Result<NaiveTime, String> {
-    let hour = get_int_field(map, "hour").unwrap_or(0) as u32;
-    let minute = get_int_field(map, "minute").unwrap_or(0) as u32;
-    let second = get_int_field(map, "second").unwrap_or(0) as u32;
+fn date_from_map(map: &OrderMap<Arc<String>, Value>) -> Result<NaiveDate, String> {
+    date_from_components(
+        get_int_field(map, "year"),
+        get_int_field(map, "month"),
+        get_int_field(map, "day"),
+        get_int_field(map, "week"),
+        get_int_field(map, "dayOfWeek"),
+        get_int_field(map, "quarter"),
+        get_int_field(map, "dayOfQuarter"),
+    )
+}
+
+fn time_from_components(
+    hour: Option<i64>,
+    minute: Option<i64>,
+    second: Option<i64>,
+) -> Result<NaiveTime, String> {
+    let hour = hour.unwrap_or(0) as u32;
+    let minute = minute.unwrap_or(0) as u32;
+    let second = second.unwrap_or(0) as u32;
     NaiveTime::from_hms_opt(hour, minute, second)
         .ok_or_else(|| format!("Invalid time: hour={hour}, minute={minute}, second={second}"))
+}
+
+fn time_from_map(map: &OrderMap<Arc<String>, Value>) -> Result<NaiveTime, String> {
+    time_from_components(
+        get_int_field(map, "hour"),
+        get_int_field(map, "minute"),
+        get_int_field(map, "second"),
+    )
+}
+
+/// Extract i64 from positional slot arg (Int/Float/Null).
+#[inline]
+fn slot_to_int(v: &Value) -> Option<i64> {
+    match v {
+        Value::Int(i) => Some(*i),
+        Value::Float(f) => Some(*f as i64),
+        _ => None,
+    }
 }
 
 // Parse date from ISO string formats.
@@ -370,6 +407,23 @@ fn parse_duration_string(s: &str) -> Result<(i64, i64, i64, i64, i64, i64, i64),
     Ok((years, months, 0, days, hours, minutes, seconds))
 }
 
+/// Days from 1970-01-01 to the given (year, month, day) — Howard Hinnant's civil-from-days.
+/// Avoids chrono allocation/validation on the duration hot path.
+#[inline]
+fn days_from_civil(
+    y: i32,
+    m: u32,
+    d: u32,
+) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = (y - era * 400) as u32; // [0, 399]
+    let mp = if m > 2 { m - 3 } else { m + 9 }; // [0, 11]
+    let doy = (153 * mp + 2) / 5 + d - 1; // [0, 365]
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // [0, 146096]
+    era as i64 * 146097 + doe as i64 - 719468
+}
+
 /// Construct a duration i64 (seconds from epoch) from components.
 /// The encoding stores the target datetime = epoch + years/months + days + time.
 pub fn construct_duration_secs(
@@ -393,12 +447,8 @@ pub fn construct_duration_secs(
         .ok_or_else(|| format!("Duration out of range: years={years}, months={months}"))?;
     let base_month = (total_month_offset_i32.rem_euclid(12) + 1) as u32;
 
-    let anchor = NaiveDate::from_ymd_opt(base_year, base_month, 1)
-        .ok_or_else(|| format!("Invalid duration: years={years}, months={months}"))?
-        .and_hms_opt(0, 0, 0)
-        .ok_or("Invalid anchor time")?;
+    let anchor_ts = days_from_civil(base_year, base_month, 1) * 86400;
 
-    let anchor_ts = anchor.and_utc().timestamp();
     let extra = weeks
         .checked_mul(7)
         .and_then(|w| w.checked_add(days))
@@ -418,21 +468,214 @@ pub fn construct_duration_secs(
 
 /// Decompose a duration (seconds from epoch) into (years, months, remaining_seconds).
 pub fn decompose_duration(dur_secs: i64) -> Result<(i32, i32, i64), String> {
-    let dt = Utc
-        .timestamp_opt(dur_secs, 0)
-        .single()
-        .ok_or("Invalid duration timestamp")?;
+    let days = dur_secs.div_euclid(86400);
+    let time_of_day = dur_secs.rem_euclid(86400);
+    let (y, m, d) = crate::runtime::value::civil_from_days(days);
 
-    let year_diff = dt.year() - 1970;
-    let month_diff = dt.month() as i32 - 1;
+    let year_diff = y - 1970;
+    let month_diff = m as i32 - 1;
+    let remaining_secs = (d as i64 - 1) * 86400 + time_of_day;
 
-    let anchor = Utc
-        .with_ymd_and_hms(1970 + year_diff, (1 + month_diff) as u32, 1, 0, 0, 0)
-        .single()
-        .ok_or("Invalid duration anchor")?;
-
-    let remaining_secs = dur_secs - anchor.timestamp();
     Ok((year_diff, month_diff, remaining_secs))
+}
+
+// ---------------------------------------------------------------------------
+// Pure (Runtime-free) constructors used by the optimizer's constant-folding
+// pass. The Runtime-bound versions registered below delegate to these for the
+// non-zero-arg branch.
+// ---------------------------------------------------------------------------
+
+pub fn date_pure(args: &[Value]) -> Result<Value, String> {
+    match args.first() {
+        Some(Value::Map(map)) => {
+            let d = date_from_map(map)?;
+            let ts = d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+            Ok(Value::Date(ts))
+        }
+        Some(Value::String(s)) => {
+            let d = parse_date_string(s)?;
+            let ts = d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+            Ok(Value::Date(ts))
+        }
+        Some(Value::Null) => Ok(Value::Null),
+        _ => unreachable!(),
+    }
+}
+
+pub fn localtime_pure(args: &[Value]) -> Result<Value, String> {
+    match args.first() {
+        Some(Value::Map(map)) => {
+            let t = time_from_map(map)?;
+            let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
+            let dt = NaiveDateTime::new(epoch, t);
+            Ok(Value::Time(dt.and_utc().timestamp()))
+        }
+        Some(Value::String(s)) => {
+            let t = parse_time_string(s)?;
+            let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
+            let dt = NaiveDateTime::new(epoch, t);
+            Ok(Value::Time(dt.and_utc().timestamp()))
+        }
+        Some(Value::Null) => Ok(Value::Null),
+        _ => unreachable!(),
+    }
+}
+
+pub fn localdatetime_pure(args: &[Value]) -> Result<Value, String> {
+    match args.first() {
+        Some(Value::Map(map)) => {
+            let d = date_from_map(map)?;
+            let t = time_from_map(map)?;
+            let dt = NaiveDateTime::new(d, t);
+            Ok(Value::Datetime(dt.and_utc().timestamp()))
+        }
+        Some(Value::String(s)) => {
+            let dt = parse_datetime_string(s)?;
+            Ok(Value::Datetime(dt.and_utc().timestamp()))
+        }
+        Some(Value::Null) => Ok(Value::Null),
+        _ => unreachable!(),
+    }
+}
+
+pub fn duration_pure(args: &[Value]) -> Result<Value, String> {
+    match args.first() {
+        Some(Value::Map(map)) => {
+            let mut years = 0i64;
+            let mut months = 0i64;
+            let mut weeks = 0i64;
+            let mut days = 0i64;
+            let mut hours = 0i64;
+            let mut minutes = 0i64;
+            let mut seconds = 0i64;
+            for (k, v) in map.iter() {
+                let n = match v {
+                    Value::Int(i) => *i,
+                    Value::Float(f) => *f as i64,
+                    _ => continue,
+                };
+                match k.as_str() {
+                    "years" => years = n,
+                    "months" => months = n,
+                    "weeks" => weeks = n,
+                    "days" => days = n,
+                    "hours" => hours = n,
+                    "minutes" => minutes = n,
+                    "seconds" => seconds = n,
+                    _ => {}
+                }
+            }
+            let ts = construct_duration_secs(years, months, weeks, days, hours, minutes, seconds)?;
+            Ok(Value::Duration(ts))
+        }
+        Some(Value::String(s)) => {
+            let (years, months, weeks, days, hours, minutes, seconds) = parse_duration_string(s)?;
+            let ts = construct_duration_secs(years, months, weeks, days, hours, minutes, seconds)?;
+            Ok(Value::Duration(ts))
+        }
+        Some(Value::Null) => Ok(Value::Null),
+        _ => unreachable!(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Positional-slot constructors. The binder rewrites Map-literal calls with
+// constant string keys (e.g. `duration({months: i})`) into invocations of these
+// internal functions, avoiding per-row Map+Arc allocation. Slot order is
+// fixed per constructor; missing fields are passed as Value::Null.
+// ---------------------------------------------------------------------------
+
+/// Slot order: [years, months, weeks, days, hours, minutes, seconds]
+const DURATION_SLOTS: &[&str] = &[
+    "years", "months", "weeks", "days", "hours", "minutes", "seconds",
+];
+
+/// Slot order: [year, month, day, week, dayOfWeek, quarter, dayOfQuarter]
+const DATE_SLOTS: &[&str] = &[
+    "year",
+    "month",
+    "day",
+    "week",
+    "dayOfWeek",
+    "quarter",
+    "dayOfQuarter",
+];
+
+/// Slot order: [hour, minute, second]
+const LOCALTIME_SLOTS: &[&str] = &["hour", "minute", "second"];
+
+/// Slot order: [year, month, day, week, dayOfWeek, quarter, dayOfQuarter, hour, minute, second]
+const LOCALDATETIME_SLOTS: &[&str] = &[
+    "year",
+    "month",
+    "day",
+    "week",
+    "dayOfWeek",
+    "quarter",
+    "dayOfQuarter",
+    "hour",
+    "minute",
+    "second",
+];
+
+pub fn duration_struct_pure(args: &[Value]) -> Result<Value, String> {
+    debug_assert_eq!(args.len(), 7);
+    let years = slot_to_int(&args[0]).unwrap_or(0);
+    let months = slot_to_int(&args[1]).unwrap_or(0);
+    let weeks = slot_to_int(&args[2]).unwrap_or(0);
+    let days = slot_to_int(&args[3]).unwrap_or(0);
+    let hours = slot_to_int(&args[4]).unwrap_or(0);
+    let minutes = slot_to_int(&args[5]).unwrap_or(0);
+    let seconds = slot_to_int(&args[6]).unwrap_or(0);
+    let ts = construct_duration_secs(years, months, weeks, days, hours, minutes, seconds)?;
+    Ok(Value::Duration(ts))
+}
+
+pub fn date_struct_pure(args: &[Value]) -> Result<Value, String> {
+    debug_assert_eq!(args.len(), 7);
+    let d = date_from_components(
+        slot_to_int(&args[0]),
+        slot_to_int(&args[1]),
+        slot_to_int(&args[2]),
+        slot_to_int(&args[3]),
+        slot_to_int(&args[4]),
+        slot_to_int(&args[5]),
+        slot_to_int(&args[6]),
+    )?;
+    let ts = d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+    Ok(Value::Date(ts))
+}
+
+pub fn localtime_struct_pure(args: &[Value]) -> Result<Value, String> {
+    debug_assert_eq!(args.len(), 3);
+    let t = time_from_components(
+        slot_to_int(&args[0]),
+        slot_to_int(&args[1]),
+        slot_to_int(&args[2]),
+    )?;
+    let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
+    let dt = NaiveDateTime::new(epoch, t);
+    Ok(Value::Time(dt.and_utc().timestamp()))
+}
+
+pub fn localdatetime_struct_pure(args: &[Value]) -> Result<Value, String> {
+    debug_assert_eq!(args.len(), 10);
+    let d = date_from_components(
+        slot_to_int(&args[0]),
+        slot_to_int(&args[1]),
+        slot_to_int(&args[2]),
+        slot_to_int(&args[3]),
+        slot_to_int(&args[4]),
+        slot_to_int(&args[5]),
+        slot_to_int(&args[6]),
+    )?;
+    let t = time_from_components(
+        slot_to_int(&args[7]),
+        slot_to_int(&args[8]),
+        slot_to_int(&args[9]),
+    )?;
+    let dt = NaiveDateTime::new(d, t);
+    Ok(Value::Datetime(dt.and_utc().timestamp()))
 }
 
 pub fn register(funcs: &mut Functions) {
@@ -454,26 +697,13 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Union(vec![Type::Date, Type::Null]),
         non_deterministic,
         fn date_fn(_, args) {
-            let mut iter = args.into_iter();
-            match iter.next() {
-                Some(Value::Map(map)) => {
-                    let d = date_from_map(&map)?;
-                    let ts = d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
-                    Ok(Value::Date(ts))
-                }
-                Some(Value::String(s)) => {
-                    let d = parse_date_string(&s)?;
-                    let ts = d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
-                    Ok(Value::Date(ts))
-                }
-                Some(Value::Null) => Ok(Value::Null),
-                None => {
-                    // Zero args: return current date
-                    let now = Utc::now().date_naive();
-                    let ts = now.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
-                    Ok(Value::Date(ts))
-                }
-                _ => unreachable!(),
+            if args.is_empty() {
+                // Zero args: return current date
+                let now = Utc::now().date_naive();
+                let ts = now.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+                Ok(Value::Date(ts))
+            } else {
+                date_pure(args)
             }
         }
     );
@@ -484,33 +714,15 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Union(vec![Type::Time, Type::Null]),
         non_deterministic,
         fn localtime_fn(_, args) {
-            let mut iter = args.into_iter();
-            match iter.next() {
-                Some(Value::Map(map)) => {
-                    let t = time_from_map(&map)?;
-                    // Store as seconds from epoch (base date 1970-01-01)
-                    let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
-                    let dt = NaiveDateTime::new(epoch, t);
-                    let ts = dt.and_utc().timestamp();
-                    Ok(Value::Time(ts))
-                }
-                Some(Value::String(s)) => {
-                    let t = parse_time_string(&s)?;
-                    let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
-                    let dt = NaiveDateTime::new(epoch, t);
-                    let ts = dt.and_utc().timestamp();
-                    Ok(Value::Time(ts))
-                }
-                Some(Value::Null) => Ok(Value::Null),
-                None => {
-                    // Zero args: return current local time
-                    let now = Utc::now().time();
-                    let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
-                    let dt = NaiveDateTime::new(epoch, now);
-                    let ts = dt.and_utc().timestamp();
-                    Ok(Value::Time(ts))
-                }
-                _ => unreachable!(),
+            if args.is_empty() {
+                // Zero args: return current local time
+                let now = Utc::now().time();
+                let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
+                let dt = NaiveDateTime::new(epoch, now);
+                let ts = dt.and_utc().timestamp();
+                Ok(Value::Time(ts))
+            } else {
+                localtime_pure(args)
             }
         }
     );
@@ -521,28 +733,13 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Union(vec![Type::Datetime, Type::Null]),
         non_deterministic,
         fn localdatetime_fn(_, args) {
-            let mut iter = args.into_iter();
-            match iter.next() {
-                Some(Value::Map(map)) => {
-                    let d = date_from_map(&map)?;
-                    let t = time_from_map(&map)?;
-                    let dt = NaiveDateTime::new(d, t);
-                    let ts = dt.and_utc().timestamp();
-                    Ok(Value::Datetime(ts))
-                }
-                Some(Value::String(s)) => {
-                    let dt = parse_datetime_string(&s)?;
-                    let ts = dt.and_utc().timestamp();
-                    Ok(Value::Datetime(ts))
-                }
-                Some(Value::Null) => Ok(Value::Null),
-                None => {
-                    // Zero args: return current local datetime
-                    let now = Utc::now().naive_utc();
-                    let ts = now.and_utc().timestamp();
-                    Ok(Value::Datetime(ts))
-                }
-                _ => unreachable!(),
+            if args.is_empty() {
+                // Zero args: return current local datetime
+                let now = Utc::now().naive_utc();
+                let ts = now.and_utc().timestamp();
+                Ok(Value::Datetime(ts))
+            } else {
+                localdatetime_pure(args)
             }
         }
     );
@@ -552,27 +749,7 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::Map, Type::String, Type::Null])],
         ret: Type::Union(vec![Type::Duration, Type::Null]),
         fn duration_fn(_, args) {
-            let mut iter = args.into_iter();
-            match iter.next() {
-                Some(Value::Map(map)) => {
-                    let years = get_int_field(&map, "years").unwrap_or(0);
-                    let months = get_int_field(&map, "months").unwrap_or(0);
-                    let weeks = get_int_field(&map, "weeks").unwrap_or(0);
-                    let days = get_int_field(&map, "days").unwrap_or(0);
-                    let hours = get_int_field(&map, "hours").unwrap_or(0);
-                    let minutes = get_int_field(&map, "minutes").unwrap_or(0);
-                    let seconds = get_int_field(&map, "seconds").unwrap_or(0);
-                    let ts = construct_duration_secs(years, months, weeks, days, hours, minutes, seconds)?;
-                    Ok(Value::Duration(ts))
-                }
-                Some(Value::String(s)) => {
-                    let (years, months, weeks, days, hours, minutes, seconds) = parse_duration_string(&s)?;
-                    let ts = construct_duration_secs(years, months, weeks, days, hours, minutes, seconds)?;
-                    Ok(Value::Duration(ts))
-                }
-                Some(Value::Null) => Ok(Value::Null),
-                _ => unreachable!(),
-            }
+            duration_pure(args)
         }
     );
 
@@ -613,4 +790,17 @@ pub fn register(funcs: &mut Functions) {
             Ok(Value::Datetime(ts))
         }
     );
+
+    // Mark temporal constructors as safe to constant-fold when called with
+    // concrete arguments, and attach the positional-slot form invoked by
+    // eval.rs after the binder rewrites `duration({months: i})` into
+    // positional children.
+    funcs.set_pure_fn("date", date_pure);
+    funcs.set_pure_fn("localtime", localtime_pure);
+    funcs.set_pure_fn("localdatetime", localdatetime_pure);
+    funcs.set_pure_fn("duration", duration_pure);
+    funcs.set_struct_fn("date", date_struct_pure, DATE_SLOTS);
+    funcs.set_struct_fn("localtime", localtime_struct_pure, LOCALTIME_SLOTS);
+    funcs.set_struct_fn("localdatetime", localdatetime_struct_pure, LOCALDATETIME_SLOTS);
+    funcs.set_struct_fn("duration", duration_struct_pure, DURATION_SLOTS);
 }

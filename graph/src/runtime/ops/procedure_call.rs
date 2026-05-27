@@ -97,7 +97,7 @@ impl<'a> ProcedureCallOp<'a> {
                             })
                             .collect::<Result<ThinVec<_>, _>>()?;
                         self.func.validate_args_type(&args)?;
-                        let res = (self.func.func)(self.runtime, args)?;
+                        let res = self.func.func.call(self.runtime, &args)?;
                         match res {
                             Value::List(arr) => {
                                 for v in arr.iter() {

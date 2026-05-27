@@ -31,6 +31,7 @@ use crate::parser::ast::{
 };
 use crate::runtime::functions::{FnArguments, FnType, Type};
 use crate::runtime::orderset::OrderSet;
+use crate::runtime::value::Value;
 use crate::tree;
 use orx_tree::{Dfs, Dyn, DynNode, DynTree, NodeRef};
 use std::collections::{HashMap, HashSet};
@@ -1843,11 +1844,7 @@ impl Binder {
                     .collect::<Result<Vec<_>, _>>()?;
 
                 let new_data = match node_ref.data().clone() {
-                    ExprIR::Null => ExprIR::Null,
-                    ExprIR::Bool(b) => ExprIR::Bool(b),
-                    ExprIR::Integer(i) => ExprIR::Integer(i),
-                    ExprIR::Float(fl) => ExprIR::Float(fl),
-                    ExprIR::String(s) => ExprIR::String(s),
+                    ExprIR::Constant(v) => ExprIR::Constant(v),
                     ExprIR::List => ExprIR::List,
                     ExprIR::Map => ExprIR::Map,
                     ExprIR::MapProjection => ExprIR::MapProjection,
@@ -1989,6 +1986,26 @@ impl Binder {
                         ExprIR::Pattern(result?)
                     }
                 };
+                // Constructor rewrite: detect `duration({...})`, `date({...})`,
+                // `localtime({...})`, `localdatetime({...})`, `point({...})`
+                // with a single Map-literal argument whose keys are constant
+                // strings. Rewrite to an internal positional-arg function so
+                // the runtime skips per-row Map+Arc allocation.
+                let (new_data, children) = rewrite_struct_constructor(new_data, children);
+
+                // Constant folding: when the bound node is a function
+                // invocation whose arguments are already concrete constants
+                // and the function exposes a Runtime-free `pure_fn`, evaluate
+                // it now and replace the subtree with a single
+                // `ExprIR::Constant(value)` leaf. The result lives in the
+                // plan cache, so the evaluation cost is paid once.
+                if let ExprIR::FuncInvocation(func) = &new_data
+                    && let Some(args) = collect_constant_args(&children)
+                    && let Some(pure_fn) = func.pure_fn
+                    && let Ok(value) = pure_fn(&args)
+                {
+                    return Ok(DynTree::new(ExprIR::Constant(value)));
+                }
                 let mut new_tree = DynTree::new(new_data);
                 let mut root = new_tree.root_mut();
                 for child in children {
@@ -2179,10 +2196,7 @@ impl Binder {
             ExprIR::FuncInvocation(func) => func.ret_type.can_return_boolean(),
 
             // Non-boolean: literals, unary arithmetic, subscript, list comprehension
-            ExprIR::Integer(_)
-            | ExprIR::Float(_)
-            | ExprIR::String(_)
-            | ExprIR::List
+            ExprIR::List
             | ExprIR::Map
             | ExprIR::MapProjection
             | ExprIR::Negate
@@ -2193,9 +2207,7 @@ impl Binder {
             | ExprIR::PatternComprehension(_) => false,
 
             // Boolean literals, comparisons, predicates, and runtime-typed nodes
-            ExprIR::Bool(_)
-            | ExprIR::Null
-            | ExprIR::Eq
+            ExprIR::Eq
             | ExprIR::Neq
             | ExprIR::Lt
             | ExprIR::Gt
@@ -2217,6 +2229,9 @@ impl Binder {
             | ExprIR::Property(_)
             | ExprIR::ShortestPath { .. }
             | ExprIR::Pattern(_) => true,
+
+            // Pre-evaluated constant – only Bool/Null are boolean-shaped
+            ExprIR::Constant(v) => matches!(v, Value::Bool(_) | Value::Null),
         }
     }
 
@@ -2238,15 +2253,10 @@ impl Binder {
             ExprIR::GetElement
             | ExprIR::Property(_)
             | ExprIR::Parameter(_)
-            | ExprIR::Null
             | ExprIR::Reduce { .. } => true,
 
             // Everything else cannot produce a graph entity
-            ExprIR::Integer(_)
-            | ExprIR::Float(_)
-            | ExprIR::String(_)
-            | ExprIR::Bool(_)
-            | ExprIR::List
+            ExprIR::List
             | ExprIR::Map
             | ExprIR::MapProjection
             | ExprIR::Negate
@@ -2276,8 +2286,129 @@ impl Binder {
             | ExprIR::Quantifier { .. }
             | ExprIR::ShortestPath { .. }
             | ExprIR::Pattern(_) => false,
+
+            // Pre-evaluated constant – only Null and entity values count
+            ExprIR::Constant(v) => {
+                matches!(
+                    v,
+                    Value::Null | Value::Node(_) | Value::Relationship(_) | Value::Path(_)
+                )
+            }
         }
     }
+}
+
+/// Try to convert an already-bound expression subtree into a single concrete
+/// [`Value`]. Used for inline constant-folding in the binder.
+///
+/// Returns `Some(value)` only for trees that consist entirely of `Constant`
+/// leaves, plus structural `Map`/`List` whose children are all such leaves.
+fn expr_tree_to_value(tree: &DynTree<ExprIR<Variable>>) -> Option<Value> {
+    fn node_to_value(node: orx_tree::DynNode<ExprIR<Variable>>) -> Option<Value> {
+        match node.data() {
+            ExprIR::Constant(v) => Some(v.clone()),
+            ExprIR::List => {
+                let mut elements = thin_vec::ThinVec::with_capacity(node.num_children());
+                for child in node.children() {
+                    elements.push(node_to_value(child)?);
+                }
+                Some(Value::List(Arc::new(elements)))
+            }
+            ExprIR::Map => {
+                let mut entries: Vec<(Arc<String>, Value)> =
+                    Vec::with_capacity(node.num_children());
+                for child in node.children() {
+                    let ExprIR::Constant(Value::String(key)) = child.data() else {
+                        return None;
+                    };
+                    let val_node = child.get_child(0)?;
+                    entries.push((key.clone(), node_to_value(val_node)?));
+                }
+                Some(Value::Map(Arc::new(entries.into_iter().collect())))
+            }
+            _ => None,
+        }
+    }
+    node_to_value(tree.root())
+}
+
+/// Collect concrete [`Value`]s from each child sub-expression when *all*
+/// children are pure constants. Returns `None` if any child is non-constant.
+fn collect_constant_args(
+    children: &[DynTree<ExprIR<Variable>>]
+) -> Option<thin_vec::ThinVec<Value>> {
+    let mut args = thin_vec::ThinVec::with_capacity(children.len());
+    for child in children {
+        args.push(expr_tree_to_value(child)?);
+    }
+    Some(args)
+}
+
+/// If `new_data` is a constructor `FuncInvocation` (`duration`, `date`,
+/// `localtime`, `localdatetime`, `point`) whose single argument child is a
+/// Map literal with all-constant string keys, rewrite the call to pass
+/// positional arguments instead of the Map. Each Map entry feeds the
+/// matching positional slot; missing slots receive a `Constant(Null)` child.
+/// eval.rs detects the rewritten form via `func.struct_fn.is_some() &&
+/// num_children > 1` and dispatches through a stack `[Value; 10]` array.
+/// Returns the (possibly rewritten) data + children.
+fn rewrite_struct_constructor(
+    new_data: ExprIR<Variable>,
+    children: Vec<DynTree<ExprIR<Variable>>>,
+) -> (ExprIR<Variable>, Vec<DynTree<ExprIR<Variable>>>) {
+    let ExprIR::FuncInvocation(func) = &new_data else {
+        return (new_data, children);
+    };
+    if func.struct_fn.is_none() || func.struct_slots.is_empty() {
+        return (new_data, children);
+    }
+    let slots = func.struct_slots;
+    if children.len() != 1 {
+        return (new_data, children);
+    }
+    // Extract (key, value_tree) pairs in a scoped borrow so `children` can be
+    // moved on the bail-out branches below.
+    let entries: Option<HashMap<String, DynTree<ExprIR<Variable>>>> = {
+        let map_tree = &children[0];
+        if !matches!(map_tree.root().data(), ExprIR::Map) {
+            None
+        } else {
+            let map_root = map_tree.root();
+            let mut entries: HashMap<String, DynTree<ExprIR<Variable>>> = HashMap::new();
+            let mut ok = true;
+            for key_node in map_root.children() {
+                let ExprIR::Constant(Value::String(key)) = key_node.data() else {
+                    ok = false;
+                    break;
+                };
+                let Some(val_node) = key_node.get_child(0) else {
+                    ok = false;
+                    break;
+                };
+                entries.insert(key.as_str().to_string(), val_node.clone_as_tree());
+            }
+            if ok { Some(entries) } else { None }
+        }
+    };
+    let Some(entries) = entries else {
+        return (new_data, children);
+    };
+
+    // Build positional children: one per slot, missing entries → Constant(Null).
+    let mut new_children: Vec<DynTree<ExprIR<Variable>>> = Vec::with_capacity(slots.len());
+    let mut remaining = entries;
+    for slot in slots {
+        let child = remaining
+            .remove(*slot)
+            .unwrap_or_else(|| DynTree::new(ExprIR::Constant(Value::Null)));
+        new_children.push(child);
+    }
+    // Unknown keys → bail (preserve original semantics).
+    if !remaining.is_empty() {
+        return (new_data, children);
+    }
+
+    (new_data, new_children)
 }
 
 /// Recursively walk an ORDER BY expression tree and replace any aggregation
@@ -2358,10 +2489,10 @@ fn raw_exprs_structurally_equal(
         match (a, b) {
             (ExprIR::Variable(va), ExprIR::Variable(vb)) => va == vb,
             (ExprIR::FuncInvocation(fa), ExprIR::FuncInvocation(fb)) => fa.name == fb.name,
-            (ExprIR::String(sa), ExprIR::String(sb)) => sa == sb,
-            (ExprIR::Integer(ia), ExprIR::Integer(ib)) => ia == ib,
-            (ExprIR::Float(fa), ExprIR::Float(fb)) => fa == fb,
-            (ExprIR::Bool(ba), ExprIR::Bool(bb)) => ba == bb,
+            (ExprIR::Constant(Value::String(sa)), ExprIR::Constant(Value::String(sb))) => sa == sb,
+            (ExprIR::Constant(Value::Int(ia)), ExprIR::Constant(Value::Int(ib))) => ia == ib,
+            (ExprIR::Constant(Value::Float(fa)), ExprIR::Constant(Value::Float(fb))) => fa == fb,
+            (ExprIR::Constant(Value::Bool(ba)), ExprIR::Constant(Value::Bool(bb))) => ba == bb,
             (ExprIR::Property(pa), ExprIR::Property(pb)) => pa == pb,
             (ExprIR::Parameter(pa), ExprIR::Parameter(pb)) => pa == pb,
             _ => std::mem::discriminant(a) == std::mem::discriminant(b),

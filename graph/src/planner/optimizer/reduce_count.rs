@@ -40,6 +40,7 @@ use orx_tree::{DynTree, NodeRef};
 use crate::{
     graph::graph::Graph,
     parser::ast::{ExprIR, Variable},
+    runtime::value::Value,
     tree,
 };
 
@@ -155,7 +156,7 @@ pub(super) fn reduce_count(
         // as a constant integer.
         let agg_var = agg_var.clone();
         let count_expr: Arc<DynTree<ExprIR<Variable>>> =
-            Arc::new(tree!(ExprIR::Integer(count_value)));
+            Arc::new(tree!(ExprIR::Constant(Value::Int(count_value))));
 
         // First prune all children.
         while optimized_plan.node(idx).num_children() > 0 {
