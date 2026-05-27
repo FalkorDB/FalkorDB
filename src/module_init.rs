@@ -195,14 +195,20 @@ pub fn graph_init(
         }
 
         // Register fork handlers:
-        // - PREPARE: drain in-flight graph writers (fork_sync barrier), then
-        //   materialize all GraphBLAS matrices.
-        // - PARENT:  release blocked writers (fork_sync barrier cleared).
+        // - PREPARE: on the main thread (BGSAVE path), call `Matrix::wait`
+        //            on all graphs so the forked child sees a fully
+        //            materialized GraphBLAS state. On non-main threads
+        //            (RediSearch's ForkGC) we return immediately, mirroring
+        //            the C port's `_ForkPrepare`. See
+        //            [`crate::redis_type::pre_fork_prepare`].
+        // - PARENT:  nothing — writers serialize against BGSAVE via the GIL
+        //            during their commit phase; BGSAVE forks on the main
+        //            thread which holds the GIL, so no per-fork release.
         // - CHILD:   force GraphBLAS/OpenMP to single-threaded mode so they
         //            don't touch the parent's (now-invalid) thread pools.
         pthread_atfork(
             Some(crate::redis_type::pre_fork_prepare),
-            Some(crate::redis_type::after_fork_parent),
+            None,
             Some(on_fork_child),
         );
 

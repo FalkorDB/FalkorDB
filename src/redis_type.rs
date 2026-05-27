@@ -274,15 +274,24 @@ unsafe extern "C" fn graph_aux_load(
 /// pthread_atfork prepare handler: materialize all pending GraphBLAS operations
 /// before fork so the child process doesn't encounter held internal locks.
 ///
-/// First drains in-flight graph writers via the fork_sync barrier
-/// (see [`graph::fork_sync`]). Without that drain, the writer thread can be
-/// mid-mutation when we call `Matrix::wait` here, which under ASAN crashes
-/// with a NULL `GrB_Matrix` pointer (#452).
+/// Only runs on the main thread (BGSAVE path). For non-main-thread forks
+/// (RediSearch's ForkGC), we return immediately — mirroring the C port's
+/// `_ForkPrepare`, which also opts out of graph-side synchronization for
+/// ForkGC forks. That avoids a three-way deadlock between the writer's
+/// RediSearch FFI calls (which take RediSearch's internal RWLock) and
+/// ForkGC (which holds that RWLock across `fork()`).
+///
+/// On the main thread, BGSAVE is invoked from the Redis command loop which
+/// already holds the GIL. Writers cannot be mid-mutation against the graph
+/// at the moment BGSAVE forks because every writer must briefly take the
+/// GIL during its commit phase, and the main thread holds it now.
 ///
 /// # Safety
 /// Called by libc before fork. Accesses graphs via data_ptr() (bypassing RwLock).
 pub unsafe extern "C" fn pre_fork_prepare() {
-    graph::fork_sync::wait_for_fork_drain();
+    if !graph::thread_id::is_main_thread() {
+        return;
+    }
     let registry = crate::graph_core::GRAPH_REGISTRY.lock();
     for graph_arc in registry.values() {
         let tg: &ThreadedGraph = unsafe { &*graph_arc.data_ptr() };
@@ -290,15 +299,6 @@ pub unsafe extern "C" fn pre_fork_prepare() {
         let graph = g.borrow();
         graph.wait_all();
     }
-}
-
-/// pthread_atfork parent handler: release writers that blocked on the
-/// barrier set by [`pre_fork_prepare`].
-///
-/// # Safety
-/// Called by libc in the parent process after `fork()` returns.
-pub unsafe extern "C" fn after_fork_parent() {
-    graph::fork_sync::clear_fork_pending();
 }
 
 /// Called by Redis persistence events. Creates virtual keys before RDB save,

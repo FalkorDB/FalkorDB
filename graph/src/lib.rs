@@ -65,7 +65,6 @@
 //! - [`udf`]: User-defined function registration and dispatch
 
 pub mod entity_type;
-pub mod fork_sync;
 pub mod graph;
 pub mod index;
 pub mod parser;
