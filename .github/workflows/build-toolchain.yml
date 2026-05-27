@@ -40,6 +40,13 @@ concurrency:
 
 jobs:
   build:
+    # Only restrict workflow_dispatch invocations to main (avoid a feature
+    # branch accidentally overwriting :latest). workflow_call always runs —
+    # caller does its own gating (see rust-pr.yml's check-files job).
+    # NOTE: don't gate on `github.event_name == 'workflow_call'` here: inside
+    # a reusable workflow github.event_name keeps the CALLER's triggering
+    # event (e.g. 'pull_request'), so that check would always be false.
+    if: ${{ github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main' }}
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
@@ -78,6 +85,7 @@ jobs:
 
   manifest:
     needs: build
+    if: ${{ github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
