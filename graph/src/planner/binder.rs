@@ -31,7 +31,7 @@ use crate::parser::ast::{
 };
 use crate::runtime::functions::{FnArguments, FnType, Type};
 use crate::runtime::orderset::OrderSet;
-use crate::runtime::value::Value;
+use crate::runtime::value::{Value, ValueTypeOf};
 use crate::tree;
 use orx_tree::{Dfs, Dyn, DynNode, DynTree, NodeRef};
 use std::collections::{HashMap, HashSet};
@@ -2000,8 +2000,13 @@ impl Binder {
                 // `ExprIR::Constant(value)` leaf. The result lives in the
                 // plan cache, so the evaluation cost is paid once.
                 if let ExprIR::FuncInvocation(func) = &new_data
-                    && let Some(args) = collect_constant_args(&children)
                     && let Some(pure_fn) = func.pure_fn
+                    && let Some(args) = collect_constant_args(&children)
+                    && args.len() == func.pure_args_type.len()
+                    && args
+                        .iter()
+                        .zip(func.pure_args_type.iter())
+                        .all(|(v, t)| v.value_of_type(t).is_none())
                     && let Ok(value) = pure_fn(&args)
                 {
                     return Ok(DynTree::new(ExprIR::Constant(value)));

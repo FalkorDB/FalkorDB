@@ -589,8 +589,15 @@ pub struct GraphFn {
     /// Optional pure form of the function: when set, the optimizer's
     /// constant-folding pass invokes this directly with concrete arguments
     /// without needing a [`Runtime`]. Used for Map/String constructor forms
-    /// (e.g. `date('2020-01-01')`).
+    /// (e.g. `date('2020-01-01')`). The binder only invokes `pure_fn` when
+    /// the arguments match `pure_args_type` — this matters because
+    /// constructor functions are registered with a loose `var_arg` signature
+    /// to accept zero-arg "now"-style invocations, while `pure_fn` only
+    /// handles the single-argument constructor shape.
     pub pure_fn: Option<fn(&[Value]) -> Result<Value, String>>,
+    /// Argument types `pure_fn` accepts (positional, one entry per arg).
+    /// Empty when `pure_fn` is `None`.
+    pub pure_args_type: Vec<Type>,
     /// Optional positional-slot form used by the binder's struct-constructor
     /// rewrite: a call like `duration({months: i})` is rewritten into 7
     /// positional children, which eval.rs evaluates into a stack-allocated
@@ -641,6 +648,7 @@ impl GraphFn {
             write,
             non_deterministic,
             pure_fn: None,
+            pure_args_type: Vec::new(),
             struct_fn: None,
             struct_slots: &[],
             args_type,
@@ -658,6 +666,7 @@ impl GraphFn {
             write: false,
             non_deterministic: false,
             pure_fn: None,
+            pure_args_type: Vec::new(),
             struct_fn: None,
             struct_slots: &[],
             args_type: FnArguments::VarLength(Type::Any),
@@ -833,11 +842,13 @@ impl Functions {
     }
 
     /// Attach a pure form of a previously registered function. The binder's
-    /// constant-folding pass invokes `pure_fn` when all arguments are constants.
+    /// constant-folding pass invokes `pure_fn` when all arguments are
+    /// constants and match `args_type` positionally.
     pub fn set_pure_fn(
         &mut self,
         name: &str,
         pure_fn: fn(&[Value]) -> Result<Value, String>,
+        args_type: Vec<Type>,
     ) {
         let lower = name.to_lowercase();
         let existing = self
@@ -847,6 +858,7 @@ impl Functions {
         let inner =
             Arc::get_mut(existing).expect("function Arc must be unique at registration time");
         inner.pure_fn = Some(pure_fn);
+        inner.pure_args_type = args_type;
     }
 
     /// Attach a positional-slot constructor to a previously registered

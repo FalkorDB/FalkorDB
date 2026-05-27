@@ -795,12 +795,17 @@ pub fn register(funcs: &mut Functions) {
     // concrete arguments, and attach the positional-slot form invoked by
     // eval.rs after the binder rewrites `duration({months: i})` into
     // positional children.
-    funcs.set_pure_fn("date", date_pure);
-    funcs.set_pure_fn("localtime", localtime_pure);
-    funcs.set_pure_fn("localdatetime", localdatetime_pure);
-    funcs.set_pure_fn("duration", duration_pure);
+    let constructor_args = || vec![Type::Union(vec![Type::Map, Type::String, Type::Null])];
+    funcs.set_pure_fn("date", date_pure, constructor_args());
+    funcs.set_pure_fn("localtime", localtime_pure, constructor_args());
+    funcs.set_pure_fn("localdatetime", localdatetime_pure, constructor_args());
+    funcs.set_pure_fn("duration", duration_pure, constructor_args());
     funcs.set_struct_fn("date", date_struct_pure, DATE_SLOTS);
     funcs.set_struct_fn("localtime", localtime_struct_pure, LOCALTIME_SLOTS);
-    funcs.set_struct_fn("localdatetime", localdatetime_struct_pure, LOCALDATETIME_SLOTS);
+    funcs.set_struct_fn(
+        "localdatetime",
+        localdatetime_struct_pure,
+        LOCALDATETIME_SLOTS,
+    );
     funcs.set_struct_fn("duration", duration_struct_pure, DURATION_SLOTS);
 }
