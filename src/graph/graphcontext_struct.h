@@ -43,6 +43,6 @@ typedef struct GraphContext {
 	pthread_t writer_tid ;                 // writer thread id
 	char **_attributes;                    // array of pending attributes
 	Schema **_node_schemas;                // array of pending node schemas
-	Schema **_relation_schemas;            // array of pending node schemas
+	Schema **_relation_schemas;            // array of pending relation schemas
 } GraphContext;
 

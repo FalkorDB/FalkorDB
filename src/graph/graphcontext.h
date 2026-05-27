@@ -291,9 +291,9 @@ uint GraphContext_AttributeCount
 // returns an attribute ID given a string, creating one if not found
 AttributeID GraphContext_FindOrAddAttribute
 (
-	GraphContext *gc,
-	const char *attribute,
-	bool *created
+	GraphContext *gc,       // graph context
+	const char *attribute,  // attribute name
+	bool *created           // [optional] rather or not attribute was created
 );
 
 // returns an attribute string given an ID

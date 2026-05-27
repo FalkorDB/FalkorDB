@@ -1598,6 +1598,7 @@ void Graph_CommitPendingsMatrices
 	if (g->_labels    == NULL &&
 		g->_relations == NULL) {
 		// no changes
+		ASSERT (g->writer_tid == (pthread_t)0) ;
 		return ;
 	}
 
@@ -1606,6 +1607,8 @@ void Graph_CommitPendingsMatrices
 	//--------------------------------------------------------------------------
 
 	if (g->_labels != NULL) {
+		ASSERT (arr_len (g->_labels) >= arr_len (g->labels)) ;
+
 		if (arr_len (g->_labels) == arr_len (g->labels)) {
 			// no new labels
 			arr_free (g->_labels) ;
@@ -1622,6 +1625,8 @@ void Graph_CommitPendingsMatrices
 	//--------------------------------------------------------------------------
 
 	if (g->_relations != NULL) {
+		ASSERT (arr_len (g->_relations) >= arr_len (g->relations)) ;
+
 		if (arr_len (g->_relations) == arr_len (g->relations)) {
 			// no new relationships
 			arr_free (g->_relations) ;

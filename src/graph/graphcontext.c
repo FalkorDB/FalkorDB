@@ -233,6 +233,7 @@ static void _GraphContext_CommitPendings
 		gc->_node_schemas     == NULL &&
 		gc->_relation_schemas == NULL) {
 		// no changes
+		ASSERT (gc->writer_tid == (pthread_t)0) ;
 		return ;
 	}
 
@@ -243,8 +244,11 @@ static void _GraphContext_CommitPendings
 	//--------------------------------------------------------------------------
 
 	if (gc->_attributes != NULL) {
+		ASSERT (arr_len (gc->_attributes) >= arr_len (gc->attributes)) ;
+
 		if (arr_len (gc->_attributes) == arr_len (gc->attributes)) {
 			// no new attributes
+			// undo occurred since pending == commited
 			arr_free (gc->_attributes) ;
 		} else {
 			// introduce new attributes
@@ -259,6 +263,8 @@ static void _GraphContext_CommitPendings
 	//--------------------------------------------------------------------------
 
 	if (gc->_node_schemas != NULL) {
+		ASSERT (arr_len (gc->_node_schemas) >= arr_len (gc->node_schemas)) ;
+
 		if (arr_len (gc->_node_schemas) == arr_len (gc->node_schemas)) {
 			// no new node schemas
 			arr_free (gc->_node_schemas) ;
@@ -275,6 +281,8 @@ static void _GraphContext_CommitPendings
 	//--------------------------------------------------------------------------
 
 	if (gc->_relation_schemas != NULL) {
+		ASSERT (arr_len (gc->_relation_schemas) >= arr_len (gc->relation_schemas)) ;
+
 		if (arr_len (gc->_relation_schemas) == arr_len (gc->relation_schemas)) {
 			// no new relationship schemas
 			arr_free (gc->_relation_schemas) ;
@@ -895,7 +903,6 @@ Schema *GraphContext_FindOrAddSchema
 			gc->writer_tid = pthread_self () ;
 			arr_clone (gc->_relation_schemas, gc->relation_schemas) ;
 		}
-
 		arr_append (gc->_relation_schemas, s) ;
 	}
 
@@ -933,6 +940,8 @@ void GraphContext_RemoveSchema
 	ASSERT (arr_len (*schemas) -1 == id) ;
 
 	Schema *s = (*schemas) [id] ;
+	ASSERT (Schema_GetID (s) == id) ;
+
 	Schema_Free (s) ;
 
 	*schemas = arr_del (*schemas, id) ;
@@ -976,9 +985,9 @@ uint GraphContext_AttributeCount
 // returns an attribute ID given a string, creating one if not found
 AttributeID GraphContext_FindOrAddAttribute
 (
-	GraphContext *gc,
-	const char *attribute,
-	bool *created
+	GraphContext *gc,       // graph context
+	const char *attribute,  // attribute name
+	bool *created           // [optional] rather or not attribute was created
 ) {
 	ASSERT (gc        != NULL) ;
 	ASSERT (attribute != NULL) ;
@@ -992,6 +1001,9 @@ AttributeID GraphContext_FindOrAddAttribute
 	if (id != ATTRIBUTE_ID_NONE) {
 		return id ;	
 	}
+
+	ASSERT (gc->writer_tid == (pthread_t) 0 ||
+			pthread_equal (gc->writer_tid, pthread_self ())) ;
 
 	// attribute missing
 	// add it as a pending attribute
