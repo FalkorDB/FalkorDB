@@ -40,10 +40,6 @@ concurrency:
 
 jobs:
   build:
-    # Allow when called from another workflow (caller-supplied tag) or via
-    # dispatch (user-supplied tag); otherwise only publish from main so a
-    # feature-branch workflow doesn't accidentally overwrite :latest.
-    if: ${{ github.event_name == 'workflow_call' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' }}
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
@@ -82,7 +78,6 @@ jobs:
 
   manifest:
     needs: build
-    if: ${{ github.event_name == 'workflow_call' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
