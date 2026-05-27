@@ -22,8 +22,11 @@ static const AlgebraicExpression *_AlgebraicExpression_SrcOperand
 	while(exp->type == AL_OPERATION) {
 		switch(exp->operation.op) {
 			case AL_EXP_ADD:
+			case AL_EXP_POW:
 				// Src (A+B) = Src(A)
+				// Src (A^n) = Src(A)
 				// Src (Transpose(A+B)) = Src (Transpose(A)+Transpose(B)) = Src (Transpose(A))
+				// Src (Transpose(A^n)) = Src(Transpose(A)^n) = Src(Transpose(A))
 				exp = FIRST_CHILD(exp);
 				break;
 			case AL_EXP_MUL:
@@ -150,4 +153,3 @@ const char *AlgebraicExpression_Dest
 	exp = _AlgebraicExpression_SrcOperand(root, &transposed);
 	return (transposed) ? exp->operand.dest : exp->operand.src;
 }
-

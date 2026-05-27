@@ -91,6 +91,9 @@ class testMultiLabel():
             "MATCH (n:{ls})-[e:R]->(m) RETURN n",
             "MATCH (n:{ls})<-[e:R]-(m) RETURN n",
             "MATCH (n:{ls})-[e:R]-(m) RETURN n",
+            "MATCH (n:{ls})-[*]->(m) RETURN n",
+            "MATCH (n:{ls})<-[*]-(m) RETURN n",
+            "MATCH (n:{ls})-[*]-(m) RETURN n",
             "MATCH (n:{ls}) WHERE n.v = 1 RETURN n",
             "MATCH (n:{ls})-[e:R]->(m) WHERE n.v = 1 RETURN n",
             "MATCH (n:{ls})<-[e:R]-(m) WHERE n.v = 1 RETURN n",
@@ -202,6 +205,21 @@ class testMultiLabel():
         query = """MATCH (a:L0:L1)-[*]->(b {v: 3}) RETURN labels(a), labels(b)"""
         query_result = self.graph.query(query)
         self.env.assertEquals(query_result.result_set, expected_result)
+
+    def test09_variable_length_expand_into_multilabel_no_crash(self):
+        graph = self.db.select_graph('multi_label_issue_636')
+
+        query = """CREATE (:label8), (:label2)<-[:reltype5]-()<-[:reltype7]-()"""
+        graph.query(query)
+
+        queries = [
+            "MATCH (node_0:label8)<-[*..]-(node_0:label9) RETURN *",
+            "MATCH (node_0:label8)<-[*..]-(node_0:label9) WHERE node_0.prop7 = [false] RETURN *",
+        ]
+
+        for query in queries:
+            query_result = graph.query(query)
+            self.env.assertEquals(query_result.result_set, [])
 
     def test10_test_delete_label(self):
         self.graph = self.db.select_graph('delete_multi_label')
