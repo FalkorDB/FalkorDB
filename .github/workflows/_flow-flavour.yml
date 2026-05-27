@@ -148,7 +148,7 @@ jobs:
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
       - name: Upload coverage to Codecov
         if: ${{ !cancelled() && inputs.collect_coverage }}
-        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2
+        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
       - name: Capture service container logs on failure
@@ -199,7 +199,7 @@ jobs:
         if: inputs.collect_coverage
         run: mkdir -p "${GITHUB_WORKSPACE}/cov" && chmod 0777 "${GITHUB_WORKSPACE}/cov"
       - name: Login to GHCR (for in-container docker pull)
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -233,7 +233,7 @@ jobs:
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
       - name: Upload coverage to Codecov
         if: ${{ !cancelled() && inputs.collect_coverage }}
-        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2
+        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
       - name: Upload flow logs on failure

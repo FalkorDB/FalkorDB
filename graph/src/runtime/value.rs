@@ -248,7 +248,44 @@ impl Value {
 
     #[must_use]
     pub fn format_duration(duration_secs: i64) -> String {
-        format!("PT{duration_secs}S")
+        use crate::runtime::functions::temporal::decompose_duration;
+        let (years, months, mut remaining) = match decompose_duration(duration_secs) {
+            Ok(v) => v,
+            Err(_) => return format!("PT{duration_secs}S"),
+        };
+        let days = remaining / 86400;
+        remaining %= 86400;
+        let hours = remaining / 3600;
+        remaining %= 3600;
+        let minutes = remaining / 60;
+        let seconds = remaining % 60;
+
+        let mut s = String::from("P");
+        if years != 0 {
+            s.push_str(&format!("{years}Y"));
+        }
+        if months != 0 {
+            s.push_str(&format!("{months}M"));
+        }
+        if days != 0 {
+            s.push_str(&format!("{days}D"));
+        }
+        if hours != 0 || minutes != 0 || seconds != 0 {
+            s.push('T');
+            if hours != 0 {
+                s.push_str(&format!("{hours}H"));
+            }
+            if minutes != 0 {
+                s.push_str(&format!("{minutes}M"));
+            }
+            if seconds != 0 {
+                s.push_str(&format!("{seconds}S"));
+            }
+        }
+        if s.len() == 1 {
+            s.push_str("T0S");
+        }
+        s
     }
 
     /// Estimate the heap-allocated bytes owned by this value.
@@ -555,7 +592,7 @@ fn add_duration_to_timestamp(
     dur_secs: i64,
 ) -> Result<i64, String> {
     use crate::runtime::functions::temporal::decompose_duration;
-    use chrono::{Datelike, TimeZone, Timelike, Utc};
+    use chrono::{Datelike, NaiveDate, TimeZone, Timelike, Utc};
 
     let (years, months, remaining_secs) = decompose_duration(dur_secs)?;
     let dt = Utc
@@ -568,13 +605,26 @@ fn add_duration_to_timestamp(
     let adj_year = new_year + (new_month_raw - 1).div_euclid(12);
     let adj_month = ((new_month_raw - 1).rem_euclid(12) + 1) as u32;
     let max_day = days_in_month(adj_year, adj_month);
-    let day = dt.day().min(max_day);
+    let (final_year, final_month, final_day) = if dt.day() > max_day {
+        let overflow = dt.day() - max_day;
+        let nm = adj_month + 1;
+        let (ny, nm) = if nm > 12 {
+            (adj_year + 1, 1)
+        } else {
+            (adj_year, nm)
+        };
+        (ny, nm, overflow)
+    } else {
+        (adj_year, adj_month, dt.day())
+    };
+    let _ = NaiveDate::from_ymd_opt(final_year, final_month, final_day)
+        .ok_or("Invalid resulting date")?;
 
     let new_dt = Utc
         .with_ymd_and_hms(
-            adj_year,
-            adj_month,
-            day,
+            final_year,
+            final_month,
+            final_day,
             dt.hour(),
             dt.minute(),
             dt.second(),
