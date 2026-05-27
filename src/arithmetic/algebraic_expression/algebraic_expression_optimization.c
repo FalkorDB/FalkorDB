@@ -265,6 +265,16 @@ static void _Pushdown_TransposeMultiplication
 	for(uint i = 0; i < child_count; i++) _Pushdown_TransposeExp(exp->operation.children[i]);
 }
 
+// Transpose power.
+static void _Pushdown_TransposePower
+(
+	AlgebraicExpression *exp
+) {
+	// T(A^n) = T(A)^n
+	ASSERT(AlgebraicExpression_ChildCount(exp) == 1);
+	_Pushdown_TransposeExp(exp->operation.children[0]);
+}
+
 // Transpose transpose.
 static void _Pushdown_TransposeTranspose
 (
@@ -291,6 +301,9 @@ static void _Pushdown_TransposeOperation
 		break;
 	case AL_EXP_MUL:
 		_Pushdown_TransposeMultiplication(exp);
+		break;
+	case AL_EXP_POW:
+		_Pushdown_TransposePower(exp);
 		break;
 	case AL_EXP_TRANSPOSE:
 		_Pushdown_TransposeTranspose(exp);
@@ -427,4 +440,3 @@ void AlgebraicExpression_Optimize
 	// retrieve all operands now that they are guaranteed to be leaves.
 	_AlgebraicExpression_PopulateOperands(*exp, QueryCtx_GetGraphCtx());
 }
-

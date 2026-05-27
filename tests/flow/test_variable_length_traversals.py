@@ -456,3 +456,20 @@ class testVariableLengthTraversals(FlowTestsBase):
                 Node(2, labels=["C"], properties={"v": 5})],
             [Edge(0, "R", 1, 0, properties={"v": 2}), Edge(1, "R", 2, 1, properties={"v": 4})]
         ))
+
+    def test16_repeated_alias_with_incoming_var_len(self):
+        self.graph.delete()
+
+        q = """MERGE (:label8)
+               MERGE (:label2{})<-[:reltype5]-(node_0{})<-[:reltype7]-({})"""
+        self.graph.query(q)
+
+        q = """MATCH (node_0:label8{})<-[*..]-(node_0:label9)
+               WHERE node_0.prop7 = [FALSE]
+               RETURN *"""
+        res = self.graph.query(q)
+        self.env.assertEquals(res.result_set, [])
+
+        q = "MATCH (node_0:label8{})<-[*..]-(node_0:label9) RETURN *"
+        res = self.graph.query(q)
+        self.env.assertEquals(res.result_set, [])

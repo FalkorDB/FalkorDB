@@ -559,6 +559,31 @@ void test_algebraicExpression_domains() {
 	GrB_Matrix_free(&B);
 }
 
+void test_powerExpressionDomains() {
+	AlgebraicExpression *operand =
+		AlgebraicExpression_NewOperand(NULL, false, "src", "dest", "edge", NULL);
+
+	AlgebraicExpression *power = AlgebraicExpression_NewOperation(AL_EXP_POW);
+	AlgebraicExpression_AddChild(power, operand);
+
+	TEST_ASSERT(strcmp(AlgebraicExpression_Src(power), "src") == 0);
+	TEST_ASSERT(strcmp(AlgebraicExpression_Dest(power), "dest") == 0);
+
+	AlgebraicExpression_Transpose(&power);
+	TEST_ASSERT(strcmp(AlgebraicExpression_Src(power), "dest") == 0);
+	TEST_ASSERT(strcmp(AlgebraicExpression_Dest(power), "src") == 0);
+
+	AlgebraicExpression_PushDownTranspose(power);
+	TEST_ASSERT(power->type == AL_OPERATION);
+	TEST_ASSERT(power->operation.op == AL_EXP_POW);
+	TEST_ASSERT(AlgebraicExpression_ChildCount(power) == 1);
+	TEST_ASSERT(AlgebraicExpression_Transposed(FIRST_CHILD(power)));
+	TEST_ASSERT(strcmp(AlgebraicExpression_Src(power), "dest") == 0);
+	TEST_ASSERT(strcmp(AlgebraicExpression_Dest(power), "src") == 0);
+
+	AlgebraicExpression_Free(power);
+}
+
 void test_algebraicExpression_Clone() {
 	AlgebraicExpression *exp = NULL;
 	AlgebraicExpression *clone = NULL;
@@ -1810,6 +1835,7 @@ TEST_LIST = {
 	{"MultipleIntermidiateReturnNodes", test_MultipleIntermidiateReturnNodes},
 	{"OneIntermidiateReturnNode", test_OneIntermidiateReturnNode},
 	{"NoIntermidiateReturnNodes", test_NoIntermidiateReturnNodes},
+	{"PowerExpressionDomains", test_powerExpressionDomains},
 	{"ONeIntermidiateReturnEdge", test_ONeIntermidiateReturnEdge},
 	{"BothDirections", test_BothDirections},
 	{"SingleNode", test_SingleNode},
@@ -1820,4 +1846,3 @@ TEST_LIST = {
 	{"LocateOperand", test_LocateOperand},
 	{NULL, NULL}
 };
-

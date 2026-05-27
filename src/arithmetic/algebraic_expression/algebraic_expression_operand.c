@@ -26,6 +26,11 @@ static const AlgebraicExpression *_AlgebraicExpression_SrcOperand
 				// Src (Transpose(A+B)) = Src (Transpose(A)+Transpose(B)) = Src (Transpose(A))
 				exp = FIRST_CHILD(exp);
 				break;
+			case AL_EXP_POW:
+				// Src (A^n) = Src(A)
+				// Src (Transpose(A^n)) = Src (Transpose(A)^n) = Src (Transpose(A))
+				exp = FIRST_CHILD(exp);
+				break;
 			case AL_EXP_MUL:
 				// Src (A*B) = Src(A)
 				// Src (Transpose(A*B)) = Src (Transpose(B)*Transpose(A)) = Src (Transpose(B))
@@ -150,4 +155,3 @@ const char *AlgebraicExpression_Dest
 	exp = _AlgebraicExpression_SrcOperand(root, &transposed);
 	return (transposed) ? exp->operand.dest : exp->operand.src;
 }
-
