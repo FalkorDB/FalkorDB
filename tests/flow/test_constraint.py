@@ -990,13 +990,19 @@ class testConstraintEdges():
 
 MONITOR_ATTACHED = False
 
+# Unique graph for this class so the MONITOR filter can ignore GRAPH.CONSTRAINT
+# events from testConstraintNodes/Edges (which share GRAPH_ID) when all classes
+# run against the same master+replica pair in svc CI mode.
+REPL_GRAPH_ID = "replication_constraints"
+
+
 class testConstraintReplication():
     def __init__(self):
         self.env, self.db = Env(env='oss', useSlaves=True)
         self.source  = self.env.getConnection()
         self.replica = self.env.getSlaveConnection()
         self.monitor = []
-        self.g = self.db.select_graph(GRAPH_ID)
+        self.g = self.db.select_graph(REPL_GRAPH_ID)
 
         self.monitor_thread = threading.Thread(target=self.monitor_thread, daemon=True)
         self.monitor_thread.start()
@@ -1006,7 +1012,7 @@ class testConstraintReplication():
             time.sleep(0.2)
 
         # clear DB
-        self.source.delete(GRAPH_ID)
+        self.source.delete(REPL_GRAPH_ID)
 
         # the WAIT command forces master slave sync to complete
         self.source.execute_command("WAIT", 1, 0)
@@ -1017,7 +1023,7 @@ class testConstraintReplication():
             with self.replica.monitor() as m:
                 MONITOR_ATTACHED = True
                 for cmd in m.listen():
-                    if 'GRAPH.CONSTRAINT' in cmd['command']:
+                    if 'GRAPH.CONSTRAINT' in cmd['command'] and REPL_GRAPH_ID in cmd['command']:
                         self.monitor.append(cmd)
         except:
             pass

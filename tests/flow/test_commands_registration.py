@@ -39,3 +39,18 @@ class testCmdReg(FlowTestsBase):
             except ResponseError as e:
                 self.env.assertContains("This Redis command is not allowed from script", str(e))
 
+    def test_command_info_flags(self):
+        command_info = self.conn.execute_command(
+            "COMMAND", "INFO", "GRAPH.SLOWLOG", "GRAPH.CONSTRAINT", "GRAPH.COPY"
+        )
+        if isinstance(command_info, dict):
+            flags_by_command = {
+                name.upper(): set(info["flags"] if isinstance(info, dict) else info[2])
+                for name, info in command_info.items()
+            }
+        else:
+            flags_by_command = {info[0].upper(): set(info[2]) for info in command_info}
+
+        self.env.assertContains("allow_busy", flags_by_command["GRAPH.SLOWLOG"])
+        self.env.assertContains("denyoom", flags_by_command["GRAPH.CONSTRAINT"])
+        self.env.assertContains("denyoom", flags_by_command["GRAPH.COPY"])
