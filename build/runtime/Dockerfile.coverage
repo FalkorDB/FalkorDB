@@ -36,23 +36,21 @@ ENV FALKORDB_HOME=/var/lib/falkordb \
 
 RUN mkdir -p ${FALKORDB_DATA_PATH} ${FALKORDB_COV_PATH} && ln -s ${FALKORDB_DATA_PATH} /data
 
-# Runtime apt install — same shape as build/runtime/Dockerfile (python3.13
-# purge first, then LLVM install). The instrumented .so still needs the
-# GraphBLAS JIT toolchain (cc + omp.h) so matrix ops compile at runtime.
+# Runtime apt install — bare essentials only. After PR #483 GraphBLAS JIT is
+# disabled and libomp is statically linked into the instrumented .so (see
+# graph/build.rs + build/libomp.sh), so this image no longer needs clang,
+# libomp5, libomp-22-dev, the LLVM repo, or any dpkg force-removes. The
+# coverage runtime itself is baked into the instrumented .so by rustc's
+# -C instrument-coverage profile.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates bash openssl && \
     apt-get upgrade -y && \
     (apt-get purge -y python3.13 python3.13-minimal libpython3.13-minimal libpython3.13-stdlib || true) && \
-    apt-get install -y --no-install-recommends wget gnupg lsb-release && \
-    wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && ./llvm.sh 22 && \
-    apt-get install -y --no-install-recommends clang-22 libomp5 libomp-22-dev && \
-    ln -sf /usr/bin/clang-22 /usr/bin/cc && \
-    apt-get purge -y wget gnupg lsb-release && \
     (dpkg --force-remove-essential --purge ncurses-base ncurses-bin || true) && \
     (dpkg --force-remove-essential --purge perl-base || true) && \
     (dpkg --force-remove-protected --force-remove-essential --purge login || true) && \
     (dpkg --purge passwd || true) && \
-    apt-get clean && rm -rf /var/lib/apt/lists/* /llvm.sh
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 WORKDIR ${FALKORDB_HOME}
 
@@ -60,19 +58,6 @@ COPY ./build/runtime/run.sh       ${FALKORDB_BIN_PATH}/run.sh
 COPY ./build/runtime/gen-certs.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 RUN chmod +x ${FALKORDB_BIN_PATH}/run.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 COPY --from=builder /out/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
-
-# libomp.so.5 for the instrumented .so. amd64 only — this image is built
-# `platforms: linux/amd64` in build-rc-coverage-image (arm64 coverage isn't
-# part of the matrix yet).
-ARG TARGETARCH
-RUN --mount=from=builder,target=/builder,readonly \
-    case "${TARGETARCH}" in \
-        amd64) LIBOMP=/builder/usr/lib/x86_64-linux-gnu/libomp.so.5 ;; \
-        arm64) LIBOMP=/builder/usr/lib/aarch64-linux-gnu/libomp.so.5 ;; \
-        *) echo "unsupported TARGETARCH=${TARGETARCH}"; exit 1 ;; \
-    esac && \
-    cp "${LIBOMP}" /usr/local/lib/libomp.so.5 && \
-    ldconfig
 
 # Instrumentation runtime: every llvm-cov-aware binary writes profraw files
 # named per the LLVM_PROFILE_FILE template. %p = pid, %m = module hash; both
