@@ -66,6 +66,7 @@ use super::super::IR;
 
 use crate::parser::ast::QueryRelationship;
 use crate::runtime::orderset::OrderSet;
+use crate::runtime::value::Value;
 
 /// Build a `hasLabels(variable, [label1, label2, ...])` filter expression.
 fn build_has_labels_filter(
@@ -78,7 +79,7 @@ fn build_has_labels_filter(
     Arc::new(tree!(
         ExprIR::FuncInvocation(has_labels_fn),
         tree!(ExprIR::Variable(var.clone())),
-        tree!(ExprIR::List; labels.map(|l| tree!(ExprIR::String(l))))
+        tree!(ExprIR::List; labels.map(|l| tree!(ExprIR::Constant(Value::String(l)))))
     ))
 }
 
@@ -726,7 +727,7 @@ fn get_inline_attr_index<T: IndexSubject>(
 ) -> Option<(T, Arc<String>, Arc<String>, DynTree<ExprIR<Variable>>)> {
     for label in subject.all_labels() {
         for attr in subject.inline_attrs().root().children() {
-            if let ExprIR::String(attr_str) = attr.data()
+            if let ExprIR::Constant(Value::String(attr_str)) = attr.data()
                 && T::is_indexed(graph, label, attr_str, &IndexType::Range)
             {
                 return Some((
@@ -865,12 +866,12 @@ fn needs_post_filter(
         && matches!(rhs.data(), ExprIR::List)
         && rhs.num_children() > 0
         && rhs.children().all(|child| match child.data() {
-            ExprIR::Bool(_) | ExprIR::Float(_) | ExprIR::String(_) => true,
+            ExprIR::Constant(Value::Bool(_) | Value::Float(_) | Value::String(_)) => true,
             // Large int64s can't round-trip through f64 exactly,
             // so the runtime will reject them and fall back to a
             // full scan — the Filter has to stay above to
             // re-establish correctness in that case.
-            ExprIR::Integer(v) => !Index::int_loses_f64_precision(*v),
+            ExprIR::Constant(Value::Int(v)) => !Index::int_loses_f64_precision(*v),
             // `Null` is intentionally *not* whitelisted: the runtime
             // drops `Null` from the IN list when building the index
             // query, which can collapse to an empty `Or([])` that the
@@ -916,7 +917,7 @@ fn is_non_indexable_subexpr(
     match expr {
         ExprIR::Variable(v) => scan_alias_id.is_none_or(|id| v.id != id),
         ExprIR::Parameter(_) => true,
-        ExprIR::Integer(v) => Index::int_loses_f64_precision(*v),
+        ExprIR::Constant(Value::Int(v)) => Index::int_loses_f64_precision(*v),
         // Compound / non-primitive literals: the index backing store
         // only handles numeric, string, bool, and point scalars.
         ExprIR::List | ExprIR::Map => true,

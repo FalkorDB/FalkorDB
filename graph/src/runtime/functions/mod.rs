@@ -83,7 +83,7 @@ macro_rules! cypher_fn {
         $(#[$attr])*
         fn $fn_name(
             $rt: &Runtime,
-            $args: ThinVec<Value>,
+            $args: &[Value],
         ) -> Result<Value, String>
         $body
 
@@ -109,7 +109,7 @@ macro_rules! cypher_fn {
         $(#[$attr])*
         fn $fn_name(
             $rt: &Runtime,
-            $args: ThinVec<Value>,
+            $args: &[Value],
         ) -> Result<Value, String>
         $body
 
@@ -134,7 +134,7 @@ macro_rules! cypher_fn {
         $(#[$attr])*
         fn $fn_name(
             $rt: &Runtime,
-            $args: ThinVec<Value>,
+            $args: &[Value],
         ) -> Result<Value, String>
         $body
 
@@ -159,7 +159,7 @@ macro_rules! cypher_fn {
         $(#[$attr])*
         fn $fn_name(
             $rt: &Runtime,
-            $args: ThinVec<Value>,
+            $args: &[Value],
         ) -> Result<Value, String>
         $body
 
@@ -186,7 +186,7 @@ macro_rules! cypher_fn {
         $(#[$attr])*
         fn $fn_name(
             $rt: &Runtime,
-            $args: ThinVec<Value>,
+            $args: &[Value],
         ) -> Result<Value, String>
         $body
 
@@ -218,7 +218,7 @@ macro_rules! cypher_fn {
         $(#[$attr])*
         fn $fn_name(
             $rt: &Runtime,
-            $args: ThinVec<Value>,
+            $args: &[Value],
         ) -> Result<Value, String>
         $body
 
@@ -248,7 +248,7 @@ macro_rules! cypher_fn {
         $(#[$attr])*
         fn $fn_name(
             $rt: &Runtime,
-            $args: ThinVec<Value>,
+            $args: &[Value],
         ) -> Result<Value, String>
         $body
 
@@ -274,7 +274,7 @@ macro_rules! cypher_fn {
         $(#[$attr])*
         fn $fn_name(
             $rt: &Runtime,
-            $args: ThinVec<Value>,
+            $args: &[Value],
         ) -> Result<Value, String>
         $body
 
@@ -300,7 +300,7 @@ macro_rules! cypher_fn {
         $(#[$attr])*
         fn $fn_name(
             $rt: &Runtime,
-            $args: ThinVec<Value>,
+            $args: &[Value],
         ) -> Result<Value, String>
         $body
 
@@ -326,7 +326,7 @@ macro_rules! cypher_fn {
         $(#[$attr])*
         fn $fn_name(
             $rt: &Runtime,
-            $args: ThinVec<Value>,
+            $args: &[Value],
         ) -> Result<Value, String>
         $body
 
@@ -351,7 +351,7 @@ mod list;
 mod math;
 mod path;
 mod procedures;
-mod spatial;
+pub mod spatial;
 mod string;
 pub mod temporal;
 mod trig;
@@ -372,10 +372,30 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
 };
-use thin_vec::ThinVec;
 
 /// Function type for runtime function implementations.
-type RuntimeFn = Arc<dyn Fn(&Runtime, ThinVec<Value>) -> Result<Value, String> + Send + Sync>;
+///
+/// Two variants because UDFs need a captured name (closure-shaped) while
+/// native functions are plain `fn` pointers. An enum avoids the
+/// `Arc<dyn Fn>` indirection and vtable dispatch on the hot path.
+pub enum RuntimeFn {
+    Native(fn(&Runtime, &[Value]) -> Result<Value, String>),
+    Udf(String),
+}
+
+impl RuntimeFn {
+    #[inline]
+    pub fn call(
+        &self,
+        rt: &Runtime,
+        args: &[Value],
+    ) -> Result<Value, String> {
+        match self {
+            Self::Native(f) => f(rt, args),
+            Self::Udf(name) => crate::udf::js_context::call_udf_bridge(name, rt, args),
+        }
+    }
+}
 
 /// Optional bulk-aggregation entry point. Receives the column of input
 /// values for one batch (`inputs`), the number of rows being aggregated
@@ -566,6 +586,30 @@ pub struct GraphFn {
     pub func: RuntimeFn,
     pub write: bool,
     pub non_deterministic: bool,
+    /// Optional pure form of the function: when set, the optimizer's
+    /// constant-folding pass invokes this directly with concrete arguments
+    /// without needing a [`Runtime`]. Used for Map/String constructor forms
+    /// (e.g. `date('2020-01-01')`). The binder only invokes `pure_fn` when
+    /// the arguments match `pure_args_type` — this matters because
+    /// constructor functions are registered with a loose `var_arg` signature
+    /// to accept zero-arg "now"-style invocations, while `pure_fn` only
+    /// handles the single-argument constructor shape.
+    pub pure_fn: Option<fn(&[Value]) -> Result<Value, String>>,
+    /// Argument types `pure_fn` accepts (positional, one entry per arg).
+    /// Empty when `pure_fn` is `None`.
+    pub pure_args_type: Vec<Type>,
+    /// Optional positional-slot form used by the binder's struct-constructor
+    /// rewrite: a call like `duration({months: i})` is rewritten into 7
+    /// positional children, which eval.rs evaluates into a stack-allocated
+    /// `[Value; 10]` array and dispatches here — bypassing the
+    /// `ThinVec<Value>` heap alloc, `validate_args_type` walk, and the
+    /// `RuntimeFn` dispatch hop used by the general `func` path. Only
+    /// invoked when `num_children > 1`.
+    pub struct_fn: Option<fn(&[Value]) -> Result<Value, String>>,
+    /// Slot names that drive the binder rewrite — the order matches the
+    /// positional children produced for `struct_fn`. Set in lockstep with
+    /// `struct_fn`; both `Some` or both `None`.
+    pub struct_slots: &'static [&'static str],
     pub args_type: FnArguments,
     pub fn_type: FnType,
     pub ret_type: Type,
@@ -591,7 +635,7 @@ impl GraphFn {
     #[must_use]
     pub fn new(
         name: &str,
-        func: fn(&Runtime, ThinVec<Value>) -> Result<Value, String>,
+        func: fn(&Runtime, &[Value]) -> Result<Value, String>,
         write: bool,
         non_deterministic: bool,
         args_type: FnArguments,
@@ -600,9 +644,13 @@ impl GraphFn {
     ) -> Self {
         Self {
             name: String::from(name),
-            func: Arc::new(func),
+            func: RuntimeFn::Native(func),
             write,
             non_deterministic,
+            pure_fn: None,
+            pure_args_type: Vec::new(),
+            struct_fn: None,
+            struct_slots: &[],
             args_type,
             fn_type,
             ret_type,
@@ -614,11 +662,13 @@ impl GraphFn {
         let udf_name = name.to_string();
         Self {
             name: String::from(name),
-            func: Arc::new(move |rt, args| {
-                crate::udf::js_context::call_udf_bridge(&udf_name, rt, &args)
-            }),
+            func: RuntimeFn::Udf(udf_name),
             write: false,
             non_deterministic: false,
+            pure_fn: None,
+            pure_args_type: Vec::new(),
+            struct_fn: None,
+            struct_slots: &[],
             args_type: FnArguments::VarLength(Type::Any),
             fn_type: FnType::Udf,
             ret_type: Type::Any,
@@ -739,7 +789,7 @@ impl Functions {
     pub fn add(
         &mut self,
         name: &str,
-        func: fn(&Runtime, ThinVec<Value>) -> Result<Value, String>,
+        func: fn(&Runtime, &[Value]) -> Result<Value, String>,
         write: bool,
         non_deterministic: bool,
         args_type: Vec<Type>,
@@ -767,7 +817,7 @@ impl Functions {
     pub fn add_var_len(
         &mut self,
         name: &str,
-        func: fn(&Runtime, ThinVec<Value>) -> Result<Value, String>,
+        func: fn(&Runtime, &[Value]) -> Result<Value, String>,
         write: bool,
         non_deterministic: bool,
         arg_type: Type,
@@ -789,6 +839,48 @@ impl Functions {
             ret_type,
         ));
         self.functions.insert(name, graph_fn);
+    }
+
+    /// Attach a pure form of a previously registered function. The binder's
+    /// constant-folding pass invokes `pure_fn` when all arguments are
+    /// constants and match `args_type` positionally.
+    pub fn set_pure_fn(
+        &mut self,
+        name: &str,
+        pure_fn: fn(&[Value]) -> Result<Value, String>,
+        args_type: Vec<Type>,
+    ) {
+        let lower = name.to_lowercase();
+        let existing = self
+            .functions
+            .get_mut(&lower)
+            .unwrap_or_else(|| panic!("Function '{name}' not registered"));
+        let inner =
+            Arc::get_mut(existing).expect("function Arc must be unique at registration time");
+        inner.pure_fn = Some(pure_fn);
+        inner.pure_args_type = args_type;
+    }
+
+    /// Attach a positional-slot constructor to a previously registered
+    /// function. The binder rewrites Map-keyed constructor calls like
+    /// `duration({months: i})` into positional children using `slots` for
+    /// the slot order, and eval.rs dispatches them through `struct_fn` via
+    /// a stack `[Value; 10]` array.
+    pub fn set_struct_fn(
+        &mut self,
+        name: &str,
+        struct_fn: fn(&[Value]) -> Result<Value, String>,
+        slots: &'static [&'static str],
+    ) {
+        let lower = name.to_lowercase();
+        let existing = self
+            .functions
+            .get_mut(&lower)
+            .unwrap_or_else(|| panic!("Function '{name}' not registered"));
+        let inner =
+            Arc::get_mut(existing).expect("function Arc must be unique at registration time");
+        inner.struct_fn = Some(struct_fn);
+        inner.struct_slots = slots;
     }
 
     pub fn get(

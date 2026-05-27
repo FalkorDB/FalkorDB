@@ -57,7 +57,6 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Duration, Instant};
 
 use rquickjs::{CatchResultExt, CaughtError, Context, Function, Persistent, Runtime as JsRuntime};
-use thin_vec::ThinVec;
 
 use crate::runtime::runtime::Runtime;
 use crate::runtime::value::Value;
@@ -282,7 +281,7 @@ fn rebuild_context(
 pub fn call_udf_bridge(
     name: &str,
     rt: &Runtime,
-    args: &ThinVec<Value>,
+    args: &[Value],
 ) -> Result<Value, String> {
     ensure_context_current()?;
 
