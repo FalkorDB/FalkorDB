@@ -368,6 +368,73 @@ void _AlgebraicExpression_PopulateOperands
 	}
 }
 
+static bool _AlgebraicExpression_ContainsResolvedLabel
+(
+	const AlgebraicExpression *exp,
+	const char *alias,
+	const char *label
+) {
+	ASSERT(exp   != NULL);
+	ASSERT(alias != NULL);
+	ASSERT(label != NULL);
+
+	uint operand_count = 0;
+	AlgebraicExpression **operands =
+		AlgebraicExpression_CollectOperandsInOrder(exp, &operand_count);
+
+	for(uint i = 0; i < operand_count; i++) {
+		AlgebraicExpression *operand = operands[i];
+		if(!AlgebraicExpression_DiagonalOperand(operand, 0)) {
+			continue;
+		}
+
+		const char *operand_src   = AlgebraicExpression_Src(operand);
+		const char *operand_dest  = AlgebraicExpression_Dest(operand);
+		const char *operand_label = AlgebraicExpression_Label(operand);
+		if(operand_src == NULL || operand_dest == NULL ||
+		   operand_label == NULL) {
+			continue;
+		}
+
+		if(strcmp(alias, operand_src)  == 0 &&
+		   strcmp(alias, operand_dest) == 0 &&
+		   strcmp(label, operand_label) == 0) {
+			rm_free(operands);
+			return true;
+		}
+	}
+
+	rm_free(operands);
+	return false;
+}
+
+static bool _AlgebraicExpression_LabelResolvedByPreviousExpression
+(
+	AlgebraicExpression **exps,
+	uint exp_idx,
+	const char *alias,
+	const char *label
+) {
+	ASSERT(exps  != NULL);
+	ASSERT(alias != NULL);
+	ASSERT(label != NULL);
+
+	for(uint i = exp_idx; i > 0; i--) {
+		AlgebraicExpression *prev_exp = exps[i - 1];
+		const char *dest_alias = AlgebraicExpression_Dest(prev_exp);
+
+		if(dest_alias == NULL || strcmp(alias, dest_alias) != 0) {
+			continue;
+		}
+
+		if(_AlgebraicExpression_ContainsResolvedLabel(prev_exp, alias, label)) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
 void _AlgebraicExpression_RemoveRedundentOperands
 (
 	AlgebraicExpression **exps,
@@ -404,22 +471,22 @@ void _AlgebraicExpression_RemoveRedundentOperands
 		uint label_count = QGNode_LabelCount(src_node);
 		ASSERT(label_count > 0);
 
-		// see if source is resolved by a previous expression
-		bool resolved = false;
-		for(int j = i-1; j >= 0; j--) {
-			AlgebraicExpression *prev_exp = exps[j];
-			const char *dest_alias = AlgebraicExpression_Dest(prev_exp);
-			if(strcmp(src_alias, dest_alias)) continue;
-
-			resolved = (AlgebraicExpression_DiagonalOperand(
-			AlgebraicExpression_DestOperand(prev_exp), 0));
-			if(resolved) break;
-		}
-
-		if(!resolved) continue;
-
 		// remove source label matrices
-		for(int i = 0; i < label_count; i++) {
+		for(uint j = 0; j < label_count; j++) {
+			if(AlgebraicExpression_OperandCount(exp) == 0) break;
+
+			AlgebraicExpression *src_operand =
+				(AlgebraicExpression*)AlgebraicExpression_SrcOperand(exp);
+			if(!AlgebraicExpression_DiagonalOperand(src_operand, 0)) break;
+
+			const char *label = AlgebraicExpression_Label(src_operand);
+			ASSERT(label != NULL);
+
+			if(!_AlgebraicExpression_LabelResolvedByPreviousExpression(exps, i,
+					src_alias, label)) {
+				break;
+			}
+
 			AlgebraicExpression *redundent =
 				AlgebraicExpression_RemoveSource(&exp);
 			AlgebraicExpression_Free(redundent);
@@ -434,4 +501,3 @@ void _AlgebraicExpression_RemoveRedundentOperands
 		}
 	}
 }
-

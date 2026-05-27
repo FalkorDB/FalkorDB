@@ -548,3 +548,44 @@ class testVariableLengthTraversals(FlowTestsBase):
         count = self.graph.query(q).result_set[0][0]
         self.env.assertEquals(count, 16)
 
+    def test17_issue_636_same_alias_label_scan(self):
+        # Regression for issue #636: a reused node alias with source and
+        # destination labels on a variable-length traversal must not crash, and
+        # cost-based label selection must be able to swap labels on var-len ops.
+        self.graph.delete()
+
+        q = """CREATE (:label8),
+                      (:label2)<-[:reltype5]-({})<-[:reltype7]-({})"""
+        res = self.graph.query(q)
+        self.env.assertEquals(res.nodes_created, 4)
+        self.env.assertEquals(res.relationships_created, 2)
+
+        queries = [
+            """MATCH (node_0:label8)<-[*..]-(node_0:label9)
+               RETURN *""",
+            """MATCH (node_0:label8)<-[*..]-(node_0:label9)
+               WHERE node_0.prop7 = [false]
+               RETURN *""",
+        ]
+
+        for q in queries:
+            plan = str(self.graph.explain(q))
+            self.env.assertIn("Conditional Variable Length Traverse", plan)
+
+            res = self.graph.query(q)
+            self.env.assertEquals(res.result_set, [])
+
+        # Exercise the expand-into var-len op too: both endpoints are already
+        # bound before the OPTIONAL MATCH, but the traversal still has to carry
+        # the same reused-alias label constraints safely.
+        q = """MATCH (node_0:label8), (node_1)
+               WITH node_0, node_1
+               OPTIONAL MATCH (node_0)<-[*..]-(node_0:label9)
+               RETURN count(node_1)"""
+
+        plan = str(self.graph.explain(q))
+        self.env.assertIn("Conditional Variable Length Traverse (Expand Into)",
+                plan)
+
+        res = self.graph.query(q)
+        self.env.assertEquals(res.result_set, [[4]])
