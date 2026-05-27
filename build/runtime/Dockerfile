@@ -34,59 +34,24 @@ ENV FALKORDB_HOME=/var/lib/falkordb \
 
 RUN mkdir -p ${FALKORDB_DATA_PATH} && ln -s ${FALKORDB_DATA_PATH} /data
 
-# Runtime-image apt install. GraphBLAS JIT shells out to `cc` and #include
-# <omp.h> at runtime, so we need clang-22 + libomp-22-dev present in the
-# final image. The ordering below is load-bearing:
+# Runtime-image apt install. GraphBLAS's JIT is permanently disabled at
+# module init (see graph/src/graph/graphblas/matrix.rs `GxB_JIT_OFF`, #452)
+# so the runtime image no longer needs clang or libomp-22-dev — no kernel
+# compilation happens at runtime. libomp.so.5 is still required by
+# libfalkordb.so and is copied from the builder stage further below.
 #
-#   1. CVE trim of python3.13 MUST happen BEFORE the LLVM install. Otherwise
-#      `apt-get purge -y python3.13 ...` cascades through reverse-deps
-#      (llvm-22-tools → python3, etc.) and silently removes the just-installed
-#      libomp-22-dev along with clang-tools-22 / liblldb-22 / libpython3.13.
-#      Verified: build log on 618a276 (LLVM-first) showed libomp-22-dev
-#      installed at 35.84 and then purged at 37.27 by the python cascade.
-#
-#   2. llvm.sh MUST run BEFORE the dpkg force-removes of essential packages
-#      (ncurses-base, perl-base, login, passwd). Once `passwd` is gone the
-#      `_apt` user disappears and apt can no longer read its keyring files —
-#      llvm.sh's repo would then come back as unsigned. Verified locally.
-#
-#   3. No `apt-get autoremove` anywhere. Earlier attempts to use
-#      `apt-mark manual` to protect libomp-22-dev failed: apt's autoremove
-#      --purge ignores the manual flag once the dpkg force-removes have
-#      broken the dep graph. We just don't autoremove. Image gains ~100MB of
-#      leftover LLVM tooling (llvm-22-tools etc.) — acceptable for working
-#      JIT.
-#
-# JIT lifecycle: on first matrix-op GraphBLAS generates C source under
-# ~/.SuiteSparse/GrBN.M.K/c/ and shells out to `cc` to compile per-kernel
-# .so files. Without `cc` + omp.h the JIT call returns GxB_JIT_ERROR and
-# matrix.rs's `assert_eq!(info, GrB_SUCCESS)` panics the module on every
-# matrix op (MATCH, SET, DELETE, ...).
-#
-# We install clang-22 + libomp-22-dev (header) + libomp5 (runtime) and point
-# `/usr/bin/cc` at clang-22 so the JIT-compiled kernels are built by the
-# same compiler that produced our pre-baked libgraphblas.a / liblagraph.a /
-# libredisearch-static.a / libfalkordb.so. Heterogeneous toolchains
-# (clang-baked statics + gcc-JIT kernels) are technically workable per the
-# asan Dockerfile in commit 4215713, but a consistent clang-22 stack
-# removes a class of subtle codegen / libomp ABI risks.
+# PreJIT kernel curation is the follow-up that recovers the performance
+# otherwise lost to generic-kernel fallbacks (see project tracker).
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates bash openssl && \
-    # ---- CVE trim: purge python3.13 FIRST, before LLVM is installed ----
     apt-get upgrade -y && \
+    # CVE trim — packages not needed at runtime by redis-server / falkordb.so.
     (apt-get purge -y python3.13 python3.13-minimal libpython3.13-minimal libpython3.13-stdlib || true) && \
-    # ---- LLVM toolchain: install after the python cascade ----
-    apt-get install -y --no-install-recommends wget gnupg lsb-release && \
-    wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && ./llvm.sh 22 && \
-    apt-get install -y --no-install-recommends clang-22 libomp5 libomp-22-dev && \
-    ln -sf /usr/bin/clang-22 /usr/bin/cc && \
-    apt-get purge -y wget gnupg lsb-release && \
-    # ---- Essential dpkg force-removes: LAST (these break apt afterwards) ----
     (dpkg --force-remove-essential --purge ncurses-base ncurses-bin || true) && \
     (dpkg --force-remove-essential --purge perl-base || true) && \
     (dpkg --force-remove-protected --force-remove-essential --purge login || true) && \
     (dpkg --purge passwd || true) && \
-    apt-get clean && rm -rf /var/lib/apt/lists/* /llvm.sh
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 WORKDIR ${FALKORDB_HOME}
 
