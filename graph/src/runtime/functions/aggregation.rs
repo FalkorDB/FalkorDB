@@ -44,7 +44,7 @@ use crate::runtime::{
     value::{CompareValue, DisjointOrNull, Value},
 };
 use std::{cmp::Ordering, sync::Arc};
-use thin_vec::{ThinVec, thin_vec};
+use thin_vec::thin_vec;
 
 pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "collect",
@@ -53,7 +53,7 @@ pub fn register(funcs: &mut Functions) {
         agg_init: Value::List(Arc::new(thin_vec![])),
         batch_agg: collect_batch,
         fn collect(_, args) {
-            let mut iter = args.into_iter();
+            let mut iter = args.iter().cloned();
             match (iter.next(), iter.next()) {
                 (Some(a), Some(Value::Null)) => Ok(Value::List(Arc::new(thin_vec![a]))),
                 (Some(a), Some(Value::List(mut l))) => {
@@ -75,7 +75,7 @@ pub fn register(funcs: &mut Functions) {
         agg_init: Value::Int(0),
         batch_agg: count_batch,
         fn count(_, args) {
-            let mut iter = args.into_iter();
+            let mut iter = args.iter().cloned();
             let first = iter.next();
             let sec = iter.next();
             match (first, sec) {
@@ -93,7 +93,7 @@ pub fn register(funcs: &mut Functions) {
         agg_init: Value::Float(0.0),
         batch_agg: sum_batch,
         fn sum(_, args) {
-            let mut iter = args.into_iter();
+            let mut iter = args.iter().cloned();
             let first = iter.next();
             let second = iter.next();
 
@@ -117,7 +117,7 @@ pub fn register(funcs: &mut Functions) {
         agg_init: Value::Null,
         batch_agg: max_batch,
         fn max(_, args) {
-            let mut iter = args.into_iter();
+            let mut iter = args.iter().cloned();
             match (iter.next(), iter.next()) {
                 (Some(a), Some(b)) => {
                     if let (ord, cmp) = b.compare_value(&a) &&
@@ -138,7 +138,7 @@ pub fn register(funcs: &mut Functions) {
         agg_init: Value::Null,
         batch_agg: min_batch,
         fn min(_, args) {
-            let mut iter = args.into_iter();
+            let mut iter = args.iter().cloned();
             match (iter.next(), iter.next()) {
                 (Some(a), Some(b)) => {
                     if let (ord, cmp) = b.compare_value(&a) &&
@@ -159,7 +159,7 @@ pub fn register(funcs: &mut Functions) {
         agg_init: Value::List(Arc::new(thin_vec![Value::Float(0.0), Value::Int(0), Value::Bool(false)])),
         finalizer: finalize_avg,
         fn avg(_, args) {
-            let mut iter = args.into_iter();
+            let mut iter = args.iter().cloned();
             let val = iter.next().unwrap();
             let ctx = iter.next().unwrap();
             match (val, ctx) {
@@ -221,16 +221,16 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Union(vec![Type::Float, Type::Null]),
         agg_init: Value::List(Arc::new(thin_vec![Value::Float(0.0), Value::List(Arc::new(thin_vec![]))])),
         finalizer: finalize_percentile_disc,
-        fn percentile(_, mut args) {
-            let val = args.remove(0);
-            let percentile_val = args.remove(0);
+        fn percentile(_, args) {
+            let val = args[0].clone();
+            let percentile_val = args[1].clone();
 
             // Domain validation is now done in PHASE 3.5, so these checks are removed
             // (Or kept as defensive programming - they should never fail)
 
             let percentile = percentile_val.get_numeric();
 
-            let ctx = args.remove(0);
+            let ctx = args[2].clone();
             if matches!(val, Value::Null) {
                 return Ok(ctx);
             }
@@ -281,7 +281,7 @@ pub fn register(funcs: &mut Functions) {
         agg_init: Value::List(Arc::new(thin_vec![Value::Float(0.0), Value::List(Arc::new(thin_vec![]))])),
         finalizer: finalize_stdev,
         fn stdev(_, args) {
-            let mut iter = args.into_iter();
+            let mut iter = args.iter().cloned();
             let val = iter.next().unwrap();
             let ctx = iter.next().unwrap();
             match (val, ctx) {

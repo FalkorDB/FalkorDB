@@ -37,20 +37,20 @@ use super::{FnType, Functions, Type};
 use crate::runtime::{runtime::Runtime, value::Value};
 use rand::RngExt;
 use std::sync::Arc;
-use thin_vec::{ThinVec, thin_vec};
+use thin_vec::thin_vec;
 
 pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "abs",
         args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         ret: Type::Union(vec![Type::Int, Type::Float, Type::Null]),
         fn abs(_, args) {
-            match args.into_iter().next() {
-                Some(Value::Int(n)) => n
+            match &args[0] {
+                Value::Int(n) => n
                     .checked_abs()
                     .map(Value::Int)
                     .ok_or_else(|| String::from("ArgumentError: integer overflow in abs()")),
-                Some(Value::Float(f)) => Ok(Value::Float(f.abs())),
-                Some(Value::Null) => Ok(Value::Null),
+                Value::Float(f) => Ok(Value::Float(f.abs())),
+                Value::Null => Ok(Value::Null),
 
                 _ => unreachable!(),
             }
@@ -61,10 +61,10 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         ret: Type::Union(vec![Type::Int, Type::Float, Type::Null]),
         fn ceil(_, args) {
-            match args.into_iter().next() {
-                Some(Value::Int(n)) => Ok(Value::Int(n)),
-                Some(Value::Float(f)) => Ok(Value::Float(f.ceil())),
-                Some(Value::Null) => Ok(Value::Null),
+            match &args[0] {
+                Value::Int(n) => Ok(Value::Int(*n)),
+                Value::Float(f) => Ok(Value::Float(f.ceil())),
+                Value::Null => Ok(Value::Null),
 
                 _ => unreachable!(),
             }
@@ -75,11 +75,8 @@ pub fn register(funcs: &mut Functions) {
         args: [],
         ret: Type::Float,
         fn e(_, args) {
-            match args.into_iter().next() {
-                None => Ok(Value::Float(std::f64::consts::E)),
-
-                _ => unreachable!(),
-            }
+            debug_assert!(args.is_empty());
+            Ok(Value::Float(std::f64::consts::E))
         }
     );
 
@@ -87,10 +84,10 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         ret: Type::Union(vec![Type::Float, Type::Null]),
         fn exp(_, args) {
-            match args.into_iter().next() {
-                Some(Value::Int(n)) => Ok(Value::Float((n as f64).exp())),
-                Some(Value::Float(f)) => Ok(Value::Float(f.exp())),
-                Some(Value::Null) => Ok(Value::Null),
+            match &args[0] {
+                Value::Int(n) => Ok(Value::Float((*n as f64).exp())),
+                Value::Float(f) => Ok(Value::Float(f.exp())),
+                Value::Null => Ok(Value::Null),
 
                 _ => unreachable!(),
             }
@@ -101,10 +98,10 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         ret: Type::Union(vec![Type::Int, Type::Float, Type::Null]),
         fn floor(_, args) {
-            match args.into_iter().next() {
-                Some(Value::Int(n)) => Ok(Value::Int(n)),
-                Some(Value::Float(f)) => Ok(Value::Float(f.floor())),
-                Some(Value::Null) => Ok(Value::Null),
+            match &args[0] {
+                Value::Int(n) => Ok(Value::Int(*n)),
+                Value::Float(f) => Ok(Value::Float(f.floor())),
+                Value::Null => Ok(Value::Null),
 
                 _ => unreachable!(),
             }
@@ -115,10 +112,10 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         ret: Type::Union(vec![Type::Float, Type::Null]),
         fn log(_, args) {
-            match args.into_iter().next() {
-                Some(Value::Int(n)) => Ok(Value::Float((n as f64).ln())),
-                Some(Value::Float(f)) => Ok(Value::Float(f.ln())),
-                Some(Value::Null) => Ok(Value::Null),
+            match &args[0] {
+                Value::Int(n) => Ok(Value::Float((*n as f64).ln())),
+                Value::Float(f) => Ok(Value::Float(f.ln())),
+                Value::Null => Ok(Value::Null),
 
                 _ => unreachable!(),
             }
@@ -129,10 +126,10 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         ret: Type::Union(vec![Type::Float, Type::Null]),
         fn log10(_, args) {
-            match args.into_iter().next() {
-                Some(Value::Int(n)) => Ok(Value::Float((n as f64).log10())),
-                Some(Value::Float(f)) => Ok(Value::Float(f.log10())),
-                Some(Value::Null) => Ok(Value::Null),
+            match &args[0] {
+                Value::Int(n) => Ok(Value::Float((*n as f64).log10())),
+                Value::Float(f) => Ok(Value::Float(f.log10())),
+                Value::Null => Ok(Value::Null),
 
                 _ => unreachable!(),
             }
@@ -177,11 +174,7 @@ pub fn register(funcs: &mut Functions) {
         ],
         ret: Type::Union(vec![Type::Float, Type::Null]),
         fn pow(_, args) {
-            let mut iter = args.into_iter();
-            match (iter.next(), iter.next()) {
-                (Some(a), Some(b)) => Ok(apply_pow(a, b)),
-                _ => unreachable!(),
-            }
+            Ok(apply_pow(args[0].clone(), args[1].clone()))
         }
     );
 
@@ -201,10 +194,10 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         ret: Type::Union(vec![Type::Int, Type::Float, Type::Null]),
         fn round(_, args) {
-            match args.into_iter().next() {
-                Some(Value::Int(n)) => Ok(Value::Int(n)),
-                Some(Value::Float(f)) => Ok(Value::Float(f.round())),
-                Some(Value::Null) => Ok(Value::Null),
+            match &args[0] {
+                Value::Int(n) => Ok(Value::Int(*n)),
+                Value::Float(f) => Ok(Value::Float(f.round())),
+                Value::Null => Ok(Value::Null),
 
                 _ => unreachable!(),
             }
@@ -215,14 +208,14 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         ret: Type::Union(vec![Type::Int, Type::Null]),
         fn sign(_, args) {
-            match args.into_iter().next() {
-                Some(Value::Int(n)) => Ok(Value::Int(n.signum())),
-                Some(Value::Float(f)) => Ok(if f == 0.0 {
+            match &args[0] {
+                Value::Int(n) => Ok(Value::Int(n.signum())),
+                Value::Float(f) => Ok(if *f == 0.0 {
                     Value::Int(0)
                 } else {
                     Value::Float(f.signum().round())
                 }),
-                Some(Value::Null) => Ok(Value::Null),
+                Value::Null => Ok(Value::Null),
 
                 _ => unreachable!(),
             }
@@ -233,22 +226,22 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         ret: Type::Union(vec![Type::Float, Type::Null]),
         fn sqrt(_, args) {
-            match args.into_iter().next() {
-                Some(Value::Int(n)) => {
-                    if n < 0 {
+            match &args[0] {
+                Value::Int(n) => {
+                    if *n < 0 {
                         Ok(Value::Float(f64::NAN))
                     } else {
-                        Ok(Value::Float((n as f64).sqrt()))
+                        Ok(Value::Float((*n as f64).sqrt()))
                     }
                 }
-                Some(Value::Float(f)) => {
-                    if f >= 0f64 {
+                Value::Float(f) => {
+                    if *f >= 0f64 {
                         Ok(Value::Float(f.sqrt()))
                     } else {
                         Ok(Value::Float(f64::NAN))
                     }
                 }
-                Some(Value::Null) => Ok(Value::Null),
+                Value::Null => Ok(Value::Null),
 
                 _ => unreachable!(),
             }
@@ -259,12 +252,18 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Int, Type::Int, Type::Optional(Box::new(Type::Int))],
         ret: Type::Union(vec![Type::List(Box::new(Type::Int)), Type::Null]),
         fn range(_, args) {
-            let mut iter = args.into_iter();
-            let start = iter.next().ok_or("Missing start value")?;
-            let end = iter.next().ok_or("Missing end value")?;
-            let step = iter.next().unwrap_or_else(|| Value::Int(1));
+            let start = &args[0];
+            let end = &args[1];
+            let step_owned;
+            let step = if args.len() > 2 {
+                &args[2]
+            } else {
+                step_owned = Value::Int(1);
+                &step_owned
+            };
             match (start, end, step) {
                 (Value::Int(start), Value::Int(end), Value::Int(step)) => {
+                    let (start, end, step) = (*start, *end, *step);
                     if step == 0 {
                         return Err(String::from(
                             "ArgumentError: step argument to range() can't be 0",
@@ -316,12 +315,11 @@ pub fn register(funcs: &mut Functions) {
         var_arg: Type::Any,
         ret: Type::Any,
         fn coalesce(_, args) {
-            let iter = args.into_iter();
-            for arg in iter {
-                if arg == Value::Null {
+            for arg in args.iter() {
+                if *arg == Value::Null {
                     continue;
                 }
-                return Ok(arg);
+                return Ok(arg.clone());
             }
             Ok(Value::Null)
         }

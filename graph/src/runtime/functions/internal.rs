@@ -27,7 +27,6 @@
 
 use super::{FnType, Functions, Type};
 use crate::runtime::{runtime::Runtime, value::Value};
-use thin_vec::ThinVec;
 
 pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "starts_with",
@@ -38,7 +37,7 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Union(vec![Type::Bool, Type::Null]),
         internal,
         fn internal_starts_with(_, args) {
-            let mut iter = args.into_iter();
+            let mut iter = args.iter();
             match (iter.next(), iter.next()) {
                 (Some(Value::String(s)), Some(Value::String(prefix))) => {
                     Ok(Value::Bool(s.starts_with(prefix.as_str())))
@@ -56,7 +55,7 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Union(vec![Type::Bool, Type::Null]),
         internal,
         fn internal_ends_with(_, args) {
-            let mut iter = args.into_iter();
+            let mut iter = args.iter();
             match (iter.next(), iter.next()) {
                 (Some(Value::String(s)), Some(Value::String(suffix))) => {
                     Ok(Value::Bool(s.ends_with(suffix.as_str())))
@@ -74,7 +73,7 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Union(vec![Type::Bool, Type::Null]),
         internal,
         fn internal_contains(_, args) {
-            let mut iter = args.into_iter();
+            let mut iter = args.iter();
             match (iter.next(), iter.next()) {
                 (Some(Value::String(s)), Some(Value::String(substring))) => {
                     Ok(Value::Bool(s.contains(substring.as_str())))
@@ -89,10 +88,10 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Union(vec![Type::Bool, Type::Null]),
         internal,
         fn internal_is_null(_, args) {
-            let mut iter = args.into_iter();
+            let mut iter = args.iter();
             match (iter.next(), iter.next()) {
-                (Some(Value::Bool(is_not)), Some(Value::Null)) => Ok(Value::Bool(!is_not)),
-                (Some(Value::Bool(is_not)), Some(_)) => Ok(Value::Bool(is_not)),
+                (Some(&Value::Bool(is_not)), Some(Value::Null)) => Ok(Value::Bool(!is_not)),
+                (Some(&Value::Bool(is_not)), Some(_)) => Ok(Value::Bool(is_not)),
                 _ => unreachable!(),
             }
         }
@@ -106,7 +105,7 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Union(vec![Type::Bool, Type::Null]),
         internal,
         fn internal_regex_matches(_, args) {
-            let mut iter = args.into_iter();
+            let mut iter = args.iter();
             match (iter.next(), iter.next()) {
                 (Some(Value::String(s)), Some(Value::String(pattern))) => {
                     match regex::Regex::new(pattern.as_str()) {
@@ -125,7 +124,7 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Any,
         internal,
         fn internal_case(_, args) {
-            let mut iter = args.into_iter();
+            let mut iter = args.iter();
             match (iter.next(), iter.next(), iter.next()) {
                 (Some(Value::List(alts)), Some(else_), None) => {
                     for pair in alts.chunks(2) {
@@ -134,7 +133,7 @@ pub fn register(funcs: &mut Functions) {
                             (_, result) => return Ok(result.clone()),
                         }
                     }
-                    Ok(else_)
+                    Ok(else_.clone())
                 }
                 (Some(value), Some(alt), Some(else_)) => {
                     let Value::List(alts) = alt else {
@@ -142,12 +141,12 @@ pub fn register(funcs: &mut Functions) {
                     };
                     for pair in alts.chunks(2) {
                         if let [condition, result] = pair
-                            && *condition == value
+                            && condition == value
                         {
                             return Ok(result.clone());
                         }
                     }
-                    Ok(else_)
+                    Ok(else_.clone())
                 }
                 _ => unreachable!(),
             }

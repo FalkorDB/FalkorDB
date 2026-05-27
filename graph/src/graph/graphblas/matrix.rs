@@ -91,9 +91,9 @@ use super::{
     GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode, GrB_UINT64, GrB_WaitMode,
     GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64,
     GxB_Container_free, GxB_Container_new, GxB_Global_Option_set_INT32, GxB_Iterator,
-    GxB_Iterator_free, GxB_Iterator_new, GxB_Matrix_fprint, GxB_Matrix_memoryUsage,
-    GxB_Matrix_type, GxB_NTHREADS, GxB_Option_Field, GxB_Print_Level, GxB_init,
-    GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
+    GxB_Iterator_free, GxB_Iterator_new, GxB_JIT_Control, GxB_Matrix_fprint,
+    GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_NTHREADS, GxB_Option_Field, GxB_Print_Level,
+    GxB_init, GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
     GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol, GxB_rowIterator_nextRow,
     GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
 };
@@ -128,6 +128,28 @@ pub fn init(
         );
         if info != GrB_Info::GrB_SUCCESS {
             return Err(format!("GraphBLAS GxB_init failed: {info:?}"));
+        }
+
+        // Disable JIT. GraphBLAS's JIT path calls dlopen() to load freshly
+        // compiled kernels, which blocks on dyld's internal lock. If a writer
+        // thread is mid-dlopen while the main thread enters fork(), the
+        // atfork-prepare handler (which we use to wait for graphs to quiesce)
+        // can deadlock against dyld. JIT-off forces GraphBLAS to use its
+        // built-in generic kernels — no dlopen, no fork-time deadlock.
+        //
+        // Trade-off: generic kernels are slower than JIT-compiled ones. The
+        // intended follow-up is to curate a PreJIT/*.c set captured from a
+        // representative workload and bake it into libgraphblas.a, mirroring
+        // the C port's approach (deps/GraphBLAS/PreJIT/ in FalkorDB/FalkorDB).
+        // Until that lands the cost shows up on hot paths like delta_lmxm and
+        // element_wise_add.
+        let info = GrB_Global_set_INT32(
+            GrB_GLOBAL,
+            GxB_JIT_Control::GxB_JIT_OFF as i32,
+            GxB_Option_Field::GxB_JIT_C_CONTROL as _,
+        );
+        if info != GrB_Info::GrB_SUCCESS {
+            return Err(format!("GraphBLAS JIT-off failed: {info:?}"));
         }
 
         // Initialize LAGraph after GraphBLAS
@@ -755,6 +777,14 @@ impl Matrix {
         }
         self.has_pending.store(false, Ordering::Relaxed);
         drop(lock);
+    }
+
+    /// Returns true if this matrix has no pending GraphBLAS operations,
+    /// i.e. is in a state where the fork child can safely serialize it
+    /// without first calling `wait()`. Cheap atomic load.
+    #[must_use]
+    pub fn is_synced(&self) -> bool {
+        !self.has_pending.load(Ordering::Relaxed)
     }
 
     #[must_use]

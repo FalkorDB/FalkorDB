@@ -309,6 +309,13 @@ impl Tensor {
         self.me.wait_all();
     }
 
+    /// Returns true if every internal matrix has no pending GraphBLAS
+    /// operations queued.
+    #[must_use]
+    pub fn is_synced(&self) -> bool {
+        self.m.is_synced() && self.mt.is_synced() && self.me.is_synced()
+    }
+
     #[must_use]
     pub fn memory_usage(&self) -> usize {
         self.m.memory_usage() + self.mt.memory_usage() + self.me.memory_usage()

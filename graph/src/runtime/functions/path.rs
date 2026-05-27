@@ -21,15 +21,13 @@
 use super::{FnType, Functions, Type};
 use crate::runtime::{runtime::Runtime, value::Value};
 use std::sync::Arc;
-use thin_vec::ThinVec;
 
 pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "nodes",
         args: [Type::Union(vec![Type::Path, Type::Null])],
         ret: Type::Union(vec![Type::List(Box::new(Type::Node)), Type::Null]),
         fn nodes(_, args) {
-            let mut iter = args.into_iter();
-            match iter.next() {
+            match args.first() {
                 Some(Value::Path(values)) => Ok(Value::List(Arc::new(
                     values
                         .iter()
@@ -52,8 +50,7 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::Path, Type::Null])],
         ret: Type::Union(vec![Type::List(Box::new(Type::Relationship)), Type::Null]),
         fn relationships(_, args) {
-            let mut iter = args.into_iter();
-            match iter.next() {
+            match args.first() {
                 Some(Value::Path(values)) => Ok(Value::List(Arc::new(
                     values
                         .iter()

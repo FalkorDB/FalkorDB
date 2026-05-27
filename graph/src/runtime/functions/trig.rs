@@ -26,17 +26,16 @@
 
 use super::{FnType, Functions, Type};
 use crate::runtime::{runtime::Runtime, value::Value};
-use thin_vec::ThinVec;
 
 /// Apply a unary `f64 -> f64` function to a single numeric-or-null argument.
 fn apply_unary_float(
-    args: ThinVec<Value>,
+    args: &[Value],
     f: fn(f64) -> f64,
 ) -> Result<Value, String> {
-    match args.into_iter().next() {
-        Some(Value::Int(n)) => Ok(Value::Float(f(n as f64))),
-        Some(Value::Float(v)) => Ok(Value::Float(f(v))),
-        Some(Value::Null) => Ok(Value::Null),
+    match &args[0] {
+        Value::Int(n) => Ok(Value::Float(f(*n as f64))),
+        Value::Float(v) => Ok(Value::Float(f(*v))),
+        Value::Null => Ok(Value::Null),
         _ => unreachable!("trig functions expect Int, Float, or Null"),
     }
 }
@@ -93,13 +92,12 @@ pub fn register(funcs: &mut Functions) {
         ],
         ret: Type::Union(vec![Type::Float, Type::Null]),
         fn atan2(_, args) {
-            let mut iter = args.into_iter();
-            match (iter.next(), iter.next()) {
-                (Some(Value::Int(y)), Some(Value::Int(x))) => Ok(Value::Float((y as f64).atan2(x as f64))),
-                (Some(Value::Float(y)), Some(Value::Float(x))) => Ok(Value::Float(y.atan2(x))),
-                (Some(Value::Int(y)), Some(Value::Float(x))) => Ok(Value::Float((y as f64).atan2(x))),
-                (Some(Value::Float(y)), Some(Value::Int(x))) => Ok(Value::Float(y.atan2(x as f64))),
-                (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(Value::Null),
+            match (&args[0], &args[1]) {
+                (Value::Int(y), Value::Int(x)) => Ok(Value::Float((*y as f64).atan2(*x as f64))),
+                (Value::Float(y), Value::Float(x)) => Ok(Value::Float(y.atan2(*x))),
+                (Value::Int(y), Value::Float(x)) => Ok(Value::Float((*y as f64).atan2(*x))),
+                (Value::Float(y), Value::Int(x)) => Ok(Value::Float(y.atan2(*x as f64))),
+                (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
                 _ => unreachable!("atan2 expects two numeric-or-null arguments"),
             }
         }

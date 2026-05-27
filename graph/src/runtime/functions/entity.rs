@@ -38,8 +38,8 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::Node, Type::Null])],
         ret: Type::Union(vec![Type::List(Box::new(Type::String)), Type::Null]),
         fn labels(runtime, args) {
-            match args.into_iter().next() {
-                Some(Value::Node(id)) => {
+            match args.first() {
+                Some(&Value::Node(id)) => {
                     let labels = runtime.get_node_labels(id);
                     Ok(Value::List(Arc::new(labels.into_iter().map(Value::String).collect())))
                 }
@@ -54,7 +54,7 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Any],
         ret: Type::String,
         fn type_of(_runtime, args) {
-            let type_name = match args.into_iter().next() {
+            let type_name = match args.first() {
                 Some(Value::Null) => "Null",
                 Some(Value::Bool(_)) => "Boolean",
                 Some(Value::Int(_)) => "Integer",
@@ -84,9 +84,9 @@ pub fn register(funcs: &mut Functions) {
         ],
         ret: Type::Union(vec![Type::Bool, Type::Null]),
         fn has_labels(runtime, args) {
-            let mut iter = args.into_iter();
+            let mut iter = args.iter();
             match (iter.next(), iter.next()) {
-                (Some(Value::Node(id)), Some(Value::List(required_labels))) => {
+                (Some(&Value::Node(id)), Some(Value::List(required_labels))) => {
                     // Validate that all items in the list are strings
                     for label_value in required_labels.iter() {
                         match label_value {
@@ -131,9 +131,8 @@ pub fn register(funcs: &mut Functions) {
         ])],
         ret: Type::Union(vec![Type::Int, Type::Null]),
         fn id(_runtime, args) {
-            let mut iter = args.into_iter();
-            match iter.next() {
-                Some(Value::Node(id)) => Ok(Value::Int(u64::from(id) as i64)),
+            match args.first() {
+                Some(&Value::Node(id)) => Ok(Value::Int(u64::from(id) as i64)),
                 Some(Value::Relationship(rel)) => Ok(Value::Int(u64::from(rel.0) as i64)),
                 Some(Value::Null) => Ok(Value::Null),
 
@@ -151,10 +150,9 @@ pub fn register(funcs: &mut Functions) {
         ])],
         ret: Type::Union(vec![Type::Map, Type::Null]),
         fn properties(runtime, args) {
-            let mut iter = args.into_iter();
-            match iter.next() {
-                Some(Value::Map(map)) => Ok(Value::Map(map)),
-                Some(Value::Node(id)) => Ok(Value::Map(Arc::new(runtime.get_node_attrs(id)))),
+            match args.first() {
+                Some(Value::Map(map)) => Ok(Value::Map(map.clone())),
+                Some(&Value::Node(id)) => Ok(Value::Map(Arc::new(runtime.get_node_attrs(id)))),
                 Some(Value::Relationship(rel)) => {
                     Ok(Value::Map(Arc::new(runtime.get_relationship_attrs(rel.0))))
                 }
@@ -169,8 +167,7 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Relationship],
         ret: Type::Union(vec![Type::Node, Type::Null]),
         fn start_node(_runtime, args) {
-            let mut iter = args.into_iter();
-            match iter.next() {
+            match args.first() {
                 Some(Value::Relationship(rel)) => Ok(Value::Node(rel.1)),
 
                 _ => unreachable!(),
@@ -182,8 +179,7 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Relationship],
         ret: Type::Union(vec![Type::Node, Type::Null]),
         fn end_node(_runtime, args) {
-            let mut iter = args.into_iter();
-            match iter.next() {
+            match args.first() {
                 Some(Value::Relationship(rel)) => Ok(Value::Node(rel.2)),
 
                 _ => unreachable!(),
@@ -195,8 +191,7 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::Path, Type::Null])],
         ret: Type::Union(vec![Type::Int, Type::Null]),
         fn length(_runtime, args) {
-            let mut iter = args.into_iter();
-            match iter.next() {
+            match args.first() {
                 Some(Value::Path(path)) => Ok(Value::Int(path.len() as i64 / 2)),
                 Some(Value::Null) => Ok(Value::Null),
 
@@ -214,11 +209,11 @@ pub fn register(funcs: &mut Functions) {
         ])],
         ret: Type::Union(vec![Type::List(Box::new(Type::String)), Type::Null]),
         fn keys(runtime, args) {
-            match args.into_iter().next() {
+            match args.first() {
                 Some(Value::Map(map)) => Ok(Value::List(Arc::new(
                     map.keys().cloned().map(Value::String).collect(),
                 ))),
-                Some(Value::Node(id)) => Ok(Value::List(Arc::new(
+                Some(&Value::Node(id)) => Ok(Value::List(Arc::new(
                     runtime
                         .get_node_attrs(id)
                         .into_iter()
@@ -243,8 +238,7 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::Relationship, Type::Null])],
         ret: Type::Union(vec![Type::String, Type::Null]),
         fn relationship_type(runtime, args) {
-            let mut iter = args.into_iter();
-            match iter.next() {
+            match args.first() {
                 Some(Value::Relationship(rel)) => runtime
                     .get_relationship_type(rel.0)
                     .map_or_else(|| Ok(Value::Null), |type_name| Ok(Value::String(type_name))),
@@ -258,8 +252,7 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Any],
         ret: Type::Union(vec![Type::Bool, Type::Null]),
         fn exists(_, args) {
-            let mut iter = args.into_iter();
-            match iter.next() {
+            match args.first() {
                 Some(Value::Null) => Ok(Value::Bool(false)),
                 _ => Ok(Value::Bool(true)),
             }
@@ -307,7 +300,7 @@ pub fn register(funcs: &mut Functions) {
 ///   degree(node, [`type1`, `type2`])      → filter by list of strings
 fn parse_degree_args(
     fn_name: &str,
-    args: ThinVec<Value>,
+    args: &[Value],
 ) -> Result<(Option<NodeId>, Vec<Arc<String>>), String> {
     if args.is_empty() {
         return Err(format!(
@@ -315,11 +308,8 @@ fn parse_degree_args(
         ));
     }
 
-    let mut iter = args.into_iter();
-    let node = iter.next().unwrap();
-
-    let id = match node {
-        Value::Node(id) => Some(id),
+    let id = match &args[0] {
+        Value::Node(id) => Some(*id),
         Value::Null => None,
         other => {
             return Err(format!(
@@ -329,14 +319,14 @@ fn parse_degree_args(
         }
     };
 
-    let rest: ThinVec<Value> = iter.collect();
+    let rest = &args[1..];
     if rest.is_empty() {
         return Ok((id, Vec::new()));
     }
 
     // Single list argument: degree(node, ['type1', 'type2'])
     if rest.len() == 1 {
-        if let Value::List(ref list) = rest[0] {
+        if let Value::List(list) = &rest[0] {
             let mut types = Vec::with_capacity(list.len());
             for v in list.iter() {
                 match v {
@@ -365,11 +355,11 @@ fn parse_degree_args(
 
     // Varargs of strings: degree(node, 'type1', 'type2', ...)
     let mut types = Vec::with_capacity(rest.len());
-    for v in rest {
+    for v in rest.iter() {
         match v {
             Value::String(s) => {
-                if !types.contains(&s) {
-                    types.push(s);
+                if !types.contains(s) {
+                    types.push(s.clone());
                 }
             }
             other => {

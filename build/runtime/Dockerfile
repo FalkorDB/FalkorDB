@@ -53,9 +53,19 @@ RUN mkdir -p ${FALKORDB_DATA_PATH} && ln -s ${FALKORDB_DATA_PATH} /data
 # + a host of dpkg force-removes to survive the LLVM install. All of that is
 # now dead code and has been removed. See git history if you need to resurrect
 # it (e.g. to re-enable runtime JIT).
+#
+# CVE trim: purge python3.13 + force-remove essential packages not needed at
+# runtime (ncurses, perl, login, passwd). With no LLVM in this image any more
+# we can run the trim straight through without the load-bearing ordering the
+# old layout required.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates bash openssl && \
     apt-get upgrade -y && \
+    (apt-get purge -y python3.13 python3.13-minimal libpython3.13-minimal libpython3.13-stdlib || true) && \
+    (dpkg --force-remove-essential --purge ncurses-base ncurses-bin || true) && \
+    (dpkg --force-remove-essential --purge perl-base || true) && \
+    (dpkg --force-remove-protected --force-remove-essential --purge login || true) && \
+    (dpkg --purge passwd || true) && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 WORKDIR ${FALKORDB_HOME}

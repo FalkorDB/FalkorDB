@@ -74,6 +74,7 @@ use crate::{
     runtime::{
         functions::{GraphFn, Type},
         orderset::OrderSet,
+        value::Value,
     },
 };
 
@@ -152,16 +153,10 @@ impl Variable {
 /// - `TVar`: Variable type (`Arc<String>` before binding, `Variable` after)
 #[derive(Clone, Debug)]
 pub enum ExprIR<TVar> {
-    /// NULL literal
-    Null,
-    /// Boolean literal (true/false)
-    Bool(bool),
-    /// Integer literal (i64)
-    Integer(i64),
-    /// Floating point literal (f64)
-    Float(f64),
-    /// String literal
-    String(Arc<String>),
+    /// Literal/constant value. Carries any runtime [`Value`] including
+    /// Null/Bool/Int/Float/String literals as well as folded values like
+    /// Date, Duration, Map, etc.
+    Constant(Value),
     /// List constructor - children are list elements
     List,
     /// Map constructor - children are key-value pairs
@@ -261,11 +256,14 @@ impl<TVar: Display + std::fmt::Debug> Display for ExprIR<TVar> {
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
         match self {
-            Self::Null => write!(f, "null"),
-            Self::Bool(b) => write!(f, "{b}"),
-            Self::Integer(i) => write!(f, "{i}"),
-            Self::Float(fl) => write!(f, "{fl}"),
-            Self::String(s) => write!(f, "{s}"),
+            Self::Constant(v) => match v {
+                Value::Null => write!(f, "null"),
+                Value::Bool(b) => write!(f, "{b}"),
+                Value::Int(i) => write!(f, "{i}"),
+                Value::Float(fl) => write!(f, "{fl}"),
+                Value::String(s) => write!(f, "{s}"),
+                _ => write!(f, "const({v:?})"),
+            },
             Self::List => write!(f, "[]"),
             Self::Map => write!(f, "{{}}"),
             Self::Variable(id) => write!(f, "{id}"),
@@ -1037,11 +1035,11 @@ impl<TVar: Eq + Hash + Display> QueryIR<TVar> {
             } => {
                 if proc.name == "db.idx.fulltext.createNodeIndex" {
                     match args[0].root().data() {
-                        ExprIR::String(_) => {}
+                        ExprIR::Constant(Value::String(_)) => {}
                         ExprIR::Map => {
                             let mut has_labels = false;
                             for child in args[0].root().children() {
-                                if let ExprIR::String(label) = child.data()
+                                if let ExprIR::Constant(Value::String(label)) = child.data()
                                     && label.as_str() == "label"
                                 {
                                     has_labels = true;
@@ -1113,7 +1111,7 @@ impl<TVar: Eq + Hash + Display> QueryIR<TVar> {
             }
             Self::Remove(items) => {
                 for item in items {
-                    if  matches!(item.root().data(), ExprIR::Property(_)) && matches!(item.root().child(0).data(), ExprIR::Null) {
+                    if  matches!(item.root().data(), ExprIR::Property(_)) && matches!(item.root().child(0).data(), ExprIR::Constant(Value::Null)) {
                         return Err("Type mismatch: expected Node or Relationship but was Null".to_string());
                     }
                 }
