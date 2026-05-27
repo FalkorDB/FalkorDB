@@ -779,6 +779,14 @@ impl Matrix {
         drop(lock);
     }
 
+    /// Returns true if this matrix has no pending GraphBLAS operations,
+    /// i.e. is in a state where the fork child can safely serialize it
+    /// without first calling `wait()`. Cheap atomic load.
+    #[must_use]
+    pub fn is_synced(&self) -> bool {
+        !self.has_pending.load(Ordering::Relaxed)
+    }
+
     #[must_use]
     pub fn memory_usage(&self) -> usize {
         unsafe {

@@ -1812,6 +1812,21 @@ impl Graph {
         }
     }
 
+    /// Returns true if every matrix is fully synced — i.e. `wait_all`
+    /// has been called and no writer has since enqueued pending ops.
+    /// Used by the post-fork child handler to verify the parent's
+    /// pre_fork sync took effect before emitting an RDB.
+    #[must_use]
+    pub fn is_synced(&self) -> bool {
+        self.zero_matrix.is_synced()
+            && self.adjacancy_matrix.is_synced()
+            && self.node_labels_matrix.is_synced()
+            && self.relationship_type_matrix.is_synced()
+            && self.all_nodes_matrix.is_synced()
+            && self.labels_matices.iter().all(VersionedMatrix::is_synced)
+            && self.relationship_matrices.iter().all(Tensor::is_synced)
+    }
+
     pub fn set_relationships_attributes(
         &mut self,
         attrs: &FxHashMap<u64, OrderMap<Arc<String>, Value>>,

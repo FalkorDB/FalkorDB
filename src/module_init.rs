@@ -83,11 +83,45 @@ unsafe extern "C" {
     ) -> c_int;
 }
 
-/// Called in the forked child process (via `pthread_atfork`).
-/// Forces GraphBLAS/OpenMP to single-threaded mode so they don't
-/// touch the parent's (now-invalid) thread pool handles.
+/// Called in the forked child process (via `pthread_atfork`). Mirrors
+/// the C port's `_AfterForkChild` (`module_event_handlers.c:586`).
+///
+/// Three responsibilities, in order:
+///
+/// 1. Mark this process as a fork child so downstream code can detect
+///    it isn't the original parent.
+/// 2. Force GraphBLAS/OpenMP to single-threaded; the parent's OMP thread
+///    pool handles are shared parent state and invalid in the child.
+///    Safe (and required) for every fork path — BGSAVE *and* RediSearch
+///    ForkGC.
+/// 3. Only on the main-thread fork (BGSAVE): validate every graph is
+///    fully synced. If `pre_fork_prepare` failed to materialize any
+///    matrix (e.g. a writer slipped in after the registry walk), abort
+///    the BGSAVE child via `std::process::abort()` rather than emit a
+///    corrupt RDB. `abort()` is async-signal-safe (SIGABRT) and skips
+///    Rust/C atexit chains — important here because libomp registers
+///    an atexit (`__kmp_internal_end_atexit`) that can deadlock on
+///    parent-held mutexes in the fork child, and ASAN registers a
+///    leak-check atexit that takes seconds to walk the heap.
 unsafe extern "C" fn on_fork_child() {
+    graph::thread_id::set_process_is_child(true);
     graph::graph::graphblas::matrix::set_nthreads(1);
+
+    if !graph::thread_id::is_main_thread() {
+        // RediSearch ForkGC fork — graph state is irrelevant to its
+        // RediSearch-only work.
+        return;
+    }
+
+    let registry = crate::graph_core::GRAPH_REGISTRY.lock();
+    for graph_arc in registry.values() {
+        let tg: &crate::graph_core::ThreadedGraph = unsafe { &*graph_arc.data_ptr() };
+        let g = tg.graph.read();
+        let graph = g.borrow();
+        if !graph.is_synced() {
+            std::process::abort();
+        }
+    }
 }
 
 pub fn graph_init(
