@@ -276,14 +276,12 @@ set(RAX $ENV{RAX})
 set(LIBCYPHER_PARSER $ENV{LIBCYPHER_PARSER})
 set(UTF8PROC $ENV{UTF8PROC})
 set(ONIGURUMA $ENV{ONIGURUMA})
-set(FalkorDBRS $ENV{FalkorDBRS})
 
 # Build library list - redisearch-static and VectorSimilarity are CMake targets
 # Note: VectorSimilarity must be explicitly linked because redisearch-static (a static library)
 # doesn't transitively link its dependencies. Only the shared redisearch library links VectorSimilarity,
 # but we can't use that because it would make falkordb.so depend on redisearch.so at runtime.
 set(FALKORDB_LIBS
-    ${FalkorDBRS}
     ${LAGRAPHX}
     ${LAGRAPH}
     ${QUICKJS}

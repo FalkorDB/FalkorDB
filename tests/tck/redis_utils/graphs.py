@@ -113,3 +113,11 @@ def binary_tree_graph2():
 def query(q):
     return graph.query(q)
 
+
+def schema_label_count():
+    res = graph.query("CALL db.labels() YIELD label RETURN count(label)")
+    if not res.result_set:
+        return 0
+    val = res.result_set[0][0]
+    return int(val) if val is not None else 0
+

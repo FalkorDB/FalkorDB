@@ -8,7 +8,6 @@
 
 #include "index_field.h"
 #include "redisearch_api.h"
-#include "../graph/graph.h"
 #include "../graph/entities/node.h"
 #include "../graph/entities/edge.h"
 #include "../filter_tree/filter_tree.h"
@@ -19,6 +18,7 @@
 #define INDEX_SEPARATOR '\1'  // can't use '\0', RediSearch will terminate on \0
 
 // forward declaration
+typedef struct GraphContext GraphContext;
 typedef struct _Index _Index;
 typedef _Index *Index;
 
@@ -121,8 +121,8 @@ void Index_ConstructStructure
 // populates index
 void Index_Populate
 (
-	Index idx,  // index to populate
-	Graph *g    // graph holding entities to index
+	Index idx,        // index to populate
+	GraphContext *gc  // graph holding entities to index
 );
 
 // adds field to index

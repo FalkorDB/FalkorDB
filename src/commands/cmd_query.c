@@ -43,13 +43,13 @@ static GraphQueryCtx *GraphQueryCtx_New
 ) {
 	GraphQueryCtx *ctx = rm_malloc(sizeof(GraphQueryCtx));
 
-	ctx->rm_ctx           =  rm_ctx;
-	ctx->exec_ctx         =  exec_ctx;
-	ctx->graph_ctx        =  graph_ctx;
-	ctx->query_ctx        =  QueryCtx_GetQueryCtx();
+	ctx->rm_ctx           = rm_ctx;
+	ctx->exec_ctx         = exec_ctx;
+	ctx->graph_ctx        = graph_ctx;
+	ctx->query_ctx        = QueryCtx_GetQueryCtx();
 	ctx->query_ctx->flags = flags;
-	ctx->command_ctx      =  command_ctx;
-	ctx->timeout          =  timeout;
+	ctx->command_ctx      = command_ctx;
+	ctx->timeout          = timeout;
 
 	return ctx;
 }
@@ -228,61 +228,66 @@ static void _ExecuteQuery
 		// avoid resetting policies between readers and writers
 		Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);
 
-		ExecutionPlan_PreparePlan(plan);
-		if(profile) {
-			ExecutionPlan_Profile(plan);
-			if (abort_and_check_timeout(gq_ctx, plan)) {
-				query_ctx->status = QueryExecutionStatus_TIMEDOUT;
+		ExecutionPlan_PreparePlan (plan) ;
+		if (profile) {
+			ExecutionPlan_Profile (plan) ;
+			if (abort_and_check_timeout (gq_ctx, plan)) {
+				query_ctx->status = QueryExecutionStatus_TIMEDOUT ;
 			}
 
-			if(!ErrorCtx_EncounteredError()) {
+			if (!ErrorCtx_EncounteredError ()) {
 				// transition the query from executing reporting
-				QueryCtx_AdvanceStage(query_ctx);
-				ExecutionPlan_Print(plan, rm_ctx);
+				QueryCtx_AdvanceStage (query_ctx) ;
+				ExecutionPlan_Print (plan, rm_ctx) ;
 			}
 		}
 		else {
-			result_set = ExecutionPlan_Execute(plan);
-			if (abort_and_check_timeout(gq_ctx, plan)) {
-				query_ctx->status = QueryExecutionStatus_TIMEDOUT;
+			result_set = ExecutionPlan_Execute (plan) ;
+			if (abort_and_check_timeout (gq_ctx, plan)) {
+				query_ctx->status = QueryExecutionStatus_TIMEDOUT ;
 			}
 		}
 
-		ExecutionPlan_Free(plan);
-		exec_ctx->plan = NULL;
-	} else if(exec_type == EXECUTION_TYPE_INDEX_CREATE ||
+		ExecutionPlan_Free (plan) ;
+		exec_ctx->plan = NULL ;
+	} else if (exec_type == EXECUTION_TYPE_INDEX_CREATE ||
 			exec_type == EXECUTION_TYPE_INDEX_DROP) {
-		IndexOperation_Run(gc, ast, exec_type);
+		IndexOperation_Run (gc, ast, exec_type) ;
 	} else {
-		ASSERT("Unhandled query type" && false);
+		ASSERT ("Unhandled query type" && false) ;
 	}
 
 	// in case of an error, rollback any modifications
-	if(ErrorCtx_EncounteredError()) {
-		QueryCtx_Rollback();
+	if (ErrorCtx_EncounteredError ()) {
+		QueryCtx_Rollback () ;
 		// clear resultset statistics, avoiding commnad being replicated
-		ResultSet_Clear(result_set);
+		ResultSet_Clear (result_set) ;
 		if (query_ctx->status != QueryExecutionStatus_TIMEDOUT) {
 			query_ctx->status = QueryExecutionStatus_FAILURE;
 		}
 	} else {
 		// replicate if graph was modified
-		if(ResultSetStat_IndicateModification(&result_set->stats)) {
+		// check both effect-buffer and result-set statistics
+		// in some edge cases the effect-buffer can have data which the
+		// result-set statistics won't cover
+		bool replicate =
+			(EffectsBuffer_Length (QueryCtx_GetEffectsBuffer ()) > 0 ||
+			 ResultSetStat_IndicateModification (&result_set->stats)) ;
+		if (replicate) {
 			// determine rather or not to replicate via effects
 			// effect replication is mandatory if query is non deterministic
-			if (EffectsBuffer_Length (QueryCtx_GetEffectsBuffer()) > 0 &&
-			    (!exec_ctx->deterministic || _should_replicate_effects()))
-			{
+			if (EffectsBuffer_Length (QueryCtx_GetEffectsBuffer ()) > 0 &&
+			    (!exec_ctx->deterministic || _should_replicate_effects ())) {
 				// compute effects buffer
-				size_t effects_len = 0;
-				u_char *effects = EffectsBuffer_Buffer(
-						QueryCtx_GetEffectsBuffer(), &effects_len);
-				ASSERT(effects_len > 0 && effects != NULL);
+				size_t effects_len = 0 ;
+				u_char *effects = EffectsBuffer_Buffer (
+						QueryCtx_GetEffectsBuffer (), &effects_len) ;
+				ASSERT (effects_len > 0 && effects != NULL) ;
 
 				// replicate effects
-				RedisModule_Replicate(rm_ctx, "GRAPH.EFFECT", "cb!",
-						GraphContext_GetName(gc), effects, effects_len);
-				rm_free(effects);
+				RedisModule_Replicate (rm_ctx, "GRAPH.EFFECT", "cb!",
+						GraphContext_GetName (gc), effects, effects_len) ;
+				rm_free (effects) ;
 			} else {
 				// replicate original query
 				QueryCtx_Replicate (query_ctx) ;
@@ -290,15 +295,15 @@ static void _ExecuteQuery
 		}
 	}
 
-	if(!profile || ErrorCtx_EncounteredError()) {
+	if (!profile || ErrorCtx_EncounteredError ()) {
 		// if we encountered an error, ResultSet_Reply will emit the error
 		// send result-set back to client
 		// transition the query from executing reporting
-		QueryCtx_AdvanceStage(query_ctx);
-		ResultSet_Reply(result_set);
+		QueryCtx_AdvanceStage (query_ctx) ;
+		ResultSet_Reply (result_set) ;
 
 		// transition the query from reporting to finished
-		QueryCtx_AdvanceStage(query_ctx);
+		QueryCtx_AdvanceStage (query_ctx) ;
 	}
 
 	QueryCtx_ReleaseLock () ;
@@ -392,19 +397,19 @@ void _query
 	bool profile,
 	void *args
 ) {
-	CommandCtx     *command_ctx = (CommandCtx *)args;
-	QueryCtx       *query_ctx   = QueryCtx_GetQueryCtx();
-	RedisModuleCtx *ctx         = CommandCtx_GetRedisCtx(command_ctx);
-	GraphContext   *gc          = CommandCtx_GetGraphContext(command_ctx);
+	CommandCtx     *command_ctx = (CommandCtx *)args ;
+	QueryCtx       *query_ctx   = QueryCtx_GetQueryCtx () ;
+	RedisModuleCtx *ctx         = CommandCtx_GetRedisCtx (command_ctx) ;
+	GraphContext   *gc          = CommandCtx_GetGraphContext (command_ctx) ;
 	Graph          *g           = GraphContext_GetGraph (gc) ;
-	ExecutionCtx   *exec_ctx    = NULL;
+	ExecutionCtx   *exec_ctx    = NULL ;
 
-	Globals_TrackCommandCtx(command_ctx);
-	QueryCtx_SetGlobalExecutionCtx(command_ctx);
+	Globals_TrackCommandCtx (command_ctx) ;
+	QueryCtx_SetGlobalExecutionCtx (command_ctx) ;
 	UDFCtx_Update () ;  // make sure thread's UDFs are up to date
 
 	// transition the query from waiting to executing
-	QueryCtx_AdvanceStage(query_ctx);
+	QueryCtx_AdvanceStage (query_ctx) ;
 
 	// acquire graph READ lock
 	// `ExecutionCtx_FromQuery` might read data from the graph's
@@ -529,10 +534,16 @@ cleanup:
 	ErrorCtx_Clear () ;
 }
 
-void Graph_Profile(void *args) {
-	_query(true, args);
+void Graph_Profile
+(
+	void *args
+) {
+	_query (true, args) ;
 }
 
-void Graph_Query(void *args) {
-	_query(false, args);
+void Graph_Query
+(
+	void *args
+) {
+	_query (false, args) ;
 }

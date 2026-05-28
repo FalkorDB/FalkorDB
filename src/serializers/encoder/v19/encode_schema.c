@@ -19,7 +19,7 @@ static void _RdbSaveAttributeKeys
 	SerializerIO_WriteUnsigned (rdb, count) ;
 
 	for (uint i = 0; i < count; i ++) {
-		const char *key = GraphContext_GetAttributeString (gc, i) ;
+		const char *key = GraphContext_GetAttributeName (gc, i) ;
 		SerializerIO_WriteBuffer (rdb, key, strlen (key) + 1) ;
 	}
 }

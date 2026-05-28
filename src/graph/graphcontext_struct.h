@@ -17,11 +17,15 @@
 
 typedef struct GraphContext {
 	Graph *g;                              // container for all matrices and entity properties
+
+	pthread_rwlock_t rwlock;               // read-write lock
+	bool writelocked;                      // true if the read-write lock was
+										   // acquired by a writer
+
 	int ref_count;                         // number of active references
-	rax *attributes;                       // from strings to attribute IDs
-	pthread_rwlock_t _schema_rwlock;       // read-write lock to protect access to the graph's schema
+	char **attributes;                     // graph's attributes, attribute id
+										   // is its position within the array
 	char *graph_name;                      // string associated with graph
-	char **string_mapping;                 // from attribute IDs to strings
 	Schema **node_schemas;                 // array of schemas for each node label
 	Schema **relation_schemas;             // array of schemas for each relation type
 	unsigned short index_count;            // number of indicies
@@ -30,10 +34,15 @@ typedef struct GraphContext {
 	GraphEncodeContext *encoding_context;  // encode context of the graph
 	GraphDecodeContext *decoding_context;  // decode context of the graph
 	Cache *cache;                          // global cache of execution plans
-	XXH32_hash_t version;                  // graph version
+	XXH32_hash_t hash;                     // graph hash
 	RedisModuleString *telemetry_stream;   // telemetry stream name
 	
 	atomic_bool write_in_progress;         // write query in progess
 	CircularBuffer pending_write_queue;    // pending write queries queue
+
+	pthread_t writer_tid ;                 // writer thread id
+	char **_attributes;                    // array of pending attributes
+	Schema **_node_schemas;                // array of pending node schemas
+	Schema **_relation_schemas;            // array of pending relation schemas
 } GraphContext;
 

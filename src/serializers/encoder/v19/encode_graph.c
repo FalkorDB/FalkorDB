@@ -237,16 +237,16 @@ void RdbSaveGraph_latest
 
 	// acquire a read lock if we're not in a thread-safe context
 	if (_shouldAcquireLocks()) {
-		Graph_AcquireReadLock (g) ;
+		GraphContext_AcquireReadLock (gc) ;
 	}
 
 	GraphEncodeContext *encoding_context = GraphContext_GetEncodingCtx (gc) ;
 
 	// get last encoded state
 	EncodeState current_state =
-		GraphEncodeContext_GetEncodeState(encoding_context);
+		GraphEncodeContext_GetEncodeState (encoding_context) ;
 
-	if(current_state == ENCODE_STATE_INIT) {
+	if (current_state == ENCODE_STATE_INIT) {
 		// inital state, populate encoding context header
 		GraphEncodeContext_InitHeader (encoding_context,
 				GraphContext_GetName (gc), g) ;
@@ -329,7 +329,7 @@ void RdbSaveGraph_latest
 
 	// if a lock was acquired, release it
 	if (_shouldAcquireLocks()) {
-		Graph_ReleaseLock (g) ;
+		GraphContext_ReleaseLock (gc) ;
 	}
 }
 

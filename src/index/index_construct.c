@@ -7,6 +7,7 @@
 #include "RG.h"
 #include "index.h"
 
+#include "../graph/graphcontext.h"
 #include "../graph/tensor/tensor.h"
 #include "../graph/delta_matrix/delta_matrix_iter.h"
 
@@ -24,10 +25,12 @@
 static void _Index_PopulateNodeIndex
 (
 	Index idx,
-	Graph *g
+	GraphContext *gc
 ) {
-	ASSERT(g   != NULL);
-	ASSERT(idx != NULL);
+	ASSERT (gc  != NULL) ;
+	ASSERT (idx != NULL) ;
+
+	Graph *g = GraphContext_GetGraph (gc) ;
 
 	GrB_Index          rowIdx     = 0;
 	int                indexed    = 0;      // #entities in current batch
@@ -36,7 +39,7 @@ static void _Index_PopulateNodeIndex
 
 	while(true) {
 		// lock graph for reading
-		Graph_AcquireReadLock(g);
+		GraphContext_AcquireReadLock (gc) ;
 
 		// index state changed, abort indexing
 		// this can happen if for example the following sequance is issued:
@@ -86,7 +89,7 @@ static void _Index_PopulateNodeIndex
 			break;
 		} else {
 			// release read lock
-			Graph_ReleaseLock(g);
+			GraphContext_ReleaseLock (gc) ;
 
 			// finished current batch
 			Delta_MatrixTupleIter_detach(&it);
@@ -98,7 +101,7 @@ static void _Index_PopulateNodeIndex
 	}
 
 	// release read lock
-	Graph_ReleaseLock(g);
+	GraphContext_ReleaseLock (gc) ;
 	Delta_MatrixTupleIter_detach(&it);
 }
 
@@ -114,10 +117,12 @@ static void _Index_PopulateNodeIndex
 static void _Index_PopulateEdgeIndex
 (
 	Index idx,
-	Graph *g
+	GraphContext *gc
 ) {
-	ASSERT(g   != NULL);
-	ASSERT(idx != NULL);
+	ASSERT (gc  != NULL) ;
+	ASSERT (idx != NULL) ;
+
+	Graph *g = GraphContext_GetGraph (gc) ;
 
 	bool  info;
 	EntityID  src_id       = 0;                      // current processed row idx
@@ -132,7 +137,7 @@ static void _Index_PopulateEdgeIndex
 
 	while(true) {
 		// lock graph for reading
-		Graph_AcquireReadLock(g);
+		GraphContext_AcquireReadLock (gc) ;
 
 		// index state changed, abort indexing
 		// this can happen if for example the following sequance is issued:
@@ -196,32 +201,32 @@ static void _Index_PopulateEdgeIndex
 		} else {
 			// finished current batch
 			// release read lock
-			Graph_ReleaseLock(g);
+			GraphContext_ReleaseLock (gc) ;
 		}
 	}
 
 	// release read lock
-	Graph_ReleaseLock(g);
+	GraphContext_ReleaseLock (gc) ;
 }
 
 // constructs index
 void Index_Populate
 (
 	Index idx,
-	Graph *g
+	GraphContext *gc
 ) {
-	ASSERT(g != NULL);
-	ASSERT(idx != NULL);
-	ASSERT(!Index_Enabled(idx));  // index should have pending changes
+	ASSERT (gc  != NULL) ;
+	ASSERT (idx != NULL) ;
+	ASSERT (!Index_Enabled (idx)) ;  // index should have pending changes
 
 	//--------------------------------------------------------------------------
 	// populate index
 	//--------------------------------------------------------------------------
 
-	if(Index_GraphEntityType(idx) == GETYPE_NODE) {
-		_Index_PopulateNodeIndex(idx, g);
+	if (Index_GraphEntityType(idx) == GETYPE_NODE) {
+		_Index_PopulateNodeIndex (idx, gc) ;
 	} else {
-		_Index_PopulateEdgeIndex(idx, g);
+		_Index_PopulateEdgeIndex (idx, gc) ;
 	}
 }
 

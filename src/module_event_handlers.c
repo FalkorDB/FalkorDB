@@ -502,7 +502,7 @@ static void _ForkPrepare() {
 		GraphContext *gc = graphs [i] ;
 		Graph *g = GraphContext_GetGraph (gc) ;
 
-		Graph_AcquireReadLock (g) ;  // release in _AfterForkParent
+		GraphContext_AcquireReadLock (gc) ;  // release in _AfterForkParent
 		locked [i] = true ;
 
 		// set matrix synchronization policy to default
@@ -511,9 +511,9 @@ static void _ForkPrepare() {
 		// synchronize all matrices, make sure they're in a consistent state
 		// do not force-flush as this can take awhile
 
-		//------------------------------------------------------------------
+		//----------------------------------------------------------------------
 		// sync graph's matrices
-		//------------------------------------------------------------------
+		//----------------------------------------------------------------------
 
 		// calling Graph_Get* will sync the retrieved matrix
 
@@ -530,14 +530,6 @@ static void _ForkPrepare() {
 		for (int j = 0; j < n_rels; j++) {
 			Graph_GetRelationMatrix (g, j, false) ;
 		}
-
-		// NOTE: yield had been commented out due to:
-		// https://github.com/redis/redis/issues/14266
-		// only the master thread (= Redis main thread) may yield
-		//if (pthread_equal (pthread_self (), redis_main_thread_id)) {
-		//	RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
-		//			"preparing to fork") ;
-		//}
 	}
 
 	// decrease graph context ref count
@@ -578,10 +570,8 @@ static void _AfterForkParent(void) {
 	int i = 0 ;
 	while ((gc = GraphIterator_Next (&it)) != NULL) {
 		// release read lock
-		Graph *g = GraphContext_GetGraph (gc) ;
-
 		if (locked [i++]) {
-			Graph_ReleaseLock (g) ;
+			GraphContext_ReleaseLock (gc) ;
 		}
 
 		// decrease graph context ref count
@@ -631,7 +621,7 @@ static void _AfterForkChild() {
 
 		bool synced = Graph_Synced (g) ;
 
-		ASSERT (!Graph_IsWriteLocked (g)) ;
+		ASSERT (!GraphContext_IsWriteLocked (gc)) ;
 
 		// abort BGSAVE if graph isn't synced
 		// it's the parent process responsibility (_ForkPrepare) to synchronize

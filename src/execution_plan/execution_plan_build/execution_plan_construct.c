@@ -23,13 +23,13 @@ static inline void _buildCreateOp
 	const cypher_astnode_t *clause
 ) {
 	AST_CreateContext create_ast_ctx =
-		AST_PrepareCreateOp(plan->query_graph, plan->record_map, clause);
+		AST_PrepareCreateOp (plan->query_graph, plan->record_map, clause) ;
 
 	OpBase *op =
-		NewCreateOp(plan, create_ast_ctx.nodes_to_create,
-				create_ast_ctx.edges_to_create);
+		NewCreateOp (plan, create_ast_ctx.nodes_to_create,
+				create_ast_ctx.edges_to_create) ;
 
-	ExecutionPlan_UpdateRoot(plan, op);
+	ExecutionPlan_UpdateRoot (plan, op) ;
 }
 
 static inline void _buildUnwindOp
@@ -276,37 +276,37 @@ void ExecutionPlanSegment_ConvertClause
 	ExecutionPlan *plan,
 	const cypher_astnode_t *clause
 ) {
-	cypher_astnode_type_t t = cypher_astnode_type(clause);
+	cypher_astnode_type_t t = cypher_astnode_type (clause) ;
 	// because 't' is set using the offsetof() call
 	// it cannot be used in switch statements
-	if(t == CYPHER_AST_MATCH) {
-		buildMatchOpTree(plan, ast, clause);
-	} else if(t == CYPHER_AST_CALL) {
-		buildCallOp(ast, plan, clause);
-	} else if(t == CYPHER_AST_CREATE) {
-		_buildCreateOp(gc, ast, plan, clause);
-	} else if(t == CYPHER_AST_UNWIND) {
-		_buildUnwindOp(plan, clause);
-	} else if(t == CYPHER_AST_MERGE) {
-		buildMergeOp(plan, ast, clause, gc);
-	} else if(t == CYPHER_AST_SET || t == CYPHER_AST_REMOVE) {
-		_buildUpdateOp(gc, plan, clause);
-	} else if(t == CYPHER_AST_DELETE) {
-		_buildDeleteOp(plan, clause);
-	} else if(t == CYPHER_AST_RETURN) {
+	if (t == CYPHER_AST_MATCH) {
+		buildMatchOpTree (plan, ast, clause) ;
+	} else if (t == CYPHER_AST_CALL) {
+		buildCallOp (ast, plan, clause) ;
+	} else if (t == CYPHER_AST_CREATE) {
+		_buildCreateOp (gc, ast, plan, clause) ;
+	} else if (t == CYPHER_AST_UNWIND) {
+		_buildUnwindOp (plan, clause) ;
+	} else if (t == CYPHER_AST_MERGE) {
+		buildMergeOp (plan, ast, clause, gc) ;
+	} else if (t == CYPHER_AST_SET || t == CYPHER_AST_REMOVE) {
+		_buildUpdateOp (gc, plan, clause) ;
+	} else if (t == CYPHER_AST_DELETE) {
+		_buildDeleteOp (plan, clause) ;
+	} else if (t == CYPHER_AST_RETURN) {
 		// converting a RETURN clause can create multiple operations.
-		buildReturnOps(plan, clause);
-	} else if(t == CYPHER_AST_WITH) {
+		buildReturnOps (plan, clause) ;
+	} else if (t == CYPHER_AST_WITH) {
 		// converting a WITH clause can create multiple operations.
-		buildWithOps(plan, clause);
-	} else if(t == CYPHER_AST_FOREACH) {
-		_buildForeachOp(plan, clause, gc);
-	} else if(t == CYPHER_AST_CALL_SUBQUERY) {
-		buildCallSubqueryPlan (plan, clause) ;
-	} else if(t == CYPHER_AST_LOAD_CSV) {
-		_buildLoadCSVOp(plan, clause);
+		buildWithOps (plan, clause) ;
+	} else if (t == CYPHER_AST_FOREACH) {
+		_buildForeachOp (plan, clause, gc) ;
+	} else if (t == CYPHER_AST_CALL_SUBQUERY) {
+		buildCallSubqueryPlan  (plan, clause)  ;
+	} else if (t == CYPHER_AST_LOAD_CSV) {
+		_buildLoadCSVOp (plan, clause) ;
 	} else {
-		assert(false && "unhandeled clause");
+		assert (false && "unhandeled clause") ;
 	}
 }
 

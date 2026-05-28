@@ -27,27 +27,27 @@ static void _ResultSet_SetColumns
 (
 	ResultSet *set
 ) {
-	ASSERT(set->columns == NULL);
+	ASSERT (set->columns == NULL) ;
 
-	AST *ast = QueryCtx_GetAST();
-	const cypher_astnode_type_t root_type = cypher_astnode_type(ast->root);
+	AST *ast = QueryCtx_GetAST () ;
+	const cypher_astnode_type_t root_type = cypher_astnode_type (ast->root) ;
 
-	if(root_type == CYPHER_AST_QUERY) {
-		uint clause_count = cypher_ast_query_nclauses(ast->root);
+	if (root_type == CYPHER_AST_QUERY) {
+		uint clause_count = cypher_ast_query_nclauses (ast->root) ;
 
 		const cypher_astnode_t *last_clause =
-			cypher_ast_query_get_clause(ast->root, clause_count - 1);
+			cypher_ast_query_get_clause (ast->root, clause_count - 1) ;
 
 		cypher_astnode_type_t last_clause_type =
-			cypher_astnode_type(last_clause);
+			cypher_astnode_type (last_clause) ;
 
-		if(last_clause_type == CYPHER_AST_RETURN) {
-			set->columns = AST_BuildReturnColumnNames(last_clause);
-		} else if(last_clause_type == CYPHER_AST_CALL) {
-			set->columns = AST_BuildCallColumnNames(last_clause);
+		if (last_clause_type == CYPHER_AST_RETURN) {
+			set->columns = AST_BuildReturnColumnNames (last_clause) ;
+		} else if (last_clause_type == CYPHER_AST_CALL) {
+			set->columns = AST_BuildCallColumnNames (last_clause) ;
 		}
 
-		set->column_count = arr_len(set->columns);
+		set->column_count = arr_len (set->columns) ;
 	}
 }
 
@@ -58,36 +58,36 @@ ResultSet *NewResultSet
 	bolt_client_t *bolt_client,
 	ResultSetFormatterType format  // resultset format
 ) {
-	ResultSet *set = rm_malloc(sizeof(ResultSet));
+	ResultSet *set = rm_malloc (sizeof (ResultSet)) ;
 
-	set->gc                  =  QueryCtx_GetGraphCtx();
-	set->ctx                 =  ctx;
-	set->cells               =  NULL;
-	set->format              =  format;
-	set->columns             =  NULL;
-	set->formatter           =  ResultSetFormatter_GetFormatter(format);
-	set->bolt_client         =  bolt_client;
-	set->column_count        =  0;
-	set->cells_allocation    =  M_NONE;
-	set->columns_record_map  =  NULL;
+	set->gc                 = QueryCtx_GetGraphCtx () ;
+	set->ctx                = ctx ;
+	set->cells              = NULL ;
+	set->format             = format ;
+	set->columns            = NULL ;
+	set->formatter          = ResultSetFormatter_GetFormatter (format) ;
+	set->bolt_client        = bolt_client ;
+	set->column_count       = 0 ;
+	set->cells_allocation   = M_NONE ;
+	set->columns_record_map = NULL ;
 
 	// init resultset statistics
-	ResultSetStat_init(&set->stats);
+	ResultSetStat_init (&set->stats) ;
 
 	// create resultset columns
-	if(set->format != FORMATTER_NOP) {
-		_ResultSet_SetColumns(set);
+	if (set->format != FORMATTER_NOP) {
+		_ResultSet_SetColumns (set) ;
 	}
 
 	// allocate space for resultset entries only if data is expected
-	if(set->column_count > 0) {
+	if (set->column_count > 0) {
 		// none empty result-set
 		// allocate enough space for at least 10 rows
-		uint64_t nrows = set->column_count * 10;
-		set->cells = DataBlock_New(16384, nrows, sizeof(SIValue), NULL);
+		uint64_t nrows = set->column_count * 10 ;
+		set->cells = DataBlock_New (16384, nrows, sizeof (SIValue), NULL) ;
 	}
 
-	return set;
+	return set ;
 }
 
 // map each column to a record index
@@ -256,9 +256,12 @@ void ResultSet_Reply
 	set->formatter->EmitStats(set);
 }
 
-void ResultSet_Clear(ResultSet *set) {
-	ASSERT(set != NULL);
-	ResultSetStat_Clear(&set->stats);
+void ResultSet_Clear
+(
+	ResultSet *set
+) {
+	ASSERT (set != NULL) ;
+	ResultSetStat_Clear (&set->stats) ;
 }
 
 // free resultset
