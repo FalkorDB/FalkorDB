@@ -528,11 +528,11 @@ void QueryCtx_ReleaseLock (void) {
 	// 2. close key
 	// 3. unlock GIL
 
+	// release graph lock
+	GraphContext_ReleaseLock (QueryCtx_GetGraphCtx ()) ;
+
 	// release WRITE lock
 	if (ctx->internal_exec_ctx.write_locked == true) {
-		// release graph lock
-		GraphContext_ReleaseLock (QueryCtx_GetGraphCtx ()) ;
-
 		// close Key
 		RedisModule_CloseKey (ctx->internal_exec_ctx.key) ;
 
@@ -540,12 +540,6 @@ void QueryCtx_ReleaseLock (void) {
 		_QueryCtx_ThreadSafeContextUnlock (ctx) ;
 	}
 	
-	// release READ lock
-	else {
-		// release graph lock
-		GraphContext_ReleaseLock (QueryCtx_GetGraphCtx ()) ;
-	}
-
 	ctx->internal_exec_ctx.read_locked  = false ;
 	ctx->internal_exec_ctx.write_locked = false ;
 }
