@@ -16,15 +16,22 @@ fn main() {
         // installed under /opt/libomp. Linking statically here makes
         // libfalkordb.so self-contained for OpenMP — no libomp.so.5 /
         // libgomp.so.1 dynamic dependency in the runtime image.
+        //
+        // For local Linux dev without /opt/libomp (e.g. apt's libomp-22-dev
+        // which ships only the .so), fall back to dynamic linking. CI/Docker
+        // is the source of truth for the fully self-contained .so.
         println!("cargo:rustc-link-search=/opt/libomp/lib");
-        // Fallback search paths for local/dev environments without /opt/libomp.
         println!("cargo:rustc-link-search=/usr/lib/llvm-22/lib");
         println!("cargo:rustc-link-search=/usr/lib/llvm-21/lib");
         println!("cargo:rustc-link-search=/usr/lib/llvm-20/lib");
+
+        if std::path::Path::new("/opt/libomp/lib/libomp.a").exists() {
+            println!("cargo:rustc-link-lib=static=omp");
+        } else {
+            println!("cargo:rustc-link-lib=omp");
+        }
     }
 
-    #[cfg(target_os = "linux")]
-    println!("cargo:rustc-link-lib=static=omp");
     #[cfg(target_os = "macos")]
     println!("cargo:rustc-link-lib=omp");
 

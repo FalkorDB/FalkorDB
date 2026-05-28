@@ -13,7 +13,7 @@ RUN apt update -y && \
     apt install -y lsb-release gnupg wget && \
     wget https://apt.llvm.org/llvm.sh && \
     chmod +x llvm.sh && \
-    ./llvm.sh 22 && \
+    ./llvm.sh "${LLVMORG_VERSION%%.*}" && \
     apt update -y
 
 RUN apt install -y git make cmake curl zlib1g zlib1g-dev libpolly-22-dev libc++-22-dev libc++abi-22-dev libzstd-dev python3-venv lcov
@@ -38,45 +38,19 @@ RUN python3 -m venv venv
 
 RUN venv/bin/pip install behave falkordb falkordb-bulk-loader hypothesis pytest pytest-benchmark RLTest
 
-# Build SuiteSparse:GraphBLAS v10.3.1 with the FalkorDB-specific tweaks:
-# GB_control.h patch, vendored PreJIT kernels from the FalkorDB C repo, and
-# the same cmake flags the C engine uses. Single source of truth is
-# graphblas.sh at the repo root — devs invoke it directly, CI invokes the
-# same script here. See graphblas.sh for rationale.
+# Build SuiteSparse:GraphBLAS v10.3.1 + LAGraph v1.2.1 with the FalkorDB-
+# specific tweaks: GB_control.h patch, vendored PreJIT kernels from the
+# FalkorDB C repo, matching cmake flags, and shared OpenMP wiring. Single
+# source of truth is graphblas.sh at the repo root — devs invoke it
+# directly, CI invokes the same script here. LAGraph is built by the same
+# script so both deps stay locked together. Output: /usr/local/lib/libgraphblas.a
+# + /data/lagraph_lib/{liblagraph.a,liblagraphx.a,LAGraph.h,LAGraphX.h}.
 COPY graphblas.sh /data/graphblas.sh
 COPY build/graphblas /data/build/graphblas
-RUN cd /data && ./graphblas.sh && rm -rf /data/graphblas.sh /data/build
-
-RUN git clone --branch v1.2.1 --single-branch https://github.com/GraphBLAS/LAGraph.git && \
-    cd LAGraph && \
-    mkdir -p build && \
-    cd build && \
-    cmake .. \
-        -DBUILD_STATIC_LIBS=ON \
-        -DBUILD_SHARED_LIBS=OFF \
-        -DLIBRARY_ONLY=ON \
-        -DBUILD_TESTING=OFF \
-        -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-        -DGRAPHBLAS_INCLUDE_DIR=/usr/local/include/suitesparse \
-        -DGRAPHBLAS_LIBRARY=/usr/local/lib/libgraphblas.a \
-        -DSUITESPARSE_USE_FORTRAN=OFF \
-        -DCMAKE_C_COMPILER=clang-22 \
-        -DCMAKE_CXX_COMPILER=clang++-22 \
-        -DCMAKE_C_FLAGS="-I/opt/libomp/include" \
-        -DCMAKE_CXX_FLAGS="-I/opt/libomp/include" \
-        -DOpenMP_C_FLAGS=-fopenmp=libomp \
-        -DOpenMP_CXX_FLAGS=-fopenmp=libomp \
-        -DOpenMP_C_LIB_NAMES=omp \
-        -DOpenMP_CXX_LIB_NAMES=omp \
-        -DOpenMP_omp_LIBRARY=/opt/libomp/lib/libomp.a && \
-    make -j2 && \
-    mkdir -p /data/lagraph_lib && \
-    cp src/liblagraph.a /data/lagraph_lib/ && \
-    cp experimental/liblagraphx.a /data/lagraph_lib/ && \
-    cp ../include/LAGraph.h /data/lagraph_lib/ && \
-    cp ../include/LAGraphX.h /data/lagraph_lib/ && \
-    cd /data && \
-    rm -rf LAGraph
+RUN cd /data && \
+    CC=clang-22 CXX=clang++-22 LAGRAPH_INSTALL_DIR=/data/lagraph_lib \
+    ./graphblas.sh && \
+    rm -rf /data/graphblas.sh /data/build
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
