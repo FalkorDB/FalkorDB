@@ -130,24 +130,29 @@ pub fn init(
             return Err(format!("GraphBLAS GxB_init failed: {info:?}"));
         }
 
-        // Restrict GraphBLAS JIT to baked-in PreJIT kernels — matches the
-        // FalkorDB C module (src/module.c uses GxB_JIT_RUN with the same
-        // intent comment). JIT_RUN engages the 188 PreJIT kernels we
-        // statically link into libgraphblas.a (via graphblas.sh) without
-        // ever calling dlopen, which is what would deadlock against the
-        // atfork-prepare handler if a writer thread were mid-load when
-        // fork() fires. Higher levels (LOAD/ON) do dlopen for cache loads
-        // or fresh compilations, so they're unsafe here. JIT_OFF (the
-        // original PR #483 setting) was fork-safe but disabled PreJIT too,
-        // negating the perf benefit of vendoring the kernels in the first
-        // place; this is the parity-with-C fix.
+        // Restrict GraphBLAS JIT to baked-in PreJIT kernels only — engages
+        // the 188 PreJIT kernels we statically link into libgraphblas.a
+        // (via graphblas.sh) without ever calling dlopen.
+        //
+        // We deliberately diverge from FalkorDB C here. C uses GxB_JIT_RUN
+        // (src/module.c GraphBLAS_Init); at RUN, GraphBLAS additionally
+        // attempts to load JIT-cache .so kernels for ops not covered by
+        // PreJIT and returns GxB_JIT_ERROR if the cache lookup fails (no
+        // cache populated + no compiler available in the runtime image).
+        // The rust port exercises some GraphBLAS ops the C 188-kernel
+        // PreJIT set doesn't fully cover (e.g. GrB_transpose with
+        // GrB_DESC_RCT0 from Matrix::remove_all, hit by `MATCH (a:A:B)`
+        // fuzz inputs), triggering JIT_ERROR panics under RUN. PAUSE is
+        // strictly "PreJIT or generic fallback" — no cache lookup, no
+        // dlopen — so it both prevents the fork-deadlock PR #483 guarded
+        // against and avoids the JIT_ERROR class of failures.
         let info = GrB_Global_set_INT32(
             GrB_GLOBAL,
-            GxB_JIT_Control::GxB_JIT_RUN as i32,
+            GxB_JIT_Control::GxB_JIT_PAUSE as i32,
             GxB_Option_Field::GxB_JIT_C_CONTROL as _,
         );
         if info != GrB_Info::GrB_SUCCESS {
-            return Err(format!("GraphBLAS JIT_RUN failed: {info:?}"));
+            return Err(format!("GraphBLAS JIT_PAUSE failed: {info:?}"));
         }
 
         // Initialize LAGraph after GraphBLAS

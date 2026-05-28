@@ -30,6 +30,8 @@ tests/flow/logs
 tests/flow/csvs
 redisearch
 lagraph_lib
+/GraphBLAS/
+/LAGraph/
 .venv/
 .zed/
 .github/copilot-instructions.md

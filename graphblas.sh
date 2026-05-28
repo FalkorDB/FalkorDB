@@ -12,13 +12,16 @@
 #     of this script set =1 which disables FactoryKernels entirely; that was
 #     incompatible with the PreJIT-baking strategy below.
 #   * RelWithDebInfo + -O3 -fPIC -fno-stack-protector — matches C engine.
-#   * JIT=1 (build) + GxB_JIT_RUN (runtime) — matches FalkorDB C. RUN
-#     restricts GraphBLAS to baked-in PreJIT kernels only (no dlopen of
-#     compiled-on-demand .so files), so it's fork-safe and avoids the
-#     dlopen-vs-fork deadlock PR #483 originally guarded against by going
-#     JIT_OFF. JIT_OFF was wasteful: it disabled PreJIT too, so the 188
-#     PreJIT kernels baked into libgraphblas.a were never used. JIT_RUN
-#     lets them engage while still preventing runtime compilation.
+#   * JIT=1 (build) + GxB_JIT_PAUSE (runtime, set in matrix.rs init). The
+#     build flag enables PreJIT compilation so the 188 baked-in kernels end
+#     up in libgraphblas.a. The runtime flag restricts GraphBLAS to those
+#     PreJIT kernels + the generic fallback path — no dlopen of cached or
+#     freshly compiled .so files. This keeps us fork-safe (the original PR
+#     #483 concern that motivated JIT_OFF) and avoids GxB_JIT_ERROR panics
+#     in ops not covered by the C-derived PreJIT set (e.g. GrB_transpose
+#     with GrB_DESC_RCT0). We diverge from FalkorDB C here, which uses
+#     GxB_JIT_RUN; at RUN, GraphBLAS attempts cache loads for un-covered
+#     ops and errors out when the cache is empty / no compiler is available.
 #
 # Two extras vs. plain upstream v10.3.1:
 #
