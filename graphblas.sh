@@ -12,9 +12,13 @@
 #     of this script set =1 which disables FactoryKernels entirely; that was
 #     incompatible with the PreJIT-baking strategy below.
 #   * RelWithDebInfo + -O3 -fPIC -fno-stack-protector — matches C engine.
-#   * JIT=0 — module disables JIT at runtime (PR #483) to avoid dlopen-vs-fork
-#     deadlocks. Performance is recovered by baking PreJIT kernels in at build
-#     time instead.
+#   * JIT=1 (build) + GxB_JIT_RUN (runtime) — matches FalkorDB C. RUN
+#     restricts GraphBLAS to baked-in PreJIT kernels only (no dlopen of
+#     compiled-on-demand .so files), so it's fork-safe and avoids the
+#     dlopen-vs-fork deadlock PR #483 originally guarded against by going
+#     JIT_OFF. JIT_OFF was wasteful: it disabled PreJIT too, so the 188
+#     PreJIT kernels baked into libgraphblas.a were never used. JIT_RUN
+#     lets them engage while still preventing runtime compilation.
 #
 # Two extras vs. plain upstream v10.3.1:
 #
@@ -156,7 +160,7 @@ if [ "${SKIP_GRAPHBLAS}" -eq 0 ]; then
             -DGRAPHBLAS_COMPACT=OFF \
             -DGRAPHBLAS_BUILD_STATIC_LIBS=ON \
             -DBUILD_TESTING=OFF \
-            -DGRAPHBLAS_USE_JIT=0 \
+            -DGRAPHBLAS_USE_JIT=1 \
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
             -DCMAKE_C_FLAGS="${COMMON_C_FLAGS}" \
             -DCMAKE_CXX_FLAGS="${COMMON_C_FLAGS}" \
