@@ -2884,3 +2884,56 @@ updating clause.")
         res = self.graph.query(q).result_set
         self.env.assertEquals(res[0][0], 2) # avgX
 
+    def test_54_optional_match_edge_traversal_in_call_subquery(self):
+        """Regression test for use-after-free in ExecutionPlan_BuildOpsFromPath.
+        
+        When an OPTIONAL MATCH with an edge traversal is planned inside a CALL
+        subquery, EdgeTraverseCtx->e previously held a dangling pointer to a
+        QGEdge that was freed when the temporary sub-QueryGraph was destroyed.
+        This caused SIGSEGV in QGEdge_RelationID (reltypeIDs == NULL) under
+        production heap pressure (FalkorDB/private#101).
+        """
+        g = self.db.select_graph("test_54_uaf")
+        g.query("CREATE (:City {id: 1})-[:HAS_MEMBER]->(:Member {id: 10})")
+        g.query("CREATE (:City {id: 2})")  # city with no members
+
+        # The OPTIONAL MATCH inside CALL {} with an explicit edge variable is
+        # the pattern that triggered the UAF: ops were built against a temporary
+        # QueryGraph that was subsequently freed while EdgeTraverseCtx->e still
+        # pointed into it.
+        q = """MATCH (c:City)
+               CALL {
+                   WITH c
+                   OPTIONAL MATCH (c)-[r:HAS_MEMBER]->(m:Member)
+                   RETURN r, m
+               }
+               RETURN c.id AS cid, m.id AS mid
+               ORDER BY cid"""
+
+        res = g.query(q).result_set
+        self.env.assertEquals(len(res), 2)
+        self.env.assertEquals(res[0][0], 1)  # city 1 has a member
+        self.env.assertEquals(res[0][1], 10)
+        self.env.assertEquals(res[1][0], 2)  # city 2 has no member
+        self.env.assertIsNone(res[1][1])
+
+        # Nested CALL with OPTIONAL MATCH edge traversal – exercises the deeper
+        # nesting that appeared in the customer's OGM-generated query.
+        q = """MATCH (c:City)
+               CALL {
+                   WITH c
+                   CALL {
+                       WITH c
+                       OPTIONAL MATCH (c)-[r:HAS_MEMBER]->(m:Member)
+                       RETURN r, m
+                   }
+                   RETURN r, m
+               }
+               RETURN c.id AS cid, m.id AS mid
+               ORDER BY cid"""
+
+        res = g.query(q).result_set
+        self.env.assertEquals(len(res), 2)
+        self.env.assertEquals(res[0][1], 10)
+        self.env.assertIsNone(res[1][1])
+

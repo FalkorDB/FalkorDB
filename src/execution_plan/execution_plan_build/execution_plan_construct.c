@@ -212,6 +212,41 @@ static void _buildForeachOp
 	ExecutionPlan_AddOp(foreach, embedded_plan->root);
 }
 
+// After ExecutionPlan_BindOpsToPlan merges the temporary sub-QueryGraph into the
+// parent plan's QueryGraph (cloning edges), ops that were built against sub_qg
+// still hold EdgeTraverseCtx->e pointers into sub_qg.  Those pointers become
+// dangling the moment sub_qg is freed.  Walk the op tree and rebind each
+// EdgeTraverseCtx->e to the corresponding (already-cloned) edge in `qg` so
+// that freeing the temporary plan is safe.
+static void _RebindEdgeCtxToMergedQG
+(
+	OpBase    *op,
+	QueryGraph *qg
+) {
+	if(op == NULL) return;
+
+	if(op->type == OPType_CONDITIONAL_TRAVERSE ||
+	   op->type == OPType_OPTIONAL_CONDITIONAL_TRAVERSE) {
+		OpCondTraverse *ct = (OpCondTraverse *)op;
+		if(ct->edge_ctx != NULL) {
+			QGEdge *e = QueryGraph_GetEdgeByAlias(qg, ct->edge_ctx->e->alias);
+			ASSERT(e != NULL);
+			if(e != NULL) ct->edge_ctx->e = e;
+		}
+	} else if(op->type == OPType_EXPAND_INTO) {
+		OpExpandInto *ei = (OpExpandInto *)op;
+		if(ei->edge_ctx != NULL) {
+			QGEdge *e = QueryGraph_GetEdgeByAlias(qg, ei->edge_ctx->e->alias);
+			ASSERT(e != NULL);
+			if(e != NULL) ei->edge_ctx->e = e;
+		}
+	}
+
+	for(int i = 0; i < op->childCount; i++) {
+		_RebindEdgeCtxToMergedQG(op->children[i], qg);
+	}
+}
+
 OpBase *ExecutionPlan_BuildOpsFromPath
 (
 	ExecutionPlan *plan,
@@ -257,8 +292,13 @@ OpBase *ExecutionPlan_BuildOpsFromPath
 	QueryCtx_SetAST(ast); // reset the AST
 
 	// associate all new ops with the correct ExecutionPlan and QueryGraph
+	// NOTE: BindOpsToPlan calls QueryGraph_MergeGraphs which clones edges from
+	// match_stream_plan->query_graph (sub_qg) into plan->query_graph.  Any op
+	// holding an EdgeTraverseCtx->e pointer still references the originals in
+	// sub_qg; rebind them now, before sub_qg is freed below.
 	OpBase *match_stream_root = match_stream_plan->root;
 	ExecutionPlan_BindOpsToPlan(plan, match_stream_root);
+	_RebindEdgeCtxToMergedQG(match_stream_root, plan->query_graph);
 
 	// NULL-set map shared between the match_stream_plan and the overall plan
 	match_stream_plan->record_map = NULL;
