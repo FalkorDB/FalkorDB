@@ -497,18 +497,6 @@ impl<'a> Runtime<'a> {
         Batch::from_envs(envs)
     }
 
-    /// Resolves the first child of `idx` into a `BatchOp`, falling back to a
-    /// single-row default batch when no child exists.
-    fn child_batch_op(
-        &'a self,
-        idx: NodeIdx<Dyn<IR>>,
-    ) -> Result<BatchOp<'a>, String> {
-        self.plan.node(idx).get_child(0).map_or_else(
-            || Ok(BatchOp::Once(Some(self.default_batch()))),
-            |child| self.run_batch(child.idx()),
-        )
-    }
-
     /// Walk IR ancestors from `idx` upward to find the effective limit.
     /// Returns `None` if a non-transparent operation is encountered before
     /// a Limit node, or if no Limit ancestor exists.
@@ -579,14 +567,88 @@ impl<'a> Runtime<'a> {
         0
     }
 
-    /// Builds a batch-mode operator tree for the given IR node.
+    /// Returns the IR child indices that must be built before `idx` itself.
+    /// Mirrors the per-variant recursion pattern that `build_batch_op` expects.
+    fn children_to_recurse(
+        &self,
+        idx: NodeIdx<Dyn<IR>>,
+    ) -> Vec<NodeIdx<Dyn<IR>>> {
+        let node = self.plan.node(idx);
+        match node.data() {
+            IR::Union | IR::Argument | IR::CreateIndex { .. } | IR::DropIndex { .. } => Vec::new(),
+            IR::CartesianProduct => node.children().map(|c| c.idx()).collect(),
+            IR::ValueHashJoin { .. } => {
+                vec![node.child(0).idx(), node.child(1).idx()]
+            }
+            IR::Optional(_) | IR::Merge { .. } | IR::ForEach { .. } => {
+                if node.num_children() > 1 {
+                    vec![node.child(0).idx()]
+                } else {
+                    Vec::new()
+                }
+            }
+            _ => node.get_child(0).map(|c| vec![c.idx()]).unwrap_or_default(),
+        }
+    }
+
+    /// Iteratively builds a batch-mode operator tree for the given IR node.
+    ///
+    /// The recursive form was prone to stack overflow under ASAN: the body
+    /// is a giant match over ~60 IR variants, so each frame holds the full
+    /// `BatchOp` enum (~41 KB). Deep plans (Optional/Aggregate/Delete/ForEach
+    /// chains) under ASAN's 2-3x frame inflation exhausted the default 2 MB
+    /// thread stack mid-walk. Postorder iteration moves the per-node state
+    /// to the heap so depth is bounded only by available memory.
     pub fn run_batch(
         &'a self,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Result<BatchOp<'a>, String> {
+        enum Frame<I> {
+            Pre(I),
+            Post(I, usize),
+        }
+        let mut work: Vec<Frame<NodeIdx<Dyn<IR>>>> = vec![Frame::Pre(idx)];
+        let mut built: Vec<BatchOp<'a>> = Vec::new();
+        while let Some(f) = work.pop() {
+            match f {
+                Frame::Pre(cur) => {
+                    let kids = self.children_to_recurse(cur);
+                    let n = kids.len();
+                    work.push(Frame::Post(cur, n));
+                    for kid in kids.into_iter().rev() {
+                        work.push(Frame::Pre(kid));
+                    }
+                }
+                Frame::Post(cur, n) => {
+                    let start = built.len() - n;
+                    let kids: Vec<BatchOp<'a>> = built.drain(start..).collect();
+                    let op = self.build_batch_op(cur, kids)?;
+                    built.push(op);
+                }
+            }
+        }
+        built.pop().ok_or_else(|| String::from("empty plan tree"))
+    }
+
+    /// Constructs a single `BatchOp` for `idx`, consuming the already-built
+    /// children that were produced by `run_batch`'s postorder walk.
+    fn build_batch_op(
+        &'a self,
+        idx: NodeIdx<Dyn<IR>>,
+        children: Vec<BatchOp<'a>>,
+    ) -> Result<BatchOp<'a>, String> {
+        let mut children = children.into_iter();
+        let pop_or_once = |it: &mut std::vec::IntoIter<BatchOp<'a>>| -> BatchOp<'a> {
+            it.next()
+                .unwrap_or_else(|| BatchOp::Once(Some(self.default_batch())))
+        };
+        let pop_or_argument = |it: &mut std::vec::IntoIter<BatchOp<'a>>| -> BatchOp<'a> {
+            it.next()
+                .unwrap_or_else(|| BatchOp::Argument(Some(self.default_batch())))
+        };
         match self.plan.node(idx).data() {
             IR::NodeByLabelScan { .. } | IR::AllNodeScan(_) => {
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 let ir = self.plan.node(idx).data();
                 let node_pattern = match ir {
                     IR::NodeByLabelScan { node } => node,
@@ -601,7 +663,7 @@ impl<'a> Runtime<'a> {
                 )))
             }
             IR::IncludePending { node } => {
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::IncludePending(IncludePendingOp::new(
                     self,
                     Box::new(child),
@@ -610,7 +672,7 @@ impl<'a> Runtime<'a> {
                 )))
             }
             IR::Filter(tree) => {
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::Filter(FilterOp::new(
                     self,
                     Box::new(child),
@@ -622,7 +684,7 @@ impl<'a> Runtime<'a> {
                 exprs: trees,
                 copies: copy_from_parent,
             } => {
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::Project(ProjectOp::new(
                     self,
                     Box::new(child),
@@ -632,7 +694,7 @@ impl<'a> Runtime<'a> {
                 )))
             }
             IR::Skip(skip) => {
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 let Value::Int(skip) = {
                     let this = &self;
                     let idx = skip.root().idx();
@@ -653,7 +715,7 @@ impl<'a> Runtime<'a> {
                 )))
             }
             IR::Limit(limit) => {
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 let Value::Int(limit) = {
                     let this = &self;
                     let idx = limit.root().idx();
@@ -674,7 +736,7 @@ impl<'a> Runtime<'a> {
                 )))
             }
             IR::Distinct => {
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::Distinct(DistinctOp::new(
                     self,
                     Box::new(child),
@@ -684,7 +746,7 @@ impl<'a> Runtime<'a> {
             IR::Sort(trees) => {
                 let limit = self.effective_limit(idx);
                 let skip = self.effective_skip(idx);
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::Sort(SortOp::new(
                     self,
                     Box::new(child),
@@ -700,7 +762,7 @@ impl<'a> Runtime<'a> {
                 projections: copy_from_parent,
                 ..
             } => {
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::Aggregate(AggregateOp::new(
                     self,
                     Box::new(child),
@@ -714,7 +776,7 @@ impl<'a> Runtime<'a> {
                 expr: list,
                 var: name,
             } => {
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::Unwind(UnwindOp::new(
                     self,
                     Box::new(child),
@@ -735,7 +797,7 @@ impl<'a> Runtime<'a> {
                 let record_cap = self
                     .effective_limit(idx)
                     .map(|l| l + self.effective_skip(idx));
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::CondTraverse(CondTraverseOp::new(
                     self,
                     Box::new(child),
@@ -758,7 +820,7 @@ impl<'a> Runtime<'a> {
                 let record_cap = self
                     .effective_limit(idx)
                     .map(|l| l + self.effective_skip(idx));
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::ExpandInto(ExpandIntoOp::new(
                     self,
                     Box::new(child),
@@ -770,7 +832,7 @@ impl<'a> Runtime<'a> {
                 )))
             }
             IR::NodeByIdSeek { node, filter } => {
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::NodeByIdSeek(NodeByIdSeekOp::new(
                     self,
                     Box::new(child),
@@ -780,7 +842,7 @@ impl<'a> Runtime<'a> {
                 )))
             }
             IR::NodeByIndexScan { node, index, query } => {
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::NodeByIndexScan(NodeByIndexScanOp::new(
                     self,
                     Box::new(child),
@@ -795,7 +857,7 @@ impl<'a> Runtime<'a> {
                 query,
                 transposed,
             } => {
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::EdgeByIndexScan(EdgeByIndexScanOp::new(
                     self,
                     Box::new(child),
@@ -806,14 +868,8 @@ impl<'a> Runtime<'a> {
                 )))
             }
             IR::CartesianProduct => {
-                let child = self.child_batch_op(idx)?;
-                let right_children: Vec<BatchOp<'_>> = self
-                    .plan
-                    .node(idx)
-                    .children()
-                    .skip(1)
-                    .map(|c| self.run_batch(c.idx()))
-                    .collect::<Result<Vec<_>, String>>()?;
+                let child = pop_or_once(&mut children);
+                let right_children: Vec<BatchOp<'_>> = children.collect();
                 Ok(BatchOp::CartesianProduct(CartesianProductOp::new(
                     self,
                     Box::new(child),
@@ -822,8 +878,10 @@ impl<'a> Runtime<'a> {
                 )))
             }
             IR::ValueHashJoin { lhs_exp, rhs_exp } => {
-                let child = self.child_batch_op(idx)?;
-                let right = self.run_batch(self.plan.node(idx).child(1).idx())?;
+                let child = pop_or_once(&mut children);
+                let right = children
+                    .next()
+                    .ok_or_else(|| String::from("ValueHashJoin missing right child"))?;
                 Ok(BatchOp::ValueHashJoin(ValueHashJoinOp::new(
                     self,
                     Box::new(child),
@@ -834,12 +892,12 @@ impl<'a> Runtime<'a> {
                 )))
             }
             IR::Apply => {
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::Apply(ApplyOp::new(self, Box::new(child), idx)))
             }
             IR::SemiApply | IR::AntiSemiApply => {
                 let is_anti = matches!(self.plan.node(idx).data(), IR::AntiSemiApply);
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::SemiApply(SemiApplyOp::new(
                     self,
                     Box::new(child),
@@ -848,11 +906,7 @@ impl<'a> Runtime<'a> {
                 )))
             }
             IR::Optional(vars) => {
-                let child = if self.plan.node(idx).num_children() > 1 {
-                    self.run_batch(self.plan.node(idx).child(0).idx())?
-                } else {
-                    BatchOp::Once(Some(self.default_batch()))
-                };
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::Optional(OptionalOp::new(
                     self,
                     Box::new(child),
@@ -861,7 +915,7 @@ impl<'a> Runtime<'a> {
                 )))
             }
             IR::Create(pattern) => {
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::Create(CreateOp::new(
                     self,
                     Box::new(child),
@@ -870,7 +924,7 @@ impl<'a> Runtime<'a> {
                 )))
             }
             IR::Delete { exprs: trees, .. } => {
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::Delete(DeleteOp::new(
                     self,
                     Box::new(child),
@@ -879,11 +933,11 @@ impl<'a> Runtime<'a> {
                 )))
             }
             IR::Set(items) => {
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::Set(SetOp::new(self, Box::new(child), items, idx)))
             }
             IR::Remove(items) => {
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::Remove(RemoveOp::new(
                     self,
                     Box::new(child),
@@ -896,11 +950,7 @@ impl<'a> Runtime<'a> {
                 on_create: on_create_set_items,
                 on_match: on_match_set_items,
             } => {
-                let child = if self.plan.node(idx).num_children() > 1 {
-                    self.run_batch(self.plan.node(idx).child(0).idx())?
-                } else {
-                    BatchOp::Argument(Some(self.default_batch()))
-                };
+                let child = pop_or_argument(&mut children);
                 Ok(BatchOp::Merge(MergeOp::new(
                     self,
                     Box::new(child),
@@ -911,7 +961,7 @@ impl<'a> Runtime<'a> {
                 )))
             }
             IR::Commit => {
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::Commit(CommitOp::new(self, Box::new(child), idx)?))
             }
             IR::ForEach { list, var } => {
@@ -919,12 +969,7 @@ impl<'a> Runtime<'a> {
                 //   - If 2 children: child(0) = input from preceding clause, child(1) = body sub-plan
                 //   - If 1 child: child(0) = body sub-plan, input comes via Argument
                 //     (Argument allows set_argument_batch to inject the parent env)
-                let node = self.plan.node(idx);
-                let child = if node.num_children() > 1 {
-                    self.run_batch(node.child(0).idx())?
-                } else {
-                    BatchOp::Argument(Some(self.default_batch()))
-                };
+                let child = pop_or_argument(&mut children);
                 Ok(BatchOp::ForEach(ForEachOp::new(
                     self,
                     Box::new(child),
@@ -935,7 +980,7 @@ impl<'a> Runtime<'a> {
             }
             IR::Union => Ok(BatchOp::Union(UnionOp::new(self, idx))),
             IR::PathBuilder(paths) => {
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::PathBuilder(PathBuilderOp::new(
                     self,
                     Box::new(child),
@@ -949,7 +994,7 @@ impl<'a> Runtime<'a> {
                 delimiter,
                 var,
             } => {
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::LoadCsv(LoadCsvOp::new(
                     self,
                     Box::new(child),
@@ -965,7 +1010,7 @@ impl<'a> Runtime<'a> {
                 args: trees,
                 yields: name_outputs,
             } => {
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::ProcedureCall(ProcedureCallOp::new(
                     self,
                     Box::new(child),
@@ -981,7 +1026,7 @@ impl<'a> Runtime<'a> {
                 query,
                 score,
             } => {
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::NodeByFulltextScan(NodeByFulltextScanOp::new(
                     self,
                     Box::new(child),
@@ -998,7 +1043,7 @@ impl<'a> Runtime<'a> {
                 query,
                 score,
             } => {
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::EdgeByFulltextScan(EdgeByFulltextScanOp::new(
                     self,
                     Box::new(child),
@@ -1017,7 +1062,7 @@ impl<'a> Runtime<'a> {
                 vector,
                 score,
             } => {
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::NodeByVectorScan(NodeByVectorScanOp::new(
                     self,
                     Box::new(child),
@@ -1038,7 +1083,7 @@ impl<'a> Runtime<'a> {
                 vector,
                 score,
             } => {
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::EdgeByVectorScan(EdgeByVectorScanOp::new(
                     self,
                     Box::new(child),
@@ -1052,7 +1097,7 @@ impl<'a> Runtime<'a> {
                 )))
             }
             IR::NodeByLabelAndIdScan { node, filter } => {
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::NodeByLabelAndIdScan(NodeByLabelAndIdScanOp::new(
                     self,
                     Box::new(child),
@@ -1065,7 +1110,7 @@ impl<'a> Runtime<'a> {
                 relationship: relationship_pattern,
                 edge_filter,
             } => {
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::CondVarLenTraverse(CondVarLenTraverseOp::new(
                     self,
                     Box::new(child),
@@ -1075,7 +1120,7 @@ impl<'a> Runtime<'a> {
                 )))
             }
             IR::AllShortestPaths(relationship_pattern) => {
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::AllShortestPaths(AllShortestPathsOp::new(
                     self,
                     Box::new(child),
@@ -1084,7 +1129,7 @@ impl<'a> Runtime<'a> {
                 )))
             }
             IR::OrApplyMultiplexer(anti_flags) => {
-                let child = self.child_batch_op(idx)?;
+                let child = pop_or_once(&mut children);
                 Ok(BatchOp::OrApplyMultiplexer(OrApplyMultiplexerOp::new(
                     self,
                     Box::new(child),
