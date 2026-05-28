@@ -43,10 +43,26 @@ GraphBLAS, LAGraph, and RediSearch must be built and installed before building t
 Local builds use whatever OpenMP package is on the system — `build/libomp.sh`
 is **not** required for local development. It is only invoked by the Docker
 toolchain image (`build/Dockerfile`) to produce `/opt/libomp/lib/libomp.a`,
-which lets the published `libfalkordb.so` embed libomp statically and have
-no `libomp.so.5` / `libgomp.so.1` runtime dependency. A locally-built
-`libfalkordb.so` will dynamically link the system libomp instead — fine for
-dev, but CI/Docker is the source of truth for the self-contained image.
+which lets the published `libfalkordb.{so,dylib}` embed libomp statically
+and have no `libomp.so.5` / `libgomp.so.1` / `libomp.dylib` runtime
+dependency. A locally-built artifact will dynamically link the system
+libomp instead — fine for dev, but CI/Docker is the source of truth for
+the self-contained image.
+
+If you do want a self-contained local artifact (e.g. to mirror the Docker
+build), run `build/libomp.sh` with a writable `PREFIX` and point
+`graph/build.rs` at it via `LIBOMP_PREFIX`:
+
+```bash
+CC=$(brew --prefix llvm)/bin/clang PREFIX=$HOME/libomp ./build/libomp.sh
+LIBOMP_PREFIX=$HOME/libomp cargo build
+```
+
+The script auto-detects the libomp source release from `${CC:-clang}
+--version`, so it stays ABI-matched to your compiler with no manual
+version arg. In Docker the same auto-detection runs against
+`clang-${CLANG_MAJOR}`, eliminating the prior drift risk between the
+apt-installed clang and a hand-pinned `LLVMORG_VERSION`.
 
 ##### Building GraphBLAS + LAGraph
 

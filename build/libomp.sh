@@ -13,13 +13,38 @@
 #
 # Network footprint: --filter=blob:none + sparse-checkout of openmp/cmake/
 # runtimes only — ~30 MB instead of ~1.5 GB for a full llvm-project clone.
+#
+# Compiler: honours CC/CXX from the environment; otherwise the Docker image
+# exports clang-${CLANG_MAJOR}, and a local mac dev would set
+# CC=$(brew --prefix llvm)/bin/clang.
 
 set -euo pipefail
 
-LLVMORG_VERSION="${1:-22.1.6}"
+# Resolve the libomp source release. Priority:
+#   1. explicit positional arg ($1)
+#   2. auto-detect from ${CC:-clang} --version
+# Auto-detection makes the libomp ABI track whatever clang is on PATH,
+# avoiding silent drift between the clang we build with and the libomp
+# we statically link in.
+detect_llvm_version() {
+    local cc_bin="${CC:-clang}"
+    "${cc_bin}" --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
+}
+LLVMORG_VERSION="${1:-$(detect_llvm_version)}"
+if [ -z "${LLVMORG_VERSION}" ]; then
+    echo "ERROR: could not detect LLVM version; pass it explicitly: ./build/libomp.sh 22.1.6" >&2
+    exit 1
+fi
+echo "libomp.sh: building llvmorg-${LLVMORG_VERSION}"
+
 PREFIX="${PREFIX:-/opt/libomp}"
 SRC_DIR="${SRC_DIR:-/tmp/llvm-project}"
 BUILD_DIR="${SRC_DIR}/build-openmp"
+JOBS="${JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)}"
+
+CMAKE_COMPILER_ARGS=()
+if [ -n "${CC:-}" ]; then CMAKE_COMPILER_ARGS+=(-DCMAKE_C_COMPILER="${CC}"); fi
+if [ -n "${CXX:-}" ]; then CMAKE_COMPILER_ARGS+=(-DCMAKE_CXX_COMPILER="${CXX}"); fi
 
 rm -rf "${SRC_DIR}"
 git clone \
@@ -37,24 +62,23 @@ cmake \
     -S openmp \
     -B "${BUILD_DIR}" \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_C_COMPILER=clang-22 \
-    -DCMAKE_CXX_COMPILER=clang++-22 \
     -DLIBOMP_ENABLE_SHARED=OFF \
     -DLIBOMP_OMPD_SUPPORT=OFF \
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
     -DOPENMP_ENABLE_LIBOMPTARGET=OFF \
     -DOPENMP_ENABLE_OMPT_TOOLS=OFF \
-    -DCMAKE_INSTALL_PREFIX="${PREFIX}"
+    -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
+    ${CMAKE_COMPILER_ARGS[@]+"${CMAKE_COMPILER_ARGS[@]}"}
 
-cmake --build "${BUILD_DIR}" -j"$(nproc)" --target install
+cmake --build "${BUILD_DIR}" -j"${JOBS}" --target install
 
 # Sanity: archive present, no .so produced.
 test -f "${PREFIX}/lib/libomp.a"
 test -f "${PREFIX}/include/omp.h"
-# Forbid only libomp.so* (not libompd.so etc.) — we only ship libomp.a.
-if find "${PREFIX}/lib" -maxdepth 1 -name 'libomp.so*' | grep -q .; then
+# Forbid only libomp.so* / .dylib (we only ship libomp.a).
+if find "${PREFIX}/lib" -maxdepth 1 \( -name 'libomp.so*' -o -name 'libomp.*dylib' \) | grep -q .; then
     echo "unexpected shared libomp produced under ${PREFIX}" >&2
-    find "${PREFIX}/lib" -maxdepth 1 -name 'libomp.so*' >&2
+    find "${PREFIX}/lib" -maxdepth 1 \( -name 'libomp.so*' -o -name 'libomp.*dylib' \) >&2
     exit 1
 fi
 

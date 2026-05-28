@@ -42,6 +42,17 @@
 
 set -euo pipefail
 
+# CLI: --skip-graphblas reuses the libgraphblas.a already installed under
+# /usr/local (skips clone + 12-min compile + sudo install). Handy when
+# iterating on the LAGraph cmake invocation alone.
+SKIP_GRAPHBLAS=0
+for arg in "$@"; do
+    case "${arg}" in
+        --skip-graphblas) SKIP_GRAPHBLAS=1 ;;
+        *) echo "unknown arg: ${arg}" >&2; exit 1 ;;
+    esac
+done
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GRAPHBLAS_VERSION="${GRAPHBLAS_VERSION:-v10.3.1}"
 LAGRAPH_VERSION="${LAGRAPH_VERSION:-v1.2.1}"
@@ -76,6 +87,33 @@ if [ -f "${LIBOMP_PREFIX}/lib/libomp.a" ]; then
     )
 fi
 
+# Shared compiler flags applied to both GraphBLAS and LAGraph. All in a
+# single COMMON_C_FLAGS bucket: we deliberately leave CMAKE_BUILD_TYPE
+# unset so cmake never appends any CMAKE_C_FLAGS_<TYPE> variant on top
+# of these — what you read here is exactly what hits the compile line.
+#
+#   -O3 -g -DNDEBUG                  : RelWithDebInfo-equivalent
+#                                       optimization with debug symbols
+#                                       (cmake's RelWithDebInfo defaults
+#                                       to -O2 -g -DNDEBUG; we want -O3).
+#   -fPIC                            : both libraries are statically linked
+#                                       into libfalkordb.{so,dylib} (a
+#                                       position-independent shared object),
+#                                       so every translation unit must be
+#                                       PIC.
+#   -fno-stack-protector             : matches the FalkorDB C engine flags;
+#                                       drops the stack-canary epilogue from
+#                                       hot loops.
+#   -Wno-incompatible-pointer-types  : clang-22 promoted this from warning to
+#                                       error by default. v10.3.1's
+#                                       GB_I_inverse.c trips it; LAGraph
+#                                       stays quiet today but the flag is
+#                                       harmless.
+COMMON_C_FLAGS="-O3 -g -DNDEBUG -fPIC -fno-stack-protector -Wno-incompatible-pointer-types"
+if [ -n "${INCLUDE_FLAG}" ]; then
+    COMMON_C_FLAGS="${COMMON_C_FLAGS} ${INCLUDE_FLAG}"
+fi
+
 install_cmd() {
     if [ "$(id -u)" -eq 0 ]; then
         cmake --install .
@@ -84,53 +122,58 @@ install_cmd() {
     fi
 }
 
-# --- clone GraphBLAS upstream -------------------------------------------------
-rm -rf GraphBLAS
-git clone --branch "${GRAPHBLAS_VERSION}" --single-branch --depth 1 \
-    https://github.com/DrTimothyAldenDavis/GraphBLAS.git
+if [ "${SKIP_GRAPHBLAS}" -eq 0 ]; then
+    # --- clone GraphBLAS upstream ---------------------------------------------
+    rm -rf GraphBLAS
+    git clone --branch "${GRAPHBLAS_VERSION}" --single-branch --depth 1 \
+        https://github.com/DrTimothyAldenDavis/GraphBLAS.git
 
-# --- apply GB_control.h customization -----------------------------------------
-git -C GraphBLAS apply "${SCRIPT_DIR}/build/graphblas/GB_control.patch"
+    # --- apply GB_control.h customization -------------------------------------
+    git -C GraphBLAS apply "${SCRIPT_DIR}/build/graphblas/GB_control.patch"
 
-# --- pull vendored PreJIT kernels from FalkorDB C -----------------------------
-rm -rf FalkorDB-prejit
-git clone --depth 1 --filter=blob:none --sparse \
-    https://github.com/FalkorDB/FalkorDB.git FalkorDB-prejit
-(
-    cd FalkorDB-prejit
-    git sparse-checkout set --no-cone deps/GraphBLAS/PreJIT
-    git fetch --depth 1 origin "${FALKORDB_C_SHA}"
-    git checkout --detach "${FALKORDB_C_SHA}"
-)
-cp FalkorDB-prejit/deps/GraphBLAS/PreJIT/GB_jit_*.c GraphBLAS/PreJIT/
-rm -rf FalkorDB-prejit
-echo "vendored $(ls GraphBLAS/PreJIT/GB_jit_*.c | wc -l) PreJIT kernels from FalkorDB@${FALKORDB_C_SHA}"
+    # --- pull vendored PreJIT kernels from FalkorDB C -------------------------
+    rm -rf FalkorDB-prejit
+    git clone --depth 1 --filter=blob:none --sparse \
+        https://github.com/FalkorDB/FalkorDB.git FalkorDB-prejit
+    (
+        cd FalkorDB-prejit
+        git sparse-checkout set --no-cone deps/GraphBLAS/PreJIT
+        git fetch --depth 1 origin "${FALKORDB_C_SHA}"
+        git checkout --detach "${FALKORDB_C_SHA}"
+    )
+    cp FalkorDB-prejit/deps/GraphBLAS/PreJIT/GB_jit_*.c GraphBLAS/PreJIT/
+    rm -rf FalkorDB-prejit
+    echo "vendored $(ls GraphBLAS/PreJIT/GB_jit_*.c | wc -l) PreJIT kernels from FalkorDB@${FALKORDB_C_SHA}"
 
-# --- build GraphBLAS ----------------------------------------------------------
-mkdir -p GraphBLAS/build
-(
-    cd GraphBLAS/build
-    cmake \
-        -DSUITESPARSE_USE_FORTRAN=OFF \
-        -DBUILD_STATIC_LIBS=ON \
-        -DBUILD_SHARED_LIBS=OFF \
-        -DGRAPHBLAS_COMPACT=OFF \
-        -DGRAPHBLAS_BUILD_STATIC_LIBS=ON \
-        -DBUILD_TESTING=OFF \
-        -DGRAPHBLAS_USE_JIT=0 \
-        -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-        -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-        -DCMAKE_C_FLAGS="-fPIC -fno-stack-protector -Wno-incompatible-pointer-types ${INCLUDE_FLAG}" \
-        -DCMAKE_CXX_FLAGS="-fPIC -fno-stack-protector -Wno-incompatible-pointer-types ${INCLUDE_FLAG}" \
-        -DCMAKE_C_FLAGS_RELWITHDEBINFO="-O3 -g -DNDEBUG -fPIC -fno-stack-protector -Wno-incompatible-pointer-types" \
-        -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O3 -g -DNDEBUG -fPIC -fno-stack-protector -Wno-incompatible-pointer-types" \
-        "${CMAKE_COMPILER_ARGS[@]}" \
-        "${OPENMP_CMAKE_ARGS[@]}" \
-        ..
-    cmake --build . --config RelWithDebInfo -j"${JOBS}"
-    install_cmd
-)
-rm -rf GraphBLAS
+    # --- build GraphBLAS ------------------------------------------------------
+    mkdir -p GraphBLAS/build
+    (
+        cd GraphBLAS/build
+        cmake \
+            -DSUITESPARSE_USE_FORTRAN=OFF \
+            -DBUILD_STATIC_LIBS=ON \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DGRAPHBLAS_COMPACT=OFF \
+            -DGRAPHBLAS_BUILD_STATIC_LIBS=ON \
+            -DBUILD_TESTING=OFF \
+            -DGRAPHBLAS_USE_JIT=0 \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DCMAKE_C_FLAGS="${COMMON_C_FLAGS}" \
+            -DCMAKE_CXX_FLAGS="${COMMON_C_FLAGS}" \
+            ${CMAKE_COMPILER_ARGS[@]+"${CMAKE_COMPILER_ARGS[@]}"} \
+            ${OPENMP_CMAKE_ARGS[@]+"${OPENMP_CMAKE_ARGS[@]}"} \
+            ..
+        cmake --build . -j"${JOBS}"
+        install_cmd
+    )
+    rm -rf GraphBLAS
+else
+    echo "--skip-graphblas: reusing /usr/local/lib/libgraphblas.a"
+    test -f /usr/local/lib/libgraphblas.a || {
+        echo "ERROR: /usr/local/lib/libgraphblas.a not found; run without --skip-graphblas first" >&2
+        exit 1
+    }
+fi
 
 # --- build LAGraph ------------------------------------------------------------
 # LAGraph links against the just-installed libgraphblas.a. Output goes to
@@ -153,12 +196,12 @@ mkdir -p LAGraph/build
         -DGRAPHBLAS_INCLUDE_DIR=/usr/local/include/suitesparse \
         -DGRAPHBLAS_LIBRARY=/usr/local/lib/libgraphblas.a \
         -DSUITESPARSE_USE_FORTRAN=OFF \
-        -DCMAKE_C_FLAGS="${INCLUDE_FLAG}" \
-        -DCMAKE_CXX_FLAGS="${INCLUDE_FLAG}" \
-        "${CMAKE_COMPILER_ARGS[@]}" \
-        "${OPENMP_CMAKE_ARGS[@]}" \
+        -DCMAKE_C_FLAGS="${COMMON_C_FLAGS}" \
+        -DCMAKE_CXX_FLAGS="${COMMON_C_FLAGS}" \
+        ${CMAKE_COMPILER_ARGS[@]+"${CMAKE_COMPILER_ARGS[@]}"} \
+        ${OPENMP_CMAKE_ARGS[@]+"${OPENMP_CMAKE_ARGS[@]}"} \
         ..
-    cmake --build . --config Release -j"${JOBS}"
+    cmake --build . -j"${JOBS}"
 )
 
 mkdir -p "${LAGRAPH_INSTALL_DIR}"

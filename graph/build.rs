@@ -4,6 +4,22 @@ use std::fs;
 // cases and splitting it would reduce clarity.
 #[allow(clippy::too_many_lines)]
 fn main() {
+    // libomp linking strategy (same shape on Linux + macOS):
+    //   * if `${LIBOMP_PREFIX:-/opt/libomp}/lib/libomp.a` exists → link static.
+    //     This makes libfalkordb.{so,dylib} self-contained for OpenMP and is
+    //     the path CI/Docker takes (build/libomp.sh installs to /opt/libomp).
+    //   * otherwise → fall back to dynamic `-lomp`, resolved against the
+    //     system search path (apt's libomp-22-dev on Linux, homebrew's
+    //     /opt/homebrew/opt/llvm/lib/libomp.dylib on macOS).
+    // The LIBOMP_PREFIX env var lets local devs point at a non-root install
+    // (e.g. PREFIX=$HOME/libomp ./build/libomp.sh) without needing sudo.
+    let libomp_prefix =
+        std::env::var("LIBOMP_PREFIX").unwrap_or_else(|_| "/opt/libomp".to_string());
+    let libomp_static = std::path::Path::new(&libomp_prefix)
+        .join("lib/libomp.a")
+        .exists();
+    println!("cargo:rustc-link-search={libomp_prefix}/lib");
+
     #[cfg(target_os = "macos")]
     {
         println!("cargo:rustc-link-search=/opt/homebrew/opt/llvm/lib");
@@ -12,28 +28,16 @@ fn main() {
 
     #[cfg(target_os = "linux")]
     {
-        // libomp.a is built from llvm-project source by build/libomp.sh and
-        // installed under /opt/libomp. Linking statically here makes
-        // libfalkordb.so self-contained for OpenMP — no libomp.so.5 /
-        // libgomp.so.1 dynamic dependency in the runtime image.
-        //
-        // For local Linux dev without /opt/libomp (e.g. apt's libomp-22-dev
-        // which ships only the .so), fall back to dynamic linking. CI/Docker
-        // is the source of truth for the fully self-contained .so.
-        println!("cargo:rustc-link-search=/opt/libomp/lib");
         println!("cargo:rustc-link-search=/usr/lib/llvm-22/lib");
         println!("cargo:rustc-link-search=/usr/lib/llvm-21/lib");
         println!("cargo:rustc-link-search=/usr/lib/llvm-20/lib");
-
-        if std::path::Path::new("/opt/libomp/lib/libomp.a").exists() {
-            println!("cargo:rustc-link-lib=static=omp");
-        } else {
-            println!("cargo:rustc-link-lib=omp");
-        }
     }
 
-    #[cfg(target_os = "macos")]
-    println!("cargo:rustc-link-lib=omp");
+    if libomp_static {
+        println!("cargo:rustc-link-lib=static=omp");
+    } else {
+        println!("cargo:rustc-link-lib=omp");
+    }
 
     println!("cargo:rustc-link-search=/usr/local/lib");
     println!("cargo:rustc-link-lib=static=graphblas");
