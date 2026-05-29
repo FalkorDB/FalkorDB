@@ -1066,12 +1066,12 @@ static AR_FuncDesc _desc_prev = {
 static AR_FuncDesc _desc_path_filter = {
     .name="path_filter", .func=AR_NOP,
     TA0(), .ret_type=T_NULL,
-    .min_argc=0, .max_argc=0, .internal=true };
+    .min_argc=0, .max_argc=0, .deterministic=true, .internal=true };
 
 static AR_FuncDesc _desc_nop = {
     .name="nop", .func=AR_NOP,
     TA0(), .ret_type=T_NULL,
-    .min_argc=0, .max_argc=0, .internal=true };
+    .min_argc=0, .max_argc=0, .deterministic=true, .internal=true };
 
 // --- AGGREGATE ---
 

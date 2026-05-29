@@ -15,8 +15,6 @@
 #include <ctype.h>
 #include <pthread.h>
 
-#define FUNC_NAME_MAX_LEN 64
-
 typedef struct {
 	rax *repo;
 	pthread_rwlock_t lock;
@@ -26,14 +24,14 @@ UDFS *__udfs = NULL ;
 
 static void _NormalizeFunctionName
 (
-	char *name,
-	char  normalized[FUNC_NAME_MAX_LEN],
+	const char *name,
+	char  *normalized,
 	size_t *len
 ) {
 	ASSERT (len  != NULL) ;
 	ASSERT (name != NULL) ;
 
-	*len = FUNC_NAME_MAX_LEN ;
+	*len = strlen (normalized) ;
 	str_tolower_ascii (name, normalized, len) ;
 }
 
@@ -53,7 +51,7 @@ void AR_FinalizeFuncsRepo(void) {
 	raxSeek (&it, "^", NULL, 0) ;
 	while (raxNext (&it)) {
 		AR_FuncDesc *f = it.data ;
-		rm_free ((void *)f->name) ;
+		free ((void *)f->name) ;
 		AR_FuncFree (f) ;
 	}
 	raxStop (&it) ;
