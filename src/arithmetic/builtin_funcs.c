@@ -1232,7 +1232,6 @@ AR_FuncDesc * const AR_BUILTIN_FUNCS[NUM_BUILTIN_FUNCS] = {
     // boolean
 	//--------------------------------------------------------------------------
 
-    &_desc_left,
     &_desc_and,
     &_desc_or,
     &_desc_xor,

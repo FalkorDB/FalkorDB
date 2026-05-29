@@ -90,28 +90,6 @@ SIValue Aggregate_GetResult
 // Aggregation function registration
 //------------------------------------------------------------------------------
 
-// forward declarations
-void Register_AVG        (void);
-void Register_SUM        (void);
-void Register_MAX        (void);
-void Register_MIN        (void);
-void Register_STD        (void);
-void Register_COUNT      (void);
-void Register_COLLECT    (void);
-void Register_PRECENTILE (void);
-
-// register all aggregation functions
-void Register_AggFuncs() {
-	Register_AVG();
-	Register_SUM();
-	Register_MAX();
-	Register_MIN();
-	Register_STD();
-	Register_COUNT();
-	Register_COLLECT();
-	Register_PRECENTILE();
-}
-
 // routine for freeing a generic aggregate function context
 void Aggregate_Free
 (

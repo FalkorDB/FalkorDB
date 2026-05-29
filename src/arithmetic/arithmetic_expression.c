@@ -7,7 +7,6 @@
 #include "./arithmetic_expression.h"
 
 #include "RG.h"
-#include "funcs.h"
 #include "rax.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"
@@ -15,6 +14,7 @@
 #include "../util/rmalloc.h"
 #include "../errors/errors.h"
 #include "../graph/graphcontext.h"
+#include "aggregate_funcs/agg_funcs.h"
 #include "../datatypes/temporal_value.h"
 #include "../datatypes/array.h"
 #include "../ast/ast_shared.h"

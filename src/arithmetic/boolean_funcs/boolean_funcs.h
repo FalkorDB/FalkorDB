@@ -8,8 +8,6 @@
 
 #include "../../value.h"
 
-void Register_BooleanFuncs();
-
 // tries to convert input to boolean
 SIValue AR_TO_BOOLEAN
 (
@@ -17,3 +15,4 @@ SIValue AR_TO_BOOLEAN
     int argc,           // number of arguments
     void *private_data  // private context
 );
+

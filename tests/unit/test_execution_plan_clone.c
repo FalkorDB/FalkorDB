@@ -7,7 +7,6 @@
 #include "src/util/arr.h"
 #include "src/query_ctx.h"
 #include "src/util/rmalloc.h"
-#include "src/arithmetic/funcs.h"
 #include "src/util/thpool/pool.h"
 #include "src/procedures/procedure.h"
 #include "src/execution_plan/ops/ops.h"

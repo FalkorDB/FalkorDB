@@ -27,9 +27,6 @@ AR_FuncDesc *AR_AggFuncDescNew
 	AR_Func_PrivateData private_data  // generate private data
 );
 
-// register all aggregation funcitons
-void Register_AggFuncs(void);
-
 // get computed aggregated value
 SIValue Aggregate_GetResult
 (

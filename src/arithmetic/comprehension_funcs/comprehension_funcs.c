@@ -281,7 +281,6 @@ SIValue AR_NONE(SIValue *argv, int argc, void *private_data) {
 	return SI_BoolVal(true);
 }
 
-
 SIValue AR_LIST_COMPREHENSION
 (
 	SIValue *argv,
@@ -334,72 +333,5 @@ SIValue AR_LIST_COMPREHENSION
 	}
 
 	return retval;
-}
-
-void Register_ComprehensionFuncs (void) {
-	SIType *types ;
-	SIType ret_type = T_BOOL | T_NULL ;
-	AR_FuncDesc *func_desc ;
-
-	//--------------------------------------------------------------------------
-	// ANY
-	//--------------------------------------------------------------------------
-
-	types = arr_new (SIType, 3) ;
-	arr_append (types, T_ARRAY | T_NULL) ;
-	arr_append (types, T_PTR) ;
-	func_desc = AR_FuncDescNew ("any", AR_ANY, 2, 2, types, ret_type, true,
-			true, true) ;
-	AR_SetPrivateDataRoutines (func_desc, ListComprehension_Free,
-			ListComprehension_Clone, ListComprehension_CollectAliases) ;
-
-	//--------------------------------------------------------------------------
-	// ALL
-	//--------------------------------------------------------------------------
-
-	types = arr_new (SIType, 3) ;
-	arr_append (types, T_ARRAY | T_NULL) ;
-	arr_append (types, T_PTR) ;
-	func_desc = AR_FuncDescNew ("all", AR_ALL, 2, 2, types, ret_type, true,
-			true, true) ;
-	AR_SetPrivateDataRoutines (func_desc, ListComprehension_Free,
-			ListComprehension_Clone, ListComprehension_CollectAliases) ;
-
-	//--------------------------------------------------------------------------
-	// SINGLE
-	//--------------------------------------------------------------------------
-
-	types = arr_new (SIType, 3) ;
-	arr_append (types, T_ARRAY | T_NULL) ;
-	arr_append (types, T_PTR) ;
-	func_desc = AR_FuncDescNew ("single", AR_SINGLE, 2, 2, types, ret_type,
-			true, true, true) ;
-	AR_SetPrivateDataRoutines (func_desc, ListComprehension_Free,
-			ListComprehension_Clone, ListComprehension_CollectAliases) ;
-
-	//--------------------------------------------------------------------------
-	// NONE
-	//--------------------------------------------------------------------------
-
-	types = arr_new (SIType, 3) ;
-	arr_append (types, T_ARRAY | T_NULL) ;
-	arr_append (types, T_PTR) ;
-	func_desc = AR_FuncDescNew ("none", AR_NONE, 2, 2, types, ret_type, true,
-			true, true) ;
-	AR_SetPrivateDataRoutines (func_desc, ListComprehension_Free,
-			ListComprehension_Clone, ListComprehension_CollectAliases) ;
-
-	//--------------------------------------------------------------------------
-	// list_comprehension
-	//--------------------------------------------------------------------------
-
-	types = arr_new (SIType, 3) ;
-	arr_append (types, T_ARRAY | T_NULL) ;
-	arr_append (types, T_PTR) ;
-	ret_type = T_ARRAY | T_NULL ;
-	func_desc = AR_FuncDescNew ("list_comprehension", AR_LIST_COMPREHENSION, 2,
-			2, types, ret_type, true, true, true) ;
-	AR_SetPrivateDataRoutines (func_desc, ListComprehension_Free,
-			ListComprehension_Clone, ListComprehension_CollectAliases) ;
 }
 

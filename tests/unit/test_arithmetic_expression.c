@@ -4,7 +4,6 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "src/arithmetic/funcs.h"
 #include "src/arithmetic/algebraic_expression.h"
 
 #include <assert.h>
