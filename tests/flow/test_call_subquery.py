@@ -2884,3 +2884,43 @@ updating clause.")
         res = self.graph.query(q).result_set
         self.env.assertEquals(res[0][0], 2) # avgX
 
+    def test_54_imported_variable_in_disconnected_match_filter(self):
+        self.graph.delete()
+
+        q = """WITH 1 AS x
+               CALL {
+                   WITH x
+                   MATCH ({v: x.n1}), ()
+                   RETURN 0 AS n
+               }
+               RETURN 0"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res, [])
+
+        self.graph.query("CREATE (:A), (:X {n1: 1}), ({n0: 1}), ({v: 1})")
+
+        q = """WITH {n1: 1} AS x
+               CALL {
+                   WITH x
+                   MATCH ({v: x.n1}), ()
+                   RETURN 0 AS n
+               }
+               RETURN 0"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res, [[0], [0], [0], [0]])
+
+        q = """MATCH (x)
+               CALL {
+                   WITH x
+                   MATCH ({n0: x.n1})
+                   MATCH (:A)
+                   WITH *
+                   ORDER BY x
+                   RETURN 0 AS n2
+               }
+               RETURN 0"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res, [[0]])

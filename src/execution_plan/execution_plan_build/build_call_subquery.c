@@ -16,6 +16,8 @@
 #include "execution_plan_util.h"
 #include "execution_plan_modify.h"
 
+#include <string.h>
+
 // looks for a Join operation at root or root->children[0] and returns it, or
 // NULL if not found
 static OpBase *_get_join
@@ -31,6 +33,106 @@ static OpBase *_get_join
 	}
 
 	return join_op;
+}
+
+// collect variables imported by leading WITH clauses in a CALL {} subquery
+static const char **_collect_imported_variables
+(
+	const cypher_astnode_t *clause  // call subquery clause
+) {
+	ASSERT(clause != NULL);
+
+	const cypher_astnode_t *query =
+		cypher_ast_call_subquery_get_query(clause);
+	uint n_clauses = cypher_ast_query_nclauses(query);
+	const char **variables = arr_new(const char *, 0);
+
+	// A WITH clause imports outer variables only when it is the first clause of
+	// the subquery, or the first clause after a UNION.
+	bool expecting_import = true;
+	for(uint i = 0; i < n_clauses; i++) {
+		const cypher_astnode_t *inner_clause =
+			cypher_ast_query_get_clause(query, i);
+		cypher_astnode_type_t t = cypher_astnode_type(inner_clause);
+
+		if(t == CYPHER_AST_UNION) {
+			expecting_import = true;
+			continue;
+		}
+
+		if(!expecting_import || t != CYPHER_AST_WITH) {
+			expecting_import = false;
+			continue;
+		}
+
+		uint n_projections = cypher_ast_with_nprojections(inner_clause);
+		for(uint j = 0; j < n_projections; j++) {
+			const cypher_astnode_t *projection =
+				cypher_ast_with_get_projection(inner_clause, j);
+			const cypher_astnode_t *exp =
+				cypher_ast_projection_get_expression(projection);
+
+			// Empty WITH * imports are rewritten to a NULL projection.
+			if(cypher_astnode_type(exp) != CYPHER_AST_IDENTIFIER) {
+				continue;
+			}
+
+			const char *identifier = cypher_ast_identifier_get_name(exp);
+			bool exists = false;
+			for(uint k = 0; k < arr_len(variables); k++) {
+				if(strcmp(variables[k], identifier) == 0) {
+					exists = true;
+					break;
+				}
+			}
+
+			if(!exists) {
+				arr_append(variables, identifier);
+			}
+		}
+
+		expecting_import = false;
+	}
+
+	return variables;
+}
+
+static bool _variable_in_array
+(
+	const char *variable,
+	const char **variables
+) {
+	ASSERT(variable != NULL);
+
+	uint n = arr_len(variables);
+	for(uint i = 0; i < n; i++) {
+		if(strcmp(variable, variables[i]) == 0) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+// return the imported variables projected by a specific feeder point
+static const char **_feeding_point_imported_variables
+(
+	OpBase *feeding_point,
+	const char **imported_variables
+) {
+	ASSERT(feeding_point != NULL);
+
+	const char **variables = arr_new(const char *, 0);
+	uint n_modified = arr_len(feeding_point->modifies);
+
+	for(uint i = 0; i < n_modified; i++) {
+		const char *modified = feeding_point->modifies[i];
+		if(_variable_in_array(modified, imported_variables)) {
+			arr_append(variables, modified);
+		}
+	}
+
+	return variables;
 }
 
 // returns an array with the deepest ops of an execution plan
@@ -214,16 +316,22 @@ void buildCallSubqueryPlan
 	// plant feeders
 	//--------------------------------------------------------------------------
 
-	// TODO: check if call sub-query imports any variables
 	// find the feeding points, to which we will add the projections and feeders
 	OpBase **feeding_points = _find_feeding_points (embedded_plan) ;
+	const char **imported_variables = _collect_imported_variables (clause) ;
 
 	uint n_feeding_points = arr_len (feeding_points) ;
 	for (uint i = 0; i < n_feeding_points; i++) {
-		OpBase *argument = NewArgumentOp (plan, NULL) ;
+		const ExecutionPlan *feeding_plan = feeding_points[i]->plan ;
+		const char **variables =
+			_feeding_point_imported_variables (feeding_points[i],
+					imported_variables) ;
+		OpBase *argument = NewArgumentOp (feeding_plan, variables) ;
 		ExecutionPlan_AddOp (feeding_points[i], argument) ;
+		arr_free (variables) ;
 	}
 
+	arr_free(imported_variables);
 	arr_free(feeding_points);
 
 	//--------------------------------------------------------------------------
@@ -270,4 +378,3 @@ void buildCallSubqueryPlan
 		ExecutionPlan_Free (embedded_plan) ;
 	}
 }
-
