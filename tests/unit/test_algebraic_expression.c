@@ -10,6 +10,7 @@
 #include "src/redismodule.h"
 #include "src/graph/graph.h"
 #include "src/util/rmalloc.h"
+#include "tests/utils/mock_log.h"
 #include "src/util/thpool/pool.h"
 #include "src/graph/query_graph.h"
 #include "src/graph/graphcontext.h"
@@ -310,6 +311,7 @@ void free_algebraic_expressions(AlgebraicExpression **exps, uint count) {
 void setup() {
 	// Use the malloc family for allocations
 	Alloc_Reset();
+	Logging_Reset();
 
 	// Initialize the thread pool.
 	TEST_ASSERT(ThreadPool_CreatePool(1, 2));

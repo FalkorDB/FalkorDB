@@ -8,12 +8,14 @@
 #include "src/util/datablock/datablock.h"
 #include "src/util/datablock/oo_datablock.h"
 #include "src/util/rmalloc.h"
+#include "tests/utils/mock_log.h"
 
 #include <stdio.h>
 #include <string.h>
 
 void setup() {
 	Alloc_Reset();
+	Logging_Reset();
 }
 #define TEST_INIT setup();
 #include "acutest.h"

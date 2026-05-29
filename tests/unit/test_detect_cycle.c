@@ -5,6 +5,7 @@
  */
 
 #include "src/util/rmalloc.h"
+#include "tests/utils/mock_log.h"
 #include "src/graph/query_graph.h"
 #include "src/algorithms/algorithms.h"
 #include "GraphBLAS/Include/GraphBLAS.h"
@@ -99,6 +100,7 @@ QueryGraph *CyclicBuildGraph() {
 void setup() {
 	// Use the malloc family for allocations
 	Alloc_Reset();
+	Logging_Reset();
 
 	// Initialize GraphBLAS
 	GrB_init(GrB_NONBLOCKING);

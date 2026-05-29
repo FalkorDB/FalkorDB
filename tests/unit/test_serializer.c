@@ -4,6 +4,7 @@
  */
 
 #include "src/util/rmalloc.h"
+#include "tests/utils/mock_log.h"
 #include "src/serializers/serializer_io.h"
 
 #include <stdio.h>
@@ -12,6 +13,7 @@
 
 void setup() {
 	Alloc_Reset();
+	Logging_Reset();
 }
 
 #define TEST_INIT setup();

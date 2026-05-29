@@ -6,9 +6,11 @@
 #include "src/value.h"
 #include "src/util/rmalloc.h"
 #include "src/datatypes/vector.h"
+#include "tests/utils/mock_log.h"
 
 void setup() {
 	Alloc_Reset();
+	Logging_Reset();
 }
 #define TEST_INIT setup();
 #include "acutest.h"

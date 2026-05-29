@@ -5,6 +5,7 @@
  */
 
 #include "src/arithmetic/funcs.h"
+#include "tests/utils/mock_log.h"
 #include "src/arithmetic/algebraic_expression.h"
 
 #include <assert.h>
@@ -19,6 +20,7 @@ void setup();
 void setup() {
 	// use the malloc family for allocations
 	Alloc_Reset () ;
+	Logging_Reset();
 
 	AR_RegisterFuncs();  // register arithmetic functions
 }

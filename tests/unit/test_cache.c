@@ -5,6 +5,7 @@
  */
 
 #include "src/util/rmalloc.h"
+#include "tests/utils/mock_log.h"
 #include "src/util/cache/cache.h"
 #include "src/execution_plan/execution_plan.h"
 
@@ -15,6 +16,7 @@ static atomic_int free_count = 0;  // count how many cache objects been freed
 
 void setup() {
 	Alloc_Reset();
+	Logging_Reset();
 	atomic_store(&free_count, 0);
 }
 

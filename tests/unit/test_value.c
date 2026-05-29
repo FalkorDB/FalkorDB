@@ -8,12 +8,14 @@
 #include "src/util/rmalloc.h"
 #include "src/datatypes/set.h"
 #include "src/datatypes/array.h"
+#include "tests/utils/mock_log.h"
 #include "src/datatypes/path/path.h"
 #include "src/graph/entities/node.h"
 #include "src/graph/entities/edge.h"
 
 void setup() {
 	Alloc_Reset();
+	Logging_Reset();
 }
 
 #define TEST_INIT setup();

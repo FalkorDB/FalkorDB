@@ -9,7 +9,7 @@
 #include "../util/circular_buffer.h"
 
 // query statistics
-typedef struct QueryStats {
+typedef struct {
 	uint64_t received;          // query received timestamp
 	double wait_duration;       // waiting time
 	double execution_duration;  // executing time

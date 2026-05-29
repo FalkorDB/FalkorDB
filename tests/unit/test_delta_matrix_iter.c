@@ -5,12 +5,14 @@
  */
 
 #include "src/util/rmalloc.h"
+#include "tests/utils/mock_log.h"
 #include "src/configuration/config.h"
 #include "src/graph/delta_matrix/delta_matrix.h"
 #include "src/graph/delta_matrix/delta_matrix_iter.h"
 
 void setup() {
-	Alloc_Reset();	
+	Alloc_Reset();
+	Logging_Reset();
 
 	// initialize GraphBLAS
 	GrB_init(GrB_NONBLOCKING);

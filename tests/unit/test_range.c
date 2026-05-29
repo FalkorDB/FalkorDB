@@ -6,6 +6,7 @@
 
 #include "src/util/rmalloc.h"
 #include "src/ast/ast_shared.h"
+#include "tests/utils/mock_log.h"
 #include "src/util/range/string_range.h"
 #include "src/util/range/numeric_range.h"
 
@@ -13,6 +14,7 @@
 
 void setup() {
 	Alloc_Reset();
+	Logging_Reset();
 }
 
 #define TEST_INIT setup();
