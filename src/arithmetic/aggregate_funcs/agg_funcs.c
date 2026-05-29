@@ -27,6 +27,7 @@ AR_FuncDesc *AR_AggFuncDescNew
 	AR_Func_PrivateData private_data  // generate private data
 ) {
 	AR_FuncDesc *desc = rm_calloc (1, sizeof (AR_FuncDesc)) ;
+	ASSERT (max_argc == arr_len (types));
 
 	desc->name                   = name ;
 	desc->func                   = func ;
