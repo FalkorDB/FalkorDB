@@ -24,15 +24,14 @@ UDFS *__udfs = NULL ;
 
 static void _NormalizeFunctionName
 (
-	const char *name,
-	char  *normalized,
+	char *name,
 	size_t *len
 ) {
 	ASSERT (len  != NULL) ;
 	ASSERT (name != NULL) ;
 
-	*len = strlen (normalized) ;
-	str_tolower_ascii (name, normalized, len) ;
+	*len = strlen (name) ;
+	str_tolower_ascii (name, name, len) ;
 }
 
 void AR_InitFuncsRepo(void) {
@@ -102,7 +101,7 @@ void AR_FuncRegisterUDF
 	ASSERT (name != NULL) ;
 
 	size_t len ;
-	_NormalizeFunctionName (name, name, &len) ;
+	_NormalizeFunctionName (name, &len) ;
 
 	SIType  ret_type = SI_ALL ;
 	SIType *types    = arr_new (SIType, 3) ;
@@ -133,7 +132,7 @@ bool AR_FuncRemoveUDF
 	ASSERT (func_name != NULL) ;
 
 	size_t len ;
-	_NormalizeFunctionName (func_name, func_name, &len) ;
+	_NormalizeFunctionName (func_name, &len) ;
 
 	int res = pthread_rwlock_wrlock (&__udfs->lock) ;
 	ASSERT (res == 0) ;
