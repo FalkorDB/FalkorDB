@@ -45,6 +45,5 @@ void Register_COUNT(void) {
 	ret_type = T_INT64 ;
 	func_desc = AR_AggFuncDescNew ("count", AGG_COUNT, 1, 1, types, ret_type,
 			NULL, NULL, Count_PrivateData) ;
-	AR_FuncRegister (func_desc) ;
 }
 

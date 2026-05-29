@@ -121,6 +121,5 @@ void Register_AVG(void) {
 	func_desc = AR_AggFuncDescNew ("avg", AGG_AVG, 1, 1, types, ret_type,
 			rm_free, Avg_Finalize, Avg_PrivateData) ;
 
-	AR_FuncRegister (func_desc) ;
 }
 

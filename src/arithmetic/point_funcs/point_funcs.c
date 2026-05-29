@@ -110,7 +110,6 @@ void Register_PointFuncs() {
 	ret_type = T_NULL | T_POINT;
 	func_desc = AR_FuncDescNew("point", AR_TOPOINT, 1, 1, types, ret_type,
 			false, true, true);
-	AR_FuncRegister(func_desc);
 
 
 	types = arr_new(SIType, 2);
@@ -119,5 +118,4 @@ void Register_PointFuncs() {
 	ret_type = T_NULL | T_DOUBLE;
 	func_desc = AR_FuncDescNew("distance", AR_DISTANCE, 2, 2, types, ret_type,
 			false, true, true);
-	AR_FuncRegister(func_desc);
 }

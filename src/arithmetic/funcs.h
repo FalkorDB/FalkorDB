@@ -23,6 +23,4 @@
 #include "path_funcs/path_funcs.h"
 #include "placeholder_funcs/placeholder_funcs.h"
 
-// registers all arithmetic functions
-void AR_RegisterFuncs();
 

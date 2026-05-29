@@ -11,7 +11,7 @@
 
 #include <sys/types.h>
 
-#define VAR_ARG_LEN UINT_MAX
+#define VAR_ARG_LEN UINT8_MAX  // sentinel: function accepts any number of arguments
 
 // an aggregation context
 // each aggregation function operates on an aggregation context
@@ -57,18 +57,19 @@ typedef struct {
 } AR_FuncCBs;
 
 typedef struct {
-	AR_Func func;          // function pointer to scalar or aggregate function routine
-	SIType *types;         // types of arguments
-	SIType ret_type;       // return type
-	uint min_argc;         // minimal number of arguments function expects
-	uint max_argc;         // maximal number of arguments function expects
-	bool internal;         // is function internal
-	bool reducible;        // can be reduced using static evaluation
-	bool aggregate;        // true if the function is an aggregation
-	bool udf;              // user define function
-	bool deterministic;    // true if return value is predictable
-	char *name;            // function name
-	AR_FuncCBs callbacks;  // function's callbacks
+	AR_Func func;           // function pointer to scalar or aggregate function routine
+	SIType *types;          // types of arguments (types_len entries)
+	SIType ret_type;        // return type
+	uint8_t min_argc;       // minimum number of arguments
+	uint8_t max_argc;       // maximum number of arguments (VAR_ARG_LEN = unlimited)
+	uint8_t types_len;      // number of entries in types[]
+	bool internal;          // is function internal
+	bool reducible;         // can be reduced using static evaluation
+	bool aggregate;         // true if the function is an aggregation
+	bool udf;               // user define function
+	bool deterministic;     // true if return value is predictable
+	char *name;             // function name
+	AR_FuncCBs callbacks;   // function's callbacks
 } AR_FuncDesc;
 
 // initialize functions repository
@@ -77,21 +78,15 @@ void AR_InitFuncsRepo(void) ;
 // create a new function descriptor
 AR_FuncDesc *AR_FuncDescNew
 (
-	char *name,       // function name
-	AR_Func func,     // pointer to function
-	uint min_argc,    // minimum number of arguments
-	uint max_argc,    // maximum number of arguments
-	SIType *types,    // acceptable types
-	SIType ret_type,  // return type
-	bool internal,    // is function internal
-	bool reducible,   // is function reducible
+	char *name,        // function name
+	AR_Func func,      // pointer to function
+	uint8_t min_argc,  // minimum number of arguments
+	uint8_t max_argc,  // maximum number of arguments (VAR_ARG_LEN = unlimited)
+	SIType *types,     // acceptable types
+	SIType ret_type,   // return type
+	bool internal,     // is function internal
+	bool reducible,    // is function reducible
 	bool deterministic  // true if return value is predictable
-);
-
-// register function to repository
-void AR_FuncRegister
-(
-	AR_FuncDesc *func  // function to register
 );
 
 // register a new UDF function

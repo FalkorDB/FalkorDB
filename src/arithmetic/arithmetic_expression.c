@@ -401,7 +401,7 @@ static bool _AR_EXP_ValidateInvocation
 	SIType actual_type;
 	SIType expected_type = T_NULL;
 
-	uint expected_types_count = arr_len(fdesc->types);
+	uint expected_types_count = fdesc->types_len;
 	for(int i = 0; i < argc; i++) {
 		actual_type = SI_TYPE(argv[i]);
 		/* For a function that accepts a variable number of arguments.

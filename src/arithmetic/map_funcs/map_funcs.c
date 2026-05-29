@@ -165,28 +165,24 @@ void Register_MapFuncs() {
 	ret_type = T_MAP;
 	func_desc = AR_FuncDescNew("tomap", AR_TOMAP, 0, VAR_ARG_LEN, types,
 			ret_type, true, true, true);
-	AR_FuncRegister(func_desc);
 
 	types = arr_new(SIType, 1);
 	arr_append(types, SI_ALL);
 	ret_type = T_NULL | T_MAP;
 	func_desc = AR_FuncDescNew("tomap_projection", AR_TOMAP_PROJECTION, 1,
 			VAR_ARG_LEN, types, ret_type, true, true, true);
-	AR_FuncRegister(func_desc);
 
 	types = arr_new(SIType, 1);
 	arr_append(types, T_NULL | T_MAP | T_NODE | T_EDGE);
 	ret_type = T_NULL | T_ARRAY;
 	func_desc = AR_FuncDescNew("keys", AR_KEYS, 1, 1, types, ret_type, false,
 			true, true);
-	AR_FuncRegister(func_desc);
 
 	types = arr_new(SIType, 1);
 	arr_append(types, T_NULL | T_MAP | T_NODE | T_EDGE);
 	ret_type = T_NULL | T_MAP;
 	func_desc = AR_FuncDescNew("properties", AR_PROPERTIES, 1, 1, types,
 			ret_type, false, true, true);
-	AR_FuncRegister(func_desc);
 
 	types = arr_new(SIType, 2);
 	arr_append(types, T_NULL | T_MAP);
@@ -194,6 +190,5 @@ void Register_MapFuncs() {
 	ret_type = T_NULL | T_MAP;
 	func_desc = AR_FuncDescNew("merge_maps", AR_MERGEMAP, 2, 2, types, ret_type,
 			true, true, true);
-	AR_FuncRegister(func_desc);
 }
 

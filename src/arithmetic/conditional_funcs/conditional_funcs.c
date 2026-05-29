@@ -113,19 +113,16 @@ void Register_ConditionalFuncs() {
 	arr_append(types, SI_ALL);
 	func_desc = AR_FuncDescNew("case", AR_CASEWHEN, 2, VAR_ARG_LEN, types,
 			ret_type, true, true, true);
-	AR_FuncRegister(func_desc);
 
 	types = arr_new(SIType, 1);
 	arr_append(types, SI_ALL);
 	func_desc = AR_FuncDescNew("coalesce", AR_COALESCE, 1, VAR_ARG_LEN, types,
 			ret_type, false, true, true);
-	AR_FuncRegister(func_desc);
 
 	types = arr_new(SIType, 1);
 	arr_append(types, SI_ALL);
 	func_desc = AR_FuncDescNew("distinct", AR_DISTINCT, 1, 1, types, ret_type,
 			true, false, true);
 	AR_SetPrivateDataRoutines(func_desc, Distinct_Free, Distinct_Clone, NULL);
-	AR_FuncRegister(func_desc);
 }
 

@@ -212,12 +212,40 @@ endif()
 add_subdirectory(${root}/deps/RediSearch ${CMAKE_BINARY_DIR}/search-static)
 
 #-----------------------------------------------------------------------------
+# Perfect-hash lookup for built-in arithmetic functions (gperf)
+#-----------------------------------------------------------------------------
+
+find_program(GPERF_EXECUTABLE gperf)
+if(NOT GPERF_EXECUTABLE)
+    message(FATAL_ERROR "gperf not found. Install gperf to build FalkorDB.")
+endif()
+
+set(GPERF_INPUT
+    ${root}/src/arithmetic/builtin_funcs.gperf)
+set(GPERF_OUTPUT
+    ${root}/src/arithmetic/builtin_funcs_lookup.inc)
+
+# The generated file is checked into the source tree so that gperf is only
+# required when builtin_funcs.gperf changes, not on every clean build.
+add_custom_command(
+    OUTPUT  ${GPERF_OUTPUT}
+    COMMAND ${GPERF_EXECUTABLE}
+            --output-file=${GPERF_OUTPUT}
+            ${GPERF_INPUT}
+    DEPENDS ${GPERF_INPUT}
+    COMMENT "Regenerating perfect hash for built-in arithmetic functions"
+    VERBATIM)
+
+add_custom_target(builtin_funcs_lookup DEPENDS ${GPERF_OUTPUT})
+
+#-----------------------------------------------------------------------------
 # Source files and library
 #-----------------------------------------------------------------------------
 
 file(GLOB_RECURSE SOURCES "src/*.c")
 
 add_library(falkordb SHARED ${SOURCES})
+add_dependencies(falkordb builtin_funcs_lookup)
 
 include_directories(
     ${root}

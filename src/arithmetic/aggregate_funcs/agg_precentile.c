@@ -148,7 +148,6 @@ void Register_PRECENTILE(void) {
 	ret_type = T_NULL | T_DOUBLE ;
 	func_desc = AR_AggFuncDescNew ("percentileDisc", AGG_PERC, 2, 2, types,
 			ret_type, Percentile_Free, PercDiscFinalize, Precentile_PrivateData) ;
-	AR_FuncRegister (func_desc) ;
 
 	types = arr_new (SIType, 3) ;
 	arr_append (types, T_NULL | T_INT64 | T_DOUBLE) ;
@@ -156,6 +155,5 @@ void Register_PRECENTILE(void) {
 	ret_type = T_NULL | T_DOUBLE ;
 	func_desc = AR_AggFuncDescNew ("percentileCont", AGG_PERC, 2, 2, types, ret_type,
 			Percentile_Free, PercContFinalize, Precentile_PrivateData) ;
-	AR_FuncRegister (func_desc) ;
 }
 

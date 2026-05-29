@@ -52,6 +52,5 @@ void Register_MAX(void) {
 	func_desc = AR_AggFuncDescNew ("max", AGG_MAX, 1, 1, types, ret_type, NULL,
 			NULL, Max_PrivateData) ;
 
-	AR_FuncRegister (func_desc) ;
 }
 

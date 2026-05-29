@@ -141,7 +141,7 @@ void setup() {
 	GxB_Global_Option_set(GxB_FORMAT, GxB_BY_ROW); // all matrices in CSR format
 
 	Proc_Register();     // register procedures
-	AR_RegisterFuncs();  // register arithmetic functions
+	AR_InitFuncsRepo () ;  // register arithmetic functions
 
 	// create a graphcontext
 	_fake_graph_context();

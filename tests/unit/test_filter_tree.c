@@ -38,7 +38,7 @@ void setup() {
 	Alloc_Reset();
 	QueryCtx_Init();
 	ErrorCtx_Init();
-	AR_RegisterFuncs();
+	AR_InitFuncsRepo () ;
 	_fake_graph_context();
 }
 

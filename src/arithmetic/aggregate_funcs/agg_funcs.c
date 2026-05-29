@@ -7,6 +7,7 @@
 #include "RG.h"
 #include "agg_funcs.h"
 #include "../../value.h"
+#include "../../util/arr.h"
 #include "../../util/rmalloc.h"
 
 // global AGGREGATE_OK result value
@@ -17,8 +18,8 @@ AR_FuncDesc *AR_AggFuncDescNew
 (
 	char *name,                       // function name
 	AR_Func func,                     // pointer to function
-	uint min_argc,                    // minimum number of arguments
-	uint max_argc,                    // maximum number of arguments
+	uint8_t min_argc,                 // minimum number of arguments
+	uint8_t max_argc,                 // maximum number of arguments
 	SIType *types,                    // acceptable types
 	SIType ret_type,                  // return type
 	AR_Func_Free free,                // free aggregation callback
@@ -30,6 +31,7 @@ AR_FuncDesc *AR_AggFuncDescNew
 	desc->name                   = name ;
 	desc->func                   = func ;
 	desc->types                  = types ;
+	desc->types_len              = (uint8_t)arr_len(types) ;
 	desc->ret_type               = ret_type ;
 	desc->min_argc               = min_argc ;
 	desc->max_argc               = max_argc ;

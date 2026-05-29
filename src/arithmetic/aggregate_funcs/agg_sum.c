@@ -45,6 +45,5 @@ void Register_SUM(void) {
 	ret_type = T_NULL | T_DOUBLE ;
 	func_desc = AR_AggFuncDescNew ("sum", AGG_SUM, 1, 1, types, ret_type, NULL,
 			NULL, SUM_PrivateData) ;
-	AR_FuncRegister (func_desc) ;
 }
 

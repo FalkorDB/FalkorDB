@@ -49,6 +49,5 @@ void Register_MIN(void) {
 	ret_type = SI_ALL ;
 	func_desc = AR_AggFuncDescNew ("min", AGG_MIN, 1, 1, types, ret_type, NULL,
 			NULL, Min_PrivateData) ;
-	AR_FuncRegister (func_desc) ;
 }
 

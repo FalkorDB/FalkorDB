@@ -71,6 +71,5 @@ void Register_COLLECT(void) {
 	ret_type = T_NULL | T_ARRAY ;
 	func_desc = AR_AggFuncDescNew ("collect", AGG_COLLECT, 1, 1, types, ret_type,
 			NULL, NULL, Collect_PrivateData) ;
-	AR_FuncRegister (func_desc) ;
 }
 

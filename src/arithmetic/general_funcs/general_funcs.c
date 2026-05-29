@@ -73,6 +73,5 @@ void Register_GeneralFuncs(void) {
 			false, true) ;
 	AR_SetPrivateDataRoutines (func_desc, AR_PrevPrivateData_Free,
 			AR_PrevPrivateData_Clone, NULL) ;
-	AR_FuncRegister (func_desc) ;
 }
 

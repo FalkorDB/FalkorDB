@@ -20,7 +20,7 @@ void setup() {
 	// use the malloc family for allocations
 	Alloc_Reset () ;
 
-	AR_RegisterFuncs();  // register arithmetic functions
+	AR_InitFuncsRepo () ;  // register arithmetic functions
 }
 
 void test_ArithmeticExp_Eq() {

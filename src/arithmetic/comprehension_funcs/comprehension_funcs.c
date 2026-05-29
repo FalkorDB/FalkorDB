@@ -352,7 +352,6 @@ void Register_ComprehensionFuncs (void) {
 			true, true) ;
 	AR_SetPrivateDataRoutines (func_desc, ListComprehension_Free,
 			ListComprehension_Clone, ListComprehension_CollectAliases) ;
-	AR_FuncRegister (func_desc) ;
 
 	//--------------------------------------------------------------------------
 	// ALL
@@ -365,7 +364,6 @@ void Register_ComprehensionFuncs (void) {
 			true, true) ;
 	AR_SetPrivateDataRoutines (func_desc, ListComprehension_Free,
 			ListComprehension_Clone, ListComprehension_CollectAliases) ;
-	AR_FuncRegister (func_desc) ;
 
 	//--------------------------------------------------------------------------
 	// SINGLE
@@ -378,7 +376,6 @@ void Register_ComprehensionFuncs (void) {
 			true, true, true) ;
 	AR_SetPrivateDataRoutines (func_desc, ListComprehension_Free,
 			ListComprehension_Clone, ListComprehension_CollectAliases) ;
-	AR_FuncRegister (func_desc) ;
 
 	//--------------------------------------------------------------------------
 	// NONE
@@ -391,7 +388,6 @@ void Register_ComprehensionFuncs (void) {
 			true, true) ;
 	AR_SetPrivateDataRoutines (func_desc, ListComprehension_Free,
 			ListComprehension_Clone, ListComprehension_CollectAliases) ;
-	AR_FuncRegister (func_desc) ;
 
 	//--------------------------------------------------------------------------
 	// list_comprehension
@@ -405,6 +401,5 @@ void Register_ComprehensionFuncs (void) {
 			2, types, ret_type, true, true, true) ;
 	AR_SetPrivateDataRoutines (func_desc, ListComprehension_Free,
 			ListComprehension_Clone, ListComprehension_CollectAliases) ;
-	AR_FuncRegister (func_desc) ;
 }
 

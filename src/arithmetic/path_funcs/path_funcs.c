@@ -319,7 +319,6 @@ void Register_PathFuncs() {
 	ret_type = T_PATH | T_NULL;
 	func_desc = AR_FuncDescNew("topath", AR_TOPATH, 1, VAR_ARG_LEN, types,
 			ret_type, true, false, true);
-	AR_FuncRegister(func_desc);
 
 	types = arr_new (SIType, 3) ;
 	arr_append (types, T_NULL | T_NODE) ;
@@ -329,27 +328,23 @@ void Register_PathFuncs() {
 			ret_type, true, false, true) ;
 	AR_SetPrivateDataRoutines (func_desc, ShortestPath_Free, ShortestPath_Clone,
 			NULL) ;
-	AR_FuncRegister (func_desc) ;
 
 	types = arr_new(SIType, 1);
 	arr_append(types, T_NULL | T_PATH);
 	ret_type = T_ARRAY | T_NULL;
 	func_desc = AR_FuncDescNew("nodes", AR_PATH_NODES, 1, 1, types, ret_type,
 			false, false, true);
-	AR_FuncRegister(func_desc);
 
 	types = arr_new(SIType, 1);
 	arr_append(types, T_NULL | T_PATH);
 	ret_type = T_ARRAY | T_NULL;
 	func_desc = AR_FuncDescNew("relationships", AR_PATH_RELATIONSHIPS, 1, 1,
 			types, ret_type, false, false, true);
-	AR_FuncRegister(func_desc);
 
 	types = arr_new(SIType, 1);
 	arr_append(types, T_NULL | T_PATH);
 	ret_type = T_INT64 | T_NULL;
 	func_desc = AR_FuncDescNew("length", AR_PATH_LENGTH, 1, 1, types, ret_type,
 			false, false, true);
-	AR_FuncRegister(func_desc);
 }
 
