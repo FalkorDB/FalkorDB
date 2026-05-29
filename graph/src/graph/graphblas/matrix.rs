@@ -130,29 +130,40 @@ pub fn init(
             return Err(format!("GraphBLAS GxB_init failed: {info:?}"));
         }
 
-        // Restrict GraphBLAS JIT to baked-in PreJIT kernels only — engages
-        // the 188 PreJIT kernels we statically link into libgraphblas.a
-        // (via graphblas.sh) without ever calling dlopen.
+        // Pick GraphBLAS JIT control level:
         //
-        // We deliberately diverge from FalkorDB C here. C uses GxB_JIT_RUN
-        // (src/module.c GraphBLAS_Init); at RUN, GraphBLAS additionally
-        // attempts to load JIT-cache .so kernels for ops not covered by
-        // PreJIT and returns GxB_JIT_ERROR if the cache lookup fails (no
-        // cache populated + no compiler available in the runtime image).
-        // The rust port exercises some GraphBLAS ops the C 188-kernel
-        // PreJIT set doesn't fully cover (e.g. GrB_transpose with
-        // GrB_DESC_RCT0 from Matrix::remove_all, hit by `MATCH (a:A:B)`
-        // fuzz inputs), triggering JIT_ERROR panics under RUN. PAUSE is
-        // strictly "PreJIT or generic fallback" — no cache lookup, no
-        // dlopen — so it both prevents the fork-deadlock PR #483 guarded
-        // against and avoids the JIT_ERROR class of failures.
+        //   * Normal mode (default) — GxB_JIT_PAUSE: engages the PreJIT
+        //     kernels statically linked into libgraphblas.a (vendored from
+        //     build/graphblas/PreJIT/ by graphblas.sh) and falls back to
+        //     generic kernels for everything else. No cache lookup, no
+        //     dlopen, so it stays fork-safe (cf. PR #483) and can't
+        //     return GxB_JIT_ERROR.
+        //
+        //   * Harvest mode (FALKORDB_PREJIT_HARVEST=1) — GxB_JIT_ON: full
+        //     JIT including compile-on-demand. Used exclusively by
+        //     gen_prejit.sh to populate ~/.SuiteSparse/GrBx.y.z/c/ with
+        //     the .c kernel sources we then check in as the next
+        //     generation of vendored PreJIT.
+        //
+        // We diverge from FalkorDB C (src/module.c uses GxB_JIT_RUN). At
+        // RUN, GraphBLAS attempts cache loads for ops not covered by
+        // PreJIT and panics with GxB_JIT_ERROR if the cache is empty / no
+        // compiler is available — which is exactly the runtime image
+        // shape we ship.
+        let harvest = std::env::var_os("FALKORDB_PREJIT_HARVEST")
+            .is_some_and(|v| v != "0" && !v.is_empty());
+        let (jit_level, jit_name) = if harvest {
+            (GxB_JIT_Control::GxB_JIT_ON, "JIT_ON (harvest)")
+        } else {
+            (GxB_JIT_Control::GxB_JIT_PAUSE, "JIT_PAUSE")
+        };
         let info = GrB_Global_set_INT32(
             GrB_GLOBAL,
-            GxB_JIT_Control::GxB_JIT_PAUSE as i32,
+            jit_level as i32,
             GxB_Option_Field::GxB_JIT_C_CONTROL as _,
         );
         if info != GrB_Info::GrB_SUCCESS {
-            return Err(format!("GraphBLAS JIT_PAUSE failed: {info:?}"));
+            return Err(format!("GraphBLAS {jit_name} failed: {info:?}"));
         }
 
         // Initialize LAGraph after GraphBLAS

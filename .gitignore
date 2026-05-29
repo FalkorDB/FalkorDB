@@ -32,6 +32,7 @@ redisearch
 lagraph_lib
 /GraphBLAS/
 /LAGraph/
+/.graphblas-harvest/
 .venv/
 .zed/
 .github/copilot-instructions.md

@@ -29,13 +29,20 @@
 #      FactoryKernel families that FalkorDB query plans never hit. Matches the
 #      tweak in FalkorDB C's vendored copy of GraphBLAS.
 #
-#   2. Sparse-checkout 188 vendored PreJIT/*.c kernels from the FalkorDB C
-#      repo at a pinned SHA. Upstream's PreJIT directory contains only a
-#      README; these kernels are a workload-specific cache captured by
-#      running the C engine's test suite with JIT on and committing the
-#      resulting .c files. GraphBLAS's CMake globs PreJIT/*.c and bakes
-#      them into libgraphblas.a, so we get factory-comparable speed for the
-#      operations FalkorDB actually executes without runtime JIT.
+#   2. Vendored PreJIT/*.c kernels checked into build/graphblas/PreJIT/ —
+#      these are harvested from running the rust port's full test suite
+#      with the JIT engine on (see gen_prejit.sh). GraphBLAS's CMake globs
+#      PreJIT/*.c and bakes them into libgraphblas.a so we get factory-
+#      comparable speed for the operations our port actually executes
+#      without runtime JIT compilation. Re-generate with gen_prejit.sh
+#      when introducing new GraphBLAS op shapes or bumping GRAPHBLAS_VERSION.
+#
+# Harvest mode (FALKORDB_PREJIT_HARVEST=1, set by gen_prejit.sh):
+#
+#   * Skips copying the vendored PreJIT kernels into the GraphBLAS source
+#     tree so the resulting libgraphblas.a has zero PreJIT — every op falls
+#     through to the JIT engine, which compiles a fresh .c kernel into
+#     ~/.SuiteSparse/GrBx.y.z/c/ for gen_prejit.sh to harvest.
 #
 # Platform handling (so a Mac dev `./graphblas.sh` just works):
 #
@@ -64,10 +71,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GRAPHBLAS_VERSION="${GRAPHBLAS_VERSION:-v10.3.1}"
 LAGRAPH_VERSION="${LAGRAPH_VERSION:-v1.2.1}"
 
-# Pinned FalkorDB C SHA whose deps/GraphBLAS/PreJIT/ kernel set we vendor.
-# Bump in lock-step with PreJIT regenerations on the C side. Capturing the
-# current main HEAD as of 2026-05-27.
+# Pinned FalkorDB C SHA — no longer used; kept here to mark the source of
+# the original vendored PreJIT seed (commit captured 2026-05-27). We now
+# vendor our own harvested kernels in build/graphblas/PreJIT/ via
+# gen_prejit.sh, so changing this constant has no effect on the build.
 FALKORDB_C_SHA="${FALKORDB_C_SHA:-7568688f358ef8227753dcdc37b30e7761ff07a6}"
+
+# Harvest mode: when set, skip vendoring PreJIT kernels so libgraphblas.a
+# falls through to the runtime JIT for every op. Used by gen_prejit.sh.
+FALKORDB_PREJIT_HARVEST="${FALKORDB_PREJIT_HARVEST:-0}"
 
 JOBS="${JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)}"
 
@@ -121,8 +133,18 @@ if [ -n "${INCLUDE_FLAG}" ]; then
     COMMON_C_FLAGS="${COMMON_C_FLAGS} ${INCLUDE_FLAG}"
 fi
 
+# Install prefix for libgraphblas.a + headers. Defaults to /usr/local
+# (needs sudo on non-root hosts; install_cmd handles that). Set to a
+# user-writable path (e.g. ~/.local) to skip sudo entirely — gen_prejit.sh
+# uses this for its intermediate harvest build, paired with cargo
+# build.rs's GRAPHBLAS_LIB_DIR env var.
+GRAPHBLAS_INSTALL_PREFIX="${GRAPHBLAS_INSTALL_PREFIX:-/usr/local}"
+
 install_cmd() {
-    if [ "$(id -u)" -eq 0 ]; then
+    # Pre-create the install prefix so the -w check works correctly even
+    # when the prefix doesn't exist yet (e.g. fresh harvest run).
+    mkdir -p "${GRAPHBLAS_INSTALL_PREFIX}" 2>/dev/null || true
+    if [ -w "${GRAPHBLAS_INSTALL_PREFIX}" ] || [ "$(id -u)" -eq 0 ]; then
         cmake --install .
     else
         sudo cmake --install .
@@ -138,25 +160,33 @@ if [ "${SKIP_GRAPHBLAS}" -eq 0 ]; then
     # --- apply GB_control.h customization -------------------------------------
     git -C GraphBLAS apply "${SCRIPT_DIR}/build/graphblas/GB_control.patch"
 
-    # --- pull vendored PreJIT kernels from FalkorDB C -------------------------
-    rm -rf FalkorDB-prejit
-    git clone --depth 1 --filter=blob:none --sparse \
-        https://github.com/FalkorDB/FalkorDB.git FalkorDB-prejit
-    (
-        cd FalkorDB-prejit
-        git sparse-checkout set --no-cone deps/GraphBLAS/PreJIT
-        git fetch --depth 1 origin "${FALKORDB_C_SHA}"
-        git checkout --detach "${FALKORDB_C_SHA}"
-    )
-    cp FalkorDB-prejit/deps/GraphBLAS/PreJIT/GB_jit_*.c GraphBLAS/PreJIT/
-    rm -rf FalkorDB-prejit
-    echo "vendored $(ls GraphBLAS/PreJIT/GB_jit_*.c | wc -l) PreJIT kernels from FalkorDB@${FALKORDB_C_SHA}"
+    # --- vendor PreJIT kernels from build/graphblas/PreJIT/ -------------------
+    # In normal mode, copy our harvested .c kernels into the GraphBLAS
+    # source tree so CMake bakes them statically into libgraphblas.a.
+    # In harvest mode (FALKORDB_PREJIT_HARVEST=1), skip this so the JIT
+    # engine has to compile every kernel into ~/.SuiteSparse/.../c/ where
+    # gen_prejit.sh can collect them.
+    if [ "${FALKORDB_PREJIT_HARVEST}" -eq 1 ]; then
+        echo "FALKORDB_PREJIT_HARVEST=1: skipping PreJIT vendoring (harvest mode)"
+    else
+        PREJIT_VENDOR_DIR="${SCRIPT_DIR}/build/graphblas/PreJIT"
+        shopt -s nullglob
+        prejit_files=( "${PREJIT_VENDOR_DIR}"/GB_jit_*.c )
+        shopt -u nullglob
+        if [ "${#prejit_files[@]}" -gt 0 ]; then
+            cp "${prejit_files[@]}" GraphBLAS/PreJIT/
+            echo "vendored ${#prejit_files[@]} PreJIT kernels from ${PREJIT_VENDOR_DIR}"
+        else
+            echo "no PreJIT kernels in ${PREJIT_VENDOR_DIR} – run gen_prejit.sh to populate"
+        fi
+    fi
 
     # --- build GraphBLAS ------------------------------------------------------
     mkdir -p GraphBLAS/build
     (
         cd GraphBLAS/build
         cmake \
+            -DCMAKE_INSTALL_PREFIX="${GRAPHBLAS_INSTALL_PREFIX}" \
             -DSUITESPARSE_USE_FORTRAN=OFF \
             -DBUILD_STATIC_LIBS=ON \
             -DBUILD_SHARED_LIBS=OFF \
@@ -175,9 +205,9 @@ if [ "${SKIP_GRAPHBLAS}" -eq 0 ]; then
     )
     rm -rf GraphBLAS
 else
-    echo "--skip-graphblas: reusing /usr/local/lib/libgraphblas.a"
-    test -f /usr/local/lib/libgraphblas.a || {
-        echo "ERROR: /usr/local/lib/libgraphblas.a not found; run without --skip-graphblas first" >&2
+    echo "--skip-graphblas: reusing ${GRAPHBLAS_INSTALL_PREFIX}/lib/libgraphblas.a"
+    test -f "${GRAPHBLAS_INSTALL_PREFIX}/lib/libgraphblas.a" || {
+        echo "ERROR: ${GRAPHBLAS_INSTALL_PREFIX}/lib/libgraphblas.a not found; run without --skip-graphblas first" >&2
         exit 1
     }
 fi
@@ -200,8 +230,10 @@ mkdir -p LAGraph/build
         -DLIBRARY_ONLY=ON \
         -DBUILD_TESTING=OFF \
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-        -DGRAPHBLAS_INCLUDE_DIR=/usr/local/include/suitesparse \
-        -DGRAPHBLAS_LIBRARY=/usr/local/lib/libgraphblas.a \
+        -DGRAPHBLAS_INCLUDE_DIR="${GRAPHBLAS_INSTALL_PREFIX}/include/suitesparse" \
+        -DGRAPHBLAS_LIBRARY="${GRAPHBLAS_INSTALL_PREFIX}/lib/libgraphblas.a" \
+        -DGraphBLAS_DIR="${GRAPHBLAS_INSTALL_PREFIX}/lib/cmake/GraphBLAS" \
+        -DCMAKE_PREFIX_PATH="${GRAPHBLAS_INSTALL_PREFIX}" \
         -DSUITESPARSE_USE_FORTRAN=OFF \
         -DCMAKE_C_FLAGS="${COMMON_C_FLAGS}" \
         -DCMAKE_CXX_FLAGS="${COMMON_C_FLAGS}" \

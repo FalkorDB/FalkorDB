@@ -39,7 +39,14 @@ fn main() {
         println!("cargo:rustc-link-lib=omp");
     }
 
-    println!("cargo:rustc-link-search=/usr/local/lib");
+    // libgraphblas.a search path. Defaults to /usr/local/lib (what
+    // graphblas.sh installs to). Set GRAPHBLAS_LIB_DIR to point at a
+    // local out-of-tree build directory — used by gen_prejit.sh to
+    // avoid needing sudo for the harvest's intermediate GraphBLAS build.
+    let graphblas_lib_dir =
+        std::env::var("GRAPHBLAS_LIB_DIR").unwrap_or_else(|_| "/usr/local/lib".to_string());
+    println!("cargo:rerun-if-env-changed=GRAPHBLAS_LIB_DIR");
+    println!("cargo:rustc-link-search={graphblas_lib_dir}");
     println!("cargo:rustc-link-lib=static=graphblas");
 
     // LAGraph static libraries
