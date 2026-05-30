@@ -120,11 +120,23 @@ bool UDF_RepoInit(void) {
 // size limit the configuration handler would bump the UDFs repo version
 // without changing its internal content, this will force each query execution
 // thread to reload a new quickjs runtime picking up on the new limits
-void UDF_RepoBumpVersion(void) {
+static inline void UDF_RepoBumpVersionLocked(void) {
 	ASSERT (udf_repo != NULL) ;
-
-	// bump version
 	udf_repo->v++ ;
+}
+
+void UDF_RepoBumpVersion(void) {
+	// During module startup configuration callbacks may fire before the repo is
+	// initialized, in which case there's nothing to bump yet.
+	if (udf_repo == NULL) return ;
+
+	// lock under WRITE
+	pthread_rwlock_wrlock (&udf_repo->rwlock) ;
+
+	UDF_RepoBumpVersionLocked () ;
+
+	// unlock
+	pthread_rwlock_unlock (&udf_repo->rwlock) ;
 }
 
 // return repo's version
@@ -381,13 +393,17 @@ bool UDF_RepoRemoveLib
 ) {
 	ASSERT (lib      != NULL) ;
 	ASSERT (udf_repo != NULL) ;
-	
+
+	// lock under WRITE
+	pthread_rwlock_wrlock (&udf_repo->rwlock) ;
+
 	// locate library
 	unsigned int idx ;
 	UDF_Lib *_lib = _UDF_RepoGetLib (lib, &idx) ;
 
 	// return if library doesn't exists
 	if (_lib == NULL) {
+		pthread_rwlock_unlock (&udf_repo->rwlock) ;
 		return false ;
 	}
 
@@ -397,9 +413,6 @@ bool UDF_RepoRemoveLib
 		udf_repo->libs[idx].script = NULL ;
 	}
 
-	// lock under WRITE
-	pthread_rwlock_wrlock (&udf_repo->rwlock) ;
-
 	// free library
 	UDF_Lib_Free (_lib) ;
 
@@ -407,7 +420,7 @@ bool UDF_RepoRemoveLib
 	arr_del_fast (udf_repo->libs, idx);
 
 	// bump version
-	UDF_RepoBumpVersion ();
+	UDF_RepoBumpVersionLocked ();
 
 	// unlock
 	pthread_rwlock_unlock (&udf_repo->rwlock) ;
@@ -463,4 +476,3 @@ void UDF_RepoFree(void) {
 
 	rm_free (udf_repo) ;
 }
-

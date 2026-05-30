@@ -41,7 +41,7 @@ class testSlowLog():
             self.env.assertIn("Invalid graph operation on empty key", str(e))
 
         # issue the same query twice
-        q = "UNWIND range (0, 200000) AS x RETURN max(x)"
+        q = "UNWIND range(0, 450000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
         self.graph.query(q)
         self.graph.query(q)
 
@@ -122,7 +122,7 @@ class testSlowLog():
         #-----------------------------------------------------------------------
 
         long_string = 'a' * 4000
-        query = f"WITH '{long_string}' AS str UNWIND range(0, 200000) AS x RETURN count(x)"
+        query = f"WITH '{long_string}' AS str UNWIND range(0, 2000000) AS x RETURN count(x)"
         self.graph.query(query)
 
         slowlog = self.graph.slowlog()
@@ -146,7 +146,7 @@ class testSlowLog():
         # clear slowlog
         self.redis_con.execute_command("GRAPH.SLOWLOG", GRAPH_ID, "RESET")
 
-        query = "WITH $long_string AS str UNWIND range(0, 200000) AS x RETURN count(x)"
+        query = "WITH $long_string AS str UNWIND range(0, 2000000) AS x RETURN count(x)"
         self.graph.query(query, {'long_string': long_string})
 
         slowlog = self.graph.slowlog()
@@ -170,7 +170,7 @@ class testSlowLog():
         # clear slowlog
         self.redis_con.execute_command("GRAPH.SLOWLOG", GRAPH_ID, "RESET")
 
-        query = f"WITH $long_string as long_param, '{long_string}' AS long_string UNWIND range(0, 200000) AS x RETURN count(x)"
+        query = f"WITH $long_string as long_param, '{long_string}' AS long_string UNWIND range(0, 2000000) AS x RETURN count(x)"
         self.graph.query(query, {'long_string': long_string})
 
         slowlog = self.graph.slowlog()
@@ -198,7 +198,7 @@ class testSlowLog():
         self.redis_con.execute_command("GRAPH.SLOWLOG", GRAPH_ID, "RESET")
 
         query = f"UNWIND range(0, $i) AS x RETURN count(x)"
-        self.graph.query(query, {'i': 200000})
+        self.graph.query(query, {'i': 2000000})
 
         slowlog = self.graph.slowlog()
         self.env.assertEquals(len(slowlog), 1)
@@ -210,7 +210,7 @@ class testSlowLog():
 
         # re-issue the same query but with different params
         query = f"UNWIND range(0, $i) AS x RETURN count(x)"
-        self.graph.query(query, {'i': 400000})
+        self.graph.query(query, {'i': 4000000})
 
         slowlog = self.graph.slowlog()
         self.env.assertEquals(len(slowlog), 1)
@@ -225,7 +225,7 @@ class testSlowLog():
 
         # expecting params to update
         self.env.assertNotEqual(p0, p1)
-        self.env.assertIn('400000', p1)
+        self.env.assertIn('4000000', p1)
 
     def test05_fast_queries(self):
         # make sure fast queries do not enter the slowlog
@@ -256,10 +256,10 @@ class testSlowLog():
         # issue 2 slower queries
         # expecting to have them replace existing entries
 
-        q0 = "UNWIND range(0, 450000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
+        q0 = "UNWIND range(0, 2000000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
         self.graph.query(q0)
 
-        q1 = "UNWIND range(0, 500000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
+        q1 = "UNWIND range(0, 3000000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
         self.graph.query(q1)
 
         entries = self.graph.slowlog()

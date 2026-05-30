@@ -55,6 +55,7 @@ help() {
 		GDB=1                 Enable interactive gdb debugging (in single-test mode)
 
 		RLTEST=path|'view'    Take RLTest from repo path or from local view
+		PYTHON=path           Python interpreter for RLTest (default: .venv/bin/python3, then python3)
 		RLTEST_DEBUG=1        Show debugging printouts from tests
 		RLTEST_ARGS=args      Extra RLTest args
 
@@ -381,6 +382,31 @@ setup_coverage() {
 
 #----------------------------------------------------------------------------------------------
 
+setup_python() {
+	if [[ -n "$PYTHON" ]]; then
+		TEST_PYTHON="$PYTHON"
+	elif [[ -x "$ROOT/.venv/bin/python3" ]]; then
+		TEST_PYTHON="$ROOT/.venv/bin/python3"
+	elif [[ -x "$ROOT/.venv/bin/python" ]]; then
+		TEST_PYTHON="$ROOT/.venv/bin/python"
+	elif is_command python3; then
+		TEST_PYTHON="python3"
+	elif is_command python; then
+		TEST_PYTHON="python"
+	else
+		eprint "No Python interpreter found. Set PYTHON=/path/to/python."
+		exit 1
+	fi
+
+	if ! "$TEST_PYTHON" -c 'from RLTest import Env' &>/dev/null; then
+		eprint "RLTest is not available for '$TEST_PYTHON'."
+		eprint "Install test dependencies with: $TEST_PYTHON -m pip install -r $ROOT/tests/requirements.txt"
+		exit 1
+	fi
+}
+
+#----------------------------------------------------------------------------------------------
+
 run_env() {
 	rltest_config=$(mktemp "${TMPDIR:-/tmp}/rltest.XXXXXXX")
 	rm -f $rltest_config
@@ -411,9 +437,9 @@ run_env() {
 
 	local E=0
 	if [[ $NOP != 1 ]]; then
-		{ $OP python3 -m RLTest @$rltest_config; (( E |= $? )); } || true
+		{ $OP "$TEST_PYTHON" -m RLTest @$rltest_config; (( E |= $? )); } || true
 	else
-		$OP python3 -m RLTest @$rltest_config
+		$OP "$TEST_PYTHON" -m RLTest @$rltest_config
 	fi
 
 	[[ $KEEP != 1 ]] && rm -f $rltest_config
@@ -513,9 +539,9 @@ run_tests() {
 
 	local E=0
 	if [[ $NOP != 1 ]]; then
-		{ $OP python3 -m RLTest @$rltest_config; (( E |= $? )); } || true
+		{ $OP "$TEST_PYTHON" -m RLTest @$rltest_config; (( E |= $? )); } || true
 	else
-		$OP python3 -m RLTest @$rltest_config
+		$OP "$TEST_PYTHON" -m RLTest @$rltest_config
 	fi
 
 	[[ $KEEP != 1 ]] && rm -f $rltest_config
@@ -660,6 +686,7 @@ fi
 #----------------------------------------------------------------------------------------------
 
 setup_rltest
+setup_python
 
 if [[ -n $SAN ]]; then
 	setup_clang_sanitizer
