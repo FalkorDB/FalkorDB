@@ -27,7 +27,7 @@ typedef struct {
 	unsigned int minHops;                  /* Maximum number of hops to perform. */
 	unsigned int maxHops;                  /* Maximum number of hops to perform. */
 	int edgeRelationCount;                 /* Length of edgeRelationTypes. */
-	int *edgeRelationTypes;                /* Relation(s) we're traversing. */
+	RelationID *edgeRelationTypes;         /* Relation(s) we're traversing. */
 	AlgebraicExpression *ae;               /* ArithmeticExpression describing op's traversal pattern. */
 	union {
 		AllPathsCtx *allPathsCtx;          /* Context for collecting all paths. */

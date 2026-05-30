@@ -36,15 +36,15 @@ static void _setupTraversedRelations
 	uint reltype_count = QGEdge_RelationCount(e);
 	if(reltype_count == 0) {
 		op->edgeRelationCount = 1;
-		op->edgeRelationTypes = arr_new(int, 1);
+		op->edgeRelationTypes = arr_new(RelationID, 1);
 		arr_append(op->edgeRelationTypes, GRAPH_NO_RELATION);
 	} else {
 		GraphContext *gc = QueryCtx_GetGraphCtx();
 		op->edgeRelationCount = 0;
-		op->edgeRelationTypes = arr_new(int, reltype_count);
+		op->edgeRelationTypes = arr_new(RelationID, reltype_count);
 
 		for(int i = 0; i < reltype_count; i++) {
-			int rel_id = e->reltypeIDs[i];
+			RelationID rel_id = e->reltypeIDs[i];
 			if(rel_id != GRAPH_UNKNOWN_RELATION) {
 				arr_append(op->edgeRelationTypes, rel_id);
 			} else {
@@ -276,59 +276,73 @@ static Record CondVarLenTraverseConsume
 (
 	OpBase *opBase
 ) {
-	CondVarLenTraverse  *op     = (CondVarLenTraverse *)opBase;
-	Path                *p      =  NULL;
-	OpBase              *child  =  op->op.children[0];
+	CondVarLenTraverse *op    =(CondVarLenTraverse *)opBase ;
+	Path               *p     = NULL ;
+	OpBase             *child = op->op.children [0] ;
 
-	while(!(p = AllPathsCtx_NextPath(op->allPathsCtx))) {
-		Record childRecord = OpBase_Consume(child);
-		if(!childRecord) return NULL;
+	while (!(p = AllPathsCtx_NextPath (op->allPathsCtx))) {
+		Record childRecord = OpBase_Consume (child) ;
+		if (!childRecord) {
+			return NULL ;
+		}
 
-		OpBase_DeleteRecord(&op->r);
-		op->r = childRecord;
+		OpBase_DeleteRecord (&op->r) ;
+		op->r = childRecord ;
 
-		Node *srcNode = Record_GetNode(op->r, op->srcNodeIdx);
-		if(srcNode == NULL) {
+		Node *srcNode = Record_GetNode (op->r, op->srcNodeIdx) ;
+		if (srcNode == NULL) {
 			// the child Record may not contain the source node in scenarios like
 			// a failed OPTIONAL MATCH. In this case, delete the Record and try again
-			OpBase_DeleteRecord(&op->r);
-			continue;
+			OpBase_DeleteRecord (&op->r) ;
+			continue ;
 		}
 
 		// create edge relation type array on first call to consume
-		if(!op->edgeRelationTypes) {
-			_setupTraversedRelations(op);
+		if (!op->edgeRelationTypes) {
+			_setupTraversedRelations (op) ;
 			// incase we don't have any relations to traverse and
 			// minimal traversal is at least one hop, we can return quickly
 			// consider: MATCH (S)-[:L*]->(M) RETURN M
 			// where label L does not exists
-			if(op->edgeRelationCount == 0 && op->minHops > 0) return NULL;
+			if (op->edgeRelationCount == 0 && op->minHops > 0) {
+				return NULL ;
+			}
 		}
 
-		Node *destNode = NULL;
+		Node *destNode = NULL ;
 		// the destination node is known in advance if we're performing an ExpandInto
-		if(op->expandInto) destNode = Record_GetNode(op->r, op->destNodeIdx);
+		if (op->expandInto) {
+			destNode = Record_GetNode (op->r, op->destNodeIdx) ;
+		}
 
-		AllPathsCtx_Free(op->allPathsCtx);
-		op->allPathsCtx = AllPathsCtx_New(srcNode, destNode, op->g,
-				op->edgeRelationTypes, op->edgeRelationCount, op->traverseDir,
-				op->minHops, op->maxHops, op->r, op->ft, op->edgesIdx,
-				op->shortestPaths);
+		if (op->allPathsCtx != NULL && !op->shortestPaths) {
+			AllPathsCtx_Reset (op->allPathsCtx, srcNode, destNode, op->r) ;
+		} else {
+			AllPathsCtx_Free (op->allPathsCtx) ;
+			op->allPathsCtx = AllPathsCtx_New (srcNode, destNode, op->g,
+					op->edgeRelationTypes, op->edgeRelationCount,
+					op->traverseDir, op->minHops, op->maxHops, op->r, op->ft,
+					op->edgesIdx, op->shortestPaths) ;
+		}
 	}
 
 	//--------------------------------------------------------------------------
 	// populate output record
 	//--------------------------------------------------------------------------
 
-	Record r = OpBase_CloneRecord(op->r);
+	Record r = OpBase_CloneRecord (op->r) ;
 
 	// add destination node to record
-	if(!op->expandInto) Record_AddNode(r, op->destNodeIdx, Path_Head(p));
+	if (!op->expandInto) {
+		Record_AddNode (r, op->destNodeIdx, Path_Head (p)) ;
+	}
 
 	// add new path to record
-	if(op->edgesIdx >= 0) Record_AddScalar(r, op->edgesIdx, SI_Path(p));
+	if (op->edgesIdx >= 0) {
+		Record_AddScalar (r, op->edgesIdx, SI_Path (p)) ;
+	}
 
-	return r;
+	return r ;
 }
 
 static OpResult CondVarLenTraverseReset
