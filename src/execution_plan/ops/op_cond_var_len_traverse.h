@@ -35,9 +35,17 @@ typedef struct {
 	};
 	bool collect_paths;                    /* Whether we must populate the entire path. */
 	GRAPH_EDGE_DIR traverseDir;            /* Traverse direction. */
+	LabelID *dest_labels;                  /* Labels destination must carry, sorted asc by nvals; NULL if none. */
+	uint8_t dest_label_count;              /* Length of dest_labels. */
+	Delta_Matrix node_labels;              /* Cached node-label matrix, synced once and queried directly. */
 } CondVarLenTraverse;
 
-OpBase *NewCondVarLenTraverseOp(const ExecutionPlan *plan, Graph *g, AlgebraicExpression *ae);
+OpBase *NewCondVarLenTraverseOp
+(
+	const ExecutionPlan *plan,
+	Graph *g,
+	AlgebraicExpression *ae
+) ;
 
 /* Transform operation from Conditional Variable Length Traverse
  * to Expand Into Conditional Variable Length Traverse */
