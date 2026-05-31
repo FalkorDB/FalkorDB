@@ -12,6 +12,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use parking_lot::Mutex;
 use redis_module::raw;
 
+use crate::reply::format_g;
+
 /// Maximum number of slowlog entries.
 const MAX_ENTRIES: usize = 10;
 
@@ -145,7 +147,7 @@ impl SlowLog {
                 .entries
                 .iter()
                 .enumerate()
-                .min_by(|a, b| a.1.latency.partial_cmp(&b.1.latency).unwrap())
+                .min_by(|a, b| a.1.latency.total_cmp(&b.1.latency))
                 .map(|(i, _)| i)
                 .unwrap();
             inner.entries[idx] = SlowLogEntry {
@@ -212,54 +214,11 @@ impl SlowLog {
     }
 }
 
-/// Format a float with `precision` significant digits, matching C's `%.*g`.
-///
-/// Chooses fixed or exponential notation like `printf` does: exponential when
-/// the exponent is less than -4 or >= precision, fixed otherwise. Trailing
-/// zeros after the decimal point are stripped.
-fn format_g(
-    value: f64,
-    precision: usize,
-) -> String {
-    // Use Rust's `{:.prec$e}` (LowerExp) to get scientific notation with
-    // `precision - 1` digits after the decimal point (= precision sig figs).
-    if value == 0.0 {
-        return "0".to_owned();
-    }
-    let exp_str = format!("{:.prec$e}", value, prec = precision.saturating_sub(1));
-    // Parse the exponent from the string.
-    let exp: i32 = exp_str
-        .rsplit_once('e')
-        .and_then(|(_, e)| e.parse().ok())
-        .unwrap_or(0);
-
-    if exp < -4 || exp >= precision as i32 {
-        // Exponential notation — strip trailing zeros from mantissa.
-        let (mantissa, e_part) = exp_str.rsplit_once('e').unwrap();
-        let mantissa = mantissa.trim_end_matches('0').trim_end_matches('.');
-        format!("{mantissa}e{e_part}")
-    } else {
-        // Fixed notation with the right number of significant digits.
-        let decimal_places = if exp >= 0 {
-            precision.saturating_sub(exp as usize + 1)
-        } else {
-            precision + (-exp as usize) - 1
-        };
-        let fixed = format!("{value:.decimal_places$}");
-        // Strip trailing zeros (like %g does).
-        if fixed.contains('.') {
-            let trimmed = fixed.trim_end_matches('0').trim_end_matches('.');
-            trimmed.to_owned()
-        } else {
-            fixed
-        }
-    }
-}
-
 /// Current time as fractional UNIX seconds.
 fn unix_now() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs_f64()
+        .floor()
 }

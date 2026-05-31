@@ -8,11 +8,10 @@ use std::sync::Arc;
 /// Validate that a name is a valid identifier: starts with a letter or underscore,
 /// followed by letters, digits, or underscores.
 fn is_valid_identifier(name: &str) -> bool {
-    if name.is_empty() {
-        return false;
-    }
     let mut chars = name.chars();
-    let first = chars.next().unwrap();
+    let Some(first) = chars.next() else {
+        return false;
+    };
     if !first.is_ascii_alphabetic() && first != '_' {
         return false;
     }

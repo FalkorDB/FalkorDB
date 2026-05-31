@@ -383,11 +383,13 @@ impl<'a> AggregateOp<'a> {
                 // `unreachable!()` for unexpected types would panic on bad data
                 // (e.g., `sum(n.flag)` where `flag` holds a Bool).
                 let mut validation_err: Option<String> = None;
+                let mut single = ThinVec::with_capacity(1);
                 for val in inputs {
                     if matches!(val, Value::Null) {
                         continue;
                     }
-                    let single = thin_vec![val.clone()];
+                    single.clear();
+                    single.push(val.clone());
                     if let Err(e) = agg.func.validate_args_type(&single) {
                         validation_err = Some(e);
                         break;

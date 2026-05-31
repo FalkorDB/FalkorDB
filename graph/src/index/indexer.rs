@@ -80,12 +80,12 @@ pub struct PopulationSnapshot {
 
 impl PopulationTicket {
     #[must_use]
-    pub fn generation_id(&self) -> u64 {
+    pub const fn generation_id(&self) -> u64 {
         self.generation_id
     }
 
     #[must_use]
-    pub fn label(&self) -> &Arc<String> {
+    pub const fn label(&self) -> &Arc<String> {
         &self.label
     }
 }
@@ -521,6 +521,7 @@ impl Indexer {
     /// KNN results — RediSearch's iterator-level score is not the
     /// distance, so the caller must compute it manually using the
     /// query and entity vectors plus this metric.
+    #[must_use]
     pub fn get_vector_metric(
         &self,
         label: &Arc<String>,
@@ -543,6 +544,7 @@ impl Indexer {
     /// Look up the configured dimension for the vector field on the
     /// given label, if any. Returns `None` if no such vector field
     /// exists on the index.
+    #[must_use]
     pub fn get_vector_dimension(
         &self,
         label: &Arc<String>,
@@ -565,6 +567,7 @@ impl Indexer {
     ///
     /// The returned ticket is generation-scoped: releasing it later decrements
     /// only that generation's pending counter, even if the label was recreated.
+    #[must_use]
     pub fn acquire_population_ticket(
         &self,
         label: &Arc<String>,

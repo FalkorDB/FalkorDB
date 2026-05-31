@@ -260,9 +260,9 @@ impl Value {
     #[must_use]
     pub fn format_duration(duration_secs: i64) -> String {
         use crate::runtime::functions::temporal::decompose_duration;
-        let (years, months, mut remaining) = match decompose_duration(duration_secs) {
-            Ok(v) => v,
-            Err(_) => return format!("PT{duration_secs}S"),
+        use std::fmt::Write;
+        let Ok((years, months, mut remaining)) = decompose_duration(duration_secs) else {
+            return format!("PT{duration_secs}S");
         };
         let days = remaining / 86400;
         remaining %= 86400;
@@ -273,24 +273,24 @@ impl Value {
 
         let mut s = String::from("P");
         if years != 0 {
-            s.push_str(&format!("{years}Y"));
+            let _ = write!(s, "{years}Y");
         }
         if months != 0 {
-            s.push_str(&format!("{months}M"));
+            let _ = write!(s, "{months}M");
         }
         if days != 0 {
-            s.push_str(&format!("{days}D"));
+            let _ = write!(s, "{days}D");
         }
         if hours != 0 || minutes != 0 || seconds != 0 {
             s.push('T');
             if hours != 0 {
-                s.push_str(&format!("{hours}H"));
+                let _ = write!(s, "{hours}H");
             }
             if minutes != 0 {
-                s.push_str(&format!("{minutes}M"));
+                let _ = write!(s, "{minutes}M");
             }
             if seconds != 0 {
-                s.push_str(&format!("{seconds}S"));
+                let _ = write!(s, "{seconds}S");
             }
         }
         if s.len() == 1 {
@@ -654,7 +654,7 @@ fn sub_duration_from_timestamp(
     Ok(new_days * 86400 + time_of_day - remaining_secs)
 }
 
-fn days_in_month(
+const fn days_in_month(
     year: i32,
     month: u32,
 ) -> u32 {
@@ -685,16 +685,16 @@ pub const fn days_from_civil(
     let d = d as i64;
     let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1; // [0, 365]
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // [0, 146096]
-    era * 146097 + doe - 719468
+    era * 146_097 + doe - 719_468
 }
 
 /// Howard Hinnant's `civil_from_days`: days since 1970-01-01 -> (y, m, d).
 #[must_use]
 pub const fn civil_from_days(z: i64) -> (i32, u32, u32) {
-    let z = z + 719468;
-    let era = z.div_euclid(146097);
-    let doe = z.rem_euclid(146097); // [0, 146096]
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; // [0, 399]
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097); // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365; // [0, 399]
     let y = yoe + era * 400;
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
     let mp = (5 * doy + 2) / 153; // [0, 11]

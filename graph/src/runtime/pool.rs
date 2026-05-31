@@ -60,16 +60,16 @@ impl<T> Pool<T> {
     ) -> Vec<T> {
         // SAFETY: see struct-level invariant.
         let free = unsafe { &mut *self.free_vecs.get() };
-        match free.pop() {
-            Some(mut v) => {
+        free.pop().map_or_else(
+            || Vec::with_capacity(capacity),
+            |mut v| {
                 v.clear();
                 if v.capacity() < capacity {
                     v.reserve(capacity - v.capacity());
                 }
                 v
-            }
-            None => Vec::with_capacity(capacity),
-        }
+            },
+        )
     }
 
     /// Acquire a [`Pooled`] handle that automatically returns the buffer on drop.

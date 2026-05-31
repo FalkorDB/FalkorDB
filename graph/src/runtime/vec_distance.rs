@@ -36,6 +36,7 @@ pub fn euclidean(
 
 /// `1 - cosine_similarity`. Matches `RediSearch`'s `COSINE` metric.
 /// `simsimd` returns 1.0 when either operand is the zero vector.
+#[must_use]
 pub fn cosine(
     a: &[f32],
     b: &[f32],
@@ -44,6 +45,7 @@ pub fn cosine(
 }
 
 /// Negated inner product — smaller is closer.
+#[must_use]
 pub fn inner_product(
     a: &[f32],
     b: &[f32],
@@ -53,6 +55,7 @@ pub fn inner_product(
 
 /// Dispatch by metric name. `metric == None` defaults to `"euclidean"`
 /// to mirror `VectorIndexOptions::similarity_function`'s default.
+#[must_use]
 pub fn distance(
     metric: Option<&str>,
     a: &[f32],

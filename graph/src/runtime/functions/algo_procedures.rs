@@ -502,7 +502,7 @@ fn register_wcc(funcs: &mut Functions) {
         ret: Type::Any,
         procedure: ["node", "componentId"],
         fn algo_wcc(runtime, args) {
-            let config = parse_config(&args)?;
+            let config = parse_config(args)?;
             if !config.is_empty() {
                 validate_config_map(&config, &["nodeLabels", "relationshipTypes"])?;
             }
@@ -586,7 +586,7 @@ fn register_betweenness(funcs: &mut Functions) {
         ret: Type::Any,
         procedure: ["node", "score"],
         fn algo_betweenness(runtime, args) {
-            let config = parse_config(&args)?;
+            let config = parse_config(args)?;
             if !config.is_empty() {
                 validate_config_map(&config, &["nodeLabels", "relationshipTypes", "samplingSize", "samplingSeed"])?;
             }
@@ -827,7 +827,7 @@ fn register_cdlp(funcs: &mut Functions) {
         ret: Type::Any,
         procedure: ["node", "communityId"],
         fn algo_cdlp(runtime, args) {
-            let config = parse_config(&args)?;
+            let config = parse_config(args)?;
             if !config.is_empty() {
                 validate_config_map(&config, &["nodeLabels", "relationshipTypes", "maxIterations"])?;
             }
@@ -913,7 +913,7 @@ fn register_cdlp(funcs: &mut Functions) {
 // ── algo.MSF ────────────────────────────────────────────────────────────
 
 /// Find the best relationship from src to dst matching the given types and weight criteria.
-/// Returns (RelationshipId, src_node, dst_node) or None if no relationship exists.
+/// Returns (`RelationshipId`, `src_node`, `dst_node`) or None if no relationship exists.
 fn get_rel_weight(
     g: &Graph,
     rel_id: RelationshipId,
@@ -969,7 +969,7 @@ fn register_msf(funcs: &mut Functions) {
         ret: Type::Any,
         procedure: ["nodes", "edges"],
         fn algo_msf(runtime, args) {
-            let config = parse_config(&args)?;
+            let config = parse_config(args)?;
             if !config.is_empty() {
                 validate_config_map(&config, &["nodeLabels", "relationshipTypes", "weightAttribute", "objective"])?;
             }
@@ -1604,7 +1604,7 @@ fn register_sp_paths(funcs: &mut Functions) {
         ret: Type::Any,
         procedure: ["path", "pathWeight", "pathCost"],
         fn algo_sp_paths(runtime, args) {
-            let config = parse_sp_config(&args)?;
+            let config = parse_sp_config(args)?;
             run_path_algo(runtime, &config)
         }
     );
@@ -1616,7 +1616,7 @@ fn register_ss_paths(funcs: &mut Functions) {
         ret: Type::Any,
         procedure: ["path", "pathWeight", "pathCost"],
         fn algo_ss_paths(runtime, args) {
-            let config = parse_ss_config(&args)?;
+            let config = parse_ss_config(args)?;
             run_path_algo(runtime, &config)
         }
     );
@@ -1632,7 +1632,7 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
         fn algo_harmonic_centrality(runtime, args) {
             use crate::runtime::orderset::OrderSet;
 
-            let config = parse_config(&args)?;
+            let config = parse_config(args)?;
             if !config.is_empty() {
                 validate_config_map(&config, &["nodeLabels", "relationshipTypes"])?;
             }
@@ -1812,12 +1812,11 @@ fn register_maxflow(funcs: &mut Functions) {
 
             let g = runtime.g.borrow();
 
-            let type_id = match g.get_type_id(&rel_types[0]) {
-                Some(t) => t,
-                None => return Err(format!(
+            let Some(type_id) = g.get_type_id(&rel_types[0]) else {
+                return Err(format!(
                     "algo.maxFlow: relationship type '{}' does not exist",
                     rel_types[0],
-                )),
+                ));
             };
             if g.relationship_tensors()[type_id.0].has_multi_edge() {
                 return Err(format!(
@@ -1866,11 +1865,10 @@ fn register_maxflow(funcs: &mut Functions) {
                         break;
                     }
                 }
-                let cap_value = match cap.or(default_cap) {
-                    Some(c) => c,
-                    None => return Err(String::from(
+                let Some(cap_value) = cap.or(default_cap) else {
+                    return Err(String::from(
                         "algo.maxFlow: invalid or missing attribute and no default attribute specified",
-                    )),
+                    ));
                 };
                 edges_with_cap.push((s, d, cap_value));
             }

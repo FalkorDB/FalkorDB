@@ -48,6 +48,8 @@ fn main() {
                 -1,
                 false,
                 None,
+                0,
+                None,
             );
             let _ = runtime.query();
         }
