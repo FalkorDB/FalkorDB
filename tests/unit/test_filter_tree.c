@@ -8,7 +8,6 @@
 #include "src/util/arr.h"
 #include "src/util/rmalloc.h"
 #include "src/errors/errors.h"
-#include "src/arithmetic/funcs.h"
 #include "src/filter_tree/filter_tree.h"
 #include "src/ast/ast_build_filter_tree.h"
 #include "src/graph/graphcontext_struct.h"
@@ -38,7 +37,7 @@ void setup() {
 	Alloc_Reset();
 	QueryCtx_Init();
 	ErrorCtx_Init();
-	AR_RegisterFuncs();
+	AR_InitFuncsRepo () ;
 	_fake_graph_context();
 }
 

@@ -4,7 +4,6 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "src/arithmetic/funcs.h"
 #include "src/arithmetic/algebraic_expression.h"
 
 #include <assert.h>
@@ -20,7 +19,7 @@ void setup() {
 	// use the malloc family for allocations
 	Alloc_Reset () ;
 
-	AR_RegisterFuncs();  // register arithmetic functions
+	AR_InitFuncsRepo () ;  // register arithmetic functions
 }
 
 void test_ArithmeticExp_Eq() {

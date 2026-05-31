@@ -7,7 +7,6 @@
 #include "src/util/arr.h"
 #include "src/query_ctx.h"
 #include "src/util/rmalloc.h"
-#include "src/arithmetic/funcs.h"
 #include "src/util/thpool/pool.h"
 #include "src/procedures/procedure.h"
 #include "src/execution_plan/ops/ops.h"
@@ -141,7 +140,7 @@ void setup() {
 	GxB_Global_Option_set(GxB_FORMAT, GxB_BY_ROW); // all matrices in CSR format
 
 	Proc_Register();     // register procedures
-	AR_RegisterFuncs();  // register arithmetic functions
+	AR_InitFuncsRepo () ;  // register arithmetic functions
 
 	// create a graphcontext
 	_fake_graph_context();
