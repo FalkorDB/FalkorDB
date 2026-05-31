@@ -249,6 +249,19 @@ static Path *_AllPathsCtx_NextPath(AllPathsCtx *ctx) {
 			 * i.e. closing a cycle and continuing traversal. */
 			bool frontierAlreadyOnPath = Path_ContainsNode(ctx->path, &frontierNode);
 
+			/* Determine whether the cycle was closed by a self-loop edge
+			 * (an edge whose source and destination are the same node).
+			 * A self-loop consumes a single edge and does not actually
+			 * traverse to a different node, so further expansion from the
+			 * same node via other (unused) edges is still valid and
+			 * required by Cypher's relationship-uniqueness semantics. */
+			bool selfLoopClosure = false;
+			if(frontierAlreadyOnPath && depth > 0) {
+				NodeID src_id  = Edge_GetSrcNodeID(&frontierConnection.edge);
+				NodeID dest_id = Edge_GetDestNodeID(&frontierConnection.edge);
+				selfLoopClosure = (src_id == dest_id);
+			}
+
 			// Add frontier to path.
 			Path_AppendNode(ctx->path, frontierNode);
 
@@ -260,8 +273,12 @@ static Path *_AllPathsCtx_NextPath(AllPathsCtx *ctx) {
 			depth++;
 
 			/* Introduce neighbors only if path depth < maximum path length.
-			 * and frontier wasn't already expanded. */
-			if(depth < ctx->maxLen && !frontierAlreadyOnPath) {
+			 * and frontier wasn't already expanded.
+			 * Self-loop closures are an exception: the self-loop edge has
+			 * been consumed and other outgoing edges from the same node
+			 * may still produce valid paths. */
+			if(depth < ctx->maxLen &&
+			   (!frontierAlreadyOnPath || selfLoopClosure)) {
 				addNeighbors(ctx, &frontierConnection, depth, ctx->dir);
 			}
 

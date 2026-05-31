@@ -456,3 +456,33 @@ class testVariableLengthTraversals(FlowTestsBase):
                 Node(2, labels=["C"], properties={"v": 5})],
             [Edge(0, "R", 1, 0, properties={"v": 2}), Edge(1, "R", 2, 1, properties={"v": 4})]
         ))
+
+    def test16_self_loop_contributed_path(self):
+        # regression test for variable-length path matching when the source
+        # node has a self-loop; the self-loop-extended path must be counted
+        # in addition to the direct path.
+        # graph:
+        #   (Diana)-[:KNOWS]->(Bob)
+        #   (Diana)-[:KNOWS]->(Diana)   self-loop
+        # there should be two paths of length 1..2 from Diana to Bob:
+        #   Diana -> Bob               (direct)
+        #   Diana -> Diana -> Bob      (via self-loop)
+        self.graph.delete()
+
+        q = """CREATE (d:Person {name:'Diana'}),
+                      (b:Person {name:'Bob'}),
+                      (d)-[:KNOWS]->(b),
+                      (d)-[:KNOWS]->(d)"""
+        self.graph.query(q)
+
+        q = """MATCH path = (:Person {name:'Diana'})-[:KNOWS*1..2]->(:Person {name:'Bob'})
+               RETURN count(path) AS pathCount"""
+        res = self.graph.query(q)
+        self.env.assertEquals(res.result_set, [[2]])
+
+        # self-loop on the source matched against the same start node should
+        # still produce a single matching path: Diana -[self-loop]-> Diana
+        q = """MATCH path = (:Person {name:'Diana'})-[:KNOWS*1..2]->(:Person {name:'Diana'})
+               RETURN count(path) AS pathCount"""
+        res = self.graph.query(q)
+        self.env.assertEquals(res.result_set, [[1]])

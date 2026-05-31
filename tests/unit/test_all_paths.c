@@ -304,11 +304,90 @@ void test_destinationSpecificPaths() {
 	Graph_Free(g);
 }
 
+// Build a small graph that mirrors the bug reported when a self-loop on the
+// source node contributes to a variable-length path:
+//   0 -[r]-> 1
+//   0 -[r]-> 0   (self-loop)
+// Variable-length traversal `(0)-[r*1..2]->(1)` should yield two paths:
+//   0 -> 1            (direct edge)
+//   0 -> 0 -> 1       (self-loop then direct edge)
+static Graph *BuildSelfLoopGraph() {
+	Edge e;
+	Node n;
+	size_t nodeCount = 2;
+	size_t edgeCount = 2;
+	Graph *g = Graph_New(nodeCount, edgeCount);
+	int relation = Graph_AddRelationType(g);
+
+	for(int i = 0; i < 2; i++) {
+		n = GE_NEW_NODE();
+		Graph_CreateNode(g, &n, NULL, 0);
+	}
+
+	// 0 -> 1
+	Graph_CreateEdge(g, 0, 1, relation, &e);
+	// 0 -> 0 (self-loop)
+	Graph_CreateEdge(g, 0, 0, relation, &e);
+	return g;
+}
+
+// regression test for variable-length path matching when the source node has
+// a self-loop. without the fix only a single path is enumerated, with the
+// fix both the direct path and the self-loop-extended path are returned.
+void test_selfLoopContributedPath() {
+	Graph *g = BuildSelfLoopGraph();
+
+	NodeID src_id = 0;
+	NodeID dst_id = 1;
+	Node src;
+	Node dst;
+	Graph_GetNode(g, src_id, &src);
+	Graph_GetNode(g, dst_id, &dst);
+
+	unsigned int minLen = 1;
+	unsigned int maxLen = 2;
+	unsigned int pathsCount = 0;
+
+	int relationships[] = {GRAPH_NO_RELATION};
+	AllPathsCtx *ctx = AllPathsCtx_New(&src, &dst, g, relationships, 1,
+		GRAPH_EDGE_DIR_OUTGOING, minLen, maxLen, NULL, NULL, 0, false);
+
+	bool found_direct        = false; // 0 -> 1
+	bool found_via_self_loop = false; // 0 -> 0 -> 1
+
+	Path *path;
+	while((path = AllPathsCtx_NextPath(ctx))) {
+		size_t nodeCount = Path_NodeCount(path);
+		// every path should end at the destination node
+		TEST_ASSERT(ENTITY_GET_ID(&path->nodes[nodeCount - 1]) == dst_id);
+		// every path should start at the source node
+		TEST_ASSERT(ENTITY_GET_ID(&path->nodes[0]) == src_id);
+
+		if(nodeCount == 2) {
+			// 0 -> 1
+			found_direct = true;
+		} else if(nodeCount == 3) {
+			// 0 -> 0 -> 1
+			TEST_ASSERT(ENTITY_GET_ID(&path->nodes[1]) == src_id);
+			found_via_self_loop = true;
+		}
+		pathsCount++;
+	}
+
+	TEST_ASSERT(found_direct);
+	TEST_ASSERT(found_via_self_loop);
+	TEST_ASSERT(pathsCount == 2);
+
+	AllPathsCtx_Free(ctx);
+	Graph_Free(g);
+}
+
 TEST_LIST = {
 	{"noPaths", test_noPaths},
 	{"longest_Paths", test_longest_Paths},
 	{"upToThreeLegsPaths", test_upToThreeLegsPaths},
 	{"twoLegPaths", test_twoLegPaths},
 	{"destinationSpecificPaths", test_destinationSpecificPaths},
+	{"selfLoopContributedPath", test_selfLoopContributedPath},
 	{NULL, NULL}
 };
