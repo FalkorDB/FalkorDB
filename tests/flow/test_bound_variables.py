@@ -103,3 +103,42 @@ class testBoundVariables(FlowTestsBase):
 
         # make sure no nodes were returned
         self.env.assertEquals(len(res.result_set), 0)
+
+    def test07_rematch_multiple_bound_variables(self):
+        """Tests that re-matching multiple already-bound, label-less
+        variables in a later MATCH does not crash the server.
+        Regression test for a SIGSEGV caused by an empty Cartesian Product
+        op being created when every connected component is a single bound,
+        label-less node."""
+
+        # clear the db
+        self.graph.delete()
+
+        # minimal reproducer from the issue
+        res = self.graph.query(
+            "CREATE (a:Person {name:'Alice'}), (b:Person {name:'Bob'}) "
+            "WITH a, b "
+            "MATCH (a), (b) "
+            "RETURN a.name AS name, b.name AS name2")
+        self.env.assertEquals(res.result_set, [['Alice', 'Bob']])
+
+        # ensure no Cartesian Product is built when every component is
+        # already bound and label-less
+        plan = str(self.graph.explain(
+            "MATCH (a:Person {name:'Alice'}), (b:Person {name:'Bob'}) "
+            "WITH a, b "
+            "MATCH (a), (b) "
+            "RETURN a.name, b.name"))
+        # the only Cartesian Product should belong to the initial MATCH;
+        # the post-WITH MATCH must not introduce a new one
+        self.env.assertEquals(plan.count('Cartesian Product'), 1)
+
+        # rematching two bound variables across a write should also work
+        res = self.graph.query(
+            "MATCH (a:Person {name:'Alice'}), (b:Person {name:'Bob'}) "
+            "CREATE (a)-[:KNOWS]->(b) "
+            "WITH a, b "
+            "MATCH (a), (b) "
+            "RETURN a.name AS person1, b.name AS person2")
+        self.env.assertEquals(res.result_set, [['Alice', 'Bob']])
+        self.env.assertEquals(res.relationships_created, 1)

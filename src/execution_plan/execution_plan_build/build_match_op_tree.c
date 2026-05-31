@@ -34,12 +34,29 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 	uint connectedComponentsCount = arr_len(connectedComponents);
 	rax *bound_vars = plan->record_map;
 
+	// count the number of connected components that will actually contribute
+	// a traversal chain. components consisting of a single bound, label-less
+	// node are skipped (no traversal needed)
+	uint contributingComponentsCount = 0;
+	for(uint i = 0; i < connectedComponentsCount; i++) {
+		QueryGraph *cc = connectedComponents[i];
+		if(arr_len(cc->edges) == 0) {
+			QGNode *n = cc->nodes[0];
+			if(raxFind(bound_vars, (unsigned char *)n->alias,
+						strlen(n->alias)) != raxNotFound &&
+					QGNode_LabelCount(n) == 0) {
+				continue;
+			}
+		}
+		contributingComponentsCount++;
+	}
+
 	// if we have multiple graph components
 	// the root operation is a cartesian product
 	// each chain of traversals will be a child of this op
 	OpBase *apply            = NULL;
 	OpBase *cartesianProduct = NULL;
-	if(connectedComponentsCount > 1) {
+	if(contributingComponentsCount > 1) {
 		cartesianProduct = NewCartesianProductOp(plan);
 		if(plan->root != NULL) {
 			// connect existing operations via an apply operation
