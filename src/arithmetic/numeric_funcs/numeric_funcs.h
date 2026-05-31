@@ -8,8 +8,6 @@
 
 #include "../../value.h"
 
-void Register_NumericFuncs();
-
 // tries to convert input to float
 SIValue AR_TOFLOAT
 (
@@ -25,3 +23,4 @@ SIValue AR_TOINTEGER
     int argc,           // number of arguments
     void *private_data  // private context
 );
+

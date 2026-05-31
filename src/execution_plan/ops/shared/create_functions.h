@@ -44,6 +44,12 @@ void PendingCreations_Reset
 	PendingCreations *ctx
 );
 
+void PendingCreations_CreateMissingSchemas
+(
+	GraphContext *gc,
+	PendingCreations *pending
+) ;
+
 // lock the graph and commit all pending changes
 void CommitNewEntities
 (

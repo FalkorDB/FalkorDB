@@ -74,25 +74,32 @@ void ErrorCtx_SetError(const char *err_fmt, ...) {
 	va_end(valist);
 }
 
-/* An error was encountered during evaluation, and has already been set in the ErrorCtx.
- * If an exception handler has been set, exit this routine and return to
- * the point on the stack where the handler was instantiated. */
-void ErrorCtx_RaiseRuntimeException(const char *err_fmt, ...) {
-	ErrorCtx *ctx = ErrorCtx_Get();
-	ASSERT(ctx != NULL);
+// an error was encountered during evaluation
+// and has already been set in the ErrorCtx
+// if an exception handler has been set, exit this routine and return to
+// the point on the stack where the handler was instantiated
+void ErrorCtx_RaiseRuntimeException
+(
+	const char *err_fmt, ...
+) {
+	ErrorCtx *ctx = ErrorCtx_Get () ;
+	ASSERT (ctx != NULL);
 
 	// set error if specified
-	if(err_fmt != NULL) {
-		va_list valist;
-		va_start(valist, err_fmt);
-		_ErrorCtx_SetError(err_fmt, valist);
-		va_end(valist);
+	if (err_fmt != NULL) {
+		va_list valist ;
+		va_start (valist, err_fmt) ;
+		_ErrorCtx_SetError (err_fmt, valist) ;
+		va_end (valist) ;
 	}
 
-	jmp_buf *env = ctx->breakpoint;
-	// If the exception handler hasn't been set, this function returns to the caller,
-	// which will manage its own freeing and error reporting.
-	if(env != NULL) longjmp(*env, 1);
+	jmp_buf *env = ctx->breakpoint ;
+	// if the exception handler hasn't been set
+	// this function returns to the caller
+	// which will manage its own freeing and error reporting
+	if (env != NULL) {
+		longjmp (*env, 1) ;
+	}
 }
 
 // Reply to caller with error

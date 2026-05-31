@@ -24,12 +24,38 @@ void GraphStatistics_IntroduceRelationship
 	arr_append(stats->edge_count, 0);
 }
 
+// removes a relationship from graph's statistics
+void GraphStatistics_RemoveRelationship
+(
+	GraphStatistics *stats,  // graph statistics
+	RelationID rel_id        // relation id to remove
+) {
+	ASSERT (stats != NULL) ;
+	ASSERT (stats->edge_count != NULL) ;
+	ASSERT (rel_id == arr_len (stats->edge_count) - 1) ;
+
+	stats->edge_count = arr_del (stats->edge_count, rel_id) ;
+}
+
 void GraphStatistics_IntroduceLabel
 (
 	GraphStatistics *stats
 ) {
-	ASSERT(stats && stats->node_count);
-	arr_append(stats->node_count, 0);
+	ASSERT (stats && stats->node_count) ;
+	arr_append (stats->node_count, 0) ;
+}
+
+// removes a label from graph's statistics
+void GraphStatistics_RemoveLabel
+(
+	GraphStatistics *stats,  // graph statistics
+	LabelID lbl_id           // label id
+) {
+	ASSERT (stats != NULL) ;
+	ASSERT (stats->node_count != NULL) ;
+	ASSERT (lbl_id == arr_len (stats->node_count) - 1) ;
+
+	stats->node_count = arr_del (stats->node_count, lbl_id) ;
 }
 
 uint64_t GraphStatistics_EdgeCount

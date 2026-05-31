@@ -97,7 +97,7 @@ static size_t _SampleVector
 		GrB_Index i = GxB_Vector_Iterator_getIndex(it);
 
 		Node n;
-		bool node_found = Graph_GetNode(g, i, &n);
+		bool node_found = Graph_GetNode (g, i, &n) ;
 		ASSERT(node_found == true);
 
 		AttributeSet set = GraphEntity_GetAttributes((GraphEntity*)&n);
@@ -541,7 +541,6 @@ static void _Graph_Memory
 	GraphMemoryCtx *ctx = (GraphMemoryCtx*)_ctx;
 
 	GraphContext             *gc     = ctx->gc;
-	Graph                    *g      = GraphContext_GetGraph (gc) ;
 	int64_t                  samples = ctx->samples;
 	RedisModuleBlockedClient *bc     = ctx->bc;
 
@@ -554,15 +553,15 @@ static void _Graph_Memory
 	result.node_attr_by_label_sz = arr_new(size_t, 0);
 
 	// acquire read lock
-	Graph_AcquireReadLock(g);
+	GraphContext_AcquireReadLock (gc) ;
 
-	_estimate_memory_consumption(gc, samples, &result);
+	_estimate_memory_consumption (gc, samples, &result) ;
 
 	// release read lock
-	Graph_ReleaseLock(g);
+	GraphContext_ReleaseLock (gc) ;
 
 	// counter to GraphContext_Retrieve
-	GraphContext_Release(gc);
+	GraphContext_DecreaseRefCount (gc) ;
 
 	//--------------------------------------------------------------------------
 	// reply to caller
@@ -741,12 +740,12 @@ int Graph_Memory
 	GraphMemoryCtx *cmd_ctx = rm_calloc(1, sizeof(GraphMemoryCtx));
 	ASSERT(cmd_ctx != NULL);
 
-	cmd_ctx->gc      = gc;
-	cmd_ctx->bc      = bc;
-	cmd_ctx->samples = samples;
+	cmd_ctx->gc      = gc ;
+	cmd_ctx->bc      = bc ;
+	cmd_ctx->samples = samples ;
 
-	ThreadPool_AddWork(_Graph_Memory, cmd_ctx, true);
+	ThreadPool_AddWork (_Graph_Memory, cmd_ctx, true) ;
 
-	return REDISMODULE_OK;
+	return REDISMODULE_OK ;
 }
 

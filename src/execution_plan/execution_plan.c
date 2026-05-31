@@ -28,28 +28,28 @@ void ExecutionPlan_PopulateExecutionPlan
 (
 	ExecutionPlan *plan
 ) {
-	AST *ast = QueryCtx_GetAST();
-	GraphContext *gc = QueryCtx_GetGraphCtx();
+	AST *ast = QueryCtx_GetAST () ;
+	GraphContext *gc = QueryCtx_GetGraphCtx () ;
 
 	// initialize the plan's record mapping if necessary
 	// it will already be set if this ExecutionPlan has been created to populate
 	// a single stream
-	if(plan->record_map == NULL) {
-		plan->record_map = raxNew();
+	if (plan->record_map == NULL) {
+		plan->record_map = raxNew () ;
 	}
 
 	// build query graph
 	// query graph is set if this ExecutionPlan has been created to populate a single stream
-	if(plan->query_graph == NULL) {
-		plan->query_graph = BuildQueryGraph(ast);
+	if (plan->query_graph == NULL) {
+		plan->query_graph = BuildQueryGraph (ast) ;
 	}
 
-	uint clause_count = cypher_ast_query_nclauses(ast->root);
-	for(uint i = 0; i < clause_count; i ++) {
+	uint clause_count = cypher_ast_query_nclauses (ast->root) ;
+	for (uint i = 0; i < clause_count; i ++) {
 		// build the appropriate operation(s) for each clause in the query
 		const cypher_astnode_t *clause =
-			cypher_ast_query_get_clause(ast->root, i);
-		ExecutionPlanSegment_ConvertClause(gc, ast, plan, clause);
+			cypher_ast_query_get_clause (ast->root, i) ;
+		ExecutionPlanSegment_ConvertClause (gc, ast, plan, clause) ;
 	}
 }
 
@@ -146,33 +146,33 @@ static ExecutionPlan *_process_segment
 	uint segment_start_idx,
 	uint segment_end_idx
 ) {
-	ASSERT(ast != NULL);
-	ASSERT(segment_start_idx <= segment_end_idx);
+	ASSERT (ast != NULL) ;
+	ASSERT (segment_start_idx <= segment_end_idx) ;
 
-	ExecutionPlan *segment = NULL;
+	ExecutionPlan *segment = NULL ;
 
 	// construct a new ExecutionPlanSegment
-	segment = ExecutionPlan_NewEmptyExecutionPlan();
-	segment->ast_segment = ast;
-	ExecutionPlan_PopulateExecutionPlan(segment);
+	segment = ExecutionPlan_NewEmptyExecutionPlan () ;
+	segment->ast_segment = ast ;
+	ExecutionPlan_PopulateExecutionPlan (segment) ;
 
-	return segment;
+	return segment ;
 }
 
 static ExecutionPlan **_process_segments
 (
 	AST *ast
 ) {
-	uint          nsegments        = 0;     // number of segments
-	uint          seg_end_idx      = 0;     // segment clause end index
-	uint          clause_count     = 0;     // number of clauses
-	uint          seg_start_idx    = 0;     // segment clause start index
-	AST           *ast_segment     = NULL;  // segment AST
-	uint          *segment_indices = NULL;  // array segment bounds
-	ExecutionPlan *segment         = NULL;  // portion of the entire execution plan
-	ExecutionPlan **segments       = NULL;  // constructed segments
+	uint          nsegments        = 0 ;     // number of segments
+	uint          seg_end_idx      = 0 ;     // segment clause end index
+	uint          clause_count     = 0 ;     // number of clauses
+	uint          seg_start_idx    = 0 ;     // segment clause start index
+	AST           *ast_segment     = NULL ;  // segment AST
+	uint          *segment_indices = NULL ;  // array segment bounds
+	ExecutionPlan *segment         = NULL ;  // portion of the entire execution plan
+	ExecutionPlan **segments       = NULL ;  // constructed segments
 
-	clause_count = cypher_ast_query_nclauses(ast->root);
+	clause_count = cypher_ast_query_nclauses (ast->root) ;
 
 	//--------------------------------------------------------------------------
 	// bound segments
@@ -181,39 +181,41 @@ static ExecutionPlan **_process_segments
 	// retrieve the indices of each WITH clause to properly set
 	// the segment's bounds.
 	// Every WITH clause demarcates the beginning of a new segment
-	segment_indices = AST_GetClauseIndices(ast, CYPHER_AST_WITH);
+	segment_indices = AST_GetClauseIndices (ast, CYPHER_AST_WITH) ;
 
 	// last segment
-	arr_append(segment_indices, clause_count);
-	nsegments = arr_len(segment_indices);
-	segments = arr_new(ExecutionPlan *, nsegments);
+	arr_append (segment_indices, clause_count) ;
+	nsegments = arr_len (segment_indices) ;
+	segments = arr_new (ExecutionPlan *, nsegments) ;
 
 	//--------------------------------------------------------------------------
 	// process segments
 	//--------------------------------------------------------------------------
 
-	seg_start_idx = 0;
-	for(uint i = 0; i < nsegments; i++) {
-		seg_end_idx = segment_indices[i];
+	seg_start_idx = 0 ;
+	for (uint i = 0 ; i < nsegments ; i++) {
+		seg_end_idx = segment_indices [i] ;
 
-		if((seg_end_idx - seg_start_idx) == 0) continue; // skip empty segment
+		if ((seg_end_idx - seg_start_idx) == 0) {
+			continue ; // skip empty segment
+		}
 
 		// slice the AST to only include the clauses in the current segment
-		AST *ast_segment = AST_NewSegment(ast, seg_start_idx, seg_end_idx);
+		AST *ast_segment = AST_NewSegment (ast, seg_start_idx, seg_end_idx) ;
 
 		// create ExecutionPlan segment that represents this slice of the AST
-		segment = _process_segment(ast_segment, seg_start_idx, seg_end_idx);
-		arr_append(segments, segment);
+		segment = _process_segment (ast_segment, seg_start_idx, seg_end_idx) ;
+		arr_append (segments, segment) ;
 
 		// the next segment will start where the current one ended
-		seg_start_idx = seg_end_idx;
+		seg_start_idx = seg_end_idx ;
 	}
 
 	// restore the overall AST
-	QueryCtx_SetAST(ast);
-	arr_free(segment_indices);
+	QueryCtx_SetAST (ast) ;
+	arr_free (segment_indices) ;
 
-	return segments;
+	return segments ;
 }
 
 static bool _ExecutionPlan_HasLocateTaps
@@ -396,14 +398,17 @@ ExecutionPlan *ExecutionPlan_FromTLS_AST(void) {
 	AST *ast = QueryCtx_GetAST();
 
 	// handle UNION if there are any
-	bool union_query = AST_ContainsClause(ast, CYPHER_AST_UNION);
-	if(union_query) return _ExecutionPlan_UnionPlans(ast);
+	bool union_query = AST_ContainsClause (ast, CYPHER_AST_UNION) ;
+	if (union_query) {
+		return _ExecutionPlan_UnionPlans (ast) ;
+	}
 
 	// execution plans are created in 1 or more segments
-	ExecutionPlan **segments = _process_segments(ast);
-	ASSERT(segments != NULL);
-	uint segment_count = arr_len(segments);
-	ASSERT(segment_count > 0);
+	ExecutionPlan **segments = _process_segments (ast) ;
+	ASSERT (segments != NULL) ;
+
+	uint segment_count = arr_len (segments) ;
+	ASSERT (segment_count > 0) ;
 
 	// connect all segments into a single ExecutionPlan
 	ExecutionPlan *plan = _tie_segments(segments, segment_count);

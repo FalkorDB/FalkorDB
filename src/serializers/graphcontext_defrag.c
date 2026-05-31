@@ -139,7 +139,7 @@ static int defrag_edges
 
 	// try to obtain exclusive access to the graph
 	int timeout_ms = 50 ;
-	if (Graph_TimeAcquireWriteLock (g, timeout_ms) != 0) {
+	if (GraphContext_TimeAcquireWriteLock (gc, timeout_ms) != 0) {
 		// failed to acquire write lock, check if we're out of time
 		RedisModule_Log (NULL, "notice",
 				"Graph defrag, failed to acquire write lock") ;
@@ -151,7 +151,7 @@ static int defrag_edges
 
 	int res = defrag_entities (ctx, DEFRAG_EDGES, g, gc, it) ;
 
-	Graph_ReleaseLock (g) ;
+	GraphContext_ReleaseLock (gc) ;
 
 	// clean up
 	DataBlockIterator_Free (it) ;
@@ -168,7 +168,7 @@ static int defrag_nodes
 
 	// try to obtain exclusive access to the graph
 	int timeout_ms = 50 ;
-	if (Graph_TimeAcquireWriteLock (g, timeout_ms) != 0) {
+	if (GraphContext_TimeAcquireWriteLock (gc, timeout_ms) != 0) {
 		// failed to acquire write lock, check if we're out of time
 		RedisModule_Log (NULL, "notice",
 				"Graph defrag, failed to acquire write lock") ;
@@ -180,7 +180,7 @@ static int defrag_nodes
 
 	int res = defrag_entities (ctx, DEFRAG_NODES, g, gc, it) ;
 
-	Graph_ReleaseLock (g) ;
+	GraphContext_ReleaseLock (gc) ;
 
 	// clean up
 	DataBlockIterator_Free (it) ;

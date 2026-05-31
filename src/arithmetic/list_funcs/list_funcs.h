@@ -19,5 +19,3 @@ typedef struct {
 	Record record;            // internal private record
 } ListReduceCtx;
 
-void Register_ListFuncs();
-
