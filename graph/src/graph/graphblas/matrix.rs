@@ -132,30 +132,31 @@ pub fn init(
 
         // Pick GraphBLAS JIT control level:
         //
-        //   * Normal mode (default) — GxB_JIT_PAUSE: engages the PreJIT
-        //     kernels statically linked into libgraphblas.a (vendored from
-        //     build/graphblas/PreJIT/ by graphblas.sh) and falls back to
-        //     generic kernels for everything else. No cache lookup, no
-        //     dlopen, so it stays fork-safe (cf. PR #483) and can't
-        //     return GxB_JIT_ERROR.
+        //   * Normal mode (default) — GxB_JIT_RUN: mirror the FalkorDB C
+        //     module (src/module.c). PreJIT kernels statically linked into
+        //     libgraphblas.a (vendored from build/graphblas/PreJIT/ by
+        //     graphblas.sh) are used for hot ops; RUN additionally permits
+        //     dlopen of any kernel already present in the on-disk cache,
+        //     without any runtime compilation. In the shipped runtime image
+        //     the cache is empty and no compiler is installed, so any op
+        //     not covered by PreJIT silently falls back to generic kernels
+        //     (no panic, no dlopen attempts that would deadlock fork()).
+        //     Local arm64 A/B vs GxB_JIT_OFF (which main shipped) shows
+        //     +6% to +87% across the test_bench.py suite; aligning with
+        //     the C module's choice keeps the runtime semantics
+        //     interchangeable.
         //
         //   * Harvest mode (FALKORDB_PREJIT_HARVEST=1) — GxB_JIT_ON: full
         //     JIT including compile-on-demand. Used exclusively by
         //     gen_prejit.sh to populate ~/.SuiteSparse/GrBx.y.z/c/ with
         //     the .c kernel sources we then check in as the next
         //     generation of vendored PreJIT.
-        //
-        // We diverge from FalkorDB C (src/module.c uses GxB_JIT_RUN). At
-        // RUN, GraphBLAS attempts cache loads for ops not covered by
-        // PreJIT and panics with GxB_JIT_ERROR if the cache is empty / no
-        // compiler is available — which is exactly the runtime image
-        // shape we ship.
         let harvest =
             std::env::var_os("FALKORDB_PREJIT_HARVEST").is_some_and(|v| v != "0" && !v.is_empty());
         let (jit_level, jit_name) = if harvest {
             (GxB_JIT_Control::GxB_JIT_ON, "JIT_ON (harvest)")
         } else {
-            (GxB_JIT_Control::GxB_JIT_PAUSE, "JIT_PAUSE")
+            (GxB_JIT_Control::GxB_JIT_RUN, "JIT_RUN")
         };
         let info = GrB_Global_set_INT32(
             GrB_GLOBAL,
