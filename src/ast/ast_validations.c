@@ -247,6 +247,9 @@ static AST_Validation _ValidateMultiHopTraversal
 	const cypher_astnode_t *range_end = cypher_ast_range_get_end(range);
 	if(range_end) {
 		end = AST_ParseIntegerNode(range_end);
+	} else {
+		ErrorCtx_SetError(EMSG_VAR_LEN_UNBOUNDED);
+		return AST_INVALID;
 	}
 
 	// Validate specified range
