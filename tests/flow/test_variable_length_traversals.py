@@ -456,3 +456,95 @@ class testVariableLengthTraversals(FlowTestsBase):
                 Node(2, labels=["C"], properties={"v": 5})],
             [Edge(0, "R", 1, 0, properties={"v": 2}), Edge(1, "R", 2, 1, properties={"v": 4})]
         ))
+
+    def test16_dest_label_enforcement(self):
+        """
+        validate no conditional / expand into operation is added to enforce
+        dest node label
+        """
+
+        self.graph.delete()
+
+        q = """CREATE
+                (a:A)-[:R]->(b0:B), 
+                (a)-[:R]->(b1:B),
+
+                (b0)-[:R]->(c0:C),
+                (b0)-[:R]->(c1:C),
+                (b1)-[:R]->(c2:C),
+                (b1)-[:R]->(c3:C),
+
+                (c0)-[:R]->(d1:D),
+                (c0)-[:R]->(d2:D),
+                (c0)-[:R]->(d3:D),
+                (c0)-[:R]->(d4:D),
+
+                (c1)-[:R]->(d5:D),
+                (c1)-[:R]->(d6:D),
+                (c1)-[:R]->(d7:D),
+                (c1)-[:R]->(d8:D),
+
+                (c2)-[:R]->(d9:D),
+                (c2)-[:R]->(d10:D),
+                (c2)-[:R]->(d11:D),
+                (c2)-[:R]->(d12:D),
+
+                (c3)-[:R]->(d13:D),
+                (c3)-[:R]->(d14:D),
+                (c3)-[:R]->(d15:D),
+                (c3)-[:R]->(d16:D)"""
+
+        self.graph.query(q)
+
+        q = "MATCH (a:A)-[:R*1..]->(d:D) RETURN count(d)"
+        plan = self.graph.explain(q)
+
+        root = plan.structured_plan
+        self.env.assertEquals(root.name, "Results")
+
+        child = root.children[0]
+        self.env.assertEquals(child.name, "Aggregate")
+
+        child = child.children[0]
+        self.env.assertEquals(child.name, "Conditional Variable Length Traverse")
+
+        child = child.children[0]
+        self.env.assertEquals(child.name, "Node By Label Scan")
+
+        count = self.graph.query(q).result_set[0][0]
+        self.env.assertEquals(count, 16)
+
+        q = """MATCH (a:A), (d:D)
+               WITH a, d
+               OPTIONAL MATCH (a)-[:R*..]->(d)
+               RETURN count(d)"""
+
+        plan = self.graph.explain(q)
+
+        root = plan.structured_plan
+        self.env.assertEquals(root.name, "Results")
+
+        child = root.children[0]
+        self.env.assertEquals(child.name, "Aggregate")
+
+        child = child.children[0]
+        self.env.assertEquals(child.name, "Apply")
+
+        match_branch = child.children[0]
+        self.env.assertEquals(match_branch.name, "Project")
+
+        match_branch = match_branch.children[0]
+        self.env.assertEquals(match_branch.name, "Cartesian Product")
+
+        optional_branch = child.children[1]
+        self.env.assertEquals(optional_branch.name, "Optional")
+
+        optional_branch = optional_branch.children[0]
+        self.env.assertEquals(optional_branch.name, "Conditional Variable Length Traverse (Expand Into)")
+
+        optional_branch = optional_branch.children[0]
+        self.env.assertEquals(optional_branch.name, "Argument")
+
+        count = self.graph.query(q).result_set[0][0]
+        self.env.assertEquals(count, 16)
+

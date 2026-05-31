@@ -1080,7 +1080,7 @@ uint64_t Graph_LabeledNodeCount
 	const Graph *g,
 	LabelID label
 ) {
-	return GraphStatistics_NodeCount(&g->stats, label);
+	return GraphStatistics_NodeCount (&g->stats, label) ;
 }
 
 // returns number of edges in the graph

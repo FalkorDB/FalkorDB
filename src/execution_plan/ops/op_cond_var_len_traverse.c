@@ -167,42 +167,43 @@ static OpResult CondVarLenTraverseInit
 	// traverse already enforced the label before we run
 	//--------------------------------------------------------------------------
 
-	if(!op->expandInto) {
-		const char *dest_alias = AlgebraicExpression_Dest(op->ae);
-		QGNode *dest_node = QueryGraph_GetNodeByAlias(
-				op->op.plan->query_graph, dest_alias);
-		uint8_t label_count = (uint8_t)QGNode_LabelCount(dest_node);
+	if (!op->expandInto) {
+		const char *dest_alias = AlgebraicExpression_Dest (op->ae) ;
+		QGNode *dest_node =
+			QueryGraph_GetNodeByAlias (op->op.plan->query_graph, dest_alias) ;
+		uint8_t label_count = (uint8_t)QGNode_LabelCount (dest_node) ;
 
-		if(label_count > 0) {
+		if (label_count > 0) {
 			// allocate directly into op->dest_labels and sort in place
 			// keep a parallel nvals[] on the stack only for sort comparisons
-			op->dest_label_count = label_count;
-			op->dest_labels = rm_malloc(sizeof(LabelID) * label_count);
+			op->dest_label_count = label_count ;
+			op->dest_labels = rm_malloc (sizeof(LabelID) * label_count) ;
 
-			uint64_t nvals[label_count];
-			for(uint8_t i = 0; i < label_count; i++) {
-				op->dest_labels[i] = QGNode_GetLabelID(dest_node, i);
-				nvals[i] = (op->dest_labels[i] >= 0)
-					? Graph_LabeledNodeCount(op->g, op->dest_labels[i]) : 0;
+			uint64_t nvals [label_count] ;
+			for (uint8_t i = 0 ; i < label_count ; i++) {
+				op->dest_labels [i] = QGNode_GetLabelID (dest_node, i) ;
+				nvals [i] = (op->dest_labels [i] >= 0)
+					? Graph_LabeledNodeCount (op->g, op->dest_labels [i]) : 0 ;
 			}
 
 			// insertion-sort by nvals ascending: most selective label checked first
-			for(uint8_t i = 1; i < label_count; i++) {
-				LabelID  kid = op->dest_labels[i];
-				uint64_t kn  = nvals[i];
-				int8_t   j   = (int8_t)(i - 1);
-				while(j >= 0 && nvals[j] > kn) {
-					op->dest_labels[j+1] = op->dest_labels[j];
-					nvals[j+1]           = nvals[j];
-					j--;
+			for (uint8_t i = 1 ; i < label_count ; i++) {
+				LabelID kid = op->dest_labels [i] ;
+				uint64_t kn = nvals [i] ;
+				int8_t j = (int8_t)(i - 1) ;
+				while (j >= 0 && nvals [j] > kn) {
+					op->dest_labels [j+1] = op->dest_labels [j] ;
+					nvals[j+1] = nvals [j] ;
+					j-- ;
 				}
-				op->dest_labels[j+1] = kid;
-				nvals[j+1]           = kn;
+
+				op->dest_labels [j+1] = kid ;
+				nvals [j+1] = kn ;
 			}
 
 			// sync and cache the node-label matrix once so consume can query
 			// it directly via Delta_Matrix_isStoredElement without re-syncing
-			op->node_labels = Graph_GetNodeLabelMatrix(op->g);
+			op->node_labels = Graph_GetNodeLabelMatrix (op->g) ;
 		}
 	}
 
@@ -258,13 +259,14 @@ static inline bool _dest_has_labels
 	const CondVarLenTraverse *op,
 	NodeID node_id
 ) {
-	for(uint8_t i = 0; i < op->dest_label_count; i++) {
-		if(Delta_Matrix_isStoredElement(op->node_labels, node_id,
-					op->dest_labels[i]) != GrB_SUCCESS) {
-			return false;
+	for (uint8_t i = 0 ; i < op->dest_label_count ; i++) {
+		if (Delta_Matrix_isStoredElement (op->node_labels, node_id,
+					op->dest_labels [i]) != GrB_SUCCESS) {
+			return false ;
 		}
 	}
-	return true;
+
+	return true ;
 }
 
 static Record CondVarLenTraverseOptimizedConsume

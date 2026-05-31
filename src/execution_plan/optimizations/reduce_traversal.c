@@ -188,8 +188,7 @@ void reduceVarLenTraverseDestLabel
 			continue ;
 		}
 
-		AlgebraicExpression *ae   = NULL ;
-		AlgebraicExpression **p_ae = NULL ;
+		AlgebraicExpression *ae = NULL ;
 
 		if (parent->type == OPType_CONDITIONAL_TRAVERSE) {
 			ae = ((OpCondTraverse*) parent)->ae ;

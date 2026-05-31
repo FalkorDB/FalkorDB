@@ -78,15 +78,15 @@ uint64_t GraphStatistics_NodeCount
 	const GraphStatistics *stats,
 	LabelID l
 ) {
-	ASSERT(stats != NULL);
-	ASSERT(l < ((LabelID)arr_len(stats->node_count)));
+	ASSERT (stats != NULL) ;
+	ASSERT (l < ((LabelID)arr_len (stats->node_count)));
 
 	// none existing / unknown label id
-	if(l < 0) {
-		return 0;
+	if (l < 0) {
+		return 0 ;
 	}
 
-	return stats->node_count[l];
+	return stats->node_count [l] ;
 }
 
 void GraphStatistics_FreeInternals
