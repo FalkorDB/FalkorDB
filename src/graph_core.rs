@@ -108,7 +108,7 @@ pub fn register_graph(
     }
 }
 
-pub(crate) struct WriteMessage {
+pub struct WriteMessage {
     pub bc: BlockedClient,
     pub query: Arc<str>,
     pub compact: bool,
@@ -120,7 +120,7 @@ pub(crate) struct WriteMessage {
     pub waiting_id: u64,
 }
 
-pub(crate) struct WriteQueryOk {
+pub struct WriteQueryOk {
     pub graph: Arc<AtomicRefCell<Graph>>,
     pub effects_buffer: Option<Vec<u8>>,
     pub modified: bool,
@@ -131,7 +131,7 @@ type WriteQueryResult = Result<WriteQueryOk, String>;
 
 /// Result from a read-path `execute_query` call, surfacing timing metadata
 /// needed for telemetry.
-pub(crate) struct ReadQueryResult {
+pub struct ReadQueryResult {
     pub is_write: bool,
     pub cached: bool,
     pub execution_time_ms: f64,
@@ -144,7 +144,7 @@ pub(crate) struct ReadQueryResult {
 /// Redis guarantees these pointers are non-null after `RedisModule_Init` succeeds.
 /// Centralising the `.expect()` here documents that invariant in one place and
 /// keeps call sites free of `unwrap()` noise.
-pub(crate) mod ffi {
+pub mod ffi {
     use redis_module::raw;
     use std::ffi::CString;
     use std::os::raw::c_char;
@@ -152,7 +152,7 @@ pub(crate) mod ffi {
 
     const MSG: &str = "Redis module FFI pointer not initialised (call RedisModule_Init first)";
 
-    /// Wrap a user error string into a CString, replacing any NUL bytes so
+    /// Wrap a user error string into a `CString`, replacing any NUL bytes so
     /// malformed strings never crash the module. NUL is extremely unlikely in
     /// practice but must be handled because `CString::new` rejects it.
     pub fn sanitise_error(err: impl Into<Vec<u8>>) -> CString {
@@ -269,7 +269,7 @@ pub(crate) mod ffi {
         flags: i32,
     ) {
         let f = unsafe { raw::RedisModule_Yield }.expect(MSG);
-        unsafe { f(ctx, flags, null_mut() as *const c_char) };
+        unsafe { f(ctx, flags, null_mut::<c_char>()) };
     }
 
     /// `REDISMODULE_YIELD_FLAG_CLIENTS` — allow Redis to process client
@@ -1179,23 +1179,20 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
             // This allows BGSAVE's create_virtual_keys (which needs a read
             // lock) to interleave between write operations.
             let mut g = graph.write();
-            let msg = match g.receiver.try_recv() {
-                Ok(msg) => msg,
-                Err(_) => {
-                    g.write_loop.store(false, Ordering::Release);
-                    if g.receiver.is_empty() {
-                        return;
-                    }
-                    if g.write_loop
-                        .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
-                        .is_err()
-                    {
-                        return;
-                    }
-                    // Retry with fresh lock acquisition.
-                    drop(g);
-                    continue;
+            let Ok(msg) = g.receiver.try_recv() else {
+                g.write_loop.store(false, Ordering::Release);
+                if g.receiver.is_empty() {
+                    return;
                 }
+                if g.write_loop
+                    .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
+                    .is_err()
+                {
+                    return;
+                }
+                // Retry with fresh lock acquisition.
+                drop(g);
+                continue;
             };
             let WriteMessage {
                 bc,
@@ -1306,7 +1303,7 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
 }
 
 /// Decide whether to use effects replication and get the pre-built buffer.
-/// The buffer was built in CommitOp before pending was cleared.
+/// The buffer was built in `CommitOp` before pending was cleared.
 /// Returns Some(buffer) if effects should be sent, None for verbatim replication.
 fn should_use_effects(
     is_non_deterministic: bool,
@@ -1430,6 +1427,7 @@ pub unsafe extern "C" fn graph_free(value: *mut c_void) {
         let data_ptr = boxed.data_ptr() as usize;
         let removed: Vec<Arc<RwLock<ThreadedGraph>>> = {
             let mut reg = GRAPH_REGISTRY.lock();
+            #[allow(clippy::needless_collect)]
             let keys: Vec<String> = reg
                 .iter()
                 .filter(|(_, arc)| arc.data_ptr() as usize == data_ptr)

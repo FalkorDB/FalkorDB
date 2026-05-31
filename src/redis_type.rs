@@ -90,7 +90,7 @@ unsafe extern "C" fn graph_rdb_load(
             graph_arc.borrow_mut().set_indexer_graph(graph_arc.clone());
             let tg = ThreadedGraph::from_mvcc(mvcc);
             let arc = Arc::new(RwLock::new(tg));
-            crate::graph_core::register_graph(key_name.clone(), arc.clone());
+            crate::graph_core::register_graph(key_name, arc.clone());
             let boxed: Box<Arc<RwLock<ThreadedGraph>>> = Box::new(arc);
             Box::into_raw(boxed).cast()
         }
@@ -173,8 +173,11 @@ unsafe extern "C" fn graph_rdb_save(
             let key_count = 1 + vkey_state
                 .graph_vkeys
                 .get(graph_name)
-                .map_or(0, |v| v.len()) as u64;
-            let snap_ref = vkey_state.rdb_snapshots.get(graph_name).map(|a| a.as_ref());
+                .map_or(0, std::vec::Vec::len) as u64;
+            let snap_ref = vkey_state
+                .rdb_snapshots
+                .get(graph_name)
+                .map(std::convert::AsRef::as_ref);
             // Look up the real graph by name from GRAPH_REGISTRY.
             let registry = crate::graph_core::GRAPH_REGISTRY.lock();
             if let Some(real_graph_arc) = registry.get(graph_name) {
@@ -327,6 +330,7 @@ pub unsafe extern "C" fn on_persistence(
             | raw::REDISMODULE_SUBEVENT_PERSISTENCE_FAILED => {
                 delete_virtual_keys(ctx);
             }
+            #[allow(clippy::match_same_arms)]
             _ => {}
         }
     }
@@ -432,8 +436,7 @@ pub unsafe fn create_virtual_keys(ctx: *mut RedisModuleCtx) {
                 .insert(graph_name.clone(), vkey_names);
 
             log_notice(format!(
-                "Created {} virtual keys for graph {graph_name}",
-                virtual_key_count
+                "Created {virtual_key_count} virtual keys for graph {graph_name}"
             ));
         }
     }
@@ -443,7 +446,7 @@ pub unsafe fn delete_virtual_keys(ctx: *mut RedisModuleCtx) {
     unsafe {
         let mut vkey_state = VKEY_STATE.lock();
 
-        for (_graph_name, vkey_names) in &vkey_state.graph_vkeys {
+        for (graph_name, vkey_names) in &vkey_state.graph_vkeys {
             let count = vkey_names.len();
             for vkey_name in vkey_names {
                 let rm_str = raw::RedisModule_CreateString.unwrap()(
@@ -458,7 +461,7 @@ pub unsafe fn delete_virtual_keys(ctx: *mut RedisModuleCtx) {
                 raw::RedisModule_FreeString.unwrap()(ctx, rm_str);
             }
             log_notice(format!(
-                "Deleted {count} virtual keys for graph {_graph_name}"
+                "Deleted {count} virtual keys for graph {graph_name}"
             ));
         }
 

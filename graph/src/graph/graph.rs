@@ -920,13 +920,11 @@ impl Graph {
         node_id: NodeId,
         label: &str,
     ) -> bool {
-        if let Some(label_id) = self.get_label_id(label) {
+        self.get_label_id(label).is_some_and(|label_id| {
             self.node_labels_matrix
                 .get(node_id.0, label_id.0 as u64)
                 .is_some()
-        } else {
-            false
-        }
+        })
     }
 
     /// Check if a node has a specific label by id (no string lookup).
@@ -947,13 +945,11 @@ impl Graph {
         edge_id: RelationshipId,
         type_name: &str,
     ) -> bool {
-        if let Some(type_id) = self.get_type_id(type_name) {
+        self.get_type_id(type_name).is_some_and(|type_id| {
             self.relationship_type_matrix
                 .get(edge_id.0, type_id.0 as u64)
                 .is_some()
-        } else {
-            false
-        }
+        })
     }
 
     /// Get-or-create a relationship type by name, returning its `TypeId`.
@@ -1001,20 +997,20 @@ impl Graph {
 
         {
             let mut cache = self.cache.lock();
-            if let Some(plan) = cache.get(query) {
-                if plan.udf_version == current_udf_version {
-                    let plan = plan.clone();
-                    drop(cache);
-                    let optimize_plan = optimize(&plan.plan, self, &param_values);
-                    return Ok(Plan::new(
-                        Arc::new(optimize_plan),
-                        true,
-                        parameters,
-                        parse_duration,
-                        plan_duration,
-                        params_offset,
-                    ));
-                }
+            if let Some(plan) = cache.get(query)
+                && plan.udf_version == current_udf_version
+            {
+                let plan = plan.clone();
+                drop(cache);
+                let optimize_plan = optimize(&plan.plan, self, &param_values);
+                return Ok(Plan::new(
+                    Arc::new(optimize_plan),
+                    true,
+                    parameters,
+                    parse_duration,
+                    plan_duration,
+                    params_offset,
+                ));
             }
         }
 
@@ -2979,7 +2975,7 @@ impl Graph {
         &self.constraints
     }
 
-    pub fn constraints_mut(&mut self) -> &mut Vec<Constraint> {
+    pub const fn constraints_mut(&mut self) -> &mut Vec<Constraint> {
         &mut self.constraints
     }
 
@@ -3049,7 +3045,7 @@ impl Graph {
             EntityType::Node => self.label_node_count(&constraint.label),
             EntityType::Relationship => self
                 .get_relationship_matrix(&constraint.label)
-                .map_or(0, |t| t.edge_count()),
+                .map_or(0, Tensor::edge_count),
         }
     }
 
@@ -3207,6 +3203,7 @@ impl Graph {
         }
     }
 
+    #[must_use]
     pub fn build_composite_key(
         properties: &[Arc<String>],
         attrs: &[(Arc<String>, Value)],

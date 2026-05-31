@@ -122,14 +122,17 @@ impl New for VersionedMatrix {
 }
 
 impl VersionedMatrix {
+    #[must_use]
     pub fn m(&self) -> &Matrix {
         &self.m
     }
 
+    #[must_use]
     pub fn dp(&self) -> &Matrix {
         &self.dp
     }
 
+    #[must_use]
     pub fn dm(&self) -> &Matrix {
         &self.dm
     }

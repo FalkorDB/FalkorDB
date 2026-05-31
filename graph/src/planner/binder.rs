@@ -2309,6 +2309,7 @@ impl Binder {
 /// Returns `Some(value)` only for trees that consist entirely of `Constant`
 /// leaves, plus structural `Map`/`List` whose children are all such leaves.
 fn expr_tree_to_value(tree: &DynTree<ExprIR<Variable>>) -> Option<Value> {
+    #[allow(clippy::needless_pass_by_value)]
     fn node_to_value(node: orx_tree::DynNode<ExprIR<Variable>>) -> Option<Value> {
         match node.data() {
             ExprIR::Constant(v) => Some(v.clone()),
@@ -2375,9 +2376,7 @@ fn rewrite_struct_constructor(
     // moved on the bail-out branches below.
     let entries: Option<HashMap<String, DynTree<ExprIR<Variable>>>> = {
         let map_tree = &children[0];
-        if !matches!(map_tree.root().data(), ExprIR::Map) {
-            None
-        } else {
+        if matches!(map_tree.root().data(), ExprIR::Map) {
             let map_root = map_tree.root();
             let mut entries: HashMap<String, DynTree<ExprIR<Variable>>> = HashMap::new();
             let mut ok = true;
@@ -2393,6 +2392,8 @@ fn rewrite_struct_constructor(
                 entries.insert(key.as_str().to_string(), val_node.clone_as_tree());
             }
             if ok { Some(entries) } else { None }
+        } else {
+            None
         }
     };
     let Some(entries) = entries else {

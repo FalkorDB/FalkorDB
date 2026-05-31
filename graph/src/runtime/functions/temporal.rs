@@ -136,7 +136,7 @@ fn time_from_map(map: &OrderMap<Arc<String>, Value>) -> Result<NaiveTime, String
 
 /// Extract i64 from positional slot arg (Int/Float/Null).
 #[inline]
-fn slot_to_int(v: &Value) -> Option<i64> {
+const fn slot_to_int(v: &Value) -> Option<i64> {
     match v {
         Value::Int(i) => Some(*i),
         Value::Float(f) => Some(*f as i64),
@@ -410,7 +410,7 @@ fn parse_duration_string(s: &str) -> Result<(i64, i64, i64, i64, i64, i64, i64),
 /// Days from 1970-01-01 to the given (year, month, day) — Howard Hinnant's civil-from-days.
 /// Avoids chrono allocation/validation on the duration hot path.
 #[inline]
-fn days_from_civil(
+const fn days_from_civil(
     y: i32,
     m: u32,
     d: u32,
@@ -421,7 +421,7 @@ fn days_from_civil(
     let mp = if m > 2 { m - 3 } else { m + 9 }; // [0, 11]
     let doy = (153 * mp + 2) / 5 + d - 1; // [0, 365]
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // [0, 146096]
-    era as i64 * 146097 + doe as i64 - 719468
+    era as i64 * 146_097 + doe as i64 - 719_468
 }
 
 /// Construct a duration i64 (seconds from epoch) from components.
@@ -466,8 +466,8 @@ pub fn construct_duration_secs(
         .ok_or_else(|| "Duration overflow when combining components".to_string())
 }
 
-/// Decompose a duration (seconds from epoch) into (years, months, remaining_seconds).
-pub fn decompose_duration(dur_secs: i64) -> Result<(i32, i32, i64), String> {
+/// Decompose a duration (seconds from epoch) into (years, months, `remaining_seconds`).
+pub const fn decompose_duration(dur_secs: i64) -> Result<(i32, i32, i64), String> {
     let days = dur_secs.div_euclid(86400);
     let time_of_day = dur_secs.rem_euclid(86400);
     let (y, m, d) = crate::runtime::value::civil_from_days(days);

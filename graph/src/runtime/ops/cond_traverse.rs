@@ -364,20 +364,18 @@ impl<'a> CondTraverseOp<'a> {
             let m = if rp.types.is_empty() {
                 g.adjacency_matrix().clone()
             } else if rp.types.len() == 1 {
-                match g.get_relationship_matrix(&rp.types[0]) {
-                    Some(t) => t.matrix().clone(),
-                    None => {
-                        state.no_match = true;
-                        return Ok(true);
-                    }
+                if let Some(t) = g.get_relationship_matrix(&rp.types[0]) {
+                    t.matrix().clone()
+                } else {
+                    state.no_match = true;
+                    return Ok(true);
                 }
             } else {
-                match g.build_relationship_matrix_unrestricted(&rp.types) {
-                    Some(m) => VersionedMatrix::from_matrix(m),
-                    None => {
-                        state.no_match = true;
-                        return Ok(true);
-                    }
+                if let Some(m) = g.build_relationship_matrix_unrestricted(&rp.types) {
+                    VersionedMatrix::from_matrix(m)
+                } else {
+                    state.no_match = true;
+                    return Ok(true);
                 }
             };
             state.batched_matrix = Some(m);
@@ -390,29 +388,24 @@ impl<'a> CondTraverseOp<'a> {
                 let hm = if hop.types.is_empty() {
                     g.adjacency_matrix().clone()
                 } else if hop.types.len() == 1 {
-                    match g.get_relationship_matrix(&hop.types[0]) {
-                        Some(t) => t.matrix().clone(),
-                        None => {
-                            state.no_match = true;
-                            return Ok(true);
-                        }
-                    }
-                } else {
-                    match g.build_relationship_matrix_unrestricted(&hop.types) {
-                        Some(m) => VersionedMatrix::from_matrix(m),
-                        None => {
-                            state.no_match = true;
-                            return Ok(true);
-                        }
-                    }
-                };
-                state.chain_matrices.push(hm);
-                let dst_labels = match g.resolve_label_ids(&hop.to.labels) {
-                    Some(ids) => ids,
-                    None => {
+                    if let Some(t) = g.get_relationship_matrix(&hop.types[0]) {
+                        t.matrix().clone()
+                    } else {
                         state.no_match = true;
                         return Ok(true);
                     }
+                } else {
+                    if let Some(m) = g.build_relationship_matrix_unrestricted(&hop.types) {
+                        VersionedMatrix::from_matrix(m)
+                    } else {
+                        state.no_match = true;
+                        return Ok(true);
+                    }
+                };
+                state.chain_matrices.push(hm);
+                let Some(dst_labels) = g.resolve_label_ids(&hop.to.labels) else {
+                    state.no_match = true;
+                    return Ok(true);
                 };
                 state.chain_dst_label_ids.push(dst_labels);
             }
@@ -442,12 +435,11 @@ impl<'a> CondTraverseOp<'a> {
                 drop(g);
                 return Ok(false);
             }
-            let src_id = match env.get(from_alias) {
-                Some(Value::Node(id)) => *id,
-                _ => {
-                    drop(g);
-                    return Ok(false);
-                }
+            let src_id = if let Some(Value::Node(id)) = env.get(from_alias) {
+                *id
+            } else {
+                drop(g);
+                return Ok(false);
             };
             // Pre-filter src by label (= L_src * F in C's algebra).
             if !state

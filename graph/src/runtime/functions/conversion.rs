@@ -259,7 +259,7 @@ pub fn register(funcs: &mut Functions) {
             match args.first() {
                 Some(Value::List(vs)) => {
                     let result: ThinVec<Value> = vs.iter().map(|v| {
-                        value_to_integer(runtime, &[v.clone()]).unwrap_or(Value::Null)
+                        value_to_integer(runtime, std::slice::from_ref(v)).unwrap_or(Value::Null)
                     }).collect();
                     Ok(Value::List(Arc::new(result)))
                 }
@@ -275,7 +275,7 @@ pub fn register(funcs: &mut Functions) {
             match args.first() {
                 Some(Value::List(vs)) => {
                     let result: ThinVec<Value> = vs.iter().map(|v| {
-                        value_to_string(runtime, &[v.clone()]).unwrap_or(Value::Null)
+                        value_to_string(runtime, std::slice::from_ref(v)).unwrap_or(Value::Null)
                     }).collect();
                     Ok(Value::List(Arc::new(result)))
                 }

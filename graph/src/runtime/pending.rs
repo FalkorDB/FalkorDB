@@ -42,7 +42,7 @@ use crate::{
 
 /// Flatten a node_id → [label_ids] map into parallel (rows, cols) arrays.
 fn flatten_label_map(map: &FxHashMap<u64, Vec<u64>>) -> (Vec<u64>, Vec<u64>) {
-    let total: usize = map.values().map(|v| v.len()).sum();
+    let total: usize = map.values().map(std::vec::Vec::len).sum();
     let mut rows = Vec::with_capacity(total);
     let mut cols = Vec::with_capacity(total);
     for (&node_id, label_ids) in map {
@@ -338,10 +338,8 @@ impl Pending {
         for label in labels {
             let label_id = usize::from(*label) as u64;
             // Remove from pending set labels
-            if let Some(set) = self.set_labels.get_mut(&raw_id)
-                && let Some(pos) = set.iter().position(|&l| l == label_id)
-            {
-                set.swap_remove(pos);
+            if let Some(set) = self.set_labels.get_mut(&raw_id) {
+                set.retain(|&l| l != label_id);
             }
             self.remove_labels.entry(raw_id).or_default().push(label_id);
         }
@@ -408,10 +406,8 @@ impl Pending {
 
         for (rel_id, _, _, type_name) in &rels {
             self.created_rel_types.remove(rel_id);
-            if let Some(entries) = self.created_rels_by_type.get_mut(type_name)
-                && let Some(pos) = entries.iter().position(|(rid, _, _)| rid == rel_id)
-            {
-                entries.swap_remove(pos);
+            if let Some(entries) = self.created_rels_by_type.get_mut(type_name) {
+                entries.retain(|(rid, _, _)| rid != rel_id);
             }
         }
         let rels: Vec<_> = rels
@@ -425,7 +421,7 @@ impl Pending {
     /// Remove and return all pending-created relationships incident on the
     /// given node, along with their staged attributes. Also cleans up
     /// `new_relationships_attrs` and `deleted_relationships` entries for
-    /// each removed relationship so that commit() has no stale state.
+    /// each removed relationship so that `commit()` has no stale state.
     pub fn remove_pending_relationships_for_node(
         &mut self,
         id: NodeId,
@@ -448,10 +444,8 @@ impl Pending {
         let mut result = Vec::with_capacity(rels.len());
         for (rel_id, from, to, type_name) in rels {
             self.created_rel_types.remove(&rel_id);
-            if let Some(entries) = self.created_rels_by_type.get_mut(&type_name)
-                && let Some(pos) = entries.iter().position(|(rid, _, _)| *rid == rel_id)
-            {
-                entries.swap_remove(pos);
+            if let Some(entries) = self.created_rels_by_type.get_mut(&type_name) {
+                entries.retain(|(rid, _, _)| *rid != rel_id);
             }
             let attrs = self.new_relationships_attrs.remove(&rel_id.into());
             self.deleted_relationships.remove(&rel_id);
@@ -602,6 +596,7 @@ impl Pending {
 
     /// Returns pending-created node IDs that have ALL of the given labels.
     /// When `label_ids` is empty, returns all pending-created nodes.
+    #[must_use]
     pub fn get_pending_nodes_with_labels(
         &self,
         label_ids: &[LabelId],
@@ -621,6 +616,7 @@ impl Pending {
 
     /// Returns existing (non-created) node IDs that have pending label REMOVEs
     /// for ANY of the given label_ids.
+    #[must_use]
     pub fn nodes_with_pending_label_removes(
         &self,
         label_ids: &[LabelId],
@@ -1012,8 +1008,7 @@ impl Pending {
                             .any(|(name, val)| name == prop && !matches!(val, Value::Null));
                         if !has_prop {
                             return Err(format!(
-                                "mandatory constraint violation: node with label {} missing property {}",
-                                label, prop
+                                "mandatory constraint violation: node with label {label} missing property {prop}"
                             ));
                         }
                     }
@@ -1038,8 +1033,7 @@ impl Pending {
                                 && existing_id != other_id
                             {
                                 return Err(format!(
-                                    "unique constraint violation on node of type {}",
-                                    label
+                                    "unique constraint violation on node of type {label}"
                                 ));
                             }
                             seen.insert(other_key, other_id);
@@ -1074,8 +1068,7 @@ impl Pending {
                             .any(|(name, val)| name == prop && !matches!(val, Value::Null));
                         if !has_prop {
                             return Err(format!(
-                                "mandatory constraint violation: edge with relationship-type {} missing property {}",
-                                type_name, prop
+                                "mandatory constraint violation: edge with relationship-type {type_name} missing property {prop}"
                             ));
                         }
                     }
@@ -1100,8 +1093,7 @@ impl Pending {
                                 && existing_id != other_eid
                             {
                                 return Err(format!(
-                                    "unique constraint violation, on edge of relationship-type {}",
-                                    type_name
+                                    "unique constraint violation, on edge of relationship-type {type_name}"
                                 ));
                             }
                             seen.insert(other_key, other_eid);

@@ -259,29 +259,31 @@ impl BufferedReader {
         Ok(slice)
     }
 
+    fn read_array<const N: usize>(&mut self) -> Result<[u8; N], String> {
+        self.read_bytes(N)?
+            .try_into()
+            .map_err(|_| format!("BufferedReader: expected exactly {N} bytes"))
+    }
+
     pub fn read_unsigned(&mut self) -> Result<u64, String> {
         self.read_tag(TYPE_UNSIGNED)?;
-        let bytes = self.read_bytes(8)?;
-        Ok(u64::from_le_bytes(bytes.try_into().unwrap()))
+        Ok(u64::from_le_bytes(self.read_array()?))
     }
 
     pub fn read_signed(&mut self) -> Result<i64, String> {
         self.read_tag(TYPE_SIGNED)?;
-        let bytes = self.read_bytes(8)?;
-        Ok(i64::from_le_bytes(bytes.try_into().unwrap()))
+        Ok(i64::from_le_bytes(self.read_array()?))
     }
 
     pub fn read_double(&mut self) -> Result<f64, String> {
         self.read_tag(TYPE_DOUBLE)?;
-        let bytes = self.read_bytes(8)?;
-        Ok(f64::from_le_bytes(bytes.try_into().unwrap()))
+        Ok(f64::from_le_bytes(self.read_array()?))
     }
 
     #[allow(dead_code)]
     pub fn read_float(&mut self) -> Result<f32, String> {
         self.read_tag(TYPE_FLOAT)?;
-        let bytes = self.read_bytes(4)?;
-        Ok(f32::from_le_bytes(bytes.try_into().unwrap()))
+        Ok(f32::from_le_bytes(self.read_array()?))
     }
 
     /// Read a byte buffer. Handles both inline (TYPE_BYTES) and blob (TYPE_BLOB).
@@ -479,7 +481,7 @@ impl Reader for PipeReader {
 }
 
 impl PipeReader {
-    pub fn new(fd: OwnedFd) -> Self {
+    pub const fn new(fd: OwnedFd) -> Self {
         Self {
             fd: Some(fd),
             buf: Vec::new(),
@@ -567,7 +569,7 @@ pub struct VecWriter {
 }
 
 impl VecWriter {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { buf: Vec::new() }
     }
 

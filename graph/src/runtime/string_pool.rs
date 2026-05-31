@@ -24,6 +24,7 @@ impl StringPool {
     /// Intern by string content. The returned Arc is owned by the pool;
     /// the caller's input is not retained, so external strong references
     /// (e.g. plan-cache constants) do not pin pool entries.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn intern(
         &self,
         a: Arc<String>,

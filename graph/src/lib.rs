@@ -24,6 +24,8 @@
 #![allow(clippy::unused_self)]
 // collect() sometimes needed for lifetime reasons.
 #![allow(clippy::needless_collect)]
+// Pedantic style lints with low signal in this codebase.
+#![allow(clippy::similar_names)]
 
 //! # FalkorDB Graph Engine
 //!

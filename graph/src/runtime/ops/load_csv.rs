@@ -195,12 +195,12 @@ impl ureq::unversioned::resolver::Resolver for PinnedResolver {
         _config: &ureq::config::Config,
         _timeout: ureq::unversioned::transport::NextTimeout,
     ) -> Result<ureq::unversioned::resolver::ResolvedSocketAddrs, ureq::Error> {
-        let mut out = self.empty();
         // `ResolvedSocketAddrs` is a fixed-capacity ArrayVec; its const cap
         // is `MAX_ADDRS = 16`. `validate_remote_url` already runs on a
         // `Vec<SocketAddr>` of arbitrary length, so cap to that limit here
         // to avoid the panic-on-overflow `push`.
         const MAX_ADDRS: usize = 16;
+        let mut out = self.empty();
         for addr in self.addrs.iter().take(MAX_ADDRS) {
             out.push(*addr);
         }
@@ -218,7 +218,7 @@ fn http_config() -> &'static ureq::config::Config {
     CFG.get_or_init(|| {
         ureq::Agent::config_builder()
             .timeout_connect(Some(Duration::from_secs(30)))
-            .timeout_recv_body(Some(Duration::from_secs(60)))
+            .timeout_recv_body(Some(Duration::from_mins(1)))
             .build()
     })
 }
@@ -262,11 +262,11 @@ impl<'a> LoadCsvOp<'a> {
         delimiter: &Arc<String>,
         vars: &Env<'a>,
     ) -> Result<Vec<Env<'a>>, String> {
-        let mut results = Vec::new();
-
         // Configurable upper bound for network- and file-sourced CSVs.
         // Kept in sync with prior hardcoded 100 MiB for backward compat.
         const MAX_CSV_BYTES: u64 = 100 * 1024 * 1024;
+
+        let mut results = Vec::new();
 
         if path.starts_with("https://") {
             // SEC-1: block SSRF to private / loopback / link-local / multicast
