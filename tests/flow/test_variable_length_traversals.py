@@ -456,3 +456,30 @@ class testVariableLengthTraversals(FlowTestsBase):
                 Node(2, labels=["C"], properties={"v": 5})],
             [Edge(0, "R", 1, 0, properties={"v": 2}), Edge(1, "R", 2, 1, properties={"v": 4})]
         ))
+
+    def test16_var_len_same_alias_label_filters(self):
+        self.graph.delete()
+
+        q = "CREATE (:A), (:B)"
+        res = self.graph.query(q)
+        self.env.assertEquals(res.nodes_created, 2)
+
+        queries = [
+            "MATCH (n:A)<-[*]-(n:Z) RETURN 1",
+            # Preserve the original regression shape with an additional predicate.
+            "MATCH (n:A)<-[*]-(n:Z) WHERE n.prop7 = [false] RETURN 1",
+        ]
+        for q in queries:
+            res = self.graph.query(q)
+            self.env.assertEquals(res.result_set, [])
+
+        self.graph.delete()
+
+        q = "CREATE (n:A:Z {v: 1})-[:R]->(n)"
+        res = self.graph.query(q)
+        self.env.assertEquals(res.nodes_created, 1)
+        self.env.assertEquals(res.relationships_created, 1)
+
+        q = "MATCH p = (n:A)<-[*]-(n:Z) RETURN n.v, length(p)"
+        res = self.graph.query(q)
+        self.env.assertEquals(res.result_set, [[1, 1]])

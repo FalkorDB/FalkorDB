@@ -81,6 +81,17 @@ static bool _AlgebraicExpression_ContainsVariableLengthEdge
 	return false;
 }
 
+static inline bool _QGNodes_ShareAlias
+(
+	const QGNode *a,
+	const QGNode *b
+) {
+	ASSERT(a != NULL);
+	ASSERT(b != NULL);
+
+	return strcmp(a->alias, b->alias) == 0;
+}
+
 static void _RemovePathFromGraph
 (
 	QueryGraph *g,
@@ -189,6 +200,7 @@ static AlgebraicExpression **_AlgebraicExpression_IsolateVariableLenExps
 
 		QGNode *dest = QueryGraph_GetNodeByAlias(qg,
 				AlgebraicExpression_Dest(exp));
+		bool same_alias = _QGNodes_ShareAlias(src, dest);
 
 		if(QGNode_Labeled(dest)) {
 			// remove dest node matrix from expression
@@ -196,11 +208,11 @@ static AlgebraicExpression **_AlgebraicExpression_IsolateVariableLenExps
 		}
 
 		if(op != NULL) {
-			// remove destination if following expression isn't a
-			// variable length edge (src/dest sharing) otherwise introduce a new
-			// label expression
-			if(expIdx < expCount - 1 &&
-			   !_AlgebraicExpression_ContainsVariableLengthEdge(qg, expressions[expIdx + 1])) {
+			// A variable-length self traversal should not re-resolve its
+			// endpoint through a second label filter after the edge operand.
+			if(same_alias ||
+			   (expIdx < expCount - 1 &&
+			    !_AlgebraicExpression_ContainsVariableLengthEdge(qg, expressions[expIdx + 1]))) {
 				AlgebraicExpression_Free(op);
 			} else {
 				arr_append(res, op);
@@ -698,4 +710,3 @@ AlgebraicExpression **AlgebraicExpression_FromQueryGraph
 	QueryGraph_Free(g);
 	return exps;
 }
-

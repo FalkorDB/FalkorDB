@@ -31,6 +31,18 @@ static inline bool _isInSubExecutionPlan(OpBase *op) {
 	return ExecutionPlan_LocateOp(op, OPType_ARGUMENT) != NULL;
 }
 
+static inline bool _traversalSelfReferencesAlias
+(
+	const AlgebraicExpression *ae
+) {
+	ASSERT(ae != NULL);
+
+	const char *src = AlgebraicExpression_Src(ae);
+	const char *dest = AlgebraicExpression_Dest(ae);
+
+	return strcmp(src, dest) == 0;
+}
+
 static void _removeRedundantTraversal(ExecutionPlan *plan, OpCondTraverse *traverse) {
 	AlgebraicExpression *ae =  traverse->ae;
 	if(AlgebraicExpression_OperandCount(ae) == 1 &&
@@ -113,8 +125,9 @@ void reduceTraversal(ExecutionPlan *plan) {
 			 * to perform label filtering, but in case a node is already
 			 * resolved this filtering is redundent and should be removed. */
 			OpBase *t;
+			bool self_ref = _traversalSelfReferencesAlias(ae);
 			QGNode *src = QueryGraph_GetNodeByAlias(traverse_plan->query_graph, AlgebraicExpression_Src(ae));
-			if(QGNode_Labeled(src)) {
+			if(QGNode_Labeled(src) && !self_ref) {
 				t = op->children[0];
 				if(t->type == OPType_CONDITIONAL_TRAVERSE && !_isInSubExecutionPlan(op)) {
 					// Queue traversal for removal.
@@ -123,7 +136,7 @@ void reduceTraversal(ExecutionPlan *plan) {
 			}
 			QGNode *dest = QueryGraph_GetNodeByAlias(traverse_plan->query_graph,
 													 AlgebraicExpression_Dest(ae));
-			if(QGNode_Labeled(dest)) {
+			if(QGNode_Labeled(dest) && !self_ref) {
 				t = op->parent;
 				if(t->type == OPType_CONDITIONAL_TRAVERSE && !_isInSubExecutionPlan(op)) {
 					// Queue traversal for removal.
@@ -141,4 +154,3 @@ void reduceTraversal(ExecutionPlan *plan) {
 	// Clean up.
 	arr_free(traversals);
 }
-
