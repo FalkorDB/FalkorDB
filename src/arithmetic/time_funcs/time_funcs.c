@@ -4,7 +4,6 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "time_funcs.h"
 #include "../func_desc.h"
 #include "../../util/arr.h"
 #include "../../errors/errors.h"
@@ -486,64 +485,3 @@ SIValue AR_DURATION
 			seconds);
 }
 
-void Register_TimeFuncs() {
-	SIType *types;
-	SIType ret_type;
-	AR_FuncDesc *func_desc;
-
-	types = arr_new(SIType, 0);
-	ret_type = T_INT64;
-	func_desc = AR_FuncDescNew("timestamp", AR_TIMESTAMP, 0, 0, types, ret_type,
-			false, false, false);
-	AR_FuncRegister(func_desc);
-
-	types = arr_new(SIType, 1);
-	arr_append(types, T_STRING | T_MAP | T_NULL);
-	ret_type = T_TIME | T_NULL;
-	func_desc = AR_FuncDescNew("localtime", AR_LOCALTIME, 0, 1, types, ret_type,
-			false, false, false);
-	AR_FuncRegister(func_desc);
-
-	types = arr_new(SIType, 1);
-	arr_append(types, T_STRING | T_MAP | T_NULL);
-	ret_type = T_TIME | T_NULL;
-	func_desc = AR_FuncDescNew("localtime.transaction", AR_LOCALTIME, 0, 1,
-			types, ret_type,
-			false, true, false);
-	AR_FuncRegister(func_desc);
-
-	types = arr_new(SIType, 1);
-	arr_append(types, T_STRING | T_MAP | T_NULL);
-	ret_type = T_DATE | T_NULL;
-	func_desc = AR_FuncDescNew("date", AR_DATE, 0, 1, types, ret_type, false,
-			false, false);
-	AR_FuncRegister(func_desc);
-
-	types = arr_new(SIType, 1);
-	arr_append(types, T_STRING | T_MAP | T_NULL);
-	ret_type = T_DATE | T_NULL;
-	func_desc = AR_FuncDescNew("date.transaction", AR_DATE, 0, 1, types,
-			ret_type, false, true, false);
-	AR_FuncRegister(func_desc);
-
-	types = arr_new(SIType, 1);
-	arr_append(types, T_STRING | T_MAP | T_NULL);
-	ret_type = T_DATETIME | T_NULL;
-	func_desc = AR_FuncDescNew("localdatetime", AR_LOCALDATETIME, 0, 1, types,
-			ret_type, false, false, false);
-	AR_FuncRegister(func_desc);
-
-	types = arr_new(SIType, 1);
-	arr_append(types, T_STRING | T_MAP | T_NULL);
-	ret_type = T_DATETIME | T_NULL;
-	func_desc = AR_FuncDescNew("localdatetime.transaction", AR_LOCALDATETIME, 0,
-			1, types, ret_type, false, true, false);
-	AR_FuncRegister(func_desc);
-
-	types = arr_new(SIType, 1);
-	arr_append(types, T_MAP | T_STRING | T_NULL);
-	ret_type = T_DURATION | T_NULL;
-	func_desc = AR_FuncDescNew("duration", AR_DURATION, 1, 1, types, ret_type,
-			false, true, true);
-	AR_FuncRegister(func_desc);
-}

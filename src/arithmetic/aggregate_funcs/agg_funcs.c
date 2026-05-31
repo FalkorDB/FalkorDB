@@ -7,6 +7,7 @@
 #include "RG.h"
 #include "agg_funcs.h"
 #include "../../value.h"
+#include "../../util/arr.h"
 #include "../../util/rmalloc.h"
 
 // global AGGREGATE_OK result value
@@ -17,8 +18,8 @@ AR_FuncDesc *AR_AggFuncDescNew
 (
 	char *name,                       // function name
 	AR_Func func,                     // pointer to function
-	uint min_argc,                    // minimum number of arguments
-	uint max_argc,                    // maximum number of arguments
+	uint8_t min_argc,                 // minimum number of arguments
+	uint8_t max_argc,                 // maximum number of arguments
 	SIType *types,                    // acceptable types
 	SIType ret_type,                  // return type
 	AR_Func_Free free,                // free aggregation callback
@@ -26,10 +27,12 @@ AR_FuncDesc *AR_AggFuncDescNew
 	AR_Func_PrivateData private_data  // generate private data
 ) {
 	AR_FuncDesc *desc = rm_calloc (1, sizeof (AR_FuncDesc)) ;
+	ASSERT (max_argc == arr_len (types));
 
 	desc->name                   = name ;
 	desc->func                   = func ;
 	desc->types                  = types ;
+	desc->types_len              = (uint8_t)arr_len(types) ;
 	desc->ret_type               = ret_type ;
 	desc->min_argc               = min_argc ;
 	desc->max_argc               = max_argc ;
@@ -87,28 +90,6 @@ SIValue Aggregate_GetResult
 //------------------------------------------------------------------------------
 // Aggregation function registration
 //------------------------------------------------------------------------------
-
-// forward declarations
-void Register_AVG        (void);
-void Register_SUM        (void);
-void Register_MAX        (void);
-void Register_MIN        (void);
-void Register_STD        (void);
-void Register_COUNT      (void);
-void Register_COLLECT    (void);
-void Register_PRECENTILE (void);
-
-// register all aggregation functions
-void Register_AggFuncs() {
-	Register_AVG();
-	Register_SUM();
-	Register_MAX();
-	Register_MIN();
-	Register_STD();
-	Register_COUNT();
-	Register_COLLECT();
-	Register_PRECENTILE();
-}
 
 // routine for freeing a generic aggregate function context
 void Aggregate_Free
