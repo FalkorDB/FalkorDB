@@ -40,6 +40,28 @@ void buildMatchOpTree
 	const cypher_astnode_t *clause
 );
 
+// builds a linear chain of scan and traversal operations for a single
+// pattern (sub-graph) extracted from the query graph
+//
+// starting from a root scan operation (label scan or all-node scan), one
+// traversal op is prepended per algebraic expression derived from the pattern,
+// forming a producer chain: scan -> traverse -> traverse -> ...
+//
+// return the topmost operation of the constructed chain, or NULL when the
+// pattern needs no traversal (i.e. it is a single, already-bound
+// label-free node)
+OpBase *ExecutionPlan_ProcessPattern
+(
+	GraphContext *gc,     // graph context
+	ExecutionPlan *plan,  // execution plan that will own the created operations
+	QueryGraph *qg,       // full query graph for the entire query
+	FT_FilterNode *ft,    // filter tree for the query, forwarded to expression
+						  // ordering so selective filters are applied early
+	bool optional,        // pattern is part of an OPTIONAL MATCH
+	QueryGraph *pattern   // pattern Sub-graph describing the specific pattern
+						  // to build ops for
+);
+
 // convert a RETURN clause into a Project or Aggregate op
 void buildReturnOps
 (
