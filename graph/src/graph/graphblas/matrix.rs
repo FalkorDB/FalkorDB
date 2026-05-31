@@ -150,8 +150,8 @@ pub fn init(
         // PreJIT and panics with GxB_JIT_ERROR if the cache is empty / no
         // compiler is available — which is exactly the runtime image
         // shape we ship.
-        let harvest = std::env::var_os("FALKORDB_PREJIT_HARVEST")
-            .is_some_and(|v| v != "0" && !v.is_empty());
+        let harvest =
+            std::env::var_os("FALKORDB_PREJIT_HARVEST").is_some_and(|v| v != "0" && !v.is_empty());
         let (jit_level, jit_name) = if harvest {
             (GxB_JIT_Control::GxB_JIT_ON, "JIT_ON (harvest)")
         } else {
