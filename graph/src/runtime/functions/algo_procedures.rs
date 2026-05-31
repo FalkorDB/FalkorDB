@@ -292,8 +292,8 @@ unsafe fn build_compact_adj(
     u64,
 ) {
     use crate::graph::graphblas::{
-        GrB_BOOL, GrB_Index, GrB_Matrix, GrB_Matrix_extractTuples_BOOL, GrB_Matrix_new,
-        GrB_Matrix_nvals, GrB_Matrix_setElement_BOOL, GrB_Matrix_wait, GrB_WaitMode,
+        GrB_BOOL, GrB_Index, GrB_Matrix, GrB_Matrix_build_BOOL, GrB_Matrix_extractTuples_BOOL,
+        GrB_Matrix_new, GrB_Matrix_nvals, GxB_ANY_BOOL,
     };
 
     let raw_adj = adj.inner();
@@ -324,18 +324,28 @@ unsafe fn build_compact_adj(
         raw_adj,
     );
 
-    // Build compact matrix
-    let mut compact: GrB_Matrix = null_mut();
-    GrB_Matrix_new(&raw mut compact, GrB_BOOL, n, n);
-
+    // Remap endpoints to compact indices, then bulk-load the matrix.
+    let mut ri: Vec<GrB_Index> = Vec::with_capacity(nvals_out as usize);
+    let mut ci: Vec<GrB_Index> = Vec::with_capacity(nvals_out as usize);
     for i in 0..nvals_out as usize {
         if let (Some(&cr), Some(&cc)) = (id_to_compact.get(&rows[i]), id_to_compact.get(&cols[i])) {
-            GrB_Matrix_setElement_BOOL(compact, true, cr, cc);
+            ri.push(cr);
+            ci.push(cc);
         }
     }
 
-    // Wait for pending operations
-    GrB_Matrix_wait(compact, GrB_WaitMode::GrB_COMPLETE as i32);
+    // Build compact matrix in one bulk call.
+    let mut compact: GrB_Matrix = null_mut();
+    GrB_Matrix_new(&raw mut compact, GrB_BOOL, n, n);
+    let xvals = vec![true; ri.len()];
+    GrB_Matrix_build_BOOL(
+        compact,
+        ri.as_ptr(),
+        ci.as_ptr(),
+        xvals.as_ptr(),
+        ri.len() as GrB_Index,
+        GxB_ANY_BOOL,
+    );
 
     (compact, id_to_compact, sorted_ids, n)
 }
@@ -352,8 +362,8 @@ unsafe fn build_compact_adj_symmetric(
     u64,
 ) {
     use crate::graph::graphblas::{
-        GrB_BOOL, GrB_Index, GrB_Matrix, GrB_Matrix_extractTuples_BOOL, GrB_Matrix_new,
-        GrB_Matrix_nvals, GrB_Matrix_setElement_BOOL, GrB_Matrix_wait, GrB_WaitMode,
+        GrB_BOOL, GrB_Index, GrB_Matrix, GrB_Matrix_build_BOOL, GrB_Matrix_extractTuples_BOOL,
+        GrB_Matrix_new, GrB_Matrix_nvals, GxB_ANY_BOOL,
     };
 
     let raw_adj = adj.inner();
@@ -382,17 +392,29 @@ unsafe fn build_compact_adj_symmetric(
         raw_adj,
     );
 
-    let mut compact: GrB_Matrix = null_mut();
-    GrB_Matrix_new(&raw mut compact, GrB_BOOL, n, n);
-
+    // Remap endpoints to compact indices in both directions, then bulk-load.
+    let mut ri: Vec<GrB_Index> = Vec::with_capacity(2 * nvals_out as usize);
+    let mut ci: Vec<GrB_Index> = Vec::with_capacity(2 * nvals_out as usize);
     for i in 0..nvals_out as usize {
         if let (Some(&cr), Some(&cc)) = (id_to_compact.get(&rows[i]), id_to_compact.get(&cols[i])) {
-            GrB_Matrix_setElement_BOOL(compact, true, cr, cc);
-            GrB_Matrix_setElement_BOOL(compact, true, cc, cr);
+            ri.push(cr);
+            ci.push(cc);
+            ri.push(cc);
+            ci.push(cr);
         }
     }
 
-    GrB_Matrix_wait(compact, GrB_WaitMode::GrB_COMPLETE as i32);
+    let mut compact: GrB_Matrix = null_mut();
+    GrB_Matrix_new(&raw mut compact, GrB_BOOL, n, n);
+    let xvals = vec![true; ri.len()];
+    GrB_Matrix_build_BOOL(
+        compact,
+        ri.as_ptr(),
+        ci.as_ptr(),
+        xvals.as_ptr(),
+        ri.len() as GrB_Index,
+        GxB_ANY_BOOL,
+    );
 
     (compact, id_to_compact, sorted_ids, n)
 }
