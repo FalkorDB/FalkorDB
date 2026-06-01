@@ -4,15 +4,20 @@
 # What this does:
 #   1. Clears the vendored PreJIT kernel sources (build/graphblas/PreJIT/*.c)
 #      and the SuiteSparse JIT runtime cache (~/.SuiteSparse/GrBx.y.z/).
-#   2. Rebuilds GraphBLAS + falkordb-rs with the JIT engine ENABLED
-#      (FALKORDB_PREJIT_HARVEST=1 — graphblas.sh skips PreJIT vendoring,
-#      matrix.rs sets GxB_JIT_ON instead of GxB_JIT_PAUSE).
+#   2. Rebuilds GraphBLAS + falkordb-rs with the JIT engine ENABLED:
+#      - FALKORDB_PREJIT_HARVEST=1 tells graphblas.sh to skip PreJIT
+#        vendoring so the build starts with an empty PreJIT directory.
+#      - `cargo build --features prejit_harvest` selects GxB_JIT_ON in
+#        matrix.rs instead of the default GxB_JIT_RUN. The runtime JIT
+#        selection is a Cargo feature, not an env var, so a shipped
+#        binary can never accidentally enable on-demand compilation.
 #   3. Runs the full test suite so GraphBLAS JIT-compiles every kernel the
 #      rust port exercises into ~/.SuiteSparse/GrBx.y.z/c/.
 #   4. Harvests those .c kernel sources into build/graphblas/PreJIT/ so
 #      the next regular build statically links them into libgraphblas.a.
-#   5. Rebuilds normally (no FALKORDB_PREJIT_HARVEST) + re-runs the suite
-#      to verify the harvested kernels load and serve every op shape.
+#   5. Rebuilds normally (no FALKORDB_PREJIT_HARVEST, no
+#      --features prejit_harvest) + re-runs the suite to verify the
+#      harvested kernels load and serve every op shape.
 #
 # This is a MANUAL developer tool, not a CI step. Re-run when:
 #   * The rust port starts exercising new GraphBLAS op shapes that aren't
@@ -138,12 +143,15 @@ fi
 
 # ---------------------------------------------------------------------------
 # Step 3 – Rebuild GraphBLAS + falkordb-rs in HARVEST mode.
-#          FALKORDB_PREJIT_HARVEST=1:
-#            * graphblas.sh skips vendoring PreJIT *.c (so the GraphBLAS
-#              build starts with an empty PreJIT directory; whatever the
-#              JIT engine compiles at runtime is what we'll capture)
-#            * matrix.rs sets GxB_JIT_ON at runtime (allows full JIT —
-#              cache load AND compile-on-demand)
+#            * FALKORDB_PREJIT_HARVEST=1 tells graphblas.sh to skip vendoring
+#              PreJIT *.c (so the GraphBLAS build starts with an empty PreJIT
+#              directory; whatever the JIT engine compiles at runtime is what
+#              we'll capture). graphblas.sh runs outside cargo, so it stays
+#              env-var driven.
+#            * --features prejit_harvest selects GxB_JIT_ON in matrix.rs
+#              (full JIT — cache load AND compile-on-demand) at build time;
+#              a shipped binary without the feature can never enable on-demand
+#              compilation, even if the env var leaks into its process.
 # ---------------------------------------------------------------------------
 echo "[Step 3a] Rebuilding GraphBLAS (HARVEST mode → ${HARVEST_PREFIX})..."
 export FALKORDB_PREJIT_HARVEST=1
@@ -157,14 +165,14 @@ export RELEASE=1
 mkdir -p "${HARVEST_PREFIX}"
 run_with_retry "graphblas.sh" "${REPO_DIR}/graphblas.sh"
 
-echo "[Step 3b] Rebuilding falkordb-rs release..."
-(cd "${REPO_DIR}" && run_with_retry "cargo build" cargo build --release)
+echo "[Step 3b] Rebuilding falkordb-rs release (--features prejit_harvest)..."
+(cd "${REPO_DIR}" && run_with_retry "cargo build" cargo build --release --features prejit_harvest)
 
 # ---------------------------------------------------------------------------
 # Step 4 – Run the full test suite to populate the JIT cache.
 # ---------------------------------------------------------------------------
-echo "[Step 4a] Running cargo tests (graph crate)..."
-(cd "${REPO_DIR}" && run_with_retry "cargo test -p graph" cargo test -p graph --release)
+echo "[Step 4a] Running cargo tests (graph crate, --features prejit_harvest)..."
+(cd "${REPO_DIR}" && run_with_retry "cargo test -p graph" cargo test -p graph --release --features prejit_harvest)
 
 echo "[Step 4b] Running pytest e2e + functions..."
 (cd "${REPO_DIR}" && run_with_retry "pytest e2e+functions" \
@@ -187,7 +195,8 @@ echo "[Step 4e] Running flow tests..."
 echo "[Step 5] Harvesting JIT kernels..."
 KERNEL_SRC_DIR="${SUITESPARSE_GRB}/c"
 [[ -d "${KERNEL_SRC_DIR}" ]] || die "JIT kernel source dir not found: ${KERNEL_SRC_DIR}
-Did the JIT actually run? Check FALKORDB_PREJIT_HARVEST is exported and matrix.rs honors it."
+Did the JIT actually run? Check FALKORDB_PREJIT_HARVEST is exported (for graphblas.sh)
+and the cargo build was invoked with --features prejit_harvest (for matrix.rs)."
 
 KERNEL_COUNT=$(find "${KERNEL_SRC_DIR}" -name 'GB*.c' | wc -l | tr -d ' ')
 echo "   Source : ${KERNEL_SRC_DIR}"
@@ -201,7 +210,8 @@ NEW_COUNT=$(find "${PREJIT_DIR}" -maxdepth 1 -name 'GB*.c' | wc -l | tr -d ' ')
 echo "   Harvested ${NEW_COUNT} kernel(s) into ${PREJIT_DIR}"
 
 # ---------------------------------------------------------------------------
-# Step 6 – Rebuild normally (PAUSE runtime) and re-run the suite to verify.
+# Step 6 – Rebuild normally (default GxB_JIT_RUN runtime, no --features
+#          prejit_harvest) and re-run the suite to verify.
 # ---------------------------------------------------------------------------
 echo "[Step 6a] Rebuilding GraphBLAS with vendored PreJIT kernels..."
 unset FALKORDB_PREJIT_HARVEST

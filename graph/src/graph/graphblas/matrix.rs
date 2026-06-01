@@ -132,8 +132,8 @@ pub fn init(
 
         // Pick GraphBLAS JIT control level:
         //
-        //   * Normal mode (default) — GxB_JIT_RUN: mirror the FalkorDB C
-        //     module (src/module.c). PreJIT kernels statically linked into
+        //   * Default — GxB_JIT_RUN: mirror the FalkorDB C module
+        //     (src/module.c:106). PreJIT kernels statically linked into
         //     libgraphblas.a (vendored from build/graphblas/PreJIT/ by
         //     graphblas.sh) are used for hot ops; RUN additionally permits
         //     dlopen of any kernel already present in the on-disk cache,
@@ -146,18 +146,17 @@ pub fn init(
         //     the C module's choice keeps the runtime semantics
         //     interchangeable.
         //
-        //   * Harvest mode (FALKORDB_PREJIT_HARVEST=1) — GxB_JIT_ON: full
-        //     JIT including compile-on-demand. Used exclusively by
-        //     gen_prejit.sh to populate ~/.SuiteSparse/GrBx.y.z/c/ with
-        //     the .c kernel sources we then check in as the next
-        //     generation of vendored PreJIT.
-        let harvest =
-            std::env::var_os("FALKORDB_PREJIT_HARVEST").is_some_and(|v| v != "0" && !v.is_empty());
-        let (jit_level, jit_name) = if harvest {
-            (GxB_JIT_Control::GxB_JIT_ON, "JIT_ON (harvest)")
-        } else {
-            (GxB_JIT_Control::GxB_JIT_RUN, "JIT_RUN")
-        };
+        //   * `--features prejit_harvest` — GxB_JIT_ON: full JIT including
+        //     compile-on-demand. Selected at build time, never at runtime —
+        //     prevents an env-var typo from accidentally enabling JIT in
+        //     a shipped binary. Used exclusively by gen_prejit.sh to
+        //     populate ~/.SuiteSparse/GrBx.y.z/c/ with the .c kernel
+        //     sources we then check in as the next generation of vendored
+        //     PreJIT (see graphblas.sh harvest mode).
+        #[cfg(feature = "prejit_harvest")]
+        let (jit_level, jit_name) = (GxB_JIT_Control::GxB_JIT_ON, "JIT_ON (harvest)");
+        #[cfg(not(feature = "prejit_harvest"))]
+        let (jit_level, jit_name) = (GxB_JIT_Control::GxB_JIT_RUN, "JIT_RUN");
         let info = GrB_Global_set_INT32(
             GrB_GLOBAL,
             jit_level as i32,
