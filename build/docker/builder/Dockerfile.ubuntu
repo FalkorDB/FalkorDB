@@ -22,8 +22,10 @@ RUN apt-get update -y && \
 
 # Pin cmake to the same exact version across every builder OS so the matrix
 # uses one CMake build. Overrides apt's 3.22.1; pip installs into
-# /usr/local/bin which precedes /usr/bin in PATH.
-RUN pip install --no-cache-dir --break-system-packages 'cmake==3.31.6'
+# /usr/local/bin which precedes /usr/bin in PATH. No --break-system-packages
+# flag because jammy's system Python isn't PEP-668-marked, and the flag
+# wasn't introduced until pip 23 (jammy ships pip 22).
+RUN pip install --no-cache-dir 'cmake==3.31.6'
 
 # Rust toolchain (used to build redisearch_rs)
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
