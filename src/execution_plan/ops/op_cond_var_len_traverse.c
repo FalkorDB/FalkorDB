@@ -254,7 +254,7 @@ static OpResult CondVarLenTraverseInit
 }
 
 // returns true if node_id carries ALL labels in op->dest_labels
-static inline bool _dest_has_labels
+static inline bool _dest_matches_labels
 (
 	const CondVarLenTraverse *op,
 	NodeID node_id
@@ -320,7 +320,9 @@ static Record CondVarLenTraverseOptimizedConsume
 		}
 
 		// destination label filtering: skip nodes that don't carry all labels
-		if(op->dest_label_count == 0 || _dest_has_labels(op, dest_id)) break;
+		if (op->dest_label_count == 0 || _dest_matches_labels (op, dest_id)) {
+			break ;
+		}
 	}
 
 	int res = Graph_GetNode(op->g, dest_id, &dest);
@@ -394,9 +396,15 @@ static Record CondVarLenTraverseConsume
 		}
 
 		// destination label filtering: skip paths whose head doesn't carry all labels
-		if(op->dest_label_count == 0) break;
+		if (op->dest_label_count == 0) {
+			break;
+		}
+
 		Node head = Path_Head(p);
-		if(_dest_has_labels(op, ENTITY_GET_ID(&head))) break;
+
+		if (_dest_matches_labels (op, ENTITY_GET_ID (&head))) {
+			break ;
+		}
 	}
 
 	//--------------------------------------------------------------------------
@@ -508,9 +516,9 @@ static void CondVarLenTraverseFree
 		op->ft = NULL;
 	}
 
-	if(op->dest_labels) {
-		rm_free(op->dest_labels);
-		op->dest_labels = NULL;
+	if (op->dest_labels) {
+		rm_free (op->dest_labels);
+		op->dest_labels = NULL ;
 	}
 }
 
