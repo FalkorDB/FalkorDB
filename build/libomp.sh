@@ -35,6 +35,47 @@ if [ -z "${LLVMORG_VERSION}" ]; then
     echo "ERROR: could not detect LLVM version; pass it explicitly: ./build/libomp.sh 22.1.6" >&2
     exit 1
 fi
+echo "libomp.sh: requested llvmorg-${LLVMORG_VERSION}"
+
+# apt.llvm.org sometimes ships a clang point release (e.g. 22.1.7) BEFORE the
+# llvm-project git tag of the same name has been cut upstream. In that
+# window a literal `git clone --branch llvmorg-22.1.7` aborts with "Remote
+# branch not found" and the toolchain image build fails.
+#
+# Resolve the requested X.Y.Z to the highest existing patch ≤ Z for the
+# same X.Y. This keeps us ABI-compatible with the installed clang (libomp
+# only needs to match the major/minor — the patch release affects bug
+# fixes, not the OpenMP runtime ABI) while surviving the upstream lag.
+LLVM_MAJOR_MINOR="${LLVMORG_VERSION%.*}"
+LLVM_PATCH="${LLVMORG_VERSION##*.}"
+RESOLVED_TAG=$(
+    git ls-remote --tags --refs https://github.com/llvm/llvm-project.git \
+        "refs/tags/llvmorg-${LLVM_MAJOR_MINOR}.*" 2>/dev/null \
+    | awk -F'refs/tags/llvmorg-' '{print $2}' \
+    | awk -F. -v want="${LLVM_PATCH}" '$3 ~ /^[0-9]+$/ && $3+0 <= want+0 {print}' \
+    | sort -t. -k3,3n \
+    | tail -1
+)
+if [ -z "${RESOLVED_TAG}" ]; then
+    # No patch ≤ requested exists — fall back to the highest patch for the
+    # major.minor channel (covers the case where apt.llvm.org regresses).
+    RESOLVED_TAG=$(
+        git ls-remote --tags --refs https://github.com/llvm/llvm-project.git \
+            "refs/tags/llvmorg-${LLVM_MAJOR_MINOR}.*" 2>/dev/null \
+        | awk -F'refs/tags/llvmorg-' '{print $2}' \
+        | awk -F. '$3 ~ /^[0-9]+$/' \
+        | sort -t. -k3,3n \
+        | tail -1
+    )
+fi
+if [ -z "${RESOLVED_TAG}" ]; then
+    echo "ERROR: no llvmorg-${LLVM_MAJOR_MINOR}.* tag found upstream" >&2
+    exit 1
+fi
+if [ "${RESOLVED_TAG}" != "${LLVMORG_VERSION}" ]; then
+    echo "libomp.sh: llvmorg-${LLVMORG_VERSION} not yet tagged upstream; using llvmorg-${RESOLVED_TAG} instead"
+fi
+LLVMORG_VERSION="${RESOLVED_TAG}"
 echo "libomp.sh: building llvmorg-${LLVMORG_VERSION}"
 
 PREFIX="${PREFIX:-/opt/libomp}"
