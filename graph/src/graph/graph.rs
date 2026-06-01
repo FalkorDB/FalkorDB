@@ -142,6 +142,7 @@ pub struct NodeId(u64);
 
 /// Opaque identifier for a relationship (edge).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(transparent)]
 pub struct RelationshipId(u64);
 
 impl From<LabelId> for usize {
@@ -2286,6 +2287,22 @@ impl Graph {
         self.relationship_attrs.get_attr_by_idx(id.0, attr_idx)
     }
 
+    /// Batch variant of `get_relationship_attribute_by_idx`.
+    /// Pushes one `Value` per id into `out`, substituting `default` for
+    /// missing entries (so callers don't allocate a temp `Vec<Option<_>>`).
+    pub fn get_relationship_attributes_by_idx(
+        &self,
+        ids: &[RelationshipId],
+        attr_idx: u16,
+        default: &Value,
+        out: &mut Vec<Value>,
+    ) {
+        // SAFETY: RelationshipId is `#[repr(transparent)]` over u64.
+        let keys: &[u64] = unsafe { std::slice::from_raw_parts(ids.as_ptr().cast(), ids.len()) };
+        self.relationship_attrs
+            .get_attrs_by_idx_batch_into(keys, attr_idx, default, out);
+    }
+
     fn resize_node_matrices(&mut self) {
         self.adjacancy_matrix.resize(self.node_cap, self.node_cap);
         self.node_labels_matrix
@@ -2913,10 +2930,15 @@ impl Graph {
         let Some(attr_idx) = self.get_node_attribute_id(&attr).map(|i| i as u16) else {
             return Ok(out.into_iter());
         };
-        for (id, _score) in raw_iter {
-            let node_id = NodeId(id);
-            let Some(Value::VecF32(entity_vec)) = self.get_node_attribute_by_idx(node_id, attr_idx)
-            else {
+        // Collect the candidate ids first, then fetch their vectors in one
+        // fused batch pass. This amortizes the per-shard read lock and gives
+        // the attribute cache sequential access instead of one isolated
+        // lookup per KNN result.
+        let node_ids: Vec<NodeId> = raw_iter.map(|(id, _score)| NodeId(id)).collect();
+        let mut vecs: Vec<Value> = Vec::with_capacity(node_ids.len());
+        self.get_node_attributes_by_idx(&node_ids, attr_idx, &Value::Null, &mut vecs);
+        for (node_id, entity) in node_ids.into_iter().zip(vecs) {
+            let Value::VecF32(entity_vec) = entity else {
                 continue;
             };
             if let Some(d) = vec_distance::distance(metric.as_deref(), &query_vec, &entity_vec) {
@@ -2963,15 +2985,20 @@ impl Graph {
         let Some(attr_idx) = self.get_relationship_attribute_id(&attr).map(|i| i as u16) else {
             return Ok(out.into_iter());
         };
-        for (src, dst, eid, _score) in raw_iter {
-            let edge_id = RelationshipId(eid);
-            let Some(Value::VecF32(entity_vec)) =
-                self.get_relationship_attribute_by_idx(edge_id, attr_idx)
-            else {
+        // Collect candidate triples first, then fetch their vectors in one
+        // fused batch pass (see `vector_query_nodes`).
+        let triples: Vec<(NodeId, NodeId, RelationshipId)> = raw_iter
+            .map(|(src, dst, eid, _score)| (NodeId(src), NodeId(dst), RelationshipId(eid)))
+            .collect();
+        let edge_ids: Vec<RelationshipId> = triples.iter().map(|&(_, _, eid)| eid).collect();
+        let mut vecs: Vec<Value> = Vec::with_capacity(edge_ids.len());
+        self.get_relationship_attributes_by_idx(&edge_ids, attr_idx, &Value::Null, &mut vecs);
+        for ((src, dst, edge_id), entity) in triples.into_iter().zip(vecs) {
+            let Value::VecF32(entity_vec) = entity else {
                 continue;
             };
             if let Some(d) = vec_distance::distance(metric.as_deref(), &query_vec, &entity_vec) {
-                out.push((NodeId(src), NodeId(dst), edge_id, d));
+                out.push((src, dst, edge_id, d));
             }
         }
         // See `vector_query_nodes` for why we sort by recomputed
