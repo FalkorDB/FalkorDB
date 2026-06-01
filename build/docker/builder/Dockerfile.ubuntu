@@ -20,9 +20,10 @@ RUN apt-get update -y && \
       cmake && \
     rm -rf /var/lib/apt/lists/*
 
-# Override apt's cmake 3.22.1 with a version that supports
-# FetchContent's DOWNLOAD_EXTRACT_TIMESTAMP (added in 3.24).
-RUN pip install --no-cache-dir --break-system-packages 'cmake>=3.28,<4.0'
+# Pin cmake to the same exact version across every builder OS so the matrix
+# uses one CMake build. Overrides apt's 3.22.1; pip installs into
+# /usr/local/bin which precedes /usr/bin in PATH.
+RUN pip install --no-cache-dir --break-system-packages 'cmake==3.31.6'
 
 # Rust toolchain (used to build redisearch_rs)
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y

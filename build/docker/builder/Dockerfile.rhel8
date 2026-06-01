@@ -23,14 +23,16 @@ RUN yum update -y && \
       zlib-devel libstdc++-static \
       gcc-toolset-14 \
       diffutils \
-      clang clang-devel \
-      cmake && \
+      clang clang-devel && \
     alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 && \
     alternatives --auto python3 && \
     yum clean all
 
 ENV PATH="/opt/rh/gcc-toolset-14/root/usr/bin:${PATH}"
 ENV LD_LIBRARY_PATH="/opt/rh/gcc-toolset-14/root/usr/lib64:${LD_LIBRARY_PATH}"
+
+# Pin cmake to the same exact version across every builder OS.
+RUN pip3.11 install --no-cache-dir 'cmake==3.31.6'
 
 # Build & install OpenSSL 3 from source (no OpenSSL 3 package in UBI8)
 ARG OPENSSL_VERSION=3.0.15

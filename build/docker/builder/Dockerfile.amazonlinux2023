@@ -34,9 +34,9 @@ RUN set -eux; \
       cmake; \
     dnf clean all
 
-# Override dnf's cmake 3.22.x with a recent version that supports
-# FetchContent's DOWNLOAD_EXTRACT_TIMESTAMP.
-RUN pip3 install --no-cache-dir 'cmake>=3.28,<4.0'
+# Pin cmake to the same exact version across every builder OS. Overrides
+# dnf's 3.22.x; pip installs into /usr/local/bin which precedes /usr/bin.
+RUN pip3 install --no-cache-dir 'cmake==3.31.6'
 
 # Rust toolchain
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
