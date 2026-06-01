@@ -1,5 +1,8 @@
 ARG BUILD_IMAGE=ghcr.io/falkordb/falkordb-build:latest
-ARG REDIS_ASAN_VER=8.6.2
+# Keep in sync with REDIS_VERSION in build/Dockerfile and build/runtime/Dockerfile
+# so all four images (toolchain, release, coverage, asan) build from the same
+# upstream redis tag.
+ARG REDIS_ASAN_VER=8.6.3
 
 # Stage 1: ASAN-instrumented redis-server built from source.
 # Redis's Makefile honors SANITIZER=address (sets MALLOC=libc, adds
