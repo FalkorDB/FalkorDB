@@ -226,6 +226,59 @@ impl AttributeCache {
         }
     }
 
+    /// Fused batch lookup that writes resolved `Value`s straight into `out`.
+    ///
+    /// For each key this pushes exactly one `Value`:
+    /// - cache hit with the attribute present  → the cloned value,
+    /// - cache hit with the attribute absent    → `default`,
+    /// - cache miss (entity not cached / newer) → `default`, and the absolute
+    ///   index into `out` is recorded in `missing` so the caller can fall back
+    ///   to the cold store.
+    ///
+    /// Avoids the intermediate `Vec<Option<Option<Value>>>` and the second
+    /// pass used by [`get_attrs_batch`]; in the common all-hit read path the
+    /// `missing` list stays empty.
+    pub fn get_attrs_batch_into(
+        &self,
+        keys: &[u64],
+        attr_idx: u16,
+        version: u64,
+        default: &Value,
+        out: &mut Vec<Value>,
+        missing: &mut Vec<usize>,
+    ) {
+        if keys.is_empty() {
+            return;
+        }
+        let base = out.len();
+        out.reserve(keys.len());
+        let mut current_shard_idx = shard_idx(keys[0]);
+        let mut guard = self.shards[current_shard_idx].entries.read();
+        for (pos, &id) in keys.iter().enumerate() {
+            let s = shard_idx(id);
+            if s != current_shard_idx {
+                drop(guard);
+                current_shard_idx = s;
+                guard = self.shards[s].entries.read();
+            }
+            let slot = slot_idx(id);
+            match guard.get(slot) {
+                Some(Some(entry)) if entry.version <= version => {
+                    let v = entry
+                        .attrs
+                        .binary_search_by_key(&attr_idx, |(idx, _)| *idx)
+                        .map_or_else(|_| default.clone(), |p| entry.attrs[p].1.clone());
+                    out.push(v);
+                }
+                _ => {
+                    // Cache miss — caller resolves against the cold store.
+                    out.push(default.clone());
+                    missing.push(base + pos);
+                }
+            }
+        }
+    }
+
     /// Return all cached attributes for an entity.
     #[must_use]
     pub fn get_entity(

@@ -525,14 +525,32 @@ impl AttributeStore {
         out: &mut Vec<Value>,
     ) {
         out.reserve(keys.len());
-        let pending_deletes_empty = self.pending_deletes.is_empty();
         let version = self.version;
-        // First pass: batch cache lookups (one shard lock per shard run).
+        if self.pending_deletes.is_empty() {
+            // Hot read path: fused single pass that writes `Value`s directly
+            // into `out`, avoiding the intermediate `Vec<Option<Option<_>>>`
+            // and a second pass. `missing` stays empty when every key hits the
+            // cache (the common case), so no cold-store work is done.
+            let base = out.len();
+            let mut missing: Vec<usize> = Vec::new();
+            self.cache
+                .get_attrs_batch_into(keys, attr_idx, version, default, out, &mut missing);
+            for &gi in &missing {
+                let key = keys[gi - base];
+                let attrs = self.populate_cache_from_fjall(key);
+                if let Ok(pos) = attrs.binary_search_by_key(&attr_idx, |(idx, _)| *idx) {
+                    out[gi] = attrs[pos].1.clone();
+                }
+            }
+            return;
+        }
+        // Slow path: some entities are pending deletion, so a cache hit must be
+        // overridden with `default`. Fall back to the two-pass logic.
         let mut cache_results: Vec<Option<Option<Value>>> = Vec::with_capacity(keys.len());
         self.cache
             .get_attrs_batch(keys, attr_idx, version, &mut cache_results);
         for (i, &key) in keys.iter().enumerate() {
-            if !pending_deletes_empty && self.pending_deletes.contains(key) {
+            if self.pending_deletes.contains(key) {
                 out.push(default.clone());
                 continue;
             }
