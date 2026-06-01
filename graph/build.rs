@@ -4,6 +4,22 @@ use std::fs;
 // cases and splitting it would reduce clarity.
 #[allow(clippy::too_many_lines)]
 fn main() {
+    // libomp linking strategy (same shape on Linux + macOS):
+    //   * if `${LIBOMP_PREFIX:-/opt/libomp}/lib/libomp.a` exists → link static.
+    //     This makes libfalkordb.{so,dylib} self-contained for OpenMP and is
+    //     the path CI/Docker takes (build/libomp.sh installs to /opt/libomp).
+    //   * otherwise → fall back to dynamic `-lomp`, resolved against the
+    //     system search path (apt's libomp-22-dev on Linux, homebrew's
+    //     /opt/homebrew/opt/llvm/lib/libomp.dylib on macOS).
+    // The LIBOMP_PREFIX env var lets local devs point at a non-root install
+    // (e.g. PREFIX=$HOME/libomp ./build/libomp.sh) without needing sudo.
+    let libomp_prefix =
+        std::env::var("LIBOMP_PREFIX").unwrap_or_else(|_| "/opt/libomp".to_string());
+    let libomp_static = std::path::Path::new(&libomp_prefix)
+        .join("lib/libomp.a")
+        .exists();
+    println!("cargo:rustc-link-search={libomp_prefix}/lib");
+
     #[cfg(target_os = "macos")]
     {
         println!("cargo:rustc-link-search=/opt/homebrew/opt/llvm/lib");
@@ -12,15 +28,25 @@ fn main() {
 
     #[cfg(target_os = "linux")]
     {
-        // Common libomp install locations when building RediSearch/VecSim with LLVM.
         println!("cargo:rustc-link-search=/usr/lib/llvm-22/lib");
         println!("cargo:rustc-link-search=/usr/lib/llvm-21/lib");
         println!("cargo:rustc-link-search=/usr/lib/llvm-20/lib");
     }
 
-    println!("cargo:rustc-link-lib=omp");
+    if libomp_static {
+        println!("cargo:rustc-link-lib=static=omp");
+    } else {
+        println!("cargo:rustc-link-lib=omp");
+    }
 
-    println!("cargo:rustc-link-search=/usr/local/lib");
+    // libgraphblas.a search path. Defaults to /usr/local/lib (what
+    // graphblas.sh installs to). Set GRAPHBLAS_LIB_DIR to point at a
+    // local out-of-tree build directory — used by gen_prejit.sh to
+    // avoid needing sudo for the harvest's intermediate GraphBLAS build.
+    let graphblas_lib_dir =
+        std::env::var("GRAPHBLAS_LIB_DIR").unwrap_or_else(|_| "/usr/local/lib".to_string());
+    println!("cargo:rerun-if-env-changed=GRAPHBLAS_LIB_DIR");
+    println!("cargo:rustc-link-search={graphblas_lib_dir}");
     println!("cargo:rustc-link-lib=static=graphblas");
 
     // LAGraph static libraries

@@ -1,5 +1,8 @@
 ARG BUILD_IMAGE=ghcr.io/falkordb/falkordb-build:latest
-ARG REDIS_ASAN_VER=8.6.2
+# Keep in sync with REDIS_VERSION in build/Dockerfile and build/runtime/Dockerfile
+# so all four images (toolchain, release, coverage, asan) build from the same
+# upstream redis tag.
+ARG REDIS_ASAN_VER=8.6.3
 
 # Stage 1: ASAN-instrumented redis-server built from source.
 # Redis's Makefile honors SANITIZER=address (sets MALLOC=libc, adds
@@ -77,31 +80,17 @@ ENV FALKORDB_HOME=/var/lib/falkordb \
 
 RUN mkdir -p ${FALKORDB_DATA_PATH} && ln -s ${FALKORDB_DATA_PATH} /data
 
-# Pull LLVM 22 from apt.llvm.org for libasan-version-matched libomp + symbolizer.
-# Plus GraphBLAS JIT runtime dependencies: at first matrix-op call GraphBLAS
-# generates C source under ~/.SuiteSparse/GrBN.M.K/c/ and invokes `cc` to
-# compile it into a per-kernel .so. Without these the JIT call returns
-# GxB_JIT_ERROR and matrix.rs:287's debug_assert_eq! panics the module,
-# killing redis on every MATCH/DELETE query.
-#
-# - `libomp5`: LLVM OpenMP **runtime**. The unversioned name is what
-#   apt.llvm.org publishes for LLVM 22; candidate via apt-cache policy is
-#   1:22.1.x from llvm-toolchain-trixie-22.
-# - `libomp-22-dev`: LLVM OpenMP **headers** (`omp.h`). Required by the
-#   JIT-compiled kernels — without it, the JIT `cc` invocation fails.
-# - `gcc`: provides `/usr/bin/cc`. GraphBLAS JIT defaults to invoking `cc`
-#   regardless of what the static library was built with. (clang-22 alone
-#   isn't enough — JIT doesn't shell out to a versioned name.)
-# - `llvm-22`: pulls in `llvm-symbolizer-22` for ASAN stack-trace symbol resolution.
-# - trixie's llvm.sh no longer requires `software-properties-common`; the
-#   helper script writes the apt source list directly.
+# Runtime apt install. After PR #483 GraphBLAS JIT is disabled and libomp is
+# statically linked into the instrumented .so (graph/build.rs + libomp.sh),
+# so we no longer need libomp5 / libomp-22-dev / gcc (was just for JIT `cc`).
+# We still need llvm-symbolizer-22 for readable ASAN backtraces, plus the
+# gcc-compatible libasan runtime.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ca-certificates bash openssl wget gnupg lsb-release libasan8 && \
     wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && ./llvm.sh 22 && \
     apt-get update && \
-    apt-get install -y --no-install-recommends \
-        libomp5 libomp-22-dev llvm-22 gcc && \
+    apt-get install -y --no-install-recommends llvm-22 && \
     apt-get purge -y wget gnupg lsb-release && \
     apt-get autoremove -y && \
     apt-get clean && rm -rf /var/lib/apt/lists/* /llvm.sh

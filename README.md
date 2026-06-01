@@ -33,26 +33,59 @@ cargo build
 
 GraphBLAS, LAGraph, and RediSearch must be built and installed before building this project.
 
-- building [GraphBLAS](https://github.com/DrTimothyAldenDavis/GraphBLAS.git)
+##### Toolchain prerequisites
+
+| Host | Compiler | OpenMP runtime |
+| --- | --- | --- |
+| macOS | `brew install llvm` (provides `clang` with OpenMP support) | `brew install libomp` |
+| Linux | `clang-22` (e.g. from [apt.llvm.org](https://apt.llvm.org/)) | `apt install libomp-22-dev` |
+
+Local builds use whatever OpenMP package is on the system — `build/libomp.sh`
+is **not** required for local development. It is only invoked by the Docker
+toolchain image (`build/Dockerfile`) to produce `/opt/libomp/lib/libomp.a`,
+which lets the published `libfalkordb.{so,dylib}` embed libomp statically
+and have no `libomp.so.5` / `libgomp.so.1` / `libomp.dylib` runtime
+dependency. A locally-built artifact will dynamically link the system
+libomp instead — fine for dev, but CI/Docker is the source of truth for
+the self-contained image.
+
+If you do want a self-contained local artifact (e.g. to mirror the Docker
+build), run `build/libomp.sh` with a writable `PREFIX` and point
+`graph/build.rs` at it via `LIBOMP_PREFIX`:
 
 ```bash
+CC=$(brew --prefix llvm)/bin/clang PREFIX=$HOME/libomp ./build/libomp.sh
+LIBOMP_PREFIX=$HOME/libomp cargo build
+```
+
+The script auto-detects the libomp source release from `${CC:-clang}
+--version`, so it stays ABI-matched to your compiler with no manual
+version arg. In Docker the same auto-detection runs against
+`clang-${CLANG_MAJOR}`, eliminating the prior drift risk between the
+apt-installed clang and a hand-pinned `LLVMORG_VERSION`.
+
+##### Building GraphBLAS + LAGraph
+
+[GraphBLAS](https://github.com/DrTimothyAldenDavis/GraphBLAS.git) and
+[LAGraph](https://github.com/GraphBLAS/LAGraph.git) are built by a single
+script: GraphBLAS is installed system-wide, LAGraph is emitted under
+`./lagraph_lib`.
+
+On macOS, point the script at homebrew clang first:
+
+```bash
+export CC=$(brew --prefix llvm)/bin/clang
+export CXX=$(brew --prefix llvm)/bin/clang++
 ./graphblas.sh
 ```
 
-or
+On Linux:
 
 ```bash
-make static CMAKE_OPTIONS='-DGRAPHBLAS_COMPACT=1 -DCMAKE_POSITION_INDEPENDENT_CODE=on'
-sudo make install
+CC=clang-22 CXX=clang++-22 ./graphblas.sh
 ```
 
-- building [LAGraph](https://github.com/GraphBLAS/LAGraph.git)
-
-```bash
-./lagraph.sh
-```
-
-- building [RediSearch](https://github.com/RediSearch/RediSearch.git)
+##### Building RediSearch
 
 ```bash
 ./redisearch.sh

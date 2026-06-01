@@ -1,4 +1,4 @@
-from common import Env
+from common import Env, SOCKET_TIMEOUT
 from falkordb.asyncio import FalkorDB
 from redis.asyncio import BlockingConnectionPool
 import asyncio
@@ -36,7 +36,7 @@ class testPendingQueryLimit():
             # blocking when there's no connections available
             n = self.db.config_get("THREAD_COUNT") * 5
             limit = self.db.config_get("MAX_QUEUED_QUERIES")
-            pool = BlockingConnectionPool(max_connections=n, timeout=None, host=self.env.host, port=self.env.port, decode_responses=True)
+            pool = BlockingConnectionPool(max_connections=n, timeout=None, host=self.env.host, port=self.env.port, decode_responses=True, socket_timeout=SOCKET_TIMEOUT)
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 

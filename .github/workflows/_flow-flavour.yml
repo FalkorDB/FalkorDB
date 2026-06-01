@@ -113,6 +113,10 @@ jobs:
       FALKORDB_REPLICA_HOST: replica
       FALKORDB_REPLICA_PORT: "6379"
       SANITIZER: ${{ inputs.sanitizer_env }}
+      # Mirrors the spawn-cell env below so tests/flow/common.py can detect
+      # the coverage flavour (CODE_COVERAGE='1') and apply the longer
+      # socket / BGSAVE polling budgets needed under instrumentation.
+      CODE_COVERAGE: ${{ inputs.collect_coverage && '1' || '' }}
     strategy:
       fail-fast: false
       matrix:

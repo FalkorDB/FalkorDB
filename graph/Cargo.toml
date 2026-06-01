@@ -12,6 +12,12 @@ categories = ["data-structures", "database"]
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
 
+[features]
+# See root Cargo.toml feature of the same name. Pass-through so the runtime
+# JIT-control choice in matrix.rs is selectable at build time, not from a
+# process env var that could leak into a shipped binary.
+prejit_harvest = []
+
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
