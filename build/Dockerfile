@@ -1,4 +1,56 @@
-FROM redis:8.6.2
+# Toolchain image (ghcr.io/falkordb/falkordb-build) — internal CI image used
+# to compile libfalkordb.so, GraphBLAS, LAGraph, and to run flow / bench
+# tests. NOT shipped to users.
+#
+# We build redis-server / redis-cli from a git clone of the pinned tag
+# rather than inheriting `FROM redis:${REDIS_VERSION}`. This:
+#   * gives us the SAME redis binary across the toolchain image, the
+#     release runtime image (build/runtime/Dockerfile) and the coverage
+#     runtime image (build/runtime/Dockerfile.coverage) — all three use
+#     the same git tag, same flags, same protected-mode + jemalloc tweaks.
+#   * keeps consistency with build/runtime/Dockerfile.asan which already
+#     builds its own (ASAN-instrumented) redis from git.
+#   * removes the implicit dependency on upstream's redis: image metadata
+#     (entrypoint, gosu, redis user) which we override anyway.
+#
+# Keep REDIS_VERSION in sync with build/runtime/Dockerfile so all images
+# carry the same redis revision.
+ARG REDIS_VERSION=8.6.3
+
+FROM debian:trixie-slim AS redis-builder
+ARG REDIS_VERSION
+ENV DEBIAN_FRONTEND=noninteractive
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        ca-certificates git dpkg-dev gcc g++ libc6-dev libssl-dev make; \
+    rm -rf /var/lib/apt/lists/*
+WORKDIR /tmp
+RUN git clone --depth 1 --branch "${REDIS_VERSION}" https://github.com/redis/redis.git redis-src
+WORKDIR /tmp/redis-src
+RUN set -eux; \
+    # Mirror upstream redis image's protected-mode default flip (1 → 0) so
+    # `docker run`s of any downstream image accept connections out-of-the-box.
+    sed -ri 's!^( *createBoolConfig[(]"protected-mode",.*, *)1( *,.*[)],)$!\10\2!' src/config.c; \
+    grep -E '^ *createBoolConfig[(]"protected-mode",.*, *0 *,.*[)],$' src/config.c; \
+    # Match upstream redis image's jemalloc page-size tuning so behaviour
+    # is identical across all kernels regardless of build host.
+    gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)"; \
+    arch="$(dpkg --print-architecture | awk -F- '{ print $NF }')"; \
+    extraJemallocConfigureFlags="--build=$gnuArch"; \
+    case "${arch##*-}" in \
+        amd64 | i386 | x32) extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-page=12" ;; \
+        *) extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-page=16" ;; \
+    esac; \
+    extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-hugepage=21"; \
+    sed -ri 's!cd jemalloc && ./configure !&'"$extraJemallocConfigureFlags"' !' deps/Makefile; \
+    export BUILD_TLS=yes BUILD_WITH_MODULES=no; \
+    make -j "$(nproc)" all; \
+    make PREFIX=/redis-install install; \
+    strip /redis-install/bin/redis-server /redis-install/bin/redis-cli; \
+    /redis-install/bin/redis-server --version
+
+FROM debian:trixie-slim
 
 # Major LLVM channel installed via apt.llvm.org (provides clang-${CLANG_MAJOR},
 # libc++-${CLANG_MAJOR}-dev, libpolly-${CLANG_MAJOR}-dev, etc.). apt.llvm.org
@@ -10,13 +62,27 @@ FROM redis:8.6.2
 ARG CLANG_MAJOR=22
 
 ENV PATH="/root/.cargo/bin:${PATH}"
+ENV DEBIAN_FRONTEND=noninteractive
 
+# Base runtime libs that previously came with the `redis:` base image
+# (ca-certificates for git/curl HTTPS, libssl3 for the redis-server binary
+# we copy in below).
 RUN apt update -y && \
+    apt install -y --no-install-recommends \
+        ca-certificates libssl3 openssl && \
     apt install -y lsb-release gnupg wget && \
     wget https://apt.llvm.org/llvm.sh && \
     chmod +x llvm.sh && \
     ./llvm.sh "${CLANG_MAJOR}" && \
     apt update -y
+
+# Install the self-built redis-server / redis-cli at the same path the
+# upstream `redis:` image used (/usr/local/bin), so callers like
+# tests/common.py:52 ("/usr/local/bin/redis-server") and RLTest's PATH
+# lookup pick them up transparently.
+COPY --from=redis-builder /redis-install/bin/redis-server /usr/local/bin/redis-server
+COPY --from=redis-builder /redis-install/bin/redis-cli    /usr/local/bin/redis-cli
+RUN redis-server --version && redis-cli --version
 
 RUN apt install -y git make cmake curl zlib1g zlib1g-dev \
     libpolly-${CLANG_MAJOR}-dev libc++-${CLANG_MAJOR}-dev libc++abi-${CLANG_MAJOR}-dev \
