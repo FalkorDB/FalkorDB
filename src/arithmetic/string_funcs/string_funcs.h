@@ -8,8 +8,6 @@
 
 #include "../../value.h"
 
-void Register_StringFuncs();
-
 // tries to convert input to string
 SIValue AR_TOSTRING
 (

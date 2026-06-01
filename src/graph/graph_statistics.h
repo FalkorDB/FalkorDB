@@ -30,10 +30,24 @@ void GraphStatistics_IntroduceRelationship
 	GraphStatistics *stats
 );
 
+// removes a relationship from graph's statistics
+void GraphStatistics_RemoveRelationship
+(
+	GraphStatistics *stats,  // graph statistics
+	RelationID rel_id        // relation id to remove
+);
+
 // new label is added, resize the node_count array
 void GraphStatistics_IntroduceLabel
 (
 	GraphStatistics *stats
+);
+
+// removes a label from graph's statistics
+void GraphStatistics_RemoveLabel
+(
+	GraphStatistics *stats,  // graph statistics
+	LabelID lbl_id           // label id
 );
 
 // increment the edge counter by amount

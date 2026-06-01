@@ -541,7 +541,7 @@ class testUndoLog():
 
     def test_20_undo_label_creation(self):
         """
-        a label introduced via a failing query should be rolledback
+        a label introduced via a failing query should be rolled back
         """
 
         lbls = self.graph.query("CALL db.labels()").result_set
@@ -558,7 +558,7 @@ class testUndoLog():
 
     def test_21_undo_rel_creation(self):
         """
-        a relationship-type introduced via a failing query should be rolledback
+        a relationship-type introduced via a failing query should be rolled back
         """
 
         rels = self.graph.query("CALL db.relationshipTypes()").result_set

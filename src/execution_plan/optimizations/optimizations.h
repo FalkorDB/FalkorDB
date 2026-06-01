@@ -19,17 +19,18 @@ void orderExpressions(
 	rax *bound_vars                 // previously-bound variables
 );
 
-void compactFilters(ExecutionPlan *plan);
-void reduceScans(ExecutionPlan *plan);
-void utilizeIndices(ExecutionPlan *plan);
-void seekByID(ExecutionPlan *plan);
-void filterVariableLengthEdges(ExecutionPlan *plan);
-void reduceCartesianProductStreamCount(ExecutionPlan *plan);
-void applyJoin(ExecutionPlan *plan);
-void reduceFilters(ExecutionPlan *plan);
-void reduceTraversal(ExecutionPlan *plan);
-void reduceDistinct(ExecutionPlan *plan);
-void reduceCount(ExecutionPlan *plan);
-void costBaseLabelScan(ExecutionPlan *plan);
-void batchOptionalMatch(ExecutionPlan *plan);
+void seekByID                          (ExecutionPlan *plan) ;
+void applyJoin                         (ExecutionPlan *plan) ;
+void reduceCount                       (ExecutionPlan *plan) ;
+void reduceScans                       (ExecutionPlan *plan) ;
+void reduceFilters                     (ExecutionPlan *plan) ;
+void compactFilters                    (ExecutionPlan *plan) ;
+void reduceDistinct                    (ExecutionPlan *plan) ;
+void utilizeIndices                    (ExecutionPlan *plan) ;
+void reduceTraversal                   (ExecutionPlan *plan) ;
+void costBaseLabelScan                 (ExecutionPlan *plan) ;
+void batchOptionalMatch                (ExecutionPlan *plan) ;
+void filterVariableLengthEdges         (ExecutionPlan *plan) ;
+void reduceVarLenTraverseDestLabel     (ExecutionPlan *plan) ;
+void reduceCartesianProductStreamCount (ExecutionPlan *plan) ;
 

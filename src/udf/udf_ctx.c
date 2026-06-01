@@ -191,6 +191,11 @@ JSContext *UDFCtx_GetJSContext(void) {
 
 // make sure the UDF context is up to date
 void UDFCtx_Update(void) {
+	// quick return if UDF repo is at its initial version
+	if (UDF_RepoGetVersion () == 0) {
+		return ;
+	}
+
 	UDFCtx *ctx = _UDFCtx_GetCtx () ;
 
 	ASSERT (ctx         != NULL) ;

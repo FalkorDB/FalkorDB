@@ -6,14 +6,14 @@
 
 #pragma once
 
-#include "../index/index.h"
-#include "../graph/graph.h"
-#include "../graph/query_graph.h"
 #include "../graph/entities/graph_entity.h"
 #include "../graph/entities/attribute_set.h"
 
+// forward declaration — breaks the circular dependency with graphcontext.h
+typedef struct GraphContext GraphContext ;
+
 // forward declaration of opaque constraint structure
-typedef struct _Constraint *Constraint;
+typedef struct _Constraint *Constraint ;
 
 // constraint enforcement callback function
 typedef bool (*Constraint_EnforcementCB)
@@ -51,14 +51,11 @@ typedef enum {
 	CT_MANDATORY
 } ConstraintType;
 
-// create a new constraint
-struct GraphContext;
-
 Constraint Constraint_New
 (
-	struct GraphContext *gc,
+	GraphContext *gc,
 	ConstraintType t,         // type of constraint
-	LabelID l,                // label/relation ID
+	int schema_id,            // schema ID
 	AttributeID *fields,      // enforced fields
 	const char **attr_names,  // enforced attribute names
 	uint8_t n_fields,         // number of fields
@@ -161,31 +158,31 @@ void Constraint_DecPendingChanges
 // replicate constraint to both persistency and replicas
 void Constraint_Replicate
 (
-	RedisModuleCtx *ctx,           // redis module context
-	const Constraint c,            // constraint to replicate
-	const struct GraphContext *gc  // graph context
+	RedisModuleCtx *ctx,    // redis module context
+	const Constraint c,     // constraint to replicate
+	const GraphContext *gc  // graph context
 );
 
 // tries to enforce constraint on all relevant entities
 // sets constraint status to pending
 void Constraint_Enforce
 (
-	Constraint c,            // constraint to enforce
-	struct GraphContext *gc  // graph context
+	Constraint c,     // constraint to enforce
+	GraphContext *gc  // graph context
 );
 
 // enforce constraint on all relevant nodes
 void Constraint_EnforceNodes
 (
-	Constraint c,  // constraint to enforce
-	Graph *g       // graph
+	Constraint c,     // constraint to enforce
+	GraphContext *gc  // graph context
 );
 
 // enforce constraint on all relevant edges
 void Constraint_EnforceEdges
 (
-	Constraint c,  // constraint to enforce
-	Graph *g       // graph
+	Constraint c,     // constraint to enforce
+	GraphContext *gc  // graph context
 );
 
 // enforce constraint on entity

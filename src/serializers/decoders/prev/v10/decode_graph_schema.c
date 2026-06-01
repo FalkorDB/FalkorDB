@@ -24,8 +24,10 @@ static void _RdbLoadSchema
 	Schema *s = NULL ;
 
 	if (!already_loaded) {
-		s = GraphContext_AddSchema (gc, name, type) ;
+		bool created = false ;
+		s = GraphContext_FindOrAddSchema (gc, name, type, &created) ;
 		ASSERT (s != NULL) ;
+		ASSERT (created == true) ;
 		ASSERT (Schema_GetID (s) == id) ;
 	}
 

@@ -18,15 +18,18 @@ void str_tolower_ascii
 	char *lower,
 	size_t *lower_len
 ) {
-	size_t str_len = strlen(str);
+	size_t str_len = strlen (str) ;
 	// avoid overflow
-	ASSERT(*lower_len >= str_len);
+	ASSERT (*lower_len >= str_len) ;
 
 	// update lower len
-	*lower_len = str_len;
+	*lower_len = str_len ;
 
-	for(size_t i = 0; i < str_len; i++) lower[i] = tolower(str[i]);
-	lower[str_len] = 0;
+	for (size_t i = 0 ; i < str_len ; i++) {
+		lower [i] = tolower (str [i]) ;
+	}
+
+	lower [str_len] = 0 ;
 }
 
 // return true if utf8 string is valid

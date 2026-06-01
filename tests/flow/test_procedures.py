@@ -389,10 +389,10 @@ class testProcedures(FlowTestsBase):
 
         q = """CALL dbms.functions()
                YIELD name, return_type, arguments, internal, reducible,
-               aggregation, variable_len, udf
+               aggregation, variable_len
                WHERE name = $name
                RETURN name, return_type, arguments, internal, reducible,
-                      aggregation, variable_len, udf"""
+                      aggregation, variable_len"""
 
         f = self.graph.query(q, {"name": "add"}).result_set[0]
 
@@ -403,7 +403,6 @@ class testProcedures(FlowTestsBase):
         reducible = f[4]
         aggregation = f[5]
         variable_len = f[6]
-        udf = f[7]
 
         self.env.assertEquals(name, "add")
         self.env.assertEquals(
@@ -421,7 +420,6 @@ class testProcedures(FlowTestsBase):
         self.env.assertEquals(reducible, True)
         self.env.assertEquals(aggregation, False)
         self.env.assertEquals(variable_len, False)
-        self.env.assertEquals(udf, False)
 
         # -----------------------------------------------------------------------
 
@@ -434,7 +432,6 @@ class testProcedures(FlowTestsBase):
         reducible = f[4]
         aggregation = f[5]
         variable_len = f[6]
-        udf = f[7]
 
         self.env.assertEquals(name, "avg")
         self.env.assertEquals(return_type, "Float or Null")
@@ -443,7 +440,6 @@ class testProcedures(FlowTestsBase):
         self.env.assertEquals(reducible, False)
         self.env.assertEquals(aggregation, True)
         self.env.assertEquals(variable_len, False)
-        self.env.assertEquals(udf, False)
 
         # -----------------------------------------------------------------------
 
@@ -456,7 +452,6 @@ class testProcedures(FlowTestsBase):
         reducible = f[4]
         aggregation = f[5]
         variable_len = f[6]
-        udf = f[7]
 
         self.env.assertEquals(name, "case")
         self.env.assertEquals(
@@ -473,4 +468,3 @@ class testProcedures(FlowTestsBase):
         self.env.assertEquals(reducible, True)
         self.env.assertEquals(aggregation, False)
         self.env.assertEquals(variable_len, True)
-        self.env.assertEquals(udf, False)

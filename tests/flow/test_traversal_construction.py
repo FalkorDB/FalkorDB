@@ -223,9 +223,6 @@ class testTraversalConstruction():
         self.env.assertTrue(child.name == "Project")
 
         child = child.children[0]
-        self.env.assertTrue("Conditional Traverse" in child.name)
-
-        child = child.children[0]
         self.env.assertTrue("Conditional Variable Length Traverse" in child.name)
 
         child = child.children[0]
@@ -258,10 +255,6 @@ class testTraversalConstruction():
 
             child = root.children[0]
             self.env.assertTrue(child.name == "Project")
-
-            child = child.children[0]
-            self.env.assertTrue("Conditional Traverse" in child.name or
-                                "Expand Into" in child.name)
 
             child = child.children[0]
             self.env.assertTrue("Conditional Variable Length Traverse" in child.name)

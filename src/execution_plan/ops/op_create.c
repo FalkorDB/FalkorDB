@@ -10,6 +10,8 @@
 #include "../../query_ctx.h"
 #include "../../errors/errors.h"
 
+#include "../../graph/graph_hub.h"
+
 // forward declarations
 static Record CreateConsume (OpBase *opBase) ;
 static OpResult CreateReset(OpBase *opBase);
@@ -29,30 +31,30 @@ OpBase *NewCreateOp
 	OpBase_Init((OpBase *)op, OPType_CREATE, "Create", NULL, CreateConsume,
 				CreateReset, NULL, CreateClone, CreateFree, true, plan);
 
-	uint node_blueprint_count = arr_len(nodes);
-	uint edge_blueprint_count = arr_len(edges);
+	uint node_blueprint_count = arr_len (nodes) ;
+	uint edge_blueprint_count = arr_len (edges) ;
 
 	// construct the array of IDs this operation modifies
-	for(uint i = 0; i < node_blueprint_count; i ++) {
-		NodeCreateCtx *n = nodes + i;
-		n->node_idx = OpBase_Modifies((OpBase *)op, n->alias);
+	for (uint i = 0; i < node_blueprint_count; i ++) {
+		NodeCreateCtx *n = nodes + i ;
+		n->node_idx = OpBase_Modifies ((OpBase *)op, n->alias) ;
 	}
 
-	for(uint i = 0; i < edge_blueprint_count; i ++) {
-		EdgeCreateCtx *e = edges + i;
-		e->edge_idx = OpBase_Modifies((OpBase *)op, e->alias);
-		bool aware;
-		UNUSED(aware);
-		aware = OpBase_AliasMapping((OpBase *)op, e->src, &e->src_idx);
-		ASSERT(aware == true);
-		aware = OpBase_AliasMapping((OpBase *)op, e->dest, &e->dest_idx);
-		ASSERT(aware == true);
+	for (uint i = 0; i < edge_blueprint_count; i ++) {
+		EdgeCreateCtx *e = edges + i ;
+		e->edge_idx = OpBase_Modifies ((OpBase *)op, e->alias) ;
+		bool aware ;
+		UNUSED (aware) ;
+		aware = OpBase_AliasMapping ((OpBase *)op, e->src, &e->src_idx) ;
+		ASSERT (aware == true) ;
+		aware = OpBase_AliasMapping ((OpBase *)op, e->dest, &e->dest_idx) ;
+		ASSERT (aware == true) ;
 	}
 
 	// prepare all creation variables
-	NewPendingCreationsContainer(&op->pending, nodes, edges); 
+	NewPendingCreationsContainer (&op->pending, nodes, edges) ;
 
-	return (OpBase *)op;
+	return (OpBase *)op ;
 }
 
 // prepare to create all nodes for the current Record
@@ -64,22 +66,22 @@ static void _CreateNodes
 ) {
 	Graph *g = GraphContext_GetGraph (gc) ;
 
-	uint nodes_to_create_count = arr_len(op->pending.nodes.nodes_to_create);
-	for (uint i = 0; i < nodes_to_create_count; i++) {
+	uint nodes_to_create_count = arr_len (op->pending.nodes.nodes_to_create) ;
+	for (uint i = 0 ; i < nodes_to_create_count ; i++) {
 		// get specified node to create
-		NodeCreateCtx *n = op->pending.nodes.nodes_to_create + i;
+		NodeCreateCtx *n = op->pending.nodes.nodes_to_create + i ;
 
 		// create a new node
 		Node newNode = Graph_ReserveNode (g) ;
 
 		// add new node to Record and save a reference to it
-		Node *node_ref = Record_AddNode(r, n->node_idx, newNode);
+		Node *node_ref = Record_AddNode (r, n->node_idx, newNode) ;
 
 		// convert query-level properties
-		AttributeSet converted_attr = NULL;
-		PropertyMap *map = n->properties;
-		if(map != NULL) {
-			ConvertPropertyMap(gc, &converted_attr, r, map, false);
+		AttributeSet converted_attr = NULL ;
+		PropertyMap *map = n->properties ;
+		if (map != NULL) {
+			ConvertPropertyMap (gc, &converted_attr, r, map, false) ;
 		}
 
 		// save node for later insertion
@@ -157,49 +159,53 @@ static Record CreateConsume
 (
 	OpBase *opBase
 ) {
-	OpCreate *op = (OpCreate *)opBase;
-	Record r;
+	OpCreate *op = (OpCreate *)opBase ;
+	Record r ;
 
 	// return mode, all data was consumed
-	if(op->records) return _handoff(op);
+	if (op->records) {
+		return _handoff (op) ;
+	}
 
 	// consume mode
-	op->records = arr_new(Record, 32);
+	op->records = arr_new (Record, 32) ;
 
-	OpBase       *child = NULL;
-	GraphContext *gc    = QueryCtx_GetGraphCtx();
+	OpBase       *child = NULL ;
+	GraphContext *gc    = QueryCtx_GetGraphCtx () ;
 
-	if(op->op.childCount == 0) {
+	PendingCreations_CreateMissingSchemas (gc, &op->pending) ;
+
+	if (op->op.childCount == 0) {
 		// no child operation to call
-		r = OpBase_CreateRecord(opBase);
+		r = OpBase_CreateRecord (opBase) ;
 		// create entities
-		_CreateNodes(op, r, gc);
-		_CreateEdges(op, r, gc);
+		_CreateNodes (op, r, gc) ;
+		_CreateEdges (op, r, gc) ;
 
 		// save record for later use
-		arr_append(op->records, r);
+		arr_append (op->records, r) ;
 	} else {
 		// pull data until child is depleted
-		child = op->op.children[0];
-		while((r = OpBase_Consume(child))) {
+		child = op->op.children [0] ;
+		while ((r = OpBase_Consume (child))) {
 			// create entities
-			_CreateNodes(op, r, gc);
-			_CreateEdges(op, r, gc);
+			_CreateNodes (op, r, gc) ;
+			_CreateEdges (op, r, gc) ;
 
 			// save record for later use
-			arr_append(op->records, r);
+			arr_append (op->records, r) ;
 		}
 	}
 
 	// done reading, we're not going to call consume any longer
 	// there might be operations e.g. index scan that need to free
 	// index R/W lock, as such reset all execution plan operation up the chain
-	if(child) {
-		OpBase_PropagateReset(child);
+	if (child) {
+		OpBase_PropagateReset (child) ;
 	}
 
 	// create entities
-	CommitNewEntities(&op->pending);
+	CommitNewEntities (&op->pending) ;
 
 	// no one consumes our output, return NULL
 	if (opBase->parent == NULL) {
@@ -207,7 +213,7 @@ static Record CreateConsume
 	}
 
 	// return record
-	return _handoff(op);
+	return _handoff (op) ;
 }
 
 static OpResult CreateReset
@@ -230,19 +236,21 @@ static OpBase *CreateClone
 	const ExecutionPlan *plan,
 	const OpBase *opBase
 ) {
-	ASSERT(opBase->type == OPType_CREATE);
+	ASSERT (opBase->type == OPType_CREATE) ;
 
-	OpCreate *op = (OpCreate *)opBase;
-	NodeCreateCtx *nodes;
-	EdgeCreateCtx *edges = arr_new(EdgeCreateCtx, arr_len(op->pending.edges));
-	arr_clone_with_cb(nodes, op->pending.nodes.nodes_to_create, NodeCreateCtx_Clone);
+	OpCreate *op = (OpCreate *)opBase ;
 
-	for(uint i = 0; i < arr_len(op->pending.edges); i++) {
-		EdgeCreateCtx ctx = EdgeCreateCtx_Clone(op->pending.edges[i].edges_to_create);
-		arr_append(edges, ctx);
+	NodeCreateCtx *nodes ;
+	EdgeCreateCtx *edges = arr_new (EdgeCreateCtx, arr_len (op->pending.edges)) ;
+	arr_clone_with_cb (nodes, op->pending.nodes.nodes_to_create, NodeCreateCtx_Clone) ;
+
+	for (uint i = 0; i < arr_len (op->pending.edges) ; i++) {
+		EdgeCreateCtx ctx =
+			EdgeCreateCtx_Clone (op->pending.edges[i].edges_to_create) ;
+		arr_append (edges, ctx) ;
 	}
 
-	return NewCreateOp(plan, nodes, edges);
+	return NewCreateOp (plan, nodes, edges) ;
 }
 
 static void FreeInternals

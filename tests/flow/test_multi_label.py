@@ -143,7 +143,7 @@ class testMultiLabel():
         query_result = self.graph.query(query)
         expected_result = [[["L2", "L3"]]]
         self.env.assertEquals(query_result.nodes_created, 1)
-        self.env.assertEquals(query_result.labels_added, 1)
+        self.env.assertEquals(query_result.labels_added, 2)
         self.env.assertEquals(query_result.result_set, expected_result)
 
         # Repetition of the query should not create a new node
