@@ -533,7 +533,7 @@ pub struct VectorScoredEdgeTripleIter {
 
 impl VectorScoredEdgeTripleIter {
     #[must_use]
-    pub fn empty(vector: Arc<thin_vec::ThinVec<f32>>) -> Self {
+    pub const fn empty(vector: Arc<thin_vec::ThinVec<f32>>) -> Self {
         Self {
             inner: ScoredEdgeTripleIter::empty(),
             _vector_owner: vector,

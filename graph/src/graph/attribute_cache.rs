@@ -3,13 +3,13 @@
 //! Custom sharded `RwLock<Vec<Option<CachedEntity>>>` implementation tuned
 //! for the attribute-store workload (sequential `u64` entity ids).
 //!
-//! ## Why a Vec instead of a HashMap
+//! ## Why a Vec instead of a `HashMap`
 //!
 //! Entity ids are allocated monotonically (`max_node_id = node_count +
 //! deleted.len() - 1`), so direct slot indexing is faster than hashing +
 //! probing.  Cost: gaps from deleted entities sit in memory as `None`
 //! slots (≈32 bytes each); for dense ids — the common case — this is
-//! cheaper than the per-entry HashMap bucket overhead.
+//! cheaper than the per-entry `HashMap` bucket overhead.
 //!
 //! ## Shape
 //!
@@ -53,7 +53,7 @@ impl CachedEntity {
     fn compute_weight(attrs: &[(u16, Value)]) -> u32 {
         let base = std::mem::size_of_val(attrs);
         let heap: usize = attrs.iter().map(|(_, v)| v.heap_size()).sum();
-        let total = base + heap + std::mem::size_of::<CachedEntity>();
+        let total = base + heap + std::mem::size_of::<Self>();
         u32::try_from(total).unwrap_or(u32::MAX).max(1)
     }
 }
@@ -78,12 +78,12 @@ struct Shard {
 const DIRTY_SHARDS: usize = 64;
 
 #[inline]
-fn shard_idx(entity_id: u64) -> usize {
+const fn shard_idx(entity_id: u64) -> usize {
     ((entity_id >> CHUNK_BITS) & SHARD_MASK) as usize
 }
 
 #[inline]
-fn slot_idx(entity_id: u64) -> usize {
+const fn slot_idx(entity_id: u64) -> usize {
     // Bijection with shard_idx. Reconstruction:
     //   id = ((slot >> CHUNK_BITS) << (CHUNK_BITS + SHARD_BITS))
     //         | (shard << CHUNK_BITS) | (slot & CHUNK_MASK)
@@ -93,7 +93,7 @@ fn slot_idx(entity_id: u64) -> usize {
 }
 
 #[inline]
-fn dirty_shard(entity_id: u64) -> usize {
+const fn dirty_shard(entity_id: u64) -> usize {
     (entity_id as usize) & (DIRTY_SHARDS - 1)
 }
 
@@ -423,11 +423,9 @@ impl AttributeCache {
         let slot = slot_idx(entity_id);
         let removed_w = {
             let mut entries = shard.entries.write();
-            if let Some(cell) = entries.get_mut(slot) {
-                cell.take().map_or(0, |e| u64::from(e.weight))
-            } else {
-                0
-            }
+            entries
+                .get_mut(slot)
+                .map_or(0, |cell| cell.take().map_or(0, |e| u64::from(e.weight)))
         };
         if removed_w > 0 {
             shard.bytes.fetch_sub(removed_w, Ordering::Relaxed);
@@ -585,7 +583,7 @@ impl AttributeCache {
 
     /// Collect up to `n` dirty entries for flushing.
     ///
-    /// Cost is O(min(n, dirty_count)) — independent of total cache size.
+    /// Cost is O(min(n, `dirty_count`)) — independent of total cache size.
     #[must_use]
     pub fn collect_dirty_lru(
         &self,

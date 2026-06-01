@@ -214,7 +214,7 @@ impl IndexSubject for Arc<QueryNode<Arc<String>, Variable>> {
                 reordered.insert(l.clone());
             }
         }
-        Arc::new(QueryNode::new(
+        Self::new(QueryNode::new(
             self.alias.clone(),
             reordered,
             self.attrs.clone(),
@@ -315,7 +315,7 @@ impl IndexSubject for Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>
             self.max_hops,
         );
         new_rel.all_shortest_paths = self.all_shortest_paths;
-        Arc::new(new_rel)
+        Self::new(new_rel)
     }
 }
 
@@ -914,6 +914,7 @@ fn is_non_indexable_subexpr(
     expr: &ExprIR<Variable>,
     scan_alias_id: Option<u32>,
 ) -> bool {
+    #[allow(clippy::match_same_arms)]
     match expr {
         ExprIR::Variable(v) => scan_alias_id.is_none_or(|id| v.id != id),
         ExprIR::Parameter(_) => true,
@@ -1036,6 +1037,7 @@ fn apply_filter_pushdown<T: IndexSubject>(
 /// Apply an inline-attr rewrite: replace the scan with an equality
 /// index scan, optionally prefixed with a post-filter when the inline
 /// value expression isn't a bare constant.
+#[allow(clippy::needless_pass_by_value)]
 fn apply_inline_rewrite<T: IndexSubject>(
     plan: &mut DynTree<IR>,
     idx: NodeIdx<Dyn<IR>>,

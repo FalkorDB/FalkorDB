@@ -93,7 +93,7 @@ pub fn register(funcs: &mut Functions) {
         args: [Type::Union(vec![Type::Map, Type::Null])],
         ret: Type::Union(vec![Type::Point, Type::Null]),
         fn point(_, args) {
-            let mut iter = args.into_iter();
+            let mut iter = args.iter();
             match iter.next() {
                 Some(Value::Map(map)) => {
                     let latitude = map
@@ -139,9 +139,9 @@ pub fn register(funcs: &mut Functions) {
         ],
         ret: Type::Union(vec![Type::Float, Type::Null]),
         fn distance(_, args) {
-            let mut iter = args.into_iter();
+            let mut iter = args.iter();
             match (iter.next(), iter.next()) {
-                (Some(Value::Point(p1)), Some(Value::Point(p2))) => Ok(Value::Float(p1.distance(&p2))),
+                (Some(Value::Point(p1)), Some(Value::Point(p2))) => Ok(Value::Float(p1.distance(p2))),
                 (Some(Value::Null), _) | (_, Some(Value::Null)) => Ok(Value::Null),
                 _ => unreachable!(),
             }
@@ -155,7 +155,7 @@ pub fn register(funcs: &mut Functions) {
         ],
         ret: Type::Union(vec![Type::Float, Type::Null]),
         fn vec_euclidean_distance(_, args) {
-            let mut iter = args.into_iter();
+            let mut iter = args.iter();
             match (iter.next(), iter.next()) {
                 (Some(Value::VecF32(a)), Some(Value::VecF32(b))) => {
                     if a.len() != b.len() {
@@ -185,7 +185,7 @@ pub fn register(funcs: &mut Functions) {
         ],
         ret: Type::Union(vec![Type::Float, Type::Null]),
         fn vec_cosine_distance(_, args) {
-            let mut iter = args.into_iter();
+            let mut iter = args.iter();
             match (iter.next(), iter.next()) {
                 (Some(Value::VecF32(a)), Some(Value::VecF32(b))) => {
                     if a.len() != b.len() {

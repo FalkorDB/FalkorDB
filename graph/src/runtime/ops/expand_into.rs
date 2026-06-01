@@ -61,7 +61,7 @@ pub struct ExpandIntoOp<'a> {
 }
 
 impl<'a> ExpandIntoOp<'a> {
-    pub fn new(
+    pub const fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
         relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,

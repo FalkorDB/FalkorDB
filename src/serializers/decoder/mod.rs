@@ -104,19 +104,34 @@ pub fn rdb_load_graph(
 
         // Decode this key's payloads into the pending graph.
         {
-            let pg = decode_state.pending.get_mut(&hdr.graph_name).unwrap();
+            let pg = decode_state
+                .pending
+                .get_mut(&hdr.graph_name)
+                .ok_or_else(|| {
+                    format!(
+                        "pending graph {} not found while loading multi-key RDB payload",
+                        hdr.graph_name
+                    )
+                })?;
             decode_payloads_into_pending(&mut r, &payloads, pg, &hdr)?;
         }
 
         // If all keys have been loaded, finalize immediately.
         // This avoids depending on aux_load ordering between module types.
         let should_finalize = {
-            let pg = decode_state.pending.get(&hdr.graph_name).unwrap();
+            let pg = decode_state.pending.get(&hdr.graph_name).ok_or_else(|| {
+                format!(
+                    "pending graph {} disappeared during multi-key RDB load",
+                    hdr.graph_name
+                )
+            })?;
             pg.keys_remaining == 0
         };
         if should_finalize {
             let graph_name = hdr.graph_name.clone();
-            let pg = decode_state.pending.remove(&graph_name).unwrap();
+            let pg = decode_state.pending.remove(&graph_name).ok_or_else(|| {
+                format!("pending graph {graph_name} not found at multi-key RDB finalization")
+            })?;
             let graph = finalize_pending_graph(pg)?;
             // Store the finalized graph in DECODE_STATE for the caller to retrieve.
             decode_state.finalized.insert(graph_name, graph);

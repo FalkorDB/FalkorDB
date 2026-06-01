@@ -411,14 +411,12 @@ pub fn graph_bulk_insert(
         key.set_value(&GRAPH_TYPE, g.clone())?;
         crate::graph_core::register_graph(key_str.to_string(), g.clone());
         g
+    } else if let Some(g) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
+        g.clone()
     } else {
-        if let Some(g) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
-            g.clone()
-        } else {
-            return Err(redis_module::RedisError::Str(
-                "ERR Invalid graph operation on empty key",
-            ));
-        }
+        return Err(redis_module::RedisError::Str(
+            "ERR Invalid graph operation on empty key",
+        ));
     };
 
     // Parse counts
@@ -449,7 +447,10 @@ pub fn graph_bulk_insert(
     // Inside MULTI/EXEC: blocking commands are not allowed, run synchronously
     // with RM_Yield to let Redis process PING between operations.
     if ctx.get_flags().contains(ContextFlags::MULTI) {
-        let tokens: Vec<&[u8]> = token_strings.iter().map(|rs| rs.as_slice()).collect();
+        let tokens: Vec<&[u8]> = token_strings
+            .iter()
+            .map(redis_module::RedisString::as_slice)
+            .collect();
         let mut tg = graph.write();
         let Some(g_arc) = tg.graph.write() else {
             return Err(redis_module::RedisError::String(
@@ -498,22 +499,19 @@ pub fn graph_bulk_insert(
     spawn(
         move || {
             let mut tg = graph.write();
-            let g_arc = match tg.graph.write() {
-                Some(g) => g,
-                None => {
-                    let ts_ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
-                    unsafe { ffi::lock_thread_safe_ctx(ts_ctx) };
-                    let cerr = ffi::sanitise_error("ERR write lock unavailable");
-                    unsafe { ffi::reply_error(ts_ctx, cerr.as_ptr()) };
-                    unsafe { ffi::unlock_thread_safe_ctx(ts_ctx) };
-                    drop(bc);
-                    unsafe { ffi::free_thread_safe_context(ts_ctx) };
-                    return;
-                }
+            let Some(g_arc) = tg.graph.write() else {
+                let ts_ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
+                unsafe { ffi::lock_thread_safe_ctx(ts_ctx) };
+                let cerr = ffi::sanitise_error("ERR write lock unavailable");
+                unsafe { ffi::reply_error(ts_ctx, cerr.as_ptr()) };
+                unsafe { ffi::unlock_thread_safe_ctx(ts_ctx) };
+                drop(bc);
+                unsafe { ffi::free_thread_safe_context(ts_ctx) };
+                return;
             };
             let result = {
                 let mut g = g_arc.borrow_mut();
-                let tokens: Vec<&[u8]> = token_data.iter().map(|v| v.as_slice()).collect();
+                let tokens: Vec<&[u8]> = token_data.iter().map(std::vec::Vec::as_slice).collect();
                 bulk_insert_sync(
                     &mut g,
                     &tokens,

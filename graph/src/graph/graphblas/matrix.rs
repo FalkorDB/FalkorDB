@@ -562,10 +562,9 @@ impl Matrix {
         }
 
         unsafe {
-            let (mask_ptr, desc) = match &mask {
-                Some(m) => (*m.m, GrB_DESC_RSC),
-                None => (null_mut(), null_mut()),
-            };
+            let (mask_ptr, desc) = mask
+                .as_ref()
+                .map_or((null_mut(), null_mut()), |m| (*m.m, GrB_DESC_RSC));
             let info = GrB_mxm(
                 *self.m,
                 mask_ptr,

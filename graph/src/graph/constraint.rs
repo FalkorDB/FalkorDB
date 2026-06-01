@@ -16,8 +16,8 @@ impl std::fmt::Display for ConstraintType {
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
         match self {
-            ConstraintType::Unique => write!(f, "UNIQUE"),
-            ConstraintType::Mandatory => write!(f, "MANDATORY"),
+            Self::Unique => write!(f, "UNIQUE"),
+            Self::Mandatory => write!(f, "MANDATORY"),
         }
     }
 }
@@ -36,9 +36,9 @@ impl std::fmt::Display for ConstraintStatus {
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
         match self {
-            ConstraintStatus::UnderConstruction => write!(f, "UNDER CONSTRUCTION"),
-            ConstraintStatus::Operational => write!(f, "OPERATIONAL"),
-            ConstraintStatus::Failed => write!(f, "FAILED"),
+            Self::UnderConstruction => write!(f, "UNDER CONSTRUCTION"),
+            Self::Operational => write!(f, "OPERATIONAL"),
+            Self::Failed => write!(f, "FAILED"),
         }
     }
 }
@@ -75,6 +75,7 @@ impl Constraint {
     }
 
     /// Check if this constraint matches the given type, entity type, label and properties.
+    #[must_use]
     pub fn matches(
         &self,
         ct: &ConstraintType,

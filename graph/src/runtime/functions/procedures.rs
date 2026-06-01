@@ -539,7 +539,7 @@ fn build_function_row(f: &super::GraphFn) -> Value {
     Value::Map(Arc::new(map))
 }
 
-/// Convert a `Type` to a display string matching the original FalkorDB format.
+/// Convert a `Type` to a display string matching the original `FalkorDB` format.
 fn type_to_dbms_string(t: &Type) -> String {
     match t {
         Type::Any => format_union(&[
@@ -607,7 +607,7 @@ fn format_union_strings(types: &[String]) -> String {
             format!(
                 "{}, or {last}",
                 rest.iter()
-                    .map(|s| s.as_str())
+                    .map(std::string::String::as_str)
                     .collect::<Vec<_>>()
                     .join(", ")
             )

@@ -134,7 +134,7 @@ pub fn graph_copy(
     // Check child exit status.
     // WIFEXITED: (status & 0x7f) == 0
     // WEXITSTATUS: (status >> 8) & 0xff
-    let exited = (status & 0x7f) == 0;
+    let exited = status.trailing_zeros() >= 7;
     let exit_code = (status >> 8) & 0xff;
     if !exited || exit_code != 0 {
         return Err(RedisError::Str("ERR child process failed during copy"));

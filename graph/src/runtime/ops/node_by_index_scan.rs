@@ -265,17 +265,17 @@ impl<'a> NodeByIndexScanOp<'a> {
     ) {
         // Additional labels (beyond the index's primary label) must be
         // verified post-hoc since the index only filters on the primary.
-        let extra_labels: Vec<&Arc<String>> = if self.node_pattern.labels.len() > 1 {
-            self.node_pattern.labels.iter().skip(1).collect()
+        let extra_labels = if self.node_pattern.labels.len() > 1 {
+            Some(self.node_pattern.labels.iter().skip(1).collect::<Vec<_>>())
         } else {
-            Vec::new()
+            None
         };
         while envs.len() < BATCH_SIZE {
             let Some((env, iter)) = self.pending.front_mut() else {
                 break;
             };
             if let Some(nid) = iter.next() {
-                if !extra_labels.is_empty() {
+                if let Some(extra_labels) = &extra_labels {
                     let node_labels = self.runtime.get_node_labels(nid);
                     if !extra_labels
                         .iter()

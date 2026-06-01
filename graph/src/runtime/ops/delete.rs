@@ -301,7 +301,7 @@ impl Runtime<'_> {
                 let mut edge_type_map: rustc_hash::FxHashMap<u64, usize> =
                     rustc_hash::FxHashMap::with_capacity_and_hasher(
                         committed.len(),
-                        Default::default(),
+                        rustc_hash::FxBuildHasher,
                     );
                 let g = self.g.borrow();
                 let min_id = committed

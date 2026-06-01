@@ -336,6 +336,7 @@ fn about_to_overflow(
 /// `count(*)`) every one of the `num_rows` rows contributes; otherwise
 /// only non-null inputs are counted. Cypher spec: `count(x)` ignores
 /// nulls; `count(*)` counts every row.
+#[allow(clippy::needless_pass_by_value)]
 fn count_batch(
     _: &Runtime,
     inputs: &[Value],
@@ -379,6 +380,7 @@ fn collect_batch(
 }
 
 /// Bulk `sum` aggregator. Sums non-null numeric inputs in one pass.
+#[allow(clippy::needless_pass_by_value)]
 fn sum_batch(
     _: &Runtime,
     inputs: &[Value],

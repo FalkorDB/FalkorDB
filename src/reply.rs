@@ -52,7 +52,7 @@ fn format_value_to_string(
         Value::Date(ts) => out.push_str(&Value::format_date(*ts)),
         Value::Time(ts) => out.push_str(&Value::format_time(*ts)),
         Value::Duration(d) => out.push_str(&Value::format_duration(*d)),
-        Value::List(values) => {
+        Value::List(values) | Value::Path(values) => {
             out.push('[');
             for (i, item) in values.iter().enumerate() {
                 if i > 0 {
@@ -79,16 +79,6 @@ fn format_value_to_string(
         }
         Value::Relationship(rel) => {
             let _ = write!(out, "[{}]", u64::from(rel.0));
-        }
-        Value::Path(values) => {
-            out.push('[');
-            for (i, item) in values.iter().enumerate() {
-                if i > 0 {
-                    out.push_str(", ");
-                }
-                format_value_to_string(runtime, item, out);
-            }
-            out.push(']');
         }
         Value::VecF32(vec) => {
             out.push('<');
@@ -117,17 +107,21 @@ fn reply_with_str(
     raw::reply_with_string_buffer(ctx.ctx, s.as_ptr().cast::<c_char>(), s.len());
 }
 
-/// Format a double using C's `%.15g` (15 significant digits, shortest of %e/%f
-/// with trailing zeros stripped). Calls libc snprintf for exact parity with
-/// FalkorDB C compact replies.
-fn format_g15(d: f64) -> String {
-    let fmt = c"%.15g";
+/// Format a double using C's `%.*g` (`precision` significant digits, shortest
+/// of %e/%f with trailing zeros stripped). Calls libc snprintf for exact parity
+/// with FalkorDB C output.
+pub fn format_g(
+    d: f64,
+    precision: i32,
+) -> String {
+    let fmt = c"%.*g";
     let mut buf = [0u8; 64];
     let n = unsafe {
         libc::snprintf(
             buf.as_mut_ptr().cast::<c_char>(),
             buf.len(),
             fmt.as_ptr(),
+            precision,
             d,
         )
     };
@@ -159,7 +153,7 @@ pub fn reply_compact_value(
         }
         Value::Float(x) => {
             raw::reply_with_long_long(ctx.ctx, 5);
-            let str = format_g15(*x);
+            let str = format_g(*x, 15);
             reply_with_str(ctx, &str);
         }
         Value::String(x) => {
@@ -338,9 +332,9 @@ pub fn reply_compact_value(
             raw::reply_with_long_long(ctx.ctx, 11);
             raw::reply_with_array(ctx.ctx, 2);
 
-            let lat_str = format_g15(f64::from(point.latitude));
+            let lat_str = format_g(f64::from(point.latitude), 15);
             reply_with_str(ctx, &lat_str);
-            let lon_str = format_g15(f64::from(point.longitude));
+            let lon_str = format_g(f64::from(point.longitude), 15);
             reply_with_str(ctx, &lon_str);
         }
     }
@@ -364,7 +358,7 @@ pub fn reply_verbose_value(
             raw::reply_with_long_long(ctx.ctx, *x as _);
         }
         Value::Float(x) => {
-            let str = format_g15(*x);
+            let str = format_g(*x, 15);
             reply_with_str(ctx, &str);
         }
         Value::String(x) => {
@@ -470,22 +464,25 @@ pub fn reply_verbose_value(
             let bg = runtime.g.borrow();
             let dr = runtime.deleted_relationships.borrow();
             let (type_name, attrs_iter): (Arc<String>, Vec<(Arc<String>, Value)>) =
-                if let Some(x) = dr.get(rel_id) {
-                    (
-                        x.type_name.clone(),
-                        x.attrs
-                            .iter()
-                            .map(|(k, v)| (k.clone(), v.clone()))
-                            .collect(),
-                    )
-                } else {
-                    let type_id = bg.get_relationship_type_id(*rel_id);
-                    let name = bg
-                        .get_type(type_id)
-                        .unwrap_or_else(|| Arc::new(String::new()));
-                    let attrs = bg.get_relationship_all_attrs(*rel_id);
-                    (name, attrs)
-                };
+                dr.get(rel_id).map_or_else(
+                    || {
+                        let type_id = bg.get_relationship_type_id(*rel_id);
+                        let name = bg
+                            .get_type(type_id)
+                            .unwrap_or_else(|| Arc::new(String::new()));
+                        let attrs = bg.get_relationship_all_attrs(*rel_id);
+                        (name, attrs)
+                    },
+                    |x| {
+                        (
+                            x.type_name.clone(),
+                            x.attrs
+                                .iter()
+                                .map(|(k, v)| (k.clone(), v.clone()))
+                                .collect(),
+                        )
+                    },
+                );
 
             raw::reply_with_array(ctx.ctx, 2);
             reply_with_str(ctx, "type");

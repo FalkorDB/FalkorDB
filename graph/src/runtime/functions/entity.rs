@@ -355,7 +355,7 @@ fn parse_degree_args(
 
     // Varargs of strings: degree(node, 'type1', 'type2', ...)
     let mut types = Vec::with_capacity(rest.len());
-    for v in rest.iter() {
+    for v in rest {
         match v {
             Value::String(s) => {
                 if !types.contains(s) {

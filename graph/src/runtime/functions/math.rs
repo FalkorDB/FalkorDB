@@ -315,7 +315,7 @@ pub fn register(funcs: &mut Functions) {
         var_arg: Type::Any,
         ret: Type::Any,
         fn coalesce(_, args) {
-            for arg in args.iter() {
+            for arg in args {
                 if *arg == Value::Null {
                     continue;
                 }

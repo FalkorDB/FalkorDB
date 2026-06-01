@@ -920,13 +920,11 @@ impl Graph {
         node_id: NodeId,
         label: &str,
     ) -> bool {
-        if let Some(label_id) = self.get_label_id(label) {
+        self.get_label_id(label).is_some_and(|label_id| {
             self.node_labels_matrix
                 .get(node_id.0, label_id.0 as u64)
                 .is_some()
-        } else {
-            false
-        }
+        })
     }
 
     /// Check if a node has a specific label by id (no string lookup).
@@ -947,13 +945,11 @@ impl Graph {
         edge_id: RelationshipId,
         type_name: &str,
     ) -> bool {
-        if let Some(type_id) = self.get_type_id(type_name) {
+        self.get_type_id(type_name).is_some_and(|type_id| {
             self.relationship_type_matrix
                 .get(edge_id.0, type_id.0 as u64)
                 .is_some()
-        } else {
-            false
-        }
+        })
     }
 
     /// Get-or-create a relationship type by name, returning its `TypeId`.
@@ -1001,20 +997,20 @@ impl Graph {
 
         {
             let mut cache = self.cache.lock();
-            if let Some(plan) = cache.get(query) {
-                if plan.udf_version == current_udf_version {
-                    let plan = plan.clone();
-                    drop(cache);
-                    let optimize_plan = optimize(&plan.plan, self, &param_values);
-                    return Ok(Plan::new(
-                        Arc::new(optimize_plan),
-                        true,
-                        parameters,
-                        parse_duration,
-                        plan_duration,
-                        params_offset,
-                    ));
-                }
+            if let Some(plan) = cache.get(query)
+                && plan.udf_version == current_udf_version
+            {
+                let plan = plan.clone();
+                drop(cache);
+                let optimize_plan = optimize(&plan.plan, self, &param_values);
+                return Ok(Plan::new(
+                    Arc::new(optimize_plan),
+                    true,
+                    parameters,
+                    parse_duration,
+                    plan_duration,
+                    params_offset,
+                ));
             }
         }
 
@@ -2277,6 +2273,19 @@ impl Graph {
         self.relationship_attrs.get_attr(id.0, attr)
     }
 
+    /// Fetches a relationship attribute using a pre-resolved attribute
+    /// index. Use `get_relationship_attribute_id` to resolve the index
+    /// once, then call this per relationship to avoid repeated string
+    /// lookups.
+    #[must_use]
+    pub fn get_relationship_attribute_by_idx(
+        &self,
+        id: RelationshipId,
+        attr_idx: u16,
+    ) -> Option<Value> {
+        self.relationship_attrs.get_attr_by_idx(id.0, attr_idx)
+    }
+
     fn resize_node_matrices(&mut self) {
         self.adjacancy_matrix.resize(self.node_cap, self.node_cap);
         self.node_labels_matrix
@@ -2897,10 +2906,17 @@ impl Graph {
         let query_vec = Arc::clone(&vector);
         let raw_iter = self.node_indexer.vector_query(label, field, vector, k)?;
 
-        let mut out: Vec<(NodeId, f64)> = Vec::new();
+        // Resolve the attribute name to its numeric slot once, rather than
+        // re-hashing the attribute string for every KNN result. If the
+        // attribute is unknown there are no vectors to score.
+        let mut out: Vec<(NodeId, f64)> = Vec::with_capacity(k);
+        let Some(attr_idx) = self.get_node_attribute_id(&attr).map(|i| i as u16) else {
+            return Ok(out.into_iter());
+        };
         for (id, _score) in raw_iter {
             let node_id = NodeId(id);
-            let Some(Value::VecF32(entity_vec)) = self.get_node_attribute(node_id, &attr) else {
+            let Some(Value::VecF32(entity_vec)) = self.get_node_attribute_by_idx(node_id, attr_idx)
+            else {
                 continue;
             };
             if let Some(d) = vec_distance::distance(metric.as_deref(), &query_vec, &entity_vec) {
@@ -2942,10 +2958,15 @@ impl Graph {
             .edge_indexer
             .vector_query_edges(label, field, vector, k)?;
 
-        let mut out: Vec<(NodeId, NodeId, RelationshipId, f64)> = Vec::new();
+        // Resolve the attribute slot once instead of per KNN result.
+        let mut out: Vec<(NodeId, NodeId, RelationshipId, f64)> = Vec::with_capacity(k);
+        let Some(attr_idx) = self.get_relationship_attribute_id(&attr).map(|i| i as u16) else {
+            return Ok(out.into_iter());
+        };
         for (src, dst, eid, _score) in raw_iter {
             let edge_id = RelationshipId(eid);
-            let Some(Value::VecF32(entity_vec)) = self.get_relationship_attribute(edge_id, &attr)
+            let Some(Value::VecF32(entity_vec)) =
+                self.get_relationship_attribute_by_idx(edge_id, attr_idx)
             else {
                 continue;
             };
@@ -2979,7 +3000,7 @@ impl Graph {
         &self.constraints
     }
 
-    pub fn constraints_mut(&mut self) -> &mut Vec<Constraint> {
+    pub const fn constraints_mut(&mut self) -> &mut Vec<Constraint> {
         &mut self.constraints
     }
 
@@ -3049,7 +3070,7 @@ impl Graph {
             EntityType::Node => self.label_node_count(&constraint.label),
             EntityType::Relationship => self
                 .get_relationship_matrix(&constraint.label)
-                .map_or(0, |t| t.edge_count()),
+                .map_or(0, Tensor::edge_count),
         }
     }
 
@@ -3207,6 +3228,7 @@ impl Graph {
         }
     }
 
+    #[must_use]
     pub fn build_composite_key(
         properties: &[Arc<String>],
         attrs: &[(Arc<String>, Value)],

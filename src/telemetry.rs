@@ -23,7 +23,7 @@ const STR_MAX_LEN: usize = 2048;
 
 /// Truncate `s` to at most `STR_MAX_LEN` characters, appending `"..."` if
 /// truncated.
-pub(crate) fn truncate(s: &str) -> String {
+pub fn truncate(s: &str) -> String {
     if let Some((byte_idx, _)) = s.char_indices().nth(STR_MAX_LEN) {
         let mut t = String::with_capacity(byte_idx + 3);
         t.push_str(&s[..byte_idx]);
@@ -39,12 +39,12 @@ pub(crate) fn truncate(s: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// Build the Redis stream key name for a graph's telemetry.
-pub(crate) fn stream_name(graph_name: &str) -> String {
+pub fn stream_name(graph_name: &str) -> String {
     format!("telemetry{{{graph_name}}}")
 }
 
 /// Data for one telemetry stream entry (10 fields).
-pub(crate) struct TelemetryEntry {
+pub struct TelemetryEntry {
     pub received_at: i64,
     pub query: String,
     pub params: String,
@@ -78,7 +78,7 @@ fn write_to_stream(
         + report.parse::<f64>().unwrap_or(0.0)
         + entry.wait_duration_ms
         + 5e-7;
-    let total = format!("{:.6}", total_raw);
+    let total = format!("{total_raw:.6}");
     let cache_flag = if entry.utilized_cache { "1" } else { "0" };
     let write_flag = if entry.is_write { "1" } else { "0" };
     let timeout_flag = if entry.timed_out { "1" } else { "0" };
@@ -129,7 +129,7 @@ fn replicated_call_options() -> CallOptions {
 }
 
 /// Delete the telemetry stream for a graph.
-pub(crate) fn delete_stream(
+pub fn delete_stream(
     ctx: &Context,
     graph_name: &str,
 ) {
@@ -149,7 +149,7 @@ fn next_id() -> u64 {
 }
 
 /// Current UNIX timestamp in seconds.
-pub(crate) fn unix_now_secs() -> i64 {
+pub fn unix_now_secs() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -157,7 +157,7 @@ pub(crate) fn unix_now_secs() -> i64 {
 }
 
 #[derive(Clone)]
-pub(crate) struct RunningQueryInfo {
+pub struct RunningQueryInfo {
     pub id: u64,
     pub received_at: i64,
     pub graph_name: String,
@@ -167,7 +167,7 @@ pub(crate) struct RunningQueryInfo {
 }
 
 #[derive(Clone)]
-pub(crate) struct WaitingQueryInfo {
+pub struct WaitingQueryInfo {
     pub id: u64,
     pub received_at: i64,
     pub graph_name: String,
@@ -186,7 +186,7 @@ static REGISTRY: Mutex<QueryRegistry> = Mutex::new(QueryRegistry {
 });
 
 /// Register a query as currently running. Returns its unique ID.
-pub(crate) fn register_running(
+pub fn register_running(
     received_at: i64,
     graph_name: &str,
     query: &str,
@@ -206,19 +206,19 @@ pub(crate) fn register_running(
 }
 
 /// Unregister a running query.
-pub(crate) fn unregister_running(id: u64) {
+pub fn unregister_running(id: u64) {
     let mut reg = REGISTRY.lock();
     reg.running.retain(|q| q.id != id);
 }
 
 /// Unregister a waiting query.
-pub(crate) fn unregister_waiting(id: u64) {
+pub fn unregister_waiting(id: u64) {
     let mut reg = REGISTRY.lock();
     reg.waiting.retain(|q| q.id != id);
 }
 
 /// Register a query as waiting in the write queue. Returns its unique ID.
-pub(crate) fn register_waiting(
+pub fn register_waiting(
     received_at: i64,
     graph_name: &str,
     query: &str,
@@ -236,7 +236,7 @@ pub(crate) fn register_waiting(
 }
 
 /// Transition a waiting query to running. Returns the waiting info if found.
-pub(crate) fn transition_waiting_to_running(waiting_id: u64) -> Option<u64> {
+pub fn transition_waiting_to_running(waiting_id: u64) -> Option<u64> {
     let mut reg = REGISTRY.lock();
     let pos = reg.waiting.iter().position(|q| q.id == waiting_id)?;
     let waiting = reg.waiting.remove(pos);
@@ -253,17 +253,17 @@ pub(crate) fn transition_waiting_to_running(waiting_id: u64) -> Option<u64> {
 }
 
 /// Snapshot of all currently running queries.
-pub(crate) fn snapshot_running() -> Vec<RunningQueryInfo> {
+pub fn snapshot_running() -> Vec<RunningQueryInfo> {
     REGISTRY.lock().running.clone()
 }
 
 /// Snapshot of all currently waiting queries.
-pub(crate) fn snapshot_waiting() -> Vec<WaitingQueryInfo> {
+pub fn snapshot_waiting() -> Vec<WaitingQueryInfo> {
     REGISTRY.lock().waiting.clone()
 }
 
-/// Build a RedisValue for the GRAPH.INFO RunningQueries section.
-pub(crate) fn running_queries_reply() -> Vec<RedisValue> {
+/// Build a `RedisValue` for the GRAPH.INFO `RunningQueries` section.
+pub fn running_queries_reply() -> Vec<RedisValue> {
     let now = Instant::now();
     let queries = snapshot_running();
     queries
@@ -280,14 +280,14 @@ pub(crate) fn running_queries_reply() -> Vec<RedisValue> {
                 RedisValue::BulkString("Execution duration".into()),
                 RedisValue::Float(duration_ms),
                 RedisValue::BulkString("Replicated command".into()),
-                RedisValue::Integer(if q.is_replicated { 1 } else { 0 }),
+                RedisValue::Integer(i64::from(q.is_replicated)),
             ])
         })
         .collect()
 }
 
-/// Build a RedisValue for the GRAPH.INFO WaitingQueries section.
-pub(crate) fn waiting_queries_reply() -> Vec<RedisValue> {
+/// Build a `RedisValue` for the GRAPH.INFO `WaitingQueries` section.
+pub fn waiting_queries_reply() -> Vec<RedisValue> {
     let now = Instant::now();
     let queries = snapshot_waiting();
     queries
@@ -343,7 +343,7 @@ static RECEIVER: Mutex<Option<MRx<List<PendingEntry>>>> = Mutex::new(None);
 static FLUSHER: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
 
 /// Push a telemetry entry to the background channel. Lock-free hot path.
-pub(crate) fn enqueue_entry(
+pub fn enqueue_entry(
     graph_name: &str,
     entry: TelemetryEntry,
 ) {
@@ -367,12 +367,12 @@ static IS_REPLICA: AtomicBool = AtomicBool::new(false);
 
 /// Update the cached replica state. Called from module init and the role
 /// change event handler.
-pub(crate) fn set_is_replica(is_replica: bool) {
+pub fn set_is_replica(is_replica: bool) {
     IS_REPLICA.store(is_replica, Ordering::Relaxed);
 }
 
 /// Spawn the background flusher thread. Must be called once at module init.
-pub(crate) fn start_flusher_thread() {
+pub fn start_flusher_thread() {
     let (tx, rx) = mpmc::unbounded_blocking::<PendingEntry>();
     {
         let mut sender = SENDER.lock();
@@ -394,7 +394,7 @@ pub(crate) fn start_flusher_thread() {
 /// Stop the background flusher: drop the sender so the channel disconnects,
 /// then join the thread. Must be called on module unload before tearing down
 /// Redis state the flusher's `RM_Call("XADD")` touches.
-pub(crate) fn shutdown_flusher_thread() {
+pub fn shutdown_flusher_thread() {
     // Drop the sender to close the channel; the flusher loop exits on
     // `Disconnected` after draining any pending entries.
     drop(SENDER.lock().take());
@@ -439,6 +439,7 @@ fn flusher_loop() {
             raw::RedisModule_ThreadSafeContextLock.expect("ThreadSafeContextLock")(tsc);
         }
         let ctx = Context::new(tsc);
+        #[allow(clippy::iter_with_drain)]
         for pe in batch.drain(..) {
             write_to_stream(&ctx, &pe.graph_name, &pe.entry);
         }

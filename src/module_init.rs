@@ -68,7 +68,7 @@ static RedisModuleEvent_ReplicationRoleChanged: RedisModuleEvent =
 /// Redis event ID for shutdown. Only wired up under sanitizer/valgrind
 /// runs (gated by `RS_GLOBAL_DTORS`) so workers join cleanly and per-thread
 /// + module-level RediSearch/LAGraph state is released — otherwise these
-/// allocations are reported as leaks at process exit.
+///   allocations are reported as leaks at process exit.
 #[allow(non_upper_case_globals)]
 static RedisModuleEvent_Shutdown: RedisModuleEvent = RedisModuleEvent { id: 5, dataver: 1 };
 
@@ -141,15 +141,15 @@ pub fn graph_init(
         )
         .replace('\0', " ");
         unsafe {
-            if let Some(log) = graph::index::redisearch::redis::RedisModule_Log {
-                if let Ok(c_msg) = std::ffi::CString::new(msg) {
-                    log(
-                        std::ptr::null_mut(),
-                        c"warning".as_ptr(),
-                        c"%s".as_ptr(),
-                        c_msg.as_ptr(),
-                    );
-                }
+            if let Some(log) = graph::index::redisearch::redis::RedisModule_Log
+                && let Ok(c_msg) = std::ffi::CString::new(msg)
+            {
+                log(
+                    std::ptr::null_mut(),
+                    c"warning".as_ptr(),
+                    c"%s".as_ptr(),
+                    c_msg.as_ptr(),
+                );
             }
         }
         std::process::exit(1);
@@ -453,13 +453,11 @@ unsafe extern "C" fn on_keyspace_event(
         .unwrap_or("");
 
     let mut key_len: usize = 0;
-    let key_ptr = unsafe {
-        redis_module::raw::RedisModule_StringPtrLen.unwrap()(key, &mut key_len as *mut usize)
-    };
+    let key_ptr =
+        unsafe { redis_module::raw::RedisModule_StringPtrLen.unwrap()(key, &raw mut key_len) };
     let key_bytes = unsafe { std::slice::from_raw_parts(key_ptr.cast(), key_len) };
-    let key_name = match std::str::from_utf8(key_bytes) {
-        Ok(s) => s,
-        Err(_) => return 0,
+    let Ok(key_name) = std::str::from_utf8(key_bytes) else {
+        return 0;
     };
 
     match event_str {
@@ -467,7 +465,8 @@ unsafe extern "C" fn on_keyspace_event(
             *RENAME_OLD_NAME.lock() = Some(key_name.to_string());
         }
         "rename_to" => {
-            if let Some(old_name) = RENAME_OLD_NAME.lock().take() {
+            let old = RENAME_OLD_NAME.lock().take();
+            if let Some(old_name) = old {
                 let context = Context::new(ctx);
                 telemetry::delete_stream(&context, &old_name);
             }
