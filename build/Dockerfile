@@ -115,6 +115,14 @@ RUN LLVMORG_VERSION=$(clang-${CLANG_MAJOR} --version | head -1 | grep -oE '[0-9]
 # we never run — only the client matters here.
 RUN apt install -y docker.io
 
+# The upstream `redis:` base used to set WORKDIR /data implicitly; we no
+# longer inherit that, so set it explicitly here. The venv install
+# (`python3 -m venv venv`) and all subsequent commands assume /data is the
+# cwd so the venv lands at /data/venv (referenced absolutely by step 16
+# as `/data/venv/bin/activate`) and graphblas.sh / RediSearch run inside
+# /data alongside the venv.
+WORKDIR /data
+
 RUN python3 -m venv venv
 
 RUN venv/bin/pip install behave falkordb falkordb-bulk-loader hypothesis pytest pytest-benchmark RLTest
