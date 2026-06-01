@@ -1,0 +1,46 @@
+# Builder toolchain image — Alpine
+#
+# Alpine cmake from apk is too old; pip-install cmake 3.28.x (this is the
+# original pattern in build-image, kept and bumped from 3.25.2 for consistency).
+# Adds clang-dev + clang-libs required by `bindgen`/`clang-sys` in redisearch_rs.
+
+FROM alpine:latest AS builder
+
+# --no-scripts avoids trigger issues in QEMU emulation during multi-arch builds.
+RUN apk add --no-cache --no-scripts \
+    git \
+    bash \
+    python3 \
+    py3-pip \
+    ca-certificates \
+    curl \
+    curl-dev \
+    wget \
+    unzip \
+    automake \
+    libtool \
+    autoconf \
+    openssl-dev \
+    zlib-dev \
+    zstd-dev \
+    rust \
+    cargo \
+    clang-dev \
+    clang-libs \
+    llvm-dev \
+    gperf \
+    bsd-compat-headers \
+    linux-headers \
+    build-base && \
+    update-ca-certificates || true
+
+# Python venv (the apk python is PEP-668 marked)
+RUN python3 -m venv /venv && chmod +x /venv/bin/*
+ENV PATH="/venv/bin:$PATH"
+
+RUN pip install --disable-pip-version-check --no-cache-dir setuptools --upgrade
+RUN pip install --no-cache-dir --break-system-packages 'cmake>=3.28,<4.0'
+
+# minipeg ships as `peg` on alpine but build.sh expects `leg`
+RUN apk add --no-cache --no-scripts minipeg && \
+    (ln -s "$(which minipeg)" /usr/local/bin/leg || ln -s "$(which minipeg)" /usr/bin/leg)

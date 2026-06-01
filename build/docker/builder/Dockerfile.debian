@@ -1,0 +1,26 @@
+# Builder toolchain image — Debian trixie-slim
+#
+# Debian trixie ships cmake 3.25.1 (≥ 3.24, OK for RediSearch's boost.cmake).
+# Adds libclang-dev + clang headers required by `bindgen`/`clang-sys` in redisearch_rs.
+
+FROM debian:trixie-slim
+
+RUN apt-get update -y && \
+    apt-get install -y --no-install-recommends \
+      git wget build-essential lcov \
+      openssl libssl-dev \
+      python3 python3-venv python3-pip \
+      rsync unzip curl m4 automake gperf peg libtool autoconf \
+      clang libclang-dev \
+      cmake \
+      gcc-13 g++-13 && \
+    rm -rf /var/lib/apt/lists/*
+
+# Set gcc-13 and g++-13 as the default gcc/g++
+RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 130 \
+    --slave /usr/bin/g++ g++ /usr/bin/g++-13 \
+    --slave /usr/bin/gcov gcov /usr/bin/gcov-13
+
+# Rust toolchain
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"

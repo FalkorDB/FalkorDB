@@ -1,0 +1,56 @@
+# Builder toolchain image — Amazon Linux 2023
+#
+# AL2023 dnf cmake is 3.22.2 (too old for RediSearch's boost.cmake). Override
+# with pip 3.28.x. Adds clang-devel for bindgen/clang-sys.
+
+FROM amazonlinux:2023 AS builder
+
+RUN set -eux; \
+    dnf update -y; \
+    dnf install -y \
+      git \
+      wget \
+      ca-certificates \
+      unzip \
+      rsync \
+      m4 \
+      automake \
+      gperf \
+      libtool \
+      autoconf \
+      make \
+      diffutils \
+      which \
+      gcc \
+      gcc-c++ \
+      libstdc++-static \
+      openssl \
+      openssl-devel \
+      python3 \
+      python3-pip \
+      clang \
+      clang-devel \
+      llvm-devel \
+      cmake; \
+    dnf clean all
+
+# Override dnf's cmake 3.22.x with a recent version that supports
+# FetchContent's DOWNLOAD_EXTRACT_TIMESTAMP.
+RUN pip3 install --no-cache-dir 'cmake>=3.28,<4.0'
+
+# Rust toolchain
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Build & install peg (alpine's minipeg equivalent — for libcypher-parser)
+ARG PEG_VERSION=0.1.19
+ARG PEG_SHA256=74d1b7b905dbbc1776502a4ccf9c38ad8b86c9f8e51b825214783eefd5cdc9af
+RUN set -eux; \
+    url="https://github.com/gpakosz/peg/archive/refs/tags/${PEG_VERSION}.tar.gz"; \
+    wget -O peg.tar.gz "$url"; \
+    echo "${PEG_SHA256}  peg.tar.gz" | sha256sum -c -; \
+    tar -xzf peg.tar.gz; \
+    cd "peg-${PEG_VERSION}"; \
+    make && make install; \
+    cd ..; \
+    rm -rf "peg-${PEG_VERSION}" peg.tar.gz

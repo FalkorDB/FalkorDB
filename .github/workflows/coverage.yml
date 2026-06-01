@@ -16,7 +16,7 @@ concurrency:
 jobs:
   code-coverage:
     runs-on: ubuntu-latest
-    container: falkordb/falkordb-build:ubuntu
+    container: ghcr.io/falkordb/falkordb-build:ubuntu
     steps:
 
     - name: Safe dir
