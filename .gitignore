@@ -57,4 +57,4 @@ twitter_thread.md
 .claude/scheduled_tasks.lock
 .claude/worktrees/
 local-build.so
-bench/
+bench/tests/flow/.ci-tmp/
