@@ -352,9 +352,83 @@ GraphContext *GraphContext_New
 	return gc ;
 }
 
-// decrease graph context reference count
-// graph context will be free once reference count reaches 0
-void GraphContext_Release
+//------------------------------------------------------------------------------
+// Synchronization functions
+//------------------------------------------------------------------------------
+
+// acquires a READ lock on the graph context
+void GraphContext_AcquireReadLock
+(
+	GraphContext *gc
+) {
+	ASSERT (gc != NULL) ;
+
+	int res = pthread_rwlock_rdlock (&gc->rwlock) ;
+	ASSERT (res == 0) ;
+
+	gc->writelocked = false ;
+}
+
+// acquires a WRITE lock on the graph context
+void GraphContext_AcquireWriteLock
+(
+	GraphContext *gc  // graph context
+) {
+	ASSERT (gc != NULL) ;
+
+	if (gc->writelocked == true) {
+		return ;
+	}
+
+	pthread_rwlock_wrlock (&gc->rwlock) ;
+	gc->writelocked = true ;
+}
+
+// acquire the graph context write lock with a timeout
+// attempts to acquire the write lock on the given graphcontext
+// if the lock is not acquired immediately the function will block until either
+// the lock becomes available or the timeout elapses
+//
+// returns:
+// - 0 on success (lock acquired)
+// - ETIMEDOUT if the timeout expired before acquiring the lock
+// - EBUSY if called with timeout_ms == 0 and the lock could not be acquired
+// - other nonzero error codes may be returned for unexpected failures
+int GraphContext_TimeAcquireWriteLock
+(
+	GraphContext *gc,  // graph to lock
+	int timeout_ms     // maximum time in milliseconds to wait for the lock:
+                       // - timeout_ms < 0 : block until the lock is acquired
+                       // - timeout_ms = 0 : non-blocking attempt (try-lock)
+                       // - timeout_ms > 0 : wait up to timeout_ms milliseconds
+) {
+	ASSERT (gc != NULL) ;
+	if (gc->writelocked == true) {
+		return 0 ;
+	}
+
+	int res = rwlock_timedwrlock (&gc->rwlock, timeout_ms) ;
+	gc->writelocked = (res == 0) ;
+
+	return res ;
+}
+
+void GraphContext_ReleaseReadLock
+(
+	GraphContext *gc
+) {
+	ASSERT (gc != NULL) ;
+	ASSERT (gc->writelocked == false) ;
+
+	// set default synchronization behavior
+	Graph_SetMatrixPolicy (gc->g, SYNC_POLICY_FLUSH_RESIZE) ;
+
+	pthread_rwlock_unlock (&gc->rwlock) ;
+}
+
+// releases the lock currently held on the graph context
+// must be called exactly once for every successful acquire call
+void GraphContext_ReleaseLock
 (
 	GraphContext *gc
 ) {

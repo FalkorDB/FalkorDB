@@ -233,9 +233,9 @@ int CommandDispatch
 		return REDISMODULE_ERR ;
 	}
 
-	// return incase caller provided a mismatched graph version
-	if (gc != NULL && !_verifyGraphVersion (gc, version)) {
-		_rejectOnVersionMismatch (ctx, GraphContext_GetVersion(gc)) ;
+	// return incase caller provided a mismatched graph hash
+	if (gc != NULL && !_verifyGraphHash (gc, hash)) {
+		_rejectOnHashMismatch (ctx, GraphContext_GetHash (gc)) ;
 		// Release the GraphContext, as we increased its reference count
 		// when retrieving it.
 		GraphContext_DecreaseRefCount (gc) ;
