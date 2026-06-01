@@ -724,9 +724,10 @@ int Graph_Memory
 	// get graph key
 	//--------------------------------------------------------------------------
 
-	GraphContext *gc = GraphContext_Retrieve(ctx, argv[2], true, false);
-	if(gc == NULL) {
-		return REDISMODULE_OK;
+	GraphContext *gc = NULL ;
+	if (GraphContext_Retrieve (ctx, argv[2], true, false, true, &gc)
+			!= GraphRetrieve_RETRIEVED) {
+		return REDISMODULE_OK ;
 	}
 
 	// GRAPH.MEMORY might be an expensive operation to compute

@@ -392,10 +392,21 @@ void _query
 	bool profile,
 	void *args
 ) {
-	CommandCtx     *command_ctx = (CommandCtx *)args;
+	CommandCtx *command_ctx = (CommandCtx *)args ;
+	RedisModuleCtx *ctx = CommandCtx_GetRedisCtx (command_ctx) ;
+	GraphContext *gc = CommandCtx_GetGraphContext (command_ctx) ;
+
+	if (gc == NULL) {
+		GraphContext_Retrieve (ctx, command_ctx->rm_graph_name, true, false,
+				true, &gc) ;
+
+		if (gc == NULL) {
+			// error emitted
+			goto cleanup ;
+		}
+	}
+
 	QueryCtx       *query_ctx   = QueryCtx_GetQueryCtx();
-	RedisModuleCtx *ctx         = CommandCtx_GetRedisCtx(command_ctx);
-	GraphContext   *gc          = CommandCtx_GetGraphContext(command_ctx);
 	Graph          *g           = GraphContext_GetGraph (gc) ;
 	ExecutionCtx   *exec_ctx    = NULL;
 
@@ -521,18 +532,30 @@ cleanup:
 
 	// cleanup routine invoked after encountering errors in this function
 	ExecutionCtx_Free (exec_ctx) ;
-	GraphContext_DecreaseRefCount (gc) ;
+
+	if (gc) {
+		GraphContext_DecreaseRefCount (gc) ;
+	}
+
 	Globals_UntrackCommandCtx (command_ctx) ;
 	CommandCtx_UnblockClient (command_ctx) ;
+
 	CommandCtx_Free (command_ctx) ;
 	QueryCtx_Free () ; // reset the QueryCtx and free its allocations
 	ErrorCtx_Clear () ;
 }
 
-void Graph_Profile(void *args) {
-	_query(true, args);
+void Graph_Profile
+(
+	void *args
+) {
+	_query (true, args) ;
 }
 
-void Graph_Query(void *args) {
-	_query(false, args);
+void Graph_Query
+(
+	void *args
+) {
+	_query (false, args) ;
 }
+

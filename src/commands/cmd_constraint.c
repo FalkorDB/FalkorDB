@@ -151,10 +151,11 @@ static bool _Constraint_Drop
 	// try to get graph
 	//--------------------------------------------------------------------------
 
-	GraphContext *gc = GraphContext_Retrieve(ctx, key, false, false);
-	if(!gc) {
+	GraphContext *gc = NULL ;
+	if (GraphContext_Retrieve (ctx, key, false, false, true, &gc)
+			!= GraphRetrieve_RETRIEVED) {
 		// graph doesn't exists
-		return false;
+		return false ;
 	}
 
 	//--------------------------------------------------------------------------
@@ -243,9 +244,10 @@ static bool _Constraint_Create
 	const char *error_msg = "Constraint creation failed";
 
 	// get or create graph
-	GraphContext *gc = GraphContext_Retrieve(ctx, key, false, true);
-	if(gc == NULL) {
-		return false;	
+	GraphContext *gc = NULL ;
+	if (GraphContext_Retrieve (ctx, key, false, true, true, &gc)
+			!= GraphRetrieve_RETRIEVED) {
+		return false ;
 	}
 
 	// set graph context in query context TLS

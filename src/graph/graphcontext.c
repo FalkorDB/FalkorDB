@@ -27,9 +27,6 @@
 // import the GraphContext struct
 #include "graphcontext_struct.h"
 
-extern uint aux_field_counter;
-// GraphContext type as it is registered at Redis.
-extern RedisModuleType *GraphContextRedisModuleType;
 
 // forward declarations
 static void _GraphContext_Free(void *arg);
@@ -128,94 +125,6 @@ GraphContext *GraphContext_New
 						  (CacheEntryCopyFunc)ExecutionCtx_Clone) ;
 
 	Graph_SetMatrixPolicy (gc->g, SYNC_POLICY_FLUSH_RESIZE) ;
-
-	return gc ;
-}
-
-// _GraphContext_Create tries to get a graph context
-// and if it does not exists, create a new one
-// the try-get-create flow is done when module global lock is acquired
-// to enforce consistency while BGSave is called
-static GraphContext *_GraphContext_Create
-(
-	RedisModuleCtx *ctx,
-	const char *graph_name
-) {
-	// create and initialize a graph context
-	GraphContext *gc = GraphContext_New (graph_name) ;
-	GraphContext_SetKey (ctx, gc) ;
-	return gc ;
-}
-
-// attach graph context to key  and register it with FalkorDB's
-// global graph registry
-void GraphContext_SetKey
-(
-	RedisModuleCtx *ctx,  // redis module context
-    GraphContext *gc      // graph context
-) {
-	ASSERT (gc != NULL) ;
-
-	const char *graph_name = GraphContext_GetName (gc) ;
-	RedisModuleString *graphID = RedisModule_CreateString (ctx, graph_name,
-			strlen (graph_name));
-
-	RedisModuleKey *key = RedisModule_OpenKey (ctx, graphID, REDISMODULE_WRITE) ;
-	ASSERT (key != NULL) ;
-
-	// set value in key
-	RedisModule_ModuleTypeSetValue (key, GraphContextRedisModuleType, gc) ;
-
-	// register graph context for BGSave
-	GraphContext_RegisterWithModule (gc) ;
-
-	RedisModule_FreeString (ctx, graphID) ;
-	RedisModule_CloseKey (key) ;
-}
-
-// retrive the graph context according to the graph name
-// readOnly is the access mode to the graph key
-GraphContext *GraphContext_Retrieve
-(
-	RedisModuleCtx *ctx,
-	RedisModuleString *graphID,
-	bool readOnly,
-	bool shouldCreate
-) {
-	// check if we're still replicating, if so don't allow access to the graph
-	if (aux_field_counter > 0) {
-		// the whole module is currently replicating, emit an error
-		RedisModule_ReplyWithError (ctx,
-				"ERR FalkorDB module is currently replicating") ;
-		return NULL ;
-	}
-
-	GraphContext *gc = NULL ;
-	int rwFlag = readOnly ? REDISMODULE_READ : REDISMODULE_WRITE ;
-
-	RedisModuleKey *key = RedisModule_OpenKey (ctx, graphID, rwFlag) ;
-	if (RedisModule_KeyType (key) == REDISMODULE_KEYTYPE_EMPTY) {
-		if (shouldCreate) {
-			// key doesn't exist, create it
-			const char *graphName = RedisModule_StringPtrLen (graphID, NULL) ;
-			gc = _GraphContext_Create (ctx, graphName) ;
-		} else {
-			// key does not exist and won't be created, emit an error.
-			RedisModule_ReplyWithError (ctx,
-					"ERR Invalid graph operation on empty key") ;
-		}
-	} else if (RedisModule_ModuleTypeGetType (key) == GraphContextRedisModuleType) {
-		gc = RedisModule_ModuleTypeGetValue (key) ;
-	} else {
-		// key exists but is not a graph, emit an error
-		RedisModule_ReplyWithError (ctx, REDISMODULE_ERRORMSG_WRONGTYPE) ;
-	}
-
-	RedisModule_CloseKey (key) ;
-
-	if (gc) {
-		GraphContext_IncreaseRefCount (gc) ;
-	}
 
 	return gc ;
 }

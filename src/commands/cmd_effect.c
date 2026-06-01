@@ -21,8 +21,9 @@ int Graph_Effect
 	}
 
 	// get graph context
-	GraphContext *gc = GraphContext_Retrieve(ctx, argv[1], false, true);
-	ASSERT(gc != NULL);
+	GraphContext *gc = NULL ;
+	GraphContext_Retrieve (ctx, argv[1], false, true, true, &gc) ;
+	ASSERT (gc != NULL) ;
 
 	//--------------------------------------------------------------------------
 	// process effects

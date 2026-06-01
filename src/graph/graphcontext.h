@@ -40,7 +40,7 @@ void GraphContext_DecreaseRefCount
 	GraphContext *gc
 );
 
-// attach graph context to key  and register it with FalkorDB's
+// attach graph context to a Redis key and register it with FalkorDB's
 // global graph registry
 void GraphContext_SetKey
 (
@@ -48,15 +48,30 @@ void GraphContext_SetKey
     GraphContext *gc      // graph context
 );
 
-// retrive the graph context according to the graph name
-// readOnly is the access mode to the graph key
-GraphContext *GraphContext_Retrieve
+// GraphContext_Retrieve status
+typedef enum {
+	GraphRetrieve_RETRIEVED,  // gc is valid, ref count incremented
+	GraphRetrieve_FAILED,     // error emitted, gc is NULL
+	GraphRetrieve_OFFLOADED,  // graph is offloaded
+} GraphRetrieveStatus ;
+
+// Retrieve the GraphContext for graphID.
+// On success sets *gc and returns GraphRetrieve_RETRIEVED.
+// On error emits a reply and returns GraphRetrieve_FAILED.
+// When load_from_disk=false and the graph is a stub, returns
+// GraphRetrieve_OFFLOADED with no error reply.
+// When load_from_disk=true the function loads the graph from disk and
+// re-fetches; may be called from any thread in that case.
+// When load_from_disk=false must be called from the Redis main thread.
+GraphRetrieveStatus GraphContext_Retrieve
 (
-	RedisModuleCtx *ctx,
-	RedisModuleString *graphID,
-	bool readOnly,
-	bool shouldCreate
-);
+	RedisModuleCtx    *ctx,             // Redis module context
+	RedisModuleString *graphID,         // key identifying the graph
+	bool               readOnly,        // if true, opens the key in read mode
+	bool               shouldCreate,    // create new graph if the key is absent
+	bool               load_from_disk,  // load graph from disk if offloaded
+	GraphContext     **gc               // out: graph context on success
+) ;
 
 // decrease graph context reference count
 // graph context will be free once reference count reaches 0
