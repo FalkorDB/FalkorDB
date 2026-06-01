@@ -409,17 +409,27 @@ pub fn register(funcs: &mut Functions) {
         procedure: ["name", "mode"],
         fn dbms_procedures(_, _args) {
             let funcs = get_functions();
-            let mut rows: Vec<Value> = funcs
+            // Collect references and sort by name up front so we never pay
+            // for map lookups (and the Arc<String> allocations they used to
+            // require) inside the sort comparator.
+            let mut procs: Vec<&Arc<super::GraphFn>> = funcs
                 .iter()
                 .filter(|f| matches!(f.fn_type, FnType::Procedure(_)))
+                .collect();
+            procs.sort_by(|a, b| a.name.cmp(&b.name));
+
+            let name_key = procedures_name_key();
+            let mode_key = procedures_mode_key();
+            let rows: ThinVec<Value> = procs
+                .into_iter()
                 .map(|f| {
                     let mut map = OrderMap::default();
                     map.insert(
-                        Arc::new(String::from("name")),
+                        name_key.clone(),
                         Value::String(Arc::new(f.name.clone())),
                     );
                     map.insert(
-                        Arc::new(String::from("mode")),
+                        mode_key.clone(),
                         Value::String(Arc::new(String::from(
                             if f.write { "WRITE" } else { "READ" },
                         ))),
@@ -427,24 +437,7 @@ pub fn register(funcs: &mut Functions) {
                     Value::Map(Arc::new(map))
                 })
                 .collect();
-            rows.sort_by(|a, b| {
-                let a_name = if let Value::Map(m) = a {
-                    m.get(&Arc::new(String::from("name")))
-                        .and_then(|v| if let Value::String(s) = v { Some(s.as_str()) } else { None })
-                        .unwrap_or("")
-                } else {
-                    ""
-                };
-                let b_name = if let Value::Map(m) = b {
-                    m.get(&Arc::new(String::from("name")))
-                        .and_then(|v| if let Value::String(s) = v { Some(s.as_str()) } else { None })
-                        .unwrap_or("")
-                } else {
-                    ""
-                };
-                a_name.cmp(b_name)
-            });
-            Ok(Value::List(Arc::new(rows.into())))
+            Ok(Value::List(Arc::new(rows)))
         }
     );
 
@@ -456,52 +449,89 @@ pub fn register(funcs: &mut Functions) {
         fn dbms_functions(_, _args) {
             let funcs = get_functions();
             let mut seen_names = std::collections::HashSet::new();
-            let mut rows: Vec<Value> = Vec::new();
+            // Gather all function references (built-ins + UDFs), de-duplicated
+            // by lowercase name, then sort by name once. Sorting the function
+            // refs is far cheaper than building maps and sorting them while
+            // re-allocating Arc<String> keys for every comparison.
+            let mut entries: Vec<Arc<super::GraphFn>> = Vec::new();
 
             // Built-in functions first (non-procedure entries).
             for f in funcs.iter().filter(|f| !matches!(f.fn_type, FnType::Procedure(_))) {
-                seen_names.insert(f.name.to_lowercase());
-                rows.push(build_function_row(f));
+                if seen_names.insert(f.name.to_lowercase()) {
+                    entries.push(Arc::clone(f));
+                }
             }
 
             // UDF entries from the dynamic registry.
             for f in get_udf_functions() {
                 if seen_names.insert(f.name.to_lowercase()) {
-                    rows.push(build_function_row(&f));
+                    entries.push(f);
                 }
             }
 
-            rows.sort_by(|a, b| {
-                let a_name = if let Value::Map(m) = a {
-                    m.get(&Arc::new(String::from("name")))
-                        .and_then(|v| if let Value::String(s) = v { Some(s.as_str()) } else { None })
-                        .unwrap_or("")
-                } else {
-                    ""
-                };
-                let b_name = if let Value::Map(m) = b {
-                    m.get(&Arc::new(String::from("name")))
-                        .and_then(|v| if let Value::String(s) = v { Some(s.as_str()) } else { None })
-                        .unwrap_or("")
-                } else {
-                    ""
-                };
-                a_name.cmp(b_name)
-            });
-            Ok(Value::List(Arc::new(rows.into())))
+            entries.sort_by(|a, b| a.name.cmp(&b.name));
+
+            let keys = function_row_keys();
+            let rows: ThinVec<Value> = entries
+                .iter()
+                .map(|f| build_function_row(f, keys))
+                .collect();
+            Ok(Value::List(Arc::new(rows)))
         }
     );
 }
 
+/// Shared `Arc<String>` map keys for `dbms.procedures()` rows, allocated once.
+fn procedures_name_key() -> &'static Arc<String> {
+    static KEY: std::sync::LazyLock<Arc<String>> =
+        std::sync::LazyLock::new(|| Arc::new(String::from("name")));
+    &KEY
+}
+
+fn procedures_mode_key() -> &'static Arc<String> {
+    static KEY: std::sync::LazyLock<Arc<String>> =
+        std::sync::LazyLock::new(|| Arc::new(String::from("mode")));
+    &KEY
+}
+
+/// Shared `Arc<String>` map keys for `dbms.functions()` rows, allocated once
+/// so every row reuses the same key allocations instead of creating eight new
+/// `Arc<String>`s per function on every call.
+struct FunctionRowKeys {
+    name: Arc<String>,
+    return_type: Arc<String>,
+    arguments: Arc<String>,
+    internal: Arc<String>,
+    reducible: Arc<String>,
+    aggregation: Arc<String>,
+    variable_len: Arc<String>,
+    udf: Arc<String>,
+}
+
+fn function_row_keys() -> &'static FunctionRowKeys {
+    static KEYS: std::sync::LazyLock<FunctionRowKeys> =
+        std::sync::LazyLock::new(|| FunctionRowKeys {
+            name: Arc::new(String::from("name")),
+            return_type: Arc::new(String::from("return_type")),
+            arguments: Arc::new(String::from("arguments")),
+            internal: Arc::new(String::from("internal")),
+            reducible: Arc::new(String::from("reducible")),
+            aggregation: Arc::new(String::from("aggregation")),
+            variable_len: Arc::new(String::from("variable_len")),
+            udf: Arc::new(String::from("udf")),
+        });
+    &KEYS
+}
+
 /// Build a single result row for `dbms.functions()`.
-fn build_function_row(f: &super::GraphFn) -> Value {
+fn build_function_row(
+    f: &super::GraphFn,
+    keys: &FunctionRowKeys,
+) -> Value {
     let mut map = OrderMap::default();
+    map.insert(keys.name.clone(), Value::String(Arc::new(f.name.clone())));
     map.insert(
-        Arc::new(String::from("name")),
-        Value::String(Arc::new(f.name.clone())),
-    );
-    map.insert(
-        Arc::new(String::from("return_type")),
+        keys.return_type.clone(),
         Value::String(Arc::new(type_to_dbms_string(&f.ret_type))),
     );
     let args_list: thin_vec::ThinVec<Value> = match &f.args_type {
@@ -513,27 +543,24 @@ fn build_function_row(f: &super::GraphFn) -> Value {
             thin_vec::thin_vec![Value::String(Arc::new(type_to_dbms_string(t)))]
         }
     };
+    map.insert(keys.arguments.clone(), Value::List(Arc::new(args_list)));
     map.insert(
-        Arc::new(String::from("arguments")),
-        Value::List(Arc::new(args_list)),
-    );
-    map.insert(
-        Arc::new(String::from("internal")),
+        keys.internal.clone(),
         Value::Bool(matches!(f.fn_type, FnType::Internal)),
     );
     let reducible = !f.non_deterministic
         && !matches!(f.fn_type, FnType::Aggregation { .. } | FnType::Procedure(_));
-    map.insert(Arc::new(String::from("reducible")), Value::Bool(reducible));
+    map.insert(keys.reducible.clone(), Value::Bool(reducible));
     map.insert(
-        Arc::new(String::from("aggregation")),
+        keys.aggregation.clone(),
         Value::Bool(matches!(f.fn_type, FnType::Aggregation { .. })),
     );
     map.insert(
-        Arc::new(String::from("variable_len")),
+        keys.variable_len.clone(),
         Value::Bool(matches!(f.args_type, FnArguments::VarLength(_))),
     );
     map.insert(
-        Arc::new(String::from("udf")),
+        keys.udf.clone(),
         Value::Bool(matches!(f.fn_type, FnType::Udf)),
     );
     Value::Map(Arc::new(map))
