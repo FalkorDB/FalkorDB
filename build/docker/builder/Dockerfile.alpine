@@ -4,7 +4,10 @@
 # original pattern in build-image, kept and bumped from 3.25.2 for consistency).
 # Adds clang-dev + clang-libs required by `bindgen`/`clang-sys` in redisearch_rs.
 
-FROM alpine:latest AS builder
+# Pinned to alpine:3.22 (rather than alpine:latest) so the toolchain version
+# is reproducible across image rebuilds. Bump deliberately when alpine 3.23+
+# becomes the production target.
+FROM alpine:3.22 AS builder
 
 # --no-scripts avoids trigger issues in QEMU emulation during multi-arch builds.
 RUN apk add --no-cache --no-scripts \
