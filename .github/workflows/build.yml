@@ -535,7 +535,14 @@ jobs:
 
   test:
     needs: build
-    if: ${{ !inputs.skip_tests && (needs.build.result == 'success') }}
+    # Run tests as long as the run wasn't cancelled and the user didn't
+    # opt out. The previous `needs.build.result == 'success'` skipped the
+    # entire test matrix whenever ANY single platform's build failed —
+    # masking tests on every platform that DID build correctly. Each
+    # matrix entry downloads its own platform-specific test image, so
+    # entries whose image is missing will fail individually instead of
+    # silently hiding the rest.
+    if: ${{ !inputs.skip_tests && !cancelled() && needs.build.result != 'skipped' }}
     runs-on: ${{ matrix.platform.machine_label }}
     strategy:
       fail-fast: false
@@ -592,7 +599,9 @@ jobs:
 
   security-scan:
     needs: build
-    if: needs.build.result == 'success'
+    # Same per-platform reasoning as `test:` above — scan whichever
+    # images built; entries whose artifact is missing fail individually.
+    if: ${{ !cancelled() && needs.build.result != 'skipped' }}
     runs-on: ${{ matrix.platform.machine_label }}
     strategy:
       fail-fast: false
