@@ -1198,7 +1198,7 @@ void test_RGMatrix_export_no_changes() {
 	// export empty matrix
 	//--------------------------------------------------------------------------
 
-	info = Delta_Matrix_export(&N, A, t);
+	info = Delta_Matrix_export(&N, A, t, NULL);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	//--------------------------------------------------------------------------
@@ -1228,7 +1228,7 @@ void test_RGMatrix_export_no_changes() {
 	// validation
 	//--------------------------------------------------------------------------
 
-	info = Delta_Matrix_export(&N, A, t);
+	info = Delta_Matrix_export(&N, A, t, NULL);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	ASSERT_GrB_Matrices_EQ(M, N);
@@ -1290,7 +1290,7 @@ void test_RGMatrix_export_pending_changes() {
 	// export matrix
 	//--------------------------------------------------------------------------
 
-	info = Delta_Matrix_export(&N, A, t);
+	info = Delta_Matrix_export(&N, A, t, NULL);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	//--------------------------------------------------------------------------
