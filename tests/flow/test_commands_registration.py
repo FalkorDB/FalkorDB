@@ -39,3 +39,19 @@ class testCmdReg(FlowTestsBase):
             except ResponseError as e:
                 self.env.assertContains("This Redis command is not allowed from script", str(e))
 
+    def test_command_metadata_flags(self):
+        def _command_flags(command):
+            info = self.conn.execute_command("COMMAND", "INFO", command)
+            if isinstance(info, dict):
+                command_info = next(iter(info.values()))
+                return set(command_info["flags"])
+            return set(info[0][2])
+
+        self.env.assertIn("denyoom", _command_flags("graph.query"))
+        self.env.assertIn("denyoom", _command_flags("graph.profile"))
+        self.env.assertIn("denyoom", _command_flags("graph.constraint"))
+        self.env.assertIn("denyoom", _command_flags("graph.copy"))
+
+        self.env.assertIn("allow_busy", _command_flags("graph.config"))
+        self.env.assertIn("allow_busy", _command_flags("graph.slowlog"))
+        self.env.assertNotIn("allow_busy", _command_flags("graph.query"))

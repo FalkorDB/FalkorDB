@@ -688,8 +688,9 @@ cypher_parse_result_t *parse_query
 	}
 
 	// empty query
-	if(len == 0) {
-		return NULL;
+	if (unlikely (len == 0)) {
+		ErrorCtx_SetError (EMSG_EMPTY_QUERY) ;
+		return NULL ;
 	}
 
 	FILE *f = fmemopen((char *)query, len, "r");
@@ -808,4 +809,3 @@ void AST_Free
 
 	rm_free(ast);
 }
-

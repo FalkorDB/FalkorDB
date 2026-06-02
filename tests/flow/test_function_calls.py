@@ -2773,6 +2773,7 @@ class testFunctionCallsFlow(FlowTestsBase):
             "RETURN pow(100,200), 5" : [[float('inf'), 5]],
             "RETURN 9223372036854775807" : [[9223372036854775807]],
             "RETURN -9223372036854775808" : [[-9223372036854775808]],
+            "RETURN abs(-9223372036854775808)" : [[-9223372036854775808]],
         }
         for query, expected_result in query_to_expected_result.items():
             self.get_res_and_assertEquals(query, expected_result)

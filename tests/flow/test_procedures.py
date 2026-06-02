@@ -16,7 +16,6 @@ node5 = Node(alias="n5", labels="fruit", properties={"name": "Banana", "value": 
 class testProcedures(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
-        self.redis_con = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
         self.populate_graph()
 
@@ -85,9 +84,9 @@ class testProcedures(FlowTestsBase):
                 emit=["unknown"],
             )
             self.env.assertFalse(1)
-        except redis.exceptions.ResponseError:
+        except redis.exceptions.ResponseError as e:
             # Expecting an error.
-            pass
+            self.env.assertContains("Procedure `db.idx.fulltext.queryNodes` does not yield output `unknown`", str(e))
 
         # Yield the same output multiple times.
         # Expect an error when trying to use the same output multiple times.
@@ -98,9 +97,9 @@ class testProcedures(FlowTestsBase):
                 emit=["node", "node"],
             )
             self.env.assertFalse(1)
-        except redis.exceptions.ResponseError:
+        except redis.exceptions.ResponseError as e:
             # Expecting an error.
-            pass
+            self.env.assertContains("Variable `node` already declared", str(e))
 
     def test03_arguments(self):
         # Omit arguments.
@@ -300,9 +299,9 @@ class testProcedures(FlowTestsBase):
             # looking for a non existing procedure
             self.graph.call_procedure("db.nonExistingProc")
             self.env.assertFalse(1)
-        except redis.exceptions.ResponseError:
+        except redis.exceptions.ResponseError as e:
             # Expecting an error.
-            pass
+            self.env.assertContains("Procedure `db.nonExistingProc` is not registered", str(e))
 
         try:
             self.graph.call_procedure(

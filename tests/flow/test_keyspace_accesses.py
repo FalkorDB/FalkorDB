@@ -41,6 +41,12 @@ class testKeyspaceAccesses(FlowTestsBase):
             assert("WRONGTYPE" in str(e))
             pass
 
+        try:
+            self.redis_con.execute_command("GRAPH.DELETE", "integer_key")
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            self.env.assertIn("Invalid graph operation on empty key", str(e))
+
     # Fail gracefully on attempting a graph deletion of an empty key.
     def test02_graph_delete_on_empty_key(self):
         self.graph = self.db.select_graph("nonexistent_key")
