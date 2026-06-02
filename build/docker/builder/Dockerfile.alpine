@@ -41,6 +41,7 @@ RUN apk add --no-cache --no-scripts \
     g++ \
     musl-dev \
     libffi-dev \
+    ncurses-dev \
     bsd-compat-headers \
     linux-headers \
     build-base && \
