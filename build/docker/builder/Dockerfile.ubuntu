@@ -8,38 +8,74 @@
 #      which precedes /usr/bin/cmake on PATH.
 #   2. libclang + clang headers (required by `bindgen`/`clang-sys` in redisearch_rs).
 #
-# Also: Redis from packages.redis.io. Ubuntu jammy ships `redis 5:6.0.16-1ubuntu1`
-# at apt epoch 5, which outranks packages.redis.io's `redis 8.x` on plain
-# `apt-get install redis` (the test image's pattern). FalkorDB hard-requires
-# Redis >= 8.0, so we pre-install it from upstream here — once Redis is in the
-# image, downstream `apt-get install redis` is a no-op and tests get the right
-# version. The old falkordb/falkordb-build:ubuntu-1.2.0 image baked Redis in
-# the same way; without it our test runs see Redis 6.0.16 and every flow test
-# hits `Can't load module … FalkorDB requires redis-server version 8.0.0`.
+# Redis: built from git at REDIS_VERSION (multi-stage). Mirrors the pattern in
+# falkordb-rs-next-gen (build/Dockerfile) — we keep the same redis-server binary
+# across every image so behaviour doesn't drift between the toolchain, the
+# release runtime, and the sanitizer runtime. Avoids the apt-priority trap on
+# jammy (Ubuntu ships `redis 5:6.0.16-1ubuntu1` at epoch 5, which outranks
+# packages.redis.io's `redis 8.x`; plain `apt-get install redis` lands on
+# 6.0.16 and FalkorDB hard-requires >= 8.0).
+
+ARG REDIS_VERSION=8.6.3
+
+#--------------------------------------------------------------------------
+# Stage 1: build redis-server / redis-cli from source at a pinned tag.
+#--------------------------------------------------------------------------
+FROM ubuntu:22.04 AS redis-builder
+
+ARG REDIS_VERSION
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates git dpkg-dev gcc g++ libc6-dev libssl-dev make && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /tmp
+RUN git clone --depth 1 --branch "${REDIS_VERSION}" https://github.com/redis/redis.git redis-src
+WORKDIR /tmp/redis-src
+
+# Mirror upstream redis image's protected-mode default flip (1 → 0) and
+# jemalloc page-size tuning so behaviour is identical to the upstream
+# redis:${REDIS_VERSION} image. Matches falkordb-rs-next-gen.
+RUN set -eux; \
+    sed -ri 's!^( *createBoolConfig[(]"protected-mode",.*, *)1( *,.*[)],)$!\10\2!' src/config.c; \
+    grep -E '^ *createBoolConfig[(]"protected-mode",.*, *0 *,.*[)],$' src/config.c; \
+    gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)"; \
+    arch="$(dpkg --print-architecture | awk -F- '{ print $NF }')"; \
+    extraJemallocConfigureFlags="--build=$gnuArch"; \
+    case "${arch##*-}" in \
+        amd64 | i386 | x32) extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-page=12" ;; \
+        *) extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-page=16" ;; \
+    esac; \
+    extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-hugepage=21"; \
+    sed -ri 's!cd jemalloc && ./configure !&'"$extraJemallocConfigureFlags"' !' deps/Makefile; \
+    export BUILD_TLS=yes BUILD_WITH_MODULES=no; \
+    make -j "$(nproc)" all; \
+    make PREFIX=/redis-install install; \
+    strip /redis-install/bin/redis-server /redis-install/bin/redis-cli; \
+    /redis-install/bin/redis-server --version
+
+#--------------------------------------------------------------------------
+# Stage 2: actual toolchain image.
+#--------------------------------------------------------------------------
 FROM ubuntu:22.04 AS builder
 
-# lsb-release + gnupg + ca-certificates are needed to add the packages.redis.io
-# apt source (`lsb_release -cs` resolves the codename, gpg --dearmor handles
-# the key, ca-certs let curl talk to packages.redis.io over TLS).
 RUN apt-get update -y && \
     apt-get install -y --no-install-recommends \
       git wget build-essential lcov \
-      openssl libssl-dev ca-certificates gnupg lsb-release \
+      openssl libssl-dev ca-certificates \
       python3 python3-venv python3-dev python3-pip \
       unzip rsync curl m4 automake gperf peg libtool autoconf \
       clang-15 libclang-15-dev libclang-common-15-dev \
       cmake && \
     rm -rf /var/lib/apt/lists/*
 
-# Pin packages.redis.io over Ubuntu's `redis 5:6.0.16-1ubuntu1` (epoch 5
-# beats unversioned upstream) so plain `apt-get install redis` resolves to
-# the Redis 8.x line; then install redis-server.
-RUN curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" > /etc/apt/sources.list.d/redis.list && \
-    printf 'Package: redis*\nPin: origin packages.redis.io\nPin-Priority: 1001\n' > /etc/apt/preferences.d/redis && \
-    apt-get update -y && \
-    apt-get install -y --no-install-recommends redis && \
-    rm -rf /var/lib/apt/lists/*
+# Copy the redis binaries from the redis-builder stage. /usr/local/bin
+# precedes /usr/bin on PATH and matches where RLTest / FalkorDB tests
+# look for `redis-server` (tests/common.py, tests/flow/tests.sh).
+COPY --from=redis-builder /redis-install/bin/redis-server /usr/local/bin/redis-server
+COPY --from=redis-builder /redis-install/bin/redis-cli    /usr/local/bin/redis-cli
 
 # Pin cmake to the same exact version across every builder OS so the matrix
 # uses one CMake build. Overrides apt's 3.22.1; pip installs into
