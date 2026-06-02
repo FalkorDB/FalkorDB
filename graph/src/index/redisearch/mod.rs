@@ -15,7 +15,7 @@
 //!
 //! # Key opaque types
 //!
-//! - `RSIndex`            -- handle to a RediSearch index
+//! - `RSIndexHandle`            -- handle to a RediSearch index
 //! - `RSDoc`              -- a document to be indexed
 //! - `RSQNode`            -- a node in a query tree (numeric, tag, geo, intersect, ...)
 //! - `RSResultsIterator`  -- iterator over query results
@@ -120,7 +120,7 @@ pub struct TotalIndexesInfo {
     pub total_active_queries: usize,
 }
 
-pub type RSIndex = RefManager;
+pub type RSIndexHandle = RefManager;
 pub type RSFieldID = usize;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -265,15 +265,45 @@ unsafe extern "C" {
     pub fn RediSearch_CreateIndex(
         name: *const ::std::os::raw::c_char,
         options: *const RSIndexOptions,
-    ) -> *mut RSIndex;
+    ) -> *mut RSIndexHandle;
 }
 unsafe extern "C" {
-    pub fn RediSearch_DropIndex(arg1: *mut RSIndex);
+    pub fn RediSearch_DropIndex(arg1: *mut RSIndexHandle);
+}
+unsafe extern "C" {
+    #[doc = " Acquire a new strong reference on `sp`. The returned handle must be"]
+    #[doc = " released with RediSearch_IndexRelease when the caller is done with it."]
+    #[doc = " Returns NULL if the underlying spec has been invalidated (e.g. by a"]
+    #[doc = " concurrent RediSearch_DropIndex)."]
+    pub fn RediSearch_IndexClone(sp: *mut RSIndexHandle) -> *mut RSIndexHandle;
+}
+unsafe extern "C" {
+    #[doc = " Release a strong reference acquired by RediSearch_IndexClone (or the"]
+    #[doc = " creation-time reference returned by RediSearch_CreateIndex). When the"]
+    #[doc = " last reference is dropped, the spec is freed."]
+    pub fn RediSearch_IndexRelease(sp: *mut RSIndexHandle);
+}
+unsafe extern "C" {
+    #[doc = " Populate the TIERED runtime fields of `params` (worker thread pool,"]
+    #[doc = " submit callback, weak ref to `sp`, flat-buffer limit, logCtx) so it can"]
+    #[doc = " be passed to RediSearch_VectorFieldSetParams. Preconditions:"]
+    #[doc = " params->algo == VecSimAlgo_TIERED and tieredParams.primaryIndexParams"]
+    #[doc = " is allocated and populated. Returns REDISEARCH_OK / REDISEARCH_ERR."]
+    pub fn RediSearch_VecSimTieredParams_Init(
+        params: *mut VecSimParams,
+        sp: *mut RSIndexHandle,
+        field_name: *const ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int;
+}
+unsafe extern "C" {
+    #[doc = " Set the number of background worker threads RediSearch uses (e.g. for"]
+    #[doc = " TIERED vector index migration jobs). Returns REDISEARCH_OK / REDISEARCH_ERR."]
+    pub fn RediSearch_SetNumWorkerThreads(n: usize) -> ::std::os::raw::c_int;
 }
 unsafe extern "C" {
     #[doc = " Handle Stopwords list"]
     pub fn RediSearch_StopwordsList_Contains(
-        idx: *mut RSIndex,
+        idx: *mut RSIndexHandle,
         term: *const ::std::os::raw::c_char,
         len: usize,
     ) -> ::std::os::raw::c_int;
@@ -287,15 +317,15 @@ unsafe extern "C" {
 unsafe extern "C" {
     #[doc = " Getter functions"]
     pub fn RediSearch_IndexGetStopwords(
-        arg1: *mut RSIndex,
+        arg1: *mut RSIndexHandle,
         arg2: *mut usize,
     ) -> *mut *mut ::std::os::raw::c_char;
 }
 unsafe extern "C" {
-    pub fn RediSearch_IndexGetScore(arg1: *mut RSIndex) -> f64;
+    pub fn RediSearch_IndexGetScore(arg1: *mut RSIndexHandle) -> f64;
 }
 unsafe extern "C" {
-    pub fn RediSearch_IndexGetLanguage(arg1: *mut RSIndex) -> *const ::std::os::raw::c_char;
+    pub fn RediSearch_IndexGetLanguage(arg1: *mut RSIndexHandle) -> *const ::std::os::raw::c_char;
 }
 unsafe extern "C" {
     #[doc = " Create a new field in the index"]
@@ -305,7 +335,7 @@ unsafe extern "C" {
     #[doc = "  This also indicates the default indexing settings if not otherwise specified"]
     #[doc = " @param fopt a mask of RSFieldOptions"]
     pub fn RediSearch_CreateField(
-        idx: *mut RSIndex,
+        idx: *mut RSIndexHandle,
         name: *const ::std::os::raw::c_char,
         ftype: ::std::os::raw::c_uint,
         fopt: ::std::os::raw::c_uint,
@@ -313,41 +343,201 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn RediSearch_TextFieldSetWeight(
-        sp: *mut RSIndex,
+        sp: *mut RSIndexHandle,
         fs: RSFieldID,
         w: f64,
     );
 }
 unsafe extern "C" {
     pub fn RediSearch_TagFieldSetSeparator(
-        sp: *mut RSIndex,
+        sp: *mut RSIndexHandle,
         fs: RSFieldID,
         sep: ::std::os::raw::c_char,
     );
 }
 unsafe extern "C" {
     pub fn RediSearch_TagFieldSetCaseSensitive(
-        sp: *mut RSIndex,
+        sp: *mut RSIndexHandle,
         fs: RSFieldID,
         enable: ::std::os::raw::c_int,
     );
 }
-unsafe extern "C" {
-    pub fn RediSearch_VectorFieldSetDim(
-        sp: *mut RSIndex,
-        fs: RSFieldID,
-        dim: ::std::os::raw::c_int,
-    );
+// ---- VecSim parameter types (from VectorSimilarity vec_sim_common.h) ----
+// RediSearch 8.6 configures vector fields via RediSearch_VectorFieldSetParams,
+// which takes a full VecSimParams and copies it by value. These definitions
+// must stay ABI-exact with the C headers; the size assertion below guards
+// against transcription drift on the supported LP64 targets.
+
+pub type VecSimType = ::std::os::raw::c_uint;
+pub const VecSimType_FLOAT32: VecSimType = 0;
+pub const VecSimType_FLOAT64: VecSimType = 1;
+pub const VecSimType_BFLOAT16: VecSimType = 2;
+pub const VecSimType_FLOAT16: VecSimType = 3;
+pub const VecSimType_INT8: VecSimType = 4;
+pub const VecSimType_UINT8: VecSimType = 5;
+pub const VecSimType_INT32: VecSimType = 6;
+pub const VecSimType_INT64: VecSimType = 7;
+
+pub type VecSimAlgo = ::std::os::raw::c_uint;
+pub const VecSimAlgo_BF: VecSimAlgo = 0;
+pub const VecSimAlgo_HNSWLIB: VecSimAlgo = 1;
+pub const VecSimAlgo_TIERED: VecSimAlgo = 2;
+pub const VecSimAlgo_SVS: VecSimAlgo = 3;
+
+pub type VecSimMetric = ::std::os::raw::c_uint;
+pub const VecSimMetric_L2: VecSimMetric = 0;
+pub const VecSimMetric_IP: VecSimMetric = 1;
+pub const VecSimMetric_Cosine: VecSimMetric = 2;
+
+pub type VecSimOptionMode = ::std::os::raw::c_uint;
+pub type VecSimSvsQuantBits = ::std::os::raw::c_uint;
+
+/// Default per-block vector capacity for VecSim's `DataBlock` container
+/// (VectorSimilarity `vec_sim_common.h`: `#define DEFAULT_BLOCK_SIZE 1024`).
+/// Unlike the `FT.CREATE` path (`spec.c` `parseVectorField_validate_hnsw`), the
+/// `RediSearch_VectorFieldSetParams` LLAPI does *not* normalize this field, and
+/// a `blockSize` of 0 corrupts the heap on the first HNSW insert/search. The
+/// embedder must supply a non-zero value.
+pub const DEFAULT_BLOCK_SIZE: usize = 1024;
+
+/// Default HNSW range-search accuracy/latency tradeoff
+/// (VectorSimilarity: `HNSW_DEFAULT_EPSILON 0.01`).
+pub const HNSW_DEFAULT_EPSILON: f64 = 0.01;
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct HNSWParams {
+    pub type_: VecSimType,
+    pub dim: usize,
+    pub metric: VecSimMetric,
+    pub multi: bool,
+    pub initialCapacity: usize,
+    pub blockSize: usize,
+    pub M: usize,
+    pub efConstruction: usize,
+    pub efRuntime: usize,
+    pub epsilon: f64,
 }
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct BFParams {
+    pub type_: VecSimType,
+    pub dim: usize,
+    pub metric: VecSimMetric,
+    pub multi: bool,
+    pub initialCapacity: usize,
+    pub blockSize: usize,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct SVSParams {
+    pub type_: VecSimType,
+    pub dim: usize,
+    pub metric: VecSimMetric,
+    pub multi: bool,
+    pub blockSize: usize,
+    pub quantBits: VecSimSvsQuantBits,
+    pub alpha: f32,
+    pub graph_max_degree: usize,
+    pub construction_window_size: usize,
+    pub max_candidate_pool_size: usize,
+    pub prune_to: usize,
+    pub use_search_history: VecSimOptionMode,
+    pub num_threads: usize,
+    pub search_window_size: usize,
+    pub search_buffer_capacity: usize,
+    pub leanvec_dim: usize,
+    pub epsilon: f64,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct TieredHNSWParams {
+    pub swapJobThreshold: usize,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct TieredHNSWDiskParams {
+    pub _placeholder: ::std::os::raw::c_char,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct TieredSVSParams {
+    pub trainingTriggerThreshold: usize,
+    pub updateTriggerThreshold: usize,
+    pub updateJobWaitTime: usize,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub union TieredSpecificParams {
+    pub tieredHnswParams: TieredHNSWParams,
+    pub tieredSVSParams: TieredSVSParams,
+    pub tieredHnswDiskParams: TieredHNSWDiskParams,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct TieredIndexParams {
+    pub jobQueue: *mut ::std::os::raw::c_void,
+    pub jobQueueCtx: *mut ::std::os::raw::c_void,
+    // SubmitCB function pointer; represented as a void pointer (size-equivalent).
+    pub submitCb: *mut ::std::os::raw::c_void,
+    pub flatBufferLimit: usize,
+    pub primaryIndexParams: *mut VecSimParams,
+    pub specificParams: TieredSpecificParams,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub union AlgoParams {
+    pub hnswParams: HNSWParams,
+    pub bfParams: BFParams,
+    pub tieredParams: TieredIndexParams,
+    pub svsParams: SVSParams,
+}
+
+#[repr(C)]
+pub struct VecSimParams {
+    pub algo: VecSimAlgo,
+    pub algoParams: AlgoParams,
+    pub logCtx: *mut ::std::os::raw::c_void,
+}
+
+const _: () = assert!(::std::mem::size_of::<VecSimParams>() == 136);
+
+// Field-offset guards against transcription drift (LP64). These mirror the C
+// `vec_sim_common.h` layout; `dim` in particular feeds `vecSimParams_ExpBlobSize`
+// (expBlobSize = dim * sizeof(type)), so a wrong offset would surface as a
+// "blob size mismatch" at document-add time.
+const _: () = {
+    use ::std::mem::offset_of;
+    // HNSWParams
+    assert!(offset_of!(HNSWParams, type_) == 0);
+    assert!(offset_of!(HNSWParams, dim) == 8);
+    assert!(offset_of!(HNSWParams, metric) == 16);
+    assert!(offset_of!(HNSWParams, blockSize) == 32);
+    assert!(offset_of!(HNSWParams, M) == 40);
+    assert!(::std::mem::size_of::<HNSWParams>() == 72);
+    // VecSimParams
+    assert!(offset_of!(VecSimParams, algo) == 0);
+    assert!(offset_of!(VecSimParams, algoParams) == 8);
+    assert!(offset_of!(VecSimParams, logCtx) == 128);
+    // TieredIndexParams: the primaryIndexParams pointer must land at the C offset
+    // so RediSearch reads the right HNSW sub-params (and thus the right dim).
+    assert!(offset_of!(TieredIndexParams, primaryIndexParams) == 32);
+};
+
 unsafe extern "C" {
-    pub fn RediSearch_VectorFieldSetHNSWParams(
-        sp: *mut RSIndex,
+    pub fn RediSearch_VectorFieldSetParams(
+        sp: *mut RSIndexHandle,
         fs: RSFieldID,
-        m: usize,
-        ef_construction: usize,
-        ef_runtime: usize,
-        metric: ::std::os::raw::c_uint,
-    );
+        params: *const VecSimParams,
+    ) -> ::std::os::raw::c_int;
 }
 unsafe extern "C" {
     pub fn RediSearch_CreateDocument(
@@ -361,7 +551,7 @@ unsafe extern "C" {
     pub fn RediSearch_CreateDocument2(
         docKey: *const ::std::os::raw::c_void,
         len: usize,
-        sp: *mut RSIndex,
+        sp: *mut RSIndexHandle,
         score: f64,
         lang: *const ::std::os::raw::c_char,
     ) -> *mut RSDoc;
@@ -371,7 +561,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn RediSearch_DeleteDocument(
-        sp: *mut RSIndex,
+        sp: *mut RSIndexHandle,
         docKey: *const ::std::os::raw::c_void,
         len: usize,
     ) -> ::std::os::raw::c_int;
@@ -412,7 +602,6 @@ unsafe extern "C" {
         d: *mut RSDoc,
         fieldName: *const ::std::os::raw::c_char,
         vec: *const c_char,
-        dim: u32,
         nbytes: usize,
     );
 }
@@ -447,7 +636,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn RediSearch_IndexAddDocument(
-        sp: *mut RSIndex,
+        sp: *mut RSIndexHandle,
         d: *mut RSDoc,
         flags: ::std::os::raw::c_int,
         arg1: *mut *mut ::std::os::raw::c_char,
@@ -455,14 +644,14 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn RediSearch_CreateTokenNode(
-        sp: *mut RSIndex,
+        sp: *mut RSIndexHandle,
         fieldName: *const ::std::os::raw::c_char,
         token: *const ::std::os::raw::c_char,
     ) -> *mut RSQNode;
 }
 unsafe extern "C" {
     pub fn RediSearch_CreateNumericNode(
-        sp: *mut RSIndex,
+        sp: *mut RSIndexHandle,
         field: *const ::std::os::raw::c_char,
         max: f64,
         min: f64,
@@ -472,7 +661,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn RediSearch_CreateGeoNode(
-        sp: *mut RSIndex,
+        sp: *mut RSIndexHandle,
         field: *const ::std::os::raw::c_char,
         lat: f64,
         lon: f64,
@@ -482,28 +671,28 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn RediSearch_CreatePrefixNode(
-        sp: *mut RSIndex,
+        sp: *mut RSIndexHandle,
         fieldName: *const ::std::os::raw::c_char,
         s: *const ::std::os::raw::c_char,
     ) -> *mut RSQNode;
 }
 unsafe extern "C" {
     pub fn RediSearch_CreateContainsNode(
-        sp: *mut RSIndex,
+        sp: *mut RSIndexHandle,
         fieldName: *const ::std::os::raw::c_char,
         s: *const ::std::os::raw::c_char,
     ) -> *mut RSQNode;
 }
 unsafe extern "C" {
     pub fn RediSearch_CreateSuffixNode(
-        sp: *mut RSIndex,
+        sp: *mut RSIndexHandle,
         fieldName: *const ::std::os::raw::c_char,
         s: *const ::std::os::raw::c_char,
     ) -> *mut RSQNode;
 }
 unsafe extern "C" {
     pub fn RediSearch_CreateLexRangeNode(
-        sp: *mut RSIndex,
+        sp: *mut RSIndexHandle,
         fieldName: *const ::std::os::raw::c_char,
         begin: *const ::std::os::raw::c_char,
         end: *const ::std::os::raw::c_char,
@@ -513,7 +702,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn RediSearch_CreateTagNode(
-        sp: *mut RSIndex,
+        sp: *mut RSIndexHandle,
         field: *const ::std::os::raw::c_char,
     ) -> *mut RSQNode;
 }
@@ -525,7 +714,7 @@ unsafe extern "C" {
     /// any other QueryNode; per-row distance is then read via
     /// `RediSearch_ResultsIteratorGetScore`.
     pub fn RediSearch_CreateVecSimNode(
-        sp: *mut RSIndex,
+        sp: *mut RSIndexHandle,
         field: *const ::std::os::raw::c_char,
         vector: *const ::std::os::raw::c_char,
         nbytes: usize,
@@ -534,31 +723,31 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn RediSearch_CreateTagTokenNode(
-        sp: *mut RSIndex,
+        sp: *mut RSIndexHandle,
         token: *const ::std::os::raw::c_char,
     ) -> *mut RSQNode;
 }
 unsafe extern "C" {
     pub fn RediSearch_CreateTagPrefixNode(
-        sp: *mut RSIndex,
+        sp: *mut RSIndexHandle,
         s: *const ::std::os::raw::c_char,
     ) -> *mut RSQNode;
 }
 unsafe extern "C" {
     pub fn RediSearch_CreateTagContainsNode(
-        sp: *mut RSIndex,
+        sp: *mut RSIndexHandle,
         s: *const ::std::os::raw::c_char,
     ) -> *mut RSQNode;
 }
 unsafe extern "C" {
     pub fn RediSearch_CreateTagSuffixNode(
-        sp: *mut RSIndex,
+        sp: *mut RSIndexHandle,
         s: *const ::std::os::raw::c_char,
     ) -> *mut RSQNode;
 }
 unsafe extern "C" {
     pub fn RediSearch_CreateTagLexRangeNode(
-        sp: *mut RSIndex,
+        sp: *mut RSIndexHandle,
         begin: *const ::std::os::raw::c_char,
         end: *const ::std::os::raw::c_char,
         includeBegin: ::std::os::raw::c_int,
@@ -567,18 +756,18 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn RediSearch_CreateIntersectNode(
-        sp: *mut RSIndex,
+        sp: *mut RSIndexHandle,
         exact: ::std::os::raw::c_int,
     ) -> *mut RSQNode;
 }
 unsafe extern "C" {
-    pub fn RediSearch_CreateUnionNode(sp: *mut RSIndex) -> *mut RSQNode;
+    pub fn RediSearch_CreateUnionNode(sp: *mut RSIndexHandle) -> *mut RSQNode;
 }
 unsafe extern "C" {
-    pub fn RediSearch_CreateEmptyNode(sp: *mut RSIndex) -> *mut RSQNode;
+    pub fn RediSearch_CreateEmptyNode(sp: *mut RSIndexHandle) -> *mut RSQNode;
 }
 unsafe extern "C" {
-    pub fn RediSearch_CreateNotNode(sp: *mut RSIndex) -> *mut RSQNode;
+    pub fn RediSearch_CreateNotNode(sp: *mut RSIndexHandle) -> *mut RSQNode;
 }
 unsafe extern "C" {
     pub fn RediSearch_QueryNodeFree(qn: *mut RSQNode);
@@ -610,7 +799,7 @@ unsafe extern "C" {
 unsafe extern "C" {
     pub fn RediSearch_GetResultsIterator(
         qn: *mut RSQNode,
-        sp: *mut RSIndex,
+        sp: *mut RSIndexHandle,
     ) -> *mut RSResultsIterator;
 }
 unsafe extern "C" {
@@ -626,7 +815,7 @@ unsafe extern "C" {
     #[doc = " @return an iterator over the results, or NULL if no iterator can be had"]
     #[doc = "  (see err, or no results)."]
     pub fn RediSearch_IterateQuery(
-        sp: *mut RSIndex,
+        sp: *mut RSIndexHandle,
         s: *const ::std::os::raw::c_char,
         n: usize,
         err: *mut *mut ::std::os::raw::c_char,
@@ -643,7 +832,7 @@ unsafe extern "C" {
     #[doc = " @return an iterator over the results, or NULL if no iterator can be had"]
     #[doc = "  (see err, or no results)."]
     pub fn RediSearch_IterateQueryWithDialect(
-        sp: *mut RSIndex,
+        sp: *mut RSIndexHandle,
         s: *const ::std::os::raw::c_char,
         n: usize,
         dialect: ::std::os::raw::c_uint,
@@ -652,7 +841,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn RediSearch_DocumentExists(
-        sp: *mut RSIndex,
+        sp: *mut RSIndexHandle,
         docKey: *const ::std::os::raw::c_void,
         len: usize,
     ) -> ::std::os::raw::c_int;
@@ -660,7 +849,7 @@ unsafe extern "C" {
 unsafe extern "C" {
     pub fn RediSearch_ResultsIteratorNext(
         iter: *mut RSResultsIterator,
-        sp: *mut RSIndex,
+        sp: *mut RSIndexHandle,
         len: *mut usize,
     ) -> *const ::std::os::raw::c_void;
 }
@@ -680,7 +869,7 @@ unsafe extern "C" {
     );
 }
 unsafe extern "C" {
-    pub fn RediSearch_MemUsage(sp: *mut RSIndex) -> usize;
+    pub fn RediSearch_MemUsage(sp: *mut RSIndexHandle) -> usize;
 }
 unsafe extern "C" {
     pub fn RediSearch_TotalMemUsage() -> usize;
@@ -696,7 +885,7 @@ unsafe extern "C" {
     #[doc = " @param sp the index"]
     #[doc = " @param info a pointer to RSIdxInfo struct with `.version = RS_INFO_CURRENT`"]
     pub fn RediSearch_IndexInfo(
-        sp: *mut RSIndex,
+        sp: *mut RSIndexHandle,
         info: *mut RSIdxInfo,
     ) -> ::std::os::raw::c_int;
 }

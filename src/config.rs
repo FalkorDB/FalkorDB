@@ -45,6 +45,11 @@ lazy_static! {
         RedisGILGuard::new("/var/lib/FalkorDB/import/".into());
     pub static ref CONFIGURATION_CACHE_SIZE: RedisGILGuard<i64> = RedisGILGuard::new(25.into());
     pub static ref CONFIGURATION_THREAD_COUNT: RedisGILGuard<i64> = RedisGILGuard::new(0.into());
+    /// Number of RediSearch background worker threads (e.g. TIERED vector-index
+    /// HNSW migration jobs). 0 = disabled: tiered inserts stay in the flat
+    /// buffer (KNN still correct), no async migration.
+    pub static ref CONFIGURATION_INDEX_WORKER_THREADS: RedisGILGuard<i64> =
+        RedisGILGuard::new(0.into());
     pub static ref CONFIGURATION_NODE_CREATION_BUFFER: RedisGILGuard<i64> =
         RedisGILGuard::new(16384.into());
     pub static ref CONFIGURATION_VKEY_MAX_ENTITY_COUNT: RedisGILGuard<i64> =
@@ -101,6 +106,7 @@ pub const CONFIG_NAMES: &[&str] = &[
     "ASYNC_DELETE",
     "OMP_THREAD_COUNT",
     "THREAD_COUNT",
+    "INDEX_WORKER_THREADS",
     "RESULTSET_SIZE",
     "VKEY_MAX_ENTITY_COUNT",
     "MAX_QUEUED_QUERIES",

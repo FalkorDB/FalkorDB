@@ -40,10 +40,12 @@ redis-module-macros = { git = "https://github.com/AviAvni/redismodule-rs", branc
 
 [profile.dev]
 opt-level = 2
+panic = "abort"
 
 [profile.release]
 codegen-units = 1
 lto = true
+panic = "abort"
 # debug = true
 # strip = false
 

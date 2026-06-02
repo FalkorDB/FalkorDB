@@ -23,15 +23,19 @@
 //! can reject loading an incomplete module.
 
 use crate::config::{
-    CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE, CONFIGURATION_TEMP_FOLDER,
-    DELTA_MAX_PENDING_CHANGES, EFFECTS_THRESHOLD, MAX_QUEUED_QUERIES, OMP_THREAD_COUNT,
-    QUERY_MEM_CAPACITY, RESULTSET_SIZE, TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count,
+    CONFIGURATION_INDEX_WORKER_THREADS, CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE,
+    CONFIGURATION_TEMP_FOLDER, DELTA_MAX_PENDING_CHANGES, EFFECTS_THRESHOLD, MAX_QUEUED_QUERIES,
+    OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE, TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX,
+    get_thread_count,
 };
 use crate::redis_type::on_persistence;
 use crate::telemetry;
 use graph::{
     graph::graphblas::matrix::init,
-    index::redisearch::{REDISEARCH_INIT_LIBRARY, RediSearch_CleanupModule, RediSearch_Init},
+    index::redisearch::{
+        REDISEARCH_INIT_LIBRARY, RediSearch_CleanupModule, RediSearch_Init,
+        RediSearch_SetNumWorkerThreads,
+    },
     runtime::functions::{init_functions, init_udf_functions},
     threadpool::{self, init_thread_pool},
     udf,
@@ -328,6 +332,20 @@ pub fn graph_init(
     let tc = get_thread_count(ctx) as usize;
     let _ = init_thread_pool(tc);
     OMP_THREAD_COUNT.store(tc as i64, std::sync::atomic::Ordering::Relaxed);
+
+    // Enable RediSearch background worker threads (TIERED vector-index HNSW
+    // migration jobs) when configured. Left disabled (0) by default, in which
+    // case tiered inserts stay in the flat buffer (KNN still correct) and we
+    // make no call — preserving prior single-threaded behavior.
+    let index_workers = (*CONFIGURATION_INDEX_WORKER_THREADS.lock(ctx)).max(0) as usize;
+    if index_workers > 0 {
+        // RediSearch_SetNumWorkerThreads returns REDISEARCH_OK (0) on success.
+        unsafe {
+            if RediSearch_SetNumWorkerThreads(index_workers) != 0 {
+                ctx.log_warning("Failed to set RediSearch worker thread count");
+            }
+        }
+    }
 
     // Start the background telemetry flusher: workers enqueue entries
     // lock-free; this thread batches them and writes XADDs under a single
