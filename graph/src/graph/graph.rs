@@ -3468,10 +3468,17 @@ impl Graph {
         // --- node attributes by label (sampling) ---
         let mut node_attr_by_label: Vec<(Arc<String>, usize)> = Vec::new();
 
-        // Track all labeled node IDs (deduplicated) for unlabeled-node detection
-        // and track processed node IDs to avoid double-counting multi-label nodes.
-        let mut labeled_node_ids = roaring::RoaringTreemap::new();
-        let mut processed_node_ids = roaring::RoaringTreemap::new();
+        // Track processed node IDs (deduplicated) so that multi-label nodes are
+        // counted once, under their first (lowest-index) label — matching the C
+        // implementation — and so unlabeled nodes can be detected afterwards.
+        // A dense bitvector indexed by node id gives O(1) membership/insert,
+        // far cheaper than a RoaringTreemap when touching every node.
+        // Sized by `node_cap` (the matrix dimension) rather than `max_node_id()`:
+        // effects replay can leave sparse high ids whose value exceeds
+        // `node_count + deleted_nodes.len() - 1`, but every id present in the
+        // label/all-node matrices is strictly below `node_cap`.
+        let mut seen = vec![false; self.node_cap() as usize];
+        let mut total_labeled: u64 = 0;
 
         for (label_idx, label_name) in self.node_labels.iter().enumerate() {
             let label_matrix = &self.labels_matices[label_idx];
@@ -3481,18 +3488,18 @@ impl Graph {
                 continue;
             }
 
-            // Iterate the full label matrix, collecting all node IDs for the
-            // labeled-node bitmap.  For attribute estimation, only sample nodes
-            // that have NOT been processed by a previous label (avoids
-            // double-counting multi-label nodes, matching the C implementation).
+            // Iterate the full label matrix.  For attribute estimation, only
+            // sample nodes that have NOT been processed by a previous label
+            // (avoids double-counting multi-label nodes, matching C).
             let mut sampled_mem: usize = 0;
             let mut sampled_count: usize = 0;
             let mut unprocessed_count: u64 = 0;
             for (node_id, _) in label_matrix.iter(0, u64::MAX) {
-                labeled_node_ids.insert(node_id);
-                if !processed_node_ids.contains(node_id) {
+                let slot = &mut seen[node_id as usize];
+                if !*slot {
+                    *slot = true;
+                    total_labeled += 1;
                     unprocessed_count += 1;
-                    processed_node_ids.insert(node_id);
                     if sampled_count < samples {
                         sampled_mem += self.estimate_entity_attr_size(&self.node_attrs, node_id);
                         sampled_count += 1;
@@ -3509,7 +3516,6 @@ impl Graph {
         }
 
         // --- unlabeled node attributes ---
-        let total_labeled = labeled_node_ids.len();
         let total_nodes = self.node_count;
         let unlabeled_count = total_nodes.saturating_sub(total_labeled);
         let unlabeled_node_attr_sz = if unlabeled_count > 0 {
@@ -3520,7 +3526,7 @@ impl Graph {
                 if sampled_count >= samples {
                     break;
                 }
-                if labeled_node_ids.contains(node_id) {
+                if seen[node_id as usize] {
                     continue;
                 }
                 sampled_mem += self.estimate_entity_attr_size(&self.node_attrs, node_id);

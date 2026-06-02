@@ -125,8 +125,13 @@ class testSlowLog():
         # truncated query
         #-----------------------------------------------------------------------
 
+        # NOTE: the query body must be heavy enough to deterministically exceed
+        # the slowlog MIN_LATENCY_MS (10ms) threshold even on a fast engine /
+        # under coverage. A single UNWIND range(0, 200000) dropped below 10ms
+        # once the engine got faster, leaving the slowlog empty. Use the same
+        # double-UNWIND pattern as test01.
         long_string = 'a' * 4000
-        query = f"WITH '{long_string}' AS str UNWIND range(0, 200000) AS x RETURN count(x)"
+        query = f"WITH '{long_string}' AS str UNWIND range(0, 2500) AS i UNWIND range(0, 2500) AS j WITH i, j WHERE i > 0 AND j < 500 RETURN SUM(i + j)"
         self.graph.query(query)
 
         slowlog = self.graph.slowlog()
@@ -150,7 +155,7 @@ class testSlowLog():
         # clear slowlog
         self.redis_con.execute_command("GRAPH.SLOWLOG", GRAPH_ID, "RESET")
 
-        query = "WITH $long_string AS str UNWIND range(0, 200000) AS x RETURN count(x)"
+        query = "WITH $long_string AS str UNWIND range(0, 2500) AS i UNWIND range(0, 2500) AS j WITH i, j WHERE i > 0 AND j < 500 RETURN SUM(i + j)"
         self.graph.query(query, {'long_string': long_string})
 
         slowlog = self.graph.slowlog()
@@ -174,7 +179,7 @@ class testSlowLog():
         # clear slowlog
         self.redis_con.execute_command("GRAPH.SLOWLOG", GRAPH_ID, "RESET")
 
-        query = f"WITH $long_string as long_param, '{long_string}' AS long_string UNWIND range(0, 200000) AS x RETURN count(x)"
+        query = f"WITH $long_string as long_param, '{long_string}' AS long_string UNWIND range(0, 2500) AS i UNWIND range(0, 2500) AS j WITH i, j WHERE i > 0 AND j < 500 RETURN SUM(i + j)"
         self.graph.query(query, {'long_string': long_string})
 
         slowlog = self.graph.slowlog()
@@ -201,8 +206,11 @@ class testSlowLog():
         # clear slowlog
         self.redis_con.execute_command("GRAPH.SLOWLOG", GRAPH_ID, "RESET")
 
-        query = f"UNWIND range(0, $i) AS x RETURN count(x)"
-        self.graph.query(query, {'i': 200000})
+        # heavy double-UNWIND body so the query deterministically exceeds the
+        # slowlog MIN_LATENCY_MS threshold; $i only differs between the two
+        # runs so the query TEXT stays identical (same slowlog entry).
+        query = "UNWIND range(0, 2500) AS i UNWIND range(0, 2500) AS j WITH i, j WHERE i > 0 AND j < 500 AND i + j < $i RETURN SUM(i + j)"
+        self.graph.query(query, {'i': 100})
 
         slowlog = self.graph.slowlog()
         self.env.assertEqual(len(slowlog), 1)
@@ -213,7 +221,7 @@ class testSlowLog():
         p0 = entry[4]
 
         # re-issue the same query but with different params
-        query = f"UNWIND range(0, $i) AS x RETURN count(x)"
+        query = "UNWIND range(0, 2500) AS i UNWIND range(0, 2500) AS j WITH i, j WHERE i > 0 AND j < 500 AND i + j < $i RETURN SUM(i + j)"
         self.graph.query(query, {'i': 400000})
 
         slowlog = self.graph.slowlog()
