@@ -13,10 +13,46 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  packages: read
+
 jobs:
-  sanitize-test:
+  # Pick the toolchain image: PR's RC if it built one (Dockerfile.ubuntu
+  # touched in this PR), otherwise the stable tag. Falling back to stable
+  # when no RC exists means non-Dockerfile PRs and master pushes use the
+  # already-promoted stable image; Dockerfile PRs validate against their
+  # own RC so the toolchain change is exercised end-to-end.
+  detect-toolchain:
     runs-on: ubuntu-latest
-    container: ghcr.io/falkordb/falkordb-build:ubuntu
+    outputs:
+      image: ${{ steps.choose.outputs.image }}
+    steps:
+      - name: Login to GHCR
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: echo "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+      - name: Choose image
+        id: choose
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          RC="ghcr.io/falkordb/falkordb-build:ubuntu-pr-${PR}"
+          STABLE="ghcr.io/falkordb/falkordb-build:ubuntu"
+          if [[ -n "$PR" ]] && docker manifest inspect "$RC" >/dev/null 2>&1; then
+            echo "Using RC: $RC"
+            echo "image=$RC" >> "$GITHUB_OUTPUT"
+          else
+            echo "Using stable: $STABLE"
+            echo "image=$STABLE" >> "$GITHUB_OUTPUT"
+          fi
+
+  sanitize-test:
+    needs: detect-toolchain
+    runs-on: ubuntu-latest
+    container: ${{ needs.detect-toolchain.outputs.image }}
     steps:
 
     - name: Safe dir

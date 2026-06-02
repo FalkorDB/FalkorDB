@@ -28,7 +28,38 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  packages: read
+
 jobs:
+  # See sanitize.yml: prefer the PR's RC toolchain image, fall back to stable.
+  detect-toolchain:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.choose.outputs.image }}
+    steps:
+      - name: Login to GHCR
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: echo "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+      - name: Choose image
+        id: choose
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          RC="ghcr.io/falkordb/falkordb-build:ubuntu-pr-${PR}"
+          STABLE="ghcr.io/falkordb/falkordb-build:ubuntu"
+          if [[ -n "$PR" ]] && docker manifest inspect "$RC" >/dev/null 2>&1; then
+            echo "Using RC: $RC"
+            echo "image=$RC" >> "$GITHUB_OUTPUT"
+          else
+            echo "Using stable: $STABLE"
+            echo "image=$STABLE" >> "$GITHUB_OUTPUT"
+          fi
+
   create-runner:
     runs-on: ubuntu-latest
     steps:
@@ -46,10 +77,10 @@ jobs:
           runner_label: codeql-${{ github.run_id }}-${{ github.run_number }}
 
   analyze:
-    needs: create-runner
+    needs: [create-runner, detect-toolchain]
     name: Analyze
     runs-on: codeql-${{ github.run_id }}-${{ github.run_number }}
-    container: ghcr.io/falkordb/falkordb-build:ubuntu
+    container: ${{ needs.detect-toolchain.outputs.image }}
     permissions:
       actions: read
       contents: read
