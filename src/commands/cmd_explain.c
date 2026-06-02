@@ -18,53 +18,55 @@
 // Args:
 // argv[1] graph name
 // argv[2] query
-void Graph_Explain(void *args) {
-	bool lock_acquired = false;
-	CommandCtx     *command_ctx = (CommandCtx *)args;
-	RedisModuleCtx *ctx         = CommandCtx_GetRedisCtx(command_ctx);
-	GraphContext   *gc          = CommandCtx_GetGraphContext(command_ctx);
-	Graph          *g           = GraphContext_GetGraph (gc) ;
-	ExecutionCtx   *exec_ctx    = NULL;
-	QueryCtx       *query_ctx   = QueryCtx_GetQueryCtx();
+void Graph_Explain
+(
+	void *args
+) {
+	bool lock_acquired = false ;
+	CommandCtx     *command_ctx = (CommandCtx *)args ;
+	RedisModuleCtx *ctx         = CommandCtx_GetRedisCtx (command_ctx) ;
+	GraphContext   *gc          = CommandCtx_GetGraphContext (command_ctx) ;
+	ExecutionCtx   *exec_ctx    = NULL ;
+	QueryCtx       *query_ctx   = QueryCtx_GetQueryCtx () ;
 
-	QueryCtx_SetGlobalExecutionCtx(command_ctx);
-	Globals_TrackCommandCtx(command_ctx);
+	QueryCtx_SetGlobalExecutionCtx (command_ctx) ;
+	Globals_TrackCommandCtx (command_ctx) ;
 
 	// retrieve the required execution items and information:
 	// 1. Execution plan
 	// 2. Whether these items were cached or not
-	bool           cached = false;
-	ExecutionPlan  *plan  = NULL;
+	bool           cached = false ;
+	ExecutionPlan  *plan  = NULL ;
 
 	exec_ctx = ExecutionCtx_FromQuery (command_ctx) ;
 	if (exec_ctx == NULL) {
-		query_ctx->status = QueryExecutionStatus_FAILURE;
-		goto cleanup;
+		query_ctx->status = QueryExecutionStatus_FAILURE ;
+		goto cleanup ;
 	}
 
-	plan = exec_ctx->plan;
-	ExecutionType exec_type = exec_ctx->exec_type;
+	plan = exec_ctx->plan ;
+	ExecutionType exec_type = exec_ctx->exec_type ;
 
-	if(exec_type == EXECUTION_TYPE_INDEX_CREATE) {
-		RedisModule_ReplyWithSimpleString(ctx, "Create Index");
-		goto cleanup;
-	} else if(exec_type == EXECUTION_TYPE_INDEX_DROP) {
-		RedisModule_ReplyWithSimpleString(ctx, "Drop Index");
-		goto cleanup;
+	if (exec_type == EXECUTION_TYPE_INDEX_CREATE) {
+		RedisModule_ReplyWithSimpleString (ctx, "Create Index") ;
+		goto cleanup ;
+	} else if (exec_type == EXECUTION_TYPE_INDEX_DROP) {
+		RedisModule_ReplyWithSimpleString (ctx, "Drop Index") ;
+		goto cleanup ;
 	}
 
-	Graph_AcquireReadLock (g) ;
-	lock_acquired = true;
+	GraphContext_AcquireReadLock (gc) ;
+	lock_acquired = true ;
 
-	ExecutionPlan_PreparePlan(plan);
-	ExecutionPlan_Init(plan);       // Initialize the plan's ops.
+	ExecutionPlan_PreparePlan (plan) ;
+	ExecutionPlan_Init (plan) ;       // initialize the plan's ops
 
-	if (ErrorCtx_EncounteredError()) {
-		query_ctx->status = QueryExecutionStatus_FAILURE;
-		goto cleanup;
+	if (ErrorCtx_EncounteredError ()) {
+		query_ctx->status = QueryExecutionStatus_FAILURE ;
+		goto cleanup ;
 	}
 
-	ExecutionPlan_Print(plan, ctx); // Print the execution plan.
+	ExecutionPlan_Print (plan, ctx) ; // print the execution plan
 
 cleanup:
 
@@ -73,7 +75,7 @@ cleanup:
 	}
 
 	if (lock_acquired) {
-		Graph_ReleaseLock (g) ;
+		GraphContext_ReleaseLock (gc) ;
 	}
 
 	ExecutionCtx_Free (exec_ctx) ;

@@ -77,6 +77,7 @@ static GraphContext *_GetOrCreateGraphContext
 		// new graph is being decoded
 		// inform the module and create new graph context
 		gc = GraphContext_New (graph_name) ;
+		GraphContext_AcquireWriteLock (gc) ;
 	}
 
 	// free the name string, as it either not in used or copied
@@ -341,6 +342,8 @@ GraphContext *RdbLoadGraphContext_v18
 		// compute transposes
 		_ComputeTransposeMatrices (g) ;
 
+		GraphContext_ReleaseLock (gc) ;
+
 		uint rel_count   = Graph_RelationTypeCount(g);
 		uint label_count = Graph_LabelTypeCount(g);
 
@@ -375,7 +378,7 @@ GraphContext *RdbLoadGraphContext_v18
 					Indexer_PopulateIndex(gc, s, idx);
 				} else {
 					// populate index
-					Index_Populate(idx, g);
+					Index_Populate (idx, gc) ;
 					Index_Enable(idx);
 					Schema_ActivateIndex(s);
 				}
@@ -391,12 +394,12 @@ GraphContext *RdbLoadGraphContext_v18
 			if(idx != NULL) {
 				if(delay_indexing) {
 					// start async indexing
-					Indexer_PopulateIndex(gc, s, idx);
+					Indexer_PopulateIndex (gc, s, idx) ;
 				} else {
 					// populate index
-					Index_Populate(idx, g);
-					Index_Enable(idx);
-					Schema_ActivateIndex(s);
+					Index_Populate (idx, gc) ;
+					Index_Enable (idx) ;
+					Schema_ActivateIndex (s) ;
 				}
 			}
 		}

@@ -43,7 +43,7 @@ GrB_Info Delta_eWiseAdd                // C = A + B
 	if(Delta_Matrix_Synced(A)) {
 		_A = AM;
 	} else {
-		GrB_OK (Delta_Matrix_export(&_A, A, GrB_BOOL));
+		GrB_OK (Delta_Matrix_export(&_A, A, GrB_BOOL, NULL));
 	}
 
 	GrB_OK (GrB_Matrix_nvals(&DM_nvals, BDM));
@@ -52,7 +52,7 @@ GrB_Info Delta_eWiseAdd                // C = A + B
 	if(Delta_Matrix_Synced(B)) {
 		_B = BM;
 	} else {
-		GrB_OK (Delta_Matrix_export(&_B, B, GrB_BOOL));
+		GrB_OK (Delta_Matrix_export(&_B, B, GrB_BOOL, NULL));
 	}
 
 	//--------------------------------------------------------------------------

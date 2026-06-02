@@ -93,7 +93,7 @@ class testGraphMergeFlow():
     def test10_update_new_node(self):
         query = """MERGE (tamara:ACTOR { name: 'tamara tunie' }) SET tamara.age = 59, tamara.name = 'Tamara Tunie' """
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 0)
+        self.env.assertEquals(result.labels_added, 1)
         self.env.assertEquals(result.nodes_created, 1)
         self.env.assertEquals(result.properties_set, 3)
         self.env.assertEquals(result.relationships_created, 0)
@@ -107,7 +107,7 @@ class testGraphMergeFlow():
     def test11_update_new_relationship(self):
         query = """MERGE (franklin:ACTOR { name: 'Franklin Cover' })-[r:ACTED_IN {rate:5.7}]->(almostHeroes:MOVIE) SET r.date=1998, r.rate=5.8"""
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 0)
+        self.env.assertEquals(result.labels_added, 2)
         self.env.assertEquals(result.nodes_created, 2)
         self.env.assertEquals(result.properties_set, 4)
         self.env.assertEquals(result.relationships_created, 1)
@@ -131,7 +131,7 @@ class testGraphMergeFlow():
     def test13_update_multiple_nodes(self):
         query = """CREATE (:person {age:31}),(:person {age:31}),(:person {age:31}),(:person {age:31})"""
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 1)
+        self.env.assertEquals(result.labels_added, 4)
         self.env.assertEquals(result.nodes_created, 4)
         self.env.assertEquals(result.properties_set, 4)
 
@@ -153,7 +153,7 @@ class testGraphMergeFlow():
     def test14_merge_unbounded_pattern(self):
         query = """MERGE (p:person {age:31})-[:owns]->(d:dog {name:'max'})"""
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 1)
+        self.env.assertEquals(result.labels_added, 2)
         self.env.assertEquals(result.nodes_created, 2)
         self.env.assertEquals(result.properties_set, 2)
         self.env.assertEquals(result.relationships_created, 1)
@@ -165,7 +165,7 @@ class testGraphMergeFlow():
         # bounded and won't be duplicated.
         query = """MERGE (p:person {age:31})-[:owns]->(d:dog {name:'max'})-[:eats]->(f:food {name:'Royal Canin'})"""
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 1)
+        self.env.assertEquals(result.labels_added, 3)
         self.env.assertEquals(result.nodes_created, 3)
         self.env.assertEquals(result.properties_set, 3)
         self.env.assertEquals(result.relationships_created, 2)
@@ -234,7 +234,7 @@ class testGraphMergeFlow():
         expected = [['a', 1, 'b']]
 
         # Verify the results
-        self.env.assertEquals(result.labels_added, 1)
+        self.env.assertEquals(result.labels_added, 2)
         self.env.assertEquals(result.nodes_created, 2)
         self.env.assertEquals(result.relationships_created, 1)
         self.env.assertEquals(result.properties_set, 3)
@@ -284,7 +284,7 @@ class testGraphMergeFlow():
                     ['c', 'create']]
 
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 0)
+        self.env.assertEquals(result.labels_added, 1)
         self.env.assertEquals(result.nodes_created, 1)
         self.env.assertEquals(result.properties_set, 4)
         self.env.assertEquals(result.result_set, expected)

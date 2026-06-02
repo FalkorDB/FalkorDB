@@ -128,3 +128,14 @@ def query(q):
         result_set = list(res)
         summary = res.consume()
         return BoltResult(result_set, summary)
+
+
+def schema_label_count():
+    with bolt_con.session() as session:
+        res = session.run("CALL db.labels() YIELD label RETURN count(label)")
+        rows = list(res)
+        res.consume()
+        if not rows:
+            return 0
+        val = rows[0][0]
+        return int(val) if val is not None else 0

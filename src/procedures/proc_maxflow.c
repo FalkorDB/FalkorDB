@@ -506,7 +506,7 @@ ProcedureResult Proc_MaxFlowInvoke
 	// nodes are involved
 	GrB_Matrix U ;
 	Delta_Matrix R = Graph_GetRelationMatrix (g, rels[0], false) ;
-	GrB_OK (Delta_Matrix_export (&U, R, GrB_UINT64)) ;
+	GrB_OK (Delta_Matrix_export (&U, R, GrB_UINT64, NULL)) ;
 
 	GrB_Matrix A ;
 	GrB_OK (Build_Matrix (&A, NULL, g, lbls, arr_len (lbls), rels,

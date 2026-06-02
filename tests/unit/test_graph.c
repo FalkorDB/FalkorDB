@@ -68,7 +68,6 @@ void benchmark_node_creation_with_labels() {
 	// size_t n = GRAPH_DEFAULT_NODE_CAP;
 	size_t n = 1000000;
 	Graph *g = Graph_New(n, n);
-	Graph_AcquireWriteLock(g);
 
 	// Introduce labels and relations to graph.
 	for(int i = 0; i < label_count; i++) {
@@ -100,7 +99,6 @@ void benchmark_node_creation_with_labels() {
 		// assert(false);
 	}
 
-	Graph_ReleaseLock(g);
 	Graph_Free(g);
 }
 
@@ -116,7 +114,6 @@ void benchmark_node_creation_no_labels() {
 	Node node;
 	size_t n = 1000000;
 	Graph *g = Graph_New(n, n);
-	Graph_AcquireWriteLock(g);
 
 	for(int i = 0; i < samples; i++) {
 		// Create N nodes, don't use labels.
@@ -138,7 +135,6 @@ void benchmark_node_creation_no_labels() {
 		// assert(false);
 	}
 
-	Graph_ReleaseLock(g);
 	Graph_Free(g);
 }
 
@@ -156,7 +152,6 @@ void benchmark_edge_creation_with_relationships() {
 	Node node;
 	Edge edge;
 	Graph *g = Graph_New(GRAPH_DEFAULT_NODE_CAP, GRAPH_DEFAULT_EDGE_CAP);
-	Graph_AcquireWriteLock(g);
 
 	// Introduce relations types.
 	for(int i = 0; i < relation_count; i++) Graph_AddRelationType(g);
@@ -193,7 +188,6 @@ void benchmark_edge_creation_with_relationships() {
 		// assert(false);
 	}
 
-	Graph_ReleaseLock(g);
 	Graph_Free(g);
 }
 
@@ -225,34 +219,30 @@ void tearDown() {
 void test_newGraph() {
 	GrB_Index ncols, nrows, nvals;
 	Graph *g = Graph_New(GRAPH_DEFAULT_NODE_CAP, GRAPH_DEFAULT_EDGE_CAP);
-	Graph_AcquireWriteLock(g);
 	Delta_Matrix adj_matrix = g->adjacency_matrix;
 	TEST_ASSERT(Delta_Matrix_ncols(&ncols, adj_matrix) == GrB_SUCCESS);
 	TEST_ASSERT(Delta_Matrix_nrows(&nrows, adj_matrix) == GrB_SUCCESS);
 	TEST_ASSERT(Delta_Matrix_nvals(&nvals, adj_matrix) == GrB_SUCCESS);
 
-	TEST_ASSERT(g->nodes != NULL);
-	TEST_ASSERT(g->relations != NULL);
-	TEST_ASSERT(g->labels != NULL);
-	TEST_ASSERT(g->adjacency_matrix != NULL);
-	TEST_ASSERT(Graph_NodeCount(g) == 0);
+	TEST_ASSERT (g->nodes != NULL) ;
+	TEST_ASSERT (g->adjacency_matrix != NULL) ;
+	TEST_ASSERT (Graph_NodeCount (g) == 0) ;
+	TEST_ASSERT (Graph_LabelTypeCount (g) == 0) ;
+	TEST_ASSERT (Graph_RelationTypeCount (g) == 0) ;
 
-	GrB_Index n = Graph_RequiredMatrixDim(g);
-	TEST_ASSERT(nrows == n);
-	TEST_ASSERT(ncols == n);
-	TEST_ASSERT(nvals == 0);
+	GrB_Index n = Graph_RequiredMatrixDim (g) ;
+	TEST_ASSERT (nrows == n) ;
+	TEST_ASSERT (ncols == n) ;
+	TEST_ASSERT (nvals == 0) ;
 
-	Graph_ReleaseLock(g);
-	Graph_Free(g);
+	Graph_Free (g) ;
 }
 
 // Tests node and edge creation.
 void test_graphConstruction() {
 	size_t node_count = GRAPH_DEFAULT_NODE_CAP / 2;
 	Graph *g = Graph_New(node_count, node_count);
-	Graph_AcquireWriteLock(g);
 	_test_node_creation(g, node_count);
-	Graph_ReleaseLock(g);
 	Graph_Free(g);
 }
 
@@ -261,7 +251,6 @@ void test_removeNodes() {
 	Delta_Matrix M;
 	GrB_Index nnz;
 	Graph *g = Graph_New(32, 32);
-	Graph_AcquireWriteLock(g);
 
 	// Create 3 nodes.
 	Node node;
@@ -313,7 +302,6 @@ void test_removeNodes() {
 	Graph_GetNode(g, 0, &node);
 	Graph_DeleteNodes(g, &node, 1);
 	
-	Graph_ReleaseLock(g);
 
 	arr_free(edges);
 
@@ -332,14 +320,10 @@ void test_getNode() {
 	size_t nodeCount = 16;
 	Graph *g = Graph_New(nodeCount, nodeCount);
 
-	Graph_AcquireWriteLock(g);
-	{
-		for(int i = 0 ; i < nodeCount; i++) {
-			n = GE_NEW_NODE();
-			Graph_CreateNode(g, &n, NULL, 0);
-		}
+	for(int i = 0 ; i < nodeCount; i++) {
+		n = GE_NEW_NODE();
+		Graph_CreateNode(g, &n, NULL, 0);
 	}
-	Graph_ReleaseLock(g);
 
 	// Get nodes 0 - nodeCount.
 	NodeID i = 0;
@@ -366,7 +350,6 @@ void test_getEdge() {
 	int relations[relationCount];
 
 	Graph *g = Graph_New(nodeCount, nodeCount);
-	Graph_AcquireWriteLock(g);
 	for(int i = 0; i < nodeCount; i++) {
 		n = GE_NEW_NODE();
 		Graph_CreateNode(g, &n, NULL, 0);
@@ -459,7 +442,6 @@ void test_getEdge() {
 	}
 
 	arr_free(edges);
-	Graph_ReleaseLock(g);
 	Graph_Free(g);
 }
 
@@ -471,3 +453,4 @@ TEST_LIST = {
 	{"getEdge", test_getEdge},
 	{NULL, NULL}
 };
+

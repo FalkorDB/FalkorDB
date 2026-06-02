@@ -36,15 +36,15 @@ static void _setupTraversedRelations
 	uint reltype_count = QGEdge_RelationCount(e);
 	if(reltype_count == 0) {
 		op->edgeRelationCount = 1;
-		op->edgeRelationTypes = arr_new(int, 1);
+		op->edgeRelationTypes = arr_new(RelationID, 1);
 		arr_append(op->edgeRelationTypes, GRAPH_NO_RELATION);
 	} else {
 		GraphContext *gc = QueryCtx_GetGraphCtx();
 		op->edgeRelationCount = 0;
-		op->edgeRelationTypes = arr_new(int, reltype_count);
+		op->edgeRelationTypes = arr_new(RelationID, reltype_count);
 
 		for(int i = 0; i < reltype_count; i++) {
-			int rel_id = e->reltypeIDs[i];
+			RelationID rel_id = e->reltypeIDs[i];
 			if(rel_id != GRAPH_UNKNOWN_RELATION) {
 				arr_append(op->edgeRelationTypes, rel_id);
 			} else {
@@ -161,6 +161,53 @@ static OpResult CondVarLenTraverseInit
 ) {
 	CondVarLenTraverse *op = (CondVarLenTraverse *)opBase;
 
+	//--------------------------------------------------------------------------
+	// extract and sort destination node labels
+	// skip when destination is already resolved (ExpandInto) — the child
+	// traverse already enforced the label before we run
+	//--------------------------------------------------------------------------
+
+	if (!op->expandInto) {
+		const char *dest_alias = AlgebraicExpression_Dest (op->ae) ;
+		QGNode *dest_node =
+			QueryGraph_GetNodeByAlias (op->op.plan->query_graph, dest_alias) ;
+		uint8_t label_count = (uint8_t)QGNode_LabelCount (dest_node) ;
+
+		if (label_count > 0) {
+			// allocate directly into op->dest_labels and sort in place
+			// keep a parallel nvals[] on the stack only for sort comparisons
+			op->dest_label_count = label_count ;
+			op->dest_labels = rm_malloc (sizeof(LabelID) * label_count) ;
+
+			uint64_t nvals [label_count] ;
+			for (uint8_t i = 0 ; i < label_count ; i++) {
+				op->dest_labels [i] = QGNode_GetLabelID (dest_node, i) ;
+				nvals [i] = (op->dest_labels [i] >= 0)
+					? Graph_LabeledNodeCount (op->g, op->dest_labels [i]) : 0 ;
+			}
+
+			// insertion-sort by nvals ascending: most selective label checked first
+			for (uint8_t i = 1 ; i < label_count ; i++) {
+				LabelID kid = op->dest_labels [i] ;
+				uint64_t kn = nvals [i] ;
+				int8_t j = (int8_t)(i - 1) ;
+				while (j >= 0 && nvals [j] > kn) {
+					op->dest_labels [j+1] = op->dest_labels [j] ;
+					nvals[j+1] = nvals [j] ;
+					j-- ;
+				}
+
+				op->dest_labels [j+1] = kid ;
+				nvals [j+1] = kn ;
+			}
+
+			// sync and cache the node-label matrix once so consume can query
+			// it directly via Delta_Matrix_isStoredElement without re-syncing
+			op->node_labels = Graph_GetNodeLabelMatrix (op->g) ;
+		}
+	}
+
+	//--------------------------------------------------------------------------
 	// check if variable length traversal doesn't require path construction
 	// in which case we only care for reachable destination nodes
 	// which is alot cheaper to compute
@@ -176,6 +223,7 @@ static OpResult CondVarLenTraverseInit
 	// 4. traversal must be directed
 	//
 	// in which case we can use a faster consume function
+	//--------------------------------------------------------------------------
 
 	QGEdge *e = QueryGraph_GetEdgeByAlias(op->op.plan->query_graph,
 			AlgebraicExpression_Edge(op->ae));
@@ -205,6 +253,22 @@ static OpResult CondVarLenTraverseInit
 	return OP_OK;
 }
 
+// returns true if node_id carries ALL labels in op->dest_labels
+static inline bool _dest_matches_labels
+(
+	const CondVarLenTraverse *op,
+	NodeID node_id
+) {
+	for (uint8_t i = 0 ; i < op->dest_label_count ; i++) {
+		if (Delta_Matrix_isStoredElement (op->node_labels, node_id,
+					op->dest_labels [i]) != GrB_SUCCESS) {
+			return false ;
+		}
+	}
+
+	return true ;
+}
+
 static Record CondVarLenTraverseOptimizedConsume
 (
 	OpBase *opBase
@@ -214,48 +278,52 @@ static Record CondVarLenTraverseOptimizedConsume
 	Node                dest    =  GE_NEW_NODE();
 	EntityID            dest_id =  INVALID_ENTITY_ID;
 
-	while((dest_id = AllNeighborsCtx_NextNeighbor(op->allNeighborsCtx)) ==
-		  INVALID_ENTITY_ID) {
-		Record childRecord = OpBase_Consume(child);
-		if(!childRecord) return NULL;
+	for(;;) {
+		while((dest_id = AllNeighborsCtx_NextNeighbor(op->allNeighborsCtx)) ==
+			  INVALID_ENTITY_ID) {
+			Record childRecord = OpBase_Consume(child);
+			if(!childRecord) return NULL;
 
-		OpBase_DeleteRecord(&op->r);
-		op->r = childRecord;
-
-		Node *srcNode = Record_GetNode(op->r, op->srcNodeIdx);
-		if(srcNode == NULL) {
-			// the child Record may not contain the source node
-			// in scenarios like a failed OPTIONAL MATCH
-			// in this case, delete the Record and try again
 			OpBase_DeleteRecord(&op->r);
-			continue;
+			op->r = childRecord;
+
+			Node *srcNode = Record_GetNode(op->r, op->srcNodeIdx);
+			if(srcNode == NULL) {
+				// the child Record may not contain the source node
+				// in scenarios like a failed OPTIONAL MATCH
+				// in this case, delete the Record and try again
+				OpBase_DeleteRecord(&op->r);
+				continue;
+			}
+
+			// create edge relation type array on first call to consume
+			if(!op->edgeRelationTypes) {
+				_setupTraversedRelations(op);
+				// incase we don't have any relations to traverse
+				// and minimal traversal is at least one hop
+				// we can return quickly
+				// consider: MATCH (S)-[:L*]->(M) RETURN M
+				// where label L does not exists */
+				if(op->edgeRelationCount == 0 && op->minHops > 0) return NULL;
+
+				op->M = op->ae->operand.matrix;
+			}
+
+			if(op->allNeighborsCtx == NULL) {
+				op->allNeighborsCtx = AllNeighborsCtx_New(srcNode->id, op->M,
+						op->minHops, op->maxHops);
+			} else {
+				// in case ctx already allocated simply reset it
+				AllNeighborsCtx_Reset(op->allNeighborsCtx, srcNode->id, op->M,
+						op->minHops, op->maxHops);
+			}
 		}
 
-		// create edge relation type array on first call to consume
-		if(!op->edgeRelationTypes) {
-			_setupTraversedRelations(op);
-			// incase we don't have any relations to traverse
-			// and minimal traversal is at least one hop
-			// we can return quickly
-			// consider: MATCH (S)-[:L*]->(M) RETURN M
-			// where label L does not exists */
-			if(op->edgeRelationCount == 0 && op->minHops > 0) return NULL;
-
-			op->M = op->ae->operand.matrix;
-		}
-
-		if(op->allNeighborsCtx == NULL) {
-			op->allNeighborsCtx = AllNeighborsCtx_New(srcNode->id, op->M,
-					op->minHops, op->maxHops);
-		} else {
-			// in case ctx already allocated simply reset it
-			AllNeighborsCtx_Reset(op->allNeighborsCtx, srcNode->id, op->M,
-					op->minHops, op->maxHops);
+		// destination label filtering: skip nodes that don't carry all labels
+		if (op->dest_label_count == 0 || _dest_matches_labels (op, dest_id)) {
+			break ;
 		}
 	}
-
-	// could not produce destination node, return
-	if(dest_id == INVALID_ENTITY_ID) return NULL;
 
 	int res = Graph_GetNode(op->g, dest_id, &dest);
 	UNUSED(res);
@@ -276,59 +344,86 @@ static Record CondVarLenTraverseConsume
 (
 	OpBase *opBase
 ) {
-	CondVarLenTraverse  *op     = (CondVarLenTraverse *)opBase;
-	Path                *p      =  NULL;
-	OpBase              *child  =  op->op.children[0];
+	CondVarLenTraverse *op    =(CondVarLenTraverse *)opBase ;
+	Path               *p     = NULL ;
+	OpBase             *child = op->op.children [0] ;
 
-	while(!(p = AllPathsCtx_NextPath(op->allPathsCtx))) {
-		Record childRecord = OpBase_Consume(child);
-		if(!childRecord) return NULL;
+	for(;;) {
+		while (!(p = AllPathsCtx_NextPath (op->allPathsCtx))) {
+			Record childRecord = OpBase_Consume (child) ;
+			if (!childRecord) {
+				return NULL ;
+			}
 
-		OpBase_DeleteRecord(&op->r);
-		op->r = childRecord;
+			OpBase_DeleteRecord (&op->r) ;
+			op->r = childRecord ;
 
-		Node *srcNode = Record_GetNode(op->r, op->srcNodeIdx);
-		if(srcNode == NULL) {
-			// the child Record may not contain the source node in scenarios like
-			// a failed OPTIONAL MATCH. In this case, delete the Record and try again
-			OpBase_DeleteRecord(&op->r);
-			continue;
+			Node *srcNode = Record_GetNode (op->r, op->srcNodeIdx) ;
+			if (srcNode == NULL) {
+				// the child Record may not contain the source node in scenarios like
+				// a failed OPTIONAL MATCH. In this case, delete the Record and try again
+				OpBase_DeleteRecord (&op->r) ;
+				continue ;
+			}
+
+			// create edge relation type array on first call to consume
+			if (!op->edgeRelationTypes) {
+				_setupTraversedRelations (op) ;
+				// incase we don't have any relations to traverse and
+				// minimal traversal is at least one hop, we can return quickly
+				// consider: MATCH (S)-[:L*]->(M) RETURN M
+				// where label L does not exists
+				if (op->edgeRelationCount == 0 && op->minHops > 0) {
+					return NULL ;
+				}
+			}
+
+			Node *destNode = NULL ;
+			// the destination node is known in advance if we're performing an ExpandInto
+			if (op->expandInto) {
+				destNode = Record_GetNode (op->r, op->destNodeIdx) ;
+			}
+
+			if (op->allPathsCtx != NULL && !op->shortestPaths) {
+				AllPathsCtx_Reset (op->allPathsCtx, srcNode, destNode, op->r) ;
+			} else {
+				AllPathsCtx_Free (op->allPathsCtx) ;
+				op->allPathsCtx = AllPathsCtx_New (srcNode, destNode, op->g,
+						op->edgeRelationTypes, op->edgeRelationCount,
+						op->traverseDir, op->minHops, op->maxHops, op->r, op->ft,
+						op->edgesIdx, op->shortestPaths) ;
+			}
 		}
 
-		// create edge relation type array on first call to consume
-		if(!op->edgeRelationTypes) {
-			_setupTraversedRelations(op);
-			// incase we don't have any relations to traverse and
-			// minimal traversal is at least one hop, we can return quickly
-			// consider: MATCH (S)-[:L*]->(M) RETURN M
-			// where label L does not exists
-			if(op->edgeRelationCount == 0 && op->minHops > 0) return NULL;
+		// destination label filtering: skip paths whose head doesn't carry all labels
+		if (op->dest_label_count == 0) {
+			break;
 		}
 
-		Node *destNode = NULL;
-		// the destination node is known in advance if we're performing an ExpandInto
-		if(op->expandInto) destNode = Record_GetNode(op->r, op->destNodeIdx);
+		Node head = Path_Head(p);
 
-		AllPathsCtx_Free(op->allPathsCtx);
-		op->allPathsCtx = AllPathsCtx_New(srcNode, destNode, op->g,
-				op->edgeRelationTypes, op->edgeRelationCount, op->traverseDir,
-				op->minHops, op->maxHops, op->r, op->ft, op->edgesIdx,
-				op->shortestPaths);
+		if (_dest_matches_labels (op, ENTITY_GET_ID (&head))) {
+			break ;
+		}
 	}
 
 	//--------------------------------------------------------------------------
 	// populate output record
 	//--------------------------------------------------------------------------
 
-	Record r = OpBase_CloneRecord(op->r);
+	Record r = OpBase_CloneRecord (op->r) ;
 
 	// add destination node to record
-	if(!op->expandInto) Record_AddNode(r, op->destNodeIdx, Path_Head(p));
+	if (!op->expandInto) {
+		Record_AddNode (r, op->destNodeIdx, Path_Head (p)) ;
+	}
 
 	// add new path to record
-	if(op->edgesIdx >= 0) Record_AddScalar(r, op->edgesIdx, SI_Path(p));
+	if (op->edgesIdx >= 0) {
+		Record_AddScalar (r, op->edgesIdx, SI_Path (p)) ;
+	}
 
-	return r;
+	return r ;
 }
 
 static OpResult CondVarLenTraverseReset
@@ -419,6 +514,11 @@ static void CondVarLenTraverseFree
 	if(op->ft) {
 		FilterTree_Free(op->ft);
 		op->ft = NULL;
+	}
+
+	if (op->dest_labels) {
+		rm_free (op->dest_labels);
+		op->dest_labels = NULL ;
 	}
 }
 

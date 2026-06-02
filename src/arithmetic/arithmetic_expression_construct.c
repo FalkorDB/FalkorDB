@@ -4,15 +4,17 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "arithmetic_expression_construct.h"
 #include "RG.h"
-#include "funcs.h"
 #include "../query_ctx.h"
 #include "../util/rmalloc.h"
 #include "../errors/errors.h"
 #include "../datatypes/array.h"
+#include "path_funcs/path_funcs.h"
+#include "list_funcs/list_funcs.h"
 #include "../configuration/config.h"
 #include "../ast/ast_build_filter_tree.h"
+#include "arithmetic_expression_construct.h"
+#include "comprehension_funcs/comprehension_funcs.h"
 
 // Forward declaration
 static AR_ExpNode *_AR_EXP_FromASTNode(const cypher_astnode_t *expr);

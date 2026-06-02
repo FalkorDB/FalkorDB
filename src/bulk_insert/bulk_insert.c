@@ -71,12 +71,8 @@ static int *_BulkInsert_ReadHeaderLabels
 			memcpy (label, labels, len + 1) ;
 		}
 
-		// try to retrieve the label's schema
-		Schema *s = GraphContext_GetSchema (gc, label, t) ;
-		// create the schema if it does not already exist
-		if (s == NULL) {
-			s = GraphContext_AddSchema (gc, label, t) ;
-		}
+		// create schema in case it doesn't exists
+		Schema *s = GraphContext_FindOrAddSchema (gc, label, t, NULL) ;
 		ASSERT (s != NULL) ;
 
 		// store the label ID
@@ -493,14 +489,12 @@ int BulkInsert
 	// prepare graph for bulk load
 	//--------------------------------------------------------------------------
 
-	Graph *g = GraphContext_GetGraph (gc) ;
-	int res = BULK_OK ;
-
 	// lock graph under write lock
 	// allocate space for new nodes and edges
 	// set graph sync policy to resize only
-	Graph_AcquireWriteLock (g) ;
+	GraphContext_AcquireWriteLock (gc) ;
 
+	Graph *g = GraphContext_GetGraph (gc) ;
 	Graph_AllocateNodes (g, node_count) ;
 	Graph_AllocateEdges (g, edge_count) ;
 
@@ -510,6 +504,7 @@ int BulkInsert
 	// process node tokens
 	//--------------------------------------------------------------------------
 
+	int res = BULK_OK ;
 	if (node_token_count > 0) {
 		ASSERT (argc >= node_token_count) ;
 
@@ -544,7 +539,7 @@ int BulkInsert
 cleanup:
 	// reset graph sync policy
 	Graph_SetMatrixPolicy (g, policy) ;
-	Graph_ReleaseLock (g) ;
+	GraphContext_ReleaseLock (gc) ;
 	return res ;
 }
 

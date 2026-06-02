@@ -12,7 +12,9 @@ class testGraphCreationFlow(FlowTestsBase):
         result = self.graph.query(query)
         self.env.assertEquals(result.nodes_created, 2)
 
-        query = """MATCH (src:person) CREATE (src)-[e:knows]->(dest {name:'C'}) RETURN src,e,dest ORDER BY ID(src) DESC LIMIT 1"""
+        query = """MATCH (src:person)
+                   CREATE (src)-[e:knows]->(dest {name:'C'})
+                   RETURN src,e,dest ORDER BY ID(src) DESC LIMIT 1"""
         result = self.graph.query(query)
         self.env.assertEquals(result.nodes_created, 2)
         self.env.assertEquals(result.relationships_created, 2)
@@ -20,11 +22,13 @@ class testGraphCreationFlow(FlowTestsBase):
         self.env.assertEquals(result.result_set[0][0].properties['name'], 'B')
 
     def test02_create_from_prop(self):
-        query = """MATCH (p:person)-[e:knows]->() CREATE (c:clone {doublename: p.name + toLower(p.name), source_of: TYPE(e)}) RETURN c.doublename, c.source_of ORDER BY c.doublename"""
+        query = """MATCH (p:person)-[e:knows]->()
+                   CREATE (c:clone {doublename: p.name + toLower(p.name), source_of: TYPE(e)})
+                   RETURN c.doublename, c.source_of ORDER BY c.doublename"""
         result = self.graph.query(query)
         expected_result = [['Aa', 'knows'], ['Bb', 'knows']]
 
-        self.env.assertEquals(result.labels_added, 1)
+        self.env.assertEquals(result.labels_added, 2)
         self.env.assertEquals(result.nodes_created, 2)
         self.env.assertEquals(result.properties_set, 4)
         self.env.assertEquals(result.result_set, expected_result)

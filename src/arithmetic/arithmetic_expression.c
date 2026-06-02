@@ -7,7 +7,6 @@
 #include "./arithmetic_expression.h"
 
 #include "RG.h"
-#include "funcs.h"
 #include "rax.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"
@@ -15,6 +14,7 @@
 #include "../util/rmalloc.h"
 #include "../errors/errors.h"
 #include "../graph/graphcontext.h"
+#include "aggregate_funcs/agg_funcs.h"
 #include "../datatypes/temporal_value.h"
 #include "../datatypes/array.h"
 #include "../ast/ast_shared.h"
@@ -401,7 +401,7 @@ static bool _AR_EXP_ValidateInvocation
 	SIType actual_type;
 	SIType expected_type = T_NULL;
 
-	uint expected_types_count = arr_len(fdesc->types);
+	uint expected_types_count = fdesc->types_len;
 	for(int i = 0; i < argc; i++) {
 		actual_type = SI_TYPE(argv[i]);
 		/* For a function that accepts a variable number of arguments.
