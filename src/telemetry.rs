@@ -8,6 +8,7 @@ use crossfire::mpmc::{self, List};
 use crossfire::{MRx, MTx};
 use parking_lot::Mutex;
 use redis_module::{CallOptions, CallOptionsBuilder, Context, RedisString, RedisValue, raw};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -34,6 +35,22 @@ pub fn truncate(s: &str) -> String {
     }
 }
 
+/// Truncate an `Arc<str>` to at most `STR_MAX_LEN` characters.
+///
+/// The common case (query already within the limit) clones the `Arc`
+/// (a refcount bump, no byte copy) instead of reallocating the string.
+/// Only over-long queries pay an allocation, and only to bound stored memory.
+fn truncate_arc(s: &Arc<str>) -> Arc<str> {
+    if let Some((byte_idx, _)) = s.char_indices().nth(STR_MAX_LEN) {
+        let mut t = String::with_capacity(byte_idx + 3);
+        t.push_str(&s[..byte_idx]);
+        t.push_str("...");
+        Arc::from(t)
+    } else {
+        Arc::clone(s)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Telemetry stream writing
 // ---------------------------------------------------------------------------
@@ -56,17 +73,27 @@ pub struct TelemetryEntry {
     pub timed_out: bool,
 }
 
-/// Write a telemetry entry to the graph's stream via XADD.
+/// Pre-formatted XADD arguments for one telemetry entry.
 ///
-/// The stream is trimmed to approximately `MAX_INFO_QUERIES` entries.
-/// Must be called with the GIL held (or from the main thread).
-fn write_to_stream(
-    ctx: &Context,
-    graph_name: &str,
-    entry: &TelemetryEntry,
-) {
-    let stream_key = stream_name(graph_name);
-    let max_len = MAX_INFO_QUERIES.load(Ordering::Relaxed).to_string();
+/// Built **outside** the Redis module lock so that the only work performed
+/// while the GIL is held is `create_string` + `RM_Call("XADD")`. The pure-Rust
+/// formatting (`format!`, float parsing, stream-key construction) happens off
+/// the critical section, shrinking the window during which the main thread is
+/// stalled.
+struct PreparedXadd {
+    /// Alternating XADD argument tokens (stream key, MAXLEN, fields, values).
+    /// Field names are `'static` borrows; only values are owned.
+    args: Vec<std::borrow::Cow<'static, str>>,
+}
+
+/// Build the XADD argument list for one entry. Pure Rust — no GIL required.
+/// Consumes the entry so the query/params strings are moved, not cloned.
+fn prepare_xadd(
+    pe: PendingEntry,
+    max_len: &str,
+) -> PreparedXadd {
+    use std::borrow::Cow;
+    let entry = pe.entry;
     let received = entry.received_at.to_string();
     let wait = format!("{:.6}", entry.wait_duration_ms);
     let exec = format!("{:.6}", entry.execution_duration_ms);
@@ -84,40 +111,51 @@ fn write_to_stream(
     let timeout_flag = if entry.timed_out { "1" } else { "0" };
 
     // XADD telemetry{graph} MAXLEN ~ <max> * field value ...
-    let args: Vec<RedisString> = [
-        &stream_key,
-        "MAXLEN",
-        "~",
-        &max_len,
-        "*",
-        "Received at",
-        &received,
-        "Query",
-        &entry.query,
-        "Query parameters",
-        &entry.params,
-        "Total duration",
-        &total,
-        "Wait duration",
-        &wait,
-        "Execution duration",
-        &exec,
-        "Report duration",
-        &report,
-        "Utilized cache",
-        cache_flag,
-        "Write",
-        write_flag,
-        "Timeout",
-        timeout_flag,
-    ]
-    .iter()
-    .map(|s| ctx.create_string(*s))
-    .collect();
+    PreparedXadd {
+        args: vec![
+            Cow::Owned(stream_name(&pe.graph_name)),
+            Cow::Borrowed("MAXLEN"),
+            Cow::Borrowed("~"),
+            Cow::Owned(max_len.to_owned()),
+            Cow::Borrowed("*"),
+            Cow::Borrowed("Received at"),
+            Cow::Owned(received),
+            Cow::Borrowed("Query"),
+            Cow::Owned(entry.query),
+            Cow::Borrowed("Query parameters"),
+            Cow::Owned(entry.params),
+            Cow::Borrowed("Total duration"),
+            Cow::Owned(total),
+            Cow::Borrowed("Wait duration"),
+            Cow::Owned(wait),
+            Cow::Borrowed("Execution duration"),
+            Cow::Owned(exec),
+            Cow::Borrowed("Report duration"),
+            Cow::Owned(report),
+            Cow::Borrowed("Utilized cache"),
+            Cow::Borrowed(cache_flag),
+            Cow::Borrowed("Write"),
+            Cow::Borrowed(write_flag),
+            Cow::Borrowed("Timeout"),
+            Cow::Borrowed(timeout_flag),
+        ],
+    }
+}
 
+/// Issue the XADD for a pre-formatted entry. Must be called with the GIL held.
+fn dispatch_xadd(
+    ctx: &Context,
+    prepared: &PreparedXadd,
+    call_options: &CallOptions,
+) {
+    let args: Vec<RedisString> = prepared
+        .args
+        .iter()
+        .map(|s| ctx.create_string(s.as_ref()))
+        .collect();
     let _: redis_module::CallResult = ctx.call_ext(
         "XADD",
-        &replicated_call_options(),
+        call_options,
         args.iter().collect::<Vec<_>>().as_slice(),
     );
 }
@@ -160,8 +198,8 @@ pub fn unix_now_secs() -> i64 {
 pub struct RunningQueryInfo {
     pub id: u64,
     pub received_at: i64,
-    pub graph_name: String,
-    pub query: String,
+    pub graph_name: Arc<str>,
+    pub query: Arc<str>,
     pub start: Instant,
     pub is_replicated: bool,
 }
@@ -170,8 +208,8 @@ pub struct RunningQueryInfo {
 pub struct WaitingQueryInfo {
     pub id: u64,
     pub received_at: i64,
-    pub graph_name: String,
-    pub query: String,
+    pub graph_name: Arc<str>,
+    pub query: Arc<str>,
     pub enqueued: Instant,
 }
 
@@ -180,68 +218,87 @@ struct QueryRegistry {
     waiting: Vec<WaitingQueryInfo>,
 }
 
-static REGISTRY: Mutex<QueryRegistry> = Mutex::new(QueryRegistry {
-    running: Vec::new(),
-    waiting: Vec::new(),
-});
+/// Number of registry shards. Each query is routed to a shard by its id, so
+/// concurrent worker threads register/unregister on different mutexes instead
+/// of contending on one global lock. Must be a power of two for the mask.
+const REGISTRY_SHARDS: usize = 8;
+
+static REGISTRY: [Mutex<QueryRegistry>; REGISTRY_SHARDS] = [const {
+    Mutex::new(QueryRegistry {
+        running: Vec::new(),
+        waiting: Vec::new(),
+    })
+}; REGISTRY_SHARDS];
+
+/// Route a query id to its registry shard.
+#[inline]
+fn shard_for(id: u64) -> &'static Mutex<QueryRegistry> {
+    &REGISTRY[(id as usize) & (REGISTRY_SHARDS - 1)]
+}
 
 /// Register a query as currently running. Returns its unique ID.
 pub fn register_running(
     received_at: i64,
-    graph_name: &str,
-    query: &str,
+    graph_name: &Arc<str>,
+    query: &Arc<str>,
     is_replicated: bool,
 ) -> u64 {
     let id = next_id();
     let info = RunningQueryInfo {
         id,
         received_at,
-        graph_name: graph_name.to_string(),
-        query: truncate(query),
+        graph_name: Arc::clone(graph_name),
+        query: truncate_arc(query),
         start: Instant::now(),
         is_replicated,
     };
-    REGISTRY.lock().running.push(info);
+    shard_for(id).lock().running.push(info);
     id
 }
 
 /// Unregister a running query.
 pub fn unregister_running(id: u64) {
-    let mut reg = REGISTRY.lock();
-    reg.running.retain(|q| q.id != id);
+    let mut reg = shard_for(id).lock();
+    if let Some(pos) = reg.running.iter().position(|q| q.id == id) {
+        reg.running.swap_remove(pos);
+    }
 }
 
 /// Unregister a waiting query.
 pub fn unregister_waiting(id: u64) {
-    let mut reg = REGISTRY.lock();
-    reg.waiting.retain(|q| q.id != id);
+    let mut reg = shard_for(id).lock();
+    if let Some(pos) = reg.waiting.iter().position(|q| q.id == id) {
+        reg.waiting.swap_remove(pos);
+    }
 }
 
 /// Register a query as waiting in the write queue. Returns its unique ID.
 pub fn register_waiting(
     received_at: i64,
-    graph_name: &str,
-    query: &str,
+    graph_name: &Arc<str>,
+    query: &Arc<str>,
 ) -> u64 {
     let id = next_id();
     let info = WaitingQueryInfo {
         id,
         received_at,
-        graph_name: graph_name.to_string(),
-        query: truncate(query),
+        graph_name: Arc::clone(graph_name),
+        query: truncate_arc(query),
         enqueued: Instant::now(),
     };
-    REGISTRY.lock().waiting.push(info);
+    shard_for(id).lock().waiting.push(info);
     id
 }
 
 /// Transition a waiting query to running. Returns the waiting info if found.
 pub fn transition_waiting_to_running(waiting_id: u64) -> Option<u64> {
-    let mut reg = REGISTRY.lock();
-    let pos = reg.waiting.iter().position(|q| q.id == waiting_id)?;
-    let waiting = reg.waiting.remove(pos);
+    let waiting = {
+        let mut reg = shard_for(waiting_id).lock();
+        let pos = reg.waiting.iter().position(|q| q.id == waiting_id)?;
+        reg.waiting.swap_remove(pos)
+    };
     let running_id = next_id();
-    reg.running.push(RunningQueryInfo {
+    shard_for(running_id).lock().running.push(RunningQueryInfo {
         id: running_id,
         received_at: waiting.received_at,
         graph_name: waiting.graph_name,
@@ -254,12 +311,20 @@ pub fn transition_waiting_to_running(waiting_id: u64) -> Option<u64> {
 
 /// Snapshot of all currently running queries.
 pub fn snapshot_running() -> Vec<RunningQueryInfo> {
-    REGISTRY.lock().running.clone()
+    let mut out = Vec::new();
+    for shard in &REGISTRY {
+        out.extend(shard.lock().running.iter().cloned());
+    }
+    out
 }
 
 /// Snapshot of all currently waiting queries.
 pub fn snapshot_waiting() -> Vec<WaitingQueryInfo> {
-    REGISTRY.lock().waiting.clone()
+    let mut out = Vec::new();
+    for shard in &REGISTRY {
+        out.extend(shard.lock().waiting.iter().cloned());
+    }
+    out
 }
 
 /// Build a `RedisValue` for the GRAPH.INFO `RunningQueries` section.
@@ -274,9 +339,9 @@ pub fn running_queries_reply() -> Vec<RedisValue> {
                 RedisValue::BulkString("Received at".into()),
                 RedisValue::Integer(q.received_at),
                 RedisValue::BulkString("Graph name".into()),
-                RedisValue::BulkString(q.graph_name),
+                RedisValue::BulkString(q.graph_name.to_string()),
                 RedisValue::BulkString("Query".into()),
-                RedisValue::BulkString(q.query),
+                RedisValue::BulkString(q.query.to_string()),
                 RedisValue::BulkString("Execution duration".into()),
                 RedisValue::Float(duration_ms),
                 RedisValue::BulkString("Replicated command".into()),
@@ -298,9 +363,9 @@ pub fn waiting_queries_reply() -> Vec<RedisValue> {
                 RedisValue::BulkString("Received at".into()),
                 RedisValue::Integer(q.received_at),
                 RedisValue::BulkString("Graph name".into()),
-                RedisValue::BulkString(q.graph_name),
+                RedisValue::BulkString(q.graph_name.to_string()),
                 RedisValue::BulkString("Query".into()),
-                RedisValue::BulkString(q.query),
+                RedisValue::BulkString(q.query.to_string()),
                 RedisValue::BulkString("Wait duration".into()),
                 RedisValue::Float(duration_ms),
             ])
@@ -326,7 +391,7 @@ const FLUSH_BATCH_MAX: usize = 256;
 const FLUSH_INTERVAL: Duration = Duration::from_millis(5);
 
 struct PendingEntry {
-    graph_name: String,
+    graph_name: Arc<str>,
     entry: TelemetryEntry,
 }
 
@@ -344,7 +409,7 @@ static FLUSHER: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
 
 /// Push a telemetry entry to the background channel. Lock-free hot path.
 pub fn enqueue_entry(
-    graph_name: &str,
+    graph_name: &Arc<str>,
     entry: TelemetryEntry,
 ) {
     // Skip on replicas: the master's XADDs are replicated to us, so writing
@@ -355,7 +420,7 @@ pub fn enqueue_entry(
     }
     if let Some(tx) = SENDER.lock().as_ref() {
         let _ = tx.send(PendingEntry {
-            graph_name: graph_name.to_string(),
+            graph_name: Arc::clone(graph_name),
             entry,
         });
     }
@@ -434,14 +499,23 @@ fn flusher_loop() {
             }
         }
 
+        // Format every entry's XADD arguments *outside* the GIL so the
+        // critical section below only does string creation + RM_Call.
+        let max_len = MAX_INFO_QUERIES.load(Ordering::Relaxed).to_string();
+        let call_options = replicated_call_options();
+        #[allow(clippy::iter_with_drain)]
+        let prepared: Vec<PreparedXadd> = batch
+            .drain(..)
+            .map(|pe| prepare_xadd(pe, &max_len))
+            .collect();
+
         // Single GIL acquisition for the whole batch.
         unsafe {
             raw::RedisModule_ThreadSafeContextLock.expect("ThreadSafeContextLock")(tsc);
         }
         let ctx = Context::new(tsc);
-        #[allow(clippy::iter_with_drain)]
-        for pe in batch.drain(..) {
-            write_to_stream(&ctx, &pe.graph_name, &pe.entry);
+        for p in &prepared {
+            dispatch_xadd(&ctx, p, &call_options);
         }
         unsafe {
             raw::RedisModule_ThreadSafeContextUnlock.expect("ThreadSafeContextUnlock")(tsc);

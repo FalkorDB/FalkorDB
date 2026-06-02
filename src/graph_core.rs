@@ -942,7 +942,10 @@ fn query_sync(
         "GRAPH.RO_QUERY"
     };
     let wall_start = Instant::now();
-    let running_id = telemetry::register_running(received_at, key_name, query, false);
+    // Telemetry stores the query as an `Arc<str>`; build it once and share it
+    // across the running-registry registrations on this (rare) sync path.
+    let query_arc: Arc<str> = Arc::from(query);
+    let running_id = telemetry::register_running(received_at, key_name, &query_arc, false);
     let res = {
         let g = graph.read();
         g.execute_query(ctx, query, compact, write, cmd, per_query_timeout)
@@ -954,7 +957,8 @@ fn query_sync(
             if read_result.is_write {
                 // Write path: acquire exclusive lock and execute.
                 let write_start = Instant::now();
-                let running_id2 = telemetry::register_running(received_at, key_name, query, false);
+                let running_id2 =
+                    telemetry::register_running(received_at, key_name, &query_arc, false);
                 let mut g = graph.write();
                 let res = g.execute_query_write(
                     ctx,

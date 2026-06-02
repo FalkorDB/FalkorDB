@@ -22,8 +22,11 @@
 //! When all key and aggregation-input expressions are simple (variable
 //! passthrough or `entity.property`), the operator uses a vectorized path
 //! that extracts values in bulk via [`Runtime::materialize_node_property`]
-//! instead of per-row `run_expr` evaluation.  For complex expressions or
-//! `DISTINCT` aggregations it falls back to per-row evaluation.
+//! instead of per-row `run_expr` evaluation.  This includes single-argument
+//! `DISTINCT` aggregations (e.g. `count(DISTINCT n.id)`): the property column
+//! is still extracted in bulk and per-group deduplication is applied during
+//! accumulation.  For other complex expressions it falls back to per-row
+//! evaluation.
 
 use crate::parser::ast::{ExprIR, QueryExpr, Variable};
 use crate::planner::IR;
@@ -33,7 +36,7 @@ use crate::runtime::{
     env::Env,
     functions::{FnType, GraphFn},
     runtime::Runtime,
-    value::Value,
+    value::{Value, ValuesDeduper},
 };
 use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 use std::collections::HashMap;
@@ -101,6 +104,11 @@ struct VectorizableAgg {
     input: Option<AggInputKind>,
     /// The variable used as the accumulator slot in the acc Env.
     acc_var: Variable,
+    /// `Some(distinct_node_idx)` when the aggregation argument is wrapped in
+    /// `DISTINCT` (e.g. `count(DISTINCT n.id)`).  The node index keys the
+    /// per-group dedup state in [`Runtime::value_dedupers`], matching the
+    /// per-row evaluator so the two paths stay consistent within a query.
+    distinct_idx: Option<NodeIdx<Dyn<ExprIR<Variable>>>>,
 }
 
 /// Full analysis of a vectorizable aggregate operator.
@@ -231,9 +239,39 @@ impl<'a> AggregateOp<'a> {
             return None;
         };
 
-        // Check for DISTINCT — fall back to per-row.
+        // DISTINCT: vectorize when the argument is `DISTINCT <var|property>`
+        // with a single inner expression.  The property column is still
+        // extracted in bulk (the expensive part); per-group deduplication is
+        // applied row-by-row during accumulation via `Runtime::value_dedupers`,
+        // keyed by the DISTINCT node index to match the per-row evaluator.
         if num_children == 2 && matches!(root.child(0).data(), ExprIR::Distinct) {
-            return None;
+            let distinct = root.child(0);
+            if distinct.num_children() != 1 {
+                return None;
+            }
+            let inner = distinct.child(0);
+            let input = match inner.data() {
+                ExprIR::Variable(var) => AggInputKind::Variable(var.clone()),
+                ExprIR::Property(attr) => {
+                    if inner.num_children() != 1 {
+                        return None;
+                    }
+                    let ExprIR::Variable(var) = inner.child(0).data() else {
+                        return None;
+                    };
+                    AggInputKind::Property {
+                        var: var.clone(),
+                        attr: attr.clone(),
+                    }
+                }
+                _ => return None,
+            };
+            return Some(VectorizableAgg {
+                func: func.clone(),
+                input: Some(input),
+                acc_var: acc_var.clone(),
+                distinct_idx: Some(distinct.idx()),
+            });
         }
 
         // Analyze the input argument (child 0).
@@ -279,6 +317,7 @@ impl<'a> AggregateOp<'a> {
             func: func.clone(),
             input,
             acc_var: acc_var.clone(),
+            distinct_idx: None,
         })
     }
 
@@ -293,6 +332,10 @@ impl<'a> AggregateOp<'a> {
     ) {
         let child = self.child.take().unwrap();
         let default_acc = self.default_acc.take().unwrap();
+
+        // Whether any aggregate uses DISTINCT — gates the per-row group-hash
+        // computation so the common non-distinct path stays free of it.
+        let any_distinct = analysis.agg_kinds.iter().any(|a| a.distinct_idx.is_some());
 
         let mut groups: HashMap<GroupKey, (Env<'a>, Env<'a>)> = HashMap::new();
         let mut errors: Vec<String> = Vec::new();
@@ -364,6 +407,7 @@ impl<'a> AggregateOp<'a> {
             if self.keys.is_empty()
                 && self.copy_from_parent.is_empty()
                 && analysis.agg_kinds.len() == 1
+                && analysis.agg_kinds[0].distinct_idx.is_none()
                 && let FnType::Aggregation {
                     batch_agg: Some(batch_fn),
                     ..
@@ -432,6 +476,12 @@ impl<'a> AggregateOp<'a> {
                     (key_env, default_acc.clone_pooled(self.runtime.env_pool))
                 });
 
+                // Opaque group identifier for DISTINCT dedup — computed only
+                // when an aggregate is distinct, and identically to the per-row
+                // fallback (`entry.0.hash_u64()`) so the shared dedup state in
+                // `Runtime::value_dedupers` stays consistent across both paths.
+                let group_id = if any_distinct { entry.0.hash_u64() } else { 0 };
+
                 let acc = &mut entry.1;
                 for (agg_idx, agg) in analysis.agg_kinds.iter().enumerate() {
                     let input_val = match &agg.input {
@@ -442,6 +492,29 @@ impl<'a> AggregateOp<'a> {
                     // Skip Null inputs for aggregation — standard Cypher behavior.
                     if matches!(input_val, Value::Null) {
                         continue;
+                    }
+
+                    // DISTINCT gating: deduplicate per (distinct node, group) so
+                    // each distinct value is accumulated at most once per group,
+                    // matching the per-row evaluator's `ExprIR::Distinct` branch.
+                    if let Some(didx) = agg.distinct_idx {
+                        let mut dedupers = self.runtime.value_dedupers.borrow_mut();
+                        // Pre-size the per-group dedup set only for keyless
+                        // aggregation, where a single deduper accumulates every
+                        // distinct value and would otherwise rehash repeatedly
+                        // as it grows. When grouping, leave it empty to avoid
+                        // over-allocating across many (possibly high-cardinality)
+                        // groups.
+                        let deduper = dedupers.entry((didx, group_id)).or_insert_with(|| {
+                            if self.keys.is_empty() {
+                                ValuesDeduper::with_capacity(1024)
+                            } else {
+                                ValuesDeduper::default()
+                            }
+                        });
+                        if deduper.is_seen(std::slice::from_ref(&input_val)) {
+                            continue;
+                        }
                     }
 
                     let prev = acc.take(&agg.acc_var).unwrap_or(Value::Null);

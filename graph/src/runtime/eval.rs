@@ -535,9 +535,7 @@ impl<'a> ExprEval<'a> {
                         .map(|child| self.eval(ir, child.idx(), env, agg_group_key))
                         .collect::<Result<ThinVec<_>, _>>()?;
                     let mut value_dedupers = rt.value_dedupers.borrow_mut();
-                    let value_deduper = value_dedupers
-                        .entry(format!("{idx:?}_{group_id}"))
-                        .or_default();
+                    let value_deduper = value_dedupers.entry((idx, group_id)).or_default();
                     if value_deduper.is_seen(&values) {
                         res.push(Value::List(Arc::new(thin_vec![Value::Null])));
                     } else {
