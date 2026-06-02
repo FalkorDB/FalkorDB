@@ -12,3 +12,10 @@
 # explicitly for the same reason.
 [target.'cfg(target_os = "linux")']
 rustflags = ["-C", "link-arg=-Wl,--allow-multiple-definition"]
+# NOTE: doctests are linked by rustdoc, which needs the same allowance via
+# `rustdocflags`/`RUSTDOCFLAGS` — but cargo ignores `rustdocflags` under a
+# `[target.<cfg>]` table (unused-key warning), and `[build].rustdocflags` is
+# global, where the GNU-ld `--allow-multiple-definition` would break macOS's
+# ld64. So the CI jobs that run doctests (`cargo test -p graph` in the `test`
+# and `coverage` jobs) set RUSTDOCFLAGS explicitly; a local Linux doctest run
+# (`cargo test -p graph`) needs the same env.

@@ -205,7 +205,9 @@ jobs:
       # Cargo unit tests run against in-process code and don't touch redis.
       - name: Run cargo unit tests
         run: |
-          cargo test --release -p graph
+          # rustdoc links doctests separately and ignores RUSTFLAGS/.cargo rustflags,
+          # so it needs the duplicate-symbol allowance (libredisearch_rs.a bundles std).
+          RUSTDOCFLAGS="-C link-arg=-Wl,--allow-multiple-definition" cargo test --release -p graph
       - name: Run pytest tests against the RC image
         run: |
           . /data/venv/bin/activate
@@ -338,7 +340,7 @@ jobs:
       - name: Run code coverage
         run: |
           RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo build
-          RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo test -p graph
+          RUSTDOCFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo test -p graph
           . /data/venv/bin/activate
           pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
           TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
