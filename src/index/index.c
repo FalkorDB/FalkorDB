@@ -386,14 +386,14 @@ static inline void _addArrayField
 		arr_free(encoded);
 	}
 
-	// clean up
-	if(n_numerics == 0) {
-		arr_free(numerics);
-	}
-
-	if(n_strings == 0) {
-		arr_free(strings);
-	}
+	// clean up. The LLAPI (RediSearch_DocumentAddFieldNumericArray /
+	// RediSearch_DocumentAddFieldStringArray) deep-copies its array
+	// argument, so the local arr.h buffers we built above are ours to
+	// free in both branches. Older code only freed when the array was
+	// empty, leaking everything on the non-empty path — visible under
+	// ASan as 1.5KB+ per testIndexScanFlow run.
+	arr_free(numerics);
+	arr_free(strings);
 }
 
 // index a graph entity
