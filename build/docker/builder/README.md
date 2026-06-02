@@ -24,7 +24,7 @@ contract is: **libclang ≥ 15, from the distro's official repo**. No
 |---|---|---|---|
 | `ubuntu` | `ubuntu:22.04` | LLVM 15 | jammy universe (explicit `clang-15 libclang-15-dev`) |
 | `debian` | `debian:trixie-slim` | LLVM 19 | trixie main (default) |
-| `alpine` | `alpine:3.22` | LLVM 20 | alpine community (`clang-dev` meta-package) |
+| `alpine` | `alpine:3.22` | LLVM 20 | alpine community (explicit `clang20-dev/-libs/-static` + `llvm20-dev/-static`; *-static needed for clang-sys's musl-only static link) |
 | `amazonlinux2023` | `amazonlinux:2023` | LLVM 15 | AL2023 default (`clang clang-devel`) |
 | `rhel` / `rhel9` | `redhat/ubi9` | LLVM 21 | UBI9 default (`clang clang-devel`) |
 | `rhel8` | `redhat/ubi8` | LLVM 21 | UBI8 default + `ubi-8-codeready-builder-rpms` for `clang-devel` |

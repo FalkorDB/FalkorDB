@@ -1,8 +1,13 @@
 # Builder toolchain image — Alpine
 #
-# Alpine cmake from apk is too old; pip-install cmake 3.28.x (this is the
-# original pattern in build-image, kept and bumped from 3.25.2 for consistency).
-# Adds clang-dev + clang-libs required by `bindgen`/`clang-sys` in redisearch_rs.
+# Alpine cmake from apk is too old; pip-install the same pinned version as
+# the other builder OSes for byte-identical cmake across the matrix.
+#
+# clang-sys / bindgen need libclang AT BUILD TIME. On musl, clang-sys's
+# build script defaults to *static* linking (libclang.a, not libclang.so),
+# so the per-major *-static packages must be installed alongside the
+# normal -dev / -libs. Alpine ships these as separate `clangNN-static` /
+# `llvmNN-static` packages.
 
 # Pinned to alpine:3.22 (rather than alpine:latest) so the toolchain version
 # is reproducible across image rebuilds. Bump deliberately when alpine 3.23+
@@ -28,9 +33,11 @@ RUN apk add --no-cache --no-scripts \
     zstd-dev \
     rust \
     cargo \
-    clang-dev \
-    clang-libs \
-    llvm-dev \
+    clang20-dev \
+    clang20-libs \
+    clang20-static \
+    llvm20-dev \
+    llvm20-static \
     gperf \
     bsd-compat-headers \
     linux-headers \
