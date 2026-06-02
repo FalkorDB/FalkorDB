@@ -10,9 +10,11 @@
 // get the fully synced GrB_Matrix from Delta_Matrix C without modifying C
 GrB_Info Delta_Matrix_export
 (
-    GrB_Matrix *A,         // output Matrix 
-    const Delta_Matrix C,  // input Delta Matrix
-    const GrB_Type type    // output matrix type (values will be typecast)
+    GrB_Matrix *A,                  // output Matrix
+    const Delta_Matrix C,           // input Delta Matrix
+    const GrB_Type type,            // output matrix type (values will be typecast)
+    const GrB_Orientation *format   // optional: if non-NULL, sets output orientation
+                                    // before fill to avoid an in-place transpose later
 ) {
 	ASSERT(C != NULL);
 	ASSERT(A != NULL);
@@ -35,6 +37,15 @@ GrB_Info Delta_Matrix_export
 	GrB_OK (GrB_Matrix_nrows (&nrows, m));
 	GrB_OK (GrB_Matrix_ncols (&ncols, m));
 	GrB_OK (GrB_Matrix_new   (&_A, type, nrows, ncols));
+
+	// set orientation on the empty matrix before filling so GraphBLAS stores
+	// entries in the requested layout directly; avoids an in-place transpose
+	// on an already-populated matrix, which races with OpenMP workers under
+	// concurrent query load
+	if (format != NULL) {
+		GrB_OK (GxB_Matrix_Option_set (_A, GrB_STORAGE_ORIENTATION_HINT,
+				*format)) ;
+	}
 	GrB_OK (GrB_Matrix_nvals (&dp_nvals, dp));
 	GrB_OK (GrB_Matrix_nvals (&dm_nvals, dm));
 

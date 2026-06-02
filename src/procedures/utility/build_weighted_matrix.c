@@ -310,14 +310,14 @@ GrB_Info get_sub_weight_matrix
 		ASSERT(DL != NULL);
 
 		GrB_Matrix L;
-		GrB_OK (Delta_Matrix_export(&L, DL, GrB_BOOL));
+		GrB_OK (Delta_Matrix_export(&L, DL, GrB_BOOL, NULL));
 
 		// L = L U M
 		for (unsigned short i = 1; i < n_lbls; i++) {
 			DL = Graph_GetLabelMatrix(g, lbls[i]);
 			ASSERT(DL != NULL);
 
-			GrB_OK (Delta_Matrix_export(&M, DL, GrB_BOOL));
+			GrB_OK (Delta_Matrix_export(&M, DL, GrB_BOOL, NULL));
 
 			GrB_OK (GrB_Matrix_eWiseAdd_Semiring(L, NULL, NULL,
 					GxB_ANY_PAIR_BOOL, L, M, NULL));
@@ -391,7 +391,7 @@ GrB_Info get_sub_weight_matrix
 	D = Graph_GetRelationMatrix(g, rel_id, false);
 	ASSERT(D != NULL);
 
-	GrB_OK(Delta_Matrix_export(&_A, D, GrB_UINT64));
+	GrB_OK(Delta_Matrix_export(&_A, D, GrB_UINT64, NULL));
 
 	bool multiEdgeFlag = Graph_RelationshipContainsMultiEdge(g, rel_id);
 
@@ -403,7 +403,7 @@ GrB_Info get_sub_weight_matrix
 		D = Graph_GetRelationMatrix(g, rel_id, false);
 		ASSERT(D != NULL);
 
-		GrB_OK (Delta_Matrix_export(&M, D, GrB_UINT64));
+		GrB_OK (Delta_Matrix_export(&M, D, GrB_UINT64, NULL));
 
 		// add and pick the min (max) valued edge if there is overlap
 		GrB_OK (GrB_Matrix_eWiseAdd_BinaryOp(_A, NULL, NULL, minID, _A, M, NULL));
