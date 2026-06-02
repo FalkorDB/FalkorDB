@@ -388,29 +388,18 @@ static void _ShutdownEventHandler
 	Globals_ReadLock () ;
 	GraphContext **graphs = Globals_Get_GraphsInKeyspace () ;
 	GraphContext **snapshot = NULL ;
-	uint32_t snap_n = 0 ;
 	if (graphs != NULL) {
-		snap_n = arr_len (graphs) ;
-		snapshot = arr_new (GraphContext *, snap_n) ;
-		for (uint32_t i = 0 ; i < snap_n ; i++) {
+		uint32_t n = arr_len (graphs) ;
+		snapshot = arr_new (GraphContext *, n) ;
+		for (uint32_t i = 0 ; i < n ; i++) {
 			arr_append (snapshot, graphs[i]) ;
 		}
 	}
 	Globals_Unlock () ;
 
-	// TEMP DEBUG: log what we're about to free so we can see whether this
-	// graph is even present at shutdown for test_index_create.
-	RedisModule_Log (ctx, "warning",
-			"phase-b shutdown: graphs_in_keyspace=%u", snap_n) ;
-
 	if (snapshot != NULL) {
 		for (uint32_t i = 0 ; i < arr_len (snapshot) ; i++) {
-			GraphContext *gc = snapshot[i] ;
-			const char *name = GraphContext_GetName (gc) ;
-			RedisModule_Log (ctx, "warning",
-					"phase-b shutdown: decref graph='%s'",
-					name ? name : "(null)") ;
-			GraphContext_DecreaseRefCount (gc) ;
+			GraphContext_DecreaseRefCount (snapshot[i]) ;
 		}
 		arr_free (snapshot) ;
 	}
