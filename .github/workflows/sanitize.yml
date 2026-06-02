@@ -101,6 +101,10 @@ jobs:
     - name: Build
       run: |
         rustup default nightly
+        # -Zbuild-std (enabled by RediSearch's redisearch_rs CMakeLists.txt
+        # when SAN=address) needs the standard library *source* installed
+        # alongside the nightly toolchain.
+        rustup component add rust-src --toolchain nightly
         apt-get update
         apt-get install -y lsb-release wget software-properties-common gnupg
         wget https://apt.llvm.org/llvm.sh
