@@ -34,7 +34,7 @@ use graph::{
     graph::graphblas::matrix::init,
     index::redisearch::{
         REDISEARCH_INIT_LIBRARY, RediSearch_CleanupModule, RediSearch_Init,
-        RediSearch_SetNumWorkerThreads,
+        RediSearch_SetDefaultScorer, RediSearch_SetNumWorkerThreads,
     },
     runtime::functions::{init_functions, init_udf_functions},
     threadpool::{self, init_thread_pool},
@@ -217,6 +217,13 @@ pub fn graph_init(
         } else {
             ctx.log_notice("Failed initializing RediSearch.");
             return Status::Err;
+        }
+
+        // RediSearch 8.6 changed the default scorer from TFIDF to BM25STD.
+        // FalkorDB compares absolute fulltext scores against the legacy TFIDF
+        // magnitudes, so opt back in (non-fatal). Mirrors FalkorDB/FalkorDB#2021.
+        if RediSearch_SetDefaultScorer(c"TFIDF".as_ptr()) != REDISMODULE_OK as c_int {
+            ctx.log_warning("Failed to set RediSearch default scorer to TFIDF");
         }
         if let Err(err) = init(
             RedisModule_Alloc,

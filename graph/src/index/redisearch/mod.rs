@@ -301,6 +301,14 @@ unsafe extern "C" {
     pub fn RediSearch_SetNumWorkerThreads(n: usize) -> ::std::os::raw::c_int;
 }
 unsafe extern "C" {
+    #[doc = " Override the default scorer name (e.g. \"TFIDF\", \"BM25\", \"BM25STD\")."]
+    #[doc = " RediSearch 8.6 defaults to BM25STD; FalkorDB uses TFIDF for legacy"]
+    #[doc = " fulltext score magnitudes. Returns REDISEARCH_OK / REDISEARCH_ERR."]
+    pub fn RediSearch_SetDefaultScorer(
+        name: *const ::std::os::raw::c_char
+    ) -> ::std::os::raw::c_int;
+}
+unsafe extern "C" {
     #[doc = " Handle Stopwords list"]
     pub fn RediSearch_StopwordsList_Contains(
         idx: *mut RSIndexHandle,
@@ -621,7 +629,8 @@ unsafe extern "C" {
     pub fn RediSearch_DocumentAddFieldNumericArray(
         d: *mut RSDoc,
         fieldName: *const ::std::os::raw::c_char,
-        arr: *mut *mut f64,
+        values: *const f64,
+        count: usize,
         indexAsTypes: ::std::os::raw::c_uint,
     );
 }
@@ -629,8 +638,8 @@ unsafe extern "C" {
     pub fn RediSearch_DocumentAddFieldStringArray(
         d: *mut RSDoc,
         fieldName: *const ::std::os::raw::c_char,
-        arr: *mut *mut *mut ::std::os::raw::c_char,
-        len: usize,
+        values: *const *const ::std::os::raw::c_char,
+        count: usize,
         indexAsTypes: ::std::os::raw::c_uint,
     );
 }
@@ -748,6 +757,7 @@ unsafe extern "C" {
 unsafe extern "C" {
     pub fn RediSearch_CreateTagLexRangeNode(
         sp: *mut RSIndexHandle,
+        field_name: *const ::std::os::raw::c_char,
         begin: *const ::std::os::raw::c_char,
         end: *const ::std::os::raw::c_char,
         includeBegin: ::std::os::raw::c_int,

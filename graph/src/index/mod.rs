@@ -67,54 +67,6 @@ use parking_lot::Mutex;
 
 use crate::runtime::value::Value;
 
-/// Allocate a C array compatible with RediSearch's `array_free`.
-///
-/// RediSearch uses a custom array format with a 12-byte header (len, cap, elem_sz)
-/// prepended to the data. `array_free` reads this header, so we must allocate
-/// in the same format.
-unsafe fn rs_array_new<T>(data: &[T]) -> *mut T {
-    use redisearch::redis::RedisModule_Alloc;
-
-    #[repr(C)]
-    struct ArrayHdr {
-        len: u32,
-        cap: u32,
-        elem_sz: u32,
-    }
-
-    let n = data.len();
-    let elem_sz = std::mem::size_of::<T>();
-    let total = std::mem::size_of::<ArrayHdr>() + std::mem::size_of_val(data);
-
-    unsafe {
-        // Must use RedisModule_Alloc because RediSearch's array_free uses
-        // rm_free which maps to RedisModule_Free when compiled as a module.
-        let alloc = RedisModule_Alloc.expect("RedisModule_Alloc not initialized");
-        let raw = alloc(total);
-        if raw.is_null() {
-            return std::ptr::null_mut();
-        }
-
-        let hdr = raw.cast::<ArrayHdr>();
-        (*hdr).len = n as u32;
-        (*hdr).cap = n as u32;
-        (*hdr).elem_sz = elem_sz as u32;
-
-        let arr_ptr = raw
-            .cast::<u8>()
-            .add(std::mem::size_of::<ArrayHdr>())
-            .cast::<T>();
-        // Use byte-level copy to avoid alignment issues — the array header
-        // is 12 bytes, so the data pointer may not be naturally aligned for T.
-        std::ptr::copy_nonoverlapping(
-            data.as_ptr().cast::<u8>(),
-            arr_ptr.cast::<u8>(),
-            std::mem::size_of_val(data),
-        );
-
-        arr_ptr
-    }
-}
 use redisearch::{
     DEFAULT_BLOCK_SIZE, GC_POLICY_FORK, HNSW_DEFAULT_EPSILON, HNSWParams, REDISEARCH_ADD_REPLACE,
     RSDoc, RSFLDOPT_NONE, RSFLDOPT_TXTNOSTEM, RSFLDOPT_TXTPHONETIC, RSFLDTYPE_FULLTEXT,
@@ -571,6 +523,30 @@ const NODE_DOC_KEY_LEN: usize = std::mem::size_of::<u64>() * 2;
 const EDGE_DOC_KEY_LEN: usize = std::mem::size_of::<[u64; 3]>() * 2;
 const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
 
+/// Escape a TAG string value so it survives RediSearch's tag tokenizer and the
+/// query-side `tag_strtolower` strip pass, collapsing to a single literal
+/// token. Mirrors C FalkorDB's `TagEncode_Lower` (FalkorDB/FalkorDB#2021,
+/// `src/index/tag_encode.c`): every byte `<= 0x20` (control bytes, whitespace
+/// and the `\1` tag separator), `\` (0x5c, the read-side strip target) and `_`
+/// (0x5f, the escape prefix itself) is emitted as `_` followed by two lowercase
+/// hex digits; all other bytes pass through verbatim. Applied symmetrically on
+/// the index write and query paths so the stored key and the query key match.
+/// No decoder exists — the encoded form is only ever the RediSearch index key;
+/// the real attribute value is served from FalkorDB's own attribute store.
+fn tag_encode_lower(src: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(src.len());
+    for &b in src {
+        if b <= 0x20 || b == b'\\' || b == b'_' {
+            out.push(b'_');
+            out.push(HEX_DIGITS[(b >> 4) as usize]);
+            out.push(HEX_DIGITS[(b & 0x0f) as usize]);
+        } else {
+            out.push(b);
+        }
+    }
+    out
+}
+
 /// Hex-encode `bytes` into `out` (high nibble first). `out.len()` must be
 /// `bytes.len() * 2`.
 fn hex_encode_into(
@@ -741,12 +717,15 @@ impl Document {
                     );
                 }
                 Value::String(s) => {
-                    // Only Range fields reach here; add as TAG.
+                    // Only Range fields reach here; add as TAG, encoded so
+                    // tag-special bytes (separator, backslash, whitespace)
+                    // survive RediSearch tokenization as a single token.
+                    let enc = tag_encode_lower(s.as_bytes());
                     RediSearch_DocumentAddFieldString(
                         self.rs_doc,
                         field.name.as_ptr(),
-                        s.as_ptr().cast::<c_char>(),
-                        s.len(),
+                        enc.as_ptr().cast::<c_char>(),
+                        enc.len(),
                         RSFLDTYPE_TAG,
                     );
                 }
@@ -770,7 +749,9 @@ impl Document {
                             Value::Int(i) => numerics.push(*i as f64),
                             Value::Float(f) => numerics.push(*f),
                             Value::String(s) => {
-                                if let Ok(cs) = CString::new(s.as_str()) {
+                                // Encode to match the single-string TAG write
+                                // path and the query path.
+                                if let Ok(cs) = CString::new(tag_encode_lower(s.as_bytes())) {
                                     string_cstrs.push(cs);
                                 }
                             }
@@ -780,33 +761,26 @@ impl Document {
                     if !numerics.is_empty()
                         && let Some(name) = field.numeric_arr_name()
                     {
-                        let mut c_arr = rs_array_new(&numerics);
-                        if !c_arr.is_null() {
-                            RediSearch_DocumentAddFieldNumericArray(
-                                self.rs_doc,
-                                name.as_ptr(),
-                                &raw mut c_arr,
-                                RSFLDTYPE_NUMERIC,
-                            );
-                        }
+                        RediSearch_DocumentAddFieldNumericArray(
+                            self.rs_doc,
+                            name.as_ptr(),
+                            numerics.as_ptr(),
+                            numerics.len(),
+                            RSFLDTYPE_NUMERIC,
+                        );
                     }
                     if !string_cstrs.is_empty()
                         && let Some(name) = field.string_arr_name()
                     {
-                        let ptrs: Vec<*mut c_char> = string_cstrs
-                            .iter()
-                            .map(|cs| cs.as_ptr().cast_mut())
-                            .collect();
-                        let mut c_arr = rs_array_new(&ptrs);
-                        if !c_arr.is_null() {
-                            RediSearch_DocumentAddFieldStringArray(
-                                self.rs_doc,
-                                name.as_ptr(),
-                                &raw mut c_arr,
-                                ptrs.len(),
-                                RSFLDTYPE_TAG,
-                            );
-                        }
+                        let ptrs: Vec<*const c_char> =
+                            string_cstrs.iter().map(|cs| cs.as_ptr()).collect();
+                        RediSearch_DocumentAddFieldStringArray(
+                            self.rs_doc,
+                            name.as_ptr(),
+                            ptrs.as_ptr(),
+                            ptrs.len(),
+                            RSFLDTYPE_TAG,
+                        );
                         // Keep string content CStrings alive — the pointer
                         // array in RediSearch references them. They'll be
                         // properly freed when the Document is dropped.
@@ -1369,7 +1343,7 @@ impl Index {
         if let (Some(lo), Some(hi)) = (min, max)
             && lo == hi
         {
-            let Ok(token) = CString::new(lo) else {
+            let Ok(token) = CString::new(tag_encode_lower(lo.as_bytes())) else {
                 return std::ptr::null_mut();
             };
             let child = unsafe {
@@ -1380,14 +1354,15 @@ impl Index {
         }
 
         // Lex range: NULL pointer means open bound (infinity)
-        let min_cstr = min.and_then(|s| CString::new(s).ok());
-        let max_cstr = max.and_then(|s| CString::new(s).ok());
+        let min_cstr = min.and_then(|s| CString::new(tag_encode_lower(s.as_bytes())).ok());
+        let max_cstr = max.and_then(|s| CString::new(tag_encode_lower(s.as_bytes())).ok());
         let min_ptr = min_cstr.as_ref().map_or(std::ptr::null(), |cs| cs.as_ptr());
         let max_ptr = max_cstr.as_ref().map_or(std::ptr::null(), |cs| cs.as_ptr());
 
         let child = unsafe {
             RediSearch_CreateTagLexRangeNode(
                 self.rs_ptr(),
+                field.name.as_ptr(),
                 min_ptr,
                 max_ptr,
                 i32::from(include_min),
@@ -1422,7 +1397,7 @@ impl Index {
                     return std::ptr::null_mut();
                 };
                 let root = unsafe { RediSearch_CreateTagNode(self.rs_ptr(), field.name.as_ptr()) };
-                let Ok(msg) = CString::new(value.as_str()) else {
+                let Ok(msg) = CString::new(tag_encode_lower(value.as_bytes())) else {
                     return std::ptr::null_mut();
                 };
                 let child = unsafe {
@@ -1592,7 +1567,7 @@ impl Index {
                         };
                         let root =
                             unsafe { RediSearch_CreateTagNode(self.rs_ptr(), arr_name.as_ptr()) };
-                        let Ok(token) = CString::new(s.as_str()) else {
+                        let Ok(token) = CString::new(tag_encode_lower(s.as_bytes())) else {
                             return std::ptr::null_mut();
                         };
                         let child = unsafe {
