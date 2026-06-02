@@ -797,6 +797,9 @@ pub fn query_mut(
     let graph = graph.clone();
     let query: Arc<str> = Arc::from(query);
     let received_at = telemetry::unix_now_secs();
+    // Monotonic clock captured at dispatch time so the worker can attribute the
+    // thread-pool queueing delay (receipt → worker start) to "Wait duration".
+    let dispatch_instant = Instant::now();
     spawn(
         move || {
             let mem_capacity = QUERY_MEM_CAPACITY.load(Ordering::Relaxed);
@@ -824,6 +827,8 @@ pub fn query_mut(
 
             let running_id = telemetry::register_running(received_at, &key_name, &query, false);
             let wall_start = Instant::now();
+            // Time spent waiting in the thread pool before this worker started.
+            let wait_ms = wall_start.duration_since(dispatch_instant).as_secs_f64() * 1000.0;
             let res = graph.execute_query(&ctx, &query, compact, write, cmd, per_query_timeout);
             let wall_ms = wall_start.elapsed().as_secs_f64() * 1000.0;
             telemetry::unregister_running(running_id);
@@ -888,7 +893,7 @@ pub fn query_mut(
                             query: telemetry::truncate(query_text.trim_start()),
                             params: telemetry::truncate(params_text.trim()),
 
-                            wait_duration_ms: 0.0,
+                            wait_duration_ms: wait_ms,
                             execution_duration_ms: exec_ms,
                             report_duration_ms: report_ms,
                             utilized_cache: read_result.cached,
