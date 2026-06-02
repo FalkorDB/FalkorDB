@@ -286,7 +286,9 @@ static void _Pushdown_TransposeOperation
 ) {
 	switch(exp->operation.op) {
 	case AL_EXP_ADD:
+	case AL_EXP_POW:
 		// T(A + B) = T(A) + T(B)
+		// T(A^n) = T(A)^n
 		_Pushdown_TransposeAddition(exp);
 		break;
 	case AL_EXP_MUL:
