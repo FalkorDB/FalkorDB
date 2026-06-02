@@ -3473,7 +3473,11 @@ impl Graph {
         // implementation — and so unlabeled nodes can be detected afterwards.
         // A dense bitvector indexed by node id gives O(1) membership/insert,
         // far cheaper than a RoaringTreemap when touching every node.
-        let mut seen = vec![false; self.max_node_id() as usize + 1];
+        // Sized by `node_cap` (the matrix dimension) rather than `max_node_id()`:
+        // effects replay can leave sparse high ids whose value exceeds
+        // `node_count + deleted_nodes.len() - 1`, but every id present in the
+        // label/all-node matrices is strictly below `node_cap`.
+        let mut seen = vec![false; self.node_cap() as usize];
         let mut total_labeled: u64 = 0;
 
         for (label_idx, label_name) in self.node_labels.iter().enumerate() {

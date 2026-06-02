@@ -210,7 +210,7 @@ class testSlowLog():
         # slowlog MIN_LATENCY_MS threshold; $i only differs between the two
         # runs so the query TEXT stays identical (same slowlog entry).
         query = "UNWIND range(0, 2500) AS i UNWIND range(0, 2500) AS j WITH i, j WHERE i > 0 AND j < 500 AND i + j < $i RETURN SUM(i + j)"
-        self.graph.query(query, {'i': 200000})
+        self.graph.query(query, {'i': 100})
 
         slowlog = self.graph.slowlog()
         self.env.assertEqual(len(slowlog), 1)
