@@ -66,3 +66,13 @@ RUN apk add --no-cache --no-scripts minipeg && \
 # triple is auto-selected.
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
 ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Rust's musl target defaults to `-C target-feature=+crt-static`, which makes
+# every build artifact (including build-scripts and the final .so) a static
+# PIE. Alpine ships libclang.a / per-component LLVM static archives but NOT
+# a combined `libLLVM-20.a` — clang-sys's build script then fails with
+# `ld: cannot find -lLLVM-20`. We're building a Redis module (.so) loaded
+# at runtime, so static linking gives us nothing. Opt out → dynamic link
+# against the libLLVM-20.so / libclang.so that llvm20-libs / clang20-libs
+# provide.
+ENV RUSTFLAGS="-C target-feature=-crt-static"
