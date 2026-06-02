@@ -31,14 +31,16 @@ RUN apk add --no-cache --no-scripts \
     openssl-dev \
     zlib-dev \
     zstd-dev \
-    rust \
-    cargo \
     clang20-dev \
     clang20-libs \
     clang20-static \
     llvm20-dev \
     llvm20-static \
     gperf \
+    gcc \
+    g++ \
+    musl-dev \
+    libffi-dev \
     bsd-compat-headers \
     linux-headers \
     build-base && \
@@ -55,3 +57,12 @@ RUN pip install --no-cache-dir --break-system-packages 'cmake==3.31.6'
 # minipeg ships as `peg` on alpine but build.sh expects `leg`
 RUN apk add --no-cache --no-scripts minipeg && \
     (ln -s "$(which minipeg)" /usr/local/bin/leg || ln -s "$(which minipeg)" /usr/bin/leg)
+
+# Install rust via rustup (matches the other builder OSes). Alpine's apk
+# `rust` package on 3.22 ships 1.87.0, which is one minor too old for
+# RediSearch's redisearch_rs build_utils crate that uses `let` chains
+# (stabilized in 1.88). rustup gets us the current stable.
+# The default-host x86_64-unknown-linux-musl / aarch64-unknown-linux-musl
+# triple is auto-selected.
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+ENV PATH="/root/.cargo/bin:${PATH}"
