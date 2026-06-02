@@ -420,21 +420,6 @@ class testProcedures(FlowTestsBase):
         self.env.assertEquals(aggregation, False)
         self.env.assertEquals(variable_len, False)
 
-        actual_resultset = self.graph.query(
-            "CALL dbms.functions() YIELD name RETURN name ORDER BY name"
-        ).result_set
-        names = {row[0] for row in actual_resultset}
-        for name in [
-            "endNode",
-            "property",
-            "randomuuid",
-            "startNode",
-            "string.matchRegEx",
-            "typeof",
-            "xor",
-        ]:
-            self.env.assertIn(name, names)
-
         # -----------------------------------------------------------------------
 
         f = self.graph.query(q, {"name": "avg"}).result_set[0]

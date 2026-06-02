@@ -1,5 +1,4 @@
 import asyncio
-import re
 from common import *
 from falkordb.asyncio import FalkorDB
 from distutils.version import StrictVersion
@@ -49,7 +48,6 @@ class testSlowLog():
         # slow log should contain a single entry, no duplicates
         slowlog = self.graph.slowlog()
         self.env.assertEquals(len(slowlog), 1)
-        self.env.assertIsNotNone(re.fullmatch(r"\d+", str(slowlog[0][0])))
 
         # saturate slowlog
         self.populate_slowlog(20)

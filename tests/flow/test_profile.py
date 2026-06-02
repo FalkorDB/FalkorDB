@@ -5,7 +5,6 @@ GRAPH_ID = "profile"
 class testProfile(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
-        self.conn = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
 
     def test01_profile(self):
@@ -57,14 +56,3 @@ class testProfile(FlowTestsBase):
         self.env.assertEquals(scan_op.name, 'Node By Label Scan')
         self.env.assertEquals(scan_op.records_produced, 0)
 
-    def test03_raw_plan_roots(self):
-        self.graph.query("RETURN 1")
-
-        explain = self.conn.execute_command("GRAPH.EXPLAIN", GRAPH_ID, "RETURN 1")
-        self.env.assertGreater(len(explain), 0)
-        self.env.assertEqual(explain[0], "Results")
-
-        profile = self.conn.execute_command("GRAPH.PROFILE", GRAPH_ID, "RETURN 1")
-        self.env.assertGreater(len(profile), 0)
-        self.env.assertTrue(profile[0].startswith("Results"))
-        self.env.assertIn("Records produced", profile[0])

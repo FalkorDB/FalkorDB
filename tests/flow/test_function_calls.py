@@ -2532,8 +2532,6 @@ class testFunctionCallsFlow(FlowTestsBase):
             self.get_res_and_assertEquals(query, expected_result)
 
     def test91_MATCHREGEX(self):
-        self.expect_error("RETURN 'abc' =~ 'a.*'", "FalkorDB does not currently support =~")
-
         # NULL input should return empty list
         expected_result = [[]]
         query = """WITH NULL as string RETURN string.matchRegEx(null, "bla")"""

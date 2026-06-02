@@ -862,3 +862,4 @@ class testIndexCreationFlow():
         self.env.assertEqual(row_by_column["stopwords"], [])
         self.env.assertEqual(row_by_column["entitytype"], "NODE")
         self.env.assertEqual(row_by_column["status"], "OPERATIONAL")
+
