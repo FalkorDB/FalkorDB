@@ -40,11 +40,14 @@ static void _removeRedundantTraversal(ExecutionPlan *plan, OpCondTraverse *trave
 	}
 }
 
-/* Inspect each traverse operation T,
- * For each T see if T's source and destination nodes
- * are already resolved, in which case replace traversal operation
- * with expand-into op. */
-void reduceTraversal(ExecutionPlan *plan) {
+// inspect each traverse operation T,
+// for each T see if T's source and destination nodes
+// are already resolved, in which case replace traversal operation
+// with expand-into op
+void reduceTraversal
+(
+	ExecutionPlan *plan
+) {
 	OpBase **traversals = ExecutionPlan_CollectOpsMatchingTypes(plan->root, TRAVERSE_OPS,
 															   TRAVERSE_OP_COUNT);
 	uint traversals_count = arr_len(traversals);
@@ -140,5 +143,88 @@ void reduceTraversal(ExecutionPlan *plan) {
 
 	// Clean up.
 	arr_free(traversals);
+}
+
+// for each CondVarLenTraverse whose destination node carries labels,
+// strip the matching source-label diagonal operands from the immediately
+// following CondTraverse (whose src is that same dest node)
+// CondVarLenTraverse already enforces dest labels via dest_labels[], so
+// the CondTraverse is either fully redundant (AE becomes empty → remove it)
+// or only partially redundant (AE retains an edge matrix → keep it, just
+// without the now-unnecessary label diagonals)
+void reduceVarLenTraverseDestLabel
+(
+	ExecutionPlan *plan
+) {
+	ASSERT (plan != NULL) ;
+
+	const OPType t = OPType_CONDITIONAL_VAR_LEN_TRAVERSE ;
+	OpBase **ops = ExecutionPlan_CollectOpsMatchingTypes (plan->root, &t, 1) ;
+	uint count = arr_len (ops) ;
+
+	for (uint i = 0; i < count; i++) {
+		CondVarLenTraverse *op = (CondVarLenTraverse *)ops [i] ;
+
+		// ExpandInto: dest already resolved by a child traverse, skip
+		if (op->expandInto) {
+			continue ;
+		}
+
+		// check whether dest node carries any labels
+		const char *dest_alias = AlgebraicExpression_Dest (op->ae) ;
+		QGNode *dest_node =
+			QueryGraph_GetNodeByAlias (op->op.plan->query_graph, dest_alias) ;
+
+		if (!QGNode_Labeled (dest_node)) {
+			continue ;
+		}
+
+		// parent must be a CondTraverse that starts from the var-len dest
+		OpBase *parent = op->op.parent ;
+		if (parent == NULL                               ||
+			(parent->type != OPType_CONDITIONAL_TRAVERSE &&
+			 parent->type != OPType_EXPAND_INTO)         ||
+			_isInSubExecutionPlan ((OpBase *)op)) {
+			continue ;
+		}
+
+		AlgebraicExpression *ae = NULL ;
+
+		if (parent->type == OPType_CONDITIONAL_TRAVERSE) {
+			ae = ((OpCondTraverse*) parent)->ae ;
+		} else {
+			ae = ((OpExpandInto*) parent)->ae ;
+		}
+		ASSERT (ae != NULL) ;
+
+		if (strcmp (AlgebraicExpression_Src (ae), dest_alias) != 0) {
+			continue ;
+		}
+
+		// strip every leading diagonal operand that belongs to dest_alias —
+		// these are the label matrices CondVarLenTraverse already enforces
+		while (AlgebraicExpression_OperandCount (ae) > 0    &&
+				AlgebraicExpression_DiagonalOperand (ae, 0) &&
+				strcmp (AlgebraicExpression_Src (ae), dest_alias) == 0) {
+			AlgebraicExpression_Free (
+					AlgebraicExpression_RemoveSource (&ae)) ;
+		}
+
+		// update operation's algebraic expression
+		if (parent->type == OPType_CONDITIONAL_TRAVERSE) {
+			((OpCondTraverse*) parent)->ae = ae ;
+		} else {
+			((OpExpandInto*) parent)->ae = ae ;
+		}
+
+		// if the entire AE was label diagonals, the CondTraverse is now empty
+		// and must be removed from the plan
+		if (AlgebraicExpression_OperandCount (ae) == 0) {
+			ExecutionPlan_RemoveOp (plan, parent) ;
+			OpBase_Free (parent) ;
+		}
+	}
+
+	arr_free (ops) ;
 }
 

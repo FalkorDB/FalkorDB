@@ -49,9 +49,32 @@ void addOutgoingNeighbors
 	EntityID frontierId = INVALID_ENTITY_ID;
 	if(depth > 1) frontierId = ENTITY_GET_ID(&frontier->edge);
 
-	// Get frontier neighbors.
+	// collect outgoing edges using cached relation matrices
+	NodeID src_id = ENTITY_GET_ID(&frontier->node);
 	for(int i = 0; i < ctx->relationCount; i++) {
-		Graph_GetNodeEdges(ctx->g, &frontier->node, GRAPH_EDGE_DIR_OUTGOING, ctx->relationIDs[i], &ctx->neighbors);
+		Edge e = {.src_id = src_id, .relationID = ctx->relationIDs[i]};
+		if(!ctx->multi_edge[i]) {
+			Delta_MatrixTupleIter dmi;
+			Delta_MatrixTupleIter_AttachRange(&dmi, ctx->matrices[i], src_id, src_id);
+			while(Delta_MatrixTupleIter_next_UINT64(&dmi, NULL, &e.dest_id, &e.id) == GrB_SUCCESS) {
+				if(ctx->fetch_edges) {
+					bool res = Graph_GetEdge(ctx->g, e.id, &e);
+					ASSERT(res == true);
+				}
+				arr_append(ctx->neighbors, e);
+			}
+			Delta_MatrixTupleIter_detach(&dmi);
+		} else {
+			TensorIterator it;
+			TensorIterator_ScanRange(&it, ctx->matrices[i], src_id, src_id, false);
+			while(TensorIterator_next(&it, NULL, &e.dest_id, &e.id, NULL)) {
+				if(ctx->fetch_edges) {
+					bool res = Graph_GetEdge(ctx->g, e.id, &e);
+					ASSERT(res == true);
+				}
+				arr_append(ctx->neighbors, e);
+			}
+		}
 	}
 
 	// Add unvisited neighbors to next level.
@@ -98,9 +121,36 @@ void addIncomingNeighbors
 	EntityID frontierId = INVALID_ENTITY_ID;
 	if(depth > 1) frontierId = ENTITY_GET_ID(&frontier->edge);
 
-	// Get frontier neighbors.
+	// collect incoming edges using cached relation matrices
+	NodeID dest_id = ENTITY_GET_ID(&frontier->node);
 	for(int i = 0; i < ctx->relationCount; i++) {
-		Graph_GetNodeEdges(ctx->g, &frontier->node, GRAPH_EDGE_DIR_INCOMING, ctx->relationIDs[i], &ctx->neighbors);
+		Edge e = {.dest_id = dest_id, .relationID = ctx->relationIDs[i]};
+		if(!ctx->multi_edge[i]) {
+			Delta_Matrix TT = Delta_Matrix_getTranspose(ctx->matrices[i]);
+			Delta_MatrixTupleIter dmi;
+			Delta_MatrixTupleIter_AttachRange(&dmi, TT, dest_id, dest_id);
+			GrB_Index src_j;
+			while(Delta_MatrixTupleIter_next_BOOL(&dmi, NULL, &src_j, NULL) == GrB_SUCCESS) {
+				e.src_id = src_j;
+				Delta_Matrix_extractElement_UINT64(&e.id, ctx->matrices[i], src_j, dest_id);
+				if(ctx->fetch_edges) {
+					bool res = Graph_GetEdge(ctx->g, e.id, &e);
+					ASSERT(res == true);
+				}
+				arr_append(ctx->neighbors, e);
+			}
+			Delta_MatrixTupleIter_detach(&dmi);
+		} else {
+			TensorIterator it;
+			TensorIterator_ScanRange(&it, ctx->matrices[i], dest_id, dest_id, true);
+			while(TensorIterator_next(&it, &e.src_id, NULL, &e.id, NULL)) {
+				if(ctx->fetch_edges) {
+					bool res = Graph_GetEdge(ctx->g, e.id, &e);
+					ASSERT(res == true);
+				}
+				arr_append(ctx->neighbors, e);
+			}
+		}
 	}
 
 	// Add unvisited neighbors to next level.
@@ -168,24 +218,25 @@ AllPathsCtx *AllPathsCtx_New
 	Node *src,
 	Node *dst,
 	Graph *g,
-	int *relationIDs,
+	RelationID *relationIDs,
 	int relationCount,
 	GRAPH_EDGE_DIR dir,
 	uint minLen,
 	uint maxLen,
 	Record r,
 	FT_FilterNode *ft,
-	uint edge_idx,
+	int edge_idx,
 	bool shortest_paths
 ) {
 	ASSERT(src != NULL);
 
 	AllPathsCtx *ctx = rm_malloc(sizeof(AllPathsCtx));
-	ctx->g         =  g;
-	ctx->r         =  r;
-	ctx->ft        =  ft;
-	ctx->dir       =  dir;
-	ctx->edge_idx  =  edge_idx;
+	ctx->g           =  g;
+	ctx->r           =  r;
+	ctx->ft          =  ft;
+	ctx->dir         =  dir;
+	ctx->edge_idx    =  edge_idx;
+	ctx->fetch_edges =  (edge_idx >= 0);
 
 	// Cypher variable path "[:*min..max]"" specifies edge count
 	// While the path constructed here contains only nodes.
@@ -193,8 +244,25 @@ AllPathsCtx *AllPathsCtx_New
 	// should contain min+1..max+1 nodes.
 	ctx->minLen         =  minLen + 1;
 	ctx->maxLen         =  maxLen + 1;
-	ctx->relationIDs    =  relationIDs;
-	ctx->relationCount  =  relationCount;
+	// take ownership of relation IDs; expand GRAPH_NO_RELATION to all actual types
+	if(relationCount == 1 && relationIDs[0] == GRAPH_NO_RELATION) {
+		ctx->relationCount = Graph_RelationTypeCount(g);
+		ctx->relationIDs   = rm_malloc(sizeof(RelationID) * ctx->relationCount);
+		for(int i = 0; i < ctx->relationCount; i++) ctx->relationIDs[i] = i;
+	} else {
+		ctx->relationCount = relationCount;
+		ctx->relationIDs   = rm_malloc(sizeof(RelationID) * relationCount);
+		for(int i = 0; i < relationCount; i++) ctx->relationIDs[i] = relationIDs[i];
+	}
+
+	// cache relation matrices to avoid repeated Graph_GetRelationMatrix calls per expansion
+	ctx->matrices    = rm_malloc(sizeof(Tensor) * ctx->relationCount);
+	ctx->multi_edge  = rm_malloc(sizeof(bool)   * ctx->relationCount);
+	for(int i = 0; i < ctx->relationCount; i++) {
+		ctx->matrices[i]   = Graph_GetRelationMatrix(g, ctx->relationIDs[i], false);
+		ctx->multi_edge[i] = Graph_RelationshipContainsMultiEdge(g, ctx->relationIDs[i]);
+	}
+
 	ctx->levels         =  arr_new(LevelConnection *, 1);
 	ctx->path           =  Path_New(1);
 	ctx->neighbors      =  arr_new(Edge, 32);
@@ -227,7 +295,7 @@ AllPathsCtx *AllPathsCtx_New
 	}
 
 	// in case we have filter tree validate that we can access the filtered edge
-	ASSERT(!ctx->ft || ctx->edge_idx < Record_length(ctx->r));
+	ASSERT(!ctx->ft || (ctx->edge_idx >= 0 && (uint)ctx->edge_idx < Record_length(ctx->r)));
 	return ctx;
 }
 
@@ -297,6 +365,32 @@ Path *AllPathsCtx_NextPath(AllPathsCtx *ctx) {
 		return _AllPathsCtx_NextPath(ctx);
 }
 
+void AllPathsCtx_Reset
+(
+	AllPathsCtx *ctx,
+	Node *src,
+	Node *dst,
+	Record r
+) {
+	ASSERT (ctx != NULL) ;
+	ASSERT (src != NULL) ;
+	ASSERT (!ctx->shortest_paths) ;
+
+	ctx->r   = r ;
+	ctx->dst = dst ;
+
+	Path_Clear (ctx->path) ;
+	arr_clear (ctx->neighbors) ;
+
+	uint levelsCount = arr_len (ctx->levels) ;
+	for (uint i = 0; i < levelsCount; i++) {
+		arr_clear (ctx->levels[i]) ;
+	}
+
+	_AllPathsCtx_EnsureLevelArrayCap (ctx, 0, 1) ;
+	_AllPathsCtx_AddConnectionToLevel (ctx, 0, src, NULL) ;
+}
+
 void AllPathsCtx_Free(AllPathsCtx *ctx) {
 	if(!ctx) return;
 	uint32_t levelsCount = arr_len(ctx->levels);
@@ -304,6 +398,9 @@ void AllPathsCtx_Free(AllPathsCtx *ctx) {
 	arr_free(ctx->levels);
 	Path_Free(ctx->path);
 	arr_free(ctx->neighbors);
+	rm_free(ctx->matrices);
+	rm_free(ctx->multi_edge);
+	rm_free(ctx->relationIDs);
 	if(ctx->visited) GrB_Vector_free(&ctx->visited);
 	rm_free(ctx);
 	ctx = NULL;

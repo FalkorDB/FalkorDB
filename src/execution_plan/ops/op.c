@@ -479,12 +479,23 @@ void OpBase_Free
 	OpBase *op
 ) {
 	// free internal operation
-	if(op->free)     op->free(op);
-	if(op->children) rm_free(op->children);
-	if(op->modifies) arr_free(op->modifies);
-	if(op->stats)    rm_free(op->stats);
+	if (op->free) {
+		op->free (op) ;
+	}
 
-	HashTableRelease(op->awareness);
-	rm_free(op);
+	if (op->children) {
+		rm_free (op->children) ;
+	}
+
+	if (op->modifies) {
+		arr_free (op->modifies) ;
+	}
+
+	if (op->stats) {
+		rm_free (op->stats) ;
+	}
+
+	HashTableRelease (op->awareness) ;
+	rm_free (op) ;
 }
 
