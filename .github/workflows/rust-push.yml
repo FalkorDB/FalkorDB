@@ -179,9 +179,13 @@ jobs:
           cargo build --release
       - name: Run unit tests
         run: |
-          # rustdoc links doctests separately and ignores RUSTFLAGS/.cargo rustflags,
-          # so it needs the duplicate-symbol allowance (libredisearch_rs.a bundles std).
-          RUSTDOCFLAGS="-C link-arg=-Wl,--allow-multiple-definition" cargo test --release -p graph
+          # Doctests are linked separately by rustdoc (which ignores RUSTFLAGS /
+          # .cargo rustflags), so they need the duplicate-symbol allowance for
+          # libredisearch_rs.a's bundled std via RUSTDOCFLAGS. Also disable release
+          # LTO for the test build: the embedded C/Rust archives carry no LLVM
+          # bitcode, so a release-LTO doctest fails with "Can't find section .llvmbc"
+          # (same reason the fuzz job sets CARGO_PROFILE_RELEASE_LTO=false).
+          CARGO_PROFILE_RELEASE_LTO=false RUSTDOCFLAGS="-C link-arg=-Wl,--allow-multiple-definition" cargo test --release -p graph
       - name: Run tests
         run: |
           . /data/venv/bin/activate
