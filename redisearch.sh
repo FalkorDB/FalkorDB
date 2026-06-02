@@ -9,6 +9,18 @@ mkdir -p "$ROOT/redisearch"
 if [ ! -d "$REDISEARCH_DIR/.git" ]; then
   git clone --recurse-submodules --branch "$REDISEARCH_BRANCH" --single-branch --depth 1 \
     https://github.com/FalkorDB/RediSearch.git "$REDISEARCH_DIR"
+else
+  # Reusing an existing checkout (fast local iteration; CI always clones fresh
+  # because redisearch/ is .dockerignore'd). Warn loudly if it isn't on the
+  # expected ref so a stale or branch-switched clone doesn't silently build
+  # against the wrong RediSearch ABI. We deliberately do NOT auto-reset — that
+  # would clobber local RediSearch work; remove the directory to force a clean
+  # re-clone.
+  current_ref="$(git -C "$REDISEARCH_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
+  if [ "$current_ref" != "$REDISEARCH_BRANCH" ]; then
+    echo "WARNING: $REDISEARCH_DIR is on '$current_ref', expected '$REDISEARCH_BRANCH'." >&2
+    echo "         Remove that directory to re-clone, or check out the expected ref." >&2
+  fi
 fi
 
 cd "$REDISEARCH_DIR"

@@ -315,11 +315,21 @@ impl<T, F: FnMut(*mut RSResultsIterator, u64) -> T> Iterator for IndexResultsIte
         }
         unsafe {
             let rs_idx = self.index.as_ref().map_or(null_mut(), RSIndex::as_ptr);
-            let key = RediSearch_ResultsIteratorNext(self.iter, rs_idx, null_mut()).cast::<u8>();
-            if key.is_null() {
-                return None;
+            loop {
+                let mut key_len: usize = 0;
+                let key = RediSearch_ResultsIteratorNext(self.iter, rs_idx, &raw mut key_len)
+                    .cast::<u8>();
+                if key.is_null() {
+                    return None;
+                }
+                // `Document::new` always writes a NODE_DOC_KEY_LEN-char hex key;
+                // skip anything else rather than let `decode_id` over-read.
+                if key_len != NODE_DOC_KEY_LEN {
+                    debug_assert!(false, "unexpected node index key length {key_len}");
+                    continue;
+                }
+                return Some((self.map)(self.iter, decode_id(key)));
             }
-            Some((self.map)(self.iter, decode_id(key)))
         }
     }
 }
@@ -375,12 +385,21 @@ impl Iterator for EdgeTripleIter {
         }
         unsafe {
             let rs_idx = self.index.as_ref().map_or(null_mut(), RSIndex::as_ptr);
-            let key = RediSearch_ResultsIteratorNext(self.iter, rs_idx, null_mut()).cast::<u8>();
-            if key.is_null() {
-                return None;
+            loop {
+                let mut key_len: usize = 0;
+                let key = RediSearch_ResultsIteratorNext(self.iter, rs_idx, &raw mut key_len)
+                    .cast::<u8>();
+                if key.is_null() {
+                    return None;
+                }
+                // `Document::new_edge` always writes an EDGE_DOC_KEY_LEN-char hex
+                // key; skip anything else rather than let `decode_triple` over-read.
+                if key_len != EDGE_DOC_KEY_LEN {
+                    debug_assert!(false, "unexpected edge index key length {key_len}");
+                    continue;
+                }
+                return Some(decode_triple(key).into());
             }
-            let triple = decode_triple(key);
-            Some(triple.into())
         }
     }
 }
@@ -430,13 +449,23 @@ impl Iterator for ScoredEdgeTripleIter {
         }
         unsafe {
             let rs_idx = self.index.as_ref().map_or(null_mut(), RSIndex::as_ptr);
-            let key = RediSearch_ResultsIteratorNext(self.iter, rs_idx, null_mut()).cast::<u8>();
-            if key.is_null() {
-                return None;
+            loop {
+                let mut key_len: usize = 0;
+                let key = RediSearch_ResultsIteratorNext(self.iter, rs_idx, &raw mut key_len)
+                    .cast::<u8>();
+                if key.is_null() {
+                    return None;
+                }
+                // `Document::new_edge` always writes an EDGE_DOC_KEY_LEN-char hex
+                // key; skip anything else rather than let `decode_triple` over-read.
+                if key_len != EDGE_DOC_KEY_LEN {
+                    debug_assert!(false, "unexpected edge index key length {key_len}");
+                    continue;
+                }
+                let triple = decode_triple(key);
+                let score = RediSearch_ResultsIteratorGetScore(self.iter);
+                return Some((triple[0], triple[1], triple[2], score));
             }
-            let triple = decode_triple(key);
-            let score = RediSearch_ResultsIteratorGetScore(self.iter);
-            Some((triple[0], triple[1], triple[2], score))
         }
     }
 }

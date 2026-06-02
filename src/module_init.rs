@@ -349,7 +349,16 @@ pub fn graph_init(
         // RediSearch_SetNumWorkerThreads returns REDISEARCH_OK (0) on success.
         unsafe {
             if RediSearch_SetNumWorkerThreads(index_workers) != 0 {
-                ctx.log_warning("Failed to set RediSearch worker thread count");
+                ctx.log_warning(
+                    "Failed to set RediSearch worker thread count; \
+                     RediSearch keeps its previous (disabled) worker pool. \
+                     Reporting INDEX_WORKER_THREADS as 0 to match what is in effect.",
+                );
+                // Reset the stored config to the effective value so
+                // `GRAPH.CONFIG GET INDEX_WORKER_THREADS` doesn't report a count
+                // RediSearch rejected (which would hide that tiered-index
+                // background work is effectively disabled).
+                *CONFIGURATION_INDEX_WORKER_THREADS.lock(ctx) = 0;
             }
         }
     }

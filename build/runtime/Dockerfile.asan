@@ -59,6 +59,13 @@ COPY . .
 # pass them via `env`.
 ARG TARGETARCH
 RUN set -eux; \
+    # Build the module with the SAME pinned nightly that redisearch.sh used for
+    # redisearch_rs (RediSearch's .rust-nightly), not the floating `nightly`
+    # alias defaulted above — so the -Zsanitizer toolchain matches across both
+    # archives. The pin lives in the in-image RediSearch checkout (redisearch/ is
+    # .dockerignore'd, so `COPY . .` didn't clobber it). redisearch.sh already
+    # installed this toolchain (with rust-src) during the SAN build.
+    rustup default "$(cat redisearch/RediSearch/.rust-nightly)"; \
     case "$TARGETARCH" in \
       amd64) RT=x86_64-unknown-linux-gnu ;; \
       arm64) RT=aarch64-unknown-linux-gnu ;; \

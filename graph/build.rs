@@ -111,10 +111,17 @@ fn main() {
     // and linux-arm64v8-debug-asan), only one of which holds the archive, so
     // require its presence when picking the search dir.
     let main_names = ["libredisearch.a", "redisearch.a", "redisearch.so"];
-    let search_dir = fs::read_dir(&rs_bin)
+    // Sort the candidate variant dirs so the choice is deterministic rather than
+    // dependent on `read_dir` traversal order (which could otherwise pick a
+    // different flavor — e.g. release vs debug-asan — across builds).
+    let mut variant_dirs: Vec<std::path::PathBuf> = fs::read_dir(&rs_bin)
         .unwrap()
         .flatten()
         .map(|e| e.path().join("search-community"))
+        .collect();
+    variant_dirs.sort();
+    let search_dir = variant_dirs
+        .into_iter()
         .find(|p| p.is_dir() && main_names.iter().any(|n| p.join(n).exists()))
         .expect(
             "search-community dir with a redisearch archive not found - run ./redisearch.sh first",
@@ -285,5 +292,8 @@ fn find_archives(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
             }
         }
     }
+    // `read_dir` yields entries in arbitrary order; sort so the static-library
+    // link order is deterministic and the build is reproducible.
+    archives.sort();
     archives
 }
