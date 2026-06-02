@@ -18,16 +18,13 @@ RUN set -ex ;\
     python3 --version ;\
     pip3 --version
 
-# Build and install redis from source
-RUN set -ex ;\
-    cd /tmp ;\
-    curl -LO https://download.redis.io/redis-stable.tar.gz ;\
-    tar -xzf redis-stable.tar.gz ;\
-    cd redis-stable ;\
-    make -j$(nproc) ;\
-    make install ;\
-    cd / ;\
-    rm -rf /tmp/redis-stable /tmp/redis-stable.tar.gz
+# Redis: provided by the toolchain image
+# (build/docker/builder/Dockerfile.amazonlinux2023) at
+# /usr/local/bin/redis-server, pinned to the same 8.6.3 tag the sanitizer
+# uses. The previous `redis-stable.tar.gz` build at test-image time has
+# been removed — it overwrote the toolchain's pinned binary with whatever
+# upstream stable currently is, causing drift between Build and Sanitizer
+# test runs.
 
 # Create virtual environment
 RUN set -ex ;\

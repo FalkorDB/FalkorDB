@@ -9,7 +9,40 @@
 # `#include <openssl/ssl.h>` is resolved by the bare compiler driver. Export
 # C_INCLUDE_PATH / CPLUS_INCLUDE_PATH so gcc/clang find the headers without
 # explicit -I.
+#
+# Redis: built from git at REDIS_VERSION (multi-stage). Same pinned tag
+# (8.6.3) as the other toolchains and sanitize. Built on UBI8 with the
+# default openssl-devel (1.1) since Redis's BUILD_TLS doesn't require
+# OpenSSL 3.
 
+ARG REDIS_VERSION=8.6.3
+
+#--------------------------------------------------------------------------
+# Stage 1: build redis-server / redis-cli from source at a pinned tag.
+#--------------------------------------------------------------------------
+FROM redhat/ubi8 AS redis-builder
+
+ARG REDIS_VERSION
+RUN yum install -y \
+      git ca-certificates gcc gcc-c++ glibc-devel openssl-devel make tar gzip && \
+    yum clean all
+
+WORKDIR /tmp
+RUN git clone --depth 1 --branch "${REDIS_VERSION}" https://github.com/redis/redis.git redis-src
+WORKDIR /tmp/redis-src
+
+RUN set -eux; \
+    sed -ri 's!^( *createBoolConfig[(]"protected-mode",.*, *)1( *,.*[)],)$!\10\2!' src/config.c; \
+    grep -E '^ *createBoolConfig[(]"protected-mode",.*, *0 *,.*[)],$' src/config.c; \
+    export BUILD_TLS=yes BUILD_WITH_MODULES=no; \
+    make -j "$(nproc)" all; \
+    make PREFIX=/redis-install install; \
+    strip /redis-install/bin/redis-server /redis-install/bin/redis-cli; \
+    /redis-install/bin/redis-server --version
+
+#--------------------------------------------------------------------------
+# Stage 2: actual toolchain image.
+#--------------------------------------------------------------------------
 FROM redhat/ubi8 AS builder
 
 # UBI8 needs codeready-builder repo for clang-devel
@@ -30,6 +63,10 @@ RUN yum update -y && \
 
 ENV PATH="/opt/rh/gcc-toolset-14/root/usr/bin:${PATH}"
 ENV LD_LIBRARY_PATH="/opt/rh/gcc-toolset-14/root/usr/lib64:${LD_LIBRARY_PATH}"
+
+# redis-server / redis-cli from the pinned git tag (see top of file).
+COPY --from=redis-builder /redis-install/bin/redis-server /usr/local/bin/redis-server
+COPY --from=redis-builder /redis-install/bin/redis-cli    /usr/local/bin/redis-cli
 
 # Pin cmake to the same exact version across every builder OS.
 RUN pip3.11 install --no-cache-dir 'cmake==3.31.6'

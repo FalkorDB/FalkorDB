@@ -8,7 +8,46 @@
 # so the per-major *-static packages must be installed alongside the
 # normal -dev / -libs. Alpine ships these as separate `clangNN-static` /
 # `llvmNN-static` packages.
+#
+# Redis: built from git at REDIS_VERSION (multi-stage). Must be built on
+# alpine itself — a glibc binary from debian:trixie-slim won't run against
+# musl. Same pinned tag (8.6.3) as the other toolchains and sanitize so
+# every test sees identical Redis behaviour.
 
+ARG REDIS_VERSION=8.6.3
+
+#--------------------------------------------------------------------------
+# Stage 1: build redis-server / redis-cli on alpine itself (musl-linked).
+#--------------------------------------------------------------------------
+FROM alpine:3.22 AS redis-builder
+
+ARG REDIS_VERSION
+RUN apk add --no-cache --no-scripts \
+    git ca-certificates gcc g++ libc-dev linux-headers \
+    openssl-dev make bsd-compat-headers && \
+    update-ca-certificates || true
+
+WORKDIR /tmp
+RUN git clone --depth 1 --branch "${REDIS_VERSION}" https://github.com/redis/redis.git redis-src
+WORKDIR /tmp/redis-src
+
+# Flip protected-mode default so test runs without --protected-mode no
+# accept connections — same one-line sed used in the upstream redis image
+# and falkordb-rs-next-gen.
+# (Skip the jemalloc page-size tweak — alpine's musl + jemalloc combo is
+#  simpler than the debian/dpkg path, default jemalloc is fine.)
+RUN set -eux; \
+    sed -ri 's!^( *createBoolConfig[(]"protected-mode",.*, *)1( *,.*[)],)$!\10\2!' src/config.c; \
+    grep -E '^ *createBoolConfig[(]"protected-mode",.*, *0 *,.*[)],$' src/config.c; \
+    export BUILD_TLS=yes BUILD_WITH_MODULES=no; \
+    make -j "$(nproc)" all; \
+    make PREFIX=/redis-install install; \
+    strip /redis-install/bin/redis-server /redis-install/bin/redis-cli; \
+    /redis-install/bin/redis-server --version
+
+#--------------------------------------------------------------------------
+# Stage 2: actual toolchain image.
+#--------------------------------------------------------------------------
 # Pinned to alpine:3.22 (rather than alpine:latest) so the toolchain version
 # is reproducible across image rebuilds. Bump deliberately when alpine 3.23+
 # becomes the production target.
@@ -46,6 +85,12 @@ RUN apk add --no-cache --no-scripts \
     linux-headers \
     build-base && \
     update-ca-certificates || true
+
+# redis-server / redis-cli from the pinned git tag (musl-linked,
+# built in the redis-builder stage above so the toolchain itself doesn't
+# need a clang/redis build context).
+COPY --from=redis-builder /redis-install/bin/redis-server /usr/local/bin/redis-server
+COPY --from=redis-builder /redis-install/bin/redis-cli    /usr/local/bin/redis-cli
 
 # Python venv (the apk python is PEP-668 marked)
 RUN python3 -m venv /venv && chmod +x /venv/bin/*
