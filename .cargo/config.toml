@@ -1,0 +1,14 @@
+# RediSearch 8.6 is linked in as `libredisearch_rs.a`, itself a Rust staticlib
+# that bundles its own copy of `std`. Linking that into our cdylib / test
+# binaries / fuzz targets on Linux (GNU ld / rust-lld) collides on std symbols
+# such as `rust_eh_personality`. The colliding definitions are identical, so we
+# tell the linker to accept the duplicate. Scoped to Linux only — macOS ld64
+# tolerates it already, and we don't want to relax the local dev link.
+#
+# NOTE: `RUSTFLAGS` / `CARGO_TARGET_*_RUSTFLAGS` env vars REPLACE (not merge)
+# these config flags, so build steps that set them must repeat this flag:
+# the coverage steps (`-C instrument-coverage`), the `cargo fuzz` steps, and
+# build/runtime/Dockerfile.asan all set `-Clink-arg=-Wl,--allow-multiple-definition`
+# explicitly for the same reason.
+[target.'cfg(target_os = "linux")']
+rustflags = ["-C", "link-arg=-Wl,--allow-multiple-definition"]
