@@ -480,10 +480,16 @@ void DateTime_toString
 		*buf = rm_realloc(*buf, sizeof(char) * *bufferLen);
 	}
 
-	// get a tm object from time_t
+	// get a tm object from time_t.
+	// gmtime_r MUST be called outside assert() — under NDEBUG (default for
+	// CMake Release builds) assert() expands to nothing, so the call would
+	// vanish and `time` would be left uninitialized; strftime would then
+	// stamp the buffer with garbage. See date.c for the matching fix.
 	struct tm time;
 	time_t rawtime = datetime->datetimeval;
-	assert(gmtime_r(&rawtime, &time) != NULL);
+	if (gmtime_r(&rawtime, &time) == NULL) {
+		return;
+	}
 
 	// format the date and time up to seconds: 2025-04-14T06:08:21
 	*bytesWritten += strftime(*buf + *bytesWritten, *bufferLen,
