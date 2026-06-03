@@ -18,6 +18,7 @@
 #include "query_ctx.h"
 #include "udf/udf_ctx.h"
 #include "udf/classes.h"
+#include "util/rmalloc.h"
 #include "util/roaring.h"
 #include "bolt/bolt_api.h"
 #include "index/indexer.h"
@@ -125,6 +126,9 @@ int RedisModule_OnLoad
 						REDISMODULE_APIVER_1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
+
+	// enable module-wide allocation tracking from startup
+	rm_tracking_init();
 
 	// initialize GraphBLAS
 	int res = GraphBLAS_Init(ctx);
@@ -349,4 +353,3 @@ int RedisModule_OnLoad
 
 	return REDISMODULE_OK;
 }
-

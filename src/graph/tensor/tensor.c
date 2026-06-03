@@ -3,6 +3,7 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
+#include "GraphBLAS.h"
 #include "RG.h"
 #include "tensor.h"
 #include "util/arr.h"
@@ -891,3 +892,114 @@ void Tensor_free
 	Delta_Matrix_free(T);
 }
 
+void _multiedge_memory (
+	uint64_t *z,
+	uint64_t *x,
+	void *y
+) {
+	if (*x <= MSB_MASK) {
+		*z = 0;
+	} else {
+		GrB_OK(GxB_Vector_memoryUsage(z, AS_VECTOR(*x)));
+	}
+}
+
+size_t _estimate_multiedge_memory (
+	const GrB_Matrix A,  // matrix with multiedges to sample
+	int64_t samples      // number of entries to sample
+) {
+	size_t _size = 0;
+	size_t temp_size = 0;
+	struct GB_Iterator_opaque _it = {0};
+	GxB_Iterator it = &_it;
+	GrB_Index nvals ;
+
+	GrB_OK (GrB_Matrix_nvals(&nvals, A)) ;
+	GrB_OK (GxB_Iterator_new (&it)) ;
+	GrB_OK (GxB_Matrix_Iterator_attach (it, A, NULL)) ;
+
+	samples = MIN(samples, nvals) ;
+
+	if (samples == 0) {
+		return 0;
+	}
+
+	GrB_OK (GxB_Matrix_Iterator_seek (it, 0)) ;
+
+	for (int i = 0; i < samples; i++) {
+		uint64_t x = GxB_Iterator_get_UINT64(it) ;
+
+		if (x > MSB_MASK) {
+			GrB_OK(GxB_Vector_memoryUsage(&temp_size, AS_VECTOR(x)));
+			_size += temp_size ;
+		}
+
+		GxB_Matrix_Iterator_next (it) ;
+	}
+
+	return (_size / (double) samples) * nvals ;
+}
+
+// return # of bytes used for a matrix
+GrB_Info Tensor_memoryUsage
+(
+    size_t *size,   // # of bytes used by the matrix C
+    const Tensor A  // matrix to query
+) {
+	ASSERT(A    != NULL);
+	ASSERT(size != NULL);
+	size_t temp_size = 0;
+	size_t _size     = 0;
+	GrB_Index nrows = 0 ;
+
+	GrB_Matrix m  = DELTA_MATRIX_M(A) ;
+	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS(A);
+
+	GrB_BinaryOp size_op  = NULL;
+	GrB_Semiring semiring = NULL;
+
+	GrB_OK(GxB_Matrix_memoryUsage(&temp_size, m));
+	_size += temp_size;
+
+	GrB_OK(GxB_Matrix_memoryUsage(&temp_size, dp));
+	_size += temp_size;
+
+	GrB_OK(GxB_Matrix_memoryUsage(&temp_size, DELTA_MATRIX_DELTA_MINUS(A)));
+	_size += temp_size;
+	
+
+	if (1) {
+		_size += _estimate_multiedge_memory(m, 100);
+		_size += _estimate_multiedge_memory(dp, 100);
+	} else {
+		GrB_Vector row_size = NULL;
+		GrB_Vector x = NULL;
+		GrB_OK (GrB_BinaryOp_new (&size_op, (GxB_binary_function) _multiedge_memory,
+							GrB_UINT64, GrB_UINT64, GrB_BOOL)) ;
+		GrB_OK (GrB_Semiring_new (&semiring, GrB_PLUS_MONOID_UINT64, size_op));
+
+		GrB_OK (GrB_Matrix_nrows (&nrows, m));
+		GrB_OK (GrB_Vector_new (&x, GrB_BOOL, nrows)) ;
+		GrB_OK (GrB_Vector_new (&row_size, GrB_UINT64, nrows)) ;
+		GrB_OK (GrB_Vector_assign_BOOL (x, NULL, NULL, false, GrB_ALL, 0, NULL)) ;
+
+		GrB_OK (GrB_set (GrB_GLOBAL, true, GxB_BURBLE)) ;
+		GrB_OK (GrB_mxv (row_size, NULL, NULL, semiring, m, x, NULL)) ;
+		GrB_OK (GrB_mxv (row_size, NULL, GrB_PLUS_UINT64, semiring, dp, x, NULL)) ;
+		GrB_OK (GrB_set (GrB_GLOBAL, false, GxB_BURBLE)) ;
+		uint64_t int_size = 0;
+		GrB_OK (GrB_reduce (
+			&int_size, NULL, GrB_PLUS_MONOID_UINT64, row_size, NULL)) ;
+		_size += int_size ;
+
+		// Add transpose
+		if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(A)){
+			GrB_OK(Delta_Matrix_memoryUsage(&temp_size, A->transposed));
+			_size += temp_size;
+		}
+	}
+
+	*size = _size;
+	
+	return GrB_SUCCESS;
+}

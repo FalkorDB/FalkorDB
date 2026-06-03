@@ -10,6 +10,7 @@
 #include "redismodule.h"
 #include "cmd_context.h"
 #include "../util/thpool/pool.h"
+#include "../util/rmalloc.h"
 
 #include <ctype.h>
 #include <string.h>
@@ -22,6 +23,7 @@
 #define EXECUTION_DURATION_KEY_NAME     "Execution duration"
 
 #define SUBCOMMAND_NAME_OBJECT_POOL     "ObjectPool"
+#define SUBCOMMAND_NAME_ALLOCATOR       "Allocator"
 #define SUBCOMMAND_NAME_RUNNING_QUERIES "RunningQueries"
 #define SUBCOMMAND_NAME_WAITING_QUERIES "WaitingQueries"
 
@@ -278,6 +280,20 @@ static void _info_object_pool
 			stats.avg_ref_count);
 }
 
+// handles the "GRAPH.INFO Allocator" section
+// "GRAPH.INFO Allocator"
+static void _info_allocator
+(
+	RedisModuleCtx *ctx       // redis context
+) {
+	ASSERT(ctx != NULL);
+
+	Info_AddSection(ctx, "Allocator", 1);
+	RedisModule_ReplyWithArray(ctx, 2);
+	Info_SectionAddEntryLongLong(ctx, "Currently allocated bytes",
+			rm_get_current_alloced_bytes());
+}
+
 // attempts to find the specified sections of "GRAPH.INFO" and dispatch it
 static void _handle_sections
 (
@@ -292,13 +308,15 @@ static void _handle_sections
 
 	// possible sections
 	bool object_pool     = false;
+	bool allocator       = false;
 	bool running_queries = false;
 	bool waiting_queries = false;
 
 	if(argc == 0) {
 		// activate all secotions
-		section_count   = 3;
+		section_count   = 4;
 		object_pool     = true;
+		allocator       = true;
 		running_queries = true;
 		waiting_queries = true;
 	} else {
@@ -317,6 +335,10 @@ static void _handle_sections
 			} else if(!object_pool &&
 					  !strcasecmp(subcmd, SUBCOMMAND_NAME_OBJECT_POOL)) {
 				object_pool = true;
+				section_count++;
+			} else if(!allocator &&
+					  !strcasecmp(subcmd, SUBCOMMAND_NAME_ALLOCATOR)) {
+				allocator = true;
 				section_count++;
 			}
 		}
@@ -345,6 +367,10 @@ static void _handle_sections
 	if(object_pool) {
 		_info_object_pool(ctx);
 	}
+
+	if(allocator) {
+		_info_allocator(ctx);
+	}
 }
 
 // graph.info command handler
@@ -367,4 +393,3 @@ int Graph_Info
 
 	return REDISMODULE_OK;
 }
-

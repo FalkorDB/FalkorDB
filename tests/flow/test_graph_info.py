@@ -461,6 +461,20 @@ class testGraphInfo():
         for t in threads:
             t.join()
 
+    def test08_allocator_info(self):
+        res = self.conn.execute_command("GRAPH.INFO", "Allocator")
+        self.env.assertEquals(len(res), 2)
+        self.env.assertEquals(res[0], "Allocator")
+        self.env.assertEquals(res[1][0][0], "Currently allocated bytes")
+        baseline = res[1][0][1]
+        self.env.assertGreaterEqual(baseline, 0)
+
+        self.graph.query("UNWIND range(0,1000) AS x CREATE (:A{id:x})")
+
+        res = self.conn.execute_command("GRAPH.INFO", "Allocator")
+        self.env.assertEquals(res[1][0][0], "Currently allocated bytes")
+        self.env.assertGreaterEqual(res[1][0][1], 0)
+
 #class testGraphInfoReplication():
 #    def __init__(self):
 #        self.env, self.db = Env(env='oss', useSlaves=True)

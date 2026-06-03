@@ -395,7 +395,7 @@ static void _EstimateEdgeAttributeMemory
 		int64_t n_sampled_edges = MAX (1, sample_size - edges_sample_size) ;
 
 		// compute weighted average
-		edge_memory_usage = (relation_memory_usage / n_sampled_edges)
+		edge_memory_usage = (relation_memory_usage / (double) n_sampled_edges)
 			* Graph_RelationEdgeCount(g, r);
 
 		arr_append(result->edge_attr_by_type_sz, edge_memory_usage);
