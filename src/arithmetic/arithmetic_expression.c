@@ -7,7 +7,6 @@
 #include "./arithmetic_expression.h"
 
 #include "RG.h"
-#include "funcs.h"
 #include "rax.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"
@@ -15,6 +14,7 @@
 #include "../util/rmalloc.h"
 #include "../errors/errors.h"
 #include "../graph/graphcontext.h"
+#include "aggregate_funcs/agg_funcs.h"
 #include "../datatypes/temporal_value.h"
 #include "../datatypes/array.h"
 #include "../ast/ast_shared.h"
@@ -256,16 +256,18 @@ AR_ExpNode *AR_EXP_NewRecordNode() {
 
 void AR_SetPrivateData
 (
-	AR_ExpNode *node, void *pdata
+	AR_ExpNode *node,
+	void *pdata
 ) {
 	// validations
 	// node must be an operation
 	// operation private data must be NULL
-	ASSERT(node != NULL);
-	ASSERT(node->type == AR_EXP_OP);
-	ASSERT(node->op.private_data == NULL);
+	ASSERT (node                  != NULL) ;
+	ASSERT (pdata                 != NULL) ;
+	ASSERT (node->type            == AR_EXP_OP) ;
+	ASSERT (node->op.private_data == NULL) ;
 
-	node->op.private_data = pdata;
+	node->op.private_data = pdata ;
 }
 
 // compact tree by evaluating constant expressions
@@ -399,7 +401,7 @@ static bool _AR_EXP_ValidateInvocation
 	SIType actual_type;
 	SIType expected_type = T_NULL;
 
-	uint expected_types_count = arr_len(fdesc->types);
+	uint expected_types_count = fdesc->types_len;
 	for(int i = 0; i < argc; i++) {
 		actual_type = SI_TYPE(argv[i]);
 		/* For a function that accepts a variable number of arguments.
@@ -788,15 +790,22 @@ void AR_EXP_CollectEntities
 	ASSERT (root    != NULL) ;
 	ASSERT (aliases != NULL) ;
 
-	if(AR_EXP_IsOperation(root)) {
-		for(int i = 0; i < root->op.child_count; i++) {
-			AR_EXP_CollectEntities(root->op.children[i], aliases);
+	if (AR_EXP_IsOperation (root)) {
+		for (int i = 0 ; i < root->op.child_count ; i++) {
+			AR_EXP_CollectEntities (root->op.children [i], aliases) ;
 		}
+
+		// collect referred aliases within function's private data
+		if (unlikely (root->op.private_data != NULL &&
+			root->op.f->callbacks.aliases   != NULL)) {
+			root->op.f->callbacks.aliases (root->op.private_data, aliases) ;
+		}
+
 	} else { // type == AR_EXP_OPERAND
-		if(root->operand.type == AR_EXP_VARIADIC) {
-			const char *entity = root->operand.variadic.entity_alias;
-			raxInsert(aliases, (unsigned char *)entity, strlen(entity), NULL,
-					NULL);
+		if (root->operand.type == AR_EXP_VARIADIC) {
+			const char *entity = root->operand.variadic.entity_alias ;
+			raxInsert (aliases, (unsigned char *)entity, strlen (entity), NULL,
+					NULL) ;
 		}
 	}
 }

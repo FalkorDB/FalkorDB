@@ -305,6 +305,45 @@ OpBase **ExecutionPlan_CollectOps
 	return ops;
 }
 
+// performs a DFS traversal of the execution plan rooted at `root`,
+// collecting all leaf operations — those with no children
+// these are called "taps" because they are the entry points where
+// data flows into the plan (e.g. scan operations)
+//
+// returns a heap-allocated array of leaf OpBase pointers (may be empty),
+// or NULL if `root` is NULL
+// the caller is responsible for freeing the returned array via arr_free()
+OpBase **ExecutionPlan_CollectTaps
+(
+	OpBase *root  // root of the execution plan subtree to scan
+) {
+	if (root == NULL) {
+		return NULL ;
+	}
+
+	OpBase **taps  = arr_new (OpBase*, 1) ;
+	OpBase **stack = arr_new (OpBase*, 1) ;
+
+	arr_append (stack, root) ;
+
+	while (arr_len (stack) > 0) {
+		OpBase *op = arr_pop (stack) ;
+		uint child_count = OpBase_ChildCount (op) ;
+
+		if (child_count == 0) {
+			arr_append (taps, op) ;
+			continue ;
+		}
+
+		for (uint i = 0 ; i < child_count ; i++) {
+			arr_append (stack, OpBase_GetChild (op, i)) ;
+		}
+	}
+
+	arr_free (stack) ;
+	return taps ;
+}
+
 // fills `ops` with all operations from `op` an upward (towards parent) in the
 // execution plan
 // returns the amount of ops collected
@@ -334,18 +373,21 @@ void ExecutionPlan_BoundVariables
 	const ExecutionPlan *plan   // scoped plan
 ) {
 	// validations
-	ASSERT(op        != NULL);
-	ASSERT(modifiers != NULL);
+	ASSERT (modifiers != NULL) ;
+
+	if (op == NULL) {
+		return ;
+	}
 
 	// TODO: switch from rax to dict,
 	// TODO: see if we can simply return op's awareness?
-	dictIterator it;
-	dictEntry    *de;
-	HashTableInitIterator(&it, op->awareness);
-	while((de = HashTableNext(&it)) != NULL) {
-		char *key = HashTableGetKey(de);
-		raxInsert(modifiers, (unsigned char *)key, strlen(key), (void *)key,
-				NULL);
+	dictIterator it ;
+	dictEntry    *de ;
+	HashTableInitIterator (&it, op->awareness) ;
+	while ((de = HashTableNext (&it)) != NULL) {
+		char *key = HashTableGetKey (de) ;
+		raxInsert (modifiers, (unsigned char *)key, strlen (key), (void *)key,
+				NULL) ;
 	}
 }
 

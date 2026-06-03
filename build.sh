@@ -466,7 +466,6 @@ setup_build_environment() {
     export QUICKJS_BINDIR="${DEPS_BINDIR}/quickjs"
     export UTF8PROC_BINDIR="${DEPS_BINDIR}/utf8proc"
     export ONIGURUMA_BINDIR="${DEPS_BINDIR}/oniguruma"
-    export FalkorDBRS_BINDIR="${BINROOT}/FalkorDB-core-rs"
 
     # Export environment variables for dependencies
     export RAX="${RAX_BINDIR}/librax.a"
@@ -481,35 +480,22 @@ setup_build_environment() {
     export UTF8PROC="${UTF8PROC_BINDIR}/libutf8proc.a"
     export ONIGURUMA="${ONIGURUMA_BINDIR}/libonig.a"
 
-    # FalkorDB Rust
-    # Note: When using sanitizer with nightly Rust, cargo builds with --target <triple>
-    # which changes the output path structure to include the target triple
-    if [[ -n "$SAN" ]] && rustup run nightly rustc --version &>/dev/null 2>&1; then
-        # Sanitizer build with nightly uses explicit target - determine the correct triple
-        local rust_target
-        if [[ "$OS" == "macos" ]]; then
-            if [[ "$ARCH" == "arm64v8" ]]; then
-                rust_target="aarch64-apple-darwin"
-            else
-                rust_target="x86_64-apple-darwin"
-            fi
-        else
-            if [[ "$ARCH" == "arm64v8" ]]; then
-                rust_target="aarch64-unknown-linux-gnu"
-            else
-                rust_target="x86_64-unknown-linux-gnu"
-            fi
-        fi
-        export FalkorDBRS="${FalkorDBRS_BINDIR}/${rust_target}/debug/libFalkorDB_rs.a"
-    elif [[ "$DEBUG" == "1" || -n "$SAN" || "$COV" == "1" ]]; then
-        # Debug, coverage, or sanitizer fallback (without nightly)
-        export FalkorDBRS="${FalkorDBRS_BINDIR}/debug/libFalkorDB_rs.a"
-    else
-        export FalkorDBRS="${FalkorDBRS_BINDIR}/release/libFalkorDB_rs.a"
-    fi
-
     # Setup compiler flags
     if [[ "$OS" == "macos" ]]; then
+        # Prefer Homebrew LLVM (has OpenMP) over Apple's clang (does not)
+        # This prevents cmake from restarting mid-configure due to compiler change
+		if command -v brew &>/dev/null; then
+			_llvm_prefix="$(brew --prefix llvm 2>/dev/null || true)"
+
+			if [[ -z "${CC:-}" && -n "$_llvm_prefix" && -x "$_llvm_prefix/bin/clang" ]]; then
+				export CC="${_llvm_prefix}/bin/clang"
+			fi
+
+			if [[ -z "${CXX:-}" && -n "$_llvm_prefix" && -x "$_llvm_prefix/bin/clang++" ]]; then
+				export CXX="${_llvm_prefix}/bin/clang++"
+			fi
+		fi
+
         export CC="${CC:-clang}"
         export CXX="${CXX:-clang++}"
 
@@ -616,7 +602,6 @@ check_dependencies() {
     [[ ! -f "$UTF8PROC" ]] && MISSING_DEPS+=("utf8proc")
     [[ ! -f "$ONIGURUMA" ]] && MISSING_DEPS+=("oniguruma")
     # RediSearch is now built by CMake as a subdirectory
-    [[ ! -f "$FalkorDBRS" ]] && MISSING_DEPS+=("falkordbrs")
 
     if [[ ${#MISSING_DEPS[@]} -gt 0 ]]; then
         log_info "Missing dependencies: ${MISSING_DEPS[*]}"
@@ -1179,92 +1164,7 @@ build_dependencies() {
     build_utf8proc
     build_oniguruma
 
-    # Build FalkorDB-core-rs (Rust)
-    build_falkordbrs
-
     log_success "All dependencies built successfully"
-}
-
-#-----------------------------------------------------------------------------
-# Function: build_falkordbrs
-# Build the Rust component
-#-----------------------------------------------------------------------------
-build_falkordbrs() {
-    start_group "Building FalkorDB-core-rs (Rust)"
-
-    # Check if cargo is available
-    if ! command -v cargo &>/dev/null; then
-        log_error "Cargo (Rust build tool) not found"
-        log_error "Please install Rust from https://rustup.rs/"
-        log_error "Or run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
-        end_group
-        exit 1
-    fi
-
-    local cargo_flags=()
-    local rustflags=""
-    local cargo_cmd="cargo"
-
-    # Determine release/debug
-    if [[ "$DEBUG" != "1" && -z "$SAN" && "$COV" != "1" ]]; then
-        cargo_flags+=(--release)
-    fi
-
-    # Handle sanitizer - requires nightly toolchain
-    if [[ -n "$SAN" ]]; then
-        # Check if nightly toolchain is available
-        if rustup run nightly rustc --version &>/dev/null; then
-            cargo_cmd="cargo +nightly"
-            rustflags="-Zsanitizer=${SAN}"
-            # Use the correct target triple for the current architecture and OS
-            local rust_target
-            if [[ "$OS" == "macos" ]]; then
-                if [[ "$ARCH" == "arm64v8" ]]; then
-                    rust_target="aarch64-apple-darwin"
-                else
-                    rust_target="x86_64-apple-darwin"
-                fi
-            else
-                if [[ "$ARCH" == "arm64v8" ]]; then
-                    rust_target="aarch64-unknown-linux-gnu"
-                else
-                    rust_target="x86_64-unknown-linux-gnu"
-                fi
-            fi
-            # Ensure the target's standard library is installed for nightly
-            if ! rustup +nightly target list --installed | grep -q "$rust_target"; then
-                log_info "Installing Rust nightly target: $rust_target"
-                rustup +nightly target add "$rust_target"
-            fi
-            cargo_flags+=(--target "$rust_target")
-        else
-            log_warn "Rust nightly toolchain not available, skipping sanitizer for Rust build"
-            log_warn "Install with: rustup toolchain install nightly"
-        fi
-    fi
-
-    # Handle coverage - only on Linux (macOS has LLVM profiler runtime linker issues)
-    if [[ "$COV" == "1" && "$OS" == "linux" ]]; then
-        rustflags="${rustflags:+${rustflags} }-C instrument-coverage"
-    fi
-
-    log_info "Building Rust component with flags: ${cargo_flags[*]}"
-
-    cd "${ROOT}/deps/FalkorDB-core-rs"
-
-    if [[ -n "$rustflags" ]]; then
-        export RUSTFLAGS="$rustflags"
-    fi
-
-    if ! $cargo_cmd build "${cargo_flags[@]}" --features falkordb_allocator --target-dir "$FalkorDBRS_BINDIR"; then
-        log_error "Failed to build FalkorDB-core-rs"
-        end_group
-        exit 1
-    fi
-
-    cd "$ROOT"
-    log_success "FalkorDB-core-rs built successfully"
-    end_group
 }
 
 #-----------------------------------------------------------------------------
@@ -1476,7 +1376,7 @@ build_project() {
 
 #-----------------------------------------------------------------------------
 # Function: run_unit_tests
-# Run C/C++ and Rust unit tests
+# Run C/C++ unit tests
 #-----------------------------------------------------------------------------
 run_unit_tests() {
     if [[ "$RUN_UNIT_TESTS" != "1" ]]; then
@@ -1521,18 +1421,6 @@ run_unit_tests() {
         log_error "C/C++ unit tests failed"
         end_group
         return 1
-    fi
-
-    # Run Rust unit tests (skip when running with sanitizer - Rust tests have different ASAN setup)
-    if [[ -n "$SAN" ]]; then
-        log_info "Skipping Rust unit tests (sanitizer mode)"
-    else
-        log_info "Running Rust unit tests..."
-        if ! cargo test --lib --target-dir "$FalkorDBRS_BINDIR"; then
-            log_error "Rust unit tests failed"
-            end_group
-            return 1
-        fi
     fi
 
     log_success "All unit tests passed"
@@ -1763,11 +1651,6 @@ do_clean() {
             # Clean quickjs in-source build
             if [[ -d "${ROOT}/deps/quickjs" ]]; then
                 make -C "${ROOT}/deps/quickjs" clean 2>/dev/null || true
-            fi
-
-            # Clean Rust target
-            if [[ -d "$FalkorDBRS_BINDIR" ]]; then
-                rm -rf "$FalkorDBRS_BINDIR"
             fi
         fi
     fi

@@ -11,7 +11,7 @@
 
 #include <sys/types.h>
 
-#define VAR_ARG_LEN UINT_MAX
+#define VAR_ARG_LEN UINT8_MAX  // sentinel: function accepts any number of arguments
 
 // an aggregation context
 // each aggregation function operates on an aggregation context
@@ -33,30 +33,43 @@ typedef void (*AR_Func_Free)(void *ctx);
 // AR_Func_Clone - function pointer to a routine for cloning a function's private data
 typedef void *(*AR_Func_Clone)(void *orig);
 
+// AR_Func_PrivateDataAliases - function pointers to a routine which
+// collects aliases referenced within function's private data
+//
+// e.g.
+//
+// for the 'ALL' predicate there's a private data context: 'ListComprehensionCtx'
+// MATCH (a)
+// WHERE ALL (item IN ['x', 'z'] WHERE item IN a.tags)
+// RETURN count(1)
+typedef void (*AR_Func_PrivateDataAliases)(const void*, rax*) ;
+
 // AR_Func_PrivateData - function pointer to a routine which produce function's private data
 typedef AggregateCtx *(*AR_Func_PrivateData)(void);
 
 // aggregation function callbacks
 typedef struct {
-	AR_Func_Free free;                  // [optional] function pointer to cleanup routine
-	AR_Func_Clone clone;                // [optional] function pointer to clone routine
-	AR_Func_Finalize finalize;          // [optional] function pointer to finalizing aggregate value routine
-	AR_Func_PrivateData private_data;   // function pointer to private data generator
+	AR_Func_Free free;                   // [optional] function pointer to cleanup routine
+	AR_Func_Clone clone;                 // [optional] function pointer to clone routine
+	AR_Func_Finalize finalize;           // [optional] function pointer to finalizing aggregate value routine
+	AR_Func_PrivateDataAliases aliases;  // [optional] function pointer to collect private data referenced entities
+	AR_Func_PrivateData private_data;    // function pointer to private data generator
 } AR_FuncCBs;
 
 typedef struct {
-	AR_Func func;          // function pointer to scalar or aggregate function routine
-	SIType *types;         // types of arguments
-	SIType ret_type;       // return type
-	uint min_argc;         // minimal number of arguments function expects
-	uint max_argc;         // maximal number of arguments function expects
-	bool internal;         // is function internal
-	bool reducible;        // can be reduced using static evaluation
-	bool aggregate;        // true if the function is an aggregation
-	bool udf;              // user define function
-	bool deterministic;    // true if return value is predictable
-	char *name;            // function name
-	AR_FuncCBs callbacks;  // aggregation callbacks
+	AR_Func func;           // function pointer to scalar or aggregate function routine
+	SIType *types;          // types of arguments (types_len entries)
+	SIType ret_type;        // return type
+	uint8_t min_argc;       // minimum number of arguments
+	uint8_t max_argc;       // maximum number of arguments (VAR_ARG_LEN = unlimited)
+	uint8_t types_len;      // number of entries in types[]
+	bool internal;          // is function internal
+	bool reducible;         // can be reduced using static evaluation
+	bool aggregate;         // true if the function is an aggregation
+	bool udf;               // user define function
+	bool deterministic;     // true if return value is predictable
+	char *name;             // function name
+	AR_FuncCBs callbacks;   // function's callbacks
 } AR_FuncDesc;
 
 // initialize functions repository
@@ -65,21 +78,15 @@ void AR_InitFuncsRepo(void) ;
 // create a new function descriptor
 AR_FuncDesc *AR_FuncDescNew
 (
-	char *name,       // function name
-	AR_Func func,     // pointer to function
-	uint min_argc,    // minimum number of arguments
-	uint max_argc,    // maximum number of arguments
-	SIType *types,    // acceptable types
-	SIType ret_type,  // return type
-	bool internal,    // is function internal
-	bool reducible,   // is function reducible
-  bool deterministic  // true if return value is predictable
-);
-
-// register function to repository
-void AR_FuncRegister
-(
-	AR_FuncDesc *func  // function to register
+	char *name,        // function name
+	AR_Func func,      // pointer to function
+	uint8_t min_argc,  // minimum number of arguments
+	uint8_t max_argc,  // maximum number of arguments (VAR_ARG_LEN = unlimited)
+	SIType *types,     // acceptable types
+	SIType ret_type,   // return type
+	bool internal,     // is function internal
+	bool reducible,    // is function reducible
+	bool deterministic  // true if return value is predictable
 );
 
 // register a new UDF function
@@ -99,7 +106,8 @@ void AR_SetPrivateDataRoutines
 (
 	AR_FuncDesc *func_desc,
 	AR_Func_Free free,
-	AR_Func_Clone clone
+	AR_Func_Clone clone,
+	AR_Func_PrivateDataAliases aliases
 );
 
 // get arithmetic function
@@ -112,7 +120,7 @@ AR_FuncDesc *AR_GetFunc
 // get function return type
 SIType AR_FuncDesc_RetType
 (
-	const AR_FuncDesc *func	
+	const AR_FuncDesc *func
 );
 
 // check to see if function exists

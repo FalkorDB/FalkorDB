@@ -470,31 +470,34 @@ void _FilterTree_CollectModified
 	const FT_FilterNode *root,
 	rax *modified
 ) {
-	if(root == NULL) return;
+	if (root == NULL) {
+		return ;
+	}
 
-	switch(root->t) {
+	switch (root->t) {
 		case FT_N_COND: {
-			_FilterTree_CollectModified(root->cond.left, modified);
-			_FilterTree_CollectModified(root->cond.right, modified);
-			break;
+			_FilterTree_CollectModified (root->cond.left, modified) ;
+			_FilterTree_CollectModified (root->cond.right, modified) ;
+			break ;
 		}
 		case FT_N_PRED: {
 			// traverse left and right-hand expressions,
 			// adding all encountered modified to the triemap
 			// we'll typically encounter 0 or 1 modified in each expression,
 			// but there are multi-argument exceptions
-			AR_EXP_CollectEntities(root->pred.lhs, modified);
-			AR_EXP_CollectEntities(root->pred.rhs, modified);
-			break;
+			AR_EXP_CollectEntities (root->pred.lhs, modified) ;
+			AR_EXP_CollectEntities (root->pred.rhs, modified) ;
+			break ;
 		}
 		case FT_N_EXP: {
-			// traverse expression, adding all encountered modified to the triemap
-			AR_EXP_CollectEntities(root->exp.exp, modified);
-			break;
+			// traverse expression
+			// adding all encountered modified to the triemap
+			AR_EXP_CollectEntities (root->exp.exp, modified) ;
+			break ;
 		}
 		default: {
-			ASSERT(0);
-			break;
+			ASSERT (0) ;
+			break ;
 		}
 	}
 }
@@ -503,10 +506,10 @@ rax *FilterTree_CollectModified
 (
 	const FT_FilterNode *root
 ) {
-	rax *modified = raxNew();
-	_FilterTree_CollectModified(root, modified);
+	rax *modified = raxNew () ;
+	_FilterTree_CollectModified (root, modified) ;
 
-	return modified;
+	return modified ;
 }
 
 // collect filtered attribute for a given entity
@@ -577,7 +580,7 @@ bool FilterTree_FiltersAlias
 	const cypher_astnode_t *ast  // AST
 ) {
 	// collect all filtered variables
-	rax *filtered_variables = FilterTree_CollectModified(root);
+	rax *filtered_variables = FilterTree_CollectModified (root) ;
 
 	raxIterator it;
 	raxStart(&it, filtered_variables);

@@ -187,7 +187,7 @@ SIValue AR_SHORTEST_PATH
 	if(ctx->reltype_names != NULL && ctx->reltype_count == 0) {
 		// if edge types were specified but none were valid,
 		// use the zero matrix
-		info = Delta_Matrix_export(&M, Graph_GetZeroMatrix(g), GrB_BOOL);
+		info = Delta_Matrix_export(&M, Graph_GetZeroMatrix(g), GrB_BOOL, NULL);
 		ASSERT(info == GrB_SUCCESS);
 	} else {
 		info = Build_Matrix(&M, NULL, g, NULL, 0, ctx->reltypes,
@@ -306,49 +306,5 @@ SIValue AR_PATH_LENGTH
 ) {
 	if(SI_TYPE(argv[0]) == T_NULL) return SI_NullVal();
 	return SI_LongVal(SIPath_Length(argv[0]));
-}
-
-void Register_PathFuncs() {
-	SIType *types;
-	SIType ret_type;
-	AR_FuncDesc *func_desc;
-
-	types = arr_new(SIType, 2);
-	arr_append(types, T_PTR);
-	arr_append(types, T_NULL | T_NODE | T_EDGE | T_PATH);
-	ret_type = T_PATH | T_NULL;
-	func_desc = AR_FuncDescNew("topath", AR_TOPATH, 1, VAR_ARG_LEN, types,
-			ret_type, true, false, true);
-	AR_FuncRegister(func_desc);
-
-	types = arr_new(SIType, 3);
-	arr_append(types, T_NULL | T_NODE);
-	arr_append(types, T_NULL | T_NODE);
-	ret_type = T_PATH | T_NULL;
-	func_desc = AR_FuncDescNew("shortestpath", AR_SHORTEST_PATH, 2, 2, types,
-			ret_type, true, false, true);
-	AR_SetPrivateDataRoutines(func_desc, ShortestPath_Free, ShortestPath_Clone);
-	AR_FuncRegister(func_desc);
-
-	types = arr_new(SIType, 1);
-	arr_append(types, T_NULL | T_PATH);
-	ret_type = T_ARRAY | T_NULL;
-	func_desc = AR_FuncDescNew("nodes", AR_PATH_NODES, 1, 1, types, ret_type,
-			false, false, true);
-	AR_FuncRegister(func_desc);
-
-	types = arr_new(SIType, 1);
-	arr_append(types, T_NULL | T_PATH);
-	ret_type = T_ARRAY | T_NULL;
-	func_desc = AR_FuncDescNew("relationships", AR_PATH_RELATIONSHIPS, 1, 1,
-			types, ret_type, false, false, true);
-	AR_FuncRegister(func_desc);
-
-	types = arr_new(SIType, 1);
-	arr_append(types, T_NULL | T_PATH);
-	ret_type = T_INT64 | T_NULL;
-	func_desc = AR_FuncDescNew("length", AR_PATH_LENGTH, 1, 1, types, ret_type,
-			false, false, true);
-	AR_FuncRegister(func_desc);
 }
 

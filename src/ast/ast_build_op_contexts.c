@@ -4,13 +4,15 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "ast_build_op_contexts.h"
+#include "RG.h"
 #include "ast_shared.h"
 #include "../util/arr.h"
+#include "../query_ctx.h"
 #include "../errors/errors.h"
+#include "../graph/graph_hub.h"
+#include "ast_build_op_contexts.h"
 #include "../util/rax_extensions.h"
 #include "../arithmetic/arithmetic_expression_construct.h"
-#include "../query_ctx.h"
 
 static inline EdgeCreateCtx _NewEdgeCreateCtx
 (
@@ -20,14 +22,14 @@ static inline EdgeCreateCtx _NewEdgeCreateCtx
 ) {
 	const cypher_astnode_t *props = cypher_ast_rel_pattern_get_properties(edge);
 
-	EdgeCreateCtx new_edge = {  .alias = e->alias,
-								.relation = e->reltypes[0],
-								.reltypeId = e->reltypeIDs[0],
-								.properties = PropertyMap_New(props),
-								.src = e->src->alias,
-								.dest = e->dest->alias
-							 };
-	return new_edge;
+	EdgeCreateCtx new_edge = { .alias      = e->alias,
+							   .relation   = e->reltypes [0],
+							   .reltypeId  = e->reltypeIDs [0],
+							   .properties = PropertyMap_New (props),
+							   .src        = e->src->alias,
+							   .dest       = e->dest->alias
+							 } ;
+	return new_edge ;
 }
 
 static inline NodeCreateCtx _NewNodeCreateCtx
@@ -36,15 +38,17 @@ static inline NodeCreateCtx _NewNodeCreateCtx
 	const QGNode *n,
 	const cypher_astnode_t *ast_node
 ) {
-	const cypher_astnode_t *ast_props = cypher_ast_node_pattern_get_properties(ast_node);
+	const cypher_astnode_t *ast_props =
+		cypher_ast_node_pattern_get_properties (ast_node) ;
 
-	NodeCreateCtx new_node;
-	new_node.alias = n->alias;
-	new_node.properties = PropertyMap_New(ast_props);
-	arr_clone(new_node.labels, n->labels);
-	arr_clone(new_node.labelsId, n->labelsID);
+	NodeCreateCtx new_node ;
+	new_node.alias = n->alias ;
+	new_node.properties = PropertyMap_New (ast_props) ;
 
-	return new_node;
+	arr_clone (new_node.labels, n->labels) ;
+	arr_clone (new_node.labelsId, n->labelsID) ;
+
+	return new_node ;
 }
 
 // updates a single property or label
@@ -148,7 +152,7 @@ static void _ConvertUpdateItem
 
 	// see if we need to create an update context for updated entity
 	int len = strlen(alias);
-	EntityUpdateEvalCtx *ctx = raxFind(updates, (unsigned char *)alias, len);
+	EntityUpdateDesc *ctx = raxFind(updates, (unsigned char *)alias, len);
 	if(ctx == raxNotFound) {
 		ctx = UpdateCtx_New(alias);
 		raxInsert(updates, (unsigned char *)alias, len, ctx, NULL);
@@ -247,7 +251,7 @@ static void _ConvertUpdateItem
 			exp = AR_EXP_NewConstOperandNode (SI_NullVal ()) ;
 		}
 
-		PropertySetCtx update = {
+		PropertySetDesc update = {
 			.exp       = exp,
 			.mode      = update_mode,
 			.attr_id   = ATTRIBUTE_ID_NONE,
@@ -266,35 +270,40 @@ void AST_PreparePathCreation
 	NodeCreateCtx **nodes,
 	EdgeCreateCtx **edges
 ) {
-	GraphContext *gc = QueryCtx_GetGraphCtx();
+	GraphContext *gc = QueryCtx_GetGraphCtx () ;
 
-	QueryGraph *g = QueryGraph_ExtractPaths(qg, &path, 1);
-	uint path_elem_count = cypher_ast_pattern_path_nelements(path);
-	for(uint i = 0; i < path_elem_count; i ++) {
-		/* See if current entity needs to be created:
-		 * 1. Current entity is NOT bound in a previous clause.
-		 * 2. We have yet to account for this entity. */
-		const cypher_astnode_t *elem = cypher_ast_pattern_path_get_element(path, i);
+	QueryGraph *g = QueryGraph_ExtractPaths (qg, &path, 1) ;
+	uint path_elem_count = cypher_ast_pattern_path_nelements (path) ;
+	for (uint i = 0 ; i < path_elem_count ; i++) {
+		// see if current entity needs to be created
+		// 1. current entity is NOT bound in a previous clause
+		// 2. we have yet to account for this entity
+		const cypher_astnode_t *elem =
+			cypher_ast_pattern_path_get_element (path, i) ;
 		const char *alias = AST_ToString (elem, NULL) ;
 
-		// Skip entities defined in previous clauses or already represented in our nodes/edges arrays.
-		int rc = raxTryInsert(bound_vars, (unsigned char *)alias, strlen(alias), NULL, NULL);
-		if(rc == 0) continue;
+		// skip entities defined in previous clauses or already represented in
+		// our nodes/edges arrays
+		int rc = raxTryInsert (bound_vars, (unsigned char *)alias,
+				strlen (alias), NULL, NULL) ;
+		if (rc == 0) {
+			continue ;
+		}
 
-		if((i % 2) == 1) {
+		if ((i % 2) == 1) {
 			// relation
-			QGEdge *e = QueryGraph_GetEdgeByAlias(g, alias);
-			EdgeCreateCtx new_edge = _NewEdgeCreateCtx(gc, e, elem);
-			arr_append(*edges, new_edge);
+			QGEdge *e = QueryGraph_GetEdgeByAlias (g, alias) ;
+			EdgeCreateCtx new_edge = _NewEdgeCreateCtx (gc, e, elem) ;
+			arr_append (*edges, new_edge) ;
 		} else {
 			// node
-			QGNode *n = QueryGraph_GetNodeByAlias(g, alias);
-			NodeCreateCtx new_node = _NewNodeCreateCtx(gc, n, elem);
-			arr_append(*nodes, new_node);
+			QGNode *n = QueryGraph_GetNodeByAlias (g, alias) ;
+			NodeCreateCtx new_node = _NewNodeCreateCtx (gc, n, elem) ;
+			arr_append (*nodes, new_node) ;
 		}
 	}
 
-	QueryGraph_Free(g);
+	QueryGraph_Free (g) ;
 }
 
 //------------------------------------------------------------------------------
@@ -433,32 +442,68 @@ AST_MergeContext AST_PrepareMergeOp
 // UPDATE operation
 //------------------------------------------------------------------------------
 
+// returns a dict mapping each entity to its set of update expressions
+//
+// e.g.
+// SET n.v = $v, n.x = $v/2, m.z = 'z'
+//
+// will return:
+//
+// {'n': [$v, $v/2],
+//  'm': ['z']
+// }
 rax *AST_PrepareUpdateOp
 (
 	GraphContext *gc,
 	const cypher_astnode_t *clause
 ) {
-	cypher_astnode_type_t type = cypher_astnode_type(clause);
-	ASSERT(type == CYPHER_AST_SET || type == CYPHER_AST_REMOVE);
+	ASSERT (gc     != NULL) ;
+	ASSERT (clause != NULL) ;
 
-	rax *updates = raxNew(); // entity alias -> EntityUpdateEvalCtx
-	if(type == CYPHER_AST_SET) {
-		uint nitems = cypher_ast_set_nitems(clause);
-		for(uint i = 0; i < nitems; i++) {
+	cypher_astnode_type_t type = cypher_astnode_type (clause) ;
+	ASSERT (type == CYPHER_AST_SET || type == CYPHER_AST_REMOVE) ;
+
+	rax *updates = raxNew () ; // entity alias -> EntityUpdateDesc
+	if (type == CYPHER_AST_SET) {
+		uint nitems = cypher_ast_set_nitems (clause) ;
+		for (uint i = 0; i < nitems; i++) {
 			const cypher_astnode_t *set_item =
-				cypher_ast_set_get_item(clause, i);
-			_ConvertUpdateItem(gc, updates, set_item);
+				cypher_ast_set_get_item (clause, i) ;
+			_ConvertUpdateItem (gc, updates, set_item) ;
 		}
+
+		// clean up redundant expressions
+		// following last write wins
+		//
+		// e.g.
+		// SET n.v = 1, n.v = 2
+		//
+		// should result in a single expression n.v = 2
+		//
+		// similarly
+		// SET n.v = 1, n.v = 2, n = m, n.v = 3
+		//
+		// should result in a two expressions
+		// n = m and n.v = 3
+
+		raxIterator it ;
+		raxStart (&it, updates) ;
+		raxSeek  (&it, "^", NULL, 0) ;
+		while (raxNext (&it)) {
+			EntityUpdateDesc *desc = it.data ;
+			UpdateCtx_RemoveRedundancies (desc) ;
+		}
+		raxStop (&it) ;
 	} else {
-		uint nitems = cypher_ast_remove_nitems(clause);
-		for(uint i = 0; i < nitems; i++) {
+		uint nitems = cypher_ast_remove_nitems (clause) ;
+		for (uint i = 0; i < nitems; i++) {
 			const cypher_astnode_t *remove_item =
 				cypher_ast_remove_get_item(clause, i);
-			_ConvertUpdateItem(gc, updates, remove_item);
+			_ConvertUpdateItem (gc, updates, remove_item) ;
 		}
 	}
 
-	return updates;
+	return updates ;
 }
 
 //------------------------------------------------------------------------------
@@ -473,25 +518,25 @@ AST_CreateContext AST_PrepareCreateOp
 ) {
 	// shouldn't operate on the original bound variables map
 	// as this function may insert aliases
-	rax *bound_and_introduced_entities = raxClone(bound_vars);
+	rax *bound_and_introduced_entities = raxClone (bound_vars) ;
 
-	NodeCreateCtx *nodes_to_create = arr_new(NodeCreateCtx, 1);
-	EdgeCreateCtx *edges_to_create = arr_new(EdgeCreateCtx, 1);
+	NodeCreateCtx *nodes_to_create = arr_new (NodeCreateCtx, 1) ;
+	EdgeCreateCtx *edges_to_create = arr_new (EdgeCreateCtx, 1) ;
 
-	const cypher_astnode_t *pattern = cypher_ast_create_get_pattern(clause);
-	uint npaths = cypher_ast_pattern_npaths(pattern);
+	const cypher_astnode_t *pattern = cypher_ast_create_get_pattern (clause) ;
+	uint npaths = cypher_ast_pattern_npaths (pattern) ;
 
-	for(uint j = 0; j < npaths; j++) {
-		const cypher_astnode_t *path = cypher_ast_pattern_get_path(pattern, j);
-		AST_PreparePathCreation(path, qg, bound_and_introduced_entities,
-				&nodes_to_create, &edges_to_create);
+	for (uint i = 0; i < npaths; i++) {
+		const cypher_astnode_t *path = cypher_ast_pattern_get_path(pattern, i);
+		AST_PreparePathCreation (path, qg, bound_and_introduced_entities,
+				&nodes_to_create, &edges_to_create) ;
 	}
 
-	raxFree(bound_and_introduced_entities);
+	raxFree (bound_and_introduced_entities) ;
 
 	AST_CreateContext ctx = { .nodes_to_create = nodes_to_create,
-		.edges_to_create = edges_to_create };
+		.edges_to_create = edges_to_create } ;
 
-	return ctx;
+	return ctx ;
 }
 

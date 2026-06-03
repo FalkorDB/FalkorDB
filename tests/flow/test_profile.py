@@ -55,3 +55,4 @@ class testProfile(FlowTestsBase):
         scan_op = traverse_op.children[0]
         self.env.assertEquals(scan_op.name, 'Node By Label Scan')
         self.env.assertEquals(scan_op.records_produced, 0)
+

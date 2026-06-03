@@ -218,6 +218,9 @@ ResultSet *QueryCtx_GetResultSet(void);
 // retrive the resultset statistics
 ResultSetStatistics *QueryCtx_GetResultSetStatistics(void);
 
+// retrive the query execution type
+QueryExecutionTypeFlag QueryCtx_GetExecutionType (void) ;
+
 // print the current query
 void QueryCtx_PrintQuery(void);
 

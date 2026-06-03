@@ -151,10 +151,10 @@ static bool _Constraint_Drop
 	// try to get graph
 	//--------------------------------------------------------------------------
 
-	GraphContext *gc = GraphContext_Retrieve(ctx, key, false, false);
-	if(!gc) {
+	GraphContext *gc = GraphContext_Retrieve (ctx, key, false, false) ;
+	if (gc == NULL) {
 		// graph doesn't exists
-		return false;
+		return false ;
 	}
 
 	//--------------------------------------------------------------------------
@@ -162,41 +162,41 @@ static bool _Constraint_Drop
 	//--------------------------------------------------------------------------
 
 	// determine schema type
-	SchemaType st = (et == GETYPE_NODE) ? SCHEMA_NODE : SCHEMA_EDGE;
+	SchemaType st = (et == GETYPE_NODE) ? SCHEMA_NODE : SCHEMA_EDGE ;
 
-	Schema *s = GraphContext_GetSchema(gc, lbl, st);
-	if(s == NULL) {
-		res = false;
-		goto cleanup;
+	Schema *s = GraphContext_GetSchema (gc, lbl, st) ;
+	if (s == NULL) {
+		res = false ;
+		goto cleanup ;
 	}
 
 	//--------------------------------------------------------------------------
 	// try to get attribute IDs
 	//--------------------------------------------------------------------------
 
-	for(uint8_t i = 0; i < n; i++) {
-		const char *prop = props[i];
+	for (uint8_t i = 0 ; i < n ; i++) {
+		const char *prop = props [i] ;
 
 		// try to get property ID
-		AttributeID id = GraphContext_GetAttributeID(gc, prop);
+		AttributeID id = GraphContext_GetAttributeID (gc, prop) ;
 
-		if(id == ATTRIBUTE_ID_NONE) {
+		if (id == ATTRIBUTE_ID_NONE) {
 			// attribute missing
-			res = false;
-			goto cleanup;
+			res = false ;
+			goto cleanup ;
 		}
 
-		attrs[i] = id;
+		attrs [i] = id ;
 	}
 
 	//--------------------------------------------------------------------------
 	// try to get constraint
 	//--------------------------------------------------------------------------
 
-	Constraint c = Schema_GetConstraint(s, ct, attrs, n);
-	if(c == NULL) {
-		res = false;
-		goto cleanup;
+	Constraint c = Schema_GetConstraint (s, ct, attrs, n) ;
+	if (c == NULL) {
+		res = false ;
+		goto cleanup ;
 	}
 
 	//--------------------------------------------------------------------------
@@ -204,28 +204,27 @@ static bool _Constraint_Drop
 	//--------------------------------------------------------------------------
 
 	// acquire graph write lock
-	Graph *g = GraphContext_GetGraph (gc) ;
+	GraphContext_AcquireWriteLock (gc) ;
 
-	Graph_AcquireWriteLock(g);
-
-	Schema_RemoveConstraint(s, c);
+	Schema_RemoveConstraint (s, c) ;
 
 	// release graph R/W lock
-	Graph_ReleaseLock(g);
+	GraphContext_ReleaseLock (gc) ;
 
 	// TODO: consider disallowing droping a pending constraint
 	// asynchronously delete constraint
-	Indexer_DropConstraint(c, gc);
+	Indexer_DropConstraint (c, gc) ;
 
 cleanup:
-	if(res == false) {
-		RedisModule_ReplyWithError(ctx, "Unable to drop constraint, no such constraint.");
+	if (res == false) {
+		RedisModule_ReplyWithError (ctx,
+				"Unable to drop constraint, no such constraint.") ;
 	}
 
 	// decrease graph reference count
-	GraphContext_DecreaseRefCount(gc);
+	GraphContext_DecreaseRefCount (gc) ;
 
-	return res;
+	return res ;
 }
 
 // GRAPH.CONSTRAIN <key> CREATE UNIQUE/MANDATORY [NODE label / RELATIONSHIP type] PROPERTIES prop_count prop0, prop1...
@@ -253,10 +252,8 @@ static bool _Constraint_Create
 	// TODO: find a better way
 	QueryCtx_SetGraphCtx(gc);
 
-	Graph *g = GraphContext_GetGraph(gc);
-
 	// acquire graph write lock
-	Graph_AcquireWriteLock(g);
+	GraphContext_AcquireWriteLock (gc) ;
 
 	//--------------------------------------------------------------------------
 	// convert attribute name to attribute ID
@@ -292,10 +289,10 @@ static bool _Constraint_Create
 	// must be aligned with attribute names array
 	for(uint i = 0; i < n; i++) {
 		// get attribute id for attribute name
-		AttributeID attr_id = attr_ids[i];
+		AttributeID attr_id = attr_ids [i] ;
 
 		// update props to hold graph context's attribute name
-		props[i] = GraphContext_GetAttributeString(gc, attr_id);
+		props [i] = GraphContext_GetAttributeName (gc, attr_id) ;
 	}
 
 	//--------------------------------------------------------------------------
@@ -356,7 +353,7 @@ cleanup:
 	}
 
 	// release graph R/W lock
-	Graph_ReleaseLock(g);
+	GraphContext_ReleaseLock (gc) ;
 
 	// constraint already exists
 	if(res == false) { 
