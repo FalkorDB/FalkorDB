@@ -179,7 +179,13 @@ jobs:
           cargo build --release
       - name: Run unit tests
         run: |
-          cargo test --release -p graph
+          # Doctests are linked separately by rustdoc (which ignores RUSTFLAGS /
+          # .cargo rustflags), so they need the duplicate-symbol allowance for
+          # libredisearch_rs.a's bundled std via RUSTDOCFLAGS. Also disable release
+          # LTO for the test build: the embedded C/Rust archives carry no LLVM
+          # bitcode, so a release-LTO doctest fails with "Can't find section .llvmbc"
+          # (same reason the fuzz job sets CARGO_PROFILE_RELEASE_LTO=false).
+          CARGO_PROFILE_RELEASE_LTO=false RUSTDOCFLAGS="-C link-arg=-Wl,--allow-multiple-definition" cargo test --release -p graph
       - name: Run tests
         run: |
           . /data/venv/bin/activate
@@ -268,8 +274,8 @@ jobs:
           env-vars: "RUSTFLAGS"
       - name: Run code coverage
         run: |
-          RUSTFLAGS="-C instrument-coverage" cargo build
-          RUSTFLAGS="-C instrument-coverage" cargo test -p graph
+          RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo build
+          RUSTDOCFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo test -p graph
           . /data/venv/bin/activate
           pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
           TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
@@ -296,7 +302,7 @@ jobs:
           env-vars: "RUSTFLAGS"
       - name: Build with coverage
         run: |
-          RUSTFLAGS="-C instrument-coverage" cargo build
+          RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo build
       - name: Upload coverage binary
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -369,6 +375,11 @@ jobs:
           . /data/venv/bin/activate
           mkdir -p fuzz/corpus/fuzz_target_runtime/
           TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
+          # cargo-fuzz sets its own RUSTFLAGS (sanitizer), which replaces the
+          # .cargo/config.toml flags; repeat the duplicate-symbol allowance so
+          # the embedded libredisearch_rs.a (its own std) links. cargo-fuzz
+          # appends to an existing RUSTFLAGS env.
+          export RUSTFLAGS="-C link-arg=-Wl,--allow-multiple-definition"
           CXX=clang++-22 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz build fuzz_target_runtime
           CXX=clang++-22 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz run fuzz_target_runtime -- -max_total_time=300
           CXX=clang++-22 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz cmin fuzz_target_runtime

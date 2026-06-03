@@ -8,7 +8,7 @@ use graph::graph::graphblas::serialization::{Decode, Reader};
 use graph::graph::graphblas::tensor::Tensor;
 use graph::graph::graphblas::versioned_matrix::VersionedMatrix;
 use graph::index::IndexInfo;
-use redis_module::RedisModuleIO;
+use redis_module::raw::RedisModuleIO;
 use roaring::RoaringTreemap;
 
 use super::EncodeState;

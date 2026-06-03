@@ -24,40 +24,64 @@ RUN git clone --depth 1 --branch ${REDIS_ASAN_VER} https://github.com/redis/redi
     echo "ASAN symbols: $SYMS" && \
     test "$SYMS" -gt 10
 
-# Stage 2 — chef/planner/builder: ASAN-instrumented libfalkordb.so.
+# Stage 2 — builder: ASAN-instrumented libfalkordb.so.
 # Nightly toolchain required for -Zsanitizer=address. Cargo profile is dev
 # (no --release) so debuginfo and frame pointers are preserved for stack traces.
-FROM $BUILD_IMAGE AS chef
-RUN cargo install cargo-chef --locked && rustup install nightly && rustup default nightly
+#
+# NOTE: no cargo-chef here (unlike the release/coverage images). This stage
+# builds RediSearch from source via redisearch.sh first — graph/build.rs needs
+# those archives to exist before the cargo build — and then compiles the module
+# directly. The dep-layer caching cargo-chef provides isn't worth the extra
+# plumbing for the one-off ASAN image.
+FROM $BUILD_IMAGE AS builder
+RUN rustup install nightly && rustup default nightly
+# OpenSSL dev: RediSearch 8.6's CMake find_package(OpenSSL) + link-time
+# libssl/libcrypto. (Also added to build/Dockerfile, but the cached base image
+# predates that, so install here too.)
+RUN apt-get update && apt-get install -y --no-install-recommends libssl-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 
-FROM chef AS planner
-COPY . .
-RUN cargo chef prepare --recipe-path recipe.json
+# Rebuild the RediSearch 8.6 fork WITH AddressSanitizer so the embedded
+# VectorSimilarity is instrumented. The toolchain image ships a
+# non-instrumented RediSearch; redisearch.sh with REDISEARCH_SAN=address
+# produces the `debug-asan` flavor in-tree (./redisearch/RediSearch/bin),
+# which graph/build.rs discovers ahead of the toolchain's /data copy.
+# Copied on its own first so editing module source doesn't bust this
+# expensive layer (redisearch/ is .dockerignore'd, so the later COPY won't
+# clobber the build output).
+COPY redisearch.sh redisearch.sh
+RUN CC=clang-22 CXX=clang++-22 REDISEARCH_SAN=address bash redisearch.sh
 
-FROM chef AS builder
-COPY --from=planner /src/recipe.json recipe.json
-# Target-specific env vars MUST use the canonical hyphenated form
-# `CFLAGS_x86_64-unknown-linux-gnu` (cc-rs's primary lookup key); the
-# uppercase+underscore variant is a secondary lookup in some cc-rs paths
-# but not reliably for all C dependencies in our tree. POSIX /bin/sh (dash)
-# can't assign env vars with hyphens, so we use `env` which accepts them.
-# Confirmed by comparing against the old in-job asan build on main, which
-# used the same hyphenated names directly via GHA's `env:` block.
-RUN env \
-    CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-Zsanitizer=address -Cdebuginfo=2" \
-    CFLAGS_x86_64-unknown-linux-gnu="-fsanitize=address -fno-omit-frame-pointer" \
-    CXXFLAGS_x86_64-unknown-linux-gnu="-fsanitize=address -fno-omit-frame-pointer" \
-    CXX=clang++-22 \
-    cargo chef cook --target x86_64-unknown-linux-gnu --recipe-path recipe.json
 COPY . .
-RUN env \
-    CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-Zsanitizer=address -Cdebuginfo=2" \
-    CFLAGS_x86_64-unknown-linux-gnu="-fsanitize=address -fno-omit-frame-pointer" \
-    CXXFLAGS_x86_64-unknown-linux-gnu="-fsanitize=address -fno-omit-frame-pointer" \
-    CXX=clang++-22 \
-    cargo build --target x86_64-unknown-linux-gnu && \
-    mkdir -p /out && cp target/x86_64-unknown-linux-gnu/debug/libfalkordb.so /out/falkordb.so
+
+# Build the module with ASAN for the host arch (native on arm64, amd64 in CI).
+# Target-specific env vars use the canonical hyphenated `CFLAGS_<triple>` form
+# (cc-rs's primary lookup key); POSIX /bin/sh can't assign hyphenated names, so
+# pass them via `env`.
+ARG TARGETARCH
+RUN set -eux; \
+    # Build the module with the SAME pinned nightly that redisearch.sh used for
+    # redisearch_rs (RediSearch's .rust-nightly), not the floating `nightly`
+    # alias defaulted above — so the -Zsanitizer toolchain matches across both
+    # archives. The pin lives in the in-image RediSearch checkout (redisearch/ is
+    # .dockerignore'd, so `COPY . .` didn't clobber it). redisearch.sh already
+    # installed this toolchain (with rust-src) during the SAN build.
+    rustup default "$(cat redisearch/RediSearch/.rust-nightly)"; \
+    case "$TARGETARCH" in \
+      amd64) RT=x86_64-unknown-linux-gnu ;; \
+      arm64) RT=aarch64-unknown-linux-gnu ;; \
+      *) echo "unsupported TARGETARCH: $TARGETARCH"; exit 1 ;; \
+    esac; \
+    RTU=$(echo "$RT" | tr 'a-z-' 'A-Z_'); \
+    env \
+      "CARGO_TARGET_${RTU}_RUSTFLAGS=-Zsanitizer=address -Cdebuginfo=2 -Clink-arg=-Wl,--allow-multiple-definition" \
+      "CFLAGS_${RT}=-fsanitize=address -fno-omit-frame-pointer" \
+      "CXXFLAGS_${RT}=-fsanitize=address -fno-omit-frame-pointer" \
+      CXX=clang++-22 \
+      LLVM_OBJDUMP=/usr/bin/llvm-objdump-22 \
+      LLVM_OBJCOPY=/usr/bin/llvm-objcopy-22 \
+      cargo build --target "$RT"; \
+    mkdir -p /out && cp "target/$RT/debug/libfalkordb.so" /out/falkordb.so
 
 # Stage 3 — runtime. debian:trixie-slim because the asan redis-server
 # (built in stage 1 against the toolchain image's glibc) needs GLIBC_2.38

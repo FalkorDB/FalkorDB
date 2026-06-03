@@ -2,7 +2,7 @@ import os
 from common import *
 
 GRAPH_ID = "config"
-NUMBER_OF_CONFIGURATIONS = 22 # number of configurations available
+NUMBER_OF_CONFIGURATIONS = 23 # number of configurations available
 
 class testConfig(FlowTestsBase):
     def __init__(self):
@@ -33,6 +33,7 @@ class testConfig(FlowTestsBase):
                 ("ASYNC_DELETE", [0,1]), # could be either 0 or 1 depending on load time config
                 ("OMP_THREAD_COUNT", os.cpu_count()),
                 ("THREAD_COUNT", os.cpu_count()),
+                ("INDEX_WORKER_THREADS", 0),
                 ("RESULTSET_SIZE", -1),
                 ("VKEY_MAX_ENTITY_COUNT", 100000),
                 ("MAX_QUEUED_QUERIES", 4294967295),
