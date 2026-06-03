@@ -380,11 +380,25 @@ static void _ShutdownEventHandler
 	// indexes (test_index_create, test_vecsim, test_index_delete,
 	// test_memory_usage).
 	//
-	// Must run *before* ThreadPool_Destroy: with ASYNC_DELETE enabled
-	// GraphContext_DecreaseRefCount can dispatch _GraphContext_Free onto
-	// the pool, and we still need that pool alive.
-	// snapshot under the read lock; release before decref because the free
-	// path takes the write lock via Globals_RemoveGraph (deadlock otherwise)
+	// Order matters here:
+	//   * Indexer_Stop above already drained the indexer queue (our
+	//     _Indexer_DiscardTask fix releases the GC ref each queued task
+	//     was holding) and pthread_join'd the indexer thread.
+	//   * ThreadPool_Wait below blocks until every in-flight worker
+	//     task (cmd_query, populate, drop, ...) has finished. Each of
+	//     those tasks decrements its own GC ref on completion, so by
+	//     the time Wait returns the only remaining ref on each
+	//     GraphContext is the one Globals_AddGraph took when the
+	//     graph was registered.
+	//   * The decref loop then takes that last reference to zero and
+	//     _GraphContext_Free runs (sync, or async-dispatched onto the
+	//     still-alive pool — the destroy below drains it either way).
+	//
+	// Snapshot under the globals read lock; release before decref because
+	// the free path takes the globals write lock via Globals_RemoveGraph
+	// (deadlock otherwise).
+	ThreadPool_Wait () ;
+
 	Globals_ReadLock () ;
 	GraphContext **graphs = Globals_Get_GraphsInKeyspace () ;
 	GraphContext **snapshot = NULL ;

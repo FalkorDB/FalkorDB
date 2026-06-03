@@ -53,6 +53,12 @@ void **ThreadPool_GetTasksByHandler
 	uint32_t *n               // number of tasks returned
 );
 
+// block until all queued tasks have run and all workers are idle.
+// Used at shutdown so callers can release the GraphContext refs that
+// in-flight populate / drop / constraint tasks were holding before any
+// subsequent decref sees the refcount.
+void ThreadPool_Wait(void);
+
 // destroies threadpool, allows threads to exit gracefully
 void ThreadPool_Destroy(void);
 
