@@ -44,7 +44,6 @@ RUN set -eux; \
     dnf install -y \
       git \
       wget \
-      curl \
       ca-certificates \
       unzip \
       rsync \
