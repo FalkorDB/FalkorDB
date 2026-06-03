@@ -154,28 +154,44 @@ static void _Index_ConstructStructure
 			RSFieldID fieldID = RediSearch_CreateField(rsIdx,
 					field->vector_name, RSFLDTYPE_VECTOR, RSFLDOPT_NONE);
 
-			// Build a TIERED-HNSW VecSimParams shaped from the schema's
-			// HNSW options. RediSearch_VecSimTieredParams_Init wires the
-			// runtime context (worker pool, weak-ref jobQueueCtx,
-			// flatBufferLimit, logCtx) using RediSearch's own
-			// infrastructure.
-			VecSimParams primary = {
-				.algo = VecSimAlgo_HNSWLIB,
-				.algoParams.hnswParams = {
-					.type           = VecSimType_FLOAT32,
-					.dim            = field->hnsw_options.dimension,
-					.metric         = IndexField_OptionsGetSimFunc(field),
-					.M              = IndexField_OptionsGetM(field),
-					.efConstruction = IndexField_OptionsGetEfConstruction(field),
-					.efRuntime      = IndexField_OptionsGetEfRuntime(field),
-				},
-			};
-			VecSimParams params = {
-				.algo = VecSimAlgo_TIERED,
-				.algoParams.tieredParams.primaryIndexParams = &primary,
-			};
-			RediSearch_VecSimTieredParams_Init(&params, rsIdx, field->vector_name);
-			RediSearch_VectorFieldSetParams(rsIdx, fieldID, &params);
+			// A dimension-0 vector field is allowed (so the index can be
+			// listed) but cannot be backed by a real VecSim index:
+			// vecSimParams_ExpBlobSize() is 0, so RediSearch_VectorFieldSetParams
+			// would reject the params. Guard the tiered-index setup on
+			// dimension > 0 — this avoids allocating a logCtx + demoting a
+			// weak ref that would then have to be reclaimed on the rejection
+			// path. The field still exists (CreateField above) so the index
+			// stays listable; it just has no queryable VecSim backing.
+			// We must NOT `continue` here: a field can be vector AND range/
+			// fulltext (e.g. 'd', 'g' in multi-type indexes), so the other
+			// per-type setup below must still run.
+			//
+			// (RediSearch_VectorFieldSetParams also frees rejected params
+			//  defensively, so any other rejection reason can't leak either.)
+			if(field->hnsw_options.dimension > 0) {
+				// Build a TIERED-HNSW VecSimParams shaped from the schema's
+				// HNSW options. RediSearch_VecSimTieredParams_Init wires the
+				// runtime context (worker pool, weak-ref jobQueueCtx,
+				// flatBufferLimit, logCtx) using RediSearch's own
+				// infrastructure.
+				VecSimParams primary = {
+					.algo = VecSimAlgo_HNSWLIB,
+					.algoParams.hnswParams = {
+						.type           = VecSimType_FLOAT32,
+						.dim            = field->hnsw_options.dimension,
+						.metric         = IndexField_OptionsGetSimFunc(field),
+						.M              = IndexField_OptionsGetM(field),
+						.efConstruction = IndexField_OptionsGetEfConstruction(field),
+						.efRuntime      = IndexField_OptionsGetEfRuntime(field),
+					},
+				};
+				VecSimParams params = {
+					.algo = VecSimAlgo_TIERED,
+					.algoParams.tieredParams.primaryIndexParams = &primary,
+				};
+				RediSearch_VecSimTieredParams_Init(&params, rsIdx, field->vector_name);
+				RediSearch_VectorFieldSetParams(rsIdx, fieldID, &params);
+			}
 		}
 
 		//----------------------------------------------------------------------
