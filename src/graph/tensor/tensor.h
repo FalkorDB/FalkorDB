@@ -171,9 +171,9 @@ bool TensorIterator_is_attached
 	const Tensor T             // tensor
 );
 
-// return # of bytes used for a matrix
 GrB_Info Tensor_memoryUsage
 (
-    size_t *size,   // # of bytes used by the matrix C
-    const Tensor A  // matrix to query
+	size_t *size,    // # of bytes used by the matrix C
+	const Tensor A,  // matrix to query
+	int64_t samples  // number of samples to take
 );

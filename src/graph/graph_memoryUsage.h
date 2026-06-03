@@ -26,4 +26,3 @@ void Graph_memoryUsage
 	const Graph *g,            // graph
 	MemoryUsageResult *result  // [output] memory usage
 );
-

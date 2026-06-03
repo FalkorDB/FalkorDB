@@ -60,7 +60,7 @@ void Graph_memoryUsage
 	for (RelationID rel = 0; rel < n_rel; rel++) {
 		T = Graph_GetRelationMatrix (g, rel, false) ;
 
-		GrB_OK (Tensor_memoryUsage (&n, T)) ;
+		GrB_OK (Tensor_memoryUsage (&n, T, 1000)) ;
 
 		result->rel_matrices_sz += n ;
 	}

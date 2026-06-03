@@ -915,8 +915,6 @@ size_t _estimate_multiedge_memory (
 	GrB_Index nvals ;
 
 	GrB_OK (GrB_Matrix_nvals(&nvals, A)) ;
-	GrB_OK (GxB_Iterator_new (&it)) ;
-	GrB_OK (GxB_Matrix_Iterator_attach (it, A, NULL)) ;
 
 	samples = MIN(samples, nvals) ;
 
@@ -924,6 +922,8 @@ size_t _estimate_multiedge_memory (
 		return 0;
 	}
 
+	GrB_OK (GxB_Iterator_new (&it)) ;
+	GrB_OK (GxB_Matrix_Iterator_attach (it, A, NULL)) ;
 	GrB_OK (GxB_Matrix_Iterator_seek (it, 0)) ;
 
 	for (int i = 0; i < samples; i++) {
@@ -943,14 +943,16 @@ size_t _estimate_multiedge_memory (
 // return # of bytes used for a matrix
 GrB_Info Tensor_memoryUsage
 (
-    size_t *size,   // # of bytes used by the matrix C
-    const Tensor A  // matrix to query
+    size_t *size,    // # of bytes used by the matrix C
+    const Tensor A,  // matrix to query
+	int64_t samples  // number of samples to take
 ) {
 	ASSERT(A    != NULL);
 	ASSERT(size != NULL);
 	size_t temp_size = 0;
 	size_t _size     = 0;
 	GrB_Index nrows = 0 ;
+	GrB_Index nvals ;
 
 	GrB_Matrix m  = DELTA_MATRIX_M(A) ;
 	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS(A);
@@ -966,12 +968,10 @@ GrB_Info Tensor_memoryUsage
 
 	GrB_OK(GxB_Matrix_memoryUsage(&temp_size, DELTA_MATRIX_DELTA_MINUS(A)));
 	_size += temp_size;
-	
 
-	if (1) {
-		_size += _estimate_multiedge_memory(m, 100);
-		_size += _estimate_multiedge_memory(dp, 100);
-	} else {
+	GrB_OK (Delta_Matrix_nvals(&nvals, A)) ;
+
+	if(samples >= nvals) {
 		GrB_Vector row_size = NULL;
 		GrB_Vector x = NULL;
 		GrB_OK (GrB_BinaryOp_new (&size_op, (GxB_binary_function) _multiedge_memory,
@@ -992,11 +992,19 @@ GrB_Info Tensor_memoryUsage
 			&int_size, NULL, GrB_PLUS_MONOID_UINT64, row_size, NULL)) ;
 		_size += int_size ;
 
-		// Add transpose
-		if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(A)){
-			GrB_OK(Delta_Matrix_memoryUsage(&temp_size, A->transposed));
-			_size += temp_size;
-		}
+		GrB_free (&x) ;
+		GrB_free (&row_size) ;
+		GrB_free (&semiring) ;
+		GrB_free (&size_op) ;
+	} else if (samples > 0) {
+		_size += _estimate_multiedge_memory(m, 100);
+		_size += _estimate_multiedge_memory(dp, 100);
+	}
+
+	// Add transpose
+	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(A)){
+		GrB_OK(Delta_Matrix_memoryUsage(&temp_size, A->transposed));
+		_size += temp_size;
 	}
 
 	*size = _size;

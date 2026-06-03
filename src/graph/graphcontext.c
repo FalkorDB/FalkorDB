@@ -1586,4 +1586,3 @@ static void _GraphContext_Free
 	rm_free (gc->graph_name) ;
 	rm_free (gc) ;
 }
-
