@@ -69,21 +69,25 @@ RUN set -eux; \
       cmake; \
     dnf clean all
 
-# AL2023's default `python3` is 3.9; the test image (tests/Dockerfile.amazonlinux2023)
-# repoints /usr/bin/python3 → python3.11. If we pip-install cmake under 3.9 the
-# wrapper at /usr/local/bin/cmake (`#!/usr/bin/env python3` → from cmake import
-# cmake`) fails at runtime under 3.11 with `ModuleNotFoundError: No module
-# named 'cmake'`. Install cmake under 3.11 here too so the shebang resolves
-# to a python that has the module on its path.
-RUN ln -sf /usr/bin/python3.11 /usr/bin/python3 && \
-    ln -sf /usr/bin/pip3.11    /usr/bin/pip3
-
 # redis-server / redis-cli from the pinned git tag (see top of file).
 COPY --from=redis-builder /redis-install/bin/redis-server /usr/local/bin/redis-server
 COPY --from=redis-builder /redis-install/bin/redis-cli    /usr/local/bin/redis-cli
 
 # Pin cmake to the same exact version across every builder OS. Overrides
 # dnf's 3.22.x; pip installs into /usr/local/bin which precedes /usr/bin.
+#
+# Install under python3.11 explicitly: AL2023 ships `yum`/`dnf` as Python
+# wrappers that import the `dnf` module from the system python (3.9), and
+# the test image (tests/Dockerfile.amazonlinux2023) later repoints
+# /usr/bin/python3 → python3.11. We do NOT change /usr/bin/python3 here —
+# doing so during toolchain build would break the next `yum install …` in
+# the test image with `ModuleNotFoundError: No module named 'dnf'` because
+# python3.11 wouldn't have the dnf module installed.
+#
+# Instead, pip-install under python3.11 directly. The cmake wrapper at
+# /usr/local/bin/cmake has `#!/usr/bin/env python` — when the test image
+# later flips /usr/bin/python3 to 3.11 it resolves cleanly because cmake
+# is on 3.11's site-packages.
 RUN pip3.11 install --no-cache-dir 'cmake==3.31.6'
 
 # Rust toolchain
