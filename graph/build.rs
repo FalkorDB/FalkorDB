@@ -154,6 +154,12 @@ fn main() {
     // `falkordb` cdylib's final link, where RediSearch symbols are resolved.
     let main_a = search_dir.join("libredisearch.a");
     if !main_a.exists() {
+        // `exists()` follows symlinks, so a *broken* `libredisearch.a` symlink
+        // left by a previous build flavor reads as "missing" yet still occupies
+        // the path, making `symlink()` below fail with EEXIST. Clear any stale
+        // entry first (a no-op if the path is genuinely empty) so local rebuilds
+        // across flavors stay deterministic.
+        let _ = fs::remove_file(&main_a);
         let src = ["redisearch.a", "redisearch.so"]
             .iter()
             .map(|n| search_dir.join(n))
