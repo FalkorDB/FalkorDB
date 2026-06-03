@@ -250,7 +250,10 @@ double QueryCtx_GetRuntime(void);
 // returns query received timestamp
 uint64_t QueryCtx_GetReceivedTS (void) ;
 
-// returns the configured per-query timeout budget in ms; 0 = unlimited
+// returns the remaining per-query timeout budget in ms; 0 = unlimited.
+// The configured budget minus elapsed time since query start, clamped to >=1
+// so a non-zero budget never reports as 0 (which RediSearch treats as
+// "no timeout").
 uint64_t QueryCtx_GetTimeoutMS (void) ;
 
 // free the allocations within the QueryCtx and reset it for the next query

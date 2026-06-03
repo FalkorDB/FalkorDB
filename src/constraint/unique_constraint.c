@@ -134,7 +134,15 @@ bool EnforceUniqueEntity
 		const char *doc_key =
 			(const char *)RediSearch_ResultsIteratorNext(iter, rs_idx, NULL);
 
-		ASSERT(doc_key != NULL);
+		// Guard against NULL: ASSERT is a no-op under NDEBUG, and the
+		// IndexDocKey_DecodeNode call below would otherwise dereference
+		// NULL. NULL here means the iterator timed out or matched no docs
+		// — either way we can't confirm uniqueness, so treat as not-found
+		// and refuse the entity (consistent with the second-call branch).
+		if(doc_key == NULL) {
+			holds = false;
+			goto cleanup;
+		}
 
 		EntityID id;
 		IndexDocKey_DecodeNode(doc_key, &id);
@@ -148,7 +156,11 @@ bool EnforceUniqueEntity
 		const char *doc_key =
 			(const char *)RediSearch_ResultsIteratorNext(iter, rs_idx, NULL);
 
-		ASSERT(doc_key != NULL);
+		// see node branch above for NULL-guard rationale
+		if(doc_key == NULL) {
+			holds = false;
+			goto cleanup;
+		}
 
 		EdgeIndexKey id;
 		IndexDocKey_DecodeEdge(doc_key, &id);

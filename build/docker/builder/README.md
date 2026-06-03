@@ -43,14 +43,29 @@ These images are released to **GHCR only** as `ghcr.io/falkordb/falkordb-build:<
 
 ## Consumer pattern (`.github/workflows/build.yml`)
 
-Downstream build jobs select between the PR's RC image and the stable image:
+Downstream build jobs select between the PR's RC image and the stable image
+via a `Compute toolchain image tag` step that consults the `changed_oses`
+JSON list emitted by `check-builder-changes`:
 
 ```yaml
-container: >-
-  ${{ needs.check-builder-changes.outputs.<os>_changed == 'true'
-      && format('ghcr.io/falkordb/falkordb-build:{0}-pr-{1}', matrix.os, github.event.pull_request.number)
-      || format('ghcr.io/falkordb/falkordb-build:{0}', matrix.os) }}
+- name: Compute toolchain image tag
+  id: toolchain_tag
+  env:
+    OS: ${{ matrix.platform.os }}
+    CHANGED_OSES: ${{ needs.check-builder-changes.outputs.changed_oses }}
+    PR_NUMBER: ${{ github.event.pull_request.number || needs.check-builder-changes.outputs.merged_pr }}
+  run: |
+    set -euo pipefail
+    changed=$(echo "$CHANGED_OSES" | jq -r '.[]' | grep -Fx "$OS" || true)
+    if [ -n "$changed" ] && [ -n "$PR_NUMBER" ]; then
+      echo "image=ghcr.io/falkordb/falkordb-build:${OS}-pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+    else
+      echo "image=ghcr.io/falkordb/falkordb-build:${OS}" >> "$GITHUB_OUTPUT"
+    fi
 ```
+
+The resolved tag is then passed into the compiler image build as
+`BUILD_IMAGE=${{ steps.toolchain_tag.outputs.image }}`.
 
 This means a PR that modifies `Dockerfile.ubuntu` validates the runtime build
 against the new image before merge, and the same image becomes the stable

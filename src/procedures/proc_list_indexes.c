@@ -429,16 +429,16 @@ SIValue *Proc_IndexesStep
 	SIValue *res;
 	IndexesContext *pdata = ctx->privateData;
 
-	// no more indices to emit
-	if(arr_len(pdata->indices) == 0) {
-		return NULL;
+	// emit next available index; skip any whose spec was dropped concurrently
+	while(arr_len(pdata->indices) > 0) {
+		Index idx = arr_pop(pdata->indices);
+		if(_EmitIndex(pdata, idx)) {
+			return pdata->out;
+		}
 	}
 
-	// emit index
-	Index idx = arr_pop(pdata->indices);
-	_EmitIndex(pdata, idx);
-
-	return pdata->out;
+	// no more indices to emit
+	return NULL;
 }
 
 ProcedureResult Proc_IndexesFree

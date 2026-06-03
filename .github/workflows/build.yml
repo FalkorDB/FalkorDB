@@ -32,7 +32,7 @@ concurrency:
 
 permissions:
   contents: read
-  packages: write
+  packages: read
 
 jobs:
   # Detect which builder Dockerfiles (build/docker/builder/Dockerfile.<os>)
@@ -102,12 +102,12 @@ jobs:
             --jq '.[] | select(.state == "closed" and .merged_at != null) | .number' \
             | head -1)
           if [ -z "$PR" ]; then
-            echo "Warning: no merged PR found for commit ${GITHUB_SHA}."
-            echo "pr_number=" >> "$GITHUB_OUTPUT"
-          else
-            echo "Merged PR: #$PR"
-            echo "pr_number=$PR" >> "$GITHUB_OUTPUT"
+            echo "Error: no merged PR found for commit ${GITHUB_SHA}, but a builder Dockerfile changed." >&2
+            echo "Refusing to proceed: without an RC toolchain tag the build would silently fall back to the stale :<os> image and promote-toolchain would be skipped, shipping the Dockerfile change without rebuilding/publishing its toolchain." >&2
+            exit 1
           fi
+          echo "Merged PR: #$PR"
+          echo "pr_number=$PR" >> "$GITHUB_OUTPUT"
 
   # Build RC toolchain images for each OS whose Dockerfile.<os> changed in the
   # PR. Tag: ghcr.io/falkordb/falkordb-build:<os>-pr-<N>. Downstream PR build

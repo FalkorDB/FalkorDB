@@ -583,7 +583,21 @@ uint64_t QueryCtx_GetTimeoutMS (void) {
 	QueryCtx *ctx = _QueryCtx_GetCtx();
 	if(ctx == NULL) return 0;
 
-	return ctx->timeout_ms ;
+	// 0 = unlimited; preserve no-timeout semantics for callers
+	if(ctx->timeout_ms == 0) return 0;
+
+	// compute total elapsed since query start: completed stage durations
+	// plus the current stage's running timer
+	double elapsed_ms = TIMER_GET_ELAPSED_MILLISECONDS(ctx->stats.timer);
+	for(int s = 0; s < (int)ctx->stage && s < 3; s++) {
+		elapsed_ms += ctx->stats.durations[s];
+	}
+
+	// remaining budget; clamp to >=1 so a non-zero timeout never becomes
+	// 0 (which RediSearch treats as "no timeout")
+	if(elapsed_ms >= (double)ctx->timeout_ms) return 1;
+	uint64_t remaining = ctx->timeout_ms - (uint64_t)elapsed_ms;
+	return (remaining == 0) ? 1 : remaining;
 }
 
 // free the allocations within the QueryCtx and reset it for the next query

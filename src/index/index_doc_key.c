@@ -11,17 +11,17 @@
 
 static const char _hex_digits[] = "0123456789abcdef";
 
-// Lookup table: hex char ('0'-'9', 'a'-'f', 'A'-'F') -> nibble value.
-// All other entries are 0xFF (sentinel for "not a hex char").
-static const uint8_t _hex_lookup[256] = {
-	['0'] = 0x0, ['1'] = 0x1, ['2'] = 0x2, ['3'] = 0x3,
-	['4'] = 0x4, ['5'] = 0x5, ['6'] = 0x6, ['7'] = 0x7,
-	['8'] = 0x8, ['9'] = 0x9,
-	['a'] = 0xa, ['b'] = 0xb, ['c'] = 0xc, ['d'] = 0xd,
-	['e'] = 0xe, ['f'] = 0xf,
-	['A'] = 0xa, ['B'] = 0xb, ['C'] = 0xc, ['D'] = 0xd,
-	['E'] = 0xe, ['F'] = 0xf,
-};
+// Decode a single hex char to its nibble value.
+// Returns 0xFF for any non-hex byte (sentinel for "not a hex char") — a
+// previous version used a `static const uint8_t [256]` lookup table whose
+// comment claimed unspecified slots were 0xFF, but C zero-init leaves them
+// at 0x00, so malformed input silently decoded to zero instead of failing.
+static inline uint8_t _hex_value(uint8_t c) {
+	if(c >= '0' && c <= '9') return c - '0';
+	if(c >= 'a' && c <= 'f') return c - 'a' + 0xa;
+	if(c >= 'A' && c <= 'F') return c - 'A' + 0xa;
+	return 0xFF;
+}
 
 static inline void _encode(const uint8_t *src, size_t src_len, char *out) {
 	for(size_t i = 0; i < src_len; i++) {
@@ -33,8 +33,13 @@ static inline void _encode(const uint8_t *src, size_t src_len, char *out) {
 
 static inline void _decode(const char *in, uint8_t *out, size_t out_len) {
 	for(size_t i = 0; i < out_len; i++) {
-		out[i] = (_hex_lookup[(uint8_t)in[i * 2]] << 4)
-		       | _hex_lookup[(uint8_t)in[i * 2 + 1]];
+		uint8_t hi = _hex_value((uint8_t)in[i * 2]);
+		uint8_t lo = _hex_value((uint8_t)in[i * 2 + 1]);
+		// Doc keys come from RediSearch which roundtrips what we encoded;
+		// any non-hex byte indicates corruption — assert in debug builds
+		// rather than silently decoding to zero.
+		ASSERT(hi != 0xFF && lo != 0xFF);
+		out[i] = (hi << 4) | lo;
 	}
 }
 
