@@ -71,20 +71,19 @@ use redisearch::{
     DEFAULT_BLOCK_SIZE, GC_POLICY_FORK, HNSW_DEFAULT_EPSILON, HNSWParams, REDISEARCH_ADD_REPLACE,
     RSDoc, RSFLDOPT_NONE, RSFLDOPT_TXTNOSTEM, RSFLDOPT_TXTPHONETIC, RSFLDTYPE_FULLTEXT,
     RSFLDTYPE_GEO, RSFLDTYPE_NUMERIC, RSFLDTYPE_TAG, RSFLDTYPE_VECTOR,
-    RSGeoDistance_RS_GEO_DISTANCE_M, RSIndexHandle, RSRANGE_INF, RSRANGE_NEG_INF,
-    RSResultsIterator, RediSearch_CreateDocument2, RediSearch_CreateEmptyNode,
-    RediSearch_CreateField, RediSearch_CreateGeoNode, RediSearch_CreateIndex,
-    RediSearch_CreateIndexOptions, RediSearch_CreateIntersectNode, RediSearch_CreateNumericNode,
-    RediSearch_CreateTagLexRangeNode, RediSearch_CreateTagNode, RediSearch_CreateTagTokenNode,
-    RediSearch_CreateUnionNode, RediSearch_CreateVecSimNode, RediSearch_DeleteDocument,
-    RediSearch_DocumentAddFieldGeo, RediSearch_DocumentAddFieldNumber,
-    RediSearch_DocumentAddFieldNumericArray, RediSearch_DocumentAddFieldString,
-    RediSearch_DocumentAddFieldStringArray, RediSearch_DocumentAddFieldVector,
-    RediSearch_DropIndex, RediSearch_FreeIndexOptions, RediSearch_GetResultsIterator,
-    RediSearch_IndexAddDocument, RediSearch_IndexClone, RediSearch_IndexOptionsSetGCPolicy,
-    RediSearch_IndexOptionsSetLanguage, RediSearch_IndexOptionsSetStopwords,
-    RediSearch_IndexRelease, RediSearch_IterateQuery, RediSearch_MemUsage,
-    RediSearch_QueryNodeAddChild, RediSearch_ResultsIteratorFree,
+    RSGeoDistance_RS_GEO_DISTANCE_M, RSIndex, RSRANGE_INF, RSRANGE_NEG_INF, RSResultsIterator,
+    RediSearch_CreateDocument2, RediSearch_CreateEmptyNode, RediSearch_CreateField,
+    RediSearch_CreateGeoNode, RediSearch_CreateIndex, RediSearch_CreateIndexOptions,
+    RediSearch_CreateIntersectNode, RediSearch_CreateNumericNode, RediSearch_CreateTagLexRangeNode,
+    RediSearch_CreateTagNode, RediSearch_CreateTagTokenNode, RediSearch_CreateUnionNode,
+    RediSearch_CreateVecSimNode, RediSearch_DeleteDocument, RediSearch_DocumentAddFieldGeo,
+    RediSearch_DocumentAddFieldNumber, RediSearch_DocumentAddFieldNumericArray,
+    RediSearch_DocumentAddFieldString, RediSearch_DocumentAddFieldStringArray,
+    RediSearch_DocumentAddFieldVector, RediSearch_DropIndex, RediSearch_FreeIndexOptions,
+    RediSearch_GetResultsIterator, RediSearch_IndexAddDocument, RediSearch_IndexClone,
+    RediSearch_IndexOptionsSetGCPolicy, RediSearch_IndexOptionsSetLanguage,
+    RediSearch_IndexOptionsSetStopwords, RediSearch_IndexRelease, RediSearch_IterateQuery,
+    RediSearch_MemUsage, RediSearch_QueryNodeAddChild, RediSearch_ResultsIteratorFree,
     RediSearch_ResultsIteratorGetScore, RediSearch_ResultsIteratorNext,
     RediSearch_TagFieldSetCaseSensitive, RediSearch_TagFieldSetSeparator,
     RediSearch_TextFieldSetWeight, RediSearch_VecSimTieredParams_Init,
@@ -269,14 +268,14 @@ pub struct IndexResultsIter<T, F: FnMut(*mut RSResultsIterator, u64) -> T> {
     iter: *mut RSResultsIterator,
     /// Own a strong reference so the spec stays alive for the whole iteration,
     /// even if a concurrent `DROP INDEX` runs. `None` for an empty iterator.
-    index: Option<RSIndex>,
+    index: Option<OwnedIndex>,
     map: F,
 }
 
 impl<T, F: FnMut(*mut RSResultsIterator, u64) -> T> IndexResultsIter<T, F> {
     fn new(
         iter: *mut RSResultsIterator,
-        index: Option<RSIndex>,
+        index: Option<OwnedIndex>,
         map: F,
     ) -> Self {
         Self { iter, index, map }
@@ -313,7 +312,7 @@ impl<T, F: FnMut(*mut RSResultsIterator, u64) -> T> Iterator for IndexResultsIte
             return None;
         }
         unsafe {
-            let rs_idx = self.index.as_ref().map_or(null_mut(), RSIndex::as_ptr);
+            let rs_idx = self.index.as_ref().map_or(null_mut(), OwnedIndex::as_ptr);
             loop {
                 let mut key_len: usize = 0;
                 let key = RediSearch_ResultsIteratorNext(self.iter, rs_idx, &raw mut key_len)
@@ -355,13 +354,13 @@ pub type ScoredIdIter = IndexResultsIter<(u64, f64), fn(*mut RSResultsIterator, 
 pub struct EdgeTripleIter {
     iter: *mut RSResultsIterator,
     /// Strong reference keeping the spec alive for the iteration's lifetime.
-    index: Option<RSIndex>,
+    index: Option<OwnedIndex>,
 }
 
 impl EdgeTripleIter {
     fn new(
         iter: *mut RSResultsIterator,
-        index: Option<RSIndex>,
+        index: Option<OwnedIndex>,
     ) -> Self {
         Self { iter, index }
     }
@@ -383,7 +382,7 @@ impl Iterator for EdgeTripleIter {
             return None;
         }
         unsafe {
-            let rs_idx = self.index.as_ref().map_or(null_mut(), RSIndex::as_ptr);
+            let rs_idx = self.index.as_ref().map_or(null_mut(), OwnedIndex::as_ptr);
             loop {
                 let mut key_len: usize = 0;
                 let key = RediSearch_ResultsIteratorNext(self.iter, rs_idx, &raw mut key_len)
@@ -419,13 +418,13 @@ impl Drop for EdgeTripleIter {
 pub struct ScoredEdgeTripleIter {
     iter: *mut RSResultsIterator,
     /// Strong reference keeping the spec alive for the iteration's lifetime.
-    index: Option<RSIndex>,
+    index: Option<OwnedIndex>,
 }
 
 impl ScoredEdgeTripleIter {
     fn new(
         iter: *mut RSResultsIterator,
-        index: Option<RSIndex>,
+        index: Option<OwnedIndex>,
     ) -> Self {
         Self { iter, index }
     }
@@ -447,7 +446,7 @@ impl Iterator for ScoredEdgeTripleIter {
             return None;
         }
         unsafe {
-            let rs_idx = self.index.as_ref().map_or(null_mut(), RSIndex::as_ptr);
+            let rs_idx = self.index.as_ref().map_or(null_mut(), OwnedIndex::as_ptr);
             loop {
                 let mut key_len: usize = 0;
                 let key = RediSearch_ResultsIteratorNext(self.iter, rs_idx, &raw mut key_len)
@@ -844,7 +843,7 @@ pub struct Index {
     id: u64,
     /// The RediSearch index spec. `None` until `create_rs_index` runs (the
     /// former `null` sentinel). Owns the creation strong reference.
-    index: Option<RSIndex>,
+    index: Option<OwnedIndex>,
     fields: HashMap<Arc<String>, Vec<Arc<Field>>>,
     /// Attribute keys in insertion order. Tracked alongside `fields` so
     /// `CALL db.indexes()` can return `properties` in declaration order.
@@ -903,25 +902,25 @@ impl Drop for GilGuard {
 }
 
 /// RAII handle for a RediSearch index spec (`RefManager`). Owns one strong
-/// reference; `Drop` releases it. The raw `*mut RSIndexHandle` never escapes
+/// reference; `Drop` releases it. The raw `*mut RSIndex` never escapes
 /// this type except as a transient passed straight into an FFI call.
 #[derive(Debug)]
-struct RSIndex(std::ptr::NonNull<RSIndexHandle>);
+struct OwnedIndex(std::ptr::NonNull<RSIndex>);
 
 // SAFETY: a RediSearch index spec is a refcounted, internally-synchronized
 // `RefManager`; cloning/releasing and using the handle across threads is sound.
-unsafe impl Send for RSIndex {}
-unsafe impl Sync for RSIndex {}
+unsafe impl Send for OwnedIndex {}
+unsafe impl Sync for OwnedIndex {}
 
-impl RSIndex {
+impl OwnedIndex {
     /// Wrap an owned strong reference (from `RediSearch_CreateIndex` or
     /// `RediSearch_IndexClone`). `None` for a null/invalidated handle.
-    fn from_owned(p: *mut RSIndexHandle) -> Option<Self> {
+    fn from_owned(p: *mut RSIndex) -> Option<Self> {
         std::ptr::NonNull::new(p).map(Self)
     }
 
     /// Raw handle for an FFI call. The returned pointer must not be stored.
-    fn as_ptr(&self) -> *mut RSIndexHandle {
+    fn as_ptr(&self) -> *mut RSIndex {
         self.0.as_ptr()
     }
 
@@ -934,14 +933,14 @@ impl RSIndex {
     /// Consume the handle, returning the raw pointer without releasing the
     /// reference — for the creation ref, which `RediSearch_DropIndex` both
     /// invalidates and releases in one call.
-    fn into_raw(self) -> *mut RSIndexHandle {
+    fn into_raw(self) -> *mut RSIndex {
         let p = self.0.as_ptr();
         std::mem::forget(self);
         p
     }
 }
 
-impl Drop for RSIndex {
+impl Drop for OwnedIndex {
     fn drop(&mut self) {
         // The final release frees the spec -> IndexSpec_Free -> RM_StopTimer,
         // which mutates Redis timer state; off-main-thread callers must hold
@@ -967,7 +966,7 @@ impl Drop for Index {
         //
         // DropIndex both invalidates the spec and releases the creation ref,
         // so hand it the raw pointer via `into_raw` to avoid a double release
-        // from `RSIndex`'s own Drop. Outstanding clones (held by in-flight
+        // from `OwnedIndex`'s own Drop. Outstanding clones (held by in-flight
         // read iterators) keep the spec alive until they are released.
         if let Some(index) = self.index.take() {
             unsafe {
@@ -1043,8 +1042,8 @@ impl Index {
     /// Raw spec handle for an FFI call (null if no index yet). Transient — the
     /// returned pointer is passed straight to a `RediSearch_*` call and never
     /// stored. Valid only while `&self` (and thus the owned reference) lives.
-    fn rs_ptr(&self) -> *mut RSIndexHandle {
-        self.index.as_ref().map_or(null_mut(), RSIndex::as_ptr)
+    fn rs_ptr(&self) -> *mut RSIndex {
+        self.index.as_ref().map_or(null_mut(), OwnedIndex::as_ptr)
     }
 
     /// Create the underlying RediSearch index with the given options.
@@ -1107,7 +1106,7 @@ impl Index {
 
             // GIL is already held at the top of this unsafe block, covering
             // CreateIndex's transitive RM_CreateTimer call.
-            self.index = RSIndex::from_owned(RediSearch_CreateIndex(
+            self.index = OwnedIndex::from_owned(RediSearch_CreateIndex(
                 clabel.as_ptr().cast::<c_char>(),
                 options,
             ));
@@ -1621,7 +1620,7 @@ impl Index {
     ) -> IdIter {
         // Clone a strong ref for the iterator so the spec outlives a concurrent
         // DROP INDEX; `None` means the spec is gone/uninitialized.
-        let Some(index) = self.index.as_ref().and_then(RSIndex::try_clone) else {
+        let Some(index) = self.index.as_ref().and_then(OwnedIndex::try_clone) else {
             return IndexResultsIter::empty();
         };
         unsafe {
@@ -1642,7 +1641,7 @@ impl Index {
         &self,
         query: IndexQuery<Value>,
     ) -> EdgeTripleIter {
-        let Some(index) = self.index.as_ref().and_then(RSIndex::try_clone) else {
+        let Some(index) = self.index.as_ref().and_then(OwnedIndex::try_clone) else {
             return EdgeTripleIter::empty();
         };
         unsafe {
@@ -1661,7 +1660,7 @@ impl Index {
         query: &str,
     ) -> Result<ScoredIdIter, String> {
         let cstr = CString::new(query).map_err(|e| e.to_string())?;
-        let Some(index) = self.index.as_ref().and_then(RSIndex::try_clone) else {
+        let Some(index) = self.index.as_ref().and_then(OwnedIndex::try_clone) else {
             return Ok(IndexResultsIter::empty_scored());
         };
         let mut err: *mut c_char = null_mut();
@@ -1690,7 +1689,7 @@ impl Index {
         query: &str,
     ) -> Result<ScoredEdgeTripleIter, String> {
         let cstr = CString::new(query).map_err(|e| e.to_string())?;
-        let Some(index) = self.index.as_ref().and_then(RSIndex::try_clone) else {
+        let Some(index) = self.index.as_ref().and_then(OwnedIndex::try_clone) else {
             return Ok(ScoredEdgeTripleIter::empty());
         };
         let mut err: *mut c_char = null_mut();
@@ -1737,7 +1736,7 @@ impl Index {
         // memory. The `Arc<ThinVec<f32>>` is moved into the returned
         // iterator so the buffer stays valid for the iterator's lifetime.
         let nbytes = std::mem::size_of_val(vector.as_slice());
-        let Some(index) = self.index.as_ref().and_then(RSIndex::try_clone) else {
+        let Some(index) = self.index.as_ref().and_then(OwnedIndex::try_clone) else {
             return Ok(VectorScoredIdIter {
                 inner: IndexResultsIter::empty_scored(),
                 _vector_owner: vector,
@@ -1793,7 +1792,7 @@ impl Index {
         // See [`vector_query`] — RediSearch field name is `vector:<attr>`.
         let cstr = CString::new(format!("vector:{field}")).map_err(|e| e.to_string())?;
         let nbytes = std::mem::size_of_val(vector.as_slice());
-        let Some(index) = self.index.as_ref().and_then(RSIndex::try_clone) else {
+        let Some(index) = self.index.as_ref().and_then(OwnedIndex::try_clone) else {
             return Ok(VectorScoredEdgeTripleIter {
                 inner: ScoredEdgeTripleIter::empty(),
                 _vector_owner: vector,
