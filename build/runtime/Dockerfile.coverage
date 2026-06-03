@@ -17,10 +17,10 @@ RUN cargo chef prepare --recipe-path recipe.json
 # accurate source mapping. Output lands in target/debug/.
 FROM chef AS builder
 COPY --from=planner /src/recipe.json recipe.json
-RUN CXX=clang++-22 RUSTFLAGS="-C instrument-coverage" \
+RUN CXX=clang++-22 RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" \
     cargo chef cook --recipe-path recipe.json
 COPY . .
-RUN CXX=clang++-22 RUSTFLAGS="-C instrument-coverage" cargo build && \
+RUN CXX=clang++-22 RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo build && \
     mkdir -p /out && cp target/debug/libfalkordb.so /out/falkordb.so
 
 # Stage 3: redis-builder — stock redis on debian:trixie-slim. Coverage

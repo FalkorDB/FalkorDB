@@ -14,8 +14,8 @@
 
 use graph::graph::graphblas::serialization::Reader;
 use graph::graph::graphblas::serialization::Writer;
-use redis_module::RedisModuleIO;
 use redis_module::raw;
+use redis_module::raw::RedisModuleIO;
 
 const BUFFER_SIZE: usize = 256_000;
 

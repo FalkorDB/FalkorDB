@@ -114,6 +114,8 @@ RUN LLVMORG_VERSION=$(clang-${CLANG_MAJOR} --version | head -1 | grep -oE '[0-9]
 # the rust-pr.yml `container.options`). docker.io includes the daemon binary
 # we never run — only the client matters here.
 RUN apt install -y docker.io
+# libssl-dev: RediSearch 8.6's coordinator/hiredis_ssl link against libssl/libcrypto.
+RUN apt install -y libssl-dev
 
 # The upstream `redis:` base used to set WORKDIR /data implicitly; we no
 # longer inherit that, so set it explicitly here. The venv install
@@ -143,16 +145,16 @@ RUN cd /data && \
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
+# Build the RediSearch 8.6 fork (falkordb/llapi-extensions-8.6) as an embeddable
+# static library. redisearch.sh is the single source of truth (also used for
+# local dev); output lands at /data/redisearch/RediSearch/bin/<variant>/, which
+# graph/build.rs discovers. Prune the source tree afterwards (keep only bin/) to
+# keep the toolchain image lean.
+COPY redisearch.sh /data/redisearch.sh
 RUN . /data/venv/bin/activate && \
-    mkdir -p redisearch && \
-    cd redisearch && \
-    git clone --recurse-submodules --branch vector-low-level-api --single-branch https://github.com/FalkorDB/RediSearch.git && \
-    cd RediSearch && \
-    sed -i 's/-Werror//g' deps/VectorSimilarity/src/VecSim/CMakeLists.txt && \
-    make build STATIC=1 CLANG=1 CC=clang-${CLANG_MAJOR} CXX=clang++-${CLANG_MAJOR}
-
-RUN cd redisearch && \
-    cp -r RediSearch/bin bin  && \
-    rm -rf RediSearch
+    cd /data && \
+    CC=clang-${CLANG_MAJOR} CXX=clang++-${CLANG_MAJOR} bash redisearch.sh && \
+    find /data/redisearch/RediSearch -mindepth 1 -maxdepth 1 ! -name bin -exec rm -rf {} + && \
+    rm -f /data/redisearch.sh
 
 CMD "/bin/bash"

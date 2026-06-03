@@ -1,9 +1,14 @@
-//! RediSearch C API bindings (auto-generated via `rust-bindgen`).
+//! RediSearch C API bindings (originally generated via `rust-bindgen`, now
+//! hand-maintained).
 //!
 //! This module exposes the RediSearch library functions used by
-//! [`Index`](super::Index) to create indexes, manage documents, build
-//! query trees, and iterate over results.  **Do not edit by hand** -- the
-//! bindings are regenerated from the RediSearch C headers.
+//! [`Index`](super::Index) to create indexes, manage documents, build query
+//! trees, and iterate over results. Although it began as `rust-bindgen` output,
+//! it is now **maintained by hand**: the VecSim / TIERED params carry explicit
+//! `#[repr(C)]` layouts guarded by `size_of`/`offset_of` assertions, several C
+//! enums are modeled as Rust `enum`s, and the signatures are kept in sync with
+//! the RediSearch 8.6 C headers manually. Edit with care and keep the layout
+//! assertions intact rather than regenerating blindly.
 //!
 //! # Module layout
 //!
@@ -36,6 +41,8 @@
 #![allow(clippy::unreadable_literal)]
 
 use std::os::raw::c_char;
+
+use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 use self::redis::{RedisModuleCtx, RedisModuleString};
 pub mod redis;
@@ -271,6 +278,44 @@ unsafe extern "C" {
     pub fn RediSearch_DropIndex(arg1: *mut RSIndex);
 }
 unsafe extern "C" {
+    #[doc = " Acquire a new strong reference on `sp`. The returned handle must be"]
+    #[doc = " released with RediSearch_IndexRelease when the caller is done with it."]
+    #[doc = " Returns NULL if the underlying spec has been invalidated (e.g. by a"]
+    #[doc = " concurrent RediSearch_DropIndex)."]
+    pub fn RediSearch_IndexClone(sp: *mut RSIndex) -> *mut RSIndex;
+}
+unsafe extern "C" {
+    #[doc = " Release a strong reference acquired by RediSearch_IndexClone (or the"]
+    #[doc = " creation-time reference returned by RediSearch_CreateIndex). When the"]
+    #[doc = " last reference is dropped, the spec is freed."]
+    pub fn RediSearch_IndexRelease(sp: *mut RSIndex);
+}
+unsafe extern "C" {
+    #[doc = " Populate the TIERED runtime fields of `params` (worker thread pool,"]
+    #[doc = " submit callback, weak ref to `sp`, flat-buffer limit, logCtx) so it can"]
+    #[doc = " be passed to RediSearch_VectorFieldSetParams. Preconditions:"]
+    #[doc = " params->algo == VecSimAlgo_TIERED and tieredParams.primaryIndexParams"]
+    #[doc = " is allocated and populated. Returns REDISEARCH_OK / REDISEARCH_ERR."]
+    pub fn RediSearch_VecSimTieredParams_Init(
+        params: *mut VecSimParams,
+        sp: *mut RSIndex,
+        field_name: *const ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int;
+}
+unsafe extern "C" {
+    #[doc = " Set the number of background worker threads RediSearch uses (e.g. for"]
+    #[doc = " TIERED vector index migration jobs). Returns REDISEARCH_OK / REDISEARCH_ERR."]
+    pub fn RediSearch_SetNumWorkerThreads(n: usize) -> ::std::os::raw::c_int;
+}
+unsafe extern "C" {
+    #[doc = " Override the default scorer name (e.g. \"TFIDF\", \"BM25\", \"BM25STD\")."]
+    #[doc = " RediSearch 8.6 defaults to BM25STD; FalkorDB uses TFIDF for legacy"]
+    #[doc = " fulltext score magnitudes. Returns REDISEARCH_OK / REDISEARCH_ERR."]
+    pub fn RediSearch_SetDefaultScorer(
+        name: *const ::std::os::raw::c_char
+    ) -> ::std::os::raw::c_int;
+}
+unsafe extern "C" {
     #[doc = " Handle Stopwords list"]
     pub fn RediSearch_StopwordsList_Contains(
         idx: *mut RSIndex,
@@ -332,22 +377,165 @@ unsafe extern "C" {
         enable: ::std::os::raw::c_int,
     );
 }
-unsafe extern "C" {
-    pub fn RediSearch_VectorFieldSetDim(
-        sp: *mut RSIndex,
-        fs: RSFieldID,
-        dim: ::std::os::raw::c_int,
-    );
+// ---- VecSim parameter types (from VectorSimilarity vec_sim_common.h) ----
+// RediSearch 8.6 configures vector fields via RediSearch_VectorFieldSetParams,
+// which takes a full VecSimParams and copies it by value. These definitions
+// must stay ABI-exact with the C headers; the size assertion below guards
+// against transcription drift on the supported LP64 targets.
+
+/// Vector element type (`VecSimType` in VectorSimilarity `vec_sim_common.h`).
+/// `#[repr(u32)]` matches the C enum width (a `c_uint`) so it sits directly in
+/// the `#[repr(C)]` params structs and is passed by value with no conversion;
+/// the `IntoPrimitive`/`TryFromPrimitive` derives give `c_uint::from(ty)` and
+/// `VecSimType::try_from(raw)` when a raw `c_uint` is needed.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, IntoPrimitive, TryFromPrimitive)]
+#[repr(u32)]
+pub enum VecSimType {
+    Float32 = 0,
+    Float64 = 1,
+    BFloat16 = 2,
+    Float16 = 3,
+    Int8 = 4,
+    Uint8 = 5,
+    Int32 = 6,
+    Int64 = 7,
 }
+
+/// Vector index algorithm (`VecSimAlgo`). FalkorDB only uses brute-force, HNSW
+/// and TIERED; the SVS backend is intentionally not represented.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, IntoPrimitive, TryFromPrimitive)]
+#[repr(u32)]
+pub enum VecSimAlgo {
+    Bf = 0,
+    Hnswlib = 1,
+    Tiered = 2,
+}
+
+/// Vector distance metric (`VecSimMetric`).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, IntoPrimitive, TryFromPrimitive)]
+#[repr(u32)]
+pub enum VecSimMetric {
+    L2 = 0,
+    Ip = 1,
+    Cosine = 2,
+}
+
+/// Default per-block vector capacity for VecSim's `DataBlock` container
+/// (VectorSimilarity `vec_sim_common.h`: `#define DEFAULT_BLOCK_SIZE 1024`).
+/// Unlike the `FT.CREATE` path (`spec.c` `parseVectorField_validate_hnsw`), the
+/// `RediSearch_VectorFieldSetParams` LLAPI does *not* normalize this field, and
+/// a `blockSize` of 0 corrupts the heap on the first HNSW insert/search. The
+/// embedder must supply a non-zero value.
+pub const DEFAULT_BLOCK_SIZE: usize = 1024;
+
+/// Default HNSW range-search accuracy/latency tradeoff
+/// (VectorSimilarity: `HNSW_DEFAULT_EPSILON 0.01`).
+pub const HNSW_DEFAULT_EPSILON: f64 = 0.01;
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct HNSWParams {
+    pub type_: VecSimType,
+    pub dim: usize,
+    pub metric: VecSimMetric,
+    pub multi: bool,
+    pub initialCapacity: usize,
+    pub blockSize: usize,
+    pub M: usize,
+    pub efConstruction: usize,
+    pub efRuntime: usize,
+    pub epsilon: f64,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct BFParams {
+    pub type_: VecSimType,
+    pub dim: usize,
+    pub metric: VecSimMetric,
+    pub multi: bool,
+    pub initialCapacity: usize,
+    pub blockSize: usize,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct TieredHNSWParams {
+    pub swapJobThreshold: usize,
+}
+
+/// Tiered-index per-backend params. Only the HNSW backend is used; the SVS and
+/// on-disk backends are not. The C union is sized by its largest member
+/// (`TieredSVSParams`, 24 bytes), so `_reserved` preserves that size to keep
+/// the enclosing `VecSimParams` ABI intact for the by-value LLAPI.
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub union TieredSpecificParams {
+    pub tieredHnswParams: TieredHNSWParams,
+    _reserved: [u8; 24],
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct TieredIndexParams {
+    pub jobQueue: *mut ::std::os::raw::c_void,
+    pub jobQueueCtx: *mut ::std::os::raw::c_void,
+    // SubmitCB function pointer; represented as a void pointer (size-equivalent).
+    pub submitCb: *mut ::std::os::raw::c_void,
+    pub flatBufferLimit: usize,
+    pub primaryIndexParams: *mut VecSimParams,
+    pub specificParams: TieredSpecificParams,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub union AlgoParams {
+    pub hnswParams: HNSWParams,
+    pub bfParams: BFParams,
+    pub tieredParams: TieredIndexParams,
+    // SVS is unused, but the C union is sized by its largest member,
+    // `SVSParams` (120 bytes), and `VecSimParams` is passed by value — reserve
+    // that space so `size_of::<VecSimParams>() == 136` and the ABI holds.
+    _svs_reserved: [u8; 120],
+}
+
+#[repr(C)]
+pub struct VecSimParams {
+    pub algo: VecSimAlgo,
+    pub algoParams: AlgoParams,
+    pub logCtx: *mut ::std::os::raw::c_void,
+}
+
+const _: () = assert!(::std::mem::size_of::<VecSimParams>() == 136);
+
+// Field-offset guards against transcription drift (LP64). These mirror the C
+// `vec_sim_common.h` layout; `dim` in particular feeds `vecSimParams_ExpBlobSize`
+// (expBlobSize = dim * sizeof(type)), so a wrong offset would surface as a
+// "blob size mismatch" at document-add time.
+const _: () = {
+    use ::std::mem::offset_of;
+    // HNSWParams
+    assert!(offset_of!(HNSWParams, type_) == 0);
+    assert!(offset_of!(HNSWParams, dim) == 8);
+    assert!(offset_of!(HNSWParams, metric) == 16);
+    assert!(offset_of!(HNSWParams, blockSize) == 32);
+    assert!(offset_of!(HNSWParams, M) == 40);
+    assert!(::std::mem::size_of::<HNSWParams>() == 72);
+    // VecSimParams
+    assert!(offset_of!(VecSimParams, algo) == 0);
+    assert!(offset_of!(VecSimParams, algoParams) == 8);
+    assert!(offset_of!(VecSimParams, logCtx) == 128);
+    // TieredIndexParams: the primaryIndexParams pointer must land at the C offset
+    // so RediSearch reads the right HNSW sub-params (and thus the right dim).
+    assert!(offset_of!(TieredIndexParams, primaryIndexParams) == 32);
+};
+
 unsafe extern "C" {
-    pub fn RediSearch_VectorFieldSetHNSWParams(
+    pub fn RediSearch_VectorFieldSetParams(
         sp: *mut RSIndex,
         fs: RSFieldID,
-        m: usize,
-        ef_construction: usize,
-        ef_runtime: usize,
-        metric: ::std::os::raw::c_uint,
-    );
+        params: *const VecSimParams,
+    ) -> ::std::os::raw::c_int;
 }
 unsafe extern "C" {
     pub fn RediSearch_CreateDocument(
@@ -412,7 +600,6 @@ unsafe extern "C" {
         d: *mut RSDoc,
         fieldName: *const ::std::os::raw::c_char,
         vec: *const c_char,
-        dim: u32,
         nbytes: usize,
     );
 }
@@ -432,7 +619,8 @@ unsafe extern "C" {
     pub fn RediSearch_DocumentAddFieldNumericArray(
         d: *mut RSDoc,
         fieldName: *const ::std::os::raw::c_char,
-        arr: *mut *mut f64,
+        values: *const f64,
+        count: usize,
         indexAsTypes: ::std::os::raw::c_uint,
     );
 }
@@ -440,8 +628,8 @@ unsafe extern "C" {
     pub fn RediSearch_DocumentAddFieldStringArray(
         d: *mut RSDoc,
         fieldName: *const ::std::os::raw::c_char,
-        arr: *mut *mut *mut ::std::os::raw::c_char,
-        len: usize,
+        values: *const *const ::std::os::raw::c_char,
+        count: usize,
         indexAsTypes: ::std::os::raw::c_uint,
     );
 }
@@ -559,6 +747,7 @@ unsafe extern "C" {
 unsafe extern "C" {
     pub fn RediSearch_CreateTagLexRangeNode(
         sp: *mut RSIndex,
+        field_name: *const ::std::os::raw::c_char,
         begin: *const ::std::os::raw::c_char,
         end: *const ::std::os::raw::c_char,
         includeBegin: ::std::os::raw::c_int,
