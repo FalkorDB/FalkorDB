@@ -88,8 +88,7 @@ use redisearch::{
     RediSearch_ResultsIteratorGetScore, RediSearch_ResultsIteratorNext,
     RediSearch_TagFieldSetCaseSensitive, RediSearch_TagFieldSetSeparator,
     RediSearch_TextFieldSetWeight, RediSearch_VecSimTieredParams_Init,
-    RediSearch_VectorFieldSetParams, VecSimAlgo_HNSWLIB, VecSimAlgo_TIERED, VecSimMetric_Cosine,
-    VecSimMetric_IP, VecSimMetric_L2, VecSimParams, VecSimType_FLOAT32,
+    RediSearch_VectorFieldSetParams, VecSimAlgo, VecSimMetric, VecSimParams, VecSimType,
 };
 
 /// Type of index for a property.
@@ -1221,9 +1220,9 @@ impl Index {
                                 .as_deref()
                                 .unwrap_or("euclidean")
                             {
-                                "euclidean" => VecSimMetric_L2,
-                                "ip" => VecSimMetric_IP,
-                                "cosine" => VecSimMetric_Cosine,
+                                "euclidean" => VecSimMetric::L2,
+                                "ip" => VecSimMetric::Ip,
+                                "cosine" => VecSimMetric::Cosine,
                                 other => {
                                     return Err(format!(
                                         "Unknown similarity function '{other}', expected 'euclidean', 'ip', or 'cosine'"
@@ -1239,9 +1238,9 @@ impl Index {
                             // fills the tiered runtime fields (worker pool, submit
                             // callback, weak ref, flat-buffer limit, logCtx).
                             let mut primary: VecSimParams = std::mem::zeroed();
-                            primary.algo = VecSimAlgo_HNSWLIB;
+                            primary.algo = VecSimAlgo::Hnswlib;
                             primary.algoParams.hnswParams = HNSWParams {
-                                type_: VecSimType_FLOAT32,
+                                type_: VecSimType::Float32,
                                 dim: vopts.dimension as usize,
                                 metric,
                                 multi: false,
@@ -1257,7 +1256,7 @@ impl Index {
                             };
 
                             let mut params: VecSimParams = std::mem::zeroed();
-                            params.algo = VecSimAlgo_TIERED;
+                            params.algo = VecSimAlgo::Tiered;
                             // `primary` outlives both calls below: Init reads it,
                             // VectorFieldSetParams deep-copies it.
                             params.algoParams.tieredParams.primaryIndexParams = &raw mut primary;
@@ -2163,5 +2162,83 @@ impl Index {
         // generation counter and never touch this fresh generation.
         self.bump_id();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        EDGE_DOC_KEY_LEN, NODE_DOC_KEY_LEN, decode_id, decode_triple, hex_encode_into,
+        tag_encode_lower,
+    };
+
+    /// Encode a node id the way `Document::new` does, then decode it back.
+    fn node_roundtrip(id: u64) -> u64 {
+        let mut key = [0u8; NODE_DOC_KEY_LEN];
+        hex_encode_into(&id.to_ne_bytes(), &mut key);
+        // SAFETY: `key` holds exactly NODE_DOC_KEY_LEN (16) readable hex bytes.
+        unsafe { decode_id(key.as_ptr()) }
+    }
+
+    #[test]
+    fn node_key_roundtrip() {
+        for id in [
+            0u64,
+            1,
+            0xff,
+            0x100, // 256 — the boundary that drove the original trie overflow
+            0x1234_5678_9abc_def0,
+            u64::MAX,
+        ] {
+            assert_eq!(node_roundtrip(id), id, "roundtrip failed for {id:#x}");
+        }
+    }
+
+    #[test]
+    fn node_key_is_16_lowercase_hex() {
+        let mut key = [0u8; NODE_DOC_KEY_LEN];
+        hex_encode_into(&0xdead_beef_u64.to_ne_bytes(), &mut key);
+        assert_eq!(key.len(), 16);
+        assert!(
+            key.iter()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()),
+            "key is not all-lowercase hex: {key:?}"
+        );
+    }
+
+    #[test]
+    fn edge_triple_roundtrip() {
+        let triple = [0u64, 0x00ff_00ff_00ff_00ff, u64::MAX];
+        let mut key = [0u8; EDGE_DOC_KEY_LEN];
+        for (i, &v) in triple.iter().enumerate() {
+            hex_encode_into(&v.to_ne_bytes(), &mut key[i * 16..i * 16 + 16]);
+        }
+        // SAFETY: `key` holds exactly EDGE_DOC_KEY_LEN (48) readable hex bytes.
+        let back = unsafe { decode_triple(key.as_ptr()) };
+        assert_eq!(back, triple);
+    }
+
+    #[test]
+    fn tag_encode_escapes_only_expected_bytes() {
+        // Bytes <= 0x20 (controls + space), '\\' (0x5c) and '_' (0x5f) become
+        // `_` + two lowercase hex digits; everything else passes through.
+        assert_eq!(tag_encode_lower(b"plain"), b"plain");
+        assert_eq!(tag_encode_lower(b"a b"), b"a_20b"); // space
+        assert_eq!(tag_encode_lower(b"a\\b"), b"a_5cb"); // backslash
+        assert_eq!(tag_encode_lower(b"a_b"), b"a_5fb"); // the escape prefix itself
+        assert_eq!(tag_encode_lower(&[0x00]), b"_00"); // NUL
+        assert_eq!(tag_encode_lower(&[0x09]), b"_09"); // tab
+        assert_eq!(tag_encode_lower(&[0x01]), b"_01"); // FalkorDB tag separator
+        // Other punctuation (comma 0x2c) and high bytes pass through untouched.
+        assert_eq!(tag_encode_lower(b"a,b"), b"a,b");
+        assert_eq!(tag_encode_lower(&[0xff]), &[0xff]);
+    }
+
+    #[test]
+    fn tag_encode_output_has_no_interior_nul() {
+        // The encoded form is handed to CString::new, so it must never contain a
+        // 0x00 byte (NUL itself is escaped to "_00").
+        let enc = tag_encode_lower(&[0x00, b'x', 0x20, 0xff, b'\\']);
+        assert!(!enc.contains(&0x00), "encoded form contains NUL: {enc:?}");
     }
 }

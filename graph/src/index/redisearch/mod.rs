@@ -37,6 +37,8 @@
 
 use std::os::raw::c_char;
 
+use num_enum::{IntoPrimitive, TryFromPrimitive};
+
 use self::redis::{RedisModuleCtx, RedisModuleString};
 pub mod redis;
 
@@ -376,29 +378,42 @@ unsafe extern "C" {
 // must stay ABI-exact with the C headers; the size assertion below guards
 // against transcription drift on the supported LP64 targets.
 
-pub type VecSimType = ::std::os::raw::c_uint;
-pub const VecSimType_FLOAT32: VecSimType = 0;
-pub const VecSimType_FLOAT64: VecSimType = 1;
-pub const VecSimType_BFLOAT16: VecSimType = 2;
-pub const VecSimType_FLOAT16: VecSimType = 3;
-pub const VecSimType_INT8: VecSimType = 4;
-pub const VecSimType_UINT8: VecSimType = 5;
-pub const VecSimType_INT32: VecSimType = 6;
-pub const VecSimType_INT64: VecSimType = 7;
+/// Vector element type (`VecSimType` in VectorSimilarity `vec_sim_common.h`).
+/// `#[repr(u32)]` matches the C enum width (a `c_uint`) so it sits directly in
+/// the `#[repr(C)]` params structs and is passed by value with no conversion;
+/// the `IntoPrimitive`/`TryFromPrimitive` derives give `c_uint::from(ty)` and
+/// `VecSimType::try_from(raw)` when a raw `c_uint` is needed.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, IntoPrimitive, TryFromPrimitive)]
+#[repr(u32)]
+pub enum VecSimType {
+    Float32 = 0,
+    Float64 = 1,
+    BFloat16 = 2,
+    Float16 = 3,
+    Int8 = 4,
+    Uint8 = 5,
+    Int32 = 6,
+    Int64 = 7,
+}
 
-pub type VecSimAlgo = ::std::os::raw::c_uint;
-pub const VecSimAlgo_BF: VecSimAlgo = 0;
-pub const VecSimAlgo_HNSWLIB: VecSimAlgo = 1;
-pub const VecSimAlgo_TIERED: VecSimAlgo = 2;
-pub const VecSimAlgo_SVS: VecSimAlgo = 3;
+/// Vector index algorithm (`VecSimAlgo`). FalkorDB only uses brute-force, HNSW
+/// and TIERED; the SVS backend is intentionally not represented.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, IntoPrimitive, TryFromPrimitive)]
+#[repr(u32)]
+pub enum VecSimAlgo {
+    Bf = 0,
+    Hnswlib = 1,
+    Tiered = 2,
+}
 
-pub type VecSimMetric = ::std::os::raw::c_uint;
-pub const VecSimMetric_L2: VecSimMetric = 0;
-pub const VecSimMetric_IP: VecSimMetric = 1;
-pub const VecSimMetric_Cosine: VecSimMetric = 2;
-
-pub type VecSimOptionMode = ::std::os::raw::c_uint;
-pub type VecSimSvsQuantBits = ::std::os::raw::c_uint;
+/// Vector distance metric (`VecSimMetric`).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, IntoPrimitive, TryFromPrimitive)]
+#[repr(u32)]
+pub enum VecSimMetric {
+    L2 = 0,
+    Ip = 1,
+    Cosine = 2,
+}
 
 /// Default per-block vector capacity for VecSim's `DataBlock` container
 /// (VectorSimilarity `vec_sim_common.h`: `#define DEFAULT_BLOCK_SIZE 1024`).
@@ -440,52 +455,19 @@ pub struct BFParams {
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub struct SVSParams {
-    pub type_: VecSimType,
-    pub dim: usize,
-    pub metric: VecSimMetric,
-    pub multi: bool,
-    pub blockSize: usize,
-    pub quantBits: VecSimSvsQuantBits,
-    pub alpha: f32,
-    pub graph_max_degree: usize,
-    pub construction_window_size: usize,
-    pub max_candidate_pool_size: usize,
-    pub prune_to: usize,
-    pub use_search_history: VecSimOptionMode,
-    pub num_threads: usize,
-    pub search_window_size: usize,
-    pub search_buffer_capacity: usize,
-    pub leanvec_dim: usize,
-    pub epsilon: f64,
-}
-
-#[repr(C)]
-#[derive(Copy, Clone)]
 pub struct TieredHNSWParams {
     pub swapJobThreshold: usize,
 }
 
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct TieredHNSWDiskParams {
-    pub _placeholder: ::std::os::raw::c_char,
-}
-
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct TieredSVSParams {
-    pub trainingTriggerThreshold: usize,
-    pub updateTriggerThreshold: usize,
-    pub updateJobWaitTime: usize,
-}
-
+/// Tiered-index per-backend params. Only the HNSW backend is used; the SVS and
+/// on-disk backends are not. The C union is sized by its largest member
+/// (`TieredSVSParams`, 24 bytes), so `_reserved` preserves that size to keep
+/// the enclosing `VecSimParams` ABI intact for the by-value LLAPI.
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub union TieredSpecificParams {
     pub tieredHnswParams: TieredHNSWParams,
-    pub tieredSVSParams: TieredSVSParams,
-    pub tieredHnswDiskParams: TieredHNSWDiskParams,
+    _reserved: [u8; 24],
 }
 
 #[repr(C)]
@@ -506,7 +488,10 @@ pub union AlgoParams {
     pub hnswParams: HNSWParams,
     pub bfParams: BFParams,
     pub tieredParams: TieredIndexParams,
-    pub svsParams: SVSParams,
+    // SVS is unused, but the C union is sized by its largest member,
+    // `SVSParams` (120 bytes), and `VecSimParams` is passed by value — reserve
+    // that space so `size_of::<VecSimParams>() == 136` and the ABI holds.
+    _svs_reserved: [u8; 120],
 }
 
 #[repr(C)]
