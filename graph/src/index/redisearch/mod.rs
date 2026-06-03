@@ -1,9 +1,14 @@
-//! RediSearch C API bindings (auto-generated via `rust-bindgen`).
+//! RediSearch C API bindings (originally generated via `rust-bindgen`, now
+//! hand-maintained).
 //!
 //! This module exposes the RediSearch library functions used by
-//! [`Index`](super::Index) to create indexes, manage documents, build
-//! query trees, and iterate over results.  **Do not edit by hand** -- the
-//! bindings are regenerated from the RediSearch C headers.
+//! [`Index`](super::Index) to create indexes, manage documents, build query
+//! trees, and iterate over results. Although it began as `rust-bindgen` output,
+//! it is now **maintained by hand**: the VecSim / TIERED params carry explicit
+//! `#[repr(C)]` layouts guarded by `size_of`/`offset_of` assertions, several C
+//! enums are modeled as Rust `enum`s, and the signatures are kept in sync with
+//! the RediSearch 8.6 C headers manually. Edit with care and keep the layout
+//! assertions intact rather than regenerating blindly.
 //!
 //! # Module layout
 //!

@@ -28,10 +28,11 @@ RUN git clone --depth 1 --branch ${REDIS_ASAN_VER} https://github.com/redis/redi
 # Nightly toolchain required for -Zsanitizer=address. Cargo profile is dev
 # (no --release) so debuginfo and frame pointers are preserved for stack traces.
 #
-# NOTE: no cargo-chef here. This branch vendors `redis-module` as a path
-# dependency (vendor/redismodule-rs); cargo-chef's `cook` stage copies only
-# the recipe + manifests, so it can't read the path dep and its build.rs has
-# no RediSearch yet. We build directly instead (no dep-layer caching).
+# NOTE: no cargo-chef here (unlike the release/coverage images). This stage
+# builds RediSearch from source via redisearch.sh first — graph/build.rs needs
+# those archives to exist before the cargo build — and then compiles the module
+# directly. The dep-layer caching cargo-chef provides isn't worth the extra
+# plumbing for the one-off ASAN image.
 FROM $BUILD_IMAGE AS builder
 RUN rustup install nightly && rustup default nightly
 # OpenSSL dev: RediSearch 8.6's CMake find_package(OpenSSL) + link-time

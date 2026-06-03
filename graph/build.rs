@@ -120,9 +120,30 @@ fn main() {
         .map(|e| e.path().join("search-community"))
         .collect();
     variant_dirs.sort();
-    let search_dir = variant_dirs
-        .into_iter()
-        .find(|p| p.is_dir() && main_names.iter().any(|n| p.join(n).exists()))
+    // Detect whether *this* build is ASAN-instrumented (the asan Dockerfile sets
+    // `-Zsanitizer=address` via RUSTFLAGS / CARGO_TARGET_<triple>_RUSTFLAGS) and
+    // prefer the matching RediSearch flavor, so a normal build never links the
+    // `debug-asan` archive (or vice-versa) when both happen to exist locally.
+    // CI images only ever build one flavor, so this is a no-op there.
+    let asan_build = std::env::vars().any(|(k, v)| {
+        (k == "RUSTFLAGS"
+            || k == "CARGO_ENCODED_RUSTFLAGS"
+            || (k.starts_with("CARGO_TARGET_") && k.ends_with("_RUSTFLAGS")))
+            && v.contains("sanitizer=address")
+    });
+    let pick = |want_asan: bool| {
+        variant_dirs
+            .iter()
+            .find(|p| {
+                p.is_dir()
+                    && main_names.iter().any(|n| p.join(n).exists())
+                    && p.to_string_lossy().contains("asan") == want_asan
+            })
+            .cloned()
+    };
+    let search_dir = pick(asan_build)
+        // Fall back to the other flavor if only it was built.
+        .or_else(|| pick(!asan_build))
         .expect(
             "search-community dir with a redisearch archive not found - run ./redisearch.sh first",
         );
@@ -141,10 +162,16 @@ fn main() {
         std::os::unix::fs::symlink(src, &main_a).expect("failed to create libredisearch.a symlink");
     }
 
-    // Link the main archive and every C/C++ dependency archive. Redundant archives
-    // are harmless: the linker only pulls members that resolve an undefined symbol.
+    // Link the main archive FIRST, then the dependency archives. GNU ld resolves
+    // static archives left-to-right and won't rescan earlier ones, so the main
+    // `libredisearch.a` — which references symbols defined in its VecSim / C
+    // deps — must precede them. (Redundant archives are otherwise harmless: the
+    // linker only pulls members that resolve an undefined symbol.)
+    link_static(&main_a);
     for archive in find_archives(&search_dir) {
-        link_static(&archive);
+        if archive != main_a {
+            link_static(&archive);
+        }
     }
 
     // RediSearch's Rust crate is a separate archive one level up. The profile

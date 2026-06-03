@@ -603,7 +603,7 @@ unsafe fn decode_id(ptr: *const u8) -> u64 {
         // SAFETY: caller guarantees `ptr` covers 16 readable bytes.
         *b = unsafe { (hex_nibble(*ptr.add(i * 2)) << 4) | hex_nibble(*ptr.add(i * 2 + 1)) };
     }
-    u64::from_ne_bytes(bytes)
+    u64::from_le_bytes(bytes)
 }
 
 /// Decode 48 hex chars at `ptr` into a `[src, dst, edge_id]` triple. SAFETY:
@@ -633,7 +633,7 @@ impl Document {
     #[must_use]
     pub fn new(id: u64) -> Self {
         let mut key = [0u8; NODE_DOC_KEY_LEN];
-        hex_encode_into(&id.to_ne_bytes(), &mut key);
+        hex_encode_into(&id.to_le_bytes(), &mut key);
         Self {
             id,
             string_arr_values: Vec::new(),
@@ -663,9 +663,9 @@ impl Document {
         edge_id: u64,
     ) -> Self {
         let mut key = [0u8; EDGE_DOC_KEY_LEN];
-        hex_encode_into(&src.to_ne_bytes(), &mut key[0..16]);
-        hex_encode_into(&dst.to_ne_bytes(), &mut key[16..32]);
-        hex_encode_into(&edge_id.to_ne_bytes(), &mut key[32..48]);
+        hex_encode_into(&src.to_le_bytes(), &mut key[0..16]);
+        hex_encode_into(&dst.to_le_bytes(), &mut key[16..32]);
+        hex_encode_into(&edge_id.to_le_bytes(), &mut key[32..48]);
         Self {
             id: edge_id,
             string_arr_values: Vec::new(),
@@ -1852,7 +1852,7 @@ impl Index {
         id: u64,
     ) {
         let mut key = [0u8; NODE_DOC_KEY_LEN];
-        hex_encode_into(&id.to_ne_bytes(), &mut key);
+        hex_encode_into(&id.to_le_bytes(), &mut key);
         unsafe {
             RediSearch_DeleteDocument(
                 self.rs_ptr(),
@@ -1871,9 +1871,9 @@ impl Index {
         edge_id: u64,
     ) {
         let mut key = [0u8; EDGE_DOC_KEY_LEN];
-        hex_encode_into(&src.to_ne_bytes(), &mut key[0..16]);
-        hex_encode_into(&dst.to_ne_bytes(), &mut key[16..32]);
-        hex_encode_into(&edge_id.to_ne_bytes(), &mut key[32..48]);
+        hex_encode_into(&src.to_le_bytes(), &mut key[0..16]);
+        hex_encode_into(&dst.to_le_bytes(), &mut key[16..32]);
+        hex_encode_into(&edge_id.to_le_bytes(), &mut key[32..48]);
         unsafe {
             RediSearch_DeleteDocument(
                 self.rs_ptr(),
@@ -2175,7 +2175,7 @@ mod tests {
     /// Encode a node id the way `Document::new` does, then decode it back.
     fn node_roundtrip(id: u64) -> u64 {
         let mut key = [0u8; NODE_DOC_KEY_LEN];
-        hex_encode_into(&id.to_ne_bytes(), &mut key);
+        hex_encode_into(&id.to_le_bytes(), &mut key);
         // SAFETY: `key` holds exactly NODE_DOC_KEY_LEN (16) readable hex bytes.
         unsafe { decode_id(key.as_ptr()) }
     }
@@ -2197,7 +2197,7 @@ mod tests {
     #[test]
     fn node_key_is_16_lowercase_hex() {
         let mut key = [0u8; NODE_DOC_KEY_LEN];
-        hex_encode_into(&0xdead_beef_u64.to_ne_bytes(), &mut key);
+        hex_encode_into(&0xdead_beef_u64.to_le_bytes(), &mut key);
         assert_eq!(key.len(), 16);
         assert!(
             key.iter()
@@ -2211,7 +2211,7 @@ mod tests {
         let triple = [0u64, 0x00ff_00ff_00ff_00ff, u64::MAX];
         let mut key = [0u8; EDGE_DOC_KEY_LEN];
         for (i, &v) in triple.iter().enumerate() {
-            hex_encode_into(&v.to_ne_bytes(), &mut key[i * 16..i * 16 + 16]);
+            hex_encode_into(&v.to_le_bytes(), &mut key[i * 16..i * 16 + 16]);
         }
         // SAFETY: `key` holds exactly EDGE_DOC_KEY_LEN (48) readable hex bytes.
         let back = unsafe { decode_triple(key.as_ptr()) };
