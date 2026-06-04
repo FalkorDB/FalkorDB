@@ -425,7 +425,7 @@ static void _estimate_memory_consumption
 	const Graph *g = GraphContext_GetGraph (gc) ;
 
 	// collect graph's memory consumption
-	Graph_memoryUsage (g, result, samples) ;
+	Graph_memoryUsage (g, result) ;
 
 	//--------------------------------------------------------------------------
 	// estimate nodes & edges attribute-set memory consumption

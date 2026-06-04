@@ -4,14 +4,12 @@
  */
 
 #include "graph_memoryUsage.h"
-#include "graph/graph.h"
 
 // get graph's memory usage
 void Graph_memoryUsage
 (
 	const Graph *g,            // graph
-	MemoryUsageResult *result, // [output] memory usage
-	int64_t samples
+	MemoryUsageResult *result  // [output] memory usage
 ) {
 	ASSERT (g      != NULL) ;
 	ASSERT (result != NULL) ;
@@ -61,7 +59,11 @@ void Graph_memoryUsage
 	for (RelationID rel = 0; rel < n_rel; rel++) {
 		T = Graph_GetRelationMatrix (g, rel, false) ;
 
-		GrB_OK (Tensor_memoryUsage (&n, T, samples)) ;
+		if (Graph_RelationshipContainsMultiEdge(g, rel)) {
+			GrB_OK (Tensor_memoryUsage (&n, T)) ;
+		} else {
+			GrB_OK (Delta_Matrix_memoryUsage (&n, D)) ;
+		}
 
 		result->rel_matrices_sz += n ;
 	}

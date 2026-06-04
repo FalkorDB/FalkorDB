@@ -318,7 +318,7 @@ size_t DataBlock_memoryUsage
 	// datablock size = deleted index array size +
 	//                  (number of blocks * block size)
 	size_t data_size = sizeof(DataBlock) ;
-	data_size += arr_sizeof(arr_hdr(dataBlock->deletedIdx));
+	data_size += arr_bytesize(dataBlock->deletedIdx);
 	data_size += RedisModule_MallocSize(dataBlock->blocks) ;
 	data_size += dataBlock->blockCount
 		* (sizeof (Block) + dataBlock->itemSize * dataBlock->blockCap);

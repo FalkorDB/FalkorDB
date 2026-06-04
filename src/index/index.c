@@ -909,13 +909,13 @@ size_t Index_MemoryUsage
 
 	size_t n = 0;
 
+	// include FalkorDB wrapper allocation and owned memory
+	n += RedisModule_MallocSize((void *)idx);
+
 	// include the internal RediSearch index memory
 	if(idx->rsIdx != NULL) {
 		n += RediSearch_MemUsage(idx->rsIdx);
 	}
-
-	// include FalkorDB wrapper allocation and owned memory
-	n += RedisModule_MallocSize((void *)idx);
 
 	if(idx->label != NULL) {
 		n += RedisModule_MallocSize(idx->label);
@@ -926,11 +926,11 @@ size_t Index_MemoryUsage
 	}
 
 	if(idx->fields != NULL) {
-		n += RedisModule_MallocSize(arr_hdr(idx->fields));
+		n += arr_bytesize(idx->fields);
 	}
 
 	if(idx->stopwords != NULL) {
-		n += RedisModule_MallocSize(arr_hdr(idx->stopwords));
+		n += arr_bytesize(idx->stopwords);
 	}
 
 	return n;
