@@ -22,6 +22,9 @@ typedef void (*CacheEntryFreeFunc)(void *);
 // cache entry duplicate function
 typedef void *(*CacheEntryCopyFunc)(void *);
 
+// cache entry memory usage function
+typedef size_t (*CacheEntryMemUsageFunc)(const void *);
+
 /**
  * @brief  A struct for an entry in cache array with a key and value.
  */
@@ -54,4 +57,3 @@ void CacheArray_CleanEntry
 	CacheEntry *entry,
 	CacheEntryFreeFunc free_entry
 ) ;
-

@@ -8,8 +8,211 @@
 #include "RG.h"
 #include "../query_ctx.h"
 #include "../errors/errors.h"
+#include "../util/arr.h"
+#include "../util/cache/cache.h"
+#include "../util/rax_extensions.h"
+#include "../arithmetic/arithmetic_expression.h"
+#include "../ast/ast_shared.h"
+#include "../execution_plan/ops/op_create.h"
+#include "../execution_plan/ops/op_merge_create.h"
+#include "../execution_plan/ops/op_unwind.h"
 #include "../execution_plan/execution_plan_clone.h"
 #include "../execution_plan/optimizations/optimizer.h"
+
+static inline size_t _ArrayUsage
+(
+	const void *arr
+) {
+	return (arr != NULL) ? arr_sizeof(arr_hdr(arr)) : 0;
+}
+
+static size_t _AR_EXP_MemoryUsage
+(
+	const AR_ExpNode *exp
+) {
+	if (exp == NULL) {
+		return 0;
+	}
+
+	size_t n = sizeof(*exp);
+	if (AR_EXP_IsOperation(exp)) {
+		n += sizeof(AR_ExpNode *) * exp->op.child_count;
+		for (int i = 0; i < exp->op.child_count; i++) {
+			n += _AR_EXP_MemoryUsage(exp->op.children[i]);
+		}
+	} else if (AR_EXP_IsConstant(exp)) {
+		n += SIValue_memoryUsage(exp->operand.constant);
+	}
+
+	return n;
+}
+
+static size_t _PropertyMap_MemoryUsage
+(
+	const PropertyMap *map
+) {
+	if (map == NULL) {
+		return 0;
+	}
+
+	size_t n = sizeof(*map);
+	n += _ArrayUsage(map->keys);
+	n += _ArrayUsage(map->attr_ids);
+	n += _ArrayUsage(map->values);
+
+	uint val_count = arr_len(map->values);
+	for (uint i = 0; i < val_count; i++) {
+		n += _AR_EXP_MemoryUsage(map->values[i]);
+	}
+
+	return n;
+}
+
+static size_t _NodeCreateCtx_MemoryUsage
+(
+	const NodeCreateCtx *ctx
+) {
+	if (ctx == NULL) {
+		return 0;
+	}
+
+	size_t n = sizeof(*ctx);
+	n += _ArrayUsage(ctx->labels);
+	n += _ArrayUsage(ctx->labelsId);
+	n += _PropertyMap_MemoryUsage(ctx->properties);
+	return n;
+}
+
+static size_t _EdgeCreateCtx_MemoryUsage
+(
+	const EdgeCreateCtx *ctx
+) {
+	if (ctx == NULL) {
+		return 0;
+	}
+
+	size_t n = sizeof(*ctx);
+	n += _PropertyMap_MemoryUsage(ctx->properties);
+	return n;
+}
+
+static size_t _PendingCreationsTemplateMemoryUsage
+(
+	const PendingCreations *pending
+) {
+	if (pending == NULL) {
+		return 0;
+	}
+
+	size_t n = 0;
+	n += _ArrayUsage(pending->nodes.nodes_to_create);
+	n += _ArrayUsage(pending->nodes.node_attributes);
+	n += _ArrayUsage(pending->nodes.node_labels);
+	n += _ArrayUsage(pending->nodes.created_nodes);
+
+	uint node_count = arr_len(pending->nodes.nodes_to_create);
+	for (uint i = 0; i < node_count; i++) {
+		n += _NodeCreateCtx_MemoryUsage(&pending->nodes.nodes_to_create[i]);
+	}
+
+	n += _ArrayUsage(pending->edges);
+	uint edge_count = arr_len(pending->edges);
+	for (uint i = 0; i < edge_count; i++) {
+		const PendingEdgeCreations *edge = &pending->edges[i];
+		n += sizeof(*edge);
+		n += _EdgeCreateCtx_MemoryUsage(&edge->edges_to_create);
+		n += _ArrayUsage(edge->edge_attributes);
+		n += _ArrayUsage(edge->created_edges);
+	}
+
+	return n;
+}
+
+static size_t _OpSpecificTemplateMemoryUsage
+(
+	const OpBase *op
+) {
+	switch (op->type) {
+	case OPType_CREATE:
+		return _PendingCreationsTemplateMemoryUsage(&((const OpCreate *)op)->pending);
+	case OPType_MERGE_CREATE:
+		return _PendingCreationsTemplateMemoryUsage(&((const OpMergeCreate *)op)->pending);
+	case OPType_UNWIND:
+		return _AR_EXP_MemoryUsage(((const OpUnwind *)op)->exp);
+	default:
+		return 0;
+	}
+}
+
+static size_t _AST_MemoryUsage
+(
+	const AST *ast
+) {
+	if (ast == NULL) {
+		return 0;
+	}
+
+	size_t n = sizeof(*ast);
+	n += sizeof(*ast->ref_count);
+	n += sizeof(*ast->anot_ctx_collection);
+	n += raxMemoryUsage(ast->referenced_entities);
+
+	return n;
+}
+
+static size_t _ExecutionPlan_MemoryUsage
+(
+	const ExecutionPlan *plan
+) {
+	if (plan == NULL) {
+		return 0;
+	}
+
+	size_t n = sizeof(*plan);
+	n += raxMemoryUsage(plan->record_map);
+	n += (plan->query_graph != NULL) ? sizeof(*plan->query_graph) : 0;
+	n += (plan->record_pool != NULL) ? sizeof(*plan->record_pool) : 0;
+
+	if (plan->root == NULL) {
+		return n;
+	}
+
+	// follow the same traversal shape as ExecutionPlan_Free.
+	OpBase **to_visit = arr_new(OpBase *, 1);
+	arr_append(to_visit, plan->root);
+
+	while (arr_len(to_visit) > 0) {
+		OpBase *op = arr_pop(to_visit);
+		n += sizeof(*op);
+		n += (op->childCount > 0) ? (sizeof(OpBase *) * op->childCount) : 0;
+		n += (op->stats != NULL) ? sizeof(*op->stats) : 0;
+		n += _OpSpecificTemplateMemoryUsage(op);
+
+		for (uint i = 0; i < op->childCount; i++) {
+			if (op->children[i] != NULL) {
+				arr_append(to_visit, op->children[i]);
+			}
+		}
+	}
+
+	arr_free(to_visit);
+	return n;
+}
+
+static inline void _LogQueryCacheMemoryUsage
+(
+	Cache *cache,
+	const char *phase,
+	const char *result
+) {
+	size_t usage = Cache_MemoryUsage(cache, (CacheEntryMemUsageFunc)ExecutionCtx_MemoryUsage);
+	printf("[query-cache] phase=%s result=%s entries=%u/%u memory=%zu bytes\n",
+		phase,
+		result,
+		cache->size,
+		cache->cap,
+		usage);
+}
 
 static ExecutionType _GetExecutionTypeFromAST
 (
@@ -147,6 +350,7 @@ ExecutionCtx *ExecutionCtx_FromQuery
 
 	// see if we already have a cached execution-ctx for given query
 	ret = Cache_GetValue (cache, query_no_params) ;
+	_LogQueryCacheMemoryUsage(cache, "lookup", ret != NULL ? "hit" : "miss");
 
 	//--------------------------------------------------------------------------
 	// cache hit
@@ -206,6 +410,8 @@ ExecutionCtx *ExecutionCtx_FromQuery
 		ExecutionCtx *exec_ctx = _ExecutionCtx_New (ast, plan, exec_type,
 				QueryCtx_IsDeterministic ()) ;
 		ret = Cache_SetGetValue (cache, query_no_params, exec_ctx) ;
+		_LogQueryCacheMemoryUsage(cache, "store",
+				(ret != exec_ctx) ? "inserted" : "existing");
 	} else {
 		ret = _ExecutionCtx_New (ast, NULL, exec_type, true) ;
 	}
@@ -233,3 +439,17 @@ void ExecutionCtx_Free
 	rm_free(ctx);
 }
 
+size_t ExecutionCtx_MemoryUsage
+(
+	const ExecutionCtx *ctx
+) {
+	if(ctx == NULL) {
+		return 0;
+	}
+
+	size_t n = sizeof(*ctx);
+	n += _AST_MemoryUsage(ctx->ast);
+	n += _ExecutionPlan_MemoryUsage(ctx->plan);
+
+	return n;
+}

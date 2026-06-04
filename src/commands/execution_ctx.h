@@ -49,3 +49,8 @@ void ExecutionCtx_Free
 	ExecutionCtx *ctx  // execution context to free
 );
 
+// returns execution context allocated memory in bytes
+size_t ExecutionCtx_MemoryUsage
+(
+	const ExecutionCtx *ctx  // execution context to inspect
+);

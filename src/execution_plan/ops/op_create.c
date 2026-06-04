@@ -11,6 +11,7 @@
 #include "../../errors/errors.h"
 
 #include "../../graph/graph_hub.h"
+#include "../../graph/entities/attribute_set.h"
 
 // forward declarations
 static Record CreateConsume (OpBase *opBase) ;
@@ -18,6 +19,57 @@ static OpResult CreateReset(OpBase *opBase);
 static OpBase *CreateClone (const ExecutionPlan *plan, const OpBase *opBase) ;
 static void CreateFree (OpBase *opBase) ;
 static void FreeInternals (OpCreate *op) ;
+
+static inline size_t _DynamicArrayMemoryUsage
+(
+	const void *arr
+) {
+	if (arr == NULL) {
+		return 0;
+	}
+
+	return arr_sizeof(arr_hdr(arr));
+}
+
+static size_t _PendingNodeAttributesPayloadUsage
+(
+	const OpCreate *op
+) {
+	size_t usage = 0;
+	const AttributeSet *attrs = op->pending.nodes.node_attributes;
+	uint n = arr_len(attrs);
+
+	for (uint i = 0; i < n; i++) {
+		if (attrs[i] != NULL) {
+			usage += AttributeSet_memoryUsage(attrs[i]);
+		}
+	}
+
+	return usage;
+}
+
+static inline void _ReportPendingNodeBuffers
+(
+	const OpCreate *op,
+	const char *phase
+) {
+	Node *const *created_nodes = op->pending.nodes.created_nodes;
+	const AttributeSet *node_attributes = op->pending.nodes.node_attributes;
+	LabelID *const *node_labels = op->pending.nodes.node_labels;
+
+	size_t created_nodes_usage   = _DynamicArrayMemoryUsage(created_nodes);
+	size_t node_attributes_usage = _DynamicArrayMemoryUsage(node_attributes);
+	size_t node_labels_usage     = _DynamicArrayMemoryUsage(node_labels);
+	size_t attrs_payload_usage   = _PendingNodeAttributesPayloadUsage(op);
+
+	printf("[create-pending] phase=%s created_nodes=%u/%u(%zuB) "
+		   "node_attributes=%u/%u(%zuB+payload=%zuB) node_labels=%u/%u(%zuB)\n",
+		phase,
+		arr_len(created_nodes), arr_cap(created_nodes), created_nodes_usage,
+		arr_len(node_attributes), arr_cap(node_attributes),
+		node_attributes_usage, attrs_payload_usage,
+		arr_len(node_labels), arr_cap(node_labels), node_labels_usage);
+}
 
 OpBase *NewCreateOp
 (
@@ -68,6 +120,10 @@ static void _CreateNodes
 
 	uint nodes_to_create_count = arr_len (op->pending.nodes.nodes_to_create) ;
 	for (uint i = 0 ; i < nodes_to_create_count ; i++) {
+		uint created_nodes_cap   = arr_cap(op->pending.nodes.created_nodes);
+		uint node_attributes_cap = arr_cap(op->pending.nodes.node_attributes);
+		uint node_labels_cap     = arr_cap(op->pending.nodes.node_labels);
+
 		// get specified node to create
 		NodeCreateCtx *n = op->pending.nodes.nodes_to_create + i ;
 
@@ -92,6 +148,12 @@ static void _CreateNodes
 
 		// save labels to assigned to node
 		arr_append(op->pending.nodes.node_labels, n->labelsId);
+
+		if (created_nodes_cap   != arr_cap(op->pending.nodes.created_nodes) ||
+			node_attributes_cap != arr_cap(op->pending.nodes.node_attributes) ||
+			node_labels_cap     != arr_cap(op->pending.nodes.node_labels)) {
+			_ReportPendingNodeBuffers(op, "nodes-grow");
+		}
 	}
 }
 
@@ -205,6 +267,7 @@ static Record CreateConsume
 	}
 
 	// create entities
+	_ReportPendingNodeBuffers(op, "before-commit");
 	CommitNewEntities (&op->pending) ;
 
 	// no one consumes our output, return NULL
@@ -279,4 +342,3 @@ static void CreateFree
 
 	PendingCreationsFree (&op->pending) ;
 }
-

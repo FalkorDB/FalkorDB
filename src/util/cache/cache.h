@@ -68,6 +68,14 @@ void Cache_SetValue(Cache *cache, const char *key, void *item);
 void *Cache_SetGetValue(Cache *cache, const char *key, void *value);
 
 /**
+ * @brief  Returns allocated memory usage for cache internals and entries.
+ * @param  *cache: cache pointer.
+ * @param  item_mem_usage: optional callback to account for entry value memory.
+ * @retval memory usage in bytes.
+ */
+size_t Cache_MemoryUsage(Cache *cache, CacheEntryMemUsageFunc item_mem_usage);
+
+/**
  * @brief  Destroys the cache and free all stored items.
  * @param  *cache: cache pointer
  */

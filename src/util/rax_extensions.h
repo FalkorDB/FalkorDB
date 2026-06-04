@@ -44,3 +44,8 @@ unsigned char **raxKeys
 	rax *rax
 );
 
+// returns rax allocated memory in bytes (including all nodes)
+size_t raxMemoryUsage
+(
+	const rax *rax
+);

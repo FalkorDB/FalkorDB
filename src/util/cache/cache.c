@@ -7,6 +7,7 @@
 #include "cache.h"
 #include "RG.h"
 #include "../rmalloc.h"
+#include "../rax_extensions.h"
 #include "cache_array.h"
 #include <pthread.h>
 
@@ -21,6 +22,17 @@ static CacheEntry *_CacheEvictLRU
 	CacheArray_CleanEntry(entry, cache->free_item);
 
 	return entry;
+}
+
+static inline size_t _AllocSize
+(
+	const void *ptr
+) {
+	if (ptr == NULL || RedisModule_MallocSize == NULL) {
+		return 0;
+	}
+
+	return RedisModule_MallocSize((void *)ptr);
 }
 
 static bool _Cache_SetValue
@@ -179,6 +191,45 @@ void *Cache_SetGetValue
 	ASSERT (res == 0) ;
 
 	return value_to_return ;
+}
+
+size_t Cache_MemoryUsage
+(
+	Cache *cache,
+	CacheEntryMemUsageFunc item_mem_usage
+) {
+	ASSERT(cache != NULL);
+
+	size_t usage = 0;
+
+	// acquire READ lock
+	int res = pthread_rwlock_rdlock(&cache->_cache_rwlock);
+	UNUSED(res);
+	ASSERT(res == 0);
+
+	usage += _AllocSize(cache);
+	usage += _AllocSize(cache->arr);
+	usage += raxMemoryUsage(cache->lookup);
+
+	for (size_t i = 0; i < cache->size; i++) {
+		CacheEntry *entry = cache->arr + i;
+		usage += _AllocSize(entry->key);
+
+		if (entry->value == NULL) {
+			continue;
+		}
+
+		if (item_mem_usage != NULL) {
+			usage += item_mem_usage(entry->value);
+		} else {
+			usage += _AllocSize(entry->value);
+		}
+	}
+
+	res = pthread_rwlock_unlock(&cache->_cache_rwlock);
+	ASSERT(res == 0);
+
+	return usage;
 }
 
 void Cache_Free

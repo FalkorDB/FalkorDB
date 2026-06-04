@@ -7,6 +7,38 @@
 #include "rax_extensions.h"
 #include "arr.h"
 
+// copied from deps/rax/rax.c for node traversal
+#define _raxPadding(nodesize) ((sizeof(void*)-((nodesize+4) % sizeof(void*))) & (sizeof(void*)-1))
+#define _raxNodeFirstChildPtr(n) ((raxNode**) ( \
+	(n)->data + \
+	(n)->size + \
+	_raxPadding((n)->size)))
+#define _raxNodeCurrentLength(n) ( \
+	sizeof(raxNode) + (n)->size + \
+	_raxPadding((n)->size) + \
+	((n)->iscompr ? sizeof(raxNode *) : sizeof(raxNode *) * (n)->size) + \
+	(((n)->iskey && !(n)->isnull) ? sizeof(void *) : 0) \
+)
+
+static size_t _raxNodeMemoryUsage
+(
+	const raxNode *n
+) {
+	if (n == NULL) {
+		return 0;
+	}
+
+	size_t usage = _raxNodeCurrentLength(n);
+	const int numchildren = n->iscompr ? 1 : n->size;
+	const raxNode **children = (const raxNode **)_raxNodeFirstChildPtr(n);
+
+	for (int i = 0; i < numchildren; i++) {
+		usage += _raxNodeMemoryUsage(children[i]);
+	}
+
+	return usage;
+}
+
 bool raxIsSubset(rax *a, rax *b) {
 	raxIterator it;
 	raxStart(&it, b);
@@ -97,3 +129,15 @@ unsigned char **raxKeys
 	return keys;
 }
 
+size_t raxMemoryUsage
+(
+	const rax *rax
+) {
+	if (rax == NULL) {
+		return 0;
+	}
+
+	size_t usage = sizeof(*rax);
+	usage += _raxNodeMemoryUsage(rax->head);
+	return usage;
+}
