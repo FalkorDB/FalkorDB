@@ -18,9 +18,84 @@ COPY --from=planner /src/recipe.json recipe.json
 RUN CXX=clang++-22 cargo chef cook --release --recipe-path recipe.json
 COPY . .
 RUN CXX=clang++-22 cargo build --release && \
-    mkdir -p /out && cp target/release/libfalkordb.so /out/falkordb.so
+    mkdir -p /out && cp target/release/libfalkordb.so /out/falkordb.so && \
+    echo "=== verify single-.so contract on libfalkordb.so ===" && \
+    deps="$(ldd /out/falkordb.so | awk '{print $1}' | sort -u)" && \
+    echo "$deps" && \
+    if echo "$deps" | grep -E '^(libomp|libgomp|libgraphblas|liblagraph|liblagraphx|libredisearch|libVectorSimilarity)'; then \
+        echo "FAIL: libfalkordb.so has forbidden dynamic dependency"; exit 1; \
+    fi && \
+    undef="$(nm -D --undefined-only /out/falkordb.so 2>/dev/null | grep -E 'omp_|GOMP_|__kmpc_' || true)" && \
+    if [ -n "$undef" ]; then echo "FAIL: OpenMP symbols undefined in .so:"; echo "$undef"; exit 1; fi && \
+    echo "OK: libfalkordb.so is self-contained ($(du -h /out/falkordb.so | cut -f1))"
 
-FROM redis:${REDIS_VERSION} AS server
+# ---------------------------------------------------------------------------
+# Redis builder stage — debian:trixie-slim + minimal build deps.
+#
+# We build redis-server / redis-cli ourselves on debian:trixie-slim instead
+# of inheriting `FROM redis:${REDIS_VERSION}` for two reasons:
+#
+#   1. The upstream redis image bakes a ~60 MB build-toolchain layer
+#      (gcc, g++, cmake, clang, python, rust) that is `apt-get purge`d in
+#      the same RUN — purged binaries don't shrink the layer tarball, so
+#      that 60 MB ships in every pull. Discarding this entire stage drops
+#      the waste.
+#
+#   2. The upstream image also ships the bundled stack modules
+#      (redisearch, rejson, redistimeseries, redisbloom — ~25 MB combined).
+#      run.sh only `--loadmodule`s falkordb.so so those modules are dead
+#      weight. Building with BUILD_WITH_MODULES=no skips them entirely
+#      and eliminates the rust toolchain requirement that pulls them in.
+#
+# Trade-off: we are now the SBOM/CVE publisher for the redis binaries,
+# losing the upstream image's attestation chain. Acceptable for a DB
+# vendor distribution.
+# ---------------------------------------------------------------------------
+FROM debian:trixie-slim AS redis-builder
+
+ARG REDIS_VERSION
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        ca-certificates git dpkg-dev gcc g++ libc6-dev libssl-dev make; \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /tmp
+# Clone the immutable upstream tag — same pattern as Dockerfile.asan.
+# --depth 1 keeps the fetch small; the tag ref is content-addressed by git
+# so no separate SHA pin is required.
+RUN set -eux; \
+    git clone --depth 1 --branch "${REDIS_VERSION}" https://github.com/redis/redis.git redis-src
+
+WORKDIR /tmp/redis-src
+RUN set -eux; \
+    # Mirror the upstream image's protected-mode default flip (1 → 0)
+    # — docker users supply auth/network controls externally.
+    sed -ri 's!^( *createBoolConfig[(]"protected-mode",.*, *)1( *,.*[)],)$!\10\2!' src/config.c; \
+    grep -E '^ *createBoolConfig[(]"protected-mode",.*, *0 *,.*[)],$' src/config.c; \
+    # Bundled jemalloc page-size tuning to match upstream image.
+    gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)"; \
+    arch="$(dpkg --print-architecture | awk -F- '{ print $NF }')"; \
+    extraJemallocConfigureFlags="--build=$gnuArch"; \
+    case "${arch##*-}" in \
+        amd64 | i386 | x32) extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-page=12" ;; \
+        *) extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-page=16" ;; \
+    esac; \
+    extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-hugepage=21"; \
+    sed -ri 's!cd jemalloc && ./configure !&'"$extraJemallocConfigureFlags"' !' deps/Makefile; \
+    export BUILD_TLS=yes BUILD_WITH_MODULES=no; \
+    make -j "$(nproc)" all; \
+    make PREFIX=/redis-install install; \
+    strip /redis-install/bin/redis-server /redis-install/bin/redis-cli; \
+    /redis-install/bin/redis-server --version; \
+    /redis-install/bin/redis-cli --version
+
+# ---------------------------------------------------------------------------
+# Runtime image — debian:trixie-slim, no build tools.
+# ---------------------------------------------------------------------------
+FROM debian:trixie-slim AS server
 
 # BuildKit auto-ARGs (TARGETPLATFORM, TARGETARCH, ...) must be re-declared in each
 # stage that consumes them, else they expand to empty.
@@ -32,26 +107,44 @@ ENV FALKORDB_HOME=/var/lib/falkordb \
     FALKORDB_IMPORT_PATH=/var/lib/falkordb/import \
     FALKORDB_TLS_PATH=/var/lib/falkordb/tls
 
-RUN mkdir -p ${FALKORDB_DATA_PATH} && ln -s ${FALKORDB_DATA_PATH} /data
-
-# Runtime-image apt install. GraphBLAS's JIT is permanently disabled at
-# module init (see graph/src/graph/graphblas/matrix.rs `GxB_JIT_OFF`, #452)
-# so the runtime image no longer needs clang or libomp-22-dev — no kernel
-# compilation happens at runtime. libomp.so.5 is still required by
-# libfalkordb.so and is copied from the builder stage further below.
+# Runtime-image apt install. After PR #483 GraphBLAS JIT is disabled at module
+# init (GxB_JIT_OFF), and libomp is now statically linked into libfalkordb.so
+# (see graph/build.rs + build/libomp.sh). The runtime image therefore needs
+# NO compiler, NO libomp shared library, and NO LLVM tooling at all — only
+# the bare runtime essentials.
 #
-# PreJIT kernel curation is the follow-up that recovers the performance
-# otherwise lost to generic-kernel fallbacks (see project tracker).
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates bash openssl && \
-    apt-get upgrade -y && \
-    # CVE trim — packages not needed at runtime by redis-server / falkordb.so.
-    (apt-get purge -y python3.13 python3.13-minimal libpython3.13-minimal libpython3.13-stdlib || true) && \
-    (dpkg --force-remove-essential --purge ncurses-base ncurses-bin || true) && \
-    (dpkg --force-remove-essential --purge perl-base || true) && \
-    (dpkg --force-remove-protected --force-remove-essential --purge login || true) && \
-    (dpkg --purge passwd || true) && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+# Required at runtime:
+#   ca-certificates, bash, openssl  : run.sh + gen-certs.sh
+#   libssl3                         : redis-server with BUILD_TLS=yes
+#
+# CVE trim: purge python3.13 + force-remove essential packages not needed at
+# runtime (ncurses, perl, login, passwd). With no LLVM in this image any more
+# we can run the trim straight through without the load-bearing ordering the
+# old layout required.
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates bash openssl libssl3; \
+    apt-get upgrade -y; \
+    # Create the redis user/group BEFORE purging `passwd` (which provides
+    # groupadd/useradd). Matches the upstream redis image's uid/gid 999
+    # so downstream consumers' bind-mount permissions and `USER redis`
+    # directives remain compatible after the base switch.
+    groupadd -r -g 999 redis && useradd -r -g redis -u 999 redis; \
+    (apt-get purge -y python3.13 python3.13-minimal libpython3.13-minimal libpython3.13-stdlib || true); \
+    (dpkg --force-remove-essential --purge ncurses-base ncurses-bin || true); \
+    (dpkg --force-remove-essential --purge perl-base || true); \
+    (dpkg --force-remove-protected --force-remove-essential --purge login || true); \
+    (dpkg --purge passwd || true); \
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/* /var/cache/debconf/*
+
+# Pull only the binaries from the redis-builder stage — no build toolchain,
+# no bundled modules, no jemalloc build artefacts.
+COPY --from=redis-builder /redis-install/bin/redis-server /usr/local/bin/redis-server
+COPY --from=redis-builder /redis-install/bin/redis-cli    /usr/local/bin/redis-cli
+
+RUN mkdir -p ${FALKORDB_DATA_PATH} ${FALKORDB_BIN_PATH} ${FALKORDB_IMPORT_PATH} ${FALKORDB_TLS_PATH} && \
+    ln -s ${FALKORDB_DATA_PATH} /data
 
 WORKDIR ${FALKORDB_HOME}
 
@@ -60,18 +153,16 @@ COPY ./build/runtime/gen-certs.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 RUN chmod +x ${FALKORDB_BIN_PATH}/run.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 COPY --from=builder /out/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
 
-# libomp.so.5 (LLVM OpenMP runtime) is linked by libfalkordb.so but absent from
-# the redis base. TARGETARCH selects the correct multiarch path so the ABI
-# matches what the binary was compiled against on both linux/amd64 and linux/arm64.
-ARG TARGETARCH
-RUN --mount=from=builder,target=/builder,readonly \
-    case "${TARGETARCH}" in \
-        amd64) LIBOMP=/builder/usr/lib/x86_64-linux-gnu/libomp.so.5 ;; \
-        arm64) LIBOMP=/builder/usr/lib/aarch64-linux-gnu/libomp.so.5 ;; \
-        *) echo "unsupported TARGETARCH=${TARGETARCH}"; exit 1 ;; \
-    esac && \
-    cp "${LIBOMP}" /usr/local/lib/libomp.so.5 && \
-    ldconfig
+# Runtime-stage sanity (cheap belt-and-braces; the load-bearing checks are in
+# the builder stage where binutils is available). Verify falkordb.so deps and
+# that the redis binaries we copied are runnable in this base.
+RUN deps="$(ldd ${FALKORDB_BIN_PATH}/falkordb.so | awk '{print $1}' | sort -u)" && \
+    echo "$deps" && \
+    if echo "$deps" | grep -E '^(libomp|libgomp|libgraphblas|liblagraph|liblagraphx|libredisearch|libVectorSimilarity)'; then \
+        echo "FAIL: forbidden dyn dep in final image"; exit 1; \
+    fi && \
+    redis-server --version && \
+    redis-cli --version
 
 ENV ARCH=${TARGETPLATFORM} \
     TLS=0 \

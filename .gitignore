@@ -30,6 +30,9 @@ tests/flow/logs
 tests/flow/csvs
 redisearch
 lagraph_lib
+/GraphBLAS/
+/LAGraph/
+/.graphblas-harvest/
 .venv/
 .zed/
 .github/copilot-instructions.md
@@ -54,4 +57,4 @@ twitter_thread.md
 .claude/scheduled_tasks.lock
 .claude/worktrees/
 local-build.so
-bench/
+bench/tests/flow/.ci-tmp/

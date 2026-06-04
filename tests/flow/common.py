@@ -23,6 +23,18 @@ Defaults.decode_responses = True
 SANITIZER     = os.getenv('SANITIZER', '')      != ''
 CODE_COVERAGE = os.getenv('CODE_COVERAGE', '0') == '1'
 
+# Per-socket read timeout (seconds) applied to redis clients constructed
+# from this module. Under ASAN/coverage instrumentation the GraphBLAS+
+# falkordb binary runs 3-5x slower (see PR #539); tests that issue heavy
+# synthetic workloads (test_index_create.test08_async_index_creation —
+# 1 M-node CREATE, test_slowlog.populate_slowlog — 19 concurrent
+# UNWIND(250k), test_pending_queries_limit — 16 concurrent UNWIND(1M))
+# overrun redis-py's default read deadline and trip a misleading
+# "Timeout reading from socket" instead of completing or surfacing the
+# real assertion. Bump the deadline generously on instrumented builds;
+# leave it unbounded otherwise.
+SOCKET_TIMEOUT = 600 if (SANITIZER or CODE_COVERAGE) else None
+
 # Normalized OS name for cross-platform test guards (matches the C FalkorDB
 # convention used by tests/memcheck): "macos", "linux", "windows", or the
 # raw sys.platform value if unrecognized.
@@ -418,6 +430,25 @@ def _bootstrap_cluster(shard_addrs, attempts=100, interval=0.2):
             raise RuntimeError(msg)
 
 
+def _wrap_get_connection_with_timeout(env_obj):
+    """Wrap env_obj.getConnection so the returned redis.Redis client carries
+    SOCKET_TIMEOUT. RLTest's native getConnection ignores socket_timeout, but
+    heavy synthetic workloads (e.g. 1M-node CREATE) overrun redis-py's default
+    read deadline under ASAN/coverage and surface as misleading socket
+    timeouts. No-op when SOCKET_TIMEOUT is None."""
+    if SOCKET_TIMEOUT is None:
+        return
+    inner = env_obj.getConnection
+    def _get_connection_with_timeout(*args, **kwargs):
+        c = inner(*args, **kwargs)
+        try:
+            c.connection_pool.connection_kwargs['socket_timeout'] = SOCKET_TIMEOUT
+        except Exception:
+            pass
+        return c
+    env_obj.getConnection = _get_connection_with_timeout
+
+
 def _attach_cluster(env_obj, shard_addrs):
     """Expose getConnection(shardId=N) on the RLTest Environment, matching
     RLTest's native oss-cluster Env contract. shardId is 1-based to mirror
@@ -436,7 +467,8 @@ def _attach_cluster(env_obj, shard_addrs):
                 f"shardId {shardId} out of range; have {len(shards)} shards"
             )
         h, p = shards[idx]
-        return redis.Redis(host=h, port=p, decode_responses=True)
+        return redis.Redis(host=h, port=p, decode_responses=True,
+                           socket_timeout=SOCKET_TIMEOUT)
 
     env_obj.getConnection = _get_connection
     env_obj.shards = shards
@@ -535,6 +567,7 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
             env_obj.log_path = f"{env_obj.logDir}/{env_obj.envRunner._getFileName('master', '.log')}"
         else:
             env_obj.log_path = None
+        _wrap_get_connection_with_timeout(env_obj)
         db = FalkorDB("localhost", env_obj.port)
         return (env_obj, db)
 
@@ -588,6 +621,7 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
             # half-replicated state.
             _wait_for_replication(replica_host, replica_port)
             _attach_slave(env_obj, replica_host, replica_port)
+        _wrap_get_connection_with_timeout(env_obj)
         db = FalkorDB(host, port)
         return (env_obj, db)
 
@@ -678,6 +712,7 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
         env_obj.envRunner.port = port
         env_obj.envRunner.host = host
 
+    _wrap_get_connection_with_timeout(env_obj)
     db = FalkorDB(host, port)
     return (env_obj, db)
 
@@ -752,7 +787,8 @@ def _attach_slave(env_obj, host, port):
     port+1 on localhost — that assumption doesn't hold under docker-per-class
     where the replica is a sibling container on a network alias."""
     def _get_slave_connection(*_args, **_kwargs):
-        return redis.Redis(host=host, port=port, decode_responses=True)
+        return redis.Redis(host=host, port=port, decode_responses=True,
+                           socket_timeout=SOCKET_TIMEOUT)
     env_obj.getSlaveConnection = _get_slave_connection
     env_obj.replica_host = host
     env_obj.replica_port = port

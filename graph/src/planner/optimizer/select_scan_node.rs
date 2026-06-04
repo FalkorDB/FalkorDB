@@ -213,6 +213,38 @@ fn collect_output_aliases(ir: &IR) -> HashSet<u32> {
     aliases
 }
 
+/// Computes the structural path (sequence of sibling indices from the root) to
+/// the node at `idx`. Unlike a [`NodeIdx`], a path is immune to the tree's
+/// `Auto` memory-reclaim reorganization that can occur after node removals, so
+/// it can be used to re-resolve a node after the tree has been mutated.
+fn node_path(
+    plan: &DynTree<IR>,
+    idx: NodeIdx<Dyn<IR>>,
+) -> Vec<usize> {
+    let mut path = Vec::new();
+    let mut current = plan.node(idx);
+    while let Some(parent) = current.parent() {
+        path.push(current.sibling_idx());
+        current = parent;
+    }
+    path.reverse();
+    path
+}
+
+/// Re-resolves a structural path produced by [`node_path`] back into a fresh
+/// [`NodeIdx`] for the current tree. Returns `None` if the path no longer
+/// corresponds to an existing node (e.g. the structure changed beneath it).
+fn resolve_path(
+    plan: &DynTree<IR>,
+    path: &[usize],
+) -> Option<NodeIdx<Dyn<IR>>> {
+    let mut node = plan.root();
+    for &pos in path {
+        node = node.get_child(pos)?;
+    }
+    Some(node.idx())
+}
+
 /// Selects the optimal scan node for leaf `CondTraverse` operators.
 ///
 /// For each bottom-of-chain CondTraverse (leaf or with a non-CT child),
@@ -229,10 +261,20 @@ pub(super) fn select_scan_node(
     optimized_plan: &mut DynTree<IR>,
     graph: &Graph,
 ) {
-    // Collect all bottom-of-chain CondTraverse indices.
+    // Collect all bottom-of-chain CondTraverse nodes as structural paths.
     // A "bottom CT" is a CT that either has no children (leaf) or whose
     // only child is not a CT (e.g., Project, AllNodeScan).
-    let bottom_ct_indices: Vec<_> = {
+    //
+    // We record paths rather than `NodeIdx`es because processing one chain
+    // mutates the tree (prune / push_child_tree). Those removals can trigger
+    // orx-tree's `Auto` memory-reclaim reorganization, which invalidates any
+    // previously-collected `NodeIdx` for nodes that are still in the tree.
+    // A structural path is re-resolved against the live tree just before use.
+    //
+    // Paths are processed deepest-first so that a processed chain's local
+    // mutations (which only ever affect its own subtree) never shift the path
+    // of a not-yet-processed, shallower chain.
+    let mut bottom_ct_paths: Vec<Vec<usize>> = {
         let indices = optimized_plan.root().indices::<Bfs>().collect::<Vec<_>>();
         indices
             .into_iter()
@@ -254,10 +296,23 @@ pub(super) fn select_scan_node(
                 }
                 !matches!(child.data(), IR::CondTraverse { .. })
             })
+            .map(|idx| node_path(optimized_plan, idx))
             .collect()
     };
+    bottom_ct_paths.sort_by_key(|p| std::cmp::Reverse(p.len()));
 
-    for bottom_idx in bottom_ct_indices {
+    for path in bottom_ct_paths {
+        // Re-resolve the path against the (possibly mutated) live tree. Skip if
+        // the node no longer exists or is no longer a CondTraverse.
+        let Some(bottom_idx) = resolve_path(optimized_plan, &path) else {
+            continue;
+        };
+        if !matches!(
+            optimized_plan.node(bottom_idx).data(),
+            IR::CondTraverse { .. }
+        ) {
+            continue;
+        }
         let is_leaf = optimized_plan.node(bottom_idx).num_children() == 0;
         // Detect if the child is a planner-added scan (not an outer-context op).
         let has_planner_scan = !is_leaf && {

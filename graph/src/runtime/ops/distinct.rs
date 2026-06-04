@@ -47,7 +47,10 @@ impl<'a> DistinctOp<'a> {
         Self {
             runtime,
             child,
-            deduper: ValuesDeduper::default(),
+            // Pre-size the dedup set so it does not rehash through several small
+            // capacities on every query. DISTINCT result sets in traversal/
+            // expansion queries are commonly in the hundreds-to-low-thousands.
+            deduper: ValuesDeduper::with_capacity(1024),
             idx,
         }
     }

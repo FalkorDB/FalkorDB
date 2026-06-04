@@ -49,10 +49,11 @@ use graph::udf::get_udf_repo;
 use parking_lot::RwLock;
 use redis_module::logging::log_notice;
 use redis_module::raw::{
-    self, RedisModuleCtx, load_string_buffer, load_unsigned, save_string, save_unsigned,
+    self, RedisModuleCtx, RedisModuleIO, load_string_buffer, load_unsigned, save_string,
+    save_unsigned,
 };
 use redis_module::{
-    REDISMODULE_TYPE_METHOD_VERSION, RedisModuleIO, RedisModuleTypeMethods, native_types::RedisType,
+    REDISMODULE_TYPE_METHOD_VERSION, RedisModuleTypeMethods, native_types::RedisType,
 };
 use std::ffi::CString;
 use std::sync::Arc;

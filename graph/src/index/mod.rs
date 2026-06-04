@@ -67,74 +67,27 @@ use parking_lot::Mutex;
 
 use crate::runtime::value::Value;
 
-/// Allocate a C array compatible with RediSearch's `array_free`.
-///
-/// RediSearch uses a custom array format with a 12-byte header (len, cap, elem_sz)
-/// prepended to the data. `array_free` reads this header, so we must allocate
-/// in the same format.
-unsafe fn rs_array_new<T>(data: &[T]) -> *mut T {
-    use redisearch::redis::RedisModule_Alloc;
-
-    #[repr(C)]
-    struct ArrayHdr {
-        len: u32,
-        cap: u32,
-        elem_sz: u32,
-    }
-
-    let n = data.len();
-    let elem_sz = std::mem::size_of::<T>();
-    let total = std::mem::size_of::<ArrayHdr>() + std::mem::size_of_val(data);
-
-    unsafe {
-        // Must use RedisModule_Alloc because RediSearch's array_free uses
-        // rm_free which maps to RedisModule_Free when compiled as a module.
-        let alloc = RedisModule_Alloc.expect("RedisModule_Alloc not initialized");
-        let raw = alloc(total);
-        if raw.is_null() {
-            return std::ptr::null_mut();
-        }
-
-        let hdr = raw.cast::<ArrayHdr>();
-        (*hdr).len = n as u32;
-        (*hdr).cap = n as u32;
-        (*hdr).elem_sz = elem_sz as u32;
-
-        let arr_ptr = raw
-            .cast::<u8>()
-            .add(std::mem::size_of::<ArrayHdr>())
-            .cast::<T>();
-        // Use byte-level copy to avoid alignment issues — the array header
-        // is 12 bytes, so the data pointer may not be naturally aligned for T.
-        std::ptr::copy_nonoverlapping(
-            data.as_ptr().cast::<u8>(),
-            arr_ptr.cast::<u8>(),
-            std::mem::size_of_val(data),
-        );
-
-        arr_ptr
-    }
-}
 use redisearch::{
-    GC_POLICY_FORK, REDISEARCH_ADD_REPLACE, RSDoc, RSFLDOPT_NONE, RSFLDOPT_TXTNOSTEM,
-    RSFLDOPT_TXTPHONETIC, RSFLDTYPE_FULLTEXT, RSFLDTYPE_GEO, RSFLDTYPE_NUMERIC, RSFLDTYPE_TAG,
-    RSFLDTYPE_VECTOR, RSGeoDistance_RS_GEO_DISTANCE_M, RSIndex, RSRANGE_INF, RSRANGE_NEG_INF,
-    RSResultsIterator, RediSearch_CreateDocument2, RediSearch_CreateEmptyNode,
-    RediSearch_CreateField, RediSearch_CreateGeoNode, RediSearch_CreateIndex,
-    RediSearch_CreateIndexOptions, RediSearch_CreateIntersectNode, RediSearch_CreateNumericNode,
-    RediSearch_CreateTagLexRangeNode, RediSearch_CreateTagNode, RediSearch_CreateTagTokenNode,
-    RediSearch_CreateUnionNode, RediSearch_CreateVecSimNode, RediSearch_DeleteDocument,
-    RediSearch_DocumentAddFieldGeo, RediSearch_DocumentAddFieldNumber,
-    RediSearch_DocumentAddFieldNumericArray, RediSearch_DocumentAddFieldString,
-    RediSearch_DocumentAddFieldStringArray, RediSearch_DocumentAddFieldVector,
-    RediSearch_DropIndex, RediSearch_FreeIndexOptions, RediSearch_GetResultsIterator,
-    RediSearch_IndexAddDocument, RediSearch_IndexOptionsSetGCPolicy,
-    RediSearch_IndexOptionsSetLanguage, RediSearch_IndexOptionsSetStopwords,
-    RediSearch_IterateQuery, RediSearch_MemUsage, RediSearch_QueryNodeAddChild,
-    RediSearch_ResultsIteratorFree, RediSearch_ResultsIteratorGetScore,
-    RediSearch_ResultsIteratorNext, RediSearch_TagFieldSetCaseSensitive,
-    RediSearch_TagFieldSetSeparator, RediSearch_TextFieldSetWeight, RediSearch_VectorFieldSetDim,
-    RediSearch_VectorFieldSetHNSWParams,
+    DEFAULT_BLOCK_SIZE, GC_POLICY_FORK, HNSW_DEFAULT_EPSILON, HNSWParams, REDISEARCH_ADD_REPLACE,
+    RSDoc, RSFLDOPT_NONE, RSFLDOPT_TXTNOSTEM, RSFLDOPT_TXTPHONETIC, RSFLDTYPE_FULLTEXT,
+    RSFLDTYPE_GEO, RSFLDTYPE_NUMERIC, RSFLDTYPE_TAG, RSFLDTYPE_VECTOR,
+    RSGeoDistance_RS_GEO_DISTANCE_M, RSIndex, RSRANGE_INF, RSRANGE_NEG_INF, RSResultsIterator,
+    RediSearch_CreateDocument2, RediSearch_CreateEmptyNode, RediSearch_CreateField,
+    RediSearch_CreateGeoNode, RediSearch_CreateIndex, RediSearch_CreateIndexOptions,
+    RediSearch_CreateIntersectNode, RediSearch_CreateNumericNode, RediSearch_CreateTagLexRangeNode,
+    RediSearch_CreateTagNode, RediSearch_CreateTagTokenNode, RediSearch_CreateUnionNode,
+    RediSearch_CreateVecSimNode, RediSearch_DeleteDocument, RediSearch_DocumentAddFieldGeo,
+    RediSearch_DocumentAddFieldNumber, RediSearch_DocumentAddFieldNumericArray,
+    RediSearch_DocumentAddFieldString, RediSearch_DocumentAddFieldStringArray,
+    RediSearch_DocumentAddFieldVector, RediSearch_DropIndex, RediSearch_FreeIndexOptions,
+    RediSearch_GetResultsIterator, RediSearch_IndexAddDocument, RediSearch_IndexClone,
+    RediSearch_IndexOptionsSetGCPolicy, RediSearch_IndexOptionsSetLanguage,
+    RediSearch_IndexOptionsSetStopwords, RediSearch_IndexRelease, RediSearch_IterateQuery,
+    RediSearch_MemUsage, RediSearch_QueryNodeAddChild, RediSearch_ResultsIteratorFree,
+    RediSearch_ResultsIteratorGetScore, RediSearch_ResultsIteratorNext,
+    RediSearch_TagFieldSetCaseSensitive, RediSearch_TagFieldSetSeparator,
+    RediSearch_TextFieldSetWeight, RediSearch_VecSimTieredParams_Init,
+    RediSearch_VectorFieldSetParams, VecSimAlgo, VecSimMetric, VecSimParams, VecSimType,
 };
 
 /// Type of index for a property.
@@ -313,17 +266,19 @@ pub enum IndexQuery<T> {
 /// iterator step (e.g. just the ID, or ID + score).
 pub struct IndexResultsIter<T, F: FnMut(*mut RSResultsIterator, u64) -> T> {
     iter: *mut RSResultsIterator,
-    rs_idx: *mut RSIndex,
+    /// Own a strong reference so the spec stays alive for the whole iteration,
+    /// even if a concurrent `DROP INDEX` runs. `None` for an empty iterator.
+    index: Option<OwnedIndex>,
     map: F,
 }
 
 impl<T, F: FnMut(*mut RSResultsIterator, u64) -> T> IndexResultsIter<T, F> {
-    const fn new(
+    fn new(
         iter: *mut RSResultsIterator,
-        rs_idx: *mut RSIndex,
+        index: Option<OwnedIndex>,
         map: F,
     ) -> Self {
-        Self { iter, rs_idx, map }
+        Self { iter, index, map }
     }
 }
 
@@ -332,7 +287,7 @@ impl IndexResultsIter<u64, fn(*mut RSResultsIterator, u64) -> u64> {
     pub fn empty() -> Self {
         Self {
             iter: null_mut(),
-            rs_idx: null_mut(),
+            index: None,
             map: |_, id| id,
         }
     }
@@ -343,7 +298,7 @@ impl IndexResultsIter<(u64, f64), fn(*mut RSResultsIterator, u64) -> (u64, f64)>
     pub fn empty_scored() -> Self {
         Self {
             iter: null_mut(),
-            rs_idx: null_mut(),
+            index: None,
             map: |_, id| (id, 0.0),
         }
     }
@@ -357,12 +312,22 @@ impl<T, F: FnMut(*mut RSResultsIterator, u64) -> T> Iterator for IndexResultsIte
             return None;
         }
         unsafe {
-            let id =
-                RediSearch_ResultsIteratorNext(self.iter, self.rs_idx, null_mut()).cast::<u64>();
-            if id.is_null() {
-                return None;
+            let rs_idx = self.index.as_ref().map_or(null_mut(), OwnedIndex::as_ptr);
+            loop {
+                let mut key_len: usize = 0;
+                let key = RediSearch_ResultsIteratorNext(self.iter, rs_idx, &raw mut key_len)
+                    .cast::<u8>();
+                if key.is_null() {
+                    return None;
+                }
+                // `Document::new` always writes a NODE_DOC_KEY_LEN-char hex key;
+                // skip anything else rather than let `decode_id` over-read.
+                if key_len != NODE_DOC_KEY_LEN {
+                    debug_assert!(false, "unexpected node index key length {key_len}");
+                    continue;
+                }
+                return Some((self.map)(self.iter, decode_id(key)));
             }
-            Some((self.map)(self.iter, id.read_unaligned()))
         }
     }
 }
@@ -388,22 +353,23 @@ pub type ScoredIdIter = IndexResultsIter<(u64, f64), fn(*mut RSResultsIterator, 
 /// `Document::new_edge`).
 pub struct EdgeTripleIter {
     iter: *mut RSResultsIterator,
-    rs_idx: *mut RSIndex,
+    /// Strong reference keeping the spec alive for the iteration's lifetime.
+    index: Option<OwnedIndex>,
 }
 
 impl EdgeTripleIter {
-    const fn new(
+    fn new(
         iter: *mut RSResultsIterator,
-        rs_idx: *mut RSIndex,
+        index: Option<OwnedIndex>,
     ) -> Self {
-        Self { iter, rs_idx }
+        Self { iter, index }
     }
 
     #[must_use]
     pub const fn empty() -> Self {
         Self {
             iter: null_mut(),
-            rs_idx: null_mut(),
+            index: None,
         }
     }
 }
@@ -416,13 +382,22 @@ impl Iterator for EdgeTripleIter {
             return None;
         }
         unsafe {
-            let ptr = RediSearch_ResultsIteratorNext(self.iter, self.rs_idx, null_mut())
-                .cast::<[u64; 3]>();
-            if ptr.is_null() {
-                return None;
+            let rs_idx = self.index.as_ref().map_or(null_mut(), OwnedIndex::as_ptr);
+            loop {
+                let mut key_len: usize = 0;
+                let key = RediSearch_ResultsIteratorNext(self.iter, rs_idx, &raw mut key_len)
+                    .cast::<u8>();
+                if key.is_null() {
+                    return None;
+                }
+                // `Document::new_edge` always writes an EDGE_DOC_KEY_LEN-char hex
+                // key; skip anything else rather than let `decode_triple` over-read.
+                if key_len != EDGE_DOC_KEY_LEN {
+                    debug_assert!(false, "unexpected edge index key length {key_len}");
+                    continue;
+                }
+                return Some(decode_triple(key).into());
             }
-            let triple = ptr.read_unaligned();
-            Some(triple.into())
         }
     }
 }
@@ -442,22 +417,23 @@ impl Drop for EdgeTripleIter {
 /// relevance score via `RediSearch_ResultsIteratorGetScore`.
 pub struct ScoredEdgeTripleIter {
     iter: *mut RSResultsIterator,
-    rs_idx: *mut RSIndex,
+    /// Strong reference keeping the spec alive for the iteration's lifetime.
+    index: Option<OwnedIndex>,
 }
 
 impl ScoredEdgeTripleIter {
-    const fn new(
+    fn new(
         iter: *mut RSResultsIterator,
-        rs_idx: *mut RSIndex,
+        index: Option<OwnedIndex>,
     ) -> Self {
-        Self { iter, rs_idx }
+        Self { iter, index }
     }
 
     #[must_use]
     pub const fn empty() -> Self {
         Self {
             iter: null_mut(),
-            rs_idx: null_mut(),
+            index: None,
         }
     }
 }
@@ -470,14 +446,24 @@ impl Iterator for ScoredEdgeTripleIter {
             return None;
         }
         unsafe {
-            let ptr = RediSearch_ResultsIteratorNext(self.iter, self.rs_idx, null_mut())
-                .cast::<[u64; 3]>();
-            if ptr.is_null() {
-                return None;
+            let rs_idx = self.index.as_ref().map_or(null_mut(), OwnedIndex::as_ptr);
+            loop {
+                let mut key_len: usize = 0;
+                let key = RediSearch_ResultsIteratorNext(self.iter, rs_idx, &raw mut key_len)
+                    .cast::<u8>();
+                if key.is_null() {
+                    return None;
+                }
+                // `Document::new_edge` always writes an EDGE_DOC_KEY_LEN-char hex
+                // key; skip anything else rather than let `decode_triple` over-read.
+                if key_len != EDGE_DOC_KEY_LEN {
+                    debug_assert!(false, "unexpected edge index key length {key_len}");
+                    continue;
+                }
+                let triple = decode_triple(key);
+                let score = RediSearch_ResultsIteratorGetScore(self.iter);
+                return Some((triple[0], triple[1], triple[2], score));
             }
-            let triple = ptr.read_unaligned();
-            let score = RediSearch_ResultsIteratorGetScore(self.iter);
-            Some((triple[0], triple[1], triple[2], score))
         }
     }
 }
@@ -549,6 +535,89 @@ impl Iterator for VectorScoredEdgeTripleIter {
     }
 }
 
+// ---- Document-key hex encoding ----
+//
+// RediSearch's doc table is a trie whose per-node child count is a `u8`. Our doc
+// keys are raw little-endian entity ids, so sequential ids drive 256 distinct
+// first bytes into the trie root; the 256th wraps the counter to 0, the trie
+// `realloc`s its children buffer to ~nothing, and copying the child pointers
+// overflows it (heap-buffer-overflow in `TrieMap_Add`). Encoding keys as
+// lowercase hex shrinks the first-byte domain from 256 to 16, keeping the trie
+// inside its printable-key contract. Mirrors the C fix in
+// FalkorDB/FalkorDB#2021 (`src/index/index_doc_key.c`): a `u64` id -> 16 hex
+// chars, a `[src, dst, edge_id]` triple -> 48.
+const NODE_DOC_KEY_LEN: usize = std::mem::size_of::<u64>() * 2;
+const EDGE_DOC_KEY_LEN: usize = std::mem::size_of::<[u64; 3]>() * 2;
+const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
+
+/// Escape a TAG string value so it survives RediSearch's tag tokenizer and the
+/// query-side `tag_strtolower` strip pass, collapsing to a single literal
+/// token. Mirrors C FalkorDB's `TagEncode_Lower` (FalkorDB/FalkorDB#2021,
+/// `src/index/tag_encode.c`): every byte `<= 0x20` (control bytes, whitespace
+/// and the `\1` tag separator), `\` (0x5c, the read-side strip target) and `_`
+/// (0x5f, the escape prefix itself) is emitted as `_` followed by two lowercase
+/// hex digits; all other bytes pass through verbatim. Applied symmetrically on
+/// the index write and query paths so the stored key and the query key match.
+/// No decoder exists — the encoded form is only ever the RediSearch index key;
+/// the real attribute value is served from FalkorDB's own attribute store.
+fn tag_encode_lower(src: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(src.len());
+    for &b in src {
+        if b <= 0x20 || b == b'\\' || b == b'_' {
+            out.push(b'_');
+            out.push(HEX_DIGITS[(b >> 4) as usize]);
+            out.push(HEX_DIGITS[(b & 0x0f) as usize]);
+        } else {
+            out.push(b);
+        }
+    }
+    out
+}
+
+/// Hex-encode `bytes` into `out` (high nibble first). `out.len()` must be
+/// `bytes.len() * 2`.
+fn hex_encode_into(
+    bytes: &[u8],
+    out: &mut [u8],
+) {
+    for (i, &b) in bytes.iter().enumerate() {
+        out[i * 2] = HEX_DIGITS[(b >> 4) as usize];
+        out[i * 2 + 1] = HEX_DIGITS[(b & 0x0f) as usize];
+    }
+}
+
+const fn hex_nibble(c: u8) -> u8 {
+    match c {
+        b'0'..=b'9' => c - b'0',
+        b'a'..=b'f' => c - b'a' + 10,
+        _ => 0,
+    }
+}
+
+/// Decode 16 hex chars at `ptr` into the original `u64` id (inverse of
+/// `hex_encode_into`). SAFETY: `ptr` must point to at least 16 readable bytes.
+unsafe fn decode_id(ptr: *const u8) -> u64 {
+    let mut bytes = [0u8; 8];
+    for (i, b) in bytes.iter_mut().enumerate() {
+        // SAFETY: caller guarantees `ptr` covers 16 readable bytes.
+        *b = unsafe { (hex_nibble(*ptr.add(i * 2)) << 4) | hex_nibble(*ptr.add(i * 2 + 1)) };
+    }
+    u64::from_le_bytes(bytes)
+}
+
+/// Decode 48 hex chars at `ptr` into a `[src, dst, edge_id]` triple. SAFETY:
+/// `ptr` must point to at least 48 readable bytes.
+unsafe fn decode_triple(ptr: *const u8) -> [u64; 3] {
+    // SAFETY: caller guarantees `ptr` covers 48 readable bytes (3 × 16).
+    unsafe {
+        [
+            decode_id(ptr),
+            decode_id(ptr.add(16)),
+            decode_id(ptr.add(32)),
+        ]
+    }
+}
+
 /// A document to be indexed, wrapping a RediSearch document.
 #[derive(Clone)]
 pub struct Document {
@@ -562,13 +631,15 @@ pub struct Document {
 impl Document {
     #[must_use]
     pub fn new(id: u64) -> Self {
+        let mut key = [0u8; NODE_DOC_KEY_LEN];
+        hex_encode_into(&id.to_le_bytes(), &mut key);
         Self {
             id,
             string_arr_values: Vec::new(),
             rs_doc: unsafe {
                 let doc = RediSearch_CreateDocument2(
-                    (&raw const id).cast::<c_void>(),
-                    8,
+                    key.as_ptr().cast::<c_void>(),
+                    NODE_DOC_KEY_LEN,
                     null_mut(),
                     1.0,
                     null_mut(),
@@ -590,14 +661,17 @@ impl Document {
         dst: u64,
         edge_id: u64,
     ) -> Self {
-        let key: [u64; 3] = [src, dst, edge_id];
+        let mut key = [0u8; EDGE_DOC_KEY_LEN];
+        hex_encode_into(&src.to_le_bytes(), &mut key[0..16]);
+        hex_encode_into(&dst.to_le_bytes(), &mut key[16..32]);
+        hex_encode_into(&edge_id.to_le_bytes(), &mut key[32..48]);
         Self {
             id: edge_id,
             string_arr_values: Vec::new(),
             rs_doc: unsafe {
                 let doc = RediSearch_CreateDocument2(
                     key.as_ptr().cast::<c_void>(),
-                    std::mem::size_of::<[u64; 3]>(),
+                    EDGE_DOC_KEY_LEN,
                     null_mut(),
                     1.0,
                     null_mut(),
@@ -626,7 +700,6 @@ impl Document {
                         self.rs_doc,
                         field.name.as_ptr().cast::<c_char>(),
                         vec.as_ptr().cast::<c_char>(),
-                        vec.len() as u32,
                         vec.len() * std::mem::size_of::<f32>(),
                     );
                 }
@@ -671,12 +744,15 @@ impl Document {
                     );
                 }
                 Value::String(s) => {
-                    // Only Range fields reach here; add as TAG.
+                    // Only Range fields reach here; add as TAG, encoded so
+                    // tag-special bytes (separator, backslash, whitespace)
+                    // survive RediSearch tokenization as a single token.
+                    let enc = tag_encode_lower(s.as_bytes());
                     RediSearch_DocumentAddFieldString(
                         self.rs_doc,
                         field.name.as_ptr(),
-                        s.as_ptr().cast::<c_char>(),
-                        s.len(),
+                        enc.as_ptr().cast::<c_char>(),
+                        enc.len(),
                         RSFLDTYPE_TAG,
                     );
                 }
@@ -700,7 +776,9 @@ impl Document {
                             Value::Int(i) => numerics.push(*i as f64),
                             Value::Float(f) => numerics.push(*f),
                             Value::String(s) => {
-                                if let Ok(cs) = CString::new(s.as_str()) {
+                                // Encode to match the single-string TAG write
+                                // path and the query path.
+                                if let Ok(cs) = CString::new(tag_encode_lower(s.as_bytes())) {
                                     string_cstrs.push(cs);
                                 }
                             }
@@ -710,33 +788,26 @@ impl Document {
                     if !numerics.is_empty()
                         && let Some(name) = field.numeric_arr_name()
                     {
-                        let mut c_arr = rs_array_new(&numerics);
-                        if !c_arr.is_null() {
-                            RediSearch_DocumentAddFieldNumericArray(
-                                self.rs_doc,
-                                name.as_ptr(),
-                                &raw mut c_arr,
-                                RSFLDTYPE_NUMERIC,
-                            );
-                        }
+                        RediSearch_DocumentAddFieldNumericArray(
+                            self.rs_doc,
+                            name.as_ptr(),
+                            numerics.as_ptr(),
+                            numerics.len(),
+                            RSFLDTYPE_NUMERIC,
+                        );
                     }
                     if !string_cstrs.is_empty()
                         && let Some(name) = field.string_arr_name()
                     {
-                        let ptrs: Vec<*mut c_char> = string_cstrs
-                            .iter()
-                            .map(|cs| cs.as_ptr().cast_mut())
-                            .collect();
-                        let mut c_arr = rs_array_new(&ptrs);
-                        if !c_arr.is_null() {
-                            RediSearch_DocumentAddFieldStringArray(
-                                self.rs_doc,
-                                name.as_ptr(),
-                                &raw mut c_arr,
-                                ptrs.len(),
-                                RSFLDTYPE_TAG,
-                            );
-                        }
+                        let ptrs: Vec<*const c_char> =
+                            string_cstrs.iter().map(|cs| cs.as_ptr()).collect();
+                        RediSearch_DocumentAddFieldStringArray(
+                            self.rs_doc,
+                            name.as_ptr(),
+                            ptrs.as_ptr(),
+                            ptrs.len(),
+                            RSFLDTYPE_TAG,
+                        );
                         // Keep string content CStrings alive — the pointer
                         // array in RediSearch references them. They'll be
                         // properly freed when the Document is dropped.
@@ -770,7 +841,9 @@ pub struct Index {
     /// their label has been replaced by a fresh `Index` after a DROP +
     /// CREATE round-trip, so they don't decrement the wrong counter.
     id: u64,
-    rs_idx: *mut RSIndex,
+    /// The RediSearch index spec. `None` until `create_rs_index` runs (the
+    /// former `null` sentinel). Owns the creation strong reference.
+    index: Option<OwnedIndex>,
     fields: HashMap<Arc<String>, Vec<Arc<Field>>>,
     /// Attribute keys in insertion order. Tracked alongside `fields` so
     /// `CALL db.indexes()` can return `properties` in declaration order.
@@ -828,27 +901,83 @@ impl Drop for GilGuard {
     }
 }
 
-impl Drop for Index {
+/// RAII handle for a RediSearch index spec (`RefManager`). Owns one strong
+/// reference; `Drop` releases it. The raw `*mut RSIndex` never escapes
+/// this type except as a transient passed straight into an FFI call.
+#[derive(Debug)]
+struct OwnedIndex(std::ptr::NonNull<RSIndex>);
+
+// SAFETY: a RediSearch index spec is a refcounted, internally-synchronized
+// `RefManager`; cloning/releasing and using the handle across threads is sound.
+unsafe impl Send for OwnedIndex {}
+unsafe impl Sync for OwnedIndex {}
+
+impl OwnedIndex {
+    /// Wrap an owned strong reference (from `RediSearch_CreateIndex` or
+    /// `RediSearch_IndexClone`). `None` for a null/invalidated handle.
+    fn from_owned(p: *mut RSIndex) -> Option<Self> {
+        std::ptr::NonNull::new(p).map(Self)
+    }
+
+    /// Raw handle for an FFI call. The returned pointer must not be stored.
+    fn as_ptr(&self) -> *mut RSIndex {
+        self.0.as_ptr()
+    }
+
+    /// Acquire an additional strong reference; `None` if the spec was
+    /// invalidated by a concurrent `DROP INDEX`.
+    fn try_clone(&self) -> Option<Self> {
+        Self::from_owned(unsafe { RediSearch_IndexClone(self.as_ptr()) })
+    }
+
+    /// Consume the handle, returning the raw pointer without releasing the
+    /// reference — for the creation ref, which `RediSearch_DropIndex` both
+    /// invalidates and releases in one call.
+    fn into_raw(self) -> *mut RSIndex {
+        let p = self.0.as_ptr();
+        std::mem::forget(self);
+        p
+    }
+}
+
+impl Drop for OwnedIndex {
     fn drop(&mut self) {
-        if self.rs_idx.is_null() {
-            return;
-        }
-        // RediSearch_DropIndex transitively calls RM_StopTimer, which mutates
-        // Redis-internal state (the timer rax). The Redis main thread holds
-        // the module GIL implicitly during command execution, so off-thread
-        // callers must acquire it explicitly. Mirrors the C FalkorDB pattern
-        // in `_GraphContext_Free` (FalkorDB/src/graph/graphcontext.c).
+        // The final release frees the spec -> IndexSpec_Free -> RM_StopTimer,
+        // which mutates Redis timer state; off-main-thread callers must hold
+        // the module GIL (mirrors `Index::drop` / `create_rs_index`).
         unsafe {
             let _gil = if crate::thread_id::is_main_thread() {
                 None
             } else {
                 GilGuard::acquire()
             };
-            if self.rs_idx.is_null() {
-                return;
+            RediSearch_IndexRelease(self.0.as_ptr());
+        }
+    }
+}
+
+impl Drop for Index {
+    fn drop(&mut self) {
+        // RediSearch_DropIndex transitively calls RM_StopTimer, which mutates
+        // Redis-internal state (the timer rax). The Redis main thread holds
+        // the module GIL implicitly during command execution, so off-thread
+        // callers must acquire it explicitly. Mirrors the C FalkorDB pattern
+        // in `_GraphContext_Free` (FalkorDB/src/graph/graphcontext.c).
+        //
+        // DropIndex both invalidates the spec and releases the creation ref,
+        // so hand it the raw pointer via `into_raw` to avoid a double release
+        // from `OwnedIndex`'s own Drop. Outstanding clones (held by in-flight
+        // read iterators) keep the spec alive until they are released.
+        if let Some(index) = self.index.take() {
+            unsafe {
+                let _gil = if crate::thread_id::is_main_thread() {
+                    None
+                } else {
+                    GilGuard::acquire()
+                };
+                RediSearch_DropIndex(index.into_raw());
+                // _gil drops here, releasing the GIL if it was acquired.
             }
-            RediSearch_DropIndex(self.rs_idx);
-            // _gil drops here, releasing the GIL if it was acquired.
         }
     }
 }
@@ -859,7 +988,7 @@ impl Default for Index {
         let id = NEXT_INDEX_ID.fetch_add(1, Ordering::Relaxed);
         Self {
             id,
-            rs_idx: std::ptr::null_mut(),
+            index: None,
             fields: HashMap::new(),
             field_order: Vec::new(),
             pending_slots: Mutex::new(PendingSlots {
@@ -907,7 +1036,14 @@ impl Index {
     /// Returns true if a RediSearch index has been created.
     #[must_use]
     pub const fn has_rs_index(&self) -> bool {
-        !self.rs_idx.is_null()
+        self.index.is_some()
+    }
+
+    /// Raw spec handle for an FFI call (null if no index yet). Transient — the
+    /// returned pointer is passed straight to a `RediSearch_*` call and never
+    /// stored. Valid only while `&self` (and thus the owned reference) lives.
+    fn rs_ptr(&self) -> *mut RSIndex {
+        self.index.as_ref().map_or(null_mut(), OwnedIndex::as_ptr)
     }
 
     /// Create the underlying RediSearch index with the given options.
@@ -970,7 +1106,11 @@ impl Index {
 
             // GIL is already held at the top of this unsafe block, covering
             // CreateIndex's transitive RM_CreateTimer call.
-            self.rs_idx = RediSearch_CreateIndex(clabel.as_ptr().cast::<c_char>(), options);
+            self.index = OwnedIndex::from_owned(RediSearch_CreateIndex(
+                clabel.as_ptr().cast::<c_char>(),
+                options,
+            ));
+            assert!(self.index.is_some(), "RediSearch_CreateIndex returned null");
 
             RediSearch_FreeIndexOptions(options);
 
@@ -978,13 +1118,13 @@ impl Index {
             // attribute-existence queries and reported in db.indexes() info.
             let none_field = CString::new("NONE_INDEXABLE_FIELDS").unwrap();
             let field_id = RediSearch_CreateField(
-                self.rs_idx,
+                self.rs_ptr(),
                 none_field.as_ptr(),
                 RSFLDTYPE_TAG,
                 RSFLDOPT_NONE,
             );
-            RediSearch_TagFieldSetSeparator(self.rs_idx, field_id, 1 as c_char);
-            RediSearch_TagFieldSetCaseSensitive(self.rs_idx, field_id, 1);
+            RediSearch_TagFieldSetSeparator(self.rs_ptr(), field_id, 1 as c_char);
+            RediSearch_TagFieldSetCaseSensitive(self.rs_ptr(), field_id, 1);
         }
         Ok(())
     }
@@ -1001,21 +1141,21 @@ impl Index {
                     IndexType::Range => {
                         let types = RSFLDTYPE_NUMERIC | RSFLDTYPE_GEO | RSFLDTYPE_TAG;
                         let field_id = RediSearch_CreateField(
-                            self.rs_idx,
+                            self.rs_ptr(),
                             field.name.as_ptr(),
                             types,
                             RSFLDOPT_NONE,
                         );
 
-                        RediSearch_TagFieldSetSeparator(self.rs_idx, field_id, 1 as c_char);
-                        RediSearch_TagFieldSetCaseSensitive(self.rs_idx, field_id, 1);
+                        RediSearch_TagFieldSetSeparator(self.rs_ptr(), field_id, 1 as c_char);
+                        RediSearch_TagFieldSetCaseSensitive(self.rs_ptr(), field_id, 1);
 
                         // Array sub-fields: numeric and string array elements
                         // are indexed in separate fields for array-contains queries.
                         // Names are precomputed on the Field struct.
                         if let Some(numeric_arr_name) = field.numeric_arr_name() {
                             RediSearch_CreateField(
-                                self.rs_idx,
+                                self.rs_ptr(),
                                 numeric_arr_name.as_ptr(),
                                 RSFLDTYPE_NUMERIC,
                                 RSFLDOPT_NONE,
@@ -1025,7 +1165,7 @@ impl Index {
                         let string_arr_field_id =
                             if let Some(string_arr_name) = field.string_arr_name() {
                                 RediSearch_CreateField(
-                                    self.rs_idx,
+                                    self.rs_ptr(),
                                     string_arr_name.as_ptr(),
                                     RSFLDTYPE_TAG,
                                     RSFLDOPT_NONE,
@@ -1034,11 +1174,11 @@ impl Index {
                                 continue;
                             };
                         RediSearch_TagFieldSetSeparator(
-                            self.rs_idx,
+                            self.rs_ptr(),
                             string_arr_field_id,
                             1 as c_char,
                         );
-                        RediSearch_TagFieldSetCaseSensitive(self.rs_idx, string_arr_field_id, 1);
+                        RediSearch_TagFieldSetCaseSensitive(self.rs_ptr(), string_arr_field_id, 1);
                     }
                     IndexType::Fulltext => {
                         let mut field_options_flag = RSFLDOPT_NONE;
@@ -1055,17 +1195,17 @@ impl Index {
                         }
 
                         let field_id = RediSearch_CreateField(
-                            self.rs_idx,
+                            self.rs_ptr(),
                             field.name.as_ptr(),
                             RSFLDTYPE_FULLTEXT,
                             field_options_flag,
                         );
 
-                        RediSearch_TextFieldSetWeight(self.rs_idx, field_id, weight);
+                        RediSearch_TextFieldSetWeight(self.rs_ptr(), field_id, weight);
                     }
                     IndexType::Vector => {
                         let field_id = RediSearch_CreateField(
-                            self.rs_idx,
+                            self.rs_ptr(),
                             field.name.as_ptr(),
                             RSFLDTYPE_VECTOR,
                             RSFLDOPT_NONE,
@@ -1074,14 +1214,14 @@ impl Index {
                         if let Some(vopts) = field.vector_options()
                             && vopts.dimension > 0
                         {
-                            let metric: u32 = match vopts
+                            let metric = match vopts
                                 .similarity_function
                                 .as_deref()
                                 .unwrap_or("euclidean")
                             {
-                                "euclidean" => 0, // VecSimMetric_L2
-                                "ip" => 1,        // VecSimMetric_IP
-                                "cosine" => 2,    // VecSimMetric_Cosine
+                                "euclidean" => VecSimMetric::L2,
+                                "ip" => VecSimMetric::Ip,
+                                "cosine" => VecSimMetric::Cosine,
                                 other => {
                                     return Err(format!(
                                         "Unknown similarity function '{other}', expected 'euclidean', 'ip', or 'cosine'"
@@ -1089,20 +1229,58 @@ impl Index {
                                 }
                             };
 
-                            RediSearch_VectorFieldSetDim(
-                                self.rs_idx,
-                                field_id,
-                                vopts.dimension as c_int,
-                            );
-
-                            RediSearch_VectorFieldSetHNSWParams(
-                                self.rs_idx,
-                                field_id,
-                                vopts.m.unwrap_or(16),
-                                vopts.ef_construction.unwrap_or(200),
-                                vopts.ef_runtime.unwrap_or(10),
+                            // RediSearch 8.6 takes a full VecSimParams by value.
+                            // FalkorDB builds a TIERED index (a flat brute-force
+                            // buffer in front of an HNSW backend, with async
+                            // migration), matching C FalkorDB. The HNSW params
+                            // are the tiered primary; VecSimTieredParams_Init
+                            // fills the tiered runtime fields (worker pool, submit
+                            // callback, weak ref, flat-buffer limit, logCtx).
+                            let mut primary: VecSimParams = std::mem::zeroed();
+                            primary.algo = VecSimAlgo::Hnswlib;
+                            primary.algoParams.hnswParams = HNSWParams {
+                                type_: VecSimType::Float32,
+                                dim: vopts.dimension as usize,
                                 metric,
-                            );
+                                multi: false,
+                                initialCapacity: 0,
+                                // Must be non-zero: the LLAPI path doesn't
+                                // normalize blockSize (unlike FT.CREATE), and 0
+                                // corrupts the heap on the first HNSW op.
+                                blockSize: DEFAULT_BLOCK_SIZE,
+                                M: vopts.m.unwrap_or(16),
+                                efConstruction: vopts.ef_construction.unwrap_or(200),
+                                efRuntime: vopts.ef_runtime.unwrap_or(10),
+                                epsilon: HNSW_DEFAULT_EPSILON,
+                            };
+
+                            let mut params: VecSimParams = std::mem::zeroed();
+                            params.algo = VecSimAlgo::Tiered;
+                            // `primary` outlives both calls below: Init reads it,
+                            // VectorFieldSetParams deep-copies it.
+                            params.algoParams.tieredParams.primaryIndexParams = &raw mut primary;
+
+                            if RediSearch_VecSimTieredParams_Init(
+                                &raw mut params,
+                                self.rs_ptr(),
+                                field.name.as_ptr(),
+                            ) != 0
+                            {
+                                return Err(format!(
+                                    "failed to init tiered params for vector field '{}'",
+                                    field.name.to_string_lossy()
+                                ));
+                            }
+
+                            // Returns REDISEARCH_OK (0) on success.
+                            if RediSearch_VectorFieldSetParams(self.rs_ptr(), field_id, &params)
+                                != 0
+                            {
+                                return Err(format!(
+                                    "failed to configure vector field '{}'",
+                                    field.name.to_string_lossy()
+                                ));
+                            }
                         }
                     }
                 }
@@ -1162,7 +1340,7 @@ impl Index {
         };
         unsafe {
             RediSearch_CreateNumericNode(
-                self.rs_idx,
+                self.rs_ptr(),
                 field.name.as_ptr(),
                 max_f,
                 min_f,
@@ -1186,31 +1364,32 @@ impl Index {
             return std::ptr::null_mut();
         };
 
-        let root = unsafe { RediSearch_CreateTagNode(self.rs_idx, field.name.as_ptr()) };
+        let root = unsafe { RediSearch_CreateTagNode(self.rs_ptr(), field.name.as_ptr()) };
 
         // If both bounds are equal, use exact match (TagTokenNode)
         if let (Some(lo), Some(hi)) = (min, max)
             && lo == hi
         {
-            let Ok(token) = CString::new(lo) else {
+            let Ok(token) = CString::new(tag_encode_lower(lo.as_bytes())) else {
                 return std::ptr::null_mut();
             };
             let child = unsafe {
-                RediSearch_CreateTagTokenNode(self.rs_idx, token.as_ptr().cast::<c_char>())
+                RediSearch_CreateTagTokenNode(self.rs_ptr(), token.as_ptr().cast::<c_char>())
             };
             unsafe { RediSearch_QueryNodeAddChild(root, child) };
             return root;
         }
 
         // Lex range: NULL pointer means open bound (infinity)
-        let min_cstr = min.and_then(|s| CString::new(s).ok());
-        let max_cstr = max.and_then(|s| CString::new(s).ok());
+        let min_cstr = min.and_then(|s| CString::new(tag_encode_lower(s.as_bytes())).ok());
+        let max_cstr = max.and_then(|s| CString::new(tag_encode_lower(s.as_bytes())).ok());
         let min_ptr = min_cstr.as_ref().map_or(std::ptr::null(), |cs| cs.as_ptr());
         let max_ptr = max_cstr.as_ref().map_or(std::ptr::null(), |cs| cs.as_ptr());
 
         let child = unsafe {
             RediSearch_CreateTagLexRangeNode(
-                self.rs_idx,
+                self.rs_ptr(),
+                field.name.as_ptr(),
                 min_ptr,
                 max_ptr,
                 i32::from(include_min),
@@ -1233,7 +1412,7 @@ impl Index {
                     return std::ptr::null_mut();
                 };
                 unsafe {
-                    RediSearch_CreateNumericNode(self.rs_idx, field.name.as_ptr(), d, d, 1, 1)
+                    RediSearch_CreateNumericNode(self.rs_ptr(), field.name.as_ptr(), d, d, 1, 1)
                 }
             }
             // String equality
@@ -1244,12 +1423,12 @@ impl Index {
                 let Some(field) = self.fields.get(&key).and_then(|f| f.first()) else {
                     return std::ptr::null_mut();
                 };
-                let root = unsafe { RediSearch_CreateTagNode(self.rs_idx, field.name.as_ptr()) };
-                let Ok(msg) = CString::new(value.as_str()) else {
+                let root = unsafe { RediSearch_CreateTagNode(self.rs_ptr(), field.name.as_ptr()) };
+                let Ok(msg) = CString::new(tag_encode_lower(value.as_bytes())) else {
                     return std::ptr::null_mut();
                 };
                 let child = unsafe {
-                    RediSearch_CreateTagTokenNode(self.rs_idx, msg.as_ptr().cast::<c_char>())
+                    RediSearch_CreateTagTokenNode(self.rs_ptr(), msg.as_ptr().cast::<c_char>())
                 };
                 unsafe { RediSearch_QueryNodeAddChild(root, child) };
                 root
@@ -1304,7 +1483,7 @@ impl Index {
                 };
                 unsafe {
                     RediSearch_CreateGeoNode(
-                        self.rs_idx,
+                        self.rs_ptr(),
                         field.name.as_ptr(),
                         f64::from(point.latitude),
                         f64::from(point.longitude),
@@ -1314,7 +1493,7 @@ impl Index {
                 }
             }
             IndexQuery::And(children) => {
-                let intersect = unsafe { RediSearch_CreateIntersectNode(self.rs_idx, 0) };
+                let intersect = unsafe { RediSearch_CreateIntersectNode(self.rs_ptr(), 0) };
                 for child in children {
                     let child_node = self.build_query_node(child);
                     if child_node.is_null() {
@@ -1329,9 +1508,9 @@ impl Index {
             }
             IndexQuery::Or(children) => {
                 if children.is_empty() {
-                    return unsafe { RediSearch_CreateEmptyNode(self.rs_idx) };
+                    return unsafe { RediSearch_CreateEmptyNode(self.rs_ptr()) };
                 }
-                let union_node = unsafe { RediSearch_CreateUnionNode(self.rs_idx) };
+                let union_node = unsafe { RediSearch_CreateUnionNode(self.rs_ptr()) };
                 for child in children {
                     let child_node = self.build_query_node(child);
                     if !child_node.is_null() {
@@ -1345,9 +1524,9 @@ impl Index {
                 list: Value::List(items),
             } => {
                 if items.is_empty() {
-                    return unsafe { RediSearch_CreateEmptyNode(self.rs_idx) };
+                    return unsafe { RediSearch_CreateEmptyNode(self.rs_ptr()) };
                 }
-                let union_node = unsafe { RediSearch_CreateUnionNode(self.rs_idx) };
+                let union_node = unsafe { RediSearch_CreateUnionNode(self.rs_ptr()) };
                 for item in items.iter() {
                     let child = self.build_query_node(IndexQuery::Equal {
                         key: key.clone(),
@@ -1370,7 +1549,7 @@ impl Index {
                         };
                         unsafe {
                             RediSearch_CreateNumericNode(
-                                self.rs_idx,
+                                self.rs_ptr(),
                                 arr_name.as_ptr(),
                                 *i as f64,
                                 *i as f64,
@@ -1385,7 +1564,7 @@ impl Index {
                         };
                         unsafe {
                             RediSearch_CreateNumericNode(
-                                self.rs_idx,
+                                self.rs_ptr(),
                                 arr_name.as_ptr(),
                                 *f,
                                 *f,
@@ -1400,7 +1579,7 @@ impl Index {
                         };
                         unsafe {
                             RediSearch_CreateNumericNode(
-                                self.rs_idx,
+                                self.rs_ptr(),
                                 arr_name.as_ptr(),
                                 f64::from(*b),
                                 f64::from(*b),
@@ -1414,13 +1593,13 @@ impl Index {
                             return std::ptr::null_mut();
                         };
                         let root =
-                            unsafe { RediSearch_CreateTagNode(self.rs_idx, arr_name.as_ptr()) };
-                        let Ok(token) = CString::new(s.as_str()) else {
+                            unsafe { RediSearch_CreateTagNode(self.rs_ptr(), arr_name.as_ptr()) };
+                        let Ok(token) = CString::new(tag_encode_lower(s.as_bytes())) else {
                             return std::ptr::null_mut();
                         };
                         let child = unsafe {
                             RediSearch_CreateTagTokenNode(
-                                self.rs_idx,
+                                self.rs_ptr(),
                                 token.as_ptr().cast::<c_char>(),
                             )
                         };
@@ -1439,13 +1618,18 @@ impl Index {
         &self,
         query: IndexQuery<Value>,
     ) -> IdIter {
+        // Clone a strong ref for the iterator so the spec outlives a concurrent
+        // DROP INDEX; `None` means the spec is gone/uninitialized.
+        let Some(index) = self.index.as_ref().and_then(OwnedIndex::try_clone) else {
+            return IndexResultsIter::empty();
+        };
         unsafe {
             let query_node = self.build_query_node(query);
             if query_node.is_null() {
                 return IndexResultsIter::empty();
             }
-            let iter = RediSearch_GetResultsIterator(query_node, self.rs_idx);
-            IndexResultsIter::new(iter, self.rs_idx, |_, id| id)
+            let iter = RediSearch_GetResultsIterator(query_node, index.as_ptr());
+            IndexResultsIter::new(iter, Some(index), |_, id| id)
         }
     }
 
@@ -1457,13 +1641,16 @@ impl Index {
         &self,
         query: IndexQuery<Value>,
     ) -> EdgeTripleIter {
+        let Some(index) = self.index.as_ref().and_then(OwnedIndex::try_clone) else {
+            return EdgeTripleIter::empty();
+        };
         unsafe {
             let query_node = self.build_query_node(query);
             if query_node.is_null() {
                 return EdgeTripleIter::empty();
             }
-            let iter = RediSearch_GetResultsIterator(query_node, self.rs_idx);
-            EdgeTripleIter::new(iter, self.rs_idx)
+            let iter = RediSearch_GetResultsIterator(query_node, index.as_ptr());
+            EdgeTripleIter::new(iter, Some(index))
         }
     }
 
@@ -1473,16 +1660,19 @@ impl Index {
         query: &str,
     ) -> Result<ScoredIdIter, String> {
         let cstr = CString::new(query).map_err(|e| e.to_string())?;
+        let Some(index) = self.index.as_ref().and_then(OwnedIndex::try_clone) else {
+            return Ok(IndexResultsIter::empty_scored());
+        };
         let mut err: *mut c_char = null_mut();
         unsafe {
             let iter =
-                RediSearch_IterateQuery(self.rs_idx, cstr.as_ptr(), query.len(), &raw mut err);
+                RediSearch_IterateQuery(index.as_ptr(), cstr.as_ptr(), query.len(), &raw mut err);
             if !err.is_null() {
                 let msg = CStr::from_ptr(err).to_string_lossy().into_owned();
                 drop(CString::from_raw(err));
                 return Err(msg);
             }
-            Ok(IndexResultsIter::new(iter, self.rs_idx, |iter, id| {
+            Ok(IndexResultsIter::new(iter, Some(index), |iter, id| {
                 let score = RediSearch_ResultsIteratorGetScore(iter);
                 (id, score)
             }))
@@ -1499,16 +1689,19 @@ impl Index {
         query: &str,
     ) -> Result<ScoredEdgeTripleIter, String> {
         let cstr = CString::new(query).map_err(|e| e.to_string())?;
+        let Some(index) = self.index.as_ref().and_then(OwnedIndex::try_clone) else {
+            return Ok(ScoredEdgeTripleIter::empty());
+        };
         let mut err: *mut c_char = null_mut();
         unsafe {
             let iter =
-                RediSearch_IterateQuery(self.rs_idx, cstr.as_ptr(), query.len(), &raw mut err);
+                RediSearch_IterateQuery(index.as_ptr(), cstr.as_ptr(), query.len(), &raw mut err);
             if !err.is_null() {
                 let msg = CStr::from_ptr(err).to_string_lossy().into_owned();
                 drop(CString::from_raw(err));
                 return Err(msg);
             }
-            Ok(ScoredEdgeTripleIter::new(iter, self.rs_idx))
+            Ok(ScoredEdgeTripleIter::new(iter, Some(index)))
         }
     }
 
@@ -1543,9 +1736,15 @@ impl Index {
         // memory. The `Arc<ThinVec<f32>>` is moved into the returned
         // iterator so the buffer stays valid for the iterator's lifetime.
         let nbytes = std::mem::size_of_val(vector.as_slice());
+        let Some(index) = self.index.as_ref().and_then(OwnedIndex::try_clone) else {
+            return Ok(VectorScoredIdIter {
+                inner: IndexResultsIter::empty_scored(),
+                _vector_owner: vector,
+            });
+        };
         unsafe {
             let query_node = RediSearch_CreateVecSimNode(
-                self.rs_idx,
+                index.as_ptr(),
                 cstr.as_ptr(),
                 vector.as_ptr().cast::<c_char>(),
                 nbytes,
@@ -1562,7 +1761,7 @@ impl Index {
             // failure RediSearch already frees `query_node` internally
             // before returning NULL (handleIterCommon → ResultsIteratorFree
             // → QAST_Destroy(qast.root)).
-            let iter = RediSearch_GetResultsIterator(query_node, self.rs_idx);
+            let iter = RediSearch_GetResultsIterator(query_node, index.as_ptr());
             if iter.is_null() {
                 return Ok(VectorScoredIdIter {
                     inner: IndexResultsIter::empty_scored(),
@@ -1570,7 +1769,7 @@ impl Index {
                 });
             }
             Ok(VectorScoredIdIter {
-                inner: IndexResultsIter::new(iter, self.rs_idx, |it, id| {
+                inner: IndexResultsIter::new(iter, Some(index), |it, id| {
                     let score = RediSearch_ResultsIteratorGetScore(it);
                     (id, score)
                 }),
@@ -1593,9 +1792,15 @@ impl Index {
         // See [`vector_query`] — RediSearch field name is `vector:<attr>`.
         let cstr = CString::new(format!("vector:{field}")).map_err(|e| e.to_string())?;
         let nbytes = std::mem::size_of_val(vector.as_slice());
+        let Some(index) = self.index.as_ref().and_then(OwnedIndex::try_clone) else {
+            return Ok(VectorScoredEdgeTripleIter {
+                inner: ScoredEdgeTripleIter::empty(),
+                _vector_owner: vector,
+            });
+        };
         unsafe {
             let query_node = RediSearch_CreateVecSimNode(
-                self.rs_idx,
+                index.as_ptr(),
                 cstr.as_ptr(),
                 vector.as_ptr().cast::<c_char>(),
                 nbytes,
@@ -1610,7 +1815,7 @@ impl Index {
             // See `vector_query` — RediSearch owns and frees `query_node`
             // in both branches (success: iter owns it; failure: freed
             // internally before NULL is returned).
-            let iter = RediSearch_GetResultsIterator(query_node, self.rs_idx);
+            let iter = RediSearch_GetResultsIterator(query_node, index.as_ptr());
             if iter.is_null() {
                 return Ok(VectorScoredEdgeTripleIter {
                     inner: ScoredEdgeTripleIter::empty(),
@@ -1618,7 +1823,7 @@ impl Index {
                 });
             }
             Ok(VectorScoredEdgeTripleIter {
-                inner: ScoredEdgeTripleIter::new(iter, self.rs_idx),
+                inner: ScoredEdgeTripleIter::new(iter, Some(index)),
                 _vector_owner: vector,
             })
         }
@@ -1631,7 +1836,7 @@ impl Index {
     ) {
         unsafe {
             let res = RediSearch_IndexAddDocument(
-                self.rs_idx,
+                self.rs_ptr(),
                 doc.rs_doc,
                 REDISEARCH_ADD_REPLACE as c_int,
                 null_mut(),
@@ -1645,8 +1850,14 @@ impl Index {
         &self,
         id: u64,
     ) {
+        let mut key = [0u8; NODE_DOC_KEY_LEN];
+        hex_encode_into(&id.to_le_bytes(), &mut key);
         unsafe {
-            RediSearch_DeleteDocument(self.rs_idx, (&raw const id).cast::<c_void>(), 8);
+            RediSearch_DeleteDocument(
+                self.rs_ptr(),
+                key.as_ptr().cast::<c_void>(),
+                NODE_DOC_KEY_LEN,
+            );
         }
     }
 
@@ -1658,12 +1869,15 @@ impl Index {
         dst: u64,
         edge_id: u64,
     ) {
-        let key: [u64; 3] = [src, dst, edge_id];
+        let mut key = [0u8; EDGE_DOC_KEY_LEN];
+        hex_encode_into(&src.to_le_bytes(), &mut key[0..16]);
+        hex_encode_into(&dst.to_le_bytes(), &mut key[16..32]);
+        hex_encode_into(&edge_id.to_le_bytes(), &mut key[32..48]);
         unsafe {
             RediSearch_DeleteDocument(
-                self.rs_idx,
+                self.rs_ptr(),
                 key.as_ptr().cast::<c_void>(),
-                std::mem::size_of::<[u64; 3]>(),
+                EDGE_DOC_KEY_LEN,
             );
         }
     }
@@ -1906,10 +2120,10 @@ impl Index {
     /// Report memory consumed by the underlying RediSearch index.
     #[must_use]
     pub fn memory_usage(&self) -> usize {
-        if self.rs_idx.is_null() {
-            return 0;
+        match &self.index {
+            None => 0,
+            Some(index) => unsafe { RediSearch_MemUsage(index.as_ptr()) },
         }
-        unsafe { RediSearch_MemUsage(self.rs_idx) }
     }
 
     // --- index count ---
@@ -1924,10 +2138,17 @@ impl Index {
         &mut self,
         label: &Arc<String>,
     ) -> Result<(), String> {
-        unsafe {
-            if !self.rs_idx.is_null() {
-                RediSearch_DropIndex(self.rs_idx);
-                self.rs_idx = null_mut();
+        // Drop the old spec (invalidate + release the creation ref) under the
+        // GIL when off the main thread, same as `Index::drop`. `create_rs_index`
+        // below installs a fresh `self.index`.
+        if let Some(index) = self.index.take() {
+            unsafe {
+                let _gil = if crate::thread_id::is_main_thread() {
+                    None
+                } else {
+                    GilGuard::acquire()
+                };
+                RediSearch_DropIndex(index.into_raw());
             }
         }
         let stopwords = self.stopwords.clone();
@@ -1940,5 +2161,83 @@ impl Index {
         // generation counter and never touch this fresh generation.
         self.bump_id();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        EDGE_DOC_KEY_LEN, NODE_DOC_KEY_LEN, decode_id, decode_triple, hex_encode_into,
+        tag_encode_lower,
+    };
+
+    /// Encode a node id the way `Document::new` does, then decode it back.
+    fn node_roundtrip(id: u64) -> u64 {
+        let mut key = [0u8; NODE_DOC_KEY_LEN];
+        hex_encode_into(&id.to_le_bytes(), &mut key);
+        // SAFETY: `key` holds exactly NODE_DOC_KEY_LEN (16) readable hex bytes.
+        unsafe { decode_id(key.as_ptr()) }
+    }
+
+    #[test]
+    fn node_key_roundtrip() {
+        for id in [
+            0u64,
+            1,
+            0xff,
+            0x100, // 256 — the boundary that drove the original trie overflow
+            0x1234_5678_9abc_def0,
+            u64::MAX,
+        ] {
+            assert_eq!(node_roundtrip(id), id, "roundtrip failed for {id:#x}");
+        }
+    }
+
+    #[test]
+    fn node_key_is_16_lowercase_hex() {
+        let mut key = [0u8; NODE_DOC_KEY_LEN];
+        hex_encode_into(&0xdead_beef_u64.to_le_bytes(), &mut key);
+        assert_eq!(key.len(), 16);
+        assert!(
+            key.iter()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()),
+            "key is not all-lowercase hex: {key:?}"
+        );
+    }
+
+    #[test]
+    fn edge_triple_roundtrip() {
+        let triple = [0u64, 0x00ff_00ff_00ff_00ff, u64::MAX];
+        let mut key = [0u8; EDGE_DOC_KEY_LEN];
+        for (i, &v) in triple.iter().enumerate() {
+            hex_encode_into(&v.to_le_bytes(), &mut key[i * 16..i * 16 + 16]);
+        }
+        // SAFETY: `key` holds exactly EDGE_DOC_KEY_LEN (48) readable hex bytes.
+        let back = unsafe { decode_triple(key.as_ptr()) };
+        assert_eq!(back, triple);
+    }
+
+    #[test]
+    fn tag_encode_escapes_only_expected_bytes() {
+        // Bytes <= 0x20 (controls + space), '\\' (0x5c) and '_' (0x5f) become
+        // `_` + two lowercase hex digits; everything else passes through.
+        assert_eq!(tag_encode_lower(b"plain"), b"plain");
+        assert_eq!(tag_encode_lower(b"a b"), b"a_20b"); // space
+        assert_eq!(tag_encode_lower(b"a\\b"), b"a_5cb"); // backslash
+        assert_eq!(tag_encode_lower(b"a_b"), b"a_5fb"); // the escape prefix itself
+        assert_eq!(tag_encode_lower(&[0x00]), b"_00"); // NUL
+        assert_eq!(tag_encode_lower(&[0x09]), b"_09"); // tab
+        assert_eq!(tag_encode_lower(&[0x01]), b"_01"); // FalkorDB tag separator
+        // Other punctuation (comma 0x2c) and high bytes pass through untouched.
+        assert_eq!(tag_encode_lower(b"a,b"), b"a,b");
+        assert_eq!(tag_encode_lower(&[0xff]), &[0xff]);
+    }
+
+    #[test]
+    fn tag_encode_output_has_no_interior_nul() {
+        // The encoded form is handed to CString::new, so it must never contain a
+        // 0x00 byte (NUL itself is escaped to "_00").
+        let enc = tag_encode_lower(&[0x00, b'x', 0x20, 0xff, b'\\']);
+        assert!(!enc.contains(&0x00), "encoded form contains NUL: {enc:?}");
     }
 }

@@ -1642,13 +1642,10 @@ impl ValuesDeduper {
         &self,
         hash: u64,
     ) -> bool {
-        let mut seen = self.seen.borrow_mut();
-        if seen.contains(&hash) {
-            true
-        } else {
-            seen.insert(hash);
-            false
-        }
+        // `insert` returns true if the value was newly inserted, so a single
+        // lookup tells us both whether the hash was already present and adds
+        // it when new — avoiding the extra `contains` probe.
+        !self.seen.borrow_mut().insert(hash)
     }
 }
 
