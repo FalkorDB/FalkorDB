@@ -23,7 +23,7 @@ prejit_harvest = []
 
 [dependencies]
 atomic_refcell = "0.1.14"
-chrono = "0.4.44"
+chrono = "0.4.45"
 crossfire = "3.1.16"
 csv = "1.4.0"
 fjall = "3.1.4"
