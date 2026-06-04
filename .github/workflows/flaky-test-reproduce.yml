@@ -1,0 +1,339 @@
+# Flow-test reproduction worker.
+#
+# Triggered by the flaky-test-rca agentic workflow via
+# safe-outputs.dispatch-workflow when it classifies a flow-test failure as
+# `flaky-instrumented` or `flaky-timing`. Re-runs the named flow test(s) N
+# times in the toolchain container and posts a single comment back to the
+# issue summarising pass/fail counts.
+#
+# Also dispatchable manually from the Actions tab for ad-hoc repro of any
+# flow test against any SHA.
+name: Flaky Test Reproduce
+
+on:
+  workflow_dispatch:
+    inputs:
+      flow_tests:
+        description: 'JSON array of RLTest identifiers, e.g. ["tests/flow/test_x:Class.test_name"]'
+        required: true
+        type: string
+      flavour:
+        description: "release | coverage (only release supported for now)"
+        required: false
+        type: string
+        default: release
+      sha:
+        description: "Commit SHA to check out and reproduce against"
+        required: true
+        type: string
+      run_url:
+        description: "URL of the original failing run (for cross-reference in the comment)"
+        required: false
+        type: string
+        default: ""
+      issue_title:
+        description: "Full issue title (including the [Flaky] prefix) used to locate the issue when issue_number is empty"
+        required: false
+        type: string
+        default: ""
+      issue_number:
+        description: "Explicit issue number to comment on. When empty, the workflow searches by title."
+        required: false
+        type: string
+        default: ""
+      attempts:
+        description: "Number of times to re-run each test (1-30)"
+        required: false
+        type: string
+        default: "10"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flaky-test-reproduce-${{ inputs.sha }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  validate-inputs:
+    runs-on: ubuntu-latest
+    outputs:
+      tests: ${{ steps.parse.outputs.tests }}
+      attempts: ${{ steps.parse.outputs.attempts }}
+    steps:
+      - name: Parse and validate inputs
+        id: parse
+        env:
+          FLOW_TESTS: ${{ inputs.flow_tests }}
+          ATTEMPTS_IN: ${{ inputs.attempts }}
+          FLAVOUR_IN: ${{ inputs.flavour }}
+          SHA_IN: ${{ inputs.sha }}
+          ISSUE_NUMBER_IN: ${{ inputs.issue_number }}
+        run: |
+          set -euo pipefail
+          # SHA must be a full 40-hex commit id; we'll check it out blindly.
+          case "${SHA_IN}" in
+            [0-9a-fA-F]*) ;;
+            *) echo "::error::sha must be a 40-hex commit id"; exit 1 ;;
+          esac
+          if [ "${#SHA_IN}" -ne 40 ]; then
+            echo "::error::sha must be exactly 40 hex chars"; exit 1
+          fi
+          # Only release flavour is supported today. Reject anything else
+          # loudly so the agent doesn't think coverage repro happened.
+          case "${FLAVOUR_IN:-release}" in
+            release) ;;
+            coverage) echo "::error::coverage flavour reproduction is not yet supported"; exit 1 ;;
+            *) echo "::error::flavour must be 'release'"; exit 1 ;;
+          esac
+          if [ -n "${ISSUE_NUMBER_IN:-}" ]; then
+            case "${ISSUE_NUMBER_IN}" in
+              ''|*[!0-9]*) echo "::error::issue_number must be an integer"; exit 1 ;;
+            esac
+          fi
+          # Validate flow_tests is a JSON array of 1..5 strings, each
+          # matching the safe RLTest identifier shape:
+          # tests/flow/<segment>(/<segment>)*[:<Class>[.<method>]]
+          # with no `..` path traversal segments. This value ends up on a
+          # shell command line as `TEST="$TEST_ID"`.
+          python3 - <<'PY'
+          import json, os, re, sys
+          raw = os.environ["FLOW_TESTS"]
+          try:
+              tests = json.loads(raw)
+          except json.JSONDecodeError as e:
+              print(f"::error::flow_tests is not valid JSON: {e}", file=sys.stderr); sys.exit(1)
+          if not isinstance(tests, list) or not tests:
+              print("::error::flow_tests must be a non-empty JSON array", file=sys.stderr); sys.exit(1)
+          if len(tests) > 5:
+              print("::error::flow_tests cannot exceed 5 entries", file=sys.stderr); sys.exit(1)
+          seg = r"[A-Za-z0-9_\-]+(?:\.[A-Za-z0-9_\-]+)*"
+          pat = re.compile(rf"^tests/flow/(?:{seg}/)*{seg}(?::[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)?)?$")
+          for t in tests:
+              if not isinstance(t, str) or not pat.match(t) or ".." in t.split("/"):
+                  print(f"::error::invalid test identifier: {t!r}", file=sys.stderr); sys.exit(1)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write("tests=" + json.dumps(tests) + "\n")
+          PY
+          # Clamp attempts to 1..30.
+          A="${ATTEMPTS_IN:-10}"
+          case "$A" in
+            ''|*[!0-9]*) echo "::error::attempts must be an integer"; exit 1 ;;
+          esac
+          if [ "$A" -lt 1 ] || [ "$A" -gt 30 ]; then
+            echo "::error::attempts must be between 1 and 30"; exit 1
+          fi
+          echo "attempts=$A" >> "$GITHUB_OUTPUT"
+
+  reproduce:
+    needs: validate-inputs
+    runs-on: ubuntu-latest
+    container: ghcr.io/falkordb/falkordb-build:latest
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        test: ${{ fromJson(needs.validate-inputs.outputs.tests) }}
+    outputs:
+      attempts: ${{ needs.validate-inputs.outputs.attempts }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ inputs.sha }}
+      - run: rustup default stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: "release"
+      - name: Build release
+        run: cargo build --release
+      - name: Re-run ${{ matrix.test }} N times
+        env:
+          TEST_ID: ${{ matrix.test }}
+          ATTEMPTS: ${{ needs.validate-inputs.outputs.attempts }}
+        run: |
+          set -uo pipefail
+          . /data/venv/bin/activate
+          mkdir -p repro-results
+          pass=0
+          fail=0
+          first_failure_log=""
+          for i in $(seq 1 "$ATTEMPTS"); do
+            echo "::group::attempt $i / $ATTEMPTS"
+            log="repro-results/attempt-${i}.log"
+            if RELEASE=1 TEST="$TEST_ID" FAIL_FAST=1 ./flow.sh >"$log" 2>&1; then
+              pass=$((pass + 1))
+              echo "attempt $i: PASS"
+            else
+              fail=$((fail + 1))
+              echo "attempt $i: FAIL"
+              if [ -z "$first_failure_log" ]; then
+                first_failure_log="$log"
+              fi
+            fi
+            echo "::endgroup::"
+          done
+          # Sanitize the test id for use as a filename.
+          safe_id=$(printf '%s' "$TEST_ID" | tr '/:.' '___')
+          {
+            echo "test=$TEST_ID"
+            echo "pass=$pass"
+            echo "fail=$fail"
+            echo "attempts=$ATTEMPTS"
+          } > "repro-results/${safe_id}.summary"
+          if [ -n "$first_failure_log" ] && [ -f "$first_failure_log" ]; then
+            # Keep just the last ~200 lines of the first failing attempt as
+            # the representative excerpt; full logs are in the artifact.
+            tail -n 200 "$first_failure_log" > "repro-results/${safe_id}.excerpt"
+          fi
+      - name: Upload per-test repro logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: repro-${{ strategy.job-index }}
+          path: repro-results/
+          if-no-files-found: ignore
+
+  comment:
+    needs: reproduce
+    if: ${{ always() && (needs.reproduce.result == 'success' || needs.reproduce.result == 'failure') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Download all repro artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          path: repro-artifacts
+          pattern: repro-*
+          merge-multiple: true
+      - name: Resolve issue number
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          ISSUE_TITLE: ${{ inputs.issue_title }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -n "${ISSUE_NUMBER:-}" ]; then
+            case "$ISSUE_NUMBER" in
+              ''|*[!0-9]*) echo "::error::issue_number is not numeric"; exit 1 ;;
+            esac
+            echo "number=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -z "${ISSUE_TITLE:-}" ]; then
+            echo "::error::either issue_number or issue_title must be provided"
+            exit 1
+          fi
+          # Search recent open Flaky Test issues; pick exact title match.
+          # Pipe to jq with --arg so the title isn't interpolated into
+          # the jq program (titles can contain quotes/backslashes).
+          NUM=$(gh issue list \
+                  --repo "$REPO" \
+                  --label "Flaky Test" \
+                  --state open \
+                  --limit 50 \
+                  --search "$ISSUE_TITLE in:title" \
+                  --json number,title \
+                | jq -r --arg t "$ISSUE_TITLE" 'map(select(.title == $t)) | .[0].number // empty')
+          if [ -z "$NUM" ]; then
+            echo "::error::could not find an open Flaky Test issue with title: $ISSUE_TITLE"
+            exit 1
+          fi
+          echo "number=$NUM" >> "$GITHUB_OUTPUT"
+      - name: Build and post comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ steps.resolve.outputs.number }}
+          RUN_URL: ${{ inputs.run_url }}
+          REPRO_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ inputs.sha }}
+          FLAVOUR: ${{ inputs.flavour }}
+        run: |
+          set -euo pipefail
+          mkdir -p repro-artifacts
+          # Parse summary files defensively as key=value data, NEVER
+          # source them. Test code uploaded these artifacts and could
+          # try to inject shell.
+          python3 - <<'PY' > comment.md
+          import os, pathlib, re, html
+
+          dir = pathlib.Path("repro-artifacts")
+          run_url = os.environ.get("RUN_URL", "")
+          sha = os.environ["SHA"]
+          flavour = os.environ["FLAVOUR"]
+          repro_run_url = os.environ["REPRO_RUN_URL"]
+
+          def safe_str(s, maxlen=200):
+              s = s.replace("`", "ʼ")
+              return s[:maxlen]
+
+          def parse_int(s, default=0):
+              try:
+                  v = int(s)
+                  return v if 0 <= v <= 1_000_000 else default
+              except (ValueError, TypeError):
+                  return default
+
+          rows = []
+          excerpts = []
+          test_id_re = re.compile(r"^tests/flow/[A-Za-z0-9_\-./]+(?::[A-Za-z0-9_.]+)?$")
+          for summary in sorted(dir.glob("*.summary")):
+              fields = {}
+              try:
+                  for line in summary.read_text(errors="replace").splitlines():
+                      if "=" not in line or len(line) > 500:
+                          continue
+                      k, _, v = line.partition("=")
+                      k = k.strip()
+                      if k in ("test", "pass", "fail", "attempts"):
+                          fields[k] = v.strip()
+              except OSError:
+                  continue
+              test = fields.get("test", "")
+              if not test_id_re.match(test):
+                  continue
+              p = parse_int(fields.get("pass"))
+              f = parse_int(fields.get("fail"))
+              a = parse_int(fields.get("attempts"))
+              rows.append((test, p, f, a))
+
+          for excerpt in sorted(dir.glob("*.excerpt")):
+              try:
+                  content = excerpt.read_text(errors="replace")[:8000]
+              except OSError:
+                  continue
+              # Strip backticks to avoid breaking out of the fenced block.
+              content = content.replace("```", "ʼʼʼ")
+              excerpts.append((excerpt.stem, content))
+
+          print(f"**Reproduction results** (commit `{safe_str(sha, 64)}`, flavour `{safe_str(flavour, 16)}`)")
+          print()
+          if run_url:
+              print(f"Triggered by: {safe_str(run_url, 200)}")
+          print(f"Repro run: {repro_run_url}")
+          print()
+          print("| Test | Pass | Fail | Attempts |")
+          print("| --- | ---: | ---: | ---: |")
+          if rows:
+              for test, p, f, a in rows:
+                  print(f"| `{safe_str(test)}` | {p} | {f} | {a} |")
+          else:
+              print("| _no summaries produced — see Repro run logs_ | – | – | – |")
+          print()
+          for stem, content in excerpts:
+              print(f"<details><summary>First failure excerpt — <code>{safe_str(stem)}</code></summary>")
+              print()
+              print("```")
+              print(content)
+              print("```")
+              print()
+              print("</details>")
+              print()
+          PY
+          gh issue comment "$ISSUE" --repo "$REPO" --body-file comment.md
