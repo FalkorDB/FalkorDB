@@ -1753,6 +1753,16 @@ static VISITOR_STRATEGY _Validate_CREATE_Clause
 				arr_append(new_identifiers, (char*)t); // note identifier type
 			}
 		}
+
+		// a CREATE named path is introduced after its elements are processed,
+		// so its own pattern cannot refer to the path alias.
+		if(cypher_astnode_type(path) == CYPHER_AST_NAMED_PATH) {
+			const cypher_astnode_t *path_id =
+				cypher_ast_named_path_get_identifier(path);
+			const char *alias = cypher_ast_identifier_get_name(path_id);
+			arr_append(new_identifiers, alias);
+			arr_append(new_identifiers, (char*)T_PATH);
+		}
 	}
 
 	//--------------------------------------------------------------------------
@@ -2475,4 +2485,3 @@ void AST_ReportErrors
 	ErrorCtx_SetError(EMSG_PARSER_ERROR, errMsg, errPos.line, errPos.column,
 			errPos.offset, errCtx, errCtxOffset);
 }
-
