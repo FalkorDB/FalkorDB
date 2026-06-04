@@ -10,7 +10,8 @@
 void Graph_memoryUsage
 (
 	const Graph *g,            // graph
-	MemoryUsageResult *result  // [output] memory usage
+	MemoryUsageResult *result, // [output] memory usage
+	int64_t samples
 ) {
 	ASSERT (g      != NULL) ;
 	ASSERT (result != NULL) ;
@@ -60,7 +61,7 @@ void Graph_memoryUsage
 	for (RelationID rel = 0; rel < n_rel; rel++) {
 		T = Graph_GetRelationMatrix (g, rel, false) ;
 
-		GrB_OK (Tensor_memoryUsage (&n, T, 1000)) ;
+		GrB_OK (Tensor_memoryUsage (&n, T, samples)) ;
 
 		result->rel_matrices_sz += n ;
 	}

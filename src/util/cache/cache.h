@@ -33,12 +33,7 @@ typedef struct Cache {
  * @param  copyFunc: callback for copying cached items before returning it to the caller.
  * @retval cache pointer - Initialized empty cache.
  */
-Cache *Cache_New
-(
-	uint size,
-	CacheEntryFreeFunc freeFunc,
-	CacheEntryCopyFunc copyFunc
-);
+Cache *Cache_New(uint size, CacheEntryFreeFunc freeFunc, CacheEntryCopyFunc copyFunc);
 
 /**
  * @brief  Returns a copy of value if it is cached, NULL otherwise.
@@ -72,3 +67,4 @@ void *Cache_SetGetValue(Cache *cache, const char *key, void *value);
  * @param  *cache: cache pointer
  */
 void Cache_Free(Cache *cache);
+

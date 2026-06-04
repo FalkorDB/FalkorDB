@@ -23,7 +23,8 @@ typedef struct {
 // get graph's memory usage
 void Graph_memoryUsage
 (
-	const Graph *g,            // graph
-	MemoryUsageResult *result  // [output] memory usage
+	const Graph *g,             // graph
+	MemoryUsageResult *result,  // [output] memory usage
+	int64_t samples
 );
 
