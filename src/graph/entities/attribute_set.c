@@ -980,7 +980,7 @@ size_t AttributeSet_memoryUsage
 
 		switch (t) {
 			case ATTR_TYPE_STRING:
-				total += RedisModule_MallocSizeString (attr->ptrval) ;
+				total += RedisModule_MallocSize (attr->ptrval) ;
 				break;
 			case ATTR_TYPE_INTERN_STRING:
 				// FIXME: account for intern string memory

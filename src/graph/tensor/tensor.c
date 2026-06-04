@@ -983,10 +983,8 @@ GrB_Info Tensor_memoryUsage
 		GrB_OK (GrB_Vector_new (&row_size, GrB_UINT64, nrows)) ;
 		GrB_OK (GrB_Vector_assign_BOOL (x, NULL, NULL, false, GrB_ALL, 0, NULL)) ;
 
-		GrB_OK (GrB_set (GrB_GLOBAL, true, GxB_BURBLE)) ;
 		GrB_OK (GrB_mxv (row_size, NULL, NULL, semiring, m, x, NULL)) ;
 		GrB_OK (GrB_mxv (row_size, NULL, GrB_PLUS_UINT64, semiring, dp, x, NULL)) ;
-		GrB_OK (GrB_set (GrB_GLOBAL, false, GxB_BURBLE)) ;
 		uint64_t int_size = 0;
 		GrB_OK (GrB_reduce (
 			&int_size, NULL, GrB_PLUS_MONOID_UINT64, row_size, NULL)) ;
