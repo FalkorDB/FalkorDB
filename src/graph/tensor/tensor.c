@@ -3,7 +3,6 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
-#include "GraphBLAS.h"
 #include "RG.h"
 #include "tensor.h"
 #include "util/arr.h"
@@ -922,11 +921,11 @@ size_t _estimate_multiedge_memory (
 		return 0;
 	}
 
-	GrB_OK (GxB_Iterator_new (&it)) ;
 	GrB_OK (GxB_Matrix_Iterator_attach (it, A, NULL)) ;
-	GrB_OK (GxB_Matrix_Iterator_seek (it, 0)) ;
+	GrB_Info info = GxB_Matrix_Iterator_seek (it, 0) ;
 
 	for (int i = 0; i < samples; i++) {
+		ASSERT (info == GrB_SUCCESS) ;
 		uint64_t x = GxB_Iterator_get_UINT64(it) ;
 
 		if (x > MSB_MASK) {
@@ -934,8 +933,9 @@ size_t _estimate_multiedge_memory (
 			_size += temp_size ;
 		}
 
-		GxB_Matrix_Iterator_next (it) ;
+		info = GxB_Matrix_Iterator_next (it) ;
 	}
+	ASSERT (info >= 0) ;
 
 	return (_size / (double) samples) * nvals ;
 }
@@ -995,8 +995,8 @@ GrB_Info Tensor_memoryUsage
 		GrB_free (&semiring) ;
 		GrB_free (&size_op) ;
 	} else if (samples > 0) {
-		_size += _estimate_multiedge_memory(m, 100);
-		_size += _estimate_multiedge_memory(dp, 100);
+		_size += _estimate_multiedge_memory(m, samples);
+		_size += _estimate_multiedge_memory(dp, samples);
 	}
 
 	// Add transpose

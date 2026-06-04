@@ -332,3 +332,4 @@ void DataBlock_Free(DataBlock *dataBlock) {
 	arr_free(dataBlock->deletedIdx);
 	rm_free(dataBlock);
 }
+
