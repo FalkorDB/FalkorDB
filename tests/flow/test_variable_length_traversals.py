@@ -284,7 +284,31 @@ class testVariableLengthTraversals(FlowTestsBase):
         self.env.assertEquals(result[0][0], 'a')
         self.env.assertEquals(result[1][0], 'c')
 
-    def test13_fanout(self):
+    def test13_issue_636_reused_alias_var_len_traversal(self):
+        # Regression test for a fuzzer crash where a reused node alias on a
+        # variable-length incoming traversal caused AlgebraicExpression_Dest()
+        # to dereference a NULL source operand during label-scan optimization.
+        self.graph.delete()
+
+        create_query = """CREATE (:label8),
+                          (:label2)<-[:reltype5]-({})<-[:reltype7]-({})"""
+        result = self.graph.query(create_query)
+        self.env.assertEquals(result.nodes_created, 4)
+        self.env.assertEquals(result.relationships_created, 2)
+
+        queries = [
+            """MATCH (node_0:label8)<-[*..]-(node_0:label9)
+               WHERE node_0.prop7 = [false]
+               RETURN *""",
+            """MATCH (node_0:label8)<-[*..]-(node_0:label9)
+               RETURN *"""
+        ]
+
+        for query in queries:
+            result = self.graph.query(query)
+            self.env.assertEquals(result.result_set, [])
+
+    def test14_fanout(self):
         # create a tree structure graph with a fanout of 3
         # root->a1
         # root->a2
@@ -335,7 +359,7 @@ class testVariableLengthTraversals(FlowTestsBase):
             self.env.assertEquals(l, 2)
             self.env.assertEquals(identity, i)
 
-    def test14_no_hops(self):
+    def test15_no_hops(self):
         self.graph.delete()
 
         # create graph
@@ -547,4 +571,3 @@ class testVariableLengthTraversals(FlowTestsBase):
 
         count = self.graph.query(q).result_set[0][0]
         self.env.assertEquals(count, 16)
-
