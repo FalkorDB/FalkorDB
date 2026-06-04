@@ -72,12 +72,9 @@ jobs:
         run: |
           set -euo pipefail
           # SHA must be a full 40-hex commit id; we'll check it out blindly.
-          case "${SHA_IN}" in
-            [0-9a-fA-F]*) ;;
-            *) echo "::error::sha must be a 40-hex commit id"; exit 1 ;;
-          esac
-          if [ "${#SHA_IN}" -ne 40 ]; then
-            echo "::error::sha must be exactly 40 hex chars"; exit 1
+          if ! printf '%s' "${SHA_IN}" | grep -Eq '^[0-9a-fA-F]{40}$'; then
+            echo "::error::sha must be a 40-hex commit id"
+            exit 1
           fi
           # Only release flavour is supported today. Reject anything else
           # loudly so the agent doesn't think coverage repro happened.
