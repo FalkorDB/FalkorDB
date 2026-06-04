@@ -3,7 +3,6 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <stdint.h>
 #include "../redismodule.h"
 
 #ifdef REDIS_MODULE_TARGET /* Set this when compiling your code as a module */
@@ -18,12 +17,6 @@ void rm_set_mem_capacity(int64_t cap);
 
 // reset thread memory consumption counter to 0 (no memory consumed)
 void rm_reset_n_alloced();
-
-// start module-wide live allocation tracking
-void rm_tracking_init(void);
-
-// return currently allocated bytes by the module
-int64_t rm_get_current_alloced_bytes(void);
 
 static inline void *rm_malloc(size_t n) {
 	return RedisModule_Alloc(n);
@@ -73,3 +66,4 @@ static inline char *rm_strndup(const char *s, size_t n) {
 void Alloc_Reset(void);
 
 #endif
+
