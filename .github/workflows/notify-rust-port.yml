@@ -1,0 +1,116 @@
+# File: .github/workflows/notify-rust-port.yml
+# Repo:  FalkorDB/FalkorDB  (upstream C implementation)
+#
+# Purpose
+# -------
+# When a PR is merged into `master` and touches `tests/flow/**`, notify
+# the rust port (`FalkorDB/falkordb-rs-next-gen`) so its flow-tests-migration
+# agentic workflow can mirror those test changes without waiting for its
+# hourly cron. The cron still runs as a backstop.
+#
+# Mechanism
+# ---------
+# We POST a `repository_dispatch` event of type `upstream-flow-test-merge`
+# to the rust-port repo, carrying the upstream PR number + merge SHA + the
+# list of changed flow-test files in `client_payload`. The rust-port
+# workflow listens for this event type and runs the migration agent
+# against that specific PR.
+#
+# Auth
+# ----
+# Requires the org-scoped secret `RUST_PORT_DISPATCH_TOKEN`, a fine-grained
+# PAT with `Contents: Read and write` on `FalkorDB/falkordb-rs-next-gen`
+# only (this is what gates the repository-dispatch API).
+#
+# The default `GITHUB_TOKEN` can't be used: it has no write access to the
+# downstream repo, and GitHub App installation tokens are scoped per repo
+# in the same way.
+
+name: Notify rust port of flow-test merge
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [master]
+    paths:
+      - "tests/flow/**"
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  notify:
+    # Only fire on actually-merged PRs (not just "closed without merging").
+    # `paths:` already filtered to flow-test-touching PRs, but `pull_request`
+    # fires on every closed event so we re-check `merged` explicitly.
+    if: ${{ github.event.pull_request.merged == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Collect changed flow-test files
+        id: changes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          # `gh pr diff --name-only` lists all files in the PR. Filter to
+          # tests/flow/ so an unrelated touch elsewhere doesn't bloat the
+          # payload. Cap at 200 entries defensively.
+          FILES=$(gh pr diff "$PR_NUMBER" --name-only \
+                    | grep -E '^tests/flow/' \
+                    | head -n 200 \
+                    | jq -R -s 'split("\n") | map(select(length > 0))')
+          if [[ "$FILES" == "[]" ]]; then
+            echo "no tests/flow/ files in this PR after filtering; nothing to dispatch"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          # Compact JSON for the payload.
+          echo "files_json<<__EOF__" >> "$GITHUB_OUTPUT"
+          echo "$FILES" | jq -c . >> "$GITHUB_OUTPUT"
+          echo "__EOF__" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch to falkordb-rs-next-gen
+        if: ${{ steps.changes.outputs.skip != 'true' }}
+        env:
+          # Fine-grained PAT with Contents:Write on falkordb-rs-next-gen ONLY.
+          GH_TOKEN: ${{ secrets.RUST_PORT_DISPATCH_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_HTML_URL: ${{ github.event.pull_request.html_url }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          FILES_JSON: ${{ steps.changes.outputs.files_json }}
+        run: |
+          set -euo pipefail
+          # Build the client_payload with jq so PR titles containing quotes,
+          # backticks, $-signs, or other shell metachars are properly escaped.
+          # Never interpolate $PR_TITLE directly into a shell-quoted JSON
+          # string — that's a classic injection vector.
+          PAYLOAD=$(jq -n \
+            --arg pr        "$PR_NUMBER" \
+            --arg title     "$PR_TITLE" \
+            --arg url       "$PR_HTML_URL" \
+            --arg sha       "$MERGE_SHA" \
+            --argjson files "$FILES_JSON" \
+            '{
+               event_type: "upstream-flow-test-merge",
+               client_payload: {
+                 upstream_pr_number: ($pr | tonumber),
+                 upstream_pr_title:  $title,
+                 upstream_pr_url:    $url,
+                 upstream_merge_sha: $sha,
+                 changed_flow_files: $files
+               }
+             }')
+          echo "Dispatching repository_dispatch for upstream PR #$PR_NUMBER"
+          # `gh api` here authenticates as RUST_PORT_DISPATCH_TOKEN because
+          # we set GH_TOKEN above. The API returns 204 No Content on success.
+          echo "$PAYLOAD" | gh api \
+            --method POST \
+            --header "Accept: application/vnd.github+json" \
+            "repos/FalkorDB/falkordb-rs-next-gen/dispatches" \
+            --input -
+          echo "Dispatched successfully."
