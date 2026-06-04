@@ -516,8 +516,8 @@ class testVariableLengthTraversals(FlowTestsBase):
 
         q = """MATCH (a:A), (d:D)
                WITH a, d
-               OPTIONAL MATCH (a)-[:R*..]->(d)
-               RETURN count(d)"""
+               OPTIONAL MATCH path = (a)-[:R*..]->(d)
+               RETURN count(path), count(d)"""
 
         plan = self.graph.explain(q)
 
@@ -545,8 +545,8 @@ class testVariableLengthTraversals(FlowTestsBase):
         optional_branch = optional_branch.children[0]
         self.env.assertEquals(optional_branch.name, "Argument")
 
-        count = self.graph.query(q).result_set[0][0]
-        self.env.assertEquals(count, 16)
+        counts = self.graph.query(q).result_set[0]
+        self.env.assertEquals(counts, [16, 16])
 
     def test17_issue_636_same_alias_label_scan(self):
         # Regression for issue #636: a reused node alias with source and
@@ -580,12 +580,12 @@ class testVariableLengthTraversals(FlowTestsBase):
         # the same reused-alias label constraints safely.
         q = """MATCH (node_0:label8), (node_1)
                WITH node_0, node_1
-               OPTIONAL MATCH (node_0)<-[*..]-(node_0:label9)
-               RETURN count(node_1)"""
+               OPTIONAL MATCH path = (node_0)<-[*..]-(node_0:label9)
+               RETURN count(path), count(node_1)"""
 
         plan = str(self.graph.explain(q))
         self.env.assertIn("Conditional Variable Length Traverse (Expand Into)",
                 plan)
 
         res = self.graph.query(q)
-        self.env.assertEquals(res.result_set, [[4]])
+        self.env.assertEquals(res.result_set, [[0, 4]])
