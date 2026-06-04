@@ -247,14 +247,21 @@ jobs:
         run: |
           # Generate a single combined hash of all dependencies to avoid 512 char key limit
           # build.sh is included so that changes to dep build flags (e.g. libcurl SSL) invalidate the cache
-          DEPS_HASH=$(cat ./deps/GraphBLAS/Include/GraphBLAS.h ./deps/GraphBLAS/Config/GB_prejit.c ./deps/libcypher-parser/lib/src/parser.c ./deps/RediSearch/src/version.h ./deps/libcurl/RELEASE-NOTES ./deps/libcsv/ChangeLog ./deps/LAGraph/include/LAGraph.h ./deps/LAGraph/include/LAGraphX.h ./deps/rax/rax.h ./deps/xxHash/xxhash.h ./deps/utf8proc/utf8proc.h ./deps/oniguruma/src/oniguruma.h ./deps/FalkorDB-core-rs/Cargo.toml ./build.sh 2>/dev/null | sha256sum | cut -d' ' -f1 || echo "no-hash")
+          # The RediSearch submodule gitlink SHA is included so that advancing the
+          # fork pin invalidates the cache even when src/version.h is unchanged
+          # (our LLAPI-extension commits do not bump the version macros).
+          RS_SHA=$(git rev-parse HEAD:deps/RediSearch 2>/dev/null || echo "no-rs-sha")
+          DEPS_HASH=$( { cat ./deps/GraphBLAS/Include/GraphBLAS.h ./deps/GraphBLAS/Config/GB_prejit.c ./deps/libcypher-parser/lib/src/parser.c ./deps/RediSearch/src/version.h ./deps/libcurl/RELEASE-NOTES ./deps/libcsv/ChangeLog ./deps/LAGraph/include/LAGraph.h ./deps/LAGraph/include/LAGraphX.h ./deps/rax/rax.h ./deps/xxHash/xxhash.h ./deps/utf8proc/utf8proc.h ./deps/oniguruma/src/oniguruma.h ./deps/FalkorDB-core-rs/Cargo.toml ./build.sh; echo "$RS_SHA"; } 2>/dev/null | sha256sum | cut -d' ' -f1 || echo "no-hash")
           echo "combined=${DEPS_HASH}" >> $GITHUB_OUTPUT
 
       - name: Generate cache key (macOS)
         if: matrix.platform.os == 'macos'
         id: cache-key-macos
         run: |
-          DEPS_HASH=$(cat deps/GraphBLAS/Include/GraphBLAS.h deps/libcypher-parser/lib/src/parser.c deps/RediSearch/src/version.h deps/libcurl/RELEASE-NOTES deps/libcsv/ChangeLog deps/LAGraph/include/LAGraph.h deps/LAGraph/include/LAGraphX.h deps/rax/rax.h deps/xxHash/xxhash.h deps/utf8proc/utf8proc.h deps/oniguruma/src/oniguruma.h deps/FalkorDB-core-rs/Cargo.toml build.sh | shasum -a 256 | cut -d' ' -f1)
+          # Include the RediSearch submodule gitlink SHA so advancing the fork
+          # pin invalidates the cache even when src/version.h is unchanged.
+          RS_SHA=$(git rev-parse HEAD:deps/RediSearch 2>/dev/null || echo "no-rs-sha")
+          DEPS_HASH=$( { cat deps/GraphBLAS/Include/GraphBLAS.h deps/libcypher-parser/lib/src/parser.c deps/RediSearch/src/version.h deps/libcurl/RELEASE-NOTES deps/libcsv/ChangeLog deps/LAGraph/include/LAGraph.h deps/LAGraph/include/LAGraphX.h deps/rax/rax.h deps/xxHash/xxhash.h deps/utf8proc/utf8proc.h deps/oniguruma/src/oniguruma.h deps/FalkorDB-core-rs/Cargo.toml build.sh; echo "$RS_SHA"; } | shasum -a 256 | cut -d' ' -f1)
           echo "key=macos-deps-${{ matrix.build_type }}-${DEPS_HASH}" >> $GITHUB_OUTPUT
 
       - name: Restore dependency caches (Docker)
