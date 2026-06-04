@@ -16,6 +16,8 @@
 #include "arithmetic_expression_construct.h"
 #include "comprehension_funcs/comprehension_funcs.h"
 
+#include <ctype.h>
+
 // Forward declaration
 static AR_ExpNode *_AR_EXP_FromASTNode(const cypher_astnode_t *expr);
 static AR_ExpNode *_AR_ExpNodeFromGraphEntity(const cypher_astnode_t *entity);
@@ -62,6 +64,86 @@ static inline const char *_ASTOpToString(AST_Operator op) {
 static AR_ExpNode *AR_EXP_NewOpNodeFromAST(AST_Operator op, uint child_count) {
 	const char *func_name = _ASTOpToString(op);
 	return AR_EXP_NewOpNode(func_name, true, child_count);
+}
+
+static bool _is_value_binary_operator(AST_Operator op) {
+	return op == OP_PLUS  ||
+		   op == OP_MINUS ||
+		   op == OP_MULT  ||
+		   op == OP_DIV   ||
+		   op == OP_MOD   ||
+		   op == OP_POW;
+}
+
+static bool _is_predicate_operator_node(const AR_ExpNode *node) {
+	if(node == NULL || node->type != AR_EXP_OP || node->op.child_count != 2) {
+		return false;
+	}
+
+	const char *func_name = node->op.f->name;
+	return strcmp(func_name, "contains")    == 0 ||
+		   strcmp(func_name, "starts with") == 0 ||
+		   strcmp(func_name, "ends with")   == 0 ||
+		   strcmp(func_name, "in")          == 0;
+}
+
+static bool _ast_expression_is_parenthesized(const cypher_astnode_t *node) {
+	QueryCtx *ctx = QueryCtx_GetQueryCtx();
+	const char *query = ctx->query_data.query_no_params;
+	if(query == NULL) return false;
+
+	struct cypher_input_range range = cypher_astnode_range(node);
+	size_t start = range.start.offset;
+	size_t end = range.end.offset;
+	size_t query_len = strlen(query);
+
+	if(start == 0 || end >= query_len) return false;
+
+	size_t before = start;
+	while(before > 0 && isspace((unsigned char)query[before - 1])) {
+		before--;
+	}
+
+	size_t after = end;
+	while(after < query_len && isspace((unsigned char)query[after])) {
+		after++;
+	}
+
+	return before > 0 && after < query_len &&
+		   query[before - 1] == '(' && query[after] == ')';
+}
+
+static AR_ExpNode *_rotate_value_predicate_expression
+(
+	AR_ExpNode *op,
+	AST_Operator operator_enum,
+	const cypher_astnode_t *lhs_node,
+	const cypher_astnode_t *rhs_node
+) {
+	if(!_is_value_binary_operator(operator_enum)) return op;
+
+	AR_ExpNode *lhs = op->op.children[0];
+	AR_ExpNode *rhs = op->op.children[1];
+
+	if(_is_predicate_operator_node(rhs) &&
+	   !_ast_expression_is_parenthesized(rhs_node)) {
+		// A + (B CONTAINS C) should evaluate as (A + B) CONTAINS C.
+		AR_ExpNode *predicate = rhs;
+		op->op.children[1] = predicate->op.children[0];
+		predicate->op.children[0] = op;
+		return predicate;
+	}
+
+	if(_is_predicate_operator_node(lhs) &&
+	   !_ast_expression_is_parenthesized(lhs_node)) {
+		// (A IN B) + C should evaluate as A IN (B + C).
+		AR_ExpNode *predicate = lhs;
+		op->op.children[0] = predicate->op.children[1];
+		predicate->op.children[1] = op;
+		return predicate;
+	}
+
+	return op;
 }
 
 static AR_ExpNode *_AR_EXP_FromApplyExpression
@@ -208,6 +290,7 @@ static AR_ExpNode *_AR_EXP_FromPropertyExpression(const cypher_astnode_t *expr) 
 	return root;
 }
 
+
 static SIValue _AR_EXP_FromIntegerString(const char *value_str) {
 	char *endptr = NULL;
 	errno = 0;
@@ -319,7 +402,8 @@ static AR_ExpNode *_AR_EXP_FromBinaryOpExpression(const cypher_astnode_t *expr) 
 	op->op.children[0] = _AR_EXP_FromASTNode(lhs_node);
 	const cypher_astnode_t *rhs_node = cypher_ast_binary_operator_get_argument2(expr);
 	op->op.children[1] = _AR_EXP_FromASTNode(rhs_node);
-	return op;
+	return _rotate_value_predicate_expression(op, operator_enum, lhs_node,
+		rhs_node);
 }
 
 static AR_ExpNode *_AR_EXP_FromComparisonExpression(const cypher_astnode_t *expr) {
@@ -946,4 +1030,3 @@ AR_ExpNode *AR_EXP_FromASTNode(const cypher_astnode_t *expr) {
 
 	return root;
 }
-
