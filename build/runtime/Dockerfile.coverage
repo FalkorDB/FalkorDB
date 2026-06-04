@@ -17,13 +17,47 @@ RUN cargo chef prepare --recipe-path recipe.json
 # accurate source mapping. Output lands in target/debug/.
 FROM chef AS builder
 COPY --from=planner /src/recipe.json recipe.json
-RUN CXX=clang++-22 RUSTFLAGS="-C instrument-coverage" \
+RUN CXX=clang++-22 RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" \
     cargo chef cook --recipe-path recipe.json
 COPY . .
-RUN CXX=clang++-22 RUSTFLAGS="-C instrument-coverage" cargo build && \
+RUN CXX=clang++-22 RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo build && \
     mkdir -p /out && cp target/debug/libfalkordb.so /out/falkordb.so
 
-FROM redis:${REDIS_VERSION} AS server
+# Stage 3: redis-builder — stock redis on debian:trixie-slim. Coverage
+# instrumentation lives in the .so only (LLVM_PROFILE_FILE writes profraw
+# from rustc -C instrument-coverage), so redis-server itself is uninstrumented.
+# Mirrors the redis-builder stage in build/runtime/Dockerfile — duplicated
+# rather than shared because Docker has no native include mechanism.
+FROM debian:trixie-slim AS redis-builder
+ARG REDIS_VERSION
+ENV DEBIAN_FRONTEND=noninteractive
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        ca-certificates git dpkg-dev gcc g++ libc6-dev libssl-dev make; \
+    rm -rf /var/lib/apt/lists/*
+WORKDIR /tmp
+RUN git clone --depth 1 --branch "${REDIS_VERSION}" https://github.com/redis/redis.git redis-src
+WORKDIR /tmp/redis-src
+RUN set -eux; \
+    sed -ri 's!^( *createBoolConfig[(]"protected-mode",.*, *)1( *,.*[)],)$!\10\2!' src/config.c; \
+    grep -E '^ *createBoolConfig[(]"protected-mode",.*, *0 *,.*[)],$' src/config.c; \
+    gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)"; \
+    arch="$(dpkg --print-architecture | awk -F- '{ print $NF }')"; \
+    extraJemallocConfigureFlags="--build=$gnuArch"; \
+    case "${arch##*-}" in \
+        amd64 | i386 | x32) extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-page=12" ;; \
+        *) extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-page=16" ;; \
+    esac; \
+    extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-hugepage=21"; \
+    sed -ri 's!cd jemalloc && ./configure !&'"$extraJemallocConfigureFlags"' !' deps/Makefile; \
+    export BUILD_TLS=yes BUILD_WITH_MODULES=no; \
+    make -j "$(nproc)" all; \
+    make PREFIX=/redis-install install; \
+    strip /redis-install/bin/redis-server /redis-install/bin/redis-cli; \
+    /redis-install/bin/redis-server --version
+
+FROM debian:trixie-slim AS server
 
 ARG TARGETPLATFORM
 
@@ -36,23 +70,27 @@ ENV FALKORDB_HOME=/var/lib/falkordb \
 
 RUN mkdir -p ${FALKORDB_DATA_PATH} ${FALKORDB_COV_PATH} && ln -s ${FALKORDB_DATA_PATH} /data
 
-# Runtime apt install — same shape as build/runtime/Dockerfile (python3.13
-# purge first, then LLVM install). The instrumented .so still needs the
-# GraphBLAS JIT toolchain (cc + omp.h) so matrix ops compile at runtime.
+# Runtime apt install — bare essentials only. After PR #483 GraphBLAS JIT is
+# disabled and libomp is statically linked into the instrumented .so (see
+# graph/build.rs + build/libomp.sh), so this image no longer needs clang,
+# libomp5, libomp-22-dev, the LLVM repo, or any dpkg force-removes. The
+# coverage runtime itself is baked into the instrumented .so by rustc's
+# -C instrument-coverage profile.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates bash openssl && \
+    apt-get install -y --no-install-recommends ca-certificates bash openssl libssl3 && \
     apt-get upgrade -y && \
+    # Match upstream redis image's uid/gid 999 before purging passwd.
+    groupadd -r -g 999 redis && useradd -r -g redis -u 999 redis && \
     (apt-get purge -y python3.13 python3.13-minimal libpython3.13-minimal libpython3.13-stdlib || true) && \
-    apt-get install -y --no-install-recommends wget gnupg lsb-release && \
-    wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && ./llvm.sh 22 && \
-    apt-get install -y --no-install-recommends clang-22 libomp5 libomp-22-dev && \
-    ln -sf /usr/bin/clang-22 /usr/bin/cc && \
-    apt-get purge -y wget gnupg lsb-release && \
     (dpkg --force-remove-essential --purge ncurses-base ncurses-bin || true) && \
     (dpkg --force-remove-essential --purge perl-base || true) && \
     (dpkg --force-remove-protected --force-remove-essential --purge login || true) && \
     (dpkg --purge passwd || true) && \
-    apt-get clean && rm -rf /var/lib/apt/lists/* /llvm.sh
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Pull only the redis binaries from the redis-builder stage.
+COPY --from=redis-builder /redis-install/bin/redis-server /usr/local/bin/redis-server
+COPY --from=redis-builder /redis-install/bin/redis-cli    /usr/local/bin/redis-cli
 
 WORKDIR ${FALKORDB_HOME}
 
@@ -60,19 +98,6 @@ COPY ./build/runtime/run.sh       ${FALKORDB_BIN_PATH}/run.sh
 COPY ./build/runtime/gen-certs.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 RUN chmod +x ${FALKORDB_BIN_PATH}/run.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 COPY --from=builder /out/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
-
-# libomp.so.5 for the instrumented .so. amd64 only — this image is built
-# `platforms: linux/amd64` in build-rc-coverage-image (arm64 coverage isn't
-# part of the matrix yet).
-ARG TARGETARCH
-RUN --mount=from=builder,target=/builder,readonly \
-    case "${TARGETARCH}" in \
-        amd64) LIBOMP=/builder/usr/lib/x86_64-linux-gnu/libomp.so.5 ;; \
-        arm64) LIBOMP=/builder/usr/lib/aarch64-linux-gnu/libomp.so.5 ;; \
-        *) echo "unsupported TARGETARCH=${TARGETARCH}"; exit 1 ;; \
-    esac && \
-    cp "${LIBOMP}" /usr/local/lib/libomp.so.5 && \
-    ldconfig
 
 # Instrumentation runtime: every llvm-cov-aware binary writes profraw files
 # named per the LLVM_PROFILE_FILE template. %p = pid, %m = module hash; both

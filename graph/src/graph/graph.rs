@@ -142,6 +142,7 @@ pub struct NodeId(u64);
 
 /// Opaque identifier for a relationship (edge).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(transparent)]
 pub struct RelationshipId(u64);
 
 impl From<LabelId> for usize {
@@ -2286,6 +2287,22 @@ impl Graph {
         self.relationship_attrs.get_attr_by_idx(id.0, attr_idx)
     }
 
+    /// Batch variant of `get_relationship_attribute_by_idx`.
+    /// Pushes one `Value` per id into `out`, substituting `default` for
+    /// missing entries (so callers don't allocate a temp `Vec<Option<_>>`).
+    pub fn get_relationship_attributes_by_idx(
+        &self,
+        ids: &[RelationshipId],
+        attr_idx: u16,
+        default: &Value,
+        out: &mut Vec<Value>,
+    ) {
+        // SAFETY: RelationshipId is `#[repr(transparent)]` over u64.
+        let keys: &[u64] = unsafe { std::slice::from_raw_parts(ids.as_ptr().cast(), ids.len()) };
+        self.relationship_attrs
+            .get_attrs_by_idx_batch_into(keys, attr_idx, default, out);
+    }
+
     fn resize_node_matrices(&mut self) {
         self.adjacancy_matrix.resize(self.node_cap, self.node_cap);
         self.node_labels_matrix
@@ -2913,10 +2930,15 @@ impl Graph {
         let Some(attr_idx) = self.get_node_attribute_id(&attr).map(|i| i as u16) else {
             return Ok(out.into_iter());
         };
-        for (id, _score) in raw_iter {
-            let node_id = NodeId(id);
-            let Some(Value::VecF32(entity_vec)) = self.get_node_attribute_by_idx(node_id, attr_idx)
-            else {
+        // Collect the candidate ids first, then fetch their vectors in one
+        // fused batch pass. This amortizes the per-shard read lock and gives
+        // the attribute cache sequential access instead of one isolated
+        // lookup per KNN result.
+        let node_ids: Vec<NodeId> = raw_iter.map(|(id, _score)| NodeId(id)).collect();
+        let mut vecs: Vec<Value> = Vec::with_capacity(node_ids.len());
+        self.get_node_attributes_by_idx(&node_ids, attr_idx, &Value::Null, &mut vecs);
+        for (node_id, entity) in node_ids.into_iter().zip(vecs) {
+            let Value::VecF32(entity_vec) = entity else {
                 continue;
             };
             if let Some(d) = vec_distance::distance(metric.as_deref(), &query_vec, &entity_vec) {
@@ -2963,15 +2985,20 @@ impl Graph {
         let Some(attr_idx) = self.get_relationship_attribute_id(&attr).map(|i| i as u16) else {
             return Ok(out.into_iter());
         };
-        for (src, dst, eid, _score) in raw_iter {
-            let edge_id = RelationshipId(eid);
-            let Some(Value::VecF32(entity_vec)) =
-                self.get_relationship_attribute_by_idx(edge_id, attr_idx)
-            else {
+        // Collect candidate triples first, then fetch their vectors in one
+        // fused batch pass (see `vector_query_nodes`).
+        let triples: Vec<(NodeId, NodeId, RelationshipId)> = raw_iter
+            .map(|(src, dst, eid, _score)| (NodeId(src), NodeId(dst), RelationshipId(eid)))
+            .collect();
+        let edge_ids: Vec<RelationshipId> = triples.iter().map(|&(_, _, eid)| eid).collect();
+        let mut vecs: Vec<Value> = Vec::with_capacity(edge_ids.len());
+        self.get_relationship_attributes_by_idx(&edge_ids, attr_idx, &Value::Null, &mut vecs);
+        for ((src, dst, edge_id), entity) in triples.into_iter().zip(vecs) {
+            let Value::VecF32(entity_vec) = entity else {
                 continue;
             };
             if let Some(d) = vec_distance::distance(metric.as_deref(), &query_vec, &entity_vec) {
-                out.push((NodeId(src), NodeId(dst), edge_id, d));
+                out.push((src, dst, edge_id, d));
             }
         }
         // See `vector_query_nodes` for why we sort by recomputed
@@ -3441,10 +3468,17 @@ impl Graph {
         // --- node attributes by label (sampling) ---
         let mut node_attr_by_label: Vec<(Arc<String>, usize)> = Vec::new();
 
-        // Track all labeled node IDs (deduplicated) for unlabeled-node detection
-        // and track processed node IDs to avoid double-counting multi-label nodes.
-        let mut labeled_node_ids = roaring::RoaringTreemap::new();
-        let mut processed_node_ids = roaring::RoaringTreemap::new();
+        // Track processed node IDs (deduplicated) so that multi-label nodes are
+        // counted once, under their first (lowest-index) label — matching the C
+        // implementation — and so unlabeled nodes can be detected afterwards.
+        // A dense bitvector indexed by node id gives O(1) membership/insert,
+        // far cheaper than a RoaringTreemap when touching every node.
+        // Sized by `node_cap` (the matrix dimension) rather than `max_node_id()`:
+        // effects replay can leave sparse high ids whose value exceeds
+        // `node_count + deleted_nodes.len() - 1`, but every id present in the
+        // label/all-node matrices is strictly below `node_cap`.
+        let mut seen = vec![false; self.node_cap() as usize];
+        let mut total_labeled: u64 = 0;
 
         for (label_idx, label_name) in self.node_labels.iter().enumerate() {
             let label_matrix = &self.labels_matices[label_idx];
@@ -3454,18 +3488,18 @@ impl Graph {
                 continue;
             }
 
-            // Iterate the full label matrix, collecting all node IDs for the
-            // labeled-node bitmap.  For attribute estimation, only sample nodes
-            // that have NOT been processed by a previous label (avoids
-            // double-counting multi-label nodes, matching the C implementation).
+            // Iterate the full label matrix.  For attribute estimation, only
+            // sample nodes that have NOT been processed by a previous label
+            // (avoids double-counting multi-label nodes, matching C).
             let mut sampled_mem: usize = 0;
             let mut sampled_count: usize = 0;
             let mut unprocessed_count: u64 = 0;
             for (node_id, _) in label_matrix.iter(0, u64::MAX) {
-                labeled_node_ids.insert(node_id);
-                if !processed_node_ids.contains(node_id) {
+                let slot = &mut seen[node_id as usize];
+                if !*slot {
+                    *slot = true;
+                    total_labeled += 1;
                     unprocessed_count += 1;
-                    processed_node_ids.insert(node_id);
                     if sampled_count < samples {
                         sampled_mem += self.estimate_entity_attr_size(&self.node_attrs, node_id);
                         sampled_count += 1;
@@ -3482,7 +3516,6 @@ impl Graph {
         }
 
         // --- unlabeled node attributes ---
-        let total_labeled = labeled_node_ids.len();
         let total_nodes = self.node_count;
         let unlabeled_count = total_nodes.saturating_sub(total_labeled);
         let unlabeled_node_attr_sz = if unlabeled_count > 0 {
@@ -3493,7 +3526,7 @@ impl Graph {
                 if sampled_count >= samples {
                     break;
                 }
-                if labeled_node_ids.contains(node_id) {
+                if seen[node_id as usize] {
                     continue;
                 }
                 sampled_mem += self.estimate_entity_attr_size(&self.node_attrs, node_id);

@@ -105,6 +105,43 @@ impl Iterator for ValueIter {
 // ExprEval
 // ---------------------------------------------------------------------------
 
+/// Lazily yields the out-neighbours of a node by scanning a single row of a
+/// GraphBLAS adjacency matrix on demand, reusing one row iterator and one
+/// scratch buffer across calls.
+///
+/// Used by the `shortestPath` BFS so the per-query cost is proportional to the
+/// edges actually traversed by the search rather than the whole graph's edge
+/// count (the previous implementation materialized the full adjacency list for
+/// every call). Correct because BFS visits each node at most once, so every
+/// row is scanned at most once.
+struct NeighborIter {
+    iter: crate::graph::graphblas::matrix::Iter,
+    buf: Vec<u64>,
+}
+
+impl NeighborIter {
+    fn new(adj: &crate::graph::graphblas::matrix::Matrix) -> Self {
+        Self {
+            iter: adj.iter(0, 0),
+            buf: Vec::new(),
+        }
+    }
+
+    /// Returns the out-neighbours of `node`. The returned slice is valid until
+    /// the next call to `neighbors`.
+    fn neighbors(
+        &mut self,
+        node: u64,
+    ) -> &[u64] {
+        self.buf.clear();
+        self.iter.seek(node, node);
+        for (_, col) in self.iter.by_ref() {
+            self.buf.push(col);
+        }
+        &self.buf
+    }
+}
+
 /// Shared expression evaluator used by both the runtime and the optimizer.
 pub struct ExprEval<'a> {
     /// Full runtime context. `None` when evaluating constant expressions at
@@ -535,9 +572,7 @@ impl<'a> ExprEval<'a> {
                         .map(|child| self.eval(ir, child.idx(), env, agg_group_key))
                         .collect::<Result<ThinVec<_>, _>>()?;
                     let mut value_dedupers = rt.value_dedupers.borrow_mut();
-                    let value_deduper = value_dedupers
-                        .entry(format!("{idx:?}_{group_id}"))
-                        .or_default();
+                    let value_deduper = value_dedupers.entry((idx, group_id)).or_default();
                     if value_deduper.is_seen(&values) {
                         res.push(Value::List(Arc::new(thin_vec![Value::Null])));
                     } else {
@@ -896,51 +931,51 @@ impl<'a> ExprEval<'a> {
             return Ok(Value::Path(Arc::new(path)));
         }
 
-        // Build adjacency matrix filtered by rel_types
-        let adj = g.build_adjacency_matrix(rel_types);
-
-        // Also build transpose if undirected
-        let adj_t = if directed {
-            None
+        // Build adjacency matrix filtered by rel_types. For undirected
+        // traversal use the symmetric (A + Aᵀ) matrix so a single row scan
+        // yields neighbours in both directions, already deduplicated by
+        // GraphBLAS (avoids the per-row sort/dedup the old transpose-merge
+        // path required).
+        let adj = if directed {
+            g.build_adjacency_matrix(rel_types)
         } else {
-            use crate::graph::graphblas::matrix::Transpose;
-            Some(adj.transpose())
+            g.build_symmetric_adjacency_matrix(rel_types)
         };
 
         let max_level = max_hops.map_or(u64::MAX, |m| m as u64);
         let node_cap = g.node_cap();
 
-        // Build adjacency list from the sparse matrix for efficient BFS.
-        // Use a hash map keyed by source node so memory scales with the
-        // number of edges actually present — not with `node_cap`, which
-        // reflects allocated matrix capacity and can be much larger than
-        // the live node count (SEC-3).
-        let mut adj_list: rustc_hash::FxHashMap<u64, Vec<u64>> = rustc_hash::FxHashMap::default();
-        for (row, col) in adj.iter(0, node_cap.saturating_sub(1)) {
-            adj_list.entry(row).or_default().push(col);
-        }
-        if let Some(ref t) = adj_t {
-            for (row, col) in t.iter(0, node_cap.saturating_sub(1)) {
-                adj_list.entry(row).or_default().push(col);
-            }
-            // In undirected mode reciprocal edges (a→b and b→a) cause the
-            // same neighbour to be inserted twice, which would double-count
-            // predecessors during BFS and produce duplicate shortest paths.
-            for neighbours in adj_list.values_mut() {
-                neighbours.sort_unstable();
-                neighbours.dedup();
-            }
-        }
+        // Fetch neighbours lazily, one matrix row at a time, instead of
+        // materializing the entire adjacency list up front. BFS visits each
+        // node at most once, so every row is scanned at most once; this turns
+        // the per-query cost from O(E) (build the full adjacency list for the
+        // whole graph) into O(edges actually traversed by the search), which
+        // dominated the profile for dense graphs.
+        let mut neighbors = NeighborIter::new(&adj);
 
         if all_paths {
             // All shortest paths: BFS to find distance, then enumerate
             Ok(self.bfs_all_shortest_paths(
-                &g, &adj_list, src_id, dst_id, max_level, node_cap, rel_types, min_hops,
+                &g,
+                &mut neighbors,
+                src_id,
+                dst_id,
+                max_level,
+                node_cap,
+                rel_types,
+                min_hops,
             ))
         } else {
             // Single shortest path via BFS with parent tracking
             Ok(self.bfs_shortest_path(
-                &g, &adj_list, src_id, dst_id, max_level, node_cap, rel_types, min_hops,
+                &g,
+                &mut neighbors,
+                src_id,
+                dst_id,
+                max_level,
+                node_cap,
+                rel_types,
+                min_hops,
             ))
         }
     }
@@ -950,7 +985,7 @@ impl<'a> ExprEval<'a> {
     fn bfs_shortest_path(
         &self,
         g: &crate::graph::graph::Graph,
-        adj_list: &rustc_hash::FxHashMap<u64, Vec<u64>>,
+        neighbors: &mut NeighborIter,
         src_id: crate::graph::graph::NodeId,
         dst_id: crate::graph::graph::NodeId,
         max_level: u64,
@@ -977,20 +1012,18 @@ impl<'a> ExprEval<'a> {
             if depth >= max_level {
                 continue;
             }
-            if let Some(neighbours) = adj_list.get(&cur) {
-                for &col in neighbours {
-                    // Not using the Entry API: we only want to insert when
-                    // absent and also `break` out of the loop on `dst`,
-                    // which Entry::or_insert_with doesn't express cleanly.
-                    #[allow(clippy::map_entry)]
-                    if !parent.contains_key(&col) {
-                        parent.insert(col, cur);
-                        if col == dst {
-                            found = true;
-                            break;
-                        }
-                        queue.push_back((col, depth + 1));
+            for &col in neighbors.neighbors(cur) {
+                // Not using the Entry API: we only want to insert when
+                // absent and also `break` out of the loop on `dst`,
+                // which Entry::or_insert_with doesn't express cleanly.
+                #[allow(clippy::map_entry)]
+                if !parent.contains_key(&col) {
+                    parent.insert(col, cur);
+                    if col == dst {
+                        found = true;
+                        break;
                     }
+                    queue.push_back((col, depth + 1));
                 }
             }
             if found {
@@ -1046,7 +1079,7 @@ impl<'a> ExprEval<'a> {
     fn bfs_all_shortest_paths(
         &self,
         g: &crate::graph::graph::Graph,
-        adj_list: &rustc_hash::FxHashMap<u64, Vec<u64>>,
+        neighbors: &mut NeighborIter,
         src_id: crate::graph::graph::NodeId,
         dst_id: crate::graph::graph::NodeId,
         max_level: u64,
@@ -1083,10 +1116,7 @@ impl<'a> ExprEval<'a> {
             if cur_dist >= max_level {
                 continue;
             }
-            let Some(neighbours) = adj_list.get(&cur) else {
-                continue;
-            };
-            for &col in neighbours {
+            for &col in neighbors.neighbors(cur) {
                 let new_dist = cur_dist + 1;
                 match distances.get(&col).copied() {
                     None => {

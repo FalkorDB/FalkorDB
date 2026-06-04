@@ -131,8 +131,14 @@ pub struct Runtime<'a> {
     pub stats: RefCell<QueryStatistics>,
     /// Query execution plan tree
     pub plan: Arc<DynTree<IR>>,
-    /// Deduplication state for DISTINCT operations
-    pub value_dedupers: RefCell<HashMap<String, ValuesDeduper>>,
+    /// Deduplication state for DISTINCT operations, keyed by the DISTINCT
+    /// expression's node index plus its aggregation group hash. Uses a
+    /// cheap `FxHashMap` over a `(NodeIdx, u64)` tuple so the hot per-row
+    /// lookup avoids the previous `format!`-built `String` key (heap alloc +
+    /// `NodeIdx` Debug formatting) and SipHash. `NodeIdx` is `Copy`, and the
+    /// expression trees it points into are immutable for the query lifetime.
+    pub value_dedupers:
+        RefCell<rustc_hash::FxHashMap<(NodeIdx<Dyn<ExprIR<Variable>>>, u64), ValuesDeduper>>,
     /// Variables to return in query results
     pub return_names: Vec<Variable>,
     /// Debug mode: record operator execution
@@ -392,7 +398,7 @@ impl<'a> Runtime<'a> {
             stats: RefCell::new(QueryStatistics::default()),
             plan,
             return_names,
-            value_dedupers: RefCell::new(HashMap::new()),
+            value_dedupers: RefCell::new(rustc_hash::FxHashMap::default()),
             inspect,
             record: RefCell::new(vec![]),
             import_folder,

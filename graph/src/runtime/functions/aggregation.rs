@@ -158,6 +158,7 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Union(vec![Type::Float, Type::Null]),
         agg_init: Value::List(Arc::new(thin_vec![Value::Float(0.0), Value::Int(0), Value::Bool(false)])),
         finalizer: finalize_avg,
+        batch_agg: avg_batch,
         fn avg(_, args) {
             let mut iter = args.iter().cloned();
             let val = iter.next().unwrap();
@@ -427,6 +428,57 @@ fn max_batch(
         }
     }
     Ok(best)
+}
+
+/// Bulk `avg` aggregator. Folds all non-null numeric inputs into the
+/// `[sum, count, had_overflow]` accumulator in a single pass, mirroring the
+/// scalar `avg` accumulator's overflow handling but avoiding the per-row
+/// `Arc::make_mut` and per-row `Value` clone the scalar path incurs.
+#[allow(clippy::needless_pass_by_value)]
+fn avg_batch(
+    _: &Runtime,
+    inputs: &[Value],
+    _num_rows: usize,
+    acc: Value,
+) -> Result<Value, String> {
+    let mut list = match acc {
+        Value::List(l) => l,
+        Value::Null => Arc::new(thin_vec![
+            Value::Float(0.0),
+            Value::Int(0),
+            Value::Bool(false)
+        ]),
+        _ => unreachable!("avg accumulator must be a List"),
+    };
+    let vec_mut = Arc::make_mut(&mut list);
+    let (first, rest) = vec_mut.split_at_mut(1);
+    let (second, third) = rest.split_at_mut(1);
+    let (Value::Float(sum), Value::Int(count), Value::Bool(had_overflow)) =
+        (&mut first[0], &mut second[0], &mut third[0])
+    else {
+        unreachable!("avg accumulator should be [sum, count, overflow]");
+    };
+    for val in inputs {
+        let val = match val {
+            Value::Null => continue,
+            Value::Int(i) => *i as f64,
+            Value::Float(f) => *f,
+            _ => unreachable!("avg expects Integer, Float, or Null"),
+        };
+        *count += 1;
+        if *had_overflow || about_to_overflow(*sum, val) {
+            // Incremental averaging once the running total risks overflow.
+            *sum /= *count as f64;
+            if *had_overflow {
+                *sum *= (*count - 1) as f64;
+            }
+            *sum += val / *count as f64;
+            *had_overflow = true;
+        } else {
+            *sum += val;
+        }
+    }
+    Ok(Value::List(list))
 }
 
 /// Bulk `min` aggregator. Mirror of `max_batch`.

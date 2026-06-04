@@ -130,26 +130,40 @@ pub fn init(
             return Err(format!("GraphBLAS GxB_init failed: {info:?}"));
         }
 
-        // Disable JIT. GraphBLAS's JIT path calls dlopen() to load freshly
-        // compiled kernels, which blocks on dyld's internal lock. If a writer
-        // thread is mid-dlopen while the main thread enters fork(), the
-        // atfork-prepare handler (which we use to wait for graphs to quiesce)
-        // can deadlock against dyld. JIT-off forces GraphBLAS to use its
-        // built-in generic kernels — no dlopen, no fork-time deadlock.
+        // Pick GraphBLAS JIT control level:
         //
-        // Trade-off: generic kernels are slower than JIT-compiled ones. The
-        // intended follow-up is to curate a PreJIT/*.c set captured from a
-        // representative workload and bake it into libgraphblas.a, mirroring
-        // the C port's approach (deps/GraphBLAS/PreJIT/ in FalkorDB/FalkorDB).
-        // Until that lands the cost shows up on hot paths like delta_lmxm and
-        // element_wise_add.
+        //   * Default — GxB_JIT_RUN: mirror the FalkorDB C module
+        //     (src/module.c:106). PreJIT kernels statically linked into
+        //     libgraphblas.a (vendored from build/graphblas/PreJIT/ by
+        //     graphblas.sh) are used for hot ops; RUN additionally permits
+        //     dlopen of any kernel already present in the on-disk cache,
+        //     without any runtime compilation. In the shipped runtime image
+        //     the cache is empty and no compiler is installed, so any op
+        //     not covered by PreJIT silently falls back to generic kernels
+        //     (no panic, no dlopen attempts that would deadlock fork()).
+        //     Local arm64 A/B vs GxB_JIT_OFF (which main shipped) shows
+        //     +6% to +87% across the test_bench.py suite; aligning with
+        //     the C module's choice keeps the runtime semantics
+        //     interchangeable.
+        //
+        //   * `--features prejit_harvest` — GxB_JIT_ON: full JIT including
+        //     compile-on-demand. Selected at build time, never at runtime —
+        //     prevents an env-var typo from accidentally enabling JIT in
+        //     a shipped binary. Used exclusively by gen_prejit.sh to
+        //     populate ~/.SuiteSparse/GrBx.y.z/c/ with the .c kernel
+        //     sources we then check in as the next generation of vendored
+        //     PreJIT (see graphblas.sh harvest mode).
+        #[cfg(feature = "prejit_harvest")]
+        let (jit_level, jit_name) = (GxB_JIT_Control::GxB_JIT_ON, "JIT_ON (harvest)");
+        #[cfg(not(feature = "prejit_harvest"))]
+        let (jit_level, jit_name) = (GxB_JIT_Control::GxB_JIT_RUN, "JIT_RUN");
         let info = GrB_Global_set_INT32(
             GrB_GLOBAL,
-            GxB_JIT_Control::GxB_JIT_OFF as i32,
+            jit_level as i32,
             GxB_Option_Field::GxB_JIT_C_CONTROL as _,
         );
         if info != GrB_Info::GrB_SUCCESS {
-            return Err(format!("GraphBLAS JIT-off failed: {info:?}"));
+            return Err(format!("GraphBLAS {jit_name} failed: {info:?}"));
         }
 
         // Initialize LAGraph after GraphBLAS

@@ -1,6 +1,6 @@
 use graph::graph::graph::{Graph, RdbSnapshots};
 use graph::graph::graphblas::serialization::{Encode, EncodeState, PayloadEntry, Writer};
-use redis_module::RedisModuleIO;
+use redis_module::raw::RedisModuleIO;
 
 use super::buffered_io::BufferedWriter;
 use super::{Header, Schema};

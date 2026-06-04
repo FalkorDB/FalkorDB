@@ -49,3 +49,8 @@ lto = true
 
 [features]
 fuzz = []
+# Drive GraphBLAS at GxB_JIT_ON (full JIT including compile-on-demand) so the
+# JIT cache populates as we exercise the test suite. Consumed by graph's
+# matrix.rs and forwarded by gen_prejit.sh; never enable in shipped builds —
+# the runtime image has no compiler and no on-disk cache.
+prejit_harvest = ["graph/prejit_harvest"]
