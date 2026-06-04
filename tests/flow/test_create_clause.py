@@ -160,5 +160,5 @@ class testCreateClause():
         try:
             self.g.query("CREATE (n) RETURN p")
             self.env.assertTrue(False)
-        except Exception as e:
+        except ResponseError as e:
             self.env.assertTrue("'p' not defined" in str(e))
