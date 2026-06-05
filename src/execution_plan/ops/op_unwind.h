@@ -16,6 +16,12 @@ typedef struct {
 	uint listIdx;          // current list index
 	uint listLen;          // length of the list currently being traversed
 	SIValue list;          // list which the unwind operation is performed on
+	bool rangeMode;        // true if iterating direct range(...) expression
+	int64_t rangeStart;    // initial range value (for resets)
+	int64_t rangeEnd;      // final range value
+	int64_t rangeCurrent;  // current range value
+	int64_t rangeStep;     // range step
+	bool rangeDepleted;    // true once all range values were emitted
 	AR_ExpNode *exp;       // arithmetic expression (evaluated as an SIArray)
 	int unwindRecIdx;      // update record at this index
 	Record currentRecord;  // record to clone and add a value from the list
@@ -27,4 +33,3 @@ OpBase *NewUnwindOp
 	const ExecutionPlan *plan,
 	AR_ExpNode *exp
 );
-

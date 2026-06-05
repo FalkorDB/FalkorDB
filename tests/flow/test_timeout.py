@@ -122,7 +122,9 @@ class testQueryTimeout():
 
         try:
             # The query is expected to timeout
-            res = self.graph.query(query, timeout=int(res.run_time_ms))
+            # Use a strict timeout so this remains stable even if query runtime
+            # improves due to execution optimizations.
+            res = self.graph.query(query, timeout=1)
             self.env.assertTrue(False)
         except ResponseError as error:
             self.env.assertContains("Query timed out", str(error))
@@ -304,4 +306,3 @@ class testQueryTimeout():
             await pool.aclose()
 
         asyncio.run(query())
-
