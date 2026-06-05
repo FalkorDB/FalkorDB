@@ -299,6 +299,7 @@ static void _costBaseLabelScan
 
 	OPType t = (parent != NULL) ? OpBase_Type (parent) : OPType_AGGREGATE ;
 	if (t != OPType_CONDITIONAL_TRAVERSE &&
+		t != OPType_OPTIONAL_CONDITIONAL_TRAVERSE &&
 		t != OPType_EXPAND_INTO &&
 		t != OPType_CONDITIONAL_VAR_LEN_TRAVERSE &&
 		t != OPType_CONDITIONAL_VAR_LEN_TRAVERSE_EXPAND_INTO) {
@@ -307,7 +308,8 @@ static void _costBaseLabelScan
 	}
 
 	AlgebraicExpression *ae = NULL ;
-	if (t == OPType_CONDITIONAL_TRAVERSE) {
+	if (t == OPType_CONDITIONAL_TRAVERSE ||
+		t == OPType_OPTIONAL_CONDITIONAL_TRAVERSE) {
 		ae = ((OpCondTraverse*) parent)->ae ;
 	} else if (t == OPType_EXPAND_INTO) {
 		ae = ((OpExpandInto*) parent)->ae ;
