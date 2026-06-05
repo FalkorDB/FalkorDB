@@ -297,10 +297,7 @@ impl<'a> AggregateOp<'a> {
                     }
                 }
                 ExprIR::Constant(
-                    Value::Bool(true)
-                    | Value::Int(_ | _)
-                    | Value::Float(_ | _)
-                    | Value::String(_ | _),
+                    Value::Bool(true) | Value::Int(_) | Value::Float(_) | Value::String(_),
                 ) if func.name.eq_ignore_ascii_case("count") => {
                     // count(*) is represented as count(1) (or other non-null literal).
                     None
