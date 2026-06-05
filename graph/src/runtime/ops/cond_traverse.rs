@@ -35,8 +35,8 @@ use crate::parser::ast::{ExprIR, QueryExpr, QueryRelationship, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchOp},
-    env::Env,
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
+    row::{Row, RowView},
     runtime::Runtime,
     value::Value,
 };
@@ -73,7 +73,7 @@ pub struct CondTraverseOp<'a> {
     pub(crate) child: Box<BatchOp<'a>>,
     relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
     /// Buffered output rows from a partial expansion.
-    pending: VecDeque<Env<'a>>,
+    pending: VecDeque<Row>,
     /// Current input batch being expanded (may span multiple output batches).
     current_batch: Option<Batch<'a>>,
     /// Index into active rows of the current batch.
@@ -340,8 +340,8 @@ impl<'a> CondTraverseOp<'a> {
     /// returns `false` to signal "fall back to slow path for this batch".
     fn expand_batch(
         &self,
-        rows: &[&Env<'a>],
-        out: &mut Vec<Env<'a>>,
+        rows: &[Row],
+        out: &mut Vec<Row>,
     ) -> Result<bool, String> {
         let runtime = self.runtime;
         let rp = self.relationship_pattern;
@@ -431,11 +431,11 @@ impl<'a> CondTraverseOp<'a> {
             // Bail to slow path if the matrix-src side isn't explicitly
             // bound on this row. `env.get` alone would silently return a
             // colliding outer-scope slot value; `is_bound` is authoritative.
-            if !env.is_bound(from_alias) {
+            if !env.is_bound_by_id(from_alias.id) {
                 drop(g);
                 return Ok(false);
             }
-            let src_id = if let Some(Value::Node(id)) = env.get(from_alias) {
+            let src_id = if let Some(Value::Node(id)) = env.get_by_id(from_alias.id) {
                 *id
             } else {
                 drop(g);
@@ -495,11 +495,11 @@ impl<'a> CondTraverseOp<'a> {
             {
                 continue;
             }
-            let env = rows[row_i as usize];
+            let env = &rows[row_i as usize];
             // If the to-alias is already bound on the input env, the
             // planner should have inserted ExpandInto, not CondTraverse —
             // but be defensive and skip mismatches.
-            if let Some(Value::Node(bound)) = env.get(to_alias)
+            if let Some(Value::Node(bound)) = env.get_by_id(to_alias.id)
                 && *bound != dest_id
             {
                 continue;
@@ -513,7 +513,7 @@ impl<'a> CondTraverseOp<'a> {
                 // self.transposed (which only affects alias→storage mapping,
                 // not the underlying matrix orientation since
                 // build_relationship_matrix_unrestricted is non-transposed).
-                let src_id = match env.get(from_alias) {
+                let src_id = match env.get_by_id(from_alias.id) {
                     Some(Value::Node(id)) => *id,
                     _ => continue,
                 };
@@ -530,7 +530,7 @@ impl<'a> CondTraverseOp<'a> {
                     }
                 }
                 let Some(edge_id) = found_id else { continue };
-                let mut row = env.clone_pooled(runtime.env_pool);
+                let mut row = env.clone();
                 row.insert(to_alias, Value::Node(dest_id));
                 row.insert(
                     &rp.alias,
@@ -545,7 +545,7 @@ impl<'a> CondTraverseOp<'a> {
                 // Fused chain: edges across hops are anonymous & unreferenced
                 // (enforced by the fusion pass), so no edge id is bound and
                 // no intermediate node alias is exposed.
-                let mut row = env.clone_pooled(runtime.env_pool);
+                let mut row = env.clone();
                 row.insert(to_alias, Value::Node(dest_id));
                 out.push(row);
             }
@@ -557,8 +557,8 @@ impl<'a> CondTraverseOp<'a> {
 
     fn expand_row(
         &self,
-        env: &Env<'a>,
-        out: &mut Vec<Env<'a>>,
+        env: &Row,
+        out: &mut Vec<Row>,
     ) -> Result<(), String> {
         let runtime = self.runtime;
         let rp = self.relationship_pattern;
@@ -582,18 +582,18 @@ impl<'a> CondTraverseOp<'a> {
             None,
         )?;
 
-        let from_id = env.get(&rp.from.alias).and_then(|v| match v {
+        let from_id = env.get_by_id(rp.from.alias.id).and_then(|v| match v {
             Value::Node(id) => Some(*id),
             _ => None,
         });
-        if from_id.is_none() && env.is_bound(&rp.from.alias) {
+        if from_id.is_none() && env.is_bound_by_id(rp.from.alias.id) {
             return Ok(());
         }
-        let to_id = env.get(&rp.to.alias).and_then(|v| match v {
+        let to_id = env.get_by_id(rp.to.alias.id).and_then(|v| match v {
             Value::Node(id) => Some(*id),
             _ => None,
         });
-        if to_id.is_none() && env.is_bound(&rp.to.alias) {
+        if to_id.is_none() && env.is_bound_by_id(rp.to.alias.id) {
             return Ok(());
         }
 
@@ -649,7 +649,6 @@ impl<'a> CondTraverseOp<'a> {
                 &g,
                 rp,
                 env,
-                runtime,
                 out,
                 self.emit_relationship,
                 self.sibling_edges,
@@ -686,7 +685,6 @@ impl<'a> CondTraverseOp<'a> {
                 &g,
                 rp,
                 env,
-                runtime,
                 out,
                 self.emit_relationship,
                 self.sibling_edges,
@@ -705,8 +703,8 @@ impl<'a> CondTraverseOp<'a> {
             let mut i = start;
             while i < out.len() {
                 let key = {
-                    let f = out[i].get(source_alias);
-                    let t = out[i].get(&rp.to.alias);
+                    let f = out[i].get_by_id(source_alias.id);
+                    let t = out[i].get_by_id(rp.to.alias.id);
                     match (f, t) {
                         (Some(Value::Node(fid)), Some(Value::Node(tid))) => {
                             Some((u64::from(*fid), u64::from(*tid)))
@@ -741,9 +739,8 @@ impl<'a> CondTraverseOp<'a> {
         filter_attrs: &Value,
         g: &crate::graph::graph::Graph,
         rp: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
-        env: &Env<'a>,
-        runtime: &'a Runtime<'a>,
-        out: &mut Vec<Env<'a>>,
+        env: &Row,
+        out: &mut Vec<Row>,
         emit_relationship: bool,
         sibling_edges: &[u32],
         edge_iters: &[std::cell::RefCell<EdgeIter>],
@@ -830,7 +827,7 @@ impl<'a> CondTraverseOp<'a> {
                     }
                 }
                 if let Some(id) = found_id {
-                    let mut row = env.clone_pooled(runtime.env_pool);
+                    let mut row = env.clone();
                     row.insert(&rp.alias, Value::Relationship(Box::new((id, src, dst))));
                     row.insert(&rp.from.alias, Value::Node(from_node));
                     row.insert(&rp.to.alias, Value::Node(to_node));
@@ -869,7 +866,7 @@ impl<'a> CondTraverseOp<'a> {
                             continue;
                         }
                     }
-                    let mut row = env.clone_pooled(runtime.env_pool);
+                    let mut row = env.clone();
                     row.insert(&rp.alias, Value::Relationship(Box::new((id, src, dst))));
                     row.insert(&rp.from.alias, Value::Node(from_node));
                     row.insert(&rp.to.alias, Value::Node(to_node));
@@ -897,13 +894,13 @@ impl<'a> Iterator for CondTraverseOp<'a> {
         // side effects.  Empty matrices/iters in the lazy state naturally
         // produce zero rows, which is the desired behavior.
 
-        let mut envs = Vec::with_capacity(BATCH_SIZE);
+        let mut builder = BatchBuilder::new();
 
         // Drain leftover rows from previous call.
-        super::drain_pending(&mut self.pending, &mut envs);
+        super::drain_pending(&mut self.pending, &mut builder);
 
         loop {
-            if envs.len() >= BATCH_SIZE {
+            if builder.len() >= BATCH_SIZE {
                 break;
             }
 
@@ -930,9 +927,9 @@ impl<'a> Iterator for CondTraverseOp<'a> {
 
                 let mut used_batched = false;
                 if self.batched_eligible && self.current_pos < active.len() {
-                    let envs_slice: Vec<&Env<'a>> = active[self.current_pos..]
+                    let envs_slice: Vec<Row> = active[self.current_pos..]
                         .iter()
-                        .map(|&i| batch.env_ref(i))
+                        .map(|&i| BatchRow::new(batch, i).to_owned_row())
                         .collect();
                     let mut expanded = Vec::new();
                     match self.expand_batch(&envs_slice, &mut expanded) {
@@ -950,9 +947,9 @@ impl<'a> Iterator for CondTraverseOp<'a> {
                     while self.current_pos < active.len() {
                         let row_idx = active[self.current_pos];
                         self.current_pos += 1;
-                        let env = batch.env_ref(row_idx);
+                        let env = BatchRow::new(batch, row_idx).to_owned_row();
                         let mut expanded = Vec::new();
-                        if let Err(e) = self.expand_row(env, &mut expanded) {
+                        if let Err(e) = self.expand_row(&env, &mut expanded) {
                             return Some(Err(e));
                         }
                         self.pending.extend(expanded);
@@ -964,7 +961,7 @@ impl<'a> Iterator for CondTraverseOp<'a> {
                 }
             }
 
-            super::drain_pending(&mut self.pending, &mut envs);
+            super::drain_pending(&mut self.pending, &mut builder);
 
             // Check if batch is exhausted.
             if let Some(ref batch) = self.current_batch
@@ -974,18 +971,18 @@ impl<'a> Iterator for CondTraverseOp<'a> {
             }
         }
 
-        if envs.is_empty() {
+        if builder.is_empty() {
             None
         } else {
             // Trim to record_cap if set.
             if let Some(cap) = self.record_cap {
                 let remaining = cap - self.produced;
-                if envs.len() > remaining {
-                    envs.truncate(remaining);
+                if builder.len() > remaining {
+                    builder.truncate(remaining);
                 }
             }
-            self.produced += envs.len();
-            Some(Ok(Batch::from_envs(envs)))
+            self.produced += builder.len();
+            Some(Ok(builder.finish()))
         }
     }
 }

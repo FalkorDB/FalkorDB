@@ -20,8 +20,8 @@ use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchOp},
-    env::Env,
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
+    row::{Row, RowView},
     runtime::Runtime,
     value::Value,
 };
@@ -31,7 +31,7 @@ pub struct EdgeByFulltextScanOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
     pending: VecDeque<(
-        Env<'a>,
+        Row,
         Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId, f64)>>,
     )>,
     edge: &'a Variable,
@@ -67,14 +67,14 @@ impl<'a> EdgeByFulltextScanOp<'a> {
     /// or all pending scans are exhausted.
     fn drain_pending(
         &mut self,
-        envs: &mut Vec<Env<'a>>,
+        builder: &mut BatchBuilder,
     ) {
-        while envs.len() < BATCH_SIZE {
+        while builder.len() < BATCH_SIZE {
             let Some((env, iter)) = self.pending.front_mut() else {
                 break;
             };
             if let Some((src, dst, edge_id, s)) = iter.next() {
-                let mut row = env.clone_pooled(self.runtime.env_pool);
+                let mut row = env.clone();
                 row.insert(
                     self.edge,
                     Value::Relationship(Box::new((edge_id, src, dst))),
@@ -82,7 +82,7 @@ impl<'a> EdgeByFulltextScanOp<'a> {
                 if let Some(score) = self.score {
                     row.insert(score, Value::Float(s));
                 }
-                envs.push(row);
+                builder.push_row(&row);
             } else {
                 self.pending.pop_front();
             }
@@ -94,23 +94,24 @@ impl<'a> Iterator for EdgeByFulltextScanOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut envs = Vec::with_capacity(BATCH_SIZE);
+        let mut builder = BatchBuilder::new();
 
         // Drain leftover scans from previous call.
-        self.drain_pending(&mut envs);
+        self.drain_pending(&mut builder);
 
-        while envs.len() < BATCH_SIZE {
+        while builder.len() < BATCH_SIZE {
             let batch = match self.child.next() {
                 Some(Ok(b)) => b,
                 Some(Err(e)) => return Some(Err(e)),
                 None => break,
             };
 
-            for vars in batch.active_env_iter() {
+            for row in batch.active_indices() {
+                let view = BatchRow::new(&batch, row);
                 let label_str = match ExprEval::from_runtime(self.runtime).eval(
                     self.label,
                     self.label.root().idx(),
-                    Some(vars),
+                    Some(&view),
                     None,
                 ) {
                     Ok(Value::String(s)) => s,
@@ -124,7 +125,7 @@ impl<'a> Iterator for EdgeByFulltextScanOp<'a> {
                 let query_str = match ExprEval::from_runtime(self.runtime).eval(
                     self.query,
                     self.query.root().idx(),
-                    Some(vars),
+                    Some(&view),
                     None,
                 ) {
                     Ok(Value::String(s)) => s,
@@ -141,16 +142,16 @@ impl<'a> Iterator for EdgeByFulltextScanOp<'a> {
                 drop(g);
 
                 self.pending
-                    .push_back((vars.clone_pooled(self.runtime.env_pool), iter));
+                    .push_back((BatchRow::new(&batch, row).to_owned_row(), iter));
             }
 
-            self.drain_pending(&mut envs);
+            self.drain_pending(&mut builder);
         }
 
-        if envs.is_empty() {
+        if builder.is_empty() {
             None
         } else {
-            Some(Ok(Batch::from_envs(envs)))
+            Some(Ok(builder.finish()))
         }
     }
 }

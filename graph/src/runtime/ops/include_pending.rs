@@ -14,8 +14,8 @@ use crate::graph::graph::NodeId;
 use crate::parser::ast::{QueryNode, Variable};
 use crate::planner::IR;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchOp},
-    env::Env,
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
+    row::{Row, RowView},
     runtime::Runtime,
     value::Value,
 };
@@ -33,8 +33,15 @@ pub struct IncludePendingOp<'a> {
     label_removed_nodes: Option<RoaringTreemap>,
     /// Whether we've finished pulling from the child.
     child_exhausted: bool,
-    /// Saved parent env for emitting pending nodes.
-    parent_env: Option<Env<'a>>,
+    /// Correlated argument rows captured from the enclosing sub-plan's
+    /// `Argument`. Pending-created nodes are paired with each of these so the
+    /// downstream filter can resolve correlated variables (e.g. `row.x`) even
+    /// when the wrapped scan returned no matching rows.
+    argument_rows: Vec<Row>,
+    /// Pending-emission cursor: the pending node currently being paired with
+    /// argument rows, and the next argument-row index to pair it with.
+    cur_pending_node: Option<NodeId>,
+    arg_idx: usize,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -53,9 +60,23 @@ impl<'a> IncludePendingOp<'a> {
             deleted_nodes: None,
             label_removed_nodes: None,
             child_exhausted: false,
-            parent_env: None,
+            argument_rows: Vec::new(),
+            cur_pending_node: None,
+            arg_idx: 0,
             idx,
         }
+    }
+
+    /// Snapshot the correlated argument rows so pending-created nodes can be
+    /// paired with them even when the wrapped scan yields no rows.
+    pub(crate) fn capture_argument(
+        &mut self,
+        batch: &Batch,
+    ) {
+        self.argument_rows = batch
+            .active_indices()
+            .map(|r| BatchRow::new(batch, r).to_owned_row())
+            .collect();
     }
 
     /// Initialize pending state (deleted/removed sets and extra nodes to emit).
@@ -87,26 +108,49 @@ impl<'a> IncludePendingOp<'a> {
 
     /// Emit a batch from pending_extra nodes.
     fn emit_pending_batch(&mut self) -> Option<Result<Batch<'a>, String>> {
-        let iter = self.pending_extra.as_mut()?;
         let alias = &self.node_pattern.alias;
 
-        let mut envs = Vec::with_capacity(BATCH_SIZE);
-        for id in iter.by_ref() {
-            let mut row = match &self.parent_env {
-                Some(env) => env.clone_pooled(self.runtime.env_pool),
-                None => Env::new(self.runtime.env_pool),
-            };
-            row.insert(alias, Value::Node(id));
-            envs.push(row);
-            if envs.len() >= BATCH_SIZE {
-                break;
+        let mut builder = BatchBuilder::new();
+        // Number of correlated argument rows to pair each pending node with.
+        // When uncorrelated (no argument), emit a single row per node with an
+        // empty base env.
+        let arg_len = self.argument_rows.len().max(1);
+
+        while builder.len() < BATCH_SIZE {
+            // Advance to the next pending node when the current one has been
+            // paired with every argument row.
+            if self.cur_pending_node.is_none() {
+                let iter = self.pending_extra.as_mut()?;
+                match iter.next() {
+                    Some(id) => {
+                        self.cur_pending_node = Some(id);
+                        self.arg_idx = 0;
+                    }
+                    None => break,
+                }
+            }
+            let id = self.cur_pending_node.unwrap();
+
+            while self.arg_idx < arg_len && builder.len() < BATCH_SIZE {
+                let mut row = self
+                    .argument_rows
+                    .get(self.arg_idx)
+                    .cloned()
+                    .unwrap_or_else(Row::new);
+                row.insert(alias, Value::Node(id));
+                builder.push_row(&row);
+                self.arg_idx += 1;
+            }
+
+            if self.arg_idx >= arg_len {
+                self.cur_pending_node = None;
             }
         }
 
-        if envs.is_empty() {
+        if builder.is_empty() {
             None
         } else {
-            Some(Ok(Batch::from_envs(envs)))
+            Some(Ok(builder.finish()))
         }
     }
 }
@@ -125,24 +169,15 @@ impl<'a> Iterator for IncludePendingOp<'a> {
             loop {
                 match self.child.next() {
                     Some(Ok(batch)) => {
-                        // Save a parent env for later pending emission.
-                        if self.parent_env.is_none() && !batch.is_empty() {
-                            // Use the first row (without the node binding) as template.
-                            // The child scan already inserted the node var, but we need
-                            // the base env. We'll just use the first env as-is since
-                            // pending nodes will overwrite the node alias anyway.
-                            self.parent_env =
-                                Some(batch.env_ref(0).clone_pooled(self.runtime.env_pool));
-                        }
-
                         let deleted = self.deleted_nodes.as_ref().unwrap();
                         let removed = self.label_removed_nodes.as_ref().unwrap();
                         let alias = &self.node_pattern.alias;
 
                         // Filter the batch: keep only rows whose node is not deleted/removed
-                        let mut envs = Vec::with_capacity(batch.len());
-                        for env in batch.active_env_iter() {
-                            if let Some(Value::Node(nid)) = env.get(alias) {
+                        let mut builder = BatchBuilder::new();
+                        for row in batch.active_indices() {
+                            let env = BatchRow::new(&batch, row).to_owned_row();
+                            if let Some(Value::Node(nid)) = env.get_by_id(alias.id) {
                                 let raw: u64 = (*nid).into();
                                 if deleted.contains(raw) || removed.contains(raw) {
                                     continue;
@@ -154,11 +189,11 @@ impl<'a> Iterator for IncludePendingOp<'a> {
                                 );
                                 continue;
                             }
-                            envs.push(env.clone_pooled(self.runtime.env_pool));
+                            builder.push_row(&env);
                         }
 
-                        if !envs.is_empty() {
-                            return Some(Ok(Batch::from_envs(envs)));
+                        if !builder.is_empty() {
+                            return Some(Ok(builder.finish()));
                         }
                         // All rows filtered, pull next batch from child
                     }

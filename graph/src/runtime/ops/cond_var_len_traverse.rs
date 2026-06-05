@@ -34,9 +34,9 @@ use crate::graph::graph::{NodeId, RelationshipId};
 use crate::parser::ast::{QueryExpr, QueryRelationship, Variable};
 use crate::planner::IR;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchOp},
-    env::Env,
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
     eval::ExprEval,
+    row::{Row, RowView},
     runtime::Runtime,
     value::Value,
 };
@@ -47,7 +47,7 @@ use thin_vec::ThinVec;
 pub struct CondVarLenTraverseOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
-    pending: VecDeque<Env<'a>>,
+    pending: VecDeque<Row>,
     relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
     /// Optional per-hop edge filter expression (absorbed from WHERE clause by the optimizer).
     edge_filter: Option<&'a QueryExpr<Variable>>,
@@ -74,8 +74,8 @@ impl<'a> CondVarLenTraverseOp<'a> {
 
     fn expand_row(
         &self,
-        vars: &Env<'a>,
-        out: &mut Vec<Env<'a>>,
+        vars: &Row,
+        out: &mut Vec<Row>,
     ) -> Result<(), String> {
         let relationship_pattern = self.relationship_pattern;
 
@@ -89,21 +89,21 @@ impl<'a> CondVarLenTraverseOp<'a> {
         let has_edge_filter = matches!(&filter_attrs, Value::Map(m) if !m.is_empty());
 
         let from_id = vars
-            .get(&relationship_pattern.from.alias)
+            .get_by_id(relationship_pattern.from.alias.id)
             .and_then(|v| match v {
                 Value::Node(id) => Some(*id),
                 _ => None,
             });
-        if from_id.is_none() && vars.is_bound(&relationship_pattern.from.alias) {
+        if from_id.is_none() && vars.is_bound_by_id(relationship_pattern.from.alias.id) {
             return Ok(());
         }
         let to_id = vars
-            .get(&relationship_pattern.to.alias)
+            .get_by_id(relationship_pattern.to.alias.id)
             .and_then(|v| match v {
                 Value::Node(id) => Some(*id),
                 _ => None,
             });
-        if to_id.is_none() && vars.is_bound(&relationship_pattern.to.alias) {
+        if to_id.is_none() && vars.is_bound_by_id(relationship_pattern.to.alias.id) {
             return Ok(());
         }
 
@@ -150,7 +150,7 @@ impl<'a> CondVarLenTraverseOp<'a> {
                         .iter()
                         .all(|l| g.get_node_labels(start_node).any(|nl| nl == *l)))
             {
-                let mut env = vars.clone_pooled(self.runtime.env_pool);
+                let mut env = vars.clone();
                 env.insert(&relationship_pattern.from.alias, Value::Node(start_node));
                 env.insert(&relationship_pattern.to.alias, Value::Node(start_node));
                 let mut path_elems = ThinVec::new();
@@ -247,7 +247,7 @@ impl<'a> CondVarLenTraverseOp<'a> {
 
                         // Check WHERE-clause edge filter (absorbed by optimizer)
                         if let Some(edge_filter) = self.edge_filter {
-                            let mut filter_env = vars.clone_pooled(self.runtime.env_pool);
+                            let mut filter_env = vars.clone();
                             filter_env.insert(
                                 &relationship_pattern.alias,
                                 Value::Relationship(Box::new((edge_id, current, dest))),
@@ -301,7 +301,7 @@ impl<'a> CondVarLenTraverseOp<'a> {
                     if will_emit && will_continue {
                         // Both emit and continue: wrap in Arc to share, avoid double clone
                         let shared = Arc::new(new_path);
-                        let mut env = vars.clone_pooled(self.runtime.env_pool);
+                        let mut env = vars.clone();
                         if reversed {
                             env.insert(&relationship_pattern.from.alias, Value::Node(dest));
                             env.insert(&relationship_pattern.to.alias, Value::Node(start_node));
@@ -328,7 +328,7 @@ impl<'a> CondVarLenTraverseOp<'a> {
                         stack.push((dest, owned, next_used, next_nodes));
                     } else if will_emit {
                         // Emit only — move path directly into Arc
-                        let mut env = vars.clone_pooled(self.runtime.env_pool);
+                        let mut env = vars.clone();
                         if reversed {
                             env.insert(&relationship_pattern.from.alias, Value::Node(dest));
                             env.insert(&relationship_pattern.to.alias, Value::Node(start_node));
@@ -366,37 +366,38 @@ impl<'a> Iterator for CondVarLenTraverseOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut envs = Vec::with_capacity(BATCH_SIZE);
+        let mut builder = BatchBuilder::new();
 
         // Drain leftover rows from previous call.
-        super::drain_pending(&mut self.pending, &mut envs);
+        super::drain_pending(&mut self.pending, &mut builder);
 
-        while envs.len() < BATCH_SIZE {
+        while builder.len() < BATCH_SIZE {
             let batch = match self.child.next() {
                 Some(Ok(b)) => b,
                 Some(Err(e)) => return Some(Err(e)),
                 None => break,
             };
 
-            for vars in batch.active_env_iter() {
+            for row in batch.active_indices() {
+                let vars = BatchRow::new(&batch, row).to_owned_row();
                 let mut expanded = Vec::new();
-                if let Err(e) = self.expand_row(vars, &mut expanded) {
+                if let Err(e) = self.expand_row(&vars, &mut expanded) {
                     return Some(Err(e));
                 }
                 self.pending.extend(expanded);
 
-                super::drain_pending(&mut self.pending, &mut envs);
+                super::drain_pending(&mut self.pending, &mut builder);
 
-                if envs.len() >= BATCH_SIZE {
+                if builder.len() >= BATCH_SIZE {
                     break;
                 }
             }
         }
 
-        if envs.is_empty() {
+        if builder.is_empty() {
             None
         } else {
-            Some(Ok(Batch::from_envs(envs)))
+            Some(Ok(builder.finish()))
         }
     }
 }

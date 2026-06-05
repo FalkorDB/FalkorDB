@@ -34,8 +34,8 @@ use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchOp},
-    env::Env,
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
+    row::{Row, RowView},
     runtime::Runtime,
     value::Value,
 };
@@ -47,7 +47,7 @@ pub struct ForEachOp<'a> {
     list: &'a QueryExpr<Variable>,
     var: &'a Variable,
     body_idx: NodeIdx<Dyn<IR>>,
-    pending: VecDeque<Env<'a>>,
+    pending: VecDeque<Row>,
     current_batch: Option<Batch<'a>>,
     current_pos: usize,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
@@ -86,24 +86,27 @@ impl<'a> ForEachOp<'a> {
     fn execute_list(
         &self,
         items: Vec<Value>,
-        env: &Env<'a>,
+        env: &Row,
     ) -> Result<(), String> {
         if items.is_empty() {
             return Ok(());
         }
 
-        let mut loop_envs: Vec<Env<'a>> = items
+        let mut loop_envs: Vec<Row> = items
             .into_iter()
             .map(|item| {
-                let mut loop_env = env.clone_pooled(self.runtime.env_pool);
+                let mut loop_env = env.clone();
                 loop_env.insert(self.var, item);
                 loop_env
             })
             .collect();
 
         while !loop_envs.is_empty() {
-            let chunk: Vec<Env<'a>> = loop_envs.drain(..BATCH_SIZE.min(loop_envs.len())).collect();
-            let batch = Batch::from_envs(chunk);
+            let mut builder = BatchBuilder::new();
+            for e in loop_envs.drain(..BATCH_SIZE.min(loop_envs.len())) {
+                builder.push_row(&e);
+            }
+            let batch = builder.finish();
             let mut body = self.runtime.run_batch(self.body_idx)?;
             body.set_argument_batch(batch);
             // Drain the body sub-plan completely — we only care about side effects.
@@ -119,13 +122,13 @@ impl<'a> Iterator for ForEachOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut envs = Vec::with_capacity(BATCH_SIZE);
+        let mut builder = BatchBuilder::new();
 
         // Drain leftover rows from previous call.
-        super::drain_pending(&mut self.pending, &mut envs);
+        super::drain_pending(&mut self.pending, &mut builder);
 
         loop {
-            if envs.len() >= BATCH_SIZE {
+            if builder.len() >= BATCH_SIZE {
                 break;
             }
 
@@ -147,13 +150,13 @@ impl<'a> Iterator for ForEachOp<'a> {
                 while self.current_pos < active.len() {
                     let row_idx = active[self.current_pos];
                     self.current_pos += 1;
-                    let env = batch.env_ref(row_idx);
+                    let env = BatchRow::new(batch, row_idx).to_owned_row();
 
                     // Evaluate the list expression for this row.
                     let list_value = match ExprEval::from_runtime(self.runtime).eval(
                         self.list,
                         self.list.root().idx(),
-                        Some(env),
+                        Some(&env),
                         None,
                     ) {
                         Ok(v) => v,
@@ -163,7 +166,7 @@ impl<'a> Iterator for ForEachOp<'a> {
                     match list_value {
                         Value::List(list) => {
                             let items: Vec<Value> = Arc::unwrap_or_clone(list).into();
-                            if let Err(e) = self.execute_list(items, env) {
+                            if let Err(e) = self.execute_list(items, &env) {
                                 return Some(Err(e));
                             }
                         }
@@ -179,8 +182,7 @@ impl<'a> Iterator for ForEachOp<'a> {
                     }
 
                     // Pass through the original input row unchanged.
-                    self.pending
-                        .push_back(env.clone_pooled(self.runtime.env_pool));
+                    self.pending.push_back(env.clone());
 
                     if self.pending.len() >= BATCH_SIZE {
                         break;
@@ -188,7 +190,7 @@ impl<'a> Iterator for ForEachOp<'a> {
                 }
             }
 
-            super::drain_pending(&mut self.pending, &mut envs);
+            super::drain_pending(&mut self.pending, &mut builder);
 
             // Check if batch is exhausted.
             if let Some(ref batch) = self.current_batch
@@ -198,10 +200,10 @@ impl<'a> Iterator for ForEachOp<'a> {
             }
         }
 
-        if envs.is_empty() {
+        if builder.is_empty() {
             None
         } else {
-            Some(Ok(Batch::from_envs(envs)))
+            Some(Ok(builder.finish()))
         }
     }
 }

@@ -29,9 +29,9 @@ use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchOp},
-    env::Env,
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
     functions::GraphFn,
+    row::{Row, RowView},
     runtime::Runtime,
     value::Value,
 };
@@ -74,15 +74,14 @@ impl<'a> ProcedureCallOp<'a> {
     }
 
     fn init_batches(&mut self) -> Result<(), String> {
-        let pool = self.runtime.env_pool;
-        let mut all_envs: Vec<Env<'a>> = Vec::new();
+        let mut all_envs: Vec<Row> = Vec::new();
 
         // Iterate over all input rows from child operator
         loop {
             match self.child.next() {
                 Some(Ok(batch)) => {
                     for row_idx in batch.active_indices() {
-                        let input_env = batch.env_ref(row_idx);
+                        let input_env = BatchRow::new(&batch, row_idx).to_owned_row();
                         // Evaluate arguments in the context of this input row
                         let args = self
                             .trees
@@ -91,7 +90,7 @@ impl<'a> ProcedureCallOp<'a> {
                                 ExprEval::from_runtime(self.runtime).eval(
                                     ir,
                                     ir.root().idx(),
-                                    Some(input_env),
+                                    Some(&input_env),
                                     None,
                                 )
                             })
@@ -101,7 +100,7 @@ impl<'a> ProcedureCallOp<'a> {
                         match res {
                             Value::List(arr) => {
                                 for v in arr.iter() {
-                                    let mut env = input_env.clone_pooled(pool);
+                                    let mut env = input_env.clone();
                                     if let Value::Map(map) = v {
                                         for output in self.name_outputs {
                                             let field_name = output.name.as_ref().unwrap();
@@ -126,18 +125,15 @@ impl<'a> ProcedureCallOp<'a> {
             Vec::new()
         } else {
             let mut result = Vec::new();
-            let mut current_chunk = Vec::with_capacity(BATCH_SIZE);
+            let mut builder = BatchBuilder::new();
             for env in all_envs {
-                current_chunk.push(env);
-                if current_chunk.len() >= BATCH_SIZE {
-                    result.push(Batch::from_envs(std::mem::replace(
-                        &mut current_chunk,
-                        Vec::with_capacity(BATCH_SIZE),
-                    )));
+                builder.push_row(&env);
+                if builder.len() >= BATCH_SIZE {
+                    result.push(std::mem::take(&mut builder).finish());
                 }
             }
-            if !current_chunk.is_empty() {
-                result.push(Batch::from_envs(current_chunk));
+            if !builder.is_empty() {
+                result.push(builder.finish());
             }
             result
         };

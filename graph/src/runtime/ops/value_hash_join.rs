@@ -29,9 +29,9 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchOp},
-    env::Env,
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
     eval::ExprEval,
+    row::{Row, RowView},
     runtime::Runtime,
     value::Value,
 };
@@ -46,13 +46,13 @@ pub struct ValueHashJoinOp<'a> {
     pub(crate) idx: NodeIdx<Dyn<IR>>,
     /// Hash table: hash(value) -> Vec<(Value, Vec<Env>)>
     /// We use a Vec of (key, envs) pairs per bucket to handle hash collisions.
-    pub(crate) hash_table: Option<HashMap<u64, Vec<(Value, Vec<Env<'a>>)>>>,
-    /// Current block of left-side rows being probed.
-    pub(crate) left_envs: Vec<Env<'a>>,
-    /// Current position within `left_envs`.
+    pub(crate) hash_table: Option<HashMap<u64, Vec<(Value, Vec<Row>)>>>,
+    /// Current block of left-side rows being probed (columnar).
+    pub(crate) left_batch: Option<Batch<'a>>,
+    /// Current position within `left_batch`.
     pub(crate) left_pos: usize,
     /// Current position within the matched right envs for the current left row.
-    pub(crate) right_match_envs: Vec<Env<'a>>,
+    pub(crate) right_match_envs: Vec<Row>,
     pub(crate) right_match_pos: usize,
 }
 
@@ -73,7 +73,7 @@ impl<'a> ValueHashJoinOp<'a> {
             rhs_exp,
             idx,
             hash_table: None,
-            left_envs: Vec::new(),
+            left_batch: None,
             left_pos: 0,
             right_match_envs: Vec::new(),
             right_match_pos: 0,
@@ -81,16 +81,16 @@ impl<'a> ValueHashJoinOp<'a> {
     }
 
     /// Build the hash table from the right sub-plan.
-    fn materialize_right(&mut self) -> Result<HashMap<u64, Vec<(Value, Vec<Env<'a>>)>>, String> {
-        let pool = self.runtime.env_pool;
+    fn materialize_right(&mut self) -> Result<HashMap<u64, Vec<(Value, Vec<Row>)>>, String> {
         let eval = ExprEval::from_runtime(self.runtime);
         let rhs_idx = self.rhs_exp.root().idx();
-        let mut table: HashMap<u64, Vec<(Value, Vec<Env<'a>>)>> = HashMap::new();
+        let mut table: HashMap<u64, Vec<(Value, Vec<Row>)>> = HashMap::new();
 
         for result in self.right.by_ref() {
             let batch = result?;
-            for env in batch.active_env_iter() {
-                let key = eval.eval(self.rhs_exp, rhs_idx, Some(env), None)?;
+            for row in batch.active_indices() {
+                let env = BatchRow::new(&batch, row).to_owned_row();
+                let key = eval.eval(self.rhs_exp, rhs_idx, Some(&env), None)?;
                 if matches!(key, Value::Null) {
                     // NULL != NULL in Cypher, skip
                     continue;
@@ -102,9 +102,9 @@ impl<'a> ValueHashJoinOp<'a> {
                 let bucket = table.entry(hash).or_default();
                 // Find existing entry with equal key, or create new
                 if let Some(entry) = bucket.iter_mut().find(|(k, _)| *k == key) {
-                    entry.1.push(env.clone_pooled(pool));
+                    entry.1.push(env);
                 } else {
-                    bucket.push((key, vec![env.clone_pooled(pool)]));
+                    bucket.push((key, vec![env]));
                 }
             }
         }
@@ -117,8 +117,6 @@ impl<'a> Iterator for ValueHashJoinOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let pool = self.runtime.env_pool;
-
         // Lazy materialization of right side
         if self.hash_table.is_none() {
             match self.materialize_right() {
@@ -132,14 +130,17 @@ impl<'a> Iterator for ValueHashJoinOp<'a> {
             }
         }
 
-        let mut envs = Vec::with_capacity(BATCH_SIZE);
+        let mut builder = BatchBuilder::new();
 
         loop {
+            let left_len = self.left_batch.as_ref().map_or(0, Batch::len);
+
             // Drain remaining matches from current left row
-            while envs.len() < BATCH_SIZE && self.right_match_pos < self.right_match_envs.len() {
-                let mut merged = self.left_envs[self.left_pos].clone_pooled(pool);
+            while builder.len() < BATCH_SIZE && self.right_match_pos < self.right_match_envs.len() {
+                let mut merged =
+                    BatchRow::new(self.left_batch.as_ref().unwrap(), self.left_pos).to_owned_row();
                 merged.merge(&self.right_match_envs[self.right_match_pos]);
-                envs.push(merged);
+                builder.push_row(&merged);
                 self.right_match_pos += 1;
             }
 
@@ -152,23 +153,21 @@ impl<'a> Iterator for ValueHashJoinOp<'a> {
                 self.right_match_pos = 0;
             }
 
-            if envs.len() >= BATCH_SIZE {
-                return Some(Ok(Batch::from_envs(envs)));
+            if builder.len() >= BATCH_SIZE {
+                return Some(Ok(builder.finish()));
             }
 
             // Process more left rows
-            while self.left_pos < self.left_envs.len() {
+            while self.left_pos < left_len {
                 // Inline probe to avoid borrow conflict with self.right_match_envs
                 let eval = ExprEval::from_runtime(self.runtime);
                 let lhs_idx = self.lhs_exp.root().idx();
-                let key = match eval.eval(
-                    self.lhs_exp,
-                    lhs_idx,
-                    Some(&self.left_envs[self.left_pos]),
-                    None,
-                ) {
-                    Ok(k) => k,
-                    Err(e) => return Some(Err(e)),
+                let key = {
+                    let left_row = BatchRow::new(self.left_batch.as_ref().unwrap(), self.left_pos);
+                    match eval.eval(self.lhs_exp, lhs_idx, Some(&left_row), None) {
+                        Ok(k) => k,
+                        Err(e) => return Some(Err(e)),
+                    }
                 };
                 if matches!(key, Value::Null) {
                     self.left_pos += 1;
@@ -195,15 +194,18 @@ impl<'a> Iterator for ValueHashJoinOp<'a> {
                 self.right_match_pos = 0;
                 for group in matched {
                     for env in group {
-                        self.right_match_envs.push(env.clone_pooled(pool));
+                        self.right_match_envs.push(env.clone());
                     }
                 }
                 // Now drain from right_match
-                while envs.len() < BATCH_SIZE && self.right_match_pos < self.right_match_envs.len()
+                while builder.len() < BATCH_SIZE
+                    && self.right_match_pos < self.right_match_envs.len()
                 {
-                    let mut merged = self.left_envs[self.left_pos].clone_pooled(pool);
+                    let mut merged =
+                        BatchRow::new(self.left_batch.as_ref().unwrap(), self.left_pos)
+                            .to_owned_row();
                     merged.merge(&self.right_match_envs[self.right_match_pos]);
-                    envs.push(merged);
+                    builder.push_row(&merged);
                     self.right_match_pos += 1;
                 }
                 if self.right_match_pos >= self.right_match_envs.len() {
@@ -211,27 +213,25 @@ impl<'a> Iterator for ValueHashJoinOp<'a> {
                     self.right_match_envs.clear();
                     self.right_match_pos = 0;
                 }
-                if envs.len() >= BATCH_SIZE {
-                    return Some(Ok(Batch::from_envs(envs)));
+                if builder.len() >= BATCH_SIZE {
+                    return Some(Ok(builder.finish()));
                 }
             }
 
             // Need more left rows
-            self.left_envs.clear();
+            self.left_batch = None;
             self.left_pos = 0;
 
             match self.child.next() {
                 Some(Ok(batch)) => {
-                    for env in batch.active_env_iter() {
-                        self.left_envs.push(env.clone_pooled(pool));
-                    }
+                    self.left_batch = Some(batch.into_compacted());
                 }
                 Some(Err(e)) => return Some(Err(e)),
                 None => {
-                    if envs.is_empty() {
+                    if builder.is_empty() {
                         return None;
                     }
-                    return Some(Ok(Batch::from_envs(envs)));
+                    return Some(Ok(builder.finish()));
                 }
             }
         }

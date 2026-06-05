@@ -34,25 +34,25 @@ use crate::parser::ast::{QueryGraph, SetItem, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchOp},
-    env::Env,
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
+    row::{Row, RowView},
     runtime::Runtime,
     value::Value,
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
 /// Pending merge results for a single input row (multiple matches to drain lazily).
-struct PendingMerge<'a> {
+struct PendingMerge {
     /// The input env to merge with each match result.
-    env: Env<'a>,
+    env: Row,
     /// Remaining match envs to process.
-    matches: VecDeque<Env<'a>>,
+    matches: VecDeque<Row>,
 }
 
 pub struct MergeOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
-    pending: VecDeque<PendingMerge<'a>>,
+    pending: VecDeque<PendingMerge>,
     merge_child_idx: NodeIdx<Dyn<IR>>,
     pattern: &'a QueryGraph<Arc<String>, Arc<String>, Variable>,
     resolved_pattern: OnceCell<QueryGraph<Arc<String>, LabelId, Variable>>,
@@ -112,8 +112,8 @@ impl<'a> MergeOp<'a> {
 
     fn do_create_fallback(
         &self,
-        vars: Env<'a>,
-    ) -> Result<Env<'a>, String> {
+        vars: Row,
+    ) -> Result<Row, String> {
         let resolved_pattern = self.resolve_pattern();
         let pattern_hash = self.compute_merge_pattern_hash(resolved_pattern, &vars)?;
 
@@ -128,32 +128,41 @@ impl<'a> MergeOp<'a> {
             drop(merge_cache);
 
             let resolved = self.resolve_on_match_set_items();
-            let batch = Batch::from_envs(vec![vars]);
+            let mut builder = BatchBuilder::new();
+            builder.push_row(&vars);
+            let batch = builder.finish();
             self.runtime.set_batch(resolved, &batch)?;
-            let mut envs_vec = batch.into_envs();
-            Ok(envs_vec.pop().unwrap())
+            Ok(BatchRow::new(&batch, 0).to_owned_row())
         } else {
             // Pattern not yet created, create it
             drop(merge_cache);
 
-            let mut batch = Batch::from_envs(vec![vars]);
+            let mut builder = BatchBuilder::new();
+            builder.push_row(&vars);
+            let mut batch = builder.finish();
             self.runtime.create_batch(resolved_pattern, &mut batch)?;
 
             // Cache the created entity bindings (node/relationship IDs)
-            let env_ref = batch.env_ref(0);
+            let env_ref = BatchRow::new(&batch, 0).to_owned_row();
             let pattern_vars: Vec<(u32, Value)> = resolved_pattern
                 .nodes()
                 .iter()
                 .map(|n| {
                     (
                         n.alias.id,
-                        env_ref.get(&n.alias).cloned().unwrap_or(Value::Null),
+                        env_ref
+                            .get_by_id(n.alias.id)
+                            .cloned()
+                            .unwrap_or(Value::Null),
                     )
                 })
                 .chain(resolved_pattern.relationships().iter().map(|r| {
                     (
                         r.alias.id,
-                        env_ref.get(&r.alias).cloned().unwrap_or(Value::Null),
+                        env_ref
+                            .get_by_id(r.alias.id)
+                            .cloned()
+                            .unwrap_or(Value::Null),
                     )
                 }))
                 .collect();
@@ -164,21 +173,20 @@ impl<'a> MergeOp<'a> {
 
             let resolved = self.resolve_on_create_set_items();
             self.runtime.set_batch(resolved, &batch)?;
-            let mut envs_vec = batch.into_envs();
-            Ok(envs_vec.pop().unwrap())
+            Ok(BatchRow::new(&batch, 0).to_owned_row())
         }
     }
 
     fn compute_merge_pattern_hash(
         &self,
         pattern: &QueryGraph<Arc<String>, LabelId, Variable>,
-        vars: &Env<'a>,
+        vars: &Row,
     ) -> Result<u64, String> {
         let mut hasher = DefaultHasher::new();
 
         // Hash nodes in the pattern
         for node in pattern.nodes() {
-            if let Some(value) = vars.get(&node.alias) {
+            if let Some(value) = vars.get_by_id(node.alias.id) {
                 value.hash(&mut hasher);
             } else {
                 for label in node.labels.iter() {
@@ -209,10 +217,10 @@ impl<'a> MergeOp<'a> {
         for rel in pattern.relationships() {
             rel.types.hash(&mut hasher);
 
-            if let Some(value) = vars.get(&rel.from.alias) {
+            if let Some(value) = vars.get_by_id(rel.from.alias.id) {
                 value.hash(&mut hasher);
             }
-            if let Some(value) = vars.get(&rel.to.alias) {
+            if let Some(value) = vars.get_by_id(rel.to.alias.id) {
                 value.hash(&mut hasher);
             }
 
@@ -243,19 +251,20 @@ impl<'a> MergeOp<'a> {
     /// or all pending are exhausted.
     fn drain_pending(
         &mut self,
-        envs: &mut Vec<Env<'a>>,
+        builder: &mut BatchBuilder,
     ) -> Result<(), String> {
-        while envs.len() < BATCH_SIZE && !self.pending.is_empty() {
+        while builder.len() < BATCH_SIZE && !self.pending.is_empty() {
             let p = self.pending.front_mut().unwrap();
 
             if let Some(match_env) = p.matches.pop_front() {
-                let mut vars = p.env.clone_pooled(self.runtime.env_pool);
+                let mut vars = p.env.clone();
                 vars.merge(&match_env);
                 let resolved = self.resolve_on_match_set_items();
-                let result_batch = Batch::from_envs(vec![vars]);
+                let mut row_builder = BatchBuilder::new();
+                row_builder.push_row(&vars);
+                let result_batch = row_builder.finish();
                 self.runtime.set_batch(resolved, &result_batch)?;
-                let mut envs_vec = result_batch.into_envs();
-                envs.push(envs_vec.pop().unwrap());
+                builder.push_row(&BatchRow::new(&result_batch, 0).to_owned_row());
             } else {
                 self.pending.pop_front();
             }
@@ -272,15 +281,15 @@ impl<'a> Iterator for MergeOp<'a> {
             return None;
         }
 
-        let mut envs = Vec::with_capacity(BATCH_SIZE);
+        let mut builder = BatchBuilder::new();
 
         // Drain leftover match results from previous call.
-        if let Err(e) = self.drain_pending(&mut envs) {
+        if let Err(e) = self.drain_pending(&mut builder) {
             self.is_error = true;
             return Some(Err(e));
         }
 
-        while envs.len() < BATCH_SIZE {
+        while builder.len() < BATCH_SIZE {
             let batch = match self.child.next() {
                 Some(Ok(b)) => b,
                 Some(Err(e)) => {
@@ -291,20 +300,17 @@ impl<'a> Iterator for MergeOp<'a> {
             };
 
             // Build argument batch with origin_row stamped.
-            let input_envs: Vec<Env<'a>> = batch
-                .active_env_iter()
+            let input_envs: Vec<Row> = batch
+                .active_indices()
                 .enumerate()
-                .map(|(i, env)| {
-                    let mut e = env.clone_pooled(self.runtime.env_pool);
+                .map(|(i, row)| {
+                    let mut e = BatchRow::new(&batch, row).to_owned_row();
                     e.origin_row = i as u32;
                     e
                 })
                 .collect();
 
-            let arg_envs: Vec<Env<'a>> = input_envs
-                .iter()
-                .map(|e| e.clone_pooled(self.runtime.env_pool))
-                .collect();
+            let arg_batch = batch.clone_active_rows_seq_origin();
 
             // Create ONE match subtree for all input rows.
             let mut subtree = match self.runtime.run_batch(self.merge_child_idx) {
@@ -314,18 +320,19 @@ impl<'a> Iterator for MergeOp<'a> {
                     return Some(Err(e));
                 }
             };
-            subtree.set_argument_batch(Batch::from_envs(arg_envs));
+            subtree.set_argument_batch(arg_batch);
 
             // Materialize all matches grouped by origin_row.
             let num_inputs = input_envs.len();
-            let mut match_groups: Vec<Vec<Env<'a>>> = (0..num_inputs).map(|_| Vec::new()).collect();
+            let mut match_groups: Vec<Vec<Row>> = (0..num_inputs).map(|_| Vec::new()).collect();
 
             for sub_result in subtree.by_ref() {
                 match sub_result {
                     Ok(sub_batch) => {
-                        for env in sub_batch.active_env_iter() {
+                        for row in sub_batch.active_indices() {
+                            let env = BatchRow::new(&sub_batch, row).to_owned_row();
                             let origin = env.origin_row as usize;
-                            match_groups[origin].push(env.clone_pooled(self.runtime.env_pool));
+                            match_groups[origin].push(env);
                         }
                     }
                     Err(e) => {
@@ -342,8 +349,8 @@ impl<'a> Iterator for MergeOp<'a> {
 
                 if matches.is_empty() {
                     // No matches found, do create fallback.
-                    match self.do_create_fallback(input_env.clone_pooled(self.runtime.env_pool)) {
-                        Ok(result_env) => envs.push(result_env),
+                    match self.do_create_fallback(input_env.clone()) {
+                        Ok(result_env) => builder.push_row(&result_env),
                         Err(e) => {
                             self.is_error = true;
                             return Some(Err(e));
@@ -361,7 +368,7 @@ impl<'a> Iterator for MergeOp<'a> {
                     let all_vars_bound = pattern
                         .nodes()
                         .iter()
-                        .all(|node| input_env.get(&node.alias).is_some())
+                        .all(|node| input_env.is_bound_by_id(node.alias.id))
                         && pattern
                             .relationships()
                             .iter()
@@ -371,19 +378,20 @@ impl<'a> Iterator for MergeOp<'a> {
                                     .as_ref()
                                     .is_some_and(|n| !n.starts_with("_anon_"))
                             })
-                            .all(|rel| input_env.get(&rel.alias).is_some());
+                            .all(|rel| input_env.is_bound_by_id(rel.alias.id));
 
                     if all_vars_bound {
                         // Only first match needed.
                         let first = &matches[0];
-                        let mut vars = input_env.clone_pooled(self.runtime.env_pool);
+                        let mut vars = input_env.clone();
                         vars.merge(first);
                         let resolved = self.resolve_on_match_set_items();
-                        let result_batch = Batch::from_envs(vec![vars]);
+                        let mut row_builder = BatchBuilder::new();
+                        row_builder.push_row(&vars);
+                        let result_batch = row_builder.finish();
                         match self.runtime.set_batch(resolved, &result_batch) {
                             Ok(()) => {
-                                let mut envs_vec = result_batch.into_envs();
-                                envs.push(envs_vec.pop().unwrap());
+                                builder.push_row(&BatchRow::new(&result_batch, 0).to_owned_row());
                             }
                             Err(e) => {
                                 self.is_error = true;
@@ -395,14 +403,15 @@ impl<'a> Iterator for MergeOp<'a> {
                         let mut match_iter = matches.into_iter();
                         let first = match_iter.next().unwrap();
 
-                        let mut vars = input_env.clone_pooled(self.runtime.env_pool);
+                        let mut vars = input_env.clone();
                         vars.merge(&first);
                         let resolved = self.resolve_on_match_set_items();
-                        let result_batch = Batch::from_envs(vec![vars]);
+                        let mut row_builder = BatchBuilder::new();
+                        row_builder.push_row(&vars);
+                        let result_batch = row_builder.finish();
                         match self.runtime.set_batch(resolved, &result_batch) {
                             Ok(()) => {
-                                let mut envs_vec = result_batch.into_envs();
-                                envs.push(envs_vec.pop().unwrap());
+                                builder.push_row(&BatchRow::new(&result_batch, 0).to_owned_row());
                             }
                             Err(e) => {
                                 self.is_error = true;
@@ -410,10 +419,10 @@ impl<'a> Iterator for MergeOp<'a> {
                             }
                         }
 
-                        let remaining: VecDeque<Env<'a>> = match_iter.collect();
+                        let remaining: VecDeque<Row> = match_iter.collect();
                         if !remaining.is_empty() {
                             self.pending.push_back(PendingMerge {
-                                env: input_env.clone_pooled(self.runtime.env_pool),
+                                env: input_env.clone(),
                                 matches: remaining,
                             });
                         }
@@ -421,16 +430,16 @@ impl<'a> Iterator for MergeOp<'a> {
                 }
             }
 
-            if let Err(e) = self.drain_pending(&mut envs) {
+            if let Err(e) = self.drain_pending(&mut builder) {
                 self.is_error = true;
                 return Some(Err(e));
             }
         }
 
-        if envs.is_empty() {
+        if builder.is_empty() {
             None
         } else {
-            Some(Ok(Batch::from_envs(envs)))
+            Some(Ok(builder.finish()))
         }
     }
 }

@@ -5,25 +5,26 @@
 //! (zero-copy filtering).
 //!
 //! ```text
-//!  Evaluation paths (chosen on first batch, cached thereafter):
+//!  Single columnar evaluation entry point (`eval`):
 //!
-//!  1. Vectorized (simple predicates like `n.age > 30`):
+//!  1. Vectorized kernel (simple predicates like `n.age > 30`):
 //!     node_ids ──► materialize_node_property ──► compare_i64_column ──► selection
 //!
-//!  2. Per-row fallback (complex expressions):
-//!     for each active row: run_expr(predicate, env) ──► collect passing indices
+//!  2. Columnar per-row fallback (complex expressions):
+//!     for each active row: run_expr(predicate, BatchRow) ──► collect passing
 //! ```
 //!
 //! When the filter expression matches a vectorizable pattern (e.g.,
-//! `n.age > 30`), the operator uses the fast columnar path:
+//! `n.age > 30`), `eval` uses the fast columnar kernel path:
 //! extract node IDs → materialize property column → run comparison kernel.
-//! For unrecognized patterns it falls back to per-row `run_expr` evaluation.
+//! For unrecognized patterns it reads each row through a [`BatchRow`] view
+//! (no `Env` materialization) and emits the survivors as a selection vector.
 
 use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{Batch, BatchOp, Column},
+    batch::{Batch, BatchOp, BatchRow, Column},
     runtime::Runtime,
     value::Value,
     vectorized::{
@@ -65,35 +66,96 @@ impl<'a> FilterOp<'a> {
         }
     }
 
-    /// Evaluates the filter using vectorized comparison kernels.
+    /// Evaluates the filter for one batch, returning the surviving rows.
     ///
-    /// Returns:
-    /// - `Ok(Some(batch))` — filtered batch with passing rows
-    /// - `Ok(None)` — all rows filtered out, caller should pull next batch
-    /// - `Err(batch)` — vectorized path not applicable, fall back to per-row
+    /// A single columnar entry point: when a vectorizable predicate was
+    /// detected it runs the comparison kernels; otherwise (or when the kernel
+    /// can't apply to this batch) it evaluates the full predicate per row
+    /// through a [`BatchRow`] view. Survivors flow out as a columnar batch
+    /// carrying just a selection vector.
+    ///
+    /// Returns `Ok(Some(batch))` with passing rows, `Ok(None)` when every row
+    /// was filtered out, or `Err` on a predicate evaluation error.
+    fn eval(
+        &mut self,
+        mut batch: Batch<'a>,
+    ) -> Result<Option<Batch<'a>>, String> {
+        // Fast path: vectorized comparison kernels for simple predicates.
+        if matches!(self.vectorized, Some(Some(_))) {
+            // Scope the immutable borrow of the cached predicate so the kernel
+            // can be disabled afterwards if it doesn't apply to this batch.
+            let result = {
+                let Some(Some(pred)) = &self.vectorized else {
+                    unreachable!("guarded by matches! above")
+                };
+                self.eval_vectorized(&batch, pred)
+            };
+            match result {
+                Ok(Some(sel)) => {
+                    batch.set_selection(sel);
+                    return Ok(Some(batch));
+                }
+                Ok(None) => return Ok(None),
+                Err(()) => {
+                    // Kernel couldn't apply (e.g. variable isn't a node in this
+                    // batch). Disable it for future batches and fall through to
+                    // the columnar per-row path on this batch.
+                    self.vectorized = Some(None);
+                }
+            }
+        }
+
+        // Columnar per-row path: read each active row through a `BatchRow`
+        // view and evaluate the full predicate, collecting passing indices.
+        let mut passing = Vec::new();
+        for row in batch.active_indices() {
+            let view = BatchRow::new(&batch, row);
+            match ExprEval::from_runtime(self.runtime).eval(
+                self.tree,
+                self.tree.root().idx(),
+                Some(&view),
+                None,
+            ) {
+                Ok(Value::Bool(true)) => passing.push(row as u16),
+                Ok(Value::Bool(false) | Value::Null) => {}
+                Err(e) => return Err(e),
+                Ok(value) => {
+                    return Err(format!(
+                        "Type mismatch: expected Boolean but was {}",
+                        value.name()
+                    ));
+                }
+            }
+        }
+
+        if passing.is_empty() {
+            Ok(None)
+        } else {
+            batch.set_selection(passing);
+            Ok(Some(batch))
+        }
+    }
+
+    /// Evaluates a vectorizable predicate with comparison kernels, returning a
+    /// selection vector of passing rows.
+    ///
+    /// Returns `Ok(Some(sel))` with the passing indices, `Ok(None)` when no row
+    /// passes, or `Err(())` when the kernel can't apply (caller falls back to
+    /// per-row evaluation).
     fn eval_vectorized(
         &self,
-        mut batch: Batch<'a>,
+        batch: &Batch<'a>,
         pred: &VectorizablePredicate,
-    ) -> Result<Option<Batch<'a>>, Batch<'a>> {
+    ) -> Result<Option<Vec<u16>>, ()> {
         match pred {
             VectorizablePredicate::Single(p) => {
-                let Ok(sel) = self.eval_single_predicate(&batch, p) else {
-                    return Err(batch);
-                };
-                if sel.is_empty() {
-                    Ok(None)
-                } else {
-                    batch.set_selection(sel);
-                    Ok(Some(batch))
-                }
+                let sel = self.eval_single_predicate(batch, p)?;
+                Ok((!sel.is_empty()).then_some(sel))
             }
             VectorizablePredicate::Conjunction(preds) => {
                 let mut sel: Option<Vec<u16>> = None;
                 for p in preds {
-                    let Ok(mask) = self.eval_single_mask(&batch, p) else {
-                        return Err(batch);
-                    };
+                    let mask = self.eval_single_mask(batch, p)?;
                     sel = Some(sel.map_or_else(
                         || mask_to_selection(&mask),
                         |existing| mask_intersect_selection(&mask, &existing),
@@ -105,10 +167,7 @@ impl<'a> FilterOp<'a> {
                 }
                 match sel {
                     Some(s) if s.is_empty() => Ok(None),
-                    Some(s) => {
-                        batch.set_selection(s);
-                        Ok(Some(batch))
-                    }
+                    Some(s) => Ok(Some(s)),
                     None => Ok(None), // empty conjunction
                 }
             }
@@ -159,42 +218,6 @@ impl<'a> FilterOp<'a> {
 
         Ok(mask)
     }
-
-    /// Per-row fallback: evaluates the filter expression for each active row.
-    /// Uses `set_selection` for zero-copy filtering instead of rebuilding
-    /// via `Batch::from_envs`.
-    fn eval_per_row(
-        &self,
-        mut batch: Batch<'a>,
-    ) -> Result<Option<Batch<'a>>, String> {
-        let mut passing = Vec::new();
-        for row in batch.active_indices() {
-            let env = batch.env_ref(row);
-            match ExprEval::from_runtime(self.runtime).eval(
-                self.tree,
-                self.tree.root().idx(),
-                Some(env),
-                None,
-            ) {
-                Ok(Value::Bool(true)) => passing.push(row as u16),
-                Ok(Value::Bool(false) | Value::Null) => {}
-                Err(e) => return Err(e),
-                Ok(value) => {
-                    return Err(format!(
-                        "Type mismatch: expected Boolean but was {}",
-                        value.name()
-                    ));
-                }
-            }
-        }
-
-        if passing.is_empty() {
-            Ok(None)
-        } else {
-            batch.set_selection(passing);
-            Ok(Some(batch))
-        }
-    }
 }
 
 impl<'a> Iterator for FilterOp<'a> {
@@ -203,7 +226,10 @@ impl<'a> Iterator for FilterOp<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         // Lazily analyze the expression on the first call.
         if self.vectorized.is_none() {
-            self.vectorized = Some(try_extract_vectorizable_predicate(self.tree));
+            self.vectorized = Some(try_extract_vectorizable_predicate(
+                self.tree,
+                &self.runtime.parameters,
+            ));
         }
 
         loop {
@@ -212,29 +238,9 @@ impl<'a> Iterator for FilterOp<'a> {
                 Err(e) => return Some(Err(e)),
             };
 
-            // Try vectorized path if we detected a vectorizable predicate.
-            if let Some(Some(pred)) = &self.vectorized {
-                match self.eval_vectorized(batch, pred) {
-                    Ok(Some(result)) => return Some(Ok(result)),
-                    Ok(None) => continue, // all rows filtered out
-                    Err(batch) => {
-                        // Vectorized path couldn't apply (e.g., variable isn't
-                        // a node in this batch). Disable for future batches and
-                        // fall through to per-row eval on the same batch.
-                        self.vectorized = Some(None);
-                        match self.eval_per_row(batch) {
-                            Ok(Some(result)) => return Some(Ok(result)),
-                            Ok(None) => continue,
-                            Err(e) => return Some(Err(e)),
-                        }
-                    }
-                }
-            }
-
-            // Per-row fallback path.
-            match self.eval_per_row(batch) {
+            match self.eval(batch) {
                 Ok(Some(result)) => return Some(Ok(result)),
-                Ok(None) => {}
+                Ok(None) => {} // all rows filtered out — pull next batch
                 Err(e) => return Some(Err(e)),
             }
         }

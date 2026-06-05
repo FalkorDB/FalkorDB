@@ -15,8 +15,8 @@ use crate::graph::graph::NodeId;
 use crate::parser::ast::{ExprIR, QueryExpr, QueryNode, Variable};
 use crate::planner::IR;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchOp},
-    env::Env,
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
+    row::{Row, RowView},
     runtime::Runtime,
     value::Value,
 };
@@ -25,7 +25,7 @@ use orx_tree::{Dyn, NodeIdx};
 pub struct NodeByLabelAndIdScanOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
-    pending: VecDeque<(Env<'a>, Box<dyn Iterator<Item = NodeId>>, RoaringTreemap)>,
+    pending: VecDeque<(Row, Box<dyn Iterator<Item = NodeId>>, RoaringTreemap)>,
     node_pattern: &'a QueryNode<Arc<String>, Variable>,
     filter: &'a Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
@@ -53,9 +53,9 @@ impl<'a> NodeByLabelAndIdScanOp<'a> {
     /// or all pending scans are exhausted.
     fn drain_pending(
         &mut self,
-        envs: &mut Vec<Env<'a>>,
+        builder: &mut BatchBuilder,
     ) {
-        while envs.len() < BATCH_SIZE {
+        while builder.len() < BATCH_SIZE {
             let Some((env, iter, range)) = self.pending.front_mut() else {
                 break;
             };
@@ -70,11 +70,11 @@ impl<'a> NodeByLabelAndIdScanOp<'a> {
                     break;
                 }
                 if range.contains(id) {
-                    let mut row = env.clone_pooled(self.runtime.env_pool);
+                    let mut row = env.clone();
                     row.insert(&self.node_pattern.alias, Value::Node(nid));
-                    envs.push(row);
+                    builder.push_row(&row);
                     found = true;
-                    if envs.len() >= BATCH_SIZE {
+                    if builder.len() >= BATCH_SIZE {
                         break;
                     }
                 }
@@ -90,20 +90,21 @@ impl<'a> Iterator for NodeByLabelAndIdScanOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut envs = Vec::with_capacity(BATCH_SIZE);
+        let mut builder = BatchBuilder::new();
 
         // Drain leftover scans from previous call.
-        self.drain_pending(&mut envs);
+        self.drain_pending(&mut builder);
 
-        while envs.len() < BATCH_SIZE {
+        while builder.len() < BATCH_SIZE {
             let batch = match self.child.next() {
                 Some(Ok(b)) => b,
                 Some(Err(e)) => return Some(Err(e)),
                 None => break,
             };
 
-            for vars in batch.active_env_iter() {
-                match self.runtime.evaluate_id_filter(self.filter, vars) {
+            for row in batch.active_indices() {
+                let view = BatchRow::new(&batch, row);
+                match self.runtime.evaluate_id_filter(self.filter, &view) {
                     Ok(Some(range)) => {
                         if range.min().is_some() {
                             let iter = self
@@ -113,7 +114,7 @@ impl<'a> Iterator for NodeByLabelAndIdScanOp<'a> {
                                 .get_nodes(&self.node_pattern.labels, range.min().unwrap());
 
                             self.pending.push_back((
-                                vars.clone_pooled(self.runtime.env_pool),
+                                BatchRow::new(&batch, row).to_owned_row(),
                                 iter,
                                 range,
                             ));
@@ -124,13 +125,13 @@ impl<'a> Iterator for NodeByLabelAndIdScanOp<'a> {
                 }
             }
 
-            self.drain_pending(&mut envs);
+            self.drain_pending(&mut builder);
         }
 
-        if envs.is_empty() {
+        if builder.is_empty() {
             None
         } else {
-            Some(Ok(Batch::from_envs(envs)))
+            Some(Ok(builder.finish()))
         }
     }
 }

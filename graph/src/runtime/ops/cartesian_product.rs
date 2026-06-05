@@ -27,8 +27,7 @@
 
 use crate::planner::IR;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchOp},
-    env::Env,
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp},
     runtime::Runtime,
 };
 use orx_tree::{Dyn, NodeIdx};
@@ -40,10 +39,10 @@ pub struct CartesianProductOp<'a> {
     pub(crate) right_children: Vec<BatchOp<'a>>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
     /// Lazily materialized right-side rows. `None` means not yet computed.
-    materialized_right: Option<Vec<Env<'a>>>,
+    materialized_right: Option<Batch<'a>>,
     /// Current block of left-side rows being cross-joined.
-    left_envs: Vec<Env<'a>>,
-    /// Current position within `left_envs`.
+    left_batch: Option<Batch<'a>>,
+    /// Current position within `left_batch`.
     left_pos: usize,
     /// Current position within `materialized_right`.
     right_pos: usize,
@@ -62,31 +61,27 @@ impl<'a> CartesianProductOp<'a> {
             right_children,
             idx,
             materialized_right: None,
-            left_envs: Vec::new(),
+            left_batch: None,
             left_pos: 0,
             right_pos: 0,
         }
     }
 
-    /// Materializes all right sub-plans into a single `Vec<Env>`.
+    /// Materializes all right sub-plans into a single columnar [`Batch`].
     ///
-    /// For a single right child, runs the sub-plan once and collects all rows.
-    /// For multiple right children, materializes each independently and computes
-    /// their cross-product into a single flat vector.
-    fn materialize_right(&mut self) -> Result<Vec<Env<'a>>, String> {
-        let pool = self.runtime.env_pool;
-
-        let mut branch_results: Vec<Vec<Env<'a>>> = Vec::with_capacity(self.right_children.len());
+    /// For a single right child, runs the sub-plan once and concatenates all
+    /// rows. For multiple right children, materializes each independently and
+    /// computes their cross-product into a single flat batch.
+    fn materialize_right(&mut self) -> Result<Batch<'a>, String> {
+        let mut branch_results: Vec<Batch<'a>> = Vec::with_capacity(self.right_children.len());
 
         for child in &mut self.right_children {
-            let mut branch_envs = Vec::new();
+            let mut builder = BatchBuilder::new();
             for result in child.by_ref() {
                 let batch = result?;
-                for env in batch.active_env_iter() {
-                    branch_envs.push(env.clone_pooled(pool));
-                }
+                builder.push_batch_active(&batch);
             }
-            branch_results.push(branch_envs);
+            branch_results.push(builder.finish());
         }
 
         // Single branch: no cross-product needed.
@@ -98,17 +93,16 @@ impl<'a> CartesianProductOp<'a> {
         let mut accumulated = branch_results.remove(0);
         for branch in branch_results {
             if accumulated.is_empty() || branch.is_empty() {
-                return Ok(Vec::new());
+                return Ok(BatchBuilder::new().finish());
             }
-            let mut next = Vec::with_capacity(accumulated.len() * branch.len());
-            for left in &accumulated {
-                for right in &branch {
-                    let mut merged = left.clone_pooled(pool);
-                    merged.merge(right);
-                    next.push(merged);
+            let mut builder = BatchBuilder::new();
+            for left in accumulated.active_indices() {
+                let origin = accumulated.origin_row(left);
+                for right in branch.active_indices() {
+                    builder.push_merged(&accumulated, left, &branch, right, origin);
                 }
             }
-            accumulated = next;
+            accumulated = builder.finish();
         }
 
         Ok(accumulated)
@@ -119,8 +113,6 @@ impl<'a> Iterator for CartesianProductOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let pool = self.runtime.env_pool;
-
         // Lazy materialization of right side (runs once).
         if self.materialized_right.is_none() {
             match self.materialize_right() {
@@ -134,17 +126,18 @@ impl<'a> Iterator for CartesianProductOp<'a> {
             }
         }
 
-        let right = self.materialized_right.as_ref().unwrap();
-        let right_len = right.len();
-        let mut envs = Vec::with_capacity(BATCH_SIZE);
+        let right_len = self.materialized_right.as_ref().unwrap().len();
+        let mut builder = BatchBuilder::new();
 
         loop {
             // Produce cross-product rows from current (left_pos, right_pos).
-            while envs.len() < BATCH_SIZE && self.left_pos < self.left_envs.len() {
-                while envs.len() < BATCH_SIZE && self.right_pos < right_len {
-                    let mut merged = self.left_envs[self.left_pos].clone_pooled(pool);
-                    merged.merge(&right[self.right_pos]);
-                    envs.push(merged);
+            let left_len = self.left_batch.as_ref().map_or(0, Batch::len);
+            while builder.len() < BATCH_SIZE && self.left_pos < left_len {
+                while builder.len() < BATCH_SIZE && self.right_pos < right_len {
+                    let left = self.left_batch.as_ref().unwrap();
+                    let right = self.materialized_right.as_ref().unwrap();
+                    let origin = left.origin_row(self.left_pos);
+                    builder.push_merged(left, self.left_pos, right, self.right_pos, origin);
                     self.right_pos += 1;
                 }
                 if self.right_pos >= right_len {
@@ -153,28 +146,26 @@ impl<'a> Iterator for CartesianProductOp<'a> {
                 }
             }
 
-            // If batch is full, return it (positions are preserved for next call).
-            if envs.len() >= BATCH_SIZE {
-                return Some(Ok(Batch::from_envs(envs)));
+            // If batch is full, return it (positions preserved for next call).
+            if builder.len() >= BATCH_SIZE {
+                return Some(Ok(builder.finish()));
             }
 
             // Current left block exhausted. Load next batch from left child.
-            self.left_envs.clear();
+            self.left_batch = None;
             self.left_pos = 0;
             self.right_pos = 0;
 
             match self.child.next() {
                 Some(Ok(batch)) => {
-                    for env in batch.active_env_iter() {
-                        self.left_envs.push(env.clone_pooled(pool));
-                    }
+                    self.left_batch = Some(batch.into_compacted());
                 }
                 Some(Err(e)) => return Some(Err(e)),
                 None => {
-                    if envs.is_empty() {
+                    if builder.is_empty() {
                         return None;
                     }
-                    return Some(Ok(Batch::from_envs(envs)));
+                    return Some(Ok(builder.finish()));
                 }
             }
         }
