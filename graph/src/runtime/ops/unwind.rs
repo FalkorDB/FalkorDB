@@ -29,36 +29,34 @@ use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::{ExprEval, ValueIter};
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchOp},
-    env::Env,
-    pool::Pool,
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
+    row::{Row, RowView},
     runtime::Runtime,
     value::Value,
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
 /// State for lazily expanding a value iterator across multiple `next()` calls.
-struct IterExpansion<'a> {
+struct IterExpansion {
     /// The lazy iterator being expanded.
     iter: ValueIter,
-    /// The base env for each output row (cloned per element).
-    base_env: Env<'a>,
+    /// The base row for each output row (cloned per element).
+    base_env: Row,
 }
 
-impl<'a> IterExpansion<'a> {
+impl IterExpansion {
     /// Drain up to `budget` elements into `out`.
     /// Returns `true` if the expansion is fully drained.
     fn drain(
         &mut self,
-        out: &mut VecDeque<Env<'a>>,
+        out: &mut VecDeque<Row>,
         budget: usize,
         name: &Variable,
-        pool: &'a Pool<Value>,
     ) -> bool {
         for _ in 0..budget {
             match self.iter.next() {
                 Some(val) => {
-                    let mut row = self.base_env.clone_pooled(pool);
+                    let mut row = self.base_env.clone();
                     row.insert(name, val);
                     out.push_back(row);
                 }
@@ -71,30 +69,29 @@ impl<'a> IterExpansion<'a> {
 
 /// Evaluate the list expression for a given row. Returns either:
 /// - An `IterExpansion` if the result is a non-empty list or lazy range
-/// - A single `Env` pushed onto `pending` for scalar values
+/// - A single `Row` pushed onto `pending` for scalar values
 /// - Nothing for `Null`
-fn eval_row<'a>(
-    runtime: &'a Runtime<'a>,
+fn eval_row(
+    runtime: &Runtime<'_>,
     list: &QueryExpr<Variable>,
     name: &Variable,
-    env: &Env<'a>,
-    pending: &mut VecDeque<Env<'a>>,
-) -> Result<Option<IterExpansion<'a>>, String> {
-    let pool = runtime.env_pool;
+    env: &Row,
+    pending: &mut VecDeque<Row>,
+) -> Result<Option<IterExpansion>, String> {
     let eval = ExprEval::from_runtime(runtime);
     let iter = eval.eval_iter_expr(list, list.root().idx(), Some(env))?;
 
     match iter {
         ValueIter::Empty | ValueIter::Once(None | Some(Value::Null)) => Ok(None),
         ValueIter::Once(Some(val)) => {
-            let mut out_row = env.clone_pooled(pool);
+            let mut out_row = env.clone();
             out_row.insert(name, val);
             pending.push_back(out_row);
             Ok(None)
         }
         _ => Ok(Some(IterExpansion {
             iter,
-            base_env: env.clone_pooled(pool),
+            base_env: env.clone(),
         })),
     }
 }
@@ -104,11 +101,11 @@ pub struct UnwindOp<'a> {
     pub(crate) child: Box<BatchOp<'a>>,
     list: &'a QueryExpr<Variable>,
     name: &'a Variable,
-    pending: VecDeque<Env<'a>>,
+    pending: VecDeque<Row>,
     current_batch: Option<Batch<'a>>,
     current_pos: usize,
     /// Lazy expansion state for a large list.
-    iter_expansion: Option<IterExpansion<'a>>,
+    iter_expansion: Option<IterExpansion>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -138,25 +135,25 @@ impl<'a> Iterator for UnwindOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut envs = Vec::with_capacity(BATCH_SIZE);
+        let mut builder = BatchBuilder::new();
 
         // Drain leftover rows from previous call.
-        super::drain_pending(&mut self.pending, &mut envs);
+        super::drain_pending(&mut self.pending, &mut builder);
 
         loop {
-            if envs.len() >= BATCH_SIZE {
+            if builder.len() >= BATCH_SIZE {
                 break;
             }
 
             // Continue draining a partially-expanded iterator.
             if let Some(ref mut exp) = self.iter_expansion {
-                let budget = BATCH_SIZE - envs.len();
-                let done = exp.drain(&mut self.pending, budget, self.name, self.runtime.env_pool);
+                let budget = BATCH_SIZE - builder.len();
+                let done = exp.drain(&mut self.pending, budget, self.name);
                 if done {
                     self.iter_expansion = None;
                 }
-                super::drain_pending(&mut self.pending, &mut envs);
-                if envs.len() >= BATCH_SIZE || self.iter_expansion.is_some() {
+                super::drain_pending(&mut self.pending, &mut builder);
+                if builder.len() >= BATCH_SIZE || self.iter_expansion.is_some() {
                     break;
                 }
                 continue;
@@ -180,8 +177,8 @@ impl<'a> Iterator for UnwindOp<'a> {
                 while self.current_pos < active.len() {
                     let row_idx = active[self.current_pos];
                     self.current_pos += 1;
-                    let env = batch.env_ref(row_idx);
-                    match eval_row(self.runtime, self.list, self.name, env, &mut self.pending) {
+                    let env = BatchRow::new(batch, row_idx).to_owned_row();
+                    match eval_row(self.runtime, self.list, self.name, &env, &mut self.pending) {
                         Ok(Some(expansion)) => {
                             self.iter_expansion = Some(expansion);
                             break; // drain the expansion in the next loop iteration
@@ -199,13 +196,13 @@ impl<'a> Iterator for UnwindOp<'a> {
             // Drain iterator expansion outside the batch borrow scope.
             if let Some(ref mut exp) = self.iter_expansion {
                 let budget = BATCH_SIZE.saturating_sub(self.pending.len());
-                let done = exp.drain(&mut self.pending, budget, self.name, self.runtime.env_pool);
+                let done = exp.drain(&mut self.pending, budget, self.name);
                 if done {
                     self.iter_expansion = None;
                 }
             }
 
-            super::drain_pending(&mut self.pending, &mut envs);
+            super::drain_pending(&mut self.pending, &mut builder);
 
             // Check if batch is exhausted.
             if self.iter_expansion.is_none()
@@ -216,10 +213,10 @@ impl<'a> Iterator for UnwindOp<'a> {
             }
         }
 
-        if envs.is_empty() {
+        if builder.is_empty() {
             None
         } else {
-            Some(Ok(Batch::from_envs(envs)))
+            Some(Ok(builder.finish()))
         }
     }
 }

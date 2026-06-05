@@ -25,8 +25,8 @@ use crate::parser::ast::{QueryRelationship, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchOp},
-    env::Env,
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
+    row::{Row, RowView},
     runtime::Runtime,
     value::Value,
 };
@@ -36,7 +36,7 @@ pub struct ExpandIntoOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
     relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
-    pending: VecDeque<Env<'a>>,
+    pending: VecDeque<Row>,
     current_batch: Option<Batch<'a>>,
     current_pos: usize,
     /// Whether to emit one row per edge (true) or collapse multi-edges into
@@ -88,13 +88,13 @@ impl<'a> ExpandIntoOp<'a> {
 
     fn expand_row(
         &self,
-        env: &Env<'a>,
-        out: &mut Vec<Env<'a>>,
+        env: &Row,
+        out: &mut Vec<Row>,
     ) -> Result<(), String> {
         let runtime = self.runtime;
         let rp = self.relationship_pattern;
 
-        let src = match env.get(&rp.from.alias) {
+        let src = match env.get_by_id(rp.from.alias.id) {
             Some(Value::Node(id)) => *id,
             Some(Value::Null) | None => return Ok(()),
             _ => {
@@ -103,7 +103,7 @@ impl<'a> ExpandIntoOp<'a> {
                 ));
             }
         };
-        let dst = match env.get(&rp.to.alias) {
+        let dst = match env.get_by_id(rp.to.alias.id) {
             Some(Value::Node(id)) => *id,
             Some(Value::Null) | None => return Ok(()),
             _ => {
@@ -137,7 +137,7 @@ impl<'a> ExpandIntoOp<'a> {
                 .iter()
                 .all(|label| g.get_node_labels(src).any(|nl| nl == *label));
             if has_all_labels {
-                let mut row = env.clone_pooled(runtime.env_pool);
+                let mut row = env.clone();
                 row.insert(&rp.from.alias, Value::Node(src));
                 out.push(row);
             }
@@ -188,7 +188,7 @@ impl<'a> ExpandIntoOp<'a> {
                     }
                 }
                 if let Some(id) = found_id {
-                    let mut row = env.clone_pooled(runtime.env_pool);
+                    let mut row = env.clone();
                     row.insert(
                         &rp.alias,
                         Value::Relationship(Box::new((id, *edge_src, *edge_dst))),
@@ -231,7 +231,7 @@ impl<'a> ExpandIntoOp<'a> {
                             continue;
                         }
                     }
-                    let mut row = env.clone_pooled(runtime.env_pool);
+                    let mut row = env.clone();
                     row.insert(
                         &rp.alias,
                         Value::Relationship(Box::new((id, *edge_src, *edge_dst))),
@@ -259,13 +259,13 @@ impl<'a> Iterator for ExpandIntoOp<'a> {
             return None;
         }
 
-        let mut envs = Vec::with_capacity(BATCH_SIZE);
+        let mut builder = BatchBuilder::new();
 
         // Drain leftover rows from previous call.
-        super::drain_pending(&mut self.pending, &mut envs);
+        super::drain_pending(&mut self.pending, &mut builder);
 
         loop {
-            if envs.len() >= BATCH_SIZE {
+            if builder.len() >= BATCH_SIZE {
                 break;
             }
 
@@ -287,9 +287,9 @@ impl<'a> Iterator for ExpandIntoOp<'a> {
                 while self.current_pos < active.len() {
                     let row_idx = active[self.current_pos];
                     self.current_pos += 1;
-                    let env = batch.env_ref(row_idx);
+                    let env = BatchRow::new(batch, row_idx).to_owned_row();
                     let mut expanded = Vec::new();
-                    if let Err(e) = self.expand_row(env, &mut expanded) {
+                    if let Err(e) = self.expand_row(&env, &mut expanded) {
                         return Some(Err(e));
                     }
                     self.pending.extend(expanded);
@@ -300,7 +300,7 @@ impl<'a> Iterator for ExpandIntoOp<'a> {
                 }
             }
 
-            super::drain_pending(&mut self.pending, &mut envs);
+            super::drain_pending(&mut self.pending, &mut builder);
 
             // Check if batch is exhausted.
             if let Some(ref batch) = self.current_batch
@@ -310,18 +310,18 @@ impl<'a> Iterator for ExpandIntoOp<'a> {
             }
         }
 
-        if envs.is_empty() {
+        if builder.is_empty() {
             None
         } else {
             // Trim to record_cap if set.
             if let Some(cap) = self.record_cap {
                 let remaining = cap - self.produced;
-                if envs.len() > remaining {
-                    envs.truncate(remaining);
+                if builder.len() > remaining {
+                    builder.truncate(remaining);
                 }
             }
-            self.produced += envs.len();
-            Some(Ok(Batch::from_envs(envs)))
+            self.produced += builder.len();
+            Some(Ok(builder.finish()))
         }
     }
 }

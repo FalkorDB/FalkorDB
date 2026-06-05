@@ -31,9 +31,9 @@ use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchOp},
-    env::Env,
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
     ordermap::OrderMap,
+    row::{Row, RowView},
     runtime::Runtime,
     value::Value,
 };
@@ -226,7 +226,7 @@ fn http_config() -> &'static ureq::config::Config {
 pub struct LoadCsvOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
-    pending: VecDeque<Env<'a>>,
+    pending: VecDeque<Row>,
     file_path: &'a QueryExpr<Variable>,
     headers: &'a bool,
     delimiter: &'a QueryExpr<Variable>,
@@ -260,8 +260,8 @@ impl<'a> LoadCsvOp<'a> {
         &self,
         path: &str,
         delimiter: &Arc<String>,
-        vars: &Env<'a>,
-    ) -> Result<Vec<Env<'a>>, String> {
+        vars: &Row,
+    ) -> Result<Vec<Row>, String> {
         // Configurable upper bound for network- and file-sourced CSVs.
         // Kept in sync with prior hardcoded 100 MiB for backward compat.
         const MAX_CSV_BYTES: u64 = 100 * 1024 * 1024;
@@ -317,8 +317,8 @@ impl<'a> LoadCsvOp<'a> {
     fn collect_records<R: std::io::Read>(
         &self,
         reader: &mut csv::Reader<R>,
-        vars: &Env<'a>,
-        results: &mut Vec<Env<'a>>,
+        vars: &Row,
+        results: &mut Vec<Row>,
     ) -> Result<(), String> {
         if *self.headers {
             let headers = reader
@@ -329,7 +329,7 @@ impl<'a> LoadCsvOp<'a> {
                 .collect::<Vec<_>>();
             for record in reader.records() {
                 let record = record.map_err(|e| format!("Failed to read CSV record: {e}"))?;
-                let mut env = vars.clone_pooled(self.runtime.env_pool);
+                let mut env = vars.clone();
                 env.insert(
                     self.var,
                     Value::Map(Arc::new(
@@ -357,7 +357,7 @@ impl<'a> LoadCsvOp<'a> {
         } else {
             for record in reader.records() {
                 let record = record.map_err(|e| format!("Failed to read CSV record: {e}"))?;
-                let mut env = vars.clone_pooled(self.runtime.env_pool);
+                let mut env = vars.clone();
                 env.insert(
                     self.var,
                     Value::List(Arc::new(
@@ -384,19 +384,21 @@ impl<'a> Iterator for LoadCsvOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut envs = Vec::with_capacity(BATCH_SIZE);
+        let mut builder = BatchBuilder::new();
 
         // Drain leftover rows from previous call.
-        super::drain_pending(&mut self.pending, &mut envs);
+        super::drain_pending(&mut self.pending, &mut builder);
 
-        while envs.len() < BATCH_SIZE {
+        while builder.len() < BATCH_SIZE {
             let batch = match self.child.next() {
                 Some(Ok(b)) => b,
                 Some(Err(e)) => return Some(Err(e)),
                 None => break,
             };
 
-            for vars in batch.active_env_iter() {
+            for row in batch.active_indices() {
+                let vars = BatchRow::new(&batch, row).to_owned_row();
+                let vars = &vars;
                 let path = match ExprEval::from_runtime(self.runtime).eval(
                     self.file_path,
                     self.file_path.root().idx(),
@@ -475,18 +477,18 @@ impl<'a> Iterator for LoadCsvOp<'a> {
                     Err(e) => return Some(Err(e)),
                 }
 
-                super::drain_pending(&mut self.pending, &mut envs);
+                super::drain_pending(&mut self.pending, &mut builder);
 
-                if envs.len() >= BATCH_SIZE {
+                if builder.len() >= BATCH_SIZE {
                     break;
                 }
             }
         }
 
-        if envs.is_empty() {
+        if builder.is_empty() {
             None
         } else {
-            Some(Ok(Batch::from_envs(envs)))
+            Some(Ok(builder.finish()))
         }
     }
 }

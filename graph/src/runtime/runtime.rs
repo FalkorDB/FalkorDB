@@ -18,7 +18,7 @@
 //! │ NodeScan │               │  NodeByLabelScan  │◄── produces BATCH_SIZE rows
 //! └──────────┘               └──────────────────┘
 //!
-//!  query() drives the root BatchOp, collecting Env rows into ResultSummary.
+//!  query() drives the root BatchOp, collecting result rows into ResultSummary.
 //! ```
 //!
 //! ## Key Types
@@ -26,8 +26,7 @@
 //! - [`Runtime`]: Main execution context (carries `Pool`, graph ref, plan)
 //! - [`ResultSummary`]: Query result with collected rows and statistics
 //! - [`BatchOp`]: Enum-dispatch operator tree (28+ variants)
-//! - [`Batch`]: Columnar/env-backed batch of up to 1024 rows
-//! - [`Env`]: Tuple of variable bindings (pool-backed)
+//! - [`Batch`]: Columnar batch of up to 1024 rows
 //!
 //! ## Write Operations
 //!
@@ -44,9 +43,7 @@ use crate::{
     parser::ast::{ExprIR, QueryExpr, Variable},
     planner::IR,
     runtime::{
-        batch::{Batch, BatchOp, Column, NullBitmap, classify_column},
-        bitset::BitSet,
-        env::Env,
+        batch::{Batch, BatchBuilder, BatchOp, BatchRow, Column, NullBitmap, classify_column},
         ops::{
             AggregateOp, AllShortestPathsOp, ApplyOp, CartesianProductOp, CommitOp, CondTraverseOp,
             CondVarLenTraverseOp, CreateOp, DeleteOp, DistinctOp, EdgeByFulltextScanOp,
@@ -59,7 +56,7 @@ use crate::{
         ordermap::OrderMap,
         orderset::OrderSet,
         pending::Pending,
-        pool::Pool,
+        row::{Row, RowView},
         value::{DeletedNode, DeletedRelationship, Value, ValuesDeduper},
     },
 };
@@ -71,7 +68,7 @@ use roaring::RoaringTreemap;
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
-    fmt::Debug,
+    marker::PhantomData,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -144,7 +141,7 @@ pub struct Runtime<'a> {
     /// Debug mode: record operator execution
     pub inspect: bool,
     /// Debug records of operator execution
-    pub record: RefCell<Vec<(NodeIdx<Dyn<IR>>, Result<(Vec<Value>, BitSet), String>)>>,
+    pub record: RefCell<Vec<(NodeIdx<Dyn<IR>>, Result<Row, String>)>>,
     /// Folder for LOAD CSV operations
     pub import_folder: String,
     /// Cache of deleted nodes for result consistency
@@ -153,9 +150,6 @@ pub struct Runtime<'a> {
     pub deleted_relationships: RefCell<HashMap<RelationshipId, DeletedRelationship>>,
     /// Cache for MERGE pattern matching — stores only the created entity bindings (variable id → value)
     pub merge_pattern_cache: RefCell<HashMap<u64, Vec<(u32, Value)>>>,
-    /// Per-query object pool for Env backing Vec<Value> buffers.
-    /// Owned externally and borrowed here to avoid self-referential lifetimes.
-    pub env_pool: &'a Pool<Value>,
     /// Maximum number of result rows to return. Negative means unlimited.
     pub result_set_size: i64,
     /// Effects buffer built before commit, for replication.
@@ -178,6 +172,8 @@ pub struct Runtime<'a> {
     pub mem_capacity: i64,
     /// Function pointer to read the current thread's net memory usage.
     pub current_usage_fn: Option<fn() -> usize>,
+    /// Preserves the `'a` lifetime parameter used by borrowing methods.
+    _marker: PhantomData<&'a ()>,
 }
 
 pub trait GetVariables {
@@ -338,15 +334,6 @@ impl ReturnNames for DynNode<'_, IR> {
     }
 }
 
-impl Debug for Env<'_> {
-    fn fmt(
-        &self,
-        f: &mut std::fmt::Formatter<'_>,
-    ) -> std::fmt::Result {
-        f.debug_list().entries(self.as_ref().iter()).finish()
-    }
-}
-
 impl<'a> Runtime<'a> {
     #[inline]
     pub fn inspect_batch(
@@ -358,8 +345,8 @@ impl<'a> Runtime<'a> {
             match result {
                 Ok(batch) => {
                     let mut record = self.record.borrow_mut();
-                    for env in batch.active_env_iter() {
-                        record.push((idx, Ok(env.to_raw())));
+                    for row in batch.active_indices() {
+                        record.push((idx, Ok(BatchRow::new(batch, row).to_owned_row())));
                     }
                 }
                 Err(err) => {
@@ -378,7 +365,6 @@ impl<'a> Runtime<'a> {
         plan: Arc<DynTree<IR>>,
         inspect: bool,
         import_folder: String,
-        env_pool: &'a Pool<Value>,
         result_set_size: i64,
         profile: bool,
         timeout_ms: Option<u64>,
@@ -405,7 +391,6 @@ impl<'a> Runtime<'a> {
             deleted_nodes: RefCell::new(HashMap::new()),
             deleted_relationships: RefCell::new(HashMap::new()),
             merge_pattern_cache: RefCell::new(HashMap::new()),
-            env_pool,
             result_set_size,
             effects_buffer: RefCell::new(None),
             effects_count: Cell::new(0),
@@ -416,6 +401,7 @@ impl<'a> Runtime<'a> {
             deadline: timeout_ms.map(|ms| Instant::now() + Duration::from_millis(ms)),
             mem_capacity,
             current_usage_fn,
+            _marker: PhantomData,
         }
     }
 
@@ -499,8 +485,9 @@ impl<'a> Runtime<'a> {
 
     /// Creates a single-row default batch.
     fn default_batch(&self) -> Batch<'_> {
-        let envs = vec![Env::new(self.env_pool)];
-        Batch::from_envs(envs)
+        let mut builder = BatchBuilder::new();
+        builder.push_row(&Row::new());
+        builder.finish()
     }
 
     /// Walk IR ancestors from `idx` upward to find the effective limit.
@@ -516,9 +503,8 @@ impl<'a> Runtime<'a> {
         while let Some(parent) = self.plan.node(cur).parent() {
             match parent.data() {
                 IR::Limit(expr) => {
-                    let env = Env::new(self.env_pool);
                     let val = super::eval::ExprEval::from_runtime(self)
-                        .eval(expr, expr.root().idx(), Some(&env), None)
+                        .eval(expr, expr.root().idx(), super::eval::NO_ROW, None)
                         .ok()?;
                     return match val {
                         Value::Int(n) if n >= 0 => Some(n as usize),
@@ -552,9 +538,8 @@ impl<'a> Runtime<'a> {
         while let Some(parent) = self.plan.node(cur).parent() {
             match parent.data() {
                 IR::Skip(expr) => {
-                    let env = Env::new(self.env_pool);
                     let val = super::eval::ExprEval::from_runtime(self)
-                        .eval(expr, expr.root().idx(), Some(&env), None)
+                        .eval(expr, expr.root().idx(), super::eval::NO_ROW, None)
                         .ok();
                     return match val {
                         Some(Value::Int(n)) if n >= 0 => n as usize,
@@ -704,8 +689,12 @@ impl<'a> Runtime<'a> {
                 let Value::Int(skip) = {
                     let this = &self;
                     let idx = skip.root().idx();
-                    let env: &Env<'_> = &Env::new(self.env_pool);
-                    super::eval::ExprEval::from_runtime(this).eval(skip, idx, Some(env), None)
+                    super::eval::ExprEval::from_runtime(this).eval(
+                        skip,
+                        idx,
+                        super::eval::NO_ROW,
+                        None,
+                    )
                 }?
                 else {
                     return Err(String::from("Skip operator requires an integer argument"));
@@ -725,8 +714,12 @@ impl<'a> Runtime<'a> {
                 let Value::Int(limit) = {
                     let this = &self;
                     let idx = limit.root().idx();
-                    let env: &Env<'_> = &Env::new(self.env_pool);
-                    super::eval::ExprEval::from_runtime(this).eval(limit, idx, Some(env), None)
+                    super::eval::ExprEval::from_runtime(this).eval(
+                        limit,
+                        idx,
+                        super::eval::NO_ROW,
+                        None,
+                    )
                 }?
                 else {
                     return Err(String::from("Limit operator requires an integer argument"));
@@ -1161,11 +1154,10 @@ impl<'a> Runtime<'a> {
                         let val = {
                             let this = &self;
                             let idx = expr.root().idx();
-                            let env: &Env<'_> = &Env::new(self.env_pool);
                             super::eval::ExprEval::from_runtime(this).eval(
                                 expr,
                                 idx,
-                                Some(env),
+                                super::eval::NO_ROW,
                                 None,
                             )
                         }?;
@@ -1208,19 +1200,10 @@ impl<'a> Runtime<'a> {
         }
     }
 
-    pub fn run_iter_expr(
-        &self,
-        ir: &DynTree<ExprIR<Variable>>,
-        idx: NodeIdx<Dyn<ExprIR<Variable>>>,
-        env: &Env<'_>,
-    ) -> Result<ValueIter, String> {
-        super::eval::ExprEval::from_runtime(self).eval_iter_expr(ir, idx, Some(env))
-    }
-
-    pub fn evaluate_id_filter(
+    pub fn evaluate_id_filter<R: super::row::RowView + ?Sized>(
         &self,
         filter: &Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
-        vars: &Env<'_>,
+        vars: &R,
     ) -> Result<Option<RoaringTreemap>, String> {
         let mut min = 0u64;
         let mut max = self.g.borrow().max_node_id();

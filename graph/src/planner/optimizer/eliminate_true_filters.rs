@@ -37,7 +37,7 @@ use orx_tree::{Bfs, DynTree, NodeRef};
 
 use crate::{
     parser::ast::{ExprIR, Variable},
-    runtime::{eval::ExprEval, value::Value},
+    runtime::{eval::ExprEval, eval::NO_ROW, value::Value},
     tree,
 };
 
@@ -52,7 +52,7 @@ fn is_constant_true(
 ) -> bool {
     // Fast path: pure constant (no params needed).
     if matches!(
-        ExprEval::constant().eval(filter, filter.root().idx(), None, None),
+        ExprEval::constant().eval(filter, filter.root().idx(), NO_ROW, None),
         Ok(Value::Bool(true))
     ) {
         return true;
@@ -63,7 +63,7 @@ fn is_constant_true(
     if !params.is_empty() && expr_has_parameter(filter) {
         let substituted = substitute_params(filter, params);
         return matches!(
-            ExprEval::constant().eval(&substituted, substituted.root().idx(), None, None),
+            ExprEval::constant().eval(&substituted, substituted.root().idx(), NO_ROW, None),
             Ok(Value::Bool(true))
         );
     }

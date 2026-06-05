@@ -20,8 +20,8 @@ use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchOp},
-    env::Env,
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
+    row::{Row, RowView},
     runtime::Runtime,
     value::Value,
 };
@@ -35,7 +35,7 @@ pub struct NodeByVectorScanOp<'a> {
     /// Must be cleared on `set_argument_batch` so a correlated plan
     /// (Apply) doesn't replay stale rows from a previous outer
     /// iteration when the inner side stops early.
-    pub(crate) pending: VecDeque<(Env<'a>, Box<dyn Iterator<Item = (NodeId, f64)>>)>,
+    pub(crate) pending: VecDeque<(Row, Box<dyn Iterator<Item = (NodeId, f64)>>)>,
     node: &'a Variable,
     label: &'a QueryExpr<Variable>,
     attr: &'a QueryExpr<Variable>,
@@ -76,19 +76,19 @@ impl<'a> NodeByVectorScanOp<'a> {
     /// reached or all pending scans are exhausted.
     fn drain_pending(
         &mut self,
-        envs: &mut Vec<Env<'a>>,
+        builder: &mut BatchBuilder,
     ) {
-        while envs.len() < BATCH_SIZE {
+        while builder.len() < BATCH_SIZE {
             let Some((env, iter)) = self.pending.front_mut() else {
                 break;
             };
             if let Some((node_id, s)) = iter.next() {
-                let mut row = env.clone_pooled(self.runtime.env_pool);
+                let mut row = env.clone();
                 row.insert(self.node, Value::Node(node_id));
                 if let Some(score) = self.score {
                     row.insert(score, Value::Float(s));
                 }
-                envs.push(row);
+                builder.push_row(&row);
             } else {
                 self.pending.pop_front();
             }
@@ -100,26 +100,27 @@ impl<'a> Iterator for NodeByVectorScanOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut envs = Vec::with_capacity(BATCH_SIZE);
+        let mut builder = BatchBuilder::new();
 
         // Drain leftover scans from previous call.
-        self.drain_pending(&mut envs);
+        self.drain_pending(&mut builder);
 
-        while envs.len() < BATCH_SIZE {
+        while builder.len() < BATCH_SIZE {
             let batch = match self.child.next() {
                 Some(Ok(b)) => b,
                 Some(Err(e)) => return Some(Err(e)),
                 None => break,
             };
 
-            for vars in batch.active_env_iter() {
+            for row in batch.active_indices() {
+                let view = BatchRow::new(&batch, row);
                 let (label_str, attr_str, k_val, vec_arc) = match eval_vector_args(
                     self.runtime,
                     self.label,
                     self.attr,
                     self.k,
                     self.vector,
-                    vars,
+                    &view,
                     "db.idx.vector.queryNodes",
                 ) {
                     Ok(t) => t,
@@ -134,16 +135,16 @@ impl<'a> Iterator for NodeByVectorScanOp<'a> {
                 drop(g);
 
                 self.pending
-                    .push_back((vars.clone_pooled(self.runtime.env_pool), iter));
+                    .push_back((BatchRow::new(&batch, row).to_owned_row(), iter));
             }
 
-            self.drain_pending(&mut envs);
+            self.drain_pending(&mut builder);
         }
 
-        if envs.is_empty() {
+        if builder.is_empty() {
             None
         } else {
-            Some(Ok(Batch::from_envs(envs)))
+            Some(Ok(builder.finish()))
         }
     }
 }
@@ -152,13 +153,13 @@ impl<'a> Iterator for NodeByVectorScanOp<'a> {
 /// (label, attribute, k, vector) and validate them against the
 /// procedure's argument contract. The error string is pinned by the
 /// `test_vecsim::test06_validate_arguments` negative cases.
-pub(crate) fn eval_vector_args<'a>(
+pub(crate) fn eval_vector_args<'a, R: crate::runtime::row::RowView + ?Sized>(
     runtime: &'a Runtime<'a>,
     label: &QueryExpr<Variable>,
     attr: &QueryExpr<Variable>,
     k: &QueryExpr<Variable>,
     vector: &QueryExpr<Variable>,
-    vars: &Env<'a>,
+    vars: &R,
     procedure: &str,
 ) -> Result<(Arc<String>, Arc<String>, usize, Arc<ThinVec<f32>>), String> {
     let invalid = || format!("Invalid arguments for procedure '{procedure}'");

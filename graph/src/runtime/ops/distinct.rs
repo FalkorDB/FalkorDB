@@ -25,7 +25,7 @@ use crate::planner::IR;
 use crate::runtime::{
     batch::{Batch, BatchOp},
     runtime::{ReturnNames, Runtime},
-    value::ValuesDeduper,
+    value::{Value, ValuesDeduper},
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 use rustc_hash::FxHasher;
@@ -78,7 +78,10 @@ impl<'a> Iterator for DistinctOp<'a> {
             for row in batch.active_indices() {
                 let mut hasher = FxHasher::default();
                 for name in names {
-                    batch.get(row, name.id).hash(&mut hasher);
+                    batch
+                        .value_at(name.id, row)
+                        .unwrap_or(Value::Null)
+                        .hash(&mut hasher);
                 }
                 if self.deduper.has_hash(hasher.finish()) {
                     continue;

@@ -9,7 +9,7 @@ use graph::{
         graphblas::{GrB_Mode, GrB_init},
         mvcc_graph::MvccGraph,
     },
-    runtime::{eval::evaluate_param, functions::init_functions, pool::Pool, runtime::Runtime},
+    runtime::{eval::evaluate_param, functions::init_functions, runtime::Runtime},
 };
 
 #[macro_use]
@@ -36,7 +36,6 @@ fn main() {
             else {
                 return;
             };
-            let pool = Pool::new();
             let runtime = Runtime::new(
                 g.read(),
                 parameters,
@@ -44,7 +43,6 @@ fn main() {
                 plan,
                 false,
                 String::new(),
-                &pool,
                 -1,
                 false,
                 None,

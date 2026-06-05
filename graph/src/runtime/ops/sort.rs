@@ -30,22 +30,22 @@ use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchOp},
-    env::Env,
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
+    row::{Row, RowView},
     runtime::Runtime,
     value::{CompareValue, Value},
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 use std::cmp::Ordering;
 
-type SortItem<'a> = (Env<'a>, Vec<(Value, bool)>);
+type SortItem = (Row, Vec<(Value, bool)>);
 
 pub struct SortOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Option<Box<BatchOp<'a>>>,
     trees: &'a [(QueryExpr<Variable>, bool)],
     /// Sorted results stored in reverse order so we can pop from the end in O(1).
-    results: Vec<Env<'a>>,
+    results: Vec<Row>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
     /// When set, only the top `limit` rows (after skip) are needed.
     /// Allows truncation after sorting to avoid excess work.
@@ -81,13 +81,14 @@ impl<'a> Iterator for SortOp<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         // Consume all input on first call.
         if let Some(child) = self.child.take() {
-            let mut items: Vec<SortItem<'a>> = Vec::new();
+            let mut items: Vec<SortItem> = Vec::new();
             for batch_result in child {
                 let batch = match batch_result {
                     Ok(b) => b,
                     Err(e) => return Some(Err(e)),
                 };
-                for env in batch.active_env_iter() {
+                for row in batch.active_indices() {
+                    let env = BatchRow::new(&batch, row).to_owned_row();
                     let sort_keys = match self
                         .trees
                         .iter()
@@ -96,7 +97,7 @@ impl<'a> Iterator for SortOp<'a> {
                                 ExprEval::from_runtime(self.runtime).eval(
                                     tree,
                                     tree.root().idx(),
-                                    Some(env),
+                                    Some(&env),
                                     None,
                                 )?,
                                 *desc,
@@ -107,7 +108,7 @@ impl<'a> Iterator for SortOp<'a> {
                         Ok(keys) => keys,
                         Err(e) => return Some(Err(e)),
                     };
-                    items.push((env.clone_pooled(self.runtime.env_pool), sort_keys));
+                    items.push((env, sort_keys));
                 }
             }
 
@@ -147,7 +148,7 @@ impl<'a> Iterator for SortOp<'a> {
 
             // Reverse so we can pop from the end in O(1) while preserving
             // sorted order, and drop sort keys immediately (no longer needed).
-            let mut sorted: Vec<Env<'a>> = items.into_iter().map(|(env, _keys)| env).collect();
+            let mut sorted: Vec<Row> = items.into_iter().map(|(env, _keys)| env).collect();
 
             // When limit is known, truncate to limit + skip to avoid keeping
             // excess rows. The Skip and Limit operators above handle the actual
@@ -170,6 +171,10 @@ impl<'a> Iterator for SortOp<'a> {
         let mut envs = self.results.split_off(self.results.len() - n);
         envs.reverse();
 
-        Some(Ok(Batch::from_envs(envs)))
+        let mut builder = BatchBuilder::new();
+        for env in &envs {
+            builder.push_row(env);
+        }
+        Some(Ok(builder.finish()))
     }
 }

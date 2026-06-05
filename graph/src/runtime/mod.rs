@@ -14,10 +14,10 @@
 //!    | (execute) |     | (exprs)   |     | (types)  |
 //!    +-----------+     +-----------+     +----------+
 //!          |
-//!    +-----+------+----------+
-//!    |     |      |          |
-//!    v     v      v          v
-//!  batch  env  pending   pool
+//!    +-----+------+
+//!    |     |      |
+//!    v     v      v
+//!  batch  row  pending
 //! ```
 //!
 //! ## Key Components
@@ -38,8 +38,6 @@
 //! ## Supporting Infrastructure
 //!
 //! - [`batch::Batch`]: Columnar row batches with selection-vector filtering
-//! - [`env::Env`]: Variable-binding tuple flowing through the pipeline
-//! - [`pool::Pool`]: Per-query object pool to amortize allocation cost
 //! - [`bitset::BitSet`]: Compact bit set for tracking bound variables
 //! - [`vectorized`]: SIMD-friendly comparison kernels for typed columns
 //!
@@ -50,14 +48,13 @@
 
 pub mod batch;
 pub mod bitset;
-pub mod env;
 pub mod eval;
 pub mod functions;
 pub mod ops;
 pub mod ordermap;
 pub mod orderset;
 pub mod pending;
-pub mod pool;
+pub mod row;
 pub mod runtime;
 pub mod string_pool;
 pub mod value;
