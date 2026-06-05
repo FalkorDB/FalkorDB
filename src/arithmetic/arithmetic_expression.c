@@ -331,26 +331,34 @@ bool AR_EXP_ReduceToScalar
 		// avoid embedding large materialized range() arrays in cached plans.
 		if(strcmp(AR_EXP_GetFuncName(root), "range") == 0) {
 			int child_count = root->op.child_count;
-			ASSERT(child_count == 2 || child_count == 3);
+			if(child_count != 2 && child_count != 3) {
+				return false;
+			}
 
 			AR_ExpNode *start_exp = root->op.children[0];
 			AR_ExpNode *end_exp = root->op.children[1];
-			ASSERT(AR_EXP_IsConstant(start_exp));
-			ASSERT(AR_EXP_IsConstant(end_exp));
+			if(!AR_EXP_IsConstant(start_exp) || !AR_EXP_IsConstant(end_exp)) {
+				return false;
+			}
 
 			SIValue start_val = start_exp->operand.constant;
 			SIValue end_val = end_exp->operand.constant;
-			ASSERT(SI_TYPE(start_val) == T_INT64);
-			ASSERT(SI_TYPE(end_val) == T_INT64);
+			if(SI_TYPE(start_val) != T_INT64 || SI_TYPE(end_val) != T_INT64) {
+				return false;
+			}
 
 			int64_t start = start_val.longval;
 			int64_t end = end_val.longval;
 			int64_t step = 1;
 			if(child_count == 3) {
 				AR_ExpNode *step_exp = root->op.children[2];
-				ASSERT(AR_EXP_IsConstant(step_exp));
+				if(!AR_EXP_IsConstant(step_exp)) {
+					return false;
+				}
 				SIValue step_val = step_exp->operand.constant;
-				ASSERT(SI_TYPE(step_val) == T_INT64);
+				if(SI_TYPE(step_val) != T_INT64) {
+					return false;
+				}
 				step = step_val.longval;
 			}
 
