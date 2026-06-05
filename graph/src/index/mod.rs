@@ -1136,6 +1136,20 @@ impl Index {
         field_options: Option<&TextIndexOptions>,
     ) -> Result<(), String> {
         unsafe {
+            // `RediSearch_CreateField` modifies the index spec's internal field
+            // array (numFields, fields[], inverted-index trie setup). RediSearch's
+            // ForkGC timer callback – fired on the Redis main thread – can concurrently
+            // read or mutate the same spec during its periodic scan. Without the GIL
+            // this is a data race that corrupts heap state and crashes the process.
+            // Under coverage instrumentation the race window is 10-100× wider, which
+            // is why the crash is reliably reproduced only in coverage builds.
+            // Mirrors the GIL guards in `create_rs_index`, `Index::drop`, and
+            // `OwnedIndex::drop`.
+            let _gil = if crate::thread_id::is_main_thread() {
+                None
+            } else {
+                GilGuard::acquire()
+            };
             for field in fields.values().flat_map(|f| f.iter()) {
                 match field.ty {
                     IndexType::Range => {
