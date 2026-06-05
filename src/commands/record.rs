@@ -25,7 +25,6 @@ use graph::{
     graph::graph::Plan,
     runtime::{
         eval::evaluate_param,
-        pool::Pool,
         runtime::{GetVariables, Runtime},
     },
 };
@@ -54,7 +53,6 @@ fn record_mut(
         .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
         .collect::<Result<HashMap<_, _>, String>>()
         .map_err(RedisError::String)?;
-    let env_pool = Pool::new();
     let runtime = Runtime::new(
         graph.read().graph.read(),
         parameters,
@@ -62,7 +60,6 @@ fn record_mut(
         plan.clone(),
         true,
         (*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone(),
-        &env_pool,
         -1,
         false,
         None,
@@ -81,13 +78,13 @@ fn record_mut(
                 raw::reply_with_long_long(ctx.ctx, 0);
                 raw::reply_with_string_buffer(ctx.ctx, err.as_ptr().cast::<c_char>(), err.len());
             }
-            Ok((values, bound)) => {
+            Ok(row) => {
                 raw::reply_with_long_long(ctx.ctx, 1);
                 let vars = plan.node(*idx).get_variables();
                 raw::reply_with_array(ctx.ctx, vars.len() as _);
                 for name in &vars {
-                    if bound.test(name.id as usize) {
-                        match values.get(name.id as usize) {
+                    if row.is_bound_by_id(name.id) {
+                        match row.get_by_id(name.id) {
                             None => {
                                 raw::reply_with_null(ctx.ctx);
                             }

@@ -79,40 +79,26 @@ impl<'a> Iterator for OrApplyMultiplexerOp<'a> {
 
             let active: Vec<usize> = batch.active_indices().collect();
 
-            // Build argument envs with origin_row stamped.
-            let arg_envs: Vec<_> = active
-                .iter()
-                .enumerate()
-                .map(|(i, &row_idx)| {
-                    let mut e = batch.env_ref(row_idx).clone_pooled(self.runtime.env_pool);
-                    e.origin_row = i as u32;
-                    e
-                })
-                .collect();
-
             // Track which origin_rows are matched across all branches.
             let mut overall_matched: HashSet<u32> = HashSet::new();
 
             for (branch_num, branch_idx) in self.branch_indices.iter().enumerate() {
-                // Clone arg_envs for each branch (each subtree consumes the batch).
-                let branch_envs: Vec<_> = arg_envs
-                    .iter()
-                    .map(|e| e.clone_pooled(self.runtime.env_pool))
-                    .collect();
-
+                // Build a fresh argument batch for each branch (each subtree
+                // consumes it); origin_row is stamped sequentially in active
+                // order so branch results correlate back to the outer rows.
                 let mut subtree = match self.runtime.run_batch(*branch_idx) {
                     Ok(s) => s,
                     Err(e) => return Some(Err(e)),
                 };
-                subtree.set_argument_batch(Batch::from_envs(branch_envs));
+                subtree.set_argument_batch(batch.clone_active_rows_seq_origin());
 
                 // Collect which origin_rows this branch matched.
                 let mut branch_matched: HashSet<u32> = HashSet::new();
                 for sub_result in subtree.by_ref() {
                     match sub_result {
                         Ok(sub_batch) => {
-                            for env in sub_batch.active_env_iter() {
-                                branch_matched.insert(env.origin_row);
+                            for row in sub_batch.active_indices() {
+                                branch_matched.insert(sub_batch.origin_row(row));
                             }
                         }
                         Err(e) => return Some(Err(e)),

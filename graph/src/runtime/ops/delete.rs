@@ -27,7 +27,7 @@ use crate::parser::ast::{ExprIR, QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{Batch, BatchOp},
+    batch::{Batch, BatchOp, BatchRow},
     runtime::Runtime,
     value::{DeletedNode, DeletedRelationship, Value},
 };
@@ -95,15 +95,14 @@ impl Runtime<'_> {
             // Collect all node IDs and relationship tuples for bulk deletion
             let mut node_ids = Vec::new();
             let mut rel_ids = Vec::new();
-            let rows = batch.read_columns(&var_ids);
-            for row in rows {
-                for val in row {
-                    match val {
-                        Value::Node(id) => node_ids.push(*id),
-                        Value::Relationship(rel) => rel_ids.push(**rel),
-                        _ => {
+            for row in batch.active_indices() {
+                for &id in &var_ids {
+                    match batch.value_at(id, row).unwrap_or(Value::Null) {
+                        Value::Node(id) => node_ids.push(id),
+                        Value::Relationship(rel) => rel_ids.push(*rel),
+                        val => {
                             // Paths, etc. go through per-entity path
-                            self.delete_entity(val)?;
+                            self.delete_entity(&val)?;
                         }
                     }
                 }
@@ -119,12 +118,12 @@ impl Runtime<'_> {
         // Slow path: evaluate remaining expression trees via env_ref
         if !expr_trees.is_empty() {
             for row in batch.active_indices() {
-                let env = batch.env_ref(row);
+                let env = BatchRow::new(batch, row);
                 for tree in &expr_trees {
                     let value = ExprEval::from_runtime(self).eval(
                         tree,
                         tree.root().idx(),
-                        Some(env),
+                        Some(&env),
                         None,
                     )?;
                     self.delete_entity(&value)?;

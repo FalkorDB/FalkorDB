@@ -32,9 +32,9 @@ use crate::parser::ast::{ExprIR, QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchOp, Column, NullBitmap},
-    env::Env,
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow, Column, NullBitmap},
     functions::{FnType, GraphFn},
+    row::{Row, RowView},
     runtime::Runtime,
     value::{Value, ValuesDeduper},
 };
@@ -133,9 +133,9 @@ pub struct AggregateOp<'a> {
     keys: &'a [(Variable, QueryExpr<Variable>)],
     agg: &'a [(Variable, QueryExpr<Variable>)],
     copy_from_parent: &'a [(Variable, Variable)],
-    default_acc: Option<Env<'a>>,
+    default_acc: Option<Row>,
     errors: std::vec::IntoIter<String>,
-    groups: std::collections::hash_map::IntoIter<GroupKey, (Env<'a>, Env<'a>)>,
+    groups: std::collections::hash_map::IntoIter<GroupKey, (Row, Row)>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
     /// Lazily-initialized vectorizable analysis cache.
     vectorized: CachedAggAnalysis,
@@ -150,7 +150,7 @@ impl<'a> AggregateOp<'a> {
         copy_from_parent: &'a [(Variable, Variable)],
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
-        let mut default_acc = Env::new(runtime.env_pool);
+        let mut default_acc = Row::new();
         for (_var, t) in agg {
             Self::set_agg_expr_zero(&t.root(), &mut default_acc);
         }
@@ -337,16 +337,13 @@ impl<'a> AggregateOp<'a> {
         // computation so the common non-distinct path stays free of it.
         let any_distinct = analysis.agg_kinds.iter().any(|a| a.distinct_idx.is_some());
 
-        let mut groups: HashMap<GroupKey, (Env<'a>, Env<'a>)> = HashMap::new();
+        let mut groups: HashMap<GroupKey, (Row, Row)> = HashMap::new();
         let mut errors: Vec<String> = Vec::new();
 
         // Pre-insert default group for keyless aggregation.
         if self.keys.is_empty() {
-            let key_env = Env::new(self.runtime.env_pool);
-            groups.insert(
-                GroupKey(vec![]),
-                (key_env, default_acc.clone_pooled(self.runtime.env_pool)),
-            );
+            let key_env = Row::new();
+            groups.insert(GroupKey(vec![]), (key_env, default_acc.clone()));
         }
 
         for batch_result in child {
@@ -401,57 +398,78 @@ impl<'a> AggregateOp<'a> {
             };
 
             // --- Phase 3: Group rows and accumulate ---
-            // Fast path: keyless single-aggregate where the function registered
-            // a `batch_agg`. Skips per-row function calls, validation, and
-            // per-row `acc.take`/`acc.insert`.
+            // Fast path: keyless aggregation where *every* aggregate registered
+            // a `batch_agg` (and none use DISTINCT). Each aggregate consumes its
+            // whole input column in a single batch call, skipping per-row
+            // function calls, validation, and per-row `acc.take`/`acc.insert`.
+            // Covers multi-aggregate queries like
+            // `RETURN min(n.age), max(n.age), avg(n.age)`.
             if self.keys.is_empty()
                 && self.copy_from_parent.is_empty()
-                && analysis.agg_kinds.len() == 1
-                && analysis.agg_kinds[0].distinct_idx.is_none()
-                && let FnType::Aggregation {
-                    batch_agg: Some(batch_fn),
-                    ..
-                } = &analysis.agg_kinds[0].func.fn_type
+                && !analysis.agg_kinds.is_empty()
+                && analysis.agg_kinds.iter().all(|a| {
+                    a.distinct_idx.is_none()
+                        && matches!(
+                            &a.func.fn_type,
+                            FnType::Aggregation {
+                                batch_agg: Some(_),
+                                ..
+                            }
+                        )
+                })
             {
-                let agg = &analysis.agg_kinds[0];
                 let entry = groups.get_mut(&GroupKey(vec![])).unwrap();
                 let acc = &mut entry.1;
-                let prev = acc.take(&agg.acc_var).unwrap_or(Value::Null);
-                let inputs: &[Value] = if agg.input.is_some() {
-                    &agg_input_columns[0]
-                } else {
-                    &[]
-                };
-                // Validate each input — the per-row path runs validate_args_type
-                // before each call; without this, batch kernels relying on
-                // `unreachable!()` for unexpected types would panic on bad data
-                // (e.g., `sum(n.flag)` where `flag` holds a Bool).
-                let mut validation_err: Option<String> = None;
-                for val in inputs {
-                    if matches!(val, Value::Null) {
-                        continue;
+                let mut batch_err: Option<String> = None;
+                for (agg_idx, agg) in analysis.agg_kinds.iter().enumerate() {
+                    let FnType::Aggregation {
+                        batch_agg: Some(batch_fn),
+                        ..
+                    } = &agg.func.fn_type
+                    else {
+                        unreachable!("guarded by the `all` check above");
+                    };
+                    let prev = acc.take(&agg.acc_var).unwrap_or(Value::Null);
+                    let inputs: &[Value] = if agg.input.is_some() {
+                        &agg_input_columns[agg_idx]
+                    } else {
+                        &[]
+                    };
+                    // Validate each input — the per-row path runs validate_args_type
+                    // before each call; without this, batch kernels relying on
+                    // `unreachable!()` for unexpected types would panic on bad data
+                    // (e.g., `sum(n.flag)` where `flag` holds a Bool).
+                    let mut validation_err: Option<String> = None;
+                    for val in inputs {
+                        if matches!(val, Value::Null) {
+                            continue;
+                        }
+                        let single = std::slice::from_ref(val);
+                        if let Err(e) = agg.func.validate_args_type(single) {
+                            validation_err = Some(e);
+                            break;
+                        }
+                        if let Err(e) = agg.func.validate_args_domain(single) {
+                            validation_err = Some(e);
+                            break;
+                        }
                     }
-                    let single = std::slice::from_ref(val);
-                    if let Err(e) = agg.func.validate_args_type(single) {
-                        validation_err = Some(e);
+                    if let Some(e) = validation_err {
+                        acc.insert(&agg.acc_var, prev);
+                        batch_err = Some(e);
                         break;
                     }
-                    if let Err(e) = agg.func.validate_args_domain(single) {
-                        validation_err = Some(e);
-                        break;
+                    match batch_fn(self.runtime, inputs, num_active, prev) {
+                        Ok(new_val) => acc.insert(&agg.acc_var, new_val),
+                        Err(e) => {
+                            batch_err = Some(e);
+                            break;
+                        }
                     }
                 }
-                if let Some(e) = validation_err {
-                    acc.insert(&agg.acc_var, prev);
+                if let Some(e) = batch_err {
                     errors.push(e);
                     break;
-                }
-                match batch_fn(self.runtime, inputs, num_active, prev) {
-                    Ok(new_val) => acc.insert(&agg.acc_var, new_val),
-                    Err(e) => {
-                        errors.push(e);
-                        break;
-                    }
                 }
                 continue;
             }
@@ -462,16 +480,18 @@ impl<'a> AggregateOp<'a> {
                 let group_key = GroupKey(key_values);
 
                 let entry = groups.entry(group_key).or_insert_with(|| {
-                    let mut key_env = Env::new(self.runtime.env_pool);
+                    let mut key_env = Row::new();
                     for (ki, (name, _tree)) in self.keys.iter().enumerate() {
                         key_env.insert(name, key_columns[ki][row_idx].clone());
                     }
                     // Capture copy_from_parent values from the first row of this group.
                     for (old_var, new_var) in self.copy_from_parent {
-                        let val = batch.get(active[row_idx], old_var.id);
-                        key_env.insert(new_var, val.clone());
+                        let val = batch
+                            .value_at(old_var.id, active[row_idx])
+                            .unwrap_or(Value::Null);
+                        key_env.insert(new_var, val);
                     }
-                    (key_env, default_acc.clone_pooled(self.runtime.env_pool))
+                    (key_env, default_acc.clone())
                 });
 
                 // Opaque group identifier for DISTINCT dedup — computed only
@@ -556,7 +576,7 @@ impl<'a> AggregateOp<'a> {
                 KeyExprKind::Variable(var) => {
                     let col: Vec<Value> = active
                         .iter()
-                        .map(|&row| batch.get(row, var.id).clone())
+                        .map(|&row| batch.value_at(var.id, row).unwrap_or(Value::Null))
                         .collect();
                     key_columns.push(col);
                 }
@@ -588,7 +608,7 @@ impl<'a> AggregateOp<'a> {
                 Some(AggInputKind::Variable(var)) => {
                     let col: Vec<Value> = active
                         .iter()
-                        .map(|&row| batch.get(row, var.id).clone())
+                        .map(|&row| batch.value_at(var.id, row).unwrap_or(Value::Null))
                         .collect();
                     agg_columns.push(col);
                 }
@@ -612,16 +632,13 @@ impl<'a> AggregateOp<'a> {
         let child = self.child.take().unwrap();
         let default_acc = self.default_acc.take().unwrap();
 
-        let mut groups: HashMap<GroupKey, (Env<'a>, Env<'a>)> = HashMap::new();
+        let mut groups: HashMap<GroupKey, (Row, Row)> = HashMap::new();
         let mut errors: Vec<String> = Vec::new();
 
         // Pre-insert default group for keyless aggregation.
         if self.keys.is_empty() {
-            let key_env = Env::new(self.runtime.env_pool);
-            groups.insert(
-                GroupKey(vec![]),
-                (key_env, default_acc.clone_pooled(self.runtime.env_pool)),
-            );
+            let key_env = Row::new();
+            groups.insert(GroupKey(vec![]), (key_env, default_acc.clone()));
         }
 
         for batch_result in child {
@@ -658,19 +675,20 @@ impl<'a> AggregateOp<'a> {
         agg: &[(Variable, QueryExpr<Variable>)],
         copy_from_parent: &[(Variable, Variable)],
         batch: &Batch<'a>,
-        default_acc: &Env<'a>,
-        groups: &mut HashMap<GroupKey, (Env<'a>, Env<'a>)>,
+        default_acc: &Row,
+        groups: &mut HashMap<GroupKey, (Row, Row)>,
         errors: &mut Vec<String>,
     ) {
-        for vars in batch.active_env_iter() {
+        for row in batch.active_indices() {
+            let vars = BatchRow::new(batch, row).to_owned_row();
             let (key_values, key_env) = match (|| {
                 let mut key_values = Vec::with_capacity(keys.len());
-                let mut key_env = Env::new(runtime.env_pool);
+                let mut key_env = Row::new();
                 for (name, tree) in keys {
                     let value = ExprEval::from_runtime(runtime).eval(
                         tree,
                         tree.root().idx(),
-                        Some(vars),
+                        Some(&vars),
                         None,
                     )?;
                     key_env.insert(name, value.clone());
@@ -682,7 +700,7 @@ impl<'a> AggregateOp<'a> {
                         key_env.insert(new_var, val.clone());
                     }
                 }
-                Ok::<(Vec<Value>, Env<'_>), String>((key_values, key_env))
+                Ok::<(Vec<Value>, Row), String>((key_values, key_env))
             })() {
                 Ok(kv) => kv,
                 Err(e) => {
@@ -695,7 +713,7 @@ impl<'a> AggregateOp<'a> {
 
             let entry = groups
                 .entry(group_key)
-                .or_insert_with(|| (key_env, default_acc.clone_pooled(runtime.env_pool)));
+                .or_insert_with(|| (key_env, default_acc.clone()));
 
             // Compute group hash for DISTINCT tracking.
             let agg_group_key = entry.0.hash_u64();
@@ -705,7 +723,7 @@ impl<'a> AggregateOp<'a> {
                     runtime,
                     tree,
                     tree.root().idx(),
-                    vars,
+                    &vars,
                     &mut entry.1,
                     agg_group_key,
                 ) {
@@ -724,8 +742,8 @@ impl<'a> AggregateOp<'a> {
         runtime: &Runtime,
         ir: &DynTree<ExprIR<Variable>>,
         idx: NodeIdx<Dyn<ExprIR<Variable>>>,
-        curr: &Env<'a>,
-        acc: &mut Env<'a>,
+        curr: &Row,
+        acc: &mut Row,
         agg_group_key: u64,
     ) -> Result<(), String> {
         match ir.node(idx).data() {
@@ -823,7 +841,7 @@ impl<'a> AggregateOp<'a> {
 
     fn set_agg_expr_zero(
         ir: &DynNode<ExprIR<Variable>>,
-        env: &mut Env<'a>,
+        env: &mut Row,
     ) {
         match ir.data() {
             ExprIR::FuncInvocation(func) if func.is_aggregate() => {
@@ -879,7 +897,7 @@ impl<'a> Iterator for AggregateOp<'a> {
         }
 
         // Emit finalized groups in batches.
-        let mut envs = Vec::with_capacity(BATCH_SIZE);
+        let mut builder = BatchBuilder::new();
         for _ in 0..BATCH_SIZE {
             let Some((_group_key, (key, mut acc))) = self.groups.next() else {
                 break;
@@ -888,7 +906,7 @@ impl<'a> Iterator for AggregateOp<'a> {
                 // Build a combined env with key values at both post-projection
                 // (name) and pre-projection (original_var) IDs, plus all
                 // accumulator values.  Acc values take precedence on collision.
-                let mut combined = key.clone_pooled(self.runtime.env_pool);
+                let mut combined = key.clone();
                 for (name, tree) in self.keys {
                     if let ExprIR::Variable(original_var) = tree.root().data()
                         && let Some(value) = key.get(name)
@@ -897,11 +915,12 @@ impl<'a> Iterator for AggregateOp<'a> {
                     }
                 }
                 combined.merge(&acc);
+                let mut agg_outputs: Vec<(&Variable, Value)> = Vec::with_capacity(self.agg.len());
                 for (name, tree) in self.agg {
                     let val = {
                         let this = &self.runtime;
                         let idx = tree.root().idx();
-                        let env: &Env<'_> = &combined;
+                        let env: &Row = &combined;
                         crate::runtime::eval::ExprEval::from_runtime(this).eval(
                             tree,
                             idx,
@@ -910,7 +929,8 @@ impl<'a> Iterator for AggregateOp<'a> {
                         )
                     }?;
                     acc.insert(name, val.clone());
-                    combined.insert(name, val);
+                    combined.insert(name, val.clone());
+                    agg_outputs.push((name, val));
                 }
                 // Insert pre-projection key variable values into acc so
                 // downstream operators can find them, but skip any slot that
@@ -934,17 +954,26 @@ impl<'a> Iterator for AggregateOp<'a> {
                 for (_, tree) in self.agg {
                     unbind_agg_accumulators(&tree.root(), &mut acc);
                 }
-                Ok::<Env<'_>, String>(acc)
+                // Re-bind aggregate output names last: an accumulator slot id
+                // can coincide with another aggregate's output name (the binder
+                // may reuse slot IDs), and the unbind above would otherwise
+                // clear that output. Output bindings must win. This also matters
+                // for keyless empty-input groups where the output value is Null,
+                // since an unbound Null slot is dropped during columnar finish.
+                for (name, val) in agg_outputs {
+                    acc.insert(name, val);
+                }
+                Ok::<Row, String>(acc)
             })() {
-                Ok(env) => envs.push(env),
+                Ok(env) => builder.push_row(&env),
                 Err(e) => return Some(Err(e)),
             }
         }
 
-        if envs.is_empty() {
+        if builder.is_empty() {
             None
         } else {
-            Some(Ok(Batch::from_envs(envs)))
+            Some(Ok(builder.finish()))
         }
     }
 }
@@ -991,7 +1020,7 @@ fn column_to_values(
 /// recurse into children.
 fn unbind_agg_accumulators(
     ir: &DynNode<ExprIR<Variable>>,
-    acc: &mut Env,
+    acc: &mut Row,
 ) {
     match ir.data() {
         ExprIR::FuncInvocation(func) if func.is_aggregate() => {
@@ -1016,7 +1045,7 @@ trait HashU64 {
     fn hash_u64(&self) -> u64;
 }
 
-impl HashU64 for Env<'_> {
+impl HashU64 for Row {
     fn hash_u64(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
         self.hash(&mut hasher);

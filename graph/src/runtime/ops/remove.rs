@@ -11,9 +11,9 @@ use crate::parser::ast::{ExprIR, QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{Batch, BatchOp},
-    env::Env,
+    batch::{Batch, BatchOp, BatchRow},
     orderset::OrderSet,
+    row::RowView,
     runtime::Runtime,
     value::Value,
 };
@@ -65,16 +65,16 @@ impl Runtime<'_> {
         batch: &Batch<'_>,
     ) -> Result<(), String> {
         for row in batch.active_indices() {
-            let env = batch.env_ref(row);
-            self.remove(items, env)?;
+            let env = BatchRow::new(batch, row);
+            self.remove(items, &env)?;
         }
         Ok(())
     }
 
-    pub fn remove(
+    pub fn remove<R: RowView + ?Sized>(
         &self,
         items: &Vec<QueryExpr<Variable>>,
-        vars: &Env<'_>,
+        vars: &R,
     ) -> Result<(), String> {
         for item in items {
             let (entity, property, labels) = match item.root().data() {

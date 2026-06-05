@@ -40,8 +40,8 @@ use std::collections::{HashSet, VecDeque};
 use crate::parser::ast::Variable;
 use crate::planner::{IR, subtree_contains};
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchOp},
-    env::Env,
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
+    row::{Row, RowView},
     runtime::Runtime,
     value::Value,
 };
@@ -50,7 +50,7 @@ use orx_tree::{Dyn, NodeIdx, NodeRef};
 /// Active batched sub-plan for all rows from one input batch.
 struct ActiveSubPlan<'a> {
     /// Saved input envs for merging with sub-plan output (indexed by origin_row).
-    input_envs: Vec<Env<'a>>,
+    input_envs: Vec<Row>,
     /// The single sub-plan iterator producing result batches for all input rows.
     subtree: BatchOp<'a>,
     /// Tracks which origin_rows have produced at least one result (for optional fallback).
@@ -64,7 +64,7 @@ struct ActiveSubPlan<'a> {
 
 /// Per-row sub-plan state (used when batching is not possible).
 struct PendingApply<'a> {
-    env: Env<'a>,
+    env: Row,
     subtree: BatchOp<'a>,
     had_result: bool,
     current_batch: Option<(Batch<'a>, usize)>,
@@ -134,9 +134,9 @@ impl<'a> ApplyOp<'a> {
 
     fn drain_active(
         &mut self,
-        envs: &mut Vec<Env<'a>>,
+        builder: &mut BatchBuilder,
     ) -> Result<(), String> {
-        while envs.len() < BATCH_SIZE {
+        while builder.len() < BATCH_SIZE {
             let Some(ref mut plan) = self.active else {
                 break;
             };
@@ -144,13 +144,13 @@ impl<'a> ApplyOp<'a> {
             // Drain partially consumed sub-batch first.
             if let Some((ref batch, ref mut pos)) = plan.current_batch {
                 let active: Vec<usize> = batch.active_indices().collect();
-                while *pos < active.len() && envs.len() < BATCH_SIZE {
-                    let env = batch.env_ref(active[*pos]);
+                while *pos < active.len() && builder.len() < BATCH_SIZE {
+                    let env = BatchRow::new(batch, active[*pos]).to_owned_row();
                     let origin = env.origin_row as usize;
                     plan.matched_origins.insert(env.origin_row);
-                    let mut merged = plan.input_envs[origin].clone_pooled(self.runtime.env_pool);
-                    merged.merge(env);
-                    envs.push(merged);
+                    let mut merged = plan.input_envs[origin].clone();
+                    merged.merge(&env);
+                    builder.push_row(&merged);
                     *pos += 1;
                 }
                 if *pos >= active.len() {
@@ -167,13 +167,12 @@ impl<'a> ApplyOp<'a> {
                         let i = *fb_idx;
                         *fb_idx += 1;
                         if !plan.matched_origins.contains(&(i as u32)) {
-                            let mut fallback =
-                                plan.input_envs[i].clone_pooled(self.runtime.env_pool);
+                            let mut fallback = plan.input_envs[i].clone();
                             for v in vars {
                                 fallback.insert(v, Value::Null);
                             }
-                            envs.push(fallback);
-                            if envs.len() >= BATCH_SIZE {
+                            builder.push_row(&fallback);
+                            if builder.len() >= BATCH_SIZE {
                                 return Ok(());
                             }
                         }
@@ -203,15 +202,15 @@ impl<'a> ApplyOp<'a> {
     }
 
     fn next_batched(&mut self) -> Option<Result<Batch<'a>, String>> {
-        let mut envs = Vec::with_capacity(BATCH_SIZE);
+        let mut builder = BatchBuilder::new();
 
-        if let Err(e) = self.drain_active(&mut envs) {
+        if let Err(e) = self.drain_active(&mut builder) {
             return Some(Err(e));
         }
 
-        while envs.len() < BATCH_SIZE {
+        while builder.len() < BATCH_SIZE {
             if self.active.is_some() {
-                if let Err(e) = self.drain_active(&mut envs) {
+                if let Err(e) = self.drain_active(&mut builder) {
                     return Some(Err(e));
                 }
                 continue;
@@ -223,26 +222,23 @@ impl<'a> ApplyOp<'a> {
                 None => break,
             };
 
-            let input_envs: Vec<Env<'a>> = batch
-                .active_env_iter()
+            let input_envs: Vec<Row> = batch
+                .active_indices()
                 .enumerate()
-                .map(|(i, env)| {
-                    let mut e = env.clone_pooled(self.runtime.env_pool);
+                .map(|(i, row)| {
+                    let mut e = BatchRow::new(&batch, row).to_owned_row();
                     e.origin_row = i as u32;
                     e
                 })
                 .collect();
 
-            let arg_envs: Vec<Env<'a>> = input_envs
-                .iter()
-                .map(|e| e.clone_pooled(self.runtime.env_pool))
-                .collect();
+            let arg_batch = batch.clone_active_rows_seq_origin();
 
             let mut subtree = match self.runtime.run_batch(self.child_idx) {
                 Ok(s) => s,
                 Err(e) => return Some(Err(e)),
             };
-            subtree.set_argument_batch(Batch::from_envs(arg_envs));
+            subtree.set_argument_batch(arg_batch);
 
             self.active = Some(Box::new(ActiveSubPlan {
                 input_envs,
@@ -252,15 +248,15 @@ impl<'a> ApplyOp<'a> {
                 fallback_idx: None,
             }));
 
-            if let Err(e) = self.drain_active(&mut envs) {
+            if let Err(e) = self.drain_active(&mut builder) {
                 return Some(Err(e));
             }
         }
 
-        if envs.is_empty() {
+        if builder.is_empty() {
             None
         } else {
-            Some(Ok(Batch::from_envs(envs)))
+            Some(Ok(builder.finish()))
         }
     }
 
@@ -270,21 +266,21 @@ impl<'a> ApplyOp<'a> {
 
     fn drain_pending(
         &mut self,
-        envs: &mut Vec<Env<'a>>,
+        builder: &mut BatchBuilder,
     ) -> Result<(), String> {
-        while envs.len() < BATCH_SIZE {
+        while builder.len() < BATCH_SIZE {
             let Some(p) = self.pending.front_mut() else {
                 break;
             };
 
             if let Some((batch, pos)) = &mut p.current_batch {
                 let active: Vec<usize> = batch.active_indices().collect();
-                while *pos < active.len() && envs.len() < BATCH_SIZE {
-                    let row = batch.env_ref(active[*pos]);
+                while *pos < active.len() && builder.len() < BATCH_SIZE {
+                    let row = BatchRow::new(batch, active[*pos]).to_owned_row();
                     p.had_result = true;
-                    let mut merged = p.env.clone_pooled(self.runtime.env_pool);
-                    merged.merge(row);
-                    envs.push(merged);
+                    let mut merged = p.env.clone();
+                    merged.merge(&row);
+                    builder.push_row(&merged);
                     *pos += 1;
                 }
                 if *pos >= active.len() {
@@ -303,11 +299,11 @@ impl<'a> ApplyOp<'a> {
                     if let Some(ref vars) = self.optional_vars
                         && !p.had_result
                     {
-                        let mut fallback = p.env.clone_pooled(self.runtime.env_pool);
+                        let mut fallback = p.env.clone();
                         for v in vars {
                             fallback.insert(v, Value::Null);
                         }
-                        envs.push(fallback);
+                        builder.push_row(&fallback);
                     }
                     self.pending.pop_front();
                     // Clear DISTINCT deduplication state between per-row
@@ -321,45 +317,46 @@ impl<'a> ApplyOp<'a> {
     }
 
     fn next_per_row(&mut self) -> Option<Result<Batch<'a>, String>> {
-        let mut envs = Vec::with_capacity(BATCH_SIZE);
+        let mut builder = BatchBuilder::new();
 
-        if let Err(e) = self.drain_pending(&mut envs) {
+        if let Err(e) = self.drain_pending(&mut builder) {
             return Some(Err(e));
         }
 
-        while envs.len() < BATCH_SIZE {
+        while builder.len() < BATCH_SIZE {
             let batch = match self.child.next() {
                 Some(Ok(b)) => b,
                 Some(Err(e)) => return Some(Err(e)),
                 None => break,
             };
 
-            for env in batch.active_env_iter() {
+            for row in batch.active_indices() {
+                let env = BatchRow::new(&batch, row).to_owned_row();
                 let mut subtree = match self.runtime.run_batch(self.child_idx) {
                     Ok(iter) => iter,
                     Err(e) => return Some(Err(e)),
                 };
-                subtree.set_argument_batch(Batch::from_envs(vec![
-                    env.clone_pooled(self.runtime.env_pool),
-                ]));
+                let mut arg_builder = BatchBuilder::new();
+                arg_builder.push_row(&env);
+                subtree.set_argument_batch(arg_builder.finish());
 
                 self.pending.push_back(PendingApply {
-                    env: env.clone_pooled(self.runtime.env_pool),
+                    env,
                     subtree,
                     had_result: false,
                     current_batch: None,
                 });
             }
 
-            if let Err(e) = self.drain_pending(&mut envs) {
+            if let Err(e) = self.drain_pending(&mut builder) {
                 return Some(Err(e));
             }
         }
 
-        if envs.is_empty() {
+        if builder.is_empty() {
             None
         } else {
-            Some(Ok(Batch::from_envs(envs)))
+            Some(Ok(builder.finish()))
         }
     }
 }

@@ -26,8 +26,8 @@ use crate::graph::graph::NodeId;
 use crate::parser::ast::{QueryNode, Variable};
 use crate::planner::IR;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchOp},
-    env::Env,
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
+    row::{Row, RowView},
     runtime::Runtime,
     value::Value,
 };
@@ -41,7 +41,7 @@ pub struct NodeByLabelScanOp<'a> {
     /// Index of the current parent row within `parent_batch`.
     parent_row: usize,
     /// Cached env for the current parent row.
-    parent_env: Option<Env<'a>>,
+    parent_env: Option<Row>,
     /// Iterator over node IDs for the current parent row.
     node_iter: Option<Box<dyn Iterator<Item = NodeId> + 'a>>,
     node_pattern: &'a QueryNode<Arc<String>, Variable>,
@@ -86,16 +86,20 @@ impl<'a> Iterator for NodeByLabelScanOp<'a> {
                 }
 
                 if !node_ids.is_empty() {
-                    let batch_len = node_ids.len();
-                    // Build output batch: clone parent env for each row, set node column
-                    let mut envs = Vec::with_capacity(batch_len);
-                    let alias = &self.node_pattern.alias;
-                    for id in node_ids {
-                        let mut row = parent_env.clone_pooled(self.runtime.env_pool);
-                        row.insert(alias, Value::Node(id));
-                        envs.push(row);
+                    let alias_id = self.node_pattern.alias.id;
+                    // Fast path: when the parent row carries no bindings, emit a
+                    // columnar batch of node IDs and skip building one env per
+                    // node. Downstream operators materialize envs/properties
+                    // only for the rows they actually need.
+                    if !parent_env.has_bindings() {
+                        return Some(Ok(Batch::from_node_ids(alias_id, node_ids)));
                     }
-                    return Some(Ok(Batch::from_envs(envs)));
+                    // Build output batch: clone parent env for each row, set node column
+                    let mut builder = BatchBuilder::new();
+                    for id in node_ids {
+                        builder.push_row(&parent_env.clone_with(alias_id, Value::Node(id)));
+                    }
+                    return Some(Ok(builder.finish()));
                 }
 
                 // Node iterator exhausted; fall through to get next parent row
@@ -108,12 +112,12 @@ impl<'a> Iterator for NodeByLabelScanOp<'a> {
                 // If we have a parent batch, try the next row
                 if let Some(ref parent_batch) = self.parent_batch {
                     if self.parent_row < parent_batch.len() {
-                        let env = parent_batch.env_ref(self.parent_row);
+                        let env = BatchRow::new(parent_batch, self.parent_row).to_owned_row();
                         self.parent_row += 1;
                         let g = self.runtime.g.borrow();
                         let graph_iter = g.get_nodes(&self.node_pattern.labels, 0);
                         drop(g);
-                        self.parent_env = Some(env.clone_pooled(self.runtime.env_pool));
+                        self.parent_env = Some(env);
                         self.node_iter = Some(graph_iter);
                         break;
                     }

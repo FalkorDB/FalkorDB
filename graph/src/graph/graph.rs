@@ -1587,10 +1587,22 @@ impl Graph {
         min_row: u64,
     ) -> Box<dyn Iterator<Item = NodeId>> {
         if labels.is_empty() {
+            // Full scan: live node IDs are exactly `0..=max_node_id` minus the
+            // deleted set, identical to the diagonal of `all_nodes_matrix`.
+            // A range walk with a roaring-bitmap membership check avoids the
+            // per-element GraphBLAS row-iterator overhead, which dominates the
+            // cost of unfiltered `MATCH (n)` scans.
+            if self.node_count == 0 {
+                return Box::new(std::iter::empty());
+            }
+            let max_id = self.max_node_id();
+            if self.deleted_nodes.is_empty() {
+                return Box::new((min_row..=max_id).map(NodeId));
+            }
+            let deleted = self.deleted_nodes.clone();
             return Box::new(
-                self.all_nodes_matrix
-                    .iter(min_row, u64::MAX)
-                    .map(|(id, _)| NodeId(id)),
+                (min_row..=max_id)
+                    .filter_map(move |id| (!deleted.contains(id)).then_some(NodeId(id))),
             );
         }
         if labels.len() == 1 {

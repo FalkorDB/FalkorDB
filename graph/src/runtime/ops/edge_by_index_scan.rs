@@ -31,8 +31,8 @@ use crate::parser::ast::{QueryExpr, QueryRelationship, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchOp},
-    env::Env,
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
+    row::{Row, RowView},
     runtime::Runtime,
     value::Value,
 };
@@ -54,7 +54,7 @@ pub struct EdgeByIndexScanOp<'a> {
     query: &'a IndexQuery<QueryExpr<Variable>>,
     transposed: bool,
     pending: VecDeque<(
-        Env<'a>,
+        Row,
         Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>>,
     )>,
     /// Lazily-populated cache of all edges of `relationship_pattern.types[0]`
@@ -88,10 +88,10 @@ impl<'a> EdgeByIndexScanOp<'a> {
         }
     }
 
-    fn evaluate_index_query(
+    fn evaluate_index_query<R: crate::runtime::row::RowView + ?Sized>(
         runtime: &Runtime,
         query: &IndexQuery<QueryExpr<Variable>>,
-        vars: &Env<'_>,
+        vars: &R,
     ) -> Result<IndexQuery<Value>, String> {
         match query {
             IndexQuery::Equal { key, value } => {
@@ -281,15 +281,15 @@ impl<'a> EdgeByIndexScanOp<'a> {
     /// Drains rows from `self.pending` into `envs` until `BATCH_SIZE` is reached.
     fn drain_pending(
         &mut self,
-        envs: &mut Vec<Env<'a>>,
+        builder: &mut BatchBuilder,
     ) {
         let rp = self.relationship_pattern;
-        while envs.len() < BATCH_SIZE {
+        while builder.len() < BATCH_SIZE {
             let Some((env, iter)) = self.pending.front_mut() else {
                 break;
             };
             if let Some((src, dst, edge_id)) = iter.next() {
-                let mut row = env.clone_pooled(self.runtime.env_pool);
+                let mut row = env.clone();
                 // Bind from/to nodes according to transposed flag
                 let (from_node, to_node) = if self.transposed {
                     (dst, src)
@@ -311,7 +311,7 @@ impl<'a> EdgeByIndexScanOp<'a> {
                     &rp.alias,
                     Value::Relationship(Box::new((edge_id, src, dst))),
                 );
-                envs.push(row);
+                builder.push_row(&row);
             } else {
                 self.pending.pop_front();
             }
@@ -323,12 +323,12 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut envs = Vec::with_capacity(BATCH_SIZE);
+        let mut builder = BatchBuilder::new();
 
         // Drain leftover scans from previous call.
-        self.drain_pending(&mut envs);
+        self.drain_pending(&mut builder);
 
-        while envs.len() < BATCH_SIZE {
+        while builder.len() < BATCH_SIZE {
             let batch = match self.child.next() {
                 Some(Ok(b)) => b,
                 Some(Err(e)) => return Some(Err(e)),
@@ -338,8 +338,9 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
             let label = &self.relationship_pattern.types[0];
             let rp = self.relationship_pattern;
 
-            for vars in batch.active_env_iter() {
-                let q = match Self::evaluate_index_query(self.runtime, self.query, vars) {
+            for row in batch.active_indices() {
+                let view = BatchRow::new(&batch, row);
+                let q = match Self::evaluate_index_query(self.runtime, self.query, &view) {
                     Ok(q) => q,
                     Err(e) => return Some(Err(e)),
                 };
@@ -388,12 +389,12 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                 // for `from_id == to_id`, non-loop edges leak through
                 // and `drain_pending`'s second `row.insert(to.alias)`
                 // overwrites the `from.alias` binding.
-                let bound_from = match vars.get(&rp.from.alias) {
-                    Some(Value::Node(id)) => Some(*id),
+                let bound_from = match view.value_at(rp.from.alias.id) {
+                    Some(Value::Node(id)) => Some(id),
                     _ => None,
                 };
-                let bound_to = match vars.get(&rp.to.alias) {
-                    Some(Value::Node(id)) => Some(*id),
+                let bound_to = match view.value_at(rp.to.alias.id) {
+                    Some(Value::Node(id)) => Some(id),
                     _ => None,
                 };
                 let transposed = self.transposed;
@@ -415,16 +416,16 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                     };
 
                 self.pending
-                    .push_back((vars.clone_pooled(self.runtime.env_pool), edges));
+                    .push_back((BatchRow::new(&batch, row).to_owned_row(), edges));
             }
 
-            self.drain_pending(&mut envs);
+            self.drain_pending(&mut builder);
         }
 
-        if envs.is_empty() {
+        if builder.is_empty() {
             None
         } else {
-            Some(Ok(Batch::from_envs(envs)))
+            Some(Ok(builder.finish()))
         }
     }
 }

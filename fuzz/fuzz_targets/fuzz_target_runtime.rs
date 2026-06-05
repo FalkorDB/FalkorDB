@@ -22,7 +22,7 @@ use graph::{
     //         RedisModuleString,
     //     },
     // },
-    runtime::{eval::evaluate_param, functions::init_functions, pool::Pool, runtime::Runtime},
+    runtime::{eval::evaluate_param, functions::init_functions, runtime::Runtime},
 };
 use libfuzzer_sys::{Corpus, fuzz_target};
 
@@ -125,8 +125,7 @@ fuzz_target!(init: {
         else {
             return Corpus::Reject;
         };
-        let pool = Pool::new();
-        let runtime = Runtime::new(g.read(), parameters, true, plan, false, String::new(), &pool, -1, false, None, 0, None);
+        let runtime = Runtime::new(g.read(), parameters, true, plan, false, String::new(), -1, false, None, 0, None);
         match runtime.query() {
             Ok(_) => Corpus::Keep,
             _ => Corpus::Reject,

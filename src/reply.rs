@@ -638,14 +638,15 @@ fn reply_result<const COMPACT: bool>(
         .sum();
     raw::reply_with_array(ctx.ctx, total as _);
     for batch in &result.result {
-        for row in batch.active_env_iter() {
+        for row in batch.active_indices() {
             raw::reply_with_array(ctx.ctx, runtime.return_names.len() as _);
             for name in &runtime.return_names {
+                let value = batch.value_at(name.id, row).unwrap();
                 if COMPACT {
                     raw::reply_with_array(ctx.ctx, 2);
-                    reply_compact_value(ctx, runtime, row.get(name).unwrap());
+                    reply_compact_value(ctx, runtime, &value);
                 } else {
-                    reply_verbose_value(ctx, runtime, row.get(name).unwrap());
+                    reply_verbose_value(ctx, runtime, &value);
                 }
             }
         }

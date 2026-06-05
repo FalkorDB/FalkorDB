@@ -32,6 +32,7 @@
 //! The comparison kernels are written as tight indexed loops to enable
 //! LLVM auto-vectorization on all target platforms (x86_64 SSE/AVX, ARM NEON).
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::parser::ast::{ExprIR, Variable};
@@ -279,8 +280,10 @@ pub enum VectorizablePredicate {
 /// - `n.age > 30 AND n.name = 'Alice'` → `Conjunction([...])`
 ///
 /// Returns `None` for complex predicates that cannot be vectorized.
+#[allow(clippy::implicit_hasher)]
 pub fn try_extract_vectorizable_predicate(
-    tree: &DynTree<ExprIR<Variable>>
+    tree: &DynTree<ExprIR<Variable>>,
+    params: &HashMap<String, Value>,
 ) -> Option<VectorizablePredicate> {
     let root = tree.root();
     let root_data = root.data();
@@ -290,7 +293,7 @@ pub fn try_extract_vectorizable_predicate(
         let mut preds = Vec::new();
         for child in root.children() {
             let child_tree = child.clone_as_tree();
-            preds.push(try_extract_single_predicate(&child_tree)?);
+            preds.push(try_extract_single_predicate(&child_tree, params)?);
         }
         if preds.is_empty() {
             return None;
@@ -299,11 +302,14 @@ pub fn try_extract_vectorizable_predicate(
     }
 
     // Single predicate
-    try_extract_single_predicate(tree).map(VectorizablePredicate::Single)
+    try_extract_single_predicate(tree, params).map(VectorizablePredicate::Single)
 }
 
 /// Tries to extract a single `SimplePredicate` from a comparison expression.
-fn try_extract_single_predicate(tree: &DynTree<ExprIR<Variable>>) -> Option<SimplePredicate> {
+fn try_extract_single_predicate(
+    tree: &DynTree<ExprIR<Variable>>,
+    params: &HashMap<String, Value>,
+) -> Option<SimplePredicate> {
     let root = tree.root();
     let op = CmpOp::from_expr_ir(root.data())?;
 
@@ -315,20 +321,21 @@ fn try_extract_single_predicate(tree: &DynTree<ExprIR<Variable>>) -> Option<Simp
     let rhs_idx = root.child(1).idx();
 
     // Try: Property(attr) -> Variable(var)  <op>  Constant
-    if let Some(pred) = try_property_vs_constant(tree, lhs_idx, rhs_idx, op) {
+    if let Some(pred) = try_property_vs_constant(tree, lhs_idx, rhs_idx, op, params) {
         return Some(pred);
     }
     // Try: Constant  <op>  Property(attr) -> Variable(var) (flip operator)
-    try_property_vs_constant(tree, rhs_idx, lhs_idx, op.flip())
+    try_property_vs_constant(tree, rhs_idx, lhs_idx, op.flip(), params)
 }
 
 /// Checks if `prop_side` is `Property(attr) -> Variable(var)` and
-/// `const_side` is a literal constant.
+/// `const_side` is a literal constant or a resolvable query parameter.
 fn try_property_vs_constant(
     tree: &DynTree<ExprIR<Variable>>,
     prop_idx: NodeIdx<Dyn<ExprIR<Variable>>>,
     const_idx: NodeIdx<Dyn<ExprIR<Variable>>>,
     op: CmpOp,
+    params: &HashMap<String, Value>,
 ) -> Option<SimplePredicate> {
     let prop_node = tree.node(prop_idx);
     let ExprIR::Property(attr) = prop_node.data() else {
@@ -341,15 +348,18 @@ fn try_property_vs_constant(
         return None;
     };
 
-    // const_side must be a leaf literal
+    // const_side must be a leaf literal or a query parameter that resolves to
+    // a literal value (parameters are not substituted into the cached plan, so
+    // `MATCH (n {id: $id})` keeps `$id` as an `ExprIR::Parameter` node).
     let const_node = tree.node(const_idx);
-    let constant = match const_node.data() {
-        ExprIR::Constant(v) => v.clone(),
-        _ => return None,
-    };
     if const_node.num_children() != 0 {
         return None;
     }
+    let constant = match const_node.data() {
+        ExprIR::Constant(v) => v.clone(),
+        ExprIR::Parameter(name) => params.get(name)?.clone(),
+        _ => return None,
+    };
 
     Some(SimplePredicate {
         var: var.clone(),
