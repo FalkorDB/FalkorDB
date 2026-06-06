@@ -19,32 +19,9 @@ permissions:
   packages: read
 
 jobs:
-  # See sanitize.yml: prefer the PR's RC toolchain image, fall back to stable.
+  # Prefer the PR's RC toolchain image, fall back to stable (shared workflow).
   detect-toolchain:
-    runs-on: ubuntu-latest
-    outputs:
-      image: ${{ steps.choose.outputs.image }}
-    steps:
-      - name: Login to GHCR
-        env:
-          TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ACTOR: ${{ github.actor }}
-        run: echo "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
-      - name: Choose image
-        id: choose
-        env:
-          PR: ${{ github.event.pull_request.number }}
-        run: |
-          set -euo pipefail
-          RC="ghcr.io/falkordb/falkordb-build:ubuntu-pr-${PR}"
-          STABLE="ghcr.io/falkordb/falkordb-build:ubuntu"
-          if [[ -n "$PR" ]] && docker manifest inspect "$RC" >/dev/null 2>&1; then
-            echo "Using RC: $RC"
-            echo "image=$RC" >> "$GITHUB_OUTPUT"
-          else
-            echo "Using stable: $STABLE"
-            echo "image=$STABLE" >> "$GITHUB_OUTPUT"
-          fi
+    uses: ./.github/workflows/detect-toolchain.yml
 
   haslabel:
     name: Check label or branch
