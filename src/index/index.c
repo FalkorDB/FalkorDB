@@ -10,6 +10,7 @@
 #include "../util/arr.h"
 #include "../query_ctx.h"
 #include "../util/rmalloc.h"
+#include "../util/identifier_limits.h"
 #include "../datatypes/array.h"
 #include "../datatypes/point.h"
 #include "../datatypes/vector.h"
@@ -30,13 +31,22 @@ void Index_RangeFieldName
 
 	if(unlikely(multi_val_type != NULL)) {
 		if(*multi_val_type == T_STRING) {
-			sprintf(type_aware_name, "range:%s:string:arr", name);
+			int n = snprintf(type_aware_name,
+					FALKORDB_MAX_TYPE_AWARE_FIELD_NAME_LEN + 1,
+					"range:%s:string:arr", name);
+			ASSERT(n >= 0 && n <= FALKORDB_MAX_TYPE_AWARE_FIELD_NAME_LEN);
 		} else {
-			sprintf(type_aware_name, "range:%s:numeric:arr", name);
+			int n = snprintf(type_aware_name,
+					FALKORDB_MAX_TYPE_AWARE_FIELD_NAME_LEN + 1,
+					"range:%s:numeric:arr", name);
+			ASSERT(n >= 0 && n <= FALKORDB_MAX_TYPE_AWARE_FIELD_NAME_LEN);
 		}
 	} else {
 		// prefix range field name with "range:"
-		sprintf(type_aware_name, "range:%s", name);
+		int n = snprintf(type_aware_name,
+				FALKORDB_MAX_TYPE_AWARE_FIELD_NAME_LEN + 1,
+				"range:%s", name);
+		ASSERT(n >= 0 && n <= FALKORDB_MAX_TYPE_AWARE_FIELD_NAME_LEN);
 	}
 }
 
@@ -50,7 +60,8 @@ void Index_FulltextxFieldName
 	ASSERT(type_aware_name != NULL);
 
 	// maintain original name for full text fields
-	strcpy(type_aware_name, name);
+	int n = snprintf(type_aware_name, FALKORDB_MAX_IDENTIFIER_LEN + 1, "%s", name);
+	ASSERT(n >= 0 && n <= FALKORDB_MAX_IDENTIFIER_LEN);
 }
 
 // gets type aware index field name
@@ -63,7 +74,9 @@ void Index_VectorFieldName
 	ASSERT(type_aware_name != NULL);
 
 	// prefix vector field name with "vector:"
-	sprintf(type_aware_name, "vector:%s", name);
+	int n = snprintf(type_aware_name, FALKORDB_MAX_VECTOR_FIELD_NAME_LEN + 1,
+			"vector:%s", name);
+	ASSERT(n >= 0 && n <= FALKORDB_MAX_VECTOR_FIELD_NAME_LEN);
 }
 
 // index structure
@@ -964,4 +977,3 @@ void Index_Free
 	rm_free(idx->label);
 	rm_free(idx);
 }
-

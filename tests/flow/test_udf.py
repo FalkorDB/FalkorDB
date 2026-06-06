@@ -67,6 +67,33 @@ class testUDF():
         self.db.udf_flush()
         self.conn.flushall()
 
+    def test_identifier_length_limit(self):
+        # overlong library name should be rejected
+        long_lib = "L" * 513
+        script = """
+        function ok() { return 1; }
+        falkor.register('ok', ok);
+        """
+        try:
+            self.db.udf_load(long_lib, script, True)
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertIn("Library name exceeds maximum length of 512 bytes", str(e))
+
+        # overlong qualified function name (lib.func) should be rejected
+        lib = "Lib"
+        long_func = "f" * 509  # len("Lib") + 1 + 509 = 513
+        script = f"""
+        function g() {{ return 1; }}
+        falkor.register('{long_func}', g);
+        """
+
+        try:
+            self.db.udf_load(lib, script, True)
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertIn("Qualified function name exceeds maximum length of 512 bytes", str(e))
+
     def test_return_primitives(self):
         """
         test the returning JS primitives back to FalkorDB works as expected

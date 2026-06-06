@@ -8,6 +8,7 @@
 #include "udf_ctx.h"
 #include "classes.h"
 #include "repository.h"
+#include "../util/identifier_limits.h"
 #include "../query_ctx.h"
 #include "../arithmetic/func_desc.h"
 
@@ -47,7 +48,29 @@ static JSValue validate_register_udf
 	}
 
 	JSValue res;
+	char *fullname = NULL ;
 	const char *func_name = JS_ToCString(js_ctx, argv[0]) ;
+
+	if(func_name == NULL) {
+		return JS_ThrowInternalError(js_ctx, "failed to read function name");
+	}
+
+	size_t lib_len  = strlen(UDF_LIB);
+	size_t func_len = strlen(func_name);
+
+	if(func_len > FALKORDB_MAX_IDENTIFIER_LEN) {
+		res = JS_ThrowTypeError(js_ctx,
+				"Function name exceeds maximum length of %d bytes",
+				FALKORDB_MAX_IDENTIFIER_LEN);
+		goto cleanup;
+	}
+
+	if((lib_len + 1 + func_len) > FALKORDB_MAX_IDENTIFIER_LEN) {
+		res = JS_ThrowTypeError(js_ctx,
+				"Qualified function name exceeds maximum length of %d bytes",
+				FALKORDB_MAX_IDENTIFIER_LEN);
+		goto cleanup;
+	}
 
 	//--------------------------------------------------------------------------
 	// fail if UDF is a registered function
@@ -61,7 +84,6 @@ static JSValue validate_register_udf
 		goto cleanup ;
 	}
 
-	char *fullname = NULL ;
 	asprintf (&fullname, "%s.%s", UDF_LIB, func_name) ;
 	if (AR_FuncExists (fullname)) {
 		res = JS_ThrowTypeError (js_ctx, "function: '%s' already registered",
@@ -149,6 +171,27 @@ static JSValue global_register_udf
 
 	JSValue res ;
 	const char *func_name = JS_ToCString (js_ctx, argv[0]) ;
+
+	if(func_name == NULL) {
+		return JS_ThrowInternalError(js_ctx, "failed to read function name");
+	}
+
+	size_t lib_len  = strlen(UDF_LIB);
+	size_t func_len = strlen(func_name);
+
+	if(func_len > FALKORDB_MAX_IDENTIFIER_LEN) {
+		res = JS_ThrowTypeError(js_ctx,
+				"Function name exceeds maximum length of %d bytes",
+				FALKORDB_MAX_IDENTIFIER_LEN);
+		goto cleanup;
+	}
+
+	if((lib_len + 1 + func_len) > FALKORDB_MAX_IDENTIFIER_LEN) {
+		res = JS_ThrowTypeError(js_ctx,
+				"Qualified function name exceeds maximum length of %d bytes",
+				FALKORDB_MAX_IDENTIFIER_LEN);
+		goto cleanup;
+	}
 
 	if (!UDF_RepoRegisterFunc (UDF_LIB, func_name)) {
 		res = JS_ThrowTypeError (js_ctx, "function: '%s' already registered",
@@ -293,4 +336,3 @@ void UDF_SetFalkorRegisterImpl
     JS_FreeValue (js_ctx, global_obj) ;
     JS_FreeValue (js_ctx, falkor_obj) ;
 }
-

@@ -9,7 +9,7 @@ class testQueryValidationFlow(FlowTestsBase):
         self.redis_con = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
         self.populate_graph()
-    
+
     def populate_graph(self):
         # Create a single graph.
         self.graph.query("CREATE ({age:34})")
@@ -32,7 +32,15 @@ class testQueryValidationFlow(FlowTestsBase):
         except redis.exceptions.ResponseError:
             # function validation should be case insensitive.
             self.env.assertTrue(False)
-    
+
+    def test02b_function_name_length_limit(self):
+        long_name = "f" * 513
+        try:
+            self.graph.query(f"RETURN {long_name}(1)")
+            self.env.assertTrue(False)
+        except redis.exceptions.ResponseError as e:
+            self.env.assertContains("Function name exceeds maximum length of 512 bytes", str(e))
+
     def test03_edge_missing_relation_type(self):
         try:
             query = """CREATE (n:Person {age:32})-[]->(:person {age:30})"""
@@ -698,3 +706,4 @@ class testQueryValidationFlow(FlowTestsBase):
 
         q = "OPTIONAL MATCH (a) RETURN a UNION MATCH (a) RETURN a"
         self.graph.query(q)
+

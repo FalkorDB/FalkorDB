@@ -7,6 +7,7 @@
 #include "RG.h"
 #include "ast.h"
 #include "util/arr.h"
+#include "util/identifier_limits.h"
 #include "query_ctx.h"
 #include "param_parser.h"
 #include "../errors/errors.h"
@@ -515,20 +516,27 @@ bool AST_ClauseContainsAggregation
 	rax *referred_funcs = raxNew();
 	AST_ReferredFunctions(clause, referred_funcs);
 
-	char funcName[32];
 	raxIterator it;
 	_prepareIterateAll(referred_funcs, &it);
 	while(raxNext(&it)) {
 		size_t len = it.key_len;
-		ASSERT(len < 32);
+		if(len > FALKORDB_MAX_IDENTIFIER_LEN) {
+			// length validation happens earlier in AST validation
+			// skip defensively
+			continue;
+		}
+
+		char *funcName = rm_malloc(len + 1);
 		// Copy the triemap key so that we can safely add a terinator character
 		memcpy(funcName, it.key, len);
 		funcName[len] = 0;
 
 		if(AR_FuncIsAggregate(funcName)) {
 			aggregated = true;
+			rm_free(funcName);
 			break;
 		}
+		rm_free(funcName);
 	}
 	raxStop(&it);
 	raxFree(referred_funcs);

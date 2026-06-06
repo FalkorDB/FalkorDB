@@ -129,7 +129,7 @@ class testIndexCreationFlow():
             assert(False)
         except ResponseError as e:
             self.env.assertIn("Nostem must be bool", str(e))
-        
+
         try:
             # create an index over L3:v1 with phonetic of type bool should failed
             # phonetic must be a string
@@ -297,6 +297,21 @@ class testIndexCreationFlow():
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("'a' not defined", str(e))
+
+    def test07b_identifier_length_limit(self):
+        max_len = 512
+        valid_prop = "p" * max_len
+        long_prop = "p" * (max_len + 1)
+
+        # boundary case: 512-byte property name is accepted
+        self.graph.query(f"CREATE INDEX FOR (n:Person) ON (n.`{valid_prop}`)")
+
+        # over-bound property name should fail with query error
+        try:
+            self.graph.query(f"CREATE INDEX FOR (n:Person) ON (n.`{long_prop}`)")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Property name exceeds maximum length of 512 bytes", str(e))
 
     def test08_async_index_creation(self):
         # skip test if we're running under Valgrind
