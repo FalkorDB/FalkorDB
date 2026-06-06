@@ -244,7 +244,7 @@ FT_Result _applyFilter
 	// if there was null comparison, return false
 	if(disjointOrNull == COMPARED_NULL) return FILTER_NULL;
 	// values are of disjoint types
-	if(disjointOrNull == DISJOINT || disjointOrNull == COMPARED_NAN) {
+	if(disjointOrNull == SIV_DISJOINT || disjointOrNull == COMPARED_NAN) {
 		// the filter passes if we're testing for inequality, and fails otherwise
 		return (op == OP_NEQUAL);
 	}

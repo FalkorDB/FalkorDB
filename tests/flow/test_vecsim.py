@@ -222,3 +222,102 @@ class testVecsim():
         except Exception as e:
             self.env.assertEqual("Vector dimension mismatch, expected 2 but got 3", str(e))
 
+
+def _aggregate_recall(env, graph, query_fn, label, attr, k, centers):
+    """Aggregate recall@k for the approximate (async/HNSW) KNN path.
+
+    Runs KNN from many query centers and returns the fraction of returned
+    results that are exact top-k hits (per-coordinate offset < k). The synthetic
+    data places entities on the diagonal, so the true k-nearest to a center
+    (c, c) all have offset < k. Aggregating over many queries keeps the metric
+    stable against the run-to-run nondeterminism of concurrent HNSW
+    construction, while a recall collapse (e.g. the index returning far-away or
+    garbage nodes) still drops the fraction well below any sane threshold.
+    """
+    total = hits = 0
+    for x, y in centers:
+        result = query_fn(graph, label, attr, k, [x, y]).result_set
+        env.assertEqual(len(result), k)
+        for row in result:
+            e = row[0].properties[attr]
+            if abs(e[0] - x) < k and abs(e[1] - y) < k:
+                hits += 1
+            total += 1
+    return hits / total
+
+
+class testVecsimAsyncWorkers():
+    # Exercises the *concurrent* index path. With INDEX_WORKER_THREADS > 0 the
+    # tiered index promotes vectors into the HNSW graph asynchronously on
+    # background workers, so the insertion order -- and therefore the graph and
+    # the approximate-KNN results -- is nondeterministic. This is the path a
+    # production deployment uses when it raises INDEX_WORKER_THREADS, and is
+    # intentionally NOT covered by the default-config testVecsim above
+    # (INDEX_WORKER_THREADS=0 -> in-place, single-threaded, deterministic).
+    #
+    # Because results are nondeterministic we assert aggregate recall@k over
+    # many query points rather than a per-result bound: stable enough to not
+    # flake, strict enough to catch a real recall regression.
+    def __init__(self):
+        self.env, self.db = Env(moduleArgs="INDEX_WORKER_THREADS 4")
+
+        # Skip on macOS with ASAN due to VectorSimilarity container-overflow bug
+        # https://github.com/RediSearch/VectorSimilarity - needs upstream fix
+        if SANITIZER and OS == "macos":
+            self.env.skip()
+
+        self.conn = self.env.getConnection()
+        self.graph = Graph(self.conn, "vecsim_async")
+
+        # confirm the async (worker-backed) path is actually active
+        self.env.assertEqual(self.db.config_get("INDEX_WORKER_THREADS"), 4)
+
+        self.populate()
+        self.create_indicies()
+
+    def populate(self):
+        n = 1000 # number of Person nodes
+        q = """UNWIND range(0, $n) AS i
+               CREATE (:Person {embeddings: vecf32([i,i])})"""
+        self.graph.query(q, params={'n': n})
+
+        # self referencing edges, embeddings mirror the node id into negatives
+        q = """MATCH (p:Person)
+               WITH vecf32([-ID(p), -ID(p)]) AS embeddings, p
+               CREATE (p)-[:Points {embeddings: embeddings}]->(p)"""
+        self.graph.query(q)
+
+    def create_indicies(self):
+        # Use M=32 (a denser HNSW graph than the default 16 -> higher recall)
+        # via the index_utils helper, which exposes the HNSW tuning params the
+        # client create_*_vector_index method does not.
+        create_node_vector_index(self.graph, "Person", "embeddings", dim=2,
+                                 similarity_function="euclidean", m=32)
+        create_edge_vector_index(self.graph, "Points", "embeddings", dim=2,
+                                 similarity_function="euclidean", m=32)
+        # wait for background promotion into HNSW to complete
+        wait_for_indices_to_sync(self.graph)
+
+    def test01_async_recall_nodes(self):
+        k = 3
+        # 40 query centers spread across the data
+        centers = [(c, c) for c in range(10, 991, 25)]
+        recall = _aggregate_recall(self.env, self.graph,
+                                   query_node_vector_index, "Person",
+                                   "embeddings", k, centers)
+        print(f"[test_vecsim] async node recall@{k} = {recall:.3f}")
+        # HNSW recall here is normally ~1.0; require a conservative aggregate
+        # floor so the concurrent path is validated (a recall collapse drops far
+        # below this) without flaking on the occasional single-neighbor miss
+        # inherent to approximate ANN.
+        self.env.assertGreaterEqual(recall, 0.7)
+
+    def test02_async_recall_edges(self):
+        k = 3
+        centers = [(-c, -c) for c in range(10, 991, 25)]
+        recall = _aggregate_recall(self.env, self.graph,
+                                   query_edge_vector_index, "Points",
+                                   "embeddings", k, centers)
+        print(f"[test_vecsim] async edge recall@{k} = {recall:.3f}")
+        self.env.assertGreaterEqual(recall, 0.7)
+

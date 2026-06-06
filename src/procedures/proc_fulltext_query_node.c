@@ -9,6 +9,7 @@
 #include "../util/arr.h"
 #include "../query_ctx.h"
 #include "../index/index.h"
+#include "../index/index_doc_key.h"
 #include "../util/rmalloc.h"
 #include "../errors/errors.h"
 #include "proc_fulltext_query.h"
@@ -25,6 +26,7 @@ typedef struct {
 	Graph *g;
 	SIValue output[2];
 	Index idx;
+	RSIndex *rsIdx;          // strong ref on RediSearch index, held for the procedure's lifetime
 	RSResultsIterator *iter;
 	SIValue *yield_node;     // yield node
 	SIValue *yield_score;    // yield score
@@ -79,9 +81,17 @@ ProcedureResult Proc_FulltextQueryNodeInvoke
 	ctx->privateData = rm_malloc(sizeof(QueryNodeContext));
 	QueryNodeContext *pdata = ctx->privateData;
 
-	pdata->g   = GraphContext_GetGraph (gc) ;
-	pdata->n   = GE_NEW_NODE();
-	pdata->idx = idx;
+	pdata->g     = GraphContext_GetGraph (gc) ;
+	pdata->n     = GE_NEW_NODE();
+	pdata->idx   = idx;
+	// Strong ref on the RediSearch index for the procedure's lifetime;
+	// released in Proc_FulltextQueryNodeFree.
+	pdata->rsIdx = Index_AcquireRSIndex(idx);
+	if(pdata->rsIdx == NULL) {
+		rm_free(pdata);
+		ctx->privateData = NULL;
+		return PROCEDURE_ERR;
+	}
 
 	_process_yield(pdata, yield);
 
@@ -117,17 +127,20 @@ SIValue *Proc_FulltextQueryNodeStep
 	// try to get a result out of the iterator
 	// NULL is returned if iterator id depleted
 	size_t len = 0;
-	NodeID *id = (NodeID *)RediSearch_ResultsIteratorNext(pdata->iter,
-			Index_RSIndex(pdata->idx), &len);
+	const char *doc_key = (const char *)RediSearch_ResultsIteratorNext(pdata->iter,
+			pdata->rsIdx, &len);
 
 	// depleted
-	if(!id) return NULL;
+	if(!doc_key) return NULL;
+
+	NodeID id;
+	IndexDocKey_DecodeNode(doc_key, &id);
 
 	double score = RediSearch_ResultsIteratorGetScore(pdata->iter);
 
 	// get node
 	Node *n = &pdata->n;
-	Graph_GetNode(pdata->g, *id, n);
+	Graph_GetNode(pdata->g, id, n);
 
 	if(pdata->yield_node)  *pdata->yield_node  = SI_Node(n);
 	if(pdata->yield_score) *pdata->yield_score = SI_DoubleVal(score);
@@ -144,6 +157,8 @@ ProcedureResult Proc_FulltextQueryNodeFree
 
 	QueryNodeContext *pdata = ctx->privateData;
 	if(pdata->iter) RediSearch_ResultsIteratorFree(pdata->iter);
+	// release the strong ref on the RediSearch index, AFTER iter free.
+	if(pdata->rsIdx) Index_ReleaseRSIndex(pdata->rsIdx);
 	rm_free(pdata);
 
 	return PROCEDURE_OK;

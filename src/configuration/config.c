@@ -86,6 +86,9 @@
 // quick js runtime stack max size
 #define JS_STACK_SIZE "JS_STACK_SIZE"
 
+// config param, number of RediSearch index worker threads (load-time only)
+#define INDEX_WORKER_THREADS "INDEX_WORKER_THREADS"
+
 //------------------------------------------------------------------------------
 // Configuration defaults
 //------------------------------------------------------------------------------
@@ -102,6 +105,19 @@
 #define JS_HEAP_SIZE_DEFAULT  (256 * 1024 * 1024)  // 256 MB
 #define JS_STACK_SIZE_DEFAULT (1024 * 1024)  // 1MB
 
+// Number of RediSearch index worker threads. Default 0 (matching RediSearch's
+// own default and the falkordb-rs-next-gen engine). The worker count selects
+// VecSim's TIERED write mode (see RediSearch util/workers.c):
+//   * 0 workers -> in-place writes: the writer thread inserts vectors directly
+//     into the HNSW graph, single-threaded and in a deterministic order. KNN is
+//     still approximate (HNSW), but the graph -- and therefore the results --
+//     are reproducible run to run.
+//   * >0 workers -> async writes: background workers promote vectors into HNSW
+//     concurrently, so the insertion order (and the resulting graph) is
+//     nondeterministic, which makes approximate-KNN recall vary run to run.
+// Operators can opt into background promotion by raising this at load time.
+#define INDEX_WORKER_THREADS_DEFAULT 0
+
 // configuration object
 typedef struct
 {
@@ -112,6 +128,7 @@ typedef struct
 	bool async_delete;				   // if true, graph deletion is done asynchronously
 	uint64_t omp_thread_count;		   // maximum number of OpenMP threads
 	uint64_t thread_pool_size;		   // thread count for thread pool
+	uint64_t index_worker_threads;	   // RediSearch index worker-thread count
 	uint64_t resultset_size;		   // resultset maximum size, UINT64_MAX unlimited
 	uint64_t vkey_entity_count;		   // the limit of number of entities encoded at once for each RDB key
 	uint64_t max_queued_queries;	   // max number of queued queries
@@ -314,6 +331,20 @@ static void Config_OMP_thread_count_set(uint64_t nthreads)
 static uint64_t Config_OMP_thread_count_get(void)
 {
 	return config.omp_thread_count;
+}
+
+//------------------------------------------------------------------------------
+// RediSearch index worker-thread count
+//------------------------------------------------------------------------------
+
+static void Config_index_worker_threads_set(uint64_t nthreads)
+{
+	config.index_worker_threads = nthreads;
+}
+
+static uint64_t Config_index_worker_threads_get(void)
+{
+	return config.index_worker_threads;
 }
 
 //------------------------------------------------------------------------------
@@ -622,6 +653,10 @@ bool Config_Contains_field(
 	{
 		f = Config_OPENMP_NTHREAD;
 	}
+	else if (!strcasecmp(field_str, INDEX_WORKER_THREADS))
+	{
+		f = Config_INDEX_WORKER_THREADS;
+	}
 	else if (!strcasecmp(field_str, VKEY_MAX_ENTITY_COUNT))
 	{
 		f = Config_VKEY_MAX_ENTITY_COUNT;
@@ -725,6 +760,9 @@ SIType Config_Field_type(
 	case Config_THREAD_POOL_SIZE:
 		return T_INT64;
 
+	case Config_INDEX_WORKER_THREADS:
+		return T_INT64;
+
 	case Config_RESULTSET_MAX_SIZE:
 		return T_INT64;
 
@@ -815,6 +853,10 @@ const char *Config_Field_name(
 		name = THREAD_COUNT;
 		break;
 
+	case Config_INDEX_WORKER_THREADS:
+		name = INDEX_WORKER_THREADS;
+		break;
+
 	case Config_RESULTSET_MAX_SIZE:
 		name = RESULTSET_SIZE;
 		break;
@@ -902,6 +944,9 @@ static void _Config_SetToDefaults(void)
 	// use the GraphBLAS-defined number of OpenMP threads by default
 	GrB_OK (GrB_get(GrB_GLOBAL, &thread_count, GxB_NTHREADS));
 	config.omp_thread_count = thread_count;
+
+	// RediSearch index worker-thread count
+	config.index_worker_threads = INDEX_WORKER_THREADS_DEFAULT;
 
 	// the default entity count of virtual keys
 	config.vkey_entity_count = VKEY_MAX_ENTITY_COUNT_DEFAULT;
@@ -1157,6 +1202,21 @@ bool Config_Option_get(
 
 		ASSERT(pool_nthreads != NULL);
 		(*pool_nthreads) = Config_thread_pool_size_get();
+	}
+	break;
+
+		//----------------------------------------------------------------------
+		// index worker-thread count
+		//----------------------------------------------------------------------
+
+	case Config_INDEX_WORKER_THREADS:
+	{
+		va_start(ap, field);
+		uint64_t *index_worker_threads = va_arg(ap, uint64_t *);
+		va_end(ap);
+
+		ASSERT(index_worker_threads != NULL);
+		(*index_worker_threads) = Config_index_worker_threads_get();
 	}
 	break;
 
@@ -1544,6 +1604,25 @@ bool Config_Option_set
 
 			if (Config_thread_pool_size_get () != pool_nthreads) {
 				Config_thread_pool_size_set (pool_nthreads) ;
+				updated = true ;
+			}
+		}
+		break ;
+
+		//----------------------------------------------------------------------
+		// index worker-thread count
+		//----------------------------------------------------------------------
+
+		case Config_INDEX_WORKER_THREADS:
+		{
+			// 0 is valid and disables RediSearch's index worker pool
+			long long index_worker_threads ;
+			if (!_Config_ParseNonNegativeInteger (val, &index_worker_threads)) {
+				return false ;
+			}
+
+			if (Config_index_worker_threads_get () != index_worker_threads) {
+				Config_index_worker_threads_set (index_worker_threads) ;
 				updated = true ;
 			}
 		}

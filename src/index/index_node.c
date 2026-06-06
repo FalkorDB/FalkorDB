@@ -6,6 +6,7 @@
 
 #include "RG.h"
 #include "index.h"
+#include "index_doc_key.h"
 #include "../value.h"
 #include "../query_ctx.h"
 #include "../graph/graphcontext.h"
@@ -21,27 +22,38 @@ void Index_IndexNode
 	ASSERT(n    !=  NULL);
 	ASSERT(idx  !=  NULL);
 
-	EntityID key             = ENTITY_GET_ID(n);
+	// Acquire a strong ref for the duration of this op. Returns NULL
+	// if the spec was dropped concurrently; in that case there's
+	// nothing to index.
+	RSIndex *rsIdx = Index_AcquireRSIndex(idx);
+	if(rsIdx == NULL) return;
+
+	char     doc_key[NODE_DOC_KEY_BUF];
 	RSDoc    *doc            = NULL;
-	RSIndex  *rsIdx          = Index_RSIndex(idx);
-	size_t   key_len         = sizeof(EntityID);
 	uint     doc_field_count = 0;
+
+	IndexDocKey_EncodeNode(ENTITY_GET_ID(n), doc_key);
 
 	// create RediSearch document representing node
 	doc = Index_IndexGraphEntity(idx, (const GraphEntity *)n,
-			(const void *)&key, key_len, &doc_field_count);
+			(const void *)doc_key, NODE_DOC_KEY_LEN, &doc_field_count);
 
 	if(doc_field_count == 0) {
 		// entity doesn't poses any attributes which are indexed
-		// remove entity from index and delete document
-		Index_RemoveNode(idx, n);
+		// remove entity from index and delete document. Use the
+		// already-acquired ref directly to avoid re-entering
+		// Index_RemoveNode (which would Acquire again).
+		RediSearch_DeleteDocument(rsIdx, doc_key, NODE_DOC_KEY_LEN);
 		RediSearch_FreeDocument(doc);
+		Index_ReleaseRSIndex(rsIdx);
 		return;
 	}
 
 	// add document to RediSearch index
 	int res = RediSearch_SpecAddDocument(rsIdx, doc);
 	ASSERT(res == REDISMODULE_OK);
+
+	Index_ReleaseRSIndex(rsIdx);
 }
 
 void Index_RemoveNode
@@ -52,9 +64,13 @@ void Index_RemoveNode
 	ASSERT(n   != NULL);
 	ASSERT(idx != NULL);
 
-	EntityID id     = ENTITY_GET_ID(n);
-	RSIndex  *rsIdx = Index_RSIndex(idx);
+	RSIndex *rsIdx = Index_AcquireRSIndex(idx);
+	if(rsIdx == NULL) return;
 
-	RediSearch_DeleteDocument(rsIdx, &id, sizeof(EntityID));
+	char doc_key[NODE_DOC_KEY_BUF];
+	IndexDocKey_EncodeNode(ENTITY_GET_ID(n), doc_key);
+	RediSearch_DeleteDocument(rsIdx, doc_key, NODE_DOC_KEY_LEN);
+
+	Index_ReleaseRSIndex(rsIdx);
 }
 

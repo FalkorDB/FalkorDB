@@ -6,6 +6,7 @@
 
 #include "RG.h"
 #include "index.h"
+#include "index_doc_key.h"
 #include "../query_ctx.h"
 #include "../graph/graphcontext.h"
 #include "../graph/entities/edge.h"
@@ -21,24 +22,31 @@ void Index_IndexEdge
 	ASSERT(e   != NULL);
 	ASSERT(idx != NULL);
 
+	// Acquire a strong ref for the duration of this op.
+	RSIndex *rsIdx = Index_AcquireRSIndex(idx);
+	if(rsIdx == NULL) return;
+
 	RSDoc    *doc    = NULL;
-	RSIndex  *rsIdx  = Index_RSIndex(idx);
 	EntityID src_id  = Edge_GetSrcNodeID(e);
 	EntityID dest_id = Edge_GetDestNodeID(e);
 	EntityID edge_id = ENTITY_GET_ID(e);
 
 	EdgeIndexKey key = {.src_id = src_id, .dest_id = dest_id, .edge_id = edge_id};
-	size_t key_len = sizeof(EdgeIndexKey);
+	char doc_key[EDGE_DOC_KEY_BUF];
+	IndexDocKey_EncodeEdge(&key, doc_key);
 
 	uint doc_field_count = 0;
 	doc = Index_IndexGraphEntity(idx, (const GraphEntity *)e,
-			(const void *)&key, key_len, &doc_field_count);
+			(const void *)doc_key, EDGE_DOC_KEY_LEN, &doc_field_count);
 
 	if(doc_field_count == 0) {
 		// entity doesn't possess any attributes which are indexed
-		// remove entity from index and delete document
-		Index_RemoveEdge(idx, e);
+		// remove entity from index and delete document. Use the
+		// already-acquired ref directly to avoid re-entering
+		// Index_RemoveEdge (which would Acquire again).
+		RediSearch_DeleteDocument(rsIdx, doc_key, EDGE_DOC_KEY_LEN);
 		RediSearch_FreeDocument(doc);
+		Index_ReleaseRSIndex(rsIdx);
 		return;
 	}
 
@@ -50,6 +58,8 @@ void Index_IndexEdge
 			dest_id, RSFLDTYPE_NUMERIC);
 	int res = RediSearch_SpecAddDocument(rsIdx, doc);
 	ASSERT(res == REDISMODULE_OK);
+
+	Index_ReleaseRSIndex(rsIdx);
 }
 
 void Index_RemoveEdge
@@ -60,13 +70,18 @@ void Index_RemoveEdge
 	ASSERT(e   != NULL);
 	ASSERT(idx != NULL);
 
-	RSIndex  *rsIdx  = Index_RSIndex(idx);
-	EntityID src_id  = Edge_GetSrcNodeID(e);
-	EntityID dest_id = Edge_GetDestNodeID(e);
-	EntityID edge_id = ENTITY_GET_ID(e);
+	RSIndex *rsIdx = Index_AcquireRSIndex(idx);
+	if(rsIdx == NULL) return;
 
-	EdgeIndexKey key = {.src_id = src_id, .dest_id = dest_id, .edge_id = edge_id};
-	size_t key_len = sizeof(EdgeIndexKey);
-	RediSearch_DeleteDocument(rsIdx, &key, key_len);
+	EdgeIndexKey key = {
+		.src_id  = Edge_GetSrcNodeID(e),
+		.dest_id = Edge_GetDestNodeID(e),
+		.edge_id = ENTITY_GET_ID(e),
+	};
+	char doc_key[EDGE_DOC_KEY_BUF];
+	IndexDocKey_EncodeEdge(&key, doc_key);
+	RediSearch_DeleteDocument(rsIdx, doc_key, EDGE_DOC_KEY_LEN);
+
+	Index_ReleaseRSIndex(rsIdx);
 }
 

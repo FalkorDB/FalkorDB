@@ -94,7 +94,14 @@ uint64_t unix_timestamp    // returns UNIX timestamp
 )
 {
 	struct timespec timestamp;
-	assert(clock_gettime(CLOCK_REALTIME, &timestamp) == 0);
+	// clock_gettime MUST be called outside assert() — under NDEBUG (default
+	// for CMake Release builds) assert() expands to nothing, so the call
+	// would vanish and timestamp.tv_sec would be uninitialized. Surfaced in
+	// flow tests as test_slowlog comparing the wrong recorded time and
+	// returning the wrong query in slowlog entries.
+	if (clock_gettime(CLOCK_REALTIME, &timestamp) != 0) {
+		return 0;
+	}
 
 	return timestamp.tv_sec;
 }

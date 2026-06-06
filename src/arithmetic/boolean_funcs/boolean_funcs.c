@@ -76,7 +76,7 @@ SIValue AR_GT(SIValue *argv, int argc, void *private_data) {
 
 	int disjointOrNull = 0;
 	int res = SIValue_Compare(a, b, &disjointOrNull);
-	if(disjointOrNull == COMPARED_NULL || disjointOrNull == DISJOINT) {
+	if(disjointOrNull == COMPARED_NULL || disjointOrNull == SIV_DISJOINT) {
 		// comparisons with NULL or different types values always return NULL
 		return SI_NullVal();
 	}
@@ -99,7 +99,7 @@ SIValue AR_GE(SIValue *argv, int argc, void *private_data) {
 		return SI_NullVal();
 	}
 	if(disjointOrNull == COMPARED_NAN) return SI_BoolVal(false);
-	if(disjointOrNull == DISJOINT) return SI_NullVal();
+	if(disjointOrNull == SIV_DISJOINT) return SI_NullVal();
 
 	return SI_BoolVal(res >= 0);
 }
@@ -115,7 +115,7 @@ SIValue AR_LT(SIValue *argv, int argc, void *private_data) {
 		return SI_NullVal();
 	}
 	if(disjointOrNull == COMPARED_NAN) return SI_BoolVal(false);
-	if(disjointOrNull == DISJOINT) return SI_NullVal();
+	if(disjointOrNull == SIV_DISJOINT) return SI_NullVal();
 
 	return SI_BoolVal(res < 0);
 }
@@ -131,7 +131,7 @@ SIValue AR_LE(SIValue *argv, int argc, void *private_data) {
 		return SI_NullVal();
 	}
 	if(disjointOrNull == COMPARED_NAN) return SI_BoolVal(false);
-	if(disjointOrNull == DISJOINT) return SI_NullVal();
+	if(disjointOrNull == SIV_DISJOINT) return SI_NullVal();
 
 	return SI_BoolVal(res <= 0);
 }
@@ -144,7 +144,7 @@ SIValue AR_EQ(SIValue *argv, int argc, void *private_data) {
 	int res = SIValue_Compare(a, b, &disjointOrNull);
 	if(disjointOrNull == COMPARED_NULL) return SI_NullVal();
 	if(disjointOrNull == COMPARED_NAN) return SI_BoolVal(false);
-	if(disjointOrNull == DISJOINT) return SI_BoolVal(false);
+	if(disjointOrNull == SIV_DISJOINT) return SI_BoolVal(false);
 	// Disjoint comparison is allowed on EQ and NE operators, since they impose no order.
 	return SI_BoolVal(res == 0);
 }
@@ -157,7 +157,7 @@ SIValue AR_NE(SIValue *argv, int argc, void *private_data) {
 	int res = SIValue_Compare(a, b, &disjointOrNull);
 	if(disjointOrNull == COMPARED_NULL) return SI_NullVal();
 	if(disjointOrNull == COMPARED_NAN) return SI_BoolVal(true);
-	if(disjointOrNull == DISJOINT) return SI_BoolVal(true);
+	if(disjointOrNull == SIV_DISJOINT) return SI_BoolVal(true);
 	// Disjoint comparison is allowed on EQ and NE operators, since they impose no order.
 	return SI_BoolVal(res != 0);
 }

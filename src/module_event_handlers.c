@@ -356,7 +356,7 @@ static void _ShutdownEventHandler
 	void *data
 ) {
 	if (!getenv("RS_GLOBAL_DTORS")) {  // used only with sanitizer or valgrind
-		return; 
+		return;
 	}
 
 	// stop cron
@@ -364,6 +364,59 @@ static void _ShutdownEventHandler
 
 	// stop indexer
 	Indexer_Stop () ;
+
+	//--------------------------------------------------------------------------
+	// release all GraphContexts so their indexes (and the RediSearch LLAPI
+	// IndexSpecs they own) get dropped cleanly before the underlying thread
+	// pools and RediSearch module state go away.
+	//
+	// Normally GraphContexts live as long as their Redis keys. At shutdown
+	// Redis exits without destroying keys, so without an explicit decref
+	// here the GraphContexts (and transitively every Index → rsIdx →
+	// RediSearch IndexSpec / RefManager) leak. The leak is otherwise
+	// invisible: it predates ASan instrumentation and stayed small.
+	// With RediSearch 8.6's LLAPI allocating a logCtx per vector field,
+	// LSan now reports it as a real finding in flow tests that create
+	// indexes (test_index_create, test_vecsim, test_index_delete,
+	// test_memory_usage).
+	//
+	// Order matters here:
+	//   * Indexer_Stop above already drained the indexer queue (our
+	//     _Indexer_DiscardTask fix releases the GC ref each queued task
+	//     was holding) and pthread_join'd the indexer thread.
+	//   * ThreadPool_Wait below blocks until every in-flight worker
+	//     task (cmd_query, populate, drop, ...) has finished. Each of
+	//     those tasks decrements its own GC ref on completion, so by
+	//     the time Wait returns the only remaining ref on each
+	//     GraphContext is the one Globals_AddGraph took when the
+	//     graph was registered.
+	//   * The decref loop then takes that last reference to zero and
+	//     _GraphContext_Free runs (sync, or async-dispatched onto the
+	//     still-alive pool — the destroy below drains it either way).
+	//
+	// Snapshot under the globals read lock; release before decref because
+	// the free path takes the globals write lock via Globals_RemoveGraph
+	// (deadlock otherwise).
+	ThreadPool_Wait () ;
+
+	Globals_ReadLock () ;
+	GraphContext **graphs = Globals_Get_GraphsInKeyspace () ;
+	GraphContext **snapshot = NULL ;
+	if (graphs != NULL) {
+		uint32_t n = arr_len (graphs) ;
+		snapshot = arr_new (GraphContext *, n) ;
+		for (uint32_t i = 0 ; i < n ; i++) {
+			arr_append (snapshot, graphs[i]) ;
+		}
+	}
+	Globals_Unlock () ;
+
+	if (snapshot != NULL) {
+		for (uint32_t i = 0 ; i < arr_len (snapshot) ; i++) {
+			GraphContext_DecreaseRefCount (snapshot[i]) ;
+		}
+		arr_free (snapshot) ;
+	}
 
 	// stop threads before finalize GraphBLAS
 	ThreadPool_Destroy () ;
