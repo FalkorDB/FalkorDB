@@ -51,7 +51,7 @@ void RdbLoadDeletedEdges_v19
 	const uint64_t deleted_edge_count  // number of deleted edges
 );
 
-void RdbLoadGraphSchema_v19
+bool RdbLoadGraphSchema_v19
 (
 	SerializerIO rdb,
 	GraphContext *gc,
@@ -82,4 +82,3 @@ void RdbLoadLblsMatrix_v19
 	SerializerIO rdb,  // RDB
 	Graph *g           // graph
 );
-

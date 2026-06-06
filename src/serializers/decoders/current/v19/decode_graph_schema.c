@@ -5,6 +5,15 @@
 
 #include "decode_v19.h"
 #include "../../../../schema/schema.h"
+#include "../../../../util/identifier_limits.h"
+
+static inline bool _IdentifierTooLong
+(
+	const char *name
+) {
+	ASSERT(name != NULL);
+	return strlen(name) > FALKORDB_MAX_IDENTIFIER_LEN;
+}
 
 static void _RdbDecodeIndexField
 (
@@ -62,7 +71,7 @@ static void _RdbDecodeIndexField
 	}
 }
 
-static void _RdbLoadIndex
+static bool _RdbLoadIndex
 (
 	SerializerIO rdb,
 	GraphContext *gc,
@@ -108,7 +117,23 @@ static void _RdbLoadIndex
 				&phonetic, &dimension, &M, &efConstruction, &efRuntime,
 				&simFunc) ;
 
-		if (!already_loaded) {
+		if(_IdentifierTooLong(field_name)) {
+			RedisModule_Log(NULL, "warning",
+					"Decode failed: oversized index field identifier (%zu bytes)",
+					strlen(field_name));
+			RedisModule_Free (phonetic) ;
+			RedisModule_Free (field_name) ;
+			RedisModule_Free (language) ;
+			if(stopwords != NULL) {
+				for(uint j = 0; j < stopwords_count; j++) {
+					rm_free(stopwords[j]);
+				}
+				arr_free(stopwords);
+			}
+			return false;
+		}
+
+		if(!already_loaded) {
 			IndexField field ;
 			AttributeID field_id =
 				GraphContext_FindOrAddAttribute (gc, field_name, NULL) ;
@@ -134,9 +159,7 @@ static void _RdbLoadIndex
 		RedisModule_Free (field_name) ;
 	}
 
-	if (!already_loaded) {
-		ASSERT (idx != NULL) ;
-
+	if(!already_loaded && idx != NULL) {
 		Index_SetLanguage (idx, language) ;
 		if (stopwords != NULL) {
 			bool stopwords_set = Index_SetStopwords (idx, &stopwords) ;
@@ -160,6 +183,8 @@ static void _RdbLoadIndex
 	}
 
 	RedisModule_Free (language) ;
+
+	return true;
 }
 
 static void _RdbLoadConstraint
@@ -222,7 +247,7 @@ static void _RdbLoadConstraint
 }
 
 // load schema's constraints
-static void _RdbLoadConstraints
+static bool _RdbLoadConstraints
 (
 	SerializerIO rdb,
 	GraphContext *gc,    // graph context
@@ -235,9 +260,11 @@ static void _RdbLoadConstraints
 	for (uint i = 0; i < constraint_count; i++) {
 		_RdbLoadConstraint(rdb, gc, s, already_loaded);
 	}
+
+	return true;
 }
 
-static void _RdbLoadSchema
+static bool _RdbLoadSchema
 (
 	SerializerIO rdb,
 	GraphContext *gc,
@@ -256,8 +283,17 @@ static void _RdbLoadSchema
 	Schema *s    = NULL;
 	int     id   = SerializerIO_ReadUnsigned (rdb) ;
 	char   *name = SerializerIO_ReadBuffer (rdb, NULL) ;
+	bool    schema_name_valid = !_IdentifierTooLong(name);
 
-	if (!already_loaded) {
+	if(!schema_name_valid) {
+		RedisModule_Log(NULL, "warning",
+				"Decode failed: oversized schema identifier (%zu bytes)",
+				strlen(name));
+		RedisModule_Free(name);
+		return false;
+	}
+
+	if(!already_loaded) {
 		bool created = false ;
 		s = GraphContext_FindOrAddSchema (gc, name, type, &created) ;
 		ASSERT (s != NULL) ;
@@ -273,17 +309,19 @@ static void _RdbLoadSchema
 
 	uint index_count = SerializerIO_ReadUnsigned (rdb) ;
 	for (uint index = 0; index < index_count; index++) {
-		_RdbLoadIndex (rdb, gc, s, already_loaded) ;
+		if(!_RdbLoadIndex (rdb, gc, s, already_loaded)) {
+			return false;
+		}
 	}
 
 	//--------------------------------------------------------------------------
 	// load constraints
 	//--------------------------------------------------------------------------
 
-	_RdbLoadConstraints (rdb, gc, s, already_loaded) ;
+	return _RdbLoadConstraints (rdb, gc, s, already_loaded) ;
 }
 
-static void _RdbLoadAttributeKeys
+static bool _RdbLoadAttributeKeys
 (
 	SerializerIO rdb,
 	GraphContext *gc
@@ -296,12 +334,22 @@ static void _RdbLoadAttributeKeys
 	uint count = SerializerIO_ReadUnsigned(rdb);
 	for(uint i = 0; i < count; i ++) {
 		char *attr = SerializerIO_ReadBuffer(rdb, NULL);
+		if(_IdentifierTooLong(attr)) {
+			RedisModule_Log(NULL, "warning",
+					"Decode failed: oversized attribute identifier (%zu bytes)",
+					strlen(attr));
+			RedisModule_Free(attr);
+			return false;
+		}
+
 		GraphContext_FindOrAddAttribute(gc, attr, NULL);
 		RedisModule_Free(attr);
 	}
+
+	return true;
 }
 
-void RdbLoadGraphSchema_v19
+bool RdbLoadGraphSchema_v19
 (
 	SerializerIO rdb,
 	GraphContext *gc,
@@ -317,14 +365,18 @@ void RdbLoadGraphSchema_v19
 	 */
 
 	// Attributes, Load the full attribute mapping.
-	_RdbLoadAttributeKeys (rdb, gc) ;
+	if(!_RdbLoadAttributeKeys (rdb, gc)) {
+		return false;
+	}
 
 	// #Node schemas
 	uint schema_count = SerializerIO_ReadUnsigned (rdb) ;
 
 	// Load each node schema
 	for (uint i = 0 ; i < schema_count ; i++) {
-		_RdbLoadSchema (rdb, gc, SCHEMA_NODE, already_loaded) ;
+		if(!_RdbLoadSchema (rdb, gc, SCHEMA_NODE, already_loaded)) {
+			return false;
+		}
 	}
 
 	// #Edge schemas
@@ -332,7 +384,10 @@ void RdbLoadGraphSchema_v19
 
 	// Load each edge schema
 	for (uint i = 0 ; i < schema_count ; i++) {
-		_RdbLoadSchema (rdb, gc, SCHEMA_EDGE, already_loaded) ;
+		if(!_RdbLoadSchema (rdb, gc, SCHEMA_EDGE, already_loaded)) {
+			return false;
+		}
 	}
-}
 
+	return true;
+}
