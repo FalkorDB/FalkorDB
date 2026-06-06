@@ -14,7 +14,38 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  packages: read
+
 jobs:
+  # See sanitize.yml: prefer the PR's RC toolchain image, fall back to stable.
+  detect-toolchain:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.choose.outputs.image }}
+    steps:
+      - name: Login to GHCR
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: echo "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+      - name: Choose image
+        id: choose
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          RC="ghcr.io/falkordb/falkordb-build:ubuntu-pr-${PR}"
+          STABLE="ghcr.io/falkordb/falkordb-build:ubuntu"
+          if [[ -n "$PR" ]] && docker manifest inspect "$RC" >/dev/null 2>&1; then
+            echo "Using RC: $RC"
+            echo "image=$RC" >> "$GITHUB_OUTPUT"
+          else
+            echo "Using stable: $STABLE"
+            echo "image=$STABLE" >> "$GITHUB_OUTPUT"
+          fi
+
   haslabel:
     name: Check label or branch
     runs-on: ubuntu-latest
@@ -66,11 +97,12 @@ jobs:
   run-benchmarks:
     needs:
       - create-runners
+      - detect-toolchain
     strategy:
       matrix:
         benchmark_group: [ a, b ]
     runs-on: benchmark-${{ github.run_id }}-${{ github.run_number }}-group_${{ matrix.benchmark_group }}
-    container: falkordb/falkordb-build:ubuntu
+    container: ${{ needs.detect-toolchain.outputs.image }}
     steps:
       - name: Sanitize ref name
         run: echo "SAFE_REF=$(echo '${{ github.head_ref || github.ref_name }}' | tr '/' '-')" >> "$GITHUB_ENV"
@@ -97,12 +129,19 @@ jobs:
           path: ./bin/linux-x64-release/libcypher-parser
           key: parser-x64-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c', './build.sh') }}
 
+      # The RediSearch submodule gitlink SHA is part of the cache key so that
+      # advancing the fork pin invalidates the cache even when src/version.h is
+      # unchanged (our LLAPI-extension commits do not bump the version macros).
+      - name: Compute RediSearch SHA
+        id: rs_sha
+        run: echo "sha=$(git rev-parse HEAD:deps/RediSearch)" >> "$GITHUB_OUTPUT"
+
       - name: Cache search
         id: cache_search
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ./bin/linux-x64-release/search-static
-          key: search-x64-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+          key: search-x64-${{ hashFiles('./deps/RediSearch/src/version.h') }}-${{ steps.rs_sha.outputs.sha }}
 
       - name: Cache libcurl
         id: cache_libcurl

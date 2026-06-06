@@ -13,10 +13,42 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  packages: read
+
 jobs:
-  code-coverage:
+  # See sanitize.yml: prefer the PR's RC toolchain image, fall back to stable.
+  detect-toolchain:
     runs-on: ubuntu-latest
-    container: falkordb/falkordb-build:ubuntu
+    outputs:
+      image: ${{ steps.choose.outputs.image }}
+    steps:
+      - name: Login to GHCR
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: echo "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+      - name: Choose image
+        id: choose
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          RC="ghcr.io/falkordb/falkordb-build:ubuntu-pr-${PR}"
+          STABLE="ghcr.io/falkordb/falkordb-build:ubuntu"
+          if [[ -n "$PR" ]] && docker manifest inspect "$RC" >/dev/null 2>&1; then
+            echo "Using RC: $RC"
+            echo "image=$RC" >> "$GITHUB_OUTPUT"
+          else
+            echo "Using stable: $STABLE"
+            echo "image=$STABLE" >> "$GITHUB_OUTPUT"
+          fi
+
+  code-coverage:
+    needs: detect-toolchain
+    runs-on: ubuntu-latest
+    container: ${{ needs.detect-toolchain.outputs.image }}
     steps:
 
     - name: Safe dir
@@ -41,12 +73,19 @@ jobs:
         path: ./bin/linux-x64-release-cov/libcypher-parser
         key: parser-coverage-llvm-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
 
+    # The RediSearch submodule gitlink SHA is part of the cache key so that
+    # advancing the fork pin invalidates the cache even when src/version.h is
+    # unchanged (our LLAPI-extension commits do not bump the version macros).
+    - name: Compute RediSearch SHA
+      id: rs_sha
+      run: echo "sha=$(git rev-parse HEAD:deps/RediSearch)" >> "$GITHUB_OUTPUT"
+
     - name: Cache search
       id: cache_search
       uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: ./bin/linux-x64-debug-cov/search-static
-        key: search-coverage-llvm-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+        key: search-coverage-llvm-${{ hashFiles('./deps/RediSearch/src/version.h') }}-${{ steps.rs_sha.outputs.sha }}
 
     - name: Cache libcurl
       id: cache_libcurl
