@@ -4,6 +4,11 @@ on:
   workflow_dispatch:
   pull_request:
     branches: [master, "[0-9]+.[0-9]+"]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE.txt'
+      - '.gitignore'
   push:
     branches:
       - master
@@ -27,51 +32,62 @@ jobs:
         set-safe-directory: '*'
         submodules: recursive
 
-    - name: Cache GraphBLAS
-      id: cache_graphblas
-      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
-      with:
-        path: ./bin/linux-x64-debug-asan/GraphBLAS
-        key: graphblas-sanitizer-llvm-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c') }}
-
-    - name: Cache parser
-      id: cache_parser
-      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
-      with:
-        path: ./bin/linux-x64-debug-asan/libcypher-parser
-        key: parser-sanitizer-llvm-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
-
-    - name: Cache search
-      id: cache_search
-      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
-      with:
-        path: ./bin/linux-x64-debug-asan/search-static
-        key: search-sanitizer-llvm-${{ hashFiles('./deps/RediSearch/src/version.h') }}
-
-    - name: Cache libcurl
-      id: cache_libcurl
-      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
-      with:
-        path: ./bin/linux-x64-debug-asan/libcurl
-        key: libcurl-sanitizer-llvm-${{ hashFiles('./deps/libcurl/RELEASE-NOTES', './build.sh') }}
-
-    - name: Cache libcsv
-      id: cache_libcsv
-      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
-      with:
-        path: ./bin/linux-x64-debug-asan/libcsv
-        key: libcsv-sanitizer-llvm-${{ hashFiles('./deps/libcsv/ChangeLog') }}
-
-    - name: Build
+    - name: Generate cache key
+      id: cache-key
+      shell: bash
       run: |
-        rustup default nightly
+        set -o pipefail
+        # build.sh included so that changes to dep build flags (e.g. libcurl SSL) invalidate the cache
+        DEPS_HASH=$(cat ./deps/GraphBLAS/Include/GraphBLAS.h ./deps/GraphBLAS/Config/GB_prejit.c ./deps/libcypher-parser/lib/src/parser.c ./deps/RediSearch/src/version.h ./deps/libcurl/RELEASE-NOTES ./deps/libcsv/ChangeLog ./deps/LAGraph/include/LAGraph.h ./deps/rax/rax.h ./deps/xxHash/xxhash.h ./deps/utf8proc/utf8proc.h ./deps/oniguruma/src/oniguruma.h ./deps/FalkorDB-core-rs/Cargo.toml ./build.sh 2>/dev/null | sha256sum | cut -d' ' -f1 || echo "${{ github.sha }}")
+        echo "combined=${DEPS_HASH}" >> "$GITHUB_OUTPUT"
+
+    - name: Restore dependency cache
+      id: restore-deps
+      uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+      with:
+        path: |
+          ./bin/linux-x64-release/GraphBLAS
+          ./bin/linux-x64-release/libcypher-parser
+          ./bin/linux-x64-debug-asan/search-static
+          ./bin/linux-x64-release/libcurl
+          ./bin/linux-x64-release/libcsv
+          ./bin/linux-x64-release/LAGraph
+          ./bin/linux-x64-release/rax
+          ./bin/linux-x64-release/xxHash
+          ./bin/linux-x64-release/utf8proc
+          ./bin/linux-x64-release/oniguruma
+          ./bin/linux-x64-debug-asan/FalkorDB-core-rs
+        key: deps-sanitizer-${{ steps.cache-key.outputs.combined }}
+        restore-keys: |
+          deps-sanitizer-
+
+    - name: Cache LLVM 17
+      id: cache-llvm
+      uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+      with:
+        path: |
+          /usr/lib/llvm-17
+          /usr/bin/clang-17
+          /usr/bin/clang++-17
+          /usr/lib/x86_64-linux-gnu/libomp*17*
+        key: llvm-17-sanitizer-ubuntu
+
+    - name: Install LLVM 17
+      if: steps.cache-llvm.outputs.cache-hit != 'true'
+      run: |
         apt-get update
         apt-get install -y lsb-release wget software-properties-common gnupg
         wget https://apt.llvm.org/llvm.sh
         chmod +x llvm.sh
         ./llvm.sh 17
         apt-get update
-        apt-get install -y libomp-17-dev libc6-dbg python3-venv
+        apt-get install -y libomp-17-dev
+
+    - name: Build
+      run: |
+        rustup default nightly
+        apt-get update
+        apt-get install -y libc6-dbg python3-venv
         python3 -m venv venv
         . venv/bin/activate
         pip install -r tests/requirements.txt
@@ -79,45 +95,59 @@ jobs:
           --verbose \
           --install /usr/bin/clang                clang                /usr/bin/clang-17 100 \
           --slave   /usr/bin/clang++              clang++              /usr/bin/clang++-17
-        make CLANG=1 SAN=address NPROC=16
+        make CLANG=1 SAN=address NPROC=16 BUILD_TESTS=1
 
-    - name: Unit tests
-      id: unit_tests
-      run: make unit-tests CLEAR_LOGS=0 SAN=address
-      continue-on-error: true
-
-    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-      with:
-        name: Upload unit tests logs
-        path: ${{ github.workspace }}/tests/unit/logs/
-        retention-days: 7
-
-    - name: Flow tests
-      id: flow_tests
+    - name: Prebuild ASAN Redis
+      # Build the sanitized Redis binary once so parallel test suites reuse
+      # the cache at /tmp/redis-san-build rather than racing to build it.
       run: |
         . venv/bin/activate
-        make flow-tests CLEAR_LOGS=0 SAN=address
-      continue-on-error: true
+        make flow-tests SKIP_BUILD=1 SAN=address LIST=1
 
-    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-      with:
-        name: Upload flow tests logs
-        path: ${{ github.workspace }}/tests/flow/logs/
-        retention-days: 7
-
-    - name: TCK tests
-      id: tck_tests
+    - name: Run tests (unit parallel with flow+tck sequential)
+      id: run_tests
       run: |
         . venv/bin/activate
-        make tck-tests CLEAR_LOGS=0 SAN=address
-      continue-on-error: true
+        set +e
+
+        # Unit tests have no Redis dependency — run them concurrently with flow+tck.
+        # Flow and TCK tests must be sequential: both hardcode BOLT_PORT 7687 so
+        # running them simultaneously causes a port conflict and all TCK scenarios error.
+        make unit-tests CLEAR_LOGS=0 SAN=address SKIP_BUILD=1 \
+          > /tmp/unit.log 2>&1 &
+        UNIT_PID=$!
+
+        RANDPORTS=1 make flow-tests CLEAR_LOGS=0 SAN=address SKIP_BUILD=1 \
+          > /tmp/flow.log 2>&1
+        FLOW_STATUS=$?
+
+        RANDPORTS=1 make tck-tests CLEAR_LOGS=0 SAN=address SKIP_BUILD=1 \
+          > /tmp/tck.log 2>&1
+        TCK_STATUS=$?
+
+        wait $UNIT_PID; UNIT_STATUS=$?
+
+        echo "::group::Unit tests output"
+        cat /tmp/unit.log
+        echo "::endgroup::"
+        echo "::group::Flow tests output"
+        cat /tmp/flow.log
+        echo "::endgroup::"
+        echo "::group::TCK tests output"
+        cat /tmp/tck.log
+        echo "::endgroup::"
+
+        if [ $UNIT_STATUS -ne 0 ] || [ $FLOW_STATUS -ne 0 ] || [ $TCK_STATUS -ne 0 ]; then
+          echo "::error::Test failures: unit=$UNIT_STATUS flow=$FLOW_STATUS tck=$TCK_STATUS"
+          exit 1
+        fi
 
     - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      if: always()
       with:
-        name: Upload TCK tests logs
-        path: ${{ github.workspace }}/tests/tck/logs/
+        name: sanitizer-test-logs
+        path: |
+          ${{ github.workspace }}/tests/unit/logs/
+          ${{ github.workspace }}/tests/flow/logs/
+          ${{ github.workspace }}/tests/tck/logs/
         retention-days: 7
-
-    - name: Check on failures
-      if: steps.unit_tests.outcome != 'success' || steps.flow_tests.outcome != 'success' || steps.tck_tests.outcome != 'success'
-      run: exit 1

@@ -152,6 +152,10 @@ ifdef BENCHMARK_GROUP
 BUILD_ARGS += BENCHMARK_GROUP=$(BENCHMARK_GROUP)
 endif
 
+ifdef SKIP_BUILD
+BUILD_ARGS += SKIP_BUILD=$(SKIP_BUILD)
+endif
+
 #----------------------------------------------------------------------------------------------
 # Build targets
 #----------------------------------------------------------------------------------------------
