@@ -252,7 +252,7 @@ SIValue SIValue_Modulo(const SIValue a, const SIValue b);
 
 // compares two SIValues and returns a value similar to strcmp
 // if one of the values is null, the macro COMPARED_NULL is returned in disjointOrNull value.
-// if the the values are not of the same type, the macro SIV_DISJOINT is returned in disjointOrNull value. */
+// if the values are not of the same type, the macro SIV_DISJOINT is returned in disjointOrNull value. */
 int SIValue_Compare(const SIValue a, const SIValue b, int *disjointOrNull);
 
 /* Update the provided hash state with the given SIValue. */

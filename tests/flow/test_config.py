@@ -173,7 +173,7 @@ class testConfig(FlowTestsBase):
             assert("Unknown subcommand for GRAPH.CONFIG" in str(e))
             pass
 
-    def test08_index_worker_threads_immutable(self):
+    def test12_index_worker_threads_immutable(self):
         # INDEX_WORKER_THREADS is a load-time only configuration; it must
         # default to 0 and reject runtime GRAPH.CONFIG SET.
         response = self.db.config_get("INDEX_WORKER_THREADS")

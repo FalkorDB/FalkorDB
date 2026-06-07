@@ -59,6 +59,6 @@ void **ThreadPool_GetTasksByHandler
 // subsequent decref sees the refcount.
 void ThreadPool_Wait(void);
 
-// destroies threadpool, allows threads to exit gracefully
+// destroys threadpool, allows threads to exit gracefully
 void ThreadPool_Destroy(void);
 
