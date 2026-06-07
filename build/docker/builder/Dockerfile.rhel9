@@ -3,11 +3,8 @@
 # UBI9 cmake 3.26.5 is fine for RediSearch's boost.cmake.
 # Adds clang + clang-devel for bindgen/clang-sys.
 #
-# Redis: built from git at REDIS_VERSION (multi-stage). Same pinned tag
-# (8.6.3) as the other toolchains and sanitize. Built on UBI9 itself so
-# the glibc 2.34 binary runs against the same base. Removes the per-test
-# image redis-stable.tar.gz build, eliminating drift between Build and
-# Sanitizer runs.
+# Redis: built from git at REDIS_VERSION (multi-stage). Built on UBI9 so the
+# glibc 2.34 binary runs against the same base.
 
 ARG REDIS_VERSION=8.6.3
 

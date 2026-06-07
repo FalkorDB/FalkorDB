@@ -20,11 +20,7 @@ RUN set -ex ;\
 
 # Redis: provided by the toolchain image
 # (build/docker/builder/Dockerfile.amazonlinux2023) at
-# /usr/local/bin/redis-server, pinned to the same 8.6.3 tag the sanitizer
-# uses. The previous `redis-stable.tar.gz` build at test-image time has
-# been removed — it overwrote the toolchain's pinned binary with whatever
-# upstream stable currently is, causing drift between Build and Sanitizer
-# test runs.
+# /usr/local/bin/redis-server, pinned to 8.6.3.
 
 # Create virtual environment
 RUN set -ex ;\

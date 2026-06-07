@@ -4,10 +4,8 @@
 # distro cmake works but drifts per Debian version). Adds libclang-dev +
 # clang headers required by `bindgen`/`clang-sys` in redisearch_rs.
 #
-# Redis: built from git at REDIS_VERSION (multi-stage). See the equivalent
-# comment in Dockerfile.ubuntu — same pattern, mirrors falkordb-rs-next-gen,
-# pins everything to the sanitize-test redis tag so test_temporal et al
-# don't drift between Build and Sanitizer runs.
+# Redis: built from git at REDIS_VERSION (multi-stage). See Dockerfile.ubuntu
+# for the rationale (same pattern, pinned to REDIS_VERSION).
 
 ARG REDIS_VERSION=8.6.3
 

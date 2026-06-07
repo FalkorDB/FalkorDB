@@ -6,8 +6,7 @@ name: Detect toolchain image
 # ghcr.io/falkordb/falkordb-build:<os>-pr-<N>), use that RC so the toolchain
 # change is exercised end-to-end; otherwise fall back to the stable :<os>.
 #
-# Centralizes what used to be a copy-pasted `detect-toolchain` job in
-# sanitize.yml / coverage.yml / codeql-analysis.yml / benchmark.yml.
+# Shared by sanitize.yml / coverage.yml / codeql-analysis.yml / benchmark.yml.
 on:
   workflow_call:
     inputs:

@@ -21,11 +21,7 @@ RUN set -ex ;\
     pip3 --version
 
 # Redis: provided by the toolchain image (build/docker/builder/Dockerfile.rhel)
-# at /usr/local/bin/redis-server, pinned to the same 8.6.3 tag the sanitizer
-# uses. The previous `redis-stable.tar.gz` build at test-image time has been
-# removed — it overwrote the toolchain's pinned binary with whatever
-# `download.redis.io/redis-stable.tar.gz` happened to be, causing drift
-# between Build and Sanitizer test runs.
+# at /usr/local/bin/redis-server, pinned to 8.6.3.
 
 # Create virtual environment
 RUN set -ex ;\
