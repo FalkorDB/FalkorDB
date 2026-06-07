@@ -52,7 +52,7 @@ RUN yum update -y && \
 
 # Enable gcc-toolset-14 on PATH
 ENV PATH="/opt/rh/gcc-toolset-14/root/usr/bin:${PATH}"
-ENV LD_LIBRARY_PATH="/opt/rh/gcc-toolset-14/root/usr/lib64:${LD_LIBRARY_PATH}"
+ENV LD_LIBRARY_PATH="/opt/rh/gcc-toolset-14/root/usr/lib64"
 
 # Pin cmake to the same exact version across every builder OS.
 RUN pip3.11 install --no-cache-dir 'cmake==3.31.6'

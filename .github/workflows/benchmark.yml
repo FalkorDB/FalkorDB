@@ -26,6 +26,9 @@ jobs:
   haslabel:
     name: Check label or branch
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read   # github-script pulls.get
     outputs:
       has-benchmark-label: ${{ steps.haslabel.outputs.result }}
     steps:
@@ -210,6 +213,10 @@ jobs:
       - merge-results
     if: ${{ github.event_name == 'pull_request' }} # No need to run this job for branches and tags
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read          # download artifacts via the Actions API
+      pull-requests: write   # update the PR body with the comparison
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Sanitize ref name

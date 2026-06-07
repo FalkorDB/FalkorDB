@@ -20,8 +20,8 @@ RUN set -ex ;\
     python3 --version ;\
     pip3 --version
 
-# Redis: provided by the toolchain image (build/docker/builder/Dockerfile.rhel)
-# at /usr/local/bin/redis-server, pinned to 8.6.3.
+# Redis: provided by the toolchain image (build/docker/builder/Dockerfile.rhel8
+# or .rhel9, depending on the build) at /usr/local/bin/redis-server, pinned to 8.6.3.
 
 # Create virtual environment
 RUN set -ex ;\

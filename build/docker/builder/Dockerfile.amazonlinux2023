@@ -1,7 +1,7 @@
 # Builder toolchain image — Amazon Linux 2023
 #
 # AL2023 dnf cmake is 3.22.2 (too old for RediSearch's boost.cmake). Override
-# with pip 3.28.x. Adds clang-devel for bindgen/clang-sys.
+# with pip 3.31.6. Adds clang-devel for bindgen/clang-sys.
 #
 # Redis: built from git at REDIS_VERSION (multi-stage). Same pinned tag
 # (8.6.3) as the other toolchains and sanitize. Built on AL2023 itself so

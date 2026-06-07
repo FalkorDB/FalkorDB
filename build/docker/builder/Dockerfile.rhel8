@@ -62,7 +62,7 @@ RUN yum update -y && \
     yum clean all
 
 ENV PATH="/opt/rh/gcc-toolset-14/root/usr/bin:${PATH}"
-ENV LD_LIBRARY_PATH="/opt/rh/gcc-toolset-14/root/usr/lib64:${LD_LIBRARY_PATH}"
+ENV LD_LIBRARY_PATH="/opt/rh/gcc-toolset-14/root/usr/lib64"
 
 # Pin cmake to the same exact version across every builder OS.
 RUN pip3.11 install --no-cache-dir 'cmake==3.31.6'
@@ -94,9 +94,9 @@ ENV LD_LIBRARY_PATH="/usr/local/openssl3/lib64:${LD_LIBRARY_PATH}"
 
 # Bare compiler driver needs the headers too — RediSearch's coord
 # sources do `#include <openssl/ssl.h>` without going through cmake/pkg-config.
-ENV C_INCLUDE_PATH="/usr/local/openssl3/include:${C_INCLUDE_PATH}"
-ENV CPLUS_INCLUDE_PATH="/usr/local/openssl3/include:${CPLUS_INCLUDE_PATH}"
-ENV LIBRARY_PATH="/usr/local/openssl3/lib64:${LIBRARY_PATH}"
+ENV C_INCLUDE_PATH="/usr/local/openssl3/include"
+ENV CPLUS_INCLUDE_PATH="/usr/local/openssl3/include"
+ENV LIBRARY_PATH="/usr/local/openssl3/lib64"
 
 # Rust toolchain
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
