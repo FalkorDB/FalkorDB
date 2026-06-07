@@ -51,9 +51,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: falkordb-build
-          # Matches any of "<os>-pr-..." across all builder OSes.
-          # The trailing `.*` lets it match the bare manifest tag and the
-          # per-arch variants (-x64 / -arm64v8).
+          # Matches any "<os>-pr-..." tag across all builder OSes. Anchored
+          # at the start only (no end anchor), so it also matches the bare
+          # manifest tag and the per-arch variants (-x64 / -arm64v8).
           TAG_PATTERN: '^(ubuntu|debian|alpine|amazonlinux2023|rhel|rhel8|rhel9)-pr-'
           TTL_DAYS: ${{ inputs.ttl_days || '30' }}
           DRY_RUN: ${{ inputs.dry_run || 'false' }}

@@ -76,7 +76,7 @@ RUN apt-get update -y && \
 # /usr/local/bin which precedes /usr/bin in PATH. No --break-system-packages
 # flag because jammy's system Python isn't PEP-668-marked, and the flag
 # wasn't introduced until pip 23 (jammy ships pip 22).
-RUN pip install --no-cache-dir 'cmake==3.31.6'
+RUN pip3 install --no-cache-dir 'cmake==3.31.6'
 
 # Rust toolchain (used to build redisearch_rs)
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
