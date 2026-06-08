@@ -548,3 +548,18 @@ class testVariableLengthTraversals(FlowTestsBase):
         count = self.graph.query(q).result_set[0][0]
         self.env.assertEquals(count, 16)
 
+    def test17_issue_636_fuzzer_crash(self):
+        # Regression coverage for GitHub issue #636. These queries were reported
+        # to crash around AlgebraicExpression_Dest during variable-length
+        # traversal planning/execution.
+        self.graph.delete()
+
+        self.graph.query("MERGE (:label8) MERGE (:label2{})<-[:reltype5]-(node_0{})<-[:reltype7]-({})")
+
+        q = "MATCH (node_0:label8{})<-[*..]-(node_0:label9) WHERE node_0.prop7 = [ FALSE ] RETURN *"
+        res = self.graph.query(q)
+        self.env.assertIsNotNone(res)
+
+        q = "MATCH (node_0:label8{})<-[*..]-(node_0:label9) RETURN *"
+        res = self.graph.query(q)
+        self.env.assertIsNotNone(res)
