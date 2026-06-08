@@ -801,21 +801,29 @@ jobs:
   # promotion via `docker buildx imagetools create` — no rebuild. The
   # cleanup-rc-images workflow eventually sweeps the orphan :<os>-pr-<N> tag.
   promote-toolchain:
-    needs: [check-builder-changes, build]
-    # always() is required: build-rc-toolchain is PR-only, so it is SKIPPED on
-    # the master push. GitHub propagates that skip down the needs chain
-    # (build-rc-toolchain -> build -> promote-toolchain); without a status
-    # function here, promote is skipped before its conditions are even
-    # evaluated — which is what left the stable :<os> images unpublished after
-    # the toolchain PR merged. (The `build` job carries always() for the same
-    # reason.)
+    # Promote the merging PR's RC toolchain image (:<os>-pr-<N>) to the stable
+    # :<os> tag by retagging the existing multi-arch manifest — no rebuild, so
+    # what PR CI validated is byte-identically what becomes :<os>.
+    #
+    # Depends ONLY on check-builder-changes, an entry job that always runs on a
+    # push and is never skipped, so there is no skipped dependency to propagate
+    # and no always()/status function is needed.
+    #
+    # We deliberately do NOT gate on the `build` job: a toolchain image's
+    # validity is independent of whether the FalkorDB app compiles, and the RC
+    # was already exercised end-to-end in the PR's CI. Gating on `build` is also
+    # exactly what broke promotion before — `build` transitively depends on the
+    # PR-only `build-rc-toolchain` (skipped on push), and GitHub propagated that
+    # skip down to promote, which (lacking a status function) was skipped before
+    # its conditions ran, leaving the stable :<os> images unpublished after the
+    # toolchain PR merged. Mirrors the promote step in
+    # FalkorDB/falkordb-rs-next-gen.
+    needs: check-builder-changes
     if: |
-      always() &&
       github.event_name == 'push' &&
       github.ref == 'refs/heads/master' &&
       needs.check-builder-changes.outputs.any_changed == 'true' &&
-      needs.check-builder-changes.outputs.merged_pr != '' &&
-      needs.build.result == 'success'
+      needs.check-builder-changes.outputs.merged_pr != ''
     runs-on: ubuntu-latest
     permissions:
       contents: read
