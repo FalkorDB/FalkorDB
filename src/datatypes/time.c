@@ -232,13 +232,14 @@ void Time_toString
 	}
 
 	// get a tm object from time_t.
-	// gmtime_r MUST be called outside assert() — under NDEBUG (default for
-	// CMake Release builds) assert() expands to nothing, so the call would
-	// vanish and `t` would be left uninitialized; strftime would then stamp
-	// the buffer with garbage. See date.c for the matching fix.
+	// gmtime_r outside assert(): assert() is a no-op under NDEBUG (Release),
+	// which would drop the call and leave `t` uninitialized.
 	struct tm t;
 	time_t rawtime = time->datetimeval;
 	if (gmtime_r(&rawtime, &t) == NULL) {
+		// unrepresentable year (see date.c): catch in debug, empty in release.
+		ASSERT(false);
+		(*buf)[*bytesWritten] = '\0';
 		return;
 	}
 

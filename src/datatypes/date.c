@@ -258,18 +258,15 @@ void Date_toString
 	}
 
 	// get a tm object from time_t.
-	// gmtime_r MUST be called outside assert() — under NDEBUG (default for
-	// CMake Release builds) assert() expands to nothing, so the call would
-	// vanish and `time` would be left uninitialized; strftime would then
-	// stamp the buffer with garbage. Was a real bug in flow tests
-	// (testTemporalDate.test_date_to_from_string, etc.) on the docker test
-	// images, where toString produced strings like '34616-2067779857-32716'
-	// from an unpopulated tm.
+	// gmtime_r outside assert(): assert() is a no-op under NDEBUG (Release),
+	// which would drop the call and leave `time` uninitialized.
 	struct tm time;
 	time_t rawtime = date->datetimeval;
 	if (gmtime_r(&rawtime, &time) == NULL) {
-		// Outside the valid range; emit an empty string rather than risk
-		// reading uninitialized memory in strftime.
+		// unrepresentable year (gmtime_r out of range): catch in debug, leave a
+		// valid empty string in release rather than uninitialized bytes.
+		ASSERT(false);
+		(*buf)[*bytesWritten] = '\0';
 		return;
 	}
 
