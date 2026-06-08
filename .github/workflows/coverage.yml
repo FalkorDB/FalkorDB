@@ -13,10 +13,19 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  packages: read
+
 jobs:
+  # Prefer the PR's RC toolchain image, fall back to stable (shared workflow).
+  detect-toolchain:
+    uses: ./.github/workflows/detect-toolchain.yml
+
   code-coverage:
+    needs: detect-toolchain
     runs-on: ubuntu-latest
-    container: falkordb/falkordb-build:ubuntu
+    container: ${{ needs.detect-toolchain.outputs.image }}
     steps:
 
     - name: Safe dir
@@ -41,12 +50,19 @@ jobs:
         path: ./bin/linux-x64-release-cov/libcypher-parser
         key: parser-coverage-llvm-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
 
+    # The RediSearch submodule gitlink SHA is part of the cache key so that
+    # advancing the fork pin invalidates the cache even when src/version.h is
+    # unchanged (our LLAPI-extension commits do not bump the version macros).
+    - name: Compute RediSearch SHA
+      id: rs_sha
+      run: echo "sha=$(git rev-parse HEAD:deps/RediSearch)" >> "$GITHUB_OUTPUT"
+
     - name: Cache search
       id: cache_search
       uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: ./bin/linux-x64-debug-cov/search-static
-        key: search-coverage-llvm-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+        key: search-coverage-llvm-${{ hashFiles('./deps/RediSearch/src/version.h') }}-${{ steps.rs_sha.outputs.sha }}
 
     - name: Cache libcurl
       id: cache_libcurl

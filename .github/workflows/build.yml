@@ -30,10 +30,113 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-env:
-  BASE_IMAGE_VERSION: 1.2.0
+permissions:
+  contents: read
+  packages: read
+
 jobs:
+  # Detect which builder Dockerfiles (build/docker/builder/Dockerfile.<os>)
+  # the PR or push changed, and emit a JSON array of changed OS names.
+  # Downstream jobs use this to (a) build RC toolchain images per changed OS,
+  # and (b) consume the RC tag instead of the stable tag for those OSes.
+  check-builder-changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read   # find-pr: gh api .../commits/<sha>/pulls on master push
+    outputs:
+      changed_oses: ${{ steps.detect.outputs.changed_oses }}
+      any_changed: ${{ steps.detect.outputs.any_changed }}
+      merged_pr: ${{ steps.find-pr.outputs.pr_number }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Detect changed builder Dockerfiles
+        id: detect
+        run: |
+          set -euo pipefail
+          case "${{ github.event_name }}" in
+            pull_request)
+              BASE='${{ github.event.pull_request.base.sha }}'
+              HEAD='${{ github.event.pull_request.head.sha }}'
+              ;;
+            push)
+              BASE='${{ github.event.before }}'
+              HEAD='${{ github.sha }}'
+              # First-push or shallow histories give 000...000 as before.
+              if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+                BASE="${HEAD}~1"
+              fi
+              ;;
+            *)
+              BASE="HEAD~1"
+              HEAD="HEAD"
+              ;;
+          esac
+
+          changed=$(git diff --name-only "$BASE" "$HEAD" 2>/dev/null \
+            | grep '^build/docker/builder/Dockerfile\.' \
+            | sed 's|^build/docker/builder/Dockerfile\.||' \
+            | sort -u || true)
+
+          if [ -z "$changed" ]; then
+            echo "changed_oses=[]" >> "$GITHUB_OUTPUT"
+            echo "any_changed=false" >> "$GITHUB_OUTPUT"
+            echo "No builder Dockerfile changes detected."
+          else
+            json=$(echo "$changed" | jq -R . | jq -s -c .)
+            echo "changed_oses=$json" >> "$GITHUB_OUTPUT"
+            echo "any_changed=true" >> "$GITHUB_OUTPUT"
+            echo "Changed OSes: $json"
+          fi
+
+      - name: Find merged PR (master push only)
+        id: find-pr
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master' && steps.detect.outputs.any_changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # The merge commit was authored by the PR; find that PR number.
+          PR=$(gh api "/repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
+            --jq '.[] | select(.state == "closed" and .merged_at != null) | .number' \
+            | head -1)
+          if [ -z "$PR" ]; then
+            echo "Error: no merged PR found for commit ${GITHUB_SHA}, but a builder Dockerfile changed." >&2
+            echo "Refusing to proceed: without an RC toolchain tag the build would silently fall back to the stale :<os> image and promote-toolchain would be skipped, shipping the Dockerfile change without rebuilding/publishing its toolchain." >&2
+            exit 1
+          fi
+          echo "Merged PR: #$PR"
+          echo "pr_number=$PR" >> "$GITHUB_OUTPUT"
+
+  # Build RC toolchain images for each OS whose Dockerfile.<os> changed in the
+  # PR. Tag: ghcr.io/falkordb/falkordb-build:<os>-pr-<N>. Downstream PR build
+  # jobs use this tag instead of the stable :<os>.
+  build-rc-toolchain:
+    needs: check-builder-changes
+    if: github.event_name == 'pull_request' && needs.check-builder-changes.outputs.any_changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.check-builder-changes.outputs.changed_oses) }}
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build-toolchain.yml
+    with:
+      os: ${{ matrix.os }}
+      tag: ${{ matrix.os }}-pr-${{ github.event.pull_request.number }}
+
   build:
+    needs: [check-builder-changes, build-rc-toolchain]
+    # build-rc-toolchain is skipped when no builder Dockerfile changed; allow that.
+    if: |
+      always() &&
+      needs.check-builder-changes.result == 'success' &&
+      (needs.build-rc-toolchain.result == 'success' || needs.build-rc-toolchain.result == 'skipped')
     runs-on: ${{ matrix.platform.machine_label }}
     services:
       registry:
@@ -147,14 +250,21 @@ jobs:
         run: |
           # Generate a single combined hash of all dependencies to avoid 512 char key limit
           # build.sh is included so that changes to dep build flags (e.g. libcurl SSL) invalidate the cache
-          DEPS_HASH=$(cat ./deps/GraphBLAS/Include/GraphBLAS.h ./deps/GraphBLAS/Config/GB_prejit.c ./deps/libcypher-parser/lib/src/parser.c ./deps/RediSearch/src/version.h ./deps/libcurl/RELEASE-NOTES ./deps/libcsv/ChangeLog ./deps/LAGraph/include/LAGraph.h ./deps/LAGraph/include/LAGraphX.h ./deps/rax/rax.h ./deps/xxHash/xxhash.h ./deps/utf8proc/utf8proc.h ./deps/oniguruma/src/oniguruma.h ./deps/FalkorDB-core-rs/Cargo.toml ./build.sh 2>/dev/null | sha256sum | cut -d' ' -f1 || echo "no-hash")
+          # The RediSearch submodule gitlink SHA is included so that advancing the
+          # fork pin invalidates the cache even when src/version.h is unchanged
+          # (our LLAPI-extension commits do not bump the version macros).
+          RS_SHA=$(git rev-parse HEAD:deps/RediSearch 2>/dev/null || echo "no-rs-sha")
+          DEPS_HASH=$( { cat ./deps/GraphBLAS/Include/GraphBLAS.h ./deps/GraphBLAS/Config/GB_prejit.c ./deps/libcypher-parser/lib/src/parser.c ./deps/RediSearch/src/version.h ./deps/libcurl/RELEASE-NOTES ./deps/libcsv/ChangeLog ./deps/LAGraph/include/LAGraph.h ./deps/LAGraph/include/LAGraphX.h ./deps/rax/rax.h ./deps/xxHash/xxhash.h ./deps/utf8proc/utf8proc.h ./deps/oniguruma/src/oniguruma.h ./deps/FalkorDB-core-rs/Cargo.toml ./build.sh; echo "$RS_SHA"; } 2>/dev/null | sha256sum | cut -d' ' -f1 || echo "no-hash")
           echo "combined=${DEPS_HASH}" >> $GITHUB_OUTPUT
 
       - name: Generate cache key (macOS)
         if: matrix.platform.os == 'macos'
         id: cache-key-macos
         run: |
-          DEPS_HASH=$(cat deps/GraphBLAS/Include/GraphBLAS.h deps/libcypher-parser/lib/src/parser.c deps/RediSearch/src/version.h deps/libcurl/RELEASE-NOTES deps/libcsv/ChangeLog deps/LAGraph/include/LAGraph.h deps/LAGraph/include/LAGraphX.h deps/rax/rax.h deps/xxHash/xxhash.h deps/utf8proc/utf8proc.h deps/oniguruma/src/oniguruma.h deps/FalkorDB-core-rs/Cargo.toml build.sh | shasum -a 256 | cut -d' ' -f1)
+          # Include the RediSearch submodule gitlink SHA so advancing the fork
+          # pin invalidates the cache even when src/version.h is unchanged.
+          RS_SHA=$(git rev-parse HEAD:deps/RediSearch 2>/dev/null || echo "no-rs-sha")
+          DEPS_HASH=$( { cat deps/GraphBLAS/Include/GraphBLAS.h deps/libcypher-parser/lib/src/parser.c deps/RediSearch/src/version.h deps/libcurl/RELEASE-NOTES deps/libcsv/ChangeLog deps/LAGraph/include/LAGraph.h deps/LAGraph/include/LAGraphX.h deps/rax/rax.h deps/xxHash/xxhash.h deps/utf8proc/utf8proc.h deps/oniguruma/src/oniguruma.h deps/FalkorDB-core-rs/Cargo.toml build.sh; echo "$RS_SHA"; } | shasum -a 256 | cut -d' ' -f1)
           echo "key=macos-deps-${{ matrix.build_type }}-${DEPS_HASH}" >> $GITHUB_OUTPUT
 
       - name: Restore dependency caches (Docker)
@@ -263,6 +373,37 @@ jobs:
             echo "build_server=false" >> $GITHUB_OUTPUT
           fi
 
+      # Decide which toolchain image to pull. On a PR that touched this OS's
+      # Dockerfile.<os>, use the RC tag :<os>-pr-<N>. On master-push that
+      # introduced such a change, use :<os>-pr-<N> from the merged PR (the
+      # promote-toolchain job retags it to :<os> after this job completes).
+      # Otherwise use the stable :<os>.
+      - name: Compute toolchain image tag
+        if: matrix.platform.use_docker
+        id: toolchain_tag
+        env:
+          OS: ${{ matrix.platform.os }}
+          CHANGED_OSES: ${{ needs.check-builder-changes.outputs.changed_oses }}
+          PR_NUMBER: ${{ github.event.pull_request.number || needs.check-builder-changes.outputs.merged_pr }}
+        run: |
+          set -euo pipefail
+          changed=$(echo "$CHANGED_OSES" | jq -r '.[]' | grep -Fx "$OS" || true)
+          if [ -n "$changed" ] && [ -n "$PR_NUMBER" ]; then
+            echo "image=ghcr.io/falkordb/falkordb-build:${OS}-pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          else
+            echo "image=ghcr.io/falkordb/falkordb-build:${OS}" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Toolchain image:"
+          cat "$GITHUB_OUTPUT" | grep '^image='
+
+      - name: Login to GHCR
+        if: matrix.platform.use_docker
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build compiler image
         if: matrix.platform.use_docker
         id: build_compiler
@@ -275,8 +416,7 @@ jobs:
           push: true
           build-args: |
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
-            OS=${{ matrix.platform.os }}
-            BASE_IMAGE_VERSION=${{ env.BASE_IMAGE_VERSION }}
+            BUILD_IMAGE=${{ steps.toolchain_tag.outputs.image }}
             DEBUG=${{ matrix.build_type == 'debug' && '1' || '0' }}
 
       - name: Copy artifacts from compiler image
@@ -405,7 +545,10 @@ jobs:
 
   test:
     needs: build
-    if: ${{ !inputs.skip_tests && (needs.build.result == 'success') }}
+    # Run the test matrix unless the run was cancelled or the user opted out.
+    # Each entry uses its own platform image and fails individually, so one
+    # platform's build failure doesn't skip the rest.
+    if: ${{ !inputs.skip_tests && !cancelled() && needs.build.result != 'skipped' }}
     runs-on: ${{ matrix.platform.machine_label }}
     strategy:
       fail-fast: false
@@ -462,7 +605,9 @@ jobs:
 
   security-scan:
     needs: build
-    if: needs.build.result == 'success'
+    # Same per-platform reasoning as `test:` above — scan whichever
+    # images built; entries whose artifact is missing fail individually.
+    if: ${{ !cancelled() && needs.build.result != 'skipped' }}
     runs-on: ${{ matrix.platform.machine_label }}
     strategy:
       fail-fast: false
@@ -650,3 +795,43 @@ jobs:
           name: ${{ steps.create_ramp.outputs.file_name }}
           path: /tmp/ramp/${{ steps.create_ramp.outputs.file_name }}
           retention-days: 7
+
+  # On master-push that introduced a Dockerfile.<os> change, retag the merged
+  # PR's RC toolchain image (:<os>-pr-<N>) to the stable :<os>. Byte-identical
+  # promotion via `docker buildx imagetools create` — no rebuild. The
+  # cleanup-rc-images workflow eventually sweeps the orphan :<os>-pr-<N> tag.
+  promote-toolchain:
+    needs: [check-builder-changes, build]
+    if: |
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/master' &&
+      needs.check-builder-changes.outputs.any_changed == 'true' &&
+      needs.check-builder-changes.outputs.merged_pr != '' &&
+      needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.check-builder-changes.outputs.changed_oses) }}
+    steps:
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote ${{ matrix.os }}-pr-${{ needs.check-builder-changes.outputs.merged_pr }} to ${{ matrix.os }}
+        env:
+          OS: ${{ matrix.os }}
+          PR_N: ${{ needs.check-builder-changes.outputs.merged_pr }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            -t "ghcr.io/falkordb/falkordb-build:${OS}" \
+            "ghcr.io/falkordb/falkordb-build:${OS}-pr-${PR_N}"
