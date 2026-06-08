@@ -87,7 +87,7 @@
 #define JS_STACK_SIZE "JS_STACK_SIZE"
 
 // config param, number of RediSearch index worker threads (load-time only)
-#define INDEX_WORKER_THREADS "INDEX_WORKER_THREADS"
+#define RS_INDEX_WORKER_THREADS "RS_INDEX_WORKER_THREADS"
 
 //------------------------------------------------------------------------------
 // Configuration defaults
@@ -116,7 +116,7 @@
 //     concurrently, so the insertion order (and the resulting graph) is
 //     nondeterministic, which makes approximate-KNN recall vary run to run.
 // Operators can opt into background promotion by raising this at load time.
-#define INDEX_WORKER_THREADS_DEFAULT 0
+#define RS_INDEX_WORKER_THREADS_DEFAULT 0
 
 // configuration object
 typedef struct
@@ -128,7 +128,7 @@ typedef struct
 	bool async_delete;				   // if true, graph deletion is done asynchronously
 	uint64_t omp_thread_count;		   // maximum number of OpenMP threads
 	uint64_t thread_pool_size;		   // thread count for thread pool
-	uint64_t index_worker_threads;	   // RediSearch index worker-thread count
+	uint64_t rs_index_worker_threads;	   // RediSearch index worker-thread count
 	uint64_t resultset_size;		   // resultset maximum size, UINT64_MAX unlimited
 	uint64_t vkey_entity_count;		   // the limit of number of entities encoded at once for each RDB key
 	uint64_t max_queued_queries;	   // max number of queued queries
@@ -337,14 +337,14 @@ static uint64_t Config_OMP_thread_count_get(void)
 // RediSearch index worker-thread count
 //------------------------------------------------------------------------------
 
-static void Config_index_worker_threads_set(uint64_t nthreads)
+static void Config_rs_index_worker_threads_set(uint64_t nthreads)
 {
-	config.index_worker_threads = nthreads;
+	config.rs_index_worker_threads = nthreads;
 }
 
-static uint64_t Config_index_worker_threads_get(void)
+static uint64_t Config_rs_index_worker_threads_get(void)
 {
-	return config.index_worker_threads;
+	return config.rs_index_worker_threads;
 }
 
 //------------------------------------------------------------------------------
@@ -653,9 +653,9 @@ bool Config_Contains_field(
 	{
 		f = Config_OPENMP_NTHREAD;
 	}
-	else if (!strcasecmp(field_str, INDEX_WORKER_THREADS))
+	else if (!strcasecmp(field_str, RS_INDEX_WORKER_THREADS))
 	{
-		f = Config_INDEX_WORKER_THREADS;
+		f = Config_RS_INDEX_WORKER_THREADS;
 	}
 	else if (!strcasecmp(field_str, VKEY_MAX_ENTITY_COUNT))
 	{
@@ -760,7 +760,7 @@ SIType Config_Field_type(
 	case Config_THREAD_POOL_SIZE:
 		return T_INT64;
 
-	case Config_INDEX_WORKER_THREADS:
+	case Config_RS_INDEX_WORKER_THREADS:
 		return T_INT64;
 
 	case Config_RESULTSET_MAX_SIZE:
@@ -853,8 +853,8 @@ const char *Config_Field_name(
 		name = THREAD_COUNT;
 		break;
 
-	case Config_INDEX_WORKER_THREADS:
-		name = INDEX_WORKER_THREADS;
+	case Config_RS_INDEX_WORKER_THREADS:
+		name = RS_INDEX_WORKER_THREADS;
 		break;
 
 	case Config_RESULTSET_MAX_SIZE:
@@ -946,7 +946,7 @@ static void _Config_SetToDefaults(void)
 	config.omp_thread_count = thread_count;
 
 	// RediSearch index worker-thread count
-	config.index_worker_threads = INDEX_WORKER_THREADS_DEFAULT;
+	config.rs_index_worker_threads = RS_INDEX_WORKER_THREADS_DEFAULT;
 
 	// the default entity count of virtual keys
 	config.vkey_entity_count = VKEY_MAX_ENTITY_COUNT_DEFAULT;
@@ -1209,14 +1209,14 @@ bool Config_Option_get(
 		// index worker-thread count
 		//----------------------------------------------------------------------
 
-	case Config_INDEX_WORKER_THREADS:
+	case Config_RS_INDEX_WORKER_THREADS:
 	{
 		va_start(ap, field);
-		uint64_t *index_worker_threads = va_arg(ap, uint64_t *);
+		uint64_t *rs_index_worker_threads = va_arg(ap, uint64_t *);
 		va_end(ap);
 
-		ASSERT(index_worker_threads != NULL);
-		(*index_worker_threads) = Config_index_worker_threads_get();
+		ASSERT(rs_index_worker_threads != NULL);
+		(*rs_index_worker_threads) = Config_rs_index_worker_threads_get();
 	}
 	break;
 
@@ -1613,16 +1613,16 @@ bool Config_Option_set
 		// index worker-thread count
 		//----------------------------------------------------------------------
 
-		case Config_INDEX_WORKER_THREADS:
+		case Config_RS_INDEX_WORKER_THREADS:
 		{
 			// 0 is valid and disables RediSearch's index worker pool
-			long long index_worker_threads ;
-			if (!_Config_ParseNonNegativeInteger (val, &index_worker_threads)) {
+			long long rs_index_worker_threads ;
+			if (!_Config_ParseNonNegativeInteger (val, &rs_index_worker_threads)) {
 				return false ;
 			}
 
-			if (Config_index_worker_threads_get () != index_worker_threads) {
-				Config_index_worker_threads_set (index_worker_threads) ;
+			if (Config_rs_index_worker_threads_get () != rs_index_worker_threads) {
+				Config_rs_index_worker_threads_set (rs_index_worker_threads) ;
 				updated = true ;
 			}
 		}

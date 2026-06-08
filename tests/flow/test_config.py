@@ -48,7 +48,7 @@ class testConfig(FlowTestsBase):
                 ("TEMP_FOLDER", "/tmp"),
                 ("JS_HEAP_SIZE", 256 * 1024 * 1024),
                 ("JS_STACK_SIZE", 1024 * 1024),
-                ("INDEX_WORKER_THREADS", 0)
+                ("RS_INDEX_WORKER_THREADS", 0)
         ]
 
         for i, config in enumerate(response):
@@ -174,19 +174,19 @@ class testConfig(FlowTestsBase):
             pass
 
     def test12_index_worker_threads_immutable(self):
-        # INDEX_WORKER_THREADS is a load-time only configuration; it must
+        # RS_INDEX_WORKER_THREADS is a load-time only configuration; it must
         # default to 0 and reject runtime GRAPH.CONFIG SET.
-        response = self.db.config_get("INDEX_WORKER_THREADS")
+        response = self.db.config_get("RS_INDEX_WORKER_THREADS")
         self.env.assertEqual(response, 0)
 
         try:
-            self.redis_con.execute_command("GRAPH.CONFIG SET INDEX_WORKER_THREADS 8")
+            self.redis_con.execute_command("GRAPH.CONFIG SET RS_INDEX_WORKER_THREADS 8")
             assert(False)
         except redis.exceptions.ResponseError as e:
             assert("This configuration parameter cannot be set at run-time" in str(e))
 
         # value must remain unchanged
-        response = self.db.config_get("INDEX_WORKER_THREADS")
+        response = self.db.config_get("RS_INDEX_WORKER_THREADS")
         self.env.assertEqual(response, 0)
 
     def test08_config_reset_to_defaults(self):

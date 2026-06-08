@@ -205,7 +205,7 @@ int RedisModule_OnLoad
 		return REDISMODULE_ERR;
 	}
 
-	// Configure RediSearch's index worker pool from INDEX_WORKER_THREADS.
+	// Configure RediSearch's index worker pool from RS_INDEX_WORKER_THREADS.
 	// Default 0: we make no call and RediSearch keeps its worker pool disabled,
 	// so VecSim TIERED indexes run in in-place write mode -- the writer thread
 	// inserts directly into the HNSW graph, single-threaded and in a
@@ -213,17 +213,17 @@ int RedisModule_OnLoad
 	// enables async background HNSW promotion (concurrent, scales, but with a
 	// nondeterministic insertion order). On a failed call we reset the stored
 	// value to 0 so GRAPH.CONFIG GET reflects the effective (disabled) state.
-	uint64_t indexWorkerThreads;
-	Config_Option_get(Config_INDEX_WORKER_THREADS, &indexWorkerThreads);
-	if(indexWorkerThreads > 0) {
-		if(RediSearch_SetNumWorkerThreads(indexWorkerThreads) != REDISMODULE_OK) {
+	uint64_t rsIndexWorkerThreads;
+	Config_Option_get(Config_RS_INDEX_WORKER_THREADS, &rsIndexWorkerThreads);
+	if(rsIndexWorkerThreads > 0) {
+		if(RediSearch_SetNumWorkerThreads(rsIndexWorkerThreads) != REDISMODULE_OK) {
 			RedisModule_Log(ctx, "warning",
 					"Failed to set RediSearch worker thread count to %" PRIu64
-					"; reporting INDEX_WORKER_THREADS as 0 to match what is in "
-					"effect", indexWorkerThreads);
+					"; reporting RS_INDEX_WORKER_THREADS as 0 to match what is in "
+					"effect", rsIndexWorkerThreads);
 			// reflect the effective (disabled) state in GRAPH.CONFIG GET
 			char *cfg_err = NULL;
-			Config_Option_set(Config_INDEX_WORKER_THREADS, "0", &cfg_err);
+			Config_Option_set(Config_RS_INDEX_WORKER_THREADS, "0", &cfg_err);
 		}
 	}
 

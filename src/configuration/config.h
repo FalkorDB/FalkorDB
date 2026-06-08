@@ -41,7 +41,7 @@ typedef enum {
 	Config_TEMP_FOLDER               = 19,  // path to temp folder
 	Config_JS_HEAP_SIZE              = 20,  // quickjs js runtime heap size limit
 	Config_JS_STACK_SIZE             = 21,  // quickjs js runtime stack size limit
-	Config_INDEX_WORKER_THREADS      = 22,  // RediSearch index worker-thread count
+	Config_RS_INDEX_WORKER_THREADS      = 22,  // RediSearch index worker-thread count
 	Config_END_MARKER                = 23
 } Config_Option_Field;
 

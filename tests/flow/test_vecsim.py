@@ -247,19 +247,19 @@ def _aggregate_recall(env, graph, query_fn, label, attr, k, centers):
 
 
 class testVecsimAsyncWorkers():
-    # Exercises the *concurrent* index path. With INDEX_WORKER_THREADS > 0 the
+    # Exercises the *concurrent* index path. With RS_INDEX_WORKER_THREADS > 0 the
     # tiered index promotes vectors into the HNSW graph asynchronously on
     # background workers, so the insertion order -- and therefore the graph and
     # the approximate-KNN results -- is nondeterministic. This is the path a
-    # production deployment uses when it raises INDEX_WORKER_THREADS, and is
+    # production deployment uses when it raises RS_INDEX_WORKER_THREADS, and is
     # intentionally NOT covered by the default-config testVecsim above
-    # (INDEX_WORKER_THREADS=0 -> in-place, single-threaded, deterministic).
+    # (RS_INDEX_WORKER_THREADS=0 -> in-place, single-threaded, deterministic).
     #
     # Because results are nondeterministic we assert aggregate recall@k over
     # many query points rather than a per-result bound: stable enough to not
     # flake, strict enough to catch a real recall regression.
     def __init__(self):
-        self.env, self.db = Env(moduleArgs="INDEX_WORKER_THREADS 4")
+        self.env, self.db = Env(moduleArgs="RS_INDEX_WORKER_THREADS 4")
 
         # Skip on macOS with ASAN due to VectorSimilarity container-overflow bug
         # https://github.com/RediSearch/VectorSimilarity - needs upstream fix
@@ -270,7 +270,7 @@ class testVecsimAsyncWorkers():
         self.graph = Graph(self.conn, "vecsim_async")
 
         # confirm the async (worker-backed) path is actually active
-        self.env.assertEqual(self.db.config_get("INDEX_WORKER_THREADS"), 4)
+        self.env.assertEqual(self.db.config_get("RS_INDEX_WORKER_THREADS"), 4)
 
         self.populate()
         self.create_indicies()
