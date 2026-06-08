@@ -152,7 +152,7 @@ jobs:
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
       - name: Upload coverage to Codecov
         if: ${{ !cancelled() && inputs.collect_coverage }}
-        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
       - name: Capture service container logs on failure
@@ -237,7 +237,7 @@ jobs:
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
       - name: Upload coverage to Codecov
         if: ${{ !cancelled() && inputs.collect_coverage }}
-        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
       - name: Upload flow logs on failure
