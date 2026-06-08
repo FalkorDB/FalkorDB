@@ -801,13 +801,16 @@ jobs:
   # promotion via `docker buildx imagetools create` — no rebuild. The
   # cleanup-rc-images workflow eventually sweeps the orphan :<os>-pr-<N> tag.
   promote-toolchain:
-    needs: [check-builder-changes, build]
+    # Retag the PR's RC image (:<os>-pr-<N>) to stable :<os> — no rebuild.
+    # Depends only on check-builder-changes (never skipped on push), not on
+    # `build`: toolchain validity is independent of the app build, and gating on
+    # `build` propagated build-rc-toolchain's push-time skip to promote.
+    needs: check-builder-changes
     if: |
       github.event_name == 'push' &&
       github.ref == 'refs/heads/master' &&
       needs.check-builder-changes.outputs.any_changed == 'true' &&
-      needs.check-builder-changes.outputs.merged_pr != '' &&
-      needs.build.result == 'success'
+      needs.check-builder-changes.outputs.merged_pr != ''
     runs-on: ubuntu-latest
     permissions:
       contents: read
