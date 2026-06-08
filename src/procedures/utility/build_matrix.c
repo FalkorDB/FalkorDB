@@ -47,7 +47,7 @@ GrB_Info Build_Matrix
 	ASSERT(D != NULL);
 
 	// export relation matrix to A
-	info = Delta_Matrix_export(&_A, D, GrB_BOOL);
+	info = Delta_Matrix_export(&_A, D, GrB_BOOL, NULL);
 	ASSERT(info == GrB_SUCCESS);
 
 	// in case there are multiple relation types, include them in A
@@ -55,7 +55,7 @@ GrB_Info Build_Matrix
 		D = Graph_GetRelationMatrix(g, rels[i], false);
 
 		GrB_Matrix M;
-		info = Delta_Matrix_export(&M, D, GrB_BOOL);
+		info = Delta_Matrix_export(&M, D, GrB_BOOL, NULL);
 		ASSERT(info == GrB_SUCCESS);
 
 		info = GrB_Matrix_eWiseAdd_Monoid(_A, NULL, NULL, GxB_ANY_BOOL_MONOID,
@@ -85,7 +85,7 @@ GrB_Info Build_Matrix
 		Delta_Matrix DL = Graph_GetLabelMatrix(g, lbls[0]);
 
 		GrB_Matrix L;
-		info = Delta_Matrix_export(&L, DL, GrB_BOOL);
+		info = Delta_Matrix_export(&L, DL, GrB_BOOL, NULL);
 		ASSERT(info == GrB_SUCCESS);
 
 		// L = L U M
@@ -93,7 +93,7 @@ GrB_Info Build_Matrix
 			DL = Graph_GetLabelMatrix(g, lbls[i]);
 
 			GrB_Matrix M;
-			info = Delta_Matrix_export(&M, DL, GrB_BOOL);
+			info = Delta_Matrix_export(&M, DL, GrB_BOOL, NULL);
 			ASSERT(info == GrB_SUCCESS);
 
 			info = GrB_Matrix_eWiseAdd_Monoid(L, NULL, NULL,

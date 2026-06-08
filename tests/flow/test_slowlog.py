@@ -271,4 +271,3 @@ class testSlowLog():
         queries = [entry[2] for entry in entries]
         self.env.assertIn (q0, queries)
         self.env.assertIn (q1, queries)
-

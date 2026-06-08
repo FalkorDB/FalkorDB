@@ -1,11 +1,16 @@
+# Compiler stage — uses a per-OS toolchain image as base.
+#
+# BUILD_IMAGE is the fully-qualified toolchain image reference, decided by the
+# caller workflow (.github/workflows/build.yml). On a PR that touches
+# build/docker/builder/Dockerfile.<os>, the caller passes the RC tag
+# (ghcr.io/falkordb/falkordb-build:<os>-pr-<N>). Otherwise it passes the stable
+# tag (ghcr.io/falkordb/falkordb-build:<os>).
+
+ARG BUILD_IMAGE=ghcr.io/falkordb/falkordb-build:ubuntu
+
+FROM ${BUILD_IMAGE} AS builder
+
 ARG TARGETPLATFORM=linux/amd64
-
-ARG OS=ubuntu
-
-ARG BASE_IMAGE_VERSION=1.0.0
-
-FROM falkordb/falkordb-build:$OS-${BASE_IMAGE_VERSION} AS builder
-
 ARG DEBUG=0
 
 WORKDIR /FalkorDB

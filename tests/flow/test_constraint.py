@@ -30,7 +30,8 @@ class testConstraintNodes():
         create_mandatory_node_constraint(self.g, 'Person', 'height')
 
         # create unique node constraint over Person height
-        create_unique_node_constraint(self.g, 'Person', 'height')
+        result = create_unique_node_constraint(self.g, 'Person', 'height')
+        self.env.assertEqual(result, "PENDING")
 
         # create unique node constraint over Person name and age
         create_unique_node_constraint(self.g, 'Person', 'name', 'age')
@@ -307,6 +308,15 @@ class testConstraintNodes():
     def test04_invalid_constraint_command(self):
         # constraint create command:
         # GRAPH.CONSTRAIN <key> CREATE/DEL UNIQUE/MANDATORY [NODE label / RELATIONSHIP type] PROPERTIES prop_count prop0...
+
+        #-----------------------------------------------------------------------
+        # invalid constraint operation
+        #-----------------------------------------------------------------------
+        try:
+            self.con.execute_command("GRAPH.CONSTRAINT", "LIST", GRAPH_ID)
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("wrong number of arguments for 'graph.CONSTRAINT' command", str(e))
 
         #-----------------------------------------------------------------------
         # invalid constraint operation
