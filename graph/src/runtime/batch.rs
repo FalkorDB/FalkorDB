@@ -274,6 +274,22 @@ impl Column {
     pub const fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    /// Creates a new column by gathering values from this column at the given
+    /// indices.
+    pub fn gather(
+        &self,
+        indices: impl Iterator<Item = usize>,
+    ) -> Self {
+        match self {
+            Self::NodeIds(v) => Self::NodeIds(indices.map(|i| v[i]).collect()),
+            Self::RelTriples(v) => Self::RelTriples(indices.map(|i| v[i]).collect()),
+            Self::Ints(v) => Self::Ints(indices.map(|i| v[i]).collect()),
+            Self::Floats(v) => Self::Floats(indices.map(|i| v[i]).collect()),
+            Self::Values(v) => Self::Values(indices.map(|i| v[i].clone()).collect()),
+            Self::Unbound => Self::Unbound,
+        }
+    }
 }
 
 /// In-progress column accumulator for a single variable slot.
@@ -663,32 +679,34 @@ impl<'a> Batch<'a> {
         let Some(sel) = self.selection.as_ref() else {
             return self;
         };
+        let indices: Vec<usize> = sel.iter().map(|&i| i as usize).collect();
+        let mut batch = self.gather(&indices);
+        batch.selection = None;
+        batch
+    }
+
+    /// Creates a new batch by gathering rows from this batch at the given
+    /// indices. Indices may be repeated or out of order.
+    #[must_use]
+    pub fn gather(
+        &self,
+        indices: &[usize],
+    ) -> Self {
         let columns = self
             .columns
             .iter()
-            .map(|col| match col {
-                Column::Unbound => Column::Unbound,
-                Column::NodeIds(v) => Column::NodeIds(sel.iter().map(|&r| v[r as usize]).collect()),
-                Column::RelTriples(v) => {
-                    Column::RelTriples(sel.iter().map(|&r| v[r as usize]).collect())
-                }
-                Column::Ints(v) => Column::Ints(sel.iter().map(|&r| v[r as usize]).collect()),
-                Column::Floats(v) => Column::Floats(sel.iter().map(|&r| v[r as usize]).collect()),
-                Column::Values(v) => {
-                    Column::Values(sel.iter().map(|&r| v[r as usize].clone()).collect())
-                }
-            })
+            .map(|c| c.gather(indices.iter().copied()))
             .collect();
         let origin_rows = self.origin_rows.as_ref().and_then(|o| {
-            let origins: Vec<u32> = sel.iter().map(|&r| o[r as usize]).collect();
+            let origins: Vec<u32> = indices.iter().map(|&i| o[i]).collect();
             origins.iter().any(|&x| x != 0).then_some(origins)
         });
         Batch {
-            len: sel.len(),
+            len: indices.len(),
             selection: None,
             columns,
             origin_rows,
-            value_only: self.value_only,
+            value_only: self.value_only.clone(),
             _marker: PhantomData,
         }
     }
