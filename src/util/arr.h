@@ -211,7 +211,7 @@ static inline uint32_t arr_cap
 	return arr_hdr(arr)->cap ;
 }
 
-/* Ensure capacity for the array to grow by one */
+/* return the allocated sizeof the array in bytes */
 static inline size_t arr_bytesize(arr_t arr) {
 	return arr_sizeof(arr_hdr(arr)) ;
 }
