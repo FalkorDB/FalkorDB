@@ -33,10 +33,6 @@
 // maximum size for which an array of SIValue will be stack-allocated, otherwise it will be heap-allocated.
 #define MAX_ARRAY_SIZE_ON_STACK 32
 
-// materialized range() constants above this threshold should not be folded
-// into cached plans.
-#define RANGE_FOLD_CACHE_CUTOFF_BYTES (128ULL * 1024ULL)
-
 //------------------------------------------------------------------------------
 // Forward declarations
 //------------------------------------------------------------------------------
@@ -326,58 +322,6 @@ bool AR_EXP_ReduceToScalar
 		// all child nodes are constants, make sure function is marked as reducible
 		if(!root->op.f->reducible) {
 			return false;
-		}
-
-		// avoid embedding large materialized range() arrays in cached plans.
-		if(strcmp(AR_EXP_GetFuncName(root), "range") == 0) {
-			int child_count = root->op.child_count;
-			if(child_count != 2 && child_count != 3) {
-				return false;
-			}
-
-			AR_ExpNode *start_exp = root->op.children[0];
-			AR_ExpNode *end_exp = root->op.children[1];
-			if(!AR_EXP_IsConstant(start_exp) || !AR_EXP_IsConstant(end_exp)) {
-				return false;
-			}
-
-			SIValue start_val = start_exp->operand.constant;
-			SIValue end_val = end_exp->operand.constant;
-			if(SI_TYPE(start_val) != T_INT64 || SI_TYPE(end_val) != T_INT64) {
-				return false;
-			}
-
-			int64_t start = start_val.longval;
-			int64_t end = end_val.longval;
-			int64_t step = 1;
-			if(child_count == 3) {
-				AR_ExpNode *step_exp = root->op.children[2];
-				if(!AR_EXP_IsConstant(step_exp)) {
-					return false;
-				}
-				SIValue step_val = step_exp->operand.constant;
-				if(SI_TYPE(step_val) != T_INT64) {
-					return false;
-				}
-				step = step_val.longval;
-			}
-
-			// keep existing behavior for invalid range() invocations (step = 0),
-			// so evaluation can raise the expected error.
-			if(step != 0) {
-				uint64_t range_len = 0;
-				if((end >= start && step > 0) || (end <= start && step < 0)) {
-					__int128 diff = (__int128)end - (__int128)start;
-					__int128 span = diff / (__int128)step;
-					range_len = (uint64_t)(span + 1);
-				}
-
-				if(range_len > 0) {
-					if(range_len > (RANGE_FOLD_CACHE_CUTOFF_BYTES / sizeof(SIValue))) {
-						return false;
-					}
-				}
-			}
 		}
 
 		// evaluate function
@@ -1275,3 +1219,4 @@ inline void AR_EXP_Free
 	_AR_EXP_FreeInternals (root) ;
 	rm_free (root) ;
 }
+

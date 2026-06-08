@@ -137,12 +137,26 @@ static bool _FilterTreeToMultiValQueryNode
 	bool attribute = AR_EXP_IsAttribute(AR_EXP_getChild(inOp, 0), &attr);
 	ASSERT(attribute == true);
 
-	SIValue list  = AR_EXP_getChild(inOp, 1)->operand.constant;
+	AR_ExpNode *rhs = AR_EXP_getChild(inOp, 1);
+	SIValue list = SI_NullVal();
+
+	if (AR_EXP_IsConstant(rhs)) {
+		list = rhs->operand.constant;
+	} else if (AR_EXP_ContainsFunc(rhs, "range") && !AR_EXP_ContainsVariadic(rhs)) {
+		list = AR_EXP_Evaluate(rhs, NULL);
+	}
+
+	if(SI_TYPE(list) != T_ARRAY) {
+		SIValue_Free(list);
+		return false;
+	}
+
 	uint list_len = SIArray_Length(list);
 
 	if(list_len == 0) {
 		// special case: "WHERE a.v in []"
 		*root = RediSearch_CreateEmptyNode(idx);
+		SIValue_Free(list);
 		return true;
 	}
 
@@ -191,6 +205,8 @@ static bool _FilterTreeToMultiValQueryNode
 	} else {
 		*root = U;
 	}
+
+	SIValue_Free(list);
 
 	return res;
 }

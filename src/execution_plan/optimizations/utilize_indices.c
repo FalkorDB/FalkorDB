@@ -95,8 +95,17 @@ static bool _applicableInExpression
 		SIValue list = SI_NullVal();
 		AR_EXP_ReduceToScalar(rhs, true, &list);
 
+		// range() is intentionally marked as non-reducible; for IN index
+		// applicability, evaluate static range expressions explicitly.
+		if(SI_TYPE(list) != T_ARRAY &&
+		   AR_EXP_ContainsFunc(rhs, "range") &&
+		   !AR_EXP_ContainsVariadic(rhs)) {
+			list = AR_EXP_Evaluate(rhs, NULL);
+		}
+
 
 		if(SI_TYPE(list) != T_ARRAY) {
+			SIValue_Free(list);
 			return false;
 		}
 
@@ -105,8 +114,13 @@ static bool _applicableInExpression
 		for(uint i = 0; i < len; i++) {
 			SIValue v = SIArray_Get(list, i);
 			// ignore everything other than number, strings and booleans
-			if(!(SI_TYPE(v) & (SI_NUMERIC | T_STRING | T_BOOL))) return false;
+			if(!(SI_TYPE(v) & (SI_NUMERIC | T_STRING | T_BOOL))) {
+				SIValue_Free(list);
+				return false;
+			}
 		}
+
+		SIValue_Free(list);
 
 		return true;
 	}

@@ -701,7 +701,7 @@ static AR_FuncDesc _desc_range = {
     .name="range", .func=AR_RANGE,
     TA (T_INT64, T_INT64, T_INT64), .ret_type=T_ARRAY | T_NULL,
     .min_argc=2, .max_argc=3,
-    .reducible=true, .deterministic=true };
+    .reducible=false, .deterministic=true };
 
 static AR_FuncDesc _desc_in = {
     .name="in", .func=AR_IN,

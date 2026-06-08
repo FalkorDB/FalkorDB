@@ -18,80 +18,6 @@ static Record UnwindConsume(OpBase *opBase);
 static OpResult UnwindReset(OpBase *opBase);
 static OpBase *UnwindClone(const ExecutionPlan *plan, const OpBase *opBase);
 
-static inline void _clearRangeIter
-(
-	OpUnwind *op
-) {
-	op->rangeMode   = false;
-	op->rangeStart  = 0;
-	op->rangeEnd    = 0;
-	op->rangeCurrent = 0;
-	op->rangeStep   = 0;
-	op->rangeDepleted = false;
-}
-
-static bool _tryInitRangeIter
-(
-	OpUnwind *op
-) {
-	AR_ExpNode *exp = op->exp;
-	if(!AR_EXP_IsOperation(exp)) {
-		return false;
-	}
-
-	if(strcmp(AR_EXP_GetFuncName(exp), "range") != 0) {
-		return false;
-	}
-
-	int arg_count = exp->op.child_count;
-	if(arg_count != 2 && arg_count != 3) {
-		return false;
-	}
-
-	AR_ExpNode *start_exp = AR_EXP_getChild(exp, 0);
-	AR_ExpNode *end_exp = AR_EXP_getChild(exp, 1);
-	if(!AR_EXP_IsConstant(start_exp) || !AR_EXP_IsConstant(end_exp)) {
-		return false;
-	}
-
-	SIValue start_val = start_exp->operand.constant;
-	SIValue end_val = end_exp->operand.constant;
-	if(SI_TYPE(start_val) != T_INT64 || SI_TYPE(end_val) != T_INT64) {
-		return false;
-	}
-
-	int64_t start = start_val.longval;
-	int64_t end   = end_val.longval;
-	int64_t step  = 1;
-	if(arg_count == 3) {
-		AR_ExpNode *step_exp = AR_EXP_getChild(exp, 2);
-		if(!AR_EXP_IsConstant(step_exp)) {
-			return false;
-		}
-
-		SIValue step_val = step_exp->operand.constant;
-		if(SI_TYPE(step_val) != T_INT64) {
-			return false;
-		}
-
-		step = step_val.longval;
-		if(step == 0) {
-			return false;
-		}
-	}
-
-	op->rangeMode = true;
-	op->rangeStart = start;
-	op->rangeEnd = end;
-	op->rangeCurrent = start;
-	op->rangeStep = step;
-	op->rangeDepleted = ((end >= start && step < 0) ||
-						 (end <= start && step > 0));
-	op->listIdx = 0;
-	op->listLen = 0;
-	return true;
-}
-
 OpBase *NewUnwindOp
 (
 	const ExecutionPlan *plan,
@@ -101,7 +27,7 @@ OpBase *NewUnwindOp
 
 	op->exp  = exp;
 	op->list = SI_NullVal();
-	_clearRangeIter(op);
+	RangeIter_free(&op->rangeIter);
 
 	// Set our Op operations
 	OpBase_Init((OpBase *)op, OPType_UNWIND, "Unwind", UnwindInit, UnwindConsume,
@@ -123,9 +49,11 @@ static void _initList
 
 	// Null-set the list value to avoid memory errors if evaluation fails
 	op->list = SI_NullVal();
-	_clearRangeIter(op);
+	RangeIter_free(&op->rangeIter);
 
-	if(_tryInitRangeIter(op)) {
+	if(RangeIter_fromRangeExp(&op->rangeIter, op->exp)) {
+		op->listIdx = 0;
+		op->listLen = 0;
 		return;
 	}
 
@@ -169,20 +97,15 @@ static Record _handoff
 (
 	OpUnwind *op
 ) {
-	if(op->rangeMode) {
-		if(op->rangeDepleted) {
+	if(op->rangeIter.active) {
+		int64_t current = 0;
+		if(!RangeIter_next(&op->rangeIter, &current)) {
 			return NULL;
 		}
 
 		Record r = OpBase_CloneRecord(op->currentRecord);
-		SIValue v = SI_LongVal(op->rangeCurrent);
+		SIValue v = SI_LongVal(current);
 		Record_Add(r, op->unwindRecIdx, v);
-
-		if(op->rangeCurrent == op->rangeEnd) {
-			op->rangeDepleted = true;
-		} else {
-			op->rangeCurrent += op->rangeStep;
-		}
 		return r;
 	}
 
@@ -221,9 +144,9 @@ static Record UnwindConsume
 	}
 
 	OpBase *child = op->op.children[0];
+
 	// did we manage to get new data?
-pull:
-	if((r = OpBase_Consume(child))) {
+	while ((r = OpBase_Consume(child))) {
 		// free current record
 		OpBase_DeleteRecord(&op->currentRecord);
 
@@ -234,8 +157,8 @@ pull:
 		_initList(op);
 
 		// skip empty lists
-		if(op->listLen == 0) {
-			goto pull;
+		if(op->listLen != 0 || op->rangeIter.active) {
+			break;
 		}
 	}
 
@@ -250,12 +173,8 @@ static OpResult UnwindReset
 
 	if (op->op.childCount == 0) {
 		// no child operation, list must be static.
-		if(op->rangeMode) {
-			op->rangeCurrent = op->rangeStart;
-			op->rangeDepleted = ((op->rangeEnd >= op->rangeStart &&
-								  op->rangeStep < 0) ||
-								 (op->rangeEnd <= op->rangeStart &&
-								  op->rangeStep > 0));
+		if(op->rangeIter.active) {
+			RangeIter_reset(&op->rangeIter);
 		} else {
 			op->listIdx = 0;
 		}
@@ -264,7 +183,7 @@ static OpResult UnwindReset
 		op->listLen = 0;
 		SIValue_Free(op->list);
 		op->list = SI_NullVal();
-		_clearRangeIter(op);
+		RangeIter_free(&op->rangeIter);
 	}
 
 	return OP_OK ;
@@ -288,6 +207,7 @@ static void UnwindFree
 	OpUnwind *op = (OpUnwind *)ctx;
 	SIValue_Free(op->list);
 	op->list = SI_NullVal();
+	RangeIter_free(&op->rangeIter);
 
 	if(op->exp) {
 		AR_EXP_Free(op->exp);
