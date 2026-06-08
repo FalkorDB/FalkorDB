@@ -1,0 +1,93 @@
+# Builder toolchain image — RHEL UBI9
+#
+# UBI9 cmake 3.26.5 is fine for RediSearch's boost.cmake.
+# Adds clang + clang-devel for bindgen/clang-sys.
+#
+# Redis: built from git at REDIS_VERSION (multi-stage). Built on UBI9 so the
+# glibc 2.34 binary runs against the same base.
+
+ARG REDIS_VERSION=8.6.3
+
+#--------------------------------------------------------------------------
+# Stage 1: build redis-server / redis-cli from source at a pinned tag.
+#--------------------------------------------------------------------------
+FROM redhat/ubi9 AS redis-builder
+
+ARG REDIS_VERSION
+RUN yum install -y \
+      git ca-certificates gcc gcc-c++ glibc-devel openssl-devel make tar gzip && \
+    yum clean all
+
+WORKDIR /tmp
+RUN git clone --depth 1 --branch "${REDIS_VERSION}" https://github.com/redis/redis.git redis-src
+WORKDIR /tmp/redis-src
+
+RUN set -eux; \
+    sed -ri 's!^( *createBoolConfig[(]"protected-mode",.*, *)1( *,.*[)],)$!\10\2!' src/config.c; \
+    grep -E '^ *createBoolConfig[(]"protected-mode",.*, *0 *,.*[)],$' src/config.c; \
+    export BUILD_TLS=yes BUILD_WITH_MODULES=no; \
+    make -j "$(nproc)" all; \
+    make PREFIX=/redis-install install; \
+    strip /redis-install/bin/redis-server /redis-install/bin/redis-cli; \
+    /redis-install/bin/redis-server --version
+
+#--------------------------------------------------------------------------
+# Stage 2: actual toolchain image.
+#--------------------------------------------------------------------------
+FROM redhat/ubi9 AS builder
+
+RUN yum update -y && \
+    yum install -y \
+      wget autoconf automake \
+      python3.11 python3.11-pip \
+      libtool git make \
+      openssl-devel \
+      gcc-toolset-14 \
+      libstdc++-static \
+      diffutils \
+      clang clang-devel && \
+    alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 && \
+    alternatives --auto python3 && \
+    yum clean all
+
+# Enable gcc-toolset-14 on PATH
+ENV PATH="/opt/rh/gcc-toolset-14/root/usr/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/opt/rh/gcc-toolset-14/root/usr/lib64"
+
+# Pin cmake to the same exact version across every builder OS.
+RUN pip3.11 install --no-cache-dir 'cmake==3.31.6'
+
+# Rust toolchain
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Build & install peg
+ARG PEG_VERSION=0.1.19
+ARG PEG_SHA256=74d1b7b905dbbc1776502a4ccf9c38ad8b86c9f8e51b825214783eefd5cdc9af
+RUN set -eux; \
+    url="https://github.com/gpakosz/peg/archive/refs/tags/${PEG_VERSION}.tar.gz"; \
+    wget -O peg.tar.gz "$url"; \
+    echo "${PEG_SHA256}  peg.tar.gz" | sha256sum -c -; \
+    tar -xzf peg.tar.gz; \
+    cd "peg-${PEG_VERSION}"; \
+    make && make install; \
+    cd ..; \
+    rm -rf "peg-${PEG_VERSION}" peg.tar.gz
+
+# Build & install gperf
+ARG GPERF_VERSION=3.1
+ARG GPERF_SHA256=588546b945bba4b70b6a3a616e80b4ab466e3f33024a352fc2198112cdbb3ae2
+RUN set -eux; \
+    wget -O gperf.tar.gz "https://ftp.gnu.org/gnu/gperf/gperf-${GPERF_VERSION}.tar.gz"; \
+    echo "${GPERF_SHA256}  gperf.tar.gz" | sha256sum -c -; \
+    tar -xzf gperf.tar.gz; \
+    cd "gperf-${GPERF_VERSION}"; \
+    ./configure; make; make install; \
+    cd ..; \
+    rm -rf "gperf-${GPERF_VERSION}" gperf.tar.gz
+
+# redis-server / redis-cli — copied LAST so a REDIS_VERSION bump only rebuilds
+# this cheap layer and leaves the toolchain download layers (rust/cmake/apt)
+# cached. /usr/local/bin precedes /usr/bin on PATH (where RLTest looks).
+COPY --from=redis-builder /redis-install/bin/redis-server /usr/local/bin/redis-server
+COPY --from=redis-builder /redis-install/bin/redis-cli    /usr/local/bin/redis-cli

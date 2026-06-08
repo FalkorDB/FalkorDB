@@ -1,0 +1,89 @@
+# Builder toolchain image — Ubuntu 22.04
+#
+# Absorbed from FalkorDB/build-image (Dockerfile.ubuntu) with two RediSearch 8.6
+# prerequisites added:
+#
+#   1. cmake >= 3.24 (required by RediSearch's boost.cmake — `DOWNLOAD_EXTRACT_TIMESTAMP`).
+#      Ubuntu 22.04 ships cmake 3.22.1; pip-install 3.31.6 to /usr/local/bin/cmake
+#      which precedes /usr/bin/cmake on PATH.
+#   2. libclang + clang headers (required by `bindgen`/`clang-sys` in redisearch_rs).
+#
+# Redis: built from git at REDIS_VERSION (multi-stage). Mirrors the pattern in
+# falkordb-rs-next-gen (build/Dockerfile) — we keep the same redis-server binary
+# across every image so behaviour doesn't drift between the toolchain, the
+# release runtime, and the sanitizer runtime. Avoids the apt-priority trap on
+# jammy (Ubuntu ships `redis 5:6.0.16-1ubuntu1` at epoch 5, which outranks
+# packages.redis.io's `redis 8.x`; plain `apt-get install redis` lands on
+# 6.0.16 and FalkorDB hard-requires >= 8.0).
+
+ARG REDIS_VERSION=8.6.3
+
+#--------------------------------------------------------------------------
+# Stage 1: build redis-server / redis-cli from source at a pinned tag.
+#--------------------------------------------------------------------------
+FROM ubuntu:22.04 AS redis-builder
+
+ARG REDIS_VERSION
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates git dpkg-dev gcc g++ libc6-dev libssl-dev make && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /tmp
+RUN git clone --depth 1 --branch "${REDIS_VERSION}" https://github.com/redis/redis.git redis-src
+WORKDIR /tmp/redis-src
+
+# Mirror upstream redis image's protected-mode default flip (1 → 0) and
+# jemalloc page-size tuning so behaviour is identical to the upstream
+# redis:${REDIS_VERSION} image. Matches falkordb-rs-next-gen.
+RUN set -eux; \
+    sed -ri 's!^( *createBoolConfig[(]"protected-mode",.*, *)1( *,.*[)],)$!\10\2!' src/config.c; \
+    grep -E '^ *createBoolConfig[(]"protected-mode",.*, *0 *,.*[)],$' src/config.c; \
+    gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)"; \
+    arch="$(dpkg --print-architecture | awk -F- '{ print $NF }')"; \
+    extraJemallocConfigureFlags="--build=$gnuArch"; \
+    case "${arch##*-}" in \
+        amd64 | i386 | x32) extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-page=12" ;; \
+        *) extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-page=16" ;; \
+    esac; \
+    extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-hugepage=21"; \
+    sed -ri 's!cd jemalloc && ./configure !&'"$extraJemallocConfigureFlags"' !' deps/Makefile; \
+    export BUILD_TLS=yes BUILD_WITH_MODULES=no; \
+    make -j "$(nproc)" all; \
+    make PREFIX=/redis-install install; \
+    strip /redis-install/bin/redis-server /redis-install/bin/redis-cli; \
+    /redis-install/bin/redis-server --version
+
+#--------------------------------------------------------------------------
+# Stage 2: actual toolchain image.
+#--------------------------------------------------------------------------
+FROM ubuntu:22.04 AS builder
+
+RUN apt-get update -y && \
+    apt-get install -y --no-install-recommends \
+      git wget build-essential lcov \
+      openssl libssl-dev ca-certificates \
+      python3 python3-venv python3-dev python3-pip \
+      unzip rsync curl m4 automake gperf peg libtool autoconf \
+      clang-15 libclang-15-dev libclang-common-15-dev \
+      cmake && \
+    rm -rf /var/lib/apt/lists/*
+
+# Pin cmake to the same exact version across every builder OS so the matrix
+# uses one CMake build. Overrides apt's 3.22.1; pip installs into
+# /usr/local/bin which precedes /usr/bin in PATH. No --break-system-packages
+# flag because jammy's system Python isn't PEP-668-marked, and the flag
+# wasn't introduced until pip 23 (jammy ships pip 22).
+RUN pip3 install --no-cache-dir 'cmake==3.31.6'
+
+# Rust toolchain (used to build redisearch_rs)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# redis-server / redis-cli — copied LAST so a REDIS_VERSION bump only rebuilds
+# this cheap layer and leaves the toolchain download layers (rust/cmake/apt)
+# cached. /usr/local/bin precedes /usr/bin on PATH (where RLTest looks).
+COPY --from=redis-builder /redis-install/bin/redis-server /usr/local/bin/redis-server
+COPY --from=redis-builder /redis-install/bin/redis-cli    /usr/local/bin/redis-cli
