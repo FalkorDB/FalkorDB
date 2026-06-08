@@ -317,8 +317,12 @@ size_t DataBlock_memoryUsage
 
 	// datablock size = deleted index array size +
 	//                  (number of blocks * block size)
-	return arr_len(dataBlock->deletedIdx) * sizeof(uint64_t) +
-		dataBlock->blockCount * (dataBlock->itemSize * dataBlock->blockCap);
+	size_t data_size = sizeof(DataBlock) ;
+	data_size += arr_bytesize(dataBlock->deletedIdx);
+	data_size += RedisModule_MallocSize(dataBlock->blocks) ;
+	data_size += dataBlock->blockCount
+		* (sizeof (Block) + dataBlock->itemSize * dataBlock->blockCap);
+	return data_size;
 }
 
 void DataBlock_Free(DataBlock *dataBlock) {
