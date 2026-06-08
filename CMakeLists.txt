@@ -158,19 +158,11 @@ set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${CMAKE_LD_FLAGS} ${
 # of its own, causing crashes due to ABI incompatibility (Redis 8.x dictType has
 # more fields than RediSearch's dictType).
 # Note: Both flags are used together as in the original readies build system.
-if(APPLE)
-    # FalkorDB's own Rust archive (FalkorDB-core-rs) and RediSearch's
-    # redisearch_rs each statically include the Rust standard library,
-    # which exports rust_eh_personality regardless of the panic strategy.
-    # When both archives are linked into the same falkordb.so, Apple's
-    # modern ld (ld_prime, since Xcode 15) errors on the duplicate.
-    # Switch to ld_classic for this link only, which accepts the
-    # -multiply_defined,suppress flag and silently picks one definition.
-    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-ld_classic -Wl,-multiply_defined,suppress")
-else()
+# -Bsymbolic is an ELF feature; macOS uses two-level namespaces by default,
+# which already binds RediSearch's symbols to its own definitions, so no
+# Apple-side flag is needed here.
+if(NOT APPLE)
     set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-Bsymbolic,-Bsymbolic-functions")
-    # gnu-ld equivalent of Apple ld's -multiply_defined,suppress.
-    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--allow-multiple-definition")
 endif()
 
 # Set C standard
