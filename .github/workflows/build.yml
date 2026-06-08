@@ -802,7 +802,15 @@ jobs:
   # cleanup-rc-images workflow eventually sweeps the orphan :<os>-pr-<N> tag.
   promote-toolchain:
     needs: [check-builder-changes, build]
+    # always() is required: build-rc-toolchain is PR-only, so it is SKIPPED on
+    # the master push. GitHub propagates that skip down the needs chain
+    # (build-rc-toolchain -> build -> promote-toolchain); without a status
+    # function here, promote is skipped before its conditions are even
+    # evaluated — which is what left the stable :<os> images unpublished after
+    # the toolchain PR merged. (The `build` job carries always() for the same
+    # reason.)
     if: |
+      always() &&
       github.event_name == 'push' &&
       github.ref == 'refs/heads/master' &&
       needs.check-builder-changes.outputs.any_changed == 'true' &&
