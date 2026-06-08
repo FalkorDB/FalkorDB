@@ -970,13 +970,20 @@ impl<'a> Iterator for CondTraverseOp<'a> {
                 let mut used_batched = false;
                 if self.batched_eligible && self.current_pos < active.len() {
                     let active_subset = &active[self.current_pos..];
-                    match self.expand_batch(batch, active_subset, &mut self.pending_batches) {
+                    let mut pending = std::mem::take(&mut self.pending_batches);
+                    match self.expand_batch(batch, active_subset, &mut pending) {
                         Ok(true) => {
+                            self.pending_batches = pending;
                             self.current_pos = active.len();
                             used_batched = true;
                         }
-                        Ok(false) => {}
-                        Err(e) => return Some(Err(e)),
+                        Ok(false) => {
+                            self.pending_batches = pending;
+                        }
+                        Err(e) => {
+                            self.pending_batches = pending;
+                            return Some(Err(e));
+                        }
                     }
                 }
 

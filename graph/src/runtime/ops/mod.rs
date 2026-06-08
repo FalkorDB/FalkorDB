@@ -152,7 +152,7 @@ pub fn drain_pending_batches<'a>(
                     builder.push_batch_row(&batch, i, batch.origin_row(i));
                 }
                 // Push the remainder back to pending.
-                let indices: Vec<_> = (remaining..batch.len()).collect();
+                let indices: Vec<usize> = (remaining..batch.len()).collect();
                 pending.push_front(batch.gather(&indices));
                 break;
             }
