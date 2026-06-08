@@ -164,15 +164,8 @@ static void _AddTaskData_WaitUntilSignalisedValue
 		// data.
 		TEST_ASSERT(FD_ISSET(data.pipe_read_fd, &read_fds));
 		// Wait until the signal expected is received.
-		// NOTE: the read() MUST run unconditionally. Previously this was
-		// `assert(read(...) == 1)`, but assert() compiles to nothing under
-		// NDEBUG (the default for CMake Release builds once Phase B dropped
-		// the -UNDEBUG flag). With the read() compiled out, read_signal_data
-		// stayed at INVALID_SIGNAL_VALUE forever, select() kept returning the
-		// still-unconsumed pipe byte, and this loop spun indefinitely — the
-		// 6-hour test_cron hang. Use TEST_ASSERT (always evaluated; this
-		// helper runs on the test thread) so the read both happens and is
-		// validated.
+		// read() must run unconditionally and be validated — not inside
+		// assert(), which is a no-op under NDEBUG (Release).
 		const ssize_t bytes_read =
 			read(data.pipe_read_fd, (void *)&read_signal_data, 1);
 		TEST_ASSERT(bytes_read == 1);

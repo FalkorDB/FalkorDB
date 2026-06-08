@@ -142,10 +142,7 @@ void **ThreadPool_GetTasksByHandler
 	return tasks;
 }
 
-// block until all queued tasks have run and all workers are idle.
-// Use this when downstream code needs the side effects of in-flight tasks
-// (e.g. GraphContext_DecreaseRefCount calls held by worker contexts) to
-// have settled before it proceeds.
+// Block until all queued tasks have run and all workers are idle.
 void ThreadPool_Wait
 (
 	void
