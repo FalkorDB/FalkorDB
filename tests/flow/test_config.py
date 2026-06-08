@@ -181,7 +181,7 @@ class testConfig(FlowTestsBase):
 
         try:
             self.redis_con.execute_command("GRAPH.CONFIG SET RS_INDEX_WORKER_THREADS 8")
-            assert(False)
+            raise AssertionError("GRAPH.CONFIG SET RS_INDEX_WORKER_THREADS should fail at runtime")
         except redis.exceptions.ResponseError as e:
             assert("This configuration parameter cannot be set at run-time" in str(e))
 

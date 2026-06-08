@@ -305,7 +305,6 @@ class testVecsimAsyncWorkers():
         recall = _aggregate_recall(self.env, self.graph,
                                    query_node_vector_index, "Person",
                                    "embeddings", k, centers)
-        print(f"[test_vecsim] async node recall@{k} = {recall:.3f}")
         # HNSW recall here is normally ~1.0; require a conservative aggregate
         # floor so the concurrent path is validated (a recall collapse drops far
         # below this) without flaking on the occasional single-neighbor miss
@@ -318,6 +317,5 @@ class testVecsimAsyncWorkers():
         recall = _aggregate_recall(self.env, self.graph,
                                    query_edge_vector_index, "Points",
                                    "embeddings", k, centers)
-        print(f"[test_vecsim] async edge recall@{k} = {recall:.3f}")
         self.env.assertGreaterEqual(recall, 0.7)
 
