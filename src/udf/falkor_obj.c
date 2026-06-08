@@ -15,6 +15,34 @@
 // global UDF library name used when registering functions globally
 extern const char *UDF_LIB ;
 
+static inline JSValue _ValidateUDFNameLength
+(
+	JSContext *js_ctx,
+	const char *lib_name,
+	const char *func_name
+) {
+	if(lib_name == NULL || func_name == NULL) {
+		return JS_ThrowInternalError(js_ctx, "missing UDF function metadata");
+	}
+
+	size_t lib_len  = strlen(lib_name);
+	size_t func_len = strlen(func_name);
+
+	if(func_len > FALKORDB_MAX_IDENTIFIER_LEN) {
+		return JS_ThrowTypeError(js_ctx,
+				"Function name exceeds maximum length of %d bytes",
+				FALKORDB_MAX_IDENTIFIER_LEN);
+	}
+
+	if((lib_len + 1 + func_len) > FALKORDB_MAX_IDENTIFIER_LEN) {
+		return JS_ThrowTypeError(js_ctx,
+				"Qualified function name exceeds maximum length of %d bytes",
+				FALKORDB_MAX_IDENTIFIER_LEN);
+	}
+
+	return JS_UNDEFINED;
+}
+
 //------------------------------------------------------------------------------
 // falkor.register implementations
 //------------------------------------------------------------------------------
@@ -55,20 +83,8 @@ static JSValue validate_register_udf
 		return JS_ThrowInternalError(js_ctx, "failed to read function name");
 	}
 
-	size_t lib_len  = strlen(UDF_LIB);
-	size_t func_len = strlen(func_name);
-
-	if(func_len > FALKORDB_MAX_IDENTIFIER_LEN) {
-		res = JS_ThrowTypeError(js_ctx,
-				"Function name exceeds maximum length of %d bytes",
-				FALKORDB_MAX_IDENTIFIER_LEN);
-		goto cleanup;
-	}
-
-	if((lib_len + 1 + func_len) > FALKORDB_MAX_IDENTIFIER_LEN) {
-		res = JS_ThrowTypeError(js_ctx,
-				"Qualified function name exceeds maximum length of %d bytes",
-				FALKORDB_MAX_IDENTIFIER_LEN);
+	res = _ValidateUDFNameLength(js_ctx, UDF_LIB, func_name);
+	if(JS_IsException(res)) {
 		goto cleanup;
 	}
 
@@ -126,20 +142,48 @@ static JSValue local_register_udf
 	}
 
 	const char *func_name = JS_ToCString(js_ctx, argv[0]) ;
+	if(func_name == NULL) {
+		return JS_ThrowInternalError(js_ctx, "failed to read function name");
+	}
 
 	JSValueConst func = argv[1] ;
 	if (!JS_IsFunction (js_ctx, func)) {
+		JS_FreeCString(js_ctx, func_name);
 		return JS_ThrowTypeError (js_ctx,
 				"second argument must be a function") ;
 	}
 
-	// register function in TLS UDF context
-	UDFCtx_RegisterFunction (JS_DupValue (js_ctx, func), func_name) ;
+	JSValue res;
 
-cleanup:
+	// register function in TLS UDF context
+	JSValue dup = JS_DupValue(js_ctx, func);
+	UDFCtx_RegisterResult reg_res = UDFCtx_RegisterFunction(dup, func_name);
+
+	switch(reg_res) {
+		case UDF_CTX_REG_OK:
+			res = JS_NewBool(js_ctx, true);
+			break;
+		case UDF_CTX_REG_ERR_FUNC_NAME_TOO_LONG:
+			JS_FreeValue(js_ctx, dup);
+			res = JS_ThrowTypeError(js_ctx,
+					"Function name exceeds maximum length of %d bytes",
+					FALKORDB_MAX_IDENTIFIER_LEN);
+			break;
+		case UDF_CTX_REG_ERR_QUALIFIED_NAME_TOO_LONG:
+			JS_FreeValue(js_ctx, dup);
+			res = JS_ThrowTypeError(js_ctx,
+					"Qualified function name exceeds maximum length of %d bytes",
+					FALKORDB_MAX_IDENTIFIER_LEN);
+			break;
+		default:
+			JS_FreeValue(js_ctx, dup);
+			res = JS_ThrowInternalError(js_ctx, "failed to register function");
+			break;
+	}
+
 	JS_FreeCString (js_ctx, func_name) ;
 
-	return JS_NewBool (js_ctx, true) ;
+	return res ;
 }
 
 // global implementation of `falkor.register`
@@ -176,20 +220,8 @@ static JSValue global_register_udf
 		return JS_ThrowInternalError(js_ctx, "failed to read function name");
 	}
 
-	size_t lib_len  = strlen(UDF_LIB);
-	size_t func_len = strlen(func_name);
-
-	if(func_len > FALKORDB_MAX_IDENTIFIER_LEN) {
-		res = JS_ThrowTypeError(js_ctx,
-				"Function name exceeds maximum length of %d bytes",
-				FALKORDB_MAX_IDENTIFIER_LEN);
-		goto cleanup;
-	}
-
-	if((lib_len + 1 + func_len) > FALKORDB_MAX_IDENTIFIER_LEN) {
-		res = JS_ThrowTypeError(js_ctx,
-				"Qualified function name exceeds maximum length of %d bytes",
-				FALKORDB_MAX_IDENTIFIER_LEN);
+	res = _ValidateUDFNameLength(js_ctx, UDF_LIB, func_name);
+	if(JS_IsException(res)) {
 		goto cleanup;
 	}
 

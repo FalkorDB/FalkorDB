@@ -161,9 +161,7 @@ static GraphContext *_DecodeHeader
 	}
 
 	// decode graph schemas
-	if(!RdbLoadGraphSchema_v19 (rdb, gc, !first_vkey)) {
-		return NULL;
-	}
+	RdbLoadGraphSchema_v19 (rdb, gc, !first_vkey) ;
 
 	// save decode statistics for later progess reporting
 	// e.g. "Decoded 20000/4500000 nodes"
@@ -216,11 +214,6 @@ GraphContext *RdbLoadGraphContext_latest
 	//  Payload(s) X N
 
 	GraphContext *gc = _DecodeHeader(rdb);
-
-	if(gc == NULL) {
-		return NULL;
-	}
-
 	Graph        *g  = GraphContext_GetGraph (gc) ;
 	GraphDecodeContext *decoding_context = GraphContext_GetDecodingCtx (gc) ;
 

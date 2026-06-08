@@ -7,6 +7,12 @@
 
 #include "quickjs.h"
 
+typedef enum {
+	UDF_CTX_REG_OK = 0,
+	UDF_CTX_REG_ERR_FUNC_NAME_TOO_LONG,
+	UDF_CTX_REG_ERR_QUALIFIED_NAME_TOO_LONG,
+} UDFCtx_RegisterResult;
+
 // instantiate the thread-local UDFCtx on module load
 bool UDFCtx_Init(void);
 
@@ -29,7 +35,7 @@ void UDFCtx_RegisterLibrary
 );
 
 // register a UDF function with TLS UDF context
-void UDFCtx_RegisterFunction
+UDFCtx_RegisterResult UDFCtx_RegisterFunction
 (
 	JSValueConst func,     // JS function
 	const char *func_name  // function name

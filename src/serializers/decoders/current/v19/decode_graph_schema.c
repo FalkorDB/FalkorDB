@@ -7,14 +7,6 @@
 #include "../../../../schema/schema.h"
 #include "../../../../util/identifier_limits.h"
 
-static inline bool _IdentifierTooLong
-(
-	const char *name
-) {
-	ASSERT(name != NULL);
-	return strlen(name) > FALKORDB_MAX_IDENTIFIER_LEN;
-}
-
 static void _RdbDecodeIndexField
 (
 	SerializerIO rdb,
@@ -40,6 +32,7 @@ static void _RdbDecodeIndexField
 
 	// decode field name
 	*name = SerializerIO_ReadBuffer(rdb, NULL);
+	RedisModule_Assert(strlen(*name) <= FALKORDB_MAX_IDENTIFIER_LEN);
 
 	// docode field type
 	*type = SerializerIO_ReadUnsigned(rdb);
@@ -71,7 +64,7 @@ static void _RdbDecodeIndexField
 	}
 }
 
-static bool _RdbLoadIndex
+static void _RdbLoadIndex
 (
 	SerializerIO rdb,
 	GraphContext *gc,
@@ -116,24 +109,10 @@ static bool _RdbLoadIndex
 		_RdbDecodeIndexField (rdb, &field_name, &type, &weight, &nostem,
 				&phonetic, &dimension, &M, &efConstruction, &efRuntime,
 				&simFunc) ;
+		RedisModule_Assert (
+			strlen(field_name) <= FALKORDB_MAX_IDENTIFIER_LEN);
 
-		if(_IdentifierTooLong(field_name)) {
-			RedisModule_Log(NULL, "warning",
-					"Decode failed: oversized index field identifier (%zu bytes)",
-					strlen(field_name));
-			RedisModule_Free (phonetic) ;
-			RedisModule_Free (field_name) ;
-			RedisModule_Free (language) ;
-			if(stopwords != NULL) {
-				for(uint j = 0; j < stopwords_count; j++) {
-					rm_free(stopwords[j]);
-				}
-				arr_free(stopwords);
-			}
-			return false;
-		}
-
-		if(!already_loaded) {
+		if (!already_loaded) {
 			IndexField field ;
 			AttributeID field_id =
 				GraphContext_FindOrAddAttribute (gc, field_name, NULL) ;
@@ -159,7 +138,9 @@ static bool _RdbLoadIndex
 		RedisModule_Free (field_name) ;
 	}
 
-	if(!already_loaded && idx != NULL) {
+	if (!already_loaded) {
+		ASSERT (idx != NULL) ;
+
 		Index_SetLanguage (idx, language) ;
 		if (stopwords != NULL) {
 			bool stopwords_set = Index_SetStopwords (idx, &stopwords) ;
@@ -183,8 +164,6 @@ static bool _RdbLoadIndex
 	}
 
 	RedisModule_Free (language) ;
-
-	return true;
 }
 
 static void _RdbLoadConstraint
@@ -247,7 +226,7 @@ static void _RdbLoadConstraint
 }
 
 // load schema's constraints
-static bool _RdbLoadConstraints
+static void _RdbLoadConstraints
 (
 	SerializerIO rdb,
 	GraphContext *gc,    // graph context
@@ -260,11 +239,9 @@ static bool _RdbLoadConstraints
 	for (uint i = 0; i < constraint_count; i++) {
 		_RdbLoadConstraint(rdb, gc, s, already_loaded);
 	}
-
-	return true;
 }
 
-static bool _RdbLoadSchema
+static void _RdbLoadSchema
 (
 	SerializerIO rdb,
 	GraphContext *gc,
@@ -283,17 +260,9 @@ static bool _RdbLoadSchema
 	Schema *s    = NULL;
 	int     id   = SerializerIO_ReadUnsigned (rdb) ;
 	char   *name = SerializerIO_ReadBuffer (rdb, NULL) ;
-	bool    schema_name_valid = !_IdentifierTooLong(name);
+	RedisModule_Assert(strlen(name) <= FALKORDB_MAX_IDENTIFIER_LEN);
 
-	if(!schema_name_valid) {
-		RedisModule_Log(NULL, "warning",
-				"Decode failed: oversized schema identifier (%zu bytes)",
-				strlen(name));
-		RedisModule_Free(name);
-		return false;
-	}
-
-	if(!already_loaded) {
+	if (!already_loaded) {
 		bool created = false ;
 		s = GraphContext_FindOrAddSchema (gc, name, type, &created) ;
 		ASSERT (s != NULL) ;
@@ -309,19 +278,17 @@ static bool _RdbLoadSchema
 
 	uint index_count = SerializerIO_ReadUnsigned (rdb) ;
 	for (uint index = 0; index < index_count; index++) {
-		if(!_RdbLoadIndex (rdb, gc, s, already_loaded)) {
-			return false;
-		}
+		_RdbLoadIndex (rdb, gc, s, already_loaded) ;
 	}
 
 	//--------------------------------------------------------------------------
 	// load constraints
 	//--------------------------------------------------------------------------
 
-	return _RdbLoadConstraints (rdb, gc, s, already_loaded) ;
+	_RdbLoadConstraints (rdb, gc, s, already_loaded) ;
 }
 
-static bool _RdbLoadAttributeKeys
+static void _RdbLoadAttributeKeys
 (
 	SerializerIO rdb,
 	GraphContext *gc
@@ -334,22 +301,14 @@ static bool _RdbLoadAttributeKeys
 	uint count = SerializerIO_ReadUnsigned(rdb);
 	for(uint i = 0; i < count; i ++) {
 		char *attr = SerializerIO_ReadBuffer(rdb, NULL);
-		if(_IdentifierTooLong(attr)) {
-			RedisModule_Log(NULL, "warning",
-					"Decode failed: oversized attribute identifier (%zu bytes)",
-					strlen(attr));
-			RedisModule_Free(attr);
-			return false;
-		}
-
+		RedisModule_Assert (
+			strlen(attr) <= FALKORDB_MAX_IDENTIFIER_LEN);
 		GraphContext_FindOrAddAttribute(gc, attr, NULL);
 		RedisModule_Free(attr);
 	}
-
-	return true;
 }
 
-bool RdbLoadGraphSchema_v19
+void RdbLoadGraphSchema_v19
 (
 	SerializerIO rdb,
 	GraphContext *gc,
@@ -365,18 +324,14 @@ bool RdbLoadGraphSchema_v19
 	 */
 
 	// Attributes, Load the full attribute mapping.
-	if(!_RdbLoadAttributeKeys (rdb, gc)) {
-		return false;
-	}
+	_RdbLoadAttributeKeys (rdb, gc) ;
 
 	// #Node schemas
 	uint schema_count = SerializerIO_ReadUnsigned (rdb) ;
 
 	// Load each node schema
 	for (uint i = 0 ; i < schema_count ; i++) {
-		if(!_RdbLoadSchema (rdb, gc, SCHEMA_NODE, already_loaded)) {
-			return false;
-		}
+		_RdbLoadSchema (rdb, gc, SCHEMA_NODE, already_loaded) ;
 	}
 
 	// #Edge schemas
@@ -384,10 +339,7 @@ bool RdbLoadGraphSchema_v19
 
 	// Load each edge schema
 	for (uint i = 0 ; i < schema_count ; i++) {
-		if(!_RdbLoadSchema (rdb, gc, SCHEMA_EDGE, already_loaded)) {
-			return false;
-		}
+		_RdbLoadSchema (rdb, gc, SCHEMA_EDGE, already_loaded) ;
 	}
-
-	return true;
 }
+

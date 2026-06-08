@@ -49,10 +49,6 @@ static void *_GraphContextType_RdbLoad
 		gc = RdbLoadGraph(rdb);
 	}
 
-	if(gc == NULL) {
-		return NULL;
-	}
-
 	// add GraphContext to global array of graphs
 	GraphContext_RegisterWithModule(gc);
 
