@@ -46,7 +46,7 @@ static inline void _decode(const char *in, uint8_t *out, size_t out_len) {
 void IndexDocKey_EncodeNode
 (
 	EntityID id,
-	char out[NODE_DOC_KEY_BUF]
+	char out[NODE_DOC_KEY_BUF_SIZE]
 ) {
 	_encode((const uint8_t *)&id, sizeof(EntityID), out);
 }
@@ -64,7 +64,7 @@ void IndexDocKey_DecodeNode
 void IndexDocKey_EncodeEdge
 (
 	const EdgeIndexKey *key,
-	char out[EDGE_DOC_KEY_BUF]
+	char out[EDGE_DOC_KEY_BUF_SIZE]
 ) {
 	ASSERT(key != NULL);
 	_encode((const uint8_t *)key, sizeof(EdgeIndexKey), out);

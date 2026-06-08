@@ -14,15 +14,15 @@
 // lowercase hex chars.
 #define NODE_DOC_KEY_LEN  (sizeof(EntityID) * 2)
 #define EDGE_DOC_KEY_LEN  (sizeof(EdgeIndexKey) * 2)
-#define NODE_DOC_KEY_BUF  (NODE_DOC_KEY_LEN + 1)
-#define EDGE_DOC_KEY_BUF  (EDGE_DOC_KEY_LEN + 1)
+#define NODE_DOC_KEY_BUF_SIZE  (NODE_DOC_KEY_LEN + 1)
+#define EDGE_DOC_KEY_BUF_SIZE  (EDGE_DOC_KEY_LEN + 1)
 
 // Encode an 8-byte EntityID as NODE_DOC_KEY_LEN lowercase hex chars,
 // followed by a NUL terminator.
 void IndexDocKey_EncodeNode
 (
 	EntityID id,                   // entity id
-	char out[NODE_DOC_KEY_BUF]     // [out] hex-encoded doc key
+	char out[NODE_DOC_KEY_BUF_SIZE]     // [out] hex-encoded doc key
 );
 
 // Decode NODE_DOC_KEY_LEN lowercase hex chars back to an EntityID.
@@ -37,7 +37,7 @@ void IndexDocKey_DecodeNode
 void IndexDocKey_EncodeEdge
 (
 	const EdgeIndexKey *key,       // edge doc key
-	char out[EDGE_DOC_KEY_BUF]     // [out] hex-encoded doc key
+	char out[EDGE_DOC_KEY_BUF_SIZE]     // [out] hex-encoded doc key
 );
 
 // Decode EDGE_DOC_KEY_LEN lowercase hex chars back to an EdgeIndexKey.
