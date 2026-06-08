@@ -35,7 +35,7 @@ use crate::parser::ast::{ExprIR, QueryExpr, QueryRelationship, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow, Column},
     row::{Row, RowView},
     runtime::Runtime,
     value::Value,
@@ -877,10 +877,10 @@ impl<'a> CondTraverseOp<'a> {
             }
 
             // Scan edges
+            let env = BatchRow::new(batch, row_idx);
             for cell in edge_iters {
                 let mut it = cell.borrow_mut();
                 it.seek(key, key);
-                let env = BatchRow::new(batch, row_idx);
                 for (_, raw_id) in &mut *it {
                     let id = RelationshipId::from(raw_id);
                     // Relationship uniqueness: skip edges already bound to other
@@ -907,7 +907,7 @@ impl<'a> CondTraverseOp<'a> {
                             continue;
                         }
                     }
-                    let mut row = env.clone();
+                    let mut row = env.to_owned_row();
                     row.insert(&rp.alias, Value::Relationship(Box::new((id, src, dst))));
                     row.insert(&rp.from.alias, Value::Node(from_node));
                     row.insert(&rp.to.alias, Value::Node(to_node));

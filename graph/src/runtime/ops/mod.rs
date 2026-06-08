@@ -114,7 +114,7 @@ use crate::graph::graph::RelationshipId;
 use crate::runtime::value::Value;
 
 use super::{
-    batch::{BATCH_SIZE, BatchBuilder},
+    batch::{BATCH_SIZE, Batch, BatchBuilder},
     row::{Row, RowView},
 };
 
