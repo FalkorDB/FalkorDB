@@ -14,10 +14,21 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  packages: read
+
 jobs:
+  # Prefer the PR's RC toolchain image, fall back to stable (shared workflow).
+  detect-toolchain:
+    uses: ./.github/workflows/detect-toolchain.yml
+
   haslabel:
     name: Check label or branch
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read   # github-script pulls.get
     outputs:
       has-benchmark-label: ${{ steps.haslabel.outputs.result }}
     steps:
@@ -66,11 +77,12 @@ jobs:
   run-benchmarks:
     needs:
       - create-runners
+      - detect-toolchain
     strategy:
       matrix:
         benchmark_group: [ a, b ]
     runs-on: benchmark-${{ github.run_id }}-${{ github.run_number }}-group_${{ matrix.benchmark_group }}
-    container: falkordb/falkordb-build:ubuntu
+    container: ${{ needs.detect-toolchain.outputs.image }}
     steps:
       - name: Sanitize ref name
         run: echo "SAFE_REF=$(echo '${{ github.head_ref || github.ref_name }}' | tr '/' '-')" >> "$GITHUB_ENV"
@@ -97,12 +109,19 @@ jobs:
           path: ./bin/linux-x64-release/libcypher-parser
           key: parser-x64-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c', './build.sh') }}
 
+      # The RediSearch submodule gitlink SHA is part of the cache key so that
+      # advancing the fork pin invalidates the cache even when src/version.h is
+      # unchanged (our LLAPI-extension commits do not bump the version macros).
+      - name: Compute RediSearch SHA
+        id: rs_sha
+        run: echo "sha=$(git rev-parse HEAD:deps/RediSearch)" >> "$GITHUB_OUTPUT"
+
       - name: Cache search
         id: cache_search
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ./bin/linux-x64-release/search-static
-          key: search-x64-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+          key: search-x64-${{ hashFiles('./deps/RediSearch/src/version.h') }}-${{ steps.rs_sha.outputs.sha }}
 
       - name: Cache libcurl
         id: cache_libcurl
@@ -194,6 +213,10 @@ jobs:
       - merge-results
     if: ${{ github.event_name == 'pull_request' }} # No need to run this job for branches and tags
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read          # download artifacts via the Actions API
+      pull-requests: write   # update the PR body with the comparison
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Sanitize ref name

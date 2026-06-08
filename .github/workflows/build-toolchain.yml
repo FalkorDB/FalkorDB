@@ -1,0 +1,120 @@
+# Builds one OS-flavoured toolchain image
+# (build/docker/builder/Dockerfile.<os>) for linux/amd64 and linux/arm64 and
+# publishes it as a multi-arch manifest at:
+#
+#   ghcr.io/falkordb/falkordb-build:<tag>
+#
+# Triggers:
+#   - workflow_call from build.yml's per-OS RC job (caller-supplied tag,
+#     typically "<os>-pr-<N>").
+#   - workflow_dispatch (UI / API) — manual escape hatch for refreshing the
+#     stable :<os> tag when only the apt/dnf/apk pin drifts but the Dockerfile
+#     didn't change. Only allowed from master.
+#
+# Master-branch :<os> is normally produced via PROMOTION, not rebuild:
+# build.yml's master-push job retags the merging PR's :<os>-pr-<N> to :<os>
+# via `docker buildx imagetools create`, giving a byte-identical guarantee
+# (what PR CI validated == what master publishes).
+
+name: Build toolchain image
+
+on:
+  workflow_dispatch:
+    inputs:
+      os:
+        description: "Builder OS (ubuntu / debian / alpine / amazonlinux2023 / rhel / rhel8 / rhel9)"
+        required: true
+        type: string
+      tag:
+        description: "Image tag to push (e.g. ubuntu-pr-42). Defaults to the OS name."
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      os:
+        description: "Builder OS"
+        required: true
+        type: string
+      tag:
+        description: "Image tag (e.g. ubuntu-pr-42)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-toolchain-${{ inputs.os }}-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # workflow_call passes through unchanged; gating done in caller.
+    # workflow_dispatch is only allowed from master so a feature-branch
+    # dispatch can't clobber the stable :<os> tag.
+    if: ${{ github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/master' }}
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64,     platform: linux/amd64, runner: ubuntu-latest }
+          - { arch: arm64v8, platform: linux/arm64, runner: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+          submodules: false
+
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (${{ inputs.os }} / ${{ matrix.arch }})
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
+        env:
+          TAG: ${{ inputs.tag || inputs.os }}
+        with:
+          context: .
+          file: build/docker/builder/Dockerfile.${{ inputs.os }}
+          platforms: ${{ matrix.platform }}
+          push: true
+          provenance: false
+          tags: ghcr.io/falkordb/falkordb-build:${{ env.TAG }}-${{ matrix.arch }}
+          cache-from: type=registry,ref=ghcr.io/falkordb/falkordb-build:buildcache-${{ inputs.os }}-${{ matrix.arch }}
+          cache-to:   type=registry,ref=ghcr.io/falkordb/falkordb-build:buildcache-${{ inputs.os }}-${{ matrix.arch }},mode=max
+
+  manifest:
+    needs: build
+    if: ${{ github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/master' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Assemble multi-arch manifest
+        env:
+          TAG: ${{ inputs.tag || inputs.os }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            -t ghcr.io/falkordb/falkordb-build:${TAG} \
+            ghcr.io/falkordb/falkordb-build:${TAG}-x64 \
+            ghcr.io/falkordb/falkordb-build:${TAG}-arm64v8
