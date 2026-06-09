@@ -89,6 +89,13 @@ RedisModuleBlockedClient *CommandCtx_GetBlockingClient
 	const CommandCtx *cmd_ctx
 );
 
+// set GraphContext
+void CommandCtx_SetGraphContext
+(
+	CommandCtx *cmd_ctx,
+	GraphContext *graph_ctx
+) ;
+
 // get GraphContext
 GraphContext *CommandCtx_GetGraphContext
 (

@@ -72,13 +72,15 @@ static int _ExportAPIs
 			return res ;                                                        \
 		}
 
-	EXPORT_API ("SerializerIO_Free",          SerializerIO_Free)
-	EXPORT_API ("RdbSaveGraph_latest",        RdbSaveGraph_latest)
-	EXPORT_API ("GraphContext_SetKey",        GraphContext_SetKey)
-	EXPORT_API ("GraphContext_Retrieve",      GraphContext_Retrieve)
-	EXPORT_API ("SerializerIO_FromStream",    SerializerIO_FromStream)
-	EXPORT_API ("GraphContext_ReleaseLock",   GraphContext_ReleaseLock)
-	EXPORT_API ("RdbLoadGraphContext_latest", RdbLoadGraphContext_latest)
+	EXPORT_API ("SerializerIO_Free",              SerializerIO_Free)
+	EXPORT_API ("RdbSaveGraph_latest",            RdbSaveGraph_latest)
+	EXPORT_API ("GraphContext_SetKey",            GraphContext_SetKey)
+	EXPORT_API ("GraphContext_Retrieve",          GraphContext_Retrieve)
+	EXPORT_API ("SerializerIO_FromStream",        SerializerIO_FromStream)
+	EXPORT_API ("RdbLoadGraphContext_latest",     RdbLoadGraphContext_latest)
+	EXPORT_API ("GraphContext_DecreaseRefCount",  GraphContext_DecreaseRefCount)
+	EXPORT_API ("GraphContext_AcquireReadLock",   GraphContext_AcquireReadLock)
+	EXPORT_API ("GraphContext_ReleaseReadLock",   GraphContext_ReleaseReadLock)
 
 #undef EXPORT_API
 

@@ -118,6 +118,18 @@ RedisModuleBlockedClient *CommandCtx_GetBlockingClient
 	return cmd_ctx->bc;
 }
 
+void CommandCtx_SetGraphContext
+(
+	CommandCtx *cmd_ctx,
+	GraphContext *graph_ctx
+) {
+	ASSERT (cmd_ctx            != NULL) ;
+	ASSERT (graph_ctx          != NULL) ;
+	ASSERT (cmd_ctx->graph_ctx == NULL) ;
+
+	cmd_ctx->graph_ctx = graph_ctx ;
+}
+
 GraphContext *CommandCtx_GetGraphContext
 (
 	const CommandCtx *cmd_ctx

@@ -397,9 +397,18 @@ void _query
 	bool profile,
 	void *args
 ) {
-  CommandCtx *command_ctx = (CommandCtx *)args ;
-  RedisModuleCtx *ctx = CommandCtx_GetRedisCtx (command_ctx) ;
-  GraphContext *gc = CommandCtx_GetGraphContext (command_ctx) ;
+	CommandCtx *command_ctx = (CommandCtx *)args ;
+	RedisModuleCtx *ctx = CommandCtx_GetRedisCtx (command_ctx) ;
+	GraphContext *gc = CommandCtx_GetGraphContext (command_ctx) ;
+	ExecutionCtx *exec_ctx = NULL ;
+
+	// Initialize TLS query context and track the in-flight command BEFORE any
+	// 'goto cleanup' so that QueryCtx_Free() and Globals_UntrackCommandCtx()
+	// in cleanup are always safe to call (both assert non-NULL state that is
+	// set up here).  This matters when GraphContext_Retrieve returns gc=NULL
+	// (e.g. graph re-offloaded immediately after a successful load).
+	QueryCtx *query_ctx = QueryCtx_GetQueryCtx () ;
+	Globals_TrackCommandCtx (command_ctx) ;
 
 	if (gc == NULL) {
 		GraphContext_Retrieve (ctx, command_ctx->rm_graph_name, true, false,
@@ -409,13 +418,12 @@ void _query
 			// error emitted
 			goto cleanup ;
 		}
+
+		CommandCtx_SetGraphContext (command_ctx, gc) ;
 	}
 
-	QueryCtx *query_ctx = QueryCtx_GetQueryCtx () ;
 	Graph *g = GraphContext_GetGraph (gc) ;
-	ExecutionCtx *exec_ctx = NULL ;
 
-	Globals_TrackCommandCtx (command_ctx) ;
 	QueryCtx_SetGlobalExecutionCtx (command_ctx) ;
 	UDFCtx_Update () ;  // make sure thread's UDFs are up to date
 

@@ -178,6 +178,14 @@ GraphRetrieveStatus GraphContext_Retrieve
 		}
 	}
 
+	// Increment the ref count while still holding the GIL (or on the main
+	// thread where no other command can run).  Moving it here closes the race
+	// where a concurrent GRAPH.OFFLOAD Phase 3 could free the gc between the
+	// pointer read above and the increment below.
+	if (*gc != NULL) {
+		GraphContext_IncreaseRefCount (*gc) ;
+	}
+
 	RedisModule_CloseKey (key) ;
 
 	if (from_thread) {
@@ -189,7 +197,6 @@ GraphRetrieveStatus GraphContext_Retrieve
 	//--------------------------------------------------------------------------
 
 	if (*gc != NULL) {
-		GraphContext_IncreaseRefCount (*gc) ;
 		return GraphRetrieve_RETRIEVED ;
 	}
 
