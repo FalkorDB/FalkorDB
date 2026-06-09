@@ -13,10 +13,20 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  packages: read
+
 jobs:
+  # Pick the toolchain image (PR's RC if it built one, else stable) via the
+  # shared reusable workflow.
+  detect-toolchain:
+    uses: ./.github/workflows/detect-toolchain.yml
+
   sanitize-test:
+    needs: detect-toolchain
     runs-on: ubuntu-latest
-    container: falkordb/falkordb-build:ubuntu
+    container: ${{ needs.detect-toolchain.outputs.image }}
     steps:
 
     - name: Safe dir
@@ -41,12 +51,19 @@ jobs:
         path: ./bin/linux-x64-debug-asan/libcypher-parser
         key: parser-sanitizer-llvm-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
 
+    # The RediSearch submodule gitlink SHA is part of the cache key so that
+    # advancing the fork pin invalidates the cache even when src/version.h is
+    # unchanged (our LLAPI-extension commits do not bump the version macros).
+    - name: Compute RediSearch SHA
+      id: rs_sha
+      run: echo "sha=$(git rev-parse HEAD:deps/RediSearch)" >> "$GITHUB_OUTPUT"
+
     - name: Cache search
       id: cache_search
       uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: ./bin/linux-x64-debug-asan/search-static
-        key: search-sanitizer-llvm-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+        key: search-sanitizer-llvm-${{ hashFiles('./deps/RediSearch/src/version.h') }}-${{ steps.rs_sha.outputs.sha }}
 
     - name: Cache libcurl
       id: cache_libcurl
@@ -65,6 +82,10 @@ jobs:
     - name: Build
       run: |
         rustup default nightly
+        # -Zbuild-std (enabled by RediSearch's redisearch_rs CMakeLists.txt
+        # when SAN=address) needs the standard library *source* installed
+        # alongside the nightly toolchain.
+        rustup component add rust-src --toolchain nightly
         apt-get update
         apt-get install -y lsb-release wget software-properties-common gnupg
         wget https://apt.llvm.org/llvm.sh

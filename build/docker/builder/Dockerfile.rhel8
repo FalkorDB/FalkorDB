@@ -1,0 +1,136 @@
+# Builder toolchain image — RHEL UBI8
+#
+# UBI8 cmake 3.26.5 is fine; needs clang for bindgen/clang-sys. UBI8 has no
+# OpenSSL 3 package — build from source as before.
+#
+# Additional fix on top of build-image's Dockerfile.rhel8: the locally-built
+# OpenSSL 3 lives under /usr/local/openssl3/include. Setting OPENSSL_ROOT_DIR
+# (for cmake's find_package) isn't enough — RediSearch's coord/rmr/conn.c
+# `#include <openssl/ssl.h>` is resolved by the bare compiler driver. Export
+# C_INCLUDE_PATH / CPLUS_INCLUDE_PATH so gcc/clang find the headers without
+# explicit -I.
+#
+# Redis: built from git at REDIS_VERSION (multi-stage). Same pinned tag
+# (8.6.3) as the other toolchains and sanitize. Built on UBI8 with the
+# default openssl-devel (1.1) since Redis's BUILD_TLS doesn't require
+# OpenSSL 3.
+
+ARG REDIS_VERSION=8.6.3
+
+#--------------------------------------------------------------------------
+# Stage 1: build redis-server / redis-cli from source at a pinned tag.
+#--------------------------------------------------------------------------
+FROM redhat/ubi8 AS redis-builder
+
+ARG REDIS_VERSION
+RUN yum install -y \
+      git ca-certificates gcc gcc-c++ glibc-devel openssl-devel make tar gzip && \
+    yum clean all
+
+WORKDIR /tmp
+RUN git clone --depth 1 --branch "${REDIS_VERSION}" https://github.com/redis/redis.git redis-src
+WORKDIR /tmp/redis-src
+
+RUN set -eux; \
+    sed -ri 's!^( *createBoolConfig[(]"protected-mode",.*, *)1( *,.*[)],)$!\10\2!' src/config.c; \
+    grep -E '^ *createBoolConfig[(]"protected-mode",.*, *0 *,.*[)],$' src/config.c; \
+    export BUILD_TLS=yes BUILD_WITH_MODULES=no; \
+    make -j "$(nproc)" all; \
+    make PREFIX=/redis-install install; \
+    strip /redis-install/bin/redis-server /redis-install/bin/redis-cli; \
+    /redis-install/bin/redis-server --version
+
+#--------------------------------------------------------------------------
+# Stage 2: actual toolchain image.
+#--------------------------------------------------------------------------
+FROM redhat/ubi8 AS builder
+
+# UBI8 needs codeready-builder repo for clang-devel
+RUN yum update -y && \
+    yum install -y dnf-plugins-core && \
+    dnf config-manager --set-enabled ubi-8-codeready-builder-rpms || true && \
+    yum install -y \
+      wget autoconf automake \
+      python3.11 python3.11-pip \
+      libtool git make perl-core \
+      zlib-devel libstdc++-static \
+      gcc-toolset-14 \
+      diffutils \
+      clang clang-devel && \
+    alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 && \
+    alternatives --auto python3 && \
+    yum clean all
+
+ENV PATH="/opt/rh/gcc-toolset-14/root/usr/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/opt/rh/gcc-toolset-14/root/usr/lib64"
+
+# Pin cmake to the same exact version across every builder OS.
+RUN pip3.11 install --no-cache-dir 'cmake==3.31.6'
+
+# Build & install OpenSSL 3 from source (no OpenSSL 3 package in UBI8)
+ARG OPENSSL_VERSION=3.0.15
+ARG OPENSSL_SHA256=23c666d0edf20f14249b3d8f0368acaee9ab585b09e1de82107c66e1f3ec9533
+RUN set -eux; \
+    wget -O openssl.tar.gz "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz"; \
+    echo "${OPENSSL_SHA256}  openssl.tar.gz" | sha256sum -c -; \
+    tar -xzf openssl.tar.gz; \
+    cd "openssl-${OPENSSL_VERSION}"; \
+    ./Configure --prefix=/usr/local/openssl3 --openssldir=/usr/local/openssl3/ssl --libdir=lib64 shared zlib; \
+    make -j"$(nproc)"; \
+    make install_sw install_ssldirs; \
+    echo "/usr/local/openssl3/lib64" > /etc/ld.so.conf.d/openssl3.conf; \
+    ldconfig; \
+    cd ..; \
+    rm -rf "openssl-${OPENSSL_VERSION}" openssl.tar.gz
+
+# cmake find_package(OpenSSL)
+ENV OPENSSL_ROOT_DIR="/usr/local/openssl3"
+ENV OPENSSL_INCLUDE_DIR="/usr/local/openssl3/include"
+ENV OPENSSL_CRYPTO_LIBRARY="/usr/local/openssl3/lib64/libcrypto.so"
+ENV OPENSSL_SSL_LIBRARY="/usr/local/openssl3/lib64/libssl.so"
+ENV PKG_CONFIG_PATH="/usr/local/openssl3/lib64/pkgconfig:${PKG_CONFIG_PATH}"
+ENV PATH="/usr/local/openssl3/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/usr/local/openssl3/lib64:${LD_LIBRARY_PATH}"
+
+# Bare compiler driver needs the headers too — RediSearch's coord
+# sources do `#include <openssl/ssl.h>` without going through cmake/pkg-config.
+ENV C_INCLUDE_PATH="/usr/local/openssl3/include"
+ENV CPLUS_INCLUDE_PATH="/usr/local/openssl3/include"
+ENV LIBRARY_PATH="/usr/local/openssl3/lib64"
+
+# Rust toolchain
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Build & install peg
+ARG PEG_VERSION=0.1.19
+ARG PEG_SHA256=74d1b7b905dbbc1776502a4ccf9c38ad8b86c9f8e51b825214783eefd5cdc9af
+RUN set -eux; \
+    url="https://github.com/gpakosz/peg/archive/refs/tags/${PEG_VERSION}.tar.gz"; \
+    wget -O peg.tar.gz "$url"; \
+    echo "${PEG_SHA256}  peg.tar.gz" | sha256sum -c -; \
+    tar -xzf peg.tar.gz; \
+    cd "peg-${PEG_VERSION}"; \
+    make && make install; \
+    cd ..; \
+    rm -rf "peg-${PEG_VERSION}" peg.tar.gz
+
+# Build & install gperf
+ARG GPERF_VERSION=3.1
+ARG GPERF_SHA256=588546b945bba4b70b6a3a616e80b4ab466e3f33024a352fc2198112cdbb3ae2
+RUN set -eux; \
+    wget -O gperf.tar.gz "https://ftp.gnu.org/gnu/gperf/gperf-${GPERF_VERSION}.tar.gz"; \
+    echo "${GPERF_SHA256}  gperf.tar.gz" | sha256sum -c -; \
+    tar -xzf gperf.tar.gz; \
+    cd "gperf-${GPERF_VERSION}"; \
+    ./configure; make; make install; \
+    cd ..; \
+    rm -rf "gperf-${GPERF_VERSION}" gperf.tar.gz
+
+# redis-server / redis-cli — copied LAST so a REDIS_VERSION bump only rebuilds
+# this cheap layer and leaves the toolchain download layers (rust/cmake/apt)
+# cached. /usr/local/bin precedes /usr/bin on PATH (where RLTest looks).
+COPY --from=redis-builder /redis-install/bin/redis-server /usr/local/bin/redis-server
+COPY --from=redis-builder /redis-install/bin/redis-cli    /usr/local/bin/redis-cli
+
+CMD ["/bin/bash"]
