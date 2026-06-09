@@ -138,13 +138,7 @@ static bool _FilterTreeToMultiValQueryNode
 	ASSERT(attribute == true);
 
 	AR_ExpNode *rhs = AR_EXP_getChild(inOp, 1);
-	SIValue list = SI_NullVal();
-
-	if (AR_EXP_IsConstant(rhs)) {
-		list = rhs->operand.constant;
-	} else if (AR_EXP_ContainsFunc(rhs, "range") && !AR_EXP_ContainsVariadic(rhs)) {
-		list = AR_EXP_Evaluate(rhs, NULL);
-	}
+	SIValue list = AR_EXP_Evaluate(rhs, NULL);
 
 	if(SI_TYPE(list) != T_ARRAY) {
 		return false;

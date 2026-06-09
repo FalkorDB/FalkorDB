@@ -29,7 +29,6 @@
 // Filter normalization
 //------------------------------------------------------------------------------
 
-
 // modifies filter tree such that the left hand side performs
 // attribute lookup on 'filtered_entity'
 static void _normalize_filter
