@@ -899,6 +899,43 @@ RSIndex *Index_RSIndex
 	return idx->rsIdx;
 }
 
+
+// returns index memory usage
+size_t Index_MemoryUsage
+(
+	const Index idx  // index to inspect
+) {
+	ASSERT(idx != NULL);
+
+	size_t n = 0;
+
+	// include FalkorDB wrapper allocation and owned memory
+	n += RedisModule_MallocSize((void *)idx);
+
+	// include the internal RediSearch index memory
+	if(idx->rsIdx != NULL) {
+		n += RediSearch_MemUsage(idx->rsIdx);
+	}
+
+	if(idx->label != NULL) {
+		n += RedisModule_MallocSize(idx->label);
+	}
+
+	if(idx->language != NULL) {
+		n += RedisModule_MallocSize(idx->language);
+	}
+
+	if(idx->fields != NULL) {
+		n += arr_bytesize(idx->fields);
+	}
+
+	if(idx->stopwords != NULL) {
+		n += arr_bytesize(idx->stopwords);
+	}
+
+	return n;
+}
+
 // free index
 void Index_Free
 (
