@@ -302,13 +302,7 @@ static void LoadGraphFromFile
 			"Decoding graph: %s from: %s", copy_ctx->dest, copy_ctx->path);
 
 	GraphContext *gc = RdbLoadGraphContext_latest(io, copy_ctx->rm_dest);
-	if(gc == NULL) {
-		RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_WARNING,
-				"GRAPH.COPY failed decoding graph: %s",
-				copy_ctx->path);
-		RedisModule_ReplyWithError(ctx, "copy failed");
-		goto cleanup;
-	}
+	ASSERT(gc != NULL);
 
 	//--------------------------------------------------------------------------
 	// add cloned graph to keyspace
@@ -573,3 +567,4 @@ int Graph_Copy
 
 	return REDISMODULE_OK;
 }
+

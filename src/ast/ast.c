@@ -516,6 +516,7 @@ bool AST_ClauseContainsAggregation
 	rax *referred_funcs = raxNew();
 	AST_ReferredFunctions(clause, referred_funcs);
 
+	char funcName[FALKORDB_MAX_IDENTIFIER_LEN + 1];
 	raxIterator it;
 	_prepareIterateAll(referred_funcs, &it);
 	while(raxNext(&it)) {
@@ -526,17 +527,14 @@ bool AST_ClauseContainsAggregation
 			continue;
 		}
 
-		char *funcName = rm_malloc(len + 1);
-		// Copy the triemap key so that we can safely add a terinator character
+		// Copy the triemap key
 		memcpy(funcName, it.key, len);
 		funcName[len] = 0;
 
 		if(AR_FuncIsAggregate(funcName)) {
 			aggregated = true;
-			rm_free(funcName);
 			break;
 		}
-		rm_free(funcName);
 	}
 	raxStop(&it);
 	raxFree(referred_funcs);

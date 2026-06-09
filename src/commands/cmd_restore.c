@@ -67,13 +67,7 @@ int Graph_Restore
 
 	// decode graph
 	GraphContext *gc = RdbLoadGraphContext_latest(io, argv[1]);
-
-	if(gc == NULL) {
-		SerializerIO_Free(&io);
-		fclose(stream);
-		RedisModule_ReplyWithError(ctx, "restore graph failed, invalid payload");
-		return REDISMODULE_OK;
-	}
+	ASSERT(gc != NULL);
 
 	// add graph to keyspace
 	key = RedisModule_OpenKey(ctx, argv[1], REDISMODULE_WRITE);
@@ -96,3 +90,4 @@ int Graph_Restore
 
 	return REDISMODULE_OK;
 }
+

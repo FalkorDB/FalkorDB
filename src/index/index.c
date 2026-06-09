@@ -977,3 +977,4 @@ void Index_Free
 	rm_free(idx->label);
 	rm_free(idx);
 }
+
