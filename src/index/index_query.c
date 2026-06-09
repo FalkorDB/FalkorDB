@@ -147,7 +147,6 @@ static bool _FilterTreeToMultiValQueryNode
 	}
 
 	if(SI_TYPE(list) != T_ARRAY) {
-		SIValue_Free(list);
 		return false;
 	}
 
@@ -156,7 +155,6 @@ static bool _FilterTreeToMultiValQueryNode
 	if(list_len == 0) {
 		// special case: "WHERE a.v in []"
 		*root = RediSearch_CreateEmptyNode(idx);
-		SIValue_Free(list);
 		return true;
 	}
 
@@ -205,8 +203,6 @@ static bool _FilterTreeToMultiValQueryNode
 	} else {
 		*root = U;
 	}
-
-	SIValue_Free(list);
 
 	return res;
 }

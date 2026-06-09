@@ -697,6 +697,8 @@ static AR_FuncDesc _desc_slice = {
     .min_argc=3, .max_argc=3,
     .internal=true, .reducible=true, .deterministic=true };
 
+// range is irriducable, this is done to prevent materialized arrays being
+// placed in the cache
 static AR_FuncDesc _desc_range = {
     .name="range", .func=AR_RANGE,
     TA (T_INT64, T_INT64, T_INT64), .ret_type=T_ARRAY | T_NULL,

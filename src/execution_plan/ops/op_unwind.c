@@ -1,15 +1,14 @@
 /*
- * Copyright Redis Ltd. 2018 - present
- * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
- * the Server Side Public License v1 (SSPLv1).
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
+#include "limits.h"
 #include "op_unwind.h"
 #include "../../query_ctx.h"
 #include "../../errors/errors.h"
 #include "../../datatypes/array.h"
 #include "../../arithmetic/arithmetic_expression.h"
-#include "limits.h"
 
 // forward declarations
 static void UnwindFree(OpBase *opBase);
@@ -27,7 +26,6 @@ OpBase *NewUnwindOp
 
 	op->exp  = exp;
 	op->list = SI_NullVal();
-	RangeIter_free(&op->rangeIter);
 
 	// Set our Op operations
 	OpBase_Init((OpBase *)op, OPType_UNWIND, "Unwind", UnwindInit, UnwindConsume,
@@ -49,11 +47,11 @@ static void _initList
 
 	// Null-set the list value to avoid memory errors if evaluation fails
 	op->list = SI_NullVal();
-	RangeIter_free(&op->rangeIter);
 
-	if(RangeIter_fromRangeExp(&op->rangeIter, op->exp)) {
+	op->isRangeIter = RangeIter_fromRangeExp(&op->rangeIter, op->exp) ;
+	if(op->isRangeIter) {
 		op->listIdx = 0;
-		op->listLen = 0;
+		op->listLen = RangeIter_len(op->rangeIter);
 		return;
 	}
 
@@ -97,32 +95,27 @@ static Record _handoff
 (
 	OpUnwind *op
 ) {
-	if(op->rangeIter.active) {
+	SIValue v;
+
+	if(op->isRangeIter) {
 		int64_t current = 0;
 		if(!RangeIter_next(&op->rangeIter, &current)) {
 			return NULL;
 		}
-
-		Record r = OpBase_CloneRecord(op->currentRecord);
-		SIValue v = SI_LongVal(current);
-		Record_Add(r, op->unwindRecIdx, v);
-		return r;
-	}
-
-	if(op->listIdx >= op->listLen) {
+		v = SI_LongVal(current);
+	} else if(op->listIdx >= op->listLen) {
 		return NULL;
+	} else {
+		v = SIArray_Get(op->list, op->listIdx);
+		if(!(SI_TYPE(v) & SI_GRAPHENTITY)) {
+			SIValue_Persist(&v);
+		}
+		op->listIdx++;
 	}
 
 	Record  r = OpBase_CloneRecord(op->currentRecord);
-	SIValue v = SIArray_Get(op->list, op->listIdx);
-
-	if(!(SI_TYPE(v) & SI_GRAPHENTITY)) {
-		SIValue_Persist(&v);
-	}
-
 	Record_Add(r, op->unwindRecIdx, v);
 
-	op->listIdx++;
 	return r;
 }
 
@@ -157,7 +150,7 @@ static Record UnwindConsume
 		_initList(op);
 
 		// skip empty lists
-		if(op->listLen != 0 || op->rangeIter.active) {
+		if(op->listLen != 0) {
 			break;
 		}
 	}
@@ -173,17 +166,18 @@ static OpResult UnwindReset
 
 	if (op->op.childCount == 0) {
 		// no child operation, list must be static.
-		if(op->rangeIter.active) {
+		if(op->isRangeIter) {
 			RangeIter_reset(&op->rangeIter);
 		} else {
 			op->listIdx = 0;
 		}
 	} else {
+		op->isRangeIter = false;
 		op->listIdx = 0;
 		op->listLen = 0;
 		SIValue_Free(op->list);
 		op->list = SI_NullVal();
-		RangeIter_free(&op->rangeIter);
+		RangeIter_reset(&op->rangeIter);
 	}
 
 	return OP_OK ;
@@ -207,7 +201,6 @@ static void UnwindFree
 	OpUnwind *op = (OpUnwind *)ctx;
 	SIValue_Free(op->list);
 	op->list = SI_NullVal();
-	RangeIter_free(&op->rangeIter);
 
 	if(op->exp) {
 		AR_EXP_Free(op->exp);
@@ -220,3 +213,4 @@ static void UnwindFree
 
 	op->currentRecord = NULL;
 }
+
