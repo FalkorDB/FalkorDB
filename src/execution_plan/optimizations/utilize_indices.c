@@ -95,13 +95,6 @@ static bool _applicableInExpression
 		SIValue list = SI_NullVal();
 		AR_EXP_ReduceToScalar(rhs, true, &list);
 
-		// range() is marked as non-reducible; for IN index, evaluate static
-		// range expressions explicitly.
-		if(SI_TYPE(list) != T_ARRAY &&
-		   AR_EXP_ContainsFunc(rhs, "range") &&
-		   !AR_EXP_ContainsVariadic(rhs)) {
-			list = AR_EXP_Evaluate(rhs, NULL);
-		}
 
 		if(SI_TYPE(list) != T_ARRAY) {
 			return false;
