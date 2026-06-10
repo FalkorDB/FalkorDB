@@ -519,6 +519,11 @@ void _query
 	return ;
 
 cleanup:
+	// avoid timeout callbacks touching a plan that is about to be freed
+	if(timeout_task != 0) {
+		Cron_AbortTask(timeout_task);
+	}
+
 	// if there were any query compile time errors, report them
 	if (ErrorCtx_EncounteredError ()) {
 		ErrorCtx_EmitException () ;
@@ -547,3 +552,4 @@ void Graph_Query
 ) {
 	_query (false, args) ;
 }
+
