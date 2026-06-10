@@ -129,15 +129,19 @@ int SIVector_Compare
 	uint32_t dim_a = va->dim;
 	uint32_t dim_b = vb->dim;
 
-	if(dim_a != dim_b) return dim_a - dim_b;
+	if (dim_a > dim_b) return 1;
+	if (dim_a < dim_b) return -1;
 
 	// compare vectors' elements
 	float *elements_a = (float*)va->elements;
 	float *elements_b = (float*)vb->elements;
 
 	for(uint32_t i = 0; i < dim_a; i++) {
-		if(elements_a[i] != elements_b[i]) {
-			return elements_a[i] - elements_b[i];
+		if (elements_a[i] != elements_b[i]) {
+			if (elements_a[i] > elements_b[i]) {
+				return 1;
+			}
+			return -1;
 		}
 	}
 
