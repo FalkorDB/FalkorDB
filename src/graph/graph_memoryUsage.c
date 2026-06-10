@@ -26,15 +26,7 @@ void Graph_memoryUsage
 
 	D = Graph_GetAdjacencyMatrix (g, false) ;
 
-	info = Delta_Matrix_memoryUsage (&n, D) ;
-	ASSERT (info == GrB_SUCCESS) ;
-
-	result->rel_matrices_sz += n ;
-
-	D = Graph_GetAdjacencyMatrix (g, true) ;
-
-	info = Delta_Matrix_memoryUsage (&n, D) ;
-	ASSERT (info == GrB_SUCCESS) ;
+	GrB_OK (Delta_Matrix_memoryUsage (&n, D)) ;
 
 	result->rel_matrices_sz += n ;
 
@@ -47,8 +39,7 @@ void Graph_memoryUsage
 	for (LabelID lbl = 0 ; lbl < n_lbl ; lbl++) {
 		D = Graph_GetLabelMatrix (g, lbl) ;
 
-		info = Delta_Matrix_memoryUsage (&n, D) ;
-		ASSERT (info == GrB_SUCCESS) ;
+		GrB_OK (Delta_Matrix_memoryUsage (&n, D)) ;
 
 		result->lbl_matrices_sz += n ;
 	}
@@ -56,8 +47,7 @@ void Graph_memoryUsage
 	// account for graph's node labels matrix
 	D = Graph_GetNodeLabelMatrix (g) ;
 
-	info = Delta_Matrix_memoryUsage (&n, D) ;
-	ASSERT (info == GrB_SUCCESS) ;
+	GrB_OK (Delta_Matrix_memoryUsage (&n, D)) ;
 
 	result->lbl_matrices_sz += n ;
 
@@ -69,11 +59,23 @@ void Graph_memoryUsage
 	for (RelationID rel = 0; rel < n_rel; rel++) {
 		T = Graph_GetRelationMatrix (g, rel, false) ;
 
-		info = Delta_Matrix_memoryUsage (&n, T) ;
-		ASSERT (info == GrB_SUCCESS) ;
+		if (Graph_RelationshipContainsMultiEdge(g, rel)) {
+			GrB_OK (Tensor_memoryUsage (&n, T)) ;
+		} else {
+			GrB_OK (Delta_Matrix_memoryUsage (&n, D)) ;
+		}
 
 		result->rel_matrices_sz += n ;
 	}
+
+	//--------------------------------------------------------------------------
+	// graph's zero matrix
+	//--------------------------------------------------------------------------
+	D = Graph_GetZeroMatrix (g) ;
+
+	GrB_OK (Delta_Matrix_memoryUsage (&n, D)) ;
+
+	result->rel_matrices_sz += n ;
 
 	//--------------------------------------------------------------------------
 	// graph's datablocks

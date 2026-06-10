@@ -100,7 +100,10 @@ void DataBlockIterator_Seek
 	uint64_t idx            // index to seek to
 ) {
 	ASSERT (it != NULL) ;
-	ASSERT (idx <= it->_end_pos) ;
+
+    if(idx > it->_end_pos) {
+       idx = it->_end_pos ;
+     }
 
 	// reset iterator
 	it->_block_pos     = 0 ;

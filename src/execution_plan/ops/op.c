@@ -102,9 +102,8 @@ inline Record OpBase_Consume
 (
 	OpBase *op
 ) {
-	ASSERT(op != NULL);
-
-	return op->consume(op);
+	ASSERT (op != NULL) ;
+	return op->consume (op) ;
 }
 
 // returns true if operation is aware of all aliases
