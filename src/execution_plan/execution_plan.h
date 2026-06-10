@@ -11,6 +11,7 @@
 #include "../resultset/resultset.h"
 #include "../filter_tree/filter_tree.h"
 #include "../util/object_pool/object_pool.h"
+
 #include <stdatomic.h>
 
 typedef struct ExecutionPlan ExecutionPlan;
@@ -22,7 +23,7 @@ struct ExecutionPlan {
 	QueryGraph *query_graph;  // queryGraph representing all graph entities in this segment
 	ObjectPool *record_pool;
 	bool prepared;            // indicates if the execution plan is ready for execute
-	atomic_bool drained; // timeout/abort requested for this execution
+	atomic_bool drained;      // timeout/abort requested for this execution
 };
 
 // creates a new execution plan from AST
