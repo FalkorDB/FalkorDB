@@ -21,7 +21,9 @@
 
 // allocate a new ExecutionPlan segment
 inline ExecutionPlan *ExecutionPlan_NewEmptyExecutionPlan(void) {
-	return rm_calloc (1, sizeof (ExecutionPlan)) ;
+	ExecutionPlan *plan = rm_calloc (1, sizeof (ExecutionPlan)) ;
+	atomic_init (&plan->drained, false) ;
+	return plan ;
 }
 
 void ExecutionPlan_PopulateExecutionPlan
@@ -584,11 +586,11 @@ void ExecutionPlan_Drain
 ) {
 	ASSERT (plan != NULL) ;
 
+	atomic_store (&plan->drained, true) ;
+
 	if (plan->root != NULL) {
 		_ExecutionPlan_Drain (plan->root) ;
 	}
-
-	atomic_store (&plan->drained, true) ;
 }
 
 //------------------------------------------------------------------------------
