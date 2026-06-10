@@ -9,6 +9,7 @@
 #include "op_sort.h"
 #include "op_project.h"
 #include "op_aggregate.h"
+#include "../execution_plan.h"
 #include "../../util/rmalloc.h"
 #include "../../util/simple_timer.h"
 
@@ -103,6 +104,9 @@ inline Record OpBase_Consume
 	OpBase *op
 ) {
 	ASSERT(op != NULL);
+	if(ExecutionPlan_Drained((ExecutionPlan *)op->plan)) {
+		return NULL;
+	}
 
 	return op->consume(op);
 }

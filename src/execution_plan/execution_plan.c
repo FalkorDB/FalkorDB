@@ -548,31 +548,18 @@ ResultSet *ExecutionPlan_Execute(ExecutionPlan *plan) {
 // Execution plan draining
 //------------------------------------------------------------------------------
 
-// NOP operation consume routine for immediately terminating execution.
-static Record deplete_consume(struct OpBase *op) {
-	return NULL;
-}
-
 // return true if execution plan been drained
 // false otherwise
 bool ExecutionPlan_Drained(ExecutionPlan *plan) {
 	ASSERT(plan != NULL);
-	ASSERT(plan->root != NULL);
-	return (plan->root->consume == deplete_consume);
+	return atomic_load(&plan->drained);
 }
 
-static void _ExecutionPlan_Drain(OpBase *root) {
-	root->consume = deplete_consume;
-	for(int i = 0; i < root->childCount; i++) {
-		_ExecutionPlan_Drain(root->children[i]);
-	}
-}
-
-// Resets each operation consume function to simply return NULL
-// this will cause the execution-plan to quickly deplete
+// Mark execution-plan as drained.
+// Consumers check this flag and stop execution.
 void ExecutionPlan_Drain(ExecutionPlan *plan) {
-	ASSERT(plan && plan->root);
-	_ExecutionPlan_Drain(plan->root);
+	ASSERT(plan != NULL);
+	atomic_store(&plan->drained, true);
 }
 
 //------------------------------------------------------------------------------
@@ -701,6 +688,7 @@ void ExecutionPlan_Free
 	OpBase **to_visit = arr_new (OpBase *, 1) ;
 
 	OpBase *op = plan->root ;
+	plan->root = NULL ;
 	arr_append (to_visit, op) ;
 
 	while (arr_len(to_visit) > 0) {
