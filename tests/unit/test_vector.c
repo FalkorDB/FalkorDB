@@ -112,6 +112,20 @@ void test_vector_compare(void) {
 	b_f_elements[0] = 1;
 	TEST_ASSERT(SIVector_Compare(a, b) < 0);
 
+	for(int i = 0; i < 3; i++) {
+		a_f_elements[i] = i / 10.0;
+		b_f_elements[i] = i / 10.0;
+	}
+
+	TEST_ASSERT(SIVector_Compare(a, b) == 0);
+
+	a_f_elements[0] = .21;
+	TEST_ASSERT(SIVector_Compare(a, b) > 0);
+
+	a_f_elements[0] = 0;
+	b_f_elements[0] = .1;
+	TEST_ASSERT(SIVector_Compare(a, b) < 0);
+
 	SIVector_Free(a);
 	SIVector_Free(b);
 }
