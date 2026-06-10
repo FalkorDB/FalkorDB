@@ -770,7 +770,11 @@ int AR_EXP_getChildCount
 ) {
 	ASSERT(root != NULL);
 
-	return NODE_CHILD_COUNT(root) ;
+	if(root->type == AR_EXP_OP) {
+		return NODE_CHILD_COUNT(root) ;
+	}
+
+	return 0;
 }
 
 // get the ith child of root
