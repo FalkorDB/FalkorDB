@@ -891,3 +891,83 @@ void Tensor_free
 	Delta_Matrix_free(T);
 }
 
+// GrB_BinaryOp function: returns size of x if vector and 0 if scalar
+void _multiedge_memory (
+	uint64_t *z,        // sizeof x
+	const uint64_t *x,  // possible multiedge
+	const void *y       // unused
+) {
+	if (*x <= MSB_MASK) {
+		*z = 0;
+	} else {
+		GrB_OK(GxB_Vector_memoryUsage(z, AS_VECTOR(*x)));
+	}
+}
+
+// return # of bytes used for a tensor
+GrB_Info Tensor_memoryUsage
+(
+    size_t *size,   // # of bytes used by the Tensor A
+    const Tensor A  // Tensor to query
+) {
+	ASSERT(A    != NULL);
+	ASSERT(size != NULL);
+	size_t temp_size = 0;
+	size_t _size     = 0;
+	GrB_Index nrows = 0 ;
+	GrB_Index nvals ;
+
+	GrB_Matrix m  = DELTA_MATRIX_M(A) ;
+	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS(A);
+	GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS(A);
+
+	GrB_BinaryOp size_op  = NULL;  // query size of entry 0 if scalar
+	GrB_Semiring semiring = NULL;  // [plus.sizeof]
+	GrB_Vector   row_size = NULL;  // size of multiedges per row
+	GrB_Vector   x        = NULL;  // full vector for reduction
+
+	GrB_OK(GxB_Matrix_memoryUsage(&temp_size, m));
+	_size += temp_size;
+
+	GrB_OK(GxB_Matrix_memoryUsage(&temp_size, dp));
+	_size += temp_size;
+
+	GrB_OK(GxB_Matrix_memoryUsage(&temp_size, dm));
+	_size += temp_size;
+
+	GrB_OK (Delta_Matrix_nvals(&nvals, A)) ;
+
+	GrB_OK (GrB_BinaryOp_new (&size_op, (GxB_binary_function) _multiedge_memory,
+						   GrB_UINT64, GrB_UINT64, GrB_BOOL)) ;
+	GrB_OK (GrB_Semiring_new (&semiring, GrB_PLUS_MONOID_UINT64, size_op));
+
+	GrB_OK (GrB_Matrix_nrows (&nrows, m));
+	GrB_OK (GrB_Vector_new (&row_size, GrB_UINT64, nrows)) ;
+
+	GrB_OK (GrB_Vector_new (&x, GrB_BOOL, nrows)) ;
+	GrB_OK (GrB_Vector_assign_BOOL (x, NULL, NULL, false, GrB_ALL, 0, NULL)) ;
+
+	// reduce size of m and dp entries into one vector
+	GrB_OK (GrB_mxv (row_size, NULL, NULL, semiring, m, x, NULL)) ;
+	GrB_OK (GrB_mxv (row_size, NULL, GrB_PLUS_UINT64, semiring, dp, x, NULL)) ;
+
+	uint64_t int_size = 0;
+	GrB_OK (GrB_reduce (
+		&int_size, NULL, GrB_PLUS_MONOID_UINT64, row_size, NULL)) ;
+	_size += int_size ;
+
+	GrB_free (&x) ;
+	GrB_free (&row_size) ;
+	GrB_free (&semiring) ;
+	GrB_free (&size_op) ;
+
+	// Add transpose
+	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(A)){
+		GrB_OK(Delta_Matrix_memoryUsage(&temp_size, A->transposed));
+		_size += temp_size;
+	}
+
+	*size = _size;
+	
+	return GrB_SUCCESS;
+}
