@@ -215,11 +215,14 @@ impl VersionedMatrix {
 
     #[must_use]
     pub fn to_matrix(&self) -> Matrix {
-        // TODO: remove
         self.wait();
         let mut m = self.m.dup();
-        m.remove_all(&self.dm);
-        m.element_wise_add(None, None, Some(&self.dp), None);
+        if self.dm.nvals() > 0 {
+            m.remove_all(&self.dm);
+        }
+        if self.dp.nvals() > 0 {
+            m.element_wise_add(None, None, Some(&self.dp), None);
+        }
         m
     }
 
