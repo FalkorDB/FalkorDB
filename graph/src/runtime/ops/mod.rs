@@ -114,7 +114,7 @@ use crate::graph::graph::RelationshipId;
 use crate::runtime::value::Value;
 
 use super::{
-    batch::{BATCH_SIZE, BatchBuilder},
+    batch::{BATCH_SIZE, Batch, BatchBuilder},
     row::{Row, RowView},
 };
 
@@ -130,6 +130,32 @@ pub fn drain_pending(
     while builder.len() < BATCH_SIZE {
         if let Some(row) = pending.pop_front() {
             builder.push_row(&row);
+        } else {
+            break;
+        }
+    }
+}
+
+pub fn drain_pending_batches<'a>(
+    pending: &mut VecDeque<Batch<'a>>,
+    builder: &mut BatchBuilder,
+) {
+    while builder.len() < BATCH_SIZE {
+        if let Some(batch) = pending.pop_front() {
+            // If the whole batch fits, push it all.
+            if builder.len() + batch.len() <= BATCH_SIZE {
+                builder.push_batch_active(&batch);
+            } else {
+                // Only part of the batch fits.
+                let remaining = BATCH_SIZE - builder.len();
+                for i in 0..remaining {
+                    builder.push_batch_row(&batch, i, batch.origin_row(i));
+                }
+                // Push the remainder back to pending.
+                let indices: Vec<usize> = (remaining..batch.len()).collect();
+                pending.push_front(batch.gather(&indices));
+                break;
+            }
         } else {
             break;
         }
