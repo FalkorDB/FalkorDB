@@ -13,8 +13,8 @@
 
 // GRAPH.MEMORY command context
 typedef struct {
-	GraphContext *gc;              // graph context
 	int64_t samples;               // number of samples to inspect
+	RedisModuleString *graph_id;   // graph name
 	RedisModuleBlockedClient *bc;  // blocked client
 } GraphMemoryCtx;
 
@@ -514,11 +514,21 @@ static void _Graph_Memory
 ) {
 	ASSERT (_ctx != NULL) ;
 
-	GraphMemoryCtx *ctx = (GraphMemoryCtx*)_ctx ;
-
-	GraphContext             *gc     = ctx->gc ;
+	GraphMemoryCtx           *ctx    = (GraphMemoryCtx*)_ctx ;
 	int64_t                  samples = ctx->samples ;
 	RedisModuleBlockedClient *bc     = ctx->bc ;
+	RedisModuleCtx           *rm_ctx = RedisModule_GetThreadSafeContext (bc) ;
+
+	//--------------------------------------------------------------------------
+	// get graph key
+	//--------------------------------------------------------------------------
+
+	GraphContext *gc = NULL ;
+	GraphContext_Retrieve (rm_ctx, ctx->graph_id, true, false, true, &gc) ;
+	if (gc == NULL) {
+		// error alreay emitted by GraphContext_Retrieve
+		goto cleanup ;
+	}
 
 	//--------------------------------------------------------------------------
 	// compute graph memory usage
@@ -569,8 +579,6 @@ static void _Graph_Memory
 	//
 	//    indices_sz_mb: <indices_sz_mb>
 	// }
-
-	RedisModuleCtx *rm_ctx = RedisModule_GetThreadSafeContext (bc) ;
 
 	RedisModule_ReplyWithMap (rm_ctx, 9) ;
 
@@ -624,6 +632,9 @@ static void _Graph_Memory
 	// indices_sz_mb
 	RedisModule_ReplyWithCString  (rm_ctx, "indices_sz_mb") ;
 	RedisModule_ReplyWithLongLong (rm_ctx, result.indices_sz) ;
+
+cleanup:
+	RedisModule_FreeString (rm_ctx, ctx->graph_id) ;
 
 	// unblock client
     RedisModule_UnblockClient (bc, NULL) ;
@@ -694,33 +705,27 @@ int Graph_Memory
 		samples = MAX (1, MIN (samples, 10000)) ;
 	}
 
-	//--------------------------------------------------------------------------
-	// get graph key
-	//--------------------------------------------------------------------------
-
-	GraphContext *gc = NULL ;
-	if (GraphContext_Retrieve (ctx, argv[2], true, false, true, &gc)
-			!= GraphRetrieve_RETRIEVED) {
-		return REDISMODULE_OK ;
-	}
-
 	// GRAPH.MEMORY might be an expensive operation to compute
 	// to avoid blocking the main thread
 	// delegate the computation to a dedicated thread
-
-	// block the client
-	RedisModuleBlockedClient *bc = RedisModule_BlockClient (ctx, NULL, NULL,
-			NULL, 0) ;
 
 	// create command context to pass to worker thread
 	GraphMemoryCtx *cmd_ctx = rm_calloc (1, sizeof (GraphMemoryCtx)) ;
 	ASSERT (cmd_ctx != NULL) ;
 
-	cmd_ctx->gc      = gc ;
-	cmd_ctx->bc      = bc ;
-	cmd_ctx->samples = samples ;
+	// block the client
+	RedisModuleBlockedClient *bc = RedisModule_BlockClient (ctx, NULL, NULL,
+			NULL, 0) ;
+
+	// retain graph name
+	RedisModule_RetainString (ctx, argv [2]) ;
+
+	cmd_ctx->bc       = bc ;
+	cmd_ctx->graph_id = argv [2] ;
+	cmd_ctx->samples  = samples ;
 
 	ThreadPool_AddWork (_Graph_Memory, cmd_ctx, true) ;
 
 	return REDISMODULE_OK ;
 }
+
