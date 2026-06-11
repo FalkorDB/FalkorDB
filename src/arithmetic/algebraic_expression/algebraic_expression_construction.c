@@ -39,6 +39,12 @@ static inline bool _referred_entity
 
 // if the edge is referenced or of a variable length
 // it should populate the AlgebraicExpression
+// the edge is also populated when the pattern specifies multiple
+// relationship types (e.g. -[:A|:B]->), because the boolean ADD in the
+// algebraic expression collapses parallel edges between the same
+// endpoints into a single tuple, causing count(*) to undercount
+// this check is purely structural (based on the query, not the data)
+// so cached execution plans remain correct
 static inline bool _should_populate_edge
 (
 	QGEdge *e
@@ -46,7 +52,8 @@ static inline bool _should_populate_edge
 	ASSERT(e != NULL);
 	return (_referred_entity(e->alias) ||
 			QGEdge_VariableLength(e)   ||
-			QGEdge_GhostEdge(e));
+			QGEdge_GhostEdge(e)        ||
+			QGEdge_RelationCount(e) > 1);
 }
 
 // checks if given expression contains a variable length edge
