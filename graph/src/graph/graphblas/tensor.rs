@@ -261,6 +261,12 @@ impl Tensor {
         &self.m
     }
 
+    /// Transposed/backward pair-level adjacency (dst → src).
+    #[must_use]
+    pub const fn matrix_t(&self) -> &VersionedMatrix {
+        &self.mt
+    }
+
     /// Iterate the edge-id matrix (`me`) keyed by `compound_key(src, dst)`.
     /// Hot-loop callers build a persistent iterator and `seek` to a specific
     /// (src, dst) per row, avoiding the per-pair iterator allocation that

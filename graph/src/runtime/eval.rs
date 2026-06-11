@@ -108,38 +108,88 @@ impl Iterator for ValueIter {
 // ExprEval
 // ---------------------------------------------------------------------------
 
-/// Lazily yields the out-neighbours of a node by scanning a single row of a
-/// GraphBLAS adjacency matrix on demand, reusing one row iterator and one
-/// scratch buffer across calls.
+/// Lazily yields the neighbours of a node by scanning single rows of the
+/// graph's *versioned* adjacency / relationship matrices on demand, reusing
+/// row iterators and one scratch buffer across calls.
 ///
 /// Used by the `shortestPath` BFS so the per-query cost is proportional to the
 /// edges actually traversed by the search rather than the whole graph's edge
-/// count (the previous implementation materialized the full adjacency list for
-/// every call). Correct because BFS visits each node at most once, so every
-/// row is scanned at most once.
+/// count. Scanning the versioned matrices directly (base + delta-plus, minus
+/// delta-minus) avoids materializing a merged adjacency matrix per call —
+/// `VersionedMatrix::to_matrix()` duplicates the entire base matrix, which
+/// dominated the shortestPath profile. Correct because BFS visits each node at
+/// most once, so every row is scanned at most once.
 struct NeighborIter {
-    iter: crate::graph::graphblas::matrix::Iter,
+    /// Forward (src → dst) row iterators, one per source matrix.
+    fwd: Vec<crate::graph::graphblas::versioned_matrix::Iter>,
+    /// Backward (dst → src) row iterators; empty for directed traversal.
+    bwd: Vec<crate::graph::graphblas::versioned_matrix::Iter>,
+    /// True when neighbours can repeat across iterators (multiple relationship
+    /// types, or undirected traversal with reciprocal edges) and the buffer
+    /// must be deduplicated.
+    dedup: bool,
     buf: Vec<u64>,
 }
 
 impl NeighborIter {
-    fn new(adj: &crate::graph::graphblas::matrix::Matrix) -> Self {
+    fn new(
+        g: &crate::graph::graph::Graph,
+        rel_types: &[Arc<String>],
+        directed: bool,
+    ) -> Self {
+        let mut fwd = Vec::new();
+        let mut bwd = Vec::new();
+        if rel_types.is_empty() {
+            // The adjacency matrix is the pair-level union of all relationship
+            // types, so a single forward iterator suffices.
+            fwd.push(g.adjacency_matrix().iter(0, 0));
+            if !directed {
+                for t in g.relationship_matrices_iter() {
+                    bwd.push(t.matrix_t().iter(0, 0));
+                }
+            }
+        } else {
+            for t in rel_types
+                .iter()
+                .filter_map(|t| g.get_relationship_matrix(t))
+            {
+                fwd.push(t.matrix().iter(0, 0));
+                if !directed {
+                    bwd.push(t.matrix_t().iter(0, 0));
+                }
+            }
+        }
+        let dedup = fwd.len() + bwd.len() > 1;
         Self {
-            iter: adj.iter(0, 0),
+            fwd,
+            bwd,
+            dedup,
             buf: Vec::new(),
         }
     }
 
-    /// Returns the out-neighbours of `node`. The returned slice is valid until
+    /// Returns the neighbours of `node`. The returned slice is valid until
     /// the next call to `neighbors`.
     fn neighbors(
         &mut self,
         node: u64,
     ) -> &[u64] {
         self.buf.clear();
-        self.iter.seek(node, node);
-        for (_, col) in self.iter.by_ref() {
-            self.buf.push(col);
+        for it in &mut self.fwd {
+            it.seek(node, node);
+            for (_, col) in it.by_ref() {
+                self.buf.push(col);
+            }
+        }
+        for it in &mut self.bwd {
+            it.seek(node, node);
+            for (_, col) in it.by_ref() {
+                self.buf.push(col);
+            }
+        }
+        if self.dedup {
+            self.buf.sort_unstable();
+            self.buf.dedup();
         }
         &self.buf
     }
@@ -903,27 +953,16 @@ impl<'a> ExprEval<'a> {
             return Ok(Value::Path(Arc::new(path)));
         }
 
-        // Build adjacency matrix filtered by rel_types. For undirected
-        // traversal use the symmetric (A + Aᵀ) matrix so a single row scan
-        // yields neighbours in both directions, already deduplicated by
-        // GraphBLAS (avoids the per-row sort/dedup the old transpose-merge
-        // path required).
-        let adj = if directed {
-            g.build_adjacency_matrix(rel_types)
-        } else {
-            g.build_symmetric_adjacency_matrix(rel_types)
-        };
-
+        // Fetch neighbours lazily, one matrix row at a time, scanning the
+        // versioned adjacency / relationship matrices directly. This avoids
+        // materializing a merged adjacency matrix per call (a full duplicate
+        // of the base matrix) and keeps the per-query cost proportional to
+        // the edges actually traversed by the search. For undirected
+        // traversal the backward (transposed) tensor matrices supply incoming
+        // neighbours; duplicates are removed in NeighborIter.
         let max_level = max_hops.map_or(u64::MAX, |m| m as u64);
         let node_cap = g.node_cap();
-
-        // Fetch neighbours lazily, one matrix row at a time, instead of
-        // materializing the entire adjacency list up front. BFS visits each
-        // node at most once, so every row is scanned at most once; this turns
-        // the per-query cost from O(E) (build the full adjacency list for the
-        // whole graph) into O(edges actually traversed by the search), which
-        // dominated the profile for dense graphs.
-        let mut neighbors = NeighborIter::new(&adj);
+        let mut neighbors = NeighborIter::new(&g, rel_types, directed);
 
         if all_paths {
             // All shortest paths: BFS to find distance, then enumerate
