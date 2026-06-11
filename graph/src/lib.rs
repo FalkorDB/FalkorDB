@@ -62,6 +62,8 @@
 //! - [`graph::graphblas`]: GraphBLAS FFI bindings (auto-generated)
 //! - [`index`]: Index types, management, and RediSearch FFI bindings
 //! - [`runtime`]: Query execution engine and built-in functions
+//! - [`storage`]: Shared OSS↔enterprise storage seam (per-store backend registry
+//!   + one shared RAM↔disk residency pool)
 //! - [`entity_type`]: Node and relationship entity type discriminator
 //! - [`threadpool`]: Thread pool for parallel query execution
 //! - [`udf`]: User-defined function registration and dispatch
@@ -72,6 +74,7 @@ pub mod index;
 pub mod parser;
 pub mod planner;
 pub mod runtime;
+pub mod storage;
 pub mod thread_id;
 pub mod threadpool;
 pub mod udf;
