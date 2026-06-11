@@ -361,3 +361,29 @@ class testOptionalFlow(FlowTestsBase):
 
         self.env.assertEquals(len(res), 10)
 
+    def test28_optional_fixed_length_variable_relationship(self):
+        # Reproduce issue #1404: OPTIONAL MATCH with a fixed-length,
+        # bidirectional variable-length relationship and labeled destination.
+        self.graph.delete()
+
+        q = """CREATE (n8:l1:l5:l10 {id:8}),
+                      (n13:l0 {id:13}),
+                      (n66:l9:l3:l1:l7:l6:l10 {id:66}),
+                      (n13)-[:rt11 {id:4}]->(n8),
+                      (n8)-[:rt6 {id:3}]->(n66)"""
+        self.graph.query(q)
+
+        q = """OPTIONAL MATCH ()-[alias0*2..2]-(n1:l1:l5:l10)
+               RETURN *"""
+        self.graph.query(q)
+
+        q = """OPTIONAL MATCH ()-[alias0*2..2]-(n1:l1:l5:l10)
+               RETURN DISTINCT n1.id
+               ORDER BY n1.id"""
+        res = self.graph.query(q).result_set
+
+        self.env.assertGreater(len(res), 0)
+        for row in res:
+            self.env.assertIn(row[0], [8, 66])
+        self.env.assertNotIn([13], res)
+
