@@ -382,8 +382,5 @@ class testOptionalFlow(FlowTestsBase):
                ORDER BY n1.id"""
         res = self.graph.query(q).result_set
 
-        self.env.assertGreater(len(res), 0)
-        for row in res:
-            self.env.assertIn(row[0], [8, 66])
-        self.env.assertNotIn([13], res)
+        self.env.assertEquals(res, [[8]])
 
