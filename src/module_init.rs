@@ -177,6 +177,7 @@ pub fn graph_init(
                 "QUERY_MEM_CAPACITY" => Some(&QUERY_MEM_CAPACITY),
                 "DELTA_MAX_PENDING_CHANGES" => Some(&DELTA_MAX_PENDING_CHANGES),
                 "EFFECTS_THRESHOLD" => Some(&EFFECTS_THRESHOLD),
+                "OMP_THREAD_COUNT" => Some(&OMP_THREAD_COUNT),
                 _ => None,
             };
             if let Some(target) = target_i64 {
@@ -210,6 +211,16 @@ pub fn graph_init(
         // when Redis forks for bgsave because the OMP thread pool state
         // is invalid in the child process.
         std::env::set_var("KMP_INIT_AT_FORK", "FALSE");
+
+        // libomp's default KMP_BLOCKTIME (200ms) keeps OpenMP workers
+        // spin-waiting after every GraphBLAS parallel region. With many
+        // concurrent read queries the spinners starve real work — measured
+        // 2.7x lower throughput at 20 parallel clients on 4-hop expansions.
+        // 0 = sleep immediately, matching libgomp's effectively-short spin
+        // (what the FalkorDB C image links). Respect an explicit override.
+        if std::env::var_os("KMP_BLOCKTIME").is_none() {
+            std::env::set_var("KMP_BLOCKTIME", "0");
+        }
 
         let result = RediSearch_Init(ctx.ctx.cast(), REDISEARCH_INIT_LIBRARY as c_int);
         if result == REDISMODULE_OK as c_int {
@@ -338,7 +349,17 @@ pub fn graph_init(
     // THREAD_COUNT may come from module args (parsed by redis_module macro).
     let tc = get_thread_count(ctx) as usize;
     let _ = init_thread_pool(tc);
-    OMP_THREAD_COUNT.store(tc as i64, std::sync::atomic::Ordering::Relaxed);
+
+    // If OMP_THREAD_COUNT was given as a module arg, cap GraphBLAS/OpenMP
+    // parallelism per operation (mirrors the C module's GxB_NTHREADS setup).
+    // Otherwise GraphBLAS keeps its default (all cores) and we report the
+    // thread pool size, matching prior behavior.
+    let omp_tc = OMP_THREAD_COUNT.load(std::sync::atomic::Ordering::Relaxed);
+    if omp_tc > 0 {
+        graph::graph::graphblas::matrix::set_nthreads(omp_tc as i32);
+    } else {
+        OMP_THREAD_COUNT.store(tc as i64, std::sync::atomic::Ordering::Relaxed);
+    }
 
     // Enable RediSearch background worker threads (TIERED vector-index HNSW
     // migration jobs) when configured. Left disabled (0) by default, in which
