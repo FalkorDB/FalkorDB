@@ -564,7 +564,10 @@ impl<'a> CondTraverseOp<'a> {
                         .collect();
                     out_batch.set_column(rp.alias.id, Column::RelTriples(triples));
                 }
-                out_batch.set_column(to_alias.id, Column::NodeIds(std::mem::take(&mut out_dest_ids)));
+                out_batch.set_column(
+                    to_alias.id,
+                    Column::NodeIds(std::mem::take(&mut out_dest_ids)),
+                );
                 out_pending.push_back(out_batch);
                 out_indices.clear();
             }
