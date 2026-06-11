@@ -31,9 +31,9 @@ use crate::graph::graph::NodeId;
 use crate::parser::ast::{AllShortestPaths, QueryRelationship, Variable};
 use crate::planner::IR;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchOp},
-    env::Env,
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
     eval::ExprEval,
+    row::{Row, RowView},
     runtime::Runtime,
     value::Value,
 };
@@ -43,7 +43,7 @@ use thin_vec::ThinVec;
 pub struct AllShortestPathsOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
-    pending: VecDeque<Env<'a>>,
+    pending: VecDeque<Row>,
     relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
@@ -66,8 +66,8 @@ impl<'a> AllShortestPathsOp<'a> {
 
     fn expand_row(
         &self,
-        vars: &Env<'a>,
-        out: &mut Vec<Env<'a>>,
+        vars: &Row,
+        out: &mut Vec<Row>,
     ) -> Result<(), String> {
         let rp = self.relationship_pattern;
 
@@ -81,7 +81,7 @@ impl<'a> AllShortestPathsOp<'a> {
         let has_edge_filter = matches!(&filter_attrs, Value::Map(m) if !m.is_empty());
 
         // Get source node
-        let src_val = vars.get(&rp.from.alias);
+        let src_val = vars.get_by_id(rp.from.alias.id);
         let src_id = match src_val {
             Some(Value::Node(id)) => *id,
             Some(Value::Null) | None => return Ok(()), // NULL endpoint → no results
@@ -93,7 +93,7 @@ impl<'a> AllShortestPathsOp<'a> {
         };
 
         // Get destination node
-        let dst_val = vars.get(&rp.to.alias);
+        let dst_val = vars.get_by_id(rp.to.alias.id);
         let dst_id = match dst_val {
             Some(Value::Node(id)) => *id,
             Some(Value::Null) | None => return Ok(()),
@@ -292,7 +292,7 @@ impl<'a> AllShortestPathsOp<'a> {
             if rp.all_shortest_paths == AllShortestPaths::Reversed {
                 path.reverse();
             }
-            let mut env = vars.clone_pooled(self.runtime.env_pool);
+            let mut env = vars.clone();
             // Store the edge list for the path builder
             env.insert(&rp.alias, Value::List(Arc::new(path)));
             out.push(env);
@@ -306,37 +306,38 @@ impl<'a> Iterator for AllShortestPathsOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut envs = Vec::with_capacity(BATCH_SIZE);
+        let mut builder = BatchBuilder::new();
 
         // Drain leftover rows from previous call.
-        super::drain_pending(&mut self.pending, &mut envs);
+        super::drain_pending(&mut self.pending, &mut builder);
 
-        while envs.len() < BATCH_SIZE {
+        while builder.len() < BATCH_SIZE {
             let batch = match self.child.next() {
                 Some(Ok(b)) => b,
                 Some(Err(e)) => return Some(Err(e)),
                 None => break,
             };
 
-            for vars in batch.active_env_iter() {
+            for row in batch.active_indices() {
+                let vars = BatchRow::new(&batch, row).to_owned_row();
                 let mut expanded = Vec::new();
-                if let Err(e) = self.expand_row(vars, &mut expanded) {
+                if let Err(e) = self.expand_row(&vars, &mut expanded) {
                     return Some(Err(e));
                 }
                 self.pending.extend(expanded);
 
-                super::drain_pending(&mut self.pending, &mut envs);
+                super::drain_pending(&mut self.pending, &mut builder);
 
-                if envs.len() >= BATCH_SIZE {
+                if builder.len() >= BATCH_SIZE {
                     break;
                 }
             }
         }
 
-        if envs.is_empty() {
+        if builder.is_empty() {
             None
         } else {
-            Some(Ok(Batch::from_envs(envs)))
+            Some(Ok(builder.finish()))
         }
     }
 }

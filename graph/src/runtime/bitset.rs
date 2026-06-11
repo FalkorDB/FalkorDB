@@ -12,7 +12,7 @@
 //! ```
 //!
 //! Supports `set`, `test`, and `union` — the three operations needed for
-//! tracking bound variables in [`Env`](super::env::Env).
+//! tracking bound variables in a [`Row`](super::row::Row).
 
 use thin_vec::ThinVec;
 
@@ -87,5 +87,11 @@ impl BitSet {
                 self.overflow[idx] &= !mask;
             }
         }
+    }
+
+    /// Returns true if no bits are set.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.inline == 0 && self.overflow.iter().all(|&w| w == 0)
     }
 }

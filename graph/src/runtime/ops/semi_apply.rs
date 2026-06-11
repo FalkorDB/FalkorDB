@@ -73,30 +73,22 @@ impl<'a> Iterator for SemiApplyOp<'a> {
             let active: Vec<usize> = batch.active_indices().collect();
 
             // Build argument batch with origin_row stamped on each env.
-            let arg_envs: Vec<_> = active
-                .iter()
-                .enumerate()
-                .map(|(i, &row_idx)| {
-                    let mut e = batch.env_ref(row_idx).clone_pooled(self.runtime.env_pool);
-                    e.origin_row = i as u32;
-                    e
-                })
-                .collect();
+            let arg_batch = batch.clone_active_rows_seq_origin();
 
             // Create ONE subtree for all rows.
             let mut subtree = match self.runtime.run_batch(self.right_child_idx) {
                 Ok(s) => s,
                 Err(e) => return Some(Err(e)),
             };
-            subtree.set_argument_batch(Batch::from_envs(arg_envs));
+            subtree.set_argument_batch(arg_batch);
 
             // Collect which origin_rows produced at least one result.
             let mut matched = HashSet::new();
             for sub_result in subtree.by_ref() {
                 match sub_result {
                     Ok(sub_batch) => {
-                        for env in sub_batch.active_env_iter() {
-                            matched.insert(env.origin_row);
+                        for row in sub_batch.active_indices() {
+                            matched.insert(sub_batch.origin_row(row));
                         }
                     }
                     Err(e) => return Some(Err(e)),

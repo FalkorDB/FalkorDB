@@ -113,20 +113,49 @@ use std::collections::VecDeque;
 use crate::graph::graph::RelationshipId;
 use crate::runtime::value::Value;
 
-use super::{batch::BATCH_SIZE, env::Env};
+use super::{
+    batch::{BATCH_SIZE, Batch, BatchBuilder},
+    row::{Row, RowView},
+};
 
-/// Drain rows from `pending` into `envs` until `BATCH_SIZE` is reached
+/// Drain rows from `pending` into `builder` until `BATCH_SIZE` is reached
 /// or all pending rows are exhausted.
 ///
 /// Shared helper used by operators that buffer intermediate results
 /// (CondTraverse, ExpandInto, Unwind, ForEach, CondVarLenTraverse, LoadCsv).
-pub fn drain_pending<'a>(
-    pending: &mut VecDeque<Env<'a>>,
-    envs: &mut Vec<Env<'a>>,
+pub fn drain_pending(
+    pending: &mut VecDeque<Row>,
+    builder: &mut BatchBuilder,
 ) {
-    while envs.len() < BATCH_SIZE {
+    while builder.len() < BATCH_SIZE {
         if let Some(row) = pending.pop_front() {
-            envs.push(row);
+            builder.push_row(&row);
+        } else {
+            break;
+        }
+    }
+}
+
+pub fn drain_pending_batches<'a>(
+    pending: &mut VecDeque<Batch<'a>>,
+    builder: &mut BatchBuilder,
+) {
+    while builder.len() < BATCH_SIZE {
+        if let Some(batch) = pending.pop_front() {
+            // If the whole batch fits, push it all.
+            if builder.len() + batch.len() <= BATCH_SIZE {
+                builder.push_batch_active(&batch);
+            } else {
+                // Only part of the batch fits.
+                let remaining = BATCH_SIZE - builder.len();
+                for i in 0..remaining {
+                    builder.push_batch_row(&batch, i, batch.origin_row(i));
+                }
+                // Push the remainder back to pending.
+                let indices: Vec<usize> = (remaining..batch.len()).collect();
+                pending.push_front(batch.gather(&indices));
+                break;
+            }
         } else {
             break;
         }
@@ -148,8 +177,8 @@ pub fn drain_pending<'a>(
 /// variables from other MATCH/OPTIONAL MATCH clauses are ignored per the
 /// Cypher spec.
 #[must_use]
-pub fn edge_already_used(
-    env: &Env<'_>,
+pub fn edge_already_used<R: RowView + ?Sized>(
+    env: &R,
     edge_id: RelationshipId,
     own_alias_id: u32,
     sibling_edges: &[u32],
@@ -158,7 +187,7 @@ pub fn edge_already_used(
         if sibling_id == own_alias_id {
             continue;
         }
-        if let Some(Value::Relationship(rel)) = env.get_by_id(sibling_id)
+        if let Some(Value::Relationship(rel)) = env.value_at(sibling_id)
             && rel.0 == edge_id
         {
             return true;

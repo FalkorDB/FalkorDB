@@ -35,8 +35,8 @@ use crate::parser::ast::{ExprIR, QueryExpr, QueryRelationship, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchOp},
-    env::Env,
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow, Column},
+    row::{Row, RowView},
     runtime::Runtime,
     value::Value,
 };
@@ -73,7 +73,9 @@ pub struct CondTraverseOp<'a> {
     pub(crate) child: Box<BatchOp<'a>>,
     relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
     /// Buffered output rows from a partial expansion.
-    pending: VecDeque<Env<'a>>,
+    pending: VecDeque<Row>,
+    /// Buffered output batches from a partial expansion (vectorized path).
+    pending_batches: VecDeque<Batch<'a>>,
     /// Current input batch being expanded (may span multiple output batches).
     current_batch: Option<Batch<'a>>,
     /// Index into active rows of the current batch.
@@ -230,6 +232,7 @@ impl<'a> CondTraverseOp<'a> {
             child,
             relationship_pattern,
             pending: VecDeque::new(),
+            pending_batches: VecDeque::new(),
             current_batch: None,
             current_pos: 0,
             emit_relationship,
@@ -340,8 +343,9 @@ impl<'a> CondTraverseOp<'a> {
     /// returns `false` to signal "fall back to slow path for this batch".
     fn expand_batch(
         &self,
-        rows: &[&Env<'a>],
-        out: &mut Vec<Env<'a>>,
+        batch: &Batch<'a>,
+        active_subset: &[usize],
+        out_pending: &mut VecDeque<Batch<'a>>,
     ) -> Result<bool, String> {
         let runtime = self.runtime;
         let rp = self.relationship_pattern;
@@ -414,29 +418,29 @@ impl<'a> CondTraverseOp<'a> {
         let ncols = m_merged.ncols();
 
         let transposed = self.transposed;
-        let nrows = rows.len() as u64;
+        let nrows = active_subset.len() as u64;
 
         // Collect (row_i, src_id) for rows where the from-alias is bound to
         // a Node and (post-label-filter) the src has all required labels.
         // Rows where from is bound to a non-Node are dropped (mirror line
         // 311 early return). Rows where from is unbound trigger fall-back.
-        let mut row_idx_buf: Vec<u64> = Vec::with_capacity(rows.len());
-        let mut col_idx_buf: Vec<u64> = Vec::with_capacity(rows.len());
-        for (i, env) in rows.iter().enumerate() {
-            let from_alias = if transposed {
-                &rp.to.alias
-            } else {
-                &rp.from.alias
-            };
+        let mut row_idx_buf: Vec<u64> = Vec::with_capacity(active_subset.len());
+        let mut col_idx_buf: Vec<u64> = Vec::with_capacity(active_subset.len());
+        let from_alias = if transposed {
+            &rp.to.alias
+        } else {
+            &rp.from.alias
+        };
+        for (i, &row_idx) in active_subset.iter().enumerate() {
             // Bail to slow path if the matrix-src side isn't explicitly
             // bound on this row. `env.get` alone would silently return a
             // colliding outer-scope slot value; `is_bound` is authoritative.
-            if !env.is_bound(from_alias) {
+            if !batch.is_bound_at(from_alias.id, row_idx) {
                 drop(g);
                 return Ok(false);
             }
-            let src_id = if let Some(Value::Node(id)) = env.get(from_alias) {
-                *id
+            let src_id = if let Some(Value::Node(id)) = batch.value_at(from_alias.id, row_idx) {
+                id
             } else {
                 drop(g);
                 return Ok(false);
@@ -486,6 +490,11 @@ impl<'a> CondTraverseOp<'a> {
             (&rp.to.alias, state.fwd_dst_label_ids.as_slice())
         };
         let chain_is_empty = self.chain.is_empty();
+        let mut out_indices = Vec::new();
+        let mut out_dest_ids = Vec::new();
+        let mut out_edge_ids = Vec::new();
+        let mut out_src_ids = Vec::new();
+
         for (row_i, dest_raw) in row_is.into_iter().zip(col_is) {
             let dest_id = NodeId::from(dest_raw);
             // Post-filter final-hop dst label (= F * A * R_dst in C's algebra).
@@ -495,15 +504,16 @@ impl<'a> CondTraverseOp<'a> {
             {
                 continue;
             }
-            let env = rows[row_i as usize];
-            // If the to-alias is already bound on the input env, the
+            let row_idx = active_subset[row_i as usize];
+            // If the to-alias is already bound on the input batch row, the
             // planner should have inserted ExpandInto, not CondTraverse —
             // but be defensive and skip mismatches.
-            if let Some(Value::Node(bound)) = env.get(to_alias)
-                && *bound != dest_id
+            if let Some(Value::Node(bound)) = batch.value_at(to_alias.id, row_idx)
+                && bound != dest_id
             {
                 continue;
             }
+
             if chain_is_empty {
                 // Look up one representative edge id (mirrors expand_row's
                 // anonymous-edge fast path). Required because downstream
@@ -513,8 +523,8 @@ impl<'a> CondTraverseOp<'a> {
                 // self.transposed (which only affects alias→storage mapping,
                 // not the underlying matrix orientation since
                 // build_relationship_matrix_unrestricted is non-transposed).
-                let src_id = match env.get(from_alias) {
-                    Some(Value::Node(id)) => *id,
+                let src_id = match batch.value_at(from_alias.id, row_idx) {
+                    Some(Value::Node(id)) => id,
                     _ => continue,
                 };
                 let mat_src = u64::from(src_id);
@@ -529,26 +539,53 @@ impl<'a> CondTraverseOp<'a> {
                         break;
                     }
                 }
-                let Some(edge_id) = found_id else { continue };
-                let mut row = env.clone_pooled(runtime.env_pool);
-                row.insert(to_alias, Value::Node(dest_id));
-                row.insert(
-                    &rp.alias,
-                    Value::Relationship(Box::new((
-                        edge_id,
-                        NodeId::from(mat_src),
-                        NodeId::from(mat_dst),
-                    ))),
-                );
-                out.push(row);
+                if let Some(edge_id) = found_id {
+                    out_indices.push(row_idx);
+                    out_dest_ids.push(dest_id);
+                    out_edge_ids.push(edge_id);
+                    out_src_ids.push(src_id);
+                }
             } else {
                 // Fused chain: edges across hops are anonymous & unreferenced
                 // (enforced by the fusion pass), so no edge id is bound and
                 // no intermediate node alias is exposed.
-                let mut row = env.clone_pooled(runtime.env_pool);
-                row.insert(to_alias, Value::Node(dest_id));
-                out.push(row);
+                out_indices.push(row_idx);
+                out_dest_ids.push(dest_id);
             }
+
+            if out_indices.len() >= BATCH_SIZE {
+                let mut out_batch = batch.gather(&out_indices);
+                if chain_is_empty {
+                    let triples = std::mem::take(&mut out_edge_ids)
+                        .into_iter()
+                        .zip(std::mem::take(&mut out_src_ids))
+                        .zip(out_dest_ids.iter().copied())
+                        .map(|((e, s), d)| (e, s, d))
+                        .collect();
+                    out_batch.set_column(rp.alias.id, Column::RelTriples(triples));
+                }
+                out_batch.set_column(
+                    to_alias.id,
+                    Column::NodeIds(std::mem::take(&mut out_dest_ids)),
+                );
+                out_pending.push_back(out_batch);
+                out_indices.clear();
+            }
+        }
+
+        if !out_indices.is_empty() {
+            let mut out_batch = batch.gather(&out_indices);
+            if chain_is_empty {
+                let triples = out_edge_ids
+                    .into_iter()
+                    .zip(out_src_ids)
+                    .zip(out_dest_ids.iter().copied())
+                    .map(|((e, s), d)| (e, s, d))
+                    .collect();
+                out_batch.set_column(rp.alias.id, Column::RelTriples(triples));
+            }
+            out_batch.set_column(to_alias.id, Column::NodeIds(out_dest_ids));
+            out_pending.push_back(out_batch);
         }
 
         drop(g);
@@ -557,43 +594,45 @@ impl<'a> CondTraverseOp<'a> {
 
     fn expand_row(
         &self,
-        env: &Env<'a>,
-        out: &mut Vec<Env<'a>>,
+        batch: &Batch<'a>,
+        row_idx: usize,
+        out: &mut Vec<Row>,
     ) -> Result<(), String> {
         let runtime = self.runtime;
         let rp = self.relationship_pattern;
+        let env = BatchRow::new(batch, row_idx);
 
         let filter_attrs = ExprEval::from_runtime(runtime).eval(
             &rp.attrs,
             rp.attrs.root().idx(),
-            Some(env),
+            Some(&env),
             None,
         )?;
         let from_node_attrs = ExprEval::from_runtime(runtime).eval(
             &rp.from.attrs,
             rp.from.attrs.root().idx(),
-            Some(env),
+            Some(&env),
             None,
         )?;
         let to_node_attrs = ExprEval::from_runtime(runtime).eval(
             &rp.to.attrs,
             rp.to.attrs.root().idx(),
-            Some(env),
+            Some(&env),
             None,
         )?;
 
-        let from_id = env.get(&rp.from.alias).and_then(|v| match v {
-            Value::Node(id) => Some(*id),
+        let from_id = env.value_at(rp.from.alias.id).and_then(|v| match v {
+            Value::Node(id) => Some(id),
             _ => None,
         });
-        if from_id.is_none() && env.is_bound(&rp.from.alias) {
+        if from_id.is_none() && batch.is_bound_at(rp.from.alias.id, row_idx) {
             return Ok(());
         }
-        let to_id = env.get(&rp.to.alias).and_then(|v| match v {
-            Value::Node(id) => Some(*id),
+        let to_id = env.value_at(rp.to.alias.id).and_then(|v| match v {
+            Value::Node(id) => Some(id),
             _ => None,
         });
-        if to_id.is_none() && env.is_bound(&rp.to.alias) {
+        if to_id.is_none() && batch.is_bound_at(rp.to.alias.id, row_idx) {
             return Ok(());
         }
 
@@ -648,8 +687,8 @@ impl<'a> CondTraverseOp<'a> {
                 &filter_attrs,
                 &g,
                 rp,
-                env,
-                runtime,
+                batch,
+                row_idx,
                 out,
                 self.emit_relationship,
                 self.sibling_edges,
@@ -685,8 +724,8 @@ impl<'a> CondTraverseOp<'a> {
                 &filter_attrs,
                 &g,
                 rp,
-                env,
-                runtime,
+                batch,
+                row_idx,
                 out,
                 self.emit_relationship,
                 self.sibling_edges,
@@ -705,8 +744,8 @@ impl<'a> CondTraverseOp<'a> {
             let mut i = start;
             while i < out.len() {
                 let key = {
-                    let f = out[i].get(source_alias);
-                    let t = out[i].get(&rp.to.alias);
+                    let f = out[i].get_by_id(source_alias.id);
+                    let t = out[i].get_by_id(rp.to.alias.id);
                     match (f, t) {
                         (Some(Value::Node(fid)), Some(Value::Node(tid))) => {
                             Some((u64::from(*fid), u64::from(*tid)))
@@ -741,9 +780,9 @@ impl<'a> CondTraverseOp<'a> {
         filter_attrs: &Value,
         g: &crate::graph::graph::Graph,
         rp: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
-        env: &Env<'a>,
-        runtime: &'a Runtime<'a>,
-        out: &mut Vec<Env<'a>>,
+        batch: &Batch<'a>,
+        row_idx: usize,
+        out: &mut Vec<Row>,
         emit_relationship: bool,
         sibling_edges: &[u32],
         edge_iters: &[std::cell::RefCell<EdgeIter>],
@@ -818,19 +857,20 @@ impl<'a> CondTraverseOp<'a> {
             let key = compound_key(u64::from(src), u64::from(dst));
             if !emit_relationship && !has_edge_filter {
                 let mut found_id: Option<RelationshipId> = None;
+                let env = BatchRow::new(batch, row_idx);
                 'outer: for cell in edge_iters {
                     let mut it = cell.borrow_mut();
                     it.seek(key, key);
                     for (_, raw_id) in &mut *it {
                         let id = RelationshipId::from(raw_id);
-                        if !super::edge_already_used(env, id, rp.alias.id, sibling_edges) {
+                        if !super::edge_already_used(&env, id, rp.alias.id, sibling_edges) {
                             found_id = Some(id);
                             break 'outer;
                         }
                     }
                 }
                 if let Some(id) = found_id {
-                    let mut row = env.clone_pooled(runtime.env_pool);
+                    let mut row = env.to_owned_row();
                     row.insert(&rp.alias, Value::Relationship(Box::new((id, src, dst))));
                     row.insert(&rp.from.alias, Value::Node(from_node));
                     row.insert(&rp.to.alias, Value::Node(to_node));
@@ -840,6 +880,7 @@ impl<'a> CondTraverseOp<'a> {
             }
 
             // Scan edges
+            let env = BatchRow::new(batch, row_idx);
             for cell in edge_iters {
                 let mut it = cell.borrow_mut();
                 it.seek(key, key);
@@ -847,7 +888,7 @@ impl<'a> CondTraverseOp<'a> {
                     let id = RelationshipId::from(raw_id);
                     // Relationship uniqueness: skip edges already bound to other
                     // relationship variables in this MATCH clause.
-                    if super::edge_already_used(env, id, rp.alias.id, sibling_edges) {
+                    if super::edge_already_used(&env, id, rp.alias.id, sibling_edges) {
                         continue;
                     }
                     if let Value::Map(filter_map) = filter_attrs
@@ -869,7 +910,7 @@ impl<'a> CondTraverseOp<'a> {
                             continue;
                         }
                     }
-                    let mut row = env.clone_pooled(runtime.env_pool);
+                    let mut row = env.to_owned_row();
                     row.insert(&rp.alias, Value::Relationship(Box::new((id, src, dst))));
                     row.insert(&rp.from.alias, Value::Node(from_node));
                     row.insert(&rp.to.alias, Value::Node(to_node));
@@ -897,13 +938,14 @@ impl<'a> Iterator for CondTraverseOp<'a> {
         // side effects.  Empty matrices/iters in the lazy state naturally
         // produce zero rows, which is the desired behavior.
 
-        let mut envs = Vec::with_capacity(BATCH_SIZE);
+        let mut builder = BatchBuilder::new();
 
         // Drain leftover rows from previous call.
-        super::drain_pending(&mut self.pending, &mut envs);
+        super::drain_pending(&mut self.pending, &mut builder);
+        super::drain_pending_batches(&mut self.pending_batches, &mut builder);
 
         loop {
-            if envs.len() >= BATCH_SIZE {
+            if builder.len() >= BATCH_SIZE {
                 break;
             }
 
@@ -930,19 +972,21 @@ impl<'a> Iterator for CondTraverseOp<'a> {
 
                 let mut used_batched = false;
                 if self.batched_eligible && self.current_pos < active.len() {
-                    let envs_slice: Vec<&Env<'a>> = active[self.current_pos..]
-                        .iter()
-                        .map(|&i| batch.env_ref(i))
-                        .collect();
-                    let mut expanded = Vec::new();
-                    match self.expand_batch(&envs_slice, &mut expanded) {
+                    let active_subset = &active[self.current_pos..];
+                    let mut pending = std::mem::take(&mut self.pending_batches);
+                    match self.expand_batch(batch, active_subset, &mut pending) {
                         Ok(true) => {
+                            self.pending_batches = pending;
                             self.current_pos = active.len();
-                            self.pending.extend(expanded);
                             used_batched = true;
                         }
-                        Ok(false) => {}
-                        Err(e) => return Some(Err(e)),
+                        Ok(false) => {
+                            self.pending_batches = pending;
+                        }
+                        Err(e) => {
+                            self.pending_batches = pending;
+                            return Some(Err(e));
+                        }
                     }
                 }
 
@@ -950,9 +994,8 @@ impl<'a> Iterator for CondTraverseOp<'a> {
                     while self.current_pos < active.len() {
                         let row_idx = active[self.current_pos];
                         self.current_pos += 1;
-                        let env = batch.env_ref(row_idx);
                         let mut expanded = Vec::new();
-                        if let Err(e) = self.expand_row(env, &mut expanded) {
+                        if let Err(e) = self.expand_row(batch, row_idx, &mut expanded) {
                             return Some(Err(e));
                         }
                         self.pending.extend(expanded);
@@ -964,7 +1007,8 @@ impl<'a> Iterator for CondTraverseOp<'a> {
                 }
             }
 
-            super::drain_pending(&mut self.pending, &mut envs);
+            super::drain_pending(&mut self.pending, &mut builder);
+            super::drain_pending_batches(&mut self.pending_batches, &mut builder);
 
             // Check if batch is exhausted.
             if let Some(ref batch) = self.current_batch
@@ -974,18 +1018,18 @@ impl<'a> Iterator for CondTraverseOp<'a> {
             }
         }
 
-        if envs.is_empty() {
+        if builder.is_empty() {
             None
         } else {
             // Trim to record_cap if set.
             if let Some(cap) = self.record_cap {
                 let remaining = cap - self.produced;
-                if envs.len() > remaining {
-                    envs.truncate(remaining);
+                if builder.len() > remaining {
+                    builder.truncate(remaining);
                 }
             }
-            self.produced += envs.len();
-            Some(Ok(Batch::from_envs(envs)))
+            self.produced += builder.len();
+            Some(Ok(builder.finish()))
         }
     }
 }

@@ -4,45 +4,36 @@
 //! operators to amortize per-row dispatch overhead and exploit data locality.
 //!
 //! ```text
-//!  Batch (env-backed mode)
-//! ┌────────────────────────────────────────────────────────┐
-//! │  len: 4                                                │
-//! │  selection: Some([0, 2, 3])   ← only these rows active │
-//! │                                                        │
-//! │  envs: [ Env0, Env1, Env2, Env3 ]                     │
-//! │         ^^^^         ^^^^  ^^^^                         │
-//! │         active       active active                     │
-//! └────────────────────────────────────────────────────────┘
-//!
-//!  Batch (columnar mode, future)
+//!  Batch (columnar)
 //! ┌────────────────────────────────────────────────────────┐
 //! │  columns[0]: NodeIds  [n1, n2, n3, n4]                 │
 //! │  columns[1]: Ints     [10, 20, 30, 40]   ← SIMD ops   │
 //! │  columns[2]: Values   ["a","b","c","d"]                │
-//! │  selection:  None     ← all rows active                │
+//! │  selection:  Some([0, 2, 3])  ← only these rows active │
 //! └────────────────────────────────────────────────────────┘
 //! ```
 //!
-//! ## Dual Storage Model
+//! ## Storage Model
 //!
-//! The batch supports two storage modes:
-//! - **Env-backed** (`envs` field): row-oriented via `Vec<Env>`. Used by most
-//!   operators today. Access via `env_ref()`, `get()`, `set()`, `read_columns()`.
-//! - **Columnar** (`columns` field): typed columns for vectorized kernels.
-//!   Used by `FilterOp`/`ProjectOp` for bulk property comparison.
+//! Rows are stored as typed [`Column`]s indexed by `Variable.id`. A "current
+//! row" is the pair `(&Batch, row_idx)`; the expression evaluator reads
+//! `batch.value_at(var_id, row_idx)`. Id columns (`NodeIds`/`RelTriples`) stay
+//! cheap until a property is actually read.
 //!
 //! ## Zero-Copy Filtering
 //!
 //! Instead of removing filtered-out rows, operators set a **selection vector**
 //! (`Vec<u16>`) listing active row indices. Downstream operators iterate only
-//! the active rows via `active_indices()` / `active_env_iter()`.
+//! the active rows via `active_indices()`.
 
 use crate::graph::graph::{NodeId, RelationshipId};
 use crate::planner::IR;
-use crate::runtime::env::Env;
+use crate::runtime::bitset::BitSet;
+use crate::runtime::row::{Row, RowView};
 use crate::runtime::runtime::Runtime;
 use crate::runtime::value::Value;
 use orx_tree::{Dyn, NodeIdx};
+use std::marker::PhantomData;
 
 use super::ops::aggregate::AggregateOp;
 use super::ops::all_shortest_paths::AllShortestPathsOp;
@@ -143,6 +134,40 @@ impl NullBitmap {
     }
 }
 
+/// Classifies a fully-bound builder column into a typed [`Column`] when its
+/// values are homogeneous node ids or relationship triples (which need no
+/// separate null bitmap to round-trip). Any other shape — including a column
+/// containing a `Null`, since the typed id/triple columns cannot represent
+/// nulls — stays as [`Column::Values`]. This keeps `value_at`/`get` byte-for-
+/// byte identical while letting downstream operators discover node id columns
+/// via [`Batch::extract_node_ids`].
+fn classify_id_column(values: Vec<Value>) -> Column {
+    if values.is_empty() {
+        return Column::Values(values);
+    }
+    if values.iter().all(|v| matches!(v, Value::Node(_))) {
+        let ids = values
+            .into_iter()
+            .map(|v| match v {
+                Value::Node(id) => id,
+                _ => unreachable!("guarded by all() above"),
+            })
+            .collect();
+        return Column::NodeIds(ids);
+    }
+    if values.iter().all(|v| matches!(v, Value::Relationship(_))) {
+        let triples = values
+            .into_iter()
+            .map(|v| match v {
+                Value::Relationship(rel) => (rel.0, rel.1, rel.2),
+                _ => unreachable!("guarded by all() above"),
+            })
+            .collect();
+        return Column::RelTriples(triples);
+    }
+    Column::Values(values)
+}
+
 /// Classifies a `Vec<Value>` into the most specific typed Column plus a NullBitmap.
 ///
 /// - If all non-null values are `Int`: returns `Column::Ints` (nulls get 0 as placeholder)
@@ -194,6 +219,7 @@ pub fn classify_column(values: Vec<Value>) -> (Column, NullBitmap) {
 }
 
 /// A single column of homogeneous values, indexed by row position.
+#[derive(Clone)]
 pub enum Column {
     /// All values are node IDs (from scan/traverse operators).
     NodeIds(Vec<NodeId>),
@@ -248,6 +274,325 @@ impl Column {
     pub const fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    /// Creates a new column by gathering values from this column at the given
+    /// indices.
+    pub fn gather(
+        &self,
+        indices: impl Iterator<Item = usize>,
+    ) -> Self {
+        match self {
+            Self::NodeIds(v) => Self::NodeIds(indices.map(|i| v[i]).collect()),
+            Self::RelTriples(v) => Self::RelTriples(indices.map(|i| v[i]).collect()),
+            Self::Ints(v) => Self::Ints(indices.map(|i| v[i]).collect()),
+            Self::Floats(v) => Self::Floats(indices.map(|i| v[i]).collect()),
+            Self::Values(v) => Self::Values(indices.map(|i| v[i].clone()).collect()),
+            Self::Unbound => Self::Unbound,
+        }
+    }
+}
+
+/// In-progress column accumulator for a single variable slot.
+struct ColumnBuilder {
+    /// One entry per row pushed so far (padded with `Null` for rows that did
+    /// not carry this slot, so all columns stay row-aligned).
+    values: Vec<Value>,
+    /// True once any row carried a *value* in this slot (`get_by_id`).
+    present: bool,
+    /// True once any row had this slot's *bound* bit set (`is_bound_by_id`).
+    any_bound: bool,
+}
+
+/// Builds a columnar [`Batch`] incrementally, one row at a time, transposing
+/// row-shaped bindings into per-variable columns.
+///
+/// Operators push each row's bindings directly into the builder, which appends
+/// into the growing columns. The builder owns its values and is lifetime-free.
+///
+/// The resulting batch preserves the value-present vs. bound distinction
+/// (`value_only`) and `origin_row` correlation lineage.
+#[derive(Default)]
+pub struct BatchBuilder {
+    /// One [`ColumnBuilder`] per variable slot seen so far. Index is `var id`.
+    cols: Vec<ColumnBuilder>,
+    /// `origin_row` for each pushed row (correlation lineage).
+    origins: Vec<u32>,
+    /// True once any pushed row had a non-zero `origin_row`.
+    any_origin: bool,
+    /// Number of rows pushed so far.
+    rows: usize,
+}
+
+impl BatchBuilder {
+    /// Creates an empty builder.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Number of rows pushed so far.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.rows
+    }
+
+    /// Returns true if no rows have been pushed.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.rows == 0
+    }
+
+    /// Truncates the builder to keep only the first `n` pushed rows.
+    ///
+    /// Used by scan/traverse operators that enforce a `record_cap` after
+    /// buffering. These operators emit rows of homogeneous column shape (every
+    /// row binds the same variable slots), so dropping a suffix of rows never
+    /// changes which columns are present; the per-column `present`/`any_bound`
+    /// flags therefore remain accurate.
+    pub fn truncate(
+        &mut self,
+        n: usize,
+    ) {
+        if n >= self.rows {
+            return;
+        }
+        for col in &mut self.cols {
+            col.values.truncate(n);
+        }
+        self.origins.truncate(n);
+        self.rows = n;
+    }
+
+    /// Appends one row from a [`Row`], transposing its bindings into the
+    /// growing columns, taking the pool-free owned row.
+    pub fn push_row(
+        &mut self,
+        row: &Row,
+    ) {
+        self.push_row_with(row, row.origin_row, &[]);
+    }
+
+    /// Appends one row built from `base` plus `extra` bindings, stamping the
+    /// row's `origin_row` to `origin`. The `extra` slice carries freshly
+    /// produced bindings (e.g. a scanned node id and score) that are layered
+    /// on top of the base row without an intermediate `Env`/`Row` clone.
+    pub fn push_row_with(
+        &mut self,
+        base: &Row,
+        origin: u32,
+        extra: &[(u32, Value)],
+    ) {
+        let r = self.rows;
+        // Highest slot touched by either the base row or the extra bindings.
+        let mut n = base.len();
+        for (id, _) in extra {
+            n = n.max(*id as usize + 1);
+        }
+        while self.cols.len() < n {
+            self.cols.push(ColumnBuilder {
+                values: vec![Value::Null; r],
+                present: false,
+                any_bound: false,
+            });
+        }
+        for (id, col) in self.cols.iter_mut().enumerate() {
+            let id = id as u32;
+            if let Some((_, v)) = extra.iter().find(|(eid, _)| *eid == id) {
+                col.values.push(v.clone());
+                col.present = true;
+                col.any_bound = true;
+            } else if let Some(v) = base.get_by_id(id) {
+                col.values.push(v.clone());
+                if base.is_bound_by_id(id) {
+                    col.present = true;
+                    col.any_bound = true;
+                } else if !matches!(v, Value::Null) {
+                    // Value-present-but-unbound slot (e.g. aggregate alias).
+                    col.present = true;
+                }
+            } else {
+                col.values.push(Value::Null);
+            }
+        }
+        if origin != 0 {
+            self.any_origin = true;
+        }
+        self.origins.push(origin);
+        self.rows += 1;
+    }
+
+    /// Appends one row read directly from `batch[row]`, transposing its columns
+    /// into the growing builder columns. Columnar equivalent of
+    /// `push_row(&BatchRow::new(batch, row).to_owned_row())` that avoids
+    /// materializing an intermediate [`Row`]: `value_only` slots are preserved
+    /// as value-present-but-unbound and the supplied `origin` is recorded.
+    pub fn push_batch_row(
+        &mut self,
+        batch: &Batch,
+        row: usize,
+        origin: u32,
+    ) {
+        let r = self.rows;
+        let n = batch.columns.len();
+        while self.cols.len() < n {
+            self.cols.push(ColumnBuilder {
+                values: vec![Value::Null; r],
+                present: false,
+                any_bound: false,
+            });
+        }
+        for (id, col) in self.cols.iter_mut().enumerate() {
+            match batch.columns.get(id) {
+                Some(c) if !matches!(c, Column::Unbound) => {
+                    let v = c.get(row);
+                    if batch.value_only.test(id) {
+                        // Value-present-but-unbound slot (e.g. aggregate alias).
+                        let is_null = matches!(v, Value::Null);
+                        col.values.push(v);
+                        if !is_null {
+                            col.present = true;
+                        }
+                    } else {
+                        col.values.push(v);
+                        col.present = true;
+                        col.any_bound = true;
+                    }
+                }
+                _ => col.values.push(Value::Null),
+            }
+        }
+        if origin != 0 {
+            self.any_origin = true;
+        }
+        self.origins.push(origin);
+        self.rows += 1;
+    }
+
+    /// Appends every active row of `batch` via [`push_batch_row`](Self::push_batch_row),
+    /// carrying each row's `origin_row`. Columnar replacement for the
+    /// `buffer.extend(batch.active_rows())` idiom used to concatenate a
+    /// sub-plan's output into a single materialized batch.
+    pub fn push_batch_active(
+        &mut self,
+        batch: &Batch,
+    ) {
+        for row in batch.active_indices() {
+            self.push_batch_row(batch, row, batch.origin_row(row));
+        }
+    }
+
+    /// Appends one row formed by overlaying the bound bindings of
+    /// `right[right_row]` on top of `left[left_row]`, reading both directly from
+    /// columnar batches. Columnar equivalent of
+    /// `left_row.clone(); merged.merge(&right_row); push_row(&merged)`:
+    /// a slot takes the right value where right is bound, otherwise the left
+    /// value (preserving left's `value_only` semantics), and is bound iff bound
+    /// in either side.
+    pub fn push_merged(
+        &mut self,
+        left: &Batch,
+        left_row: usize,
+        right: &Batch,
+        right_row: usize,
+        origin: u32,
+    ) {
+        let r = self.rows;
+        let n = left.columns.len().max(right.columns.len());
+        while self.cols.len() < n {
+            self.cols.push(ColumnBuilder {
+                values: vec![Value::Null; r],
+                present: false,
+                any_bound: false,
+            });
+        }
+        for (id, col) in self.cols.iter_mut().enumerate() {
+            let vid = id as u32;
+            if right.is_bound_at(vid, right_row) {
+                col.values
+                    .push(right.value_at(vid, right_row).unwrap_or(Value::Null));
+                col.present = true;
+                col.any_bound = true;
+                continue;
+            }
+            // Right not bound here: fall back to the left base row.
+            match left.columns.get(id) {
+                Some(c) if !matches!(c, Column::Unbound) => {
+                    let v = c.get(left_row);
+                    if left.value_only.test(id) {
+                        let is_null = matches!(v, Value::Null);
+                        col.values.push(v);
+                        if !is_null {
+                            col.present = true;
+                        }
+                    } else {
+                        col.values.push(v);
+                        col.present = true;
+                        col.any_bound = true;
+                    }
+                }
+                _ => col.values.push(Value::Null),
+            }
+        }
+        if origin != 0 {
+            self.any_origin = true;
+        }
+        self.origins.push(origin);
+        self.rows += 1;
+    }
+
+    /// Consumes the builder and produces the final columnar [`Batch`].
+    #[must_use]
+    pub fn finish<'a>(self) -> Batch<'a> {
+        if self.rows == 0 {
+            return Batch {
+                len: 0,
+                selection: None,
+                columns: Vec::new(),
+                origin_rows: None,
+                value_only: BitSet::default(),
+                _marker: PhantomData,
+            };
+        }
+        let mut columns: Vec<Column> = Vec::with_capacity(self.cols.len());
+        let mut value_only = BitSet::default();
+        for (id, col) in self.cols.into_iter().enumerate() {
+            if col.present {
+                if col.any_bound {
+                    // Promote homogeneous node/relationship columns to their
+                    // typed representation so downstream operators (Project,
+                    // Filter, Aggregate) can read property columns in bulk via
+                    // `extract_node_ids` instead of falling back to per-row
+                    // `get_node_attribute`. This is the key enabler for
+                    // vectorized property access after a traversal, whose
+                    // output is transposed through this builder.
+                    columns.push(classify_id_column(col.values));
+                } else {
+                    // A slot that carried a value but was never bound in any
+                    // row mirrors an env slot with a cleared bound bit (e.g.
+                    // aggregate finalization). Record it so `is_bound_at` and
+                    // the env reconstructions report it as unbound, and keep it
+                    // as `Values` to preserve that distinction.
+                    columns.push(Column::Values(col.values));
+                    value_only.set(id);
+                }
+            } else {
+                columns.push(Column::Unbound);
+            }
+        }
+        let origin_rows = if self.any_origin {
+            Some(self.origins)
+        } else {
+            None
+        };
+        Batch {
+            len: self.rows,
+            selection: None,
+            columns,
+            origin_rows,
+            value_only,
+            _marker: PhantomData,
+        }
+    }
 }
 
 /// A columnar batch of rows.
@@ -255,9 +600,7 @@ impl Column {
 /// Each column corresponds to a variable slot
 /// (by `Variable.id`). The `len` field indicates how many logical rows exist.
 /// The optional `selection` vector enables zero-copy filtering.
-///
-/// When created via `from_envs`, the `envs` field stores the original `Env`
-/// objects directly for lossless round-tripping.
+#[derive(Clone)]
 pub struct Batch<'a> {
     /// Number of logical rows in this batch (before selection filtering).
     len: usize,
@@ -267,9 +610,18 @@ pub struct Batch<'a> {
     /// One column per variable slot. Indexed by `Variable.id`.
     /// Used by native batch operators. Empty when `envs` is set.
     columns: Vec<Column>,
-    /// Raw env storage for the adapter path. When set, `row_to_env`
-    /// returns a clone from here instead of reconstructing from columns.
-    envs: Option<Vec<Env<'a>>>,
+    /// Per-row correlation tag for columnar batches, indexed by logical row.
+    /// When the batch is env-backed, the tag lives in each `Env::origin_row`
+    /// instead; this sidecar is the columnar equivalent. `None` means every
+    /// row's origin is `0` (the default for uncorrelated plans).
+    origin_rows: Option<Vec<u32>>,
+    /// Var ids whose `Column::Values` holds a value that is *present but not
+    /// bound* (e.g. aggregate accumulator aliasing): `value_at` returns the
+    /// value but `is_bound_at` reports `false`, and `BatchRow::to_owned_row`
+    /// reconstructs the slot as unbound so downstream `Row::merge` skips it.
+    value_only: BitSet,
+    /// Retains the `'a` lifetime carried by the batch's borrowed data.
+    _marker: PhantomData<&'a ()>,
 }
 
 impl<'a> Batch<'a> {
@@ -284,20 +636,96 @@ impl<'a> Batch<'a> {
             len: 0,
             selection: None,
             columns,
-            envs: None,
+            origin_rows: None,
+            value_only: BitSet::default(),
+            _marker: PhantomData,
         }
     }
 
-    /// Creates a batch from a vector of `Env` rows.
+    /// Creates a columnar batch holding a single [`Column::NodeIds`] at the
+    /// given variable slot. No `Env`s are materialized — this is the
+    /// late-materialization fast path for scans feeding directly into a
+    /// `Filter`. Downstream operators read the node ids columnar (typically
+    /// only for the rows that survive filtering).
     #[must_use]
-    pub const fn from_envs(envs: Vec<Env<'a>>) -> Self {
-        let len = envs.len();
-        Self {
+    pub fn from_node_ids(
+        alias_id: u32,
+        ids: Vec<NodeId>,
+    ) -> Self {
+        let len = ids.len();
+        let mut batch = Self {
             len,
             selection: None,
             columns: Vec::new(),
-            envs: Some(envs),
+            origin_rows: None,
+            value_only: BitSet::default(),
+            _marker: PhantomData,
+        };
+        batch.set_column(alias_id, Column::NodeIds(ids));
+        batch
+    }
+
+    /// Compacts this batch in place by applying its selection vector, yielding
+    /// a dense [`Batch`] whose logical rows are exactly the previously-active
+    /// rows (in selection order) and whose `selection` is `None`. Typed columns
+    /// are preserved (no collapse to [`Column::Values`]), so this is the purely
+    /// columnar replacement for the old `clone_active_rows` round-trip: callers
+    /// that own a batch move it through here instead of deep-cloning, and those
+    /// that only borrow one pair `clone()` with `into_compacted()`.
+    ///
+    /// A batch with no selection is already dense and is returned unchanged.
+    #[must_use]
+    pub fn into_compacted(self) -> Self {
+        let Some(sel) = self.selection.as_ref() else {
+            return self;
+        };
+        let indices: Vec<usize> = sel.iter().map(|&i| i as usize).collect();
+        let mut batch = self.gather(&indices);
+        batch.selection = None;
+        batch
+    }
+
+    /// Creates a new batch by gathering rows from this batch at the given
+    /// indices. Indices may be repeated or out of order.
+    #[must_use]
+    pub fn gather(
+        &self,
+        indices: &[usize],
+    ) -> Self {
+        let columns = self
+            .columns
+            .iter()
+            .map(|c| c.gather(indices.iter().copied()))
+            .collect();
+        let origin_rows = self.origin_rows.as_ref().and_then(|o| {
+            let origins: Vec<u32> = indices.iter().map(|&i| o[i]).collect();
+            origins.iter().any(|&x| x != 0).then_some(origins)
+        });
+        Batch {
+            len: indices.len(),
+            selection: None,
+            columns,
+            origin_rows,
+            value_only: self.value_only.clone(),
+            _marker: PhantomData,
         }
+    }
+
+    /// Snapshots every active row into a fresh, dense columnar [`Batch`] and
+    /// stamps each emitted row's `origin_row` with its sequential position
+    /// (`0..n`) in active order. This is the columnar replacement for the
+    /// correlated argument-batch idiom that clones active rows while setting
+    /// `e.origin_row = i` (Apply / Optional / SemiApply / Merge / OR-apply),
+    /// used downstream to correlate sub-plan results back to outer rows.
+    ///
+    /// The `origin_rows` sidecar is emitted only when it would contain a
+    /// non-zero entry (i.e. `n > 1`).
+    #[must_use]
+    pub fn clone_active_rows_seq_origin(&self) -> Batch<'a> {
+        let mut batch = self.clone().into_compacted();
+        let n = batch.len;
+        batch.origin_rows = (n > 1).then(|| (0..n as u32).collect());
+        batch
     }
 
     /// Returns the number of logical rows in this batch.
@@ -341,15 +769,6 @@ impl<'a> Batch<'a> {
         }
     }
 
-    /// Returns an iterator yielding a reference to the [`Env`] for each active row.
-    #[must_use]
-    pub const fn active_env_iter<'b>(&'b self) -> ActiveEnvIter<'b, 'a> {
-        ActiveEnvIter {
-            batch: self,
-            indices: self.active_indices(),
-        }
-    }
-
     /// Returns a reference to the column at the given variable id.
     #[must_use]
     pub fn column(
@@ -388,74 +807,64 @@ impl<'a> Batch<'a> {
             self.columns.push(Column::Unbound);
         }
         self.columns[idx] = col;
+        // Installing an explicit column binds the slot; clear any stale
+        // value-only marker so the new binding is reported as bound.
+        self.value_only.clear(idx);
     }
 
-    /// Read a single value by (row, var_id).
-    /// Returns `&Value::Null` for unbound slots. No allocation.
+    /// Read a single value by (var_id, row) from the typed columns. Returns
+    /// `None` when the variable is unbound in this row (out-of-range slot or
+    /// `Column::Unbound`); returns `Some(Value::Null)` for an explicitly-null
+    /// binding. Clones the value.
     #[must_use]
-    pub fn get(
+    pub fn value_at(
+        &self,
+        var_id: u32,
+        row: usize,
+    ) -> Option<Value> {
+        match self.column(var_id) {
+            Column::Unbound => None,
+            col => Some(col.get(row)),
+        }
+    }
+
+    /// Returns the per-row correlation tag for `row`. Defaults to `0` when no
+    /// origin has been assigned (uncorrelated plans).
+    #[must_use]
+    pub fn origin_row(
         &self,
         row: usize,
-        var_id: u32,
-    ) -> &Value {
-        static NULL: Value = Value::Null;
-        let envs = self.envs.as_ref().expect("batch must be env-backed");
-        envs[row].get_by_id(var_id).unwrap_or(&NULL)
+    ) -> u32 {
+        self.origin_rows.as_ref().map_or(0, |o| o[row])
     }
 
-    /// Write a single value by (row, var_id). Mutates the env in-place.
-    pub fn set(
+    /// Installs the columnar per-row correlation sidecar. The vector is indexed
+    /// by logical row (length must equal [`len`](Self::len)). Ignored for
+    /// env-backed batches, which carry the tag inside each `Env`.
+    pub fn set_origin_rows(
         &mut self,
-        row: usize,
-        var_id: u32,
-        value: Value,
+        origins: Vec<u32>,
     ) {
-        let envs = self.envs.as_mut().expect("batch must be env-backed");
-        envs[row].insert_by_id(var_id, value);
+        debug_assert_eq!(origins.len(), self.len);
+        self.origin_rows = Some(origins);
     }
 
-    /// Read multiple variables for all active rows, returned in row-major order.
-    /// Outer index = active row (length `self.active_len()`), inner index =
-    /// variable (same order as `var_ids`).
-    ///
-    /// Env storage is already row-major, so this is the natural access
-    /// pattern — no transpose needed.
     #[must_use]
-    pub fn read_columns(
-        &self,
-        var_ids: &[u32],
-    ) -> Vec<Vec<&Value>> {
-        static NULL: Value = Value::Null;
-        let envs = self.envs.as_ref().expect("batch must be env-backed");
-        self.active_indices()
-            .map(|row| {
-                var_ids
-                    .iter()
-                    .map(|&id| envs[row].get_by_id(id).unwrap_or(&NULL))
-                    .collect()
-            })
-            .collect()
+    pub fn num_columns(&self) -> usize {
+        self.columns.len()
     }
 
-    /// Returns a mutable slice of the underlying env storage.
-    /// Panics if the batch is not env-backed.
-    pub const fn envs_mut(&mut self) -> &mut [Env<'a>] {
-        self.envs
-            .as_mut()
-            .expect("batch must be env-backed")
-            .as_mut_slice()
-    }
-
-    /// Returns a shared reference to the Env at the given row index.
-    /// Panics if the batch is not env-backed.
-    /// This is zero-copy — no allocation or cloning.
+    /// Returns true if the variable `var_id` is explicitly bound in `row`.
+    /// Column-level: a non-`Unbound` column is considered bound for every row,
+    /// unless the slot is tracked as value-present-but-unbound.
     #[must_use]
-    pub fn env_ref(
+    pub fn is_bound_at(
         &self,
+        var_id: u32,
         row: usize,
-    ) -> &Env<'a> {
-        let envs = self.envs.as_ref().expect("batch must be env-backed");
-        &envs[row]
+    ) -> bool {
+        let _ = row;
+        !matches!(self.column(var_id), Column::Unbound) && !self.value_only.test(var_id as usize)
     }
 
     /// Write an entire column of values into the active rows.
@@ -465,25 +874,21 @@ impl<'a> Batch<'a> {
         var_id: u32,
         values: Vec<Value>,
     ) {
-        let envs = self.envs.as_mut().expect("batch must be env-backed");
-        if let Some(sel) = &self.selection {
+        // Scatter the active-row values into a full-length column, preserving
+        // any existing bindings on non-active rows.
+        if let Some(sel) = self.selection.clone() {
             debug_assert_eq!(values.len(), sel.len());
+            let mut full: Vec<Value> = (0..self.len)
+                .map(|r| self.value_at(var_id, r).unwrap_or(Value::Null))
+                .collect();
             for (val, &row) in values.into_iter().zip(sel.iter()) {
-                envs[row as usize].insert_by_id(var_id, val);
+                full[row as usize] = val;
             }
+            self.set_column(var_id, Column::Values(full));
         } else {
             debug_assert_eq!(values.len(), self.len);
-            for (row, val) in values.into_iter().enumerate() {
-                envs[row].insert_by_id(var_id, val);
-            }
+            self.set_column(var_id, Column::Values(values));
         }
-    }
-
-    /// Consumes the batch and returns the underlying env storage.
-    /// Panics if the batch is not env-backed.
-    #[must_use]
-    pub fn into_envs(self) -> Vec<Env<'a>> {
-        self.envs.expect("batch must be env-backed")
     }
 
     /// Takes a column out of this batch, replacing it with `Unbound`.
@@ -493,6 +898,7 @@ impl<'a> Batch<'a> {
     ) -> Column {
         let idx = var_id as usize;
         if idx < self.columns.len() {
+            self.value_only.clear(idx);
             std::mem::replace(&mut self.columns[idx], Column::Unbound)
         } else {
             Column::Unbound
@@ -500,28 +906,68 @@ impl<'a> Batch<'a> {
     }
 
     /// Extracts node IDs for a given variable from this batch.
-    /// Works for both env-backed and columnar batches.
     /// Returns `None` if the variable doesn't hold node values.
     #[must_use]
     pub fn extract_node_ids(
         &self,
         var_id: u32,
     ) -> Option<Vec<NodeId>> {
-        if let Some(envs) = &self.envs {
-            let mut ids = Vec::with_capacity(self.len);
-            for env in envs {
-                match env.get_by_id(var_id)? {
-                    Value::Node(id) => ids.push(*id),
-                    _ => return None,
+        match self.column(var_id) {
+            Column::NodeIds(ids) => Some(ids.clone()),
+            _ => None,
+        }
+    }
+}
+
+/// A borrowed view of a single row of a [`Batch`], implementing [`RowView`]
+/// so the expression evaluator can read columnar data without materializing
+/// an owned [`Row`].
+pub struct BatchRow<'b, 'a> {
+    batch: &'b Batch<'a>,
+    row: usize,
+}
+
+impl<'b, 'a> BatchRow<'b, 'a> {
+    /// Creates a view of `row` in `batch`.
+    #[must_use]
+    pub const fn new(
+        batch: &'b Batch<'a>,
+        row: usize,
+    ) -> Self {
+        Self { batch, row }
+    }
+}
+
+impl RowView for BatchRow<'_, '_> {
+    fn value_at(
+        &self,
+        var_id: u32,
+    ) -> Option<Value> {
+        // Honor the `RowView` contract: an in-range slot that is unbound reads
+        // back as `Some(Null)` (matching the owned `Row` and the legacy
+        // env-backed runtime), while a slot beyond the batch's column space is
+        // genuinely out of scope and reads back as `None`.
+        match self.batch.value_at(var_id, self.row) {
+            Some(value) => Some(value),
+            None if (var_id as usize) < self.batch.num_columns() => Some(Value::Null),
+            None => None,
+        }
+    }
+
+    fn to_owned_row(&self) -> Row {
+        let mut r = Row::new();
+        for (var_id, col) in self.batch.columns.iter().enumerate() {
+            if !matches!(col, Column::Unbound) {
+                r.insert_by_id(var_id as u32, col.get(self.row));
+                if self.batch.value_only.test(var_id) {
+                    r.unbind_by_id(var_id as u32);
                 }
             }
-            Some(ids)
-        } else {
-            match self.column(var_id) {
-                Column::NodeIds(ids) => Some(ids.clone()),
-                _ => None,
-            }
         }
+        if let Some(origins) = &self.batch.origin_rows {
+            r.origin_row = origins[self.row];
+        }
+        r
     }
 }
 
@@ -568,31 +1014,6 @@ impl Iterator for ActiveIndices<'_, '_> {
 }
 
 impl ExactSizeIterator for ActiveIndices<'_, '_> {}
-
-// ---------------------------------------------------------------------------
-// ActiveEnvIter — iterator yielding Env for each active row
-// ---------------------------------------------------------------------------
-
-/// Iterator over active rows in a batch, yielding a reference to the [`Env`] per row.
-pub struct ActiveEnvIter<'b, 'a> {
-    batch: &'b Batch<'a>,
-    indices: ActiveIndices<'b, 'a>,
-}
-
-impl<'b, 'a> Iterator for ActiveEnvIter<'b, 'a> {
-    type Item = &'b Env<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let idx = self.indices.next()?;
-        Some(self.batch.env_ref(idx))
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.indices.size_hint()
-    }
-}
-
-impl ExactSizeIterator for ActiveEnvIter<'_, '_> {}
 
 // ---------------------------------------------------------------------------
 // BatchOp — enum dispatch for batch-mode operators
@@ -705,7 +1126,10 @@ impl<'a> BatchOp<'a> {
                 op.child.set_argument_batch(batch);
             }
             Self::NodeByLabelScan(op) => op.child.set_argument_batch(batch),
-            Self::IncludePending(op) => op.child.set_argument_batch(batch),
+            Self::IncludePending(op) => {
+                op.capture_argument(&batch);
+                op.child.set_argument_batch(batch);
+            }
             Self::Filter(op) => op.child.set_argument_batch(batch),
             Self::Project(op) => op.child.set_argument_batch(batch),
             Self::Skip(op) => op.child.set_argument_batch(batch),
@@ -729,11 +1153,7 @@ impl<'a> BatchOp<'a> {
             Self::EdgeByIndexScan(op) => op.child.set_argument_batch(batch),
             Self::CartesianProduct(op) => {
                 for right_child in &mut op.right_children {
-                    let cloned: Vec<Env<'a>> = batch
-                        .active_env_iter()
-                        .map(|e| e.clone_pooled(op.runtime.env_pool))
-                        .collect();
-                    right_child.set_argument_batch(Batch::from_envs(cloned));
+                    right_child.set_argument_batch(batch.clone().into_compacted());
                 }
                 op.child.set_argument_batch(batch);
             }
@@ -751,15 +1171,11 @@ impl<'a> BatchOp<'a> {
                 }
             }
             Self::Union(op) => {
-                op.store_argument_batch(&batch);
+                op.store_argument_batch(batch);
                 if let Some(ref mut c) = op.current
-                    && let Some(ref envs) = op.argument_batch
+                    && let Some(ref arg) = op.argument_batch
                 {
-                    let cloned: Vec<crate::runtime::env::Env<'a>> = envs
-                        .iter()
-                        .map(|e| e.clone_pooled(op.runtime.env_pool))
-                        .collect();
-                    c.set_argument_batch(Batch::from_envs(cloned));
+                    c.set_argument_batch(arg.clone());
                 }
             }
             Self::PathBuilder(op) => op.child.set_argument_batch(batch),
@@ -786,15 +1202,11 @@ impl<'a> BatchOp<'a> {
             Self::ValueHashJoin(op) => {
                 // Clear cached state so the join rematerializes for the new batch
                 op.hash_table = None;
-                op.left_envs.clear();
+                op.left_batch = None;
                 op.left_pos = 0;
                 op.right_match_envs.clear();
                 op.right_match_pos = 0;
-                let cloned: Vec<Env<'a>> = batch
-                    .active_env_iter()
-                    .map(|e| e.clone_pooled(op.runtime.env_pool))
-                    .collect();
-                op.right.set_argument_batch(Batch::from_envs(cloned));
+                op.right.set_argument_batch(batch.clone().into_compacted());
                 op.child.set_argument_batch(batch);
             }
         }

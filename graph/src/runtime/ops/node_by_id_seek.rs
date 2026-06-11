@@ -14,8 +14,8 @@ use crate::graph::graph::NodeId;
 use crate::parser::ast::{ExprIR, QueryExpr, QueryNode, Variable};
 use crate::planner::IR;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchOp},
-    env::Env,
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
+    row::{Row, RowView},
     runtime::Runtime,
     value::Value,
 };
@@ -26,7 +26,7 @@ pub struct NodeByIdSeekOp<'a> {
     pub(crate) child: Box<BatchOp<'a>>,
     node_pattern: &'a QueryNode<Arc<String>, Variable>,
     filter: &'a Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
-    pending: VecDeque<(Env<'a>, RoaringIntoIter)>,
+    pending: VecDeque<(Row, RoaringIntoIter)>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -52,16 +52,16 @@ impl<'a> NodeByIdSeekOp<'a> {
     /// or all pending ranges are exhausted.
     fn drain_pending(
         &mut self,
-        envs: &mut Vec<Env<'a>>,
+        builder: &mut BatchBuilder,
     ) {
-        while envs.len() < BATCH_SIZE {
+        while builder.len() < BATCH_SIZE {
             let Some((env, iter)) = self.pending.front_mut() else {
                 break;
             };
             if let Some(nid) = iter.next() {
-                let mut row = env.clone_pooled(self.runtime.env_pool);
+                let mut row = env.clone();
                 row.insert(&self.node_pattern.alias, Value::Node(NodeId::from(nid)));
-                envs.push(row);
+                builder.push_row(&row);
             } else {
                 self.pending.pop_front();
             }
@@ -73,26 +73,27 @@ impl<'a> Iterator for NodeByIdSeekOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut envs = Vec::with_capacity(BATCH_SIZE);
+        let mut builder = BatchBuilder::new();
 
         // Drain leftover ranges from previous call.
-        self.drain_pending(&mut envs);
+        self.drain_pending(&mut builder);
 
-        while envs.len() < BATCH_SIZE {
+        while builder.len() < BATCH_SIZE {
             let batch = match self.child.next() {
                 Some(Ok(b)) => b,
                 Some(Err(e)) => return Some(Err(e)),
                 None => break,
             };
 
-            for vars in batch.active_env_iter() {
-                match self.runtime.evaluate_id_filter(self.filter, vars) {
+            for row in batch.active_indices() {
+                let view = BatchRow::new(&batch, row);
+                match self.runtime.evaluate_id_filter(self.filter, &view) {
                     Ok(Some(mut range)) => {
                         // Remove all deleted nodes at once.
                         range -= self.runtime.g.borrow().deleted_nodes();
                         if !range.is_empty() {
                             self.pending.push_back((
-                                vars.clone_pooled(self.runtime.env_pool),
+                                BatchRow::new(&batch, row).to_owned_row(),
                                 range.into_iter(),
                             ));
                         }
@@ -102,13 +103,13 @@ impl<'a> Iterator for NodeByIdSeekOp<'a> {
                 }
             }
 
-            self.drain_pending(&mut envs);
+            self.drain_pending(&mut builder);
         }
 
-        if envs.is_empty() {
+        if builder.is_empty() {
             None
         } else {
-            Some(Ok(Batch::from_envs(envs)))
+            Some(Ok(builder.finish()))
         }
     }
 }

@@ -21,8 +21,8 @@ use crate::parser::ast::{ExprIR, SetItem, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{Batch, BatchOp},
-    env::Env,
+    batch::{Batch, BatchOp, BatchRow},
+    row::RowView,
     runtime::Runtime,
     value::Value,
 };
@@ -87,8 +87,8 @@ impl Runtime<'_> {
             !has_deleted_nodes && !has_pending_deleted_nodes && !has_pending_deleted_rels;
 
         for row in batch.active_indices() {
-            let env = batch.env_ref(row);
-            self.set_inner(items, env, skip_delete_checks)?;
+            let view = BatchRow::new(batch, row);
+            self.set_inner(items, &view, skip_delete_checks)?;
         }
         Ok(())
     }
@@ -121,19 +121,10 @@ impl Runtime<'_> {
     }
 
     #[allow(clippy::too_many_lines)]
-    pub fn set(
+    fn set_inner<R: RowView + ?Sized>(
         &self,
         items: &Vec<SetItem<LabelId, Variable>>,
-        vars: &Env<'_>,
-    ) -> Result<(), String> {
-        self.set_inner(items, vars, false)
-    }
-
-    #[allow(clippy::too_many_lines)]
-    fn set_inner(
-        &self,
-        items: &Vec<SetItem<LabelId, Variable>>,
-        vars: &Env<'_>,
+        vars: &R,
         skip_delete_checks: bool,
     ) -> Result<(), String> {
         for item in items {
@@ -152,9 +143,8 @@ impl Runtime<'_> {
                     let (entity, attr) = match entity.root().data() {
                         ExprIR::Variable(name) => {
                             let entity = vars
-                                .get(name)
-                                .ok_or_else(|| format!("Variable {} not found", name.as_str()))?
-                                .clone();
+                                .value_at(name.id)
+                                .ok_or_else(|| format!("Variable {} not found", name.as_str()))?;
                             (entity, None)
                         }
                         ExprIR::Property(property) => (
@@ -431,23 +421,23 @@ impl Runtime<'_> {
                     var: entity,
                     labels,
                 } => {
-                    let run_expr = vars.get(entity);
+                    let run_expr = vars.value_at(entity.id);
                     match run_expr {
                         Some(Value::Node(id)) => {
                             if !skip_delete_checks
-                                && ((self.g.borrow().is_node_deleted(*id)
-                                    && !self.pending.borrow().is_node_created(*id))
-                                    || self.pending.borrow().is_node_deleted(*id))
+                                && ((self.g.borrow().is_node_deleted(id)
+                                    && !self.pending.borrow().is_node_created(id))
+                                    || self.pending.borrow().is_node_deleted(id))
                             {
                                 continue;
                             }
-                            self.pending.borrow_mut().set_node_labels(*id, labels);
+                            self.pending.borrow_mut().set_node_labels(id, labels);
                         }
                         Some(Value::Null) => {}
                         _ => {
                             return Err(format!(
                                 "Type mismatch: expected Node but was {}",
-                                run_expr.map_or_else(|| "undefined", Value::name)
+                                run_expr.as_ref().map_or_else(|| "undefined", Value::name)
                             ));
                         }
                     }

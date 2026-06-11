@@ -66,32 +66,26 @@ impl<'a> Iterator for PathBuilderOp<'a> {
         };
 
         for path in self.paths {
-            let var_ids: Vec<u32> = path.vars.iter().map(|v| v.id).collect();
-
-            // read_columns returns row-major: rows[row][var_index] = &Value
-            let rows = batch.read_columns(&var_ids);
-
-            let path_values: Result<Vec<Value>, String> = rows
-                .iter()
-                .zip(batch.active_indices())
-                .map(|(row, row_idx)| {
+            let path_values: Result<Vec<Value>, String> = batch
+                .active_indices()
+                .map(|row_idx| {
                     let mut elems = ThinVec::new();
                     let mut skip_next = false;
-                    for (i, val) in row.iter().enumerate() {
+                    for var in &path.vars {
                         if skip_next {
                             skip_next = false;
                             continue;
                         }
-                        let env = batch.env_ref(row_idx);
-                        if !env.is_bound(&path.vars[i]) {
-                            return Err(format!("Variable {} not found", path.vars[i].as_str()));
+                        if !batch.is_bound_at(var.id, row_idx) {
+                            return Err(format!("Variable {} not found", var.as_str()));
                         }
+                        let val = batch.value_at(var.id, row_idx).unwrap_or(Value::Null);
                         // Variable-length relationship: the VLT operator stores
                         // the result as a Path in alternating [Node, Rel, Node, ...]
                         // format. Incorporate it directly, skipping the leading
                         // node (which duplicates the preceding node already in elems)
                         // and the following endpoint variable.
-                        if let Value::Path(path_elems) = val {
+                        if let Value::Path(path_elems) = &val {
                             if path_elems.len() > 1 {
                                 // Check if VLT path direction matches the pattern
                                 // direction. For incoming patterns (m)<-[*]-(n), the
@@ -145,7 +139,7 @@ impl<'a> Iterator for PathBuilderOp<'a> {
                             // Skip the following endpoint node variable (it
                             // duplicates the last node in the path).
                             skip_next = true;
-                        } else if let Value::List(edges) = val {
+                        } else if let Value::List(edges) = &val {
                             if !edges.is_empty() {
                                 for edge in edges.iter() {
                                     // Determine the next node: whichever endpoint
@@ -174,7 +168,7 @@ impl<'a> Iterator for PathBuilderOp<'a> {
                             // following endpoint node, so skip it.
                             skip_next = true;
                         } else {
-                            elems.push((*val).clone());
+                            elems.push(val);
                         }
                     }
                     Ok(Value::Path(Arc::new(elems)))
