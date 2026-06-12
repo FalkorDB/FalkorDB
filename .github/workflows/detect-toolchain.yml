@@ -1,0 +1,53 @@
+name: Detect toolchain image
+
+# Reusable workflow: pick the builder/toolchain image a job should run in.
+# If this PR built a release-candidate image for the given OS (its
+# build/docker/builder/Dockerfile.<os> changed -> build-rc-toolchain published
+# ghcr.io/falkordb/falkordb-build:<os>-pr-<N>), use that RC so the toolchain
+# change is exercised end-to-end; otherwise fall back to the stable :<os>.
+#
+# Shared by sanitize.yml / coverage.yml / codeql-analysis.yml / benchmark.yml.
+on:
+  workflow_call:
+    inputs:
+      os:
+        description: "Builder OS (default: ubuntu)"
+        required: false
+        type: string
+        default: ubuntu
+    outputs:
+      image:
+        description: "Toolchain image ref to use as the job container"
+        value: ${{ jobs.detect.outputs.image }}
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.choose.outputs.image }}
+    steps:
+      - name: Login to GHCR
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: echo "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+      - name: Choose image
+        id: choose
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          OS: ${{ inputs.os }}
+        run: |
+          set -euo pipefail
+          RC="ghcr.io/falkordb/falkordb-build:${OS}-pr-${PR}"
+          STABLE="ghcr.io/falkordb/falkordb-build:${OS}"
+          if [[ -n "$PR" ]] && docker manifest inspect "$RC" >/dev/null 2>&1; then
+            echo "Using RC: $RC"
+            echo "image=$RC" >> "$GITHUB_OUTPUT"
+          else
+            echo "Using stable: $STABLE"
+            echo "image=$STABLE" >> "$GITHUB_OUTPUT"
+          fi

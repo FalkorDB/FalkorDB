@@ -395,7 +395,7 @@ static void _EstimateEdgeAttributeMemory
 		int64_t n_sampled_edges = MAX (1, sample_size - edges_sample_size) ;
 
 		// compute weighted average
-		edge_memory_usage = (relation_memory_usage / n_sampled_edges)
+		edge_memory_usage = (relation_memory_usage / (double) n_sampled_edges)
 			* Graph_RelationEdgeCount(g, r);
 
 		arr_append(result->edge_attr_by_type_sz, edge_memory_usage);
@@ -449,9 +449,11 @@ static void _estimate_memory_consumption
 			continue ;
 		}
 
-		Index   idx = ACTIVE_IDX (s) ? ACTIVE_IDX (s) : PENDING_IDX (s) ;
-		RSIndex *sp = Index_RSIndex (idx) ;
-		result->indices_sz += RediSearch_MemUsage (sp) ;
+		Index active_idx  = ACTIVE_IDX (s) ;
+		Index pending_idx = PENDING_IDX (s) ;
+
+		if (active_idx  != NULL) result->indices_sz += Index_MemoryUsage (active_idx) ;
+		if (pending_idx != NULL) result->indices_sz += Index_MemoryUsage (pending_idx) ;
 	}
 
 	int n_edge_schema = GraphContext_SchemaCount (gc, SCHEMA_EDGE) ;
@@ -462,18 +464,12 @@ static void _estimate_memory_consumption
 			continue ;
 		}
 
-		Index   idx = ACTIVE_IDX (s) ? ACTIVE_IDX (s) : PENDING_IDX (s) ;
-		RSIndex *sp = Index_RSIndex (idx) ;
-		result->indices_sz += RediSearch_MemUsage (sp) ;
-	}
+		Index active_idx  = ACTIVE_IDX (s) ;
+		Index pending_idx = PENDING_IDX (s) ;
 
-	// convert from bytes to mb
-	result->indices_sz             /= MB ;
-	result->lbl_matrices_sz        /= MB ;
-	result->rel_matrices_sz        /= MB ;
-	result->node_block_storage_sz  /= MB ;
-	result->edge_block_storage_sz  /= MB ;
-	result->unlabeled_node_attr_sz /= MB ;
+		if (active_idx  != NULL) result->indices_sz += Index_MemoryUsage (active_idx) ;
+		if (pending_idx != NULL) result->indices_sz += Index_MemoryUsage (pending_idx) ;
+	}
 
 	//--------------------------------------------------------------------------
 	// compute the total graph memory usage
@@ -481,14 +477,14 @@ static void _estimate_memory_consumption
 
 	// sum up node attributes
 	for (int i = 0 ; i < arr_len (result->node_attr_by_label_sz) ; i++) {
-		result->node_attr_by_label_sz [i] /= MB ;
 		result->total_graph_sz_mb += result->node_attr_by_label_sz [i] ;
+		result->node_attr_by_label_sz [i] /= MB ;
 	}
 
 	// sum up edge attributes
 	for (int i = 0 ; i < arr_len (result->edge_attr_by_type_sz) ; i++) {
-		result->edge_attr_by_type_sz [i] /= MB ;
 		result->total_graph_sz_mb += result->edge_attr_by_type_sz [i] ;
+		result->edge_attr_by_type_sz [i] /= MB ;
 	}
 
 	// add up the rest of the components
@@ -499,6 +495,15 @@ static void _estimate_memory_consumption
 			result->node_block_storage_sz  +
 			result->edge_block_storage_sz  +
 			result->unlabeled_node_attr_sz ;
+
+	// convert from bytes to mb
+	result->indices_sz             /= MB ;
+	result->lbl_matrices_sz        /= MB ;
+	result->rel_matrices_sz        /= MB ;
+	result->node_block_storage_sz  /= MB ;
+	result->edge_block_storage_sz  /= MB ;
+	result->unlabeled_node_attr_sz /= MB ;
+	result->total_graph_sz_mb      /= MB ;
 }
 
 // GRAPH.MEMORY USAGE internal command handler
@@ -567,7 +572,6 @@ static void _Graph_Memory
 
 	RedisModuleCtx *rm_ctx = RedisModule_GetThreadSafeContext (bc) ;
 
-	// six key value pairs
 	RedisModule_ReplyWithMap (rm_ctx, 9) ;
 
 	// total_graph_sz_mb
@@ -719,4 +723,3 @@ int Graph_Memory
 
 	return REDISMODULE_OK ;
 }
-
