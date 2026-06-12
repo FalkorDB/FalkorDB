@@ -819,3 +819,47 @@ class testIndexCreationFlow():
             # re-pull index status
             status = self.graph.query("CALL db.indexes() yield status").result_set[0][0]
 
+    def test16_index_creation_stats(self):
+        graph_name = "index_create_stats_contract"
+        graph = self.db.select_graph(graph_name)
+        if graph_name in self.db.list_graphs():
+            graph.delete()
+
+        result = create_node_range_index(graph, "N", "a")
+        self.env.assertEquals(result.indices_created, 1)
+        self.env.assertEquals(result.labels_added, 0)
+
+    def test17_index_catalog_response(self):
+        graph_name = "index_catalog_response"
+        graph = self.db.select_graph(graph_name)
+        if graph_name in self.db.list_graphs():
+            graph.delete()
+
+        create_node_fulltext_index(graph, "Person", "name", sync=True)
+        result = graph.query("CALL db.indexes()")
+
+        expected_header = [
+            "label",
+            "properties",
+            "types",
+            "options",
+            "language",
+            "stopwords",
+            "entitytype",
+            "status",
+            "info",
+        ]
+        header = [column[1] for column in result.header]
+        self.env.assertEqual(header[: len(expected_header)], expected_header)
+
+        self.env.assertEqual(len(result.header), len(result.result_set[0]))
+        row_by_column = dict(zip(header, result.result_set[0]))
+        self.env.assertEqual(row_by_column["label"], "Person")
+        self.env.assertEqual(row_by_column["properties"], ["name"])
+        self.env.assertEqual(row_by_column["types"], OrderedDict([("name", ["FULLTEXT"])]))
+        self.env.assertEqual(row_by_column["options"], OrderedDict([("name", OrderedDict())]))
+        self.env.assertEqual(row_by_column["language"], "english")
+        self.env.assertEqual(row_by_column["stopwords"], [])
+        self.env.assertEqual(row_by_column["entitytype"], "NODE")
+        self.env.assertEqual(row_by_column["status"], "OPERATIONAL")
+

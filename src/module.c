@@ -24,7 +24,7 @@
 #include "udf/repository.h"
 #include "udf/replication.h"
 #include "redisearch_api.h"
-#include "arithmetic/funcs.h"
+#include "arithmetic/func_desc.h"
 #include "util/thpool/pool.h"
 #include "commands/commands.h"
 #include "graph/graphcontext.h"
@@ -157,7 +157,7 @@ int RedisModule_OnLoad
 					FALKOR_VERSION_MAJOR, FALKOR_VERSION_MINOR, FALKOR_VERSION_PATCH);
 
 	Proc_Register();     // register procedures
-	AR_RegisterFuncs();  // register arithmetic functions
+	AR_InitFuncsRepo();  // initialise UDF repository
 
 	// set up the module's configurable variables,
 	// using user-defined values where provided

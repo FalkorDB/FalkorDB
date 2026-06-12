@@ -212,12 +212,49 @@ endif()
 add_subdirectory(${root}/deps/RediSearch ${CMAKE_BINARY_DIR}/search-static)
 
 #-----------------------------------------------------------------------------
+# Perfect-hash lookup for built-in arithmetic functions (gperf)
+#-----------------------------------------------------------------------------
+
+find_program(GPERF_EXECUTABLE gperf)
+
+set(GPERF_INPUT
+    ${root}/src/arithmetic/builtin_funcs.gperf)
+set(GPERF_OUTPUT
+    ${root}/src/arithmetic/builtin_funcs_lookup.inc)
+
+# The generated file is checked into the source tree. gperf is only required
+# when the generated file is missing or older than its source.
+if(GPERF_EXECUTABLE)
+    add_custom_command(
+        OUTPUT  ${GPERF_OUTPUT}
+        COMMAND ${GPERF_EXECUTABLE}
+                --output-file=${GPERF_OUTPUT}
+                ${GPERF_INPUT}
+        DEPENDS ${GPERF_INPUT}
+        COMMENT "Regenerating perfect hash for built-in arithmetic functions"
+        VERBATIM)
+    add_custom_target(builtin_funcs_lookup DEPENDS ${GPERF_OUTPUT})
+else()
+    # gperf is absent — only fatal if the committed file is stale or missing
+    if(NOT EXISTS "${GPERF_OUTPUT}")
+        message(FATAL_ERROR "gperf not found and ${GPERF_OUTPUT} does not exist. Install gperf to generate it.")
+    endif()
+    file(TIMESTAMP "${GPERF_INPUT}"  _ts_input)
+    file(TIMESTAMP "${GPERF_OUTPUT}" _ts_output)
+    if("${_ts_input}" STRGREATER "${_ts_output}")
+        message(FATAL_ERROR "gperf not found and ${GPERF_OUTPUT} is out of sync with ${GPERF_INPUT}. Install gperf to regenerate it.")
+    endif()
+    add_custom_target(builtin_funcs_lookup)
+endif()
+
+#-----------------------------------------------------------------------------
 # Source files and library
 #-----------------------------------------------------------------------------
 
 file(GLOB_RECURSE SOURCES "src/*.c")
 
 add_library(falkordb SHARED ${SOURCES})
+add_dependencies(falkordb builtin_funcs_lookup)
 
 include_directories(
     ${root}
@@ -276,14 +313,12 @@ set(RAX $ENV{RAX})
 set(LIBCYPHER_PARSER $ENV{LIBCYPHER_PARSER})
 set(UTF8PROC $ENV{UTF8PROC})
 set(ONIGURUMA $ENV{ONIGURUMA})
-set(FalkorDBRS $ENV{FalkorDBRS})
 
 # Build library list - redisearch-static and VectorSimilarity are CMake targets
 # Note: VectorSimilarity must be explicitly linked because redisearch-static (a static library)
 # doesn't transitively link its dependencies. Only the shared redisearch library links VectorSimilarity,
 # but we can't use that because it would make falkordb.so depend on redisearch.so at runtime.
 set(FALKORDB_LIBS
-    ${FalkorDBRS}
     ${LAGRAPHX}
     ${LAGRAPH}
     ${QUICKJS}

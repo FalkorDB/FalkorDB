@@ -18,16 +18,9 @@ RUN set -ex ;\
     python3 --version ;\
     pip3 --version
 
-# Build and install redis from source
-RUN set -ex ;\
-    cd /tmp ;\
-    curl -LO https://download.redis.io/redis-stable.tar.gz ;\
-    tar -xzf redis-stable.tar.gz ;\
-    cd redis-stable ;\
-    make -j$(nproc) ;\
-    make install ;\
-    cd / ;\
-    rm -rf /tmp/redis-stable /tmp/redis-stable.tar.gz
+# Redis: provided by the toolchain image
+# (build/docker/builder/Dockerfile.amazonlinux2023) at
+# /usr/local/bin/redis-server, pinned to 8.6.3.
 
 # Create virtual environment
 RUN set -ex ;\

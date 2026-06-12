@@ -1,0 +1,110 @@
+# Builder toolchain image — Amazon Linux 2023
+#
+# AL2023 dnf cmake is 3.22.2 (too old for RediSearch's boost.cmake). Override
+# with pip 3.31.6. Adds clang-devel for bindgen/clang-sys.
+#
+# Redis: built from git at REDIS_VERSION (multi-stage). Same pinned tag
+# (8.6.3) as the other toolchains and sanitize. Built on AL2023 itself so
+# the resulting glibc 2.34 binary runs in the same base.
+
+ARG REDIS_VERSION=8.6.3
+
+#--------------------------------------------------------------------------
+# Stage 1: build redis-server / redis-cli from source at a pinned tag.
+#--------------------------------------------------------------------------
+FROM amazonlinux:2023 AS redis-builder
+
+ARG REDIS_VERSION
+RUN set -eux; \
+    dnf install -y --setopt=install_weak_deps=False \
+      git ca-certificates gcc gcc-c++ glibc-devel openssl-devel make tar gzip; \
+    dnf clean all
+
+WORKDIR /tmp
+RUN git clone --depth 1 --branch "${REDIS_VERSION}" https://github.com/redis/redis.git redis-src
+WORKDIR /tmp/redis-src
+
+# Flip protected-mode default — same one-line sed as the other toolchains.
+RUN set -eux; \
+    sed -ri 's!^( *createBoolConfig[(]"protected-mode",.*, *)1( *,.*[)],)$!\10\2!' src/config.c; \
+    grep -E '^ *createBoolConfig[(]"protected-mode",.*, *0 *,.*[)],$' src/config.c; \
+    export BUILD_TLS=yes BUILD_WITH_MODULES=no; \
+    make -j "$(nproc)" all; \
+    make PREFIX=/redis-install install; \
+    strip /redis-install/bin/redis-server /redis-install/bin/redis-cli; \
+    /redis-install/bin/redis-server --version
+
+#--------------------------------------------------------------------------
+# Stage 2: actual toolchain image.
+#--------------------------------------------------------------------------
+FROM amazonlinux:2023 AS builder
+
+RUN set -eux; \
+    dnf update -y; \
+    dnf install -y \
+      git \
+      wget \
+      ca-certificates \
+      unzip \
+      rsync \
+      m4 \
+      automake \
+      gperf \
+      libtool \
+      autoconf \
+      make \
+      diffutils \
+      which \
+      gcc \
+      gcc-c++ \
+      libstdc++-static \
+      openssl \
+      openssl-devel \
+      python3.11 \
+      python3.11-pip \
+      python3.11-devel \
+      clang \
+      clang-devel \
+      llvm-devel \
+      cmake; \
+    dnf clean all
+
+# Pin cmake to the same exact version across every builder OS. Overrides
+# dnf's 3.22.x; pip installs into /usr/local/bin which precedes /usr/bin.
+#
+# Install under python3.11 explicitly: AL2023 ships `yum`/`dnf` as Python
+# wrappers that import the `dnf` module from the system python (3.9), and
+# the test image (tests/Dockerfile.amazonlinux2023) later repoints
+# /usr/bin/python3 → python3.11. We do NOT change /usr/bin/python3 here —
+# doing so during toolchain build would break the next `yum install …` in
+# the test image with `ModuleNotFoundError: No module named 'dnf'` because
+# python3.11 wouldn't have the dnf module installed.
+#
+# Instead, pip-install under python3.11 directly. The cmake wrapper at
+# /usr/local/bin/cmake has `#!/usr/bin/env python` — when the test image
+# later flips /usr/bin/python3 to 3.11 it resolves cleanly because cmake
+# is on 3.11's site-packages.
+RUN pip3.11 install --no-cache-dir 'cmake==3.31.6'
+
+# Rust toolchain
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Build & install peg (alpine's minipeg equivalent — for libcypher-parser)
+ARG PEG_VERSION=0.1.19
+ARG PEG_SHA256=74d1b7b905dbbc1776502a4ccf9c38ad8b86c9f8e51b825214783eefd5cdc9af
+RUN set -eux; \
+    url="https://github.com/gpakosz/peg/archive/refs/tags/${PEG_VERSION}.tar.gz"; \
+    wget -O peg.tar.gz "$url"; \
+    echo "${PEG_SHA256}  peg.tar.gz" | sha256sum -c -; \
+    tar -xzf peg.tar.gz; \
+    cd "peg-${PEG_VERSION}"; \
+    make && make install; \
+    cd ..; \
+    rm -rf "peg-${PEG_VERSION}" peg.tar.gz
+
+# redis-server / redis-cli — copied LAST so a REDIS_VERSION bump only rebuilds
+# this cheap layer and leaves the toolchain download layers (rust/cmake/apt)
+# cached. /usr/local/bin precedes /usr/bin on PATH (where RLTest looks).
+COPY --from=redis-builder /redis-install/bin/redis-server /usr/local/bin/redis-server
+COPY --from=redis-builder /redis-install/bin/redis-cli    /usr/local/bin/redis-cli

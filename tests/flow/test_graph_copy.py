@@ -96,8 +96,8 @@ class testGraphCopy():
         try:
             self.graph_copy(src, src)
             self.env.assertTrue(False)
-        except Exception:
-            pass
+        except ResponseError as e:
+            self.env.assertIn("destination key already exists", str(e))
 
         # clean up
         self.conn.delete(src, dest)
@@ -358,4 +358,3 @@ class testGraphCopy():
 
         # clean up
         self.conn.flushall()
-

@@ -276,15 +276,15 @@ void Map_GetIdx
 	SIValue *key,
 	SIValue *value
 ) {
-	ASSERT(key   != NULL);
-	ASSERT(value != NULL);
-	ASSERT(SI_TYPE(map) & T_MAP);
-	ASSERT(idx < Map_KeyCount(map));
+	ASSERT (key   != NULL) ;
+	ASSERT (value != NULL) ;
+	ASSERT (SI_TYPE (map) & T_MAP) ;
+	ASSERT (idx < Map_KeyCount (map)) ;
 
-	Pair p = map.map[idx];
+	Pair p = map.map [idx] ;
 
-	*key   = SI_ShareValue(p.key);
-	*value = SI_ShareValue(p.val);
+	*key   = SI_ShareValue (p.key) ;
+	*value = SI_ShareValue (p.val) ;
 }
 
 // checks if 'key' is in map

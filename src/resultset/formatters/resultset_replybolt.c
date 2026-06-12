@@ -151,7 +151,7 @@ static void _ResultSet_BoltReplyWithNode
 		AttributeSet_GetIdx (set, i, &attr_id, &value) ;
 
 		// emit the actual string
-		const char *prop_str = GraphContext_GetAttributeString(gc, attr_id);
+		const char *prop_str = GraphContext_GetAttributeName (gc, attr_id) ;
 		bolt_reply_string(client, prop_str, strlen(prop_str));
 
 		// emit the value
@@ -209,7 +209,7 @@ static void _ResultSet_BoltReplyWithEdge
 		AttributeSet_GetIdx (set, i, &attr_id, &value) ;
 
 		// emit the actual string
-		const char *prop_str = GraphContext_GetAttributeString(gc, attr_id);
+		const char *prop_str = GraphContext_GetAttributeName (gc, attr_id) ;
 		bolt_reply_string(client, prop_str, strlen(prop_str));
 
 		// emit the value

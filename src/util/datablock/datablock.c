@@ -33,15 +33,18 @@ static void _DataBlock_AddBlocks
 	DataBlock *dataBlock,
 	uint blockCount
 ) {
-	ASSERT(dataBlock);
-	ASSERT(blockCount > 0);
+	ASSERT (dataBlock != NULL) ;
+	ASSERT (blockCount > 0) ;
 
-	uint prevBlockCount = dataBlock->blockCount;
-	dataBlock->blockCount += blockCount;
-	if(!dataBlock->blocks)
-		dataBlock->blocks = rm_malloc(sizeof(Block *) * dataBlock->blockCount);
-	else
-		dataBlock->blocks = rm_realloc(dataBlock->blocks, sizeof(Block *) * dataBlock->blockCount);
+	uint prevBlockCount = dataBlock->blockCount ;
+	dataBlock->blockCount += blockCount ;
+	if (!dataBlock->blocks) {
+		dataBlock->blocks =
+			rm_malloc (sizeof (Block *) * dataBlock->blockCount) ;
+	} else {
+		dataBlock->blocks =
+			rm_realloc (dataBlock->blocks, sizeof (Block *) * dataBlock->blockCount) ;
+	}
 
 	uint i;
 	for(i = prevBlockCount; i < dataBlock->blockCount; i++) {
@@ -134,15 +137,19 @@ DataBlockIterator *DataBlock_FullScan(const DataBlock *dataBlock) {
 }
 
 // Make sure datablock can accommodate at least k items.
-void DataBlock_Accommodate(DataBlock *dataBlock, int64_t k) {
-	// Compute number of free slots.
-	int64_t freeSlotsCount = dataBlock->itemCap - dataBlock->itemCount;
-	int64_t additionalItems = k - freeSlotsCount;
+void DataBlock_Accommodate
+(
+	DataBlock *dataBlock,
+	int64_t k
+) {
+	// compute number of free slots
+	int64_t freeSlotsCount  = dataBlock->itemCap - dataBlock->itemCount ;
+	int64_t additionalItems = k - freeSlotsCount ;
 
-	if(additionalItems > 0) {
+	if (additionalItems > 0) {
 		int64_t additionalBlocks =
-			ITEM_COUNT_TO_BLOCK_COUNT(additionalItems, dataBlock->blockCap);
-		_DataBlock_AddBlocks(dataBlock, additionalBlocks);
+			ITEM_COUNT_TO_BLOCK_COUNT (additionalItems, dataBlock->blockCap) ;
+		_DataBlock_AddBlocks (dataBlock, additionalBlocks) ;
 	}
 }
 
@@ -310,8 +317,12 @@ size_t DataBlock_memoryUsage
 
 	// datablock size = deleted index array size +
 	//                  (number of blocks * block size)
-	return arr_len(dataBlock->deletedIdx) * sizeof(uint64_t) +
-		dataBlock->blockCount * (dataBlock->itemSize * dataBlock->blockCap);
+	size_t data_size = sizeof(DataBlock) ;
+	data_size += arr_bytesize(dataBlock->deletedIdx);
+	data_size += RedisModule_MallocSize(dataBlock->blocks) ;
+	data_size += dataBlock->blockCount
+		* (sizeof (Block) + dataBlock->itemSize * dataBlock->blockCap);
+	return data_size;
 }
 
 void DataBlock_Free(DataBlock *dataBlock) {

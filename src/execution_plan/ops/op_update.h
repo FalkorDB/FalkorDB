@@ -9,21 +9,22 @@
 #include "op.h"
 #include "../../util/dict.h"
 #include "../execution_plan.h"
+#include "shared/update_functions.h"
 
 typedef struct {
-	OpBase op;
-	raxIterator it;      // iterator for traversing update contexts
-	uint64_t rec_idx;    // emit record index
-	Record *records;     // updated records
-	GraphContext *gc;    // graph context
-	rax *update_ctxs;    // entities to update and their expressions
-	dict *node_updates;  // enqueued node updates
-	dict *edge_updates;  // enqueued edge updates
+	OpBase op;                         // base op
+	raxIterator it;                    // iterator for traversing update ctxs
+	uint64_t rec_idx;                  // emit record index
+	Record *records;                   // updated records
+	GraphContext *gc;                  // graph context
+	rax *update_ctxs;                  // entities to update and their exps
+	StagedUpdatesCtx *staged_updates;  // staged updates
 } OpUpdate;
 
+// create a new update operation
 OpBase *NewUpdateOp
 (
-	const ExecutionPlan *plan,
-	rax *update_exps
+	const ExecutionPlan *plan,  // execution plan
+	rax *update_exps            // update expressions
 );
 

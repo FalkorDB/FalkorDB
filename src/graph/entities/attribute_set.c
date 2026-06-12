@@ -964,11 +964,11 @@ size_t AttributeSet_memoryUsage
 	uint16_t n = AttributeSet_Count (set) ;
 
 	// initial memory consumption
-	size_t total = sizeof (set->attr_count)  +
-				   n * (sizeof (AttributeID) + sizeof (AttrValue_t)) ;
+	size_t total = RedisModule_MallocSize (set) ;
 
 	// count memory consumption of each attribute
 	for (uint16_t i = 0; i < n; i++) {
+		// pointer inside the AttributeSet, memory allocation already accounted
 		AttrValue_t *attr = _GetAttrVal (set, i) ;
 		AttrType_t t = AttrValue_Type (attr) ;
 
@@ -980,8 +980,10 @@ size_t AttributeSet_memoryUsage
 
 		switch (t) {
 			case ATTR_TYPE_STRING:
+				total += RedisModule_MallocSize (attr->ptrval) ;
+				break;
 			case ATTR_TYPE_INTERN_STRING:
-				total += strlen (attr->ptrval) ;  // misleading for intern
+				// FIXME: account for intern string memory
 				break ;
 
 			case ATTR_TYPE_MAP:

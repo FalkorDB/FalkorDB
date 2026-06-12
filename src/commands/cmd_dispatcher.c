@@ -12,7 +12,7 @@
 #include "../util/blocked_client.h"
 #include "../configuration/config.h"
 
-#define GRAPH_VERSION_MISSING -1
+#define GRAPH_HASH_MISSING -1
 
 // command handler function pointer
 typedef void(*Command_Handler)(void *args);
@@ -26,7 +26,7 @@ static int _read_flags
   	bool *compact,              // compact result-set format
 	long long *timeout,         // query level timeout
   	bool *timeout_rw,           // apply timeout on both read and write queries
-  	uint *graph_version,        // graph version [UNUSED]
+  	uint *graph_hash,           // graph hash [UNUSED]
   	char **errmsg,              // reported error message
 	bolt_client_t **bolt_client // BOLT client
 ) {
@@ -38,7 +38,7 @@ static int _read_flags
 	// set defaults
 	*compact       = false;  // verbose
 	*bolt_client   = NULL;
-	*graph_version = GRAPH_VERSION_MISSING;
+	*graph_hash    = GRAPH_HASH_MISSING ;
 	Config_Option_get(Config_TIMEOUT_DEFAULT, timeout);
 	Config_Option_get(Config_TIMEOUT_MAX, &max_timeout);
 
@@ -95,15 +95,15 @@ static int _read_flags
 				return REDISMODULE_ERR;
 			}
 		} else if(!strcasecmp(arg, "version")) {
-			long long v = GRAPH_VERSION_MISSING;
+			long long v = GRAPH_HASH_MISSING ;
 			int err = REDISMODULE_ERR;
 			if(i < argc - 1) {
-				i++; // Set the current argument to the version value.
+				i++; // Set the current argument to the hash value.
 				err = RedisModule_StringToLongLong(argv[i], &v);
-				*graph_version = v;
+				*graph_hash = v;
 			}
 
-			// Emit error on missing, negative, or non-numeric version values.
+			// Emit error on missing, negative, or non-numeric hash values.
 			if(err != REDISMODULE_OK || v < 0 || v > UINT_MAX) {
 				int rc __attribute__((unused));
 				rc = asprintf(errmsg, "Failed to parse graph version value");
@@ -116,18 +116,29 @@ static int _read_flags
 	return REDISMODULE_OK;
 }
 
-// Returns false if client provided a graph version
-// which mismatch the current graph version
-static bool _verifyGraphVersion(GraphContext *gc, uint version) {
-	// caller did not specify graph version
-	if(version == GRAPH_VERSION_MISSING) return true;
-	return (GraphContext_GetVersion(gc) == version);
+// Returns false if client provided a graph hash
+// which mismatch the current graph hash
+static bool _verifyGraphHash
+(
+	GraphContext *gc,
+	uint hash
+) {
+	// caller did not specify graph hash
+	if (hash == GRAPH_HASH_MISSING) {
+		return true ;
+	}
+
+	return (GraphContext_GetHash (gc) == hash) ;
 }
 
-static void _rejectOnVersionMismatch(RedisModuleCtx *ctx, uint version) {
-	RedisModule_ReplyWithArray(ctx, 2);
-	RedisModule_ReplyWithError(ctx, "version mismatch");
-	RedisModule_ReplyWithLongLong(ctx, version);
+static void _rejectOnHashMismatch
+(
+	RedisModuleCtx *ctx,
+	uint hash
+) {
+	RedisModule_ReplyWithArray    (ctx, 2) ;
+	RedisModule_ReplyWithError    (ctx, "version mismatch") ;
+	RedisModule_ReplyWithLongLong (ctx, hash) ;
 }
 
 // Return true if the command has a valid number of arguments.
@@ -182,7 +193,7 @@ int CommandDispatch
 	int argc
 ) {
 	char *errmsg;
-	uint version;
+	uint hash;
 	bolt_client_t *bolt_client;
 	bool compact;
 	bool timeout_rw;
@@ -204,7 +215,7 @@ int CommandDispatch
 
 	// parse additional arguments
 	int res = _read_flags (argv, argc, &compact, &timeout, &timeout_rw,
-			&version, &errmsg, &bolt_client) ;
+			&hash, &errmsg, &bolt_client) ;
 	if (res == REDISMODULE_ERR) {
 		// emit error and exit if argument parsing failed
 		RedisModule_ReplyWithError (ctx, errmsg) ;
@@ -219,9 +230,9 @@ int CommandDispatch
 	// if GraphContext is null, key access failed and an error been emitted
 	if (!gc) return REDISMODULE_ERR;
 
-	// return incase caller provided a mismatched graph version
-	if (!_verifyGraphVersion (gc, version)) {
-		_rejectOnVersionMismatch (ctx, GraphContext_GetVersion(gc)) ;
+	// return incase caller provided a mismatched graph hash
+	if (!_verifyGraphHash (gc, hash)) {
+		_rejectOnHashMismatch (ctx, GraphContext_GetHash (gc)) ;
 		// Release the GraphContext, as we increased its reference count
 		// when retrieving it.
 		GraphContext_DecreaseRefCount (gc) ;

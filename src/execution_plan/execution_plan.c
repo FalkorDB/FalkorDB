@@ -21,35 +21,37 @@
 
 // allocate a new ExecutionPlan segment
 inline ExecutionPlan *ExecutionPlan_NewEmptyExecutionPlan(void) {
-	return rm_calloc(1, sizeof(ExecutionPlan));
+	ExecutionPlan *plan = rm_calloc (1, sizeof (ExecutionPlan)) ;
+	atomic_init (&plan->drained, false) ;
+	return plan ;
 }
 
 void ExecutionPlan_PopulateExecutionPlan
 (
 	ExecutionPlan *plan
 ) {
-	AST *ast = QueryCtx_GetAST();
-	GraphContext *gc = QueryCtx_GetGraphCtx();
+	AST *ast = QueryCtx_GetAST () ;
+	GraphContext *gc = QueryCtx_GetGraphCtx () ;
 
 	// initialize the plan's record mapping if necessary
 	// it will already be set if this ExecutionPlan has been created to populate
 	// a single stream
-	if(plan->record_map == NULL) {
-		plan->record_map = raxNew();
+	if (plan->record_map == NULL) {
+		plan->record_map = raxNew () ;
 	}
 
 	// build query graph
 	// query graph is set if this ExecutionPlan has been created to populate a single stream
-	if(plan->query_graph == NULL) {
-		plan->query_graph = BuildQueryGraph(ast);
+	if (plan->query_graph == NULL) {
+		plan->query_graph = BuildQueryGraph (ast) ;
 	}
 
-	uint clause_count = cypher_ast_query_nclauses(ast->root);
-	for(uint i = 0; i < clause_count; i ++) {
+	uint clause_count = cypher_ast_query_nclauses (ast->root) ;
+	for (uint i = 0; i < clause_count; i ++) {
 		// build the appropriate operation(s) for each clause in the query
 		const cypher_astnode_t *clause =
-			cypher_ast_query_get_clause(ast->root, i);
-		ExecutionPlanSegment_ConvertClause(gc, ast, plan, clause);
+			cypher_ast_query_get_clause (ast->root, i) ;
+		ExecutionPlanSegment_ConvertClause (gc, ast, plan, clause) ;
 	}
 }
 
@@ -146,33 +148,33 @@ static ExecutionPlan *_process_segment
 	uint segment_start_idx,
 	uint segment_end_idx
 ) {
-	ASSERT(ast != NULL);
-	ASSERT(segment_start_idx <= segment_end_idx);
+	ASSERT (ast != NULL) ;
+	ASSERT (segment_start_idx <= segment_end_idx) ;
 
-	ExecutionPlan *segment = NULL;
+	ExecutionPlan *segment = NULL ;
 
 	// construct a new ExecutionPlanSegment
-	segment = ExecutionPlan_NewEmptyExecutionPlan();
-	segment->ast_segment = ast;
-	ExecutionPlan_PopulateExecutionPlan(segment);
+	segment = ExecutionPlan_NewEmptyExecutionPlan () ;
+	segment->ast_segment = ast ;
+	ExecutionPlan_PopulateExecutionPlan (segment) ;
 
-	return segment;
+	return segment ;
 }
 
 static ExecutionPlan **_process_segments
 (
 	AST *ast
 ) {
-	uint          nsegments        = 0;     // number of segments
-	uint          seg_end_idx      = 0;     // segment clause end index
-	uint          clause_count     = 0;     // number of clauses
-	uint          seg_start_idx    = 0;     // segment clause start index
-	AST           *ast_segment     = NULL;  // segment AST
-	uint          *segment_indices = NULL;  // array segment bounds
-	ExecutionPlan *segment         = NULL;  // portion of the entire execution plan
-	ExecutionPlan **segments       = NULL;  // constructed segments
+	uint          nsegments        = 0 ;     // number of segments
+	uint          seg_end_idx      = 0 ;     // segment clause end index
+	uint          clause_count     = 0 ;     // number of clauses
+	uint          seg_start_idx    = 0 ;     // segment clause start index
+	AST           *ast_segment     = NULL ;  // segment AST
+	uint          *segment_indices = NULL ;  // array segment bounds
+	ExecutionPlan *segment         = NULL ;  // portion of the entire execution plan
+	ExecutionPlan **segments       = NULL ;  // constructed segments
 
-	clause_count = cypher_ast_query_nclauses(ast->root);
+	clause_count = cypher_ast_query_nclauses (ast->root) ;
 
 	//--------------------------------------------------------------------------
 	// bound segments
@@ -181,39 +183,41 @@ static ExecutionPlan **_process_segments
 	// retrieve the indices of each WITH clause to properly set
 	// the segment's bounds.
 	// Every WITH clause demarcates the beginning of a new segment
-	segment_indices = AST_GetClauseIndices(ast, CYPHER_AST_WITH);
+	segment_indices = AST_GetClauseIndices (ast, CYPHER_AST_WITH) ;
 
 	// last segment
-	arr_append(segment_indices, clause_count);
-	nsegments = arr_len(segment_indices);
-	segments = arr_new(ExecutionPlan *, nsegments);
+	arr_append (segment_indices, clause_count) ;
+	nsegments = arr_len (segment_indices) ;
+	segments = arr_new (ExecutionPlan *, nsegments) ;
 
 	//--------------------------------------------------------------------------
 	// process segments
 	//--------------------------------------------------------------------------
 
-	seg_start_idx = 0;
-	for(uint i = 0; i < nsegments; i++) {
-		seg_end_idx = segment_indices[i];
+	seg_start_idx = 0 ;
+	for (uint i = 0 ; i < nsegments ; i++) {
+		seg_end_idx = segment_indices [i] ;
 
-		if((seg_end_idx - seg_start_idx) == 0) continue; // skip empty segment
+		if ((seg_end_idx - seg_start_idx) == 0) {
+			continue ; // skip empty segment
+		}
 
 		// slice the AST to only include the clauses in the current segment
-		AST *ast_segment = AST_NewSegment(ast, seg_start_idx, seg_end_idx);
+		AST *ast_segment = AST_NewSegment (ast, seg_start_idx, seg_end_idx) ;
 
 		// create ExecutionPlan segment that represents this slice of the AST
-		segment = _process_segment(ast_segment, seg_start_idx, seg_end_idx);
-		arr_append(segments, segment);
+		segment = _process_segment (ast_segment, seg_start_idx, seg_end_idx) ;
+		arr_append (segments, segment) ;
 
 		// the next segment will start where the current one ended
-		seg_start_idx = seg_end_idx;
+		seg_start_idx = seg_end_idx ;
 	}
 
 	// restore the overall AST
-	QueryCtx_SetAST(ast);
-	arr_free(segment_indices);
+	QueryCtx_SetAST (ast) ;
+	arr_free (segment_indices) ;
 
-	return segments;
+	return segments ;
 }
 
 static bool _ExecutionPlan_HasLocateTaps
@@ -396,14 +400,17 @@ ExecutionPlan *ExecutionPlan_FromTLS_AST(void) {
 	AST *ast = QueryCtx_GetAST();
 
 	// handle UNION if there are any
-	bool union_query = AST_ContainsClause(ast, CYPHER_AST_UNION);
-	if(union_query) return _ExecutionPlan_UnionPlans(ast);
+	bool union_query = AST_ContainsClause (ast, CYPHER_AST_UNION) ;
+	if (union_query) {
+		return _ExecutionPlan_UnionPlans (ast) ;
+	}
 
 	// execution plans are created in 1 or more segments
-	ExecutionPlan **segments = _process_segments(ast);
-	ASSERT(segments != NULL);
-	uint segment_count = arr_len(segments);
-	ASSERT(segment_count > 0);
+	ExecutionPlan **segments = _process_segments (ast) ;
+	ASSERT (segments != NULL) ;
+
+	uint segment_count = arr_len (segments) ;
+	ASSERT (segment_count > 0) ;
 
 	// connect all segments into a single ExecutionPlan
 	ExecutionPlan *plan = _tie_segments(segments, segment_count);
@@ -544,30 +551,46 @@ ResultSet *ExecutionPlan_Execute(ExecutionPlan *plan) {
 //------------------------------------------------------------------------------
 
 // NOP operation consume routine for immediately terminating execution.
-static Record deplete_consume(struct OpBase *op) {
-	return NULL;
+static Record deplete_consume
+(
+	struct OpBase *op
+) {
+	return NULL ;
 }
 
 // return true if execution plan been drained
 // false otherwise
-bool ExecutionPlan_Drained(ExecutionPlan *plan) {
-	ASSERT(plan != NULL);
-	ASSERT(plan->root != NULL);
-	return (plan->root->consume == deplete_consume);
+bool ExecutionPlan_Drained
+(
+	ExecutionPlan *plan
+) {
+	ASSERT (plan != NULL) ;
+	return atomic_load (&plan->drained) ;
 }
 
-static void _ExecutionPlan_Drain(OpBase *root) {
-	root->consume = deplete_consume;
-	for(int i = 0; i < root->childCount; i++) {
-		_ExecutionPlan_Drain(root->children[i]);
+static void _ExecutionPlan_Drain
+(
+	OpBase *root
+) {
+	root->consume = deplete_consume ;
+	for (int i = 0; i < root->childCount; i++) {
+		_ExecutionPlan_Drain (root->children [i]) ;
 	}
 }
 
-// Resets each operation consume function to simply return NULL
-// this will cause the execution-plan to quickly deplete
-void ExecutionPlan_Drain(ExecutionPlan *plan) {
-	ASSERT(plan && plan->root);
-	_ExecutionPlan_Drain(plan->root);
+// mark execution-plan as drained
+// consumers check this flag and stop execution
+void ExecutionPlan_Drain
+(
+	ExecutionPlan *plan
+) {
+	ASSERT (plan != NULL) ;
+
+	atomic_store (&plan->drained, true) ;
+
+	if (plan->root != NULL) {
+		_ExecutionPlan_Drain (plan->root) ;
+	}
 }
 
 //------------------------------------------------------------------------------
@@ -679,62 +702,65 @@ void ExecutionPlan_Free
 (
 	ExecutionPlan *plan
 ) {
-	ASSERT(plan != NULL);
-	if(plan->root == NULL) {
-		_ExecutionPlan_FreeInternals(plan);
-		return;
+	ASSERT (plan != NULL) ;
+	if (plan->root == NULL) {
+		_ExecutionPlan_FreeInternals (plan) ;
+		return ;
 	}
 
-	// -------------------------------------------------------------------------
+	//--------------------------------------------------------------------------
 	// free op tree and collect execution-plans
-	// -------------------------------------------------------------------------
+	//--------------------------------------------------------------------------
 
 	// traverse the execution-plan graph (DAG -> no endless cycles), while
 	// collecting the different segments, and freeing the op tree
-	dict *plans = HashTableCreate(&def_dt);
-	OpBase **visited = arr_new(OpBase *, 1);
-	OpBase **to_visit = arr_new(OpBase *, 1);
+	dict *plans = HashTableCreate (&def_dt) ;
+	OpBase **visited  = arr_new (OpBase *, 1) ;
+	OpBase **to_visit = arr_new (OpBase *, 1) ;
 
-	OpBase *op = plan->root;
-	arr_append(to_visit, op);
+	OpBase *op = plan->root ;
+	plan->root = NULL ;
+	arr_append (to_visit, op) ;
 
-	while(arr_len(to_visit) > 0) {
-		op = arr_pop(to_visit);
+	while (arr_len(to_visit) > 0) {
+		op = arr_pop (to_visit) ;
 
 		// add the plan this op is affiliated with
-		HashTableAdd(plans, (void *)op->plan, (void *)op->plan);
+		HashTableAdd (plans, (void *)op->plan, (void *)op->plan) ;
 
 		// add all direct children of op to to_visit
-		for(uint i = 0; i < op->childCount; i++) {
-			if(op->children[i] != NULL) {
-				arr_append(to_visit, op->children[i]);
+		for (uint i = 0; i < op->childCount; i++) {
+			if (op->children [i] != NULL) {
+				arr_append (to_visit, op->children [i]) ;
 			}
 		}
 
 		// add op to `visited` array
-		arr_append(visited, op);
+		arr_append (visited, op) ;
 	}
 
 	// free the collected ops
-	for(int i = arr_len(visited)-1; i >= 0; i--) {
-		op = visited[i];
-		OpBase_Free(op);
+	for (int i = arr_len (visited)-1 ; i >= 0 ; i--) {
+		op = visited [i] ;
+		OpBase_Free (op) ;
 	}
-	arr_free(visited);
-	arr_free(to_visit);
+
+	arr_free (visited) ;
+	arr_free (to_visit) ;
 
 	// -------------------------------------------------------------------------
 	// free internals of the plans
 	// -------------------------------------------------------------------------
 
-	dictEntry *entry;
-	ExecutionPlan *curr_plan;
-	dictIterator *it = HashTableGetIterator(plans);
-	while((entry = HashTableNext(it)) != NULL) {
-		curr_plan = (ExecutionPlan *)HashTableGetVal(entry);
-		_ExecutionPlan_FreeInternals(curr_plan);
+	dictEntry *entry ;
+	ExecutionPlan *curr_plan ;
+	dictIterator *it = HashTableGetIterator (plans) ;
+	while ((entry = HashTableNext (it)) != NULL) {
+		curr_plan = (ExecutionPlan *)HashTableGetVal (entry) ;
+		_ExecutionPlan_FreeInternals (curr_plan) ;
 	}
 
-	HashTableReleaseIterator(it);
-	HashTableRelease(plans);
+	HashTableReleaseIterator (it) ;
+	HashTableRelease (plans) ;
 }
+

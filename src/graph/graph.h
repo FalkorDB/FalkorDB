@@ -6,9 +6,6 @@
 
 #pragma once
 
-#include <pthread.h>
-
-#include "rax.h"
 #include "GraphBLAS.h"
 #include "tensor/tensor.h"
 #include "entities/node.h"
@@ -20,12 +17,10 @@
 #include "../util/datablock/datablock.h"
 #include "../util/datablock/datablock_iterator.h"
 
-#define GRAPH_DEFAULT_RELATION_TYPE_CAP 16  // default number of different relationship types a graph can hold before resizing.
-#define GRAPH_DEFAULT_LABEL_CAP 16          // default number of different labels a graph can hold before resizing.
-#define GRAPH_NO_LABEL -1                   // labels are numbered [0-N], -1 represents no label.
-#define GRAPH_UNKNOWN_LABEL -2              // labels are numbered [0-N], -2 represents an unknown relation.
-#define GRAPH_NO_RELATION -1                // relations are numbered [0-N], -1 represents no relation.
-#define GRAPH_UNKNOWN_RELATION -2           // relations are numbered [0-N], -2 represents an unknown relation.
+#define GRAPH_NO_LABEL -1          // labels are numbered [0-N], -1 represents no label.
+#define GRAPH_UNKNOWN_LABEL -2     // labels are numbered [0-N], -2 represents an unknown relation.
+#define GRAPH_NO_RELATION -1       // relations are numbered [0-N], -1 represents no relation.
+#define GRAPH_UNKNOWN_RELATION -2  // relations are numbered [0-N], -2 represents an unknown relation.
 
 typedef enum {
 	GRAPH_EDGE_DIR_INCOMING,
@@ -55,57 +50,13 @@ struct Graph {
 	Delta_Matrix node_labels;          // mapping of all node IDs to all labels possessed by each node
 	Tensor *relations;                 // relation matrices
 	Delta_Matrix _zero_matrix;         // zero matrix
-	pthread_rwlock_t _rwlock;          // read-write lock scoped to this specific graph
-	bool _writelocked;                 // true if the read-write lock was acquired by a writer
 	SyncMatrixFunc SynchronizeMatrix;  // function pointer to matrix synchronization routine
 	GraphStatistics stats;             // graph related statistics
+
+	Delta_Matrix *_labels;             // pending label matrices
+	Tensor *_relations;                // pending relation matrices
+	pthread_t writer_tid ;             // writer thread id
 };
-
-// graph synchronization functions
-// the graph is initialized with a read-write lock allowing
-// concurrent access from one writer or N readers
-// acquire a lock that does not restrict access from additional reader threads
-void Graph_AcquireReadLock
-(
-	Graph *g
-);
-
-// acquire a lock for exclusive access to this graph's data
-void Graph_AcquireWriteLock
-(
-	Graph *g
-);
-
-// acquire the graph write lock with a timeout
-// attempts to acquire the write lock on the given graph
-// if the lock is not acquired immediately the function will block until either
-// the lock becomes available or the timeout elapses
-//
-// returns:
-// - 0 on success (lock acquired)
-// - ETIMEDOUT if the timeout expired before acquiring the lock
-// - EBUSY if called with timeout_ms == 0 and the lock could not be acquired
-// - other nonzero error codes may be returned for unexpected failures
-int Graph_TimeAcquireWriteLock
-(
-	Graph *g,       // graph to lock
-	int timeout_ms  // maximum time in milliseconds to wait for the lock:
-                    // - timeout_ms < 0 : block until the lock is acquired
-                    // - timeout_ms = 0 : non-blocking attempt (try-lock)
-                    // - timeout_ms > 0 : wait up to timeout_ms milliseconds
-);
-
-// returns rather or not graph is locked for writing
-bool Graph_IsWriteLocked
-(
-	const Graph *g
-);
-
-// release the held lock
-void Graph_ReleaseLock
-(
-	Graph *g
-);
 
 // retrieve graph matrix synchronization policy
 MATRIX_POLICY Graph_GetMatrixPolicy
@@ -498,8 +449,8 @@ Delta_Matrix Graph_GetAdjacencyMatrix
 // matrix is resized if its size doesn't match graph's node count
 Delta_Matrix Graph_GetLabelMatrix
 (
-	const Graph *g,     // graph from which to get adjacency matrix
-	int label           // label described by matrix
+	const Graph *g,  // graph from which to get adjacency matrix
+	LabelID label    // label described by matrix
 );
 
 // retrieves a typed adjacency matrix
@@ -544,6 +495,12 @@ void Graph_PartialFree
 void Graph_PrintMatrices
 (
 	Graph *g
+);
+
+// commit graph's pending schema changes
+void Graph_CommitPendingsMatrices
+(
+	Graph *g  // graph
 );
 
 // free graph

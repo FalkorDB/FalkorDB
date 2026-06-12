@@ -1,0 +1,78 @@
+# Builder toolchain image — Debian trixie-slim
+#
+# Pip-installs cmake 3.31.6 to align with the other builder OSes (apt's
+# distro cmake works but drifts per Debian version). Adds libclang-dev +
+# clang headers required by `bindgen`/`clang-sys` in redisearch_rs.
+#
+# Redis: built from git at REDIS_VERSION (multi-stage). See Dockerfile.ubuntu
+# for the rationale (same pattern, pinned to REDIS_VERSION).
+
+ARG REDIS_VERSION=8.6.3
+
+#--------------------------------------------------------------------------
+# Stage 1: build redis-server / redis-cli from source at a pinned tag.
+#--------------------------------------------------------------------------
+FROM debian:trixie-slim AS redis-builder
+
+ARG REDIS_VERSION
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates git dpkg-dev gcc g++ libc6-dev libssl-dev make && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /tmp
+RUN git clone --depth 1 --branch "${REDIS_VERSION}" https://github.com/redis/redis.git redis-src
+WORKDIR /tmp/redis-src
+
+RUN set -eux; \
+    sed -ri 's!^( *createBoolConfig[(]"protected-mode",.*, *)1( *,.*[)],)$!\10\2!' src/config.c; \
+    grep -E '^ *createBoolConfig[(]"protected-mode",.*, *0 *,.*[)],$' src/config.c; \
+    gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)"; \
+    arch="$(dpkg --print-architecture | awk -F- '{ print $NF }')"; \
+    extraJemallocConfigureFlags="--build=$gnuArch"; \
+    case "${arch##*-}" in \
+        amd64 | i386 | x32) extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-page=12" ;; \
+        *) extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-page=16" ;; \
+    esac; \
+    extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-hugepage=21"; \
+    sed -ri 's!cd jemalloc && ./configure !&'"$extraJemallocConfigureFlags"' !' deps/Makefile; \
+    export BUILD_TLS=yes BUILD_WITH_MODULES=no; \
+    make -j "$(nproc)" all; \
+    make PREFIX=/redis-install install; \
+    strip /redis-install/bin/redis-server /redis-install/bin/redis-cli; \
+    /redis-install/bin/redis-server --version
+
+#--------------------------------------------------------------------------
+# Stage 2: actual toolchain image.
+#--------------------------------------------------------------------------
+FROM debian:trixie-slim
+
+RUN apt-get update -y && \
+    apt-get install -y --no-install-recommends \
+      git wget build-essential lcov \
+      openssl libssl-dev \
+      python3 python3-venv python3-pip \
+      rsync unzip curl m4 automake gperf peg libtool autoconf \
+      clang libclang-dev \
+      gcc-13 g++-13 && \
+    rm -rf /var/lib/apt/lists/*
+
+# Set gcc-13 and g++-13 as the default gcc/g++
+RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 130 \
+    --slave /usr/bin/g++ g++ /usr/bin/g++-13 \
+    --slave /usr/bin/gcov gcov /usr/bin/gcov-13
+
+# Pin cmake to the same exact version across every builder OS.
+RUN pip3 install --no-cache-dir --break-system-packages 'cmake==3.31.6'
+
+# Rust toolchain
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# redis-server / redis-cli — copied LAST so a REDIS_VERSION bump only rebuilds
+# this cheap layer and leaves the toolchain download layers (rust/cmake/apt)
+# cached. /usr/local/bin precedes /usr/bin on PATH (where RLTest looks).
+COPY --from=redis-builder /redis-install/bin/redis-server /usr/local/bin/redis-server
+COPY --from=redis-builder /redis-install/bin/redis-cli    /usr/local/bin/redis-cli

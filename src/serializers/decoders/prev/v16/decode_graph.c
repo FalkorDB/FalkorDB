@@ -19,7 +19,7 @@ static GraphContext *_GetOrCreateGraphContext
 
 		// while loading the graph
 		// minimize matrix realloc and synchronization calls
-		Graph_AcquireWriteLock (g) ;
+		GraphContext_AcquireWriteLock (gc) ;
 		Graph_SetMatrixPolicy (g, SYNC_POLICY_RESIZE) ;
 	}
 
@@ -247,7 +247,7 @@ GraphContext *RdbLoadGraphContext_v16
 
 	if (GraphDecodeContext_Finished (decoding_context)) {
 		// release graph write lock
-		Graph_ReleaseLock (g) ;
+		GraphContext_ReleaseLock (gc) ;
 
 		// set the node label matrix
 		Serializer_Graph_SetNodeLabels(g);

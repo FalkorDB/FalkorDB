@@ -13,46 +13,6 @@
 #include "../../../graph/graph_hub.h"
 
 // commit node blueprints
-static void _CommitNodesBlueprint
-(
-	PendingCreations *pending
-) {
-	GraphContext *gc = QueryCtx_GetGraphCtx();
-	Graph *g = GraphContext_GetGraph (gc) ;
-
-	// sync policy should be set to resize to capacity, no need to sync
-	ASSERT(Graph_GetMatrixPolicy(g) == SYNC_POLICY_RESIZE);
-
-	// create missing schemas
-	// this loop iterates over the CREATE pattern, e.g.
-	// CREATE (p:Person)
-	// as such we're not expecting a large number of iterations
-	uint blueprint_node_count = arr_len(pending->nodes.nodes_to_create);
-	for(uint i = 0; i < blueprint_node_count; i++) {
-		NodeCreateCtx *node_ctx = pending->nodes.nodes_to_create + i;
-		uint label_count = arr_len(node_ctx->labels);
-
-		for(uint j = 0; j < label_count; j++) {
-			const char *label = node_ctx->labels[j];
-			Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
-
-			if(s == NULL) {
-				s = GraphHub_AddSchema(gc, label, SCHEMA_NODE, true);
-				QueryCtx_GetResultSetStatistics()->labels_added++;
-			}
-
-			node_ctx->labelsId[j] = s->id;
-			pending->nodes.node_labels[i][j] = s->id;
-
-			// sync matrix, make sure label matrix is of the right dimensions
-			Graph_GetLabelMatrix(g, Schema_GetID(s));
-		}
-
-		// sync matrix, make sure mapping matrix is of the right dimensions
-		if(label_count > 0) Graph_GetNodeLabelMatrix(g);
-	}
-}
-
 // commit nodes
 static void _CommitNodes
 (
@@ -63,6 +23,7 @@ static void _CommitNodes
 	Graph        *g                   = GraphContext_GetGraph (gc) ;
 	uint         node_count           = arr_len (pending->nodes.created_nodes) ;
 	bool         constraint_violation = false;
+	bool         enforce_constraints  = GraphContext_HasConstraints (gc) ;
 
 	// sync policy should be set to NOP, no need to sync/resize
 	ASSERT (Graph_GetMatrixPolicy (g) == SYNC_POLICY_NOP) ;
@@ -81,56 +42,23 @@ static void _CommitNodes
 		// enforce constraints
 		//----------------------------------------------------------------------
 
-		if(constraint_violation == false) {
-			for(uint j = 0; j < label_count; j++) {
-				Schema *s = GraphContext_GetSchemaByID(gc, labels[j], SCHEMA_NODE);
-				char *err_msg = NULL;
-				if(!Schema_EnforceConstraints(s, (GraphEntity*)n, &err_msg)) {
+		if (enforce_constraints && constraint_violation == false) {
+			for (uint j = 0 ; j < label_count ; j++) {
+				Schema *s =
+					GraphContext_GetSchemaByID (gc, labels [j], SCHEMA_NODE) ;
+				char *err_msg = NULL ;
+
+				if (!Schema_EnforceConstraints (s, (GraphEntity*)n, &err_msg)) {
 					// constraint violation
-					ASSERT(err_msg != NULL);
-					constraint_violation = true;
-					ErrorCtx_SetError("%s", err_msg);
-					free(err_msg);
-					break;
+					ASSERT (err_msg != NULL) ;
+					constraint_violation = true ;
+					ErrorCtx_SetError ("%s", err_msg) ;
+					free (err_msg) ;
+					break ;
 				}
 			}
 		}
 	}
-}
-
-// commit edge blueprints
-static void _CommitEdgesBlueprint
-(
-	PendingCreations *pending
-) {
-	GraphContext *gc = QueryCtx_GetGraphCtx();
-	Graph *g = GraphContext_GetGraph (gc) ;
-
-	// sync policy should be set to resize to capacity, no need to sync
-	ASSERT(Graph_GetMatrixPolicy(g) == SYNC_POLICY_RESIZE);
-
-	// create missing schemas
-	// this loop iterates over the CREATE pattern, e.g.
-	// CREATE (p:Person)-[e:VISITED]->(q)
-	// as such we're not expecting a large number of iterations
-	uint blueprint_edge_count = arr_len(pending->edges);
-	for(uint i = 0; i < blueprint_edge_count; i++) {
-		EdgeCreateCtx *edge_ctx = &pending->edges[i].edges_to_create;
-
-		const char *relation = edge_ctx->relation;
-		Schema *s = GraphContext_GetSchema(gc, relation, SCHEMA_EDGE);
-		if(s == NULL) {
-			s = GraphHub_AddSchema(gc, relation, SCHEMA_EDGE, true);
-		}
-
-		// calling Graph_GetRelationMatrix will make sure relationship matrix
-		// is of the right dimensions
-		Graph_GetRelationMatrix(g, Schema_GetID(s), false);
-	}
-
-	// call Graph_GetAdjacencyMatrix will make sure the adjacency matrix
-	// is of the right dimensions
-	Graph_GetAdjacencyMatrix(g, false);
 }
 
 // commit edges
@@ -253,45 +181,168 @@ void PendingCreations_Reset
 	}
 }
 
+static void _PropertyMap_CreateMissingAttributes
+(
+	GraphContext *gc,
+	PropertyMap *map
+) {
+	if (map == NULL) {
+		return ;
+	}
+
+	uint n = arr_len (map->attr_ids) ;
+	for (uint i = 0 ; i < n ; i++) {
+		if (unlikely (map->attr_ids [i] == ATTRIBUTE_ID_NONE)) {
+			map->attr_ids [i] =
+				GraphHub_FindOrAddAttribute (gc, map->keys [i], true) ;
+		}
+	}
+}
+
+void PendingCreations_CreateMissingSchemas
+(
+	GraphContext *gc,
+	PendingCreations *pending
+) {
+	ASSERT (gc      != NULL) ;
+	ASSERT (pending != NULL) ;
+
+	NodeCreateCtx *nodes = pending->nodes.nodes_to_create ;
+
+	uint n = arr_len (nodes) ;
+	for (uint i = 0 ; i < n ; i++) {
+		NodeCreateCtx *ctx = nodes + i ;
+
+		uint m = arr_len (ctx->labelsId) ;
+		for (uint j = 0 ; j < m ; j++) {
+			if (unlikely (ctx->labelsId [j] == GRAPH_UNKNOWN_LABEL)) {
+				Schema *s =
+					GraphHub_AddSchema (gc, ctx->labels [j], SCHEMA_NODE, true) ;
+				ctx->labelsId [j] = Schema_GetID (s) ;
+			}
+		}
+
+		_PropertyMap_CreateMissingAttributes (gc, ctx->properties) ;
+	}
+
+	PendingEdgeCreations *edges = pending->edges ;
+	n = arr_len (edges) ;
+	for (uint i = 0 ; i < n ; i++) {
+		EdgeCreateCtx *ctx = &(edges[i].edges_to_create) ;
+		if (unlikely (ctx->reltypeId == GRAPH_UNKNOWN_RELATION)) {
+			Schema *s =
+				GraphHub_AddSchema (gc, ctx->relation, SCHEMA_EDGE, true) ;
+			ctx->reltypeId = Schema_GetID (s) ;
+		}
+
+		_PropertyMap_CreateMissingAttributes (gc, ctx->properties) ;
+	}
+}
+
+static void _PendingCreations_EnsureMatrixDim
+(
+	Graph *g,
+	PendingCreations *pending
+) {
+	ASSERT (g       != NULL) ;
+	ASSERT (pending != NULL) ;
+
+	//--------------------------------------------------------------------------
+	// resize labels
+	//--------------------------------------------------------------------------
+
+	uint node_count = arr_len (pending->nodes.created_nodes) ;
+
+	if (node_count > 0) {
+		uint lbl_count = 0 ;
+		MATRIX_POLICY policy = Graph_SetMatrixPolicy (g, SYNC_POLICY_RESIZE) ;
+
+		NodeCreateCtx *nodes = pending->nodes.nodes_to_create ;
+
+		uint n = arr_len (nodes) ;
+		for (uint i = 0 ; i < n ; i++) {
+			NodeCreateCtx *ctx = nodes + i ;
+
+			uint m = arr_len (ctx->labelsId) ;
+			lbl_count += m ;
+
+			for (uint j = 0 ; j < m ; j++) {
+				ASSERT (ctx->labelsId [j] != GRAPH_UNKNOWN_LABEL) ;
+				Graph_GetLabelMatrix (g, ctx->labelsId [j]) ;
+			}
+		}
+
+		// sync node labels matrix
+		if (lbl_count > 0) {
+			Graph_GetNodeLabelMatrix (g) ;
+		}
+
+		// restore policy
+		Graph_SetMatrixPolicy (g, policy) ;
+	}
+	
+	//--------------------------------------------------------------------------
+	// resize relations
+	//--------------------------------------------------------------------------
+
+	uint edge_count = 0 ;
+	for (uint i = 0; i < arr_len (pending->edges); i++) {
+		edge_count += arr_len (pending->edges[i].created_edges) ;
+	}
+
+	if (edge_count > 0) {
+		MATRIX_POLICY policy = Graph_SetMatrixPolicy (g, SYNC_POLICY_RESIZE) ;
+		PendingEdgeCreations *edges = pending->edges ;
+
+		uint n = arr_len (edges) ;
+		for (uint i = 0 ; i < n ; i++) {
+			EdgeCreateCtx *ctx = &(edges[i].edges_to_create) ;
+			ASSERT (ctx->reltypeId != GRAPH_UNKNOWN_RELATION) ;
+
+			Graph_GetRelationMatrix (g, ctx->reltypeId, false) ;
+		}
+
+		Graph_GetAdjacencyMatrix (g, false) ;
+
+		// restore policy
+		Graph_SetMatrixPolicy (g, policy) ;
+	}
+}
+
 // lock the graph and commit all pending changes
 void CommitNewEntities
 (
 	PendingCreations *pending
 ) {
-	Graph *g = QueryCtx_GetGraph();
-	uint node_count = arr_len(pending->nodes.created_nodes);
-	// count number of edges created
-	// edges are distributed among multiple containers, one for each edge in the CREATE/MERGE pattern
-	uint edge_count = 0;
-	for(uint i = 0; i < arr_len(pending->edges); i++) {
-		edge_count += arr_len(pending->edges[i].created_edges);
-	}
+	Graph *g = QueryCtx_GetGraph () ;
+	uint node_count = arr_len (pending->nodes.created_nodes) ;
+
+	MATRIX_POLICY policy = Graph_GetMatrixPolicy (g) ;
 
 	// lock everything
 	QueryCtx_AcquireWriteLock () ;
+
+	if (node_count > 0) {
+		Graph_AllocateNodes (g, node_count) ;
+	}
+
+	_PendingCreations_EnsureMatrixDim (g, pending) ;
 
 	//--------------------------------------------------------------------------
 	// commit nodes
 	//--------------------------------------------------------------------------
 
-	if(node_count > 0) {
-		Graph_AllocateNodes(g, node_count);
-
-		// set graph matrix sync policy to resize
-		// no need to perform sync
-		Graph_SetMatrixPolicy(g, SYNC_POLICY_RESIZE);
-		_CommitNodesBlueprint(pending);
-
+	if (node_count > 0) {
 		// set graph matrix sync policy to NOP
 		// no need to perform sync/resize
-		Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
-		_CommitNodes(pending);
+		Graph_SetMatrixPolicy (g, SYNC_POLICY_NOP) ;
+		_CommitNodes (pending) ;
 
 		// clear pending attributes array
-		arr_clear(pending->nodes.node_attributes);
+		arr_clear (pending->nodes.node_attributes) ;
 
-		if(unlikely(ErrorCtx_EncounteredError())) {
-			goto cleanup;
+		if (unlikely (ErrorCtx_EncounteredError ())) {
+			goto cleanup ;
 		}
 	}
 
@@ -299,33 +350,35 @@ void CommitNewEntities
 	// commit edges
 	//--------------------------------------------------------------------------
 
-	if(edge_count > 0) {
-		Graph_AllocateEdges(g, edge_count);
+	// count number of edges created
+	// edges are distributed among multiple containers, one for each edge in the CREATE/MERGE pattern
+	uint edge_count = 0 ;
+	for (uint i = 0; i < arr_len (pending->edges); i++) {
+		edge_count += arr_len (pending->edges[i].created_edges) ;
+	}
 
-		// set graph matrix sync policy to resize
-		// no need to perform sync
-		Graph_SetMatrixPolicy(g, SYNC_POLICY_RESIZE);
-		_CommitEdgesBlueprint(pending);
+	if (edge_count > 0) {
+		Graph_AllocateEdges (g, edge_count) ;
 
 		// set graph matrix sync policy to NOP
 		// no need to perform sync/resize
-		Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
-		_CommitEdges(pending);
+		Graph_SetMatrixPolicy (g, SYNC_POLICY_NOP) ;
+		_CommitEdges (pending) ;
 
 		// clear pending attributes array
-		for(uint i = 0; i < arr_len(pending->edges); i++) {
+		for (uint i = 0 ; i < arr_len (pending->edges) ; i++) {
 			arr_clear (pending->edges[i].edge_attributes) ;
 		}
 
-		if(unlikely(ErrorCtx_EncounteredError())) {
-			goto cleanup;
+		if (unlikely (ErrorCtx_EncounteredError ())) {
+			goto cleanup ;
 		}
 	}
 
 cleanup:
 
-	// restore matrix sync policy to default
-	Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);
+	// restore matrix sync policy
+	Graph_SetMatrixPolicy (g, policy) ;
 }
 
 // resolve the properties specified in the query into constant values
@@ -348,9 +401,9 @@ void ConvertPropertyMap
 		// in which case the allocations in this function will leak
 		// for example, this occurs in the query:
 		// CREATE (a {val: 2}), (b {val: a.val})
-		SIValue val = AR_EXP_Evaluate (map->values[i], r) ;
+		SIValue val = AR_EXP_Evaluate (map->values [i], r) ;
 
-		if (!(SI_TYPE(val) & SI_VALID_PROPERTY_VALUE)) {
+		if (!(SI_TYPE (val) & SI_VALID_PROPERTY_VALUE)) {
 			// this value is of an invalid type
 			if (!SIValue_IsNull(val)) {
 				// if the value was a complex type, emit an exception
@@ -397,7 +450,7 @@ void ConvertPropertyMap
 		}
 
 		// set the converted attribute
-		ids [attrs_count] = map->attr_ids[i] ;
+		ids [attrs_count] = map->attr_ids [i] ;
 		vals[attrs_count] = SI_CloneValue (val) ;
 		attrs_count++ ;
 		SIValue_Free (val) ;
