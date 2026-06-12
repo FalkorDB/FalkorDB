@@ -621,7 +621,6 @@ void Index_Enable
 	Index idx
 ) {
 	ASSERT(idx != NULL);
-	ASSERT(idx->rsIdx != NULL);
 	ASSERT(idx->pending_changes > 0);
 
 	idx->pending_changes--;

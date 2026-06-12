@@ -49,6 +49,11 @@ static void _Index_PopulateNodeIndex
 			break;
 		}
 
+		// abort if index out of range (schema deleted)
+		if(Index_GetLabelID(idx) >= (int)Graph_LabelTypeCount(g)) {
+			break;
+		}
+
 		// reset number of indexed nodes in batch
 		indexed = 0;
 
@@ -144,6 +149,11 @@ static void _Index_PopulateEdgeIndex
 		// 1. CREATE INDEX FOR (:Person)-[e:WORKS]-(:Company) ON (e.since)
 		// 2. CREATE INDEX FOR (:Person)-[e:WORKS]-(:Company) ON (e.title)
 		if(Index_PendingChanges(idx) > 1) {
+			break;
+		}
+
+		// abort if index out of range (schema deleted)
+		if(Index_GetLabelID(idx) >= Graph_RelationTypeCount(g)) {
 			break;
 		}
 
