@@ -168,6 +168,36 @@ impl NeighborIter {
         }
     }
 
+    /// Iterator over *incoming* neighbours (predecessors) for a directed
+    /// traversal, used as the backward side of the bidirectional BFS.
+    /// Scans the transposed relationship matrices: row `n` of `matrix_t`
+    /// holds the sources of edges pointing at `n`.
+    fn new_reversed(
+        g: &crate::graph::graph::Graph,
+        rel_types: &[Arc<String>],
+    ) -> Self {
+        let mut fwd = Vec::new();
+        if rel_types.is_empty() {
+            for t in g.relationship_matrices_iter() {
+                fwd.push(t.matrix_t().iter(0, 0));
+            }
+        } else {
+            for t in rel_types
+                .iter()
+                .filter_map(|t| g.get_relationship_matrix(t))
+            {
+                fwd.push(t.matrix_t().iter(0, 0));
+            }
+        }
+        let dedup = fwd.len() > 1;
+        Self {
+            fwd,
+            bwd: Vec::new(),
+            dedup,
+            buf: Vec::new(),
+        }
+    }
+
     /// Returns the neighbours of `node`. The returned slice is valid until
     /// the next call to `neighbors`.
     fn neighbors(
@@ -962,9 +992,9 @@ impl<'a> ExprEval<'a> {
         // neighbours; duplicates are removed in NeighborIter.
         let max_level = max_hops.map_or(u64::MAX, |m| m as u64);
         let node_cap = g.node_cap();
-        let mut neighbors = NeighborIter::new(&g, rel_types, directed);
 
         if all_paths {
+            let mut neighbors = NeighborIter::new(&g, rel_types, directed);
             // All shortest paths: BFS to find distance, then enumerate
             Ok(self.bfs_all_shortest_paths(
                 &g,
@@ -977,10 +1007,20 @@ impl<'a> ExprEval<'a> {
                 min_hops,
             ))
         } else {
-            // Single shortest path via BFS with parent tracking
+            // Single shortest path via bidirectional BFS. The backward side
+            // follows incoming edges for directed traversal; for undirected
+            // traversal neighbours are symmetric so both sides use the same
+            // (separately-stateful) iterator construction.
+            let mut fwd_nbrs = NeighborIter::new(&g, rel_types, directed);
+            let mut bwd_nbrs = if directed {
+                NeighborIter::new_reversed(&g, rel_types)
+            } else {
+                NeighborIter::new(&g, rel_types, false)
+            };
             Ok(self.bfs_shortest_path(
                 &g,
-                &mut neighbors,
+                &mut fwd_nbrs,
+                &mut bwd_nbrs,
                 src_id,
                 dst_id,
                 max_level,
@@ -991,12 +1031,30 @@ impl<'a> ExprEval<'a> {
         }
     }
 
-    /// BFS to find the single shortest path between two nodes.
+    /// Bidirectional BFS to find a single shortest path between two nodes.
+    ///
+    /// Expands the smaller frontier one full level at a time, alternating
+    /// between a forward search from `src` (outgoing edges) and a backward
+    /// search from `dst` (incoming edges; symmetric neighbours when
+    /// undirected). This bounds the explored set by roughly
+    /// `O(b^(d/2))` instead of `O(b^d)`, and lets no-path queries terminate
+    /// as soon as the smaller side's reachable set is exhausted — the
+    /// pathological cases where a unidirectional scalar BFS had to visit the
+    /// entire graph.
+    ///
+    /// Correctness of the level-synchronised stop rule: after completing
+    /// levels `(df, db)` with no meeting node, any path must be longer than
+    /// `df + db` (a shortest path of length `D <= df + db` would have a node
+    /// visited by both sides, detected when the second side discovered it).
+    /// Hence after the first level whose expansion produces meeting
+    /// candidates, the minimum candidate total equals the true shortest
+    /// distance.
     #[allow(clippy::too_many_arguments)]
     fn bfs_shortest_path(
         &self,
         g: &crate::graph::graph::Graph,
-        neighbors: &mut NeighborIter,
+        fwd_nbrs: &mut NeighborIter,
+        bwd_nbrs: &mut NeighborIter,
         src_id: crate::graph::graph::NodeId,
         dst_id: crate::graph::graph::NodeId,
         max_level: u64,
@@ -1009,51 +1067,92 @@ impl<'a> ExprEval<'a> {
         let src = u64::from(src_id);
         let dst = u64::from(dst_id);
 
-        // parent[n] = Some(prev) during BFS, keyed only by visited nodes
-        // (SEC-3: bounded by visited count, not node_cap).
-        let mut parent: rustc_hash::FxHashMap<u64, u64> = rustc_hash::FxHashMap::default();
-        parent.insert(src, src); // mark source visited (self-parent)
-
-        let mut queue: VecDeque<(u64, u64)> = VecDeque::new(); // (node, depth)
-        queue.push_back((src, 0));
-
-        let mut found = false;
-
-        while let Some((cur, depth)) = queue.pop_front() {
-            if depth >= max_level {
-                continue;
-            }
-            for &col in neighbors.neighbors(cur) {
-                // Not using the Entry API: we only want to insert when
-                // absent and also `break` out of the loop on `dst`,
-                // which Entry::or_insert_with doesn't express cleanly.
-                #[allow(clippy::map_entry)]
-                if !parent.contains_key(&col) {
-                    parent.insert(col, cur);
-                    if col == dst {
-                        found = true;
-                        break;
-                    }
-                    queue.push_back((col, depth + 1));
-                }
-            }
-            if found {
-                break;
-            }
-        }
-
-        if !found {
+        // src == dst with min_hops > 0 (the zero-hop case is handled by the
+        // caller): a cyclic path back to the same node is not matched,
+        // mirroring the prior unidirectional behaviour.
+        if src == dst {
             return Value::Null;
         }
 
-        // Reconstruct path from dst back to src
-        let mut path_nodes: Vec<u64> = vec![dst];
-        let mut cur = dst;
+        // (parent, depth) per visited node, keyed only by visited nodes
+        // (SEC-3: bounded by visited count, not node_cap).
+        let mut f_map: rustc_hash::FxHashMap<u64, (u64, u64)> = rustc_hash::FxHashMap::default();
+        let mut b_map: rustc_hash::FxHashMap<u64, (u64, u64)> = rustc_hash::FxHashMap::default();
+        f_map.insert(src, (src, 0));
+        b_map.insert(dst, (dst, 0));
+
+        let mut f_front: Vec<u64> = vec![src];
+        let mut b_front: Vec<u64> = vec![dst];
+        let mut next: Vec<u64> = Vec::new();
+        let mut df: u64 = 0; // completed forward depth
+        let mut db: u64 = 0; // completed backward depth
+
+        // Best meeting found in the level being expanded:
+        // (other side's depth, meeting node).
+        let mut meet: Option<(u64, u64)> = None;
+
+        while meet.is_none() {
+            if f_front.is_empty() || b_front.is_empty() || df + db >= max_level {
+                return Value::Null;
+            }
+            let expand_fwd = f_front.len() <= b_front.len();
+            let (front, own, other, nbrs) = if expand_fwd {
+                (&f_front, &mut f_map, &b_map, &mut *fwd_nbrs)
+            } else {
+                (&b_front, &mut b_map, &f_map, &mut *bwd_nbrs)
+            };
+            let depth = if expand_fwd { df } else { db } + 1;
+            next.clear();
+            for &cur in front {
+                for &nb in nbrs.neighbors(cur) {
+                    // Not using the Entry API: the common case is an
+                    // already-visited neighbour, which Entry would allocate
+                    // a hash slot probe closure for; contains+insert reads
+                    // cleaner with the meet check in between.
+                    #[allow(clippy::map_entry)]
+                    if !own.contains_key(&nb) {
+                        own.insert(nb, (cur, depth));
+                        if let Some(&(_, od)) = other.get(&nb) {
+                            if meet.is_none_or(|(best_od, _)| od < best_od) {
+                                meet = Some((od, nb));
+                            }
+                        } else {
+                            next.push(nb);
+                        }
+                    }
+                }
+            }
+            std::mem::swap(
+                if expand_fwd {
+                    &mut f_front
+                } else {
+                    &mut b_front
+                },
+                &mut next,
+            );
+            if expand_fwd {
+                df = depth;
+            } else {
+                db = depth;
+            }
+        }
+
+        let (_, meet_node) = meet.expect("loop exits only with a meet");
+
+        // Reconstruct: src -> meet via forward parents, then meet -> dst via
+        // backward parents (each backward parent is one step closer to dst).
+        let mut path_nodes: Vec<u64> = vec![meet_node];
+        let mut cur = meet_node;
         while cur != src {
-            cur = *parent.get(&cur).expect("BFS parent chain broken");
+            cur = f_map.get(&cur).expect("BFS parent chain broken").0;
             path_nodes.push(cur);
         }
         path_nodes.reverse();
+        cur = meet_node;
+        while cur != dst {
+            cur = b_map.get(&cur).expect("BFS parent chain broken").0;
+            path_nodes.push(cur);
+        }
 
         // Enforce min_hops: path must have at least min_hops edges
         if (path_nodes.len() - 1) < min_hops as usize {
