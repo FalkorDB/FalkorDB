@@ -434,3 +434,4 @@ void costBaseLabelScan
 
 	arr_free(label_scan_ops);
 }
+

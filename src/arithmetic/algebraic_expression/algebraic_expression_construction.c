@@ -708,3 +708,4 @@ AlgebraicExpression **AlgebraicExpression_FromQueryGraph
 	QueryGraph_Free(g);
 	return exps;
 }
+
