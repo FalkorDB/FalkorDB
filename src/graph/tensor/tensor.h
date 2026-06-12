@@ -18,7 +18,7 @@ typedef Delta_Matrix Tensor;
 #define SCALAR_ENTRY(x) !((x) & MSB_MASK)
 
 // clear MSB and cast to GrB_Vector
-#define AS_VECTOR(x) (GrB_Vector)(CLEAR_MSB(x));
+#define AS_VECTOR(x) ((GrB_Vector)(CLEAR_MSB(x)))
 
 // init new tensor
 Tensor Tensor_new
@@ -169,5 +169,12 @@ bool TensorIterator_is_attached
 (
 	const TensorIterator *it,  // iterator
 	const Tensor T             // tensor
+);
+
+// return # of bytes used for a tensor
+GrB_Info Tensor_memoryUsage
+(
+    size_t *size,   // # of bytes used by the Tensor A
+    const Tensor A  // Tensor to query
 );
 

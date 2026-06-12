@@ -1,0 +1,119 @@
+name: Cleanup PR toolchain images
+
+# Sweeps GHCR PR-scoped toolchain image tags older than the TTL window.
+#
+# Tag families covered (matched per-OS via `<os>-pr-`):
+#   ghcr.io/falkordb/falkordb-build:<os>-pr-<N>
+#   ghcr.io/falkordb/falkordb-build:<os>-pr-<N>-x64
+#   ghcr.io/falkordb/falkordb-build:<os>-pr-<N>-arm64v8
+#
+# After a PR merges, build.yml's promote-toolchain job retags <os>-pr-<N> to
+# <os>, so the pr- tag is dead weight; if the PR closed un-merged it never
+# mattered. Folding both cases into a single TTL sweep keeps the cleanup
+# surface tiny — only PRs that touch build/docker/builder/Dockerfile.<os>
+# produce an RC.
+#
+# The 7-OS variant means the matcher pattern is `^[a-z0-9]+-pr-` (any of
+# ubuntu / alpine / debian / amazonlinux2023 / rhel / rhel8 / rhel9 prefixes).
+#
+# Triggers: daily cron + workflow_dispatch (manual sweep, e.g. to verify the
+# filter after editing). The dry-run input lists candidates without deleting.
+
+on:
+  schedule:
+    - cron: '17 4 * * *'   # 04:17 UTC daily — offset from the hour to avoid GHA cron lock contention
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "List candidates without deleting"
+        type: boolean
+        default: false
+      ttl_days:
+        description: "Override TTL window in days"
+        type: string
+        default: "30"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cleanup-rc-images
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Sweep falkordb-build pr- tags older than TTL
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: falkordb-build
+          # Matches any "<os>-pr-..." tag across all builder OSes. Anchored
+          # at the start only (no end anchor), so it also matches the bare
+          # manifest tag and the per-arch variants (-x64 / -arm64v8).
+          TAG_PATTERN: '^(ubuntu|debian|alpine|amazonlinux2023|rhel|rhel8|rhel9)-pr-'
+          TTL_DAYS: ${{ inputs.ttl_days || '30' }}
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+        run: |
+          set -euo pipefail
+
+          # Validate the TTL window before feeding it to `date -d`
+          # (ttl_days is a free-form workflow_dispatch input).
+          if ! printf '%s' "${TTL_DAYS}" | grep -Eq '^[1-9][0-9]*$'; then
+            echo "::error::ttl_days must be a positive integer (got: '${TTL_DAYS}')"
+            exit 1
+          fi
+
+          # Exported so jq's env.cutoff can read it — safer than
+          # string-interpolating the shell var into the jq filter.
+          export cutoff=$(date -u -d "${TTL_DAYS} days ago" +%Y-%m-%dT%H:%M:%SZ)
+          echo "Sweeping ghcr.io/falkordb/${REPO} versions created before ${cutoff} matching /${TAG_PATTERN}/ (TTL=${TTL_DAYS}d)"
+          echo "DRY_RUN=${DRY_RUN}"
+
+          # Pull every version's id, tags, and created_at. Then in jq:
+          #   - filter by created_at < cutoff
+          #   - keep only versions whose tags ALL match the pattern. The
+          #     `all()` check is a safety net: after promotion, a version
+          #     may carry both an <os>-pr-<N> tag AND a stable <os> /
+          #     :<os>-edge / semver tag. Such versions must NOT be swept —
+          #     a non-matching tag fails `all()` and the version is preserved.
+          #   - drop untagged versions (layer remnants — separate concern).
+          candidates=$(gh api \
+            -X GET "/orgs/falkordb/packages/container/${REPO}/versions?per_page=100" \
+            --paginate \
+            --jq '
+              .[]
+              | select(.created_at < env.cutoff)
+              | select(.metadata.container.tags | length > 0)
+              | select(.metadata.container.tags | all(test(env.TAG_PATTERN)))
+              | {id: .id, tags: .metadata.container.tags, created: .created_at}
+            ')
+
+          if [ -z "$candidates" ]; then
+            echo "Nothing to sweep."
+            exit 0
+          fi
+
+          fail=0
+          while read -r row; do
+            vid=$(echo "$row" | jq -r '.id')
+            tags=$(echo "$row" | jq -r '.tags | join(",")')
+            created=$(echo "$row" | jq -r '.created')
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "[dry-run] would delete ${REPO} version ${vid} created=${created} tags=[${tags}]"
+            else
+              echo "deleting ${REPO} version ${vid} created=${created} tags=[${tags}]"
+              if ! gh api -X DELETE "/orgs/falkordb/packages/container/${REPO}/versions/${vid}"; then
+                echo "::warning::failed to delete ${REPO} version ${vid}"
+                fail=1
+              fi
+            fi
+          done < <(echo "$candidates" | jq -c '.')
+
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::one or more RC image deletions failed"
+            exit 1
+          fi

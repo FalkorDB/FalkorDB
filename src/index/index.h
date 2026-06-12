@@ -111,6 +111,12 @@ RSIndex *Index_RSIndex
 	const Index idx  // index to get internal RediSearch index from
 );
 
+// returns index memory usage
+size_t Index_MemoryUsage
+(
+	const Index idx  // index to inspect
+);
+
 // responsible for creating the index structure only!
 // e.g. fields, stopwords, language
 void Index_ConstructStructure

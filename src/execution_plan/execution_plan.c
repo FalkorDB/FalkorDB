@@ -21,7 +21,9 @@
 
 // allocate a new ExecutionPlan segment
 inline ExecutionPlan *ExecutionPlan_NewEmptyExecutionPlan(void) {
-	return rm_calloc(1, sizeof(ExecutionPlan));
+	ExecutionPlan *plan = rm_calloc (1, sizeof (ExecutionPlan)) ;
+	atomic_init (&plan->drained, false) ;
+	return plan ;
 }
 
 void ExecutionPlan_PopulateExecutionPlan
@@ -549,30 +551,46 @@ ResultSet *ExecutionPlan_Execute(ExecutionPlan *plan) {
 //------------------------------------------------------------------------------
 
 // NOP operation consume routine for immediately terminating execution.
-static Record deplete_consume(struct OpBase *op) {
-	return NULL;
+static Record deplete_consume
+(
+	struct OpBase *op
+) {
+	return NULL ;
 }
 
 // return true if execution plan been drained
 // false otherwise
-bool ExecutionPlan_Drained(ExecutionPlan *plan) {
-	ASSERT(plan != NULL);
-	ASSERT(plan->root != NULL);
-	return (plan->root->consume == deplete_consume);
+bool ExecutionPlan_Drained
+(
+	ExecutionPlan *plan
+) {
+	ASSERT (plan != NULL) ;
+	return atomic_load (&plan->drained) ;
 }
 
-static void _ExecutionPlan_Drain(OpBase *root) {
-	root->consume = deplete_consume;
-	for(int i = 0; i < root->childCount; i++) {
-		_ExecutionPlan_Drain(root->children[i]);
+static void _ExecutionPlan_Drain
+(
+	OpBase *root
+) {
+	root->consume = deplete_consume ;
+	for (int i = 0; i < root->childCount; i++) {
+		_ExecutionPlan_Drain (root->children [i]) ;
 	}
 }
 
-// Resets each operation consume function to simply return NULL
-// this will cause the execution-plan to quickly deplete
-void ExecutionPlan_Drain(ExecutionPlan *plan) {
-	ASSERT(plan && plan->root);
-	_ExecutionPlan_Drain(plan->root);
+// mark execution-plan as drained
+// consumers check this flag and stop execution
+void ExecutionPlan_Drain
+(
+	ExecutionPlan *plan
+) {
+	ASSERT (plan != NULL) ;
+
+	atomic_store (&plan->drained, true) ;
+
+	if (plan->root != NULL) {
+		_ExecutionPlan_Drain (plan->root) ;
+	}
 }
 
 //------------------------------------------------------------------------------
@@ -701,6 +719,7 @@ void ExecutionPlan_Free
 	OpBase **to_visit = arr_new (OpBase *, 1) ;
 
 	OpBase *op = plan->root ;
+	plan->root = NULL ;
 	arr_append (to_visit, op) ;
 
 	while (arr_len(to_visit) > 0) {

@@ -40,9 +40,9 @@ void Graph_DeleteNodes
 	ASSERT (nodes      != NULL) ;
 	ASSERT (node_count > 0) ;
 
-	// set matrix sync policy to NOP
+	// set matrix sync policy to RESIZE
 	MATRIX_POLICY policy = Graph_GetMatrixPolicy (g) ;
-	Graph_SetMatrixPolicy (g, SYNC_POLICY_NOP) ;
+	Graph_SetMatrixPolicy (g, SYNC_POLICY_RESIZE) ;
 
 #if RG_DEBUG
 	Edge *es = arr_new (Edge, 0) ;
@@ -136,7 +136,7 @@ void Graph_DeleteNodes
 	// phase two
 	//--------------------------------------------------------------------------
 
-	Delta_Matrix_removeElements (lbls, elems, NULL) ;
+	GrB_OK (Delta_Matrix_removeElements (lbls, elems, NULL)) ;
 
 	// restore matrix sync policy
 	Graph_SetMatrixPolicy (g, policy) ;
