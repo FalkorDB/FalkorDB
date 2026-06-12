@@ -81,17 +81,6 @@ static bool _AlgebraicExpression_ContainsVariableLengthEdge
 	return false;
 }
 
-static inline bool _QGNodes_ShareAlias
-(
-	const QGNode *a,
-	const QGNode *b
-) {
-	ASSERT(a != NULL);
-	ASSERT(b != NULL);
-
-	return strcmp(QGNode_Alias(a), QGNode_Alias(b)) == 0;
-}
-
 static void _RemovePathFromGraph
 (
 	QueryGraph *g,
@@ -171,7 +160,7 @@ static AlgebraicExpression **_AlgebraicExpression_IsolateVariableLenExps
 				AlgebraicExpression_Src(exp));
 		QGNode *dest = QueryGraph_GetNodeByAlias(qg,
 				AlgebraicExpression_Dest(exp));
-		bool self_ref = _QGNodes_ShareAlias(src, dest);
+		bool self_ref = src == dest;
 
 		// a variable length expression with a labeled source node
 		// we only care about the source label matrix, when it comes to
