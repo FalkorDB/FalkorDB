@@ -411,10 +411,8 @@ void _query
 	Globals_TrackCommandCtx (command_ctx) ;
 
 	if (gc == NULL) {
-		GraphContext_Retrieve (ctx, command_ctx->rm_graph_name, true, false,
-				true, &gc) ;
-
-		if (gc == NULL) {
+		if (GraphContext_Retrieve (ctx, command_ctx->rm_graph_name, true, false,
+					true, &gc) != GraphRetrieve_RETRIEVED) {
 			// error emitted
 			goto cleanup ;
 		}
