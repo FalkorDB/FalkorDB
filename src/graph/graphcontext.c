@@ -67,6 +67,16 @@ inline void GraphContext_DecreaseRefCount
 	}
 }
 
+// return graph context reference count
+int GraphContext_RefCount
+(
+	const GraphContext *gc
+) {
+	ASSERT (gc != NULL) ;
+
+	return gc->ref_count ;
+}
+
 //------------------------------------------------------------------------------
 // pending array accessors
 //------------------------------------------------------------------------------

@@ -39,9 +39,6 @@ void Globals_Set_ProcessIsChild
 // get process main thread id
 pthread_t Globals_Get_MainThreadId(void);
 
-// get direct access to 'graphs_in_keyspace'
-GraphContext **Globals_Get_GraphsInKeyspace(void);
-
 uint32_t Globals_GraphsCount (void) ;
 
 // add graph to global tracker

@@ -40,6 +40,12 @@ void GraphContext_DecreaseRefCount
 	GraphContext *gc
 );
 
+// return graph context reference count
+int GraphContext_RefCount
+(
+	const GraphContext *gc
+) ;
+
 // attach graph context to a Redis key and register it with FalkorDB's
 // global graph registry
 void GraphContext_SetKey

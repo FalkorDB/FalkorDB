@@ -21,10 +21,11 @@ static RedisModuleType *GraphStubType = NULL ;
 //------------------------------------------------------------------------------
 
 typedef enum {
-	GraphLoad_SUCCESS,  // graph restored from disk successfully
-	GraphLoad_LOADING,  // a load for this key is already in progress
-	GraphLoad_MISSING,  // key or dump file does not exist
-	GraphLoad_ERR,      // all other failures
+    GraphLoad_SUCCESS,  // graph restored from disk successfully
+    GraphLoad_LOADING,  // a load for this key is already in progress
+    GraphLoad_MISSING,  // key or dump file does not exist
+    GraphLoad_OOM,      // not enough memory to hold the loaded graph
+    GraphLoad_ERR,      // all other failures
 } GraphLoadResult ;
 
 typedef RedisModuleType* (*GraphStubType_Get_t) (void) ;
@@ -33,7 +34,8 @@ typedef GraphLoadResult (*graph_load_t)
 (
     RedisModuleCtx    *ctx,
     RedisModuleString *key_name,
-    bool              from_thread
+    bool              from_thread,
+	bool              force
 ) ;
 
 //------------------------------------------------------------------------------
@@ -215,7 +217,7 @@ GraphRetrieveStatus GraphContext_Retrieve
 	// on success, recursive call re-enters Phase 1 to fetch the live graph
 	//--------------------------------------------------------------------------
 
-	GraphLoadResult load_res = graph_load (ctx, graphID, from_thread) ;
+	GraphLoadResult load_res = graph_load (ctx, graphID, from_thread, false) ;
 
 	switch (load_res) {
 		case GraphLoad_SUCCESS:
@@ -230,6 +232,11 @@ GraphRetrieveStatus GraphContext_Retrieve
 		case GraphLoad_LOADING:
 			RedisModule_ReplyWithError (ctx,
 					"ERR graph is already loading from disk") ;
+			break ;
+
+		case GraphLoad_OOM:
+			RedisModule_ReplyWithError (ctx,
+					"ERR not enough memory to load graph") ;
 			break ;
 
 		case GraphLoad_ERR:

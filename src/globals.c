@@ -102,11 +102,6 @@ pthread_t Globals_Get_MainThreadId(void) {
 	return _globals.main_thread_id;
 }
 
-// get direct access to 'graphs_in_keyspace'
-GraphContext **Globals_Get_GraphsInKeyspace(void) {
-	return _globals.graphs_in_keyspace;
-}
-
 uint32_t Globals_GraphsCount (void) {
 	// acquire read lock
 	Globals_ReadLock () ;
