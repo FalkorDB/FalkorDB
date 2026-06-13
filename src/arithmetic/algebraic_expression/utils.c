@@ -409,6 +409,7 @@ void _AlgebraicExpression_RemoveRedundentOperands
 		for(int j = i-1; j >= 0; j--) {
 			AlgebraicExpression *prev_exp = exps[j];
 			const char *dest_alias = AlgebraicExpression_Dest(prev_exp);
+			if(dest_alias == NULL) continue;
 			if(strcmp(src_alias, dest_alias)) continue;
 
 			resolved = (AlgebraicExpression_DiagonalOperand(
