@@ -38,7 +38,6 @@
 #define EMSG_WITH_PROJ_MISSING_ALIAS "WITH clause projections must be aliased"
 #define EMSG_SAME_RESULT_COLUMN_NAME "Error: Multiple result columns with the same name are not supported."
 #define EMSG_VAR_LEN_INVALID_RANGE "Variable length path, maximum number of hops must be greater or equal to minimum number of hops."
-#define EMSG_VAR_LEN_UNBOUNDED "Variable length path, an explicit upper bound is required to prevent excessive resource consumption."
 #define EMSG_VAR_LEN "Variable length relationships cannot be used in %s"
 #define EMSG_REDECLARE "The bound %s '%s' can't be redeclared in a %s clause"
 #define EMSG_ONE_RELATIONSHIP_TYPE "Exactly one relationship type must be specified for each relation in a %s pattern."
