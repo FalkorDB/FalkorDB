@@ -9,7 +9,19 @@
 #include "../../util/rmalloc.h"
 #include "../../configuration/config.h"
 
-// performs inplace re-purposing of an operand into an operation
+//------------------------------------------------------------------------------
+// Utilities for algebraic expressions.
+//------------------------------------------------------------------------------
+
+/**
+ * @brief Performs inplace re-purposing of an operand into an operation.
+ *
+ * Converts an operand node into an operation node in-place, reusing the
+ * existing memory structure.
+ *
+ * @param operand Pointer to the algebraic expression operand to convert.
+ * @param op      The operation type to convert the operand into.
+ */
 void _InplaceRepurposeOperandToOperation
 (
 	AlgebraicExpression *operand,
@@ -24,7 +36,15 @@ void _InplaceRepurposeOperandToOperation
 	rm_free(operation);
 }
 
-// performs inplace re-purposing of an operation into an operand
+/**
+ * @brief Performs inplace re-purposing of an operation into an operand.
+ *
+ * Replaces an operation expression with an operand expression in-place,
+ * appropriately freeing the operation's internal resources.
+ *
+ * @param exp         Pointer to the algebraic expression to replace.
+ * @param replacement Pointer to the replacement operand expression.
+ */
 void _AlgebraicExpression_InplaceRepurpose
 (
 	AlgebraicExpression *exp,
@@ -47,6 +67,15 @@ void _AlgebraicExpression_InplaceRepurpose
 	rm_free(replacement);
 }
 
+/**
+ * @brief Removes a child node from an operation's children array.
+ *
+ * Searches for and removes the specified child from the parent operation,
+ * shifting remaining children and updating the array.
+ *
+ * @param parent Pointer to the parent algebraic expression operation.
+ * @param child  Pointer to the child expression to remove.
+ */
 void _AlgebraicExpression_OperationRemoveChild
 (
 	AlgebraicExpression *parent,
@@ -76,7 +105,13 @@ void _AlgebraicExpression_OperationRemoveChild
 	}
 }
 
-// removes the rightmost direct child node of root
+/**
+ * @brief Removes the rightmost direct child node from an operation.
+ *
+ * @param root Pointer to the root algebraic expression operation.
+ *
+ * @return Pointer to the removed child, or NULL if no child exists.
+ */
 AlgebraicExpression *_AlgebraicExpression_OperationRemoveDest
 (
 	AlgebraicExpression *root  // Root from which to remove a child.
@@ -92,7 +127,13 @@ AlgebraicExpression *_AlgebraicExpression_OperationRemoveDest
 	return child;
 }
 
-// removes the leftmost direct child node of root
+/**
+ * @brief Removes the leftmost direct child node from an operation.
+ *
+ * @param root Pointer to the root algebraic expression operation.
+ *
+ * @return Pointer to the removed child, or NULL if no child exists.
+ */
 AlgebraicExpression *_AlgebraicExpression_OperationRemoveSource
 (
 	AlgebraicExpression *root   // Root from which to remove a child.

@@ -11,8 +11,18 @@
 #include "../../query_ctx.h"
 #include "../../algorithms/algorithms.h"
 
-// node with (income + outcome degree) > 2
-// is considered a highly connected node
+//------------------------------------------------------------------------------
+// Algebraic expression construction.
+//------------------------------------------------------------------------------
+
+/**
+ * @brief Checks if a node is highly connected (degree > 2).
+ *
+ * @param qg    Pointer to the query graph.
+ * @param alias Node alias to look up.
+ *
+ * @return true if the node has income + outcome degree > 2, false otherwise.
+ */
 static bool _highly_connected_node
 (
 	const QueryGraph *qg,
@@ -124,11 +134,22 @@ static inline bool _should_divide_expression
 			_referred_entity(e->dest->alias));              // destination node is referenced
 }
 
-// variable length expression must contain only a single operand: the edge being
-// traversed, in cases such as (:labelA)-[e*]->(:labelB) both label A and B
-// are applied via a label matrix operand, this function migrates A and B from a
-// variable length expression to new expressions
-// or completely discards them when possible
+/**
+ * @brief Isolates variable-length edges into individual algebraic expressions.
+ *
+ * Variable length expression must contain only a single operand: the edge being
+ * traversed. In cases such as (:labelA)-[e*]->(:labelB) both label A and B
+ * are applied via a label matrix operand, this function migrates A and B from a
+ * variable length expression to new expressions or completely discards them when
+ * possible.
+ *
+ * @param qg          Pointer to the query graph containing node and edge metadata.
+ * @param expressions Array of algebraic expression pointers to be processed.
+ *
+ * @return A newly allocated array of algebraic expressions where each variable-length
+ *         expression is guaranteed to have a single operand. The caller is responsible
+ *         for freeing the returned array.
+ */
 static AlgebraicExpression **_AlgebraicExpression_IsolateVariableLenExps
 (
 	const QueryGraph *qg,

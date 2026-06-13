@@ -14,6 +14,10 @@
 #include "../execution_plan_build/execution_plan_modify.h"
 #include "../../arithmetic/algebraic_expression/utils.h"
 
+//------------------------------------------------------------------------------
+// Cost-based label scan optimization for execution plans.
+//------------------------------------------------------------------------------
+
 // this optimization scans through each label-scan operation
 // in case the node being scaned is associated with multiple labels
 // e.g. MATCH (n:A:B) RETURN n
@@ -274,6 +278,16 @@ static bool _transposeExpression
 	return true;
 }
 
+/**
+ * @brief Extracts algebraic expression from a traversal operation.
+ *
+ * Retrieves the algebraic expression from various traversal operation types
+ * including conditional traverse, expand_into, and variable-length traverse.
+ *
+ * @param op Pointer to the operation base.
+ *
+ * @return Pointer to the algebraic expression, or NULL if not found.
+ */
 static AlgebraicExpression *_TraversalAlgebraicExpression
 (
 	OpBase *op
@@ -296,6 +310,14 @@ static AlgebraicExpression *_TraversalAlgebraicExpression
 	}
 }
 
+/**
+ * @brief Performs cost-based label scan optimization.
+ *
+ * Scans through each label-scan operation and optimizes by preferring
+ * the label with the least number of nodes when multiple labels are present.
+ *
+ * @param scan Pointer to the node by label scan operation.
+ */
 static void _costBaseLabelScan
 (
 	NodeByLabelScan *scan
