@@ -1,48 +1,37 @@
-//! Process-wide storage seams shared across the engine's pluggable stores.
+//! Storage seams shared across the engine's pluggable stores.
 //!
-//! This module is the **general home** for the storage seam that both the native
+//! This module is the **general home** for the backend seam that both the native
 //! index subsystem ([`crate::index::falkordb`]) and the attribute store will
-//! share. It owns three things:
+//! share. It owns two things:
 //!
-//! - [`StoreKind`] — the identity of a pluggable store (index, attribute store).
-//! - [`Backend`] — the single shared durable-backend trait; each store registers
-//!   its own backend instance.
-//! - [`Residency`] — the **one process-wide resident pool** under a single
-//!   storage budget, shared by every store so they compete for one budget rather
-//!   than each carrying its own. Default [`AllHot`].
-//! - the registry — runtime injection: per-store **backends** plus the one shared
-//!   residency, defaulting to the built-in impls, swapped in by a statically
-//!   linked add-on crate at module init.
+//! - [`IndexBackend`] / [`AttrBackend`] — one storage-backend trait per store.
+//!   Each is implemented by the default in-memory backend and, optionally, an
+//!   alternate backend installed by a statically-linked add-on; a store talks to
+//!   whichever is registered, unaware of which.
+//! - the registry — runtime injection: a store registers its backend instance at
+//!   module init ([`register_index_backend`] / [`register_attr_backend`]).
 //!
-//! This keeps store-specific record types out of the general namespace (each
-//! store serializes its own records to bytes before calling [`Backend`]) while
-//! still giving both stores one registry and one storage budget.
+//! This keeps each store's record types out of the general namespace — a store
+//! serializes its own records to bytes before calling its backend — while giving
+//! both stores one place to plug in.
 //!
-//! Unlike [`crate::index::falkordb`], this module is **not** gated behind a Cargo
-//! feature: it is core infrastructure the (ungated) attribute store will also
-//! consume. Until both consumers are wired, some items are unused in the default
-//! build — see the `allow(dead_code)` on the registry's internals.
+//! **Residency is deliberately not here.** Keeping data resident under a storage
+//! budget is a private internal of a backend that does so: the in-memory backend
+//! keeps everything resident, and nothing outside a backend ever coordinates
+//! residency (a reader is unaware of backend internals; any I/O it triggers
+//! happens inside backend code). So this module exposes no residency seam.
+//!
+//! This module is **not** gated behind a Cargo feature: it is core infrastructure
+//! the (ungated) attribute store will also consume. Until both consumers are
+//! wired, its items are unused in the default build — see the `allow(dead_code)`
+//! on the registry.
 
 pub mod backend;
 pub mod error;
 mod registry;
-pub mod residency;
 
-pub use backend::Backend;
+pub use backend::{AttrBackend, IndexBackend};
 pub use error::{Result, StorageError};
-pub use registry::{backend, register_backend, register_residency, residency};
-pub use residency::{AllHot, Residency, ResidentId, ShardGuard};
-
-/// Identity of a pluggable store that participates in the shared storage seam.
-/// Used as the registry key and as the store component of a [`ResidentId`], so
-/// two stores never collide in the one shared resident pool.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum StoreKind {
-    /// The native MVCC index subsystem ([`crate::index::falkordb`]).
-    Index,
-    /// The attribute (property) store. **Stub** — the attribute-store backend
-    /// and its registration land when the attribute store migrates onto this
-    /// seam; today nothing registers or reads under this key. It exists so the
-    /// shared registry and the shared resident pool already have a slot for it.
-    Attrs,
-}
+pub use registry::{
+    attr_backend, index_backend, register_attr_backend, register_index_backend,
+};
