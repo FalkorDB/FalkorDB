@@ -97,7 +97,6 @@ const fn new_msg() -> LagMsg {
 }
 
 fn msg_to_string(msg: &LagMsg) -> String {
-    // LAGraph writes a null-terminated C string into this fixed buffer.
     unsafe { std::ffi::CStr::from_ptr(msg.as_ptr()) }
         .to_string_lossy()
         .into_owned()
@@ -2007,7 +2006,85 @@ fn register_maxflow(funcs: &mut Functions) {
                 ]));
             }
 
-            unsafe {
+            let multi_srcs = srcs.len() > 1;
+            let multi_sinks = sinks.len() > 1;
+
+            // Re-index onto a dense node ID space to avoid huge sparse
+            // dimensions from tombstoned node IDs.
+            let mut compact_to_id: Vec<u64> = srcs.iter().map(|n| u64::from(*n)).collect();
+            compact_to_id.extend(sinks.iter().map(|n| u64::from(*n)));
+            compact_to_id.extend(edges_with_cap.iter().flat_map(|(s, d, _)| [*s, *d]));
+            compact_to_id.sort_unstable();
+            compact_to_id.dedup();
+
+            let mut id_to_compact: std::collections::HashMap<u64, usize> =
+                std::collections::HashMap::with_capacity(compact_to_id.len());
+            for (compact_id, orig_id) in compact_to_id.iter().copied().enumerate() {
+                id_to_compact.insert(orig_id, compact_id);
+            }
+
+            let base_dim = compact_to_id.len();
+            let super_src = base_dim;
+            let super_sink = base_dim + usize::from(multi_srcs);
+            let total_nodes = base_dim + usize::from(multi_srcs) + usize::from(multi_sinks);
+
+            let mut compact_edges: Vec<(usize, usize, f64)> = Vec::with_capacity(
+                edges_with_cap.len() + srcs.len() + sinks.len(),
+            );
+            let mut original_edge_count = 0usize;
+
+            let mut min_cap = f64::INFINITY;
+            let mut max_cap = 0.0_f64;
+            for (s, d, c) in &edges_with_cap {
+                if *c <= 0.0 {
+                    continue;
+                }
+                if let (Some(&cs), Some(&cd)) = (id_to_compact.get(s), id_to_compact.get(d)) {
+                    compact_edges.push((cs, cd, *c));
+                    original_edge_count += 1;
+                    if *c < min_cap {
+                        min_cap = *c;
+                    }
+                    if *c > max_cap {
+                        max_cap = *c;
+                    }
+                }
+            }
+
+            #[allow(clippy::cast_lossless)]
+            let overflow_factor = u32::MAX as f64;
+            if min_cap.is_finite() && max_cap >= min_cap * overflow_factor {
+                return Err(String::from(
+                    "algo.maxFlow: capacity range too wide (max >= min * 2^32); narrow the capacity values to avoid internal overflow",
+                ));
+            }
+
+            let mut src_id = *id_to_compact
+                .get(&u64::from(srcs[0]))
+                .ok_or_else(|| String::from("algo.maxFlow: source node is not in graph"))?;
+            let mut sink_id = *id_to_compact
+                .get(&u64::from(sinks[0]))
+                .ok_or_else(|| String::from("algo.maxFlow: sink node is not in graph"))?;
+            #[allow(clippy::cast_lossless)]
+            let big_cap: f64 = i32::MAX as f64;
+            if multi_srcs {
+                src_id = super_src;
+                for s in &srcs {
+                    if let Some(&cs) = id_to_compact.get(&u64::from(*s)) {
+                        compact_edges.push((src_id, cs, big_cap));
+                    }
+                }
+            }
+            if multi_sinks {
+                sink_id = super_sink;
+                for s in &sinks {
+                    if let Some(&cs) = id_to_compact.get(&u64::from(*s)) {
+                        compact_edges.push((cs, sink_id, big_cap));
+                    }
+                }
+            }
+
+            let (max_flow, flows) = unsafe {
                 use crate::graph::graphblas::{
                     GrB_FP64, GrB_Index, GrB_Matrix, GrB_Matrix_extractTuples_FP64,
                     GrB_Matrix_free, GrB_Matrix_new, GrB_Matrix_nvals,
@@ -2015,81 +2092,40 @@ fn register_maxflow(funcs: &mut Functions) {
                     lagraph_bindings, lagraphx_bindings,
                 };
 
-                let multi_srcs = srcs.len() > 1;
-                let multi_sinks = sinks.len() > 1;
-                let base_dim = g.node_cap();
-                let dim = base_dim + u64::from(multi_srcs) + u64::from(multi_sinks);
-
                 let mut cap_mtx: GrB_Matrix = null_mut();
-                GrB_Matrix_new(&raw mut cap_mtx, GrB_FP64, dim, dim);
-
-                let mut min_cap = f64::INFINITY;
-                let mut max_cap = 0.0_f64;
-                for (s, d, c) in &edges_with_cap {
+                GrB_Matrix_new(&raw mut cap_mtx, GrB_FP64, total_nodes as u64, total_nodes as u64);
+                for (u, v, c) in &compact_edges {
                     if *c > 0.0 {
-                        GrB_Matrix_setElement_FP64(cap_mtx, *c, *s, *d);
-                        if *c < min_cap { min_cap = *c; }
-                        if *c > max_cap { max_cap = *c; }
+                        GrB_Matrix_setElement_FP64(cap_mtx, *c, *u as u64, *v as u64);
                     }
                 }
-
-                let mut src_id = u64::from(srcs[0]);
-                let mut sink_id = u64::from(sinks[0]);
-                #[allow(clippy::cast_lossless)]
-                let big_cap: f64 = i32::MAX as f64;
-                if multi_srcs {
-                    src_id = base_dim;
-                    for s in &srcs {
-                        GrB_Matrix_setElement_FP64(cap_mtx, big_cap, src_id, u64::from(*s));
-                    }
-                }
-                if multi_sinks {
-                    sink_id = base_dim + u64::from(multi_srcs);
-                    for s in &sinks {
-                        GrB_Matrix_setElement_FP64(cap_mtx, big_cap, u64::from(*s), sink_id);
-                    }
-                }
-
                 GrB_Matrix_wait(cap_mtx, GrB_WaitMode::GrB_COMPLETE as i32);
 
-                #[allow(clippy::cast_lossless)]
-                let overflow_factor = u32::MAX as f64;
-                if min_cap.is_finite() && max_cap >= min_cap * overflow_factor {
-                    GrB_Matrix_free(&raw mut cap_mtx);
-                    return Err(String::from(
-                        "algo.maxFlow: capacity range too wide (max >= min * 2^32); narrow the capacity values to avoid internal overflow",
-                    ));
-                }
-
                 let mut lag_g = create_lagraph_graph(
-                    cap_mtx, LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED,
+                    cap_mtx,
+                    LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED,
                 )?;
-
                 let mut msg = new_msg();
                 lagraph_bindings::LAGraph_Cached_AT(lag_g, msg.as_mut_ptr());
                 lagraph_bindings::LAGraph_Cached_EMin(lag_g, msg.as_mut_ptr());
 
-                let mut max_flow: f64 = 0.0;
+                let mut lag_max_flow: f64 = 0.0;
                 let mut flow_mtx: GrB_Matrix = null_mut();
-                let mut res_mtx: GrB_Matrix = null_mut();
                 let info = lagraphx_bindings::LAGr_MaxFlow(
-                    &raw mut max_flow,
+                    &raw mut lag_max_flow,
                     &raw mut flow_mtx,
-                    &raw mut res_mtx,
+                    null_mut(),
                     lag_g,
-                    src_id,
-                    sink_id,
+                    src_id as u64,
+                    sink_id as u64,
                     msg.as_mut_ptr(),
                 );
 
                 delete_lagraph_graph(&mut lag_g);
 
-                if info != 0 {
+                if info != 0 || flow_mtx.is_null() {
                     if !flow_mtx.is_null() {
                         GrB_Matrix_free(&raw mut flow_mtx);
-                    }
-                    if !res_mtx.is_null() {
-                        GrB_Matrix_free(&raw mut res_mtx);
                     }
                     let detail = msg_to_string(&msg);
                     return Err(format!("LAGr_MaxFlow failed: {info}; {detail}"));
@@ -2109,49 +2145,69 @@ fn register_maxflow(funcs: &mut Functions) {
                     flow_mtx,
                 );
                 GrB_Matrix_free(&raw mut flow_mtx);
-                if !res_mtx.is_null() {
-                    GrB_Matrix_free(&raw mut res_mtx);
-                }
 
-                let mut used_nodes: std::collections::BTreeSet<u64> =
-                    std::collections::BTreeSet::new();
-                let mut edges_out: ThinVec<Value> = thin_vec![];
-                let mut flows_out: ThinVec<Value> = thin_vec![];
-
+                let mut flow_by_edge: std::collections::HashMap<(usize, usize), f64> =
+                    std::collections::HashMap::with_capacity(nvals_out as usize);
                 for i in 0..nvals_out as usize {
-                    let r = rows[i];
-                    let c = cols[i];
-                    let v = vals[i];
-                    if r >= base_dim || c >= base_dim || v == 0.0 {
-                        continue;
-                    }
-                    let src_n = NodeId::from(r);
-                    let dst_n = NodeId::from(c);
-                    used_nodes.insert(r);
-                    used_nodes.insert(c);
-                    if let Some(rel_id) = g
-                        .get_src_dest_relationships(src_n, dst_n, &rel_types)
-                        .next()
-                    {
-                        edges_out.push(Value::Relationship(
-                            Box::new((rel_id, src_n, dst_n)),
-                        ));
-                        flows_out.push(Value::Float(v));
+                    if vals[i] > 0.0 {
+                        flow_by_edge.insert((rows[i] as usize, cols[i] as usize), vals[i]);
                     }
                 }
 
-                let nodes_out: ThinVec<Value> = used_nodes
+                let mut flows = vec![0.0_f64; original_edge_count];
+                for (i, (u, v, _)) in compact_edges
                     .iter()
-                    .map(|&n| node_value(NodeId::from(n)))
-                    .collect();
+                    .take(original_edge_count)
+                    .enumerate()
+                {
+                    if let Some(f) = flow_by_edge.get(&(*u, *v)) {
+                        flows[i] = *f;
+                    }
+                }
 
-                Ok(Batch::from_columns([
-                    Column::Values(vec![Value::List(Arc::new(nodes_out))]),
-                    Column::Values(vec![Value::List(Arc::new(edges_out))]),
-                    Column::Values(vec![Value::List(Arc::new(flows_out))]),
-                    Column::Floats(vec![max_flow]),
-                ]))
+                (lag_max_flow, flows)
+            };
+
+            let mut used_nodes: std::collections::BTreeSet<u64> =
+                std::collections::BTreeSet::new();
+            let mut edges_out: ThinVec<Value> = thin_vec![];
+            let mut flows_out: ThinVec<Value> = thin_vec![];
+
+            for (i, flow) in flows.into_iter().take(original_edge_count).enumerate() {
+                if flow == 0.0 {
+                    continue;
+                }
+                let (r, c, _) = compact_edges[i];
+                let Some(&src_orig) = compact_to_id.get(r) else {
+                    continue;
+                };
+                let Some(&dst_orig) = compact_to_id.get(c) else {
+                    continue;
+                };
+                let src_n = NodeId::from(src_orig);
+                let dst_n = NodeId::from(dst_orig);
+                if let Some(rel_id) = g
+                    .get_src_dest_relationships(src_n, dst_n, &rel_types)
+                    .next()
+                {
+                    used_nodes.insert(src_orig);
+                    used_nodes.insert(dst_orig);
+                    edges_out.push(Value::Relationship(Box::new((rel_id, src_n, dst_n))));
+                    flows_out.push(Value::Float(flow));
+                }
             }
+
+            let nodes_out: ThinVec<Value> = used_nodes
+                .iter()
+                .map(|&n| node_value(NodeId::from(n)))
+                .collect();
+
+            Ok(Batch::from_columns([
+                Column::Values(vec![Value::List(Arc::new(nodes_out))]),
+                Column::Values(vec![Value::List(Arc::new(edges_out))]),
+                Column::Values(vec![Value::List(Arc::new(flows_out))]),
+                Column::Floats(vec![max_flow]),
+            ]))
         }
     );
 }
