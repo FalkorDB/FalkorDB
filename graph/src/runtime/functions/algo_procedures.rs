@@ -1196,6 +1196,7 @@ fn register_msf(funcs: &mut Functions) {
                 GrB_Matrix_free(&raw mut weighted_adj);
 
                 if info != 0 {
+                    GrB_Matrix_free(&raw mut edge_map);
                     return Err(format!("LAGraph_msf failed: {info}"));
                 }
 
@@ -2086,10 +2087,11 @@ fn register_maxflow(funcs: &mut Functions) {
 
                 let mut max_flow: f64 = 0.0;
                 let mut flow_mtx: GrB_Matrix = null_mut();
+                let mut res_mtx: GrB_Matrix = null_mut();
                 let info = lagraphx_bindings::LAGr_MaxFlow(
                     &raw mut max_flow,
                     &raw mut flow_mtx,
-                    null_mut(),
+                    &raw mut res_mtx,
                     lag_g,
                     src_id,
                     sink_id,
@@ -2101,6 +2103,9 @@ fn register_maxflow(funcs: &mut Functions) {
                 if info != 0 {
                     if !flow_mtx.is_null() {
                         GrB_Matrix_free(&raw mut flow_mtx);
+                    }
+                    if !res_mtx.is_null() {
+                        GrB_Matrix_free(&raw mut res_mtx);
                     }
                     let detail = msg_to_string(&msg);
                     return Err(format!("LAGr_MaxFlow failed: {info}; {detail}"));
@@ -2120,6 +2125,9 @@ fn register_maxflow(funcs: &mut Functions) {
                     flow_mtx,
                 );
                 GrB_Matrix_free(&raw mut flow_mtx);
+                if !res_mtx.is_null() {
+                    GrB_Matrix_free(&raw mut res_mtx);
+                }
 
                 let mut used_nodes: std::collections::BTreeSet<u64> =
                     std::collections::BTreeSet::new();
