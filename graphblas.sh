@@ -69,7 +69,7 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GRAPHBLAS_VERSION="${GRAPHBLAS_VERSION:-v10.3.1}"
-LAGRAPH_VERSION="${LAGRAPH_VERSION:-v1.2.1}"
+LAGRAPH_VERSION="${LAGRAPH_VERSION:-v1.3.x}"
 
 # Pinned FalkorDB C SHA — no longer used; kept here to mark the source of
 # the original vendored PreJIT seed (commit captured 2026-05-27). We now

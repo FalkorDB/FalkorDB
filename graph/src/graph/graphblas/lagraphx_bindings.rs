@@ -482,6 +482,25 @@ unsafe extern "C" {
         msg: *mut ::std::os::raw::c_char,
     ) -> ::std::os::raw::c_int;
 
+    /// Approximate harmonic centrality via HLL sketches.
+    pub fn LAGr_HarmonicCentrality(
+        scores: *mut GrB_Vector,
+        reachable_nodes: *mut GrB_Vector,
+        G: LAGraph_Graph,
+        node_weights: GrB_Vector,
+        msg: *mut ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int;
+
+    /// Exact harmonic centrality via BFS.
+    pub fn LAGr_HarmonicCentrality_exact(
+        scores: *mut GrB_Vector,
+        reachable_nodes: *mut GrB_Vector,
+        G: LAGraph_Graph,
+        nodes: GrB_Vector,
+        node_weights: GrB_Vector,
+        msg: *mut ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int;
+
     pub fn LAGr_PeerPressureClustering(
         c_f: *mut GrB_Vector,
         normalize: bool,
@@ -591,6 +610,7 @@ unsafe extern "C" {
     pub fn LAGr_MaxFlow(
         f: *mut f64,
         flow_mtx: *mut GrB_Matrix,
+        res_mtx: *mut GrB_Matrix,
         G: LAGraph_Graph,
         src: GrB_Index,
         sink: GrB_Index,

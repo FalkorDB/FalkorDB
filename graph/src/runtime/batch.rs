@@ -134,14 +134,15 @@ impl NullBitmap {
     }
 }
 
-/// Classifies a fully-bound builder column into a typed [`Column`] when its
-/// values are homogeneous node ids or relationship triples (which need no
-/// separate null bitmap to round-trip). Any other shape — including a column
-/// containing a `Null`, since the typed id/triple columns cannot represent
-/// nulls — stays as [`Column::Values`]. This keeps `value_at`/`get` byte-for-
-/// byte identical while letting downstream operators discover node id columns
-/// via [`Batch::extract_node_ids`].
-fn classify_id_column(values: Vec<Value>) -> Column {
+/// Classifies a fully-bound stored column into the most specific lossless
+/// [`Column`] representation supported by the current batch layout.
+///
+/// Because [`Batch`] does not yet store a null bitmap alongside typed columns,
+/// only fully non-null homogeneous columns can be promoted out of
+/// [`Column::Values`]. Nullable or mixed-shape columns remain value-backed so
+/// `value_at`/`get` continue to round-trip exactly.
+#[must_use]
+pub fn classify_stored_column(values: Vec<Value>) -> Column {
     if values.is_empty() {
         return Column::Values(values);
     }
@@ -164,6 +165,26 @@ fn classify_id_column(values: Vec<Value>) -> Column {
             })
             .collect();
         return Column::RelTriples(triples);
+    }
+    if values.iter().all(|v| matches!(v, Value::Int(_))) {
+        let ints = values
+            .into_iter()
+            .map(|v| match v {
+                Value::Int(i) => i,
+                _ => unreachable!("guarded by all() above"),
+            })
+            .collect();
+        return Column::Ints(ints);
+    }
+    if values.iter().all(|v| matches!(v, Value::Float(_))) {
+        let floats = values
+            .into_iter()
+            .map(|v| match v {
+                Value::Float(f) => f,
+                _ => unreachable!("guarded by all() above"),
+            })
+            .collect();
+        return Column::Floats(floats);
     }
     Column::Values(values)
 }
@@ -558,14 +579,10 @@ impl BatchBuilder {
         for (id, col) in self.cols.into_iter().enumerate() {
             if col.present {
                 if col.any_bound {
-                    // Promote homogeneous node/relationship columns to their
-                    // typed representation so downstream operators (Project,
-                    // Filter, Aggregate) can read property columns in bulk via
-                    // `extract_node_ids` instead of falling back to per-row
-                    // `get_node_attribute`. This is the key enabler for
-                    // vectorized property access after a traversal, whose
-                    // output is transposed through this builder.
-                    columns.push(classify_id_column(col.values));
+                    // Promote homogeneous bound columns to the best stored
+                    // representation so downstream operators can stay on
+                    // typed vectors when the batch layout can represent them.
+                    columns.push(classify_stored_column(col.values));
                 } else {
                     // A slot that carried a value but was never bound in any
                     // row mirrors an env slot with a cleared bound bit (e.g.
@@ -640,6 +657,16 @@ impl<'a> Batch<'a> {
             value_only: BitSet::default(),
             _marker: PhantomData,
         }
+    }
+
+    /// Creates a batch from fully materialized columns.
+    #[must_use]
+    pub fn from_columns(columns: impl IntoIterator<Item = Column>) -> Self {
+        let mut batch = Self::new(0);
+        for (i, col) in columns.into_iter().enumerate() {
+            batch.set_column(i as u32, col);
+        }
+        batch
     }
 
     /// Creates a columnar batch holding a single [`Column::NodeIds`] at the
@@ -802,6 +829,23 @@ impl<'a> Batch<'a> {
         var_id: u32,
         col: Column,
     ) {
+        let col = match col {
+            // Upgrade value-backed columns to the best lossless stored shape.
+            Column::Values(values) => classify_stored_column(values),
+            other => other,
+        };
+
+        let col_len = col.len();
+        if self.len == 0 {
+            self.len = col_len;
+        } else if !matches!(col, Column::Unbound) {
+            debug_assert_eq!(
+                col_len, self.len,
+                "column length {} must match batch len {}",
+                col_len, self.len
+            );
+        }
+
         let idx = var_id as usize;
         while self.columns.len() <= idx {
             self.columns.push(Column::Unbound);
@@ -1122,7 +1166,7 @@ impl<'a> BatchOp<'a> {
             }
             Self::Once(_) => {}
             Self::ProcedureCall(op) => {
-                op.batches = None;
+                op.reset_state();
                 op.child.set_argument_batch(batch);
             }
             Self::NodeByLabelScan(op) => op.child.set_argument_batch(batch),

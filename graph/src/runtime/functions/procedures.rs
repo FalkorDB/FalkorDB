@@ -23,10 +23,17 @@
 
 #![allow(clippy::unnecessary_wraps)]
 
-use super::{FnArguments, FnType, Functions, Type, get_functions, get_udf_functions};
+use super::{
+    FnArguments, FnType, Functions, Type, empty_procedure_batch, get_functions, get_udf_functions,
+};
 use crate::{
     index::indexer::{IndexInfo, IndexType},
-    runtime::{ordermap::OrderMap, runtime::Runtime, value::Value},
+    runtime::{
+        batch::{Batch, Column},
+        ordermap::OrderMap,
+        runtime::Runtime,
+        value::Value,
+    },
 };
 use std::sync::Arc;
 use thin_vec::{ThinVec, thin_vec};
@@ -38,19 +45,14 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Any,
         procedure: ["label"],
         fn db_labels(runtime, _args) {
-            Ok(Value::List(Arc::new(
-                runtime
-                    .g
-                    .borrow()
-                    .get_labels()
-                    .iter()
-                    .map(|l| {
-                        let mut map = OrderMap::default();
-                        map.insert(Arc::new(String::from("label")), Value::String(l.clone()));
-                        Value::Map(Arc::new(map))
-                    })
-                    .collect(),
-            )))
+            let col_label: Vec<Value> = runtime
+                .g
+                .borrow()
+                .get_labels()
+                .iter()
+                .map(|l| Value::String(l.clone()))
+                .collect();
+            Ok(Batch::from_columns([Column::Values(col_label)]))
         }
     );
 
@@ -60,22 +62,14 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Any,
         procedure: ["relationshipType"],
         fn db_types(runtime, _args) {
-            Ok(Value::List(Arc::new(
-                runtime
-                    .g
-                    .borrow()
-                    .get_types()
-                    .iter()
-                    .map(|t| {
-                        let mut map = OrderMap::default();
-                        map.insert(
-                            Arc::new(String::from("relationshipType")),
-                            Value::String(t.clone()),
-                        );
-                        Value::Map(Arc::new(map))
-                    })
-                    .collect(),
-            )))
+            let col_type: Vec<Value> = runtime
+                .g
+                .borrow()
+                .get_types()
+                .iter()
+                .map(|t| Value::String(t.clone()))
+                .collect();
+            Ok(Batch::from_columns([Column::Values(col_type)]))
         }
     );
 
@@ -85,21 +79,13 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Any,
         procedure: ["propertyKey"],
         fn db_properties(runtime, _args) {
-            Ok(Value::List(Arc::new(
-                runtime
-                    .g
-                    .borrow()
-                    .get_attrs()
-                    .map(|p| {
-                        let mut map = OrderMap::default();
-                        map.insert(
-                            Arc::new(String::from("propertyKey")),
-                            Value::String(p.clone()),
-                        );
-                        Value::Map(Arc::new(map))
-                    })
-                    .collect(),
-            )))
+            let col_key: Vec<Value> = runtime
+                .g
+                .borrow()
+                .get_attrs()
+                .map(|p| Value::String(p.clone()))
+                .collect();
+            Ok(Batch::from_columns([Column::Values(col_key)]))
         }
     );
 
@@ -109,37 +95,33 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Any,
         procedure: ["label", "properties", "types", "options", "language", "stopwords", "entitytype", "status", "info"],
         fn db_indexes(runtime, _args) {
-            Ok(Value::List(Arc::new(
-                runtime
-                    .g
-                    .borrow()
-                    .index_info()
-                    .into_iter()
-                    .map(
-                        |IndexInfo {
-                             label,
-                             pending,
-                             progress,
-                             total,
-                             fields,
-                             field_order,
-                             language,
-                             stopwords,
-                             entity_type,
-                         }| {
-                            let mut map = OrderMap::default();
-                            map.insert(Arc::new(String::from("label")), Value::String(label));
-                            map.insert(
-                                Arc::new(String::from("properties")),
-                                Value::List(Arc::new(field_order.iter().map(|f| Value::String(f.clone())).collect())),
-                            );
+            let infos = runtime.g.borrow().index_info();
+            let mut col_label = Vec::with_capacity(infos.len());
+            let mut col_properties = Vec::with_capacity(infos.len());
+            let mut col_types = Vec::with_capacity(infos.len());
+            let mut col_options = Vec::with_capacity(infos.len());
+            let mut col_language = Vec::with_capacity(infos.len());
+            let mut col_stopwords = Vec::with_capacity(infos.len());
+            let mut col_entitytype = Vec::with_capacity(infos.len());
+            let mut col_status = Vec::with_capacity(infos.len());
+            let mut col_info = Vec::with_capacity(infos.len());
+
+            for IndexInfo {
+                label,
+                pending,
+                progress,
+                total,
+                fields,
+                field_order,
+                language,
+                stopwords,
+                entity_type,
+            } in infos {
+                            // Build all 9 columns directly (columnar approach)
+                            col_label.push(Value::String(label));
+                            col_properties.push(Value::List(Arc::new(field_order.iter().map(|f| Value::String(f.clone())).collect())));
+
                             let mut types_map = OrderMap::default();
-                            // Per-attribute index types. A single attribute
-                            // can hold several fields of the same index type
-                            // (e.g. a range index spans `range:a`,
-                            // `range:a:numeric:arr`, `range:a:string:arr`),
-                            // so dedupe — but do not impose an order; callers
-                            // that care should compare as sets.
                             for attr in &field_order {
                                 let mut seen = [false; 3];
                                 let mut types = thin_vec![];
@@ -156,36 +138,25 @@ pub fn register(funcs: &mut Functions) {
                                 }
                                 types_map.insert(attr.clone(), Value::List(Arc::new(types)));
                             }
-                            map.insert(Arc::new(String::from("types")), Value::Map(Arc::new(types_map)));
-                            map.insert(Arc::new(String::from("options")), Value::Null);
-                            map.insert(
-                                Arc::new(String::from("language")),
-                                language.map_or_else(|| Value::Null, Value::String),
-                            );
+                            col_types.push(Value::Map(Arc::new(types_map)));
+                            col_options.push(Value::Null);
+                            col_language.push(language.map_or_else(|| Value::Null, Value::String));
+
                             let is_fulltext = field_order.iter().any(|attr| {
                                 fields.get(attr).is_some_and(|fs| fs.iter().any(|f| f.ty == IndexType::Fulltext))
                             });
-                            map.insert(
-                                Arc::new(String::from("stopwords")),
-                                stopwords.map_or_else(
-                                    || if is_fulltext { Value::List(Arc::new(thin_vec![])) } else { Value::Null },
-                                    |sw| Value::List(Arc::new(sw.into_iter().map(Value::String).collect())),
-                                ),
-                            );
-                            map.insert(
-                                Arc::new(String::from("entitytype")),
-                                Value::String(Arc::new(entity_type)),
-                            );
-                            map.insert(
-                                Arc::new(String::from("status")),
-                                if pending > 0 {
-                                    Value::String(Arc::new(format!(
-                                        "[Indexing] {progress}/{total}: UNDER CONSTRUCTION"
-                                    )))
-                                } else {
-                                    Value::String(Arc::new(String::from("OPERATIONAL")))
-                                },
-                            );
+                            col_stopwords.push(stopwords.map_or_else(
+                                || if is_fulltext { Value::List(Arc::new(thin_vec![])) } else { Value::Null },
+                                |sw| Value::List(Arc::new(sw.into_iter().map(Value::String).collect())),
+                            ));
+                            col_entitytype.push(Value::String(Arc::new(entity_type)));
+                            col_status.push(if pending > 0 {
+                                Value::String(Arc::new(format!(
+                                    "[Indexing] {progress}/{total}: UNDER CONSTRUCTION"
+                                )))
+                            } else {
+                                Value::String(Arc::new(String::from("OPERATIONAL")))
+                            });
 
                             // Build the `info.fields` list: one entry per
                             // underlying RediSearch field name, not per
@@ -206,13 +177,10 @@ pub fn register(funcs: &mut Functions) {
                                     continue;
                                 };
                                 for field in field_list {
-                                    // Primary RediSearch field name.
                                     let name = field.name.to_str().unwrap_or("").to_string();
                                     if !name.is_empty() {
                                         rs_field_names.push(name);
                                     }
-                                    // Companion array fields, present only
-                                    // for range indexes.
                                     if let Some(arr_name) = field.numeric_arr_name()
                                         && let Ok(s) = arr_name.to_str() {
                                             rs_field_names.push(s.to_string());
@@ -223,12 +191,8 @@ pub fn register(funcs: &mut Functions) {
                                         }
                                 }
                             }
-                            // Sentinel field used by the engine to track
-                            // non-indexable properties.
                             rs_field_names.push(String::from("NONE_INDEXABLE_FIELDS"));
 
-                            // Wrap each field name as `{name: "..."}` — the
-                            // map shape the Python test helpers expect.
                             let fields_list: ThinVec<Value> = rs_field_names
                                 .into_iter()
                                 .map(|name| {
@@ -245,13 +209,20 @@ pub fn register(funcs: &mut Functions) {
                                 Arc::new(String::from("fields")),
                                 Value::List(Arc::new(fields_list)),
                             );
-                            map.insert(Arc::new(String::from("info")), Value::Map(Arc::new(info_map)));
+                            col_info.push(Value::Map(Arc::new(info_map)));
+            }
 
-                            Value::Map(Arc::new(map))
-                        },
-                    )
-                    .collect(),
-            )))
+            Ok(Batch::from_columns([
+                Column::Values(col_label),
+                Column::Values(col_properties),
+                Column::Values(col_types),
+                Column::Values(col_options),
+                Column::Values(col_language),
+                Column::Values(col_stopwords),
+                Column::Values(col_entitytype),
+                Column::Values(col_status),
+                Column::Values(col_info),
+            ]))
         }
     );
 
@@ -281,16 +252,17 @@ pub fn register(funcs: &mut Functions) {
                 );
             }
 
-            let mut row = OrderMap::default();
-            row.insert(Arc::new(String::from("labels")), Value::Map(Arc::new(labels_map)));
-            row.insert(Arc::new(String::from("relTypes")), Value::Map(Arc::new(rel_types_map)));
-            row.insert(Arc::new(String::from("relCount")), Value::Int(g.relationship_count() as i64));
-            row.insert(Arc::new(String::from("nodeCount")), Value::Int(g.node_count() as i64));
-            row.insert(Arc::new(String::from("labelCount")), Value::Int(g.get_labels().len() as i64));
-            row.insert(Arc::new(String::from("relTypeCount")), Value::Int(g.get_types().len() as i64));
-            row.insert(Arc::new(String::from("propertyKeyCount")), Value::Int(g.property_key_count() as i64));
-
-            Ok(Value::List(Arc::new(thin_vec![Value::Map(Arc::new(row))])))
+            // Build 7 columns directly (columnar approach)
+            // Maps stay as Column::Values; Ints are promoted to Column::Ints for efficiency
+            Ok(Batch::from_columns([
+                Column::Values(vec![Value::Map(Arc::new(labels_map))]),
+                Column::Values(vec![Value::Map(Arc::new(rel_types_map))]),
+                Column::Ints(vec![g.relationship_count() as i64]),
+                Column::Ints(vec![g.node_count() as i64]),
+                Column::Ints(vec![g.get_labels().len() as i64]),
+                Column::Ints(vec![g.get_types().len() as i64]),
+                Column::Ints(vec![g.property_key_count() as i64]),
+            ]))
         }
     );
 
@@ -300,7 +272,7 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Any,
         write procedure: [],
         fn db_fulltext_create_node_index(_runtime, _args) {
-            Ok(Value::List(Arc::new(thin_vec![])))
+            Ok(empty_procedure_batch())
         }
     );
 
@@ -372,33 +344,30 @@ pub fn register(funcs: &mut Functions) {
         procedure: ["type", "label", "properties", "entitytype", "status"],
         fn db_constraints(runtime, _args) {
             let g = runtime.g.borrow();
-            let rows: ThinVec<Value> = g.constraints().iter().map(|c| {
-                let mut map = OrderMap::default();
-                map.insert(
-                    Arc::new(String::from("type")),
-                    Value::String(Arc::new(c.ct.to_string())),
-                );
-                map.insert(
-                    Arc::new(String::from("label")),
-                    Value::String(c.label.clone()),
-                );
-                map.insert(
-                    Arc::new(String::from("properties")),
-                    Value::List(Arc::new(
-                        c.properties.iter().map(|p| Value::String(p.clone())).collect(),
-                    )),
-                );
-                map.insert(
-                    Arc::new(String::from("entitytype")),
-                    Value::String(Arc::new(c.entity_type.to_string())),
-                );
-                map.insert(
-                    Arc::new(String::from("status")),
-                    Value::String(Arc::new(c.status.to_string())),
-                );
-                Value::Map(Arc::new(map))
-            }).collect();
-            Ok(Value::List(Arc::new(rows)))
+            let constraints = g.constraints();
+            let mut col_type = Vec::with_capacity(constraints.len());
+            let mut col_label = Vec::with_capacity(constraints.len());
+            let mut col_properties = Vec::with_capacity(constraints.len());
+            let mut col_entitytype = Vec::with_capacity(constraints.len());
+            let mut col_status = Vec::with_capacity(constraints.len());
+            for c in constraints {
+                // positional order: type, label, properties, entitytype, status
+                col_type.push(Value::String(Arc::new(c.ct.to_string())));
+                col_label.push(Value::String(c.label.clone()));
+                col_properties.push(Value::List(Arc::new(
+                    c.properties.iter().map(|p| Value::String(p.clone())).collect(),
+                )));
+                col_entitytype.push(Value::String(Arc::new(c.entity_type.to_string())));
+                col_status.push(Value::String(Arc::new(c.status.to_string())));
+            }
+
+            Ok(Batch::from_columns([
+                Column::Values(col_type),
+                Column::Values(col_label),
+                Column::Values(col_properties),
+                Column::Values(col_entitytype),
+                Column::Values(col_status),
+            ]))
         }
     );
 
@@ -418,26 +387,19 @@ pub fn register(funcs: &mut Functions) {
                 .collect();
             procs.sort_by(|a, b| a.name.cmp(&b.name));
 
-            let name_key = procedures_name_key();
-            let mode_key = procedures_mode_key();
-            let rows: ThinVec<Value> = procs
-                .into_iter()
-                .map(|f| {
-                    let mut map = OrderMap::default();
-                    map.insert(
-                        name_key.clone(),
-                        Value::String(Arc::new(f.name.clone())),
-                    );
-                    map.insert(
-                        mode_key.clone(),
-                        Value::String(Arc::new(String::from(
-                            if f.write { "WRITE" } else { "READ" },
-                        ))),
-                    );
-                    Value::Map(Arc::new(map))
-                })
-                .collect();
-            Ok(Value::List(Arc::new(rows)))
+            let mut col_name = Vec::with_capacity(procs.len());
+            let mut col_mode = Vec::with_capacity(procs.len());
+            for f in procs {
+                col_name.push(Value::String(Arc::new(f.name.clone())));
+                col_mode.push(Value::String(Arc::new(String::from(
+                    if f.write { "WRITE" } else { "READ" },
+                ))));
+            }
+
+            Ok(Batch::from_columns([
+                Column::Values(col_name),
+                Column::Values(col_mode),
+            ]))
         }
     );
 
@@ -471,99 +433,53 @@ pub fn register(funcs: &mut Functions) {
 
             entries.sort_by(|a, b| a.name.cmp(&b.name));
 
-            let keys = function_row_keys();
-            let rows: ThinVec<Value> = entries
-                .iter()
-                .map(|f| build_function_row(f, keys))
-                .collect();
-            Ok(Value::List(Arc::new(rows)))
+            let mut col_name = Vec::with_capacity(entries.len());
+            let mut col_return_type = Vec::with_capacity(entries.len());
+            let mut col_arguments = Vec::with_capacity(entries.len());
+            let mut col_internal = Vec::with_capacity(entries.len());
+            let mut col_reducible = Vec::with_capacity(entries.len());
+            let mut col_aggregation = Vec::with_capacity(entries.len());
+            let mut col_variable_len = Vec::with_capacity(entries.len());
+            let mut col_udf = Vec::with_capacity(entries.len());
+
+            for f in &entries {
+                col_name.push(Value::String(Arc::new(f.name.clone())));
+                col_return_type.push(Value::String(Arc::new(type_to_dbms_string(&f.ret_type))));
+
+                let args_list: thin_vec::ThinVec<Value> = match &f.args_type {
+                    FnArguments::Fixed(types) => types
+                        .iter()
+                        .map(|t| Value::String(Arc::new(type_to_dbms_string(t))))
+                        .collect(),
+                    FnArguments::VarLength(t) => {
+                        thin_vec::thin_vec![Value::String(Arc::new(type_to_dbms_string(t)))]
+                    }
+                };
+                col_arguments.push(Value::List(Arc::new(args_list)));
+
+                col_internal.push(Value::Bool(matches!(f.fn_type, FnType::Internal)));
+
+                let reducible = !f.non_deterministic
+                    && !matches!(f.fn_type, FnType::Aggregation { .. } | FnType::Procedure(_));
+                col_reducible.push(Value::Bool(reducible));
+
+                col_aggregation.push(Value::Bool(matches!(f.fn_type, FnType::Aggregation { .. })));
+                col_variable_len.push(Value::Bool(matches!(f.args_type, FnArguments::VarLength(_))));
+                col_udf.push(Value::Bool(matches!(f.fn_type, FnType::Udf)));
+            }
+
+            Ok(Batch::from_columns([
+                Column::Values(col_name),
+                Column::Values(col_return_type),
+                Column::Values(col_arguments),
+                Column::Values(col_internal),
+                Column::Values(col_reducible),
+                Column::Values(col_aggregation),
+                Column::Values(col_variable_len),
+                Column::Values(col_udf),
+            ]))
         }
     );
-}
-
-/// Shared `Arc<String>` map keys for `dbms.procedures()` rows, allocated once.
-fn procedures_name_key() -> &'static Arc<String> {
-    static KEY: std::sync::LazyLock<Arc<String>> =
-        std::sync::LazyLock::new(|| Arc::new(String::from("name")));
-    &KEY
-}
-
-fn procedures_mode_key() -> &'static Arc<String> {
-    static KEY: std::sync::LazyLock<Arc<String>> =
-        std::sync::LazyLock::new(|| Arc::new(String::from("mode")));
-    &KEY
-}
-
-/// Shared `Arc<String>` map keys for `dbms.functions()` rows, allocated once
-/// so every row reuses the same key allocations instead of creating eight new
-/// `Arc<String>`s per function on every call.
-struct FunctionRowKeys {
-    name: Arc<String>,
-    return_type: Arc<String>,
-    arguments: Arc<String>,
-    internal: Arc<String>,
-    reducible: Arc<String>,
-    aggregation: Arc<String>,
-    variable_len: Arc<String>,
-    udf: Arc<String>,
-}
-
-fn function_row_keys() -> &'static FunctionRowKeys {
-    static KEYS: std::sync::LazyLock<FunctionRowKeys> =
-        std::sync::LazyLock::new(|| FunctionRowKeys {
-            name: Arc::new(String::from("name")),
-            return_type: Arc::new(String::from("return_type")),
-            arguments: Arc::new(String::from("arguments")),
-            internal: Arc::new(String::from("internal")),
-            reducible: Arc::new(String::from("reducible")),
-            aggregation: Arc::new(String::from("aggregation")),
-            variable_len: Arc::new(String::from("variable_len")),
-            udf: Arc::new(String::from("udf")),
-        });
-    &KEYS
-}
-
-/// Build a single result row for `dbms.functions()`.
-fn build_function_row(
-    f: &super::GraphFn,
-    keys: &FunctionRowKeys,
-) -> Value {
-    let mut map = OrderMap::default();
-    map.insert(keys.name.clone(), Value::String(Arc::new(f.name.clone())));
-    map.insert(
-        keys.return_type.clone(),
-        Value::String(Arc::new(type_to_dbms_string(&f.ret_type))),
-    );
-    let args_list: thin_vec::ThinVec<Value> = match &f.args_type {
-        FnArguments::Fixed(types) => types
-            .iter()
-            .map(|t| Value::String(Arc::new(type_to_dbms_string(t))))
-            .collect(),
-        FnArguments::VarLength(t) => {
-            thin_vec::thin_vec![Value::String(Arc::new(type_to_dbms_string(t)))]
-        }
-    };
-    map.insert(keys.arguments.clone(), Value::List(Arc::new(args_list)));
-    map.insert(
-        keys.internal.clone(),
-        Value::Bool(matches!(f.fn_type, FnType::Internal)),
-    );
-    let reducible = !f.non_deterministic
-        && !matches!(f.fn_type, FnType::Aggregation { .. } | FnType::Procedure(_));
-    map.insert(keys.reducible.clone(), Value::Bool(reducible));
-    map.insert(
-        keys.aggregation.clone(),
-        Value::Bool(matches!(f.fn_type, FnType::Aggregation { .. })),
-    );
-    map.insert(
-        keys.variable_len.clone(),
-        Value::Bool(matches!(f.args_type, FnArguments::VarLength(_))),
-    );
-    map.insert(
-        keys.udf.clone(),
-        Value::Bool(matches!(f.fn_type, FnType::Udf)),
-    );
-    Value::Map(Arc::new(map))
 }
 
 /// Convert a `Type` to a display string matching the original `FalkorDB` format.

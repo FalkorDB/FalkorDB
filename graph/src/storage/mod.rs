@@ -32,6 +32,4 @@ mod registry;
 
 pub use backend::{AttrBackend, IndexBackend};
 pub use error::{Result, StorageError};
-pub use registry::{
-    attr_backend, index_backend, register_attr_backend, register_index_backend,
-};
+pub use registry::{attr_backend, index_backend, register_attr_backend, register_index_backend};

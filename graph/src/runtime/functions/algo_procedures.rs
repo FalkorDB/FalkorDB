@@ -67,13 +67,21 @@
 #![allow(clippy::unnecessary_wraps)]
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use super::{FnType, Functions, Type};
+use super::{FnType, Functions, Type, empty_procedure_batch};
 use crate::{
     graph::{
         graph::{Graph, NodeId, RelationshipId},
-        graphblas::lagraph_bindings::{self, LAGraph_Boolean, LAGraph_Graph, LAGraph_Kind},
+        graphblas::{
+            lagraph_bindings::{self, LAGraph_Boolean, LAGraph_Graph, LAGraph_Kind},
+            matrix::Dup,
+        },
     },
-    runtime::{ordermap::OrderMap, runtime::Runtime, value::Value},
+    runtime::{
+        batch::{Batch, Column, classify_stored_column},
+        ordermap::OrderMap,
+        runtime::Runtime,
+        value::Value,
+    },
 };
 use std::ptr::null_mut;
 use std::sync::Arc;
@@ -89,6 +97,13 @@ type LagMsg = [std::os::raw::c_char; 256];
 
 const fn new_msg() -> LagMsg {
     [0; 256]
+}
+
+fn msg_to_string(msg: &LagMsg) -> String {
+    // LAGraph writes a null-terminated C string into this fixed buffer.
+    unsafe { std::ffi::CStr::from_ptr(msg.as_ptr()) }
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// Extract an optional string-or-null from a Value, returning an error if
@@ -236,15 +251,6 @@ unsafe fn extract_vector_i64(v: crate::graph::graphblas::GrB_Vector) -> Vec<(u64
 /// Build a node Value with a given NodeId.
 const fn node_value(id: NodeId) -> Value {
     Value::Node(id)
-}
-
-/// Build a result row as Value::Map.
-fn make_row(entries: Vec<(&str, Value)>) -> Value {
-    let mut map = OrderMap::default();
-    for (k, v) in entries {
-        map.insert(Arc::new(String::from(k)), v);
-    }
-    Value::Map(Arc::new(map))
 }
 
 /// Collect all active node IDs from the graph matching ANY of the given labels.
@@ -447,7 +453,7 @@ fn register_pagerank(funcs: &mut Functions) {
 
             let g = runtime.g.borrow();
             if g.node_count() == 0 {
-                return Ok(Value::List(Arc::new(thin_vec![])));
+                return Ok(empty_procedure_batch());
             }
 
             let rel_types: Vec<Arc<String>> = rel_type.into_iter().collect();
@@ -456,11 +462,21 @@ fn register_pagerank(funcs: &mut Functions) {
             unsafe {
                 use crate::graph::graphblas::{lagraph_bindings, GrB_Vector, GrB_Vector_free};
 
-                let active = active_node_set(&g);
-                let (compact_adj, _id_to_compact, compact_to_id, _n) =
-                    build_compact_adj(&adj, &active);
+                // Fast path for the common unfiltered call (algo.pageRank(NULL, NULL)): run
+                // directly on the full adjacency without compacting/reindexing.
+                let (lag_adj, compact_to_id): (
+                    crate::graph::graphblas::GrB_Matrix,
+                    Option<Vec<u64>>,
+                ) = if label.is_none() {
+                    (adj.dup().inner(), None)
+                } else {
+                    let active = active_node_set(&g);
+                    let (compact_adj, _id_to_compact, compact_to_id, _n) =
+                        build_compact_adj(&adj, &active);
+                    (compact_adj, Some(compact_to_id))
+                };
 
-                let mut lag_g = create_lagraph_graph(compact_adj, LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED)?;
+                let mut lag_g = create_lagraph_graph(lag_adj, LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED)?;
 
                 // Cache AT and OutDegree (required for PageRank)
                 let mut msg = new_msg();
@@ -497,20 +513,28 @@ fn register_pagerank(funcs: &mut Functions) {
                     collect_node_ids(&g, std::slice::from_ref(l)).into_iter().collect()
                 });
 
-                let mut results: ThinVec<Value> = thin_vec![];
+                let mut node_ids = Vec::with_capacity(entries.len());
+                let mut scores = Vec::with_capacity(entries.len());
+                let has_deleted = g.deleted_nodes_count() != 0;
                 for (compact_idx, score) in entries {
-                    let orig_id = compact_to_id[compact_idx as usize];
+                    let orig_id = compact_to_id
+                        .as_ref()
+                        .map_or(compact_idx, |map| map[compact_idx as usize]);
+                    if has_deleted && g.is_node_deleted(NodeId::from(orig_id)) {
+                        continue;
+                    }
                     if let Some(ref filter) = label_filter
                         && !filter.contains(&orig_id) {
                             continue;
                         }
-                    results.push(make_row(vec![
-                        ("node", node_value(NodeId::from(orig_id))),
-                        ("score", Value::Float(score)),
-                    ]));
+                    node_ids.push(NodeId::from(orig_id));
+                    scores.push(score);
                 }
 
-                Ok(Value::List(Arc::new(results)))
+                Ok(Batch::from_columns([
+                    Column::NodeIds(node_ids),
+                    Column::Floats(scores),
+                ]))
             }
         }
     );
@@ -533,7 +557,7 @@ fn register_wcc(funcs: &mut Functions) {
 
             let g = runtime.g.borrow();
             if g.node_count() == 0 {
-                return Ok(Value::List(Arc::new(thin_vec![])));
+                return Ok(empty_procedure_batch());
             }
 
             // Build symmetric adjacency matrix (WCC needs undirected)
@@ -542,19 +566,29 @@ fn register_wcc(funcs: &mut Functions) {
             unsafe {
                 use crate::graph::graphblas::{lagraph_bindings, GrB_Vector, GrB_Vector_free};
 
-                let active = active_node_set(&g);
-                let (compact_adj, _id_to_compact, compact_to_id, _n) =
-                    build_compact_adj_symmetric(&adj, &active);
+                // Fast path (no nodeLabels): run on full matrix without compaction.
+                let (lag_adj, compact_to_id): (
+                    crate::graph::graphblas::GrB_Matrix,
+                    Option<Vec<u64>>,
+                ) = if node_labels.is_empty() {
+                    (adj.dup().inner(), None)
+                } else {
+                    let active: std::collections::HashSet<u64> =
+                        collect_node_ids(&g, &node_labels).into_iter().collect();
+                    if active.is_empty() {
+                        return Ok(empty_procedure_batch());
+                    }
+                    let (compact_adj, _id_to_compact, compact_to_id, _n) =
+                        build_compact_adj_symmetric(&adj, &active);
+                    (compact_adj, Some(compact_to_id))
+                };
 
-                let mut lag_g = create_lagraph_graph(compact_adj, LAGraph_Kind::LAGraph_ADJACENCY_UNDIRECTED)?;
+                let mut lag_g = create_lagraph_graph(lag_adj, LAGraph_Kind::LAGraph_ADJACENCY_UNDIRECTED)?;
 
                 // Cache symmetric structure
                 let mut msg = new_msg();
                 let lag_g_ref = lag_g.as_mut().ok_or_else(|| String::from("LAGraph graph pointer is null"))?;
                 lag_g_ref.is_symmetric_structure = LAGraph_Boolean::LAGraph_TRUE;
-                lagraph_bindings::LAGraph_Cached_OutDegree(lag_g, msg.as_mut_ptr());
-                lagraph_bindings::LAGraph_Cached_NSelfEdges(lag_g, msg.as_mut_ptr());
-                lagraph_bindings::LAGraph_DeleteSelfEdges(lag_g, msg.as_mut_ptr());
 
                 // Run connected components
                 let mut component: GrB_Vector = null_mut();
@@ -571,30 +605,27 @@ fn register_wcc(funcs: &mut Functions) {
 
                 let entries = extract_vector_i64(component);
 
+                let mut node_ids = Vec::with_capacity(entries.len());
+                let mut component_ids = Vec::with_capacity(entries.len());
+                let has_deleted = g.deleted_nodes_count() != 0;
+                for (compact_idx, comp_id) in entries {
+                    let orig_id = compact_to_id
+                        .as_ref()
+                        .map_or(compact_idx, |map| map[compact_idx as usize]);
+                    if has_deleted && g.is_node_deleted(NodeId::from(orig_id)) {
+                        continue;
+                    }
+                    node_ids.push(NodeId::from(orig_id));
+                    component_ids.push(comp_id);
+                }
+
                 GrB_Vector_free(&raw mut component);
                 delete_lagraph_graph(&mut lag_g);
 
-                // Map compact indices back to original IDs and filter by labels
-                let label_filter: Option<std::collections::HashSet<u64>> = if node_labels.is_empty() {
-                    None
-                } else {
-                    Some(collect_node_ids(&g, &node_labels).into_iter().collect())
-                };
-
-                let mut results: ThinVec<Value> = thin_vec![];
-                for (compact_idx, comp_id) in entries {
-                    let orig_id = compact_to_id[compact_idx as usize];
-                    if let Some(ref filter) = label_filter
-                        && !filter.contains(&orig_id) {
-                            continue;
-                        }
-                    results.push(make_row(vec![
-                        ("node", node_value(NodeId::from(orig_id))),
-                        ("componentId", Value::Int(comp_id)),
-                    ]));
-                }
-
-                Ok(Value::List(Arc::new(results)))
+                Ok(Batch::from_columns([
+                    Column::NodeIds(node_ids),
+                    Column::Ints(component_ids),
+                ]))
             }
         }
     );
@@ -636,7 +667,7 @@ fn register_betweenness(funcs: &mut Functions) {
 
             let g = runtime.g.borrow();
             if g.node_count() == 0 {
-                return Ok(Value::List(Arc::new(thin_vec![])));
+                return Ok(empty_procedure_batch());
             }
 
             let adj = g.build_adjacency_matrix(&rel_types);
@@ -706,16 +737,18 @@ fn register_betweenness(funcs: &mut Functions) {
                 delete_lagraph_graph(&mut lag_g);
 
                 // All compact indices map to valid nodes (already label-filtered)
-                let mut results: ThinVec<Value> = thin_vec![];
+                let mut node_ids = Vec::with_capacity(entries.len());
+                let mut scores = Vec::with_capacity(entries.len());
                 for (compact_idx, score) in entries {
                     let orig_id = compact_to_id[compact_idx as usize];
-                    results.push(make_row(vec![
-                        ("node", node_value(NodeId::from(orig_id))),
-                        ("score", Value::Float(score)),
-                    ]));
+                    node_ids.push(NodeId::from(orig_id));
+                    scores.push(score);
                 }
 
-                Ok(Value::List(Arc::new(results)))
+                Ok(Batch::from_columns([
+                    Column::NodeIds(node_ids),
+                    Column::Floats(scores),
+                ]))
             }
         }
     );
@@ -732,7 +765,7 @@ fn register_bfs(funcs: &mut Functions) {
             // arg 0: source node (Node or Null)
             let source_id = match &args[0] {
                 Value::Node(id) => *id,
-                Value::Null => return Ok(Value::List(Arc::new(thin_vec![]))),
+                Value::Null => return Ok(empty_procedure_batch()),
                 _ => return Err(String::from("Source must be a node or null")),
             };
 
@@ -747,26 +780,21 @@ fn register_bfs(funcs: &mut Functions) {
 
             let g = runtime.g.borrow();
             if g.node_count() == 0 {
-                return Ok(Value::List(Arc::new(thin_vec![])));
+                return Ok(empty_procedure_batch());
+            }
+            if g.is_node_deleted(source_id) {
+                return Err(String::from("Source node not found in graph"));
             }
 
             let rel_types: Vec<Arc<String>> = rel_type.into_iter().collect();
             let adj = g.build_adjacency_matrix(&rel_types);
 
             unsafe {
-                use crate::graph::graphblas::{lagraph_bindings, GrB_Vector, lagraphx_bindings, GrB_Vector_free, GrB_Matrix_free};
+                use crate::graph::graphblas::{lagraph_bindings, GrB_Vector, lagraphx_bindings, GrB_Vector_free};
 
-                let active = active_node_set(&g);
-                let (mut compact_adj, id_to_compact, compact_to_id, _n) =
-                    build_compact_adj(&adj, &active);
-
-                // Map source_id to compact index
-                let Some(&compact_source) = id_to_compact.get(&u64::from(source_id)) else {
-                    GrB_Matrix_free(&raw mut compact_adj);
-                    return Err(String::from("Source node not found in graph"));
-                };
-
-                let mut lag_g = create_lagraph_graph(compact_adj, LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED)?;
+                // Run directly on full adjacency; no compaction needed for BFS.
+                let compact_source = u64::from(source_id);
+                let mut lag_g = create_lagraph_graph(adj.dup().inner(), LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED)?;
 
                 let mut msg = new_msg();
                 lagraph_bindings::LAGraph_Cached_AT(lag_g, msg.as_mut_ptr());
@@ -797,23 +825,32 @@ fn register_bfs(funcs: &mut Functions) {
                 let parent_entries = extract_vector_i64(parent);
 
                 // Build nodes list (excluding the source itself) and edges list
-                let mut nodes: ThinVec<Value> = thin_vec![];
-                let mut edges: ThinVec<Value> = thin_vec![];
+                let mut nodes: ThinVec<Value> = ThinVec::with_capacity(parent_entries.len());
+                let mut edges: ThinVec<Value> = ThinVec::with_capacity(parent_entries.len());
+                let has_deleted = g.deleted_nodes_count() != 0;
 
                 for (compact_idx, compact_par) in &parent_entries {
                     if *compact_idx == compact_source {
                         continue; // skip source itself
                     }
-                    let orig_child = compact_to_id[*compact_idx as usize];
-                    let orig_parent = compact_to_id[*compact_par as u64 as usize];
+                    let orig_child = *compact_idx;
+                    let orig_parent = *compact_par as u64;
+                    if has_deleted
+                        && (g.is_node_deleted(NodeId::from(orig_child))
+                            || g.is_node_deleted(NodeId::from(orig_parent)))
+                    {
+                        continue;
+                    }
                     let child = NodeId::from(orig_child);
                     let parent_node = NodeId::from(orig_parent);
                     nodes.push(node_value(child));
 
-                    // Find the relationship from parent to child
-                    let rels: Vec<RelationshipId> = g.get_src_dest_relationships(parent_node, child, &rel_types).collect();
-                    if let Some(rel_id) = rels.first() {
-                        edges.push(Value::Relationship(Box::new((*rel_id, parent_node, child))));
+                    // Find the relationship from parent to child without
+                    // materializing an intermediate Vec per row.
+                    if let Some(rel_id) =
+                        g.get_src_dest_relationships(parent_node, child, &rel_types).next()
+                    {
+                        edges.push(Value::Relationship(Box::new((rel_id, parent_node, child))));
                     }
                 }
 
@@ -827,15 +864,13 @@ fn register_bfs(funcs: &mut Functions) {
 
                 // If no nodes were reached, return empty list (no result row)
                 if nodes.is_empty() {
-                    return Ok(Value::List(Arc::new(thin_vec![])));
+                    return Ok(empty_procedure_batch());
                 }
 
-                let result = make_row(vec![
-                    ("nodes", Value::List(Arc::new(nodes))),
-                    ("edges", Value::List(Arc::new(edges))),
-                ]);
-
-                Ok(Value::List(Arc::new(thin_vec![result])))
+                Ok(Batch::from_columns([
+                    Column::Values(vec![Value::List(Arc::new(nodes))]),
+                    Column::Values(vec![Value::List(Arc::new(edges))]),
+                ]))
             }
         }
     );
@@ -870,7 +905,7 @@ fn register_cdlp(funcs: &mut Functions) {
 
             let g = runtime.g.borrow();
             if g.node_count() == 0 {
-                return Ok(Value::List(Arc::new(thin_vec![])));
+                return Ok(empty_procedure_batch());
             }
 
             // CDLP needs symmetric adjacency
@@ -879,11 +914,24 @@ fn register_cdlp(funcs: &mut Functions) {
             unsafe {
                 use crate::graph::graphblas::{GrB_Vector, lagraphx_bindings, GrB_Vector_free};
 
-                let active = active_node_set(&g);
-                let (compact_adj, _id_to_compact, compact_to_id, _n) =
-                    build_compact_adj_symmetric(&adj, &active);
+                // Fast path (no nodeLabels): avoid compaction and run on full graph.
+                let (lag_adj, compact_to_id): (
+                    crate::graph::graphblas::GrB_Matrix,
+                    Option<Vec<u64>>,
+                ) = if node_labels.is_empty() {
+                    (adj.dup().inner(), None)
+                } else {
+                    let active: std::collections::HashSet<u64> =
+                        collect_node_ids(&g, &node_labels).into_iter().collect();
+                    if active.is_empty() {
+                        return Ok(empty_procedure_batch());
+                    }
+                    let (compact_adj, _id_to_compact, compact_to_id, _n) =
+                        build_compact_adj_symmetric(&adj, &active);
+                    (compact_adj, Some(compact_to_id))
+                };
 
-                let mut lag_g = create_lagraph_graph(compact_adj, LAGraph_Kind::LAGraph_ADJACENCY_UNDIRECTED)?;
+                let mut lag_g = create_lagraph_graph(lag_adj, LAGraph_Kind::LAGraph_ADJACENCY_UNDIRECTED)?;
 
                 let mut msg = new_msg();
                 let lag_g_ref = lag_g.as_mut().ok_or_else(|| String::from("LAGraph graph pointer is null"))?;
@@ -904,29 +952,27 @@ fn register_cdlp(funcs: &mut Functions) {
 
                 let entries = extract_vector_i64(cdlp);
 
+                let mut node_ids = Vec::with_capacity(entries.len());
+                let mut community_ids = Vec::with_capacity(entries.len());
+                let has_deleted = g.deleted_nodes_count() != 0;
+                for (compact_idx, community_id) in entries {
+                    let orig_id = compact_to_id
+                        .as_ref()
+                        .map_or(compact_idx, |map| map[compact_idx as usize]);
+                    if has_deleted && g.is_node_deleted(NodeId::from(orig_id)) {
+                        continue;
+                    }
+                    node_ids.push(NodeId::from(orig_id));
+                    community_ids.push(community_id);
+                }
+
                 GrB_Vector_free(&raw mut cdlp);
                 delete_lagraph_graph(&mut lag_g);
 
-                let label_filter: Option<std::collections::HashSet<u64>> = if node_labels.is_empty() {
-                    None
-                } else {
-                    Some(collect_node_ids(&g, &node_labels).into_iter().collect())
-                };
-
-                let mut results: ThinVec<Value> = thin_vec![];
-                for (compact_idx, community_id) in entries {
-                    let orig_id = compact_to_id[compact_idx as usize];
-                    if let Some(ref filter) = label_filter
-                        && !filter.contains(&orig_id) {
-                            continue;
-                        }
-                    results.push(make_row(vec![
-                        ("node", node_value(NodeId::from(orig_id))),
-                        ("communityId", Value::Int(community_id)),
-                    ]));
-                }
-
-                Ok(Value::List(Arc::new(results)))
+                Ok(Batch::from_columns([
+                    Column::NodeIds(node_ids),
+                    Column::Ints(community_ids),
+                ]))
             }
         }
     );
@@ -934,55 +980,24 @@ fn register_cdlp(funcs: &mut Functions) {
 
 // ── algo.MSF ────────────────────────────────────────────────────────────
 
-/// Find the best relationship from src to dst matching the given types and weight criteria.
-/// Returns (`RelationshipId`, `src_node`, `dst_node`) or None if no relationship exists.
-fn get_rel_weight(
-    g: &Graph,
-    rel_id: RelationshipId,
-    weight_attr: Option<&Arc<String>>,
-) -> f64 {
-    weight_attr.map_or(1.0, |attr| {
-        match g.get_relationship_attribute(rel_id, attr) {
-            Some(Value::Float(f)) => f,
-            Some(Value::Int(i)) => i as f64,
-            _ => f64::NAN,
-        }
-    })
-}
-
-fn find_best_relationship(
+fn resolve_relationship_triplet(
     g: &Graph,
     src: NodeId,
     dst: NodeId,
+    rel_id: RelationshipId,
     types: &[Arc<String>],
-    weight_attr: Option<&Arc<String>>,
-    maximize: bool,
 ) -> Option<(RelationshipId, NodeId, NodeId)> {
-    let mut best: Option<(RelationshipId, f64)> = None;
-    let missing_sentinel = if maximize {
-        f64::NEG_INFINITY
-    } else {
-        f64::INFINITY
-    };
-    for rel_id in g.get_src_dest_relationships(src, dst, types) {
-        if let Some(attr) = weight_attr {
-            let w = match g.get_relationship_attribute(rel_id, attr) {
-                Some(Value::Float(f)) => f,
-                Some(Value::Int(i)) => i as f64,
-                _ => missing_sentinel,
-            };
-            best = Some(match best {
-                None => (rel_id, w),
-                Some((_, prev_w)) if (maximize && w > prev_w) || (!maximize && w < prev_w) => {
-                    (rel_id, w)
-                }
-                Some(prev) => prev,
-            });
-        } else {
-            return Some((rel_id, src, dst));
-        }
+    if g.get_src_dest_relationships(src, dst, types)
+        .any(|rid| rid == rel_id)
+    {
+        return Some((rel_id, src, dst));
     }
-    best.map(|(rel_id, _)| (rel_id, src, dst))
+    if g.get_src_dest_relationships(dst, src, types)
+        .any(|rid| rid == rel_id)
+    {
+        return Some((rel_id, dst, src));
+    }
+    None
 }
 
 fn register_msf(funcs: &mut Functions) {
@@ -1035,20 +1050,20 @@ fn register_msf(funcs: &mut Functions) {
                 }
 
             if g.node_count() == 0 {
-                return Ok(Value::List(Arc::new(thin_vec![])));
+                return Ok(empty_procedure_batch());
             }
 
             // Get the set of nodes we care about
             let active_nodes = collect_node_ids(&g, &node_labels);
             if active_nodes.is_empty() {
-                return Ok(Value::List(Arc::new(thin_vec![])));
+                return Ok(empty_procedure_batch());
             }
 
             // Build a weighted FP64 adjacency matrix
             // For unweighted: use 1.0 for all entries
             // For weighted: use the attribute value
             unsafe {
-                use crate::graph::graphblas::{GrB_Matrix, GrB_Matrix_new, GrB_FP64, GrB_Matrix_extractElement_FP64, GrB_Info, GrB_Matrix_setElement_FP64, GrB_Matrix_wait, GrB_WaitMode, GrB_Vector, lagraphx_bindings, GrB_Matrix_free, GrB_Index, GrB_Matrix_nvals, GrB_Matrix_extractTuples_FP64, GrB_Vector_free};
+                use crate::graph::graphblas::{GrB_FP64, GrB_Index, GrB_Info, GrB_Matrix, GrB_Matrix_extractElement_UINT64, GrB_Matrix_extractTuples_FP64, GrB_Matrix_free, GrB_Matrix_new, GrB_Matrix_nvals, GrB_Matrix_setElement_FP64, GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_UINT64, GrB_Vector, GrB_Vector_free, GrB_WaitMode, lagraphx_bindings};
                 use crate::runtime::orderset::OrderSet;
 
                 let active_set: std::collections::HashSet<u64> = active_nodes.iter().copied().collect();
@@ -1058,9 +1073,12 @@ fn register_msf(funcs: &mut Functions) {
                 sorted_ids.sort_unstable();
                 let n = sorted_ids.len() as u64;
 
-                let mut id_to_compact: std::collections::HashMap<u64, u64> = std::collections::HashMap::with_capacity(sorted_ids.len());
+                // Use Vec-based mapping for O(1) compact ID lookup
+                // Map: original_id -> compact_id (for fast lookups)
+                let max_id = sorted_ids.last().copied().unwrap_or(0);
+                let mut id_to_compact_vec = vec![u64::MAX; (max_id + 1) as usize];
                 for (compact, &orig) in sorted_ids.iter().enumerate() {
-                    id_to_compact.insert(orig, compact as u64);
+                    id_to_compact_vec[orig as usize] = compact as u64;
                 }
 
                 // Iterate relationships and fill weighted compact matrix
@@ -1069,55 +1087,98 @@ fn register_msf(funcs: &mut Functions) {
 
                 let empty_label_set: OrderSet<Arc<String>> = OrderSet::default();
 
-                // Create compact FP64 matrix
+                // Create compact FP64 matrix and a parallel edge-id matrix.
                 let mut weighted_adj: GrB_Matrix = null_mut();
                 GrB_Matrix_new(&raw mut weighted_adj, GrB_FP64, n, n);
+                let mut edge_map: GrB_Matrix = null_mut();
+                GrB_Matrix_new(&raw mut edge_map, GrB_UINT64, n, n);
 
-                // For each edge, pick the best weight and write to compact matrix
-                // Don't filter by labels here — the active_set/id_to_compact check below
-                // already ensures both endpoints match the requested labels.
-                for (src, dst) in g.get_relationships(types_to_use, &empty_label_set, &empty_label_set, None, None) {
-                    let src_u = u64::from(src);
-                    let dst_u = u64::from(dst);
+                // Best edge per undirected node pair (compact IDs).
+                let mut best_pairs: std::collections::HashMap<(u64, u64), (f64, RelationshipId)> =
+                    std::collections::HashMap::new();
 
-                    // Both endpoints must be in active set
-                    let (Some(&cs), Some(&cd)) = (id_to_compact.get(&src_u), id_to_compact.get(&dst_u)) else {
-                        continue;
-                    };
+                // Fast path: if no weight attribute, skip attribute lookups entirely
+                if weight_attr.is_none() {
+                    // Unweighted: all edges have weight 1.0
+                    for (src, dst) in g.get_relationships(types_to_use, &empty_label_set, &empty_label_set, None, None) {
+                        let src_u = u64::from(src);
+                        let dst_u = u64::from(dst);
 
-                    let weight = weight_attr.as_ref().map_or(1.0, |attr| {
-                        // For missing/non-numeric weight attributes:
-                        // minimize: use +INF (never chosen as minimum)
-                        // maximize: use -INF, which negated = +INF (never chosen as minimum)
-                        let missing_sentinel = if maximize { f64::NEG_INFINITY } else { f64::INFINITY };
-                        let mut best_w: Option<f64> = None;
+                        // Both endpoints must be in active set
+                        if src_u as usize >= id_to_compact_vec.len() || id_to_compact_vec[src_u as usize] == u64::MAX {
+                            continue;
+                        }
+                        if dst_u as usize >= id_to_compact_vec.len() || id_to_compact_vec[dst_u as usize] == u64::MAX {
+                            continue;
+                        }
+
+                        let cs = id_to_compact_vec[src_u as usize];
+                        let cd = id_to_compact_vec[dst_u as usize];
+                        let (a, b) = if cs <= cd { (cs, cd) } else { (cd, cs) };
+
                         for rel_id in g.get_src_dest_relationships(src, dst, types_to_use) {
-                            let w = match g.get_relationship_attribute(rel_id, attr) {
+                            // All weights are 1.0, no need to fetch attribute
+                            let score = 1.0f64;
+                            best_pairs
+                                .entry((a, b))
+                                .and_modify(|(_prev_score, prev_rel)| {
+                                    // For unweighted, just keep first edge
+                                    *prev_rel = rel_id;
+                                })
+                                .or_insert((score, rel_id));
+                        }
+                    }
+                } else {
+                    // Weighted: need to fetch attributes
+                    let attr_ref = weight_attr.as_ref().unwrap();
+                    for (src, dst) in g.get_relationships(types_to_use, &empty_label_set, &empty_label_set, None, None) {
+                        let src_u = u64::from(src);
+                        let dst_u = u64::from(dst);
+
+                        // Both endpoints must be in active set
+                        if src_u as usize >= id_to_compact_vec.len() || id_to_compact_vec[src_u as usize] == u64::MAX {
+                            continue;
+                        }
+                        if dst_u as usize >= id_to_compact_vec.len() || id_to_compact_vec[dst_u as usize] == u64::MAX {
+                            continue;
+                        }
+
+                        let cs = id_to_compact_vec[src_u as usize];
+                        let cd = id_to_compact_vec[dst_u as usize];
+                        let (a, b) = if cs <= cd { (cs, cd) } else { (cd, cs) };
+
+                        for rel_id in g.get_src_dest_relationships(src, dst, types_to_use) {
+                            let raw_weight = match g.get_relationship_attribute(rel_id, attr_ref) {
                                 Some(Value::Float(f)) => f,
                                 Some(Value::Int(i)) => i as f64,
-                                _ => missing_sentinel,
+                                _ => {
+                                    if maximize { f64::NEG_INFINITY } else { f64::INFINITY }
+                                }
                             };
-                            best_w = Some(match best_w {
-                                None => w,
-                                Some(prev) if maximize => prev.max(w),
-                                Some(prev) => prev.min(w),
-                            });
+                            let score = if maximize { -raw_weight } else { raw_weight };
+                            best_pairs
+                                .entry((a, b))
+                                .and_modify(|(prev_score, prev_rel)| {
+                                    if score < *prev_score {
+                                        *prev_score = score;
+                                        *prev_rel = rel_id;
+                                    }
+                                })
+                                .or_insert((score, rel_id));
                         }
-                        let w = best_w.unwrap_or(missing_sentinel);
-                        if maximize { -w } else { w }
-                    });
-
-                    // Only write if this is a better weight than existing
-                    // (handles case where both (src,dst) and (dst,src) are iterated)
-                    let mut existing = 0.0f64;
-                    let has_existing = GrB_Matrix_extractElement_FP64(&raw mut existing, weighted_adj, cs, cd);
-                    if has_existing != GrB_Info::GrB_SUCCESS || weight < existing {
-                        GrB_Matrix_setElement_FP64(weighted_adj, weight, cs, cd);
-                        GrB_Matrix_setElement_FP64(weighted_adj, weight, cd, cs);
                     }
                 }
 
+                for ((cs, cd), (score, rel_id)) in best_pairs {
+                    GrB_Matrix_setElement_FP64(weighted_adj, score, cs, cd);
+                    GrB_Matrix_setElement_FP64(weighted_adj, score, cd, cs);
+                    let rid = u64::from(rel_id);
+                    GrB_Matrix_setElement_UINT64(edge_map, rid, cs, cd);
+                    GrB_Matrix_setElement_UINT64(edge_map, rid, cd, cs);
+                }
+
                 GrB_Matrix_wait(weighted_adj, GrB_WaitMode::GrB_COMPLETE as i32);
+                GrB_Matrix_wait(edge_map, GrB_WaitMode::GrB_COMPLETE as i32);
 
                 // Run Boruvka MSF
                 let mut forest_edges: GrB_Matrix = null_mut();
@@ -1159,7 +1220,13 @@ fn register_msf(funcs: &mut Functions) {
                 GrB_Matrix_free(&raw mut forest_edges);
                 GrB_Vector_free(&raw mut component_id);
 
-                // Group nodes by component (map compact indices back)
+                // Use Vec for component mapping instead of HashMap (compact indices are 0..n-1)
+                let mut compact_to_component_vec = vec![i64::MIN; sorted_ids.len()];
+                for (compact_idx, comp) in &comp_entries {
+                    compact_to_component_vec[*compact_idx as usize] = *comp;
+                }
+
+                // Group nodes by component
                 let mut components: std::collections::BTreeMap<i64, Vec<u64>> = std::collections::BTreeMap::new();
                 for (compact_idx, comp) in &comp_entries {
                     let orig_id = sorted_ids[*compact_idx as usize];
@@ -1177,59 +1244,84 @@ fn register_msf(funcs: &mut Functions) {
                     }
                 }
 
-                // Build forest edge list per component
-                let mut results: ThinVec<Value> = thin_vec![];
-                for node_ids in components.values() {
-                    let node_set: std::collections::HashSet<u64> = node_ids.iter().copied().collect();
+                let mut component_edges: std::collections::BTreeMap<i64, ThinVec<Value>> =
+                    std::collections::BTreeMap::new();
+                let mut seen_pairs: std::collections::HashSet<(u64, u64)> =
+                    std::collections::HashSet::new();
 
+                // Single pass over forest edges; avoid per-component scans.
+                for i in 0..nvals_out as usize {
+                    let compact_src = f_rows[i];
+                    let compact_dst = f_cols[i];
+                    let (a, b) = if compact_src <= compact_dst {
+                        (compact_src, compact_dst)
+                    } else {
+                        (compact_dst, compact_src)
+                    };
+                    if !seen_pairs.insert((a, b)) {
+                        continue;
+                    }
+
+                    // Use Vec-based lookup: O(1) instead of HashMap O(log n)
+                    if compact_src as usize >= compact_to_component_vec.len() || compact_to_component_vec[compact_src as usize] == i64::MIN {
+                        continue;
+                    }
+                    if compact_dst as usize >= compact_to_component_vec.len() || compact_to_component_vec[compact_dst as usize] == i64::MIN {
+                        continue;
+                    }
+
+                    let component_id = compact_to_component_vec[compact_src as usize];
+                    if compact_to_component_vec[compact_dst as usize] != component_id {
+                        continue;
+                    }
+
+                    let mut rel_id_u64: u64 = 0;
+                    let info = GrB_Matrix_extractElement_UINT64(
+                        &raw mut rel_id_u64,
+                        edge_map,
+                        compact_src,
+                        compact_dst,
+                    );
+                    if info != GrB_Info::GrB_SUCCESS {
+                        continue;
+                    }
+
+                    let src_node = NodeId::from(sorted_ids[compact_src as usize]);
+                    let dst_node = NodeId::from(sorted_ids[compact_dst as usize]);
+                    if let Some((rel_id, s, d)) = resolve_relationship_triplet(
+                        &g,
+                        src_node,
+                        dst_node,
+                        RelationshipId::from(rel_id_u64),
+                        types_to_use,
+                    ) {
+                        component_edges
+                            .entry(component_id)
+                            .or_default()
+                            .push(Value::Relationship(Box::new((rel_id, s, d))));
+                    }
+                }
+
+                GrB_Matrix_free(&raw mut edge_map);
+
+                // Build forest rows from component nodes and collected edges.
+                let mut nodes_col = Vec::with_capacity(components.len());
+                let mut edges_col = Vec::with_capacity(components.len());
+                for (component_id, node_ids) in &components {
                     let tree_nodes: ThinVec<Value> = node_ids
                         .iter()
                         .map(|&nid| node_value(NodeId::from(nid)))
                         .collect();
+                    let tree_edges = component_edges.remove(component_id).unwrap_or_default();
 
-                    let mut tree_edges: ThinVec<Value> = thin_vec![];
-
-                    // Find forest edges where both endpoints are in this component
-                    for i in 0..nvals_out as usize {
-                        let compact_src = f_rows[i];
-                        let compact_dst = f_cols[i];
-                        let orig_src = sorted_ids[compact_src as usize];
-                        let orig_dst = sorted_ids[compact_dst as usize];
-                        if node_set.contains(&orig_src) && node_set.contains(&orig_dst) {
-                            let src_node = NodeId::from(orig_src);
-                            let dst_node = NodeId::from(orig_dst);
-
-                            // Check both directions and pick the overall best relationship
-                            let fwd_best = find_best_relationship(&g, src_node, dst_node, types_to_use, weight_attr.as_ref(), maximize);
-                            let rev_best = find_best_relationship(&g, dst_node, src_node, types_to_use, weight_attr.as_ref(), maximize);
-
-                            let best = match (fwd_best, rev_best) {
-                                (Some(f), Some(r)) => {
-                                    // Compare weights to pick overall best
-                                    let f_w = get_rel_weight(&g, f.0, weight_attr.as_ref());
-                                    let r_w = get_rel_weight(&g, r.0, weight_attr.as_ref());
-                                    if maximize {
-                                        if r_w > f_w { Some(r) } else { Some(f) }
-                                    } else if r_w < f_w { Some(r) } else { Some(f) }
-                                }
-                                (Some(f), None) => Some(f),
-                                (None, Some(r)) => Some(r),
-                                (None, None) => None,
-                            };
-
-                            if let Some((rel_id, s, d)) = best {
-                                tree_edges.push(Value::Relationship(Box::new((rel_id, s, d))));
-                            }
-                        }
-                    }
-
-                    results.push(make_row(vec![
-                        ("nodes", Value::List(Arc::new(tree_nodes))),
-                        ("edges", Value::List(Arc::new(tree_edges))),
-                    ]));
+                    nodes_col.push(Value::List(Arc::new(tree_nodes)));
+                    edges_col.push(Value::List(Arc::new(tree_edges)));
                 }
 
-                Ok(Value::List(Arc::new(results)))
+                Ok(Batch::from_columns([
+                    Column::Values(nodes_col),
+                    Column::Values(edges_col),
+                ]))
             }
         }
     );
@@ -1407,7 +1499,7 @@ fn to_numeric_value(v: f64) -> Value {
 fn run_path_algo(
     runtime: &Runtime,
     config: &PathAlgoConfig,
-) -> Result<Value, String> {
+) -> Result<super::ProcedureBatch, String> {
     use std::cmp::Ordering;
     use std::collections::BinaryHeap;
 
@@ -1593,7 +1685,9 @@ fn run_path_algo(
         }
     }
 
-    let mut result_list: ThinVec<Value> = ThinVec::with_capacity(results.len());
+    let mut paths = Vec::with_capacity(results.len());
+    let mut path_weights = Vec::with_capacity(results.len());
+    let mut path_costs = Vec::with_capacity(results.len());
     for (edges, weight, cost) in results {
         let mut path_elems = ThinVec::new();
         path_elems.push(Value::Node(config.source));
@@ -1610,14 +1704,16 @@ fn run_path_algo(
             path_elems.push(Value::Node(next));
         }
 
-        result_list.push(make_row(vec![
-            ("path", Value::Path(Arc::new(path_elems))),
-            ("pathWeight", to_numeric_value(weight)),
-            ("pathCost", to_numeric_value(cost)),
-        ]));
+        paths.push(Value::Path(Arc::new(path_elems)));
+        path_weights.push(to_numeric_value(weight));
+        path_costs.push(to_numeric_value(cost));
     }
 
-    Ok(Value::List(Arc::new(result_list)))
+    Ok(Batch::from_columns([
+        Column::Values(paths),
+        classify_stored_column(path_weights),
+        classify_stored_column(path_costs),
+    ]))
 }
 
 fn register_sp_paths(funcs: &mut Functions) {
@@ -1652,7 +1748,16 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
         ret: Type::Any,
         procedure: ["node", "score", "reachable"],
         fn algo_harmonic_centrality(runtime, args) {
-            use crate::runtime::orderset::OrderSet;
+            use crate::graph::graphblas::{
+                lagraph_bindings,
+                lagraphx_bindings,
+                GrB_ALL,
+                GrB_BOOL,
+                GrB_Vector,
+                GrB_Vector_assign_BOOL,
+                GrB_Vector_free,
+                GrB_Vector_new,
+            };
 
             let config = parse_config(args)?;
             if !config.is_empty() {
@@ -1669,76 +1774,89 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
             }
 
             if g.node_count() == 0 {
-                return Ok(Value::List(Arc::new(thin_vec![])));
+                return Ok(empty_procedure_batch());
             }
 
-            let nodes_in_set: Vec<u64> = if node_labels.is_empty() {
-                let mut v: Vec<u64> = active_node_set(&g).into_iter().collect();
-                v.sort_unstable();
-                v
+            let node_set: std::collections::HashSet<u64> = if node_labels.is_empty() {
+                active_node_set(&g)
             } else {
-                collect_node_ids(&g, &node_labels)
+                collect_node_ids(&g, &node_labels).into_iter().collect()
             };
 
-            if nodes_in_set.is_empty() {
-                return Ok(Value::List(Arc::new(thin_vec![])));
+            if node_set.is_empty() {
+                return Ok(empty_procedure_batch());
             }
 
-            let node_set: std::collections::HashSet<u64> =
-                nodes_in_set.iter().copied().collect();
+            let adj = g.build_adjacency_matrix(&rel_types);
 
-            let empty_label_set: OrderSet<Arc<String>> = OrderSet::default();
-            let mut adj: std::collections::HashMap<u64, Vec<u64>> =
-                std::collections::HashMap::with_capacity(nodes_in_set.len());
-            for (src, dst) in g.get_relationships(
-                &rel_types, &empty_label_set, &empty_label_set, None, None,
-            ) {
-                let s = u64::from(src);
-                let d = u64::from(dst);
-                if node_set.contains(&s) && node_set.contains(&d) && s != d {
-                    adj.entry(s).or_default().push(d);
+            unsafe {
+                let (compact_adj, _id_to_compact, compact_to_id, _n) =
+                    build_compact_adj(&adj, &node_set);
+
+                let mut lag_g = create_lagraph_graph(
+                    compact_adj,
+                    LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED,
+                )?;
+
+                let mut msg = new_msg();
+                lagraph_bindings::LAGraph_Cached_AT(lag_g, msg.as_mut_ptr());
+                lagraph_bindings::LAGraph_Cached_OutDegree(lag_g, msg.as_mut_ptr());
+
+                runtime.check_timeout()?;
+                let mut nodes: GrB_Vector = null_mut();
+                GrB_Vector_new(&raw mut nodes, GrB_BOOL, compact_to_id.len() as u64);
+                GrB_Vector_assign_BOOL(
+                    nodes,
+                    null_mut(),
+                    null_mut(),
+                    true,
+                    GrB_ALL,
+                    compact_to_id.len() as u64,
+                    null_mut(),
+                );
+
+                let mut scores: GrB_Vector = null_mut();
+                let mut reachable_nodes: GrB_Vector = null_mut();
+                let info = lagraphx_bindings::LAGr_HarmonicCentrality(
+                    &raw mut scores,
+                    &raw mut reachable_nodes,
+                    lag_g,
+                    nodes,
+                    msg.as_mut_ptr(),
+                );
+
+                GrB_Vector_free(&raw mut nodes);
+                if info != 0 {
+                    delete_lagraph_graph(&mut lag_g);
+                    return Err(format!("LAGr_HarmonicCentrality failed: {info}"));
                 }
-            }
 
-            let mut results: ThinVec<Value> = thin_vec![];
-            let mut dist: std::collections::HashMap<u64, u64> =
-                std::collections::HashMap::new();
-            let mut queue: std::collections::VecDeque<u64> =
-                std::collections::VecDeque::new();
-            for &start in &nodes_in_set {
-                dist.clear();
-                queue.clear();
-                dist.insert(start, 0);
-                queue.push_back(start);
-                let mut score: f64 = 0.0;
-                let mut reachable: i64 = 0;
-                while let Some(u) = queue.pop_front() {
-                    let du = dist[&u];
-                    if let Some(neighbors) = adj.get(&u) {
-                        for &v in neighbors {
-                            if let std::collections::hash_map::Entry::Vacant(e) =
-                                dist.entry(v)
-                            {
-                                let dv = du + 1;
-                                e.insert(dv);
-                                queue.push_back(v);
-                                #[allow(clippy::cast_precision_loss)]
-                                {
-                                    score += 1.0 / (dv as f64);
-                                }
-                                reachable += 1;
-                            }
-                        }
-                    }
+                let score_entries = extract_vector_f64(scores);
+                let mut reachable_by_idx = vec![0_i64; compact_to_id.len()];
+                for (compact_idx, reachable) in extract_vector_i64(reachable_nodes) {
+                    reachable_by_idx[compact_idx as usize] = reachable;
                 }
-                results.push(make_row(vec![
-                    ("node", node_value(NodeId::from(start))),
-                    ("score", Value::Float(score)),
-                    ("reachable", Value::Int(reachable)),
-                ]));
-            }
 
-            Ok(Value::List(Arc::new(results)))
+                let mut node_ids = Vec::with_capacity(score_entries.len());
+                let mut scores_col = Vec::with_capacity(score_entries.len());
+                let mut reachable_col = Vec::with_capacity(score_entries.len());
+                for (compact_idx, score) in score_entries {
+                    let orig_id = compact_to_id[compact_idx as usize];
+                    node_ids.push(NodeId::from(orig_id));
+                    scores_col.push(score);
+                    reachable_col.push(reachable_by_idx[compact_idx as usize]);
+                }
+
+                GrB_Vector_free(&raw mut scores);
+                GrB_Vector_free(&raw mut reachable_nodes);
+                delete_lagraph_graph(&mut lag_g);
+
+                Ok(Batch::from_columns([
+                    Column::NodeIds(node_ids),
+                    Column::Floats(scores_col),
+                    Column::Ints(reachable_col),
+                ]))
+            }
         }
     );
 }
@@ -1896,13 +2014,12 @@ fn register_maxflow(funcs: &mut Functions) {
             }
 
             if edges_with_cap.is_empty() {
-                let result = make_row(vec![
-                    ("nodes", Value::List(Arc::new(thin_vec![]))),
-                    ("edges", Value::List(Arc::new(thin_vec![]))),
-                    ("edgeFlows", Value::List(Arc::new(thin_vec![]))),
-                    ("maxFlow", Value::Float(0.0)),
-                ]);
-                return Ok(Value::List(Arc::new(thin_vec![result])));
+                return Ok(Batch::from_columns([
+                    Column::Values(vec![Value::List(Arc::new(thin_vec![]))]),
+                    Column::Values(vec![Value::List(Arc::new(thin_vec![]))]),
+                    Column::Values(vec![Value::List(Arc::new(thin_vec![]))]),
+                    Column::Floats(vec![0.0]),
+                ]));
             }
 
             unsafe {
@@ -1972,6 +2089,7 @@ fn register_maxflow(funcs: &mut Functions) {
                 let info = lagraphx_bindings::LAGr_MaxFlow(
                     &raw mut max_flow,
                     &raw mut flow_mtx,
+                    null_mut(),
                     lag_g,
                     src_id,
                     sink_id,
@@ -1984,7 +2102,8 @@ fn register_maxflow(funcs: &mut Functions) {
                     if !flow_mtx.is_null() {
                         GrB_Matrix_free(&raw mut flow_mtx);
                     }
-                    return Err(format!("LAGr_MaxFlow failed: {info}"));
+                    let detail = msg_to_string(&msg);
+                    return Err(format!("LAGr_MaxFlow failed: {info}; {detail}"));
                 }
 
                 let mut nvals: GrB_Index = 0;
@@ -2034,14 +2153,12 @@ fn register_maxflow(funcs: &mut Functions) {
                     .map(|&n| node_value(NodeId::from(n)))
                     .collect();
 
-                let result = make_row(vec![
-                    ("nodes", Value::List(Arc::new(nodes_out))),
-                    ("edges", Value::List(Arc::new(edges_out))),
-                    ("edgeFlows", Value::List(Arc::new(flows_out))),
-                    ("maxFlow", Value::Float(max_flow)),
-                ]);
-
-                Ok(Value::List(Arc::new(thin_vec![result])))
+                Ok(Batch::from_columns([
+                    Column::Values(vec![Value::List(Arc::new(nodes_out))]),
+                    Column::Values(vec![Value::List(Arc::new(edges_out))]),
+                    Column::Values(vec![Value::List(Arc::new(flows_out))]),
+                    Column::Floats(vec![max_flow]),
+                ]))
             }
         }
     );
