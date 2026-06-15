@@ -71,10 +71,7 @@ use super::{FnType, Functions, Type, empty_procedure_batch};
 use crate::{
     graph::{
         graph::{Graph, NodeId, RelationshipId},
-        graphblas::{
-            lagraph_bindings::{self, LAGraph_Boolean, LAGraph_Graph, LAGraph_Kind},
-            matrix::Dup,
-        },
+        graphblas::lagraph_bindings::{self, LAGraph_Boolean, LAGraph_Graph, LAGraph_Kind},
     },
     runtime::{
         batch::{Batch, Column, classify_stored_column},
@@ -462,19 +459,16 @@ fn register_pagerank(funcs: &mut Functions) {
             unsafe {
                 use crate::graph::graphblas::{lagraph_bindings, GrB_Vector, GrB_Vector_free};
 
-                // Fast path for the common unfiltered call (algo.pageRank(NULL, NULL)): run
-                // directly on the full adjacency without compacting/reindexing.
-                let (lag_adj, compact_to_id): (
-                    crate::graph::graphblas::GrB_Matrix,
-                    Option<Vec<u64>>,
-                ) = if label.is_none() {
-                    (adj.dup().inner(), None)
+                // PageRank teleportation distributes mass to ALL matrix entries, including
+                // phantom (never-created) node slots.  We must always compact so LAGraph
+                // sees only actually-active nodes and rank sums to 1.
+                let active = if let Some(label) = &label {
+                    collect_node_ids(&g, std::slice::from_ref(label)).into_iter().collect()
                 } else {
-                    let active = active_node_set(&g);
-                    let (compact_adj, _id_to_compact, compact_to_id, _n) =
-                        build_compact_adj(&adj, &active);
-                    (compact_adj, Some(compact_to_id))
+                    active_node_set(&g)
                 };
+                let (lag_adj, _id_to_compact, compact_to_id, _n) =
+                    build_compact_adj(&adj, &active);
 
                 let mut lag_g = create_lagraph_graph(lag_adj, LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED)?;
 
@@ -508,25 +502,14 @@ fn register_pagerank(funcs: &mut Functions) {
                 GrB_Vector_free(&raw mut centrality);
                 delete_lagraph_graph(&mut lag_g);
 
-                // Map back to original IDs and filter by label
-                let label_filter: Option<std::collections::HashSet<u64>> = label.as_ref().map(|l| {
-                    collect_node_ids(&g, std::slice::from_ref(l)).into_iter().collect()
-                });
-
+                let has_deleted = g.deleted_nodes_count() != 0;
                 let mut node_ids = Vec::with_capacity(entries.len());
                 let mut scores = Vec::with_capacity(entries.len());
-                let has_deleted = g.deleted_nodes_count() != 0;
                 for (compact_idx, score) in entries {
-                    let orig_id = compact_to_id
-                        .as_ref()
-                        .map_or(compact_idx, |map| map[compact_idx as usize]);
+                    let orig_id = compact_to_id[compact_idx as usize];
                     if has_deleted && g.is_node_deleted(NodeId::from(orig_id)) {
                         continue;
                     }
-                    if let Some(ref filter) = label_filter
-                        && !filter.contains(&orig_id) {
-                            continue;
-                        }
                     node_ids.push(NodeId::from(orig_id));
                     scores.push(score);
                 }
@@ -566,22 +549,21 @@ fn register_wcc(funcs: &mut Functions) {
             unsafe {
                 use crate::graph::graphblas::{lagraph_bindings, GrB_Vector, GrB_Vector_free};
 
-                // Fast path (no nodeLabels): run on full matrix without compaction.
-                let (lag_adj, compact_to_id): (
-                    crate::graph::graphblas::GrB_Matrix,
-                    Option<Vec<u64>>,
-                ) = if node_labels.is_empty() {
-                    (adj.dup().inner(), None)
+                // Always compact: LAGr_ConnectedComponents returns a dense vector over
+                // all node_cap slots; phantom (never-created) slots would appear as
+                // isolated singleton components unless we restrict to active nodes.
+                let active: std::collections::HashSet<u64> = if node_labels.is_empty() {
+                    active_node_set(&g)
                 } else {
-                    let active: std::collections::HashSet<u64> =
+                    let a: std::collections::HashSet<u64> =
                         collect_node_ids(&g, &node_labels).into_iter().collect();
-                    if active.is_empty() {
+                    if a.is_empty() {
                         return Ok(empty_procedure_batch());
                     }
-                    let (compact_adj, _id_to_compact, compact_to_id, _n) =
-                        build_compact_adj_symmetric(&adj, &active);
-                    (compact_adj, Some(compact_to_id))
+                    a
                 };
+                let (lag_adj, _id_to_compact, compact_to_id, _n) =
+                    build_compact_adj_symmetric(&adj, &active);
 
                 let mut lag_g = create_lagraph_graph(lag_adj, LAGraph_Kind::LAGraph_ADJACENCY_UNDIRECTED)?;
 
@@ -605,13 +587,11 @@ fn register_wcc(funcs: &mut Functions) {
 
                 let entries = extract_vector_i64(component);
 
+                let has_deleted = g.deleted_nodes_count() != 0;
                 let mut node_ids = Vec::with_capacity(entries.len());
                 let mut component_ids = Vec::with_capacity(entries.len());
-                let has_deleted = g.deleted_nodes_count() != 0;
                 for (compact_idx, comp_id) in entries {
-                    let orig_id = compact_to_id
-                        .as_ref()
-                        .map_or(compact_idx, |map| map[compact_idx as usize]);
+                    let orig_id = compact_to_id[compact_idx as usize];
                     if has_deleted && g.is_node_deleted(NodeId::from(orig_id)) {
                         continue;
                     }
@@ -790,11 +770,19 @@ fn register_bfs(funcs: &mut Functions) {
             let adj = g.build_adjacency_matrix(&rel_types);
 
             unsafe {
-                use crate::graph::graphblas::{lagraph_bindings, GrB_Vector, lagraphx_bindings, GrB_Vector_free};
+                use crate::graph::graphblas::{
+                    lagraph_bindings, GrB_Matrix, GrB_Matrix_dup, GrB_Vector,
+                    lagraphx_bindings, GrB_Vector_free,
+                };
 
                 // Run directly on full adjacency; no compaction needed for BFS.
+                // Duplicate the raw matrix directly so LAGraph_New takes sole
+                // ownership — adj.dup().inner() would double-free because the
+                // temporary Matrix wrapper also calls GrB_Matrix_free on drop.
                 let compact_source = u64::from(source_id);
-                let mut lag_g = create_lagraph_graph(adj.dup().inner(), LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED)?;
+                let mut raw_adj: GrB_Matrix = std::ptr::null_mut();
+                GrB_Matrix_dup(&raw mut raw_adj, adj.inner());
+                let mut lag_g = create_lagraph_graph(raw_adj, LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED)?;
 
                 let mut msg = new_msg();
                 lagraph_bindings::LAGraph_Cached_AT(lag_g, msg.as_mut_ptr());
@@ -914,22 +902,20 @@ fn register_cdlp(funcs: &mut Functions) {
             unsafe {
                 use crate::graph::graphblas::{GrB_Vector, lagraphx_bindings, GrB_Vector_free};
 
-                // Fast path (no nodeLabels): avoid compaction and run on full graph.
-                let (lag_adj, compact_to_id): (
-                    crate::graph::graphblas::GrB_Matrix,
-                    Option<Vec<u64>>,
-                ) = if node_labels.is_empty() {
-                    (adj.dup().inner(), None)
+                // Always compact: LAGraph_cdlp returns a dense vector over all node_cap
+                // slots; phantom (never-created) slots would appear as distinct communities.
+                let active: std::collections::HashSet<u64> = if node_labels.is_empty() {
+                    active_node_set(&g)
                 } else {
-                    let active: std::collections::HashSet<u64> =
+                    let a: std::collections::HashSet<u64> =
                         collect_node_ids(&g, &node_labels).into_iter().collect();
-                    if active.is_empty() {
+                    if a.is_empty() {
                         return Ok(empty_procedure_batch());
                     }
-                    let (compact_adj, _id_to_compact, compact_to_id, _n) =
-                        build_compact_adj_symmetric(&adj, &active);
-                    (compact_adj, Some(compact_to_id))
+                    a
                 };
+                let (lag_adj, _id_to_compact, compact_to_id, _n) =
+                    build_compact_adj_symmetric(&adj, &active);
 
                 let mut lag_g = create_lagraph_graph(lag_adj, LAGraph_Kind::LAGraph_ADJACENCY_UNDIRECTED)?;
 
@@ -952,13 +938,11 @@ fn register_cdlp(funcs: &mut Functions) {
 
                 let entries = extract_vector_i64(cdlp);
 
+                let has_deleted = g.deleted_nodes_count() != 0;
                 let mut node_ids = Vec::with_capacity(entries.len());
                 let mut community_ids = Vec::with_capacity(entries.len());
-                let has_deleted = g.deleted_nodes_count() != 0;
                 for (compact_idx, community_id) in entries {
-                    let orig_id = compact_to_id
-                        .as_ref()
-                        .map_or(compact_idx, |map| map[compact_idx as usize]);
+                    let orig_id = compact_to_id[compact_idx as usize];
                     if has_deleted && g.is_node_deleted(NodeId::from(orig_id)) {
                         continue;
                     }
