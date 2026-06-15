@@ -301,10 +301,10 @@ macro_rules! cypher_fn {
         fn $fn_name(
             $rt: &Runtime,
             $args: &[Value],
-        ) -> Result<Value, String>
+        ) -> Result<crate::runtime::functions::ProcedureBatch, String>
         $body
 
-        $funcs.add(
+        $funcs.add_procedure(
             $name,
             $fn_name,
             false,
@@ -327,10 +327,10 @@ macro_rules! cypher_fn {
         fn $fn_name(
             $rt: &Runtime,
             $args: &[Value],
-        ) -> Result<Value, String>
+        ) -> Result<crate::runtime::functions::ProcedureBatch, String>
         $body
 
-        $funcs.add(
+        $funcs.add_procedure(
             $name,
             $fn_name,
             true,
@@ -359,6 +359,7 @@ mod trig;
 pub use math::apply_pow;
 
 use crate::runtime::{
+    batch::{Batch, BatchBuilder},
     runtime::Runtime,
     value::{Value, ValueTypeOf},
 };
@@ -373,6 +374,13 @@ use std::{
     },
 };
 
+pub type ProcedureBatch = Batch<'static>;
+
+#[must_use]
+pub fn empty_procedure_batch() -> ProcedureBatch {
+    BatchBuilder::new().finish()
+}
+
 /// Function type for runtime function implementations.
 ///
 /// Two variants because UDFs need a captured name (closure-shaped) while
@@ -380,6 +388,7 @@ use std::{
 /// `Arc<dyn Fn>` indirection and vtable dispatch on the hot path.
 pub enum RuntimeFn {
     Native(fn(&Runtime, &[Value]) -> Result<Value, String>),
+    NativeProcedureBatch(fn(&Runtime, &[Value]) -> Result<ProcedureBatch, String>),
     Udf(String),
 }
 
@@ -392,7 +401,22 @@ impl RuntimeFn {
     ) -> Result<Value, String> {
         match self {
             Self::Native(f) => f(rt, args),
+            Self::NativeProcedureBatch(_) => {
+                Err("Procedure runtime function cannot be called as scalar".into())
+            }
             Self::Udf(name) => crate::udf::js_context::call_udf_bridge(name, rt, args),
+        }
+    }
+
+    #[inline]
+    pub fn call_procedure_batch(
+        &self,
+        rt: &Runtime,
+        args: &[Value],
+    ) -> Result<ProcedureBatch, String> {
+        match self {
+            Self::NativeProcedureBatch(f) => f(rt, args),
+            _ => Err("Function is not a procedure runtime function".into()),
         }
     }
 }
@@ -658,6 +682,31 @@ impl GraphFn {
     }
 
     #[must_use]
+    pub fn new_procedure(
+        name: &str,
+        func: fn(&Runtime, &[Value]) -> Result<ProcedureBatch, String>,
+        write: bool,
+        non_deterministic: bool,
+        args_type: FnArguments,
+        fn_type: FnType,
+        ret_type: Type,
+    ) -> Self {
+        Self {
+            name: String::from(name),
+            func: RuntimeFn::NativeProcedureBatch(func),
+            write,
+            non_deterministic,
+            pure_fn: None,
+            pure_args_type: Vec::new(),
+            struct_fn: None,
+            struct_slots: &[],
+            args_type,
+            fn_type,
+            ret_type,
+        }
+    }
+
+    #[must_use]
     pub fn new_udf(name: &str) -> Self {
         let udf_name = name.to_string();
         Self {
@@ -768,6 +817,18 @@ impl GraphFn {
         }
         Ok(())
     }
+
+    /// Execute a procedure and return its native columnar batch output.
+    pub fn call_procedure_batch(
+        &self,
+        rt: &Runtime,
+        args: &[Value],
+    ) -> Result<ProcedureBatch, String> {
+        if !matches!(self.fn_type, FnType::Procedure(_)) {
+            return Err(format!("Function '{}' is not a procedure", self.name));
+        }
+        self.func.call_procedure_batch(rt, args)
+    }
 }
 
 #[derive(Default, Debug)]
@@ -802,6 +863,34 @@ impl Functions {
             "Function '{name}' already exists"
         );
         let graph_fn = Arc::new(GraphFn::new(
+            name,
+            func,
+            write,
+            non_deterministic,
+            FnArguments::Fixed(args_type),
+            fn_type,
+            ret_type,
+        ));
+        self.functions.insert(lower_name, graph_fn);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_procedure(
+        &mut self,
+        name: &str,
+        func: fn(&Runtime, &[Value]) -> Result<ProcedureBatch, String>,
+        write: bool,
+        non_deterministic: bool,
+        args_type: Vec<Type>,
+        fn_type: FnType,
+        ret_type: Type,
+    ) {
+        let lower_name = name.to_lowercase();
+        assert!(
+            !self.functions.contains_key(&lower_name),
+            "Function '{name}' already exists"
+        );
+        let graph_fn = Arc::new(GraphFn::new_procedure(
             name,
             func,
             write,
