@@ -136,4 +136,5 @@
 #define EMSG_MERGE_MAP_ERROR "Cannot merge a map with a non-map value"
 #define EMSG_INVALID_CONSTRAINT_COMMAND "Invalid constraint command use the GRAPH.CONSTRAINT command instead"
 #define EMSG_WRITE_QUEUE_FULL "Write queue is full: cannot accept additional write queries at this time. Please retry later."
+#define EMSG_INVALID_GROUP_KEY_TYPE "Type mismatch: %s values cannot be used as grouping keys in aggregation"
 

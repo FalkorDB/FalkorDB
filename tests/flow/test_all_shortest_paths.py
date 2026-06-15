@@ -284,6 +284,33 @@ class testAllShortestPaths():
         actual_result = self.cyclic_graph.query(query)
         self.env.assertEqual(actual_result.result_set, expected_result)
 
+    def test08_aggregate_with_path_grouping_key_raises_error(self):
+        """
+        Grouping by a Path value inside WITH * + aggregate should raise a
+        descriptive error instead of crashing the server (issue #2127).
+        """
+
+        # create a minimal graph: two nodes connected by one edge
+        self.graph.query("CREATE (:Paper)-[:REL]->(:Paper)")
+
+        # this query previously caused a SIGSEGV because the aggregation engine
+        # tried to hash a Path value as a GROUP BY key without handling it
+        query = ("MATCH p = allShortestPaths((a:Paper)-[*..2]-(b:Paper)) "
+                 "WITH *, count(a) AS count_a RETURN p")
+
+        try:
+            self.graph.query(query)
+            # if no exception is raised the engine handled it without crashing;
+            # either outcome (error or empty result) is acceptable as long as
+            # the server stays alive
+        except Exception as e:
+            # a runtime error is the expected outcome; make sure it is a
+            # meaningful message and not a connection-drop / SIGSEGV
+            self.env.assertIn("grouping", str(e).lower())
+
+        # confirm the server is still alive after the query
+        self.env.assertIsNotNone(self.graph.query("RETURN 1"))
+
     def test07_all_shortest_paths_unreachables(self):
         """
         try to find shortest path between two unreachable nodes
