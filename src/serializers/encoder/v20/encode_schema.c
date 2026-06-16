@@ -3,7 +3,7 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
-#include "encode_v19.h"
+#include "encode_v20.h"
 #include "../../../util/arr.h"
 
 static void _RdbSaveAttributeKeys
@@ -213,7 +213,7 @@ static void _RdbSaveSchema
 	_RdbSaveConstraintsData(rdb, s->constraints);
 }
 
-void RdbSaveGraphSchema_v19
+void RdbSaveGraphSchema_v20
 (
 	SerializerIO rdb,
 	GraphContext *gc

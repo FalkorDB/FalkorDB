@@ -6,7 +6,7 @@
 #include "RG.h"
 #include "../graph/graphcontext.h"
 #include "../serializers/serializer_io.h"
-#include "../serializers/decoders/current/v19/decode_v19.h"
+#include "../serializers/decoders/current/v20/decode_v20.h"
 
 extern RedisModuleType *GraphContextRedisModuleType;
 
@@ -90,4 +90,3 @@ int Graph_Restore
 
 	return REDISMODULE_OK;
 }
-
