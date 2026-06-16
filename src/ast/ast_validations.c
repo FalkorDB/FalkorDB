@@ -1774,8 +1774,9 @@ static VISITOR_STRATEGY _Validate_CREATE_Clause
 		const char *alias = new_identifiers[i];
 		SIType t = (SIType)new_identifiers[i+1];
 
-		// fail on duplicate identifier
-		if(_IdentifierAdd(vctx, alias, (void*)t) == 0 && t == T_EDGE) {
+		// fail on duplicate edge/path identifiers
+		if(_IdentifierAdd(vctx, alias, (void*)t) == 0 &&
+				(t == T_EDGE || t == T_PATH)) {
 			ErrorCtx_SetError(EMSG_VAIABLE_ALREADY_DECLARED, alias);
 			res = VISITOR_BREAK;
 			break;

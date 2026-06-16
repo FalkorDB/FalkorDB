@@ -158,6 +158,12 @@ class testCreateClause():
         self.env.assertEqual(res.result_set, [[1, 1, 2]])
 
         try:
+            self.g.query("CREATE p=(a), p=(b)")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertTrue("Variable `p` already declared" in str(e))
+
+        try:
             self.g.query("CREATE (n) RETURN p")
             self.env.assertTrue(False)
         except ResponseError as e:
