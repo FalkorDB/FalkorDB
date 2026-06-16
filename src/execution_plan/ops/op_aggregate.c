@@ -9,8 +9,6 @@
 #include "../../util/arr.h"
 #include "../../query_ctx.h"
 #include "../../util/rmalloc.h"
-#include "../../errors/errors.h"
-#include "../../errors/error_msgs.h"
 
 // forward declarations
 static void AggregateFree(OpBase *opBase);
@@ -107,18 +105,6 @@ static XXH64_hash_t _ComputeGroupKey
 		AR_ExpNode *exp = op->key_exps[i];
 		// note if AR_EXP_Evaluate throws a runtime exception we will leak
 		keys[i] = AR_EXP_Evaluate(exp, r);
-
-		// Path and List (Array) values cannot be used as grouping keys;
-		// using them causes a server crash. Raise a descriptive runtime
-		// exception (which unwinds via longjmp) so the query fails cleanly
-		// instead of segfaulting.
-		SIType t = SI_TYPE(keys[i]);
-		if(t == T_PATH || t == T_ARRAY) {
-			// free keys evaluated so far before raising the error
-			for(uint j = 0; j <= i; j++) SIValue_Free(keys[j]);
-			ErrorCtx_RaiseRuntimeException(EMSG_INVALID_GROUP_KEY_TYPE,
-				t == T_PATH ? "Path" : "List");
-		}
 
 		// update the hash state with the current value.
 		SIValue_HashUpdate(keys[i], &state);

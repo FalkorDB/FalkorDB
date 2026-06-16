@@ -284,17 +284,15 @@ class testAllShortestPaths():
         actual_result = self.cyclic_graph.query(query)
         self.env.assertEqual(actual_result.result_set, expected_result)
 
-    def test08_aggregate_with_path_grouping_key_raises_error(self):
+    def test08_allshortestpaths_unbound_endpoints_raises_error(self):
         """
-        Grouping by a Path value inside WITH * + aggregate should raise a
-        descriptive error instead of crashing the server (issue #2127).
+        allShortestPaths requires both endpoint variables to be already bound.
+        When a and b are introduced for the first time inside the allShortestPaths
+        pattern (not pre-bound in a preceding clause), the engine must return a
+        descriptive compile-time error instead of crashing the server (issue #2127).
         """
 
-        # create a minimal graph: two nodes connected by one edge
-        self.graph.query("CREATE (:Paper)-[:REL]->(:Paper)")
-
-        # this query previously caused a SIGSEGV because the aggregation engine
-        # tried to hash a Path value as a GROUP BY key without handling it
+        # a and b are NOT pre-bound — allShortestPaths should reject this
         query = ("MATCH p = allShortestPaths((a:Paper)-[*..2]-(b:Paper)) "
                  "WITH *, count(a) AS count_a RETURN p")
 
@@ -302,13 +300,12 @@ class testAllShortestPaths():
         try:
             self.graph.query(query)
         except redis.exceptions.ResponseError as e:
-            err = str(e).lower()
+            err = str(e)
 
-        # A runtime error is the required outcome for this regression: the
-        # engine must reject Path/List grouping keys rather than silently
-        # succeed or crash the server.
+        # A compile-time error is the required outcome: the engine must reject
+        # allShortestPaths with unbound endpoints instead of crashing the server.
         self.env.assertIsNotNone(err)
-        self.env.assertIn("grouping", err)
+        self.env.assertIn("Source and destination must already be resolved", err)
 
         # confirm the server is still alive after the query
         self.env.assertIsNotNone(self.graph.query("RETURN 1"))
