@@ -193,6 +193,8 @@ static void _PropertyMap_CreateMissingAttributes
 	uint n = arr_len (map->attr_ids) ;
 	for (uint i = 0 ; i < n ; i++) {
 		if (unlikely (map->attr_ids [i] == ATTRIBUTE_ID_NONE)) {
+			// Aquire write lock to add schema
+			QueryCtx_AcquireWriteLock () ;
 			map->attr_ids [i] =
 				GraphHub_FindOrAddAttribute (gc, map->keys [i], true) ;
 		}
@@ -216,6 +218,8 @@ void PendingCreations_CreateMissingSchemas
 		uint m = arr_len (ctx->labelsId) ;
 		for (uint j = 0 ; j < m ; j++) {
 			if (unlikely (ctx->labelsId [j] == GRAPH_UNKNOWN_LABEL)) {
+				// Aquire write lock to add schema
+				QueryCtx_AcquireWriteLock () ;
 				Schema *s =
 					GraphHub_AddSchema (gc, ctx->labels [j], SCHEMA_NODE, true) ;
 				ctx->labelsId [j] = Schema_GetID (s) ;
@@ -230,6 +234,8 @@ void PendingCreations_CreateMissingSchemas
 	for (uint i = 0 ; i < n ; i++) {
 		EdgeCreateCtx *ctx = &(edges[i].edges_to_create) ;
 		if (unlikely (ctx->reltypeId == GRAPH_UNKNOWN_RELATION)) {
+			// Aquire write lock to add schema
+			QueryCtx_AcquireWriteLock () ;
 			Schema *s =
 				GraphHub_AddSchema (gc, ctx->relation, SCHEMA_EDGE, true) ;
 			ctx->reltypeId = Schema_GetID (s) ;
