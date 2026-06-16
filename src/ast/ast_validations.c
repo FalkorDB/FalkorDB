@@ -2485,3 +2485,4 @@ void AST_ReportErrors
 	ErrorCtx_SetError(EMSG_PARSER_ERROR, errMsg, errPos.line, errPos.column,
 			errPos.offset, errCtx, errCtxOffset);
 }
+
