@@ -298,15 +298,17 @@ class testAllShortestPaths():
         query = ("MATCH p = allShortestPaths((a:Paper)-[*..2]-(b:Paper)) "
                  "WITH *, count(a) AS count_a RETURN p")
 
+        err = None
         try:
             self.graph.query(query)
-            # if no exception is raised the engine handled it without crashing;
-            # either outcome (error or empty result) is acceptable as long as
-            # the server stays alive
-        except Exception as e:
-            # a runtime error is the expected outcome; make sure it is a
-            # meaningful message and not a connection-drop / SIGSEGV
-            self.env.assertIn("grouping", str(e).lower())
+        except redis.exceptions.ResponseError as e:
+            err = str(e).lower()
+
+        # A runtime error is the required outcome for this regression: the
+        # engine must reject Path/List grouping keys rather than silently
+        # succeed or crash the server.
+        self.env.assertIsNotNone(err)
+        self.env.assertIn("grouping", err)
 
         # confirm the server is still alive after the query
         self.env.assertIsNotNone(self.graph.query("RETURN 1"))
