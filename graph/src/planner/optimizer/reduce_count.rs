@@ -108,27 +108,40 @@ pub(super) fn reduce_count(
                 Some(graph.label_node_count(label.as_str()) as i64)
             }
             // MATCH ()-[r]->() RETURN COUNT(r) or MATCH ()-[r:Type]->() RETURN COUNT(r)
-            // Plan shape: CondTraverse { rel } (leaf, before select_scan_node adds the scan child)
+            // Also handles bidirectional: MATCH ()-[r]-() RETURN COUNT(r)
+            // Plan shape: CondTraverse { rel } with optional source node scan as child
             // Only safe when both endpoints are unlabeled and direction is not reversed.
             IR::CondTraverse {
                 relationship,
                 transposed,
                 ..
             } if relationship.alias.id == count_var_id && !transposed => {
-                // The CondTraverse must be a leaf (no children) — this means
-                // the pattern is a simple scan, not part of a longer chain.
-                if child.num_children() != 0 {
+                // The CondTraverse can optionally have a single source scan child
+                // (AllNodeScan or NodeByLabelScan). Check that it's a simple scan pattern.
+                let has_valid_child = if child.num_children() == 0 {
+                    true
+                } else if child.num_children() == 1 {
+                    // Check if the single child is a simple scan node
+                    let grandchild = child.child(0);
+                    matches!(
+                        grandchild.data(),
+                        IR::AllNodeScan(_) | IR::NodeByLabelScan { .. }
+                    ) && grandchild.num_children() == 0
+                } else {
+                    false
+                };
+
+                if !has_valid_child {
                     continue;
                 }
+
                 // Skip when endpoints have labels — the graph-level count
                 // doesn't account for endpoint label filtering.
                 if !relationship.from.labels.is_empty() || !relationship.to.labels.is_empty() {
                     continue;
                 }
-                // Skip bidirectional patterns — the graph-level count is directional.
-                if relationship.bidirectional {
-                    continue;
-                }
+                // For bidirectional patterns, count is still the total directional count
+                // since we're matching edges in either direction (all edges match).
                 // Compute the edge count based on relationship types.
                 if relationship.types.is_empty() {
                     // Untyped: total relationship count.
