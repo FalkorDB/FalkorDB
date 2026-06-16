@@ -8,7 +8,7 @@
 #include "../../../udf/repository.h"
 
 // persist all UDF libraries to the AUX field (Redis persistence)
-// format (version 18):
+// format (version 20):
 //   <unsigned int> number_of_libraries
 //   for each library:
 //       <string buffer> library_name
@@ -16,7 +16,7 @@
 //
 // notes:
 //   - both library name and script must be NUL-terminated strings
-//   - this function defines the v19 on-disk format; changes require a new
+//   - this function defines the v20 on-disk format; changes require a new
 //     versioned save/load pair to preserve backward compatibility
 void AUXSaveUDF_latest
 (

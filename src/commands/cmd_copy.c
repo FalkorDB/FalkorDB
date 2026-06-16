@@ -60,8 +60,8 @@
 #include "../redismodule.h"
 #include "../graph/graphcontext.h"
 #include "../serializers/serializer_io.h"
-#include "../serializers/encoder/v19/encode_v19.h"
-#include "../serializers/decoders/current/v19/decode_v19.h"
+#include "../serializers/encoder/v20/encode_v20.h"
+#include "../serializers/decoders/current/v20/decode_v20.h"
 
 #include <stdio.h>
 #include <fcntl.h>
@@ -567,4 +567,3 @@ int Graph_Copy
 
 	return REDISMODULE_OK;
 }
-
