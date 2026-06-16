@@ -35,6 +35,7 @@ RUN_TESTS=0          # Run all tests
 RUN_UNIT_TESTS=0     # Run unit tests
 RUN_FLOW_TESTS=0     # Run flow tests
 RUN_TCK_TESTS=0      # Run TCK tests
+RUN_JIT_FLOW_TESTS=0 # Run JIT flow tests
 
 # Other options
 LIST_TESTS=0         # List tests only
@@ -152,6 +153,7 @@ TEST OPTIONS:
     RUN_UNIT_TESTS=1    Run unit tests only
     RUN_FLOW_TESTS=1    Run flow tests only
     RUN_TCK_TESTS=1     Run TCK tests only
+    RUN_JIT_FLOW_TESTS=1 Run JIT flow tests (uses existing Redis on 127.0.0.1:6379)
     LIST=1              List all tests, do not execute
     TEST=name           Run specific test
     TESTFILE=file       Run tests listed in file
@@ -283,6 +285,9 @@ parse_arguments() {
                 ;;
             RUN_TCK_TESTS=1|TCK=1)
                 RUN_TCK_TESTS=1
+                ;;
+            RUN_JIT_FLOW_TESTS=1|JIT_FLOW=1)
+                RUN_JIT_FLOW_TESTS=1
                 ;;
             LIST=1)
                 LIST_TESTS=1
@@ -1560,6 +1565,62 @@ run_tck_tests() {
 }
 
 
+
+#-----------------------------------------------------------------------------
+# Function: run_jit_flow_tests
+# Run the jit_flow test suite against an already-running Redis server.
+#-----------------------------------------------------------------------------
+run_jit_flow_tests() {
+    if [[ "$RUN_JIT_FLOW_TESTS" != "1" ]]; then
+        return 0
+    fi
+
+    start_group "Running JIT Flow Tests"
+
+    # Use existing Redis server.
+    log_info "Connecting to existing Redis on port 6379..."
+    
+    local attempts=0
+    until redis-cli -p 6379 ping &>/dev/null; do
+        (( attempts++ ))
+        if (( attempts > 10 )); then
+            log_error "Redis server not responding on port 6379"
+            end_group
+            return 1
+        fi
+        sleep 0.5
+    done
+
+    log_info "Connected to Redis on port 6379"
+
+    # Run the jit_flow test suite.
+    log_info "Running jit_flow tests..."
+    local test_rc=0
+    (
+        export MODULE="$TARGET"
+        export EXT=1
+        export EXT_HOST=127.0.0.1
+        export EXT_PORT=6379
+        [[ -n "$PARALLEL" ]] && export PARALLEL
+        [[ "$SLOW" == "1" ]] && export PARALLEL=0
+        [[ -n "$TEST_FILTER" ]] && export TEST="$TEST_FILTER"
+        [[ -n "$TESTFILE" ]] && export TESTFILE
+        [[ -n "$FAILFILE" ]] && export FAILEDFILE="$FAILFILE"
+        [[ "$GDB" == "1" ]] && export GDB=1
+        [[ "$VERBOSE" == "1" ]] && export VERBOSE=1
+        "${ROOT}/tests/jit_flow/tests.sh"
+    ) || test_rc=$?
+
+    if [[ $test_rc -ne 0 ]]; then
+        log_error "JIT flow tests failed"
+        end_group
+        return 1
+    fi
+
+    log_success "JIT flow tests passed"
+    end_group
+}
+
 #-----------------------------------------------------------------------------
 # Function: run_fuzz_tests
 # Run fuzz tests
@@ -1969,6 +2030,11 @@ main() {
     # Run fuzz tests if requested
     if [[ "$RUN_FUZZ_TESTS" == "1" ]]; then
         run_fuzz_tests || test_result=1
+    fi
+
+    # Run JIT flow tests if requested
+    if [[ "$RUN_JIT_FLOW_TESTS" == "1" ]]; then
+        run_jit_flow_tests || test_result=1
     fi
 
     # Run benchmarks if requested

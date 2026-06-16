@@ -1,0 +1,6 @@
+queries:
+  - id: algo.betweenness.default
+    cypher: >
+      CALL algo.betweenness() YIELD node, score
+      RETURN count(node), sum(score)
+

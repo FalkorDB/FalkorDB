@@ -55,6 +55,71 @@ echo ""
 # ---------------------------------------------------------------------------
 die() { echo "ERROR: $*" >&2; exit 1; }
 
+JIT_FLOW_PORT="${JIT_FLOW_PORT:-6379}"
+JIT_FLOW_SERVER_STARTED=0
+
+detect_module_path() {
+    local os arch module
+
+    case "$(uname -s)" in
+        Linux) os="linux" ;;
+        Darwin) os="macos" ;;
+        *) die "Unsupported OS for module path detection: $(uname -s)" ;;
+    esac
+
+    case "$(uname -m)" in
+        x86_64|amd64) arch="x64" ;;
+        arm64|aarch64) arch="arm64v8" ;;
+        *) die "Unsupported architecture for module path detection: $(uname -m)" ;;
+    esac
+
+    module="${FALKORDB_DIR}/bin/${os}-${arch}-release/falkordb.so"
+    if [[ -f "$module" ]]; then
+        echo "$module"
+        return 0
+    fi
+
+    module="$(find "${FALKORDB_DIR}/bin" -type f -name falkordb.so -print | head -n1 || true)"
+    [[ -n "$module" && -f "$module" ]] || die "Could not locate falkordb.so under ${FALKORDB_DIR}/bin"
+    echo "$module"
+}
+
+start_jit_flow_redis() {
+    local module
+    module="$(detect_module_path)"
+
+    if redis-cli -p "$JIT_FLOW_PORT" ping >/dev/null 2>&1; then
+        die "Redis is already running on port ${JIT_FLOW_PORT}. Stop it or set JIT_FLOW_PORT."
+    fi
+
+    redis-server \
+        --port "$JIT_FLOW_PORT" \
+        --save "" \
+        --appendonly no \
+        --loadmodule "$module" \
+        --daemonize yes
+
+    local attempts=0
+    until redis-cli -p "$JIT_FLOW_PORT" ping >/dev/null 2>&1; do
+        attempts=$((attempts + 1))
+        if (( attempts > 40 )); then
+            die "Timed out waiting for Redis on port ${JIT_FLOW_PORT}"
+        fi
+        sleep 0.25
+    done
+
+    JIT_FLOW_SERVER_STARTED=1
+}
+
+stop_jit_flow_redis() {
+    if [[ "$JIT_FLOW_SERVER_STARTED" == "1" ]]; then
+        redis-cli -p "$JIT_FLOW_PORT" shutdown >/dev/null 2>&1 || true
+        JIT_FLOW_SERVER_STARTED=0
+    fi
+}
+
+trap stop_jit_flow_redis EXIT
+
 # run_with_retry <label> <command...>
 #
 # Runs the given command. On failure, asks the user:
@@ -140,6 +205,14 @@ make JIT=1 FORCE=1
 echo "[Step 4b] Running jit-warmup"
 cd "${FALKORDB_DIR}" || die "Cannot cd to ${FALKORDB_DIR}"
 run_with_retry "make test" make test JIT=1
+
+# ---------------------------------------------------------------------------
+# Step 4c – Run JIT flow tests on a dedicated temporary Redis server.
+# ---------------------------------------------------------------------------
+echo "[Step 4c] Starting Redis, running jit-flow tests, then shutting down..."
+start_jit_flow_redis
+run_with_retry "make jit-flow-tests" make jit-flow-tests JIT=1
+stop_jit_flow_redis
 
 # ---------------------------------------------------------------------------
 # Step 5 – Harvest the generated kernel sources from the JIT cache /c dir.

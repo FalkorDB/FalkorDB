@@ -1,0 +1,52 @@
+queries:
+  - id: algo.maxFlow.capacity-cap
+    cypher: >
+      MATCH (s)-[r]->(t)
+      WITH s, t, type(r) AS rel
+      LIMIT 1
+      CALL algo.maxFlow({
+        sourceNodes: [s],
+        targetNodes: [t],
+        relationshipTypes: [rel],
+        capacityProperty: 'cap',
+        defaultCapacity: 1
+      }) YIELD maxFlow
+      RETURN maxFlow
+    prerequisites:
+      - has_edges
+
+  - id: algo.maxFlow.capacity-weight
+    cypher: >
+      MATCH (s)-[r]->(t)
+      WHERE id(s) <> id(t)
+      WITH s, t, type(r) AS rel
+      LIMIT 1
+      CALL algo.maxFlow({
+        sourceNodes: [s],
+        targetNodes: [t],
+        relationshipTypes: [rel],
+        capacityProperty: 'weight',
+        defaultCapacity: 2
+      }) YIELD maxFlow
+      RETURN maxFlow
+    prerequisites:
+      - has_edges
+
+  - id: algo.maxFlow.node-label-filter
+    cypher: >
+      MATCH (s)-[r]->(t)
+      WITH s, t, type(r) AS rel, head(labels(s)) AS label
+      LIMIT 1
+      CALL algo.maxFlow({
+        sourceNodes: [s],
+        targetNodes: [t],
+        nodeLabels: [label],
+        relationshipTypes: [rel],
+        capacityProperty: 'cap',
+        defaultCapacity: 1
+      }) YIELD maxFlow
+      RETURN maxFlow
+    prerequisites:
+      - has_edges
+      - has_labels
+

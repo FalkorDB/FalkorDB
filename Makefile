@@ -4,7 +4,7 @@
 # all actual build operations to build.sh
 
 .PHONY: all build deps clean pack package test unit-tests flow-tests tck-tests \
-        fuzz-tests benchmark coverage help run lagraph-tests jit-warmup
+        fuzz-tests benchmark coverage help run lagraph-tests jit-warmup jit-flow-tests
 
 #----------------------------------------------------------------------------------------------
 # Default target
@@ -47,6 +47,7 @@ make test         # Run tests
 
 make unit-tests     # Run unit tests
 make flow-tests     # Run flow tests
+make jit-flow-tests # Run JIT flow tests (needs Redis running with loaded graphs)
 make tck-tests      # Run TCK tests
 make fuzz-tests     # Run fuzz tester
   TIMEOUT=secs      # Timeout in `secs`
@@ -196,6 +197,9 @@ unit-tests:
 
 flow-tests:
 	@./build.sh RUN_FLOW_TESTS=1 $(BUILD_ARGS)
+
+jit-flow-tests:
+	@./build.sh RUN_JIT_FLOW_TESTS=1 $(BUILD_ARGS)
 
 tck-tests:
 	@./build.sh RUN_TCK_TESTS=1 $(BUILD_ARGS)
