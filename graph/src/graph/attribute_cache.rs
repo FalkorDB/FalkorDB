@@ -251,9 +251,11 @@ impl AttributeCache {
             return;
         }
         let base = out.len();
-        out.reserve(keys.len());
         let mut current_shard_idx = shard_idx(keys[0]);
         let mut guard = self.shards[current_shard_idx].entries.read();
+        // Pre-warm hit/miss prediction: in common case (all cache hits), we can
+        // reserve exactly and avoid clone-on-default overhead in the hot loop.
+        missing.reserve(keys.len() / 8); // Assume ~12.5% misses initially.
         for (pos, &id) in keys.iter().enumerate() {
             let s = shard_idx(id);
             if s != current_shard_idx {
@@ -262,20 +264,23 @@ impl AttributeCache {
                 guard = self.shards[s].entries.read();
             }
             let slot = slot_idx(id);
-            match guard.get(slot) {
-                Some(Some(entry)) if entry.version <= version => {
-                    let v = entry
-                        .attrs
-                        .binary_search_by_key(&attr_idx, |(idx, _)| *idx)
-                        .map_or_else(|_| default.clone(), |p| entry.attrs[p].1.clone());
-                    out.push(v);
+            // Fast-path: match on entry existence and version check first,
+            // only then do binary search (avoid search cost on misses).
+            if let Some(Some(entry)) = guard.get(slot)
+                && entry.version <= version
+            {
+                match entry.attrs.binary_search_by_key(&attr_idx, |(idx, _)| *idx) {
+                    Ok(p) => out.push(entry.attrs[p].1.clone()),
+                    Err(_) => {
+                        // Attr not found: use default.
+                        out.push(default.clone());
+                    }
                 }
-                _ => {
-                    // Cache miss — caller resolves against the cold store.
-                    out.push(default.clone());
-                    missing.push(base + pos);
-                }
+                continue;
             }
+            // Cache miss or version mismatch — caller resolves against cold store.
+            out.push(default.clone());
+            missing.push(base + pos);
         }
     }
 

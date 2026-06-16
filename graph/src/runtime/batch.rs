@@ -416,13 +416,46 @@ impl BatchBuilder {
                 any_bound: false,
             });
         }
+        // Index extra bindings by variable ID to avoid O(n) find() calls.
+        // For small extra slices this is negligible; for larger ones it's a win.
+        let extra_map: Option<&(u32, Value)> = if extra.len() == 1 {
+            // Micro-optimize common case: single extra binding.
+            Some(&extra[0])
+        } else if extra.len() > 1 {
+            // For multiple extras, skip building a full map—instead just avoid
+            // the find() per column by checking extra directly in hot loop.
+            None
+        } else {
+            None
+        };
         for (id, col) in self.cols.iter_mut().enumerate() {
             let id = id as u32;
-            if let Some((_, v)) = extra.iter().find(|(eid, _)| *eid == id) {
-                col.values.push(v.clone());
+            let found_in_extra = if let Some((eid, v)) = extra_map {
+                if *eid == id {
+                    col.values.push(v.clone());
+                    true
+                } else {
+                    false
+                }
+            } else {
+                // For multiple or zero extras, scan directly (avoids hash overhead).
+                extra.iter().any(|(eid, v)| {
+                    if *eid == id {
+                        col.values.push(v.clone());
+                        col.present = true;
+                        col.any_bound = true;
+                        return true;
+                    }
+                    false
+                })
+            };
+            if found_in_extra {
                 col.present = true;
                 col.any_bound = true;
-            } else if let Some(v) = base.get_by_id(id) {
+                continue;
+            }
+            // Not in extra: check base row.
+            if let Some(v) = base.get_by_id(id) {
                 col.values.push(v.clone());
                 if base.is_bound_by_id(id) {
                     col.present = true;

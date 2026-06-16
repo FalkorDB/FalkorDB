@@ -28,7 +28,7 @@ use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow, Column},
     functions::{FnType, GraphFn},
     row::Row,
     runtime::Runtime,
@@ -143,6 +143,45 @@ impl<'a> ProcedureCallOp<'a> {
         Ok(())
     }
 
+    fn remap_procedure_batch(
+        &self,
+        proc_batch: &Batch<'static>,
+    ) -> Batch<'static> {
+        let max_var = self
+            .output_var_ids
+            .iter()
+            .copied()
+            .max()
+            .map_or(0usize, |v| v as usize + 1);
+
+        let mut mapped = Batch::new(max_var);
+        let row_count = proc_batch.len();
+
+        for (var_id, source_pos) in self
+            .output_var_ids
+            .iter()
+            .zip(&self.output_source_positions)
+        {
+            let source_col = if *source_pos < proc_batch.num_columns() {
+                proc_batch.column(*source_pos as u32).clone()
+            } else {
+                Column::Unbound
+            };
+
+            if matches!(source_col, Column::Unbound) {
+                mapped.set_column(*var_id, Column::Values(vec![Value::Null; row_count]));
+            } else {
+                mapped.set_column(*var_id, source_col);
+            }
+        }
+
+        if let Some(sel) = proc_batch.selection() {
+            mapped.set_selection(sel.to_vec());
+        }
+
+        mapped
+    }
+
     fn next_input_row(&mut self) -> Option<Result<usize, String>> {
         loop {
             if let Some(batch) = self.child_batch.as_ref()
@@ -233,23 +272,15 @@ impl<'a> Iterator for ProcedureCallOp<'a> {
                 Ok(v) => v,
                 Err(e) => return Some(Err(e)),
             };
-            let proc_batch = {
+            let proc_batch = if self.output_var_ids.is_empty() {
                 let mut out_builder = BatchBuilder::new();
-                for row_idx in proc_batch.active_indices() {
-                    let mut row = Row::new();
-                    for (var_id, source_pos) in self
-                        .output_var_ids
-                        .iter()
-                        .zip(&self.output_source_positions)
-                    {
-                        let val = proc_batch
-                            .value_at(*source_pos as u32, row_idx)
-                            .unwrap_or(Value::Null);
-                        row.insert_by_id(*var_id, val);
-                    }
+                for _ in proc_batch.active_indices() {
+                    let row = Row::new();
                     out_builder.push_row(&row);
                 }
                 out_builder.finish()
+            } else {
+                self.remap_procedure_batch(&proc_batch)
             };
 
             self.pending_source_row = Some(source_row);
