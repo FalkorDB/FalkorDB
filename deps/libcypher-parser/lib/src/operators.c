@@ -108,19 +108,19 @@ static const cypher_operator_t _CYPHER_OP_REGEX =
 const cypher_operator_t *CYPHER_OP_REGEX = &_CYPHER_OP_REGEX;
 // `l IN r`
 static const cypher_operator_t _CYPHER_OP_IN =
-    { .precedence = 11, .associativity = LEFT_ASSOC, .str = "IN" };
+    { .precedence = 6, .associativity = LEFT_ASSOC, .str = "IN" };
 const cypher_operator_t *CYPHER_OP_IN = &_CYPHER_OP_IN;
 // `l STARTS WITH r`
 static const cypher_operator_t _CYPHER_OP_STARTS_WITH =
-    { .precedence = 11, .associativity = LEFT_ASSOC, .str = "STARTS WITH" };
+    { .precedence = 6, .associativity = LEFT_ASSOC, .str = "STARTS WITH" };
 const cypher_operator_t *CYPHER_OP_STARTS_WITH = &_CYPHER_OP_STARTS_WITH;
 // `l ENDS WITH r`
 static const cypher_operator_t _CYPHER_OP_ENDS_WITH =
-    { .precedence = 11, .associativity = LEFT_ASSOC, .str = "ENDS WITH" };
+    { .precedence = 6, .associativity = LEFT_ASSOC, .str = "ENDS WITH" };
 const cypher_operator_t *CYPHER_OP_ENDS_WITH = &_CYPHER_OP_ENDS_WITH;
 // `l CONTAINS r`
 static const cypher_operator_t _CYPHER_OP_CONTAINS =
-    { .precedence = 11, .associativity = LEFT_ASSOC, .str = "CONTAINS" };
+    { .precedence = 6, .associativity = LEFT_ASSOC, .str = "CONTAINS" };
 const cypher_operator_t *CYPHER_OP_CONTAINS = &_CYPHER_OP_CONTAINS;
 // `l IS NULL`
 static const cypher_operator_t _CYPHER_OP_IS_NULL =
