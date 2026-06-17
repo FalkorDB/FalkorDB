@@ -412,6 +412,17 @@ ExecutionPlan *ExecutionPlan_FromTLS_AST(void) {
 	uint segment_count = arr_len (segments) ;
 	ASSERT (segment_count > 0) ;
 
+	// if an error was raised during segment construction (e.g. unbound
+	// allShortestPaths endpoints), bail out before _tie_segments tries to
+	// dereference a NULL segment root, which would crash the server
+	if (ErrorCtx_EncounteredError ()) {
+		for (uint i = 0 ; i < segment_count ; i++) {
+			if (segments [i] != NULL) ExecutionPlan_Free (segments [i]) ;
+		}
+		arr_free (segments) ;
+		return NULL ;
+	}
+
 	// connect all segments into a single ExecutionPlan
 	ExecutionPlan *plan = _tie_segments(segments, segment_count);
 
