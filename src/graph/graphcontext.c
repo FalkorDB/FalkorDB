@@ -29,7 +29,6 @@
 #include "graphcontext_struct.h"
 
 // forward declarations
-static void _GraphContext_Free(void *arg);
 static void _DeleteTelemetryStream(RedisModuleCtx *ctx, const GraphContext *gc);
 
 // increase graph context ref count by 1
@@ -59,10 +58,10 @@ inline void GraphContext_DecreaseRefCount
 			// Async delete
 			// add deletion task to pool using force mode
 			// we can't lose this task in-case pool's queue is full
-			ThreadPool_AddWork (_GraphContext_Free, gc, 1) ;
+			ThreadPool_AddWork ((void (*)(void *))GraphContext_Free, gc, 1) ;
 		} else {
 			// Sync delete
-			_GraphContext_Free (gc) ;
+			GraphContext_Free (gc) ;
 		}
 	}
 }
@@ -858,6 +857,7 @@ void GraphContext_RemoveSchema
 ) {
 	ASSERT (gc != NULL) ;
 	ASSERT (id >= 0 && id < GraphContext_SchemaCount (gc, t)) ;
+	ASSERT (pthread_equal (gc->writer_tid, pthread_self ())) ;
 
 	Graph *g = GraphContext_GetGraph (gc) ;
 
@@ -1002,6 +1002,7 @@ void GraphContext_RemoveAttribute
 	ASSERT (gc != NULL) ;
 	ASSERT (gc->_attributes != NULL) ;
 	ASSERT (id == arr_len (gc->_attributes) - 1) ;
+	ASSERT (pthread_equal (gc->writer_tid, pthread_self ())) ;
 
 	rm_free (gc->_attributes [id]) ;
 	arr_del (gc->_attributes, id) ;
@@ -1397,12 +1398,13 @@ static void _DeleteTelemetryStream
 }
 
 // free all data associated with graph
-static void _GraphContext_Free
+void GraphContext_Free
 (
-	void *arg
+	GraphContext *gc
 ) {
-	GraphContext *gc = (GraphContext *)arg;
 	uint len;
+
+	ASSERT (gc->ref_count == 0) ;
 
 	if (gc->decoding_context == NULL ||
 			GraphDecodeContext_Finished (gc->decoding_context)) {

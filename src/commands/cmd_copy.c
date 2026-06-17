@@ -301,8 +301,8 @@ static void LoadGraphFromFile
 	RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
 			"Decoding graph: %s from: %s", copy_ctx->dest, copy_ctx->path);
 
-	GraphContext *gc = RdbLoadGraphContext_latest(io, copy_ctx->rm_dest);
-	ASSERT(gc != NULL);
+	GraphContext *gc = RdbLoadGraphContext_latest (io, copy_ctx->rm_dest, false) ;
+	ASSERT (gc != NULL) ;
 
 	//--------------------------------------------------------------------------
 	// add cloned graph to keyspace

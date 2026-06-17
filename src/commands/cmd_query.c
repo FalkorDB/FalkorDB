@@ -399,8 +399,8 @@ void _query
 ) {
 	CommandCtx *command_ctx = (CommandCtx *)args ;
 	RedisModuleCtx *ctx = CommandCtx_GetRedisCtx (command_ctx) ;
-	GraphContext *gc = CommandCtx_GetGraphContext (command_ctx) ;
 	ExecutionCtx *exec_ctx = NULL ;
+	GraphContext *gc = CommandCtx_GetGraphContext (command_ctx) ;
 
 	// Initialize TLS query context and track the in-flight command BEFORE any
 	// 'goto cleanup' so that QueryCtx_Free() and Globals_UntrackCommandCtx()
@@ -411,12 +411,12 @@ void _query
 	Globals_TrackCommandCtx (command_ctx) ;
 
 	if (gc == NULL) {
+		GraphContext *gc_out = NULL ;
 		if (GraphContext_Retrieve (ctx, command_ctx->rm_graph_name, true, false,
-					true, &gc) != GraphRetrieve_RETRIEVED) {
-			// error emitted
+					true, &gc_out) != GraphRetrieve_RETRIEVED) {
 			goto cleanup ;
 		}
-
+		gc = gc_out ;
 		CommandCtx_SetGraphContext (command_ctx, gc) ;
 	}
 

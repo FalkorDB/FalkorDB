@@ -144,8 +144,8 @@ GraphRetrieveStatus GraphContext_Retrieve
 	// when loading from disk the initial open is always READ (type check only);
 	// a successful load re-fetches with the caller's readOnly flag
 	int rw_flag = (readOnly || load_from_disk)
-	              ? REDISMODULE_READ
-	              : REDISMODULE_WRITE ;
+		? REDISMODULE_READ
+		: REDISMODULE_WRITE ;
 
 	//--------------------------------------------------------------------------
 	// Phase 1: inspect key
@@ -217,32 +217,9 @@ GraphRetrieveStatus GraphContext_Retrieve
 	// on success, recursive call re-enters Phase 1 to fetch the live graph
 	//--------------------------------------------------------------------------
 
-	GraphLoadResult load_res = graph_load (ctx, graphID, from_thread, false) ;
-
-	switch (load_res) {
-		case GraphLoad_SUCCESS:
-			return GraphContext_Retrieve (ctx, graphID, readOnly,
-					shouldCreate, false, gc) ;
-
-		case GraphLoad_MISSING:
-			RedisModule_ReplyWithError (ctx,
-					"ERR failed to load graph: dump file is missing") ;
-			break ;
-
-		case GraphLoad_LOADING:
-			RedisModule_ReplyWithError (ctx,
-					"ERR graph is already loading from disk") ;
-			break ;
-
-		case GraphLoad_OOM:
-			RedisModule_ReplyWithError (ctx,
-					"ERR not enough memory to load graph") ;
-			break ;
-
-		case GraphLoad_ERR:
-			RedisModule_ReplyWithError (ctx,
-					"ERR failed to load graph from disk") ;
-			break ;
+	if (graph_load (ctx, graphID, from_thread, false) == GraphLoad_SUCCESS) {
+		return GraphContext_Retrieve (ctx, graphID, readOnly, shouldCreate,
+				false, gc) ;
 	}
 
 	return GraphRetrieve_FAILED ;

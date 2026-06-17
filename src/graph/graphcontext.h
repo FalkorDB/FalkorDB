@@ -507,3 +507,10 @@ QueriesLog GraphContext_GetQueriesLog
 	GraphContext *gc
 );
 
+// free all data associated with graph context
+// caller must ensure ref count is 0 and gc is not in the global registry
+void GraphContext_Free
+(
+	GraphContext *gc
+);
+

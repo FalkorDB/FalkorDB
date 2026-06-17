@@ -88,6 +88,7 @@ static int _ExportAPIs
 
 	EXPORT_API ("GraphContext_DecreaseRefCount",  GraphContext_DecreaseRefCount)
 	EXPORT_API ("GraphContext_RefCount",          GraphContext_RefCount)
+	EXPORT_API ("GraphContext_Free",              GraphContext_Free)
 
 #undef EXPORT_API
 

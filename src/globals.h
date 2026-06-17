@@ -39,6 +39,15 @@ void Globals_Set_ProcessIsChild
 // get process main thread id
 pthread_t Globals_Get_MainThreadId(void);
 
+// collect graphs
+// caller is responsible for:
+// 1. decreasing ref count for each GraphContext
+// 2. freeing returned value via rm_free
+GraphContext **Globals_CollectGraphs
+(
+	uint *n // number of graphs collected
+);
+
 uint32_t Globals_GraphsCount (void) ;
 
 // add graph to global tracker
