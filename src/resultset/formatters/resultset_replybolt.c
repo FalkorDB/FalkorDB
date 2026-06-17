@@ -7,6 +7,7 @@
 #include "../../bolt/bolt.h"
 #include "resultset_formatters.h"
 #include "../../datatypes/datatypes.h"
+#include "../../graph/graph.h"
 
 static void _ResultSet_BoltReplyWithNode
 (
@@ -143,6 +144,11 @@ static void _ResultSet_BoltReplyWithNode
 	}
 	const AttributeSet set = GraphEntity_GetAttributes((GraphEntity *)n);
 	int prop_count = AttributeSet_Count(set);
+	// a deleted entity is returned as an empty value
+	// (no properties), matching Cypher semantics
+	if (Graph_EntityIsDeleted ((const GraphEntity *)n)) {
+		prop_count = 0 ;
+	}
 	bolt_reply_map(client, prop_count);
 	// Iterate over all properties stored on entity
 	for(int i = 0; i < prop_count; i ++) {
@@ -201,6 +207,11 @@ static void _ResultSet_BoltReplyWithEdge
 	bolt_reply_string(client, reltype, strlen(reltype));
 	const AttributeSet set = GraphEntity_GetAttributes((GraphEntity *)e);
 	int prop_count = AttributeSet_Count(set);
+	// a deleted entity is returned as an empty value
+	// (no properties), matching Cypher semantics
+	if (Graph_EntityIsDeleted ((const GraphEntity *)e)) {
+		prop_count = 0 ;
+	}
 	bolt_reply_map(client, prop_count);
 	// Iterate over all properties stored on entity
 	for(int i = 0; i < prop_count; i ++) {
