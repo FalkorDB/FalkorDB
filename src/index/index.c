@@ -32,21 +32,21 @@ void Index_RangeFieldName
 	if(unlikely(multi_val_type != NULL)) {
 		if(*multi_val_type == T_STRING) {
 			int n = snprintf(type_aware_name,
-					FALKORDB_MAX_TYPE_AWARE_FIELD_NAME_LEN + 1,
+					FDB_MAX_TYPED_NAME_LEN + 1,
 					"range:%s:string:arr", name);
-			ASSERT(n >= 0 && n <= FALKORDB_MAX_TYPE_AWARE_FIELD_NAME_LEN);
+			ASSERT(n >= 0 && n <= FDB_MAX_TYPED_NAME_LEN);
 		} else {
 			int n = snprintf(type_aware_name,
-					FALKORDB_MAX_TYPE_AWARE_FIELD_NAME_LEN + 1,
+					FDB_MAX_TYPED_NAME_LEN + 1,
 					"range:%s:numeric:arr", name);
-			ASSERT(n >= 0 && n <= FALKORDB_MAX_TYPE_AWARE_FIELD_NAME_LEN);
+			ASSERT(n >= 0 && n <= FDB_MAX_TYPED_NAME_LEN);
 		}
 	} else {
 		// prefix range field name with "range:"
 		int n = snprintf(type_aware_name,
-				FALKORDB_MAX_TYPE_AWARE_FIELD_NAME_LEN + 1,
+				FDB_MAX_TYPED_NAME_LEN + 1,
 				"range:%s", name);
-		ASSERT(n >= 0 && n <= FALKORDB_MAX_TYPE_AWARE_FIELD_NAME_LEN);
+		ASSERT(n >= 0 && n <= FDB_MAX_TYPED_NAME_LEN);
 	}
 }
 
@@ -60,8 +60,8 @@ void Index_FulltextxFieldName
 	ASSERT(type_aware_name != NULL);
 
 	// maintain original name for full text fields
-	int n = snprintf(type_aware_name, FALKORDB_MAX_IDENTIFIER_LEN + 1, "%s", name);
-	ASSERT(n >= 0 && n <= FALKORDB_MAX_IDENTIFIER_LEN);
+	int n = snprintf(type_aware_name, FDB_MAX_NAME_LEN + 1, "%s", name);
+	ASSERT(n >= 0 && n <= FDB_MAX_NAME_LEN);
 }
 
 // gets type aware index field name
@@ -74,9 +74,9 @@ void Index_VectorFieldName
 	ASSERT(type_aware_name != NULL);
 
 	// prefix vector field name with "vector:"
-	int n = snprintf(type_aware_name, FALKORDB_MAX_VECTOR_FIELD_NAME_LEN + 1,
+	int n = snprintf(type_aware_name, FDB_MAX_VECTOR_NAME_LEN + 1,
 			"vector:%s", name);
-	ASSERT(n >= 0 && n <= FALKORDB_MAX_VECTOR_FIELD_NAME_LEN);
+	ASSERT(n >= 0 && n <= FDB_MAX_VECTOR_NAME_LEN);
 }
 
 // index structure
@@ -542,7 +542,7 @@ Index Index_New
 
 	// must crash in release
 	// should only happen if an old rdb with an overlong name is loaded
-	ASSERT_UNCONDITIONAL (strlen(label) <= FALKORDB_MAX_IDENTIFIER_LEN);
+	RELEASE_ASSERT (strlen(label) <= FDB_MAX_NAME_LEN);
 
 	Index idx = rm_malloc(sizeof(_Index));
 
@@ -981,4 +981,3 @@ void Index_Free
 	rm_free(idx->label);
 	rm_free(idx);
 }
-

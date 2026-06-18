@@ -260,11 +260,11 @@ UDFCtx_RegisterResult UDFCtx_RegisterFunction
 	UDFLib  *l = ctx->libs + (n - 1) ;
 	size_t lib_len  = strlen(l->name);
 	size_t func_len = strlen(func_name);
-	if(func_len > FALKORDB_MAX_IDENTIFIER_LEN) {
+	if(func_len > FDB_MAX_NAME_LEN) {
 		return UDF_CTX_REG_ERR_FUNC_NAME_TOO_LONG;
 	}
 
-	if((lib_len + 1 + func_len) > FALKORDB_MAX_IDENTIFIER_LEN) {
+	if((lib_len + 1 + func_len) > FDB_MAX_NAME_LEN) {
 		return UDF_CTX_REG_ERR_QUALIFIED_NAME_TOO_LONG;
 	}
 
@@ -303,4 +303,3 @@ JSValueConst *UDFCtx_GetFunction
 	UDFFunc *f = _UDFCtx_GetFunc (lib, func_name) ;
 	return (f != NULL) ? &f->func : NULL ;
 }
-

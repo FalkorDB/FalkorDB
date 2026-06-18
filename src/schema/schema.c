@@ -71,7 +71,7 @@ Schema *Schema_New
 
 	// must crash in release
 	// should only happen if an old rdb with an overlong name is loaded
-	ASSERT_UNCONDITIONAL (strlen(name) <= FALKORDB_MAX_IDENTIFIER_LEN);
+	RELEASE_ASSERT (strlen(name) <= FDB_MAX_NAME_LEN);
 
 	Schema *s = rm_calloc (1, sizeof (Schema)) ;
 
@@ -594,4 +594,3 @@ void Schema_Free
 
 	rm_free(s);
 }
-

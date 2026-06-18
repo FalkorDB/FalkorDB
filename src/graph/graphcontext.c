@@ -1011,7 +1011,7 @@ AttributeID GraphContext_FindOrAddAttribute
 
 	// must crash in release
 	// should only happen if an old rdb with an overlong name is loaded
-	ASSERT_UNCONDITIONAL (strlen(attribute) <= FALKORDB_MAX_IDENTIFIER_LEN);
+	RELEASE_ASSERT (strlen(attribute) <= FDB_MAX_NAME_LEN);
 
 	// attribute missing
 	// add it as a pending attribute
@@ -1594,4 +1594,3 @@ static void _GraphContext_Free
 	rm_free (gc->graph_name) ;
 	rm_free (gc) ;
 }
-

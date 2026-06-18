@@ -9,12 +9,12 @@
 
 // the maximum byte size of an identifier. efforced on all schema and function
 // names.
-#define FALKORDB_MAX_IDENTIFIER_LEN 512
+#define FDB_MAX_NAME_LEN 512
 
 // "range:" + name + ":numeric:arr"
-#define FALKORDB_MAX_RANGE_FIELD_NAME_LEN (FALKORDB_MAX_IDENTIFIER_LEN + 18)
+#define FDB_MAX_RANGE_NAME_LEN (FDB_MAX_NAME_LEN + 18)
 // "vector:" + name
-#define FALKORDB_MAX_VECTOR_FIELD_NAME_LEN (FALKORDB_MAX_IDENTIFIER_LEN + 7)
+#define FDB_MAX_VECTOR_NAME_LEN (FDB_MAX_NAME_LEN + 7)
 // max(range_field_name, vector_field_name)
-#define FALKORDB_MAX_TYPE_AWARE_FIELD_NAME_LEN FALKORDB_MAX_RANGE_FIELD_NAME_LEN
+#define FDB_MAX_TYPED_NAME_LEN FDB_MAX_RANGE_NAME_LEN
 

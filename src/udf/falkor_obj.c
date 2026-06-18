@@ -28,11 +28,11 @@ static inline bool _ValidateUDFNameLength
 	size_t lib_len  = strlen(lib_name);
 	size_t func_len = strlen(func_name);
 
-	if(func_len > FALKORDB_MAX_IDENTIFIER_LEN) {
+	if(func_len > FDB_MAX_NAME_LEN) {
 		return false;
 	}
 
-	if((lib_len + 1 + func_len) > FALKORDB_MAX_IDENTIFIER_LEN) {
+	if((lib_len + 1 + func_len) > FDB_MAX_NAME_LEN) {
 		return false;
 	}
 
@@ -162,13 +162,13 @@ static JSValue local_register_udf
 			JS_FreeValue(js_ctx, dup);
 			res = JS_ThrowTypeError(js_ctx,
 					"Function name exceeds maximum length of %d bytes",
-					FALKORDB_MAX_IDENTIFIER_LEN);
+					FDB_MAX_NAME_LEN);
 			break;
 		case UDF_CTX_REG_ERR_QUALIFIED_NAME_TOO_LONG:
 			JS_FreeValue(js_ctx, dup);
 			res = JS_ThrowTypeError(js_ctx,
 					"Qualified function name exceeds maximum length of %d bytes",
-					FALKORDB_MAX_IDENTIFIER_LEN);
+					FDB_MAX_NAME_LEN);
 			break;
 		default:
 			JS_FreeValue(js_ctx, dup);
@@ -362,4 +362,3 @@ void UDF_SetFalkorRegisterImpl
     JS_FreeValue (js_ctx, global_obj) ;
     JS_FreeValue (js_ctx, falkor_obj) ;
 }
-

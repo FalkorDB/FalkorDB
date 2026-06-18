@@ -44,8 +44,8 @@
 // debugging definitions
 //------------------------------------------------------------------------------
 
-// assert X is true
-#define ASSERT_UNCONDITIONAL(X)                                 \
+// assert X is true in all build modes
+#define RELEASE_ASSERT(X)                                       \
 _Pragma("GCC diagnostic push")                                  \
 _Pragma("GCC diagnostic ignored \"-Wnull-dereference\"")        \
 {                                                               \
@@ -68,7 +68,7 @@ _Pragma("GCC diagnostic pop")
 
 #ifdef RG_DEBUG
 	// assert X is true
-	#define ASSERT(X) ASSERT_UNCONDITIONAL(X)
+	#define ASSERT(X) RELEASE_ASSERT(X)
 #else
 	// debugging disabled
 	#define ASSERT(X)
@@ -149,4 +149,3 @@ _Pragma("GCC diagnostic pop")
 	/* short read! */                                    \
 	ASSERT("short read" && read == 1);                   \
 }
-

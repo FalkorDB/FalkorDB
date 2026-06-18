@@ -254,9 +254,9 @@ static bool _UpdateSetFromMap
 		}
 
 		// convert key to attribute-id, missing attributes will be created
-		if(strlen(key.stringval) > FALKORDB_MAX_IDENTIFIER_LEN) {
+		if(strlen(key.stringval) > FDB_MAX_NAME_LEN) {
 			ErrorCtx_SetError(EMSG_IDENTIFIER_TOO_LONG, "Property name",
-					FALKORDB_MAX_IDENTIFIER_LEN);
+					FDB_MAX_NAME_LEN);
 			return false;
 		}
 
@@ -951,4 +951,3 @@ void PendingUpdateCtx_Free
 	AttributeSet_Free (&ctx->attributes) ;
 	rm_free (ctx) ;
 }
-

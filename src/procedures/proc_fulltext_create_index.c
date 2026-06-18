@@ -235,9 +235,9 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 	// label is mandatory
 	ASSERT(label != NULL);
 
-	if(strlen(label) > FALKORDB_MAX_IDENTIFIER_LEN) {
+	if(strlen(label) > FDB_MAX_NAME_LEN) {
 		ErrorCtx_SetError(EMSG_IDENTIFIER_TOO_LONG, "Label name",
-				FALKORDB_MAX_IDENTIFIER_LEN);
+				FDB_MAX_NAME_LEN);
 		return PROCEDURE_ERR;
 	}
 
@@ -278,9 +278,9 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 			}
 		}
 
-		if(strlen(_fields[i]) > FALKORDB_MAX_IDENTIFIER_LEN) {
+		if(strlen(_fields[i]) > FDB_MAX_NAME_LEN) {
 			ErrorCtx_SetError(EMSG_IDENTIFIER_TOO_LONG, "Property name",
-					FALKORDB_MAX_IDENTIFIER_LEN);
+					FDB_MAX_NAME_LEN);
 			return PROCEDURE_ERR;
 		}
 	}
@@ -360,4 +360,3 @@ ProcedureCtx *Proc_FulltextCreateNodeIdxGen() {
 			Proc_FulltextCreateNodeIdxStep, Proc_FulltextCreateNodeIdxInvoke,
 			NULL, NULL, false);
 }
-

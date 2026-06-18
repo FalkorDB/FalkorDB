@@ -101,9 +101,9 @@ static int Constraint_Parse
 
 	*label = RedisModule_StringPtrLen(*argv++, NULL);
 
-	if(strlen(*label) > FALKORDB_MAX_IDENTIFIER_LEN) {
+	if(strlen(*label) > FDB_MAX_NAME_LEN) {
 		RedisModule_ReplyWithErrorFormat(ctx, EMSG_IDENTIFIER_TOO_LONG,
-				"Label name", FALKORDB_MAX_IDENTIFIER_LEN);
+				"Label name", FDB_MAX_NAME_LEN);
 		return REDISMODULE_ERR;
 	}
 
@@ -419,9 +419,9 @@ int Graph_Constraint
 	for(uint8_t i = 0; i < prop_count; i++) {
 		props_cstr[i] = RedisModule_StringPtrLen(props[i], NULL);
 
-		if(strlen(props_cstr[i]) > FALKORDB_MAX_IDENTIFIER_LEN) {
+		if(strlen(props_cstr[i]) > FDB_MAX_NAME_LEN) {
 			RedisModule_ReplyWithErrorFormat(ctx, EMSG_IDENTIFIER_TOO_LONG,
-					"Property name", FALKORDB_MAX_IDENTIFIER_LEN);
+					"Property name", FDB_MAX_NAME_LEN);
 			return REDISMODULE_ERR;
 		}
 
@@ -451,4 +451,3 @@ int Graph_Constraint
 
 	return REDISMODULE_ERR;
 }
-
