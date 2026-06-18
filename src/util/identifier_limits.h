@@ -7,6 +7,8 @@
 
 #include <stddef.h>
 
+// the maximum byte size of an identifier. efforced on all schema and function
+// names.
 #define FALKORDB_MAX_IDENTIFIER_LEN 512
 
 // "range:" + name + ":numeric:arr"

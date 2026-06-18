@@ -15,32 +15,28 @@
 // global UDF library name used when registering functions globally
 extern const char *UDF_LIB ;
 
-static inline JSValue _ValidateUDFNameLength
+static inline bool _ValidateUDFNameLength
 (
 	JSContext *js_ctx,
 	const char *lib_name,
 	const char *func_name
 ) {
 	if(lib_name == NULL || func_name == NULL) {
-		return JS_ThrowInternalError(js_ctx, "missing UDF function metadata");
+		return false;
 	}
 
 	size_t lib_len  = strlen(lib_name);
 	size_t func_len = strlen(func_name);
 
 	if(func_len > FALKORDB_MAX_IDENTIFIER_LEN) {
-		return JS_ThrowTypeError(js_ctx,
-				"Function name exceeds maximum length of %d bytes",
-				FALKORDB_MAX_IDENTIFIER_LEN);
+		return false;
 	}
 
 	if((lib_len + 1 + func_len) > FALKORDB_MAX_IDENTIFIER_LEN) {
-		return JS_ThrowTypeError(js_ctx,
-				"Qualified function name exceeds maximum length of %d bytes",
-				FALKORDB_MAX_IDENTIFIER_LEN);
+		return false;
 	}
 
-	return JS_UNDEFINED;
+	return true;
 }
 
 //------------------------------------------------------------------------------
@@ -83,8 +79,7 @@ static JSValue validate_register_udf
 		return JS_ThrowInternalError(js_ctx, "failed to read function name");
 	}
 
-	res = _ValidateUDFNameLength(js_ctx, UDF_LIB, func_name);
-	if(JS_IsException(res)) {
+	if(!_ValidateUDFNameLength(js_ctx, UDF_LIB, func_name)) {
 		goto cleanup;
 	}
 
@@ -220,8 +215,7 @@ static JSValue global_register_udf
 		return JS_ThrowInternalError(js_ctx, "failed to read function name");
 	}
 
-	res = _ValidateUDFNameLength(js_ctx, UDF_LIB, func_name);
-	if(JS_IsException(res)) {
+	if(!_ValidateUDFNameLength(js_ctx, UDF_LIB, func_name)) {
 		goto cleanup;
 	}
 

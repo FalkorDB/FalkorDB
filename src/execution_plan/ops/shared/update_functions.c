@@ -10,8 +10,10 @@
 #include "../../../errors/errors.h"
 #include "../../../datatypes/array.h"
 #include "../../../graph/graph_hub.h"
+#include "../../../errors/error_msgs.h"
 #include "../../../graph/graphcontext.h"
 #include "../../../graph/entities/node.h"
+#include "../../../util/identifier_limits.h"
 
 static bool _ValidateAttrType
 (
@@ -252,6 +254,12 @@ static bool _UpdateSetFromMap
 		}
 
 		// convert key to attribute-id, missing attributes will be created
+		if(strlen(key.stringval) > FALKORDB_MAX_IDENTIFIER_LEN) {
+			ErrorCtx_SetError(EMSG_IDENTIFIER_TOO_LONG, "Property name",
+					FALKORDB_MAX_IDENTIFIER_LEN);
+			return false;
+		}
+
 		attr_ids [attr_count] =
 			GraphHub_FindOrAddAttribute (gc, key.stringval, log) ;
 		attr_count++ ;

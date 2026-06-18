@@ -10,10 +10,10 @@
 #include "../util/arr.h"
 #include "../query_ctx.h"
 #include "../util/rmalloc.h"
-#include "../util/identifier_limits.h"
 #include "../datatypes/array.h"
 #include "../datatypes/point.h"
 #include "../datatypes/vector.h"
+#include "../util/identifier_limits.h"
 
 #include <stdatomic.h>
 
@@ -539,6 +539,10 @@ Index Index_New
 	GraphEntityType entity_type  // entity type been indexed
 ) {
 	ASSERT(label != NULL);
+
+	// must crash in release
+	// should only happen if an old rdb with an overlong name is loaded
+	ASSERT_UNCONDITIONAL (strlen(label) <= FALKORDB_MAX_IDENTIFIER_LEN);
 
 	Index idx = rm_malloc(sizeof(_Index));
 

@@ -15,8 +15,9 @@
 #include "../util/rmalloc.h"
 #include "../util/thpool/pool.h"
 #include "../constraint/constraint.h"
-#include "../serializers/graphcontext_type.h"
+#include "../util/identifier_limits.h"
 #include "../commands/execution_ctx.h"
+#include "../serializers/graphcontext_type.h"
 
 #include <pthread.h>
 #include <sys/param.h>
@@ -999,11 +1000,18 @@ AttributeID GraphContext_FindOrAddAttribute
 	// see if attribute already exists
 	AttributeID id = GraphContext_GetAttributeID (gc, attribute) ;
 	if (id != ATTRIBUTE_ID_NONE) {
-		return id ;	
+		return id ;
 	}
 
+	//--------------------------------------------------------------------------
+	// Create new attribute locally
+	//--------------------------------------------------------------------------
 	ASSERT (gc->writer_tid == (pthread_t) 0 ||
 			pthread_equal (gc->writer_tid, pthread_self ())) ;
+
+	// must crash in release
+	// should only happen if an old rdb with an overlong name is loaded
+	ASSERT_UNCONDITIONAL (strlen(attribute) <= FALKORDB_MAX_IDENTIFIER_LEN);
 
 	// attribute missing
 	// add it as a pending attribute

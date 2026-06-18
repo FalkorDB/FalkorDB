@@ -12,6 +12,7 @@
 #include "../index/indexer.h"
 #include "../graph/graphcontext.h"
 #include "../constraint/constraint.h"
+#include "../util/identifier_limits.h"
 
 // activate pending index
 // asserts that pending index is enabled
@@ -67,6 +68,10 @@ Schema *Schema_New
 	const char  *name  // human-readable label/relation-type name
 ) {
 	ASSERT (name != NULL) ;
+
+	// must crash in release
+	// should only happen if an old rdb with an overlong name is loaded
+	ASSERT_UNCONDITIONAL (strlen(name) <= FALKORDB_MAX_IDENTIFIER_LEN);
 
 	Schema *s = rm_calloc (1, sizeof (Schema)) ;
 

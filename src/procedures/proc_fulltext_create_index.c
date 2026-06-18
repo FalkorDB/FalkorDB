@@ -15,6 +15,7 @@
 #include "../graph/graph_hub.h"
 #include "../graph/graphcontext.h"
 #include "../datatypes/datatypes.h"
+#include "../util/identifier_limits.h"
 
 //------------------------------------------------------------------------------
 // fulltext createNodeIndex
@@ -234,6 +235,12 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 	// label is mandatory
 	ASSERT(label != NULL);
 
+	if(strlen(label) > FALKORDB_MAX_IDENTIFIER_LEN) {
+		ErrorCtx_SetError(EMSG_IDENTIFIER_TOO_LONG, "Label name",
+				FALKORDB_MAX_IDENTIFIER_LEN);
+		return PROCEDURE_ERR;
+	}
+
 	// validation passed, create full-text index
 	Index idx             = NULL;
 	char *language        = NULL;
@@ -269,6 +276,12 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 			if(MAP_GET(fields[i], "phonetic", tmp)) {
 				phonetics[i] = tmp.stringval;
 			}
+		}
+
+		if(strlen(_fields[i]) > FALKORDB_MAX_IDENTIFIER_LEN) {
+			ErrorCtx_SetError(EMSG_IDENTIFIER_TOO_LONG, "Property name",
+					FALKORDB_MAX_IDENTIFIER_LEN);
+			return PROCEDURE_ERR;
 		}
 	}
 

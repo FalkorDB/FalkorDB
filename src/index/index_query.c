@@ -798,7 +798,7 @@ RSQNode *Index_BuildVectorQueryTree
 	const char *field,  // field to query
 	const float *vec,   // query vector
 	size_t nbytes,      // vector size in bytes
-	int k			    // number of results to return
+	int k               // number of results to return
 ) {
 	ASSERT(k      > 0);
 	ASSERT(nbytes > 0);

@@ -6,11 +6,10 @@
 
 #include "RG.h"
 #include "func_desc.h"
-#include "builtin_funcs_lookup.h"
 #include "../util/arr.h"
-#include "../util/identifier_limits.h"
 #include "../util/rmalloc.h"
 #include "../util/strutil.h"
+#include "builtin_funcs_lookup.h"
 #include "aggregate_funcs/agg_funcs.h"
 
 #include <ctype.h>
@@ -178,11 +177,6 @@ AR_FuncDesc *AR_GetFunc
 
 	// normalize to lowercase
 	size_t len = strlen (func_name) ;
-
-	if (unlikely(len > FALKORDB_MAX_IDENTIFIER_LEN)) {
-		return NULL;
-	}
-
 	char   lower[len + 1] ;
 	str_tolower_ascii (func_name, lower, &len) ;
 

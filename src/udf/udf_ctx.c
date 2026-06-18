@@ -254,10 +254,12 @@ UDFCtx_RegisterResult UDFCtx_RegisterFunction
 	int n = arr_len(ctx->libs) ;
 	ASSERT (n > 0) ;
 
+	//--------------------------------------------------------------------------
+	// enforce identifier limit
+	//--------------------------------------------------------------------------
 	UDFLib  *l = ctx->libs + (n - 1) ;
 	size_t lib_len  = strlen(l->name);
 	size_t func_len = strlen(func_name);
-
 	if(func_len > FALKORDB_MAX_IDENTIFIER_LEN) {
 		return UDF_CTX_REG_ERR_FUNC_NAME_TOO_LONG;
 	}

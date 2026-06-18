@@ -5,7 +5,6 @@
 
 #include "decode_v19.h"
 #include "../../../../schema/schema.h"
-#include "../../../../util/identifier_limits.h"
 
 static void _RdbDecodeIndexField
 (
@@ -32,7 +31,6 @@ static void _RdbDecodeIndexField
 
 	// decode field name
 	*name = SerializerIO_ReadBuffer(rdb, NULL);
-	RedisModule_Assert(strlen(*name) <= FALKORDB_MAX_IDENTIFIER_LEN);
 
 	// docode field type
 	*type = SerializerIO_ReadUnsigned(rdb);
@@ -109,8 +107,6 @@ static void _RdbLoadIndex
 		_RdbDecodeIndexField (rdb, &field_name, &type, &weight, &nostem,
 				&phonetic, &dimension, &M, &efConstruction, &efRuntime,
 				&simFunc) ;
-		RedisModule_Assert (
-			strlen(field_name) <= FALKORDB_MAX_IDENTIFIER_LEN);
 
 		if (!already_loaded) {
 			IndexField field ;
@@ -260,7 +256,6 @@ static void _RdbLoadSchema
 	Schema *s    = NULL;
 	int     id   = SerializerIO_ReadUnsigned (rdb) ;
 	char   *name = SerializerIO_ReadBuffer (rdb, NULL) ;
-	RedisModule_Assert(strlen(name) <= FALKORDB_MAX_IDENTIFIER_LEN);
 
 	if (!already_loaded) {
 		bool created = false ;
@@ -301,8 +296,6 @@ static void _RdbLoadAttributeKeys
 	uint count = SerializerIO_ReadUnsigned(rdb);
 	for(uint i = 0; i < count; i ++) {
 		char *attr = SerializerIO_ReadBuffer(rdb, NULL);
-		RedisModule_Assert (
-			strlen(attr) <= FALKORDB_MAX_IDENTIFIER_LEN);
 		GraphContext_FindOrAddAttribute(gc, attr, NULL);
 		RedisModule_Free(attr);
 	}
