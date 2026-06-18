@@ -361,3 +361,19 @@ class testOptionalFlow(FlowTestsBase):
 
         self.env.assertEquals(len(res), 10)
 
+    def test28_optional_with_alias_cartesian_product(self):
+        # Regression test for issue #1280: carrying n0 through WITH as alias4
+        # and matching both variables must not crash.
+        self.graph.delete()
+
+        query = """OPTIONAL MATCH (n0)
+                   WITH *, n0 AS alias4
+                   MATCH (n0), (alias4)
+                   RETURN n0"""
+
+        self.graph.query(query)
+
+        self.graph.query("CREATE ()")
+
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(len(actual_result.result_set), 1)
