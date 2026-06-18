@@ -883,9 +883,6 @@ Schema *GraphContext_FindOrAddSchema
 	}
 
 	// create schema
-	ASSERT (gc->writer_tid == (pthread_t) 0 ||
-			pthread_equal (gc->writer_tid, pthread_self ())) ;
-
 	if (t == SCHEMA_NODE) {
 		LabelID id = Graph_AddLabel (gc->g) ;
 		s = Schema_New (SCHEMA_NODE, id, name) ;
@@ -905,8 +902,6 @@ Schema *GraphContext_FindOrAddSchema
 		}
 		arr_append (gc->_relation_schemas, s) ;
 	}
-
-	ASSERT (pthread_equal (gc->writer_tid, pthread_self ())) ;
 
 	if (created != NULL) {
 		*created = true ;

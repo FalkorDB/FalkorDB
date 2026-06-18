@@ -74,7 +74,7 @@ struct _Index {
 	char *language;                // language
 	char **stopwords;              // stopwords
 	GraphEntityType entity_type;   // entity type (node/edge) indexed
-	RSIndex *rsIdx;                // RediSearch index
+	_Atomic(RSIndex *) rsIdx;      // RediSearch index
 	uint _Atomic pending_changes;  // number of pending changes
 };
 
@@ -213,16 +213,12 @@ static void _Index_ConstructStructure
 	}
 }
 
-// responsible for creating the index structure only!
-// e.g. fields, stopwords, language
-void Index_ConstructStructure
+static RSIndex *_Index_CreateRSIndex
 (
-	Index idx
+	const Index idx
 ) {
 	ASSERT(idx != NULL);
-	ASSERT(idx->rsIdx == NULL);
 
-	RSIndex *rsIdx = NULL;
 	RSIndexOptions *idx_options = RediSearch_CreateIndexOptions();
 	RediSearch_IndexOptionsSetLanguage(idx_options, idx->language);
 	// TODO: Remove this comment when https://github.com/RediSearch/RediSearch/issues/1100 is closed
@@ -240,15 +236,26 @@ void Index_ConstructStructure
 				(const char**)idx->stopwords, arr_len(idx->stopwords));
 	}
 
-	rsIdx = RediSearch_CreateIndex(idx->label, idx_options);
+	RSIndex *rsIdx = RediSearch_CreateIndex(idx->label, idx_options);
 	RediSearch_FreeIndexOptions(idx_options);
 
 	// create indexed fields
 	_Index_ConstructStructure(idx, rsIdx);
 
+	return rsIdx;
+}
+
+// responsible for creating the index structure only!
+// e.g. fields, stopwords, language
+void Index_ConstructStructure
+(
+	Index idx
+) {
+	ASSERT(idx != NULL);
+	ASSERT(atomic_load(&idx->rsIdx) == NULL);
+
 	// set RediSearch index
-	ASSERT(idx->rsIdx == NULL);
-	idx->rsIdx = rsIdx;
+	atomic_store(&idx->rsIdx, _Index_CreateRSIndex(idx));
 }
 
 // add a new string field to doc
@@ -530,13 +537,13 @@ Index Index_New
 	Index idx = rm_malloc(sizeof(_Index));
 
 	idx->label           = rm_strdup(label);
-	idx->rsIdx           = NULL;
 	idx->fields          = arr_new(IndexField, 1);
 	idx->label_id        = label_id;
 	idx->language        = NULL;
 	idx->stopwords       = NULL;
 	idx->entity_type     = entity_type;
 	idx->pending_changes = ATOMIC_VAR_INIT(0);
+	atomic_init(&idx->rsIdx, NULL);
 
 	return idx;
 }
@@ -556,9 +563,9 @@ Index Index_Clone
 	Index clone = rm_malloc(sizeof(_Index));
 	memcpy(clone, idx, sizeof(_Index));
 
-	clone->rsIdx           = NULL;
 	clone->label           = rm_strdup(idx->label);
 	clone->pending_changes = ATOMIC_VAR_INIT(0);
+	atomic_init(&clone->rsIdx, NULL);
 	
 	if(clone->stopwords != NULL) {
 		arr_clone_with_cb(clone->stopwords, idx->stopwords, rm_strdup);
@@ -604,14 +611,11 @@ void Index_Disable
 
 	idx->pending_changes++;
 
-	// drop index if exists
-	if(idx->rsIdx != NULL) {
-		RediSearch_DropIndex(idx->rsIdx);
-		idx->rsIdx = NULL;
+	RSIndex *new_rsIdx = _Index_CreateRSIndex(idx);
+	RSIndex *old_rsIdx = atomic_exchange(&idx->rsIdx, new_rsIdx);
+	if(old_rsIdx != NULL) {
+		RediSearch_DropIndex(old_rsIdx);
 	}
-
-	// construct index structure
-	Index_ConstructStructure(idx);
 }
 
 // try to enable index by dropping number of pending changes by 1
@@ -621,6 +625,7 @@ void Index_Enable
 	Index idx
 ) {
 	ASSERT(idx != NULL);
+	ASSERT(atomic_load(&idx->rsIdx) != NULL);
 	ASSERT(idx->pending_changes > 0);
 
 	idx->pending_changes--;
@@ -691,7 +696,10 @@ RSResultsIterator *Index_Query
 	ASSERT(idx   != NULL);
 	ASSERT(query != NULL);
 
-	return RediSearch_IterateQuery(idx->rsIdx, query, strlen(query), err);
+	RSIndex *rsIdx = atomic_load(&idx->rsIdx);
+	ASSERT(rsIdx != NULL);
+
+	return RediSearch_IterateQuery(rsIdx, query, strlen(query), err);
 }
 
 // returns index graph entity type
@@ -895,7 +903,7 @@ RSIndex *Index_RSIndex
 ) {
 	ASSERT(idx != NULL);
 	
-	return idx->rsIdx;
+	return atomic_load(&idx->rsIdx);
 }
 
 
@@ -912,8 +920,9 @@ size_t Index_MemoryUsage
 	n += RedisModule_MallocSize((void *)idx);
 
 	// include the internal RediSearch index memory
-	if(idx->rsIdx != NULL) {
-		n += RediSearch_MemUsage(idx->rsIdx);
+	RSIndex *rsIdx = atomic_load(&idx->rsIdx);
+	if(rsIdx != NULL) {
+		n += RediSearch_MemUsage(rsIdx);
 	}
 
 	if(idx->label != NULL) {
@@ -942,8 +951,9 @@ void Index_Free
 ) {
 	ASSERT(idx != NULL);
 
-	if(idx->rsIdx) {
-		RediSearch_DropIndex(idx->rsIdx);
+	RSIndex *rsIdx = atomic_load(&idx->rsIdx);
+	if(rsIdx) {
+		RediSearch_DropIndex(rsIdx);
 	}
 
 	if(idx->language != NULL) {
@@ -963,4 +973,3 @@ void Index_Free
 	rm_free(idx->label);
 	rm_free(idx);
 }
-
