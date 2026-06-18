@@ -17,8 +17,8 @@
 
 #include <stdatomic.h>
 
-// gets type aware index field name
-void Index_RangeFieldName
+// gets typed index field name
+bool Index_RangeFieldName
 (
 	char *type_aware_name,  // [out] type aware name
 	const char *name,       // field name
@@ -29,29 +29,41 @@ void Index_RangeFieldName
 	ASSERT(multi_val_type  == NULL ||
 		   *multi_val_type & (T_STRING | SI_NUMERIC | T_BOOL));
 
+	if(unlikely(strlen(name) > FDB_MAX_NAME_LEN)) {
+		return false;
+	}
+
 	if(unlikely(multi_val_type != NULL)) {
 		if(*multi_val_type == T_STRING) {
 			int n = snprintf(type_aware_name,
 					FDB_MAX_TYPED_NAME_LEN + 1,
 					"range:%s:string:arr", name);
-			ASSERT(n >= 0 && n <= FDB_MAX_TYPED_NAME_LEN);
+			if(unlikely(n < 0 || n > FDB_MAX_TYPED_NAME_LEN)) {
+				return false;
+			}
 		} else {
 			int n = snprintf(type_aware_name,
 					FDB_MAX_TYPED_NAME_LEN + 1,
 					"range:%s:numeric:arr", name);
-			ASSERT(n >= 0 && n <= FDB_MAX_TYPED_NAME_LEN);
+			if(unlikely(n < 0 || n > FDB_MAX_TYPED_NAME_LEN)) {
+				return false;
+			}
 		}
 	} else {
 		// prefix range field name with "range:"
 		int n = snprintf(type_aware_name,
 				FDB_MAX_TYPED_NAME_LEN + 1,
 				"range:%s", name);
-		ASSERT(n >= 0 && n <= FDB_MAX_TYPED_NAME_LEN);
+		if(unlikely(n < 0 || n > FDB_MAX_TYPED_NAME_LEN)) {
+			return false;
+		}
 	}
+
+	return true;
 }
 
 // gets type aware index field name
-void Index_FulltextxFieldName
+bool Index_VectorFieldName
 (
 	char *type_aware_name,  // [out] type aware name
 	const char *name        // field name
@@ -59,24 +71,18 @@ void Index_FulltextxFieldName
 	ASSERT(name != NULL);
 	ASSERT(type_aware_name != NULL);
 
-	// maintain original name for full text fields
-	int n = snprintf(type_aware_name, FDB_MAX_NAME_LEN + 1, "%s", name);
-	ASSERT(n >= 0 && n <= FDB_MAX_NAME_LEN);
-}
-
-// gets type aware index field name
-void Index_VectorFieldName
-(
-	char *type_aware_name,  // [out] type aware name
-	const char *name        // field name
-) {
-	ASSERT(name != NULL);
-	ASSERT(type_aware_name != NULL);
+	if(unlikely(strlen(name) > FDB_MAX_NAME_LEN)) {
+		return false;
+	}
 
 	// prefix vector field name with "vector:"
 	int n = snprintf(type_aware_name, FDB_MAX_VECTOR_NAME_LEN + 1,
 			"vector:%s", name);
-	ASSERT(n >= 0 && n <= FDB_MAX_VECTOR_NAME_LEN);
+	if(unlikely(n < 0 || n > FDB_MAX_VECTOR_NAME_LEN)) {
+		return false;
+	}
+
+	return true;
 }
 
 // index structure

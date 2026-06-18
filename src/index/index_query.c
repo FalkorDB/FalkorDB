@@ -16,19 +16,6 @@
 #include "../filter_tree/filter_tree_utils.h"
 #include "../arithmetic/arithmetic_expression.h"
 
-extern void Index_RangeFieldName
-(
-	char *type_aware_name,  // [out] type aware name
-	const char *name,       // field name
-	SIType *multi_val_type  // [optional] multi-val type
-);
-
-extern void Index_VectorFieldName
-(
-	char *type_aware_name,  // [out] type aware name
-	const char *name        // field name
-);
-
 //------------------------------------------------------------------------------
 // forward declarations
 //------------------------------------------------------------------------------
@@ -53,7 +40,9 @@ static RSQNode *_NumericRangeToQueryNode
 	const NumericRange *range  // range to query
 ) {
 	char type_aware_field_name[FDB_MAX_TYPED_NAME_LEN + 1];
-	Index_RangeFieldName(type_aware_field_name, field, NULL);
+	if(unlikely(!Index_RangeFieldName(type_aware_field_name, field, NULL))) {
+		return NULL;
+	}
 
 	double max = (range->max == INFINITY) ? RSRANGE_INF : range->max;
 	double min = (range->min == -INFINITY) ? RSRANGE_NEG_INF : range->min;
@@ -69,7 +58,9 @@ static RSQNode *_StringRangeToQueryNode
 	const StringRange *range  // range to query
 ) {
 	char type_aware_field_name[FDB_MAX_TYPED_NAME_LEN + 1];
-	Index_RangeFieldName(type_aware_field_name, field, NULL);
+	if(unlikely(!Index_RangeFieldName(type_aware_field_name, field, NULL))) {
+		return NULL;
+	}
 	RSQNode *root = RediSearch_CreateTagNode(idx, type_aware_field_name);
 	RSQNode *child = NULL;
 	const char *max = range->max;
@@ -104,7 +95,9 @@ static RSQNode *_FilterTreeToDistanceQueryNode
 	extractOriginAndRadius(filter, &origin, &radius, &field);
 
 	char type_aware_field_name[FDB_MAX_TYPED_NAME_LEN + 1];
-	Index_RangeFieldName(type_aware_field_name, field, NULL);
+	if(unlikely(!Index_RangeFieldName(type_aware_field_name, field, NULL))) {
+		return NULL;
+	}
 
 	return RediSearch_CreateGeoNode(idx, type_aware_field_name,
 			Point_lat(origin), Point_lon(origin), SI_GET_NUMERIC(radius),
@@ -153,7 +146,10 @@ static bool _FilterTreeToMultiValQueryNode
 	RSQNode *U      = RediSearch_CreateUnionNode(idx);
 
 	char type_aware_field_name[FDB_MAX_TYPED_NAME_LEN + 1];
-	Index_RangeFieldName(type_aware_field_name, attr, NULL);
+	if(unlikely(!Index_RangeFieldName(type_aware_field_name, attr, NULL))) {
+		RediSearch_QueryNodeFree(U);
+		return false;
+	}
 
 	for(uint i = 0; res && i < list_len; i++) {
 		double d;
@@ -246,7 +242,9 @@ static bool _FilterTreeToInQueryNode
 	RSQNode *parent = NULL;
 
 	char type_aware_field_name[FDB_MAX_TYPED_NAME_LEN + 1];
-	Index_RangeFieldName(type_aware_field_name, attr, &t);
+	if(unlikely(!Index_RangeFieldName(type_aware_field_name, attr, &t))) {
+		return false;
+	}
 
 	switch(t) {
 		case T_DOUBLE:
@@ -583,7 +581,9 @@ static bool _FilterTreePredicateToQueryNode
 		   op == OP_EQUAL);
 
 	char type_aware_field_name[FDB_MAX_TYPED_NAME_LEN + 1];
-	Index_RangeFieldName(type_aware_field_name, field, NULL);
+	if(unlikely(!Index_RangeFieldName(type_aware_field_name, field, NULL))) {
+		return false;
+	}
 
 	if(t & T_STRING) {
 		switch(tree->pred.op) {
@@ -810,7 +810,9 @@ RSQNode *Index_BuildVectorQueryTree
 	RSIndex *rsIdx = Index_RSIndex(idx);
 
 	char type_aware_field_name[FDB_MAX_VECTOR_NAME_LEN + 1];
-	Index_VectorFieldName(type_aware_field_name, field);
+	if(unlikely(!Index_VectorFieldName(type_aware_field_name, field))) {
+		return NULL;
+	}
 
 	RSQNode *root = RediSearch_CreateVecSimNode(rsIdx, type_aware_field_name,
 			(char*)vec, nbytes, k);
