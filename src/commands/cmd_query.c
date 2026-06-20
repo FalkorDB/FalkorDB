@@ -546,7 +546,6 @@ cleanup:
 		ErrorCtx_EmitException () ;
 	}
 
-	// cleanup routine invoked after encountering errors in this function
 	ExecutionCtx_Free (exec_ctx) ;
 
 	if (gc) {
