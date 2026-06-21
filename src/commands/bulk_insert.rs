@@ -22,6 +22,11 @@ const BI_STRING: u8 = 3;
 const BI_LONG: u8 = 4;
 const BI_ARRAY: u8 = 5;
 
+/// Maximum nesting depth for `BI_ARRAY` values in bulk-insert data. Bounds the
+/// recursion in [`read_property`] so a deeply nested array in attacker-supplied
+/// `GRAPH.BULKINSERT` data cannot overflow the stack (an uncatchable abort).
+const MAX_BULK_ARRAY_DEPTH: usize = 128;
+
 fn read_cstring<'a>(
     data: &'a [u8],
     idx: &mut usize,
@@ -89,6 +94,7 @@ fn read_f64_ne(
 fn read_property(
     data: &[u8],
     idx: &mut usize,
+    depth: usize,
 ) -> Result<Value, String> {
     if *idx >= data.len() {
         return Err("unexpected end of bulk data reading property type".to_string());
@@ -119,14 +125,24 @@ fn read_property(
             Ok(Value::String(Arc::new(s.to_string())))
         }
         BI_ARRAY => {
+            if depth >= MAX_BULK_ARRAY_DEPTH {
+                return Err(format!(
+                    "bulk data array nesting exceeds maximum depth of {MAX_BULK_ARRAY_DEPTH}"
+                ));
+            }
             let len = read_i64_ne(data, idx)?;
             if len < 0 {
                 return Err(format!("negative array length in bulk data: {len}"));
             }
             let len = len as usize;
-            let mut arr = thin_vec::ThinVec::with_capacity(len);
+            // Cap the pre-allocation to the bytes that remain: every element
+            // consumes at least one byte from `data`, so a `len` larger than the
+            // remaining input is malformed and must not drive a huge up-front
+            // allocation (memory-exhaustion DoS via GRAPH.BULKINSERT).
+            let cap = len.min(data.len().saturating_sub(*idx));
+            let mut arr = thin_vec::ThinVec::with_capacity(cap);
             for _ in 0..len {
-                arr.push(read_property(data, idx)?);
+                arr.push(read_property(data, idx, depth + 1)?);
             }
             Ok(Value::List(Arc::new(arr)))
         }
@@ -210,7 +226,7 @@ fn process_node_token(
         if !attr_ids.is_empty() {
             let mut entries: Vec<(u16, Value)> = Vec::with_capacity(attr_ids.len());
             for &attr_id in &attr_ids {
-                let val = read_property(data, &mut idx)?;
+                let val = read_property(data, &mut idx, 0)?;
                 if !matches!(val, Value::Null) {
                     entries.push((attr_id, val));
                 }
@@ -287,7 +303,7 @@ fn process_edge_token(
         if !attr_ids.is_empty() {
             let mut entries: Vec<(u16, Value)> = Vec::with_capacity(attr_ids.len());
             for &attr_id in &attr_ids {
-                let val = read_property(data, &mut idx)?;
+                let val = read_property(data, &mut idx, 0)?;
                 if !matches!(val, Value::Null) {
                     entries.push((attr_id, val));
                 }

@@ -269,23 +269,43 @@ impl Decode<19> for Vector<bool> {
         let n_bytes = r.read_unsigned()?;
         let handling = r.read_signed()? as i32;
 
+        // `GRAPH.RESTORE` feeds an entirely attacker-controlled payload here, so
+        // the independently decoded `n_bytes` and `type_name` must be validated
+        // before they drive an allocation, a raw copy, or an FFI C-string read.
+        //
+        // The encoder always writes `arr_data` with exactly `n_bytes` bytes
+        // (see `encode` above). If `n_bytes` exceeds the buffer length the
+        // `copy_nonoverlapping` below would read past the end of `arr_data`
+        // (heap over-read / crash), so reject any mismatch.
+        if n_bytes as usize != arr_data.len() {
+            return Err(format!(
+                "Vector decode: declared byte length {n_bytes} does not match buffer length {}",
+                arr_data.len()
+            ));
+        }
+        // `GxB_Type_from_name` reads `type_name` as a NUL-terminated C string;
+        // require an embedded NUL so the FFI call cannot read out of bounds.
+        if !type_name.contains(&0) {
+            return Err(String::from(
+                "Vector decode: type name is not NUL-terminated",
+            ));
+        }
+
         unsafe {
             let mut type_: MaybeUninit<GrB_Type> = MaybeUninit::uninit();
             let info = GxB_Type_from_name(type_.as_mut_ptr(), type_name.as_ptr().cast());
-            assert_eq!(
-                info,
-                GrB_Info::GrB_SUCCESS,
-                "GxB_Type_from_name failed: {info:?}"
-            );
+            if info != GrB_Info::GrB_SUCCESS {
+                return Err(format!(
+                    "Vector decode: GxB_Type_from_name failed: {info:?}"
+                ));
+            }
             let type_ = type_.assume_init();
 
             let mut v: MaybeUninit<GrB_Vector> = MaybeUninit::uninit();
             let info = GrB_Vector_new(v.as_mut_ptr(), type_, 0);
-            assert_eq!(
-                info,
-                GrB_Info::GrB_SUCCESS,
-                "GrB_Vector_new failed: {info:?}"
-            );
+            if info != GrB_Info::GrB_SUCCESS {
+                return Err(format!("Vector decode: GrB_Vector_new failed: {info:?}"));
+            }
             let v = v.assume_init();
 
             let mut arr_ptr: *mut c_void = if n_bytes > 0 {

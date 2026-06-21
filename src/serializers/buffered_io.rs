@@ -247,7 +247,11 @@ impl BufferedReader {
         &mut self,
         n: usize,
     ) -> Result<&[u8], String> {
-        if self.pos + n > self.buf.len() {
+        if self
+            .pos
+            .checked_add(n)
+            .is_none_or(|end| end > self.buf.len())
+        {
             return Err(format!(
                 "BufferedReader: need {n} bytes at pos {}, but buffer len is {}",
                 self.pos,
