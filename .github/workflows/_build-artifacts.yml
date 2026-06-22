@@ -20,23 +20,18 @@ on:
   workflow_call:
     inputs:
       cells:
-        description: "JSON array of build cells — {arch, platform, runner, suffix}"
+        description: >-
+          JSON array of build cells. Each:
+          {suffix, arch, platform, runner, dockerfile, build_image, cxx}.
+          `dockerfile` provides the `artifact` target; `build_image` is the
+          chef/builder base (Debian toolchain image) or "" for self-contained
+          per-OS Dockerfiles; `cxx` is the C++ compiler passed to the builder.
         required: true
         type: string
       commit_sha:
         description: "Commit SHA to check out and build"
         required: true
         type: string
-      build_image:
-        description: "Toolchain image used as the build base (chef/builder stage)"
-        required: false
-        type: string
-        default: "ghcr.io/falkordb/falkordb-build:latest"
-      dockerfile:
-        description: "Dockerfile providing the `artifact` target"
-        required: false
-        type: string
-        default: "build/runtime/Dockerfile"
 
 jobs:
   build:
@@ -80,17 +75,18 @@ jobs:
           DOCKER_BUILD_RECORD_UPLOAD: false
         with:
           context: .
-          file: ${{ inputs.dockerfile }}
+          file: ${{ matrix.dockerfile }}
           target: artifact
           platforms: ${{ matrix.platform }}
           outputs: type=local,dest=artifact-out
           provenance: false
           build-args: |
-            BUILD_IMAGE=${{ inputs.build_image }}
-          # Read-only reuse of the runtime image's builder cache (same `builder`
-          # stage layers) for fast incremental builds. No cache-to (packages:read
-          # only) so we never clobber the release flavour cache.
-          cache-from: type=registry,ref=ghcr.io/falkordb/falkordb:buildcache-release-${{ matrix.arch }}
+            BUILD_IMAGE=${{ matrix.build_image }}
+            CXX=${{ matrix.cxx }}
+          # Per-suffix GitHub Actions cache so each platform's build layers are
+          # independent and sticky across runs (no packages:write needed).
+          cache-from: type=gha,scope=artifact-${{ matrix.suffix }}
+          cache-to: type=gha,mode=max,scope=artifact-${{ matrix.suffix }}
 
       - name: Stage + checksum
         env:
