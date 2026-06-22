@@ -133,7 +133,7 @@ pub fn register(funcs: &mut Functions) {
         fn id(_runtime, args) {
             match args.first() {
                 Some(&Value::Node(id)) => Ok(Value::Int(u64::from(id) as i64)),
-                Some(Value::Relationship(rel)) => Ok(Value::Int(u64::from(rel.0) as i64)),
+                Some(Value::Relationship(rel)) => Ok(Value::Int(u64::from(*rel) as i64)),
                 Some(Value::Null) => Ok(Value::Null),
 
                 _ => unreachable!(),
@@ -154,7 +154,7 @@ pub fn register(funcs: &mut Functions) {
                 Some(Value::Map(map)) => Ok(Value::Map(map.clone())),
                 Some(&Value::Node(id)) => Ok(Value::Map(Arc::new(runtime.get_node_attrs(id)))),
                 Some(Value::Relationship(rel)) => {
-                    Ok(Value::Map(Arc::new(runtime.get_relationship_attrs(rel.0))))
+                    Ok(Value::Map(Arc::new(runtime.get_relationship_attrs(*rel))))
                 }
                 Some(Value::Null) => Ok(Value::Null),
 
@@ -166,9 +166,12 @@ pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "startnode",
         args: [Type::Relationship],
         ret: Type::Union(vec![Type::Node, Type::Null]),
-        fn start_node(_runtime, args) {
+        fn start_node(runtime, args) {
             match args.first() {
-                Some(Value::Relationship(rel)) => Ok(Value::Node(rel.1)),
+                Some(Value::Relationship(rel)) => {
+                    let (src, _dst) = runtime.get_relationship_endpoints(*rel);
+                    Ok(Value::Node(src))
+                }
 
                 _ => unreachable!(),
             }
@@ -178,9 +181,12 @@ pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "endnode",
         args: [Type::Relationship],
         ret: Type::Union(vec![Type::Node, Type::Null]),
-        fn end_node(_runtime, args) {
+        fn end_node(runtime, args) {
             match args.first() {
-                Some(Value::Relationship(rel)) => Ok(Value::Node(rel.2)),
+                Some(Value::Relationship(rel)) => {
+                    let (_src, dst) = runtime.get_relationship_endpoints(*rel);
+                    Ok(Value::Node(dst))
+                }
 
                 _ => unreachable!(),
             }
@@ -222,7 +228,7 @@ pub fn register(funcs: &mut Functions) {
                 ))),
                 Some(Value::Relationship(rel)) => Ok(Value::List(Arc::new(
                     runtime
-                        .get_relationship_attrs(rel.0)
+                        .get_relationship_attrs(*rel)
                         .into_iter()
                         .map(|(k, _)| Value::String(k))
                         .collect::<ThinVec<_>>(),
@@ -240,7 +246,7 @@ pub fn register(funcs: &mut Functions) {
         fn relationship_type(runtime, args) {
             match args.first() {
                 Some(Value::Relationship(rel)) => runtime
-                    .get_relationship_type(rel.0)
+                    .get_relationship_type(*rel)
                     .map_or_else(|| Ok(Value::Null), |type_name| Ok(Value::String(type_name))),
                 Some(Value::Null) => Ok(Value::Null),
                 _ => unreachable!(),

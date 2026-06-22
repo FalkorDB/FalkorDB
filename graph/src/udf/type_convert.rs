@@ -46,13 +46,20 @@ use rquickjs::function::This;
 use rquickjs::{Array, Ctx, IntoJs, Object, Value as JsValue};
 
 use crate::graph::graph::Graph;
+use crate::runtime::runtime::Runtime;
 use crate::runtime::value::{Point, Value};
 
 /// Convert a FalkorDB Value to a JavaScript value.
+///
+/// `runtime`, when present, resolves relationship endpoints/type/attributes
+/// through the deleted→pending→graph fallback so relationships created or
+/// deleted earlier in the same query are handled correctly. Lazy JS graph
+/// accessors that only have a committed-graph handle pass `None`.
 pub fn value_to_js<'js>(
     ctx: &Ctx<'js>,
     value: &Value,
     graph: &Arc<AtomicRefCell<Graph>>,
+    runtime: Option<&Runtime<'_>>,
 ) -> Result<JsValue<'js>, String> {
     match value {
         Value::Null => Ok(JsValue::new_null(ctx.clone())),
@@ -83,7 +90,7 @@ pub fn value_to_js<'js>(
             let arr =
                 Array::new(ctx.clone()).map_err(|e| format!("JS array creation error: {e}"))?;
             for (i, item) in items.iter().enumerate() {
-                let js_val = value_to_js(ctx, item, graph)?;
+                let js_val = value_to_js(ctx, item, graph, runtime)?;
                 arr.set(i, js_val)
                     .map_err(|e| format!("JS array set error: {e}"))?;
             }
@@ -93,7 +100,7 @@ pub fn value_to_js<'js>(
             let obj =
                 Object::new(ctx.clone()).map_err(|e| format!("JS object creation error: {e}"))?;
             for (key, val) in map.iter() {
-                let js_val = value_to_js(ctx, val, graph)?;
+                let js_val = value_to_js(ctx, val, graph, runtime)?;
                 // Escape keys that start with "__falkor_" to avoid collision
                 // with internal metadata properties.
                 let js_key = if key.starts_with("__falkor_") {
@@ -109,17 +116,23 @@ pub fn value_to_js<'js>(
         Value::Node(node_id) => {
             crate::udf::js_classes::create_js_node(ctx, (*node_id).into(), graph)
         }
-        Value::Relationship(rel_box) => {
-            let (rel_id, src_id, dst_id) = rel_box.as_ref();
+        Value::Relationship(rel_id) => {
+            let (src, dst) = match runtime {
+                Some(rt) => rt.get_relationship_endpoints(*rel_id),
+                None => graph.borrow().get_relationship_endpoints(*rel_id),
+            };
             crate::udf::js_classes::create_js_edge(
                 ctx,
                 (*rel_id).into(),
-                (*src_id).into(),
-                (*dst_id).into(),
+                src.into(),
+                dst.into(),
                 graph,
+                runtime,
             )
         }
-        Value::Path(path_values) => crate::udf::js_classes::create_js_path(ctx, path_values, graph),
+        Value::Path(path_values) => {
+            crate::udf::js_classes::create_js_path(ctx, path_values, graph, runtime)
+        }
         Value::Point(coords) => {
             let obj =
                 Object::new(ctx.clone()).map_err(|e| format!("JS object creation error: {e}"))?;
@@ -250,13 +263,7 @@ pub fn js_to_value(val: JsValue<'_>) -> Result<Value, String> {
                 }
                 "edge" => {
                     let id: u64 = obj.get("__falkor_edge_id").map_err(|e| format!("{e}"))?;
-                    let src: u64 = obj.get("__falkor_edge_src").map_err(|e| format!("{e}"))?;
-                    let dst: u64 = obj.get("__falkor_edge_dst").map_err(|e| format!("{e}"))?;
-                    return Ok(Value::Relationship(Box::new((
-                        id.into(),
-                        src.into(),
-                        dst.into(),
-                    ))));
+                    return Ok(Value::Relationship(id.into()));
                 }
                 "path" => {
                     let nodes_arr: Array = obj.get("nodes").map_err(|e| format!("{e}"))?;

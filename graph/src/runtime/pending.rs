@@ -107,8 +107,10 @@ pub struct Pending {
     created_rel_types: FxHashMap<RelationshipId, Arc<String>>,
     /// Nodes to be deleted
     deleted_nodes: RoaringTreemap,
-    /// Relationships to be deleted (edge_id → (src, dst))
-    deleted_relationships: FxHashMap<RelationshipId, (NodeId, NodeId)>,
+    /// Relationships to be deleted
+    deleted_relationships: RoaringTreemap,
+    /// Endpoints for deleted relationships — populated by commit(), used by build_effects_buffer().
+    deleted_endpoints: Vec<(RelationshipId, NodeId, NodeId)>,
     /// Property updates for newly created nodes (fast path: skip fjall)
     new_nodes_attrs: FxHashMap<u64, OrderMap<Arc<String>, Value>>,
     /// Property updates for existing nodes (full merge path)
@@ -163,7 +165,8 @@ impl Pending {
             created_rels_by_type: FxHashMap::default(),
             created_rel_types: FxHashMap::default(),
             deleted_nodes: RoaringTreemap::new(),
-            deleted_relationships: FxHashMap::default(),
+            deleted_relationships: RoaringTreemap::new(),
+            deleted_endpoints: Vec::new(),
             new_nodes_attrs: FxHashMap::default(),
             existing_nodes_attrs: FxHashMap::default(),
             new_relationships_attrs: FxHashMap::default(),
@@ -448,7 +451,7 @@ impl Pending {
                 entries.retain(|(rid, _, _)| *rid != rel_id);
             }
             let attrs = self.new_relationships_attrs.remove(&rel_id.into());
-            self.deleted_relationships.remove(&rel_id);
+            self.deleted_relationships.remove(rel_id.into());
             result.push((rel_id, from, to, type_name, attrs));
         }
 
@@ -562,19 +565,16 @@ impl Pending {
     pub fn deleted_relationship(
         &mut self,
         id: RelationshipId,
-        from: NodeId,
-        to: NodeId,
     ) {
-        self.deleted_relationships.insert(id, (from, to));
+        self.deleted_relationships.insert(id.into());
     }
 
     pub fn deleted_relationships_bulk(
         &mut self,
-        rels: &[(RelationshipId, NodeId, NodeId)],
+        rels: &[RelationshipId],
     ) {
-        self.deleted_relationships.reserve(rels.len());
-        for &(id, from, to) in rels {
-            self.deleted_relationships.insert(id, (from, to));
+        for &id in rels {
+            self.deleted_relationships.insert(id.into());
         }
     }
 
@@ -642,6 +642,19 @@ impl Pending {
         self.created_rel_types.contains_key(&id)
     }
 
+    /// Returns (src, dst) for a pending-created relationship, or None if not found.
+    pub fn get_created_relationship_endpoints(
+        &self,
+        id: RelationshipId,
+    ) -> Option<(NodeId, NodeId)> {
+        let type_name = self.created_rel_types.get(&id)?;
+        self.created_rels_by_type
+            .get(type_name)?
+            .iter()
+            .find(|(rid, _, _)| *rid == id)
+            .map(|&(_, from, to)| (from, to))
+    }
+
     #[must_use]
     pub fn has_deleted_nodes(&self) -> bool {
         !self.deleted_nodes.is_empty()
@@ -675,10 +688,8 @@ impl Pending {
     pub fn is_relationship_deleted(
         &self,
         id: RelationshipId,
-        _from: NodeId,
-        _to: NodeId,
     ) -> bool {
-        self.deleted_relationships.contains_key(&id)
+        self.deleted_relationships.contains(id.into())
     }
 
     /// Count pending-created relationships whose destination is `node_id` and
@@ -741,10 +752,11 @@ impl Pending {
     ) -> usize {
         self.deleted_relationships
             .iter()
-            .filter(|(rel_id, (_from, to))| {
-                *to == node_id
+            .filter(|rel_id| {
+                let (_from, to) = g.get_relationship_endpoints(RelationshipId::from(*rel_id));
+                to == node_id
                     && (types.is_empty()
-                        || g.get_type(g.get_relationship_type_id(**rel_id))
+                        || g.get_type(g.get_relationship_type_id(RelationshipId::from(*rel_id)))
                             .is_some_and(|t| types.contains(&t)))
             })
             .count()
@@ -762,10 +774,11 @@ impl Pending {
     ) -> usize {
         self.deleted_relationships
             .iter()
-            .filter(|(rel_id, (from, _to))| {
-                *from == node_id
+            .filter(|rel_id| {
+                let (from, _to) = g.get_relationship_endpoints(RelationshipId::from(*rel_id));
+                from == node_id
                     && (types.is_empty()
-                        || g.get_type(g.get_relationship_type_id(**rel_id))
+                        || g.get_type(g.get_relationship_type_id(RelationshipId::from(*rel_id)))
                             .is_some_and(|t| types.contains(&t)))
             })
             .count()
@@ -864,16 +877,20 @@ impl Pending {
             stats.borrow_mut().relationships_deleted += count;
             // Record in deleted_relationships so effects buffer can serialize them
             for (rel_id, from, to) in implicit_edges {
-                self.deleted_relationships.insert(rel_id, (from, to));
+                self.deleted_relationships.insert(u64::from(rel_id));
+                self.deleted_endpoints.push((rel_id, from, to));
             }
         }
         if !explicit_rels.is_empty() {
-            stats.borrow_mut().relationships_deleted += explicit_rels.len();
-            // Re-record explicit rels so the effects buffer can serialize them.
-            self.deleted_relationships
-                .extend(explicit_rels.iter().map(|(&k, &v)| (k, v)));
-            g.borrow_mut()
+            let endpoints = g
+                .borrow_mut()
                 .delete_relationships(&explicit_rels, &mut self.index_remove_edge_docs)?;
+            // Use the actually-removed relationships (delete_relationships skips
+            // stale/missing ids) for stats and effects/constraint bookkeeping.
+            stats.borrow_mut().relationships_deleted += endpoints.len();
+            self.deleted_relationships
+                .extend(endpoints.iter().map(|(id, _, _)| u64::from(*id)));
+            self.deleted_endpoints.extend(endpoints);
         }
         // Enforce constraints before committing attrs to fjall.
         // The constraint checks read from the in-memory attribute cache
@@ -961,8 +978,8 @@ impl Pending {
         for id in &self.deleted_nodes {
             affected_node_ids.remove(id);
         }
-        for &rel_id in self.deleted_relationships.keys() {
-            affected_edge_ids.remove(rel_id.into());
+        for rel_id in self.deleted_relationships.iter() {
+            affected_edge_ids.remove(rel_id);
         }
 
         // Check each OPERATIONAL constraint
@@ -1135,6 +1152,7 @@ impl Pending {
         self.existing_relationships_attrs.clear();
         self.deleted_nodes.clear();
         self.deleted_relationships.clear();
+        self.deleted_endpoints.clear();
         self.index_add_docs.clear();
         self.index_remove_docs.clear();
         self.index_add_edge_docs.clear();
@@ -1147,7 +1165,7 @@ impl Pending {
         self.created_nodes.len()
             + self.created_rel_types.len() as u64
             + self.deleted_nodes.len()
-            + self.deleted_relationships.len() as u64
+            + self.deleted_relationships.len()
             + self.new_nodes_attrs.len() as u64
             + self.existing_nodes_attrs.len() as u64
             + self.new_relationships_attrs.len() as u64
@@ -1180,7 +1198,7 @@ impl Pending {
         let estimated_bytes = (self.created_nodes.len() as usize) * 40
             + self.created_rel_types.len() * 50
             + (self.deleted_nodes.len() as usize) * 10
-            + self.deleted_relationships.len() * 25;
+            + (self.deleted_relationships.len() as usize) * 25;
         buf.reserve(estimated_bytes);
 
         // Version header (only write once at the start)
@@ -1338,11 +1356,11 @@ impl Pending {
         }
 
         // --- Deleted relationships (before nodes, so replica removes edges first) ---
-        for (rel_id, (from, to)) in &self.deleted_relationships {
+        for &(rel_id, from, to) in &self.deleted_endpoints {
             buf.push(EFFECT_DELETE_EDGE);
-            buf.extend_from_slice(&u64::from(*rel_id).to_le_bytes());
-            buf.extend_from_slice(&u64::from(*from).to_le_bytes());
-            buf.extend_from_slice(&u64::from(*to).to_le_bytes());
+            buf.extend_from_slice(&u64::from(rel_id).to_le_bytes());
+            buf.extend_from_slice(&u64::from(from).to_le_bytes());
+            buf.extend_from_slice(&u64::from(to).to_le_bytes());
             n_effects += 1;
         }
 

@@ -15,7 +15,7 @@
 
 use std::collections::VecDeque;
 
-use crate::graph::graph::{NodeId, RelationshipId};
+use crate::graph::graph::RelationshipId;
 use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
@@ -30,10 +30,7 @@ use orx_tree::{Dyn, NodeIdx, NodeRef};
 pub struct EdgeByFulltextScanOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
-    pending: VecDeque<(
-        Row,
-        Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId, f64)>>,
-    )>,
+    pending: VecDeque<(Row, Box<dyn Iterator<Item = (RelationshipId, f64)>>)>,
     edge: &'a Variable,
     label: &'a QueryExpr<Variable>,
     query: &'a QueryExpr<Variable>,
@@ -73,12 +70,9 @@ impl<'a> EdgeByFulltextScanOp<'a> {
             let Some((env, iter)) = self.pending.front_mut() else {
                 break;
             };
-            if let Some((src, dst, edge_id, s)) = iter.next() {
+            if let Some((edge_id, s)) = iter.next() {
                 let mut row = env.clone();
-                row.insert(
-                    self.edge,
-                    Value::Relationship(Box::new((edge_id, src, dst))),
-                );
+                row.insert(self.edge, Value::Relationship(edge_id));
                 if let Some(score) = self.score {
                     row.insert(score, Value::Float(s));
                 }
@@ -136,7 +130,7 @@ impl<'a> Iterator for EdgeByFulltextScanOp<'a> {
                 };
                 let g = self.runtime.g.borrow();
                 let iter = match g.fulltext_query_edges(&label_str, &query_str) {
-                    Ok(iter) => Box::new(iter),
+                    Ok(iter) => Box::new(iter.map(|(_src, _dst, edge_id, score)| (edge_id, score))),
                     Err(e) => return Some(Err(e)),
                 };
                 drop(g);

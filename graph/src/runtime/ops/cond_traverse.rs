@@ -556,13 +556,10 @@ impl<'a> CondTraverseOp<'a> {
             if out_indices.len() >= BATCH_SIZE {
                 let mut out_batch = batch.gather(&out_indices);
                 if chain_is_empty {
-                    let triples = std::mem::take(&mut out_edge_ids)
-                        .into_iter()
-                        .zip(std::mem::take(&mut out_src_ids))
-                        .zip(out_dest_ids.iter().copied())
-                        .map(|((e, s), d)| (e, s, d))
-                        .collect();
-                    out_batch.set_column(rp.alias.id, Column::RelTriples(triples));
+                    out_batch.set_column(
+                        rp.alias.id,
+                        Column::RelIds(std::mem::take(&mut out_edge_ids)),
+                    );
                 }
                 out_batch.set_column(
                     to_alias.id,
@@ -570,19 +567,14 @@ impl<'a> CondTraverseOp<'a> {
                 );
                 out_pending.push_back(out_batch);
                 out_indices.clear();
+                out_src_ids.clear();
             }
         }
 
         if !out_indices.is_empty() {
             let mut out_batch = batch.gather(&out_indices);
             if chain_is_empty {
-                let triples = out_edge_ids
-                    .into_iter()
-                    .zip(out_src_ids)
-                    .zip(out_dest_ids.iter().copied())
-                    .map(|((e, s), d)| (e, s, d))
-                    .collect();
-                out_batch.set_column(rp.alias.id, Column::RelTriples(triples));
+                out_batch.set_column(rp.alias.id, Column::RelIds(out_edge_ids));
             }
             out_batch.set_column(to_alias.id, Column::NodeIds(out_dest_ids));
             out_pending.push_back(out_batch);
@@ -871,7 +863,7 @@ impl<'a> CondTraverseOp<'a> {
                 }
                 if let Some(id) = found_id {
                     let mut row = env.to_owned_row();
-                    row.insert(&rp.alias, Value::Relationship(Box::new((id, src, dst))));
+                    row.insert(&rp.alias, Value::Relationship(id));
                     row.insert(&rp.from.alias, Value::Node(from_node));
                     row.insert(&rp.to.alias, Value::Node(to_node));
                     out.push(row);
@@ -911,7 +903,7 @@ impl<'a> CondTraverseOp<'a> {
                         }
                     }
                     let mut row = env.to_owned_row();
-                    row.insert(&rp.alias, Value::Relationship(Box::new((id, src, dst))));
+                    row.insert(&rp.alias, Value::Relationship(id));
                     row.insert(&rp.from.alias, Value::Node(from_node));
                     row.insert(&rp.to.alias, Value::Node(to_node));
                     out.push(row);

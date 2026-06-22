@@ -390,7 +390,7 @@ impl<'a> ExprEval<'a> {
                         (Value::Relationship(rel), Value::String(key)) => {
                             let rt = self.rt()?;
                             res.push(
-                                rt.get_relationship_attribute(rel.0, &key)
+                                rt.get_relationship_attribute(rel, &key)
                                     .unwrap_or(Value::Null),
                             );
                         }
@@ -640,7 +640,7 @@ impl<'a> ExprEval<'a> {
                         Value::Relationship(rel) => {
                             let rt = self.rt()?;
                             res.push(
-                                rt.get_relationship_attribute(rel.0, attr)
+                                rt.get_relationship_attribute(rel, attr)
                                     .unwrap_or(Value::Null),
                             );
                         }
@@ -1166,17 +1166,12 @@ impl<'a> ExprEval<'a> {
             let from = NodeId::from(path_nodes[i]);
             let to = NodeId::from(path_nodes[i + 1]);
             // Find the relationship between consecutive path nodes
-            let rel_id: Option<(RelationshipId, NodeId, NodeId)> = g
+            let rel_id: Option<RelationshipId> = g
                 .get_src_dest_relationships(from, to, rel_types)
                 .next()
-                .map(|rid| (rid, from, to))
-                .or_else(|| {
-                    g.get_src_dest_relationships(to, from, rel_types)
-                        .next()
-                        .map(|rid| (rid, to, from))
-                });
-            if let Some((rid, src, dst)) = rel_id {
-                path.push(Value::Relationship(Box::new((rid, src, dst))));
+                .or_else(|| g.get_src_dest_relationships(to, from, rel_types).next());
+            if let Some(rid) = rel_id {
+                path.push(Value::Relationship(rid));
             }
             path.push(Value::Node(to));
         }
@@ -1264,17 +1259,12 @@ impl<'a> ExprEval<'a> {
                 for i in 0..fwd.len() - 1 {
                     let from = NodeId::from(fwd[i]);
                     let to = NodeId::from(fwd[i + 1]);
-                    let rel_id: Option<(RelationshipId, NodeId, NodeId)> = g
+                    let rel_id: Option<RelationshipId> = g
                         .get_src_dest_relationships(from, to, rel_types)
                         .next()
-                        .map(|rid| (rid, from, to))
-                        .or_else(|| {
-                            g.get_src_dest_relationships(to, from, rel_types)
-                                .next()
-                                .map(|rid| (rid, to, from))
-                        });
-                    if let Some((rid, src, dst)) = rel_id {
-                        path.push(Value::Relationship(Box::new((rid, src, dst))));
+                        .or_else(|| g.get_src_dest_relationships(to, from, rel_types).next());
+                    if let Some(rid) = rel_id {
+                        path.push(Value::Relationship(rid));
                     }
                     path.push(Value::Node(to));
                 }
@@ -1337,7 +1327,7 @@ impl<'a> ExprEval<'a> {
                         }
                     }
                     Value::Relationship(rel) => {
-                        for (k, v) in rt.get_relationship_attrs(rel.0) {
+                        for (k, v) in rt.get_relationship_attrs(*rel) {
                             result.insert(k, v);
                         }
                     }
@@ -1358,7 +1348,7 @@ impl<'a> ExprEval<'a> {
                             rt.get_node_attribute(*id, prop_name).unwrap_or(Value::Null)
                         }
                         Value::Relationship(rel) => rt
-                            .get_relationship_attribute(rel.0, prop_name)
+                            .get_relationship_attribute(*rel, prop_name)
                             .unwrap_or(Value::Null),
                         Value::Map(map) => map.get(prop_name).cloned().unwrap_or(Value::Null),
                         _ => {

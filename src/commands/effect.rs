@@ -13,7 +13,7 @@
 use crate::{config::CONFIGURATION_CACHE_SIZE, graph_core::ThreadedGraph, redis_type::GRAPH_TYPE};
 use graph::{
     entity_type::EntityType,
-    graph::graph::{Graph, NodeId, RelationshipId},
+    graph::graph::Graph,
     index::IndexType,
     runtime::{
         ordermap::OrderMap,
@@ -230,11 +230,10 @@ fn apply_effects(
 
             EFFECT_DELETE_EDGE => {
                 let rel_id = read_u64(buf, &mut offset)?;
-                let src_id = read_u64(buf, &mut offset)?;
-                let dst_id = read_u64(buf, &mut offset)?;
-                let rel = RelationshipId::from(rel_id);
-                let mut rels = FxHashMap::default();
-                rels.insert(rel, (NodeId::from(src_id), NodeId::from(dst_id)));
+                let _src_id = read_u64(buf, &mut offset)?;
+                let _dst_id = read_u64(buf, &mut offset)?;
+                let mut rels = RoaringTreemap::new();
+                rels.insert(rel_id);
                 g.delete_relationships(&rels, &mut index_remove_edge_docs)?;
             }
 

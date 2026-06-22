@@ -1423,6 +1423,19 @@ impl<'a> Runtime<'a> {
         actual
     }
 
+    pub fn get_relationship_endpoints(
+        &self,
+        id: RelationshipId,
+    ) -> (NodeId, NodeId) {
+        if let Some(dr) = self.deleted_relationships.borrow().get(&id) {
+            return (dr.src, dr.dst);
+        }
+        if let Some(endpoints) = self.pending.borrow().get_created_relationship_endpoints(id) {
+            return endpoints;
+        }
+        self.g.borrow().get_relationship_endpoints(id)
+    }
+
     pub fn get_relationship_type(
         &self,
         id: RelationshipId,

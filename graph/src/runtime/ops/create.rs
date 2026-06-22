@@ -192,11 +192,6 @@ impl Runtime<'_> {
 
             // Record all created relationships directly into pending (no intermediate Vec)
             let type_name = rel.types.first().unwrap().clone();
-            let rel_ids: Vec<_> = ids
-                .iter()
-                .zip(endpoints.iter())
-                .map(|(id, (from, to))| (*id, *from, *to))
-                .collect();
             {
                 let mut pending = self.pending.borrow_mut();
                 for (&id, &(from, to)) in ids.iter().zip(endpoints.iter()) {
@@ -207,7 +202,7 @@ impl Runtime<'_> {
             // Evaluate relationship attributes per row, then batch-insert.
             // Same as nodes: eval() may borrow pending, so separate eval from insert.
             let mut all_rel_attrs: Vec<OrderMap<Arc<String>, Value>> =
-                Vec::with_capacity(rel_ids.len());
+                Vec::with_capacity(ids.len());
             for row in batch.active_indices() {
                 let env = BatchRow::new(batch, row);
                 let attrs = ExprEval::from_runtime(self).eval(
@@ -226,15 +221,12 @@ impl Runtime<'_> {
             {
                 let mut pending = self.pending.borrow_mut();
                 for (i, attrs) in all_rel_attrs.into_iter().enumerate() {
-                    pending.set_relationship_attributes(rel_ids[i].0, attrs)?;
+                    pending.set_relationship_attributes(ids[i], attrs)?;
                 }
             }
 
             // Write relationship values back using write_column
-            let values: Vec<Value> = rel_ids
-                .into_iter()
-                .map(|(id, from, to)| Value::Relationship(Box::new((id, from, to))))
-                .collect();
+            let values: Vec<Value> = ids.into_iter().map(Value::Relationship).collect();
             batch.write_column(rel.alias.id, values);
         }
 

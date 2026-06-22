@@ -306,11 +306,9 @@ impl<'a> EdgeByIndexScanOp<'a> {
                 if rp.to.alias != rp.from.alias {
                     row.insert(&rp.to.alias, Value::Node(to_node));
                 }
-                // Relationship value always stores (edge_id, src, dst) in graph order
-                row.insert(
-                    &rp.alias,
-                    Value::Relationship(Box::new((edge_id, src, dst))),
-                );
+                // Relationship value stores only the edge_id; endpoints and
+                // attributes are resolved on demand from the graph.
+                row.insert(&rp.alias, Value::Relationship(edge_id));
                 builder.push_row(&row);
             } else {
                 self.pending.pop_front();

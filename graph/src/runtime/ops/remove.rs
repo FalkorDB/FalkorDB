@@ -149,7 +149,7 @@ impl Runtime<'_> {
                 Value::Relationship(rel) => {
                     if let Some(property) = property {
                         self.pending.borrow_mut().set_relationship_attribute(
-                            rel.0,
+                            rel,
                             property.clone(),
                             Value::Null,
                         )?;

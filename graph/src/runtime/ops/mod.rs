@@ -188,7 +188,7 @@ pub fn edge_already_used<R: RowView + ?Sized>(
             continue;
         }
         if let Some(Value::Relationship(rel)) = env.value_at(sibling_id)
-            && rel.0 == edge_id
+            && rel == edge_id
         {
             return true;
         }

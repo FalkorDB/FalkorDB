@@ -891,7 +891,7 @@ fn register_bfs(funcs: &mut Functions) {
                     if let Some(rel_id) =
                         g.get_src_dest_relationships(parent_node, child, &rel_types).next()
                     {
-                        edges.push(Value::Relationship(Box::new((rel_id, parent_node, child))));
+                        edges.push(Value::Relationship(rel_id));
                     }
                 }
 
@@ -1086,7 +1086,7 @@ fn register_msf(funcs: &mut Functions) {
             // For unweighted: use 1.0 for all entries
             // For weighted: use the attribute value
             unsafe {
-                use crate::graph::graphblas::{GrB_FP64, GrB_Index, GrB_Matrix, GrB_Matrix_extractTuples_FP64, GrB_Matrix_free, GrB_Matrix_new, GrB_Matrix_nvals, GrB_Matrix_setElement_FP64, GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_UINT64, GrB_Vector, GrB_Vector_free, GrB_WaitMode, lagraphx_bindings};
+                use crate::graph::graphblas::{GrB_FP64, GrB_Index, GrB_Matrix, GrB_Matrix_extractTuples_FP64, GrB_Matrix_free, GrB_Matrix_new, GrB_Matrix_nvals, GrB_Matrix_setElement_FP64, GrB_Matrix_wait, GrB_Vector, GrB_Vector_free, GrB_WaitMode, lagraphx_bindings};
 
                 let active_set: std::collections::HashSet<u64> = active_nodes.iter().copied().collect();
 
@@ -1103,20 +1103,19 @@ fn register_msf(funcs: &mut Functions) {
                     id_to_compact_vec[orig as usize] = compact as u64;
                 }
 
-                // Iterate relationships and fill weighted compact matrix
-                // Create compact FP64 matrix and a parallel edge-id matrix.
+                // Iterate relationships and fill weighted compact matrix.
+                // The chosen relationship per node pair is tracked in
+                // `pair_to_rel`; no separate edge-id matrix is needed.
                 let mut weighted_adj: GrB_Matrix = null_mut();
                 GrB_Matrix_new(&raw mut weighted_adj, GrB_FP64, n, n);
-                let mut edge_map: GrB_Matrix = null_mut();
-                GrB_Matrix_new(&raw mut edge_map, GrB_UINT64, n, n);
 
                 // Best edge per undirected node pair (compact IDs).
-                let mut best_pairs: std::collections::HashMap<(u64, u64), (f64, RelationshipId, u64, u64)> =
+                let mut best_pairs: std::collections::HashMap<(u64, u64), (f64, RelationshipId)> =
                     std::collections::HashMap::new();
 
                 // Chosen relationship metadata for each undirected compact pair.
                 // Maps (min_compact, max_compact) -> (relationship id, original src, original dst).
-                let mut pair_to_rel: std::collections::HashMap<(u64, u64), (RelationshipId, u64, u64)> =
+                let mut pair_to_rel: std::collections::HashMap<(u64, u64), RelationshipId> =
                     std::collections::HashMap::new();
 
                 let has_multi_edges = if rel_types.is_empty() {
@@ -1146,10 +1145,7 @@ fn register_msf(funcs: &mut Functions) {
                                 let (a, b) = if cs <= cd { (cs, cd) } else { (cd, cs) };
                                 GrB_Matrix_setElement_FP64(weighted_adj, 1.0, cs, cd);
                                 GrB_Matrix_setElement_FP64(weighted_adj, 1.0, cd, cs);
-                                let rid = edge_id;
-                                GrB_Matrix_setElement_UINT64(edge_map, rid, cs, cd);
-                                GrB_Matrix_setElement_UINT64(edge_map, rid, cd, cs);
-                                pair_to_rel.insert((a, b), (RelationshipId::from(rid), src_u, dst_u));
+                                pair_to_rel.insert((a, b), RelationshipId::from(edge_id));
                             }
                         }
                     } else {
@@ -1169,10 +1165,7 @@ fn register_msf(funcs: &mut Functions) {
                                 let (a, b) = if cs <= cd { (cs, cd) } else { (cd, cs) };
                                 GrB_Matrix_setElement_FP64(weighted_adj, 1.0, cs, cd);
                                 GrB_Matrix_setElement_FP64(weighted_adj, 1.0, cd, cs);
-                                let rid = edge_id;
-                                GrB_Matrix_setElement_UINT64(edge_map, rid, cs, cd);
-                                GrB_Matrix_setElement_UINT64(edge_map, rid, cd, cs);
-                                pair_to_rel.insert((a, b), (RelationshipId::from(rid), src_u, dst_u));
+                                pair_to_rel.insert((a, b), RelationshipId::from(edge_id));
                             }
                         }
                     }
@@ -1195,7 +1188,7 @@ fn register_msf(funcs: &mut Functions) {
 
                                 best_pairs
                                     .entry((a, b))
-                                    .or_insert((1.0f64, rel_id, src_u, dst_u));
+                                    .or_insert((1.0f64, rel_id));
                             }
                         }
                     } else {
@@ -1217,7 +1210,7 @@ fn register_msf(funcs: &mut Functions) {
 
                                 best_pairs
                                     .entry((a, b))
-                                    .or_insert((1.0f64, rel_id, src_u, dst_u));
+                                    .or_insert((1.0f64, rel_id));
                             }
                         }
                     }
@@ -1227,7 +1220,7 @@ fn register_msf(funcs: &mut Functions) {
                         .get_relationship_attribute_id(weight_attr.as_ref().unwrap())
                         .ok_or_else(|| String::from("Weight attribute does not exist"))?
                         as u16;
-                    let mut pair_meta_for_weights: Vec<(u64, u64, u64, u64)> = Vec::new();
+                    let mut pair_meta_for_weights: Vec<(u64, u64)> = Vec::new();
                     let mut rel_ids_for_weights: Vec<RelationshipId> = Vec::new();
 
                     if rel_types.is_empty() {
@@ -1242,7 +1235,7 @@ fn register_msf(funcs: &mut Functions) {
                                 let cs = id_to_compact_vec[src_u as usize];
                                 let cd = id_to_compact_vec[dst_u as usize];
                                 let (a, b) = if cs <= cd { (cs, cd) } else { (cd, cs) };
-                                pair_meta_for_weights.push((a, b, src_u, dst_u));
+                                pair_meta_for_weights.push((a, b));
                                 rel_ids_for_weights.push(RelationshipId::from(edge_id));
                             }
                         }
@@ -1260,7 +1253,7 @@ fn register_msf(funcs: &mut Functions) {
                                 let cs = id_to_compact_vec[src_u as usize];
                                 let cd = id_to_compact_vec[dst_u as usize];
                                 let (a, b) = if cs <= cd { (cs, cd) } else { (cd, cs) };
-                                pair_meta_for_weights.push((a, b, src_u, dst_u));
+                                pair_meta_for_weights.push((a, b));
                                 rel_ids_for_weights.push(RelationshipId::from(edge_id));
                             }
                         }
@@ -1274,7 +1267,7 @@ fn register_msf(funcs: &mut Functions) {
                         &mut weight_values,
                     );
 
-                    for ((a, b, src_u, dst_u), rel_id, value) in pair_meta_for_weights
+                    for ((a, b), rel_id, value) in pair_meta_for_weights
                         .into_iter()
                         .zip(rel_ids_for_weights.into_iter())
                         .zip(weight_values.into_iter())
@@ -1291,29 +1284,23 @@ fn register_msf(funcs: &mut Functions) {
 
                         best_pairs
                             .entry((a, b))
-                            .and_modify(|(prev_score, prev_rel, prev_src, prev_dst)| {
+                            .and_modify(|(prev_score, prev_rel)| {
                                 if score < *prev_score {
                                     *prev_score = score;
                                     *prev_rel = rel_id;
-                                    *prev_src = src_u;
-                                    *prev_dst = dst_u;
                                 }
                             })
-                            .or_insert((score, rel_id, src_u, dst_u));
+                            .or_insert((score, rel_id));
                     }
                 }
 
-                for ((cs, cd), (score, rel_id, rel_src, rel_dst)) in best_pairs {
+                for ((cs, cd), (score, rel_id)) in best_pairs {
                     GrB_Matrix_setElement_FP64(weighted_adj, score, cs, cd);
                     GrB_Matrix_setElement_FP64(weighted_adj, score, cd, cs);
-                    let rid = u64::from(rel_id);
-                    GrB_Matrix_setElement_UINT64(edge_map, rid, cs, cd);
-                    GrB_Matrix_setElement_UINT64(edge_map, rid, cd, cs);
-                    pair_to_rel.insert((cs, cd), (rel_id, rel_src, rel_dst));
+                    pair_to_rel.insert((cs, cd), rel_id);
                 }
 
                 GrB_Matrix_wait(weighted_adj, GrB_WaitMode::GrB_COMPLETE as i32);
-                GrB_Matrix_wait(edge_map, GrB_WaitMode::GrB_COMPLETE as i32);
 
                 // Run Boruvka MSF
                 let mut forest_edges: GrB_Matrix = null_mut();
@@ -1331,7 +1318,6 @@ fn register_msf(funcs: &mut Functions) {
                 GrB_Matrix_free(&raw mut weighted_adj);
 
                 if info != 0 {
-                    GrB_Matrix_free(&raw mut edge_map);
                     return Err(format!("LAGraph_msf failed: {info}"));
                 }
 
@@ -1411,16 +1397,14 @@ fn register_msf(funcs: &mut Functions) {
                         continue;
                     }
 
-                    let Some((rel_id, src_orig, dst_orig)) = pair_to_rel.get(&(a, b)).copied() else {
+                    let Some(rel_id) = pair_to_rel.get(&(a, b)).copied() else {
                         continue;
                     };
                     component_edges
                         .entry(component_id)
                         .or_default()
-                        .push(Value::Relationship(Box::new((rel_id, NodeId::from(src_orig), NodeId::from(dst_orig)))));
+                        .push(Value::Relationship(rel_id));
                 }
-
-                GrB_Matrix_free(&raw mut edge_map);
 
                 // Build forest rows from component nodes and collected edges.
                 let mut nodes_col = Vec::with_capacity(components.len());
@@ -1817,7 +1801,7 @@ fn run_path_algo(
                     None
                 }
             });
-            path_elems.push(Value::Relationship(Box::new((*eid, *esrc, *edst))));
+            path_elems.push(Value::Relationship(*eid));
             let next = if prev_id == Some(*esrc) { *edst } else { *esrc };
             path_elems.push(Value::Node(next));
         }
@@ -2411,11 +2395,9 @@ fn register_maxflow(funcs: &mut Functions) {
                     continue;
                 }
                 let (src_orig, dst_orig, rel_id) = edge_meta[i];
-                let src_n = NodeId::from(src_orig);
-                let dst_n = NodeId::from(dst_orig);
                 used_nodes.insert(src_orig);
                 used_nodes.insert(dst_orig);
-                edges_out.push(Value::Relationship(Box::new((rel_id, src_n, dst_n))));
+                edges_out.push(Value::Relationship(rel_id));
                 flows_out.push(Value::Float(flow));
             }
 

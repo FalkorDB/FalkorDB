@@ -27,7 +27,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
-use crate::graph::graph::NodeId;
+use crate::graph::graph::{NodeId, RelationshipId};
 use crate::parser::ast::{AllShortestPaths, QueryRelationship, Variable};
 use crate::planner::IR;
 use crate::runtime::{
@@ -111,7 +111,7 @@ impl<'a> AllShortestPathsOp<'a> {
 
         // BFS phase: find shortest distance and collect predecessors
         // predecessor map: node -> list of (prev_node, edge_id, edge_src, edge_dst)
-        let mut predecessors: HashMap<u64, Vec<(u64, u64, u64, u64)>> = HashMap::new();
+        let mut predecessors: HashMap<u64, Vec<(u64, RelationshipId)>> = HashMap::new();
         let mut distances: HashMap<u64, u32> = HashMap::new();
         let mut queue: VecDeque<u64> = VecDeque::new();
 
@@ -196,23 +196,19 @@ impl<'a> AllShortestPathsOp<'a> {
                     if let Some(sd) = shortest_dist {
                         if next_dist == sd {
                             // Same-distance cycle: add predecessor
-                            predecessors.entry(next).or_default().push((
-                                current,
-                                u64::from(edge_id),
-                                u64::from(edge_src),
-                                u64::from(edge_dst),
-                            ));
+                            predecessors
+                                .entry(next)
+                                .or_default()
+                                .push((current, edge_id));
                         }
                         // If next_dist > sd, skip (longer cycle)
                     } else {
                         // First cycle found
                         shortest_dist = Some(next_dist);
-                        predecessors.entry(next).or_default().push((
-                            current,
-                            u64::from(edge_id),
-                            u64::from(edge_src),
-                            u64::from(edge_dst),
-                        ));
+                        predecessors
+                            .entry(next)
+                            .or_default()
+                            .push((current, edge_id));
                     }
                     continue;
                 }
@@ -220,23 +216,19 @@ impl<'a> AllShortestPathsOp<'a> {
                 if let Some(&existing_dist) = distances.get(&next) {
                     if next_dist == existing_dist {
                         // Same-distance path: add predecessor
-                        predecessors.entry(next).or_default().push((
-                            current,
-                            u64::from(edge_id),
-                            u64::from(edge_src),
-                            u64::from(edge_dst),
-                        ));
+                        predecessors
+                            .entry(next)
+                            .or_default()
+                            .push((current, edge_id));
                     }
                     // If next_dist > existing_dist, skip (already found shorter path)
                 } else {
                     // First time reaching this node
                     distances.insert(next, next_dist);
-                    predecessors.entry(next).or_default().push((
-                        current,
-                        u64::from(edge_id),
-                        u64::from(edge_src),
-                        u64::from(edge_dst),
-                    ));
+                    predecessors
+                        .entry(next)
+                        .or_default()
+                        .push((current, edge_id));
                     if next == dst && next_dist >= min_hops {
                         shortest_dist = Some(next_dist);
                     }
@@ -275,13 +267,9 @@ impl<'a> AllShortestPathsOp<'a> {
             }
 
             if let Some(preds) = predecessors.get(&node) {
-                for &(prev, edge_id_raw, esrc, edst) in preds {
+                for &(prev, edge_id_raw) in preds {
                     let mut new_edges = edges.clone();
-                    new_edges.push(Value::Relationship(Box::new((
-                        crate::graph::graph::RelationshipId::from(edge_id_raw),
-                        NodeId::from(esrc),
-                        NodeId::from(edst),
-                    ))));
+                    new_edges.push(Value::Relationship(edge_id_raw));
                     stack.push((prev, new_edges));
                 }
             }

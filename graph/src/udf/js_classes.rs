@@ -60,6 +60,7 @@ use atomic_refcell::AtomicRefCell;
 use rquickjs::{Array, Ctx, Function, Object, Value as JsValue};
 
 use crate::graph::graph::{Graph, NodeId, RelationshipId};
+use crate::runtime::runtime::Runtime;
 use crate::runtime::value::Value;
 use crate::udf::type_convert;
 
@@ -157,7 +158,7 @@ pub fn create_js_node<'js>(
     // .attributes - object with all node properties
     let attrs_obj = Object::new(ctx.clone()).map_err(|e| format!("JS object error: {e}"))?;
     for (attr_name, value) in g.get_node_all_attrs(nid) {
-        let js_val = type_convert::value_to_js(ctx, &value, graph)?;
+        let js_val = type_convert::value_to_js(ctx, &value, graph, None)?;
         attrs_obj
             .set(attr_name.as_str(), js_val)
             .map_err(|e| format!("JS set error: {e}"))?;
@@ -212,10 +213,10 @@ pub fn create_js_edge<'js>(
     src_id: u64,
     dst_id: u64,
     graph: &Arc<AtomicRefCell<Graph>>,
+    runtime: Option<&Runtime<'_>>,
 ) -> Result<JsValue<'js>, String> {
     let obj = Object::new(ctx.clone()).map_err(|e| format!("JS object error: {e}"))?;
 
-    let g = graph.borrow();
     let rid = RelationshipId::from(rel_id);
 
     // Hidden type markers
@@ -232,16 +233,23 @@ pub fn create_js_edge<'js>(
     obj.set("id", rel_id)
         .map_err(|e| format!("JS set error: {e}"))?;
 
-    // .type - relationship type string
-    let type_id = g.get_relationship_type_id(rid);
-    let type_name = g
-        .get_type(type_id)
-        .unwrap_or_else(|| Arc::new(String::new()));
+    // .type - relationship type string. Resolve through the runtime when
+    // available so a relationship deleted/created earlier in the same query is
+    // handled; otherwise fall back to the committed graph.
+    let type_name = match runtime {
+        Some(rt) => rt
+            .get_relationship_type(rid)
+            .unwrap_or_else(|| Arc::new(String::new())),
+        None => {
+            let g = graph.borrow();
+            g.get_type(g.get_relationship_type_id(rid))
+                .unwrap_or_else(|| Arc::new(String::new()))
+        }
+    };
     obj.set("type", type_name.as_str())
         .map_err(|e| format!("JS set error: {e}"))?;
 
     // .source and .target - node objects
-    drop(g);
     let source_node = create_js_node(ctx, src_id, graph)?;
     let target_node = create_js_node(ctx, dst_id, graph)?;
     obj.set("source", source_node)
@@ -249,12 +257,18 @@ pub fn create_js_edge<'js>(
     obj.set("target", target_node)
         .map_err(|e| format!("JS set error: {e}"))?;
 
-    // .attributes - properties
-    let g = graph.borrow();
-    let rid = RelationshipId::from(rel_id);
+    // .attributes - properties (runtime-aware, same fallback as the type).
+    let attrs: Vec<(Arc<String>, Value)> = match runtime {
+        Some(rt) => rt
+            .get_relationship_attrs(rid)
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+        None => graph.borrow().get_relationship_all_attrs(rid),
+    };
     let attrs_obj = Object::new(ctx.clone()).map_err(|e| format!("JS object error: {e}"))?;
-    for (attr_name, value) in g.get_relationship_all_attrs(rid) {
-        let js_val = type_convert::value_to_js(ctx, &value, graph)?;
+    for (attr_name, value) in &attrs {
+        let js_val = type_convert::value_to_js(ctx, value, graph, runtime)?;
         attrs_obj
             .set(attr_name.as_str(), js_val)
             .map_err(|e| format!("JS set error: {e}"))?;
@@ -262,7 +276,6 @@ pub fn create_js_edge<'js>(
     obj.set("attributes", attrs_obj)
         .map_err(|e| format!("JS set error: {e}"))?;
 
-    drop(g);
     Ok(obj.into_value())
 }
 
@@ -271,6 +284,7 @@ pub fn create_js_path<'js>(
     ctx: &Ctx<'js>,
     path_values: &[Value],
     graph: &Arc<AtomicRefCell<Graph>>,
+    runtime: Option<&Runtime<'_>>,
 ) -> Result<JsValue<'js>, String> {
     let obj = Object::new(ctx.clone()).map_err(|e| format!("JS object error: {e}"))?;
 
@@ -291,14 +305,18 @@ pub fn create_js_path<'js>(
                     .map_err(|e| format!("JS set error: {e}"))?;
                 node_idx += 1;
             }
-            Value::Relationship(rel_box) => {
-                let (rel_id, src_id, dst_id) = rel_box.as_ref();
+            Value::Relationship(rel_id) => {
+                let (src, dst) = match runtime {
+                    Some(rt) => rt.get_relationship_endpoints(*rel_id),
+                    None => graph.borrow().get_relationship_endpoints(*rel_id),
+                };
                 let js_edge = create_js_edge(
                     ctx,
                     (*rel_id).into(),
-                    (*src_id).into(),
-                    (*dst_id).into(),
+                    u64::from(src),
+                    u64::from(dst),
                     graph,
+                    runtime,
                 )?;
                 rels_arr
                     .set(rel_idx, js_edge)
@@ -450,7 +468,7 @@ fn js_get_neighbors<'js>(
         let mut seen_neighbors: HashSet<u64> = HashSet::new();
         for (rel_id, src_id, dst_id) in &neighbor_edges {
             if return_type == "edges" {
-                let js_edge = create_js_edge(ctx, *rel_id, *src_id, *dst_id, graph)?;
+                let js_edge = create_js_edge(ctx, *rel_id, *src_id, *dst_id, graph, None)?;
                 results
                     .set(result_idx, js_edge)
                     .map_err(|e| format!("JS set error: {e}"))?;
@@ -653,7 +671,7 @@ fn js_traverse_impl<'js>(
                     }
                 } else {
                     for (rel_id, src_id, dst_id) in &edges_to_create {
-                        let js_edge = create_js_edge(ctx, *rel_id, *src_id, *dst_id, graph)?;
+                        let js_edge = create_js_edge(ctx, *rel_id, *src_id, *dst_id, graph, None)?;
                         inner_results
                             .set(result_idx, js_edge)
                             .map_err(|e| format!("JS set error: {e}"))?;

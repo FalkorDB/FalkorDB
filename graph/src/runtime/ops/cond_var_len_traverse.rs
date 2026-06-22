@@ -248,10 +248,8 @@ impl<'a> CondVarLenTraverseOp<'a> {
                         // Check WHERE-clause edge filter (absorbed by optimizer)
                         if let Some(edge_filter) = self.edge_filter {
                             let mut filter_env = vars.clone();
-                            filter_env.insert(
-                                &relationship_pattern.alias,
-                                Value::Relationship(Box::new((edge_id, current, dest))),
-                            );
+                            filter_env
+                                .insert(&relationship_pattern.alias, Value::Relationship(edge_id));
                             let result = ExprEval::from_runtime(self.runtime).eval(
                                 edge_filter,
                                 edge_filter.root().idx(),
@@ -295,7 +293,7 @@ impl<'a> CondVarLenTraverseOp<'a> {
                     } else {
                         path.clone()
                     };
-                    new_path.push(Value::Relationship(Box::new((edge_id, current, dest))));
+                    new_path.push(Value::Relationship(edge_id));
                     new_path.push(Value::Node(dest));
 
                     if will_emit && will_continue {
