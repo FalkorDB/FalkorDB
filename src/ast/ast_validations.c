@@ -7,110 +7,162 @@
 #include "../errors.h"
 #include "../util/arr.h"
 #include "../util/dict.h"
+#include <libcypher-parser.h>
 
-// Validate AST structure for semantic correctness
-// Returns non-zero if validation fails
-int AST_Validate(AST *ast) {
-	if (!ast) return 0;
-	
-	// Validate match patterns for duplicate aliases with conflicting labels
-	int ret = AST_ValidateMatchPatterns(ast);
-	if (ret != 0) return ret;
-	
-	return 0;
+// Visitor context for tracking node aliases and their labels
+typedef struct {
+	dict *node_labels;  // Maps alias -> label array
+	int error;          // Flag if validation failed
+} validation_context_t;
+
+// Forward declaration
+static VISITOR_STRATEGY _visit_node(const cypher_astnode_t *n, bool start,
+                                     ast_visitor *visitor);
+
+// Initialize validation mappings
+bool AST_ValidationsMappingInit(void) {
+	return true;
 }
 
-// Detect issues where the same node alias is used with different labels
-// Issue #636: Crash found in fuzzer - same alias with conflicting labels
-int AST_ValidateMatchPatterns(AST *ast) {
-	if (!ast || !ast->root) return 0;
+// Default visitor that processes all node types
+VISITOR_STRATEGY _default_visit(const cypher_astnode_t *n, bool start,
+                                 ast_visitor *visitor) {
+	if (!start || !n) return VISITOR_CONTINUE;
 	
-	// Dictionary to track node aliases and their labels
-	dict *node_labels = dictCreate(&dictTypeHeapStringKey, NULL);
+	validation_context_t *ctx = (validation_context_t *)visitor->data;
+	cypher_astnode_type_t node_type = cypher_astnode_type(n);
 	
-	int ret = _ValidatePatternNode(ast->root, node_labels);
-	
-	dictRelease(node_labels);
-	return ret;
-}
-
-// Helper function to recursively validate pattern nodes
-static int _ValidatePatternNode(AST_Node *node, dict *node_labels) {
-	if (!node) return 0;
-	
-	// Check for conflicting label definitions on same alias
-	if (node->type == N_PATTERN_PATH) {
-		if (_ValidateNodeAliasLabels(node, node_labels) != 0) {
-			return 1;
-		}
-	}
-	
-	// Recursively validate child nodes
-	if (node->children) {
-		uint child_count = array_len(node->children);
-		for (uint i = 0; i < child_count; i++) {
-			if (_ValidatePatternNode(node->children[i], node_labels) != 0) {
-				return 1;
+	// Check pattern paths for conflicting node aliases
+	if (node_type == CYPHER_AST_PATTERN_PATH) {
+		uint num_elements = cypher_ast_pattern_path_nrelationships(n);
+		
+		// Iterate through all node patterns in the path
+		for (uint i = 0; i < num_elements; i++) {
+			const cypher_astnode_t *rel = cypher_ast_pattern_path_get_relationship(n, i);
+			if (!rel) continue;
+			
+			// Check both nodes in the relationship
+			const cypher_astnode_t *start_node = cypher_ast_pattern_path_get_start_node(n, i);
+			const cypher_astnode_t *end_node = cypher_ast_pattern_path_get_end_node(n, i);
+			
+			if (start_node && cypher_astnode_type(start_node) == CYPHER_AST_NODE_PATTERN) {
+				if (_validate_node_pattern(start_node, ctx->node_labels) != 0) {
+					ctx->error = 1;
+					return VISITOR_BREAK;
+				}
 			}
-		}
-	}
-	
-	return 0;
-}
-
-// Validate that aliases don't have conflicting labels
-static int _ValidateNodeAliasLabels(AST_Node *pattern, dict *node_labels) {
-	if (!pattern) return 0;
-	
-	// Extract all node entities and their labels from the pattern
-	uint node_count = array_len(pattern->children);
-	for (uint i = 0; i < node_count; i++) {
-		AST_Node *entity = pattern->children[i];
-		if (entity->type == N_NODE_PATTERN) {
-			const char *alias = entity->string_val;
-			if (alias && strlen(alias) > 0) {
-				// Get or create label set for this alias
-				dictEntry *entry = dictFind(node_labels, (char *)alias);
-				
-				if (!entry) {
-					// First occurrence of this alias - record its labels
-					array labels = entity->vector;
-					dictAdd(node_labels, (char *)alias, labels);
-				} else {
-					// Alias seen before - check for label conflicts
-					array prev_labels = (array)entry->v.val;
-					array curr_labels = entity->vector;
-					
-					if (_LabelsConflict(prev_labels, curr_labels)) {
-						// Same alias used with different labels - error
-						return 1;
-					}
+			
+			if (end_node && cypher_astnode_type(end_node) == CYPHER_AST_NODE_PATTERN) {
+				if (_validate_node_pattern(end_node, ctx->node_labels) != 0) {
+					ctx->error = 1;
+					return VISITOR_BREAK;
 				}
 			}
 		}
 	}
 	
-	return 0;
+	return VISITOR_CONTINUE;
 }
 
-// Check if two label sets conflict (are non-identical)
-static int _LabelsConflict(array labels1, array labels2) {
-	uint len1 = array_len(labels1);
-	uint len2 = array_len(labels2);
+// Validate a single node pattern for conflicting labels
+static int _validate_node_pattern(const cypher_astnode_t *node_pattern,
+                                   dict *node_labels) {
+	if (!node_pattern) return 0;
 	
-	// Different number of labels is a conflict
-	if (len1 != len2) return 1;
+	// Get the node identifier (alias)
+	const cypher_astnode_t *identifier = cypher_ast_node_pattern_get_identifier(node_pattern);
+	if (!identifier) return 0;
 	
-	// Check each label matches
-	for (uint i = 0; i < len1; i++) {
-		AST_Node *label1 = labels1[i];
-		AST_Node *label2 = labels2[i];
+	const char *alias = cypher_ast_identifier_get_name(identifier);
+	if (!alias || strlen(alias) == 0) return 0;
+	
+	// Get the labels for this node
+	uint label_count = cypher_ast_node_pattern_nlabels(node_pattern);
+	
+	dictEntry *entry = dictFind(node_labels, (char *)alias);
+	
+	if (!entry) {
+		// First occurrence - store the labels for this alias
+		array labels = array_new(cypher_astnode_t *, label_count);
+		if (!labels) return 0;
 		
-		if (!label1 || !label2) return 1;
-		if (strcmp(label1->string_val, label2->string_val) != 0) {
-			return 1; // Labels differ
+		for (uint i = 0; i < label_count; i++) {
+			const cypher_astnode_t *label = cypher_ast_node_pattern_get_label(node_pattern, i);
+			if (label) {
+				array_append(labels, label);
+			}
+		}
+		
+		if (dictAdd(node_labels, (char *)alias, labels) != DICT_OK) {
+			array_free(labels);
+			return 1;
+		}
+	} else {
+		// Alias already seen - check for label conflicts
+		array prev_labels = (array)entry->v.val;
+		
+		if (_labels_conflict(prev_labels, node_pattern) != 0) {
+			// Conflicting labels on same alias
+			return 1;
 		}
 	}
 	
-	return 0; // Labels are identical
+	return 0;
+}
+
+// Check if stored labels conflict with current node's labels
+static int _labels_conflict(array stored_labels, const cypher_astnode_t *node) {
+	if (!node) return 0;
+	
+	uint stored_len = array_len(stored_labels);
+	uint curr_len = cypher_ast_node_pattern_nlabels(node);
+	
+	// Different number of labels is a conflict
+	if (stored_len != curr_len) return 1;
+	
+	// Compare each label
+	for (uint i = 0; i < stored_len; i++) {
+		const cypher_astnode_t *stored_label = stored_labels[i];
+		const cypher_astnode_t *curr_label = cypher_ast_node_pattern_get_label(node, i);
+		
+		if (!stored_label || !curr_label) return 1;
+		
+		const char *stored_name = cypher_ast_label_get_name(stored_label);
+		const char *curr_name = cypher_ast_label_get_name(curr_label);
+		
+		if (!stored_name || !curr_name || strcmp(stored_name, curr_name) != 0) {
+			return 1;  // Labels differ
+		}
+	}
+	
+	return 0;  // Labels match
+}
+
+// Main validation function for AST
+int AST_Validate(AST *ast) {
+	if (!ast || !ast->root) return 0;
+	
+	if (!AST_ValidationsMappingInit()) return -1;
+	
+	// Create validation context
+	validation_context_t ctx = {
+		.node_labels = dictCreate(&dictTypeHeapStringKey, NULL),
+		.error = 0
+	};
+	
+	if (!ctx.node_labels) return -1;
+	
+	// Create visitor and validate
+	ast_visitor visitor = {
+		.visit = _default_visit,
+		.data = &ctx
+	};
+	
+	int result = ast_visit(ast->root, &visitor);
+	
+	// Cleanup
+	dictRelease(ctx.node_labels);
+	
+	if (ctx.error) return 1;
+	return result;
 }
