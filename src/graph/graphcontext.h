@@ -7,6 +7,7 @@
 #pragma once
 
 #include "graph.h"
+#include "graph_memoryUsage.h"
 #include "../redismodule.h"
 #include "../index/index.h"
 #include "../schema/schema.h"
@@ -220,6 +221,25 @@ Graph *GraphContext_GetGraph
 (
 	const GraphContext *gc
 );
+
+// returns the graph's current RAM footprint in bytes
+// acquires the read lock internally; safe to call after GraphContext_Retrieve
+uint64_t GraphContext_MemoryUsage
+(
+	const GraphContext *gc
+) ;
+
+// returns the amortized memory consumption of a graph (all fields in MB on return)
+// samples attribute-sets for nodes/edges and measures index memory
+// result->node_attr_by_label_sz and result->edge_attr_by_type_sz must be
+// initialised with arr_new(size_t, 0) by the caller; arr_free them after use
+// caller must hold at least the graph read lock
+void GraphContext_EstimateMemoryUsage
+(
+	GraphContext      *gc,      // graph context
+	double             samples, // samples per label / relation type
+	MemoryUsageResult *result   // [output] all size fields in MB on return
+) ;
 
 //------------------------------------------------------------------------------
 // Schema API

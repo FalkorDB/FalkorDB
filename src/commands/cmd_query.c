@@ -392,6 +392,12 @@ static void enter_writer_loop
 	}
 }
 
+// optnone: Clang's -O2/-O3 inter-procedural analysis converts every
+// "goto cleanup" branch to llvm.assume, making it fall through to
+// GraphContext_GetGraph(NULL) when GraphContext_Retrieve fails.
+// The heavy inner functions (_ExecuteQuery, GraphContext_Retrieve, etc.)
+// are not affected by this attribute — only the orchestration shell is.
+__attribute__((optnone))
 void _query
 (
 	bool profile,
