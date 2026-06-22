@@ -210,12 +210,10 @@ impl Runtime<'_> {
                     for (rel_id, src, dest, type_name, attrs) in pending_rels {
                         let attrs = attrs.unwrap_or_default();
                         self.g.borrow_mut().return_relationship_id(rel_id);
-                        self.deleted_relationships
-                            .borrow_mut()
-                            .insert(
-                                rel_id,
-                                DeletedRelationship::new(src, dest, type_name, attrs),
-                            );
+                        self.deleted_relationships.borrow_mut().insert(
+                            rel_id,
+                            DeletedRelationship::new(src, dest, type_name, attrs),
+                        );
                     }
                     self.pending.borrow_mut().deleted_node(id);
                 }
@@ -331,8 +329,10 @@ impl Runtime<'_> {
                     pending.update_relationship_attrs(rel_id, &mut actual);
 
                     pending.deleted_relationship(rel_id);
-                    deleted_rels
-                        .insert(rel_id, DeletedRelationship::new(src, dst, type_name, actual));
+                    deleted_rels.insert(
+                        rel_id,
+                        DeletedRelationship::new(src, dst, type_name, actual),
+                    );
                 }
             }
         }
@@ -377,17 +377,10 @@ impl Runtime<'_> {
                         let type_name = self.get_relationship_type(rel_id).unwrap();
                         let attrs = self.get_relationship_attrs(rel_id);
                         let (src_node, dest_node) = (src, dest);
-                        self.deleted_relationships
-                            .borrow_mut()
-                            .insert(
-                                rel_id,
-                                DeletedRelationship::new(
-                                    src_node,
-                                    dest_node,
-                                    type_name,
-                                    attrs,
-                                ),
-                            );
+                        self.deleted_relationships.borrow_mut().insert(
+                            rel_id,
+                            DeletedRelationship::new(src_node, dest_node, type_name, attrs),
+                        );
                     }
                     // Cascade-delete pending-created relationships incident on this node
                     let pending_rels = self
@@ -397,12 +390,10 @@ impl Runtime<'_> {
                     for (rel_id, src, dest, type_name, attrs) in pending_rels {
                         let attrs = attrs.unwrap_or_default();
                         self.g.borrow_mut().return_relationship_id(rel_id);
-                        self.deleted_relationships
-                            .borrow_mut()
-                            .insert(
-                                rel_id,
-                                DeletedRelationship::new(src, dest, type_name, attrs),
-                            );
+                        self.deleted_relationships.borrow_mut().insert(
+                            rel_id,
+                            DeletedRelationship::new(src, dest, type_name, attrs),
+                        );
                     }
                     // Mark as implicit — edge cleanup deferred to commit time
                     self.pending.borrow_mut().deleted_node(id);
