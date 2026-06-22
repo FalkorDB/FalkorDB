@@ -78,7 +78,7 @@ fn format_value_to_string(
             let _ = write!(out, "({})", u64::from(*id));
         }
         Value::Relationship(rel) => {
-            let _ = write!(out, "[{}]", u64::from(rel.0));
+            let _ = write!(out, "[{}]", u64::from(*rel));
         }
         Value::VecF32(vec) => {
             out.push('<');
@@ -239,17 +239,17 @@ pub fn reply_compact_value(
             }
         }
         Value::Relationship(rel) => {
-            let (rel_id, rel_src, rel_dst) = (&rel.0, &rel.1, &rel.2);
+            let (rel_src, rel_dst) = runtime.get_relationship_endpoints(*rel);
             raw::reply_with_long_long(ctx.ctx, 7);
             raw::reply_with_array(ctx.ctx, 5);
-            raw::reply_with_long_long(ctx.ctx, u64::from(*rel_id) as _);
+            raw::reply_with_long_long(ctx.ctx, u64::from(*rel) as _);
             let dr = runtime.deleted_relationships.borrow();
-            if let Some(x) = dr.get(rel_id) {
+            if let Some(x) = dr.get(rel) {
                 let bg = runtime.g.borrow();
                 let type_id = bg.get_type_id(&x.type_name).unwrap();
                 raw::reply_with_long_long(ctx.ctx, usize::from(type_id) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(*rel_src) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(*rel_dst) as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(rel_src) as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(rel_dst) as _);
                 raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
                 for (key, value) in x.attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 3);
@@ -262,11 +262,11 @@ pub fn reply_compact_value(
                 let bg = runtime.g.borrow();
                 raw::reply_with_long_long(
                     ctx.ctx,
-                    usize::from(bg.get_relationship_type_id(*rel_id)) as _,
+                    usize::from(bg.get_relationship_type_id(*rel)) as _,
                 );
-                raw::reply_with_long_long(ctx.ctx, u64::from(*rel_src) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(*rel_dst) as _);
-                let attrs = bg.get_relationship_all_attrs_by_id(*rel_id);
+                raw::reply_with_long_long(ctx.ctx, u64::from(rel_src) as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(rel_dst) as _);
+                let attrs = bg.get_relationship_all_attrs_by_id(*rel);
                 raw::reply_with_array(ctx.ctx, attrs.len() as _);
                 for (key, value) in attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 3);
@@ -454,23 +454,23 @@ pub fn reply_verbose_value(
         Value::Relationship(rel) => {
             // [ ["id",id], ["type",name], ["src_node",s], ["dest_node",d],
             //   ["properties", [[name,value]…]] ]
-            let (rel_id, rel_src, rel_dst) = (&rel.0, &rel.1, &rel.2);
+            let (rel_src, rel_dst) = runtime.get_relationship_endpoints(*rel);
             raw::reply_with_array(ctx.ctx, 5);
 
             raw::reply_with_array(ctx.ctx, 2);
             reply_with_str(ctx, "id");
-            raw::reply_with_long_long(ctx.ctx, u64::from(*rel_id) as _);
+            raw::reply_with_long_long(ctx.ctx, u64::from(*rel) as _);
 
             let bg = runtime.g.borrow();
             let dr = runtime.deleted_relationships.borrow();
             let (type_name, attrs_iter): (Arc<String>, Vec<(Arc<String>, Value)>) =
-                dr.get(rel_id).map_or_else(
+                dr.get(rel).map_or_else(
                     || {
-                        let type_id = bg.get_relationship_type_id(*rel_id);
+                        let type_id = bg.get_relationship_type_id(*rel);
                         let name = bg
                             .get_type(type_id)
                             .unwrap_or_else(|| Arc::new(String::new()));
-                        let attrs = bg.get_relationship_all_attrs(*rel_id);
+                        let attrs = bg.get_relationship_all_attrs(*rel);
                         (name, attrs)
                     },
                     |x| {
@@ -490,11 +490,11 @@ pub fn reply_verbose_value(
 
             raw::reply_with_array(ctx.ctx, 2);
             reply_with_str(ctx, "src_node");
-            raw::reply_with_long_long(ctx.ctx, u64::from(*rel_src) as _);
+            raw::reply_with_long_long(ctx.ctx, u64::from(rel_src) as _);
 
             raw::reply_with_array(ctx.ctx, 2);
             reply_with_str(ctx, "dest_node");
-            raw::reply_with_long_long(ctx.ctx, u64::from(*rel_dst) as _);
+            raw::reply_with_long_long(ctx.ctx, u64::from(rel_dst) as _);
 
             raw::reply_with_array(ctx.ctx, 2);
             reply_with_str(ctx, "properties");

@@ -124,8 +124,9 @@ impl<'a> Iterator for PathBuilderOp<'a> {
                                                             None
                                                         }
                                                     });
-                                                let next =
-                                                    if cur == Some(rel.1) { rel.2 } else { rel.1 };
+                                                let (src, dst) =
+                                                    self.runtime.get_relationship_endpoints(*rel);
+                                                let next = if cur == Some(src) { dst } else { src };
                                                 elems.push(Value::Node(next));
                                             }
                                             Value::Node(_) => {
@@ -156,8 +157,9 @@ impl<'a> Iterator for PathBuilderOp<'a> {
                                     });
                                     elems.push(edge.clone());
                                     if let Value::Relationship(rel) = edge {
-                                        let next =
-                                            if prev_id == Some(rel.1) { rel.2 } else { rel.1 };
+                                        let (src, dst) =
+                                            self.runtime.get_relationship_endpoints(*rel);
+                                        let next = if prev_id == Some(src) { dst } else { src };
                                         elems.push(Value::Node(next));
                                     }
                                 }

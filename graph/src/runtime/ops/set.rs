@@ -249,7 +249,7 @@ impl Runtime<'_> {
                                     }
                                     Value::Relationship(rel) => {
                                         let g = self.g.borrow();
-                                        let attrs = self.get_relationship_attrs(rel.0);
+                                        let attrs = self.get_relationship_attrs(rel);
                                         if *replace {
                                             for key in g.get_node_attrs(id) {
                                                 self.pending.borrow_mut().set_node_attribute(
@@ -278,27 +278,19 @@ impl Runtime<'_> {
                         }
                         Value::Relationship(target_rel) => {
                             if !skip_delete_checks
-                                && ((self.g.borrow().is_relationship_deleted(target_rel.0)
-                                    && !self
-                                        .pending
-                                        .borrow()
-                                        .is_relationship_created(target_rel.0))
-                                    || self.pending.borrow().is_relationship_deleted(
-                                        target_rel.0,
-                                        target_rel.1,
-                                        target_rel.2,
-                                    ))
+                                && ((self.g.borrow().is_relationship_deleted(target_rel)
+                                    && !self.pending.borrow().is_relationship_created(target_rel))
+                                    || self.pending.borrow().is_relationship_deleted(target_rel))
                             {
                                 continue;
                             }
                             if let Some(attr) = attr {
                                 let existing = if skip_delete_checks {
                                     self.get_relationship_attribute_no_delete_check(
-                                        target_rel.0,
-                                        attr,
+                                        target_rel, attr,
                                     )
                                 } else {
-                                    self.get_relationship_attribute(target_rel.0, attr)
+                                    self.get_relationship_attribute(target_rel, attr)
                                 };
                                 if let Some(v) = existing
                                     && v == run_expr
@@ -307,7 +299,7 @@ impl Runtime<'_> {
                                 }
 
                                 self.pending.borrow_mut().set_relationship_attribute(
-                                    target_rel.0,
+                                    target_rel,
                                     attr.clone(),
                                     run_expr,
                                 )?;
@@ -316,11 +308,11 @@ impl Runtime<'_> {
                                     Value::Map(map) => {
                                         let g = self.g.borrow();
                                         if *replace {
-                                            for key in g.get_relationship_attrs(target_rel.0) {
+                                            for key in g.get_relationship_attrs(target_rel) {
                                                 self.pending
                                                     .borrow_mut()
                                                     .set_relationship_attribute(
-                                                        target_rel.0,
+                                                        target_rel,
                                                         key,
                                                         Value::Null,
                                                     )?;
@@ -329,11 +321,10 @@ impl Runtime<'_> {
                                         for (key, value) in map.iter() {
                                             let existing = if skip_delete_checks {
                                                 self.get_relationship_attribute_no_delete_check(
-                                                    target_rel.0,
-                                                    key,
+                                                    target_rel, key,
                                                 )
                                             } else {
-                                                self.get_relationship_attribute(target_rel.0, key)
+                                                self.get_relationship_attribute(target_rel, key)
                                             };
                                             if let Some(v) = existing
                                                 && v == *value
@@ -341,7 +332,7 @@ impl Runtime<'_> {
                                                 continue;
                                             }
                                             self.pending.borrow_mut().set_relationship_attribute(
-                                                target_rel.0,
+                                                target_rel,
                                                 key.clone(),
                                                 value.clone(),
                                             )?;
@@ -351,11 +342,11 @@ impl Runtime<'_> {
                                         let g = self.g.borrow();
                                         let attrs = self.get_node_attrs(sid);
                                         if *replace {
-                                            for key in g.get_relationship_attrs(target_rel.0) {
+                                            for key in g.get_relationship_attrs(target_rel) {
                                                 self.pending
                                                     .borrow_mut()
                                                     .set_relationship_attribute(
-                                                        target_rel.0,
+                                                        target_rel,
                                                         key,
                                                         Value::Null,
                                                     )?;
@@ -363,30 +354,28 @@ impl Runtime<'_> {
                                         }
                                         for (key, value) in attrs {
                                             if let Some(v) =
-                                                self.get_relationship_attribute(target_rel.0, &key)
+                                                self.get_relationship_attribute(target_rel, &key)
                                                 && v == value
                                             {
                                                 continue;
                                             }
                                             self.pending.borrow_mut().set_relationship_attribute(
-                                                target_rel.0,
-                                                key,
-                                                value,
+                                                target_rel, key, value,
                                             )?;
                                         }
                                     }
                                     Value::Relationship(source_rel) => {
-                                        if source_rel.0 == target_rel.0 {
+                                        if source_rel == target_rel {
                                             continue;
                                         }
                                         let g = self.g.borrow();
-                                        let attrs = self.get_relationship_attrs(source_rel.0);
+                                        let attrs = self.get_relationship_attrs(source_rel);
                                         if *replace {
-                                            for key in g.get_relationship_attrs(target_rel.0) {
+                                            for key in g.get_relationship_attrs(target_rel) {
                                                 self.pending
                                                     .borrow_mut()
                                                     .set_relationship_attribute(
-                                                        target_rel.0,
+                                                        target_rel,
                                                         key,
                                                         Value::Null,
                                                     )?;
@@ -394,15 +383,13 @@ impl Runtime<'_> {
                                         }
                                         for (key, value) in attrs {
                                             if let Some(v) =
-                                                self.get_relationship_attribute(target_rel.0, &key)
+                                                self.get_relationship_attribute(target_rel, &key)
                                                 && v == value
                                             {
                                                 continue;
                                             }
                                             self.pending.borrow_mut().set_relationship_attribute(
-                                                target_rel.0,
-                                                key,
-                                                value,
+                                                target_rel, key, value,
                                             )?;
                                         }
                                     }

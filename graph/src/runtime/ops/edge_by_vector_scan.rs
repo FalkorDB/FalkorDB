@@ -76,12 +76,9 @@ impl<'a> EdgeByVectorScanOp<'a> {
             let Some((env, iter)) = self.pending.front_mut() else {
                 break;
             };
-            if let Some((src, dst, edge_id, s)) = iter.next() {
+            if let Some((_src, _dst, edge_id, s)) = iter.next() {
                 let mut row = env.clone();
-                row.insert(
-                    self.edge,
-                    Value::Relationship(Box::new((edge_id, src, dst))),
-                );
+                row.insert(self.edge, Value::Relationship(edge_id));
                 if let Some(score) = self.score {
                     row.insert(score, Value::Float(s));
                 }

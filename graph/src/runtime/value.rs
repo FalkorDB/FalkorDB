@@ -77,6 +77,8 @@ impl DeletedNode {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct DeletedRelationship {
+    pub src: NodeId,
+    pub dst: NodeId,
     pub type_name: Arc<String>,
     pub attrs: OrderMap<Arc<String>, Value>,
 }
@@ -84,10 +86,17 @@ pub struct DeletedRelationship {
 impl DeletedRelationship {
     #[must_use]
     pub const fn new(
+        src: NodeId,
+        dst: NodeId,
         type_name: Arc<String>,
         attrs: OrderMap<Arc<String>, Value>,
     ) -> Self {
-        Self { type_name, attrs }
+        Self {
+            src,
+            dst,
+            type_name,
+            attrs,
+        }
     }
 }
 
@@ -188,7 +197,7 @@ pub enum Value {
     /// Reference to a graph node (by ID)
     Node(NodeId),
     /// Reference to a relationship: (edge_id, source_node, target_node)
-    Relationship(Box<(RelationshipId, NodeId, NodeId)>),
+    Relationship(RelationshipId),
     /// A path through the graph (alternating nodes and relationships)
     Path(Arc<ThinVec<Self>>),
     /// Float32 vector (for vector similarity operations)
@@ -769,7 +778,7 @@ impl Hash for Value {
             }
             Self::Relationship(rel) => {
                 7.hash(state);
-                rel.0.hash(state);
+                rel.hash(state);
             }
             Self::Path(x) => {
                 8.hash(state);
@@ -1127,7 +1136,7 @@ impl CompareValue for Value {
             (Self::Map(a), Self::Map(b)) => Self::compare_map(a, b),
             (Self::Node(a), Self::Node(b)) => (a.cmp(b), DisjointOrNull::None),
             (Self::Relationship(rel_a), Self::Relationship(rel_b)) => {
-                (rel_a.0.cmp(&rel_b.0), DisjointOrNull::None)
+                (rel_a.cmp(rel_b), DisjointOrNull::None)
             }
             (Self::Point(a), Self::Point(b)) => match a.longitude.partial_cmp(&b.longitude) {
                 Some(Ordering::Equal) => a
@@ -1415,10 +1424,10 @@ impl DisplayJson for Value {
             }
             Self::Node(id) => write_node_json(f, runtime, *id, true),
             Self::Relationship(rel) => {
-                let rel_id_u64 = u64::from(rel.0);
-                let properties = runtime.get_relationship_attrs(rel.0);
+                let rel_id_u64 = u64::from(*rel);
+                let properties = runtime.get_relationship_attrs(*rel);
                 let type_name = runtime
-                    .get_relationship_type(rel.0)
+                    .get_relationship_type(*rel)
                     .unwrap_or_else(|| Arc::new(String::new()));
 
                 write!(
@@ -1438,9 +1447,10 @@ impl DisplayJson for Value {
                 }
 
                 write!(f, r#"}},"start":"#)?;
-                write_node_json(f, runtime, rel.1, false)?;
+                let (src, dst) = runtime.get_relationship_endpoints(*rel);
+                write_node_json(f, runtime, src, false)?;
                 write!(f, r#","end":"#)?;
-                write_node_json(f, runtime, rel.2, false)?;
+                write_node_json(f, runtime, dst, false)?;
                 write!(f, "}}")
             }
             Self::Path(values) => {

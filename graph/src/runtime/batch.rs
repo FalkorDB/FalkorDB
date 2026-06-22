@@ -160,7 +160,7 @@ pub fn classify_stored_column(values: Vec<Value>) -> Column {
         let triples = values
             .into_iter()
             .map(|v| match v {
-                Value::Relationship(rel) => (rel.0, rel.1, rel.2),
+                Value::Relationship(rel) => rel,
                 _ => unreachable!("guarded by all() above"),
             })
             .collect();
@@ -245,7 +245,7 @@ pub enum Column {
     /// All values are node IDs (from scan/traverse operators).
     NodeIds(Vec<NodeId>),
     /// All values are relationship triples: (rel_id, src_node, dst_node).
-    RelTriples(Vec<(RelationshipId, NodeId, NodeId)>),
+    RelTriples(Vec<RelationshipId>),
     /// All values are 64-bit signed integers.
     Ints(Vec<i64>),
     /// All values are 64-bit floating point numbers.
@@ -265,10 +265,7 @@ impl Column {
     ) -> Value {
         match self {
             Self::NodeIds(ids) => Value::Node(ids[row]),
-            Self::RelTriples(triples) => {
-                let (rel_id, src, dst) = triples[row];
-                Value::Relationship(Box::new((rel_id, src, dst)))
-            }
+            Self::RelTriples(triples) => Value::Relationship(triples[row]),
             Self::Ints(vals) => Value::Int(vals[row]),
             Self::Floats(vals) => Value::Float(vals[row]),
             Self::Values(vals) => vals[row].clone(),

@@ -109,13 +109,13 @@ pub fn value_to_js<'js>(
         Value::Node(node_id) => {
             crate::udf::js_classes::create_js_node(ctx, (*node_id).into(), graph)
         }
-        Value::Relationship(rel_box) => {
-            let (rel_id, src_id, dst_id) = rel_box.as_ref();
+        Value::Relationship(rel_id) => {
+            let (src, dst) = graph.borrow().get_relationship_endpoints(*rel_id);
             crate::udf::js_classes::create_js_edge(
                 ctx,
                 (*rel_id).into(),
-                (*src_id).into(),
-                (*dst_id).into(),
+                src.into(),
+                dst.into(),
                 graph,
             )
         }
@@ -250,13 +250,7 @@ pub fn js_to_value(val: JsValue<'_>) -> Result<Value, String> {
                 }
                 "edge" => {
                     let id: u64 = obj.get("__falkor_edge_id").map_err(|e| format!("{e}"))?;
-                    let src: u64 = obj.get("__falkor_edge_src").map_err(|e| format!("{e}"))?;
-                    let dst: u64 = obj.get("__falkor_edge_dst").map_err(|e| format!("{e}"))?;
-                    return Ok(Value::Relationship(Box::new((
-                        id.into(),
-                        src.into(),
-                        dst.into(),
-                    ))));
+                    return Ok(Value::Relationship(id.into()));
                 }
                 "path" => {
                     let nodes_arr: Array = obj.get("nodes").map_err(|e| format!("{e}"))?;

@@ -291,15 +291,10 @@ pub fn create_js_path<'js>(
                     .map_err(|e| format!("JS set error: {e}"))?;
                 node_idx += 1;
             }
-            Value::Relationship(rel_box) => {
-                let (rel_id, src_id, dst_id) = rel_box.as_ref();
-                let js_edge = create_js_edge(
-                    ctx,
-                    (*rel_id).into(),
-                    (*src_id).into(),
-                    (*dst_id).into(),
-                    graph,
-                )?;
+            Value::Relationship(rel_id) => {
+                let (src, dst) = graph.borrow().get_relationship_endpoints(*rel_id);
+                let js_edge =
+                    create_js_edge(ctx, (*rel_id).into(), u64::from(src), u64::from(dst), graph)?;
                 rels_arr
                     .set(rel_idx, js_edge)
                     .map_err(|e| format!("JS set error: {e}"))?;

@@ -179,7 +179,7 @@ impl<'a> ExpandIntoOp<'a> {
                     it.seek(key, key);
                     for (_, raw_id) in &mut *it {
                         let id = RelationshipId::from(raw_id);
-                        if !pending.is_relationship_deleted(id, *edge_src, *edge_dst)
+                        if !pending.is_relationship_deleted(id)
                             && !super::edge_already_used(env, id, rp.alias.id, self.sibling_edges)
                         {
                             found_id = Some(id);
@@ -189,10 +189,7 @@ impl<'a> ExpandIntoOp<'a> {
                 }
                 if let Some(id) = found_id {
                     let mut row = env.clone();
-                    row.insert(
-                        &rp.alias,
-                        Value::Relationship(Box::new((id, *edge_src, *edge_dst))),
-                    );
+                    row.insert(&rp.alias, Value::Relationship(id));
                     row.insert(&rp.from.alias, Value::Node(src));
                     row.insert(&rp.to.alias, Value::Node(dst));
                     out.push(row);
@@ -204,7 +201,7 @@ impl<'a> ExpandIntoOp<'a> {
                 it.seek(key, key);
                 for (_, raw_id) in &mut *it {
                     let id = RelationshipId::from(raw_id);
-                    if pending.is_relationship_deleted(id, *edge_src, *edge_dst) {
+                    if pending.is_relationship_deleted(id) {
                         continue;
                     }
                     // Relationship uniqueness: skip edges already bound to other
@@ -232,10 +229,7 @@ impl<'a> ExpandIntoOp<'a> {
                         }
                     }
                     let mut row = env.clone();
-                    row.insert(
-                        &rp.alias,
-                        Value::Relationship(Box::new((id, *edge_src, *edge_dst))),
-                    );
+                    row.insert(&rp.alias, Value::Relationship(id));
                     row.insert(&rp.from.alias, Value::Node(src));
                     row.insert(&rp.to.alias, Value::Node(dst));
                     out.push(row);
