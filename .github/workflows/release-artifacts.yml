@@ -1,0 +1,148 @@
+# Publish the shared-library (.so) artifacts to a GitHub Release.
+#
+# BUILD (fan-out) and PUBLISH (fan-in) are separated so a partial matrix failure
+# never leaves a half-populated public Release: the per-arch build cells only
+# produce workflow artifacts, and a single publish job downloads them, asserts
+# the FULL expected set is present, generates SHA256SUMS, then uploads.
+#
+# Triggers:
+#   - release: published   → build at the release commit, upload to that release.
+#   - workflow_dispatch    → repair/escape hatch: rebuild + (re)upload assets for
+#     an existing tag at a given commit (uses --clobber so re-runs are idempotent).
+#
+# Keep the cell list in sync with build-artifacts.yml. New platforms (see #608)
+# are added in both places.
+
+name: Release artifacts
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to build + upload assets for (e.g. v0.4.0)"
+        required: true
+      commit_sha:
+        description: "Commit SHA to build"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-artifacts-${{ github.event.release.tag_name || github.event.inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      cells: ${{ steps.derive.outputs.cells }}
+      commit_sha: ${{ steps.derive.outputs.commit_sha }}
+      tag: ${{ steps.derive.outputs.tag }}
+      suffixes: ${{ steps.derive.outputs.suffixes }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Check out the RELEASE TAG (release event) or the requested commit
+          # (dispatch). The resolved commit is then read back via `git rev-parse`
+          # below — `github.sha` is NOT guaranteed to be the tagged commit for a
+          # release event, so we never rely on it.
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.commit_sha || github.event.release.tag_name }}
+          persist-credentials: false
+
+      - name: Derive tag, commit SHA, cells; validate Cargo.toml version
+        id: derive
+        env:
+          EVENT: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            TAG="$INPUT_TAG"
+          else
+            TAG="$RELEASE_TAG"
+          fi
+          # Resolve the actual commit from the checked-out ref (the tag/commit
+          # above), never from github.sha.
+          SHA="$(git rev-parse HEAD)"
+          # Validate Cargo.toml version matches the (v-stripped) tag — fail loudly
+          # so a mis-tagged release never ships mismatched binaries.
+          SEMVER="${TAG#v}"
+          CARGO_VERSION=$(cargo metadata --no-deps --format-version=1 \
+            | jq -r '.packages[] | select(.name=="falkordb-rs") | .version')
+          if [ "$CARGO_VERSION" != "$SEMVER" ]; then
+            echo "::error::Cargo.toml version ($CARGO_VERSION) does not match tag ($TAG)"; exit 1
+          fi
+          ALL='[
+            {"suffix":"x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-22"},
+            {"suffix":"arm64v8","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-22"},
+            {"suffix":"rhel9-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.rhel9","build_image":"","cxx":"clang++"},
+            {"suffix":"amazonlinux2023-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.amazonlinux2023","build_image":"","cxx":"clang++-19"}
+          ]'
+          CELLS=$(printf '%s' "$ALL" | jq -c .)
+          SUFFIXES=$(printf '%s' "$ALL" | jq -c '[ .[].suffix ]')
+          {
+            echo "tag=$TAG"
+            echo "commit_sha=$SHA"
+            echo "cells=$CELLS"
+            echo "suffixes=$SUFFIXES"
+          } >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG sha=$SHA cells=$CELLS"
+
+  build:
+    needs: prepare
+    uses: ./.github/workflows/_build-artifacts.yml
+    permissions:
+      contents: read
+      packages: read
+    with:
+      cells: ${{ needs.prepare.outputs.cells }}
+      commit_sha: ${{ needs.prepare.outputs.commit_sha }}
+    # No `secrets: inherit` — the reusable build only needs the auto GITHUB_TOKEN.
+
+  publish:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: downloaded
+
+      - name: Assemble + assert complete set + checksums
+        id: assemble
+        env:
+          SUFFIXES: ${{ needs.prepare.outputs.suffixes }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          # download-artifact lays each artifact down under downloaded/<name>/...
+          find downloaded -type f \( -name 'falkordb-*.so' -o -name 'falkordb-*.so.sha256' \) \
+            -exec cp -t dist {} +
+          # Completeness gate: every expected suffix must be present, else FAIL
+          # (never publish a partial release).
+          MISSING=""
+          for s in $(printf '%s' "$SUFFIXES" | jq -r '.[]'); do
+            if [ ! -f "dist/falkordb-${s}.so" ]; then MISSING="$MISSING falkordb-${s}.so"; fi
+          done
+          if [ -n "$MISSING" ]; then
+            echo "::error::missing expected release assets:$MISSING"; exit 1
+          fi
+          ( cd dist && sha256sum falkordb-*.so > SHA256SUMS )
+          echo "Publishing:"; ls -1 dist
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" \
+            dist/falkordb-*.so dist/falkordb-*.so.sha256 dist/SHA256SUMS \
+            --clobber

@@ -1,0 +1,100 @@
+# Self-contained Amazon Linux 2023 (glibc 2.34) builder for the FalkorDB shared
+# library. Unlike build/runtime/Dockerfile (which consumes the prebuilt Debian
+# `falkordb-build` toolchain image), this image installs its own toolchain and
+# builds GraphBLAS + LAGraph + libomp + RediSearch from source via the SAME
+# scripts the Debian toolchain uses — so the produced .so has a glibc-2.34
+# baseline and the single-.so self-containment contract still holds.
+#
+# Exported via:  docker build --target artifact --output type=local,dest=<dir>
+# Package set mirrors the C repo's build/docker/builder/Dockerfile.amazonlinux2023, minus
+# the C-only peg/libcypher-parser bits the Rust port doesn't use.
+
+ARG CXX=clang++-19
+# Consumed (unused) so the shared _build-artifacts.yml can pass --build-arg
+# BUILD_IMAGE uniformly without a "not consumed" warning; self-contained OSes
+# don't use a toolchain base image.
+ARG BUILD_IMAGE
+
+# ---------------------------------------------------------------------------
+# Toolchain + dependency build.
+# ---------------------------------------------------------------------------
+FROM amazonlinux:2023 AS builder
+
+ENV CC=clang-19
+ENV CXX=clang++-19
+# build.rs picks llvm-objcopy/objdump by bare name then -22/-21/-20; AL2023's
+# clang19 tools are versioned -19, so point at them explicitly. LIBCLANG_PATH
+# lets the redisearch_rs bindgen find clang19's libclang.
+ENV LLVM_OBJCOPY=llvm-objcopy-19
+ENV LLVM_OBJDUMP=llvm-objdump-19
+ENV LIBCLANG_PATH=/usr/lib64/llvm19/lib
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# AL2023's default clang is 15 — too old for RediSearch's C++20. Use the
+# versioned clang19 packages instead (clang-19 / clang++-19 land on PATH).
+RUN dnf update -y && \
+    dnf install -y \
+      git wget tar gzip xz which diffutils file \
+      make automake autoconf libtool perl \
+      gcc gcc-c++ \
+      clang19 clang19-devel llvm19 \
+      openssl-devel zlib-devel \
+      python3.11 python3.11-pip python3.11-devel && \
+    dnf clean all && \
+    alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 && \
+    alternatives --auto python3
+
+# Pin cmake to the same version the C builders use (UBI9's 3.26 also works for
+# GraphBLAS, but keep one version across every OS for reproducibility).
+RUN pip3.11 install --no-cache-dir 'cmake==3.31.6'
+
+# Rust toolchain (rustup) — needed for the redisearch_rs crate and the cdylib.
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+
+WORKDIR /data
+
+# libomp.a (static) matched to the system clang version, installed to /opt/libomp
+# so graph/build.rs links it statically (single-.so OpenMP contract).
+COPY build/libomp.sh /tmp/libomp.sh
+RUN LLVMORG_VERSION=$(clang-19 --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1) && \
+    test -n "${LLVMORG_VERSION}" && \
+    /tmp/libomp.sh "${LLVMORG_VERSION}" && \
+    rm -f /tmp/libomp.sh
+
+# GraphBLAS + LAGraph (static) → /usr/local/lib/libgraphblas.a + /data/lagraph_lib
+COPY graphblas.sh /data/graphblas.sh
+COPY build/graphblas /data/build/graphblas
+RUN LAGRAPH_INSTALL_DIR=/data/lagraph_lib /data/graphblas.sh && \
+    rm -rf /data/graphblas.sh /data/build
+
+# RediSearch (static) → /data/redisearch/RediSearch/bin
+COPY redisearch.sh /data/redisearch.sh
+RUN bash /data/redisearch.sh && \
+    rm -f /data/redisearch.sh
+
+# Build the cdylib from the repo source. Deps resolve via graph/build.rs's
+# absolute fallbacks (/data/lagraph_lib, /data/redisearch/RediSearch/bin),
+# GRAPHBLAS_LIB_DIR (/usr/local/lib default) and LIBOMP_PREFIX (/opt/libomp).
+ARG CXX
+WORKDIR /src
+COPY . .
+RUN GBDIR="$(dirname "$(find /usr/local /usr /opt -name libgraphblas.a 2>/dev/null | head -1)")" && \
+    test -n "$GBDIR" || { echo "FAIL: libgraphblas.a not found"; exit 1; } && \
+    echo "Using GRAPHBLAS_LIB_DIR=$GBDIR" && \
+    CXX="$CXX" LIBOMP_PREFIX=/opt/libomp GRAPHBLAS_LIB_DIR="$GBDIR" cargo build --release && \
+    mkdir -p /out && cp target/release/libfalkordb.so /out/falkordb.so && \
+    echo "=== verify single-.so contract on libfalkordb.so ===" && \
+    deps="$(ldd /out/falkordb.so | awk '{print $1}' | sort -u)" && \
+    echo "$deps" && \
+    if echo "$deps" | grep -E '^(libomp|libgomp|libgraphblas|liblagraph|liblagraphx|libredisearch|libVectorSimilarity)'; then \
+        echo "FAIL: libfalkordb.so has forbidden dynamic dependency"; exit 1; \
+    fi && \
+    undef="$(nm -D --undefined-only /out/falkordb.so 2>/dev/null | grep -E 'omp_|GOMP_|__kmpc_' || true)" && \
+    if [ -n "$undef" ]; then echo "FAIL: OpenMP symbols undefined in .so:"; echo "$undef"; exit 1; fi && \
+    echo "OK: libfalkordb.so is self-contained ($(du -h /out/falkordb.so | cut -f1))"
+
+# ---------------------------------------------------------------------------
+# Artifact export stage — yields ONLY the built falkordb.so.
+# ---------------------------------------------------------------------------
+FROM scratch AS artifact
+COPY --from=builder /out/falkordb.so /falkordb.so

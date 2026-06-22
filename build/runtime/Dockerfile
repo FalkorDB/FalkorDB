@@ -14,10 +14,15 @@ COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
+# CXX defaults to the Debian toolchain's clang++-22. Per-OS toolchain images
+# (rhel9/al2023/rhel8/alpine) reuse this exact builder stage and override the
+# compiler via `--build-arg CXX=<their clang++>` — keeping one build path /
+# one self-containment contract for every platform (see build/Dockerfile.<os>).
+ARG CXX=clang++-22
 COPY --from=planner /src/recipe.json recipe.json
-RUN CXX=clang++-22 cargo chef cook --release --recipe-path recipe.json
+RUN CXX="$CXX" cargo chef cook --release --recipe-path recipe.json
 COPY . .
-RUN CXX=clang++-22 cargo build --release && \
+RUN CXX="$CXX" cargo build --release && \
     mkdir -p /out && cp target/release/libfalkordb.so /out/falkordb.so && \
     echo "=== verify single-.so contract on libfalkordb.so ===" && \
     deps="$(ldd /out/falkordb.so | awk '{print $1}' | sort -u)" && \
@@ -28,6 +33,22 @@ RUN CXX=clang++-22 cargo build --release && \
     undef="$(nm -D --undefined-only /out/falkordb.so 2>/dev/null | grep -E 'omp_|GOMP_|__kmpc_' || true)" && \
     if [ -n "$undef" ]; then echo "FAIL: OpenMP symbols undefined in .so:"; echo "$undef"; exit 1; fi && \
     echo "OK: libfalkordb.so is self-contained ($(du -h /out/falkordb.so | cut -f1))"
+
+# ---------------------------------------------------------------------------
+# Artifact export stage — yields ONLY the built falkordb.so so CI can extract
+# the exact .so the runtime image ships via:
+#   docker build --target artifact --output type=local,dest=<dir> ...
+# This is the single source of truth for the released shared library: it reuses
+# the `builder` stage above (same cargo flags, same self-containment contract),
+# so the released .so == the .so baked into the runtime image.
+#
+# FROM scratch keeps the --output tree clean (just the .so, no userland). It is
+# placed AFTER `builder` and BEFORE the runtime stages so (a) it never pulls in
+# the Debian runtime layers and (b) it is NOT the default build target — the
+# default remains the final `full` stage at the bottom of this file.
+# ---------------------------------------------------------------------------
+FROM scratch AS artifact
+COPY --from=builder /out/falkordb.so /falkordb.so
 
 # ---------------------------------------------------------------------------
 # Redis builder stage — debian:trixie-slim + minimal build deps.
