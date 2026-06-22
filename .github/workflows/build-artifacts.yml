@@ -12,9 +12,9 @@
 #     `verify-artifacts` label: the build runs at the PR head and re-runs on each
 #     push while the label is present. Remove + re-add the label to force a re-run.
 #
-# Additional platforms (alpine/musl, rhel8, rhel9, amazonlinux2023) land in the
-# cell list below as their per-OS toolchain images are added — see issue #608.
-# Native macOS build is tracked separately in PR #551.
+# Additional Linux platforms (alpine/musl, rhel8, rhel9, amazonlinux2023) land in
+# the cell list below as their per-OS toolchain images are added — see issue #608.
+# macOS arm64 is built natively (no Docker) via _build-artifacts-macos.yml.
 
 name: Build artifacts (verify)
 
@@ -22,7 +22,7 @@ on:
   workflow_dispatch:
     inputs:
       archs:
-        description: "Comma-separated suffixes to build (e.g. 'x64,arm64v8'), or 'all'"
+        description: "Comma-separated suffixes (e.g. 'x64,arm64v8,macos-arm64v8'), or 'all'"
         required: false
         default: "all"
   pull_request:
@@ -46,6 +46,7 @@ jobs:
     outputs:
       cells: ${{ steps.derive.outputs.cells }}
       commit_sha: ${{ steps.derive.outputs.commit_sha }}
+      macos: ${{ steps.derive.outputs.macos }}
     steps:
       - name: Derive cells + commit SHA
         id: derive
@@ -56,31 +57,38 @@ jobs:
           GH_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          # Master list of currently-wired cells (Debian/glibc). Keep in sync with
-          # release-artifacts.yml. Add new platforms here as toolchain images land.
+          # Master list of Docker (Linux) cells. Keep in sync with
+          # release-artifacts.yml. macOS is built natively (no Docker) and is
+          # selected via the separate `macos` flag below.
           ALL='[
             {"suffix":"x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest"},
             {"suffix":"arm64v8","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm"}
           ]'
+          MACOS_SUFFIX="macos-arm64v8"
           if [ "$EVENT" = "workflow_dispatch" ] && [ -n "${ARCHS:-}" ] && [ "$ARCHS" != "all" ]; then
             FILTER=$(printf '%s' "$ARCHS" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' | jq -R . | jq -s -c .)
             CELLS=$(printf '%s' "$ALL" | jq -c --argjson f "$FILTER" '[ .[] | select(.suffix as $s | $f | index($s)) ]')
+            MACOS=$(printf '%s' "$FILTER" | jq -r --arg m "$MACOS_SUFFIX" 'if index($m) then "true" else "false" end')
           else
             CELLS=$(printf '%s' "$ALL" | jq -c .)
+            MACOS=true
           fi
-          if [ "$(printf '%s' "$CELLS" | jq 'length')" = "0" ]; then
-            echo "::error::no cells selected for archs='${ARCHS:-}'"; exit 1
+          if [ "$(printf '%s' "$CELLS" | jq 'length')" = "0" ] && [ "$MACOS" != "true" ]; then
+            echo "::error::no platforms selected for archs='${ARCHS:-}'"; exit 1
           fi
           if [ "$EVENT" = "pull_request" ]; then SHA="$PR_SHA"; else SHA="$GH_SHA"; fi
           {
             echo "cells=$CELLS"
             echo "commit_sha=$SHA"
+            echo "macos=$MACOS"
           } >> "$GITHUB_OUTPUT"
           echo "Selected cells: $CELLS"
+          echo "macOS: $MACOS"
           echo "Commit SHA: $SHA"
 
   build:
     needs: prepare
+    if: ${{ needs.prepare.outputs.cells != '[]' }}
     uses: ./.github/workflows/_build-artifacts.yml
     permissions:
       contents: read
@@ -91,3 +99,12 @@ jobs:
     # No `secrets: inherit` — the reusable workflow only needs the auto-provided
     # GITHUB_TOKEN (GHCR read). Keeping custom secrets out of a PR-triggered
     # build that compiles untrusted code is deliberate.
+
+  build-macos:
+    needs: prepare
+    if: ${{ needs.prepare.outputs.macos == 'true' }}
+    uses: ./.github/workflows/_build-artifacts-macos.yml
+    permissions:
+      contents: read
+    with:
+      commit_sha: ${{ needs.prepare.outputs.commit_sha }}
