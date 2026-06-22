@@ -52,25 +52,65 @@ static FT_FilterNode *_convertPropertyMap(
 		 * NULL upward so the caller can surface a proper planning error.
 		 */
 		if(val == NULL) {
-			ErrorCtx_SetError(EMSG_UNKNOWN, "Property map value could not be resolved; outer-scope variable reference in CALL subquery pattern is not supported at plan time");
+			ErrorCtx_SetError(EMSG_UNKNOWN,
+				"Property map value could not be resolved; "
+				"outer-scope variable reference in CALL subquery pattern "
+				"is not supported at plan time");
 			FilterTree_Free(root);
 			return NULL;
 		}
 
 		const char *prop_name = cypher_ast_prop_name_get_value(key);
 
-		// Build equality predicate: entity.prop_name = val
-		AR_ExpNode *lhs = AR_EXP_NewAttributeAccessNode(
-			AR_EXP_NewVariableOperandNode(cypher_ast_identifier_get_name(entity)),
-			prop_name
-		);
+		/* Build equality predicate: entity.prop_name = val
+		 * Each allocation is checked individually; on failure we free any
+		 * partial state, set an error, and return NULL to match the error
+		 * handling pattern above (mirrors Cppcheck findings: nullPointerOutOfMemory,
+		 * memleak on lines 63-69).
+		 */
+		AR_ExpNode *inner = AR_EXP_NewVariableOperandNode(
+			cypher_ast_identifier_get_name(entity));
+		if(inner == NULL) {
+			ErrorCtx_SetError(EMSG_UNKNOWN, "Failed to allocate variable operand node");
+			FilterTree_Free(root);
+			return NULL;
+		}
+
+		AR_ExpNode *lhs = AR_EXP_NewAttributeAccessNode(inner, prop_name);
+		if(lhs == NULL) {
+			AR_EXP_Free(inner);
+			ErrorCtx_SetError(EMSG_UNKNOWN, "Failed to allocate attribute access node");
+			FilterTree_Free(root);
+			return NULL;
+		}
+
 		AR_ExpNode *rhs = AR_EXP_FromASTNode(val);
+		if(rhs == NULL) {
+			AR_EXP_Free(lhs);
+			ErrorCtx_SetError(EMSG_UNKNOWN, "Failed to build RHS expression from AST node");
+			FilterTree_Free(root);
+			return NULL;
+		}
+
 		FT_FilterNode *pred = FilterTree_CreatePredicateFilter(OP_EQUAL, lhs, rhs);
+		if(pred == NULL) {
+			AR_EXP_Free(lhs);
+			AR_EXP_Free(rhs);
+			ErrorCtx_SetError(EMSG_UNKNOWN, "Failed to create predicate filter node");
+			FilterTree_Free(root);
+			return NULL;
+		}
 
 		if(root == NULL) {
 			root = pred;
 		} else {
 			FT_FilterNode *and_node = FilterTree_CreateConditionFilter(OP_AND);
+			if(and_node == NULL) {
+				FilterTree_Free(pred);
+				ErrorCtx_SetError(EMSG_UNKNOWN, "Failed to create AND condition filter node");
+				FilterTree_Free(root);
+				return NULL;
+			}
 			FilterTree_AppendLeftChild(and_node, root);
 			FilterTree_AppendRightChild(and_node, pred);
 			root = and_node;
