@@ -13,6 +13,7 @@
 typedef struct {
 	dict *node_labels;  // Maps alias -> label array
 	int error;          // Flag if validation failed
+	ErrorCtx *error_ctx; // Error context for reporting
 } validation_context_t;
 
 // Forward declaration
@@ -46,14 +47,14 @@ VISITOR_STRATEGY _default_visit(const cypher_astnode_t *n, bool start,
 			const cypher_astnode_t *end_node = cypher_ast_pattern_path_get_end_node(n, i);
 			
 			if (start_node && cypher_astnode_type(start_node) == CYPHER_AST_NODE_PATTERN) {
-				if (_validate_node_pattern(start_node, ctx->node_labels) != 0) {
+				if (_validate_node_pattern(start_node, ctx->node_labels, ctx->error_ctx) != 0) {
 					ctx->error = 1;
 					return VISITOR_BREAK;
 				}
 			}
 			
 			if (end_node && cypher_astnode_type(end_node) == CYPHER_AST_NODE_PATTERN) {
-				if (_validate_node_pattern(end_node, ctx->node_labels) != 0) {
+				if (_validate_node_pattern(end_node, ctx->node_labels, ctx->error_ctx) != 0) {
 					ctx->error = 1;
 					return VISITOR_BREAK;
 				}
@@ -66,7 +67,7 @@ VISITOR_STRATEGY _default_visit(const cypher_astnode_t *n, bool start,
 
 // Validate a single node pattern for conflicting labels
 static int _validate_node_pattern(const cypher_astnode_t *node_pattern,
-                                   dict *node_labels) {
+                                   dict *node_labels, ErrorCtx *error_ctx) {
 	if (!node_pattern) return 0;
 	
 	// Get the node identifier (alias)
@@ -103,6 +104,11 @@ static int _validate_node_pattern(const cypher_astnode_t *node_pattern,
 		
 		if (_labels_conflict(prev_labels, node_pattern) != 0) {
 			// Conflicting labels on same alias
+			if (error_ctx) {
+				ErrorCtx_SetError(error_ctx,
+					"Node alias '%s' used with conflicting labels in pattern",
+					alias);
+			}
 			return 1;
 		}
 	}
@@ -125,44 +131,15 @@ static int _labels_conflict(array stored_labels, const cypher_astnode_t *node) {
 		const cypher_astnode_t *stored_label = stored_labels[i];
 		const cypher_astnode_t *curr_label = cypher_ast_node_pattern_get_label(node, i);
 		
-		if (!stored_label || !curr_label) return 1;
+		if (!curr_label) return 1;
 		
 		const char *stored_name = cypher_ast_label_get_name(stored_label);
 		const char *curr_name = cypher_ast_label_get_name(curr_label);
 		
 		if (!stored_name || !curr_name || strcmp(stored_name, curr_name) != 0) {
-			return 1;  // Labels differ
+			return 1;
 		}
 	}
 	
-	return 0;  // Labels match
-}
-
-// Main validation function for AST
-int AST_Validate(AST *ast) {
-	if (!ast || !ast->root) return 0;
-	
-	if (!AST_ValidationsMappingInit()) return -1;
-	
-	// Create validation context
-	validation_context_t ctx = {
-		.node_labels = dictCreate(&dictTypeHeapStringKey, NULL),
-		.error = 0
-	};
-	
-	if (!ctx.node_labels) return -1;
-	
-	// Create visitor and validate
-	ast_visitor visitor = {
-		.visit = _default_visit,
-		.data = &ctx
-	};
-	
-	int result = ast_visit(ast->root, &visitor);
-	
-	// Cleanup
-	dictRelease(ctx.node_labels);
-	
-	if (ctx.error) return 1;
-	return result;
+	return 0;
 }
