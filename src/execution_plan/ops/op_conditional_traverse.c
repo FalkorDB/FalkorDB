@@ -1,4 +1,4 @@
-# Fix for Issue #636: Crash found in fuzzer
+// Fix for Issue #636: Crash found in fuzzer
 
 // Add null check in CondTraverseConsume to prevent crash on malformed patterns
 static Record CondTraverseConsume(OpBase *opBase) {
