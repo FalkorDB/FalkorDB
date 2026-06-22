@@ -90,47 +90,76 @@ fn read_property(
     data: &[u8],
     idx: &mut usize,
 ) -> Result<Value, String> {
-    if *idx >= data.len() {
-        return Err("unexpected end of bulk data reading property type".to_string());
-    }
-    let type_byte = data[*idx];
-    *idx += 1;
+    // Parse a possibly-nested value without recursion: `BI_ARRAY` elements are
+    // expanded onto an explicit work stack instead of recursive calls, so
+    // arbitrarily deep attacker-supplied `GRAPH.BULKINSERT` data cannot overflow
+    // the call stack (an uncatchable abort) and arrays of any depth are
+    // supported. Each frame holds a partially-built array and how many elements
+    // it still expects.
+    let mut stack: Vec<(thin_vec::ThinVec<Value>, usize)> = Vec::new();
 
-    match type_byte {
-        BI_NULL => Ok(Value::Null),
-        BI_BOOL => {
+    loop {
+        // Decode the next scalar, or open a new array frame and keep reading.
+        let mut value = {
             if *idx >= data.len() {
-                return Err("unexpected end of bulk data reading bool".to_string());
+                return Err("unexpected end of bulk data reading property type".to_string());
             }
-            let val = data[*idx] != 0;
+            let type_byte = data[*idx];
             *idx += 1;
-            Ok(Value::Bool(val))
-        }
-        BI_DOUBLE => {
-            let val = read_f64_ne(data, idx)?;
-            Ok(Value::Float(val))
-        }
-        BI_LONG => {
-            let val = read_i64_ne(data, idx)?;
-            Ok(Value::Int(val))
-        }
-        BI_STRING => {
-            let s = read_cstring(data, idx)?;
-            Ok(Value::String(Arc::new(s.to_string())))
-        }
-        BI_ARRAY => {
-            let len = read_i64_ne(data, idx)?;
-            if len < 0 {
-                return Err(format!("negative array length in bulk data: {len}"));
+
+            match type_byte {
+                BI_NULL => Value::Null,
+                BI_BOOL => {
+                    if *idx >= data.len() {
+                        return Err("unexpected end of bulk data reading bool".to_string());
+                    }
+                    let val = data[*idx] != 0;
+                    *idx += 1;
+                    Value::Bool(val)
+                }
+                BI_DOUBLE => Value::Float(read_f64_ne(data, idx)?),
+                BI_LONG => Value::Int(read_i64_ne(data, idx)?),
+                BI_STRING => Value::String(Arc::new(read_cstring(data, idx)?.to_string())),
+                BI_ARRAY => {
+                    let len = read_i64_ne(data, idx)?;
+                    if len < 0 {
+                        return Err(format!("negative array length in bulk data: {len}"));
+                    }
+                    let len = len as usize;
+                    // Cap the pre-allocation to the bytes that remain: every
+                    // element consumes at least one byte from `data`, so a `len`
+                    // larger than the remaining input is malformed and must not
+                    // drive a huge up-front allocation (memory-exhaustion DoS).
+                    let cap = len.min(data.len().saturating_sub(*idx));
+                    let arr = thin_vec::ThinVec::with_capacity(cap);
+                    if len == 0 {
+                        Value::List(Arc::new(arr))
+                    } else {
+                        stack.push((arr, len));
+                        continue;
+                    }
+                }
+                _ => return Err(format!("unknown bulk property type: {type_byte}")),
             }
-            let len = len as usize;
-            let mut arr = thin_vec::ThinVec::with_capacity(len);
-            for _ in 0..len {
-                arr.push(read_property(data, idx)?);
+        };
+
+        // Attach the finished value to the innermost open array, completing and
+        // bubbling up any array whose element count is now satisfied.
+        loop {
+            match stack.last_mut() {
+                None => return Ok(value),
+                Some((arr, remaining)) => {
+                    arr.push(value);
+                    *remaining -= 1;
+                    if *remaining == 0 {
+                        let (arr, _) = stack.pop().unwrap();
+                        value = Value::List(Arc::new(arr));
+                    } else {
+                        break;
+                    }
+                }
             }
-            Ok(Value::List(Arc::new(arr)))
         }
-        _ => Err(format!("unknown bulk property type: {type_byte}")),
     }
 }
 

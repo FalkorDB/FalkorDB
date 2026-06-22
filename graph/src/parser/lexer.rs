@@ -430,7 +430,7 @@ impl<'a> Lexer<'a> {
                         len += 1;
                         let mut end = false;
                         for ch in chars {
-                            len += 1;
+                            len += ch.len_utf8();
                             if ch == '`' {
                                 end = true;
                                 break;
@@ -772,5 +772,83 @@ impl<'a> Lexer<'a> {
         self.pos = pos;
         let pos = pos + Self::read_spaces(self.str, pos);
         self.cached_current = Self::get_token(self.str, pos);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Collect every token of `input` until `EndOfFile`. Panics propagate, so
+    /// this also acts as a "does not panic" assertion for the lexer.
+    fn lex_all(input: &str) -> Result<Vec<Token>, String> {
+        let mut lexer = Lexer::new(input);
+        let mut tokens = Vec::new();
+        loop {
+            let token = lexer.current()?;
+            if token == Token::EndOfFile {
+                break;
+            }
+            tokens.push(token);
+            lexer.next();
+        }
+        Ok(tokens)
+    }
+
+    #[test]
+    fn backtick_parameter_ascii() {
+        assert_eq!(
+            lex_all("$`abc`").unwrap(),
+            vec![Token::Parameter(String::from("abc"))]
+        );
+    }
+
+    #[test]
+    fn plain_parameter() {
+        assert_eq!(
+            lex_all("$abc").unwrap(),
+            vec![Token::Parameter(String::from("abc"))]
+        );
+    }
+
+    // Regression: a backtick-quoted parameter name containing a multi-byte
+    // UTF-8 character used to advance the length counter by one *char* and then
+    // slice on a *byte* offset, panicking with "byte index N is not a char
+    // boundary" and crashing the server. The name must now be lexed verbatim.
+    #[test]
+    fn backtick_parameter_two_byte_utf8_does_not_panic() {
+        assert_eq!(
+            lex_all("$`é`").unwrap(),
+            vec![Token::Parameter(String::from("é"))]
+        );
+    }
+
+    #[test]
+    fn backtick_parameter_three_byte_utf8_does_not_panic() {
+        assert_eq!(
+            lex_all("$`€`").unwrap(),
+            vec![Token::Parameter(String::from("€"))]
+        );
+    }
+
+    #[test]
+    fn backtick_parameter_utf8_within_query_does_not_panic() {
+        assert_eq!(
+            lex_all("RETURN $`é`").unwrap(),
+            vec![
+                Token::IdentifierOrKeyword {
+                    ident: Arc::new(String::from("RETURN")),
+                    keyword: Some(Keyword::Return),
+                },
+                Token::Parameter(String::from("é")),
+            ]
+        );
+    }
+
+    #[test]
+    fn unterminated_backtick_parameter_errors_without_panic() {
+        assert!(lex_all("$`abc").is_err());
+        // A multi-byte char in the unterminated name must not panic either.
+        assert!(lex_all("$`é").is_err());
     }
 }

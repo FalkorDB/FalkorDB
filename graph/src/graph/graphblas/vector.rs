@@ -269,28 +269,72 @@ impl Decode<19> for Vector<bool> {
         let n_bytes = r.read_unsigned()?;
         let handling = r.read_signed()? as i32;
 
+        // `GRAPH.RESTORE` feeds an entirely attacker-controlled payload here, so
+        // the independently decoded `n_bytes` and `type_name` must be validated
+        // before they drive an allocation, a raw copy, or an FFI C-string read.
+        //
+        // The encoder always writes `arr_data` with exactly `n_bytes` bytes
+        // (see `encode` above). If `n_bytes` exceeds the buffer length the
+        // `copy_nonoverlapping` below would read past the end of `arr_data`
+        // (heap over-read / crash), so reject any mismatch.
+        if n_bytes as usize != arr_data.len() {
+            return Err(format!(
+                "Vector decode: declared byte length {n_bytes} does not match buffer length {}",
+                arr_data.len()
+            ));
+        }
+        // `GxB_Type_from_name` reads `type_name` as a NUL-terminated C string.
+        // The encoder always writes the type name followed by exactly one
+        // trailing NUL (see `encode`), so the only NUL must be the final byte.
+        // Requiring the terminator at the end (and rejecting interior NULs)
+        // both matches the encoder and guarantees the C-string read stays in
+        // bounds.
+        if type_name.last() != Some(&0) || type_name[..type_name.len() - 1].contains(&0) {
+            return Err(String::from(
+                "Vector decode: type name is not NUL-terminated",
+            ));
+        }
+
         unsafe {
             let mut type_: MaybeUninit<GrB_Type> = MaybeUninit::uninit();
             let info = GxB_Type_from_name(type_.as_mut_ptr(), type_name.as_ptr().cast());
-            assert_eq!(
-                info,
-                GrB_Info::GrB_SUCCESS,
-                "GxB_Type_from_name failed: {info:?}"
-            );
+            if info != GrB_Info::GrB_SUCCESS {
+                return Err(format!(
+                    "Vector decode: GxB_Type_from_name failed: {info:?}"
+                ));
+            }
             let type_ = type_.assume_init();
 
             let mut v: MaybeUninit<GrB_Vector> = MaybeUninit::uninit();
             let info = GrB_Vector_new(v.as_mut_ptr(), type_, 0);
-            assert_eq!(
-                info,
-                GrB_Info::GrB_SUCCESS,
-                "GrB_Vector_new failed: {info:?}"
-            );
-            let v = v.assume_init();
+            if info != GrB_Info::GrB_SUCCESS {
+                return Err(format!("Vector decode: GrB_Vector_new failed: {info:?}"));
+            }
+            let mut v = v.assume_init();
 
-            let mut arr_ptr: *mut c_void = if n_bytes > 0 {
-                let layout = std::alloc::Layout::from_size_align(n_bytes as usize, 8).unwrap();
+            // Allocate the backing buffer that `GxB_Vector_load` adopts on
+            // success (`n_bytes == arr_data.len()` was validated above). The
+            // payload is attacker-controlled, so handle layout and allocation
+            // failures explicitly instead of unwrapping or copying into a null
+            // pointer, and free the freshly created vector on every error path.
+            let layout = if n_bytes > 0 {
+                match std::alloc::Layout::from_size_align(n_bytes as usize, 8) {
+                    Ok(layout) => Some(layout),
+                    Err(e) => {
+                        GrB_Vector_free(addr_of_mut!(v));
+                        return Err(format!("Vector decode: invalid buffer layout: {e}"));
+                    }
+                }
+            } else {
+                None
+            };
+
+            let mut arr_ptr: *mut c_void = if let Some(layout) = layout {
                 let ptr = std::alloc::alloc(layout);
+                if ptr.is_null() {
+                    GrB_Vector_free(addr_of_mut!(v));
+                    return Err(String::from("Vector decode: buffer allocation failed"));
+                }
                 std::ptr::copy_nonoverlapping(arr_data.as_ptr(), ptr, n_bytes as usize);
                 ptr.cast()
             } else {
@@ -306,7 +350,19 @@ impl Decode<19> for Vector<bool> {
                 handling,
                 null_mut(),
             );
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            // A `debug_assert` here would be compiled out in release, letting a
+            // malformed payload return a half-initialized vector and leak the
+            // buffer. On failure `GxB_Vector_load` does not adopt `arr_ptr`, so
+            // we still own it: free the buffer and the vector, then return Err.
+            if info != GrB_Info::GrB_SUCCESS {
+                if let Some(layout) = layout {
+                    if !arr_ptr.is_null() {
+                        std::alloc::dealloc(arr_ptr.cast(), layout);
+                    }
+                }
+                GrB_Vector_free(addr_of_mut!(v));
+                return Err(format!("Vector decode: GxB_Vector_load failed: {info:?}"));
+            }
 
             Ok(Self::from(v))
         }
@@ -490,6 +546,94 @@ impl Iterator for Iter<u64> {
             let val = GxB_Iterator_get_UINT64(self.inner);
             self.depleted = GxB_Vector_Iterator_next(self.inner) == GrB_Info::GxB_EXHAUSTED;
             Some((idx, val))
+        }
+    }
+}
+
+#[cfg(test)]
+mod decode_tests {
+    use super::*;
+    use std::collections::VecDeque;
+
+    /// Minimal in-memory [`Reader`] that replays scripted values in call order.
+    /// It drives `Vector::<bool>::decode`'s input-validation paths without a live
+    /// GraphBLAS context: every rejection path returns before any FFI call.
+    #[derive(Default)]
+    struct MockReader {
+        buffers: VecDeque<Vec<u8>>,
+        unsigned: VecDeque<u64>,
+        signed: VecDeque<i64>,
+    }
+
+    impl Reader for MockReader {
+        fn read_unsigned(&mut self) -> Result<u64, String> {
+            self.unsigned
+                .pop_front()
+                .ok_or_else(|| "mock: no more unsigned values".to_string())
+        }
+        fn read_signed(&mut self) -> Result<i64, String> {
+            self.signed
+                .pop_front()
+                .ok_or_else(|| "mock: no more signed values".to_string())
+        }
+        fn read_double(&mut self) -> Result<f64, String> {
+            Err("mock: read_double unused".to_string())
+        }
+        fn read_buffer(&mut self) -> Result<Vec<u8>, String> {
+            self.buffers
+                .pop_front()
+                .ok_or_else(|| "mock: no more buffers".to_string())
+        }
+    }
+
+    // `decode` reads, in order: arr_data, type_name (buffers); n_entries,
+    // n_bytes (unsigned); handling (signed).
+    fn reader(
+        arr_data: Vec<u8>,
+        type_name: Vec<u8>,
+        n_entries: u64,
+        n_bytes: u64,
+        handling: i64,
+    ) -> MockReader {
+        MockReader {
+            buffers: VecDeque::from(vec![arr_data, type_name]),
+            unsigned: VecDeque::from(vec![n_entries, n_bytes]),
+            signed: VecDeque::from(vec![handling]),
+        }
+    }
+
+    #[test]
+    fn decode_rejects_n_bytes_buffer_length_mismatch() {
+        // arr_data is 3 bytes but the payload declares n_bytes = 999: copying
+        // n_bytes would over-read the buffer, so decode must reject it.
+        let mut r = reader(vec![1, 2, 3], b"bool\0".to_vec(), 0, 999, 0);
+        match <Vector<bool> as Decode<19>>::decode(&mut r) {
+            Err(err) => assert!(
+                err.contains("does not match buffer length"),
+                "unexpected error: {err}"
+            ),
+            Ok(_) => panic!("expected decode to reject n_bytes/buffer mismatch"),
+        }
+    }
+
+    #[test]
+    fn decode_rejects_type_name_without_trailing_nul() {
+        // No NUL anywhere: the C-string read would run off the end of the buffer.
+        let mut r = reader(Vec::new(), b"Int".to_vec(), 0, 0, 0);
+        match <Vector<bool> as Decode<19>>::decode(&mut r) {
+            Err(err) => assert!(err.contains("NUL-terminated"), "unexpected error: {err}"),
+            Ok(_) => panic!("expected decode to reject a type name without a trailing NUL"),
+        }
+    }
+
+    #[test]
+    fn decode_rejects_type_name_with_only_interior_nul() {
+        // NUL present but not the final byte: rejected so the buffer matches what
+        // the encoder writes (name followed by a single trailing NUL).
+        let mut r = reader(Vec::new(), vec![b'I', 0, b'X'], 0, 0, 0);
+        match <Vector<bool> as Decode<19>>::decode(&mut r) {
+            Err(err) => assert!(err.contains("NUL-terminated"), "unexpected error: {err}"),
+            Ok(_) => panic!("expected decode to reject a type name with an interior-only NUL"),
         }
     }
 }
