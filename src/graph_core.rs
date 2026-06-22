@@ -971,11 +971,6 @@ fn query_sync(
                         if wq.modified {
                             replicate_effects(ctx, key_name, wq.effects_buffer, query);
                         }
-                        // Flush dirty cache entries to fjall if over budget.
-                        let value = g.graph.read().borrow().maybe_flush_caches();
-                        if let Err(e) = value {
-                            ctx.log_warning(&format!("FalkorDB: cache flush failed: {e}"));
-                        }
                         // Write telemetry
                         let query_text = &query[wq.params_offset..];
                         let params_text = &query[..wq.params_offset];
@@ -1080,10 +1075,6 @@ pub fn profile_mut(
                         match res {
                             Ok(wq) => {
                                 graph_write.graph.commit(wq.graph);
-                                let value = graph_write.graph.read().borrow().maybe_flush_caches();
-                                if let Err(e) = value {
-                                    ctx2.log_warning(&format!("FalkorDB: cache flush failed: {e}"));
-                                }
                             }
                             Err(err) => {
                                 let cerr = ffi::sanitise_error(err);
@@ -1138,10 +1129,6 @@ fn profile_sync(
                 match res {
                     Ok(wq) => {
                         g.graph.commit(wq.graph);
-                        let value = g.graph.read().borrow().maybe_flush_caches();
-                        if let Err(e) = value {
-                            ctx.log_warning(&format!("FalkorDB: cache flush failed: {e}"));
-                        }
                     }
                     Err(err) => {
                         g.graph.rollback();
@@ -1275,12 +1262,6 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                     // Enqueue telemetry entry for background flusher
                     telemetry::enqueue_entry(&key_name, entry);
                     drop(bc);
-                    let value = g.graph.read().borrow().maybe_flush_caches();
-                    if let Err(e) = value {
-                        redis_module::logging::log_warning(format!(
-                            "FalkorDB: cache flush failed: {e}"
-                        ));
-                    }
                 }
                 Err(err) => {
                     g.graph.rollback();

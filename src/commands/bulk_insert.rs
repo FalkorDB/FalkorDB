@@ -501,10 +501,6 @@ pub fn graph_bulk_insert(
         return match result {
             Ok(()) => {
                 tg.graph.commit(g_arc);
-                let value = tg.graph.read().borrow().maybe_flush_caches();
-                if let Err(e) = value {
-                    ctx.log_warning(&format!("FalkorDB: cache flush failed: {e}"));
-                }
                 ctx.replicate_verbatim();
                 let reply = format!("{node_count} nodes created, {edge_count} relations created");
                 Ok(RedisValue::SimpleString(reply))
@@ -554,14 +550,7 @@ pub fn graph_bulk_insert(
             match result {
                 Ok(()) => {
                     tg.graph.commit(g_arc);
-                    let value = tg.graph.read().borrow().maybe_flush_caches();
                     unsafe { ffi::lock_thread_safe_ctx(ts_ctx) };
-                    if let Err(e) = value {
-                        let ctx_w = Context::new(ts_ctx);
-                        ctx_w.log_warning(&format!("FalkorDB: cache flush failed: {e}"));
-                        #[allow(clippy::forget_non_drop)]
-                        std::mem::forget(ctx_w);
-                    }
                     raw::replicate_verbatim(ts_ctx);
                     let reply =
                         format!("{node_count} nodes created, {edge_count} relations created");

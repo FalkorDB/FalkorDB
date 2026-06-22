@@ -232,7 +232,7 @@ pub fn reply_compact_value(
                 raw::reply_with_array(ctx.ctx, attrs.len() as _);
                 for (key, value) in attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 3);
-                    raw::reply_with_long_long(ctx.ctx, *key as _);
+                    raw::reply_with_long_long(ctx.ctx, key as _);
                     reply_compact_value(ctx, runtime, value);
                 }
                 drop(bg);
@@ -272,7 +272,7 @@ pub fn reply_compact_value(
                     raw::reply_with_array(ctx.ctx, 3);
                     raw::reply_with_long_long(
                         ctx.ctx,
-                        bg.rel_attr_id_to_global(*key).unwrap_or(0) as _,
+                        bg.rel_attr_id_to_global(key).unwrap_or(0) as _,
                     );
                     reply_compact_value(ctx, runtime, value);
                 }

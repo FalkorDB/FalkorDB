@@ -173,6 +173,5 @@ impl MvccGraph {
 impl Drop for MvccGraph {
     fn drop(&mut self) {
         self.graph.borrow().cancel_indexing();
-        self.graph.borrow().delete_keyspaces();
     }
 }

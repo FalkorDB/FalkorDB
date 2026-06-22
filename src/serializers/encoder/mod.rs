@@ -1,4 +1,4 @@
-use graph::graph::graph::{Graph, RdbSnapshots};
+use graph::graph::graph::Graph;
 use graph::graph::graphblas::serialization::{Encode, EncodeState, PayloadEntry, Writer};
 use redis_module::raw::RedisModuleIO;
 
@@ -11,10 +11,9 @@ use super::{Header, Schema};
 pub fn rdb_save_graph(
     rdb: *mut RedisModuleIO,
     graph: &Graph,
-    snapshots: Option<&RdbSnapshots>,
 ) {
     let payloads = build_payloads(graph);
-    rdb_save_graph_key(rdb, graph, &payloads, 1, snapshots);
+    rdb_save_graph_key(rdb, graph, &payloads, 1);
 }
 
 /// Encode a single key's portion of the graph (used for both primary and virtual keys).
@@ -23,11 +22,10 @@ pub fn rdb_save_graph_key(
     graph: &Graph,
     payloads: &[PayloadEntry],
     key_count: u64,
-    snapshots: Option<&RdbSnapshots>,
 ) {
     let mut w = BufferedWriter::new(rdb);
     let global_attrs = graph.build_global_attrs();
-    encode_graph(&mut w, graph, payloads, key_count, &global_attrs, snapshots);
+    encode_graph(&mut w, graph, payloads, key_count, &global_attrs);
     w.finish();
 }
 
@@ -37,12 +35,11 @@ pub fn rdb_save_graph_key(
 pub fn pipe_save_graph(
     fd: std::os::unix::io::OwnedFd,
     graph: &Graph,
-    snapshots: Option<&RdbSnapshots>,
 ) {
     let payloads = build_payloads(graph);
     let mut w = super::buffered_io::PipeWriter::new(fd);
     let global_attrs = graph.build_global_attrs();
-    encode_graph(&mut w, graph, &payloads, 1, &global_attrs, snapshots);
+    encode_graph(&mut w, graph, &payloads, 1, &global_attrs);
     w.finish();
 }
 
@@ -50,14 +47,11 @@ pub fn pipe_save_graph(
 ///
 /// Uses the same v19 format as RDB, with `VecWriter` instead of `BufferedWriter`.
 /// The returned bytes can be decoded with `BufferedReader::from_vec()`.
-pub fn vec_save_graph(
-    graph: &Graph,
-    snapshots: Option<&RdbSnapshots>,
-) -> Vec<u8> {
+pub fn vec_save_graph(graph: &Graph) -> Vec<u8> {
     let payloads = build_payloads(graph);
     let mut w = super::buffered_io::VecWriter::new();
     let global_attrs = graph.build_global_attrs();
-    encode_graph(&mut w, graph, &payloads, 1, &global_attrs, snapshots);
+    encode_graph(&mut w, graph, &payloads, 1, &global_attrs);
     w.into_vec()
 }
 
@@ -68,7 +62,6 @@ fn encode_graph(
     payloads: &[PayloadEntry],
     key_count: u64,
     global_attrs: &[std::sync::Arc<String>],
-    snapshots: Option<&RdbSnapshots>,
 ) {
     Header::from_graph(graph, key_count).encode(w);
     Schema::from_graph(graph, global_attrs.to_vec()).encode(w);
@@ -80,7 +73,7 @@ fn encode_graph(
     }
 
     for p in payloads {
-        graph.encode_payload(w, p, global_attrs, snapshots);
+        graph.encode_payload(w, p, global_attrs);
     }
 }
 

@@ -115,7 +115,7 @@ pub struct Pending {
     new_nodes_attrs: FxHashMap<u64, OrderMap<Arc<String>, Value>>,
     /// Property updates for existing nodes (full merge path)
     existing_nodes_attrs: FxHashMap<u64, OrderMap<Arc<String>, Value>>,
-    /// Property updates for newly created relationships (fast path: skip fjall)
+    /// Property updates for newly created relationships (fast path)
     new_relationships_attrs: FxHashMap<u64, OrderMap<Arc<String>, Value>>,
     /// Property updates for existing relationships (full merge path)
     existing_relationships_attrs: FxHashMap<u64, OrderMap<Arc<String>, Value>>,
@@ -892,7 +892,7 @@ impl Pending {
                 .extend(endpoints.iter().map(|(id, _, _)| u64::from(*id)));
             self.deleted_endpoints.extend(endpoints);
         }
-        // Enforce constraints before committing attrs to fjall.
+        // Enforce constraints before committing attrs to the store.
         // The constraint checks read from the in-memory attribute cache
         // which already has the dirty mutations from this transaction.
         self.enforce_constraints(g)?;
