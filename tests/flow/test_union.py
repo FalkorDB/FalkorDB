@@ -172,3 +172,47 @@ class testUnion(FlowTestsBase):
         self.env.assertEquals(len(result.result_set), 1)
         self.env.assertEquals(result.result_set, [[0]])
         self.env.assertEquals(result.nodes_created, 2)
+
+    def test10_union_invalid_sub_query(self):
+        """
+        make sure a union query with an invalid sub-query fails gracefully
+        """
+
+        # WHERE EXISTS((p)-->() ) is invalid, we do not support passing
+        # traversal patterns into the exists function
+
+        q = """MATCH (p)
+               WHERE EXISTS((p)-->() )
+               RETURN 1 AS x
+
+               UNION
+
+               MATCH (p)
+               WITH p
+               RETURN 2 AS x"""
+
+        try:
+            self.graph.query(q)
+            # fail if query did not returned an error
+            self.env.assertFalse(True)
+        except Exception:
+            pass
+
+        # reverse sub-queries
+        q = """MATCH (p)
+               WITH p
+               RETURN 2 AS x
+
+               UNION
+
+               MATCH (p)
+               WHERE EXISTS((p)-->() )
+               RETURN 1 AS x"""
+
+        try:
+            self.graph.query(q)
+            # fail if query did not returned an error
+            self.env.assertFalse(True)
+        except Exception:
+            pass
+
