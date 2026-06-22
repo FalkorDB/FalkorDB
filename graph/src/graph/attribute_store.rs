@@ -1,101 +1,42 @@
 //! Attribute storage for graph entities (nodes and relationships).
 //!
-//! This module provides [`AttributeStore`], a two-tier key-value store for
-//! entity properties. It uses an in-memory LRU cache as its primary hot-path
-//! store and falls back to [`fjall`] (an LSM-tree disk store) for cold data.
-//!
-//! ## Two-Tier Storage Architecture
-//!
-//! ```text
-//!  ┌─────────────────────────────────────────────────────────┐
-//!  │                   AttributeStore                        │
-//!  │                                                         │
-//!  │  attrs_name: ["name", "age", "city"]                    │
-//!  │              idx:  0      1      2                      │
-//!  │                                                         │
-//!  │  ┌───────────────────────────────────────────────────┐  │
-//!  │  │         AttributeCache (shared via Arc)           │  │
-//!  │  │  entity_id -> [(attr_idx, Value), ...]            │  │
-//!  │  │  Each entry: version + dirty flag                 │  │
-//!  │  │  Dirty entries pinned (cannot be evicted)         │  │
-//!  │  └───────────────────────┬───────────────────────────┘  │
-//!  │                          │                              │
-//!  │            flush (when over budget)                     │
-//!  │                          │                              │
-//!  │  ┌───────────────────────▼───────────────────────────┐  │
-//!  │  │              fjall Keyspace                       │  │
-//!  │  │  Key: entity_id (8B BE) + attr_idx (2B BE)       │  │
-//!  │  │  Value: serialized Value bytes                    │  │
-//!  │  │  Snapshot isolation via fjall::Snapshot           │  │
-//!  │  └───────────────────────────────────────────────────┘  │
-//!  └─────────────────────────────────────────────────────────┘
-//! ```
+//! This module provides [`AttributeStore`], an in-memory columnar key-value
+//! store for entity properties backed by a concurrent [`AttributeStorage`].
+//! The cache is the sole source of truth: a cache miss means the entity has
+//! no attributes.
 //!
 //! ## Read Path
 //!
-//! ```text
-//!  get_attr(entity_id, "name")
-//!       │
-//!       ▼
-//!  [1] Check cache ──hit──▶ return value (or None if absent)
-//!       │
-//!      miss
-//!       │
-//!       ▼
-//!  [2] Scan fjall snapshot (prefix = entity_id)
-//!       │
-//!       ▼
-//!  [3] Populate cache (dirty=false, version-guarded insert)
-//!       │
-//!       ▼
-//!  [4] Return value from fetched attributes
-//! ```
+//! `get_attr` checks the cache; a miss returns `None` (no attributes).
 //!
 //! ## Write Path
 //!
-//! ```text
-//!  insert_attrs(entity_id, {name: "Alice", age: 30})
-//!       │
-//!       ▼
-//!  [1] Resolve attr names to column indices (create if new)
-//!       │
-//!       ▼
-//!  [2] Merge with current state (cache or fjall)
-//!       │
-//!       ▼
-//!  [3] Write merged result to cache (dirty=true)
-//!       │
-//!       ▼
-//!  [4] On commit: take new fjall snapshot, clear dirty tracking
-//!      On rollback: invalidate dirty cache entries
-//! ```
+//! `insert_attrs` resolves attribute names to column indices, merges with the
+//! current cached state, and writes the result back to the cache as dirty.
+//! `commit` applies deletions and accumulates the transaction's dirty set;
+//! `rollback_cache` restores or invalidates dirty entries; `clear_rollback_state`
+//! drops tracking after a successful query.
 //!
 //! ## MVCC Integration
 //!
-//! The cache is shared across MVCC versions via `Arc<AttributeCache>`.
-//! Each `AttributeStore` carries its own MVCC `version` number. Cache
-//! entries with a version newer than the reader's are ignored (invisible
-//! uncommitted writes). On `new_version()`, the store is cloned cheaply
+//! The storage is shared across MVCC versions via `Arc<AttributeStorage>`. Each
+//! `AttributeStore` carries its own MVCC `version`; cache entries newer than
+//! the reader's version are ignored. `new_version()` clones the store cheaply
 //! (Arc bump + bitmap clear) with a fresh `dirty_entities` tracker.
-//!
-//! ## Key Format (fjall)
-//!
-//! Each attribute is stored as a separate fjall entry:
-//! `entity_id (8 bytes big-endian) + attr_idx (2 bytes big-endian)`
 
-use std::{process, sync::Arc};
+use std::alloc::{self, Layout};
+use std::ptr::{self, NonNull};
+use std::slice;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
 use std::cmp::Ordering;
 
+use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
 
-use fjall::{
-    Database, Keyspace, KeyspaceCreateOptions, Readable, Snapshot, config::HashRatioPolicy,
-};
-use once_cell::sync::OnceCell;
 use roaring::RoaringTreemap;
 
-use super::attribute_cache::AttributeCache;
 use super::graphblas::serialization::{Decode, Encode, Reader, Writer};
 use crate::runtime::{ordermap::OrderMap, value::Value};
 
@@ -167,158 +108,55 @@ impl std::ops::Index<usize> for AttrNameMap {
 
 /// Shared empty attribute vector to avoid per-entity allocations when an
 /// entity has no properties.
-static EMPTY_ATTRS: once_cell::sync::Lazy<Arc<Vec<(u16, Value)>>> =
-    once_cell::sync::Lazy::new(|| Arc::new(Vec::new()));
-
-/// Create a composite key from entity ID and attribute index.
-fn make_key(
-    entity_id: u64,
-    attr_idx: u16,
-) -> [u8; 10] {
-    let mut key = [0u8; 10];
-    key[..8].copy_from_slice(&entity_id.to_be_bytes());
-    key[8..].copy_from_slice(&attr_idx.to_be_bytes());
-    key
-}
-
-/// Extract attribute index from a composite key.
-fn extract_attr_idx(key: &[u8]) -> Option<u16> {
-    if key.len() >= 10 {
-        Some(u16::from_be_bytes([key[8], key[9]]))
-    } else {
-        None
-    }
-}
+static EMPTY_ATTRS: once_cell::sync::Lazy<AttrArray> = once_cell::sync::Lazy::new(AttrArray::empty);
 
 /// Columnar attribute storage for graph entities.
 ///
-/// Uses a shared [`AttributeCache`] as the primary hot store and fjall as the
-/// durable cold store.  The fjall keyspace is created lazily on first access
-/// to avoid I/O overhead for graphs that fit entirely in cache.
+/// Uses a shared [`AttributeStorage`] as the sole, in-memory source of truth for
+/// entity attributes.  A cache miss means the entity has no attributes.
 pub struct AttributeStore {
-    snapshot: OnceCell<Snapshot>,
-    keyspace: OnceCell<Keyspace>,
-    keyspace_name: Arc<String>,
     /// Attribute names in insertion order (name → column index)
     pub attrs_name: AttrNameMap,
-    /// Shared in-memory LRU cache (cheap Arc clone across MVCC versions).
-    cache: Arc<AttributeCache>,
+    /// Shared in-memory storage (cheap Arc clone across MVCC versions).
+    storage: Arc<AttributeStorage>,
     /// MVCC version of this store's snapshot.
     version: u64,
-    /// Entity IDs dirtied during the current write tx (for rollback).
+    /// Entity IDs written during the current write transaction (across all
+    /// operators since the last `new_version`/`clear_rollback_state`). Used by
+    /// `rollback_cache` to invalidate cache entries that aren't restored.
     dirty_entities: RoaringTreemap,
     /// Entity IDs pending full deletion (all attributes) — applied on commit, cleared on rollback.
     pending_deletes: RoaringTreemap,
-    /// Accumulated dirty entity IDs from prior commits within the same write
-    /// transaction. Used by `rollback_cache()` to invalidate cache entries
-    /// that were committed by an earlier `CommitOp` but need to be undone
-    /// because a later operator in the same query failed.
-    committed_dirty: RoaringTreemap,
     /// Saved original cache entries captured before the first modification
     /// within a write transaction. On rollback, these are restored to undo
     /// cache mutations, since the cache is shared with the read version.
-    saved_for_rollback: FxHashMap<u64, Arc<Vec<(u16, Value)>>>,
+    saved_for_rollback: FxHashMap<u64, AttrArray>,
 }
 
 impl Clone for AttributeStore {
     fn clone(&self) -> Self {
         Self {
-            snapshot: self.snapshot.clone(),
-            keyspace: self.keyspace.clone(),
-            keyspace_name: self.keyspace_name.clone(),
             attrs_name: self.attrs_name.clone(),
-            cache: self.cache.clone(),
+            storage: self.storage.clone(),
             version: self.version,
             dirty_entities: self.dirty_entities.clone(),
             pending_deletes: self.pending_deletes.clone(),
-            committed_dirty: self.committed_dirty.clone(),
             saved_for_rollback: self.saved_for_rollback.clone(),
         }
     }
 }
 
-/// Default memory budget per attribute cache (2 GiB).
-const DEFAULT_ATTR_CACHE_BYTES: usize = 2 * 1024 * 1024 * 1024;
-
-static DATABASE: OnceCell<Database> = OnceCell::new();
-
-/// Get or initialize the shared fjall database for attribute stores.
-fn get_database() -> Database {
-    DATABASE
-        .get_or_init(|| {
-            Database::builder(format!("./attrs/{}", process::id()))
-                .temporary(true)
-                .manual_journal_persist(true)
-                .cache_size(128 * 1_024 * 1_024)
-                .open()
-                .expect("failed to open fjall database")
-        })
-        .clone()
-}
-
 impl AttributeStore {
     #[must_use]
-    pub fn new(
-        keyspace: &str,
-        version: u64,
-    ) -> Self {
+    pub fn new(version: u64) -> Self {
         Self {
-            snapshot: OnceCell::new(),
-            keyspace: OnceCell::new(),
-            keyspace_name: Arc::new(keyspace.to_owned()),
             attrs_name: AttrNameMap::default(),
-            cache: Arc::new(AttributeCache::new(DEFAULT_ATTR_CACHE_BYTES)),
+            storage: Arc::new(AttributeStorage::new()),
             version,
             dirty_entities: RoaringTreemap::new(),
             pending_deletes: RoaringTreemap::new(),
-            committed_dirty: RoaringTreemap::new(),
             saved_for_rollback: FxHashMap::default(),
         }
-    }
-
-    /// Get-or-create the fjall keyspace lazily, clearing stale data if present.
-    ///
-    /// Also initializes the snapshot so it is always taken *after* the keyspace
-    /// has been cleared, preventing reads of stale data from a previously-deleted
-    /// graph that reused the same keyspace name.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the fjall keyspace cannot be created or cleared. This is
-    /// intentional: a failure here means the storage backend is broken and
-    /// the process cannot continue safely.
-    fn keyspace(&self) -> &Keyspace {
-        self.keyspace.get_or_init(|| {
-            let db = get_database();
-            let ks_exists = db.keyspace_exists(&self.keyspace_name);
-            let ks = db
-                .keyspace(&self.keyspace_name, || {
-                    KeyspaceCreateOptions::default()
-                        .data_block_hash_ratio_policy(HashRatioPolicy::all(0.75))
-                        .expect_point_read_hits(true)
-                        .manual_journal_persist(true)
-                })
-                .expect("failed to create fjall keyspace");
-            if ks_exists && ks.approximate_len() > 0 {
-                ks.clear().expect("failed to clear existing fjall keyspace");
-            }
-            ks
-        })
-    }
-
-    /// Get the fjall snapshot, taking one lazily if needed.
-    ///
-    /// On a freshly-constructed store the snapshot is initialized by the first
-    /// `keyspace()` call (which clears stale data first).  Subsequent MVCC
-    /// versions (`new_version`) and commits set it eagerly.
-    fn snapshot(&self) -> &Snapshot {
-        self.snapshot.get_or_init(|| {
-            // Ensure the keyspace is initialized (and stale data cleared) before
-            // taking a snapshot, so the new version never sees data from a
-            // previously-deleted graph that reused the same keyspace name.
-            let _ = self.keyspace();
-            get_database().snapshot()
-        })
     }
 
     #[must_use]
@@ -327,159 +165,16 @@ impl AttributeStore {
         version: u64,
     ) -> Self {
         Self {
-            snapshot: self.snapshot.clone(),
-            keyspace: self.keyspace.clone(),
-            keyspace_name: self.keyspace_name.clone(),
             attrs_name: self.attrs_name.clone(),
-            cache: self.cache.clone(),
+            storage: self.storage.clone(),
             version,
             dirty_entities: RoaringTreemap::new(),
             pending_deletes: RoaringTreemap::new(),
-            committed_dirty: RoaringTreemap::new(),
             saved_for_rollback: FxHashMap::default(),
         }
     }
 
     // ---- helpers --------------------------------------------------------
-
-    /// Fetch ALL attributes for `entity_id` from the fjall snapshot and
-    /// populate the cache if the result is non-empty.
-    ///
-    /// Uses a version-aware insert to avoid overwriting in-flight dirty writes:
-    /// the cache entry is only updated if no newer/dirty entry already exists.
-    /// Empty results are NOT cached: caching one entry per prop-less entity
-    /// reintroduces the per-entity cache overhead the C version avoids by
-    /// representing empty AttributeSets as NULL.
-    /// Returns empty if the entity is pending full deletion.
-    fn populate_cache_from_fjall(
-        &self,
-        entity_id: u64,
-    ) -> Arc<Vec<(u16, Value)>> {
-        // If this entity is pending full deletion, return empty regardless of fjall state.
-        if self.pending_deletes.contains(entity_id) {
-            return EMPTY_ATTRS.clone();
-        }
-        // If the fjall keyspace was never initialized, no data was ever flushed
-        // to persistent storage. All live data is in the cache. Return empty
-        // without triggering expensive keyspace creation or cache writes.
-        if self.keyspace.get().is_none() {
-            return EMPTY_ATTRS.clone();
-        }
-        let prefix = entity_id.to_be_bytes();
-        let attrs: Vec<(u16, Value)> = self
-            .snapshot()
-            .prefix(self.keyspace(), prefix)
-            .filter_map(|entry| {
-                let (k, data) = entry.into_inner().ok()?;
-                let idx = extract_attr_idx(&k)?;
-                let (value, _) = Value::from_bytes(&data)?;
-                Some((idx, value))
-            })
-            .collect();
-        if attrs.is_empty() {
-            return EMPTY_ATTRS.clone();
-        }
-        // Cache only non-empty results using safe insert that
-        // respects in-flight writes: only insert if no newer/dirty entry exists.
-        let _ = self
-            .cache
-            .insert_entity_if_older(entity_id, attrs.clone(), self.version);
-        Arc::new(attrs)
-    }
-
-    /// Returns `true` if this store has a fjall keyspace that might contain
-    /// cold data not present in cache.  When `false`, all data is in cache
-    /// and the fork child can safely read from cache without touching fjall.
-    pub fn has_fjall_data(&self) -> bool {
-        self.keyspace.get().is_some()
-    }
-
-    /// Build a complete snapshot of all entity attributes by merging cache and
-    /// fjall data.  Returns a map from entity-ID to its attribute list.
-    ///
-    /// Called **before** Redis forks for BGSAVE so the fork child can encode
-    /// entities without touching fjall (which is unsafe after fork).
-    /// The returned map is passed to [`encode_with_range`] as the data source.
-    pub fn build_rdb_snapshot(
-        &self,
-        deleted: &RoaringTreemap,
-        max_id: u64,
-    ) -> FxHashMap<u64, Arc<Vec<(u16, Value)>>> {
-        let mut snap: FxHashMap<u64, Arc<Vec<(u16, Value)>>> = FxHashMap::default();
-
-        // 1. Collect everything from fjall (cold store) in a single sequential scan.
-        if self.keyspace.get().is_some() {
-            let mut current_id: Option<u64> = None;
-            let mut current_attrs: Vec<(u16, Value)> = Vec::new();
-            for entry in self.snapshot().iter(self.keyspace()) {
-                let Ok((key, data)) = entry.into_inner() else {
-                    continue;
-                };
-                let Some(attr_idx) = extract_attr_idx(&key) else {
-                    continue;
-                };
-                let eid = u64::from_be_bytes(key[..8].try_into().unwrap());
-                let Some((value, _)) = Value::from_bytes(&data) else {
-                    continue;
-                };
-                if current_id != Some(eid) {
-                    if let Some(prev_id) = current_id {
-                        if !deleted.contains(prev_id) && !self.pending_deletes.contains(prev_id) {
-                            current_attrs.sort_by_key(|item| item.0);
-                            snap.insert(prev_id, Arc::new(std::mem::take(&mut current_attrs)));
-                        } else {
-                            current_attrs.clear();
-                        }
-                    }
-                    current_id = Some(eid);
-                }
-                current_attrs.push((attr_idx, value));
-            }
-            if let Some(prev_id) = current_id
-                && !deleted.contains(prev_id)
-                && !self.pending_deletes.contains(prev_id)
-            {
-                current_attrs.sort_by_key(|item| item.0);
-                snap.insert(prev_id, Arc::new(current_attrs));
-            }
-        }
-
-        // 2. Overlay cache entries (hot store) — cache wins over fjall because
-        //    it may contain newer dirty writes not yet flushed.
-        for id in 0..=max_id {
-            if deleted.contains(id) || self.pending_deletes.contains(id) {
-                continue;
-            }
-            if let Some(cached) = self.cache.get_entity(id, self.version) {
-                snap.insert(id, cached);
-            }
-        }
-
-        snap
-    }
-
-    // ---- read path (cache → fjall) --------------------------------------
-
-    pub fn remove(
-        &mut self,
-        key: u64,
-    ) -> Result<(), String> {
-        // Save original cache entry for rollback (only the first time).
-        if !self.saved_for_rollback.contains_key(&key) {
-            let current = self
-                .cache
-                .get_entity(key, self.version)
-                .unwrap_or_else(|| self.populate_cache_from_fjall(key));
-            self.saved_for_rollback.insert(key, current);
-        }
-        // Don't invalidate cache — older MVCC versions sharing this cache may
-        // still need the dirty entry. pending_deletes guards reads on this
-        // version; the cache entry is harmless to older/newer readers because
-        // the version check in the cache handles visibility.
-        self.dirty_entities.insert(key);
-        self.pending_deletes.insert(key);
-        Ok(())
-    }
 
     #[must_use]
     pub fn get_attr(
@@ -501,15 +196,11 @@ impl AttributeStore {
             return None;
         }
         // 1. Check cache.
-        if let Some(result) = self.cache.get_attr(key, attr_idx, self.version) {
+        if let Some(result) = self.storage.get_attr(key, attr_idx, self.version) {
             return result;
         }
-        // 2. Cache miss — populate from fjall.
-        let attrs = self.populate_cache_from_fjall(key);
-        attrs
-            .binary_search_by_key(&attr_idx, |(idx, _)| *idx)
-            .ok()
-            .map(|pos| attrs[pos].1.clone())
+        // 2. Storage miss — entity has no attributes.
+        None
     }
 
     /// Batch variant of `get_attr_by_idx` for a list of keys with the same
@@ -531,36 +222,24 @@ impl AttributeStore {
             // into `out`, avoiding the intermediate `Vec<Option<Option<_>>>`
             // and a second pass. `missing` stays empty when every key hits the
             // cache (the common case), so no cold-store work is done.
-            let base = out.len();
+            // Cache is the sole store: misses already carry `default`, so the
+            // single cache pass fully populates `out`.
             let mut missing: Vec<usize> = Vec::new();
-            self.cache
+            self.storage
                 .get_attrs_batch_into(keys, attr_idx, version, default, out, &mut missing);
-            for &gi in &missing {
-                let key = keys[gi - base];
-                let attrs = self.populate_cache_from_fjall(key);
-                if let Ok(pos) = attrs.binary_search_by_key(&attr_idx, |(idx, _)| *idx) {
-                    out[gi] = attrs[pos].1.clone();
-                }
-            }
             return;
         }
         // Slow path: some entities are pending deletion, so a cache hit must be
         // overridden with `default`. Fall back to the two-pass logic.
         let mut cache_results: Vec<Option<Option<Value>>> = Vec::with_capacity(keys.len());
-        self.cache
+        self.storage
             .get_attrs_batch(keys, attr_idx, version, &mut cache_results);
         for (i, &key) in keys.iter().enumerate() {
             if self.pending_deletes.contains(key) {
                 out.push(default.clone());
                 continue;
             }
-            let v = cache_results[i].take().unwrap_or_else(|| {
-                let attrs = self.populate_cache_from_fjall(key);
-                attrs
-                    .binary_search_by_key(&attr_idx, |(idx, _)| *idx)
-                    .ok()
-                    .map(|pos| attrs[pos].1.clone())
-            });
+            let v = cache_results[i].take().unwrap_or(None);
             out.push(v.unwrap_or_else(|| default.clone()));
         }
     }
@@ -574,12 +253,11 @@ impl AttributeStore {
         if self.pending_deletes.contains(key) {
             return false;
         }
-        if let Some(has) = self.cache.has_entity(key, self.version) {
+        if let Some(has) = self.storage.has_entity(key, self.version) {
             return has;
         }
-        // Fallback to fjall, populating cache to avoid repeated scans.
-        let attrs = self.populate_cache_from_fjall(key);
-        !attrs.is_empty()
+        // Storage miss — entity has no attributes.
+        false
     }
 
     pub fn get_attrs(
@@ -590,12 +268,12 @@ impl AttributeStore {
             return Vec::new().into_iter();
         }
         // Try cache first.
-        let cached = self.cache.get_entity(key, self.version);
-        let attrs = cached.unwrap_or_else(|| self.populate_cache_from_fjall(key));
+        let cached = self.storage.get_entity(key, self.version);
+        let attrs = cached.unwrap_or_else(|| EMPTY_ATTRS.clone());
         attrs
             .iter()
             .filter_map(move |(idx, _)| {
-                let i = *idx as usize;
+                let i = idx as usize;
                 if i < self.attrs_name.len() {
                     Some(self.attrs_name[i].clone())
                 } else {
@@ -613,12 +291,12 @@ impl AttributeStore {
         if self.pending_deletes.contains(key) {
             return Vec::new();
         }
-        let cached = self.cache.get_entity(key, self.version);
-        let attrs = cached.unwrap_or_else(|| self.populate_cache_from_fjall(key));
+        let cached = self.storage.get_entity(key, self.version);
+        let attrs = cached.unwrap_or_else(|| EMPTY_ATTRS.clone());
         attrs
             .iter()
             .filter_map(move |(idx, value)| {
-                let i = *idx as usize;
+                let i = idx as usize;
                 if i < self.attrs_name.len() {
                     Some((self.attrs_name[i].clone(), value.clone()))
                 } else {
@@ -631,13 +309,13 @@ impl AttributeStore {
     pub fn get_all_attrs_by_id(
         &self,
         key: u64,
-    ) -> Arc<Vec<(u16, Value)>> {
+    ) -> AttrArray {
         if self.pending_deletes.contains(key) {
-            return Arc::new(Vec::new());
+            return EMPTY_ATTRS.clone();
         }
-        self.cache
+        self.storage
             .get_entity(key, self.version)
-            .unwrap_or_else(|| self.populate_cache_from_fjall(key))
+            .unwrap_or_else(|| EMPTY_ATTRS.clone())
     }
 
     // ---- write path (cache only) ----------------------------------------
@@ -649,28 +327,14 @@ impl AttributeStore {
     ) -> Result<bool, String> {
         if let Some(idx) = self.attrs_name.get_index_of(attr) {
             let attr_idx = idx as u16;
-            // Check if the attr exists (cache or fjall).
-            let exists = self
-                .cache
+            // The cache is the sole store: if the attr isn't cached it doesn't exist.
+            if self
+                .storage
                 .contains_attr(key, attr_idx, self.version)
-                .unwrap_or_else(|| {
-                    let composite_key = make_key(key, attr_idx);
-                    self.snapshot()
-                        .contains_key(self.keyspace(), composite_key)
-                        .unwrap_or(false)
-                });
-            if exists {
-                // Try to remove from cache. If not in cache, populate from fjall first.
-                let removed = self.cache.remove_attr_from_entity(key, attr_idx);
-                if !removed {
-                    // Attr is in fjall but not in cache. Populate cache from fjall,
-                    // then remove the attr from the cached entry.
-                    let _ = self.populate_cache_from_fjall(key);
-                    let _ = self.cache.remove_attr_from_entity(key, attr_idx);
-                }
+                .unwrap_or(false)
+            {
+                let _ = self.storage.remove_attr_from_entity(key, attr_idx);
                 self.dirty_entities.insert(key);
-                // Don't immediately delete from fjall; let the flush logic persist the removal
-                // when the entity is flushed with its updated attribute set.
                 return Ok(true);
             }
         }
@@ -686,9 +350,9 @@ impl AttributeStore {
         for key in keys {
             if !self.saved_for_rollback.contains_key(&key) {
                 let current = self
-                    .cache
+                    .storage
                     .get_entity(key, self.version)
-                    .unwrap_or_else(|| self.populate_cache_from_fjall(key));
+                    .unwrap_or_else(|| EMPTY_ATTRS.clone());
                 self.saved_for_rollback.insert(key, current);
             }
         }
@@ -727,7 +391,7 @@ impl AttributeStore {
 
         for (key, entity_attrs) in attrs {
             // Skip entities whose pending map is empty: no entries to write, no nulls
-            // to remove, and no need to touch fjall. Avoids creating an empty pinned
+            // to remove. Avoids creating an empty pinned
             // dirty cache entry per entity (matches C's NULL AttributeSet behaviour).
             if entity_attrs.is_empty() {
                 continue;
@@ -746,11 +410,12 @@ impl AttributeStore {
                 }
             }
 
-            // Get current state: cache first, then fjall.
-            let current = self
-                .cache
-                .get_entity(*key, self.version)
-                .unwrap_or_else(|| self.populate_cache_from_fjall(*key));
+            // Get current stored state. Keep the shared array for rollback
+            // and materialize a Vec for the in-place merge below.
+            let current_arr = self.storage.get_entity(*key, self.version);
+            let current: Vec<(u16, Value)> = current_arr
+                .as_ref()
+                .map_or_else(Vec::new, AttrArray::to_pairs);
 
             // Sort new entries for O(n+m) merge.
             new_entries.sort_unstable_by_key(|(idx, _)| *idx);
@@ -816,18 +481,15 @@ impl AttributeStore {
                 }
             }
 
-            // Save original cache entry for rollback (only the first time).
+            // Save original entry for rollback (only the first time).
             if !self.saved_for_rollback.contains_key(key) {
-                self.saved_for_rollback.insert(*key, current.clone());
+                let saved = current_arr.clone().unwrap_or_else(|| EMPTY_ATTRS.clone());
+                self.saved_for_rollback.insert(*key, saved);
             }
 
             // Write merged attrs to cache as dirty (already sorted, skip re-sort).
-            self.cache.insert_entity_presorted(
-                *key,
-                std::mem::take(&mut merged),
-                self.version,
-                true,
-            );
+            self.storage
+                .insert_entity_presorted(*key, std::mem::take(&mut merged), self.version);
             self.dirty_entities.insert(*key);
         }
 
@@ -836,7 +498,7 @@ impl AttributeStore {
 
     /// Bulk import attributes for entities known to be new (no prior state).
     ///
-    /// Optimized for RDB decode: skips cache/fjall lookups since entities
+    /// Optimized for RDB decode: skips cache lookups since entities
     /// don't exist yet. Attributes are written directly to cache.
     /// Returns the number of non-null attributes imported.
     pub fn import_attrs(
@@ -877,8 +539,8 @@ impl AttributeStore {
             if entries.is_empty() {
                 continue;
             }
-            self.cache
-                .insert_entity_presorted(*key, entries, self.version, true);
+            self.storage
+                .insert_entity_presorted(*key, entries, self.version);
             self.dirty_entities.insert(*key);
         }
         nset
@@ -896,8 +558,8 @@ impl AttributeStore {
                 continue;
             }
             nset += entries.len();
-            self.cache
-                .insert_entity_presorted(entity_id, entries, self.version, true);
+            self.storage
+                .insert_entity_presorted(entity_id, entries, self.version);
             self.dirty_entities.insert(entity_id);
         }
         nset
@@ -924,59 +586,28 @@ impl AttributeStore {
 
     #[must_use]
     pub fn memory_usage(&self) -> usize {
-        self.cache.memory_usage()
+        self.storage.memory_usage()
     }
 
     /// Structural slot-storage overhead, excluding attribute payload heap.
     #[must_use]
     pub fn structural_memory_usage(&self) -> usize {
-        self.cache.structural_memory_usage()
+        self.storage.structural_memory_usage()
     }
 
     pub fn commit(&mut self) -> Result<(), String> {
-        // Apply pending full entity deletions to fjall.
+        // Invalidate fully-deleted entities from the shared cache to prevent
+        // stale reads. The cache is the sole store, so this is the only state
+        // that must change on commit.
         if !self.pending_deletes.is_empty() {
-            // Only scan fjall if the keyspace was already initialized AND has entries.
-            // For freshly created entities that were never flushed to fjall,
-            // the keyspace was never accessed, so we skip the expensive
-            // keyspace initialization + prefix scans entirely.
-            let has_keyspace = self
-                .keyspace
-                .get()
-                .is_some_and(|ks| ks.approximate_len() > 0);
-            if has_keyspace {
-                let mut batch = get_database().batch();
-                // Targeted prefix scans: O(pending_deletes × attrs_per_entity)
-                // instead of scanning the entire keyspace.
-                for entity_id in &self.pending_deletes {
-                    let prefix = entity_id.to_be_bytes();
-                    for entry in self.keyspace().prefix(prefix) {
-                        if let Ok(k) = entry.key() {
-                            batch.remove(self.keyspace(), k);
-                        }
-                    }
-                }
-                batch.durability(None).commit().map_err(|e| e.to_string())?;
-            }
-            // Invalidate deleted entities from the shared cache to prevent stale reads.
-            // Skip when no keyspace (entities never had attributes stored).
-            if has_keyspace || self.cache.has_entries() {
-                self.cache.invalidate_batch(&self.pending_deletes);
-            }
+            self.storage.invalidate_batch(&self.pending_deletes);
         }
-        // Only refresh the fjall snapshot if the database/keyspace was already
-        // initialized. For stores that never touched fjall (all data in cache),
-        // skip the expensive database + keyspace initialization.
-        if self.keyspace.get().is_some() {
-            let new_snapshot = OnceCell::new();
-            let _ = new_snapshot.set(get_database().snapshot());
-            self.snapshot = new_snapshot;
-        }
-        // Accumulate dirty/deleted entity IDs so rollback_cache() can still
-        // invalidate them if a later operator in the same query fails.
-        self.committed_dirty |= &self.dirty_entities;
-        self.committed_dirty |= &self.pending_deletes;
-        self.dirty_entities.clear();
+        // Fold this operator's deletions into the transaction-wide dirty set so
+        // rollback_cache() can still invalidate them if a later operator in the
+        // same query fails. Attribute writes are already tracked in
+        // `dirty_entities`, which persists across operators until the query
+        // commits (clear_rollback_state) or rolls back.
+        self.dirty_entities |= &self.pending_deletes;
         self.pending_deletes.clear();
         Ok(())
     }
@@ -988,7 +619,7 @@ impl AttributeStore {
     /// transaction back to the pre-query state).
     pub fn clear_rollback_state(&mut self) {
         self.saved_for_rollback.clear();
-        self.committed_dirty.clear();
+        self.dirty_entities.clear();
     }
 
     // ---- flush / rollback -----------------------------------------------
@@ -999,7 +630,7 @@ impl AttributeStore {
         // Restore saved original cache entries for entities that were
         // modified during this write transaction. This is needed because the
         // cache is shared between MVCC versions — simply invalidating would
-        // lose unflushed data that was never written to fjall.
+        // lose data that is only present in the shared in-memory cache.
         let mut restored = RoaringTreemap::new();
 
         for (entity_id, original_attrs) in self.saved_for_rollback.drain() {
@@ -1008,135 +639,22 @@ impl AttributeStore {
                 // entry. Let to_invalidate evict the dirty write instead.
                 continue;
             }
-            self.cache.insert_entity_presorted(
+            self.storage.insert_entity_presorted(
                 entity_id,
-                (*original_attrs).clone(),
+                original_attrs.to_pairs(),
                 self.version.saturating_sub(1),
-                true,
             );
             restored.insert(entity_id);
         }
         // Invalidate any remaining dirty entities not covered by saved entries
         // (e.g., newly created entities that had no prior cache entry).
-        let to_invalidate =
-            (&self.dirty_entities | &self.pending_deletes | &self.committed_dirty) - &restored;
-        self.cache.invalidate_batch(&to_invalidate);
+        let to_invalidate = (&self.dirty_entities | &self.pending_deletes) - &restored;
+        self.storage.invalidate_batch(&to_invalidate);
         self.dirty_entities.clear();
         self.pending_deletes.clear();
-        self.committed_dirty.clear();
     }
 
-    /// Flush dirty cache entries to fjall.
-    ///
-    /// Collects up to `n` least-recently-used dirty entries, writes them to
-    /// fjall in a single batch, then evicts clean entries until memory is
-    /// within budget.
-    pub fn flush_dirty_to_fjall(
-        &self,
-        n: usize,
-    ) -> Result<(), String> {
-        let dirty_entries = self.cache.collect_dirty_lru(n);
-        if dirty_entries.is_empty() {
-            return Ok(());
-        }
-
-        let mut batch = get_database().batch();
-        for (entity_id, attrs) in &dirty_entries {
-            // Delete all existing fjall keys for this entity first, so that
-            // removed attributes don't reappear after cache eviction.
-            let prefix = entity_id.to_be_bytes();
-            for entry in self.keyspace().prefix(prefix) {
-                if let Ok(k) = entry.key() {
-                    batch.remove(self.keyspace(), k);
-                }
-            }
-            // Then insert the current attribute set.
-            for &(attr_idx, ref value) in attrs.iter() {
-                let composite_key = make_key(*entity_id, attr_idx);
-                batch.insert(self.keyspace(), composite_key, value.to_bytes());
-            }
-        }
-        batch.durability(None).commit().map_err(|e| {
-            // Re-insert entries to prevent data loss on commit failure.
-            for (entity_id, attrs) in dirty_entries {
-                self.cache
-                    .insert_entity(entity_id, (*attrs).clone(), self.version, true);
-            }
-            e.to_string()
-        })?;
-
-        Ok(())
-    }
-
-    /// Access the shared cache (for background flush scheduling).
-    #[must_use]
-    pub const fn cache(&self) -> &Arc<AttributeCache> {
-        &self.cache
-    }
-
-    /// Pre-populate the cache from fjall in a single sequential scan.
-    ///
-    /// This is much faster than N individual prefix scans when many entities
-    /// need to be loaded. Entities already in cache are not overwritten.
-    fn bulk_populate_cache_from_fjall(&self) {
-        // Nothing to scan if fjall keyspace was never initialized.
-        if self.keyspace.get().is_none() {
-            return;
-        }
-        let snapshot = self.snapshot();
-        let ks = self.keyspace();
-
-        let mut current_id: Option<u64> = None;
-        let mut current_attrs: Vec<(u16, Value)> = Vec::new();
-
-        // Iterate the entire keyspace in sorted order.
-        // Keys are (entity_id:8B BE, attr_idx:2B BE), so entries naturally
-        // group by entity_id.
-        for entry in snapshot.prefix(ks, []) {
-            let Ok((k, data)) = entry.into_inner() else {
-                continue;
-            };
-            if k.len() < 10 {
-                continue;
-            }
-            let eid = u64::from_be_bytes(k[..8].try_into().unwrap());
-            let Some(idx) = extract_attr_idx(&k) else {
-                continue;
-            };
-            let Some((value, _)) = Value::from_bytes(&data) else {
-                continue;
-            };
-
-            if current_id != Some(eid) {
-                // Flush previous entity.
-                if let Some(prev_id) = current_id {
-                    if self.pending_deletes.contains(prev_id) {
-                        current_attrs.clear();
-                    } else {
-                        let _ = self.cache.insert_entity_if_older(
-                            prev_id,
-                            std::mem::take(&mut current_attrs),
-                            self.version,
-                        );
-                    }
-                }
-                current_id = Some(eid);
-            }
-            current_attrs.push((idx, value));
-        }
-        // Flush the last entity.
-        if let Some(prev_id) = current_id
-            && !self.pending_deletes.contains(prev_id)
-        {
-            let _ = self
-                .cache
-                .insert_entity_if_older(prev_id, current_attrs, self.version);
-        }
-    }
-
-    /// Encode a range of entities, using the pre-built RDB snapshot when
-    /// provided, falling back to cache → fjall otherwise.
-    #[allow(clippy::too_many_arguments)]
+    /// Encode a range of entities, reading attributes from the in-memory cache.
     pub fn encode_with_range(
         &self,
         w: &mut dyn Writer,
@@ -1145,7 +663,6 @@ impl AttributeStore {
         global_attrs: &[Arc<String>],
         count: u64,
         offset: u64,
-        rdb_snapshot: Option<&FxHashMap<u64, Arc<Vec<(u16, Value)>>>>,
     ) {
         // Build attr remap inline.
         let global_index: FxHashMap<&Arc<String>, usize> = global_attrs
@@ -1159,16 +676,6 @@ impl AttributeStore {
             if let Some(&global_id) = global_index.get(local_name) {
                 remap[local_id] = global_id as u16;
             }
-        }
-
-        // Pre-populate the cache from fjall in a single sequential scan.
-        // This is O(total_fjall_entries) instead of O(N × log(M)) for N
-        // individual prefix scans, dramatically speeding up RDB encoding
-        // when many entities have been flushed from cache to fjall.
-        // Skip when an RDB snapshot is provided — the fork child uses
-        // snapshots instead of cache/fjall (fjall is unsafe after fork).
-        if rdb_snapshot.is_none() {
-            self.bulk_populate_cache_from_fjall();
         }
 
         let mut skipped = 0u64;
@@ -1185,17 +692,10 @@ impl AttributeStore {
 
             w.write_unsigned(id);
 
-            let props = rdb_snapshot.map_or_else(
-                || self.get_all_attrs_by_id(id),
-                |snap| {
-                    snap.get(&id)
-                        .cloned()
-                        .unwrap_or_else(|| EMPTY_ATTRS.clone())
-                },
-            );
+            let props = self.get_all_attrs_by_id(id);
             w.write_unsigned(props.len() as u64);
 
-            for &(local_attr_id, ref value) in props.iter() {
+            for (local_attr_id, value) in props.iter() {
                 let global_attr_id = if (local_attr_id as usize) < remap.len() {
                     remap[local_attr_id as usize]
                 } else {
@@ -1211,24 +711,11 @@ impl AttributeStore {
             }
         }
     }
-
-    /// Delete the fjall keyspace, releasing all persisted data.
-    ///
-    /// No-op if the keyspace was never initialized.
-    /// Safe to call while other clones still hold `Keyspace` handles —
-    /// fjall defers physical cleanup until the last handle drops.
-    pub fn delete_keyspace(&self) {
-        if let Some(ks) = self.keyspace.get() {
-            let _ = get_database().delete_keyspace(ks.clone());
-        }
-    }
 }
 
 // SAFETY: AttributeStore is Send+Sync because:
-// - `Database`, `Snapshot`, `Keyspace` are thread-safe (fjall guarantees)
-// - `AttributeCache` is wrapped in `Arc` and uses sharded locks internally
-// - `OnceCell<Keyspace>` is `Sync` (interior init is thread-safe)
-// - All other fields (`RoaringTreemap`, `OrderSet`, etc.) are owned and not shared
+// - `AttributeStorage` is wrapped in `Arc` and uses sharded locks internally
+// - All other owned fields are not shared across threads
 unsafe impl Send for AttributeStore {}
 unsafe impl Sync for AttributeStore {}
 
@@ -1258,11 +745,565 @@ impl Decode<19> for AttributeStore {
 
             if !entries.is_empty() {
                 entries.sort_by_key(|(idx, _)| *idx);
-                self.cache
-                    .insert_entity(entity_id, entries, self.version, true);
+                self.storage.insert_entity(entity_id, entries, self.version);
                 self.dirty_entities.insert(entity_id);
             }
         }
         Ok(())
+    }
+}
+
+// ============================================================================
+// AttributeStorage: in-memory concurrent backing store
+// ============================================================================
+//
+// Custom sharded `RwLock<Vec<Option<CachedEntity>>>` tuned for the attribute
+// workload (sequential `u64` entity ids). Ids are allocated monotonically, so
+// direct slot indexing beats hashing; gaps from deleted entities sit as `None`
+// slots. Shared across MVCC versions via `Arc`; per-entry version stamps give
+// snapshot visibility. It is the sole source of truth (no cold tier), so it
+// is unbounded: every live entity stays resident and nothing is evicted.
+
+/// Reference-counted, single-allocation struct-of-arrays for one entity's
+/// attributes.
+///
+/// Replaces the previous fat `Arc<[_]>` representation to remove two sources
+/// of per-entity waste: the 6 bytes of padding inside each pair (the `u16` is
+/// padded up to `Value`'s 8-byte alignment), and the 16-byte fat pointer plus
+/// the 16-byte `Arc` header. Indices and values live as two contiguous columns
+/// in **one** heap block, referenced by a thin (8-byte) pointer:
+///
+/// ```text
+///   [ strong: AtomicU32 | len: u32 ]   8-byte header
+///   [ values:  [Value; len] ]          16 B each, 8-aligned
+///   [ indices: [u16;   len] ]          2 B each
+/// ```
+///
+/// Contents are immutable after construction, so sharing across threads and
+/// MVCC versions is sound with an atomic strong count — exactly like `Arc`.
+pub struct AttrArray {
+    ptr: NonNull<u8>,
+}
+
+#[repr(C)]
+struct AttrHeader {
+    strong: AtomicU32,
+    len: u32,
+}
+
+impl AttrArray {
+    fn layout_of(len: usize) -> (Layout, usize, usize) {
+        let header = Layout::new::<AttrHeader>();
+        let values = Layout::array::<Value>(len).expect("values layout");
+        let indices = Layout::array::<u16>(len).expect("indices layout");
+        let (l, values_off) = header.extend(values).expect("extend values");
+        let (l, indices_off) = l.extend(indices).expect("extend indices");
+        (l.pad_to_align(), values_off, indices_off)
+    }
+
+    /// Build from attribute pairs already sorted by `attr_idx`. Consumes the
+    /// `Vec`, moving each `Value` into the new block (no extra clones).
+    #[must_use]
+    fn from_sorted(pairs: Vec<(u16, Value)>) -> Self {
+        let len = pairs.len();
+        let (layout, values_off, indices_off) = Self::layout_of(len);
+        // SAFETY: layout has non-zero size (the header is 8 bytes).
+        let raw = unsafe { alloc::alloc(layout) };
+        let Some(ptr) = NonNull::new(raw) else {
+            alloc::handle_alloc_error(layout);
+        };
+        // SAFETY: `ptr` is a fresh allocation matching `layout`; we initialize
+        // the header and exactly `len` values and indices before any read.
+        unsafe {
+            ptr::write(
+                ptr.as_ptr().cast::<AttrHeader>(),
+                AttrHeader {
+                    strong: AtomicU32::new(1),
+                    len: len as u32,
+                },
+            );
+            let vptr = ptr.as_ptr().add(values_off).cast::<Value>();
+            let iptr = ptr.as_ptr().add(indices_off).cast::<u16>();
+            for (i, (idx, val)) in pairs.into_iter().enumerate() {
+                ptr::write(vptr.add(i), val);
+                ptr::write(iptr.add(i), idx);
+            }
+        }
+        Self { ptr }
+    }
+
+    /// Shared empty instance (used for prop-less entities).
+    #[must_use]
+    fn empty() -> Self {
+        Self::from_sorted(Vec::new())
+    }
+
+    #[inline]
+    fn header(&self) -> &AttrHeader {
+        // SAFETY: `ptr` always references a valid header for the lifetime of self.
+        unsafe { &*self.ptr.as_ptr().cast::<AttrHeader>() }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.header().len as usize
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn indices(&self) -> &[u16] {
+        let len = self.len();
+        let (_, _, indices_off) = Self::layout_of(len);
+        // SAFETY: the index column holds `len` initialized `u16`s.
+        unsafe { slice::from_raw_parts(self.ptr.as_ptr().add(indices_off).cast::<u16>(), len) }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn values(&self) -> &[Value] {
+        let len = self.len();
+        let (_, values_off, _) = Self::layout_of(len);
+        // SAFETY: the value column holds `len` initialized `Value`s.
+        unsafe { slice::from_raw_parts(self.ptr.as_ptr().add(values_off).cast::<Value>(), len) }
+    }
+
+    /// Position of `attr_idx` within the sorted index column, if present.
+    #[inline]
+    #[must_use]
+    pub fn position(
+        &self,
+        attr_idx: u16,
+    ) -> Option<usize> {
+        self.indices().binary_search(&attr_idx).ok()
+    }
+
+    /// Value for `attr_idx`, if the attribute is present.
+    #[inline]
+    #[must_use]
+    pub fn get(
+        &self,
+        attr_idx: u16,
+    ) -> Option<&Value> {
+        self.position(attr_idx).map(|pos| &self.values()[pos])
+    }
+
+    /// Iterate `(attr_idx, &Value)` pairs in index order.
+    pub fn iter(&self) -> impl Iterator<Item = (u16, &Value)> + '_ {
+        self.indices().iter().copied().zip(self.values().iter())
+    }
+
+    /// Materialize an owned `Vec` of `(attr_idx, Value)` pairs.
+    #[must_use]
+    pub fn to_pairs(&self) -> Vec<(u16, Value)> {
+        self.indices()
+            .iter()
+            .copied()
+            .zip(self.values().iter().cloned())
+            .collect()
+    }
+
+    /// Estimated heap bytes of this entity's single allocation, including the
+    /// out-of-line heap owned by each `Value`.
+    #[must_use]
+    fn heap_bytes(&self) -> usize {
+        let (layout, _, _) = Self::layout_of(self.len());
+        layout.size() + self.values().iter().map(Value::heap_size).sum::<usize>()
+    }
+}
+
+impl Clone for AttrArray {
+    fn clone(&self) -> Self {
+        // Relaxed suffices on clone (matches std `Arc`): the cloned reference is
+        // published through existing happens-before edges of the shared store.
+        let old = self.header().strong.fetch_add(1, AtomicOrdering::Relaxed);
+        assert!(old != u32::MAX, "AttrArray refcount overflow");
+        Self { ptr: self.ptr }
+    }
+}
+
+impl Drop for AttrArray {
+    fn drop(&mut self) {
+        if self.header().strong.fetch_sub(1, AtomicOrdering::Release) != 1 {
+            return;
+        }
+        // Acquire fence: ensure all prior writes/reads are visible before free.
+        std::sync::atomic::fence(AtomicOrdering::Acquire);
+        let len = self.len();
+        let (layout, values_off, _) = Self::layout_of(len);
+        // SAFETY: last reference — drop each `Value` in place, then free.
+        unsafe {
+            let vptr = self.ptr.as_ptr().add(values_off).cast::<Value>();
+            for i in 0..len {
+                ptr::drop_in_place(vptr.add(i));
+            }
+            alloc::dealloc(self.ptr.as_ptr(), layout);
+        }
+    }
+}
+
+// SAFETY: contents are immutable after construction and the strong count is
+// atomic, so `AttrArray` shares across threads exactly like an `Arc<[_]>`
+// (sound because `u16` and `Value` are both `Send + Sync`).
+unsafe impl Send for AttrArray {}
+unsafe impl Sync for AttrArray {}
+
+/// Per-entity stored attributes.
+#[derive(Clone)]
+struct CachedEntity {
+    /// Indices + values for this entity, in one shared allocation.
+    attrs: AttrArray,
+    /// Graph version when this entry was written.
+    version: u64,
+}
+
+const SHARDS: usize = 64;
+const SHARD_BITS: u32 = 6; // log2(SHARDS)
+const SHARD_MASK: u64 = (SHARDS as u64) - 1;
+// Chunks of CHUNK consecutive ids share a shard, so sequential id batches
+// (label scans) reuse one read lock per chunk instead of one per id.
+const CHUNK_BITS: u32 = 6;
+const CHUNK: u64 = 1 << CHUNK_BITS;
+const CHUNK_MASK: u64 = CHUNK - 1;
+
+struct Shard {
+    /// Layout: shard = `(id >> CHUNK_BITS) & SHARD_MASK`, so `CHUNK`
+    /// consecutive ids share one shard — sequential id batches (e.g.
+    /// label scans) reuse a single read lock per chunk.
+    entries: RwLock<Vec<Option<CachedEntity>>>,
+}
+
+#[inline]
+const fn shard_idx(entity_id: u64) -> usize {
+    ((entity_id >> CHUNK_BITS) & SHARD_MASK) as usize
+}
+
+#[inline]
+const fn slot_idx(entity_id: u64) -> usize {
+    // Bijection with shard_idx. Reconstruction:
+    //   id = ((slot >> CHUNK_BITS) << (CHUNK_BITS + SHARD_BITS))
+    //         | (shard << CHUNK_BITS) | (slot & CHUNK_MASK)
+    let high = entity_id >> (CHUNK_BITS + SHARD_BITS);
+    let low = entity_id & CHUNK_MASK;
+    ((high << CHUNK_BITS) | low) as usize
+}
+
+/// Shared, version-stamped, entity-level attribute storage.
+///
+/// This is the sole source of truth (no cold tier), so it is unbounded:
+/// every live entity stays resident and entries are never evicted.
+pub struct AttributeStorage {
+    shards: Box<[Shard; SHARDS]>,
+}
+
+impl Default for AttributeStorage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AttributeStorage {
+    /// Create an empty attribute storage.
+    #[must_use]
+    pub fn new() -> Self {
+        let shards: Vec<Shard> = (0..SHARDS)
+            .map(|_| Shard {
+                entries: RwLock::new(Vec::new()),
+            })
+            .collect();
+        let shards: Box<[Shard; SHARDS]> = shards
+            .into_boxed_slice()
+            .try_into()
+            .unwrap_or_else(|_| unreachable!("vec built with exactly SHARDS items"));
+        Self { shards }
+    }
+
+    #[inline]
+    fn shard(
+        &self,
+        entity_id: u64,
+    ) -> &Shard {
+        // SAFETY: shard_idx returns 0..SHARDS.
+        unsafe { self.shards.get_unchecked(shard_idx(entity_id)) }
+    }
+
+    /// Look up a single attribute for an entity by index.
+    ///
+    /// Returns `Some(Some(value))` on a hit with the attribute present,
+    /// `Some(None)` on a hit but attribute absent, and `None` on a miss.
+    #[must_use]
+    pub fn get_attr(
+        &self,
+        entity_id: u64,
+        attr_idx: u16,
+        version: u64,
+    ) -> Option<Option<Value>> {
+        let shard = self.shard(entity_id);
+        let slot = slot_idx(entity_id);
+        let entries = shard.entries.read();
+        let entry = entries.get(slot)?.as_ref()?;
+        if entry.version > version {
+            return None;
+        }
+        Some(entry.attrs.get(attr_idx).cloned())
+    }
+
+    /// Batch variant of [`get_attr`] for many ids sharing the same `attr_idx`.
+    ///
+    /// Walks the input in order and reuses the current shard's read lock for
+    /// any run of consecutive keys that hash to the same shard.
+    pub fn get_attrs_batch(
+        &self,
+        keys: &[u64],
+        attr_idx: u16,
+        version: u64,
+        out: &mut Vec<Option<Option<Value>>>,
+    ) {
+        out.clear();
+        out.resize(keys.len(), None);
+        if keys.is_empty() {
+            return;
+        }
+        let mut current_shard_idx = shard_idx(keys[0]);
+        let mut guard = self.shards[current_shard_idx].entries.read();
+        for (pos, &id) in keys.iter().enumerate() {
+            let s = shard_idx(id);
+            if s != current_shard_idx {
+                drop(guard);
+                current_shard_idx = s;
+                guard = self.shards[s].entries.read();
+            }
+            let slot = slot_idx(id);
+            let Some(Some(entry)) = guard.get(slot) else {
+                continue;
+            };
+            if entry.version > version {
+                continue;
+            }
+            out[pos] = Some(entry.attrs.get(attr_idx).cloned());
+        }
+    }
+
+    /// Fused batch lookup that writes resolved `Value`s straight into `out`.
+    ///
+    /// For each key this pushes exactly one `Value`:
+    /// - hit with the attribute present  -> the cloned value,
+    /// - hit with the attribute absent    -> `default`,
+    /// - miss (entity not stored / newer) -> `default`, and the absolute index
+    ///   into `out` is recorded in `missing` for caller fallback.
+    pub fn get_attrs_batch_into(
+        &self,
+        keys: &[u64],
+        attr_idx: u16,
+        version: u64,
+        default: &Value,
+        out: &mut Vec<Value>,
+        missing: &mut Vec<usize>,
+    ) {
+        if keys.is_empty() {
+            return;
+        }
+        let base = out.len();
+        let mut current_shard_idx = shard_idx(keys[0]);
+        let mut guard = self.shards[current_shard_idx].entries.read();
+        missing.reserve(keys.len() / 8);
+        for (pos, &id) in keys.iter().enumerate() {
+            let s = shard_idx(id);
+            if s != current_shard_idx {
+                drop(guard);
+                current_shard_idx = s;
+                guard = self.shards[s].entries.read();
+            }
+            let slot = slot_idx(id);
+            if let Some(Some(entry)) = guard.get(slot)
+                && entry.version <= version
+            {
+                match entry.attrs.get(attr_idx) {
+                    Some(v) => out.push(v.clone()),
+                    None => out.push(default.clone()),
+                }
+                continue;
+            }
+            out.push(default.clone());
+            missing.push(base + pos);
+        }
+    }
+
+    /// Return all stored attributes for an entity (cheap shared clone).
+    #[must_use]
+    pub fn get_entity(
+        &self,
+        entity_id: u64,
+        version: u64,
+    ) -> Option<AttrArray> {
+        let shard = self.shard(entity_id);
+        let slot = slot_idx(entity_id);
+        let entries = shard.entries.read();
+        let entry = entries.get(slot)?.as_ref()?;
+        if entry.version > version {
+            return None;
+        }
+        Some(entry.attrs.clone())
+    }
+
+    /// Check whether an entity has *any* stored attributes.
+    #[must_use]
+    pub fn has_entity(
+        &self,
+        entity_id: u64,
+        version: u64,
+    ) -> Option<bool> {
+        let shard = self.shard(entity_id);
+        let slot = slot_idx(entity_id);
+        let entries = shard.entries.read();
+        let entry = entries.get(slot)?.as_ref()?;
+        if entry.version > version {
+            return None;
+        }
+        Some(!entry.attrs.is_empty())
+    }
+
+    /// Check whether an attr already exists for an entity.
+    #[must_use]
+    pub fn contains_attr(
+        &self,
+        entity_id: u64,
+        attr_idx: u16,
+        version: u64,
+    ) -> Option<bool> {
+        let shard = self.shard(entity_id);
+        let slot = slot_idx(entity_id);
+        let entries = shard.entries.read();
+        let entry = entries.get(slot)?.as_ref()?;
+        if entry.version > version {
+            return None;
+        }
+        Some(entry.attrs.get(attr_idx).is_some())
+    }
+
+    /// Insert (or replace) the full attribute set for an entity.
+    pub fn insert_entity(
+        &self,
+        entity_id: u64,
+        mut attrs: Vec<(u16, Value)>,
+        version: u64,
+    ) {
+        attrs.sort_by_key(|item| item.0);
+        self.insert_internal(entity_id, AttrArray::from_sorted(attrs), version);
+    }
+
+    /// Insert (or replace) the full attribute set when the caller guarantees
+    /// the attrs are already sorted by `attr_idx`.
+    pub fn insert_entity_presorted(
+        &self,
+        entity_id: u64,
+        attrs: Vec<(u16, Value)>,
+        version: u64,
+    ) {
+        debug_assert!(
+            attrs.windows(2).all(|w| w[0].0 <= w[1].0),
+            "insert_entity_presorted: attrs not sorted"
+        );
+        self.insert_internal(entity_id, AttrArray::from_sorted(attrs), version);
+    }
+
+    fn insert_internal(
+        &self,
+        entity_id: u64,
+        attrs: AttrArray,
+        version: u64,
+    ) {
+        let entry = CachedEntity { attrs, version };
+        let shard = self.shard(entity_id);
+        let slot = slot_idx(entity_id);
+        let mut entries = shard.entries.write();
+        if entries.len() <= slot {
+            entries.resize(slot + 1, None);
+        }
+        // SAFETY: just resized to cover `slot`.
+        let cell = unsafe { entries.get_unchecked_mut(slot) };
+        *cell = Some(entry);
+    }
+
+    /// Batch-invalidate entities (used during rollback and commit).
+    ///
+    /// Groups ids by shard so each shard's write lock is taken at most once.
+    pub fn invalidate_batch(
+        &self,
+        entity_ids: &roaring::RoaringTreemap,
+    ) {
+        let mut by_shard: [Vec<u64>; SHARDS] = std::array::from_fn(|_| Vec::new());
+        for id in entity_ids {
+            by_shard[shard_idx(id)].push(id);
+        }
+        for (i, ids) in by_shard.iter().enumerate() {
+            if ids.is_empty() {
+                continue;
+            }
+            let mut entries = self.shards[i].entries.write();
+            for &id in ids {
+                let slot = slot_idx(id);
+                if let Some(cell) = entries.get_mut(slot) {
+                    *cell = None;
+                }
+            }
+        }
+    }
+
+    /// Remove a single attribute from a stored entity.
+    #[must_use]
+    pub fn remove_attr_from_entity(
+        &self,
+        entity_id: u64,
+        attr_idx: u16,
+    ) -> bool {
+        let shard = self.shard(entity_id);
+        let slot = slot_idx(entity_id);
+        let mut entries = shard.entries.write();
+        let Some(Some(existing)) = entries.get_mut(slot) else {
+            return false;
+        };
+        let Some(pos) = existing.attrs.position(attr_idx) else {
+            return false;
+        };
+        let mut pairs = existing.attrs.to_pairs();
+        pairs.remove(pos);
+        existing.attrs = AttrArray::from_sorted(pairs);
+        true
+    }
+
+    /// Estimated heap bytes of stored attribute payloads.
+    ///
+    /// Walks every live entry; intended for the (cold) memory-report path.
+    #[must_use]
+    pub fn memory_usage(&self) -> usize {
+        self.shards
+            .iter()
+            .map(|s| {
+                s.entries
+                    .read()
+                    .iter()
+                    .filter_map(Option::as_ref)
+                    .map(|e| e.attrs.heap_bytes())
+                    .sum::<usize>()
+            })
+            .sum()
+    }
+
+    /// Structural overhead of the slot vectors, excluding attribute payload.
+    /// Grows monotonically as ids are allocated; does not shrink on removal.
+    #[must_use]
+    pub fn structural_memory_usage(&self) -> usize {
+        let slot_size = std::mem::size_of::<Option<CachedEntity>>();
+        self.shards
+            .iter()
+            .map(|s| s.entries.read().len() * slot_size)
+            .sum()
     }
 }

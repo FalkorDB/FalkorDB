@@ -175,19 +175,13 @@ unsafe extern "C" fn graph_rdb_save(
                 .graph_vkeys
                 .get(graph_name)
                 .map_or(0, std::vec::Vec::len) as u64;
-            let snap_ref = vkey_state
-                .rdb_snapshots
-                .get(graph_name)
-                .map(std::convert::AsRef::as_ref);
             // Look up the real graph by name from GRAPH_REGISTRY.
             let registry = crate::graph_core::GRAPH_REGISTRY.lock();
             if let Some(real_graph_arc) = registry.get(graph_name) {
                 let tg: &ThreadedGraph = &*real_graph_arc.data_ptr();
                 let g = tg.graph.read();
                 let graph = g.borrow();
-                serializers::encoder::rdb_save_graph_key(
-                    rdb, &graph, payloads, key_count, snap_ref,
-                );
+                serializers::encoder::rdb_save_graph_key(rdb, &graph, payloads, key_count);
                 return;
             }
         }
@@ -199,7 +193,7 @@ unsafe extern "C" fn graph_rdb_save(
         let tg: &ThreadedGraph = &*graph_arc.data_ptr();
         let g = tg.graph.read();
         let graph = g.borrow();
-        serializers::encoder::rdb_save_graph(rdb, &graph, None);
+        serializers::encoder::rdb_save_graph(rdb, &graph);
     }
 }
 
@@ -367,14 +361,6 @@ pub unsafe fn create_virtual_keys(ctx: *mut RedisModuleCtx) {
             let tg: &ThreadedGraph = &*graph_ref.data_ptr();
             let g = tg.graph.read();
             let graph = g.borrow();
-
-            // Build attribute snapshots (cache + fjall) before serialization.
-            if graph.needs_rdb_snapshot() {
-                let snapshots = Arc::new(graph.build_rdb_snapshots());
-                vkey_state
-                    .rdb_snapshots
-                    .insert(graph_name.clone(), snapshots);
-            }
 
             let multi_payloads = build_multi_key_payloads(&graph, vkey_max as u64);
             let key_count = multi_payloads.len();

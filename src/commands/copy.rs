@@ -63,13 +63,6 @@ pub fn graph_copy(
     let g = tg.graph.read();
     let graph = g.borrow();
 
-    // Build attribute snapshots before fork (fork-safe attribute reading).
-    let snapshots = if graph.needs_rdb_snapshot() {
-        Some(Arc::new(graph.build_rdb_snapshots()))
-    } else {
-        None
-    };
-
     // Create pipe.
     let mut pipe_fds = [0i32; 2];
     if unsafe { pipe(pipe_fds.as_mut_ptr()) } != 0 {
@@ -93,11 +86,7 @@ pub fn graph_copy(
         drop(read_fd);
         set_nthreads(1);
 
-        serializers::encoder::pipe_save_graph(
-            write_fd,
-            &graph,
-            snapshots.as_ref().map(AsRef::as_ref),
-        );
+        serializers::encoder::pipe_save_graph(write_fd, &graph);
 
         // _exit to avoid running destructors in the child.
         unsafe { _exit(0) };
@@ -141,7 +130,7 @@ pub fn graph_copy(
     }
 
     // Serialize the decoded graph for replication before wrapping.
-    let serialized = serializers::encoder::vec_save_graph(&new_graph, None);
+    let serialized = serializers::encoder::vec_save_graph(&new_graph);
 
     // Wrap the decoded graph and set on dest key.
     let mvcc = MvccGraph::from_graph(new_graph);

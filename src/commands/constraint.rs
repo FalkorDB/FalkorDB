@@ -210,10 +210,6 @@ pub fn graph_constraint(
                     ctx.replicate_verbatim();
                 }
             }
-            let value = tg.graph.read().borrow().maybe_flush_caches();
-            if let Err(e) = value {
-                ctx.log_warning(&format!("FalkorDB: cache flush failed: {e}"));
-            }
             if is_create {
                 Ok(RedisValue::SimpleStringStatic("PENDING"))
             } else {

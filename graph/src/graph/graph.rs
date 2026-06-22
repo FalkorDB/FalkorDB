@@ -83,7 +83,7 @@ use roaring::RoaringTreemap;
 use crate::{
     entity_type::EntityType,
     graph::{
-        attribute_store::AttributeStore,
+        attribute_store::{AttrArray, AttributeStore},
         constraint::{Constraint, ConstraintStatus, ConstraintType},
         graphblas::{
             matrix::{
@@ -216,13 +216,6 @@ pub struct MemoryUsageReport {
     pub indices_sz: usize,
 }
 
-/// Pre-built attribute snapshots for RDB save.
-/// Built before Redis forks so the child never accesses fjall.
-pub struct RdbSnapshots {
-    pub nodes: FxHashMap<u64, Arc<Vec<(u16, Value)>>>,
-    pub relationships: FxHashMap<u64, Arc<Vec<(u16, Value)>>>,
-}
-
 /// The main graph data structure.
 ///
 /// Stores nodes, relationships, labels, and properties using sparse matrices
@@ -236,6 +229,13 @@ pub struct RdbSnapshots {
 ///
 /// The Graph is `Send + Sync` but not internally synchronized. Use [`MvccGraph`]
 /// for concurrent access with proper read/write isolation.
+/// Sentinel for an empty/deleted slot in [`Graph::edge_endpoints`].
+///
+/// Equals `compound_key(u32::MAX, u32::MAX)`, which would only collide with a
+/// real edge whose endpoints are both node id `u32::MAX` (4.29 billion) — not
+/// reachable in practice, since the tensor compound key caps node ids at u32.
+const EDGE_NO_ENDPOINT: u64 = u64::MAX;
+
 pub struct Graph {
     /// Graph name (Redis key name)
     name: String,
@@ -269,10 +269,13 @@ pub struct Graph {
     labels_matices: Vec<VersionedMatrix>,
     /// Per-type relationship tensors (type ID → src×dst×edge_id)
     relationship_matrices: Vec<Tensor>,
-    /// Graph-wide reverse index: edge_id → compound_key(src, dst) for O(1)
-    /// endpoint lookup. Edge IDs are globally unique, so a single map covers
-    /// all relationship types.
-    edge_id_to_key: FxHashMap<u64, u64>,
+    /// Graph-wide reverse index: `edge_id` → `compound_key(src, dst)` for O(1)
+    /// endpoint lookup, stored as a dense vector indexed by edge id. Edge IDs
+    /// are densely allocated, so a `Vec` is far more compact than a hash map
+    /// (8 B/edge vs ~31 B with control bytes + load-factor slack) and clones
+    /// faster across MVCC versions. Empty/deleted slots hold
+    /// [`EDGE_NO_ENDPOINT`].
+    edge_endpoints: Vec<u64>,
     /// Node property storage
     node_attrs: AttributeStore,
     /// Relationship property storage
@@ -628,9 +631,9 @@ impl Graph {
             all_nodes_matrix: VersionedMatrix::new(n, n),
             labels_matices: Vec::new(),
             relationship_matrices: Vec::new(),
-            edge_id_to_key: FxHashMap::default(),
-            node_attrs: AttributeStore::new(&format!("{name}/nodes"), version),
-            relationship_attrs: AttributeStore::new(&format!("{name}/relationships"), version),
+            edge_endpoints: Vec::new(),
+            node_attrs: AttributeStore::new(version),
+            relationship_attrs: AttributeStore::new(version),
             node_indexer: Indexer::default(),
             edge_indexer: Indexer::default(),
             node_labels: Vec::new(),
@@ -670,10 +673,14 @@ impl Graph {
     ) -> Self {
         // Rebuild the graph-wide reverse index after RDB load to ensure
         // complete sync with the decoded edges.
-        let mut edge_id_to_key: FxHashMap<u64, u64> = FxHashMap::default();
+        let mut edge_endpoints: Vec<u64> = Vec::new();
         for tensor in &relationship_matrices {
             for (key, edge_id) in tensor.edge_iter(0, u64::MAX) {
-                edge_id_to_key.insert(edge_id, key);
+                let idx = edge_id as usize;
+                if idx >= edge_endpoints.len() {
+                    edge_endpoints.resize(idx + 1, EDGE_NO_ENDPOINT);
+                }
+                edge_endpoints[idx] = key;
             }
         }
 
@@ -697,7 +704,7 @@ impl Graph {
             all_nodes_matrix,
             labels_matices,
             relationship_matrices,
-            edge_id_to_key,
+            edge_endpoints,
             node_attrs,
             relationship_attrs,
             node_indexer: Indexer::default(),
@@ -759,7 +766,7 @@ impl Graph {
         let node_attrs = self.node_attrs.new_version(self.version + 1);
         let relationship_attrs = self.relationship_attrs.new_version(self.version + 1);
 
-        // Tensor::dup() is copy-on-write; the graph-wide edge_id_to_key is
+        // Tensor::dup() is copy-on-write; the graph-wide edge_endpoints vec is
         // cloned once below.
         let relationship_matrices: Vec<Tensor> =
             self.relationship_matrices.iter().map(Tensor::dup).collect();
@@ -785,7 +792,7 @@ impl Graph {
                 .map(VersionedMatrix::dup)
                 .collect(),
             relationship_matrices,
-            edge_id_to_key: self.edge_id_to_key.clone(),
+            edge_endpoints: self.edge_endpoints.clone(),
             node_attrs,
             relationship_attrs,
             node_indexer: self.node_indexer.clone(),
@@ -1806,9 +1813,14 @@ impl Graph {
         self.relationship_matrices[type_idx].set_all_from_slices(srcs, dsts, rel_ids);
 
         // Maintain the graph-wide reverse index alongside the tensor edges.
-        self.edge_id_to_key.reserve(rel_ids.len());
+        if let Some(&max_id) = rel_ids.iter().max() {
+            let needed = max_id as usize + 1;
+            if needed > self.edge_endpoints.len() {
+                self.edge_endpoints.resize(needed, EDGE_NO_ENDPOINT);
+            }
+        }
         for ((&src, &dst), &id) in srcs.iter().zip(dsts.iter()).zip(rel_ids.iter()) {
-            self.edge_id_to_key.insert(id, compound_key(src, dst));
+            self.edge_endpoints[id as usize] = compound_key(src, dst);
         }
 
         self.adjacancy_matrix
@@ -1994,7 +2006,7 @@ impl Graph {
                 tm_rows.push(edge_id);
                 tm_cols.push(type_id);
                 endpoints.push((RelationshipId(edge_id), NodeId(src), NodeId(dst)));
-                self.edge_id_to_key.remove(&edge_id);
+                self.clear_edge_endpoint(edge_id);
             }
 
             adj_candidates.extend(self.relationship_matrices[type_idx].remove_all(type_rels));
@@ -2120,7 +2132,7 @@ impl Graph {
 
             // Drop deleted edges from the graph-wide reverse index.
             for &(edge_id, _, _) in &rels {
-                self.edge_id_to_key.remove(&edge_id);
+                self.clear_edge_endpoint(edge_id);
             }
 
             // Batch-remove from tensor — remove_all uses bulk mask operations
@@ -2325,9 +2337,21 @@ impl Graph {
         &self,
         edge_id: u64,
     ) -> Option<(u64, u64)> {
-        self.edge_id_to_key
-            .get(&edge_id)
+        self.edge_endpoints
+            .get(edge_id as usize)
+            .filter(|&&key| key != EDGE_NO_ENDPOINT)
             .map(|&key| (key >> 32, key & 0xFFFF_FFFF))
+    }
+
+    /// Clear an edge's endpoint slot in the reverse index (on deletion).
+    /// Leaves the slot as a tombstone; the vector never shrinks.
+    fn clear_edge_endpoint(
+        &mut self,
+        edge_id: u64,
+    ) {
+        if let Some(slot) = self.edge_endpoints.get_mut(edge_id as usize) {
+            *slot = EDGE_NO_ENDPOINT;
+        }
     }
 
     /// Returns (src, dst) for an edge via the maintained reverse index.
@@ -2453,7 +2477,7 @@ impl Graph {
     pub fn get_node_all_attrs_by_id(
         &self,
         id: NodeId,
-    ) -> Arc<Vec<(u16, Value)>> {
+    ) -> AttrArray {
         self.node_attrs.get_all_attrs_by_id(id.0)
     }
 
@@ -2475,7 +2499,7 @@ impl Graph {
     pub fn get_relationship_all_attrs_by_id(
         &self,
         id: RelationshipId,
-    ) -> Arc<Vec<(u16, Value)>> {
+    ) -> AttrArray {
         self.relationship_attrs.get_all_attrs_by_id(id.0)
     }
 
@@ -2654,38 +2678,6 @@ impl Graph {
     pub fn clear_rollback_state(&mut self) {
         self.node_attrs.clear_rollback_state();
         self.relationship_attrs.clear_rollback_state();
-    }
-
-    /// Flush dirty cache entries to fjall and evict clean entries if over budget.
-    pub fn maybe_flush_caches(&self) -> Result<(), String> {
-        const FLUSH_BATCH: usize = 1024;
-        if self.node_attrs.cache().over_budget() {
-            self.node_attrs.flush_dirty_to_fjall(FLUSH_BATCH)?;
-        }
-        if self.relationship_attrs.cache().over_budget() {
-            self.relationship_attrs.flush_dirty_to_fjall(FLUSH_BATCH)?;
-        }
-        Ok(())
-    }
-
-    /// Returns `true` if any attribute store has cold data in fjall that
-    /// would be unsafe to read from a fork child.
-    pub fn needs_rdb_snapshot(&self) -> bool {
-        self.node_attrs.has_fjall_data() || self.relationship_attrs.has_fjall_data()
-    }
-
-    /// Pre-populate attribute caches from fjall for RDB save.
-    pub fn build_rdb_snapshots(&self) -> RdbSnapshots {
-        let node_snap = self
-            .node_attrs
-            .build_rdb_snapshot(&self.deleted_nodes, self.max_node_id());
-        let rel_snap = self
-            .relationship_attrs
-            .build_rdb_snapshot(&self.deleted_relationships, self.max_relationship_id());
-        RdbSnapshots {
-            nodes: node_snap,
-            relationships: rel_snap,
-        }
     }
 
     pub fn commit_index(
@@ -3431,13 +3423,6 @@ impl Graph {
         self.edge_indexer.cancel();
     }
 
-    /// Delete fjall keyspaces for both node and relationship attribute stores.
-    /// Called during graph destruction to release persisted attribute data.
-    pub fn delete_keyspaces(&self) {
-        self.node_attrs.delete_keyspace();
-        self.relationship_attrs.delete_keyspace();
-    }
-
     pub fn set_indexer_graph(
         &mut self,
         graph: Arc<AtomicRefCell<Self>>,
@@ -3516,9 +3501,8 @@ impl Graph {
             size += relationship_matrix.memory_usage();
         }
         size += self.node_attrs.memory_usage();
-        // Graph-wide edge_id → compound_key reverse index: one (u64, u64) entry
-        // per relationship, plus one SwissTable control byte per slot.
-        size += self.edge_id_to_key.capacity() * (std::mem::size_of::<(u64, u64)>() + 1);
+        // Graph-wide edge_id → compound_key reverse index: one u64 per edge slot.
+        size += self.edge_endpoints.capacity() * std::mem::size_of::<u64>();
         // size += self.relationship_attrs.memory_usage();
         // size += self.node_indexer.memory_usage();
         size
@@ -3553,12 +3537,11 @@ impl Graph {
             self.node_attrs.structural_memory_usage() + self.deleted_nodes.serialized_size();
 
         // --- edge block storage ---
-        // Includes the graph-wide edge_id → compound_key reverse index, which
-        // holds one (u64, u64) entry per relationship (plus a SwissTable
-        // control byte per slot).
+        // Includes the graph-wide edge_id → compound_key reverse index, a dense
+        // vector holding one u64 per edge slot.
         let edge_block_storage_sz: usize = self.relationship_attrs.structural_memory_usage()
             + self.deleted_relationships.serialized_size()
-            + self.edge_id_to_key.capacity() * (std::mem::size_of::<(u64, u64)>() + 1);
+            + self.edge_endpoints.capacity() * std::mem::size_of::<u64>();
 
         // --- node attributes by label (sampling) ---
         let mut node_attr_by_label: Vec<(Arc<String>, usize)> = Vec::new();
@@ -3697,7 +3680,6 @@ impl Graph {
         w: &mut dyn Writer,
         p: &PayloadEntry,
         global_attrs: &[Arc<String>],
-        snapshots: Option<&RdbSnapshots>,
     ) {
         match p.state {
             EncodeState::Nodes => {
@@ -3708,7 +3690,6 @@ impl Graph {
                     global_attrs,
                     p.count,
                     p.offset,
-                    snapshots.map(|s| &s.nodes),
                 );
             }
             EncodeState::DeletedNodes => {
@@ -3722,7 +3703,6 @@ impl Graph {
                     global_attrs,
                     p.count,
                     p.offset,
-                    snapshots.map(|s| &s.relationships),
                 );
             }
             EncodeState::DeletedEdges => {

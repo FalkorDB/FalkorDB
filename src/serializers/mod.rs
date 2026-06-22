@@ -32,8 +32,6 @@ pub struct VirtualKeyState {
     pub vkey_map: HashMap<String, (String, usize, Vec<PayloadEntry>)>,
     /// graph_name → list of virtual key names
     pub graph_vkeys: HashMap<String, Vec<String>>,
-    /// Pre-built attribute snapshots (cache + fjall) built before fork.
-    pub rdb_snapshots: HashMap<String, Arc<graph::graph::graph::RdbSnapshots>>,
 }
 
 impl VirtualKeyState {
@@ -41,14 +39,12 @@ impl VirtualKeyState {
         Self {
             vkey_map: HashMap::new(),
             graph_vkeys: HashMap::new(),
-            rdb_snapshots: HashMap::new(),
         }
     }
 
     pub fn clear(&mut self) {
         self.vkey_map.clear();
         self.graph_vkeys.clear();
-        self.rdb_snapshots.clear();
     }
 }
 
