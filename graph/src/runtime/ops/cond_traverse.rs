@@ -558,7 +558,7 @@ impl<'a> CondTraverseOp<'a> {
                 if chain_is_empty {
                     out_batch.set_column(
                         rp.alias.id,
-                        Column::RelTriples(std::mem::take(&mut out_edge_ids)),
+                        Column::RelIds(std::mem::take(&mut out_edge_ids)),
                     );
                 }
                 out_batch.set_column(
@@ -574,7 +574,7 @@ impl<'a> CondTraverseOp<'a> {
         if !out_indices.is_empty() {
             let mut out_batch = batch.gather(&out_indices);
             if chain_is_empty {
-                out_batch.set_column(rp.alias.id, Column::RelTriples(out_edge_ids));
+                out_batch.set_column(rp.alias.id, Column::RelIds(out_edge_ids));
             }
             out_batch.set_column(to_alias.id, Column::NodeIds(out_dest_ids));
             out_pending.push_back(out_batch);

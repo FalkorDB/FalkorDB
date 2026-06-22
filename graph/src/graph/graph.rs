@@ -1930,70 +1930,77 @@ impl Graph {
         rels: &RoaringTreemap,
         index_remove_edge_docs: &mut FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
     ) -> Result<Vec<(RelationshipId, NodeId, NodeId)>, String> {
-        let del_keys = rels;
-
-        let min_id = del_keys.min().unwrap_or(0);
-        let max_id = del_keys.max().unwrap_or(0);
+        if rels.is_empty() {
+            return Ok(Vec::new());
+        }
         let num_types = self.relationship_matrices.len();
-        let mut by_type: Vec<Vec<(u64, u64, u64)>> = vec![Vec::new(); num_types];
 
-        // Resolve endpoints BEFORE mutating any graph state, so a stale or
-        // non-existent edge id can't corrupt the deleted bitmap / counters.
-        // Build by_type using the graph-wide reverse index (edge_id_to_key) for
-        // O(1) endpoint lookup. The me matrix rows are compound_keys
-        // (src<<32|dst), not edge IDs, so an edge-ID range scan can't be used.
-        #[allow(clippy::cast_possible_truncation)]
-        for (edge_id, type_idx) in self.relationship_type_matrix.iter(min_id, max_id) {
-            if del_keys.contains(edge_id) {
-                if let Some((src, dst)) = self.endpoints_for_edge(edge_id) {
+        // --- Phase 1: resolve (type, src, dst) per edge without mutating state ---
+        // Endpoints come from the graph-wide reverse index (O(1)); the type from
+        // a single re-seekable iterator over `relationship_type_matrix`. Walking
+        // `rels` (O(deleted)) with per-edge seeks avoids scanning every edge in
+        // the [min, max] id range, and resolving before any mutation means a
+        // stale id (absent from the reverse index or type matrix) is skipped
+        // without corrupting counters or bitmaps.
+        let mut by_type: Vec<Vec<(u64, u64, u64)>> = vec![Vec::new(); num_types];
+        {
+            let min_id = rels.min().expect("rels is non-empty");
+            let mut type_iter = self.relationship_type_matrix.iter(min_id, min_id);
+            #[allow(clippy::cast_possible_truncation)]
+            for edge_id in rels {
+                let Some((src, dst)) = self.endpoints_for_edge(edge_id) else {
+                    continue;
+                };
+                type_iter.seek(edge_id, edge_id);
+                if let Some((_, type_idx)) = type_iter.next() {
                     by_type[type_idx as usize].push((edge_id, src, dst));
                 }
             }
         }
 
-        // Endpoints resolved — now apply state mutations.
+        // --- Phase 2: endpoints resolved, apply mutations ---
         self.deleted_relationships.extend(rels.iter());
         self.relationship_count -= rels.len();
-        self.relationship_attrs.remove_all(del_keys);
+        self.relationship_attrs.remove_all(rels);
 
         let mut endpoints: Vec<(RelationshipId, NodeId, NodeId)> =
             Vec::with_capacity(rels.len() as usize);
-
-        // Track (src, dst) pairs that were emptied from at least one tensor —
-        // only these are candidates for adjacency matrix removal.
+        // (edge_id, type_id) pairs for a single bulk removal from the type matrix.
+        let mut tm_rows: Vec<u64> = Vec::with_capacity(endpoints.capacity());
+        let mut tm_cols: Vec<u64> = Vec::with_capacity(endpoints.capacity());
+        // (src, dst) pairs emptied from a tensor — candidates for adjacency removal.
         let mut adj_candidates: Vec<(u64, u64)> = Vec::new();
 
         for (type_idx, type_rels) in by_type.iter().enumerate() {
             if type_rels.is_empty() {
                 continue;
             }
-
-            // Stage index document removals for indexed relationship types
             let type_id = type_idx as u64;
-            let type_name = &self.relationship_types[type_idx];
-            if self.edge_indexer.has_index(type_name) {
+
+            // Stage index document removals for indexed relationship types.
+            if self.edge_indexer.has_index(&self.relationship_types[type_idx]) {
+                let docs = index_remove_edge_docs.entry(type_id).or_default();
                 for &(edge_id, src, dst) in type_rels {
-                    index_remove_edge_docs
-                        .entry(type_id)
-                        .or_default()
-                        .insert(edge_id, (src, dst));
+                    docs.insert(edge_id, (src, dst));
                 }
             }
 
-            // Batch remove from relationship_type_matrix using bulk build_bool
-            let tm_rows: Vec<u64> = type_rels.iter().map(|&(id, _, _)| id).collect();
-            let tm_cols: Vec<u64> = vec![type_id; type_rels.len()];
+            for &(edge_id, src, dst) in type_rels {
+                tm_rows.push(edge_id);
+                tm_cols.push(type_id);
+                endpoints.push((RelationshipId(edge_id), NodeId(src), NodeId(dst)));
+                self.edge_id_to_key.remove(&edge_id);
+            }
+
+            adj_candidates.extend(self.relationship_matrices[type_idx].remove_all(type_rels));
+        }
+
+        // Remove every deleted edge from relationship_type_matrix in one masked op.
+        if !tm_rows.is_empty() {
             let mut type_mask =
                 Matrix::new(self.relationship_cap, self.relationship_types.len() as u64);
             type_mask.build_bool(&tm_rows, &tm_cols);
             self.relationship_type_matrix.remove_mask(&type_mask);
-
-            for &(edge_id, src, dst) in type_rels {
-                endpoints.push((RelationshipId(edge_id), NodeId(src), NodeId(dst)));
-                self.edge_id_to_key.remove(&edge_id);
-            }
-            let emptied = self.relationship_matrices[type_idx].remove_all(type_rels);
-            adj_candidates.extend(emptied);
         }
 
         // Update adjacancy_matrix for pairs that lost all edges.

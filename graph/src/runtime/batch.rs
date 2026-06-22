@@ -164,7 +164,7 @@ pub fn classify_stored_column(values: Vec<Value>) -> Column {
                 _ => unreachable!("guarded by all() above"),
             })
             .collect();
-        return Column::RelTriples(triples);
+        return Column::RelIds(triples);
     }
     if values.iter().all(|v| matches!(v, Value::Int(_))) {
         let ints = values
@@ -244,8 +244,8 @@ pub fn classify_column(values: Vec<Value>) -> (Column, NullBitmap) {
 pub enum Column {
     /// All values are node IDs (from scan/traverse operators).
     NodeIds(Vec<NodeId>),
-    /// All values are relationship triples: (rel_id, src_node, dst_node).
-    RelTriples(Vec<RelationshipId>),
+    /// All values are relationship IDs.
+    RelIds(Vec<RelationshipId>),
     /// All values are 64-bit signed integers.
     Ints(Vec<i64>),
     /// All values are 64-bit floating point numbers.
@@ -265,7 +265,7 @@ impl Column {
     ) -> Value {
         match self {
             Self::NodeIds(ids) => Value::Node(ids[row]),
-            Self::RelTriples(triples) => Value::Relationship(triples[row]),
+            Self::RelIds(triples) => Value::Relationship(triples[row]),
             Self::Ints(vals) => Value::Int(vals[row]),
             Self::Floats(vals) => Value::Float(vals[row]),
             Self::Values(vals) => vals[row].clone(),
@@ -279,7 +279,7 @@ impl Column {
     pub const fn len(&self) -> usize {
         match self {
             Self::NodeIds(v) => v.len(),
-            Self::RelTriples(v) => v.len(),
+            Self::RelIds(v) => v.len(),
             Self::Ints(v) => v.len(),
             Self::Floats(v) => v.len(),
             Self::Values(v) => v.len(),
@@ -301,7 +301,7 @@ impl Column {
     ) -> Self {
         match self {
             Self::NodeIds(v) => Self::NodeIds(indices.map(|i| v[i]).collect()),
-            Self::RelTriples(v) => Self::RelTriples(indices.map(|i| v[i]).collect()),
+            Self::RelIds(v) => Self::RelIds(indices.map(|i| v[i]).collect()),
             Self::Ints(v) => Self::Ints(indices.map(|i| v[i]).collect()),
             Self::Floats(v) => Self::Floats(indices.map(|i| v[i]).collect()),
             Self::Values(v) => Self::Values(indices.map(|i| v[i].clone()).collect()),
