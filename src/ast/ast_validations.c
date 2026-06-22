@@ -116,7 +116,7 @@ static int _validate_node_pattern(const cypher_astnode_t *node_pattern,
 	return 0;
 }
 
-// Check if stored labels conflict with current node's labels
+// Check if stored labels conflict with current node's labels (unordered set comparison)
 static int _labels_conflict(array stored_labels, const cypher_astnode_t *node) {
 	if (!node) return 0;
 	
@@ -126,20 +126,27 @@ static int _labels_conflict(array stored_labels, const cypher_astnode_t *node) {
 	// Different number of labels is a conflict
 	if (stored_len != curr_len) return 1;
 	
-	// Compare each label
+	// Check each label in stored_labels exists in current node's labels (set comparison)
 	for (uint i = 0; i < stored_len; i++) {
-		const cypher_astnode_t *stored_label = stored_labels[i];
-		const cypher_astnode_t *curr_label = cypher_ast_node_pattern_get_label(node, i);
-		
-		if (!curr_label) return 1;
+		const cypher_astnode_t *stored_label = (const cypher_astnode_t *)array_index(stored_labels, i);
+		if (!stored_label) return 1;
 		
 		const char *stored_name = cypher_ast_label_get_name(stored_label);
-		const char *curr_name = cypher_ast_label_get_name(curr_label);
+		if (!stored_name) return 1;
 		
-		if (!stored_name || !curr_name || strcmp(stored_name, curr_name) != 0) {
-			return 1;
+		bool found = false;
+		for (uint j = 0; j < curr_len; j++) {
+			const cypher_astnode_t *curr_label = cypher_ast_node_pattern_get_label(node, j);
+			if (curr_label) {
+				const char *curr_name = cypher_ast_label_get_name(curr_label);
+				if (curr_name && strcmp(stored_name, curr_name) == 0) {
+					found = true;
+					break;
+				}
+			}
 		}
+		if (!found) return 1;  // Label from stored_labels not found in current labels
 	}
 	
-	return 0;
+	return 0;  // Labels are identical (order-independent)
 }
