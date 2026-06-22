@@ -22,6 +22,20 @@ use crate::runtime::bitset::BitSet;
 use crate::runtime::value::Value;
 use std::hash::Hash;
 
+use smallvec::SmallVec;
+
+/// Inline capacity for a [`Row`]'s value store. Rows up to this many slots wide
+/// — the common correlated/expansion case (`UNWIND`, `Apply`/`CALL`,
+/// `OPTIONAL`, variable-length traversal) — keep their bindings inline with no
+/// heap allocation; wider rows spill to the heap exactly like a `Vec`.
+const ROW_INLINE: usize = 4;
+
+/// Backing store for a [`Row`]'s dense value slots.
+///
+/// `SmallVec<[Value; ROW_INLINE]>` so narrow owned rows clone without touching
+/// the allocator; wider rows spill to the heap exactly like a `Vec`.
+type ValueStore = SmallVec<[Value; ROW_INLINE]>;
+
 /// Read access to a single row of variable bindings.
 ///
 /// `var_id` is a `Variable.id` (assigned during binding). Returns `None` when
@@ -49,7 +63,7 @@ pub trait RowView {
 /// [`BitSet`] recording which slots were explicitly bound.
 #[derive(Clone, Default)]
 pub struct Row {
-    values: Vec<Value>,
+    values: ValueStore,
     bound: BitSet,
     /// Origin row index, propagated through correlated sub-plans (Optional,
     /// Apply) to map result rows back to their input row.
@@ -67,7 +81,7 @@ impl Row {
     #[must_use]
     pub fn with_capacity(num_vars: usize) -> Self {
         Self {
-            values: Vec::with_capacity(num_vars),
+            values: ValueStore::with_capacity(num_vars),
             bound: BitSet::default(),
             origin_row: 0,
         }
@@ -75,12 +89,12 @@ impl Row {
 
     /// Creates a row directly from a dense value vector and bound set.
     #[must_use]
-    pub const fn from_raw(
+    pub fn from_raw(
         values: Vec<Value>,
         bound: BitSet,
     ) -> Self {
         Self {
-            values,
+            values: ValueStore::from_vec(values),
             bound,
             origin_row: 0,
         }

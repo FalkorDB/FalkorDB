@@ -1276,6 +1276,7 @@ impl<'a> BatchOp<'a> {
             Self::ValueHashJoin(op) => {
                 // Clear cached state so the join rematerializes for the new batch
                 op.hash_table = None;
+                op.right_batches.clear();
                 op.left_batch = None;
                 op.left_pos = 0;
                 op.right_match_envs.clear();

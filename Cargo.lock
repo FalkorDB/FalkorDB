@@ -429,6 +429,7 @@ dependencies = [
  "rquickjs",
  "rustc-hash",
  "simsimd",
+ "smallvec",
  "thin-vec",
  "thiserror",
  "ureq",

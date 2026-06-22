@@ -151,6 +151,34 @@ impl<'a> ProjectOp<'a> {
             columns.push(col);
         }
 
+        // Fast path: every projection bulk-materialized into a column and there
+        // are no carry-forward variables, so move the columns straight into the
+        // output batch. This skips the per-row `Row` allocation and the
+        // column -> Row -> column double-clone the general path below incurs (the
+        // dominant `ProjectOp` cost on row-heavy projections such as `RETURN n`
+        // or `RETURN n.id`). Parity-exact: `set_column` applies the same
+        // `classify_stored_column` that `BatchBuilder::finish` would over the
+        // same materialized values and binds the slot identically, and origins
+        // are carried over per active row exactly as the row path does.
+        if !active.is_empty()
+            && !self.trees.is_empty()
+            && self.copy_from_parent.is_empty()
+            && columns.iter().all(Option::is_some)
+        {
+            let mut out = Batch::new(0);
+            for (proj_idx, (target, _tree)) in self.trees.iter().enumerate() {
+                let col = columns[proj_idx]
+                    .take()
+                    .expect("all projection columns materialized on the fast path");
+                out.set_column(target.id, Column::Values(col));
+            }
+            let origins: Vec<u32> = active.iter().map(|&row| batch.origin_row(row)).collect();
+            if origins.iter().any(|&o| o != 0) {
+                out.set_origin_rows(origins);
+            }
+            return Ok(out);
+        }
+
         // Transpose the projected columns into the output batch row by row.
         let mut builder = BatchBuilder::new();
         for (out_idx, &row) in active.iter().enumerate() {

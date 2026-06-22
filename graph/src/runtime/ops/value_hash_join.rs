@@ -20,7 +20,7 @@
 //! ```
 //!
 //! The hash table uses chaining for collision resolution: each bucket stores
-//! a `Vec<(Value, Vec<Env>)>` where exact key equality is checked during
+//! a `Vec<(Value, BuildSlot)>` where exact key equality is checked during
 //! probe. NULL keys are skipped on both sides (Cypher NULL != NULL semantics).
 
 use std::collections::HashMap;
@@ -37,6 +37,32 @@ use crate::runtime::{
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
+/// A lightweight reference to one retained right-side row: which batch in
+/// `right_batches`, and which row within it. The build phase stores these
+/// instead of owned `Row`s, so only rows that actually match are materialised
+/// (on demand) during probe.
+#[derive(Clone, Copy)]
+pub(crate) struct RightRowRef {
+    batch: u32,
+    row: u32,
+}
+
+/// One hash bucket's worth of build-side rows that share the same key value,
+/// kept as positions so probe can re-check exact key equality after a hash hit.
+pub(crate) type BuildSlot = Vec<RightRowRef>;
+
+/// The build/probe hash table: `hash(key) -> [(key, matching right rows)]`.
+/// The per-bucket `Vec` resolves hash collisions; exact key equality is
+/// re-checked on probe (see `BuildSlot`).
+pub(crate) type JoinHashTable = HashMap<u64, Vec<(Value, BuildSlot)>>;
+
+/// Hash a join key with the same hasher used on both the build and probe sides.
+fn hash_value(value: &Value) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
+}
+
 pub struct ValueHashJoinOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
@@ -44,9 +70,12 @@ pub struct ValueHashJoinOp<'a> {
     pub(crate) lhs_exp: &'a QueryExpr<Variable>,
     pub(crate) rhs_exp: &'a QueryExpr<Variable>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
-    /// Hash table: hash(value) -> Vec<(Value, Vec<Env>)>
-    /// We use a Vec of (key, envs) pairs per bucket to handle hash collisions.
-    pub(crate) hash_table: Option<HashMap<u64, Vec<(Value, Vec<Row>)>>>,
+    /// Build/probe hash table; `None` until the right side has been consumed.
+    pub(crate) hash_table: Option<JoinHashTable>,
+    /// The right sub-plan's batches, retained so probe can gather matched rows
+    /// by `RightRowRef` position without the build phase materialising an owned
+    /// `Row` per right row.
+    pub(crate) right_batches: Vec<Batch<'a>>,
     /// Current block of left-side rows being probed (columnar).
     pub(crate) left_batch: Option<Batch<'a>>,
     /// Current position within `left_batch`.
@@ -73,6 +102,7 @@ impl<'a> ValueHashJoinOp<'a> {
             rhs_exp,
             idx,
             hash_table: None,
+            right_batches: Vec::new(),
             left_batch: None,
             left_pos: 0,
             right_match_envs: Vec::new(),
@@ -80,36 +110,67 @@ impl<'a> ValueHashJoinOp<'a> {
         }
     }
 
-    /// Build the hash table from the right sub-plan.
-    fn materialize_right(&mut self) -> Result<HashMap<u64, Vec<(Value, Vec<Row>)>>, String> {
+    /// Build the probe hash table from the right sub-plan. Each retained batch
+    /// keeps its rows in place; the table stores `RightRowRef` positions into
+    /// `right_batches` rather than owned `Row`s, so the build side allocates
+    /// nothing per row and only matched rows are materialised during probe.
+    fn build_hash_table(&mut self) -> Result<JoinHashTable, String> {
         let eval = ExprEval::from_runtime(self.runtime);
         let rhs_idx = self.rhs_exp.root().idx();
-        let mut table: HashMap<u64, Vec<(Value, Vec<Row>)>> = HashMap::new();
+        let mut table = JoinHashTable::new();
 
         for result in self.right.by_ref() {
             let batch = result?;
+            // The index this batch will occupy in `right_batches` once pushed
+            // below; refs point at its rows by that position.
+            let batch_ref = self.right_batches.len() as u32;
             for row in batch.active_indices() {
-                let env = BatchRow::new(&batch, row).to_owned_row();
-                let key = eval.eval(self.rhs_exp, rhs_idx, Some(&env), None)?;
+                let view = BatchRow::new(&batch, row);
+                let key = eval.eval(self.rhs_exp, rhs_idx, Some(&view), None)?;
                 if matches!(key, Value::Null) {
-                    // NULL != NULL in Cypher, skip
-                    continue;
+                    continue; // NULL never joins (Cypher NULL != NULL).
                 }
-                let mut hasher = DefaultHasher::new();
-                key.hash(&mut hasher);
-                let hash = hasher.finish();
-
-                let bucket = table.entry(hash).or_default();
-                // Find existing entry with equal key, or create new
-                if let Some(entry) = bucket.iter_mut().find(|(k, _)| *k == key) {
-                    entry.1.push(env);
-                } else {
-                    bucket.push((key, vec![env]));
+                let slot = RightRowRef {
+                    batch: batch_ref,
+                    row: row as u32,
+                };
+                // Group refs under their key within the bucket, re-using the
+                // existing key entry on a hash collision or repeated key.
+                let bucket = table.entry(hash_value(&key)).or_default();
+                match bucket.iter_mut().find(|(k, _)| *k == key) {
+                    Some((_, refs)) => refs.push(slot),
+                    None => bucket.push((key, vec![slot])),
                 }
             }
+            self.right_batches.push(batch);
         }
 
         Ok(table)
+    }
+
+    /// Populate `right_match_envs` with the build-side rows whose key equals
+    /// `key`, preserving build insertion order, and reset `right_match_pos`.
+    /// Matched rows are gathered from `right_batches` by position (only matched
+    /// rows are materialised).
+    fn fill_matches(
+        &mut self,
+        key: &Value,
+    ) {
+        self.right_match_envs.clear();
+        self.right_match_pos = 0;
+        let mut matches: BuildSlot = Vec::new();
+        if let Some(bucket) = self.hash_table.as_ref().unwrap().get(&hash_value(key)) {
+            for (k, refs) in bucket {
+                if k == key {
+                    matches.extend_from_slice(refs);
+                }
+            }
+        }
+        for slot in matches {
+            let env = BatchRow::new(&self.right_batches[slot.batch as usize], slot.row as usize)
+                .to_owned_row();
+            self.right_match_envs.push(env);
+        }
     }
 }
 
@@ -119,7 +180,7 @@ impl<'a> Iterator for ValueHashJoinOp<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         // Lazy materialization of right side
         if self.hash_table.is_none() {
-            match self.materialize_right() {
+            match self.build_hash_table() {
                 Ok(table) => {
                     if table.is_empty() {
                         return None;
@@ -173,29 +234,10 @@ impl<'a> Iterator for ValueHashJoinOp<'a> {
                     self.left_pos += 1;
                     continue;
                 }
-                let mut hasher = DefaultHasher::new();
-                key.hash(&mut hasher);
-                let hash = hasher.finish();
-
-                let table = self.hash_table.as_ref().unwrap();
-                let matched = table.get(&hash).map_or_else(Vec::new, |bucket| {
-                    bucket
-                        .iter()
-                        .filter(|(k, _)| *k == key)
-                        .map(|(_, envs)| envs)
-                        .collect::<Vec<_>>()
-                });
-                if matched.is_empty() {
+                self.fill_matches(&key);
+                if self.right_match_envs.is_empty() {
                     self.left_pos += 1;
                     continue;
-                }
-                // Flatten all matching right envs
-                self.right_match_envs.clear();
-                self.right_match_pos = 0;
-                for group in matched {
-                    for env in group {
-                        self.right_match_envs.push(env.clone());
-                    }
                 }
                 // Now drain from right_match
                 while builder.len() < BATCH_SIZE

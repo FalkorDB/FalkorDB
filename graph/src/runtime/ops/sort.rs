@@ -31,21 +31,21 @@ use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
     batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
-    row::{Row, RowView},
     runtime::Runtime,
     value::{CompareValue, Value},
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 use std::cmp::Ordering;
 
-type SortItem = (Row, Vec<(Value, bool)>);
-
 pub struct SortOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Option<Box<BatchOp<'a>>>,
     trees: &'a [(QueryExpr<Variable>, bool)],
-    /// Sorted results stored in reverse order so we can pop from the end in O(1).
-    results: Vec<Row>,
+    /// The concatenated input buffer (fully materialised on the first `next`),
+    /// the row order to emit, and a cursor into that order.
+    sorted: Option<Batch<'a>>,
+    order: Vec<usize>,
+    pos: usize,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
     /// When set, only the top `limit` rows (after skip) are needed.
     /// Allows truncation after sorting to avoid excess work.
@@ -67,7 +67,9 @@ impl<'a> SortOp<'a> {
             runtime,
             child: Some(child),
             trees,
-            results: Vec::new(),
+            sorted: None,
+            order: Vec::new(),
+            pos: 0,
             idx,
             limit,
             skip,
@@ -79,102 +81,100 @@ impl<'a> Iterator for SortOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // Consume all input on first call.
+        // Consume and sort all input on the first call.
         if let Some(child) = self.child.take() {
-            let mut items: Vec<SortItem> = Vec::new();
+            // Concatenate every child batch into one columnar buffer with no
+            // owned `Row` materialised per input row.
+            let mut combined_builder = BatchBuilder::new();
             for batch_result in child {
-                let batch = match batch_result {
-                    Ok(b) => b,
+                match batch_result {
+                    Ok(batch) => combined_builder.push_batch_active(&batch),
                     Err(e) => return Some(Err(e)),
-                };
-                for row in batch.active_indices() {
-                    let env = BatchRow::new(&batch, row).to_owned_row();
-                    let sort_keys = match self
-                        .trees
-                        .iter()
-                        .map(|(tree, desc)| {
-                            Ok((
-                                ExprEval::from_runtime(self.runtime).eval(
-                                    tree,
-                                    tree.root().idx(),
-                                    Some(&env),
-                                    None,
-                                )?,
-                                *desc,
-                            ))
-                        })
-                        .collect::<Result<Vec<_>, String>>()
-                    {
-                        Ok(keys) => keys,
-                        Err(e) => return Some(Err(e)),
-                    };
-                    items.push((env, sort_keys));
                 }
             }
+            let combined = combined_builder.finish();
+            let total = combined.len();
+            if total == 0 {
+                return None;
+            }
 
-            items.sort_by(|(env_a, a), (env_b, b)| {
-                let primary =
-                    a.iter()
-                        .zip(b)
-                        .fold(Ordering::Equal, |acc, ((a, desc_a), (b, _))| {
-                            if acc != Ordering::Equal {
-                                return acc;
-                            }
-                            let (ordering, _) = a.compare_value(b);
-                            if *desc_a {
-                                ordering.reverse()
-                            } else {
-                                ordering
-                            }
-                        });
+            // Evaluate the sort keys once per row through a borrowed columnar
+            // view (so `rand()` and other expression keys still work) with no
+            // `Row` allocation.
+            let mut keys: Vec<Vec<(Value, bool)>> = Vec::with_capacity(total);
+            for row in 0..total {
+                let view = BatchRow::new(&combined, row);
+                let mut row_keys = Vec::with_capacity(self.trees.len());
+                for (tree, desc) in self.trees {
+                    match ExprEval::from_runtime(self.runtime).eval(
+                        tree,
+                        tree.root().idx(),
+                        Some(&view),
+                        None,
+                    ) {
+                        Ok(value) => row_keys.push((value, *desc)),
+                        Err(e) => return Some(Err(e)),
+                    }
+                }
+                keys.push(row_keys);
+            }
+
+            let num_columns = combined.num_columns();
+            let mut order: Vec<usize> = (0..total).collect();
+            order.sort_by(|&a, &b| {
+                let primary = keys[a].iter().zip(&keys[b]).fold(
+                    Ordering::Equal,
+                    |acc, ((va, desc_a), (vb, _))| {
+                        if acc != Ordering::Equal {
+                            return acc;
+                        }
+                        let (ordering, _) = va.compare_value(vb);
+                        if *desc_a {
+                            ordering.reverse()
+                        } else {
+                            ordering
+                        }
+                    },
+                );
                 if primary != Ordering::Equal {
                     return primary;
                 }
-                // Tiebreaker: compare env values slot-by-slot for deterministic
-                // ordering when primary sort keys are equal.
-                let len = env_a.len().min(env_b.len());
-                for i in 0..len {
-                    if let (Some(va), Some(vb)) =
-                        (env_a.get_by_id(i as u32), env_b.get_by_id(i as u32))
-                    {
-                        let (ord, _) = va.compare_value(vb);
-                        if ord != Ordering::Equal {
-                            return ord;
-                        }
+                // Deterministic tiebreaker: compare bound slots position-by-position.
+                // Columns unbound in every row read back as `Null` on both sides
+                // and so never change the ordering.
+                for id in 0..num_columns {
+                    let va = combined.value_at(id as u32, a).unwrap_or(Value::Null);
+                    let vb = combined.value_at(id as u32, b).unwrap_or(Value::Null);
+                    let (ordering, _) = va.compare_value(&vb);
+                    if ordering != Ordering::Equal {
+                        return ordering;
                     }
                 }
-                env_a.len().cmp(&env_b.len())
+                Ordering::Equal
             });
 
-            // Reverse so we can pop from the end in O(1) while preserving
-            // sorted order, and drop sort keys immediately (no longer needed).
-            let mut sorted: Vec<Row> = items.into_iter().map(|(env, _keys)| env).collect();
-
-            // When limit is known, truncate to limit + skip to avoid keeping
-            // excess rows. The Skip and Limit operators above handle the actual
-            // row-level trimming.
+            // When a limit is known, drop the rows the Skip/Limit operators above
+            // will never consume.
             if let Some(limit) = self.limit {
-                let keep = limit + self.skip;
-                sorted.truncate(keep);
+                order.truncate(limit + self.skip);
             }
 
-            sorted.reverse();
-            self.results = sorted;
+            self.sorted = Some(combined);
+            self.order = order;
+            self.pos = 0;
         }
 
-        // Emit sorted rows in batches by popping from the end.
-        if self.results.is_empty() {
+        // Emit the sorted rows BATCH_SIZE at a time by gathering from the
+        // combined buffer in sorted order.
+        if self.pos >= self.order.len() {
             return None;
         }
-
-        let n = BATCH_SIZE.min(self.results.len());
-        let mut envs = self.results.split_off(self.results.len() - n);
-        envs.reverse();
-
-        let mut builder = BatchBuilder::new();
-        for env in &envs {
-            builder.push_row(env);
-        }
-        Some(Ok(builder.finish()))
+        let end = (self.pos + BATCH_SIZE).min(self.order.len());
+        let out = {
+            let combined = self.sorted.as_ref().unwrap();
+            combined.gather(&self.order[self.pos..end])
+        };
+        self.pos = end;
+        Some(Ok(out))
     }
 }
