@@ -1978,7 +1978,10 @@ impl Graph {
             let type_id = type_idx as u64;
 
             // Stage index document removals for indexed relationship types.
-            if self.edge_indexer.has_index(&self.relationship_types[type_idx]) {
+            if self
+                .edge_indexer
+                .has_index(&self.relationship_types[type_idx])
+            {
                 let docs = index_remove_edge_docs.entry(type_id).or_default();
                 for &(edge_id, src, dst) in type_rels {
                     docs.insert(edge_id, (src, dst));
