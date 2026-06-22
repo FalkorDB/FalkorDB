@@ -49,7 +49,11 @@ jobs:
       matrix:
         include: ${{ fromJson(inputs.cells) }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      # `persist-credentials: false` + read-only `permissions` (above) keep this
+      # safe even though it builds caller-supplied (potentially PR) code: no
+      # GITHUB_TOKEN is left on disk and the job cannot write anything. Callers
+      # do not pass `secrets: inherit`, so no custom secrets reach the build.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ inputs.commit_sha }}
           persist-credentials: false

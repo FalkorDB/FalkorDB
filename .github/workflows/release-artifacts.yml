@@ -43,9 +43,13 @@ jobs:
       tag: ${{ steps.derive.outputs.tag }}
       suffixes: ${{ steps.derive.outputs.suffixes }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.commit_sha || github.sha }}
+          # Check out the RELEASE TAG (release event) or the requested commit
+          # (dispatch). The resolved commit is then read back via `git rev-parse`
+          # below — `github.sha` is NOT guaranteed to be the tagged commit for a
+          # release event, so we never rely on it.
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.commit_sha || github.event.release.tag_name }}
           persist-credentials: false
 
       - name: Derive tag, commit SHA, cells; validate Cargo.toml version
@@ -54,15 +58,16 @@ jobs:
           EVENT: ${{ github.event_name }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           INPUT_TAG: ${{ github.event.inputs.tag }}
-          INPUT_SHA: ${{ github.event.inputs.commit_sha }}
-          GH_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           if [ "$EVENT" = "workflow_dispatch" ]; then
-            TAG="$INPUT_TAG"; SHA="$INPUT_SHA"
+            TAG="$INPUT_TAG"
           else
-            TAG="$RELEASE_TAG"; SHA="$GH_SHA"
+            TAG="$RELEASE_TAG"
           fi
+          # Resolve the actual commit from the checked-out ref (the tag/commit
+          # above), never from github.sha.
+          SHA="$(git rev-parse HEAD)"
           # Validate Cargo.toml version matches the (v-stripped) tag — fail loudly
           # so a mis-tagged release never ships mismatched binaries.
           SEMVER="${TAG#v}"
@@ -94,7 +99,7 @@ jobs:
     with:
       cells: ${{ needs.prepare.outputs.cells }}
       commit_sha: ${{ needs.prepare.outputs.commit_sha }}
-    secrets: inherit
+    # No `secrets: inherit` — the reusable build only needs the auto GITHUB_TOKEN.
 
   publish:
     needs: [prepare, build]

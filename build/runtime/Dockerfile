@@ -14,10 +14,15 @@ COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
+# CXX defaults to the Debian toolchain's clang++-22. Per-OS toolchain images
+# (rhel9/al2023/rhel8/alpine) reuse this exact builder stage and override the
+# compiler via `--build-arg CXX=<their clang++>` — keeping one build path /
+# one self-containment contract for every platform (see build/Dockerfile.<os>).
+ARG CXX=clang++-22
 COPY --from=planner /src/recipe.json recipe.json
-RUN CXX=clang++-22 cargo chef cook --release --recipe-path recipe.json
+RUN CXX="$CXX" cargo chef cook --release --recipe-path recipe.json
 COPY . .
-RUN CXX=clang++-22 cargo build --release && \
+RUN CXX="$CXX" cargo build --release && \
     mkdir -p /out && cp target/release/libfalkordb.so /out/falkordb.so && \
     echo "=== verify single-.so contract on libfalkordb.so ===" && \
     deps="$(ldd /out/falkordb.so | awk '{print $1}' | sort -u)" && \

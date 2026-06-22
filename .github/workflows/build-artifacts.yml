@@ -88,4 +88,6 @@ jobs:
     with:
       cells: ${{ needs.prepare.outputs.cells }}
       commit_sha: ${{ needs.prepare.outputs.commit_sha }}
-    secrets: inherit
+    # No `secrets: inherit` — the reusable workflow only needs the auto-provided
+    # GITHUB_TOKEN (GHCR read). Keeping custom secrets out of a PR-triggered
+    # build that compiles untrusted code is deliberate.
