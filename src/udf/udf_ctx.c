@@ -303,3 +303,4 @@ JSValueConst *UDFCtx_GetFunction
 	UDFFunc *f = _UDFCtx_GetFunc (lib, func_name) ;
 	return (f != NULL) ? &f->func : NULL ;
 }
+

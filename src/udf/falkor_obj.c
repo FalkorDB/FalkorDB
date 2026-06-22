@@ -362,3 +362,4 @@ void UDF_SetFalkorRegisterImpl
     JS_FreeValue (js_ctx, global_obj) ;
     JS_FreeValue (js_ctx, falkor_obj) ;
 }
+

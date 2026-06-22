@@ -5,6 +5,7 @@
  */
 
 #include "proc_fulltext_create_index.h"
+
 #include "../value.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"
@@ -360,3 +361,4 @@ ProcedureCtx *Proc_FulltextCreateNodeIdxGen() {
 			Proc_FulltextCreateNodeIdxStep, Proc_FulltextCreateNodeIdxInvoke,
 			NULL, NULL, false);
 }
+

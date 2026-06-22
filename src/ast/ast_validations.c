@@ -13,9 +13,9 @@
 #include "ast_visitor.h"
 #include "../errors/errors.h"
 #include "../util/rax_extensions.h"
-#include "../util/identifier_limits.h"
 #include "../procedures/procedure.h"
 #include "../execution_plan/ops/op.h"
+#include "../util/identifier_limits.h"
 #include "../arithmetic/arithmetic_expression.h"
 
 typedef enum {
@@ -2606,3 +2606,4 @@ void AST_ReportErrors
 	ErrorCtx_SetError(EMSG_PARSER_ERROR, errMsg, errPos.line, errPos.column,
 			errPos.offset, errCtx, errCtxOffset);
 }
+

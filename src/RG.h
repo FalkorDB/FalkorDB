@@ -149,3 +149,4 @@ _Pragma("GCC diagnostic pop")
 	/* short read! */                                    \
 	ASSERT("short read" && read == 1);                   \
 }
+
