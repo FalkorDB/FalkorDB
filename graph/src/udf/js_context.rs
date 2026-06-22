@@ -316,7 +316,7 @@ pub fn call_udf_bridge(
             // Convert arguments
             let js_args: Vec<rquickjs::Value> = args
                 .iter()
-                .map(|v| type_convert::value_to_js(&ctx, v, &rt.g))
+                .map(|v| type_convert::value_to_js(&ctx, v, &rt.g, Some(rt)))
                 .collect::<Result<Vec<_>, _>>()?;
 
             // Call the function

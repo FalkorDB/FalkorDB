@@ -1086,7 +1086,7 @@ fn register_msf(funcs: &mut Functions) {
             // For unweighted: use 1.0 for all entries
             // For weighted: use the attribute value
             unsafe {
-                use crate::graph::graphblas::{GrB_FP64, GrB_Index, GrB_Matrix, GrB_Matrix_extractTuples_FP64, GrB_Matrix_free, GrB_Matrix_new, GrB_Matrix_nvals, GrB_Matrix_setElement_FP64, GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_UINT64, GrB_Vector, GrB_Vector_free, GrB_WaitMode, lagraphx_bindings};
+                use crate::graph::graphblas::{GrB_FP64, GrB_Index, GrB_Matrix, GrB_Matrix_extractTuples_FP64, GrB_Matrix_free, GrB_Matrix_new, GrB_Matrix_nvals, GrB_Matrix_setElement_FP64, GrB_Matrix_wait, GrB_Vector, GrB_Vector_free, GrB_WaitMode, lagraphx_bindings};
 
                 let active_set: std::collections::HashSet<u64> = active_nodes.iter().copied().collect();
 
@@ -1103,12 +1103,11 @@ fn register_msf(funcs: &mut Functions) {
                     id_to_compact_vec[orig as usize] = compact as u64;
                 }
 
-                // Iterate relationships and fill weighted compact matrix
-                // Create compact FP64 matrix and a parallel edge-id matrix.
+                // Iterate relationships and fill weighted compact matrix.
+                // The chosen relationship per node pair is tracked in
+                // `pair_to_rel`; no separate edge-id matrix is needed.
                 let mut weighted_adj: GrB_Matrix = null_mut();
                 GrB_Matrix_new(&raw mut weighted_adj, GrB_FP64, n, n);
-                let mut edge_map: GrB_Matrix = null_mut();
-                GrB_Matrix_new(&raw mut edge_map, GrB_UINT64, n, n);
 
                 // Best edge per undirected node pair (compact IDs).
                 let mut best_pairs: std::collections::HashMap<(u64, u64), (f64, RelationshipId)> =
@@ -1146,10 +1145,7 @@ fn register_msf(funcs: &mut Functions) {
                                 let (a, b) = if cs <= cd { (cs, cd) } else { (cd, cs) };
                                 GrB_Matrix_setElement_FP64(weighted_adj, 1.0, cs, cd);
                                 GrB_Matrix_setElement_FP64(weighted_adj, 1.0, cd, cs);
-                                let rid = edge_id;
-                                GrB_Matrix_setElement_UINT64(edge_map, rid, cs, cd);
-                                GrB_Matrix_setElement_UINT64(edge_map, rid, cd, cs);
-                                pair_to_rel.insert((a, b), RelationshipId::from(rid));
+                                pair_to_rel.insert((a, b), RelationshipId::from(edge_id));
                             }
                         }
                     } else {
@@ -1169,10 +1165,7 @@ fn register_msf(funcs: &mut Functions) {
                                 let (a, b) = if cs <= cd { (cs, cd) } else { (cd, cs) };
                                 GrB_Matrix_setElement_FP64(weighted_adj, 1.0, cs, cd);
                                 GrB_Matrix_setElement_FP64(weighted_adj, 1.0, cd, cs);
-                                let rid = edge_id;
-                                GrB_Matrix_setElement_UINT64(edge_map, rid, cs, cd);
-                                GrB_Matrix_setElement_UINT64(edge_map, rid, cd, cs);
-                                pair_to_rel.insert((a, b), RelationshipId::from(rid));
+                                pair_to_rel.insert((a, b), RelationshipId::from(edge_id));
                             }
                         }
                     }
@@ -1304,14 +1297,10 @@ fn register_msf(funcs: &mut Functions) {
                 for ((cs, cd), (score, rel_id)) in best_pairs {
                     GrB_Matrix_setElement_FP64(weighted_adj, score, cs, cd);
                     GrB_Matrix_setElement_FP64(weighted_adj, score, cd, cs);
-                    let rid = u64::from(rel_id);
-                    GrB_Matrix_setElement_UINT64(edge_map, rid, cs, cd);
-                    GrB_Matrix_setElement_UINT64(edge_map, rid, cd, cs);
                     pair_to_rel.insert((cs, cd), rel_id);
                 }
 
                 GrB_Matrix_wait(weighted_adj, GrB_WaitMode::GrB_COMPLETE as i32);
-                GrB_Matrix_wait(edge_map, GrB_WaitMode::GrB_COMPLETE as i32);
 
                 // Run Boruvka MSF
                 let mut forest_edges: GrB_Matrix = null_mut();
@@ -1329,7 +1318,6 @@ fn register_msf(funcs: &mut Functions) {
                 GrB_Matrix_free(&raw mut weighted_adj);
 
                 if info != 0 {
-                    GrB_Matrix_free(&raw mut edge_map);
                     return Err(format!("LAGraph_msf failed: {info}"));
                 }
 
@@ -1417,8 +1405,6 @@ fn register_msf(funcs: &mut Functions) {
                         .or_default()
                         .push(Value::Relationship(rel_id));
                 }
-
-                GrB_Matrix_free(&raw mut edge_map);
 
                 // Build forest rows from component nodes and collected edges.
                 let mut nodes_col = Vec::with_capacity(components.len());

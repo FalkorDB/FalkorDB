@@ -1939,10 +1939,11 @@ impl Graph {
         // Endpoints come from the graph-wide reverse index (O(1)); the type from
         // a single re-seekable iterator over `relationship_type_matrix`. Walking
         // `rels` (O(deleted)) with per-edge seeks avoids scanning every edge in
-        // the [min, max] id range, and resolving before any mutation means a
-        // stale id (absent from the reverse index or type matrix) is skipped
-        // without corrupting counters or bitmaps.
+        // the [min, max] id range. Only edges that resolve to both endpoints and
+        // a type are recorded in `resolved`; stale/non-existent ids are skipped
+        // so they can't corrupt counters or bitmaps in phase 2.
         let mut by_type: Vec<Vec<(u64, u64, u64)>> = vec![Vec::new(); num_types];
+        let mut resolved = RoaringTreemap::new();
         {
             let min_id = rels.min().expect("rels is non-empty");
             let mut type_iter = self.relationship_type_matrix.iter(min_id, min_id);
@@ -1954,17 +1955,18 @@ impl Graph {
                 type_iter.seek(edge_id, edge_id);
                 if let Some((_, type_idx)) = type_iter.next() {
                     by_type[type_idx as usize].push((edge_id, src, dst));
+                    resolved.insert(edge_id);
                 }
             }
         }
 
-        // --- Phase 2: endpoints resolved, apply mutations ---
-        self.deleted_relationships.extend(rels.iter());
-        self.relationship_count -= rels.len();
-        self.relationship_attrs.remove_all(rels);
+        // --- Phase 2: mutate state for the actually-resolved edges only ---
+        self.deleted_relationships |= &resolved;
+        self.relationship_count -= resolved.len();
+        self.relationship_attrs.remove_all(&resolved);
 
         let mut endpoints: Vec<(RelationshipId, NodeId, NodeId)> =
-            Vec::with_capacity(rels.len() as usize);
+            Vec::with_capacity(resolved.len() as usize);
         // (edge_id, type_id) pairs for a single bulk removal from the type matrix.
         let mut tm_rows: Vec<u64> = Vec::with_capacity(endpoints.capacity());
         let mut tm_cols: Vec<u64> = Vec::with_capacity(endpoints.capacity());

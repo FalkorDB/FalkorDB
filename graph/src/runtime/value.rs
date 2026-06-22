@@ -196,7 +196,8 @@ pub enum Value {
     Map(Arc<OrderMap<Arc<String>, Self>>),
     /// Reference to a graph node (by ID)
     Node(NodeId),
-    /// Reference to a relationship: (edge_id, source_node, target_node)
+    /// Reference to a relationship (by edge ID); endpoints are resolved on
+    /// demand via the runtime / graph reverse index.
     Relationship(RelationshipId),
     /// A path through the graph (alternating nodes and relationships)
     Path(Arc<ThinVec<Self>>),

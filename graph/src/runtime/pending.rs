@@ -882,12 +882,14 @@ impl Pending {
             }
         }
         if !explicit_rels.is_empty() {
-            stats.borrow_mut().relationships_deleted += explicit_rels.len() as usize;
             let endpoints = g
                 .borrow_mut()
                 .delete_relationships(&explicit_rels, &mut self.index_remove_edge_docs)?;
-            // Re-record explicit rels so effects buffer / constraint checks can use them.
-            self.deleted_relationships.extend(explicit_rels.iter());
+            // Use the actually-removed relationships (delete_relationships skips
+            // stale/missing ids) for stats and effects/constraint bookkeeping.
+            stats.borrow_mut().relationships_deleted += endpoints.len();
+            self.deleted_relationships
+                .extend(endpoints.iter().map(|(id, _, _)| u64::from(*id)));
             self.deleted_endpoints.extend(endpoints);
         }
         // Enforce constraints before committing attrs to fjall.
