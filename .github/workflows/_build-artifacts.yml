@@ -70,6 +70,10 @@ jobs:
       # correct target-arch context, unlike a host-side ldd.
       - name: Build falkordb-${{ matrix.suffix }}.so
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
+        env:
+          # Don't upload the buildx build-record (.dockerbuild) artifact — keep
+          # the run's artifact list (and the release asset set) to just the .so.
+          DOCKER_BUILD_RECORD_UPLOAD: false
         with:
           context: .
           file: ${{ inputs.dockerfile }}
