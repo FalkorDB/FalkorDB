@@ -94,13 +94,16 @@ static ExecutionPlan *_ExecutionPlan_UnionPlans
 	arr_free (union_indices) ;
 
 	if (ErrorCtx_EncounteredError ()) {
+		ExecutionPlan *err_plan = plans [i] ;
+		i-- ;
+
 		// clean up
 		while (i >= 0) {
 			ExecutionPlan_Free (plans [i]) ;
 			i-- ;
 		}
 
-		return NULL ;
+		return err_plan ;
 	}
 
 	/* Join streams:
