@@ -1930,17 +1930,15 @@ impl Graph {
         rels: &RoaringTreemap,
         index_remove_edge_docs: &mut FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
     ) -> Result<Vec<(RelationshipId, NodeId, NodeId)>, String> {
-        self.deleted_relationships.extend(rels.iter());
-        self.relationship_count -= rels.len();
-
         let del_keys = rels;
-        self.relationship_attrs.remove_all(del_keys);
 
         let min_id = del_keys.min().unwrap_or(0);
         let max_id = del_keys.max().unwrap_or(0);
         let num_types = self.relationship_matrices.len();
         let mut by_type: Vec<Vec<(u64, u64, u64)>> = vec![Vec::new(); num_types];
 
+        // Resolve endpoints BEFORE mutating any graph state, so a stale or
+        // non-existent edge id can't corrupt the deleted bitmap / counters.
         // Build by_type using the graph-wide reverse index (edge_id_to_key) for
         // O(1) endpoint lookup. The me matrix rows are compound_keys
         // (src<<32|dst), not edge IDs, so an edge-ID range scan can't be used.
@@ -1952,6 +1950,11 @@ impl Graph {
                 }
             }
         }
+
+        // Endpoints resolved — now apply state mutations.
+        self.deleted_relationships.extend(rels.iter());
+        self.relationship_count -= rels.len();
+        self.relationship_attrs.remove_all(del_keys);
 
         let mut endpoints: Vec<(RelationshipId, NodeId, NodeId)> =
             Vec::with_capacity(rels.len() as usize);
@@ -3501,6 +3504,9 @@ impl Graph {
             size += relationship_matrix.memory_usage();
         }
         size += self.node_attrs.memory_usage();
+        // Graph-wide edge_id → compound_key reverse index: one (u64, u64) entry
+        // per relationship, plus one SwissTable control byte per slot.
+        size += self.edge_id_to_key.capacity() * (std::mem::size_of::<(u64, u64)>() + 1);
         // size += self.relationship_attrs.memory_usage();
         // size += self.node_indexer.memory_usage();
         size
@@ -3535,8 +3541,12 @@ impl Graph {
             self.node_attrs.structural_memory_usage() + self.deleted_nodes.serialized_size();
 
         // --- edge block storage ---
+        // Includes the graph-wide edge_id → compound_key reverse index, which
+        // holds one (u64, u64) entry per relationship (plus a SwissTable
+        // control byte per slot).
         let edge_block_storage_sz: usize = self.relationship_attrs.structural_memory_usage()
-            + self.deleted_relationships.serialized_size();
+            + self.deleted_relationships.serialized_size()
+            + self.edge_id_to_key.capacity() * (std::mem::size_of::<(u64, u64)>() + 1);
 
         // --- node attributes by label (sampling) ---
         let mut node_attr_by_label: Vec<(Arc<String>, usize)> = Vec::new();
