@@ -30,6 +30,22 @@ RUN CXX=clang++-22 cargo build --release && \
     echo "OK: libfalkordb.so is self-contained ($(du -h /out/falkordb.so | cut -f1))"
 
 # ---------------------------------------------------------------------------
+# Artifact export stage — yields ONLY the built falkordb.so so CI can extract
+# the exact .so the runtime image ships via:
+#   docker build --target artifact --output type=local,dest=<dir> ...
+# This is the single source of truth for the released shared library: it reuses
+# the `builder` stage above (same cargo flags, same self-containment contract),
+# so the released .so == the .so baked into the runtime image.
+#
+# FROM scratch keeps the --output tree clean (just the .so, no userland). It is
+# placed AFTER `builder` and BEFORE the runtime stages so (a) it never pulls in
+# the Debian runtime layers and (b) it is NOT the default build target — the
+# default remains the final `full` stage at the bottom of this file.
+# ---------------------------------------------------------------------------
+FROM scratch AS artifact
+COPY --from=builder /out/falkordb.so /falkordb.so
+
+# ---------------------------------------------------------------------------
 # Redis builder stage — debian:trixie-slim + minimal build deps.
 #
 # We build redis-server / redis-cli ourselves on debian:trixie-slim instead

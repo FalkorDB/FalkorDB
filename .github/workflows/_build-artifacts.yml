@@ -1,0 +1,105 @@
+# Reusable workflow: build the falkordb shared library (.so) for one or more
+# architectures and upload each as a workflow artifact. BUILD ONLY — it never
+# uploads to a GitHub Release. Callers (build-artifacts.yml for PR verification,
+# release-artifacts.yml for the release upload) describe the build cells via the
+# `cells` input as a JSON array of {arch, platform, runner, suffix} objects:
+#
+#   [
+#     {"suffix":"x64",     "arch":"x64",     "platform":"linux/amd64","runner":"ubuntu-latest"},
+#     {"suffix":"arm64v8", "arch":"arm64v8", "platform":"linux/arm64","runner":"ubuntu-24.04-arm"}
+#   ]
+#
+# Each cell extracts the .so from the `artifact` target of build/runtime/Dockerfile
+# (the exact .so the runtime image ships) and uploads it as `falkordb-<suffix>.so`
+# together with its `.sha256`. Cells are independent (fail-fast: false) and run on
+# native runners (no QEMU) for maximum parallelism.
+
+name: Build artifacts (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      cells:
+        description: "JSON array of build cells — {arch, platform, runner, suffix}"
+        required: true
+        type: string
+      commit_sha:
+        description: "Commit SHA to check out and build"
+        required: true
+        type: string
+      build_image:
+        description: "Toolchain image used as the build base (chef/builder stage)"
+        required: false
+        type: string
+        default: "ghcr.io/falkordb/falkordb-build:latest"
+      dockerfile:
+        description: "Dockerfile providing the `artifact` target"
+        required: false
+        type: string
+        default: "build/runtime/Dockerfile"
+
+jobs:
+  build:
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(inputs.cells) }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+
+      - name: Login to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build the `artifact` stage and export just the .so to ./artifact-out.
+      # The Dockerfile's `builder` stage enforces the single-.so self-containment
+      # contract (no dynamic libomp/graphblas/redisearch deps; OpenMP static), so
+      # a successful build is also the authoritative dependency check — run in the
+      # correct target-arch context, unlike a host-side ldd.
+      - name: Build falkordb-${{ matrix.suffix }}.so
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
+        with:
+          context: .
+          file: ${{ inputs.dockerfile }}
+          target: artifact
+          platforms: ${{ matrix.platform }}
+          outputs: type=local,dest=artifact-out
+          provenance: false
+          build-args: |
+            BUILD_IMAGE=${{ inputs.build_image }}
+          # Read-only reuse of the runtime image's builder cache (same `builder`
+          # stage layers) for fast incremental builds. No cache-to (packages:read
+          # only) so we never clobber the release flavour cache.
+          cache-from: type=registry,ref=ghcr.io/falkordb/falkordb:buildcache-release-${{ matrix.arch }}
+
+      - name: Stage + checksum
+        env:
+          SUFFIX: ${{ matrix.suffix }}
+        run: |
+          set -euo pipefail
+          test -f "artifact-out/falkordb.so" || { echo "::error::artifact-out/falkordb.so missing"; exit 1; }
+          mkdir -p dist
+          cp "artifact-out/falkordb.so" "dist/falkordb-${SUFFIX}.so"
+          ( cd dist && sha256sum "falkordb-${SUFFIX}.so" > "falkordb-${SUFFIX}.so.sha256" )
+          echo "Built falkordb-${SUFFIX}.so ($(du -h "dist/falkordb-${SUFFIX}.so" | cut -f1))"
+          cat "dist/falkordb-${SUFFIX}.so.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: falkordb-${{ matrix.suffix }}.so
+          path: dist/falkordb-${{ matrix.suffix }}.so*
+          retention-days: 7
+          compression-level: 0
