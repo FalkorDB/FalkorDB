@@ -1,4 +1,4 @@
-# Fix for Issue #636: Crash found in fuzzer
+// Fix for Issue #636: Crash found in fuzzer
 
 /*
  * Copyright FalkorDB Ltd. 2023 - present
