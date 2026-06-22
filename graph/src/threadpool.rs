@@ -62,7 +62,17 @@ impl ThreadPool {
             let worker = thread::spawn(move || {
                 while let Ok(job) = rx.recv() {
                     match job {
-                        Some(j) => j(),
+                        Some(j) => {
+                            // Isolate panics: a single panicking job must not
+                            // kill the worker thread. A dead worker would shrink
+                            // the pool and, once all workers die, make `spawn`
+                            // fail its dispatch on the Redis main thread —
+                            // unwinding across the extern "C" boundary and
+                            // aborting the whole server.
+                            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(j)).is_err() {
+                                eprintln!("thread pool: job panicked and was contained");
+                            }
+                        }
                         None => break,
                     }
                 }
@@ -83,9 +93,14 @@ impl ThreadPool {
     ) where
         F: FnOnce() + Send + 'static,
     {
-        self.sender
-            .send(Some(Box::new(job)))
-            .expect("thread pool worker died: cannot dispatch job");
+        if self.sender.send(Some(Box::new(job))).is_err() {
+            // The channel only disconnects once every worker has exited, i.e.
+            // during pool shutdown. Drop the job and log rather than panicking:
+            // on the Redis command path this runs on the main server thread,
+            // where a panic would unwind across the extern "C" boundary and
+            // abort the process.
+            eprintln!("thread pool: dropping job, no workers available to dispatch to");
+        }
     }
     pub fn pending_count(&self) -> usize {
         crossfire::BlockingTxTrait::len(&self.sender)
