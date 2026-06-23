@@ -30,6 +30,14 @@ static void _Graph_Memory
 	RedisModuleCtx           *rm_ctx = RedisModule_GetThreadSafeContext (bc) ;
 
 	//--------------------------------------------------------------------------
+	// compute graph memory usage
+	//--------------------------------------------------------------------------
+
+	// declare result before any goto so cleanup can safely arr_free the arrays
+	// (arr_free checks for NULL, so zero-initialized pointers are safe)
+	MemoryUsageResult result = {0} ;
+
+	//--------------------------------------------------------------------------
 	// get graph key
 	//--------------------------------------------------------------------------
 
@@ -40,11 +48,6 @@ static void _Graph_Memory
 		goto cleanup ;
 	}
 
-	//--------------------------------------------------------------------------
-	// compute graph memory usage
-	//--------------------------------------------------------------------------
-
-	MemoryUsageResult result = {0} ;
 	result.edge_attr_by_type_sz  = arr_new (size_t, 0) ;
 	result.node_attr_by_label_sz = arr_new (size_t, 0) ;
 
