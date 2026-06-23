@@ -205,11 +205,16 @@ impl<'a> Iterator for ValueHashJoinOp<'a> {
                 self.right_match_pos += 1;
             }
 
-            if self.right_match_pos >= self.right_match_envs.len() {
-                // Move to next left row
-                if self.right_match_pos > 0 || self.left_pos > 0 {
-                    self.left_pos += 1;
-                }
+            // Only advance when this block actually drained a non-empty match
+            // set for the current left row. If `right_match_envs` is already
+            // empty, a prior `next()` call finished this left row exactly at a
+            // BATCH_SIZE boundary (advancing `left_pos` and clearing the
+            // matches before returning); advancing again here would skip the
+            // following left row.
+            if !self.right_match_envs.is_empty()
+                && self.right_match_pos >= self.right_match_envs.len()
+            {
+                self.left_pos += 1;
                 self.right_match_envs.clear();
                 self.right_match_pos = 0;
             }

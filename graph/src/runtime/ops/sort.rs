@@ -150,7 +150,12 @@ impl<'a> Iterator for SortOp<'a> {
                         return ordering;
                     }
                 }
-                Ordering::Equal
+                // Final total-order fallback: rows still equal here are identical
+                // in every compared column (or differ only in columns that read
+                // back as `Null` on both sides). `sort_by` is unstable, so break
+                // the remaining ties by original row index to keep output order
+                // deterministic.
+                a.cmp(&b)
             });
 
             // When a limit is known, drop the rows the Skip/Limit operators above

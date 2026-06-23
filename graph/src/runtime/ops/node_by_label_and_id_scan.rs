@@ -99,7 +99,7 @@ impl<'a> NodeByLabelAndIdScanOp<'a> {
             let Some((env, iter, range)) = self.pending.front_mut() else {
                 break;
             };
-            if env.has_bindings() {
+            if env.has_bindings() || env.origin_row != 0 {
                 break;
             }
             let Some(max) = range.max() else {
@@ -161,26 +161,28 @@ impl<'a> Iterator for NodeByLabelAndIdScanOp<'a> {
                 }
             }
 
-            // Dispatch on whether the front parent row carries bindings.
+            // Dispatch on whether the front parent row qualifies for the
+            // columnar fast path. It requires no bindings AND a default
+            // correlation origin: `Batch::from_node_ids` emits `origin_rows:
+            // None`, so a parent carrying a non-zero `origin_row` must take the
+            // row path to preserve its correlation lineage.
             let (env, ..) = self.pending.front().expect("pending is non-empty");
-            match env.has_bindings() {
-                // Columnar fast path: no bindings → emit a `Column::NodeIds`
-                // batch directly, skipping per-row `Row` construction and the
-                // `BatchBuilder` transpose.
-                false => {
-                    let mut ids: Vec<NodeId> = Vec::with_capacity(BATCH_SIZE);
-                    self.drain_pending_columnar(&mut ids);
-                    if !ids.is_empty() {
-                        return Some(Ok(Batch::from_node_ids(alias_id, ids)));
-                    }
+            if !env.has_bindings() && env.origin_row == 0 {
+                // Columnar fast path: emit a `Column::NodeIds` batch directly,
+                // skipping per-row `Row` construction and the `BatchBuilder`
+                // transpose.
+                let mut ids: Vec<NodeId> = Vec::with_capacity(BATCH_SIZE);
+                self.drain_pending_columnar(&mut ids);
+                if !ids.is_empty() {
+                    return Some(Ok(Batch::from_node_ids(alias_id, ids)));
                 }
-                // Row path: parent bindings present, so build one env per node.
-                true => {
-                    let mut builder = BatchBuilder::new();
-                    self.drain_pending(&mut builder);
-                    if !builder.is_empty() {
-                        return Some(Ok(builder.finish()));
-                    }
+            } else {
+                // Row path: parent bindings or origin present, so build one env
+                // per node.
+                let mut builder = BatchBuilder::new();
+                self.drain_pending(&mut builder);
+                if !builder.is_empty() {
+                    return Some(Ok(builder.finish()));
                 }
             }
         }

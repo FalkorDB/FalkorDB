@@ -94,12 +94,19 @@ impl<'a> ExpandIntoOp<'a> {
     /// [`Batch::gather`]; the relationship variable is attached as a single
     /// [`Column::RelIds`]. A row that produces N matching edges pushes its
     /// index N times so `gather` replicates the carried-forward bindings.
+    ///
+    /// Expansion is incremental for backpressure: once at least one full
+    /// [`BATCH_SIZE`] batch is buffered in `out_pending`, it stops before
+    /// starting the next input row and returns the number of `active_subset`
+    /// rows consumed so the caller can resume at the remainder. (A single input
+    /// row is always fully expanded; for `ExpandInto` its fan-out is bounded by
+    /// the parallel edges between two specific endpoints, which is small.)
     fn expand_batch(
         &self,
         batch: &Batch<'a>,
         active_subset: &[usize],
         out_pending: &mut VecDeque<Batch<'a>>,
-    ) -> Result<(), String> {
+    ) -> Result<usize, String> {
         let runtime = self.runtime;
         let rp = self.relationship_pattern;
 
@@ -136,7 +143,17 @@ impl<'a> ExpandIntoOp<'a> {
             };
         }
 
-        for &row_idx in active_subset {
+        for (i, &row_idx) in active_subset.iter().enumerate() {
+            // Backpressure: once a full output batch is buffered, pause before
+            // starting another input row and report how many rows were
+            // consumed. The caller drains `out_pending` and resumes at row `i`,
+            // so expansion stays incremental instead of materialising every
+            // matching edge for the whole input batch up front.
+            if i > 0 && !out_pending.is_empty() {
+                flush!();
+                return Ok(i);
+            }
+
             let src = match batch.value_at(rp.from.alias.id, row_idx) {
                 Some(Value::Node(id)) => id,
                 Some(Value::Null) | None => continue,
@@ -276,7 +293,7 @@ impl<'a> ExpandIntoOp<'a> {
         flush!();
         drop(g);
         drop(pending);
-        Ok(())
+        Ok(active_subset.len())
     }
 }
 
@@ -321,10 +338,10 @@ impl<'a> Iterator for ExpandIntoOp<'a> {
                     let mut pending = std::mem::take(&mut self.pending_batches);
                     let result = self.expand_batch(batch, active_subset, &mut pending);
                     self.pending_batches = pending;
-                    if let Err(e) = result {
-                        return Some(Err(e));
+                    match result {
+                        Ok(consumed) => self.current_pos += consumed,
+                        Err(e) => return Some(Err(e)),
                     }
-                    self.current_pos = active.len();
                 }
             }
 
