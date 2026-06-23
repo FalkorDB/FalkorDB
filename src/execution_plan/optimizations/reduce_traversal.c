@@ -31,6 +31,32 @@ static inline bool _isInSubExecutionPlan(OpBase *op) {
 	return ExecutionPlan_LocateOp(op, OPType_ARGUMENT) != NULL;
 }
 
+static inline AlgebraicExpression *_ParentTraverseAE
+(
+	OpBase *parent
+) {
+	ASSERT(parent != NULL);
+	if (parent->type == OPType_CONDITIONAL_TRAVERSE) {
+		return ((OpCondTraverse*) parent)->ae;
+	}
+	ASSERT(parent->type == OPType_EXPAND_INTO);
+	return ((OpExpandInto*) parent)->ae;
+}
+
+static inline void _SetParentTraverseAE
+(
+	OpBase *parent,
+	AlgebraicExpression *ae
+) {
+	ASSERT(parent != NULL);
+	if (parent->type == OPType_CONDITIONAL_TRAVERSE) {
+		((OpCondTraverse*) parent)->ae = ae;
+	} else {
+		ASSERT(parent->type == OPType_EXPAND_INTO);
+		((OpExpandInto*) parent)->ae = ae;
+	}
+}
+
 static void _removeRedundantTraversal(ExecutionPlan *plan, OpCondTraverse *traverse) {
 	AlgebraicExpression *ae =  traverse->ae;
 	if(AlgebraicExpression_OperandCount(ae) == 1 &&
@@ -188,34 +214,50 @@ void reduceVarLenTraverseDestLabel
 			continue ;
 		}
 
-		AlgebraicExpression *ae = NULL ;
+		AlgebraicExpression *parent_ae = _ParentTraverseAE (parent) ;
+		ASSERT (parent_ae != NULL) ;
 
-		if (parent->type == OPType_CONDITIONAL_TRAVERSE) {
-			ae = ((OpCondTraverse*) parent)->ae ;
-		} else {
-			ae = ((OpExpandInto*) parent)->ae ;
-		}
-		ASSERT (ae != NULL) ;
-
-		if (strcmp (AlgebraicExpression_Src (ae), dest_alias) != 0) {
+		if (strcmp (AlgebraicExpression_Src (parent_ae), dest_alias) != 0) {
 			continue ;
 		}
 
-		// strip every leading diagonal operand that belongs to dest_alias —
-		// these are the label matrices CondVarLenTraverse already enforces
-		while (AlgebraicExpression_OperandCount (ae) > 0    &&
-				AlgebraicExpression_DiagonalOperand (ae, 0) &&
-				strcmp (AlgebraicExpression_Src (ae), dest_alias) == 0) {
+		const char *orig_src = AlgebraicExpression_Src (parent_ae) ;
+		const char *orig_dest = AlgebraicExpression_Dest (parent_ae) ;
+		AlgebraicExpression *ae = AlgebraicExpression_Clone (parent_ae) ;
+		bool stripped = false ;
+
+		// strip diagonal source operands that belong to dest_alias; source is
+		// evaluated semantically (transpose-aware), not by leftmost operand.
+		while (AlgebraicExpression_OperandCount (ae) > 0) {
+			const AlgebraicExpression *src_operand =
+				AlgebraicExpression_SrcOperand (ae) ;
+			if (src_operand == NULL                            ||
+				!AlgebraicExpression_Diagonal (src_operand)    ||
+				strcmp (AlgebraicExpression_Src (ae), dest_alias) != 0) {
+				break ;
+			}
+
+			stripped = true ;
 			AlgebraicExpression_Free (
 					AlgebraicExpression_RemoveSource (&ae)) ;
 		}
 
-		// update operation's algebraic expression
-		if (parent->type == OPType_CONDITIONAL_TRAVERSE) {
-			((OpCondTraverse*) parent)->ae = ae ;
-		} else {
-			((OpExpandInto*) parent)->ae = ae ;
+		if (!stripped) {
+			AlgebraicExpression_Free (ae) ;
+			continue ;
 		}
+
+		// rewrite must not alter traversal endpoints; otherwise op metadata
+		// (src/dest record indices) becomes inconsistent with the expression.
+		if (AlgebraicExpression_OperandCount (ae) > 0 &&
+			(strcmp (orig_src, AlgebraicExpression_Src (ae)) != 0 ||
+			 strcmp (orig_dest, AlgebraicExpression_Dest (ae)) != 0)) {
+			AlgebraicExpression_Free (ae) ;
+			continue ;
+		}
+
+		_SetParentTraverseAE (parent, ae) ;
+		AlgebraicExpression_Free (parent_ae) ;
 
 		// if the entire AE was label diagonals, the CondTraverse is now empty
 		// and must be removed from the plan
