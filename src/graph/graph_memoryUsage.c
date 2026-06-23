@@ -62,7 +62,7 @@ void Graph_memoryUsage
 		if (Graph_RelationshipContainsMultiEdge(g, rel)) {
 			GrB_OK (Tensor_memoryUsage (&n, T)) ;
 		} else {
-			GrB_OK (Delta_Matrix_memoryUsage (&n, D)) ;
+			GrB_OK (Delta_Matrix_memoryUsage (&n, T)) ;
 		}
 
 		result->rel_matrices_sz += n ;
