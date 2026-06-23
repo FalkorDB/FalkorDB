@@ -35,11 +35,11 @@ static inline AlgebraicExpression *_ParentTraverseAE
 (
 	OpBase *parent
 ) {
-	ASSERT(parent != NULL);
+	ASSERT (parent != NULL) ;
 	if (parent->type == OPType_CONDITIONAL_TRAVERSE) {
 		return ((OpCondTraverse*) parent)->ae;
 	}
-	ASSERT(parent->type == OPType_EXPAND_INTO);
+	ASSERT (parent->type == OPType_EXPAND_INTO);
 	return ((OpExpandInto*) parent)->ae;
 }
 
@@ -48,21 +48,21 @@ static inline void _SetParentTraverseAE
 	OpBase *parent,
 	AlgebraicExpression *ae
 ) {
-	ASSERT(parent != NULL);
+	ASSERT (parent != NULL) ;
 	if (parent->type == OPType_CONDITIONAL_TRAVERSE) {
 		((OpCondTraverse*) parent)->ae = ae;
 	} else {
-		ASSERT(parent->type == OPType_EXPAND_INTO);
+		ASSERT (parent->type == OPType_EXPAND_INTO) ;
 		((OpExpandInto*) parent)->ae = ae;
 	}
 }
 
 static void _removeRedundantTraversal(ExecutionPlan *plan, OpCondTraverse *traverse) {
-	AlgebraicExpression *ae =  traverse->ae;
-	if(AlgebraicExpression_OperandCount(ae) == 1 &&
-	   !strcmp(AlgebraicExpression_Src(ae), AlgebraicExpression_Dest(ae))) {
-		ExecutionPlan_RemoveOp(plan, (OpBase *)traverse);
-		OpBase_Free((OpBase *)traverse);
+	AlgebraicExpression *ae =  traverse->ae ;
+	if(AlgebraicExpression_OperandCount (ae) == 1 &&
+	   !strcmp(AlgebraicExpression_Src (ae), AlgebraicExpression_Dest (ae))) {
+		ExecutionPlan_RemoveOp (plan, (OpBase *) traverse);
+		OpBase_Free ((OpBase *) traverse) ;
 	}
 }
 
@@ -223,7 +223,9 @@ void reduceVarLenTraverseDestLabel
 
 		const char *orig_src = AlgebraicExpression_Src (parent_ae) ;
 		const char *orig_dest = AlgebraicExpression_Dest (parent_ae) ;
-		AlgebraicExpression *ae = AlgebraicExpression_Clone (parent_ae) ;
+
+		// shallow copy, will clone if a change is planned for the AE
+		AlgebraicExpression *ae = parent_ae ;
 		bool stripped = false ;
 
 		// strip diagonal source operands that belong to dest_alias; source is
@@ -237,18 +239,23 @@ void reduceVarLenTraverseDestLabel
 				break ;
 			}
 
-			stripped = true ;
-			AlgebraicExpression_Free (
-					AlgebraicExpression_RemoveSource (&ae)) ;
+			if (!stripped) {
+				ae = AlgebraicExpression_Clone (parent_ae) ;
+				stripped = true ;
+			}
+
+			AlgebraicExpression_Free (AlgebraicExpression_RemoveSource (&ae)) ;
 		}
 
 		if (!stripped) {
-			AlgebraicExpression_Free (ae) ;
 			continue ;
 		}
 
 		// rewrite must not alter traversal endpoints; otherwise op metadata
 		// (src/dest record indices) becomes inconsistent with the expression.
+		// TODO: this optimization is not nessesarily incorrect, but we skip it
+		// to avoid having to modify the src and dest in the op. In the future,
+		// it may be worth it to propogate this change instead.
 		if (AlgebraicExpression_OperandCount (ae) > 0 &&
 			(strcmp (orig_src, AlgebraicExpression_Src (ae)) != 0 ||
 			 strcmp (orig_dest, AlgebraicExpression_Dest (ae)) != 0)) {

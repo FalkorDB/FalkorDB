@@ -564,3 +564,4 @@ class testVariableLengthTraversals(FlowTestsBase):
 
         result = self.graph.query(q)
         self.env.assertEquals(result.result_set, [])
+
