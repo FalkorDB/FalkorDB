@@ -141,11 +141,10 @@ impl<'a> Iterator for SortOp<'a> {
                 }
                 // Deterministic tiebreaker: compare bound slots position-by-position.
                 // Columns unbound in every row read back as `Null` on both sides
-                // and so never change the ordering.
+                // and so never change the ordering. `compare_rows_at` borrows
+                // stored values instead of cloning them.
                 for id in 0..num_columns {
-                    let va = combined.value_at(id as u32, a).unwrap_or(Value::Null);
-                    let vb = combined.value_at(id as u32, b).unwrap_or(Value::Null);
-                    let (ordering, _) = va.compare_value(&vb);
+                    let ordering = combined.compare_rows_at(id as u32, a, b);
                     if ordering != Ordering::Equal {
                         return ordering;
                     }

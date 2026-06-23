@@ -31,8 +31,9 @@ use crate::planner::IR;
 use crate::runtime::bitset::BitSet;
 use crate::runtime::row::{Row, RowView};
 use crate::runtime::runtime::Runtime;
-use crate::runtime::value::Value;
+use crate::runtime::value::{CompareValue, Value};
 use orx_tree::{Dyn, NodeIdx};
+use std::cmp::Ordering;
 use std::marker::PhantomData;
 
 use super::ops::aggregate::AggregateOp;
@@ -899,6 +900,26 @@ impl<'a> Batch<'a> {
         match self.column(var_id) {
             Column::Unbound => None,
             col => Some(col.get(row)),
+        }
+    }
+
+    /// Compare two rows of a single column for a sort tiebreaker, treating an
+    /// unbound column as `Null` on both sides (and therefore equal). Unlike
+    /// pairing two [`value_at`](Self::value_at) calls, this borrows stored
+    /// heterogeneous `Value`s instead of cloning them — avoiding an allocation
+    /// per comparison for `String`/`List`/`Map` columns, which can dominate the
+    /// comparator when many rows share equal primary sort keys.
+    #[must_use]
+    pub fn compare_rows_at(
+        &self,
+        var_id: u32,
+        a: usize,
+        b: usize,
+    ) -> Ordering {
+        match self.column(var_id) {
+            Column::Unbound => Ordering::Equal,
+            Column::Values(vals) => vals[a].compare_value(&vals[b]).0,
+            col => col.get(a).compare_value(&col.get(b)).0,
         }
     }
 

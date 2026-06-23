@@ -150,23 +150,22 @@ impl<'a> ValueHashJoinOp<'a> {
 
     /// Populate `right_match_envs` with the build-side rows whose key equals
     /// `key`, preserving build insertion order, and reset `right_match_pos`.
-    /// Matched rows are gathered from `right_batches` by position (only matched
-    /// rows are materialised).
+    /// Build groups all rows for a given key under a single bucket entry, so at
+    /// most one entry matches; its `RightRowRef`s are materialised straight into
+    /// `right_match_envs` from `right_batches` with no intermediate ref copy.
     fn fill_matches(
         &mut self,
         key: &Value,
     ) {
         self.right_match_envs.clear();
         self.right_match_pos = 0;
-        let mut matches: BuildSlot = Vec::new();
-        if let Some(bucket) = self.hash_table.as_ref().unwrap().get(&hash_value(key)) {
-            for (k, refs) in bucket {
-                if k == key {
-                    matches.extend_from_slice(refs);
-                }
-            }
-        }
-        for slot in matches {
+        let Some(bucket) = self.hash_table.as_ref().unwrap().get(&hash_value(key)) else {
+            return;
+        };
+        let Some((_, refs)) = bucket.iter().find(|(k, _)| k == key) else {
+            return;
+        };
+        for slot in refs {
             let env = BatchRow::new(&self.right_batches[slot.batch as usize], slot.row as usize)
                 .to_owned_row();
             self.right_match_envs.push(env);
