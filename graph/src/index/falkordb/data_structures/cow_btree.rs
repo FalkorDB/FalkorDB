@@ -445,15 +445,29 @@ impl Leaf {
 
 /// Group `children` into branch pages of at most `BRANCH_MAX`, one separator per adjacent pair
 /// (the separator is the minimum `(key, doc)` of the right child).
+///
+/// Every emitted branch gets **at least two children**: a lone single-child branch has no sibling, so a
+/// later delete that underflowed its only child could not rebalance it (see [`Branch::rebalance`]). The
+/// only way `chunks(BRANCH_MAX)` would leave a singleton is a trailing remainder of exactly 1, i.e. an
+/// input length of `BRANCH_MAX + 1`; that case is split as `BRANCH_MAX - 1` + `2` instead.
 fn pack_branches(children: Vec<Node>) -> Vec<Node> {
-    children
-        .chunks(BRANCH_MAX)
-        .map(|chunk| {
-            let children: Vec<Node> = chunk.to_vec();
-            let seps: Vec<(u64, u64)> = children[1..].iter().map(Node::min).collect();
-            Node::Branch(Arc::new(Branch { seps, children }))
-        })
-        .collect()
+    let mut packed = Vec::new();
+    let mut rest = &children[..];
+    while !rest.is_empty() {
+        let take = if rest.len() == BRANCH_MAX + 1 {
+            BRANCH_MAX - 1
+        } else {
+            rest.len().min(BRANCH_MAX)
+        };
+        let (chunk, remaining) = rest.split_at(take);
+        let seps: Vec<(u64, u64)> = chunk[1..].iter().map(Node::min).collect();
+        packed.push(Node::Branch(Arc::new(Branch {
+            seps,
+            children: chunk.to_vec(),
+        })));
+        rest = remaining;
+    }
+    packed
 }
 
 /// Stitch a flat list of node fragments into a single root, packing branch levels bottom-up until
@@ -498,6 +512,13 @@ impl Branch {
         &mut self,
         child_idx: usize,
     ) {
+        // A branch always has ≥ 2 children — [`pack_branches`] never emits a single-child branch and
+        // splits/merges preserve this — so the underflowed child always has a sibling to pair with.
+        // Guard anyway: with no sibling there is nothing to combine, so let the underflow propagate to
+        // the parent (which will merge this branch) rather than indexing `child_idx - 1` out of bounds.
+        if self.children.len() < 2 {
+            return;
+        }
         // Pair the underflowed child with its right neighbour when there is one, otherwise its left.
         let (left_idx, right_idx) = if child_idx + 1 < self.children.len() {
             (child_idx, child_idx + 1)
@@ -758,7 +779,10 @@ impl CowBTree {
     /// directly from the slice and builds the branch levels bottom-up — no per-item sort, dedup, or
     /// insert traversal, so it is far cheaper than inserting one at a time.
     pub fn from_sorted(pairs: &[(u64, u64)]) -> Self {
-        debug_assert!(
+        // Enforced in all builds (not just `debug`): a violation silently corrupts the tree — the
+        // bottom-up build derives separators assuming this order — and the O(n) scan is dwarfed by the
+        // O(n) page encoding the build does anyway.
+        assert!(
             pairs.windows(2).all(|w| w[0] < w[1]),
             "from_sorted input must be sorted and unique"
         );
@@ -798,7 +822,9 @@ impl CowBTree {
         if sorted_adds.is_empty() {
             return;
         }
-        debug_assert!(
+        // Enforced in all builds: out-of-order input mis-routes tuples (the branch path binary-searches
+        // the remaining slice), permanently breaking ordering. The O(n) check is cheap next to the batch.
+        assert!(
             sorted_adds.windows(2).all(|w| w[0] <= w[1]),
             "insert_batch input must be sorted"
         );
@@ -1323,5 +1349,26 @@ mod tests {
             ref_range(&reference, 0, u64::MAX),
             "parity across mixed formats"
         );
+    }
+
+    #[test]
+    fn bulk_built_thin_tail_deletes_without_panicking() {
+        // Regression: a bulk build whose leaf count is `BRANCH_MAX + 1` (= 257) once packed a trailing
+        // single-child branch; deleting from its lone child then panicked in `rebalance` (no sibling, so
+        // `child_idx - 1` underflowed). Build exactly that shape, delete the tail, and check it stays sane.
+        let n = (BRANCH_MAX * LEAF_MAX + 1) as u64; // 257 leaves: 256 full + 1 one-entry leaf
+        let pairs: Vec<(u64, u64)> = (0..n).map(|i| (i, i)).collect();
+        let mut t = CowBTree::from_sorted(&pairs);
+        let mut reference: BTreeSet<(u64, u64)> = pairs.iter().copied().collect();
+        assert_eq!(t.len(), reference.len());
+        // Delete the tail — the first removal underflows the formerly-singleton branch's child.
+        for k in (n - 400..n).rev() {
+            t.remove(k, k);
+            reference.remove(&(k, k));
+        }
+        assert_eq!(t.len(), reference.len());
+        let got: Vec<u64> = t.range(0, u64::MAX).collect();
+        let expected: Vec<u64> = reference.iter().map(|&(_, d)| d).collect();
+        assert_eq!(got, expected);
     }
 }
