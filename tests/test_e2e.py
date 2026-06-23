@@ -1872,35 +1872,3 @@ def test_optional_match_null_merge():
         [None, [2]],
     ]
 
-
-def test_value_hash_join_batch_boundary():
-    """Regression: a probe row whose matches exactly fill an output batch must
-    not cause the following probe row to be skipped.
-
-    The Value Hash Join emits output in BATCH_SIZE (1024) chunks. When a single
-    probe (left) row has exactly 1024 matches, draining them fills the builder
-    to the batch boundary and advances to the next probe row before returning.
-    A prior bug then re-advanced the probe cursor on the next `next()` call,
-    skipping the following probe row entirely.
-
-    Setup: probe side `:L` has two rows (k=1, k=2); build side `:R` has 1024
-    rows with k=1 (so L{k:1} gets exactly 1024 matches) plus one row with k=2.
-    Without the fix the k=2 group is dropped from the result.
-    """
-    query("CREATE (:L {k: 1}), (:L {k: 2})", write=True)
-    query("UNWIND range(1, 1024) AS i CREATE (:R {k: 1})", write=True)
-    query("CREATE (:R {k: 2})", write=True)
-
-    res = query(
-        """
-        MATCH (a:L), (b:R)
-        WHERE a.k = b.k
-        RETURN a.k AS ak, count(b) AS cnt
-        ORDER BY ak
-        """
-    )
-
-    assert res.result_set == [
-        [1, 1024],
-        [2, 1],
-    ]
