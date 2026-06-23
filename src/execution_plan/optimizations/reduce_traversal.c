@@ -31,38 +31,12 @@ static inline bool _isInSubExecutionPlan(OpBase *op) {
 	return ExecutionPlan_LocateOp(op, OPType_ARGUMENT) != NULL;
 }
 
-static inline AlgebraicExpression *_ParentTraverseAE
-(
-	OpBase *parent
-) {
-	ASSERT (parent != NULL) ;
-	if (parent->type == OPType_CONDITIONAL_TRAVERSE) {
-		return ((OpCondTraverse*) parent)->ae;
-	}
-	ASSERT (parent->type == OPType_EXPAND_INTO);
-	return ((OpExpandInto*) parent)->ae;
-}
-
-static inline void _SetParentTraverseAE
-(
-	OpBase *parent,
-	AlgebraicExpression *ae
-) {
-	ASSERT (parent != NULL) ;
-	if (parent->type == OPType_CONDITIONAL_TRAVERSE) {
-		((OpCondTraverse*) parent)->ae = ae;
-	} else {
-		ASSERT (parent->type == OPType_EXPAND_INTO) ;
-		((OpExpandInto*) parent)->ae = ae;
-	}
-}
-
 static void _removeRedundantTraversal(ExecutionPlan *plan, OpCondTraverse *traverse) {
-	AlgebraicExpression *ae =  traverse->ae ;
-	if(AlgebraicExpression_OperandCount (ae) == 1 &&
-	   !strcmp(AlgebraicExpression_Src (ae), AlgebraicExpression_Dest (ae))) {
-		ExecutionPlan_RemoveOp (plan, (OpBase *) traverse);
-		OpBase_Free ((OpBase *) traverse) ;
+	AlgebraicExpression *ae =  traverse->ae;
+	if(AlgebraicExpression_OperandCount(ae) == 1 &&
+	   !strcmp(AlgebraicExpression_Src(ae), AlgebraicExpression_Dest(ae))) {
+		ExecutionPlan_RemoveOp(plan, (OpBase *)traverse);
+		OpBase_Free((OpBase *)traverse);
 	}
 }
 
@@ -214,57 +188,41 @@ void reduceVarLenTraverseDestLabel
 			continue ;
 		}
 
-		AlgebraicExpression *parent_ae = _ParentTraverseAE (parent) ;
-		ASSERT (parent_ae != NULL) ;
+		AlgebraicExpression *ae = NULL ;
 
-		if (strcmp (AlgebraicExpression_Src (parent_ae), dest_alias) != 0) {
+		if (parent->type == OPType_CONDITIONAL_TRAVERSE) {
+			ae = ((OpCondTraverse*) parent)->ae ;
+		} else {
+			ae = ((OpExpandInto*) parent)->ae ;
+		}
+		ASSERT (ae != NULL) ;
+
+		if (strcmp (AlgebraicExpression_Src (ae), dest_alias) != 0) {
 			continue ;
 		}
 
-		const char *orig_src = AlgebraicExpression_Src (parent_ae) ;
-		const char *orig_dest = AlgebraicExpression_Dest (parent_ae) ;
-
-		// shallow copy, will clone if a change is planned for the AE
-		AlgebraicExpression *ae = parent_ae ;
-		bool stripped = false ;
-
-		// strip diagonal source operands that belong to dest_alias; source is
-		// evaluated semantically (transpose-aware), not by leftmost operand.
+		// strip every leading diagonal operand that belongs to dest_alias —
+		// these are the label matrices CondVarLenTraverse already enforces
 		while (AlgebraicExpression_OperandCount (ae) > 0) {
+			// find source (aware of transpose)
 			const AlgebraicExpression *src_operand =
-				AlgebraicExpression_SrcOperand (ae) ;
-			if (src_operand == NULL                            ||
-				!AlgebraicExpression_Diagonal (src_operand)    ||
+				AlgebraicExpression_SrcOperand(ae) ;
+
+			if (src_operand == NULL ||
+				!AlgebraicExpression_Diagonal (src_operand) ||
 				strcmp (AlgebraicExpression_Src (ae), dest_alias) != 0) {
 				break ;
-			}
-
-			if (!stripped) {
-				ae = AlgebraicExpression_Clone (parent_ae) ;
-				stripped = true ;
 			}
 
 			AlgebraicExpression_Free (AlgebraicExpression_RemoveSource (&ae)) ;
 		}
 
-		if (!stripped) {
-			continue ;
+		// update operation's algebraic expression
+		if (parent->type == OPType_CONDITIONAL_TRAVERSE) {
+			((OpCondTraverse*) parent)->ae = ae ;
+		} else {
+			((OpExpandInto*) parent)->ae = ae ;
 		}
-
-		// rewrite must not alter traversal endpoints; otherwise op metadata
-		// (src/dest record indices) becomes inconsistent with the expression.
-		// TODO: this optimization is not nessesarily incorrect, but we skip it
-		// to avoid having to modify the src and dest in the op. In the future,
-		// it may be worth it to propogate this change instead.
-		if (AlgebraicExpression_OperandCount (ae) > 0 &&
-			(strcmp (orig_src, AlgebraicExpression_Src (ae)) != 0 ||
-			 strcmp (orig_dest, AlgebraicExpression_Dest (ae)) != 0)) {
-			AlgebraicExpression_Free (ae) ;
-			continue ;
-		}
-
-		_SetParentTraverseAE (parent, ae) ;
-		AlgebraicExpression_Free (parent_ae) ;
 
 		// if the entire AE was label diagonals, the CondTraverse is now empty
 		// and must be removed from the plan
