@@ -56,9 +56,6 @@ static void _Graph_Memory
 	// release read lock
 	GraphContext_ReleaseReadLock (gc) ;
 
-	// counter to GraphContext_Retrieve
-	GraphContext_DecreaseRefCount (gc) ;
-
 	//--------------------------------------------------------------------------
 	// reply to caller
 	//--------------------------------------------------------------------------
@@ -142,6 +139,10 @@ static void _Graph_Memory
 	// indices_sz_mb
 	RedisModule_ReplyWithCString  (rm_ctx, "indices_sz_mb") ;
 	RedisModule_ReplyWithLongLong (rm_ctx, result.indices_sz) ;
+
+	// counter to GraphContext_Retrieve
+	// held until here so schema name lookups above are not use-after-free
+	GraphContext_DecreaseRefCount (gc) ;
 
 cleanup:
 	RedisModule_FreeString (rm_ctx, ctx->graph_id) ;
