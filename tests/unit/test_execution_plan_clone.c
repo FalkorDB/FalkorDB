@@ -127,10 +127,17 @@ void setup() {
 	}
 
 	// use the malloc family for allocations
-	Alloc_Reset();
+	Alloc_Reset () ;
 
-	// Initialize the thread pool.
-	TEST_ASSERT(ThreadPool_CreatePool(1, 2));
+	// initialize error context
+	TEST_ASSERT (ErrorCtx_Init ()) ;
+
+	// initialize the thread pool
+	static int threadpool_initialized = 0 ;
+	if (threadpool_initialized == 0) {
+		TEST_ASSERT (ThreadPool_CreatePool (1, 2)) ;
+		threadpool_initialized = 1 ;
+	}
 
 	// init query context
 	TEST_ASSERT(QueryCtx_Init());
@@ -148,6 +155,7 @@ void setup() {
 
 void tearDown() {
 	TEST_ASSERT(GrB_finalize() == GrB_SUCCESS);
+	ErrorCtx_Clear () ;
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	GraphContext_DecreaseRefCount(gc);
 	QueryCtx_Free();
