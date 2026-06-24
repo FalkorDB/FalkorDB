@@ -8,14 +8,17 @@
 //!
 //! ```text
 //!  Input: row where from=Node(5), to=Node(7)
-//!  ──expand_batch──►  checks edges between 5→7 (and 7→5 if bidirectional)
-//!                     emits one output row per matching edge
+//!  ──refill──►  checks edges between 5→7 (and 7→5 if bidirectional)
+//!              queues one matched-edge iterator per matching input row
 //! ```
 //!
-//! Uses the same `pending_batches` / `current_batch` / `current_pos` state
-//! machine as [`CondTraverseOp`] for buffered batch emission.
+//! Emission reuses the shared [`BatchedResultEmitter`]: each refill processes
+//! exactly one child batch — queueing a per-input-row iterator over that row's
+//! matched edge ids — and `emit` packs the queued rows into `≤ BATCH_SIZE`
+//! gathered batches. The operator therefore never materialises every matching
+//! edge of an entire input stream up front; it pulls one parent batch at a time
+//! and yields as soon as a batch is ready.
 
-use std::collections::VecDeque;
 use std::sync::Arc;
 
 use crate::graph::graph::RelationshipId;
@@ -23,22 +26,29 @@ use crate::graph::graphblas::tensor::compound_key;
 use crate::graph::graphblas::versioned_matrix::Iter as EdgeIter;
 use crate::parser::ast::{QueryRelationship, Variable};
 use crate::planner::IR;
-use crate::runtime::batch::Column;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
+    batch::{Batch, BatchOp, BatchRow},
     runtime::Runtime,
     value::Value,
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
+use super::batched_result_emitter::BatchedResultEmitter;
+
 pub struct ExpandIntoOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
     relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
-    pending_batches: VecDeque<Batch<'a>>,
-    current_batch: Option<Batch<'a>>,
-    current_pos: usize,
+    /// Shared incremental emitter: holds the current input batch plus a queue
+    /// of per-input-row matched-edge-id iterators, and packs them into gathered
+    /// output batches. For the synthetic label-check it binds no relationship
+    /// column.
+    emitter: BatchedResultEmitter<'a, RelationshipId>,
+    /// Synthetic multi-label self-loop (`MATCH (a:A:B:C)` lowered to
+    /// `LabelScan(:A) + ExpandInto` checking `:B:C`): no edge is bound, the op
+    /// only verifies the remaining labels on the single endpoint.
+    synthetic_label: bool,
     /// Whether to emit one row per edge (true) or collapse multi-edges into
     /// one row per (src, dst) pair (false). Set by the planner.
     emit_relationship: bool,
@@ -61,7 +71,7 @@ pub struct ExpandIntoOp<'a> {
 }
 
 impl<'a> ExpandIntoOp<'a> {
-    pub const fn new(
+    pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
         relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
@@ -70,13 +80,25 @@ impl<'a> ExpandIntoOp<'a> {
         idx: NodeIdx<Dyn<IR>>,
         record_cap: Option<usize>,
     ) -> Self {
+        // Synthetic multi-label self-loop (MATCH (a:A:B:C) lowered to
+        // LabelScan(:A) + ExpandInto checking :B:C): no edge is bound, the op
+        // only verifies the remaining labels on the single endpoint, so the
+        // emitter binds no relationship column.
+        let synthetic_label = relationship_pattern.from.alias.id
+            == relationship_pattern.to.alias.id
+            && relationship_pattern.from.labels.is_empty()
+            && !relationship_pattern.to.labels.is_empty();
+        let emitter: BatchedResultEmitter<'a, RelationshipId> = if synthetic_label {
+            BatchedResultEmitter::new_without_alias()
+        } else {
+            BatchedResultEmitter::new(relationship_pattern.alias.id)
+        };
         Self {
             runtime,
             child,
             relationship_pattern,
-            pending_batches: VecDeque::new(),
-            current_batch: None,
-            current_pos: 0,
+            emitter,
+            synthetic_label,
             emit_relationship,
             sibling_edges,
             idx,
@@ -86,74 +108,32 @@ impl<'a> ExpandIntoOp<'a> {
         }
     }
 
-    /// Columnar expansion: checks edges between the already-bound `from`/`to`
-    /// endpoints of every row in `active_subset` using a borrowed [`BatchRow`]
-    /// view (zero owned-`Row` allocation), accumulates the matched input row
-    /// indices plus their edge ids, and emits gathered [`Batch`]es into
-    /// `out_pending`. The input columns are carried forward verbatim via
-    /// [`Batch::gather`]; the relationship variable is attached as a single
-    /// [`Column::RelIds`]. A row that produces N matching edges pushes its
-    /// index N times so `gather` replicates the carried-forward bindings.
+    /// Pull the edge matches for one input `batch` into the emitter. For each
+    /// active input row, probes the edges between the already-bound `from`/`to`
+    /// endpoints (reverse too when bidirectional) using a borrowed [`BatchRow`]
+    /// view (zero owned-`Row` allocation), collects the matched edge ids — bounded
+    /// by the parallel edges between two specific endpoints, which is small — and
+    /// queues a single per-row iterator over them. Only matching rows are queued,
+    /// so the dominant non-matching probes on a cycle closure add nothing.
     ///
-    /// Expansion is incremental for backpressure: once at least one full
-    /// [`BATCH_SIZE`] batch is buffered in `out_pending`, it stops before
-    /// starting the next input row and returns the number of `active_subset`
-    /// rows consumed so the caller can resume at the remainder. (A single input
-    /// row is always fully expanded; for `ExpandInto` its fan-out is bounded by
-    /// the parallel edges between two specific endpoints, which is small.)
-    fn expand_batch(
-        &self,
+    /// The synthetic label-check queues one placeholder per row whose `from`
+    /// carries all the required labels; the emitter (a filter emitter) gathers
+    /// that input row forward without binding any relationship column.
+    fn refill(
+        &mut self,
         batch: &Batch<'a>,
-        active_subset: &[usize],
-        out_pending: &mut VecDeque<Batch<'a>>,
-    ) -> Result<usize, String> {
+    ) -> Result<(), String> {
         let runtime = self.runtime;
         let rp = self.relationship_pattern;
-
-        // Synthetic multi-label self-loop (MATCH (a:A:B:C) lowered to
-        // LabelScan(:A) + ExpandInto checking :B:C): no edge is bound, the op
-        // only verifies the remaining labels on the single endpoint.
-        let synthetic_label = rp.from.alias.id == rp.to.alias.id
-            && rp.from.labels.is_empty()
-            && !rp.to.labels.is_empty();
-
-        let mut out_indices: Vec<usize> = Vec::new();
-        let mut out_edge_ids: Vec<RelationshipId> = Vec::new();
+        let synthetic_label = self.synthetic_label;
+        let emit_relationship = self.emit_relationship;
+        let sibling_edges = self.sibling_edges;
 
         let g = runtime.g.borrow();
         let pending = runtime.pending.borrow();
         let mut iters_ref = self.edge_iters.borrow_mut();
 
-        // Flush the accumulated rows into a gathered batch. For non-synthetic
-        // ops the edge column is attached; the synthetic label-check op emits
-        // no relationship binding.
-        macro_rules! flush {
-            () => {
-                if !out_indices.is_empty() {
-                    let mut b = batch.gather(&out_indices);
-                    if !synthetic_label {
-                        b.set_column(
-                            rp.alias.id,
-                            Column::RelIds(std::mem::take(&mut out_edge_ids)),
-                        );
-                    }
-                    out_pending.push_back(b);
-                    out_indices.clear();
-                }
-            };
-        }
-
-        for (i, &row_idx) in active_subset.iter().enumerate() {
-            // Backpressure: once a full output batch is buffered, pause before
-            // starting another input row and report how many rows were
-            // consumed. The caller drains `out_pending` and resumes at row `i`,
-            // so expansion stays incremental instead of materialising every
-            // matching edge for the whole input batch up front.
-            if i > 0 && !out_pending.is_empty() {
-                flush!();
-                return Ok(i);
-            }
-
+        for row_idx in batch.active_indices() {
             let src = match batch.value_at(rp.from.alias.id, row_idx) {
                 Some(Value::Node(id)) => id,
                 Some(Value::Null) | None => continue,
@@ -180,10 +160,10 @@ impl<'a> ExpandIntoOp<'a> {
                     .iter()
                     .all(|label| g.get_node_labels(src).any(|nl| nl == *label));
                 if has_all_labels {
-                    out_indices.push(row_idx);
-                    if out_indices.len() >= BATCH_SIZE {
-                        flush!();
-                    }
+                    // The filter emitter binds no relationship; this placeholder
+                    // id is discarded and only makes `emit` gather exactly one
+                    // row forward for this matching input row.
+                    self.emitter.push_one(row_idx, RelationshipId::from(0u64));
                 }
                 continue;
             }
@@ -217,9 +197,12 @@ impl<'a> ExpandIntoOp<'a> {
                 }
             });
 
+            // Matched edge ids for this input row, collected eagerly within the
+            // graph borrow scope (the lazy GraphBLAS iterators can't outlive it).
+            let mut row_edges: Vec<RelationshipId> = Vec::new();
             for &(edge_src, edge_dst) in &pairs[..npairs] {
                 let key = compound_key(u64::from(edge_src), u64::from(edge_dst));
-                if !self.emit_relationship && !has_edge_filter {
+                if !emit_relationship && !has_edge_filter {
                     // One representative edge per (src, dst) pair.
                     let mut found_id: Option<RelationshipId> = None;
                     'outer: for cell in edge_iters.iter() {
@@ -228,12 +211,7 @@ impl<'a> ExpandIntoOp<'a> {
                         for (_, raw_id) in &mut *it {
                             let id = RelationshipId::from(raw_id);
                             if !pending.is_relationship_deleted(id)
-                                && !super::edge_already_used(
-                                    &env,
-                                    id,
-                                    rp.alias.id,
-                                    self.sibling_edges,
-                                )
+                                && !super::edge_already_used(&env, id, rp.alias.id, sibling_edges)
                             {
                                 found_id = Some(id);
                                 break 'outer;
@@ -241,11 +219,7 @@ impl<'a> ExpandIntoOp<'a> {
                         }
                     }
                     if let Some(id) = found_id {
-                        out_indices.push(row_idx);
-                        out_edge_ids.push(id);
-                        if out_indices.len() >= BATCH_SIZE {
-                            flush!();
-                        }
+                        row_edges.push(id);
                     }
                     continue;
                 }
@@ -258,7 +232,7 @@ impl<'a> ExpandIntoOp<'a> {
                         if pending.is_relationship_deleted(id) {
                             continue;
                         }
-                        if super::edge_already_used(&env, id, rp.alias.id, self.sibling_edges) {
+                        if super::edge_already_used(&env, id, rp.alias.id, sibling_edges) {
                             continue;
                         }
                         if let Value::Map(ref filter_map) = filter_attrs
@@ -280,20 +254,23 @@ impl<'a> ExpandIntoOp<'a> {
                                 continue;
                             }
                         }
-                        out_indices.push(row_idx);
-                        out_edge_ids.push(id);
-                        if out_indices.len() >= BATCH_SIZE {
-                            flush!();
-                        }
+                        row_edges.push(id);
                     }
                 }
             }
+            // One queued row per matching input row: a single matched edge
+            // (the collapsed/anonymous common case) is stored inline without a
+            // boxed-iterator allocation; several matched edges box an iterator.
+            match row_edges.len() {
+                0 => {}
+                1 => self.emitter.push_one(row_idx, row_edges[0]),
+                _ => self.emitter.push(row_idx, Box::new(row_edges.into_iter())),
+            }
         }
-
-        flush!();
         drop(g);
         drop(pending);
-        Ok(active_subset.len())
+        drop(iters_ref);
+        Ok(())
     }
 }
 
@@ -301,72 +278,43 @@ impl<'a> Iterator for ExpandIntoOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // Check if record_cap already reached.
+        // Stop once the record cap is reached.
         if let Some(cap) = self.record_cap
             && self.produced >= cap
         {
             return None;
         }
 
-        let mut builder = BatchBuilder::new();
-
-        // Drain leftover batches from a previous call.
-        super::drain_pending_batches(&mut self.pending_batches, &mut builder);
-
         loop {
-            if builder.len() >= BATCH_SIZE {
-                break;
-            }
-
-            if self.current_batch.is_none() {
+            // Refill from one child batch at a time — never buffer the whole
+            // input stream up front.
+            if self.emitter.needs_refill() {
                 match self.child.next() {
-                    Some(Ok(b)) => {
-                        self.current_batch = Some(b);
-                        self.current_pos = 0;
+                    Some(Ok(batch)) => {
+                        if let Err(e) = self.refill(&batch) {
+                            return Some(Err(e));
+                        }
+                        self.emitter.set_batch(batch);
+                        continue;
                     }
                     Some(Err(e)) => return Some(Err(e)),
-                    None => break,
+                    None => return None,
                 }
             }
 
-            {
-                let batch = self.current_batch.as_ref().unwrap();
-                let active: Vec<usize> = batch.active_indices().collect();
+            let Some(mut out) = self.emitter.emit() else {
+                continue;
+            };
 
-                if self.current_pos < active.len() {
-                    let active_subset = &active[self.current_pos..];
-                    let mut pending = std::mem::take(&mut self.pending_batches);
-                    let result = self.expand_batch(batch, active_subset, &mut pending);
-                    self.pending_batches = pending;
-                    match result {
-                        Ok(consumed) => self.current_pos += consumed,
-                        Err(e) => return Some(Err(e)),
-                    }
-                }
-            }
-
-            super::drain_pending_batches(&mut self.pending_batches, &mut builder);
-
-            // Check if batch is exhausted.
-            if let Some(ref batch) = self.current_batch
-                && self.current_pos >= batch.active_len()
-            {
-                self.current_batch = None;
-            }
-        }
-
-        if builder.is_empty() {
-            None
-        } else {
-            // Trim to record_cap if set.
+            // Trim the final batch to the record cap if set.
             if let Some(cap) = self.record_cap {
                 let remaining = cap - self.produced;
-                if builder.len() > remaining {
-                    builder.truncate(remaining);
+                if out.active_len() > remaining {
+                    out.set_selection((0..remaining as u16).collect());
                 }
             }
-            self.produced += builder.len();
-            Some(Ok(builder.finish()))
+            self.produced += out.active_len();
+            return Some(Ok(out));
         }
     }
 }

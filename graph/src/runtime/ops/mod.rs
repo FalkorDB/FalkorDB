@@ -31,6 +31,7 @@
 pub mod aggregate;
 pub mod all_shortest_paths;
 pub mod apply;
+pub(crate) mod batched_result_emitter;
 pub mod cartesian_product;
 pub mod commit;
 pub mod cond_traverse;
@@ -60,7 +61,6 @@ pub mod path_builder;
 pub mod procedure_call;
 pub mod project;
 pub mod remove;
-pub(crate) mod scan_emitter;
 pub mod semi_apply;
 pub mod set;
 pub mod skip;

@@ -34,7 +34,7 @@ use crate::runtime::{
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
-use super::scan_emitter::ScanEmitter;
+use super::batched_result_emitter::BatchedResultEmitter;
 
 pub struct NodeByIndexScanOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
@@ -48,7 +48,7 @@ pub struct NodeByIndexScanOp<'a> {
     extra_labels: Option<Vec<Arc<String>>>,
     /// Holds the parent batch being expanded and the per-row node iterators, and
     /// performs the shared pack-and-gather emit.
-    emitter: ScanEmitter<'a>,
+    emitter: BatchedResultEmitter<'a, NodeId>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -73,7 +73,7 @@ impl<'a> NodeByIndexScanOp<'a> {
             index,
             query,
             extra_labels,
-            emitter: ScanEmitter::new(node_pattern.alias.id),
+            emitter: BatchedResultEmitter::new(node_pattern.alias.id),
             idx,
         }
     }

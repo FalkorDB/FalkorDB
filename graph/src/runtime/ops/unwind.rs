@@ -1,8 +1,11 @@
 //! Batch-mode unwind operator — expands a list expression into individual rows.
 //!
-//! Implements Cypher `UNWIND expr AS var`. For each active row in each input
-//! batch, evaluates the list expression and expands it into individual rows.
-//! Output rows are accumulated into batches of up to `BATCH_SIZE`.
+//! Implements Cypher `UNWIND expr AS var`. For each active parent row, evaluates
+//! the list expression and queues its values on the shared
+//! [`BatchedResultEmitter`], which packs up to
+//! [`BATCH_SIZE`](super::super::batch::BATCH_SIZE) values into one columnar
+//! batch — replicating the parent columns once per value via `gather` rather
+//! than cloning the parent row per element.
 //!
 //! ```text
 //!  Input row {a: 1}
@@ -16,96 +19,36 @@
 //!  └────────────────┘
 //! ```
 //!
-//! Large lists are expanded lazily: the operator uses `ValueIter` (which can
-//! be a lazy range iterator) and only materializes `Env` rows in `BATCH_SIZE`
-//! chunks, preventing memory blow-up for queries like
-//! `UNWIND range(1, 20000000)`.
-//! Non-list values are treated as single-element results; NULL values
+//! Rows are expanded **one at a time**: only the current row's (possibly lazy)
+//! iterator is queued, so `UNWIND range(1, 20000000)` keeps just one lazy range
+//! in flight and a per-row list property is materialized for a single row at a
+//! time. The emitter pulls values in `BATCH_SIZE` chunks, preventing memory
+//! blow-up. Non-list values are treated as single-element results; NULL values
 //! produce no output rows.
-
-use std::collections::VecDeque;
 
 use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::{ExprEval, ValueIter};
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
-    row::{Row, RowView},
+    batch::{Batch, BatchOp, BatchRow},
     runtime::Runtime,
     value::Value,
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
-/// State for lazily expanding a value iterator across multiple `next()` calls.
-struct IterExpansion {
-    /// The lazy iterator being expanded.
-    iter: ValueIter,
-    /// The base row for each output row (cloned per element).
-    base_env: Row,
-}
-
-impl IterExpansion {
-    /// Drain up to `budget` elements into `out`.
-    /// Returns `true` if the expansion is fully drained.
-    fn drain(
-        &mut self,
-        out: &mut VecDeque<Row>,
-        budget: usize,
-        name: &Variable,
-    ) -> bool {
-        for _ in 0..budget {
-            match self.iter.next() {
-                Some(val) => {
-                    let mut row = self.base_env.clone();
-                    row.insert(name, val);
-                    out.push_back(row);
-                }
-                None => return true,
-            }
-        }
-        false
-    }
-}
-
-/// Evaluate the list expression for a given row. Returns either:
-/// - An `IterExpansion` if the result is a non-empty list or lazy range
-/// - A single `Row` pushed onto `pending` for scalar values
-/// - Nothing for `Null`
-fn eval_row(
-    runtime: &Runtime<'_>,
-    list: &QueryExpr<Variable>,
-    name: &Variable,
-    env: &Row,
-    pending: &mut VecDeque<Row>,
-) -> Result<Option<IterExpansion>, String> {
-    let eval = ExprEval::from_runtime(runtime);
-    let iter = eval.eval_iter_expr(list, list.root().idx(), Some(env))?;
-
-    match iter {
-        ValueIter::Empty | ValueIter::Once(None | Some(Value::Null)) => Ok(None),
-        ValueIter::Once(Some(val)) => {
-            let mut out_row = env.clone();
-            out_row.insert(name, val);
-            pending.push_back(out_row);
-            Ok(None)
-        }
-        _ => Ok(Some(IterExpansion {
-            iter,
-            base_env: env.clone(),
-        })),
-    }
-}
+use super::batched_result_emitter::BatchedResultEmitter;
 
 pub struct UnwindOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
     list: &'a QueryExpr<Variable>,
-    name: &'a Variable,
-    pending: VecDeque<Row>,
-    current_batch: Option<Batch<'a>>,
+    /// Holds the parent batch being expanded and the current row's value
+    /// iterator, and performs the shared pack-and-gather emit.
+    emitter: BatchedResultEmitter<'a, Value>,
+    /// Active row indices of the batch currently held by the emitter.
+    active: Vec<usize>,
+    /// Next index into `active` whose list expression hasn't been expanded yet.
     current_pos: usize,
-    /// Lazy expansion state for a large list.
-    iter_expansion: Option<IterExpansion>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -121,11 +64,9 @@ impl<'a> UnwindOp<'a> {
             runtime,
             child,
             list,
-            name,
-            pending: VecDeque::new(),
-            current_batch: None,
+            emitter: BatchedResultEmitter::with_binding(name.id),
+            active: Vec::new(),
             current_pos: 0,
-            iter_expansion: None,
             idx,
         }
     }
@@ -135,88 +76,64 @@ impl<'a> Iterator for UnwindOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut builder = BatchBuilder::new();
-
-        // Drain leftover rows from previous call.
-        super::drain_pending(&mut self.pending, &mut builder);
-
         loop {
-            if builder.len() >= BATCH_SIZE {
-                break;
+            // Emit ready values from the current row's iterator first.
+            if !self.emitter.needs_refill()
+                && let Some(out) = self.emitter.emit()
+            {
+                return Some(Ok(out));
             }
 
-            // Continue draining a partially-expanded iterator.
-            if let Some(ref mut exp) = self.iter_expansion {
-                let budget = BATCH_SIZE - builder.len();
-                let done = exp.drain(&mut self.pending, budget, self.name);
-                if done {
-                    self.iter_expansion = None;
-                }
-                super::drain_pending(&mut self.pending, &mut builder);
-                if builder.len() >= BATCH_SIZE || self.iter_expansion.is_some() {
-                    break;
-                }
-                continue;
-            }
+            // The current row is drained: queue the next row's expansion,
+            // pulling a fresh child batch when the current one is exhausted.
+            // Only one row's iterator is ever queued, so a lazy range or a
+            // per-row list property stays bounded to a single row.
+            loop {
+                if self.current_pos < self.active.len() {
+                    let row_idx = self.active[self.current_pos];
+                    self.current_pos += 1;
 
-            if self.current_batch.is_none() {
+                    let iter = {
+                        let batch = self
+                            .emitter
+                            .batch()
+                            .expect("batch is set while active rows remain");
+                        let view = BatchRow::new(batch, row_idx);
+                        match ExprEval::from_runtime(self.runtime).eval_iter_expr(
+                            self.list,
+                            self.list.root().idx(),
+                            Some(&view),
+                        ) {
+                            Ok(it) => it,
+                            Err(e) => return Some(Err(e)),
+                        }
+                    };
+
+                    match iter {
+                        // `UNWIND null` / empty produces no rows. A NULL *inside*
+                        // a list arrives via `List` and is emitted normally.
+                        ValueIter::Empty | ValueIter::Once(None | Some(Value::Null)) => continue,
+                        ValueIter::Once(Some(val)) => {
+                            self.emitter.push_one(row_idx, val);
+                            break;
+                        }
+                        other => {
+                            self.emitter.push(row_idx, Box::new(other));
+                            break;
+                        }
+                    }
+                }
+
                 match self.child.next() {
-                    Some(Ok(b)) => {
-                        self.current_batch = Some(b);
+                    Some(Ok(batch)) => {
+                        self.active = batch.active_indices().collect();
                         self.current_pos = 0;
+                        self.emitter.set_batch(batch);
                     }
                     Some(Err(e)) => return Some(Err(e)),
-                    None => break,
+                    None => return None,
                 }
             }
-
-            {
-                let batch = self.current_batch.as_ref().unwrap();
-                let active: Vec<usize> = batch.active_indices().collect();
-
-                while self.current_pos < active.len() {
-                    let row_idx = active[self.current_pos];
-                    self.current_pos += 1;
-                    let env = BatchRow::new(batch, row_idx).to_owned_row();
-                    match eval_row(self.runtime, self.list, self.name, &env, &mut self.pending) {
-                        Ok(Some(expansion)) => {
-                            self.iter_expansion = Some(expansion);
-                            break; // drain the expansion in the next loop iteration
-                        }
-                        Ok(None) => {}
-                        Err(e) => return Some(Err(e)),
-                    }
-
-                    if self.pending.len() >= BATCH_SIZE {
-                        break;
-                    }
-                }
-            }
-
-            // Drain iterator expansion outside the batch borrow scope.
-            if let Some(ref mut exp) = self.iter_expansion {
-                let budget = BATCH_SIZE.saturating_sub(self.pending.len());
-                let done = exp.drain(&mut self.pending, budget, self.name);
-                if done {
-                    self.iter_expansion = None;
-                }
-            }
-
-            super::drain_pending(&mut self.pending, &mut builder);
-
-            // Check if batch is exhausted.
-            if self.iter_expansion.is_none()
-                && let Some(ref batch) = self.current_batch
-                && self.current_pos >= batch.active_len()
-            {
-                self.current_batch = None;
-            }
-        }
-
-        if builder.is_empty() {
-            None
-        } else {
-            Some(Ok(builder.finish()))
         }
     }
 }

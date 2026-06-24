@@ -22,7 +22,6 @@
 //!             output rows with edge + endpoint IDs
 //! ```
 
-use std::collections::VecDeque;
 use std::sync::Arc;
 
 use crate::graph::graph::{NodeId, RelationshipId};
@@ -31,8 +30,8 @@ use crate::parser::ast::{QueryExpr, QueryRelationship, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
-    row::{Row, RowView},
+    batch::{Batch, BatchOp, BatchRow},
+    row::RowView,
     runtime::Runtime,
     value::Value,
 };
@@ -40,6 +39,8 @@ use crate::runtime::{
 // trait import — it appears unused in signatures but removing it
 // breaks `value.root().idx()` etc.
 use orx_tree::{Dyn, NodeIdx, NodeRef};
+
+use super::batched_result_emitter::{BatchedResultEmitter, EdgeEndpoints};
 
 /// Invariant: `relationship.from` is always the bound endpoint of the
 /// edge scan; `transposed` flips which graph-side endpoint the edge
@@ -53,10 +54,12 @@ pub struct EdgeByIndexScanOp<'a> {
     relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
     query: &'a IndexQuery<QueryExpr<Variable>>,
     transposed: bool,
-    pending: VecDeque<(
-        Row,
-        Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>>,
-    )>,
+    /// Holds the parent batch being expanded and the per-row edge iterators, and
+    /// performs the shared pack-and-gather emit. Each pushed iterator yields
+    /// `(src, dst, edge)` in graph-tensor order; the emitter's binding maps the
+    /// graph sides onto the pattern's from/to endpoints (honoring `transposed`)
+    /// and skips the second endpoint for self-loop patterns.
+    emitter: BatchedResultEmitter<'a, (NodeId, NodeId, RelationshipId)>,
     /// Lazily-populated cache of all edges of `relationship_pattern.types[0]`
     /// for the non-indexable-runtime-value fallback. Materialized once
     /// on the first fallback and shared across subsequent input rows
@@ -76,13 +79,23 @@ impl<'a> EdgeByIndexScanOp<'a> {
         transposed: bool,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
+        // Self-loop patterns like `MATCH (n)-[r:T]->(n)` share one alias on both
+        // endpoints; bind it once (via `from`) and skip the `to` column so the
+        // second insert can't overwrite the first.
+        let to = (relationship_pattern.to.alias != relationship_pattern.from.alias)
+            .then_some(relationship_pattern.to.alias.id);
         Self {
             runtime,
             child,
+            emitter: BatchedResultEmitter::with_binding(EdgeEndpoints {
+                from: relationship_pattern.from.alias.id,
+                to,
+                edge: relationship_pattern.alias.id,
+                transposed,
+            }),
             relationship_pattern,
             query,
             transposed,
-            pending: VecDeque::new(),
             all_edges_cache: std::cell::RefCell::new(None),
             idx,
         }
@@ -277,153 +290,114 @@ impl<'a> EdgeByIndexScanOp<'a> {
             _ => true,
         }
     }
-
-    /// Drains rows from `self.pending` into `envs` until `BATCH_SIZE` is reached.
-    fn drain_pending(
-        &mut self,
-        builder: &mut BatchBuilder,
-    ) {
-        let rp = self.relationship_pattern;
-        while builder.len() < BATCH_SIZE {
-            let Some((env, iter)) = self.pending.front_mut() else {
-                break;
-            };
-            if let Some((src, dst, edge_id)) = iter.next() {
-                let mut row = env.clone();
-                // Bind from/to nodes according to transposed flag
-                let (from_node, to_node) = if self.transposed {
-                    (dst, src)
-                } else {
-                    (src, dst)
-                };
-                row.insert(&rp.from.alias, Value::Node(from_node));
-                // Self-loop patterns share the same alias on both
-                // endpoints; the second `insert` would overwrite the
-                // first with the (equal, per the filter above)
-                // destination value. Skip when aliases are the same
-                // to avoid redundant work and to preserve the
-                // semantics that the single variable is bound once.
-                if rp.to.alias != rp.from.alias {
-                    row.insert(&rp.to.alias, Value::Node(to_node));
-                }
-                // Relationship value stores only the edge_id; endpoints and
-                // attributes are resolved on demand from the graph.
-                row.insert(&rp.alias, Value::Relationship(edge_id));
-                builder.push_row(&row);
-            } else {
-                self.pending.pop_front();
-            }
-        }
-    }
 }
 
 impl<'a> Iterator for EdgeByIndexScanOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut builder = BatchBuilder::new();
+        loop {
+            // Refill the per-row scans from the child when we've run dry: queue
+            // one (endpoint-filtered) edge iterator per active parent row.
+            if self.emitter.needs_refill() {
+                match self.child.next() {
+                    Some(Ok(batch)) => {
+                        let label = &self.relationship_pattern.types[0];
+                        let rp = self.relationship_pattern;
 
-        // Drain leftover scans from previous call.
-        self.drain_pending(&mut builder);
+                        for row in batch.active_indices() {
+                            let view = BatchRow::new(&batch, row);
+                            let q =
+                                match Self::evaluate_index_query(self.runtime, self.query, &view) {
+                                    Ok(q) => q,
+                                    Err(e) => return Some(Err(e)),
+                                };
 
-        while builder.len() < BATCH_SIZE {
-            let batch = match self.child.next() {
-                Some(Ok(b)) => b,
-                Some(Err(e)) => return Some(Err(e)),
-                None => break,
-            };
+                            // Stream results instead of collecting: the child
+                            // batch may have many rows and each row would
+                            // otherwise materialize the full edge set before any
+                            // emission. Matches `NodeByIndexScanOp`'s pattern.
+                            //
+                            // On the fallback path (non-indexable runtime value),
+                            // `get_all_edges` is materialized once into the op's
+                            // cache and shared by all subsequent rows via `Arc`,
+                            // so we don't rebuild the full-type Vec per row.
+                            let base: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
+                                if Self::can_utilize_index(&q) {
+                                    Box::new(self.runtime.g.borrow().get_indexed_edges(label, q))
+                                } else {
+                                    let cached = {
+                                        let mut cache = self.all_edges_cache.borrow_mut();
+                                        if cache.is_none() {
+                                            *cache = Some(Arc::new(
+                                                self.runtime.g.borrow().get_all_edges(label),
+                                            ));
+                                        }
+                                        Arc::clone(cache.as_ref().unwrap())
+                                    };
+                                    let mut idx = 0usize;
+                                    Box::new(std::iter::from_fn(move || {
+                                        if idx < cached.len() {
+                                            let v = cached[idx];
+                                            idx += 1;
+                                            Some(v)
+                                        } else {
+                                            None
+                                        }
+                                    }))
+                                };
 
-            let label = &self.relationship_pattern.types[0];
-            let rp = self.relationship_pattern;
-
-            for row in batch.active_indices() {
-                let view = BatchRow::new(&batch, row);
-                let q = match Self::evaluate_index_query(self.runtime, self.query, &view) {
-                    Ok(q) => q,
-                    Err(e) => return Some(Err(e)),
-                };
-
-                // Stream results instead of collecting: the child
-                // batch may have many rows and each row would
-                // otherwise materialize the full edge set before any
-                // emission. Matches `NodeByIndexScanOp`'s pattern.
-                //
-                // On the fallback path (non-indexable runtime value),
-                // `get_all_edges` is materialized once into the op's
-                // cache and shared by all subsequent rows via `Arc`,
-                // so we don't rebuild the full-type Vec per row.
-                let base: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
-                    if Self::can_utilize_index(&q) {
-                        Box::new(self.runtime.g.borrow().get_indexed_edges(label, q))
-                    } else {
-                        let cached = {
-                            let mut cache = self.all_edges_cache.borrow_mut();
-                            if cache.is_none() {
-                                *cache =
-                                    Some(Arc::new(self.runtime.g.borrow().get_all_edges(label)));
-                            }
-                            Arc::clone(cache.as_ref().unwrap())
-                        };
-                        let mut idx = 0usize;
-                        Box::new(std::iter::from_fn(move || {
-                            if idx < cached.len() {
-                                let v = cached[idx];
-                                idx += 1;
-                                Some(v)
-                            } else {
-                                None
-                            }
-                        }))
-                    };
-
-                // Filter edges by *both* endpoints when the child has
-                // already bound them. `transposed` flips which
-                // graph-side (src/dst) role the pattern's from/to
-                // endpoints play in the tensor, so the binding check
-                // swaps correspondingly.
-                //
-                // Self-loop patterns like `MATCH (n)-[r:T]->(n)` have
-                // `rp.from.alias == rp.to.alias`. Without filtering
-                // for `from_id == to_id`, non-loop edges leak through
-                // and `drain_pending`'s second `row.insert(to.alias)`
-                // overwrites the `from.alias` binding.
-                let bound_from = match view.value_at(rp.from.alias.id) {
-                    Some(Value::Node(id)) => Some(id),
-                    _ => None,
-                };
-                let bound_to = match view.value_at(rp.to.alias.id) {
-                    Some(Value::Node(id)) => Some(id),
-                    _ => None,
-                };
-                let transposed = self.transposed;
-                let same_endpoint_alias = rp.from.alias == rp.to.alias;
-                let edges: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
-                    if bound_from.is_some() || bound_to.is_some() || same_endpoint_alias {
-                        Box::new(base.filter(move |(src, dst, _)| {
-                            let (from_id, to_id) = if transposed {
-                                (*dst, *src)
-                            } else {
-                                (*src, *dst)
+                            // Filter edges by *both* endpoints when the child has
+                            // already bound them. `transposed` flips which
+                            // graph-side (src/dst) role the pattern's from/to
+                            // endpoints play in the tensor, so the binding check
+                            // swaps correspondingly.
+                            //
+                            // Self-loop patterns like `MATCH (n)-[r:T]->(n)` have
+                            // `rp.from.alias == rp.to.alias`. Without filtering
+                            // for `from_id == to_id`, non-loop edges leak through
+                            // and the emitter (which binds the single shared
+                            // alias once, via `from`) would surface them.
+                            let bound_from = match view.value_at(rp.from.alias.id) {
+                                Some(Value::Node(id)) => Some(id),
+                                _ => None,
                             };
-                            bound_from.is_none_or(|id| id == from_id)
-                                && bound_to.is_none_or(|id| id == to_id)
-                                && (!same_endpoint_alias || from_id == to_id)
-                        }))
-                    } else {
-                        base
-                    };
+                            let bound_to = match view.value_at(rp.to.alias.id) {
+                                Some(Value::Node(id)) => Some(id),
+                                _ => None,
+                            };
+                            let transposed = self.transposed;
+                            let same_endpoint_alias = rp.from.alias == rp.to.alias;
+                            let edges: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
+                                if bound_from.is_some() || bound_to.is_some() || same_endpoint_alias
+                                {
+                                    Box::new(base.filter(move |(src, dst, _)| {
+                                        let (from_id, to_id) = if transposed {
+                                            (*dst, *src)
+                                        } else {
+                                            (*src, *dst)
+                                        };
+                                        bound_from.is_none_or(|id| id == from_id)
+                                            && bound_to.is_none_or(|id| id == to_id)
+                                            && (!same_endpoint_alias || from_id == to_id)
+                                    }))
+                                } else {
+                                    base
+                                };
 
-                self.pending
-                    .push_back((BatchRow::new(&batch, row).to_owned_row(), edges));
+                            self.emitter.push(row, edges);
+                        }
+                        self.emitter.set_batch(batch);
+                        continue;
+                    }
+                    Some(Err(e)) => return Some(Err(e)),
+                    None => return None,
+                }
             }
 
-            self.drain_pending(&mut builder);
-        }
-
-        if builder.is_empty() {
-            None
-        } else {
-            Some(Ok(builder.finish()))
+            if let Some(out) = self.emitter.emit() {
+                return Some(Ok(out));
+            }
         }
     }
 }

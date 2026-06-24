@@ -8,6 +8,7 @@
 
 use std::sync::Arc;
 
+use crate::graph::graph::NodeId;
 use crate::parser::ast::{ExprIR, QueryExpr, QueryNode, Variable};
 use crate::planner::IR;
 use crate::runtime::{
@@ -16,14 +17,14 @@ use crate::runtime::{
 };
 use orx_tree::{Dyn, NodeIdx};
 
-use super::scan_emitter::ScanEmitter;
+use super::batched_result_emitter::BatchedResultEmitter;
 
 pub struct NodeByLabelAndIdScanOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
     /// Holds the parent batch being expanded and the per-row id iterators, and
     /// performs the shared pack-and-gather emit.
-    emitter: ScanEmitter<'a>,
+    emitter: BatchedResultEmitter<'a, NodeId>,
     node_pattern: &'a QueryNode<Arc<String>, Variable>,
     filter: &'a Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
@@ -40,7 +41,7 @@ impl<'a> NodeByLabelAndIdScanOp<'a> {
         Self {
             runtime,
             child,
-            emitter: ScanEmitter::new(node_pattern.alias.id),
+            emitter: BatchedResultEmitter::new(node_pattern.alias.id),
             node_pattern,
             filter,
             idx,
