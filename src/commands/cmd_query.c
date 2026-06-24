@@ -417,12 +417,10 @@ void _query
 	Globals_TrackCommandCtx (command_ctx) ;
 
 	if (gc == NULL) {
-		GraphContext *gc_out = NULL ;
 		if (GraphContext_Retrieve (ctx, command_ctx->rm_graph_name, true, false,
-					true, &gc_out) != GraphRetrieve_RETRIEVED) {
+					true, &gc) != GraphRetrieve_RETRIEVED) {
 			goto cleanup ;
 		}
-		gc = gc_out ;
 		CommandCtx_SetGraphContext (command_ctx, gc) ;
 	}
 

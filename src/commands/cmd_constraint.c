@@ -33,6 +33,48 @@ typedef struct {
 	char                    **props;        // prop_count owned property name copies
 } GraphConstraintCtx;
 
+static GraphConstraintCtx *GraphConstraintCtx_New
+(
+	ConstraintOp op,
+	ConstraintType ct,
+	const char *label,
+	uint8_t prop_count,
+	GraphEntityType entity_type
+) {
+	ASSERT (label != NULL) ;
+	ASSERT (prop_count > 0) ;
+
+	GraphConstraintCtx *ctx = rm_calloc (1, sizeof (GraphConstraintCtx)) ;
+
+	ctx->op          = op ;
+	ctx->ct          = ct ;
+	ctx->label       = rm_strdup (label) ;
+	ctx->prop_count  = prop_count ;
+	ctx->entity_type = entity_type ;
+
+	return ctx ;
+}
+
+static void GraphConstraintCtx_Free
+(
+	RedisModuleCtx *rm_ctx,
+	GraphConstraintCtx **ctx
+) {
+	GraphConstraintCtx *_ctx = *ctx ;
+
+	RedisModule_FreeString (rm_ctx, _ctx->graph_id) ;
+
+	for (uint8_t i = 0 ; i < _ctx->prop_count ; i++) {
+		rm_free (_ctx->props [i]) ;
+	}
+
+	rm_free (_ctx->props) ;
+	rm_free (_ctx->label) ;
+	rm_free (_ctx) ;
+
+	*ctx = NULL ;
+}
+
 static inline int _cmp_AttributeID
 (
 	const void *a,
@@ -453,14 +495,7 @@ static void _Graph_Constraint
 	}
 
 	// cleanup
-	RedisModule_FreeString (rm_ctx, ctx->graph_id) ;
-
-	for (uint8_t i = 0 ; i < ctx->prop_count ; i++) {
-		rm_free (ctx->props [i]) ;
-	}
-	rm_free (ctx->props) ;
-	rm_free (ctx->label) ;
-	rm_free (ctx) ;
+	GraphConstraintCtx_Free (rm_ctx, &ctx) ;
 
 	// unblock client
 	RedisModule_UnblockClient (bc, NULL) ;
@@ -518,13 +553,8 @@ int Graph_Constraint
 	}
 
 	// build context for worker thread
-	GraphConstraintCtx *cmd_ctx = rm_calloc (1, sizeof (GraphConstraintCtx)) ;
-
-	cmd_ctx->op          = op ;
-	cmd_ctx->ct          = ct ;
-	cmd_ctx->label       = rm_strdup (label) ;
-	cmd_ctx->prop_count  = prop_count ;
-	cmd_ctx->entity_type = entity_type ;
+	GraphConstraintCtx *cmd_ctx =
+		GraphConstraintCtx_New (op, ct, label, prop_count, entity_type) ;
 
 	// copy property names — the worker may pass them to _Constraint_Create
 	// which overwrites the array elements with GraphContext-internal pointers
