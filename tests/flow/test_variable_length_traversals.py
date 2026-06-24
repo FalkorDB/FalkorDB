@@ -548,3 +548,16 @@ class testVariableLengthTraversals(FlowTestsBase):
         count = self.graph.query(q).result_set[0][0]
         self.env.assertEquals(count, 16)
 
+    def test17_var_len_planner_alias_consistency(self):
+        # Regression: planner-time rewrite must keep aliases consistent for
+        # subsequent CondTraverse reconstruction on EXPLAIN/QUERY.
+        self.graph.delete()
+
+        q = """MATCH (:B)<--()-->(:E)-[*0..]->(d:D)
+               MATCH (p)-->()
+               WHERE p.k = d.k
+               RETURN 1"""
+
+        result = self.graph.query(q)
+        self.env.assertEquals(result.result_set, [])
+

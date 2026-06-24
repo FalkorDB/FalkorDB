@@ -37,6 +37,8 @@
 #include "configuration/reconf_handler.h"
 #include "serializers/graphcontext_type.h"
 #include "arithmetic/arithmetic_expression.h"
+#include "serializers/encoder/v19/encode_v19.h"
+#include "serializers/decoders/current/v19/decode_v19.h"
 
 // minimal supported Redis version
 #define MIN_REDIS_VERSION_MAJOR 8
@@ -55,6 +57,35 @@ static int _RegisterDataTypes(RedisModuleCtx *ctx) {
 		return REDISMODULE_ERR;
 	}
 	return REDISMODULE_OK;
+}
+
+static int _ExportAPIs
+(
+	RedisModuleCtx *ctx
+) {
+	int res ;
+
+	#define EXPORT_API(name, fp)                                                \
+		res = RedisModule_ExportSharedAPI (ctx, name, fp) ;                     \
+        if (res != REDISMODULE_OK) {                                            \
+            RedisModule_Log (ctx, "warning", "failed to export FalkorDB API") ; \
+			return res ;                                                        \
+		}
+
+	EXPORT_API ("SerializerIO_Free",              SerializerIO_Free)
+	EXPORT_API ("GraphContext_Free",              GraphContext_Free)
+	EXPORT_API ("RdbSaveGraph_latest",            RdbSaveGraph_latest)
+	EXPORT_API ("GraphContext_SetKey",            GraphContext_SetKey)
+	EXPORT_API ("GraphContext_Retrieve",          GraphContext_Retrieve)
+	EXPORT_API ("GraphContext_RefCount",          GraphContext_RefCount)
+	EXPORT_API ("SerializerIO_FromStream",        SerializerIO_FromStream)
+	EXPORT_API ("GraphContext_MemoryUsage",       GraphContext_MemoryUsage)
+	EXPORT_API ("RdbLoadGraphContext_latest",     RdbLoadGraphContext_latest)
+	EXPORT_API ("GraphContext_DecreaseRefCount",  GraphContext_DecreaseRefCount)
+
+#undef EXPORT_API
+
+	return REDISMODULE_OK ;
 }
 
 // starts cron and register recurring tasks
@@ -124,6 +155,10 @@ int RedisModule_OnLoad
 	if(RedisModule_Init(ctx, "graph", FALKOR_MODULE_VERSION,
 						REDISMODULE_APIVER_1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
+	}
+
+	if (_ExportAPIs (ctx) != REDISMODULE_OK) {
+		return REDISMODULE_ERR ;
 	}
 
 	// initialize GraphBLAS

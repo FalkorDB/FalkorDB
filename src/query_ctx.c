@@ -447,7 +447,8 @@ bool QueryCtx_AcquireWriteLock (void) {
 	// concurrent memory modifications by defrag
 	// must release before acquiring GIL to avoid deadlock:
 	//   worker: READ lock → GIL  vs  main thread: GIL → WRITE lock
-	if (ctx->internal_exec_ctx.read_locked == true) {
+	bool read_locked = ctx->internal_exec_ctx.read_locked ;
+	if (read_locked == true) {
 		//GraphContext_ReleaseLock (gc) ;
 		GraphContext_ReleaseReadLock (gc) ;
 		ctx->internal_exec_ctx.read_locked = false ;
@@ -504,6 +505,11 @@ clean_up:
 
 	// unlock GIL
 	_QueryCtx_ThreadSafeContextUnlock (ctx) ;
+
+	// restore read lock
+	if (read_locked) {
+		QueryCtx_AcquireReadLock () ;
+	}
 
 	// if there is a break point for runtime exception, raise it
 	// otherwise return false
