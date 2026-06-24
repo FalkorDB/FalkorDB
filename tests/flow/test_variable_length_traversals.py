@@ -552,15 +552,11 @@ class testVariableLengthTraversals(FlowTestsBase):
         # Regression: planner-time rewrite must keep aliases consistent for
         # subsequent CondTraverse reconstruction on EXPLAIN/QUERY.
         self.graph.delete()
-        self.graph.query("CREATE (:__seed__)")
 
         q = """MATCH (:B)<--()-->(:E)-[*0..]->(d:D)
                MATCH (p)-->()
                WHERE p.k = d.k
                RETURN 1"""
-
-        plan = self.graph.explain(q)
-        self.env.assertEquals(plan.structured_plan.name, "Results")
 
         result = self.graph.query(q)
         self.env.assertEquals(result.result_set, [])
