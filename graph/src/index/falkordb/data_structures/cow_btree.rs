@@ -323,16 +323,30 @@ impl Leaf {
         }
     }
 
-    /// Build a leaf from sorted `(key, doc)` pairs, choosing [`FMT_AOS`] or [`FMT_COMPACT`] per the data:
-    /// compact is used only when it saves at least [`COMPACT_MIN_SAVING_BPE`] bytes per entry, so the AoS
-    /// form — simpler and cheaper to build — keeps the near-incompressible cases. An empty slice yields an
-    /// empty AoS leaf. Re-selecting on every rebuild is what migrates a leaf's format as its data changes.
+    /// Build a leaf from sorted `(key, doc)` pairs, choosing [`FMT_AOS`] or [`FMT_COMPACT`] per the data.
+    ///
+    /// The choice is a closed-form size comparison; the widths are always one of {1, 2, 4, 8}, so the only
+    /// free variables are `count` and the data:
+    /// - AoS:                `1 + count·STRIDE`
+    /// - compact, no-dedup:  `BODY_OFFSET + count·value_width + count·doc_width`
+    /// - compact, dedup:     `BODY_OFFSET + distinct·value_width + count (index) + count·doc_width`
+    ///
+    /// Compact is used only when it saves at least [`COMPACT_MIN_SAVING_BPE`] bytes/entry, so AoS — simpler
+    /// and cheaper to build — keeps the near-incompressible cases. An empty slice yields an empty AoS leaf;
+    /// re-selecting on every rebuild is what migrates a leaf's format as its data changes.
+    ///
+    /// `value_width` comes from the value range, which is O(1): entries are sorted by `(key, doc)`, so the
+    /// min/max values are the first/last keys. `doc_width` needs `max_doc`, which is *not* O(1) — docs are
+    /// ordered only within a value, so the global max can sit under any key — so the single pass below (which
+    /// also counts distinct values for the dedup decision) is unavoidable. The distinct table itself is built
+    /// lazily in [`Leaf::build_compact`], only when compact is chosen.
     fn from_pairs(pairs: &[(u64, u64)]) -> Self {
         let count = pairs.len();
         if count == 0 {
             return Self::build_aos(pairs);
         }
-        // One stats pass: distinct values (runs, since sorted), value range, max doc.
+        // One pass for the two data-dependent inputs — the distinct-value count (runs, since sorted) and the
+        // max doc. (The value range needs no scan; it's read O(1) from the sorted ends just below.)
         let mut distinct_count = 1usize;
         let mut max_doc = pairs[0].1;
         for window in pairs.windows(2) {
@@ -376,7 +390,10 @@ impl Leaf {
         Self(Arc::from(buf.as_slice()))
     }
 
-    /// Encode the `FMT_COMPACT` layout (the caller has already chosen it and computed the widths).
+    /// Encode the `FMT_COMPACT` layout (the caller has already chosen it and computed the widths). The
+    /// distinct table and per-entry index are (re)built here in one in-cache pass over the ≤ `LEAF_MAX`
+    /// entries — deliberately *not* carried over from [`Leaf::from_pairs`], since materialising them there
+    /// measurably slowed the far more common AoS path while saving nothing here (the byte writes dominate).
     fn build_compact(
         pairs: &[(u64, u64)],
         count: usize,
