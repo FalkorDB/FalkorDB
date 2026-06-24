@@ -339,6 +339,28 @@ impl<'a> ExprEval<'a> {
                     *all_paths,
                 );
             }
+            // Property access (`n.prop`) is the most common non-leaf expression
+            // (join keys, filters, projections, sort keys). Handle it here so it
+            // never falls through to the allocating stack-based loop below, which
+            // would heap-allocate `stack` + `res` on every call. The child is
+            // usually a `Variable` (its own fast path), so this resolves with no
+            // scratch allocation. Mirrors the in-loop `Property` handler.
+            ExprIR::Property(attr) => {
+                let obj = self.eval(ir, ir.node(idx).child(0).idx(), env, agg_group_key)?;
+                return match obj {
+                    Value::Node(id) => {
+                        let rt = self.rt()?;
+                        Ok(rt.get_node_attribute(id, attr).unwrap_or(Value::Null))
+                    }
+                    Value::Relationship(rel) => {
+                        let rt = self.rt()?;
+                        Ok(rt
+                            .get_relationship_attribute(rel, attr)
+                            .unwrap_or(Value::Null))
+                    }
+                    other => other.get_attr(attr),
+                };
+            }
             _ => {}
         }
 
