@@ -23,8 +23,9 @@
 //! a `Vec<(Value, BuildSlot)>` where exact key equality is checked during
 //! probe. NULL keys are skipped on both sides (Cypher NULL != NULL semantics).
 
-use std::collections::HashMap;
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::hash::{Hash, Hasher};
+
+use rustc_hash::{FxHashMap, FxHasher};
 
 use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
@@ -54,11 +55,14 @@ pub(crate) type BuildSlot = Vec<RightRowRef>;
 /// The build/probe hash table: `hash(key) -> [(key, matching right rows)]`.
 /// The per-bucket `Vec` resolves hash collisions; exact key equality is
 /// re-checked on probe (see `BuildSlot`).
-pub(crate) type JoinHashTable = HashMap<u64, Vec<(Value, BuildSlot)>>;
+pub(crate) type JoinHashTable = FxHashMap<u64, Vec<(Value, BuildSlot)>>;
 
 /// Hash a join key with the same hasher used on both the build and probe sides.
+/// Uses a fast non-cryptographic hasher (`FxHasher`): join keys are commonly
+/// integers/ids, and the bucket re-checks exact `Value` equality, so hash
+/// quality only needs to spread buckets, not resist collisions adversarially.
 fn hash_value(value: &Value) -> u64 {
-    let mut hasher = DefaultHasher::new();
+    let mut hasher = FxHasher::default();
     value.hash(&mut hasher);
     hasher.finish()
 }
@@ -117,7 +121,7 @@ impl<'a> ValueHashJoinOp<'a> {
     fn build_hash_table(&mut self) -> Result<JoinHashTable, String> {
         let eval = ExprEval::from_runtime(self.runtime);
         let rhs_idx = self.rhs_exp.root().idx();
-        let mut table = JoinHashTable::new();
+        let mut table = JoinHashTable::default();
 
         for result in self.right.by_ref() {
             let batch = result?;
