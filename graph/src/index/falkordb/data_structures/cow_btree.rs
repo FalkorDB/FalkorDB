@@ -456,6 +456,94 @@ impl Leaf {
     fn raw(&self) -> &[u8] {
         &self.0
     }
+
+    /// First entry whose `(key, doc)` is `>= (key, doc)` — the slot a single insert/remove targets.
+    fn lower_bound_entry(
+        &self,
+        key: u64,
+        doc: u64,
+    ) -> usize {
+        let (mut lo, mut hi) = (0usize, self.count());
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            if (self.key(mid), self.doc(mid)) < (key, doc) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        lo
+    }
+
+    /// Insert one `(key, doc)`: the replacement leaf if it still fits, a [`LeafInsert::Split`] if it
+    /// overflowed, or `None` if the tuple is already present. An [`FMT_AOS`] leaf that still fits is
+    /// **spliced directly in its bytes** — no decode/re-encode. The overflow case and every [`FMT_COMPACT`]
+    /// leaf go through [`Leaf::to_pairs`] + [`Leaf::from_pairs`], which also re-selects the format (so an
+    /// AoS→compact migration happens at the next split, not on every insert).
+    fn insert(
+        &self,
+        key: u64,
+        doc: u64,
+    ) -> Option<LeafInsert> {
+        if self.0[0] == FMT_AOS && self.count() < LEAF_MAX {
+            // AoS fast path: it still fits (count < LEAF_MAX ⇒ count + 1 ≤ LEAF_MAX), so splice the 16-byte
+            // tuple into the page — memcpy of prefix + tuple + suffix, one allocation, no full decode.
+            let pos = self.lower_bound_entry(key, doc);
+            if pos < self.count() && self.key(pos) == key && self.doc(pos) == doc {
+                return None; // already present
+            }
+            let cut = 1 + pos * STRIDE;
+            let mut buf = Vec::with_capacity(self.0.len() + STRIDE);
+            buf.extend_from_slice(&self.0[..cut]);
+            buf.extend_from_slice(&key.to_le_bytes());
+            buf.extend_from_slice(&doc.to_le_bytes());
+            buf.extend_from_slice(&self.0[cut..]);
+            return Some(LeafInsert::Fit(Leaf(Arc::from(buf.as_slice()))));
+        }
+        // Compact leaf, or an AoS leaf that would overflow: decode, insert, rebuild (re-selecting the format).
+        let mut pairs = self.to_pairs();
+        let Err(pos) = pairs.binary_search(&(key, doc)) else {
+            return None; // already present
+        };
+        pairs.insert(pos, (key, doc));
+        if pairs.len() <= LEAF_MAX {
+            Some(LeafInsert::Fit(Self::from_pairs(&pairs)))
+        } else {
+            let mid = pairs.len() / 2;
+            Some(LeafInsert::Split {
+                left: Self::from_pairs(&pairs[..mid]),
+                sep: pairs[mid],
+                right: Self::from_pairs(&pairs[mid..]),
+            })
+        }
+    }
+
+    /// Remove one `(key, doc)`: the replacement leaf plus whether it underflowed (`< LEAF_MIN`), or `None`
+    /// if the tuple is absent. An [`FMT_AOS`] leaf is **spliced directly** (the 16-byte tuple is cut out); a
+    /// [`FMT_COMPACT`] leaf is rebuilt via [`Leaf::from_pairs`]. Re-compacting an AoS leaf happens at its
+    /// next merge (which rebuilds through [`Leaf::from_pairs`]).
+    fn remove(
+        &self,
+        key: u64,
+        doc: u64,
+    ) -> Option<(Leaf, bool)> {
+        if self.0[0] == FMT_AOS {
+            let count = self.count();
+            let pos = self.lower_bound_entry(key, doc);
+            if pos >= count || self.key(pos) != key || self.doc(pos) != doc {
+                return None; // absent
+            }
+            let cut = 1 + pos * STRIDE;
+            let mut buf = Vec::with_capacity(self.0.len() - STRIDE);
+            buf.extend_from_slice(&self.0[..cut]);
+            buf.extend_from_slice(&self.0[cut + STRIDE..]);
+            return Some((Leaf(Arc::from(buf.as_slice())), count - 1 < LEAF_MIN));
+        }
+        let mut pairs = self.to_pairs();
+        let pos = pairs.binary_search(&(key, doc)).ok()?; // `None` ⇒ absent
+        pairs.remove(pos);
+        Some((Self::from_pairs(&pairs), pairs.len() < LEAF_MIN))
+    }
 }
 
 // ---- bottom-up builders (used by bulk build and batched insert) ------------------------------
@@ -504,6 +592,16 @@ fn build_root(mut fragments: Vec<Node>) -> Node {
 struct Split {
     sep: (u64, u64),
     right: Node,
+}
+/// Outcome of inserting into a single leaf: the replacement leaf if it still fits, or the two halves plus
+/// their separator if it overflowed and split. (`None` from [`Leaf::insert`] means the tuple was present.)
+enum LeafInsert {
+    Fit(Leaf),
+    Split {
+        left: Leaf,
+        sep: (u64, u64),
+        right: Leaf,
+    },
 }
 /// Outcome of combining two siblings: a single merged node, or two re-balanced nodes plus their new
 /// separator.
@@ -637,25 +735,20 @@ impl Node {
         doc: u64,
     ) -> Option<Split> {
         match self {
-            Node::Leaf(leaf) => {
-                let mut pairs = leaf.to_pairs();
-                let Err(pos) = pairs.binary_search(&(key, doc)) else {
-                    return None; // already present
-                };
-                pairs.insert(pos, (key, doc));
-                if pairs.len() <= LEAF_MAX {
-                    *leaf = Leaf::from_pairs(&pairs);
+            // The leaf owns the encoding-specific work (an AoS leaf splices its bytes; see [`Leaf::insert`]).
+            Node::Leaf(leaf) => match leaf.insert(key, doc)? {
+                LeafInsert::Fit(new) => {
+                    *leaf = new;
                     None
-                } else {
-                    // Overflow: keep the left half here, hand the right half (and its first key) up.
-                    let mid = pairs.len() / 2;
-                    *leaf = Leaf::from_pairs(&pairs[..mid]);
+                }
+                LeafInsert::Split { left, sep, right } => {
+                    *leaf = left;
                     Some(Split {
-                        sep: pairs[mid],
-                        right: Node::Leaf(Leaf::from_pairs(&pairs[mid..])),
+                        sep,
+                        right: Node::Leaf(right),
                     })
                 }
-            }
+            },
             Node::Branch(branch_arc) => {
                 let branch = Arc::make_mut(branch_arc); // in place if unshared, else copy-on-write
                 let child_idx = branch.child_index(key, doc);
@@ -752,11 +845,9 @@ impl Node {
     ) -> Option<bool> {
         match self {
             Node::Leaf(leaf) => {
-                let mut pairs = leaf.to_pairs();
-                let pos = pairs.binary_search(&(key, doc)).ok()?; // `None` ⇒ not present
-                pairs.remove(pos);
-                *leaf = Leaf::from_pairs(&pairs);
-                Some(pairs.len() < LEAF_MIN)
+                let (new, underflow) = leaf.remove(key, doc)?; // `None` ⇒ not present
+                *leaf = new;
+                Some(underflow)
             }
             Node::Branch(branch_arc) => {
                 let branch = Arc::make_mut(branch_arc); // in place if unshared, else copy-on-write
@@ -1226,6 +1317,60 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_is_isolated_from_a_concurrent_writer() {
+        // The MVCC property under real concurrency: a reader iterating a snapshot on one thread must keep
+        // seeing the snapshot's contents while a writer churns the *shared* tree on another. Every page the
+        // two share has `Arc` strong-count >= 2, so the writer's `Arc::make_mut` copies it rather than
+        // mutating in place — the reader can never observe a write it shouldn't, and the writer only ever
+        // *reads* a shared page (to clone it), so there is no write-while-read race. A bug that mutated a
+        // shared page in place would surface here as a changed/garbled read.
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::thread;
+
+        let n = 4_000u64;
+        let base = CowBTree::from_sorted(&(0..n).map(|i| (i, i)).collect::<Vec<_>>());
+        let snapshot = base.clone(); // shares every page with `base`
+        let expected: Vec<u64> = (0..n).collect();
+
+        let done = Arc::new(AtomicBool::new(false));
+        let done_reader = Arc::clone(&done);
+        let reader = thread::spawn(move || {
+            // Re-read the whole snapshot for as long as the writer is mutating; it must never change.
+            let mut reads = 0u64;
+            while !done_reader.load(Ordering::Relaxed) {
+                assert_eq!(
+                    snapshot.range(0, u64::MAX).collect::<Vec<_>>(),
+                    expected,
+                    "snapshot observed a concurrent writer's mutation"
+                );
+                reads += 1;
+            }
+            assert_eq!(snapshot.range(0, u64::MAX).collect::<Vec<_>>(), expected);
+            reads
+        });
+
+        // Churn the shared tree hard while the reader runs: delete every original entry, then insert a
+        // disjoint range. Each step path-copies through pages the snapshot still holds — exercising
+        // `make_mut`'s copy-on-write against a live reader.
+        let mut writer = base;
+        for i in 0..n {
+            writer.remove(i, i);
+        }
+        for i in n..2 * n {
+            writer.insert(i, i);
+        }
+        done.store(true, Ordering::Relaxed);
+
+        let reads = reader.join().unwrap();
+        assert!(reads > 0, "reader thread never completed a read");
+        assert_eq!(
+            writer.range(0, u64::MAX).collect::<Vec<_>>(),
+            (n..2 * n).collect::<Vec<_>>(),
+            "the writer's own tree should reflect all the churn"
+        );
+    }
+
+    #[test]
     fn leaf_bytes_round_trip_through_a_byte_store() {
         // a leaf blob round-trips through a byte store verbatim: the in-memory form is the serialized form.
         let t = CowBTree::from_sorted(&(0..2_000u64).map(|i| (i, i)).collect::<Vec<_>>());
@@ -1387,5 +1532,50 @@ mod tests {
         let got: Vec<u64> = t.range(0, u64::MAX).collect();
         let expected: Vec<u64> = reference.iter().map(|&(_, d)| d).collect();
         assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn aos_splice_insert_remove_edges() {
+        // The AoS byte-splice path: insert/remove at the front, back, and middle of a leaf, plus the
+        // already-present / absent no-ops. Wide, all-distinct data keeps the leaf in `FMT_AOS`.
+        let mut t = CowBTree::new();
+        let mut reference: BTreeSet<(u64, u64)> = BTreeSet::new();
+        for i in 1..100u64 {
+            let (k, d) = (i << 40, i << 40);
+            t.insert(k, d);
+            reference.insert((k, d));
+        }
+        assert!(
+            t.leaves().iter().all(|b| b[0] == FMT_AOS),
+            "wide data should encode as AoS"
+        );
+        // insert below all, above all, and into the middle
+        for (k, d) in [
+            (0u64, 0u64),
+            (1_000u64 << 40, 1_000 << 40),
+            ((50 << 40) + 1, 7),
+        ] {
+            t.insert(k, d);
+            reference.insert((k, d));
+        }
+        // a duplicate (key, doc) insert is a no-op
+        let before = t.len();
+        t.insert(0, 0);
+        assert_eq!(t.len(), before, "duplicate insert must not grow the leaf");
+        // remove front / back / middle, then an absent tuple (no-op)
+        for (k, d) in [
+            (0u64, 0u64),
+            (1_000u64 << 40, 1_000 << 40),
+            ((50 << 40) + 1, 7),
+        ] {
+            t.remove(k, d);
+            reference.remove(&(k, d));
+        }
+        t.remove(99_999 << 40, 1); // absent
+        assert_eq!(t.len(), reference.len());
+        assert_eq!(
+            t.range(0, u64::MAX).collect::<Vec<_>>(),
+            reference.iter().map(|&(_, d)| d).collect::<Vec<_>>(),
+        );
     }
 }
