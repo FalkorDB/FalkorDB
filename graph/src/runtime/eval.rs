@@ -364,12 +364,15 @@ impl<'a> ExprEval<'a> {
             _ => {}
         }
 
-        // Stack-based iterative evaluation scratch buffer.
-        let mut res_owned: Vec<Value> = Vec::new();
-        let res: &mut Vec<Value> = &mut res_owned;
-        res.clear();
+        // Stack-based iterative evaluation. Both scratch buffers are stack-inline
+        // SmallVecs, so typical expressions evaluate with zero heap allocation;
+        // unusually large ones (long list literals / many-arg functions) spill to
+        // the heap exactly like a Vec, so this is never an allocation regression.
+        let mut res_owned: SmallVec<[Value; 4]> = SmallVec::new();
+        let res = &mut res_owned;
 
-        let mut stack = thin_vec![(idx, false)];
+        let mut stack: SmallVec<[_; 4]> = SmallVec::new();
+        stack.push((idx, false));
         while let Some((idx, reenter)) = stack.pop() {
             let node = ir.node(idx);
             match node.data() {
