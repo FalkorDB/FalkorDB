@@ -308,19 +308,3 @@ void Index_Free
 	Index idx  // index being freed
 );
 
-// build a typed range field name ("range:<name>[...:arr]")
-// returns false if the input name is too long for the fixed output buffer
-bool Index_RangeFieldName
-(
-	char *type_aware_name,  // [out] type-aware name
-	const char *name,       // field name
-	SIType *multi_val_type  // [optional] multi-value type
-);
-
-// build a typed vector field name ("vector:<name>")
-// returns false if the input name is too long for the fixed output buffer
-bool Index_VectorFieldName
-(
-	char *type_aware_name,  // [out] type-aware name
-	const char *name        // field name
-);
