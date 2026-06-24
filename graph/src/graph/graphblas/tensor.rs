@@ -551,11 +551,14 @@ impl Iterator for Iter<'_> {
     type Item = (u64, u64, u64);
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(vit) = &mut self.vit {
-            if let Some((_, id)) = vit.next() {
-                return Some((self.src, self.dest, id));
-            }
-            self.vit = None;
+        // Yield the next edge id for the current (src, dest). When that pair is
+        // exhausted we intentionally keep `vit` alive (rather than resetting it
+        // to None) so the next pair below re-seeks it instead of freeing and
+        // re-allocating its GxB_Iterator.
+        if let Some(vit) = &mut self.vit
+            && let Some((_, id)) = vit.next()
+        {
+            return Some((self.src, self.dest, id));
         }
 
         if let Some((src, dest)) = self.mit.next() {
@@ -566,8 +569,19 @@ impl Iterator for Iter<'_> {
                 self.src = src;
                 self.dest = dest;
             }
+            // `me` is keyed by the (src, dest) compound key in original
+            // orientation regardless of `transpose`, and holds every edge id.
+            // Reuse one edge-id iterator across all pairs via `seek`, paying the
+            // GxB_Iterator allocation/attach only once per traversal instead of
+            // per (src, dest) pair (mirrors the CondTraverse/ExpandInto edge
+            // lookup hot path). The matrix is a stable read snapshot for the
+            // life of this iterator, so the cached deletion-mask/delta flags
+            // stay valid across seeks.
             let row = compound_key(self.src, self.dest);
-            self.vit = Some(self.t.me.iter(row, row));
+            match &mut self.vit {
+                Some(vit) => vit.seek(row, row),
+                None => self.vit = Some(self.t.me.iter(row, row)),
+            }
             return self.next();
         }
 
