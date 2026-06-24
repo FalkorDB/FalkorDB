@@ -775,12 +775,18 @@ impl<'a> Runtime<'a> {
                 expr: list,
                 var: name,
             } => {
+                // A downstream Skip/Limit bounds how many expanded rows are
+                // needed; pass it through so packing stays lazy under `LIMIT`.
+                let record_cap = self
+                    .effective_limit(idx)
+                    .map(|l| l + self.effective_skip(idx));
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::Unwind(UnwindOp::new(
                     self,
                     Box::new(child),
                     list,
                     name,
+                    record_cap,
                     idx,
                 )))
             }

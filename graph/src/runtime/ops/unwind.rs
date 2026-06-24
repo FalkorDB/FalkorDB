@@ -19,18 +19,29 @@
 //!  └────────────────┘
 //! ```
 //!
-//! Rows are expanded **one at a time**: only the current row's (possibly lazy)
-//! iterator is queued, so `UNWIND range(1, 20000000)` keeps just one lazy range
-//! in flight and a per-row list property is materialized for a single row at a
-//! time. The emitter pulls values in `BATCH_SIZE` chunks, preventing memory
-//! blow-up. Non-list values are treated as single-element results; NULL values
-//! produce no output rows.
+//! Each parent row's results are queued on the emitter as one of two slot
+//! kinds: an inline `One` (the value lives in the queue's existing buffer — no
+//! allocation) or a boxed `Many` iterator (one heap allocation). Single values
+//! (`UNWIND n.id`) and list *literals* (`UNWIND [n.id, n.id+1]`, which `eval`
+//! fuses into already-evaluated inline values rather than an `Arc<Value::List>`)
+//! are bounded and fully materialized, so they drain into `One` slots and are
+//! **packed across rows**: the loop keeps pulling input rows until a
+//! [`BATCH_SIZE`](super::super::batch::BATCH_SIZE)-worth of values is queued,
+//! then `gather`/`scatter` folds them into one dense columnar batch — collapsing
+//! one tiny batch per input row into far fewer dense ones. A downstream `LIMIT`
+//! lowers that packing ceiling (via `record_cap`) so `UNWIND ... RETURN x
+//! LIMIT k` still produces a small first batch.
+//!
+//! An unbounded or large source — a lazy `range(1, 20000000)` or a list
+//! materialized from a property/parameter — is instead boxed (`Many`) and
+//! expanded **one row at a time**, so a single huge expansion can never pile up
+//! in the queue. NULL values (and `UNWIND null`) produce no output rows.
 
 use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::{ExprEval, ValueIter};
 use crate::runtime::{
-    batch::{Batch, BatchOp, BatchRow},
+    batch::{BATCH_SIZE, Batch, BatchOp, BatchRow},
     runtime::Runtime,
     value::Value,
 };
@@ -49,6 +60,11 @@ pub struct UnwindOp<'a> {
     active: Vec<usize>,
     /// Next index into `active` whose list expression hasn't been expanded yet.
     current_pos: usize,
+    /// Cross-row packing ceiling derived from a downstream `Skip`/`Limit`
+    /// (`None` when unbounded). Bounds how many values are queued before each
+    /// emit so `UNWIND ... RETURN x LIMIT k` produces a small first batch
+    /// instead of eagerly packing a full `BATCH_SIZE` worth of work.
+    pack_cap: usize,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -58,8 +74,18 @@ impl<'a> UnwindOp<'a> {
         child: Box<BatchOp<'a>>,
         list: &'a QueryExpr<Variable>,
         name: &'a Variable,
+        record_cap: Option<usize>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
+        // Translate the downstream row budget into a packing ceiling. With no
+        // limit (or one at/over a full batch) we pack a whole `BATCH_SIZE`; a
+        // tighter limit caps the queue so the first `emit` returns just enough
+        // rows (clamped to at least 1, since `LIMIT 0` still has to run the op).
+        let pack_cap = match record_cap {
+            Some(0) => 1,
+            Some(cap) if cap < BATCH_SIZE => cap,
+            _ => BATCH_SIZE,
+        };
         Self {
             runtime,
             child,
@@ -67,6 +93,7 @@ impl<'a> UnwindOp<'a> {
             emitter: BatchedResultEmitter::with_binding(name.id),
             active: Vec::new(),
             current_pos: 0,
+            pack_cap,
             idx,
         }
     }
@@ -77,17 +104,18 @@ impl<'a> Iterator for UnwindOp<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            // Emit ready values from the current row's iterator first.
+            // Emit a packed batch from whatever results are already queued
+            // before refilling, so we hand one batch upstream per `next()` call.
             if !self.emitter.needs_refill()
                 && let Some(out) = self.emitter.emit()
             {
                 return Some(Ok(out));
             }
 
-            // The current row is drained: queue the next row's expansion,
-            // pulling a fresh child batch when the current one is exhausted.
-            // Only one row's iterator is ever queued, so a lazy range or a
-            // per-row list property stays bounded to a single row.
+            // The pending queue is drained: refill it. Walk the active rows of
+            // the current parent batch, queue each row's expansion (see the
+            // per-shape dispatch below), and pull the next child batch once this
+            // one is exhausted — then loop back up to `emit`.
             loop {
                 if self.current_pos < self.active.len() {
                     let row_idx = self.active[self.current_pos];
@@ -109,21 +137,64 @@ impl<'a> Iterator for UnwindOp<'a> {
                         }
                     };
 
+                    // Queue this row's results by shape. The choice of slot
+                    // (`One` vs boxed `Many`) decides both whether we allocate
+                    // and whether these results can pack with their neighbours:
+                    // `push_one` stores a value inline in the queue's buffer (no
+                    // allocation) and adds one entry per value, while `push`
+                    // boxes an iterator (one allocation) and adds a single entry
+                    // that `emit` drains lazily. We therefore unpack bounded,
+                    // already-evaluated results into `One` slots and only box
+                    // unbounded/large ones.
                     match iter {
                         // `UNWIND null` / empty produces no rows. A NULL *inside*
-                        // a list arrives via `List` and is emitted normally.
+                        // a list arrives via `Inline`/`List` and is emitted.
                         ValueIter::Empty | ValueIter::Once(None | Some(Value::Null)) => continue,
-                        ValueIter::Once(Some(val)) => {
-                            self.emitter.push_one(row_idx, val);
-                            break;
+                        // Single value (e.g. `UNWIND n.id`): one allocation-free
+                        // `One` slot that packs with its neighbours below.
+                        ValueIter::Once(Some(val)) => self.emitter.push_one(row_idx, val),
+                        ValueIter::Inline(vals) => {
+                            // Fused list literal: the elements are already
+                            // evaluated and bounded by the literal's arity, so
+                            // drain them straight into allocation-free `One`
+                            // slots. Boxing the iterator instead would add a heap
+                            // allocation per row *and* make `pending_len` count
+                            // rows rather than values, blunting the value-precise
+                            // packing threshold below.
+                            for val in vals {
+                                self.emitter.push_one(row_idx, val);
+                            }
                         }
                         other => {
+                            // Lazy `range(..)` or a list materialized from a
+                            // property/parameter: box the iterator and expand
+                            // this row alone, so a large (or unbounded) expansion
+                            // streams through `emit` instead of piling up in the
+                            // queue. `break` stops refilling so it drains first.
                             self.emitter.push(row_idx, Box::new(other));
                             break;
                         }
                     }
+
+                    // Every queued value is one pending entry, so `pending_len`
+                    // is the count of values staged so far. Keep pulling rows and
+                    // packing their values until we have a batch's worth (or the
+                    // downstream `LIMIT`, whichever is smaller), so the next
+                    // `emit` gathers many input rows into one dense columnar
+                    // batch rather than one tiny batch per input row. The cap
+                    // also bounds the queue so a huge literal can't balloon it.
+                    if self.emitter.pending_len() >= self.pack_cap {
+                        break;
+                    }
+                    continue;
                 }
 
+                // The current batch is fully queued: emit what we have, otherwise
+                // pull the next child batch (only safe once pending has drained,
+                // since the emitter holds a single parent batch at a time).
+                if !self.emitter.needs_refill() {
+                    break;
+                }
                 match self.child.next() {
                     Some(Ok(batch)) => {
                         self.active = batch.active_indices().collect();

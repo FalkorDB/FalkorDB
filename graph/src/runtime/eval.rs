@@ -47,6 +47,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
+use smallvec::SmallVec;
 use thin_vec::{ThinVec, thin_vec};
 
 use crate::{
@@ -71,9 +72,23 @@ pub const NO_ROW: Option<&'static crate::runtime::row::Row> = None;
 pub enum ValueIter {
     Empty,
     Once(Option<Value>),
-    RangeUp { current: i64, end: i64, step: usize },
-    RangeDown { current: i64, end: i64, step: usize },
+    RangeUp {
+        current: i64,
+        end: i64,
+        step: usize,
+    },
+    RangeDown {
+        current: i64,
+        end: i64,
+        step: usize,
+    },
     List(thin_vec::IntoIter<Value>),
+    /// A list *literal*'s elements, evaluated directly into inline storage
+    /// without ever materializing an intermediate `Value::List(Arc<..>)`.
+    /// Small literals (the common case) carry their values inline with no heap
+    /// allocation; the values are bounded by the literal's arity, so `UNWIND`
+    /// can safely pack them across rows.
+    Inline(smallvec::IntoIter<[Value; 4]>),
 }
 
 impl Iterator for ValueIter {
@@ -100,6 +115,7 @@ impl Iterator for ValueIter {
                 Some(Value::Int(val))
             }
             Self::List(iter) => iter.next(),
+            Self::Inline(iter) => iter.next(),
         }
     }
 }
@@ -925,6 +941,19 @@ impl<'a> ExprEval<'a> {
                         unreachable!();
                     }
                 }
+            }
+            ExprIR::List => {
+                // Fuse `UNWIND [a, b, c]`: evaluate the element expressions
+                // directly into inline storage instead of building a
+                // `Value::List(Arc<ThinVec>)` only to immediately unwrap and
+                // iterate it. This avoids the per-row `Arc` + `ThinVec`
+                // allocation for the list literal.
+                let node = ir.node(idx);
+                let mut values: SmallVec<[Value; 4]> = SmallVec::with_capacity(node.num_children());
+                for child in node.children() {
+                    values.push(self.eval(ir, child.idx(), env, None)?);
+                }
+                Ok(ValueIter::Inline(values.into_iter()))
             }
             _ => {
                 let res = self.eval(ir, idx, env, None)?;

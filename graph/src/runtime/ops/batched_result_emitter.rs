@@ -257,6 +257,13 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
         self.pending.is_empty()
     }
 
+    /// Number of queued per-row result iterators. Operators that queue several
+    /// small per-row results before emitting (e.g. `UNWIND` of a list literal)
+    /// use this to pack a batch's worth across rows while bounding queued work.
+    pub(crate) fn pending_len(&self) -> usize {
+        self.pending.len()
+    }
+
     /// Install the parent batch whose rows the queued iterators expand. Called
     /// once per refill, after pushing that batch's per-row iterators.
     pub(crate) fn set_batch(
