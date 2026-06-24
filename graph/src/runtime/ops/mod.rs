@@ -60,6 +60,7 @@ pub mod path_builder;
 pub mod procedure_call;
 pub mod project;
 pub mod remove;
+pub(crate) mod scan_emitter;
 pub mod semi_apply;
 pub mod set;
 pub mod skip;

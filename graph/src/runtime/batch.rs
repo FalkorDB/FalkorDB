@@ -700,29 +700,6 @@ impl<'a> Batch<'a> {
         batch
     }
 
-    /// Creates a columnar batch holding a single [`Column::NodeIds`] at the
-    /// given variable slot. No `Env`s are materialized — this is the
-    /// late-materialization fast path for scans feeding directly into a
-    /// `Filter`. Downstream operators read the node ids columnar (typically
-    /// only for the rows that survive filtering).
-    #[must_use]
-    pub fn from_node_ids(
-        alias_id: u32,
-        ids: Vec<NodeId>,
-    ) -> Self {
-        let len = ids.len();
-        let mut batch = Self {
-            len,
-            selection: None,
-            columns: Vec::new(),
-            origin_rows: None,
-            value_only: BitSet::default(),
-            _marker: PhantomData,
-        };
-        batch.set_column(alias_id, Column::NodeIds(ids));
-        batch
-    }
-
     /// Compacts this batch in place by applying its selection vector, yielding
     /// a dense [`Batch`] whose logical rows are exactly the previously-active
     /// rows (in selection order) and whose `selection` is `None`. Typed columns
