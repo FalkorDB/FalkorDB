@@ -100,44 +100,37 @@ impl<'a> Iterator for SortOp<'a> {
 
             // Evaluate the sort keys once per row through a borrowed columnar
             // view (so `rand()` and other expression keys still work) with no
-            // `Row` allocation.
-            let mut keys: Vec<Vec<(Value, bool)>> = Vec::with_capacity(total);
+            // per-row `Row` allocation. All keys are packed into one flat buffer
+            // indexed `row * num_keys + key`, avoiding a per-row key `Vec`
+            // allocation (the direction flag is per-key, read from `trees`).
+            let num_keys = self.trees.len();
+            let mut keys: Vec<Value> = Vec::with_capacity(total * num_keys);
             for row in 0..total {
                 let view = BatchRow::new(&combined, row);
-                let mut row_keys = Vec::with_capacity(self.trees.len());
-                for (tree, desc) in self.trees {
+                for (tree, _desc) in self.trees {
                     match ExprEval::from_runtime(self.runtime).eval(
                         tree,
                         tree.root().idx(),
                         Some(&view),
                         None,
                     ) {
-                        Ok(value) => row_keys.push((value, *desc)),
+                        Ok(value) => keys.push(value),
                         Err(e) => return Some(Err(e)),
                     }
                 }
-                keys.push(row_keys);
             }
 
+            let trees = self.trees;
             let num_columns = combined.num_columns();
             let mut order: Vec<usize> = (0..total).collect();
             order.sort_by(|&a, &b| {
-                let primary = keys[a].iter().zip(&keys[b]).fold(
-                    Ordering::Equal,
-                    |acc, ((va, desc_a), (vb, _))| {
-                        if acc != Ordering::Equal {
-                            return acc;
-                        }
-                        let (ordering, _) = va.compare_value(vb);
-                        if *desc_a {
-                            ordering.reverse()
-                        } else {
-                            ordering
-                        }
-                    },
-                );
-                if primary != Ordering::Equal {
-                    return primary;
+                // Lexicographic multi-key comparison over the flat key buffer.
+                let (base_a, base_b) = (a * num_keys, b * num_keys);
+                for (k, (_tree, desc)) in trees.iter().enumerate() {
+                    let (ordering, _) = keys[base_a + k].compare_value(&keys[base_b + k]);
+                    if ordering != Ordering::Equal {
+                        return if *desc { ordering.reverse() } else { ordering };
+                    }
                 }
                 // Deterministic tiebreaker: compare bound slots position-by-position.
                 // Columns unbound in every row read back as `Null` on both sides
