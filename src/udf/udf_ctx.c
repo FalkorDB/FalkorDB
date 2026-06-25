@@ -257,7 +257,8 @@ UDFCtx_RegisterResult UDFCtx_RegisterFunction
 	//--------------------------------------------------------------------------
 	// enforce identifier limit
 	//--------------------------------------------------------------------------
-	UDFLib  *l = ctx->libs + (n - 1) ;
+
+	UDFLib *l = ctx->libs + (n - 1) ;
 	size_t lib_len  = strlen(l->name);
 	size_t func_len = strlen(func_name);
 	if(func_len > FDB_MAX_NAME_LEN) {

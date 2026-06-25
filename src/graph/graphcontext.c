@@ -960,6 +960,7 @@ AttributeID GraphContext_FindOrAddAttribute
 	//--------------------------------------------------------------------------
 	// Create new attribute locally
 	//--------------------------------------------------------------------------
+
 	ASSERT (gc->writer_tid == (pthread_t) 0 ||
 			pthread_equal (gc->writer_tid, pthread_self ())) ;
 

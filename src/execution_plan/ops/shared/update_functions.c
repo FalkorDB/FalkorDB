@@ -253,13 +253,13 @@ static bool _UpdateSetFromMap
 			return false ;
 		}
 
-		// convert key to attribute-id, missing attributes will be created
-		if(strlen(key.stringval) > FDB_MAX_NAME_LEN) {
+		if(unlikely (strlen(key.stringval) > FDB_MAX_NAME_LEN)) {
 			ErrorCtx_SetError(EMSG_IDENTIFIER_TOO_LONG, "Property name",
 					FDB_MAX_NAME_LEN);
 			return false;
 		}
 
+		// convert key to attribute-id, missing attributes will be created
 		attr_ids [attr_count] =
 			GraphHub_FindOrAddAttribute (gc, key.stringval, log) ;
 		attr_count++ ;
