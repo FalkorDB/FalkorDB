@@ -30,11 +30,12 @@
 //!                   emit BATCH_SIZE rows at a time
 //! ```
 //!
-//! When primary sort keys are equal, the full-sort path applies a deterministic
-//! tiebreaker comparing every bound slot position-by-position and finally the
-//! original row index. The top-k path breaks ties by arrival order (a stable
-//! heap); for rows tied at the limit boundary, which of them is retained is
-//! unspecified by Cypher, so either tiebreak is correct.
+//! When primary sort keys are equal, both regimes apply the *same* deterministic
+//! tiebreaker: compare every bound slot position-by-position, then fall back to
+//! arrival order. Sharing the tiebreaker means the top-k heap retains the same
+//! rows, in the same order, as a full sort followed by truncation — which some
+//! queries rely on (e.g. comparing a result against the same query with a
+//! reversed traversal pattern, tests/flow/test_social).
 
 use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
@@ -107,10 +108,40 @@ impl Ord for OrderedKey {
     }
 }
 
+/// Deterministic content tiebreaker for two materialised rows, mirroring
+/// [`Batch::compare_rows_at`] used by the full-sort path: compare every slot
+/// position-by-position, treating an absent/out-of-range slot as `Null` (so two
+/// such slots are equal). `get_by_id` returns the stored value even for a
+/// value-present-but-unbound slot, matching how the full sort compares a
+/// `value_only` column's values. Borrows the stored `Value`s (no clone).
+///
+/// This is what makes the top-k heap pick the *same* surviving rows, in the
+/// *same* order, as a full sort followed by truncation: when the ORDER BY keys
+/// tie, both paths fall back to the full row content and then arrival order.
+fn compare_row_content(
+    a: &Row,
+    b: &Row,
+) -> Ordering {
+    let n = a.len().max(b.len());
+    for id in 0..n {
+        let ordering = match (a.get_by_id(id as u32), b.get_by_id(id as u32)) {
+            (Some(va), Some(vb)) => va.compare_value(vb).0,
+            (Some(va), None) => va.compare_value(&Value::Null).0,
+            (None, Some(vb)) => Value::Null.compare_value(vb).0,
+            (None, None) => Ordering::Equal,
+        };
+        if ordering != Ordering::Equal {
+            return ordering;
+        }
+    }
+    Ordering::Equal
+}
+
 /// A candidate row held by the bounded top-k heap. Ordered so the max-heap's
 /// root is the row that sorts *last* — i.e. the next one to evict once the heap
-/// is full. Ties on the sort keys break by `seq` (arrival order) so the heap is
-/// stable.
+/// is full. Ties on the sort keys break by full row *content* and finally by
+/// `seq` (arrival order), so the heap reproduces the exact total order of the
+/// full-sort path while staying stable.
 struct HeapEntry {
     keys: SmallVec<[OrderedKey; 2]>,
     seq: u64,
@@ -140,12 +171,17 @@ impl Ord for HeapEntry {
         other: &Self,
     ) -> Ordering {
         // Lexicographic over the key vector (multi-key ORDER BY: first key, then
-        // ties broken by the next), then by arrival `seq` so equal-keyed rows
-        // keep a stable order. This is the final output order, so the max-heap's
-        // greatest element is the row that sorts *last* (the eviction candidate).
+        // ties broken by the next), then by full row content, then by arrival
+        // `seq` so equal rows keep a stable order. This is the final output
+        // order, so the max-heap's greatest element is the row that sorts *last*
+        // (the eviction candidate). The content tiebreaker matches the full-sort
+        // path's `compare_rows_at` loop, so both regimes order ties identically
+        // (required by queries that compare a result against a reordered
+        // pattern, e.g. tests/flow/test_social).
         self.keys
             .as_slice()
             .cmp(other.keys.as_slice())
+            .then_with(|| compare_row_content(&self.row, &other.row))
             .then(self.seq.cmp(&other.seq))
     }
 }
@@ -352,6 +388,13 @@ impl<'a> SortOp<'a> {
         cap: usize,
     ) -> Result<(Batch<'a>, Vec<usize>), String> {
         if cap == 0 {
+            // `ORDER BY ... LIMIT 0` (or `SKIP n LIMIT 0`) yields no rows, but
+            // the child must still be drained so its side effects fire and any
+            // error surfaces — the full-sort path always consumes the child, so
+            // match that here instead of returning early.
+            for batch_result in child {
+                batch_result?;
+            }
             return Ok((Batch::new(0), Vec::new()));
         }
         let num_keys = trees.len();
@@ -386,27 +429,41 @@ impl<'a> SortOp<'a> {
                 } else {
                     // The heap is a max-heap, so `peek()` is the worst survivor
                     // (the row that sorts last). Replace it only when the new row
-                    // sorts strictly before it, i.e. its `(keys, seq)` is smaller
-                    // — exactly `HeapEntry`'s order, but compared here without
-                    // building a `HeapEntry`, so the row is materialised
-                    // (`to_owned_row`, which clones values) only when it actually
-                    // wins a slot. The common reject path stays allocation-free.
+                    // sorts strictly before it under the same total order as
+                    // `HeapEntry`: keys, then full row content, then `seq`.
                     //
-                    // The `Equal` arm is effectively always false: rows arrive in
-                    // increasing `seq`, so `cur_seq` exceeds every `seq` already
-                    // in the heap. On a key tie the new (later) row is therefore
-                    // rejected, which keeps the *earliest*-arriving rows — a
-                    // stable top-k.
-                    let smaller = {
-                        let worst = heap.peek().expect("heap is full, so non-empty");
-                        match keys.as_slice().cmp(worst.keys.as_slice()) {
-                            Ordering::Less => true,
-                            Ordering::Greater => false,
-                            Ordering::Equal => cur_seq < worst.seq,
+                    // A *strict* key comparison decides most rows without ever
+                    // materialising them, so the common reject path stays
+                    // allocation-free. Only a key *tie* needs the content
+                    // tiebreaker, which requires the candidate row, so it is
+                    // materialised lazily — exactly as the full-sort path falls
+                    // back from keys to `compare_rows_at`. Matching that fallback
+                    // is what makes the heap retain the *same* rows in the *same*
+                    // order as a full sort + truncate.
+                    //
+                    // On a full content tie the later arrival (larger `seq`)
+                    // loses, so the earliest-arriving rows are kept — a stable
+                    // top-k.
+                    let (wins, prematerialized) = {
+                        let key_ord = {
+                            let worst = heap.peek().expect("heap is full, so non-empty");
+                            keys.as_slice().cmp(worst.keys.as_slice())
+                        };
+                        match key_ord {
+                            Ordering::Less => (true, None),
+                            Ordering::Greater => (false, None),
+                            Ordering::Equal => {
+                                let row = view.to_owned_row();
+                                let worst = heap.peek().expect("heap is full, so non-empty");
+                                let wins = compare_row_content(&row, &worst.row)
+                                    .then(cur_seq.cmp(&worst.seq))
+                                    == Ordering::Less;
+                                (wins, Some(row))
+                            }
                         }
                     };
-                    if smaller {
-                        let row = view.to_owned_row();
+                    if wins {
+                        let row = prematerialized.unwrap_or_else(|| view.to_owned_row());
                         heap.pop();
                         heap.push(HeapEntry {
                             keys,
