@@ -4,13 +4,14 @@
  */
 
 #include "RG.h"
-#include "graphcontext.h"
-#include "graph_memoryUsage.h"
-#include "delta_matrix/delta_matrix_iter.h"
-#include "entities/attribute_set.h"
-#include "../schema/schema.h"
-#include "../index/index.h"
 #include "../util/arr.h"
+#include "graph/graph.h"
+#include "graphcontext.h"
+#include "../index/index.h"
+#include "../schema/schema.h"
+#include "graph_memoryUsage.h"
+#include "entities/attribute_set.h"
+#include "delta_matrix/delta_matrix_iter.h"
 
 #include <sys/param.h>
 
@@ -30,15 +31,20 @@ static bool _Overlapping
 	ASSERT (V != NULL && *V == NULL) ;
 
 	GrB_Index nrows ;
-
-	GrB_OK (GrB_Matrix_nrows (&nrows, lbls)) ;
-	GrB_OK (GrB_Vector_new (V, GrB_BOOL, nrows)) ;
-
-	GrB_OK (GrB_Matrix_reduce_Monoid (*V, NULL, NULL, GxB_ANY_BOOL_MONOID, lbls,
-			NULL)) ;
-
+	GrB_Index ncols ;
 	GrB_Index lbls_nvals ;
+	GrB_Vector x = NULL ;
+
 	GrB_OK (GrB_Matrix_nvals (&lbls_nvals, lbls)) ;
+	GrB_OK (GrB_Matrix_nrows (&nrows, lbls)) ;
+	GrB_OK (GrB_Matrix_ncols (&ncols, lbls)) ;
+
+	GrB_OK (GrB_Vector_new (V, GrB_BOOL, nrows)) ;
+	GrB_OK (GrB_Vector_new (&x, GrB_BOOL, ncols)) ;
+	GrB_OK (GrB_Vector_assign_BOOL (x, NULL, NULL, 1, GrB_ALL, ncols, NULL)) ;
+
+	GrB_OK (GrB_mxv (*V, NULL, NULL, GxB_ANY_PAIR_BOOL, lbls, x, NULL)) ;
+
 
 	GrB_Index v_nvals ;
 	GrB_OK (GrB_Vector_nvals (&v_nvals, *V)) ;
@@ -76,7 +82,7 @@ static size_t _SampleVector
 		bool node_found = Graph_GetNode (g, i, &n) ;
 		ASSERT (node_found == true) ;
 
-		AttributeSet set = GraphEntity_GetAttributes ((GraphEntity*)&n) ;
+		AttributeSet set = GraphEntity_GetAttributes ((GraphEntity*) &n) ;
 		memory_usage += AttributeSet_memoryUsage (set) ;
 
 		remaining_samples-- ;
@@ -85,11 +91,12 @@ static size_t _SampleVector
 	}
 
 	int64_t n_sampled = attempted_samples - remaining_samples ;
+
 	if (n_sampled == 0) {
 		return 0 ;
 	}
 
-	double avg = (double)memory_usage / n_sampled ;
+	double avg = (double) memory_usage / (double) n_sampled ;
 
 	return (size_t)(avg * nvals) ;
 }
@@ -105,17 +112,8 @@ static size_t _UnlabeledNodesMemory
 	ASSERT (V       != NULL) ;
 	ASSERT (samples > 0) ;
 
-	GrB_Scalar x ;
-
-	GrB_OK (GrB_Scalar_new (&x, GrB_BOOL)) ;
-	GrB_OK (GrB_Scalar_setElement (x, true)) ;
-
-	GrB_Index len ;
-	GrB_OK (GrB_Vector_size (&len, V)) ;
-
 	// V<!V> = true  (mark unlabeled nodes)
-	GrB_OK (GrB_Vector_assign_Scalar (V, V, NULL, x, GrB_ALL, len, GrB_DESC_RC)) ;
-	GrB_OK (GrB_free (&x)) ;
+	GrB_OK (GrB_Vector_assign_BOOL (V, V, NULL, 1, GrB_ALL, 0, GrB_DESC_RSC)) ;
 
 	GxB_Iterator it ;
 	GrB_OK (GxB_Iterator_new (&it)) ;
@@ -137,50 +135,8 @@ static size_t _UnlabeledNodesMemory
 	return memory_usage ;
 }
 
-// estimates amortized memory usage for nodes with overlapping labels
-static void _EstimateOverlapingNodeAttributeMemory
-(
-	const Graph *g,            // graph
-	GrB_Matrix lbls,           // labels matrix
-	int64_t samples,           // max samples per label
-	MemoryUsageResult *result  // [output] memory usage
-) {
-	ASSERT (g       != NULL) ;
-	ASSERT (samples > 0) ;
-
-	size_t node_memory_usage = 0 ;
-	int n_lbls = Graph_LabelTypeCount (g) ;
-
-	GrB_Vector     V     = NULL ;
-	GrB_Vector     P     = NULL ;
-	GxB_Iterator   it    = NULL ;
-	GrB_Index      nrows = 0 ;
-	GrB_Descriptor desc  = GrB_DESC_RSC ;
-
-	GrB_OK (GrB_Matrix_nrows (&nrows, lbls)) ;
-	GrB_OK (GrB_Vector_new (&P, GrB_BOOL, nrows)) ;
-	GrB_OK (GrB_Vector_new (&V, GrB_BOOL, nrows)) ;
-	GrB_OK (GxB_Iterator_new (&it)) ;
-
-	for (int i = 0 ; i < n_lbls ; i++) {
-		// V<!P> = lbls[:, i]  (extract unprocessed nodes for label i)
-		GrB_OK (GrB_Col_extract (V, P, NULL, lbls, GrB_ALL, nrows, i, desc)) ;
-
-		node_memory_usage = _SampleVector (g, V, it, samples) ;
-		arr_append (result->node_attr_by_label_sz, node_memory_usage) ;
-
-		// mark processed: P = P | V
-		GrB_OK (GrB_Vector_eWiseAdd_Semiring (P, NULL, NULL, GxB_ANY_PAIR_BOOL,
-				P, V, GrB_DESC_S)) ;
-	}
-
-	GrB_free (&V) ;
-	GrB_free (&P) ;
-	GrB_free (&it) ;
-}
-
-// estimate total memory usage for all labeled nodes assuming no label overlap
-static void _EstimateNonOverlapingNodeAttributeMemory
+// estimate total memory usage for all labeled nodes
+static void _EstimateLabeledNodeAttributeMemory
 (
 	const Graph *g,            // graph
 	int64_t sample_size,       // number of nodes to sample per label
@@ -228,6 +184,29 @@ static void _EstimateNonOverlapingNodeAttributeMemory
 	}
 }
 
+// estimate total memory usage for all entities in the datablock
+static void _TotalAttributeMemory
+(
+	DataBlockIterator *it,     // DataBlock to iterate
+	MemoryUsageResult *result  // [output] memory usage
+) {
+	ASSERT (g           != NULL) ;
+	ASSERT (sample_size >= 0) ;
+
+	AttributeSet *set = NULL ;
+	size_t memory_usage = 0 ;
+
+	while ((set = (AttributeSet*) (DataBlockIterator_Next (it, NULL))) != NULL) {
+		// entity has no attributes, skip
+		if (*set != NULL) {
+			memory_usage += AttributeSet_memoryUsage (*set) ;
+		}
+	}
+
+	// TODO: add a specific value for total usage to results
+	result->total_graph_sz_mb += memory_usage;
+}
+
 // estimate amortized memory consumption of node attribute sets
 static void _EstimateNodeAttributeMemory
 (
@@ -247,9 +226,8 @@ static void _EstimateNodeAttributeMemory
 	int64_t node_count        = Graph_NodeCount (g) ;
 	int64_t sample_size       = MIN (node_count, samples) ;
 
-	GrB_Orientation fmt = GrB_COLMAJOR ;
 	Delta_Matrix D = Graph_GetNodeLabelMatrix (g) ;
-	GrB_OK (Delta_Matrix_export (&lbls, D, GrB_BOOL, &fmt)) ;
+	GrB_OK (Delta_Matrix_export (&lbls, D, GrB_BOOL, NULL)) ;
 
 	bool overlapping = _Overlapping (lbls, &V) ;
 
@@ -265,11 +243,10 @@ static void _EstimateNodeAttributeMemory
 
 	GrB_OK (GrB_free (&V)) ;
 
-	if (overlapping) {
-		_EstimateOverlapingNodeAttributeMemory (g, lbls, sample_size, result) ;
-	} else {
-		_EstimateNonOverlapingNodeAttributeMemory (g, sample_size, result) ;
-	}
+	_EstimateLabeledNodeAttributeMemory (g, sample_size, result) ;
+
+	// Total must be esitmated seperately. It is not simply a sum of parts.
+	_TotalAttributeMemory (Graph_ScanNodes(g), result) ;
 
 	GrB_free (&lbls) ;
 }
@@ -373,12 +350,12 @@ void GraphContext_EstimateMemoryUsage
 	//--------------------------------------------------------------------------
 
 	for (int i = 0 ; i < arr_len (result->node_attr_by_label_sz) ; i++) {
-		result->total_graph_sz_mb += result->node_attr_by_label_sz[i] ;
+		// result->total_graph_sz_mb += result->node_attr_by_label_sz[i] ;
 		result->node_attr_by_label_sz[i] /= MB ;
 	}
 
 	for (int i = 0 ; i < arr_len (result->edge_attr_by_type_sz) ; i++) {
-		result->total_graph_sz_mb += result->edge_attr_by_type_sz[i] ;
+		// result->total_graph_sz_mb += result->edge_attr_by_type_sz[i] ;
 		result->edge_attr_by_type_sz[i] /= MB ;
 	}
 
