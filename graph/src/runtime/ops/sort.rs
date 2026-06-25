@@ -150,6 +150,83 @@ impl Ord for HeapEntry {
     }
 }
 
+/// One materialised sort-key column for the full-sort path, specialised by type
+/// so the comparator can compare raw scalars and skip the `Value` enum dispatch.
+///
+/// A key is `Ints`/`Floats` only when *every* row evaluated that key to the same
+/// primitive type; any null, mismatch, or non-primitive value (and any mixed
+/// `Int`/`Float` column) keeps the whole key on the `Values` path. That keeps
+/// `compare_at` byte-for-byte identical to `Value::compare_value`: an all-`Int`
+/// column always hits the `(Int, Int) => a.cmp(b)` arm, and an all-`Float`
+/// column always hits `(Float, Float) => compare_floats`, which is exactly
+/// `partial_cmp(...).unwrap_or(Less)`.
+enum KeyColumn {
+    Ints(Vec<i64>),
+    Floats(Vec<f64>),
+    Values(Vec<Value>),
+}
+
+impl KeyColumn {
+    /// Specialises a key column to `Ints`/`Floats` when homogeneous, else keeps
+    /// the boxed `Values` (consuming them, no clone).
+    fn classify(values: Vec<Value>) -> Self {
+        let mut all_int = true;
+        let mut all_float = true;
+        for v in &values {
+            match v {
+                Value::Int(_) => all_float = false,
+                Value::Float(_) => all_int = false,
+                _ => {
+                    all_int = false;
+                    all_float = false;
+                    break;
+                }
+            }
+        }
+        if values.is_empty() {
+            Self::Values(values)
+        } else if all_int {
+            Self::Ints(
+                values
+                    .into_iter()
+                    .map(|v| match v {
+                        Value::Int(i) => i,
+                        _ => unreachable!("column proven all-Int"),
+                    })
+                    .collect(),
+            )
+        } else if all_float {
+            Self::Floats(
+                values
+                    .into_iter()
+                    .map(|v| match v {
+                        Value::Float(f) => f,
+                        _ => unreachable!("column proven all-Float"),
+                    })
+                    .collect(),
+            )
+        } else {
+            Self::Values(values)
+        }
+    }
+
+    /// Compares rows `a` and `b` of this key column in ascending value order
+    /// (the caller applies the `DESC` reversal). Mirrors `Value::compare_value`
+    /// for the specialised types.
+    #[inline]
+    fn compare_at(
+        &self,
+        a: usize,
+        b: usize,
+    ) -> Ordering {
+        match self {
+            Self::Ints(v) => v[a].cmp(&v[b]),
+            Self::Floats(v) => v[a].partial_cmp(&v[b]).unwrap_or(Ordering::Less),
+            Self::Values(v) => v[a].compare_value(&v[b]).0,
+        }
+    }
+}
+
 pub struct SortOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Option<Box<BatchOp<'a>>>,
@@ -211,31 +288,32 @@ impl<'a> SortOp<'a> {
 
         // Evaluate the sort keys once per row through a borrowed columnar view
         // (so `rand()` and other expression keys still work) with no per-row
-        // `Row` allocation. All keys are packed into one flat buffer indexed
-        // `row * num_keys + key` (the direction flag is per-key, read from
-        // `trees`), avoiding a per-row key `Vec`.
+        // `Row` allocation. Each key goes into its own column so it can be
+        // specialised to a typed scalar vector (`KeyColumn`), letting the
+        // comparator skip the `Value` enum dispatch for primitive keys.
         let num_keys = trees.len();
-        let mut keys: Vec<Value> = Vec::with_capacity(total * num_keys);
+        let mut key_cols: Vec<Vec<Value>> =
+            (0..num_keys).map(|_| Vec::with_capacity(total)).collect();
         for row in 0..total {
             let view = BatchRow::new(&combined, row);
-            for (tree, _desc) in trees {
+            for (k, (tree, _desc)) in trees.iter().enumerate() {
                 let value = ExprEval::from_runtime(runtime).eval(
                     tree,
                     tree.root().idx(),
                     Some(&view),
                     None,
                 )?;
-                keys.push(value);
+                key_cols[k].push(value);
             }
         }
+        let typed_keys: Vec<KeyColumn> = key_cols.into_iter().map(KeyColumn::classify).collect();
 
         let num_columns = combined.num_columns();
         let mut order: Vec<usize> = (0..total).collect();
         order.sort_by(|&a, &b| {
-            // Lexicographic multi-key comparison over the flat key buffer.
-            let (base_a, base_b) = (a * num_keys, b * num_keys);
+            // Lexicographic multi-key comparison over the typed key columns.
             for (k, (_tree, desc)) in trees.iter().enumerate() {
-                let (ordering, _) = keys[base_a + k].compare_value(&keys[base_b + k]);
+                let ordering = typed_keys[k].compare_at(a, b);
                 if ordering != Ordering::Equal {
                     return if *desc { ordering.reverse() } else { ordering };
                 }
