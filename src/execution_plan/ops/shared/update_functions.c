@@ -253,9 +253,9 @@ static bool _UpdateSetFromMap
 			return false ;
 		}
 
-		if(unlikely (strlen(key.stringval) > FDB_MAX_NAME_LEN)) {
+		if(unlikely (strlen(key.stringval) > FDB_MAX_IDENTIFIER_LEN)) {
 			ErrorCtx_SetError(EMSG_IDENTIFIER_TOO_LONG, "Property name",
-					FDB_MAX_NAME_LEN);
+					FDB_MAX_IDENTIFIER_LEN);
 			return false;
 		}
 
@@ -893,7 +893,7 @@ void ensureMatrixDim
 	ASSERT (gc  != NULL) ;
 	ASSERT (ctx != NULL) ;
 
-	char         label[512] = {0}  ;
+	char         label[FDB_MAX_IDENTIFIER_LEN + 1] = {0}  ;
 	Graph *g = GraphContext_GetGraph (gc) ;
 
 	// set matrix sync policy to resize
@@ -951,4 +951,3 @@ void PendingUpdateCtx_Free
 	AttributeSet_Free (&ctx->attributes) ;
 	rm_free (ctx) ;
 }
-

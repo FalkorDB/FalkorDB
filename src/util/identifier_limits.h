@@ -7,14 +7,13 @@
 
 #include <stddef.h>
 
-// the maximum byte size of an identifier. efforced on all schema and function
-// names.
-#define FDB_MAX_NAME_LEN 512
+// maximum identifier byte size, enforced on schema/function/property names.
+#define FDB_MAX_IDENTIFIER_LEN 512
 
-// "range:" + name + ":numeric:arr"
-#define FDB_MAX_RANGE_NAME_LEN (FDB_MAX_NAME_LEN + 18)
-// "vector:" + name
-#define FDB_MAX_VECTOR_NAME_LEN (FDB_MAX_NAME_LEN + 7)
+// Index-field identifier limits used when composing type-aware field names.
+// "range:" + identifier + ":numeric:arr"
+#define FDB_MAX_INDEX_RANGE_FIELD_NAME_LEN (FDB_MAX_IDENTIFIER_LEN + 18)
+// "vector:" + identifier
+#define FDB_MAX_INDEX_VECTOR_FIELD_NAME_LEN (FDB_MAX_IDENTIFIER_LEN + 7)
 // max(range_field_name, vector_field_name)
-#define FDB_MAX_TYPED_NAME_LEN FDB_MAX_RANGE_NAME_LEN
-
+#define FDB_MAX_INDEX_TYPED_FIELD_NAME_LEN FDB_MAX_INDEX_RANGE_FIELD_NAME_LEN

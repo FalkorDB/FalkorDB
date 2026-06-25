@@ -7,6 +7,7 @@
 #include "GraphBLAS.h"
 #include "../../../util/dict.h"
 #include "../../../query_ctx.h"
+#include "../../../util/identifier_limits.h"
 #include "./update_functions.h"
 
 // used by both op_update and op_merge to maintain staged updates
@@ -259,7 +260,7 @@ static void _PopulateVector
 	ASSERT (node_count > 0) ;
 
 	GrB_Vector   v         = NULL ;
-	char         name[512] = {0}  ;
+	char         name[FDB_MAX_IDENTIFIER_LEN + 1] = {0}  ;
 	GrB_Vector **vecs      = NULL ;
 	uint8_t     *vec_count = NULL ;
 
@@ -420,4 +421,3 @@ void StagedUpdatesCtx_Free
 	rm_free (_ctx) ;
 	*ctx = NULL ;
 }
-

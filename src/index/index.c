@@ -13,7 +13,6 @@
 #include "../datatypes/array.h"
 #include "../datatypes/point.h"
 #include "../datatypes/vector.h"
-#include "../util/identifier_limits.h"
 
 #include <stdatomic.h>
 
@@ -527,10 +526,6 @@ Index Index_New
 	GraphEntityType entity_type  // entity type been indexed
 ) {
 	ASSERT(label != NULL);
-
-	// must crash in release
-	// should only happen if an old rdb with an overlong name is loaded
-	RELEASE_ASSERT (strlen(label) <= FDB_MAX_NAME_LEN);
 
 	Index idx = rm_malloc(sizeof(_Index));
 

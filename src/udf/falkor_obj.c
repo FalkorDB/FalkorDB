@@ -15,6 +15,7 @@
 // global UDF library name used when registering functions globally
 extern const char *UDF_LIB ;
 
+// returns true if the function and library name will fit in the character limit
 static inline bool _ValidateUDFNameLength
 (
 	JSContext *js_ctx,
@@ -28,15 +29,7 @@ static inline bool _ValidateUDFNameLength
 	size_t lib_len  = strlen(lib_name);
 	size_t func_len = strlen(func_name);
 
-	if(func_len > FDB_MAX_NAME_LEN) {
-		return false;
-	}
-
-	if((lib_len + 1 + func_len) > FDB_MAX_NAME_LEN) {
-		return false;
-	}
-
-	return true;
+	return (lib_len + 1 + func_len) <= FDB_MAX_IDENTIFIER_LEN ;
 }
 
 //------------------------------------------------------------------------------
@@ -80,6 +73,8 @@ static JSValue validate_register_udf
 	}
 
 	if(!_ValidateUDFNameLength(js_ctx, UDF_LIB, func_name)) {
+		res = JS_ThrowTypeError (js_ctx, "function name '%s.%s' is too long",
+				UDF_LIB, func_name) ;
 		goto cleanup;
 	}
 
@@ -91,8 +86,7 @@ static JSValue validate_register_udf
 	if (UDF_RepoContainsFunc (UDF_LIB, func_name)) {
 		res = JS_ThrowTypeError (js_ctx, "function: '%s.%s' already registered",
 				UDF_LIB, func_name) ;
-
-		goto cleanup ;
+		goto cleanup;
 	}
 
 	asprintf (&fullname, "%s.%s", UDF_LIB, func_name) ;
@@ -148,37 +142,13 @@ static JSValue local_register_udf
 				"second argument must be a function") ;
 	}
 
-	JSValue res;
-
 	// register function in TLS UDF context
 	JSValue dup = JS_DupValue(js_ctx, func);
-	UDFCtx_RegisterResult reg_res = UDFCtx_RegisterFunction(dup, func_name);
-
-	switch(reg_res) {
-		case UDF_CTX_REG_OK:
-			res = JS_NewBool(js_ctx, true);
-			break;
-		case UDF_CTX_REG_ERR_FUNC_NAME_TOO_LONG:
-			JS_FreeValue(js_ctx, dup);
-			res = JS_ThrowTypeError(js_ctx,
-					"Function name exceeds maximum length of %d bytes",
-					FDB_MAX_NAME_LEN);
-			break;
-		case UDF_CTX_REG_ERR_QUALIFIED_NAME_TOO_LONG:
-			JS_FreeValue(js_ctx, dup);
-			res = JS_ThrowTypeError(js_ctx,
-					"Qualified function name exceeds maximum length of %d bytes",
-					FDB_MAX_NAME_LEN);
-			break;
-		default:
-			JS_FreeValue(js_ctx, dup);
-			res = JS_ThrowInternalError(js_ctx, "failed to register function");
-			break;
-	}
+	UDFCtx_RegisterFunction(dup, func_name);
 
 	JS_FreeCString (js_ctx, func_name) ;
 
-	return res ;
+	return JS_NewBool(js_ctx, true) ;
 }
 
 // global implementation of `falkor.register`
@@ -211,13 +181,7 @@ static JSValue global_register_udf
 	JSValue res ;
 	const char *func_name = JS_ToCString (js_ctx, argv[0]) ;
 
-	if(func_name == NULL) {
-		return JS_ThrowInternalError(js_ctx, "failed to read function name");
-	}
-
-	if(!_ValidateUDFNameLength(js_ctx, UDF_LIB, func_name)) {
-		goto cleanup;
-	}
+	ASSERT (_ValidateUDFNameLength(js_ctx, UDF_LIB, func_name)) ;
 
 	if (!UDF_RepoRegisterFunc (UDF_LIB, func_name)) {
 		res = JS_ThrowTypeError (js_ctx, "function: '%s' already registered",
@@ -362,4 +326,3 @@ void UDF_SetFalkorRegisterImpl
     JS_FreeValue (js_ctx, global_obj) ;
     JS_FreeValue (js_ctx, falkor_obj) ;
 }
-

@@ -78,10 +78,10 @@ int Graph_UDF_Load
 		return REDISMODULE_OK ;
 	}
 
-	if (lib_len > FDB_MAX_NAME_LEN) {
+	if (lib_len > FDB_MAX_IDENTIFIER_LEN) {
 		RedisModule_ReplyWithErrorFormat(ctx,
 				"Library name exceeds maximum length of %d bytes",
-				FDB_MAX_NAME_LEN);
+				FDB_MAX_IDENTIFIER_LEN);
 		return REDISMODULE_OK;
 	}
 
@@ -109,4 +109,3 @@ int Graph_UDF_Load
 
 	return REDISMODULE_OK ;
 }
-

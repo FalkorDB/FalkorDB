@@ -42,9 +42,9 @@ static AST_Validation _ValidateNameLength
 	ASSERT(name   != NULL);
 	ASSERT(entity != NULL);
 
-	if(strlen(name) > FDB_MAX_NAME_LEN) {
+	if(strlen(name) > FDB_MAX_IDENTIFIER_LEN) {
 		ErrorCtx_SetError(EMSG_IDENTIFIER_TOO_LONG, entity,
-				FDB_MAX_NAME_LEN);
+				FDB_MAX_IDENTIFIER_LEN);
 		return AST_INVALID;
 	}
 
@@ -2606,4 +2606,3 @@ void AST_ReportErrors
 	ErrorCtx_SetError(EMSG_PARSER_ERROR, errMsg, errPos.line, errPos.column,
 			errPos.offset, errCtx, errCtxOffset);
 }
-

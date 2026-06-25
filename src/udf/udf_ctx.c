@@ -10,7 +10,6 @@
 #include "repository.h"
 #include "../util/arr.h"
 #include "../util/rmalloc.h"
-#include "../util/identifier_limits.h"
 
 #include <pthread.h>
 
@@ -243,7 +242,7 @@ void UDFCtx_RegisterLibrary
 }
 
 // register a UDF function with TLS UDF context
-UDFCtx_RegisterResult UDFCtx_RegisterFunction
+void UDFCtx_RegisterFunction
 (
 	JSValueConst func,     // JS function
 	const char *func_name  // function name
@@ -258,17 +257,7 @@ UDFCtx_RegisterResult UDFCtx_RegisterFunction
 	// enforce identifier limit
 	//--------------------------------------------------------------------------
 
-	UDFLib *l = ctx->libs + (n - 1) ;
-	size_t lib_len  = strlen(l->name);
-	size_t func_len = strlen(func_name);
-	if(func_len > FDB_MAX_NAME_LEN) {
-		return UDF_CTX_REG_ERR_FUNC_NAME_TOO_LONG;
-	}
-
-	if((lib_len + 1 + func_len) > FDB_MAX_NAME_LEN) {
-		return UDF_CTX_REG_ERR_QUALIFIED_NAME_TOO_LONG;
-	}
-
+	UDFLib  *l = ctx->libs + (n - 1) ;
 	UDFFunc *f = _UDFCtx_GetFunc (l, func_name) ;
 
 	if (unlikely (f != NULL)) {
@@ -280,8 +269,6 @@ UDFCtx_RegisterResult UDFCtx_RegisterFunction
 		UDFFunc _f = (UDFFunc) {.func = func, .name = (rm_strdup (func_name))} ;
 		arr_append (l->funcs, _f) ;
 	}
-
-	return UDF_CTX_REG_OK;
 }
 
 // get UDF function

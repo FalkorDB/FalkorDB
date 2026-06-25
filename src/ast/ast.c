@@ -516,12 +516,12 @@ bool AST_ClauseContainsAggregation
 	rax *referred_funcs = raxNew();
 	AST_ReferredFunctions(clause, referred_funcs);
 
-	char funcName[FDB_MAX_NAME_LEN + 1];
+	char funcName[FDB_MAX_IDENTIFIER_LEN + 1];
 	raxIterator it;
 	_prepareIterateAll(referred_funcs, &it);
 	while(raxNext(&it)) {
 		size_t len = it.key_len;
-		if(len > FDB_MAX_NAME_LEN) {
+		if(len > FDB_MAX_IDENTIFIER_LEN) {
 			// length validation happens earlier in AST validation
 			// skip defensively
 			continue;
