@@ -1450,8 +1450,8 @@ mod tests {
         // a leaf blob round-trips through a byte store verbatim: the in-memory form is the serialized form.
         let t = CowBTree::from_sorted(&(0..2_000u64).map(|i| (i, i)).collect::<Vec<_>>());
         let store: Vec<Vec<u8>> = t.leaves().iter().map(|l| l.to_vec()).collect(); // store the raw bytes
-                                                                                   // re-read the docs for a key directly from a stored leaf — proving the bytes are usable as-is.
-                                                                                   // find the leaf containing key 1234 by its min key, then scan it.
+        // re-read the docs for a key directly from a stored leaf — proving the bytes are usable as-is.
+        // find the leaf containing key 1234 by its min key, then scan it.
         let want = 1234u64;
         let mut found = None;
         for blob in &store {
@@ -1494,7 +1494,7 @@ mod tests {
         }
         check(vec![], None); // empty ⇒ AoS (just the tag byte)
         check(vec![(5, 50)], Some(false)); // single entry ⇒ AoS (header doesn't amortise)
-                                           // wide, all-distinct values AND docs (both need 8-byte width) ⇒ no compression ⇒ AoS
+        // wide, all-distinct values AND docs (both need 8-byte width) ⇒ no compression ⇒ AoS
         check(
             (0..200u64).map(|i| (i << 40, i << 40)).collect(),
             Some(false),
