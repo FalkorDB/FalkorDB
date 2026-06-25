@@ -282,10 +282,16 @@ impl<'a> CompactView<'a> {
 
 impl Leaf {
     /// Number of `(key, doc)` entries.
+    ///
+    /// Each tag-dispatch matches the two valid formats explicitly and treats any other byte as
+    /// `unreachable!` — a leaf this code builds is always one of the two, so an unknown tag means a
+    /// malformed page (or a future format whose call sites weren't updated), which should fail loudly
+    /// rather than be silently misread as compact.
     fn count(&self) -> usize {
         match self.0[0] {
             FMT_AOS => (self.0.len() - 1) / STRIDE,
-            _ => read_u16(&self.0, ENTRY_COUNT_OFFSET) as usize,
+            FMT_COMPACT => read_u16(&self.0, ENTRY_COUNT_OFFSET) as usize,
+            tag => unreachable!("unknown leaf format tag: {tag}"),
         }
     }
 
@@ -296,7 +302,8 @@ impl Leaf {
     ) -> u64 {
         match self.0[0] {
             FMT_AOS => read_u64(&self.0, 1 + STRIDE * i),
-            _ => CompactView::new(&self.0).key(i),
+            FMT_COMPACT => CompactView::new(&self.0).key(i),
+            tag => unreachable!("unknown leaf format tag: {tag}"),
         }
     }
 
@@ -314,7 +321,8 @@ impl Leaf {
     fn doc_layout(&self) -> (usize, usize, usize) {
         match self.0[0] {
             FMT_AOS => (1 + FIELD, STRIDE, FIELD),
-            _ => CompactView::new(&self.0).doc_layout(),
+            FMT_COMPACT => CompactView::new(&self.0).doc_layout(),
+            tag => unreachable!("unknown leaf format tag: {tag}"),
         }
     }
 
@@ -348,7 +356,8 @@ impl Leaf {
                     )
                 })
                 .collect(),
-            _ => CompactView::new(&self.0).to_pairs(),
+            FMT_COMPACT => CompactView::new(&self.0).to_pairs(),
+            tag => unreachable!("unknown leaf format tag: {tag}"),
         }
     }
 
@@ -1063,9 +1072,11 @@ impl CowBTree {
         count(&self.root)
     }
 
-    /// Whether the tree holds no tuples.
+    /// Whether the tree holds no tuples. `O(1)`: the tree is empty iff its root is an empty leaf — a
+    /// non-empty tree's root is a branch or a leaf with entries, and underflowing leaves are merged, so an
+    /// empty leaf only ever exists as the root of an empty tree. (Avoids walking every page like [`len`].)
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        matches!(&self.root, Node::Leaf(leaf) if leaf.count() == 0)
     }
 
     /// All leaf page blobs in key order. Each is a self-contained byte page — the bytes are the
@@ -1698,5 +1709,28 @@ mod tests {
             .map(|i| ((i % 8) * 1_000, 1_000_000 + i))
             .collect();
         check(&low_card, &add);
+    }
+
+    #[test]
+    fn is_empty_tracks_emptiness() {
+        // `is_empty` is O(1) (root-only) and must agree with `len() == 0` through inserts, single
+        // removes, and a bulk-built tree drained to nothing (leaves merge back to one empty root).
+        let mut t = CowBTree::new();
+        assert!(t.is_empty());
+        assert_eq!(t.len(), 0);
+        t.insert(5, 50);
+        assert!(!t.is_empty());
+        assert_eq!(t.len(), 1);
+        t.remove(5, 50);
+        assert!(t.is_empty(), "removing the last entry empties the tree");
+
+        let pairs: Vec<(u64, u64)> = (0..1_000u64).map(|i| (i, i)).collect();
+        let mut big = CowBTree::from_sorted(&pairs);
+        assert!(!big.is_empty());
+        for &(k, d) in &pairs {
+            big.remove(k, d);
+        }
+        assert!(big.is_empty(), "draining every entry empties the tree");
+        assert_eq!(big.len(), 0);
     }
 }
