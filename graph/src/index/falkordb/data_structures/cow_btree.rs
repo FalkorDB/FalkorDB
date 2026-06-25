@@ -544,6 +544,59 @@ impl Leaf {
         pairs.remove(pos);
         Some((Self::from_pairs(&pairs), pairs.len() < LEAF_MIN))
     }
+
+    /// Apply a sorted `batch` (all of it routing into this leaf) and return the replacement leaf page(s).
+    /// An [`FMT_AOS`] leaf whose result still fits one page is **byte-merged** (see [`Leaf::merge_batch_aos`]);
+    /// a [`FMT_COMPACT`] leaf, or one whose result overflows into several pages, decodes, merges, de-dups,
+    /// and re-chunks through [`Leaf::from_pairs`] (re-selecting the format per chunk).
+    fn merge_batch(
+        &self,
+        batch: &[(u64, u64)],
+    ) -> Vec<Leaf> {
+        if self.0[0] == FMT_AOS && self.count() + batch.len() <= LEAF_MAX {
+            return vec![self.merge_batch_aos(batch)];
+        }
+        // `Vec::sort` is run-adaptive (Timsort), so the two already-sorted inputs merge in ~one linear pass.
+        let mut merged = self.to_pairs();
+        merged.extend_from_slice(batch);
+        merged.sort();
+        merged.dedup();
+        merged.chunks(LEAF_MAX).map(Self::from_pairs).collect()
+    }
+
+    /// Two-pointer merge of `self`'s entries with a sorted `batch` into a single new [`FMT_AOS`] page — no
+    /// `Vec<(u64, u64)>`, no sort, one allocation. Exact `(key, doc)` duplicates are dropped (re-adding an
+    /// existing tuple is a no-op). The caller guarantees the result fits (`count + batch.len() <= LEAF_MAX`).
+    fn merge_batch_aos(
+        &self,
+        batch: &[(u64, u64)],
+    ) -> Leaf {
+        let count = self.count();
+        let mut buf = Vec::with_capacity(self.0.len() + batch.len() * STRIDE);
+        buf.push(FMT_AOS);
+        let (mut i, mut j) = (0usize, 0usize);
+        let mut last: Option<(u64, u64)> = None;
+        while i < count || j < batch.len() {
+            let take_leaf =
+                i < count && (j >= batch.len() || (self.key(i), self.doc(i)) <= batch[j]);
+            let next = if take_leaf {
+                let entry = (self.key(i), self.doc(i));
+                i += 1;
+                entry
+            } else {
+                let entry = batch[j];
+                j += 1;
+                entry
+            };
+            if last == Some(next) {
+                continue; // drop an exact `(key, doc)` duplicate
+            }
+            buf.extend_from_slice(&next.0.to_le_bytes());
+            buf.extend_from_slice(&next.1.to_le_bytes());
+            last = Some(next);
+        }
+        Leaf(Arc::from(buf.as_slice()))
+    }
 }
 
 // ---- bottom-up builders (used by bulk build and batched insert) ------------------------------
@@ -676,21 +729,13 @@ impl Node {
         batch: &[(u64, u64)],
     ) -> Vec<Node> {
         match self {
-            // Leaf: concatenate the existing entries with the batch and sort. `Vec::sort` is a
-            // run-adaptive merge sort (Timsort), so two already-sorted inputs merge in ~one linear
-            // pass — std has no standalone two-sequence merge, and at leaf size (≤ `LEAF_MAX`) this
-            // is the idiomatic, allocation-cheap choice. `dedup` then collapses any duplicate
-            // `(key, doc)` (re-adding an existing tuple is a no-op). Finally re-chunk into pages.
-            Node::Leaf(leaf) => {
-                let mut merged = leaf.to_pairs();
-                merged.extend_from_slice(batch);
-                merged.sort();
-                merged.dedup();
-                merged
-                    .chunks(LEAF_MAX)
-                    .map(|chunk| Node::Leaf(Leaf::from_pairs(chunk)))
-                    .collect()
-            }
+            // Leaf: merge the batch into this page (the leaf owns the encoding-specific work — an AoS page
+            // that still fits is byte-merged, no decode; see [`Leaf::merge_batch`]). It may split into several.
+            Node::Leaf(leaf) => leaf
+                .merge_batch(batch)
+                .into_iter()
+                .map(Node::Leaf)
+                .collect(),
             // Branch: hand each child the slice of `batch` that routes into it, recursing only into
             // children that actually receive entries — every other child is shared by `Arc` clone,
             // never copied. Re-pack the resulting child list (which may have grown, since a touched
@@ -1577,5 +1622,51 @@ mod tests {
             t.range(0, u64::MAX).collect::<Vec<_>>(),
             reference.iter().map(|&(_, d)| d).collect::<Vec<_>>(),
         );
+    }
+
+    #[test]
+    fn insert_batch_merge_parity() {
+        // `insert_batch` must match a `BTreeSet` reference across the merge paths: small batches (AoS
+        // byte-merge), large batches that overflow into several pages (fallback), tuples already present
+        // (dedup), and compact source leaves (fallback).
+        fn check(
+            initial: &[(u64, u64)],
+            batch: &[(u64, u64)],
+        ) {
+            let mut t = CowBTree::from_sorted(initial);
+            let mut reference: BTreeSet<(u64, u64)> = initial.iter().copied().collect();
+            let mut sorted = batch.to_vec();
+            sorted.sort_unstable();
+            sorted.dedup();
+            t.insert_batch(&sorted);
+            reference.extend(sorted.iter().copied());
+            assert_eq!(t.len(), reference.len(), "len after batch");
+            assert_eq!(
+                t.range(0, u64::MAX).collect::<Vec<_>>(),
+                reference.iter().map(|&(_, d)| d).collect::<Vec<_>>(),
+            );
+        }
+        // wide, all-distinct ⇒ AoS leaves
+        let aos: Vec<(u64, u64)> = (0..500u64).map(|i| (i << 40, i << 40)).collect();
+        // small batch (byte-merge fast path), including a tuple already present (must de-dup)
+        check(
+            &aos,
+            &[
+                (7 << 40, 7 << 40),
+                ((3 << 40) + 1, 99),
+                ((250 << 40) + 5, 7),
+            ],
+        );
+        // large batch ⇒ overflows leaves into several pages (fallback path)
+        let big: Vec<(u64, u64)> = (0..2_000u64).map(|i| ((i << 40) + 1, i)).collect();
+        check(&aos, &big);
+        // low cardinality ⇒ compact source leaves (fallback path)
+        let mut low_card: Vec<(u64, u64)> = (0..2_000u64).map(|i| ((i % 8) * 1_000, i)).collect();
+        low_card.sort_unstable();
+        low_card.dedup();
+        let add: Vec<(u64, u64)> = (0..60u64)
+            .map(|i| ((i % 8) * 1_000, 1_000_000 + i))
+            .collect();
+        check(&low_card, &add);
     }
 }
