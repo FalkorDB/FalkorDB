@@ -155,12 +155,26 @@ impl<'a> Iterator for UnwindOp<'a> {
                         ValueIter::Once(Some(val)) => self.emitter.push_one(row_idx, val),
                         ValueIter::Inline(vals) => {
                             // Fused list literal: the elements are already
-                            // evaluated and bounded by the literal's arity, so
-                            // drain them straight into allocation-free `One`
-                            // slots. Boxing the iterator instead would add a heap
-                            // allocation per row *and* make `pending_len` count
-                            // rows rather than values, blunting the value-precise
-                            // packing threshold below.
+                            // evaluated and usually bounded by the literal's
+                            // arity, so drain them straight into allocation-free
+                            // `One` slots that pack with their neighbours. Boxing
+                            // would add a heap allocation per row *and* make
+                            // `pending_len` count rows rather than values,
+                            // blunting the value-precise packing threshold below.
+                            //
+                            // The exception is a literal larger than the
+                            // remaining pack budget (e.g. a giant `UNWIND [..]`):
+                            // pushing every element up front would blow past
+                            // `pack_cap` before the check below runs. In that case
+                            // box the iterator so `emit` streams it in
+                            // `BATCH_SIZE` chunks, keeping the queue bounded.
+                            let remaining =
+                                self.pack_cap.saturating_sub(self.emitter.pending_len());
+                            if vals.len() > remaining {
+                                self.emitter
+                                    .push(row_idx, Box::new(ValueIter::Inline(vals)));
+                                break;
+                            }
                             for val in vals {
                                 self.emitter.push_one(row_idx, val);
                             }

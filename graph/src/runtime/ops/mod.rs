@@ -143,20 +143,24 @@ pub fn drain_pending_batches<'a>(
 ) {
     while builder.len() < BATCH_SIZE {
         if let Some(batch) = pending.pop_front() {
-            // If the whole batch fits, push every active row.
-            if builder.len() + batch.len() <= BATCH_SIZE {
+            // Count and index *active* rows only: a batch may carry a selection
+            // vector, so `len()` (total rows) would overshoot the fit check and
+            // raw `0..` indices could address filtered-out rows.
+            if builder.len() + batch.active_len() <= BATCH_SIZE {
+                // The whole batch fits: push every active row.
                 for row in batch.active_indices() {
                     builder.push_batch_row(&batch, row, batch.origin_row(row));
                 }
             } else {
-                // Only part of the batch fits.
+                // Only part of the batch fits: push the first `remaining` active
+                // rows and re-queue the rest (gathering by active index keeps the
+                // selection honoured).
                 let remaining = BATCH_SIZE - builder.len();
-                for i in 0..remaining {
-                    builder.push_batch_row(&batch, i, batch.origin_row(i));
+                let active: Vec<usize> = batch.active_indices().collect();
+                for &row in &active[..remaining] {
+                    builder.push_batch_row(&batch, row, batch.origin_row(row));
                 }
-                // Push the remainder back to pending.
-                let indices: Vec<usize> = (remaining..batch.len()).collect();
-                pending.push_front(batch.gather(&indices));
+                pending.push_front(batch.gather(&active[remaining..]));
                 break;
             }
         } else {

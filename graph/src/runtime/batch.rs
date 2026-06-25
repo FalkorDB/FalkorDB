@@ -1105,6 +1105,12 @@ impl<'a> Batch<'a> {
         self.origin_rows.as_ref().map_or(0, |o| o[row])
     }
 
+    /// Whether this batch carries a per-row correlation origin sidecar.
+    #[must_use]
+    pub fn has_origin_rows(&self) -> bool {
+        self.origin_rows.is_some()
+    }
+
     /// Installs the columnar per-row correlation sidecar. The vector is indexed
     /// by logical row (length must equal [`len`](Self::len)). Ignored for
     /// env-backed batches, which carry the tag inside each `Env`.
@@ -1447,8 +1453,17 @@ impl<'a> BatchOp<'a> {
             }
             Self::PathBuilder(op) => op.child.set_argument_batch(batch),
             Self::LoadCsv(op) => op.child.set_argument_batch(batch),
-            Self::NodeByFulltextScan(op) => op.child.set_argument_batch(batch),
-            Self::EdgeByFulltextScan(op) => op.child.set_argument_batch(batch),
+            Self::NodeByFulltextScan(op) => {
+                // Drop rows still queued from the previous outer iteration so a
+                // correlated plan (Apply) that stops the inner side early can't
+                // leak stale matches into the next argument batch.
+                op.emitter.reset();
+                op.child.set_argument_batch(batch);
+            }
+            Self::EdgeByFulltextScan(op) => {
+                op.emitter.reset();
+                op.child.set_argument_batch(batch);
+            }
             Self::NodeByVectorScan(op) => {
                 // Drop any KNN rows still queued from the previous
                 // outer iteration; otherwise correlated plans (Apply)
@@ -1461,7 +1476,10 @@ impl<'a> BatchOp<'a> {
                 op.emitter.reset();
                 op.child.set_argument_batch(batch);
             }
-            Self::NodeByLabelAndIdScan(op) => op.child.set_argument_batch(batch),
+            Self::NodeByLabelAndIdScan(op) => {
+                op.emitter.reset();
+                op.child.set_argument_batch(batch);
+            }
             Self::CondVarLenTraverse(op) => op.child.set_argument_batch(batch),
             Self::AllShortestPaths(op) => op.child.set_argument_batch(batch),
             Self::OrApplyMultiplexer(op) => op.child.set_argument_batch(batch),

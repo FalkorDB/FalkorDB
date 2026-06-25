@@ -31,7 +31,7 @@ pub struct EdgeByFulltextScanOp<'a> {
     pub(crate) child: Box<BatchOp<'a>>,
     /// Holds the parent batch being expanded and the per-row `(edge, score)`
     /// iterators, and performs the shared pack-and-gather emit.
-    emitter: BatchedResultEmitter<'a, (RelationshipId, f64)>,
+    pub(crate) emitter: BatchedResultEmitter<'a, (RelationshipId, f64)>,
     label: &'a QueryExpr<Variable>,
     query: &'a QueryExpr<Variable>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,

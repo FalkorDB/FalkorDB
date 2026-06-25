@@ -26,7 +26,7 @@ pub struct NodeByFulltextScanOp<'a> {
     pub(crate) child: Box<BatchOp<'a>>,
     /// Holds the parent batch being expanded and the per-row `(node, score)`
     /// iterators, and performs the shared pack-and-gather emit.
-    emitter: BatchedResultEmitter<'a, (NodeId, f64)>,
+    pub(crate) emitter: BatchedResultEmitter<'a, (NodeId, f64)>,
     label: &'a QueryExpr<Variable>,
     query: &'a QueryExpr<Variable>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,

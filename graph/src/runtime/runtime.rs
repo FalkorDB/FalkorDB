@@ -779,7 +779,7 @@ impl<'a> Runtime<'a> {
                 // needed; pass it through so packing stays lazy under `LIMIT`.
                 let record_cap = self
                     .effective_limit(idx)
-                    .map(|l| l + self.effective_skip(idx));
+                    .map(|l| l.saturating_add(self.effective_skip(idx)));
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::Unwind(UnwindOp::new(
                     self,
@@ -801,7 +801,7 @@ impl<'a> Runtime<'a> {
                 // enough rows for a downstream SkipOp + LimitOp pipeline.
                 let record_cap = self
                     .effective_limit(idx)
-                    .map(|l| l + self.effective_skip(idx));
+                    .map(|l| l.saturating_add(self.effective_skip(idx)));
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::CondTraverse(CondTraverseOp::new(
                     self,
@@ -824,7 +824,7 @@ impl<'a> Runtime<'a> {
                 // enough rows for a downstream SkipOp + LimitOp pipeline.
                 let record_cap = self
                     .effective_limit(idx)
-                    .map(|l| l + self.effective_skip(idx));
+                    .map(|l| l.saturating_add(self.effective_skip(idx)));
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::ExpandInto(ExpandIntoOp::new(
                     self,

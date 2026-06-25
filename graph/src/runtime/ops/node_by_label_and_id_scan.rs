@@ -24,7 +24,7 @@ pub struct NodeByLabelAndIdScanOp<'a> {
     pub(crate) child: Box<BatchOp<'a>>,
     /// Holds the parent batch being expanded and the per-row id iterators, and
     /// performs the shared pack-and-gather emit.
-    emitter: BatchedResultEmitter<'a, NodeId>,
+    pub(crate) emitter: BatchedResultEmitter<'a, NodeId>,
     node_pattern: &'a QueryNode<Arc<String>, Variable>,
     filter: &'a Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
