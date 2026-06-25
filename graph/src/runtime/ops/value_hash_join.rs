@@ -23,9 +23,9 @@
 //! a `Vec<(Value, BuildSlot)>` where exact key equality is checked during
 //! probe. NULL keys are skipped on both sides (Cypher NULL != NULL semantics).
 
-use std::hash::{Hash, Hasher};
-
-use rustc_hash::{FxHashMap, FxHasher};
+use ahash::RandomState;
+use once_cell::sync::Lazy;
+use rustc_hash::FxHashMap;
 
 use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
@@ -57,14 +57,22 @@ pub(crate) type BuildSlot = Vec<RightRowRef>;
 /// re-checked on probe (see `BuildSlot`).
 pub(crate) type JoinHashTable = FxHashMap<u64, Vec<(Value, BuildSlot)>>;
 
-/// Hash a join key with the same hasher used on both the build and probe sides.
-/// Uses a fast non-cryptographic hasher (`FxHasher`): join keys are commonly
-/// integers/ids, and the bucket re-checks exact `Value` equality, so hash
-/// quality only needs to spread buckets, not resist collisions adversarially.
+/// Process-global random seed for join-key hashing.
+///
+/// A *randomized* seed (chosen once per process) makes the hash output
+/// unpredictable, so a client who controls join-key values can't precompute
+/// many distinct keys that all collide into a single bucket — the classic
+/// hash-flooding / algorithmic-complexity DoS that would turn an O(n) join into
+/// O(n²) chain scans. `aHash` stays close to `FxHash` speed (it uses AES
+/// intrinsics where available) while resisting that attack. The same seed is
+/// shared by the build and probe sides, so equal keys still hash identically.
+static JOIN_HASH_SEED: Lazy<RandomState> = Lazy::new(RandomState::new);
+
+/// Hash a join key with the shared, seeded hasher (see [`JOIN_HASH_SEED`]).
+/// Buckets re-check exact `Value` equality, so the hash only needs to spread
+/// keys; the random seed is what keeps that spread non-adversarial.
 fn hash_value(value: &Value) -> u64 {
-    let mut hasher = FxHasher::default();
-    value.hash(&mut hasher);
-    hasher.finish()
+    JOIN_HASH_SEED.hash_one(value)
 }
 
 pub struct ValueHashJoinOp<'a> {
