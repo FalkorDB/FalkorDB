@@ -1,54 +1,166 @@
 //! Batch-mode sort operator — orders result rows by one or more expressions.
 //!
-//! This is a *blocking* operator: it consumes all batches from the child on
-//! the first `next()` call, evaluates sort-key expressions for each
-//! row, sorts in-memory using a stable sort with per-key ascending/descending
-//! control, and then yields rows in sorted batches.
+//! This is a *blocking* operator. It has two regimes, picked on the first
+//! `next()` call:
+//!
+//! * **Full sort** (no `LIMIT`, or a very large one): every child batch is
+//!   concatenated columnar via [`Batch::concat`] (no per-row `Row`), the sort
+//!   keys are evaluated once per row, the row *indices* are stable-sorted, and
+//!   rows are emitted `BATCH_SIZE` at a time by gathering from the combined
+//!   buffer.
+//!
+//! * **Top-`k`** (`ORDER BY … LIMIT k`, with `k + skip` small): a streaming
+//!   bounded max-heap of capacity `k + skip` keeps only the rows that can
+//!   survive the limit, so the whole input is never buffered or fully sorted.
+//!   This is `O(N·log k)` time and `O(k)` memory instead of `O(N·log N)` +
+//!   `O(N)`.
 //!
 //! ```text
-//!  Child batches (all consumed on first call)
+//!  Child batches
 //!       │
 //!       ▼
-//!  ┌──────────────────────────────────┐
-//!  │ Evaluate sort keys per row       │
-//!  │ [(env, [(val, desc), ...])]      │
-//!  └──────────────┬───────────────────┘
-//!                 │
-//!       stable sort (multi-key)
-//!                 │
-//!       ┌────────▼────────┐
-//!       │ reversed Vec    │  stored reversed so pop() is O(1)
-//!       │ yield BATCH_SIZE│
-//!       │ at a time       │
-//!       └─────────────────┘
+//!  ┌──────────────────────────────┐     ┌──────────────────────────────┐
+//!  │ Full sort:                   │ or  │ Top-k:                       │
+//!  │   Batch::concat → keys →     │     │   bounded max-heap of k+skip │
+//!  │   stable-sort indices        │     │   (evict the worst row)      │
+//!  └──────────────┬───────────────┘     └──────────────┬───────────────┘
+//!                 │                                     │
+//!                 └──────────────┬──────────────────────┘
+//!                                ▼
+//!                   emit BATCH_SIZE rows at a time
 //! ```
 //!
-//! When primary sort keys are equal, a deterministic tiebreaker compares
-//! env values slot-by-slot.
+//! When primary sort keys are equal, the full-sort path applies a deterministic
+//! tiebreaker comparing every bound slot position-by-position and finally the
+//! original row index. The top-k path breaks ties by arrival order (a stable
+//! heap); for rows tied at the limit boundary, which of them is retained is
+//! unspecified by Cypher, so either tiebreak is correct.
 
 use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
+use crate::runtime::row::Row;
+use crate::runtime::row::RowView;
 use crate::runtime::{
     batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
     runtime::Runtime,
     value::{CompareValue, Value},
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
+use smallvec::SmallVec;
 use std::cmp::Ordering;
+use std::collections::BinaryHeap;
+
+/// Upper bound on `limit + skip` for which the streaming top-k heap is used.
+/// Beyond this the columnar full sort (then truncate) wins, because the heap's
+/// per-surviving-row materialization no longer pays off against bulk gather.
+const TOP_K_HEAP_MAX: usize = 4 * BATCH_SIZE;
+
+/// One sort key paired with its descending flag, ordered so a plain
+/// lexicographic comparison of a key vector matches the requested direction.
+struct OrderedKey {
+    value: Value,
+    desc: bool,
+}
+
+impl OrderedKey {
+    /// Compares two keys in *final output order*: the underlying `Value` total
+    /// order, with the result reversed for `DESC`. Folding the direction in here
+    /// lets every layer above (the key-vector and heap comparisons) use plain
+    /// ascending comparisons without re-checking ASC/DESC.
+    fn cmp_key(
+        &self,
+        other: &Self,
+    ) -> Ordering {
+        let (ordering, _) = self.value.compare_value(&other.value);
+        if self.desc {
+            ordering.reverse()
+        } else {
+            ordering
+        }
+    }
+}
+
+impl PartialEq for OrderedKey {
+    fn eq(
+        &self,
+        other: &Self,
+    ) -> bool {
+        self.cmp_key(other) == Ordering::Equal
+    }
+}
+impl Eq for OrderedKey {}
+impl PartialOrd for OrderedKey {
+    fn partial_cmp(
+        &self,
+        other: &Self,
+    ) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for OrderedKey {
+    fn cmp(
+        &self,
+        other: &Self,
+    ) -> Ordering {
+        self.cmp_key(other)
+    }
+}
+
+/// A candidate row held by the bounded top-k heap. Ordered so the max-heap's
+/// root is the row that sorts *last* — i.e. the next one to evict once the heap
+/// is full. Ties on the sort keys break by `seq` (arrival order) so the heap is
+/// stable.
+struct HeapEntry {
+    keys: SmallVec<[OrderedKey; 2]>,
+    seq: u64,
+    row: Row,
+}
+
+impl PartialEq for HeapEntry {
+    fn eq(
+        &self,
+        other: &Self,
+    ) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+impl Eq for HeapEntry {}
+impl PartialOrd for HeapEntry {
+    fn partial_cmp(
+        &self,
+        other: &Self,
+    ) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for HeapEntry {
+    fn cmp(
+        &self,
+        other: &Self,
+    ) -> Ordering {
+        // Lexicographic over the key vector (multi-key ORDER BY: first key, then
+        // ties broken by the next), then by arrival `seq` so equal-keyed rows
+        // keep a stable order. This is the final output order, so the max-heap's
+        // greatest element is the row that sorts *last* (the eviction candidate).
+        self.keys
+            .as_slice()
+            .cmp(other.keys.as_slice())
+            .then(self.seq.cmp(&other.seq))
+    }
+}
 
 pub struct SortOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Option<Box<BatchOp<'a>>>,
     trees: &'a [(QueryExpr<Variable>, bool)],
-    /// The concatenated input buffer (fully materialised on the first `next`),
-    /// the row order to emit, and a cursor into that order.
+    /// The materialised, ordered output buffer (built on the first `next`), the
+    /// row order to emit, and a cursor into that order.
     sorted: Option<Batch<'a>>,
     order: Vec<usize>,
     pos: usize,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
     /// When set, only the top `limit` rows (after skip) are needed.
-    /// Allows truncation after sorting to avoid excess work.
     limit: Option<usize>,
     /// Number of rows to skip before the limit applies.
     skip: usize,
@@ -75,6 +187,169 @@ impl<'a> SortOp<'a> {
             skip,
         }
     }
+
+    /// Full sort: concatenate every child batch columnar, evaluate the sort keys
+    /// once per row, and stable-sort the row indices. When `truncate` is set
+    /// (a large `LIMIT`), drop the indices the Skip/Limit operators above will
+    /// never consume.
+    fn build_full_sort(
+        runtime: &'a Runtime<'a>,
+        trees: &'a [(QueryExpr<Variable>, bool)],
+        child: Box<BatchOp<'a>>,
+        truncate: Option<usize>,
+    ) -> Result<(Batch<'a>, Vec<usize>), String> {
+        let mut batches: Vec<Batch<'a>> = Vec::new();
+        for batch_result in child {
+            batches.push(batch_result?);
+        }
+        let combined = Batch::concat(&batches);
+        drop(batches);
+        let total = combined.len();
+        if total == 0 {
+            return Ok((combined, Vec::new()));
+        }
+
+        // Evaluate the sort keys once per row through a borrowed columnar view
+        // (so `rand()` and other expression keys still work) with no per-row
+        // `Row` allocation. All keys are packed into one flat buffer indexed
+        // `row * num_keys + key` (the direction flag is per-key, read from
+        // `trees`), avoiding a per-row key `Vec`.
+        let num_keys = trees.len();
+        let mut keys: Vec<Value> = Vec::with_capacity(total * num_keys);
+        for row in 0..total {
+            let view = BatchRow::new(&combined, row);
+            for (tree, _desc) in trees {
+                let value = ExprEval::from_runtime(runtime).eval(
+                    tree,
+                    tree.root().idx(),
+                    Some(&view),
+                    None,
+                )?;
+                keys.push(value);
+            }
+        }
+
+        let num_columns = combined.num_columns();
+        let mut order: Vec<usize> = (0..total).collect();
+        order.sort_by(|&a, &b| {
+            // Lexicographic multi-key comparison over the flat key buffer.
+            let (base_a, base_b) = (a * num_keys, b * num_keys);
+            for (k, (_tree, desc)) in trees.iter().enumerate() {
+                let (ordering, _) = keys[base_a + k].compare_value(&keys[base_b + k]);
+                if ordering != Ordering::Equal {
+                    return if *desc { ordering.reverse() } else { ordering };
+                }
+            }
+            // Deterministic tiebreaker: compare bound slots position-by-position.
+            // Columns unbound in every row read back as `Null` on both sides and
+            // so never change the ordering. `compare_rows_at` borrows stored
+            // values instead of cloning them.
+            for id in 0..num_columns {
+                let ordering = combined.compare_rows_at(id as u32, a, b);
+                if ordering != Ordering::Equal {
+                    return ordering;
+                }
+            }
+            // Final total-order fallback: rows still equal here are identical in
+            // every compared column. `sort_by` is unstable, so break remaining
+            // ties by original row index to keep output deterministic.
+            a.cmp(&b)
+        });
+
+        if let Some(cap) = truncate {
+            order.truncate(cap);
+        }
+
+        Ok((combined, order))
+    }
+
+    /// Streaming top-k: keep only the `cap = limit + skip` smallest rows in a
+    /// bounded max-heap, evicting the current worst when a better row arrives.
+    /// The whole input is never buffered nor fully sorted; only the rows that
+    /// enter the heap are materialised.
+    fn build_top_k(
+        runtime: &'a Runtime<'a>,
+        trees: &'a [(QueryExpr<Variable>, bool)],
+        child: Box<BatchOp<'a>>,
+        cap: usize,
+    ) -> Result<(Batch<'a>, Vec<usize>), String> {
+        if cap == 0 {
+            return Ok((Batch::new(0), Vec::new()));
+        }
+        let num_keys = trees.len();
+        let mut heap: BinaryHeap<HeapEntry> = BinaryHeap::with_capacity(cap);
+        let mut seq: u64 = 0;
+        for batch_result in child {
+            let batch = batch_result?;
+            for row in batch.active_indices() {
+                let view = BatchRow::new(&batch, row);
+                // Evaluate the keys first; the row is only materialised if it
+                // actually survives the limit (the common case rejects it).
+                let mut keys: SmallVec<[OrderedKey; 2]> = SmallVec::with_capacity(num_keys);
+                for (tree, desc) in trees {
+                    let value = ExprEval::from_runtime(runtime).eval(
+                        tree,
+                        tree.root().idx(),
+                        Some(&view),
+                        None,
+                    )?;
+                    keys.push(OrderedKey { value, desc: *desc });
+                }
+                let cur_seq = seq;
+                seq += 1;
+
+                if heap.len() < cap {
+                    let row = view.to_owned_row();
+                    heap.push(HeapEntry {
+                        keys,
+                        seq: cur_seq,
+                        row,
+                    });
+                } else {
+                    // The heap is a max-heap, so `peek()` is the worst survivor
+                    // (the row that sorts last). Replace it only when the new row
+                    // sorts strictly before it, i.e. its `(keys, seq)` is smaller
+                    // — exactly `HeapEntry`'s order, but compared here without
+                    // building a `HeapEntry`, so the row is materialised
+                    // (`to_owned_row`, which clones values) only when it actually
+                    // wins a slot. The common reject path stays allocation-free.
+                    //
+                    // The `Equal` arm is effectively always false: rows arrive in
+                    // increasing `seq`, so `cur_seq` exceeds every `seq` already
+                    // in the heap. On a key tie the new (later) row is therefore
+                    // rejected, which keeps the *earliest*-arriving rows — a
+                    // stable top-k.
+                    let smaller = {
+                        let worst = heap.peek().expect("heap is full, so non-empty");
+                        match keys.as_slice().cmp(worst.keys.as_slice()) {
+                            Ordering::Less => true,
+                            Ordering::Greater => false,
+                            Ordering::Equal => cur_seq < worst.seq,
+                        }
+                    };
+                    if smaller {
+                        let row = view.to_owned_row();
+                        heap.pop();
+                        heap.push(HeapEntry {
+                            keys,
+                            seq: cur_seq,
+                            row,
+                        });
+                    }
+                }
+            }
+        }
+
+        // `into_sorted_vec` drains the max-heap in ascending `HeapEntry` order,
+        // which is exactly the requested output order; rebuild a dense batch.
+        let mut builder = BatchBuilder::new();
+        for entry in heap.into_sorted_vec() {
+            builder.push_row(&entry.row);
+        }
+        let combined = builder.finish();
+        let total = combined.len();
+        Ok((combined, (0..total).collect()))
+    }
 }
 
 impl<'a> Iterator for SortOp<'a> {
@@ -83,82 +358,25 @@ impl<'a> Iterator for SortOp<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         // Consume and sort all input on the first call.
         if let Some(child) = self.child.take() {
-            // Concatenate every child batch into one columnar buffer with no
-            // owned `Row` materialised per input row.
-            let mut combined_builder = BatchBuilder::new();
-            for batch_result in child {
-                match batch_result {
-                    Ok(batch) => combined_builder.push_batch_active(&batch),
-                    Err(e) => return Some(Err(e)),
-                }
-            }
-            let combined = combined_builder.finish();
-            let total = combined.len();
-            if total == 0 {
-                return None;
-            }
-
-            // Evaluate the sort keys once per row through a borrowed columnar
-            // view (so `rand()` and other expression keys still work) with no
-            // per-row `Row` allocation. All keys are packed into one flat buffer
-            // indexed `row * num_keys + key`, avoiding a per-row key `Vec`
-            // allocation (the direction flag is per-key, read from `trees`).
-            let num_keys = self.trees.len();
-            let mut keys: Vec<Value> = Vec::with_capacity(total * num_keys);
-            for row in 0..total {
-                let view = BatchRow::new(&combined, row);
-                for (tree, _desc) in self.trees {
-                    match ExprEval::from_runtime(self.runtime).eval(
-                        tree,
-                        tree.root().idx(),
-                        Some(&view),
-                        None,
-                    ) {
-                        Ok(value) => keys.push(value),
-                        Err(e) => return Some(Err(e)),
+            let result = match self.limit {
+                Some(limit) => {
+                    let cap = limit.saturating_add(self.skip);
+                    if cap <= TOP_K_HEAP_MAX {
+                        Self::build_top_k(self.runtime, self.trees, child, cap)
+                    } else {
+                        Self::build_full_sort(self.runtime, self.trees, child, Some(cap))
                     }
                 }
-            }
-
-            let trees = self.trees;
-            let num_columns = combined.num_columns();
-            let mut order: Vec<usize> = (0..total).collect();
-            order.sort_by(|&a, &b| {
-                // Lexicographic multi-key comparison over the flat key buffer.
-                let (base_a, base_b) = (a * num_keys, b * num_keys);
-                for (k, (_tree, desc)) in trees.iter().enumerate() {
-                    let (ordering, _) = keys[base_a + k].compare_value(&keys[base_b + k]);
-                    if ordering != Ordering::Equal {
-                        return if *desc { ordering.reverse() } else { ordering };
-                    }
+                None => Self::build_full_sort(self.runtime, self.trees, child, None),
+            };
+            match result {
+                Ok((combined, order)) => {
+                    self.sorted = Some(combined);
+                    self.order = order;
+                    self.pos = 0;
                 }
-                // Deterministic tiebreaker: compare bound slots position-by-position.
-                // Columns unbound in every row read back as `Null` on both sides
-                // and so never change the ordering. `compare_rows_at` borrows
-                // stored values instead of cloning them.
-                for id in 0..num_columns {
-                    let ordering = combined.compare_rows_at(id as u32, a, b);
-                    if ordering != Ordering::Equal {
-                        return ordering;
-                    }
-                }
-                // Final total-order fallback: rows still equal here are identical
-                // in every compared column (or differ only in columns that read
-                // back as `Null` on both sides). `sort_by` is unstable, so break
-                // the remaining ties by original row index to keep output order
-                // deterministic.
-                a.cmp(&b)
-            });
-
-            // When a limit is known, drop the rows the Skip/Limit operators above
-            // will never consume.
-            if let Some(limit) = self.limit {
-                order.truncate(limit + self.skip);
+                Err(e) => return Some(Err(e)),
             }
-
-            self.sorted = Some(combined);
-            self.order = order;
-            self.pos = 0;
         }
 
         // Emit the sorted rows BATCH_SIZE at a time by gathering from the

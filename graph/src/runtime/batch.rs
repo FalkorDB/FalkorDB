@@ -240,6 +240,24 @@ pub fn classify_column(values: Vec<Value>) -> (Column, NullBitmap) {
     }
 }
 
+/// Appends the active rows of one batch's typed column slice `src` onto `out`.
+///
+/// `selection` is the owning batch's active-row mask: `None` means the batch is
+/// dense (every row active) so the whole slice is copied in one bulk
+/// `extend_from_slice`; `Some(sel)` means only those row indices are active, so
+/// the matching elements are gathered individually. Generic over `T: Copy`
+/// (`u64`/`i64`/`f64`) for cheap element copies.
+fn extend_active_slice<T: Copy>(
+    out: &mut Vec<T>,
+    src: &[T],
+    selection: Option<&[u16]>,
+) {
+    match selection {
+        None => out.extend_from_slice(src),
+        Some(sel) => out.extend(sel.iter().map(|&r| src[r as usize])),
+    }
+}
+
 /// A single column of homogeneous values, indexed by row position.
 #[derive(Clone)]
 pub enum Column {
@@ -520,19 +538,6 @@ impl BatchBuilder {
         self.rows += 1;
     }
 
-    /// Appends every active row of `batch` via [`push_batch_row`](Self::push_batch_row),
-    /// carrying each row's `origin_row`. Columnar replacement for the
-    /// `buffer.extend(batch.active_rows())` idiom used to concatenate a
-    /// sub-plan's output into a single materialized batch.
-    pub fn push_batch_active(
-        &mut self,
-        batch: &Batch,
-    ) {
-        for row in batch.active_indices() {
-            self.push_batch_row(batch, row, batch.origin_row(row));
-        }
-    }
-
     /// Appends one row formed by overlaying the bound bindings of
     /// `right[right_row]` on top of `left[left_row]`, reading both directly from
     /// columnar batches. Columnar equivalent of
@@ -743,6 +748,196 @@ impl<'a> Batch<'a> {
             origin_rows,
             value_only: self.value_only.clone(),
             _marker: PhantomData,
+        }
+    }
+
+    /// Concatenates the active rows of `batches` into a single dense batch.
+    ///
+    /// This is the columnar replacement for repeatedly appending each batch row
+    /// by row through a generic `Value` accumulator (and re-classifying the
+    /// result); instead, each output column is built once. A column that is bound to the
+    /// same primitive type (`NodeIds`/`RelIds`/`Ints`/`Floats`) in every
+    /// contributing batch is bulk-extended with no per-cell `Value` boxing;
+    /// columns whose type differs across batches, that are absent in some batch,
+    /// or that are value-present-but-unbound fall back to a `Value`-backed
+    /// column (then re-classified) — byte-for-byte the same result the per-row
+    /// concat produced.
+    ///
+    /// Row order is preserved: batches in slice order, and within each batch its
+    /// active rows in active order, so any downstream tiebreaker that falls back
+    /// to original row index is unaffected.
+    #[must_use]
+    pub fn concat(batches: &[Batch<'a>]) -> Batch<'a> {
+        let total: usize = batches.iter().map(Batch::active_len).sum();
+        if total == 0 {
+            return Batch::new(0);
+        }
+        let num_cols = batches.iter().map(Batch::num_columns).max().unwrap_or(0);
+
+        let mut columns: Vec<Column> = Vec::with_capacity(num_cols);
+        let mut value_only = BitSet::default();
+
+        for i in 0..num_cols {
+            if let Some(col) = Self::concat_typed_column(batches, i, total) {
+                columns.push(col);
+                continue;
+            }
+            // Generic fallback. Every column slot is in one of three states, and
+            // the concatenated column must reproduce whichever state the per-row
+            // path would have produced:
+            //   * bound      — at least one batch binds the slot (a real value).
+            //   * value-only — the slot carries a non-null value but is flagged
+            //                  unbound (`value_only`, e.g. an aggregate alias);
+            //                  `value_at` returns it yet `is_bound_at` is false.
+            //   * unbound    — no batch ever put a value here.
+            // We gather every active row's value (unbound/absent slots read back
+            // as `Null`) and meanwhile track those two facts across all batches.
+            let vid = i as u32;
+            let mut values: Vec<Value> = Vec::with_capacity(total);
+            let mut bound_anywhere = false;
+            let mut nonnull_anywhere = false;
+            for b in batches {
+                let col = b.column(vid);
+                // Same predicate as `is_bound_at`: present column AND not the
+                // value-only flag. A slot bound in *any* batch makes the whole
+                // concatenated column bound.
+                if !matches!(col, Column::Unbound) && !b.value_only.test(i) {
+                    bound_anywhere = true;
+                }
+                for r in b.active_indices() {
+                    let v = col.get(r);
+                    nonnull_anywhere |= !matches!(v, Value::Null);
+                    values.push(v);
+                }
+            }
+            if bound_anywhere {
+                // Bound somewhere → a real column; promote to the tightest typed
+                // representation (NodeIds/Ints/…) the values allow.
+                columns.push(classify_stored_column(values));
+            } else if nonnull_anywhere {
+                // Never bound, but holds a non-null value → value-only. Keep the
+                // raw `Values` and re-set the bit so `is_bound_at` still reports
+                // unbound downstream.
+                columns.push(Column::Values(values));
+                value_only.set(i);
+            } else {
+                // No value in any row → the slot stays unbound.
+                columns.push(Column::Unbound);
+            }
+        }
+
+        // Concatenate correlation tags; emit the sidecar only if non-trivial.
+        let mut origins: Vec<u32> = Vec::with_capacity(total);
+        let mut any_origin = false;
+        for b in batches {
+            for r in b.active_indices() {
+                let o = b.origin_row(r);
+                any_origin |= o != 0;
+                origins.push(o);
+            }
+        }
+
+        Batch {
+            len: total,
+            selection: None,
+            columns,
+            origin_rows: any_origin.then_some(origins),
+            value_only,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Builds column `i` by bulk-extending a single primitive typed
+    /// representation shared by every contributing batch. Returns `None` (so the
+    /// caller takes the generic `Value` path) when any active batch leaves the
+    /// column unbound, value-only, `Value`-backed, or of a different primitive
+    /// type — i.e. whenever a lossless typed concat is not possible.
+    fn concat_typed_column(
+        batches: &[Batch<'a>],
+        i: usize,
+        total: usize,
+    ) -> Option<Column> {
+        #[derive(Clone, Copy, PartialEq)]
+        enum Kind {
+            Node,
+            Rel,
+            Int,
+            Float,
+        }
+        let vid = i as u32;
+        // Scan every contributing batch first to prove the typed bulk copy is
+        // lossless. Any disqualifying batch makes us return `None` so the caller
+        // takes the generic `Value` path instead.
+        let mut kind: Option<Kind> = None;
+        for b in batches {
+            // Empty batches contribute no rows, so they can't dictate the type.
+            if b.active_len() == 0 {
+                continue;
+            }
+            // Value-only slot: bulk-copying into a typed column would silently
+            // flip it to *bound* (typed columns always report bound), corrupting
+            // `is_bound_at`. The generic path preserves the unbound flag.
+            if b.value_only.test(i) {
+                return None;
+            }
+            let k = match b.column(vid) {
+                Column::NodeIds(_) => Kind::Node,
+                Column::RelIds(_) => Kind::Rel,
+                Column::Ints(_) => Kind::Int,
+                Column::Floats(_) => Kind::Float,
+                // Unbound (column absent here) or `Values`/`Unbound`-backed:
+                // can't be represented by a single primitive vector.
+                _ => return None,
+            };
+            match kind {
+                None => kind = Some(k),
+                // Type must agree across batches to share one vector.
+                Some(prev) if prev == k => {}
+                Some(_) => return None,
+            }
+        }
+        // `kind` is `None` only when every batch was empty — nothing to build.
+        // The guard loop above proved every non-empty batch stores this column as
+        // exactly `kind`, so each `if let` below always matches for batches with
+        // rows; empty batches fall through and contribute nothing. `selection` is
+        // honored per batch so only active rows are copied (bulk when dense).
+        match kind? {
+            Kind::Node => {
+                let mut out = Vec::with_capacity(total);
+                for b in batches {
+                    if let Column::NodeIds(v) = b.column(vid) {
+                        extend_active_slice(&mut out, v, b.selection());
+                    }
+                }
+                Some(Column::NodeIds(out))
+            }
+            Kind::Rel => {
+                let mut out = Vec::with_capacity(total);
+                for b in batches {
+                    if let Column::RelIds(v) = b.column(vid) {
+                        extend_active_slice(&mut out, v, b.selection());
+                    }
+                }
+                Some(Column::RelIds(out))
+            }
+            Kind::Int => {
+                let mut out = Vec::with_capacity(total);
+                for b in batches {
+                    if let Column::Ints(v) = b.column(vid) {
+                        extend_active_slice(&mut out, v, b.selection());
+                    }
+                }
+                Some(Column::Ints(out))
+            }
+            Kind::Float => {
+                let mut out = Vec::with_capacity(total);
+                for b in batches {
+                    if let Column::Floats(v) = b.column(vid) {
+                        extend_active_slice(&mut out, v, b.selection());
+                    }
+                }
+                Some(Column::Floats(out))
+            }
         }
     }
 

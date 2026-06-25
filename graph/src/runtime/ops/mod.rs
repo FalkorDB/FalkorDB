@@ -143,9 +143,11 @@ pub fn drain_pending_batches<'a>(
 ) {
     while builder.len() < BATCH_SIZE {
         if let Some(batch) = pending.pop_front() {
-            // If the whole batch fits, push it all.
+            // If the whole batch fits, push every active row.
             if builder.len() + batch.len() <= BATCH_SIZE {
-                builder.push_batch_active(&batch);
+                for row in batch.active_indices() {
+                    builder.push_batch_row(&batch, row, batch.origin_row(row));
+                }
             } else {
                 // Only part of the batch fits.
                 let remaining = BATCH_SIZE - builder.len();
