@@ -128,7 +128,6 @@ impl<'a> ValueHashJoinOp<'a> {
     /// nothing per row and only matched rows are materialised during probe.
     fn build_hash_table(&mut self) -> Result<JoinHashTable, String> {
         let eval = ExprEval::from_runtime(self.runtime);
-        let rhs_idx = self.rhs_exp.root().idx();
         let mut table = JoinHashTable::default();
 
         for result in self.right.by_ref() {
@@ -136,12 +135,20 @@ impl<'a> ValueHashJoinOp<'a> {
             // The index this batch will occupy in `right_batches` once pushed
             // below; refs point at its rows by that position.
             let batch_ref = self.right_batches.len() as u32;
-            for row in batch.active_indices() {
-                let view = BatchRow::new(&batch, row);
-                let key = eval.eval(self.rhs_exp, rhs_idx, Some(&view), None)?;
-                if matches!(key, Value::Null) {
+
+            // Bulk-evaluate the build key for the whole batch in one shot. For
+            // the common `b.attr` shape this is a single columnar attribute
+            // fetch; other shapes fall back to per-row eval inside `eval_batch`.
+            // The column is lossless, so reconstructing each key via
+            // `column.get` is equivalent to evaluating it individually.
+            let active: Vec<usize> = batch.active_indices().collect();
+            let (column, nulls) = eval.eval_batch(self.rhs_exp, &batch, &active)?;
+
+            for (i, &row) in active.iter().enumerate() {
+                if nulls.is_null(i) {
                     continue; // NULL never joins (Cypher NULL != NULL).
                 }
+                let key = column.get(i);
                 let slot = RightRowRef {
                     batch: batch_ref,
                     row: row as u32,

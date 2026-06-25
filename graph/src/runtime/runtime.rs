@@ -1342,6 +1342,20 @@ impl<'a> Runtime<'a> {
         node_ids: &[NodeId],
         attr: &Arc<String>,
     ) -> (Column, NullBitmap) {
+        classify_column(self.materialize_node_property_values(node_ids, attr))
+    }
+
+    /// Like [`materialize_node_property`](Self::materialize_node_property) but
+    /// returns the raw per-node values without classifying them into a typed
+    /// column. Callers that must preserve exact value types — e.g. join-key
+    /// evaluation, where coercing a mixed int/float column to all-float would
+    /// lose integer precision past 2^53 and change which keys compare equal —
+    /// use this and classify losslessly themselves.
+    pub fn materialize_node_property_values(
+        &self,
+        node_ids: &[NodeId],
+        attr: &Arc<String>,
+    ) -> Vec<Value> {
         let g = self.g.borrow();
         let attr_idx = g.get_node_attribute_id(attr).map(|i| i as u16);
 
@@ -1378,7 +1392,7 @@ impl<'a> Runtime<'a> {
         drop(deleted);
         drop(pending);
 
-        classify_column(values)
+        values
     }
 
     pub fn get_node_labels(

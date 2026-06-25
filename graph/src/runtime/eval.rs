@@ -51,8 +51,10 @@ use smallvec::SmallVec;
 use thin_vec::{ThinVec, thin_vec};
 
 use crate::{
+    graph::graph::NodeId,
     parser::ast::{ExprIR, QuantifierType, Variable},
     runtime::{
+        batch::{Batch, BatchRow, Column, NullBitmap},
         functions::{FnType, apply_pow},
         ordermap::OrderMap,
         row::RowView,
@@ -68,6 +70,35 @@ use crate::{
 /// Convenience `None` for the `env` argument of [`ExprEval::eval`] in
 /// constant-evaluation contexts, where the row type cannot be inferred.
 pub const NO_ROW: Option<&'static crate::runtime::row::Row> = None;
+
+/// Classify bulk-evaluated values into a *lossless* column suitable for
+/// equality / join-key use.
+///
+/// Produces [`Column::Ints`] only when every non-null value is an integer (the
+/// common, fast case — it lets the join key directly on `i64` with no per-row
+/// `Value`); anything else stays an exact [`Column::Values`]. Unlike
+/// [`classify_column`](crate::runtime::batch::classify_column), it never coerces
+/// a *mixed* int/float column to all-float: that conversion would round an
+/// integer past 2^53 to the nearest `f64` and silently change which keys
+/// compare equal, diverging from per-row evaluation.
+fn classify_join_keys(values: Vec<Value>) -> (Column, NullBitmap) {
+    let nulls = NullBitmap::from_values(&values);
+    if values
+        .iter()
+        .all(|v| matches!(v, Value::Int(_) | Value::Null))
+    {
+        let ints = values
+            .into_iter()
+            .map(|v| match v {
+                Value::Int(i) => i,
+                _ => 0, // null placeholder; bitmap tracks nullness
+            })
+            .collect();
+        (Column::Ints(ints), nulls)
+    } else {
+        (Column::Values(values), nulls)
+    }
+}
 
 pub enum ValueIter {
     Empty,
@@ -905,6 +936,81 @@ impl<'a> ExprEval<'a> {
         debug_assert_eq!(res.len(), 1);
         let result = res.pop().unwrap();
         Ok(result)
+    }
+
+    /// Bulk-evaluate `tree` over the `active` rows of `batch`, returning a
+    /// lossless typed [`Column`] plus a [`NullBitmap`] (entry `i` corresponds to
+    /// row `active[i]`).
+    ///
+    /// This is the columnar counterpart to [`eval`](Self::eval): it avoids the
+    /// per-row interpreter dispatch for the shape that dominates hot paths.
+    /// `var.attr`, where `var` is a bound node column, is served by a single
+    /// bulk attribute fetch yielding a primitive [`Column::Ints`] (or exact
+    /// [`Column::Values`]) with no per-row `Value` allocation; every other shape
+    /// falls back to per-row `eval` collected into a column. Either way the
+    /// result is *lossless* — an all-integer column stays `Ints`, anything else
+    /// stays exact `Values` (never coerced to all-float) — so null handling,
+    /// error propagation, and which values compare equal match evaluating each
+    /// row individually.
+    pub fn eval_batch(
+        &self,
+        tree: &DynTree<ExprIR<Variable>>,
+        batch: &Batch<'_>,
+        active: &[usize],
+    ) -> Result<(Column, NullBitmap), String> {
+        if let Some(result) = self.try_eval_batch_property(tree, batch, active)? {
+            return Ok(result);
+        }
+        self.eval_batch_per_row(tree, batch, active)
+    }
+
+    /// If `tree` is a node property access `var.attr` over a bound node column,
+    /// bulk-fetch the property for all active rows in one shot and classify it
+    /// losslessly. Returns `None` for any other shape, so the caller falls back
+    /// to per-row evaluation.
+    fn try_eval_batch_property(
+        &self,
+        tree: &DynTree<ExprIR<Variable>>,
+        batch: &Batch<'_>,
+        active: &[usize],
+    ) -> Result<Option<(Column, NullBitmap)>, String> {
+        let root = tree.root();
+        let ExprIR::Property(attr) = root.data() else {
+            return Ok(None);
+        };
+        if root.num_children() != 1 {
+            return Ok(None);
+        }
+        let ExprIR::Variable(var) = root.child(0).data() else {
+            return Ok(None);
+        };
+        let Some(node_ids) = batch.extract_node_ids(var.id) else {
+            return Ok(None);
+        };
+        let active_ids: Vec<NodeId> = active.iter().map(|&i| node_ids[i]).collect();
+        let values = self
+            .rt()?
+            .materialize_node_property_values(&active_ids, attr);
+        Ok(Some(classify_join_keys(values)))
+    }
+
+    /// Per-row fallback for [`eval_batch`](Self::eval_batch): evaluate `tree`
+    /// against each active row through a borrowed [`BatchRow`] and classify the
+    /// collected results losslessly. Used for any shape the bulk fast path does
+    /// not cover (arithmetic, function calls, non-node properties).
+    fn eval_batch_per_row(
+        &self,
+        tree: &DynTree<ExprIR<Variable>>,
+        batch: &Batch<'_>,
+        active: &[usize],
+    ) -> Result<(Column, NullBitmap), String> {
+        let root_idx = tree.root().idx();
+        let mut values = Vec::with_capacity(active.len());
+        for &row in active {
+            let view = BatchRow::new(batch, row);
+            values.push(self.eval(tree, root_idx, Some(&view), None)?);
+        }
+        Ok(classify_join_keys(values))
     }
 
     // -------------------------------------------------------------------
