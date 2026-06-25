@@ -230,3 +230,4 @@ void GraphHub_UpdateNodeLabels
 		_UnLabelNodes_Single (gc, rmv_labels + i, log) ;
 	}
 }
+

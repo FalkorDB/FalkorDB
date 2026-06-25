@@ -253,10 +253,6 @@ void UDFCtx_RegisterFunction
 	int n = arr_len(ctx->libs) ;
 	ASSERT (n > 0) ;
 
-	//--------------------------------------------------------------------------
-	// enforce identifier limit
-	//--------------------------------------------------------------------------
-
 	UDFLib  *l = ctx->libs + (n - 1) ;
 	UDFFunc *f = _UDFCtx_GetFunc (l, func_name) ;
 

@@ -131,16 +131,10 @@ static JSValue local_register_udf
 	}
 
 	const char *func_name = JS_ToCString(js_ctx, argv[0]) ;
-	if(func_name == NULL) {
-		return JS_ThrowInternalError(js_ctx, "failed to read function name");
-	}
+	ASSERT (func_name != NULL) ;
 
 	JSValueConst func = argv[1] ;
-	if (!JS_IsFunction (js_ctx, func)) {
-		JS_FreeCString(js_ctx, func_name);
-		return JS_ThrowTypeError (js_ctx,
-				"second argument must be a function") ;
-	}
+	ASSERT (JS_IsFunction (js_ctx, func)) ;
 
 	// register function in TLS UDF context
 	JSValue dup = JS_DupValue(js_ctx, func);
@@ -326,3 +320,4 @@ void UDF_SetFalkorRegisterImpl
     JS_FreeValue (js_ctx, global_obj) ;
     JS_FreeValue (js_ctx, falkor_obj) ;
 }
+
