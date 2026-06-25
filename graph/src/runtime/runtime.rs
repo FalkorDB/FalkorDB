@@ -1114,6 +1114,7 @@ impl<'a> Runtime<'a> {
             IR::CondVarLenTraverse {
                 relationship: relationship_pattern,
                 edge_filter,
+                emit_path,
             } => {
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::CondVarLenTraverse(CondVarLenTraverseOp::new(
@@ -1121,6 +1122,7 @@ impl<'a> Runtime<'a> {
                     Box::new(child),
                     relationship_pattern,
                     edge_filter.as_ref(),
+                    *emit_path,
                     idx,
                 )))
             }

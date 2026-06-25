@@ -51,6 +51,7 @@ mod fuse_anonymous_traverse;
 mod push_filters_down;
 mod reduce_count;
 mod reduce_expand_into;
+mod reduce_var_len_path;
 mod reorder_labels;
 mod replace_cartesian_with_hash_join;
 mod select_scan_node;
@@ -75,6 +76,7 @@ use fuse_anonymous_traverse::fuse_anonymous_traverse;
 use push_filters_down::push_filters_down;
 use reduce_count::reduce_count;
 use reduce_expand_into::reduce_expand_into;
+use reduce_var_len_path::reduce_var_len_path;
 use reorder_labels::reorder_labels;
 use replace_cartesian_with_hash_join::replace_cartesian_with_hash_join;
 use select_scan_node::select_scan_node;
@@ -124,6 +126,7 @@ pub fn optimize(
 
     reduce_count(&mut optimized_plan, graph);
     reduce_expand_into(&mut optimized_plan);
+    reduce_var_len_path(&mut optimized_plan);
     eliminate_true_filters(&mut optimized_plan, params);
     select_scan_node(&mut optimized_plan, graph);
     push_filters_down(&mut optimized_plan);
