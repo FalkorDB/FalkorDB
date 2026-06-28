@@ -43,7 +43,10 @@ use crate::runtime::eval::ExprEval;
 use crate::runtime::row::Row;
 use crate::runtime::row::RowView;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
+    batch::{
+        BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow, ValueKinds, floats_from_values,
+        ints_from_values,
+    },
     runtime::Runtime,
     value::{CompareValue, Value},
 };
@@ -204,43 +207,15 @@ enum KeyColumn {
 
 impl KeyColumn {
     /// Specialises a key column to `Ints`/`Floats` when homogeneous, else keeps
-    /// the boxed `Values` (consuming them, no clone).
+    /// the boxed `Values` (consuming them, no clone). A null (or any non-numeric
+    /// value) keeps the whole key on the `Values` path so `compare_at` stays
+    /// byte-for-byte identical to `Value::compare_value`.
     fn classify(values: Vec<Value>) -> Self {
-        let mut all_int = true;
-        let mut all_float = true;
-        for v in &values {
-            match v {
-                Value::Int(_) => all_float = false,
-                Value::Float(_) => all_int = false,
-                _ => {
-                    all_int = false;
-                    all_float = false;
-                    break;
-                }
-            }
-        }
-        if values.is_empty() {
-            Self::Values(values)
-        } else if all_int {
-            Self::Ints(
-                values
-                    .into_iter()
-                    .map(|v| match v {
-                        Value::Int(i) => i,
-                        _ => unreachable!("column proven all-Int"),
-                    })
-                    .collect(),
-            )
-        } else if all_float {
-            Self::Floats(
-                values
-                    .into_iter()
-                    .map(|v| match v {
-                        Value::Float(f) => f,
-                        _ => unreachable!("column proven all-Float"),
-                    })
-                    .collect(),
-            )
+        let kinds = ValueKinds::scan(&values);
+        if kinds.all_int_no_null() {
+            Self::Ints(ints_from_values(values))
+        } else if kinds.all_float_no_null() {
+            Self::Floats(floats_from_values(values))
         } else {
             Self::Values(values)
         }

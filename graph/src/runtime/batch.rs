@@ -135,6 +135,106 @@ impl NullBitmap {
     }
 }
 
+/// One-pass record of which scalar [`Value`] variants a column contains, so the
+/// numeric column classifiers ([`classify_stored_column`], [`classify_column`],
+/// `classify_join_keys`, and the sort-key `KeyColumn::classify`) can each pick a
+/// specialised representation from a single shared scan instead of
+/// re-implementing the variant match. Scanning stops at the first non-numeric,
+/// non-null value (`has_other`) — all any caller needs to fall back to
+/// [`Column::Values`]. Entity columns (`Node`/`Relationship`) are recognised by
+/// the caller before this scan, since they are not numeric fast paths.
+pub(crate) struct ValueKinds {
+    has_int: bool,
+    has_float: bool,
+    has_null: bool,
+    has_other: bool,
+}
+
+impl ValueKinds {
+    /// Scans `values` once, recording which scalar kinds are present.
+    #[must_use]
+    pub(crate) fn scan(values: &[Value]) -> Self {
+        let mut kinds = Self {
+            has_int: false,
+            has_float: false,
+            has_null: false,
+            has_other: false,
+        };
+        for v in values {
+            match v {
+                Value::Int(_) => kinds.has_int = true,
+                Value::Float(_) => kinds.has_float = true,
+                Value::Null => kinds.has_null = true,
+                _ => {
+                    // Any non-numeric value forces the value-backed fallback for
+                    // every caller, so there is nothing more to learn.
+                    kinds.has_other = true;
+                    break;
+                }
+            }
+        }
+        kinds
+    }
+
+    /// Every value is `Int` (no float, null, or other) — a lossless `i64` column
+    /// needing no null bitmap.
+    #[must_use]
+    pub(crate) const fn all_int_no_null(&self) -> bool {
+        self.has_int && !self.has_float && !self.has_null && !self.has_other
+    }
+
+    /// Every value is `Float` (no int, null, or other).
+    #[must_use]
+    pub(crate) const fn all_float_no_null(&self) -> bool {
+        self.has_float && !self.has_int && !self.has_null && !self.has_other
+    }
+
+    /// Every value is `Int` or `Null` — a lossless `i64` column paired with a
+    /// null bitmap. Also true for an all-null or empty column.
+    #[must_use]
+    pub(crate) const fn int_or_null(&self) -> bool {
+        !self.has_float && !self.has_other
+    }
+
+    /// Every value is `Int`, `Float`, or `Null` — numeric, but only losslessly
+    /// `i64` when [`int_or_null`](Self::int_or_null); a mix promotes ints to
+    /// `f64` (which rounds magnitudes past 2^53, so it is unfit for join keys).
+    #[must_use]
+    pub(crate) const fn numeric_or_null(&self) -> bool {
+        !self.has_other
+    }
+}
+
+/// Extracts an `i64` column from values proven (by a [`ValueKinds`]) to contain
+/// only `Int`/`Null`. Nulls — and, for a homogeneous all-`Int` column, nothing —
+/// map to a `0` placeholder that the caller's null bitmap, if any, marks absent.
+#[must_use]
+pub(crate) fn ints_from_values(values: Vec<Value>) -> Vec<i64> {
+    values
+        .into_iter()
+        .map(|v| match v {
+            Value::Int(i) => i,
+            _ => 0,
+        })
+        .collect()
+}
+
+/// Extracts an `f64` column from values proven (by a [`ValueKinds`]) to contain
+/// only `Int`/`Float`/`Null`; ints are promoted (lossy past 2^53 — callers that
+/// must stay lossless only call this on an all-`Float` column) and nulls map to
+/// a `0.0` placeholder.
+#[must_use]
+pub(crate) fn floats_from_values(values: Vec<Value>) -> Vec<f64> {
+    values
+        .into_iter()
+        .map(|v| match v {
+            Value::Int(i) => i as f64,
+            Value::Float(f) => f,
+            _ => 0.0,
+        })
+        .collect()
+}
+
 /// Classifies a fully-bound stored column into the most specific lossless
 /// [`Column`] representation supported by the current batch layout.
 ///
@@ -167,77 +267,40 @@ pub fn classify_stored_column(values: Vec<Value>) -> Column {
             .collect();
         return Column::RelIds(triples);
     }
-    if values.iter().all(|v| matches!(v, Value::Int(_))) {
-        let ints = values
-            .into_iter()
-            .map(|v| match v {
-                Value::Int(i) => i,
-                _ => unreachable!("guarded by all() above"),
-            })
-            .collect();
-        return Column::Ints(ints);
+    // Null-intolerant numeric promotion: any null keeps the column value-backed
+    // (the stored layout has no companion null bitmap).
+    let kinds = ValueKinds::scan(&values);
+    if kinds.all_int_no_null() {
+        Column::Ints(ints_from_values(values))
+    } else if kinds.all_float_no_null() {
+        Column::Floats(floats_from_values(values))
+    } else {
+        Column::Values(values)
     }
-    if values.iter().all(|v| matches!(v, Value::Float(_))) {
-        let floats = values
-            .into_iter()
-            .map(|v| match v {
-                Value::Float(f) => f,
-                _ => unreachable!("guarded by all() above"),
-            })
-            .collect();
-        return Column::Floats(floats);
-    }
-    Column::Values(values)
 }
 
 /// Classifies a `Vec<Value>` into the most specific typed Column plus a NullBitmap.
 ///
-/// - If all non-null values are `Int`: returns `Column::Ints` (nulls get 0 as placeholder)
-/// - If all non-null values are `Int` or `Float`: returns `Column::Floats` (ints promoted)
+/// - If every non-null value is `Int`: returns `Column::Ints` (nulls get a 0 placeholder)
+/// - Else if every non-null value is `Int`/`Float`: returns `Column::Floats` (ints promoted)
 /// - Otherwise: returns `Column::Values` as-is
+///
+/// The null bitmap lets nulls ride along in the typed column, so unlike
+/// [`classify_stored_column`] a nullable numeric column is still promoted.
 #[must_use]
 pub fn classify_column(values: Vec<Value>) -> (Column, NullBitmap) {
     let nulls = NullBitmap::from_values(&values);
-
-    let mut all_int = true;
-    let mut all_numeric = true;
-
-    for v in &values {
-        match v {
-            Value::Int(_) | Value::Null => {}
-            Value::Float(_) => {
-                all_int = false;
-            }
-            _ => {
-                all_int = false;
-                all_numeric = false;
-                break;
-            }
-        }
-    }
-
-    if all_int {
-        let ints: Vec<i64> = values
-            .into_iter()
-            .map(|v| match v {
-                Value::Int(i) => i,
-                _ => 0, // null placeholder, bitmap tracks nullness
-            })
-            .collect();
-        (Column::Ints(ints), nulls)
-    } else if all_numeric {
-        let floats: Vec<f64> = values
-            .into_iter()
-            .map(|v| match v {
-                Value::Int(i) => i as f64,
-                Value::Float(f) => f,
-                _ => 0.0, // null placeholder
-            })
-            .collect();
-        (Column::Floats(floats), nulls)
+    let kinds = ValueKinds::scan(&values);
+    let column = if kinds.int_or_null() {
+        Column::Ints(ints_from_values(values))
+    } else if kinds.numeric_or_null() {
+        // Mixed int/float: lossy promotion is acceptable here (the result is a
+        // value column read back through the null bitmap), but not for join keys.
+        Column::Floats(floats_from_values(values))
     } else {
-        (Column::Values(values), nulls)
-    }
+        Column::Values(values)
+    };
+    (column, nulls)
 }
 
 /// Appends the active rows of one batch's typed column slice `src` onto `out`.

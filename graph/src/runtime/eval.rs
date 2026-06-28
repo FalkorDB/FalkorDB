@@ -54,7 +54,7 @@ use crate::{
     graph::graph::NodeId,
     parser::ast::{ExprIR, QuantifierType, Variable},
     runtime::{
-        batch::{Batch, BatchRow, Column, NullBitmap},
+        batch::{Batch, BatchRow, Column, NullBitmap, ValueKinds, ints_from_values},
         functions::{FnType, apply_pow},
         ordermap::OrderMap,
         row::RowView,
@@ -83,21 +83,15 @@ pub const NO_ROW: Option<&'static crate::runtime::row::Row> = None;
 /// compare equal, diverging from per-row evaluation.
 fn classify_join_keys(values: Vec<Value>) -> (Column, NullBitmap) {
     let nulls = NullBitmap::from_values(&values);
-    if values
-        .iter()
-        .all(|v| matches!(v, Value::Int(_) | Value::Null))
-    {
-        let ints = values
-            .into_iter()
-            .map(|v| match v {
-                Value::Int(i) => i,
-                _ => 0, // null placeholder; bitmap tracks nullness
-            })
-            .collect();
-        (Column::Ints(ints), nulls)
+    // Lossless: stop at all-`Int` (or null); never promote a mixed int/float
+    // column to `f64`, which would round integers past 2^53 and silently change
+    // which keys compare equal.
+    let column = if ValueKinds::scan(&values).int_or_null() {
+        Column::Ints(ints_from_values(values))
     } else {
-        (Column::Values(values), nulls)
-    }
+        Column::Values(values)
+    };
+    (column, nulls)
 }
 
 pub enum ValueIter {
