@@ -190,9 +190,13 @@ impl<'a> Iterator for UnwindOp<'a> {
                         }
                     }
 
-                    // Every queued value is one pending entry, so `pending_len`
-                    // is the count of values staged so far. Keep pulling rows and
-                    // packing their values until we have a batch's worth (or the
+                    // `pending_len` counts queued entries, not the values inside
+                    // a boxed `Many` iterator. It equals the staged value count
+                    // at this check because every arm that reaches here used
+                    // `push_one` (one queue entry per value); the arms that box
+                    // an iterator (`push`) all `break` first, so they never make
+                    // this count under-report. Keep pulling rows and packing
+                    // their values until we have a batch's worth (or the
                     // downstream `LIMIT`, whichever is smaller), so the next
                     // `emit` gathers many input rows into one dense columnar
                     // batch rather than one tiny batch per input row. The cap

@@ -8,8 +8,9 @@
 //! emit is identical and lives here.
 //!
 //! The shape of the emitted result columns is chosen by the [`GatherItem`] type
-//! parameter, which knows how to [`scatter`](GatherItem::scatter) a packed
-//! `Vec` of results into one or more columns on the gathered batch. A single id
+//! parameter, which knows how to accumulate packed results into typed column
+//! *lanes* ([`push_into`](GatherItem::push_into)) and then install them on the
+//! gathered batch ([`finish`](GatherItem::finish)). A single id
 //! (`NodeId`/`RelationshipId`) binds one column; an emitter built with
 //! [`new_without_alias`](BatchedResultEmitter::new_without_alias) binds none and
 //! just gathers the matched input rows forward; richer items (scored scans,
@@ -26,7 +27,7 @@
 //!              │ (parent_row, result) │
 //!              └──────────┬───────────┘
 //!                         │
-//!     gather parent columns + origin per result, then scatter the result
+//!     gather parent columns + origin per result, then install the result
 //!     columns (if any)
 //! ```
 
@@ -36,34 +37,77 @@ use crate::graph::graph::{NodeId, RelationshipId};
 use crate::runtime::batch::{BATCH_SIZE, Batch, Column};
 use crate::runtime::value::Value;
 
-/// A per-row result that knows how to scatter a packed batch of itself into one
-/// or more output columns. [`Binding`](GatherItem::Binding) carries the
+/// A per-row result that knows how to accumulate a packed batch of itself into
+/// one or more output columns. [`Binding`](GatherItem::Binding) carries the
 /// per-operator metadata (which alias slots to bind, and any layout flags).
-pub(crate) trait GatherItem {
-    /// Per-operator binding metadata consumed by [`scatter`](Self::scatter).
+///
+/// Results are accumulated directly into typed column *lanes* as they are pulled
+/// ([`push_into`](Self::push_into)) rather than collected into a `Vec<Self>` and
+/// transposed afterward — so a multi-column item (edge endpoints, scored id)
+/// never materializes an intermediate `Vec` of tuples just to split it back into
+/// per-column `Vec`s. [`finish`](Self::finish) installs the completed lanes on
+/// the gathered batch.
+pub(crate) trait GatherItem: Sized {
+    /// Per-operator binding metadata consumed by [`new_lanes`](Self::new_lanes),
+    /// [`push_into`](Self::push_into) and [`finish`](Self::finish).
     type Binding;
 
-    /// Scatter the packed results into columns on `out`, which has already been
+    /// Typed column accumulators this item scatters into: one growable `Vec` per
+    /// output column.
+    type Lanes;
+
+    /// Create empty lanes pre-sized for up to `cap` results. Columns the binding
+    /// leaves unbound (an absent score, a self-loop `to`) are left at zero
+    /// capacity so they never allocate.
+    fn new_lanes(
+        binding: &Self::Binding,
+        cap: usize,
+    ) -> Self::Lanes;
+
+    /// Push one result's components into their lanes, applying any per-item
+    /// layout (e.g. the edge transpose swap).
+    fn push_into(
+        self,
+        binding: &Self::Binding,
+        lanes: &mut Self::Lanes,
+    );
+
+    /// Install the accumulated lanes as columns on `out`, which has already been
     /// gathered to one row per result.
-    fn scatter(
-        items: Vec<Self>,
+    fn finish(
+        lanes: Self::Lanes,
         binding: &Self::Binding,
         out: &mut Batch,
-    ) where
-        Self: Sized;
+    );
 }
 
 impl GatherItem for NodeId {
     /// `Some(alias)` binds the node-id column; `None` binds no column.
     type Binding = Option<u32>;
+    type Lanes = Vec<NodeId>;
 
-    fn scatter(
-        items: Vec<Self>,
+    fn new_lanes(
+        _binding: &Self::Binding,
+        cap: usize,
+    ) -> Self::Lanes {
+        Vec::with_capacity(cap)
+    }
+
+    fn push_into(
+        self,
+        _binding: &Self::Binding,
+        lanes: &mut Self::Lanes,
+    ) {
+        lanes.push(self);
+    }
+
+    fn finish(
+        lanes: Self::Lanes,
         binding: &Self::Binding,
         out: &mut Batch,
     ) {
         if let Some(alias) = binding {
-            out.set_column(*alias, Column::NodeIds(items));
+            out.set_column(*alias, Column::NodeIds(lanes));
         }
     }
 }
@@ -71,14 +115,30 @@ impl GatherItem for NodeId {
 impl GatherItem for RelationshipId {
     /// `Some(alias)` binds the relationship-id column; `None` binds no column.
     type Binding = Option<u32>;
+    type Lanes = Vec<RelationshipId>;
 
-    fn scatter(
-        items: Vec<Self>,
+    fn new_lanes(
+        _binding: &Self::Binding,
+        cap: usize,
+    ) -> Self::Lanes {
+        Vec::with_capacity(cap)
+    }
+
+    fn push_into(
+        self,
+        _binding: &Self::Binding,
+        lanes: &mut Self::Lanes,
+    ) {
+        lanes.push(self);
+    }
+
+    fn finish(
+        lanes: Self::Lanes,
         binding: &Self::Binding,
         out: &mut Batch,
     ) {
         if let Some(alias) = binding {
-            out.set_column(*alias, Column::RelIds(items));
+            out.set_column(*alias, Column::RelIds(lanes));
         }
     }
 }
@@ -94,41 +154,83 @@ pub(crate) struct ScoredColumn {
 
 impl GatherItem for (NodeId, f64) {
     type Binding = ScoredColumn;
+    type Lanes = (Vec<NodeId>, Vec<f64>);
 
-    fn scatter(
-        items: Vec<Self>,
+    fn new_lanes(
+        binding: &Self::Binding,
+        cap: usize,
+    ) -> Self::Lanes {
+        // Only allocate the score lane when a score column is bound.
+        let scores = if binding.score.is_some() {
+            Vec::with_capacity(cap)
+        } else {
+            Vec::new()
+        };
+        (Vec::with_capacity(cap), scores)
+    }
+
+    fn push_into(
+        self,
+        binding: &Self::Binding,
+        lanes: &mut Self::Lanes,
+    ) {
+        let (id, score) = self;
+        lanes.0.push(id);
+        if binding.score.is_some() {
+            lanes.1.push(score);
+        }
+    }
+
+    fn finish(
+        lanes: Self::Lanes,
         binding: &Self::Binding,
         out: &mut Batch,
     ) {
-        // Hoist the score-bound check out of the loop: when a score column is
-        // bound, `unzip` keeps the id and score columns the same length by
-        // construction; otherwise we never build the score column at all.
+        let (ids, scores) = lanes;
+        out.set_column(binding.id, Column::NodeIds(ids));
         if let Some(score_alias) = binding.score {
-            let (nodes, scores): (Vec<NodeId>, Vec<f64>) = items.into_iter().unzip();
-            out.set_column(binding.id, Column::NodeIds(nodes));
             out.set_column(score_alias, Column::Floats(scores));
-        } else {
-            let nodes: Vec<NodeId> = items.into_iter().map(|(id, _)| id).collect();
-            out.set_column(binding.id, Column::NodeIds(nodes));
         }
     }
 }
 
 impl GatherItem for (RelationshipId, f64) {
     type Binding = ScoredColumn;
+    type Lanes = (Vec<RelationshipId>, Vec<f64>);
 
-    fn scatter(
-        items: Vec<Self>,
+    fn new_lanes(
+        binding: &Self::Binding,
+        cap: usize,
+    ) -> Self::Lanes {
+        let scores = if binding.score.is_some() {
+            Vec::with_capacity(cap)
+        } else {
+            Vec::new()
+        };
+        (Vec::with_capacity(cap), scores)
+    }
+
+    fn push_into(
+        self,
+        binding: &Self::Binding,
+        lanes: &mut Self::Lanes,
+    ) {
+        let (id, score) = self;
+        lanes.0.push(id);
+        if binding.score.is_some() {
+            lanes.1.push(score);
+        }
+    }
+
+    fn finish(
+        lanes: Self::Lanes,
         binding: &Self::Binding,
         out: &mut Batch,
     ) {
+        let (ids, scores) = lanes;
+        out.set_column(binding.id, Column::RelIds(ids));
         if let Some(score_alias) = binding.score {
-            let (edges, scores): (Vec<RelationshipId>, Vec<f64>) = items.into_iter().unzip();
-            out.set_column(binding.id, Column::RelIds(edges));
             out.set_column(score_alias, Column::Floats(scores));
-        } else {
-            let edges: Vec<RelationshipId> = items.into_iter().map(|(id, _)| id).collect();
-            out.set_column(binding.id, Column::RelIds(edges));
         }
     }
 }
@@ -148,43 +250,64 @@ pub(crate) struct EdgeEndpoints {
     pub(crate) transposed: bool,
 }
 
+/// Column lanes for an edge scan: the two endpoint node columns plus the edge
+/// column. `tos` stays empty (and unallocated) for a self-loop pattern whose
+/// endpoints share one alias.
+pub(crate) struct EdgeLanes {
+    froms: Vec<NodeId>,
+    tos: Vec<NodeId>,
+    edges: Vec<RelationshipId>,
+}
+
 impl GatherItem for (NodeId, NodeId, RelationshipId) {
     type Binding = EdgeEndpoints;
+    type Lanes = EdgeLanes;
 
-    fn scatter(
-        items: Vec<Self>,
+    fn new_lanes(
+        binding: &Self::Binding,
+        cap: usize,
+    ) -> Self::Lanes {
+        EdgeLanes {
+            froms: Vec::with_capacity(cap),
+            // A self-loop pattern binds one alias via `from`, so we never build
+            // the `to` column for it — leave its lane unallocated.
+            tos: if binding.to.is_some() {
+                Vec::with_capacity(cap)
+            } else {
+                Vec::new()
+            },
+            edges: Vec::with_capacity(cap),
+        }
+    }
+
+    fn push_into(
+        self,
+        binding: &Self::Binding,
+        lanes: &mut Self::Lanes,
+    ) {
+        let (src, dst, edge) = self;
+        let (from_node, to_node) = if binding.transposed {
+            (dst, src)
+        } else {
+            (src, dst)
+        };
+        lanes.froms.push(from_node);
+        if binding.to.is_some() {
+            lanes.tos.push(to_node);
+        }
+        lanes.edges.push(edge);
+    }
+
+    fn finish(
+        lanes: Self::Lanes,
         binding: &Self::Binding,
         out: &mut Batch,
     ) {
-        let mut froms = Vec::with_capacity(items.len());
-        let mut edges = Vec::with_capacity(items.len());
-        // Hoist the `to`-bound check out of the loop. A distinct `to` endpoint
-        // is gathered alongside `from` (same length by construction); a
-        // self-loop pattern shares one alias, so we bind it once via `from` and
-        // never build the `to` column.
+        out.set_column(binding.from, Column::NodeIds(lanes.froms));
         if let Some(to_alias) = binding.to {
-            let mut tos = Vec::with_capacity(items.len());
-            for (src, dst, edge) in items {
-                let (from_node, to_node) = if binding.transposed {
-                    (dst, src)
-                } else {
-                    (src, dst)
-                };
-                froms.push(from_node);
-                tos.push(to_node);
-                edges.push(edge);
-            }
-            out.set_column(binding.from, Column::NodeIds(froms));
-            out.set_column(to_alias, Column::NodeIds(tos));
-            out.set_column(binding.edge, Column::RelIds(edges));
-        } else {
-            for (src, dst, edge) in items {
-                froms.push(if binding.transposed { dst } else { src });
-                edges.push(edge);
-            }
-            out.set_column(binding.from, Column::NodeIds(froms));
-            out.set_column(binding.edge, Column::RelIds(edges));
+            out.set_column(to_alias, Column::NodeIds(lanes.tos));
         }
+        out.set_column(binding.edge, Column::RelIds(lanes.edges));
     }
 }
 
@@ -193,13 +316,29 @@ impl GatherItem for Value {
     /// the best lossless stored shape (ints/floats), so this preserves the
     /// column specialization a row builder would have produced.
     type Binding = u32;
+    type Lanes = Vec<Value>;
 
-    fn scatter(
-        items: Vec<Self>,
+    fn new_lanes(
+        _binding: &Self::Binding,
+        cap: usize,
+    ) -> Self::Lanes {
+        Vec::with_capacity(cap)
+    }
+
+    fn push_into(
+        self,
+        _binding: &Self::Binding,
+        lanes: &mut Self::Lanes,
+    ) {
+        lanes.push(self);
+    }
+
+    fn finish(
+        lanes: Self::Lanes,
         binding: &Self::Binding,
         out: &mut Batch,
     ) {
-        out.set_column(*binding, Column::Values(items));
+        out.set_column(*binding, Column::Values(lanes));
     }
 }
 
@@ -311,11 +450,13 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
     /// Pack up to [`BATCH_SIZE`] `(parent row, result)` pairs from the pending
     /// queue into one columnar batch. `gather` replicates each parent row's
     /// columns (and correlation origin) once per matching result; the result
-    /// columns are then attached via [`GatherItem::scatter`]. The per-row index
-    /// vector is only needed when the parent carries columns *or* a correlation
-    /// origin sidecar — a bare column-less (leaf) parent skips it and emits a
-    /// standalone result batch. Returns `None` when the queue drained without
-    /// yielding a result, in which case the caller refills.
+    /// columns are accumulated straight into typed lanes as each result is
+    /// pulled ([`GatherItem::push_into`]) and installed via
+    /// [`GatherItem::finish`]. The per-row index vector is only needed when the
+    /// parent carries columns *or* a correlation origin sidecar — a bare
+    /// column-less (leaf) parent skips it and emits a standalone result batch.
+    /// Returns `None` when the queue drained without yielding a result, in which
+    /// case the caller refills.
     pub(crate) fn emit(&mut self) -> Option<Batch<'a>> {
         // Gather (rather than build a standalone batch) whenever the parent has
         // columns to replicate *or* per-row correlation origins to carry forward;
@@ -330,21 +471,37 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
         } else {
             Vec::new()
         };
-        let mut items: Vec<I> = Vec::with_capacity(BATCH_SIZE);
-        while items.len() < BATCH_SIZE {
+        // Accumulate results straight into typed column lanes instead of a
+        // `Vec<I>`: a multi-column item never materializes an intermediate
+        // tuple `Vec` just to transpose it back into columns at the end.
+        let mut lanes = I::new_lanes(&self.binding, BATCH_SIZE);
+        let mut count = 0usize;
+        while count < BATCH_SIZE {
             let Some((row, iter)) = self.pending.front_mut() else {
                 break;
             };
-            if let Some(item) = iter.next() {
-                if should_expand_batch {
-                    indices.push(*row);
+            let row = *row;
+            // Keep taking from this row's iterator while the batch has room.
+            // When it runs dry, drop the entry and move to the next queued row;
+            // if the batch fills mid-iterator, the partially-drained entry stays
+            // at the front for the next `emit`.
+            let mut drained = false;
+            while count < BATCH_SIZE && !drained {
+                if let Some(item) = iter.next() {
+                    if should_expand_batch {
+                        indices.push(row);
+                    }
+                    item.push_into(&self.binding, &mut lanes);
+                    count += 1;
+                } else {
+                    drained = true;
                 }
-                items.push(item);
-            } else {
+            }
+            if drained {
                 self.pending.pop_front();
             }
         }
-        if items.is_empty() {
+        if count == 0 {
             return None;
         }
         let batch = self
@@ -356,7 +513,7 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
         } else {
             Batch::new(0)
         };
-        I::scatter(items, &self.binding, &mut out);
+        I::finish(lanes, &self.binding, &mut out);
         Some(out)
     }
 }
