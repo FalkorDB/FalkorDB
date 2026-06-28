@@ -189,6 +189,29 @@ fn partition_point(
     lo
 }
 
+/// Galloping (exponential) lower bound: the first index in `[start, count)` where `predicate` is false,
+/// found by probing outward from `start` (1, 2, 4, … entries) until it overshoots, then binary-searching
+/// the final interval. Cost is `O(log(gap))` in the distance to the answer, so merging a sorted run by
+/// calling this once per run entry (each resuming from the previous answer) is `O(B·log(N/B))` — it adapts:
+/// cheap when run entries are sparse, and degrading to a linear scan (no worse than a merge-walk) when they
+/// are dense. `predicate` must be monotone over `[start, count)` (true… then false…).
+fn gallop_lower_bound(
+    start: usize,
+    count: usize,
+    mut predicate: impl FnMut(usize) -> bool,
+) -> usize {
+    let mut step = 1;
+    while start + step < count && predicate(start + step) {
+        step *= 2;
+    }
+    // The answer is in `[start + step/2, min(start + step, count))`: `predicate` held at the previous probe
+    // (`start + step/2`, or `start` itself) and fails at `start + step` (or that probe ran past `count`).
+    partition_point(
+        (start + step / 2)..(start + step).min(count),
+        &mut predicate,
+    )
+}
+
 /// Two-pointer merge of a leaf's `count` entries (read via `leaf_key`/`leaf_doc`, ascending) with the
 /// sorted `batch`, dropping exact `(key, doc)` duplicates, calling `emit(key, doc, leaf_index)` once per
 /// output entry in order. `leaf_index` is `Some(i)` for a leaf entry (so the caller can copy its packed
@@ -888,14 +911,14 @@ impl CompactIndexedLeaf {
         CompactIndexedLeaf(Arc::from(buf.as_slice()))
     }
 
-    /// Merge a **small** sorted `batch` whose keys are all *existing* distinct values, by binary-searching
-    /// each entry's position and block-copying the leaf's index + doc cells between positions (verbatim — no
-    /// per-entry key decode for the copied spans, and no distinct-table change so no index remap). The caller
-    /// guarantees every entry [`packing_fits`], every key is already a distinct value, and
+    /// Merge a sorted `batch` whose keys are all *existing* distinct values, by galloping to each entry's
+    /// position and block-copying the leaf's index + doc cells between positions (verbatim — no per-entry key
+    /// decode for the copied spans, and no distinct-table change so no index remap). The caller guarantees
+    /// every entry [`packing_fits`], every key is already a distinct value, and
     /// `count + batch.len() <= LEAF_MAX`. Exact `(key, doc)` duplicates (within the batch or against the leaf)
-    /// are dropped. This beats the full [`Self::merge`] walk when the batch is small relative to the leaf —
-    /// it reads ~`batch.len() * log(count)` keys instead of `count` — so the caller routes only small,
-    /// all-existing-distinct batches here and everything else (new distinct values, large batches) to `merge`.
+    /// are dropped. Galloping (see [`gallop_lower_bound`]) makes this never worse than the full
+    /// [`Self::merge`] walk at any batch size — `O(B·log(N/B))` — so the caller routes *all* all-existing-
+    /// distinct batches here and only new-distinct ones (which need an index remap) to `merge`.
     fn block_copy_merge(
         &self,
         batch: &[(u64, u64)],
@@ -929,9 +952,10 @@ impl CompactIndexedLeaf {
         let mut leaf_pos = 0usize;
         let mut previous: Option<(u64, u64)> = None;
         for &(key, doc) in batch {
-            // binary-search this entry's insert position within the not-yet-copied tail of the leaf
+            // gallop to this entry's insert position within the not-yet-copied tail of the leaf — cheap
+            // for a sparse batch, never worse than a linear scan for a dense one
             let position =
-                partition_point(leaf_pos..count, |i| (leaf_key(i), leaf_doc(i)) < (key, doc));
+                gallop_lower_bound(leaf_pos, count, |i| (leaf_key(i), leaf_doc(i)) < (key, doc));
             // block-copy the leaf entries before it, verbatim (index byte + doc cell, no key decode)
             new_index.extend_from_slice(&bytes[index_offset + leaf_pos..index_offset + position]);
             new_docs.extend_from_slice(
@@ -1280,13 +1304,11 @@ impl Leaf {
                     return vec![Leaf::Compact(l.merge(batch))];
                 }
                 Leaf::CompactIndexed(l) if batch.iter().all(|&(k, d)| packing_fits(&l.0, k, d)) => {
-                    // A small batch of values that are all *already* distinct is far cheaper to block-copy
-                    // (binary-search each position + memcpy the spans between) than to merge-walk; the
-                    // crossover is ~`count / 4`. New distinct values (which would need an index remap) and
-                    // larger batches go through the full merge-walk instead.
-                    if batch.len() * 4 <= l.count()
-                        && batch.iter().all(|&(k, _)| l.distinct_slot(k).is_ok())
-                    {
+                    // If every batch key is *already* a distinct value, block-copy the leaf's index + doc
+                    // cells between the (galloped) insert positions — no index remap, and the gallop makes
+                    // this never worse than the merge-walk at any batch size (so no size guard). A batch that
+                    // introduces a new distinct value needs an index remap, so it takes the merge-walk.
+                    if batch.iter().all(|&(k, _)| l.distinct_slot(k).is_ok()) {
                         return vec![Leaf::CompactIndexed(l.block_copy_merge(batch))];
                     }
                     return vec![Leaf::CompactIndexed(l.merge(batch))];
@@ -1307,6 +1329,8 @@ impl AosLeaf {
     /// Two-pointer merge of `self`'s entries with a sorted `batch` into a single new tag-free AoS page — no
     /// `Vec<(u64, u64)>`, no sort, one allocation. Exact `(key, doc)` duplicates are dropped (re-adding an
     /// existing tuple is a no-op). The caller guarantees the result fits (`count + batch.len() <= LEAF_MAX`).
+    /// (A galloping block-copy was tried here but only helped tiny batches and regressed large ones — AoS has
+    /// no per-entry decode for it to amortize, unlike the compact merges — so the simple walk stays.)
     fn merge_batch(
         &self,
         batch: &[(u64, u64)],
@@ -1509,21 +1533,26 @@ impl Node {
             Node::Branch(branch) => {
                 // At least one replacement child per existing child (a touched one may split into more).
                 let mut new_children: Vec<Node> = Vec::with_capacity(branch.children.len());
-                // `rest` is the suffix of `batch` not yet assigned to an earlier child; it shrinks
-                // from the front as we walk the children left to right.
-                let mut rest = batch;
+                // Split the sorted `batch` across the children with a single linear sweep — a merge of the
+                // sorted batch against the sorted separators. `cursor` only ever advances, so a child that
+                // receives nothing costs one comparison, not a binary search over the whole remaining batch:
+                // routing a localized batch over a wide branch is O(children + batch), not
+                // O(children * log batch). (A merge-pass, not galloping — every child must be emitted
+                // (touched ones recurse, untouched share by Arc), so the O(children) walk is unavoidable.)
+                let mut cursor = 0usize;
                 for (child_idx, child) in branch.children.iter().enumerate() {
-                    // Each child owns keys strictly below its right separator; the last child (which
-                    // has no separator) owns everything remaining. `rest` is sorted, so a binary
-                    // `partition_point` finds how many leading entries fall into this child.
+                    // Each child owns keys strictly below its right separator; the last child (no separator)
+                    // owns everything remaining.
                     let child_upper = branch
                         .seps
                         .get(child_idx)
                         .copied()
                         .unwrap_or((u64::MAX, u64::MAX));
-                    let take = rest.partition_point(|&entry| entry < child_upper);
-                    let (for_child, remaining) = rest.split_at(take);
-                    rest = remaining;
+                    let start = cursor;
+                    while cursor < batch.len() && batch[cursor] < child_upper {
+                        cursor += 1;
+                    }
+                    let for_child = &batch[start..cursor];
                     if for_child.is_empty() {
                         new_children.push(child.clone()); // nothing routes here ⇒ share the page
                     } else {
@@ -2715,9 +2744,9 @@ mod tests {
 
     #[test]
     fn block_copy_merge_parity() {
-        // A small batch whose keys are all existing distinct values, into a large indexed leaf, takes the
-        // block-copy merge path (B*4 <= count, all existing-distinct). Must match a reference, with a
-        // within-batch dup and a leaf-present tuple both dropped.
+        // Batches whose keys are all existing distinct values, into a large indexed leaf, take the block-copy
+        // merge path (gallop + memcpy, any size). Must match a reference, with a within-batch dup and a
+        // leaf-present tuple both dropped.
         let mut seed: Vec<(u64, u64)> = Vec::new();
         for v in 0..4u64 {
             for d in 0..50u64 {
@@ -2759,6 +2788,19 @@ mod tests {
                 .into_iter()
                 .all(|(f, b)| matches!(Leaf::from_parts(f, b), Leaf::CompactIndexed(_))),
             "block-copy merge must keep the leaf indexed"
+        );
+        // A *large* all-existing-distinct batch (no size guard now — galloping keeps block-copy ≥ the walk).
+        // 40 entries into the ~205-entry leaf stays under LEAF_MAX and on the block-copy path.
+        let mut big: Vec<(u64, u64)> = (0..40u64).map(|i| ((i % 4) * 1_000, 500 + i)).collect();
+        big.sort_unstable();
+        t.insert_batch(&big);
+        for &p in &big {
+            reference.insert(p);
+        }
+        assert_eq!(t.len(), reference.len());
+        assert_eq!(
+            tree_pairs(&t),
+            reference.iter().copied().collect::<Vec<_>>()
         );
     }
 
