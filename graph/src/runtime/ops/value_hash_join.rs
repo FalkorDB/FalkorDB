@@ -4,24 +4,29 @@
 //! optimizer detects an equality predicate between a left and right expression.
 //!
 //! ```text
-//!  Phase 1: BUILD (materialize right sub-plan into hash table)
+//!  Phase 1: BUILD (consume right sub-plan into the probe table)
 //!
-//!     Right child ──► for each row: hash(rhs_expr) ──► HashMap<hash, Vec<(key, envs)>>
+//!     Right child ──► eval_batch(rhs_expr) per batch ──► one key per row
+//!                          │   all-integer keys ─► Int   table:  i64       ─► [RightRowRef]
+//!                          │   otherwise        ─► Value table:  hash(key) ─► [(key, [RightRowRef])]
+//!                          ▼
+//!                     (right rows are NOT copied — only RightRowRef positions are kept)
 //!
 //!  Phase 2: PROBE (stream left rows, look up matches)
 //!
-//!     Left child ──► for each row: hash(lhs_expr) ──► probe table
-//!                                                        │
-//!                          ┌──────────────────────────────┘
-//!                          │  for each matching right env:
-//!                          │    merged = left_env + right_env
+//!     Left child ──► eval(lhs_expr) per row ──► probe the table
+//!                          │  for each matching RightRowRef:
+//!                          │    materialize right row, merged = left_row + right_row
 //!                          ▼
 //!                     output batches
 //! ```
 //!
-//! The hash table uses chaining for collision resolution: each bucket stores
-//! a `Vec<(Value, BuildSlot)>` where exact key equality is checked during
-//! probe. NULL keys are skipped on both sides (Cypher NULL != NULL semantics).
+//! The table has two representations (see [`JoinHashTable`]): an `i64`-keyed
+//! fast path when every build key is integer-valued, and a general `Value`
+//! table (hash-to-bucket, then exact `Value` equality) for everything else.
+//! NULL keys are skipped on both sides (Cypher NULL != NULL semantics).
+
+use std::collections::HashMap;
 
 use ahash::RandomState;
 use once_cell::sync::Lazy;
@@ -30,7 +35,7 @@ use rustc_hash::FxHashMap;
 use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow, Column},
     eval::ExprEval,
     row::{Row, RowView},
     runtime::Runtime,
@@ -52,10 +57,34 @@ pub(crate) struct RightRowRef {
 /// kept as positions so probe can re-check exact key equality after a hash hit.
 pub(crate) type BuildSlot = Vec<RightRowRef>;
 
-/// The build/probe hash table: `hash(key) -> [(key, matching right rows)]`.
-/// The per-bucket `Vec` resolves hash collisions; exact key equality is
-/// re-checked on probe (see `BuildSlot`).
-pub(crate) type JoinHashTable = FxHashMap<u64, Vec<(Value, BuildSlot)>>;
+/// General-path build/probe table: `seeded_hash(Value) -> [(key, right rows)]`.
+/// The per-bucket `Vec` resolves hash collisions; exact `Value` equality is
+/// re-checked on probe (see [`BuildSlot`]).
+pub(crate) type ValueTable = FxHashMap<u64, Vec<(Value, BuildSlot)>>;
+
+/// The build/probe hash table, in one of two representations.
+pub(crate) enum JoinHashTable {
+    /// Fast path used when every build-side key is integer-valued. Keyed
+    /// directly on `i64` with the seeded hasher (hashbrown resolves
+    /// collisions), so the build side stores no boxed `Value` per key, hashes
+    /// 8 bytes instead of the `Value` enum, and compares keys with a plain
+    /// `i64` equality instead of `Value::compare_value` — none of which leave a
+    /// `Value` to drop. Whole-valued probe floats (Cypher treats `30.0 = 30`)
+    /// are converted to `i64` to probe; see [`key_as_i64`].
+    Int(HashMap<i64, BuildSlot, RandomState>),
+    /// General path: any non-integer key (string, non-whole float, …) on the
+    /// build side promotes the table here, where keys keep their `Value` form.
+    Value(ValueTable),
+}
+
+impl JoinHashTable {
+    fn is_empty(&self) -> bool {
+        match self {
+            Self::Int(table) => table.is_empty(),
+            Self::Value(table) => table.is_empty(),
+        }
+    }
+}
 
 /// Process-global random seed for join-key hashing.
 ///
@@ -73,6 +102,53 @@ static JOIN_HASH_SEED: Lazy<RandomState> = Lazy::new(RandomState::new);
 /// keys; the random seed is what keeps that spread non-adversarial.
 fn hash_value(value: &Value) -> u64 {
     JOIN_HASH_SEED.hash_one(value)
+}
+
+/// Map a key to the `i64` the [`JoinHashTable::Int`] fast path is keyed on,
+/// honouring `Value`'s numeric equality (`Int(n)` and the whole float `n.0`
+/// compare equal and hash identically, so they must share a key). Integers map
+/// directly; a float maps only if it round-trips through `i64` exactly (a whole
+/// number, in range — matching the `Value` `Hash`/`compare_value` rules);
+/// anything else (string, non-whole float, NaN, …) can't equal an integer key,
+/// so it returns `None`.
+fn key_as_i64(key: &Value) -> Option<i64> {
+    match key {
+        Value::Int(n) => Some(*n),
+        Value::Float(f) => {
+            let n = *f as i64;
+            (n as f64 == *f).then_some(n)
+        }
+        _ => None,
+    }
+}
+
+/// Insert one build row into the general (`Value`) table, grouping rows that
+/// share a key under a single bucket entry (re-using it on a hash collision or
+/// a repeated key).
+fn insert_value(
+    table: &mut ValueTable,
+    key: Value,
+    slot: RightRowRef,
+) {
+    let bucket = table.entry(hash_value(&key)).or_default();
+    match bucket.iter_mut().find(|(k, _)| *k == key) {
+        Some((_, refs)) => refs.push(slot),
+        None => bucket.push((key, vec![slot])),
+    }
+}
+
+/// Move every entry of the integer fast-path table into a fresh general table
+/// (as `Value::Int` keys) so the build can continue once a non-integer key
+/// forces the general representation. Equality is preserved: `Value::Int(n)`
+/// matches exactly the same probe keys the raw `i64 n` did (`Int(n)` and the
+/// whole float `n.0` hash identically and compare equal).
+fn promote_int_table(int_table: &mut HashMap<i64, BuildSlot, RandomState>) -> ValueTable {
+    let mut table = ValueTable::default();
+    for (n, refs) in int_table.drain() {
+        let key = Value::Int(n);
+        table.entry(hash_value(&key)).or_default().push((key, refs));
+    }
+    table
 }
 
 pub struct ValueHashJoinOp<'a> {
@@ -128,7 +204,12 @@ impl<'a> ValueHashJoinOp<'a> {
     /// nothing per row and only matched rows are materialised during probe.
     fn build_hash_table(&mut self) -> Result<JoinHashTable, String> {
         let eval = ExprEval::from_runtime(self.runtime);
-        let mut table = JoinHashTable::default();
+        // Build on the integer fast path; the first non-integer-valued key
+        // promotes the entries gathered so far into the general `Value` table,
+        // and the rest of the build continues there.
+        let mut int_table: HashMap<i64, BuildSlot, RandomState> =
+            HashMap::with_hasher((*JOIN_HASH_SEED).clone());
+        let mut value_table: Option<ValueTable> = None;
 
         for result in self.right.by_ref() {
             let batch = result?;
@@ -138,9 +219,11 @@ impl<'a> ValueHashJoinOp<'a> {
 
             // Bulk-evaluate the build key for the whole batch in one shot. For
             // the common `b.attr` shape this is a single columnar attribute
-            // fetch; other shapes fall back to per-row eval inside `eval_batch`.
-            // The column is lossless, so reconstructing each key via
-            // `column.get` is equivalent to evaluating it individually.
+            // fetch yielding a primitive `Column::Ints`, which feeds the integer
+            // fast-path table straight from the `i64` slice with no per-row
+            // `Value` created or dropped; other shapes fall back to per-row eval
+            // inside `eval_batch`. The column is lossless, so routing it below is
+            // equivalent to evaluating each key individually.
             let active: Vec<usize> = batch.active_indices().collect();
             let (column, nulls) = eval.eval_batch(self.rhs_exp, &batch, &active)?;
 
@@ -148,29 +231,51 @@ impl<'a> ValueHashJoinOp<'a> {
                 if nulls.is_null(i) {
                     continue; // NULL never joins (Cypher NULL != NULL).
                 }
-                let key = column.get(i);
                 let slot = RightRowRef {
                     batch: batch_ref,
                     row: row as u32,
                 };
-                // Group refs under their key within the bucket, re-using the
-                // existing key entry on a hash collision or repeated key.
-                let bucket = table.entry(hash_value(&key)).or_default();
-                match bucket.iter_mut().find(|(k, _)| *k == key) {
-                    Some((_, refs)) => refs.push(slot),
-                    None => bucket.push((key, vec![slot])),
+                match &mut value_table {
+                    // General path already active: re-materialize the key value.
+                    Some(table) => insert_value(table, column.get(i), slot),
+                    None => match &column {
+                        // All-integer column: key directly on the `i64` — the
+                        // build side's hot path (no `Value` box / hash / drop).
+                        Column::Ints(ints) => {
+                            int_table.entry(ints[i]).or_default().push(slot);
+                        }
+                        // Heterogeneous keys: honour `Value` numeric equality
+                        // (`30.0 == 30`) via `key_as_i64`, otherwise promote the
+                        // accumulated integer entries to the general table.
+                        _ => {
+                            let key = column.get(i);
+                            match key_as_i64(&key) {
+                                Some(n) => {
+                                    int_table.entry(n).or_default().push(slot);
+                                }
+                                None => {
+                                    let mut table = promote_int_table(&mut int_table);
+                                    insert_value(&mut table, key, slot);
+                                    value_table = Some(table);
+                                }
+                            }
+                        }
+                    },
                 }
             }
             self.right_batches.push(batch);
         }
 
-        Ok(table)
+        Ok(match value_table {
+            Some(table) => JoinHashTable::Value(table),
+            None => JoinHashTable::Int(int_table),
+        })
     }
 
     /// Populate `right_match_envs` with the build-side rows whose key equals
     /// `key`, preserving build insertion order, and reset `right_match_pos`.
-    /// Build groups all rows for a given key under a single bucket entry, so at
-    /// most one entry matches; its `RightRowRef`s are materialised straight into
+    /// Build groups all rows for a given key under a single entry, so at most
+    /// one entry matches; its `RightRowRef`s are materialised straight into
     /// `right_match_envs` from `right_batches` with no intermediate ref copy.
     fn fill_matches(
         &mut self,
@@ -178,10 +283,24 @@ impl<'a> ValueHashJoinOp<'a> {
     ) {
         self.right_match_envs.clear();
         self.right_match_pos = 0;
-        let Some(bucket) = self.hash_table.as_ref().unwrap().get(&hash_value(key)) else {
-            return;
+        let refs = match self.hash_table.as_ref().unwrap() {
+            // Integer fast path: only integer-valued probe keys can match an
+            // all-integer build side; everything else short-circuits.
+            JoinHashTable::Int(table) => {
+                let Some(n) = key_as_i64(key) else {
+                    return;
+                };
+                table.get(&n)
+            }
+            // General path: hash to the bucket, then re-check exact equality.
+            JoinHashTable::Value(table) => {
+                let Some(bucket) = table.get(&hash_value(key)) else {
+                    return;
+                };
+                bucket.iter().find(|(k, _)| k == key).map(|(_, refs)| refs)
+            }
         };
-        let Some((_, refs)) = bucket.iter().find(|(k, _)| k == key) else {
+        let Some(refs) = refs else {
             return;
         };
         for slot in refs {
