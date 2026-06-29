@@ -45,8 +45,8 @@ use crate::runtime::row::Row;
 use crate::runtime::row::RowView;
 use crate::runtime::{
     batch::{
-        BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow, FloatLane, NumericColumn,
-        classify_numeric,
+        BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow, Column, FloatLane, NullBitmap,
+        NumericColumn, classify_numeric,
     },
     runtime::Runtime,
     value::{CompareValue, Value},
@@ -207,6 +207,34 @@ enum KeyColumn {
 }
 
 impl KeyColumn {
+    /// Builds a key column from a bulk [`eval_batch`](ExprEval::eval_batch)
+    /// result. A null anywhere keeps the whole key boxed (so a sort key with
+    /// nulls compares byte-for-byte like `Value::compare_value`); otherwise a
+    /// typed `Ints`/`Floats` column passes straight through and anything else is
+    /// reclassified, the same total order the old per-row path produced.
+    fn from_column(
+        col: Column,
+        nulls: &NullBitmap,
+    ) -> Self {
+        if nulls.any_null() {
+            let values = (0..col.len())
+                .map(|i| {
+                    if nulls.is_null(i) {
+                        Value::Null
+                    } else {
+                        col.get(i)
+                    }
+                })
+                .collect();
+            return Self::Values(values);
+        }
+        match col {
+            Column::Ints(v) => Self::Ints(v),
+            Column::Floats(v) => Self::Floats(v),
+            other => Self::classify((0..other.len()).map(|i| other.get(i)).collect()),
+        }
+    }
+
     /// Specialises a key column to `Ints`/`Floats` when homogeneous, else keeps
     /// the boxed `Values` (consuming them, no clone). A null (or any non-numeric
     /// value) keeps the whole key on the `Values` path so `compare_at` stays
@@ -298,27 +326,19 @@ impl<'a> SortOp<'a> {
             return Ok((combined, Vec::new()));
         }
 
-        // Evaluate the sort keys once per row through a borrowed columnar view
-        // (so `rand()` and other expression keys still work) with no per-row
-        // `Row` allocation. Each key goes into its own column so it can be
-        // specialised to a typed scalar vector (`KeyColumn`), letting the
-        // comparator skip the `Value` enum dispatch for primitive keys.
+        // Evaluate each sort key in bulk: `eval_batch` serves a `var.attr` key
+        // with a single property fetch (no per-row interpreter dispatch) and
+        // falls back to per-row eval for expression keys, so `rand()` etc. still
+        // work. Each key becomes its own typed `KeyColumn`, letting the
+        // comparator skip `Value` enum dispatch for primitive keys.
         let num_keys = trees.len();
-        let mut key_cols: Vec<Vec<Value>> =
-            (0..num_keys).map(|_| Vec::with_capacity(total)).collect();
-        for row in 0..total {
-            let view = BatchRow::new(&combined, row);
-            for (k, (tree, _desc)) in trees.iter().enumerate() {
-                let value = ExprEval::from_runtime(runtime).eval(
-                    tree,
-                    tree.root().idx(),
-                    Some(&view),
-                    None,
-                )?;
-                key_cols[k].push(value);
-            }
+        let active: Vec<usize> = (0..total).collect();
+        let mut typed_keys: Vec<KeyColumn> = Vec::with_capacity(num_keys);
+        for (tree, _desc) in trees {
+            let (col, nulls) =
+                ExprEval::from_runtime(runtime).eval_batch(tree, &combined, &active)?;
+            typed_keys.push(KeyColumn::from_column(col, &nulls));
         }
-        let typed_keys: Vec<KeyColumn> = key_cols.into_iter().map(KeyColumn::classify).collect();
 
         let num_columns = combined.num_columns();
         // Comparator for rows that tie on the *primary* key: the remaining keys
