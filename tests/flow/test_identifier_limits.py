@@ -1,4 +1,5 @@
 from common import *
+import struct
 
 GRAPH_ID = "identifier_limits"
 
@@ -16,7 +17,7 @@ class testIdentifierLimits():
             fn()
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertContains("exceeds maximum length of 512 bytes", str(e))
+            self.env.assertContains("exceeds maximum length of 512", str(e))
 
     # GRAPH.CONSTRAINT consumes command arguments directly (non-AST identifier path).
     def test01_constraint_command_identifier_length_limit(self):
@@ -190,9 +191,33 @@ class testIdentifierLimits():
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertFalse(
-                "Library name exceeds maximum length of 512 bytes" in str(e)
+                "Library name exceeds maximum length of 512" in str(e)
             )
 
         self._assert_identifier_too_long(
             lambda: self.db.udf_load(long_lib, invalid_script, True)
         )
+
+    # GRAPH.BULK headers should reject overlong labels before schema creation.
+    def test07_bulk_insert_label_identifier_length_limit(self):
+        bulk_graph = f"{GRAPH_ID}_bulk"
+        self.con.delete(bulk_graph)
+
+        long_label = b"a" * 513
+        node_header = long_label + b"\x00" + struct.pack("I", 0)
+
+        try:
+            self.con.execute_command(
+                "GRAPH.BULK",
+                bulk_graph,
+                "BEGIN",
+                0,  # node count
+                0,  # edge count
+                1,  # node token count
+                0,  # relation token count
+                node_header,
+            )
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Label name exceeds maximum length of 512", str(e))
+

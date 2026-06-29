@@ -11,6 +11,8 @@
 #include "../schema/schema.h"
 #include "../datatypes/array.h"
 #include "../graph/graph_hub.h"
+#include "../errors/error_msgs.h"
+#include "../util/identifier_limits.h"
 
 #include <string.h>
 
@@ -34,11 +36,13 @@ typedef enum {
 // and retrieve the label IDs
 static int *_BulkInsert_ReadHeaderLabels
 (
+	RedisModuleCtx *ctx,
 	GraphContext* gc,
 	SchemaType t,
 	const char* data,
 	size_t* data_idx
 ) {
+	ASSERT (ctx      != NULL) ;
 	ASSERT (gc       != NULL) ;
 	ASSERT (data     != NULL) ;
 	ASSERT (data_idx != NULL) ;
@@ -71,6 +75,13 @@ static int *_BulkInsert_ReadHeaderLabels
 			memcpy (label, labels, len + 1) ;
 		}
 
+		if (strlen(label) > FDB_MAX_IDENTIFIER_LEN) {
+			RedisModule_ReplyWithErrorFormat (ctx, EMSG_IDENTIFIER_TOO_LONG,
+					"Label name", FDB_MAX_IDENTIFIER_LEN) ;
+			arr_free (label_ids) ;
+			return NULL ;
+		}
+
 		// create schema in case it doesn't exists
 		Schema *s = GraphContext_FindOrAddSchema (gc, label, t, NULL) ;
 		ASSERT (s != NULL) ;
@@ -90,12 +101,14 @@ static int *_BulkInsert_ReadHeaderLabels
 // read the property keys from a header
 static AttributeID *_BulkInsert_ReadHeaderProperties
 (
+	RedisModuleCtx *ctx,
 	GraphContext *gc,
 	SchemaType t,
 	const char *data,
 	size_t *data_idx,
 	uint16_t *prop_count
 ) {
+	ASSERT (ctx        != NULL) ;
 	ASSERT (gc         != NULL) ;
 	ASSERT (data       != NULL) ;
 	ASSERT (data_idx   != NULL) ;
@@ -118,6 +131,13 @@ static AttributeID *_BulkInsert_ReadHeaderProperties
 	for (uint j = 0; j < *prop_count; j++) {
 		char* prop_key = (char*)data + *data_idx ;
 		*data_idx += strlen(prop_key) + 1 ;
+
+		if (strlen(prop_key) > FDB_MAX_IDENTIFIER_LEN) {
+			RedisModule_ReplyWithErrorFormat (ctx, EMSG_IDENTIFIER_TOO_LONG,
+					"Property name", FDB_MAX_IDENTIFIER_LEN) ;
+			rm_free (prop_indices) ;
+			return NULL ;
+		}
 
 		// add properties to schemas
 		prop_indices[j] = GraphContext_FindOrAddAttribute (gc, prop_key, NULL) ;
@@ -206,15 +226,21 @@ static int _BulkInsert_ProcessNodeFile
 	// parse CSV headers
 	//--------------------------------------------------------------------------
 
-	int *label_ids = _BulkInsert_ReadHeaderLabels (gc, SCHEMA_NODE, data,
+	int *label_ids = _BulkInsert_ReadHeaderLabels (ctx, gc, SCHEMA_NODE, data,
 			&data_idx) ;
-	ASSERT (label_ids != NULL) ;
+	if (label_ids == NULL) {
+		return BULK_FAIL ;
+	}
 
 	uint n_lbl = arr_len (label_ids) ;
 
 	// read the CSV header properties and collect their indices
-	AttributeID *prop_indices = _BulkInsert_ReadHeaderProperties (gc,
+	AttributeID *prop_indices = _BulkInsert_ReadHeaderProperties (ctx, gc,
 			SCHEMA_NODE, data, &data_idx, &prop_count) ;
+	if (prop_count > 0 && prop_indices == NULL) {
+		arr_free (label_ids) ;
+		return BULK_FAIL ;
+	}
 
 	//--------------------------------------------------------------------------
 	// load nodes
@@ -305,16 +331,24 @@ static int _BulkInsert_ProcessEdgeFile
 	// parse CSV headers
 	//--------------------------------------------------------------------------
 
-	RelationID *rels = _BulkInsert_ReadHeaderLabels (gc, SCHEMA_EDGE, data,
+	RelationID *rels = _BulkInsert_ReadHeaderLabels (ctx, gc, SCHEMA_EDGE, data,
 			&data_idx) ;
+	if (rels == NULL) {
+		return BULK_FAIL ;
+	}
+
 	uint type_count = arr_len (rels) ;
 
 	// // edges must have exactly one type
 	ASSERT (type_count == 1) ;
 	RelationID rel = rels[0] ;
 
-	AttributeID *prop_indices = _BulkInsert_ReadHeaderProperties (gc,
+	AttributeID *prop_indices = _BulkInsert_ReadHeaderProperties (ctx, gc,
 			SCHEMA_EDGE, data, &data_idx, &prop_count) ;
+	if (prop_count > 0 && prop_indices == NULL) {
+		arr_free (rels) ;
+		return BULK_FAIL ;
+	}
 
 	//--------------------------------------------------------------------------
 	// prepare matrices
@@ -435,8 +469,9 @@ static int _BulkInsert_ProcessTokens
 		int rc = (type == SCHEMA_NODE)
 			? _BulkInsert_ProcessNodeFile (ctx, gc, data, len)
 			: _BulkInsert_ProcessEdgeFile (ctx, gc, data, len) ;
-		UNUSED (rc) ;
-		ASSERT (rc == BULK_OK) ;
+		if (rc != BULK_OK) {
+			return BULK_FAIL ;
+		}
 	}
 
 	return BULK_OK ;
