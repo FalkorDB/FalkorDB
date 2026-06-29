@@ -73,15 +73,12 @@ impl<'a> Iterator for NodeByLabelScanOp<'a> {
             if self.emitter.needs_refill() {
                 match self.child.next() {
                     Some(Ok(batch)) => {
-                        for row in batch.active_indices() {
-                            let iter = self
-                                .runtime
-                                .g
-                                .borrow()
-                                .get_nodes(&self.node_pattern.labels, 0);
-                            self.emitter.push(row, iter);
+                        let labels = &self.node_pattern.labels;
+                        if let Err(e) = self.emitter.seed(batch, |_b, _row| {
+                            Ok(Some(self.runtime.g.borrow().get_nodes(labels, 0)))
+                        }) {
+                            return Some(Err(e));
                         }
-                        self.emitter.set_batch(batch);
                         continue;
                     }
                     Some(Err(e)) => return Some(Err(e)),

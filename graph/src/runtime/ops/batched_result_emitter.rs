@@ -412,6 +412,29 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
         self.batch = Some(batch);
     }
 
+    /// Install the parent batch and queue one result iterator per active row in
+    /// a single pass: the active-index walk borrows our owned batch internally,
+    /// so the caller needs no index Vec and no re-borrow via [`batch`]. `f`
+    /// builds each row's iterator from a view into the batch (or `None` to skip
+    /// the row). Replaces the set_batch-then-loop-push idiom for scans.
+    pub(crate) fn seed<F>(
+        &mut self,
+        batch: Batch<'a>,
+        mut f: F,
+    ) -> Result<(), String>
+    where
+        F: FnMut(&Batch<'a>, usize) -> Result<Option<Box<dyn Iterator<Item = I> + 'a>>, String>,
+    {
+        self.batch = Some(batch);
+        let b = self.batch.as_ref().expect("just set above");
+        for row in b.active_indices() {
+            if let Some(iter) = f(b, row)? {
+                self.pending.push_back((row, RowIter::Many(iter)));
+            }
+        }
+        Ok(())
+    }
+
     /// The parent batch currently being expanded, if any. Operators that push
     /// one row's iterator at a time (to bound peak memory) read it back here to
     /// build the next row's view without keeping a second copy of the batch.

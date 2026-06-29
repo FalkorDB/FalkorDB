@@ -62,28 +62,28 @@ impl<'a> Iterator for NodeByLabelAndIdScanOp<'a> {
             if self.emitter.needs_refill() {
                 match self.child.next() {
                     Some(Ok(batch)) => {
-                        for row in batch.active_indices() {
-                            let view = BatchRow::new(&batch, row);
-                            match self.runtime.evaluate_id_filter(self.filter, &view) {
-                                Ok(Some(range)) => {
-                                    if let Some(min) = range.min() {
-                                        let max =
-                                            range.max().expect("range has a min, so it has a max");
-                                        let iter = self
-                                            .runtime
-                                            .g
-                                            .borrow()
-                                            .get_nodes(&self.node_pattern.labels, min)
-                                            .take_while(move |nid| u64::from(*nid) <= max)
-                                            .filter(move |nid| range.contains(u64::from(*nid)));
-                                        self.emitter.push(row, Box::new(iter));
-                                    }
-                                }
-                                Ok(None) => {}
-                                Err(e) => return Some(Err(e)),
-                            }
+                        if let Err(e) = self.emitter.seed(batch, |b, row| {
+                            let view = BatchRow::new(b, row);
+                            let Some(range) =
+                                self.runtime.evaluate_id_filter(self.filter, &view)?
+                            else {
+                                return Ok(None);
+                            };
+                            let Some(min) = range.min() else {
+                                return Ok(None);
+                            };
+                            let max = range.max().expect("range has a min, so it has a max");
+                            let iter = self
+                                .runtime
+                                .g
+                                .borrow()
+                                .get_nodes(&self.node_pattern.labels, min)
+                                .take_while(move |nid| u64::from(*nid) <= max)
+                                .filter(move |nid| range.contains(u64::from(*nid)));
+                            Ok(Some(Box::new(iter)))
+                        }) {
+                            return Some(Err(e));
                         }
-                        self.emitter.set_batch(batch);
                         continue;
                     }
                     Some(Err(e)) => return Some(Err(e)),

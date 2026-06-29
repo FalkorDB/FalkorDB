@@ -71,48 +71,40 @@ impl<'a> Iterator for EdgeByFulltextScanOp<'a> {
             if self.emitter.needs_refill() {
                 match self.child.next() {
                     Some(Ok(batch)) => {
-                        for row in batch.active_indices() {
-                            let view = BatchRow::new(&batch, row);
+                        if let Err(e) = self.emitter.seed(batch, |b, row| {
+                            let view = BatchRow::new(b, row);
                             let label_str = match ExprEval::from_runtime(self.runtime).eval(
                                 self.label,
                                 self.label.root().idx(),
                                 Some(&view),
                                 None,
-                            ) {
-                                Ok(Value::String(s)) => s,
-                                Ok(_) => {
-                                    return Some(Err(
+                            )? {
+                                Value::String(s) => s,
+                                _ => {
+                                    return Err(
                                         "fulltext query expects a string relationship type".into(),
-                                    ));
+                                    );
                                 }
-                                Err(e) => return Some(Err(e)),
                             };
                             let query_str = match ExprEval::from_runtime(self.runtime).eval(
                                 self.query,
                                 self.query.root().idx(),
                                 Some(&view),
                                 None,
-                            ) {
-                                Ok(Value::String(s)) => s,
-                                Ok(_) => {
-                                    return Some(Err(
-                                        "fulltext query expects a string query".into()
-                                    ));
-                                }
-                                Err(e) => return Some(Err(e)),
+                            )? {
+                                Value::String(s) => s,
+                                _ => return Err("fulltext query expects a string query".into()),
                             };
                             let g = self.runtime.g.borrow();
-                            let iter = match g.fulltext_query_edges(&label_str, &query_str) {
-                                Ok(iter) => Box::new(
-                                    iter.map(|(_src, _dst, edge_id, score)| (edge_id, score)),
-                                )
-                                    as Box<dyn Iterator<Item = (RelationshipId, f64)>>,
-                                Err(e) => return Some(Err(e)),
-                            };
-                            drop(g);
-                            self.emitter.push(row, iter);
+                            let iter = Box::new(
+                                g.fulltext_query_edges(&label_str, &query_str)?
+                                    .map(|(_src, _dst, edge_id, score)| (edge_id, score)),
+                            )
+                                as Box<dyn Iterator<Item = (RelationshipId, f64)>>;
+                            Ok(Some(iter))
+                        }) {
+                            return Some(Err(e));
                         }
-                        self.emitter.set_batch(batch);
                         continue;
                     }
                     Some(Err(e)) => return Some(Err(e)),

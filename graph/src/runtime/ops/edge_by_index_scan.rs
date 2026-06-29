@@ -304,14 +304,9 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                     Some(Ok(batch)) => {
                         let label = &self.relationship_pattern.types[0];
                         let rp = self.relationship_pattern;
-
-                        for row in batch.active_indices() {
-                            let view = BatchRow::new(&batch, row);
-                            let q =
-                                match Self::evaluate_index_query(self.runtime, self.query, &view) {
-                                    Ok(q) => q,
-                                    Err(e) => return Some(Err(e)),
-                                };
+                        if let Err(e) = self.emitter.seed(batch, |b, row| {
+                            let view = BatchRow::new(b, row);
+                            let q = Self::evaluate_index_query(self.runtime, self.query, &view)?;
 
                             // Stream results instead of collecting: the child
                             // batch may have many rows and each row would
@@ -384,10 +379,10 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                                 } else {
                                     base
                                 };
-
-                            self.emitter.push(row, edges);
+                            Ok(Some(edges))
+                        }) {
+                            return Some(Err(e));
                         }
-                        self.emitter.set_batch(batch);
                         continue;
                     }
                     Some(Err(e)) => return Some(Err(e)),

@@ -75,9 +75,9 @@ impl<'a> Iterator for EdgeByVectorScanOp<'a> {
             if self.emitter.needs_refill() {
                 match self.child.next() {
                     Some(Ok(batch)) => {
-                        for row in batch.active_indices() {
-                            let view = BatchRow::new(&batch, row);
-                            let (label_str, attr_str, k_val, vec_arc) = match eval_vector_args(
+                        if let Err(e) = self.emitter.seed(batch, |b, row| {
+                            let view = BatchRow::new(b, row);
+                            let (label_str, attr_str, k_val, vec_arc) = eval_vector_args(
                                 self.runtime,
                                 self.label,
                                 self.attr,
@@ -85,24 +85,17 @@ impl<'a> Iterator for EdgeByVectorScanOp<'a> {
                                 self.vector,
                                 &view,
                                 "db.idx.vector.queryRelationships",
-                            ) {
-                                Ok(t) => t,
-                                Err(e) => return Some(Err(e)),
-                            };
-
+                            )?;
                             let g = self.runtime.g.borrow();
-                            let iter =
-                                match g.vector_query_edges(&label_str, &attr_str, vec_arc, k_val) {
-                                    Ok(iter) => Box::new(
-                                        iter.map(|(_src, _dst, edge_id, score)| (edge_id, score)),
-                                    )
-                                        as Box<dyn Iterator<Item = (RelationshipId, f64)>>,
-                                    Err(e) => return Some(Err(e)),
-                                };
-                            drop(g);
-                            self.emitter.push(row, iter);
+                            let iter = Box::new(
+                                g.vector_query_edges(&label_str, &attr_str, vec_arc, k_val)?
+                                    .map(|(_src, _dst, edge_id, score)| (edge_id, score)),
+                            )
+                                as Box<dyn Iterator<Item = (RelationshipId, f64)>>;
+                            Ok(Some(iter))
+                        }) {
+                            return Some(Err(e));
                         }
-                        self.emitter.set_batch(batch);
                         continue;
                     }
                     Some(Err(e)) => return Some(Err(e)),

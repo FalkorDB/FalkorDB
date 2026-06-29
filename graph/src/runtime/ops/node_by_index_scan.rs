@@ -283,13 +283,9 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
             if self.emitter.needs_refill() {
                 match self.child.next() {
                     Some(Ok(batch)) => {
-                        for row in batch.active_indices() {
-                            let view = BatchRow::new(&batch, row);
-                            let q =
-                                match Self::evaluate_index_query(self.runtime, self.query, &view) {
-                                    Ok(q) => q,
-                                    Err(e) => return Some(Err(e)),
-                                };
+                        if let Err(e) = self.emitter.seed(batch, |b, row| {
+                            let view = BatchRow::new(b, row);
+                            let q = Self::evaluate_index_query(self.runtime, self.query, &view)?;
 
                             // Check if the index can satisfy this query. If not
                             // (e.g. non-indexable value types), fall back to a
@@ -320,9 +316,10 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                                 }
                                 None => base,
                             };
-                            self.emitter.push(row, iter);
+                            Ok(Some(iter))
+                        }) {
+                            return Some(Err(e));
                         }
-                        self.emitter.set_batch(batch);
                         continue;
                     }
                     Some(Err(e)) => return Some(Err(e)),
