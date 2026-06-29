@@ -54,7 +54,7 @@ use crate::{
     graph::graph::NodeId,
     parser::ast::{ExprIR, QuantifierType, Variable},
     runtime::{
-        batch::{Batch, BatchRow, Column, NullBitmap, ValueKinds, ints_from_values},
+        batch::{Batch, BatchRow, Column, FloatLane, NullBitmap, NumericColumn, classify_numeric},
         functions::{FnType, apply_pow},
         ordermap::OrderMap,
         row::RowView,
@@ -86,10 +86,10 @@ fn classify_join_keys(values: Vec<Value>) -> (Column, NullBitmap) {
     // Lossless: stop at all-`Int` (or null); never promote a mixed int/float
     // column to `f64`, which would round integers past 2^53 and silently change
     // which keys compare equal.
-    let column = if ValueKinds::scan(&values).int_or_null() {
-        Column::Ints(ints_from_values(values))
-    } else {
-        Column::Values(values)
+    let column = match classify_numeric(values, true, FloatLane::None) {
+        NumericColumn::Ints(ints) => Column::Ints(ints),
+        NumericColumn::Values(values) => Column::Values(values),
+        NumericColumn::Floats(_) => unreachable!("FloatLane::None never yields floats"),
     };
     (column, nulls)
 }

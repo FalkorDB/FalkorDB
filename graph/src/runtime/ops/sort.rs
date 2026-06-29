@@ -45,8 +45,8 @@ use crate::runtime::row::Row;
 use crate::runtime::row::RowView;
 use crate::runtime::{
     batch::{
-        BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow, ValueKinds, floats_from_values,
-        ints_from_values,
+        BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow, FloatLane, NumericColumn,
+        classify_numeric,
     },
     runtime::Runtime,
     value::{CompareValue, Value},
@@ -212,13 +212,13 @@ impl KeyColumn {
     /// value) keeps the whole key on the `Values` path so `compare_at` stays
     /// byte-for-byte identical to `Value::compare_value`.
     fn classify(values: Vec<Value>) -> Self {
-        let kinds = ValueKinds::scan(&values);
-        if kinds.all_int_no_null() {
-            Self::Ints(ints_from_values(values))
-        } else if kinds.all_float_no_null() {
-            Self::Floats(floats_from_values(values))
-        } else {
-            Self::Values(values)
+        // A null (or any non-numeric value) keeps the whole key value-backed so
+        // `compare_at` stays byte-for-byte identical to `Value::compare_value`;
+        // a pure-float key uses the float lane, no int/float mixing.
+        match classify_numeric(values, false, FloatLane::Pure) {
+            NumericColumn::Ints(ints) => Self::Ints(ints),
+            NumericColumn::Floats(floats) => Self::Floats(floats),
+            NumericColumn::Values(values) => Self::Values(values),
         }
     }
 
@@ -462,26 +462,18 @@ impl<'a> SortOp<'a> {
                     // On a full content tie the later arrival (larger `seq`)
                     // loses, so the earliest-arriving rows are kept — a stable
                     // top-k.
-                    let (wins, prematerialized) = {
-                        let key_ord = {
-                            let worst = heap.peek().expect("heap is full, so non-empty");
-                            keys.as_slice().cmp(worst.keys.as_slice())
-                        };
-                        match key_ord {
-                            Ordering::Less => (true, None),
-                            Ordering::Greater => (false, None),
-                            Ordering::Equal => {
-                                let row = view.to_owned_row();
-                                let worst = heap.peek().expect("heap is full, so non-empty");
-                                let wins = compare_row_content(&row, &worst.row)
-                                    .then(cur_seq.cmp(&worst.seq))
-                                    == Ordering::Less;
-                                (wins, Some(row))
-                            }
+                    let worst = heap.peek().expect("heap is full, so non-empty");
+                    let winner = match keys.as_slice().cmp(worst.keys.as_slice()) {
+                        Ordering::Less => Some(view.to_owned_row()),
+                        Ordering::Greater => None,
+                        Ordering::Equal => {
+                            let row = view.to_owned_row();
+                            (compare_row_content(&row, &worst.row).then(cur_seq.cmp(&worst.seq))
+                                == Ordering::Less)
+                                .then_some(row)
                         }
                     };
-                    if wins {
-                        let row = prematerialized.unwrap_or_else(|| view.to_owned_row());
+                    if let Some(row) = winner {
                         heap.pop();
                         heap.push(HeapEntry {
                             keys,

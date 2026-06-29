@@ -135,104 +135,73 @@ impl NullBitmap {
     }
 }
 
-/// One-pass record of which scalar [`Value`] variants a column contains, so the
-/// numeric column classifiers ([`classify_stored_column`], [`classify_column`],
-/// `classify_join_keys`, and the sort-key `KeyColumn::classify`) can each pick a
-/// specialised representation from a single shared scan instead of
-/// re-implementing the variant match. Scanning stops at the first non-numeric,
-/// non-null value (`has_other`) — all any caller needs to fall back to
-/// [`Column::Values`]. Entity columns (`Node`/`Relationship`) are recognised by
-/// the caller before this scan, since they are not numeric fast paths.
-pub(crate) struct ValueKinds {
-    has_int: bool,
-    has_float: bool,
-    has_null: bool,
-    has_other: bool,
+/// One-pass numeric classification shared by every column classifier
+/// ([`classify_stored_column`], [`classify_column`], `classify_join_keys`, and
+/// the sort-key `KeyColumn::classify`), so the int/float/null match lives in one
+/// place. A single scan tries to collect `i64`s, then optionally an `f64` lane,
+/// else falls back to value-backed. `allow_null` decides whether `Null` rides
+/// along as a `0`/`0.0` placeholder (callers pair a null bitmap) or disqualifies
+/// the typed lane; [`FloatLane`] decides the float fallback shape.
+pub(crate) enum NumericColumn {
+    Ints(Vec<i64>),
+    Floats(Vec<f64>),
+    Values(Vec<Value>),
 }
 
-impl ValueKinds {
-    /// Scans `values` once, recording which scalar kinds are present.
-    #[must_use]
-    pub(crate) fn scan(values: &[Value]) -> Self {
-        let mut kinds = Self {
-            has_int: false,
-            has_float: false,
-            has_null: false,
-            has_other: false,
-        };
-        for v in values {
-            match v {
-                Value::Int(_) => kinds.has_int = true,
-                Value::Float(_) => kinds.has_float = true,
-                Value::Null => kinds.has_null = true,
-                _ => {
-                    // Any non-numeric value forces the value-backed fallback for
-                    // every caller, so there is nothing more to learn.
-                    kinds.has_other = true;
-                    break;
-                }
-            }
+/// How a non-int numeric column may fall back to an `f64` lane.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum FloatLane {
+    /// Never produce floats — a non-int column stays value-backed (join keys,
+    /// where promoting ints past 2^53 would silently change equality).
+    None,
+    /// Only an all-`Float` column folds to floats; a mixed int/float column
+    /// stays value-backed (lossless stored columns, no precision loss).
+    Pure,
+    /// A mixed int/float column folds to floats, promoting ints (acceptable when
+    /// read back through a null bitmap as a value column).
+    Promote,
+}
+
+pub(crate) fn classify_numeric(
+    values: Vec<Value>,
+    allow_null: bool,
+    floats: FloatLane,
+) -> NumericColumn {
+    let mut ints = Vec::with_capacity(values.len());
+    if values.iter().all(|v| match v {
+        Value::Int(i) => {
+            ints.push(*i);
+            true
         }
-        kinds
+        Value::Null if allow_null => {
+            ints.push(0);
+            true
+        }
+        _ => false,
+    }) {
+        return NumericColumn::Ints(ints);
     }
-
-    /// Every value is `Int` (no float, null, or other) — a lossless `i64` column
-    /// needing no null bitmap.
-    #[must_use]
-    pub(crate) const fn all_int_no_null(&self) -> bool {
-        self.has_int && !self.has_float && !self.has_null && !self.has_other
+    if floats != FloatLane::None {
+        let mut out = Vec::with_capacity(values.len());
+        if values.iter().all(|v| match v {
+            Value::Int(i) if floats == FloatLane::Promote => {
+                out.push(*i as f64);
+                true
+            }
+            Value::Float(f) => {
+                out.push(*f);
+                true
+            }
+            Value::Null if allow_null => {
+                out.push(0.0);
+                true
+            }
+            _ => false,
+        }) {
+            return NumericColumn::Floats(out);
+        }
     }
-
-    /// Every value is `Float` (no int, null, or other).
-    #[must_use]
-    pub(crate) const fn all_float_no_null(&self) -> bool {
-        self.has_float && !self.has_int && !self.has_null && !self.has_other
-    }
-
-    /// Every value is `Int` or `Null` — a lossless `i64` column paired with a
-    /// null bitmap. Also true for an all-null or empty column.
-    #[must_use]
-    pub(crate) const fn int_or_null(&self) -> bool {
-        !self.has_float && !self.has_other
-    }
-
-    /// Every value is `Int`, `Float`, or `Null` — numeric, but only losslessly
-    /// `i64` when [`int_or_null`](Self::int_or_null); a mix promotes ints to
-    /// `f64` (which rounds magnitudes past 2^53, so it is unfit for join keys).
-    #[must_use]
-    pub(crate) const fn numeric_or_null(&self) -> bool {
-        !self.has_other
-    }
-}
-
-/// Extracts an `i64` column from values proven (by a [`ValueKinds`]) to contain
-/// only `Int`/`Null`. Nulls — and, for a homogeneous all-`Int` column, nothing —
-/// map to a `0` placeholder that the caller's null bitmap, if any, marks absent.
-#[must_use]
-pub(crate) fn ints_from_values(values: Vec<Value>) -> Vec<i64> {
-    values
-        .into_iter()
-        .map(|v| match v {
-            Value::Int(i) => i,
-            _ => 0,
-        })
-        .collect()
-}
-
-/// Extracts an `f64` column from values proven (by a [`ValueKinds`]) to contain
-/// only `Int`/`Float`/`Null`; ints are promoted (lossy past 2^53 — callers that
-/// must stay lossless only call this on an all-`Float` column) and nulls map to
-/// a `0.0` placeholder.
-#[must_use]
-pub(crate) fn floats_from_values(values: Vec<Value>) -> Vec<f64> {
-    values
-        .into_iter()
-        .map(|v| match v {
-            Value::Int(i) => i as f64,
-            Value::Float(f) => f,
-            _ => 0.0,
-        })
-        .collect()
+    NumericColumn::Values(values)
 }
 
 /// Classifies a fully-bound stored column into the most specific lossless
@@ -267,15 +236,12 @@ pub fn classify_stored_column(values: Vec<Value>) -> Column {
             .collect();
         return Column::RelIds(triples);
     }
-    // Null-intolerant numeric promotion: any null keeps the column value-backed
-    // (the stored layout has no companion null bitmap).
-    let kinds = ValueKinds::scan(&values);
-    if kinds.all_int_no_null() {
-        Column::Ints(ints_from_values(values))
-    } else if kinds.all_float_no_null() {
-        Column::Floats(floats_from_values(values))
-    } else {
-        Column::Values(values)
+    // No null bitmap in the stored layout, so a null disqualifies; only a pure
+    // float column promotes (a mixed int/float column stays lossless `Values`).
+    match classify_numeric(values, false, FloatLane::Pure) {
+        NumericColumn::Ints(ints) => Column::Ints(ints),
+        NumericColumn::Floats(floats) => Column::Floats(floats),
+        NumericColumn::Values(values) => Column::Values(values),
     }
 }
 
@@ -290,15 +256,10 @@ pub fn classify_stored_column(values: Vec<Value>) -> Column {
 #[must_use]
 pub fn classify_column(values: Vec<Value>) -> (Column, NullBitmap) {
     let nulls = NullBitmap::from_values(&values);
-    let kinds = ValueKinds::scan(&values);
-    let column = if kinds.int_or_null() {
-        Column::Ints(ints_from_values(values))
-    } else if kinds.numeric_or_null() {
-        // Mixed int/float: lossy promotion is acceptable here (the result is a
-        // value column read back through the null bitmap), but not for join keys.
-        Column::Floats(floats_from_values(values))
-    } else {
-        Column::Values(values)
+    let column = match classify_numeric(values, true, FloatLane::Promote) {
+        NumericColumn::Ints(ints) => Column::Ints(ints),
+        NumericColumn::Floats(floats) => Column::Floats(floats),
+        NumericColumn::Values(values) => Column::Values(values),
     };
     (column, nulls)
 }
