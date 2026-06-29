@@ -21,6 +21,8 @@ class MemoryUsage:
         edge_attributes_by_type_storage_sz_mb,
         label_matrices_sz_mb,
         relation_matrices_sz_mb,
+        total_node_attributes_sz_mb,
+        total_edge_attributes_sz_mb,
     ):
 
         self.indices_sz_mb = indices_sz_mb
@@ -36,6 +38,8 @@ class MemoryUsage:
         self.node_attributes_by_label_storage_sz_mb = (
             node_attributes_by_label_storage_sz_mb
         )
+        self.total_node_attributes_sz_mb = total_node_attributes_sz_mb
+        self.total_edge_attributes_sz_mb = total_edge_attributes_sz_mb
 
         # make sure total reported graph size is the sum of all components
         expected = (indices_sz_mb
@@ -66,7 +70,10 @@ class testGraphMemoryUsage(FlowTestsBase):
 
         res = self.conn.execute_command("GRAPH.MEMORY", "USAGE", GRAPH_ID,
                                         "SAMPLES", samples)
-        return MemoryUsage(res[17], res[1], res[7], res[11], res[9], res[13], res[15], res[3], res[5])
+        return MemoryUsage(
+            res[17], res[1], res[7], res[11], res[9], res[13], res[15], res[3],
+            res[5], res[19], res[21]
+        )
 
     def _assert_mb_close(self, actual, expected, tolerance_mb=1):
         self.env.assertLessEqual(abs(actual - expected), tolerance_mb)
@@ -240,6 +247,8 @@ class testGraphMemoryUsage(FlowTestsBase):
 
         res = self._graph_memory_usage()
         self.env.assertGreater(res.unlabeled_node_attributes_sz_mb, 0)
+        self.env.assertGreater(res.total_node_attributes_sz_mb, 0)
+        self.env.assertEquals(res.total_edge_attributes_sz_mb, 0)
         self.env.assertEquals(res.node_block_storage_sz_mb, prev_node_storage_sz_mb)
 
     def test_indices_memory_usage(self):
@@ -544,6 +553,7 @@ class testGraphMemoryUsage(FlowTestsBase):
         self.env.assertGreater(res.total_graph_sz_mb, 0)
         self.env.assertGreater(res.edge_block_storage_sz_mb, 0)
         self.env.assertGreater(res.edge_attributes_by_type_storage_sz_mb[1], 0)
+        self.env.assertGreater(res.total_edge_attributes_sz_mb, 0)
 
     def test_graph_with_empty_relationship_type(self):
         """test memory consumption of a graph containing an empty relationship-type"""
@@ -653,3 +663,4 @@ class testGraphMemoryUsage(FlowTestsBase):
 
         self.env.assertEquals(reconstructed_memory_consumption.node_block_storage_sz_mb, original_memory_consumption.node_block_storage_sz_mb)
         self.env.assertEquals(reconstructed_memory_consumption.edge_block_storage_sz_mb, original_memory_consumption.edge_block_storage_sz_mb)
+
