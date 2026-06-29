@@ -30,36 +30,35 @@
 
 use std::sync::Arc;
 
-/// Max **entries** (`(key, doc)` tuples) per leaf page; split on overflow, merge below `LEAF_MIN`. Leaf
-/// balance is by entry *count*, not byte size — the same bound for both leaf encodings (see [`Leaf`]), so a
-/// page holds ≤ 256 entries whether they encode to ≈ 4 KiB ([`AosLeaf`], 16 B/tuple) or less ([`CompactLeaf`]).
-///
-/// `256` is also load-bearing for the compact format: its dedup index stores one slot per entry as a `u8`,
-/// which only fits because `count ≤ LEAF_MAX ≤ 256` (see [`CompactLeaf::build`]). **Raising this past 256
-/// would overflow that index** — the compact `as u8` cast would have to widen first.
-const LEAF_MAX: usize = 256;
-const LEAF_MIN: usize = LEAF_MAX / 2;
-/// Max children per branch page (fan-out). Split on overflow, merge below `BRANCH_MIN`.
-const BRANCH_MAX: usize = 256;
-const BRANCH_MIN: usize = BRANCH_MAX / 2;
+// Max **entries** (`(key, doc)` tuples) per leaf page is the `LEAF_MAX` const generic on [`CowBTree`]
+// (default 256); split on overflow, merge below `LEAF_MAX / 2`. Leaf balance is by entry *count*, not byte
+// size — the same bound for both leaf encodings (see [`Leaf`]), so a page holds ≤ `LEAF_MAX` entries whether
+// they encode to ≈ 4 KiB ([`AosLeaf`], 16 B/tuple) or less ([`CompactLeaf`]).
+//
+// The 256 ceiling is load-bearing for the compact format: its dedup index stores one slot per entry as a
+// `u8`, which only fits because `count ≤ LEAF_MAX ≤ 256` (see [`CompactLeaf::build`]). **Raising `LEAF_MAX`
+// past 256 would overflow that index** — the compact `as u8` cast would have to widen first — which is why
+// [`CowBTree::new`] / [`CowBTree::from_sorted`] / `Default` assert `LEAF_MAX <= 256`.
+// Max children per branch page (fan-out) is the `BRANCH_MAX` const generic on [`CowBTree`] (default 256):
+// a branch splits on overflow and merges below `BRANCH_MAX / 2`.
 
 /// A tree node: either a leaf (a byte blob of sorted tuples) or an internal branch.
 ///
 /// Both variants are `Arc`-wrapped, so cloning a node — and therefore a whole tree version — is an
 /// `O(1)` reference-count bump that shares all underlying pages.
 #[derive(Clone)]
-enum Node {
+enum Node<const LEAF_MAX: usize, const BRANCH_MAX: usize> {
     /// A leaf page of sorted `(key, doc)` tuples — see [`Leaf`].
-    Leaf(Leaf),
-    Branch(Arc<Branch>),
+    Leaf(Leaf<LEAF_MAX>),
+    Branch(Arc<Branch<LEAF_MAX, BRANCH_MAX>>),
 }
 
 /// An internal node: separator keys plus child pointers. `seps[i]` is the minimum `(key, doc)` of
 /// `children[i + 1]`, so `seps.len() == children.len() - 1`.
 #[derive(Clone)]
-struct Branch {
+struct Branch<const LEAF_MAX: usize, const BRANCH_MAX: usize> {
     seps: Vec<(u64, u64)>,
-    children: Vec<Node>,
+    children: Vec<Node<LEAF_MAX, BRANCH_MAX>>,
 }
 
 // ---- the leaf page: a tagged, self-describing byte blob (one of two encodings) ----------------
@@ -269,7 +268,7 @@ fn merge_walk(
 /// is [`Leaf::from_parts`] — a copy, never a (de)serialization. These newtypes are the one place that knows
 /// the byte layout; the enum dispatches to them, so a tree may freely mix the formats.
 #[derive(Clone)]
-enum Leaf {
+enum Leaf<const LEAF_MAX: usize> {
     Aos(AosLeaf),
     Compact(CompactLeaf),
     CompactIndexed(CompactIndexedLeaf),
@@ -997,7 +996,7 @@ impl CompactIndexedLeaf {
     }
 }
 
-impl Leaf {
+impl<const LEAF_MAX: usize> Leaf<LEAF_MAX> {
     /// This leaf's serialized encoding (carried out of band, see [`LeafFormat`]). The two compact in-RAM
     /// types share one on-disk format — index presence lives in the buffer — so both map to `Compact`.
     fn format(&self) -> LeafFormat {
@@ -1095,14 +1094,18 @@ impl Leaf {
         }
         // One pass for the two data-dependent inputs — the distinct-value count (runs, since sorted) and the
         // max doc. (The value range needs no scan; it's read O(1) from the sorted ends just below.)
+        // Docs are sorted within a value, so a value's max doc is the last entry of its run: fold it in at
+        // each run boundary (`window[0]`, the entry just before the key changes), then once more for the
+        // final run, which has no boundary after it. Cheaper than `max`-ing every entry on low-card data.
         let mut distinct_count = 1usize;
-        let mut max_doc = pairs[0].1;
+        let mut max_doc = 0;
         for window in pairs.windows(2) {
             if window[0].0 != window[1].0 {
                 distinct_count += 1;
+                max_doc = max_doc.max(window[0].1); // window[0] = the ending value's last (= max) doc
             }
-            max_doc = max_doc.max(window[1].1);
         }
+        max_doc = max_doc.max(pairs[count - 1].1); // the final run has no boundary; fold in its last entry
         let min_value = pairs[0].0;
         let value_width = pow2_bytes_for(pairs[count - 1].0 - min_value);
         let doc_width = pow2_bytes_for(max_doc);
@@ -1112,6 +1115,8 @@ impl Leaf {
             + if deduplicated { count } else { 0 }
             + count * doc_width;
         let aos_size = count * STRIDE;
+        // Pick compact only when it saves at least COMPACT_MIN_SAVING_BPE bytes *per entry* over AoS — the
+        // floor (see the const) skips marginal wins whose extra build cost isn't worth the memory saved.
         if compact_size + COMPACT_MIN_SAVING_BPE * count <= aos_size {
             if deduplicated {
                 Leaf::CompactIndexed(CompactIndexedLeaf::build(
@@ -1196,7 +1201,7 @@ impl Leaf {
         &self,
         key: u64,
         doc: u64,
-    ) -> Option<LeafInsert> {
+    ) -> Option<LeafInsert<LEAF_MAX>> {
         let count = self.count();
         let pos = self.lower_bound_entry(key, doc);
         if pos < count && self.key(pos) == key && self.doc(pos) == doc {
@@ -1248,7 +1253,7 @@ impl Leaf {
         }
     }
 
-    /// Remove one `(key, doc)`: the replacement leaf plus whether it underflowed (`< LEAF_MIN`), or `None`
+    /// Remove one `(key, doc)`: the replacement leaf plus whether it underflowed (`< LEAF_MAX / 2`), or `None`
     /// if the tuple is absent. An [`AosLeaf`] is **spliced directly** (the 16-byte tuple is cut out); a
     /// [`CompactLeaf`] is rebuilt via [`Leaf::from_pairs`]. Re-compacting an AoS leaf happens at its next
     /// merge (which rebuilds through [`Leaf::from_pairs`]).
@@ -1256,7 +1261,7 @@ impl Leaf {
         &self,
         key: u64,
         doc: u64,
-    ) -> Option<(Leaf, bool)> {
+    ) -> Option<(Leaf<LEAF_MAX>, bool)> {
         let count = self.count();
         let pos = self.lower_bound_entry(key, doc);
         if pos >= count || self.key(pos) != key || self.doc(pos) != doc {
@@ -1284,7 +1289,7 @@ impl Leaf {
                 Self::from_pairs(&pairs)
             }
         };
-        Some((leaf, new_count < LEAF_MIN))
+        Some((leaf, new_count < LEAF_MAX / 2))
     }
 
     /// Apply a sorted `batch` (all of it routing into this leaf) and return the replacement leaf page(s).
@@ -1294,7 +1299,7 @@ impl Leaf {
     fn merge_batch(
         &self,
         batch: &[(u64, u64)],
-    ) -> Vec<Leaf> {
+    ) -> Vec<Leaf<LEAF_MAX>> {
         // Fast path: the whole batch fits one page and never widens a packing parameter — digest it into the
         // packed bytes (existing cells copied verbatim, only batch entries encoded), keeping the format.
         if self.count() + batch.len() <= LEAF_MAX {
@@ -1360,7 +1365,9 @@ impl AosLeaf {
 /// later delete that underflowed its only child could not rebalance it (see [`Branch::rebalance`]). The
 /// only way `chunks(BRANCH_MAX)` would leave a singleton is a trailing remainder of exactly 1, i.e. an
 /// input length of `BRANCH_MAX + 1`; that case is split as `BRANCH_MAX - 1` + `2` instead.
-fn pack_branches(children: Vec<Node>) -> Vec<Node> {
+fn pack_branches<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
+    children: Vec<Node<LEAF_MAX, BRANCH_MAX>>
+) -> Vec<Node<LEAF_MAX, BRANCH_MAX>> {
     // One branch per chunk of up to `BRANCH_MAX` children, so the count is known up front.
     let mut packed = Vec::with_capacity(children.len().div_ceil(BRANCH_MAX));
     let mut rest = &children[..];
@@ -1370,6 +1377,13 @@ fn pack_branches(children: Vec<Node>) -> Vec<Node> {
         } else {
             rest.len().min(BRANCH_MAX)
         };
+        // Never emit a single-child branch: a lone child can't rebalance against a sibling and would panic on
+        // a later underflow. `build_root` only calls this with >= 2 children, and the BRANCH_MAX+1 special
+        // case keeps the remainder from ever being exactly 1, so `take` is always >= 2.
+        debug_assert!(
+            take >= 2,
+            "pack_branches must not emit a single-child branch"
+        );
         let (chunk, remaining) = rest.split_at(take);
         // Each separator is the right child's minimum `(key, doc)` — a single B+-tree boundary point,
         // NOT a `(min, max)` range: everything in `children[i]` is `< seps[i] == min(children[i + 1])`.
@@ -1385,7 +1399,9 @@ fn pack_branches(children: Vec<Node>) -> Vec<Node> {
 
 /// Stitch a flat list of node fragments into a single root, packing branch levels bottom-up until
 /// one node remains. An empty list becomes an empty leaf.
-fn build_root(mut fragments: Vec<Node>) -> Node {
+fn build_root<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
+    mut fragments: Vec<Node<LEAF_MAX, BRANCH_MAX>>
+) -> Node<LEAF_MAX, BRANCH_MAX> {
     while fragments.len() > 1 {
         fragments = pack_branches(fragments);
     }
@@ -1397,28 +1413,32 @@ fn build_root(mut fragments: Vec<Node>) -> Node {
 // ---- node-operation results ------------------------------------------------------------------
 
 /// A node that split under an insert: the new right sibling plus the separator promoted to the parent.
-struct Split {
+struct Split<const LEAF_MAX: usize, const BRANCH_MAX: usize> {
     sep: (u64, u64),
-    right: Node,
+    right: Node<LEAF_MAX, BRANCH_MAX>,
 }
 /// Outcome of inserting into a single leaf: the replacement leaf if it still fits, or the two halves plus
 /// their separator if it overflowed and split. (`None` from [`Leaf::insert`] means the tuple was present.)
-enum LeafInsert {
-    Fit(Leaf),
+enum LeafInsert<const LEAF_MAX: usize> {
+    Fit(Leaf<LEAF_MAX>),
     Split {
-        left: Leaf,
+        left: Leaf<LEAF_MAX>,
         sep: (u64, u64),
-        right: Leaf,
+        right: Leaf<LEAF_MAX>,
     },
 }
 /// Outcome of combining two siblings: a single merged node, or two re-balanced nodes plus their new
 /// separator.
-enum Combined {
-    One(Node),
-    Two(Node, (u64, u64), Node),
+enum Combined<const LEAF_MAX: usize, const BRANCH_MAX: usize> {
+    One(Node<LEAF_MAX, BRANCH_MAX>),
+    Two(
+        Node<LEAF_MAX, BRANCH_MAX>,
+        (u64, u64),
+        Node<LEAF_MAX, BRANCH_MAX>,
+    ),
 }
 
-impl Branch {
+impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Branch<LEAF_MAX, BRANCH_MAX> {
     /// Index of the child that an entry `(key, doc)` routes into — the number of separators `<=` it.
     fn child_index(
         &self,
@@ -1498,7 +1518,7 @@ mod make_mut_gate {
     }
 }
 
-impl Node {
+impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> {
     /// The minimum `(key, doc)` in this subtree — walk the left spine down to its first leaf.
     fn min(&self) -> (u64, u64) {
         let mut node = self;
@@ -1517,7 +1537,7 @@ impl Node {
     fn apply_batch(
         &self,
         batch: &[(u64, u64)],
-    ) -> Vec<Node> {
+    ) -> Vec<Node<LEAF_MAX, BRANCH_MAX>> {
         match self {
             // Leaf: merge the batch into this page (the leaf owns the encoding-specific work — an AoS page
             // that still fits is byte-merged, no decode; see [`Leaf::merge_batch`]). It may split into several.
@@ -1532,7 +1552,8 @@ impl Node {
             // child can split into several) back into branch pages.
             Node::Branch(branch) => {
                 // At least one replacement child per existing child (a touched one may split into more).
-                let mut new_children: Vec<Node> = Vec::with_capacity(branch.children.len());
+                let mut new_children: Vec<Node<LEAF_MAX, BRANCH_MAX>> =
+                    Vec::with_capacity(branch.children.len());
                 // Split the sorted `batch` across the children with a single linear sweep — a merge of the
                 // sorted batch against the sorted separators. `cursor` only ever advances, so a child that
                 // receives nothing costs one comparison, not a binary search over the whole remaining batch:
@@ -1574,7 +1595,7 @@ impl Node {
         &mut self,
         key: u64,
         doc: u64,
-    ) -> Option<Split> {
+    ) -> Option<Split<LEAF_MAX, BRANCH_MAX>> {
         match self {
             // The leaf owns the encoding-specific work (an AoS leaf splices its bytes; see [`Leaf::insert`]).
             Node::Leaf(leaf) => match leaf.insert(key, doc)? {
@@ -1629,8 +1650,8 @@ impl Node {
     fn combine(
         &self,
         sep: (u64, u64),
-        right: &Node,
-    ) -> Combined {
+        right: &Node<LEAF_MAX, BRANCH_MAX>,
+    ) -> Combined<LEAF_MAX, BRANCH_MAX> {
         match (self, right) {
             (Node::Leaf(left_leaf), Node::Leaf(right_leaf)) => {
                 let mut pairs = left_leaf.to_pairs();
@@ -1655,17 +1676,17 @@ impl Node {
                 if children.len() <= BRANCH_MAX {
                     Combined::One(Node::Branch(Arc::new(Branch { seps, children })))
                 } else {
+                    // Reuse the joined `children`/`seps` allocations for the left node — `split_off` hands
+                    // back the right halves — instead of three more `to_vec` copies. After the splits, `seps`
+                    // still holds the boundary separator at its end; pop it as the promoted one.
                     let mid = children.len() / 2;
-                    let left_children = children[..mid].to_vec();
-                    let right_children = children[mid..].to_vec();
-                    let left_seps = seps[..mid - 1].to_vec();
-                    let promoted = seps[mid - 1];
-                    let right_seps = seps[mid..].to_vec();
+                    let right_children = children.split_off(mid);
+                    let right_seps = seps.split_off(mid);
+                    let promoted = seps
+                        .pop()
+                        .expect("a split branch always has an internal separator to promote");
                     Combined::Two(
-                        Node::Branch(Arc::new(Branch {
-                            seps: left_seps,
-                            children: left_children,
-                        })),
+                        Node::Branch(Arc::new(Branch { seps, children })),
                         promoted,
                         Node::Branch(Arc::new(Branch {
                             seps: right_seps,
@@ -1698,7 +1719,7 @@ impl Node {
                 if branch.children[child_idx].remove_one(key, doc)? {
                     branch.rebalance(child_idx);
                 }
-                Some(branch.children.len() < BRANCH_MIN)
+                Some(branch.children.len() < BRANCH_MAX / 2)
             }
         }
     }
@@ -1707,22 +1728,48 @@ impl Node {
 // ---- the tree --------------------------------------------------------------------------------
 
 /// A copy-on-write B⁺-tree mapping sorted `(key, doc)` tuples; see the module docs.
+///
+/// The `LEAF_MAX` const generic is the maximum number of `(key, doc)` entries per leaf page (a leaf splits
+/// on overflow and merges below `LEAF_MAX / 2`). It must be in `2..=256`: at least 2 so a split yields two
+/// non-empty halves, and at most 256 because the compact leaf's dedup index stores one slot per entry as a
+/// `u8` (see [`CompactLeaf::build`]).
+///
+/// The `BRANCH_MAX` const generic is the maximum number of children per branch page / fan-out (a branch
+/// splits on overflow and merges below `BRANCH_MAX / 2`). It must be `>= 3`: the [`pack_branches`]
+/// `BRANCH_MAX + 1` special case (which rewrites a trailing single-child remainder into a `BRANCH_MAX - 1`
+/// + `2` split, so no branch is ever born with a single child) needs `BRANCH_MAX - 1 >= 2`.
+///
+/// Both default to 256, which keeps behaviour identical to the original fixed bounds; the assert in
+/// [`CowBTree::new`] / [`CowBTree::from_sorted`] / `Default` trips any out-of-range monomorphization that
+/// builds a tree.
 #[derive(Clone)]
-pub struct CowBTree {
-    root: Node,
+pub struct CowBTree<const LEAF_MAX: usize = 256, const BRANCH_MAX: usize = 256> {
+    root: Node<LEAF_MAX, BRANCH_MAX>,
 }
 
-impl Default for CowBTree {
+impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Default for CowBTree<LEAF_MAX, BRANCH_MAX> {
     fn default() -> Self {
+        const {
+            assert!(
+                LEAF_MAX >= 2 && LEAF_MAX <= 256 && BRANCH_MAX >= 3,
+                "LEAF_MAX must be 2..=256 (compact index is u8); BRANCH_MAX >= 3 (the pack_branches BRANCH_MAX+1 split needs >= 3)"
+            );
+        }
         Self {
             root: Node::Leaf(Leaf::from_pairs(&[])),
         }
     }
 }
 
-impl CowBTree {
+impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_MAX> {
     /// An empty tree.
     pub fn new() -> Self {
+        const {
+            assert!(
+                LEAF_MAX >= 2 && LEAF_MAX <= 256 && BRANCH_MAX >= 3,
+                "LEAF_MAX must be 2..=256 (compact index is u8); BRANCH_MAX >= 3 (the pack_branches BRANCH_MAX+1 split needs >= 3)"
+            );
+        }
         Self::default()
     }
 
@@ -1730,6 +1777,12 @@ impl CowBTree {
     /// directly from the slice and builds the branch levels bottom-up — no per-item sort, dedup, or
     /// insert traversal, so it is far cheaper than inserting one at a time.
     pub fn from_sorted(pairs: &[(u64, u64)]) -> Self {
+        const {
+            assert!(
+                LEAF_MAX >= 2 && LEAF_MAX <= 256 && BRANCH_MAX >= 3,
+                "LEAF_MAX must be 2..=256 (compact index is u8); BRANCH_MAX >= 3 (the pack_branches BRANCH_MAX+1 split needs >= 3)"
+            );
+        }
         // Enforced in all builds (not just `debug`): a violation silently corrupts the tree — the
         // bottom-up build derives separators assuming this order — and the O(n) scan is dwarfed by the
         // O(n) page encoding the build does anyway.
@@ -1740,7 +1793,7 @@ impl CowBTree {
         if pairs.is_empty() {
             return Self::default();
         }
-        let leaves: Vec<Node> = pairs
+        let leaves: Vec<Node<LEAF_MAX, BRANCH_MAX>> = pairs
             .chunks(LEAF_MAX)
             .map(|chunk| Node::Leaf(Leaf::from_pairs(chunk)))
             .collect();
@@ -1808,7 +1861,7 @@ impl CowBTree {
         &self,
         lo: u64,
         hi: u64,
-    ) -> RangeIter {
+    ) -> RangeIter<LEAF_MAX, BRANCH_MAX> {
         RangeIter::new(&self.root, (lo, 0), hi)
     }
 
@@ -1816,13 +1869,15 @@ impl CowBTree {
     pub fn point(
         &self,
         key: u64,
-    ) -> RangeIter {
+    ) -> RangeIter<LEAF_MAX, BRANCH_MAX> {
         self.range(key, key)
     }
 
     /// Total number of live tuples.
     pub fn len(&self) -> usize {
-        fn count(node: &Node) -> usize {
+        fn count<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
+            node: &Node<LEAF_MAX, BRANCH_MAX>
+        ) -> usize {
             match node {
                 Node::Leaf(leaf) => leaf.count(),
                 Node::Branch(branch) => branch.children.iter().map(count).sum(),
@@ -1842,8 +1897,8 @@ impl CowBTree {
     /// serialized form and the format is carried alongside, so writing the tree out to a byte store needs
     /// no further encoding — re-adopt a page with [`Leaf::from_parts`].
     pub fn leaves(&self) -> Vec<(LeafFormat, Arc<[u8]>)> {
-        fn walk(
-            node: &Node,
+        fn walk<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
+            node: &Node<LEAF_MAX, BRANCH_MAX>,
             out: &mut Vec<(LeafFormat, Arc<[u8]>)>,
         ) {
             match node {
@@ -1858,10 +1913,10 @@ impl CowBTree {
 }
 
 /// A lazy, droppable cursor over the doc ids in a key range. Owns a snapshot of the tree.
-pub struct RangeIter {
-    _root: Node, // keeps the snapshot (and all its pages) alive for the cursor's lifetime
-    stack: Vec<(Arc<Branch>, usize)>, // (branch, next child index to descend)
-    leaf: Option<Leaf>,
+pub struct RangeIter<const LEAF_MAX: usize, const BRANCH_MAX: usize> {
+    _root: Node<LEAF_MAX, BRANCH_MAX>, // keeps the snapshot (and all its pages) alive for the cursor's lifetime
+    stack: Vec<(Arc<Branch<LEAF_MAX, BRANCH_MAX>>, usize)>, // (branch, next child index to descend)
+    leaf: Option<Leaf<LEAF_MAX>>,
     leaf_count: usize, // entry count of `leaf`, read once per leaf rather than per entry
     whole: bool,       // every entry of `leaf` is `<= hi_key` ⇒ skip the per-entry bound check
     // Cached doc decode layout `(base, stride, width)` for the current leaf — read once in `set_leaf`
@@ -1875,9 +1930,9 @@ pub struct RangeIter {
     hi_key: u64, // inclusive upper key bound (the doc half of the bound is always `u64::MAX`)
 }
 
-impl RangeIter {
+impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> RangeIter<LEAF_MAX, BRANCH_MAX> {
     fn new(
-        root: &Node,
+        root: &Node<LEAF_MAX, BRANCH_MAX>,
         lo: (u64, u64),
         hi_key: u64,
     ) -> Self {
@@ -1918,7 +1973,7 @@ impl RangeIter {
     /// per-entry checks.
     fn set_leaf(
         &mut self,
-        leaf: Leaf,
+        leaf: Leaf<LEAF_MAX>,
         pos: usize,
     ) {
         let count = leaf.count();
@@ -1935,7 +1990,7 @@ impl RangeIter {
     /// Descend a node's left spine to its first leaf, pushing branch frames.
     fn descend_left(
         &mut self,
-        mut node: Node,
+        mut node: Node<LEAF_MAX, BRANCH_MAX>,
     ) {
         loop {
             match node {
@@ -1969,7 +2024,7 @@ impl RangeIter {
     }
 }
 
-impl Iterator for RangeIter {
+impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Iterator for RangeIter<LEAF_MAX, BRANCH_MAX> {
     type Item = u64; // doc id
 
     fn next(&mut self) -> Option<u64> {
@@ -2032,11 +2087,14 @@ mod tests {
 
     /// The full `(key, doc)` multiset the tree stores, decoded straight from the leaf bytes (so it verifies
     /// the *value* column, not just docs — a full-range cursor scan skips key reads on interior leaves).
-    fn tree_pairs(t: &CowBTree) -> Vec<(u64, u64)> {
+    /// Generic over `LEAF_MAX` so the const-generic parity test can drive a non-default leaf size through it.
+    fn tree_pairs<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
+        t: &CowBTree<LEAF_MAX, BRANCH_MAX>
+    ) -> Vec<(u64, u64)> {
         let mut v: Vec<(u64, u64)> = t
             .leaves()
             .into_iter()
-            .flat_map(|(fmt, bytes)| Leaf::from_parts(fmt, bytes).to_pairs())
+            .flat_map(|(fmt, bytes)| Leaf::<LEAF_MAX>::from_parts(fmt, bytes).to_pairs())
             .collect();
         v.sort_unstable();
         v
@@ -2044,7 +2102,7 @@ mod tests {
 
     #[test]
     fn empty_and_single() {
-        let mut t = CowBTree::new();
+        let mut t = CowBTree::<256, 256>::new();
         assert!(t.is_empty());
         assert_eq!(t.point(5).count(), 0);
         t.insert(5, 50);
@@ -2057,7 +2115,7 @@ mod tests {
     fn insert_split_parity() {
         // enough inserts to force several levels of splits
         let n = 5_000u64;
-        let mut t = CowBTree::new();
+        let mut t = CowBTree::<256, 256>::new();
         let mut reference = BTreeSet::new();
         for q in 0..n {
             let k = splitmix(q) % 1000; // duplicate keys (multiple docs per key)
@@ -2086,8 +2144,8 @@ mod tests {
     #[test]
     fn bulk_build_matches_incremental() {
         let pairs: Vec<(u64, u64)> = (0..3_000u64).map(|i| (i, i)).collect();
-        let bulk = CowBTree::from_sorted(&pairs);
-        let mut inc = CowBTree::new();
+        let bulk = CowBTree::<256, 256>::from_sorted(&pairs);
+        let mut inc = CowBTree::<256, 256>::new();
         for &(k, d) in &pairs {
             inc.insert(k, d);
         }
@@ -2101,7 +2159,7 @@ mod tests {
     #[test]
     fn remove_merge_parity() {
         let n = 4_000u64;
-        let mut t = CowBTree::from_sorted(&(0..n).map(|i| (i, i)).collect::<Vec<_>>());
+        let mut t = CowBTree::<256, 256>::from_sorted(&(0..n).map(|i| (i, i)).collect::<Vec<_>>());
         let mut reference: BTreeSet<(u64, u64)> = (0..n).map(|i| (i, i)).collect();
         // remove ~75% in scattered order, forcing many merges
         for q in 0..n {
@@ -2119,7 +2177,7 @@ mod tests {
     fn churn_stays_compact() {
         // build, then ~100% delete+reinsert turnover; assert no memory bloat (bytes/entry stays tight).
         let w = 20_000u64;
-        let mut t = CowBTree::from_sorted(&(0..w).map(|i| (i, i)).collect::<Vec<_>>());
+        let mut t = CowBTree::<256, 256>::from_sorted(&(0..w).map(|i| (i, i)).collect::<Vec<_>>());
         let bytes_per = |t: &CowBTree| -> f64 {
             let b: usize = t.leaves().iter().map(|(_, l)| l.len()).sum();
             b as f64 / t.len().max(1) as f64
@@ -2164,7 +2222,8 @@ mod tests {
     #[test]
     fn clone_is_an_isolated_snapshot() {
         // a clone (snapshot) is unaffected by later mutations of the original — the MVCC property.
-        let mut t = CowBTree::from_sorted(&(0..1_000u64).map(|i| (i, i)).collect::<Vec<_>>());
+        let mut t =
+            CowBTree::<256, 256>::from_sorted(&(0..1_000u64).map(|i| (i, i)).collect::<Vec<_>>());
         let snapshot = t.clone();
         for i in 0..1_000u64 {
             t.remove(i, i);
@@ -2189,7 +2248,7 @@ mod tests {
         use std::thread;
 
         let n = 4_000u64;
-        let base = CowBTree::from_sorted(&(0..n).map(|i| (i, i)).collect::<Vec<_>>());
+        let base = CowBTree::<256, 256>::from_sorted(&(0..n).map(|i| (i, i)).collect::<Vec<_>>());
         let snapshot = base.clone(); // shares every page with `base`
         let expected: Vec<u64> = (0..n).collect();
 
@@ -2234,7 +2293,8 @@ mod tests {
     #[test]
     fn leaf_bytes_round_trip_through_a_byte_store() {
         // a leaf blob round-trips through a byte store verbatim: the in-memory form is the serialized form.
-        let t = CowBTree::from_sorted(&(0..2_000u64).map(|i| (i, i)).collect::<Vec<_>>());
+        let t =
+            CowBTree::<256, 256>::from_sorted(&(0..2_000u64).map(|i| (i, i)).collect::<Vec<_>>());
         // store the format tag + raw bytes
         let store: Vec<(LeafFormat, Vec<u8>)> =
             t.leaves().iter().map(|(f, b)| (*f, b.to_vec())).collect();
@@ -2243,7 +2303,7 @@ mod tests {
         let want = 1234u64;
         let mut found = None;
         for (fmt, blob) in &store {
-            let leaf = Leaf::from_parts(*fmt, Arc::from(blob.as_slice())); // re-wrap — proving they're usable as-is
+            let leaf = Leaf::<256>::from_parts(*fmt, Arc::from(blob.as_slice())); // re-wrap — proving they're usable as-is
             if leaf.count() > 0 && leaf.key(0) <= want && leaf.key(leaf.count() - 1) >= want {
                 let i = leaf.lower_bound(want);
                 if i < leaf.count() && leaf.key(i) == want {
@@ -2272,7 +2332,7 @@ mod tests {
             pairs: Vec<(u64, u64)>,
             want: Option<Want>,
         ) {
-            let leaf = Leaf::from_pairs(&pairs);
+            let leaf = Leaf::<256>::from_pairs(&pairs);
             assert_eq!(leaf.count(), pairs.len(), "count for {pairs:?}");
             assert_eq!(leaf.to_pairs(), pairs, "to_pairs for {pairs:?}");
             for (i, &(k, d)) in pairs.iter().enumerate() {
@@ -2281,7 +2341,7 @@ mod tests {
             }
             let blob = leaf.bytes();
             assert_eq!(
-                Leaf::from_parts(leaf.format(), blob).to_pairs(),
+                Leaf::<256>::from_parts(leaf.format(), blob).to_pairs(),
                 pairs,
                 "bytes round-trip for {pairs:?}"
             );
@@ -2330,7 +2390,7 @@ mod tests {
         // Low-cardinality data forces compact (dedup) leaves; point + range reads must still match a
         // reference, and at least one leaf must actually have chosen the compact format.
         let (n_values, docs_per) = (60u64, 70u64);
-        let mut t = CowBTree::new();
+        let mut t = CowBTree::<256, 256>::new();
         let mut reference: BTreeSet<(u64, u64)> = BTreeSet::new();
         let mut doc = 0u64;
         for v in 0..n_values {
@@ -2370,7 +2430,7 @@ mod tests {
     fn format_migration() {
         // A leaf starts AoS (wide, all-distinct) and migrates to compact as low-cardinality data arrives;
         // reads stay correct across the mix. Exercises the cursor on a tree holding both formats.
-        let mut t = CowBTree::new();
+        let mut t = CowBTree::<256, 256>::new();
         let mut reference: BTreeSet<(u64, u64)> = BTreeSet::new();
         for i in 0..120u64 {
             let (k, d) = (i << 40, i << 40); // wide value + wide doc, all distinct ⇒ AoS
@@ -2404,9 +2464,9 @@ mod tests {
         // Regression: a bulk build whose leaf count is `BRANCH_MAX + 1` (= 257) once packed a trailing
         // single-child branch; deleting from its lone child then panicked in `rebalance` (no sibling, so
         // `child_idx - 1` underflowed). Build exactly that shape, delete the tail, and check it stays sane.
-        let n = (BRANCH_MAX * LEAF_MAX + 1) as u64; // 257 leaves: 256 full + 1 one-entry leaf
+        let n = (256 * 256 + 1) as u64; // 257 leaves: 256 full + 1 one-entry leaf
         let pairs: Vec<(u64, u64)> = (0..n).map(|i| (i, i)).collect();
-        let mut t = CowBTree::from_sorted(&pairs);
+        let mut t = CowBTree::<256, 256>::from_sorted(&pairs);
         let mut reference: BTreeSet<(u64, u64)> = pairs.iter().copied().collect();
         assert_eq!(t.len(), reference.len());
         // Delete the tail — the first removal underflows the formerly-singleton branch's child.
@@ -2424,7 +2484,7 @@ mod tests {
     fn aos_splice_insert_remove_edges() {
         // The AoS byte-splice path: insert/remove at the front, back, and middle of a leaf, plus the
         // already-present / absent no-ops. Wide, all-distinct data keeps the leaf in `LeafFormat::Aos`.
-        let mut t = CowBTree::new();
+        let mut t = CowBTree::<256, 256>::new();
         let mut reference: BTreeSet<(u64, u64)> = BTreeSet::new();
         for i in 1..100u64 {
             let (k, d) = (i << 40, i << 40);
@@ -2474,7 +2534,7 @@ mod tests {
             initial: &[(u64, u64)],
             batch: &[(u64, u64)],
         ) {
-            let mut t = CowBTree::from_sorted(initial);
+            let mut t = CowBTree::<256, 256>::from_sorted(initial);
             let mut reference: BTreeSet<(u64, u64)> = initial.iter().copied().collect();
             let mut sorted = batch.to_vec();
             sorted.sort_unstable();
@@ -2515,7 +2575,7 @@ mod tests {
     fn is_empty_tracks_emptiness() {
         // `is_empty` is O(1) (root-only) and must agree with `len() == 0` through inserts, single
         // removes, and a bulk-built tree drained to nothing (leaves merge back to one empty root).
-        let mut t = CowBTree::new();
+        let mut t = CowBTree::<256, 256>::new();
         assert!(t.is_empty());
         assert_eq!(t.len(), 0);
         t.insert(5, 50);
@@ -2525,7 +2585,7 @@ mod tests {
         assert!(t.is_empty(), "removing the last entry empties the tree");
 
         let pairs: Vec<(u64, u64)> = (0..1_000u64).map(|i| (i, i)).collect();
-        let mut big = CowBTree::from_sorted(&pairs);
+        let mut big = CowBTree::<256, 256>::from_sorted(&pairs);
         assert!(!big.is_empty());
         for &(k, d) in &pairs {
             big.remove(k, d);
@@ -2554,7 +2614,7 @@ mod tests {
 
         // 1000 entries ⇒ depth-2 tree, so the insert hits exactly one branch `make_mut` and parks once.
         let pairs: Vec<(u64, u64)> = (0..1000u64).map(|i| (i, i)).collect();
-        let committed = Arc::new(CowBTree::from_sorted(&pairs)); // the immutable committed version (V1)
+        let committed = Arc::new(CowBTree::<256, 256>::from_sorted(&pairs)); // the immutable committed version (V1)
         let reader_view = Arc::clone(&committed);
 
         make_mut_gate::PARKED.store(false, SeqCst);
@@ -2617,7 +2677,7 @@ mod tests {
                 doc += 1;
             }
         }
-        let mut t = CowBTree::from_sorted(&pairs);
+        let mut t = CowBTree::<256, 256>::from_sorted(&pairs);
         let mut reference: BTreeSet<(u64, u64)> = pairs.iter().copied().collect();
         let is_compact = |t: &CowBTree| t.leaves().iter().any(|(f, _)| *f == LeafFormat::Compact);
         assert!(is_compact(&t), "setup should be compact");
@@ -2690,12 +2750,12 @@ mod tests {
         // `from_sorted`. Exercise splice insert (new value + value collision), remove, and merge, asserting
         // full (key, doc) parity decoded from the bytes. (The indexed arms are covered separately.)
         let pairs: Vec<(u64, u64)> = (0..200u64).map(|i| (i, i)).collect(); // narrow, all-distinct
-        let mut t = CowBTree::from_sorted(&pairs);
+        let mut t = CowBTree::<256, 256>::from_sorted(&pairs);
         let mut reference: BTreeSet<(u64, u64)> = pairs.iter().copied().collect();
         let no_index = |t: &CowBTree| {
             t.leaves()
                 .into_iter()
-                .all(|(f, b)| matches!(Leaf::from_parts(f, b), Leaf::Compact(_)))
+                .all(|(f, b)| matches!(Leaf::<256>::from_parts(f, b), Leaf::Compact(_)))
         };
         assert!(
             no_index(&t),
@@ -2753,12 +2813,12 @@ mod tests {
                 seed.push((v * 1_000, d)); // 200 entries, 4 distinct, narrow docs
             }
         }
-        let mut t = CowBTree::from_sorted(&seed);
+        let mut t = CowBTree::<256, 256>::from_sorted(&seed);
         let mut reference: BTreeSet<(u64, u64)> = seed.iter().copied().collect();
         assert!(
             t.leaves()
                 .into_iter()
-                .all(|(f, b)| matches!(Leaf::from_parts(f, b), Leaf::CompactIndexed(_))),
+                .all(|(f, b)| matches!(Leaf::<256>::from_parts(f, b), Leaf::CompactIndexed(_))),
             "setup should be a single indexed leaf"
         );
         // B = 8 (< 200/4), keys all existing distinct (0/1000/2000/3000), docs fit. (2000,102) is a
@@ -2786,7 +2846,7 @@ mod tests {
         assert!(
             t.leaves()
                 .into_iter()
-                .all(|(f, b)| matches!(Leaf::from_parts(f, b), Leaf::CompactIndexed(_))),
+                .all(|(f, b)| matches!(Leaf::<256>::from_parts(f, b), Leaf::CompactIndexed(_))),
             "block-copy merge must keep the leaf indexed"
         );
         // A *large* all-existing-distinct batch (no size guard now — galloping keeps block-copy ≥ the walk).
@@ -2819,7 +2879,7 @@ mod tests {
                 seed.push((v * 1_000, d));
             }
         }
-        let mut t = CowBTree::from_sorted(&seed);
+        let mut t = CowBTree::<256, 256>::from_sorted(&seed);
         let mut reference: BTreeSet<(u64, u64)> = seed.iter().copied().collect();
         let mut s = 0x1234_5678_9abc_def0u64;
         let mut next = || {
@@ -2878,6 +2938,71 @@ mod tests {
             tree_pairs(&t),
             reference.iter().copied().collect::<Vec<_>>(),
             "final (key, doc) contents"
+        );
+    }
+
+    #[test]
+    fn const_generic_leaf_size_parity() {
+        // The const generic must instantiate and stay correct at a *non-default* leaf size. Drive a few
+        // hundred mixed low-cardinality inserts/removes into a `CowBTree<64>` (a 64-entry leaf splits/merges
+        // far more often than the default 256, exercising the generic on the split/merge paths) and assert it
+        // matches a BTreeSet reference decoded straight from the leaf bytes.
+        let mut t = CowBTree::<64, 256>::new();
+        let mut reference: BTreeSet<(u64, u64)> = BTreeSet::new();
+        let mut s = 0xDEAD_BEEF_CAFE_F00Du64;
+        let mut next = || {
+            s = splitmix(s);
+            s
+        };
+        for _ in 0..600u64 {
+            let key = (next() % 20) * 1_000; // low cardinality ⇒ compact leaves
+            let doc = next() % 500; // narrow docs
+            if next() % 3 == 0 {
+                t.remove(key, doc);
+                reference.remove(&(key, doc));
+            } else {
+                t.insert(key, doc);
+                reference.insert((key, doc));
+            }
+        }
+        assert_eq!(t.len(), reference.len());
+        assert_eq!(
+            tree_pairs(&t),
+            reference.iter().copied().collect::<Vec<_>>(),
+            "CowBTree<64> contents must match the reference"
+        );
+    }
+
+    #[test]
+    fn const_generic_branch_size_parity() {
+        // The `BRANCH_MAX` const generic must instantiate and stay correct at a *non-default* fan-out. A
+        // small branch fanout (16) makes branches split and merge far more often than the default 256 —
+        // forcing many more node packs, rebalances, and root grow/shrinks — so it exercises the generic on
+        // the branch paths. Drive a few hundred mixed inserts/removes via `splitmix` and assert the tree
+        // matches a `BTreeSet` reference decoded straight from the leaf bytes.
+        let mut t = CowBTree::<256, 16>::new();
+        let mut reference: BTreeSet<(u64, u64)> = BTreeSet::new();
+        let mut s = 0xC0FF_EE00_1234_5678u64;
+        let mut next = || {
+            s = splitmix(s);
+            s
+        };
+        for _ in 0..600u64 {
+            let key = next() % 2_000; // spread keys so the tree grows several branch levels at fanout 16
+            let doc = next() % 1_000;
+            if next() % 3 == 0 {
+                t.remove(key, doc);
+                reference.remove(&(key, doc));
+            } else {
+                t.insert(key, doc);
+                reference.insert((key, doc));
+            }
+        }
+        assert_eq!(t.len(), reference.len());
+        assert_eq!(
+            tree_pairs(&t),
+            reference.iter().copied().collect::<Vec<_>>(),
+            "CowBTree<256, 16> contents must match the reference"
         );
     }
 }
