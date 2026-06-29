@@ -5,9 +5,10 @@
 //!
 //! * **Full sort** (no `LIMIT`, or a very large one): every child batch is
 //!   concatenated columnar via [`Batch::concat`] (no per-row `Row`), the sort
-//!   keys are evaluated once per row, the row *indices* are stable-sorted, and
-//!   rows are emitted `BATCH_SIZE` at a time by gathering from the combined
-//!   buffer.
+//!   keys are evaluated once per row, and the rows are ordered by sorting
+//!   contiguous `(primary key, row index)` pairs — equal primary keys break by
+//!   the remaining keys, then full content, then arrival. Rows are emitted
+//!   `BATCH_SIZE` at a time by gathering from the combined buffer.
 //!
 //! * **Top-`k`** (`ORDER BY … LIMIT k`, with `k + skip` small): a streaming
 //!   bounded max-heap of capacity `k + skip` keeps only the rows that can
@@ -22,7 +23,7 @@
 //!  ┌──────────────────────────────┐     ┌──────────────────────────────┐
 //!  │ Full sort:                   │ or  │ Top-k:                       │
 //!  │   Batch::concat → keys →     │     │   bounded max-heap of k+skip │
-//!  │   stable-sort indices        │     │   (evict the worst row)      │
+//!  │   sort (key,idx) pairs       │     │   (evict the worst row)      │
 //!  └──────────────┬───────────────┘     └──────────────┬───────────────┘
 //!                 │                                     │
 //!                 └──────────────┬──────────────────────┘
@@ -320,30 +321,72 @@ impl<'a> SortOp<'a> {
         let typed_keys: Vec<KeyColumn> = key_cols.into_iter().map(KeyColumn::classify).collect();
 
         let num_columns = combined.num_columns();
-        let mut order: Vec<usize> = (0..total).collect();
-        order.sort_by(|&a, &b| {
-            // Lexicographic multi-key comparison over the typed key columns.
-            for (k, (_tree, desc)) in trees.iter().enumerate() {
+        // Comparator for rows that tie on the *primary* key: the remaining keys
+        // (already direction-folded), then a position-by-position content
+        // compare, then arrival order. Columns unbound in every row read back as
+        // `Null` on both sides and so never move the order; `compare_rows_at`
+        // borrows the stored values instead of cloning. Only invoked on a
+        // primary-key tie, so the random-access content scan rarely fires.
+        let tiebreak = |a: usize, b: usize| -> Ordering {
+            for (k, (_tree, desc)) in trees.iter().enumerate().skip(1) {
                 let ordering = typed_keys[k].compare_at(a, b);
                 if ordering != Ordering::Equal {
                     return if *desc { ordering.reverse() } else { ordering };
                 }
             }
-            // Deterministic tiebreaker: compare bound slots position-by-position.
-            // Columns unbound in every row read back as `Null` on both sides and
-            // so never change the ordering. `compare_rows_at` borrows stored
-            // values instead of cloning them.
             for id in 0..num_columns {
                 let ordering = combined.compare_rows_at(id as u32, a, b);
                 if ordering != Ordering::Equal {
                     return ordering;
                 }
             }
-            // Final total-order fallback: rows still equal here are identical in
-            // every compared column. `sort_by` is unstable, so break remaining
-            // ties by original row index to keep output deterministic.
             a.cmp(&b)
-        });
+        };
+        // Pack the primary key inline so the sort scans contiguous `(key, idx)`
+        // pairs instead of indices that random-gather the key column — the same
+        // total order, far fewer cache misses. The `Values` primary key keeps
+        // the index sort, which already borrows through the comparator.
+        let primary_desc = trees[0].1;
+        let mut order: Vec<usize> = match &typed_keys[0] {
+            KeyColumn::Ints(keys) => {
+                let mut pairs: Vec<(i64, u32)> = (0..total).map(|i| (keys[i], i as u32)).collect();
+                pairs.sort_unstable_by(|&(ka, ia), &(kb, ib)| {
+                    let primary = if primary_desc {
+                        kb.cmp(&ka)
+                    } else {
+                        ka.cmp(&kb)
+                    };
+                    primary.then_with(|| tiebreak(ia as usize, ib as usize))
+                });
+                pairs.into_iter().map(|(_, i)| i as usize).collect()
+            }
+            KeyColumn::Floats(keys) => {
+                let mut pairs: Vec<(f64, u32)> = (0..total).map(|i| (keys[i], i as u32)).collect();
+                pairs.sort_unstable_by(|&(ka, ia), &(kb, ib)| {
+                    let primary = ka.partial_cmp(&kb).unwrap_or(Ordering::Less);
+                    let primary = if primary_desc {
+                        primary.reverse()
+                    } else {
+                        primary
+                    };
+                    primary.then_with(|| tiebreak(ia as usize, ib as usize))
+                });
+                pairs.into_iter().map(|(_, i)| i as usize).collect()
+            }
+            KeyColumn::Values(_) => {
+                let mut order: Vec<usize> = (0..total).collect();
+                order.sort_by(|&a, &b| {
+                    let ordering = typed_keys[0].compare_at(a, b);
+                    let primary = if primary_desc {
+                        ordering.reverse()
+                    } else {
+                        ordering
+                    };
+                    primary.then_with(|| tiebreak(a, b))
+                });
+                order
+            }
+        };
 
         if let Some(cap) = truncate {
             order.truncate(cap);
