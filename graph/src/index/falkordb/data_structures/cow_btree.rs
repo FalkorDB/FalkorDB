@@ -1501,13 +1501,15 @@ mod make_mut_gate {
 
     /// A key no other test inserts — the park hook keys off it so only the concurrency test triggers it.
     pub(super) const KEY: u64 = 0xFFFF_FFFF_FFFF_FF00;
-    /// Writer → test: "I am parked inside `make_mut`, holding the `&mut`."
+    /// Writer → test: "I am parked mid-mutation, holding the `&mut Branch` after updating it."
     pub(super) static PARKED: AtomicBool = AtomicBool::new(false);
     /// Test → writer: "you may proceed."
     pub(super) static RELEASE: AtomicBool = AtomicBool::new(false);
 
-    /// Called right after `make_mut` in `insert_one`. For the sentinel key only, announce that we've
-    /// parked (still holding the `&mut Branch`) and spin until the test releases us.
+    /// Called in `insert_one` *after* the working copy's branch has been mutated (its children/seps
+    /// updated from a child split). For the sentinel key only, announce that we've parked mid-mutation
+    /// (still holding the `&mut Branch`) and spin until released — so the test observes a genuinely
+    /// in-flight write, not a freshly-`make_mut`'d-but-unmodified copy.
     pub(super) fn park_if(key: u64) {
         if key == KEY {
             PARKED.store(true, SeqCst);
@@ -1613,8 +1615,6 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
             },
             Node::Branch(branch_arc) => {
                 let branch = Arc::make_mut(branch_arc); // in place if unshared, else copy-on-write
-                #[cfg(test)]
-                make_mut_gate::park_if(key); // test-only; no-op in release builds
                 let child_idx = branch.child_index(key, doc);
                 let Some(Split { sep, right }) = branch.children[child_idx].insert_one(key, doc)
                 else {
@@ -1623,6 +1623,8 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
                 // The child split — take in the promoted separator and the new right sibling beside it.
                 branch.seps.insert(child_idx, sep);
                 branch.children.insert(child_idx + 1, right);
+                #[cfg(test)]
+                make_mut_gate::park_if(key); // test-only: parks AFTER the working copy is mutated
                 if branch.children.len() <= BRANCH_MAX {
                     None
                 } else {
@@ -2604,8 +2606,9 @@ mod tests {
         // `new_version()`), mutates *that*, and would publish by swapping the pointer (cf. `commit`). Readers
         // never lock — they just clone the committed `Arc` (cf. `read()`).
         //
-        // We freeze the writer mid-`make_mut` on its working clone, then have the main thread read the
-        // committed version concurrently. The point: the reader is NOT locked out (no mutex), and it still
+        // We freeze the writer mid-mutation (after a shared branch is `make_mut`'d AND its children/seps
+        // updated) on its working clone, then have the main thread read the committed version
+        // concurrently. The point: the reader is NOT locked out (no mutex), and it still
         // sees the committed version intact — because the working clone shares the committed nodes, so
         // `make_mut` sees refcount ≥ 2 and COPIES rather than mutating in place. The in-place (refcount==1)
         // path is therefore only ever taken on the writer's own private, not-yet-published nodes, which no
@@ -2615,8 +2618,10 @@ mod tests {
         use std::sync::atomic::Ordering::SeqCst;
         use std::thread;
 
-        // 1000 entries ⇒ depth-2 tree, so the insert hits exactly one branch `make_mut` and parks once.
-        let pairs: Vec<(u64, u64)> = (0..1000u64).map(|i| (i, i)).collect();
+        // 1024 entries = 4 full leaves ⇒ depth-2. Inserting the sentinel (the max key) splits the full
+        // rightmost leaf and propagates a `Split` to the root branch, where the park fires — AFTER the
+        // working copy's children/seps are mutated, so the reader observes a genuinely in-flight write.
+        let pairs: Vec<(u64, u64)> = (0..1024u64).map(|i| (i, i)).collect();
         let committed = Arc::new(CowBTree::<256, 256>::from_sorted(&pairs)); // the immutable committed version (V1)
         let reader_view = Arc::clone(&committed);
 
@@ -2627,7 +2632,7 @@ mod tests {
             let base = Arc::clone(&committed);
             move || {
                 let mut working = (*base).clone(); // new_version(): a CoW clone sharing V1's nodes
-                working.insert(make_mut_gate::KEY, 1); // make_mut on the SHARED root copies, then parks
+                working.insert(make_mut_gate::KEY, 1); // copies the shared root, splits the full leaf, mutates the working root — then parks
                 working // the new version that `commit` would publish
             }
         });
@@ -2637,12 +2642,12 @@ mod tests {
         }
 
         // Writer is frozen mid-mutation on its working clone. With no lock, the reader clones the committed
-        // version and reads it — and must see V1 intact: 1000 entries, no sentinel leaked in.
+        // version and reads it — and must see V1 intact: 1024 entries, no sentinel leaked in.
         let snapshot = (*reader_view).clone();
         let docs: Vec<u64> = snapshot.range(0, u64::MAX).collect();
         assert_eq!(
             docs.len(),
-            1000,
+            1024,
             "reader observed a writer's in-flight mutation"
         );
         assert!(
@@ -2655,12 +2660,12 @@ mod tests {
 
         assert_eq!(
             published.len(),
-            1001,
+            1025,
             "the new version must hold the insert"
         );
         assert_eq!(
             committed.len(),
-            1000,
+            1024,
             "the committed version must be untouched"
         );
     }
