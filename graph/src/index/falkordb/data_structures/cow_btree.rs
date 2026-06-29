@@ -1873,7 +1873,8 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
         self.range(key, key)
     }
 
-    /// Total number of live tuples.
+    /// Total number of live tuples. Test-only (`O(n)` page walk) — prefer [`is_empty`] in non-test code.
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         fn count<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
             node: &Node<LEAF_MAX, BRANCH_MAX>
@@ -1895,7 +1896,9 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
 
     /// All leaf pages in key order, each paired with its [`LeafFormat`]. The bytes are the (tag-free)
     /// serialized form and the format is carried alongside, so writing the tree out to a byte store needs
-    /// no further encoding — re-adopt a page with [`Leaf::from_parts`].
+    /// no further encoding — re-adopt a page with [`Leaf::from_parts`]. Test-only for now (the byte-store
+    /// round-trip + format assertions); the durable-write path will re-expose it when disk lands.
+    #[cfg(test)]
     pub fn leaves(&self) -> Vec<(LeafFormat, Arc<[u8]>)> {
         fn walk<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
             node: &Node<LEAF_MAX, BRANCH_MAX>,
