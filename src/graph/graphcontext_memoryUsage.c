@@ -9,6 +9,7 @@
 #include "graphcontext.h"
 #include "../index/index.h"
 #include "../schema/schema.h"
+#include "util/simple_rand.h"
 #include "graph_memoryUsage.h"
 #include "entities/attribute_set.h"
 #include "delta_matrix/delta_matrix_iter.h"
@@ -20,6 +21,37 @@
 //------------------------------------------------------------------------------
 // attribute and index estimation helpers
 //------------------------------------------------------------------------------
+
+// checks whether any node in the graph is associated with more than one label
+static bool _Overlapping
+(
+	const GrB_Matrix lbls,  // [input] Node-label adjacency matrix
+	GrB_Vector *V           // [output] Boolean vector: V[i]=true if node i has a label
+) {
+	ASSERT (lbls != NULL) ;
+	ASSERT (V != NULL && *V == NULL) ;
+
+	GrB_Index nrows ;
+	GrB_Index ncols ;
+	GrB_Index lbls_nvals ;
+	GrB_Vector x = NULL ;
+
+	GrB_OK (GrB_Matrix_nvals (&lbls_nvals, lbls)) ;
+	GrB_OK (GrB_Matrix_nrows (&nrows, lbls)) ;
+	GrB_OK (GrB_Matrix_ncols (&ncols, lbls)) ;
+
+	GrB_OK (GrB_Vector_new (V, GrB_BOOL, nrows)) ;
+	GrB_OK (GrB_Vector_new (&x, GrB_BOOL, ncols)) ;
+	GrB_OK (GrB_Vector_assign_BOOL (x, NULL, NULL, 1, GrB_ALL, ncols, NULL)) ;
+
+	GrB_OK (GrB_mxv (*V, NULL, NULL, GxB_ANY_PAIR_BOOL, lbls, x, NULL)) ;
+
+	GrB_Index v_nvals ;
+	GrB_OK (GrB_Vector_nvals (&v_nvals, *V)) ;
+	GrB_OK (GrB_free(&x)) ;
+
+	return (lbls_nvals > v_nvals) ;
+}
 
 // estimates memory usage for a vector of nodes by sampling
 static size_t _SampleVector
@@ -174,6 +206,45 @@ static size_t _TotalAttributeMemory
 	return memory_usage ;
 }
 
+// estimate total memory usage for all entities in the datablock
+static size_t _EstimateTotalAttributeMemory
+(
+	DataBlock *block,     // DataBlock to iterate
+	int64_t sample_size   // number of nodes to sample per label
+) {
+	ASSERT (block != NULL) ;
+
+	int64_t itemcount = DataBlock_ItemCount(block) ;
+	
+	if (itemcount == 0) {
+		return 0;
+	} else if (sample_size * 10 > itemcount) {
+		// if sample is close to the total, just scan all nodes.
+		return _TotalAttributeMemory(DataBlock_Scan(block)) ;
+	}
+
+	int64_t datablock_size = DataBlock_DeletedItemsCount(block) + itemcount;
+
+	// TODO: find a better (more random) sampling method
+	uint64_t r = 12345;
+	AttributeSet *set = NULL ;
+	size_t memory_usage = 0 ;
+	int64_t i = 0 ;
+	while (i < sample_size) {
+		simple_rand (&r) ;
+		set = (AttributeSet*) DataBlock_GetItem (block, r % datablock_size) ;
+
+		if (set != NULL) {
+			memory_usage += AttributeSet_memoryUsage (*set) ;
+			++i ;
+		}
+		// skip deleted items
+	}
+
+	double avg = memory_usage / (double) sample_size ;
+	return avg * itemcount ;
+}
+
 // estimate amortized memory consumption of node attribute sets
 static void _EstimateNodeAttributeMemory
 (
@@ -196,6 +267,8 @@ static void _EstimateNodeAttributeMemory
 	Delta_Matrix D = Graph_GetNodeLabelMatrix (g) ;
 	GrB_OK (Delta_Matrix_export (&lbls, D, GrB_BOOL, NULL)) ;
 
+	_Overlapping (lbls, &V) ;
+	
 	GrB_Index nvals ;
 	GrB_OK (GrB_Vector_nvals (&nvals, V)) ;
 
@@ -258,7 +331,9 @@ static void _EstimateEdgeAttributeMemory
 
 		edges_sample_size = sample_size ;
 	}
-	result->total_edge_attr_sz = _TotalAttributeMemory (Graph_ScanEdges(g)) ;
+	// result->total_edge_attr_sz = _TotalAttributeMemory (Graph_ScanEdges(g)) ;
+	// result->total_edge_attr_sz =
+	// 	_EstimateTotalAttributeMemory (g->edges, samples) ;
 }
 
 // returns the amortized memory consumption of a graph
@@ -321,7 +396,7 @@ void GraphContext_EstimateMemoryUsage
 	}
 
 	for (int i = 0 ; i < arr_len (result->edge_attr_by_type_sz) ; i++) {
-		// result->total_graph_sz_mb += result->edge_attr_by_type_sz[i] ;
+		result->total_edge_attr_sz += result->edge_attr_by_type_sz[i] ;
 		result->edge_attr_by_type_sz[i] /= MB ;
 	}
 
