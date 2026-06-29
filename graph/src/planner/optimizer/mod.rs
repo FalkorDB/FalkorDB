@@ -133,6 +133,12 @@ pub fn optimize(
     fuse_anonymous_traverse(&mut optimized_plan);
     replace_cartesian_with_hash_join(&mut optimized_plan);
     absorb_edge_filters_into_vlt(&mut optimized_plan);
+    // Re-run path reduction: folding an edge-only filter into a
+    // CondVarLenTraverse can remove the last ancestor that consumed the path
+    // alias, so a path kept by the first pass may now be skippable. Safe here
+    // because `ir_references_variable` inspects `ValueHashJoin` keys, the only
+    // path consumer `replace_cartesian_with_hash_join` adds in between.
+    reduce_var_len_path(&mut optimized_plan);
     utilize_index(&mut optimized_plan, graph);
     utilize_node_by_id(&mut optimized_plan);
 

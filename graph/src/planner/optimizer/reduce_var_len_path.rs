@@ -11,10 +11,13 @@
 //! expression references the path alias. If it is never consumed, `emit_path`
 //! is set to false and the operator skips path materialization.
 //!
-//! It runs before `replace_cartesian_with_hash_join` and the filter-movement
-//! passes so every original path consumer (Project/Filter/Sort/Aggregate/
-//! PathBuilder/...) is still a direct ancestor and `ValueHashJoin` nodes — which
-//! `ir_references_variable` does not inspect — do not yet exist.
+//! It runs twice. The first run (before the filter-movement passes) sees every
+//! original path consumer (Project/Filter/Sort/Aggregate/PathBuilder/...) as a
+//! direct ancestor. A second run after `absorb_edge_filters_into_vlt` catches
+//! paths whose last consumer was an edge-only filter that the absorption pass
+//! folded into the traversal. The second run is safe because
+//! `ir_references_variable` inspects `ValueHashJoin` keys — the only new path
+//! consumer `replace_cartesian_with_hash_join` can introduce in between.
 
 use orx_tree::{Bfs, DynTree, NodeRef};
 
@@ -49,5 +52,86 @@ pub(super) fn reduce_var_len_path(plan: &mut DynTree<IR>) {
         {
             *emit_path = false;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use orx_tree::{Bfs, DynTree, NodeRef};
+
+    use super::super::absorb_edge_filters_into_vlt::absorb_edge_filters_into_vlt;
+    use super::super::replace_cartesian_with_hash_join::replace_cartesian_with_hash_join;
+    use super::reduce_var_len_path;
+    use crate::parser::cypher::Parser;
+    use crate::planner::{IR, Planner, binder::Binder};
+
+    /// Compiles `query` through parse → bind → plan, then runs the Graph-free
+    /// subset of the optimizer pipeline that governs `emit_path`, in pipeline
+    /// order. The skipped passes (`reduce_count`, `select_scan_node`,
+    /// `utilize_index`, ...) need a live GraphBLAS context and do not change
+    /// which operators consume a path alias.
+    fn optimized_varlen_plan(query: &str) -> DynTree<IR> {
+        let mut parser = Parser::new(query);
+        parser.parse_parameters().expect("parse parameters");
+        let raw = parser.parse().expect("parse");
+        let (ir, scope_vars) = Binder::default().bind(raw).expect("bind");
+        let mut plan = Planner::new(scope_vars).plan(ir);
+
+        reduce_var_len_path(&mut plan);
+        replace_cartesian_with_hash_join(&mut plan);
+        absorb_edge_filters_into_vlt(&mut plan);
+        reduce_var_len_path(&mut plan);
+        plan
+    }
+
+    fn emit_paths(plan: &DynTree<IR>) -> Vec<bool> {
+        plan.root()
+            .indices::<Bfs>()
+            .filter_map(|idx| match plan.node(idx).data() {
+                IR::CondVarLenTraverse { emit_path, .. } => Some(*emit_path),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn has_value_hash_join(plan: &DynTree<IR>) -> bool {
+        plan.root()
+            .indices::<Bfs>()
+            .any(|idx| matches!(plan.node(idx).data(), IR::ValueHashJoin { .. }))
+    }
+
+    #[test]
+    fn absorbed_edge_filter_lets_unused_path_be_skipped() {
+        // `e` is consumed only by the edge-only filter `e.w = 1`. Once
+        // `absorb_edge_filters_into_vlt` folds that filter into the traversal,
+        // the second pass run must reduce emit_path to false.
+        let plan = optimized_varlen_plan("MATCH (a)-[e:R*1..2]->(b) WHERE e.w = 1 RETURN b.v");
+        assert_eq!(emit_paths(&plan), vec![false]);
+    }
+
+    #[test]
+    fn consumed_path_is_kept_despite_absorption() {
+        // The relationship list `e` is also returned, so even though `e.w = 1`
+        // is absorbable, emit_path must stay true.
+        let plan = optimized_varlen_plan("MATCH (a)-[e:R*1..2]->(b) WHERE e.w = 1 RETURN e");
+        assert!(emit_paths(&plan).into_iter().all(|kept| kept));
+    }
+
+    #[test]
+    fn path_consumed_through_value_hash_join_is_kept() {
+        // `e1` flows only into a ValueHashJoin key (`e1 = e2`, which the
+        // cartesian-to-join pass rewrites). The re-run must still see that
+        // consumer through the join and keep both paths materialized — this
+        // guards the `ir_references_variable` ValueHashJoin arm.
+        let plan = optimized_varlen_plan(
+            "MATCH (a)-[e1:R*1..2]->(b), (c)-[e2:R*1..2]->(d) WHERE e1 = e2 RETURN b.v, d.v",
+        );
+        assert!(
+            has_value_hash_join(&plan),
+            "expected a ValueHashJoin in the plan"
+        );
+        let paths = emit_paths(&plan);
+        assert_eq!(paths.len(), 2, "expected two CondVarLenTraverse nodes");
+        assert!(paths.into_iter().all(|kept| kept));
     }
 }
