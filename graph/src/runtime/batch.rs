@@ -135,19 +135,6 @@ impl NullBitmap {
     }
 }
 
-/// One-pass numeric classification shared by every column classifier
-/// ([`classify_stored_column`], [`classify_column`], `classify_join_keys`, and
-/// the sort-key `KeyColumn::classify`), so the int/float/null match lives in one
-/// place. A single scan tries to collect `i64`s, then optionally an `f64` lane,
-/// else falls back to value-backed. `allow_null` decides whether `Null` rides
-/// along as a `0`/`0.0` placeholder (callers pair a null bitmap) or disqualifies
-/// the typed lane; [`FloatLane`] decides the float fallback shape.
-pub(crate) enum NumericColumn {
-    Ints(Vec<i64>),
-    Floats(Vec<f64>),
-    Values(Vec<Value>),
-}
-
 /// How a non-int numeric column may fall back to an `f64` lane.
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum FloatLane {
@@ -162,11 +149,19 @@ pub(crate) enum FloatLane {
     Promote,
 }
 
+/// One-pass numeric classification shared by every column classifier
+/// ([`classify_stored_column`], [`classify_column`], `classify_join_keys`, and
+/// the sort-key `KeyColumn::classify`), so the int/float/null match lives in one
+/// place. Returns the narrowest numeric [`Column`]: [`Column::Ints`] when every
+/// value collects as `i64`, else an optional [`Column::Floats`] lane, else
+/// [`Column::Values`]. `allow_null` decides whether `Null` rides along as a
+/// `0`/`0.0` placeholder (callers pair a null bitmap) or disqualifies the typed
+/// lane; [`FloatLane`] decides the float fallback shape.
 pub(crate) fn classify_numeric(
     values: Vec<Value>,
     allow_null: bool,
     floats: FloatLane,
-) -> NumericColumn {
+) -> Column {
     let mut ints = Vec::with_capacity(values.len());
     if values.iter().all(|v| match v {
         Value::Int(i) => {
@@ -179,7 +174,7 @@ pub(crate) fn classify_numeric(
         }
         _ => false,
     }) {
-        return NumericColumn::Ints(ints);
+        return Column::Ints(ints);
     }
     if floats != FloatLane::None {
         let mut out = Vec::with_capacity(values.len());
@@ -198,10 +193,10 @@ pub(crate) fn classify_numeric(
             }
             _ => false,
         }) {
-            return NumericColumn::Floats(out);
+            return Column::Floats(out);
         }
     }
-    NumericColumn::Values(values)
+    Column::Values(values)
 }
 
 /// Classifies a fully-bound stored column into the most specific lossless
@@ -238,11 +233,7 @@ pub fn classify_stored_column(values: Vec<Value>) -> Column {
     }
     // No null bitmap in the stored layout, so a null disqualifies; only a pure
     // float column promotes (a mixed int/float column stays lossless `Values`).
-    match classify_numeric(values, false, FloatLane::Pure) {
-        NumericColumn::Ints(ints) => Column::Ints(ints),
-        NumericColumn::Floats(floats) => Column::Floats(floats),
-        NumericColumn::Values(values) => Column::Values(values),
-    }
+    classify_numeric(values, false, FloatLane::Pure)
 }
 
 /// Classifies a `Vec<Value>` into the most specific typed Column plus a NullBitmap.
@@ -256,11 +247,7 @@ pub fn classify_stored_column(values: Vec<Value>) -> Column {
 #[must_use]
 pub fn classify_column(values: Vec<Value>) -> (Column, NullBitmap) {
     let nulls = NullBitmap::from_values(&values);
-    let column = match classify_numeric(values, true, FloatLane::Promote) {
-        NumericColumn::Ints(ints) => Column::Ints(ints),
-        NumericColumn::Floats(floats) => Column::Floats(floats),
-        NumericColumn::Values(values) => Column::Values(values),
-    };
+    let column = classify_numeric(values, true, FloatLane::Promote);
     (column, nulls)
 }
 

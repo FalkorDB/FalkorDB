@@ -46,7 +46,7 @@ use crate::runtime::row::RowView;
 use crate::runtime::{
     batch::{
         BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow, Column, FloatLane, NullBitmap,
-        NumericColumn, classify_numeric,
+        classify_numeric,
     },
     runtime::Runtime,
     value::{CompareValue, Value},
@@ -244,9 +244,13 @@ impl KeyColumn {
         // `compare_at` stays byte-for-byte identical to `Value::compare_value`;
         // a pure-float key uses the float lane, no int/float mixing.
         match classify_numeric(values, false, FloatLane::Pure) {
-            NumericColumn::Ints(ints) => Self::Ints(ints),
-            NumericColumn::Floats(floats) => Self::Floats(floats),
-            NumericColumn::Values(values) => Self::Values(values),
+            Column::Ints(ints) => Self::Ints(ints),
+            Column::Floats(floats) => Self::Floats(floats),
+            Column::Values(values) => Self::Values(values),
+            // `classify_numeric` only ever yields `Ints`/`Floats`/`Values`.
+            Column::NodeIds(_) | Column::RelIds(_) | Column::Unbound => {
+                unreachable!("classify_numeric yields only Ints/Floats/Values")
+            }
         }
     }
 
