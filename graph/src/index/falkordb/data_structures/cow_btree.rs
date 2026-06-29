@@ -999,6 +999,8 @@ impl CompactIndexedLeaf {
 impl<const LEAF_MAX: usize> Leaf<LEAF_MAX> {
     /// This leaf's serialized encoding (carried out of band, see [`LeafFormat`]). The two compact in-RAM
     /// types share one on-disk format — index presence lives in the buffer — so both map to `Compact`.
+    /// Test-only for now (paired with [`CowBTree::leaves`]); the durable-write path re-exposes it on disk.
+    #[cfg(test)]
     fn format(&self) -> LeafFormat {
         match self {
             Leaf::Aos(_) => LeafFormat::Aos,
@@ -1165,7 +1167,9 @@ impl<const LEAF_MAX: usize> Leaf<LEAF_MAX> {
         }
     }
 
-    /// The leaf's serialized (tag-free) bytes — an `Arc` bump, no serialization step.
+    /// The leaf's serialized (tag-free) bytes — an `Arc` bump, no serialization step. Test-only for now
+    /// (paired with [`CowBTree::leaves`]); the durable-write path re-exposes it when disk lands.
+    #[cfg(test)]
     fn bytes(&self) -> Arc<[u8]> {
         match self {
             Leaf::Aos(l) => Arc::clone(&l.0),
@@ -1656,17 +1660,24 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
     ) -> Combined<LEAF_MAX, BRANCH_MAX> {
         match (self, right) {
             (Node::Leaf(left_leaf), Node::Leaf(right_leaf)) => {
-                let mut pairs = left_leaf.to_pairs();
-                pairs.extend(right_leaf.to_pairs());
-                if pairs.len() <= LEAF_MAX {
-                    Combined::One(Node::Leaf(Leaf::from_pairs(&pairs)))
+                // Two AoS leaves are tag-free `[(key, doc) × n]` and the siblings are ordered, so the join
+                // is a byte concat (see [`Node::aos_combine`]). Compact/mixed leaves can't share a
+                // `min_value`/width, so they fall back to the decode + rebuild below.
+                if let (Leaf::Aos(left_aos), Leaf::Aos(right_aos)) = (left_leaf, right_leaf) {
+                    Self::aos_combine(left_aos, right_aos)
                 } else {
-                    let mid = pairs.len() / 2;
-                    Combined::Two(
-                        Node::Leaf(Leaf::from_pairs(&pairs[..mid])),
-                        pairs[mid],
-                        Node::Leaf(Leaf::from_pairs(&pairs[mid..])),
-                    )
+                    let mut pairs = left_leaf.to_pairs();
+                    pairs.extend(right_leaf.to_pairs());
+                    if pairs.len() <= LEAF_MAX {
+                        Combined::One(Node::Leaf(Leaf::from_pairs(&pairs)))
+                    } else {
+                        let mid = pairs.len() / 2;
+                        Combined::Two(
+                            Node::Leaf(Leaf::from_pairs(&pairs[..mid])),
+                            pairs[mid],
+                            Node::Leaf(Leaf::from_pairs(&pairs[mid..])),
+                        )
+                    }
                 }
             }
             (Node::Branch(left_branch), Node::Branch(right_branch)) => {
@@ -1698,6 +1709,28 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
                 }
             }
             _ => unreachable!("siblings are always the same node type"),
+        }
+    }
+
+    /// Join two ordered AoS sibling leaves. Their buffers are tag-free `[(key, doc) × n]` and `left`
+    /// precedes `right`, so the merge is a plain byte concat — no decode. If the result overflows
+    /// `LEAF_MAX` we split at the midpoint entry; the fixed `STRIDE` makes that a balanced split (both
+    /// halves `>= LEAF_MAX / 2`), and `mid_sep` (the first entry of the right half) is the new separator.
+    fn aos_combine(
+        left: &AosLeaf,
+        right: &AosLeaf,
+    ) -> Combined<LEAF_MAX, BRANCH_MAX> {
+        let mut buf = Vec::with_capacity(left.0.len() + right.0.len());
+        buf.extend_from_slice(&left.0);
+        buf.extend_from_slice(&right.0);
+        let leaf = |bytes: Vec<u8>| Node::Leaf(Leaf::Aos(AosLeaf(bytes.into())));
+        if buf.len() / STRIDE <= LEAF_MAX {
+            Combined::One(leaf(buf))
+        } else {
+            let split = buf.len() / STRIDE / 2 * STRIDE;
+            let mid_sep = (read_u64(&buf, split), read_u64(&buf, split + FIELD));
+            let right_buf = buf.split_off(split);
+            Combined::Two(leaf(buf), mid_sep, leaf(right_buf))
         }
     }
 
@@ -2899,9 +2932,19 @@ mod tests {
             // step interleaves with the 1000-step seed, so new distinct values land in the *middle* of a
             // leaf's distinct table (exercising the index remap), not only at the end.
             let gen_key = |n: u64| {
-                if n % 16 == 0 { n >> 8 } else { (n % 100) * 500 }
+                if n.is_multiple_of(16) {
+                    n >> 8
+                } else {
+                    (n % 100) * 500
+                }
             };
-            let gen_doc = |n: u64| if n % 8 == 0 { n >> 20 } else { n % 800 }; // narrow + widening docs
+            let gen_doc = |n: u64| {
+                if n.is_multiple_of(8) {
+                    n >> 20
+                } else {
+                    n % 800
+                }
+            }; // narrow + widening docs
             match next() % 10 {
                 0..=5 => {
                     let (k, d) = (gen_key(next()), gen_doc(next()));
