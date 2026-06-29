@@ -1168,12 +1168,6 @@ impl<'a> Batch<'a> {
         self.origin_rows.as_ref().map_or(0, |o| o[row])
     }
 
-    /// Whether this batch carries a per-row correlation origin sidecar.
-    #[must_use]
-    pub fn has_origin_rows(&self) -> bool {
-        self.origin_rows.is_some()
-    }
-
     /// Installs the columnar per-row correlation sidecar. The vector is indexed
     /// by logical row (length must equal [`len`](Self::len)). Ignored for
     /// env-backed batches, which carry the tag inside each `Env`.

@@ -453,19 +453,17 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
     /// columns are accumulated straight into typed lanes as each result is
     /// pulled ([`GatherItem::push_into`]) and installed via
     /// [`GatherItem::finish`]. The per-row index vector is only needed when the
-    /// parent carries columns *or* a correlation origin sidecar — a bare
-    /// column-less (leaf) parent skips it and emits a standalone result batch.
-    /// Returns `None` when the queue drained without yielding a result, in which
-    /// case the caller refills.
+    /// parent carries columns — a bare column-less (leaf) parent skips it and
+    /// emits a standalone result batch. Returns `None` when the queue drained
+    /// without yielding a result, in which case the caller refills.
     pub(crate) fn emit(&mut self) -> Option<Batch<'a>> {
         // Gather (rather than build a standalone batch) whenever the parent has
-        // columns to replicate *or* per-row correlation origins to carry forward;
-        // otherwise a 0-column correlated parent would drop its origins, and a
-        // no-alias emitter (which never sets a column) would emit an empty batch.
-        let should_expand_batch = self
-            .batch
-            .as_ref()
-            .is_some_and(|b| b.num_columns() > 0 || b.has_origin_rows());
+        // columns to replicate; otherwise a no-alias emitter (which never sets a
+        // column) would emit an empty batch. Correlation origins never need a
+        // separate check: they are only ever stamped by
+        // `clone_active_rows_seq_origin`, which clones the outer batch's
+        // columns, so a parent carrying origins always has at least one column.
+        let should_expand_batch = self.batch.as_ref().is_some_and(|b| b.num_columns() > 0);
         let mut indices: Vec<usize> = if should_expand_batch {
             Vec::with_capacity(BATCH_SIZE)
         } else {
