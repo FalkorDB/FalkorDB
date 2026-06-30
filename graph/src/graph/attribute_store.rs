@@ -757,7 +757,7 @@ impl Decode<19> for AttributeStore {
 // AttributeStorage: in-memory concurrent backing store
 // ============================================================================
 //
-// Custom sharded `RwLock<Vec<Option<CachedEntity>>>` tuned for the attribute
+// Custom sharded `RwLock<Vec<Option<AttrArray>>>` tuned for the attribute
 // workload (sequential `u64` entity ids). Ids are allocated monotonically, so
 // direct slot indexing beats hashing; gaps from deleted entities sit as `None`
 // slots. Shared across MVCC versions via `Arc`; per-entry version stamps give
@@ -785,10 +785,20 @@ pub struct AttrArray {
     ptr: NonNull<u8>,
 }
 
+/// Header stored at the front of every [`AttrArray`] allocation.
+///
+/// Carrying the MVCC `version` here (rather than alongside the slot pointer)
+/// keeps the per-entity slot a single 8-byte `NonNull`, so an empty/absent
+/// slot costs 8 bytes instead of 16 — matching the C engine's layout where
+/// each entity slot is just a pointer and all metadata lives in the heap
+/// allocation it points to.
 #[repr(C)]
 struct AttrHeader {
     strong: AtomicU32,
     len: u32,
+    /// Graph version when this entity's attributes were written. A reader at
+    /// snapshot version `v` ignores entries whose `version > v`.
+    version: u64,
 }
 
 impl AttrArray {
@@ -801,13 +811,17 @@ impl AttrArray {
         (l.pad_to_align(), values_off, indices_off)
     }
 
-    /// Build from attribute pairs already sorted by `attr_idx`. Consumes the
-    /// `Vec`, moving each `Value` into the new block (no extra clones).
+    /// Build from attribute pairs already sorted by `attr_idx`, stamped with
+    /// the writing `version`. Consumes the `Vec`, moving each `Value` into the
+    /// new block (no extra clones).
     #[must_use]
-    fn from_sorted(pairs: Vec<(u16, Value)>) -> Self {
+    fn from_sorted(
+        pairs: Vec<(u16, Value)>,
+        version: u64,
+    ) -> Self {
         let len = pairs.len();
         let (layout, values_off, indices_off) = Self::layout_of(len);
-        // SAFETY: layout has non-zero size (the header is 8 bytes).
+        // SAFETY: layout has non-zero size (the header is 16 bytes).
         let raw = unsafe { alloc::alloc(layout) };
         let Some(ptr) = NonNull::new(raw) else {
             alloc::handle_alloc_error(layout);
@@ -820,6 +834,7 @@ impl AttrArray {
                 AttrHeader {
                     strong: AtomicU32::new(1),
                     len: len as u32,
+                    version,
                 },
             );
             let vptr = ptr.as_ptr().add(values_off).cast::<Value>();
@@ -832,16 +847,25 @@ impl AttrArray {
         Self { ptr }
     }
 
-    /// Shared empty instance (used for prop-less entities).
+    /// Shared empty instance (used for prop-less entities). Its `version` is
+    /// irrelevant: the empty array is only ever returned as a fallback payload,
+    /// never stored in a slot and never version-checked.
     #[must_use]
     fn empty() -> Self {
-        Self::from_sorted(Vec::new())
+        Self::from_sorted(Vec::new(), 0)
     }
 
     #[inline]
     fn header(&self) -> &AttrHeader {
         // SAFETY: `ptr` always references a valid header for the lifetime of self.
         unsafe { &*self.ptr.as_ptr().cast::<AttrHeader>() }
+    }
+
+    /// MVCC version stamp recorded when this entity's attributes were written.
+    #[inline]
+    #[must_use]
+    fn version(&self) -> u64 {
+        self.header().version
     }
 
     #[inline]
@@ -954,15 +978,6 @@ impl Drop for AttrArray {
 unsafe impl Send for AttrArray {}
 unsafe impl Sync for AttrArray {}
 
-/// Per-entity stored attributes.
-#[derive(Clone)]
-struct CachedEntity {
-    /// Indices + values for this entity, in one shared allocation.
-    attrs: AttrArray,
-    /// Graph version when this entry was written.
-    version: u64,
-}
-
 const SHARDS: usize = 64;
 const SHARD_BITS: u32 = 6; // log2(SHARDS)
 const SHARD_MASK: u64 = (SHARDS as u64) - 1;
@@ -973,10 +988,15 @@ const CHUNK: u64 = 1 << CHUNK_BITS;
 const CHUNK_MASK: u64 = CHUNK - 1;
 
 struct Shard {
+    /// Per-entity stored attributes, indexed by slot. Each entry is a single
+    /// shared [`AttrArray`] whose heap header carries the MVCC version, so a
+    /// slot is one 8-byte `NonNull` and an empty/absent slot (`None`) costs
+    /// 8 bytes via the niche.
+    ///
     /// Layout: shard = `(id >> CHUNK_BITS) & SHARD_MASK`, so `CHUNK`
     /// consecutive ids share one shard — sequential id batches (e.g.
     /// label scans) reuse a single read lock per chunk.
-    entries: RwLock<Vec<Option<CachedEntity>>>,
+    entries: RwLock<Vec<Option<AttrArray>>>,
 }
 
 #[inline]
@@ -1048,10 +1068,10 @@ impl AttributeStorage {
         let slot = slot_idx(entity_id);
         let entries = shard.entries.read();
         let entry = entries.get(slot)?.as_ref()?;
-        if entry.version > version {
+        if entry.version() > version {
             return None;
         }
-        Some(entry.attrs.get(attr_idx).cloned())
+        Some(entry.get(attr_idx).cloned())
     }
 
     /// Batch variant of [`get_attr`] for many ids sharing the same `attr_idx`.
@@ -1083,10 +1103,10 @@ impl AttributeStorage {
             let Some(Some(entry)) = guard.get(slot) else {
                 continue;
             };
-            if entry.version > version {
+            if entry.version() > version {
                 continue;
             }
-            out[pos] = Some(entry.attrs.get(attr_idx).cloned());
+            out[pos] = Some(entry.get(attr_idx).cloned());
         }
     }
 
@@ -1122,9 +1142,9 @@ impl AttributeStorage {
             }
             let slot = slot_idx(id);
             if let Some(Some(entry)) = guard.get(slot)
-                && entry.version <= version
+                && entry.version() <= version
             {
-                match entry.attrs.get(attr_idx) {
+                match entry.get(attr_idx) {
                     Some(v) => out.push(v.clone()),
                     None => out.push(default.clone()),
                 }
@@ -1146,10 +1166,10 @@ impl AttributeStorage {
         let slot = slot_idx(entity_id);
         let entries = shard.entries.read();
         let entry = entries.get(slot)?.as_ref()?;
-        if entry.version > version {
+        if entry.version() > version {
             return None;
         }
-        Some(entry.attrs.clone())
+        Some(entry.clone())
     }
 
     /// Check whether an entity has *any* stored attributes.
@@ -1163,10 +1183,10 @@ impl AttributeStorage {
         let slot = slot_idx(entity_id);
         let entries = shard.entries.read();
         let entry = entries.get(slot)?.as_ref()?;
-        if entry.version > version {
+        if entry.version() > version {
             return None;
         }
-        Some(!entry.attrs.is_empty())
+        Some(!entry.is_empty())
     }
 
     /// Check whether an attr already exists for an entity.
@@ -1181,10 +1201,10 @@ impl AttributeStorage {
         let slot = slot_idx(entity_id);
         let entries = shard.entries.read();
         let entry = entries.get(slot)?.as_ref()?;
-        if entry.version > version {
+        if entry.version() > version {
             return None;
         }
-        Some(entry.attrs.get(attr_idx).is_some())
+        Some(entry.get(attr_idx).is_some())
     }
 
     /// Insert (or replace) the full attribute set for an entity.
@@ -1195,7 +1215,7 @@ impl AttributeStorage {
         version: u64,
     ) {
         attrs.sort_by_key(|item| item.0);
-        self.insert_internal(entity_id, AttrArray::from_sorted(attrs), version);
+        self.insert_internal(entity_id, AttrArray::from_sorted(attrs, version));
     }
 
     /// Insert (or replace) the full attribute set when the caller guarantees
@@ -1210,16 +1230,14 @@ impl AttributeStorage {
             attrs.windows(2).all(|w| w[0].0 <= w[1].0),
             "insert_entity_presorted: attrs not sorted"
         );
-        self.insert_internal(entity_id, AttrArray::from_sorted(attrs), version);
+        self.insert_internal(entity_id, AttrArray::from_sorted(attrs, version));
     }
 
     fn insert_internal(
         &self,
         entity_id: u64,
         attrs: AttrArray,
-        version: u64,
     ) {
-        let entry = CachedEntity { attrs, version };
         let shard = self.shard(entity_id);
         let slot = slot_idx(entity_id);
         let mut entries = shard.entries.write();
@@ -1228,7 +1246,7 @@ impl AttributeStorage {
         }
         // SAFETY: just resized to cover `slot`.
         let cell = unsafe { entries.get_unchecked_mut(slot) };
-        *cell = Some(entry);
+        *cell = Some(attrs);
     }
 
     /// Batch-invalidate entities (used during rollback and commit).
@@ -1269,12 +1287,14 @@ impl AttributeStorage {
         let Some(Some(existing)) = entries.get_mut(slot) else {
             return false;
         };
-        let Some(pos) = existing.attrs.position(attr_idx) else {
+        let Some(pos) = existing.position(attr_idx) else {
             return false;
         };
-        let mut pairs = existing.attrs.to_pairs();
+        // Preserve the entry's MVCC version when rebuilding the array.
+        let version = existing.version();
+        let mut pairs = existing.to_pairs();
         pairs.remove(pos);
-        existing.attrs = AttrArray::from_sorted(pairs);
+        *existing = AttrArray::from_sorted(pairs, version);
         true
     }
 
@@ -1290,7 +1310,7 @@ impl AttributeStorage {
                     .read()
                     .iter()
                     .filter_map(Option::as_ref)
-                    .map(|e| e.attrs.heap_bytes())
+                    .map(AttrArray::heap_bytes)
                     .sum::<usize>()
             })
             .sum()
@@ -1300,7 +1320,7 @@ impl AttributeStorage {
     /// Grows monotonically as ids are allocated; does not shrink on removal.
     #[must_use]
     pub fn structural_memory_usage(&self) -> usize {
-        let slot_size = std::mem::size_of::<Option<CachedEntity>>();
+        let slot_size = std::mem::size_of::<Option<AttrArray>>();
         self.shards
             .iter()
             .map(|s| s.entries.read().len() * slot_size)
