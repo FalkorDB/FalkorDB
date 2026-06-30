@@ -161,9 +161,9 @@ class testVarLengthTraversal(FlowTestsBase):
             2 -> 5
 
         Expected behaviour
-          *1..1 -> {4349, 8798}
-          *2..2 -> {765, 775, 4349}
-          *1..2 -> superset of *2..2, i.e. {4349, 8798, 765, 775}
+          *1..1 -> {2, 3}
+          *2..2 -> {2, 4, 5}
+          *1..2 -> superset of *2..2, i.e. {2, 3, 4, 5}
         """
         edges = [(1, 2), (1, 3), (2, 4), (2, 5), (3, 2)]
         self.build_graph_from_edgelist(edges)
@@ -321,3 +321,123 @@ class testVarLengthTraversal(FlowTestsBase):
             459,
             message=f"[1..] paths from node 0 to node 0: expected 459, got {got_unbounded}",
         )
+
+    def test05_chain_exact_depths(self):
+        """Linear chain: *k..k returns exactly the node at hop k.
+
+        Graph (start = 0):
+            0 -> 1 -> 2 -> 3 -> 4 -> 5
+
+        Expected exact-depth results:
+          *1..1 = {1}
+          *2..2 = {2}
+          *3..3 = {3}
+          *4..4 = {4}
+          *5..5 = {5}
+
+        Also verifies cumulative ranges and the split-union / traversal-union
+        invariants, which together guarantee *n..n contributes the right slice
+        to every wider range.
+        """
+        edges = [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]
+        self.build_graph_from_edgelist(edges)
+
+        for k in range(1, 6):
+            got = self.endpoints(0, f"{k}..{k}")
+            self.env.assertEqual(
+                got,
+                [k],
+                message=f"*{k}..{k} from node 0: expected [{k}], got {got}",
+            )
+
+        got_range = self.endpoints(0, "1..3")
+        self.env.assertEqual(
+            got_range,
+            [1, 2, 3],
+            message=f"*1..3 from node 0: expected [1,2,3], got {got_range}",
+        )
+
+        self.assert_range_split_invariant(0, n=5)
+        self.assert_traversal_union_invariant(0, n=5)
+
+    def test06_minlen_semantics(self):
+        """minLen boundary: nodes shallower than minLen must not appear.
+
+        Graph (start = 0):
+            0 -> 1 -> 2 -> 3 -> 4
+
+        *2..4 must return {2, 3, 4} and must NOT include node 1 (depth 1).
+        """
+        edges = [(0, 1), (1, 2), (2, 3), (3, 4)]
+        self.build_graph_from_edgelist(edges)
+
+        got = self.endpoints(0, "2..4")
+        self.env.assertEqual(
+            got,
+            [2, 3, 4],
+            message=f"*2..4 from node 0: expected [2,3,4], got {got}",
+        )
+
+        # Node 1 (depth 1) must be absent.
+        self.env.assertEqual(
+            1 in got,
+            False,
+            message=f"*2..4 incorrectly includes node 1 (depth 1)",
+        )
+
+        got_33 = self.endpoints(0, "3..3")
+        self.env.assertEqual(
+            got_33,
+            [3],
+            message=f"*3..3 from node 0: expected [3], got {got_33}",
+        )
+
+        self.assert_range_split_invariant(0, n=4)
+        self.assert_traversal_union_invariant(0, n=4)
+
+    def test07_edge_based_semantics(self):
+        """Edge-based cycle detection: a node may be visited twice if the
+        two traversals use different edges.
+
+        Graph (start = 0):
+            0 -[e1]-> 1 -[e2]-> 2 -[e3]-> 1 -[e4]-> 3
+
+        Under node-based semantics (old behaviour) the path 0->1->2->1->3
+        would be rejected because node 1 appears twice.  Under edge-based
+        semantics it is valid because all four edges are distinct.
+
+        Expected exact-depth results:
+          *1..1 = [1]            (0->1 via e1)
+          *2..2 = [2, 3]         (0->1->2, 0->1->3)
+          *3..3 = [1]            (0->1->2->1 via e1,e2,e3 -- all distinct)
+          *4..4 = [3]            (0->1->2->1->3 via e1,e2,e3,e4 -- node 1 twice, OK!)
+          *5..5 = []             (node 3 is a dead-end; e2 would be repeated)
+          *1..4 = Counter({1:2, 2:1, 3:2})
+        """
+        edges = [(0, 1), (1, 2), (2, 1), (1, 3)]
+        self.build_graph_from_edgelist(edges)
+
+        expected_exact = [
+            ("1..1", [1]),
+            ("2..2", [2, 3]),
+            ("3..3", [1]),
+            ("4..4", [3]),
+            ("5..5", []),
+        ]
+        for rng, expected in expected_exact:
+            got = self.endpoints(0, rng)
+            self.env.assertEqual(
+                got,
+                expected,
+                message=f"*{rng} from node 0: expected {expected}, got {got}",
+            )
+
+        got_14 = Counter(self.endpoints(0, "1..4"))
+        self.env.assertEqual(
+            got_14,
+            Counter({1: 2, 2: 1, 3: 2}),
+            message=f"*1..4 from node 0: expected {{1:2, 2:1, 3:2}}, got {dict(got_14)}",
+        )
+
+        self.assert_range_split_invariant(0, n=4)
+        self.assert_traversal_union_invariant(0, n=5)
