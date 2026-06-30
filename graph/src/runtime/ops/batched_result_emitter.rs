@@ -31,8 +31,6 @@
 //!     columns (if any)
 //! ```
 
-use std::collections::VecDeque;
-
 use crate::graph::graph::{NodeId, RelationshipId};
 use crate::runtime::batch::{BATCH_SIZE, Batch, Column};
 use crate::runtime::value::Value;
@@ -343,17 +341,16 @@ impl GatherItem for Value {
 }
 
 /// What a single parent row yields, as returned by the lazy
-/// [`emit_lazy`](BatchedResultEmitter::emit_lazy) closure. Kept separate from the
-/// queued [`RowIter`] so the (fat) `Spread` payload only ever lives on the stack
-/// during [`refill_from_cursor`](BatchedResultEmitter::refill_from_cursor) — it is
-/// immediately decomposed into small [`RowIter`] pending entries, so the queue
-/// stays lean even though a row may carry a few inline values.
+/// [`emit_lazy`](BatchedResultEmitter::emit_lazy) closure. Mirrors the stored
+/// [`RowIter`] but carries its single value by value (`One(I)`) so op closures
+/// stay ergonomic; [`refill_from_cursor`](BatchedResultEmitter::refill_from_cursor)
+/// moves it straight into the matching `RowIter` pending entry.
 ///
 /// `One` is a single value (the scalar-`UNWIND`/single-node-per-row case);
 /// `Spread` is a small, arity-bounded run of values from a list *literal*
-/// (`UNWIND [a, b, c]`), expanded into that many heap-free `One` entries; `Many`
-/// boxes an iterator for an unbounded or lazy source (a property list, a
-/// `range(..)`, a label/index scan).
+/// (`UNWIND [a, b, c]`) held inline in a smallvec; `Many` boxes an iterator for
+/// an unbounded or lazy source (a property list, a `range(..)`, a label/index
+/// scan).
 pub(crate) enum RowResult<'a, I> {
     One(I),
     Spread(smallvec::IntoIter<[I; 4]>),
@@ -378,15 +375,17 @@ impl<'a, I> RowResult<'a, I> {
     }
 }
 
-/// A parent row's queued result iterator. `One` carries a single result inline
-/// (no heap allocation) for the common case where a row yields exactly one;
-/// `Many` boxes an iterator for rows that yield several. The lazy refill picks
-/// the variant when it decomposes a [`RowResult`]: a `One` (or each `Spread`
-/// element) becomes an inline `One`, a `Many` stays boxed — so a single-value
-/// row stays allocation-free. Kept deliberately small (two pointer-ish words)
-/// since the queue holds one of these per pending result.
+/// The current parent row's result iterator, held in
+/// [`pending`](BatchedResultEmitter::pending). `One` carries a single result
+/// inline (no heap allocation) for the common case where a row yields exactly
+/// one; `Spread` holds a list literal's (arity ≥ 2) values inline in a smallvec
+/// — a single-element literal collapses to `One`; `Many` boxes an iterator for
+/// an unbounded or lazy source. The lazy refill picks the variant straight from
+/// the matching [`RowResult`]. At most one of these is ever live, since the
+/// emitter holds a single row's results at a time.
 enum RowIter<'a, I> {
     One(Option<I>),
+    Spread(smallvec::IntoIter<[I; 4]>),
     Many(Box<dyn Iterator<Item = I> + 'a>),
 }
 
@@ -397,13 +396,14 @@ impl<I> Iterator for RowIter<'_, I> {
     fn next(&mut self) -> Option<I> {
         match self {
             Self::Many(iter) => iter.next(),
+            Self::Spread(iter) => iter.next(),
             Self::One(item) => item.take(),
         }
     }
 }
 
-/// Owns the parent batch being expanded plus the queue of per-row result
-/// iterators, and performs the shared pack-and-gather emit.
+/// Owns the parent batch being expanded plus the current row's result iterator,
+/// and performs the shared pack-and-gather emit.
 pub(crate) struct BatchedResultEmitter<'a, I: GatherItem> {
     /// Per-operator binding describing how packed results scatter into columns.
     binding: I::Binding,
@@ -411,15 +411,14 @@ pub(crate) struct BatchedResultEmitter<'a, I: GatherItem> {
     /// `gather`ing this batch, which replicates every carried-forward parent
     /// column (and correlation origin) once per result.
     batch: Option<Batch<'a>>,
-    /// Per-parent-row result iterators keyed by their parent row index within
+    /// The current parent row's result iterator, keyed by its row index within
     /// `batch`: `(parent_row, results)`. Any per-row filtering is folded into
     /// the iterator by the op that produced it.
     ///
-    /// Filled lazily: [`emit_lazy`](Self::emit_lazy) keeps at most one row's
-    /// results here at a time — the current row's partially-drained iterator (or
-    /// the inline `One` entries a [`RowResult::Spread`] decomposes into) — and
+    /// Filled lazily: [`emit_lazy`](Self::emit_lazy) holds at most one row's
+    /// results at a time — the current row's partially-drained iterator — and
     /// rebuilds the next on demand using [`cursor`](Self::cursor).
-    pending: VecDeque<(usize, RowIter<'a, I>)>,
+    pending: Option<(usize, RowIter<'a, I>)>,
     /// Next active-row position to generate from (an index into the batch's
     /// active rows, not a raw row index).
     cursor: usize,
@@ -440,7 +439,7 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
         Self {
             binding,
             batch: None,
-            pending: VecDeque::new(),
+            pending: None,
             cursor: 0,
             pack_ceiling: BATCH_SIZE,
         }
@@ -470,7 +469,10 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
         &mut self,
         batch: Batch<'a>,
     ) {
-        debug_assert!(self.pending.is_empty(), "seed requires a drained queue");
+        debug_assert!(
+            self.pending.is_none(),
+            "seed requires an empty pending slot"
+        );
         self.batch = Some(batch);
         self.cursor = 0;
     }
@@ -500,10 +502,10 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
         (should_expand, indices, lanes)
     }
 
-    /// Drain the front pending entry's iterator into `lanes` until the batch is
-    /// full or the entry is exhausted (then pop it). A partially-drained entry is
-    /// left at the front for the next call. Precondition: `pending` is non-empty.
-    fn drain_front_entry(
+    /// Drain the pending entry's iterator into `lanes` until the batch is full or
+    /// the entry is exhausted (then clear it). A partially-drained entry is kept
+    /// for the next call. Precondition: `pending` is `Some`.
+    fn drain_pending_entry(
         &mut self,
         indices: &mut Vec<usize>,
         lanes: &mut I::Lanes,
@@ -511,7 +513,7 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
         should_expand: bool,
     ) {
         let ceiling = self.pack_ceiling;
-        let (row, iter) = self.pending.front_mut().expect("pending is non-empty");
+        let (row, iter) = self.pending.as_mut().expect("pending is set");
         let row = *row;
         let mut drained = false;
         while *count < ceiling && !drained {
@@ -526,7 +528,7 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
             }
         }
         if drained {
-            self.pending.pop_front();
+            self.pending = None;
         }
     }
 
@@ -554,11 +556,9 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
 
     /// Advance the [`cursor`](Self::cursor) to the next active row and queue its
     /// results (built on demand by `f` as a [`RowResult`]), skipping rows for
-    /// which `f` yields nothing. A `Spread` is decomposed here into that many
-    /// inline `One` entries (matching the push model's per-element spread) so the
-    /// queue never stores the fat inline payload. Returns `false` when the
-    /// batch's active rows are exhausted (or no batch is installed), signalling
-    /// the caller to refill via [`seed`](Self::seed).
+    /// which `f` yields nothing (including an empty `Spread`). Returns `false`
+    /// when the batch's active rows are exhausted (or no batch is installed),
+    /// signalling the caller to refill via [`seed`](Self::seed).
     fn refill_from_cursor<F>(
         &mut self,
         f: &mut F,
@@ -579,24 +579,28 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
             match f(b, row)? {
                 None => {}
                 Some(RowResult::One(item)) => {
-                    self.pending.push_back((row, RowIter::One(Some(item))));
+                    self.pending = Some((row, RowIter::One(Some(item))));
                     return Ok(true);
                 }
                 Some(RowResult::Many(iter)) => {
-                    self.pending.push_back((row, RowIter::Many(iter)));
+                    self.pending = Some((row, RowIter::Many(iter)));
                     return Ok(true);
                 }
-                Some(RowResult::Spread(values)) => {
-                    let before = self.pending.len();
-                    for item in values {
-                        self.pending.push_back((row, RowIter::One(Some(item))));
-                    }
+                Some(RowResult::Spread(mut values)) => match values.len() {
                     // An empty list literal (`UNWIND []`) yields nothing for this
-                    // row; keep scanning rather than reporting a queued result.
-                    if self.pending.len() > before {
+                    // row; keep scanning rather than queueing an empty iterator.
+                    0 => {}
+                    // A single-element literal (`UNWIND [x]`) takes the lean `One`
+                    // path so it never pays the wider `Spread` payload's drain cost.
+                    1 => {
+                        self.pending = Some((row, RowIter::One(values.next())));
                         return Ok(true);
                     }
-                }
+                    _ => {
+                        self.pending = Some((row, RowIter::Spread(values)));
+                        return Ok(true);
+                    }
+                },
             }
         }
         Ok(false)
@@ -622,10 +626,10 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
         let (should_expand, mut indices, mut lanes) = self.start_batch();
         let mut count = 0usize;
         while count < self.pack_ceiling {
-            if self.pending.is_empty() && !self.refill_from_cursor(&mut f)? {
+            if self.pending.is_none() && !self.refill_from_cursor(&mut f)? {
                 break;
             }
-            self.drain_front_entry(&mut indices, &mut lanes, &mut count, should_expand);
+            self.drain_pending_entry(&mut indices, &mut lanes, &mut count, should_expand);
         }
         Ok(self.finish_batch(indices, lanes, count, should_expand))
     }
@@ -633,7 +637,7 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
     /// Drop all queued state. Used by correlated (Apply) plans that re-seed the
     /// scan with a new argument batch and must not replay stale rows.
     pub(crate) fn reset(&mut self) {
-        self.pending.clear();
+        self.pending = None;
         self.batch = None;
         self.cursor = 0;
     }
