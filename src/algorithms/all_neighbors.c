@@ -5,9 +5,10 @@
  */
 
 #include "RG.h"
-#include "all_neighbors.h"
 #include "../util/arr.h"
+#include "all_neighbors.h"
 #include "../util/rmalloc.h"
+#include "graph/tensor/tensor.h"
 
 static void _AllNeighborsCtx_CollectNeighbors
 (
@@ -48,10 +49,6 @@ void AllNeighborsCtx_Reset
 	ctx->current_level = 0;
 
 	arr_clear(ctx->visited);
-
-	// reset visited nodes
-	HashTableRelease(ctx->visited_nodes);
-	ctx->visited_nodes = HashTableCreate(&def_dt);
 }
 
 AllNeighborsCtx *AllNeighborsCtx_New
@@ -75,7 +72,6 @@ AllNeighborsCtx *AllNeighborsCtx_New
 	ctx->visited       = arr_new(EntityID, 1);
 	ctx->first_pull    = true;
 	ctx->current_level = 0;
-	ctx->visited_nodes = HashTableCreate(&def_dt);
 
 	// Dummy iterator at level 0
 	ctx->levels[0] = (Delta_MatrixTupleIter) {0};
@@ -92,10 +88,6 @@ EntityID AllNeighborsCtx_NextNeighbor
 	if(unlikely(ctx->first_pull)) {
 		ASSERT(ctx->current_level == 0);
 		ctx->first_pull = false;
-
-		// update visited path, replace frontier with current node
-		arr_append(ctx->visited, ctx->src);
-		HashTableAdd(ctx->visited_nodes, (void*)(ctx->src), NULL);
 
 		// current_level >= ctx->minLen
 		// see if we should expand further?
@@ -114,23 +106,33 @@ EntityID AllNeighborsCtx_NextNeighbor
 		Delta_MatrixTupleIter *it = &ctx->levels[ctx->current_level];
 
 		GrB_Index dest_id;
-		GrB_Info info = Delta_MatrixTupleIter_next_BOOL(it, NULL, &dest_id, NULL);
+		uint64_t  edge_id;
+		GrB_Info info = Delta_MatrixTupleIter_next_UINT64(it, NULL, &dest_id, &edge_id);
 
 		if(info == GxB_EXHAUSTED) {
-			// backtrack
-			ctx->current_level--;
-			dest_id = arr_pop(ctx->visited);
-			int res = HashTableDelete(ctx->visited_nodes, (void*)(dest_id));
-			ASSERT(res == DICT_OK);
+			// backtrack: only pop if we pushed an edge to reach this level
+			--ctx->current_level;
+			if(arr_len(ctx->visited) > 0) {
+				arr_pop(ctx->visited);
+			}
 			continue;
 		}
 
-		// update visited path, replace frontier with current node
-		bool visited =
-			HashTableAdd(ctx->visited_nodes, (void*)(dest_id), NULL) != DICT_OK;
+		bool visited = false;
 
-		if(ctx->current_level < ctx->minLen && !visited) {
-			arr_append(ctx->visited, dest_id);
+		for (int i = 0; i < arr_len(ctx->visited) ; i++) {
+			visited = visited || (ctx->visited[i] == edge_id);
+		}
+
+		if (visited) {
+			// if we have visted this edge already, do not continue down this 
+			// path, and do not emmit
+			continue;
+		}
+
+
+		if(ctx->current_level < ctx->minLen) {
+			arr_append(ctx->visited, edge_id);
 			// continue traversing
 			_AllNeighborsCtx_CollectNeighbors(ctx, dest_id);
 			continue;
@@ -138,8 +140,8 @@ EntityID AllNeighborsCtx_NextNeighbor
 
 		// current_level >= ctx->minLen
 		// see if we should expand further?
-		if(ctx->current_level < ctx->maxLen && !visited) {
-			arr_append(ctx->visited, dest_id);
+		if(ctx->current_level < ctx->maxLen) {
+			arr_append(ctx->visited, edge_id);
 			// we can expand further
 			_AllNeighborsCtx_CollectNeighbors(ctx, dest_id);
 		}
@@ -163,8 +165,6 @@ void AllNeighborsCtx_Free
 	}
 	rm_free(ctx->levels);
 	arr_free(ctx->visited);
-
-	HashTableRelease(ctx->visited_nodes);
 
 	rm_free(ctx);
 }

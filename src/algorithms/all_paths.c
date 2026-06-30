@@ -300,36 +300,35 @@ AllPathsCtx *AllPathsCtx_New
 }
 
 static Path *_AllPathsCtx_NextPath(AllPathsCtx *ctx) {
+
 	// As long as path is not empty OR there are neighbors to traverse.
-	while(Path_NodeCount(ctx->path) || _AllPathsCtx_LevelNotEmpty(ctx, 0)) {
-		uint32_t depth = Path_NodeCount(ctx->path);
+	while(Path_NodeCount(ctx->path) > 0 || _AllPathsCtx_LevelNotEmpty(ctx, 0)) {
+		uint32_t depth = Path_NodeCount (ctx->path);
 
 		// Can we advance?
-		if(_AllPathsCtx_LevelNotEmpty(ctx, depth)) {
+		if(_AllPathsCtx_LevelNotEmpty (ctx, depth)) {
 			// Get a new frontier.
 			LevelConnection frontierConnection = arr_pop(ctx->levels[depth]);
-			Node frontierNode = frontierConnection.node;
+			Edge frontierEdge = frontierConnection.edge;
 
-			/* See if frontier is already on path,
-			 * it is OK for a path to contain an entity twice,
-			 * such as in the case of a cycle, but in such case we
-			 * won't expand frontier.
-			 * i.e. closing a cycle and continuing traversal. */
-			bool frontierAlreadyOnPath = Path_ContainsNode(ctx->path, &frontierNode);
+			// path is not valid if the next edge is a duplicate of the edges
+			// that came before it.
+			if (Path_ContainsEdge(ctx->path, &frontierEdge)) {
+				continue;
+			}
 
 			// Add frontier to path.
-			Path_AppendNode(ctx->path, frontierNode);
+			Path_AppendNode(ctx->path, frontierConnection.node);
 
 			/* If depth is 0 this is the source node, there is no leading edge to it.
 			 * For depth > 0 for each frontier node, there is a leading edge. */
-			if(depth > 0) Path_AppendEdge(ctx->path, frontierConnection.edge);
+			if(depth > 0) Path_AppendEdge(ctx->path, frontierEdge);
 
 			// Update path depth.
 			depth++;
 
-			/* Introduce neighbors only if path depth < maximum path length.
-			 * and frontier wasn't already expanded. */
-			if(depth < ctx->maxLen && !frontierAlreadyOnPath) {
+			/* Introduce neighbors only if path depth < maximum path length */
+			if(depth < ctx->maxLen) {
 				addNeighbors(ctx, &frontierConnection, depth, ctx->dir);
 			}
 

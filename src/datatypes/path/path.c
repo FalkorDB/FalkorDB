@@ -142,7 +142,7 @@ size_t Path_Len(const Path *p) {
 bool Path_ContainsNode
 (
 	const Path *p,
-	Node *n
+	const Node *n
 ) {
 	ASSERT (p != NULL) ;
 	ASSERT (n != NULL) ;
@@ -152,6 +152,26 @@ bool Path_ContainsNode
 
 	for (int i = 0; i < pathDepth; i++) {
 		if (ENTITY_GET_ID (p->nodes + i) == nId) {
+			return true ;
+		}
+	}
+
+	return false ;
+}
+
+bool Path_ContainsEdge
+(
+	const Path *p,
+	const Edge *e
+) {
+	ASSERT (p != NULL) ;
+	ASSERT (e != NULL) ;
+
+	uint32_t pathDepth = Path_EdgeCount (p) ;
+	EntityID eId = ENTITY_GET_ID (e) ;
+
+	for (int i = 0 ; i < pathDepth ; i++) {
+		if (ENTITY_GET_ID (p->edges + i) == eId) {
 			return true ;
 		}
 	}

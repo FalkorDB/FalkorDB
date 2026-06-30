@@ -31,7 +31,6 @@ typedef struct {
 	EntityID *visited;              // visited nodes
 	Delta_MatrixTupleIter *levels;  // array of neighbors iterator
 	uint n_levels;                  // number of levels
-	dict *visited_nodes;            // visited nodes
 } AllNeighborsCtx;
 
 void AllNeighborsCtx_Reset
