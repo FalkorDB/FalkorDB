@@ -18,7 +18,7 @@ use crate::runtime::{
 };
 use orx_tree::{Dyn, NodeIdx};
 
-use super::batched_result_emitter::{BatchedResultEmitter, ScoredColumn};
+use super::batched_result_emitter::{BatchedResultEmitter, RowResult, ScoredColumn};
 
 pub struct EdgeByVectorScanOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
@@ -69,42 +69,35 @@ impl<'a> Iterator for EdgeByVectorScanOp<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            // Refill the per-row scans from the child when we've run dry: queue
-            // one KNN iterator per active parent row, discarding the endpoints
-            // the index yields and keeping only `(edge, distance)`.
-            if self.emitter.needs_refill() {
-                match self.child.next() {
-                    Some(Ok(batch)) => {
-                        if let Err(e) = self.emitter.seed(batch, |b, row| {
-                            let view = BatchRow::new(b, row);
-                            let (label_str, attr_str, k_val, vec_arc) = eval_vector_args(
-                                self.runtime,
-                                self.label,
-                                self.attr,
-                                self.k,
-                                self.vector,
-                                &view,
-                                "db.idx.vector.queryRelationships",
-                            )?;
-                            let g = self.runtime.g.borrow();
-                            let iter = Box::new(
-                                g.vector_query_edges(&label_str, &attr_str, vec_arc, k_val)?
-                                    .map(|(_src, _dst, edge_id, score)| (edge_id, score)),
-                            )
-                                as Box<dyn Iterator<Item = (RelationshipId, f64)>>;
-                            Ok(Some(iter))
-                        }) {
-                            return Some(Err(e));
-                        }
-                        continue;
-                    }
+            // One KNN iterator per active parent row, built lazily one row at a
+            // time, discarding the endpoints the index yields and keeping only
+            // `(edge, distance)`. When the batch is exhausted (`Ok(None)`), pull
+            // and seed the next child batch.
+            match self.emitter.emit_lazy(|b, row| {
+                let view = BatchRow::new(b, row);
+                let (label_str, attr_str, k_val, vec_arc) = eval_vector_args(
+                    self.runtime,
+                    self.label,
+                    self.attr,
+                    self.k,
+                    self.vector,
+                    &view,
+                    "db.idx.vector.queryRelationships",
+                )?;
+                let g = self.runtime.g.borrow();
+                let iter = Box::new(
+                    g.vector_query_edges(&label_str, &attr_str, vec_arc, k_val)?
+                        .map(|(_src, _dst, edge_id, score)| (edge_id, score)),
+                ) as Box<dyn Iterator<Item = (RelationshipId, f64)>>;
+                Ok(Some(RowResult::many(iter)))
+            }) {
+                Ok(Some(out)) => return Some(Ok(out)),
+                Ok(None) => match self.child.next() {
+                    Some(Ok(batch)) => self.emitter.seed(batch),
                     Some(Err(e)) => return Some(Err(e)),
                     None => return None,
-                }
-            }
-
-            if let Some(out) = self.emitter.emit() {
-                return Some(Ok(out));
+                },
+                Err(e) => return Some(Err(e)),
             }
         }
     }

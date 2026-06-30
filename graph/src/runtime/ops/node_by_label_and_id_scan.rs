@@ -17,7 +17,7 @@ use crate::runtime::{
 };
 use orx_tree::{Dyn, NodeIdx};
 
-use super::batched_result_emitter::BatchedResultEmitter;
+use super::batched_result_emitter::{BatchedResultEmitter, RowResult};
 
 pub struct NodeByLabelAndIdScanOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
@@ -54,45 +54,37 @@ impl<'a> Iterator for NodeByLabelAndIdScanOp<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            // Refill the pending scans from the child when we've run dry. For
-            // each active parent row, evaluate the id filter to a candidate
+            // For each active parent row, evaluate the id filter to a candidate
             // range and queue a label scan from the range minimum, folding the
             // `id <= max` cutoff and `range.contains` membership into the
-            // iterator so the shared emit stays generic.
-            if self.emitter.needs_refill() {
-                match self.child.next() {
-                    Some(Ok(batch)) => {
-                        if let Err(e) = self.emitter.seed(batch, |b, row| {
-                            let view = BatchRow::new(b, row);
-                            let Some(range) =
-                                self.runtime.evaluate_id_filter(self.filter, &view)?
-                            else {
-                                return Ok(None);
-                            };
-                            let Some(min) = range.min() else {
-                                return Ok(None);
-                            };
-                            let max = range.max().expect("range has a min, so it has a max");
-                            let iter = self
-                                .runtime
-                                .g
-                                .borrow()
-                                .get_nodes(&self.node_pattern.labels, min)
-                                .take_while(move |nid| u64::from(*nid) <= max)
-                                .filter(move |nid| range.contains(u64::from(*nid)));
-                            Ok(Some(Box::new(iter)))
-                        }) {
-                            return Some(Err(e));
-                        }
-                        continue;
-                    }
+            // iterator so the shared emit stays generic. Iterators are built
+            // lazily, one row at a time. When the batch is exhausted (`Ok(None)`),
+            // pull and seed the next child batch.
+            match self.emitter.emit_lazy(|b, row| {
+                let view = BatchRow::new(b, row);
+                let Some(range) = self.runtime.evaluate_id_filter(self.filter, &view)? else {
+                    return Ok(None);
+                };
+                let Some(min) = range.min() else {
+                    return Ok(None);
+                };
+                let max = range.max().expect("range has a min, so it has a max");
+                let iter = self
+                    .runtime
+                    .g
+                    .borrow()
+                    .get_nodes(&self.node_pattern.labels, min)
+                    .take_while(move |nid| u64::from(*nid) <= max)
+                    .filter(move |nid| range.contains(u64::from(*nid)));
+                Ok(Some(RowResult::many(Box::new(iter))))
+            }) {
+                Ok(Some(out)) => return Some(Ok(out)),
+                Ok(None) => match self.child.next() {
+                    Some(Ok(batch)) => self.emitter.seed(batch),
                     Some(Err(e)) => return Some(Err(e)),
                     None => return None,
-                }
-            }
-
-            if let Some(out) = self.emitter.emit() {
-                return Some(Ok(out));
+                },
+                Err(e) => return Some(Err(e)),
             }
         }
     }

@@ -40,7 +40,7 @@ use crate::runtime::{
 // breaks `value.root().idx()` etc.
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
-use super::batched_result_emitter::{BatchedResultEmitter, EdgeEndpoints};
+use super::batched_result_emitter::{BatchedResultEmitter, EdgeEndpoints, RowResult};
 
 /// Invariant: `relationship.from` is always the bound endpoint of the
 /// edge scan; `transposed` flips which graph-side endpoint the edge
@@ -297,101 +297,93 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            // Refill the per-row scans from the child when we've run dry: queue
-            // one (endpoint-filtered) edge iterator per active parent row.
-            if self.emitter.needs_refill() {
-                match self.child.next() {
-                    Some(Ok(batch)) => {
-                        let label = &self.relationship_pattern.types[0];
-                        let rp = self.relationship_pattern;
-                        if let Err(e) = self.emitter.seed(batch, |b, row| {
-                            let view = BatchRow::new(b, row);
-                            let q = Self::evaluate_index_query(self.runtime, self.query, &view)?;
+            // One (endpoint-filtered) edge iterator per active parent row, built
+            // lazily one row at a time. When the batch is exhausted (`Ok(None)`),
+            // pull and seed the next child batch.
+            let label = &self.relationship_pattern.types[0];
+            let rp = self.relationship_pattern;
+            match self.emitter.emit_lazy(|b, row| {
+                let view = BatchRow::new(b, row);
+                let q = Self::evaluate_index_query(self.runtime, self.query, &view)?;
 
-                            // Stream results instead of collecting: the child
-                            // batch may have many rows and each row would
-                            // otherwise materialize the full edge set before any
-                            // emission. Matches `NodeByIndexScanOp`'s pattern.
-                            //
-                            // On the fallback path (non-indexable runtime value),
-                            // `get_all_edges` is materialized once into the op's
-                            // cache and shared by all subsequent rows via `Arc`,
-                            // so we don't rebuild the full-type Vec per row.
-                            let base: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
-                                if Self::can_utilize_index(&q) {
-                                    Box::new(self.runtime.g.borrow().get_indexed_edges(label, q))
-                                } else {
-                                    let cached = {
-                                        let mut cache = self.all_edges_cache.borrow_mut();
-                                        if cache.is_none() {
-                                            *cache = Some(Arc::new(
-                                                self.runtime.g.borrow().get_all_edges(label),
-                                            ));
-                                        }
-                                        Arc::clone(cache.as_ref().unwrap())
-                                    };
-                                    let mut idx = 0usize;
-                                    Box::new(std::iter::from_fn(move || {
-                                        if idx < cached.len() {
-                                            let v = cached[idx];
-                                            idx += 1;
-                                            Some(v)
-                                        } else {
-                                            None
-                                        }
-                                    }))
-                                };
+                // Stream results instead of collecting: the child
+                // batch may have many rows and each row would
+                // otherwise materialize the full edge set before any
+                // emission. Matches `NodeByIndexScanOp`'s pattern.
+                //
+                // On the fallback path (non-indexable runtime value),
+                // `get_all_edges` is materialized once into the op's
+                // cache and shared by all subsequent rows via `Arc`,
+                // so we don't rebuild the full-type Vec per row.
+                let base: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
+                    if Self::can_utilize_index(&q) {
+                        Box::new(self.runtime.g.borrow().get_indexed_edges(label, q))
+                    } else {
+                        let cached = {
+                            let mut cache = self.all_edges_cache.borrow_mut();
+                            if cache.is_none() {
+                                *cache =
+                                    Some(Arc::new(self.runtime.g.borrow().get_all_edges(label)));
+                            }
+                            Arc::clone(cache.as_ref().unwrap())
+                        };
+                        let mut idx = 0usize;
+                        Box::new(std::iter::from_fn(move || {
+                            if idx < cached.len() {
+                                let v = cached[idx];
+                                idx += 1;
+                                Some(v)
+                            } else {
+                                None
+                            }
+                        }))
+                    };
 
-                            // Filter edges by *both* endpoints when the child has
-                            // already bound them. `transposed` flips which
-                            // graph-side (src/dst) role the pattern's from/to
-                            // endpoints play in the tensor, so the binding check
-                            // swaps correspondingly.
-                            //
-                            // Self-loop patterns like `MATCH (n)-[r:T]->(n)` have
-                            // `rp.from.alias == rp.to.alias`. Without filtering
-                            // for `from_id == to_id`, non-loop edges leak through
-                            // and the emitter (which binds the single shared
-                            // alias once, via `from`) would surface them.
-                            let bound_from = match view.value_at(rp.from.alias.id) {
-                                Some(Value::Node(id)) => Some(id),
-                                _ => None,
+                // Filter edges by *both* endpoints when the child has
+                // already bound them. `transposed` flips which
+                // graph-side (src/dst) role the pattern's from/to
+                // endpoints play in the tensor, so the binding check
+                // swaps correspondingly.
+                //
+                // Self-loop patterns like `MATCH (n)-[r:T]->(n)` have
+                // `rp.from.alias == rp.to.alias`. Without filtering
+                // for `from_id == to_id`, non-loop edges leak through
+                // and the emitter (which binds the single shared
+                // alias once, via `from`) would surface them.
+                let bound_from = match view.value_at(rp.from.alias.id) {
+                    Some(Value::Node(id)) => Some(id),
+                    _ => None,
+                };
+                let bound_to = match view.value_at(rp.to.alias.id) {
+                    Some(Value::Node(id)) => Some(id),
+                    _ => None,
+                };
+                let transposed = self.transposed;
+                let same_endpoint_alias = rp.from.alias == rp.to.alias;
+                let edges: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
+                    if bound_from.is_some() || bound_to.is_some() || same_endpoint_alias {
+                        Box::new(base.filter(move |(src, dst, _)| {
+                            let (from_id, to_id) = if transposed {
+                                (*dst, *src)
+                            } else {
+                                (*src, *dst)
                             };
-                            let bound_to = match view.value_at(rp.to.alias.id) {
-                                Some(Value::Node(id)) => Some(id),
-                                _ => None,
-                            };
-                            let transposed = self.transposed;
-                            let same_endpoint_alias = rp.from.alias == rp.to.alias;
-                            let edges: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
-                                if bound_from.is_some() || bound_to.is_some() || same_endpoint_alias
-                                {
-                                    Box::new(base.filter(move |(src, dst, _)| {
-                                        let (from_id, to_id) = if transposed {
-                                            (*dst, *src)
-                                        } else {
-                                            (*src, *dst)
-                                        };
-                                        bound_from.is_none_or(|id| id == from_id)
-                                            && bound_to.is_none_or(|id| id == to_id)
-                                            && (!same_endpoint_alias || from_id == to_id)
-                                    }))
-                                } else {
-                                    base
-                                };
-                            Ok(Some(edges))
-                        }) {
-                            return Some(Err(e));
-                        }
-                        continue;
-                    }
+                            bound_from.is_none_or(|id| id == from_id)
+                                && bound_to.is_none_or(|id| id == to_id)
+                                && (!same_endpoint_alias || from_id == to_id)
+                        }))
+                    } else {
+                        base
+                    };
+                Ok(Some(RowResult::many(edges)))
+            }) {
+                Ok(Some(out)) => return Some(Ok(out)),
+                Ok(None) => match self.child.next() {
+                    Some(Ok(batch)) => self.emitter.seed(batch),
                     Some(Err(e)) => return Some(Err(e)),
                     None => return None,
-                }
-            }
-
-            if let Some(out) = self.emitter.emit() {
-                return Some(Ok(out));
+                },
+                Err(e) => return Some(Err(e)),
             }
         }
     }

@@ -24,7 +24,7 @@ use crate::runtime::{
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
-use super::batched_result_emitter::{BatchedResultEmitter, ScoredColumn};
+use super::batched_result_emitter::{BatchedResultEmitter, RowResult, ScoredColumn};
 
 pub struct EdgeByFulltextScanOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
@@ -66,54 +66,45 @@ impl<'a> Iterator for EdgeByFulltextScanOp<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            // Refill the per-row scans from the child when we've run dry: queue
-            // one fulltext-query iterator per active parent row.
-            if self.emitter.needs_refill() {
-                match self.child.next() {
-                    Some(Ok(batch)) => {
-                        if let Err(e) = self.emitter.seed(batch, |b, row| {
-                            let view = BatchRow::new(b, row);
-                            let label_str = match ExprEval::from_runtime(self.runtime).eval(
-                                self.label,
-                                self.label.root().idx(),
-                                Some(&view),
-                                None,
-                            )? {
-                                Value::String(s) => s,
-                                _ => {
-                                    return Err(
-                                        "fulltext query expects a string relationship type".into(),
-                                    );
-                                }
-                            };
-                            let query_str = match ExprEval::from_runtime(self.runtime).eval(
-                                self.query,
-                                self.query.root().idx(),
-                                Some(&view),
-                                None,
-                            )? {
-                                Value::String(s) => s,
-                                _ => return Err("fulltext query expects a string query".into()),
-                            };
-                            let g = self.runtime.g.borrow();
-                            let iter = Box::new(
-                                g.fulltext_query_edges(&label_str, &query_str)?
-                                    .map(|(_src, _dst, edge_id, score)| (edge_id, score)),
-                            )
-                                as Box<dyn Iterator<Item = (RelationshipId, f64)>>;
-                            Ok(Some(iter))
-                        }) {
-                            return Some(Err(e));
-                        }
-                        continue;
+            // One fulltext-query iterator per active parent row, built lazily one
+            // row at a time. When the batch is exhausted (`Ok(None)`), pull and
+            // seed the next child batch.
+            match self.emitter.emit_lazy(|b, row| {
+                let view = BatchRow::new(b, row);
+                let label_str = match ExprEval::from_runtime(self.runtime).eval(
+                    self.label,
+                    self.label.root().idx(),
+                    Some(&view),
+                    None,
+                )? {
+                    Value::String(s) => s,
+                    _ => {
+                        return Err("fulltext query expects a string relationship type".into());
                     }
+                };
+                let query_str = match ExprEval::from_runtime(self.runtime).eval(
+                    self.query,
+                    self.query.root().idx(),
+                    Some(&view),
+                    None,
+                )? {
+                    Value::String(s) => s,
+                    _ => return Err("fulltext query expects a string query".into()),
+                };
+                let g = self.runtime.g.borrow();
+                let iter = Box::new(
+                    g.fulltext_query_edges(&label_str, &query_str)?
+                        .map(|(_src, _dst, edge_id, score)| (edge_id, score)),
+                ) as Box<dyn Iterator<Item = (RelationshipId, f64)>>;
+                Ok(Some(RowResult::many(iter)))
+            }) {
+                Ok(Some(out)) => return Some(Ok(out)),
+                Ok(None) => match self.child.next() {
+                    Some(Ok(batch)) => self.emitter.seed(batch),
                     Some(Err(e)) => return Some(Err(e)),
                     None => return None,
-                }
-            }
-
-            if let Some(out) = self.emitter.emit() {
-                return Some(Ok(out));
+                },
+                Err(e) => return Some(Err(e)),
             }
         }
     }

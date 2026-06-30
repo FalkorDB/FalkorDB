@@ -7,13 +7,13 @@
 //! parent columns are replicated once per batch via `gather`.
 //!
 //! ```text
-//!  parent BatchOp ──► parent_batch ──► BatchedResultEmitter::set_batch
+//!  parent BatchOp ──► parent_batch ──► BatchedResultEmitter::seed
 //!                          │
-//!             for each active parent row:
-//!               g.get_nodes(labels) ──► BatchedResultEmitter::push(row, iter)
+//!             for each active parent row (on demand):
+//!               g.get_nodes(labels) ──► RowResult::many(iter)
 //!                          │
 //!              ┌───────────┴───────────┐
-//!              │  emit(): pack ≤       │
+//!              │  emit_lazy: pack ≤    │
 //!              │  BATCH_SIZE node IDs  │
 //!              └───────────┬───────────┘
 //!                          │
@@ -33,7 +33,7 @@ use crate::runtime::{
 };
 use orx_tree::{Dyn, NodeIdx};
 
-use super::batched_result_emitter::BatchedResultEmitter;
+use super::batched_result_emitter::{BatchedResultEmitter, RowResult};
 
 pub struct NodeByLabelScanOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
@@ -67,27 +67,24 @@ impl<'a> Iterator for NodeByLabelScanOp<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            // Refill the per-row scans from the child when we've run dry. Every
-            // active parent row expands to the full label node set, so queue one
-            // `get_nodes` iterator per row.
-            if self.emitter.needs_refill() {
-                match self.child.next() {
-                    Some(Ok(batch)) => {
-                        let labels = &self.node_pattern.labels;
-                        if let Err(e) = self.emitter.seed(batch, |_b, _row| {
-                            Ok(Some(self.runtime.g.borrow().get_nodes(labels, 0)))
-                        }) {
-                            return Some(Err(e));
-                        }
-                        continue;
-                    }
+            // The lazy emit builds one `get_nodes` iterator at a time as it walks
+            // the active parent rows, so no per-row iterator is queued up front.
+            // When the batch is exhausted (`Ok(None)`), pull and seed the next
+            // child batch.
+            let labels = &self.node_pattern.labels;
+            let runtime = self.runtime;
+            match self.emitter.emit_lazy(|_b, _row| {
+                Ok(Some(RowResult::many(
+                    runtime.g.borrow().get_nodes(labels, 0),
+                )))
+            }) {
+                Ok(Some(out)) => return Some(Ok(out)),
+                Ok(None) => match self.child.next() {
+                    Some(Ok(batch)) => self.emitter.seed(batch),
                     Some(Err(e)) => return Some(Err(e)),
                     None => return None,
-                }
-            }
-
-            if let Some(out) = self.emitter.emit() {
-                return Some(Ok(out));
+                },
+                Err(e) => return Some(Err(e)),
             }
         }
     }

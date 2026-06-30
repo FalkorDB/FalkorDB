@@ -4,7 +4,7 @@
 //! produce a per-active-row iterator of results, then pack up to [`BATCH_SIZE`]
 //! `(parent_row, result)` pairs into one columnar output batch. The operators
 //! differ only in *how* each row's iterator is produced (and any per-row
-//! filtering, which they fold into the pushed iterator); the pack-and-gather
+//! filtering, which they fold into the produced iterator); the pack-and-gather
 //! emit is identical and lives here.
 //!
 //! The shape of the emitted result columns is chosen by the [`GatherItem`] type
@@ -17,13 +17,13 @@
 //! edge-with-endpoints, unwound values) bind several columns at once.
 //!
 //! ```text
-//!  child BatchOp ──► parent batch ──► set_batch()
+//!  child BatchOp ──► parent batch ──► seed()
 //!                         │
-//!            for each active parent row:
-//!              op-specific result iterator ──► push(row, iter)
+//!            for each active parent row (on demand, via the cursor):
+//!              op-specific closure ──► RowResult (One / Spread / Many)
 //!                         │
 //!              ┌──────────┴───────────┐
-//!              │ pack ≤ BATCH_SIZE    │  emit()
+//!              │ pack ≤ BATCH_SIZE    │  emit_lazy(closure)
 //!              │ (parent_row, result) │
 //!              └──────────┬───────────┘
 //!                         │
@@ -342,9 +342,49 @@ impl GatherItem for Value {
     }
 }
 
-/// A parent row's queued results. `One` carries a single result inline (no heap
-/// allocation) for the common case where a row yields exactly one; `Many` boxes
-/// an iterator for rows that yield several.
+/// What a single parent row yields, as returned by the lazy
+/// [`emit_lazy`](BatchedResultEmitter::emit_lazy) closure. Kept separate from the
+/// queued [`RowIter`] so the (fat) `Spread` payload only ever lives on the stack
+/// during [`refill_from_cursor`](BatchedResultEmitter::refill_from_cursor) — it is
+/// immediately decomposed into small [`RowIter`] pending entries, so the queue
+/// stays lean even though a row may carry a few inline values.
+///
+/// `One` is a single value (the scalar-`UNWIND`/single-node-per-row case);
+/// `Spread` is a small, arity-bounded run of values from a list *literal*
+/// (`UNWIND [a, b, c]`), expanded into that many heap-free `One` entries; `Many`
+/// boxes an iterator for an unbounded or lazy source (a property list, a
+/// `range(..)`, a label/index scan).
+pub(crate) enum RowResult<'a, I> {
+    One(I),
+    Spread(smallvec::IntoIter<[I; 4]>),
+    Many(Box<dyn Iterator<Item = I> + 'a>),
+}
+
+impl<'a, I> RowResult<'a, I> {
+    /// A row that yields exactly one result, queued inline without allocation.
+    pub(crate) fn one(item: I) -> Self {
+        Self::One(item)
+    }
+
+    /// A row that yields a small, arity-bounded run of results (a list literal),
+    /// spread into that many inline `One` entries — no per-row heap allocation.
+    pub(crate) fn spread(iter: smallvec::IntoIter<[I; 4]>) -> Self {
+        Self::Spread(iter)
+    }
+
+    /// A row that yields several results, drained from a boxed iterator.
+    pub(crate) fn many(iter: Box<dyn Iterator<Item = I> + 'a>) -> Self {
+        Self::Many(iter)
+    }
+}
+
+/// A parent row's queued result iterator. `One` carries a single result inline
+/// (no heap allocation) for the common case where a row yields exactly one;
+/// `Many` boxes an iterator for rows that yield several. The lazy refill picks
+/// the variant when it decomposes a [`RowResult`]: a `One` (or each `Spread`
+/// element) becomes an inline `One`, a `Many` stays boxed — so a single-value
+/// row stays allocation-free. Kept deliberately small (two pointer-ish words)
+/// since the queue holds one of these per pending result.
 enum RowIter<'a, I> {
     One(Option<I>),
     Many(Box<dyn Iterator<Item = I> + 'a>),
@@ -374,7 +414,21 @@ pub(crate) struct BatchedResultEmitter<'a, I: GatherItem> {
     /// Per-parent-row result iterators keyed by their parent row index within
     /// `batch`: `(parent_row, results)`. Any per-row filtering is folded into
     /// the iterator by the op that produced it.
+    ///
+    /// Filled lazily: [`emit_lazy`](Self::emit_lazy) keeps at most one row's
+    /// results here at a time — the current row's partially-drained iterator (or
+    /// the inline `One` entries a [`RowResult::Spread`] decomposes into) — and
+    /// rebuilds the next on demand using [`cursor`](Self::cursor).
     pending: VecDeque<(usize, RowIter<'a, I>)>,
+    /// Next active-row position to generate from (an index into the batch's
+    /// active rows, not a raw row index).
+    cursor: usize,
+    /// Upper bound on results packed into one output batch. Defaults to
+    /// [`BATCH_SIZE`]; an operator fed by a downstream `Skip`/`Limit` lowers it
+    /// via [`set_pack_ceiling`](Self::set_pack_ceiling) so a capped query
+    /// produces a small first batch instead of eagerly packing a whole
+    /// `BATCH_SIZE` worth of work.
+    pack_ceiling: usize,
 }
 
 impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
@@ -387,59 +441,193 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
             binding,
             batch: None,
             pending: VecDeque::new(),
+            cursor: 0,
+            pack_ceiling: BATCH_SIZE,
         }
     }
 
-    /// True when the pending queue is drained and the op must refill it from its
-    /// child before the next [`emit`](Self::emit).
-    pub(crate) fn needs_refill(&self) -> bool {
-        self.pending.is_empty()
+    /// Lower the per-batch packing ceiling below [`BATCH_SIZE`]. Used by `UNWIND`
+    /// when a downstream `Skip`/`Limit` bounds how many rows are needed, so the
+    /// first [`emit_lazy`](Self::emit_lazy) returns just enough rows rather than
+    /// eagerly packing a whole batch.
+    pub(crate) fn set_pack_ceiling(
+        &mut self,
+        cap: usize,
+    ) {
+        debug_assert!(
+            (1..=BATCH_SIZE).contains(&cap),
+            "pack ceiling must be within [1, BATCH_SIZE]"
+        );
+        self.pack_ceiling = cap;
     }
 
-    /// Number of queued per-row result iterators. Operators that queue several
-    /// small per-row results before emitting (e.g. `UNWIND` of a list literal)
-    /// use this to pack a batch's worth across rows while bounding queued work.
-    pub(crate) fn pending_len(&self) -> usize {
-        self.pending.len()
-    }
-
-    /// Install the parent batch whose rows the queued iterators expand. Called
-    /// once per refill, after pushing that batch's per-row iterators.
-    pub(crate) fn set_batch(
+    /// Install a parent batch for the lazy expand path: installs the batch but
+    /// builds **no** per-row iterators up front. Resets the active-row
+    /// [`cursor`](Self::cursor) so the next [`emit_lazy`](Self::emit_lazy) starts
+    /// at the first active row. Call this whenever [`emit_lazy`](Self::emit_lazy)
+    /// returns `None` (the previous batch is exhausted, or none was installed).
+    pub(crate) fn seed(
         &mut self,
         batch: Batch<'a>,
     ) {
+        debug_assert!(self.pending.is_empty(), "seed requires a drained queue");
         self.batch = Some(batch);
+        self.cursor = 0;
     }
 
-    /// Install the parent batch and queue one result iterator per active row in
-    /// a single pass: the active-index walk borrows our owned batch internally,
-    /// so the caller needs no index Vec and no re-borrow via [`batch`]. `f`
-    /// builds each row's iterator from a view into the batch (or `None` to skip
-    /// the row). Replaces the set_batch-then-loop-push idiom for scans.
-    pub(crate) fn seed<F>(
+    /// Allocate the per-emit accumulators for [`emit_lazy`](Self::emit_lazy):
+    /// the `should_expand` flag (true when the
+    /// parent has columns to replicate), the parent-row index buffer (only sized
+    /// when expanding), and the typed result lanes.
+    ///
+    /// We gather (rather than build a standalone batch) whenever the parent has
+    /// columns to replicate; otherwise a no-alias emitter (which never sets a
+    /// column) would emit an empty batch. Correlation origins never need a
+    /// separate check: they are only ever stamped by
+    /// `clone_active_rows_seq_origin`, which clones the outer batch's columns, so
+    /// a parent carrying origins always has at least one column. The result lanes
+    /// accumulate straight into typed columns instead of a `Vec<I>`, so a
+    /// multi-column item never materializes an intermediate tuple `Vec` just to
+    /// transpose it back into columns at the end.
+    fn start_batch(&self) -> (bool, Vec<usize>, I::Lanes) {
+        let should_expand = self.batch.as_ref().is_some_and(|b| b.num_columns() > 0);
+        let indices = if should_expand {
+            Vec::with_capacity(self.pack_ceiling)
+        } else {
+            Vec::new()
+        };
+        let lanes = I::new_lanes(&self.binding, self.pack_ceiling);
+        (should_expand, indices, lanes)
+    }
+
+    /// Drain the front pending entry's iterator into `lanes` until the batch is
+    /// full or the entry is exhausted (then pop it). A partially-drained entry is
+    /// left at the front for the next call. Precondition: `pending` is non-empty.
+    fn drain_front_entry(
         &mut self,
-        batch: Batch<'a>,
-        mut f: F,
-    ) -> Result<(), String>
-    where
-        F: FnMut(&Batch<'a>, usize) -> Result<Option<Box<dyn Iterator<Item = I> + 'a>>, String>,
-    {
-        self.batch = Some(batch);
-        let b = self.batch.as_ref().expect("just set above");
-        for row in b.active_indices() {
-            if let Some(iter) = f(b, row)? {
-                self.pending.push_back((row, RowIter::Many(iter)));
+        indices: &mut Vec<usize>,
+        lanes: &mut I::Lanes,
+        count: &mut usize,
+        should_expand: bool,
+    ) {
+        let ceiling = self.pack_ceiling;
+        let (row, iter) = self.pending.front_mut().expect("pending is non-empty");
+        let row = *row;
+        let mut drained = false;
+        while *count < ceiling && !drained {
+            if let Some(item) = iter.next() {
+                if should_expand {
+                    indices.push(row);
+                }
+                item.push_into(&self.binding, lanes);
+                *count += 1;
+            } else {
+                drained = true;
             }
         }
-        Ok(())
+        if drained {
+            self.pending.pop_front();
+        }
     }
 
-    /// The parent batch currently being expanded, if any. Operators that push
-    /// one row's iterator at a time (to bound peak memory) read it back here to
-    /// build the next row's view without keeping a second copy of the batch.
-    pub(crate) const fn batch(&self) -> Option<&Batch<'a>> {
-        self.batch.as_ref()
+    /// Gather the accumulated `lanes`/`indices` into the output batch, or `None`
+    /// when nothing was packed.
+    fn finish_batch(
+        &self,
+        indices: Vec<usize>,
+        lanes: I::Lanes,
+        count: usize,
+        should_expand: bool,
+    ) -> Option<Batch<'a>> {
+        if count == 0 {
+            return None;
+        }
+        let batch = self.batch.as_ref().expect("batch is set while emitting");
+        let mut out = if should_expand {
+            batch.gather(&indices)
+        } else {
+            Batch::new(0)
+        };
+        I::finish(lanes, &self.binding, &mut out);
+        Some(out)
+    }
+
+    /// Advance the [`cursor`](Self::cursor) to the next active row and queue its
+    /// results (built on demand by `f` as a [`RowResult`]), skipping rows for
+    /// which `f` yields nothing. A `Spread` is decomposed here into that many
+    /// inline `One` entries (matching the push model's per-element spread) so the
+    /// queue never stores the fat inline payload. Returns `false` when the
+    /// batch's active rows are exhausted (or no batch is installed), signalling
+    /// the caller to refill via [`seed`](Self::seed).
+    fn refill_from_cursor<F>(
+        &mut self,
+        f: &mut F,
+    ) -> Result<bool, String>
+    where
+        F: FnMut(&Batch<'a>, usize) -> Result<Option<RowResult<'a, I>>, String>,
+    {
+        let Some(b) = self.batch.as_ref() else {
+            return Ok(false);
+        };
+        let active_len = b.active_len();
+        while self.cursor < active_len {
+            let row = match b.selection() {
+                Some(sel) => sel[self.cursor] as usize,
+                None => self.cursor,
+            };
+            self.cursor += 1;
+            match f(b, row)? {
+                None => {}
+                Some(RowResult::One(item)) => {
+                    self.pending.push_back((row, RowIter::One(Some(item))));
+                    return Ok(true);
+                }
+                Some(RowResult::Many(iter)) => {
+                    self.pending.push_back((row, RowIter::Many(iter)));
+                    return Ok(true);
+                }
+                Some(RowResult::Spread(values)) => {
+                    let before = self.pending.len();
+                    for item in values {
+                        self.pending.push_back((row, RowIter::One(Some(item))));
+                    }
+                    // An empty list literal (`UNWIND []`) yields nothing for this
+                    // row; keep scanning rather than reporting a queued result.
+                    if self.pending.len() > before {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    /// Packs up to the pack ceiling ([`BATCH_SIZE`] by default) into one columnar
+    /// batch, walking the parent batch's active rows on demand via the
+    /// [`cursor`](Self::cursor), building each row's results with `f` only when
+    /// reached. `f` returns the row's [`RowResult`] (a single inline value, a
+    /// small spread of inline values, or a boxed iterator), or `None` to skip the
+    /// row. At most one row's results are ever live (held in `pending`), so a
+    /// wide parent batch never materializes one iterator per active row. Returns
+    /// `Ok(None)` once the active rows are exhausted (or no batch is installed
+    /// yet), at which point the caller pulls the next child batch and installs it
+    /// via [`seed`](Self::seed).
+    pub(crate) fn emit_lazy<F>(
+        &mut self,
+        mut f: F,
+    ) -> Result<Option<Batch<'a>>, String>
+    where
+        F: FnMut(&Batch<'a>, usize) -> Result<Option<RowResult<'a, I>>, String>,
+    {
+        let (should_expand, mut indices, mut lanes) = self.start_batch();
+        let mut count = 0usize;
+        while count < self.pack_ceiling {
+            if self.pending.is_empty() && !self.refill_from_cursor(&mut f)? {
+                break;
+            }
+            self.drain_front_entry(&mut indices, &mut lanes, &mut count, should_expand);
+        }
+        Ok(self.finish_batch(indices, lanes, count, should_expand))
     }
 
     /// Drop all queued state. Used by correlated (Apply) plans that re-seed the
@@ -447,95 +635,7 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
     pub(crate) fn reset(&mut self) {
         self.pending.clear();
         self.batch = None;
-    }
-
-    /// Queue a parent row's result iterator. The op folds any per-row filter
-    /// into `iter`. Use [`push_one`](Self::push_one) instead when the row yields
-    /// a single result to skip the boxed-iterator allocation.
-    pub(crate) fn push(
-        &mut self,
-        row: usize,
-        iter: Box<dyn Iterator<Item = I> + 'a>,
-    ) {
-        self.pending.push_back((row, RowIter::Many(iter)));
-    }
-
-    /// Queue a parent row that yields exactly one result, stored inline without
-    /// a heap allocation.
-    pub(crate) fn push_one(
-        &mut self,
-        row: usize,
-        item: I,
-    ) {
-        self.pending.push_back((row, RowIter::One(Some(item))));
-    }
-
-    /// Pack up to [`BATCH_SIZE`] `(parent row, result)` pairs from the pending
-    /// queue into one columnar batch. `gather` replicates each parent row's
-    /// columns (and correlation origin) once per matching result; the result
-    /// columns are accumulated straight into typed lanes as each result is
-    /// pulled ([`GatherItem::push_into`]) and installed via
-    /// [`GatherItem::finish`]. The per-row index vector is only needed when the
-    /// parent carries columns — a bare column-less (leaf) parent skips it and
-    /// emits a standalone result batch. Returns `None` when the queue drained
-    /// without yielding a result, in which case the caller refills.
-    pub(crate) fn emit(&mut self) -> Option<Batch<'a>> {
-        // Gather (rather than build a standalone batch) whenever the parent has
-        // columns to replicate; otherwise a no-alias emitter (which never sets a
-        // column) would emit an empty batch. Correlation origins never need a
-        // separate check: they are only ever stamped by
-        // `clone_active_rows_seq_origin`, which clones the outer batch's
-        // columns, so a parent carrying origins always has at least one column.
-        let should_expand_batch = self.batch.as_ref().is_some_and(|b| b.num_columns() > 0);
-        let mut indices: Vec<usize> = if should_expand_batch {
-            Vec::with_capacity(BATCH_SIZE)
-        } else {
-            Vec::new()
-        };
-        // Accumulate results straight into typed column lanes instead of a
-        // `Vec<I>`: a multi-column item never materializes an intermediate
-        // tuple `Vec` just to transpose it back into columns at the end.
-        let mut lanes = I::new_lanes(&self.binding, BATCH_SIZE);
-        let mut count = 0usize;
-        while count < BATCH_SIZE {
-            let Some((row, iter)) = self.pending.front_mut() else {
-                break;
-            };
-            let row = *row;
-            // Keep taking from this row's iterator while the batch has room.
-            // When it runs dry, drop the entry and move to the next queued row;
-            // if the batch fills mid-iterator, the partially-drained entry stays
-            // at the front for the next `emit`.
-            let mut drained = false;
-            while count < BATCH_SIZE && !drained {
-                if let Some(item) = iter.next() {
-                    if should_expand_batch {
-                        indices.push(row);
-                    }
-                    item.push_into(&self.binding, &mut lanes);
-                    count += 1;
-                } else {
-                    drained = true;
-                }
-            }
-            if drained {
-                self.pending.pop_front();
-            }
-        }
-        if count == 0 {
-            return None;
-        }
-        let batch = self
-            .batch
-            .as_ref()
-            .expect("batch is set while pending is non-empty");
-        let mut out = if should_expand_batch {
-            batch.gather(&indices)
-        } else {
-            Batch::new(0)
-        };
-        I::finish(lanes, &self.binding, &mut out);
-        Some(out)
+        self.cursor = 0;
     }
 }
 

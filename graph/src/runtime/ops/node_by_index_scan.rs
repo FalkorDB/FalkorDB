@@ -34,7 +34,7 @@ use crate::runtime::{
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
-use super::batched_result_emitter::BatchedResultEmitter;
+use super::batched_result_emitter::{BatchedResultEmitter, RowResult};
 
 pub struct NodeByIndexScanOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
@@ -275,60 +275,49 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            // Refill the pending scans from the child when we've run dry. For
-            // each active parent row, evaluate the index query and queue the
+            // For each active parent row, evaluate the index query and queue the
             // matching node ids (falling back to a label scan when the index
             // can't satisfy the query), folding any extra-label verification
-            // into the iterator so the shared emit stays generic.
-            if self.emitter.needs_refill() {
-                match self.child.next() {
-                    Some(Ok(batch)) => {
-                        if let Err(e) = self.emitter.seed(batch, |b, row| {
-                            let view = BatchRow::new(b, row);
-                            let q = Self::evaluate_index_query(self.runtime, self.query, &view)?;
+            // into the iterator so the shared emit stays generic. Iterators are
+            // built lazily, one row at a time. When the batch is exhausted
+            // (`Ok(None)`), pull and seed the next child batch.
+            match self.emitter.emit_lazy(|b, row| {
+                let view = BatchRow::new(b, row);
+                let q = Self::evaluate_index_query(self.runtime, self.query, &view)?;
 
-                            // Check if the index can satisfy this query. If not
-                            // (e.g. non-indexable value types), fall back to a
-                            // label scan.
-                            let base: Box<dyn Iterator<Item = NodeId>> =
-                                if Self::can_utilize_index(&q) {
-                                    Box::new(
-                                        self.runtime.g.borrow().get_indexed_nodes(self.index, q),
-                                    )
-                                } else {
-                                    Box::new(
-                                        self.runtime
-                                            .g
-                                            .borrow()
-                                            .get_nodes(&self.node_pattern.labels, 0),
-                                    )
-                                };
-                            let iter: Box<dyn Iterator<Item = NodeId> + 'a> = match &self
-                                .extra_labels
-                            {
-                                Some(extra) => {
-                                    let extra = extra.clone();
-                                    let runtime = self.runtime;
-                                    Box::new(base.filter(move |nid| {
-                                        let node_labels = runtime.get_node_labels(*nid);
-                                        extra.iter().all(|l| node_labels.iter().any(|nl| nl == l))
-                                    }))
-                                }
-                                None => base,
-                            };
-                            Ok(Some(iter))
-                        }) {
-                            return Some(Err(e));
-                        }
-                        continue;
+                // Check if the index can satisfy this query. If not
+                // (e.g. non-indexable value types), fall back to a
+                // label scan.
+                let base: Box<dyn Iterator<Item = NodeId>> = if Self::can_utilize_index(&q) {
+                    Box::new(self.runtime.g.borrow().get_indexed_nodes(self.index, q))
+                } else {
+                    Box::new(
+                        self.runtime
+                            .g
+                            .borrow()
+                            .get_nodes(&self.node_pattern.labels, 0),
+                    )
+                };
+                let iter: Box<dyn Iterator<Item = NodeId> + 'a> = match &self.extra_labels {
+                    Some(extra) => {
+                        let extra = extra.clone();
+                        let runtime = self.runtime;
+                        Box::new(base.filter(move |nid| {
+                            let node_labels = runtime.get_node_labels(*nid);
+                            extra.iter().all(|l| node_labels.iter().any(|nl| nl == l))
+                        }))
                     }
+                    None => base,
+                };
+                Ok(Some(RowResult::many(iter)))
+            }) {
+                Ok(Some(out)) => return Some(Ok(out)),
+                Ok(None) => match self.child.next() {
+                    Some(Ok(batch)) => self.emitter.seed(batch),
                     Some(Err(e)) => return Some(Err(e)),
                     None => return None,
-                }
-            }
-
-            if let Some(out) = self.emitter.emit() {
-                return Some(Ok(out));
+                },
+                Err(e) => return Some(Err(e)),
             }
         }
     }
