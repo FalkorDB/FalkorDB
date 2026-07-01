@@ -9,8 +9,8 @@ fn splitmix(mut z: u64) -> u64 {
 }
 
 /// Sorted doc ids the tree yields for `[lo, hi]`.
-fn tree_range(
-    t: &CowBTree,
+fn tree_range<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
+    t: &CowBTree<LEAF_MAX, BRANCH_MAX>,
     lo: u64,
     hi: u64,
 ) -> Vec<u64> {
@@ -1003,4 +1003,214 @@ fn const_generic_branch_size_parity() {
         reference.iter().copied().collect::<Vec<_>>(),
         "CowBTree<256, 16> contents must match the reference"
     );
+}
+
+/// Walk the whole tree and assert every structural invariant. `min_fill` gates the occupancy check: pass
+/// `true` for trees grown by `insert`/`remove` from empty (splits + rebalance keep non-root pages at least
+/// half full), `false` for a fresh `from_sorted` bulk build (whose last leaf may be short by construction).
+fn check_invariants<const L: usize, const B: usize>(
+    t: &CowBTree<L, B>,
+    min_fill: bool,
+) {
+    use super::node::Node;
+    // Returns (subtree min (key,doc), subtree max (key,doc), depth, entry count).
+    fn walk<const L: usize, const B: usize>(
+        node: &Node<L, B>,
+        is_root: bool,
+        min_fill: bool,
+    ) -> ((u64, u64), (u64, u64), usize, usize) {
+        match node {
+            Node::Leaf(leaf) => {
+                let n = leaf.count();
+                assert!(n <= L, "leaf over LEAF_MAX ({n} > {L})");
+                if !is_root && min_fill {
+                    assert!(n >= L / 2, "leaf under LEAF_MIN ({n} < {})", L / 2);
+                }
+                for i in 1..n {
+                    let prev = (leaf.key(i - 1), leaf.doc(i - 1));
+                    let cur = (leaf.key(i), leaf.doc(i));
+                    assert!(
+                        prev < cur,
+                        "leaf entries out of order at {i}: {prev:?} !< {cur:?}"
+                    );
+                }
+                // Page-encoding invariants: the two decode paths agree, and the leaf's contents re-encode
+                // faithfully — `from_pairs` (how canonical leaves are built) must round-trip them, on AoS
+                // and compact pages alike.
+                let pairs: Vec<(u64, u64)> = leaf.to_pairs();
+                assert_eq!(pairs.len(), n, "to_pairs count != header entry count");
+                let via_accessors: Vec<(u64, u64)> =
+                    (0..n).map(|i| (leaf.key(i), leaf.doc(i))).collect();
+                assert_eq!(
+                    pairs, via_accessors,
+                    "to_pairs disagrees with key/doc accessors"
+                );
+                assert_eq!(
+                    Leaf::<L>::from_pairs(&pairs).to_pairs(),
+                    pairs,
+                    "leaf encoder round-trip mismatch"
+                );
+                if n == 0 {
+                    ((0, 0), (0, 0), 1, 0) // only ever the root of an empty tree; bounds unused
+                } else {
+                    let lo = (leaf.key(0), leaf.doc(0));
+                    let hi = (leaf.key(n - 1), leaf.doc(n - 1));
+                    (lo, hi, 1, n)
+                }
+            }
+            Node::Branch(b) => {
+                let nc = b.children.len();
+                assert_eq!(
+                    b.seps.len() + 1,
+                    nc,
+                    "branch has {} seps for {nc} children",
+                    b.seps.len()
+                );
+                assert!(nc <= B, "branch over BRANCH_MAX ({nc} > {B})");
+                assert!(
+                    nc >= 2,
+                    "branch must have >= 2 children (a 1-child root should collapse): {nc}"
+                );
+                if !is_root && min_fill {
+                    assert!(nc >= B / 2, "branch under BRANCH_MIN ({nc} < {})", B / 2);
+                }
+                let mut depth: Option<usize> = None;
+                let mut total = 0;
+                let mut prev_max: Option<(u64, u64)> = None;
+                let (mut sub_min, mut sub_max) = ((0, 0), (0, 0));
+                for (i, child) in b.children.iter().enumerate() {
+                    let (cmin, cmax, cdepth, cn) = walk(child, false, min_fill);
+                    match depth {
+                        None => depth = Some(cdepth),
+                        Some(d) => {
+                            assert_eq!(d, cdepth, "leaves at differing depths ({d} vs {cdepth})")
+                        }
+                    }
+                    if i == 0 {
+                        sub_min = cmin;
+                    } else {
+                        // The separator must be a valid routing boundary: max(left subtree) < sep <=
+                        // min(right subtree). It equals min(right) right after a split, but a later
+                        // borrow/merge can leave it a valid boundary strictly below the right child's
+                        // current min — routing (`child_index`) and range scans still work.
+                        let sep = b.seps[i - 1];
+                        assert!(
+                            prev_max.unwrap() < sep && sep <= cmin,
+                            "separator {} not a valid boundary: max(left)={:?} < sep={sep:?} <= min(right)={cmin:?}",
+                            i - 1,
+                            prev_max.unwrap(),
+                        );
+                    }
+                    prev_max = Some(cmax);
+                    sub_max = cmax;
+                    total += cn;
+                }
+                (sub_min, sub_max, depth.unwrap() + 1, total)
+            }
+        }
+    }
+    let (_, _, _, count) = walk(&t.root, true, min_fill);
+    assert_eq!(count, t.len(), "walked entry count != len()");
+}
+
+/// Drive random mixed insert/remove against a `BTreeSet<(key, doc)>` oracle, asserting full content parity
+/// AND every structural invariant after each op — the core integrity harness, run below at several sizes.
+fn differential<const L: usize, const B: usize>(
+    seed: u64,
+    ops: usize,
+    key_space: u64,
+) {
+    let mut t: CowBTree<L, B> = CowBTree::new();
+    let mut oracle: BTreeSet<(u64, u64)> = BTreeSet::new();
+    let mut s = seed;
+    for _ in 0..ops {
+        s = splitmix(s);
+        let key = s % key_space;
+        s = splitmix(s);
+        let doc = s % key_space;
+        s = splitmix(s);
+        if s.is_multiple_of(3) && oracle.contains(&(key, doc)) {
+            t.remove(key, doc);
+            oracle.remove(&(key, doc));
+        } else {
+            t.insert(key, doc);
+            oracle.insert((key, doc));
+        }
+        assert_eq!(t.len(), oracle.len(), "len diverged");
+        assert_eq!(
+            tree_pairs(&t),
+            oracle.iter().copied().collect::<Vec<_>>(),
+            "contents diverged"
+        );
+        check_invariants(&t, true);
+    }
+    assert_eq!(
+        tree_range(&t, 0, u64::MAX),
+        ref_range(&oracle, 0, u64::MAX),
+        "range scan diverged"
+    );
+}
+
+#[test]
+fn integrity_differential_across_sizes() {
+    // Tiny capacities make split/merge/borrow/collapse fire on almost every op (at 256 the FIRST split
+    // needs 257 inserts, so structural code is otherwise unexercised); the default confirms production width.
+    differential::<4, 4>(0x1111_1111, 3000, 30);
+    differential::<5, 5>(0x2222_2222, 3000, 30);
+    differential::<8, 8>(0x3333_3333, 3000, 50);
+    differential::<8, 32>(0x4444_4444, 3000, 50); // wide branch, narrow leaf
+    differential::<32, 8>(0x5555_5555, 3000, 80); // narrow branch, wide leaf
+    differential::<256, 256>(0x6666_6666, 4000, 800);
+}
+
+#[test]
+fn integrity_from_sorted_well_formed_across_sizes() {
+    // Bulk build must produce a valid tree at every size + boundary count. `min_fill` off: the last leaf
+    // may be short by construction (`chunks(LEAF_MAX)`).
+    fn build<const L: usize, const B: usize>(n: u64) {
+        let t = CowBTree::<L, B>::from_sorted(&(0..n).map(|i| (i, i)).collect::<Vec<_>>());
+        assert_eq!(t.len() as u64, n, "len != n for n={n}");
+        check_invariants(&t, false);
+        // from_sorted builds every leaf via from_pairs, so each page must be byte-identical to
+        // re-encoding its own contents — proving the encoding is deterministic AND the smaller (AoS vs
+        // compact) format was chosen.
+        for (fmt, bytes) in t.leaves() {
+            let pairs = Leaf::<L>::from_parts(fmt, bytes.clone()).to_pairs();
+            assert_eq!(
+                Leaf::<L>::from_pairs(&pairs).bytes(),
+                bytes,
+                "from_sorted leaf not byte-identical to its from_pairs re-encode (n={n})"
+            );
+        }
+    }
+    for &n in &[
+        0u64, 1, 2, 3, 7, 8, 9, 15, 16, 17, 63, 64, 65, 256, 257, 1000,
+    ] {
+        build::<4, 4>(n);
+        build::<8, 8>(n);
+        build::<16, 4>(n);
+        build::<256, 256>(n);
+    }
+}
+
+#[test]
+fn integrity_adversarial_ascending_then_cascade_delete() {
+    // Ascending inserts (right-edge-split worst case) build a deep tree at tiny capacity; then delete
+    // every key in a coprime-stride permutation, forcing cascading borrow/merge + root collapse to empty.
+    let mut t: CowBTree<4, 4> = CowBTree::new();
+    let mut oracle: BTreeSet<(u64, u64)> = BTreeSet::new();
+    for i in 0..300u64 {
+        t.insert(i, i);
+        oracle.insert((i, i));
+        check_invariants(&t, true);
+    }
+    for i in 0..300u64 {
+        let k = (i * 7) % 300; // gcd(7, 300) == 1 ⇒ a permutation of 0..300
+        t.remove(k, k);
+        oracle.remove(&(k, k));
+        assert_eq!(tree_pairs(&t), oracle.iter().copied().collect::<Vec<_>>());
+        check_invariants(&t, true);
+    }
+    assert!(t.is_empty());
+    assert_eq!(t.len(), 0);
 }
