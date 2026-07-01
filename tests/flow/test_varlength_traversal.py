@@ -441,3 +441,84 @@ class testVarLengthTraversal(FlowTestsBase):
 
         self.assert_range_split_invariant(0, n=4)
         self.assert_traversal_union_invariant(0, n=5)
+
+    def test08_selfloop_contributes_path(self):
+        """Self-loop on the start node must contribute to bounded traversals.
+
+        When the start node has a self-loop, a path that uses that self-loop
+        as an intermediate hop must be counted.  FalkorDB previously dropped
+        these paths, returning fewer results than expected.
+
+        Minimised repro (nodes identified by the 'id' property):
+            0 -[e1]-> 1          (direct edge to destination)
+            0 -[e2]-> 0          (self-loop on start node)
+
+        Valid paths from 0 to 1 with *1..2:
+          1. 0 -[e1]-> 1                    (length 1)
+          2. 0 -[e2]-> 0 -[e1]-> 1          (length 2, self-loop first)
+        Expected count: 2
+
+        Control checks (match the bug report):
+          *1..2 from 0 to 0: path  0 -[e2]-> 0  gives count 1
+          *1..2 from 0 to 0 (no self-loop): count 0
+          *1..2 from 0 to 1 (no self-loop): count 1  (only the direct edge)
+        """
+        # -- minimised repro: self-loop + outgoing edge --
+        edges = [(0, 0), (0, 1)]
+        self.build_graph_from_edgelist(edges)
+
+        # Direct count via MATCH path = ... RETURN count(path)
+        q = (
+            "MATCH path = (a:U {id:0})-[:F*1..2]->(b:U {id:1}) "
+            "RETURN count(path) AS pathCount"
+        )
+        count = self.graph.query(q).result_set[0][0]
+        self.env.assertEqual(
+            count, 2,
+            message=f"*1..2 paths from 0 to 1 with self-loop: expected 2, got {count}",
+        )
+
+        # The self-loop itself must appear once in *1..2 from 0 to 0.
+        q_loop = (
+            "MATCH path = (a:U {id:0})-[:F*1..2]->(b:U {id:0}) "
+            "RETURN count(path) AS pathCount"
+        )
+        count_loop = self.graph.query(q_loop).result_set[0][0]
+        self.env.assertEqual(
+            count_loop, 1,
+            message=f"*1..2 paths from 0 to 0 (self-loop): expected 1, got {count_loop}",
+        )
+
+        # -- control: no self-loop, only direct edge --
+        self.conn.delete(GRAPH_ID)
+        self.build_graph_from_edgelist([(0, 1)])
+
+        count_direct = self.graph.query(q).result_set[0][0]
+        self.env.assertEqual(
+            count_direct, 1,
+            message=f"*1..2 paths from 0 to 1 (no self-loop): expected 1, got {count_direct}",
+        )
+
+        # -- extended repro: Diana/Bob scenario from the bug report --
+        self.conn.delete(GRAPH_ID)
+        # nodes: 0=Diana, 1=Bob; self-loop on Diana; Diana->Bob
+        edges_diana = [(0, 1), (0, 0)]
+        self.build_graph_from_edgelist(edges_diana, label="Person", rel="KNOWS")
+
+        q_diana = (
+            "MATCH path = (d:Person {id:0})-[:KNOWS*1..2]->(b:Person {id:1}) "
+            "RETURN count(path) AS pathCount"
+        )
+        count_diana = self.graph.query(q_diana).result_set[0][0]
+        self.env.assertEqual(
+            count_diana, 2,
+            message=f"Diana->Bob *1..2 with self-loop: expected 2, got {count_diana}",
+        )
+
+        # The split-union and traversal-union invariants must hold.
+        # (Use the original simple graph: 0->0 self-loop + 0->1)
+        self.conn.delete(GRAPH_ID)
+        self.build_graph_from_edgelist(edges)
+        self.assert_range_split_invariant(0, n=3)
+        self.assert_traversal_union_invariant(0, n=4)
+
