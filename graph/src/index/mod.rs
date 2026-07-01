@@ -44,6 +44,7 @@
 //! - [`Document`] -- wraps a RediSearch document for inserting/updating entities.
 //! - [`IndexResultsIter`] -- lazy pull-based iterator over C query results.
 
+pub mod falkordb;
 pub mod indexer;
 pub mod redisearch;
 pub mod text_index_options;
