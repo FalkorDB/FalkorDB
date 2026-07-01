@@ -56,6 +56,7 @@ use crate::{
     runtime::{
         batch::{Batch, BatchRow, Column, FloatLane, NullBitmap, classify_numeric},
         functions::{FnType, apply_pow},
+        ops::batched_result_emitter::RowResult,
         ordermap::OrderMap,
         row::RowView,
         runtime::Runtime,
@@ -867,7 +868,7 @@ impl<'a> ExprEval<'a> {
                 }
                 ExprIR::ListComprehension(var) => {
                     let e = env.ok_or_else(|| String::from("Variable not found"))?;
-                    let iter = self.eval_iter_expr(ir, node.child(0).idx(), env)?;
+                    let iter = self.eval_value_iter(ir, node.child(0).idx(), env)?;
                     let mut row = e.to_owned_row();
                     let mut acc = thin_vec![];
                     for value in iter {
@@ -1008,7 +1009,13 @@ impl<'a> ExprEval<'a> {
     // Companion methods
     // -------------------------------------------------------------------
 
-    pub fn eval_iter_expr<R: RowView + ?Sized>(
+    /// Lazily evaluate a list-valued expression into a [`ValueIter`], the
+    /// eval-side iterator used by callers that consume the values directly
+    /// (e.g. list comprehension). `range(..)` and list literals get dedicated
+    /// lazy/inline variants so neither materializes an intermediate
+    /// `Value::List`. The shape mapping for the batched-emit consumers lives in
+    /// [`eval_iter_expr`](Self::eval_iter_expr).
+    fn eval_value_iter<R: RowView + ?Sized>(
         &self,
         ir: &DynTree<ExprIR<Variable>>,
         idx: NodeIdx<Dyn<ExprIR<Variable>>>,
@@ -1086,6 +1093,30 @@ impl<'a> ExprEval<'a> {
                 }
             }
         }
+    }
+
+    /// Evaluate a list-valued expression into a [`RowResult`] for the
+    /// batched-emit consumers (e.g. `UNWIND`), mapping each [`ValueIter`]
+    /// variant onto the matching row-result shape:
+    ///
+    /// - empty / `null` / a single `null` element -> `None` (the row produces
+    ///   no output rows),
+    /// - a single non-null value -> [`RowResult::one`],
+    /// - an inline list literal -> [`RowResult::spread`] (stays on the stack,
+    ///   no boxing),
+    /// - a lazy `range(..)` or a materialized list -> [`RowResult::many`].
+    pub(crate) fn eval_iter_expr<R: RowView + ?Sized>(
+        &self,
+        ir: &DynTree<ExprIR<Variable>>,
+        idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+        env: Option<&R>,
+    ) -> Result<Option<RowResult<'a, Value>>, String> {
+        Ok(match self.eval_value_iter(ir, idx, env)? {
+            ValueIter::Empty | ValueIter::Once(None) | ValueIter::Once(Some(Value::Null)) => None,
+            ValueIter::Once(Some(value)) => Some(RowResult::one(value)),
+            ValueIter::Inline(values) => Some(RowResult::spread(values)),
+            other => Some(RowResult::many(Box::new(other))),
+        })
     }
 
     /// Evaluate a `shortestPath()` or `allShortestPaths()` expression.

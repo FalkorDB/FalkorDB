@@ -20,7 +20,9 @@
 //! ```
 //!
 //! Each active parent row's list expression is evaluated on demand into a
-//! [`ValueIter`], and the shared [`BatchedResultEmitter`] drives the expansion
+//! [`RowResult`](super::batched_result_emitter::RowResult) (via
+//! [`eval_iter_expr`](crate::runtime::eval::ExprEval::eval_iter_expr)), and the
+//! shared [`BatchedResultEmitter`] drives the expansion
 //! **lazily** — building one row's iterator at a time via
 //! [`emit_lazy`](BatchedResultEmitter::emit_lazy) — while packing up to
 //! [`BATCH_SIZE`](super::super::batch::BATCH_SIZE) values *across* rows into one
@@ -37,7 +39,7 @@
 
 use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
-use crate::runtime::eval::{ExprEval, ValueIter};
+use crate::runtime::eval::ExprEval;
 use crate::runtime::{
     batch::{BATCH_SIZE, Batch, BatchOp, BatchRow},
     runtime::Runtime,
@@ -45,7 +47,7 @@ use crate::runtime::{
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
-use super::batched_result_emitter::{BatchedResultEmitter, RowResult};
+use super::batched_result_emitter::BatchedResultEmitter;
 
 pub struct UnwindOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
@@ -96,36 +98,18 @@ impl<'a> Iterator for UnwindOp<'a> {
         let list = self.list;
         loop {
             // Each active parent row's list expression is evaluated on demand
-            // into a value iterator; the shared emitter packs up to the pack
-            // ceiling values across rows into one gathered batch. A scalar
-            // `UNWIND null` / empty list yields no rows for that row (`Ok(None)`
-            // from the closure); a NULL inside a list arrives via `Inline`/`List`
-            // and is emitted. When the batch is exhausted (`Ok(None)` from
-            // `emit_lazy`), pull and seed the next child batch.
+            // into a [`RowResult`](super::batched_result_emitter::RowResult)
+            // (see `ExprEval::eval_iter_expr`): a scalar
+            // becomes one inline row, a small list literal a stack-held spread,
+            // and a `range(..)`/property list a boxed lazy iterator — so only
+            // the current row's iterator is ever held. `UNWIND null` / an empty
+            // list yields no rows for that row (`Ok(None)`); a NULL *inside* a
+            // list is emitted. The emitter packs up to the pack ceiling values
+            // across rows into one gathered batch. When the batch is exhausted
+            // (`Ok(None)` from `emit_lazy`), pull and seed the next child batch.
             match self.emitter.emit_lazy(|batch, row| {
                 let view = BatchRow::new(batch, row);
-                match ExprEval::from_runtime(runtime).eval_iter_expr(
-                    list,
-                    list.root().idx(),
-                    Some(&view),
-                )? {
-                    ValueIter::Empty
-                    | ValueIter::Once(None)
-                    | ValueIter::Once(Some(Value::Null)) => Ok(None),
-                    // A scalar yields exactly one value: queue it inline, with no
-                    // per-row boxed-iterator allocation.
-                    ValueIter::Once(Some(val)) => Ok(Some(RowResult::one(val))),
-                    // A small list *literal* (`UNWIND [a, b, c]`) carries its
-                    // arity-bounded values inline: spread them into that many
-                    // inline `One` queue entries rather than boxing an iterator
-                    // per row.
-                    ValueIter::Inline(values) => Ok(Some(RowResult::spread(values))),
-                    // A property list or a `range(..)` is unbounded/lazy: box it
-                    // so only the current row's iterator is ever held.
-                    other => Ok(Some(RowResult::many(
-                        Box::new(other) as Box<dyn Iterator<Item = Value> + 'a>
-                    ))),
-                }
+                ExprEval::from_runtime(runtime).eval_iter_expr(list, list.root().idx(), Some(&view))
             }) {
                 Ok(Some(out)) => return Some(Ok(out)),
                 Ok(None) => match self.child.next() {
