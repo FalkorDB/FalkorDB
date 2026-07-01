@@ -7,8 +7,8 @@
 #include "GraphBLAS.h"
 #include "../../../util/dict.h"
 #include "../../../query_ctx.h"
-#include "../../../util/identifier_limits.h"
 #include "./update_functions.h"
+#include "../../../util/identifier_limits.h"
 
 // used by both op_update and op_merge to maintain staged updates
 // property updates: SET n.v = n.v+1
@@ -259,8 +259,9 @@ static void _PopulateVector
 	ASSERT (node_ids   != NULL) ;
 	ASSERT (node_count > 0) ;
 
+	char name [MAX_IDENTIFIER_LEN + 1] = {0}  ;
+
 	GrB_Vector   v         = NULL ;
-	char         name[FDB_MAX_IDENTIFIER_LEN + 1] = {0}  ;
 	GrB_Vector **vecs      = NULL ;
 	uint8_t     *vec_count = NULL ;
 

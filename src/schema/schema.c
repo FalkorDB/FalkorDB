@@ -71,7 +71,8 @@ Schema *Schema_New
 
 	// must crash in release
 	// should only happen if an old rdb with an overlong name is loaded
-	RELEASE_ASSERT (strlen(name) <= FDB_MAX_IDENTIFIER_LEN);
+	RELEASE_ASSERT (strnlen (name, MAX_IDENTIFIER_LEN + 1) <=
+			MAX_IDENTIFIER_LEN) ;
 
 	Schema *s = rm_calloc (1, sizeof (Schema)) ;
 

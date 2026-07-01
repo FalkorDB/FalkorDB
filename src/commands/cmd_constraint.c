@@ -154,12 +154,12 @@ static int Constraint_Parse
 	// extract label/relationship-type
 	//--------------------------------------------------------------------------
 
-	*label = RedisModule_StringPtrLen(*argv++, NULL);
+	*label = RedisModule_StringPtrLen (*argv++, NULL) ;
 
-	if(strlen(*label) > FDB_MAX_IDENTIFIER_LEN) {
-		RedisModule_ReplyWithErrorFormat(ctx, EMSG_IDENTIFIER_TOO_LONG,
-				"Label name", FDB_MAX_IDENTIFIER_LEN);
-		return REDISMODULE_ERR;
+	if (strnlen (*label, MAX_IDENTIFIER_LEN + 1) > MAX_IDENTIFIER_LEN) {
+		RedisModule_ReplyWithErrorFormat (ctx, EMSG_IDENTIFIER_TOO_LONG,
+				"Label name", MAX_IDENTIFIER_LEN) ;
+		return REDISMODULE_ERR ;
 	}
 
 	if(str_MatchRegex(PROPERTY_NAME_PATTERN, *label) == false) {
@@ -555,10 +555,10 @@ int Graph_Constraint
 	for (uint8_t i = 0 ; i < prop_count ; i++) {
 		props_cstr [i] = RedisModule_StringPtrLen (props [i], NULL) ;
 
-		if(strlen(props_cstr[i]) > FDB_MAX_IDENTIFIER_LEN) {
-			RedisModule_ReplyWithErrorFormat(ctx, EMSG_IDENTIFIER_TOO_LONG,
-					"Property name", FDB_MAX_IDENTIFIER_LEN);
-			return REDISMODULE_ERR;
+		if (strnlen (props_cstr [i], MAX_IDENTIFIER_LEN + 1) > MAX_IDENTIFIER_LEN) {
+			RedisModule_ReplyWithErrorFormat (ctx, EMSG_IDENTIFIER_TOO_LONG,
+					"Property name", MAX_IDENTIFIER_LEN) ;
+			return REDISMODULE_ERR ;
 		}
 
 		if (str_MatchRegex (PROPERTY_NAME_PATTERN, props_cstr [i]) == false) {

@@ -75,9 +75,9 @@ static int *_BulkInsert_ReadHeaderLabels
 			memcpy (label, labels, len + 1) ;
 		}
 
-		if (strlen(label) > FDB_MAX_IDENTIFIER_LEN) {
+		if (strnlen (label, MAX_IDENTIFIER_LEN + 1) > MAX_IDENTIFIER_LEN) {
 			RedisModule_ReplyWithErrorFormat (ctx, EMSG_IDENTIFIER_TOO_LONG,
-					"Label name", FDB_MAX_IDENTIFIER_LEN) ;
+					"Label name", MAX_IDENTIFIER_LEN) ;
 			arr_free (label_ids) ;
 			return NULL ;
 		}
@@ -108,8 +108,8 @@ static AttributeID *_BulkInsert_ReadHeaderProperties
 	size_t *data_idx,
 	uint16_t *prop_count
 ) {
-	ASSERT (ctx        != NULL) ;
 	ASSERT (gc         != NULL) ;
+	ASSERT (ctx        != NULL) ;
 	ASSERT (data       != NULL) ;
 	ASSERT (data_idx   != NULL) ;
 	ASSERT (prop_count != NULL) ;
@@ -132,9 +132,9 @@ static AttributeID *_BulkInsert_ReadHeaderProperties
 		char* prop_key = (char*)data + *data_idx ;
 		*data_idx += strlen(prop_key) + 1 ;
 
-		if (strlen(prop_key) > FDB_MAX_IDENTIFIER_LEN) {
+		if (strnlen (prop_key, MAX_IDENTIFIER_LEN + 1) > MAX_IDENTIFIER_LEN) {
 			RedisModule_ReplyWithErrorFormat (ctx, EMSG_IDENTIFIER_TOO_LONG,
-					"Property name", FDB_MAX_IDENTIFIER_LEN) ;
+					"Property name", MAX_IDENTIFIER_LEN) ;
 			rm_free (prop_indices) ;
 			return NULL ;
 		}
@@ -237,6 +237,8 @@ static int _BulkInsert_ProcessNodeFile
 	// read the CSV header properties and collect their indices
 	AttributeID *prop_indices = _BulkInsert_ReadHeaderProperties (ctx, gc,
 			SCHEMA_NODE, data, &data_idx, &prop_count) ;
+
+	// failed to extract properties
 	if (prop_count > 0 && prop_indices == NULL) {
 		arr_free (label_ids) ;
 		return BULK_FAIL ;

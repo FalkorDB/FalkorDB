@@ -253,10 +253,11 @@ static bool _UpdateSetFromMap
 			return false ;
 		}
 
-		if(unlikely (strlen(key.stringval) > FDB_MAX_IDENTIFIER_LEN)) {
-			ErrorCtx_SetError(EMSG_IDENTIFIER_TOO_LONG, "Property name",
-					FDB_MAX_IDENTIFIER_LEN);
-			return false;
+		if (unlikely (strnlen (key.stringval, MAX_IDENTIFIER_LEN + 1) >
+					MAX_IDENTIFIER_LEN)) {
+			ErrorCtx_SetError (EMSG_IDENTIFIER_TOO_LONG, "Property name",
+					MAX_IDENTIFIER_LEN) ;
+			return false ;
 		}
 
 		// convert key to attribute-id, missing attributes will be created
@@ -893,7 +894,7 @@ void ensureMatrixDim
 	ASSERT (gc  != NULL) ;
 	ASSERT (ctx != NULL) ;
 
-	char         label[FDB_MAX_IDENTIFIER_LEN + 1] = {0}  ;
+	char label [MAX_IDENTIFIER_LEN + 1] = {0}  ;
 	Graph *g = GraphContext_GetGraph (gc) ;
 
 	// set matrix sync policy to resize

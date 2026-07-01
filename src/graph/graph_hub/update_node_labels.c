@@ -39,7 +39,7 @@ static void _LabelNodes_Single
 		undo_log = QueryCtx_GetUndoLog () ;
 	}
 
-	char lbl_name[FDB_MAX_IDENTIFIER_LEN + 1] = {0} ;
+	char lbl_name [MAX_IDENTIFIER_LEN + 1] = {0} ;
 
 	//--------------------------------------------------------------------------
 	// set label
@@ -139,7 +139,7 @@ static void _UnLabelNodes_Single
 		undo_log = QueryCtx_GetUndoLog () ;
 	}
 
-	char lbl_name[FDB_MAX_IDENTIFIER_LEN + 1] = {0} ;
+	char lbl_name [MAX_IDENTIFIER_LEN + 1] = {0} ;
 
 	//--------------------------------------------------------------------------
 	// remove labels

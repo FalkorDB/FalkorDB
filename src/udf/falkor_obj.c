@@ -22,14 +22,14 @@ static inline bool _ValidateUDFNameLength
 	const char *lib_name,
 	const char *func_name
 ) {
-	if(lib_name == NULL || func_name == NULL) {
-		return false;
+	if (lib_name == NULL || func_name == NULL) {
+		return false ;
 	}
 
-	size_t lib_len  = strlen(lib_name);
-	size_t func_len = strlen(func_name);
+	size_t lib_len  = strnlen (lib_name,  MAX_IDENTIFIER_LEN) ;
+	size_t func_len = strnlen (func_name, MAX_IDENTIFIER_LEN) ;
 
-	return (lib_len + 1 + func_len) <= FDB_MAX_IDENTIFIER_LEN ;
+	return (lib_len + 1 + func_len) <= MAX_IDENTIFIER_LEN ;
 }
 
 //------------------------------------------------------------------------------
@@ -133,16 +133,16 @@ static JSValue local_register_udf
 	const char *func_name = JS_ToCString(js_ctx, argv[0]) ;
 	ASSERT (func_name != NULL) ;
 
-	JSValueConst func = argv[1] ;
+	JSValueConst func = argv [1] ;
 	ASSERT (JS_IsFunction (js_ctx, func)) ;
 
 	// register function in TLS UDF context
-	JSValue dup = JS_DupValue(js_ctx, func);
-	UDFCtx_RegisterFunction(dup, func_name);
+	JSValue dup = JS_DupValue (js_ctx, func) ;
+	UDFCtx_RegisterFunction (dup, func_name) ;
 
 	JS_FreeCString (js_ctx, func_name) ;
 
-	return JS_NewBool(js_ctx, true) ;
+	return JS_NewBool (js_ctx, true) ;
 }
 
 // global implementation of `falkor.register`
@@ -174,8 +174,6 @@ static JSValue global_register_udf
 
 	JSValue res ;
 	const char *func_name = JS_ToCString (js_ctx, argv[0]) ;
-
-	ASSERT (_ValidateUDFNameLength(js_ctx, UDF_LIB, func_name)) ;
 
 	if (!UDF_RepoRegisterFunc (UDF_LIB, func_name)) {
 		res = JS_ThrowTypeError (js_ctx, "function: '%s' already registered",

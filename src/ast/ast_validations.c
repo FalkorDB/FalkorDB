@@ -39,16 +39,16 @@ static AST_Validation _ValidateNameLength
 	const char *name,
 	const char *entity
 ) {
-	ASSERT(name   != NULL);
-	ASSERT(entity != NULL);
+	ASSERT (name   != NULL) ;
+	ASSERT (entity != NULL) ;
 
-	if(strlen(name) > FDB_MAX_IDENTIFIER_LEN) {
-		ErrorCtx_SetError(EMSG_IDENTIFIER_TOO_LONG, entity,
-				FDB_MAX_IDENTIFIER_LEN);
-		return AST_INVALID;
+	if (strnlen (name, MAX_IDENTIFIER_LEN + 1) > MAX_IDENTIFIER_LEN) {
+		ErrorCtx_SetError (EMSG_IDENTIFIER_TOO_LONG, entity,
+				MAX_IDENTIFIER_LEN) ;
+		return AST_INVALID ;
 	}
 
-	return AST_VALID;
+	return AST_VALID ;
 }
 
 // find an identifier in the environment
@@ -581,18 +581,18 @@ static VISITOR_STRATEGY _Validate_prop_name
 	bool start,
 	ast_visitor *visitor
 ) {
-	UNUSED(visitor);
+	UNUSED (visitor) ;
 
-	if(!start) {
-		return VISITOR_CONTINUE;
+	if (!start) {
+		return VISITOR_CONTINUE ;
 	}
 
-	const char *prop = cypher_ast_prop_name_get_value(n);
-	if(_ValidateNameLength(prop, "Property name") == AST_INVALID) {
-		return VISITOR_BREAK;
+	const char *prop = cypher_ast_prop_name_get_value (n) ;
+	if (_ValidateNameLength (prop, "Property name") == AST_INVALID) {
+		return VISITOR_BREAK ;
 	}
 
-	return VISITOR_RECURSE;
+	return VISITOR_RECURSE ;
 }
 
 static VISITOR_STRATEGY _Validate_label_name
@@ -601,18 +601,18 @@ static VISITOR_STRATEGY _Validate_label_name
 	bool start,
 	ast_visitor *visitor
 ) {
-	UNUSED(visitor);
+	UNUSED (visitor) ;
 
-	if(!start) {
-		return VISITOR_CONTINUE;
+	if (!start) {
+		return VISITOR_CONTINUE ;
 	}
 
-	const char *label = cypher_ast_label_get_name(n);
-	if(_ValidateNameLength(label, "Label name") == AST_INVALID) {
-		return VISITOR_BREAK;
+	const char *label = cypher_ast_label_get_name (n) ;
+	if (_ValidateNameLength (label, "Label name") == AST_INVALID) {
+		return VISITOR_BREAK ;
 	}
 
-	return VISITOR_RECURSE;
+	return VISITOR_RECURSE ;
 }
 
 static VISITOR_STRATEGY _Validate_reltype_name
@@ -621,18 +621,18 @@ static VISITOR_STRATEGY _Validate_reltype_name
 	bool start,
 	ast_visitor *visitor
 ) {
-	UNUSED(visitor);
+	UNUSED (visitor) ;
 
-	if(!start) {
-		return VISITOR_CONTINUE;
+	if (!start) {
+		return VISITOR_CONTINUE ;
 	}
 
-	const char *reltype = cypher_ast_reltype_get_name(n);
-	if(_ValidateNameLength(reltype, "Relationship type") == AST_INVALID) {
-		return VISITOR_BREAK;
+	const char *reltype = cypher_ast_reltype_get_name (n) ;
+	if (_ValidateNameLength (reltype, "Relationship type") == AST_INVALID) {
+		return VISITOR_BREAK ;
 	}
 
-	return VISITOR_RECURSE;
+	return VISITOR_RECURSE ;
 }
 
 static VISITOR_STRATEGY _Validate_proc_name
@@ -641,18 +641,18 @@ static VISITOR_STRATEGY _Validate_proc_name
 	bool start,
 	ast_visitor *visitor
 ) {
-	UNUSED(visitor);
+	UNUSED (visitor) ;
 
-	if(!start) {
-		return VISITOR_CONTINUE;
+	if (!start) {
+		return VISITOR_CONTINUE ;
 	}
 
-	const char *proc_name = cypher_ast_proc_name_get_value(n);
-	if(_ValidateNameLength(proc_name, "Procedure name") == AST_INVALID) {
-		return VISITOR_BREAK;
+	const char *proc_name = cypher_ast_proc_name_get_value (n) ;
+	if (_ValidateNameLength (proc_name, "Procedure name") == AST_INVALID) {
+		return VISITOR_BREAK ;
 	}
 
-	return VISITOR_RECURSE;
+	return VISITOR_RECURSE ;
 }
 
 static VISITOR_STRATEGY _Validate_function_name
@@ -661,18 +661,18 @@ static VISITOR_STRATEGY _Validate_function_name
 	bool start,
 	ast_visitor *visitor
 ) {
-	UNUSED(visitor);
+	UNUSED (visitor) ;
 
-	if(!start) {
-		return VISITOR_CONTINUE;
+	if (!start) {
+		return VISITOR_CONTINUE ;
 	}
 
-	const char *func_name = cypher_ast_function_name_get_value(n);
-	if(_ValidateNameLength(func_name, "Function name") == AST_INVALID) {
-		return VISITOR_BREAK;
+	const char *func_name = cypher_ast_function_name_get_value (n) ;
+	if (_ValidateNameLength (func_name, "Function name") == AST_INVALID) {
+		return VISITOR_BREAK ;
 	}
 
-	return VISITOR_RECURSE;
+	return VISITOR_RECURSE ;
 }
 
 // validate the values of a map
@@ -727,8 +727,8 @@ static AST_Validation _ValidateFunctionCall
 	const char *funcName,    // function name
 	bool include_aggregates  // are aggregations allowed
 ) {
-	if(_ValidateNameLength(funcName, "Function name") == AST_INVALID) {
-		return AST_INVALID;
+	if (_ValidateNameLength (funcName, "Function name") == AST_INVALID) {
+		return AST_INVALID ;
 	}
 
 	// check existence of the function-name

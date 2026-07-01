@@ -6,10 +6,10 @@
 
 #include "RG.h"
 #include "globals.h"
-#include "graphcontext.h"
 #include "../util/arr.h"
 #include "../util/uuid.h"
 #include "../query_ctx.h"
+#include "graphcontext.h"
 #include "../redismodule.h"
 #include "../util/rwlock.h"
 #include "../util/rmalloc.h"
@@ -964,9 +964,8 @@ AttributeID GraphContext_FindOrAddAttribute
 	ASSERT (gc->writer_tid == (pthread_t) 0 ||
 			pthread_equal (gc->writer_tid, pthread_self ())) ;
 
-	// must crash in release
 	// should only happen if an old rdb with an overlong name is loaded
-	RELEASE_ASSERT (strlen(attribute) <= FDB_MAX_IDENTIFIER_LEN);
+	ASSERT (strnlen (attribute, MAX_IDENTIFIER_LEN) <= MAX_IDENTIFIER_LEN) ;
 
 	// attribute missing
 	// add it as a pending attribute
