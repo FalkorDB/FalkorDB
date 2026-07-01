@@ -217,12 +217,10 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
         }
     }
 
-    /// Insert a single `(key, doc)` **in place**, copy-on-write down the touched path. `Arc::make_mut`
-    /// mutates a branch in place when this version is its sole owner (refcount 1) and copies it only
-    /// when a snapshot still shares it — so a held snapshot is never disturbed, yet a burst of inserts
-    /// into an unshared tree pays no per-level branch copy after the first touch. Returns `Some(Split)`
-    /// when the node split (the parent must take in the new right sibling), else `None`. Idempotent:
-    /// inserting an already-present tuple is a no-op.
+    /// Insert a single `(key, doc)`, copy-on-write down the touched path: each branch on the path is
+    /// cloned into a private copy before it is mutated (see [`make_private`]), so the committed version a
+    /// reader may hold is never disturbed. Returns `Some(Split)` when the node split (the parent must take
+    /// in the new right sibling), else `None`. Idempotent: inserting an already-present tuple is a no-op.
     pub(super) fn insert_one(
         &mut self,
         key: u64,
@@ -244,7 +242,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
                 }
             },
             Node::Branch(branch_arc) => {
-                let branch = Arc::make_mut(branch_arc); // in place if unshared, else copy-on-write
+                let branch = make_private(branch_arc); // CoW: clone the shared branch, mutate the copy
                 let child_idx = branch.child_index(key, doc);
                 let Some(Split { sep, right }) = branch.children[child_idx].insert_one(key, doc)
                 else {
@@ -254,7 +252,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
                 branch.seps.insert(child_idx, sep);
                 branch.children.insert(child_idx + 1, right);
                 #[cfg(test)]
-                make_mut_gate::park_if(key); // test-only: parks AFTER the working copy is mutated
+                cow_gate::park_if(key); // test-only: parks AFTER the working copy is mutated
                 if branch.children.len() <= BRANCH_MAX {
                     None
                 } else {
@@ -360,8 +358,8 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
         }
     }
 
-    /// Remove a single `(key, doc)` **in place**, copy-on-write down the touched path (see
-    /// [`Node::insert_one`] on `make_mut`). Returns `None` if the tuple is absent; otherwise `Some`
+    /// Remove a single `(key, doc)`, copy-on-write down the touched path (each branch cloned before
+    /// mutation, see [`Node::insert_one`]). Returns `None` if the tuple is absent; otherwise `Some`
     /// carrying `true` when the touched page dropped below its minimum fill, so the parent re-balances it.
     pub(super) fn remove_one(
         &mut self,
@@ -375,7 +373,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
                 Some(underflow)
             }
             Node::Branch(branch_arc) => {
-                let branch = Arc::make_mut(branch_arc); // in place if unshared, else copy-on-write
+                let branch = make_private(branch_arc); // CoW: clone the shared branch, mutate the copy
                 let child_idx = branch.child_index(key, doc);
                 if branch.children[child_idx].remove_one(key, doc)? {
                     branch.rebalance(child_idx);
@@ -386,13 +384,23 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
     }
 }
 
+/// Copy-on-write: replace `arc` with a private clone and hand back a mutable reference into it. Unlike
+/// `Arc::make_mut` this ALWAYS clones — the writer's working tree shares the committed version's nodes, so
+/// every branch it touches must be copied to keep the committed version immutable for any concurrent
+/// reader. (We deliberately drop `make_mut`'s in-place path: it only ever fires on a re-touch of a node
+/// already privatized within one transaction, and the batch digest path never re-touches.)
+fn make_private<T: Clone>(arc: &mut Arc<T>) -> &mut T {
+    *arc = Arc::new((**arc).clone());
+    Arc::get_mut(arc).expect("uniquely owned right after the clone")
+}
+
 /// Test-only synchronization seam (compiled out of release builds). It lets the concurrency test
-/// [`tests::make_mut_locks_out_a_concurrent_reader`] freeze a writer in the middle of `make_mut` —
-/// while it still holds the `&mut Branch` — so the test can prove that a reader cannot clone the tree
-/// during a mutation. The hook fires only for one sentinel key that no other test inserts, so it stays
-/// inert even though the test binary runs tests in parallel.
+/// [`tests::a_reader_reads_the_committed_version_lock_free_during_a_write`] freeze a writer in the middle
+/// of a copy-on-write mutation — while it still holds the `&mut Branch` of a private copy — so the test
+/// can show a reader still sees the committed version intact. The hook fires only for one sentinel key no
+/// other test inserts, so it stays inert even though the test binary runs tests in parallel.
 #[cfg(test)]
-pub(super) mod make_mut_gate {
+pub(super) mod cow_gate {
     use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 
     /// A key no other test inserts — the park hook keys off it so only the concurrency test triggers it.
@@ -405,7 +413,7 @@ pub(super) mod make_mut_gate {
     /// Called in `insert_one` *after* the working copy's branch has been mutated (its children/seps
     /// updated from a child split). For the sentinel key only, announce that we've parked mid-mutation
     /// (still holding the `&mut Branch`) and spin until released — so the test observes a genuinely
-    /// in-flight write, not a freshly-`make_mut`'d-but-unmodified copy.
+    /// in-flight write, not a freshly-cloned-but-unmodified copy.
     pub(super) fn park_if(key: u64) {
         if key == KEY {
             PARKED.store(true, SeqCst);

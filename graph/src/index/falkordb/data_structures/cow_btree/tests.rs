@@ -184,7 +184,7 @@ fn clone_is_an_isolated_snapshot() {
 fn snapshot_is_isolated_from_a_concurrent_writer() {
     // The MVCC property under real concurrency: a reader iterating a snapshot on one thread must keep
     // seeing the snapshot's contents while a writer churns the *shared* tree on another. Every page the
-    // two share has `Arc` strong-count >= 2, so the writer's `Arc::make_mut` copies it rather than
+    // two share has `Arc` strong-count >= 2, so the writer clones it into a private copy rather than
     // mutating in place — the reader can never observe a write it shouldn't, and the writer only ever
     // *reads* a shared page (to clone it), so there is no write-while-read race. A bug that mutated a
     // shared page in place would surface here as a changed/garbled read.
@@ -215,7 +215,7 @@ fn snapshot_is_isolated_from_a_concurrent_writer() {
 
     // Churn the shared tree hard while the reader runs: delete every original entry, then insert a
     // disjoint range. Each step path-copies through pages the snapshot still holds — exercising
-    // `make_mut`'s copy-on-write against a live reader.
+    // copy-on-write path-copying against a live reader.
     let mut writer = base;
     for i in 0..n {
         writer.remove(i, i);
@@ -539,49 +539,46 @@ fn is_empty_tracks_emptiness() {
 
 #[test]
 fn a_reader_reads_the_committed_version_lock_free_during_a_write() {
-    // The MVCC question, modeled the way the graph actually does it — NO mutex. The committed version
-    // is an immutable `Arc<CowBTree>` (cf. `MvccGraph.graph`); a writer takes a copy-on-write clone (cf.
+    // The MVCC question, modeled the way the graph does it — NO mutex. The committed version is an
+    // immutable `Arc<CowBTree>` (cf. `MvccGraph.graph`); a writer takes a copy-on-write clone (cf.
     // `new_version()`), mutates *that*, and would publish by swapping the pointer (cf. `commit`). Readers
     // never lock — they just clone the committed `Arc` (cf. `read()`).
     //
-    // We freeze the writer mid-mutation (after a shared branch is `make_mut`'d AND its children/seps
-    // updated) on its working clone, then have the main thread read the committed version
-    // concurrently. The point: the reader is NOT locked out (no mutex), and it still
-    // sees the committed version intact — because the working clone shares the committed nodes, so
-    // `make_mut` sees refcount ≥ 2 and COPIES rather than mutating in place. The in-place (refcount==1)
-    // path is therefore only ever taken on the writer's own private, not-yet-published nodes, which no
-    // reader can reach. That's why MVCC needs no lock between a reader's clone and a writer's mutation.
-    use super::node::make_mut_gate;
+    // We freeze the writer mid-mutation (after it has cloned a shared branch and updated the private
+    // copy's children/seps); ONLY THEN does the reader take its view and read the committed version
+    // concurrently. It must see V1 intact — because the writer mutates a *private* clone of every node it
+    // touches, so the committed nodes a reader reaches are never disturbed. That's why MVCC needs no lock
+    // between a reader's clone and a writer's mutation.
+    use super::node::cow_gate;
     use std::sync::Arc;
     use std::sync::atomic::Ordering::SeqCst;
     use std::thread;
 
     // 1024 entries = 4 full leaves ⇒ depth-2. Inserting the sentinel (the max key) splits the full
-    // rightmost leaf and propagates a `Split` to the root branch, where the park fires — AFTER the
-    // working copy's children/seps are mutated, so the reader observes a genuinely in-flight write.
+    // rightmost leaf and propagates a `Split` to the root branch, where the park fires — after the
+    // private copy's children/seps are mutated, so the reader observes a genuinely in-flight write.
     let pairs: Vec<(u64, u64)> = (0..1024u64).map(|i| (i, i)).collect();
-    let committed = Arc::new(CowBTree::<256, 256>::from_sorted(&pairs)); // the immutable committed version (V1)
-    let reader_view = Arc::clone(&committed);
+    let committed = Arc::new(CowBTree::<256, 256>::from_sorted(&pairs)); // the committed version (V1)
 
-    make_mut_gate::PARKED.store(false, SeqCst);
-    make_mut_gate::RELEASE.store(false, SeqCst);
+    cow_gate::PARKED.store(false, SeqCst);
+    cow_gate::RELEASE.store(false, SeqCst);
 
     let writer = thread::spawn({
         let base = Arc::clone(&committed);
         move || {
             let mut working = (*base).clone(); // new_version(): a CoW clone sharing V1's nodes
-            working.insert(make_mut_gate::KEY, 1); // copies the shared root, splits the full leaf, mutates the working root — then parks
+            working.insert(cow_gate::KEY, 1); // clones the shared root, splits the full leaf, mutates the copy — then parks
             working // the new version that `commit` would publish
         }
     });
 
-    while !make_mut_gate::PARKED.load(SeqCst) {
-        std::hint::spin_loop(); // wait until the writer is frozen mid-`make_mut`
+    while !cow_gate::PARKED.load(SeqCst) {
+        std::hint::spin_loop(); // wait until the writer is frozen mid-mutation
     }
 
-    // Writer is frozen mid-mutation on its working clone. With no lock, the reader clones the committed
-    // version and reads it — and must see V1 intact: 1024 entries, no sentinel leaked in.
-    let snapshot = (*reader_view).clone();
+    // The writer is frozen mid-mutation. Only now does the reader arrive: it clones the committed version
+    // (lock-free) and reads it — and must see V1 intact: 1024 entries, no sentinel leaked in.
+    let snapshot = (*committed).clone();
     let docs: Vec<u64> = snapshot.range(0, u64::MAX).collect();
     assert_eq!(
         docs.len(),
@@ -589,11 +586,11 @@ fn a_reader_reads_the_committed_version_lock_free_during_a_write() {
         "reader observed a writer's in-flight mutation"
     );
     assert!(
-        snapshot.point(make_mut_gate::KEY).next().is_none(),
+        snapshot.point(cow_gate::KEY).next().is_none(),
         "the writer's uncommitted insert leaked into the committed snapshot",
     );
 
-    make_mut_gate::RELEASE.store(true, SeqCst); // let the writer finish
+    cow_gate::RELEASE.store(true, SeqCst); // let the writer finish
     let published = writer.join().unwrap();
 
     assert_eq!(
@@ -605,6 +602,52 @@ fn a_reader_reads_the_committed_version_lock_free_during_a_write() {
         committed.len(),
         1024,
         "the committed version must be untouched"
+    );
+}
+
+#[test]
+fn cow_writer_shares_committed_nodes_then_privatizes_on_write() {
+    // The invariant behind copy-on-write: a writer's new version is a clone of committed, so it SHARES
+    // committed's nodes (refcount >= 2). Every node the writer touches must therefore be cloned into a
+    // private copy before mutation, or it would corrupt the committed version a reader may hold. (This is
+    // also why we always clone rather than reuse `Arc::make_mut`'s in-place path: the first touch of any
+    // node is always shared, so make_mut would copy anyway — see `node::make_private`.)
+    use super::node::Node;
+    use std::sync::Arc;
+    fn root_rc<const L: usize, const B: usize>(t: &CowBTree<L, B>) -> usize {
+        match &t.root {
+            Node::Branch(b) => Arc::strong_count(b),
+            Node::Leaf(_) => panic!("test needs a multi-level tree"),
+        }
+    }
+    // 44 entries, LEAF_MAX=8 ⇒ 6 leaves under one branch root (depth 2).
+    let committed = CowBTree::<8, 8>::from_sorted(&(0..44u64).map(|i| (i, i)).collect::<Vec<_>>());
+    assert!(
+        matches!(committed.root, Node::Branch(_)),
+        "need a branch root"
+    );
+
+    // A writer's new version shares committed's root ⇒ refcount 2. Touching it MUST copy (never mutate
+    // the shared node in place), or the committed version would be corrupted.
+    let mut working = committed.clone();
+    assert_eq!(
+        root_rc(&working),
+        2,
+        "the new version shares committed's root (refcount 2)"
+    );
+
+    // After a (non-splitting) insert the writer's root is a private copy (refcount 1) and committed's is
+    // unshared again — the write went to the copy, committed is untouched.
+    working.insert(100, 1);
+    assert_eq!(
+        root_rc(&working),
+        1,
+        "the writer's root is now a private copy"
+    );
+    assert_eq!(
+        root_rc(&committed),
+        1,
+        "committed's root is untouched / unshared again"
     );
 }
 
