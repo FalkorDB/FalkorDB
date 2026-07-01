@@ -20,7 +20,6 @@
 //!             output rows with node IDs
 //! ```
 
-use std::collections::VecDeque;
 use std::sync::Arc;
 
 use crate::graph::graph::NodeId;
@@ -29,12 +28,13 @@ use crate::parser::ast::{QueryExpr, QueryNode, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
-    row::{Row, RowView},
+    batch::{Batch, BatchOp, BatchRow},
     runtime::Runtime,
     value::Value,
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
+
+use super::batched_result_emitter::{BatchedResultEmitter, RowIter};
 
 pub struct NodeByIndexScanOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
@@ -42,7 +42,13 @@ pub struct NodeByIndexScanOp<'a> {
     node_pattern: &'a QueryNode<Arc<String>, Variable>,
     index: &'a Arc<String>,
     query: &'a IndexQuery<QueryExpr<Variable>>,
-    pending: VecDeque<(Row, Box<dyn Iterator<Item = NodeId>>)>,
+    /// Additional labels (beyond the index's primary label) that must be
+    /// verified post-hoc, since the index only filters on the primary. Computed
+    /// once; folded into each row's iterator as a `filter`.
+    extra_labels: Option<Vec<Arc<String>>>,
+    /// Holds the parent batch being expanded and the per-row node iterators, and
+    /// performs the shared pack-and-gather emit.
+    emitter: BatchedResultEmitter<'a, NodeId>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -55,13 +61,19 @@ impl<'a> NodeByIndexScanOp<'a> {
         query: &'a IndexQuery<QueryExpr<Variable>>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
+        let extra_labels = if node_pattern.labels.len() > 1 {
+            Some(node_pattern.labels.iter().skip(1).cloned().collect())
+        } else {
+            None
+        };
         Self {
             runtime,
             child,
             node_pattern,
             index,
             query,
-            pending: VecDeque::new(),
+            extra_labels,
+            emitter: BatchedResultEmitter::new(node_pattern.alias.id),
             idx,
         }
     }
@@ -256,132 +268,56 @@ impl<'a> NodeByIndexScanOp<'a> {
             _ => true,
         }
     }
-
-    /// Drains rows from `self.pending` into `envs` until `BATCH_SIZE` is reached
-    /// or all pending scans are exhausted.
-    fn drain_pending(
-        &mut self,
-        builder: &mut BatchBuilder,
-    ) {
-        // Additional labels (beyond the index's primary label) must be
-        // verified post-hoc since the index only filters on the primary.
-        let extra_labels = if self.node_pattern.labels.len() > 1 {
-            Some(self.node_pattern.labels.iter().skip(1).collect::<Vec<_>>())
-        } else {
-            None
-        };
-        while builder.len() < BATCH_SIZE {
-            let Some((env, iter)) = self.pending.front_mut() else {
-                break;
-            };
-            if let Some(nid) = iter.next() {
-                if let Some(extra_labels) = &extra_labels {
-                    let node_labels = self.runtime.get_node_labels(nid);
-                    if !extra_labels
-                        .iter()
-                        .all(|l| node_labels.iter().any(|nl| nl == *l))
-                    {
-                        continue;
-                    }
-                }
-                let mut row = env.clone();
-                row.insert(&self.node_pattern.alias, Value::Node(nid));
-                builder.push_row(&row);
-            } else {
-                self.pending.pop_front();
-            }
-        }
-    }
-
-    /// Columnar fast path: drains node IDs from leading no-binding pending
-    /// scans into a flat `Vec<NodeId>`, mirroring `NodeByLabelScan`'s
-    /// `from_node_ids` path. Only valid when the pattern has a single label
-    /// (no post-hoc label verification) and the parent row carries no
-    /// bindings, so every output row is just `Value::Node(id)`. Stops at
-    /// `BATCH_SIZE`, a binding-carrying env, or pending exhaustion.
-    fn drain_pending_columnar(
-        &mut self,
-        ids: &mut Vec<NodeId>,
-    ) {
-        while ids.len() < BATCH_SIZE {
-            let Some((env, iter)) = self.pending.front_mut() else {
-                break;
-            };
-            if env.has_bindings() {
-                break;
-            }
-            if let Some(nid) = iter.next() {
-                ids.push(nid);
-            } else {
-                self.pending.pop_front();
-            }
-        }
-    }
 }
 
 impl<'a> Iterator for NodeByIndexScanOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let single_label = self.node_pattern.labels.len() <= 1;
-        let alias_id = self.node_pattern.alias.id;
-
         loop {
-            // Refill pending scans from the child when we've run dry.
-            if self.pending.is_empty() {
-                match self.child.next() {
-                    Some(Ok(batch)) => {
-                        for row in batch.active_indices() {
-                            let view = BatchRow::new(&batch, row);
-                            let q =
-                                match Self::evaluate_index_query(self.runtime, self.query, &view) {
-                                    Ok(q) => q,
-                                    Err(e) => return Some(Err(e)),
-                                };
+            // For each active parent row, evaluate the index query and queue the
+            // matching node ids (falling back to a label scan when the index
+            // can't satisfy the query), folding any extra-label verification
+            // into the iterator so the shared emit stays generic. Iterators are
+            // built lazily, one row at a time. When the batch is exhausted
+            // (`Ok(None)`), pull and seed the next child batch.
+            match self.emitter.emit_lazy(|b, row| {
+                let view = BatchRow::new(b, row);
+                let q = Self::evaluate_index_query(self.runtime, self.query, &view)?;
 
-                            // Check if the index can satisfy this query. If not
-                            // (e.g. non-indexable value types), fall back to a
-                            // label scan.
-                            let iter: Box<dyn Iterator<Item = NodeId>> =
-                                if Self::can_utilize_index(&q) {
-                                    Box::new(
-                                        self.runtime.g.borrow().get_indexed_nodes(self.index, q),
-                                    )
-                                } else {
-                                    Box::new(
-                                        self.runtime
-                                            .g
-                                            .borrow()
-                                            .get_nodes(&self.node_pattern.labels, 0),
-                                    )
-                                };
-                            self.pending.push_back((view.to_owned_row(), iter));
-                        }
-                        continue;
+                // Check if the index can satisfy this query. If not
+                // (e.g. non-indexable value types), fall back to a
+                // label scan.
+                let base: Box<dyn Iterator<Item = NodeId>> = if Self::can_utilize_index(&q) {
+                    Box::new(self.runtime.g.borrow().get_indexed_nodes(self.index, q))
+                } else {
+                    Box::new(
+                        self.runtime
+                            .g
+                            .borrow()
+                            .get_nodes(&self.node_pattern.labels, 0),
+                    )
+                };
+                let iter: Box<dyn Iterator<Item = NodeId> + 'a> = match &self.extra_labels {
+                    Some(extra) => {
+                        let extra = extra.clone();
+                        let runtime = self.runtime;
+                        Box::new(base.filter(move |nid| {
+                            let node_labels = runtime.get_node_labels(*nid);
+                            extra.iter().all(|l| node_labels.iter().any(|nl| nl == l))
+                        }))
                     }
+                    None => base,
+                };
+                Ok(Some(RowIter::many(iter)))
+            }) {
+                Ok(Some(out)) => return Some(Ok(out)),
+                Ok(None) => match self.child.next() {
+                    Some(Ok(batch)) => self.emitter.seed(batch),
                     Some(Err(e)) => return Some(Err(e)),
                     None => return None,
-                }
-            }
-
-            // Columnar fast path: single label and the front parent row carries
-            // no bindings → emit a `Column::NodeIds` batch directly, skipping
-            // per-row `Row` construction and the `BatchBuilder` transpose.
-            if single_label && !self.pending.front().unwrap().0.has_bindings() {
-                let mut ids: Vec<NodeId> = Vec::with_capacity(BATCH_SIZE);
-                self.drain_pending_columnar(&mut ids);
-                if !ids.is_empty() {
-                    return Some(Ok(Batch::from_node_ids(alias_id, ids)));
-                }
-                continue;
-            }
-
-            // Row path: parent bindings present (or multi-label verification),
-            // so build one env per matching node.
-            let mut builder = BatchBuilder::new();
-            self.drain_pending(&mut builder);
-            if !builder.is_empty() {
-                return Some(Ok(builder.finish()));
+                },
+                Err(e) => return Some(Err(e)),
             }
         }
     }

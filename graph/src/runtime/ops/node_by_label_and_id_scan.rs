@@ -6,26 +6,25 @@
 //! from the minimum candidate ID, and yields those whose ID falls within
 //! the evaluated filter range.
 
-use std::collections::VecDeque;
 use std::sync::Arc;
-
-use roaring::RoaringTreemap;
 
 use crate::graph::graph::NodeId;
 use crate::parser::ast::{ExprIR, QueryExpr, QueryNode, Variable};
 use crate::planner::IR;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
-    row::{Row, RowView},
+    batch::{Batch, BatchOp, BatchRow},
     runtime::Runtime,
-    value::Value,
 };
 use orx_tree::{Dyn, NodeIdx};
+
+use super::batched_result_emitter::{BatchedResultEmitter, RowIter};
 
 pub struct NodeByLabelAndIdScanOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
-    pending: VecDeque<(Row, Box<dyn Iterator<Item = NodeId>>, RoaringTreemap)>,
+    /// Holds the parent batch being expanded and the per-row id iterators, and
+    /// performs the shared pack-and-gather emit.
+    pub(crate) emitter: BatchedResultEmitter<'a, NodeId>,
     node_pattern: &'a QueryNode<Arc<String>, Variable>,
     filter: &'a Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
@@ -42,46 +41,10 @@ impl<'a> NodeByLabelAndIdScanOp<'a> {
         Self {
             runtime,
             child,
-            pending: VecDeque::new(),
+            emitter: BatchedResultEmitter::new(node_pattern.alias.id),
             node_pattern,
             filter,
             idx,
-        }
-    }
-
-    /// Drains rows from `self.pending` into `envs` until `BATCH_SIZE` is reached
-    /// or all pending scans are exhausted.
-    fn drain_pending(
-        &mut self,
-        builder: &mut BatchBuilder,
-    ) {
-        while builder.len() < BATCH_SIZE {
-            let Some((env, iter, range)) = self.pending.front_mut() else {
-                break;
-            };
-            let Some(max) = range.max() else {
-                self.pending.pop_front();
-                continue;
-            };
-            let mut found = false;
-            for nid in iter.by_ref() {
-                let id = u64::from(nid);
-                if id > max {
-                    break;
-                }
-                if range.contains(id) {
-                    let mut row = env.clone();
-                    row.insert(&self.node_pattern.alias, Value::Node(nid));
-                    builder.push_row(&row);
-                    found = true;
-                    if builder.len() >= BATCH_SIZE {
-                        break;
-                    }
-                }
-            }
-            if !found {
-                self.pending.pop_front();
-            }
         }
     }
 }
@@ -90,48 +53,39 @@ impl<'a> Iterator for NodeByLabelAndIdScanOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut builder = BatchBuilder::new();
-
-        // Drain leftover scans from previous call.
-        self.drain_pending(&mut builder);
-
-        while builder.len() < BATCH_SIZE {
-            let batch = match self.child.next() {
-                Some(Ok(b)) => b,
-                Some(Err(e)) => return Some(Err(e)),
-                None => break,
-            };
-
-            for row in batch.active_indices() {
-                let view = BatchRow::new(&batch, row);
-                match self.runtime.evaluate_id_filter(self.filter, &view) {
-                    Ok(Some(range)) => {
-                        if range.min().is_some() {
-                            let iter = self
-                                .runtime
-                                .g
-                                .borrow()
-                                .get_nodes(&self.node_pattern.labels, range.min().unwrap());
-
-                            self.pending.push_back((
-                                BatchRow::new(&batch, row).to_owned_row(),
-                                iter,
-                                range,
-                            ));
-                        }
-                    }
-                    Ok(None) => {}
-                    Err(e) => return Some(Err(e)),
-                }
+        loop {
+            // For each active parent row, evaluate the id filter to a candidate
+            // range and queue a label scan from the range minimum, folding the
+            // `id <= max` cutoff and `range.contains` membership into the
+            // iterator so the shared emit stays generic. Iterators are built
+            // lazily, one row at a time. When the batch is exhausted (`Ok(None)`),
+            // pull and seed the next child batch.
+            match self.emitter.emit_lazy(|b, row| {
+                let view = BatchRow::new(b, row);
+                let Some(range) = self.runtime.evaluate_id_filter(self.filter, &view)? else {
+                    return Ok(None);
+                };
+                let Some(min) = range.min() else {
+                    return Ok(None);
+                };
+                let max = range.max().expect("range has a min, so it has a max");
+                let iter = self
+                    .runtime
+                    .g
+                    .borrow()
+                    .get_nodes(&self.node_pattern.labels, min)
+                    .take_while(move |nid| u64::from(*nid) <= max)
+                    .filter(move |nid| range.contains(u64::from(*nid)));
+                Ok(Some(RowIter::many(Box::new(iter))))
+            }) {
+                Ok(Some(out)) => return Some(Ok(out)),
+                Ok(None) => match self.child.next() {
+                    Some(Ok(batch)) => self.emitter.seed(batch),
+                    Some(Err(e)) => return Some(Err(e)),
+                    None => return None,
+                },
+                Err(e) => return Some(Err(e)),
             }
-
-            self.drain_pending(&mut builder);
-        }
-
-        if builder.is_empty() {
-            None
-        } else {
-            Some(Ok(builder.finish()))
         }
     }
 }

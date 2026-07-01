@@ -66,6 +66,10 @@ pub(super) fn ir_references_variable(
             set_items_reference_variable(on_create, var_id, scope_id)
                 || set_items_reference_variable(on_match, var_id, scope_id)
         }
+        IR::ValueHashJoin { lhs_exp, rhs_exp } => {
+            expr_references_variable(lhs_exp, var_id, scope_id)
+                || expr_references_variable(rhs_exp, var_id, scope_id)
+        }
         _ => false,
     }
 }

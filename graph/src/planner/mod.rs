@@ -190,6 +190,11 @@ pub enum IR {
         relationship: Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
         /// Optional per-hop edge filter absorbed from a WHERE clause by the optimizer.
         edge_filter: Option<QueryExpr<Variable>>,
+        /// When false, the path/relationship-list binding (`relationship.alias`)
+        /// is not consumed by any ancestor, so the operator skips materializing
+        /// the per-row `Value::Path`. Conservatively `true` at planning time;
+        /// lowered to `false` by the `reduce_var_len_path` optimizer pass.
+        emit_path: bool,
     },
     /// All shortest paths between two known nodes
     AllShortestPaths(Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>),
@@ -1378,14 +1383,16 @@ impl Planner {
                     || {
                         tree!(IR::CondVarLenTraverse {
                             relationship: relationship.clone(),
-                            edge_filter: None
+                            edge_filter: None,
+                            emit_path: true
                         })
                     },
                     |scan| {
                         tree!(
                             IR::CondVarLenTraverse {
                                 relationship: relationship.clone(),
-                                edge_filter: None
+                                edge_filter: None,
+                                emit_path: true
                             },
                             scan
                         )
@@ -1513,7 +1520,8 @@ impl Planner {
                     let mut cvlt = tree!(
                         IR::CondVarLenTraverse {
                             relationship: relationship.clone(),
-                            edge_filter: None
+                            edge_filter: None,
+                            emit_path: true
                         },
                         res
                     );

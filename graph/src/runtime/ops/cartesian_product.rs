@@ -76,12 +76,11 @@ impl<'a> CartesianProductOp<'a> {
         let mut branch_results: Vec<Batch<'a>> = Vec::with_capacity(self.right_children.len());
 
         for child in &mut self.right_children {
-            let mut builder = BatchBuilder::new();
+            let mut batches: Vec<Batch<'a>> = Vec::new();
             for result in child.by_ref() {
-                let batch = result?;
-                builder.push_batch_active(&batch);
+                batches.push(result?);
             }
-            branch_results.push(builder.finish());
+            branch_results.push(Batch::concat(&batches));
         }
 
         // Single branch: no cross-product needed.

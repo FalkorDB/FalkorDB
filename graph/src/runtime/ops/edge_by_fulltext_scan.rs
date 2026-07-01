@@ -1,40 +1,39 @@
 //! Batch-mode edge fulltext scan operator — retrieves edges via a fulltext index query.
 //!
-//! Implements `CALL db.idx.fulltext.queryRelationships(type, query)`.
-//! For each active row in each input batch, evaluates the relationship-type
-//! and query expressions, delegates to the graph's edge fulltext index,
-//! and expands matching edges into output rows accumulated into batches
-//! of up to `BATCH_SIZE`.
+//! Implements `CALL db.idx.fulltext.queryRelationships(type, query)`. For each
+//! active parent row, evaluates the relationship-type and query expressions,
+//! delegates to the graph's edge fulltext index, and queues the matching
+//! `(edge, score)` iterator on the shared [`BatchedResultEmitter`], which packs
+//! up to [`BATCH_SIZE`](super::super::batch::BATCH_SIZE) results into one
+//! columnar batch.
 //!
-//! Each result row includes the matched edge as
-//! `Value::Relationship((edge_id, src, dst))` and optionally a
-//! relevance score (float) when a score yield variable is specified.
-//! The `Value::Relationship` carries enough information for downstream
-//! property lookups (e.g. `RETURN r.name`) without binding endpoint
-//! variables — the procedure only yields `relationship` / `score`.
-
-use std::collections::VecDeque;
+//! The matched edge binds to the relationship variable as a
+//! `Value::Relationship`, carrying enough information for downstream property
+//! lookups (e.g. `RETURN r.name`) without binding endpoint variables — the
+//! procedure only yields `relationship` / `score`. When a score yield variable
+//! is present, the relevance score binds to it as a float column.
 
 use crate::graph::graph::RelationshipId;
 use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
-    row::{Row, RowView},
+    batch::{Batch, BatchOp, BatchRow},
     runtime::Runtime,
     value::Value,
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
+use super::batched_result_emitter::{BatchedResultEmitter, RowIter, ScoredColumn};
+
 pub struct EdgeByFulltextScanOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
-    pending: VecDeque<(Row, Box<dyn Iterator<Item = (RelationshipId, f64)>>)>,
-    edge: &'a Variable,
+    /// Holds the parent batch being expanded and the per-row `(edge, score)`
+    /// iterators, and performs the shared pack-and-gather emit.
+    pub(crate) emitter: BatchedResultEmitter<'a, (RelationshipId, f64)>,
     label: &'a QueryExpr<Variable>,
     query: &'a QueryExpr<Variable>,
-    score: &'a Option<Variable>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -51,35 +50,13 @@ impl<'a> EdgeByFulltextScanOp<'a> {
         Self {
             runtime,
             child,
-            pending: VecDeque::new(),
-            edge,
+            emitter: BatchedResultEmitter::with_binding(ScoredColumn {
+                id: edge.id,
+                score: score.as_ref().map(|v| v.id),
+            }),
             label,
             query,
-            score,
             idx,
-        }
-    }
-
-    /// Drains rows from `self.pending` into `envs` until `BATCH_SIZE` is reached
-    /// or all pending scans are exhausted.
-    fn drain_pending(
-        &mut self,
-        builder: &mut BatchBuilder,
-    ) {
-        while builder.len() < BATCH_SIZE {
-            let Some((env, iter)) = self.pending.front_mut() else {
-                break;
-            };
-            if let Some((edge_id, s)) = iter.next() {
-                let mut row = env.clone();
-                row.insert(self.edge, Value::Relationship(edge_id));
-                if let Some(score) = self.score {
-                    row.insert(score, Value::Float(s));
-                }
-                builder.push_row(&row);
-            } else {
-                self.pending.pop_front();
-            }
         }
     }
 }
@@ -88,64 +65,47 @@ impl<'a> Iterator for EdgeByFulltextScanOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut builder = BatchBuilder::new();
-
-        // Drain leftover scans from previous call.
-        self.drain_pending(&mut builder);
-
-        while builder.len() < BATCH_SIZE {
-            let batch = match self.child.next() {
-                Some(Ok(b)) => b,
-                Some(Err(e)) => return Some(Err(e)),
-                None => break,
-            };
-
-            for row in batch.active_indices() {
-                let view = BatchRow::new(&batch, row);
+        loop {
+            // One fulltext-query iterator per active parent row, built lazily one
+            // row at a time. When the batch is exhausted (`Ok(None)`), pull and
+            // seed the next child batch.
+            match self.emitter.emit_lazy(|b, row| {
+                let view = BatchRow::new(b, row);
                 let label_str = match ExprEval::from_runtime(self.runtime).eval(
                     self.label,
                     self.label.root().idx(),
                     Some(&view),
                     None,
-                ) {
-                    Ok(Value::String(s)) => s,
-                    Ok(_) => {
-                        return Some(Err(
-                            "fulltext query expects a string relationship type".into()
-                        ));
+                )? {
+                    Value::String(s) => s,
+                    _ => {
+                        return Err("fulltext query expects a string relationship type".into());
                     }
-                    Err(e) => return Some(Err(e)),
                 };
                 let query_str = match ExprEval::from_runtime(self.runtime).eval(
                     self.query,
                     self.query.root().idx(),
                     Some(&view),
                     None,
-                ) {
-                    Ok(Value::String(s)) => s,
-                    Ok(_) => {
-                        return Some(Err("fulltext query expects a string query".into()));
-                    }
-                    Err(e) => return Some(Err(e)),
+                )? {
+                    Value::String(s) => s,
+                    _ => return Err("fulltext query expects a string query".into()),
                 };
                 let g = self.runtime.g.borrow();
-                let iter = match g.fulltext_query_edges(&label_str, &query_str) {
-                    Ok(iter) => Box::new(iter.map(|(_src, _dst, edge_id, score)| (edge_id, score))),
-                    Err(e) => return Some(Err(e)),
-                };
-                drop(g);
-
-                self.pending
-                    .push_back((BatchRow::new(&batch, row).to_owned_row(), iter));
+                let iter = Box::new(
+                    g.fulltext_query_edges(&label_str, &query_str)?
+                        .map(|(_src, _dst, edge_id, score)| (edge_id, score)),
+                ) as Box<dyn Iterator<Item = (RelationshipId, f64)>>;
+                Ok(Some(RowIter::many(iter)))
+            }) {
+                Ok(Some(out)) => return Some(Ok(out)),
+                Ok(None) => match self.child.next() {
+                    Some(Ok(batch)) => self.emitter.seed(batch),
+                    Some(Err(e)) => return Some(Err(e)),
+                    None => return None,
+                },
+                Err(e) => return Some(Err(e)),
             }
-
-            self.drain_pending(&mut builder);
-        }
-
-        if builder.is_empty() {
-            None
-        } else {
-            Some(Ok(builder.finish()))
         }
     }
 }

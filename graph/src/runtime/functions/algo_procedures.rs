@@ -80,6 +80,7 @@ use crate::{
         value::Value,
     },
 };
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use std::ptr::null_mut;
 use std::sync::Arc;
 use thin_vec::{ThinVec, thin_vec};
@@ -261,7 +262,7 @@ fn collect_node_ids(
         return g.get_nodes(&empty, 0).map(u64::from).collect();
     }
     // Union: collect nodes matching any of the labels
-    let mut ids = std::collections::HashSet::new();
+    let mut ids = FxHashSet::default();
     for label in labels {
         let mut label_set = OrderSet::default();
         label_set.insert(label.clone());
@@ -275,7 +276,7 @@ fn collect_node_ids(
 }
 
 /// Build a HashSet of all active node IDs (regardless of label).
-fn active_node_set(g: &Graph) -> std::collections::HashSet<u64> {
+fn active_node_set(g: &Graph) -> FxHashSet<u64> {
     use crate::runtime::orderset::OrderSet;
     let empty: OrderSet<Arc<String>> = OrderSet::default();
     g.get_nodes(&empty, 0).map(u64::from).collect()
@@ -288,10 +289,10 @@ fn active_node_set(g: &Graph) -> std::collections::HashSet<u64> {
 unsafe fn build_compact_adj_from_tensors(
     g: &crate::graph::graph::Graph,
     rel_types: &[Arc<String>],
-    active: &std::collections::HashSet<u64>,
+    active: &FxHashSet<u64>,
 ) -> (
     crate::graph::graphblas::GrB_Matrix,
-    std::collections::HashMap<u64, u64>,
+    FxHashMap<u64, u64>,
     Vec<u64>,
     u64,
 ) {
@@ -304,8 +305,8 @@ unsafe fn build_compact_adj_from_tensors(
     sorted_ids.sort_unstable();
     let n = sorted_ids.len() as u64;
 
-    let mut id_to_compact: std::collections::HashMap<u64, u64> =
-        std::collections::HashMap::with_capacity(sorted_ids.len());
+    let mut id_to_compact: FxHashMap<u64, u64> =
+        FxHashMap::with_capacity_and_hasher(sorted_ids.len(), FxBuildHasher);
     for (compact, &orig) in sorted_ids.iter().enumerate() {
         id_to_compact.insert(orig, compact as u64);
     }
@@ -364,10 +365,10 @@ unsafe fn build_compact_adj_from_tensors(
 unsafe fn build_compact_adj_symmetric_from_tensors(
     g: &crate::graph::graph::Graph,
     rel_types: &[Arc<String>],
-    active: &std::collections::HashSet<u64>,
+    active: &FxHashSet<u64>,
 ) -> (
     crate::graph::graphblas::GrB_Matrix,
-    std::collections::HashMap<u64, u64>,
+    FxHashMap<u64, u64>,
     Vec<u64>,
     u64,
 ) {
@@ -380,8 +381,8 @@ unsafe fn build_compact_adj_symmetric_from_tensors(
     sorted_ids.sort_unstable();
     let n = sorted_ids.len() as u64;
 
-    let mut id_to_compact: std::collections::HashMap<u64, u64> =
-        std::collections::HashMap::with_capacity(sorted_ids.len());
+    let mut id_to_compact: FxHashMap<u64, u64> =
+        FxHashMap::with_capacity_and_hasher(sorted_ids.len(), FxBuildHasher);
     for (compact, &orig) in sorted_ids.iter().enumerate() {
         id_to_compact.insert(orig, compact as u64);
     }
@@ -591,7 +592,7 @@ fn register_wcc(funcs: &mut Functions) {
                     GrB_Matrix_resize(raw_adj, n, n);
                     (raw_adj, None)
                 } else {
-                    let a: std::collections::HashSet<u64> =
+                    let a: FxHashSet<u64> =
                         collect_node_ids(&g, &node_labels).into_iter().collect();
                     if a.is_empty() {
                         return Ok(empty_procedure_batch());
@@ -703,7 +704,7 @@ fn register_betweenness(funcs: &mut Functions) {
                     GrB_Matrix_resize(raw_adj, n, n);
                     (raw_adj, None)
                 } else {
-                    let node_set: std::collections::HashSet<u64> =
+                    let node_set: FxHashSet<u64> =
                         collect_node_ids(&g, &node_labels).into_iter().collect();
                     let (compact_adj, _id_to_compact, compact_to_id, _n) =
                         build_compact_adj_from_tensors(&g, &rel_types, &node_set);
@@ -730,7 +731,7 @@ fn register_betweenness(funcs: &mut Functions) {
                     let actual_samples = sampling_size;
                     let mut srcs = Vec::with_capacity(actual_samples);
                     let mut rng = sampling_seed;
-                    let mut used = std::collections::HashSet::new();
+                    let mut used = FxHashSet::default();
                     for i in 0..actual_samples {
                         let idx = if sampling_seed == 0 {
                             i % n_nodes
@@ -964,7 +965,7 @@ fn register_cdlp(funcs: &mut Functions) {
                     GrB_Matrix_resize(raw_adj, n, n);
                     (raw_adj, None)
                 } else {
-                    let a: std::collections::HashSet<u64> =
+                    let a: FxHashSet<u64> =
                         collect_node_ids(&g, &node_labels).into_iter().collect();
                     if a.is_empty() {
                         return Ok(empty_procedure_batch());
@@ -1088,7 +1089,7 @@ fn register_msf(funcs: &mut Functions) {
             unsafe {
                 use crate::graph::graphblas::{GrB_FP64, GrB_Index, GrB_Matrix, GrB_Matrix_extractTuples_FP64, GrB_Matrix_free, GrB_Matrix_new, GrB_Matrix_nvals, GrB_Matrix_setElement_FP64, GrB_Matrix_wait, GrB_Vector, GrB_Vector_free, GrB_WaitMode, lagraphx_bindings};
 
-                let active_set: std::collections::HashSet<u64> = active_nodes.iter().copied().collect();
+                let active_set: FxHashSet<u64> = active_nodes.iter().copied().collect();
 
                 // Build compact mapping (sorted original IDs -> 0..n-1)
                 let mut sorted_ids: Vec<u64> = active_nodes;
@@ -1110,13 +1111,13 @@ fn register_msf(funcs: &mut Functions) {
                 GrB_Matrix_new(&raw mut weighted_adj, GrB_FP64, n, n);
 
                 // Best edge per undirected node pair (compact IDs).
-                let mut best_pairs: std::collections::HashMap<(u64, u64), (f64, RelationshipId)> =
-                    std::collections::HashMap::new();
+                let mut best_pairs: FxHashMap<(u64, u64), (f64, RelationshipId)> =
+                    FxHashMap::default();
 
                 // Chosen relationship metadata for each undirected compact pair.
                 // Maps (min_compact, max_compact) -> (relationship id, original src, original dst).
-                let mut pair_to_rel: std::collections::HashMap<(u64, u64), RelationshipId> =
-                    std::collections::HashMap::new();
+                let mut pair_to_rel: FxHashMap<(u64, u64), RelationshipId> =
+                    FxHashMap::default();
 
                 let has_multi_edges = if rel_types.is_empty() {
                     g.relationship_tensors().iter().any(|tensor| tensor.has_multi_edge())
@@ -1359,7 +1360,7 @@ fn register_msf(funcs: &mut Functions) {
                 }
 
                 // Add isolated nodes (in active set but not in comp_entries)
-                let in_comp: std::collections::HashSet<u64> = comp_entries.iter().map(|(ci, _)| sorted_ids[*ci as usize]).collect();
+                let in_comp: FxHashSet<u64> = comp_entries.iter().map(|(ci, _)| sorted_ids[*ci as usize]).collect();
                 for &nid in &sorted_ids {
                     if !in_comp.contains(&nid) && !g.is_node_deleted(NodeId::from(nid)) {
                         components.entry(nid as i64).or_default().push(nid);
@@ -1368,8 +1369,8 @@ fn register_msf(funcs: &mut Functions) {
 
                 let mut component_edges: std::collections::BTreeMap<i64, ThinVec<Value>> =
                     std::collections::BTreeMap::new();
-                let mut seen_pairs: std::collections::HashSet<(u64, u64)> =
-                    std::collections::HashSet::new();
+                let mut seen_pairs: FxHashSet<(u64, u64)> =
+                    FxHashSet::default();
 
                 // Single pass over forest edges; avoid per-component scans.
                 for i in 0..nvals_out as usize {
@@ -1610,7 +1611,7 @@ fn run_path_algo(
         cost: f64,
         path_len: u32,
         current: NodeId,
-        visited: std::collections::HashSet<u64>,
+        visited: FxHashSet<u64>,
         // Edges stored in original direction (edge_id, edge_src, edge_dst)
         edges: Vec<(RelationshipId, NodeId, NodeId)>,
     }
@@ -1657,7 +1658,7 @@ fn run_path_algo(
     let g = runtime.g.borrow();
 
     let mut heap = BinaryHeap::new();
-    let mut initial_visited = std::collections::HashSet::new();
+    let mut initial_visited = FxHashSet::default();
     initial_visited.insert(u64::from(config.source));
 
     heap.push(State {
@@ -1879,7 +1880,7 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
                 return Ok(empty_procedure_batch());
             }
 
-            let node_set: std::collections::HashSet<u64> = if node_labels.is_empty() {
+            let node_set: FxHashSet<u64> = if node_labels.is_empty() {
                 active_node_set(&g)
             } else {
                 collect_node_ids(&g, &node_labels).into_iter().collect()
@@ -2039,7 +2040,7 @@ fn register_maxflow(funcs: &mut Functions) {
                 ));
             }
 
-            let src_set: std::collections::HashSet<u64> =
+            let src_set: FxHashSet<u64> =
                 srcs.iter().map(|n| u64::from(*n)).collect();
             if sinks.iter().any(|s| src_set.contains(&u64::from(*s))) {
                 return Err(String::from(
@@ -2091,7 +2092,7 @@ fn register_maxflow(funcs: &mut Functions) {
                 ));
             }
 
-            let label_filter: Option<std::collections::HashSet<u64>> =
+            let label_filter: Option<FxHashSet<u64>> =
                 if node_labels.is_empty() {
                     None
                 } else {
@@ -2219,8 +2220,8 @@ fn register_maxflow(funcs: &mut Functions) {
                     compact_to_id.sort_unstable();
                     compact_to_id.dedup();
 
-                    let mut id_to_compact: std::collections::HashMap<u64, usize> =
-                        std::collections::HashMap::with_capacity(compact_to_id.len());
+                    let mut id_to_compact: FxHashMap<u64, usize> =
+                        FxHashMap::with_capacity_and_hasher(compact_to_id.len(), FxBuildHasher);
                     for (compact_id, orig_id) in compact_to_id.iter().copied().enumerate() {
                         id_to_compact.insert(orig_id, compact_id);
                     }
@@ -2363,8 +2364,8 @@ fn register_maxflow(funcs: &mut Functions) {
                 );
                 GrB_Matrix_free(&raw mut flow_mtx);
 
-                let mut flow_by_edge: std::collections::HashMap<(usize, usize), f64> =
-                    std::collections::HashMap::with_capacity(nvals_out as usize);
+                let mut flow_by_edge: FxHashMap<(usize, usize), f64> =
+                    FxHashMap::with_capacity_and_hasher(nvals_out as usize, FxBuildHasher);
                 for i in 0..nvals_out as usize {
                     if vals[i] > 0.0 {
                         flow_by_edge.insert((rows[i] as usize, cols[i] as usize), vals[i]);
