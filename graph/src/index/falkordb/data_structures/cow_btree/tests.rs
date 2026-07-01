@@ -1113,8 +1113,9 @@ fn check_invariants<const L: usize, const B: usize>(
     assert_eq!(count, t.len(), "walked entry count != len()");
 }
 
-/// Drive random mixed insert/remove against a `BTreeSet<(key, doc)>` oracle, asserting full content parity
-/// AND every structural invariant after each op — the core integrity harness, run below at several sizes.
+/// Drive random mixed insert/remove against a `BTreeSet<(key, doc)>` oracle, asserting content parity,
+/// read-path (`range`/`point`) parity, AND every structural invariant after each op — the core integrity
+/// harness, run below at several sizes.
 fn differential<const L: usize, const B: usize>(
     seed: u64,
     ops: usize,
@@ -1143,6 +1144,26 @@ fn differential<const L: usize, const B: usize>(
             "contents diverged"
         );
         check_invariants(&t, true);
+
+        // Read-path parity: `range()` and `point()` — the production read path — must agree with the
+        // oracle, not just the stored contents (which `tree_pairs` decodes straight from leaf bytes).
+        // A random window [lo, hi] exercises the cursor's start-descent + iteration; a point query hits
+        // the `range(k, k)` fast path.
+        s = splitmix(s);
+        let a = s % key_space;
+        s = splitmix(s);
+        let b = s % key_space;
+        let (lo, hi) = (a.min(b), a.max(b));
+        assert_eq!(
+            tree_range(&t, lo, hi),
+            ref_range(&oracle, lo, hi),
+            "range [{lo}, {hi}] diverged"
+        );
+        s = splitmix(s);
+        let k = s % key_space;
+        let mut pt: Vec<u64> = t.point(k).collect();
+        pt.sort_unstable();
+        assert_eq!(pt, ref_range(&oracle, k, k), "point {k} diverged");
     }
     assert_eq!(
         tree_range(&t, 0, u64::MAX),
