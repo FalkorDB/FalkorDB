@@ -40,7 +40,7 @@ use crate::runtime::{
 // breaks `value.root().idx()` etc.
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
-use super::batched_result_emitter::{BatchedResultEmitter, EdgeEndpoints, RowResult};
+use super::batched_result_emitter::{BatchedResultEmitter, EdgeEndpoints, RowIter};
 
 /// Invariant: `relationship.from` is always the bound endpoint of the
 /// edge scan; `transposed` flips which graph-side endpoint the edge
@@ -375,7 +375,7 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                     } else {
                         base
                     };
-                Ok(Some(RowResult::many(edges)))
+                Ok(Some(RowIter::many(edges)))
             }) {
                 Ok(Some(out)) => return Some(Ok(out)),
                 Ok(None) => match self.child.next() {

@@ -16,7 +16,7 @@ use crate::runtime::{
 };
 use orx_tree::{Dyn, NodeIdx};
 
-use super::batched_result_emitter::{BatchedResultEmitter, RowResult};
+use super::batched_result_emitter::{BatchedResultEmitter, RowIter};
 
 pub struct NodeByIdSeekOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
@@ -65,7 +65,7 @@ impl<'a> Iterator for NodeByIdSeekOp<'a> {
                 if range.is_empty() {
                     return Ok(None);
                 }
-                Ok(Some(RowResult::many(Box::new(
+                Ok(Some(RowIter::many(Box::new(
                     range.into_iter().map(NodeId::from),
                 ))))
             }) {

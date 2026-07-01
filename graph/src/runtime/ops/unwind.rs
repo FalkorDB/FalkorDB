@@ -20,7 +20,7 @@
 //! ```
 //!
 //! Each active parent row's list expression is evaluated on demand into a
-//! [`RowResult`](super::batched_result_emitter::RowResult) (via
+//! [`RowIter`](super::batched_result_emitter::RowIter) (via
 //! [`eval_iter_expr`](crate::runtime::eval::ExprEval::eval_iter_expr)), and the
 //! shared [`BatchedResultEmitter`] drives the expansion
 //! **lazily** — building one row's iterator at a time via
@@ -98,7 +98,7 @@ impl<'a> Iterator for UnwindOp<'a> {
         let list = self.list;
         loop {
             // Each active parent row's list expression is evaluated on demand
-            // into a [`RowResult`](super::batched_result_emitter::RowResult)
+            // into a [`RowIter`](super::batched_result_emitter::RowIter)
             // (see `ExprEval::eval_iter_expr`): a scalar
             // becomes one inline row, a small list literal a stack-held spread,
             // and a `range(..)`/property list a boxed lazy iterator — so only

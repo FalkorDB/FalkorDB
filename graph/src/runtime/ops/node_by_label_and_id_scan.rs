@@ -17,7 +17,7 @@ use crate::runtime::{
 };
 use orx_tree::{Dyn, NodeIdx};
 
-use super::batched_result_emitter::{BatchedResultEmitter, RowResult};
+use super::batched_result_emitter::{BatchedResultEmitter, RowIter};
 
 pub struct NodeByLabelAndIdScanOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
@@ -76,7 +76,7 @@ impl<'a> Iterator for NodeByLabelAndIdScanOp<'a> {
                     .get_nodes(&self.node_pattern.labels, min)
                     .take_while(move |nid| u64::from(*nid) <= max)
                     .filter(move |nid| range.contains(u64::from(*nid)));
-                Ok(Some(RowResult::many(Box::new(iter))))
+                Ok(Some(RowIter::many(Box::new(iter))))
             }) {
                 Ok(Some(out)) => return Some(Ok(out)),
                 Ok(None) => match self.child.next() {

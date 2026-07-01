@@ -36,11 +36,13 @@
 //! - **Complex nodes** (Quantifier, ListComprehension, Reduce, ShortestPath)
 //!   fall back to recursive `eval()` calls since they need scoped env mutations.
 //!
-//! ## ValueIter
+//! ## Iterable expressions
 //!
-//! [`ValueIter`] is a lazy iterator over values, used by `UNWIND` and list
-//! comprehensions. It optimizes `range()` calls by producing integers on the
-//! fly without materializing the entire list.
+//! [`ExprEval::eval_iter_expr`] evaluates a list-valued expression into an
+//! optional [`RowIter`], the row-expanding shape consumed by `UNWIND` (via
+//! the batched emitter) and the list-comprehension decomposition. It optimizes
+//! `range()` and list literals by producing values on the fly — a lazy
+//! [`RangeIter`] or an inline spread — without materializing the whole list.
 
 use std::cmp::Ordering;
 use std::collections::VecDeque;
@@ -56,7 +58,7 @@ use crate::{
     runtime::{
         batch::{Batch, BatchRow, Column, FloatLane, NullBitmap, classify_numeric},
         functions::{FnType, apply_pow},
-        ops::batched_result_emitter::RowResult,
+        ops::batched_result_emitter::RowIter,
         ordermap::OrderMap,
         row::RowView,
         runtime::Runtime,
@@ -65,7 +67,7 @@ use crate::{
 };
 
 // ---------------------------------------------------------------------------
-// ValueIter
+// RangeIter
 // ---------------------------------------------------------------------------
 
 /// Convenience `None` for the `env` argument of [`ExprEval::eval`] in
@@ -92,54 +94,32 @@ fn classify_join_keys(values: Vec<Value>) -> (Column, NullBitmap) {
     (column, nulls)
 }
 
-pub enum ValueIter {
-    Empty,
-    Once(Option<Value>),
-    RangeUp {
-        current: i64,
-        end: i64,
-        step: usize,
-    },
-    RangeDown {
-        current: i64,
-        end: i64,
-        step: usize,
-    },
-    List(thin_vec::IntoIter<Value>),
-    /// A list *literal*'s elements, evaluated directly into inline storage
-    /// without ever materializing an intermediate `Value::List(Arc<..>)`.
-    /// Small literals (the common case) carry their values inline with no heap
-    /// allocation; the values are bounded by the literal's arity, so `UNWIND`
-    /// can safely pack them across rows.
-    Inline(smallvec::IntoIter<[Value; 4]>),
+/// Lazy integer range iterator backing `UNWIND range(a, b, step)`: yields
+/// `Value::Int`s on the fly without materialising an intermediate
+/// `Value::List`. `step` is stored as a positive magnitude and `up` selects the
+/// direction (ascending when the original step was positive). Boxed into a
+/// [`RowIter::many`] by [`ExprEval::eval_iter_expr`].
+struct RangeIter {
+    current: i64,
+    end: i64,
+    step: i64,
+    up: bool,
 }
 
-impl Iterator for ValueIter {
+impl Iterator for RangeIter {
     type Item = Value;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            Self::Empty => None,
-            Self::Once(v) => v.take(),
-            Self::RangeUp { current, end, step } => {
-                if *current > *end {
-                    return None;
-                }
-                let val = *current;
-                *current += *step as i64;
-                Some(Value::Int(val))
+        if self.up {
+            if self.current > self.end {
+                return None;
             }
-            Self::RangeDown { current, end, step } => {
-                if *current < *end {
-                    return None;
-                }
-                let val = *current;
-                *current -= *step as i64;
-                Some(Value::Int(val))
-            }
-            Self::List(iter) => iter.next(),
-            Self::Inline(iter) => iter.next(),
+        } else if self.current < self.end {
+            return None;
         }
+        let val = self.current;
+        self.current += if self.up { self.step } else { -self.step };
+        Some(Value::Int(val))
     }
 }
 
@@ -868,16 +848,22 @@ impl<'a> ExprEval<'a> {
                 }
                 ExprIR::ListComprehension(var) => {
                     let e = env.ok_or_else(|| String::from("Variable not found"))?;
-                    let iter = self.eval_value_iter(ir, node.child(0).idx(), env)?;
                     let mut row = e.to_owned_row();
                     let mut acc = thin_vec![];
-                    for value in iter {
-                        row.insert(var, value);
-                        match self.eval(ir, node.child(1).idx(), Some(&row), agg_group_key)? {
-                            Value::Bool(true) => {}
-                            _ => continue,
+                    if let Some(result) = self.eval_iter_expr(ir, node.child(0).idx(), env)? {
+                        for value in result {
+                            row.insert(var, value);
+                            match self.eval(ir, node.child(1).idx(), Some(&row), agg_group_key)? {
+                                Value::Bool(true) => {}
+                                _ => continue,
+                            }
+                            acc.push(self.eval(
+                                ir,
+                                node.child(2).idx(),
+                                Some(&row),
+                                agg_group_key,
+                            )?);
                         }
-                        acc.push(self.eval(ir, node.child(2).idx(), Some(&row), agg_group_key)?);
                     }
 
                     res.push(Value::List(Arc::new(acc)));
@@ -1009,18 +995,23 @@ impl<'a> ExprEval<'a> {
     // Companion methods
     // -------------------------------------------------------------------
 
-    /// Lazily evaluate a list-valued expression into a [`ValueIter`], the
-    /// eval-side iterator used by callers that consume the values directly
-    /// (e.g. list comprehension). `range(..)` and list literals get dedicated
-    /// lazy/inline variants so neither materializes an intermediate
-    /// `Value::List`. The shape mapping for the batched-emit consumers lives in
-    /// [`eval_iter_expr`](Self::eval_iter_expr).
-    fn eval_value_iter<R: RowView + ?Sized>(
+    /// Evaluate a list-valued expression into an optional [`RowIter`] — the
+    /// row-expanding shape consumed by `UNWIND` (via the batched emitter) and
+    /// the list-comprehension decomposition. `range(..)` and list literals get
+    /// dedicated lazy/inline shapes so neither materializes an intermediate
+    /// `Value::List`:
+    ///
+    /// - an empty `range(..)` / a `null` / a `null` scalar -> `None` (the row
+    ///   produces no output rows),
+    /// - a single non-null scalar -> [`RowIter::one`],
+    /// - a list *literal* -> [`RowIter::spread`] (inline smallvec, no boxing),
+    /// - a lazy `range(..)` or a materialized list value -> [`RowIter::many`].
+    pub(crate) fn eval_iter_expr<R: RowView + ?Sized>(
         &self,
         ir: &DynTree<ExprIR<Variable>>,
         idx: NodeIdx<Dyn<ExprIR<Variable>>>,
         env: Option<&R>,
-    ) -> Result<ValueIter, String> {
+    ) -> Result<Option<RowIter<'a, Value>>, String> {
         match ir.node(idx).data() {
             ExprIR::FuncInvocation(func) if func.name == "range" => {
                 let start = self.eval(ir, ir.node(idx).child(0).idx(), env, None)?;
@@ -1030,46 +1021,37 @@ impl<'a> ExprEval<'a> {
                     .get_child(2)
                     .map_or_else(|| Ok(Value::Int(1)), |c| self.eval(ir, c.idx(), env, None))?;
                 func.validate_args_type(&[&start, &end, &step])?;
-                match (start, end, step) {
-                    (Value::Int(start), Value::Int(end), Value::Int(step)) => {
-                        if step == 0 {
-                            return Err(String::from(
-                                "ArgumentError: step argument to range() can't be 0",
-                            ));
-                        }
-                        if (start > end && step > 0) || (start < end && step < 0) {
-                            return Ok(ValueIter::Empty);
-                        }
-                        let span = if end >= start {
-                            (end as i128) - (start as i128)
-                        } else {
-                            (start as i128) - (end as i128)
-                        };
-                        let abs_step = (step as i128).unsigned_abs();
-                        let length = (span.unsigned_abs() / abs_step)
-                            .checked_add(1)
-                            .ok_or_else(|| String::from("Range too large"))?;
-                        if length > u32::MAX as u128 {
-                            return Err(String::from("Range too large"));
-                        }
-
-                        if step > 0 {
-                            return Ok(ValueIter::RangeUp {
-                                current: start,
-                                end,
-                                step: step as usize,
-                            });
-                        }
-                        Ok(ValueIter::RangeDown {
-                            current: start,
-                            end,
-                            step: step.unsigned_abs() as usize,
-                        })
-                    }
-                    _ => {
-                        unreachable!();
-                    }
+                let (Value::Int(start), Value::Int(end), Value::Int(step)) = (start, end, step)
+                else {
+                    unreachable!();
+                };
+                if step == 0 {
+                    return Err(String::from(
+                        "ArgumentError: step argument to range() can't be 0",
+                    ));
                 }
+                if (start > end && step > 0) || (start < end && step < 0) {
+                    return Ok(None);
+                }
+                let span = if end >= start {
+                    (end as i128) - (start as i128)
+                } else {
+                    (start as i128) - (end as i128)
+                };
+                let abs_step = (step as i128).unsigned_abs();
+                let length = (span.unsigned_abs() / abs_step)
+                    .checked_add(1)
+                    .ok_or_else(|| String::from("Range too large"))?;
+                if length > u32::MAX as u128 {
+                    return Err(String::from("Range too large"));
+                }
+                let iter = RangeIter {
+                    current: start,
+                    end,
+                    step: step.unsigned_abs() as i64,
+                    up: step > 0,
+                };
+                Ok(Some(RowIter::many(Box::new(iter))))
             }
             ExprIR::List => {
                 // Fuse `UNWIND [a, b, c]`: evaluate the element expressions
@@ -1082,41 +1064,19 @@ impl<'a> ExprEval<'a> {
                 for child in node.children() {
                     values.push(self.eval(ir, child.idx(), env, None)?);
                 }
-                Ok(ValueIter::Inline(values.into_iter()))
+                Ok(Some(RowIter::spread(values.into_iter())))
             }
             _ => {
                 let res = self.eval(ir, idx, env, None)?;
-                match res {
-                    Value::List(arr) => Ok(ValueIter::List(Arc::unwrap_or_clone(arr).into_iter())),
-                    Value::Null => Ok(ValueIter::Empty),
-                    _ => Ok(ValueIter::Once(Some(res))),
-                }
+                Ok(match res {
+                    Value::List(arr) => Some(RowIter::many(Box::new(
+                        Arc::unwrap_or_clone(arr).into_iter(),
+                    ))),
+                    Value::Null => None,
+                    other => Some(RowIter::one(other)),
+                })
             }
         }
-    }
-
-    /// Evaluate a list-valued expression into a [`RowResult`] for the
-    /// batched-emit consumers (e.g. `UNWIND`), mapping each [`ValueIter`]
-    /// variant onto the matching row-result shape:
-    ///
-    /// - empty / `null` / a single `null` element -> `None` (the row produces
-    ///   no output rows),
-    /// - a single non-null value -> [`RowResult::one`],
-    /// - an inline list literal -> [`RowResult::spread`] (stays on the stack,
-    ///   no boxing),
-    /// - a lazy `range(..)` or a materialized list -> [`RowResult::many`].
-    pub(crate) fn eval_iter_expr<R: RowView + ?Sized>(
-        &self,
-        ir: &DynTree<ExprIR<Variable>>,
-        idx: NodeIdx<Dyn<ExprIR<Variable>>>,
-        env: Option<&R>,
-    ) -> Result<Option<RowResult<'a, Value>>, String> {
-        Ok(match self.eval_value_iter(ir, idx, env)? {
-            ValueIter::Empty | ValueIter::Once(None) | ValueIter::Once(Some(Value::Null)) => None,
-            ValueIter::Once(Some(value)) => Some(RowResult::one(value)),
-            ValueIter::Inline(values) => Some(RowResult::spread(values)),
-            other => Some(RowResult::many(Box::new(other))),
-        })
     }
 
     /// Evaluate a `shortestPath()` or `allShortestPaths()` expression.

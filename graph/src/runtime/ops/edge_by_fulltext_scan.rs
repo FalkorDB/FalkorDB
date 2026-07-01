@@ -24,7 +24,7 @@ use crate::runtime::{
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
-use super::batched_result_emitter::{BatchedResultEmitter, RowResult, ScoredColumn};
+use super::batched_result_emitter::{BatchedResultEmitter, RowIter, ScoredColumn};
 
 pub struct EdgeByFulltextScanOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
@@ -96,7 +96,7 @@ impl<'a> Iterator for EdgeByFulltextScanOp<'a> {
                     g.fulltext_query_edges(&label_str, &query_str)?
                         .map(|(_src, _dst, edge_id, score)| (edge_id, score)),
                 ) as Box<dyn Iterator<Item = (RelationshipId, f64)>>;
-                Ok(Some(RowResult::many(iter)))
+                Ok(Some(RowIter::many(iter)))
             }) {
                 Ok(Some(out)) => return Some(Ok(out)),
                 Ok(None) => match self.child.next() {

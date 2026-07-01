@@ -18,7 +18,7 @@ use crate::runtime::{
 };
 use orx_tree::{Dyn, NodeIdx};
 
-use super::batched_result_emitter::{BatchedResultEmitter, RowResult, ScoredColumn};
+use super::batched_result_emitter::{BatchedResultEmitter, RowIter, ScoredColumn};
 
 pub struct EdgeByVectorScanOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
@@ -89,7 +89,7 @@ impl<'a> Iterator for EdgeByVectorScanOp<'a> {
                     g.vector_query_edges(&label_str, &attr_str, vec_arc, k_val)?
                         .map(|(_src, _dst, edge_id, score)| (edge_id, score)),
                 ) as Box<dyn Iterator<Item = (RelationshipId, f64)>>;
-                Ok(Some(RowResult::many(iter)))
+                Ok(Some(RowIter::many(iter)))
             }) {
                 Ok(Some(out)) => return Some(Ok(out)),
                 Ok(None) => match self.child.next() {

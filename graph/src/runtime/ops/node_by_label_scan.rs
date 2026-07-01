@@ -10,7 +10,7 @@
 //!  parent BatchOp ──► parent_batch ──► BatchedResultEmitter::seed
 //!                          │
 //!             for each active parent row (on demand):
-//!               g.get_nodes(labels) ──► RowResult::many(iter)
+//!               g.get_nodes(labels) ──► RowIter::many(iter)
 //!                          │
 //!              ┌───────────┴───────────┐
 //!              │  emit_lazy: pack ≤    │
@@ -33,7 +33,7 @@ use crate::runtime::{
 };
 use orx_tree::{Dyn, NodeIdx};
 
-use super::batched_result_emitter::{BatchedResultEmitter, RowResult};
+use super::batched_result_emitter::{BatchedResultEmitter, RowIter};
 
 pub struct NodeByLabelScanOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
@@ -74,9 +74,7 @@ impl<'a> Iterator for NodeByLabelScanOp<'a> {
             let labels = &self.node_pattern.labels;
             let runtime = self.runtime;
             match self.emitter.emit_lazy(|_b, _row| {
-                Ok(Some(RowResult::many(
-                    runtime.g.borrow().get_nodes(labels, 0),
-                )))
+                Ok(Some(RowIter::many(runtime.g.borrow().get_nodes(labels, 0))))
             }) {
                 Ok(Some(out)) => return Some(Ok(out)),
                 Ok(None) => match self.child.next() {

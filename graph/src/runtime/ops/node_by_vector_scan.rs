@@ -25,7 +25,7 @@ use crate::runtime::{
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 use thin_vec::ThinVec;
 
-use super::batched_result_emitter::{BatchedResultEmitter, RowResult, ScoredColumn};
+use super::batched_result_emitter::{BatchedResultEmitter, RowIter, ScoredColumn};
 
 pub struct NodeByVectorScanOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
@@ -93,7 +93,7 @@ impl<'a> Iterator for NodeByVectorScanOp<'a> {
                 let g = self.runtime.g.borrow();
                 let iter = Box::new(g.vector_query_nodes(&label_str, &attr_str, vec_arc, k_val)?)
                     as Box<dyn Iterator<Item = (NodeId, f64)>>;
-                Ok(Some(RowResult::many(iter)))
+                Ok(Some(RowIter::many(iter)))
             }) {
                 Ok(Some(out)) => return Some(Ok(out)),
                 Ok(None) => match self.child.next() {

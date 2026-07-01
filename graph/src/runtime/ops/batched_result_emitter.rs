@@ -20,7 +20,7 @@
 //!  child BatchOp ──► parent batch ──► seed()
 //!                         │
 //!            for each active parent row (on demand, via the cursor):
-//!              op-specific closure ──► RowResult (One / Spread / Many)
+//!              op-specific closure ──► RowIter (One / Spread / Many)
 //!                         │
 //!              ┌──────────┴───────────┐
 //!              │ pack ≤ BATCH_SIZE    │  emit_lazy(closure)
@@ -340,31 +340,34 @@ impl GatherItem for Value {
     }
 }
 
-/// What a single parent row yields, as returned by the lazy
-/// [`emit_lazy`](BatchedResultEmitter::emit_lazy) closure. Mirrors the stored
-/// [`RowIter`] but carries its single value by value (`One(I)`) so op closures
-/// stay ergonomic; [`refill_from_cursor`](BatchedResultEmitter::refill_from_cursor)
-/// moves it straight into the matching `RowIter` pending entry.
+/// What a single parent row yields: returned by the lazy
+/// [`emit_lazy`](BatchedResultEmitter::emit_lazy) closure and held in
+/// [`pending`](BatchedResultEmitter::pending) while it is drained. Implements
+/// [`Iterator`], so the emitter drives it for lazy cross-row packing and eager
+/// consumers (e.g. the list-comprehension decomposition) can `for value in
+/// result` over the same `next()`.
 ///
-/// `One` is a single value (the scalar-`UNWIND`/single-node-per-row case);
-/// `Spread` is a small, arity-bounded run of values from a list *literal*
+/// `One` is a single value (the scalar-`UNWIND`/single-node-per-row case),
+/// carried in an `Option` so it can be `take`n as the iterator drains; `Spread`
+/// is a small, arity-bounded run of values from a list *literal*
 /// (`UNWIND [a, b, c]`) held inline in a smallvec; `Many` boxes an iterator for
 /// an unbounded or lazy source (a property list, a `range(..)`, a label/index
-/// scan).
-pub(crate) enum RowResult<'a, I> {
-    One(I),
+/// scan). At most one is ever live, since the emitter holds a single row's
+/// results at a time.
+pub(crate) enum RowIter<'a, I> {
+    One(Option<I>),
     Spread(smallvec::IntoIter<[I; 4]>),
     Many(Box<dyn Iterator<Item = I> + 'a>),
 }
 
-impl<'a, I> RowResult<'a, I> {
+impl<'a, I> RowIter<'a, I> {
     /// A row that yields exactly one result, queued inline without allocation.
     pub(crate) fn one(item: I) -> Self {
-        Self::One(item)
+        Self::One(Some(item))
     }
 
-    /// A row that yields a small, arity-bounded run of results (a list literal),
-    /// spread into that many inline `One` entries — no per-row heap allocation.
+    /// A row that yields a small, arity-bounded run of results (a list literal)
+    /// held inline in a smallvec — no per-row heap allocation.
     pub(crate) fn spread(iter: smallvec::IntoIter<[I; 4]>) -> Self {
         Self::Spread(iter)
     }
@@ -373,20 +376,6 @@ impl<'a, I> RowResult<'a, I> {
     pub(crate) fn many(iter: Box<dyn Iterator<Item = I> + 'a>) -> Self {
         Self::Many(iter)
     }
-}
-
-/// The current parent row's result iterator, held in
-/// [`pending`](BatchedResultEmitter::pending). `One` carries a single result
-/// inline (no heap allocation) for the common case where a row yields exactly
-/// one; `Spread` holds a list literal's (arity ≥ 2) values inline in a smallvec
-/// — a single-element literal collapses to `One`; `Many` boxes an iterator for
-/// an unbounded or lazy source. The lazy refill picks the variant straight from
-/// the matching [`RowResult`]. At most one of these is ever live, since the
-/// emitter holds a single row's results at a time.
-enum RowIter<'a, I> {
-    One(Option<I>),
-    Spread(smallvec::IntoIter<[I; 4]>),
-    Many(Box<dyn Iterator<Item = I> + 'a>),
 }
 
 impl<I> Iterator for RowIter<'_, I> {
@@ -555,7 +544,7 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
     }
 
     /// Advance the [`cursor`](Self::cursor) to the next active row and queue its
-    /// results (built on demand by `f` as a [`RowResult`]), skipping rows for
+    /// results (built on demand by `f` as a [`RowIter`]), skipping rows for
     /// which `f` yields nothing (including an empty `Spread`). Returns `false`
     /// when the batch's active rows are exhausted (or no batch is installed),
     /// signalling the caller to refill via [`seed`](Self::seed).
@@ -564,7 +553,7 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
         f: &mut F,
     ) -> Result<bool, String>
     where
-        F: FnMut(&Batch<'a>, usize) -> Result<Option<RowResult<'a, I>>, String>,
+        F: FnMut(&Batch<'a>, usize) -> Result<Option<RowIter<'a, I>>, String>,
     {
         let Some(b) = self.batch.as_ref() else {
             return Ok(false);
@@ -578,15 +567,7 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
             self.cursor += 1;
             match f(b, row)? {
                 None => {}
-                Some(RowResult::One(item)) => {
-                    self.pending = Some((row, RowIter::One(Some(item))));
-                    return Ok(true);
-                }
-                Some(RowResult::Many(iter)) => {
-                    self.pending = Some((row, RowIter::Many(iter)));
-                    return Ok(true);
-                }
-                Some(RowResult::Spread(mut values)) => match values.len() {
+                Some(RowIter::Spread(mut values)) => match values.len() {
                     // An empty list literal (`UNWIND []`) yields nothing for this
                     // row; keep scanning rather than queueing an empty iterator.
                     0 => {}
@@ -601,6 +582,10 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
                         return Ok(true);
                     }
                 },
+                Some(result) => {
+                    self.pending = Some((row, result));
+                    return Ok(true);
+                }
             }
         }
         Ok(false)
@@ -609,7 +594,7 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
     /// Packs up to the pack ceiling ([`BATCH_SIZE`] by default) into one columnar
     /// batch, walking the parent batch's active rows on demand via the
     /// [`cursor`](Self::cursor), building each row's results with `f` only when
-    /// reached. `f` returns the row's [`RowResult`] (a single inline value, a
+    /// reached. `f` returns the row's [`RowIter`] (a single inline value, a
     /// small spread of inline values, or a boxed iterator), or `None` to skip the
     /// row. At most one row's results are ever live (held in `pending`), so a
     /// wide parent batch never materializes one iterator per active row. Returns
@@ -621,7 +606,7 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
         mut f: F,
     ) -> Result<Option<Batch<'a>>, String>
     where
-        F: FnMut(&Batch<'a>, usize) -> Result<Option<RowResult<'a, I>>, String>,
+        F: FnMut(&Batch<'a>, usize) -> Result<Option<RowIter<'a, I>>, String>,
     {
         let (should_expand, mut indices, mut lanes) = self.start_batch();
         let mut count = 0usize;

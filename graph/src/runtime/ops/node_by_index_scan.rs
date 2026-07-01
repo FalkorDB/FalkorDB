@@ -34,7 +34,7 @@ use crate::runtime::{
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
-use super::batched_result_emitter::{BatchedResultEmitter, RowResult};
+use super::batched_result_emitter::{BatchedResultEmitter, RowIter};
 
 pub struct NodeByIndexScanOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
@@ -309,7 +309,7 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                     }
                     None => base,
                 };
-                Ok(Some(RowResult::many(iter)))
+                Ok(Some(RowIter::many(iter)))
             }) {
                 Ok(Some(out)) => return Some(Ok(out)),
                 Ok(None) => match self.child.next() {

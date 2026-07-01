@@ -73,8 +73,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub use super::eval::ValueIter;
-
 /// Query result containing statistics and returned tuples.
 pub struct ResultSummary<'a> {
     /// Mutation statistics (nodes created, etc.)

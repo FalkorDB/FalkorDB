@@ -35,7 +35,7 @@ use crate::runtime::{
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
-use super::batched_result_emitter::{BatchedResultEmitter, RowResult};
+use super::batched_result_emitter::{BatchedResultEmitter, RowIter};
 
 pub struct ExpandIntoOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
@@ -110,10 +110,10 @@ impl<'a> ExpandIntoOp<'a> {
     }
 
     /// Probe one input row's already-bound `from`/`to` endpoints for matching
-    /// relationships and return them as a [`RowResult`] (`None` skips the row).
+    /// relationships and return them as a [`RowIter`] (`None` skips the row).
     /// The reverse direction is probed too when the pattern is bidirectional and
     /// not a self-loop. The matched edge ids are collected eagerly while the
-    /// caller holds the graph borrow; the returned `RowResult` owns its ids, so
+    /// caller holds the graph borrow; the returned `RowIter` owns its ids, so
     /// nothing queued in the emitter borrows the graph.
     ///
     /// The synthetic label-check returns a single placeholder id — discarded by
@@ -131,7 +131,7 @@ impl<'a> ExpandIntoOp<'a> {
         iters_ref: &mut Option<Vec<std::cell::RefCell<EdgeIter>>>,
         batch: &Batch<'a>,
         row_idx: usize,
-    ) -> Result<Option<RowResult<'a, RelationshipId>>, String> {
+    ) -> Result<Option<RowIter<'a, RelationshipId>>, String> {
         let src = match batch.value_at(rp.from.alias.id, row_idx) {
             Some(Value::Node(id)) => id,
             Some(Value::Null) | None => return Ok(None),
@@ -158,7 +158,7 @@ impl<'a> ExpandIntoOp<'a> {
                 .iter()
                 .all(|label| g.get_node_labels(src).any(|nl| nl == *label));
             return if has_all_labels {
-                Ok(Some(RowResult::one(RelationshipId::from(0u64))))
+                Ok(Some(RowIter::one(RelationshipId::from(0u64))))
             } else {
                 Ok(None)
             };
@@ -260,8 +260,8 @@ impl<'a> ExpandIntoOp<'a> {
         // iterator.
         match row_edges.len() {
             0 => Ok(None),
-            1 => Ok(Some(RowResult::one(row_edges[0]))),
-            _ => Ok(Some(RowResult::many(Box::new(row_edges.into_iter())))),
+            1 => Ok(Some(RowIter::one(row_edges[0]))),
+            _ => Ok(Some(RowIter::many(Box::new(row_edges.into_iter())))),
         }
     }
 }

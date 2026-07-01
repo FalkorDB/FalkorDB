@@ -19,7 +19,7 @@ use crate::runtime::{
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
-use super::batched_result_emitter::{BatchedResultEmitter, RowResult, ScoredColumn};
+use super::batched_result_emitter::{BatchedResultEmitter, RowIter, ScoredColumn};
 
 pub struct NodeByFulltextScanOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
@@ -87,7 +87,7 @@ impl<'a> Iterator for NodeByFulltextScanOp<'a> {
                 let g = self.runtime.g.borrow();
                 let iter = Box::new(g.fulltext_query_nodes(&label_str, &query_str)?)
                     as Box<dyn Iterator<Item = (NodeId, f64)>>;
-                Ok(Some(RowResult::many(iter)))
+                Ok(Some(RowIter::many(iter)))
             }) {
                 Ok(Some(out)) => return Some(Ok(out)),
                 Ok(None) => match self.child.next() {
