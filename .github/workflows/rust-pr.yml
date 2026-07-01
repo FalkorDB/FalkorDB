@@ -345,12 +345,24 @@ jobs:
         run: |
           RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo build
           RUSTDOCFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo test -p graph
+          # Snapshot coverage here, before the e2e/TCK suites run below, so
+          # cargo test's own profraw can be reported as its own Codecov flag
+          # (unit-tests) instead of being indistinguishable from e2e coverage.
+          llvm-profdata-22 merge --sparse `find . -name "*.profraw"` -o cov-unit.profdata
+          llvm-cov-22 export --format=lcov --instr-profile cov-unit.profdata target/debug/libfalkordb.so > codecov-unit.txt.all
+          lcov --ignore-errors unused -r codecov-unit.txt.all -o codecov-unit.txt
           . /data/venv/bin/activate
           pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
           TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
           llvm-profdata-22 merge --sparse `find . -name "*.profraw"` -o cov.profdata
           llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
+      - name: Upload unit test coverage to Codecov
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./codecov-unit.txt
+          flags: unit-tests
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
         with:
