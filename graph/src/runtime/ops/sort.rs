@@ -190,84 +190,42 @@ impl Ord for HeapEntry {
     }
 }
 
-/// One materialised sort-key column for the full-sort path, specialised by type
-/// so the comparator can compare raw scalars and skip the `Value` enum dispatch.
+/// Materialises a full-sort key column from a bulk
+/// [`eval_batch`](ExprEval::eval_batch) result, specialised by type so the
+/// comparator can compare raw scalars and skip the `Value` enum dispatch.
 ///
-/// A key is `Ints`/`Floats` only when *every* row evaluated that key to the same
-/// primitive type; any null, mismatch, or non-primitive value (and any mixed
-/// `Int`/`Float` column) keeps the whole key on the `Values` path. That keeps
-/// `compare_at` byte-for-byte identical to `Value::compare_value`: an all-`Int`
-/// column always hits the `(Int, Int) => a.cmp(b)` arm, and an all-`Float`
-/// column always hits `(Float, Float) => compare_floats`, which is exactly
-/// `partial_cmp(...).unwrap_or(Less)`.
-enum KeyColumn {
-    Ints(Vec<i64>),
-    Floats(Vec<f64>),
-    Values(Vec<Value>),
-}
-
-impl KeyColumn {
-    /// Builds a key column from a bulk [`eval_batch`](ExprEval::eval_batch)
-    /// result. A null anywhere keeps the whole key boxed (so a sort key with
-    /// nulls compares byte-for-byte like `Value::compare_value`); otherwise a
-    /// typed `Ints`/`Floats` column passes straight through and anything else is
-    /// reclassified, the same total order the old per-row path produced.
-    fn from_column(
-        col: Column,
-        nulls: &NullBitmap,
-    ) -> Self {
-        if nulls.any_null() {
-            let values = (0..col.len())
-                .map(|i| {
-                    if nulls.is_null(i) {
-                        Value::Null
-                    } else {
-                        col.get(i)
-                    }
-                })
-                .collect();
-            return Self::Values(values);
-        }
-        match col {
-            Column::Ints(v) => Self::Ints(v),
-            Column::Floats(v) => Self::Floats(v),
-            other => Self::classify((0..other.len()).map(|i| other.get(i)).collect()),
-        }
+/// A null anywhere keeps the whole key on the `Values` path (so a sort key with
+/// nulls compares byte-for-byte like `Value::compare_value`); otherwise a typed
+/// `Ints`/`Floats` column passes straight through and anything else is
+/// reclassified to the narrowest numeric lane. A key stays `Ints`/`Floats` only
+/// when *every* row evaluated it to the same primitive type, which keeps
+/// [`Column::compare_at`] byte-for-byte identical to `Value::compare_value`.
+fn classify_sort_key(
+    col: Column,
+    nulls: &NullBitmap,
+) -> Column {
+    if nulls.any_null() {
+        let values = (0..col.len())
+            .map(|i| {
+                if nulls.is_null(i) {
+                    Value::Null
+                } else {
+                    col.get(i)
+                }
+            })
+            .collect();
+        return Column::Values(values);
     }
-
-    /// Specialises a key column to `Ints`/`Floats` when homogeneous, else keeps
-    /// the boxed `Values` (consuming them, no clone). A null (or any non-numeric
-    /// value) keeps the whole key on the `Values` path so `compare_at` stays
-    /// byte-for-byte identical to `Value::compare_value`.
-    fn classify(values: Vec<Value>) -> Self {
-        // A null (or any non-numeric value) keeps the whole key value-backed so
-        // `compare_at` stays byte-for-byte identical to `Value::compare_value`;
-        // a pure-float key uses the float lane, no int/float mixing.
-        match classify_numeric(values, false, FloatLane::Pure) {
-            Column::Ints(ints) => Self::Ints(ints),
-            Column::Floats(floats) => Self::Floats(floats),
-            Column::Values(values) => Self::Values(values),
-            // `classify_numeric` only ever yields `Ints`/`Floats`/`Values`.
-            Column::NodeIds(_) | Column::RelIds(_) | Column::Unbound => {
-                unreachable!("classify_numeric yields only Ints/Floats/Values")
-            }
-        }
-    }
-
-    /// Compares rows `a` and `b` of this key column in ascending value order
-    /// (the caller applies the `DESC` reversal). Mirrors `Value::compare_value`
-    /// for the specialised types.
-    #[inline]
-    fn compare_at(
-        &self,
-        a: usize,
-        b: usize,
-    ) -> Ordering {
-        match self {
-            Self::Ints(v) => v[a].cmp(&v[b]),
-            Self::Floats(v) => v[a].partial_cmp(&v[b]).unwrap_or(Ordering::Less),
-            Self::Values(v) => v[a].compare_value(&v[b]).0,
-        }
+    match col {
+        Column::Ints(v) => Column::Ints(v),
+        Column::Floats(v) => Column::Floats(v),
+        // A pure-float key uses the float lane, no int/float mixing; a null or
+        // any non-numeric value keeps the whole key value-backed.
+        other => classify_numeric(
+            (0..other.len()).map(|i| other.get(i)).collect(),
+            false,
+            FloatLane::Pure,
+        ),
     }
 }
 
@@ -333,15 +291,15 @@ impl<'a> SortOp<'a> {
         // Evaluate each sort key in bulk: `eval_batch` serves a `var.attr` key
         // with a single property fetch (no per-row interpreter dispatch) and
         // falls back to per-row eval for expression keys, so `rand()` etc. still
-        // work. Each key becomes its own typed `KeyColumn`, letting the
+        // work. Each key becomes its own typed `Column`, letting the
         // comparator skip `Value` enum dispatch for primitive keys.
         let num_keys = trees.len();
         let active: Vec<usize> = (0..total).collect();
-        let mut typed_keys: Vec<KeyColumn> = Vec::with_capacity(num_keys);
+        let mut typed_keys: Vec<Column> = Vec::with_capacity(num_keys);
         for (tree, _desc) in trees {
             let (col, nulls) =
                 ExprEval::from_runtime(runtime).eval_batch(tree, &combined, &active)?;
-            typed_keys.push(KeyColumn::from_column(col, &nulls));
+            typed_keys.push(classify_sort_key(col, &nulls));
         }
 
         let num_columns = combined.num_columns();
@@ -368,11 +326,11 @@ impl<'a> SortOp<'a> {
         };
         // Pack the primary key inline so the sort scans contiguous `(key, idx)`
         // pairs instead of indices that random-gather the key column — the same
-        // total order, far fewer cache misses. The `Values` primary key keeps
+        // total order, far fewer cache misses. A non-primitive primary key keeps
         // the index sort, which already borrows through the comparator.
         let primary_desc = trees[0].1;
         let mut order: Vec<usize> = match &typed_keys[0] {
-            KeyColumn::Ints(keys) => {
+            Column::Ints(keys) => {
                 let mut pairs: Vec<(i64, u32)> = (0..total).map(|i| (keys[i], i as u32)).collect();
                 pairs.sort_unstable_by(|&(ka, ia), &(kb, ib)| {
                     let primary = if primary_desc {
@@ -384,7 +342,7 @@ impl<'a> SortOp<'a> {
                 });
                 pairs.into_iter().map(|(_, i)| i as usize).collect()
             }
-            KeyColumn::Floats(keys) => {
+            Column::Floats(keys) => {
                 let mut pairs: Vec<(f64, u32)> = (0..total).map(|i| (keys[i], i as u32)).collect();
                 pairs.sort_unstable_by(|&(ka, ia), &(kb, ib)| {
                     let primary = ka.partial_cmp(&kb).unwrap_or(Ordering::Less);
@@ -397,7 +355,10 @@ impl<'a> SortOp<'a> {
                 });
                 pairs.into_iter().map(|(_, i)| i as usize).collect()
             }
-            KeyColumn::Values(_) => {
+            // A non-primitive primary key (`Values`, and the node/rel/unbound
+            // shapes `classify_sort_key` never yields here) sorts row indices
+            // directly through the borrowing comparator.
+            _ => {
                 let mut order: Vec<usize> = (0..total).collect();
                 order.sort_by(|&a, &b| {
                     let ordering = typed_keys[0].compare_at(a, b);

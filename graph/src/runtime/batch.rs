@@ -151,7 +151,7 @@ pub(crate) enum FloatLane {
 
 /// One-pass numeric classification shared by every column classifier
 /// ([`classify_stored_column`], [`classify_column`], `classify_join_keys`, and
-/// the sort-key `KeyColumn::classify`), so the int/float/null match lives in one
+/// the sort operator's key classifier), so the int/float/null match lives in one
 /// place. Returns the narrowest numeric [`Column`]: [`Column::Ints`] when every
 /// value collects as `i64`, else an optional [`Column::Floats`] lane, else
 /// [`Column::Values`]. `allow_null` decides whether `Null` rides along as a
@@ -336,6 +336,30 @@ impl Column {
             Self::Floats(v) => Self::Floats(indices.map(|i| v[i]).collect()),
             Self::Values(v) => Self::Values(indices.map(|i| v[i].clone()).collect()),
             Self::Unbound => Self::Unbound,
+        }
+    }
+
+    /// Compares rows `a` and `b` of this column in ascending value order (the
+    /// caller applies any `DESC` reversal). The primitive `Ints`/`Floats` lanes
+    /// compare raw scalars, skipping the `Value` enum dispatch; every other lane
+    /// defers to [`CompareValue::compare_value`](crate::runtime::value::CompareValue)
+    /// through [`get`](Self::get), so the order stays byte-for-byte identical to
+    /// comparing the materialised `Value`s. Used by the sort operator to order
+    /// its typed key columns.
+    #[inline]
+    #[must_use]
+    pub fn compare_at(
+        &self,
+        a: usize,
+        b: usize,
+    ) -> Ordering {
+        match self {
+            Self::Ints(v) => v[a].cmp(&v[b]),
+            Self::Floats(v) => v[a].partial_cmp(&v[b]).unwrap_or(Ordering::Less),
+            Self::Values(v) => v[a].compare_value(&v[b]).0,
+            Self::NodeIds(_) | Self::RelIds(_) | Self::Unbound => {
+                self.get(a).compare_value(&self.get(b)).0
+            }
         }
     }
 }
