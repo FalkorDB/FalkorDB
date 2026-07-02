@@ -126,12 +126,11 @@ EntityID AllNeighborsCtx_NextNeighbor
 		}
 
 
-		// The invariant is that 'visited_nodes' always contains all nodes
-		// that are currently on the 'visited' path stack.
-		// (node in 'visited' iff node is in 'visited_nodes')
-		// Note:Leaf nodes (nodes at max len) should never be pushed onto the 'visited' path stack,
-		// so they are never in 'visited_nodes' - they will never show up
-		// on the path stack when backtracking.
+		// Invariant: 'visited_nodes' mirrors the 'visited' path stack.
+		// (node is in 'visited' iff it is in 'visited_nodes')
+		// Note: Leaf nodes (nodes at maxLen) should never be pushed onto the
+		// 'visited' path stack, so they are never added to 'visited_nodes' and
+		// will never show up on the path stack when backtracking.
 		bool visited =
 			HashTableFind(ctx->visited_nodes, (void*)(dest_id)) != NULL;
 
