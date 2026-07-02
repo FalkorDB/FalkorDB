@@ -22,6 +22,7 @@ prejit_harvest = []
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+ahash = "0.8"
 atomic_refcell = "0.1.14"
 chrono = "0.4.45"
 crossfire = "3.1.16"
@@ -41,5 +42,6 @@ ureq = { version = "3.3.0", default-features = false, features = ["rustls"] }
 roaring = "0.11.4"
 rustc-hash = "2"
 simsimd = "6.5"
+smallvec = "1.15.1"
 thin-vec = "0.2.18"
 thiserror = "2"

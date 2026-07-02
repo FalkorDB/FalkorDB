@@ -73,8 +73,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub use super::eval::ValueIter;
-
 /// Query result containing statistics and returned tuples.
 pub struct ResultSummary<'a> {
     /// Mutation statistics (nodes created, etc.)
@@ -775,12 +773,18 @@ impl<'a> Runtime<'a> {
                 expr: list,
                 var: name,
             } => {
+                // A downstream Skip/Limit bounds how many expanded rows are
+                // needed; pass it through so packing stays lazy under `LIMIT`.
+                let record_cap = self
+                    .effective_limit(idx)
+                    .map(|l| l.saturating_add(self.effective_skip(idx)));
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::Unwind(UnwindOp::new(
                     self,
                     Box::new(child),
                     list,
                     name,
+                    record_cap,
                     idx,
                 )))
             }
@@ -795,7 +799,7 @@ impl<'a> Runtime<'a> {
                 // enough rows for a downstream SkipOp + LimitOp pipeline.
                 let record_cap = self
                     .effective_limit(idx)
-                    .map(|l| l + self.effective_skip(idx));
+                    .map(|l| l.saturating_add(self.effective_skip(idx)));
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::CondTraverse(CondTraverseOp::new(
                     self,
@@ -818,7 +822,7 @@ impl<'a> Runtime<'a> {
                 // enough rows for a downstream SkipOp + LimitOp pipeline.
                 let record_cap = self
                     .effective_limit(idx)
-                    .map(|l| l + self.effective_skip(idx));
+                    .map(|l| l.saturating_add(self.effective_skip(idx)));
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::ExpandInto(ExpandIntoOp::new(
                     self,
@@ -1108,6 +1112,7 @@ impl<'a> Runtime<'a> {
             IR::CondVarLenTraverse {
                 relationship: relationship_pattern,
                 edge_filter,
+                emit_path,
             } => {
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::CondVarLenTraverse(CondVarLenTraverseOp::new(
@@ -1115,6 +1120,7 @@ impl<'a> Runtime<'a> {
                     Box::new(child),
                     relationship_pattern,
                     edge_filter.as_ref(),
+                    *emit_path,
                     idx,
                 )))
             }
@@ -1334,6 +1340,20 @@ impl<'a> Runtime<'a> {
         node_ids: &[NodeId],
         attr: &Arc<String>,
     ) -> (Column, NullBitmap) {
+        classify_column(self.materialize_node_property_values(node_ids, attr))
+    }
+
+    /// Like [`materialize_node_property`](Self::materialize_node_property) but
+    /// returns the raw per-node values without classifying them into a typed
+    /// column. Callers that must preserve exact value types — e.g. join-key
+    /// evaluation, where coercing a mixed int/float column to all-float would
+    /// lose integer precision past 2^53 and change which keys compare equal —
+    /// use this and classify losslessly themselves.
+    pub fn materialize_node_property_values(
+        &self,
+        node_ids: &[NodeId],
+        attr: &Arc<String>,
+    ) -> Vec<Value> {
         let g = self.g.borrow();
         let attr_idx = g.get_node_attribute_id(attr).map(|i| i as u16);
 
@@ -1370,7 +1390,7 @@ impl<'a> Runtime<'a> {
         drop(deleted);
         drop(pending);
 
-        classify_column(values)
+        values
     }
 
     pub fn get_node_labels(

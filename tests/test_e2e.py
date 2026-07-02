@@ -1871,3 +1871,4 @@ def test_optional_match_null_merge():
         [10, [1]],
         [None, [2]],
     ]
+

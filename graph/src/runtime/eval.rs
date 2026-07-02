@@ -36,23 +36,29 @@
 //! - **Complex nodes** (Quantifier, ListComprehension, Reduce, ShortestPath)
 //!   fall back to recursive `eval()` calls since they need scoped env mutations.
 //!
-//! ## ValueIter
+//! ## Iterable expressions
 //!
-//! [`ValueIter`] is a lazy iterator over values, used by `UNWIND` and list
-//! comprehensions. It optimizes `range()` calls by producing integers on the
-//! fly without materializing the entire list.
+//! [`ExprEval::eval_iter_expr`] evaluates a list-valued expression into an
+//! optional [`RowIter`], the row-expanding shape consumed by `UNWIND` (via
+//! the batched emitter) and the list-comprehension decomposition. It optimizes
+//! `range()` and list literals by producing values on the fly — a lazy
+//! [`RangeIter`] or an inline spread — without materializing the whole list.
 
 use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
 use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
+use smallvec::SmallVec;
 use thin_vec::{ThinVec, thin_vec};
 
 use crate::{
+    graph::graph::NodeId,
     parser::ast::{ExprIR, QuantifierType, Variable},
     runtime::{
+        batch::{Batch, BatchRow, Column, FloatLane, NullBitmap, classify_numeric},
         functions::{FnType, apply_pow},
+        ops::batched_result_emitter::RowIter,
         ordermap::OrderMap,
         row::RowView,
         runtime::Runtime,
@@ -61,46 +67,59 @@ use crate::{
 };
 
 // ---------------------------------------------------------------------------
-// ValueIter
+// RangeIter
 // ---------------------------------------------------------------------------
 
 /// Convenience `None` for the `env` argument of [`ExprEval::eval`] in
 /// constant-evaluation contexts, where the row type cannot be inferred.
 pub const NO_ROW: Option<&'static crate::runtime::row::Row> = None;
 
-pub enum ValueIter {
-    Empty,
-    Once(Option<Value>),
-    RangeUp { current: i64, end: i64, step: usize },
-    RangeDown { current: i64, end: i64, step: usize },
-    List(thin_vec::IntoIter<Value>),
+/// Classify bulk-evaluated values into a *lossless* column suitable for
+/// equality / join-key use.
+///
+/// Produces [`Column::Ints`] only when every non-null value is an integer (the
+/// common, fast case — it lets the join key directly on `i64` with no per-row
+/// `Value`); anything else stays an exact [`Column::Values`]. Unlike
+/// [`classify_column`](crate::runtime::batch::classify_column), it never coerces
+/// a *mixed* int/float column to all-float: that conversion would round an
+/// integer past 2^53 to the nearest `f64` and silently change which keys
+/// compare equal, diverging from per-row evaluation.
+fn classify_join_keys(values: Vec<Value>) -> (Column, NullBitmap) {
+    let nulls = NullBitmap::from_values(&values);
+    // Lossless: stop at all-`Int` (or null); never promote a mixed int/float
+    // column to `f64`, which would round integers past 2^53 and silently change
+    // which keys compare equal. `FloatLane::None` keeps `classify_numeric` from
+    // ever yielding a float column, so the result is `Ints` or `Values` only.
+    let column = classify_numeric(values, true, FloatLane::None);
+    (column, nulls)
 }
 
-impl Iterator for ValueIter {
+/// Lazy integer range iterator backing `UNWIND range(a, b, step)`: yields
+/// `Value::Int`s on the fly without materialising an intermediate
+/// `Value::List`. `step` is stored as a positive magnitude and `up` selects the
+/// direction (ascending when the original step was positive). Boxed into a
+/// [`RowIter::many`] by [`ExprEval::eval_iter_expr`].
+struct RangeIter {
+    current: i64,
+    end: i64,
+    step: i64,
+    up: bool,
+}
+
+impl Iterator for RangeIter {
     type Item = Value;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            Self::Empty => None,
-            Self::Once(v) => v.take(),
-            Self::RangeUp { current, end, step } => {
-                if *current > *end {
-                    return None;
-                }
-                let val = *current;
-                *current += *step as i64;
-                Some(Value::Int(val))
+        if self.up {
+            if self.current > self.end {
+                return None;
             }
-            Self::RangeDown { current, end, step } => {
-                if *current < *end {
-                    return None;
-                }
-                let val = *current;
-                *current -= *step as i64;
-                Some(Value::Int(val))
-            }
-            Self::List(iter) => iter.next(),
+        } else if self.current < self.end {
+            return None;
         }
+        let val = self.current;
+        self.current += if self.up { self.step } else { -self.step };
+        Some(Value::Int(val))
     }
 }
 
@@ -323,15 +342,40 @@ impl<'a> ExprEval<'a> {
                     *all_paths,
                 );
             }
+            // Property access (`n.prop`) is the most common non-leaf expression
+            // (join keys, filters, projections, sort keys). Handle it here so it
+            // never falls through to the allocating stack-based loop below, which
+            // would heap-allocate `stack` + `res` on every call. The child is
+            // usually a `Variable` (its own fast path), so this resolves with no
+            // scratch allocation. Mirrors the in-loop `Property` handler.
+            ExprIR::Property(attr) => {
+                let obj = self.eval(ir, ir.node(idx).child(0).idx(), env, agg_group_key)?;
+                return match obj {
+                    Value::Node(id) => {
+                        let rt = self.rt()?;
+                        Ok(rt.get_node_attribute(id, attr).unwrap_or(Value::Null))
+                    }
+                    Value::Relationship(rel) => {
+                        let rt = self.rt()?;
+                        Ok(rt
+                            .get_relationship_attribute(rel, attr)
+                            .unwrap_or(Value::Null))
+                    }
+                    other => other.get_attr(attr),
+                };
+            }
             _ => {}
         }
 
-        // Stack-based iterative evaluation scratch buffer.
-        let mut res_owned: Vec<Value> = Vec::new();
-        let res: &mut Vec<Value> = &mut res_owned;
-        res.clear();
+        // Stack-based iterative evaluation. Both scratch buffers are stack-inline
+        // SmallVecs, so typical expressions evaluate with zero heap allocation;
+        // unusually large ones (long list literals / many-arg functions) spill to
+        // the heap exactly like a Vec, so this is never an allocation regression.
+        let mut res_owned: SmallVec<[Value; 4]> = SmallVec::new();
+        let res = &mut res_owned;
 
-        let mut stack = thin_vec![(idx, false)];
+        let mut stack: SmallVec<[_; 4]> = SmallVec::new();
+        stack.push((idx, false));
         while let Some((idx, reenter)) = stack.pop() {
             let node = ir.node(idx);
             match node.data() {
@@ -804,16 +848,22 @@ impl<'a> ExprEval<'a> {
                 }
                 ExprIR::ListComprehension(var) => {
                     let e = env.ok_or_else(|| String::from("Variable not found"))?;
-                    let iter = self.eval_iter_expr(ir, node.child(0).idx(), env)?;
                     let mut row = e.to_owned_row();
                     let mut acc = thin_vec![];
-                    for value in iter {
-                        row.insert(var, value);
-                        match self.eval(ir, node.child(1).idx(), Some(&row), agg_group_key)? {
-                            Value::Bool(true) => {}
-                            _ => continue,
+                    if let Some(result) = self.eval_iter_expr(ir, node.child(0).idx(), env)? {
+                        for value in result {
+                            row.insert(var, value);
+                            match self.eval(ir, node.child(1).idx(), Some(&row), agg_group_key)? {
+                                Value::Bool(true) => {}
+                                _ => continue,
+                            }
+                            acc.push(self.eval(
+                                ir,
+                                node.child(2).idx(),
+                                Some(&row),
+                                agg_group_key,
+                            )?);
                         }
-                        acc.push(self.eval(ir, node.child(2).idx(), Some(&row), agg_group_key)?);
                     }
 
                     res.push(Value::List(Arc::new(acc)));
@@ -866,16 +916,102 @@ impl<'a> ExprEval<'a> {
         Ok(result)
     }
 
+    /// Bulk-evaluate `tree` over the `active` rows of `batch`, returning a
+    /// lossless typed [`Column`] plus a [`NullBitmap`] (entry `i` corresponds to
+    /// row `active[i]`).
+    ///
+    /// This is the columnar counterpart to [`eval`](Self::eval): it avoids the
+    /// per-row interpreter dispatch for the shape that dominates hot paths.
+    /// `var.attr`, where `var` is a bound node column, is served by a single
+    /// bulk attribute fetch yielding a primitive [`Column::Ints`] (or exact
+    /// [`Column::Values`]) with no per-row `Value` allocation; every other shape
+    /// falls back to per-row `eval` collected into a column. Either way the
+    /// result is *lossless* — an all-integer column stays `Ints`, anything else
+    /// stays exact `Values` (never coerced to all-float) — so null handling,
+    /// error propagation, and which values compare equal match evaluating each
+    /// row individually.
+    pub fn eval_batch(
+        &self,
+        tree: &DynTree<ExprIR<Variable>>,
+        batch: &Batch<'_>,
+        active: &[usize],
+    ) -> Result<(Column, NullBitmap), String> {
+        if let Some(result) = self.try_eval_batch_property(tree, batch, active)? {
+            return Ok(result);
+        }
+        self.eval_batch_per_row(tree, batch, active)
+    }
+
+    /// If `tree` is a node property access `var.attr` over a bound node column,
+    /// bulk-fetch the property for all active rows in one shot and classify it
+    /// losslessly. Returns `None` for any other shape, so the caller falls back
+    /// to per-row evaluation.
+    fn try_eval_batch_property(
+        &self,
+        tree: &DynTree<ExprIR<Variable>>,
+        batch: &Batch<'_>,
+        active: &[usize],
+    ) -> Result<Option<(Column, NullBitmap)>, String> {
+        let root = tree.root();
+        let ExprIR::Property(attr) = root.data() else {
+            return Ok(None);
+        };
+        if root.num_children() != 1 {
+            return Ok(None);
+        }
+        let ExprIR::Variable(var) = root.child(0).data() else {
+            return Ok(None);
+        };
+        let Some(node_ids) = batch.extract_node_ids(var.id) else {
+            return Ok(None);
+        };
+        let active_ids: Vec<NodeId> = active.iter().map(|&i| node_ids[i]).collect();
+        let values = self
+            .rt()?
+            .materialize_node_property_values(&active_ids, attr);
+        Ok(Some(classify_join_keys(values)))
+    }
+
+    /// Per-row fallback for [`eval_batch`](Self::eval_batch): evaluate `tree`
+    /// against each active row through a borrowed [`BatchRow`] and classify the
+    /// collected results losslessly. Used for any shape the bulk fast path does
+    /// not cover (arithmetic, function calls, non-node properties).
+    fn eval_batch_per_row(
+        &self,
+        tree: &DynTree<ExprIR<Variable>>,
+        batch: &Batch<'_>,
+        active: &[usize],
+    ) -> Result<(Column, NullBitmap), String> {
+        let root_idx = tree.root().idx();
+        let mut values = Vec::with_capacity(active.len());
+        for &row in active {
+            let view = BatchRow::new(batch, row);
+            values.push(self.eval(tree, root_idx, Some(&view), None)?);
+        }
+        Ok(classify_join_keys(values))
+    }
+
     // -------------------------------------------------------------------
     // Companion methods
     // -------------------------------------------------------------------
 
-    pub fn eval_iter_expr<R: RowView + ?Sized>(
+    /// Evaluate a list-valued expression into an optional [`RowIter`] — the
+    /// row-expanding shape consumed by `UNWIND` (via the batched emitter) and
+    /// the list-comprehension decomposition. `range(..)` and list literals get
+    /// dedicated lazy/inline shapes so neither materializes an intermediate
+    /// `Value::List`:
+    ///
+    /// - an empty `range(..)` / a `null` / a `null` scalar -> `None` (the row
+    ///   produces no output rows),
+    /// - a single non-null scalar -> [`RowIter::one`],
+    /// - a list *literal* -> [`RowIter::spread`] (inline smallvec, no boxing),
+    /// - a lazy `range(..)` or a materialized list value -> [`RowIter::many`].
+    pub(crate) fn eval_iter_expr<R: RowView + ?Sized>(
         &self,
         ir: &DynTree<ExprIR<Variable>>,
         idx: NodeIdx<Dyn<ExprIR<Variable>>>,
         env: Option<&R>,
-    ) -> Result<ValueIter, String> {
+    ) -> Result<Option<RowIter<'a, Value>>, String> {
         match ir.node(idx).data() {
             ExprIR::FuncInvocation(func) if func.name == "range" => {
                 let start = self.eval(ir, ir.node(idx).child(0).idx(), env, None)?;
@@ -885,54 +1021,60 @@ impl<'a> ExprEval<'a> {
                     .get_child(2)
                     .map_or_else(|| Ok(Value::Int(1)), |c| self.eval(ir, c.idx(), env, None))?;
                 func.validate_args_type(&[&start, &end, &step])?;
-                match (start, end, step) {
-                    (Value::Int(start), Value::Int(end), Value::Int(step)) => {
-                        if step == 0 {
-                            return Err(String::from(
-                                "ArgumentError: step argument to range() can't be 0",
-                            ));
-                        }
-                        if (start > end && step > 0) || (start < end && step < 0) {
-                            return Ok(ValueIter::Empty);
-                        }
-                        let span = if end >= start {
-                            (end as i128) - (start as i128)
-                        } else {
-                            (start as i128) - (end as i128)
-                        };
-                        let abs_step = (step as i128).unsigned_abs();
-                        let length = (span.unsigned_abs() / abs_step)
-                            .checked_add(1)
-                            .ok_or_else(|| String::from("Range too large"))?;
-                        if length > u32::MAX as u128 {
-                            return Err(String::from("Range too large"));
-                        }
-
-                        if step > 0 {
-                            return Ok(ValueIter::RangeUp {
-                                current: start,
-                                end,
-                                step: step as usize,
-                            });
-                        }
-                        Ok(ValueIter::RangeDown {
-                            current: start,
-                            end,
-                            step: step.unsigned_abs() as usize,
-                        })
-                    }
-                    _ => {
-                        unreachable!();
-                    }
+                let (Value::Int(start), Value::Int(end), Value::Int(step)) = (start, end, step)
+                else {
+                    unreachable!();
+                };
+                if step == 0 {
+                    return Err(String::from(
+                        "ArgumentError: step argument to range() can't be 0",
+                    ));
                 }
+                if (start > end && step > 0) || (start < end && step < 0) {
+                    return Ok(None);
+                }
+                let span = if end >= start {
+                    (end as i128) - (start as i128)
+                } else {
+                    (start as i128) - (end as i128)
+                };
+                let abs_step = (step as i128).unsigned_abs();
+                let length = (span.unsigned_abs() / abs_step)
+                    .checked_add(1)
+                    .ok_or_else(|| String::from("Range too large"))?;
+                if length > u32::MAX as u128 {
+                    return Err(String::from("Range too large"));
+                }
+                let iter = RangeIter {
+                    current: start,
+                    end,
+                    step: step.unsigned_abs() as i64,
+                    up: step > 0,
+                };
+                Ok(Some(RowIter::many(Box::new(iter))))
+            }
+            ExprIR::List => {
+                // Fuse `UNWIND [a, b, c]`: evaluate the element expressions
+                // directly into inline storage instead of building a
+                // `Value::List(Arc<ThinVec>)` only to immediately unwrap and
+                // iterate it. This avoids the per-row `Arc` + `ThinVec`
+                // allocation for the list literal.
+                let node = ir.node(idx);
+                let mut values: SmallVec<[Value; 4]> = SmallVec::with_capacity(node.num_children());
+                for child in node.children() {
+                    values.push(self.eval(ir, child.idx(), env, None)?);
+                }
+                Ok(Some(RowIter::spread(values.into_iter())))
             }
             _ => {
                 let res = self.eval(ir, idx, env, None)?;
-                match res {
-                    Value::List(arr) => Ok(ValueIter::List(Arc::unwrap_or_clone(arr).into_iter())),
-                    Value::Null => Ok(ValueIter::Empty),
-                    _ => Ok(ValueIter::Once(Some(res))),
-                }
+                Ok(match res {
+                    Value::List(arr) => Some(RowIter::many(Box::new(
+                        Arc::unwrap_or_clone(arr).into_iter(),
+                    ))),
+                    Value::Null => None,
+                    other => Some(RowIter::one(other)),
+                })
             }
         }
     }
