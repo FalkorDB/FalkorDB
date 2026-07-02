@@ -135,10 +135,13 @@ EntityID AllNeighborsCtx_NextNeighbor
 		ASSERT(ctx->current_level < ctx->n_levels);
 		Delta_MatrixTupleIter *it = &ctx->levels [ctx->current_level];
 
+		// unique stable position into the matrix's internal arrays
+		// works on both BOOL and UINT64 matrices (no Ax read)
+		GrB_Index edge_id = Delta_Matrix_Iterator_getp(it);
+
 		GrB_Index dest_id;
-		uint64_t  edge_id;
-		GrB_Info info = Delta_MatrixTupleIter_next_UINT64(
-			it, NULL, &dest_id, &edge_id);
+		GrB_Info info = Delta_MatrixTupleIter_next_BOOL(
+			it, NULL, &dest_id, NULL);
 
 		if(info == GxB_EXHAUSTED) {
 			// backtrack: only pop if we pushed an edge to reach this level
@@ -151,6 +154,7 @@ EntityID AllNeighborsCtx_NextNeighbor
 			}
 			continue;
 		}
+
 
 		bool visited = false;
 
