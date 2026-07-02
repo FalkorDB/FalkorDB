@@ -282,21 +282,12 @@ jobs:
           # yet). Locate the `cargo test -p graph` unit-test binary too (cache
           # hit, same RUSTFLAGS as above, so this doesn't rebuild or re-run
           # anything) so llvm-cov can also credit coverage recorded by
-          # test-only call paths, not just the shared library's.
+          # test-only call paths, not just the shared library's. Cargo prints
+          # "  Executable <target> (<path>)" to stderr for every test binary
+          # it builds (one per test target; today that's just the lib's own
+          # unit tests) — no jq/python needed to find it.
           TEST_OBJECTS=""
-          for bin in $(RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo test -p graph --no-run --message-format=json 2>/dev/null | python3 -c '
-          import json, sys
-          for line in sys.stdin:
-              line = line.strip()
-              if not line.startswith("{"):
-                  continue
-              try:
-                  msg = json.loads(line)
-              except ValueError:
-                  continue
-              if msg.get("reason") == "compiler-artifact" and msg.get("profile", {}).get("test") and msg.get("executable"):
-                  print(msg["executable"])
-          '); do
+          for bin in $(RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo test -p graph --no-run 2>&1 | grep -w Executable | grep -oE 'target/debug/deps/[^)]+'); do
             TEST_OBJECTS="$TEST_OBJECTS -object $bin"
           done
           echo "Additional coverage objects: $TEST_OBJECTS"
