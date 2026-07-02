@@ -289,6 +289,7 @@ jobs:
           llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
       - name: Upload unit test coverage to Codecov
+        if: ${{ !cancelled() }}
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
