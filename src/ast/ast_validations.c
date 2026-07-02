@@ -34,6 +34,8 @@ typedef struct {
 // number of ast-node types: _MAX_VT_OFF = sizeof(struct cypher_astnode_vts) / sizeof(struct cypher_astnode_vt *) = 116
 static visit validations_mapping[116];
 
+// validates name length
+// returns AST_INVALID if name is too long and sets an error
 static AST_Validation _ValidateNameLength
 (
 	const char *name,
@@ -575,6 +577,8 @@ static VISITOR_STRATEGY _Validate_identifier
 	return VISITOR_RECURSE;
 }
 
+// validates prop name length
+// breaks and sets errorctx if name too long
 static VISITOR_STRATEGY _Validate_prop_name
 (
 	const cypher_astnode_t *n,
@@ -595,6 +599,8 @@ static VISITOR_STRATEGY _Validate_prop_name
 	return VISITOR_RECURSE ;
 }
 
+// validates label name length
+// breaks and sets errorctx if name too long
 static VISITOR_STRATEGY _Validate_label_name
 (
 	const cypher_astnode_t *n,
@@ -615,6 +621,8 @@ static VISITOR_STRATEGY _Validate_label_name
 	return VISITOR_RECURSE ;
 }
 
+// validates relationship name length
+// breaks and sets errorctx if name too long
 static VISITOR_STRATEGY _Validate_reltype_name
 (
 	const cypher_astnode_t *n,
@@ -635,6 +643,8 @@ static VISITOR_STRATEGY _Validate_reltype_name
 	return VISITOR_RECURSE ;
 }
 
+// validates procedure name length
+// breaks and sets errorctx if name too long
 static VISITOR_STRATEGY _Validate_proc_name
 (
 	const cypher_astnode_t *n,
@@ -655,6 +665,8 @@ static VISITOR_STRATEGY _Validate_proc_name
 	return VISITOR_RECURSE ;
 }
 
+// validates function name length
+// breaks and sets errorctx if name too long
 static VISITOR_STRATEGY _Validate_function_name
 (
 	const cypher_astnode_t *n,

@@ -209,6 +209,85 @@ static SIValue _BulkInsert_ReadProperty
 	}
 }
 
+// validate the header identifiers of a single CSV file
+// (label/rel-type names and property names) without modifying graph state
+// returns BULK_OK if all identifiers are within length limits, BULK_FAIL otherwise
+static int _BulkInsert_ValidateHeader
+(
+	RedisModuleCtx *ctx,
+	SchemaType t,
+	const char *data,
+	size_t data_len
+) {
+	ASSERT (ctx  != NULL) ;
+	ASSERT (data != NULL) ;
+
+	size_t data_idx = 0 ;
+
+	// read the entire label / rel-type segment
+	const char *labels = data + data_idx ;
+	size_t labels_len = strlen (labels) ;
+	data_idx += labels_len + 1 ;
+
+	// validate each colon-delimited name
+	const char *ptr = labels ;
+	while (true) {
+		char *found = strchr (ptr, ':') ;
+		size_t len = found ? (size_t)(found - ptr) : strlen (ptr) ;
+
+		if (len > MAX_IDENTIFIER_LEN) {
+			RedisModule_ReplyWithErrorFormat (ctx, EMSG_IDENTIFIER_TOO_LONG,
+					"Label name", MAX_IDENTIFIER_LEN) ;
+			return BULK_FAIL ;
+		}
+
+		if (!found) break ;
+		ptr = found + 1 ;
+	}
+
+	// read property count
+	if (data_idx + sizeof (uint) > data_len) {
+		return BULK_OK ;
+	}
+
+	uint prop_count = *(uint*)&data[data_idx] ;
+	data_idx += sizeof (uint) ;
+
+	// validate each property name
+	for (uint j = 0; j < prop_count; j++) {
+		if (data_idx >= data_len) break ;
+		const char *prop_key = data + data_idx ;
+		data_idx += strlen (prop_key) + 1 ;
+
+		if (strnlen (prop_key, MAX_IDENTIFIER_LEN + 1) > MAX_IDENTIFIER_LEN) {
+			RedisModule_ReplyWithErrorFormat (ctx, EMSG_IDENTIFIER_TOO_LONG,
+					"Property name", MAX_IDENTIFIER_LEN) ;
+			return BULK_FAIL ;
+		}
+	}
+
+	return BULK_OK ;
+}
+
+// validate headers of all CSV tokens of a given type without touching the graph
+static int _BulkInsert_ValidateTokens
+(
+	RedisModuleCtx *ctx,
+	int token_count,
+	RedisModuleString **argv,
+	SchemaType type
+) {
+	for (int i = 0; i < token_count; i++) {
+		size_t len ;
+		const char *data = RedisModule_StringPtrLen (argv[i], &len) ;
+		if (_BulkInsert_ValidateHeader (ctx, type, data, len) != BULK_OK) {
+			return BULK_FAIL ;
+		}
+	}
+
+	return BULK_OK ;
+}
+
 // process a single node CSV file
 static int _BulkInsert_ProcessNodeFile
 (
@@ -228,21 +307,13 @@ static int _BulkInsert_ProcessNodeFile
 
 	int *label_ids = _BulkInsert_ReadHeaderLabels (ctx, gc, SCHEMA_NODE, data,
 			&data_idx) ;
-	if (label_ids == NULL) {
-		return BULK_FAIL ;
-	}
+	ASSERT (label_ids != NULL) ;
 
 	uint n_lbl = arr_len (label_ids) ;
 
 	// read the CSV header properties and collect their indices
 	AttributeID *prop_indices = _BulkInsert_ReadHeaderProperties (ctx, gc,
 			SCHEMA_NODE, data, &data_idx, &prop_count) ;
-
-	// failed to extract properties
-	if (prop_count > 0 && prop_indices == NULL) {
-		arr_free (label_ids) ;
-		return BULK_FAIL ;
-	}
 
 	//--------------------------------------------------------------------------
 	// load nodes
@@ -335,9 +406,7 @@ static int _BulkInsert_ProcessEdgeFile
 
 	RelationID *rels = _BulkInsert_ReadHeaderLabels (ctx, gc, SCHEMA_EDGE, data,
 			&data_idx) ;
-	if (rels == NULL) {
-		return BULK_FAIL ;
-	}
+	ASSERT (rels != NULL) ;
 
 	uint type_count = arr_len (rels) ;
 
@@ -347,10 +416,6 @@ static int _BulkInsert_ProcessEdgeFile
 
 	AttributeID *prop_indices = _BulkInsert_ReadHeaderProperties (ctx, gc,
 			SCHEMA_EDGE, data, &data_idx, &prop_count) ;
-	if (prop_count > 0 && prop_indices == NULL) {
-		arr_free (rels) ;
-		return BULK_FAIL ;
-	}
 
 	//--------------------------------------------------------------------------
 	// prepare matrices
@@ -521,6 +586,22 @@ int BulkInsert
 	}
 
 	argc -= 2 ;
+
+	//--------------------------------------------------------------------------
+	// validate all CSV headers before modifying any graph state
+	// a bad identifier in CSV #N must not leave a half-constructed graph from
+	// the already-processed CSV files #1 .. #N-1
+	//--------------------------------------------------------------------------
+
+	if (_BulkInsert_ValidateTokens (ctx, node_token_count, argv,
+				SCHEMA_NODE) != BULK_OK) {
+		return BULK_FAIL ;
+	}
+
+	if (_BulkInsert_ValidateTokens (ctx, relation_token_count,
+				argv + node_token_count, SCHEMA_EDGE) != BULK_OK) {
+		return BULK_FAIL ;
+	}
 
 	//--------------------------------------------------------------------------
 	// prepare graph for bulk load
