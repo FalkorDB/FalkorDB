@@ -345,17 +345,41 @@ jobs:
         run: |
           RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo build
           RUSTDOCFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo test -p graph
+          # `cargo build` only produces libfalkordb.so's coverage map, which is
+          # blind to code with no caller reachable from the cdylib (e.g.
+          # graph/src/index/falkordb's cow_btree, not wired into the runtime
+          # yet). Locate the `cargo test -p graph` unit-test binary too (cache
+          # hit, same RUSTFLAGS as above, so this doesn't rebuild or re-run
+          # anything) so llvm-cov can also credit coverage recorded by
+          # test-only call paths, not just the shared library's.
+          TEST_OBJECTS=""
+          for bin in $(RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo test -p graph --no-run --message-format=json 2>/dev/null | python3 -c '
+          import json, sys
+          for line in sys.stdin:
+              line = line.strip()
+              if not line.startswith("{"):
+                  continue
+              try:
+                  msg = json.loads(line)
+              except ValueError:
+                  continue
+              if msg.get("reason") == "compiler-artifact" and msg.get("profile", {}).get("test") and msg.get("executable"):
+                  print(msg["executable"])
+          '); do
+            TEST_OBJECTS="$TEST_OBJECTS -object $bin"
+          done
+          echo "Additional coverage objects: $TEST_OBJECTS"
           # Snapshot coverage here, before the e2e/TCK suites run below, so
           # cargo test's own profraw can be reported as its own Codecov flag
           # (unit-tests) instead of being indistinguishable from e2e coverage.
           llvm-profdata-22 merge --sparse `find . -name "*.profraw"` -o cov-unit.profdata
-          llvm-cov-22 export --format=lcov --instr-profile cov-unit.profdata target/debug/libfalkordb.so > codecov-unit.txt.all
+          llvm-cov-22 export --format=lcov --instr-profile cov-unit.profdata target/debug/libfalkordb.so $TEST_OBJECTS > codecov-unit.txt.all
           lcov --ignore-errors unused -r codecov-unit.txt.all -o codecov-unit.txt
           . /data/venv/bin/activate
           pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
           TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
           llvm-profdata-22 merge --sparse `find . -name "*.profraw"` -o cov.profdata
-          llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
+          llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so $TEST_OBJECTS > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
       - name: Upload unit test coverage to Codecov
         if: ${{ !cancelled() }}
