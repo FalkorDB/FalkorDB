@@ -561,3 +561,52 @@ class testVariableLengthTraversals(FlowTestsBase):
         result = self.graph.query(q)
         self.env.assertEquals(result.result_set, [])
 
+    def test18_convergent_diamond_range(self):
+        """
+        a bounded range pattern [:F*1..2] must return a SUPERSET of the
+        exact-length pattern [:F*2..2].
+
+        regression test for a bug in the optimized (single relationship type,
+        no filter, edge not referenced) variable length traversal path which
+        uses AllNeighborsCtx. a node reachable at BOTH depth 1 and depth 2 from
+        the source (a "convergent diamond") could be returned first as a leaf at
+        the maximum depth and leak into the visited set, after which it was no
+        longer expanded when reached at a shallower depth on another path -
+        silently dropping its descendants.
+
+        the bug only manifested on the typed (optimized) path; the untyped path
+        uses AllPathsCtx and was always correct, so we assert both agree.
+        """
+
+        self.graph.delete()
+
+        # convergent diamond, ids and insertion order both matter:
+        #   5 -> 4349        (depth-1)
+        #   5 -> 8798        (depth-1)
+        #   8798 -> 4349     (4349 is ALSO reachable at depth 2)
+        #   4349 -> 765      (depth-2 leaf)
+        #   4349 -> 775      (depth-2 leaf)
+        edges = [(5, 4349), (5, 8798), (4349, 765), (4349, 775), (8798, 4349)]
+        pairs = ",".join(f"[{a},{b}]" for a, b in edges)
+        self.graph.query(
+            f"UNWIND [{pairs}] AS e "
+            "MERGE (x:U {id:e[0]}) MERGE (y:U {id:e[1]}) MERGE (x)-[:F]->(y)")
+
+        def endpoints(pattern):
+            q = (f"MATCH (a:U {{id:5}})-{pattern}->(b:U) "
+                 "RETURN DISTINCT b.id ORDER BY b.id")
+            return [row[0] for row in self.graph.query(q).result_set]
+
+        typed_1_2   = endpoints("[:F*1..2]")  # optimized path
+        typed_2_2   = endpoints("[:F*2..2]")
+        untyped_1_2 = endpoints("[*1..2]")    # AllPathsCtx path
+
+        # range [1..2] must contain every endpoint of exact-length [2..2]
+        self.env.assertTrue(set(typed_2_2).issubset(set(typed_1_2)))
+
+        # typed and untyped traversals must agree
+        self.env.assertEquals(typed_1_2, untyped_1_2)
+
+        # explicit expected endpoints: depth-1 {4349, 8798} + depth-2 {765, 775, 4349}
+        self.env.assertEquals(typed_1_2, [765, 775, 4349, 8798])
+

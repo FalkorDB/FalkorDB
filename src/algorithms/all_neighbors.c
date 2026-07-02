@@ -125,12 +125,19 @@ EntityID AllNeighborsCtx_NextNeighbor
 			continue;
 		}
 
-		// update visited path, replace frontier with current node
+
+		// The invariant is that 'visited_nodes' always contains all nodes
+		// that are currently on the 'visited' path stack.
+		// (node in 'visited' iff node is in 'visited_nodes')
+		// Note:Leaf nodes (nodes at max len) should never be pushed onto the 'visited' path stack,
+		// so they are never in 'visited_nodes' - they will never show up
+		// on the path stack when backtracking.
 		bool visited =
-			HashTableAdd(ctx->visited_nodes, (void*)(dest_id), NULL) != DICT_OK;
+			HashTableFind(ctx->visited_nodes, (void*)(dest_id)) != NULL;
 
 		if(ctx->current_level < ctx->minLen && !visited) {
 			arr_append(ctx->visited, dest_id);
+			HashTableAdd(ctx->visited_nodes, (void*)(dest_id), NULL);
 			// continue traversing
 			_AllNeighborsCtx_CollectNeighbors(ctx, dest_id);
 			continue;
@@ -140,6 +147,7 @@ EntityID AllNeighborsCtx_NextNeighbor
 		// see if we should expand further?
 		if(ctx->current_level < ctx->maxLen && !visited) {
 			arr_append(ctx->visited, dest_id);
+			HashTableAdd(ctx->visited_nodes, (void*)(dest_id), NULL);
 			// we can expand further
 			_AllNeighborsCtx_CollectNeighbors(ctx, dest_id);
 		}
@@ -168,4 +176,3 @@ void AllNeighborsCtx_Free
 
 	rm_free(ctx);
 }
-
