@@ -6,6 +6,7 @@
 
 #include "RG.h"
 #include "../util/arr.h"
+#include "../util/dict.h"
 #include "all_neighbors.h"
 #include "../util/rmalloc.h"
 #include "graph/tensor/tensor.h"
@@ -25,6 +26,19 @@ static void _AllNeighborsCtx_CollectNeighbors
 	} else {
 		Delta_MatrixTupleIter_iterate_row(&ctx->levels[ctx->current_level], id);
 	}
+}
+
+// Linear scan used when path depth is below VISITED_HASHMAP_THRESHOLD.
+static bool _AllNeighborsCtx_EdgeVisited
+(
+	const EntityID *visited,
+	int len,
+	uint64_t edge_id
+) {
+	for (int i = 0 ; i < len ; i++) {
+		if (visited[i] == edge_id) return true;
+	}
+	return false;
 }
 
 void AllNeighborsCtx_Reset
@@ -49,6 +63,20 @@ void AllNeighborsCtx_Reset
 	ctx->current_level = 0;
 
 	arr_clear(ctx->visited);
+
+	// reset lookup strategy for the new source
+	bool want_hashmap = (maxLen >= VISITED_HASHMAP_THRESHOLD);
+	if(want_hashmap) {
+		if(ctx->visited_edges != NULL) HashTableRelease(ctx->visited_edges);
+		ctx->visited_edges = HashTableCreate(&def_dt);
+	} else {
+		// array mode: discard any hashmap left from a previous dynamic promotion
+		if(ctx->visited_edges != NULL) {
+			HashTableRelease(ctx->visited_edges);
+			ctx->visited_edges = NULL;
+		}
+	}
+	ctx->use_hashmap = want_hashmap;
 }
 
 AllNeighborsCtx *AllNeighborsCtx_New
@@ -69,9 +97,11 @@ AllNeighborsCtx *AllNeighborsCtx_New
 	ctx->maxLen        = maxLen;
 	ctx->levels        = rm_malloc(sizeof(Delta_MatrixTupleIter));
 	ctx->n_levels      = 1;
-	ctx->visited       = arr_new(EntityID, 1);
+	ctx->visited       = arr_new(EntityID, MIN(128, maxLen));
 	ctx->first_pull    = true;
 	ctx->current_level = 0;
+	ctx->use_hashmap   = (maxLen >= VISITED_HASHMAP_THRESHOLD);
+	ctx->visited_edges = ctx->use_hashmap ? HashTableCreate(&def_dt) : NULL;
 
 	// Dummy iterator at level 0
 	ctx->levels[0] = (Delta_MatrixTupleIter) {0};
@@ -103,25 +133,33 @@ EntityID AllNeighborsCtx_NextNeighbor
 
 	while(ctx->current_level > 0) {
 		ASSERT(ctx->current_level < ctx->n_levels);
-		Delta_MatrixTupleIter *it = &ctx->levels[ctx->current_level];
+		Delta_MatrixTupleIter *it = &ctx->levels [ctx->current_level];
 
 		GrB_Index dest_id;
 		uint64_t  edge_id;
-		GrB_Info info = Delta_MatrixTupleIter_next_UINT64(it, NULL, &dest_id, &edge_id);
+		GrB_Info info = Delta_MatrixTupleIter_next_UINT64(
+			it, NULL, &dest_id, &edge_id);
 
 		if(info == GxB_EXHAUSTED) {
 			// backtrack: only pop if we pushed an edge to reach this level
 			--ctx->current_level;
-			if(arr_len(ctx->visited) > 0) {
-				arr_pop(ctx->visited);
+			if (arr_len (ctx->visited) > 0) {
+				EntityID popped = arr_pop (ctx->visited);
+				if (ctx->use_hashmap) {
+					HashTableDelete (ctx->visited_edges, (void *) popped);
+				}
 			}
 			continue;
 		}
 
 		bool visited = false;
 
-		for (int i = 0; i < arr_len(ctx->visited) ; i++) {
-			visited = visited || (ctx->visited[i] == edge_id);
+		if(ctx->use_hashmap) {
+			visited = (HashTableFind (
+			           ctx->visited_edges, (void *) edge_id) != NULL);
+		} else {
+			visited = _AllNeighborsCtx_EdgeVisited(
+				ctx->visited, arr_len(ctx->visited), edge_id) ;
 		}
 
 		if (visited) {
@@ -132,7 +170,11 @@ EntityID AllNeighborsCtx_NextNeighbor
 
 
 		if(ctx->current_level < ctx->minLen) {
-			arr_append(ctx->visited, edge_id);
+			arr_append (ctx->visited, edge_id);
+			if (ctx->use_hashmap) {
+				HashTableAdd (
+				ctx->visited_edges, (void *) edge_id, (void *) edge_id);
+			}
 			// continue traversing
 			_AllNeighborsCtx_CollectNeighbors(ctx, dest_id);
 			continue;
@@ -141,7 +183,12 @@ EntityID AllNeighborsCtx_NextNeighbor
 		// current_level >= ctx->minLen
 		// see if we should expand further?
 		if(ctx->current_level < ctx->maxLen) {
-			arr_append(ctx->visited, edge_id);
+			arr_append (ctx->visited, edge_id);
+			if (ctx->use_hashmap) {
+				HashTableAdd (
+					ctx->visited_edges, (void *)edge_id, (void *) edge_id) ;
+			}
+
 			// we can expand further
 			_AllNeighborsCtx_CollectNeighbors(ctx, dest_id);
 		}
@@ -165,6 +212,7 @@ void AllNeighborsCtx_Free
 	}
 	rm_free(ctx->levels);
 	arr_free(ctx->visited);
+	if(ctx->visited_edges != NULL) HashTableRelease(ctx->visited_edges);
 
 	rm_free(ctx);
 }

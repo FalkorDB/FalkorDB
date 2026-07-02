@@ -21,6 +21,11 @@
 // path: (a)->(b)->(a), 'a' will not be expanded again during traversal of this
 // current path
 
+// Depth threshold at which the visited-edge lookup switches from a
+// linear array scan to an O(1) hashmap.  Queries with maxLen below this
+// use the array (better cache behaviour); others use the hashmap.
+#define VISITED_HASHMAP_THRESHOLD 128
+
 typedef struct {
 	EntityID src;                   // traverse begin here
 	Delta_Matrix M;                 // adjacency matrix
@@ -28,7 +33,9 @@ typedef struct {
 	uint maxLen;                    // maximum allowed depth
 	int current_level;              // current depth
 	bool first_pull;                // first call to Next
-	EntityID *visited;              // visited nodes
+	bool use_hashmap;               // true once hashmap lookup is active
+	EntityID *visited;              // edge stack – always maintained for backtracking
+	dict *visited_edges;            // hashmap for O(1) lookup (NULL while in array mode)
 	Delta_MatrixTupleIter *levels;  // array of neighbors iterator
 	uint n_levels;                  // number of levels
 } AllNeighborsCtx;
