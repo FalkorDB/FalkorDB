@@ -237,17 +237,22 @@ pub(super) fn fuse_anonymous_traverse(plan: &mut DynTree<IR>) {
 
         // Build the merged chain: child's existing chain (entry-side hops),
         // then the parent's relationship, then parent's existing chain.
-        let mut merged_chain = child_chain;
+        let mut merged_chain = Vec::with_capacity(child_chain.len() + parent_chain.len() + 1);
+        merged_chain.extend(child_chain);
         merged_chain.push(parent_rel);
         merged_chain.extend(parent_chain);
 
         // Detach grandchildren (child CT's subtree) so we can reattach them
         // under the merged op.
-        let grandchild_indices: Vec<_> = plan.node(child_idx).children().map(|c| c.idx()).collect();
-        let grandchild_trees: Vec<DynTree<IR>> = grandchild_indices
-            .into_iter()
-            .map(|g_idx| plan.node_mut(g_idx).clone_as_tree())
-            .collect();
+        let child_node = plan.node(child_idx);
+        let mut grandchild_indices = Vec::with_capacity(child_node.num_children());
+        for grandchild in child_node.children() {
+            grandchild_indices.push(grandchild.idx());
+        }
+        let mut grandchild_trees: Vec<DynTree<IR>> = Vec::with_capacity(grandchild_indices.len());
+        for g_idx in grandchild_indices {
+            grandchild_trees.push(plan.node_mut(g_idx).clone_as_tree());
+        }
 
         // Replace parent's data with the merged CondTraverse, then attach
         // grandchildren and prune the original child CT last — pruning may
