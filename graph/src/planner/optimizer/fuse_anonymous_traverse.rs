@@ -240,7 +240,7 @@ pub(super) fn fuse_anonymous_traverse(plan: &mut DynTree<IR>) {
         let mut merged_chain = child_chain;
         merged_chain.reserve_exact(parent_chain.len() + 1);
         merged_chain.push(parent_rel);
-        merged_chain.extend(parent_chain)
+        merged_chain.extend(parent_chain);
 
         // Detach grandchildren (child CT's subtree) so we can reattach them
         // under the merged op.
