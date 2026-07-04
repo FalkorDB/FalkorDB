@@ -160,7 +160,14 @@ impl MvccGraph {
             new_graph.borrow_mut().schema_version += 1;
         }
 
-        new_graph.borrow_mut().set_indexer_graph(new_graph.clone());
+        // Use an immutable borrow here: `set_indexer_graph` only publishes
+        // `new_graph` into the indexers' own `Mutex`-guarded fields. Holding
+        // a mutable borrow across this call previously created a race with
+        // the background index population thread, which fetches this same
+        // graph reference from the indexer and immediately calls `.borrow()`
+        // on it -- if that happened before this statement's `borrow_mut()`
+        // guard was dropped, it panicked with "already mutably borrowed".
+        new_graph.borrow().set_indexer_graph(new_graph.clone());
         self.graph = new_graph;
         self.write.store(false, Ordering::Release);
     }
