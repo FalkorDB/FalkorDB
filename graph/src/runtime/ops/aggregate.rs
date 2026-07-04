@@ -39,7 +39,7 @@ use crate::runtime::{
     value::{Value, ValuesDeduper},
 };
 use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 use thin_vec::{ThinVec, thin_vec};
@@ -163,7 +163,7 @@ impl<'a> AggregateOp<'a> {
             copy_from_parent,
             default_acc: Some(default_acc),
             errors: Vec::new().into_iter(),
-            groups: HashMap::new().into_iter(),
+            groups: FxHashMap::default().into_iter(),
             idx,
             vectorized: None,
         }
@@ -334,7 +334,7 @@ impl<'a> AggregateOp<'a> {
         // computation so the common non-distinct path stays free of it.
         let any_distinct = analysis.agg_kinds.iter().any(|a| a.distinct_idx.is_some());
 
-        let mut groups: HashMap<GroupKey, (Row, Row)> = HashMap::new();
+        let mut groups: FxHashMap<GroupKey, (Row, Row)> = FxHashMap::default();
         let mut errors: Vec<String> = Vec::new();
 
         // Pre-insert default group for keyless aggregation.
@@ -629,7 +629,7 @@ impl<'a> AggregateOp<'a> {
         let child = self.child.take().unwrap();
         let default_acc = self.default_acc.take().unwrap();
 
-        let mut groups: HashMap<GroupKey, (Row, Row)> = HashMap::new();
+        let mut groups: FxHashMap<GroupKey, (Row, Row)> = FxHashMap::default();
         let mut errors: Vec<String> = Vec::new();
 
         // Pre-insert default group for keyless aggregation.
@@ -673,7 +673,7 @@ impl<'a> AggregateOp<'a> {
         copy_from_parent: &[(Variable, Variable)],
         batch: &Batch<'a>,
         default_acc: &Row,
-        groups: &mut HashMap<GroupKey, (Row, Row)>,
+        groups: &mut FxHashMap<GroupKey, (Row, Row)>,
         errors: &mut Vec<String>,
     ) {
         for row in batch.active_indices() {

@@ -897,12 +897,17 @@ impl Graph {
     }
 
     pub fn get_attrs(&self) -> impl Iterator<Item = &Arc<String>> + '_ {
-        let mut seen = std::collections::HashSet::new();
+        // Deduplicate by borrowed `&str` rather than owned `String`: this
+        // iterator is walked once per property on the relationship reply path
+        // (via `get_global_attribute_id` / `rel_attr_id_to_global`), so a
+        // per-attribute heap allocation here shows up as O(props * attrs)
+        // allocations when serializing results.
+        let mut seen = std::collections::HashSet::<&str>::new();
         self.node_attrs
             .attrs_name
             .iter()
             .chain(self.relationship_attrs.attrs_name.iter())
-            .filter(move |a| seen.insert(a.as_str().to_owned()))
+            .filter(move |a| seen.insert(a.as_str()))
     }
 
     pub fn get_label_id_mut(
