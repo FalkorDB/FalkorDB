@@ -1794,7 +1794,8 @@ impl Binder {
                     outer_scope_names.contains(name) || name.starts_with("_anon")
                 });
 
-                let mut new_tree = DynTree::new(ExprIR::PatternComprehension(bound_graph));
+                let mut new_tree =
+                    DynTree::new(ExprIR::PatternComprehension(Box::new(bound_graph)));
                 let mut root = new_tree.root_mut();
                 for child in children {
                     root.push_child_tree(child);
@@ -1983,7 +1984,7 @@ impl Binder {
                             outer_scope_names.contains(name) || name.starts_with("_anon")
                         });
 
-                        ExprIR::Pattern(result?)
+                        ExprIR::Pattern(Box::new(result?))
                     }
                 };
                 // Constructor rewrite: detect `duration({...})`, `date({...})`,

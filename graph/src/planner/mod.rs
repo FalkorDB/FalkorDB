@@ -788,7 +788,13 @@ impl Planner {
                     extracted,
                 ));
 
-                extracted.push((var.clone(), graph.clone(), where_tree, result_tree, vec![]));
+                extracted.push((
+                    var.clone(),
+                    (**graph).clone(),
+                    where_tree,
+                    result_tree,
+                    vec![],
+                ));
                 DynTree::new(ExprIR::Variable(var))
             }
             ExprIR::Pattern(graph) => {
@@ -812,7 +818,7 @@ impl Planner {
 
                 extracted.push((
                     var.clone(),
-                    graph.clone(),
+                    (**graph).clone(),
                     None,
                     Arc::new(DynTree::new(ExprIR::Variable(path_var))),
                     vec![query_path],
@@ -1115,7 +1121,7 @@ impl Planner {
             ExprIR::Pattern(graph) => {
                 if can_extract {
                     // Top-level conjunct: extract for SemiApply, replace with true.
-                    extractable.push((graph.clone(), false));
+                    extractable.push(((**graph).clone(), false));
                     DynTree::new(ExprIR::Constant(Value::Bool(true)))
                 } else {
                     // Under OR/NOT: replace with a fresh boolean variable and
@@ -1128,7 +1134,7 @@ impl Planner {
                         ty: Type::Bool,
                     };
                     self.scope_vars[current_scope as usize].push(var.clone());
-                    inline.insert(var.id, graph.clone());
+                    inline.insert(var.id, (**graph).clone());
                     DynTree::new(ExprIR::Variable(var))
                 }
             }
@@ -1140,7 +1146,7 @@ impl Planner {
                 {
                     if can_extract {
                         // Extract for AntiSemiApply (is_anti = true).
-                        extractable.push((graph.clone(), true));
+                        extractable.push(((**graph).clone(), true));
                         return DynTree::new(ExprIR::Constant(Value::Bool(true)));
                     }
                     // Inline: create NOT(synth_var) so expr_to_plan can
@@ -1153,7 +1159,7 @@ impl Planner {
                         ty: Type::Bool,
                     };
                     self.scope_vars[current_scope as usize].push(var.clone());
-                    inline.insert(var.id, graph.clone());
+                    inline.insert(var.id, (**graph).clone());
                     let mut new_tree = DynTree::new(ExprIR::Not);
                     new_tree
                         .root_mut()

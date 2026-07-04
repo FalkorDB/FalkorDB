@@ -230,11 +230,15 @@ pub enum ExprIR<TVar> {
     /// Pattern comprehension [(pattern) WHERE cond | expr]
     /// Stores the graph pattern for runtime traversal.
     /// Children: [where_condition, result_expression]
-    PatternComprehension(QueryGraph<Arc<String>, Arc<String>, TVar>),
+    ///
+    /// Boxed: `QueryGraph` is 72 bytes but this variant is rare, so inlining
+    /// it would bloat every node of every expression tree.
+    PatternComprehension(Box<QueryGraph<Arc<String>, Arc<String>, TVar>>),
     /// Parenthesized expression (for precedence)
     Paren,
-    /// Pattern predicate should be rewritten in planner
-    Pattern(QueryGraph<Arc<String>, Arc<String>, TVar>),
+    /// Pattern predicate should be rewritten in planner (boxed; see
+    /// `PatternComprehension`).
+    Pattern(Box<QueryGraph<Arc<String>, Arc<String>, TVar>>),
     /// shortestPath((a)-[*]->(b)) or allShortestPaths((a)-[*]->(b))
     /// Children: [source_var_expr, dest_var_expr]
     ShortestPath {

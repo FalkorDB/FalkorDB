@@ -1769,7 +1769,7 @@ impl<'a> Parser<'a> {
                     && let Ok(pattern) = self.parse_pattern(&Keyword::Match)
                     && !pattern.relationships().is_empty()
                 {
-                    return Ok((tree!(ExprIR::Pattern(pattern)), false));
+                    return Ok((tree!(ExprIR::Pattern(Box::new(pattern))), false));
                 }
 
                 // Not a pattern predicate - restore and parse normally
@@ -2462,7 +2462,7 @@ impl<'a> Parser<'a> {
         match_token!(self.lexer, RBrace);
 
         Ok(tree!(
-            ExprIR::PatternComprehension(graph),
+            ExprIR::PatternComprehension(Box::new(graph)),
             condition,
             result_expr
         ))
