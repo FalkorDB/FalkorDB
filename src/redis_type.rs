@@ -522,9 +522,10 @@ unsafe fn scan_and_clean_graphdata_keys(
                 // any non-UTF-8 key rather than decoding it lossily: this name is
                 // fed back into `RedisModule_CreateString` for the open/delete
                 // below, and a lossy name no longer round-trips to the same key
-                // (and could even alias a different one). Real graph keys are
-                // always UTF-8 (see the lossy `graph_rdb_save`/`graph_rdb_load`
-                // paths), so a non-UTF-8 graphdata key is never a live graph.
+                // (and could even alias a different one). A non-UTF-8 graph name
+                // is not round-trippable here and is already handled only lossily
+                // elsewhere (`graph_rdb_save`/`graph_rdb_load`), so skipping it
+                // does not regress any normally (UTF-8) named graph.
                 let key_bytes = std::slice::from_raw_parts(kptr.cast::<u8>(), key_len);
                 let Ok(key_name) = std::str::from_utf8(key_bytes) else {
                     continue;
