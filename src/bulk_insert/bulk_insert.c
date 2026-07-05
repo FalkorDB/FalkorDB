@@ -225,7 +225,7 @@ static int _BulkInsert_ValidateHeader
 	size_t data_idx = 0 ;
 
 	// read the entire label / rel-type segment
-	const char *labels = data + data_idx ;
+	const char *labels = data ;
 	size_t labels_len = strlen (labels) ;
 	data_idx += labels_len + 1 ;
 
@@ -257,9 +257,10 @@ static int _BulkInsert_ValidateHeader
 	for (uint j = 0; j < prop_count; j++) {
 		if (data_idx >= data_len) break ;
 		const char *prop_key = data + data_idx ;
-		data_idx += strlen (prop_key) + 1 ;
+		size_t n = strlen (prop_key) + 1 ;
+		data_idx += n ;
 
-		if (strnlen (prop_key, MAX_IDENTIFIER_LEN + 1) > MAX_IDENTIFIER_LEN) {
+		if (n > MAX_IDENTIFIER_LEN) {
 			RedisModule_ReplyWithErrorFormat (ctx, EMSG_IDENTIFIER_TOO_LONG,
 					"Property name", MAX_IDENTIFIER_LEN) ;
 			return BULK_FAIL ;
