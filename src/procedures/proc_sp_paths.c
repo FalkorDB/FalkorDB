@@ -454,10 +454,13 @@ static void SPpaths_next
 			LevelConnection frontierConnection = arr_pop(ctx->levels[depth]);
 			Node frontierNode = frontierConnection.node;
 
-			bool frontierAlreadyOnPath = Path_ContainsNode(ctx->path, &frontierNode);
+			bool frontierAlreadyOnPath =
+				Path_ContainsNode(ctx->path, ENTITY_GET_ID (&frontierNode));
 
 			// don't allow cycles
-			if(frontierAlreadyOnPath) continue;
+			if (frontierAlreadyOnPath) {
+				continue ;
+			}
 
 			// add frontier to path.
 			Path_AppendNode(ctx->path, frontierNode);

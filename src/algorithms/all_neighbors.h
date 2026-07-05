@@ -17,13 +17,12 @@
 // returns the newly discovered destination node
 // it is possible for the same destination node to be returned multiple times
 // if it is on multiple different paths from src
-// we allow cycles to be closed, but we don't expand once a cycle been closed
-// path: (a)->(b)->(a), 'a' will not be expanded again during traversal of this
-// current path
+// the only restriction inforced is edge uniqueness
 
-// Depth threshold at which the visited-edge lookup switches from a
-// linear array scan to an O(1) hashmap.  Queries with maxLen below this
-// use the array (better cache behaviour); others use the hashmap.
+// depth threshold at which the visited-edge lookup switches from a
+// linear array scan to an O(1) hashmap
+// queries with maxLen below this use the array
+// (better cache behaviour); others use the hashmap
 #define VISITED_HASHMAP_THRESHOLD 128
 
 typedef struct {

@@ -4,11 +4,11 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "GraphBLAS.h"
 #include "RG.h"
-#include "all_shortest_paths.h"
+#include "GraphBLAS.h"
 #include "../util/arr.h"
 #include "../util/rmalloc.h"
+#include "all_shortest_paths.h"
 
 // run BFS from `src` until `dest` is reached
 // add all nodes visited during traversal except for nodes in

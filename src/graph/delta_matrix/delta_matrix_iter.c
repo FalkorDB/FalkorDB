@@ -388,15 +388,6 @@ GrB_Index Delta_Matrix_Iterator_getp
 		+ GxB_Matrix_Iterator_getp (&iter->dp_it) ;
 }
 
-// return the maximum position of the iterator
-GrB_Index Delta_Matrix_Iterator_getpmax
-(
-	Delta_MatrixTupleIter *iter  // iterator to query
-) {
-	return GxB_Matrix_Iterator_getpmax (&iter->m_it)
-		+ GxB_Matrix_Iterator_getpmax (&iter->dp_it) ;
-}
-
 // free iterator data
 GrB_Info Delta_MatrixTupleIter_detach
 (

@@ -101,9 +101,3 @@ GrB_Index Delta_Matrix_Iterator_getp
 	Delta_MatrixTupleIter *iter  // iterator to query
 );
 
-// return the maximum position of the iterator
-GrB_Index Delta_Matrix_Iterator_getpmax
-(
-	Delta_MatrixTupleIter *iter  // iterator to query
-);
-
