@@ -1,0 +1,308 @@
+# A/B benchmark front door: workflow_dispatch (manual), a PR `benchmark`
+# label, or a `/benchmark` PR comment (which just adds the label — see the
+# `slash-command` job — so the label is the single source of truth for "this
+# PR wants a benchmark run", same as the label re-runs on every push while
+# present the way `verify-artifacts` does for build-artifacts.yml).
+#
+# The PR path never trusts that the RC image (rc-pr-<N>) built by rust-pr.yml
+# is ready just because the label is present — `wait-for-rc-image` polls the
+# actual "Rust PR" workflow run for this exact head SHA and only proceeds
+# once it has completed successfully, so a benchmark never runs against a
+# stale or nonexistent build.
+#
+# The automatic, continuously-updated canonical trend (main branch, edge vs
+# edge-rs) is wired separately, from rust-push.yml after `edge-rs` promotion
+# — not from this workflow.
+name: A/B benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_b_tag:
+        description: "Variant B (this repo) tag on ghcr.io/falkordb/falkordb-server"
+        required: true
+      image_a_tag:
+        description: "Variant A (production C) tag on docker.io/falkordb/falkordb-server"
+        required: false
+        default: "edge"
+      dataset_size:
+        description: "Workload dataset size"
+        required: false
+        default: "small"
+        type: choice
+        options: ["small", "medium", "large"]
+  pull_request:
+    types: [labeled, synchronize, reopened, closed]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmark-${{ github.event.pull_request.number || github.event.issue.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # /benchmark PR comment → add the `benchmark` label (idempotent) and stop.
+  # Adding the label fires a fresh `pull_request labeled` event which the
+  # `prepare` job below reacts to — a single code path decides "should this
+  # PR be benchmarked", whether that was requested via label or slash
+  # command.
+  slash-command:
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/benchmark') &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Add benchmark label
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: gh api -X POST "repos/${REPO}/issues/${ISSUE_NUMBER}/labels" -f "labels[]=benchmark"
+
+      - name: Acknowledge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+        run: gh api -X POST "repos/${REPO}/issues/comments/${COMMENT_ID}/reactions" -f content="+1"
+
+  # Fail fast on a manual dispatch with a typo'd tag, before spending time on
+  # the dedicated runner + toolchain setup.
+  validate-dispatch-images:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify both image tags resolve
+        env:
+          IMAGE_A_TAG: ${{ inputs.image_a_tag }}
+          IMAGE_B_TAG: ${{ inputs.image_b_tag }}
+        run: |
+          set -euo pipefail
+          docker manifest inspect "docker.io/falkordb/falkordb-server:${IMAGE_A_TAG}" >/dev/null
+          docker manifest inspect "ghcr.io/falkordb/falkordb-server:${IMAGE_B_TAG}" >/dev/null
+
+  prepare:
+    needs: [validate-dispatch-images]
+    # validate-dispatch-images only runs (and is only needed) for
+    # workflow_dispatch; don't let its `skipped` result on the PR path block us.
+    if: |
+      !cancelled() &&
+      (needs.validate-dispatch-images.result == 'success' || needs.validate-dispatch-images.result == 'skipped') &&
+      (
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event_name == 'pull_request' &&
+          contains(fromJSON('["labeled", "synchronize", "reopened"]'), github.event.action) &&
+          contains(github.event.pull_request.labels.*.name, 'benchmark')
+        )
+      )
+    runs-on: ubuntu-latest
+    outputs:
+      image_a: ${{ steps.derive.outputs.image_a }}
+      image_b: ${{ steps.derive.outputs.image_b }}
+      view: ${{ steps.derive.outputs.view }}
+      pr_number: ${{ steps.derive.outputs.pr_number }}
+      dataset_size: ${{ steps.derive.outputs.dataset_size }}
+    steps:
+      - name: Checkout benchmark scripts
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          sparse-checkout: .github/scripts/benchmark
+          persist-credentials: false
+
+      - name: Derive image refs, view, dataset size
+        id: derive
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_IMAGE_A_TAG: ${{ inputs.image_a_tag }}
+          INPUT_IMAGE_B_TAG: ${{ inputs.image_b_tag }}
+          INPUT_DATASET_SIZE: ${{ inputs.dataset_size }}
+          DISPATCH_REF_NAME: ${{ github.ref_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            workflow_dispatch)
+              IMAGE_A="docker.io/falkordb/falkordb-server:${INPUT_IMAGE_A_TAG}"
+              IMAGE_B="ghcr.io/falkordb/falkordb-server:${INPUT_IMAGE_B_TAG}"
+              VIEW_RAW="$DISPATCH_REF_NAME"
+              OUT_PR_NUMBER=""
+              DATASET_SIZE="${INPUT_DATASET_SIZE:-small}"
+              ;;
+            pull_request)
+              IMAGE_A="docker.io/falkordb/falkordb-server:edge"
+              IMAGE_B="ghcr.io/falkordb/falkordb-server:rc-pr-${PR_NUMBER}"
+              VIEW_RAW="$PR_HEAD_REF"
+              OUT_PR_NUMBER="$PR_NUMBER"
+              DATASET_SIZE="small"
+              ;;
+            *)
+              echo "::error::unsupported event $EVENT_NAME"
+              exit 1
+              ;;
+          esac
+
+          # Slugify to a filesystem/URL-safe path segment. Shared with
+          # cleanup-branch-view (view-slug.sh) so a closed PR removes the exact
+          # dir it published; the script also remaps a "main" branch away from
+          # the canonical /benchmark/ trend's reserved slug.
+          VIEW=$(.github/scripts/benchmark/view-slug.sh "$VIEW_RAW")
+
+          {
+            echo "image_a=${IMAGE_A}"
+            echo "image_b=${IMAGE_B}"
+            echo "view=${VIEW}"
+            echo "pr_number=${OUT_PR_NUMBER}"
+            echo "dataset_size=${DATASET_SIZE}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Derived: image_a=${IMAGE_A} image_b=${IMAGE_B} view=${VIEW} pr_number=${OUT_PR_NUMBER} dataset_size=${DATASET_SIZE}"
+
+  # PR path only: don't benchmark a stale or nonexistent RC build. We only
+  # need the rc-pr image itself — which rust-pr.yml's `build-rc-image` job
+  # pushes early, long before the (sometimes flaky) e2e/flow/asan suites in
+  # that same run finish. So wait on the *image*, not on the whole "Rust PR"
+  # run concluding success; a flaky test shouldn't starve the benchmark of a
+  # perfectly good image.
+  wait-for-rc-image:
+    needs: prepare
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Wait for the RC image to be published
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          IMAGE_B: ${{ needs.prepare.outputs.image_b }}
+        run: |
+          set -euo pipefail
+          # Poll the registry for the image directly. Fail fast only if the
+          # Rust PR run for this SHA has *finished* and the image still isn't
+          # there — that means the build itself failed and it's never coming
+          # (a run that failed only in a later test job has already pushed the
+          # image, so the manifest check below would have already succeeded).
+          deadline=$(( $(date +%s) + 85 * 60 ))
+          while true; do
+            if docker manifest inspect "$IMAGE_B" >/dev/null 2>&1; then
+              echo "RC image ${IMAGE_B} is available."
+              exit 0
+            fi
+
+            run_status=$(gh api "repos/${REPO}/actions/runs?head_sha=${HEAD_SHA}&per_page=50" \
+              --jq '[.workflow_runs[] | select(.name == "Rust PR")] | sort_by(.run_started_at) | last | .status // empty')
+
+            if [ "$run_status" = "completed" ]; then
+              # Race guard: the image may have landed between the check above
+              # and the run reporting completed.
+              if docker manifest inspect "$IMAGE_B" >/dev/null 2>&1; then
+                echo "RC image ${IMAGE_B} is available."
+                exit 0
+              fi
+              echo "::error::the Rust PR run for ${HEAD_SHA} finished but ${IMAGE_B} was never published — the RC image build must have failed"
+              exit 1
+            fi
+
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "::error::timed out waiting for the RC image ${IMAGE_B} (Rust PR run status=${run_status:-none})"
+              exit 1
+            fi
+            echo "RC image not yet available (Rust PR run status=${run_status:-none}); waiting..."
+            sleep 20
+          done
+
+  run-benchmark:
+    needs: [prepare, wait-for-rc-image]
+    if: |
+      !cancelled() &&
+      needs.prepare.result == 'success' &&
+      (needs.wait-for-rc-image.result == 'success' || needs.wait-for-rc-image.result == 'skipped')
+    uses: ./.github/workflows/_benchmark.yml
+    permissions:
+      contents: write
+      pull-requests: write
+    with:
+      image_a: ${{ needs.prepare.outputs.image_a }}
+      image_b: ${{ needs.prepare.outputs.image_b }}
+      view: ${{ needs.prepare.outputs.view }}
+      is_canonical: false
+      dataset_size: ${{ needs.prepare.outputs.dataset_size }}
+      pr_number: ${{ needs.prepare.outputs.pr_number }}
+
+  # Remove a PR's /benchmark/branch/<slug>/ preview once it closes — no
+  # point keeping a dead branch's dashboard around forever. Runs regardless
+  # of whether the `benchmark` label was ever added (cheap no-op if there's
+  # nothing to remove).
+  cleanup-branch-view:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # Scripts come from the PR's base branch (stable, always has view-slug.sh
+      # once this lands) rather than the PR merge ref, which can be gone by the
+      # time a closed PR is cleaned up.
+      - name: Checkout benchmark scripts
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          sparse-checkout: .github/scripts/benchmark
+          persist-credentials: false
+
+      - name: Checkout gh-pages
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: gh-pages
+          path: gh-pages
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Remove branch view (if any) and push
+        env:
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          # Same slug the publish path used (view-slug.sh) so we remove the
+          # exact dir this PR published — no orphaned views. Tolerate a missing
+          # script so an unrelated closed PR never fails here.
+          VIEW=$(.github/scripts/benchmark/view-slug.sh "$PR_HEAD_REF" || true)
+          if [ -z "$VIEW" ]; then
+            echo "could not derive a view slug — nothing to clean up"
+            exit 0
+          fi
+
+          cd gh-pages
+          TARGET="benchmark/branch/${VIEW}"
+          if [ ! -d "$TARGET" ]; then
+            echo "no published view at $TARGET — nothing to clean up"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+
+          git rm -rq "$TARGET"
+          git commit -q -m "benchmark: remove closed-PR view ${VIEW}"
+
+          attempt=1
+          max_attempts=5
+          until git push origin gh-pages -q; do
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "::error::failed to push gh-pages cleanup after ${max_attempts} attempts"
+              exit 1
+            fi
+            echo "push rejected (attempt ${attempt}/${max_attempts}) — fetching + rebasing and retrying"
+            git fetch origin gh-pages -q
+            git rebase origin/gh-pages
+            attempt=$((attempt + 1))
+          done

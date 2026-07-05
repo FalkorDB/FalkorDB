@@ -126,3 +126,28 @@ TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
 ```
 
 - [benchmark](https://falkordb.github.io/falkordb-rs-next-gen/dev/bench/)
+
+### A/B benchmarking vs the production (C) image
+
+[`.github/workflows/benchmark.yml`](.github/workflows/benchmark.yml) runs the
+[FalkorDB/benchmark](https://github.com/FalkorDB/benchmark) A/B workload
+against two live containers — variant A (production C image,
+`falkordb/falkordb-server:edge` by default) and variant B (this repo) — on a
+dedicated `ubuntu-latest-8-cores` GitHub Larger Runner, never the default
+shared runners.
+
+- **On a PR**: add the `benchmark` label, or comment `/benchmark` (comment
+  authors need OWNER/MEMBER/COLLABORATOR association). Variant B is that
+  PR's `rc-pr-<N>` image; the workflow waits for `rust-pr.yml`'s RC image
+  build to actually succeed before benchmarking, so it never runs against a
+  stale build. Results are posted as a PR comment and published to
+  `https://falkordb.github.io/falkordb-rs-next-gen/benchmark/branch/<branch>/`.
+  Pushing new commits while the label is present re-runs it; closing the PR
+  removes its published view.
+- **Manually**: run the "A/B benchmark" workflow from the Actions tab and
+  choose the variant B (and optionally A) image tag.
+- **Automatically**: every time `edge-rs` is promoted (merge to main), the
+  canonical trend at
+  [`/benchmark/`](https://falkordb.github.io/falkordb-rs-next-gen/benchmark/)
+  is updated — this is the one continuously-growing history; PR/manual runs
+  publish to their own capped-history branch view instead.

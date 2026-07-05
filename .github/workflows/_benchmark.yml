@@ -1,0 +1,187 @@
+# Reusable workflow: run the FalkorDB-vs-FalkorDB A/B benchmark (variant A —
+# typically the production C image — vs variant B — typically this repo's
+# Rust port) and publish the result to GitHub Pages.
+#
+# Called by:
+#   - benchmark.yml        (PR `benchmark` label / `/benchmark` slash command,
+#                            and manual workflow_dispatch)
+#   - rust-push.yml         (automatically, after a new `edge-rs` is promoted
+#                            on merge to main — this is the canonical,
+#                            continuously-updated trend)
+#
+# Runs on a GitHub-hosted Larger Runner (dedicated hardware, not the default
+# shared pool) so latency numbers aren't skewed by noisy-neighbor containers.
+# Prerequisite: an `ubuntu-latest-8-cores` Larger Runner must be provisioned
+# for this org (Settings → Actions → Runners → Larger runners) before this
+# workflow can run.
+name: A/B benchmark (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      image_a:
+        description: "Variant A full image ref, e.g. docker.io/falkordb/falkordb-server:edge"
+        required: true
+        type: string
+      image_b:
+        description: "Variant B full image ref, e.g. ghcr.io/falkordb/falkordb-server:rc-pr-123"
+        required: true
+        type: string
+      name_a:
+        description: "Label for variant A in the published comparison"
+        required: false
+        type: string
+        default: "falkordb-c"
+      name_b:
+        description: "Label for variant B in the published comparison"
+        required: false
+        type: string
+        default: "falkordb-rs"
+      view:
+        description: "Slugified view name (branch name, or 'main' for the canonical trend)"
+        required: true
+        type: string
+      is_canonical:
+        description: "true only for the main-branch edge-vs-edge trend; publishes to gh-pages root /benchmark/ with unbounded history instead of a capped /benchmark/branch/<view>/ preview"
+        required: false
+        type: boolean
+        default: false
+      dataset_size:
+        description: "small|medium|large — FalkorDB/benchmark dataset size"
+        required: false
+        type: string
+        default: "small"
+      pr_number:
+        description: "PR number to comment on (empty for non-PR runs)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  # FalkorDB/benchmark doesn't tag releases often enough to track the
+  # features this workflow depends on (the run-history manifest feature is
+  # newer than the latest tag, v2.1) — pin to a commit instead. Validated
+  # (static export + the basePath patch in patch-ui.sh) against this exact
+  # commit; bump deliberately and re-verify the patch still applies.
+  BENCHMARK_REPO: FalkorDB/benchmark
+  BENCHMARK_REF: 0cc0e9ee45464b9cb8d71732f419e4e0c8ebdacc
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest-8-cores
+    timeout-minutes: 90
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout this repo (scripts)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Checkout gh-pages
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: gh-pages
+          path: gh-pages
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout FalkorDB/benchmark@${{ env.BENCHMARK_REF }}
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ env.BENCHMARK_REPO }}
+          ref: ${{ env.BENCHMARK_REF }}
+          path: benchmark-tool
+          persist-credentials: false
+
+      - run: rustup default stable
+      - name: Install protobuf-compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: benchmark-tool
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+
+      - name: Compute snapshot timestamp
+        id: ts
+        run: echo "out_json=${{ runner.temp }}/out/falkordb_vs_falkordb_$(date +%s).json" >> "$GITHUB_OUTPUT"
+
+      - name: Run A/B benchmark
+        id: run
+        env:
+          IMAGE_A: ${{ inputs.image_a }}
+          IMAGE_B: ${{ inputs.image_b }}
+          NAME_A: ${{ inputs.name_a }}
+          NAME_B: ${{ inputs.name_b }}
+          DATASET_SIZE: ${{ inputs.dataset_size }}
+          BENCHMARK_DIR: ${{ github.workspace }}/benchmark-tool
+          RESULTS_DIR: ${{ runner.temp }}/results-ab
+          OUT_JSON: ${{ steps.ts.outputs.out_json }}
+        run: .github/scripts/benchmark/run-ab.sh
+
+      - name: Upload raw results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: benchmark-results-${{ inputs.view }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/results-ab
+            ${{ steps.ts.outputs.out_json }}
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Configure git identity for gh-pages commit
+        run: |
+          git -C gh-pages config user.name "github-actions[bot]"
+          git -C gh-pages config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C gh-pages remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+
+      - name: Publish to gh-pages
+        id: publish
+        env:
+          REPO: ${{ github.repository }}
+          VIEW: ${{ inputs.view }}
+          IS_CANONICAL: ${{ inputs.is_canonical }}
+          SUMMARY_JSON: ${{ steps.ts.outputs.out_json }}
+          UI_DIR: ${{ github.workspace }}/benchmark-tool/ui
+          GH_PAGES_DIR: ${{ github.workspace }}/gh-pages
+        run: |
+          .github/scripts/benchmark/publish.sh | tee "${{ runner.temp }}/publish.log"
+          published_url=$(grep -o 'RESULT: published_url=.*' "${{ runner.temp }}/publish.log" | sed 's/RESULT: published_url=//')
+          echo "published_url=$published_url" >> "$GITHUB_OUTPUT"
+
+      - name: Comment on PR
+        if: ${{ inputs.pr_number != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          PUBLISHED_URL: ${{ steps.publish.outputs.published_url }}
+        run: |
+          BODY_FILE="${{ runner.temp }}/pr-comment.md"
+          python3 .github/scripts/benchmark/format-summary.py \
+            "${{ steps.ts.outputs.out_json }}" --view "${{ inputs.view }}" --published-url "$PUBLISHED_URL" \
+            --name-a "${{ inputs.name_a }}" --name-b "${{ inputs.name_b }}" \
+            > "$BODY_FILE"
+
+          # Upsert: replace a prior benchmark comment on this PR (identified
+          # by the marker) instead of piling up a new one on every push while
+          # the `benchmark` label is present.
+          MARKER="<!-- ab-benchmark-comment -->"
+          { echo "$MARKER"; cat "$BODY_FILE"; } > "${BODY_FILE}.marked"
+
+          existing_id=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" --paginate \
+            --jq "map(select(.body | startswith(\"$MARKER\"))) | .[0].id // empty")
+          if [ -n "$existing_id" ]; then
+            gh api -X PATCH "repos/${{ github.repository }}/issues/comments/${existing_id}" \
+              -F body=@"${BODY_FILE}.marked"
+          else
+            gh api -X POST "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+              -F body=@"${BODY_FILE}.marked"
+          fi
