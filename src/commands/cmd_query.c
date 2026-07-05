@@ -392,19 +392,40 @@ static void enter_writer_loop
 	}
 }
 
+// optnone: Clang's -O2/-O3 inter-procedural analysis converts every
+// "goto cleanup" branch to llvm.assume, making it fall through to
+// GraphContext_GetGraph(NULL) when GraphContext_Retrieve fails.
+// The heavy inner functions (_ExecuteQuery, GraphContext_Retrieve, etc.)
+// are not affected by this attribute — only the orchestration shell is.
+__attribute__((optnone))
 void _query
 (
 	bool profile,
 	void *args
 ) {
-	CommandCtx     *command_ctx = (CommandCtx *)args ;
-	QueryCtx       *query_ctx   = QueryCtx_GetQueryCtx () ;
-	RedisModuleCtx *ctx         = CommandCtx_GetRedisCtx (command_ctx) ;
-	GraphContext   *gc          = CommandCtx_GetGraphContext (command_ctx) ;
-	Graph          *g           = GraphContext_GetGraph (gc) ;
-	ExecutionCtx   *exec_ctx    = NULL ;
+	CommandCtx *command_ctx = (CommandCtx *)args ;
+	RedisModuleCtx *ctx = CommandCtx_GetRedisCtx (command_ctx) ;
+	ExecutionCtx *exec_ctx = NULL ;
+	GraphContext *gc = CommandCtx_GetGraphContext (command_ctx) ;
 
+	// Initialize TLS query context and track the in-flight command BEFORE any
+	// 'goto cleanup' so that QueryCtx_Free() and Globals_UntrackCommandCtx()
+	// in cleanup are always safe to call (both assert non-NULL state that is
+	// set up here).  This matters when GraphContext_Retrieve returns gc=NULL
+	// (e.g. graph re-offloaded immediately after a successful load).
+	QueryCtx *query_ctx = QueryCtx_GetQueryCtx () ;
 	Globals_TrackCommandCtx (command_ctx) ;
+
+	if (gc == NULL) {
+		if (GraphContext_Retrieve (ctx, command_ctx->rm_graph_name, true, false,
+					true, &gc) != GraphRetrieve_RETRIEVED) {
+			goto cleanup ;
+		}
+		CommandCtx_SetGraphContext (command_ctx, gc) ;
+	}
+
+	Graph *g = GraphContext_GetGraph (gc) ;
+
 	QueryCtx_SetGlobalExecutionCtx (command_ctx) ;
 	UDFCtx_Update () ;  // make sure thread's UDFs are up to date
 
@@ -529,11 +550,15 @@ cleanup:
 		ErrorCtx_EmitException () ;
 	}
 
-	// cleanup routine invoked after encountering errors in this function
 	ExecutionCtx_Free (exec_ctx) ;
-	GraphContext_DecreaseRefCount (gc) ;
+
+	if (gc) {
+		GraphContext_DecreaseRefCount (gc) ;
+	}
+
 	Globals_UntrackCommandCtx (command_ctx) ;
 	CommandCtx_UnblockClient (command_ctx) ;
+
 	CommandCtx_Free (command_ctx) ;
 	QueryCtx_Free () ; // reset the QueryCtx and free its allocations
 	ErrorCtx_Clear () ;

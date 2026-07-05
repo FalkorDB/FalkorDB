@@ -224,21 +224,23 @@ int CommandDispatch
 	}
 
 	bool shouldCreate = should_command_create_graph (cmd) ;
-	GraphContext *gc = GraphContext_Retrieve (ctx, graph_name, true,
-			shouldCreate) ;
+	GraphContext *gc = NULL ;
+	GraphRetrieveStatus status =
+		GraphContext_Retrieve (ctx, graph_name, true, shouldCreate, false, &gc) ;
 
 	// if GraphContext is null, key access failed and an error been emitted
-	if (!gc) return REDISMODULE_ERR;
+	if (status == GraphRetrieve_FAILED) {
+		return REDISMODULE_ERR ;
+	}
 
 	// return incase caller provided a mismatched graph hash
-	if (!_verifyGraphHash (gc, hash)) {
+	if (gc != NULL && !_verifyGraphHash (gc, hash)) {
 		_rejectOnHashMismatch (ctx, GraphContext_GetHash (gc)) ;
 		// Release the GraphContext, as we increased its reference count
 		// when retrieving it.
 		GraphContext_DecreaseRefCount (gc) ;
 		return REDISMODULE_OK ;
 	}
-
 
 	// determine the query execution context
 	// queries issued within a LUA script or multi exec block must
@@ -257,12 +259,12 @@ int CommandDispatch
 		: EXEC_THREAD_READER ;
 
 	Command_Handler handler = get_command_handler (cmd) ;
-	if(exec_thread == EXEC_THREAD_MAIN) {
+	if (exec_thread == EXEC_THREAD_MAIN) {
 		// run query on Redis main thread
-		context = CommandCtx_New (ctx, NULL, argv[0], query, gc, exec_thread,
-								 is_replicated, compact, timeout, timeout_rw,
-								 received_ts, timer, bolt_client) ;
-		handler(context);
+		context = CommandCtx_New (ctx, NULL, argv[0], argv[1], query, gc,
+				exec_thread, is_replicated, compact, timeout, timeout_rw,
+				received_ts, timer, bolt_client) ;
+		handler (context) ;
 	} else {
 		// run query on a dedicated thread
 		RedisModuleBlockedClient *bc =
@@ -271,7 +273,7 @@ int CommandDispatch
 		RedisModuleCtx *redis_ctx = (bolt_client != NULL) ?
 			bolt_client->ctx : NULL ;
 
-		context = CommandCtx_New (redis_ctx, bc, argv[0], query, gc,
+		context = CommandCtx_New (redis_ctx, bc, argv[0], argv[1], query, gc,
 				exec_thread, is_replicated, compact, timeout, timeout_rw,
 				received_ts, timer, bolt_client) ;
 
@@ -280,9 +282,13 @@ int CommandDispatch
 			// is full, this error usually happens when the server is
 			// under heavy load and is unable to catch up
 			RedisModule_ReplyWithError (ctx, "Max pending queries exceeded") ;
+
 			// release the GraphContext, as we increased its reference count
 			// when retrieving it
-			GraphContext_DecreaseRefCount (gc) ;
+			if (gc != NULL) {
+				GraphContext_DecreaseRefCount (gc) ;
+			}
+
 			CommandCtx_UnblockClient (context) ;
 			CommandCtx_Free (context) ;
 		}

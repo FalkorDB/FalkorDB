@@ -30,14 +30,15 @@ int Graph_Slowlog
 	}
 
 	// get a hold of the graph key
-	RedisModuleString *key = argv[1];
-	GraphContext *gc = GraphContext_Retrieve(ctx, key, false, false);
-	if(gc == NULL) {
+	RedisModuleString *key = argv [1] ;
+	GraphContext *gc = NULL ;
+	GraphContext_Retrieve (ctx, key, false, false, true, &gc) ;
+	if (gc == NULL) {
 		// if GraphContext is null, key access failed and an error been emitted
-		return REDISMODULE_OK;
+		return REDISMODULE_OK ;
 	}
 
-	SlowLog *slowlog = GraphContext_GetSlowLog(gc);
+	SlowLog *slowlog = GraphContext_GetSlowLog (gc) ;
 
 	// handle subcommand e.g. GRAPH.SLOWLOG G RESET
 	if(argc == 3) {

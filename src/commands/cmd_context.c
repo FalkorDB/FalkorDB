@@ -16,22 +16,24 @@
 // create a new command context
 CommandCtx *CommandCtx_New
 (
-	RedisModuleCtx *ctx,           // redis module context
-	RedisModuleBlockedClient *bc,  // blocked client
-	RedisModuleString *cmd_name,   // command to execute
-	RedisModuleString *query,      // query string
-	GraphContext *graph_ctx,       // graph context
-	ExecutorThread thread,         // which thread executes this command
-	bool replicated_command,       // whether this instance was spawned by a replication command
-	bool compact,                  // whether this query was issued with the compact flag
-	long long timeout,             // the query timeout, if specified
-	bool timeout_rw,               // apply timeout on both read and write queries
-	uint64_t received_ts,          // command received at this UNIX timestamp
-	simple_timer_t timer,          // stopwatch started upon command received
-	bolt_client_t *bolt_client     // BOLT client
+	RedisModuleCtx *ctx,            // redis module context
+	RedisModuleBlockedClient *bc,   // blocked client
+	RedisModuleString *cmd_name,    // command to execute
+	RedisModuleString *graph_name,  // graph name
+	RedisModuleString *query,       // query string
+	GraphContext *graph_ctx,        // graph context
+	ExecutorThread thread,          // which thread executes this command
+	bool replicated_command,        // whether this instance was spawned by a replication command
+	bool compact,                   // whether this query was issued with the compact flag
+	long long timeout,              // the query timeout, if specified
+	bool timeout_rw,                // apply timeout on both read and write queries
+	uint64_t received_ts,           // command received at this UNIX timestamp
+	simple_timer_t timer,           // stopwatch started upon command received
+	bolt_client_t *bolt_client      // BOLT client
 ) {
-	ASSERT (query    != NULL) ;
-	ASSERT (cmd_name != NULL) ;
+	ASSERT (query      != NULL) ;
+	ASSERT (cmd_name   != NULL) ;
+	ASSERT (graph_name != NULL) ;
 
 	CommandCtx *context = rm_calloc (1, sizeof (CommandCtx)) ;
 
@@ -52,12 +54,16 @@ CommandCtx *CommandCtx_New
 	// retain command name
 	// threaded modules that reference retained strings from other threads
 	// must explicitly trim the allocation as soon as the string is retained.
-	// Not doing so may result with automatic trimming which is not thread safe.
+	// not doing so may result with automatic trimming which is not thread safe.
 	RedisModule_RetainString (ctx, cmd_name) ;
 	RedisModule_TrimStringAllocation (cmd_name) ;
 
+	RedisModule_RetainString (ctx, graph_name) ;
+	RedisModule_TrimStringAllocation (graph_name) ;
+
+	context->command_name    = RedisModule_StringPtrLen (cmd_name, NULL) ;
 	context->rm_command_name = cmd_name ;
-	context->command_name = RedisModule_StringPtrLen (cmd_name, NULL) ;
+	context->rm_graph_name   = graph_name ;
 
 	// retain query
 	RedisModule_RetainString (ctx, query) ;
@@ -110,6 +116,18 @@ RedisModuleBlockedClient *CommandCtx_GetBlockingClient
 ) {
 	ASSERT(cmd_ctx != NULL);
 	return cmd_ctx->bc;
+}
+
+void CommandCtx_SetGraphContext
+(
+	CommandCtx *cmd_ctx,
+	GraphContext *graph_ctx
+) {
+	ASSERT (cmd_ctx            != NULL) ;
+	ASSERT (graph_ctx          != NULL) ;
+	ASSERT (cmd_ctx->graph_ctx == NULL) ;
+
+	cmd_ctx->graph_ctx = graph_ctx ;
 }
 
 GraphContext *CommandCtx_GetGraphContext
@@ -190,6 +208,7 @@ void CommandCtx_Free
 		ASSERT (cmd_ctx->bc == NULL) ;
 
 		RedisModule_FreeString (NULL, cmd_ctx->rm_query) ;
+		RedisModule_FreeString (NULL, cmd_ctx->rm_graph_name) ;
 		RedisModule_FreeString (NULL, cmd_ctx->rm_command_name) ;
 
 		if (cmd_ctx->params != NULL) {

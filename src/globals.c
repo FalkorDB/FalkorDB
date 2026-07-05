@@ -102,9 +102,33 @@ pthread_t Globals_Get_MainThreadId(void) {
 	return _globals.main_thread_id;
 }
 
-// get direct access to 'graphs_in_keyspace'
-GraphContext **Globals_Get_GraphsInKeyspace(void) {
-	return _globals.graphs_in_keyspace;
+// collect graphs
+// caller is responsible for:
+// 1. decreasing ref count for each GraphContext
+// 2. freeing returned value via rm_free
+GraphContext **Globals_CollectGraphs
+(
+	uint *n // number of graphs collected
+) {
+	ASSERT (n != NULL) ;
+
+	Globals_ReadLock () ;
+
+	*n = arr_len (_globals.graphs_in_keyspace) ;
+
+	GraphContext **graphs = rm_malloc (sizeof (GraphContext*) * *n) ;
+	ASSERT (graphs != NULL) ;
+
+	for (uint i = 0 ; i < *n ; i++) {
+		GraphContext *gc = _globals.graphs_in_keyspace [i] ;
+		GraphContext_IncreaseRefCount (gc) ;
+
+		graphs [i] = gc ;
+	}
+
+	Globals_Unlock () ;
+
+	return graphs ;
 }
 
 uint32_t Globals_GraphsCount (void) {
