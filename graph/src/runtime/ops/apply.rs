@@ -35,12 +35,12 @@
 //! Falls back to per-row sub-plan execution when the sub-plan contains blocking
 //! operators (Aggregate) that accumulate state across all rows.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 
 use crate::parser::ast::Variable;
 use crate::planner::{IR, subtree_contains};
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow, Column},
     row::{Row, RowView},
     runtime::Runtime,
     value::Value,
@@ -49,17 +49,17 @@ use orx_tree::{Dyn, NodeIdx, NodeRef};
 
 /// Active batched sub-plan for all rows from one input batch.
 struct ActiveSubPlan<'a> {
-    /// Saved input envs for merging with sub-plan output (indexed by origin_row).
-    input_envs: Vec<Row>,
+    /// Compacted input batch (row `i` carries sequential origin `i`), kept so
+    /// each sub-plan output batch can be merged back columnar via
+    /// [`Batch::merge_over_input`] and unmatched origins can be gathered for the
+    /// optional NULL fallback.
+    input_ref: Batch<'a>,
     /// The single sub-plan iterator producing result batches for all input rows.
     subtree: BatchOp<'a>,
-    /// Tracks which origin_rows have produced at least one result (for optional fallback).
-    matched_origins: HashSet<u32>,
-    /// Partially consumed sub-batch and current index into its active rows.
-    current_batch: Option<(Batch<'a>, usize)>,
-    /// When `Some`, the subtree is exhausted; value is the next index into
-    /// `input_envs` for optional fallback emission.
-    fallback_idx: Option<usize>,
+    /// Dense per-origin match flags (`matched[i]` == origin `i` produced a
+    /// result), used for the optional NULL fallback. Empty for the non-optional
+    /// path, which needs no fallback and so skips match tracking entirely.
+    matched: Vec<bool>,
 }
 
 /// Per-row sub-plan state (used when batching is not possible).
@@ -77,6 +77,9 @@ pub struct ApplyOp<'a> {
     child_idx: NodeIdx<Dyn<IR>>,
     /// Batched mode state (used when can_batch is true).
     active: Option<Box<ActiveSubPlan<'a>>>,
+    /// Buffered columnar output batches (merged sub-plan results + optional NULL
+    /// fallback), emitted directly without a row-by-row rebuild.
+    pending_batches: VecDeque<Batch<'a>>,
     /// Per-row mode state (used when can_batch is false).
     pending: VecDeque<PendingApply<'a>>,
     can_batch: bool,
@@ -122,6 +125,7 @@ impl<'a> ApplyOp<'a> {
             optional_vars,
             child_idx,
             active: None,
+            pending_batches: VecDeque::new(),
             pending: VecDeque::new(),
             can_batch,
             idx,
@@ -132,131 +136,85 @@ impl<'a> ApplyOp<'a> {
     // Batched mode helpers
     // -----------------------------------------------------------------------
 
-    fn drain_active(
-        &mut self,
-        builder: &mut BatchBuilder,
-    ) -> Result<(), String> {
-        while builder.len() < BATCH_SIZE {
-            let Some(ref mut plan) = self.active else {
-                break;
-            };
-
-            // Drain partially consumed sub-batch first.
-            if let Some((ref batch, ref mut pos)) = plan.current_batch {
-                let active: Vec<usize> = batch.active_indices().collect();
-                while *pos < active.len() && builder.len() < BATCH_SIZE {
-                    let env = BatchRow::new(batch, active[*pos]).to_owned_row();
-                    let origin = env.origin_row as usize;
-                    plan.matched_origins.insert(env.origin_row);
-                    let mut merged = plan.input_envs[origin].clone();
-                    merged.merge(&env);
-                    builder.push_row(&merged);
-                    *pos += 1;
-                }
-                if *pos >= active.len() {
-                    plan.current_batch = None;
-                } else {
-                    return Ok(());
-                }
+    fn next_batched(&mut self) -> Option<Result<Batch<'a>, String>> {
+        loop {
+            // 1. Emit any buffered columnar output batch first.
+            if let Some(out) = self.pending_batches.pop_front() {
+                return Some(Ok(out));
             }
 
-            // Emit optional fallbacks for unmatched origins.
-            if let Some(ref mut fb_idx) = plan.fallback_idx {
-                if let Some(ref vars) = self.optional_vars {
-                    while *fb_idx < plan.input_envs.len() {
-                        let i = *fb_idx;
-                        *fb_idx += 1;
-                        if !plan.matched_origins.contains(&(i as u32)) {
-                            let mut fallback = plan.input_envs[i].clone();
-                            for v in vars {
-                                fallback.insert(v, Value::Null);
-                            }
-                            builder.push_row(&fallback);
-                            if builder.len() >= BATCH_SIZE {
-                                return Ok(());
+            // 2. Ensure an active sub-plan is running for the current input batch.
+            if self.active.is_none() {
+                let batch = match self.child.next() {
+                    Some(Ok(b)) => b,
+                    Some(Err(e)) => return Some(Err(e)),
+                    None => return None,
+                };
+                // One compacted copy feeds the sub-plan as its argument batch;
+                // an identical copy is retained to merge results back against.
+                let input_ref = batch.clone_active_rows_seq_origin();
+                let arg_batch = batch.clone_active_rows_seq_origin();
+                let mut subtree = match self.runtime.run_batch(self.child_idx) {
+                    Ok(s) => s,
+                    Err(e) => return Some(Err(e)),
+                };
+                subtree.set_argument_batch(arg_batch);
+                // The non-optional path needs no fallback, so it skips match
+                // tracking; the optional path uses a dense per-origin bitmap.
+                let matched = if self.optional_vars.is_some() {
+                    vec![false; input_ref.len()]
+                } else {
+                    Vec::new()
+                };
+                self.active = Some(Box::new(ActiveSubPlan {
+                    input_ref,
+                    subtree,
+                    matched,
+                }));
+            }
+
+            // 3. Drive the sub-plan one batch at a time, merging each result
+            //    batch back against the input columnar.
+            let plan = self.active.as_mut().unwrap();
+            match plan.subtree.next() {
+                Some(Ok(sub)) => {
+                    let origins: Vec<usize> = sub
+                        .active_indices()
+                        .map(|r| sub.origin_row(r) as usize)
+                        .collect();
+                    if !origins.is_empty() {
+                        // Only the optional path needs match tracking.
+                        if self.optional_vars.is_some() {
+                            for &o in &origins {
+                                plan.matched[o] = true;
                             }
                         }
+                        let merged = sub.merge_over_input(&plan.input_ref, &origins);
+                        self.pending_batches.push_back(merged);
                     }
                 }
-                self.active = None;
-                break;
-            }
-
-            // Pull next sub-batch from the subtree.
-            match plan.subtree.next() {
-                Some(Ok(sub_batch)) => {
-                    plan.current_batch = Some((sub_batch, 0));
-                }
-                Some(Err(e)) => return Err(e),
-                None => {
-                    if self.optional_vars.is_some() {
-                        plan.fallback_idx = Some(0);
-                    } else {
-                        self.active = None;
-                        break;
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn next_batched(&mut self) -> Option<Result<Batch<'a>, String>> {
-        let mut builder = BatchBuilder::new();
-
-        if let Err(e) = self.drain_active(&mut builder) {
-            return Some(Err(e));
-        }
-
-        while builder.len() < BATCH_SIZE {
-            if self.active.is_some() {
-                if let Err(e) = self.drain_active(&mut builder) {
-                    return Some(Err(e));
-                }
-                continue;
-            }
-
-            let batch = match self.child.next() {
-                Some(Ok(b)) => b,
                 Some(Err(e)) => return Some(Err(e)),
-                None => break,
-            };
-
-            let input_envs: Vec<Row> = batch
-                .active_indices()
-                .enumerate()
-                .map(|(i, row)| {
-                    let mut e = BatchRow::new(&batch, row).to_owned_row();
-                    e.origin_row = i as u32;
-                    e
-                })
-                .collect();
-
-            let arg_batch = batch.clone_active_rows_seq_origin();
-
-            let mut subtree = match self.runtime.run_batch(self.child_idx) {
-                Ok(s) => s,
-                Err(e) => return Some(Err(e)),
-            };
-            subtree.set_argument_batch(arg_batch);
-
-            self.active = Some(Box::new(ActiveSubPlan {
-                input_envs,
-                subtree,
-                matched_origins: HashSet::new(),
-                current_batch: None,
-                fallback_idx: None,
-            }));
-
-            if let Err(e) = self.drain_active(&mut builder) {
-                return Some(Err(e));
+                None => {
+                    // Sub-plan exhausted: emit an optional NULL fallback batch for
+                    // the origins that never matched, then retire the sub-plan.
+                    if let Some(ref vars) = self.optional_vars {
+                        let unmatched: Vec<usize> = (0..plan.matched.len())
+                            .filter(|&i| !plan.matched[i])
+                            .collect();
+                        if !unmatched.is_empty() {
+                            let mut fb = plan.input_ref.gather(&unmatched);
+                            for v in vars {
+                                fb.set_column(
+                                    v.id,
+                                    Column::Values(vec![Value::Null; unmatched.len()]),
+                                );
+                            }
+                            self.pending_batches.push_back(fb);
+                        }
+                    }
+                    self.active = None;
+                }
             }
-        }
-
-        if builder.is_empty() {
-            None
-        } else {
-            Some(Ok(builder.finish()))
         }
     }
 

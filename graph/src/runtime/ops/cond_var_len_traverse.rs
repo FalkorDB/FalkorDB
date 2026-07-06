@@ -27,27 +27,46 @@
 //! used edge IDs. Adjacency lists are lazily cached per node to avoid
 //! creating GraphBLAS iterators at every DFS step.
 
-use std::collections::VecDeque;
 use std::sync::Arc;
 
 use crate::graph::graph::{NodeId, RelationshipId};
 use crate::parser::ast::{QueryExpr, QueryRelationship, Variable};
 use crate::planner::IR;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
+    batch::{Batch, BatchOp, BatchRow},
     eval::ExprEval,
-    row::{Row, RowView},
+    row::RowView,
     runtime::Runtime,
     value::Value,
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 use roaring::RoaringTreemap;
+use smallvec::SmallVec;
 use thin_vec::ThinVec;
+
+use super::batched_result_emitter::{BatchedResultEmitter, RowIter, VarLenEndpoints};
+
+/// A single expanded var-length result: the resolved `from`/`to` endpoint node
+/// ids plus an optional materialized path value (`Some` only when the path is
+/// read downstream, i.e. `emit_path`).
+type VarLenResult = (NodeId, NodeId, Option<Value>);
+
+/// Per-input-row result buffer. Inline capacity 4 keeps a low-fan-out row (a
+/// handful of reachable destinations) off the heap, so the emitter can drain it
+/// via a concrete `smallvec::IntoIter` (no `Box`/vtable) while still spilling
+/// for high-fan-out rows.
+type ResultBuf = SmallVec<[VarLenResult; 4]>;
 
 pub struct CondVarLenTraverseOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
-    pending: VecDeque<Row>,
+    /// Holds the parent batch being expanded and performs the shared
+    /// pack-and-gather emit: each active row's DFS results are packed into
+    /// columnar batches via `gather`, replicating the parent columns once per
+    /// result instead of cloning the parent env per emitted row. Crucially the
+    /// emitter resumes a partially-drained input batch across `next()` calls, so
+    /// a batch that produces more than `BATCH_SIZE` results never drops rows.
+    pub(crate) emitter: BatchedResultEmitter<'a, VarLenResult>,
     relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
     /// Optional per-hop edge filter expression (absorbed from WHERE clause by the optimizer).
     edge_filter: Option<&'a QueryExpr<Variable>>,
@@ -59,7 +78,7 @@ pub struct CondVarLenTraverseOp<'a> {
 }
 
 impl<'a> CondVarLenTraverseOp<'a> {
-    pub const fn new(
+    pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
         relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
@@ -67,10 +86,18 @@ impl<'a> CondVarLenTraverseOp<'a> {
         emit_path: bool,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
+        let emitter = BatchedResultEmitter::with_binding(VarLenEndpoints {
+            from: relationship_pattern.from.alias.id,
+            to: relationship_pattern.to.alias.id,
+            // A shared endpoint alias (`(a)-[*]->(a)`) binds one column; keep the
+            // `to` value (last-insert-wins) to match the row builder.
+            distinct: relationship_pattern.from.alias.id != relationship_pattern.to.alias.id,
+            path: emit_path.then_some(relationship_pattern.alias.id),
+        });
         Self {
             runtime,
             child,
-            pending: VecDeque::new(),
+            emitter,
             relationship_pattern,
             edge_filter,
             emit_path,
@@ -78,38 +105,49 @@ impl<'a> CondVarLenTraverseOp<'a> {
         }
     }
 
+    /// Enumerate all var-length results reachable from `batch[row_idx]`'s source
+    /// binding, pushing each as a `(from, to, opt_path)` tuple into `out`. The
+    /// endpoint node ids are already mapped onto the pattern's `from`/`to`
+    /// aliases (honoring reversal), so the emitter binds them without any
+    /// transpose. Path values are built only when `emit_path` is set. Callers
+    /// pass the op's fields explicitly so this runs inside the emitter closure
+    /// without borrowing the emitter through `&self`.
     fn expand_row(
-        &self,
-        vars: &Row,
-        out: &mut Vec<Row>,
+        runtime: &Runtime,
+        relationship_pattern: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
+        edge_filter: Option<&QueryExpr<Variable>>,
+        emit_path: bool,
+        batch: &Batch,
+        row_idx: usize,
+        out: &mut ResultBuf,
     ) -> Result<(), String> {
-        let relationship_pattern = self.relationship_pattern;
+        let vars = BatchRow::new(batch, row_idx);
 
         // Evaluate edge attribute filter (e.g. {connects: 'BC'})
-        let filter_attrs = ExprEval::from_runtime(self.runtime).eval(
+        let filter_attrs = ExprEval::from_runtime(runtime).eval(
             &relationship_pattern.attrs,
             relationship_pattern.attrs.root().idx(),
-            Some(vars),
+            Some(&vars),
             None,
         )?;
         let has_edge_filter = matches!(&filter_attrs, Value::Map(m) if !m.is_empty());
 
         let from_id = vars
-            .get_by_id(relationship_pattern.from.alias.id)
+            .value_at(relationship_pattern.from.alias.id)
             .and_then(|v| match v {
-                Value::Node(id) => Some(*id),
+                Value::Node(id) => Some(id),
                 _ => None,
             });
-        if from_id.is_none() && vars.is_bound_by_id(relationship_pattern.from.alias.id) {
+        if from_id.is_none() && batch.is_bound_at(relationship_pattern.from.alias.id, row_idx) {
             return Ok(());
         }
         let to_id = vars
-            .get_by_id(relationship_pattern.to.alias.id)
+            .value_at(relationship_pattern.to.alias.id)
             .and_then(|v| match v {
-                Value::Node(id) => Some(*id),
+                Value::Node(id) => Some(id),
                 _ => None,
             });
-        if to_id.is_none() && vars.is_bound_by_id(relationship_pattern.to.alias.id) {
+        if to_id.is_none() && batch.is_bound_at(relationship_pattern.to.alias.id, row_idx) {
             return Ok(());
         }
 
@@ -128,7 +166,7 @@ impl<'a> CondVarLenTraverseOp<'a> {
         } else {
             from_id.map_or_else(
                 || {
-                    self.runtime
+                    runtime
                         .g
                         .borrow()
                         .get_nodes(&relationship_pattern.from.labels, 0)
@@ -145,7 +183,7 @@ impl<'a> CondVarLenTraverseOp<'a> {
         };
         let dest_id = if reversed { from_id } else { to_id };
 
-        let g = self.runtime.g.borrow();
+        let g = runtime.g.borrow();
 
         for start_node in start_nodes {
             // Handle 0-hop case: start node itself is a valid result.
@@ -156,18 +194,13 @@ impl<'a> CondVarLenTraverseOp<'a> {
                         .iter()
                         .all(|l| g.get_node_labels(start_node).any(|nl| nl == *l)))
             {
-                let mut env = vars.clone();
-                env.insert(&relationship_pattern.from.alias, Value::Node(start_node));
-                env.insert(&relationship_pattern.to.alias, Value::Node(start_node));
-                if self.emit_path {
+                // `from` and `to` both bind the start node for a 0-hop result.
+                let path = emit_path.then(|| {
                     let mut path_elems = ThinVec::new();
                     path_elems.push(Value::Node(start_node));
-                    env.insert(
-                        &relationship_pattern.alias,
-                        Value::Path(Arc::new(path_elems)),
-                    );
-                }
-                out.push(env);
+                    Value::Path(Arc::new(path_elems))
+                });
+                out.push((start_node, start_node, path));
             }
 
             // Pre-collect adjacency list for this start node's DFS to avoid
@@ -191,7 +224,7 @@ impl<'a> CondVarLenTraverseOp<'a> {
                 // The path is only materialized when consumed downstream;
                 // otherwise it stays empty (hop-counting uses `nodes_in_path`).
                 let mut initial_path = ThinVec::new();
-                if self.emit_path {
+                if emit_path {
                     initial_path.push(Value::Node(start_node));
                 }
                 let mut initial_nodes = RoaringTreemap::new();
@@ -260,11 +293,11 @@ impl<'a> CondVarLenTraverseOp<'a> {
                         }
 
                         // Check WHERE-clause edge filter (absorbed by optimizer)
-                        if let Some(edge_filter) = self.edge_filter {
-                            let mut filter_env = vars.clone();
+                        if let Some(edge_filter) = edge_filter {
+                            let mut filter_env = vars.to_owned_row();
                             filter_env
                                 .insert(&relationship_pattern.alias, Value::Relationship(edge_id));
-                            let result = ExprEval::from_runtime(self.runtime).eval(
+                            let result = ExprEval::from_runtime(runtime).eval(
                                 edge_filter,
                                 edge_filter.root().idx(),
                                 Some(&filter_env),
@@ -310,33 +343,29 @@ impl<'a> CondVarLenTraverseOp<'a> {
                     } else {
                         path.clone()
                     };
-                    if self.emit_path {
+                    if emit_path {
                         new_path.push(Value::Relationship(edge_id));
                         new_path.push(Value::Node(dest));
                     }
 
+                    // Map the traversal endpoints onto the pattern's from/to
+                    // aliases (swapped for a reversed traversal).
+                    let (from_node, to_node) = if reversed {
+                        (dest, start_node)
+                    } else {
+                        (start_node, dest)
+                    };
+
                     if will_emit && will_continue {
-                        let mut env = vars.clone();
-                        if reversed {
-                            env.insert(&relationship_pattern.from.alias, Value::Node(dest));
-                            env.insert(&relationship_pattern.to.alias, Value::Node(start_node));
-                        } else {
-                            env.insert(&relationship_pattern.from.alias, Value::Node(start_node));
-                            env.insert(&relationship_pattern.to.alias, Value::Node(dest));
-                        }
-                        // The path feeds both the emitted row and the stack
+                        // The path feeds both the emitted result and the stack
                         // continuation. Clone once for the output `Value::Path`
                         // and move the original onto the stack below. When the
                         // path isn't emitted, the (empty) `new_path` moves
                         // straight onto the stack with no clone.
-                        if self.emit_path {
-                            env.insert(
-                                &relationship_pattern.alias,
-                                Value::Path(Arc::new(new_path.clone())),
-                            );
-                        }
+                        let emit_path_val =
+                            emit_path.then(|| Value::Path(Arc::new(new_path.clone())));
                         let owned = new_path;
-                        out.push(env);
+                        out.push((from_node, to_node, emit_path_val));
                         let mut next_used = if is_last {
                             std::mem::replace(&mut used_edges, RoaringTreemap::new())
                         } else {
@@ -352,21 +381,8 @@ impl<'a> CondVarLenTraverseOp<'a> {
                         stack.push((dest, owned, next_used, next_nodes));
                     } else if will_emit {
                         // Emit only — move path directly into Arc
-                        let mut env = vars.clone();
-                        if reversed {
-                            env.insert(&relationship_pattern.from.alias, Value::Node(dest));
-                            env.insert(&relationship_pattern.to.alias, Value::Node(start_node));
-                        } else {
-                            env.insert(&relationship_pattern.from.alias, Value::Node(start_node));
-                            env.insert(&relationship_pattern.to.alias, Value::Node(dest));
-                        }
-                        if self.emit_path {
-                            env.insert(
-                                &relationship_pattern.alias,
-                                Value::Path(Arc::new(new_path)),
-                            );
-                        }
-                        out.push(env);
+                        let emit_path_val = emit_path.then(|| Value::Path(Arc::new(new_path)));
+                        out.push((from_node, to_node, emit_path_val));
                     } else if will_continue {
                         // Continue only — move path to stack
                         let mut next_used = if is_last {
@@ -395,38 +411,48 @@ impl<'a> Iterator for CondVarLenTraverseOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut builder = BatchBuilder::new();
-
-        // Drain leftover rows from previous call.
-        super::drain_pending(&mut self.pending, &mut builder);
-
-        while builder.len() < BATCH_SIZE {
-            let batch = match self.child.next() {
-                Some(Ok(b)) => b,
-                Some(Err(e)) => return Some(Err(e)),
-                None => break,
-            };
-
-            for row in batch.active_indices() {
-                let vars = BatchRow::new(&batch, row).to_owned_row();
-                let mut expanded = Vec::new();
-                if let Err(e) = self.expand_row(&vars, &mut expanded) {
-                    return Some(Err(e));
+        let runtime = self.runtime;
+        let rp = self.relationship_pattern;
+        let edge_filter = self.edge_filter;
+        let emit_path = self.emit_path;
+        loop {
+            // Expand each active parent row's DFS results on demand and pack them
+            // across rows into one gathered batch. `expand_row` enumerates a
+            // row's results eagerly into a `SmallVec` (the DFS is stack-based and
+            // borrows the graph, so it can't stream lazily), which the emitter
+            // then drains — replacing the per-result env clone + row-builder
+            // transpose with a single columnar `gather`. Because the emitter
+            // resumes a partially-drained batch across `next()` calls, an input
+            // batch that yields more than `BATCH_SIZE` results never drops rows.
+            // When the seeded batch is exhausted (`Ok(None)`), pull and seed the
+            // next child batch.
+            match self.emitter.emit_lazy(|batch, row| {
+                let mut expanded = ResultBuf::new();
+                Self::expand_row(
+                    runtime,
+                    rp,
+                    edge_filter,
+                    emit_path,
+                    batch,
+                    row,
+                    &mut expanded,
+                )?;
+                if expanded.is_empty() {
+                    Ok(None)
+                } else {
+                    // `spread` drains through a concrete `smallvec::IntoIter` —
+                    // no `Box`/vtable, and no heap for a low-fan-out row.
+                    Ok(Some(RowIter::spread(expanded.into_iter())))
                 }
-                self.pending.extend(expanded);
-
-                super::drain_pending(&mut self.pending, &mut builder);
-
-                if builder.len() >= BATCH_SIZE {
-                    break;
-                }
+            }) {
+                Ok(Some(out)) => return Some(Ok(out)),
+                Ok(None) => match self.child.next() {
+                    Some(Ok(batch)) => self.emitter.seed(batch),
+                    Some(Err(e)) => return Some(Err(e)),
+                    None => return None,
+                },
+                Err(e) => return Some(Err(e)),
             }
-        }
-
-        if builder.is_empty() {
-            None
-        } else {
-            Some(Ok(builder.finish()))
         }
     }
 }

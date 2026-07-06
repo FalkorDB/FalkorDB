@@ -12,17 +12,21 @@
 //!                             │ n=5, r=Rel(2,5,9)   │
 //!                             │ ...                  │
 //!                             └─────────────────────┘
-//!                             (buffered in `pending`, drained to output batches)
 //! ```
 //!
-//! ## State Machine
+//! ## Execution paths
 //!
-//! The operator maintains three pieces of state across `next()` calls:
-//! - `current_batch` / `current_pos`: position within the current input batch
-//! - `pending`: VecDeque of already-expanded output rows awaiting emission
-//!
-//! Each `next()` drains pending rows, then continues expanding input rows
-//! until `BATCH_SIZE` output rows are collected or input is exhausted.
+//! - **Batched F·A path** (`expand_batch`): the structurally-eligible common
+//!   case (anonymous edge, no sibling uniqueness, no inline attribute
+//!   predicates). Builds a sparse frontier matrix and multiplies it by the
+//!   relationship matrix in one `mxm`, gathering the resulting endpoints
+//!   columnar. Its output batches are queued on `pending_batches`.
+//! - **Per-row fallback** (`expand_row`): everything else (named edge,
+//!   bidirectional, sibling-edge uniqueness, attribute filters). Each active row
+//!   enumerates its `(from, to, edge)` results eagerly, and the shared
+//!   [`BatchedResultEmitter`] packs those across rows into one gathered batch
+//!   (replicating the parent columns once per result via `gather` instead of
+//!   cloning the parent env per result).
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -35,12 +39,14 @@ use crate::parser::ast::{ExprIR, QueryExpr, QueryRelationship, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow, Column},
-    row::{Row, RowView},
+    batch::{BATCH_SIZE, Batch, BatchOp, BatchRow, Column},
+    row::RowView,
     runtime::Runtime,
     value::Value,
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
+
+use super::batched_result_emitter::{BatchedResultEmitter, EdgeEndpoints, RowIter};
 
 /// Lazily resolved state — built on first `expand_row`, after any sibling
 /// Commit in the subtree has had a chance to create new labels/types.
@@ -72,14 +78,14 @@ pub struct CondTraverseOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
     relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
-    /// Buffered output rows from a partial expansion.
-    pending: VecDeque<Row>,
-    /// Buffered output batches from a partial expansion (vectorized path).
-    pending_batches: VecDeque<Batch<'a>>,
-    /// Current input batch being expanded (may span multiple output batches).
-    current_batch: Option<Batch<'a>>,
-    /// Index into active rows of the current batch.
-    current_pos: usize,
+    /// Holds the parent batch being expanded and the per-row edge results, and
+    /// performs the shared pack-and-gather emit for the per-row fallback path.
+    /// Each pushed result is a `(from, to, edge)` triple already mapped onto the
+    /// pattern's endpoints; the emitter binds them (no transpose) and skips the
+    /// second endpoint for self-loop patterns.
+    pub(crate) emitter: BatchedResultEmitter<'a, (NodeId, NodeId, RelationshipId)>,
+    /// Buffered output batches from the batched F·A path (`expand_batch`).
+    pub(crate) pending_batches: VecDeque<Batch<'a>>,
     /// Whether to emit one row per edge (true) or collapse multi-edges into
     /// one row per (src, dst) pair (false). Set by the planner based on
     /// whether the edge is named or referenced in a named path.
@@ -227,14 +233,34 @@ impl<'a> CondTraverseOp<'a> {
                     && attrs_is_static_empty(&rp.to.attrs)))
             && chain.iter().all(|hop| !hop.bidirectional);
 
+        // Self-loop patterns like `MATCH (n)-[r:T]->(n)` share one alias on both
+        // endpoints; bind it once (via `from`) and skip the `to` column so the
+        // second insert can't overwrite the first. The per-row path resolves
+        // `from`/`to` to the pattern endpoints itself, so the emitter binds them
+        // untransposed.
+        let to = (relationship_pattern.to.alias != relationship_pattern.from.alias)
+            .then_some(relationship_pattern.to.alias.id);
+        let mut emitter = BatchedResultEmitter::with_binding(EdgeEndpoints {
+            from: relationship_pattern.from.alias.id,
+            to,
+            edge: relationship_pattern.alias.id,
+            transposed: false,
+        });
+        // A downstream Skip/Limit lowers how many rows are needed; shrink the
+        // pack ceiling so the first emit returns a small batch instead of a full
+        // BATCH_SIZE worth of work.
+        if let Some(cap) = record_cap
+            && cap < BATCH_SIZE
+        {
+            emitter.set_pack_ceiling(cap.max(1));
+        }
+
         Self {
             runtime,
             child,
             relationship_pattern,
-            pending: VecDeque::new(),
+            emitter,
             pending_batches: VecDeque::new(),
-            current_batch: None,
-            current_pos: 0,
             emit_relationship,
             sibling_edges,
             transposed,
@@ -250,13 +276,16 @@ impl<'a> CondTraverseOp<'a> {
     }
 
     /// Build the lazy state from current graph contents.  Called on the
-    /// first `expand_row` invocation, after any sibling Commit in the
-    /// subtree has executed.
-    fn build_state(&self) -> CtState {
-        let rp = self.relationship_pattern;
-        let g = self.runtime.g.borrow();
+    /// first `expand_row`/`expand_batch` invocation, after any sibling Commit in
+    /// the subtree has executed.
+    fn build_state(
+        runtime: &Runtime,
+        rp: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
+        transposed: bool,
+    ) -> CtState {
+        let g = runtime.g.borrow();
 
-        let (fwd_src_labels, fwd_dst_labels) = if self.transposed {
+        let (fwd_src_labels, fwd_dst_labels) = if transposed {
             (&rp.to.labels, &rp.from.labels)
         } else {
             (&rp.from.labels, &rp.to.labels)
@@ -265,7 +294,7 @@ impl<'a> CondTraverseOp<'a> {
         let fwd_src_label_ids = g.resolve_label_ids(fwd_src_labels);
         let fwd_dst_label_ids = g.resolve_label_ids(fwd_dst_labels);
         let (rev_src_label_ids, rev_dst_label_ids) = if rp.bidirectional {
-            let (rev_src_labels, rev_dst_labels) = if self.transposed {
+            let (rev_src_labels, rev_dst_labels) = if transposed {
                 (&rp.from.labels, &rp.to.labels)
             } else {
                 (&rp.to.labels, &rp.from.labels)
@@ -353,7 +382,8 @@ impl<'a> CondTraverseOp<'a> {
         let mut state_ref = self.state.borrow_mut();
         if state_ref.is_none() {
             drop(state_ref);
-            let new_state = self.build_state();
+            let new_state =
+                Self::build_state(self.runtime, self.relationship_pattern, self.transposed);
             *self.state.borrow_mut() = Some(new_state);
             state_ref = self.state.borrow_mut();
         }
@@ -584,14 +614,24 @@ impl<'a> CondTraverseOp<'a> {
         Ok(true)
     }
 
+    /// Enumerate the single-hop results for `batch[row_idx]`, pushing each as a
+    /// `(from, to, edge)` triple (already mapped onto the pattern's endpoints)
+    /// into `out`. Callers pass the op's fields explicitly so this can run inside
+    /// the emitter closure without borrowing the emitter through `&self`.
+    #[allow(clippy::too_many_arguments)]
     fn expand_row(
-        &self,
+        runtime: &Runtime,
+        rp: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
+        emit_relationship: bool,
+        sibling_edges: &[u32],
+        transposed: bool,
+        state_cell: &std::cell::RefCell<Option<CtState>>,
+        bidir_dedup: &Option<std::cell::RefCell<std::collections::HashSet<(u64, u64)>>>,
+        dedup_source_alias: &Option<Variable>,
         batch: &Batch<'a>,
         row_idx: usize,
-        out: &mut Vec<Row>,
+        out: &mut Vec<(NodeId, NodeId, RelationshipId)>,
     ) -> Result<(), String> {
-        let runtime = self.runtime;
-        let rp = self.relationship_pattern;
         let env = BatchRow::new(batch, row_idx);
 
         let filter_attrs = ExprEval::from_runtime(runtime).eval(
@@ -633,13 +673,13 @@ impl<'a> CondTraverseOp<'a> {
         // Lazily initialize state from current graph contents on first use,
         // ensuring sibling Commits in the subtree have already had a chance
         // to add new labels/relationship types.
-        let mut state_ref = self.state.borrow_mut();
+        let mut state_ref = state_cell.borrow_mut();
         if state_ref.is_none() {
             drop(state_ref);
             drop(g);
-            let new_state = self.build_state();
-            *self.state.borrow_mut() = Some(new_state);
-            state_ref = self.state.borrow_mut();
+            let new_state = Self::build_state(runtime, rp, transposed);
+            *state_cell.borrow_mut() = Some(new_state);
+            state_ref = state_cell.borrow_mut();
             // Re-borrow after building state.
             // (g re-borrowed below)
         }
@@ -648,8 +688,6 @@ impl<'a> CondTraverseOp<'a> {
             return Ok(());
         }
         let g = runtime.g.borrow();
-
-        let transposed = self.transposed;
 
         // Map from_id/to_id to the matrix's src/dst dimensions.
         let (fwd_src_id, fwd_dst_id) = if transposed {
@@ -682,8 +720,8 @@ impl<'a> CondTraverseOp<'a> {
                 batch,
                 row_idx,
                 out,
-                self.emit_relationship,
-                self.sibling_edges,
+                emit_relationship,
+                sibling_edges,
                 &state.edge_iters,
                 &state.fwd_src_label_ids,
                 &state.fwd_dst_label_ids,
@@ -719,8 +757,8 @@ impl<'a> CondTraverseOp<'a> {
                 batch,
                 row_idx,
                 out,
-                self.emit_relationship,
-                self.sibling_edges,
+                emit_relationship,
+                sibling_edges,
                 &state.edge_iters,
                 &state.rev_src_label_ids,
                 &state.rev_dst_label_ids,
@@ -730,21 +768,19 @@ impl<'a> CondTraverseOp<'a> {
         // When both this CT and its child are anonymous bidirectional,
         // deduplicate output rows by (scan_source, final_dest) across
         // expand_row calls — matching C FalkorDB's matrix-multiply semantics.
-        if let Some(ref dedup) = self.bidir_dedup {
-            let source_alias = self.dedup_source_alias.as_ref().unwrap();
+        if let Some(dedup) = bidir_dedup {
+            let source_alias = dedup_source_alias.as_ref().unwrap();
+            // The scan source is a parent-carried column, constant for every
+            // result of this row, so read it once.
+            let src_key = match batch.value_at(source_alias.id, row_idx) {
+                Some(Value::Node(id)) => Some(u64::from(id)),
+                _ => None,
+            };
             let mut seen = dedup.borrow_mut();
             let mut i = start;
             while i < out.len() {
-                let key = {
-                    let f = out[i].get_by_id(source_alias.id);
-                    let t = out[i].get_by_id(rp.to.alias.id);
-                    match (f, t) {
-                        (Some(Value::Node(fid)), Some(Value::Node(tid))) => {
-                            Some((u64::from(*fid), u64::from(*tid)))
-                        }
-                        _ => None,
-                    }
-                };
+                // `out[i].1` is the `to` endpoint bound on the produced row.
+                let key = src_key.map(|s| (s, u64::from(out[i].1)));
                 if let Some(k) = key
                     && !seen.insert(k)
                 {
@@ -774,7 +810,7 @@ impl<'a> CondTraverseOp<'a> {
         rp: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
         batch: &Batch<'a>,
         row_idx: usize,
-        out: &mut Vec<Row>,
+        out: &mut Vec<(NodeId, NodeId, RelationshipId)>,
         emit_relationship: bool,
         sibling_edges: &[u32],
         edge_iters: &[std::cell::RefCell<EdgeIter>],
@@ -862,11 +898,9 @@ impl<'a> CondTraverseOp<'a> {
                     }
                 }
                 if let Some(id) = found_id {
-                    let mut row = env.to_owned_row();
-                    row.insert(&rp.alias, Value::Relationship(id));
-                    row.insert(&rp.from.alias, Value::Node(from_node));
-                    row.insert(&rp.to.alias, Value::Node(to_node));
-                    out.push(row);
+                    // The parent columns are replicated by the emitter's gather;
+                    // here we only record the produced endpoints and edge.
+                    out.push((from_node, to_node, id));
                 }
                 continue;
             }
@@ -902,13 +936,33 @@ impl<'a> CondTraverseOp<'a> {
                             continue;
                         }
                     }
-                    let mut row = env.to_owned_row();
-                    row.insert(&rp.alias, Value::Relationship(id));
-                    row.insert(&rp.from.alias, Value::Node(from_node));
-                    row.insert(&rp.to.alias, Value::Node(to_node));
-                    out.push(row);
+                    out.push((from_node, to_node, id));
                 }
             }
+        }
+    }
+
+    /// Trim a produced batch to the remaining `record_cap` budget (when set),
+    /// advancing `produced`. Takes the fields explicitly so it can be called
+    /// while disjoint fields of `self` are borrowed by the emitter closure.
+    fn trim_to_cap(
+        record_cap: Option<usize>,
+        produced: &mut usize,
+        batch: Batch<'a>,
+    ) -> Batch<'a> {
+        let Some(cap) = record_cap else {
+            return batch;
+        };
+        let remaining = cap.saturating_sub(*produced);
+        let active_len = batch.active_len();
+        if active_len > remaining {
+            let active: Vec<usize> = batch.active_indices().take(remaining).collect();
+            let trimmed = batch.gather(&active);
+            *produced += trimmed.active_len();
+            trimmed
+        } else {
+            *produced += active_len;
+            batch
         }
     }
 }
@@ -930,98 +984,98 @@ impl<'a> Iterator for CondTraverseOp<'a> {
         // side effects.  Empty matrices/iters in the lazy state naturally
         // produce zero rows, which is the desired behavior.
 
-        let mut builder = BatchBuilder::new();
-
-        // Drain leftover rows from previous call.
-        super::drain_pending(&mut self.pending, &mut builder);
-        super::drain_pending_batches(&mut self.pending_batches, &mut builder);
+        // Pre-bind disjoint field borrows so the emitter closure doesn't borrow
+        // `self` (which also owns the emitter). The per-row expansion runs
+        // through these instead of `&self`.
+        let runtime = self.runtime;
+        let rp = self.relationship_pattern;
+        let emit_relationship = self.emit_relationship;
+        let sibling_edges = self.sibling_edges;
+        let transposed = self.transposed;
+        let state_cell = &self.state;
+        let bidir_dedup = &self.bidir_dedup;
+        let dedup_source_alias = &self.dedup_source_alias;
+        let record_cap = self.record_cap;
 
         loop {
-            if builder.len() >= BATCH_SIZE {
-                break;
+            // 1. Emit any batches produced by the batched F·A path first.
+            if let Some(out) = self.pending_batches.pop_front() {
+                return Some(Ok(Self::trim_to_cap(record_cap, &mut self.produced, out)));
             }
 
-            // Get or fetch current batch.
-            if self.current_batch.is_none() {
-                match self.child.next() {
-                    Some(Ok(b)) => {
-                        self.current_batch = Some(b);
-                        self.current_pos = 0;
-                        // Reset bidirectional dedup for each new input batch so
-                        // that Apply/Optional scopes see fresh state.
-                        if let Some(ref dedup) = self.bidir_dedup {
-                            dedup.borrow_mut().clear();
+            // 2. Drive the per-row fallback emitter over the seeded batch. Each
+            //    active row's single-hop results are enumerated eagerly into a
+            //    `Vec` (the edge iterators borrow the graph, so they can't stream
+            //    lazily), which the emitter packs across rows into one gathered
+            //    batch — replacing the per-result env clone + row-builder
+            //    transpose with a single columnar `gather`.
+            match self.emitter.emit_lazy(|batch, row_idx| {
+                let mut expanded = Vec::new();
+                Self::expand_row(
+                    runtime,
+                    rp,
+                    emit_relationship,
+                    sibling_edges,
+                    transposed,
+                    state_cell,
+                    bidir_dedup,
+                    dedup_source_alias,
+                    batch,
+                    row_idx,
+                    &mut expanded,
+                )?;
+                if expanded.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(RowIter::many(Box::new(expanded.into_iter()))))
+                }
+            }) {
+                Ok(Some(out)) => {
+                    return Some(Ok(Self::trim_to_cap(record_cap, &mut self.produced, out)));
+                }
+                Ok(None) => {
+                    // Seeded batch exhausted (or none installed). Pull the next
+                    // child batch and decide fast vs. per-row path for it.
+                    match self.child.next() {
+                        Some(Ok(b)) => {
+                            // Reset bidirectional dedup for each new input batch
+                            // so Apply/Optional scopes see fresh state.
+                            if let Some(ref dedup) = self.bidir_dedup {
+                                dedup.borrow_mut().clear();
+                            }
+                            // Try the batched mxm path on the whole batch. When it
+                            // fully handles the batch (`Ok(true)`) its output is
+                            // queued on `pending_batches` and the emitter is left
+                            // idle; on fallback (`Ok(false)`) seed the emitter to
+                            // expand the batch row-by-row.
+                            let mut handled = false;
+                            if self.batched_eligible {
+                                let active: Vec<usize> = b.active_indices().collect();
+                                let mut pending = std::mem::take(&mut self.pending_batches);
+                                match self.expand_batch(&b, &active, &mut pending) {
+                                    Ok(true) => {
+                                        self.pending_batches = pending;
+                                        handled = true;
+                                    }
+                                    Ok(false) => {
+                                        self.pending_batches = pending;
+                                    }
+                                    Err(e) => {
+                                        self.pending_batches = pending;
+                                        return Some(Err(e));
+                                    }
+                                }
+                            }
+                            if !handled {
+                                self.emitter.seed(b);
+                            }
                         }
+                        Some(Err(e)) => return Some(Err(e)),
+                        None => return None,
                     }
-                    Some(Err(e)) => return Some(Err(e)),
-                    None => break,
                 }
+                Err(e) => return Some(Err(e)),
             }
-
-            {
-                let batch = self.current_batch.as_ref().unwrap();
-                let active: Vec<usize> = batch.active_indices().collect();
-
-                let mut used_batched = false;
-                if self.batched_eligible && self.current_pos < active.len() {
-                    let active_subset = &active[self.current_pos..];
-                    let mut pending = std::mem::take(&mut self.pending_batches);
-                    match self.expand_batch(batch, active_subset, &mut pending) {
-                        Ok(true) => {
-                            self.pending_batches = pending;
-                            self.current_pos = active.len();
-                            used_batched = true;
-                        }
-                        Ok(false) => {
-                            self.pending_batches = pending;
-                        }
-                        Err(e) => {
-                            self.pending_batches = pending;
-                            return Some(Err(e));
-                        }
-                    }
-                }
-
-                if !used_batched {
-                    while self.current_pos < active.len() {
-                        let row_idx = active[self.current_pos];
-                        self.current_pos += 1;
-                        let mut expanded = Vec::new();
-                        if let Err(e) = self.expand_row(batch, row_idx, &mut expanded) {
-                            return Some(Err(e));
-                        }
-                        self.pending.extend(expanded);
-
-                        if self.pending.len() >= BATCH_SIZE {
-                            break;
-                        }
-                    }
-                }
-            }
-
-            super::drain_pending(&mut self.pending, &mut builder);
-            super::drain_pending_batches(&mut self.pending_batches, &mut builder);
-
-            // Check if batch is exhausted.
-            if let Some(ref batch) = self.current_batch
-                && self.current_pos >= batch.active_len()
-            {
-                self.current_batch = None;
-            }
-        }
-
-        if builder.is_empty() {
-            None
-        } else {
-            // Trim to record_cap if set.
-            if let Some(cap) = self.record_cap {
-                let remaining = cap - self.produced;
-                if builder.len() > remaining {
-                    builder.truncate(remaining);
-                }
-            }
-            self.produced += builder.len();
-            Some(Ok(builder.finish()))
         }
     }
 }

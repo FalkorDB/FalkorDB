@@ -21,7 +21,6 @@
 //!             output rows (one per CSV record)
 //! ```
 
-use std::collections::VecDeque;
 use std::net::{Ipv4Addr, SocketAddr, ToSocketAddrs};
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
@@ -31,13 +30,14 @@ use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
+    batch::{Batch, BatchOp, BatchRow},
     ordermap::OrderMap,
-    row::{Row, RowView},
     runtime::Runtime,
     value::Value,
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
+
+use super::batched_result_emitter::{BatchedResultEmitter, RowIter};
 
 /// True if `v4` falls into a non-public IPv4 range that we refuse to
 /// fetch CSV from. Shared between the `IpAddr::V4` branch and the
@@ -226,16 +226,20 @@ fn http_config() -> &'static ureq::config::Config {
 pub struct LoadCsvOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
-    pending: VecDeque<Row>,
+    /// Holds the parent batch being expanded and performs the shared
+    /// pack-and-gather emit, binding each CSV record (a `Value::Map` with
+    /// headers, or a `Value::List` without) to `var`. The emitter resumes a
+    /// partially-drained batch across `next()` calls, so a CSV that yields more
+    /// than `BATCH_SIZE` records never drops sibling input rows.
+    pub(crate) emitter: BatchedResultEmitter<'a, Value>,
     file_path: &'a QueryExpr<Variable>,
     headers: &'a bool,
     delimiter: &'a QueryExpr<Variable>,
-    var: &'a Variable,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
 impl<'a> LoadCsvOp<'a> {
-    pub const fn new(
+    pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
         file_path: &'a QueryExpr<Variable>,
@@ -247,26 +251,23 @@ impl<'a> LoadCsvOp<'a> {
         Self {
             runtime,
             child,
-            pending: VecDeque::new(),
+            emitter: BatchedResultEmitter::with_binding(var.id),
             file_path,
             headers,
             delimiter,
-            var,
             idx,
         }
     }
 
     fn load_csv_records(
-        &self,
+        headers: bool,
         path: &str,
         delimiter: &Arc<String>,
-        vars: &Row,
-    ) -> Result<Vec<Row>, String> {
+        results: &mut Vec<Value>,
+    ) -> Result<(), String> {
         // Configurable upper bound for network- and file-sourced CSVs.
         // Kept in sync with prior hardcoded 100 MiB for backward compat.
         const MAX_CSV_BYTES: u64 = 100 * 1024 * 1024;
-
-        let mut results = Vec::new();
 
         if path.starts_with("https://") {
             // SEC-1: block SSRF to private / loopback / link-local / multicast
@@ -293,10 +294,10 @@ impl<'a> LoadCsvOp<'a> {
             // truncating, so a payload longer than the limit fails the query.
             let response = EnforcingReader::new(body.into_reader(), MAX_CSV_BYTES);
             let mut reader = csv::ReaderBuilder::new()
-                .has_headers(*self.headers)
+                .has_headers(headers)
                 .delimiter(delimiter.as_bytes()[0])
                 .from_reader(response);
-            self.collect_records(&mut reader, vars, &mut results)?;
+            Self::collect_records(headers, &mut reader, results)?;
         } else {
             // SEC-4: cap local file reads at the same bound. The path has
             // already been canonicalised and prefix-checked against the
@@ -305,23 +306,22 @@ impl<'a> LoadCsvOp<'a> {
                 std::fs::File::open(path).map_err(|e| format!("Failed to read CSV file: {e}"))?;
             let limited = EnforcingReader::new(file, MAX_CSV_BYTES);
             let mut reader = csv::ReaderBuilder::new()
-                .has_headers(*self.headers)
+                .has_headers(headers)
                 .delimiter(delimiter.as_bytes()[0])
                 .from_reader(limited);
-            self.collect_records(&mut reader, vars, &mut results)?;
+            Self::collect_records(headers, &mut reader, results)?;
         }
 
-        Ok(results)
+        Ok(())
     }
 
     fn collect_records<R: std::io::Read>(
-        &self,
+        headers: bool,
         reader: &mut csv::Reader<R>,
-        vars: &Row,
-        results: &mut Vec<Row>,
+        results: &mut Vec<Value>,
     ) -> Result<(), String> {
-        if *self.headers {
-            let headers = reader
+        if headers {
+            let header_names = reader
                 .headers()
                 .map_err(|e| format!("Failed to read CSV headers: {e}"))?
                 .iter()
@@ -329,51 +329,41 @@ impl<'a> LoadCsvOp<'a> {
                 .collect::<Vec<_>>();
             for record in reader.records() {
                 let record = record.map_err(|e| format!("Failed to read CSV record: {e}"))?;
-                let mut env = vars.clone();
-                env.insert(
-                    self.var,
-                    Value::Map(Arc::new(
-                        record
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(i, field)| {
-                                if field.is_empty() {
-                                    None
-                                } else {
-                                    Some((
-                                        headers
-                                            .get(i)
-                                            .cloned()
-                                            .unwrap_or_else(|| Arc::new(format!("col_{i}"))),
-                                        Value::String(Arc::new(String::from(field))),
-                                    ))
-                                }
-                            })
-                            .collect::<OrderMap<_, _>>(),
-                    )),
-                );
-                results.push(env);
+                results.push(Value::Map(Arc::new(
+                    record
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, field)| {
+                            if field.is_empty() {
+                                None
+                            } else {
+                                Some((
+                                    header_names
+                                        .get(i)
+                                        .cloned()
+                                        .unwrap_or_else(|| Arc::new(format!("col_{i}"))),
+                                    Value::String(Arc::new(String::from(field))),
+                                ))
+                            }
+                        })
+                        .collect::<OrderMap<_, _>>(),
+                )));
             }
         } else {
             for record in reader.records() {
                 let record = record.map_err(|e| format!("Failed to read CSV record: {e}"))?;
-                let mut env = vars.clone();
-                env.insert(
-                    self.var,
-                    Value::List(Arc::new(
-                        record
-                            .iter()
-                            .map(|field| {
-                                if field.is_empty() {
-                                    Value::Null
-                                } else {
-                                    Value::String(Arc::new(String::from(field)))
-                                }
-                            })
-                            .collect(),
-                    )),
-                );
-                results.push(env);
+                results.push(Value::List(Arc::new(
+                    record
+                        .iter()
+                        .map(|field| {
+                            if field.is_empty() {
+                                Value::Null
+                            } else {
+                                Value::String(Arc::new(String::from(field)))
+                            }
+                        })
+                        .collect(),
+                )));
             }
         }
         Ok(())
@@ -384,78 +374,67 @@ impl<'a> Iterator for LoadCsvOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut builder = BatchBuilder::new();
-
-        // Drain leftover rows from previous call.
-        super::drain_pending(&mut self.pending, &mut builder);
-
-        while builder.len() < BATCH_SIZE {
-            let batch = match self.child.next() {
-                Some(Ok(b)) => b,
-                Some(Err(e)) => return Some(Err(e)),
-                None => break,
-            };
-
-            for row in batch.active_indices() {
-                let vars = BatchRow::new(&batch, row).to_owned_row();
-                let vars = &vars;
-                let path = match ExprEval::from_runtime(self.runtime).eval(
-                    self.file_path,
-                    self.file_path.root().idx(),
-                    Some(vars),
+        let runtime = self.runtime;
+        let file_path = self.file_path;
+        let delimiter_expr = self.delimiter;
+        let headers = *self.headers;
+        loop {
+            // For each active input row, resolve the path + delimiter, read the
+            // CSV eagerly into a `Vec<Value>` (one map/list per record), and let
+            // the emitter pack the records across rows into gathered batches.
+            // The emitter resumes a partially-drained batch across `next()`
+            // calls, so a CSV with more than `BATCH_SIZE` records never drops
+            // sibling input rows. When exhausted (`Ok(None)`), pull the next
+            // child batch.
+            match self.emitter.emit_lazy(|batch, row| {
+                let view = BatchRow::new(batch, row);
+                let path = ExprEval::from_runtime(runtime).eval(
+                    file_path,
+                    file_path.root().idx(),
+                    Some(&view),
                     None,
-                ) {
-                    Ok(v) => v,
-                    Err(e) => return Some(Err(e)),
-                };
-                let delimiter = match ExprEval::from_runtime(self.runtime).eval(
-                    self.delimiter,
-                    self.delimiter.root().idx(),
-                    Some(vars),
+                )?;
+                let delimiter = match ExprEval::from_runtime(runtime).eval(
+                    delimiter_expr,
+                    delimiter_expr.root().idx(),
+                    Some(&view),
                     None,
-                ) {
-                    Ok(Value::String(s)) => s,
-                    Ok(_) => return Some(Err(String::from("Delimiter must be a string"))),
-                    Err(e) => return Some(Err(e)),
+                )? {
+                    Value::String(s) => s,
+                    _ => return Err(String::from("Delimiter must be a string")),
                 };
                 if delimiter.len() != 1 {
-                    return Some(Err(String::from(
+                    return Err(String::from(
                         "CSV field terminator can only be one character wide",
-                    )));
+                    ));
                 }
                 let Value::String(path) = path else {
-                    return Some(Err(String::from("File path must be a string")));
+                    return Err(String::from("File path must be a string"));
                 };
                 let path = if let Some(path) = path.strip_prefix("file://") {
                     // Strip a leading '/' so an absolute path inside the URL
                     // does not cause `Path::join` to discard the import
                     // folder and escape the sandbox.
                     let rel_path = path.trim_start_matches('/');
-                    let joined_path = Path::new(&self.runtime.import_folder).join(rel_path);
+                    let joined_path = Path::new(&runtime.import_folder).join(rel_path);
                     let joined = joined_path.to_string_lossy().into_owned();
-                    let import_folder = match Path::new(&self.runtime.import_folder).canonicalize()
-                    {
-                        Ok(p) => p,
-                        Err(e) => {
-                            return Some(Err(format!(
-                                "Failed to canonicalize import folder path '{}': {e}",
-                                self.runtime.import_folder
-                            )));
-                        }
-                    };
-                    let cpath = match joined_path.canonicalize() {
-                        Ok(p) => p,
-                        Err(e) => {
-                            return Some(Err(format!(
-                                "Failed to canonicalize file path '{joined}': {e}"
-                            )));
-                        }
-                    };
+                    let import_folder =
+                        Path::new(&runtime.import_folder)
+                            .canonicalize()
+                            .map_err(|e| {
+                                format!(
+                                    "Failed to canonicalize import folder path '{}': {e}",
+                                    runtime.import_folder
+                                )
+                            })?;
+                    let cpath = joined_path
+                        .canonicalize()
+                        .map_err(|e| format!("Failed to canonicalize file path '{joined}': {e}"))?;
                     if !cpath.starts_with(&import_folder) {
-                        return Some(Err(format!(
+                        return Err(format!(
                             "File path '{joined}' is not within the import folder '{}'",
-                            self.runtime.import_folder
-                        )));
+                            runtime.import_folder
+                        ));
                     }
                     // Use the canonicalized path for actual I/O so a symlink
                     // race cannot cause us to read a file outside the import
@@ -464,31 +443,26 @@ impl<'a> Iterator for LoadCsvOp<'a> {
                 } else if path.starts_with("https://") {
                     String::from(path.as_str())
                 } else {
-                    return Some(Err(String::from(
-                        "File path must start with 'file://' prefix",
-                    )));
+                    return Err(String::from("File path must start with 'file://' prefix"));
                 };
 
-                // Read CSV and expand rows
-                match self.load_csv_records(&path, &delimiter, vars) {
-                    Ok(rows) => {
-                        self.pending.extend(rows);
-                    }
-                    Err(e) => return Some(Err(e)),
+                // Read CSV records for this input row.
+                let mut records = Vec::new();
+                Self::load_csv_records(headers, &path, &delimiter, &mut records)?;
+                if records.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(RowIter::many(Box::new(records.into_iter()))))
                 }
-
-                super::drain_pending(&mut self.pending, &mut builder);
-
-                if builder.len() >= BATCH_SIZE {
-                    break;
-                }
+            }) {
+                Ok(Some(out)) => return Some(Ok(out)),
+                Ok(None) => match self.child.next() {
+                    Some(Ok(batch)) => self.emitter.seed(batch),
+                    Some(Err(e)) => return Some(Err(e)),
+                    None => return None,
+                },
+                Err(e) => return Some(Err(e)),
             }
-        }
-
-        if builder.is_empty() {
-            None
-        } else {
-            Some(Ok(builder.finish()))
         }
     }
 }
