@@ -137,16 +137,11 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Configure git identity for gh-pages commit
-        run: |
-          git -C gh-pages config user.name "github-actions[bot]"
-          git -C gh-pages config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C gh-pages remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
-
       - name: Publish to gh-pages
         id: publish
         env:
           REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VIEW: ${{ inputs.view }}
           IS_CANONICAL: ${{ inputs.is_canonical }}
           SUMMARY_JSON: ${{ steps.ts.outputs.out_json }}

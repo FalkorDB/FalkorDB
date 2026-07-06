@@ -274,12 +274,15 @@ jobs:
       - name: Remove branch view (if any) and push
         env:
           PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          SCRIPTS="$GITHUB_WORKSPACE/.github/scripts/benchmark"
           # Same slug the publish path used (view-slug.sh) so we remove the
           # exact dir this PR published — no orphaned views. Tolerate a missing
           # script so an unrelated closed PR never fails here.
-          VIEW=$(.github/scripts/benchmark/view-slug.sh "$PR_HEAD_REF" || true)
+          VIEW=$("$SCRIPTS/view-slug.sh" "$PR_HEAD_REF" || true)
           if [ -z "$VIEW" ]; then
             echo "could not derive a view slug — nothing to clean up"
             exit 0
@@ -292,22 +295,6 @@ jobs:
             exit 0
           fi
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
-
           git rm -rq "$TARGET"
-          git commit -q -m "benchmark: remove closed-PR view ${VIEW}"
-
-          attempt=1
-          max_attempts=5
-          until git push origin gh-pages -q; do
-            if [ "$attempt" -ge "$max_attempts" ]; then
-              echo "::error::failed to push gh-pages cleanup after ${max_attempts} attempts"
-              exit 1
-            fi
-            echo "push rejected (attempt ${attempt}/${max_attempts}) — fetching + rebasing and retrying"
-            git fetch origin gh-pages -q
-            git rebase origin/gh-pages
-            attempt=$((attempt + 1))
-          done
+          # Shared identity + token-remote + rebase-retry push (see publish.sh).
+          "$SCRIPTS/gh-pages-push.sh" "benchmark: remove closed-PR view ${VIEW}"

@@ -19,6 +19,11 @@
 # any future upstream refactor of these exact lines fail loudly here instead
 # of silently shipping a broken sub-path deployment — if that happens, this
 # script needs a one-time update to match the new source.
+#
+# This script is almost entirely literal JavaScript/TypeScript patched in via
+# sed; the single-quoted `${...}` fragments are JS template placeholders that
+# must NOT be shell-expanded, so SC2016 is a false positive throughout.
+# shellcheck disable=SC2016
 set -euo pipefail
 
 : "${UI_DIR:?UI_DIR (path to the vendored FalkorDB/benchmark ui/ directory) is required}"

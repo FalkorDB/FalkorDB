@@ -130,24 +130,9 @@ echo "target_rel=${TARGET_REL}"
 echo "::group::Committing and pushing gh-pages"
 cd "$GH_PAGES_DIR"
 git add -A -- "$TARGET_REL"
-if git diff --cached --quiet; then
-  echo "no changes to publish (identical output) — skipping commit"
-else
-  git commit -m "benchmark: update ${VIEW} view (epoch ${EPOCH})" -q
-
-  attempt=1
-  max_attempts=5
-  until git push origin gh-pages -q; do
-    if [ "$attempt" -ge "$max_attempts" ]; then
-      echo "::error::failed to push to gh-pages after ${max_attempts} attempts" >&2
-      exit 1
-    fi
-    echo "push rejected (attempt ${attempt}/${max_attempts}) — fetching + rebasing and retrying"
-    git fetch origin gh-pages -q
-    git rebase origin/gh-pages
-    attempt=$((attempt + 1))
-  done
-fi
+# Shared identity + token-remote + rebase-retry push (also a no-op when the
+# output is byte-identical to what's already published).
+"$SCRIPT_DIR/gh-pages-push.sh" "benchmark: update ${VIEW} view (epoch ${EPOCH})"
 echo "::endgroup::"
 
 # Surface outputs for the calling workflow (GITHUB_OUTPUT-compatible lines;
