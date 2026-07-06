@@ -508,3 +508,112 @@ class testAllShortestPaths():
         self.env.assertGreater(ss_result.result_set[0][0], ss_result.result_set[1][0])
         self.env.assertAlmostEqual(ss_result.result_set[0][0], 0.2, delta=1e-9)
         self.env.assertAlmostEqual(ss_result.result_set[1][0], 0.1, delta=1e-9)
+
+    def test09_sp_dijkstra_unconstrained_cost(self):
+        # pathCount == 1 with no maxCost set routes through the Dijkstra
+        # fast path (SPpaths_dijkstra_single) instead of the DFS-based
+        # search used everywhere else in this file. Verify it agrees with
+        # the true minimum-weight path, computed independently via a fully
+        # unconstrained Cypher variable-length match (no cost filtering).
+        query = f"""
+        MATCH (n:L {{v: {self.n}}}), (m:L {{v: {self.m}}})
+        MATCH p=(n)-[:E*1..3]->(m)
+        RETURN p,
+               reduce(weight = 0, r in relationships(p) | weight + r.weight) AS weight"""
+        result = self.graph.query(query)
+        candidates = [p for p in result.result_set
+                      if len(p[0].nodes()) == len(set(node.id for node in p[0].nodes()))]
+        min_weight = min(p[1] for p in candidates)
+
+        results = [
+            self.sp_query(self.n, self.m, ["E"], 3, None, 1, None),
+            self.sp_query(self.n, self.m, None, 3, None, 1, None)
+        ]
+
+        for result in results:
+            self.env.assertEquals(len(result.result_set), 1)
+            self.env.assertAlmostEqual(result.result_set[0][1], min_weight, delta=1e-9)
+
+    def test11_sp_unreachable(self):
+        # two nodes with no path between them at all: the BFS bound
+        # pre-pass (finite maxCost) and Dijkstra (unconstrained maxCost)
+        # must both report "no path" cleanly rather than erroring or
+        # hanging, regardless of pathCount.
+        g = self.db.select_graph("unreachable_graph")
+        g.query("CREATE (x:UR {id: 'X'}), (y:UR {id: 'Y'})")
+
+        def ur_query(path_count, max_cost):
+            args = ["sourceNode: src", "targetNode: dst", "weightProp: 'w'"]
+            if max_cost is not None:
+                args.append(f"maxCost: {max_cost}")
+            args.append(f"pathCount: {path_count}")
+            return g.query(f"""
+                MATCH (src:UR {{id: 'X'}}), (dst:UR {{id: 'Y'}})
+                CALL algo.SPpaths({{{", ".join(args)}}}) YIELD path
+                RETURN path
+            """)
+
+        # pathCount==1, unconstrained cost -> Dijkstra "not found" branch
+        self.env.assertEquals(len(ur_query(1, None).result_set), 0)
+        # pathCount==1, finite maxCost -> pre-pass short-circuit
+        self.env.assertEquals(len(ur_query(1, 100).result_set), 0)
+        # pathCount==0 (all-minimal), finite maxCost -> pre-pass short-circuit
+        self.env.assertEquals(len(ur_query(0, 100).result_set), 0)
+        # pathCount>1 (k-minimal), finite maxCost -> pre-pass short-circuit
+        self.env.assertEquals(len(ur_query(3, 100).result_set), 0)
+
+    def test12_sp_duplicate_edges(self):
+        # (a) a self-loop combined with relDirection: 'both' can surface
+        # the same edge as a candidate via both the outgoing and incoming
+        # scan; it must be rejected like any other cycle, not corrupt or
+        # duplicate the result.
+        g = self.db.select_graph("selfloop_graph")
+        g.query("""
+            CREATE (a:SL {id: 'A'}),
+                   (b:SL {id: 'B'}),
+                   (a)-[:SLR {weight: 1}]->(a),
+                   (a)-[:SLR {weight: 1}]->(b)
+        """)
+
+        result = g.query("""
+            MATCH (src:SL {id: 'A'}), (dst:SL {id: 'B'})
+            CALL algo.SPpaths({
+                sourceNode: src,
+                targetNode: dst,
+                weightProp: 'weight',
+                relDirection: 'both',
+                pathCount: 1
+            }) YIELD path, pathWeight
+            RETURN pathWeight, length(path)
+        """)
+
+        self.env.assertEquals(len(result.result_set), 1)
+        self.env.assertAlmostEqual(result.result_set[0][0], 1, delta=1e-9)
+        self.env.assertEquals(result.result_set[0][1], 1)
+
+        # (b) listing the same relationship type twice in relTypes must
+        # not double-count a path in the k-minimal results (previously,
+        # duplicate relation ids could surface a node/edge as a candidate
+        # twice, letting the same path be re-derived and returned again
+        # after the DFS backtracked through it).
+        expected_len = min(len(self.sp_paths), 3)
+        dup = self.sp_query(self.n, self.m, ["E", "E"], 3, self.max_cost, 3, None)
+        single = self.sp_query(self.n, self.m, ["E"], 3, self.max_cost, 3, None)
+
+        self.env.assertEquals(len(dup.result_set), expected_len)
+        self.env.assertEquals(len(single.result_set), expected_len)
+        for row in dup.result_set:
+            self.env.assertContains(row, single.result_set)
+
+    def test13_sp_src_eq_dst(self):
+        # sourceNode == targetNode is degenerate: minLen==1 requires at
+        # least one edge, so this must always return no results, whether
+        # or not a self-loop exists, and regardless of which code path
+        # handles it (Dijkstra fast path vs. DFS).
+        result = self.sp_query(self.n, self.n, ["E"], 3, self.max_cost, 1, None)
+        self.env.assertEquals(len(result.result_set), 0)
+
+        # unconstrained cost -- this is exactly the case SPpaths_dijkstra_single
+        # would otherwise mishandle (trivially "finding" src at distance 0).
+        result = self.sp_query(self.n, self.n, None, 3, None, 1, None)
+        self.env.assertEquals(len(result.result_set), 0)

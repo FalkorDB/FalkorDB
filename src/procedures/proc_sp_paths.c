@@ -593,6 +593,214 @@ static void _find_bound_path
 	HashTableRelease(parents);
 }
 
+// per-node label used by the Dijkstra fast path below
+typedef struct {
+	NodeID parent;    // predecessor in the shortest-path tree
+	Edge   edge;      // edge connecting parent -> this node
+	double weight;    // current best known weight to reach this node
+	bool   finalized; // true once popped from the heap with its optimal weight
+} DijkstraLabel;
+
+// heap entry: a candidate (node, weight) pair waiting to be finalized.
+// duplicate/stale entries for the same node are allowed (lazy deletion);
+// they're skipped at pop time via DijkstraLabel.finalized.
+typedef struct {
+	NodeID node;
+	double weight;  // weight at the time this entry was queued (heap key)
+} DijkstraItem;
+
+// Heap_* is a max-heap by 'cmp' (see path_cmp above); invert the comparison
+// so it behaves as a min-heap ordered by ascending weight.
+static int _dijkstra_cmp
+(
+	const void *a,
+	const void *b,
+	void *udata
+) {
+	const DijkstraItem *da = a;
+	const DijkstraItem *db = b;
+	return (da->weight < db->weight) - (da->weight > db->weight);
+}
+
+// exact single-shortest-path search via Dijkstra (label-setting, one
+// best-known weight per node, each node finalized exactly once).
+//
+// only valid when there is no maxCost constraint: with cost unconstrained,
+// weight alone determines optimality, so classic per-node dedup applies
+// and this always terminates in O((V+E) log V) -- unlike the DFS
+// enumeration below, which can blow up combinatorially on graphs with many
+// similar-weight alternative routes (e.g. dense/mesh-like road networks).
+//
+// ASSUMES weightProp is non-negative for every edge. Dijkstra's
+// "finalize once, never revisit" invariant is unsound with negative
+// weights (a node reached later via a heavier edge can hold a negative
+// edge that retroactively beats an already-finalized node), and this is
+// NOT detected or guarded against here: making that safe would require
+// giving up the early-termination-at-dst optimization (running to full
+// completion over the whole reachable component instead), which was
+// judged not worth it given weightProp values are expected to represent
+// real, non-negative quantities (distance, time, cost) in practice. if
+// negative weights are ever a real requirement, this function must not
+// be used as-is.
+static void SPpaths_dijkstra_single
+(
+	SinglePairCtx *ctx
+) {
+	NodeID src_id = ENTITY_GET_ID(&ctx->src);
+	NodeID dst_id = ENTITY_GET_ID(ctx->dst);
+
+	RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
+		"SPpaths: Dijkstra fast path src=%llu dst=%llu (unconstrained cost)",
+		(unsigned long long)src_id, (unsigned long long)dst_id);
+
+	dict *label_idx = HashTableCreate(&def_dt);  // node -> 1-based index into 'labels'
+	DijkstraLabel *labels = arr_new(DijkstraLabel, 64);
+	heap_t *heap = Heap_new(_dijkstra_cmp, NULL);
+
+	GRAPH_EDGE_DIR dirs[2];
+	int ndirs = 0;
+	if(ctx->dir == GRAPH_EDGE_DIR_OUTGOING || ctx->dir == GRAPH_EDGE_DIR_BOTH) {
+		dirs[ndirs++] = GRAPH_EDGE_DIR_OUTGOING;
+	}
+	if(ctx->dir == GRAPH_EDGE_DIR_INCOMING || ctx->dir == GRAPH_EDGE_DIR_BOTH) {
+		dirs[ndirs++] = GRAPH_EDGE_DIR_INCOMING;
+	}
+
+	// seed src with weight 0
+	DijkstraLabel src_label = { .parent = src_id, .weight = 0, .finalized = false };
+	arr_append(labels, src_label);
+	HashTableAdd(label_idx, (void *)(uintptr_t)src_id, (void *)(uintptr_t)arr_len(labels));
+
+	DijkstraItem *seed = rm_malloc(sizeof(DijkstraItem));
+	seed->node = src_id;
+	seed->weight = 0;
+	Heap_offer(&heap, seed);
+
+	bool found = false;
+
+	while(!found) {
+		DijkstraItem *item = Heap_poll(heap);
+		if(item == NULL) break;  // heap exhausted: dst is unreachable
+
+		NodeID cur = item->node;
+		rm_free(item);
+
+		uintptr_t cur_idx = (uintptr_t)HashTableFetchValue(label_idx, (void *)(uintptr_t)cur);
+		ASSERT(cur_idx != 0);
+		if(labels[cur_idx - 1].finalized) continue;  // stale duplicate entry
+		labels[cur_idx - 1].finalized = true;
+
+		if(cur == dst_id) {
+			found = true;
+			break;
+		}
+
+		double cur_weight = labels[cur_idx - 1].weight;
+
+		Node curNode = GE_NEW_NODE();
+		Graph_GetNode(ctx->g, cur, &curNode);
+
+		for(int d = 0; d < ndirs; d++) {
+			for(int r = 0; r < ctx->relationCount; r++) {
+				Graph_GetNodeEdges(ctx->g, &curNode, dirs[d], ctx->relationIDs[r], &ctx->neighbors);
+			}
+
+			uint32_t n = arr_len(ctx->neighbors);
+			for(uint32_t j = 0; j < n; j++) {
+				Edge *e = ctx->neighbors + j;
+				NodeID nid = (dirs[d] == GRAPH_EDGE_DIR_OUTGOING)
+					? Edge_GetDestNodeID(e)
+					: Edge_GetSrcNodeID(e);
+
+				if(nid == cur) continue;  // ignore self-loops
+
+				// NOTE: weightProp is assumed non-negative here (see the
+				// function-level comment above); a negative value would
+				// silently make this search's result incorrect.
+				SIValue w = _get_value_or_default((GraphEntity *)e, ctx->weight_prop, SI_LongVal(1));
+				double new_weight = cur_weight + SI_GET_NUMERIC(w);
+
+				dictEntry *existing;
+				dictEntry *entry = HashTableAddRaw(label_idx, (void *)(uintptr_t)nid, &existing);
+				if(entry == NULL) {
+					// already labeled: improve in place if not yet finalized
+					uintptr_t idx = (uintptr_t)HashTableGetVal(existing);
+					DijkstraLabel *nlabel = labels + (idx - 1);
+					if(nlabel->finalized || new_weight >= nlabel->weight) continue;
+
+					nlabel->weight = new_weight;
+					nlabel->parent = cur;
+					nlabel->edge   = *e;
+				} else {
+					DijkstraLabel nlabel = { .parent = cur, .edge = *e, .weight = new_weight, .finalized = false };
+					arr_append(labels, nlabel);
+					HashTableSetVal(label_idx, entry, (void *)(uintptr_t)arr_len(labels));
+				}
+
+				DijkstraItem *qi = rm_malloc(sizeof(DijkstraItem));
+				qi->node = nid;
+				qi->weight = new_weight;
+				Heap_offer(&heap, qi);
+			}
+
+			arr_clear(ctx->neighbors);
+		}
+	}
+
+	// drain and free any remaining queued items
+	DijkstraItem *leftover;
+	while((leftover = Heap_poll(heap)) != NULL) rm_free(leftover);
+	Heap_free(heap);
+
+	if(!found) {
+		RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
+			"SPpaths: Dijkstra fast path found no path src=%llu dst=%llu",
+			(unsigned long long)src_id, (unsigned long long)dst_id);
+		arr_free(labels);
+		HashTableRelease(label_idx);
+		return;
+	}
+
+	// reconstruct the path by walking parent pointers from dst back to src
+	Path *path = Path_New(8);
+	double total_cost = 0;
+	NodeID cur = dst_id;
+	while(cur != src_id) {
+		uintptr_t idx = (uintptr_t)HashTableFetchValue(label_idx, (void *)(uintptr_t)cur);
+		ASSERT(idx != 0);
+		DijkstraLabel *label = labels + (idx - 1);
+
+		Node n = GE_NEW_NODE();
+		Graph_GetNode(ctx->g, cur, &n);
+		Path_AppendNode(path, n);
+		Path_AppendEdge(path, label->edge);
+
+		SIValue c = _get_value_or_default((GraphEntity *)&label->edge, ctx->cost_prop, SI_LongVal(1));
+		total_cost += SI_GET_NUMERIC(c);
+
+		cur = label->parent;
+	}
+	Node srcNode = GE_NEW_NODE();
+	Graph_GetNode(ctx->g, src_id, &srcNode);
+	Path_AppendNode(path, srcNode);
+
+	Path_Reverse(path);
+
+	uintptr_t dst_idx = (uintptr_t)HashTableFetchValue(label_idx, (void *)(uintptr_t)dst_id);
+	double total_weight = labels[dst_idx - 1].weight;
+
+	ctx->single.path   = path;
+	ctx->single.weight = total_weight;
+	ctx->single.cost   = total_cost;
+
+	RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
+		"SPpaths: Dijkstra fast path found src=%llu dst=%llu weight=%g cost=%g",
+		(unsigned long long)src_id, (unsigned long long)dst_id, total_weight, total_cost);
+
+	arr_free(labels);
+	HashTableRelease(label_idx);
+}
+
 // use DFS to find all paths from src to dst tracking cost and weight
 static void SPpaths_next
 (
@@ -790,15 +998,18 @@ static void inline _add_path
 // find k minimal weighted path (path can have different weight)
 static void SPpaths_k_minimal
 (
-	SinglePairCtx *ctx,
-	double initial_bound
+	SinglePairCtx *ctx
 ) {
 	// initialize heap that contains the result where top path is the highest weight
 	ctx->heap = Heap_new(path_cmp, NULL);
 
-	// get first path
+	// get first path. unlike the single/all-minimal cases, the pre-pass
+	// bound must NOT seed this search: we need to fill up to path_count
+	// candidates before weight can meaningfully bound anything, since the
+	// k best paths can legitimately span a range of weights above the
+	// single cheapest path found by the pre-pass.
 	WeightedPath p = {0};
-	double max_weight = initial_bound;
+	double max_weight = DBL_MAX;
 	SPpaths_next(ctx, &p, max_weight);
 
 	// iterate over all paths
@@ -862,6 +1073,27 @@ static ProcedureResult Proc_SPpathsInvoke
 
 	_process_yield(single_pair_ctx, yield);
 
+	// fast path: a single shortest path with no maxCost constraint is
+	// exactly what Dijkstra solves, in O((V+E) log V) instead of the
+	// exhaustive DFS enumeration below, which can blow up combinatorially
+	// on graphs with many similar-weight alternative routes. this makes
+	// the bound pre-pass unnecessary too, since Dijkstra finds the exact
+	// optimum (and unreachability) directly.
+	// NOTE: SPpaths_dijkstra_single assumes weightProp is non-negative for
+	// every edge (see its own comment for why this isn't detected/guarded).
+	// src == dst is degenerate: Dijkstra trivially "finds" the source at
+	// distance 0 with zero edges traversed, which would violate the
+	// minLen==1 contract (a path needs at least one edge, e.g. a genuine
+	// self-loop). Rather than special-casing that inside the search, just
+	// don't take the fast path here and let the exhaustive DFS (which
+	// already handles this correctly) run instead.
+	bool src_eq_dst = ENTITY_GET_ID(&single_pair_ctx->src) == ENTITY_GET_ID(single_pair_ctx->dst);
+
+	if(single_pair_ctx->path_count == 1 && single_pair_ctx->max_cost == DBL_MAX && !src_eq_dst) {
+		SPpaths_dijkstra_single(single_pair_ctx);
+		return PROCEDURE_OK;
+	}
+
 	// quick pre-pass: does *any* structural path (honoring relTypes/
 	// relDirection/maxLen) exist between src and dst at all? if not, no
 	// path can exist regardless of maxCost either, so skip the exhaustive
@@ -890,17 +1122,27 @@ static ProcedureResult Proc_SPpathsInvoke
 	double initial_bound = cost_feasible ? bound_weight : DBL_MAX;
 
 	RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
-		"SPpaths: bound pre-pass weight=%g cost=%g maxCost=%g -> %s, seeding exhaustive search with max_weight=%g",
+		"SPpaths: bound pre-pass weight=%g cost=%g maxCost=%g -> %s",
 		bound_weight, bound_cost, single_pair_ctx->max_cost,
-		cost_feasible ? "cost-feasible" : "exceeds maxCost, bound discarded",
-		initial_bound);
+		cost_feasible ? "cost-feasible" : "exceeds maxCost, bound discarded");
 
 	if(single_pair_ctx->path_count == 0) {
+		// all-minimal wants every tie at the true minimum weight; the
+		// pre-pass weight is a valid upper bound on that minimum (any tie
+		// is by definition <= it), so seeding is safe here.
+		RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
+			"SPpaths: seeding all-minimal search with max_weight=%g", initial_bound);
 		SPpaths_all_minimal(single_pair_ctx, initial_bound);
 	} else if(single_pair_ctx->path_count == 1) {
+		RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
+			"SPpaths: seeding single-minimal search with max_weight=%g", initial_bound);
 		SPpaths_single_minimal(single_pair_ctx, initial_bound);
 	} else {
-		SPpaths_k_minimal(single_pair_ctx, initial_bound);
+		// k-minimal needs to fill up to path_count candidates before
+		// weight can meaningfully bound anything -- those candidates can
+		// legitimately be heavier than the single path the pre-pass
+		// found, so the bound must not be applied here.
+		SPpaths_k_minimal(single_pair_ctx);
 	}
 
 	return PROCEDURE_OK;
