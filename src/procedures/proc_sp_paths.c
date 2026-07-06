@@ -9,6 +9,7 @@
 #include "../value.h"
 #include "../util/arr.h"
 #include "../util/heap.h"
+#include "../util/dict.h"
 #include "../query_ctx.h"
 #include "../util/rmalloc.h"
 #include "../errors/errors.h"
@@ -49,6 +50,7 @@ typedef struct {
 	GRAPH_EDGE_DIR dir;          // traverse direction.
 	uint minLen;                 // path minimum length.
 	uint maxLen;                 // path max length.
+	Node src;                    // source node.
 	Node *dst;                   // destination node, defaults to NULL in case of general all paths execution.
 	AttributeID weight_prop;     // weight attribute id
 	AttributeID cost_prop;       // cost attribuite id
@@ -179,6 +181,7 @@ static void SinglePairCtx_New
 	ctx->levels         =  arr_new(LevelConnection *, 1);
 	ctx->path           =  Path_New(1);
 	ctx->neighbors      =  arr_new(Edge, 32);
+	ctx->src            = *src;
 	ctx->dst            =  dst;
 
 	_SinglePairCtx_EnsureLevelArrayCap(ctx, 0, 1);
@@ -437,6 +440,159 @@ static inline SIValue _get_value_or_default
 	return default_value ;
 }
 
+// predecessor of a node discovered by the BFS pre-pass in `_find_bound_path`
+typedef struct {
+	NodeID parent;  // node from which this node was first reached
+	Edge edge;      // edge connecting parent -> this node
+} BoundParentRecord;
+
+// quickly search for *some* concrete path from src to dst honoring
+// relTypes/relDirection/maxLen (weight and cost are ignored while
+// traversing) via a plain BFS.
+//
+// the result is used only to seed a tight initial bound for the exhaustive
+// weighted search below; because it is a real, concrete path (not an
+// estimate) its weight is always safe to use as an upper bound.
+//
+// *exists is set to false when no structural path can be found within
+// maxLen hops, in which case no path can exist regardless of maxCost
+// either, and the caller can skip the exhaustive search entirely.
+static void _find_bound_path
+(
+	SinglePairCtx *ctx,
+	bool *exists,
+	double *out_weight,
+	double *out_cost
+) {
+	*exists = false;
+
+	NodeID src_id = ENTITY_GET_ID(&ctx->src);
+	NodeID dst_id = ENTITY_GET_ID(ctx->dst);
+
+	if(src_id == dst_id) {
+		RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
+			"SPpaths bound pre-pass: src == dst (%llu), skipping",
+			(unsigned long long)src_id);
+		return;
+	}
+
+	// node -> 1-based index into 'records' (0 is reserved, unused, as
+	// HashTableFetchValue returns NULL for it same as for a missing key;
+	// src itself is inserted with value 0 and is never looked up, since
+	// backtracking stops as soon as it's reached).
+	// records is a single growable arena: one malloc/realloc for the whole
+	// pre-pass instead of one rm_malloc per discovered node.
+	dict *parents = HashTableCreate(&def_dt);
+	BoundParentRecord *records = arr_new(BoundParentRecord, 64);
+
+	NodeID *frontier = arr_new(NodeID, 1);
+	NodeID *next     = arr_new(NodeID, 0);
+	arr_append(frontier, src_id);
+
+	HashTableAdd(parents, (void *)(uintptr_t)src_id, (void *)(uintptr_t)0);
+
+	bool found = false;
+	uint32_t max_hops = ctx->maxLen - 1;
+
+	// direction(s) to expand on; depends only on ctx->dir, so compute once
+	// up front rather than per node/hop.
+	GRAPH_EDGE_DIR dirs[2];
+	int ndirs = 0;
+	if(ctx->dir == GRAPH_EDGE_DIR_OUTGOING || ctx->dir == GRAPH_EDGE_DIR_BOTH) {
+		dirs[ndirs++] = GRAPH_EDGE_DIR_OUTGOING;
+	}
+	if(ctx->dir == GRAPH_EDGE_DIR_INCOMING || ctx->dir == GRAPH_EDGE_DIR_BOTH) {
+		dirs[ndirs++] = GRAPH_EDGE_DIR_INCOMING;
+	}
+
+	RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
+		"SPpaths bound pre-pass: BFS src=%llu dst=%llu maxHops=%u dir=%d relCount=%d",
+		(unsigned long long)src_id, (unsigned long long)dst_id, max_hops,
+		(int)ctx->dir, ctx->relationCount);
+
+	for(uint32_t hop = 1; !found && hop <= max_hops && arr_len(frontier) > 0; hop++) {
+		for(uint32_t i = 0; !found && i < arr_len(frontier); i++) {
+			NodeID cur = frontier[i];
+			Node curNode = GE_NEW_NODE();
+			Graph_GetNode(ctx->g, cur, &curNode);
+
+			for(int d = 0; !found && d < ndirs; d++) {
+				for(int r = 0; r < ctx->relationCount; r++) {
+					Graph_GetNodeEdges(ctx->g, &curNode, dirs[d], ctx->relationIDs[r], &ctx->neighbors);
+				}
+
+				uint32_t n = arr_len(ctx->neighbors);
+				for(uint32_t j = 0; j < n; j++) {
+					NodeID nid = (dirs[d] == GRAPH_EDGE_DIR_OUTGOING)
+						? Edge_GetDestNodeID(ctx->neighbors + j)
+						: Edge_GetSrcNodeID(ctx->neighbors + j);
+
+					// single lookup that both checks membership and, if
+					// absent, reserves the slot -- avoids a separate
+					// find + add pair of hash lookups per candidate.
+					dictEntry *existing;
+					dictEntry *entry = HashTableAddRaw(parents, (void *)(uintptr_t)nid, &existing);
+					if(entry == NULL) continue;  // already visited
+
+					BoundParentRecord rec = { .parent = cur, .edge = ctx->neighbors[j] };
+					arr_append(records, rec);
+					HashTableSetVal(parents, entry, (void *)(uintptr_t)arr_len(records));
+					arr_append(next, nid);
+
+					if(nid == dst_id) {
+						found = true;
+						break;
+					}
+				}
+
+				arr_clear(ctx->neighbors);
+			}
+		}
+
+		NodeID *tmp = frontier;
+		frontier = next;
+		next = tmp;
+		arr_clear(next);
+	}
+
+	arr_free(frontier);
+	arr_free(next);
+
+	if(found) {
+		*exists = true;
+
+		double weight = 0;
+		double cost   = 0;
+		NodeID cur = dst_id;
+		while(cur != src_id) {
+			uintptr_t idx = (uintptr_t)HashTableFetchValue(parents, (void *)(uintptr_t)cur);
+			ASSERT(idx != 0);
+			BoundParentRecord *rec = records + (idx - 1);
+
+			SIValue c = _get_value_or_default((GraphEntity *)&rec->edge, ctx->cost_prop,   SI_LongVal(1));
+			SIValue w = _get_value_or_default((GraphEntity *)&rec->edge, ctx->weight_prop, SI_LongVal(1));
+			cost   += SI_GET_NUMERIC(c);
+			weight += SI_GET_NUMERIC(w);
+
+			cur = rec->parent;
+		}
+
+		*out_weight = weight;
+		*out_cost   = cost;
+
+		RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
+			"SPpaths bound pre-pass: found concrete src->dst path, weight=%g cost=%g",
+			weight, cost);
+	} else {
+		RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
+			"SPpaths bound pre-pass: no structural path found within maxHops=%u",
+			max_hops);
+	}
+
+	arr_free(records);
+	HashTableRelease(parents);
+}
+
 // use DFS to find all paths from src to dst tracking cost and weight
 static void SPpaths_next
 (
@@ -456,6 +612,17 @@ static void SPpaths_next
 
 			bool frontierAlreadyOnPath =
 				Path_ContainsNode(ctx->path, ENTITY_GET_ID (&frontierNode));
+
+			// a self-loop (or duplicate relation ids) can surface the same
+			// edge as a candidate more than once; reject it exactly like a
+			// node cycle so it doesn't get traversed twice on one path.
+			if(!frontierAlreadyOnPath && depth > 0 &&
+				Path_ContainsEdge(ctx->path, ENTITY_GET_ID(&frontierConnection.edge))) {
+				RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
+					"SPpaths: rejecting duplicate edge %llu already on path (depth=%u)",
+					(unsigned long long)ENTITY_GET_ID(&frontierConnection.edge), depth);
+				frontierAlreadyOnPath = true;
+			}
 
 			// don't allow cycles
 			if (frontierAlreadyOnPath) {
@@ -539,14 +706,15 @@ static int path_cmp
 // get all minimal paths (all paths with the same weight)
 static void SPpaths_all_minimal
 (
-	SinglePairCtx *ctx
+	SinglePairCtx *ctx,
+	double initial_bound
 ) {
 	// initialize array that contains the result
 	ctx->array = arr_new(WeightedPath, 0);
 
 	// get first path
 	WeightedPath p = {0};
-	double max_weight = DBL_MAX;
+	double max_weight = initial_bound;
 	SPpaths_next(ctx, &p, max_weight);
 
 	// iterate over all paths
@@ -575,7 +743,8 @@ static void SPpaths_all_minimal
 // find the single minimal weighted path
 static void SPpaths_single_minimal
 (
-	SinglePairCtx *ctx
+	SinglePairCtx *ctx,
+	double initial_bound
 ) {
 	// initialize the result path to worst path
 	ctx->single.path   = NULL;
@@ -584,7 +753,7 @@ static void SPpaths_single_minimal
 
 	// get first path
 	WeightedPath p = {0};
-	SPpaths_next(ctx, &p, DBL_MAX);
+	SPpaths_next(ctx, &p, initial_bound);
 
 	// iterate over all paths
 	while (p.path != NULL) {
@@ -621,14 +790,15 @@ static void inline _add_path
 // find k minimal weighted path (path can have different weight)
 static void SPpaths_k_minimal
 (
-	SinglePairCtx *ctx
+	SinglePairCtx *ctx,
+	double initial_bound
 ) {
 	// initialize heap that contains the result where top path is the highest weight
 	ctx->heap = Heap_new(path_cmp, NULL);
 
 	// get first path
 	WeightedPath p = {0};
-	double max_weight = DBL_MAX;
+	double max_weight = initial_bound;
 	SPpaths_next(ctx, &p, max_weight);
 
 	// iterate over all paths
@@ -692,12 +862,45 @@ static ProcedureResult Proc_SPpathsInvoke
 
 	_process_yield(single_pair_ctx, yield);
 
+	// quick pre-pass: does *any* structural path (honoring relTypes/
+	// relDirection/maxLen) exist between src and dst at all? if not, no
+	// path can exist regardless of maxCost either, so skip the exhaustive
+	// search entirely. if one is found and it also satisfies maxCost, its
+	// weight is a safe upper bound to seed the exhaustive search with.
+	bool   bound_exists;
+	double bound_weight;
+	double bound_cost;
+	_find_bound_path(single_pair_ctx, &bound_exists, &bound_weight, &bound_cost);
+
+	if(!bound_exists) {
+		RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
+			"SPpaths: bound pre-pass found no structural path, skipping exhaustive search");
+
+		if(single_pair_ctx->path_count == 0) {
+			single_pair_ctx->array = arr_new(WeightedPath, 0);
+		} else if(single_pair_ctx->path_count == 1) {
+			single_pair_ctx->single.path = NULL;
+		} else {
+			single_pair_ctx->heap = Heap_new(path_cmp, NULL);
+		}
+		return PROCEDURE_OK;
+	}
+
+	bool cost_feasible = (bound_cost <= single_pair_ctx->max_cost);
+	double initial_bound = cost_feasible ? bound_weight : DBL_MAX;
+
+	RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
+		"SPpaths: bound pre-pass weight=%g cost=%g maxCost=%g -> %s, seeding exhaustive search with max_weight=%g",
+		bound_weight, bound_cost, single_pair_ctx->max_cost,
+		cost_feasible ? "cost-feasible" : "exceeds maxCost, bound discarded",
+		initial_bound);
+
 	if(single_pair_ctx->path_count == 0) {
-		SPpaths_all_minimal(single_pair_ctx);
+		SPpaths_all_minimal(single_pair_ctx, initial_bound);
 	} else if(single_pair_ctx->path_count == 1) {
-		SPpaths_single_minimal(single_pair_ctx);
+		SPpaths_single_minimal(single_pair_ctx, initial_bound);
 	} else {
-		SPpaths_k_minimal(single_pair_ctx);
+		SPpaths_k_minimal(single_pair_ctx, initial_bound);
 	}
 
 	return PROCEDURE_OK;
