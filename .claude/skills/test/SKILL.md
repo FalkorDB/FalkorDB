@@ -6,10 +6,12 @@ allowed-tools: Bash
 
 # Test
 
-All Python suites require the virtualenv: `source venv/bin/activate` (create
-once with `python3 -m venv venv && pip install -r tests/requirements.txt`).
-The module must be built first (`cargo build`, see the `build` skill) for
-anything that loads `libfalkordb.{so,dylib}`.
+All Python suites require the virtualenv. Locally it's `./venv` (create once
+with `python3 -m venv venv && pip install -r tests/requirements.txt`); inside
+the devcontainer/CI it lives at `/data/venv`. The activation lines below fall
+back between the two so they work in either environment. The module must be
+built first (`cargo build`, see the `build` skill) for anything that loads
+`libfalkordb.{so,dylib}`.
 
 ## Rust unit tests (default choice for Rust-only changes)
 
@@ -20,7 +22,7 @@ cargo test -p graph
 ## Python e2e / function / MVCC / concurrency tests
 
 ```bash
-source venv/bin/activate
+source venv/bin/activate 2>/dev/null || source /data/venv/bin/activate
 pytest tests/test_e2e.py tests/test_functions.py -vv       # e2e + function tests
 pytest tests/test_mvcc.py tests/test_concurrency.py -vv     # MVCC + concurrency tests
 ```
@@ -30,7 +32,7 @@ Run a single file/suite by narrowing the `pytest` args, e.g.
 ## TCK tests (openCypher language-compliance suite)
 
 ```bash
-source venv/bin/activate
+source venv/bin/activate 2>/dev/null || source /data/venv/bin/activate
 TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s              # all currently-passing scenarios
 TCK_INCLUDE=<path> pytest tests/tck/test_tck.py -s                 # only scenarios under <path>
 ```

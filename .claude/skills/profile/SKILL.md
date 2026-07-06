@@ -12,8 +12,10 @@ For finding performance bottlenecks in query execution (full reference:
 `docs/profiling.md`):
 
 ```bash
-cargo install samply                 # one-time
-cargo build --release                # release build carries debug info
+cargo install samply                              # one-time
+# [profile.release] has `debug` commented out in Cargo.toml, so a plain
+# --release build has no line info. Add debuginfo for readable flamegraphs:
+RUSTFLAGS="-C debuginfo=2" cargo build --release
 
 # record redis-server with the module loaded, run your query/workload
 # against it, then stop the server
@@ -26,7 +28,7 @@ On stop, samply opens the Firefox Profiler UI in your browser. Use
 
 ```bash
 cargo build --release
-source venv/bin/activate
+source venv/bin/activate 2>/dev/null || source /data/venv/bin/activate   # /data/venv in the devcontainer/CI
 pytest tests/test_bench.py --benchmark-json output.json -vv
 ```
 CI publishes results to a tracked history at

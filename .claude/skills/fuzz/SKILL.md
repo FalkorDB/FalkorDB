@@ -35,25 +35,35 @@ valid Cypher queries/inputs):
 
 ```bash
 mkdir -p fuzz/corpus/fuzz_target_runtime/
+source venv/bin/activate 2>/dev/null || source /data/venv/bin/activate   # pytest deps (/data/venv in devcontainer/CI)
 TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
 ```
 
 ## 4. Run / minimize / cover
 
+On Linux, first export the RediSearch link workaround CI uses, so the embedded
+static libs link without duplicate-symbol errors (not needed / not a valid
+flag with macOS's linker):
 ```bash
+export RUSTFLAGS="-C link-arg=-Wl,--allow-multiple-definition"   # Linux/CI only
+
 CXX=clang++ CARGO_PROFILE_RELEASE_LTO=false cargo fuzz run fuzz_target_runtime -- -max_total_time=<seconds>
 CXX=clang++ CARGO_PROFILE_RELEASE_LTO=false cargo fuzz cmin fuzz_target_runtime      # minimize the corpus
 CXX=clang++ CARGO_PROFILE_RELEASE_LTO=false cargo fuzz coverage fuzz_target_runtime  # generate coverage data
 ```
-Then render an HTML coverage report (target triple differs by OS):
+Then render an HTML coverage report. Resolve `llvm-cov` from the active Rust
+toolchain (via `llvm-tools-preview`) rather than a system one, exactly as CI
+does, to avoid version skew; the target triple differs by OS:
 ```bash
+LLVM_COV=$(find "$(rustc --print sysroot)" -name llvm-cov -type f | head -1)
+
 # Linux
-llvm-cov show -format=html -instr-profile=fuzz/coverage/fuzz_target_runtime/coverage.profdata \
+"$LLVM_COV" show -format=html -instr-profile=fuzz/coverage/fuzz_target_runtime/coverage.profdata \
   -ignore-filename-regex=\.cargo/registry \
   target/x86_64-unknown-linux-gnu/coverage/x86_64-unknown-linux-gnu/release/fuzz_target_runtime > cov.html
 
 # macOS
-llvm-cov show -format=html -instr-profile=fuzz/coverage/fuzz_target_runtime/coverage.profdata \
+"$LLVM_COV" show -format=html -instr-profile=fuzz/coverage/fuzz_target_runtime/coverage.profdata \
   -ignore-filename-regex=\.cargo/registry \
   target/aarch64-apple-darwin/coverage/aarch64-apple-darwin/release/fuzz_target_runtime > cov.html
 ```

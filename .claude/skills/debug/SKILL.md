@@ -27,8 +27,11 @@ crash/signal. Use `bt` (backtrace), `frame select`/`up`/`down`, and
 `target/release` to debug a release build instead.
 
 For a specific failing flow test under the debugger, use RLTest directly
-instead of `flow.sh` so it doesn't spawn/manage the server itself:
+instead of `flow.sh` so it doesn't spawn/manage the server itself (activate
+the venv first so `python -m RLTest` resolves — it lives at `/data/venv` in
+the devcontainer/CI):
 ```bash
+source venv/bin/activate 2>/dev/null || source /data/venv/bin/activate
 lldb -- python -m RLTest --test tests/flow/<file>.py --module target/debug/libfalkordb.so --no-progress -v
 ```
 

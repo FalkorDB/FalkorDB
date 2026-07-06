@@ -19,21 +19,34 @@ suffix matches your LLVM (drop the suffix if you only have one). Also needs
 find . -name "*.profraw" -delete
 rm -f cov.profdata codecov.txt codecov.txt.all
 
-# build + Rust unit tests, instrumented
-RUSTFLAGS="-C instrument-coverage" cargo build
-RUSTFLAGS="-C instrument-coverage" cargo test -p graph
+# build + Rust unit tests, instrumented.
+# The link-arg is required on Linux/CI so the embedded RediSearch static libs
+# link without duplicate-symbol errors; drop it with macOS's linker. RUSTDOCFLAGS
+# instruments doctests too, matching CI.
+COV_RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition"
+RUSTFLAGS="$COV_RUSTFLAGS" RUSTDOCFLAGS="$COV_RUSTFLAGS" cargo build
+RUSTFLAGS="$COV_RUSTFLAGS" RUSTDOCFLAGS="$COV_RUSTFLAGS" cargo test -p graph
 
 # instrumented Python + flow + TCK suites (module already built above)
-source venv/bin/activate
+source venv/bin/activate 2>/dev/null || source /data/venv/bin/activate
 pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
 ./flow.sh
 TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
 
+# pass each unit-test binary as an extra -object so llvm-cov also credits
+# coverage recorded by test-only code paths (CI does this; without it those
+# lines under-report)
+TEST_OBJECTS=""
+for bin in $(RUSTFLAGS="$COV_RUSTFLAGS" cargo test -p graph --no-run 2>&1 \
+    | grep -w Executable | grep -oE 'target/debug/deps/[^)]+'); do
+  TEST_OBJECTS="$TEST_OBJECTS -object $bin"
+done
+
 # merge the .profraw files and export lcov (libfalkordb.dylib on macOS)
 llvm-profdata-22 merge --sparse $(find . -name "*.profraw") -o cov.profdata
-llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
+llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so $TEST_OBJECTS > codecov.txt.all
 lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
-llvm-cov-22 report --instr-profile cov.profdata target/debug/libfalkordb.so   # console summary
+llvm-cov-22 report --instr-profile cov.profdata target/debug/libfalkordb.so $TEST_OBJECTS   # console summary
 ```
 
 Narrow the run when you don't need whole-project numbers:
@@ -52,16 +65,19 @@ the same sequence inside the container image:
 docker build -t falkordb-dev -f .devcontainer/Dockerfile .
 docker run --rm -v $(pwd):/workspace -w /workspace falkordb-dev bash -c "
   find . -name '*.profraw' -delete
-  RUSTFLAGS='-C instrument-coverage' cargo build
-  RUSTFLAGS='-C instrument-coverage' cargo test -p graph
+  CF='-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition'
+  RUSTFLAGS=\"\$CF\" RUSTDOCFLAGS=\"\$CF\" cargo build
+  RUSTFLAGS=\"\$CF\" RUSTDOCFLAGS=\"\$CF\" cargo test -p graph
   source /data/venv/bin/activate
   pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
   ./flow.sh
   TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
+  TEST_OBJECTS=''
+  for bin in \$(RUSTFLAGS=\"\$CF\" cargo test -p graph --no-run 2>&1 | grep -w Executable | grep -oE 'target/debug/deps/[^)]+'); do TEST_OBJECTS=\"\$TEST_OBJECTS -object \$bin\"; done
   llvm-profdata-22 merge --sparse \$(find . -name '*.profraw') -o cov.profdata
-  llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
+  llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so \$TEST_OBJECTS > codecov.txt.all
   lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
-  llvm-cov-22 report --instr-profile cov.profdata target/debug/libfalkordb.so
+  llvm-cov-22 report --instr-profile cov.profdata target/debug/libfalkordb.so \$TEST_OBJECTS
 "
 ```
 

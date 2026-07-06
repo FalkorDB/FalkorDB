@@ -16,7 +16,7 @@ Only needed once per machine/container (skip if `cargo build` already works).
 
 ```bash
 ./graphblas.sh    # clones, builds (static, PIC) and installs GraphBLAS v10.3.1 + LAGraph
-./redisearch.sh   # clones and builds RediSearch (static) into ./redisearch/bin
+./redisearch.sh   # clones and builds RediSearch (static) into redisearch/RediSearch/bin
 ```
 
 If a script fails, read it before retrying by hand — `graphblas.sh` documents
@@ -40,8 +40,8 @@ CXX=clang++ cargo clippy --all-targets
 ```
 
 - `CXX=clang++` is required for clippy (and any build invoking the GraphBLAS
-  FFI bindings in `graph/src/graph/GraphBLAS.rs`) — without it, clippy fails
-  trying to compile the C shims.
+  FFI bindings under `graph/src/graph/graphblas/`, whose bindgen output is
+  `graphblas/mod.rs`) — without it, clippy fails trying to compile the C shims.
 - Format check uses the project's `rustfmt.toml` (vertical function-parameter
   layout). Run `cargo fmt --all` (no `--check`) to auto-fix.
 - Run format + build + clippy together, in that order, for a full check —
