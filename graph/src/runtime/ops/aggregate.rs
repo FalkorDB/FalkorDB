@@ -38,11 +38,22 @@ use crate::runtime::{
     runtime::Runtime,
     value::{Value, ValuesDeduper},
 };
+use ahash::RandomState;
 use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 use thin_vec::{ThinVec, thin_vec};
+
+/// Group-by accumulator map, keyed by the composite [`GroupKey`].
+///
+/// Uses ahash's seeded [`RandomState`] rather than a fixed/unseeded hasher:
+/// the grouping keys are client-controlled, so an unseeded hasher (e.g.
+/// FxHash) would let a caller craft keys that all collide, degrading grouping
+/// to O(n^2) (algorithmic-complexity DoS). This mirrors the seeded hasher the
+/// value-hash-join operator uses for the same reason, while staying far faster
+/// than the std default SipHash.
+type GroupMap = HashMap<GroupKey, (Row, Row), RandomState>;
 
 // ---------------------------------------------------------------------------
 // GroupKey — collision-free composite grouping key
@@ -163,7 +174,7 @@ impl<'a> AggregateOp<'a> {
             copy_from_parent,
             default_acc: Some(default_acc),
             errors: Vec::new().into_iter(),
-            groups: HashMap::new().into_iter(),
+            groups: GroupMap::default().into_iter(),
             idx,
             vectorized: None,
         }
@@ -334,7 +345,7 @@ impl<'a> AggregateOp<'a> {
         // computation so the common non-distinct path stays free of it.
         let any_distinct = analysis.agg_kinds.iter().any(|a| a.distinct_idx.is_some());
 
-        let mut groups: HashMap<GroupKey, (Row, Row)> = HashMap::new();
+        let mut groups: GroupMap = GroupMap::with_hasher(RandomState::new());
         let mut errors: Vec<String> = Vec::new();
 
         // Pre-insert default group for keyless aggregation.
@@ -629,7 +640,7 @@ impl<'a> AggregateOp<'a> {
         let child = self.child.take().unwrap();
         let default_acc = self.default_acc.take().unwrap();
 
-        let mut groups: HashMap<GroupKey, (Row, Row)> = HashMap::new();
+        let mut groups: GroupMap = GroupMap::with_hasher(RandomState::new());
         let mut errors: Vec<String> = Vec::new();
 
         // Pre-insert default group for keyless aggregation.
@@ -673,7 +684,7 @@ impl<'a> AggregateOp<'a> {
         copy_from_parent: &[(Variable, Variable)],
         batch: &Batch<'a>,
         default_acc: &Row,
-        groups: &mut HashMap<GroupKey, (Row, Row)>,
+        groups: &mut GroupMap,
         errors: &mut Vec<String>,
     ) {
         for row in batch.active_indices() {
