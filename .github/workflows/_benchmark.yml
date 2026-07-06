@@ -223,6 +223,7 @@ jobs:
           cp "$DL/summary-$primary.json" "$RUNNER_TMP/pub/falkordb_vs_falkordb_$epoch.json"
 
           export SUMMARY_JSON="$RUNNER_TMP/pub/falkordb_vs_falkordb_$epoch.json"
+          export ABC_SUMMARIES_DIR="$DL"   # all per-size summaries → the impact page (PR views)
           .github/scripts/benchmark/publish.sh | tee "$RUNNER_TMP/publish.log"
           published_url=$(grep -o 'RESULT: published_url=.*' "$RUNNER_TMP/publish.log" | tail -n1 | sed 's/RESULT: published_url=//')
 

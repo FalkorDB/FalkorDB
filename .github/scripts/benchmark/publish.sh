@@ -107,6 +107,10 @@ cp -r "$OUT_DIR/summaries" "$TARGET_DIR/summaries"
 [ -f "$OUT_DIR/favicon.ico" ] && cp "$OUT_DIR/favicon.ico" "$TARGET_DIR/favicon.ico"
 [ -f "$OUT_DIR/favicon.svg" ] && cp "$OUT_DIR/favicon.svg" "$TARGET_DIR/favicon.svg"
 
+# The view's landing page redirects here. Default is the vendored dashboard;
+# a PR view overrides it to our A/B/C impact page below.
+REDIRECT_TARGET="falkordb-compare"
+
 # Canonical trend only: build the per-query trend page from the full published
 # history (all snapshots in the manifest). PR views are single-run, so a
 # per-query-over-time view there would have nothing to trend.
@@ -121,23 +125,41 @@ if [ "$IS_CANONICAL" = "true" ]; then
   cp "$SCRIPT_DIR/benchmark-trend.html" "$TARGET_DIR/trend/index.html"
 fi
 
+# PR view only: build our A/B/C impact page (in-page size + metric switcher)
+# from every per-size summary, and make it the landing page — the vendored
+# dashboard (one size, rich histograms) stays linked from it. Skips cleanly on
+# a two-variant run (no C), leaving the vendored dashboard as the landing page.
+if [ "$IS_CANONICAL" != "true" ] && [ -n "${ABC_SUMMARIES_DIR:-}" ]; then
+  echo "building A/B/C impact page (${TARGET_REL}/impact/)"
+  mkdir -p "$TARGET_DIR/impact"
+  if python3 "$SCRIPT_DIR/build-abc.py" \
+       --summaries-dir "$ABC_SUMMARIES_DIR" --out "$TARGET_DIR/impact/abc.json" \
+       --name-a "${NAME_A:-falkordb-c}" --name-b "${NAME_B:-falkordb-rs}" --name-c "${NAME_C:-falkordb-pr}"; then
+    cp "$SCRIPT_DIR/benchmark-abc.html" "$TARGET_DIR/impact/index.html"
+    REDIRECT_TARGET="impact"
+  else
+    echo "no A/B/C data (two-variant run?) — keeping the vendored dashboard as landing page"
+    rmdir "$TARGET_DIR/impact" 2>/dev/null || true
+  fi
+fi
+
 cat > "$TARGET_DIR/index.html" << EOF
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="refresh" content="0; url=./falkordb-compare/">
-  <link rel="canonical" href="./falkordb-compare/">
+  <meta http-equiv="refresh" content="0; url=./${REDIRECT_TARGET}/">
+  <link rel="canonical" href="./${REDIRECT_TARGET}/">
   <title>FalkorDB benchmark — redirecting</title>
 </head>
 <body>
-  <p>Redirecting to <a href="./falkordb-compare/">the benchmark dashboard</a>...</p>
+  <p>Redirecting to <a href="./${REDIRECT_TARGET}/">the benchmark dashboard</a>...</p>
 </body>
 </html>
 EOF
 echo "::endgroup::"
 
-PUBLISHED_URL="https://$(echo "${REPO%%/*}" | tr '[:upper:]' '[:lower:]').github.io/${REPO_NAME}/${TARGET_REL}/falkordb-compare/"
+PUBLISHED_URL="https://$(echo "${REPO%%/*}" | tr '[:upper:]' '[:lower:]').github.io/${REPO_NAME}/${TARGET_REL}/${REDIRECT_TARGET}/"
 echo "published_url=${PUBLISHED_URL}"
 echo "target_rel=${TARGET_REL}"
 
