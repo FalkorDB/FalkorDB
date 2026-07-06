@@ -368,8 +368,7 @@ fn extract_attribute_from_subtree(
     tree: &DynTree<ExprIR<Variable>>,
     root_idx: NodeIdx<Dyn<ExprIR<Variable>>>,
 ) -> Option<Arc<String>> {
-    let indices = tree.node(root_idx).indices::<Bfs>().collect::<Vec<_>>();
-    for idx in indices {
+    for idx in tree.node(root_idx).indices::<Bfs>() {
         let node = tree.node(idx);
         if let ExprIR::Property(attr) = node.data() {
             return Some(attr.clone());
@@ -560,8 +559,7 @@ fn subtree_has_property_of(
     root_idx: NodeIdx<Dyn<ExprIR<Variable>>>,
     alias: &Variable,
 ) -> bool {
-    let indices = tree.node(root_idx).indices::<Bfs>().collect::<Vec<_>>();
-    for idx in indices {
+    for idx in tree.node(root_idx).indices::<Bfs>() {
         let node = tree.node(idx);
         if let ExprIR::Property(_) = node.data() {
             // Check if the Variable child of this Property matches the alias
@@ -582,8 +580,7 @@ fn subtree_has_any_property(
     tree: &DynTree<ExprIR<Variable>>,
     root_idx: NodeIdx<Dyn<ExprIR<Variable>>>,
 ) -> bool {
-    let indices = tree.node(root_idx).indices::<Bfs>().collect::<Vec<_>>();
-    for idx in indices {
+    for idx in tree.node(root_idx).indices::<Bfs>() {
         if let ExprIR::Property(_) = tree.node(idx).data() {
             return true;
         }
