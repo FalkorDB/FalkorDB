@@ -142,7 +142,8 @@ jobs:
               IMAGE_A="docker.io/falkordb/falkordb-server:${INPUT_IMAGE_A_TAG}"
               IMAGE_B="ghcr.io/falkordb/falkordb-server:${INPUT_IMAGE_B_TAG}"
               IMAGE_C=""
-              VIEW_RAW="$DISPATCH_REF_NAME"
+              # No PR here — use the (main-remapped) slugified ref for the view.
+              VIEW=$(.github/scripts/benchmark/view-slug.sh "$DISPATCH_REF_NAME")
               OUT_PR_NUMBER=""
               SIZES="[\"${INPUT_DATASET_SIZE:-small}\"]"
               ;;
@@ -152,7 +153,11 @@ jobs:
               IMAGE_A="docker.io/falkordb/falkordb-server:edge"
               IMAGE_B="ghcr.io/falkordb/falkordb-server:edge-rs"
               IMAGE_C="ghcr.io/falkordb/falkordb-server:rc-pr-${PR_NUMBER}"
-              VIEW_RAW="$PR_HEAD_REF"
+              # Key the view off the PR number, not the branch name: two PRs can
+              # share a branch name (forks, `patch-1`, …) and would otherwise
+              # publish to — and overwrite — the same gh-pages dir. Must match
+              # cleanup-branch-view.
+              VIEW="pr-${PR_NUMBER}"
               OUT_PR_NUMBER="$PR_NUMBER"
               SIZES='["small","medium","large"]'
               ;;
@@ -161,12 +166,6 @@ jobs:
               exit 1
               ;;
           esac
-
-          # Slugify to a filesystem/URL-safe path segment. Shared with
-          # cleanup-branch-view (view-slug.sh) so a closed PR removes the exact
-          # dir it published; the script also remaps a "main" branch away from
-          # the canonical /benchmark/ trend's reserved slug.
-          VIEW=$(.github/scripts/benchmark/view-slug.sh "$VIEW_RAW")
 
           {
             echo "image_a=${IMAGE_A}"
@@ -251,7 +250,7 @@ jobs:
       sizes: ${{ needs.prepare.outputs.sizes }}
       pr_number: ${{ needs.prepare.outputs.pr_number }}
 
-  # Remove a PR's /benchmark/branch/<slug>/ preview once it closes — no
+  # Remove a PR's /benchmark/branch/pr-<N>/ preview once it closes — no
   # point keeping a dead branch's dashboard around forever. Runs regardless
   # of whether the `benchmark` label was ever added (cheap no-op if there's
   # nothing to remove).
@@ -261,9 +260,9 @@ jobs:
     permissions:
       contents: write
     steps:
-      # Scripts come from the PR's base branch (stable, always has view-slug.sh
-      # once this lands) rather than the PR merge ref, which can be gone by the
-      # time a closed PR is cleaned up.
+      # Scripts come from the PR's base branch (stable, always has
+      # gh-pages-push.sh once this lands) rather than the PR merge ref, which
+      # can be gone by the time a closed PR is cleaned up.
       - name: Checkout benchmark scripts
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -281,20 +280,20 @@ jobs:
 
       - name: Remove branch view (if any) and push
         env:
-          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           SCRIPTS="$GITHUB_WORKSPACE/.github/scripts/benchmark"
-          # Same slug the publish path used (view-slug.sh) so we remove the
-          # exact dir this PR published — no orphaned views. Tolerate a missing
-          # script so an unrelated closed PR never fails here.
-          VIEW=$("$SCRIPTS/view-slug.sh" "$PR_HEAD_REF" || true)
-          if [ -z "$VIEW" ]; then
-            echo "could not derive a view slug — nothing to clean up"
+          # Same view the PR published under (pr-<N>, keyed off the PR number,
+          # not the branch — see prepare) so we remove the exact dir and never
+          # orphan a view or clobber another PR's.
+          if [ -z "$PR_NUMBER" ]; then
+            echo "no PR number — nothing to clean up"
             exit 0
           fi
+          VIEW="pr-${PR_NUMBER}"
 
           cd gh-pages
           TARGET="benchmark/branch/${VIEW}"

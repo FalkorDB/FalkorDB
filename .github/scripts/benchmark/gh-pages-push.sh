@@ -42,6 +42,12 @@ until git push origin gh-pages -q; do
   fi
   echo "push rejected (attempt ${attempt}/${max_attempts}) — fetching + rebasing and retrying"
   git fetch origin gh-pages -q
-  git rebase origin/gh-pages
+  # A conflicting rebase would otherwise leave the checkout mid-rebase and, under
+  # `set -e`, abort the script with a raw git error instead of the message below.
+  if ! git rebase origin/gh-pages; then
+    git rebase --abort || true
+    echo "::error::gh-pages rebase hit an unresolvable conflict on origin/gh-pages" >&2
+    exit 1
+  fi
   attempt=$((attempt + 1))
 done

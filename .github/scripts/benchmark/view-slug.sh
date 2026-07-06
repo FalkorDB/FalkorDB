@@ -2,15 +2,11 @@
 # Canonicalize a git branch/ref name into the URL- and filesystem-safe "view"
 # slug used for a benchmark's published path (benchmark/branch/<view>/).
 #
-# Single source of truth: benchmark.yml's `prepare` job (which publishes a
-# view) and its `cleanup-branch-view` job (which removes that view when the PR
-# closes) must derive the *exact* same slug, or a closed PR would orphan the
-# directory it published. Keeping the transform here — instead of duplicating
-# the tr/sed pipeline in both jobs — is what guarantees that.
-#
-# The `main` remap keeps a branch literally named "main" from colliding with
-# the canonical /benchmark/ trend (published only by rust-push.yml, never by
-# benchmark.yml).
+# Used by benchmark.yml's `prepare` for the workflow_dispatch path only — PR
+# views are keyed off the PR number (pr-<N>) instead, since branch names aren't
+# unique across PRs. The `main` remap keeps a dispatch from a branch literally
+# named "main" from colliding with the canonical /benchmark/ trend (published
+# only by rust-push.yml).
 set -euo pipefail
 
 raw="${1:?usage: view-slug.sh <branch-or-ref-name>}"
