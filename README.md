@@ -153,4 +153,7 @@ shared runners.
   canonical trend at
   [`/benchmark/`](https://falkordb.github.io/falkordb-rs-next-gen/benchmark/)
   is updated — this is the one continuously-growing history; PR/manual runs
-  publish to their own capped-history branch view instead.
+  publish to their own capped-history branch view instead. A **per-query
+  trend** (each query shape over time — C engine vs Rust, with server-exec and
+  p50/p95/p99) is published alongside at
+  [`/benchmark/trend/`](https://falkordb.github.io/falkordb-rs-next-gen/benchmark/trend/).

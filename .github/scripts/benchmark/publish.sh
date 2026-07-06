@@ -107,6 +107,20 @@ cp -r "$OUT_DIR/summaries" "$TARGET_DIR/summaries"
 [ -f "$OUT_DIR/favicon.ico" ] && cp "$OUT_DIR/favicon.ico" "$TARGET_DIR/favicon.ico"
 [ -f "$OUT_DIR/favicon.svg" ] && cp "$OUT_DIR/favicon.svg" "$TARGET_DIR/favicon.svg"
 
+# Canonical trend only: build the per-query trend page from the full published
+# history (all snapshots in the manifest). PR views are single-run, so a
+# per-query-over-time view there would have nothing to trend.
+if [ "$IS_CANONICAL" = "true" ]; then
+  echo "building per-query trend page (${TARGET_REL}/trend/)"
+  mkdir -p "$TARGET_DIR/trend"
+  python3 "$SCRIPT_DIR/build-trend.py" \
+    --summaries-dir "$TARGET_DIR/summaries" \
+    --manifest "$TARGET_DIR/summaries/manifest.json" \
+    --out "$TARGET_DIR/trend/trend.json" \
+    --name-a "${NAME_A:-falkordb-c}" --name-b "${NAME_B:-falkordb-rs}"
+  cp "$SCRIPT_DIR/benchmark-trend.html" "$TARGET_DIR/trend/index.html"
+fi
+
 cat > "$TARGET_DIR/index.html" << EOF
 <!DOCTYPE html>
 <html lang="en">
