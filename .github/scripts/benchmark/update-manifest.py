@@ -54,6 +54,8 @@ def main() -> int:
                 os.remove(stale_path)
                 print(f"pruned stale snapshot {stale_path}")
             except FileNotFoundError:
+                # Already gone (a prior run pruned it, or the manifest listed a
+                # file that was never published) — nothing to reclaim, so ignore.
                 pass
         merged = kept
 

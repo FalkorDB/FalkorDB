@@ -19,6 +19,14 @@ slug=$(printf '%s' "$raw" \
   | tr '[:upper:]' '[:lower:]' \
   | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')
 
+# A branch made entirely of non-alphanumerics slugs to "" — refuse it rather
+# than publish into benchmark/branch/ (which would collide across PRs and break
+# cleanup). The cleanup path invokes this with `|| true` so it no-ops instead.
+if [ -z "$slug" ]; then
+  echo "::error::view-slug.sh: '$raw' has no alphanumeric characters to form a view slug" >&2
+  exit 1
+fi
+
 if [ "$slug" = "main" ]; then
   slug="branch-main"
 fi

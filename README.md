@@ -136,14 +136,17 @@ against two live containers — variant A (production C image,
 dedicated `ubuntu-latest-8-cores` GitHub Larger Runner, never the default
 shared runners.
 
-- **On a PR**: add the `benchmark` label, or comment `/benchmark` (comment
-  authors need OWNER/MEMBER/COLLABORATOR association). Variant B is that
-  PR's `rc-pr-<N>` image; the workflow waits for `rust-pr.yml`'s RC image
-  build to actually succeed before benchmarking, so it never runs against a
-  stale build. Results are posted as a PR comment and published to
-  `https://falkordb.github.io/falkordb-rs-next-gen/benchmark/branch/<branch>/`.
-  Pushing new commits while the label is present re-runs it; closing the PR
-  removes its published view.
+- **On a PR** (from a branch in this repo — a fork PR's read-only token can't
+  publish, so those are skipped): add the `benchmark` label, or comment
+  `/benchmark` (comment authors need OWNER/MEMBER/COLLABORATOR association).
+  Variant B is that PR's `rc-pr-<N>` image; the workflow waits for that RC
+  image to be published to the registry (built early by `rust-pr.yml`, before
+  its slower test jobs finish), so it never runs against a missing build.
+  Results are posted as a PR comment and published to
+  `https://falkordb.github.io/falkordb-rs-next-gen/benchmark/branch/<slug>/`
+  (`<slug>` is the branch name lower-cased and dash-separated). Pushing new
+  commits while the label is present re-runs it; closing the PR removes its
+  published view.
 - **Manually**: run the "A/B benchmark" workflow from the Actions tab and
   choose the variant B (and optionally A) image tag.
 - **Automatically**: every time `edge-rs` is promoted (merge to main), the

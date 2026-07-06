@@ -154,7 +154,7 @@ jobs:
           GH_PAGES_DIR: ${{ github.workspace }}/gh-pages
         run: |
           .github/scripts/benchmark/publish.sh | tee "${{ runner.temp }}/publish.log"
-          published_url=$(grep -o 'RESULT: published_url=.*' "${{ runner.temp }}/publish.log" | sed 's/RESULT: published_url=//')
+          published_url=$(grep -o 'RESULT: published_url=.*' "${{ runner.temp }}/publish.log" | tail -n1 | sed 's/RESULT: published_url=//')
           echo "published_url=$published_url" >> "$GITHUB_OUTPUT"
 
       - name: Comment on PR

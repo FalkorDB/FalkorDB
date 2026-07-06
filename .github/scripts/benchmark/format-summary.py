@@ -66,13 +66,16 @@ def gap_lines(runs: list, name_a: str, name_b: str) -> list:
 
     mps_a = ra.get("actual-messages-per-second")
     mps_b = rb.get("actual-messages-per-second")
-    if isinstance(mps_a, (int, float)) and isinstance(mps_b, (int, float)) and mps_a:
+    # Explicit `> 0` guards the ratio's denominator (a 0 baseline has no
+    # meaningful ratio and would divide by zero).
+    if isinstance(mps_a, (int, float)) and isinstance(mps_b, (int, float)) and mps_a > 0:
         rows.append(f"| msg/s (actual) | {mps_a:,.0f} | {mps_b:,.0f} | {mps_b / mps_a:.2f}× |")
 
     la, lb = ra.get("latency", {}), rb.get("latency", {})
     for pct in ("p50", "p95", "p99"):
         ms_a, ms_b = _latency_ms(la.get(pct)), _latency_ms(lb.get(pct))
-        if ms_a and ms_b is not None:
+        # Skip if either side is unparseable, or A is zero (no ratio / div-by-zero).
+        if ms_a is not None and ms_a > 0 and ms_b is not None:
             rows.append(f"| {pct} latency | {la.get(pct)} | {lb.get(pct)} | {ms_b / ms_a:.2f}× |")
 
     if not rows:

@@ -6,9 +6,13 @@
 #
 # The PR path never trusts that the RC image (rc-pr-<N>) built by rust-pr.yml
 # is ready just because the label is present — `wait-for-rc-image` polls the
-# actual "Rust PR" workflow run for this exact head SHA and only proceeds
-# once it has completed successfully, so a benchmark never runs against a
-# stale or nonexistent build.
+# registry for that image and proceeds as soon as it exists (rust-pr.yml
+# publishes it early, before its slower/flaky test jobs finish). It only fails
+# if the "Rust PR" run for this head SHA finishes without ever publishing the
+# image, so a benchmark never runs against a nonexistent build.
+#
+# PR benchmarks run only for same-repo branches: a fork PR's GITHUB_TOKEN is
+# read-only and couldn't push to gh-pages or comment (see the `prepare` guard).
 #
 # The automatic, continuously-updated canonical trend (main branch, edge vs
 # edge-rs) is wired separately, from rust-push.yml after `edge-rs` promotion
@@ -82,8 +86,8 @@ jobs:
     steps:
       - name: Verify both image tags resolve
         env:
-          IMAGE_A_TAG: ${{ inputs.image_a_tag }}
-          IMAGE_B_TAG: ${{ inputs.image_b_tag }}
+          IMAGE_A_TAG: ${{ github.event.inputs.image_a_tag }}
+          IMAGE_B_TAG: ${{ github.event.inputs.image_b_tag }}
         run: |
           set -euo pipefail
           docker manifest inspect "docker.io/falkordb/falkordb-server:${IMAGE_A_TAG}" >/dev/null
@@ -101,7 +105,8 @@ jobs:
         (
           github.event_name == 'pull_request' &&
           contains(fromJSON('["labeled", "synchronize", "reopened"]'), github.event.action) &&
-          contains(github.event.pull_request.labels.*.name, 'benchmark')
+          contains(github.event.pull_request.labels.*.name, 'benchmark') &&
+          github.event.pull_request.head.repo.full_name == github.repository
         )
       )
     runs-on: ubuntu-latest
@@ -122,9 +127,9 @@ jobs:
         id: derive
         env:
           EVENT_NAME: ${{ github.event_name }}
-          INPUT_IMAGE_A_TAG: ${{ inputs.image_a_tag }}
-          INPUT_IMAGE_B_TAG: ${{ inputs.image_b_tag }}
-          INPUT_DATASET_SIZE: ${{ inputs.dataset_size }}
+          INPUT_IMAGE_A_TAG: ${{ github.event.inputs.image_a_tag }}
+          INPUT_IMAGE_B_TAG: ${{ github.event.inputs.image_b_tag }}
+          INPUT_DATASET_SIZE: ${{ github.event.inputs.dataset_size }}
           DISPATCH_REF_NAME: ${{ github.ref_name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
