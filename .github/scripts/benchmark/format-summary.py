@@ -16,7 +16,7 @@ import argparse
 import json
 import sys
 
-from bench_metrics import per_query
+from query_metrics import per_query
 
 SIZE_ORDER = {"small": 0, "medium": 1, "large": 2}
 
