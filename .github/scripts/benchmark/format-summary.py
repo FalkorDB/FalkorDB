@@ -1,25 +1,40 @@
 #!/usr/bin/env python3
-"""Render a short Markdown summary of a falkordb_vs_falkordb comparison JSON
-(as produced by `benchmark aggregate-aws-tests`) for posting as a PR comment.
+"""Render the Markdown PR comment for a FalkorDB benchmark run.
 
-The aggregate stamps each run's originating subfolder name into its `vendor`
-field (e.g. "falkordb-c" / "falkordb-rs"), so the per-vendor rows are already
-unambiguous. On top of that we surface the actual A/B *gap* — variant B's
-throughput and latency relative to variant A — since publishing that gap is
-the whole point of the comparison.
+Two shapes, both produced by `benchmark aggregate-aws-tests` (which stamps each
+run's originating subfolder name into its `vendor` field):
+
+  A/B   — two variants (C engine `falkordb-c` vs Rust `falkordb-rs`).
+  A/B/C — three variants, where C (`falkordb-pr`) is the PR's image. Then
+          **B→C is exactly this PR's impact** and A/C compares it to the C engine.
+
+Multiple dataset sizes are passed as repeated `--summary <label>:<path>` (one
+aggregate JSON per size); the comment shows one row per size. A single
+positional summary is still accepted for the plain two-variant case.
 """
 import argparse
 import json
 import sys
 
+SIZE_ORDER = {"small": 0, "medium": 1, "large": 2}
+
+
+def _load(path: str):
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _run(summary: dict, vendor: str):
+    return next((r for r in summary.get("runs", []) if r.get("vendor") == vendor), None)
+
+
+def _mps(run: dict):
+    v = (run or {}).get("result", {}).get("actual-messages-per-second")
+    return float(v) if isinstance(v, (int, float)) else None
+
 
 def _latency_ms(value):
-    """Parse a latency string like "20.61ms" into float milliseconds.
-
-    Returns None for anything we don't recognise (a missing value, or a unit
-    the upstream tool didn't emit before) so the caller can skip that row
-    rather than crash the whole comment.
-    """
+    """Parse a latency string like "20.61ms" into float ms (None if unparseable)."""
     if isinstance(value, (int, float)):
         return float(value)
     if isinstance(value, str) and value.endswith("ms"):
@@ -30,95 +45,111 @@ def _latency_ms(value):
     return None
 
 
-def fmt_run(run: dict) -> str:
-    result = run.get("result", {})
-    latency = result.get("latency", {})
-    mps = result.get("actual-messages-per-second")
-    mps_str = f"{mps:,.0f}" if isinstance(mps, (int, float)) else "n/a"
-    errors = result.get("errors", "n/a")
-    return (
-        f"| {run.get('vendor', 'unknown')} "
-        f"| {latency.get('p50', 'n/a')} "
-        f"| {latency.get('p95', 'n/a')} "
-        f"| {latency.get('p99', 'n/a')} "
-        f"| {mps_str} "
-        f"| {errors} |"
-    )
+def _rat(cur, base):
+    """cur ÷ base as a rendered ratio cell, or 'n/a'. `good` if >=1 (higher better)."""
+    if cur is None or base is None or base == 0:
+        return "n/a", "neu"
+    r = cur / base
+    cls = "good" if r >= 1.03 else "bad" if r <= 0.97 else "neu"
+    return (f"{r:.1f}×" if r >= 10 else f"{r:.2f}×"), cls
 
 
-def _find_run(runs: list, vendor: str):
-    return next((r for r in runs if r.get("vendor") == vendor), None)
+def _fmt(x):
+    if x is None:
+        return "n/a"
+    return f"{x:,.0f}" if x >= 100 else f"{x:,.1f}" if x >= 10 else f"{x:.2f}"
 
 
-def gap_lines(runs: list, name_a: str, name_b: str) -> list:
-    """A small "gap" table: variant B relative to variant A.
+def throughput_table(sizes, name_a, name_b, name_c, has_c):
+    head = ["dataset", f"A · {name_a}", f"B · {name_b}"]
+    if has_c:
+        head += [f"C · this PR", "B→C", "vs C-engine"]
+    else:
+        head += ["B ÷ A"]
+    lines = ["| " + " | ".join(head) + " |", "| " + " | ".join(["---"] * len(head)) + " |"]
+    for label, summ in sizes:
+        a, b = _mps(_run(summ, name_a)), _mps(_run(summ, name_b))
+        row = [f"`{label}`", _fmt(a), _fmt(b)]
+        if has_c:
+            c = _mps(_run(summ, name_c))
+            bc, _ = _rat(c, b)
+            vc, _ = _rat(c, a)
+            row += [_fmt(c), bc, vc]
+        else:
+            ba, _ = _rat(b, a)
+            row += [ba]
+        lines.append("| " + " | ".join(row) + " |")
+    return lines
 
-    Aligns the two runs by their `vendor` label (not array position) so a
-    reordered aggregate can't silently swap which side is which. If either
-    side is missing we omit the section rather than guess.
-    """
-    a, b = _find_run(runs, name_a), _find_run(runs, name_b)
-    if a is None or b is None:
-        return []
 
-    ra, rb = a.get("result", {}), b.get("result", {})
-    rows = []
-
-    mps_a = ra.get("actual-messages-per-second")
-    mps_b = rb.get("actual-messages-per-second")
-    # Explicit `> 0` guards the ratio's denominator (a 0 baseline has no
-    # meaningful ratio and would divide by zero).
-    if isinstance(mps_a, (int, float)) and isinstance(mps_b, (int, float)) and mps_a > 0:
-        rows.append(f"| msg/s (actual) | {mps_a:,.0f} | {mps_b:,.0f} | {mps_b / mps_a:.2f}× |")
-
-    la, lb = ra.get("latency", {}), rb.get("latency", {})
-    for pct in ("p50", "p95", "p99"):
-        ms_a, ms_b = _latency_ms(la.get(pct)), _latency_ms(lb.get(pct))
-        # Skip if either side is unparseable, or A is zero (no ratio / div-by-zero).
-        if ms_a is not None and ms_a > 0 and ms_b is not None:
-            rows.append(f"| {pct} latency | {la.get(pct)} | {lb.get(pct)} | {ms_b / ms_a:.2f}× |")
-
-    if not rows:
-        return []
-
-    return [
+def latency_table(sizes, name_b, name_c):
+    """Aggregate workload latency, this PR (C) relative to published Rust (B). ×<1 = PR faster."""
+    lines = [
         "",
-        f"**Gap — `{name_b}` relative to `{name_a}`** "
-        f"(msg/s ×>1 ⇒ B higher throughput; latency ×>1 ⇒ B slower)",
+        "**Aggregate latency — C (this PR) ÷ B (published Rust)** · ×<1 = PR faster",
         "",
-        f"| metric | {name_a} | {name_b} | B ÷ A |",
+        "| dataset | p50 | p95 | p99 |",
         "| --- | --- | --- | --- |",
-        *rows,
     ]
+    any_row = False
+    for label, summ in sizes:
+        b, c = _run(summ, name_b), _run(summ, name_c)
+        if not b or not c:
+            continue
+        lb, lc = b.get("result", {}).get("latency", {}), c.get("result", {}).get("latency", {})
+        cells = []
+        for pct in ("p50", "p95", "p99"):
+            r, _ = _rat(_latency_ms(lc.get(pct)), _latency_ms(lb.get(pct)))
+            cells.append(r)
+        lines.append(f"| `{label}` | " + " | ".join(cells) + " |")
+        any_row = True
+    return lines if any_row else []
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("summary_json")
-    parser.add_argument("--view", required=True)
-    parser.add_argument("--published-url", required=True)
-    parser.add_argument("--name-a", default="falkordb-c", help="vendor label of variant A (the C baseline)")
-    parser.add_argument("--name-b", default="falkordb-rs", help="vendor label of variant B (this repo)")
-    args = parser.parse_args()
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("summary_json", nargs="?", help="single aggregate JSON (two-variant fallback)")
+    p.add_argument("--summary", action="append", default=[], metavar="LABEL:PATH",
+                   help="a size-labelled aggregate JSON; repeat for multiple sizes")
+    p.add_argument("--view", required=True)
+    p.add_argument("--published-url", required=True)
+    p.add_argument("--name-a", default="falkordb-c")
+    p.add_argument("--name-b", default="falkordb-rs")
+    p.add_argument("--name-c", default="falkordb-pr")
+    args = p.parse_args()
 
+    # Collect (label, summary) pairs, in small→medium→large order.
+    sizes = []
     try:
-        with open(args.summary_json, encoding="utf-8") as f:
-            data = json.load(f)
+        for spec in args.summary:
+            label, _, path = spec.partition(":")
+            sizes.append((label or "default", _load(path)))
+        if args.summary_json:
+            sizes.append(("default", _load(args.summary_json)))
     except (OSError, json.JSONDecodeError) as exc:
-        print(f"Could not read {args.summary_json}: {exc}", file=sys.stderr)
+        print(f"Could not read a summary: {exc}", file=sys.stderr)
         return 1
+    if not sizes:
+        print("No summaries given (need a positional JSON or --summary LABEL:PATH)", file=sys.stderr)
+        return 2
+    sizes.sort(key=lambda s: SIZE_ORDER.get(s[0], 99))
 
-    runs = data.get("runs", [])
-    lines = [
-        f"### FalkorDB A/B benchmark — `{args.view}`",
-        "",
-        "| vendor | p50 | p95 | p99 | msg/s (actual) | errors |",
-        "| --- | --- | --- | --- | --- | --- |",
-    ]
-    lines.extend(fmt_run(run) for run in runs)
-    lines.extend(gap_lines(runs, args.name_a, args.name_b))
-    lines.append("")
-    lines.append(f"📊 [Full dashboard]({args.published_url})")
+    has_c = any(_run(summ, args.name_c) for _, summ in sizes)
+    title = "A/B/C" if has_c else "A/B"
+
+    lines = [f"### FalkorDB {title} benchmark — `{args.view}`", ""]
+    if has_c:
+        lines += [
+            f"**Variants:** A `{args.name_a}` (C engine) · "
+            f"B `{args.name_b}` (Rust, published) · C this PR (`rc-pr`)",
+            "_B→C = this PR's impact (>1× throughput = faster); vs-C-engine = C ÷ A._",
+            "",
+        ]
+    lines += ["**Throughput — actual msg/s**", ""]
+    lines += throughput_table(sizes, args.name_a, args.name_b, args.name_c, has_c)
+    if has_c:
+        lines += latency_table(sizes, args.name_b, args.name_c)
+    lines += ["", f"📊 [Full dashboard]({args.published_url})"]
     print("\n".join(lines))
     return 0
 

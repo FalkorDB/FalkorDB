@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
-# Runs the FalkorDB-vs-FalkorDB A/B comparison (variant A vs variant B) using
+# Runs the FalkorDB-vs-FalkorDB comparison across two or three variants using
 # the FalkorDB/benchmark CLI, and writes a single timestamped UI summary
 # JSON to $OUT_JSON.
 #
+#   A/B   — canonical main-branch trend (C engine `edge` vs Rust `edge-rs`)
+#   A/B/C — a PR run, where C is the PR's `rc-pr-<N>` image, so B→C isolates
+#           exactly the PR's impact and A/C compares it to the C engine.
+#
 # Mirrors FalkorDB/benchmark's scripts/run_small_benchmark.sh RUN_FALKOR /
-# RUN_FALKOR_2 dance (same vendor "falkor" on both sides, one shared query
+# RUN_FALKOR_2 dance (same vendor "falkor" on every side, one shared query
 # workload, results renamed into <name>/ subfolders, then aggregated with
-# `aggregate-aws-tests`), but drives two throwaway Docker containers instead
-# of a locally-running redis-server, and never runs A and B concurrently so
-# the two runs never contend for the runner's CPU/memory.
+# `aggregate-aws-tests`), but drives throwaway Docker containers instead of a
+# locally-running redis-server, and never runs variants concurrently so no
+# run's numbers are skewed by another contending for the runner's CPU/memory.
 set -euo pipefail
 
 : "${IMAGE_A:?IMAGE_A is required}"
@@ -16,8 +20,11 @@ set -euo pipefail
 : "${BENCHMARK_DIR:?BENCHMARK_DIR (checkout of FalkorDB/benchmark) is required}"
 : "${OUT_JSON:?OUT_JSON output path is required (e.g. /tmp/out/falkordb_vs_falkordb_<epoch>.json)}"
 
+# IMAGE_C is optional — set it (with NAME_C) to add the third, PR variant.
+IMAGE_C="${IMAGE_C:-}"
 NAME_A="${NAME_A:-falkordb-c}"
 NAME_B="${NAME_B:-falkordb-rs}"
+NAME_C="${NAME_C:-falkordb-pr}"
 DATASET_SIZE="${DATASET_SIZE:-small}"   # small|medium|large — benchmark CLI's Size enum
 QUERIES_COUNT="${QUERIES_COUNT:-200000}"
 PARALLEL="${PARALLEL:-20}"
@@ -104,11 +111,14 @@ cargo run --release --bin benchmark -- generate-queries \
   --name "$QUERIES_NAME" --write-ratio "$WRITE_RATIO"
 echo "::endgroup::"
 
-# Sequential, never concurrent: A fully completes (and its container is torn
-# down) before B starts, so neither run's numbers are skewed by the other
-# competing for CPU/memory/disk cache on the runner.
-run_variant "$IMAGE_A" "$NAME_A"
-run_variant "$IMAGE_B" "$NAME_B"
+# Sequential, never concurrent: each variant fully completes (and its
+# container is torn down) before the next starts, so no run's numbers are
+# skewed by another competing for CPU/memory/disk cache on the runner.
+variants=("${NAME_A}|${IMAGE_A}" "${NAME_B}|${IMAGE_B}")
+[ -n "$IMAGE_C" ] && variants+=("${NAME_C}|${IMAGE_C}")
+for entry in "${variants[@]}"; do
+  run_variant "${entry#*|}" "${entry%%|*}"
+done
 
 echo "::group::Aggregating comparison into ${OUT_JSON}"
 mkdir -p "$(dirname "$OUT_JSON")"

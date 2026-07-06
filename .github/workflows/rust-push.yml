@@ -161,7 +161,7 @@ jobs:
       image_b: ghcr.io/falkordb/falkordb-server:edge-rs
       view: main
       is_canonical: true
-      dataset_size: small
+      sizes: '["small"]'
 
   lint:
     runs-on: ubuntu-latest

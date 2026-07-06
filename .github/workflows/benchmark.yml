@@ -113,9 +113,10 @@ jobs:
     outputs:
       image_a: ${{ steps.derive.outputs.image_a }}
       image_b: ${{ steps.derive.outputs.image_b }}
+      image_c: ${{ steps.derive.outputs.image_c }}
       view: ${{ steps.derive.outputs.view }}
       pr_number: ${{ steps.derive.outputs.pr_number }}
-      dataset_size: ${{ steps.derive.outputs.dataset_size }}
+      sizes: ${{ steps.derive.outputs.sizes }}
     steps:
       - name: Checkout benchmark scripts
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -123,7 +124,7 @@ jobs:
           sparse-checkout: .github/scripts/benchmark
           persist-credentials: false
 
-      - name: Derive image refs, view, dataset size
+      - name: Derive image refs, view, sizes
         id: derive
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -137,18 +138,23 @@ jobs:
           set -euo pipefail
           case "$EVENT_NAME" in
             workflow_dispatch)
+              # Ad-hoc A/B of two published tags, one chosen size, no PR image.
               IMAGE_A="docker.io/falkordb/falkordb-server:${INPUT_IMAGE_A_TAG}"
               IMAGE_B="ghcr.io/falkordb/falkordb-server:${INPUT_IMAGE_B_TAG}"
+              IMAGE_C=""
               VIEW_RAW="$DISPATCH_REF_NAME"
               OUT_PR_NUMBER=""
-              DATASET_SIZE="${INPUT_DATASET_SIZE:-small}"
+              SIZES="[\"${INPUT_DATASET_SIZE:-small}\"]"
               ;;
             pull_request)
+              # A/B/C across all sizes: C engine (A) vs published Rust (B) vs
+              # this PR (C). B→C isolates the PR's impact; A/C is vs the C engine.
               IMAGE_A="docker.io/falkordb/falkordb-server:edge"
-              IMAGE_B="ghcr.io/falkordb/falkordb-server:rc-pr-${PR_NUMBER}"
+              IMAGE_B="ghcr.io/falkordb/falkordb-server:edge-rs"
+              IMAGE_C="ghcr.io/falkordb/falkordb-server:rc-pr-${PR_NUMBER}"
               VIEW_RAW="$PR_HEAD_REF"
               OUT_PR_NUMBER="$PR_NUMBER"
-              DATASET_SIZE="small"
+              SIZES='["small","medium","large"]'
               ;;
             *)
               echo "::error::unsupported event $EVENT_NAME"
@@ -165,11 +171,12 @@ jobs:
           {
             echo "image_a=${IMAGE_A}"
             echo "image_b=${IMAGE_B}"
+            echo "image_c=${IMAGE_C}"
             echo "view=${VIEW}"
             echo "pr_number=${OUT_PR_NUMBER}"
-            echo "dataset_size=${DATASET_SIZE}"
+            echo "sizes=${SIZES}"
           } >> "$GITHUB_OUTPUT"
-          echo "Derived: image_a=${IMAGE_A} image_b=${IMAGE_B} view=${VIEW} pr_number=${OUT_PR_NUMBER} dataset_size=${DATASET_SIZE}"
+          echo "Derived: A=${IMAGE_A} B=${IMAGE_B} C=${IMAGE_C} view=${VIEW} pr=${OUT_PR_NUMBER} sizes=${SIZES}"
 
   # PR path only: don't benchmark a stale or nonexistent RC build. We only
   # need the rc-pr image itself — which rust-pr.yml's `build-rc-image` job
@@ -188,18 +195,18 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          IMAGE_B: ${{ needs.prepare.outputs.image_b }}
+          PR_IMAGE: ${{ needs.prepare.outputs.image_c }}
         run: |
           set -euo pipefail
-          # Poll the registry for the image directly. Fail fast only if the
-          # Rust PR run for this SHA has *finished* and the image still isn't
-          # there — that means the build itself failed and it's never coming
-          # (a run that failed only in a later test job has already pushed the
-          # image, so the manifest check below would have already succeeded).
+          # Wait on the PR image (variant C, rc-pr-<N>) — A (edge) and B
+          # (edge-rs) always exist. Poll the registry directly; fail fast only
+          # if the Rust PR run for this SHA has *finished* and the image still
+          # isn't there (the build failed — it's never coming; a run that
+          # failed only in a later test job already pushed the image).
           deadline=$(( $(date +%s) + 85 * 60 ))
           while true; do
-            if docker manifest inspect "$IMAGE_B" >/dev/null 2>&1; then
-              echo "RC image ${IMAGE_B} is available."
+            if docker manifest inspect "$PR_IMAGE" >/dev/null 2>&1; then
+              echo "RC image ${PR_IMAGE} is available."
               exit 0
             fi
 
@@ -209,16 +216,16 @@ jobs:
             if [ "$run_status" = "completed" ]; then
               # Race guard: the image may have landed between the check above
               # and the run reporting completed.
-              if docker manifest inspect "$IMAGE_B" >/dev/null 2>&1; then
-                echo "RC image ${IMAGE_B} is available."
+              if docker manifest inspect "$PR_IMAGE" >/dev/null 2>&1; then
+                echo "RC image ${PR_IMAGE} is available."
                 exit 0
               fi
-              echo "::error::the Rust PR run for ${HEAD_SHA} finished but ${IMAGE_B} was never published — the RC image build must have failed"
+              echo "::error::the Rust PR run for ${HEAD_SHA} finished but ${PR_IMAGE} was never published — the RC image build must have failed"
               exit 1
             fi
 
             if [ "$(date +%s)" -ge "$deadline" ]; then
-              echo "::error::timed out waiting for the RC image ${IMAGE_B} (Rust PR run status=${run_status:-none})"
+              echo "::error::timed out waiting for the RC image ${PR_IMAGE} (Rust PR run status=${run_status:-none})"
               exit 1
             fi
             echo "RC image not yet available (Rust PR run status=${run_status:-none}); waiting..."
@@ -238,9 +245,10 @@ jobs:
     with:
       image_a: ${{ needs.prepare.outputs.image_a }}
       image_b: ${{ needs.prepare.outputs.image_b }}
+      image_c: ${{ needs.prepare.outputs.image_c }}
       view: ${{ needs.prepare.outputs.view }}
       is_canonical: false
-      dataset_size: ${{ needs.prepare.outputs.dataset_size }}
+      sizes: ${{ needs.prepare.outputs.sizes }}
       pr_number: ${{ needs.prepare.outputs.pr_number }}
 
   # Remove a PR's /benchmark/branch/<slug>/ preview once it closes — no
