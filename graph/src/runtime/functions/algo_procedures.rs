@@ -1304,10 +1304,35 @@ fn register_msf(funcs: &mut Functions) {
                         as u16;
                     weight_attr_idx = attr_idx;
 
-                    if has_multi_edges {
-                    // Multi-edge weighted path: parallel edges between the same
-                    // ordered pair can carry different weights, so an edge-id
-                    // matrix (one id per cell) can't disambiguate them cheaply.
+                    // The weighted UDT fast path (the `else` below) folds every
+                    // selected relationship type into ONE edge-id matrix deduped by
+                    // `GrB_MIN_UINT64`, which silently drops one of two edges that
+                    // share an ordered (src, dst) pair across DIFFERENT types — it
+                    // keeps the minimum edge-*id*, not the minimum weight.
+                    // `has_multi_edge` only detects same-type parallels, so the fast
+                    // path is sound only for a single relationship type. Multi-type
+                    // weighted graphs must take the sort/dedup-by-min-weight path,
+                    // which selects the true minimum-weight edge across all types
+                    // (and matches the C module). A structural type count is used so
+                    // it can never under-count and mis-route a colliding graph.
+                    let single_type = if rel_types.is_empty() {
+                        g.relationship_tensors().len() <= 1
+                    } else {
+                        let mut tids: Vec<usize> = rel_types
+                            .iter()
+                            .filter_map(|rt| g.get_type_id(rt))
+                            .map(|tid| tid.0)
+                            .collect();
+                        tids.sort_unstable();
+                        tids.dedup();
+                        tids.len() <= 1
+                    };
+
+                    if has_multi_edges || !single_type {
+                    // Multi-edge or multi-type weighted path: two edges can share an
+                    // ordered (src, dst) pair — parallel edges of the same type, or
+                    // edges of different types — and carry different weights, so a
+                    // single edge-id matrix (one id per cell) can't disambiguate them.
                     // Dedup undirected pairs to their minimum-weight edge with a
                     // sort, then build the symmetric weighted adjacency in one
                     // `GrB_Matrix_build`.
