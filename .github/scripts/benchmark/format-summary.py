@@ -16,6 +16,8 @@ import argparse
 import json
 import sys
 
+from bench_metrics import per_query
+
 SIZE_ORDER = {"small": 0, "medium": 1, "large": 2}
 
 
@@ -106,6 +108,44 @@ def latency_table(sizes, name_b, name_c):
     return lines if any_row else []
 
 
+def _ratio(r):
+    return (f"{r:.1f}×" if r >= 10 else f"{r:.2f}×")
+
+
+def movers_lines(sizes, name_b, name_c, top=6, floor_ms=0.05):
+    """Top per-query movers by server exec time, B→C, on the largest size present.
+
+    >1× = the PR sped that query up. Queries where both sides are below
+    `floor_ms` are dropped as noise.
+    """
+    if not sizes:
+        return []
+    label, summ = sizes[-1]  # sizes are sorted small→large; last = largest present
+    b = per_query(_run(summ, name_b), "exec")
+    c = per_query(_run(summ, name_c), "exec")
+
+    rows = []
+    for q in set(b) & set(c):
+        if c[q] <= 0 or (b[q] < floor_ms and c[q] < floor_ms):
+            continue
+        rows.append((q, b[q] / c[q]))
+    if not rows:
+        return []
+
+    rows.sort(key=lambda r: r[1], reverse=True)
+    faster = [r for r in rows if r[1] >= 1.05][:top]
+    slower = sorted((r for r in rows if r[1] <= 0.90), key=lambda r: r[1])[:top]
+
+    out = ["", f"**Top per-query movers** — B→C server exec, `{label}` (>1× = PR faster)"]
+    if faster:
+        out.append("⚡ Faster: " + " · ".join(f"`{q}` {_ratio(r)}" for q, r in faster))
+    if slower:
+        out.append("⚠️ Slower: " + " · ".join(f"`{q}` {_ratio(r)}" for q, r in slower))
+    if not faster and not slower:
+        out.append("_no per-query change beyond noise._")
+    return out
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("summary_json", nargs="?", help="single aggregate JSON (two-variant fallback)")
@@ -149,6 +189,7 @@ def main() -> int:
     lines += throughput_table(sizes, args.name_a, args.name_b, args.name_c, has_c)
     if has_c:
         lines += latency_table(sizes, args.name_b, args.name_c)
+        lines += movers_lines(sizes, args.name_b, args.name_c)
     lines += ["", f"📊 [Full dashboard]({args.published_url})"]
     print("\n".join(lines))
     return 0
