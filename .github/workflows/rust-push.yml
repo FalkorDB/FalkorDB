@@ -90,10 +90,10 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - name: Login to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -125,10 +125,10 @@ jobs:
       matrix:
         repo: [falkordb, falkordb-server]
     steps:
-      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - name: Login to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -276,12 +276,40 @@ jobs:
         run: |
           RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo build
           RUSTDOCFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo test -p graph
+          # `cargo build` only produces libfalkordb.so's coverage map, which is
+          # blind to code with no caller reachable from the cdylib (e.g.
+          # graph/src/index/falkordb's cow_btree, not wired into the runtime
+          # yet). Locate the `cargo test -p graph` unit-test binary too (cache
+          # hit, same RUSTFLAGS as above, so this doesn't rebuild or re-run
+          # anything) so llvm-cov can also credit coverage recorded by
+          # test-only call paths, not just the shared library's. Cargo prints
+          # "  Executable <target> (<path>)" to stderr for every test binary
+          # it builds (one per test target; today that's just the lib's own
+          # unit tests) — no jq/python needed to find it.
+          TEST_OBJECTS=""
+          for bin in $(RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo test -p graph --no-run 2>&1 | grep -w Executable | grep -oE 'target/debug/deps/[^)]+'); do
+            TEST_OBJECTS="$TEST_OBJECTS -object $bin"
+          done
+          echo "Additional coverage objects: $TEST_OBJECTS"
+          # Snapshot coverage here, before the e2e/TCK suites run below, so
+          # cargo test's own profraw can be reported as its own Codecov flag
+          # (unit-tests) instead of being indistinguishable from e2e coverage.
+          llvm-profdata-22 merge --sparse `find . -name "*.profraw"` -o cov-unit.profdata
+          llvm-cov-22 export --format=lcov --instr-profile cov-unit.profdata target/debug/libfalkordb.so $TEST_OBJECTS > codecov-unit.txt.all
+          lcov --ignore-errors unused -r codecov-unit.txt.all -o codecov-unit.txt
           . /data/venv/bin/activate
           pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
           TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
           llvm-profdata-22 merge --sparse `find . -name "*.profraw"` -o cov.profdata
-          llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
+          llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so $TEST_OBJECTS > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
+      - name: Upload unit test coverage to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./codecov-unit.txt
+          flags: unit-tests
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
         with:
@@ -358,7 +386,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - run: rustup default nightly
       - run: rustup component add llvm-tools-preview
-      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: ${{ runner.tool_cache }}/cargo-fuzz
           key: cargo-fuzz-bin-${{ env.CARGO_FUZZ_VERSION }}

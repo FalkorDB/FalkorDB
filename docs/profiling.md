@@ -1,5 +1,9 @@
 # Profiling using samply
 
+> See also the `profile` agent skill (`.claude/skills/profile/SKILL.md`),
+> which wraps this flow plus the benchmark suite; the `coverage` skill covers
+> code-coverage reports.
+
 To profile the code to find performance bottlenecks we use [samply](https://github.com/mstange/samply).
 
 1. Install samply
