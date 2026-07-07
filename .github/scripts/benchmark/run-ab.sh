@@ -101,6 +101,12 @@ mkdir -p "$RESULTS_DIR"
 
 cd "$BENCHMARK_DIR"
 
+# The benchmark tool is checked out inside this repo's directory tree, whose
+# root Cargo.toml is a [workspace] — cargo would otherwise refuse to build it
+# ("current package believes it's in a workspace when it's not"). Make the tool
+# its own workspace root so cargo stops walking up to ours.
+grep -q '^\[workspace\]' Cargo.toml || printf '\n[workspace]\n' >> Cargo.toml
+
 echo "::group::Building benchmark CLI"
 cargo build --release --bin benchmark
 echo "::endgroup::"
