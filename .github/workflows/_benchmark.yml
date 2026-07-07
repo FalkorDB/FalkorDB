@@ -133,8 +133,11 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - name: Create GCE runner (${{ matrix.combo.size }}/${{ matrix.combo.variant }})
-        uses: FalkorDB/gce-github-runner@0caf8406cd6353630fcd0b2eade420d3da124e01 # installs Docker
+        uses: ./.github/actions/create-runner # gce-github-runner + retry on stockout
         with:
           token: ${{ secrets.GH_SA_TOKEN }}
           project_id: ${{ secrets.GCP_PROJECT_ID }}
