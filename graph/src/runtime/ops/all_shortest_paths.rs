@@ -71,17 +71,20 @@ impl<'a> AllShortestPathsOp<'a> {
         }
     }
 
-    /// Enumerate every shortest path for `batch[row_idx]`, pushing each as a
-    /// `Value::List` of edges into `out`. Callers pass the op's fields
-    /// explicitly so this runs inside the emitter closure without borrowing the
-    /// emitter through `&self`.
+    /// Enumerate every shortest path for `batch[row_idx]`, returning them as a
+    /// [`RowIter`] of `Value::List` edge lists, or `None` when the row yields no
+    /// paths. The BFS runs eagerly (it borrows the graph), but the DFS backtrack
+    /// reads only the owned `predecessors` snapshot — so it is returned as a
+    /// lazy iterator that walks the backtrack stack one path at a time while the
+    /// emitter packs, never materializing the full path set. Callers pass the
+    /// op's fields explicitly so this runs inside the emitter closure without
+    /// borrowing the emitter through `&self`.
     fn expand_row(
         runtime: &Runtime,
         rp: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
         batch: &Batch,
         row_idx: usize,
-        out: &mut Vec<Value>,
-    ) -> Result<(), String> {
+    ) -> Result<Option<RowIter<'a, Value>>, String> {
         let vars = BatchRow::new(batch, row_idx);
 
         // Evaluate edge attribute filter
@@ -97,7 +100,7 @@ impl<'a> AllShortestPathsOp<'a> {
         let src_val = vars.value_at(rp.from.alias.id);
         let src_id = match src_val {
             Some(Value::Node(id)) => id,
-            Some(Value::Null) | None => return Ok(()), // NULL endpoint → no results
+            Some(Value::Null) | None => return Ok(None), // NULL endpoint → no results
             Some(_) => {
                 return Err(String::from(
                     "encountered unexpected type in Record; expected Node",
@@ -109,7 +112,7 @@ impl<'a> AllShortestPathsOp<'a> {
         let dst_val = vars.value_at(rp.to.alias.id);
         let dst_id = match dst_val {
             Some(Value::Node(id)) => id,
-            Some(Value::Null) | None => return Ok(()),
+            Some(Value::Null) | None => return Ok(None),
             Some(_) => {
                 return Err(String::from(
                     "encountered unexpected type in Record; expected Node",
@@ -255,50 +258,42 @@ impl<'a> AllShortestPathsOp<'a> {
 
         // If destination not reached, no paths
         if !predecessors.contains_key(&dst) {
-            return Ok(());
+            return Ok(None);
         }
 
-        // DFS to enumerate all shortest paths from dst back to src
-        let mut paths: Vec<ThinVec<Value>> = Vec::new();
-        let mut stack: Vec<(u64, ThinVec<Value>)> = Vec::new();
-        stack.push((dst, ThinVec::new()));
-
-        while let Some((node, edges)) = stack.pop() {
-            if node == src && !edges.is_empty() {
-                if is_cycle {
-                    // For cycles, keep the DFS order (predecessor chain order)
-                    paths.push(edges);
-                } else {
-                    // Reverse the path (we built it dst→src, reverse to src→dst)
-                    let mut path = ThinVec::with_capacity(edges.len());
-                    for edge in edges.iter().rev() {
-                        path.push(edge.clone());
+        // DFS backtrack from dst to src, streamed lazily: the emitter pulls one
+        // path at a time off the backtrack stack, so the full path set is never
+        // materialized (a diamond-shaped graph can hold exponentially many
+        // shortest paths). The iterator owns the `predecessors` snapshot and
+        // reads nothing else — no graph borrow escapes.
+        let reverse = rp.all_shortest_paths == AllShortestPaths::Reversed;
+        let mut stack: Vec<(u64, ThinVec<Value>)> = vec![(dst, ThinVec::new())];
+        Ok(Some(RowIter::many(Box::new(std::iter::from_fn(
+            move || {
+                while let Some((node, edges)) = stack.pop() {
+                    if node == src && !edges.is_empty() {
+                        let mut path = edges;
+                        if !is_cycle {
+                            // Built dst→src; reverse in place to src→dst. (Cycles
+                            // keep the DFS predecessor-chain order.)
+                            path.reverse();
+                        }
+                        if reverse {
+                            path.reverse();
+                        }
+                        return Some(Value::List(Arc::new(path)));
                     }
-                    paths.push(path);
+                    if let Some(preds) = predecessors.get(&node) {
+                        for &(prev, edge_id) in preds {
+                            let mut new_edges = edges.clone();
+                            new_edges.push(Value::Relationship(edge_id));
+                            stack.push((prev, new_edges));
+                        }
+                    }
                 }
-                continue;
-            }
-
-            if let Some(preds) = predecessors.get(&node) {
-                for &(prev, edge_id_raw) in preds {
-                    let mut new_edges = edges.clone();
-                    new_edges.push(Value::Relationship(edge_id_raw));
-                    stack.push((prev, new_edges));
-                }
-            }
-        }
-
-        // Emit results
-        for mut path in paths {
-            if rp.all_shortest_paths == AllShortestPaths::Reversed {
-                path.reverse();
-            }
-            // Store the edge list for the path builder; the emitter replicates
-            // the parent columns via `gather` and binds this to the path alias.
-            out.push(Value::List(Arc::new(path)));
-        }
-
-        Ok(())
+                None
+            },
+        )))))
     }
 }
 
@@ -309,21 +304,16 @@ impl<'a> Iterator for AllShortestPathsOp<'a> {
         let runtime = self.runtime;
         let rp = self.relationship_pattern;
         loop {
-            // Enumerate each active parent row's shortest paths eagerly (the BFS
-            // then DFS-backtrack borrows the graph, so it can't stream lazily)
-            // and let the emitter pack them across rows into one gathered batch.
-            // The emitter resumes a partially-drained batch across `next()`
-            // calls, so a row producing more than `BATCH_SIZE` paths never drops
+            // Enumerate each active parent row's shortest paths (the BFS +
+            // DFS-backtrack borrows the graph, so it runs eagerly) and let the
+            // emitter pack them across rows into one gathered batch. The
+            // emitter resumes a partially-drained batch across `next()` calls,
+            // so a row producing more than `BATCH_SIZE` paths never drops
             // sibling rows. When exhausted (`Ok(None)`), pull the next batch.
-            match self.emitter.emit_lazy(|batch, row| {
-                let mut expanded = Vec::new();
-                Self::expand_row(runtime, rp, batch, row, &mut expanded)?;
-                if expanded.is_empty() {
-                    Ok(None)
-                } else {
-                    Ok(Some(RowIter::many(Box::new(expanded.into_iter()))))
-                }
-            }) {
+            match self
+                .emitter
+                .emit_lazy(|batch, row| Self::expand_row(runtime, rp, batch, row))
+            {
                 Ok(Some(out)) => return Some(Ok(out)),
                 Ok(None) => match self.child.next() {
                     Some(Ok(batch)) => self.emitter.seed(batch),
