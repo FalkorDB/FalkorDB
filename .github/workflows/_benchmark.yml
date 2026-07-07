@@ -5,18 +5,24 @@
 #   A/B/C — a PR run, where C is the PR's `rc-pr-<N>` image, so B→C is exactly
 #           the PR's impact and A/C compares it to the C engine.
 #
-# Shape: one `benchmark` job fanned out over `sizes` (a JSON array) — each leg
-# runs on a size-appropriate Larger Runner (large → 16-cores, else 8-cores) and
-# uploads a per-size summary. A single `merge` job then publishes the dashboard
-# once and upserts one PR comment covering every size, so concurrent gh-pages
-# writers and comment pile-ups can't happen.
+# Shape, fanned out over `sizes` (a JSON array), per size:
+#   create-runners  → spin up an ephemeral self-hosted GCE VM runner, sized for
+#                     the dataset (large gets more cores).
+#   benchmark       → run A/B/C on that VM (Docker + the benchmark CLI).
+#   cleanup-runners → tear the VM down (the create action also auto-deletes it
+#                     after 6h as a backstop).
+# A single `merge` job then publishes the dashboard once and upserts one PR
+# comment covering every size, so concurrent gh-pages writers and comment
+# pile-ups can't happen.
 #
 # Called by:
 #   - benchmark.yml   (PR `benchmark` label / `/benchmark` / manual dispatch)
 #   - rust-push.yml   (canonical trend, after `edge-rs` promotion on merge)
 #
-# Prerequisite: `ubuntu-latest-8-cores` and (for large) `ubuntu-latest-16-cores`
-# Larger Runners must be provisioned for the org.
+# Runners are self-hosted GCE VMs (no GitHub larger runners), mirroring
+# FalkorDB/FalkorDB. Prerequisites, all available to this repo (org-level is
+# fine — callers pass `secrets: inherit`): secrets GH_SA_TOKEN, GCP_SA_KEY,
+# GCP_PROJECT_ID; var GCP_ZONES; and the `gh-runner` GCP network.
 name: A/B/C benchmark (reusable)
 
 on:
@@ -80,21 +86,56 @@ env:
   BENCHMARK_REF: 0cc0e9ee45464b9cb8d71732f419e4e0c8ebdacc
 
 jobs:
-  # One leg per dataset size, each on a size-appropriate runner. Legs are
-  # independent (fail-fast off) and only produce a per-size summary artifact —
-  # publishing happens once, later, in `merge`.
-  benchmark:
+  # One ephemeral GCE VM per dataset size, labelled uniquely for this run so the
+  # matching benchmark leg lands on it and cleanup can find it. large gets more
+  # cores for the 30.6M-edge load.
+  create-runners:
     strategy:
       fail-fast: false
       matrix:
         size: ${{ fromJSON(inputs.sizes) }}
-    runs-on: ${{ matrix.size == 'large' && 'ubuntu-latest-16-cores' || 'ubuntu-latest-8-cores' }}
-    # large loads 30.6M edges × 3 variants sequentially — give it a much higher
-    # ceiling than the quick small/medium legs.
-    timeout-minutes: ${{ matrix.size == 'large' && 330 || 90 }}
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
+      - name: Create GCE runner (${{ matrix.size }})
+        uses: FalkorDB/gce-github-runner@0caf8406cd6353630fcd0b2eade420d3da124e01 # installs Docker
+        with:
+          token: ${{ secrets.GH_SA_TOKEN }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          machine_zones: ${{ vars.GCP_ZONES }}
+          machine_type: ${{ matrix.size == 'large' && 'n4-highcpu-16' || 'n4-highcpu-8' }}
+          network: gh-runner
+          runner_label: bench-${{ github.run_id }}-${{ github.run_number }}-${{ matrix.size }}
+
+  # Each leg runs on its own VM (runs-on = the label created above). The VM has
+  # Docker but not Rust/git — install those. The runner runs as root, so no sudo.
+  benchmark:
+    needs: create-runners
+    strategy:
+      fail-fast: false
+      matrix:
+        size: ${{ fromJSON(inputs.sizes) }}
+    runs-on: bench-${{ github.run_id }}-${{ github.run_number }}-${{ matrix.size }}
+    timeout-minutes: ${{ matrix.size == 'large' && 330 || 120 }}
+    permissions:
+      contents: read
+    steps:
+      - name: Install toolchain deps
+        run: |
+          set -euo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            git curl ca-certificates build-essential pkg-config libssl-dev protobuf-compiler
+
+      - name: Install Rust
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain stable --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
       - name: Checkout this repo (scripts)
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -107,13 +148,6 @@ jobs:
           ref: ${{ env.BENCHMARK_REF }}
           path: benchmark-tool
           persist-credentials: false
-
-      - run: rustup default stable
-      - name: Install protobuf-compiler
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          workspaces: benchmark-tool
 
       - name: Run benchmark (${{ matrix.size }})
         env:
@@ -145,6 +179,28 @@ jobs:
           path: ${{ runner.temp }}/results-ab
           if-no-files-found: warn
           retention-days: 30
+
+  # Tear down each size's VM once its benchmark leg ends (success, failure, or
+  # cancel). The create action's 6h auto-delete is the backstop; the cleanup
+  # action treats a never-created VM as a no-op.
+  cleanup-runners:
+    needs: benchmark
+    if: always()
+    strategy:
+      matrix:
+        size: ${{ fromJSON(inputs.sizes) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/cleanup-runner
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          instance_label: bench-${{ github.run_id }}-${{ github.run_number }}-${{ matrix.size }}
 
   # Collect every size's summary, publish the dashboard once, and upsert one
   # all-sizes PR comment. Runs even if a leg failed (publishes what succeeded);

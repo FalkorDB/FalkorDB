@@ -130,11 +130,13 @@ TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
 ### A/B benchmarking vs the production (C) image
 
 [`.github/workflows/benchmark.yml`](.github/workflows/benchmark.yml) runs the
-[FalkorDB/benchmark](https://github.com/FalkorDB/benchmark) A/B workload
-against two live containers — variant A (production C image,
-`falkordb/falkordb-server:edge` by default) and variant B (this repo) — on a
-dedicated `ubuntu-latest-8-cores` GitHub Larger Runner, never the default
-shared runners.
+[FalkorDB/benchmark](https://github.com/FalkorDB/benchmark) A/B/C workload
+against live containers — variant A (production C image
+`falkordb/falkordb-server:edge`), B (published Rust `edge-rs`), and, on a PR,
+C (that PR's image) — on **ephemeral self-hosted GCE VMs** (one per dataset
+size, torn down after each run), mirroring FalkorDB/FalkorDB. Requires the
+`GH_SA_TOKEN` / `GCP_SA_KEY` / `GCP_PROJECT_ID` secrets, the `GCP_ZONES`
+variable, and the `gh-runner` GCP network.
 
 - **On a PR** (from a branch in this repo — a fork PR's read-only token can't
   publish, so those are skipped): add the `benchmark` label, or comment

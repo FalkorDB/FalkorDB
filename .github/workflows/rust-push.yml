@@ -162,6 +162,7 @@ jobs:
       view: main
       is_canonical: true
       sizes: '["small"]'
+    secrets: inherit
 
   lint:
     runs-on: ubuntu-latest

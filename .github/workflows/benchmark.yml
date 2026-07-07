@@ -185,7 +185,10 @@ jobs:
   # perfectly good image.
   wait-for-rc-image:
     needs: prepare
-    if: github.event_name == 'pull_request'
+    # Explicit guard (not a bare `if`): in a chain where an ancestor was skipped
+    # (validate-dispatch-images), a bare condition inherits the skip. Mirror
+    # run-benchmark's pattern so this actually runs on the PR path.
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -249,6 +252,7 @@ jobs:
       is_canonical: false
       sizes: ${{ needs.prepare.outputs.sizes }}
       pr_number: ${{ needs.prepare.outputs.pr_number }}
+    secrets: inherit
 
   # Remove a PR's /benchmark/branch/pr-<N>/ preview once it closes — no
   # point keeping a dead branch's dashboard around forever. Runs regardless

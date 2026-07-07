@@ -1,0 +1,45 @@
+name: Cleanup GCE runner
+description: Delete the ephemeral GCE benchmark runner VM identified by a label.
+
+# Mirrors FalkorDB/FalkorDB's .github/actions/cleanup-runner, but treats a
+# missing instance as success — if create-runner failed there's no VM to
+# delete, and cleanup shouldn't add a second, misleading red X.
+
+inputs:
+  service_account_key:
+    description: GCP service account key (JSON)
+    required: true
+  project_id:
+    description: GCP project ID
+    required: true
+  instance_label:
+    description: Label identifying the VM to delete (matches the runner_label used to create it)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Authenticate to GCP
+      shell: bash
+      run: |
+        echo '${{ inputs.service_account_key }}' \
+          | gcloud --project '${{ inputs.project_id }}' --quiet \
+              auth activate-service-account --key-file - >/dev/null 2>&1
+
+    - name: Delete the runner VM (if any)
+      shell: bash
+      run: |
+        set -euo pipefail
+        # The create action tags the VM with `<runner_label>=1`, so match on
+        # that label key (same identifier passed as instance_label).
+        info=$(gcloud compute instances list \
+          --filter="labels.${{ inputs.instance_label }}=1" \
+          --format="value(name,zone)" | head -1 || true)
+        name=$(echo "$info" | awk '{print $1}')
+        zone=$(echo "$info" | awk '{print $2}')
+        if [ -z "$name" ]; then
+          echo "no VM with label '${{ inputs.instance_label }}' — nothing to clean up"
+          exit 0
+        fi
+        echo "deleting $name ($zone)"
+        gcloud compute instances delete "$name" --zone="$zone" --quiet
