@@ -204,6 +204,10 @@ jobs:
           # variables) — fair by construction.
           DB_CPUS: ${{ vars.BENCHMARK_DB_CPUS || '8' }}
           DB_MEMORY: ${{ vars.BENCHMARK_DB_MEMORY || '24g' }}
+          # Server-side per-query timeout (ms) — 5s so heavy algos abort fast
+          # instead of running to the tool's 180s default (which makes medium
+          # take hours). Tunable via repo variable.
+          FALKOR_QUERY_TIMEOUT_MS: ${{ vars.BENCHMARK_QUERY_TIMEOUT_MS || '5000' }}
           BENCHMARK_DIR: ${{ github.workspace }}/benchmark-tool
           RESULTS_DIR: ${{ runner.temp }}/results-ab
         run: .github/scripts/benchmark/run-variant.sh

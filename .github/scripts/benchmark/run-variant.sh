@@ -20,6 +20,13 @@ PARALLEL="${PARALLEL:-20}"
 MPS="${MPS:-7500}"
 BATCH_SIZE="${BATCH_SIZE:-5000}"
 WRITE_RATIO="${WRITE_RATIO:-0.0}"
+# Server-side per-query timeout (FalkorDB aborts the query and frees the thread
+# at this deadline; the benchmark client applies it via ro_query .with_timeout).
+# Default 5s, well below the tool's own 180s default: the heavy graph algos
+# (maxflow/msf/harmonic) and the unbounded shortestPath otherwise run for
+# minutes each, making medium take hours. At 5s they abort fast (recorded as
+# timeouts) while the ordinary read shapes still complete and compare cleanly.
+export FALKOR_QUERY_TIMEOUT_MS="${FALKOR_QUERY_TIMEOUT_MS:-5000}"
 DB_PORT="${DB_PORT:-16379}"
 DB_CPUS="${DB_CPUS:-4}"
 DB_MEMORY="${DB_MEMORY:-12g}"
