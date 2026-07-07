@@ -41,21 +41,21 @@ typedef struct {
 } LevelConnection;
 
 typedef struct {
-	LevelConnection **levels;    // nodes reached at depth i, and edges leading to them.
-	Path *path;                  // current path.
-	Graph *g;                    // graph to traverse.
-	Edge *neighbors;             // reusable buffer of edges along the current path.
-	int *relationIDs;            // edge type(s) to traverse.
-	int relationCount;           // length of relationIDs.
-	GRAPH_EDGE_DIR dir;          // traverse direction.
-	uint minLen;                 // path minimum length.
-	uint maxLen;                 // path max length.
-	Node src;                    // source node.
-	Node *dst;                   // destination node, defaults to NULL in case of general all paths execution.
+	LevelConnection **levels;    // nodes reached at depth i, and edges leading to them
+	Path *path;                  // current path
+	Graph *g;                    // graph to traverse
+	Edge *neighbors;             // reusable buffer of edges along the current path
+	int *relationIDs;            // edge type(s) to traverse
+	int relationCount;           // length of relationIDs
+	GRAPH_EDGE_DIR dir;          // traverse direction
+	uint minLen;                 // path minimum length
+	uint maxLen;                 // path max length
+	Node src;                    // source node
+	Node *dst;                   // destination node, defaults to NULL in case of general all paths execution
 	AttributeID weight_prop;     // weight attribute id
 	AttributeID cost_prop;       // cost attribuite id
 	double max_cost;             // maximum cost of path
-	uint64_t path_count;         // path to return
+	uint64_t path_count;         // number of paths to return
 	union {
 		WeightedPath single;     // path_count == 1
 		heap_t *heap;            // in case path_count > 1
@@ -469,11 +469,8 @@ static void _find_bound_path
 	NodeID src_id = ENTITY_GET_ID(&ctx->src);
 	NodeID dst_id = ENTITY_GET_ID(ctx->dst);
 
-	if(src_id == dst_id) {
-		RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
-			"SPpaths bound pre-pass: src == dst (%llu), skipping",
-			(unsigned long long)src_id);
-		return;
+	if (src_id == dst_id) {
+		return ;
 	}
 
 	// node -> 1-based index into 'records' (0 is reserved, unused, as
@@ -505,12 +502,7 @@ static void _find_bound_path
 		dirs[ndirs++] = GRAPH_EDGE_DIR_INCOMING;
 	}
 
-	RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
-		"SPpaths bound pre-pass: BFS src=%llu dst=%llu maxHops=%u dir=%d relCount=%d",
-		(unsigned long long)src_id, (unsigned long long)dst_id, max_hops,
-		(int)ctx->dir, ctx->relationCount);
-
-	for(uint32_t hop = 1; !found && hop <= max_hops && arr_len(frontier) > 0; hop++) {
+	for (uint32_t hop = 1; !found && hop <= max_hops && arr_len(frontier) > 0; hop++) {
 		for(uint32_t i = 0; !found && i < arr_len(frontier); i++) {
 			NodeID cur = frontier[i];
 			Node curNode = GE_NEW_NODE();
@@ -579,18 +571,10 @@ static void _find_bound_path
 
 		*out_weight = weight;
 		*out_cost   = cost;
-
-		RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
-			"SPpaths bound pre-pass: found concrete src->dst path, weight=%g cost=%g",
-			weight, cost);
-	} else {
-		RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
-			"SPpaths bound pre-pass: no structural path found within maxHops=%u",
-			max_hops);
 	}
 
-	arr_free(records);
-	HashTableRelease(parents);
+	arr_free (records) ;
+	HashTableRelease (parents) ;
 }
 
 // per-node label used by the Dijkstra fast path below
@@ -617,9 +601,9 @@ static int _dijkstra_cmp
 	const void *b,
 	void *udata
 ) {
-	const DijkstraItem *da = a;
-	const DijkstraItem *db = b;
-	return (da->weight < db->weight) - (da->weight > db->weight);
+	const DijkstraItem *da = a ;
+	const DijkstraItem *db = b ;
+	return (da->weight < db->weight) - (da->weight > db->weight) ;
 }
 
 // exact single-shortest-path search via Dijkstra (label-setting, one
@@ -646,159 +630,249 @@ static void SPpaths_dijkstra_single
 (
 	SinglePairCtx *ctx
 ) {
-	NodeID src_id = ENTITY_GET_ID(&ctx->src);
-	NodeID dst_id = ENTITY_GET_ID(ctx->dst);
+	NodeID src_id = ENTITY_GET_ID (&ctx->src) ;
+	NodeID dst_id = ENTITY_GET_ID (ctx->dst) ;
 
-	RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
-		"SPpaths: Dijkstra fast path src=%llu dst=%llu (unconstrained cost)",
-		(unsigned long long)src_id, (unsigned long long)dst_id);
+	// 'labels' holds one DijkstraLabel per node ever discovered (tentative
+	// or finalized best-known distance, its parent and connecting edge).
+	// 'label_idx' maps a node id to its 1-based slot in 'labels' (0 means
+	// "not yet discovered"), since NodeIDs aren't dense/small enough to
+	// index 'labels' directly.
+	// 'heap' is the Dijkstra priority queue: pending (node, weight)
+	// candidates ordered so the next Heap_poll always returns the
+	// smallest-weight candidate discovered so far.
+	dict *label_idx       = HashTableCreate (&def_dt);
+	DijkstraLabel *labels = arr_new (DijkstraLabel, 64) ;
+	heap_t *heap          = Heap_new (_dijkstra_cmp, NULL) ;
 
-	dict *label_idx = HashTableCreate(&def_dt);  // node -> 1-based index into 'labels'
-	DijkstraLabel *labels = arr_new(DijkstraLabel, 64);
-	heap_t *heap = Heap_new(_dijkstra_cmp, NULL);
-
-	GRAPH_EDGE_DIR dirs[2];
+	// build the list of edge directions to expand through when scanning a
+	// node's neighbors: OUTGOING, INCOMING, or both, per the query's
+	// requested traversal direction.
 	int ndirs = 0;
-	if(ctx->dir == GRAPH_EDGE_DIR_OUTGOING || ctx->dir == GRAPH_EDGE_DIR_BOTH) {
-		dirs[ndirs++] = GRAPH_EDGE_DIR_OUTGOING;
+	GRAPH_EDGE_DIR dirs [2] ;
+	if (ctx->dir == GRAPH_EDGE_DIR_OUTGOING || ctx->dir == GRAPH_EDGE_DIR_BOTH) {
+		dirs [ndirs++] = GRAPH_EDGE_DIR_OUTGOING ;
 	}
-	if(ctx->dir == GRAPH_EDGE_DIR_INCOMING || ctx->dir == GRAPH_EDGE_DIR_BOTH) {
-		dirs[ndirs++] = GRAPH_EDGE_DIR_INCOMING;
+	if (ctx->dir == GRAPH_EDGE_DIR_INCOMING || ctx->dir == GRAPH_EDGE_DIR_BOTH) {
+		dirs [ndirs++] = GRAPH_EDGE_DIR_INCOMING ;
 	}
 
-	// seed src with weight 0
-	DijkstraLabel src_label = { .parent = src_id, .weight = 0, .finalized = false };
-	arr_append(labels, src_label);
-	HashTableAdd(label_idx, (void *)(uintptr_t)src_id, (void *)(uintptr_t)arr_len(labels));
+	// initialization: seed the source node with distance 0 and no parent
+	// (it parents itself, which also makes the path-reconstruction loop's
+	// "cur != src_id" stop condition correct). every other node is
+	// implicitly at distance +inf until first discovered below.
+	DijkstraLabel src_label =
+		{ .parent = src_id, .weight = 0, .finalized = false } ;
 
-	DijkstraItem *seed = rm_malloc(sizeof(DijkstraItem));
-	seed->node = src_id;
-	seed->weight = 0;
-	Heap_offer(&heap, seed);
+	arr_append (labels, src_label) ;
+	HashTableAdd (label_idx, (void *)(uintptr_t)src_id,
+			(void *)(uintptr_t)arr_len (labels)) ;
 
-	bool found = false;
+	// push the source onto the priority queue so the main loop below has
+	// somewhere to start.
+	DijkstraItem *seed = rm_malloc (sizeof (DijkstraItem)) ;
+	seed->node   = src_id ;
+	seed->weight = 0 ;
 
-	while(!found) {
-		DijkstraItem *item = Heap_poll(heap);
-		if(item == NULL) break;  // heap exhausted: dst is unreachable
+	Heap_offer (&heap, seed) ;
 
-		NodeID cur = item->node;
-		rm_free(item);
+	bool found = false ;
 
-		uintptr_t cur_idx = (uintptr_t)HashTableFetchValue(label_idx, (void *)(uintptr_t)cur);
-		ASSERT(cur_idx != 0);
-		if(labels[cur_idx - 1].finalized) continue;  // stale duplicate entry
-		labels[cur_idx - 1].finalized = true;
-
-		if(cur == dst_id) {
-			found = true;
-			break;
+	// main Dijkstra loop: repeatedly extract the not-yet-finalized node
+	// with the smallest tentative distance and finalize it -- that
+	// distance is now guaranteed optimal, since all edge weights are
+	// non-negative and every unexplored candidate is at least as large.
+	// stops either when dst is finalized (found) or the heap empties
+	// (dst unreachable from src).
+	while (!found) {
+		// extract the minimum-weight candidate. this may be a stale
+		// duplicate left over from a relaxation performed after this
+		// entry was queued (see the lazy-deletion note on DijkstraItem);
+		// staleness is detected below via the label's 'finalized' flag
+		// rather than by removing superseded heap entries in place.
+		DijkstraItem *item = Heap_poll (heap) ;
+		if (item == NULL) {
+			break ;  // heap exhausted: dst is unreachable
 		}
 
-		double cur_weight = labels[cur_idx - 1].weight;
+		NodeID cur = item->node ;
+		rm_free (item) ;
 
-		Node curNode = GE_NEW_NODE();
-		Graph_GetNode(ctx->g, cur, &curNode);
+		uintptr_t cur_idx =
+			(uintptr_t)HashTableFetchValue (label_idx, (void *)(uintptr_t)cur) ;
 
-		for(int d = 0; d < ndirs; d++) {
-			for(int r = 0; r < ctx->relationCount; r++) {
-				Graph_GetNodeEdges(ctx->g, &curNode, dirs[d], ctx->relationIDs[r], &ctx->neighbors);
+		ASSERT (cur_idx != 0) ;
+		if (labels [cur_idx - 1].finalized) {
+			continue ;  // stale duplicate entry
+		}
+
+		// finalize 'cur': its current label weight is its true shortest
+		// distance from src and will never be improved again (label
+		// setting -- each node is finalized exactly once).
+		labels [cur_idx - 1].finalized = true ;
+
+		// dst just got finalized, its shortest path is settled: stop
+		// early instead of exploring the rest of the reachable graph.
+		if (cur == dst_id) {
+			found = true ;
+			break ;
+		}
+
+		double cur_weight = labels [cur_idx - 1].weight ;
+
+		Node curNode = GE_NEW_NODE () ;
+		Graph_GetNode (ctx->g, cur, &curNode) ;
+
+		// relaxation step: examine every edge leaving (or entering, per
+		// 'dirs') 'cur', across every relationship type the query allows,
+		// and try to improve each neighbor's tentative distance through
+		// 'cur'.
+		for (int d = 0; d < ndirs; d++) {
+			for (int r = 0; r < ctx->relationCount; r++) {
+				Graph_GetNodeEdges (ctx->g, &curNode, dirs [d],
+						ctx->relationIDs [r], &ctx->neighbors) ;
 			}
 
-			uint32_t n = arr_len(ctx->neighbors);
-			for(uint32_t j = 0; j < n; j++) {
-				Edge *e = ctx->neighbors + j;
-				NodeID nid = (dirs[d] == GRAPH_EDGE_DIR_OUTGOING)
-					? Edge_GetDestNodeID(e)
-					: Edge_GetSrcNodeID(e);
+			uint32_t n = arr_len (ctx->neighbors) ;
+			for (uint32_t j = 0; j < n; j++) {
+				Edge *e = ctx->neighbors + j ;
+				NodeID nid = (dirs [d] == GRAPH_EDGE_DIR_OUTGOING)
+					? Edge_GetDestNodeID (e)
+					: Edge_GetSrcNodeID (e) ;
 
-				if(nid == cur) continue;  // ignore self-loops
+				if (nid == cur) {
+					continue ;  // ignore self-loops
+				}
 
+				// candidate distance to 'nid' going through 'cur' via
+				// this edge: cur's finalized distance plus the edge's
+				// weight.
 				// NOTE: weightProp is assumed non-negative here (see the
 				// function-level comment above); a negative value would
 				// silently make this search's result incorrect.
-				SIValue w = _get_value_or_default((GraphEntity *)e, ctx->weight_prop, SI_LongVal(1));
-				double new_weight = cur_weight + SI_GET_NUMERIC(w);
+				SIValue w = _get_value_or_default ((GraphEntity *)e,
+						ctx->weight_prop, SI_LongVal (1)) ;
+				double new_weight = cur_weight + SI_GET_NUMERIC (w) ;
 
-				dictEntry *existing;
-				dictEntry *entry = HashTableAddRaw(label_idx, (void *)(uintptr_t)nid, &existing);
-				if(entry == NULL) {
-					// already labeled: improve in place if not yet finalized
-					uintptr_t idx = (uintptr_t)HashTableGetVal(existing);
-					DijkstraLabel *nlabel = labels + (idx - 1);
-					if(nlabel->finalized || new_weight >= nlabel->weight) continue;
+				// look up (or reserve) 'nid's slot in 'labels': HashTableAddRaw
+				// returns a fresh entry (entry != NULL) the first time 'nid'
+				// is seen, or NULL with 'existing' set to the prior entry if
+				// 'nid' already has a label.
+				dictEntry *existing ;
+				dictEntry *entry = HashTableAddRaw (label_idx,
+						(void *)(uintptr_t)nid, &existing) ;
 
-					nlabel->weight = new_weight;
-					nlabel->parent = cur;
-					nlabel->edge   = *e;
+				if (entry == NULL) {
+					// 'nid' already labeled: this is the relaxation
+					// comparison proper. skip if it's already finalized
+					// (its distance is final and can't improve) or if
+					// going through 'cur' isn't strictly better than what
+					// it already has.
+					uintptr_t idx = (uintptr_t)HashTableGetVal (existing) ;
+					DijkstraLabel *nlabel = labels + (idx - 1) ;
+					if (nlabel->finalized || new_weight >= nlabel->weight) {
+						continue ;
+					}
+
+					// found a strictly shorter route to 'nid' through
+					// 'cur': update its label in place with the new best
+					// distance, parent and connecting edge.
+					nlabel->edge   = *e ;
+					nlabel->parent = cur ;
+					nlabel->weight = new_weight ;
 				} else {
-					DijkstraLabel nlabel = { .parent = cur, .edge = *e, .weight = new_weight, .finalized = false };
-					arr_append(labels, nlabel);
-					HashTableSetVal(label_idx, entry, (void *)(uintptr_t)arr_len(labels));
+					// first time 'nid' is discovered: create its label
+					// with 'cur' as parent and 'new_weight' as its (so
+					// far unbeaten) tentative distance.
+					DijkstraLabel nlabel = { .parent = cur, .edge = *e,
+						.weight = new_weight, .finalized = false } ;
+
+					arr_append (labels, nlabel) ;
+					HashTableSetVal (label_idx, entry,
+							(void *)(uintptr_t)arr_len (labels)) ;
 				}
 
-				DijkstraItem *qi = rm_malloc(sizeof(DijkstraItem));
-				qi->node = nid;
-				qi->weight = new_weight;
-				Heap_offer(&heap, qi);
+				// queue (or re-queue) 'nid' at its updated tentative
+				// weight. any older, now-superseded heap entry for 'nid'
+				// is left in place and simply skipped later as a stale
+				// duplicate once popped.
+				DijkstraItem *qi = rm_malloc (sizeof (DijkstraItem)) ;
+				qi->node   = nid ;
+				qi->weight = new_weight ;
+				Heap_offer (&heap, qi) ;
 			}
 
-			arr_clear(ctx->neighbors);
+			arr_clear (ctx->neighbors) ;
 		}
 	}
 
-	// drain and free any remaining queued items
-	DijkstraItem *leftover;
-	while((leftover = Heap_poll(heap)) != NULL) rm_free(leftover);
-	Heap_free(heap);
+	// search is over (dst found or heap exhausted): drain and free any
+	// remaining queued items before freeing the heap itself.
+	DijkstraItem *leftover ;
+	while ((leftover = Heap_poll (heap)) != NULL) {
+		rm_free (leftover) ;
+	}
+	Heap_free (heap) ;
 
-	if(!found) {
-		RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
-			"SPpaths: Dijkstra fast path found no path src=%llu dst=%llu",
-			(unsigned long long)src_id, (unsigned long long)dst_id);
-		arr_free(labels);
-		HashTableRelease(label_idx);
-		return;
+	if (!found) {
+		// dst is unreachable from src: nothing to report, leave
+		// ctx->single at its caller-initialized "no path" state.
+		arr_free (labels) ;
+		HashTableRelease (label_idx) ;
+		return ;
 	}
 
-	// reconstruct the path by walking parent pointers from dst back to src
-	Path *path = Path_New(8);
-	double total_cost = 0;
-	NodeID cur = dst_id;
-	while(cur != src_id) {
-		uintptr_t idx = (uintptr_t)HashTableFetchValue(label_idx, (void *)(uintptr_t)cur);
-		ASSERT(idx != 0);
-		DijkstraLabel *label = labels + (idx - 1);
+	// reconstruct the path by walking parent pointers from dst back to
+	// src, one finalized label at a time, accumulating cost_prop along
+	// the way (weight_prop was already accumulated into each label's
+	// 'weight' during the relaxation loop above, so total_weight is just
+	// read off dst's label once the walk is done).
+	NodeID cur = dst_id ;
+	double total_cost = 0 ;
+	Path *path = Path_New (8) ;
 
-		Node n = GE_NEW_NODE();
-		Graph_GetNode(ctx->g, cur, &n);
-		Path_AppendNode(path, n);
-		Path_AppendEdge(path, label->edge);
+	while (cur != src_id) {
+		uintptr_t idx =
+			(uintptr_t)HashTableFetchValue (label_idx, (void *)(uintptr_t)cur) ;
+		ASSERT (idx != 0) ;
+		DijkstraLabel *label = labels + (idx - 1) ;
 
-		SIValue c = _get_value_or_default((GraphEntity *)&label->edge, ctx->cost_prop, SI_LongVal(1));
-		total_cost += SI_GET_NUMERIC(c);
+		// append 'cur' and the edge that reached it from its parent; the
+		// path is being built tail-first (dst towards src) and will be
+		// reversed once the walk reaches src.
+		Node n = GE_NEW_NODE () ;
+		Graph_GetNode (ctx->g, cur, &n) ;
+		Path_AppendNode (path, n) ;
+		Path_AppendEdge (path, label->edge) ;
 
-		cur = label->parent;
+		SIValue c =
+			_get_value_or_default ((GraphEntity *)&label->edge, ctx->cost_prop,
+					SI_LongVal (1)) ;
+		total_cost += SI_GET_NUMERIC (c) ;
+
+		cur = label->parent ;
 	}
-	Node srcNode = GE_NEW_NODE();
-	Graph_GetNode(ctx->g, src_id, &srcNode);
-	Path_AppendNode(path, srcNode);
 
-	Path_Reverse(path);
+	// walk terminated at src: append it (it has no incoming edge on this
+	// path) and flip the path from dst->src order into src->dst order.
+	Node srcNode = GE_NEW_NODE () ;
+	Graph_GetNode (ctx->g, src_id, &srcNode) ;
+	Path_AppendNode (path, srcNode) ;
 
-	uintptr_t dst_idx = (uintptr_t)HashTableFetchValue(label_idx, (void *)(uintptr_t)dst_id);
-	double total_weight = labels[dst_idx - 1].weight;
+	Path_Reverse (path) ;
 
-	ctx->single.path   = path;
-	ctx->single.weight = total_weight;
-	ctx->single.cost   = total_cost;
+	// dst's finalized label already holds the total shortest weight from
+	// src, accumulated incrementally throughout the relaxation loop.
+	uintptr_t dst_idx =
+		(uintptr_t)HashTableFetchValue (label_idx, (void *)(uintptr_t)dst_id) ;
+	double total_weight = labels [dst_idx - 1].weight ;
 
-	RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
-		"SPpaths: Dijkstra fast path found src=%llu dst=%llu weight=%g cost=%g",
-		(unsigned long long)src_id, (unsigned long long)dst_id, total_weight, total_cost);
+	ctx->single.path   = path ;
+	ctx->single.cost   = total_cost ;
+	ctx->single.weight = total_weight ;
 
-	arr_free(labels);
-	HashTableRelease(label_idx);
+	arr_free (labels) ;
+	HashTableRelease (label_idx) ;
 }
 
 // use DFS to find all paths from src to dst tracking cost and weight
@@ -826,9 +900,6 @@ static void SPpaths_next
 			// node cycle so it doesn't get traversed twice on one path.
 			if(!frontierAlreadyOnPath && depth > 0 &&
 				Path_ContainsEdge(ctx->path, ENTITY_GET_ID(&frontierConnection.edge))) {
-				RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
-					"SPpaths: rejecting duplicate edge %llu already on path (depth=%u)",
-					(unsigned long long)ENTITY_GET_ID(&frontierConnection.edge), depth);
 				frontierAlreadyOnPath = true;
 			}
 
@@ -1064,14 +1135,14 @@ static ProcedureResult Proc_SPpathsInvoke
 	const SIValue *args,
 	const char **yield
 ) {
-	SinglePairCtx *single_pair_ctx = rm_calloc(1, sizeof(SinglePairCtx));
-	if(!validate_config(args[0], single_pair_ctx)) {
-		SinglePairCtx_Free(single_pair_ctx);
-		return PROCEDURE_ERR;
+	SinglePairCtx *single_pair_ctx = rm_calloc (1, sizeof (SinglePairCtx)) ;
+	if (!validate_config (args [0], single_pair_ctx)) {
+		SinglePairCtx_Free (single_pair_ctx) ;
+		return PROCEDURE_ERR ;
 	}
-	ctx->privateData = single_pair_ctx;
 
-	_process_yield(single_pair_ctx, yield);
+	ctx->privateData = single_pair_ctx ;
+	_process_yield (single_pair_ctx, yield) ;
 
 	// fast path: a single shortest path with no maxCost constraint is
 	// exactly what Dijkstra solves, in O((V+E) log V) instead of the
@@ -1087,11 +1158,15 @@ static ProcedureResult Proc_SPpathsInvoke
 	// self-loop). Rather than special-casing that inside the search, just
 	// don't take the fast path here and let the exhaustive DFS (which
 	// already handles this correctly) run instead.
-	bool src_eq_dst = ENTITY_GET_ID(&single_pair_ctx->src) == ENTITY_GET_ID(single_pair_ctx->dst);
+	bool src_eq_dst =
+		(ENTITY_GET_ID (&single_pair_ctx->src) ==
+		 ENTITY_GET_ID (single_pair_ctx->dst)) ;
 
-	if(single_pair_ctx->path_count == 1 && single_pair_ctx->max_cost == DBL_MAX && !src_eq_dst) {
-		SPpaths_dijkstra_single(single_pair_ctx);
-		return PROCEDURE_OK;
+	if (src_eq_dst == false              &&
+		single_pair_ctx->path_count == 1 &&
+		single_pair_ctx->max_cost == DBL_MAX) {
+		SPpaths_dijkstra_single (single_pair_ctx) ;
+		return PROCEDURE_OK ;
 	}
 
 	// quick pre-pass: does *any* structural path (honoring relTypes/
@@ -1105,9 +1180,6 @@ static ProcedureResult Proc_SPpathsInvoke
 	_find_bound_path(single_pair_ctx, &bound_exists, &bound_weight, &bound_cost);
 
 	if(!bound_exists) {
-		RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
-			"SPpaths: bound pre-pass found no structural path, skipping exhaustive search");
-
 		if(single_pair_ctx->path_count == 0) {
 			single_pair_ctx->array = arr_new(WeightedPath, 0);
 		} else if(single_pair_ctx->path_count == 1) {
@@ -1121,21 +1193,12 @@ static ProcedureResult Proc_SPpathsInvoke
 	bool cost_feasible = (bound_cost <= single_pair_ctx->max_cost);
 	double initial_bound = cost_feasible ? bound_weight : DBL_MAX;
 
-	RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
-		"SPpaths: bound pre-pass weight=%g cost=%g maxCost=%g -> %s",
-		bound_weight, bound_cost, single_pair_ctx->max_cost,
-		cost_feasible ? "cost-feasible" : "exceeds maxCost, bound discarded");
-
 	if(single_pair_ctx->path_count == 0) {
 		// all-minimal wants every tie at the true minimum weight; the
 		// pre-pass weight is a valid upper bound on that minimum (any tie
 		// is by definition <= it), so seeding is safe here.
-		RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
-			"SPpaths: seeding all-minimal search with max_weight=%g", initial_bound);
 		SPpaths_all_minimal(single_pair_ctx, initial_bound);
 	} else if(single_pair_ctx->path_count == 1) {
-		RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
-			"SPpaths: seeding single-minimal search with max_weight=%g", initial_bound);
 		SPpaths_single_minimal(single_pair_ctx, initial_bound);
 	} else {
 		// k-minimal needs to fill up to path_count candidates before
@@ -1190,29 +1253,25 @@ static ProcedureResult Proc_SPpathsFree
 (
 	ProcedureCtx *ctx
 ) {
-	SinglePairCtx *single_pair_ctx = ctx->privateData;
-	SinglePairCtx_Free(single_pair_ctx);
-	return PROCEDURE_OK;
+	ASSERT (ctx != NULL) ;
+
+	SinglePairCtx *single_pair_ctx = ctx->privateData ;
+	SinglePairCtx_Free (single_pair_ctx) ;
+
+	return PROCEDURE_OK ;
 }
 
-ProcedureCtx *Proc_SPpathCtx() {
-	void *privateData = NULL;
-	ProcedureOutput output;
-	ProcedureOutput *outputs = arr_new(ProcedureOutput, 3);
-	output = (ProcedureOutput){.name = "path", .type = T_PATH};
-	arr_append(outputs, output);
-	output = (ProcedureOutput){.name = "pathWeight", .type = T_DOUBLE};
-	arr_append(outputs, output);
-	output = (ProcedureOutput){.name = "pathCost", .type = T_DOUBLE};
-	arr_append(outputs, output);
+ProcedureCtx *Proc_SPpathCtx (void) {
+	ProcedureOutput output ;
+	void *privateData = NULL ;
 
-	ProcedureCtx *ctx = ProcCtxNew("algo.SPpaths",
-								   1,
-								   outputs,
-								   Proc_SPpathsStep,
-								   Proc_SPpathsInvoke,
-								   Proc_SPpathsFree,
-								   privateData,
-								   true);
-	return ctx;
+	ProcedureOutput *outputs = arr_newlen (ProcedureOutput, 3) ;
+
+	outputs [0] = (ProcedureOutput) {.name = "path",       .type = T_PATH} ;
+	outputs [1] = (ProcedureOutput) {.name = "pathWeight", .type = T_DOUBLE} ;
+	outputs [2] = (ProcedureOutput) {.name = "pathCost",   .type = T_DOUBLE} ;
+
+	return ProcCtxNew ("algo.SPpaths", 1, outputs, Proc_SPpathsStep,
+			Proc_SPpathsInvoke, Proc_SPpathsFree, privateData, true) ;
 }
+

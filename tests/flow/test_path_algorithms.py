@@ -1,6 +1,8 @@
 from common import *
 from index_utils import *
 from functools import cmp_to_key
+import heapq
+import random
 
 NODES = 20    # node count
 EDGES = 200   # edge count
@@ -617,3 +619,154 @@ class testAllShortestPaths():
         # would otherwise mishandle (trivially "finding" src at distance 0).
         result = self.sp_query(self.n, self.n, None, 3, None, 1, None)
         self.env.assertEquals(len(result.result_set), 0)
+
+    #-------------------------------------------------------------------------
+    # Dijkstra fast-path (SPpaths_dijkstra_single) correctness on structured
+    # graphs: pathCount==1 with no maxCost is exactly the condition that
+    # routes into the Dijkstra fast path (see the dispatch check in
+    # Proc_SPpathsInvoke). Each test below builds a graph with a known,
+    # hand-designed topology, computes all-pairs shortest distances with an
+    # independent Python Dijkstra implementation, then asks algo.SPpaths for
+    # every (src, dst) combination in a single query and checks that every
+    # reachable pair's pathWeight matches the reference exactly, and that
+    # every unreachable pair yields no result at all.
+    #-------------------------------------------------------------------------
+
+    def _dijkstra_all_pairs(self, n_nodes, edges):
+        # independent reference implementation: all-pairs shortest distances
+        # over a directed, non-negatively weighted graph given as a list of
+        # (u, v, weight) edges. returns {src: {dst: dist, ...}, ...}, where
+        # unreachable dst's are simply absent from the inner dict.
+        adj = [[] for _ in range(n_nodes)]
+        for u, v, w in edges:
+            adj[u].append((v, w))
+
+        all_dist = {}
+        for src in range(n_nodes):
+            dist = {src: 0}
+            pq = [(0, src)]
+            while pq:
+                d, u = heapq.heappop(pq)
+                if d > dist.get(u, float('inf')):
+                    continue  # stale heap entry, already finalized cheaper
+                for v, w in adj[u]:
+                    nd = d + w
+                    if nd < dist.get(v, float('inf')):
+                        dist[v] = nd
+                        heapq.heappush(pq, (nd, v))
+            all_dist[src] = dist
+
+        return all_dist
+
+    def _verify_dijkstra_all_pairs(self, graph_name, n_nodes, edges):
+        # build a directed weighted graph from `edges` (nodes labeled :DK
+        # with an 'id' property 0..n_nodes-1, edges typed :DE with a
+        # 'weight' property), then validate algo.SPpaths' Dijkstra fast
+        # path (pathCount: 1, no maxCost) against the independent reference
+        # in self._dijkstra_all_pairs for every (src, dst) combination.
+        g = self.db.select_graph(graph_name)
+        g.query(f"UNWIND range(0, {n_nodes - 1}) AS x CREATE (:DK {{id: x}})")
+
+        if edges:
+            rows = ", ".join(f"[{u}, {v}, {w}]" for u, v, w in edges)
+            g.query(f"""
+                UNWIND [{rows}] AS e
+                MATCH (a:DK {{id: e[0]}}), (b:DK {{id: e[1]}})
+                CREATE (a)-[:DE {{weight: e[2]}}]->(b)
+            """)
+
+        # one query drives algo.SPpaths once per (n, m) row produced by the
+        # outer MATCH, covering every ordered pair in a single round trip;
+        # unreachable pairs simply yield no row (CALL acts like an inner
+        # join), so they never appear in 'actual' below.
+        result = g.query("""
+            MATCH (n:DK), (m:DK)
+            WHERE n.id <> m.id
+            CALL algo.SPpaths({
+                sourceNode: n,
+                targetNode: m,
+                weightProp: 'weight',
+                pathCount: 1
+            }) YIELD pathWeight
+            RETURN n.id, m.id, pathWeight
+        """)
+
+        actual = {(row[0], row[1]): row[2] for row in result.result_set}
+        expected = self._dijkstra_all_pairs(n_nodes, edges)
+
+        for src in range(n_nodes):
+            for dst in range(n_nodes):
+                if src == dst:
+                    continue
+
+                key = (src, dst)
+                exp_weight = expected[src].get(dst)
+
+                if exp_weight is None:
+                    # no path should have been found for this pair
+                    self.env.assertNotContains(key, actual)
+                else:
+                    self.env.assertContains(key, actual)
+                    self.env.assertAlmostEqual(actual[key], exp_weight, delta=1e-9)
+
+    def test14_dijkstra_line_graph(self):
+        # simple directed line 0->1->2->...->(n-1) with strictly increasing
+        # weights. exactly one path exists between any (src, dst) pair, and
+        # only "forward" pairs are reachable at all -- a baseline sanity
+        # check for path composition, weight accumulation, and correct
+        # rejection of unreachable (backward) pairs.
+        n = 8
+        edges = [(i, i + 1, i + 1) for i in range(n - 1)]
+        self._verify_dijkstra_all_pairs("dijkstra_line", n, edges)
+
+    def test15_dijkstra_diamond_graph(self):
+        # a DAG made of two chained "diamonds", each offering a cheap and an
+        # expensive parallel route between the same pair of nodes:
+        #   0 -> 1 -> 3 -> 4 -> 6 -> 7   (cheap branch: weight 1 each hop)
+        #   0 -> 2 -> 3 -> 5 -> 6 -> 7   (expensive branch: weight 5 each hop)
+        # Dijkstra must independently pick the cheap branch at each diamond.
+        edges = [
+            (0, 1, 1), (0, 2, 5),
+            (1, 3, 1), (2, 3, 1),
+            (3, 4, 1), (3, 5, 5),
+            (4, 6, 1), (5, 6, 1),
+            (6, 7, 1),
+        ]
+        self._verify_dijkstra_all_pairs("dijkstra_diamond", 8, edges)
+
+    def test16_dijkstra_grid_graph(self):
+        # a 4x4 grid with only rightward/downward edges and randomized
+        # weights: many equal-length alternative routes exist between any
+        # two nodes on the same diagonal, forcing Dijkstra to actually
+        # compare weights rather than just hop count. reversed (backward)
+        # pairs are unreachable, exercising that path too.
+        random.seed(1234)
+        rows, cols = 4, 4
+
+        def node_id(r, c):
+            return r * cols + c
+
+        edges = []
+        for r in range(rows):
+            for c in range(cols):
+                if c + 1 < cols:
+                    edges.append((node_id(r, c), node_id(r, c + 1), random.randint(1, 9)))
+                if r + 1 < rows:
+                    edges.append((node_id(r, c), node_id(r + 1, c), random.randint(1, 9)))
+
+        self._verify_dijkstra_all_pairs("dijkstra_grid", rows * cols, edges)
+
+    def test17_dijkstra_dense_cyclic_graph(self):
+        # a dense graph with edges in both directions between most node
+        # pairs, forming many cycles. exercises Dijkstra's finalize-once
+        # invariant and lazy heap-deletion under heavy relabeling: many
+        # nodes get repeatedly relaxed and re-queued before the true
+        # minimum is found.
+        n = 10
+        edges = []
+        for u in range(n):
+            for v in range(n):
+                if u != v and (u + v) % 3 != 0:
+                    edges.append((u, v, ((u * 7 + v * 13) % 11) + 1))
+
+        self._verify_dijkstra_all_pairs("dijkstra_dense", n, edges)
