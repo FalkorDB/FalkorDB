@@ -121,6 +121,11 @@ jobs:
     timeout-minutes: ${{ matrix.size == 'large' && 330 || 120 }}
     permissions:
       contents: read
+    # The GCE runner registers as root but doesn't export HOME; rustup, cargo
+    # and git all need it (without it, `set -u` steps hit "HOME: unbound
+    # variable" and cargo can't find its toolchain). Point it at root's home.
+    env:
+      HOME: /root
     steps:
       - name: Install toolchain deps
         run: |
