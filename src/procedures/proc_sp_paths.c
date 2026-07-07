@@ -46,6 +46,7 @@ typedef struct {
 	Graph *g;                    // graph to traverse
 	Edge *neighbors;             // reusable buffer of edges along the current path
 	int *relationIDs;            // edge type(s) to traverse
+	Tensor *relationMatrices;    // relation matrix per relationIDs entry, synced once up front
 	int relationCount;           // length of relationIDs
 	GRAPH_EDGE_DIR dir;          // traverse direction
 	uint minLen;                 // path minimum length
@@ -79,10 +80,11 @@ static void SinglePairCtx_Free
 		arr_free(ctx->levels[i]);
 	}
 
-	if(ctx->path)        Path_Free(ctx->path);
-	if(ctx->levels)      arr_free(ctx->levels);
-	if(ctx->neighbors)   arr_free(ctx->neighbors);
-	if(ctx->relationIDs) arr_free(ctx->relationIDs);
+	if(ctx->path)             Path_Free(ctx->path);
+	if(ctx->levels)           arr_free(ctx->levels);
+	if(ctx->neighbors)        arr_free(ctx->neighbors);
+	if(ctx->relationIDs)      arr_free(ctx->relationIDs);
+	if(ctx->relationMatrices) arr_free(ctx->relationMatrices);
 
 	if(ctx->path_count == 0 && ctx->array != NULL) {
 		arr_free(ctx->array);
@@ -184,6 +186,16 @@ static void SinglePairCtx_New
 	ctx->src            = *src;
 	ctx->dst            =  dst;
 
+	// resolve and synchronize each relation's matrix once, up front, instead
+	// of on every neighbor-expansion call during traversal: the procedure
+	// runs under the graph's read lock for its entire lifetime, so the
+	// matrices are guaranteed stable for as long as they're cached here
+	ctx->relationMatrices = arr_new(Tensor, relationCount);
+	for(int i = 0; i < relationCount; i++) {
+		Tensor R = Graph_GetRelationMatrix(g, relationIDs[i], false);
+		arr_append(ctx->relationMatrices, R);
+	}
+
 	_SinglePairCtx_EnsureLevelArrayCap(ctx, 0, 1);
 	_SinglePairCtx_AddConnectionToLevel(ctx, 0, src, NULL);
 }
@@ -274,9 +286,15 @@ static ProcedureResult validate_config
 			types_count = arr_len(types);
 		}
 	} else {
-		types_count = 1;
+		// no relTypes specified: traverse every relation type. expand to
+		// concrete relation ids up front (rather than passing the
+		// GRAPH_NO_RELATION wildcard through) so each one can be resolved
+		// to a matrix and cached once in SinglePairCtx_New below.
+		types_count = Graph_RelationTypeCount(g);
 		types = arr_new(int, types_count);
-		arr_append(types, GRAPH_NO_RELATION);
+		for(uint i = 0; i < types_count; i++) {
+			arr_append(types, (int)i);
+		}
 	}
 
 	SinglePairCtx_New(ctx, (Node *)start.ptrval, (Node *)end.ptrval, g, types,
@@ -346,7 +364,8 @@ static void addOutgoingNeighbors
 
 	// Get frontier neighbors.
 	for(int i = 0; i < ctx->relationCount; i++) {
-		Graph_GetNodeEdges(ctx->g, &frontier->node, GRAPH_EDGE_DIR_OUTGOING, ctx->relationIDs[i], &ctx->neighbors);
+		Graph_GetNodeEdgesFromMatrix(ctx->g, &frontier->node, GRAPH_EDGE_DIR_OUTGOING,
+				ctx->relationMatrices[i], ctx->relationIDs[i], &ctx->neighbors);
 	}
 
 	// Add unvisited neighbors to next level.
@@ -376,7 +395,8 @@ static void addIncomingNeighbors
 
 	// Get frontier neighbors.
 	for(int i = 0; i < ctx->relationCount; i++) {
-		Graph_GetNodeEdges(ctx->g, &frontier->node, GRAPH_EDGE_DIR_INCOMING, ctx->relationIDs[i], &ctx->neighbors);
+		Graph_GetNodeEdgesFromMatrix(ctx->g, &frontier->node, GRAPH_EDGE_DIR_INCOMING,
+				ctx->relationMatrices[i], ctx->relationIDs[i], &ctx->neighbors);
 	}
 
 	// Add unvisited neighbors to next level.
@@ -510,7 +530,8 @@ static void _find_bound_path
 
 			for(int d = 0; !found && d < ndirs; d++) {
 				for(int r = 0; r < ctx->relationCount; r++) {
-					Graph_GetNodeEdges(ctx->g, &curNode, dirs[d], ctx->relationIDs[r], &ctx->neighbors);
+					Graph_GetNodeEdgesFromMatrix(ctx->g, &curNode, dirs[d],
+							ctx->relationMatrices[r], ctx->relationIDs[r], &ctx->neighbors);
 				}
 
 				uint32_t n = arr_len(ctx->neighbors);
@@ -729,8 +750,8 @@ static void SPpaths_dijkstra_single
 		// 'cur'.
 		for (int d = 0; d < ndirs; d++) {
 			for (int r = 0; r < ctx->relationCount; r++) {
-				Graph_GetNodeEdges (ctx->g, &curNode, dirs [d],
-						ctx->relationIDs [r], &ctx->neighbors) ;
+				Graph_GetNodeEdgesFromMatrix (ctx->g, &curNode, dirs [d],
+						ctx->relationMatrices [r], ctx->relationIDs [r], &ctx->neighbors) ;
 			}
 
 			uint32_t n = arr_len (ctx->neighbors) ;

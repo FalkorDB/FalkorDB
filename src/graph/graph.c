@@ -355,22 +355,23 @@ Graph *Graph_New
 	return g ;
 }
 
-// get outgoing edges of node 'n'
-static void _GetOutgoingNodeEdges
+// get outgoing edges of node 'n' via an already-synchronized relation matrix
+static void _GetOutgoingNodeEdgesFromMatrix
 (
 	const Graph *g,  // graph to collect edges from
 	const Node *n,   // either source or destination node
+	Tensor R,        // already synchronized relation matrix for 'r'
 	RelationID r,    // relationship type
 	Edge **edges     // [output] array of edges
 ) {
 	ASSERT (g) ;
 	ASSERT (n) ;
+	ASSERT (R) ;
 	ASSERT (edges) ;
 	ASSERT (r != GRAPH_NO_RELATION && r != GRAPH_UNKNOWN_RELATION) ;
 
 	TensorIterator it ;
 	NodeID src_id = ENTITY_GET_ID (n) ;
-	Tensor R      = Graph_GetRelationMatrix (g, r, false) ;
 
 	Edge e = {.src_id = src_id, .relationID = r};
 
@@ -382,22 +383,35 @@ static void _GetOutgoingNodeEdges
 	}
 }
 
-// get incoming edges of node 'n'
-static void _GetIncomingNodeEdges
+// get outgoing edges of node 'n'
+static inline void _GetOutgoingNodeEdges
+(
+	const Graph *g,  // graph to collect edges from
+	const Node *n,   // either source or destination node
+	RelationID r,    // relationship type
+	Edge **edges     // [output] array of edges
+) {
+	Tensor R = Graph_GetRelationMatrix (g, r, false) ;
+	_GetOutgoingNodeEdgesFromMatrix (g, n, R, r, edges) ;
+}
+
+// get incoming edges of node 'n' via an already-synchronized relation matrix
+static void _GetIncomingNodeEdgesFromMatrix
 (
 	const Graph *g,        // graph to collect edges from
 	const Node *n,         // either source or destination node
+	Tensor T,              // already synchronized relation matrix for 'r'
 	RelationID r,          // relationship type
 	bool skip_self_edges,  // skip self referencing edges
 	Edge **edges           // [output] array of edges
 ) {
 	ASSERT (g     != NULL) ;
 	ASSERT (n     != NULL) ;
+	ASSERT (T     != NULL) ;
 	ASSERT (edges != NULL) ;
 	ASSERT (r != GRAPH_NO_RELATION && r != GRAPH_UNKNOWN_RELATION) ;
 
 	TensorIterator it ;
-	Tensor T       = Graph_GetRelationMatrix (g, r, false) ;
 	NodeID src_id  = INVALID_ENTITY_ID ;
 	NodeID dest_id = ENTITY_GET_ID (n) ;
 
@@ -414,6 +428,19 @@ static void _GetIncomingNodeEdges
 		ASSERT (e.attributes) ;
 		arr_append (*edges, e) ;
 	}
+}
+
+// get incoming edges of node 'n'
+static inline void _GetIncomingNodeEdges
+(
+	const Graph *g,        // graph to collect edges from
+	const Node *n,         // either source or destination node
+	RelationID r,          // relationship type
+	bool skip_self_edges,  // skip self referencing edges
+	Edge **edges           // [output] array of edges
+) {
+	Tensor T = Graph_GetRelationMatrix (g, r, false) ;
+	_GetIncomingNodeEdgesFromMatrix (g, n, T, r, skip_self_edges, edges) ;
 }
 
 // free every relation matrix
@@ -1339,6 +1366,52 @@ void Graph_GetNodeEdges
 				_GetIncomingNodeEdges (g, n, i, skip_self_edges, edges) ;
 			}
 		}
+	}
+}
+
+// retrieves all either incoming or outgoing edges of a specific relation type
+// to/from given node N, using an already-synchronized relation matrix
+//
+// unlike Graph_GetNodeEdges, this skips the relation-matrix lookup/sync (and
+// the lock it takes) on every call. callers that repeatedly query the same
+// relation across many nodes (e.g. a traversal's inner loop) should resolve
+// the matrix once up front via Graph_GetRelationMatrix and reuse it here.
+//
+// the matrix must have been synchronized while the caller held whatever lock
+// guarantees the graph is stable for as long as the matrix is reused (e.g. a
+// read query holding the graph's read lock) -- 'R' is not re-validated here
+void Graph_GetNodeEdgesFromMatrix
+(
+	const Graph *g,      // graph to collect edges from
+	const Node *n,       // either source or destination node
+	GRAPH_EDGE_DIR dir,  // edge direction ->, <-, <->
+	Tensor R,            // already synchronized relation matrix for 'r'
+	RelationID r,        // relationship type (must be a concrete relation)
+	Edge **edges         // [output] array of edges
+) {
+	ASSERT (g) ;
+	ASSERT (n) ;
+	ASSERT (R) ;
+	ASSERT (edges) ;
+	ASSERT (r != GRAPH_NO_RELATION && r != GRAPH_UNKNOWN_RELATION) ;
+
+	bool outgoing = (dir == GRAPH_EDGE_DIR_OUTGOING ||
+					 dir == GRAPH_EDGE_DIR_BOTH);
+
+	bool incoming = (dir == GRAPH_EDGE_DIR_INCOMING ||
+					 dir == GRAPH_EDGE_DIR_BOTH);
+
+	// when direction is BOTH to avoid duplication we want to skip over
+	// self referencing edges, as those will show up twice once for (a)->(a)
+	// and (a)<-(a)
+	bool skip_self_edges = (dir == GRAPH_EDGE_DIR_BOTH);
+
+	if (outgoing) {
+		_GetOutgoingNodeEdgesFromMatrix (g, n, R, r, edges) ;
+	}
+
+	if (incoming) {
+		_GetIncomingNodeEdgesFromMatrix (g, n, R, r, skip_self_edges, edges) ;
 	}
 }
 
