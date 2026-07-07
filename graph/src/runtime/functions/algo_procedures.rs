@@ -172,27 +172,27 @@ unsafe extern "C" fn msf_weight_index_op(
     *z.cast::<f64>() = if ctx.maximize { -raw } else { raw };
 }
 
-/// Plain-old-data `{score, rel}` pair, the value type of the `rel_adj` matrix.
+/// Plain-old-data `{score, edge}` pair, the value type of the `rel_adj` matrix.
 ///
-/// Building `rel_adj` with [`msf_min_score_rel`] as the duplicate-combiner makes
+/// Building `rel_adj` with [`msf_keep_min_score`] as the duplicate-combiner makes
 /// each node pair resolve to the relationship id of its minimum-score edge — the
 /// exact edge the weighted forest selects — so a forest edge's relationship can
 /// be recovered with an O(1) `extractElement` instead of re-scanning the tensor.
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct MsfScoreRel {
+struct ScoredEdge {
     score: f64,
-    rel: u64,
+    edge: u64,
 }
 
-/// User-defined GraphBLAS **binary** operator combining two [`MsfScoreRel`] by
+/// User-defined GraphBLAS **binary** operator combining two [`ScoredEdge`] by
 /// keeping the smaller score (ties keep the first operand). Used as the `dup`
 /// when building and symmetrizing `rel_adj`.
 ///
 /// # Panic safety
 /// Runs on GraphBLAS worker threads (the panic hook aborts the process), so it
 /// does only null-guarded plain-old-data reads and never unwinds.
-unsafe extern "C" fn msf_min_score_rel(
+unsafe extern "C" fn msf_keep_min_score(
     z: *mut std::os::raw::c_void,
     x: *const std::os::raw::c_void,
     y: *const std::os::raw::c_void,
@@ -200,12 +200,12 @@ unsafe extern "C" fn msf_min_score_rel(
     if z.is_null() || x.is_null() || y.is_null() {
         return;
     }
-    let x = &*x.cast::<MsfScoreRel>();
-    let y = &*y.cast::<MsfScoreRel>();
-    *z.cast::<MsfScoreRel>() = if y.score < x.score { *y } else { *x };
+    let x = &*x.cast::<ScoredEdge>();
+    let y = &*y.cast::<ScoredEdge>();
+    *z.cast::<ScoredEdge>() = if y.score < x.score { *y } else { *x };
 }
 
-/// User-defined GraphBLAS **unary** operator projecting an [`MsfScoreRel`] to its
+/// User-defined GraphBLAS **unary** operator projecting an [`ScoredEdge`] to its
 /// `score` (FP64). Applied to the finished `rel_adj` to derive the plain-weight
 /// `weighted_adj` Boruvka needs, so the score is stored once (in `rel_adj`) rather
 /// than built into a second matrix from a parallel array.
@@ -220,7 +220,7 @@ unsafe extern "C" fn msf_score_of(
     if z.is_null() || x.is_null() {
         return;
     }
-    *z.cast::<f64>() = (*x.cast::<MsfScoreRel>()).score;
+    *z.cast::<f64>() = (*x.cast::<ScoredEdge>()).score;
 }
 
 /// Extract an optional string-or-null from a Value, returning an error if
@@ -1207,7 +1207,7 @@ fn register_msf(funcs: &mut Functions) {
             // For unweighted: use 1.0 for all entries
             // For weighted: use the attribute value
             unsafe {
-                use crate::graph::graphblas::{GrB_BOOL, GrB_BinaryOp, GrB_BinaryOp_free, GrB_BinaryOp_new, GrB_DESC_SC, GrB_DESC_T1, GrB_Descriptor, GrB_FP64, GrB_Index, GrB_IndexUnaryOp, GrB_IndexUnaryOp_free, GrB_IndexUnaryOp_new, GrB_Info, GrB_Matrix, GrB_Matrix_apply, GrB_Matrix_apply_IndexOp_UDT, GrB_Matrix_build_UDT, GrB_Matrix_eWiseAdd_BinaryOp, GrB_Matrix_extractElement_UDT, GrB_Matrix_extractTuples_FP64, GrB_Matrix_free, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_wait, GrB_Type, GrB_Type_free, GrB_Type_new, GrB_UnaryOp, GrB_UnaryOp_free, GrB_UnaryOp_new, GrB_Vector, GrB_Vector_free, GrB_WaitMode, lagraphx_bindings};
+                use crate::graph::graphblas::{GrB_BOOL, GrB_BinaryOp, GrB_BinaryOp_free, GrB_BinaryOp_new, GrB_DESC_SC, GrB_DESC_T1, GrB_Descriptor, GrB_FP64, GrB_Index, GrB_IndexUnaryOp, GrB_IndexUnaryOp_free, GrB_IndexUnaryOp_new, GrB_Info, GrB_Matrix, GrB_Matrix_apply, GrB_Matrix_apply_IndexOp_UDT, GrB_Matrix_build_UDT, GrB_Matrix_eWiseAdd_BinaryOp, GrB_Matrix_extractElement_UDT, GrB_Matrix_extractTuples_FP64, GrB_Matrix_free, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_wait, GrB_Type, GrB_Type_free, GrB_Type_new, GrB_UnaryOp, GrB_UnaryOp_free, GrB_UnaryOp_new, GrB_Vector, GrB_Vector_free, GrB_WaitMode, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_get_FP64, GxB_Iterator_new, GxB_rowIterator_attach, GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol, GxB_rowIterator_nextRow, GxB_rowIterator_seekRow, lagraphx_bindings};
 
                 let active_set: FxHashSet<u64> = active_nodes.iter().copied().collect();
 
@@ -1252,11 +1252,11 @@ fn register_msf(funcs: &mut Functions) {
                 // `score` is produced (Phase 1); a single min-by-score build then
                 // collapses each pair's — and cross-type / multi-edge — tuples to
                 // its minimum-score edge, so there is no gate, sort, or per-row
-                // reduce. `b_srel` is the single source of truth for both Boruvka's
+                // reduce. `scored_edges` is the single source of truth for both Boruvka's
                 // weights and the forest-edge relationship recovery.
                 let mut b_rows: Vec<GrB_Index> = Vec::new();
                 let mut b_cols: Vec<GrB_Index> = Vec::new();
-                let mut b_srel: Vec<MsfScoreRel> = Vec::new();
+                let mut scored_edges: Vec<ScoredEdge> = Vec::new();
 
                 // The same parallel index-unary apply serves both paths: weighted
                 // reads the attribute; unweighted (`unit`) returns 1.0 — so neither
@@ -1325,46 +1325,44 @@ fn register_msf(funcs: &mut Functions) {
                             desc,
                         );
 
-                        // Phase 2 (extract): pull the scored edges to the host as
-                        // (compound_key row, edge_id col, score value) tuples.
-                        let mut score_nvals: GrB_Index = 0;
-                        GrB_Matrix_nvals(&raw mut score_nvals, score_mat);
-                        let mut compound_keys = vec![0u64; score_nvals as usize];
-                        let mut edge_ids = vec![0u64; score_nvals as usize];
-                        let mut scores = vec![0.0f64; score_nvals as usize];
-                        let mut n_out = score_nvals;
-                        GrB_Matrix_extractTuples_FP64(
-                            compound_keys.as_mut_ptr(),
-                            edge_ids.as_mut_ptr(),
-                            scores.as_mut_ptr(),
-                            &raw mut n_out,
-                            score_mat,
-                        );
-
-                        // Phase 3 (decode + remap): split each compound_key into
-                        // (src, dst), map both to compact ids, and accumulate one
-                        // {score, rel} tuple per surviving edge.
-                        for i in 0..n_out as usize {
-                            let compound_key = compound_keys[i];
+                        // Phases 2+3 (stream): walk `score_mat` with a single row
+                        // iterator instead of `extractTuples` — no temp arrays. For
+                        // each entry decode the compound_key row into (src,dst), remap
+                        // to compact ids, and push one {score, edge} tuple.
+                        let mut it: GxB_Iterator = null_mut();
+                        GxB_Iterator_new(&raw mut it);
+                        GxB_rowIterator_attach(it, score_mat, null_mut());
+                        let mut info = GxB_rowIterator_seekRow(it, 0);
+                        while info == GrB_Info::GrB_NO_VALUE {
+                            info = GxB_rowIterator_nextRow(it);
+                        }
+                        while info == GrB_Info::GrB_SUCCESS {
+                            let compound_key = GxB_rowIterator_getRowIndex(it);
+                            let edge_id = GxB_rowIterator_getColIndex(it);
+                            let score = GxB_Iterator_get_FP64(it);
                             let src_original = (compound_key >> 32) as usize;
                             let dst_original = (compound_key & 0xFFFF_FFFF) as usize;
-                            if src_original >= id_to_compact_vec.len()
-                                || id_to_compact_vec[src_original] == u64::MAX
+                            if src_original < id_to_compact_vec.len()
+                                && id_to_compact_vec[src_original] != u64::MAX
+                                && dst_original < id_to_compact_vec.len()
+                                && id_to_compact_vec[dst_original] != u64::MAX
                             {
-                                continue;
+                                b_rows.push(id_to_compact_vec[src_original]);
+                                b_cols.push(id_to_compact_vec[dst_original]);
+                                scored_edges.push(ScoredEdge {
+                                    score,
+                                    edge: edge_id,
+                                });
                             }
-                            if dst_original >= id_to_compact_vec.len()
-                                || id_to_compact_vec[dst_original] == u64::MAX
-                            {
-                                continue;
+                            info = GxB_rowIterator_nextCol(it);
+                            if info != GrB_Info::GrB_SUCCESS {
+                                info = GxB_rowIterator_nextRow(it);
+                                while info == GrB_Info::GrB_NO_VALUE {
+                                    info = GxB_rowIterator_nextRow(it);
+                                }
                             }
-                            b_rows.push(id_to_compact_vec[src_original]);
-                            b_cols.push(id_to_compact_vec[dst_original]);
-                            b_srel.push(MsfScoreRel {
-                                score: scores[i],
-                                rel: edge_ids[i],
-                            });
                         }
+                        GxB_Iterator_free(&raw mut it);
                         GrB_Matrix_free(&raw mut score_mat);
                     }
                 }
@@ -1372,40 +1370,40 @@ fn register_msf(funcs: &mut Functions) {
                 GrB_Type_free(&raw mut ctx_type);
 
                 // Phase 4 (build): one min-by-score `rel_adj` build collapses each
-                // pair's tuples to its minimum-score {score, rel}; symmetrize to the
+                // pair's tuples to its minimum-score {score, edge}; symmetrize to the
                 // undirected minimum. Boruvka's plain-FP64 `weighted_adj` is then the
                 // score component projected out of `rel_adj` (`msf_score_of`), so the
                 // score lives once — in `rel_adj`. `rel_adj` and its type outlive this
                 // block for the recovery below; they stay null (and the recovery is
                 // skipped) when there are no edges, so nothing is allocated then.
                 let mut rel_adj: GrB_Matrix = null_mut();
-                let mut srel_type: GrB_Type = null_mut();
+                let mut scored_edge_type: GrB_Type = null_mut();
                 if !b_rows.is_empty() {
-                    GrB_Type_new(&raw mut srel_type, std::mem::size_of::<MsfScoreRel>());
-                    let mut min_srel_op: GrB_BinaryOp = null_mut();
+                    GrB_Type_new(&raw mut scored_edge_type, std::mem::size_of::<ScoredEdge>());
+                    let mut min_by_score: GrB_BinaryOp = null_mut();
                     GrB_BinaryOp_new(
-                        &raw mut min_srel_op,
-                        Some(msf_min_score_rel),
-                        srel_type,
-                        srel_type,
-                        srel_type,
+                        &raw mut min_by_score,
+                        Some(msf_keep_min_score),
+                        scored_edge_type,
+                        scored_edge_type,
+                        scored_edge_type,
                     );
                     let mut score_op: GrB_UnaryOp = null_mut();
-                    GrB_UnaryOp_new(&raw mut score_op, Some(msf_score_of), GrB_FP64, srel_type);
-                    GrB_Matrix_new(&raw mut rel_adj, srel_type, n, n);
+                    GrB_UnaryOp_new(&raw mut score_op, Some(msf_score_of), GrB_FP64, scored_edge_type);
+                    GrB_Matrix_new(&raw mut rel_adj, scored_edge_type, n, n);
                     GrB_Matrix_build_UDT(
                         rel_adj,
                         b_rows.as_ptr(),
                         b_cols.as_ptr(),
-                        b_srel.as_ptr().cast::<std::os::raw::c_void>(),
+                        scored_edges.as_ptr().cast::<std::os::raw::c_void>(),
                         b_rows.len() as GrB_Index,
-                        min_srel_op,
+                        min_by_score,
                     );
                     GrB_Matrix_eWiseAdd_BinaryOp(
                         rel_adj,
                         null_mut(),
                         null_mut(),
-                        min_srel_op,
+                        min_by_score,
                         rel_adj,
                         rel_adj,
                         GrB_DESC_T1,
@@ -1420,7 +1418,7 @@ fn register_msf(funcs: &mut Functions) {
                     );
                     // Ops are done once `weighted_adj` is projected; only `rel_adj`
                     // (and its type) is needed by the forest recovery below.
-                    GrB_BinaryOp_free(&raw mut min_srel_op);
+                    GrB_BinaryOp_free(&raw mut min_by_score);
                     GrB_UnaryOp_free(&raw mut score_op);
                 }
 
@@ -1470,12 +1468,15 @@ fn register_msf(funcs: &mut Functions) {
                 // single O(1) extract per pair (both orientations resolve, since
                 // rel_adj is symmetrized). The min-by-score build already picked the
                 // edge the weighted forest selects, so weighted and unweighted share
-                // this path — no per-pair tensor scan, no weight re-read.
+                // this path — no per-pair tensor scan, no weight re-read. Touching
+                // only the ~n forest pairs is leaner than masking the full, ~m-entry
+                // UDT `rel_adj` down to the forest and bulk-extracting it (measured
+                // neutral-to-slower: the UDT mask sweeps every cell to keep ~n).
                 for i in 0..nvals_out as usize {
                     let cs = f_rows[i];
                     let cd = f_cols[i];
                     let (a, b) = if cs <= cd { (cs, cd) } else { (cd, cs) };
-                    let mut sr = MsfScoreRel { score: 0.0, rel: 0 };
+                    let mut sr = ScoredEdge { score: 0.0, edge: 0 };
                     if GrB_Matrix_extractElement_UDT(
                         (&raw mut sr).cast::<std::os::raw::c_void>(),
                         rel_adj,
@@ -1483,11 +1484,11 @@ fn register_msf(funcs: &mut Functions) {
                         cd,
                     ) == GrB_Info::GrB_SUCCESS
                     {
-                        pair_to_rel.insert((a, b), RelationshipId::from(sr.rel));
+                        pair_to_rel.insert((a, b), RelationshipId::from(sr.edge));
                     }
                 }
                 GrB_Matrix_free(&raw mut rel_adj);
-                GrB_Type_free(&raw mut srel_type);
+                GrB_Type_free(&raw mut scored_edge_type);
 
                 // Use Vec for component mapping instead of HashMap (compact indices are 0..n-1)
                 let mut compact_to_component_vec = vec![i64::MIN; sorted_ids.len()];
