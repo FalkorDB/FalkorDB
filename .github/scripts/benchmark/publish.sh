@@ -24,7 +24,7 @@ set -euo pipefail
 : "${REPO:?REPO is required (e.g. FalkorDB/falkordb-rs-next-gen)}"
 : "${VIEW:?VIEW is required (slug, e.g. main or a branch slug)}"
 : "${IS_CANONICAL:?IS_CANONICAL is required (true|false)}"
-: "${SUMMARY_JSON:?SUMMARY_JSON path is required (falkordb_vs_falkordb_<epoch>.json produced by run-ab.sh)}"
+: "${SUMMARY_JSON:?SUMMARY_JSON path is required (falkordb_vs_falkordb_<epoch>.json produced by the merge job's aggregate-variants.sh)}"
 : "${UI_DIR:?UI_DIR (vendored FalkorDB/benchmark ui/ checkout) is required}"
 : "${GH_PAGES_DIR:?GH_PAGES_DIR (checkout of the gh-pages branch) is required}"
 

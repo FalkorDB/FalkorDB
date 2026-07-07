@@ -5,15 +5,16 @@
 #   A/B/C — a PR run, where C is the PR's `rc-pr-<N>` image, so B→C is exactly
 #           the PR's impact and A/C compares it to the C engine.
 #
-# Shape, fanned out over `sizes` (a JSON array), per size:
-#   create-runners  → spin up an ephemeral self-hosted GCE VM runner, sized for
-#                     the dataset (large gets more cores).
-#   benchmark       → run A/B/C on that VM (Docker + the benchmark CLI).
-#   cleanup-runners → tear the VM down (the create action also auto-deletes it
-#                     after 6h as a backstop).
-# A single `merge` job then publishes the dashboard once and upserts one PR
-# comment covering every size, so concurrent gh-pages writers and comment
-# pile-ups can't happen.
+# Shape: `setup` expands (size × variant) into a combo list; then, per combo, an
+# ephemeral self-hosted GCE VM is created, runs ONE variant (so all variants of
+# all sizes run in parallel on identical VMs), and is torn down. A single
+# `merge` job builds the CLI, aggregates each size's variants into one summary,
+# publishes the dashboard once and upserts one PR comment.
+#
+# Each variant generates its own query workload (generate-queries is not
+# deterministic, but the params are identical → same distribution, so the
+# percentile comparison stays valid). Aggregation is two-vendor upstream, so
+# `merge` does it pairwise (A+B, A+C) and merges — see aggregate-variants.sh.
 #
 # Called by:
 #   - benchmark.yml   (PR `benchmark` label / `/benchmark` / manual dispatch)
@@ -22,7 +23,8 @@
 # Runners are self-hosted GCE VMs (no GitHub larger runners), mirroring
 # FalkorDB/FalkorDB. Prerequisites, all available to this repo (org-level is
 # fine — callers pass `secrets: inherit`): secrets GH_SA_TOKEN, GCP_SA_KEY,
-# GCP_PROJECT_ID; var GCP_ZONES; and the `gh-runner` GCP network.
+# GCP_PROJECT_ID; var GCP_ZONES; and the `gh-runner` GCP network. All VMs use
+# vars.BENCHMARK_MACHINE_TYPE and DB limits vars.BENCHMARK_DB_CPUS/MEMORY.
 name: A/B/C benchmark (reusable)
 
 on:
@@ -86,20 +88,52 @@ env:
   BENCHMARK_REF: 0cc0e9ee45464b9cb8d71732f419e4e0c8ebdacc
 
 jobs:
-  # One ephemeral GCE VM per dataset size, labelled uniquely for this run so the
-  # matching benchmark leg lands on it and cleanup can find it. Every size uses
-  # the SAME machine type (vars.BENCHMARK_MACHINE_TYPE) so all variants and all
-  # sizes are compared on identical hardware.
+  # Expand (size × variant) into a flat combo list the matrices below fan out
+  # over — one VM per combo, so variants run in parallel instead of in sequence.
+  setup:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      combos: ${{ steps.c.outputs.combos }}
+    steps:
+      - name: Build (size × variant) combos
+        id: c
+        env:
+          SIZES: ${{ inputs.sizes }}
+          NAME_A: ${{ inputs.name_a }}
+          IMAGE_A: ${{ inputs.image_a }}
+          NAME_B: ${{ inputs.name_b }}
+          IMAGE_B: ${{ inputs.image_b }}
+          NAME_C: ${{ inputs.name_c }}
+          IMAGE_C: ${{ inputs.image_c }}
+        run: |
+          set -euo pipefail
+          variants=$(jq -cn \
+            --arg na "$NAME_A" --arg ia "$IMAGE_A" \
+            --arg nb "$NAME_B" --arg ib "$IMAGE_B" \
+            --arg nc "$NAME_C" --arg ic "$IMAGE_C" \
+            '[{name:$na,image:$ia},{name:$nb,image:$ib}]
+               + (if $ic != "" then [{name:$nc,image:$ic}] else [] end)')
+          combos=$(jq -cn --argjson sizes "$SIZES" --argjson variants "$variants" \
+            '[ $sizes[] as $s | $variants[] as $v | {size:$s, variant:$v.name, image:$v.image} ]')
+          echo "combos=$combos" >> "$GITHUB_OUTPUT"
+          echo "combos:"; echo "$combos" | jq .
+
+  # One ephemeral GCE VM per (size, variant), labelled uniquely for this run so
+  # its benchmark leg lands on it and cleanup can find it. All use the same
+  # machine type → all variants/sizes compared on identical hardware.
   create-runners:
+    needs: setup
     strategy:
       fail-fast: false
       matrix:
-        size: ${{ fromJSON(inputs.sizes) }}
+        combo: ${{ fromJSON(needs.setup.outputs.combos) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - name: Create GCE runner (${{ matrix.size }})
+      - name: Create GCE runner (${{ matrix.combo.size }}/${{ matrix.combo.variant }})
         uses: FalkorDB/gce-github-runner@0caf8406cd6353630fcd0b2eade420d3da124e01 # installs Docker
         with:
           token: ${{ secrets.GH_SA_TOKEN }}
@@ -108,25 +142,22 @@ jobs:
           machine_zones: ${{ vars.GCP_ZONES }}
           machine_type: ${{ vars.BENCHMARK_MACHINE_TYPE || 'n4-highcpu-16' }}
           network: gh-runner
-          runner_label: bench-${{ github.run_id }}-${{ github.run_number }}-${{ matrix.size }}
+          runner_label: bench-${{ github.run_id }}-${{ github.run_number }}-${{ matrix.combo.size }}-${{ matrix.combo.variant }}
 
-  # Each leg runs on its own VM (runs-on = the label created above). The VM has
-  # Docker but not Rust/git — install those. The runner runs as root, so no sudo.
+  # Each leg runs ONE variant on its own VM (runs-on = the label above). The VM
+  # has Docker but not Rust/git — install those. Runs as root, so no sudo.
   benchmark:
-    needs: create-runners
+    needs: [setup, create-runners]
     strategy:
       fail-fast: false
       matrix:
-        size: ${{ fromJSON(inputs.sizes) }}
-    runs-on: bench-${{ github.run_id }}-${{ github.run_number }}-${{ matrix.size }}
-    # Same generous ceiling for every size (they share a machine type); large
-    # is the long pole, small/medium finish well under it.
+        combo: ${{ fromJSON(needs.setup.outputs.combos) }}
+    runs-on: bench-${{ github.run_id }}-${{ github.run_number }}-${{ matrix.combo.size }}-${{ matrix.combo.variant }}
     timeout-minutes: 330
     permissions:
       contents: read
-    # The GCE runner registers as root but doesn't export HOME; rustup, cargo
-    # and git all need it (without it, `set -u` steps hit "HOME: unbound
-    # variable" and cargo can't find its toolchain). Point it at root's home.
+    # The GCE runner registers as root but doesn't export HOME; rustup/cargo/git
+    # all need it (else `set -u` hits "HOME: unbound variable"). Point at /root.
     env:
       HOME: /root
     steps:
@@ -157,57 +188,41 @@ jobs:
           path: benchmark-tool
           persist-credentials: false
 
-      # Cache the (pinned) benchmark tool's build across runs — the VM is
-      # ephemeral, so this restores from the GitHub Actions cache and drops the
-      # from-scratch release build (~15 min) to ~1 min on a hit.
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: benchmark-tool
 
-      - name: Run benchmark (${{ matrix.size }})
+      - name: Run variant (${{ matrix.combo.size }}/${{ matrix.combo.variant }})
         env:
-          IMAGE_A: ${{ inputs.image_a }}
-          IMAGE_B: ${{ inputs.image_b }}
-          IMAGE_C: ${{ inputs.image_c }}
-          NAME_A: ${{ inputs.name_a }}
-          NAME_B: ${{ inputs.name_b }}
-          NAME_C: ${{ inputs.name_c }}
-          DATASET_SIZE: ${{ matrix.size }}
-          # Identical DB limits for every variant AND size (all legs share one
-          # machine type), tunable via repo variables. Fair by construction.
+          IMAGE: ${{ matrix.combo.image }}
+          NAME: ${{ matrix.combo.variant }}
+          DATASET_SIZE: ${{ matrix.combo.size }}
+          # Identical DB limits for every variant AND size (tunable via repo
+          # variables) — fair by construction.
           DB_CPUS: ${{ vars.BENCHMARK_DB_CPUS || '8' }}
           DB_MEMORY: ${{ vars.BENCHMARK_DB_MEMORY || '24g' }}
           BENCHMARK_DIR: ${{ github.workspace }}/benchmark-tool
           RESULTS_DIR: ${{ runner.temp }}/results-ab
-          OUT_JSON: ${{ runner.temp }}/summary-${{ matrix.size }}.json
-        run: .github/scripts/benchmark/run-ab.sh
+        run: .github/scripts/benchmark/run-variant.sh
 
-      - name: Upload per-size summary
+      # Raw results are laid out as <size>/<variant>/… so merge-multiple in the
+      # merge job reassembles every variant of a size side by side.
+      - name: Upload raw results
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: bench-summary-${{ inputs.view }}-${{ matrix.size }}
-          path: ${{ runner.temp }}/summary-${{ matrix.size }}.json
+          name: bench-raw-${{ inputs.view }}-${{ matrix.combo.size }}-${{ matrix.combo.variant }}
+          path: ${{ runner.temp }}/results-ab
           if-no-files-found: error
           retention-days: 30
 
-      - name: Upload raw results
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: bench-results-${{ inputs.view }}-${{ matrix.size }}
-          path: ${{ runner.temp }}/results-ab
-          if-no-files-found: warn
-          retention-days: 30
-
-  # Tear down each size's VM once its benchmark leg ends (success, failure, or
-  # cancel). The create action's 6h auto-delete is the backstop; the cleanup
-  # action treats a never-created VM as a no-op.
+  # Tear down each VM once its leg ends (success, failure, or cancel). The create
+  # action's 6h auto-delete is the backstop; cleanup no-ops on a missing VM.
   cleanup-runners:
-    needs: benchmark
-    if: always()
+    needs: [setup, benchmark]
+    if: ${{ always() && needs.setup.result == 'success' }}
     strategy:
       matrix:
-        size: ${{ fromJSON(inputs.sizes) }}
+        combo: ${{ fromJSON(needs.setup.outputs.combos) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -219,14 +234,14 @@ jobs:
         with:
           service_account_key: ${{ secrets.GCP_SA_KEY }}
           project_id: ${{ secrets.GCP_PROJECT_ID }}
-          instance_label: bench-${{ github.run_id }}-${{ github.run_number }}-${{ matrix.size }}
+          instance_label: bench-${{ github.run_id }}-${{ github.run_number }}-${{ matrix.combo.size }}-${{ matrix.combo.variant }}
 
-  # Collect every size's summary, publish the dashboard once, and upsert one
-  # all-sizes PR comment. Runs even if a leg failed (publishes what succeeded);
-  # no-ops if nothing was produced.
+  # Aggregate each size's variants into one summary, publish the dashboard once,
+  # and upsert one all-sizes PR comment. Runs even if some legs failed
+  # (aggregates what's there); no-ops if nothing was produced.
   merge:
-    needs: benchmark
-    if: ${{ !cancelled() }}
+    needs: [setup, benchmark]
+    if: ${{ !cancelled() && needs.setup.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -253,19 +268,32 @@ jobs:
           path: benchmark-tool
           persist-credentials: false
 
+      - name: Install protobuf-compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - run: rustup default stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: benchmark-tool
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: "22"
 
-      - name: Download per-size summaries
+      - name: Build benchmark CLI (for aggregation)
+        run: |
+          set -euo pipefail
+          cd benchmark-tool
+          grep -q '^\[workspace\]' Cargo.toml || printf '\n[workspace]\n' >> Cargo.toml
+          cargo build --release --bin benchmark
+
+      - name: Download raw results
         continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          pattern: bench-summary-${{ inputs.view }}-*
+          pattern: bench-raw-${{ inputs.view }}-*
           merge-multiple: true
-          path: ${{ runner.temp }}/summaries
+          path: ${{ runner.temp }}/raw
 
-      - name: Publish dashboard and comment
+      - name: Aggregate, publish, and comment
         env:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -277,18 +305,30 @@ jobs:
           NAME_A: ${{ inputs.name_a }}
           NAME_B: ${{ inputs.name_b }}
           NAME_C: ${{ inputs.name_c }}
+          SIZES: ${{ inputs.sizes }}
+          BENCHMARK_DIR: ${{ github.workspace }}/benchmark-tool
+          RAW: ${{ runner.temp }}/raw
           DL: ${{ runner.temp }}/summaries
           RUNNER_TMP: ${{ runner.temp }}
         run: |
           set -euo pipefail
-          # Largest size present becomes the published dashboard (most
-          # differentiated A/B/C); the comment still covers every size.
+          mkdir -p "$DL"
+          # One summary per size, aggregating that size's variant raw-results.
+          for sz in $(echo "$SIZES" | jq -r '.[]'); do
+            [ -d "$RAW/$sz" ] || { echo "no raw results for $sz"; continue; }
+            VARIANTS_DIR="$RAW/$sz" OUT_JSON="$DL/summary-$sz.json" \
+            NAME_A="$NAME_A" NAME_B="$NAME_B" NAME_C="$NAME_C" BENCHMARK_DIR="$BENCHMARK_DIR" \
+              .github/scripts/benchmark/aggregate-variants.sh
+          done
+
+          # Largest size present becomes the published dashboard; the comment
+          # covers every size.
           primary=""
           for sz in small medium large; do
             [ -f "$DL/summary-$sz.json" ] && primary="$sz"
           done
           if [ -z "$primary" ]; then
-            echo "no summaries produced by any leg — nothing to publish"
+            echo "no summaries produced — nothing to publish"
             exit 0
           fi
           echo "primary dashboard size: $primary"
