@@ -97,6 +97,23 @@ mkdir -p "$dest"
 mv "$RESULTS_DIR"/falkor/* "$dest"/
 rmdir "$RESULTS_DIR/falkor"
 
+# Post-run server health, captured INTO the artifact (the live job log isn't
+# reliably fetchable). On `large` the server goes unreachable mid-run and ~99.8%
+# of queries return NoConnection — this tells us whether it was OOM-killed
+# (State.OOMKilled=true / ExitCode 137) or crashed some other way, and the log
+# tail shows the last thing it did before dying.
+{
+  echo "=== docker inspect state ($NAME / $DATASET_SIZE) ==="
+  docker inspect \
+    --format 'OOMKilled={{.State.OOMKilled}} ExitCode={{.State.ExitCode}} Status={{.State.Status}} Error={{.State.Error}} RestartCount={{.RestartCount}}' \
+    "$CONTAINER_NAME" 2>&1
+  echo "=== server (container) log tail ==="
+  docker logs "$CONTAINER_NAME" 2>&1 | tail -100
+} > "$dest/server-diagnostics.txt" 2>&1 || true
+echo "::group::Server post-run diagnostics ($NAME / $DATASET_SIZE)"
+cat "$dest/server-diagnostics.txt" 2>/dev/null || true
+echo "::endgroup::"
+
 docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 echo "::endgroup::"
 echo "Wrote raw results to $dest"

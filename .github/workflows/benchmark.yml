@@ -153,8 +153,8 @@ jobs:
               SIZES="[\"${INPUT_DATASET_SIZE:-small}\"]"
               ;;
             pull_request)
-              # A/B/C across all sizes: C engine (A) vs published Rust (B) vs
-              # this PR (C). B→C isolates the PR's impact; A/C is vs the C engine.
+              # A/B/C: C engine (A) vs published Rust (B) vs this PR (C).
+              # B→C isolates the PR's impact; A/C is vs the C engine.
               IMAGE_A="docker.io/falkordb/falkordb-server:edge"
               IMAGE_B="ghcr.io/falkordb/falkordb-server:edge-rs"
               IMAGE_C="ghcr.io/falkordb/falkordb-server:rc-pr-${PR_NUMBER}"
@@ -164,7 +164,13 @@ jobs:
               # cleanup-branch-view.
               VIEW="pr-${PR_NUMBER}"
               OUT_PR_NUMBER="$PR_NUMBER"
-              SIZES='["small","medium","large"]'
+              # `large` is KNOWN-BROKEN and excluded: on the large graph the
+              # server goes unreachable mid-run (NoConnection) on every engine —
+              # C, edge-rs, and the PR alike — so ~99.8% of queries fail and the
+              # numbers are meaningless. Small+medium publish cleanly meanwhile.
+              # Run large on demand via workflow_dispatch (dataset_size: large)
+              # while investigating; re-add here once fixed.
+              SIZES='["small","medium"]'
               ;;
             *)
               echo "::error::unsupported event $EVENT_NAME"
