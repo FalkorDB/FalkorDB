@@ -60,7 +60,9 @@
 
 use super::{
     GxB_Print_Level,
-    matrix::{self, Dup, Get, MaskedElementWiseAdd, Matrix, New, Remove, Set, Size, Transpose},
+    matrix::{
+        self, Descriptor, Dup, Get, MaskedElementWiseAdd, Matrix, New, Remove, Set, Size, Transpose,
+    },
     serialization::{Decode, Encode, Reader, Writer},
 };
 use crate::graph::cow::Cow;
@@ -216,14 +218,24 @@ impl VersionedMatrix {
     #[must_use]
     pub fn to_matrix(&self) -> Matrix {
         self.wait();
-        let mut m = self.m.dup();
-        if self.dm.nvals() > 0 {
-            m.remove_all(&self.dm);
-        }
-        if self.dp.nvals() > 0 {
-            m.element_wise_add(None, None, Some(&self.dp), None);
-        }
-        m
+        // Effective snapshot view = (m ∪ dp) − dm (see module header). dp and dm
+        // are disjoint by construction — Set clears dm[i,j], Remove clears dp[i,j]
+        // (both debug-asserted) — so masking the union by ¬dm is exact. One masked
+        // eWiseAdd into a fresh matrix replaces the former dup → remove_all(dm) →
+        // eWiseAdd(dp) (up to three passes over m):  result⟨¬dm⟩ = m ⊕ dp.
+        //
+        // The structural-complement mask admits every cell an empty dm can't
+        // exclude, so the no-deletion case needs no special-casing. The fresh
+        // result starts empty, so masked-out (deleted) cells stay empty without
+        // needing REPLACE.
+        let mut result = Matrix::new(self.m.nrows(), self.m.ncols());
+        result.element_wise_add(
+            Some(&self.dm),
+            Some(&self.m),
+            Some(&self.dp),
+            Some(Descriptor::SC),
+        );
+        result
     }
 
     pub fn print(
