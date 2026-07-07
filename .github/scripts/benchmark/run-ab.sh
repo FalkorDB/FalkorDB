@@ -135,8 +135,37 @@ done
 
 echo "::group::Aggregating comparison into ${OUT_JSON}"
 mkdir -p "$(dirname "$OUT_JSON")"
-cargo run --release --bin benchmark -- aggregate-aws-tests \
-  --aws-tests-dir "$RESULTS_DIR" --out-path "$OUT_JSON"
+if [ -z "$IMAGE_C" ]; then
+  # Two variants — aggregate-aws-tests handles a pair directly.
+  cargo run --release --bin benchmark -- aggregate-aws-tests \
+    --aws-tests-dir "$RESULTS_DIR" --out-path "$OUT_JSON"
+else
+  # Three variants: aggregate-aws-tests is a two-vendor tool (it truncate(2)s
+  # the dirs it finds — built to compare two AWS instance families), so it would
+  # silently drop the third. Aggregate each non-baseline variant against the
+  # baseline (A) and merge the per-vendor runs into one 3-run summary.
+  merge_inputs=()
+  for other in "$NAME_B" "$NAME_C"; do
+    pair="$RESULTS_DIR/_pair_${other}"
+    rm -rf "$pair"; mkdir -p "$pair"
+    cp -r "$RESULTS_DIR/$NAME_A" "$pair/$NAME_A"
+    cp -r "$RESULTS_DIR/$other" "$pair/$other"
+    cargo run --release --bin benchmark -- aggregate-aws-tests \
+      --aws-tests-dir "$pair" --out-path "$pair/summary.json"
+    merge_inputs+=("$pair/summary.json")
+  done
+  python3 - "$OUT_JSON" "${merge_inputs[@]}" <<'PY'
+import json, sys
+# Dedup runs by vendor across the pairwise summaries → one run each for A/B/C.
+runs = {}
+for path in sys.argv[2:]:
+    with open(path, encoding="utf-8") as f:
+        for r in json.load(f).get("runs", []):
+            runs[r["vendor"]] = r
+with open(sys.argv[1], "w", encoding="utf-8") as f:
+    json.dump({"runs": list(runs.values())}, f)
+PY
+fi
 echo "::endgroup::"
 
 echo "Wrote $OUT_JSON"
