@@ -87,8 +87,9 @@ env:
 
 jobs:
   # One ephemeral GCE VM per dataset size, labelled uniquely for this run so the
-  # matching benchmark leg lands on it and cleanup can find it. large gets more
-  # cores for the 30.6M-edge load.
+  # matching benchmark leg lands on it and cleanup can find it. Every size uses
+  # the SAME machine type (vars.BENCHMARK_MACHINE_TYPE) so all variants and all
+  # sizes are compared on identical hardware.
   create-runners:
     strategy:
       fail-fast: false
@@ -105,7 +106,7 @@ jobs:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
           service_account_key: ${{ secrets.GCP_SA_KEY }}
           machine_zones: ${{ vars.GCP_ZONES }}
-          machine_type: ${{ matrix.size == 'large' && 'n4-highcpu-16' || 'n4-highcpu-8' }}
+          machine_type: ${{ vars.BENCHMARK_MACHINE_TYPE || 'n4-highcpu-16' }}
           network: gh-runner
           runner_label: bench-${{ github.run_id }}-${{ github.run_number }}-${{ matrix.size }}
 
@@ -118,7 +119,9 @@ jobs:
       matrix:
         size: ${{ fromJSON(inputs.sizes) }}
     runs-on: bench-${{ github.run_id }}-${{ github.run_number }}-${{ matrix.size }}
-    timeout-minutes: ${{ matrix.size == 'large' && 330 || 120 }}
+    # Same generous ceiling for every size (they share a machine type); large
+    # is the long pole, small/medium finish well under it.
+    timeout-minutes: 330
     permissions:
       contents: read
     # The GCE runner registers as root but doesn't export HOME; rustup, cargo
@@ -154,6 +157,13 @@ jobs:
           path: benchmark-tool
           persist-credentials: false
 
+      # Cache the (pinned) benchmark tool's build across runs — the VM is
+      # ephemeral, so this restores from the GitHub Actions cache and drops the
+      # from-scratch release build (~15 min) to ~1 min on a hit.
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: benchmark-tool
+
       - name: Run benchmark (${{ matrix.size }})
         env:
           IMAGE_A: ${{ inputs.image_a }}
@@ -163,6 +173,10 @@ jobs:
           NAME_B: ${{ inputs.name_b }}
           NAME_C: ${{ inputs.name_c }}
           DATASET_SIZE: ${{ matrix.size }}
+          # Identical DB limits for every variant AND size (all legs share one
+          # machine type), tunable via repo variables. Fair by construction.
+          DB_CPUS: ${{ vars.BENCHMARK_DB_CPUS || '8' }}
+          DB_MEMORY: ${{ vars.BENCHMARK_DB_MEMORY || '24g' }}
           BENCHMARK_DIR: ${{ github.workspace }}/benchmark-tool
           RESULTS_DIR: ${{ runner.temp }}/results-ab
           OUT_JSON: ${{ runner.temp }}/summary-${{ matrix.size }}.json

@@ -73,6 +73,13 @@ run_variant() {
 
   wait_for_redis
 
+  # Throwaway container: never snapshot to disk. During the big load Redis
+  # would otherwise hit an auto-save point, and a failed bgsave (VM disk) trips
+  # stop-writes-on-bgsave-error and aborts the load. Persistence is pointless
+  # for a one-shot benchmark anyway.
+  docker exec "$CONTAINER_NAME" redis-cli CONFIG SET save "" >/dev/null 2>&1 || true
+  docker exec "$CONTAINER_NAME" redis-cli CONFIG SET stop-writes-on-bgsave-error no >/dev/null 2>&1 || true
+
   # Belt-and-braces wipe — the container is freshly created so this is
   # normally a no-op, but guards against a reused/warm image.
   docker exec "$CONTAINER_NAME" redis-cli GRAPH.DELETE falkor >/dev/null 2>&1 || true
