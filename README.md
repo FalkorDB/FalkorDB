@@ -141,14 +141,15 @@ variable, and the `gh-runner` GCP network.
 - **On a PR** (from a branch in this repo — a fork PR's read-only token can't
   publish, so those are skipped): add the `benchmark` label, or comment
   `/benchmark` (comment authors need OWNER/MEMBER/COLLABORATOR association).
-  Variant B is that PR's `rc-pr-<N>` image; the workflow waits for that RC
+  Variant C is that PR's `rc-pr-<N>` image; the workflow waits for that RC
   image to be published to the registry (built early by `rust-pr.yml`, before
   its slower test jobs finish), so it never runs against a missing build.
   Results are posted as a PR comment and published to
   `https://falkordb.github.io/falkordb-rs-next-gen/benchmark/branch/pr-<N>/`
   (keyed by PR number, so same-named branches on different PRs never collide).
-  Pushing new commits while the label is present re-runs it; closing the PR
-  removes its published view.
+  A run happens only when the label is **added** (not on every push — a full
+  A/B/C run is expensive); to re-run, remove and re-add the label. Closing the
+  PR removes its published view.
 - **Manually**: run the "A/B benchmark" workflow from the Actions tab and
   choose the variant B (and optionally A) image tag.
 - **Automatically**: every time `edge-rs` is promoted (merge to main), the

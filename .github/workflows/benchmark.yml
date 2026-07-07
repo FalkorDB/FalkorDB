@@ -1,8 +1,10 @@
-# A/B benchmark front door: workflow_dispatch (manual), a PR `benchmark`
-# label, or a `/benchmark` PR comment (which just adds the label — see the
-# `slash-command` job — so the label is the single source of truth for "this
-# PR wants a benchmark run", same as the label re-runs on every push while
-# present the way `verify-artifacts` does for build-artifacts.yml).
+# A/B benchmark front door: workflow_dispatch (manual), adding the PR
+# `benchmark` label, or a `/benchmark` PR comment (which just adds the label —
+# see the `slash-command` job). A benchmark runs only when the label is *added*
+# (the `labeled` event), NOT on every push while it happens to be present — a
+# full A/B/C run spins up GCE VMs and is expensive, so it must be an explicit
+# request. To re-run, remove and re-add the label (or re-comment `/benchmark`
+# after removing it).
 #
 # The PR path never trusts that the RC image (rc-pr-<N>) built by rust-pr.yml
 # is ready just because the label is present — `wait-for-rc-image` polls the
@@ -36,7 +38,10 @@ on:
         type: choice
         options: ["small", "medium", "large"]
   pull_request:
-    types: [labeled, synchronize, reopened, closed]
+    # `labeled` runs a benchmark only when the `benchmark` label is *added*
+    # (not on every push while it happens to be present — those are expensive);
+    # `closed` drives the branch-view cleanup.
+    types: [labeled, closed]
   issue_comment:
     types: [created]
 
@@ -104,8 +109,8 @@ jobs:
         github.event_name == 'workflow_dispatch' ||
         (
           github.event_name == 'pull_request' &&
-          contains(fromJSON('["labeled", "synchronize", "reopened"]'), github.event.action) &&
-          contains(github.event.pull_request.labels.*.name, 'benchmark') &&
+          github.event.action == 'labeled' &&
+          github.event.label.name == 'benchmark' &&
           github.event.pull_request.head.repo.full_name == github.repository
         )
       )
