@@ -436,7 +436,12 @@ impl Decode<19> for VersionedMatrix {
 
 pub struct Iter {
     mit: matrix::Iter,
-    dpit: matrix::Iter,
+    /// Delta-plus iterator. Lazily left `None` when `dp` is empty (the common
+    /// read-only hot path on a freshly loaded graph) so we skip allocating and
+    /// freeing a `GxB_Iterator` that would never yield anything. `dp` is a
+    /// stable read snapshot for the life of this iterator, so once `None` it
+    /// stays `None` across `seek` calls.
+    dpit: Option<matrix::Iter>,
     dm: Cow<Matrix>,
     /// True when both the deletion mask and the delta-plus matrix are empty,
     /// so iteration can stream `mit` without per-edge `dm.get` lookups or a
@@ -465,7 +470,11 @@ impl Iter {
         let dp_empty = m.dp.nvals() == 0;
         Self {
             mit: m.m.iter(min_row, max_row),
-            dpit: m.dp.iter(min_row, max_row),
+            dpit: if dp_empty {
+                None
+            } else {
+                Some(m.dp.iter(min_row, max_row))
+            },
             dm: m.dm.clone(),
             dm_empty,
             dp_empty,
@@ -482,7 +491,9 @@ impl Iter {
         max_row: u64,
     ) {
         self.mit.seek(min_row, max_row);
-        self.dpit.seek(min_row, max_row);
+        if let Some(dpit) = &mut self.dpit {
+            dpit.seek(min_row, max_row);
+        }
     }
 }
 
@@ -502,13 +513,13 @@ impl Iterator for Iter {
             if self.dp_empty {
                 return None;
             }
-            return self.dpit.next();
+            return self.dpit.as_mut().and_then(Iterator::next);
         }
         for (i, j) in &mut self.mit {
             if self.dm.get(i, j).is_none() {
                 return Some((i, j));
             }
         }
-        self.dpit.next()
+        self.dpit.as_mut().and_then(Iterator::next)
     }
 }

@@ -286,6 +286,16 @@ impl Tensor {
         self.me.nvals()
     }
 
+    /// The edge-id [`VersionedMatrix`] `me[compound_key(src,dst)][edge_id] = true`.
+    /// Exposed so callers can apply/reduce over its live components (base `m`,
+    /// additions `dp`, deletions `dm`) in place — a pair's row *is* the C tensor's
+    /// per-cell edge-id vector. Weighted MSF reads edge weights straight off `m`
+    /// (masked by `¬dm`) and `dp`, avoiding a throwaway union materialization.
+    #[must_use]
+    pub const fn edge_versioned(&self) -> &VersionedMatrix {
+        &self.me
+    }
+
     #[must_use]
     pub fn iter(
         &self,
