@@ -1,8 +1,8 @@
 //! Batch-mode variable-length traverse operator — multi-hop relationship expansion.
 //!
 //! Implements Cypher patterns like `(a)-[*2..5]->(b)`. For each active row
-//! in each input batch, enumerates all simple paths (no repeated edges within
-//! a single path) from the source node up to `max_hops` away, yielding result
+//! in each input batch, enumerates all trails (no repeated edges within a
+//! single path; nodes may repeat) from the source node up to `max_hops` away, yielding result
 //! rows for destinations reached at or beyond `min_hops`. Output rows are
 //! accumulated into batches of up to `BATCH_SIZE`.
 //!
@@ -93,8 +93,11 @@ struct VarLenIter<'a> {
     current_start: Option<NodeId>,
     /// Lazily-built adjacency cache, shared across the row's whole DFS.
     adj_cache: HashMap<u64, Vec<(NodeId, NodeId, RelationshipId)>>,
-    /// DFS frames: (node, path_elems, used_edges, nodes_in_path).
-    stack: Vec<(NodeId, ThinVec<Value>, RoaringTreemap, RoaringTreemap)>,
+    /// DFS frames: (node, path_elems, used_edges, depth). Depth counts edges
+    /// traversed so far; uniqueness is edge-based (Cypher trail semantics —
+    /// nodes may repeat, relationships may not), matching the C engine's
+    /// `Path_ContainsEdge` check.
+    stack: Vec<(NodeId, ThinVec<Value>, RoaringTreemap, u32)>,
     /// Current frame's emissions, stored reversed so `pop()` yields them in
     /// adjacency order. Bounded by the frame's fan-out.
     buf: FrameBuf,
@@ -135,19 +138,13 @@ impl VarLenIter<'_> {
             self.buf.push((start_node, start_node, path));
         }
         // The path is only materialized when consumed downstream; otherwise it
-        // stays empty (hop-counting uses `nodes_in_path`).
+        // stays empty (hop-counting uses the frame's depth counter).
         let mut initial_path = ThinVec::new();
         if self.emit_path {
             initial_path.push(Value::Node(start_node));
         }
-        let mut initial_nodes = RoaringTreemap::new();
-        initial_nodes.insert(u64::from(start_node));
-        self.stack.push((
-            start_node,
-            initial_path,
-            RoaringTreemap::new(),
-            initial_nodes,
-        ));
+        self.stack
+            .push((start_node, initial_path, RoaringTreemap::new(), 0));
     }
 
     /// Process one DFS frame under a single graph borrow: collect the frame's
@@ -178,13 +175,8 @@ impl VarLenIter<'_> {
             &rp.to.labels
         };
 
-        while let Some((current, mut path, mut used_edges, mut nodes_in_path)) = self.stack.pop() {
-            // Hops so far = distinct nodes visited - 1. Derived from
-            // `nodes_in_path` (always maintained for cycle detection) rather
-            // than `path.len()`, so path materialization can be skipped
-            // entirely when `emit_path` is false.
-            let hops_so_far = (nodes_in_path.len() as u32).saturating_sub(1);
-            let hop = hops_so_far + 1;
+        while let Some((current, mut path, mut used_edges, depth)) = self.stack.pop() {
+            let hop = depth + 1;
             if hop > max_hops {
                 continue;
             }
@@ -271,8 +263,7 @@ impl VarLenIter<'_> {
                             .iter()
                             .all(|l| g.get_node_labels(dest).any(|nl| nl == *l)));
 
-                let node_already_in_path = nodes_in_path.contains(u64::from(dest));
-                let will_continue = hop < max_hops && !node_already_in_path;
+                let will_continue = hop < max_hops;
 
                 if !will_emit && !will_continue {
                     continue;
@@ -314,13 +305,7 @@ impl VarLenIter<'_> {
                         used_edges.clone()
                     };
                     next_used.insert(u64::from(edge_id));
-                    let mut next_nodes = if is_last {
-                        std::mem::replace(&mut nodes_in_path, RoaringTreemap::new())
-                    } else {
-                        nodes_in_path.clone()
-                    };
-                    next_nodes.insert(u64::from(dest));
-                    self.stack.push((dest, owned, next_used, next_nodes));
+                    self.stack.push((dest, owned, next_used, hop));
                 } else if will_emit {
                     // Emit only — move path directly into Arc
                     let emit_path_val = emit_path.then(|| Value::Path(Arc::new(new_path)));
@@ -333,13 +318,7 @@ impl VarLenIter<'_> {
                         used_edges.clone()
                     };
                     next_used.insert(u64::from(edge_id));
-                    let mut next_nodes = if is_last {
-                        std::mem::replace(&mut nodes_in_path, RoaringTreemap::new())
-                    } else {
-                        nodes_in_path.clone()
-                    };
-                    next_nodes.insert(u64::from(dest));
-                    self.stack.push((dest, new_path, next_used, next_nodes));
+                    self.stack.push((dest, new_path, next_used, hop));
                 }
             }
 
