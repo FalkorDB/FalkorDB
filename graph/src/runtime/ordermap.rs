@@ -57,6 +57,22 @@ impl<K: PartialEq, V> OrderMap<K, V> {
         res
     }
 
+    /// Build from pairs whose keys the caller guarantees are already unique
+    /// (e.g. CSV columns deduplicated once per file). Skips the per-key
+    /// hashing dedup that [`OrderMap::from_vec`] performs.
+    #[must_use]
+    pub fn from_unique_keys(pairs: impl IntoIterator<Item = (K, V)>) -> Self
+    where
+        K: Hash + Eq,
+    {
+        let vec: ThinVec<(K, V)> = pairs.into_iter().collect();
+        debug_assert!(
+            vec.iter().map(|(k, _)| k).all_unique(),
+            "from_unique_keys called with duplicate keys"
+        );
+        Self { vec }
+    }
+
     pub fn reserve_exact(
         &mut self,
         additional: usize,
