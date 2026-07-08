@@ -419,6 +419,23 @@ void Graph_GetNodeEdges
 	Edge **edges          // array_t incoming/outgoing edges
 );
 
+// get node edges of a specific relation, given an already-synchronized
+// relation matrix, skipping the per-call matrix lookup/sync (and its lock).
+// callers that repeatedly query the same relation (e.g. a traversal's inner
+// loop) should resolve the matrix once via Graph_GetRelationMatrix and reuse
+// it across calls -- safe only while the caller holds whatever lock
+// guarantees the graph is stable for that long (e.g. a read query's graph
+// read lock)
+void Graph_GetNodeEdgesFromMatrix
+(
+	const Graph *g,       // graph to get edges from
+	const Node *n,        // node to extract edges from
+	GRAPH_EDGE_DIR dir,   // edge direction
+	Tensor R,             // already synchronized relation matrix for 'edgeType'
+	RelationID edgeType,  // relation type (must be a concrete relation)
+	Edge **edges          // array_t incoming/outgoing edges
+);
+
 // returns node incoming/outgoing degree
 uint64_t Graph_GetNodeDegree
 (

@@ -10,8 +10,10 @@
 #include "../../../errors/errors.h"
 #include "../../../datatypes/array.h"
 #include "../../../graph/graph_hub.h"
+#include "../../../errors/error_msgs.h"
 #include "../../../graph/graphcontext.h"
 #include "../../../graph/entities/node.h"
+#include "../../../util/identifier_limits.h"
 
 static bool _ValidateAttrType
 (
@@ -248,6 +250,13 @@ static bool _UpdateSetFromMap
 
 		if (!_ValidateAttrType (accepted_types, attr_vals [attr_count])) {
 			Error_InvalidPropertyValue () ;
+			return false ;
+		}
+
+		if (unlikely (strnlen (key.stringval, MAX_IDENTIFIER_LEN + 1) >
+					MAX_IDENTIFIER_LEN)) {
+			ErrorCtx_SetError (EMSG_IDENTIFIER_TOO_LONG, "Property name",
+					MAX_IDENTIFIER_LEN) ;
 			return false ;
 		}
 
@@ -885,7 +894,7 @@ void ensureMatrixDim
 	ASSERT (gc  != NULL) ;
 	ASSERT (ctx != NULL) ;
 
-	char         label[512] = {0}  ;
+	char label [MAX_IDENTIFIER_LEN + 1] = {0}  ;
 	Graph *g = GraphContext_GetGraph (gc) ;
 
 	// set matrix sync policy to resize

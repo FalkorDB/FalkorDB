@@ -6,18 +6,19 @@
 
 #include "RG.h"
 #include "globals.h"
-#include "graphcontext.h"
 #include "../util/arr.h"
 #include "../util/uuid.h"
 #include "../query_ctx.h"
+#include "graphcontext.h"
 #include "../redismodule.h"
 #include "../util/rwlock.h"
 #include "../util/rmalloc.h"
 #include "graph_memoryUsage.h"
 #include "../util/thpool/pool.h"
 #include "../constraint/constraint.h"
-#include "../serializers/graphcontext_type.h"
+#include "../util/identifier_limits.h"
 #include "../commands/execution_ctx.h"
+#include "../serializers/graphcontext_type.h"
 
 #include <pthread.h>
 #include <sys/param.h>
@@ -953,11 +954,18 @@ AttributeID GraphContext_FindOrAddAttribute
 	// see if attribute already exists
 	AttributeID id = GraphContext_GetAttributeID (gc, attribute) ;
 	if (id != ATTRIBUTE_ID_NONE) {
-		return id ;	
+		return id ;
 	}
+
+	//--------------------------------------------------------------------------
+	// Create new attribute locally
+	//--------------------------------------------------------------------------
 
 	ASSERT (gc->writer_tid == (pthread_t) 0 ||
 			pthread_equal (gc->writer_tid, pthread_self ())) ;
+
+	// should only happen if an old rdb with an overlong name is loaded
+	ASSERT (strnlen (attribute, MAX_IDENTIFIER_LEN) <= MAX_IDENTIFIER_LEN) ;
 
 	// attribute missing
 	// add it as a pending attribute

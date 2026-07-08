@@ -133,6 +133,7 @@
 #define EMSG_FAILED_TO_LOAD_CSV "failed to open CSV file: %s"
 #define EMSG_FAILED_TO_READ_CSV_ROW "Failed to get next row"
 #define EMSG_FAILED_TO_READ_CSV_HEADERS "failed to read headers row"
+#define EMSG_IDENTIFIER_TOO_LONG "%s exceeds maximum length of %d characters"
 #define EMSG_MERGE_MAP_ERROR "Cannot merge a map with a non-map value"
 #define EMSG_INVALID_CONSTRAINT_COMMAND "Invalid constraint command use the GRAPH.CONSTRAINT command instead"
 #define EMSG_WRITE_QUEUE_FULL "Write queue is full: cannot accept additional write queries at this time. Please retry later."
