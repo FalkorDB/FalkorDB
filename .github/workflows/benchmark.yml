@@ -164,12 +164,12 @@ jobs:
               # cleanup-branch-view.
               VIEW="pr-${PR_NUMBER}"
               OUT_PR_NUMBER="$PR_NUMBER"
-              # All three sizes. large previously OOM-killed the server mid-run
-              # (heavy algos exceeding the container memory → NoConnection); the
-              # algorithm fix merged from main addresses that. The 5s per-query
-              # timeout and the run-variant OOM-capture stay in place, so a
-              # regression shows up immediately instead of silently.
-              SIZES='["small","medium","large"]'
+              # small + medium only. large is excluded: verified the C engine
+              # (A, docker.io edge) still OOM-kills on large — the algorithm fix
+              # is in THIS repo (reaches B/C) but not the separate C image, so
+              # large can't yield a valid A/B/C until the C engine is fixed.
+              # Run large on demand via workflow_dispatch (B→C) meanwhile.
+              SIZES='["small","medium"]'
               ;;
             *)
               echo "::error::unsupported event $EVENT_NAME"
