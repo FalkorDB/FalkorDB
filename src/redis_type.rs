@@ -47,7 +47,7 @@ use graph::graph::mvcc_graph::MvccGraph;
 use graph::runtime::functions::{GraphFn, register_udf};
 use graph::udf::get_udf_repo;
 use parking_lot::RwLock;
-use redis_module::logging::log_notice;
+use redis_module::logging::{log_notice, log_warning};
 use redis_module::raw::{
     self, RedisModuleCtx, RedisModuleIO, load_string_buffer, load_unsigned, save_string,
     save_unsigned,
@@ -528,6 +528,10 @@ unsafe fn scan_and_clean_graphdata_keys(
                 // does not regress any normally (UTF-8) named graph.
                 let key_bytes = std::slice::from_raw_parts(kptr.cast::<u8>(), key_len);
                 let Ok(key_name) = std::str::from_utf8(key_bytes) else {
+                    log_warning(format!(
+                        "Skipping graphdata key with non-UTF-8 name during scan (lossy display: {})",
+                        String::from_utf8_lossy(key_bytes)
+                    ));
                     continue;
                 };
                 let key_name = key_name.to_string();
@@ -693,6 +697,10 @@ unsafe fn scan_keys_by_type(
                 // bytes is UB (see scan_and_clean_graphdata_keys above).
                 let key_bytes = std::slice::from_raw_parts(kptr.cast::<u8>(), name_len);
                 let Ok(key_name) = std::str::from_utf8(key_bytes) else {
+                    log_warning(format!(
+                        "Skipping key with non-UTF-8 name during type scan (lossy display: {})",
+                        String::from_utf8_lossy(key_bytes)
+                    ));
                     continue;
                 };
                 out.push(key_name.to_string());
