@@ -234,9 +234,14 @@ fn http_config() -> &'static ureq::config::Config {
 /// it after every emit and aborts the query) and the iterator fuses.
 struct CsvRecordIter {
     records: csv::StringRecordsIntoIter<Box<dyn std::io::Read>>,
-    /// `Some(names)` for `WITH HEADERS` (record → `Value::Map`), `None` for
-    /// headerless (record → `Value::List`).
-    headers: Option<Vec<Arc<String>>>,
+    /// `Some(columns)` for `WITH HEADERS` (record → `Value::Map`), `None` for
+    /// headerless (record → `Value::List`). Deduplicated once at open time —
+    /// unique keys in first-occurrence order, each paired with the column
+    /// index its value is read from (the last duplicate occurrence — the
+    /// "last wins" replace semantics of building the map per record) — so
+    /// every record builds its map with `OrderMap::from_unique_keys`, no
+    /// per-record dedup hashing.
+    headers: Option<Vec<(Arc<String>, usize)>>,
     /// Shared error slot, also checked on entry so an already-failed load stops
     /// yielding immediately.
     error: Rc<RefCell<Option<String>>>,
@@ -250,39 +255,40 @@ impl Iterator for CsvRecordIter {
             return None;
         }
         match self.records.next()? {
-            Ok(record) => Some(match &self.headers {
-                Some(names) => Value::Map(Arc::new(
-                    record
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(i, field)| {
-                            if field.is_empty() {
-                                None
-                            } else {
-                                Some((
-                                    names
-                                        .get(i)
-                                        .cloned()
-                                        .unwrap_or_else(|| Arc::new(format!("col_{i}"))),
+            Ok(record) => Some(self.headers.as_ref().map_or_else(
+                || {
+                    Value::List(Arc::new(
+                        record
+                            .iter()
+                            .map(|field| {
+                                if field.is_empty() {
+                                    Value::Null
+                                } else {
+                                    Value::String(Arc::new(String::from(field)))
+                                }
+                            })
+                            .collect(),
+                    ))
+                },
+                |columns| {
+                    // Keys are unique by construction (deduplicated once at
+                    // open time), so skip per-record dedup hashing. The
+                    // reader is non-flexible: any record whose width differs
+                    // from the header row errors before reaching here, so
+                    // every column index is in bounds and every field is
+                    // covered by the plan.
+                    Value::Map(Arc::new(OrderMap::from_unique_keys(
+                        columns.iter().filter_map(|(name, i)| {
+                            record.get(*i).filter(|f| !f.is_empty()).map(|field| {
+                                (
+                                    Arc::clone(name),
                                     Value::String(Arc::new(String::from(field))),
-                                ))
-                            }
-                        })
-                        .collect::<OrderMap<_, _>>(),
-                )),
-                None => Value::List(Arc::new(
-                    record
-                        .iter()
-                        .map(|field| {
-                            if field.is_empty() {
-                                Value::Null
-                            } else {
-                                Value::String(Arc::new(String::from(field)))
-                            }
-                        })
-                        .collect(),
-                )),
-            }),
+                                )
+                            })
+                        }),
+                    )))
+                },
+            )),
             Err(e) => {
                 *self.error.borrow_mut() = Some(format!("Failed to read CSV record: {e}"));
                 None
@@ -395,22 +401,29 @@ impl<'a> LoadCsvOp<'a> {
 
         // The header row is consumed up front (it configures every record's
         // map keys); errors here surface immediately, before any row is packed.
-        let header_names = if headers {
-            Some(
-                reader
-                    .headers()
-                    .map_err(|e| format!("Failed to read CSV headers: {e}"))?
-                    .iter()
-                    .map(|s| Arc::new(String::from(s)))
-                    .collect::<Vec<_>>(),
-            )
+        // Duplicate header names are deduplicated here, once per file: the key
+        // keeps its first-occurrence position and reads the last duplicate
+        // column's value (the "last wins" semantics of per-record map inserts).
+        let header_plan = if headers {
+            let header_row = reader
+                .headers()
+                .map_err(|e| format!("Failed to read CSV headers: {e}"))?;
+            let mut columns: Vec<(Arc<String>, usize)> = Vec::with_capacity(header_row.len());
+            for (i, name) in header_row.iter().enumerate() {
+                if let Some(slot) = columns.iter_mut().find(|(n, _)| n.as_str() == name) {
+                    slot.1 = i;
+                } else {
+                    columns.push((Arc::new(String::from(name)), i));
+                }
+            }
+            Some(columns)
         } else {
             None
         };
 
         Ok(CsvRecordIter {
             records: reader.into_records(),
-            headers: header_names,
+            headers: header_plan,
             error,
         })
     }
