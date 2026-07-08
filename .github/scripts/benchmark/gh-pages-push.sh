@@ -26,6 +26,15 @@ git config user.name "github-actions[bot]"
 git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
 
+# GitHub Pages runs Jekyll by default, which drops every underscore-prefixed
+# path — including Next.js's _next/ (all the dashboard CSS/JS). A root .nojekyll
+# disables Jekyll so those assets are actually served. Ensure it exists on every
+# publish (staged here so the very first publish carries it too).
+if [ ! -f .nojekyll ]; then
+  touch .nojekyll
+  git add .nojekyll
+fi
+
 if git diff --cached --quiet; then
   echo "no staged changes — nothing to publish"
   exit 0
