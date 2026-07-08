@@ -332,6 +332,18 @@ jobs:
               .github/scripts/benchmark/aggregate-variants.sh
           done
 
+          # Accumulate across runs: a run does one size, but rehydrate the
+          # previously-published per-size summaries for this view so the impact
+          # page (size switcher) and the comment show every size run so far.
+          # cp -n → the size just aggregated above wins over its stored copy.
+          if [ "$IS_CANONICAL" = "true" ]; then rel="benchmark"; else rel="benchmark/branch/$VIEW"; fi
+          prev="$GH_PAGES_DIR/$rel/abc-summaries"
+          if [ -d "$prev" ]; then
+            cp -n "$prev"/summary-*.json "$DL"/ 2>/dev/null || true
+            n=$(find "$DL" -maxdepth 1 -name 'summary-*.json' | wc -l | tr -d ' ')
+            echo "rehydrated prior sizes → ${n} size(s) total"
+          fi
+
           # Largest size present becomes the published dashboard; the comment
           # covers every size.
           primary=""

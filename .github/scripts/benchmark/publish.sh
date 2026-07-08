@@ -141,6 +141,15 @@ if [ "$IS_CANONICAL" != "true" ] && [ -n "${ABC_SUMMARIES_DIR:-}" ]; then
     echo "no A/B/C data (two-variant run?) — keeping the vendored dashboard as landing page"
     rmdir "$TARGET_DIR/impact" 2>/dev/null || true
   fi
+
+  # Persist the per-size summaries so the next (one-size) run for this view can
+  # rehydrate them and keep accumulating sizes (the merge job seeds its
+  # summaries dir from here). Kept out of summaries/ so the vendored dashboard's
+  # own manifest/history isn't touched.
+  if ls "$ABC_SUMMARIES_DIR"/summary-*.json >/dev/null 2>&1; then
+    mkdir -p "$TARGET_DIR/abc-summaries"
+    cp "$ABC_SUMMARIES_DIR"/summary-*.json "$TARGET_DIR/abc-summaries/"
+  fi
 fi
 
 cat > "$TARGET_DIR/index.html" << EOF
