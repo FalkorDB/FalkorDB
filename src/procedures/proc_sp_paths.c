@@ -18,6 +18,8 @@
 
 #include <float.h>
 
+#define UNBOUNDED_PATH_LENGTH INT64_MAX -1
+
 // MATCH (n:L {v: 1}), (m:L {v: 5})
 // CALL algo.SPpaths({sourceNode: n,
 //					  targetNode: m,
@@ -49,8 +51,8 @@ typedef struct {
 	Tensor *relationMatrices;    // relation matrix per relationIDs entry, synced once up front
 	int relationCount;           // length of relationIDs
 	GRAPH_EDGE_DIR dir;          // traverse direction
-	uint minLen;                 // path minimum length
-	uint maxLen;                 // path max length
+	int64_t minLen;              // path minimum length
+	int64_t maxLen;              // path max length
 	Node src;                    // source node
 	Node *dst;                   // destination node, defaults to NULL in case of general all paths execution
 	AttributeID weight_prop;     // weight attribute id
@@ -169,22 +171,22 @@ static void SinglePairCtx_New
 	int *relationIDs,
 	int relationCount,
 	GRAPH_EDGE_DIR dir,
-	uint minLen,
-	uint maxLen
+	int64_t minLen,
+	int64_t maxLen
 ) {
-	ASSERT(src != NULL);
+	ASSERT (src != NULL) ;
 
-	ctx->g              =  g;
-	ctx->dir            =  dir;
-	ctx->minLen         =  minLen + 1;
-	ctx->maxLen         =  maxLen + 1;
-	ctx->relationIDs    =  relationIDs;
-	ctx->relationCount  =  relationCount;
-	ctx->levels         =  arr_new(LevelConnection *, 1);
-	ctx->path           =  Path_New(1);
-	ctx->neighbors      =  arr_new(Edge, 32);
-	ctx->src            = *src;
-	ctx->dst            =  dst;
+	ctx->g             = g ;
+	ctx->dir           = dir ;
+	ctx->minLen        = minLen + 1 ;
+	ctx->maxLen        = maxLen + 1 ;
+	ctx->relationIDs   = relationIDs ;
+	ctx->relationCount = relationCount ;
+	ctx->levels        = arr_new (LevelConnection *, 1) ;
+	ctx->path          = Path_New (1) ;
+	ctx->neighbors     = arr_new (Edge, 32) ;
+	ctx->src           = *src ;
+	ctx->dst           = dst ;
 
 	// resolve and synchronize each relation's matrix once, up front, instead
 	// of on every neighbor-expansion call during traversal: the procedure
@@ -216,16 +218,15 @@ static ProcedureResult validate_config
 	SIValue max_cost;             // maximum cost
 	SIValue path_count;           // # of paths to return
 	
-	bool start_exists         = MAP_GET(config, "sourceNode",   start);
-	bool end_exists           = MAP_GET(config, "targetNode",   end);
-	bool relationships_exists = MAP_GET(config, "relTypes",     relationships);
-	bool dir_exists           = MAP_GET(config, "relDirection", dir);
-	bool max_length_exists    = MAP_GET(config, "maxLen",       max_length);
-	bool weight_prop_exists   = MAP_GET(config, "weightProp",   weight_prop);
-	bool cost_prop_exists     = MAP_GET(config, "costProp",     cost_prop);
-	bool max_cost_exists      = MAP_GET(config, "maxCost",      max_cost);
-	bool path_count_exists    = MAP_GET(config, "pathCount",    path_count);
-	
+	bool start_exists         = MAP_GET (config, "sourceNode",   start) ;
+	bool end_exists           = MAP_GET (config, "targetNode",   end) ;
+	bool relationships_exists = MAP_GET (config, "relTypes",     relationships) ;
+	bool dir_exists           = MAP_GET (config, "relDirection", dir) ;
+	bool max_length_exists    = MAP_GET (config, "maxLen",       max_length) ;
+	bool weight_prop_exists   = MAP_GET (config, "weightProp",   weight_prop) ;
+	bool cost_prop_exists     = MAP_GET (config, "costProp",     cost_prop) ;
+	bool max_cost_exists      = MAP_GET (config, "maxCost",      max_cost) ;
+	bool path_count_exists    = MAP_GET (config, "pathCount",    path_count) ;
 
 	if(!start_exists || !end_exists) {
 		ErrorCtx_SetError(EMSG_SPPATH_REQUIRED);
@@ -254,13 +255,13 @@ static ProcedureResult validate_config
 		}
 	}
 
-	int64_t max_length_val = LONG_MAX - 1;
-	if(max_length_exists) {
-		if(SI_TYPE(max_length) != T_INT64) {
-			ErrorCtx_SetError(EMSG_MUST_BE, "maxLen", "integer");
-			return false;
+	int64_t max_length_val = UNBOUNDED_PATH_LENGTH ;
+	if (max_length_exists) {
+		if (SI_TYPE (max_length) != T_INT64) {
+			ErrorCtx_SetError (EMSG_MUST_BE, "maxLen", "integer") ;
+			return false ;
 		}
-		max_length_val = SI_GET_NUMERIC(max_length);
+		max_length_val = SI_GET_NUMERIC (max_length) ;
 	}
 
 	GraphContext *gc = QueryCtx_GetGraphCtx();
@@ -486,8 +487,8 @@ static void _find_bound_path
 ) {
 	*exists = false;
 
-	NodeID src_id = ENTITY_GET_ID(&ctx->src);
-	NodeID dst_id = ENTITY_GET_ID(ctx->dst);
+	NodeID src_id = ENTITY_GET_ID (&ctx->src) ;
+	NodeID dst_id = ENTITY_GET_ID (ctx->dst)  ;
 
 	if (src_id == dst_id) {
 		return ;
@@ -1183,9 +1184,10 @@ static ProcedureResult Proc_SPpathsInvoke
 		(ENTITY_GET_ID (&single_pair_ctx->src) ==
 		 ENTITY_GET_ID (single_pair_ctx->dst)) ;
 
-	if (src_eq_dst == false              &&
-		single_pair_ctx->path_count == 1 &&
-		single_pair_ctx->max_cost == DBL_MAX) {
+	if (src_eq_dst == false                    &&
+		single_pair_ctx->path_count == 1       &&
+		single_pair_ctx->max_cost   == DBL_MAX &&
+		single_pair_ctx->maxLen     == UNBOUNDED_PATH_LENGTH + 1) {
 		SPpaths_dijkstra_single (single_pair_ctx) ;
 		return PROCEDURE_OK ;
 	}
@@ -1195,26 +1197,27 @@ static ProcedureResult Proc_SPpathsInvoke
 	// path can exist regardless of maxCost either, so skip the exhaustive
 	// search entirely. if one is found and it also satisfies maxCost, its
 	// weight is a safe upper bound to seed the exhaustive search with.
-	bool   bound_exists;
-	double bound_weight;
-	double bound_cost;
-	_find_bound_path(single_pair_ctx, &bound_exists, &bound_weight, &bound_cost);
+	double bound_cost ;
+	bool   bound_exists ;
+	double bound_weight ;
+	_find_bound_path (single_pair_ctx, &bound_exists, &bound_weight,
+			&bound_cost) ;
 
-	if(!bound_exists) {
+	if (!bound_exists) {
 		if(single_pair_ctx->path_count == 0) {
-			single_pair_ctx->array = arr_new(WeightedPath, 0);
+			single_pair_ctx->array = arr_new (WeightedPath, 0) ;
 		} else if(single_pair_ctx->path_count == 1) {
 			single_pair_ctx->single.path = NULL;
 		} else {
-			single_pair_ctx->heap = Heap_new(path_cmp, NULL);
+			single_pair_ctx->heap = Heap_new (path_cmp, NULL) ;
 		}
-		return PROCEDURE_OK;
+		return PROCEDURE_OK ;
 	}
 
-	bool cost_feasible = (bound_cost <= single_pair_ctx->max_cost);
-	double initial_bound = cost_feasible ? bound_weight : DBL_MAX;
+	bool cost_feasible = (bound_cost <= single_pair_ctx->max_cost) ;
+	double initial_bound = cost_feasible ? bound_weight : DBL_MAX ;
 
-	if(single_pair_ctx->path_count == 0) {
+	if (single_pair_ctx->path_count == 0) {
 		// all-minimal wants every tie at the true minimum weight; the
 		// pre-pass weight is a valid upper bound on that minimum (any tie
 		// is by definition <= it), so seeding is safe here.
