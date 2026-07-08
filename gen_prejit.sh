@@ -25,6 +25,20 @@
 #     slowdown on a new query pattern).
 #   * GraphBLAS version is bumped in graphblas.sh.
 #
+# HARMONIC HLL KERNELS: the LAGraph HyperLogLog dot4 semiring kernels
+# (GB_jit__AxB_dot4__*__lg_hll_merge_lg_hll_second, plus lg_hll_count /
+# lg_hll_delta) are only harvested because tests/flow/test_harmonic_centrality.py
+# exercises algo.HarmonicCentrality on BOTH a tiny graph (A-bitmap `...eca`
+# dot4 variant) and a larger sparse graph (test08 -> A-sparse `...ec6` variant,
+# the one the benchmark hits). Two conditions are required for these to appear:
+#   1. The harmonic iso fast path (algo_procedures.rs feeds LAGraph an ISO bool
+#      adjacency via eWiseMult ONEB) must be present -- a non-iso adjacency
+#      makes HyperBall punt to the ~3x slower generic dot2 and no dot4 kernel
+#      is ever JIT-compiled.
+#   2. The flow suite must run under --features prejit_harvest (Step 4e below).
+# If harmonic centrality regresses on medium/large graphs, confirm those dot4
+# kernels are still present in build/graphblas/PreJIT/ after a re-harvest.
+#
 # NOTE: PreJIT kernel sources are architecture-independent C; the harvest
 # can run on any host. The harvested files become a checked-in artifact.
 
@@ -187,6 +201,9 @@ echo "[Step 4d] Running TCK suite..."
     env TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s)
 
 echo "[Step 4e] Running flow tests..."
+# Includes tests/flow/test_harmonic_centrality.py, whose tiny + 200-node graph
+# shapes JIT-compile the LAGraph HLL dot4 kernels (see header note) into the
+# cache so Step 5 can harvest them.
 (cd "${REPO_DIR}" && run_with_retry "flow.sh" ./flow.sh)
 
 # ---------------------------------------------------------------------------

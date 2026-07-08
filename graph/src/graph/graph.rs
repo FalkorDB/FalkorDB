@@ -2404,6 +2404,16 @@ impl Graph {
         self.relationship_attrs.get_attr_by_idx(id.0, attr_idx)
     }
 
+    /// Borrow the relationship attribute store directly.
+    ///
+    /// Lets a caller hand a GraphBLAS user-defined operator a minimal, read-only
+    /// handle to just the relationship weights (see `algo.MSF`'s weight operator)
+    /// rather than a raw pointer to the whole graph.
+    #[must_use]
+    pub const fn relationship_attrs(&self) -> &AttributeStore {
+        &self.relationship_attrs
+    }
+
     /// Batch variant of `get_relationship_attribute_by_idx`.
     /// Pushes one `Value` per id into `out`, substituting `default` for
     /// missing entries (so callers don't allocate a temp `Vec<Option<_>>`).
