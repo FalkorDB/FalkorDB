@@ -222,11 +222,8 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
 
             // Route each conjunct to the child that provides all its variables
             let mut child_conjuncts: Vec<Vec<DynTree<ExprIR<Variable>>>> =
-                Vec::with_capacity(children.len());
-            for _ in 0..children.len() {
-                child_conjuncts.push(Vec::new());
-            }
-            let mut remaining: Vec<DynTree<ExprIR<Variable>>> = Vec::with_capacity(conjuncts.len());
+                vec![vec![]; children.len()];
+            let mut remaining: Vec<DynTree<ExprIR<Variable>>> = vec![];
 
             for conjunct in conjuncts {
                 let conj_vars = collect_expr_variables(&conjunct);
