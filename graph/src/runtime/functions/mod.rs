@@ -800,8 +800,15 @@ impl GraphFn {
         &self,
         args: &[Value],
     ) -> Result<(), String> {
-        // Only percentile functions need domain validation currently
-        if self.name.to_lowercase().starts_with("percentile") {
+        // Only percentile functions need domain validation currently.
+        // Allocation-free case-insensitive prefix check: this runs per row
+        // in aggregation hot loops, where `to_lowercase` showed up in
+        // profiles as pure alloc churn.
+        if self
+            .name
+            .get(.."percentile".len())
+            .is_some_and(|p| p.eq_ignore_ascii_case("percentile"))
+        {
             // percentile is at index 1 (after the value argument)
             if args.len() >= 2 {
                 if matches!(args[1], Value::Null) {
