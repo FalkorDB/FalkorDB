@@ -111,7 +111,7 @@
       </div>
     </div>
     <div><span class="cl">Dataset</span><div class="seg" id="segSize"></div></div>
-    <span class="fig-meta" id="ctlHint"></span>
+    <span class="fig-meta" id="ctlHint"></span><span class="fig-meta" id="flameLink"></span>
   </div>
 
   <div class="kpis" id="kpis"></div>
@@ -222,7 +222,15 @@ function renderLat(){
 
 function render(){
   document.getElementById("ctlHint").textContent=state.metric==="exec"?"server-internal execution time (ms)":"client latency percentile (ms)";
-  renderKPIs(); renderBars(); renderLat();
+  renderKPIs(); renderBars(); renderLat(); renderFlameLink();
+}
+// Show a flame-graph link for the selected size only if a profile run published
+// one (decoupled from this benchmark run — a HEAD check, no coupling).
+function renderFlameLink(){
+  const el=document.getElementById("flameLink"); if(!el) return;
+  el.innerHTML="";
+  const url="../profile/"+state.size+"/flamegraph.svg";
+  fetch(url,{method:"HEAD"}).then(r=>{ if(r.ok) el.innerHTML=' · <a href="'+url+'" target="_blank" rel="noopener">🔥 flame graph</a>'; }).catch(()=>{});
 }
 function syncSize(){ [...document.getElementById("segSize").children].forEach(c=>c.classList.toggle("on",c.dataset.v===state.size)); }
 
