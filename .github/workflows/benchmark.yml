@@ -38,6 +38,10 @@ on:
         default: "small"
         type: choice
         options: ["small", "medium", "large"]
+      write_ratio:
+        description: "Fraction of write queries (0.0-1.0). PR/slash runs are always read-only; set this to benchmark writes on a manual run."
+        required: false
+        default: "0.0"
   pull_request:
     # `labeled` runs a benchmark only when a benchmark-<size> label is *added*
     # (not on every push while it happens to be present — those are expensive);
@@ -129,6 +133,7 @@ jobs:
       view: ${{ steps.derive.outputs.view }}
       pr_number: ${{ steps.derive.outputs.pr_number }}
       sizes: ${{ steps.derive.outputs.sizes }}
+      write_ratio: ${{ steps.derive.outputs.write_ratio }}
     steps:
       - name: Checkout benchmark scripts
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -143,6 +148,7 @@ jobs:
           INPUT_IMAGE_A_TAG: ${{ github.event.inputs.image_a_tag }}
           INPUT_IMAGE_B_TAG: ${{ github.event.inputs.image_b_tag }}
           INPUT_DATASET_SIZE: ${{ github.event.inputs.dataset_size }}
+          INPUT_WRITE_RATIO: ${{ github.event.inputs.write_ratio }}
           DISPATCH_REF_NAME: ${{ github.ref_name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
@@ -159,6 +165,8 @@ jobs:
               VIEW=$(.github/scripts/benchmark/view-slug.sh "$DISPATCH_REF_NAME")
               OUT_PR_NUMBER=""
               SIZES="[\"${INPUT_DATASET_SIZE:-small}\"]"
+              # Manual runs may opt into writes; default read-only.
+              WRITE_RATIO="${INPUT_WRITE_RATIO:-0.0}"
               ;;
             pull_request)
               # A/B/C: C engine (A) vs published Rust (B) vs this PR (C).
@@ -177,6 +185,8 @@ jobs:
               # LABEL_NAME is one of benchmark-small/medium/large.
               SIZE="${LABEL_NAME#benchmark-}"
               SIZES="[\"${SIZE}\"]"
+              # PR/slash runs are always read-only; writes are manual-only.
+              WRITE_RATIO="0.0"
               ;;
             *)
               echo "::error::unsupported event $EVENT_NAME"
@@ -191,6 +201,7 @@ jobs:
             echo "view=${VIEW}"
             echo "pr_number=${OUT_PR_NUMBER}"
             echo "sizes=${SIZES}"
+            echo "write_ratio=${WRITE_RATIO}"
           } >> "$GITHUB_OUTPUT"
           echo "Derived: A=${IMAGE_A} B=${IMAGE_B} C=${IMAGE_C} view=${VIEW} pr=${OUT_PR_NUMBER} sizes=${SIZES}"
 
@@ -269,6 +280,7 @@ jobs:
       is_canonical: false
       sizes: ${{ needs.prepare.outputs.sizes }}
       pr_number: ${{ needs.prepare.outputs.pr_number }}
+      write_ratio: ${{ needs.prepare.outputs.write_ratio }}
     secrets: inherit
 
   # Remove a PR's /benchmark/branch/pr-<N>/ preview once it closes — no

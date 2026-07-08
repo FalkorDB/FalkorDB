@@ -19,7 +19,7 @@ QUERIES_COUNT="${QUERIES_COUNT:-20000}"   # a benchmark, not a soak test
 PARALLEL="${PARALLEL:-20}"                 # client worker tasks
 MPS="${MPS:-5000}"                         # target scheduling rate (queries/sec)
 BATCH_SIZE="${BATCH_SIZE:-5000}"
-WRITE_RATIO="${WRITE_RATIO:-0.05}"         # 5% writes, 95% reads
+WRITE_RATIO="${WRITE_RATIO:-0.0}"          # read-only by default (workflow passes it)
 # Server-side per-query timeout (FalkorDB aborts the query and frees the thread
 # at this deadline; the benchmark client applies it via ro_query .with_timeout).
 # Default 5s, well below the tool's own 180s default: the heavy graph algos

@@ -77,6 +77,11 @@ on:
         required: false
         type: string
         default: ""
+      write_ratio:
+        description: "Fraction of write queries (0.0-1.0). PR/slash runs are read-only (0.0); writes are opt-in via manual dispatch."
+        required: false
+        type: string
+        default: "0.0"
 
 permissions:
   contents: read
@@ -208,7 +213,8 @@ jobs:
           PARALLEL: ${{ vars.BENCHMARK_PARALLEL || '20' }}
           MPS: ${{ vars.BENCHMARK_MPS || '5000' }}
           QUERIES_COUNT: ${{ vars.BENCHMARK_QUERIES_COUNT || '20000' }}
-          WRITE_RATIO: ${{ vars.BENCHMARK_WRITE_RATIO || '0.05' }}
+          # Read-only unless the caller opts into writes (manual dispatch only).
+          WRITE_RATIO: ${{ inputs.write_ratio }}
           # Server-side per-query timeout (ms) — 5s so heavy algos abort fast
           # instead of running to the tool's 180s default. Tunable via repo var.
           FALKOR_QUERY_TIMEOUT_MS: ${{ vars.BENCHMARK_QUERY_TIMEOUT_MS || '5000' }}
