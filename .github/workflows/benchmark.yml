@@ -164,13 +164,12 @@ jobs:
               # cleanup-branch-view.
               VIEW="pr-${PR_NUMBER}"
               OUT_PR_NUMBER="$PR_NUMBER"
-              # `large` is KNOWN-BROKEN and excluded: on the large graph the
-              # server goes unreachable mid-run (NoConnection) on every engine —
-              # C, edge-rs, and the PR alike — so ~99.8% of queries fail and the
-              # numbers are meaningless. Small+medium publish cleanly meanwhile.
-              # Run large on demand via workflow_dispatch (dataset_size: large)
-              # while investigating; re-add here once fixed.
-              SIZES='["small","medium"]'
+              # All three sizes. large previously OOM-killed the server mid-run
+              # (heavy algos exceeding the container memory → NoConnection); the
+              # algorithm fix merged from main addresses that. The 5s per-query
+              # timeout and the run-variant OOM-capture stay in place, so a
+              # regression shows up immediately instead of silently.
+              SIZES='["small","medium","large"]'
               ;;
             *)
               echo "::error::unsupported event $EVENT_NAME"
