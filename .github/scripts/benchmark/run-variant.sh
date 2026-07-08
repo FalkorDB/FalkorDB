@@ -15,11 +15,11 @@ set -euo pipefail
 : "${BENCHMARK_DIR:?BENCHMARK_DIR (checkout of FalkorDB/benchmark) is required}"
 
 DATASET_SIZE="${DATASET_SIZE:-small}"
-QUERIES_COUNT="${QUERIES_COUNT:-200000}"
-PARALLEL="${PARALLEL:-20}"
-MPS="${MPS:-7500}"
+QUERIES_COUNT="${QUERIES_COUNT:-20000}"   # a benchmark, not a soak test
+PARALLEL="${PARALLEL:-20}"                 # client worker tasks
+MPS="${MPS:-5000}"                         # target scheduling rate (queries/sec)
 BATCH_SIZE="${BATCH_SIZE:-5000}"
-WRITE_RATIO="${WRITE_RATIO:-0.0}"
+WRITE_RATIO="${WRITE_RATIO:-0.05}"         # 5% writes, 95% reads
 # Server-side per-query timeout (FalkorDB aborts the query and frees the thread
 # at this deadline; the benchmark client applies it via ro_query .with_timeout).
 # Default 5s, well below the tool's own 180s default: the heavy graph algos
@@ -28,7 +28,9 @@ WRITE_RATIO="${WRITE_RATIO:-0.0}"
 # timeouts) while the ordinary read shapes still complete and compare cleanly.
 export FALKOR_QUERY_TIMEOUT_MS="${FALKOR_QUERY_TIMEOUT_MS:-5000}"
 DB_PORT="${DB_PORT:-16379}"
-DB_CPUS="${DB_CPUS:-4}"
+# Give the DB every core of the VM by default (FalkorDB already sizes its thread
+# pool off host nproc); the client is co-located but the OS scheduler shares.
+DB_CPUS="${DB_CPUS:-$(nproc)}"
 DB_MEMORY="${DB_MEMORY:-12g}"
 RESULTS_DIR="${RESULTS_DIR:-$(pwd)/Results-ab}"
 CONTAINER_NAME="bench-db-$$"

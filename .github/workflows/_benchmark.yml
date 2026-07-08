@@ -200,13 +200,17 @@ jobs:
           IMAGE: ${{ matrix.combo.image }}
           NAME: ${{ matrix.combo.variant }}
           DATASET_SIZE: ${{ matrix.combo.size }}
-          # Identical DB limits for every variant AND size (tunable via repo
-          # variables) — fair by construction.
-          DB_CPUS: ${{ vars.BENCHMARK_DB_CPUS || '8' }}
+          # DB limits — same for every variant AND size (fair by construction).
+          # DB_CPUS empty → run-variant.sh gives the DB the VM's full core count.
+          DB_CPUS: ${{ vars.BENCHMARK_DB_CPUS }}
           DB_MEMORY: ${{ vars.BENCHMARK_DB_MEMORY || '24g' }}
+          # Client + workload knobs, tunable via repo variables.
+          PARALLEL: ${{ vars.BENCHMARK_PARALLEL || '20' }}
+          MPS: ${{ vars.BENCHMARK_MPS || '5000' }}
+          QUERIES_COUNT: ${{ vars.BENCHMARK_QUERIES_COUNT || '20000' }}
+          WRITE_RATIO: ${{ vars.BENCHMARK_WRITE_RATIO || '0.05' }}
           # Server-side per-query timeout (ms) — 5s so heavy algos abort fast
-          # instead of running to the tool's 180s default (which makes medium
-          # take hours). Tunable via repo variable.
+          # instead of running to the tool's 180s default. Tunable via repo var.
           FALKOR_QUERY_TIMEOUT_MS: ${{ vars.BENCHMARK_QUERY_TIMEOUT_MS || '5000' }}
           BENCHMARK_DIR: ${{ github.workspace }}/benchmark-tool
           RESULTS_DIR: ${{ runner.temp }}/results-ab
