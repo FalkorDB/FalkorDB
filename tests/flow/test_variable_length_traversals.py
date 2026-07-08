@@ -258,9 +258,9 @@ class testVariableLengthTraversals(FlowTestsBase):
         # a->b->c->a
         #
         # variable length traversal should not get stuck in a cycle
-        # in addition, the traversal mustn't continue traversing once a cycle
-        # is detected, for the test graph that means that the path: a->b->c->a->d/b
-        # can't be matched
+        # traversal follows Cypher trail semantics: relationships are unique
+        # within a path but nodes may repeat, so a->b->c->a->d is matched
+        # (a->b->c->a->b is not, edge a->b would repeat)
 
         # clear previous data
         self.graph.delete()
@@ -280,9 +280,10 @@ class testVariableLengthTraversals(FlowTestsBase):
                    ORDER BY z.v"""
 
         result = self.graph.query(query).result_set
-        self.env.assertEqual(len(result), 2)
+        self.env.assertEqual(len(result), 3)
         self.env.assertEqual(result[0][0], 'a')
         self.env.assertEqual(result[1][0], 'c')
+        self.env.assertEqual(result[2][0], 'd')
 
     def test13_fanout(self):
         # create a tree structure graph with a fanout of 3

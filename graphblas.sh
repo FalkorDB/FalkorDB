@@ -91,7 +91,13 @@ if [ -n "${CXX:-}" ]; then CMAKE_COMPILER_ARGS+=(-DCMAKE_CXX_COMPILER="${CXX}");
 
 # OpenMP: only force the static-libomp wiring inside the Docker toolchain
 # image (where build/libomp.sh has produced /opt/libomp/lib/libomp.a). On
-# every other host let cmake's find_package(OpenMP) auto-detect.
+# macOS, wire Homebrew's libomp explicitly: Apple clang has no -fopenmp
+# driver flag, so cmake's find_package(OpenMP) fails *silently* and
+# GraphBLAS builds single-threaded — every mxm/mxv then runs on one core
+# (measured ~4x slower harmonic centrality / ~3x slower MSF vs the C
+# engine, whose build wires libomp). `-Xclang -fopenmp` bypasses the
+# driver check and works on both Apple clang and Homebrew LLVM clang.
+# On every other host let cmake's find_package(OpenMP) auto-detect.
 LIBOMP_PREFIX="${LIBOMP_PREFIX:-/opt/libomp}"
 OPENMP_CMAKE_ARGS=()
 INCLUDE_FLAG=""
@@ -103,6 +109,17 @@ if [ -f "${LIBOMP_PREFIX}/lib/libomp.a" ]; then
         -DOpenMP_C_LIB_NAMES=omp
         -DOpenMP_CXX_LIB_NAMES=omp
         -DOpenMP_omp_LIBRARY="${LIBOMP_PREFIX}/lib/libomp.a"
+    )
+elif [ "$(uname -s)" = "Darwin" ] \
+    && BREW_LIBOMP="$(brew --prefix libomp 2>/dev/null)" \
+    && [ -f "${BREW_LIBOMP}/lib/libomp.dylib" ]; then
+    INCLUDE_FLAG="-I${BREW_LIBOMP}/include"
+    OPENMP_CMAKE_ARGS=(
+        "-DOpenMP_C_FLAGS=-Xclang -fopenmp -I${BREW_LIBOMP}/include"
+        "-DOpenMP_CXX_FLAGS=-Xclang -fopenmp -I${BREW_LIBOMP}/include"
+        -DOpenMP_C_LIB_NAMES=omp
+        -DOpenMP_CXX_LIB_NAMES=omp
+        -DOpenMP_omp_LIBRARY="${BREW_LIBOMP}/lib/libomp.dylib"
     )
 fi
 
