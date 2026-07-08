@@ -892,19 +892,15 @@ impl Pending {
                 .extend(endpoints.iter().map(|(id, _, _)| u64::from(*id)));
             self.deleted_endpoints.extend(endpoints);
         }
-        // Enforce constraints before committing attrs to the store.
-        // The constraint checks read from the in-memory attribute cache
-        // which already has the dirty mutations from this transaction.
+        // Enforce constraints before accumulating index operations.
+        // The constraint checks read the attribute store, which already has
+        // the mutations from this transaction (writes apply immediately to
+        // the private MVCC graph).
         self.enforce_constraints(g)?;
 
-        // Commit attribute changes after constraint validation passes.
         // Index operations are deferred — they will be applied only after
         // the full query succeeds to avoid stale RediSearch entries on
         // rollback.
-        {
-            let mut g = g.borrow_mut();
-            g.commit_attrs()?;
-        }
 
         // Accumulate index operations into deferred fields.
         for (k, v) in self.index_add_docs.drain() {

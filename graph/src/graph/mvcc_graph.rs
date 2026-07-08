@@ -21,7 +21,7 @@
 //!  Reader 2 ──read()──▶ clones Arc ──▶ sees Graph v1
 //!
 //!  Writer ──write()──▶ CAS(false→true) ──▶ Graph::new_version() ──▶ Graph v2
-//!    │                                       (COW matrices, fresh AttributeStore)
+//!    │                                       (COW matrices, COW AttributeStore)
 //!    │── mutations on v2 ──▶ ...
 //!    │── commit(v2) ──▶ swap graph pointer, store(false)
 //!    │

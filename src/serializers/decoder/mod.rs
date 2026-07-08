@@ -192,13 +192,6 @@ pub fn rdb_load_graph(
         }
     }
 
-    node_attrs
-        .commit()
-        .map_err(|e| format!("commit node attrs: {e}"))?;
-    rel_attrs
-        .commit()
-        .map_err(|e| format!("commit rel attrs: {e}"))?;
-
     let mut graph = Graph::restore(
         &hdr.graph_name,
         cache_size,
@@ -274,17 +267,10 @@ fn decode_payloads_into_pending(
     Ok(())
 }
 
-/// Finalize a pending multi-key graph: commit attrs, build Graph, rebuild derived matrices.
+/// Finalize a pending multi-key graph: build Graph, rebuild derived matrices.
 pub fn finalize_pending_graph(pg: PendingGraph) -> Result<Graph, String> {
-    let mut node_attrs = pg.node_attrs;
-    let mut rel_attrs = pg.rel_attrs;
-
-    node_attrs
-        .commit()
-        .map_err(|e| format!("commit node attrs: {e}"))?;
-    rel_attrs
-        .commit()
-        .map_err(|e| format!("commit rel attrs: {e}"))?;
+    let node_attrs = pg.node_attrs;
+    let rel_attrs = pg.rel_attrs;
 
     let mut graph = Graph::restore(
         &pg.header.graph_name,
@@ -469,13 +455,6 @@ fn load_graph_from_reader(
             _ => {}
         }
     }
-
-    node_attrs
-        .commit()
-        .map_err(|e| format!("commit node attrs: {e}"))?;
-    rel_attrs
-        .commit()
-        .map_err(|e| format!("commit rel attrs: {e}"))?;
 
     let mut graph = Graph::restore(
         dest_name,

@@ -365,7 +365,6 @@ fn bulk_insert_sync(
         process_edge_token(g, token, &rel_ids, &mut rel_id_cursor, null_ctx)?;
     }
 
-    g.commit_attrs()?;
     // Flush delta-plus into base to prevent large dp from slowing subsequent commands
     g.flush_for_bulk();
     Ok(())
@@ -397,7 +396,6 @@ fn bulk_insert_sync_yield(
         unsafe { maybe_yield(raw_ctx) };
     }
 
-    g.commit_attrs()?;
     // Flush delta-plus into base to prevent O(N²) dp accumulation across commands
     g.flush_for_bulk();
     Ok(())

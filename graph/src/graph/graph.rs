@@ -2677,24 +2677,6 @@ impl Graph {
         }
     }
 
-    pub fn commit_attrs(&mut self) -> Result<(), String> {
-        self.node_attrs.commit()?;
-        self.relationship_attrs.commit()?;
-        Ok(())
-    }
-
-    /// Invalidate dirty cache entries written during a failed write transaction.
-    pub fn rollback_cache(&mut self) {
-        self.node_attrs.rollback_cache();
-        self.relationship_attrs.rollback_cache();
-    }
-
-    /// Drop rollback-saved state after a query commits successfully.
-    pub fn clear_rollback_state(&mut self) {
-        self.node_attrs.clear_rollback_state();
-        self.relationship_attrs.clear_rollback_state();
-    }
-
     pub fn commit_index(
         &mut self,
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
