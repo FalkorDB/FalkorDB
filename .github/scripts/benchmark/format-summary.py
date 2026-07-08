@@ -16,7 +16,7 @@ import argparse
 import json
 import sys
 
-from query_metrics import per_query
+from query_metrics import parse_latency_ms, per_query
 
 SIZE_ORDER = {"small": 0, "medium": 1, "large": 2}
 
@@ -33,18 +33,6 @@ def _run(summary: dict, vendor: str):
 def _mps(run: dict):
     v = (run or {}).get("result", {}).get("actual-messages-per-second")
     return float(v) if isinstance(v, (int, float)) else None
-
-
-def _latency_ms(value):
-    """Parse a latency string like "20.61ms" into float ms (None if unparseable)."""
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str) and value.endswith("ms"):
-        try:
-            return float(value[:-2])
-        except ValueError:
-            return None
-    return None
 
 
 def _rat(cur, base):
@@ -101,7 +89,7 @@ def latency_table(sizes, name_base, name_c, heading):
         lbase, lc = base.get("result", {}).get("latency", {}), c.get("result", {}).get("latency", {})
         cells = []
         for pct in ("p50", "p95", "p99"):
-            r, _ = _rat(_latency_ms(lc.get(pct)), _latency_ms(lbase.get(pct)))
+            r, _ = _rat(parse_latency_ms(lc.get(pct)), parse_latency_ms(lbase.get(pct)))
             cells.append(r)
         lines.append(f"| `{label}` | " + " | ".join(cells) + " |")
         any_row = True

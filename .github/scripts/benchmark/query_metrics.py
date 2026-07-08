@@ -26,6 +26,32 @@ METRIC_LABEL = {
 }
 
 
+def parse_latency_ms(value):
+    """Parse an aggregate-latency value into float milliseconds.
+
+    The benchmark emits these as unit-suffixed strings whose unit VARIES with
+    magnitude — "6.463ms", but "2.490s" once it crosses a second (and "…us"
+    below a millisecond). A bare number is assumed already-ms. Returns None if
+    unparseable. Order matters: "ms"/"us"/"µs" all end in "s", so check them
+    before the bare "s". (Fixes p95/p99 silently dropping whenever they're ≥1s.)
+    """
+    if isinstance(value, (int, float)):
+        return float(value)
+    if not isinstance(value, str):
+        return None
+    s = value.strip()
+    try:
+        if s.endswith("ms"):
+            return float(s[:-2])
+        if s.endswith("us") or s.endswith("µs"):
+            return float(s[:-2]) / 1000.0
+        if s.endswith("s"):
+            return float(s[:-1]) * 1000.0
+    except ValueError:
+        return None
+    return None
+
+
 def per_query(run, metric):
     """Return {query: value_ms} for `metric` on one run's result.
 

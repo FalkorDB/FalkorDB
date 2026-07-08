@@ -41,6 +41,7 @@ require() {
 }
 
 require "$PAGE" 'const dataUrl = "/summaries/falkordb_vs_falkordb.json";'
+require "$PAGE" '"falkordb-c", "falkordb-rs",'
 require "$DASHBOARD" 'const response = await fetch("/summaries/manifest.json");'
 require "$DASHBOARD" 'setActiveUrl(`/summaries/${val}`);'
 require "$DASHBOARD" 'activeUrl.replace("/summaries/", "")'
@@ -50,6 +51,14 @@ require "$DASHBOARD" 'activeUrl.replace("/summaries/", "")'
 sed -i.bak \
   's#const dataUrl = "/summaries/falkordb_vs_falkordb.json";#const dataUrl = `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/summaries/falkordb_vs_falkordb.json`;#' \
   "$PAGE"
+
+# 1b. The falkordb-compare page's vendor allow-list hardcodes falkordb-c +
+#     falkordb-rs but not our PR variant (falkordb-pr), so filterDataByVendors
+#     would drop the PR and the detailed dashboard would show only the C engine
+#     vs published Rust. Add falkordb-pr after every falkordb-rs (covers both
+#     comparisonVendors and the initial Vendors selection). Harmless for
+#     canonical A/B runs where falkordb-pr simply isn't in the data.
+sed -i.bak 's#"falkordb-rs",#"falkordb-rs", "falkordb-pr",#g' "$PAGE"
 
 # 2. Manifest fallback fetch, 3. history-switcher fetch, 4. the filename
 #    extraction that feeds the <select> — all need the same base-path

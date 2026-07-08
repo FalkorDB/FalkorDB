@@ -157,10 +157,11 @@ function renderKPIs(){
   for(const sz of D.sizes){
     const t=D.throughput[sz]; if(!t) continue;
     const bc=(t.b&&t.c)?t.c/t.b:null, vc=(t.a&&t.c)?t.c/t.a:null;
+    const primary=state.cmp==="vc"?vc:bc;
     const d=document.createElement("div"); d.className="kpi"+(sz===state.size?" sel":""); d.style.cursor="pointer";
     d.innerHTML=`<div class="l"><span>${sz} · throughput</span><span>q/s</span></div>
-      <div class="v">${bc?bc.toFixed(2):"—"}×<small> B→C</small></div>
-      <div class="raw">C ${fmt(t.c)} · B ${fmt(t.b)} · A ${fmt(t.a)}${vc?" · vs C-engine "+vc.toFixed(2)+"×":""}</div>`;
+      <div class="v">${primary?primary.toFixed(2):"—"}×<small> ${CMPLABEL[state.cmp]}</small></div>
+      <div class="raw">C ${fmt(t.c)} · B ${fmt(t.b)} · A ${fmt(t.a)}</div>`;
     d.addEventListener("click",()=>{ state.size=sz; syncSize(); render(); });
     box.appendChild(d);
   }
@@ -170,7 +171,7 @@ function renderBars(){
   const fig=document.getElementById("barFig");
   const pq=((D.perquery[state.size]||{})[state.metric])||{};
   const base=state.cmp==="vc"?"a":"b";
-  const rows=Object.keys(pq).map(q=>{const v=pq[q];const bv=v[base];return {q,bc:(bv&&v.c)?bv/v.c:null,c:v.c};})
+  const rows=Object.keys(pq).map(q=>{const v=pq[q];const bv=v[base];return {q,bc:(bv&&v.c)?bv/v.c:null,c:v.c,base:bv};})
     .filter(r=>r.bc!=null && r.c!=null).sort((a,b)=>b.bc-a.bc);
   if(!rows.length){ fig.hidden=true; return; } fig.hidden=false;
   const svg=document.getElementById("barchart"); svg.innerHTML="";
@@ -189,7 +190,8 @@ function renderBars(){
     const bx=Math.min(midX,xe),bw=Math.max(3,Math.abs(xe-midX));
     g.appendChild(el("rect",{x:bx,y:cy-8,width:bw,height:16,rx:4,fill:faster?good:bad,opacity:noisy?0.3:0.75}));
     const vt=el("text",{x:faster?xe+7:xe-7,y:cy+4,"text-anchor":faster?"start":"end",class:"val",fill:faster?good:bad});vt.appendChild(txt(rstr(r.bc)));g.appendChild(vt);
-    g.addEventListener("mousemove",e=>showTip(e,r.q,[[CMPLABEL[state.cmp]+" ("+METLABEL[state.metric]+")",rstr(r.bc),faster?good:bad],["C "+(state.metric==="exec"?"exec ms":"ms"),fmt(r.c),css("--c")]]));
+    const um=state.metric==="exec"?"exec ms":"ms",bl=state.cmp==="vc"?"A":"B",bcol=state.cmp==="vc"?css("--a"):css("--b");
+    g.addEventListener("mousemove",e=>showTip(e,r.q,[[CMPLABEL[state.cmp]+" ("+METLABEL[state.metric]+")",rstr(r.bc),faster?good:bad],[bl+" "+um,fmt(r.base),bcol],["C "+um,fmt(r.c),css("--c")]]));
     g.addEventListener("mouseleave",hideTip);
     svg.appendChild(g);
   });

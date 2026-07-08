@@ -11,7 +11,7 @@ import argparse
 import json
 import sys
 
-from query_metrics import METRICS, per_query
+from query_metrics import METRICS, parse_latency_ms, per_query
 
 SIZE_ORDER = ["small", "medium", "large"]
 
@@ -23,17 +23,6 @@ def _run(summ, vendor):
 def _mps(run):
     v = (run or {}).get("result", {}).get("actual-messages-per-second")
     return v if isinstance(v, (int, float)) else None
-
-
-def _lat_ms(value):
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str) and value.endswith("ms"):
-        try:
-            return float(value[:-2])
-        except ValueError:
-            return None
-    return None
 
 
 def main() -> int:
@@ -60,7 +49,7 @@ def main() -> int:
         sizes.append(sz)
         throughput[sz] = {k: _mps(runs[k]) for k in names}
         latency[sz] = {
-            k: {pct: _lat_ms((runs[k] or {}).get("result", {}).get("latency", {}).get(pct))
+            k: {pct: parse_latency_ms((runs[k] or {}).get("result", {}).get("latency", {}).get(pct))
                 for pct in ("p50", "p95", "p99")}
             for k in names
         }
