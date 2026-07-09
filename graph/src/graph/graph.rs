@@ -145,6 +145,14 @@ pub struct NodeId(u64);
 #[repr(transparent)]
 pub struct RelationshipId(u64);
 
+/// Which halves of a node's adjacency to enumerate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeDirection {
+    Outgoing,
+    Incoming,
+    Both,
+}
+
 impl From<LabelId> for usize {
     fn from(val: LabelId) -> Self {
         val.0
@@ -1538,10 +1546,13 @@ impl Graph {
 
     /// Get all relationships for a node, optionally filtered by relationship types.
     /// When `types` is empty, returns relationships of all types (equivalent to `[*]`).
+    /// Tuples are always `(src, dst, edge_id)` in original edge orientation,
+    /// regardless of `direction`.
     pub fn get_node_relationships_by_type(
         &self,
         id: NodeId,
         types: &[Arc<String>],
+        direction: EdgeDirection,
     ) -> impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + '_ {
         let matrices: Vec<&Tensor> = if types.is_empty() {
             self.relationship_matrices.iter().collect()
@@ -1551,13 +1562,25 @@ impl Graph {
                 .filter_map(|t| self.get_relationship_matrix(t))
                 .collect()
         };
+        let with_outgoing = direction != EdgeDirection::Incoming;
+        let with_incoming = direction != EdgeDirection::Outgoing;
         matrices
             .into_iter()
             .flat_map(move |m| {
-                m.iter(id.0, id.0, false).chain(
-                    m.iter(id.0, id.0, true)
-                        .filter(move |(src, _, _)| *src != id.0),
-                )
+                let outgoing = with_outgoing
+                    .then(|| m.iter(id.0, id.0, false))
+                    .into_iter()
+                    .flatten();
+                // A self-loop appears in both halves; when the outgoing half is
+                // also enumerated, drop it from the incoming half.
+                let incoming = with_incoming
+                    .then(|| {
+                        m.iter(id.0, id.0, true)
+                            .filter(move |(src, _, _)| !with_outgoing || *src != id.0)
+                    })
+                    .into_iter()
+                    .flatten();
+                outgoing.chain(incoming)
             })
             .map(|(src, dest, id)| (NodeId(src), NodeId(dest), RelationshipId(id)))
     }

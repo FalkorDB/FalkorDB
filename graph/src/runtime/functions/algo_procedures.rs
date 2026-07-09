@@ -71,7 +71,7 @@ use super::{FnType, Functions, Type, empty_procedure_batch};
 use crate::{
     graph::{
         attribute_store::AttributeStore,
-        graph::{Graph, NodeId, RelationshipId},
+        graph::{EdgeDirection, Graph, NodeId, RelationshipId},
         graphblas::lagraph_bindings::{self, LAGraph_Boolean, LAGraph_Graph, LAGraph_Kind},
     },
     runtime::{
@@ -1856,8 +1856,13 @@ fn run_path_algo(
             continue;
         }
 
+        let direction = match config.rel_direction.as_str() {
+            "outgoing" => EdgeDirection::Outgoing,
+            "incoming" => EdgeDirection::Incoming,
+            _ => EdgeDirection::Both,
+        };
         for (edge_src, edge_dst, edge_id) in
-            g.get_node_relationships_by_type(state.current, &config.rel_types)
+            g.get_node_relationships_by_type(state.current, &config.rel_types, direction)
         {
             let neighbor = match config.rel_direction.as_str() {
                 "outgoing" => {
