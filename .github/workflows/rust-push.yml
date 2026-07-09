@@ -156,6 +156,11 @@ jobs:
     uses: ./.github/workflows/_benchmark.yml
     permissions:
       contents: write
+      # _benchmark.yml's merge job declares pull-requests: write; a reusable
+      # workflow can't request a permission the caller didn't grant, so omitting
+      # this made the whole Rust Push run startup_fail. (The canonical run never
+      # comments — no PR — but the grant must still cover the declaration.)
+      pull-requests: write
     with:
       image_a: docker.io/falkordb/falkordb-server:edge
       image_b: ghcr.io/falkordb/falkordb-server:edge-rs
