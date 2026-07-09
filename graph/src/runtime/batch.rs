@@ -289,7 +289,6 @@ pub enum Column {
 impl Column {
     /// Extracts a single [`Value`] from this column at the given row index.
     #[must_use]
-    #[inline]
     pub fn get(
         &self,
         row: usize,
@@ -1143,7 +1142,6 @@ impl<'a> Batch<'a> {
     /// `Column::Unbound`); returns `Some(Value::Null)` for an explicitly-null
     /// binding. Clones the value.
     #[must_use]
-    #[inline]
     pub fn value_at(
         &self,
         var_id: u32,
@@ -1286,7 +1284,6 @@ impl<'b, 'a> BatchRow<'b, 'a> {
 }
 
 impl RowView for BatchRow<'_, '_> {
-    #[inline]
     fn value_at(
         &self,
         var_id: u32,
