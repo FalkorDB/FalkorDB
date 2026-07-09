@@ -100,6 +100,11 @@ pub struct QueryStatistics {
     pub cached: bool,
 }
 
+/// Upper bound on attr-id memo entries; queries with more distinct
+/// attribute keys (typically per-row computed keys) fall back to the
+/// name-map lookup for the excess.
+const ATTR_ID_MEMO_CAP: usize = 32;
+
 /// The query execution context.
 ///
 /// Runtime holds all state needed to execute a query plan:
@@ -148,12 +153,27 @@ pub struct Runtime<'a> {
     pub deleted_relationships: RefCell<HashMap<RelationshipId, DeletedRelationship>>,
     /// Cache for MERGE pattern matching — stores only the created entity bindings (variable id → value)
     pub merge_pattern_cache: RefCell<HashMap<u64, Vec<(u32, Value)>>>,
+    /// Pointer-identity memo of resolved node attribute ids. Plan
+    /// expressions hold the same `Arc<String>` across all rows, so after
+    /// the first resolution a lookup is a short pointer scan instead of a
+    /// string hash + equality probe. Entries hold the `Arc` so a memoized
+    /// address can never be freed and recycled by a different name
+    /// mid-query. Capped so per-row computed keys can't grow it unboundedly.
+    node_attr_id_memo: RefCell<Vec<(Arc<String>, u16)>>,
+    /// Relationship-space counterpart of `node_attr_id_memo` (the two id
+    /// spaces are independent).
+    rel_attr_id_memo: RefCell<Vec<(Arc<String>, u16)>>,
     /// Maximum number of result rows to return. Negative means unlimited.
     pub result_set_size: i64,
     /// Effects buffer built before commit, for replication.
     pub effects_buffer: RefCell<Option<Vec<u8>>>,
     /// Total number of effect records across all commits in this query.
     pub effects_count: Cell<u64>,
+    /// Whether commits should serialize an effects buffer. Callers clear
+    /// this when replication has no possible consumer (no AOF, no replica
+    /// has ever attached); the replication layer then falls back to
+    /// verbatim query propagation, which Redis discards for free.
+    pub build_effects: Cell<bool>,
     /// Timestamp captured at the start of the transaction/query.
     /// Used by `date.transaction()`, `localtime.transaction()`, and `localdatetime.transaction()`
     /// so every call in the same transaction returns the same value.
@@ -389,9 +409,12 @@ impl<'a> Runtime<'a> {
             deleted_nodes: RefCell::new(HashMap::new()),
             deleted_relationships: RefCell::new(HashMap::new()),
             merge_pattern_cache: RefCell::new(HashMap::new()),
+            node_attr_id_memo: RefCell::new(Vec::new()),
+            rel_attr_id_memo: RefCell::new(Vec::new()),
             result_set_size,
             effects_buffer: RefCell::new(None),
             effects_count: Cell::new(0),
+            build_effects: Cell::new(true),
             transaction_timestamp: Utc::now(),
             profile,
             profile_data: RefCell::new(HashMap::new()),
@@ -1274,7 +1297,11 @@ impl<'a> Runtime<'a> {
         key: &Arc<String>,
         value: Value,
     ) -> Result<(), String> {
-        let attr_id = self.g.borrow_mut().get_or_create_node_attr_id(key);
+        let attr_id = Self::memo_lookup(&self.node_attr_id_memo, key).unwrap_or_else(|| {
+            let attr_id = self.g.borrow_mut().get_or_create_node_attr_id(key);
+            Self::memo_insert(&self.node_attr_id_memo, key, attr_id);
+            attr_id
+        });
         self.pending
             .borrow_mut()
             .set_node_attribute(id, attr_id, value)
@@ -1288,10 +1315,64 @@ impl<'a> Runtime<'a> {
         key: &Arc<String>,
         value: Value,
     ) -> Result<(), String> {
-        let attr_id = self.g.borrow_mut().get_or_create_rel_attr_id(key);
+        let attr_id = Self::memo_lookup(&self.rel_attr_id_memo, key).unwrap_or_else(|| {
+            let attr_id = self.g.borrow_mut().get_or_create_rel_attr_id(key);
+            Self::memo_insert(&self.rel_attr_id_memo, key, attr_id);
+            attr_id
+        });
         self.pending
             .borrow_mut()
             .set_relationship_attribute(id, attr_id, value)
+    }
+
+    fn memo_lookup(
+        memo: &RefCell<Vec<(Arc<String>, u16)>>,
+        attr: &Arc<String>,
+    ) -> Option<u16> {
+        memo.borrow()
+            .iter()
+            .find(|(name, _)| Arc::ptr_eq(name, attr))
+            .map(|&(_, id)| id)
+    }
+
+    fn memo_insert(
+        memo: &RefCell<Vec<(Arc<String>, u16)>>,
+        attr: &Arc<String>,
+        id: u16,
+    ) {
+        let mut memo = memo.borrow_mut();
+        if memo.len() < ATTR_ID_MEMO_CAP {
+            memo.push((attr.clone(), id));
+        }
+    }
+
+    /// Memoized `Graph::get_node_attr_id`. Never memoizes a miss: the id
+    /// may be created later in the same query.
+    fn node_attr_id(
+        &self,
+        g: &Graph,
+        attr: &Arc<String>,
+    ) -> Option<u16> {
+        if let Some(id) = Self::memo_lookup(&self.node_attr_id_memo, attr) {
+            return Some(id);
+        }
+        let id = g.get_node_attr_id(attr)?;
+        Self::memo_insert(&self.node_attr_id_memo, attr, id);
+        Some(id)
+    }
+
+    /// Memoized `Graph::get_rel_attr_id`.
+    fn rel_attr_id(
+        &self,
+        g: &Graph,
+        attr: &Arc<String>,
+    ) -> Option<u16> {
+        if let Some(id) = Self::memo_lookup(&self.rel_attr_id_memo, attr) {
+            return Some(id);
+        }
+        let id = g.get_rel_attr_id(attr)?;
+        Self::memo_insert(&self.rel_attr_id_memo, attr, id);
+        Some(id)
     }
 
     pub fn get_node_attribute(
@@ -1320,7 +1401,7 @@ impl<'a> Runtime<'a> {
         attr: &Arc<String>,
     ) -> Option<Value> {
         let g = self.g.borrow();
-        let attr_id = g.get_node_attr_id(attr)?;
+        let attr_id = self.node_attr_id(&g, attr)?;
         if let Some(value) = self.pending.borrow().get_node_attribute(id, attr_id) {
             return Some(value.clone());
         }
@@ -1334,7 +1415,7 @@ impl<'a> Runtime<'a> {
         attr: &Arc<String>,
     ) -> Option<Value> {
         let g = self.g.borrow();
-        let attr_id = g.get_rel_attr_id(attr)?;
+        let attr_id = self.rel_attr_id(&g, attr)?;
         if let Some(value) = self
             .pending
             .borrow()
@@ -1361,7 +1442,7 @@ impl<'a> Runtime<'a> {
         }
         drop(deleted);
         let g = self.g.borrow();
-        if let Some(attr_id) = g.get_rel_attr_id(attr)
+        if let Some(attr_id) = self.rel_attr_id(&g, attr)
             && let Some(value) = self
                 .pending
                 .borrow()
@@ -1397,7 +1478,7 @@ impl<'a> Runtime<'a> {
         attr: &Arc<String>,
     ) -> Vec<Value> {
         let g = self.g.borrow();
-        let attr_idx = g.get_node_attribute_id(attr).map(|i| i as u16);
+        let attr_idx = self.node_attr_id(&g, attr);
 
         let deleted = self.deleted_nodes.borrow();
         let pending = self.pending.borrow();
