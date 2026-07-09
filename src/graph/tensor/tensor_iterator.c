@@ -280,6 +280,7 @@ void TensorIterator_ScanRange
 	memset (it, 0, sizeof (TensorIterator)) ;
 
 	it->T = T;
+	it->transpose = transpose ;
 
 	if (transpose) {
 		Delta_Matrix TT = Delta_Matrix_getTranspose (T) ;
