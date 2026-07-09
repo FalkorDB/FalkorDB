@@ -1320,12 +1320,11 @@ impl<'a> Runtime<'a> {
         attr: &Arc<String>,
     ) -> Option<Value> {
         let g = self.g.borrow();
-        if let Some(attr_id) = g.get_node_attr_id(attr)
-            && let Some(value) = self.pending.borrow().get_node_attribute(id, attr_id)
-        {
+        let attr_id = g.get_node_attr_id(attr)?;
+        if let Some(value) = self.pending.borrow().get_node_attribute(id, attr_id) {
             return Some(value.clone());
         }
-        g.get_node_attribute(id, attr)
+        g.get_node_attribute_by_idx(id, attr_id)
     }
 
     /// Like `get_relationship_attribute` but skips the deleted check.
@@ -1335,15 +1334,15 @@ impl<'a> Runtime<'a> {
         attr: &Arc<String>,
     ) -> Option<Value> {
         let g = self.g.borrow();
-        if let Some(attr_id) = g.get_rel_attr_id(attr)
-            && let Some(value) = self
-                .pending
-                .borrow()
-                .get_relationship_attribute(id, attr_id)
+        let attr_id = g.get_rel_attr_id(attr)?;
+        if let Some(value) = self
+            .pending
+            .borrow()
+            .get_relationship_attribute(id, attr_id)
         {
             return Some(value.clone());
         }
-        g.get_relationship_attribute(id, attr)
+        g.get_relationship_attribute_by_idx(id, attr_id)
     }
 
     pub fn get_relationship_attribute(

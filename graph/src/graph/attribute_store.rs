@@ -10,6 +10,45 @@
 //! vectors) are stored once in a block-level side array and referenced by
 //! index from the packed payload.
 //!
+//! ## Memory layout
+//!
+//! ```text
+//! DataBlock
+//! ┌────────────────────────────────────────────────────────────────────┐
+//! │ blocks: Vec<Arc<Block>>   (entity_id / block_cap() picks a block)  │
+//! │   [ Arc<Block 0> ][ Arc<Block 1> ][ Arc<Block 2> ] ...             │
+//! └───────────┬────────────────────────────────────────────────────────┘
+//!             │ shared across MVCC snapshots, COW on first write
+//!             ▼
+//! Block
+//! ┌────────────────────────────────────────────────────────────────────┐
+//! │ slots: Vec<Slot>          one 8-byte span descriptor per entity    │
+//! │   idx (entity_id % block_cap())                                    │
+//! │   ┌─────0─────┬─────1─────┬─────2─────┬─────3─────┐                │
+//! │   │ off:0     │ off:3     │ cap:0     │ off:5     │ ...            │
+//! │   │ len:3 cap:3 len:2 cap:2 (no attrs)│ len:1 cap:4                │
+//! │   └────┬──────┴────┬──────┴───────────┴────┬──────┘                │
+//! │        │           │                       │                       │
+//! │ arena: Vec<PackedAttr>   12 B each: (attr_id u16, tag u8, [u8;8])  │
+//! │        ▼           ▼                       ▼                       │
+//! │   ┌────┬────┬────┬────┬────┬────┬────┬────┬────┬───────────────┐   │
+//! │   │ e0 │ e0 │ e0 │ e1 │ e1 │ e3 │ ~~ │ ~~ │ ~~ │ ← bump alloc  │   │
+//! │   └────┴────┴────┴────┴─┬──┴────┴────┴────┴────┴───────────────┘   │
+//! │     sorted by attr_id   │  ~~ = slack (cap > len) / dead spans,    │
+//! │     within each span    │  reclaimed by compact() when >50% dead   │
+//! │                         │                                          │
+//! │                         │ payload of TAG_HEAP = u32 index          │
+//! │ heap: Vec<Value>        ▼  out-of-line String/List/VecF32/...      │
+//! │   ┌──────────┬──────────┬──────────┐                               │
+//! │   │ "alice"  │ Null(hole)│ [1,2,3] │   heap_free: [1]              │
+//! │   └──────────┴──────────┴──────────┘   (holes recycled)            │
+//! └────────────────────────────────────────────────────────────────────┘
+//!
+//! Per-entity cost: 8 B slot + 12 B x attrs in the shared arena —
+//! no per-entity allocation. Scalars (Int/Float/Bool/...) live entirely
+//! in the 8-byte packed payload; only heap values touch `heap`.
+//! ```
+//!
 //! ## Concurrency / MVCC
 //!
 //! The store contains no locks and no unsafe code. Isolation comes from the
@@ -111,7 +150,7 @@ const TAG_HEAP: u8 = 9;
 
 /// One packed attribute: 12 bytes, matching the C engine's per-attribute
 /// footprint (`AttributeID` + packed `AttrValue_t`).
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct PackedAttr {
     id: u16,
     tag: u8,
@@ -165,6 +204,8 @@ struct Block {
     heap_free: Vec<u32>,
     /// Arena entries no longer referenced by any slot.
     dead: u32,
+    /// Arena entries reserved but unused inside live spans (`cap - len`).
+    slack: u32,
 }
 
 impl Block {
@@ -261,6 +302,7 @@ impl Block {
         let n = pairs.len();
         if n == 0 {
             self.dead += u32::from(old.cap);
+            self.slack -= u32::from(old.cap - old.len);
             self.slots[o] = Slot::default();
             return;
         }
@@ -269,6 +311,7 @@ impl Block {
                 let (tag, payload) = self.pack(value);
                 self.arena[old.offset as usize + k] = PackedAttr { id, tag, payload };
             }
+            self.slack = (i64::from(self.slack) + i64::from(old.len) - n as i64) as u32;
             self.slots[o] = Slot {
                 offset: old.offset,
                 len: n as u16,
@@ -276,6 +319,7 @@ impl Block {
             };
         } else {
             self.dead += u32::from(old.cap);
+            self.slack -= u32::from(old.cap - old.len);
             let offset = self.arena.len() as u32;
             for (id, value) in pairs.drain(..) {
                 let (tag, payload) = self.pack(value);
@@ -300,32 +344,241 @@ impl Block {
         }
         self.release_span_values(slot);
         self.dead += u32::from(slot.cap);
+        self.slack -= u32::from(slot.cap - slot.len);
         self.slots[o] = Slot::default();
     }
 
-    /// Rebuild the arena from live spans when abandoned entries dominate.
-    fn maybe_compact(&mut self) {
-        if self.dead as usize * 2 <= self.arena.len() || self.arena.len() <= 1024 {
-            return;
+    /// Merge `pairs` (sorted by attribute id; `Null` value = removal) into
+    /// the entity's span at the packed level: untouched attributes are
+    /// copied as raw entries — no unpack/re-pack, and their heap values keep
+    /// their index. Returns `(nremoved, nset)` with [`AttributeStore::insert_attrs`]
+    /// semantics. `scratch` is a reusable snapshot buffer of the old span.
+    fn merge_span(
+        &mut self,
+        o: usize,
+        pairs: &[(u16, Value)],
+        scratch: &mut Vec<PackedAttr>,
+    ) -> (usize, usize) {
+        if self.slots.len() <= o {
+            self.slots.resize(o + 1, Slot::default());
         }
-        let live: usize = self
-            .slots
-            .iter()
-            .filter(|s| s.cap != 0)
-            .map(|s| s.len as usize)
-            .sum();
+        let old = self.slots[o];
+
+        // Fast path: every pair replaces an existing attribute (non-null,
+        // id already present). Patch entries in place — the dominant shape
+        // for `SET n.x = ...` on existing attributes — without snapshotting
+        // or rewriting the untouched rest of the span.
+        if old.cap != 0 {
+            let s = old.offset as usize;
+            let span = &self.arena[s..s + old.len as usize];
+            if pairs.iter().all(|(id, v)| {
+                !matches!(v, Value::Null) && span.binary_search_by_key(id, |e| e.id).is_ok()
+            }) {
+                for (id, v) in pairs {
+                    let span = &self.arena[s..s + old.len as usize];
+                    let pos = span.binary_search_by_key(id, |e| e.id).unwrap();
+                    let e = self.arena[s + pos];
+                    if e.tag == TAG_HEAP {
+                        let hi = e.heap_index();
+                        self.heap[hi] = Value::Null;
+                        self.heap_free.push(hi as u32);
+                    }
+                    let (tag, payload) = self.pack(v.clone());
+                    self.arena[s + pos] = PackedAttr {
+                        id: *id,
+                        tag,
+                        payload,
+                    };
+                }
+                return (pairs.len(), pairs.len());
+            }
+
+            // Fast path: pure removal (every pair null). Shift surviving
+            // entries left within the span, releasing removed heap values.
+            if pairs.iter().all(|(_, v)| matches!(v, Value::Null)) {
+                let mut w = s;
+                let mut ni = 0;
+                let mut nremoved = 0;
+                for r in s..s + old.len as usize {
+                    let e = self.arena[r];
+                    while ni < pairs.len() && pairs[ni].0 < e.id {
+                        ni += 1;
+                    }
+                    if ni < pairs.len() && pairs[ni].0 == e.id {
+                        nremoved += 1;
+                        if e.tag == TAG_HEAP {
+                            let hi = e.heap_index();
+                            self.heap[hi] = Value::Null;
+                            self.heap_free.push(hi as u32);
+                        }
+                        continue;
+                    }
+                    self.arena[w] = e;
+                    w += 1;
+                }
+                let new_len = w - s;
+                if new_len == 0 {
+                    self.dead += u32::from(old.cap);
+                    self.slack -= u32::from(old.cap - old.len);
+                    self.slots[o] = Slot::default();
+                } else {
+                    self.slack =
+                        (i64::from(self.slack) + i64::from(old.len) - new_len as i64) as u32;
+                    self.slots[o].len = new_len as u16;
+                }
+                return (nremoved, 0);
+            }
+        }
+
+        scratch.clear();
+        if old.cap != 0 {
+            let s = old.offset as usize;
+            scratch.extend_from_slice(&self.arena[s..s + old.len as usize]);
+        }
+
+        // First pass: merged length, to pick in-place vs relocation.
+        let mut new_len = 0usize;
+        {
+            let (mut ci, mut ni) = (0usize, 0usize);
+            while ci < scratch.len() && ni < pairs.len() {
+                match scratch[ci].id.cmp(&pairs[ni].0) {
+                    Ordering::Less => {
+                        new_len += 1;
+                        ci += 1;
+                    }
+                    Ordering::Equal => {
+                        new_len += usize::from(!matches!(pairs[ni].1, Value::Null));
+                        ci += 1;
+                        ni += 1;
+                    }
+                    Ordering::Greater => {
+                        new_len += usize::from(!matches!(pairs[ni].1, Value::Null));
+                        ni += 1;
+                    }
+                }
+            }
+            new_len += scratch.len() - ci;
+            new_len += pairs[ni..]
+                .iter()
+                .filter(|(_, v)| !matches!(v, Value::Null))
+                .count();
+        }
+
+        let in_place = new_len != 0 && new_len <= old.cap as usize;
+        let dst = if new_len == 0 {
+            0 // no entry is ever written
+        } else if in_place {
+            old.offset as usize
+        } else {
+            if old.cap != 0 {
+                self.dead += u32::from(old.cap);
+                self.slack -= u32::from(old.cap - old.len);
+            }
+            let d = self.arena.len();
+            self.arena.resize(d + new_len, PackedAttr::default());
+            d
+        };
+
+        // Second pass: emit merged entries, releasing replaced/removed heap
+        // values. Untouched heap entries move with their raw copy.
+        let mut nremoved = 0usize;
+        let mut nset = 0usize;
+        let mut w = dst;
+        let (mut ci, mut ni) = (0usize, 0usize);
+        while ci < scratch.len() || ni < pairs.len() {
+            let take_old =
+                ni >= pairs.len() || (ci < scratch.len() && scratch[ci].id < pairs[ni].0);
+            if take_old {
+                self.arena[w] = scratch[ci];
+                w += 1;
+                ci += 1;
+                continue;
+            }
+            if ci < scratch.len() && scratch[ci].id == pairs[ni].0 {
+                nremoved += 1;
+                let e = scratch[ci];
+                if e.tag == TAG_HEAP {
+                    let hi = e.heap_index();
+                    self.heap[hi] = Value::Null;
+                    self.heap_free.push(hi as u32);
+                }
+                ci += 1;
+            }
+            let (id, v) = &pairs[ni];
+            if !matches!(v, Value::Null) {
+                nset += 1;
+                let (tag, payload) = self.pack(v.clone());
+                self.arena[w] = PackedAttr {
+                    id: *id,
+                    tag,
+                    payload,
+                };
+                w += 1;
+            }
+            ni += 1;
+        }
+        debug_assert!(new_len == 0 || w - dst == new_len);
+
+        if new_len == 0 {
+            if old.cap != 0 {
+                self.dead += u32::from(old.cap);
+                self.slack -= u32::from(old.cap - old.len);
+            }
+            self.slots[o] = Slot::default();
+        } else if in_place {
+            self.slack = (i64::from(self.slack) + i64::from(old.len) - new_len as i64) as u32;
+            self.slots[o] = Slot {
+                offset: old.offset,
+                len: new_len as u16,
+                cap: old.cap,
+            };
+        } else {
+            self.slots[o] = Slot {
+                offset: dst as u32,
+                len: new_len as u16,
+                cap: new_len as u16,
+            };
+        }
+        (nremoved, nset)
+    }
+
+    /// Rebuild the arena and heap from live spans, dropping dead spans,
+    /// `cap > len` slack, and heap holes (heap indices are remapped).
+    fn compact(&mut self) {
+        let live = self.arena.len() - self.dead as usize - self.slack as usize;
         let mut new_arena = Vec::with_capacity(live);
+        let mut new_heap = Vec::with_capacity(self.heap.len() - self.heap_free.len());
         for slot in &mut self.slots {
             if slot.cap == 0 {
                 continue;
             }
             let start = slot.offset as usize;
             slot.offset = new_arena.len() as u32;
-            new_arena.extend_from_slice(&self.arena[start..start + slot.len as usize]);
+            for entry in &self.arena[start..start + slot.len as usize] {
+                let mut entry = *entry;
+                if entry.tag == TAG_HEAP {
+                    let value = std::mem::replace(&mut self.heap[entry.heap_index()], Value::Null);
+                    entry.payload[..4].copy_from_slice(&(new_heap.len() as u32).to_le_bytes());
+                    new_heap.push(value);
+                }
+                new_arena.push(entry);
+            }
             slot.cap = slot.len;
         }
+        debug_assert_eq!(new_arena.len(), live);
         self.arena = new_arena;
+        self.heap = new_heap;
+        self.heap_free = Vec::new();
         self.dead = 0;
+        self.slack = 0;
+    }
+
+    /// Compact when abandoned entries dominate the arena.
+    fn maybe_compact(&mut self) {
+        let waste = self.dead as usize + self.slack as usize;
+        if waste * 2 > self.arena.len() && self.arena.len() > 1024 {
+            self.compact();
+        }
     }
 }
 
@@ -365,10 +618,6 @@ impl<'a> SpanRef<'a> {
         self.entries()
             .iter()
             .map(move |attr| (attr.id, block.unpack(attr)))
-    }
-
-    fn to_pairs(self) -> Vec<(u16, Value)> {
-        self.iter().collect()
     }
 
     /// Estimated heap bytes attributable to this entity: its arena span plus
@@ -437,6 +686,33 @@ impl DataBlock {
         block.maybe_compact();
     }
 
+    /// Merge `pairs` (sorted by attribute id; `Null` = removal) into an
+    /// entity's span. Returns `(nremoved, nset)`.
+    fn merge_span(
+        &mut self,
+        entity_id: u64,
+        pairs: &[(u16, Value)],
+        scratch: &mut Vec<PackedAttr>,
+    ) -> (usize, usize) {
+        let (b, o) = Self::locate(entity_id);
+        // Avoid COW (and empty-slot creation) when there is nothing to do:
+        // no existing span and only removals.
+        let has_span = self
+            .blocks
+            .get(b)
+            .is_some_and(|block| block.slots.get(o).is_some_and(|slot| slot.cap != 0));
+        if !has_span && pairs.iter().all(|(_, v)| matches!(v, Value::Null)) {
+            return (0, 0);
+        }
+        if self.blocks.len() <= b {
+            self.blocks.resize_with(b + 1, Arc::default);
+        }
+        let block = Arc::make_mut(&mut self.blocks[b]);
+        let counts = block.merge_span(o, pairs, scratch);
+        block.maybe_compact();
+        counts
+    }
+
     /// Trim arena growth slop on blocks this version owns exclusively
     /// (i.e. the blocks touched since the last snapshot). Called at commit
     /// time: mid-fill shrinking would break `Vec`'s doubling sequence and
@@ -450,6 +726,15 @@ impl DataBlock {
         let cap = block_cap();
         for arc in &mut self.blocks {
             if let Some(block) = Arc::get_mut(arc) {
+                // Commit-time compaction: reclaim update churn (dead spans +
+                // in-span slack) once it reaches half the arena. Steady-state
+                // waste stays bounded at 2x live payload — still below the C
+                // engine's realloc churn — without recopying every block on
+                // each commit.
+                let waste = block.dead as usize + block.slack as usize;
+                if waste * 2 >= block.arena.len() && block.arena.len() > 1024 {
+                    block.compact();
+                }
                 if block.slots.len() == cap {
                     block.arena.shrink_to_fit();
                     block.heap.shrink_to_fit();
@@ -652,95 +937,24 @@ impl AttributeStore {
         let mut nremoved = 0;
         let mut nset = 0;
 
-        // Reusable buffer to avoid per-entity allocation.
-        let mut merged: Vec<(u16, Value)> = Vec::new();
+        // Reusable span snapshot buffer to avoid per-entity allocation.
+        let mut scratch: Vec<PackedAttr> = Vec::new();
 
-        for (key, entity_attrs) in attrs {
-            // Skip entities whose pending map is empty: no entries to write,
-            // no nulls to remove. Avoids creating an empty slot per entity
-            // (matches C's NULL AttributeSet behaviour).
-            if entity_attrs.is_empty() {
-                continue;
-            }
-            // Split into non-null entries and null (removal) indices. Input
-            // is already resolved and sorted by attribute id, so both splits
-            // stay sorted.
-            let mut new_entries: Vec<(u16, Value)> = Vec::with_capacity(entity_attrs.len());
-            let mut null_indices: Vec<u16> = Vec::new();
+        // Apply in entity-id order: spans are laid out in id order, so this
+        // turns the hash map's random arena access into a sequential sweep.
+        // Empty pending maps are skipped: no entries to write, no nulls to
+        // remove (matches C's NULL AttributeSet behaviour).
+        let mut items: Vec<(u64, &Vec<(u16, Value)>)> = attrs
+            .iter()
+            .filter(|(_, entity_attrs)| !entity_attrs.is_empty())
+            .map(|(key, entity_attrs)| (*key, entity_attrs))
+            .collect();
+        items.sort_unstable_by_key(|&(key, _)| key);
 
-            for (idx, value) in entity_attrs {
-                if matches!(value, Value::Null) {
-                    null_indices.push(*idx);
-                } else {
-                    new_entries.push((*idx, value.clone()));
-                    nset += 1;
-                }
-            }
-
-            // Current stored state, unpacked once for the merge.
-            let current: Vec<(u16, Value)> =
-                self.data.get(*key).map_or_else(Vec::new, SpanRef::to_pairs);
-
-            // Fast path: if no nulls AND all new entries come after all current
-            // entries, just clone current + append new without a full merge.
-            if null_indices.is_empty()
-                && !new_entries.is_empty()
-                && (current.is_empty() || current.last().unwrap().0 < new_entries[0].0)
-            {
-                merged.clear();
-                merged.reserve(current.len() + new_entries.len());
-                merged.extend_from_slice(&current);
-                merged.append(&mut new_entries);
-            } else {
-                // Single-pass sorted merge of current + new_entries, skipping nulls.
-                merged.clear();
-                merged.reserve(current.len() + new_entries.len());
-                let mut ci = 0;
-                let mut ni = 0;
-                let mut di = 0;
-
-                while ci < current.len() && ni < new_entries.len() {
-                    let cur_idx = current[ci].0;
-                    let new_idx = new_entries[ni].0;
-                    match cur_idx.cmp(&new_idx) {
-                        Ordering::Less => {
-                            if di < null_indices.len() && cur_idx == null_indices[di] {
-                                nremoved += 1;
-                                di += 1;
-                            } else {
-                                merged.push(current[ci].clone());
-                            }
-                            ci += 1;
-                        }
-                        Ordering::Equal => {
-                            nremoved += 1;
-                            merged.push((new_idx, new_entries[ni].1.clone()));
-                            ci += 1;
-                            ni += 1;
-                        }
-                        Ordering::Greater => {
-                            merged.push((new_idx, new_entries[ni].1.clone()));
-                            ni += 1;
-                        }
-                    }
-                }
-                while ci < current.len() {
-                    let cur_idx = current[ci].0;
-                    if di < null_indices.len() && cur_idx == null_indices[di] {
-                        nremoved += 1;
-                        di += 1;
-                    } else {
-                        merged.push(current[ci].clone());
-                    }
-                    ci += 1;
-                }
-                while ni < new_entries.len() {
-                    merged.push((new_entries[ni].0, new_entries[ni].1.clone()));
-                    ni += 1;
-                }
-            }
-
-            self.data.set_span(*key, &mut merged);
+        for (key, entity_attrs) in items {
+            let (r, s) = self.data.merge_span(key, entity_attrs, &mut scratch);
+            nremoved += r;
+            nset += s;
         }
 
         Ok((nremoved, nset))
