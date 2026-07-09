@@ -84,7 +84,10 @@ wait_for_redis
 docker exec "$CONTAINER_NAME" redis-cli CONFIG SET save "" >/dev/null 2>&1 || true
 docker exec "$CONTAINER_NAME" redis-cli CONFIG SET stop-writes-on-bgsave-error no >/dev/null 2>&1 || true
 PID="$(docker inspect -f '{{.State.Pid}}' "$CONTAINER_NAME")"
-[ -n "$PID" ] && [ "$PID" != "0" ] || { echo "::error::could not resolve server host PID" >&2; exit 1; }
+if [ -z "$PID" ] || [ "$PID" = "0" ]; then
+  echo "::error::could not resolve server host PID" >&2
+  exit 1
+fi
 echo "server host PID: $PID"
 echo "::endgroup::"
 
