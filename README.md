@@ -126,3 +126,46 @@ TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
 ```
 
 - [benchmark](https://falkordb.github.io/falkordb-rs-next-gen/dev/bench/)
+
+### A/B benchmarking vs the production (C) image
+
+[`.github/workflows/benchmark.yml`](.github/workflows/benchmark.yml) runs the
+[FalkorDB/benchmark](https://github.com/FalkorDB/benchmark) A/B/C workload
+against live containers — variant A (production C image
+`falkordb/falkordb-server:edge`), B (published Rust `edge-rs`), and, on a PR,
+C (that PR's image) — on **ephemeral self-hosted GCE VMs** (one per dataset
+size, torn down after each run), mirroring FalkorDB/FalkorDB. Requires the
+`GH_SA_TOKEN` / `GCP_SA_KEY` / `GCP_PROJECT_ID` secrets, the `GCP_ZONES`
+variable, and the `gh-runner` GCP network.
+
+- **On a PR** (from a branch in this repo — a fork PR's read-only token can't
+  publish, so those are skipped): add a per-size label — `benchmark-small`,
+  `benchmark-medium`, or `benchmark-large` — or comment `/benchmark [size]`
+  (default `small`; comment authors need OWNER/MEMBER/COLLABORATOR
+  association). Each run does **one size** (a full multi-size run is too
+  expensive to fire on a single label) and is **read-only**; results
+  **accumulate** across sizes into one published view and one PR comment.
+  Variant C is that PR's `rc-pr-<N>` image; the workflow waits for that RC
+  image to be published to the registry (built early by `rust-pr.yml`, before
+  its slower test jobs finish), so it never runs against a missing build.
+  Published to
+  `https://falkordb.github.io/falkordb-rs-next-gen/benchmark/branch/pr-<N>/`
+  (keyed by PR number, so same-named branches on different PRs never collide).
+  A run happens only when a label is **added** (not on every push); to re-run a
+  size, remove and re-add its label. Closing the PR removes its published view.
+- **Manually**: run the "A/B benchmark" workflow from the Actions tab and
+  choose the variant B (and optionally A) image tag, the dataset size, and the
+  **write ratio** (default `0.0` — a manual run is the only way to benchmark
+  writes; PR/slash runs are always read-only).
+- **Profiling**: add a `profile-small` / `profile-medium` / `profile-large`
+  label (or run "Profile (flame graph)" from the Actions tab) to publish an
+  interactive CPU flame graph of the engine under the workload to
+  `.../benchmark/branch/pr-<N>/profile/<size>/flamegraph.svg`.
+- **Automatically**: every time `edge-rs` is promoted (merge to main), the
+  canonical trend at
+  [`/benchmark/`](https://falkordb.github.io/falkordb-rs-next-gen/benchmark/)
+  is updated — this is the one continuously-growing history; PR/manual runs
+  publish to their own capped-history branch view instead. A **per-query
+  trend** (each query shape over time — C engine vs Rust, with server-exec and
+  p50/p95/p99) is published alongside at
+  [`/benchmark/trend/`](https://falkordb.github.io/falkordb-rs-next-gen/benchmark/trend/).

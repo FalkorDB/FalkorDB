@@ -47,6 +47,14 @@ lto = true
 # debug = true
 # strip = false
 
+# Release performance (LTO on, so it mirrors the shipped build) plus full
+# DWARF debuginfo so `perf --call-graph dwarf` can unwind + symbolize (incl.
+# inlined frames) for flame graphs. Not stripped. Used by profile.sh.
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = false
+
 [features]
 fuzz = []
 # Drive GraphBLAS at GxB_JIT_ON (full JIT including compile-on-demand) so the
