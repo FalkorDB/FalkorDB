@@ -153,6 +153,19 @@ pub enum EdgeDirection {
     Both,
 }
 
+impl std::str::FromStr for EdgeDirection {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "outgoing" => Ok(Self::Outgoing),
+            "incoming" => Ok(Self::Incoming),
+            "both" => Ok(Self::Both),
+            _ => Err(()),
+        }
+    }
+}
+
 impl From<LabelId> for usize {
     fn from(val: LabelId) -> Self {
         val.0
@@ -1562,8 +1575,11 @@ impl Graph {
                 .filter_map(|t| self.get_relationship_matrix(t))
                 .collect()
         };
-        let with_outgoing = direction != EdgeDirection::Incoming;
-        let with_incoming = direction != EdgeDirection::Outgoing;
+        let (with_outgoing, with_incoming) = match direction {
+            EdgeDirection::Outgoing => (true, false),
+            EdgeDirection::Incoming => (false, true),
+            EdgeDirection::Both => (true, true),
+        };
         matrices
             .into_iter()
             .flat_map(move |m| {

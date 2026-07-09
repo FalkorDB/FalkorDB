@@ -1584,7 +1584,7 @@ struct PathAlgoConfig {
     source: NodeId,
     target: Option<NodeId>,
     rel_types: Vec<Arc<String>>,
-    rel_direction: String,
+    rel_direction: EdgeDirection,
     max_len: u32,
     weight_prop: Option<Arc<String>>,
     cost_prop: Option<Arc<String>>,
@@ -1613,15 +1613,10 @@ fn parse_common_path_config(
     };
 
     let rel_direction = match config.get(&Arc::new(String::from("relDirection"))) {
-        None | Some(Value::Null) => String::from("outgoing"),
-        Some(Value::String(s)) => match s.as_str() {
-            "incoming" | "outgoing" | "both" => s.to_string(),
-            _ => {
-                return Err(String::from(
-                    "relDirection values must be 'incoming', 'outgoing' or 'both'",
-                ));
-            }
-        },
+        None | Some(Value::Null) => EdgeDirection::Outgoing,
+        Some(Value::String(s)) => s.parse().map_err(|()| {
+            String::from("relDirection values must be 'incoming', 'outgoing' or 'both'")
+        })?,
         _ => {
             return Err(String::from(
                 "relDirection values must be 'incoming', 'outgoing' or 'both'",
@@ -1856,31 +1851,25 @@ fn run_path_algo(
             continue;
         }
 
-        let direction = match config.rel_direction.as_str() {
-            "outgoing" => EdgeDirection::Outgoing,
-            "incoming" => EdgeDirection::Incoming,
-            _ => EdgeDirection::Both,
-        };
         for (edge_src, edge_dst, edge_id) in
-            g.get_node_relationships_by_type(state.current, &config.rel_types, direction)
+            g.get_node_relationships_by_type(state.current, &config.rel_types, config.rel_direction)
         {
-            let neighbor = match config.rel_direction.as_str() {
-                "outgoing" => {
+            let neighbor = match config.rel_direction {
+                EdgeDirection::Outgoing => {
                     if edge_src == state.current {
                         Some(edge_dst)
                     } else {
                         None
                     }
                 }
-                "incoming" => {
+                EdgeDirection::Incoming => {
                     if edge_dst == state.current {
                         Some(edge_src)
                     } else {
                         None
                     }
                 }
-                _ => {
-                    // "both"
+                EdgeDirection::Both => {
                     if edge_src == state.current {
                         Some(edge_dst)
                     } else if edge_dst == state.current {
