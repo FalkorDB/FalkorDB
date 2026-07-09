@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// GB_jit__AxB_dot4__0380400e1e0e1ec6__lg_hll_merge_lg_hll_second.c
+// GB_jit__AxB_dot4__0380800eb90eb9c7__LG_MSF_tupleMin_double_LG_MSF_combine_double.c
 //------------------------------------------------------------------------------
 // SuiteSparse:GraphBLAS v10.3.1, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
@@ -10,41 +10,47 @@
 
 #include "include/GB_jit_kernel.h"
 
-// semiring: (lg_hll_merge, lg_hll_second, bool)
-typedef struct { uint8_t registers[(1 << 10)]; } HLL;
-#define GB_HLL_USER_DEFN \
-"typedef struct { uint8_t registers[(1 << 10)]; } HLL;"
+// semiring: (LG_MSF_tupleMin_double, LG_MSF_combine_double, double)
+typedef struct { double wInt; uint64_t idx; } LG_MSF_tuple_double;
+#define GB_LG_MSF_tuple_double_USER_DEFN \
+"typedef struct { double wInt; uint64_t idx; } LG_MSF_tuple_double;"
 
 
 // monoid:
-#define GB_Z_TYPE HLL
-#ifndef GB_GUARD_lg_hll_merge_DEFINED
-#define GB_GUARD_lg_hll_merge_DEFINED
+#define GB_Z_TYPE LG_MSF_tuple_double
+#ifndef GB_GUARD_LG_MSF_tupleMin_double_DEFINED
+#define GB_GUARD_LG_MSF_tupleMin_double_DEFINED
 GB_STATIC_INLINE
-void lg_hll_merge(HLL *z, const HLL *x, const HLL *y) { for (uint32_t i = 0; i < (1 << 10); i++) { z->registers[i] = y->registers[i] > x->registers[i] ? y->registers[i] : x->registers[i]; } }
-#define GB_lg_hll_merge_USER_DEFN \
-"void lg_hll_merge(HLL *z, const HLL *x, const HLL *y) { for (uint32_t i = 0; i < (1 << 10); i++) { z->registers[i] = y->registers[i] > x->registers[i] ? y->registers[i] : x->registers[i]; } }"
+void LG_MSF_tupleMin_double ( LG_MSF_tuple_double *z, const LG_MSF_tuple_double *x, const LG_MSF_tuple_double *y ) { _Bool xSmaller = x->wInt < y->wInt || (x->wInt == y->wInt && x->idx < y->idx); z->wInt = (xSmaller)? x->wInt: y->wInt; z->idx = (xSmaller)? x->idx: y->idx; }
+#define GB_LG_MSF_tupleMin_double_USER_DEFN \
+"void LG_MSF_tupleMin_double ( LG_MSF_tuple_double *z, const LG_MSF_tuple_double *x, const LG_MSF_tuple_double *y ) { _Bool xSmaller = x->wInt < y->wInt || (x->wInt == y->wInt && x->idx < y->idx); z->wInt = (xSmaller)? x->wInt: y->wInt; z->idx = (xSmaller)? x->idx: y->idx; }"
 #endif
-#define GB_ADD(z,x,y)  lg_hll_merge (&(z), &(x), &(y))
+#define GB_ADD(z,x,y)  LG_MSF_tupleMin_double (&(z), &(x), &(y))
 #define GB_UPDATE(z,y) GB_ADD(z,z,y)
-#define GB_DECLARE_IDENTITY(z) HLL z ; memset (&z, 0x00, 1024)
-#define GB_HAS_IDENTITY_BYTE 1
-#define GB_IDENTITY_BYTE 0x00
+#define GB_DECLARE_IDENTITY(z) LG_MSF_tuple_double z ; \
+{ \
+    const uint8_t bytes [16] = \
+    { \
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x7f, \
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff  \
+    } ; \
+    memcpy (&z, bytes, 16) ; \
+}
 #define GB_DECLARE_IDENTITY_CONST(z) GB_DECLARE_IDENTITY(z)
-#define GB_Z_SIZE  1024
-#define GB_Z_NBITS 8192
+#define GB_Z_SIZE  16
+#define GB_Z_NBITS 128
 
 // multiplicative operator:
-#define GB_X_TYPE bool
-#define GB_Y_TYPE HLL
-#ifndef GB_GUARD_lg_hll_second_DEFINED
-#define GB_GUARD_lg_hll_second_DEFINED
+#define GB_X_TYPE double
+#define GB_Y_TYPE uint64_t
+#ifndef GB_GUARD_LG_MSF_combine_double_DEFINED
+#define GB_GUARD_LG_MSF_combine_double_DEFINED
 GB_STATIC_INLINE
-void lg_hll_second(HLL *z, _Bool *x, const HLL *y) { memcpy(z->registers, y->registers, sizeof(z->registers)); }
-#define GB_lg_hll_second_USER_DEFN \
-"void lg_hll_second(HLL *z, _Bool *x, const HLL *y) { memcpy(z->registers, y->registers, sizeof(z->registers)); }"
+void LG_MSF_combine_double ( LG_MSF_tuple_double *z, const double *x, const uint64_t *y ) { z->wInt = *x; z->idx = *y; }
+#define GB_LG_MSF_combine_double_USER_DEFN \
+"void LG_MSF_combine_double ( LG_MSF_tuple_double *z, const double *x, const uint64_t *y ) { z->wInt = *x; z->idx = *y; }"
 #endif
-#define GB_MULT(z,x,y,i,k,j)  lg_hll_second (&(z), &(x), &(y))
+#define GB_MULT(z,x,y,i,k,j)  LG_MSF_combine_double (&(z), &(x), &(y))
 
 // multiply-add operator:
 #define GB_MULTADD(z,x,y,i,k,j)    \
@@ -68,8 +74,8 @@ void lg_hll_second(HLL *z, _Bool *x, const HLL *y) { memcpy(z->registers, y->reg
 #define GB_C_NVALS(e) int64_t e = (C->vlen * C->vdim)
 #define GB_C_NHELD(e) GB_C_NVALS(e)
 #define GB_C_ISO 0
-#define GB_C_IN_ISO 0
-#define GB_C_TYPE HLL
+#define GB_C_IN_ISO 1
+#define GB_C_TYPE LG_MSF_tuple_double
 #define GB_PUTC(c,Cx,p) Cx [p] = c
 #define GB_Cp_TYPE uint64_t
 #define GB_Cj_TYPE uint64_t
@@ -106,11 +112,11 @@ void lg_hll_second(HLL *z, _Bool *x, const HLL *y) { memcpy(z->registers, y->reg
 #define GBb_A(Ab,p)      1
 #define GB_A_NVALS(e) int64_t e = A->nvals
 #define GB_A_NHELD(e) GB_A_NVALS(e)
-#define GB_A_ISO 1
-#define GB_A_TYPE bool
-#define GB_A2TYPE bool
-#define GB_DECLAREA(a) bool a
-#define GB_GETA(a,Ax,p,iso) a = Ax [0]
+#define GB_A_ISO 0
+#define GB_A_TYPE double
+#define GB_A2TYPE double
+#define GB_DECLAREA(a) double a
+#define GB_GETA(a,Ax,p,iso) a = Ax [p]
 #define GB_Ap_TYPE uint32_t
 #define GB_Aj_TYPE uint32_t
 #define GB_Aj_SIGNED_TYPE int32_t
@@ -120,21 +126,21 @@ void lg_hll_second(HLL *z, _Bool *x, const HLL *y) { memcpy(z->registers, y->reg
 #define GB_Aj_BITS 32
 #define GB_Ai_BITS 32
 
-// B matrix: bitmap
+// B matrix: full
 #define GB_B_IS_HYPER  0
 #define GB_B_IS_SPARSE 0
-#define GB_B_IS_BITMAP 1
-#define GB_B_IS_FULL   0
+#define GB_B_IS_BITMAP 0
+#define GB_B_IS_FULL   1
 #define GBp_B(Bp,k,vlen) ((k) * (vlen))
 #define GBh_B(Bh,k)      (k)
 #define GBi_B(Bi,p,vlen) ((p) % (vlen))
-#define GBb_B(Bb,p)      Bb [p]
-#define GB_B_NVALS(e) int64_t e = B->nvals
-#define GB_B_NHELD(e) int64_t e = (B->vlen * B->vdim)
+#define GBb_B(Bb,p)      1
+#define GB_B_NVALS(e) int64_t e = (B->vlen * B->vdim)
+#define GB_B_NHELD(e) GB_B_NVALS(e)
 #define GB_B_ISO 0
-#define GB_B_TYPE HLL
-#define GB_B2TYPE HLL
-#define GB_DECLAREB(b) HLL b
+#define GB_B_TYPE uint64_t
+#define GB_B2TYPE uint64_t
+#define GB_DECLAREB(b) uint64_t b
 #define GB_GETB(b,Bx,p,iso) b = Bx [p]
 #define GB_Bp_TYPE uint64_t
 #define GB_Bj_TYPE uint64_t
@@ -147,22 +153,22 @@ void lg_hll_second(HLL *z, _Bool *x, const HLL *y) { memcpy(z->registers, y->reg
 
 #include "include/GB_mxm_shared_definitions.h"
 #ifndef GB_JIT_RUNTIME
-#define GB_jit_kernel GB_jit__AxB_dot4__0380400e1e0e1ec6__lg_hll_merge_lg_hll_second
-#define GB_jit_query  GB_jit__AxB_dot4__0380400e1e0e1ec6__lg_hll_merge_lg_hll_second_query
+#define GB_jit_kernel GB_jit__AxB_dot4__0380800eb90eb9c7__LG_MSF_tupleMin_double_LG_MSF_combine_double
+#define GB_jit_query  GB_jit__AxB_dot4__0380800eb90eb9c7__LG_MSF_tupleMin_double_LG_MSF_combine_double_query
 #endif
 #include "template/GB_jit_kernel_AxB_dot4.c"
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
-    (*hash) = 0x5e806b5f3995f9b2 ;
+    (*hash) = 0xbd2cc88f6da552ec ;
     v [0] = 10 ; v [1] = 3 ; v [2] = 1 ;
-    defn [0] = GB_lg_hll_merge_USER_DEFN ;
-    defn [1] = GB_lg_hll_second_USER_DEFN ;
-    defn [2] = GB_HLL_USER_DEFN ;
+    defn [0] = GB_LG_MSF_tupleMin_double_USER_DEFN ;
+    defn [1] = GB_LG_MSF_combine_double_USER_DEFN ;
+    defn [2] = GB_LG_MSF_tuple_double_USER_DEFN ;
     defn [3] = NULL ;
-    defn [4] = defn [2] ;
-    if (id_size != 1024 || term_size != 0) return (false) ;
+    defn [4] = NULL ;
+    if (id_size != 16 || term_size != 0) return (false) ;
     GB_DECLARE_IDENTITY_CONST (zidentity) ;
-    if (id == NULL || memcmp (id, &zidentity, 1024) != 0) return (false) ;
+    if (id == NULL || memcmp (id, &zidentity, 16) != 0) return (false) ;
     return (true) ;
 }
