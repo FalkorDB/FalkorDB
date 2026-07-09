@@ -143,9 +143,12 @@ void GraphContext_MarkWriter
 // attempt to acquire exclusive write access to the given graph
 // returns true if the calling thread successfully acquired write ownership
 // returns false if another write is already in progress
-bool GraphContext_TryEnterWrite
+bool GraphContext_TimeTryEnterWrite
 (
-	GraphContext *gc  // graph context
+	GraphContext *gc,  // graph context
+	uint timeout_ms    // maximum time in milliseconds to wait for the lock:
+                       // - timeout_ms = 0 : non-blocking attempt (try-lock)
+                       // - timeout_ms > 0 : block up to timeout_ms milliseconds
 );
 
 // release exclusive write access to the graph
