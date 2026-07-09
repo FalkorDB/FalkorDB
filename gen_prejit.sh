@@ -39,13 +39,17 @@
 # If harmonic centrality regresses on medium/large graphs, confirm those dot4
 # kernels are still present in build/graphblas/PreJIT/ after a re-harvest.
 #
-# NOTE: the harvest MUST run inside the Linux Docker toolchain image
-# (ghcr.io/falkordb/falkordb-build), never on macOS. The JIT defn strings
-# embedded in the kernels are captured AFTER host header macro expansion,
-# so a macOS harvest can bake in Apple-specific expansions (e.g. fortify
-# rewriting memcpy to __builtin___memcpy_chk) that fail the kernels'
-# _query hash check on Linux — GraphBLAS then silently falls back to slow
-# generic kernels. The harvested files become a checked-in artifact.
+# NOTE: PreJIT kernels are vendored PER-PLATFORM (build/graphblas/PreJIT/linux/
+# and .../macos/). The JIT defn strings embedded in the kernels are captured
+# AFTER host header macro expansion, so a macOS harvest can bake in
+# Apple-specific expansions (e.g. fortify rewriting memcpy to
+# __builtin___memcpy_chk) that fail the kernels' _query hash check on Linux —
+# GraphBLAS then silently falls back to slow generic kernels (and vice versa).
+# Run this script ON EACH platform to regenerate its kernel set:
+#   * linux/ : run inside the Linux Docker toolchain image
+#              (ghcr.io/falkordb/falkordb-build) — the CI/production target.
+#   * macos/ : run natively on macOS.
+# The harvested files become a checked-in artifact.
 
 set -euo pipefail
 
@@ -53,7 +57,14 @@ set -euo pipefail
 # Locate the repo root.
 # ---------------------------------------------------------------------------
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PREJIT_DIR="${REPO_DIR}/build/graphblas/PreJIT"
+
+# PreJIT kernels are vendored per-platform (see header NOTE).
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    PREJIT_PLATFORM=macos
+else
+    PREJIT_PLATFORM=linux
+fi
+PREJIT_DIR="${REPO_DIR}/build/graphblas/PreJIT/${PREJIT_PLATFORM}"
 
 # ---------------------------------------------------------------------------
 # Detect GraphBLAS version (we don't keep a checked-in GraphBLAS source tree,
@@ -84,10 +95,20 @@ if [[ "$(uname -s)" == "Darwin" ]] && [[ -z "${CC:-}" ]]; then
     fi
 fi
 
+# On macOS the JIT-compiled kernel dylibs link their own copy of libomp;
+# loading them next to the module's statically-wired libomp trips OpenMP's
+# duplicate-runtime abort (__kmp_serial_initialize). Harmless for a harvest
+# run, so tell libomp to tolerate it — without this the server crashes after
+# compiling the first kernel and the cache stays nearly empty.
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    export KMP_DUPLICATE_LIB_OK=TRUE
+fi
+
 echo "============================================================"
 echo " falkordb-rs PreJIT kernel regeneration"
 echo "============================================================"
 echo " Repo root     : ${REPO_DIR}"
+echo " Platform      : ${PREJIT_PLATFORM}"
 echo " GraphBLAS     : v${GRAPHBLAS_VERSION}"
 echo " Vendored dir  : ${PREJIT_DIR}"
 echo " JIT cache     : ${SUITESPARSE_GRB}"
@@ -236,9 +257,10 @@ echo "   Harvested ${NEW_COUNT} kernel(s) into ${PREJIT_DIR}"
 #          prejit_harvest) and re-run the suite to verify.
 # ---------------------------------------------------------------------------
 echo "[Step 6a] Rebuilding GraphBLAS with vendored PreJIT kernels..."
+# Keep the writable harvest prefix for the verify build too — installing to
+# /usr/local would need sudo (interactive prompt on dev machines). Only the
+# harvest-mode flag is dropped so the vendored kernels get baked in.
 unset FALKORDB_PREJIT_HARVEST
-unset GRAPHBLAS_INSTALL_PREFIX
-unset GRAPHBLAS_LIB_DIR
 run_with_retry "graphblas.sh (normal)" "${REPO_DIR}/graphblas.sh"
 
 echo "[Step 6b] Rebuilding falkordb-rs release (normal)..."
