@@ -69,9 +69,9 @@ static void DijkstraHeap_init
 (
 	DijkstraHeap *hp
 ) {
-	hp->cap   = DIJKSTRA_HEAP_DEFAULT_CAP;
-	hp->count = 0;
-	hp->items = rm_malloc(hp->cap * sizeof(DijkstraItem));
+	hp->cap   = DIJKSTRA_HEAP_DEFAULT_CAP ;
+	hp->count = 0 ;
+	hp->items = rm_calloc (hp->cap, sizeof (DijkstraItem)) ;
 }
 
 // move 'item' up from 'idx', treating 'idx' as an empty hole until the

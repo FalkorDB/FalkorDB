@@ -323,7 +323,8 @@ void TensorIterator_IterateRow
 	TensorIterator *it,  // iterator, must already be attached
 	GrB_Index row        // row to iterate
 ) {
-	ASSERT(it != NULL);
+	ASSERT (it    != NULL) ;
+	ASSERT (it->T != NULL) ;
 
 	// abandon any in-progress vector scan from the previous row, and restore
 	// the iteration strategy in case the previous row depleted the iterator
