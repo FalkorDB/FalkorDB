@@ -238,6 +238,16 @@ LAGRAPH_INSTALL_DIR="${LAGRAPH_INSTALL_DIR:-${SCRIPT_DIR}/lagraph_lib}"
 rm -rf LAGraph
 git clone --branch "${LAGRAPH_VERSION}" --single-branch --depth 1 \
     https://github.com/GraphBLAS/LAGraph.git
+
+# LG_JIT_STRING stringifies op bodies AFTER macro expansion, so a bare
+# `memcpy` in lg_hll_second becomes `__builtin___memcpy_chk(...)` on macOS
+# (Apple fortify headers) but stays `memcpy(...)` on Linux. The JIT defn
+# string then hashes differently per platform, and PreJIT kernels harvested
+# on one OS are rejected by their _query check on the other — HyperBall's
+# dot4 HLL kernels silently punt to generic dot2 (~4x slower harmonic).
+# Replace the memcpy with a struct assignment, which no header macro touches.
+git -C LAGraph apply "${SCRIPT_DIR}/build/graphblas/LAGraph_jit_string_portability.patch"
+
 mkdir -p LAGraph/build
 (
     cd LAGraph/build

@@ -40,9 +40,9 @@ void lg_hll_merge(HLL *z, const HLL *x, const HLL *y) { for (uint32_t i = 0; i <
 #ifndef GB_GUARD_lg_hll_second_DEFINED
 #define GB_GUARD_lg_hll_second_DEFINED
 GB_STATIC_INLINE
-void lg_hll_second(HLL *z, _Bool *x, const HLL *y) { __builtin___memcpy_chk (z->registers, y->registers, sizeof(z->registers), __builtin_object_size (z->registers, 0)); }
+void lg_hll_second(HLL *z, _Bool *x, const HLL *y) { *z = *y ; }
 #define GB_lg_hll_second_USER_DEFN \
-"void lg_hll_second(HLL *z, _Bool *x, const HLL *y) { __builtin___memcpy_chk (z->registers, y->registers, sizeof(z->registers), __builtin_object_size (z->registers, 0)); }"
+"void lg_hll_second(HLL *z, _Bool *x, const HLL *y) { *z = *y ; }"
 #endif
 #define GB_MULT(z,x,y,i,k,j)  lg_hll_second (&(z), &(x), &(y))
 

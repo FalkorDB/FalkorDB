@@ -1,0 +1,13 @@
+diff --git a/experimental/algorithm/LAGr_HarmonicCentrality.c b/experimental/algorithm/LAGr_HarmonicCentrality.c
+index c7a759a..fdab22a 100644
+--- a/experimental/algorithm/LAGr_HarmonicCentrality.c
++++ b/experimental/algorithm/LAGr_HarmonicCentrality.c
+@@ -208,7 +208,7 @@ LG_HLL_DELTA_STR)
+ 
+ LG_JIT_STRING(
+     void lg_hll_second(HLL *z, bool *x, const HLL *y) {
+-    memcpy(z->registers, y->registers, sizeof(z->registers));
++    *z = *y ;
+ },
+ LG_HLL_SECOND_STR)
+ 
