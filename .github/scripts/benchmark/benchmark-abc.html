@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>FalkorDB — this PR's benchmark impact (A/B/C)</title>
+<style>
+  :root{
+    --bg:#f4f6fb; --surface:#ffffff; --surface-2:#f0f2f8; --border:#e2e5ef;
+    --ink:#1a2030; --muted:#5c657c; --faint:#8a93a8; --accent:#6a4dff;
+    --a:#2f6fd0; --b:#b9761c; --c:#0e8f66; --good:#0e8f66; --bad:#c0384a; --grid:#eceef4;
+    --shadow:0 1px 2px rgba(20,26,48,.05),0 8px 24px rgba(20,26,48,.05);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0e1320; --surface:#161c2a; --surface-2:#1c2334; --border:#28314a;
+      --ink:#e8edf5; --muted:#9aa6bd; --faint:#68748c; --accent:#9d90ff;
+      --a:#5b8bef; --b:#c9862b; --c:#1cab84; --good:#28c090; --bad:#e0687a; --grid:#212a40;
+      --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.28);
+    }
+  }
+  :root[data-theme="light"]{--bg:#f4f6fb;--surface:#fff;--surface-2:#f0f2f8;--border:#e2e5ef;--ink:#1a2030;--muted:#5c657c;--faint:#8a93a8;--accent:#6a4dff;--a:#2f6fd0;--b:#b9761c;--c:#0e8f66;--good:#0e8f66;--bad:#c0384a;--grid:#eceef4;}
+  :root[data-theme="dark"]{--bg:#0e1320;--surface:#161c2a;--surface-2:#1c2334;--border:#28314a;--ink:#e8edf5;--muted:#9aa6bd;--faint:#68748c;--accent:#9d90ff;--a:#5b8bef;--b:#c9862b;--c:#1cab84;--good:#28c090;--bad:#e0687a;--grid:#212a40;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+  main{max-width:1080px;margin:0 auto;padding:32px 24px 80px}
+  .mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+  h1{font-size:24px;margin:0 0 4px;letter-spacing:-.02em}
+  .lede{color:var(--muted);max-width:72ch;margin:.2em 0 0;font-size:14.5px}
+  .lede b{color:var(--ink)}
+  a{color:var(--accent)}
+  header.hero{padding-bottom:18px;border-bottom:1px solid var(--border)}
+  .topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap}
+  button.ghost{appearance:none;background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:6px 10px;font:inherit;font-size:12.5px;cursor:pointer}
+  .legend{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+  .chip{display:flex;flex-direction:column;gap:2px;background:var(--surface);border:1px solid var(--border);border-left-width:4px;border-radius:10px;padding:8px 12px;min-width:200px;box-shadow:var(--shadow)}
+  .chip .k{font-weight:700;font-size:12.5px}
+  .chip .d{color:var(--muted);font-size:11px}
+  .chip.a{border-left-color:var(--a)} .chip.b{border-left-color:var(--b)} .chip.c{border-left-color:var(--c)}
+  .chip .dot{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:6px;vertical-align:middle}
+  .controls{position:sticky;top:0;z-index:5;display:flex;gap:18px;align-items:center;flex-wrap:wrap;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(8px);border:1px solid var(--border);border-radius:12px;padding:10px 14px;margin:18px 0 6px}
+  .cl{font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);margin-right:8px}
+  .seg{display:inline-flex;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:3px}
+  .seg button{appearance:none;border:0;background:transparent;color:var(--muted);font:inherit;font-size:13px;font-weight:600;padding:5px 12px;border-radius:6px;cursor:pointer}
+  .seg button:hover{color:var(--ink)}
+  .seg button.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12)}
+  @media (prefers-color-scheme:dark){ .seg button.on{background:var(--accent);color:#fff;box-shadow:none} }
+  :root[data-theme="dark"] .seg button.on{background:var(--accent);color:#fff;box-shadow:none}
+  :root[data-theme="light"] .seg button.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12)}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:16px 0 4px}
+  .kpi{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow)}
+  .kpi.sel{border-color:var(--accent)}
+  .kpi .l{color:var(--muted);font-size:12px;display:flex;justify-content:space-between;gap:8px}
+  .kpi .v{font-size:28px;font-weight:800;letter-spacing:-.02em;margin-top:4px;color:var(--good)}
+  .kpi .v small{font-size:13px;font-weight:700;color:var(--muted)}
+  .kpi .raw{font-size:11px;color:var(--faint);margin-top:6px}
+  figure{margin:18px 0 0;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow)}
+  .fig-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+  .fig-title{font-size:13px;font-weight:700}
+  .fig-meta{font-size:12px;color:var(--muted)}
+  .chart{width:100%;overflow-x:auto}
+  .chart.scroll{max-height:560px;overflow-y:auto}
+  svg{display:block;max-width:100%}
+  .axis{fill:var(--faint);font-size:11px}
+  .qlabel{fill:var(--ink);font-size:11.5px}
+  .val{font-size:11px;font-weight:700;font-variant-numeric:tabular-nums}
+  .baseline{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3;opacity:.6}
+  table{border-collapse:collapse;width:100%;font-size:13px;margin-top:6px}
+  th,td{padding:6px 10px;border-bottom:1px solid var(--border);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+  th:first-child,td:first-child{text-align:left}
+  th{color:var(--muted);font-weight:600;font-size:12px}
+  .rat{font-weight:700;border-radius:6px;padding:1px 7px}
+  .rat.good{color:var(--good);background:color-mix(in srgb,var(--good) 15%,transparent)}
+  .rat.bad{color:var(--bad);background:color-mix(in srgb,var(--bad) 15%,transparent)}
+  .rat.neu{color:var(--muted);background:color-mix(in srgb,var(--muted) 12%,transparent)}
+  .note{color:var(--muted);font-size:12.5px;border-left:3px solid var(--border);padding-left:11px;margin-top:12px}
+  .msg{color:var(--muted);padding:40px 0;text-align:center}
+  .tt{position:fixed;pointer-events:none;z-index:20;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow);padding:7px 10px;font-size:12px;opacity:0;transition:opacity .08s}
+  .tt .ttq{font-weight:700;margin-bottom:4px}
+  .tt .row{display:flex;align-items:center;gap:7px;justify-content:space-between}
+  .tt .row .lab{display:flex;align-items:center;gap:6px;color:var(--muted)}
+  .tt .row .dot{width:9px;height:9px;border-radius:3px}
+</style>
+</head>
+<body>
+<main>
+  <header class="hero">
+    <div class="topbar">
+      <div>
+        <h1>This PR's benchmark impact <span class="mono" style="font-size:14px;font-weight:400;color:var(--muted)">· A / B / C</span></h1>
+        <p class="lede"><b>B→C is this PR's delta</b> — B is Rust <i>without</i> the PR, C is Rust <i>with</i> it; A is the C engine. Ratios <b>&gt;1× = the PR is faster</b>. Full single-size histograms are in the <a href="../falkordb-compare/">detailed dashboard</a>.</p>
+      </div>
+      <button class="ghost" id="themeBtn" title="Toggle light/dark">◐ theme</button>
+    </div>
+    <div class="legend">
+      <div class="chip a"><span class="k"><span class="dot" style="background:var(--a)"></span>A — C engine</span><span class="d mono" id="nA">falkordb-c</span></div>
+      <div class="chip b"><span class="k"><span class="dot" style="background:var(--b)"></span>B — Rust, published</span><span class="d mono" id="nB">falkordb-rs</span></div>
+      <div class="chip c"><span class="k"><span class="dot" style="background:var(--c)"></span>C — this PR</span><span class="d mono" id="nC">falkordb-pr</span></div>
+    </div>
+  </header>
+
+  <div class="controls">
+    <div><span class="cl">Metric</span>
+      <div class="seg" id="segMetric">
+        <button data-v="exec" class="on">Server exec</button><button data-v="p50">p50</button><button data-v="p95">p95</button><button data-v="p99">p99</button>
+      </div>
+    </div>
+    <div><span class="cl">Compare</span>
+      <div class="seg" id="segCmp">
+        <button data-v="bc" class="on">B→C (PR impact)</button><button data-v="vc">vs C-engine</button>
+      </div>
+    </div>
+    <div><span class="cl">Dataset</span><div class="seg" id="segSize"></div></div>
+    <span class="fig-meta" id="ctlHint"></span><span class="fig-meta" id="flameLink"></span>
+  </div>
+
+  <div class="kpis" id="kpis"></div>
+
+  <figure id="barFig" hidden>
+    <div class="fig-head">
+      <span class="fig-title">Per-query · <span id="barCmp">B→C</span> <span id="barMetric">server exec</span> · <span id="barSize">—</span></span>
+      <span class="fig-meta" id="barCount"></span>
+    </div>
+    <div class="chart scroll"><svg id="barchart" role="img" aria-label="Per-query PR impact"></svg></div>
+    <div class="note">Diverging around <b>1×</b>: right (green) = the PR (C) is faster, left (red) = slower — vs published Rust (B→C) or vs the C engine, per the Compare toggle. Sub-threshold shapes are de-emphasised.</div>
+  </figure>
+
+  <figure id="latFig" hidden>
+    <div class="fig-head"><span class="fig-title">Aggregate latency · <span id="latSize">—</span></span></div>
+    <table id="latTable"></table>
+  </figure>
+
+  <div id="empty" class="msg" hidden></div>
+</main>
+<div class="tt" id="tt"></div>
+
+<script>
+const METLABEL={exec:"server exec",p50:"client p50",p95:"client p95",p99:"client p99"};
+const CMPLABEL={bc:"B→C",vc:"vs C-engine"};
+const state={metric:"exec",size:null,cmp:"bc"};
+let D=null;
+const SVGNS="http://www.w3.org/2000/svg";
+const css=k=>getComputedStyle(document.documentElement).getPropertyValue(k).trim();
+const el=(t,a,k)=>{const e=document.createElementNS(SVGNS,t);for(const n in(a||{}))e.setAttribute(n,a[n]);(k||[]).forEach(c=>e.appendChild(c));return e;};
+const txt=s=>document.createTextNode(s);
+const fmt=x=>x==null?"—":x>=100?x.toFixed(0):x>=10?x.toFixed(1):x>=1?x.toFixed(2):x.toFixed(3);
+const rstr=r=>(r>=10?r.toFixed(1):r.toFixed(2))+"×";
+const ratCls=r=>r>=1.03?"good":r<=0.97?"bad":"neu";
+
+document.getElementById("themeBtn").addEventListener("click",()=>{
+  const cur=document.documentElement.getAttribute("data-theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");
+  document.documentElement.setAttribute("data-theme",cur==="dark"?"light":"dark"); render();
+});
+
+function renderKPIs(){
+  const box=document.getElementById("kpis"); box.innerHTML="";
+  for(const sz of D.sizes){
+    const t=D.throughput[sz]; if(!t) continue;
+    const bc=(t.b&&t.c)?t.c/t.b:null, vc=(t.a&&t.c)?t.c/t.a:null;
+    const primary=state.cmp==="vc"?vc:bc;
+    const d=document.createElement("div"); d.className="kpi"+(sz===state.size?" sel":""); d.style.cursor="pointer";
+    d.innerHTML=`<div class="l"><span>${sz} · throughput</span><span>q/s</span></div>
+      <div class="v">${primary?primary.toFixed(2):"—"}×<small> ${CMPLABEL[state.cmp]}</small></div>
+      <div class="raw">C ${fmt(t.c)} · B ${fmt(t.b)} · A ${fmt(t.a)}</div>`;
+    d.addEventListener("click",()=>{ state.size=sz; syncSize(); render(); });
+    box.appendChild(d);
+  }
+}
+
+function renderBars(){
+  const fig=document.getElementById("barFig");
+  const pq=((D.perquery[state.size]||{})[state.metric])||{};
+  const base=state.cmp==="vc"?"a":"b";
+  const rows=Object.keys(pq).map(q=>{const v=pq[q];const bv=v[base];return {q,bc:(bv&&v.c)?bv/v.c:null,c:v.c,base:bv};})
+    .filter(r=>r.bc!=null && r.c!=null).sort((a,b)=>b.bc-a.bc);
+  if(!rows.length){ fig.hidden=true; return; } fig.hidden=false;
+  const svg=document.getElementById("barchart"); svg.innerHTML="";
+  const W=980,rowH=24,padT=26,padB=10,padL=210,padR=64,H=padT+padB+rows.length*rowH;
+  svg.setAttribute("viewBox",`0 0 ${W} ${H}`);svg.setAttribute("width",W);svg.setAttribute("height",H);
+  const good=css("--good"),bad=css("--bad");
+  const maxL2=Math.max(...rows.map(r=>Math.abs(Math.log2(r.bc))),1);
+  const midX=padL+(W-padL-padR)*0.46;
+  const X=bc=>midX+(Math.log2(bc)/maxL2)*(bc>=1?(W-padR-midX):(midX-padL));
+  const floor=state.metric==="exec"?0.1:0.6;
+  svg.appendChild(el("line",{x1:midX,y1:padT-6,x2:midX,y2:H-padB+2,class:"baseline"}));
+  const bl=el("text",{x:midX,y:padT-11,"text-anchor":"middle",class:"axis"});bl.appendChild(txt("1× (no change)"));svg.appendChild(bl);
+  rows.forEach((r,i)=>{
+    const cy=padT+i*rowH+rowH/2,faster=r.bc>=1,xe=X(r.bc),noisy=r.c<floor,g=el("g",{});
+    const lab=el("text",{x:padL-12,y:cy+4,"text-anchor":"end",class:"qlabel"});lab.appendChild(txt(r.q));g.appendChild(lab);
+    const bx=Math.min(midX,xe),bw=Math.max(3,Math.abs(xe-midX));
+    g.appendChild(el("rect",{x:bx,y:cy-8,width:bw,height:16,rx:4,fill:faster?good:bad,opacity:noisy?0.3:0.75}));
+    const vt=el("text",{x:faster?xe+7:xe-7,y:cy+4,"text-anchor":faster?"start":"end",class:"val",fill:faster?good:bad});vt.appendChild(txt(rstr(r.bc)));g.appendChild(vt);
+    const um=state.metric==="exec"?"exec ms":"ms",bl=state.cmp==="vc"?"A":"B",bcol=state.cmp==="vc"?css("--a"):css("--b");
+    g.addEventListener("mousemove",e=>showTip(e,r.q,[[CMPLABEL[state.cmp]+" ("+METLABEL[state.metric]+")",rstr(r.bc),faster?good:bad],[bl+" "+um,fmt(r.base),bcol],["C "+um,fmt(r.c),css("--c")]]));
+    g.addEventListener("mouseleave",hideTip);
+    svg.appendChild(g);
+  });
+  document.getElementById("barCmp").textContent=CMPLABEL[state.cmp];
+  document.getElementById("barMetric").textContent=METLABEL[state.metric];
+  document.getElementById("barSize").textContent=state.size;
+  document.getElementById("barCount").textContent=rows.length+" read shapes";
+}
+
+function renderLat(){
+  const fig=document.getElementById("latFig"), lat=(D.latency[state.size]||{});
+  if(!lat.b||!lat.c){ fig.hidden=true; return; } fig.hidden=false;
+  document.getElementById("latSize").textContent=state.size;
+  const t=document.getElementById("latTable");
+  t.innerHTML=`<thead><tr><th>percentile</th><th>A · C engine</th><th>B · Rust</th><th>C · this PR</th><th>B→C</th><th>vs C-engine</th></tr></thead>`;
+  const tb=document.createElement("tbody");
+  for(const pct of ["p50","p95","p99"]){
+    const a=(lat.a||{})[pct],b=lat.b[pct],c=lat.c[pct];
+    const bc=(b&&c)?b/c:null, vc=(a&&c)?a/c:null;
+    const tr=document.createElement("tr");
+    tr.innerHTML=`<td>${pct}</td><td>${fmt(a)}</td><td>${fmt(b)}</td><td>${fmt(c)}</td>
+      <td>${bc?`<span class="rat ${ratCls(bc)}">${rstr(bc)}</span>`:"—"}</td>
+      <td>${vc?`<span class="rat ${ratCls(vc)}">${rstr(vc)}</span>`:"—"}</td>`;
+    tb.appendChild(tr);
+  }
+  t.appendChild(tb);
+}
+
+function render(){
+  document.getElementById("ctlHint").textContent=state.metric==="exec"?"server-internal execution time (ms)":"client latency percentile (ms)";
+  renderKPIs(); renderBars(); renderLat(); renderFlameLink();
+}
+// Show a flame-graph link for the selected size only if a profile run published
+// one (decoupled from this benchmark run — a HEAD check, no coupling).
+function renderFlameLink(){
+  const el=document.getElementById("flameLink"); if(!el) return;
+  el.innerHTML="";
+  const url="../profile/"+state.size+"/flamegraph.svg";
+  fetch(url,{method:"HEAD"}).then(r=>{ if(r.ok) el.innerHTML=' · <a href="'+url+'" target="_blank" rel="noopener">🔥 flame graph</a>'; }).catch(()=>{});
+}
+function syncSize(){ [...document.getElementById("segSize").children].forEach(c=>c.classList.toggle("on",c.dataset.v===state.size)); }
+
+const tt=document.getElementById("tt");
+function showTip(e,title,rows){
+  tt.innerHTML=`<div class="ttq">${title}</div>`+rows.map(([l,v,c])=>`<div class="row"><span class="lab"><span class="dot" style="background:${c}"></span>${l}</span><b>${v}</b></div>`).join("");
+  tt.style.opacity=1;const pad=14;let x=e.clientX+pad,y=e.clientY+pad;const r=tt.getBoundingClientRect();
+  if(x+r.width>innerWidth)x=e.clientX-r.width-pad;if(y+r.height>innerHeight)y=e.clientY-r.height-pad;
+  tt.style.left=x+"px";tt.style.top=y+"px";
+}
+function hideTip(){ tt.style.opacity=0; }
+
+document.getElementById("segMetric").addEventListener("click",e=>{
+  const b=e.target.closest("button");if(!b)return;state.metric=b.dataset.v;
+  [...e.currentTarget.children].forEach(c=>c.classList.toggle("on",c===b));render();
+});
+document.getElementById("segCmp").addEventListener("click",e=>{
+  const b=e.target.closest("button");if(!b)return;state.cmp=b.dataset.v;
+  [...e.currentTarget.children].forEach(c=>c.classList.toggle("on",c===b));render();
+});
+
+fetch("./abc.json").then(r=>r.ok?r.json():Promise.reject(r.status)).then(d=>{
+  D=d; state.size=d.sizes[d.sizes.length-1]||null;
+  document.getElementById("nA").textContent=d.variants.a;
+  document.getElementById("nB").textContent=d.variants.b;
+  document.getElementById("nC").textContent=d.variants.c;
+  const ss=document.getElementById("segSize");
+  ss.innerHTML=d.sizes.map(s=>`<button data-v="${s}">${s}</button>`).join("");
+  ss.addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;state.size=b.dataset.v;syncSize();render();});
+  syncSize(); render();
+}).catch(err=>{
+  document.getElementById("empty").hidden=false;
+  document.getElementById("empty").textContent="Could not load impact data ("+err+").";
+});
+</script>
+</body>
+</html>
