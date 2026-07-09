@@ -139,19 +139,28 @@ size, torn down after each run), mirroring FalkorDB/FalkorDB. Requires the
 variable, and the `gh-runner` GCP network.
 
 - **On a PR** (from a branch in this repo — a fork PR's read-only token can't
-  publish, so those are skipped): add the `benchmark` label, or comment
-  `/benchmark` (comment authors need OWNER/MEMBER/COLLABORATOR association).
+  publish, so those are skipped): add a per-size label — `benchmark-small`,
+  `benchmark-medium`, or `benchmark-large` — or comment `/benchmark [size]`
+  (default `small`; comment authors need OWNER/MEMBER/COLLABORATOR
+  association). Each run does **one size** (a full multi-size run is too
+  expensive to fire on a single label) and is **read-only**; results
+  **accumulate** across sizes into one published view and one PR comment.
   Variant C is that PR's `rc-pr-<N>` image; the workflow waits for that RC
   image to be published to the registry (built early by `rust-pr.yml`, before
   its slower test jobs finish), so it never runs against a missing build.
-  Results are posted as a PR comment and published to
+  Published to
   `https://falkordb.github.io/falkordb-rs-next-gen/benchmark/branch/pr-<N>/`
   (keyed by PR number, so same-named branches on different PRs never collide).
-  A run happens only when the label is **added** (not on every push — a full
-  A/B/C run is expensive); to re-run, remove and re-add the label. Closing the
-  PR removes its published view.
+  A run happens only when a label is **added** (not on every push); to re-run a
+  size, remove and re-add its label. Closing the PR removes its published view.
 - **Manually**: run the "A/B benchmark" workflow from the Actions tab and
-  choose the variant B (and optionally A) image tag.
+  choose the variant B (and optionally A) image tag, the dataset size, and the
+  **write ratio** (default `0.0` — a manual run is the only way to benchmark
+  writes; PR/slash runs are always read-only).
+- **Profiling**: add a `profile-small` / `profile-medium` / `profile-large`
+  label (or run "Profile (flame graph)" from the Actions tab) to publish an
+  interactive CPU flame graph of the engine under the workload to
+  `.../benchmark/branch/pr-<N>/profile/<size>/flamegraph.svg`.
 - **Automatically**: every time `edge-rs` is promoted (merge to main), the
   canonical trend at
   [`/benchmark/`](https://falkordb.github.io/falkordb-rs-next-gen/benchmark/)

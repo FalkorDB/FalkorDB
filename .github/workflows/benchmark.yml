@@ -83,7 +83,9 @@ jobs:
         run: |
           set -euo pipefail
           # /benchmark [small|medium|large] — default small.
-          SIZE=$(printf '%s' "$BODY" | grep -oiE '(small|medium|large)' | head -1 | tr '[:upper:]' '[:lower:]')
+          # `|| true`: with pipefail, a no-match grep (bare `/benchmark`) exits
+          # 1 and would abort the step before the `:-small` default applies.
+          SIZE=$(printf '%s' "$BODY" | grep -oiE '(small|medium|large)' | head -1 | tr '[:upper:]' '[:lower:]' || true)
           SIZE="${SIZE:-small}"
           gh api -X POST "repos/${REPO}/issues/${ISSUE_NUMBER}/labels" -f "labels[]=benchmark-${SIZE}"
 

@@ -53,7 +53,7 @@ def _fmt(x):
 def throughput_table(sizes, name_a, name_b, name_c, has_c):
     head = ["dataset", f"A · {name_a}", f"B · {name_b}"]
     if has_c:
-        head += [f"C · this PR", "B→C", "vs C-engine"]
+        head += ["C · this PR", "B→C", "vs C-engine"]
     else:
         head += ["B ÷ A"]
     lines = ["| " + " | ".join(head) + " |", "| " + " | ".join(["---"] * len(head)) + " |"]
