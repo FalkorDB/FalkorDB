@@ -130,8 +130,13 @@ impl PackedAttr {
 // Block / DataBlock: arena-based slot storage (C engine's DataBlock, COW)
 // ============================================================================
 
-/// Slots per block, matching the C engine's DataBlock granularity.
-const BLOCK_CAP: usize = 16384;
+/// Slots per block, matching the C engine's DataBlock granularity. Driven
+/// by the NODE_CREATION_BUFFER configuration, which is normalized to a
+/// power of two at module init and immutable afterwards.
+#[inline]
+fn block_cap() -> usize {
+    super::graph::NODE_CREATION_BUFFER.load(std::sync::atomic::Ordering::Relaxed) as usize
+}
 
 /// Arena span descriptor for one entity. `cap == 0` means the entity has no
 /// attribute span (the equivalent of C's NULL AttributeSet); live spans have
@@ -147,7 +152,7 @@ struct Slot {
 }
 
 /// One block of entity slots plus the arena holding their packed attributes.
-/// Slots grow lazily up to [`BLOCK_CAP`].
+/// Slots grow lazily up to [`block_cap`].
 #[derive(Clone, Default)]
 struct Block {
     slots: Vec<Slot>,
@@ -391,9 +396,11 @@ struct DataBlock {
 
 impl DataBlock {
     #[inline]
-    const fn locate(entity_id: u64) -> (usize, usize) {
+    fn locate(entity_id: u64) -> (usize, usize) {
+        let cap = block_cap();
+        debug_assert!(cap.is_power_of_two());
         let id = entity_id as usize;
-        (id / BLOCK_CAP, id % BLOCK_CAP)
+        (id >> cap.trailing_zeros(), id & (cap - 1))
     }
 
     #[inline]
@@ -440,13 +447,14 @@ impl DataBlock {
     /// for slop that the next batch reclaims anyway. Residual slop is
     /// bounded by one partially-filled tail block per store.
     fn trim(&mut self) {
+        let cap = block_cap();
         for arc in &mut self.blocks {
             if let Some(block) = Arc::get_mut(arc) {
-                if block.slots.len() == BLOCK_CAP {
+                if block.slots.len() == cap {
                     block.arena.shrink_to_fit();
                     block.heap.shrink_to_fit();
                     // Slots fill in hash order, so `resize` can double past
-                    // BLOCK_CAP from a non-power-of-two start.
+                    // the block capacity from a non-power-of-two start.
                     block.slots.shrink_to_fit();
                 }
                 block.heap_free.shrink_to_fit();
@@ -1186,7 +1194,7 @@ mod tests {
         let mut keys = RoaringTreemap::new();
         keys.insert(2);
         // Also an id in a block that doesn't exist at all.
-        keys.insert(BLOCK_CAP as u64 * 10);
+        keys.insert(block_cap() as u64 * 10);
         store.remove_all(&keys);
 
         assert!(Arc::ptr_eq(&block_before, &store.data.blocks[0]));
@@ -1203,7 +1211,7 @@ mod tests {
 
     #[test]
     fn cross_block_ids() {
-        let far_id = BLOCK_CAP as u64 * 3 + 7;
+        let far_id = block_cap() as u64 * 3 + 7;
         let store = store_with(&[(far_id, &[("a", Value::Int(42))])]);
         assert_eq!(store.get_attr(far_id, &name("a")), Some(Value::Int(42)));
         assert_eq!(store.get_attr(far_id - 1, &name("a")), None);
