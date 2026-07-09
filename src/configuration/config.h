@@ -34,14 +34,13 @@ typedef enum {
 	Config_NODE_CREATION_BUFFER      = 12,  // size of buffer to maintain as margin in matrices
 	Config_CMD_INFO                  = 13,  // toggle on/off the GRAPH.INFO
 	Config_CMD_INFO_MAX_QUERY_COUNT  = 14,  // the max number of info queries count
-	Config_EFFECTS_THRESHOLD         = 15,  // bolt protocol port
-	Config_BOLT_PORT                 = 16,  // replicate queries via effects
-	Config_DELAY_INDEXING            = 17,  // delay index construction when decoding
-	Config_IMPORT_FOLDER             = 18,  // path to CSV import folder
-	Config_TEMP_FOLDER               = 19,  // path to temp folder
-	Config_JS_HEAP_SIZE              = 20,  // quickjs js runtime heap size limit
-	Config_JS_STACK_SIZE             = 21,  // quickjs js runtime stack size limit
-	Config_END_MARKER                = 22
+	Config_EFFECTS_THRESHOLD         = 15,  // replicate queries via effects
+	Config_DELAY_INDEXING            = 16,  // delay index construction when decoding
+	Config_IMPORT_FOLDER             = 17,  // path to CSV import folder
+	Config_TEMP_FOLDER               = 18,  // path to temp folder
+	Config_JS_HEAP_SIZE              = 19,  // quickjs js runtime heap size limit
+	Config_JS_STACK_SIZE             = 20,  // quickjs js runtime stack size limit
+	Config_END_MARKER                = 21
 } Config_Option_Field;
 
 // callback function, invoked once configuration changes as a result of

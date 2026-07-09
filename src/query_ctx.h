@@ -66,7 +66,6 @@ typedef struct {
 typedef struct {
 	RedisModuleCtx *redis_ctx;     // the Redis module context
 	RedisModuleBlockedClient *bc;  // blocked client
-	bolt_client_t *bolt_client;    // bolt client
 	const char *command_name;      // command name
 } QueryCtx_GlobalExecCtx;
 
@@ -193,9 +192,6 @@ dict *QueryCtx_GetParams(void);
 
 // retrieve the GraphCtx
 GraphContext *QueryCtx_GetGraphCtx(void);
-
-// retrieve the bolt client
-bolt_client_t *QueryCtx_GetBoltClient(void);
 
 // retrieve the Graph object
 Graph *QueryCtx_GetGraph(void);

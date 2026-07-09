@@ -28,8 +28,7 @@ CommandCtx *CommandCtx_New
 	long long timeout,              // the query timeout, if specified
 	bool timeout_rw,                // apply timeout on both read and write queries
 	uint64_t received_ts,           // command received at this UNIX timestamp
-	simple_timer_t timer,           // stopwatch started upon command received
-	bolt_client_t *bolt_client      // BOLT client
+	simple_timer_t timer            // stopwatch started upon command received
 ) {
 	ASSERT (query      != NULL) ;
 	ASSERT (cmd_name   != NULL) ;
@@ -45,7 +44,6 @@ CommandCtx *CommandCtx_New
 	context->ref_count          = ATOMIC_VAR_INIT(1);
 	context->graph_ctx          = graph_ctx;
 	context->timeout_rw         = timeout_rw;
-	context->bolt_client        = bolt_client;
 	context->received_ts        = received_ts;
 	context->replicated_command = replicated_command;
 
@@ -100,14 +98,6 @@ RedisModuleCtx *CommandCtx_GetRedisCtx
 
 	cmd_ctx->ctx = RedisModule_GetThreadSafeContext(cmd_ctx->bc);
 	return cmd_ctx->ctx;
-}
-
-bolt_client_t *CommandCtx_GetBoltClient
-(
-	CommandCtx *cmd_ctx
-) {
-	ASSERT(cmd_ctx != NULL);
-	return cmd_ctx->bolt_client;
 }
 
 RedisModuleBlockedClient *CommandCtx_GetBlockingClient
