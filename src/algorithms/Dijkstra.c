@@ -341,6 +341,21 @@ bool Dijkstra_ShortestPath
 		dirs[ndirs++] = GRAPH_EDGE_DIR_INCOMING;
 	}
 
+	// one TensorIterator per (direction, relation) pair, attached once up
+	// front and reseeked (rather than re-attached) for every node popped
+	// from the heap below -- attaching a TensorIterator is expensive (it
+	// re-derives the underlying matrices' sparsity/format), while reseeking
+	// it to a different row is cheap, and the relation matrices themselves
+	// don't change over the course of a single search
+	TensorIterator *iters = rm_malloc(ndirs * relationCount * sizeof(TensorIterator));
+	for(int d = 0; d < ndirs; d++) {
+		bool transpose = (dirs[d] == GRAPH_EDGE_DIR_INCOMING);
+		for(int r = 0; r < relationCount; r++) {
+			TensorIterator_Attach(&iters[d * relationCount + r],
+					relationMatrices[r], transpose);
+		}
+	}
+
 	// initialization: seed the source node with distance 0 and no parent
 	// (it parents itself, which also makes the path-reconstruction loop's
 	// "cur != src_id" stop condition correct). every other node is
@@ -410,8 +425,8 @@ bool Dijkstra_ShortestPath
 		// through 'cur'.
 		for(int d = 0; d < ndirs; d++) {
 			for(int r = 0; r < relationCount; r++) {
-				Graph_GetNodeEdgesFromMatrix(g, &curNode, dirs[d],
-						relationMatrices[r], relationIDs[r], &neighbors);
+				Graph_GetNodeEdgesFromIterator(g, &curNode, dirs[d],
+						&iters[d * relationCount + r], relationIDs[r], &neighbors);
 			}
 
 			uint32_t n = arr_len(neighbors);
@@ -483,6 +498,7 @@ bool Dijkstra_ShortestPath
 	// value, so there's nothing to drain, just free the heap itself.
 	DijkstraHeap_free(&heap);
 	arr_free(neighbors);
+	rm_free(iters);
 
 	if(!found) {
 		// dst is unreachable from src: nothing to report.

@@ -436,6 +436,23 @@ void Graph_GetNodeEdgesFromMatrix
 	Edge **edges          // array_t incoming/outgoing edges
 );
 
+// get node edges of a specific relation, using an already-attached
+// TensorIterator (see TensorIterator_Attach), reseeking it to 'n' instead of
+// re-attaching it to the relation matrix from scratch. 'dir' must be
+// OUTGOING or INCOMING -- callers wanting both directions should hold one
+// iterator per direction and call this once per iterator. intended for hot
+// loops that repeatedly query the same relation matrix across many nodes
+// (e.g. Dijkstra's relaxation loop)
+void Graph_GetNodeEdgesFromIterator
+(
+	const Graph *g,       // graph to get edges from
+	const Node *n,        // node to extract edges from
+	GRAPH_EDGE_DIR dir,   // edge direction, OUTGOING or INCOMING
+	TensorIterator *it,   // iterator already attached to the relation matrix
+	RelationID edgeType,  // relation type (must be a concrete relation)
+	Edge **edges          // array_t incoming/outgoing edges
+);
+
 // returns node incoming/outgoing degree
 uint64_t Graph_GetNodeDegree
 (

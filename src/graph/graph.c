@@ -1415,6 +1415,57 @@ void Graph_GetNodeEdgesFromMatrix
 	}
 }
 
+// retrieves either incoming or outgoing edges of a specific relation type
+// to/from given node N, using an already-attached TensorIterator
+//
+// unlike Graph_GetNodeEdgesFromMatrix, this reseeks the given iterator to N
+// instead of re-attaching it to the relation matrix from scratch -- callers
+// that repeatedly query the same relation matrix across many nodes (e.g.
+// Dijkstra's relaxation loop) should attach the iterator once up front via
+// TensorIterator_Attach and reuse it across calls
+//
+// 'dir' must be OUTGOING or INCOMING -- callers wanting both directions
+// should hold one iterator per direction (attached with the matching
+// 'transpose' value) and call this once per iterator
+void Graph_GetNodeEdgesFromIterator
+(
+	const Graph *g,      // graph to collect edges from
+	const Node *n,       // either source or destination node
+	GRAPH_EDGE_DIR dir,  // edge direction, OUTGOING or INCOMING
+	TensorIterator *it,  // iterator already attached to the relation matrix
+	RelationID r,        // relationship type
+	Edge **edges         // [output] array of edges
+) {
+	ASSERT (g       != NULL) ;
+	ASSERT (n       != NULL) ;
+	ASSERT (it      != NULL) ;
+	ASSERT (edges   != NULL) ;
+	ASSERT (dir == GRAPH_EDGE_DIR_OUTGOING || dir == GRAPH_EDGE_DIR_INCOMING) ;
+	ASSERT (r != GRAPH_NO_RELATION && r != GRAPH_UNKNOWN_RELATION) ;
+
+	if (dir == GRAPH_EDGE_DIR_OUTGOING) {
+		NodeID src_id = ENTITY_GET_ID (n) ;
+		Edge e = {.src_id = src_id, .relationID = r} ;
+
+		TensorIterator_IterateRow (it, src_id) ;
+		while (TensorIterator_next (it, NULL, &e.dest_id, &e.id, NULL)) {
+			e.attributes = DataBlock_GetItem (g->edges, e.id) ;
+			ASSERT (e.attributes) ;
+			arr_append (*edges, e) ;
+		}
+	} else {
+		NodeID dest_id = ENTITY_GET_ID (n) ;
+		Edge e = {.dest_id = dest_id, .relationID = r} ;
+
+		TensorIterator_IterateRow (it, dest_id) ;
+		while (TensorIterator_next (it, &e.src_id, NULL, &e.id, NULL)) {
+			e.attributes = DataBlock_GetItem (g->edges, e.id) ;
+			ASSERT (e.attributes) ;
+			arr_append (*edges, e) ;
+		}
+	}
+}
+
 // returns node incoming/outgoing degree
 uint64_t Graph_GetNodeDegree
 (
