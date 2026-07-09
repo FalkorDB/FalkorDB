@@ -297,14 +297,6 @@ pub mod ffi {
     }
 }
 
-/// Sticky flag: set once any replica has ever attached (ReplicaChange
-/// server event) and never cleared — a disconnected replica may resume
-/// from the replication backlog, so effects buffers must keep being
-/// built after the first attach. While false (and AOF is off) write
-/// queries skip serializing effects entirely; the replication layer's
-/// verbatim-query fallback is then a no-op propagation.
-pub static REPLICATION_CONSUMERS: AtomicBool = AtomicBool::new(false);
-
 pub struct ThreadedGraph {
     pub graph: MvccGraph,
     pub sender: MTx<Array<Box<WriteMessage>>>,
@@ -470,10 +462,6 @@ impl ThreadedGraph {
             timeout_ms,
             QUERY_MEM_CAPACITY.load(Ordering::Relaxed),
             Some(net_thread_usage),
-        );
-        runtime.build_effects.set(
-            REPLICATION_CONSUMERS.load(Ordering::Relaxed)
-                || ctx.get_flags().contains(ContextFlags::AOF),
         );
         let mut result = match runtime.query() {
             Ok(r) => r,

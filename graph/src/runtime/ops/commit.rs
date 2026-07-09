@@ -90,22 +90,13 @@ impl<'a> Iterator for CommitOp<'a> {
             // Commit succeeded — build effects buffer from pending data, then clear.
             {
                 let pending = self.runtime.pending.borrow();
-                let estimated = pending.effects_count();
-                if estimated > 0 {
-                    if self.runtime.build_effects.get() {
-                        let mut buf_ref = self.runtime.effects_buffer.borrow_mut();
-                        let buf = buf_ref.get_or_insert_with(Vec::new);
-                        let n_effects = pending.build_effects_buffer(&self.runtime.g, buf);
-                        self.runtime
-                            .effects_count
-                            .set(self.runtime.effects_count.get() + n_effects);
-                    } else {
-                        // Keep the count accurate for `modified` bookkeeping
-                        // even when the buffer itself is not needed.
-                        self.runtime
-                            .effects_count
-                            .set(self.runtime.effects_count.get() + estimated);
-                    }
+                if pending.effects_count() > 0 {
+                    let mut buf_ref = self.runtime.effects_buffer.borrow_mut();
+                    let buf = buf_ref.get_or_insert_with(Vec::new);
+                    let n_effects = pending.build_effects_buffer(&self.runtime.g, buf);
+                    self.runtime
+                        .effects_count
+                        .set(self.runtime.effects_count.get() + n_effects);
                 }
             }
             self.runtime.pending.borrow_mut().clear();
