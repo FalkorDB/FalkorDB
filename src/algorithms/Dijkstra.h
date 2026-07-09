@@ -38,15 +38,15 @@
 // returned path's edges instead.
 bool Dijkstra_ShortestPath
 (
-	Path **path,                  // [output] src -> dst path
-	double *weight,                // [output] total path weight
-	Graph *g,                      // graph to traverse
-	NodeID src_id,                 // source node
-	NodeID dst_id,                 // destination node
-	GRAPH_EDGE_DIR dir,             // traverse direction
-	RelationID *relationIDs,        // edge type(s) to traverse
-	Tensor *relationMatrices,       // relation matrix per relationIDs entry
-	int relationCount,              // length of relationIDs
-	AttributeID weight_prop         // weight attribute id
+	Path **path,               // [output] src -> dst path
+	double *weight,            // [output] total path weight
+	Graph *g,                  // graph to traverse
+	NodeID src_id,             // source node
+	NodeID dst_id,             // destination node
+	GRAPH_EDGE_DIR dir,        // traverse direction
+	RelationID *relationIDs,   // edge type(s) to traverse
+	Tensor *relationMatrices,  // relation matrix per relationIDs entry
+	int relationCount,         // length of relationIDs
+	AttributeID weight_prop    // weight attribute id
 );
 
