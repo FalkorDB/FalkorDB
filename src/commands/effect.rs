@@ -13,10 +13,9 @@
 use crate::{config::CONFIGURATION_CACHE_SIZE, graph_core::ThreadedGraph, redis_type::GRAPH_TYPE};
 use graph::{
     entity_type::EntityType,
-    graph::graph::Graph,
+    graph::graph::{Graph, TypeId},
     index::IndexType,
     runtime::{
-        ordermap::OrderMap,
         pending::{
             ATTR_NODE, ATTR_REL, EFFECT_ADD_ATTRIBUTE, EFFECT_ADD_SCHEMA, EFFECT_CREATE_EDGE,
             EFFECT_CREATE_INDEX, EFFECT_CREATE_NODE, EFFECT_DELETE_EDGE, EFFECT_DELETE_NODE,
@@ -110,6 +109,16 @@ fn apply_effects(
         FxHashMap::default();
     let mut has_index_ops = false;
 
+    // Entity effects reference labels, relationship types, and attributes by
+    // u16 id. The replica's id space matches the master's because schema
+    // registrations are replicated in order (EFFECT_ADD_SCHEMA /
+    // EFFECT_ADD_ATTRIBUTE below, or verbatim query replay). Track current
+    // counts to validate ids against corrupt or out-of-order buffers.
+    let mut label_count_g = g.get_labels().len();
+    let mut type_count_g = g.get_types().len();
+    let mut node_attr_count = g.get_node_attribute_names().len();
+    let mut rel_attr_count = g.get_relationship_attribute_names().len();
+
     while offset < buf.len() {
         let effect_type = buf[offset];
         offset += 1;
@@ -124,10 +133,12 @@ fn apply_effects(
                 let mut label_rows = Vec::with_capacity(label_count as usize);
                 let mut label_cols = Vec::with_capacity(label_count as usize);
                 for _ in 0..label_count {
-                    let label_name = read_string(buf, &mut offset)?;
-                    let label_id = g.get_label_id_mut(&label_name);
+                    let label_id = read_u16(buf, &mut offset)?;
+                    if label_id as usize >= label_count_g {
+                        return Err(format!("label id {label_id} out of range"));
+                    }
                     label_rows.push(node_id_raw);
-                    label_cols.push(label_id.0 as u64);
+                    label_cols.push(label_id as u64);
                 }
 
                 // Create the node
@@ -143,7 +154,7 @@ fn apply_effects(
                 // Attributes
                 let attr_count = read_u16(buf, &mut offset)?;
                 if attr_count > 0 {
-                    let attrs = read_attrs(buf, &mut offset, attr_count)?;
+                    let attrs = read_attrs(buf, &mut offset, attr_count, node_attr_count)?;
                     let mut attr_map = FxHashMap::default();
                     attr_map.insert(node_id_raw, attrs);
                     g.set_nodes_attributes(&attr_map, &mut index_add_docs)?;
@@ -154,7 +165,13 @@ fn apply_effects(
                 let rel_id_raw = read_u64(buf, &mut offset)?;
                 let src_id = read_u64(buf, &mut offset)?;
                 let dst_id = read_u64(buf, &mut offset)?;
-                let type_name = read_string(buf, &mut offset)?;
+                let type_id = read_u16(buf, &mut offset)?;
+                if type_id as usize >= type_count_g {
+                    return Err(format!("relationship type id {type_id} out of range"));
+                }
+                let type_name = g
+                    .get_type(TypeId(type_id as usize))
+                    .ok_or_else(|| format!("unknown relationship type id {type_id}"))?;
 
                 g.inc_reserved_relationship_count();
 
@@ -163,7 +180,7 @@ fn apply_effects(
                 // Attributes
                 let attr_count = read_u16(buf, &mut offset)?;
                 if attr_count > 0 {
-                    let attrs = read_attrs(buf, &mut offset, attr_count)?;
+                    let attrs = read_attrs(buf, &mut offset, attr_count, rel_attr_count)?;
                     let mut attr_map = FxHashMap::default();
                     attr_map.insert(rel_id_raw, attrs);
                     g.set_relationships_attributes(&attr_map, &mut index_add_edge_docs)?;
@@ -173,7 +190,7 @@ fn apply_effects(
             EFFECT_UPDATE_NODE => {
                 let node_id = read_u64(buf, &mut offset)?;
                 let attr_count = read_u16(buf, &mut offset)?;
-                let attrs = read_attrs(buf, &mut offset, attr_count)?;
+                let attrs = read_attrs(buf, &mut offset, attr_count, node_attr_count)?;
                 let mut attr_map = FxHashMap::default();
                 attr_map.insert(node_id, attrs);
                 g.set_nodes_attributes(&attr_map, &mut index_add_docs)?;
@@ -182,7 +199,7 @@ fn apply_effects(
             EFFECT_UPDATE_EDGE => {
                 let rel_id = read_u64(buf, &mut offset)?;
                 let attr_count = read_u16(buf, &mut offset)?;
-                let attrs = read_attrs(buf, &mut offset, attr_count)?;
+                let attrs = read_attrs(buf, &mut offset, attr_count, rel_attr_count)?;
                 let mut attr_map = FxHashMap::default();
                 attr_map.insert(rel_id, attrs);
                 g.set_relationships_attributes(&attr_map, &mut index_add_edge_docs)?;
@@ -194,10 +211,12 @@ fn apply_effects(
                 let mut label_rows = Vec::with_capacity(label_count as usize);
                 let mut label_cols = Vec::with_capacity(label_count as usize);
                 for _ in 0..label_count {
-                    let label_name = read_string(buf, &mut offset)?;
-                    let label_id = g.get_label_id_mut(&label_name);
+                    let label_id = read_u16(buf, &mut offset)?;
+                    if label_id as usize >= label_count_g {
+                        return Err(format!("label id {label_id} out of range"));
+                    }
                     label_rows.push(node_id);
-                    label_cols.push(label_id.0 as u64);
+                    label_cols.push(label_id as u64);
                 }
                 g.set_nodes_labels_bulk(&label_rows, &label_cols, &mut index_add_docs);
             }
@@ -208,11 +227,12 @@ fn apply_effects(
                 let mut label_rows = Vec::with_capacity(label_count as usize);
                 let mut label_cols = Vec::with_capacity(label_count as usize);
                 for _ in 0..label_count {
-                    let label_name = read_string(buf, &mut offset)?;
-                    if let Some(label_id) = g.get_label_id(&label_name) {
-                        label_rows.push(node_id);
-                        label_cols.push(label_id.0 as u64);
+                    let label_id = read_u16(buf, &mut offset)?;
+                    if label_id as usize >= label_count_g {
+                        return Err(format!("label id {label_id} out of range"));
                     }
+                    label_rows.push(node_id);
+                    label_cols.push(label_id as u64);
                 }
                 g.remove_nodes_labels(&label_rows, &label_cols, &mut index_remove_docs);
             }
@@ -243,9 +263,11 @@ fn apply_effects(
                 match schema_type {
                     SCHEMA_NODE_LABEL => {
                         g.get_label_id_mut(&name);
+                        label_count_g = g.get_labels().len();
                     }
                     SCHEMA_REL_TYPE => {
                         g.get_type_id_mut(&name);
+                        type_count_g = g.get_types().len();
                     }
                     _ => return Err(format!("unknown schema type: {schema_type}")),
                 }
@@ -259,8 +281,14 @@ fn apply_effects(
                 offset += 1;
                 let name = read_string(buf, &mut offset)?;
                 match attr_type {
-                    ATTR_NODE => g.add_node_attribute_name(&name),
-                    ATTR_REL => g.add_rel_attribute_name(&name),
+                    ATTR_NODE => {
+                        g.add_node_attribute_name(&name);
+                        node_attr_count = g.get_node_attribute_names().len();
+                    }
+                    ATTR_REL => {
+                        g.add_rel_attribute_name(&name);
+                        rel_attr_count = g.get_relationship_attribute_names().len();
+                    }
                     _ => return Err(format!("unknown attribute type: {attr_type}")),
                 }
             }
@@ -342,13 +370,19 @@ fn read_attrs(
     buf: &[u8],
     offset: &mut usize,
     count: u16,
-) -> Result<OrderMap<Arc<String>, Value>, String> {
-    let pairs: Vec<_> = (0..count)
-        .map(|_| {
-            let key = read_string(buf, offset)?;
-            let value = read_value(buf, offset)?;
-            Ok((key, value))
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    Ok(OrderMap::from_vec(pairs))
+    attr_id_bound: usize,
+) -> Result<Vec<(u16, Value)>, String> {
+    // Attribute ids arrive id-sorted from the writer (pending stores are
+    // id-sorted), matching what the attribute stores expect.
+    let mut pairs: Vec<(u16, Value)> = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let id = read_u16(buf, offset)?;
+        if id as usize >= attr_id_bound {
+            return Err(format!("attribute id {id} out of range"));
+        }
+        let value = read_value(buf, offset)?;
+        pairs.push((id, value));
+    }
+    debug_assert!(pairs.is_sorted_by_key(|(k, _)| *k));
+    Ok(pairs)
 }

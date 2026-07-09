@@ -34,7 +34,6 @@ use std::sync::Arc;
 /// Build a Cypher-style string representation of a value, matching the C
 /// FalkorDB `SIValue_ToString` output used for verbose list/map/path/vector.
 fn format_value_to_string(
-    runtime: &Runtime<'_>,
     v: &Value,
     out: &mut String,
 ) {
@@ -58,7 +57,7 @@ fn format_value_to_string(
                 if i > 0 {
                     out.push_str(", ");
                 }
-                format_value_to_string(runtime, item, out);
+                format_value_to_string(item, out);
             }
             out.push(']');
         }
@@ -70,7 +69,7 @@ fn format_value_to_string(
                 }
                 out.push_str(k);
                 out.push_str(": ");
-                format_value_to_string(runtime, val, out);
+                format_value_to_string(val, out);
             }
             out.push('}');
         }
@@ -228,12 +227,17 @@ pub fn reply_compact_value(
                     raw::RedisModule_ReplySetArrayLength.unwrap()(ctx.ctx, labels_len as _);
                 }
 
-                let attrs = bg.get_node_all_attrs_by_id(*id);
-                raw::reply_with_array(ctx.ctx, attrs.len() as _);
-                for (key, value) in attrs.iter() {
-                    raw::reply_with_array(ctx.ctx, 3);
-                    raw::reply_with_long_long(ctx.ctx, key as _);
-                    reply_compact_value(ctx, runtime, value);
+                raw::reply_with_array(ctx.ctx, i64::from(raw::REDISMODULE_POSTPONED_LEN));
+                let attrs_len = bg
+                    .get_node_all_attrs_by_id(*id)
+                    .inspect(|(key, value)| {
+                        raw::reply_with_array(ctx.ctx, 3);
+                        raw::reply_with_long_long(ctx.ctx, *key as _);
+                        reply_compact_value(ctx, runtime, value);
+                    })
+                    .count();
+                unsafe {
+                    raw::RedisModule_ReplySetArrayLength.unwrap()(ctx.ctx, attrs_len as _);
                 }
                 drop(bg);
             }
@@ -267,14 +271,19 @@ pub fn reply_compact_value(
                 raw::reply_with_long_long(ctx.ctx, u64::from(rel_src) as _);
                 raw::reply_with_long_long(ctx.ctx, u64::from(rel_dst) as _);
                 let attrs = bg.get_relationship_all_attrs_by_id(*rel);
-                raw::reply_with_array(ctx.ctx, attrs.len() as _);
-                for (key, value) in attrs.iter() {
-                    raw::reply_with_array(ctx.ctx, 3);
-                    raw::reply_with_long_long(
-                        ctx.ctx,
-                        bg.rel_attr_id_to_global(key).unwrap_or(0) as _,
-                    );
-                    reply_compact_value(ctx, runtime, value);
+                raw::reply_with_array(ctx.ctx, i64::from(raw::REDISMODULE_POSTPONED_LEN));
+                let attrs_len = attrs
+                    .inspect(|(key, value)| {
+                        raw::reply_with_array(ctx.ctx, 3);
+                        raw::reply_with_long_long(
+                            ctx.ctx,
+                            bg.rel_attr_id_to_global(*key).unwrap_or(0) as _,
+                        );
+                        reply_compact_value(ctx, runtime, value);
+                    })
+                    .count();
+                unsafe {
+                    raw::RedisModule_ReplySetArrayLength.unwrap()(ctx.ctx, attrs_len as _);
                 }
                 drop(bg);
             }
@@ -398,7 +407,7 @@ pub fn reply_verbose_value(
         }
         Value::List(_) | Value::Map(_) | Value::Path(_) | Value::VecF32(_) => {
             let mut s = String::new();
-            format_value_to_string(runtime, r, &mut s);
+            format_value_to_string(r, &mut s);
             reply_with_str(ctx, &s);
         }
         Value::Node(id) => {
@@ -441,12 +450,17 @@ pub fn reply_verbose_value(
 
                 raw::reply_with_array(ctx.ctx, 2);
                 reply_with_str(ctx, "properties");
-                let attrs = bg.get_node_all_attrs(*id);
-                raw::reply_with_array(ctx.ctx, attrs.len() as _);
-                for (key, value) in &attrs {
-                    raw::reply_with_array(ctx.ctx, 2);
-                    reply_with_str(ctx, key);
-                    reply_verbose_value(ctx, runtime, value);
+                raw::reply_with_array(ctx.ctx, i64::from(raw::REDISMODULE_POSTPONED_LEN));
+                let attrs_len = bg
+                    .get_node_all_attrs(*id)
+                    .inspect(|(key, value)| {
+                        raw::reply_with_array(ctx.ctx, 2);
+                        reply_with_str(ctx, key);
+                        reply_verbose_value(ctx, runtime, value);
+                    })
+                    .count();
+                unsafe {
+                    raw::RedisModule_ReplySetArrayLength.unwrap()(ctx.ctx, attrs_len as _);
                 }
                 drop(bg);
             }
@@ -463,26 +477,15 @@ pub fn reply_verbose_value(
 
             let bg = runtime.g.borrow();
             let dr = runtime.deleted_relationships.borrow();
-            let (type_name, attrs_iter): (Arc<String>, Vec<(Arc<String>, Value)>) =
-                dr.get(rel).map_or_else(
-                    || {
-                        let type_id = bg.get_relationship_type_id(*rel);
-                        let name = bg
-                            .get_type(type_id)
-                            .unwrap_or_else(|| Arc::new(String::new()));
-                        let attrs = bg.get_relationship_all_attrs(*rel);
-                        (name, attrs)
-                    },
-                    |x| {
-                        (
-                            x.type_name.clone(),
-                            x.attrs
-                                .iter()
-                                .map(|(k, v)| (k.clone(), v.clone()))
-                                .collect(),
-                        )
-                    },
-                );
+            let deleted = dr.get(rel);
+            let type_name = deleted.map_or_else(
+                || {
+                    let type_id = bg.get_relationship_type_id(*rel);
+                    bg.get_type(type_id)
+                        .unwrap_or_else(|| Arc::new(String::new()))
+                },
+                |x| x.type_name.clone(),
+            );
 
             raw::reply_with_array(ctx.ctx, 2);
             reply_with_str(ctx, "type");
@@ -498,11 +501,26 @@ pub fn reply_verbose_value(
 
             raw::reply_with_array(ctx.ctx, 2);
             reply_with_str(ctx, "properties");
-            raw::reply_with_array(ctx.ctx, attrs_iter.len() as _);
-            for (key, value) in &attrs_iter {
-                raw::reply_with_array(ctx.ctx, 2);
-                reply_with_str(ctx, key);
-                reply_verbose_value(ctx, runtime, value);
+            if let Some(x) = deleted {
+                raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
+                for (key, value) in x.attrs.iter() {
+                    raw::reply_with_array(ctx.ctx, 2);
+                    reply_with_str(ctx, key);
+                    reply_verbose_value(ctx, runtime, value);
+                }
+            } else {
+                raw::reply_with_array(ctx.ctx, i64::from(raw::REDISMODULE_POSTPONED_LEN));
+                let attrs_len = bg
+                    .get_relationship_all_attrs(*rel)
+                    .inspect(|(key, value)| {
+                        raw::reply_with_array(ctx.ctx, 2);
+                        reply_with_str(ctx, key);
+                        reply_verbose_value(ctx, runtime, value);
+                    })
+                    .count();
+                unsafe {
+                    raw::RedisModule_ReplySetArrayLength.unwrap()(ctx.ctx, attrs_len as _);
+                }
             }
             drop(bg);
         }

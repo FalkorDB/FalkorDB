@@ -1266,6 +1266,34 @@ impl<'a> Runtime<'a> {
         Ok(Some(result))
     }
 
+    /// Resolve an attribute name to its id (creating it if needed) and
+    /// record the pending node property change.
+    pub(crate) fn set_pending_node_attr(
+        &self,
+        id: NodeId,
+        key: &Arc<String>,
+        value: Value,
+    ) -> Result<(), String> {
+        let attr_id = self.g.borrow_mut().get_or_create_node_attr_id(key);
+        self.pending
+            .borrow_mut()
+            .set_node_attribute(id, attr_id, value)
+    }
+
+    /// Resolve an attribute name to its id (creating it if needed) and
+    /// record the pending relationship property change.
+    pub(crate) fn set_pending_relationship_attr(
+        &self,
+        id: RelationshipId,
+        key: &Arc<String>,
+        value: Value,
+    ) -> Result<(), String> {
+        let attr_id = self.g.borrow_mut().get_or_create_rel_attr_id(key);
+        self.pending
+            .borrow_mut()
+            .set_relationship_attribute(id, attr_id, value)
+    }
+
     pub fn get_node_attribute(
         &self,
         id: NodeId,
@@ -1291,10 +1319,13 @@ impl<'a> Runtime<'a> {
         id: NodeId,
         attr: &Arc<String>,
     ) -> Option<Value> {
-        if let Some(value) = self.pending.borrow().get_node_attribute(id, attr) {
+        let g = self.g.borrow();
+        if let Some(attr_id) = g.get_node_attr_id(attr)
+            && let Some(value) = self.pending.borrow().get_node_attribute(id, attr_id)
+        {
             return Some(value.clone());
         }
-        self.g.borrow().get_node_attribute(id, attr)
+        g.get_node_attribute(id, attr)
     }
 
     /// Like `get_relationship_attribute` but skips the deleted check.
@@ -1303,10 +1334,16 @@ impl<'a> Runtime<'a> {
         id: RelationshipId,
         attr: &Arc<String>,
     ) -> Option<Value> {
-        if let Some(value) = self.pending.borrow().get_relationship_attribute(id, attr) {
+        let g = self.g.borrow();
+        if let Some(attr_id) = g.get_rel_attr_id(attr)
+            && let Some(value) = self
+                .pending
+                .borrow()
+                .get_relationship_attribute(id, attr_id)
+        {
             return Some(value.clone());
         }
-        self.g.borrow().get_relationship_attribute(id, attr)
+        g.get_relationship_attribute(id, attr)
     }
 
     pub fn get_relationship_attribute(
@@ -1324,10 +1361,16 @@ impl<'a> Runtime<'a> {
             return None;
         }
         drop(deleted);
-        if let Some(value) = self.pending.borrow().get_relationship_attribute(id, attr) {
+        let g = self.g.borrow();
+        if let Some(attr_id) = g.get_rel_attr_id(attr)
+            && let Some(value) = self
+                .pending
+                .borrow()
+                .get_relationship_attribute(id, attr_id)
+        {
             return Some(value.clone());
         }
-        self.g.borrow().get_relationship_attribute(id, attr)
+        g.get_relationship_attribute(id, attr)
     }
 
     /// Materializes a property column for a batch of node IDs.
@@ -1372,14 +1415,14 @@ impl<'a> Runtime<'a> {
             for &id in node_ids {
                 let val = deleted.get(&id).map_or_else(
                     || {
-                        pending.get_node_attribute(id, attr).map_or_else(
-                            || {
-                                attr_idx
-                                    .and_then(|idx| g.get_node_attribute_by_idx(id, idx))
-                                    .unwrap_or(Value::Null)
-                            },
-                            Clone::clone,
-                        )
+                        attr_idx
+                            .and_then(|idx| {
+                                pending
+                                    .get_node_attribute(id, idx)
+                                    .cloned()
+                                    .or_else(|| g.get_node_attribute_by_idx(id, idx))
+                            })
+                            .unwrap_or(Value::Null)
                     },
                     |dn| dn.attrs.get(attr).cloned().unwrap_or(Value::Null),
                 );
@@ -1419,8 +1462,9 @@ impl<'a> Runtime<'a> {
                 .collect();
             return attrs;
         }
-        let mut actual = OrderMap::from_vec(self.g.borrow().get_node_all_attrs(id));
-        self.pending.borrow().update_node_attrs(id, &mut actual);
+        let g = self.g.borrow();
+        let mut actual = OrderMap::from_unique_keys(g.get_node_all_attrs(id));
+        self.pending.borrow().update_node_attrs(id, &mut actual, &g);
         actual
     }
 
@@ -1436,10 +1480,11 @@ impl<'a> Runtime<'a> {
                 .collect();
             return attrs;
         }
-        let mut actual = OrderMap::from_vec(self.g.borrow().get_relationship_all_attrs(id));
+        let g = self.g.borrow();
+        let mut actual = OrderMap::from_unique_keys(g.get_relationship_all_attrs(id));
         self.pending
             .borrow()
-            .update_relationship_attrs(id, &mut actual);
+            .update_relationship_attrs(id, &mut actual, &g);
         actual
     }
 

@@ -160,6 +160,7 @@ impl MvccGraph {
             new_graph.borrow_mut().schema_version += 1;
         }
 
+        new_graph.borrow_mut().trim_attr_stores();
         new_graph.borrow_mut().set_indexer_graph(new_graph.clone());
         self.graph = new_graph;
         self.write.store(false, Ordering::Release);

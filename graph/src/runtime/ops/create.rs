@@ -28,16 +28,67 @@ use std::cell::OnceCell;
 use std::sync::Arc;
 
 use crate::graph::graph::LabelId;
-use crate::parser::ast::{QueryGraph, QueryNode, QueryRelationship, Variable};
+use crate::parser::ast::{ExprIR, QueryGraph, QueryNode, QueryRelationship, Variable};
 use crate::planner::IR;
-use crate::runtime::eval::ExprEval;
+use crate::runtime::eval::{ExprEval, ExprNode};
 use crate::runtime::ordermap::OrderMap;
 use crate::runtime::{
     batch::{Batch, BatchOp, BatchRow},
     runtime::Runtime,
     value::Value,
 };
-use orx_tree::{Dyn, NodeIdx, NodeRef};
+use orx_tree::{Dyn, DynTree, NodeIdx, NodeRef};
+
+/// Per-entry plan for a map-literal attrs expression: attribute id, position
+/// in the id-sorted output, and the pre-resolved value-expression node.
+/// Resolving nodes once per batch means each row's evaluation is pure
+/// pointer navigation ([`ExprEval::eval_node`]) with no per-row index
+/// validation. Entries are in written order so evaluation side effects match
+/// Cypher semantics.
+type AttrTemplate<'t> = Vec<(u16, usize, ExprNode<'t>)>;
+
+/// Resolve a map-literal attrs expression once per batch: keys are
+/// compile-time string constants, so each name→id lookup happens here
+/// instead of per row. Returns `None` when the root is not a map literal
+/// (e.g. `CREATE (n $props)`), in which case callers fall back to full
+/// evaluation.
+fn build_attr_template<'t>(
+    attrs: &'t DynTree<ExprIR<Variable>>,
+    mut resolve: impl FnMut(&Arc<String>) -> u16,
+) -> Option<AttrTemplate<'t>> {
+    let root = attrs.root();
+    if !matches!(root.data(), ExprIR::Map) {
+        return None;
+    }
+    let mut template: AttrTemplate<'t> = Vec::with_capacity(root.num_children());
+    for child in root.children() {
+        let ExprIR::Constant(Value::String(key)) = child.data() else {
+            return None;
+        };
+        let id = resolve(key);
+        let value_node = child.child(0);
+        if let Some(entry) = template.iter_mut().find(|(k, _, _)| *k == id) {
+            entry.2 = value_node;
+        } else {
+            template.push((id, 0, value_node));
+        }
+    }
+    let mut order: Vec<usize> = (0..template.len()).collect();
+    order.sort_unstable_by_key(|&i| template[i].0);
+    for (pos, &i) in order.iter().enumerate() {
+        template[i].1 = pos;
+    }
+    Some(template)
+}
+
+fn resolve_map_attrs(
+    map: OrderMap<Arc<String>, Value>,
+    mut resolve: impl FnMut(&Arc<String>) -> u16,
+) -> Vec<(u16, Value)> {
+    let mut out: Vec<(u16, Value)> = map.into_iter().map(|(k, v)| (resolve(&k), v)).collect();
+    out.sort_unstable_by_key(|(k, _)| *k);
+    out
+}
 
 pub struct CreateOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
@@ -108,30 +159,55 @@ impl Runtime<'_> {
                 pending.set_nodes_labels(&node_ids, &node.labels);
             }
 
-            // Evaluate attributes per row, then batch-insert into pending.
+            // Evaluate attributes per row into id-sorted `Vec<(u16, Value)>`.
             // NOTE: eval() may borrow pending internally (e.g. property reads),
             // so we cannot hold pending.borrow_mut() across eval calls.
-            let mut all_attrs: Vec<OrderMap<Arc<String>, Value>> = Vec::with_capacity(active_len);
-            for row in batch.active_indices() {
-                let env = BatchRow::new(batch, row);
-                let attrs = ExprEval::from_runtime(self).eval(
-                    &node.attrs,
-                    node.attrs.root().idx(),
-                    Some(&env),
-                    None,
-                )?;
-                match attrs {
-                    Value::Map(attrs) => all_attrs.push(Arc::unwrap_or_clone(attrs)),
-                    other => {
-                        return Err(format!(
-                            "Expected map for node attributes, got {}",
-                            other.name()
-                        ));
+            let template = build_attr_template(&node.attrs, |k| {
+                self.g.borrow_mut().get_or_create_node_attr_id(k)
+            });
+            let mut all_attrs: Vec<Vec<(u16, Value)>> = Vec::new();
+            match &template {
+                Some(t) if t.is_empty() => {}
+                Some(t) => {
+                    let eval = ExprEval::from_runtime(self);
+                    all_attrs.reserve(active_len);
+                    for row in batch.active_indices() {
+                        let env = BatchRow::new(batch, row);
+                        let mut out = vec![(0u16, Value::Null); t.len()];
+                        for (attr_id, pos, value_node) in t {
+                            let v = eval.eval_node(value_node, Some(&env), None)?;
+                            out[*pos] = (*attr_id, v);
+                        }
+                        all_attrs.push(out);
                     }
+                }
+                None => {
+                    let root = node.attrs.root();
+                    let eval = ExprEval::from_runtime(self);
+                    let mut maps: Vec<OrderMap<Arc<String>, Value>> =
+                        Vec::with_capacity(active_len);
+                    for row in batch.active_indices() {
+                        let env = BatchRow::new(batch, row);
+                        let attrs = eval.eval_node(&root, Some(&env), None)?;
+                        match attrs {
+                            Value::Map(attrs) => maps.push(Arc::unwrap_or_clone(attrs)),
+                            other => {
+                                return Err(format!(
+                                    "Expected map for node attributes, got {}",
+                                    other.name()
+                                ));
+                            }
+                        }
+                    }
+                    let mut g = self.g.borrow_mut();
+                    all_attrs.extend(
+                        maps.into_iter()
+                            .map(|m| resolve_map_attrs(m, |k| g.get_or_create_node_attr_id(k))),
+                    );
                 }
             }
             // Single borrow to insert all evaluated attrs
-            {
+            if !all_attrs.is_empty() {
                 let mut pending = self.pending.borrow_mut();
                 for (i, attrs) in all_attrs.into_iter().enumerate() {
                     pending.set_node_attributes(node_ids[i], attrs)?;
@@ -201,24 +277,47 @@ impl Runtime<'_> {
 
             // Evaluate relationship attributes per row, then batch-insert.
             // Same as nodes: eval() may borrow pending, so separate eval from insert.
-            let mut all_rel_attrs: Vec<OrderMap<Arc<String>, Value>> =
-                Vec::with_capacity(ids.len());
-            for row in batch.active_indices() {
-                let env = BatchRow::new(batch, row);
-                let attrs = ExprEval::from_runtime(self).eval(
-                    &rel.attrs,
-                    rel.attrs.root().idx(),
-                    Some(&env),
-                    None,
-                )?;
-                match attrs {
-                    Value::Map(attrs) => all_rel_attrs.push(Arc::unwrap_or_clone(attrs)),
-                    _ => {
-                        return Err(String::from("Invalid relationship properties"));
+            let template = build_attr_template(&rel.attrs, |k| {
+                self.g.borrow_mut().get_or_create_rel_attr_id(k)
+            });
+            let mut all_rel_attrs: Vec<Vec<(u16, Value)>> = Vec::new();
+            match &template {
+                Some(t) if t.is_empty() => {}
+                Some(t) => {
+                    let eval = ExprEval::from_runtime(self);
+                    all_rel_attrs.reserve(ids.len());
+                    for row in batch.active_indices() {
+                        let env = BatchRow::new(batch, row);
+                        let mut out = vec![(0u16, Value::Null); t.len()];
+                        for (attr_id, pos, value_node) in t {
+                            let v = eval.eval_node(value_node, Some(&env), None)?;
+                            out[*pos] = (*attr_id, v);
+                        }
+                        all_rel_attrs.push(out);
                     }
                 }
+                None => {
+                    let root = rel.attrs.root();
+                    let eval = ExprEval::from_runtime(self);
+                    let mut maps: Vec<OrderMap<Arc<String>, Value>> = Vec::with_capacity(ids.len());
+                    for row in batch.active_indices() {
+                        let env = BatchRow::new(batch, row);
+                        let attrs = eval.eval_node(&root, Some(&env), None)?;
+                        match attrs {
+                            Value::Map(attrs) => maps.push(Arc::unwrap_or_clone(attrs)),
+                            _ => {
+                                return Err(String::from("Invalid relationship properties"));
+                            }
+                        }
+                    }
+                    let mut g = self.g.borrow_mut();
+                    all_rel_attrs.extend(
+                        maps.into_iter()
+                            .map(|m| resolve_map_attrs(m, |k| g.get_or_create_rel_attr_id(k))),
+                    );
+                }
             }
-            {
+            if !all_rel_attrs.is_empty() {
                 let mut pending = self.pending.borrow_mut();
                 for (i, attrs) in all_rel_attrs.into_iter().enumerate() {
                     pending.set_relationship_attributes(ids[i], attrs)?;

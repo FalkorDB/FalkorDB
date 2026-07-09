@@ -2,9 +2,13 @@
 //!
 //! This module provides [`AttributeStore`], an in-memory key-value store for
 //! entity properties modeled on the C engine's DataBlock: entity ids index
-//! into fixed-capacity blocks of slots, and each slot is a single thin
-//! pointer to the entity's attribute set ([`AttrArray`]) — one contiguous
-//! allocation of `(attr_id, value)` pairs sorted by attribute id.
+//! into fixed-capacity blocks, and each block stores all of its entities'
+//! attributes in one contiguous arena of packed 12-byte
+//! `(attr_id, tag, payload)` entries sorted by attribute id. A slot is an
+//! 8-byte `(offset, len, cap)` span descriptor into the arena, so entities
+//! cost no individual allocations at all. Heap values (strings, lists,
+//! vectors) are stored once in a block-level side array and referenced by
+//! index from the packed payload.
 //!
 //! ## Concurrency / MVCC
 //!
@@ -13,17 +17,17 @@
 //! graph (`Graph::new_version`), which is published atomically on commit or
 //! simply discarded on rollback. Cloning the store is cheap — blocks are
 //! shared via `Arc` and copied on first write per block (`Arc::make_mut`),
-//! so older snapshots keep reading their own blocks untouched.
+//! so older snapshots keep reading their own blocks untouched. In-place
+//! arena writes are safe because they only ever happen after `make_mut`.
 
 use std::cmp::Ordering;
 use std::sync::Arc;
 
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
-use triomphe::ThinArc;
 
 use super::graphblas::serialization::{Decode, Encode, Reader, Writer};
-use crate::runtime::{ordermap::OrderMap, value::Value};
+use crate::runtime::value::Value;
 
 /// Insertion-ordered map of attribute names to attribute indices.
 ///
@@ -91,109 +95,289 @@ impl std::ops::Index<usize> for AttrNameMap {
     }
 }
 
-/// Shared empty attribute set to avoid per-call allocations when an entity
-/// has no properties.
-static EMPTY_ATTRS: once_cell::sync::Lazy<AttrArray> = once_cell::sync::Lazy::new(AttrArray::empty);
+// Packed value type tags. Scalars inline their payload; `TAG_HEAP` values
+// live in the block-level side array (`Block::heap`) and the payload is a
+// `u32` index.
+const TAG_NULL: u8 = 0;
+const TAG_BOOL: u8 = 1;
+const TAG_INT: u8 = 2;
+const TAG_FLOAT: u8 = 3;
+const TAG_POINT: u8 = 4;
+const TAG_DATETIME: u8 = 5;
+const TAG_DATE: u8 = 6;
+const TAG_TIME: u8 = 7;
+const TAG_DURATION: u8 = 8;
+const TAG_HEAP: u8 = 9;
 
-/// Reference-counted, single-allocation attribute set for one entity.
-///
-/// A thin (8-byte) pointer to one heap block holding the refcount, the
-/// length, and the `(attr_id, value)` pairs sorted by attribute id —
-/// mirroring the C engine's `AttributeSet` where the entity slot is a single
-/// pointer and all metadata lives in the pointee. Contents are immutable
-/// after construction; mutation builds a new array.
-#[derive(Clone)]
-pub struct AttrArray(ThinArc<(), (u16, Value)>);
+/// One packed attribute: 12 bytes, matching the C engine's per-attribute
+/// footprint (`AttributeID` + packed `AttrValue_t`).
+#[derive(Clone, Copy)]
+struct PackedAttr {
+    id: u16,
+    tag: u8,
+    payload: [u8; 8],
+}
 
-impl AttrArray {
-    /// Build from attribute pairs already sorted by attr id.
-    #[must_use]
-    fn from_sorted(pairs: Vec<(u16, Value)>) -> Self {
-        Self(ThinArc::from_header_and_iter((), pairs.into_iter()))
-    }
-
-    #[must_use]
-    fn empty() -> Self {
-        Self::from_sorted(Vec::new())
-    }
-
+impl PackedAttr {
     #[inline]
-    fn pairs(&self) -> &[(u16, Value)] {
-        &self.0.slice
-    }
-
-    #[inline]
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.pairs().len()
-    }
-
-    #[inline]
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.pairs().is_empty()
-    }
-
-    /// Position of `attr_idx` within the sorted pairs, if present.
-    #[inline]
-    #[must_use]
-    pub fn position(
-        &self,
-        attr_idx: u16,
-    ) -> Option<usize> {
-        self.pairs()
-            .binary_search_by_key(&attr_idx, |&(idx, _)| idx)
-            .ok()
-    }
-
-    /// Value for `attr_idx`, if the attribute is present.
-    #[inline]
-    #[must_use]
-    pub fn get(
-        &self,
-        attr_idx: u16,
-    ) -> Option<&Value> {
-        self.position(attr_idx).map(|pos| &self.pairs()[pos].1)
-    }
-
-    /// Iterate `(attr_idx, &Value)` pairs in index order.
-    pub fn iter(&self) -> impl Iterator<Item = (u16, &Value)> + '_ {
-        self.pairs().iter().map(|(idx, value)| (*idx, value))
-    }
-
-    /// Materialize an owned `Vec` of `(attr_idx, Value)` pairs.
-    #[must_use]
-    pub fn to_pairs(&self) -> Vec<(u16, Value)> {
-        self.pairs().to_vec()
-    }
-
-    /// Estimated heap bytes of this entity's single allocation, including the
-    /// out-of-line heap owned by each `Value`.
-    #[must_use]
-    fn heap_bytes(&self) -> usize {
-        // ThinArc allocation: refcount (usize) + length (usize) + pairs.
-        std::mem::size_of::<usize>() * 2
-            + self.len() * std::mem::size_of::<(u16, Value)>()
-            + self
-                .pairs()
-                .iter()
-                .map(|(_, v)| v.heap_size())
-                .sum::<usize>()
+    fn heap_index(&self) -> usize {
+        debug_assert_eq!(self.tag, TAG_HEAP);
+        u32::from_le_bytes(self.payload[..4].try_into().unwrap()) as usize
     }
 }
 
 // ============================================================================
-// DataBlock: block-allocated slot storage (C engine's DataBlock, COW)
+// Block / DataBlock: arena-based slot storage (C engine's DataBlock, COW)
 // ============================================================================
 
 /// Slots per block, matching the C engine's DataBlock granularity.
 const BLOCK_CAP: usize = 16384;
 
-/// One block of entity slots. Slots grow lazily up to [`BLOCK_CAP`]; each
-/// slot is a single 8-byte thin pointer (`None` = entity has no attributes).
+/// Arena span descriptor for one entity. `cap == 0` means the entity has no
+/// attribute span (the equivalent of C's NULL AttributeSet); live spans have
+/// `1 <= len <= cap`.
+#[derive(Clone, Copy, Default)]
+struct Slot {
+    /// Start index into `Block::arena`, in entries.
+    offset: u32,
+    /// Live entries.
+    len: u16,
+    /// Reserved entries (in-place overwrite allowed while `len <= cap`).
+    cap: u16,
+}
+
+/// One block of entity slots plus the arena holding their packed attributes.
+/// Slots grow lazily up to [`BLOCK_CAP`].
 #[derive(Clone, Default)]
 struct Block {
-    slots: Vec<Option<AttrArray>>,
+    slots: Vec<Slot>,
+    /// All attribute spans, bump-allocated; abandoned spans are tracked in
+    /// `dead` and reclaimed by [`Block::compact`].
+    arena: Vec<PackedAttr>,
+    /// Out-of-line values (String/List/VecF32) referenced by index from
+    /// packed payloads. Holes hold `Value::Null` and are recycled.
+    heap: Vec<Value>,
+    heap_free: Vec<u32>,
+    /// Arena entries no longer referenced by any slot.
+    dead: u32,
+}
+
+impl Block {
+    fn pack(
+        &mut self,
+        value: Value,
+    ) -> (u8, [u8; 8]) {
+        match value {
+            Value::Null => (TAG_NULL, [0; 8]),
+            Value::Bool(b) => {
+                let mut p = [0; 8];
+                p[0] = u8::from(b);
+                (TAG_BOOL, p)
+            }
+            Value::Int(i) => (TAG_INT, i.to_le_bytes()),
+            Value::Float(f) => (TAG_FLOAT, f.to_le_bytes()),
+            Value::Point(point) => {
+                let mut p = [0; 8];
+                p[..4].copy_from_slice(&point.latitude.to_le_bytes());
+                p[4..].copy_from_slice(&point.longitude.to_le_bytes());
+                (TAG_POINT, p)
+            }
+            Value::Datetime(t) => (TAG_DATETIME, t.to_le_bytes()),
+            Value::Date(t) => (TAG_DATE, t.to_le_bytes()),
+            Value::Time(t) => (TAG_TIME, t.to_le_bytes()),
+            Value::Duration(t) => (TAG_DURATION, t.to_le_bytes()),
+            other => {
+                let idx = if let Some(i) = self.heap_free.pop() {
+                    self.heap[i as usize] = other;
+                    i
+                } else {
+                    self.heap.push(other);
+                    (self.heap.len() - 1) as u32
+                };
+                let mut p = [0; 8];
+                p[..4].copy_from_slice(&idx.to_le_bytes());
+                (TAG_HEAP, p)
+            }
+        }
+    }
+
+    fn unpack(
+        &self,
+        attr: &PackedAttr,
+    ) -> Value {
+        match attr.tag {
+            TAG_NULL => Value::Null,
+            TAG_BOOL => Value::Bool(attr.payload[0] != 0),
+            TAG_INT => Value::Int(i64::from_le_bytes(attr.payload)),
+            TAG_FLOAT => Value::Float(f64::from_le_bytes(attr.payload)),
+            TAG_POINT => Value::Point(crate::runtime::value::Point {
+                latitude: f32::from_le_bytes(attr.payload[..4].try_into().unwrap()),
+                longitude: f32::from_le_bytes(attr.payload[4..].try_into().unwrap()),
+            }),
+            TAG_DATETIME => Value::Datetime(i64::from_le_bytes(attr.payload)),
+            TAG_DATE => Value::Date(i64::from_le_bytes(attr.payload)),
+            TAG_TIME => Value::Time(i64::from_le_bytes(attr.payload)),
+            TAG_DURATION => Value::Duration(i64::from_le_bytes(attr.payload)),
+            TAG_HEAP => self.heap[attr.heap_index()].clone(),
+            _ => unreachable!("invalid packed attribute tag"),
+        }
+    }
+
+    /// Release the heap values referenced by a span's live entries.
+    fn release_span_values(
+        &mut self,
+        slot: Slot,
+    ) {
+        let start = slot.offset as usize;
+        for i in start..start + slot.len as usize {
+            if self.arena[i].tag == TAG_HEAP {
+                let hi = self.arena[i].heap_index();
+                self.heap[hi] = Value::Null;
+                self.heap_free.push(hi as u32);
+            }
+        }
+    }
+
+    /// Write an entity's full attribute set, replacing any previous span.
+    /// `pairs` must be sorted by attribute id; it is drained.
+    fn set_span(
+        &mut self,
+        o: usize,
+        pairs: &mut Vec<(u16, Value)>,
+    ) {
+        if self.slots.len() <= o {
+            self.slots.resize(o + 1, Slot::default());
+        }
+        let old = self.slots[o];
+        if old.cap != 0 {
+            self.release_span_values(old);
+        }
+
+        let n = pairs.len();
+        if n == 0 {
+            self.dead += u32::from(old.cap);
+            self.slots[o] = Slot::default();
+            return;
+        }
+        if n <= old.cap as usize {
+            for (k, (id, value)) in pairs.drain(..).enumerate() {
+                let (tag, payload) = self.pack(value);
+                self.arena[old.offset as usize + k] = PackedAttr { id, tag, payload };
+            }
+            self.slots[o] = Slot {
+                offset: old.offset,
+                len: n as u16,
+                cap: old.cap,
+            };
+        } else {
+            self.dead += u32::from(old.cap);
+            let offset = self.arena.len() as u32;
+            for (id, value) in pairs.drain(..) {
+                let (tag, payload) = self.pack(value);
+                self.arena.push(PackedAttr { id, tag, payload });
+            }
+            self.slots[o] = Slot {
+                offset,
+                len: n as u16,
+                cap: n as u16,
+            };
+        }
+    }
+
+    /// Free an entity's span (entity keeps no attributes).
+    fn free_span(
+        &mut self,
+        o: usize,
+    ) {
+        let slot = self.slots[o];
+        if slot.cap == 0 {
+            return;
+        }
+        self.release_span_values(slot);
+        self.dead += u32::from(slot.cap);
+        self.slots[o] = Slot::default();
+    }
+
+    /// Rebuild the arena from live spans when abandoned entries dominate.
+    fn maybe_compact(&mut self) {
+        if self.dead as usize * 2 <= self.arena.len() || self.arena.len() <= 1024 {
+            return;
+        }
+        let live: usize = self
+            .slots
+            .iter()
+            .filter(|s| s.cap != 0)
+            .map(|s| s.len as usize)
+            .sum();
+        let mut new_arena = Vec::with_capacity(live);
+        for slot in &mut self.slots {
+            if slot.cap == 0 {
+                continue;
+            }
+            let start = slot.offset as usize;
+            slot.offset = new_arena.len() as u32;
+            new_arena.extend_from_slice(&self.arena[start..start + slot.len as usize]);
+            slot.cap = slot.len;
+        }
+        self.arena = new_arena;
+        self.dead = 0;
+    }
+}
+
+/// Borrowed view of one entity's attribute span.
+#[derive(Clone, Copy)]
+struct SpanRef<'a> {
+    block: &'a Block,
+    slot: Slot,
+}
+
+impl<'a> SpanRef<'a> {
+    #[inline]
+    fn entries(self) -> &'a [PackedAttr] {
+        let start = self.slot.offset as usize;
+        &self.block.arena[start..start + self.slot.len as usize]
+    }
+
+    #[inline]
+    fn len(self) -> usize {
+        self.slot.len as usize
+    }
+
+    #[inline]
+    fn get(
+        self,
+        attr_idx: u16,
+    ) -> Option<Value> {
+        let entries = self.entries();
+        entries
+            .binary_search_by_key(&attr_idx, |attr| attr.id)
+            .ok()
+            .map(|pos| self.block.unpack(&entries[pos]))
+    }
+
+    fn iter(self) -> impl Iterator<Item = (u16, Value)> + 'a {
+        let block = self.block;
+        self.entries()
+            .iter()
+            .map(move |attr| (attr.id, block.unpack(attr)))
+    }
+
+    fn to_pairs(self) -> Vec<(u16, Value)> {
+        self.iter().collect()
+    }
+
+    /// Estimated heap bytes attributable to this entity: its arena span plus
+    /// its share of the block-level heap array.
+    fn heap_bytes(self) -> usize {
+        let mut bytes = self.len() * std::mem::size_of::<PackedAttr>();
+        for attr in self.entries() {
+            if attr.tag == TAG_HEAP {
+                let value = &self.block.heap[attr.heap_index()];
+                bytes += std::mem::size_of::<Value>() + value.heap_size();
+            }
+        }
+        bytes
+    }
 }
 
 /// Block-allocated attribute storage indexed by entity id.
@@ -216,25 +400,58 @@ impl DataBlock {
     fn get(
         &self,
         entity_id: u64,
-    ) -> Option<&AttrArray> {
+    ) -> Option<SpanRef<'_>> {
         let (b, o) = Self::locate(entity_id);
-        self.blocks.get(b)?.slots.get(o)?.as_ref()
+        let block = self.blocks.get(b)?;
+        let slot = *block.slots.get(o)?;
+        if slot.cap == 0 {
+            return None;
+        }
+        Some(SpanRef { block, slot })
     }
 
-    fn set(
+    /// Replace an entity's attribute set with `pairs` (sorted by attribute
+    /// id, drained). An empty `pairs` frees the span.
+    fn set_span(
         &mut self,
         entity_id: u64,
-        attrs: AttrArray,
+        pairs: &mut Vec<(u16, Value)>,
     ) {
+        if pairs.is_empty() {
+            self.remove(entity_id);
+            return;
+        }
         let (b, o) = Self::locate(entity_id);
         if self.blocks.len() <= b {
             self.blocks.resize_with(b + 1, Arc::default);
         }
         let block = Arc::make_mut(&mut self.blocks[b]);
-        if block.slots.len() <= o {
-            block.slots.resize_with(o + 1, || None);
+        block.set_span(o, pairs);
+        block.maybe_compact();
+    }
+
+    /// Trim arena growth slop on blocks this version owns exclusively
+    /// (i.e. the blocks touched since the last snapshot). Called at commit
+    /// time: mid-fill shrinking would break `Vec`'s doubling sequence and
+    /// leave up to 2x over-allocation, so slop is reclaimed here instead.
+    ///
+    /// Only fully-populated blocks are shrunk: reallocating a still-growing
+    /// tail block on every commit churns the allocator (RSS fragmentation)
+    /// for slop that the next batch reclaims anyway. Residual slop is
+    /// bounded by one partially-filled tail block per store.
+    fn trim(&mut self) {
+        for arc in &mut self.blocks {
+            if let Some(block) = Arc::get_mut(arc) {
+                if block.slots.len() == BLOCK_CAP {
+                    block.arena.shrink_to_fit();
+                    block.heap.shrink_to_fit();
+                    // Slots fill in hash order, so `resize` can double past
+                    // BLOCK_CAP from a non-power-of-two start.
+                    block.slots.shrink_to_fit();
+                }
+                block.heap_free.shrink_to_fit();
+            }
         }
-        block.slots[o] = Some(attrs);
     }
 
     fn remove(
@@ -247,10 +464,12 @@ impl DataBlock {
         let Some(block) = self.blocks.get(b) else {
             return;
         };
-        if !block.slots.get(o).is_some_and(Option::is_some) {
+        if !block.slots.get(o).is_some_and(|slot| slot.cap != 0) {
             return;
         }
-        Arc::make_mut(&mut self.blocks[b]).slots[o] = None;
+        let block = Arc::make_mut(&mut self.blocks[b]);
+        block.free_span(o);
+        block.maybe_compact();
     }
 
     /// Estimated heap bytes of stored attribute payloads.
@@ -258,24 +477,21 @@ impl DataBlock {
         self.blocks
             .iter()
             .map(|block| {
-                block
-                    .slots
-                    .iter()
-                    .filter_map(Option::as_ref)
-                    .map(AttrArray::heap_bytes)
-                    .sum::<usize>()
+                block.arena.capacity() * std::mem::size_of::<PackedAttr>()
+                    + block.heap.capacity() * std::mem::size_of::<Value>()
+                    + block.heap.iter().map(Value::heap_size).sum::<usize>()
+                    + block.heap_free.capacity() * std::mem::size_of::<u32>()
             })
             .sum()
     }
 
     /// Structural overhead of the slot storage, excluding attribute payload.
     fn structural_memory_usage(&self) -> usize {
-        let slot_size = std::mem::size_of::<Option<AttrArray>>();
-        self.blocks.len() * std::mem::size_of::<Arc<Block>>()
+        self.blocks.len() * (std::mem::size_of::<Arc<Block>>() + std::mem::size_of::<Block>())
             + self
                 .blocks
                 .iter()
-                .map(|block| block.slots.len() * slot_size)
+                .map(|block| block.slots.capacity() * std::mem::size_of::<Slot>())
                 .sum::<usize>()
     }
 }
@@ -292,7 +508,7 @@ impl DataBlock {
 pub struct AttributeStore {
     /// Attribute names in insertion order (name → column index)
     pub attrs_name: AttrNameMap,
-    /// Block-allocated per-entity attribute sets (COW across MVCC versions).
+    /// Block-allocated per-entity attribute spans (COW across MVCC versions).
     data: DataBlock,
 }
 
@@ -314,6 +530,11 @@ impl AttributeStore {
         self.clone()
     }
 
+    /// Reclaim arena growth slop on exclusively-owned blocks. Call at commit.
+    pub fn trim(&mut self) {
+        self.data.trim();
+    }
+
     // ---- read path --------------------------------------------------------
 
     #[must_use]
@@ -332,7 +553,7 @@ impl AttributeStore {
         key: u64,
         attr_idx: u16,
     ) -> Option<Value> {
-        self.data.get(key)?.get(attr_idx).cloned()
+        self.data.get(key)?.get(attr_idx)
     }
 
     /// Batch variant of `get_attr_by_idx` for a list of keys with the same
@@ -347,11 +568,7 @@ impl AttributeStore {
     ) {
         out.reserve(keys.len());
         for &key in keys {
-            let value = self
-                .data
-                .get(key)
-                .and_then(|attrs| attrs.get(attr_idx))
-                .cloned();
+            let value = self.data.get(key).and_then(|span| span.get(attr_idx));
             out.push(value.unwrap_or_else(|| default.clone()));
         }
     }
@@ -361,52 +578,47 @@ impl AttributeStore {
         &self,
         key: u64,
     ) -> bool {
-        self.data.get(key).is_some_and(|attrs| !attrs.is_empty())
+        self.data.get(key).is_some()
+    }
+
+    /// Estimated heap bytes of one entity's attribute set (0 if none).
+    #[must_use]
+    pub fn entity_memory_usage(
+        &self,
+        key: u64,
+    ) -> usize {
+        self.data.get(key).map_or(0, SpanRef::heap_bytes)
     }
 
     pub fn get_attrs(
         &self,
         key: u64,
     ) -> impl Iterator<Item = Arc<String>> + '_ {
-        let attrs = self
-            .data
-            .get(key)
-            .cloned()
-            .unwrap_or_else(|| EMPTY_ATTRS.clone());
-        attrs
-            .iter()
-            .filter_map(move |(idx, _)| self.attrs_name.get(idx as usize).cloned())
-            .collect::<Vec<_>>()
-            .into_iter()
+        self.data.get(key).into_iter().flat_map(move |span| {
+            span.entries()
+                .iter()
+                .filter_map(move |attr| self.attrs_name.get(attr.id as usize).cloned())
+        })
     }
 
     pub fn get_all_attrs(
         &self,
         key: u64,
-    ) -> Vec<(Arc<String>, Value)> {
-        let attrs = self
-            .data
-            .get(key)
-            .cloned()
-            .unwrap_or_else(|| EMPTY_ATTRS.clone());
-        attrs
-            .iter()
-            .filter_map(move |(idx, value)| {
+    ) -> impl Iterator<Item = (Arc<String>, Value)> + '_ {
+        self.data.get(key).into_iter().flat_map(move |span| {
+            span.iter().filter_map(|(idx, value)| {
                 self.attrs_name
                     .get(idx as usize)
-                    .map(|name| (name.clone(), value.clone()))
+                    .map(|name| (name.clone(), value))
             })
-            .collect::<Vec<_>>()
+        })
     }
 
     pub fn get_all_attrs_by_id(
         &self,
         key: u64,
-    ) -> AttrArray {
-        self.data
-            .get(key)
-            .cloned()
-            .unwrap_or_else(|| EMPTY_ATTRS.clone())
+    ) -> impl Iterator<Item = (u16, Value)> + '_ {
+        self.data.get(key).into_iter().flat_map(SpanRef::iter)
     }
 
     // ---- write path --------------------------------------------------------
@@ -427,22 +639,10 @@ impl AttributeStore {
     /// the number of non-null attributes *set*.
     pub fn insert_attrs(
         &mut self,
-        attrs: &FxHashMap<u64, OrderMap<Arc<String>, Value>>,
+        attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
     ) -> Result<(usize, usize), String> {
         let mut nremoved = 0;
         let mut nset = 0;
-
-        // Pre-resolve all unique attribute names → indices ONCE.
-        // Uses Arc pointer identity as key to avoid rehashing strings.
-        let mut name_to_idx: FxHashMap<*const String, u16> = FxHashMap::default();
-        for entity_attrs in attrs.values() {
-            for (attr, _) in entity_attrs.iter() {
-                let ptr = Arc::as_ptr(attr);
-                if let std::collections::hash_map::Entry::Vacant(e) = name_to_idx.entry(ptr) {
-                    e.insert(self.get_or_create_attr_id(attr));
-                }
-            }
-        }
 
         // Reusable buffer to avoid per-entity allocation.
         let mut merged: Vec<(u16, Value)> = Vec::new();
@@ -454,26 +654,24 @@ impl AttributeStore {
             if entity_attrs.is_empty() {
                 continue;
             }
-            // Resolve attribute indices using pre-resolved map.
+            // Split into non-null entries and null (removal) indices. Input
+            // is already resolved and sorted by attribute id, so both splits
+            // stay sorted.
             let mut new_entries: Vec<(u16, Value)> = Vec::with_capacity(entity_attrs.len());
             let mut null_indices: Vec<u16> = Vec::new();
 
-            for (attr, value) in entity_attrs.iter() {
-                let idx = name_to_idx[&Arc::as_ptr(attr)];
+            for (idx, value) in entity_attrs {
                 if matches!(value, Value::Null) {
-                    null_indices.push(idx);
+                    null_indices.push(*idx);
                 } else {
-                    new_entries.push((idx, value.clone()));
+                    new_entries.push((*idx, value.clone()));
                     nset += 1;
                 }
             }
 
-            // Current stored state (cheap Arc clone detaches the borrow).
-            let current_arr = self.data.get(*key).cloned();
-            let current: &[(u16, Value)] = current_arr.as_ref().map_or(&[], AttrArray::pairs);
-
-            // Sort new entries for O(n+m) merge.
-            new_entries.sort_unstable_by_key(|(idx, _)| *idx);
+            // Current stored state, unpacked once for the merge.
+            let current: Vec<(u16, Value)> =
+                self.data.get(*key).map_or_else(Vec::new, SpanRef::to_pairs);
 
             // Fast path: if no nulls AND all new entries come after all current
             // entries, just clone current + append new without a full merge.
@@ -483,11 +681,9 @@ impl AttributeStore {
             {
                 merged.clear();
                 merged.reserve(current.len() + new_entries.len());
-                merged.extend_from_slice(current);
+                merged.extend_from_slice(&current);
                 merged.append(&mut new_entries);
             } else {
-                null_indices.sort_unstable();
-
                 // Single-pass sorted merge of current + new_entries, skipping nulls.
                 merged.clear();
                 merged.reserve(current.len() + new_entries.len());
@@ -536,8 +732,7 @@ impl AttributeStore {
                 }
             }
 
-            self.data
-                .set(*key, AttrArray::from_sorted(std::mem::take(&mut merged)));
+            self.data.set_span(*key, &mut merged);
         }
 
         Ok((nremoved, nset))
@@ -545,43 +740,30 @@ impl AttributeStore {
 
     /// Bulk import attributes for entities known to be new (no prior state).
     ///
-    /// Optimized for RDB decode: skips slot lookups since entities don't
-    /// exist yet. Returns the number of non-null attributes imported.
+    /// Input values are attribute-id-resolved and sorted by id; null values
+    /// are skipped. Returns the number of non-null attributes imported.
     pub fn import_attrs(
         &mut self,
-        attrs: &FxHashMap<u64, OrderMap<Arc<String>, Value>>,
+        attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
     ) -> usize {
-        // Pre-resolve all unique attribute names → indices ONCE.
-        let mut name_to_idx: FxHashMap<*const String, u16> = FxHashMap::default();
-        for entity_attrs in attrs.values() {
-            for (attr, _) in entity_attrs.iter() {
-                let ptr = Arc::as_ptr(attr);
-                if let std::collections::hash_map::Entry::Vacant(e) = name_to_idx.entry(ptr) {
-                    e.insert(self.get_or_create_attr_id(attr));
-                }
-            }
-        }
-
         let mut nset = 0;
+        // Reusable scratch, drained into the arena per entity.
+        let mut scratch: Vec<(u16, Value)> = Vec::new();
         for (key, entity_attrs) in attrs {
-            let mut entries: Vec<(u16, Value)> = Vec::with_capacity(entity_attrs.len());
-
-            for (attr, value) in entity_attrs.iter() {
-                if matches!(value, Value::Null) {
-                    continue;
-                }
-                let idx = name_to_idx[&Arc::as_ptr(attr)];
-                entries.push((idx, value.clone()));
-                nset += 1;
-            }
-
+            scratch.clear();
+            scratch.extend(
+                entity_attrs
+                    .iter()
+                    .filter(|(_, value)| !matches!(value, Value::Null))
+                    .cloned(),
+            );
             // Skip empty entities to avoid per-entity slot overhead (matches
             // C's NULL AttributeSet behaviour for prop-less entities).
-            if entries.is_empty() {
+            if scratch.is_empty() {
                 continue;
             }
-            entries.sort_by_key(|(idx, _)| *idx);
-            self.data.set(*key, AttrArray::from_sorted(entries));
+            nset += scratch.len();
+            self.data.set_span(*key, &mut scratch);
         }
         nset
     }
@@ -599,7 +781,7 @@ impl AttributeStore {
             }
             nset += entries.len();
             entries.sort_by_key(|(idx, _)| *idx);
-            self.data.set(entity_id, AttrArray::from_sorted(entries));
+            self.data.set_span(entity_id, &mut entries);
         }
         nset
     }
@@ -674,17 +856,19 @@ impl AttributeStore {
 
             w.write_unsigned(id);
 
-            let props = self.get_all_attrs_by_id(id);
-            w.write_unsigned(props.len() as u64);
+            let span = self.data.get(id);
+            w.write_unsigned(span.map_or(0, |s| s.len() as u64));
 
-            for (local_attr_id, value) in props.iter() {
-                let global_attr_id = if (local_attr_id as usize) < remap.len() {
-                    remap[local_attr_id as usize]
-                } else {
-                    local_attr_id
-                };
-                w.write_unsigned(global_attr_id as u64);
-                value.encode(w);
+            if let Some(span) = span {
+                for (local_attr_id, value) in span.iter() {
+                    let global_attr_id = if (local_attr_id as usize) < remap.len() {
+                        remap[local_attr_id as usize]
+                    } else {
+                        local_attr_id
+                    };
+                    w.write_unsigned(u64::from(global_attr_id));
+                    value.encode(w);
+                }
             }
 
             encoded += 1;
@@ -721,7 +905,7 @@ impl Decode<19> for AttributeStore {
 
             if !entries.is_empty() {
                 entries.sort_by_key(|(idx, _)| *idx);
-                self.data.set(entity_id, AttrArray::from_sorted(entries));
+                self.data.set_span(entity_id, &mut entries);
             }
         }
         Ok(())
@@ -738,22 +922,168 @@ mod tests {
 
     fn store_with(entries: &[(u64, &[(&str, Value)])]) -> AttributeStore {
         let mut store = AttributeStore::new(0);
-        let mut attrs: FxHashMap<u64, OrderMap<Arc<String>, Value>> = FxHashMap::default();
+        let mut attrs: FxHashMap<u64, Vec<(u16, Value)>> = FxHashMap::default();
         for (id, pairs) in entries {
-            let mut map = OrderMap::default();
-            for (attr, value) in *pairs {
-                map.insert(name(attr), value.clone());
-            }
-            attrs.insert(*id, map);
+            let mut vec: Vec<(u16, Value)> = pairs
+                .iter()
+                .map(|(attr, value)| (store.get_or_create_attr_id(&name(attr)), value.clone()))
+                .collect();
+            vec.sort_unstable_by_key(|(k, _)| *k);
+            attrs.insert(*id, vec);
         }
         store.insert_attrs(&attrs).unwrap();
         store
     }
 
     #[test]
-    fn slot_is_pointer_sized() {
-        assert_eq!(std::mem::size_of::<Option<AttrArray>>(), 8);
-        assert_eq!(std::mem::size_of::<AttrArray>(), 8);
+    fn layout_matches_c() {
+        assert_eq!(std::mem::size_of::<Slot>(), 8);
+        assert_eq!(std::mem::size_of::<PackedAttr>(), 12);
+    }
+
+    #[test]
+    fn packed_round_trip_all_storable_variants() {
+        use crate::runtime::value::Point;
+        let values = vec![
+            Value::Bool(true),
+            Value::Bool(false),
+            Value::Int(i64::MIN),
+            Value::Int(-1),
+            Value::Int(i64::MAX),
+            Value::Float(-0.0),
+            Value::Float(f64::NAN),
+            Value::Float(f64::MAX),
+            Value::Point(Point {
+                latitude: 32.07,
+                longitude: 34.78,
+            }),
+            Value::Datetime(-62_135_596_800),
+            Value::Date(19_723),
+            Value::Time(-1),
+            Value::Duration(i64::MAX),
+            Value::String(Arc::new("hello".to_string())),
+            Value::List(Arc::new(
+                [Value::Int(1), Value::String(Arc::new("x".to_string()))]
+                    .into_iter()
+                    .collect(),
+            )),
+            Value::VecF32(Arc::new([1.0f32, -2.5].into_iter().collect())),
+        ];
+        let mut store = AttributeStore::new(0);
+        let pairs: Vec<(u16, Value)> = values
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(i, v)| {
+                store.get_or_create_attr_id(&name(&format!("a{i:02}")));
+                (i as u16, v)
+            })
+            .collect();
+        let mut attrs = FxHashMap::default();
+        attrs.insert(7u64, pairs.clone());
+        store.insert_attrs(&attrs).unwrap();
+
+        for (i, expected) in values.iter().enumerate() {
+            let got = store.get_attr_by_idx(7, i as u16).unwrap();
+            match (expected, &got) {
+                // NaN != NaN under PartialEq; compare bit patterns.
+                (Value::Float(a), Value::Float(b)) => assert_eq!(a.to_bits(), b.to_bits()),
+                _ => assert_eq!(*expected, got),
+            }
+        }
+        assert_eq!(store.get_attr_by_idx(7, values.len() as u16), None);
+
+        let round_tripped: Vec<_> = store.get_all_attrs_by_id(7).collect();
+        assert_eq!(round_tripped.len(), pairs.len());
+        for ((ei, ev), (gi, gv)) in pairs.iter().zip(round_tripped.iter()) {
+            assert_eq!(ei, gi);
+            if let (Value::Float(a), Value::Float(b)) = (ev, gv) {
+                assert_eq!(a.to_bits(), b.to_bits());
+            } else {
+                assert_eq!(ev, gv);
+            }
+        }
+    }
+
+    #[test]
+    fn scalar_entity_memory_matches_c_layout() {
+        // All-scalar entity: exactly 12 bytes per attribute, nothing else.
+        let pairs: Vec<(&str, Value)> = vec![
+            ("a", Value::Int(1)),
+            ("b", Value::Int(2)),
+            ("c", Value::Int(3)),
+            ("d", Value::Int(4)),
+        ];
+        let store = store_with(&[(1, &pairs)]);
+        assert_eq!(store.entity_memory_usage(1), 4 * 12);
+        assert_eq!(store.entity_memory_usage(2), 0);
+        assert!(store.data.blocks[0].heap.is_empty());
+    }
+
+    #[test]
+    fn mixed_scalar_and_heap_interleaved() {
+        let s1 = Value::String(Arc::new("first".to_string()));
+        let s2 = Value::String(Arc::new("second".to_string()));
+        let store = store_with(&[(
+            1,
+            &[
+                ("a", Value::Int(7)),
+                ("b", s1.clone()),
+                ("c", Value::Float(1.5)),
+                ("d", s2.clone()),
+            ],
+        )]);
+        assert_eq!(store.get_attr(1, &name("a")), Some(Value::Int(7)));
+        assert_eq!(store.get_attr(1, &name("b")), Some(s1));
+        assert_eq!(store.get_attr(1, &name("c")), Some(Value::Float(1.5)));
+        assert_eq!(store.get_attr(1, &name("d")), Some(s2));
+        assert_eq!(store.data.blocks[0].heap.len(), 2);
+    }
+
+    #[test]
+    fn heap_free_list_reuse_on_overwrite() {
+        let mut store = store_with(&[(1, &[("s", Value::String(Arc::new("old".to_string())))])]);
+        let s = store.get_or_create_attr_id(&name("s"));
+        let mut attrs = FxHashMap::default();
+        attrs.insert(1u64, vec![(s, Value::String(Arc::new("new".to_string())))]);
+        store.insert_attrs(&attrs).unwrap();
+
+        assert_eq!(
+            store.get_attr(1, &name("s")),
+            Some(Value::String(Arc::new("new".to_string())))
+        );
+        // The old string's heap slot must be recycled, not leaked.
+        let block = &store.data.blocks[0];
+        assert_eq!(block.heap.len(), 1);
+        assert!(block.heap_free.is_empty());
+    }
+
+    #[test]
+    fn compaction_reclaims_abandoned_spans() {
+        let mut store = AttributeStore::new(0);
+        for i in 0..200u16 {
+            store.get_or_create_attr_id(&name(&format!("a{i:03}")));
+        }
+        // Grow one entity's attr set one attribute at a time: every write
+        // relocates the span, abandoning the previous one.
+        for k in 1..=100u16 {
+            let pairs: Vec<(u16, Value)> = (0..k).map(|i| (i, Value::Int(i64::from(i)))).collect();
+            let mut attrs = FxHashMap::default();
+            attrs.insert(1u64, pairs);
+            store.insert_attrs(&attrs).unwrap();
+        }
+        let block = &store.data.blocks[0];
+        // Compaction must have run: dead entries bounded by live ones.
+        assert!(block.dead as usize * 2 <= block.arena.len() || block.arena.len() <= 1024);
+        // Values intact after compaction.
+        for i in 0..100u16 {
+            assert_eq!(
+                store.get_attr_by_idx(1, i),
+                Some(Value::Int(i64::from(i))),
+                "attr {i}"
+            );
+        }
+        assert_eq!(store.get_all_attrs_by_id(1).count(), 100);
     }
 
     #[test]
@@ -772,12 +1102,13 @@ mod tests {
         let mut store = store_with(&[(1, &[("a", Value::Int(1)), ("b", Value::Int(2))])]);
 
         // Overwrite `a`, remove `b` via null, add `c`.
-        let mut map = OrderMap::default();
-        map.insert(name("a"), Value::Int(10));
-        map.insert(name("b"), Value::Null);
-        map.insert(name("c"), Value::Int(3));
+        let a = store.get_or_create_attr_id(&name("a"));
+        let b = store.get_or_create_attr_id(&name("b"));
+        let c = store.get_or_create_attr_id(&name("c"));
+        let mut vec = vec![(a, Value::Int(10)), (b, Value::Null), (c, Value::Int(3))];
+        vec.sort_unstable_by_key(|(k, _)| *k);
         let mut attrs = FxHashMap::default();
-        attrs.insert(1u64, map);
+        attrs.insert(1u64, vec);
         let (nremoved, nset) = store.insert_attrs(&attrs).unwrap();
 
         assert_eq!(nremoved, 2); // `a` replaced + `b` removed
@@ -792,12 +1123,13 @@ mod tests {
         let v1 = store_with(&[(1, &[("a", Value::Int(1))])]);
         let mut v2 = v1.new_version(1);
 
-        // Mutate v2: overwrite entity 1, add entity 2, delete entity 1 attrs.
-        let mut map = OrderMap::default();
-        map.insert(name("a"), Value::Int(99));
+        // Mutate v2: overwrite entity 1 (in-place candidate!), add entity 2,
+        // then delete entity 1's attrs. v1 must never observe any of it.
+        let a = v2.get_or_create_attr_id(&name("a"));
+        let vec = vec![(a, Value::Int(99))];
         let mut attrs = FxHashMap::default();
-        attrs.insert(1u64, map.clone());
-        attrs.insert(2u64, map);
+        attrs.insert(1u64, vec.clone());
+        attrs.insert(2u64, vec);
         v2.insert_attrs(&attrs).unwrap();
 
         assert_eq!(v2.get_attr(1, &name("a")), Some(Value::Int(99)));
@@ -814,6 +1146,26 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_isolation_heap_values() {
+        let v1 = store_with(&[(1, &[("s", Value::String(Arc::new("v1".to_string())))])]);
+        let mut v2 = v1.new_version(1);
+
+        let s = v2.get_or_create_attr_id(&name("s"));
+        let mut attrs = FxHashMap::default();
+        attrs.insert(1u64, vec![(s, Value::String(Arc::new("v2".to_string())))]);
+        v2.insert_attrs(&attrs).unwrap();
+
+        assert_eq!(
+            v1.get_attr(1, &name("s")),
+            Some(Value::String(Arc::new("v1".to_string())))
+        );
+        assert_eq!(
+            v2.get_attr(1, &name("s")),
+            Some(Value::String(Arc::new("v2".to_string())))
+        );
+    }
+
+    #[test]
     fn remove_all_is_immediate() {
         let mut store = store_with(&[(5, &[("a", Value::Int(1))])]);
         let mut keys = RoaringTreemap::new();
@@ -821,7 +1173,7 @@ mod tests {
         store.remove_all(&keys);
         assert_eq!(store.get_attr(5, &name("a")), None);
         assert!(!store.has_attributes(5));
-        assert!(store.get_all_attrs(5).is_empty());
+        assert!(store.get_all_attrs(5).next().is_none());
     }
 
     #[test]

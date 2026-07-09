@@ -492,9 +492,9 @@ class testGraphMemoryUsage(FlowTestsBase):
         res = self._graph_memory_usage()
         self.env.assertGreater(res.node_block_storage_sz_mb, node_storage)
 
-        # In Rust, attribute store shrinks on delete but deleted_nodes bitmap grows.
-        # Memory should be at least as large as before deletion.
-        self.env.assertGreaterEqual(res.node_block_storage_sz_mb, double_sized_graph_node_storage)
+        # In Rust, the arena-based attribute store compacts on delete, so
+        # deleting half the nodes reclaims memory below the doubled size.
+        self.env.assertLessEqual(res.node_block_storage_sz_mb, double_sized_graph_node_storage)
 
     def test_graph_with_multi_edges(self):
         """test memory consumption of a graph containing multi-edges"""
@@ -595,12 +595,12 @@ class testGraphMemoryUsage(FlowTestsBase):
         # expecting datablocks to consume more space, as these do not shrinks
         # and the internal deleted_idx array contains every deleted ID
 
-        # In Rust, attribute store shrinks on delete but deleted_nodes bitmap grows.
-        # Storage should be at least as large as original.
-        self.env.assertGreaterEqual(deleted_memory_consumption.node_block_storage_sz_mb,
+        # In Rust, the arena-based attribute store compacts on delete, so
+        # storage shrinks below the original size but must stay bounded by it.
+        self.env.assertLessEqual(deleted_memory_consumption.node_block_storage_sz_mb,
                                original_memory_consumption.node_block_storage_sz_mb)
 
-        self.env.assertGreaterEqual(deleted_memory_consumption.edge_block_storage_sz_mb,
+        self.env.assertLessEqual(deleted_memory_consumption.edge_block_storage_sz_mb,
                                original_memory_consumption.edge_block_storage_sz_mb)
 
         #-----------------------------------------------------------------------
