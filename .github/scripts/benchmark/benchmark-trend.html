@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>FalkorDB — per-query benchmark trend</title>
+<style>
+  :root{
+    --bg:#f4f6fb; --surface:#ffffff; --surface-2:#f0f2f8; --border:#e2e5ef;
+    --ink:#1a2030; --muted:#5c657c; --faint:#8a93a8; --accent:#6a4dff;
+    --a:#2f6fd0; --b:#b9761c; --good:#0e8f66; --bad:#c0384a; --grid:#eceef4;
+    --shadow:0 1px 2px rgba(20,26,48,.05),0 8px 24px rgba(20,26,48,.05);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0e1320; --surface:#161c2a; --surface-2:#1c2334; --border:#28314a;
+      --ink:#e8edf5; --muted:#9aa6bd; --faint:#68748c; --accent:#9d90ff;
+      --a:#5b8bef; --b:#c9862b; --good:#28c090; --bad:#e0687a; --grid:#212a40;
+      --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.28);
+    }
+  }
+  :root[data-theme="light"]{--bg:#f4f6fb;--surface:#fff;--surface-2:#f0f2f8;--border:#e2e5ef;--ink:#1a2030;--muted:#5c657c;--faint:#8a93a8;--accent:#6a4dff;--a:#2f6fd0;--b:#b9761c;--good:#0e8f66;--bad:#c0384a;--grid:#eceef4;}
+  :root[data-theme="dark"]{--bg:#0e1320;--surface:#161c2a;--surface-2:#1c2334;--border:#28314a;--ink:#e8edf5;--muted:#9aa6bd;--faint:#68748c;--accent:#9d90ff;--a:#5b8bef;--b:#c9862b;--good:#28c090;--bad:#e0687a;--grid:#212a40;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+  main{max-width:1080px;margin:0 auto;padding:32px 24px 80px}
+  .mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+  h1{font-size:24px;margin:0 0 4px;letter-spacing:-.02em}
+  .lede{color:var(--muted);max-width:70ch;margin:.2em 0 0;font-size:14.5px}
+  .lede b{color:var(--ink)}
+  a{color:var(--accent)}
+  header.hero{padding-bottom:18px;border-bottom:1px solid var(--border)}
+  .topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap}
+  .legend{display:flex;gap:14px;margin-top:12px;font-size:12.5px;color:var(--muted)}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .legend .dot{width:10px;height:10px;border-radius:3px}
+  .controls{position:sticky;top:0;z-index:5;display:flex;gap:16px;align-items:center;flex-wrap:wrap;
+    background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(8px);
+    border:1px solid var(--border);border-radius:12px;padding:10px 14px;margin:18px 0}
+  .cl{font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);margin-right:8px}
+  .seg{display:inline-flex;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:3px}
+  .seg button{appearance:none;border:0;background:transparent;color:var(--muted);font:inherit;font-size:13px;font-weight:600;padding:5px 12px;border-radius:6px;cursor:pointer}
+  .seg button:hover{color:var(--ink)}
+  .seg button.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12)}
+  @media (prefers-color-scheme:dark){ .seg button.on{background:var(--accent);color:#fff;box-shadow:none} }
+  :root[data-theme="dark"] .seg button.on{background:var(--accent);color:#fff;box-shadow:none}
+  :root[data-theme="light"] .seg button.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12)}
+  button.ghost{appearance:none;background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:6px 10px;font:inherit;font-size:12.5px;cursor:pointer}
+  .spark-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(232px,1fr));gap:12px;margin-top:10px}
+  .spark{background:var(--surface);border:1px solid var(--border);border-radius:11px;padding:11px 12px 9px;cursor:pointer;box-shadow:var(--shadow)}
+  .spark:hover{border-color:var(--accent)}
+  .spark.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+  .spark .st{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+  .spark .sq{font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .spark .sd{font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:6px;white-space:nowrap}
+  .sd.down{color:var(--good);background:color-mix(in srgb,var(--good) 16%,transparent)}
+  .sd.up{color:var(--bad);background:color-mix(in srgb,var(--bad) 16%,transparent)}
+  .sd.flat{color:var(--muted);background:color-mix(in srgb,var(--muted) 14%,transparent)}
+  .spark .sl{font-size:10px;color:var(--faint);margin-top:2px}
+  svg{display:block;max-width:100%}
+  .axis{fill:var(--faint);font-size:11px}
+  .gridline{stroke:var(--grid);stroke-width:1}
+  .val{font-size:11px;font-weight:700;font-variant-numeric:tabular-nums}
+  figure{margin:22px 0 0;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px 18px;box-shadow:var(--shadow)}
+  .fig-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+  .fig-title{font-size:13px;font-weight:700}
+  .fig-meta{font-size:12px;color:var(--muted)}
+  .note{color:var(--muted);font-size:12.5px;border-left:3px solid var(--border);padding-left:11px;margin-top:12px}
+  .msg{color:var(--muted);padding:40px 0;text-align:center}
+  .tt{position:fixed;pointer-events:none;z-index:20;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow);padding:7px 10px;font-size:12px;opacity:0;transition:opacity .08s}
+  .tt .ttq{font-weight:700;margin-bottom:4px}
+  .tt .row{display:flex;align-items:center;gap:7px;justify-content:space-between}
+  .tt .row .lab{display:flex;align-items:center;gap:6px;color:var(--muted)}
+  .tt .row .dot{width:9px;height:9px;border-radius:3px}
+</style>
+</head>
+<body>
+<main>
+  <header class="hero">
+    <div class="topbar">
+      <div>
+        <h1>Per-query benchmark trend <span class="mono" style="font-size:14px;font-weight:400;color:var(--muted)">· main</span></h1>
+        <p class="lede">Each query shape's latency over successive main-branch runs — <b>C engine</b> (<span class="mono" id="nameA">edge</span>) vs <b>Rust</b> (<span class="mono" id="nameB">edge-rs</span>). A regression confined to one query surfaces here even when the aggregate looks flat. Click a card to drill in.</p>
+      </div>
+      <button class="ghost" id="themeBtn" title="Toggle light/dark">◐ theme</button>
+    </div>
+    <div class="legend">
+      <span><span class="dot" style="background:var(--a)"></span><b>C engine</b></span>
+      <span><span class="dot" style="background:var(--b)"></span><b>Rust</b></span>
+    </div>
+  </header>
+
+  <div class="controls">
+    <div><span class="cl">Metric</span>
+      <div class="seg" id="segMetric">
+        <button data-v="exec" class="on">Server exec</button><button data-v="p50">p50</button><button data-v="p95">p95</button><button data-v="p99">p99</button>
+      </div>
+    </div>
+    <span class="fig-meta" id="ctlHint"></span>
+  </div>
+
+  <div id="grid" class="spark-grid"></div>
+  <div id="empty" class="msg" hidden></div>
+
+  <figure id="detailFig" hidden>
+    <div class="fig-head">
+      <span class="fig-title">Drill-down · <span id="detailQ" class="mono">—</span> · <span id="detailMetric">server exec</span> over time</span>
+      <span class="fig-meta">hover for values</span>
+    </div>
+    <svg id="linechart" role="img" aria-label="Per-query trend"></svg>
+    <div class="note">Newest run on the right. Trend history begins at the first run that included the query; renamed queries appear as a fresh series.</div>
+  </figure>
+</main>
+<div class="tt" id="tt"></div>
+
+<script>
+const METLABEL={exec:"server exec",p50:"client p50",p95:"client p95",p99:"client p99"};
+const state={metric:"exec",query:null};
+let TREND=null;
+const SVGNS="http://www.w3.org/2000/svg";
+const css=k=>getComputedStyle(document.documentElement).getPropertyValue(k).trim();
+const el=(t,a,k)=>{const e=document.createElementNS(SVGNS,t);for(const n in(a||{}))e.setAttribute(n,a[n]);(k||[]).forEach(c=>e.appendChild(c));return e;};
+const txt=s=>document.createTextNode(s);
+const fmt=x=>x==null?"—":x>=100?x.toFixed(0):x>=10?x.toFixed(1):x>=1?x.toFixed(2):x.toFixed(3);
+const dateOf=t=>{const d=new Date(t*1000);return(d.getMonth()+1)+"/"+d.getDate();};
+
+/* theme toggle (page is served standalone on gh-pages) */
+document.getElementById("themeBtn").addEventListener("click",()=>{
+  const cur=document.documentElement.getAttribute("data-theme")
+    || (matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");
+  document.documentElement.setAttribute("data-theme",cur==="dark"?"light":"dark");
+  render();
+});
+
+function seriesFor(q){ return (TREND.series[state.metric]||{})[q] || []; }
+
+function render(){
+  document.getElementById("detailMetric").textContent=METLABEL[state.metric];
+  document.getElementById("ctlHint").textContent=state.metric==="exec"
+    ? "server-internal execution time (ms)" : "client latency percentile (ms)";
+  renderGrid();
+  if(state.query) drawDetail();
+}
+
+function renderGrid(){
+  const grid=document.getElementById("grid"); grid.innerHTML="";
+  const qs=TREND.queries.filter(q=>seriesFor(q).length);
+  if(!qs.length){ document.getElementById("empty").hidden=false;
+    document.getElementById("empty").textContent="No data for this metric yet."; return; }
+  document.getElementById("empty").hidden=true;
+  for(const q of qs){
+    const pts=seriesFor(q); const bs=pts.map(p=>p[2]).filter(v=>v!=null);
+    const first=bs[0], last=bs[bs.length-1];
+    const chg=(first&&last)?last/first-1:0;
+    const cls=Math.abs(chg)<0.02?"flat":chg<0?"down":"up";
+    const arrow=cls==="flat"?"▬":chg<0?"▼":"▲";
+    const card=document.createElement("div"); card.className="spark"+(q===state.query?" sel":"");
+    card.innerHTML=`<div class="st"><span class="sq">${q}</span>
+      <span class="sd ${cls}">${arrow} ${Math.abs(chg*100).toFixed(0)}%</span></div>`;
+    card.appendChild(sparkSVG(pts));
+    const cap=document.createElement("div"); cap.className="sl";
+    cap.textContent=`Rust ${fmt(last)} · C-engine ${fmt(pts[pts.length-1][1])} ms`;
+    card.appendChild(cap);
+    card.addEventListener("click",()=>{ state.query=q; render();
+      document.getElementById("detailFig").scrollIntoView({behavior:"smooth",block:"nearest"}); });
+    grid.appendChild(card);
+  }
+}
+
+function sparkSVG(pts){
+  const W=210,H=46,p=4,n=pts.length;
+  const vals=pts.flatMap(x=>[x[1],x[2]]).filter(v=>v!=null);
+  const mx=Math.max(...vals),mn=Math.min(...vals);
+  const X=i=>p+(n<2?0:i*(W-2*p)/(n-1)), Y=v=>H-p-((v-mn)/((mx-mn)||1))*(H-2*p);
+  const svg=el("svg",{viewBox:`0 0 ${W} ${H}`,width:"100%",height:H});
+  [[1,css("--a"),1.5,0.7],[2,css("--b"),2,1]].forEach(([idx,col,w,op])=>{
+    const seg=pts.map((x,i)=>x[idx]!=null?`${X(i)},${Y(x[idx])}`:null).filter(Boolean).join(" ");
+    if(seg) svg.appendChild(el("polyline",{points:seg,fill:"none",stroke:col,"stroke-width":w,
+      "stroke-linejoin":"round","stroke-linecap":"round",opacity:op}));
+    const lastv=pts[n-1][idx];
+    if(lastv!=null) svg.appendChild(el("circle",{cx:X(n-1),cy:Y(lastv),r:3,fill:col}));
+  });
+  return svg;
+}
+
+function drawDetail(){
+  const q=state.query, pts=seriesFor(q);
+  document.getElementById("detailFig").hidden=false;
+  document.getElementById("detailQ").textContent=q;
+  const svg=document.getElementById("linechart"); svg.innerHTML="";
+  const W=1000,H=320,padL=64,padR=18,padT=16,padB=38,n=pts.length;
+  svg.setAttribute("viewBox",`0 0 ${W} ${H}`);
+  const vals=pts.flatMap(x=>[x[1],x[2]]).filter(v=>v!=null);
+  let mx=Math.max(...vals),mn=Math.min(...vals); const pd=(mx-mn)*0.12||1; mx+=pd; mn=Math.max(0,mn-pd);
+  const X=i=>padL+(n<2?(W-padL-padR)/2:i*(W-padL-padR)/(n-1)), Y=v=>H-padB-((v-mn)/((mx-mn)||1))*(H-padT-padB);
+  for(let g=0;g<=4;g++){ const v=mn+(mx-mn)*g/4,y=Y(v);
+    svg.appendChild(el("line",{x1:padL,y1:y,x2:W-padR,y2:y,class:"gridline"}));
+    const t=el("text",{x:padL-9,y:y+4,"text-anchor":"end",class:"axis"});t.appendChild(txt(fmt(v)));svg.appendChild(t);}
+  const yl=el("text",{x:padL-9,y:padT+2,"text-anchor":"end",class:"axis"});yl.appendChild(txt("ms"));svg.appendChild(yl);
+  pts.forEach((x,i)=>{ if(n>8 && i%Math.ceil(n/8) && i!==n-1)return;
+    const t=el("text",{x:X(i),y:H-padB+18,"text-anchor":"middle",class:"axis"});t.appendChild(txt(dateOf(x[0])));svg.appendChild(t);});
+  [[1,css("--a"),2,0.8,"C engine"],[2,css("--b"),2.5,1,"Rust"]].forEach(([idx,col,w,op,lab])=>{
+    const seg=pts.map((x,i)=>x[idx]!=null?`${X(i)},${Y(x[idx])}`:null).filter(Boolean).join(" ");
+    if(seg) svg.appendChild(el("polyline",{points:seg,fill:"none",stroke:col,"stroke-width":w,"stroke-linejoin":"round","stroke-linecap":"round",opacity:op}));
+    const lv=pts[n-1][idx];
+    if(lv!=null){ svg.appendChild(el("circle",{cx:X(n-1),cy:Y(lv),r:4.5,fill:col}));
+      const t=el("text",{x:X(n-1)-8,y:Y(lv)-9,"text-anchor":"end",class:"val",fill:col});t.appendChild(txt(lab));svg.appendChild(t);}
+  });
+  const hoverL=el("line",{y1:padT,y2:H-padB,class:"gridline","stroke-dasharray":"3 3",opacity:0});svg.appendChild(hoverL);
+  const dA=el("circle",{r:5,fill:css("--a"),opacity:0,stroke:css("--surface"),"stroke-width":2});
+  const dB=el("circle",{r:5,fill:css("--b"),opacity:0,stroke:css("--surface"),"stroke-width":2});
+  svg.appendChild(dA);svg.appendChild(dB);
+  const rect=el("rect",{x:padL,y:padT,width:W-padL-padR,height:H-padT-padB,fill:"transparent"});
+  rect.addEventListener("mousemove",e=>{
+    const pt=svg.getBoundingClientRect(), sx=(e.clientX-pt.left)*(W/pt.width);
+    let i=n<2?0:Math.round((sx-padL)/((W-padL-padR)/(n-1))); i=Math.max(0,Math.min(n-1,i));
+    hoverL.setAttribute("x1",X(i));hoverL.setAttribute("x2",X(i));hoverL.setAttribute("opacity",.8);
+    const a=pts[i][1],b=pts[i][2];
+    if(a!=null){dA.setAttribute("cx",X(i));dA.setAttribute("cy",Y(a));dA.setAttribute("opacity",1);}else dA.setAttribute("opacity",0);
+    if(b!=null){dB.setAttribute("cx",X(i));dB.setAttribute("cy",Y(b));dB.setAttribute("opacity",1);}else dB.setAttribute("opacity",0);
+    showTip(e,q+" · "+dateOf(pts[i][0]),[["Rust (edge-rs)",fmt(b)+" ms",css("--b")],["C engine (edge)",fmt(a)+" ms",css("--a")]]);
+  });
+  rect.addEventListener("mouseleave",()=>{hoverL.setAttribute("opacity",0);dA.setAttribute("opacity",0);dB.setAttribute("opacity",0);hideTip();});
+  svg.appendChild(rect);
+}
+
+const tt=document.getElementById("tt");
+function showTip(e,title,rows){
+  tt.innerHTML=`<div class="ttq">${title}</div>`+rows.map(([l,v,c])=>`<div class="row"><span class="lab"><span class="dot" style="background:${c}"></span>${l}</span><b>${v}</b></div>`).join("");
+  tt.style.opacity=1; const pad=14; let x=e.clientX+pad,y=e.clientY+pad; const r=tt.getBoundingClientRect();
+  if(x+r.width>innerWidth)x=e.clientX-r.width-pad; if(y+r.height>innerHeight)y=e.clientY-r.height-pad;
+  tt.style.left=x+"px"; tt.style.top=y+"px";
+}
+function hideTip(){ tt.style.opacity=0; }
+
+document.getElementById("segMetric").addEventListener("click",e=>{
+  const b=e.target.closest("button"); if(!b)return;
+  state.metric=b.dataset.v;
+  [...e.currentTarget.children].forEach(c=>c.classList.toggle("on",c===b));
+  render();
+});
+
+fetch("./trend.json").then(r=>r.ok?r.json():Promise.reject(r.status)).then(d=>{
+  TREND=d;
+  document.getElementById("nameA").textContent=(d.engines&&d.engines.a)||"edge";
+  document.getElementById("nameB").textContent=(d.engines&&d.engines.b)||"edge-rs";
+  state.query=(d.queries||[]).find(q=>seriesFor(q).length)||null;
+  render();
+}).catch(err=>{
+  document.getElementById("empty").hidden=false;
+  document.getElementById("empty").textContent="Could not load trend data ("+err+"). A trend appears after the first main-branch benchmark run.";
+});
+</script>
+</body>
+</html>

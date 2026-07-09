@@ -143,6 +143,27 @@ jobs:
           docker buildx imagetools create \
             -t "ghcr.io/falkordb/${REPO}:edge-rs" \
             "ghcr.io/falkordb/${REPO}:rc-pr-${PR_NUM}"
+
+  # Feed the canonical, continuously-updated A/B benchmark trend (production
+  # C `:edge` vs this repo's freshly-promoted `:edge-rs`) every time
+  # promote-edge succeeds. This is the only trigger that ever publishes to
+  # gh-pages' /benchmark/ root — see _benchmark.yml (the reusable pipeline)
+  # and benchmark.yml (the PR-label/slash-command/manual-dispatch entry
+  # points, which publish to /benchmark/branch/<view>/ previews instead).
+  benchmark-edge:
+    needs: promote-edge
+    if: ${{ github.ref == 'refs/heads/main' && needs.promote-edge.result == 'success' }}
+    uses: ./.github/workflows/_benchmark.yml
+    permissions:
+      contents: write
+    with:
+      image_a: docker.io/falkordb/falkordb-server:edge
+      image_b: ghcr.io/falkordb/falkordb-server:edge-rs
+      view: main
+      is_canonical: true
+      sizes: '["small"]'
+    secrets: inherit
+
   lint:
     runs-on: ubuntu-latest
     container: ghcr.io/falkordb/falkordb-build:latest
