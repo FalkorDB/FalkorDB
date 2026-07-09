@@ -39,17 +39,13 @@
 # If harmonic centrality regresses on medium/large graphs, confirm those dot4
 # kernels are still present in build/graphblas/PreJIT/ after a re-harvest.
 #
-# NOTE: PreJIT kernels are vendored PER-PLATFORM (build/graphblas/PreJIT/linux/
-# and .../macos/). The JIT defn strings embedded in the kernels are captured
-# AFTER host header macro expansion, so a macOS harvest can bake in
-# Apple-specific expansions (e.g. fortify rewriting memcpy to
-# __builtin___memcpy_chk) that fail the kernels' _query hash check on Linux —
-# GraphBLAS then silently falls back to slow generic kernels (and vice versa).
-# Run this script ON EACH platform to regenerate its kernel set:
-#   * linux/ : run inside the Linux Docker toolchain image
-#              (ghcr.io/falkordb/falkordb-build) — the CI/production target.
-#   * macos/ : run natively on macOS.
-# The harvested files become a checked-in artifact.
+# NOTE: kernels must be harvested ON LINUX, inside the Linux Docker toolchain
+# image (ghcr.io/falkordb/falkordb-build) — the CI/production target. The JIT
+# defn strings embedded in the kernels are captured AFTER host header macro
+# expansion, so a macOS harvest can bake in Apple-specific expansions (e.g.
+# fortify rewriting memcpy to __builtin___memcpy_chk) that fail the kernels'
+# _query hash check on Linux — GraphBLAS then silently falls back to slow
+# generic kernels. The harvested files become a checked-in artifact.
 
 set -euo pipefail
 
@@ -57,14 +53,7 @@ set -euo pipefail
 # Locate the repo root.
 # ---------------------------------------------------------------------------
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# PreJIT kernels are vendored per-platform (see header NOTE).
-if [[ "$(uname -s)" == "Darwin" ]]; then
-    PREJIT_PLATFORM=macos
-else
-    PREJIT_PLATFORM=linux
-fi
-PREJIT_DIR="${REPO_DIR}/build/graphblas/PreJIT/${PREJIT_PLATFORM}"
+PREJIT_DIR="${REPO_DIR}/build/graphblas/PreJIT"
 
 # ---------------------------------------------------------------------------
 # Detect GraphBLAS version (we don't keep a checked-in GraphBLAS source tree,
@@ -97,9 +86,8 @@ fi
 
 # On macOS the JIT-compiled kernel dylibs link their own copy of libomp;
 # loading them next to the module's statically-wired libomp trips OpenMP's
-# duplicate-runtime abort (__kmp_serial_initialize). Harmless for a harvest
-# run, so tell libomp to tolerate it — without this the server crashes after
-# compiling the first kernel and the cache stays nearly empty.
+# duplicate-runtime abort (__kmp_serial_initialize). Only relevant for local
+# experiments — the checked-in harvest must come from the Linux Docker image.
 if [[ "$(uname -s)" == "Darwin" ]]; then
     export KMP_DUPLICATE_LIB_OK=TRUE
 fi
@@ -108,7 +96,6 @@ echo "============================================================"
 echo " falkordb-rs PreJIT kernel regeneration"
 echo "============================================================"
 echo " Repo root     : ${REPO_DIR}"
-echo " Platform      : ${PREJIT_PLATFORM}"
 echo " GraphBLAS     : v${GRAPHBLAS_VERSION}"
 echo " Vendored dir  : ${PREJIT_DIR}"
 echo " JIT cache     : ${SUITESPARSE_GRB}"

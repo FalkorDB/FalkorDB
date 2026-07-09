@@ -177,26 +177,22 @@ if [ "${SKIP_GRAPHBLAS}" -eq 0 ]; then
     # --- apply GB_control.h customization -------------------------------------
     git -C GraphBLAS apply "${SCRIPT_DIR}/build/graphblas/GB_control.patch"
 
-    # --- vendor PreJIT kernels from build/graphblas/PreJIT/<platform>/ --------
+    # --- vendor PreJIT kernels from build/graphblas/PreJIT/ --------------------
     # In normal mode, copy our harvested .c kernels into the GraphBLAS
     # source tree so CMake bakes them statically into libgraphblas.a.
-    # Kernels are vendored per-platform (linux/ vs macos/): the JIT defn
-    # strings embedded in each kernel are captured after host header macro
-    # expansion (e.g. Apple fortify rewrites memcpy to __builtin___memcpy_chk),
-    # so a kernel harvested on one OS can fail its _query hash check on the
-    # other and silently fall back to slow generic kernels.
+    # Kernels MUST be harvested on Linux inside the Docker toolchain image
+    # (see gen_prejit.sh): the JIT defn strings embedded in each kernel are
+    # captured after host header macro expansion (e.g. Apple fortify rewrites
+    # memcpy to __builtin___memcpy_chk), so a macOS-harvested kernel fails
+    # its _query hash check on Linux and silently falls back to slow generic
+    # kernels.
     # In harvest mode (FALKORDB_PREJIT_HARVEST=1), skip this so the JIT
     # engine has to compile every kernel into ~/.SuiteSparse/.../c/ where
     # gen_prejit.sh can collect them.
     if [ "${FALKORDB_PREJIT_HARVEST}" -eq 1 ]; then
         echo "FALKORDB_PREJIT_HARVEST=1: skipping PreJIT vendoring (harvest mode)"
     else
-        if [ "$(uname -s)" = "Darwin" ]; then
-            PREJIT_PLATFORM=macos
-        else
-            PREJIT_PLATFORM=linux
-        fi
-        PREJIT_VENDOR_DIR="${SCRIPT_DIR}/build/graphblas/PreJIT/${PREJIT_PLATFORM}"
+        PREJIT_VENDOR_DIR="${SCRIPT_DIR}/build/graphblas/PreJIT"
         shopt -s nullglob
         prejit_files=( "${PREJIT_VENDOR_DIR}"/GB_jit_*.c )
         shopt -u nullglob
