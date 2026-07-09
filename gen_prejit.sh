@@ -39,8 +39,13 @@
 # If harmonic centrality regresses on medium/large graphs, confirm those dot4
 # kernels are still present in build/graphblas/PreJIT/ after a re-harvest.
 #
-# NOTE: PreJIT kernel sources are architecture-independent C; the harvest
-# can run on any host. The harvested files become a checked-in artifact.
+# NOTE: the harvest MUST run inside the Linux Docker toolchain image
+# (ghcr.io/falkordb/falkordb-build), never on macOS. The JIT defn strings
+# embedded in the kernels are captured AFTER host header macro expansion,
+# so a macOS harvest can bake in Apple-specific expansions (e.g. fortify
+# rewriting memcpy to __builtin___memcpy_chk) that fail the kernels'
+# _query hash check on Linux — GraphBLAS then silently falls back to slow
+# generic kernels. The harvested files become a checked-in artifact.
 
 set -euo pipefail
 
