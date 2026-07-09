@@ -84,12 +84,26 @@ if [[ "$(uname -s)" == "Darwin" ]] && [[ -z "${CC:-}" ]]; then
     fi
 fi
 
-# On macOS the JIT-compiled kernel dylibs link their own copy of libomp;
-# loading them next to the module's statically-wired libomp trips OpenMP's
-# duplicate-runtime abort (__kmp_serial_initialize). Only relevant for local
-# experiments — the checked-in harvest must come from the Linux Docker image.
-if [[ "$(uname -s)" == "Darwin" ]]; then
-    export KMP_DUPLICATE_LIB_OK=TRUE
+# JIT-compiled kernel .{so,dylib}s link their own copy of libomp; loading
+# them next to the module's statically-wired libomp trips OpenMP's
+# duplicate-runtime abort (__kmp_serial_initialize). Harmless for a harvest
+# run, so tell libomp to tolerate it — without this the server crashes after
+# compiling the first kernel and the cache stays nearly empty.
+export KMP_DUPLICATE_LIB_OK=TRUE
+
+# In the Linux Docker toolchain image only a static /opt/libomp/lib/libomp.a
+# exists, and it's outside the default linker search path. The JIT compile
+# line ends with `-fopenmp=libomp`, whose implicit `-lomp` then fails with
+# "cannot find -lomp" — every runtime JIT compile errors out (GxB_JIT_ERROR),
+# aborting each algorithm at its first uncached kernel so later kernels
+# never get generated. Symlink the archive into the default path.
+if [[ "$(uname -s)" == "Linux" && -f /opt/libomp/lib/libomp.a && ! -e /usr/lib/libomp.a ]]; then
+    if [[ -w /usr/lib ]]; then
+        ln -s /opt/libomp/lib/libomp.a /usr/lib/libomp.a
+        echo "Symlinked /opt/libomp/lib/libomp.a -> /usr/lib/libomp.a (JIT link needs -lomp)"
+    else
+        echo "WARNING: /usr/lib not writable; JIT kernel links may fail with 'cannot find -lomp'" >&2
+    fi
 fi
 
 echo "============================================================"

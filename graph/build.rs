@@ -33,12 +33,6 @@ fn main() {
         println!("cargo:rustc-link-search=/usr/lib/llvm-20/lib");
     }
 
-    if libomp_static {
-        println!("cargo:rustc-link-lib=static=omp");
-    } else {
-        println!("cargo:rustc-link-lib=omp");
-    }
-
     // libgraphblas.a search path. Defaults to /usr/local/lib (what
     // graphblas.sh installs to). Set GRAPHBLAS_LIB_DIR to point at a
     // local out-of-tree build directory — used by gen_prejit.sh to
@@ -56,6 +50,16 @@ fn main() {
     println!("cargo:rustc-link-search=native=/data/lagraph_lib");
     println!("cargo:rustc-link-lib=static=lagraph");
     println!("cargo:rustc-link-lib=static=lagraphx");
+
+    // omp must come AFTER graphblas/lagraph: GNU ld resolves static archives
+    // left-to-right, and those archives reference __kmpc_* symbols. The wrong
+    // order goes unnoticed for the cdylib (shared links tolerate undefined
+    // symbols) but breaks test executables with static libomp.
+    if libomp_static {
+        println!("cargo:rustc-link-lib=static=omp");
+    } else {
+        println!("cargo:rustc-link-lib=omp");
+    }
 
     // VecSim/RediSearch are built with a C++ toolchain.
     // - macOS uses libc++ / libc++abi
