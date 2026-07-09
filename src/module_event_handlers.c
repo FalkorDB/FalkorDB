@@ -11,7 +11,6 @@
 #include "util/uuid.h"
 #include "cron/cron.h"
 #include "index/indexer.h"
-#include "bolt/bolt_api.h"
 #include "util/thpool/pool.h"
 #include "util/redis_version.h"
 #include "graph/graphcontext.h"
@@ -370,8 +369,6 @@ static void _ShutdownEventHandler
 
 	// server is shutting down, finalize GraphBLAS
 	LAGraph_Finalize (NULL) ;
-
-	BoltApi_Unregister () ;
 
 	// free global variables
 	Globals_Free () ;

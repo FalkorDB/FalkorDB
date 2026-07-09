@@ -9,9 +9,11 @@
 #include "../query_ctx.h"
 #include "../index/indexer.h"
 #include "../graph/graph_hub.h"
+#include "../util/thpool/pool.h"
+#include "../errors/error_msgs.h"
 #include "../graph/graphcontext.h"
 #include "constraint/constraint.h"
-#include "../util/thpool/pool.h"
+#include "../util/identifier_limits.h"
 
 #define PROPERTY_NAME_PATTERN "[a-zA-Z_][a-zA-Z0-9_$]*"
 
@@ -152,7 +154,14 @@ static int Constraint_Parse
 	// extract label/relationship-type
 	//--------------------------------------------------------------------------
 
-	*label = RedisModule_StringPtrLen(*argv++, NULL);
+	*label = RedisModule_StringPtrLen (*argv++, NULL) ;
+
+	if (strnlen (*label, MAX_IDENTIFIER_LEN + 1) > MAX_IDENTIFIER_LEN) {
+		RedisModule_ReplyWithErrorFormat (ctx, EMSG_IDENTIFIER_TOO_LONG,
+				"Label name", MAX_IDENTIFIER_LEN) ;
+		return REDISMODULE_ERR ;
+	}
+
 	if(str_MatchRegex(PROPERTY_NAME_PATTERN, *label) == false) {
 		RedisModule_ReplyWithErrorFormat(ctx, "Label name %s is invalid", *label);
 		return REDISMODULE_ERR;
@@ -545,6 +554,13 @@ int Graph_Constraint
 	const char *props_cstr [prop_count] ;
 	for (uint8_t i = 0 ; i < prop_count ; i++) {
 		props_cstr [i] = RedisModule_StringPtrLen (props [i], NULL) ;
+
+		if (strnlen (props_cstr [i], MAX_IDENTIFIER_LEN + 1) > MAX_IDENTIFIER_LEN) {
+			RedisModule_ReplyWithErrorFormat (ctx, EMSG_IDENTIFIER_TOO_LONG,
+					"Property name", MAX_IDENTIFIER_LEN) ;
+			return REDISMODULE_ERR ;
+		}
+
 		if (str_MatchRegex (PROPERTY_NAME_PATTERN, props_cstr [i]) == false) {
 			RedisModule_ReplyWithErrorFormat (ctx, "Property name %s is invalid",
 					props_cstr [i]) ;

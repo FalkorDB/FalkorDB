@@ -171,7 +171,7 @@ static OpResult CondVarLenTraverseInit
 		const char *dest_alias = AlgebraicExpression_Dest (op->ae) ;
 		QGNode *dest_node =
 			QueryGraph_GetNodeByAlias (op->op.plan->query_graph, dest_alias) ;
-		uint8_t label_count = (uint8_t)QGNode_LabelCount (dest_node) ;
+		uint8_t label_count = (uint8_t) QGNode_LabelCount (dest_node) ;
 
 		if (label_count > 0) {
 			// allocate directly into op->dest_labels and sort in place
@@ -273,12 +273,12 @@ static Record CondVarLenTraverseOptimizedConsume
 (
 	OpBase *opBase
 ) {
-	CondVarLenTraverse  *op     = (CondVarLenTraverse *)opBase;
+	CondVarLenTraverse  *op     = (CondVarLenTraverse *) opBase;
 	OpBase              *child  =  op->op.children[0];
 	Node                dest    =  GE_NEW_NODE();
 	EntityID            dest_id =  INVALID_ENTITY_ID;
 
-	for(;;) {
+	while (true) {
 		while((dest_id = AllNeighborsCtx_NextNeighbor(op->allNeighborsCtx)) ==
 			  INVALID_ENTITY_ID) {
 			Record childRecord = OpBase_Consume(child);
@@ -348,7 +348,7 @@ static Record CondVarLenTraverseConsume
 	Path               *p     = NULL ;
 	OpBase             *child = op->op.children [0] ;
 
-	for(;;) {
+	while (true) {
 		while (!(p = AllPathsCtx_NextPath (op->allPathsCtx))) {
 			Record childRecord = OpBase_Consume (child) ;
 			if (!childRecord) {

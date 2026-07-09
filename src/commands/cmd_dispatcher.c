@@ -27,8 +27,7 @@ static int _read_flags
 	long long *timeout,         // query level timeout
   	bool *timeout_rw,           // apply timeout on both read and write queries
   	uint *graph_hash,           // graph hash [UNUSED]
-  	char **errmsg,              // reported error message
-	bolt_client_t **bolt_client // BOLT client
+  	char **errmsg               // reported error message
 ) {
 	ASSERT(compact != NULL);
 	ASSERT(timeout != NULL);
@@ -37,7 +36,6 @@ static int _read_flags
 
 	// set defaults
 	*compact       = false;  // verbose
-	*bolt_client   = NULL;
 	*graph_hash    = GRAPH_HASH_MISSING ;
 	Config_Option_get(Config_TIMEOUT_DEFAULT, timeout);
 	Config_Option_get(Config_TIMEOUT_MAX, &max_timeout);
@@ -64,8 +62,6 @@ static int _read_flags
 		if(!strcasecmp(arg, "--compact")) {
 			// compact result-set
 			*compact = true;
-		} else if(!strcasecmp(arg, "--bolt")) {
-			*bolt_client = (bolt_client_t *)argv[++i];
 		} else if(!strcasecmp(arg, "timeout")) {
 			// query timeout
 			int err = REDISMODULE_ERR;
@@ -194,7 +190,6 @@ int CommandDispatch
 ) {
 	char *errmsg;
 	uint hash;
-	bolt_client_t *bolt_client;
 	bool compact;
 	bool timeout_rw;
 	long long timeout;
@@ -215,7 +210,7 @@ int CommandDispatch
 
 	// parse additional arguments
 	int res = _read_flags (argv, argc, &compact, &timeout, &timeout_rw,
-			&hash, &errmsg, &bolt_client) ;
+			&hash, &errmsg) ;
 	if (res == REDISMODULE_ERR) {
 		// emit error and exit if argument parsing failed
 		RedisModule_ReplyWithError (ctx, errmsg) ;
@@ -263,19 +258,15 @@ int CommandDispatch
 		// run query on Redis main thread
 		context = CommandCtx_New (ctx, NULL, argv[0], argv[1], query, gc,
 				exec_thread, is_replicated, compact, timeout, timeout_rw,
-				received_ts, timer, bolt_client) ;
+				received_ts, timer) ;
 		handler (context) ;
 	} else {
 		// run query on a dedicated thread
-		RedisModuleBlockedClient *bc =
-			bolt_client != NULL ? NULL : RedisGraph_BlockClient (ctx) ;
+		RedisModuleBlockedClient *bc = RedisGraph_BlockClient (ctx) ;
 
-		RedisModuleCtx *redis_ctx = (bolt_client != NULL) ?
-			bolt_client->ctx : NULL ;
-
-		context = CommandCtx_New (redis_ctx, bc, argv[0], argv[1], query, gc,
+		context = CommandCtx_New (NULL, bc, argv[0], argv[1], query, gc,
 				exec_thread, is_replicated, compact, timeout, timeout_rw,
-				received_ts, timer, bolt_client) ;
+				received_ts, timer) ;
 
 		if (ThreadPool_AddWork (handler, context, false) == THPOOL_QUEUE_FULL) {
 			// report an error once our workers thread pool internal queue

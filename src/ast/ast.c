@@ -9,9 +9,10 @@
 #include "util/arr.h"
 #include "query_ctx.h"
 #include "param_parser.h"
+#include "ast_build_value.h"
 #include "../errors/errors.h"
 #include "procedures/procedure.h"
-#include "ast_build_value.h"
+#include "util/identifier_limits.h"
 #include "ast_rewrite_same_clauses.h"
 #include "ast_rewrite_star_projections.h"
 #include "arithmetic/arithmetic_expression.h"
@@ -507,33 +508,37 @@ bool AST_ClauseContainsAggregation
 (
 	const cypher_astnode_t *clause
 ) {
-	ASSERT(clause);
+	ASSERT (clause) ;
 
-	bool aggregated = false;
+	bool aggregated = false ;
 
-	// Retrieve all user-specified functions in clause.
-	rax *referred_funcs = raxNew();
-	AST_ReferredFunctions(clause, referred_funcs);
+	// retrieve all user-specified functions in clause
+	rax *referred_funcs = raxNew () ;
+	AST_ReferredFunctions (clause, referred_funcs) ;
 
-	char funcName[32];
-	raxIterator it;
-	_prepareIterateAll(referred_funcs, &it);
-	while(raxNext(&it)) {
-		size_t len = it.key_len;
-		ASSERT(len < 32);
-		// Copy the triemap key so that we can safely add a terinator character
-		memcpy(funcName, it.key, len);
-		funcName[len] = 0;
+	char funcName [MAX_IDENTIFIER_LEN + 1] ;
+	raxIterator it ;
+	_prepareIterateAll (referred_funcs, &it) ;
 
-		if(AR_FuncIsAggregate(funcName)) {
-			aggregated = true;
-			break;
+	while (raxNext (&it)) {
+		size_t len = it.key_len ;
+		// length validation happens earlier in AST validation
+		ASSERT (len <= MAX_IDENTIFIER_LEN) ;
+
+		// copy the triemap key
+		memcpy (funcName, it.key, len) ;
+		funcName [len] = 0 ;
+
+		if (AR_FuncIsAggregate (funcName)) {
+			aggregated = true ;
+			break ;
 		}
 	}
-	raxStop(&it);
-	raxFree(referred_funcs);
 
-	return aggregated;
+	raxStop (&it) ;
+	raxFree (referred_funcs) ;
+
+	return aggregated ;
 }
 
 const char **AST_BuildReturnColumnNames

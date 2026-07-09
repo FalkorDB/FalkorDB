@@ -10,6 +10,7 @@
 #include "../../udf/udf_ctx.h"
 #include "../../udf/repository.h"
 #include "../../arithmetic/func_desc.h"
+#include "../../util/identifier_limits.h"
 #include "../../arithmetic/udf_funcs/udf_funcs.h"
 
 // GRAPH.UDF LOAD [REPLACE] <LIBNAME> <SCRIPT>
@@ -74,6 +75,13 @@ int Graph_UDF_Load
 
 	if (lib_len == 0) {
 		RedisModule_ReplyWithError (ctx, "empty lib name") ;
+		return REDISMODULE_OK ;
+	}
+
+	if (lib_len > MAX_IDENTIFIER_LEN) {
+		RedisModule_ReplyWithErrorFormat (ctx,
+				"Library name exceeds maximum length of %d bytes",
+				MAX_IDENTIFIER_LEN) ;
 		return REDISMODULE_OK ;
 	}
 

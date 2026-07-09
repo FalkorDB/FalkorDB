@@ -183,21 +183,18 @@ static void _ExecuteQuery
 	}
 
 	// instantiate the query ResultSet
-	bool bolt    = command_ctx->bolt_client != NULL ;
 	bool compact = command_ctx->compact ;
 
 	// replicated command don't need to return result
 	ResultSetFormatterType resultset_format =
 		(profile || command_ctx->replicated_command) ?
 			FORMATTER_NOP :
-				(bolt) ?
-					FORMATTER_BOLT :
-					(compact) ?
-						FORMATTER_COMPACT :
-						FORMATTER_VERBOSE ;
+				(compact) ?
+					FORMATTER_COMPACT :
+					FORMATTER_VERBOSE ;
 
 	ResultSet *result_set =
-		NewResultSet (rm_ctx, command_ctx->bolt_client, resultset_format) ;
+		NewResultSet (rm_ctx, resultset_format) ;
 
 	if (exec_ctx->cached) {
 		ResultSet_CachedExecution (result_set) ; // indicate a cached execution
@@ -383,8 +380,8 @@ static void enter_writer_loop
 		// to reacquire write access
 		// if we succeed, continue processing
 		// if we fail, another thread is now the writer and will handle the queue
-		if (GraphContext_WriteQueueEmpty (gc) ||
-			!GraphContext_TryEnterWrite  (gc)) {
+		if (GraphContext_WriteQueueEmpty    (gc) ||
+			!GraphContext_TimeTryEnterWrite (gc, 0)) {
 			// either the queue is empty
 			// or the another thread became a writer
 			break ;
@@ -527,7 +524,7 @@ void _query
 		}
 
 		// try to acquire exclusive write access to graph
-		if (GraphContext_TryEnterWrite (gc)) {
+		if (GraphContext_TimeTryEnterWrite (gc, 0)) {
 			// thread has exclusive write access to graph
 			// go ahead and run the query
 			enter_writer_loop (gc) ;
