@@ -27,8 +27,7 @@ static int _read_flags
 	long long *timeout,         // query level timeout
   	bool *timeout_rw,           // apply timeout on both read and write queries
   	uint *graph_hash,           // graph hash [UNUSED]
-  	char **errmsg,              // reported error message
-	bolt_client_t **bolt_client // BOLT client
+  	char **errmsg               // reported error message
 ) {
 	ASSERT(compact != NULL);
 	ASSERT(timeout != NULL);
@@ -37,7 +36,6 @@ static int _read_flags
 
 	// set defaults
 	*compact       = false;  // verbose
-	*bolt_client   = NULL;
 	*graph_hash    = GRAPH_HASH_MISSING ;
 	Config_Option_get(Config_TIMEOUT_DEFAULT, timeout);
 	Config_Option_get(Config_TIMEOUT_MAX, &max_timeout);
@@ -64,8 +62,6 @@ static int _read_flags
 		if(!strcasecmp(arg, "--compact")) {
 			// compact result-set
 			*compact = true;
-		} else if(!strcasecmp(arg, "--bolt")) {
-			*bolt_client = (bolt_client_t *)argv[++i];
 		} else if(!strcasecmp(arg, "timeout")) {
 			// query timeout
 			int err = REDISMODULE_ERR;
@@ -194,7 +190,6 @@ int CommandDispatch
 ) {
 	char *errmsg;
 	uint hash;
-	bolt_client_t *bolt_client;
 	bool compact;
 	bool timeout_rw;
 	long long timeout;
@@ -215,7 +210,7 @@ int CommandDispatch
 
 	// parse additional arguments
 	int res = _read_flags (argv, argc, &compact, &timeout, &timeout_rw,
-			&hash, &errmsg, &bolt_client) ;
+			&hash, &errmsg) ;
 	if (res == REDISMODULE_ERR) {
 		// emit error and exit if argument parsing failed
 		RedisModule_ReplyWithError (ctx, errmsg) ;
@@ -224,21 +219,23 @@ int CommandDispatch
 	}
 
 	bool shouldCreate = should_command_create_graph (cmd) ;
-	GraphContext *gc = GraphContext_Retrieve (ctx, graph_name, true,
-			shouldCreate) ;
+	GraphContext *gc = NULL ;
+	GraphRetrieveStatus status =
+		GraphContext_Retrieve (ctx, graph_name, true, shouldCreate, false, &gc) ;
 
 	// if GraphContext is null, key access failed and an error been emitted
-	if (!gc) return REDISMODULE_ERR;
+	if (status == GraphRetrieve_FAILED) {
+		return REDISMODULE_ERR ;
+	}
 
 	// return incase caller provided a mismatched graph hash
-	if (!_verifyGraphHash (gc, hash)) {
+	if (gc != NULL && !_verifyGraphHash (gc, hash)) {
 		_rejectOnHashMismatch (ctx, GraphContext_GetHash (gc)) ;
 		// Release the GraphContext, as we increased its reference count
 		// when retrieving it.
 		GraphContext_DecreaseRefCount (gc) ;
 		return REDISMODULE_OK ;
 	}
-
 
 	// determine the query execution context
 	// queries issued within a LUA script or multi exec block must
@@ -257,32 +254,32 @@ int CommandDispatch
 		: EXEC_THREAD_READER ;
 
 	Command_Handler handler = get_command_handler (cmd) ;
-	if(exec_thread == EXEC_THREAD_MAIN) {
+	if (exec_thread == EXEC_THREAD_MAIN) {
 		// run query on Redis main thread
-		context = CommandCtx_New (ctx, NULL, argv[0], query, gc, exec_thread,
-								 is_replicated, compact, timeout, timeout_rw,
-								 received_ts, timer, bolt_client) ;
-		handler(context);
+		context = CommandCtx_New (ctx, NULL, argv[0], argv[1], query, gc,
+				exec_thread, is_replicated, compact, timeout, timeout_rw,
+				received_ts, timer) ;
+		handler (context) ;
 	} else {
 		// run query on a dedicated thread
-		RedisModuleBlockedClient *bc =
-			bolt_client != NULL ? NULL : RedisGraph_BlockClient (ctx) ;
+		RedisModuleBlockedClient *bc = RedisGraph_BlockClient (ctx) ;
 
-		RedisModuleCtx *redis_ctx = (bolt_client != NULL) ?
-			bolt_client->ctx : NULL ;
-
-		context = CommandCtx_New (redis_ctx, bc, argv[0], query, gc,
+		context = CommandCtx_New (NULL, bc, argv[0], argv[1], query, gc,
 				exec_thread, is_replicated, compact, timeout, timeout_rw,
-				received_ts, timer, bolt_client) ;
+				received_ts, timer) ;
 
 		if (ThreadPool_AddWork (handler, context, false) == THPOOL_QUEUE_FULL) {
 			// report an error once our workers thread pool internal queue
 			// is full, this error usually happens when the server is
 			// under heavy load and is unable to catch up
 			RedisModule_ReplyWithError (ctx, "Max pending queries exceeded") ;
+
 			// release the GraphContext, as we increased its reference count
 			// when retrieving it
-			GraphContext_DecreaseRefCount (gc) ;
+			if (gc != NULL) {
+				GraphContext_DecreaseRefCount (gc) ;
+			}
+
 			CommandCtx_UnblockClient (context) ;
 			CommandCtx_Free (context) ;
 		}

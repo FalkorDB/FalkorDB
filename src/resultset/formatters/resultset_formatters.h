@@ -8,7 +8,6 @@
 
 #include "resultset_formatter.h"
 #include "resultset_replynop.h"
-#include "resultset_replybolt.h"
 #include "resultset_replycompact.h"
 #include "resultset_replyverbose.h"
 
@@ -16,7 +15,6 @@ typedef enum {
 	FORMATTER_NOP = 0,
 	FORMATTER_VERBOSE = 1,
 	FORMATTER_COMPACT = 2,
-	FORMATTER_BOLT    = 3,
 } ResultSetFormatterType;
 
 /* Retrieves result-set formatter.
@@ -43,12 +41,5 @@ static ResultSetFormatter ResultSetFormatterVerbose __attribute__((used)) = {
 	.EmitRow = ResultSet_EmitVerboseRow,
 	.EmitStats = ResultSet_EmitVerboseStats,
 	.EmitHeader = ResultSet_ReplyWithVerboseHeader
-};
-
-/* Bolt reply formatter, used when querying via bolt driver. */
-static ResultSetFormatter ResultSetFormatterBolt __attribute__((used)) = {
-	.EmitRow = ResultSet_EmitBoltRow,
-	.EmitStats = ResultSet_EmitBoltStats,
-	.EmitHeader = ResultSet_ReplyWithBoltHeader
 };
 

@@ -9,6 +9,7 @@
 #include "../../query_ctx.h"
 #include "../../effects/effects.h"
 #include "../../undo_log/undo_log.h"
+#include "../../util/identifier_limits.h"
 
 // adds a label to a small set of nodes (<LABEL_BATCH_THRESHOLD) via
 // per-element delta updates
@@ -38,7 +39,7 @@ static void _LabelNodes_Single
 		undo_log = QueryCtx_GetUndoLog () ;
 	}
 
-	char lbl_name[512] = {0} ;
+	char lbl_name [MAX_IDENTIFIER_LEN + 1] = {0} ;
 
 	//--------------------------------------------------------------------------
 	// set label
@@ -138,7 +139,7 @@ static void _UnLabelNodes_Single
 		undo_log = QueryCtx_GetUndoLog () ;
 	}
 
-	char lbl_name[512] = {0} ;
+	char lbl_name [MAX_IDENTIFIER_LEN + 1] = {0} ;
 
 	//--------------------------------------------------------------------------
 	// remove labels

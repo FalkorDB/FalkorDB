@@ -7,6 +7,7 @@
 #pragma once
 
 #include "graph.h"
+#include "graph_memoryUsage.h"
 #include "../redismodule.h"
 #include "../index/index.h"
 #include "../schema/schema.h"
@@ -40,15 +41,44 @@ void GraphContext_DecreaseRefCount
 	GraphContext *gc
 );
 
-// retrive the graph context according to the graph name
-// readOnly is the access mode to the graph key
-GraphContext *GraphContext_Retrieve
+// return graph context reference count
+int GraphContext_RefCount
 (
-	RedisModuleCtx *ctx,
-	RedisModuleString *graphID,
-	bool readOnly,
-	bool shouldCreate
+	const GraphContext *gc
+) ;
+
+// attach graph context to a Redis key and register it with FalkorDB's
+// global graph registry
+void GraphContext_SetKey
+(
+	RedisModuleCtx *ctx,  // redis module context
+    GraphContext *gc      // graph context
 );
+
+// GraphContext_Retrieve status
+typedef enum {
+	GraphRetrieve_RETRIEVED,  // gc is valid, ref count incremented
+	GraphRetrieve_FAILED,     // error emitted, gc is NULL
+	GraphRetrieve_OFFLOADED,  // graph is offloaded
+} GraphRetrieveStatus ;
+
+// Retrieve the GraphContext for graphID.
+// On success sets *gc and returns GraphRetrieve_RETRIEVED.
+// On error emits a reply and returns GraphRetrieve_FAILED.
+// When load_from_disk=false and the graph is a stub, returns
+// GraphRetrieve_OFFLOADED with no error reply.
+// When load_from_disk=true the function loads the graph from disk and
+// re-fetches; may be called from any thread in that case.
+// When load_from_disk=false must be called from the Redis main thread.
+GraphRetrieveStatus GraphContext_Retrieve
+(
+	RedisModuleCtx    *ctx,             // Redis module context
+	RedisModuleString *graphID,         // key identifying the graph
+	bool               readOnly,        // if true, opens the key in read mode
+	bool               shouldCreate,    // create new graph if the key is absent
+	bool               load_from_disk,  // load graph from disk if offloaded
+	GraphContext     **gc               // out: graph context on success
+) ;
 
 //------------------------------------------------------------------------------
 // Synchronization functions
@@ -191,6 +221,25 @@ Graph *GraphContext_GetGraph
 (
 	const GraphContext *gc
 );
+
+// returns the graph's current RAM footprint in bytes
+// acquires the read lock internally; safe to call after GraphContext_Retrieve
+uint64_t GraphContext_MemoryUsage
+(
+	const GraphContext *gc
+) ;
+
+// returns the amortized memory consumption of a graph (all fields in MB on return)
+// samples attribute-sets for nodes/edges and measures index memory
+// result->node_attr_by_label_sz and result->edge_attr_by_type_sz must be
+// initialised with arr_new(size_t, 0) by the caller; arr_free them after use
+// caller must hold at least the graph read lock
+void GraphContext_EstimateMemoryUsage
+(
+	GraphContext      *gc,      // graph context
+	double             samples, // samples per label / relation type
+	MemoryUsageResult *result   // [output] all size fields in MB on return
+) ;
 
 //------------------------------------------------------------------------------
 // Schema API
@@ -474,6 +523,13 @@ GraphDecodeContext *GraphContext_GetDecodingCtx
 //------------------------------------------------------------------------------
 
 QueriesLog GraphContext_GetQueriesLog
+(
+	GraphContext *gc
+);
+
+// free all data associated with graph context
+// caller must ensure ref count is 0 and gc is not in the global registry
+void GraphContext_Free
 (
 	GraphContext *gc
 );

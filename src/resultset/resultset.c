@@ -10,8 +10,6 @@
 #include "../util/arr.h"
 #include "../query_ctx.h"
 #include "../util/rmalloc.h"
-#include "../bolt/bolt.h"
-#include "../bolt/socket.h"
 #include "../globals.h"
 #include "../errors/errors.h"
 #include "../commands/cmd_context.h"
@@ -55,7 +53,6 @@ static void _ResultSet_SetColumns
 ResultSet *NewResultSet
 (
 	RedisModuleCtx *ctx,
-	bolt_client_t *bolt_client,
 	ResultSetFormatterType format  // resultset format
 ) {
 	ResultSet *set = rm_malloc (sizeof (ResultSet)) ;
@@ -66,7 +63,6 @@ ResultSet *NewResultSet
 	set->format             = format ;
 	set->columns            = NULL ;
 	set->formatter          = ResultSetFormatter_GetFormatter (format) ;
-	set->bolt_client        = bolt_client ;
 	set->column_count       = 0 ;
 	set->cells_allocation   = M_NONE ;
 	set->columns_record_map = NULL ;

@@ -301,8 +301,8 @@ static void LoadGraphFromFile
 	RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
 			"Decoding graph: %s from: %s", copy_ctx->dest, copy_ctx->path);
 
-	GraphContext *gc = RdbLoadGraphContext_latest(io, copy_ctx->rm_dest);
-	ASSERT(gc != NULL);
+	GraphContext *gc = RdbLoadGraphContext_latest (io, copy_ctx->rm_dest, false) ;
+	ASSERT (gc != NULL) ;
 
 	//--------------------------------------------------------------------------
 	// add cloned graph to keyspace
@@ -429,34 +429,34 @@ static void _Graph_Copy
 	//--------------------------------------------------------------------------
 
 	// lock GIL
-	RedisModule_ThreadSafeContextLock(ctx);
+	RedisModule_ThreadSafeContextLock (ctx) ;
 
 	// make sure dest key does not exists
 	RedisModuleKey *dest_key =
-		RedisModule_OpenKey(ctx, rm_dest, REDISMODULE_READ);
-	int dest_key_type = RedisModule_KeyType(dest_key);
-	RedisModule_CloseKey(dest_key);
-
-	// make sure src key is a graph
-	gc = GraphContext_Retrieve (ctx, rm_src, true, false) ;
+		RedisModule_OpenKey (ctx, rm_dest, REDISMODULE_READ) ;
+	int dest_key_type = RedisModule_KeyType (dest_key) ;
+	RedisModule_CloseKey (dest_key) ;
 
 	// release GIL
-	RedisModule_ThreadSafeContextUnlock(ctx);
+	RedisModule_ThreadSafeContextUnlock (ctx) ;
 
 	// dest key shouldn't exists
-	if(dest_key_type != REDISMODULE_KEYTYPE_EMPTY) {
+	if (dest_key_type != REDISMODULE_KEYTYPE_EMPTY) {
 		// destination key already exists, abort
-		error = true;
-		RedisModule_ReplyWithError(ctx, "destination key already exists");
-		goto cleanup;
+		error = true ;
+		RedisModule_ReplyWithError (ctx, "destination key already exists") ;
+		goto cleanup ;
 	}
 
+	// make sure src key is a graph
+	GraphContext_Retrieve (ctx, rm_src, true, false, true, &gc) ;
+
 	// src key should be a graph
-	if(gc == NULL) {
+	if (gc == NULL) {
 		// src graph is missing, abort
-		error = true;
+		error = true ;
 		// error alreay omitted by 'GraphContext_Retrieve'
-		goto cleanup;
+		goto cleanup ;
 	}
 
 	//--------------------------------------------------------------------------
