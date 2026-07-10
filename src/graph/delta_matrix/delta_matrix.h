@@ -281,9 +281,10 @@ GrB_Info Delta_Matrix_dup
 // get the fully synced GrB_Matrix from Delta_Matrix C without modifying C
 GrB_Info Delta_Matrix_export
 (
-    GrB_Matrix *A,         // output Matrix 
-    const Delta_Matrix C,  // input Delta Matrix
-    const GrB_Type type    // output matrix type (values will be typecast)
+    GrB_Matrix *A,                  // output Matrix
+    const Delta_Matrix C,           // input Delta Matrix
+    const GrB_Type type,            // output matrix type (values will be typecast)
+    const GrB_Orientation *format   // optional: if non-NULL, sets output orientation
 );
 
 // return # of bytes used for a matrix

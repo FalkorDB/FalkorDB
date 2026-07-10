@@ -94,3 +94,10 @@ GrB_Info Delta_MatrixTupleIter_reset
 	Delta_MatrixTupleIter *iter  // iterator to reset
 );
 
+// return the position of the current iterator entry
+// unique and stable across re-scans of the same matrix
+GrB_Index Delta_Matrix_Iterator_getp
+(
+	Delta_MatrixTupleIter *iter  // iterator to query
+);
+

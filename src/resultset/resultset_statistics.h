@@ -11,22 +11,58 @@
 
 typedef struct {
 	bool cached;                // indication for a cached query execution
+
 	bool index_creation;        // index creation operation executed
 	bool index_deletion;        // index deletion operation executed
+
 	bool constraint_creation;   // constraint creation operation executed
 	bool constraint_deletion;   // constraint deletion operation executed
-	int labels_added;           // number of labels added as part of a create/update query
-	int nodes_created;          // number of nodes created as part of a create query
-	int nodes_deleted;          // number of nodes removed as part of a delete query
-	int labels_removed;         // number of labels removed as part of an update query
-	int properties_set;         // number of properties created as part of a create query
+
+	int labels_added;           // incremented each time a label is added to a
+								// node this happens during CREATE
+								// (each label on the new node counts)
+								// or explicitly via SET n:LabelName.
+
+	int labels_removed;         // incremented each time a label is removed from
+								// a node triggered by REMOVE n:LabelName
+								// trying to remove a label that doesn't exist
+								// on the node does not increment the counter
+
+	int nodes_created;          // incremented each time a new node is created
+								// in the graph
+								// triggered by CREATE (n) or a MERGE that
+								// doesn't find a match and creates the node
+								// each node counts as +1, regardless of how
+								// many properties or labels it has
+
+	int nodes_deleted;          // incremented each time a node is removed from
+								// the graph. Triggered by DELETE n
+
+
+	int properties_set;         // incremented each time a property is written
+								// on a node or relationship
+								// whether it's a new property being added, or
+								// an existing one being updated
+								// setting a property to null (which removes it)
+								// doesn't counts
+
+	int properties_removed;     // number of properties removed as part of a remove query
+
+
+	int relationships_created;  // incremented each time a new relationship is
+								// created triggered by CREATE or an unmatched
+								// MERGE on a relationship pattern
+								// each counts as +1
+
+	int relationships_deleted;  // incremented each time a relationship is
+								// removed triggered explicitly by DELETE r on
+								// a relationship variable, or implicitly when
+								// using DELETE on a node
+
 	int indices_created;        // number of indices created
 	int indices_deleted;        // number of indices deleted
 	int constraints_created;    // number of constraints created
 	int constraints_deleted;    // number of constraints deleted
-	int properties_removed;     // number of properties removed as part of a remove query
-	int relationships_created;  // number of edges created as part of a create query
-	int relationships_deleted;  // number of edges removed as part of a delete query
 } ResultSetStatistics;
 
 // Checks to see if resultset-statistics indicate that a modification was made

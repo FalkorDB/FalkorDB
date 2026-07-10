@@ -15,5 +15,3 @@ typedef struct {
 	unsigned int reltype_count;  // number of traversed relationship types
 } ShortestPathCtx;
 
-void Register_PathFuncs();
-

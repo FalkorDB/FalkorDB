@@ -32,13 +32,20 @@ typedef struct {
 	Constraint *constraints;  // constraints array
 } Schema;
 
-// creates a new schema
+// Schema_New creates and initializes a new Schema object
+//
+// each schema represents the structure of a typed graph entity (Node or Edge),
+// identified by a unique numeric ID and a human-readable name within its type
+// domain (node schemas and relation schemas maintain separate ID spaces)
+//
+// returns a fully initialized Schema on success
+// panics (via ASSERT) if 'name' is NULL
 Schema *Schema_New
 (
-	SchemaType type,
-	int id,
-	const char *name
-);
+	SchemaType  type,  // node or edge schema
+	int         id,    // unique schema ID within its type domain
+	const char  *name  // human-readable label/relation-type name
+ );
 
 // return the given schema's name
 const char *Schema_GetName
@@ -57,7 +64,6 @@ const char *Schema_GetName
 	const Schema *s
 );
 
-// return schema type
 SchemaType Schema_GetType
 (
 	const Schema *s

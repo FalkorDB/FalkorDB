@@ -16,7 +16,6 @@ node5 = Node(alias="n5", labels="fruit", properties={"name": "Banana", "value": 
 class testProcedures(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
-        self.redis_con = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
         self.populate_graph()
 
@@ -85,9 +84,9 @@ class testProcedures(FlowTestsBase):
                 emit=["unknown"],
             )
             self.env.assertFalse(1)
-        except redis.exceptions.ResponseError:
+        except redis.exceptions.ResponseError as e:
             # Expecting an error.
-            pass
+            self.env.assertContains("Procedure `db.idx.fulltext.queryNodes` does not yield output `unknown`", str(e))
 
         # Yield the same output multiple times.
         # Expect an error when trying to use the same output multiple times.
@@ -98,9 +97,9 @@ class testProcedures(FlowTestsBase):
                 emit=["node", "node"],
             )
             self.env.assertFalse(1)
-        except redis.exceptions.ResponseError:
+        except redis.exceptions.ResponseError as e:
             # Expecting an error.
-            pass
+            self.env.assertContains("Variable `node` already declared", str(e))
 
     def test03_arguments(self):
         # Omit arguments.
@@ -300,9 +299,9 @@ class testProcedures(FlowTestsBase):
             # looking for a non existing procedure
             self.graph.call_procedure("db.nonExistingProc")
             self.env.assertFalse(1)
-        except redis.exceptions.ResponseError:
+        except redis.exceptions.ResponseError as e:
             # Expecting an error.
-            pass
+            self.env.assertContains("Procedure `db.nonExistingProc` is not registered", str(e))
 
         try:
             self.graph.call_procedure(
@@ -389,10 +388,10 @@ class testProcedures(FlowTestsBase):
 
         q = """CALL dbms.functions()
                YIELD name, return_type, arguments, internal, reducible,
-               aggregation, variable_len, udf
+               aggregation, variable_len
                WHERE name = $name
                RETURN name, return_type, arguments, internal, reducible,
-                      aggregation, variable_len, udf"""
+                      aggregation, variable_len"""
 
         f = self.graph.query(q, {"name": "add"}).result_set[0]
 
@@ -403,7 +402,6 @@ class testProcedures(FlowTestsBase):
         reducible = f[4]
         aggregation = f[5]
         variable_len = f[6]
-        udf = f[7]
 
         self.env.assertEquals(name, "add")
         self.env.assertEquals(
@@ -421,7 +419,6 @@ class testProcedures(FlowTestsBase):
         self.env.assertEquals(reducible, True)
         self.env.assertEquals(aggregation, False)
         self.env.assertEquals(variable_len, False)
-        self.env.assertEquals(udf, False)
 
         # -----------------------------------------------------------------------
 
@@ -434,7 +431,6 @@ class testProcedures(FlowTestsBase):
         reducible = f[4]
         aggregation = f[5]
         variable_len = f[6]
-        udf = f[7]
 
         self.env.assertEquals(name, "avg")
         self.env.assertEquals(return_type, "Float or Null")
@@ -443,7 +439,6 @@ class testProcedures(FlowTestsBase):
         self.env.assertEquals(reducible, False)
         self.env.assertEquals(aggregation, True)
         self.env.assertEquals(variable_len, False)
-        self.env.assertEquals(udf, False)
 
         # -----------------------------------------------------------------------
 
@@ -456,7 +451,6 @@ class testProcedures(FlowTestsBase):
         reducible = f[4]
         aggregation = f[5]
         variable_len = f[6]
-        udf = f[7]
 
         self.env.assertEquals(name, "case")
         self.env.assertEquals(
@@ -473,4 +467,3 @@ class testProcedures(FlowTestsBase):
         self.env.assertEquals(reducible, True)
         self.env.assertEquals(aggregation, False)
         self.env.assertEquals(variable_len, True)
-        self.env.assertEquals(udf, False)
