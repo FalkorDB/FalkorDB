@@ -203,11 +203,18 @@ void reduceVarLenTraverseDestLabel
 
 		// strip every leading diagonal operand that belongs to dest_alias —
 		// these are the label matrices CondVarLenTraverse already enforces
-		while (AlgebraicExpression_OperandCount (ae) > 0    &&
-				AlgebraicExpression_DiagonalOperand (ae, 0) &&
-				strcmp (AlgebraicExpression_Src (ae), dest_alias) == 0) {
-			AlgebraicExpression_Free (
-					AlgebraicExpression_RemoveSource (&ae)) ;
+		while (AlgebraicExpression_OperandCount (ae) > 0) {
+			// find source (aware of transpose)
+			const AlgebraicExpression *src_operand =
+				AlgebraicExpression_SrcOperand(ae) ;
+
+			if (src_operand == NULL ||
+				!AlgebraicExpression_Diagonal (src_operand) ||
+				strcmp (AlgebraicExpression_Src (ae), dest_alias) != 0) {
+				break ;
+			}
+
+			AlgebraicExpression_Free (AlgebraicExpression_RemoveSource (&ae)) ;
 		}
 
 		// update operation's algebraic expression

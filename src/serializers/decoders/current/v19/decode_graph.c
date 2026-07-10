@@ -79,9 +79,6 @@ static GraphContext *_GetOrCreateGraphContext
 		GraphContext_AcquireWriteLock (gc) ;
 	}
 
-	// free the name string, as it either not in used or copied
-	RedisModule_Free (graph_name) ;
-
 	return gc ;
 }
 
@@ -102,7 +99,8 @@ static void _InitGraphDataStructure
 
 static GraphContext *_DecodeHeader
 (
-	SerializerIO rdb
+	SerializerIO rdb,
+	bool detached
 ) {
 	// Header format:
 	// Graph name
@@ -136,7 +134,15 @@ static GraphContext *_DecodeHeader
 	// total keys representing the graph
 	uint64_t key_number = SerializerIO_ReadUnsigned(rdb);
 
-	GraphContext *gc = _GetOrCreateGraphContext(graph_name);
+	GraphContext *gc = NULL ;
+	if (detached) {
+		gc = GraphContext_New (graph_name) ;
+		GraphContext_AcquireWriteLock (gc) ;
+	} else {
+		gc = _GetOrCreateGraphContext (graph_name) ;
+	}
+	RedisModule_Free (graph_name) ;
+
 	Graph *g = GraphContext_GetGraph (gc) ;
 	GraphDecodeContext *decoding_context = GraphContext_GetDecodingCtx (gc) ;
 
@@ -203,7 +209,8 @@ static PayloadInfo *_RdbLoadKeySchema
 GraphContext *RdbLoadGraphContext_latest
 (
 	SerializerIO rdb,
-	const RedisModuleString *rm_key_name
+	const RedisModuleString *rm_key_name,
+	bool detached
 ) {
 	// Key format:
 	//  Header
@@ -213,7 +220,7 @@ GraphContext *RdbLoadGraphContext_latest
 	//      Entities in payload
 	//  Payload(s) X N
 
-	GraphContext *gc = _DecodeHeader(rdb);
+	GraphContext *gc = _DecodeHeader (rdb, detached) ;
 	Graph        *g  = GraphContext_GetGraph (gc) ;
 	GraphDecodeContext *decoding_context = GraphContext_GetDecodingCtx (gc) ;
 

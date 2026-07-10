@@ -183,21 +183,18 @@ static void _ExecuteQuery
 	}
 
 	// instantiate the query ResultSet
-	bool bolt    = command_ctx->bolt_client != NULL ;
 	bool compact = command_ctx->compact ;
 
 	// replicated command don't need to return result
 	ResultSetFormatterType resultset_format =
 		(profile || command_ctx->replicated_command) ?
 			FORMATTER_NOP :
-				(bolt) ?
-					FORMATTER_BOLT :
-					(compact) ?
-						FORMATTER_COMPACT :
-						FORMATTER_VERBOSE ;
+				(compact) ?
+					FORMATTER_COMPACT :
+					FORMATTER_VERBOSE ;
 
 	ResultSet *result_set =
-		NewResultSet (rm_ctx, command_ctx->bolt_client, resultset_format) ;
+		NewResultSet (rm_ctx, resultset_format) ;
 
 	if (exec_ctx->cached) {
 		ResultSet_CachedExecution (result_set) ; // indicate a cached execution
@@ -383,8 +380,8 @@ static void enter_writer_loop
 		// to reacquire write access
 		// if we succeed, continue processing
 		// if we fail, another thread is now the writer and will handle the queue
-		if (GraphContext_WriteQueueEmpty (gc) ||
-			!GraphContext_TryEnterWrite  (gc)) {
+		if (GraphContext_WriteQueueEmpty    (gc) ||
+			!GraphContext_TimeTryEnterWrite (gc, 0)) {
 			// either the queue is empty
 			// or the another thread became a writer
 			break ;
@@ -392,19 +389,40 @@ static void enter_writer_loop
 	}
 }
 
+// optnone: Clang's -O2/-O3 inter-procedural analysis converts every
+// "goto cleanup" branch to llvm.assume, making it fall through to
+// GraphContext_GetGraph(NULL) when GraphContext_Retrieve fails.
+// The heavy inner functions (_ExecuteQuery, GraphContext_Retrieve, etc.)
+// are not affected by this attribute — only the orchestration shell is.
+__attribute__((optnone))
 void _query
 (
 	bool profile,
 	void *args
 ) {
-	CommandCtx     *command_ctx = (CommandCtx *)args ;
-	QueryCtx       *query_ctx   = QueryCtx_GetQueryCtx () ;
-	RedisModuleCtx *ctx         = CommandCtx_GetRedisCtx (command_ctx) ;
-	GraphContext   *gc          = CommandCtx_GetGraphContext (command_ctx) ;
-	Graph          *g           = GraphContext_GetGraph (gc) ;
-	ExecutionCtx   *exec_ctx    = NULL ;
+	CommandCtx *command_ctx = (CommandCtx *)args ;
+	RedisModuleCtx *ctx = CommandCtx_GetRedisCtx (command_ctx) ;
+	ExecutionCtx *exec_ctx = NULL ;
+	GraphContext *gc = CommandCtx_GetGraphContext (command_ctx) ;
 
+	// Initialize TLS query context and track the in-flight command BEFORE any
+	// 'goto cleanup' so that QueryCtx_Free() and Globals_UntrackCommandCtx()
+	// in cleanup are always safe to call (both assert non-NULL state that is
+	// set up here).  This matters when GraphContext_Retrieve returns gc=NULL
+	// (e.g. graph re-offloaded immediately after a successful load).
+	QueryCtx *query_ctx = QueryCtx_GetQueryCtx () ;
 	Globals_TrackCommandCtx (command_ctx) ;
+
+	if (gc == NULL) {
+		if (GraphContext_Retrieve (ctx, command_ctx->rm_graph_name, true, false,
+					true, &gc) != GraphRetrieve_RETRIEVED) {
+			goto cleanup ;
+		}
+		CommandCtx_SetGraphContext (command_ctx, gc) ;
+	}
+
+	Graph *g = GraphContext_GetGraph (gc) ;
+
 	QueryCtx_SetGlobalExecutionCtx (command_ctx) ;
 	UDFCtx_Update () ;  // make sure thread's UDFs are up to date
 
@@ -506,7 +524,7 @@ void _query
 		}
 
 		// try to acquire exclusive write access to graph
-		if (GraphContext_TryEnterWrite (gc)) {
+		if (GraphContext_TimeTryEnterWrite (gc, 0)) {
 			// thread has exclusive write access to graph
 			// go ahead and run the query
 			enter_writer_loop (gc) ;
@@ -529,11 +547,15 @@ cleanup:
 		ErrorCtx_EmitException () ;
 	}
 
-	// cleanup routine invoked after encountering errors in this function
 	ExecutionCtx_Free (exec_ctx) ;
-	GraphContext_DecreaseRefCount (gc) ;
+
+	if (gc) {
+		GraphContext_DecreaseRefCount (gc) ;
+	}
+
 	Globals_UntrackCommandCtx (command_ctx) ;
 	CommandCtx_UnblockClient (command_ctx) ;
+
 	CommandCtx_Free (command_ctx) ;
 	QueryCtx_Free () ; // reset the QueryCtx and free its allocations
 	ErrorCtx_Clear () ;

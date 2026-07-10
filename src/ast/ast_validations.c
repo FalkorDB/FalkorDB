@@ -15,6 +15,7 @@
 #include "../util/rax_extensions.h"
 #include "../procedures/procedure.h"
 #include "../execution_plan/ops/op.h"
+#include "../util/identifier_limits.h"
 #include "../arithmetic/arithmetic_expression.h"
 
 typedef enum {
@@ -32,6 +33,25 @@ typedef struct {
 // ast validation visitor mappings
 // number of ast-node types: _MAX_VT_OFF = sizeof(struct cypher_astnode_vts) / sizeof(struct cypher_astnode_vt *) = 116
 static visit validations_mapping[116];
+
+// validates name length
+// returns AST_INVALID if name is too long and sets an error
+static AST_Validation _ValidateNameLength
+(
+	const char *name,
+	const char *entity
+) {
+	ASSERT (name   != NULL) ;
+	ASSERT (entity != NULL) ;
+
+	if (strnlen (name, MAX_IDENTIFIER_LEN + 1) > MAX_IDENTIFIER_LEN) {
+		ErrorCtx_SetError (EMSG_IDENTIFIER_TOO_LONG, entity,
+				MAX_IDENTIFIER_LEN) ;
+		return AST_INVALID ;
+	}
+
+	return AST_VALID ;
+}
 
 // find an identifier in the environment
 static void *_IdentifiersFind
@@ -546,11 +566,125 @@ static VISITOR_STRATEGY _Validate_identifier
 	}
 
 	const char *identifier = cypher_ast_identifier_get_name(n);
+	if(_ValidateNameLength(identifier, "Identifier") == AST_INVALID) {
+		return VISITOR_BREAK;
+	}
+
 	if(_Validate_referred_identifier(vctx, identifier) == AST_INVALID) {
 		return VISITOR_BREAK;
 	}
 
 	return VISITOR_RECURSE;
+}
+
+// validates prop name length
+// breaks and sets errorctx if name too long
+static VISITOR_STRATEGY _Validate_prop_name
+(
+	const cypher_astnode_t *n,
+	bool start,
+	ast_visitor *visitor
+) {
+	UNUSED (visitor) ;
+
+	if (!start) {
+		return VISITOR_CONTINUE ;
+	}
+
+	const char *prop = cypher_ast_prop_name_get_value (n) ;
+	if (_ValidateNameLength (prop, "Property name") == AST_INVALID) {
+		return VISITOR_BREAK ;
+	}
+
+	return VISITOR_RECURSE ;
+}
+
+// validates label name length
+// breaks and sets errorctx if name too long
+static VISITOR_STRATEGY _Validate_label_name
+(
+	const cypher_astnode_t *n,
+	bool start,
+	ast_visitor *visitor
+) {
+	UNUSED (visitor) ;
+
+	if (!start) {
+		return VISITOR_CONTINUE ;
+	}
+
+	const char *label = cypher_ast_label_get_name (n) ;
+	if (_ValidateNameLength (label, "Label name") == AST_INVALID) {
+		return VISITOR_BREAK ;
+	}
+
+	return VISITOR_RECURSE ;
+}
+
+// validates relationship name length
+// breaks and sets errorctx if name too long
+static VISITOR_STRATEGY _Validate_reltype_name
+(
+	const cypher_astnode_t *n,
+	bool start,
+	ast_visitor *visitor
+) {
+	UNUSED (visitor) ;
+
+	if (!start) {
+		return VISITOR_CONTINUE ;
+	}
+
+	const char *reltype = cypher_ast_reltype_get_name (n) ;
+	if (_ValidateNameLength (reltype, "Relationship type") == AST_INVALID) {
+		return VISITOR_BREAK ;
+	}
+
+	return VISITOR_RECURSE ;
+}
+
+// validates procedure name length
+// breaks and sets errorctx if name too long
+static VISITOR_STRATEGY _Validate_proc_name
+(
+	const cypher_astnode_t *n,
+	bool start,
+	ast_visitor *visitor
+) {
+	UNUSED (visitor) ;
+
+	if (!start) {
+		return VISITOR_CONTINUE ;
+	}
+
+	const char *proc_name = cypher_ast_proc_name_get_value (n) ;
+	if (_ValidateNameLength (proc_name, "Procedure name") == AST_INVALID) {
+		return VISITOR_BREAK ;
+	}
+
+	return VISITOR_RECURSE ;
+}
+
+// validates function name length
+// breaks and sets errorctx if name too long
+static VISITOR_STRATEGY _Validate_function_name
+(
+	const cypher_astnode_t *n,
+	bool start,
+	ast_visitor *visitor
+) {
+	UNUSED (visitor) ;
+
+	if (!start) {
+		return VISITOR_CONTINUE ;
+	}
+
+	const char *func_name = cypher_ast_function_name_get_value (n) ;
+	if (_ValidateNameLength (func_name, "Function name") == AST_INVALID) {
+		return VISITOR_BREAK ;
+	}
+
+	return VISITOR_RECURSE ;
 }
 
 // validate the values of a map
@@ -605,6 +739,10 @@ static AST_Validation _ValidateFunctionCall
 	const char *funcName,    // function name
 	bool include_aggregates  // are aggregations allowed
 ) {
+	if (_ValidateNameLength (funcName, "Function name") == AST_INVALID) {
+		return AST_INVALID ;
+	}
+
 	// check existence of the function-name
 	if(!AR_FuncExists(funcName)) {
 		ErrorCtx_SetError(EMSG_UNKNOWN_FUNCTION, funcName);
@@ -2292,6 +2430,11 @@ bool AST_ValidationsMappingInit(void) {
 	validations_mapping[CYPHER_AST_FOREACH]                    = _Validate_FOREACH_Clause;
 	validations_mapping[CYPHER_AST_LOAD_CSV]                   = _Validate_load_csv;
 	validations_mapping[CYPHER_AST_IDENTIFIER]                 = _Validate_identifier;
+	validations_mapping[CYPHER_AST_PROP_NAME]                  = _Validate_prop_name;
+	validations_mapping[CYPHER_AST_LABEL]                      = _Validate_label_name;
+	validations_mapping[CYPHER_AST_RELTYPE]                    = _Validate_reltype_name;
+	validations_mapping[CYPHER_AST_PROC_NAME]                  = _Validate_proc_name;
+	validations_mapping[CYPHER_AST_FUNCTION_NAME]              = _Validate_function_name;
 	validations_mapping[CYPHER_AST_PROJECTION]                 = _Validate_projection;
 	validations_mapping[CYPHER_AST_NAMED_PATH]                 = _Validate_named_path;
 	validations_mapping[CYPHER_AST_REL_PATTERN]                = _Validate_rel_pattern;

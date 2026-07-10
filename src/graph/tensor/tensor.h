@@ -128,6 +128,7 @@ struct TensorIterator {
 	Delta_MatrixTupleIter a_it;      // vectors iterator
 	struct GB_Iterator_opaque v_it;  // vector iterator
 	bool vec;                        // iterate using v_it
+	bool transpose;                  // attached to T's transpose
 	uint64_t x;                      // current entry value
 	GrB_Index row;                   // current row
 	GrB_Index col;                   // current col
@@ -152,6 +153,25 @@ void TensorIterator_ScanRange
 	GrB_Index min_row,   // minimum row
 	GrB_Index max_row,   // maximum row
 	bool transpose       // scan transposed of T
+);
+
+// attach iterator to a tensor (or its transpose) without restricting it to a
+// row range, for callers that will repeatedly reseek the same iterator via
+// TensorIterator_IterateRow rather than re-attach on every query. avoids the
+// cost of re-deriving the underlying matrices' sparsity/format on every scan
+void TensorIterator_Attach
+(
+	TensorIterator *it,  // iterator
+	Tensor T,            // tensor
+	bool transpose       // attach to transpose of T
+);
+
+// reseek an already-attached iterator (see TensorIterator_Attach) to a
+// single row, without re-attaching the underlying row iterators
+void TensorIterator_IterateRow
+(
+	TensorIterator *it,  // iterator, must already be attached
+	GrB_Index row        // row to iterate
 );
 
 // advance iterator
