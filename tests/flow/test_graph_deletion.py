@@ -535,6 +535,26 @@ class testGraphDeletionFlow(FlowTestsBase):
         self.env.assertEquals(result[1][0], b)
         self.env.assertEquals(result[2][0], a1)
 
+    def test25_delete_does_not_leave_phantom_label_entries(self):
+        # clean the db
+        self.graph.delete()
+
+        # create a single labeled node and then grow the graph dimensions
+        self.graph.query("CREATE (ghost:BOO)")
+        self.graph.query("UNWIND range(0, 100000) AS x CREATE ()")
+
+        # delete a subset that includes the BOO node (id 0)
+        res = self.graph.query("MATCH (x) WITH x LIMIT 10000 DELETE x")
+        self.env.assertEquals(res.nodes_deleted, 10000)
+
+        # regression: deleted node must not remain discoverable via label scan
+        res = self.graph.query("MATCH (x:BOO) RETURN count(x)")
+        self.env.assertEquals(res.result_set[0][0], 0)
+
+        # regression: property access on labeled result must not hit undefined attribute
+        res = self.graph.query("MATCH (x:BOO) WHERE x.id = 0 RETURN x")
+        self.env.assertEquals(res.result_set, [])
+
 class testGraphBulkDeletion(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
@@ -796,4 +816,3 @@ class testGraphBulkDeletion(FlowTestsBase):
         self.env.assertEquals(relTypes,  relTypes_expected)
         self.env.assertEquals(relCount,  relCount_expected)
         self.env.assertEquals(nodeCount, nodeCount_expected)
-

@@ -38,7 +38,7 @@ static sds _JsonEncoder_Properties
 		AttributeID attr_id ;
 		AttributeSet_GetIdx (set, i, &attr_id, &value) ;
 
-		const char *key = GraphContext_GetAttributeString (gc, attr_id) ;
+		const char *key = GraphContext_GetAttributeName (gc, attr_id) ;
 		s = sdscatfmt (s, "\"%s\": ", key) ;
 		s = _JsonEncoder_SIValue (value, s) ;
 		if (i < prop_count - 1) {

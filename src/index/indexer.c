@@ -91,16 +91,15 @@ static void _indexer_idx_populate
 ) {
 	Index idx = ctx->idx;
 	GraphContext *gc = ctx->gc;
-	Graph *g = GraphContext_GetGraph (gc) ;
 
 	// populate index
-	Index_Populate (idx, g) ;
+	Index_Populate (idx, gc) ;
 
 	// we're required to hold both GIL and write lock
 	// as Schema_ActivateIndex might drop an index
 	RedisModuleCtx *rm_ctx = RedisModule_GetThreadSafeContext(NULL);
 	RedisModule_ThreadSafeContextLock(rm_ctx);
-	Graph_AcquireWriteLock (g) ;
+	GraphContext_AcquireWriteLock (gc) ;
 
 	// index populated, try to enable
 	Index_Enable(idx);
@@ -110,7 +109,7 @@ static void _indexer_idx_populate
 	}
 
 	// release locks
-	Graph_ReleaseLock (g) ;
+	GraphContext_ReleaseLock (gc) ;
 	RedisModule_ThreadSafeContextUnlock(rm_ctx);
 	RedisModule_FreeThreadSafeContext(rm_ctx);
 
@@ -147,7 +146,6 @@ static void _indexer_enforce_constraint
 ) {
 	Constraint c = ctx->c;
 	GraphContext *gc = ctx->gc;
-	Graph *g = GraphContext_GetGraph(gc);
 
 	// unique constraint uses index to enforce the constraint
 	// if the index is not enabled, we'll delay the enforcement
@@ -163,10 +161,10 @@ static void _indexer_enforce_constraint
 	}
 
 	// try to enforce constraint on all relevent entities
-	if(Constraint_GetEntityType(c) == GETYPE_NODE) {
-		Constraint_EnforceNodes(c, g);
+	if (Constraint_GetEntityType (c) == GETYPE_NODE) {
+		Constraint_EnforceNodes (c, gc) ;
 	} else {
-		Constraint_EnforceEdges(c, g);
+		Constraint_EnforceEdges (c, gc) ;
 	}
 
 	// replicate constraint if active

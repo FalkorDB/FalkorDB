@@ -1,0 +1,124 @@
+# Builder toolchain image — Alpine
+#
+# Alpine cmake from apk is too old; pip-install the same pinned version as
+# the other builder OSes for byte-identical cmake across the matrix.
+#
+# clang-sys / bindgen need libclang AT BUILD TIME. On musl, clang-sys's
+# build script defaults to *static* linking (libclang.a, not libclang.so),
+# so the per-major *-static packages must be installed alongside the
+# normal -dev / -libs. Alpine ships these as separate `clangNN-static` /
+# `llvmNN-static` packages.
+#
+# Redis: built from git at REDIS_VERSION (multi-stage). Must be built on
+# alpine itself — a glibc binary from debian:trixie-slim won't run against
+# musl. Same pinned tag (8.6.3) as the other toolchains and sanitize so
+# every test sees identical Redis behaviour.
+
+ARG REDIS_VERSION=8.6.3
+
+#--------------------------------------------------------------------------
+# Stage 1: build redis-server / redis-cli on alpine itself (musl-linked).
+#--------------------------------------------------------------------------
+FROM alpine:3.22 AS redis-builder
+
+ARG REDIS_VERSION
+RUN apk add --no-cache --no-scripts \
+    git ca-certificates gcc g++ libc-dev linux-headers \
+    openssl-dev make bsd-compat-headers && \
+    update-ca-certificates || true
+
+WORKDIR /tmp
+RUN git clone --depth 1 --branch "${REDIS_VERSION}" https://github.com/redis/redis.git redis-src
+WORKDIR /tmp/redis-src
+
+# Flip protected-mode default so test runs without --protected-mode no
+# accept connections — same one-line sed used in the upstream redis image
+# and falkordb-rs-next-gen.
+# (Skip the jemalloc page-size tweak — alpine's musl + jemalloc combo is
+#  simpler than the debian/dpkg path, default jemalloc is fine.)
+RUN set -eux; \
+    sed -ri 's!^( *createBoolConfig[(]"protected-mode",.*, *)1( *,.*[)],)$!\10\2!' src/config.c; \
+    grep -E '^ *createBoolConfig[(]"protected-mode",.*, *0 *,.*[)],$' src/config.c; \
+    export BUILD_TLS=yes BUILD_WITH_MODULES=no; \
+    make -j "$(nproc)" all; \
+    make PREFIX=/redis-install install; \
+    strip /redis-install/bin/redis-server /redis-install/bin/redis-cli; \
+    /redis-install/bin/redis-server --version
+
+#--------------------------------------------------------------------------
+# Stage 2: actual toolchain image.
+#--------------------------------------------------------------------------
+# Pinned to alpine:3.22 (rather than alpine:latest) so the toolchain version
+# is reproducible across image rebuilds. Bump deliberately when alpine 3.23+
+# becomes the production target.
+FROM alpine:3.22 AS builder
+
+# --no-scripts avoids trigger issues in QEMU emulation during multi-arch builds.
+RUN apk add --no-cache --no-scripts \
+    git \
+    bash \
+    python3 \
+    py3-pip \
+    ca-certificates \
+    curl \
+    curl-dev \
+    wget \
+    unzip \
+    automake \
+    libtool \
+    autoconf \
+    openssl-dev \
+    zlib-dev \
+    zstd-dev \
+    clang20-dev \
+    clang20-libs \
+    clang20-static \
+    llvm20-dev \
+    llvm20-static \
+    gperf \
+    gcc \
+    g++ \
+    musl-dev \
+    libffi-dev \
+    ncurses-dev \
+    bsd-compat-headers \
+    linux-headers \
+    build-base && \
+    update-ca-certificates || true
+
+# Python venv (the apk python is PEP-668 marked)
+RUN python3 -m venv /venv && chmod +x /venv/bin/*
+ENV PATH="/venv/bin:$PATH"
+
+RUN pip install --disable-pip-version-check --no-cache-dir setuptools --upgrade
+# Pin cmake to the same exact version across every builder OS.
+RUN pip install --no-cache-dir --break-system-packages 'cmake==3.31.6'
+
+# minipeg ships as `peg` on alpine but build.sh expects `leg`
+RUN apk add --no-cache --no-scripts minipeg && \
+    (ln -s "$(which minipeg)" /usr/local/bin/leg || ln -s "$(which minipeg)" /usr/bin/leg)
+
+# Install rust via rustup (matches the other builder OSes). Alpine's apk
+# `rust` package on 3.22 ships 1.87.0, which is one minor too old for
+# RediSearch's redisearch_rs build_utils crate that uses `let` chains
+# (stabilized in 1.88). rustup gets us the current stable.
+# The default-host x86_64-unknown-linux-musl / aarch64-unknown-linux-musl
+# triple is auto-selected.
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Rust's musl target defaults to `-C target-feature=+crt-static`, which makes
+# every build artifact (including build-scripts and the final .so) a static
+# PIE. Alpine ships libclang.a / per-component LLVM static archives but NOT
+# a combined `libLLVM-20.a` — clang-sys's build script then fails with
+# `ld: cannot find -lLLVM-20`. We're building a Redis module (.so) loaded
+# at runtime, so static linking gives us nothing. Opt out → dynamic link
+# against the libLLVM-20.so / libclang.so that llvm20-libs / clang20-libs
+# provide.
+ENV RUSTFLAGS="-C target-feature=-crt-static"
+
+# redis-server / redis-cli — copied LAST so a REDIS_VERSION bump only rebuilds
+# this cheap layer and leaves the toolchain download layers (rust/cmake/apt)
+# cached. /usr/local/bin precedes /usr/bin on PATH (where RLTest looks).
+COPY --from=redis-builder /redis-install/bin/redis-server /usr/local/bin/redis-server
+COPY --from=redis-builder /redis-install/bin/redis-cli    /usr/local/bin/redis-cli

@@ -12,6 +12,7 @@
 #include "../index/indexer.h"
 #include "../graph/graphcontext.h"
 #include "../constraint/constraint.h"
+#include "../util/identifier_limits.h"
 
 // activate pending index
 // asserts that pending index is enabled
@@ -52,22 +53,35 @@ void Schema_ActivateIndex
 	}
 }
 
+// Schema_New creates and initializes a new Schema object
+//
+// each schema represents the structure of a typed graph entity (Node or Edge),
+// identified by a unique numeric ID and a human-readable name within its type
+// domain (node schemas and relation schemas maintain separate ID spaces)
+//
+// returns a fully initialized Schema on success
+// panics (via ASSERT) if 'name' is NULL
 Schema *Schema_New
 (
-	SchemaType type,
-	int id,
-	const char *name
+	SchemaType  type,  // node or edge schema
+	int         id,    // unique schema ID within its type domain
+	const char  *name  // human-readable label/relation-type name
 ) {
-	ASSERT(name != NULL);
+	ASSERT (name != NULL) ;
 
-	Schema *s = rm_calloc(1, sizeof(Schema));
+	// must crash in release
+	// should only happen if an old rdb with an overlong name is loaded
+	RELEASE_ASSERT (strnlen (name, MAX_IDENTIFIER_LEN + 1) <=
+			MAX_IDENTIFIER_LEN) ;
 
-	s->id          = id;
-	s->type        = type;
-	s->name        = rm_strdup(name);
-	s->constraints = arr_new(Constraint, 0);
+	Schema *s = rm_calloc (1, sizeof (Schema)) ;
 
-	return s;
+	s->id          = id ;
+	s->type        = type ;
+	s->name        = rm_strdup (name);
+	s->constraints = arr_new (Constraint, 0) ;
+
+	return s ;
 }
 
 int Schema_ID

@@ -7,6 +7,7 @@
 #pragma once
 
 #include "graph.h"
+#include "graph_memoryUsage.h"
 #include "../redismodule.h"
 #include "../index/index.h"
 #include "../schema/schema.h"
@@ -40,22 +41,97 @@ void GraphContext_DecreaseRefCount
 	GraphContext *gc
 );
 
-// retrive the graph context according to the graph name
-// readOnly is the access mode to the graph key
-GraphContext *GraphContext_Retrieve
+// return graph context reference count
+int GraphContext_RefCount
 (
-	RedisModuleCtx *ctx,
-	RedisModuleString *graphID,
-	bool readOnly,
-	bool shouldCreate
+	const GraphContext *gc
+) ;
+
+// attach graph context to a Redis key and register it with FalkorDB's
+// global graph registry
+void GraphContext_SetKey
+(
+	RedisModuleCtx *ctx,  // redis module context
+    GraphContext *gc      // graph context
 );
 
-// decrease graph context reference count
-// graph context will be free once reference count reaches 0
-void GraphContext_Release
+// GraphContext_Retrieve status
+typedef enum {
+	GraphRetrieve_RETRIEVED,  // gc is valid, ref count incremented
+	GraphRetrieve_FAILED,     // error emitted, gc is NULL
+	GraphRetrieve_OFFLOADED,  // graph is offloaded
+} GraphRetrieveStatus ;
+
+// Retrieve the GraphContext for graphID.
+// On success sets *gc and returns GraphRetrieve_RETRIEVED.
+// On error emits a reply and returns GraphRetrieve_FAILED.
+// When load_from_disk=false and the graph is a stub, returns
+// GraphRetrieve_OFFLOADED with no error reply.
+// When load_from_disk=true the function loads the graph from disk and
+// re-fetches; may be called from any thread in that case.
+// When load_from_disk=false must be called from the Redis main thread.
+GraphRetrieveStatus GraphContext_Retrieve
 (
-	GraphContext *gc // graph context to release
+	RedisModuleCtx    *ctx,             // Redis module context
+	RedisModuleString *graphID,         // key identifying the graph
+	bool               readOnly,        // if true, opens the key in read mode
+	bool               shouldCreate,    // create new graph if the key is absent
+	bool               load_from_disk,  // load graph from disk if offloaded
+	GraphContext     **gc               // out: graph context on success
+) ;
+
+//------------------------------------------------------------------------------
+// Synchronization functions
+//------------------------------------------------------------------------------
+
+// acquires a READ lock on the graph context
+void GraphContext_AcquireReadLock
+(
+	GraphContext *gc  // graph context
 );
+
+// acquires a WRITE lock on the graph context
+void GraphContext_AcquireWriteLock 
+(
+	GraphContext *gc  // graph context
+);
+
+// acquire the graph context write lock with a timeout
+// attempts to acquire the write lock on the given graphcontext
+// if the lock is not acquired immediately the function will block until either
+// the lock becomes available or the timeout elapses
+//
+// returns:
+// - 0 on success (lock acquired)
+// - ETIMEDOUT if the timeout expired before acquiring the lock
+// - EBUSY if called with timeout_ms == 0 and the lock could not be acquired
+// - other nonzero error codes may be returned for unexpected failures
+int GraphContext_TimeAcquireWriteLock
+(
+	GraphContext *gc,  // graph to lock
+	int timeout_ms     // maximum time in milliseconds to wait for the lock:
+                       // - timeout_ms < 0 : block until the lock is acquired
+                       // - timeout_ms = 0 : non-blocking attempt (try-lock)
+                       // - timeout_ms > 0 : wait up to timeout_ms milliseconds
+);
+
+void GraphContext_ReleaseReadLock
+(
+	GraphContext *gc
+);
+
+// releases the lock currently held on the graph context
+// must be called exactly once for every successful acquire call
+void GraphContext_ReleaseLock
+(
+	GraphContext *gc
+);
+
+// returns rather or not graph is locked for writing
+bool GraphContext_IsWriteLocked
+(
+	const GraphContext *gc
+) ;
 
 // mark graph key as "dirty" for Redis to pick up on
 void GraphContext_MarkWriter
@@ -64,24 +140,15 @@ void GraphContext_MarkWriter
 	GraphContext *gc
 );
 
-void GraphContext_LockForCommit
-(
-	RedisModuleCtx *ctx,
-	GraphContext *gc
-);
-
-void GraphContext_UnlockCommit
-(
-	RedisModuleCtx *ctx,
-	GraphContext *gc
-);
-
 // attempt to acquire exclusive write access to the given graph
 // returns true if the calling thread successfully acquired write ownership
 // returns false if another write is already in progress
-bool GraphContext_TryEnterWrite
+bool GraphContext_TimeTryEnterWrite
 (
-	GraphContext *gc  // graph context
+	GraphContext *gc,  // graph context
+	uint timeout_ms    // maximum time in milliseconds to wait for the lock:
+                       // - timeout_ms = 0 : non-blocking attempt (try-lock)
+                       // - timeout_ms > 0 : block up to timeout_ms milliseconds
 );
 
 // release exclusive write access to the graph
@@ -141,11 +208,16 @@ void GraphContext_Rename
 	const char *name      // new name
 );
 
-// Get graph context version
-XXH32_hash_t GraphContext_GetVersion
+// get graph context hash
+XXH32_hash_t GraphContext_GetHash
 (
 	const GraphContext *gc
 );
+
+void GraphContext_BumpReadVersion
+(
+	GraphContext *gc
+) ;
 
 // get graph from graph context
 Graph *GraphContext_GetGraph
@@ -153,11 +225,38 @@ Graph *GraphContext_GetGraph
 	const GraphContext *gc
 );
 
+// returns the graph's current RAM footprint in bytes
+// acquires the read lock internally; safe to call after GraphContext_Retrieve
+uint64_t GraphContext_MemoryUsage
+(
+	const GraphContext *gc
+) ;
+
+// returns the amortized memory consumption of a graph (all fields in MB on return)
+// samples attribute-sets for nodes/edges and measures index memory
+// result->node_attr_by_label_sz and result->edge_attr_by_type_sz must be
+// initialised with arr_new(size_t, 0) by the caller; arr_free them after use
+// caller must hold at least the graph read lock
+void GraphContext_EstimateMemoryUsage
+(
+	GraphContext      *gc,      // graph context
+	double             samples, // samples per label / relation type
+	MemoryUsageResult *result   // [output] all size fields in MB on return
+) ;
+
 //------------------------------------------------------------------------------
 // Schema API
 //------------------------------------------------------------------------------
 
-// retrieve number of schemas created for given type
+// returns the number of schemas of the given type visible at the current
+// graph version
+//
+// schemas are stored in insertion order, so any schema introduced after
+// the current reader's version will appear at the tail of the array
+// invisible schemas are peeled from the tail until a visible one is found
+//
+// relies on the invariant that schemas are always appended in strictly
+// increasing version order — newer schemas never appear before older ones
 unsigned short GraphContext_SchemaCount
 (
 	GraphContext *gc,
@@ -195,24 +294,37 @@ Schema *GraphContext_GetSchemaByID
 Schema *GraphContext_GetSchema
 (
 	GraphContext *gc,
-	const char *label,
+	const char *name,
 	SchemaType t
 );
 
-// add a new schema and matrix for the given label
-Schema *GraphContext_AddSchema
+// tries to located schema, in case schema doesn't exists
+// registers a new schema and its backing matrix for the given type:
+// allocates a label matrix (node) or relation-type matrix (edge) in the graph
+// then appends the schema to the corresponding schema array
+Schema *GraphContext_FindOrAddSchema
 (
-	GraphContext *gc,
-	const char *label,
-	SchemaType t
+	GraphContext *gc,  // graph context
+	const char *name,  // schema name
+	SchemaType t,      // SCHEMA_NODE or SCHEMA_EDGE
+	bool *created      // true if schema was created
 );
 
-// removes a schema with a specific id
+// removes the schema at index 'id', frees it, and removes its backing
+// matrix from the graph
+//
+// after removal the schema array is compacted: every schema with index > id
+// shifts down by one
+// callers must invalidate any cached schema IDs
+//
+// the schema's version must equal the current write version — only schemas
+// introduced within the current write transaction may be removed
+// this ensures committed schemas remain stable from concurrent readers
 void GraphContext_RemoveSchema
 (
-	GraphContext *gc,
-	int schema_id,
-	SchemaType t
+	GraphContext *gc,  // graph context
+	int id,            // schema ID to remove
+	SchemaType t       // SCHEMA_NODE or SCHEMA_EDGE
 );
 
 // returns the relation type string for a given edge object
@@ -231,13 +343,13 @@ uint GraphContext_AttributeCount
 // returns an attribute ID given a string, creating one if not found
 AttributeID GraphContext_FindOrAddAttribute
 (
-	GraphContext *gc,
-	const char *attribute,
-	bool* created
+	GraphContext *gc,       // graph context
+	const char *attribute,  // attribute name
+	bool *created           // [optional] rather or not attribute was created
 );
 
 // returns an attribute string given an ID
-const char *GraphContext_GetAttributeString
+const char *GraphContext_GetAttributeName
 (
 	GraphContext *gc,
 	AttributeID id
@@ -414,6 +526,13 @@ GraphDecodeContext *GraphContext_GetDecodingCtx
 //------------------------------------------------------------------------------
 
 QueriesLog GraphContext_GetQueriesLog
+(
+	GraphContext *gc
+);
+
+// free all data associated with graph context
+// caller must ensure ref count is 0 and gc is not in the global registry
+void GraphContext_Free
 (
 	GraphContext *gc
 );

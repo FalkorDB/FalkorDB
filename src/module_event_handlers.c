@@ -11,7 +11,6 @@
 #include "util/uuid.h"
 #include "cron/cron.h"
 #include "index/indexer.h"
-#include "bolt/bolt_api.h"
 #include "util/thpool/pool.h"
 #include "util/redis_version.h"
 #include "graph/graphcontext.h"
@@ -371,8 +370,6 @@ static void _ShutdownEventHandler
 	// server is shutting down, finalize GraphBLAS
 	LAGraph_Finalize (NULL) ;
 
-	BoltApi_Unregister () ;
-
 	// free global variables
 	Globals_Free () ;
 
@@ -468,22 +465,11 @@ static void _ForkPrepare() {
 	double tic [2] ;
 	simple_tic (tic) ;
 
-	uint32_t n = Globals_GraphsCount () ;
+	uint n = 0 ;
+	GraphContext **graphs = Globals_CollectGraphs (&n) ;
 
 	ASSERT (locked == NULL) ;
 	locked = rm_calloc (n, sizeof (atomic_bool)) ;
-	GraphContext **graphs = rm_malloc (sizeof (GraphContext*) * n) ;
-
-	// scan through each graph in the keyspace
-	KeySpaceGraphIterator it ;
-	Globals_ScanGraphs (&it) ;
-
-	// collect graphs
-	for (uint32_t i = 0 ; i < n ; i++) {
-		graphs [i] = GraphIterator_Next (&it) ;
-		ASSERT (graphs [i] != NULL) ;
-	}
-	ASSERT (GraphIterator_Next (&it) == NULL) ;
 
 	// sync each graph's matrices in parallel
 	// each iteration is independent — different graph, different locks
@@ -502,7 +488,7 @@ static void _ForkPrepare() {
 		GraphContext *gc = graphs [i] ;
 		Graph *g = GraphContext_GetGraph (gc) ;
 
-		Graph_AcquireReadLock (g) ;  // release in _AfterForkParent
+		GraphContext_AcquireReadLock (gc) ;  // release in _AfterForkParent
 		locked [i] = true ;
 
 		// set matrix synchronization policy to default
@@ -511,9 +497,9 @@ static void _ForkPrepare() {
 		// synchronize all matrices, make sure they're in a consistent state
 		// do not force-flush as this can take awhile
 
-		//------------------------------------------------------------------
+		//----------------------------------------------------------------------
 		// sync graph's matrices
-		//------------------------------------------------------------------
+		//----------------------------------------------------------------------
 
 		// calling Graph_Get* will sync the retrieved matrix
 
@@ -530,14 +516,6 @@ static void _ForkPrepare() {
 		for (int j = 0; j < n_rels; j++) {
 			Graph_GetRelationMatrix (g, j, false) ;
 		}
-
-		// NOTE: yield had been commented out due to:
-		// https://github.com/redis/redis/issues/14266
-		// only the master thread (= Redis main thread) may yield
-		//if (pthread_equal (pthread_self (), redis_main_thread_id)) {
-		//	RedisModule_Yield (ctx, REDISMODULE_YIELD_FLAG_CLIENTS,
-		//			"preparing to fork") ;
-		//}
 	}
 
 	// decrease graph context ref count
@@ -571,17 +549,15 @@ static void _AfterForkParent(void) {
 	ASSERT (locked != NULL) ;
 
 	// the child process forked, release all acquired locks
-	GraphContext *gc = NULL ;
-	KeySpaceGraphIterator it ;
-	Globals_ScanGraphs (&it) ;
+	uint n = 0 ;
+	GraphContext **graphs = Globals_CollectGraphs (&n) ;
 
-	int i = 0 ;
-	while ((gc = GraphIterator_Next (&it)) != NULL) {
+	for (uint i = 0 ; i < n ; i++) {
+		GraphContext *gc = graphs [i] ;
+
 		// release read lock
-		Graph *g = GraphContext_GetGraph (gc) ;
-
-		if (locked [i++]) {
-			Graph_ReleaseLock (g) ;
+		if (locked [i]) {
+			GraphContext_ReleaseLock (gc) ;
 		}
 
 		// decrease graph context ref count
@@ -590,6 +566,7 @@ static void _AfterForkParent(void) {
 
 	// free locked array
 	rm_free (locked) ;
+	rm_free (graphs) ;
 	locked = NULL ;
 }
 
@@ -631,7 +608,7 @@ static void _AfterForkChild() {
 
 		bool synced = Graph_Synced (g) ;
 
-		ASSERT (!Graph_IsWriteLocked (g)) ;
+		ASSERT (!GraphContext_IsWriteLocked (gc)) ;
 
 		// abort BGSAVE if graph isn't synced
 		// it's the parent process responsibility (_ForkPrepare) to synchronize

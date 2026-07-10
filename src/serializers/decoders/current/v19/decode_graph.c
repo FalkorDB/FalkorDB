@@ -76,10 +76,8 @@ static GraphContext *_GetOrCreateGraphContext
 		// new graph is being decoded
 		// inform the module and create new graph context
 		gc = GraphContext_New (graph_name) ;
+		GraphContext_AcquireWriteLock (gc) ;
 	}
-
-	// free the name string, as it either not in used or copied
-	RedisModule_Free (graph_name) ;
 
 	return gc ;
 }
@@ -101,7 +99,8 @@ static void _InitGraphDataStructure
 
 static GraphContext *_DecodeHeader
 (
-	SerializerIO rdb
+	SerializerIO rdb,
+	bool detached
 ) {
 	// Header format:
 	// Graph name
@@ -135,7 +134,15 @@ static GraphContext *_DecodeHeader
 	// total keys representing the graph
 	uint64_t key_number = SerializerIO_ReadUnsigned(rdb);
 
-	GraphContext *gc = _GetOrCreateGraphContext(graph_name);
+	GraphContext *gc = NULL ;
+	if (detached) {
+		gc = GraphContext_New (graph_name) ;
+		GraphContext_AcquireWriteLock (gc) ;
+	} else {
+		gc = _GetOrCreateGraphContext (graph_name) ;
+	}
+	RedisModule_Free (graph_name) ;
+
 	Graph *g = GraphContext_GetGraph (gc) ;
 	GraphDecodeContext *decoding_context = GraphContext_GetDecodingCtx (gc) ;
 
@@ -144,23 +151,23 @@ static GraphContext *_DecodeHeader
 	bool first_vkey =
 		GraphDecodeContext_GetProcessedKeyCount(decoding_context) == 0;
 
-	if(first_vkey == true) {
-		_InitGraphDataStructure(g, node_count, edge_count,
+	if (first_vkey == true) {
+		_InitGraphDataStructure (g, node_count, edge_count,
 			deleted_node_count, deleted_edge_count) ;
 
-		decoding_context->multi_edge = arr_new(uint64_t, relation_count);
-		for(uint i = 0; i < relation_count; i++) {
+		decoding_context->multi_edge = arr_new (uint64_t, relation_count) ;
+		for (uint i = 0 ; i < relation_count ; i++) {
 			// enable/Disable support for multi-edge
 			// we will enable support for multi-edge on all relationship
 			// matrices once we finish loading the graph
-			arr_append(decoding_context->multi_edge,  multi_edge[i]);
+			arr_append (decoding_context->multi_edge,  multi_edge [i]) ;
 		}
 
-		GraphDecodeContext_SetKeyCount(decoding_context, key_number);
+		GraphDecodeContext_SetKeyCount (decoding_context, key_number) ;
 	}
 
 	// decode graph schemas
-	RdbLoadGraphSchema_v19(rdb, gc, !first_vkey);
+	RdbLoadGraphSchema_v19 (rdb, gc, !first_vkey) ;
 
 	// save decode statistics for later progess reporting
 	// e.g. "Decoded 20000/4500000 nodes"
@@ -202,7 +209,8 @@ static PayloadInfo *_RdbLoadKeySchema
 GraphContext *RdbLoadGraphContext_latest
 (
 	SerializerIO rdb,
-	const RedisModuleString *rm_key_name
+	const RedisModuleString *rm_key_name,
+	bool detached
 ) {
 	// Key format:
 	//  Header
@@ -212,7 +220,7 @@ GraphContext *RdbLoadGraphContext_latest
 	//      Entities in payload
 	//  Payload(s) X N
 
-	GraphContext *gc = _DecodeHeader(rdb);
+	GraphContext *gc = _DecodeHeader (rdb, detached) ;
 	Graph        *g  = GraphContext_GetGraph (gc) ;
 	GraphDecodeContext *decoding_context = GraphContext_GetDecodingCtx (gc) ;
 
@@ -340,6 +348,8 @@ GraphContext *RdbLoadGraphContext_latest
 		// compute transposes
 		_ComputeTransposeMatrices (g) ;
 
+		GraphContext_ReleaseLock (gc) ;
+
 		uint rel_count   = Graph_RelationTypeCount(g);
 		uint label_count = Graph_LabelTypeCount(g);
 
@@ -374,9 +384,9 @@ GraphContext *RdbLoadGraphContext_latest
 					Indexer_PopulateIndex(gc, s, idx);
 				} else {
 					// populate index
-					Index_Populate(idx, g);
-					Index_Enable(idx);
-					Schema_ActivateIndex(s);
+					Index_Populate (idx, gc) ;
+					Index_Enable (idx) ;
+					Schema_ActivateIndex (s) ;
 				}
 			}
 		}
@@ -393,7 +403,7 @@ GraphContext *RdbLoadGraphContext_latest
 					Indexer_PopulateIndex(gc, s, idx);
 				} else {
 					// populate index
-					Index_Populate(idx, g);
+					Index_Populate (idx, gc) ;
 					Index_Enable(idx);
 					Schema_ActivateIndex(s);
 				}
@@ -404,7 +414,6 @@ GraphContext *RdbLoadGraphContext_latest
 		ASSERT(Graph_Pending(g) == false);
 
 		GraphDecodeContext_Reset(decoding_context);
-
 		RedisModule_Log(NULL, "notice", "Done decoding graph %s",
 				GraphContext_GetName(gc));
 	}

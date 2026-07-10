@@ -74,25 +74,32 @@ void ErrorCtx_SetError(const char *err_fmt, ...) {
 	va_end(valist);
 }
 
-/* An error was encountered during evaluation, and has already been set in the ErrorCtx.
- * If an exception handler has been set, exit this routine and return to
- * the point on the stack where the handler was instantiated. */
-void ErrorCtx_RaiseRuntimeException(const char *err_fmt, ...) {
-	ErrorCtx *ctx = ErrorCtx_Get();
-	ASSERT(ctx != NULL);
+// an error was encountered during evaluation
+// and has already been set in the ErrorCtx
+// if an exception handler has been set, exit this routine and return to
+// the point on the stack where the handler was instantiated
+void ErrorCtx_RaiseRuntimeException
+(
+	const char *err_fmt, ...
+) {
+	ErrorCtx *ctx = ErrorCtx_Get () ;
+	ASSERT (ctx != NULL);
 
 	// set error if specified
-	if(err_fmt != NULL) {
-		va_list valist;
-		va_start(valist, err_fmt);
-		_ErrorCtx_SetError(err_fmt, valist);
-		va_end(valist);
+	if (err_fmt != NULL) {
+		va_list valist ;
+		va_start (valist, err_fmt) ;
+		_ErrorCtx_SetError (err_fmt, valist) ;
+		va_end (valist) ;
 	}
 
-	jmp_buf *env = ctx->breakpoint;
-	// If the exception handler hasn't been set, this function returns to the caller,
-	// which will manage its own freeing and error reporting.
-	if(env != NULL) longjmp(*env, 1);
+	jmp_buf *env = ctx->breakpoint ;
+	// if the exception handler hasn't been set
+	// this function returns to the caller
+	// which will manage its own freeing and error reporting
+	if (env != NULL) {
+		longjmp (*env, 1) ;
+	}
 }
 
 // Reply to caller with error
@@ -101,20 +108,8 @@ void ErrorCtx_EmitException(void) {
 	ASSERT(ctx != NULL);
 
 	if(ctx->error != NULL) {
-		bolt_client_t *bolt_client = QueryCtx_GetBoltClient();
-		if(bolt_client != NULL) {
-			bolt_client_reply_for(bolt_client, BST_RUN, BST_FAILURE, 1);
-			bolt_reply_map(bolt_client, 2);
-			bolt_reply_string(bolt_client, "code", 4);
-			bolt_reply_string(bolt_client, "SyntaxError", 11);
-			bolt_reply_string(bolt_client, "message", 7);
-			bolt_reply_string(bolt_client, ctx->error, strlen(ctx->error));
-			bolt_client_end_message(bolt_client);
-			bolt_client_finish_write(bolt_client);
-		} else {
-			RedisModuleCtx *rm_ctx = QueryCtx_GetRedisModuleCtx();
-			RedisModule_ReplyWithError(rm_ctx, ctx->error);
-		}
+		RedisModuleCtx *rm_ctx = QueryCtx_GetRedisModuleCtx();
+		RedisModule_ReplyWithError(rm_ctx, ctx->error);
 	}
 
 	// clear error context once error emitted

@@ -12,7 +12,7 @@
 #include "../util/blocked_client.h"
 #include "../configuration/config.h"
 
-#define GRAPH_VERSION_MISSING -1
+#define GRAPH_HASH_MISSING -1
 
 // command handler function pointer
 typedef void(*Command_Handler)(void *args);
@@ -26,9 +26,8 @@ static int _read_flags
   	bool *compact,              // compact result-set format
 	long long *timeout,         // query level timeout
   	bool *timeout_rw,           // apply timeout on both read and write queries
-  	uint *graph_version,        // graph version [UNUSED]
-  	char **errmsg,              // reported error message
-	bolt_client_t **bolt_client // BOLT client
+  	uint *graph_hash,           // graph hash [UNUSED]
+  	char **errmsg               // reported error message
 ) {
 	ASSERT(compact != NULL);
 	ASSERT(timeout != NULL);
@@ -37,8 +36,7 @@ static int _read_flags
 
 	// set defaults
 	*compact       = false;  // verbose
-	*bolt_client   = NULL;
-	*graph_version = GRAPH_VERSION_MISSING;
+	*graph_hash    = GRAPH_HASH_MISSING ;
 	Config_Option_get(Config_TIMEOUT_DEFAULT, timeout);
 	Config_Option_get(Config_TIMEOUT_MAX, &max_timeout);
 
@@ -64,8 +62,6 @@ static int _read_flags
 		if(!strcasecmp(arg, "--compact")) {
 			// compact result-set
 			*compact = true;
-		} else if(!strcasecmp(arg, "--bolt")) {
-			*bolt_client = (bolt_client_t *)argv[++i];
 		} else if(!strcasecmp(arg, "timeout")) {
 			// query timeout
 			int err = REDISMODULE_ERR;
@@ -95,15 +91,15 @@ static int _read_flags
 				return REDISMODULE_ERR;
 			}
 		} else if(!strcasecmp(arg, "version")) {
-			long long v = GRAPH_VERSION_MISSING;
+			long long v = GRAPH_HASH_MISSING ;
 			int err = REDISMODULE_ERR;
 			if(i < argc - 1) {
-				i++; // Set the current argument to the version value.
+				i++; // Set the current argument to the hash value.
 				err = RedisModule_StringToLongLong(argv[i], &v);
-				*graph_version = v;
+				*graph_hash = v;
 			}
 
-			// Emit error on missing, negative, or non-numeric version values.
+			// Emit error on missing, negative, or non-numeric hash values.
 			if(err != REDISMODULE_OK || v < 0 || v > UINT_MAX) {
 				int rc __attribute__((unused));
 				rc = asprintf(errmsg, "Failed to parse graph version value");
@@ -116,18 +112,29 @@ static int _read_flags
 	return REDISMODULE_OK;
 }
 
-// Returns false if client provided a graph version
-// which mismatch the current graph version
-static bool _verifyGraphVersion(GraphContext *gc, uint version) {
-	// caller did not specify graph version
-	if(version == GRAPH_VERSION_MISSING) return true;
-	return (GraphContext_GetVersion(gc) == version);
+// Returns false if client provided a graph hash
+// which mismatch the current graph hash
+static bool _verifyGraphHash
+(
+	GraphContext *gc,
+	uint hash
+) {
+	// caller did not specify graph hash
+	if (hash == GRAPH_HASH_MISSING) {
+		return true ;
+	}
+
+	return (GraphContext_GetHash (gc) == hash) ;
 }
 
-static void _rejectOnVersionMismatch(RedisModuleCtx *ctx, uint version) {
-	RedisModule_ReplyWithArray(ctx, 2);
-	RedisModule_ReplyWithError(ctx, "version mismatch");
-	RedisModule_ReplyWithLongLong(ctx, version);
+static void _rejectOnHashMismatch
+(
+	RedisModuleCtx *ctx,
+	uint hash
+) {
+	RedisModule_ReplyWithArray    (ctx, 2) ;
+	RedisModule_ReplyWithError    (ctx, "version mismatch") ;
+	RedisModule_ReplyWithLongLong (ctx, hash) ;
 }
 
 // Return true if the command has a valid number of arguments.
@@ -182,8 +189,7 @@ int CommandDispatch
 	int argc
 ) {
 	char *errmsg;
-	uint version;
-	bolt_client_t *bolt_client;
+	uint hash;
 	bool compact;
 	bool timeout_rw;
 	long long timeout;
@@ -204,7 +210,7 @@ int CommandDispatch
 
 	// parse additional arguments
 	int res = _read_flags (argv, argc, &compact, &timeout, &timeout_rw,
-			&version, &errmsg, &bolt_client) ;
+			&hash, &errmsg) ;
 	if (res == REDISMODULE_ERR) {
 		// emit error and exit if argument parsing failed
 		RedisModule_ReplyWithError (ctx, errmsg) ;
@@ -213,21 +219,23 @@ int CommandDispatch
 	}
 
 	bool shouldCreate = should_command_create_graph (cmd) ;
-	GraphContext *gc = GraphContext_Retrieve (ctx, graph_name, true,
-			shouldCreate) ;
+	GraphContext *gc = NULL ;
+	GraphRetrieveStatus status =
+		GraphContext_Retrieve (ctx, graph_name, true, shouldCreate, false, &gc) ;
 
 	// if GraphContext is null, key access failed and an error been emitted
-	if (!gc) return REDISMODULE_ERR;
+	if (status == GraphRetrieve_FAILED) {
+		return REDISMODULE_ERR ;
+	}
 
-	// return incase caller provided a mismatched graph version
-	if (!_verifyGraphVersion (gc, version)) {
-		_rejectOnVersionMismatch (ctx, GraphContext_GetVersion(gc)) ;
+	// return incase caller provided a mismatched graph hash
+	if (gc != NULL && !_verifyGraphHash (gc, hash)) {
+		_rejectOnHashMismatch (ctx, GraphContext_GetHash (gc)) ;
 		// Release the GraphContext, as we increased its reference count
 		// when retrieving it.
 		GraphContext_DecreaseRefCount (gc) ;
 		return REDISMODULE_OK ;
 	}
-
 
 	// determine the query execution context
 	// queries issued within a LUA script or multi exec block must
@@ -246,32 +254,32 @@ int CommandDispatch
 		: EXEC_THREAD_READER ;
 
 	Command_Handler handler = get_command_handler (cmd) ;
-	if(exec_thread == EXEC_THREAD_MAIN) {
+	if (exec_thread == EXEC_THREAD_MAIN) {
 		// run query on Redis main thread
-		context = CommandCtx_New (ctx, NULL, argv[0], query, gc, exec_thread,
-								 is_replicated, compact, timeout, timeout_rw,
-								 received_ts, timer, bolt_client) ;
-		handler(context);
+		context = CommandCtx_New (ctx, NULL, argv[0], argv[1], query, gc,
+				exec_thread, is_replicated, compact, timeout, timeout_rw,
+				received_ts, timer) ;
+		handler (context) ;
 	} else {
 		// run query on a dedicated thread
-		RedisModuleBlockedClient *bc =
-			bolt_client != NULL ? NULL : RedisGraph_BlockClient (ctx) ;
+		RedisModuleBlockedClient *bc = RedisGraph_BlockClient (ctx) ;
 
-		RedisModuleCtx *redis_ctx = (bolt_client != NULL) ?
-			bolt_client->ctx : NULL ;
-
-		context = CommandCtx_New (redis_ctx, bc, argv[0], query, gc,
+		context = CommandCtx_New (NULL, bc, argv[0], argv[1], query, gc,
 				exec_thread, is_replicated, compact, timeout, timeout_rw,
-				received_ts, timer, bolt_client) ;
+				received_ts, timer) ;
 
 		if (ThreadPool_AddWork (handler, context, false) == THPOOL_QUEUE_FULL) {
 			// report an error once our workers thread pool internal queue
 			// is full, this error usually happens when the server is
 			// under heavy load and is unable to catch up
 			RedisModule_ReplyWithError (ctx, "Max pending queries exceeded") ;
+
 			// release the GraphContext, as we increased its reference count
 			// when retrieving it
-			GraphContext_DecreaseRefCount (gc) ;
+			if (gc != NULL) {
+				GraphContext_DecreaseRefCount (gc) ;
+			}
+
 			CommandCtx_UnblockClient (context) ;
 			CommandCtx_Free (context) ;
 		}

@@ -211,6 +211,11 @@ static inline uint32_t arr_cap
 	return arr_hdr(arr)->cap ;
 }
 
+/* return the allocated sizeof the array in bytes */
+static inline size_t arr_bytesize(arr_t arr) {
+	return arr_sizeof(arr_hdr(arr)) ;
+}
+
 #define ARR_CAP_NOSHRINK ((uint32_t)-1)
 static inline void *arr_trimm(arr_t arr, uint32_t len, uint32_t cap) {
 	arr_hdr_t *arr_hdr = arr_hdr(arr);

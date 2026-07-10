@@ -8,7 +8,6 @@
 #include "src/util/arr.h"
 #include "src/util/rmalloc.h"
 #include "src/errors/errors.h"
-#include "src/arithmetic/funcs.h"
 #include "src/filter_tree/filter_tree.h"
 #include "src/ast/ast_build_filter_tree.h"
 #include "src/graph/graphcontext_struct.h"
@@ -30,8 +29,7 @@ void _fake_graph_context() {
 	// accessible via thread local storage, as such we're creating a
 	// fake graph context and placing it within thread local storage
 	GraphContext *gc = (GraphContext *)calloc(1, sizeof(GraphContext));
-	gc->attributes = raxNew();
-	pthread_rwlock_init(&gc->_schema_rwlock, NULL);
+	gc->attributes = NULL ;
 	QueryCtx_SetGraphCtx(gc);
 }
 
@@ -39,13 +37,12 @@ void setup() {
 	Alloc_Reset();
 	QueryCtx_Init();
 	ErrorCtx_Init();
-	AR_RegisterFuncs();
+	AR_InitFuncsRepo () ;
 	_fake_graph_context();
 }
 
 void tearDown() {
 	GraphContext *gc = QueryCtx_GetGraphCtx();
-	raxFree(gc->attributes);
 	free(gc);
 	QueryCtx_Free();
 }

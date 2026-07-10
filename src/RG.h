@@ -44,35 +44,34 @@
 // debugging definitions
 //------------------------------------------------------------------------------
 
+// assert X is true in all build modes
+#define RELEASE_ASSERT(X)                                       \
+_Pragma("GCC diagnostic push")                                  \
+_Pragma("GCC diagnostic ignored \"-Wnull-dereference\"")        \
+{                                                               \
+	if (!(X))                                                   \
+	{                                                           \
+		if(RedisModule__Assert != NULL) {                       \
+			RedisModule_Assert(X);                              \
+		} else {                                                \
+			printf ("assert(%s) failed: %s line %d\n",          \
+			#X, __FILE__, __LINE__);                            \
+			/* force crash */                                   \
+			char x = *((char*)NULL); /* produce stack trace */  \
+			assert(x); /* solves C++ unused var warning */      \
+		}                                                       \
+	}                                                           \
+}                                                               \
+_Pragma("GCC diagnostic pop")
+
 #undef ASSERT
 
 #ifdef RG_DEBUG
-
 	// assert X is true
-	#define ASSERT(X)                                               \
-	_Pragma("GCC diagnostic push")                                  \
-	_Pragma("GCC diagnostic ignored \"-Wnull-dereference\"")        \
-	{                                                               \
-		if (!(X))                                                   \
-		{                                                           \
-			if(RedisModule__Assert != NULL) {                       \
-				RedisModule_Assert(X);                              \
-			} else {                                                \
-				printf ("assert(%s) failed: %s line %d\n",          \
-				#X, __FILE__, __LINE__);                            \
-				/* force crash */                                   \
-				char x = *((char*)NULL); /* produce stack trace */  \
-				assert(x); /* solves C++ unused var warning */      \
-			}                                                       \
-		}                                                           \
-	}                                                               \
-	_Pragma("GCC diagnostic pop")
-
+	#define ASSERT(X) RELEASE_ASSERT(X)
 #else
-
 	// debugging disabled
 	#define ASSERT(X)
-
 #endif
 
 
