@@ -88,7 +88,7 @@ GrB_Info Delta_Matrix_ncols
 }
 
 // get the number of entries in a matrix
-GrB_Info Delta_Matrix_nvals    
+GrB_Info Delta_Matrix_nvals
 (
     GrB_Index *nvals,       // matrix has nvals entries
     const Delta_Matrix A    // matrix to query

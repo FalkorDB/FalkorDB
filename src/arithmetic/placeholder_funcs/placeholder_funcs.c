@@ -4,7 +4,6 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "placeholder_funcs.h"
 #include "../func_desc.h"
 #include "../../util/arr.h"
 
@@ -16,23 +15,5 @@ SIValue AR_NOP
 ) {
 	ASSERT (false) ;
 	return SI_NullVal () ;
-}
-
-void Register_PlaceholderFuncs() {
-	SIType *types ;
-	SIType ret_type ;
-	AR_FuncDesc *func_desc ;
-
-	types = arr_new(SIType, 0);
-	ret_type = T_NULL;
-	func_desc = AR_FuncDescNew("path_filter", AR_NOP, 0, 0, types,
-			ret_type, true, false, true);
-	AR_FuncRegister (func_desc) ;
-
-	types = arr_new(SIType, 0);
-	ret_type = T_NULL;
-	func_desc = AR_FuncDescNew("nop", AR_NOP, 0, 0, types,
-			ret_type, true, false, true);
-	AR_FuncRegister (func_desc) ;
 }
 

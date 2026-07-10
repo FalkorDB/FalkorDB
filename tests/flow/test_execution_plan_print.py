@@ -47,6 +47,3 @@ class test_execution_plan_print():
         # as it does not enforce them
         self.env.assertIn("Conditional Variable Length Traverse | (n)-[@anon_0*1..INF]->(m)", plan)
 
-        # 'expand into' prints labels C and D
-        self.env.assertIn("Expand Into | (m:C:D)->(m:C:D)", plan)
-

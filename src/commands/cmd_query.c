@@ -43,13 +43,13 @@ static GraphQueryCtx *GraphQueryCtx_New
 ) {
 	GraphQueryCtx *ctx = rm_malloc(sizeof(GraphQueryCtx));
 
-	ctx->rm_ctx           =  rm_ctx;
-	ctx->exec_ctx         =  exec_ctx;
-	ctx->graph_ctx        =  graph_ctx;
-	ctx->query_ctx        =  QueryCtx_GetQueryCtx();
+	ctx->rm_ctx           = rm_ctx;
+	ctx->exec_ctx         = exec_ctx;
+	ctx->graph_ctx        = graph_ctx;
+	ctx->query_ctx        = QueryCtx_GetQueryCtx();
 	ctx->query_ctx->flags = flags;
-	ctx->command_ctx      =  command_ctx;
-	ctx->timeout          =  timeout;
+	ctx->command_ctx      = command_ctx;
+	ctx->timeout          = timeout;
 
 	return ctx;
 }
@@ -183,21 +183,18 @@ static void _ExecuteQuery
 	}
 
 	// instantiate the query ResultSet
-	bool bolt    = command_ctx->bolt_client != NULL ;
 	bool compact = command_ctx->compact ;
 
 	// replicated command don't need to return result
 	ResultSetFormatterType resultset_format =
 		(profile || command_ctx->replicated_command) ?
 			FORMATTER_NOP :
-				(bolt) ?
-					FORMATTER_BOLT :
-					(compact) ?
-						FORMATTER_COMPACT :
-						FORMATTER_VERBOSE ;
+				(compact) ?
+					FORMATTER_COMPACT :
+					FORMATTER_VERBOSE ;
 
 	ResultSet *result_set =
-		NewResultSet (rm_ctx, command_ctx->bolt_client, resultset_format) ;
+		NewResultSet (rm_ctx, resultset_format) ;
 
 	if (exec_ctx->cached) {
 		ResultSet_CachedExecution (result_set) ; // indicate a cached execution
@@ -228,61 +225,66 @@ static void _ExecuteQuery
 		// avoid resetting policies between readers and writers
 		Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);
 
-		ExecutionPlan_PreparePlan(plan);
-		if(profile) {
-			ExecutionPlan_Profile(plan);
-			if (abort_and_check_timeout(gq_ctx, plan)) {
-				query_ctx->status = QueryExecutionStatus_TIMEDOUT;
+		ExecutionPlan_PreparePlan (plan) ;
+		if (profile) {
+			ExecutionPlan_Profile (plan) ;
+			if (abort_and_check_timeout (gq_ctx, plan)) {
+				query_ctx->status = QueryExecutionStatus_TIMEDOUT ;
 			}
 
-			if(!ErrorCtx_EncounteredError()) {
+			if (!ErrorCtx_EncounteredError ()) {
 				// transition the query from executing reporting
-				QueryCtx_AdvanceStage(query_ctx);
-				ExecutionPlan_Print(plan, rm_ctx);
+				QueryCtx_AdvanceStage (query_ctx) ;
+				ExecutionPlan_Print (plan, rm_ctx) ;
 			}
 		}
 		else {
-			result_set = ExecutionPlan_Execute(plan);
-			if (abort_and_check_timeout(gq_ctx, plan)) {
-				query_ctx->status = QueryExecutionStatus_TIMEDOUT;
+			result_set = ExecutionPlan_Execute (plan) ;
+			if (abort_and_check_timeout (gq_ctx, plan)) {
+				query_ctx->status = QueryExecutionStatus_TIMEDOUT ;
 			}
 		}
 
-		ExecutionPlan_Free(plan);
-		exec_ctx->plan = NULL;
-	} else if(exec_type == EXECUTION_TYPE_INDEX_CREATE ||
+		ExecutionPlan_Free (plan) ;
+		exec_ctx->plan = NULL ;
+	} else if (exec_type == EXECUTION_TYPE_INDEX_CREATE ||
 			exec_type == EXECUTION_TYPE_INDEX_DROP) {
-		IndexOperation_Run(gc, ast, exec_type);
+		IndexOperation_Run (gc, ast, exec_type) ;
 	} else {
-		ASSERT("Unhandled query type" && false);
+		ASSERT ("Unhandled query type" && false) ;
 	}
 
 	// in case of an error, rollback any modifications
-	if(ErrorCtx_EncounteredError()) {
-		QueryCtx_Rollback();
+	if (ErrorCtx_EncounteredError ()) {
+		QueryCtx_Rollback () ;
 		// clear resultset statistics, avoiding commnad being replicated
-		ResultSet_Clear(result_set);
+		ResultSet_Clear (result_set) ;
 		if (query_ctx->status != QueryExecutionStatus_TIMEDOUT) {
 			query_ctx->status = QueryExecutionStatus_FAILURE;
 		}
 	} else {
 		// replicate if graph was modified
-		if(ResultSetStat_IndicateModification(&result_set->stats)) {
+		// check both effect-buffer and result-set statistics
+		// in some edge cases the effect-buffer can have data which the
+		// result-set statistics won't cover
+		bool replicate =
+			(EffectsBuffer_Length (QueryCtx_GetEffectsBuffer ()) > 0 ||
+			 ResultSetStat_IndicateModification (&result_set->stats)) ;
+		if (replicate) {
 			// determine rather or not to replicate via effects
 			// effect replication is mandatory if query is non deterministic
-			if (EffectsBuffer_Length (QueryCtx_GetEffectsBuffer()) > 0 &&
-			    (!exec_ctx->deterministic || _should_replicate_effects()))
-			{
+			if (EffectsBuffer_Length (QueryCtx_GetEffectsBuffer ()) > 0 &&
+			    (!exec_ctx->deterministic || _should_replicate_effects ())) {
 				// compute effects buffer
-				size_t effects_len = 0;
-				u_char *effects = EffectsBuffer_Buffer(
-						QueryCtx_GetEffectsBuffer(), &effects_len);
-				ASSERT(effects_len > 0 && effects != NULL);
+				size_t effects_len = 0 ;
+				u_char *effects = EffectsBuffer_Buffer (
+						QueryCtx_GetEffectsBuffer (), &effects_len) ;
+				ASSERT (effects_len > 0 && effects != NULL) ;
 
 				// replicate effects
-				RedisModule_Replicate(rm_ctx, "GRAPH.EFFECT", "cb!",
-						GraphContext_GetName(gc), effects, effects_len);
-				rm_free(effects);
+				RedisModule_Replicate (rm_ctx, "GRAPH.EFFECT", "cb!",
+						GraphContext_GetName (gc), effects, effects_len) ;
+				rm_free (effects) ;
 			} else {
 				// replicate original query
 				QueryCtx_Replicate (query_ctx) ;
@@ -290,15 +292,15 @@ static void _ExecuteQuery
 		}
 	}
 
-	if(!profile || ErrorCtx_EncounteredError()) {
+	if (!profile || ErrorCtx_EncounteredError ()) {
 		// if we encountered an error, ResultSet_Reply will emit the error
 		// send result-set back to client
 		// transition the query from executing reporting
-		QueryCtx_AdvanceStage(query_ctx);
-		ResultSet_Reply(result_set);
+		QueryCtx_AdvanceStage (query_ctx) ;
+		ResultSet_Reply (result_set) ;
 
 		// transition the query from reporting to finished
-		QueryCtx_AdvanceStage(query_ctx);
+		QueryCtx_AdvanceStage (query_ctx) ;
 	}
 
 	QueryCtx_ReleaseLock () ;
@@ -378,8 +380,8 @@ static void enter_writer_loop
 		// to reacquire write access
 		// if we succeed, continue processing
 		// if we fail, another thread is now the writer and will handle the queue
-		if (GraphContext_WriteQueueEmpty (gc) ||
-			!GraphContext_TryEnterWrite  (gc)) {
+		if (GraphContext_WriteQueueEmpty    (gc) ||
+			!GraphContext_TimeTryEnterWrite (gc, 0)) {
 			// either the queue is empty
 			// or the another thread became a writer
 			break ;
@@ -387,24 +389,45 @@ static void enter_writer_loop
 	}
 }
 
+// optnone: Clang's -O2/-O3 inter-procedural analysis converts every
+// "goto cleanup" branch to llvm.assume, making it fall through to
+// GraphContext_GetGraph(NULL) when GraphContext_Retrieve fails.
+// The heavy inner functions (_ExecuteQuery, GraphContext_Retrieve, etc.)
+// are not affected by this attribute — only the orchestration shell is.
+__attribute__((optnone))
 void _query
 (
 	bool profile,
 	void *args
 ) {
-	CommandCtx     *command_ctx = (CommandCtx *)args;
-	QueryCtx       *query_ctx   = QueryCtx_GetQueryCtx();
-	RedisModuleCtx *ctx         = CommandCtx_GetRedisCtx(command_ctx);
-	GraphContext   *gc          = CommandCtx_GetGraphContext(command_ctx);
-	Graph          *g           = GraphContext_GetGraph (gc) ;
-	ExecutionCtx   *exec_ctx    = NULL;
+	CommandCtx *command_ctx = (CommandCtx *)args ;
+	RedisModuleCtx *ctx = CommandCtx_GetRedisCtx (command_ctx) ;
+	ExecutionCtx *exec_ctx = NULL ;
+	GraphContext *gc = CommandCtx_GetGraphContext (command_ctx) ;
 
-	Globals_TrackCommandCtx(command_ctx);
-	QueryCtx_SetGlobalExecutionCtx(command_ctx);
+	// Initialize TLS query context and track the in-flight command BEFORE any
+	// 'goto cleanup' so that QueryCtx_Free() and Globals_UntrackCommandCtx()
+	// in cleanup are always safe to call (both assert non-NULL state that is
+	// set up here).  This matters when GraphContext_Retrieve returns gc=NULL
+	// (e.g. graph re-offloaded immediately after a successful load).
+	QueryCtx *query_ctx = QueryCtx_GetQueryCtx () ;
+	Globals_TrackCommandCtx (command_ctx) ;
+
+	if (gc == NULL) {
+		if (GraphContext_Retrieve (ctx, command_ctx->rm_graph_name, true, false,
+					true, &gc) != GraphRetrieve_RETRIEVED) {
+			goto cleanup ;
+		}
+		CommandCtx_SetGraphContext (command_ctx, gc) ;
+	}
+
+	Graph *g = GraphContext_GetGraph (gc) ;
+
+	QueryCtx_SetGlobalExecutionCtx (command_ctx) ;
 	UDFCtx_Update () ;  // make sure thread's UDFs are up to date
 
 	// transition the query from waiting to executing
-	QueryCtx_AdvanceStage(query_ctx);
+	QueryCtx_AdvanceStage (query_ctx) ;
 
 	// acquire graph READ lock
 	// `ExecutionCtx_FromQuery` might read data from the graph's
@@ -501,7 +524,7 @@ void _query
 		}
 
 		// try to acquire exclusive write access to graph
-		if (GraphContext_TryEnterWrite (gc)) {
+		if (GraphContext_TimeTryEnterWrite (gc, 0)) {
 			// thread has exclusive write access to graph
 			// go ahead and run the query
 			enter_writer_loop (gc) ;
@@ -514,25 +537,41 @@ void _query
 	return ;
 
 cleanup:
+	// avoid timeout callbacks touching a plan that is about to be freed
+	if(timeout_task != 0) {
+		Cron_AbortTask(timeout_task);
+	}
+
 	// if there were any query compile time errors, report them
 	if (ErrorCtx_EncounteredError ()) {
 		ErrorCtx_EmitException () ;
 	}
 
-	// cleanup routine invoked after encountering errors in this function
 	ExecutionCtx_Free (exec_ctx) ;
-	GraphContext_DecreaseRefCount (gc) ;
+
+	if (gc) {
+		GraphContext_DecreaseRefCount (gc) ;
+	}
+
 	Globals_UntrackCommandCtx (command_ctx) ;
 	CommandCtx_UnblockClient (command_ctx) ;
+
 	CommandCtx_Free (command_ctx) ;
 	QueryCtx_Free () ; // reset the QueryCtx and free its allocations
 	ErrorCtx_Clear () ;
 }
 
-void Graph_Profile(void *args) {
-	_query(true, args);
+void Graph_Profile
+(
+	void *args
+) {
+	_query (true, args) ;
 }
 
-void Graph_Query(void *args) {
-	_query(false, args);
+void Graph_Query
+(
+	void *args
+) {
+	_query (false, args) ;
 }
+

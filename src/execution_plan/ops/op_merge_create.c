@@ -284,36 +284,40 @@ static Record MergeCreateConsume
 (
 	OpBase *opBase
 ) {
-	OpMergeCreate *op = (OpMergeCreate *)opBase;
-	Record r;
+	OpMergeCreate *op = (OpMergeCreate *)opBase ;
+	Record r ;
 
 	// return mode, all data was consumed
-	if(op->handoff_mode) return _handoff(op);
+	if (op->handoff_mode) {
+		return _handoff (op) ;
+	}
+
+	PendingCreations_CreateMissingSchemas (op->gc, &op->pending) ;
 
 	// consume mode
-	if(!opBase->childCount) {
+	if (!opBase->childCount) {
 		// no child operation to call
-		r = OpBase_CreateRecord(opBase);
+		r = OpBase_CreateRecord (opBase) ;
 
 		// buffer all entity creations
 		// if this operation has no children, it should always have unique creations
-		bool entities_created = _CreateEntities(op, r, op->gc);
-		ASSERT(entities_created == true);
+		bool entities_created = _CreateEntities (op, r, op->gc) ;
+		ASSERT (entities_created == true) ;
 
 		// save record for later use
-		arr_append(op->records, r);
+		arr_append (op->records, r) ;
 
-		r = NULL; // record scheduled for creation nullify it
+		r = NULL ; // record scheduled for creation nullify it
 	} else {
 		// pull record from child
-		r = OpBase_Consume(opBase->children[0]);
-		if(r) {
+		r = OpBase_Consume (opBase->children [0]) ;
+		if (r) {
 			// create entities
-			if(_CreateEntities(op, r, op->gc)) {
+			if (_CreateEntities (op, r, op->gc)) {
 				// save record for later use
-				arr_append(op->records, r);
+				arr_append (op->records, r) ;
 
-				r = NULL; // record scheduled for creation nullify it
+				r = NULL ; // record scheduled for creation nullify it
 			}
 		}
 	}
@@ -321,7 +325,7 @@ static Record MergeCreateConsume
 	// return NULL if record is scheduled for creation
 	// return the input record in case it represents a duplicate
 	// which will later on be matched
-	return r;
+	return r ;
 }
 
 // commit accumulated changes and switch to Record handoff mode

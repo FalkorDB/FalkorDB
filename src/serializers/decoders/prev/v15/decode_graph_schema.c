@@ -180,8 +180,8 @@ static void _RdbLoadConstaint
 	// read fields
 	for(uint8_t i = 0; i < n; i++) {
 		AttributeID attr = SerializerIO_ReadUnsigned(rdb);
-		attr_ids[i]  = attr;
-		attr_strs[i] = GraphContext_GetAttributeString(gc, attr);
+		attr_ids  [i] = attr ;
+		attr_strs [i] = GraphContext_GetAttributeName (gc, attr) ;
 	}
 
 	if(!already_loaded) {
@@ -240,8 +240,10 @@ static void _RdbLoadSchema
 	char   *name = SerializerIO_ReadBuffer(rdb, NULL);
 
 	if(!already_loaded) {
-		s = GraphContext_AddSchema (gc, name, type) ;
+		bool created = false ;
+		s = GraphContext_FindOrAddSchema (gc, name, type, &created) ;
 		ASSERT (s != NULL) ;
+		ASSERT (created == true) ;
 		ASSERT (Schema_GetID (s) == id) ;
 	}
 

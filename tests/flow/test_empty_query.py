@@ -12,6 +12,14 @@ class testEmptyQuery(FlowTestsBase):
         except ResponseError as e:
             self.env.assertIn("Error: empty query.", str(e))
 
+    def test02_whitespace_and_semicolon_queries(self):
+        for query in [" ", ";"]:
+            try:
+                self.graph.query(query)
+                self.env.assertTrue(False)
+            except ResponseError as e:
+                self.env.assertIn("Error: empty query.", str(e))
+
     #def test02_query_with_only_params(self):
     #    try:
     #        self.graph.query("CYPHER v=1")

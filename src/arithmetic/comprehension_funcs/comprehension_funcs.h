@@ -17,5 +17,3 @@ typedef struct {
 	Record local_record;       // Record to populate with the input record's values and the list element.
 } ListComprehensionCtx;
 
-void Register_ComprehensionFuncs(void);
-

@@ -28,6 +28,9 @@ void Optimizer_CompileTimeOptimize
 	// into an expand into operation
 	reduceTraversal(plan);
 
+	// reduce variable-length traversal redundant destination label enforcement
+	reduceVarLenTraverseDestLabel (plan) ;
+
 	// try to reduce distinct if it follows aggregation
 	reduceDistinct(plan);
 
