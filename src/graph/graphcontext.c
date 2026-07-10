@@ -20,6 +20,7 @@
 #include "../commands/execution_ctx.h"
 #include "../serializers/graphcontext_type.h"
 
+#include <time.h>
 #include <pthread.h>
 #include <sys/param.h>
 #include <stdatomic.h>
@@ -499,29 +500,65 @@ cleanup:
 // attempt to acquire exclusive write access to the given graph
 // returns true if the calling thread successfully acquired write ownership
 // returns false if another write is already in progress
-bool GraphContext_TryEnterWrite
+bool GraphContext_TimeTryEnterWrite
 (
-	GraphContext *gc  // graph context
+	GraphContext *gc,  // graph context
+	uint timeout_ms    // maximum time in milliseconds to wait for the lock:
+					   // - timeout_ms = 0 : non-blocking attempt (try-lock)
+					   // - timeout_ms > 0 : block up to timeout_ms milliseconds
 ) {
-	ASSERT(gc != NULL);
+	ASSERT (gc != NULL) ;
 
-	bool expected = false;
+	bool expected = false ;
 
     // atomically set to true only if current value is false
-    return atomic_compare_exchange_strong(&gc->write_in_progress, &expected,
-			true);
+	bool acquired = atomic_compare_exchange_strong (&gc->write_in_progress,
+			&expected, true) ;
+
+	if (acquired == true) {
+		return acquired ;
+	}
+
+	// failed to acquire, sleep and retry
+	if (timeout_ms > 0) {
+		int remaining_ms = timeout_ms ;
+		int sleep_for_ms = MIN (5, timeout_ms) ;
+
+		// sleep for 5ms
+		struct timespec ts = {
+			.tv_sec = 0,
+			.tv_nsec = sleep_for_ms * 1000000  // 5 ms
+		};
+
+		while (remaining_ms > 0) {
+			// sleep and retry
+			nanosleep (&ts, NULL) ;
+
+			expected = false ;  // reset, CAS clobbers it on failure
+			acquired = atomic_compare_exchange_strong (&gc->write_in_progress,
+					&expected, true) ;
+
+			if (acquired == true) {
+				return acquired ;
+			}
+
+			remaining_ms -= sleep_for_ms ;
+		}
+	}
+
+	return false ;
 }
 
 // release exclusive write access to the graph
 // this should be called by a thread that previously acquired write ownership
-// via GraphContext_TryEnterWrite, it clears the write-in-progress flag
+// via GraphContext_TimeTryEnterWrite, it clears the write-in-progress flag
 void GraphContext_ExitWrite
 (
 	GraphContext *gc  // graph context
 ) {
-	ASSERT(gc != NULL);
+	ASSERT (gc != NULL) ;
 
-	atomic_store(&gc->write_in_progress, false);
+	atomic_store (&gc->write_in_progress, false) ;
 }
 
 // enqueue a write query for deferred execution on the specified graph
