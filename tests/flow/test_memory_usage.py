@@ -134,6 +134,56 @@ class testGraphMemoryUsage(FlowTestsBase):
         except:
             pass
 
+    def test_index_population_over_fieldless_entities_no_leak(self):
+        """Populating an index over entities that lack the indexed field must
+        not leak memory.
+
+        A "field-less" entity is one that has NONE of the properties the index
+        covers (e.g. a fulltext index on `ft`, but a node that only has `uid`).
+        Index population scans every entity of the label; for a field-less one
+        it builds a RediSearch document and then discards it (nothing to index).
+        Before the fix `Document` had no `Drop`, so each discarded doc leaked one
+        `RSDoc` -> one leak per scanned field-less entity, which OOM-kills a
+        server when an index is created before its fields are seeded over a large
+        label (the ft/vector benchmark OOM).
+
+        This guards the fix: creating fulltext + vector indexes over N field-less
+        nodes/edges must grow process memory by only a bounded amount. Measured
+        under ASAN, this population grew used_memory by +36 MB pre-fix vs -3 MB
+        (flat) after the fix, for the same workload below."""
+
+        N = 100000
+
+        def used_memory():
+            return self.conn.info('memory')['used_memory']
+
+        # N User nodes + N FRIEND edges, plus N more User nodes as edge targets.
+        # NONE of them carry `ft`/`embedding`, so every entity is field-less for
+        # the indexes created below.
+        self.graph.query(
+            f"UNWIND range(1, {N}) AS i "
+            f"CREATE (:User {{uid:i}})-[:FRIEND {{w:i}}]->(:User {{uid:i}})")
+
+        before = used_memory()
+
+        # Creating the indexes triggers background population that scans every
+        # (field-less) entity: ~2N node scans + N edge scans.
+        create_node_fulltext_index(self.graph, 'User', 'ft')
+        create_node_vector_index(self.graph, 'User', 'embedding', dim=4)
+        create_edge_fulltext_index(self.graph, 'FRIEND', 'ft')
+        wait_for_indices_to_sync(self.graph)
+
+        grew_mb = (used_memory() - before) / (1024 * 1024)
+
+        # Pre-fix this leaked ~one RSDoc per scanned field-less entity (~500k
+        # docs, tens of MB). With the leak fixed, population over field-less
+        # entities adds essentially nothing; the generous 15 MB ceiling absorbs
+        # allocator noise / index metadata while staying far below the leak.
+        self.env.assertLess(
+            grew_mb, 15,
+            message=f"index population over field-less entities grew memory by "
+            f"{grew_mb:.1f} MB (expected ~0) - the RSDoc population leak regressed")
+
     def test_node_memory_usage(self):
         """make sure node memory consumption is reported"""
 

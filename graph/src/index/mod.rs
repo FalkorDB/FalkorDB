@@ -80,9 +80,9 @@ use redisearch::{
     RediSearch_CreateVecSimNode, RediSearch_DeleteDocument, RediSearch_DocumentAddFieldGeo,
     RediSearch_DocumentAddFieldNumber, RediSearch_DocumentAddFieldNumericArray,
     RediSearch_DocumentAddFieldString, RediSearch_DocumentAddFieldStringArray,
-    RediSearch_DocumentAddFieldVector, RediSearch_DropIndex, RediSearch_FreeIndexOptions,
-    RediSearch_GetResultsIterator, RediSearch_IndexAddDocument, RediSearch_IndexClone,
-    RediSearch_IndexOptionsSetGCPolicy, RediSearch_IndexOptionsSetLanguage,
+    RediSearch_DocumentAddFieldVector, RediSearch_DropIndex, RediSearch_FreeDocument,
+    RediSearch_FreeIndexOptions, RediSearch_GetResultsIterator, RediSearch_IndexAddDocument,
+    RediSearch_IndexClone, RediSearch_IndexOptionsSetGCPolicy, RediSearch_IndexOptionsSetLanguage,
     RediSearch_IndexOptionsSetStopwords, RediSearch_IndexRelease, RediSearch_IterateQuery,
     RediSearch_MemUsage, RediSearch_QueryNodeAddChild, RediSearch_ResultsIteratorFree,
     RediSearch_ResultsIteratorGetScore, RediSearch_ResultsIteratorNext,
@@ -620,13 +620,35 @@ unsafe fn decode_triple(ptr: *const u8) -> [u64; 3] {
 }
 
 /// A document to be indexed, wrapping a RediSearch document.
-#[derive(Clone)]
+///
+/// Owns the underlying `RSDoc`: `Drop` frees it via `RediSearch_FreeDocument`
+/// unless it was handed to `add_document`, which sets `consumed` because
+/// `RediSearch_IndexAddDocument` takes ownership and frees it internally.
+/// Not `Clone` — two owners would double-free (or double-add) the same `RSDoc`.
 pub struct Document {
     rs_doc: *mut RSDoc,
     id: u64,
     /// CStrings for array string elements. RediSearch stores raw pointers
     /// into these during `set`, so they must live until after `add_document`.
     string_arr_values: Vec<CString>,
+    /// Set once `add_document` has passed `rs_doc` to RediSearch, which then
+    /// owns and frees it. Gates `Drop` so we never free a consumed doc.
+    consumed: bool,
+}
+
+impl Drop for Document {
+    fn drop(&mut self) {
+        // Only free docs RediSearch never took ownership of (e.g. entities
+        // scanned during population that had no indexed field). Consumed docs
+        // were already freed inside `RediSearch_IndexAddDocument`.
+        if !self.consumed && !self.rs_doc.is_null() {
+            // SAFETY: `rs_doc` came from `RediSearch_CreateDocument2` and was
+            // not consumed, so this is the matching, single free. The
+            // `string_arr_values` CStrings are disjoint Rust allocations freed
+            // by the automatic field drop that runs after this body.
+            unsafe { RediSearch_FreeDocument(self.rs_doc) };
+        }
+    }
 }
 
 impl Document {
@@ -636,6 +658,7 @@ impl Document {
         hex_encode_into(&id.to_le_bytes(), &mut key);
         Self {
             id,
+            consumed: false,
             string_arr_values: Vec::new(),
             rs_doc: unsafe {
                 let doc = RediSearch_CreateDocument2(
@@ -668,6 +691,7 @@ impl Document {
         hex_encode_into(&edge_id.to_le_bytes(), &mut key[32..48]);
         Self {
             id: edge_id,
+            consumed: false,
             string_arr_values: Vec::new(),
             rs_doc: unsafe {
                 let doc = RediSearch_CreateDocument2(
@@ -1847,7 +1871,7 @@ impl Index {
     /// Add a document to the index.
     pub fn add_document(
         &self,
-        doc: &Document,
+        doc: &mut Document,
     ) {
         unsafe {
             let res = RediSearch_IndexAddDocument(
@@ -1858,6 +1882,12 @@ impl Index {
             );
             debug_assert_eq!(res, 0);
         }
+        // RediSearch took ownership of `rs_doc` and frees it internally (it
+        // `rm_free`s the doc on the success path). Mark consumed unconditionally
+        // so `Drop` never frees it again: the only path that returns an error
+        // *without* freeing is a rare `NewAddDocumentCtx == NULL` preprocessing
+        // failure, and leaking one doc there is far safer than a double-free.
+        doc.consumed = true;
     }
 
     /// Delete a document from the index by entity ID.
