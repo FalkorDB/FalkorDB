@@ -125,7 +125,11 @@ fuzz_target!(init: {
         else {
             return Corpus::Reject;
         };
-        let runtime = Runtime::new(g.read(), parameters, true, plan, false, String::new(), -1, false, None, 0, None);
+        // 100ms query timeout: the fuzzer otherwise finds semantically huge but
+        // valid queries (e.g. UNWIND range(..1M) CREATE 15 nodes per row) that
+        // blow past libFuzzer's 2048MB rss limit. Timed-out inputs return Err
+        // and are rejected from the corpus.
+        let runtime = Runtime::new(g.read(), parameters, true, plan, false, String::new(), -1, false, Some(100), 0, None);
         match runtime.query() {
             Ok(_) => Corpus::Keep,
             _ => Corpus::Reject,
