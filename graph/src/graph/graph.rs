@@ -503,9 +503,16 @@ fn populate_index_batch(
 
                 let mut batch: Vec<Document> = Vec::with_capacity(scanned_count);
 
-                let build_doc_with_fields =
-                    |doc: &mut Document, id: u64, is_edge: bool, g: &Graph| -> bool {
-                        let mut has_fields = false;
+                // Build a document for `id`, allocating the RSDoc only once we
+                // know the entity has at least one indexed field. Populating an
+                // index created before its fields are seeded would otherwise
+                // create-then-free a document for every field-less entity (e.g.
+                // scanning a 1.7M-edge tensor), pure allocator churn. Returns
+                // `None` when no indexed field is present. `make_doc` builds the
+                // right key kind (node id vs edge triple) lazily.
+                let build_doc =
+                    |id: u64, is_edge: bool, g: &Graph, make_doc: &dyn Fn() -> Document| {
+                        let mut doc: Option<Document> = None;
                         for (attr, fields) in &attrs {
                             let value = if is_edge {
                                 g.get_relationship_attribute(RelationshipId(id), attr)
@@ -513,13 +520,13 @@ fn populate_index_batch(
                                 g.get_node_attribute(NodeId(id), attr)
                             };
                             if let Some(value) = value {
+                                let doc = doc.get_or_insert_with(make_doc);
                                 for field in fields {
                                     doc.set(field, &value);
                                 }
-                                has_fields = true;
                             }
                         }
-                        has_fields
+                        doc
                     };
 
                 // Advance `next_cursor` based on the *last scanned id*,
@@ -530,9 +537,8 @@ fn populate_index_batch(
                     IndexKind::Node => {
                         let last_id = ids.last().copied();
                         for id in ids {
-                            let mut doc = Document::new(id);
                             let g = graph.borrow();
-                            if build_doc_with_fields(&mut doc, id, false, &g) {
+                            if let Some(doc) = build_doc(id, false, &g, &|| Document::new(id)) {
                                 batch.push(doc);
                             }
                         }
@@ -547,9 +553,10 @@ fn populate_index_batch(
                     IndexKind::Edge => {
                         let last_pos = edge_triples.last().map(|(s, d, e)| (*s, *d, *e));
                         for (src, dst, eid) in edge_triples {
-                            let mut doc = Document::new_edge(src, dst, eid);
                             let g = graph.borrow();
-                            if build_doc_with_fields(&mut doc, eid, true, &g) {
+                            if let Some(doc) =
+                                build_doc(eid, true, &g, &|| Document::new_edge(src, dst, eid))
+                            {
                                 batch.push(doc);
                             }
                         }
@@ -2695,18 +2702,19 @@ impl Graph {
 
                 let mut batch = Vec::new();
                 for (n, _) in lm.iter(0, u64::MAX) {
-                    let mut doc = Document::new(n);
-                    let mut has_fields = false;
+                    // Allocate the RSDoc only once a field is present — nodes
+                    // without an indexed attribute produce no document (and no
+                    // create+free churn).
+                    let mut doc: Option<Document> = None;
                     for (attr_idx, fields) in &resolved_attrs {
-                        let value = self.get_node_attribute_by_idx(NodeId(n), *attr_idx);
-                        if let Some(value) = value {
+                        if let Some(value) = self.get_node_attribute_by_idx(NodeId(n), *attr_idx) {
+                            let doc = doc.get_or_insert_with(|| Document::new(n));
                             for field in fields {
                                 doc.set(field, &value);
                             }
-                            has_fields = true;
                         }
                     }
-                    if has_fields {
+                    if let Some(doc) = doc {
                         batch.push(doc);
                     }
                 }
@@ -2734,17 +2742,19 @@ impl Graph {
             if let Some(tensor) = self.get_relationship_matrix(&type_name) {
                 let mut batch = Vec::new();
                 for (src, dst, eid) in tensor.iter(0, u64::MAX, false) {
-                    let mut doc = Document::new_edge(src, dst, eid);
-                    let mut has_fields = false;
+                    // Allocate the RSDoc only once a field is present — edges
+                    // without an indexed attribute produce no document (and no
+                    // create+free churn).
+                    let mut doc: Option<Document> = None;
                     for (attr, fields) in &attrs {
                         if let Some(value) = self.relationship_attrs.get_attr(eid, attr) {
+                            let doc = doc.get_or_insert_with(|| Document::new_edge(src, dst, eid));
                             for field in fields {
                                 doc.set(field, &value);
                             }
-                            has_fields = true;
                         }
                     }
-                    if has_fields {
+                    if let Some(doc) = doc {
                         batch.push(doc);
                     }
                 }

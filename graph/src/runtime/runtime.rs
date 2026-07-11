@@ -169,6 +169,11 @@ pub struct Runtime<'a> {
     pub effects_buffer: RefCell<Option<Vec<u8>>>,
     /// Total number of effect records across all commits in this query.
     pub effects_count: Cell<u64>,
+    /// Whether commits should serialize an effects buffer. Callers clear
+    /// this when replication has no possible consumer (no AOF, no replica
+    /// has ever attached); the replication layer then falls back to
+    /// verbatim query propagation, which Redis discards for free.
+    pub build_effects: Cell<bool>,
     /// Timestamp captured at the start of the transaction/query.
     /// Used by `date.transaction()`, `localtime.transaction()`, and `localdatetime.transaction()`
     /// so every call in the same transaction returns the same value.
@@ -409,6 +414,7 @@ impl<'a> Runtime<'a> {
             result_set_size,
             effects_buffer: RefCell::new(None),
             effects_count: Cell::new(0),
+            build_effects: Cell::new(true),
             transaction_timestamp: Utc::now(),
             profile,
             profile_data: RefCell::new(HashMap::new()),

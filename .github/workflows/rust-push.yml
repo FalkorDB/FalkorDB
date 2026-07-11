@@ -156,6 +156,11 @@ jobs:
     uses: ./.github/workflows/_benchmark.yml
     permissions:
       contents: write
+      # _benchmark.yml's merge job declares pull-requests: write; a reusable
+      # workflow can't request a permission the caller didn't grant, so omitting
+      # this made the whole Rust Push run startup_fail. (The canonical run never
+      # comments — no PR — but the grant must still cover the declaration.)
+      pull-requests: write
     with:
       image_a: docker.io/falkordb/falkordb-server:edge
       image_b: ghcr.io/falkordb/falkordb-server:edge-rs
@@ -467,32 +472,3 @@ jobs:
           else                                                              
             echo "No fuzz artifacts found or directory is empty"           
           fi                                                                
-  benchmark:
-    runs-on: ubuntu-latest
-    container: ghcr.io/falkordb/falkordb-build:latest
-    needs: docker
-    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - name: Setup
-        run: |
-          git config --global --add safe.directory $GITHUB_WORKSPACE
-          rustup default stable
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          shared-key: "release"
-      - name: Build and run benchmark
-        run: |
-          cargo build --release
-          . /data/venv/bin/activate
-          pytest tests/test_bench.py --benchmark-json output.json -vv
-      - name: Store benchmark result
-        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba
-        with:
-          name: FalkorDB Benchmark
-          tool: 'pytest'
-          output-file-path: output.json
-          # Access token to deploy GitHub Pages branch
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          # Push and deploy GitHub pages branch automatically
-          auto-push: true
