@@ -26,14 +26,11 @@ On stop, samply opens the Firefox Profiler UI in your browser. Use
 
 ## 2. Benchmark suite
 
-```bash
-cargo build --release
-source venv/bin/activate 2>/dev/null || source /data/venv/bin/activate   # /data/venv in the devcontainer/CI
-pytest tests/test_bench.py --benchmark-json output.json -vv
-```
-CI publishes results to a tracked history at
-<https://falkordb.github.io/falkordb-rs-next-gen/dev/bench/> — compare a
-local `output.json` against that trend when checking for a regression.
+CI runs the A/B FalkorDB-vs-FalkorDB benchmark pipeline
+(`.github/workflows/_benchmark.yml`, driven by the `FalkorDB/benchmark`
+tool) and publishes the trend to
+<https://falkordb.github.io/falkordb-rs-next-gen/benchmark/> — compare
+against that history when checking for a regression.
 
 ## Notes
 
