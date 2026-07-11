@@ -3,7 +3,6 @@ falkordb
 falkordb-bulk-loader
 hypothesis
 pytest
-pytest-benchmark
 textual
 textual-dev
 RLTest>=0.7.25
