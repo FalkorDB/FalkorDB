@@ -13,6 +13,7 @@ Output shape (compact; points are [timestamp, a_value_or_null, b_value_or_null])
     "engines": {"a": "falkordb-c", "b": "falkordb-rs"},
     "metrics": ["exec", "p50", "p95", "p99"],
     "queries": ["aggregate_age", ...],
+    "prs": {"172...": 681, ...},   // timestamp -> triggering PR number
     "series": { "exec": { "aggregate_age": [[172..., 81.1, 50.2], ...] }, ... }
   }
 """
@@ -54,9 +55,14 @@ def main() -> int:
     # series[metric][query] = [[t, a, b], ...]
     series = {m: {} for m in METRICS}
     queries = set()
+    # timestamp -> triggering PR number, for the drill-down chart's attribution.
+    prs = {}
 
     for e in entries:
         t = int(e["timestamp"])
+        pr = e.get("pr")
+        if isinstance(pr, int):
+            prs[str(t)] = pr
         try:
             with open(f"{args.summaries_dir}/{e['filename']}", encoding="utf-8") as f:
                 summ = json.load(f)
@@ -73,6 +79,7 @@ def main() -> int:
         "engines": {"a": args.name_a, "b": args.name_b},
         "metrics": list(METRICS),
         "queries": sorted(queries),
+        "prs": prs,
         "series": series,
     }
     with open(args.out, "w", encoding="utf-8") as f:
