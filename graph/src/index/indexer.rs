@@ -684,8 +684,8 @@ impl Indexer {
             let Some(index) = index.get_mut(label) else {
                 continue;
             };
-            for doc in add_docs.drain(..) {
-                index.add_document(&doc);
+            for mut doc in add_docs.drain(..) {
+                index.add_document(&mut doc);
             }
         }
         for (label, remove_docs) in remove_docs {
@@ -715,8 +715,8 @@ impl Indexer {
             let Some(index) = index.get_mut(label) else {
                 continue;
             };
-            for doc in add_docs.drain(..) {
-                index.add_document(&doc);
+            for mut doc in add_docs.drain(..) {
+                index.add_document(&mut doc);
             }
         }
         for (label, edges) in remove_docs {
