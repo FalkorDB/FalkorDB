@@ -668,8 +668,8 @@ impl Graph {
             labels_matices: Vec::new(),
             relationship_matrices: Vec::new(),
             edge_endpoints: Vec::new(),
-            node_attrs: AttributeStore::new(version),
-            relationship_attrs: AttributeStore::new(version),
+            node_attrs: AttributeStore::new(),
+            relationship_attrs: AttributeStore::new(),
             node_indexer: Indexer::default(),
             edge_indexer: Indexer::default(),
             node_labels: Vec::new(),
@@ -806,8 +806,8 @@ impl Graph {
     pub fn new_version(&self) -> Self {
         debug_assert_eq!(self.reserved_node_count, 0);
         debug_assert_eq!(self.reserved_relationship_count, 0);
-        let node_attrs = self.node_attrs.new_version(self.version + 1);
-        let relationship_attrs = self.relationship_attrs.new_version(self.version + 1);
+        let node_attrs = self.node_attrs.new_version();
+        let relationship_attrs = self.relationship_attrs.new_version();
 
         // Tensor::dup() is copy-on-write; the graph-wide edge_endpoints vec is
         // cloned once below.
@@ -2585,6 +2585,15 @@ impl Graph {
         self.node_attrs.get_all_attrs_by_id(id.0)
     }
 
+    /// Number of attributes stored for a node (0 if none).
+    #[must_use]
+    pub fn get_node_attr_count(
+        &self,
+        id: NodeId,
+    ) -> usize {
+        self.node_attrs.attr_count(id.0)
+    }
+
     pub fn get_relationship_attrs(
         &self,
         id: RelationshipId,
@@ -2605,6 +2614,15 @@ impl Graph {
         id: RelationshipId,
     ) -> impl Iterator<Item = (u16, Value)> + '_ {
         self.relationship_attrs.get_all_attrs_by_id(id.0)
+    }
+
+    /// Number of attributes stored for a relationship (0 if none).
+    #[must_use]
+    pub fn get_relationship_attr_count(
+        &self,
+        id: RelationshipId,
+    ) -> usize {
+        self.relationship_attrs.attr_count(id.0)
     }
 
     pub fn create_index(

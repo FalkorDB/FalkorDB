@@ -1341,6 +1341,8 @@ impl<'a> Runtime<'a> {
         id: u16,
     ) {
         let mut memo = memo.borrow_mut();
+        // Bounded memo with no eviction: once full, further names simply
+        // aren't memoized and fall back to the graph's name table lookup.
         if memo.len() < ATTR_ID_MEMO_CAP {
             memo.push((attr.clone(), id));
         }
