@@ -125,8 +125,6 @@ To run all passing TCK tests use:
 TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
 ```
 
-- [benchmark](https://falkordb.github.io/falkordb-rs-next-gen/dev/bench/)
-
 ### A/B benchmarking vs the production (C) image
 
 [`.github/workflows/benchmark.yml`](.github/workflows/benchmark.yml) runs the
