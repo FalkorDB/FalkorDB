@@ -181,7 +181,7 @@ class testGraphMemoryUsage(FlowTestsBase):
         # allocator noise / index metadata while staying far below the leak.
         self.env.assertLess(
             grew_mb, 15,
-            f"index population over field-less entities grew memory by "
+            message=f"index population over field-less entities grew memory by "
             f"{grew_mb:.1f} MB (expected ~0) - the RSDoc population leak regressed")
 
     def test_node_memory_usage(self):
