@@ -140,52 +140,52 @@ jobs:
           cargo build --release --bin benchmark
           echo "::endgroup::"
 
-          # Run the REAL tool's fixture-dependent load against one image, while a
-          # background loop polls a FRESH connection's vector probe each 5s.
-          run_tool() {
-            IMG="$1"; NAME="vt-$(echo "$IMG" | tr '/:.' '___')"; PORT=16399
-            echo "::group::### REAL TOOL vs $IMG (arch=$ARCH)"
+          # Bisect run-variant.sh's knobs against the C `edge` image: run the real
+          # fixture-dependent load under different container/env configs, each on
+          # a fresh container, polling a FRESH connection's vector probe each 5s.
+          #   XFLAGS = extra `docker run` flags; TMO = FALKOR_QUERY_TIMEOUT_MS
+          #   (empty => unset); CFG=1 => run-variant.sh's CONFIG SET + wipe.
+          IMG="docker.io/falkordb/falkordb-server:edge"
+          docker pull "$IMG" >/dev/null 2>&1 || docker pull "$IMG"
+          NPROC=$(nproc)
+          run_config() {
+            DESC="$1"; XFLAGS="$2"; TMO="$3"; CFG="$4"
+            NAME="vc-$(echo "$DESC" | tr ' /:.' '_____')"; PORT=16399
+            echo "::group::### CONFIG [$DESC]  docker='$XFLAGS'  FALKOR_QUERY_TIMEOUT_MS='${TMO:-unset}'  cfg=$CFG"
             docker rm -f "$NAME" >/dev/null 2>&1 || true
-            docker pull "$IMG" >/dev/null 2>&1 || docker pull "$IMG"
-            docker run -d --name "$NAME" -p "${PORT}:6379" "$IMG" >/dev/null
-            for _ in $(seq 1 40); do
-              docker exec "$NAME" redis-cli PING 2>/dev/null | grep -q PONG && break; sleep 1
-            done
-
-            # FRESH-connection poller: each iteration is a brand-new redis-cli
-            # connection. If this reports vector_probe>0 while the tool's pooled
-            # readiness reports vector_hits=0, it's a cross-connection visibility
-            # issue; if this also stays 0, the vectors never got ingested.
-            (
-              for i in $(seq 1 90); do
+            # shellcheck disable=SC2086
+            docker run -d --name "$NAME" $XFLAGS -p "${PORT}:6379" "$IMG" >/dev/null
+            for _ in $(seq 1 40); do docker exec "$NAME" redis-cli PING 2>/dev/null | grep -q PONG && break; sleep 1; done
+            if [ "$CFG" = 1 ]; then
+              docker exec "$NAME" redis-cli CONFIG SET save "" >/dev/null 2>&1 || true
+              docker exec "$NAME" redis-cli CONFIG SET stop-writes-on-bgsave-error no >/dev/null 2>&1 || true
+              docker exec "$NAME" redis-cli GRAPH.DELETE falkor >/dev/null 2>&1 || true
+              docker exec "$NAME" redis-cli DEL falkor >/dev/null 2>&1 || true
+            fi
+            ( for i in $(seq 1 60); do
                 p=$(docker exec "$NAME" redis-cli GRAPH.QUERY falkor "CALL db.idx.vector.queryNodes('User','embedding',1, vecf32([0.1,0.2,0.3])) YIELD node RETURN count(node)" 2>/dev/null | grep -oE '\(integer\) [0-9]+' | grep -oE '[0-9]+$')
-                e=$(docker exec "$NAME" redis-cli GRAPH.QUERY falkor "MATCH (u:User) WHERE u.embedding IS NOT NULL RETURN count(u)" 2>/dev/null | grep -oE '\(integer\) [0-9]+' | grep -oE '[0-9]+$')
-                echo "  [poll $i] FRESH-conn vector_probe=${p:-NA}  embedding_prop=${e:-NA}"
-                sleep 5
-              done
-            ) &
+                echo "  [poll $i] FRESH-conn vector_probe=${p:-NA}"; sleep 5
+              done ) &
             POLLPID=$!
-
+            if [ -n "$TMO" ]; then export FALKOR_QUERY_TIMEOUT_MS="$TMO"; else unset FALKOR_QUERY_TIMEOUT_MS || true; fi
             rc=0
             ./target/release/benchmark load --vendor falkor --size small \
               --endpoint "falkor://127.0.0.1:${PORT}" -b 5000 --query-profile fixture-dependent \
               > "/tmp/load_${NAME}.log" 2>&1 || rc=$?
             kill "$POLLPID" 2>/dev/null || true
-            echo ">>> TOOL LOAD exit code: $rc  (non-zero => reproduced the failure)"
-            echo "--- tool load log tail (readiness lines) ---"
-            grep -iE 'post-phase fixtures|vector_hits|Timed out|imported|ready after' "/tmp/load_${NAME}.log" | tail -20
-
-            echo "--- FINAL fresh-connection probe + db.indexes ---"
-            echo -n "  fresh vector_probe: "; docker exec "$NAME" redis-cli GRAPH.QUERY falkor "CALL db.idx.vector.queryNodes('User','embedding',1, vecf32([0.1,0.2,0.3])) YIELD node RETURN count(node)" 2>&1 | grep -oE '\(integer\) [0-9]+' | head -1
-            echo -n "  embedding prop count: "; docker exec "$NAME" redis-cli GRAPH.QUERY falkor "MATCH (u:User) WHERE u.embedding IS NOT NULL RETURN count(u)" 2>&1 | grep -oE '\(integer\) [0-9]+' | head -1
-            docker exec "$NAME" redis-cli GRAPH.QUERY falkor "CALL db.indexes()" 2>&1 | grep -E 'numDocuments|indexingFailures' | head
+            echo ">>> [$DESC] LOAD exit: $rc  (non-zero => REPRODUCED)"
+            grep -iE 'post-phase fixtures (ready|not)|vector_hits=|Timed out waiting|ready after' "/tmp/load_${NAME}.log" | tail -4
+            echo -n "  FINAL fresh vector_probe: "; docker exec "$NAME" redis-cli GRAPH.QUERY falkor "CALL db.idx.vector.queryNodes('User','embedding',1, vecf32([0.1,0.2,0.3])) YIELD node RETURN count(node)" 2>&1 | grep -oE '\(integer\) [0-9]+' | head -1
             docker rm -f "$NAME" >/dev/null 2>&1 || true
             echo "::endgroup::"
           }
 
-          run_tool "docker.io/falkordb/falkordb-server:edge"      # C engine — expected to fail on GCE
-          run_tool "ghcr.io/falkordb/falkordb-server:edge-rs"     # Rust engine — control (passes)
-          echo "vecdiag(tool) done for arch=$ARCH"
+          #            desc            docker flags                     timeout  cfg
+          run_config "bare-control"    ""                               ""       0
+          run_config "timeout-5s"      ""                               "5000"   0
+          run_config "mem-24g"         "--memory=24g"                   ""       0
+          run_config "full-replica"    "--cpus=${NPROC} --memory=24g"   "5000"   1
+          echo "vecdiag(bisect) done for arch=$ARCH"
 
   cleanup-runners:
     needs: [setup, diagnose]
