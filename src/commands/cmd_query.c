@@ -20,7 +20,6 @@
 #include "../effects/effects.h"
 #include "../util/cache/cache.h"
 #include "../configuration/config.h"
-#include "../util/thpool/pool.h"
 #include "../execution_plan/execution_plan.h"
 
 // GraphQueryCtx stores the allocations required to execute a query
