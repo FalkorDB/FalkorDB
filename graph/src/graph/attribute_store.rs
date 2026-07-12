@@ -37,7 +37,7 @@
 //! │     sorted by attr_id   │  ~~ = slack (cap > len) / dead spans,    │
 //! │     within each span    │  reclaimed by compact() when >50% dead   │
 //! │                         │                                          │
-//! │                         │ payload of TAG_HEAP = u32 index          │
+//! │                         │ payload of Tag::Heap = u32 index         │
 //! │ heap: Vec<Value>        ▼  out-of-line String/List/VecF32/...      │
 //! │   ┌──────────┬──────────┬──────────┐                               │
 //! │   │ "alice"  │ Null(hole)│ [1,2,3] │   heap_free: [1]              │
@@ -134,33 +134,38 @@ impl std::ops::Index<usize> for AttrNameMap {
     }
 }
 
-// Packed value type tags. Scalars inline their payload; `TAG_HEAP` values
-// live in the block-level side array (`Block::heap`) and the payload is a
-// `u32` index.
-const TAG_NULL: u8 = 0;
-const TAG_BOOL: u8 = 1;
-const TAG_INT: u8 = 2;
-const TAG_FLOAT: u8 = 3;
-const TAG_POINT: u8 = 4;
-const TAG_DATETIME: u8 = 5;
-const TAG_DATE: u8 = 6;
-const TAG_TIME: u8 = 7;
-const TAG_DURATION: u8 = 8;
-const TAG_HEAP: u8 = 9;
+/// Packed value type tag. Scalars inline their payload; [`Tag::Heap`] values
+/// live in the block-level side array (`Block::heap`) and the payload is a
+/// `u32` index.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[repr(u8)]
+enum Tag {
+    #[default]
+    Null = 0,
+    Bool = 1,
+    Int = 2,
+    Float = 3,
+    Point = 4,
+    Datetime = 5,
+    Date = 6,
+    Time = 7,
+    Duration = 8,
+    Heap = 9,
+}
 
 /// One packed attribute: 12 bytes, matching the C engine's per-attribute
 /// footprint (`AttributeID` + packed `AttrValue_t`).
 #[derive(Clone, Copy, Default)]
 struct PackedAttr {
     id: u16,
-    tag: u8,
+    tag: Tag,
     payload: [u8; 8],
 }
 
 impl PackedAttr {
     #[inline]
     fn heap_index(&self) -> usize {
-        debug_assert_eq!(self.tag, TAG_HEAP);
+        debug_assert_eq!(self.tag, Tag::Heap);
         u32::from_le_bytes(self.payload[..4].try_into().unwrap()) as usize
     }
 }
@@ -217,26 +222,26 @@ impl Block {
     fn pack_value(
         &mut self,
         value: Value,
-    ) -> (u8, [u8; 8]) {
+    ) -> (Tag, [u8; 8]) {
         match value {
-            Value::Null => (TAG_NULL, [0; 8]),
+            Value::Null => (Tag::Null, [0; 8]),
             Value::Bool(b) => {
                 let mut p = [0; 8];
                 p[0] = u8::from(b);
-                (TAG_BOOL, p)
+                (Tag::Bool, p)
             }
-            Value::Int(i) => (TAG_INT, i.to_le_bytes()),
-            Value::Float(f) => (TAG_FLOAT, f.to_le_bytes()),
+            Value::Int(i) => (Tag::Int, i.to_le_bytes()),
+            Value::Float(f) => (Tag::Float, f.to_le_bytes()),
             Value::Point(point) => {
                 let mut p = [0; 8];
                 p[..4].copy_from_slice(&point.latitude.to_le_bytes());
                 p[4..].copy_from_slice(&point.longitude.to_le_bytes());
-                (TAG_POINT, p)
+                (Tag::Point, p)
             }
-            Value::Datetime(t) => (TAG_DATETIME, t.to_le_bytes()),
-            Value::Date(t) => (TAG_DATE, t.to_le_bytes()),
-            Value::Time(t) => (TAG_TIME, t.to_le_bytes()),
-            Value::Duration(t) => (TAG_DURATION, t.to_le_bytes()),
+            Value::Datetime(t) => (Tag::Datetime, t.to_le_bytes()),
+            Value::Date(t) => (Tag::Date, t.to_le_bytes()),
+            Value::Time(t) => (Tag::Time, t.to_le_bytes()),
+            Value::Duration(t) => (Tag::Duration, t.to_le_bytes()),
             other => {
                 let idx = if let Some(i) = self.heap_free.pop() {
                     self.heap[i as usize] = other;
@@ -247,7 +252,7 @@ impl Block {
                 };
                 let mut p = [0; 8];
                 p[..4].copy_from_slice(&idx.to_le_bytes());
-                (TAG_HEAP, p)
+                (Tag::Heap, p)
             }
         }
     }
@@ -257,20 +262,19 @@ impl Block {
         attr: &PackedAttr,
     ) -> Value {
         match attr.tag {
-            TAG_NULL => Value::Null,
-            TAG_BOOL => Value::Bool(attr.payload[0] != 0),
-            TAG_INT => Value::Int(i64::from_le_bytes(attr.payload)),
-            TAG_FLOAT => Value::Float(f64::from_le_bytes(attr.payload)),
-            TAG_POINT => Value::Point(crate::runtime::value::Point {
+            Tag::Null => Value::Null,
+            Tag::Bool => Value::Bool(attr.payload[0] != 0),
+            Tag::Int => Value::Int(i64::from_le_bytes(attr.payload)),
+            Tag::Float => Value::Float(f64::from_le_bytes(attr.payload)),
+            Tag::Point => Value::Point(crate::runtime::value::Point {
                 latitude: f32::from_le_bytes(attr.payload[..4].try_into().unwrap()),
                 longitude: f32::from_le_bytes(attr.payload[4..].try_into().unwrap()),
             }),
-            TAG_DATETIME => Value::Datetime(i64::from_le_bytes(attr.payload)),
-            TAG_DATE => Value::Date(i64::from_le_bytes(attr.payload)),
-            TAG_TIME => Value::Time(i64::from_le_bytes(attr.payload)),
-            TAG_DURATION => Value::Duration(i64::from_le_bytes(attr.payload)),
-            TAG_HEAP => self.heap[attr.heap_index()].clone(),
-            _ => unreachable!("invalid packed attribute tag"),
+            Tag::Datetime => Value::Datetime(i64::from_le_bytes(attr.payload)),
+            Tag::Date => Value::Date(i64::from_le_bytes(attr.payload)),
+            Tag::Time => Value::Time(i64::from_le_bytes(attr.payload)),
+            Tag::Duration => Value::Duration(i64::from_le_bytes(attr.payload)),
+            Tag::Heap => self.heap[attr.heap_index()].clone(),
         }
     }
 
@@ -281,7 +285,7 @@ impl Block {
         &mut self,
         entry: PackedAttr,
     ) {
-        if entry.tag == TAG_HEAP {
+        if entry.tag == Tag::Heap {
             let heap_index = entry.heap_index();
             self.heap[heap_index] = Value::Null;
             self.heap_free.push(heap_index as u32);
@@ -577,7 +581,7 @@ impl Block {
             slot.offset = new_arena.len() as u32;
             for entry in &self.arena[start..start + slot.len as usize] {
                 let mut entry = *entry;
-                if entry.tag == TAG_HEAP {
+                if entry.tag == Tag::Heap {
                     let value = std::mem::replace(&mut self.heap[entry.heap_index()], Value::Null);
                     entry.payload[..4].copy_from_slice(&(new_heap.len() as u32).to_le_bytes());
                     new_heap.push(value);
@@ -646,7 +650,7 @@ impl<'a> SpanRef<'a> {
     fn heap_bytes(self) -> usize {
         let mut bytes = self.len() * std::mem::size_of::<PackedAttr>();
         for attr in self.entries() {
-            if attr.tag == TAG_HEAP {
+            if attr.tag == Tag::Heap {
                 let value = &self.block.heap[attr.heap_index()];
                 bytes += std::mem::size_of::<Value>() + value.heap_size();
             }
