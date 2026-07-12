@@ -31,6 +31,10 @@ QUERIES_COUNT="${QUERIES_COUNT:-20000}"
 PARALLEL="${PARALLEL:-20}"
 MPS="${MPS:-5000}"
 WRITE_RATIO="${WRITE_RATIO:-0.0}"      # profiling is read-only by default
+# Query coverage profile: baseline | extended-core | fixture-dependent.
+# fixture-dependent adds text/vector-index query flows; passed to both `load`
+# (runs the post-phase fixture/index setup) and `generate-queries` (emits them).
+QUERY_PROFILE="${QUERY_PROFILE:-baseline}"
 BATCH_SIZE="${BATCH_SIZE:-5000}"
 export FALKOR_QUERY_TIMEOUT_MS="${FALKOR_QUERY_TIMEOUT_MS:-5000}"
 DB_PORT="${DB_PORT:-16379}"
@@ -102,10 +106,12 @@ grep -q '^\[workspace\]' Cargo.toml || printf '\n[workspace]\n' >> Cargo.toml
 cargo build --release --bin benchmark
 cargo run --release --bin benchmark -- generate-queries \
   --vendor falkor --dataset "$DATASET_SIZE" --size "$QUERIES_COUNT" \
-  --name "$QUERIES_NAME" --write-ratio "$WRITE_RATIO"
+  --name "$QUERIES_NAME" --write-ratio "$WRITE_RATIO" \
+  --query-profile "$QUERY_PROFILE"
 cargo run --release --bin benchmark -- load \
   --vendor falkor --size "$DATASET_SIZE" \
-  --endpoint "falkor://127.0.0.1:${DB_PORT}" -b "$BATCH_SIZE"
+  --endpoint "falkor://127.0.0.1:${DB_PORT}" -b "$BATCH_SIZE" \
+  --query-profile "$QUERY_PROFILE"
 echo "::endgroup::"
 
 echo "::group::perf record (server PID $PID) for up to ${PROFILE_DURATION}s of the run"

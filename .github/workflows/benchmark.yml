@@ -42,6 +42,12 @@ on:
         description: "Fraction of write queries (0.0-1.0). PR/slash runs default to 0.05 (5% writes); set this to override on a manual run."
         required: false
         default: "0.0"
+      query_profile:
+        description: "Query coverage profile. PR/slash runs default to fixture-dependent (adds text+vector index flows); set this to override on a manual run."
+        required: false
+        default: "baseline"
+        type: choice
+        options: ["baseline", "extended-core", "fixture-dependent"]
   pull_request:
     # `labeled` runs a benchmark only when a benchmark-<size> label is *added*
     # (not on every push while it happens to be present — those are expensive);
@@ -136,6 +142,7 @@ jobs:
       pr_number: ${{ steps.derive.outputs.pr_number }}
       sizes: ${{ steps.derive.outputs.sizes }}
       write_ratio: ${{ steps.derive.outputs.write_ratio }}
+      query_profile: ${{ steps.derive.outputs.query_profile }}
     steps:
       - name: Checkout benchmark scripts
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -151,6 +158,7 @@ jobs:
           INPUT_IMAGE_B_TAG: ${{ github.event.inputs.image_b_tag }}
           INPUT_DATASET_SIZE: ${{ github.event.inputs.dataset_size }}
           INPUT_WRITE_RATIO: ${{ github.event.inputs.write_ratio }}
+          INPUT_QUERY_PROFILE: ${{ github.event.inputs.query_profile }}
           DISPATCH_REF_NAME: ${{ github.ref_name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
@@ -169,6 +177,8 @@ jobs:
               SIZES="[\"${INPUT_DATASET_SIZE:-small}\"]"
               # Manual runs may opt into writes; default read-only.
               WRITE_RATIO="${INPUT_WRITE_RATIO:-0.0}"
+              # Manual runs may opt into a richer query profile; default baseline.
+              QUERY_PROFILE="${INPUT_QUERY_PROFILE:-baseline}"
               ;;
             pull_request)
               # A/B/C: C engine (A) vs published Rust (B) vs this PR (C).
@@ -191,6 +201,9 @@ jobs:
               # benchmarks include writes). A manual dispatch can still override
               # via the write_ratio input.
               WRITE_RATIO="0.05"
+              # PR/slash runs use the fixture-dependent profile so text+vector
+              # index query flows are exercised. Manual dispatch can override.
+              QUERY_PROFILE="fixture-dependent"
               ;;
             *)
               echo "::error::unsupported event $EVENT_NAME"
@@ -206,6 +219,7 @@ jobs:
             echo "pr_number=${OUT_PR_NUMBER}"
             echo "sizes=${SIZES}"
             echo "write_ratio=${WRITE_RATIO}"
+            echo "query_profile=${QUERY_PROFILE}"
           } >> "$GITHUB_OUTPUT"
           echo "Derived: A=${IMAGE_A} B=${IMAGE_B} C=${IMAGE_C} view=${VIEW} pr=${OUT_PR_NUMBER} sizes=${SIZES}"
 
@@ -285,6 +299,7 @@ jobs:
       sizes: ${{ needs.prepare.outputs.sizes }}
       pr_number: ${{ needs.prepare.outputs.pr_number }}
       write_ratio: ${{ needs.prepare.outputs.write_ratio }}
+      query_profile: ${{ needs.prepare.outputs.query_profile }}
     secrets: inherit
 
   # Remove a PR's /benchmark/branch/pr-<N>/ preview once it closes — no

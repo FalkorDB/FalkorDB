@@ -20,6 +20,11 @@ PARALLEL="${PARALLEL:-20}"                 # client worker tasks
 MPS="${MPS:-5000}"                         # target scheduling rate (queries/sec)
 BATCH_SIZE="${BATCH_SIZE:-5000}"
 WRITE_RATIO="${WRITE_RATIO:-0.0}"          # read-only by default (workflow passes it)
+# Query coverage profile: baseline | extended-core | fixture-dependent.
+# fixture-dependent adds the text- and vector-index query flows; it must be
+# passed to BOTH `load` (which then runs the post-phase fixture/index setup so
+# those queries have targets) and `generate-queries` (which emits them).
+QUERY_PROFILE="${QUERY_PROFILE:-baseline}"
 # Server-side per-query timeout (FalkorDB aborts the query and frees the thread
 # at this deadline; the benchmark client applies it via ro_query .with_timeout).
 # Default 5s, well below the tool's own 180s default: the heavy graph algos
@@ -67,7 +72,8 @@ echo "::endgroup::"
 echo "::group::Generating query workload (${QUERIES_NAME})"
 cargo run --release --bin benchmark -- generate-queries \
   --vendor falkor --dataset "$DATASET_SIZE" --size "$QUERIES_COUNT" \
-  --name "$QUERIES_NAME" --write-ratio "$WRITE_RATIO"
+  --name "$QUERIES_NAME" --write-ratio "$WRITE_RATIO" \
+  --query-profile "$QUERY_PROFILE"
 echo "::endgroup::"
 
 echo "::group::Benchmarking ${NAME} (${IMAGE})"
@@ -91,7 +97,8 @@ docker exec "$CONTAINER_NAME" redis-cli DEL falkor >/dev/null 2>&1 || true
 
 cargo run --release --bin benchmark -- load \
   --vendor falkor --size "$DATASET_SIZE" \
-  --endpoint "falkor://127.0.0.1:${DB_PORT}" -b "$BATCH_SIZE"
+  --endpoint "falkor://127.0.0.1:${DB_PORT}" -b "$BATCH_SIZE" \
+  --query-profile "$QUERY_PROFILE"
 
 cargo run --release --bin benchmark -- run \
   --vendor falkor --name "$QUERIES_NAME" \

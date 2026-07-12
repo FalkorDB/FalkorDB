@@ -82,6 +82,11 @@ on:
         required: false
         type: string
         default: "0.0"
+      query_profile:
+        description: "Query coverage profile (baseline | extended-core | fixture-dependent). PR/slash runs pass fixture-dependent to exercise text+vector index flows; the canonical main-branch trend stays baseline. Callers that omit this get baseline."
+        required: false
+        type: string
+        default: "baseline"
 
 permissions:
   contents: read
@@ -217,6 +222,9 @@ jobs:
           # Write fraction from the caller: 0.05 for PR/slash runs, 0.0 for the
           # canonical main-branch trend (and any caller that omits it).
           WRITE_RATIO: ${{ inputs.write_ratio }}
+          # Query coverage profile from the caller: fixture-dependent for PR/slash
+          # runs (adds text+vector index flows), baseline for the canonical trend.
+          QUERY_PROFILE: ${{ inputs.query_profile }}
           # Server-side per-query timeout (ms) — 5s so heavy algos abort fast
           # instead of running to the tool's 180s default. Tunable via repo var.
           FALKOR_QUERY_TIMEOUT_MS: ${{ vars.BENCHMARK_QUERY_TIMEOUT_MS || '5000' }}
