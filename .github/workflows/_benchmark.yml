@@ -78,7 +78,7 @@ on:
         type: string
         default: ""
       write_ratio:
-        description: "Fraction of write queries (0.0-1.0). PR/slash runs are read-only (0.0); writes are opt-in via manual dispatch."
+        description: "Fraction of write queries (0.0-1.0). PR/slash runs pass 0.05 (5% writes); the canonical main-branch trend stays read-only (0.0). Callers that omit this get the read-only default."
         required: false
         type: string
         default: "0.0"
@@ -87,10 +87,11 @@ permissions:
   contents: read
 
 env:
-  # FalkorDB/benchmark rarely tags; pin to a commit validated against
-  # patch-ui.sh (static export + basePath). Bump deliberately and re-verify.
+  # Pinned to a commit validated against patch-ui.sh (static export + basePath).
+  # This is the v2.2 release commit. Bump deliberately and re-verify patch-ui.sh
+  # (its grep -qF guards on the vendored ui/ source) when moving it.
   BENCHMARK_REPO: FalkorDB/benchmark
-  BENCHMARK_REF: 0cc0e9ee45464b9cb8d71732f419e4e0c8ebdacc
+  BENCHMARK_REF: deca7752cbd8cdeb333493569472ede385d5b5db # v2.2
 
 jobs:
   # Expand (size × variant) into a flat combo list the matrices below fan out
@@ -213,7 +214,8 @@ jobs:
           PARALLEL: ${{ vars.BENCHMARK_PARALLEL || '20' }}
           MPS: ${{ vars.BENCHMARK_MPS || '5000' }}
           QUERIES_COUNT: ${{ vars.BENCHMARK_QUERIES_COUNT || '20000' }}
-          # Read-only unless the caller opts into writes (manual dispatch only).
+          # Write fraction from the caller: 0.05 for PR/slash runs, 0.0 for the
+          # canonical main-branch trend (and any caller that omits it).
           WRITE_RATIO: ${{ inputs.write_ratio }}
           # Server-side per-query timeout (ms) — 5s so heavy algos abort fast
           # instead of running to the tool's 180s default. Tunable via repo var.

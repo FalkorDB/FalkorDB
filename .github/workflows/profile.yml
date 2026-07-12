@@ -12,7 +12,9 @@
 # exists) and uploads the folded stacks + perf report as artifacts.
 #
 # Verified locally: the flame graph symbolizes the full engine + GraphBLAS
-# path. Read-only workload (profiling reads).
+# path. Workload is 5% writes (WRITE_RATIO), matching the A/B benchmark, so the
+# flame graph covers the write path too; override via the PROFILE_WRITE_RATIO
+# repo variable.
 name: Profile (flame graph)
 
 on:
@@ -40,7 +42,7 @@ concurrency:
 
 env:
   BENCHMARK_REPO: FalkorDB/benchmark
-  BENCHMARK_REF: 0cc0e9ee45464b9cb8d71732f419e4e0c8ebdacc
+  BENCHMARK_REF: deca7752cbd8cdeb333493569472ede385d5b5db # v2.2
 
 jobs:
   prepare:
@@ -175,6 +177,8 @@ jobs:
           QUERIES_COUNT: ${{ vars.BENCHMARK_QUERIES_COUNT || '20000' }}
           PARALLEL: ${{ vars.BENCHMARK_PARALLEL || '20' }}
           MPS: ${{ vars.BENCHMARK_MPS || '5000' }}
+          # Profile the write path too: 5% writes, matching the A/B benchmark.
+          WRITE_RATIO: ${{ vars.PROFILE_WRITE_RATIO || '0.05' }}
         run: .github/scripts/benchmark/profile.sh
 
       - name: Upload profiling artifacts

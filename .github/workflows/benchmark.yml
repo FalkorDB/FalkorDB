@@ -39,7 +39,7 @@ on:
         type: choice
         options: ["small", "medium", "large"]
       write_ratio:
-        description: "Fraction of write queries (0.0-1.0). PR/slash runs are always read-only; set this to benchmark writes on a manual run."
+        description: "Fraction of write queries (0.0-1.0). PR/slash runs default to 0.05 (5% writes); set this to override on a manual run."
         required: false
         default: "0.0"
   pull_request:
@@ -187,8 +187,10 @@ jobs:
               # LABEL_NAME is one of benchmark-small/medium/large.
               SIZE="${LABEL_NAME#benchmark-}"
               SIZES="[\"${SIZE}\"]"
-              # PR/slash runs are always read-only; writes are manual-only.
-              WRITE_RATIO="0.0"
+              # PR/slash runs exercise the write path at 5% writes (policy: PR
+              # benchmarks include writes). A manual dispatch can still override
+              # via the write_ratio input.
+              WRITE_RATIO="0.05"
               ;;
             *)
               echo "::error::unsupported event $EVENT_NAME"
