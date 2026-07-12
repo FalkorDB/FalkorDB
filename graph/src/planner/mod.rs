@@ -77,11 +77,14 @@ pub enum IR {
         expr: QueryExpr<Variable>,
         var: Variable,
     },
-    /// CREATE pattern
-    Create(QueryGraph<Arc<String>, Arc<String>, Variable>),
-    /// MERGE pattern with ON CREATE/ON MATCH actions
+    /// CREATE pattern. Boxed: `QueryGraph` is 72 bytes inline.
+    Create(Box<QueryGraph<Arc<String>, Arc<String>, Variable>>),
+    /// MERGE pattern with ON CREATE/ON MATCH actions.
+    /// Pattern boxed: with the inline 72-byte `QueryGraph` plus the two
+    /// `Vec`s this variant was 120 bytes — the size cap of the whole `IR`
+    /// enum, which every plan-tree node carries.
     Merge {
-        pattern: QueryGraph<Arc<String>, Arc<String>, Variable>,
+        pattern: Box<QueryGraph<Arc<String>, Arc<String>, Variable>>,
         on_create: Vec<SetItem<Arc<String>, Variable>>,
         on_match: Vec<SetItem<Arc<String>, Variable>>,
     },
@@ -2323,7 +2326,7 @@ impl Planner {
                 let paths = pattern.paths();
                 let merge = tree!(
                     IR::Merge {
-                        pattern: create_pattern,
+                        pattern: Box::new(create_pattern),
                         on_create: on_create_set_items,
                         on_match: on_match_set_items
                     },
@@ -2344,7 +2347,7 @@ impl Planner {
                 for v in pattern.variables() {
                     self.visited.insert((v.id, v.scope_id));
                 }
-                tree!(IR::Create(filtered))
+                tree!(IR::Create(Box::new(filtered)))
             }
             QueryIR::Delete {
                 exprs,
