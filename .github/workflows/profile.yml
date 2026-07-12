@@ -44,7 +44,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: profile-${{ github.event.pull_request.number || github.ref }}
+  # Split by arch so x86 and arm profiles for the same PR run in parallel
+  # (same-arch runs still serialize). arch from the -arm label suffix / dispatch input.
+  group: profile-${{ github.event.pull_request.number || github.ref }}-${{ (github.event.inputs.arch == 'arm' || endsWith(github.event.label.name, '-arm')) && 'arm' || 'x86' }}
   cancel-in-progress: false
 
 env:

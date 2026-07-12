@@ -68,7 +68,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: benchmark-${{ github.event.pull_request.number || github.event.issue.number || github.ref }}
+  # Split by arch so an x86 and an arm benchmark for the SAME PR run in parallel
+  # instead of one queueing behind the other; same-arch runs still serialize
+  # (cancel-in-progress: false). arch comes from the -arm label suffix (PR runs)
+  # or the arch dispatch input (manual runs); everything else is x86.
+  group: benchmark-${{ github.event.pull_request.number || github.event.issue.number || github.ref }}-${{ (github.event.inputs.arch == 'arm' || endsWith(github.event.label.name, '-arm')) && 'arm' || 'x86' }}
   cancel-in-progress: false
 
 jobs:
