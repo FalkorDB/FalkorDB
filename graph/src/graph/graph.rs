@@ -468,15 +468,6 @@ fn populate_index_batch(
                 let edge_triples: Vec<(u64, u64, u64)>;
                 let scanned_count: usize;
                 {
-                    // Label-matrix / tensor iteration is GraphBLAS compute on
-                    // a background thread — hold the fork barrier so a BGSAVE
-                    // fork can't catch us inside the GraphBLAS critical
-                    // section. Scoped to the scan only: `indexer.commit`
-                    // below acquires the module GIL, which must never happen
-                    // under the barrier (GIL ↔ barrier ordering rule, see
-                    // `graphblas::fork_barrier`).
-                    let _fork_guard =
-                        crate::graph::graphblas::fork_barrier::GRAPHBLAS_FORK_BARRIER.read();
                     let g = graph.borrow();
                     match kind {
                         IndexKind::Node => {
