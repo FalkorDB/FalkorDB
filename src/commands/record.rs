@@ -14,10 +14,13 @@
 //! Recording mode executes the normal planning/runtime path but captures
 //! intermediate environments per operator index to help diagnose planning or
 //! runtime mismatches.
+//!
+//! Like `GRAPH.QUERY`, execution happens on the thread pool with the client
+//! blocked; the main thread only resolves (or creates) the graph key.
 
 use crate::{
     config::{CONFIGURATION_CACHE_SIZE, CONFIGURATION_IMPORT_FOLDER},
-    graph_core::ThreadedGraph,
+    graph_core::{BlockedClient, ThreadedGraph, ffi},
     redis_type::GRAPH_TYPE,
     reply::reply_verbose_value,
 };
@@ -27,10 +30,13 @@ use graph::{
         eval::evaluate_param,
         runtime::{GetVariables, Runtime},
     },
+    threadpool::spawn,
 };
 use orx_tree::{Bfs, Collection, NodeRef};
 use parking_lot::RwLock;
-use redis_module::{Context, NextArg, RedisError, RedisResult, RedisString, RedisValue, raw};
+use redis_module::{
+    Context, ContextFlags, NextArg, RedisError, RedisResult, RedisString, RedisValue, raw,
+};
 use std::{collections::HashMap, os::raw::c_char, sync::Arc};
 
 #[inline]
@@ -141,17 +147,46 @@ pub fn graph_record(
 
     let key = ctx.open_key_writable(&key_str);
 
-    if let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
-        record_mut(ctx, graph, query)?;
+    let graph = if let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
+        graph.clone()
     } else {
         let graph = Arc::new(RwLock::new(ThreadedGraph::new(
             *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
             &key_str.to_string(),
         )));
-        record_mut(ctx, &graph, query)?;
         key.set_value(&GRAPH_TYPE, graph.clone())?;
-        crate::graph_core::register_graph(key_str.to_string(), graph);
+        crate::graph_core::register_graph(key_str.to_string(), graph.clone());
+        graph
+    };
+
+    // Blocking clients are not allowed inside MULTI/EXEC, and replicated
+    // commands must complete before the handler returns (same rules as
+    // GRAPH.QUERY) — run synchronously in those cases.
+    if ctx.get_flags().contains(ContextFlags::MULTI)
+        || ctx.get_flags().contains(ContextFlags::REPLICATED)
+    {
+        return record_mut(ctx, &graph, query);
     }
+
+    // Run on the thread pool like GRAPH.QUERY. Executing on the main thread
+    // deadlocks the server: the handler holds the GIL while waiting for the
+    // ThreadedGraph read lock, while a committing write query holds the
+    // write lock and waits for the GIL.
+    let bc = unsafe { BlockedClient::new(ctx.ctx) };
+    let query: Arc<str> = Arc::from(query);
+    spawn(
+        move || {
+            let ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
+            let ctx = Context::new(ctx);
+            if let Err(err) = record_mut(&ctx, &graph, &query) {
+                let cerr = ffi::sanitise_error(err.to_string());
+                unsafe { ffi::reply_error(ctx.ctx, cerr.as_ptr()) };
+            }
+            drop(bc);
+            unsafe { ffi::free_thread_safe_context(ctx.ctx) };
+        },
+        None,
+    );
 
     RedisResult::Ok(RedisValue::NoReply)
 }
