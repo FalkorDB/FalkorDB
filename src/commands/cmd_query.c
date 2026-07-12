@@ -398,7 +398,8 @@ static void _drain_write_queue_task
 ) {
 	GraphContext *gc = (GraphContext *)arg ;
 
-	// if another thread is already the writer it drains the queue itself
+	// become the writer and drain; if another thread is already the writer it
+	// drains the queue itself, so there is nothing to do
 	if (GraphContext_TimeTryEnterWrite (gc, 0)) {
 		enter_writer_loop (gc) ;
 	}
@@ -423,9 +424,9 @@ void Graph_DrainWriteQueue
 	// keep gc alive until the drain task runs
 	GraphContext_IncreaseRefCount (gc) ;
 
-	// force=true: don't drop the drain even under a full pool queue, else the
-	// delegated write (and its blocked client) stays orphaned
-	if (ThreadPool_AddWork (_drain_write_queue_task, gc, true) == THPOOL_QUEUE_FULL) {
+	// force=true: never dropped for a full queue, so the only failure is an
+	// allocation error (returns non-zero); undo the ref so gc isn't leaked
+	if (ThreadPool_AddWork (_drain_write_queue_task, gc, true) != 0) {
 		GraphContext_DecreaseRefCount (gc) ;  // couldn't enqueue; undo the ref
 	}
 }

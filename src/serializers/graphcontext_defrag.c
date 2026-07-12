@@ -147,9 +147,11 @@ static int defrag_entities
 
 		counter++ ;
 
-		// stop if Redis's time-slice is up or we've spent our main-thread budget
-        if ((counter % 64 == 0) &&
-			(RedisModule_DefragShouldStop (ctx) || _ms_until (deadline) == 0)) {
+		// stop if we've spent our main-thread budget — checked every entity, as a
+		// single entity can carry a large attribute-set — or Redis's time-slice
+		// is up (amortized every 64)
+        if (_ms_until (deadline) == 0 ||
+			((counter % 64 == 0) && RedisModule_DefragShouldStop (ctx))) {
 			// only pause if NOT at the end
 			if (!DataBlockIterator_Depleted (it)) {
 				// save current stage and offset
