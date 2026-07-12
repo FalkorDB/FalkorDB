@@ -512,6 +512,13 @@ class testDefragWriteHang():
 
     def test_write_not_orphaned_during_defrag(self):
         conn = self.conn
+
+        # active defrag is a no-op without jemalloc (e.g. sanitizer/libc builds);
+        # skip up-front, before the expensive fragmentation setup
+        if "jemalloc" not in conn.info("memory").get("mem_allocator", ""):
+            self.env.skip()
+            return
+
         gname = "defrag_write_hang"
         g = self.db.select_graph(gname)
 
@@ -524,10 +531,6 @@ class testDefragWriteHang():
                     "-[:LINK {w:'e_' + toString(x)}]->(:Seed {x:-x})")
         g.query("MATCH (n:Seed) WHERE n.x % 4 <> 0 DELETE n")
         conn.execute_command("MEMORY PURGE")
-
-        if "jemalloc" not in conn.info("memory").get("mem_allocator", ""):
-            self.env.skip()
-            return
 
         # aggressive active defrag (hz=100 -> fires ~every 10ms)
         keys = ["activedefrag", "active-defrag-threshold-lower",
