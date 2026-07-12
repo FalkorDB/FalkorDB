@@ -88,7 +88,7 @@ unsafe extern "C" fn graph_rdb_load(
             // Single-key load (key_count == 1) -- graph is fully loaded.
             let mvcc = MvccGraph::from_graph(graph);
             let graph_arc = mvcc.read();
-            graph_arc.borrow_mut().set_indexer_graph(graph_arc.clone());
+            graph_arc.borrow().set_indexer_graph(graph_arc.clone());
             let tg = ThreadedGraph::from_mvcc(mvcc);
             let arc = Arc::new(RwLock::new(tg));
             crate::graph_core::register_graph(key_name, arc.clone());
@@ -104,7 +104,7 @@ unsafe extern "C" fn graph_rdb_load(
                 if let Some(graph) = decode_state.finalized.remove(&key_name) {
                     let mvcc = MvccGraph::from_graph(graph);
                     let graph_arc = mvcc.read();
-                    graph_arc.borrow_mut().set_indexer_graph(graph_arc.clone());
+                    graph_arc.borrow().set_indexer_graph(graph_arc.clone());
                     drop(graph_arc);
                     // If a placeholder Arc was already registered for this
                     // key (main key loaded in middle of stream), mutate it
@@ -748,7 +748,7 @@ fn install_graph(
 ) {
     let mvcc = MvccGraph::from_graph(graph);
     let graph_arc = mvcc.read();
-    graph_arc.borrow_mut().set_indexer_graph(graph_arc.clone());
+    graph_arc.borrow().set_indexer_graph(graph_arc.clone());
     drop(graph_arc);
 
     if let Some(ph) = placeholder {

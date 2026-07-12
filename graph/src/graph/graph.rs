@@ -3487,8 +3487,15 @@ impl Graph {
         self.edge_indexer.cancel();
     }
 
+    /// Takes `&self` (not `&mut self`): it only publishes the graph
+    /// reference into the node/edge indexers' own `Mutex`-guarded fields,
+    /// via `Indexer::set_graph`. This lets `MvccGraph::commit()` call it
+    /// through an immutable borrow of the graph, so the background index
+    /// population thread's own immutable borrows of the same
+    /// `AtomicRefCell<Graph>` are never blocked by (or racing against) a
+    /// concurrent mutable borrow here -- see `MvccGraph::commit()`.
     pub fn set_indexer_graph(
-        &mut self,
+        &self,
         graph: Arc<AtomicRefCell<Self>>,
     ) {
         self.node_indexer.set_graph(graph.clone());
