@@ -41,8 +41,8 @@ use thin_vec::thin_vec;
 
 pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "abs",
-        args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
-        ret: Type::Union(vec![Type::Int, Type::Float, Type::Null]),
+        args: [Type::union([Type::Int, Type::Float, Type::Null])],
+        ret: Type::union([Type::Int, Type::Float, Type::Null]),
         fn abs(_, args) {
             match &args[0] {
                 Value::Int(n) => n
@@ -58,8 +58,8 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "ceil",
-        args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
-        ret: Type::Union(vec![Type::Int, Type::Float, Type::Null]),
+        args: [Type::union([Type::Int, Type::Float, Type::Null])],
+        ret: Type::union([Type::Int, Type::Float, Type::Null]),
         fn ceil(_, args) {
             match &args[0] {
                 Value::Int(n) => Ok(Value::Int(*n)),
@@ -81,8 +81,8 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "exp",
-        args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
-        ret: Type::Union(vec![Type::Float, Type::Null]),
+        args: [Type::union([Type::Int, Type::Float, Type::Null])],
+        ret: Type::union([Type::Float, Type::Null]),
         fn exp(_, args) {
             match &args[0] {
                 Value::Int(n) => Ok(Value::Float((*n as f64).exp())),
@@ -95,8 +95,8 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "floor",
-        args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
-        ret: Type::Union(vec![Type::Int, Type::Float, Type::Null]),
+        args: [Type::union([Type::Int, Type::Float, Type::Null])],
+        ret: Type::union([Type::Int, Type::Float, Type::Null]),
         fn floor(_, args) {
             match &args[0] {
                 Value::Int(n) => Ok(Value::Int(*n)),
@@ -109,8 +109,8 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "log",
-        args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
-        ret: Type::Union(vec![Type::Float, Type::Null]),
+        args: [Type::union([Type::Int, Type::Float, Type::Null])],
+        ret: Type::union([Type::Float, Type::Null]),
         fn log(_, args) {
             match &args[0] {
                 Value::Int(n) => Ok(Value::Float((*n as f64).ln())),
@@ -123,8 +123,8 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "log10",
-        args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
-        ret: Type::Union(vec![Type::Float, Type::Null]),
+        args: [Type::union([Type::Int, Type::Float, Type::Null])],
+        ret: Type::union([Type::Float, Type::Null]),
         fn log10(_, args) {
             match &args[0] {
                 Value::Int(n) => Ok(Value::Float((*n as f64).log10())),
@@ -169,10 +169,10 @@ pub fn register(funcs: &mut Functions) {
 
     cypher_fn!(funcs, "pow",
         args: [
-            Type::Union(vec![Type::Int, Type::Float, Type::Null]),
-            Type::Union(vec![Type::Int, Type::Float, Type::Null]),
+            Type::union([Type::Int, Type::Float, Type::Null]),
+            Type::union([Type::Int, Type::Float, Type::Null]),
         ],
-        ret: Type::Union(vec![Type::Float, Type::Null]),
+        ret: Type::union([Type::Float, Type::Null]),
         fn pow(_, args) {
             Ok(apply_pow(args[0].clone(), args[1].clone()))
         }
@@ -191,8 +191,8 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "round",
-        args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
-        ret: Type::Union(vec![Type::Int, Type::Float, Type::Null]),
+        args: [Type::union([Type::Int, Type::Float, Type::Null])],
+        ret: Type::union([Type::Int, Type::Float, Type::Null]),
         fn round(_, args) {
             match &args[0] {
                 Value::Int(n) => Ok(Value::Int(*n)),
@@ -205,8 +205,8 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "sign",
-        args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
-        ret: Type::Union(vec![Type::Int, Type::Null]),
+        args: [Type::union([Type::Int, Type::Float, Type::Null])],
+        ret: Type::union([Type::Int, Type::Null]),
         fn sign(_, args) {
             match &args[0] {
                 Value::Int(n) => Ok(Value::Int(n.signum())),
@@ -223,8 +223,8 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "sqrt",
-        args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
-        ret: Type::Union(vec![Type::Float, Type::Null]),
+        args: [Type::union([Type::Int, Type::Float, Type::Null])],
+        ret: Type::union([Type::Float, Type::Null]),
         fn sqrt(_, args) {
             match &args[0] {
                 Value::Int(n) => {
@@ -250,7 +250,7 @@ pub fn register(funcs: &mut Functions) {
 
     cypher_fn!(funcs, "range",
         args: [Type::Int, Type::Int, Type::Optional(Box::new(Type::Int))],
-        ret: Type::Union(vec![Type::List(Box::new(Type::Int)), Type::Null]),
+        ret: Type::union([Type::List(Box::new(Type::Int)), Type::Null]),
         fn range(_, args) {
             let start = &args[0];
             let end = &args[1];
