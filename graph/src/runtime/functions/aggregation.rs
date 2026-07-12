@@ -49,7 +49,7 @@ use thin_vec::thin_vec;
 pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "collect",
         args: [Type::Any],
-        ret: Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
+        ret: Type::union([Type::List(Box::new(Type::Any)), Type::Null]),
         agg_init: Value::List(Arc::new(thin_vec![])),
         batch_agg: collect_batch,
         fn collect(_, args) {
@@ -88,8 +88,8 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "sum",
-        args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
-        ret: Type::Union(vec![Type::Float, Type::Null]),
+        args: [Type::union([Type::Int, Type::Float, Type::Null])],
+        ret: Type::union([Type::Float, Type::Null]),
         agg_init: Value::Float(0.0),
         batch_agg: sum_batch,
         fn sum(_, args) {
@@ -154,8 +154,8 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "avg",
-        args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
-        ret: Type::Union(vec![Type::Float, Type::Null]),
+        args: [Type::union([Type::Int, Type::Float, Type::Null])],
+        ret: Type::union([Type::Float, Type::Null]),
         agg_init: Value::List(Arc::new(thin_vec![Value::Float(0.0), Value::Int(0), Value::Bool(false)])),
         finalizer: finalize_avg,
         batch_agg: avg_batch,
@@ -216,10 +216,10 @@ pub fn register(funcs: &mut Functions) {
 
     cypher_fn!(funcs, "percentileDisc",
         args: [
-            Type::Union(vec![Type::Int, Type::Float, Type::Null]),
-            Type::Union(vec![Type::Int, Type::Float]),
+            Type::union([Type::Int, Type::Float, Type::Null]),
+            Type::union([Type::Int, Type::Float]),
         ],
-        ret: Type::Union(vec![Type::Float, Type::Null]),
+        ret: Type::union([Type::Float, Type::Null]),
         agg_init: Value::List(Arc::new(thin_vec![Value::Float(0.0), Value::List(Arc::new(thin_vec![]))])),
         finalizer: finalize_percentile_disc,
         fn percentile(_, args) {
@@ -262,8 +262,8 @@ pub fn register(funcs: &mut Functions) {
         false,
         false,
         vec![
-            Type::Union(vec![Type::Int, Type::Float, Type::Null]),
-            Type::Union(vec![Type::Int, Type::Float]),
+            Type::union([Type::Int, Type::Float, Type::Null]),
+            Type::union([Type::Int, Type::Float]),
         ],
         FnType::Aggregation {
             initial: Value::List(Arc::new(thin_vec![
@@ -273,12 +273,12 @@ pub fn register(funcs: &mut Functions) {
             finalizer: Some(Box::new(finalize_percentile_cont)),
             batch_agg: None,
         },
-        Type::Union(vec![Type::Float, Type::Null]),
+        Type::union([Type::Float, Type::Null]),
     );
 
     cypher_fn!(funcs, "stDev",
-        args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
-        ret: Type::Union(vec![Type::Float, Type::Null]),
+        args: [Type::union([Type::Int, Type::Float, Type::Null])],
+        ret: Type::union([Type::Float, Type::Null]),
         agg_init: Value::List(Arc::new(thin_vec![Value::Float(0.0), Value::List(Arc::new(thin_vec![]))])),
         finalizer: finalize_stdev,
         fn stdev(_, args) {
@@ -313,7 +313,7 @@ pub fn register(funcs: &mut Functions) {
         stdev,
         false,
         false,
-        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        vec![Type::union([Type::Int, Type::Float, Type::Null])],
         FnType::Aggregation {
             initial: Value::List(Arc::new(thin_vec![
                 Value::Float(0.0),
@@ -322,7 +322,7 @@ pub fn register(funcs: &mut Functions) {
             finalizer: Some(Box::new(finalize_stdevp)),
             batch_agg: None,
         },
-        Type::Union(vec![Type::Float, Type::Null]),
+        Type::union([Type::Float, Type::Null]),
     );
 }
 

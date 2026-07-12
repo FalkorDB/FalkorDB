@@ -100,7 +100,7 @@ use crate::entity_type::EntityType;
 use crate::index::indexer::IndexType;
 use crate::parser::ast::{
     AllShortestPaths, ExprIR, QuantifierType, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
-    QueryRelationship, RawQueryIR, SetItem,
+    QueryRelationship, RawQueryIR, ReduceVars, SetItem, ShortestPathInfo,
 };
 use crate::parser::lexer::{Keyword, Lexer, Token};
 use crate::runtime::orderset::OrderSet;
@@ -1397,10 +1397,10 @@ impl<'a> Parser<'a> {
         match_token!(self.lexer, RParen);
 
         Ok(tree!(
-            ExprIR::Reduce {
+            ExprIR::Reduce(Box::new(ReduceVars {
                 accumulator: acc_var,
                 iterator: iter_var
-            },
+            })),
             init_expr,
             list_expr,
             body_expr
@@ -1593,13 +1593,13 @@ impl<'a> Parser<'a> {
         };
 
         Ok(tree!(
-            ExprIR::ShortestPath {
+            ExprIR::ShortestPath(Box::new(ShortestPathInfo {
                 rel_types,
                 min_hops,
                 max_hops,
                 directed,
                 all_paths,
-            },
+            })),
             tree!(ExprIR::Variable(actual_src)),
             tree!(ExprIR::Variable(actual_dst))
         ))
@@ -1769,7 +1769,7 @@ impl<'a> Parser<'a> {
                     && let Ok(pattern) = self.parse_pattern(&Keyword::Match)
                     && !pattern.relationships().is_empty()
                 {
-                    return Ok((tree!(ExprIR::Pattern(pattern)), false));
+                    return Ok((tree!(ExprIR::Pattern(Box::new(pattern))), false));
                 }
 
                 // Not a pattern predicate - restore and parse normally
@@ -2462,7 +2462,7 @@ impl<'a> Parser<'a> {
         match_token!(self.lexer, RBrace);
 
         Ok(tree!(
-            ExprIR::PatternComprehension(graph),
+            ExprIR::PatternComprehension(Box::new(graph)),
             condition,
             result_expr
         ))

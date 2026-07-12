@@ -27,7 +27,7 @@
 
 use crate::parser::ast::{
     AllShortestPaths, BoundQueryIR, ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
-    QueryRelationship, RawQueryIR, SetItem, SupportAggregation, Variable,
+    QueryRelationship, RawQueryIR, ReduceVars, SetItem, SupportAggregation, Variable,
 };
 use crate::runtime::functions::{FnArguments, FnType, Type};
 use crate::runtime::orderset::OrderSet;
@@ -1715,10 +1715,8 @@ impl Binder {
                 }
                 Ok(new_tree)
             }
-            ExprIR::Reduce {
-                accumulator: acc_name,
-                iterator: iter_name,
-            } => {
+            ExprIR::Reduce(vars) => {
+                let (acc_name, iter_name) = (&vars.accumulator, &vars.iterator);
                 if acc_name == iter_name {
                     return Err(format!("Variable `{acc_name}` already declared"));
                 }
@@ -1751,10 +1749,10 @@ impl Binder {
                 let bound_body = self.bind_expr_node(expr, &body_child, locals)?;
                 locals.pop();
 
-                let mut new_tree = DynTree::new(ExprIR::Reduce {
+                let mut new_tree = DynTree::new(ExprIR::Reduce(Box::new(ReduceVars {
                     accumulator: bound_acc,
                     iterator: bound_iter,
-                });
+                })));
                 let mut root = new_tree.root_mut();
                 root.push_child_tree(bound_init);
                 root.push_child_tree(bound_list);
@@ -1794,7 +1792,8 @@ impl Binder {
                     outer_scope_names.contains(name) || name.starts_with("_anon")
                 });
 
-                let mut new_tree = DynTree::new(ExprIR::PatternComprehension(bound_graph));
+                let mut new_tree =
+                    DynTree::new(ExprIR::PatternComprehension(Box::new(bound_graph)));
                 let mut root = new_tree.root_mut();
                 for child in children {
                     root.push_child_tree(child);
@@ -1803,8 +1802,8 @@ impl Binder {
             }
             _ => {
                 // For ShortestPath, wrap child binding errors as "requires bound nodes"
-                if let ExprIR::ShortestPath { all_paths, .. } = node_ref.data() {
-                    let fn_name = if *all_paths {
+                if let ExprIR::ShortestPath(info) = node_ref.data() {
+                    let fn_name = if info.all_paths {
                         "allShortestPaths"
                     } else {
                         "shortestPath"
@@ -1814,23 +1813,7 @@ impl Binder {
                         .map(|child| self.bind_expr_node(expr, &child, locals))
                         .collect::<Result<Vec<_>, _>>()
                         .map_err(|_| format!("A {fn_name} requires bound nodes"))?;
-                    let ExprIR::ShortestPath {
-                        rel_types,
-                        min_hops,
-                        max_hops,
-                        directed,
-                        all_paths,
-                    } = node_ref.data().clone()
-                    else {
-                        unreachable!();
-                    };
-                    let mut new_tree = DynTree::new(ExprIR::ShortestPath {
-                        rel_types,
-                        min_hops,
-                        max_hops,
-                        directed,
-                        all_paths,
-                    });
+                    let mut new_tree = DynTree::new(ExprIR::ShortestPath(info.clone()));
                     let mut root = new_tree.root_mut();
                     for child in children {
                         root.push_child_tree(child);
@@ -1922,19 +1905,13 @@ impl Binder {
                         ExprIR::FuncInvocation(func)
                     }
                     ExprIR::Paren => ExprIR::Paren,
-                    ExprIR::ShortestPath {
-                        rel_types,
-                        min_hops,
-                        max_hops,
-                        directed,
-                        all_paths,
-                    } => {
+                    ExprIR::ShortestPath(info) => {
                         // Verify children (source/dest vars) are bound
                         for child in &children {
                             if let ExprIR::Variable(var) = child.root().data()
                                 && var.name.is_none()
                             {
-                                let fn_name = if all_paths {
+                                let fn_name = if info.all_paths {
                                     "allShortestPaths"
                                 } else {
                                     "shortestPath"
@@ -1942,18 +1919,12 @@ impl Binder {
                                 return Err(format!("A {fn_name} requires bound nodes"));
                             }
                         }
-                        ExprIR::ShortestPath {
-                            rel_types,
-                            min_hops,
-                            max_hops,
-                            directed,
-                            all_paths,
-                        }
+                        ExprIR::ShortestPath(info)
                     }
                     ExprIR::Variable(_)
                     | ExprIR::Quantifier { .. }
                     | ExprIR::ListComprehension(_)
-                    | ExprIR::Reduce { .. }
+                    | ExprIR::Reduce(_)
                     | ExprIR::PatternComprehension(_) => unreachable!("handled above"),
                     ExprIR::Pattern(pattern) => {
                         // Snapshot outer scope so pattern-local aliases can be
@@ -1983,7 +1954,7 @@ impl Binder {
                             outer_scope_names.contains(name) || name.starts_with("_anon")
                         });
 
-                        ExprIR::Pattern(result?)
+                        ExprIR::Pattern(Box::new(result?))
                     }
                 };
                 // Constructor rewrite: detect `duration({...})`, `date({...})`,
@@ -2228,11 +2199,11 @@ impl Binder {
             | ExprIR::IsNode
             | ExprIR::IsRelationship
             | ExprIR::Quantifier { .. }
-            | ExprIR::Reduce { .. }
+            | ExprIR::Reduce(_)
             | ExprIR::Variable(_)
             | ExprIR::Parameter(_)
             | ExprIR::Property(_)
-            | ExprIR::ShortestPath { .. }
+            | ExprIR::ShortestPath(_)
             | ExprIR::Pattern(_) => true,
 
             // Pre-evaluated constant – only Bool/Null are boolean-shaped
@@ -2255,10 +2226,9 @@ impl Binder {
             }
 
             // Subscript and property access could produce entities at runtime
-            ExprIR::GetElement
-            | ExprIR::Property(_)
-            | ExprIR::Parameter(_)
-            | ExprIR::Reduce { .. } => true,
+            ExprIR::GetElement | ExprIR::Property(_) | ExprIR::Parameter(_) | ExprIR::Reduce(_) => {
+                true
+            }
 
             // Everything else cannot produce a graph entity
             ExprIR::List
@@ -2289,7 +2259,7 @@ impl Binder {
             | ExprIR::IsNode
             | ExprIR::IsRelationship
             | ExprIR::Quantifier { .. }
-            | ExprIR::ShortestPath { .. }
+            | ExprIR::ShortestPath(_)
             | ExprIR::Pattern(_) => false,
 
             // Pre-evaluated constant – only Null and entity values count

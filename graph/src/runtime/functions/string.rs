@@ -34,8 +34,8 @@ use thin_vec::thin_vec;
 
 pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "intern",
-        args: [Type::Union(vec![Type::String, Type::Null])],
-        ret: Type::Union(vec![Type::String, Type::Null]),
+        args: [Type::union([Type::String, Type::Null])],
+        ret: Type::union([Type::String, Type::Null]),
         non_deterministic,
         fn intern(_runtime, args) {
             match args.first() {
@@ -50,11 +50,11 @@ pub fn register(funcs: &mut Functions) {
 
     cypher_fn!(funcs, "substring",
         args: [
-            Type::Union(vec![Type::String, Type::Null]),
+            Type::union([Type::String, Type::Null]),
             Type::Int,
             Type::Optional(Box::new(Type::Int)),
         ],
-        ret: Type::Union(vec![Type::String, Type::Null]),
+        ret: Type::union([Type::String, Type::Null]),
         fn substring(_runtime, args) {
             let mut iter = args.iter();
             match (iter.next(), iter.next(), iter.next()) {
@@ -102,10 +102,10 @@ pub fn register(funcs: &mut Functions) {
 
     cypher_fn!(funcs, "split",
         args: [
-            Type::Union(vec![Type::String, Type::Null]),
-            Type::Union(vec![Type::String, Type::Null]),
+            Type::union([Type::String, Type::Null]),
+            Type::union([Type::String, Type::Null]),
         ],
-        ret: Type::Union(vec![Type::List(Box::new(Type::String)), Type::Null]),
+        ret: Type::union([Type::List(Box::new(Type::String)), Type::Null]),
         fn split(_runtime, args) {
             let mut iter = args.iter();
             match (iter.next(), iter.next()) {
@@ -137,8 +137,8 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "tolower",
-        args: [Type::Union(vec![Type::String, Type::Null])],
-        ret: Type::Union(vec![Type::String, Type::Null]),
+        args: [Type::union([Type::String, Type::Null])],
+        ret: Type::union([Type::String, Type::Null]),
         fn string_to_lower(_runtime, args) {
             match args.first() {
                 Some(Value::String(s)) => {
@@ -159,8 +159,8 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "toupper",
-        args: [Type::Union(vec![Type::String, Type::Null])],
-        ret: Type::Union(vec![Type::String, Type::Null]),
+        args: [Type::union([Type::String, Type::Null])],
+        ret: Type::union([Type::String, Type::Null]),
         fn string_to_upper(_runtime, args) {
             match args.first() {
                 Some(Value::String(s)) => {
@@ -182,11 +182,11 @@ pub fn register(funcs: &mut Functions) {
 
     cypher_fn!(funcs, "replace",
         args: [
-            Type::Union(vec![Type::String, Type::Null]),
-            Type::Union(vec![Type::String, Type::Null]),
-            Type::Union(vec![Type::String, Type::Null]),
+            Type::union([Type::String, Type::Null]),
+            Type::union([Type::String, Type::Null]),
+            Type::union([Type::String, Type::Null]),
         ],
-        ret: Type::Union(vec![Type::String, Type::Null]),
+        ret: Type::union([Type::String, Type::Null]),
         fn string_replace(_runtime, args) {
             let mut iter = args.iter();
             match (iter.next(), iter.next(), iter.next()) {
@@ -206,10 +206,10 @@ pub fn register(funcs: &mut Functions) {
 
     cypher_fn!(funcs, "left",
         args: [
-            Type::Union(vec![Type::String, Type::Null]),
-            Type::Union(vec![Type::Int, Type::Null]),
+            Type::union([Type::String, Type::Null]),
+            Type::union([Type::Int, Type::Null]),
         ],
-        ret: Type::Union(vec![Type::String, Type::Null]),
+        ret: Type::union([Type::String, Type::Null]),
         fn string_left(_runtime, args) {
             let mut iter = args.iter();
             match (iter.next(), iter.next()) {
@@ -231,8 +231,8 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "ltrim",
-        args: [Type::Union(vec![Type::String, Type::Null])],
-        ret: Type::Union(vec![Type::String, Type::Null]),
+        args: [Type::union([Type::String, Type::Null])],
+        ret: Type::union([Type::String, Type::Null]),
         fn string_ltrim(_runtime, args) {
             match args.first() {
                 Some(Value::String(s)) => Ok(Value::String(Arc::new(String::from(
@@ -246,8 +246,8 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "rtrim",
-        args: [Type::Union(vec![Type::String, Type::Null])],
-        ret: Type::Union(vec![Type::String, Type::Null]),
+        args: [Type::union([Type::String, Type::Null])],
+        ret: Type::union([Type::String, Type::Null]),
         fn string_rtrim(_runtime, args) {
             match args.first() {
                 Some(Value::String(s)) => Ok(Value::String(Arc::new(String::from(
@@ -261,8 +261,8 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "trim",
-        args: [Type::Union(vec![Type::String, Type::Null])],
-        ret: Type::Union(vec![Type::String, Type::Null]),
+        args: [Type::union([Type::String, Type::Null])],
+        ret: Type::union([Type::String, Type::Null]),
         fn string_trim(_runtime, args) {
             match args.first() {
                 Some(Value::String(s)) => Ok(Value::String(Arc::new(String::from(s.trim_matches(' '))))),
@@ -275,10 +275,10 @@ pub fn register(funcs: &mut Functions) {
 
     cypher_fn!(funcs, "right",
         args: [
-            Type::Union(vec![Type::String, Type::Null]),
-            Type::Union(vec![Type::Int, Type::Null]),
+            Type::union([Type::String, Type::Null]),
+            Type::union([Type::Int, Type::Null]),
         ],
-        ret: Type::Union(vec![Type::String, Type::Null]),
+        ret: Type::union([Type::String, Type::Null]),
         fn string_right(_runtime, args) {
             let mut iter = args.iter();
             match (iter.next(), iter.next()) {
@@ -300,10 +300,10 @@ pub fn register(funcs: &mut Functions) {
 
     cypher_fn!(funcs, "string.join",
         args: [
-            Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
+            Type::union([Type::List(Box::new(Type::Any)), Type::Null]),
             Type::Optional(Box::new(Type::String)),
         ],
-        ret: Type::Union(vec![Type::String, Type::Null]),
+        ret: Type::union([Type::String, Type::Null]),
         fn string_join(_runtime, args) {
             /// Convert Value list to Arc<String> vector, checking types
             fn to_string_vec(values: &[Value]) -> Result<Vec<Arc<String>>, String> {
@@ -410,10 +410,10 @@ pub fn register(funcs: &mut Functions) {
 
     cypher_fn!(funcs, "string.matchRegEx",
         args: [
-            Type::Union(vec![Type::String, Type::Null]),
-            Type::Union(vec![Type::String, Type::Null]),
+            Type::union([Type::String, Type::Null]),
+            Type::union([Type::String, Type::Null]),
         ],
-        ret: Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
+        ret: Type::union([Type::List(Box::new(Type::Any)), Type::Null]),
         fn string_match_reg_ex(_runtime, args) {
             let mut iter = args.iter();
             match (iter.next(), iter.next()) {
@@ -451,11 +451,11 @@ pub fn register(funcs: &mut Functions) {
 
     cypher_fn!(funcs, "string.replaceRegEx",
         args: [
-            Type::Union(vec![Type::String, Type::Null]),
-            Type::Union(vec![Type::String, Type::Null]),
-            Type::Optional(Box::new(Type::Union(vec![Type::String, Type::Null]))),
+            Type::union([Type::String, Type::Null]),
+            Type::union([Type::String, Type::Null]),
+            Type::Optional(Box::new(Type::union([Type::String, Type::Null]))),
         ],
-        ret: Type::Union(vec![Type::String, Type::Null]),
+        ret: Type::union([Type::String, Type::Null]),
         fn string_replace_reg_ex(_runtime, args) {
             let mut iter = args.iter();
             let text = iter.next();

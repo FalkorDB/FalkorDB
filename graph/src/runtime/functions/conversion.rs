@@ -39,8 +39,8 @@ use thin_vec::ThinVec;
 
 pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "tointeger",
-        args: [Type::Union(vec![Type::String, Type::Bool, Type::Int, Type::Float, Type::Null])],
-        ret: Type::Union(vec![Type::Int, Type::Null]),
+        args: [Type::union([Type::String, Type::Bool, Type::Int, Type::Float, Type::Null])],
+        ret: Type::union([Type::Int, Type::Null]),
         fn value_to_integer(_runtime, args) {
             match args.first() {
                 Some(Value::String(s)) => {
@@ -87,12 +87,12 @@ pub fn register(funcs: &mut Functions) {
         false,
         vec![Type::Any],
         FnType::Function,
-        Type::Union(vec![Type::Int, Type::Null]),
+        Type::union([Type::Int, Type::Null]),
     );
 
     cypher_fn!(funcs, "tofloat",
-        args: [Type::Union(vec![Type::String, Type::Float, Type::Int, Type::Null])],
-        ret: Type::Union(vec![Type::Float, Type::Null]),
+        args: [Type::union([Type::String, Type::Float, Type::Int, Type::Null])],
+        ret: Type::union([Type::Float, Type::Null]),
         fn value_to_float(_runtime, args) {
             match args.first() {
                 Some(Value::String(s)) => s.parse::<f64>().map(Value::Float).or(Ok(Value::Null)),
@@ -109,12 +109,12 @@ pub fn register(funcs: &mut Functions) {
         false,
         vec![Type::Any],
         FnType::Function,
-        Type::Union(vec![Type::Float, Type::Null]),
+        Type::union([Type::Float, Type::Null]),
     );
 
     cypher_fn!(funcs, "tostring",
-        args: [Type::Union(vec![Type::Datetime, Type::Date, Type::Time, Type::Duration, Type::String, Type::Bool, Type::Int, Type::Float, Type::Null, Type::Point])],
-        ret: Type::Union(vec![Type::String, Type::Null]),
+        args: [Type::union([Type::Datetime, Type::Date, Type::Time, Type::Duration, Type::String, Type::Bool, Type::Int, Type::Float, Type::Null, Type::Point])],
+        ret: Type::union([Type::String, Type::Null]),
         fn value_to_string(_runtime, args) {
             match args.first() {
                 Some(Value::String(s)) => Ok(Value::String(Arc::clone(s))),
@@ -145,12 +145,12 @@ pub fn register(funcs: &mut Functions) {
         false,
         vec![Type::Any],
         FnType::Function,
-        Type::Union(vec![Type::String, Type::Null]),
+        Type::union([Type::String, Type::Null]),
     );
 
     cypher_fn!(funcs, "tojson",
         args: [Type::Any],
-        ret: Type::Union(vec![Type::String, Type::Null]),
+        ret: Type::union([Type::String, Type::Null]),
         fn to_json(runtime, args) {
             args.first().map_or_else(
                 || unreachable!(),
@@ -163,8 +163,8 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "isEmpty",
-        args: [Type::Union(vec![Type::Map, Type::List(Box::new(Type::Any)), Type::String, Type::Null])],
-        ret: Type::Union(vec![Type::Bool, Type::Null]),
+        args: [Type::union([Type::Map, Type::List(Box::new(Type::Any)), Type::String, Type::Null])],
+        ret: Type::union([Type::Bool, Type::Null]),
         fn is_empty(_, args) {
             match args.first() {
                 Some(Value::Null) => Ok(Value::Null),
@@ -177,8 +177,8 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "toBoolean",
-        args: [Type::Union(vec![Type::String, Type::Bool, Type::Int, Type::Null])],
-        ret: Type::Union(vec![Type::Bool, Type::Null]),
+        args: [Type::union([Type::String, Type::Bool, Type::Int, Type::Null])],
+        ret: Type::union([Type::Bool, Type::Null]),
         fn to_boolean(_, args) {
             match args.first() {
                 Some(&Value::Bool(b)) => Ok(Value::Bool(b)),
@@ -203,12 +203,12 @@ pub fn register(funcs: &mut Functions) {
         false,
         vec![Type::Any],
         FnType::Function,
-        Type::Union(vec![Type::Bool, Type::Null]),
+        Type::union([Type::Bool, Type::Null]),
     );
 
     cypher_fn!(funcs, "toBooleanList",
-        args: [Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null])],
-        ret: Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
+        args: [Type::union([Type::List(Box::new(Type::Any)), Type::Null])],
+        ret: Type::union([Type::List(Box::new(Type::Any)), Type::Null]),
         fn to_boolean_list(_, args) {
             match args.first() {
                 Some(Value::List(vs)) => {
@@ -234,8 +234,8 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "toFloatList",
-        args: [Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null])],
-        ret: Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
+        args: [Type::union([Type::List(Box::new(Type::Any)), Type::Null])],
+        ret: Type::union([Type::List(Box::new(Type::Any)), Type::Null]),
         fn to_float_list(_, args) {
             match args.first() {
                 Some(Value::List(vs)) => {
@@ -253,8 +253,8 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "toIntegerList",
-        args: [Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null])],
-        ret: Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
+        args: [Type::union([Type::List(Box::new(Type::Any)), Type::Null])],
+        ret: Type::union([Type::List(Box::new(Type::Any)), Type::Null]),
         fn to_integer_list(runtime, args) {
             match args.first() {
                 Some(Value::List(vs)) => {
@@ -269,8 +269,8 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "toStringList",
-        args: [Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null])],
-        ret: Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
+        args: [Type::union([Type::List(Box::new(Type::Any)), Type::Null])],
+        ret: Type::union([Type::List(Box::new(Type::Any)), Type::Null]),
         fn to_string_list(runtime, args) {
             match args.first() {
                 Some(Value::List(vs)) => {
