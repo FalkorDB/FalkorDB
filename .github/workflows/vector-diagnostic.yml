@@ -1,13 +1,15 @@
 # One-shot vector-index diagnostic. Reproduces the benchmark's fixture-dependent
-# vector-index setup against a FalkorDB server image ON THE REAL GCE hardware
-# (n4-highcpu-16 / Intel AVX-512 and c4a-highcpu-16 / Axion SVE) and dumps
-# `db.indexes()` so we can see whether the vector index actually BUILDS
-# (numDocuments) vs. builds-but-search-returns-nothing.
+# vector-index setup at the tool's real scale (~10k nodes, ~103 embeddings) ON
+# THE REAL GCE hardware (n4 / Intel AVX-512 and c4a / Axion SVE) and dumps
+# `db.indexes()` — for BOTH the C `edge` engine and the Rust `edge-rs` engine on
+# the SAME VM.
 #
-# Context: the C `edge` engine's KNN probe returns 0 hits on both GCE arches but
-# works on macOS Docker (NEON-only). This captures numDocuments/indexingFailures
-# on the failing hardware to distinguish "index never ingested" from "search
-# kernel returns empty".
+# Why C-vs-Rust on the same box: both engines link the SAME VecSim (same spaces/
+# SIMD kernels), yet C's KNN probe returns 0 while Rust returns hits on identical
+# hardware — so the bug is NOT VecSim/SIMD, it's how the C engine drives VecSim's
+# tiered/async vector ingestion. The decisive field is `numDocuments`: if C shows
+# 0 while Rust shows ~103 on the same VM, it's a C-side ingestion issue (a
+# background-writer race on the 16-vCPU VM), not the search kernel.
 #
 # Trigger: add the `vecdiag` label to a PR (same-repo branches only), or run
 # manually once this is on the default branch. Runs on both arches by default.
@@ -18,10 +20,6 @@ on:
     types: [labeled]
   workflow_dispatch:
     inputs:
-      image:
-        description: "falkordb-server image to probe"
-        required: false
-        default: "docker.io/falkordb/falkordb-server:edge"
       arches:
         description: "Which arches to test"
         required: false
@@ -95,67 +93,66 @@ jobs:
       matrix:
         arch: ${{ fromJSON(needs.setup.outputs.arches) }}
     runs-on: vecdiag-${{ github.run_id }}-${{ github.run_number }}-${{ matrix.arch }}
-    timeout-minutes: 30
+    timeout-minutes: 40
     permissions:
       contents: read
-    env:
-      IMAGE: ${{ github.event.inputs.image || 'docker.io/falkordb/falkordb-server:edge' }}
     steps:
-      - name: Probe vector index (${{ matrix.arch }})
+      - name: Probe vector index — C vs Rust (${{ matrix.arch }})
         run: |
           # No `set -e`: run every diagnostic query even if one errors.
           set -uo pipefail
-          NAME="vecdiag-$$"
-          PORT=16399
-          cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
-          trap cleanup EXIT
+          ARCH="${{ matrix.arch }}"
 
-          echo "::group::Host CPU features (arch=${{ matrix.arch }})"
+          echo "::group::Host CPU features (arch=$ARCH)"
           uname -m
           grep -m1 -Ei '^flags|^Features' /proc/cpuinfo | tr ' ' '\n' \
             | grep -iE 'avx512|^sve$|sve2|asimd|neon' | sort -u | tr '\n' ' '; echo
+          echo "nproc=$(nproc)"
           echo "::endgroup::"
 
-          echo "::group::Start $IMAGE"
-          docker rm -f "$NAME" >/dev/null 2>&1 || true
-          docker pull "$IMAGE"
-          docker run -d --name "$NAME" -p "${PORT}:6379" "$IMAGE" >/dev/null
-          for _ in $(seq 1 60); do
-            docker exec "$NAME" redis-cli PING 2>/dev/null | grep -q PONG && break; sleep 1
-          done
-          docker exec "$NAME" redis-cli PING
-          echo "-- MODULE LIST (versions) --"; docker exec "$NAME" redis-cli MODULE LIST
-          echo "::endgroup::"
+          # Run the fixture-dependent setup at the tool's real scale against one
+          # image and dump db.indexes().
+          probe_image() {
+            IMG="$1"; NAME="vecdiag-$(echo "$IMG" | tr '/:.' '___')"; PORT=16399
+            echo "::group::### $IMG  (arch=$ARCH)"
+            docker rm -f "$NAME" >/dev/null 2>&1 || true
+            docker pull "$IMG" >/dev/null 2>&1 || docker pull "$IMG"
+            docker run -d --name "$NAME" -p "${PORT}:6379" "$IMG" >/dev/null
+            for _ in $(seq 1 60); do
+              docker exec "$NAME" redis-cli PING 2>/dev/null | grep -q PONG && break; sleep 1
+            done
+            docker exec "$NAME" redis-cli PING
+            Q() { docker exec "$NAME" redis-cli GRAPH.QUERY vg "$1"; }
+            # Tool sequence: load nodes, create indexes on the (no-embedding yet)
+            # graph, THEN seed embeddings on id%97=0 (~103) — drives the async /
+            # tiered vector-index ingestion exactly like the benchmark's load.
+            Q "UNWIND range(0, 9999) AS i CREATE (:User {id:i})" >/dev/null
+            Q "CREATE FULLTEXT INDEX FOR (l:User) ON (l.ft_text)" >/dev/null
+            Q "CREATE VECTOR INDEX FOR (l:User) ON (l.embedding) OPTIONS {dimension:3, similarityFunction:'cosine'}" >/dev/null
+            Q "MATCH (u:User) WHERE u.id % 97 = 0 SET u.ft_text = 'fixture_alice user_' + toString(u.id), u.embedding = vecf32([toFloat((u.id % 10)+1)/10.0, toFloat(((u.id+3)%10)+1)/10.0, toFloat(((u.id+6)%10)+1)/10.0])" >/dev/null
+            echo '--- embedding property count (expect ~103) ---'
+            Q "MATCH (u:User) WHERE u.embedding IS NOT NULL RETURN count(u)"
+            echo '--- VECTOR probe count(node) — the failing check ---'
+            Q "CALL db.idx.vector.queryNodes('User','embedding',1, vecf32([0.1,0.2,0.3])) YIELD node, score RETURN count(node)"
+            echo '--- FULLTEXT probe count(node) — control (worked in CI) ---'
+            Q "CALL db.idx.fulltext.queryNodes('User','fixture_alice') YIELD node RETURN count(node)"
+            echo '--- db.indexes() — KEY: numDocuments / indexingFailures / status ---'
+            Q "CALL db.indexes()"
+            echo '--- retry VECTOR probe after 10s (async-build check) ---'
+            sleep 10
+            Q "CALL db.idx.vector.queryNodes('User','embedding',1, vecf32([0.1,0.2,0.3])) YIELD node, score RETURN count(node)"
+            echo '--- db.indexes() again (did numDocuments change?) ---'
+            Q "CALL db.indexes()"
+            echo '--- server log tail ---'
+            docker logs "$NAME" 2>&1 | tail -30
+            docker rm -f "$NAME" >/dev/null 2>&1 || true
+            echo "::endgroup::"
+          }
 
-          Q() { docker exec "$NAME" redis-cli GRAPH.QUERY vg "$1"; }
-
-          echo "::group::Apply fixture (exact tool sequence: indexes BEFORE writes)"
-          Q "CREATE (:User {id:1}),(:User {id:2}),(:User {id:97}),(:User {id:194}),(:User {id:291})"
-          Q "CREATE FULLTEXT INDEX FOR (l:User) ON (l.ft_text)"
-          Q "CREATE VECTOR INDEX FOR (l:User) ON (l.embedding) OPTIONS {dimension:3, similarityFunction:'cosine'}"
-          Q "MATCH (u:User) SET u.ft_text = 'fixture_alice user_' + toString(u.id), u.embedding = vecf32([toFloat((u.id % 10)+1)/10.0, toFloat(((u.id+3)%10)+1)/10.0, toFloat(((u.id+6)%10)+1)/10.0])"
-          echo "::endgroup::"
-
-          echo "::group::RESULTS — arch=${{ matrix.arch }}, image=$IMAGE"
-          echo '### embedding property count (expect 5)'
-          Q "MATCH (u:User) WHERE u.embedding IS NOT NULL RETURN count(u)"
-          echo '### VECTOR PROBE count(node) — the failing check (macOS=1, GCE=0?)'
-          Q "CALL db.idx.vector.queryNodes('User','embedding',1, vecf32([0.1,0.2,0.3])) YIELD node, score RETURN count(node)"
-          echo '### FULLTEXT probe count(node) — the control (worked in CI)'
-          Q "CALL db.idx.fulltext.queryNodes('User','fixture_alice') YIELD node RETURN count(node)"
-          echo '### db.indexes() — KEY: numDocuments / indexingFailures / status per index'
-          Q "CALL db.indexes()"
-          echo '### retry vector probe after 8s (async-build check)'
-          sleep 8
-          Q "CALL db.idx.vector.queryNodes('User','embedding',1, vecf32([0.1,0.2,0.3])) YIELD node, score RETURN count(node)"
-          echo '### db.indexes() again (did numDocuments change?)'
-          Q "CALL db.indexes()"
-          echo "::endgroup::"
-
-          echo "::group::Server log tail"
-          docker logs "$NAME" 2>&1 | tail -50
-          echo "::endgroup::"
-          echo "vecdiag done for arch=${{ matrix.arch }}"
+          # Same VecSim, same VM: C engine (fails?) vs Rust engine (control).
+          probe_image "docker.io/falkordb/falkordb-server:edge"
+          probe_image "ghcr.io/falkordb/falkordb-server:edge-rs"
+          echo "vecdiag done for arch=$ARCH"
 
   cleanup-runners:
     needs: [setup, diagnose]
