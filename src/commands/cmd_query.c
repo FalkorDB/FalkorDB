@@ -20,6 +20,7 @@
 #include "../effects/effects.h"
 #include "../util/cache/cache.h"
 #include "../configuration/config.h"
+#include "../util/thpool/pool.h"
 #include "../execution_plan/execution_plan.h"
 
 // GraphQueryCtx stores the allocations required to execute a query
@@ -386,6 +387,46 @@ static void enter_writer_loop
 			// or the another thread became a writer
 			break ;
 		}
+	}
+}
+
+// worker-pool task: elect a writer and drain pending write queries on `gc`
+// (dispatched by Graph_DrainWriteQueue; releases the reference taken there)
+static void _drain_write_queue_task
+(
+	void *arg
+) {
+	GraphContext *gc = (GraphContext *)arg ;
+
+	// if another thread is already the writer it drains the queue itself
+	if (GraphContext_TimeTryEnterWrite (gc, 0)) {
+		enter_writer_loop (gc) ;
+	}
+
+	GraphContext_DecreaseRefCount (gc) ;  // counter to the ref in the dispatcher
+}
+
+// dispatch a worker to drain pending write queries on `gc`. used after active
+// defrag borrows the write election: defrag runs on the main thread and doesn't
+// drain the queue, so a write delegated during its hold would be orphaned (its
+// blocked client never replied). safe on the main thread; no-op if queue empty
+void Graph_DrainWriteQueue
+(
+	GraphContext *gc
+) {
+	ASSERT (gc != NULL) ;
+
+	if (GraphContext_WriteQueueEmpty (gc)) {
+		return ;
+	}
+
+	// keep gc alive until the drain task runs
+	GraphContext_IncreaseRefCount (gc) ;
+
+	// force=true: don't drop the drain even under a full pool queue, else the
+	// delegated write (and its blocked client) stays orphaned
+	if (ThreadPool_AddWork (_drain_write_queue_task, gc, true) == THPOOL_QUEUE_FULL) {
+		GraphContext_DecreaseRefCount (gc) ;  // couldn't enqueue; undo the ref
 	}
 }
 

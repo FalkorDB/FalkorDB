@@ -45,6 +45,10 @@ void Graph_Query(void *args);
 void Graph_Profile(void *args);
 void Graph_Explain(void *args);
 
+// dispatch a worker to drain pending write queries on `gc`; used after active
+// defrag releases the write election so a delegated write isn't orphaned
+void Graph_DrainWriteQueue(GraphContext *gc);
+
 int Graph_UDF         (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 int Graph_List        (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 int Graph_Info        (RedisModuleCtx *ctx, RedisModuleString **argv, int argc);

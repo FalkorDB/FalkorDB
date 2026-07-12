@@ -519,20 +519,24 @@ bool GraphContext_TimeTryEnterWrite
 		return acquired ;
 	}
 
-	// failed to acquire, sleep and retry
+	// failed to acquire, poll until acquired or the timeout elapses
 	if (timeout_ms > 0) {
-		int remaining_ms = timeout_ms ;
-		int sleep_for_ms = MIN (5, timeout_ms) ;
+		// poll against an absolute monotonic deadline (not a decremented sleep)
+		// so the timeout stays honest if nanosleep wakes early on a signal
+		struct timespec deadline ;
+		clock_gettime (CLOCK_MONOTONIC, &deadline) ;
+		deadline.tv_sec  += timeout_ms / 1000 ;
+		deadline.tv_nsec += (long)(timeout_ms % 1000) * 1000000L ;
+		if (deadline.tv_nsec >= 1000000000L) {
+			deadline.tv_sec++ ;
+			deadline.tv_nsec -= 1000000000L ;
+		}
 
-		// sleep for 5ms
-		struct timespec ts = {
-			.tv_sec = 0,
-			.tv_nsec = sleep_for_ms * 1000000  // 5 ms
-		};
+		// 1ms poll interval — fine enough to grab the flag promptly once it frees
+		struct timespec ts = { .tv_sec = 0, .tv_nsec = 1000000 } ;
 
-		while (remaining_ms > 0) {
-			// sleep and retry
-			nanosleep (&ts, NULL) ;
+		while (true) {
+			nanosleep (&ts, NULL) ;  // may wake early on signal; deadline guards us
 
 			expected = false ;  // reset, CAS clobbers it on failure
 			acquired = atomic_compare_exchange_strong (&gc->write_in_progress,
@@ -542,7 +546,12 @@ bool GraphContext_TimeTryEnterWrite
 				return acquired ;
 			}
 
-			remaining_ms -= sleep_for_ms ;
+			struct timespec now ;
+			clock_gettime (CLOCK_MONOTONIC, &now) ;
+			if (now.tv_sec > deadline.tv_sec ||
+				(now.tv_sec == deadline.tv_sec && now.tv_nsec >= deadline.tv_nsec)) {
+				break ;  // timeout elapsed
+			}
 		}
 	}
 
