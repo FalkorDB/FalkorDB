@@ -216,9 +216,9 @@ struct Block {
 impl Block {
     /// Pack a value into a tag + 8-byte payload. Out-of-line values are
     /// pushed into `self.heap` (recycling `heap_free` holes) and the payload
-    /// is their heap index. Arena placement stays with the caller: spans are
-    /// written both in place (patch/overwrite) and by append, so `pack_value`
-    /// cannot know where the entry lands.
+    /// is their heap index. Packing therefore has a side effect that must be
+    /// paired with an arena write — only [`Block::store_packed_value`] may
+    /// call this.
     fn pack_value(
         &mut self,
         value: Value,
@@ -254,6 +254,24 @@ impl Block {
                 p[..4].copy_from_slice(&idx.to_le_bytes());
                 (Tag::Heap, p)
             }
+        }
+    }
+
+    /// Pack `value` and write the entry to the arena at `index` (appending
+    /// when `index == self.arena.len()`) in one step, so the heap side effect
+    /// of packing can never be separated from the arena write.
+    fn store_packed_value(
+        &mut self,
+        index: usize,
+        id: u16,
+        value: Value,
+    ) {
+        let (tag, payload) = self.pack_value(value);
+        let entry = PackedAttr { id, tag, payload };
+        if index == self.arena.len() {
+            self.arena.push(entry);
+        } else {
+            self.arena[index] = entry;
         }
     }
 
@@ -351,8 +369,7 @@ impl Block {
         let n = pairs.len();
         if n <= old.cap as usize {
             for (k, (id, value)) in pairs.drain(..).enumerate() {
-                let (tag, payload) = self.pack_value(value);
-                self.arena[old.offset as usize + k] = PackedAttr { id, tag, payload };
+                self.store_packed_value(old.offset as usize + k, id, value);
             }
             self.resize_span_slack(old.len, n);
             self.slots[slot_idx] = Slot {
@@ -364,8 +381,7 @@ impl Block {
             self.retire_span(old);
             let offset = self.arena.len() as u32;
             for (id, value) in pairs.drain(..) {
-                let (tag, payload) = self.pack_value(value);
-                self.arena.push(PackedAttr { id, tag, payload });
+                self.store_packed_value(self.arena.len(), id, value);
             }
             self.slots[slot_idx] = Slot {
                 offset,
@@ -421,12 +437,7 @@ impl Block {
                     let span = &self.arena[s..s + old.len as usize];
                     let pos = span.binary_search_by_key(id, |e| e.id).unwrap();
                     self.release_heap_value(self.arena[s + pos]);
-                    let (tag, payload) = self.pack_value(v.clone());
-                    self.arena[s + pos] = PackedAttr {
-                        id: *id,
-                        tag,
-                        payload,
-                    };
+                    self.store_packed_value(s + pos, *id, v.clone());
                 }
                 return (pairs.len(), pairs.len());
             }
@@ -533,12 +544,7 @@ impl Block {
             let (id, v) = &pairs[ni];
             if !matches!(v, Value::Null) {
                 nset += 1;
-                let (tag, payload) = self.pack_value(v.clone());
-                self.arena[w] = PackedAttr {
-                    id: *id,
-                    tag,
-                    payload,
-                };
+                self.store_packed_value(w, *id, v.clone());
                 w += 1;
             }
             ni += 1;
