@@ -794,21 +794,8 @@ impl DataBlock {
         }
     }
 
-    /// Estimated heap bytes of stored attribute payloads.
-    fn memory_usage(&self) -> usize {
-        self.blocks
-            .iter()
-            .map(|block| {
-                block.arena.capacity() * std::mem::size_of::<PackedAttr>()
-                    + block.heap.capacity() * std::mem::size_of::<Value>()
-                    + block.heap.iter().map(Value::heap_size).sum::<usize>()
-                    + block.heap_free.capacity() * std::mem::size_of::<u32>()
-            })
-            .sum()
-    }
-
     /// Structural overhead of the slot storage, excluding attribute payload.
-    fn structural_memory_usage(&self) -> usize {
+    fn memory_usage(&self) -> usize {
         self.blocks.len() * (std::mem::size_of::<Arc<Block>>() + std::mem::size_of::<Block>())
             + self
                 .blocks
@@ -1059,15 +1046,10 @@ impl AttributeStore {
         self.attrs_name.get_index_of(attr)
     }
 
+    /// Structural slot-storage overhead, excluding attribute payload heap.
     #[must_use]
     pub fn memory_usage(&self) -> usize {
         self.data.memory_usage()
-    }
-
-    /// Structural slot-storage overhead, excluding attribute payload heap.
-    #[must_use]
-    pub fn structural_memory_usage(&self) -> usize {
-        self.data.structural_memory_usage()
     }
 
     // ---- serialization -----------------------------------------------------

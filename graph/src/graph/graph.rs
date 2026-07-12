@@ -3593,27 +3593,6 @@ impl Graph {
         }
     }
 
-    #[must_use]
-    pub fn memory_usage(&self) -> usize {
-        let mut size = 0usize;
-        size += self.adjacancy_matrix.memory_usage();
-        size += self.node_labels_matrix.memory_usage();
-        size += self.relationship_type_matrix.memory_usage();
-        size += self.all_nodes_matrix.memory_usage();
-        for label_matrix in &self.labels_matices {
-            size += label_matrix.memory_usage();
-        }
-        for relationship_matrix in &self.relationship_matrices {
-            size += relationship_matrix.memory_usage();
-        }
-        size += self.node_attrs.memory_usage();
-        // Graph-wide edge_id → compound_key reverse index: one u64 per edge slot.
-        size += self.edge_endpoints.capacity() * std::mem::size_of::<u64>();
-        // size += self.relationship_attrs.memory_usage();
-        // size += self.node_indexer.memory_usage();
-        size
-    }
-
     /// Compute a detailed breakdown of memory usage for `GRAPH.MEMORY USAGE`.
     ///
     /// `samples` controls how many entities are sampled per label/type when
@@ -3640,12 +3619,12 @@ impl Graph {
 
         // --- node block storage ---
         let node_block_storage_sz: usize =
-            self.node_attrs.structural_memory_usage() + self.deleted_nodes.serialized_size();
+            self.node_attrs.memory_usage() + self.deleted_nodes.serialized_size();
 
         // --- edge block storage ---
         // Includes the graph-wide edge_id → compound_key reverse index, a dense
         // vector holding one u64 per edge slot.
-        let edge_block_storage_sz: usize = self.relationship_attrs.structural_memory_usage()
+        let edge_block_storage_sz: usize = self.relationship_attrs.memory_usage()
             + self.deleted_relationships.serialized_size()
             + self.edge_endpoints.capacity() * std::mem::size_of::<u64>();
 
