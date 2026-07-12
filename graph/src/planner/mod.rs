@@ -77,11 +77,14 @@ pub enum IR {
         expr: QueryExpr<Variable>,
         var: Variable,
     },
-    /// CREATE pattern
-    Create(QueryGraph<Arc<String>, Arc<String>, Variable>),
-    /// MERGE pattern with ON CREATE/ON MATCH actions
+    /// CREATE pattern. Boxed: `QueryGraph` is 72 bytes inline.
+    Create(Box<QueryGraph<Arc<String>, Arc<String>, Variable>>),
+    /// MERGE pattern with ON CREATE/ON MATCH actions.
+    /// Pattern boxed: with the inline 72-byte `QueryGraph` plus the two
+    /// `Vec`s this variant was 120 bytes — the size cap of the whole `IR`
+    /// enum, which every plan-tree node carries.
     Merge {
-        pattern: QueryGraph<Arc<String>, Arc<String>, Variable>,
+        pattern: Box<QueryGraph<Arc<String>, Arc<String>, Variable>>,
         on_create: Vec<SetItem<Arc<String>, Variable>>,
         on_match: Vec<SetItem<Arc<String>, Variable>>,
     },
@@ -788,7 +791,13 @@ impl Planner {
                     extracted,
                 ));
 
-                extracted.push((var.clone(), graph.clone(), where_tree, result_tree, vec![]));
+                extracted.push((
+                    var.clone(),
+                    graph.as_ref().clone(),
+                    where_tree,
+                    result_tree,
+                    vec![],
+                ));
                 DynTree::new(ExprIR::Variable(var))
             }
             ExprIR::Pattern(graph) => {
@@ -812,7 +821,7 @@ impl Planner {
 
                 extracted.push((
                     var.clone(),
-                    graph.clone(),
+                    graph.as_ref().clone(),
                     None,
                     Arc::new(DynTree::new(ExprIR::Variable(path_var))),
                     vec![query_path],
@@ -1115,7 +1124,7 @@ impl Planner {
             ExprIR::Pattern(graph) => {
                 if can_extract {
                     // Top-level conjunct: extract for SemiApply, replace with true.
-                    extractable.push((graph.clone(), false));
+                    extractable.push((graph.as_ref().clone(), false));
                     DynTree::new(ExprIR::Constant(Value::Bool(true)))
                 } else {
                     // Under OR/NOT: replace with a fresh boolean variable and
@@ -1128,7 +1137,7 @@ impl Planner {
                         ty: Type::Bool,
                     };
                     self.scope_vars[current_scope as usize].push(var.clone());
-                    inline.insert(var.id, graph.clone());
+                    inline.insert(var.id, graph.as_ref().clone());
                     DynTree::new(ExprIR::Variable(var))
                 }
             }
@@ -1140,7 +1149,7 @@ impl Planner {
                 {
                     if can_extract {
                         // Extract for AntiSemiApply (is_anti = true).
-                        extractable.push((graph.clone(), true));
+                        extractable.push((graph.as_ref().clone(), true));
                         return DynTree::new(ExprIR::Constant(Value::Bool(true)));
                     }
                     // Inline: create NOT(synth_var) so expr_to_plan can
@@ -1153,7 +1162,7 @@ impl Planner {
                         ty: Type::Bool,
                     };
                     self.scope_vars[current_scope as usize].push(var.clone());
-                    inline.insert(var.id, graph.clone());
+                    inline.insert(var.id, graph.as_ref().clone());
                     let mut new_tree = DynTree::new(ExprIR::Not);
                     new_tree
                         .root_mut()
@@ -2317,7 +2326,7 @@ impl Planner {
                 let paths = pattern.paths();
                 let merge = tree!(
                     IR::Merge {
-                        pattern: create_pattern,
+                        pattern: Box::new(create_pattern),
                         on_create: on_create_set_items,
                         on_match: on_match_set_items
                     },
@@ -2338,7 +2347,7 @@ impl Planner {
                 for v in pattern.variables() {
                     self.visited.insert((v.id, v.scope_id));
                 }
-                tree!(IR::Create(filtered))
+                tree!(IR::Create(Box::new(filtered)))
             }
             QueryIR::Delete {
                 exprs,

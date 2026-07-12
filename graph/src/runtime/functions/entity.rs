@@ -35,8 +35,8 @@ use thin_vec::ThinVec;
 
 pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "labels",
-        args: [Type::Union(vec![Type::Node, Type::Null])],
-        ret: Type::Union(vec![Type::List(Box::new(Type::String)), Type::Null]),
+        args: [Type::union([Type::Node, Type::Null])],
+        ret: Type::union([Type::List(Box::new(Type::String)), Type::Null]),
         fn labels(runtime, args) {
             match args.first() {
                 Some(&Value::Node(id)) => {
@@ -79,10 +79,10 @@ pub fn register(funcs: &mut Functions) {
 
     cypher_fn!(funcs, "hasLabels",
         args: [
-            Type::Union(vec![Type::Node, Type::Null]),
+            Type::union([Type::Node, Type::Null]),
             Type::List(Box::new(Type::Any)),
         ],
-        ret: Type::Union(vec![Type::Bool, Type::Null]),
+        ret: Type::union([Type::Bool, Type::Null]),
         fn has_labels(runtime, args) {
             let mut iter = args.iter();
             match (iter.next(), iter.next()) {
@@ -124,12 +124,12 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "id",
-        args: [Type::Union(vec![
+        args: [Type::union([
             Type::Node,
             Type::Relationship,
             Type::Null,
         ])],
-        ret: Type::Union(vec![Type::Int, Type::Null]),
+        ret: Type::union([Type::Int, Type::Null]),
         fn id(_runtime, args) {
             match args.first() {
                 Some(&Value::Node(id)) => Ok(Value::Int(u64::from(id) as i64)),
@@ -142,13 +142,13 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "properties",
-        args: [Type::Union(vec![
+        args: [Type::union([
             Type::Map,
             Type::Node,
             Type::Relationship,
             Type::Null,
         ])],
-        ret: Type::Union(vec![Type::Map, Type::Null]),
+        ret: Type::union([Type::Map, Type::Null]),
         fn properties(runtime, args) {
             match args.first() {
                 Some(Value::Map(map)) => Ok(Value::Map(map.clone())),
@@ -165,7 +165,7 @@ pub fn register(funcs: &mut Functions) {
 
     cypher_fn!(funcs, "startnode",
         args: [Type::Relationship],
-        ret: Type::Union(vec![Type::Node, Type::Null]),
+        ret: Type::union([Type::Node, Type::Null]),
         fn start_node(runtime, args) {
             match args.first() {
                 Some(Value::Relationship(rel)) => {
@@ -180,7 +180,7 @@ pub fn register(funcs: &mut Functions) {
 
     cypher_fn!(funcs, "endnode",
         args: [Type::Relationship],
-        ret: Type::Union(vec![Type::Node, Type::Null]),
+        ret: Type::union([Type::Node, Type::Null]),
         fn end_node(runtime, args) {
             match args.first() {
                 Some(Value::Relationship(rel)) => {
@@ -194,8 +194,8 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "length",
-        args: [Type::Union(vec![Type::Path, Type::Null])],
-        ret: Type::Union(vec![Type::Int, Type::Null]),
+        args: [Type::union([Type::Path, Type::Null])],
+        ret: Type::union([Type::Int, Type::Null]),
         fn length(_runtime, args) {
             match args.first() {
                 Some(Value::Path(path)) => Ok(Value::Int(path.len() as i64 / 2)),
@@ -207,13 +207,13 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "keys",
-        args: [Type::Union(vec![
+        args: [Type::union([
             Type::Map,
             Type::Node,
             Type::Relationship,
             Type::Null,
         ])],
-        ret: Type::Union(vec![Type::List(Box::new(Type::String)), Type::Null]),
+        ret: Type::union([Type::List(Box::new(Type::String)), Type::Null]),
         fn keys(runtime, args) {
             match args.first() {
                 Some(Value::Map(map)) => Ok(Value::List(Arc::new(
@@ -241,8 +241,8 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "type",
-        args: [Type::Union(vec![Type::Relationship, Type::Null])],
-        ret: Type::Union(vec![Type::String, Type::Null]),
+        args: [Type::union([Type::Relationship, Type::Null])],
+        ret: Type::union([Type::String, Type::Null]),
         fn relationship_type(runtime, args) {
             match args.first() {
                 Some(Value::Relationship(rel)) => runtime
@@ -256,7 +256,7 @@ pub fn register(funcs: &mut Functions) {
 
     cypher_fn!(funcs, "exists",
         args: [Type::Any],
-        ret: Type::Union(vec![Type::Bool, Type::Null]),
+        ret: Type::union([Type::Bool, Type::Null]),
         fn exists(_, args) {
             match args.first() {
                 Some(Value::Null) => Ok(Value::Bool(false)),
@@ -267,7 +267,7 @@ pub fn register(funcs: &mut Functions) {
 
     cypher_fn!(funcs, "indegree",
         var_arg: Type::Any,
-        ret: Type::Union(vec![Type::Int, Type::Null]),
+        ret: Type::union([Type::Int, Type::Null]),
         fn indegree(runtime, args) {
             let (id, types) = parse_degree_args("indegree", args)?;
             id.map_or_else(|| Ok(Value::Null), |id| {
@@ -283,7 +283,7 @@ pub fn register(funcs: &mut Functions) {
 
     cypher_fn!(funcs, "outdegree",
         var_arg: Type::Any,
-        ret: Type::Union(vec![Type::Int, Type::Null]),
+        ret: Type::union([Type::Int, Type::Null]),
         fn outdegree(runtime, args) {
             let (id, types) = parse_degree_args("outdegree", args)?;
             id.map_or_else(|| Ok(Value::Null), |id| {
