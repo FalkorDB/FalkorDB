@@ -47,7 +47,7 @@ use graph::graph::mvcc_graph::MvccGraph;
 use graph::runtime::functions::{GraphFn, register_udf};
 use graph::udf::get_udf_repo;
 use parking_lot::RwLock;
-use redis_module::logging::log_notice;
+use redis_module::logging::{log_notice, log_warning};
 use redis_module::raw::{
     self, RedisModuleCtx, RedisModuleIO, load_string_buffer, load_unsigned, save_string,
     save_unsigned,
@@ -516,9 +516,25 @@ unsafe fn scan_and_clean_graphdata_keys(
                 let elem = raw::call_reply_array_element(arr_reply, i);
                 let mut key_len: usize = 0;
                 let kptr = raw::RedisModule_CallReplyStringPtr.unwrap()(elem, &raw mut key_len);
-                let key_name =
-                    std::str::from_utf8_unchecked(std::slice::from_raw_parts(kptr.cast(), key_len))
-                        .to_string();
+                // Redis key names are binary-safe, so a graphdata-typed key may
+                // have a non-UTF-8 name (e.g. `GRAPH.QUERY "\xff" ...`). Building a
+                // `str` over non-UTF-8 bytes via `from_utf8_unchecked` is UB. Skip
+                // any non-UTF-8 key rather than decoding it lossily: this name is
+                // fed back into `RedisModule_CreateString` for the open/delete
+                // below, and a lossy name no longer round-trips to the same key
+                // (and could even alias a different one). A non-UTF-8 graph name
+                // is not round-trippable here and is already handled only lossily
+                // elsewhere (`graph_rdb_save`/`graph_rdb_load`), so skipping it
+                // does not regress any normally (UTF-8) named graph.
+                let key_bytes = std::slice::from_raw_parts(kptr.cast::<u8>(), key_len);
+                let Ok(key_name) = std::str::from_utf8(key_bytes) else {
+                    log_warning(format!(
+                        "Skipping graphdata key with non-UTF-8 name during scan (lossy display: {})",
+                        String::from_utf8_lossy(key_bytes)
+                    ));
+                    continue;
+                };
+                let key_name = key_name.to_string();
 
                 let rm_str = raw::RedisModule_CreateString.unwrap()(
                     ctx,
@@ -674,12 +690,20 @@ unsafe fn scan_keys_by_type(
                 let elem = raw::call_reply_array_element(arr_reply, i);
                 let mut name_len: usize = 0;
                 let kptr = raw::RedisModule_CallReplyStringPtr.unwrap()(elem, &raw mut name_len);
-                let key_name = std::str::from_utf8_unchecked(std::slice::from_raw_parts(
-                    kptr.cast(),
-                    name_len,
-                ))
-                .to_string();
-                out.push(key_name);
+                // Key names are binary-safe; skip any non-UTF-8 name rather than
+                // decoding it lossily. `out` names are round-tripped back through
+                // `RedisModule_CreateString`/`OpenKey` for deletion, so a lossy name
+                // would target the wrong key; and `from_utf8_unchecked` on non-UTF-8
+                // bytes is UB (see scan_and_clean_graphdata_keys above).
+                let key_bytes = std::slice::from_raw_parts(kptr.cast::<u8>(), name_len);
+                let Ok(key_name) = std::str::from_utf8(key_bytes) else {
+                    log_warning(format!(
+                        "Skipping key with non-UTF-8 name during type scan (lossy display: {})",
+                        String::from_utf8_lossy(key_bytes)
+                    ));
+                    continue;
+                };
+                out.push(key_name.to_string());
             }
 
             cursor_val = CString::new(new_cursor).unwrap();
