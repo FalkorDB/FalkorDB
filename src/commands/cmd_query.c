@@ -361,7 +361,7 @@ static bool _DelegateQuery
 
 // process all queued write queries
 // writer will only release write access when the queue is truly empty
-static void enter_writer_loop
+void enter_writer_loop
 (
 	GraphContext *gc
 ) {
@@ -387,47 +387,6 @@ static void enter_writer_loop
 			// or the another thread became a writer
 			break ;
 		}
-	}
-}
-
-// worker-pool task: elect a writer and drain pending write queries on `gc`
-// (dispatched by Graph_DrainWriteQueue; releases the reference taken there)
-static void _drain_write_queue_task
-(
-	void *arg
-) {
-	GraphContext *gc = (GraphContext *)arg ;
-
-	// become the writer and drain; if another thread is already the writer it
-	// drains the queue itself, so there is nothing to do
-	if (GraphContext_TimeTryEnterWrite (gc, 0)) {
-		enter_writer_loop (gc) ;
-	}
-
-	GraphContext_DecreaseRefCount (gc) ;  // counter to the ref in the dispatcher
-}
-
-// dispatch a worker to drain pending write queries on `gc`. used after active
-// defrag borrows the write election: defrag runs on the main thread and doesn't
-// drain the queue, so a write delegated during its hold would be orphaned (its
-// blocked client never replied). safe on the main thread; no-op if queue empty
-void Graph_DrainWriteQueue
-(
-	GraphContext *gc
-) {
-	ASSERT (gc != NULL) ;
-
-	if (GraphContext_WriteQueueEmpty (gc)) {
-		return ;
-	}
-
-	// keep gc alive until the drain task runs
-	GraphContext_IncreaseRefCount (gc) ;
-
-	// force=true: never dropped for a full queue, so the only failure is an
-	// allocation error (returns non-zero); undo the ref so gc isn't leaked
-	if (ThreadPool_AddWork (_drain_write_queue_task, gc, true) != 0) {
-		GraphContext_DecreaseRefCount (gc) ;  // couldn't enqueue; undo the ref
 	}
 }
 

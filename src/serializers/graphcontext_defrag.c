@@ -29,6 +29,7 @@ static void _deadline_in
 	clock_gettime (CLOCK_MONOTONIC, deadline) ;
 	deadline->tv_sec  += ms / 1000 ;
 	deadline->tv_nsec += (long)(ms % 1000) * 1000000L ;
+
 	if (deadline->tv_nsec >= 1000000000L) {
 		deadline->tv_sec++ ;
 		deadline->tv_nsec -= 1000000000L ;
@@ -173,40 +174,40 @@ static int defrag_edges
 	GraphContext *gc,
 	uint64_t offset
 ) {
+	int res = 1 ;  // there's more work to be done
 	Graph *g = GraphContext_GetGraph (gc) ;
 
-	// defrag runs on the main thread; bound this step to DEFRAG_BUDGET_MS, shared
-	// across the election wait, the rwlock wait and the scan. yield if it elapses
+	// defrag runs on the main thread; bound this step to DEFRAG_BUDGET_MS
+	// shared across the election wait, the rwlock wait and the scan
+	// yield if it elapses
 	struct timespec deadline ;
 	_deadline_in (&deadline, DEFRAG_BUDGET_MS) ;
 
 	// block out any new writer (wait up to the remaining budget)
 	if (!GraphContext_TimeTryEnterWrite (gc, _ms_until (&deadline))) {
-		return 1 ;  // there's more work to be done
+		return res ;
 	}
 
 	// then acquire the rwlock to block out readers too (remaining budget)
 	if (GraphContext_TimeAcquireWriteLock (gc, _ms_until (&deadline)) != 0) {
-		GraphContext_ExitWrite (gc) ;
-		// hand any queued writer back to a writer thread (avoid orphaning it)
-		Graph_DrainWriteQueue (gc) ;
-		return 1 ;  // there's more work to be done
+		goto release_writer ;
 	}
 
 	DataBlockIterator *it = Graph_ScanEdges (g) ;
 	DataBlockIterator_Seek (it, offset) ;  // seek iterator to offset
 
-	int res = defrag_entities (ctx, DEFRAG_EDGES, g, gc, it, &deadline) ;
+	res = defrag_entities (ctx, DEFRAG_EDGES, g, gc, it, &deadline) ;
+	DataBlockIterator_Free (it) ;
 
 	GraphContext_ReleaseLock (gc) ;
-	GraphContext_ExitWrite (gc) ;
 
+release_writer:
 	// a writer may have queued while we held the election; defrag doesn't drain
 	// the queue, so hand it to a writer thread (avoids orphaning the query)
-	Graph_DrainWriteQueue (gc) ;
+	GraphContext_ExitWrite (gc) ;
+	GraphContext_AsyncDrainWriteQueries (gc) ;
 
 	// clean up
-	DataBlockIterator_Free (it) ;
 	return res ;
 }
 
@@ -216,6 +217,7 @@ static int defrag_nodes
 	GraphContext *gc,
 	uint64_t offset
 ) {
+	int res = 1 ;  // there's more work to be done
 	Graph *g = GraphContext_GetGraph (gc) ;
 
 	// defrag runs on the main thread; bound this step to DEFRAG_BUDGET_MS, shared
@@ -225,31 +227,29 @@ static int defrag_nodes
 
 	// block out any new writer (wait up to the remaining budget)
 	if (!GraphContext_TimeTryEnterWrite (gc, _ms_until (&deadline))) {
-		return 1 ;  // there's more work to be done
+		return res ;  // there's more work to be done
 	}
 
 	// then acquire the rwlock to block out readers too (remaining budget)
 	if (GraphContext_TimeAcquireWriteLock (gc, _ms_until (&deadline)) != 0) {
-		GraphContext_ExitWrite (gc) ;
-		// hand any queued writer back to a writer thread (avoid orphaning it)
-		Graph_DrainWriteQueue (gc) ;
-		return 1 ;  // there's more work to be done
+		goto release_writer ;
 	}
 
 	DataBlockIterator *it = Graph_ScanNodes (g) ;
 	DataBlockIterator_Seek (it, offset) ;  // seek iterator to offset
 
-	int res = defrag_entities (ctx, DEFRAG_NODES, g, gc, it, &deadline) ;
+	res = defrag_entities (ctx, DEFRAG_NODES, g, gc, it, &deadline) ;
+	DataBlockIterator_Free (it) ;
 
 	GraphContext_ReleaseLock (gc) ;
-	GraphContext_ExitWrite (gc) ;
 
+release_writer:
 	// a writer may have queued while we held the election; defrag doesn't drain
 	// the queue, so hand it to a writer thread (avoids orphaning the query)
-	Graph_DrainWriteQueue (gc) ;
+	GraphContext_ExitWrite (gc) ;
+	GraphContext_AsyncDrainWriteQueries (gc) ;
 
 	// clean up
-	DataBlockIterator_Free (it) ;
 	return res ;
 }
 
