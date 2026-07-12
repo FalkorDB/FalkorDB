@@ -179,6 +179,8 @@ jobs:
           MPS: ${{ vars.BENCHMARK_MPS || '5000' }}
           # Profile the write path too: 5% writes, matching the A/B benchmark.
           WRITE_RATIO: ${{ vars.PROFILE_WRITE_RATIO || '0.05' }}
+          # Cap the perf capture (seconds) so perf.data can't fill the runner disk.
+          PROFILE_DURATION: ${{ vars.PROFILE_DURATION || '90' }}
         run: .github/scripts/benchmark/profile.sh
 
       - name: Upload profiling artifacts
