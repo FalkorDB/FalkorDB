@@ -66,11 +66,11 @@ pub fn point_struct_pure(args: &[Value]) -> Result<Value, String> {
 
 pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "vecf32",
-        args: [Type::Union(vec![
+        args: [Type::union([
             Type::List(Box::new(Type::Any)),
             Type::Null,
         ])],
-        ret: Type::Union(vec![Type::VecF32, Type::Null]),
+        ret: Type::union([Type::VecF32, Type::Null]),
         fn vecf32(_, args) {
             match args.first() {
                 Some(Value::List(vec)) => {
@@ -90,8 +90,8 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "point",
-        args: [Type::Union(vec![Type::Map, Type::Null])],
-        ret: Type::Union(vec![Type::Point, Type::Null]),
+        args: [Type::union([Type::Map, Type::Null])],
+        ret: Type::union([Type::Point, Type::Null]),
         fn point(_, args) {
             let mut iter = args.iter();
             match iter.next() {
@@ -134,10 +134,10 @@ pub fn register(funcs: &mut Functions) {
 
     cypher_fn!(funcs, "distance",
         args: [
-            Type::Union(vec![Type::Point, Type::Null]),
-            Type::Union(vec![Type::Point, Type::Null]),
+            Type::union([Type::Point, Type::Null]),
+            Type::union([Type::Point, Type::Null]),
         ],
-        ret: Type::Union(vec![Type::Float, Type::Null]),
+        ret: Type::union([Type::Float, Type::Null]),
         fn distance(_, args) {
             let mut iter = args.iter();
             match (iter.next(), iter.next()) {
@@ -150,10 +150,10 @@ pub fn register(funcs: &mut Functions) {
 
     cypher_fn!(funcs, "vec.euclideanDistance",
         args: [
-            Type::Union(vec![Type::VecF32, Type::Null]),
-            Type::Union(vec![Type::VecF32, Type::Null]),
+            Type::union([Type::VecF32, Type::Null]),
+            Type::union([Type::VecF32, Type::Null]),
         ],
-        ret: Type::Union(vec![Type::Float, Type::Null]),
+        ret: Type::union([Type::Float, Type::Null]),
         fn vec_euclidean_distance(_, args) {
             let mut iter = args.iter();
             match (iter.next(), iter.next()) {
@@ -180,10 +180,10 @@ pub fn register(funcs: &mut Functions) {
     // and from `db.idx.vector.queryNodes(... COSINE ...)` agree.
     cypher_fn!(funcs, "vec.cosineDistance",
         args: [
-            Type::Union(vec![Type::VecF32, Type::Null]),
-            Type::Union(vec![Type::VecF32, Type::Null]),
+            Type::union([Type::VecF32, Type::Null]),
+            Type::union([Type::VecF32, Type::Null]),
         ],
-        ret: Type::Union(vec![Type::Float, Type::Null]),
+        ret: Type::union([Type::Float, Type::Null]),
         fn vec_cosine_distance(_, args) {
             let mut iter = args.iter();
             match (iter.next(), iter.next()) {

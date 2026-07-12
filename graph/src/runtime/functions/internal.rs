@@ -34,7 +34,7 @@ pub fn register(funcs: &mut Functions) {
             Type::Any,
             Type::Any,
         ],
-        ret: Type::Union(vec![Type::Bool, Type::Null]),
+        ret: Type::union([Type::Bool, Type::Null]),
         internal,
         fn internal_starts_with(_, args) {
             let mut iter = args.iter();
@@ -52,7 +52,7 @@ pub fn register(funcs: &mut Functions) {
             Type::Any,
             Type::Any,
         ],
-        ret: Type::Union(vec![Type::Bool, Type::Null]),
+        ret: Type::union([Type::Bool, Type::Null]),
         internal,
         fn internal_ends_with(_, args) {
             let mut iter = args.iter();
@@ -70,7 +70,7 @@ pub fn register(funcs: &mut Functions) {
             Type::Any,
             Type::Any,
         ],
-        ret: Type::Union(vec![Type::Bool, Type::Null]),
+        ret: Type::union([Type::Bool, Type::Null]),
         internal,
         fn internal_contains(_, args) {
             let mut iter = args.iter();
@@ -84,8 +84,8 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "is_null",
-        args: [Type::Union(vec![Type::Bool]), Type::Any],
-        ret: Type::Union(vec![Type::Bool, Type::Null]),
+        args: [Type::union([Type::Bool]), Type::Any],
+        ret: Type::union([Type::Bool, Type::Null]),
         internal,
         fn internal_is_null(_, args) {
             let mut iter = args.iter();
@@ -99,10 +99,10 @@ pub fn register(funcs: &mut Functions) {
 
     cypher_fn!(funcs, "regex_matches",
         args: [
-            Type::Union(vec![Type::String, Type::Null]),
-            Type::Union(vec![Type::String, Type::Null]),
+            Type::union([Type::String, Type::Null]),
+            Type::union([Type::String, Type::Null]),
         ],
-        ret: Type::Union(vec![Type::Bool, Type::Null]),
+        ret: Type::union([Type::Bool, Type::Null]),
         internal,
         fn internal_regex_matches(_, args) {
             let mut iter = args.iter();
@@ -158,10 +158,10 @@ pub fn register(funcs: &mut Functions) {
     // This registration exists so dbms.functions() can enumerate it.
     cypher_fn!(funcs, "add",
         args: [
-            Type::Union(vec![Type::Map, Type::List(Box::new(Type::Any)), Type::Datetime, Type::Date, Type::Time, Type::Duration, Type::String, Type::Bool, Type::Int, Type::Float, Type::Null]),
-            Type::Union(vec![Type::Map, Type::List(Box::new(Type::Any)), Type::Datetime, Type::Date, Type::Time, Type::Duration, Type::String, Type::Bool, Type::Int, Type::Float, Type::Null]),
+            Type::union([Type::Map, Type::List(Box::new(Type::Any)), Type::Datetime, Type::Date, Type::Time, Type::Duration, Type::String, Type::Bool, Type::Int, Type::Float, Type::Null]),
+            Type::union([Type::Map, Type::List(Box::new(Type::Any)), Type::Datetime, Type::Date, Type::Time, Type::Duration, Type::String, Type::Bool, Type::Int, Type::Float, Type::Null]),
         ],
-        ret: Type::Union(vec![Type::Map, Type::List(Box::new(Type::Any)), Type::Datetime, Type::Date, Type::Time, Type::Duration, Type::String, Type::Bool, Type::Int, Type::Float, Type::Null]),
+        ret: Type::union([Type::Map, Type::List(Box::new(Type::Any)), Type::Datetime, Type::Date, Type::Time, Type::Duration, Type::String, Type::Bool, Type::Int, Type::Float, Type::Null]),
         internal,
         fn internal_add(_, _args) {
             Err(String::from("Internal function 'add' should not be called directly"))

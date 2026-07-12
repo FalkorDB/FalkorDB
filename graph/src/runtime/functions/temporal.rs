@@ -693,8 +693,8 @@ pub fn register(funcs: &mut Functions) {
 
     // ── date() ──
     cypher_fn!(funcs, "date",
-        var_arg: Type::Union(vec![Type::Map, Type::String, Type::Null]),
-        ret: Type::Union(vec![Type::Date, Type::Null]),
+        var_arg: Type::union([Type::Map, Type::String, Type::Null]),
+        ret: Type::union([Type::Date, Type::Null]),
         non_deterministic,
         fn date_fn(_, args) {
             if args.is_empty() {
@@ -710,8 +710,8 @@ pub fn register(funcs: &mut Functions) {
 
     // ── localtime() ──
     cypher_fn!(funcs, "localtime",
-        var_arg: Type::Union(vec![Type::Map, Type::String, Type::Null]),
-        ret: Type::Union(vec![Type::Time, Type::Null]),
+        var_arg: Type::union([Type::Map, Type::String, Type::Null]),
+        ret: Type::union([Type::Time, Type::Null]),
         non_deterministic,
         fn localtime_fn(_, args) {
             if args.is_empty() {
@@ -729,8 +729,8 @@ pub fn register(funcs: &mut Functions) {
 
     // ── localdatetime() ──
     cypher_fn!(funcs, "localdatetime",
-        var_arg: Type::Union(vec![Type::Map, Type::String, Type::Null]),
-        ret: Type::Union(vec![Type::Datetime, Type::Null]),
+        var_arg: Type::union([Type::Map, Type::String, Type::Null]),
+        ret: Type::union([Type::Datetime, Type::Null]),
         non_deterministic,
         fn localdatetime_fn(_, args) {
             if args.is_empty() {
@@ -746,8 +746,8 @@ pub fn register(funcs: &mut Functions) {
 
     // ── duration() ──
     cypher_fn!(funcs, "duration",
-        args: [Type::Union(vec![Type::Map, Type::String, Type::Null])],
-        ret: Type::Union(vec![Type::Duration, Type::Null]),
+        args: [Type::union([Type::Map, Type::String, Type::Null])],
+        ret: Type::union([Type::Duration, Type::Null]),
         fn duration_fn(_, args) {
             duration_pure(args)
         }
@@ -795,7 +795,7 @@ pub fn register(funcs: &mut Functions) {
     // concrete arguments, and attach the positional-slot form invoked by
     // eval.rs after the binder rewrites `duration({months: i})` into
     // positional children.
-    let constructor_args = || vec![Type::Union(vec![Type::Map, Type::String, Type::Null])];
+    let constructor_args = || vec![Type::union([Type::Map, Type::String, Type::Null])];
     funcs.set_pure_fn("date", date_pure, constructor_args());
     funcs.set_pure_fn("localtime", localtime_pure, constructor_args());
     funcs.set_pure_fn("localdatetime", localdatetime_pure, constructor_args());

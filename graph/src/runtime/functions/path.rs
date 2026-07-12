@@ -24,8 +24,8 @@ use std::sync::Arc;
 
 pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "nodes",
-        args: [Type::Union(vec![Type::Path, Type::Null])],
-        ret: Type::Union(vec![Type::List(Box::new(Type::Node)), Type::Null]),
+        args: [Type::union([Type::Path, Type::Null])],
+        ret: Type::union([Type::List(Box::new(Type::Node)), Type::Null]),
         fn nodes(_, args) {
             match args.first() {
                 Some(Value::Path(values)) => Ok(Value::List(Arc::new(
@@ -47,8 +47,8 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "relationships",
-        args: [Type::Union(vec![Type::Path, Type::Null])],
-        ret: Type::Union(vec![Type::List(Box::new(Type::Relationship)), Type::Null]),
+        args: [Type::union([Type::Path, Type::Null])],
+        ret: Type::union([Type::List(Box::new(Type::Relationship)), Type::Null]),
         fn relationships(_, args) {
             match args.first() {
                 Some(Value::Path(values)) => Ok(Value::List(Arc::new(
