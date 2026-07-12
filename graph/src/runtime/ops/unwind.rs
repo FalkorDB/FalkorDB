@@ -45,7 +45,7 @@ use crate::runtime::{
     runtime::Runtime,
     value::Value,
 };
-use orx_tree::{Dyn, NodeIdx, NodeRef};
+use orx_tree::{Dyn, NodeIdx};
 
 use super::batched_result_emitter::BatchedResultEmitter;
 
@@ -109,7 +109,7 @@ impl<'a> Iterator for UnwindOp<'a> {
             // (`Ok(None)` from `emit_lazy`), pull and seed the next child batch.
             match self.emitter.emit_lazy(|batch, row| {
                 let view = BatchRow::new(batch, row);
-                ExprEval::from_runtime(runtime).eval_iter_expr(list, list.root().idx(), Some(&view))
+                ExprEval::from_runtime(runtime).eval_iter_expr(&list.root(), Some(&view))
             }) {
                 Ok(Some(out)) => return Some(Ok(out)),
                 Ok(None) => match self.child.next() {

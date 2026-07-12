@@ -478,12 +478,11 @@ impl ThreadedGraph {
         let mut result = match runtime.query() {
             Ok(r) => r,
             Err(err) => {
-                // Clean up dirty cache entries before the graph is dropped.
-                g.borrow_mut().rollback_cache();
+                // The private MVCC graph is dropped on rollback, discarding
+                // all attribute writes with it.
                 return Err(err);
             }
         };
-        g.borrow_mut().clear_rollback_state();
 
         // Query succeeded — commit deferred index operations to RediSearch
         // without holding the GIL; RediSearch's ForkGC would deadlock against
@@ -620,7 +619,6 @@ impl ThreadedGraph {
         );
         match runtime.query() {
             Ok(_) => {
-                g.borrow_mut().clear_rollback_state();
                 runtime.commit_deferred_indexes();
                 reply_profile(ctx, &runtime, &plan);
                 Ok(WriteQueryOk {
@@ -631,10 +629,7 @@ impl ThreadedGraph {
                     params_offset: 0,
                 })
             }
-            Err(err) => {
-                g.borrow_mut().rollback_cache();
-                Err(err)
-            }
+            Err(err) => Err(err),
         }
     }
 }

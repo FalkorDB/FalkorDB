@@ -12,7 +12,7 @@
 //! Uses a `ThinVec<(K, V)>` internally with O(n) lookup. This is efficient
 //! for small maps (typical property counts) while preserving order.
 
-use std::{borrow::Borrow, collections::HashSet, hash::Hash, ops::Index};
+use std::{borrow::Borrow, hash::Hash, ops::Index};
 
 use itertools::Itertools;
 use thin_vec::ThinVec;
@@ -39,27 +39,20 @@ impl<K, V> Default for OrderMap<K, V> {
 
 impl<K: PartialEq, V> OrderMap<K, V> {
     #[must_use]
-    pub fn from_vec(vec: Vec<(K, V)>) -> Self
-    where
-        K: Hash + Eq + Clone,
-    {
-        let mut set = HashSet::new();
-        let mut res = Self {
-            vec: ThinVec::with_capacity(vec.len()),
-        };
-        for (k, v) in vec {
-            if set.insert(k.clone()) {
-                res.vec.push((k, v));
-            } else {
-                res.insert(k, v);
-            }
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            vec: ThinVec::with_capacity(capacity),
         }
-        res
+    }
+
+    #[must_use]
+    pub fn from_vec(vec: Vec<(K, V)>) -> Self {
+        vec.into_iter().collect()
     }
 
     /// Build from pairs whose keys the caller guarantees are already unique
     /// (e.g. CSV columns deduplicated once per file). Skips the per-key
-    /// hashing dedup that [`OrderMap::from_vec`] performs.
+    /// duplicate scan that [`OrderMap::insert`] performs.
     #[must_use]
     pub fn from_unique_keys(pairs: impl IntoIterator<Item = (K, V)>) -> Self
     where
@@ -187,24 +180,17 @@ impl<K: PartialEq, V: PartialEq> PartialEq for OrderMap<K, V> {
     }
 }
 
-impl<K: PartialEq + Hash + Eq + Clone, V: PartialEq> FromIterator<(K, V)> for OrderMap<K, V> {
+impl<K: PartialEq, V> FromIterator<(K, V)> for OrderMap<K, V> {
     fn from_iter<T: IntoIterator<Item = (K, V)>>(iter: T) -> Self {
-        {
-            let mut set = HashSet::new();
-            let iter = iter.into_iter();
-            let size_hint = iter.size_hint().0;
-            let mut res = Self {
-                vec: ThinVec::with_capacity(size_hint),
-            };
-            for (k, v) in iter {
-                if set.insert(k.clone()) {
-                    res.vec.push((k, v));
-                } else {
-                    res.insert(k, v);
-                }
-            }
-            res
+        let iter = iter.into_iter();
+        let size_hint = iter.size_hint().0;
+        let mut res = Self {
+            vec: ThinVec::with_capacity(size_hint),
+        };
+        for (k, v) in iter {
+            res.insert(k, v);
         }
+        res
     }
 }
 

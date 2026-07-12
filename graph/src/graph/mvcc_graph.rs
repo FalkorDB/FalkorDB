@@ -21,7 +21,7 @@
 //!  Reader 2 ──read()──▶ clones Arc ──▶ sees Graph v1
 //!
 //!  Writer ──write()──▶ CAS(false→true) ──▶ Graph::new_version() ──▶ Graph v2
-//!    │                                       (COW matrices, fresh AttributeStore)
+//!    │                                       (COW matrices, COW AttributeStore)
 //!    │── mutations on v2 ──▶ ...
 //!    │── commit(v2) ──▶ swap graph pointer, store(false)
 //!    │
@@ -160,6 +160,8 @@ impl MvccGraph {
             new_graph.borrow_mut().schema_version += 1;
         }
 
+        new_graph.borrow_mut().trim_attr_stores();
+
         // Use an immutable borrow here: `set_indexer_graph` only publishes
         // `new_graph` into the indexers' own `Mutex`-guarded fields. Holding
         // a mutable borrow across this call previously created a race with
@@ -168,6 +170,7 @@ impl MvccGraph {
         // on it -- if that happened before this statement's `borrow_mut()`
         // guard was dropped, it panicked with "already mutably borrowed".
         new_graph.borrow().set_indexer_graph(new_graph.clone());
+
         self.graph = new_graph;
         self.write.store(false, Ordering::Release);
     }

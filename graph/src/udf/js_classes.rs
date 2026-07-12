@@ -258,20 +258,25 @@ pub fn create_js_edge<'js>(
         .map_err(|e| format!("JS set error: {e}"))?;
 
     // .attributes - properties (runtime-aware, same fallback as the type).
-    let attrs: Vec<(Arc<String>, Value)> = match runtime {
-        Some(rt) => rt
-            .get_relationship_attrs(rid)
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect(),
-        None => graph.borrow().get_relationship_all_attrs(rid),
-    };
     let attrs_obj = Object::new(ctx.clone()).map_err(|e| format!("JS object error: {e}"))?;
-    for (attr_name, value) in &attrs {
-        let js_val = type_convert::value_to_js(ctx, value, graph, runtime)?;
-        attrs_obj
-            .set(attr_name.as_str(), js_val)
-            .map_err(|e| format!("JS set error: {e}"))?;
+    match runtime {
+        Some(rt) => {
+            for (attr_name, value) in rt.get_relationship_attrs(rid) {
+                let js_val = type_convert::value_to_js(ctx, &value, graph, runtime)?;
+                attrs_obj
+                    .set(attr_name.as_str(), js_val)
+                    .map_err(|e| format!("JS set error: {e}"))?;
+            }
+        }
+        None => {
+            let g = graph.borrow();
+            for (attr_name, value) in g.get_relationship_all_attrs(rid) {
+                let js_val = type_convert::value_to_js(ctx, &value, graph, runtime)?;
+                attrs_obj
+                    .set(attr_name.as_str(), js_val)
+                    .map_err(|e| format!("JS set error: {e}"))?;
+            }
+        }
     }
     obj.set("attributes", attrs_obj)
         .map_err(|e| format!("JS set error: {e}"))?;

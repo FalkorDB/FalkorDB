@@ -68,7 +68,10 @@ use std::{
     collections::HashMap,
     hash::Hash,
     num::NonZeroUsize,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -83,7 +86,7 @@ use roaring::RoaringTreemap;
 use crate::{
     entity_type::EntityType,
     graph::{
-        attribute_store::{AttrArray, AttributeStore},
+        attribute_store::AttributeStore,
         constraint::{Constraint, ConstraintStatus, ConstraintType},
         graphblas::{
             matrix::{
@@ -101,9 +104,7 @@ use crate::{
     },
     parser::{ast::ExprIR, cypher::Parser},
     planner::{IR, Planner, binder::Binder, optimizer::optimize},
-    runtime::{
-        eval::evaluate_param, ordermap::OrderMap, orderset::OrderSet, value::Value, vec_distance,
-    },
+    runtime::{eval::evaluate_param, orderset::OrderSet, value::Value, vec_distance},
     threadpool::spawn,
 };
 
@@ -133,7 +134,7 @@ pub struct LabelId(pub usize);
 
 /// Opaque identifier for a relationship type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct TypeId(pub(crate) usize);
+pub struct TypeId(pub usize);
 
 /// Opaque identifier for a node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -633,6 +634,34 @@ fn drop_index_bg(
     );
 }
 
+/// Default for the NODE_CREATION_BUFFER configuration; the config
+/// registration and `CONFIGURATION_NODE_CREATION_BUFFER` in the root crate
+/// reference this constant so the default lives in one place.
+pub const DEFAULT_NODE_CREATION_BUFFER: u64 = 16384;
+
+/// Effective NODE_CREATION_BUFFER configuration value: the chunk size (in
+/// entities) that matrix capacities grow by. Set once at module init from
+/// the normalized config (power of two, >= 128); immutable afterwards.
+pub static NODE_CREATION_BUFFER: AtomicU64 = AtomicU64::new(DEFAULT_NODE_CREATION_BUFFER);
+
+/// Capacity growth step for entity matrices. Sparse matrices carry a
+/// row-pointer array sized by the matrix dimension, so doubling the
+/// capacity wastes up to `4 * cap` bytes per matrix at large graph sizes.
+/// Growing 25% at a time (rounded up to a NODE_CREATION_BUFFER chunk)
+/// bounds that slop while keeping resizes rare: each resize triggers
+/// GraphBLAS format conversions costing O(entries), so smaller growth
+/// steps measurably slow bulk inserts.
+fn grow_cap(
+    mut cap: u64,
+    needed: u64,
+) -> u64 {
+    let chunk = NODE_CREATION_BUFFER.load(Ordering::Relaxed);
+    while needed > cap {
+        cap = (cap + (cap / 4).max(chunk)).next_multiple_of(chunk);
+    }
+    cap
+}
+
 impl Graph {
     #[must_use]
     pub fn new(
@@ -660,8 +689,8 @@ impl Graph {
             labels_matices: Vec::new(),
             relationship_matrices: Vec::new(),
             edge_endpoints: Vec::new(),
-            node_attrs: AttributeStore::new(version),
-            relationship_attrs: AttributeStore::new(version),
+            node_attrs: AttributeStore::new(),
+            relationship_attrs: AttributeStore::new(),
             node_indexer: Indexer::default(),
             edge_indexer: Indexer::default(),
             node_labels: Vec::new(),
@@ -712,13 +741,14 @@ impl Graph {
             }
         }
 
+        let chunk = NODE_CREATION_BUFFER.load(Ordering::Relaxed);
         let node_cap = node_count + deleted_nodes.len();
         let relationship_cap = relationship_count + deleted_relationships.len();
         let schema_version = (node_labels.len() + relationship_types.len()) as u64;
         Self {
             name: name.to_string(),
-            node_cap: node_cap.next_power_of_two().max(64),
-            relationship_cap: relationship_cap.next_power_of_two().max(64),
+            node_cap: node_cap.next_multiple_of(chunk).max(64),
+            relationship_cap: relationship_cap.next_multiple_of(chunk).max(64),
             reserved_node_count: 0,
             reserved_relationship_count: 0,
             node_count,
@@ -787,12 +817,18 @@ impl Graph {
         }
     }
 
-    #[must_use]
+    /// Reclaim attribute-arena growth slop on blocks touched by this version.
+    /// Called once at MVCC commit.
+    pub fn trim_attr_stores(&mut self) {
+        self.node_attrs.trim();
+        self.relationship_attrs.trim();
+    }
+
     pub fn new_version(&self) -> Self {
         debug_assert_eq!(self.reserved_node_count, 0);
         debug_assert_eq!(self.reserved_relationship_count, 0);
-        let node_attrs = self.node_attrs.new_version(self.version + 1);
-        let relationship_attrs = self.relationship_attrs.new_version(self.version + 1);
+        let node_attrs = self.node_attrs.new_version();
+        let relationship_attrs = self.relationship_attrs.new_version();
 
         // Tensor::dup() is copy-on-write; the graph-wide edge_endpoints vec is
         // cloned once below.
@@ -1285,9 +1321,7 @@ impl Graph {
         if let Some(max_id) = nodes.max() {
             let needed = max_id + 1;
             if needed > self.node_cap {
-                while needed > self.node_cap {
-                    self.node_cap *= 2;
-                }
+                self.node_cap = grow_cap(self.node_cap, needed);
                 self.resize_node_matrices();
             }
         }
@@ -1316,7 +1350,7 @@ impl Graph {
 
     pub fn set_nodes_attributes(
         &mut self,
-        attrs: &FxHashMap<u64, OrderMap<Arc<String>, Value>>,
+        attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) -> Result<(usize, usize), String> {
         let (nremoved, nset) = self.node_attrs.insert_attrs(attrs)?;
@@ -1325,7 +1359,10 @@ impl Graph {
             for (id, attrs) in attrs {
                 for (_, label_id) in self.node_labels_matrix.iter(*id, *id) {
                     let label = &self.node_labels[label_id as usize];
-                    for key in attrs.keys() {
+                    for (attr_id, _) in attrs {
+                        let Some(key) = self.node_attrs.attrs_name.get(*attr_id as usize) else {
+                            continue;
+                        };
                         if self.node_indexer.has_indexed_attr(label, key) {
                             index_add_docs.entry(label_id).or_default().insert(*id);
                         }
@@ -1338,7 +1375,7 @@ impl Graph {
 
     pub fn import_node_attrs(
         &mut self,
-        attrs: &FxHashMap<u64, OrderMap<Arc<String>, Value>>,
+        attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) -> usize {
         let nset = self.node_attrs.import_attrs(attrs);
@@ -1347,7 +1384,10 @@ impl Graph {
             for (id, attrs) in attrs {
                 for (_, label_id) in self.node_labels_matrix.iter(*id, *id) {
                     let label = &self.node_labels[label_id as usize];
-                    for key in attrs.keys() {
+                    for (attr_id, _) in attrs {
+                        let Some(key) = self.node_attrs.attrs_name.get(*attr_id as usize) else {
+                            continue;
+                        };
                         if self.node_indexer.has_indexed_attr(label, key) {
                             index_add_docs.entry(label_id).or_default().insert(*id);
                         }
@@ -1375,6 +1415,51 @@ impl Graph {
         self.node_attrs.get_or_create_attr_id(attr)
     }
 
+    /// Resolve a node attribute name to its index, if it exists.
+    #[must_use]
+    pub fn get_node_attr_id(
+        &self,
+        attr: &Arc<String>,
+    ) -> Option<u16> {
+        self.node_attrs
+            .attrs_name
+            .get_index_of(attr)
+            .map(|i| i as u16)
+    }
+
+    /// Node attribute name for an index.
+    #[must_use]
+    pub fn node_attr_name(
+        &self,
+        attr_id: u16,
+    ) -> Option<Arc<String>> {
+        self.node_attrs.attrs_name.get(attr_id as usize).cloned()
+    }
+
+    /// Resolve a relationship attribute name to its index, if it exists.
+    #[must_use]
+    pub fn get_rel_attr_id(
+        &self,
+        attr: &Arc<String>,
+    ) -> Option<u16> {
+        self.relationship_attrs
+            .attrs_name
+            .get_index_of(attr)
+            .map(|i| i as u16)
+    }
+
+    /// Relationship attribute name for an index.
+    #[must_use]
+    pub fn rel_attr_name(
+        &self,
+        attr_id: u16,
+    ) -> Option<Arc<String>> {
+        self.relationship_attrs
+            .attrs_name
+            .get(attr_id as usize)
+            .cloned()
+    }
+
     /// Import pre-resolved relationship attributes directly into the cache.
     pub fn import_relationship_attrs_resolved(
         &mut self,
@@ -1393,7 +1478,7 @@ impl Graph {
 
     pub fn import_relationship_attrs(
         &mut self,
-        attrs: &FxHashMap<u64, OrderMap<Arc<String>, Value>>,
+        attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
         index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) -> usize {
         let nset = self.relationship_attrs.import_attrs(attrs);
@@ -1406,7 +1491,7 @@ impl Graph {
     /// documents. Shared by the import and set paths.
     fn track_edge_index_updates(
         &self,
-        attrs: &FxHashMap<u64, OrderMap<Arc<String>, Value>>,
+        attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
         index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) {
         if !self.edge_indexer.has_indices() {
@@ -1415,7 +1500,10 @@ impl Graph {
         for (id, attrs) in attrs {
             let type_id = self.get_relationship_type_id(RelationshipId(*id));
             let type_name = &self.relationship_types[type_id.0];
-            for key in attrs.keys() {
+            for (attr_id, _) in attrs {
+                let Some(key) = self.relationship_attrs.attrs_name.get(*attr_id as usize) else {
+                    continue;
+                };
                 if self.edge_indexer.has_indexed_attr(type_name, key) {
                     index_add_edge_docs
                         .entry(type_id.0 as u64)
@@ -1845,9 +1933,7 @@ impl Graph {
         if let Some(&max_id) = rel_ids.iter().max() {
             let needed = max_id + 1;
             if needed > self.relationship_cap {
-                while needed > self.relationship_cap {
-                    self.relationship_cap *= 2;
-                }
+                self.relationship_cap = grow_cap(self.relationship_cap, needed);
                 self.resize_relationship_matrices();
             }
         }
@@ -1929,7 +2015,7 @@ impl Graph {
 
     pub fn set_relationships_attributes(
         &mut self,
-        attrs: &FxHashMap<u64, OrderMap<Arc<String>, Value>>,
+        attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
         index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) -> Result<(usize, usize), String> {
         let (nremoved, nset) = self.relationship_attrs.insert_attrs(attrs)?;
@@ -2496,9 +2582,7 @@ impl Graph {
 
     fn resize(&mut self) {
         if self.node_count > self.node_cap {
-            while self.node_count > self.node_cap {
-                self.node_cap *= 2;
-            }
+            self.node_cap = grow_cap(self.node_cap, self.node_count);
             self.resize_node_matrices();
         }
 
@@ -2508,9 +2592,7 @@ impl Graph {
         }
 
         if self.relationship_count > self.relationship_cap {
-            while self.relationship_count > self.relationship_cap {
-                self.relationship_cap *= 2;
-            }
+            self.relationship_cap = grow_cap(self.relationship_cap, self.relationship_count);
             self.resize_relationship_matrices();
         }
 
@@ -2531,15 +2613,24 @@ impl Graph {
     pub fn get_node_all_attrs(
         &self,
         id: NodeId,
-    ) -> Vec<(Arc<String>, Value)> {
+    ) -> impl Iterator<Item = (Arc<String>, Value)> + '_ {
         self.node_attrs.get_all_attrs(id.0)
     }
 
     pub fn get_node_all_attrs_by_id(
         &self,
         id: NodeId,
-    ) -> AttrArray {
+    ) -> impl Iterator<Item = (u16, Value)> + '_ {
         self.node_attrs.get_all_attrs_by_id(id.0)
+    }
+
+    /// Number of attributes stored for a node (0 if none).
+    #[must_use]
+    pub fn get_node_attr_count(
+        &self,
+        id: NodeId,
+    ) -> usize {
+        self.node_attrs.attr_count(id.0)
     }
 
     pub fn get_relationship_attrs(
@@ -2553,15 +2644,24 @@ impl Graph {
     pub fn get_relationship_all_attrs(
         &self,
         id: RelationshipId,
-    ) -> Vec<(Arc<String>, Value)> {
+    ) -> impl Iterator<Item = (Arc<String>, Value)> + '_ {
         self.relationship_attrs.get_all_attrs(id.0)
     }
 
     pub fn get_relationship_all_attrs_by_id(
         &self,
         id: RelationshipId,
-    ) -> AttrArray {
+    ) -> impl Iterator<Item = (u16, Value)> + '_ {
         self.relationship_attrs.get_all_attrs_by_id(id.0)
+    }
+
+    /// Number of attributes stored for a relationship (0 if none).
+    #[must_use]
+    pub fn get_relationship_attr_count(
+        &self,
+        id: RelationshipId,
+    ) -> usize {
+        self.relationship_attrs.attr_count(id.0)
     }
 
     pub fn create_index(
@@ -2724,24 +2824,6 @@ impl Graph {
             self.edge_indexer
                 .release_population_ticket(&snapshot.ticket);
         }
-    }
-
-    pub fn commit_attrs(&mut self) -> Result<(), String> {
-        self.node_attrs.commit()?;
-        self.relationship_attrs.commit()?;
-        Ok(())
-    }
-
-    /// Invalidate dirty cache entries written during a failed write transaction.
-    pub fn rollback_cache(&mut self) {
-        self.node_attrs.rollback_cache();
-        self.relationship_attrs.rollback_cache();
-    }
-
-    /// Drop rollback-saved state after a query commits successfully.
-    pub fn clear_rollback_state(&mut self) {
-        self.node_attrs.clear_rollback_state();
-        self.relationship_attrs.clear_rollback_state();
     }
 
     pub fn commit_index(
@@ -3325,11 +3407,10 @@ impl Graph {
                     return true;
                 };
                 for (node_id, _) in lm.iter(0, u64::MAX) {
-                    let attrs = self.get_node_all_attrs(NodeId(node_id));
                     for prop in &constraint.properties {
-                        if !attrs
-                            .iter()
-                            .any(|(name, val)| name == prop && !matches!(val, Value::Null))
+                        if !self
+                            .get_node_attribute(NodeId(node_id), prop)
+                            .is_some_and(|val| !matches!(val, Value::Null))
                         {
                             return false;
                         }
@@ -3342,11 +3423,10 @@ impl Graph {
                     return true;
                 };
                 for (_, _, edge_id) in tensor.iter(0, u64::MAX, false) {
-                    let attrs = self.get_relationship_all_attrs(RelationshipId(edge_id));
                     for prop in &constraint.properties {
-                        if !attrs
-                            .iter()
-                            .any(|(name, val)| name == prop && !matches!(val, Value::Null))
+                        if !self
+                            .get_relationship_attribute(RelationshipId(edge_id), prop)
+                            .is_some_and(|val| !matches!(val, Value::Null))
                         {
                             return false;
                         }
@@ -3368,8 +3448,9 @@ impl Graph {
                 };
                 let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
                 for (node_id, _) in lm.iter(0, u64::MAX) {
-                    let attrs = self.get_node_all_attrs(NodeId(node_id));
-                    let key = Self::build_composite_key(&constraint.properties, &attrs);
+                    let key = Self::build_composite_key(&constraint.properties, |prop| {
+                        self.get_node_attribute(NodeId(node_id), prop)
+                    });
                     if key.is_empty() {
                         continue; // All NULL → skip
                     }
@@ -3385,8 +3466,9 @@ impl Graph {
                 };
                 let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
                 for (_, _, edge_id) in tensor.iter(0, u64::MAX, false) {
-                    let attrs = self.get_relationship_all_attrs(RelationshipId(edge_id));
-                    let key = Self::build_composite_key(&constraint.properties, &attrs);
+                    let key = Self::build_composite_key(&constraint.properties, |prop| {
+                        self.get_relationship_attribute(RelationshipId(edge_id), prop)
+                    });
                     if key.is_empty() {
                         continue;
                     }
@@ -3402,13 +3484,12 @@ impl Graph {
     #[must_use]
     pub fn build_composite_key(
         properties: &[Arc<String>],
-        attrs: &[(Arc<String>, Value)],
+        mut get: impl FnMut(&Arc<String>) -> Option<Value>,
     ) -> Vec<u8> {
         let mut all_null = true;
         let mut key = Vec::new();
         for prop in properties {
-            let value = attrs.iter().find(|(name, _)| name == prop).map(|(_, v)| v);
-            match value {
+            match get(prop) {
                 Some(v) if !matches!(v, Value::Null) => {
                     all_null = false;
                     key.extend_from_slice(format!("{v:?}").as_bytes());
@@ -3558,27 +3639,6 @@ impl Graph {
         }
     }
 
-    #[must_use]
-    pub fn memory_usage(&self) -> usize {
-        let mut size = 0usize;
-        size += self.adjacancy_matrix.memory_usage();
-        size += self.node_labels_matrix.memory_usage();
-        size += self.relationship_type_matrix.memory_usage();
-        size += self.all_nodes_matrix.memory_usage();
-        for label_matrix in &self.labels_matices {
-            size += label_matrix.memory_usage();
-        }
-        for relationship_matrix in &self.relationship_matrices {
-            size += relationship_matrix.memory_usage();
-        }
-        size += self.node_attrs.memory_usage();
-        // Graph-wide edge_id → compound_key reverse index: one u64 per edge slot.
-        size += self.edge_endpoints.capacity() * std::mem::size_of::<u64>();
-        // size += self.relationship_attrs.memory_usage();
-        // size += self.node_indexer.memory_usage();
-        size
-    }
-
     /// Compute a detailed breakdown of memory usage for `GRAPH.MEMORY USAGE`.
     ///
     /// `samples` controls how many entities are sampled per label/type when
@@ -3605,12 +3665,12 @@ impl Graph {
 
         // --- node block storage ---
         let node_block_storage_sz: usize =
-            self.node_attrs.structural_memory_usage() + self.deleted_nodes.serialized_size();
+            self.node_attrs.memory_usage() + self.deleted_nodes.serialized_size();
 
         // --- edge block storage ---
         // Includes the graph-wide edge_id → compound_key reverse index, a dense
         // vector holding one u64 per edge slot.
-        let edge_block_storage_sz: usize = self.relationship_attrs.structural_memory_usage()
+        let edge_block_storage_sz: usize = self.relationship_attrs.memory_usage()
             + self.deleted_relationships.serialized_size()
             + self.edge_endpoints.capacity() * std::mem::size_of::<u64>();
 
@@ -3738,11 +3798,7 @@ impl Graph {
         store: &AttributeStore,
         entity_id: u64,
     ) -> usize {
-        let mut sz: usize = 0;
-        for (_, val) in store.get_all_attrs_by_id(entity_id).iter() {
-            sz += std::mem::size_of::<u16>() + std::mem::size_of::<Value>() + val.heap_size();
-        }
-        sz
+        store.entity_memory_usage(entity_id)
     }
 
     /// Encode a single payload entry.
