@@ -1,18 +1,19 @@
-# One-shot vector-index diagnostic. Reproduces the benchmark's fixture-dependent
-# vector-index setup at the tool's real scale (~10k nodes, ~103 embeddings) ON
-# THE REAL GCE hardware (n4 / Intel AVX-512 and c4a / Axion SVE) and dumps
-# `db.indexes()` — for BOTH the C `edge` engine and the Rust `edge-rs` engine on
-# the SAME VM.
+# One-shot vector-index diagnostic. Runs the REAL FalkorDB/benchmark tool's
+# fixture-dependent load ON THE GCE hardware (n4 / Intel AVX-512 and c4a / Axion
+# SVE2) against the C `edge` and Rust `edge-rs` images, and — while the tool's
+# pooled readiness check runs — polls a FRESH single connection's vector KNN
+# probe every few seconds.
 #
-# Why C-vs-Rust on the same box: both engines link the SAME VecSim (same spaces/
-# SIMD kernels), yet C's KNN probe returns 0 while Rust returns hits on identical
-# hardware — so the bug is NOT VecSim/SIMD, it's how the C engine drives VecSim's
-# tiered/async vector ingestion. The decisive field is `numDocuments`: if C shows
-# 0 while Rust shows ~103 on the same VM, it's a C-side ingestion issue (a
-# background-writer race on the 16-vCPU VM), not the search kernel.
+# The whole point: the exact fixture passes via redis-cli AND via the real tool
+# on macOS, but the tool fails only on GCE against `edge`. This isolates the last
+# question: while the tool's pooled connection reports vector_hits=0, does a
+# fresh connection see the vectors?
+#   fresh probe > 0  → vectors ARE ingested; the tool's connection can't see them
+#                      → a C-engine cross-connection visibility issue.
+#   fresh probe = 0  → vectors never became searchable → async ingestion failure.
 #
 # Trigger: add the `vecdiag` label to a PR (same-repo branches only), or run
-# manually once this is on the default branch. Runs on both arches by default.
+# manually once this is on the default branch.
 name: Vector index diagnostic (GCE)
 
 on:
@@ -33,6 +34,10 @@ permissions:
 concurrency:
   group: vecdiag-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
+
+env:
+  BENCHMARK_REPO: FalkorDB/benchmark
+  BENCHMARK_REF: deca7752cbd8cdeb333493569472ede385d5b5db # v2.2
 
 jobs:
   setup:
@@ -93,82 +98,94 @@ jobs:
       matrix:
         arch: ${{ fromJSON(needs.setup.outputs.arches) }}
     runs-on: vecdiag-${{ github.run_id }}-${{ github.run_number }}-${{ matrix.arch }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     permissions:
       contents: read
+    env:
+      HOME: /root
     steps:
-      - name: Probe vector index — C vs Rust (${{ matrix.arch }})
+      - name: Install toolchain deps
         run: |
-          # No `set -e`: run every diagnostic query even if one errors.
+          set -euo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            git curl ca-certificates build-essential pkg-config libssl-dev protobuf-compiler
+      - name: Install Rust
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain stable --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Checkout FalkorDB/benchmark@${{ env.BENCHMARK_REF }}
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ env.BENCHMARK_REPO }}
+          ref: ${{ env.BENCHMARK_REF }}
+          path: benchmark-tool
+          persist-credentials: false
+      - name: Build tool + run REAL fixture load, poll fresh-conn probe (${{ matrix.arch }})
+        run: |
+          # No set -e: keep going through diagnostics even on a query error.
           set -uo pipefail
           ARCH="${{ matrix.arch }}"
-
-          echo "::group::Host CPU features (arch=$ARCH)"
-          uname -m
+          echo "::group::Host CPU (arch=$ARCH)"
+          uname -m; echo "nproc=$(nproc)"
           grep -m1 -Ei '^flags|^Features' /proc/cpuinfo | tr ' ' '\n' \
-            | grep -iE 'avx512|^sve$|sve2|asimd|neon' | sort -u | tr '\n' ' '; echo
-          echo "nproc=$(nproc)"
+            | grep -iE 'avx512|^sve$|sve2|asimd' | sort -u | tr '\n' ' '; echo
           echo "::endgroup::"
 
-          # Run the fixture-dependent setup at the tool's real scale against one
-          # image and dump db.indexes().
-          probe_image() {
-            IMG="$1"; NAME="vecdiag-$(echo "$IMG" | tr '/:.' '___')"; PORT=16399
-            echo "::group::### $IMG  (arch=$ARCH)"
+          echo "::group::Build benchmark tool"
+          cd "$GITHUB_WORKSPACE/benchmark-tool"
+          grep -q '^\[workspace\]' Cargo.toml || printf '\n[workspace]\n' >> Cargo.toml
+          cargo build --release --bin benchmark
+          echo "::endgroup::"
+
+          # Run the REAL tool's fixture-dependent load against one image, while a
+          # background loop polls a FRESH connection's vector probe each 5s.
+          run_tool() {
+            IMG="$1"; NAME="vt-$(echo "$IMG" | tr '/:.' '___')"; PORT=16399
+            echo "::group::### REAL TOOL vs $IMG (arch=$ARCH)"
             docker rm -f "$NAME" >/dev/null 2>&1 || true
             docker pull "$IMG" >/dev/null 2>&1 || docker pull "$IMG"
             docker run -d --name "$NAME" -p "${PORT}:6379" "$IMG" >/dev/null
-            for _ in $(seq 1 60); do
+            for _ in $(seq 1 40); do
               docker exec "$NAME" redis-cli PING 2>/dev/null | grep -q PONG && break; sleep 1
             done
-            docker exec "$NAME" redis-cli PING
-            Q() { docker exec "$NAME" redis-cli GRAPH.QUERY vg "$1"; }
-            # FULL benchmark fixture: real Pokec-scale graph (10k Users + ~120k
-            # Friend edges) + the id index + bench_capacity backfill + node/rel
-            # full-text indexes + vector index, THEN the seeds — matching the
-            # tool's fixture-dependent load, so the vector ingestion runs amid
-            # the same concurrent edge-indexing/backfill work.
-            echo "[$(date +%T)] load 10k User nodes"
-            Q "UNWIND range(0, 9999) AS i CREATE (:User {id:i, age:(i % 80) + 15})" >/dev/null
-            Q "CREATE INDEX FOR (u:User) ON (u.id)" >/dev/null
-            sleep 3
-            echo "[$(date +%T)] create ~120k Friend edges"
-            Q "UNWIND range(0,9999) AS i UNWIND range(1,12) AS k MATCH (a:User {id:i}), (b:User {id:(i*7 + k*13) % 10000}) WHERE a <> b CREATE (a)-[:Friend]->(b)" >/dev/null
-            echo '--- Friend edge count ---'; Q "MATCH ()-[e:Friend]->() RETURN count(e)"
-            echo "[$(date +%T)] bench_capacity backfill over all Friend edges"
-            Q "MATCH (n:User)-[e:Friend]->(m:User) SET e.bench_capacity = coalesce(e.bench_capacity, 1 + ((n.id*31 + m.id*17) % 20))" >/dev/null
-            echo "[$(date +%T)] create node/rel full-text + vector indexes, then seed"
-            Q "CREATE FULLTEXT INDEX FOR (l:User) ON (l.ft_text)" >/dev/null
-            Q "CREATE FULLTEXT INDEX FOR ()-[l:Friend]->() ON (l.ft_text)" >/dev/null
-            Q "CREATE VECTOR INDEX FOR (l:User) ON (l.embedding) OPTIONS {dimension:3, similarityFunction:'cosine'}" >/dev/null
-            Q "MATCH (u:User) WHERE u.id % 97 = 0 SET u.ft_text = 'fixture_alice user_' + toString(u.id), u.embedding = vecf32([toFloat((u.id % 10)+1)/10.0, toFloat(((u.id+3)%10)+1)/10.0, toFloat(((u.id+6)%10)+1)/10.0])" >/dev/null
-            Q "MATCH (s:User)-[r:Friend]->(d:User) WHERE s.id % 97 = 0 SET r.ft_text = 'fixture_blue edge_' + toString(s.id) + '_' + toString(d.id)" >/dev/null
-            echo "[$(date +%T)] probe"
-            echo '--- embedding property count (expect ~103) ---'
-            Q "MATCH (u:User) WHERE u.embedding IS NOT NULL RETURN count(u)"
-            echo '--- VECTOR probe count(node) — the failing check ---'
-            Q "CALL db.idx.vector.queryNodes('User','embedding',1, vecf32([0.1,0.2,0.3])) YIELD node, score RETURN count(node)"
-            echo '--- FULLTEXT node probe count — control ---'
-            Q "CALL db.idx.fulltext.queryNodes('User','fixture_alice') YIELD node RETURN count(node)"
-            echo '--- FULLTEXT rel probe count — control ---'
-            Q "CALL db.idx.fulltext.queryRelationships('Friend','fixture_blue') YIELD edge RETURN count(edge)"
-            echo '--- db.indexes() — KEY: numDocuments / indexingFailures / status ---'
-            Q "CALL db.indexes()"
-            echo '--- retry VECTOR probe after 10s (async-build check) ---'
-            sleep 10
-            Q "CALL db.idx.vector.queryNodes('User','embedding',1, vecf32([0.1,0.2,0.3])) YIELD node, score RETURN count(node)"
-            echo '--- db.indexes() again (did numDocuments change?) ---'
-            Q "CALL db.indexes()"
-            echo '--- server log tail ---'
-            docker logs "$NAME" 2>&1 | tail -30
+
+            # FRESH-connection poller: each iteration is a brand-new redis-cli
+            # connection. If this reports vector_probe>0 while the tool's pooled
+            # readiness reports vector_hits=0, it's a cross-connection visibility
+            # issue; if this also stays 0, the vectors never got ingested.
+            (
+              for i in $(seq 1 90); do
+                p=$(docker exec "$NAME" redis-cli GRAPH.QUERY falkor "CALL db.idx.vector.queryNodes('User','embedding',1, vecf32([0.1,0.2,0.3])) YIELD node RETURN count(node)" 2>/dev/null | grep -oE '\(integer\) [0-9]+' | grep -oE '[0-9]+$')
+                e=$(docker exec "$NAME" redis-cli GRAPH.QUERY falkor "MATCH (u:User) WHERE u.embedding IS NOT NULL RETURN count(u)" 2>/dev/null | grep -oE '\(integer\) [0-9]+' | grep -oE '[0-9]+$')
+                echo "  [poll $i] FRESH-conn vector_probe=${p:-NA}  embedding_prop=${e:-NA}"
+                sleep 5
+              done
+            ) &
+            POLLPID=$!
+
+            rc=0
+            ./target/release/benchmark load --vendor falkor --size small \
+              --endpoint "falkor://127.0.0.1:${PORT}" -b 5000 --query-profile fixture-dependent \
+              > "/tmp/load_${NAME}.log" 2>&1 || rc=$?
+            kill "$POLLPID" 2>/dev/null || true
+            echo ">>> TOOL LOAD exit code: $rc  (non-zero => reproduced the failure)"
+            echo "--- tool load log tail (readiness lines) ---"
+            grep -iE 'post-phase fixtures|vector_hits|Timed out|imported|ready after' "/tmp/load_${NAME}.log" | tail -20
+
+            echo "--- FINAL fresh-connection probe + db.indexes ---"
+            echo -n "  fresh vector_probe: "; docker exec "$NAME" redis-cli GRAPH.QUERY falkor "CALL db.idx.vector.queryNodes('User','embedding',1, vecf32([0.1,0.2,0.3])) YIELD node RETURN count(node)" 2>&1 | grep -oE '\(integer\) [0-9]+' | head -1
+            echo -n "  embedding prop count: "; docker exec "$NAME" redis-cli GRAPH.QUERY falkor "MATCH (u:User) WHERE u.embedding IS NOT NULL RETURN count(u)" 2>&1 | grep -oE '\(integer\) [0-9]+' | head -1
+            docker exec "$NAME" redis-cli GRAPH.QUERY falkor "CALL db.indexes()" 2>&1 | grep -E 'numDocuments|indexingFailures' | head
             docker rm -f "$NAME" >/dev/null 2>&1 || true
             echo "::endgroup::"
           }
 
-          # Same VecSim, same VM: C engine (fails?) vs Rust engine (control).
-          probe_image "docker.io/falkordb/falkordb-server:edge"
-          probe_image "ghcr.io/falkordb/falkordb-server:edge-rs"
-          echo "vecdiag done for arch=$ARCH"
+          run_tool "docker.io/falkordb/falkordb-server:edge"      # C engine — expected to fail on GCE
+          run_tool "ghcr.io/falkordb/falkordb-server:edge-rs"     # Rust engine — control (passes)
+          echo "vecdiag(tool) done for arch=$ARCH"
 
   cleanup-runners:
     needs: [setup, diagnose]
