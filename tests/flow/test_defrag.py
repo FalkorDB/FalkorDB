@@ -1,6 +1,7 @@
 import time
 import redis
 import random
+import string
 import datetime
 import threading
 from dateutil.relativedelta import relativedelta
@@ -294,3 +295,204 @@ class testDefrag():
                     conn.config_set(k, v)
                 except Exception:
                     pass
+
+# Regression test for a use-after-free between Redis active defragmentation and
+# staged SET / ON MATCH SET updates.
+#
+# A staged update builds its pending attribute-set with AttributeSet_ShallowClone
+# (staged_updates.c): the unchanged heap-valued attributes only *alias* the live
+# set. The staged set is created under the graph READ lock but committed *after*
+# the writer's read->write lock-upgrade gap (query_ctx.c). Active defrag runs on
+# the main thread and relocates the live attribute-set values inside that gap, so
+# at commit AttributeSet_TransferOwnership sees a stale pointer:
+#   - debug build   -> assertion abort at attribute_set.c:903
+#   - release build -> a dangling pointer is installed -> SIGSEGV
+#
+# The #1834 read-lock fix protects the *match* phase but NOT this staged-set
+# aliasing across the upgrade gap, so this test currently REPRODUCES the crash on
+# master. It should pass once staged updates deep-persist their borrowed values
+# (AttributeSet_Clone instead of ShallowClone) before the lock upgrade.
+#
+# This is a *soak-style* reproduction of a timing race: it drives concurrent
+# writers + fragmentation across several graphs under aggressive active defrag
+# and waits for the crash (which lands within tens of seconds on master).
+#
+# Requires a jemalloc redis-server (active defrag is a no-op under libc malloc,
+# e.g. stock macOS) -> the test skips otherwise.
+
+GRAPH_PREFIX = "defrag_staged"
+NUM_GRAPHS = 6
+STR_PROPS = ["s0", "s1", "s2", "s3", "s4", "s5"]
+
+def _rnd(n):
+    return "".join(random.choices(string.ascii_letters + string.digits, k=n))
+
+class testDefragStagedUpdate():
+    def __init__(self):
+        self.env, self.db = Env(enableDebugCommand=True)
+        self.conn = self.env.getConnection()
+
+    def test_staged_update_uaf_during_defrag(self):
+        test_start = time.time()  # bound total test time (setup + soak) to ~10s
+        conn = self.conn
+        # fewer distinct names => more writer/defrag contention on each entity
+        names = [f"e{i}" for i in range(80)]
+        graph_ids = [f"{GRAPH_PREFIX}_{i}" for i in range(NUM_GRAPHS)]
+
+        #----------------------------------------------------------------------
+        # 1. Seed entities carrying several string properties + a blob, so a
+        #    single-property SET carries the *other* heap values over as
+        #    shallow-cloned (aliasing) attributes -- the UAF trigger. Spread
+        #    across several graphs to give defrag more memory to relocate.
+        #----------------------------------------------------------------------
+
+        sets = ", ".join([f"n.{sp}=${sp}" for sp in STR_PROPS])
+        for gid in graph_ids:
+            g = self.db.select_graph(gid)
+            try:
+                g.query("CREATE INDEX FOR (n:Ent) ON (n.name)")
+            except ResponseError:
+                pass
+            for nm in names:
+                p = {"name": nm, "blob": _rnd(1024)}
+                for sp in STR_PROPS:
+                    p[sp] = _rnd(random.randint(64, 256))
+                g.query(f"MERGE (n:Ent {{name:$name}}) SET {sets}, n.blob=$blob", p)
+            # churn to fragment the heap
+            g.query("UNWIND range(0, 800) AS i CREATE (:Frag {i:i, s:'frag_' + toString(i)})")
+            g.query("MATCH (n:Frag) WHERE n.i % 2 = 0 DELETE n")
+        conn.execute_command("MEMORY PURGE")
+
+        #----------------------------------------------------------------------
+        # 2. Enable aggressive active defrag (skip if unsupported / not jemalloc)
+        #----------------------------------------------------------------------
+
+        # `hz` is the dominant lever: it sets how often serverCron (and thus the
+        # defrag cycle) fires. RLTest launches redis at the default hz=10; bump it
+        # so defrag runs ~every 10ms and reliably lands in a writer's upgrade gap.
+        keys = ["activedefrag", "active-defrag-threshold-lower",
+                "active-defrag-threshold-upper", "active-defrag-ignore-bytes",
+                "active-defrag-cycle-min", "active-defrag-cycle-max", "hz"]
+        original_cfg = {}
+        for k in keys:
+            try:
+                original_cfg.update(conn.config_get(k))
+            except ResponseError:
+                pass
+
+        try:
+            conn.config_set("hz", "100")
+            conn.config_set("activedefrag", "yes")
+            conn.config_set("active-defrag-ignore-bytes", "100kb")
+            conn.config_set("active-defrag-threshold-lower", "1")
+            conn.config_set("active-defrag-threshold-upper", "1")
+            conn.config_set("active-defrag-cycle-min", "25")
+            conn.config_set("active-defrag-cycle-max", "75")
+        except ResponseError:
+            self.env.skip()
+            return
+
+        if "jemalloc" not in conn.info("memory").get("mem_allocator", ""):
+            self.env.skip()  # active defrag can't relocate under libc malloc
+            return
+
+        #----------------------------------------------------------------------
+        # 3. Concurrent staged-SET writers while defrag relocates memory
+        #----------------------------------------------------------------------
+
+        stop = threading.Event()
+        crashed = threading.Event()
+        errors = []
+
+        def writer(tid):
+            graphs = [self.db.select_graph(gid) for gid in graph_ids]
+            while not stop.is_set():
+                r = random.random()
+                nm = random.choice(names)
+                tg = random.choice(graphs)
+                try:
+                    if r < 0.5:
+                        # first-writer SET of ONE string; carries s1..s5+blob as aliases
+                        sp = random.choice(STR_PROPS)
+                        tg.query(f"MATCH (n:Ent {{name:$name}}) SET n.{sp}=$v RETURN ID(n)",
+                                 {"name": nm, "v": _rnd(random.randint(48, 192))})
+                    elif r < 0.8:
+                        # borrow-and-set: read one heap value, write another
+                        a, b = random.sample(STR_PROPS, 2)
+                        tg.query(f"MATCH (n:Ent {{name:$name}}) SET n.{a} = n.{b}", {"name": nm})
+                    else:
+                        tg.query("MERGE (n:Ent {name:$name}) ON MATCH SET n.tag=$t",
+                                 {"name": nm, "t": _rnd(random.randint(48, 160))})
+                except redis.exceptions.ResponseError:
+                    pass  # cypher/runtime error, not a crash
+                except Exception as e:  # noqa: BLE001
+                    if "connection" in str(e).lower() or isinstance(
+                            e, (redis.exceptions.ConnectionError, ConnectionResetError)):
+                        crashed.set()
+                        errors.append(f"t{tid}: server crashed: {e}")
+                        return
+                    errors.append(f"t{tid}: {e}")
+
+        def churn():
+            # Create nodes carrying several big blobs in the SAME jemalloc size
+            # classes as the Ent string/blob properties, then delete most. This
+            # fragments those classes so active defrag actually *relocates* the
+            # Ent attribute values a committing writer aliases (not just scans).
+            graphs = [self.db.select_graph(gid) for gid in graph_ids]
+            props = ", ".join([f"b{j}:$b{j}" for j in range(8)])
+            i = 0
+            while not stop.is_set():
+                cg = random.choice(graphs)
+                try:
+                    p = {f"b{j}": _rnd(random.randint(64, 1024)) for j in range(8)}
+                    cg.query(f"UNWIND range(0,20) AS x CREATE (:Frag {{x:x, {props}}})", p)
+                    cg.query("MATCH (n:Frag) WITH n LIMIT 12 DELETE n")
+                    i += 1
+                    if i % 5 == 0:            # purge occasionally, not every cycle
+                        conn.execute_command("MEMORY PURGE")
+                except redis.exceptions.ResponseError:
+                    pass
+                except Exception:  # noqa: BLE001
+                    return
+                time.sleep(0.01)
+
+        threads = [threading.Thread(target=writer, args=(t,), daemon=True) for t in range(12)]
+        threads += [threading.Thread(target=churn, daemon=True) for _ in range(3)]
+        for th in threads:
+            th.start()
+
+        try:
+            # soak for a crash, but keep the *whole* test (setup included) under
+            # ~10s -- deadline is anchored to test_start, not to "now".
+            deadline = test_start + 10
+            while time.time() < deadline and not crashed.is_set():
+                try:
+                    conn.ping()
+                except Exception:  # noqa: BLE001
+                    crashed.set()
+                    break
+                time.sleep(0.5)
+
+            stop.set()
+            for th in threads:
+                th.join(timeout=5)
+
+            #------------------------------------------------------------------
+            # 4. The server must still be alive (no defrag-induced UAF)
+            #------------------------------------------------------------------
+            self.env.assertFalse(crashed.is_set())
+            self.env.assertTrue(conn.ping())
+            res = self.db.select_graph(graph_ids[0]).query(
+                "MATCH (n:Ent) RETURN count(n)").result_set
+            self.env.assertGreater(res[0][0], 0)
+
+        finally:
+            stop.set()
+            for th in threads:
+                th.join(timeout=5)
+            for k, v in original_cfg.items():
+                try:
+                    conn.config_set(k, v)
+                except Exception:  # noqa: BLE001
+                    pass
+
