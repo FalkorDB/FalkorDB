@@ -323,23 +323,17 @@ impl<'a> ExprEval<'a> {
             ExprIR::MapProjection => {
                 return self.eval_map_projection(ir, idx, env, agg_group_key);
             }
-            ExprIR::ShortestPath {
-                rel_types,
-                min_hops,
-                max_hops,
-                directed,
-                all_paths,
-            } => {
+            ExprIR::ShortestPath(info) => {
                 return self.eval_shortest_path(
                     ir,
                     idx,
                     env,
                     agg_group_key,
-                    rel_types,
-                    *min_hops,
-                    *max_hops,
-                    *directed,
-                    *all_paths,
+                    &info.rel_types,
+                    info.min_hops,
+                    info.max_hops,
+                    info.directed,
+                    info.all_paths,
                 );
             }
             // Property access (`n.prop`) is the most common non-leaf expression
@@ -868,10 +862,8 @@ impl<'a> ExprEval<'a> {
 
                     res.push(Value::List(Arc::new(acc)));
                 }
-                ExprIR::Reduce {
-                    accumulator: acc_var,
-                    iterator: iter_var,
-                } => {
+                ExprIR::Reduce(vars) => {
+                    let (acc_var, iter_var) = (&vars.accumulator, &vars.iterator);
                     // child[0] = init, child[1] = list, child[2] = body
                     let init = self.eval(ir, node.child(0).idx(), env, agg_group_key)?;
                     let list = self.eval(ir, node.child(1).idx(), env, agg_group_key)?;
@@ -906,7 +898,7 @@ impl<'a> ExprEval<'a> {
                 ExprIR::Pattern(_) => {
                     unreachable!("Pattern should be handled by the planner")
                 }
-                ExprIR::ShortestPath { .. } => {
+                ExprIR::ShortestPath(_) => {
                     unreachable!("ShortestPath should be handled in the early-return section")
                 }
             }

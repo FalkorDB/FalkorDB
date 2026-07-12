@@ -373,6 +373,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
 };
+use thin_vec::ThinVec;
 
 pub type ProcedureBatch = Batch<'static>;
 
@@ -502,11 +503,21 @@ pub enum Type {
     Time,
     Duration,
     Any,
-    Union(Vec<Self>),
+    /// `ThinVec` (single pointer, len/cap in the heap header) keeps this
+    /// variant pointer-sized so `Type` is 16 bytes instead of 32; `Type`
+    /// is embedded in every `Variable`, which in turn caps
+    /// `ExprIR<Variable>` — the node type of every cached-plan expression
+    /// tree. Construct via [`Type::union`].
+    Union(ThinVec<Self>),
     Optional(Box<Self>),
 }
 
 impl Type {
+    #[must_use]
+    pub fn union(types: impl IntoIterator<Item = Self>) -> Self {
+        Self::Union(types.into_iter().collect())
+    }
+
     /// Returns true if this type can include a boolean value.
     /// This mirrors `AR_EXP_ReturnsBoolean` in the C implementation:
     /// returns true if the type is Bool, Null, Any, or a Union/Optional
