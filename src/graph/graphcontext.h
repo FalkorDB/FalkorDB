@@ -176,6 +176,12 @@ void *GraphContext_DequeueWriteQuery
 	GraphContext *gc  // graph context
 );
 
+// asynchronously drain write queries queue
+void GraphContext_AsyncDrainWriteQueries
+(
+	GraphContext *gc  // graph context
+);
+
 // checks if the graph's pending write queue is empty
 bool GraphContext_WriteQueueEmpty
 (

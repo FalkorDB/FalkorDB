@@ -496,3 +496,108 @@ class testDefragStagedUpdate():
                 except Exception:  # noqa: BLE001
                     pass
 
+
+# Regression test: active defrag must not orphan a delegated write.
+#
+# A write delegated to the queue while defrag transiently owns the write election
+# was never drained (defrag runs on the main thread and doesn't drain the queue),
+# so the client hung forever. Stream a CREATE load while aggressive defrag churns
+# the same graph; assert it finishes (no hang) with every write landed once.
+# Requires jemalloc (active defrag is a no-op under libc malloc).
+
+class testDefragWriteHang():
+    def __init__(self):
+        self.env, self.db = Env(enableDebugCommand=True)
+        self.conn = self.env.getConnection()
+
+    def test_write_not_orphaned_during_defrag(self):
+        conn = self.conn
+
+        # active defrag is a no-op without jemalloc (e.g. sanitizer/libc builds);
+        # skip up-front, before the expensive fragmentation setup
+        if "jemalloc" not in conn.info("memory").get("mem_allocator", ""):
+            self.env.skip()
+            return
+
+        gname = "defrag_write_hang"
+        g = self.db.select_graph(gname)
+
+        # fragment the SAME graph the loader writes to, so defrag keeps
+        # relocating its memory while writes stream in (the orphan trigger)
+        for _ in range(40):
+            g.query("UNWIND range(0, 4000) AS x "
+                    "CREATE (:Seed {x:x, s0:'a_' + toString(x), "
+                    "s1:'b_' + toString(x * 3), s2:'c_' + toString(x * 7)})"
+                    "-[:LINK {w:'e_' + toString(x)}]->(:Seed {x:-x})")
+        g.query("MATCH (n:Seed) WHERE n.x % 4 <> 0 DELETE n")
+        conn.execute_command("MEMORY PURGE")
+
+        # snapshot config we're about to change so the finally can restore it
+        keys = ["activedefrag", "active-defrag-threshold-lower",
+                "active-defrag-threshold-upper", "active-defrag-ignore-bytes",
+                "active-defrag-cycle-min", "active-defrag-cycle-max", "hz"]
+        original_cfg = {}
+        for k in keys:
+            original_cfg.update(conn.config_get(k))
+
+        BATCHES = 150
+        BATCH   = 5000
+        t = None
+        # one outer try/finally so config is always restored, even on a partial
+        # config_set failure or an assertion failure
+        try:
+            try:
+                conn.config_set("hz", "100")            # fires defrag ~every 10ms
+                conn.config_set("activedefrag", "yes")
+                conn.config_set("active-defrag-ignore-bytes", "1")
+                conn.config_set("active-defrag-threshold-lower", "1")
+                conn.config_set("active-defrag-threshold-upper", "1")
+                conn.config_set("active-defrag-cycle-min", "25")
+                conn.config_set("active-defrag-cycle-max", "75")
+            except ResponseError:
+                self.env.skip()
+                return
+
+            # stream the load on a thread; an orphaned batch blocks it forever,
+            # which the bounded wait on `done` below detects
+            state = {"completed": 0, "error": None}
+            done = threading.Event()
+
+            def loader():
+                try:
+                    wg = self.db.select_graph(gname)
+                    for b in range(BATCHES):
+                        lo = b * BATCH
+                        wg.query(
+                            "UNWIND range($lo, $hi) AS i CREATE (:Node {id:i})",
+                            {"lo": lo, "hi": lo + BATCH - 1})
+                        state["completed"] = b + 1
+                except Exception as e:  # noqa: BLE001
+                    state["error"] = str(e)
+                finally:
+                    done.set()
+
+            t = threading.Thread(target=loader, daemon=True)
+            t.start()
+
+            # a healthy load returns in seconds; only a hang waits out the deadline
+            finished = done.wait(timeout=90)
+
+            # load must complete (no hung write) ...
+            self.env.assertTrue(finished)            # False => a write hung
+            self.env.assertIsNone(state["error"])
+            self.env.assertEquals(state["completed"], BATCHES)
+
+            # ... with every write landed exactly once
+            if finished and state["error"] is None:
+                res = self.db.select_graph(gname).query(
+                    "MATCH (n:Node) RETURN count(n)").result_set
+                self.env.assertEquals(res[0][0], BATCHES * BATCH)
+
+        finally:
+            if t is not None:
+                t.join(timeout=5)
+            # restore every key; a genuine restore failure should surface
+            for k, v in original_cfg.items():
+                conn.config_set(k, v)
+

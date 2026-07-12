@@ -360,7 +360,7 @@ static bool _DelegateQuery
 
 // process all queued write queries
 // writer will only release write access when the queue is truly empty
-static void enter_writer_loop
+void enter_writer_loop
 (
 	GraphContext *gc
 ) {
