@@ -104,6 +104,7 @@ typedef struct {
 	NodeID parent;    // predecessor in the shortest-path tree
 	Edge   edge;      // edge connecting parent -> this node
 	double g_score;   // current best known true cost to reach this node
+	double h;         // cached heuristic, computed once on first discovery
 	bool   finalized; // true once popped from the heap with its optimal g_score
 } AStarLabel;
 
@@ -255,12 +256,13 @@ bool AStar_ShortestPath
 		// through 'cur'.
 		for(int d = 0; d < ndirs; d++) {
 			for(int r = 0; r < relationCount; r++) {
-				Graph_GetNodeEdgesFromIterator(g, &curNode, dirs[d],
-						&iters[d * relationCount + r], relationIDs[r], &neighbors);
+				Graph_GetNodeEdgesFromIterator (g, &curNode, dirs[d],
+						&iters[d * relationCount + r], relationIDs[r],
+						&neighbors) ;
 			}
 
-			uint32_t n = arr_len(neighbors);
-			for(uint32_t j = 0; j < n; j++) {
+			uint32_t n = arr_len (neighbors) ;
+			for (uint32_t j = 0; j < n; j++) {
 				Edge *e = neighbors + j;
 				NodeID nid = (dirs[d] == GRAPH_EDGE_DIR_OUTGOING)
 					? Edge_GetDestNodeID(e)
@@ -281,6 +283,7 @@ bool AStar_ShortestPath
 
 				// look up (or reserve) 'nid's slot in 'labels'
 				bool is_new;
+				AStarLabel *nlabel = NULL ;
 				uint32_t *nslot = NodeMap_findOrInsert(&label_idx, nid, &is_new);
 
 				if(!is_new) {
@@ -289,7 +292,7 @@ bool AStar_ShortestPath
 					// (its g_score is final and can't improve) or if
 					// going through 'cur' isn't strictly better than what
 					// it already has.
-					AStarLabel *nlabel = labels + (*nslot - 1);
+					nlabel = labels + (*nslot - 1);
 					if(nlabel->finalized || new_g >= nlabel->g_score) {
 						continue;
 					}
@@ -304,20 +307,24 @@ bool AStar_ShortestPath
 					// first time 'nid' is discovered: create its label
 					// with 'cur' as parent and 'new_g' as its (so far
 					// unbeaten) tentative g_score.
-					AStarLabel nlabel = { .parent = cur, .edge = *e,
-						.g_score = new_g, .finalized = false };
 
-					arr_append(labels, nlabel);
-					*nslot = arr_len(labels);
+					double h = _heuristic (g, nid, lat_prop, lon_prop,
+							dst_has_coords, dst_lat, dst_lon) ;
+
+					AStarLabel lbl = {.parent = cur, .edge = *e,
+						.g_score = new_g, .h = h, .finalized = false } ;
+
+					arr_append (labels, lbl) ;
+
+					*nslot = arr_len (labels) ;
+					nlabel = labels + (*nslot - 1) ;
 				}
 
 				// queue (or re-queue) 'nid' at its updated priority
 				// f = g_score + h(nid). any older, now-superseded heap
 				// entry for 'nid' is left in place and simply skipped
 				// later as a stale duplicate once popped.
-				double h = _heuristic(g, nid, lat_prop, lon_prop,
-						dst_has_coords, dst_lat, dst_lon);
-				NodeWeightItem qi = { .node = nid, .weight = new_g + h };
+				NodeWeightItem qi = { .node = nid, .weight = new_g + nlabel->h };
 				NodeWeightHeap_offer(&heap, qi);
 			}
 
