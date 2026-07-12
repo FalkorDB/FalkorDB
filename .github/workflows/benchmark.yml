@@ -1,5 +1,7 @@
 # A/B/C benchmark front door: workflow_dispatch (manual), adding a per-size PR
-# label `benchmark-small` | `benchmark-medium` | `benchmark-large`, or a
+# label `benchmark-small` | `benchmark-medium` | `benchmark-large` (or the
+# `-arm` variants, which run the same A/B/C on a c4a-highcpu-16 Axion VM and
+# publish to a separate `pr-<N>-arm` view + comment), or a
 # `/benchmark [size]` PR comment (which just adds that label — see the
 # `slash-command` job). The size run is the one named by the label. A benchmark
 # runs only when the label is *added* (the `labeled` event), NOT on every push
@@ -48,6 +50,12 @@ on:
         default: "baseline"
         type: choice
         options: ["baseline", "extended-core", "fixture-dependent"]
+      arch:
+        description: "CPU architecture: x86 (n4-highcpu-16) or arm (c4a-highcpu-16 Axion)."
+        required: false
+        default: "x86"
+        type: choice
+        options: ["x86", "arm"]
   pull_request:
     # `labeled` runs a benchmark only when a benchmark-<size> label is *added*
     # (not on every push while it happens to be present — those are expensive);
@@ -129,7 +137,7 @@ jobs:
         (
           github.event_name == 'pull_request' &&
           github.event.action == 'labeled' &&
-          contains(fromJSON('["benchmark-small","benchmark-medium","benchmark-large"]'), github.event.label.name) &&
+          contains(fromJSON('["benchmark-small","benchmark-medium","benchmark-large","benchmark-small-arm","benchmark-medium-arm","benchmark-large-arm"]'), github.event.label.name) &&
           github.event.pull_request.head.repo.full_name == github.repository
         )
       )
@@ -143,6 +151,7 @@ jobs:
       sizes: ${{ steps.derive.outputs.sizes }}
       write_ratio: ${{ steps.derive.outputs.write_ratio }}
       query_profile: ${{ steps.derive.outputs.query_profile }}
+      arch: ${{ steps.derive.outputs.arch }}
     steps:
       - name: Checkout benchmark scripts
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -159,6 +168,7 @@ jobs:
           INPUT_DATASET_SIZE: ${{ github.event.inputs.dataset_size }}
           INPUT_WRITE_RATIO: ${{ github.event.inputs.write_ratio }}
           INPUT_QUERY_PROFILE: ${{ github.event.inputs.query_profile }}
+          INPUT_ARCH: ${{ github.event.inputs.arch }}
           DISPATCH_REF_NAME: ${{ github.ref_name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
@@ -179,6 +189,9 @@ jobs:
               WRITE_RATIO="${INPUT_WRITE_RATIO:-0.0}"
               # Manual runs may opt into a richer query profile; default baseline.
               QUERY_PROFILE="${INPUT_QUERY_PROFILE:-baseline}"
+              # Architecture: x86 (default) or arm; arm gets its own -arm view.
+              ARCH="${INPUT_ARCH:-x86}"
+              if [ "$ARCH" = "arm" ]; then VIEW="${VIEW}-arm"; fi
               ;;
             pull_request)
               # A/B/C: C engine (A) vs published Rust (B) vs this PR (C).
@@ -186,17 +199,24 @@ jobs:
               IMAGE_A="docker.io/falkordb/falkordb-server:edge"
               IMAGE_B="ghcr.io/falkordb/falkordb-server:edge-rs"
               IMAGE_C="ghcr.io/falkordb/falkordb-server:rc-pr-${PR_NUMBER}"
-              # Key the view off the PR number, not the branch name: two PRs can
-              # share a branch name (forks, `patch-1`, …) and would otherwise
-              # publish to — and overwrite — the same gh-pages dir. Must match
-              # cleanup-branch-view.
-              VIEW="pr-${PR_NUMBER}"
               OUT_PR_NUMBER="$PR_NUMBER"
-              # One size per run, chosen by which benchmark-<size> label was
-              # added (benchmark-small -> small). The prepare gate guarantees
-              # LABEL_NAME is one of benchmark-small/medium/large.
-              SIZE="${LABEL_NAME#benchmark-}"
+              # One size + arch per run, from the benchmark-<size>[-arm] label
+              # that was added (benchmark-small -> small/x86; benchmark-small-arm
+              # -> small/arm). The prepare gate guarantees LABEL_NAME is one of
+              # the six benchmark-{small,medium,large}[-arm] labels.
+              REST="${LABEL_NAME#benchmark-}"        # e.g. small | small-arm
+              if [ "${REST%-arm}" != "$REST" ]; then
+                ARCH="arm"; SIZE="${REST%-arm}"
+              else
+                ARCH="x86"; SIZE="$REST"
+              fi
               SIZES="[\"${SIZE}\"]"
+              # Key the view off the PR number (+ -arm for arm), not the branch
+              # name: two PRs can share a branch name (forks, patch-1, …) and
+              # would otherwise publish to — and overwrite — the same gh-pages
+              # dir. Must match cleanup-branch-view.
+              VIEW="pr-${PR_NUMBER}"
+              if [ "$ARCH" = "arm" ]; then VIEW="${VIEW}-arm"; fi
               # PR/slash runs exercise the write path at 5% writes (policy: PR
               # benchmarks include writes). A manual dispatch can still override
               # via the write_ratio input.
@@ -220,8 +240,9 @@ jobs:
             echo "sizes=${SIZES}"
             echo "write_ratio=${WRITE_RATIO}"
             echo "query_profile=${QUERY_PROFILE}"
+            echo "arch=${ARCH}"
           } >> "$GITHUB_OUTPUT"
-          echo "Derived: A=${IMAGE_A} B=${IMAGE_B} C=${IMAGE_C} view=${VIEW} pr=${OUT_PR_NUMBER} sizes=${SIZES}"
+          echo "Derived: A=${IMAGE_A} B=${IMAGE_B} C=${IMAGE_C} view=${VIEW} pr=${OUT_PR_NUMBER} sizes=${SIZES} arch=${ARCH}"
 
   # PR path only: don't benchmark a stale or nonexistent RC build. We only
   # need the rc-pr image itself — which rust-pr.yml's `build-rc-image` job
@@ -300,6 +321,7 @@ jobs:
       pr_number: ${{ needs.prepare.outputs.pr_number }}
       write_ratio: ${{ needs.prepare.outputs.write_ratio }}
       query_profile: ${{ needs.prepare.outputs.query_profile }}
+      arch: ${{ needs.prepare.outputs.arch }}
     secrets: inherit
 
   # Remove a PR's /benchmark/branch/pr-<N>/ preview once it closes — no
@@ -345,15 +367,23 @@ jobs:
             echo "no PR number — nothing to clean up"
             exit 0
           fi
-          VIEW="pr-${PR_NUMBER}"
-
           cd gh-pages
-          TARGET="benchmark/branch/${VIEW}"
-          if [ ! -d "$TARGET" ]; then
-            echo "no published view at $TARGET — nothing to clean up"
+          # Remove both the x86 (pr-<N>) and arm (pr-<N>-arm) views, whichever
+          # were published — same names prepare/_benchmark publish under.
+          removed=0
+          for VIEW in "pr-${PR_NUMBER}" "pr-${PR_NUMBER}-arm"; do
+            TARGET="benchmark/branch/${VIEW}"
+            if [ -d "$TARGET" ]; then
+              git rm -rq "$TARGET"
+              removed=1
+              echo "removed $TARGET"
+            else
+              echo "no published view at $TARGET — skipping"
+            fi
+          done
+          if [ "$removed" -eq 0 ]; then
+            echo "nothing to clean up"
             exit 0
           fi
-
-          git rm -rq "$TARGET"
           # Shared identity + token-remote + rebase-retry push (see publish.sh).
-          "$SCRIPTS/gh-pages-push.sh" "benchmark: remove closed-PR view ${VIEW}"
+          "$SCRIPTS/gh-pages-push.sh" "benchmark: remove closed-PR views for pr-${PR_NUMBER}"

@@ -87,6 +87,11 @@ on:
         required: false
         type: string
         default: "baseline"
+      arch:
+        description: "CPU architecture of the benchmark VMs: 'x86' (default, n4-highcpu-16) or 'arm' (c4a-highcpu-16 Axion). arm runs publish to the caller's <view> (a -arm-suffixed view) and a separate PR comment."
+        required: false
+        type: string
+        default: "x86"
 
 permissions:
   contents: read
@@ -147,14 +152,18 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-      - name: Create GCE runner (${{ matrix.combo.size }}/${{ matrix.combo.variant }})
+      - name: Create GCE runner (${{ matrix.combo.size }}/${{ matrix.combo.variant }}/${{ inputs.arch }})
         uses: ./.github/actions/create-runner # gce-github-runner + retry on stockout
         with:
           token: ${{ secrets.GH_SA_TOKEN }}
           project_id: ${{ secrets.GCP_PROJECT_ID }}
           service_account_key: ${{ secrets.GCP_SA_KEY }}
-          machine_zones: ${{ vars.GCP_ZONES }}
-          machine_type: ${{ vars.BENCHMARK_MACHINE_TYPE || 'n4-highcpu-16' }}
+          # arm → Axion (c4a) in the arm-capable zones; else the x86 N4 default.
+          machine_zones: ${{ inputs.arch == 'arm' && (vars.GCP_ZONES_ARM || vars.GCP_ZONES) || vars.GCP_ZONES }}
+          machine_type: ${{ inputs.arch == 'arm' && (vars.BENCHMARK_MACHINE_TYPE_ARM || 'c4a-highcpu-16') || (vars.BENCHMARK_MACHINE_TYPE || 'n4-highcpu-16') }}
+          arm: ${{ inputs.arch == 'arm' }}
+          image_family: ${{ inputs.arch == 'arm' && (vars.BENCHMARK_IMAGE_FAMILY_ARM || 'ubuntu-2404-lts-arm64') || '' }}
+          image_project: ${{ inputs.arch == 'arm' && (vars.BENCHMARK_IMAGE_PROJECT_ARM || 'ubuntu-os-cloud') || '' }}
           network: gh-runner
           runner_label: bench-${{ github.run_id }}-${{ github.run_number }}-${{ matrix.combo.size }}-${{ matrix.combo.variant }}
 
@@ -325,6 +334,8 @@ jobs:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VIEW: ${{ inputs.view }}
+          # Separate PR comment per arch so x86 and arm results don't clobber each other.
+          COMMENT_MARKER: ${{ inputs.arch == 'arm' && '<!-- ab-benchmark-comment-arm -->' || '<!-- ab-benchmark-comment -->' }}
           IS_CANONICAL: ${{ inputs.is_canonical }}
           UI_DIR: ${{ github.workspace }}/benchmark-tool/ui
           GH_PAGES_DIR: ${{ github.workspace }}/gh-pages
@@ -397,8 +408,8 @@ jobs:
             --view "$VIEW" --published-url "$published_url" \
             --name-a "$NAME_A" --name-b "$NAME_B" --name-c "$NAME_C" > "$BODY"
 
-          # Upsert one benchmark comment per PR (marker-identified).
-          MARKER="<!-- ab-benchmark-comment -->"
+          # Upsert one benchmark comment per PR *per arch* (marker-identified).
+          MARKER="$COMMENT_MARKER"
           { echo "$MARKER"; cat "$BODY"; } > "$BODY.marked"
           existing=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate \
             --jq "map(select(.body | startswith(\"$MARKER\"))) | .[0].id // empty")
