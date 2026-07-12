@@ -712,9 +712,10 @@ impl DataBlock {
         if self.blocks.len() <= block_idx {
             self.blocks.resize_with(block_idx + 1, Arc::default);
         }
-        let block = Arc::make_mut(&mut self.blocks[block_idx]);
+        let mut block = (*self.blocks[block_idx]).clone();
         block.set_span(slot_idx, pairs);
         block.maybe_compact();
+        self.blocks[block_idx] = Arc::new(block);
     }
 
     /// Merge `pairs` (sorted by attribute id; `Null` = removal) into an
@@ -738,9 +739,10 @@ impl DataBlock {
         if self.blocks.len() <= block_idx {
             self.blocks.resize_with(block_idx + 1, Arc::default);
         }
-        let block = Arc::make_mut(&mut self.blocks[block_idx]);
+        let mut block = (*self.blocks[block_idx]).clone();
         let counts = block.merge_span(slot_idx, pairs, scratch);
         block.maybe_compact();
+        self.blocks[block_idx] = Arc::new(block);
         counts
     }
 
@@ -783,14 +785,15 @@ impl DataBlock {
         entity_id: u64,
     ) {
         let (block_idx, slot_idx) = Self::locate(entity_id);
-        // Check occupancy before make_mut so clearing an already-empty slot
-        // doesn't deep-copy a shared block.
+        // Check occupancy first so clearing an already-empty slot doesn't
+        // deep-copy the block.
         if let Some(block) = self.blocks.get(block_idx)
             && block.slots.get(slot_idx).is_some_and(|slot| slot.cap != 0)
         {
-            let block = Arc::make_mut(&mut self.blocks[block_idx]);
+            let mut block = (*self.blocks[block_idx]).clone();
             block.free_span(slot_idx);
             block.maybe_compact();
+            self.blocks[block_idx] = Arc::new(block);
         }
     }
 
