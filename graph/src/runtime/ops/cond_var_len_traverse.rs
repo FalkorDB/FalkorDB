@@ -36,7 +36,7 @@ use std::sync::Arc;
 
 use ahash::RandomState;
 
-use crate::graph::graph::{LabelId, NodeId, RelationshipId};
+use crate::graph::graph::{EdgeDirection, LabelId, NodeId, RelationshipId};
 use crate::parser::ast::{QueryExpr, QueryRelationship, Variable};
 use crate::planner::IR;
 use crate::runtime::{
@@ -185,6 +185,15 @@ impl VarLenIter<'_> {
         let dest_label_missing = self.dest_label_missing;
         let dest_label_ids = self.dest_label_ids.clone();
         let evaluator = ExprEval::from_runtime(rt);
+        // Only enumerate the adjacency half the traversal can actually follow;
+        // the incoming half of a directed expansion would be discarded below.
+        let direction = if bidirectional {
+            EdgeDirection::Both
+        } else if reversed {
+            EdgeDirection::Incoming
+        } else {
+            EdgeDirection::Outgoing
+        };
 
         while let Some((current, mut path, mut used_edges, depth)) = self.stack.pop() {
             let hop = depth + 1;
@@ -195,7 +204,7 @@ impl VarLenIter<'_> {
             // Lazily cache the adjacency list to avoid creating GraphBLAS iterators
             // at every DFS step.
             let edges = self.adj_cache.entry(u64::from(current)).or_insert_with(|| {
-                g.get_node_relationships_by_type(current, &rp.types)
+                g.get_node_relationships_by_type(current, &rp.types, direction)
                     .collect()
             });
             self.scratch.clear();
