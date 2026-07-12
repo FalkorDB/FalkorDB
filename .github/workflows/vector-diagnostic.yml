@@ -1,0 +1,177 @@
+# One-shot vector-index diagnostic. Reproduces the benchmark's fixture-dependent
+# vector-index setup against a FalkorDB server image ON THE REAL GCE hardware
+# (n4-highcpu-16 / Intel AVX-512 and c4a-highcpu-16 / Axion SVE) and dumps
+# `db.indexes()` so we can see whether the vector index actually BUILDS
+# (numDocuments) vs. builds-but-search-returns-nothing.
+#
+# Context: the C `edge` engine's KNN probe returns 0 hits on both GCE arches but
+# works on macOS Docker (NEON-only). This captures numDocuments/indexingFailures
+# on the failing hardware to distinguish "index never ingested" from "search
+# kernel returns empty".
+#
+# Trigger: add the `vecdiag` label to a PR (same-repo branches only), or run
+# manually once this is on the default branch. Runs on both arches by default.
+name: Vector index diagnostic (GCE)
+
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      image:
+        description: "falkordb-server image to probe"
+        required: false
+        default: "docker.io/falkordb/falkordb-server:edge"
+      arches:
+        description: "Which arches to test"
+        required: false
+        default: "both"
+        type: choice
+        options: ["both", "x86", "arm"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vecdiag-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  setup:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'pull_request' &&
+        github.event.action == 'labeled' &&
+        github.event.label.name == 'vecdiag' &&
+        github.event.pull_request.head.repo.full_name == github.repository
+      )
+    runs-on: ubuntu-latest
+    outputs:
+      arches: ${{ steps.d.outputs.arches }}
+    steps:
+      - id: d
+        env:
+          SEL: ${{ github.event.inputs.arches }}
+        run: |
+          set -euo pipefail
+          case "${SEL:-both}" in
+            x86) echo 'arches=["x86"]' >> "$GITHUB_OUTPUT" ;;
+            arm) echo 'arches=["arm"]' >> "$GITHUB_OUTPUT" ;;
+            *)   echo 'arches=["x86","arm"]' >> "$GITHUB_OUTPUT" ;;
+          esac
+
+  create-runners:
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: ${{ fromJSON(needs.setup.outputs.arches) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Create GCE runner (${{ matrix.arch }})
+        uses: ./.github/actions/create-runner
+        with:
+          token: ${{ secrets.GH_SA_TOKEN }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          machine_zones: ${{ matrix.arch == 'arm' && (vars.GCP_ZONES_ARM || vars.GCP_ZONES) || vars.GCP_ZONES }}
+          machine_type: ${{ matrix.arch == 'arm' && (vars.BENCHMARK_MACHINE_TYPE_ARM || 'c4a-highcpu-16') || (vars.BENCHMARK_MACHINE_TYPE || 'n4-highcpu-16') }}
+          arm: ${{ matrix.arch == 'arm' }}
+          image_family: ${{ matrix.arch == 'arm' && (vars.BENCHMARK_IMAGE_FAMILY_ARM || 'debian-12-arm64') || '' }}
+          image_project: ${{ matrix.arch == 'arm' && (vars.BENCHMARK_IMAGE_PROJECT_ARM || 'debian-cloud') || '' }}
+          network: gh-runner
+          runner_label: vecdiag-${{ github.run_id }}-${{ github.run_number }}-${{ matrix.arch }}
+
+  diagnose:
+    needs: [setup, create-runners]
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: ${{ fromJSON(needs.setup.outputs.arches) }}
+    runs-on: vecdiag-${{ github.run_id }}-${{ github.run_number }}-${{ matrix.arch }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      IMAGE: ${{ github.event.inputs.image || 'docker.io/falkordb/falkordb-server:edge' }}
+    steps:
+      - name: Probe vector index (${{ matrix.arch }})
+        run: |
+          # No `set -e`: run every diagnostic query even if one errors.
+          set -uo pipefail
+          NAME="vecdiag-$$"
+          PORT=16399
+          cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          echo "::group::Host CPU features (arch=${{ matrix.arch }})"
+          uname -m
+          grep -m1 -Ei '^flags|^Features' /proc/cpuinfo | tr ' ' '\n' \
+            | grep -iE 'avx512|^sve$|sve2|asimd|neon' | sort -u | tr '\n' ' '; echo
+          echo "::endgroup::"
+
+          echo "::group::Start $IMAGE"
+          docker rm -f "$NAME" >/dev/null 2>&1 || true
+          docker pull "$IMAGE"
+          docker run -d --name "$NAME" -p "${PORT}:6379" "$IMAGE" >/dev/null
+          for _ in $(seq 1 60); do
+            docker exec "$NAME" redis-cli PING 2>/dev/null | grep -q PONG && break; sleep 1
+          done
+          docker exec "$NAME" redis-cli PING
+          echo "-- MODULE LIST (versions) --"; docker exec "$NAME" redis-cli MODULE LIST
+          echo "::endgroup::"
+
+          Q() { docker exec "$NAME" redis-cli GRAPH.QUERY vg "$1"; }
+
+          echo "::group::Apply fixture (exact tool sequence: indexes BEFORE writes)"
+          Q "CREATE (:User {id:1}),(:User {id:2}),(:User {id:97}),(:User {id:194}),(:User {id:291})"
+          Q "CREATE FULLTEXT INDEX FOR (l:User) ON (l.ft_text)"
+          Q "CREATE VECTOR INDEX FOR (l:User) ON (l.embedding) OPTIONS {dimension:3, similarityFunction:'cosine'}"
+          Q "MATCH (u:User) SET u.ft_text = 'fixture_alice user_' + toString(u.id), u.embedding = vecf32([toFloat((u.id % 10)+1)/10.0, toFloat(((u.id+3)%10)+1)/10.0, toFloat(((u.id+6)%10)+1)/10.0])"
+          echo "::endgroup::"
+
+          echo "::group::RESULTS — arch=${{ matrix.arch }}, image=$IMAGE"
+          echo '### embedding property count (expect 5)'
+          Q "MATCH (u:User) WHERE u.embedding IS NOT NULL RETURN count(u)"
+          echo '### VECTOR PROBE count(node) — the failing check (macOS=1, GCE=0?)'
+          Q "CALL db.idx.vector.queryNodes('User','embedding',1, vecf32([0.1,0.2,0.3])) YIELD node, score RETURN count(node)"
+          echo '### FULLTEXT probe count(node) — the control (worked in CI)'
+          Q "CALL db.idx.fulltext.queryNodes('User','fixture_alice') YIELD node RETURN count(node)"
+          echo '### db.indexes() — KEY: numDocuments / indexingFailures / status per index'
+          Q "CALL db.indexes()"
+          echo '### retry vector probe after 8s (async-build check)'
+          sleep 8
+          Q "CALL db.idx.vector.queryNodes('User','embedding',1, vecf32([0.1,0.2,0.3])) YIELD node, score RETURN count(node)"
+          echo '### db.indexes() again (did numDocuments change?)'
+          Q "CALL db.indexes()"
+          echo "::endgroup::"
+
+          echo "::group::Server log tail"
+          docker logs "$NAME" 2>&1 | tail -50
+          echo "::endgroup::"
+          echo "vecdiag done for arch=${{ matrix.arch }}"
+
+  cleanup-runners:
+    needs: [setup, diagnose]
+    if: ${{ always() && needs.setup.result == 'success' }}
+    strategy:
+      matrix:
+        arch: ${{ fromJSON(needs.setup.outputs.arches) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/cleanup-runner
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          instance_label: vecdiag-${{ github.run_id }}-${{ github.run_number }}-${{ matrix.arch }}
