@@ -27,7 +27,7 @@ inputs:
     required: false
     default: "false"
   image_family:
-    description: "Boot-disk image family (e.g. ubuntu-2404-lts-arm64 for arm). Empty → gce-github-runner default (x86)."
+    description: "Boot-disk image family (e.g. debian-12-arm64 for arm). Empty → gce-github-runner default (gcloud picks Debian x86)."
     required: false
     default: ""
   image_project:

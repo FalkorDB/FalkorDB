@@ -162,8 +162,10 @@ jobs:
           machine_zones: ${{ inputs.arch == 'arm' && (vars.GCP_ZONES_ARM || vars.GCP_ZONES) || vars.GCP_ZONES }}
           machine_type: ${{ inputs.arch == 'arm' && (vars.BENCHMARK_MACHINE_TYPE_ARM || 'c4a-highcpu-16') || (vars.BENCHMARK_MACHINE_TYPE || 'n4-highcpu-16') }}
           arm: ${{ inputs.arch == 'arm' }}
-          image_family: ${{ inputs.arch == 'arm' && (vars.BENCHMARK_IMAGE_FAMILY_ARM || 'ubuntu-2404-lts-arm64') || '' }}
-          image_project: ${{ inputs.arch == 'arm' && (vars.BENCHMARK_IMAGE_PROJECT_ARM || 'ubuntu-os-cloud') || '' }}
+          # debian-12-arm64 mirrors x86's gcloud-default Debian (arm64 variant),
+          # so the runner-agent bootstrap matches the working x86 path.
+          image_family: ${{ inputs.arch == 'arm' && (vars.BENCHMARK_IMAGE_FAMILY_ARM || 'debian-12-arm64') || '' }}
+          image_project: ${{ inputs.arch == 'arm' && (vars.BENCHMARK_IMAGE_PROJECT_ARM || 'debian-cloud') || '' }}
           network: gh-runner
           runner_label: bench-${{ github.run_id }}-${{ github.run_number }}-${{ matrix.combo.size }}-${{ matrix.combo.variant }}
 
