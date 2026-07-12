@@ -296,31 +296,28 @@ pub(super) fn select_scan_node(
     // Paths are processed deepest-first so that a processed chain's local
     // mutations (which only ever affect its own subtree) never shift the path
     // of a not-yet-processed, shallower chain.
-    let mut bottom_ct_paths: Vec<Vec<usize>> = {
-        let indices = optimized_plan.root().indices::<Bfs>().collect::<Vec<_>>();
-        indices
-            .into_iter()
-            .filter(|&idx| {
-                let node = optimized_plan.node(idx);
-                if !matches!(node.data(), IR::CondTraverse { .. }) {
-                    return false;
-                }
-                if node.num_children() == 0 {
-                    return true; // leaf CT
-                }
-                if node.num_children() != 1 {
-                    return false;
-                }
-                // Walk through single-child Filter nodes to find the real child.
-                let mut child = node.child(0);
-                while matches!(child.data(), IR::Filter(_)) && child.num_children() == 1 {
-                    child = child.child(0);
-                }
-                !matches!(child.data(), IR::CondTraverse { .. })
-            })
-            .map(|idx| node_path(optimized_plan, idx))
-            .collect()
-    };
+    let mut bottom_ct_paths = Vec::new();
+    for idx in optimized_plan.root().indices::<Bfs>() {
+        let node = optimized_plan.node(idx);
+        if !matches!(node.data(), IR::CondTraverse { .. }) {
+            continue;
+        }
+        if node.num_children() == 0 {
+            bottom_ct_paths.push(node_path(optimized_plan, idx));
+            continue;
+        }
+        if node.num_children() != 1 {
+            continue;
+        }
+        // Walk through single-child Filter nodes to find the real child.
+        let mut child = node.child(0);
+        while matches!(child.data(), IR::Filter(_)) && child.num_children() == 1 {
+            child = child.child(0);
+        }
+        if !matches!(child.data(), IR::CondTraverse { .. }) {
+            bottom_ct_paths.push(node_path(optimized_plan, idx));
+        }
+    }
     bottom_ct_paths.sort_by_key(|p| std::cmp::Reverse(p.len()));
 
     for path in bottom_ct_paths {
