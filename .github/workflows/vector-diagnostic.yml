@@ -125,8 +125,10 @@ jobs:
           persist-credentials: false
       - name: Build tool + run REAL fixture load, poll fresh-conn probe (${{ matrix.arch }})
         run: |
-          # No set -e: keep going through diagnostics even on a query error.
+          # GitHub's default shell adds -e; disable it so a benign empty grep
+          # doesn't abort the whole bisection mid-run.
           set -uo pipefail
+          set +e
           ARCH="${{ matrix.arch }}"
           echo "::group::Host CPU (arch=$ARCH)"
           uname -m; echo "nproc=$(nproc)"
