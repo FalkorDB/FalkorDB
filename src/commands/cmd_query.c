@@ -380,8 +380,8 @@ static void enter_writer_loop
 		// to reacquire write access
 		// if we succeed, continue processing
 		// if we fail, another thread is now the writer and will handle the queue
-		if (GraphContext_WriteQueueEmpty (gc) ||
-			!GraphContext_TryEnterWrite  (gc)) {
+		if (GraphContext_WriteQueueEmpty    (gc) ||
+			!GraphContext_TimeTryEnterWrite (gc, 0)) {
 			// either the queue is empty
 			// or the another thread became a writer
 			break ;
@@ -524,7 +524,7 @@ void _query
 		}
 
 		// try to acquire exclusive write access to graph
-		if (GraphContext_TryEnterWrite (gc)) {
+		if (GraphContext_TimeTryEnterWrite (gc, 0)) {
 			// thread has exclusive write access to graph
 			// go ahead and run the query
 			enter_writer_loop (gc) ;
