@@ -55,12 +55,10 @@
 //! For example, two "TRANSFERRED" relationships between the same bank accounts
 //! with different amounts and dates.
 
-use std::collections::HashMap;
-
 use rustc_hash::FxHashSet;
 
 use super::{
-    matrix::{Dup, Matrix, New, Remove, Set, Size, Transpose},
+    matrix::{Dup, Matrix},
     serialization::{Decode, Encode, Reader, Writer},
     vector::Vector,
     versioned_matrix::{self, VersionedMatrix},
@@ -90,41 +88,69 @@ pub fn compound_key(
     (src << 32) | dst
 }
 
-/// Multi-edge storage supporting multiple edges between node pairs.
+/// Edge storage for one relationship type, with inline edge ids.
 ///
-/// Maintains three matrices for efficient traversal in both directions
-/// and edge ID lookup.
+/// The forward (`m`) and backward (`mt`) adjacency matrices are **UINT64** and
+/// store the edge id of the (first) edge between a pair directly as the matrix
+/// value — so a single-edge graph needs no separate edge-id matrix at all. The
+/// `me` overflow matrix is **lazy**: it stays empty until a pair gains a second
+/// edge, at which point the *additional* edge ids (2nd, 3rd, …) are stored there
+/// keyed by `compound_key(src, dst)`. This keeps the common single-edge case at
+/// ~12 bytes/edge instead of materializing a hypersparse edge-id matrix.
+///
+/// Invariants:
+/// - `m[s, d]` / `mt[d, s]` hold the same edge id for the pair's first edge.
+/// - `me` is non-empty iff some pair has more than one edge
+///   (`has_multi_edge()` == `me.nvals() > 0`).
+/// - total edges == `m.nvals() + me.nvals()` (first edges + overflow edges).
 pub struct Tensor {
-    /// Forward adjacency matrix (src → dst)
-    m: VersionedMatrix,
-    /// Transpose/backward adjacency (dst → src)
-    mt: VersionedMatrix,
-    /// Edge ID storage keyed by (src, dst) pair
-    me: VersionedMatrix,
+    /// Forward adjacency (src → dst), UINT64 value = first edge id.
+    m: VersionedMatrix<u64>,
+    /// Backward adjacency (dst → src), BOOL structure only. Edge ids are never
+    /// stored here — they are recovered from `m` (and `me`) when iterating
+    /// incoming edges, avoiding a redundant copy of every id.
+    mt: VersionedMatrix<bool>,
+    /// Overflow edge-id storage for multi-edges, keyed by `compound_key(src,
+    /// dst)` → edge_id (BOOL). Empty unless a pair has more than one edge.
+    me: VersionedMatrix<bool>,
 }
 
-impl New for Tensor {
-    fn new(
+impl Tensor {
+    pub fn new(
         nrows: u64,
         ncols: u64,
     ) -> Self {
         Self {
-            m: VersionedMatrix::new(nrows, ncols),
+            m: VersionedMatrix::new_uint64(nrows, ncols),
             mt: VersionedMatrix::new(ncols, nrows),
             me: VersionedMatrix::new(GrB_INDEX_MAX, GrB_INDEX_MAX),
         }
     }
-}
 
-impl Tensor {
+    /// Edge ids for the `(src, dest)` pair, in ascending edge-id order. The
+    /// inline first-edge id from `m` is merged with any overflow ids from `me`
+    /// (multi-edge pairs only) and sorted, matching the edge-id iteration order
+    /// other engines expose. Returns an owned iterator (borrows nothing).
     #[must_use]
     pub fn get(
         &self,
         src: u64,
         dest: u64,
-    ) -> versioned_matrix::Iter {
-        let row = compound_key(src, dest);
-        self.me.iter(row, row)
+    ) -> std::vec::IntoIter<u64> {
+        let mut ids: Vec<u64> = Vec::new();
+        if let Some(first) = self.m.get_uint64(src, dest) {
+            ids.push(first);
+            if self.me.nvals() != 0 {
+                let key = compound_key(src, dest);
+                for (_, edge_id) in self.me.iter(key, key) {
+                    ids.push(edge_id);
+                }
+                if ids.len() > 1 {
+                    ids.sort_unstable();
+                }
+            }
+        }
+        ids.into_iter()
     }
 
     pub fn set(
@@ -133,12 +159,26 @@ impl Tensor {
         dest: u64,
         id: u64,
     ) {
-        self.m.set(src, dest, true);
-        self.mt.set(dest, src, true);
-        self.me.set(compound_key(src, dest), id, true);
+        if self.m.get_uint64(src, dest).is_none() {
+            // First edge for this pair: store inline in the forward/backward
+            // adjacency.
+            self.m.set_uint64(src, dest, id);
+            self.mt.set(dest, src, true);
+        } else {
+            // Additional edge: pair already has a first edge → overflow to `me`.
+            self.me.set(compound_key(src, dest), id, true);
+        }
     }
 
-    /// Set entries from parallel slices, updating all three sub-matrices.
+    /// Set entries from parallel slices. The first edge of each pair lands
+    /// inline in `m`/`mt`; any additional edges between an already-present pair
+    /// overflow to `me`.
+    ///
+    /// Avoids the per-edge `get_uint64` (which would sync pending GraphBLAS work
+    /// on every call, making bulk insertion quadratic): the set of pairs that
+    /// already have an inline first edge is materialized once, then updated
+    /// in-batch so the first occurrence of each pair is detected without
+    /// touching GraphBLAS per edge.
     pub fn set_all_from_slices(
         &mut self,
         srcs: &[u64],
@@ -150,16 +190,39 @@ impl Tensor {
         if srcs.is_empty() {
             return;
         }
-        self.m
-            .set_all(srcs.iter().copied().zip(dsts.iter().copied()));
+
+        // Pairs that already have an inline first edge (committed or pending).
+        let mut present: FxHashSet<(u64, u64)> = self
+            .m
+            .collect_uint64()
+            .into_iter()
+            .map(|(s, d, _)| (s, d))
+            .collect();
+
+        let mut m_srcs: Vec<u64> = Vec::with_capacity(srcs.len());
+        let mut m_dsts: Vec<u64> = Vec::with_capacity(srcs.len());
+        let mut m_ids: Vec<u64> = Vec::with_capacity(srcs.len());
+        for ((&s, &d), &id) in srcs.iter().zip(dsts.iter()).zip(ids.iter()) {
+            if present.insert((s, d)) {
+                // First edge for this pair → inline.
+                m_srcs.push(s);
+                m_dsts.push(d);
+                m_ids.push(id);
+            } else {
+                // Additional edge → overflow.
+                self.me.set(compound_key(s, d), id, true);
+            }
+        }
+
+        self.m.set_all_uint64(
+            m_srcs
+                .iter()
+                .zip(m_dsts.iter())
+                .zip(m_ids.iter())
+                .map(|((&s, &d), &id)| (s, d, id)),
+        );
         self.mt
-            .set_all(dsts.iter().copied().zip(srcs.iter().copied()));
-        let compound_iter = srcs
-            .iter()
-            .zip(dsts.iter())
-            .zip(ids.iter())
-            .map(|((&s, &d), &id)| (compound_key(s, d), id));
-        self.me.set_all(compound_iter);
+            .set_all(m_dsts.iter().zip(m_srcs.iter()).map(|(&d, &s)| (d, s)));
     }
 
     /// Bulk-remove specific edges from this tensor.
@@ -175,26 +238,10 @@ impl Tensor {
             return Vec::new();
         }
 
-        // Build me_mask arrays for bulk GraphBLAS build
-        let mut me_rows = Vec::with_capacity(rels.len());
-        let mut me_cols = Vec::with_capacity(rels.len());
-        for &(id, src, dest) in rels {
-            me_rows.push(compound_key(src, dest));
-            me_cols.push(id);
-        }
-        let mut me_mask = Matrix::new(GrB_INDEX_MAX, GrB_INDEX_MAX);
-        me_mask.build_bool(&me_rows, &me_cols);
-
-        // Check for multi-edges BEFORE removal
-        let no_multi_edges = !self.has_multi_edge();
-
-        // Single bulk GraphBLAS operation
-        self.me.remove_mask(&me_mask);
-
-        if no_multi_edges {
-            // Non-multi-edge: each pair had exactly one edge, so all pairs
-            // with a removed edge are now empty. Build m/mt masks directly
-            // from rels without an intermediate FxHashSet.
+        // Fast path: no overflow edges exist, so every edge is the inline first
+        // edge of its pair. Bulk-remove from the forward/backward adjacency in
+        // two GraphBLAS ops; every touched pair becomes empty.
+        if !self.has_multi_edge() {
             let nrows = self.m.nrows();
             let ncols = self.m.ncols();
             let mut m_rows = Vec::with_capacity(rels.len());
@@ -207,27 +254,37 @@ impl Tensor {
                 mt_rows.push(dst);
                 mt_cols.push(src);
             }
-            let mut m_mask = Matrix::new(nrows, ncols);
+            let mut m_mask = Matrix::<bool>::new(nrows, ncols);
             m_mask.build_bool(&m_rows, &m_cols);
-            let mut mt_mask = Matrix::new(ncols, nrows);
+            let mut mt_mask = Matrix::<bool>::new(ncols, nrows);
             mt_mask.build_bool(&mt_rows, &mt_cols);
             self.m.remove_mask(&m_mask);
             self.mt.remove_mask(&mt_mask);
             return rels.iter().map(|&(_, src, dst)| (src, dst)).collect();
         }
 
-        // Slow path for multi-edge tensors: need FxHashSet to dedup pairs.
-        let mut pairs: FxHashSet<(u64, u64)> = FxHashSet::default();
-        for &(_, src, dest) in rels {
-            pairs.insert((src, dest));
-        }
+        // Slow path: some pairs have overflow edges. Handle per edge:
+        //  - removing an overflow id: drop it from `me`; the pair survives.
+        //  - removing the inline first-edge id: promote one overflow id into
+        //    the inline slot if any remain, otherwise empty the pair.
         let mut emptied = Vec::new();
-        for (src, dst) in pairs {
+        for &(id, src, dst) in rels {
             let key = compound_key(src, dst);
-            if self.me.iter(key, key).next().is_none() {
-                self.m.remove(src, dst);
-                self.mt.remove(dst, src);
-                emptied.push((src, dst));
+            if self.m.get_uint64(src, dst) == Some(id) {
+                // Removing the inline first edge.
+                let promote = self.me.iter(key, key).next().map(|(_, eid)| eid);
+                if let Some(eid) = promote {
+                    self.me.remove(key, eid);
+                    self.m.set_uint64(src, dst, eid);
+                    // mt structure already has (dst, src); the pair survives.
+                } else {
+                    self.m.remove_uint64(src, dst);
+                    self.mt.remove(dst, src);
+                    emptied.push((src, dst));
+                }
+            } else {
+                // Removing an overflow edge; the inline first edge is untouched.
+                self.me.remove(key, id);
             }
         }
         emptied
@@ -243,8 +300,15 @@ impl Tensor {
     }
 
     /// Rebuild the backward matrix as the transpose of the forward matrix.
+    ///
+    /// `mt` is structure-only (`bool`). The forward matrix's *effective*
+    /// structure (`(m − dm) ∪ dp`) is materialized first, then transposed into
+    /// a clean base with empty deltas. Materializing (rather than transposing
+    /// the three layers separately) keeps `mt` valid even when the uint64
+    /// forward matrix carries a dp overlay (`dp ∩ m ≠ ∅`), which would break
+    /// the bool disjointness invariants `mt` relies on.
     pub fn rebuild_backward(&mut self) {
-        self.mt = self.m.transpose();
+        self.mt = VersionedMatrix::from_matrix(self.m.to_matrix().transpose());
     }
 
     #[must_use]
@@ -257,43 +321,48 @@ impl Tensor {
     }
 
     #[must_use]
-    pub const fn matrix(&self) -> &VersionedMatrix {
+    pub const fn matrix(&self) -> &VersionedMatrix<u64> {
         &self.m
     }
 
-    /// Transposed/backward pair-level adjacency (dst → src).
+    /// Transposed/backward pair-level adjacency (dst → src), structure only.
     #[must_use]
-    pub const fn matrix_t(&self) -> &VersionedMatrix {
+    pub const fn matrix_t(&self) -> &VersionedMatrix<bool> {
         &self.mt
     }
 
-    /// Iterate the edge-id matrix (`me`) keyed by `compound_key(src, dst)`.
-    /// Hot-loop callers build a persistent iterator and `seek` to a specific
-    /// (src, dst) per row, avoiding the per-pair iterator allocation that
-    /// `get(src, dst)` does.
+    /// Overflow multi-edge id storage (`me`), keyed by `compound_key(src,
+    /// dst)` → edge id. Holds only the 2nd, 3rd, … edge of a pair; empty
+    /// unless some pair has more than one edge.
     #[must_use]
-    pub fn edge_iter(
-        &self,
-        min_row: u64,
-        max_row: u64,
-    ) -> versioned_matrix::Iter {
-        self.me.iter(min_row, max_row)
+    pub const fn edge_versioned(&self) -> &VersionedMatrix<bool> {
+        &self.me
     }
 
-    /// Total number of edges (including multi-edges between the same node pair).
+    /// Iterate the edge-id matrix (`me`) keyed by `compound_key(src, dst)`.
+    /// Total number of edges (inline first edges plus multi-edge overflow).
     #[must_use]
     pub fn edge_count(&self) -> u64 {
-        self.me.nvals()
+        self.m.nvals() + self.me.nvals()
     }
 
-    /// The edge-id [`VersionedMatrix`] `me[compound_key(src,dst)][edge_id] = true`.
-    /// Exposed so callers can apply/reduce over its live components (base `m`,
-    /// additions `dp`, deletions `dm`) in place — a pair's row *is* the C tensor's
-    /// per-cell edge-id vector. Weighted MSF reads edge weights straight off `m`
-    /// (masked by `¬dm`) and `dp`, avoiding a throwaway union materialization.
-    #[must_use]
-    pub const fn edge_versioned(&self) -> &VersionedMatrix {
-        &self.me
+    /// Iterate every `(src, dst, edge_id)` triple in the tensor.
+    ///
+    /// Yields the inline first edge of every pair from the UINT64 forward
+    /// matrix `m`, followed by any overflow (multi-edge) ids from `me`. On a
+    /// single-edge graph `me` is empty, so this is a single streaming pass over
+    /// `m` with no per-pair sub-iterator.
+    pub fn iter_edges(&self) -> impl Iterator<Item = (u64, u64, u64)> + '_ {
+        let overflow: Box<dyn Iterator<Item = (u64, u64, u64)> + '_> = if self.me.nvals() != 0 {
+            Box::new(
+                self.me
+                    .iter(0, GrB_INDEX_MAX)
+                    .map(|(key, edge_id)| (key >> 32, key & 0xFFFF_FFFF, edge_id)),
+            )
+        } else {
+            Box::new(std::iter::empty())
+        };
+        self.m.uint64_iter_range(0, u64::MAX).chain(overflow)
     }
 
     #[must_use]
@@ -307,9 +376,10 @@ impl Tensor {
     }
 
     /// Whether this tensor has any (src, dst) pair with more than one edge.
+    /// Overflow ids live in `me`, so this is simply `me` being non-empty.
     #[must_use]
     pub fn has_multi_edge(&self) -> bool {
-        self.m.nvals() != self.me.nvals()
+        self.me.nvals() != 0
     }
 
     pub fn wait(&mut self) {
@@ -350,159 +420,101 @@ impl Encode<19> for Tensor {
     ) {
         let nrows = self.m.nrows();
         let ncols = self.m.ncols();
+        let has_multi = self.me.nvals() != 0;
 
-        // Compute both nvals at once to avoid redundant wait()/nvals() FFI calls.
-        let m_nvals = self.m.nvals();
-        let me_nvals = self.me.nvals();
-        let has_multi = m_nvals != me_nvals;
-        let total = me_nvals;
-
-        // Reusable empty UINT64 matrix — shared across the 2 empty slots.
-        let empty = Matrix::new_uint64(nrows, ncols);
-
-        let (multi_edge_m, multi_edge_dp, edge_id_map) = if has_multi {
-            let (m, dp) = self.m.extract_m_dp();
-            let (me_rows, me_cols) = self.me.extract_all_tuples();
-            let mut edge_id_map: HashMap<u64, Vec<u64>> = HashMap::with_capacity(me_rows.len());
-            for i in 0..me_rows.len() {
-                edge_id_map.entry(me_rows[i]).or_default().push(me_cols[i]);
-            }
-
-            let mut multi_edge_m: Vec<(u64, u64)> = Vec::new();
-            let mut multi_edge_dp: Vec<(u64, u64)> = Vec::new();
-
-            for (matrix, multi_edges) in [(&m, &mut multi_edge_m), (&dp, &mut multi_edge_dp)] {
-                let (rows, cols) = matrix.extract_tuples_bool();
-                let mut u_rows = Vec::with_capacity(rows.len());
-                let mut u_cols = Vec::with_capacity(rows.len());
-                let mut u_vals = Vec::with_capacity(rows.len());
-
-                for i in 0..rows.len() {
-                    let src = rows[i];
-                    let dst = cols[i];
-                    let key = compound_key(src, dst);
-                    let edge_ids = edge_id_map.get(&key).map_or(&[][..], |v| v.as_slice());
-
-                    u_rows.push(src);
-                    u_cols.push(dst);
-                    if edge_ids.len() == 1 {
-                        u_vals.push(edge_ids[0]);
-                    } else {
-                        u_vals.push(edge_ids.len() as u64 | MSB_MASK);
-                        multi_edges.push((src, dst));
-                    }
-                }
-
-                if u_rows.is_empty() {
-                    empty.encode(w);
+        // Serialize the C-compatible UINT64 forward matrix from the effective
+        // inline state. Single-edge pairs store the edge id directly; multi-edge
+        // pairs store `(edge_count | MSB)` and push their full id list (inline
+        // first edge + `me` overflow) into the tensor section below.
+        let mut f_rows: Vec<u64> = Vec::new();
+        let mut f_cols: Vec<u64> = Vec::new();
+        let mut f_vals: Vec<u64> = Vec::new();
+        let mut multi: Vec<(u64, u64, Vec<u64>)> = Vec::new();
+        for (src, dst, first_id) in self.m.uint64_iter_range(0, u64::MAX) {
+            f_rows.push(src);
+            f_cols.push(dst);
+            if has_multi {
+                let key = compound_key(src, dst);
+                let overflow: Vec<u64> = self.me.iter(key, key).map(|(_, id)| id).collect();
+                if overflow.is_empty() {
+                    f_vals.push(first_id);
                 } else {
-                    let mut uint64_mat = Matrix::new_uint64(nrows, ncols);
-                    uint64_mat.build_uint64(&u_rows, &u_cols, &u_vals);
-                    uint64_mat.encode(w);
+                    let mut ids = Vec::with_capacity(1 + overflow.len());
+                    ids.push(first_id);
+                    ids.extend(overflow);
+                    ids.sort_unstable();
+                    f_vals.push(ids.len() as u64 | MSB_MASK);
+                    multi.push((src, dst, ids));
                 }
+            } else {
+                f_vals.push(first_id);
             }
+        }
 
+        // Forward VersionedMatrix layout: base (effective), empty delta-plus,
+        // empty delta-minus. Folding dp into the base keeps the on-disk form
+        // canonical and matches what decode expects.
+        let empty = Matrix::<u64>::new(nrows, ncols);
+        if f_rows.is_empty() {
             empty.encode(w);
-
-            (multi_edge_m, multi_edge_dp, Some(edge_id_map))
         } else {
-            // Fast path: no multi-edges, no extract_m_dp() needed.
-            let ((me_m_rows, me_m_cols), (me_dp_rows, me_dp_cols)) = self.me.extract_m_dp_tuples();
+            let mut fm = Matrix::<u64>::new(nrows, ncols);
+            fm.build_uint64(&f_rows, &f_cols, &f_vals);
+            fm.encode(w);
+        }
+        empty.encode(w); // delta-plus
+        empty.encode(w); // delta-minus
 
-            // Encode uint64_m
-            if me_m_rows.is_empty() {
-                empty.encode(w);
-            } else {
-                let m_len = me_m_rows.len();
-                let mut m_src = Vec::with_capacity(m_len);
-                let mut m_dst = Vec::with_capacity(m_len);
-                for &row in &me_m_rows {
-                    m_src.push(row >> 32);
-                    m_dst.push(row & 0xFFFF_FFFF);
-                }
-                let mut uint64_m = Matrix::new_uint64(nrows, ncols);
-                uint64_m.build_uint64(&m_src, &m_dst, &me_m_cols);
-                uint64_m.encode(w);
-            }
-
-            // Encode uint64_dp
-            if me_dp_rows.is_empty() {
-                empty.encode(w);
-            } else {
-                let dp_len = me_dp_rows.len();
-                let mut dp_src = Vec::with_capacity(dp_len);
-                let mut dp_dst = Vec::with_capacity(dp_len);
-                for &row in &me_dp_rows {
-                    dp_src.push(row >> 32);
-                    dp_dst.push(row & 0xFFFF_FFFF);
-                }
-                let mut uint64_dp = Matrix::new_uint64(nrows, ncols);
-                uint64_dp.build_uint64(&dp_src, &dp_dst, &me_dp_cols);
-                uint64_dp.encode(w);
-            }
-
-            // Empty delta-minus
-            empty.encode(w);
-
-            (Vec::new(), Vec::new(), None)
-        };
-
+        let total = self.m.nvals() + self.me.nvals();
         w.write_unsigned(total);
-
         if total == 0 {
             return;
         }
 
+        // Tensor section: two groups (base TM, delta-plus TDP). All multi-edge
+        // pairs live in the base group; the delta-plus group is empty since dp
+        // was folded into the base above.
         let mut v = Vector::<u64>::new(GrB_INDEX_MAX);
-        for multi_edges in [&multi_edge_m, &multi_edge_dp] {
-            w.write_unsigned(multi_edges.len() as u64);
-            for &(src, dst) in multi_edges {
-                let key = compound_key(src, dst);
-                v.clear();
-
-                if let Some(ref map) = edge_id_map
-                    && let Some(ids) = map.get(&key)
-                {
-                    for (idx, &edge_id) in ids.iter().enumerate() {
-                        v.set(idx as u64, edge_id);
-                    }
-                }
-
-                w.write_unsigned(src);
-                w.write_unsigned(dst);
-                v.encode(w);
+        w.write_unsigned(multi.len() as u64);
+        for (src, dst, ids) in &multi {
+            v.clear();
+            for (idx, &edge_id) in ids.iter().enumerate() {
+                v.set(idx as u64, edge_id);
             }
+            w.write_unsigned(*src);
+            w.write_unsigned(*dst);
+            v.encode(w);
         }
+        w.write_unsigned(0); // empty delta-plus tensor group
     }
 }
 
 impl Decode<19> for Tensor {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
-        let forward = VersionedMatrix::decode(r)?;
-        let mut edges = VersionedMatrix::new(GrB_INDEX_MAX, GrB_INDEX_MAX);
+        let forward = VersionedMatrix::<u64>::decode(r)?;
+        let nrows = forward.nrows();
+        let ncols = forward.ncols();
 
-        // C FalkorDB stores edge IDs as UINT64 values in the forward matrix.
-        // Single-edge entries (MSB not set) hold the edge ID directly.
-        // Multi-edge entries (MSB set) are stored in the tensor section below.
-        // Iterate entries, extract single-edge IDs, and rebuild as BOOL.
-        let forward = if forward.is_uint64() {
-            let mut bool_forward = VersionedMatrix::new(forward.nrows(), forward.ncols());
-            for (src, dst, value) in forward.uint64_iter() {
-                bool_forward.set(src, dst, true);
-                if value & MSB_MASK == 0 {
-                    // Single-edge: value is the edge ID
-                    let key = compound_key(src, dst);
-                    edges.set(key, value, true);
-                }
+        // Inline representation: `m`/`mt` are UINT64 first-edge ids; `me` holds
+        // multi-edge overflow. The on-disk forward matrix (C-compatible) stores
+        // single-edge ids directly (MSB clear) and `(count | MSB)` for multi-edge
+        // pairs, whose real id lists follow in the tensor section.
+        let mut m = VersionedMatrix::new_uint64(nrows, ncols);
+        let mut me = VersionedMatrix::new(GrB_INDEX_MAX, GrB_INDEX_MAX);
+
+        for (src, dst, value) in forward.uint64_iter() {
+            if value & MSB_MASK == 0 {
+                // Single edge: value is the edge id; store inline.
+                m.set_uint64(src, dst, value);
             }
-            bool_forward
-        } else {
-            forward
-        };
+            // Multi-edge (MSB set): ids are supplied by the tensor section.
+        }
 
         let total_tensor_count = r.read_unsigned()?;
         if total_tensor_count > 0 {
-            // TM tensors (base), then TDP tensors (delta-plus)
+            // Two groups: base (TM) then delta-plus (TDP). Each pair's id list is
+            // `[first_inline, overflow...]`; the first lands in `m`, the rest in
+            // `me`.
             for _ in 0..2 {
                 let count = r.read_unsigned()?;
                 for _ in 0..count {
@@ -510,29 +522,48 @@ impl Decode<19> for Tensor {
                     let dst = r.read_unsigned()?;
                     let v = Vector::<u64>::decode(r)?;
                     let key = compound_key(src, dst);
+                    let mut first = true;
                     for (_, edge_id) in v.iter() {
-                        edges.set(key, edge_id, true);
+                        if first {
+                            m.set_uint64(src, dst, edge_id);
+                            first = false;
+                        } else {
+                            me.set(key, edge_id, true);
+                        }
                     }
                 }
             }
         }
 
+        // Backward matrix is rebuilt from `m` by the caller (`rebuild_backward`)
+        // after decode, so leave it empty here.
         let backward = VersionedMatrix::new(0, 0);
         Ok(Self {
-            m: forward,
+            m,
             mt: backward,
-            me: edges,
+            me,
         })
     }
 }
 
+/// Base adjacency iterator. Forward iteration streams inline first-edge ids
+/// directly from `m`; backward iteration streams the BOOL structure of `mt`
+/// (which carries no ids) and recovers each first-edge id from `m`.
+enum BaseIter {
+    Forward(versioned_matrix::UintIter),
+    Backward(versioned_matrix::Iter),
+}
+
 pub struct Iter<'a> {
     t: &'a Tensor,
-    mit: versioned_matrix::Iter,
-    vit: Option<versioned_matrix::Iter>,
-    transpose: bool,
+    base: BaseIter,
+    /// Whether multi-edge overflow exists at all (skip `me` lookups if not).
+    has_multi: bool,
     src: u64,
     dest: u64,
+    /// Buffered, ascending edge ids for the current multi-edge pair.
+    buf: Vec<u64>,
+    buf_pos: usize,
 }
 
 impl<'a> Iter<'a> {
@@ -544,15 +575,16 @@ impl<'a> Iter<'a> {
     ) -> Self {
         Self {
             t,
-            mit: if transpose {
-                t.mt.iter(min_row, max_row)
+            base: if transpose {
+                BaseIter::Backward(t.mt.iter(min_row, max_row))
             } else {
-                t.m.iter(min_row, max_row)
+                BaseIter::Forward(t.m.uint64_iter_range(min_row, max_row))
             },
-            vit: None,
-            transpose,
+            has_multi: t.me.nvals() != 0,
             src: 0,
             dest: 0,
+            buf: Vec::new(),
+            buf_pos: 0,
         }
     }
 }
@@ -561,40 +593,183 @@ impl Iterator for Iter<'_> {
     type Item = (u64, u64, u64);
 
     fn next(&mut self) -> Option<Self::Item> {
-        // Yield the next edge id for the current (src, dest). When that pair is
-        // exhausted we intentionally keep `vit` alive (rather than resetting it
-        // to None) so the next pair below re-seeks it instead of freeing and
-        // re-allocating its GxB_Iterator.
-        if let Some(vit) = &mut self.vit
-            && let Some((_, id)) = vit.next()
-        {
+        // Drain buffered (sorted) overflow edges for the current pair.
+        if self.buf_pos < self.buf.len() {
+            let id = self.buf[self.buf_pos];
+            self.buf_pos += 1;
             return Some((self.src, self.dest, id));
         }
 
-        if let Some((src, dest)) = self.mit.next() {
-            if self.transpose {
-                self.src = dest;
-                self.dest = src;
-            } else {
-                self.src = src;
-                self.dest = dest;
+        // Next base pair, oriented as (src, dest) with its inline first-edge id.
+        // Forward carries the id inline; backward recovers it from `m`.
+        let (src, dest, first_id) = match &mut self.base {
+            BaseIter::Forward(it) => {
+                let (row, col, id) = it.next()?;
+                (row, col, id)
             }
-            // `me` is keyed by the (src, dest) compound key in original
-            // orientation regardless of `transpose`, and holds every edge id.
-            // Reuse one edge-id iterator across all pairs via `seek`, paying the
-            // GxB_Iterator allocation/attach only once per traversal instead of
-            // per (src, dest) pair (mirrors the CondTraverse/ExpandInto edge
-            // lookup hot path). The matrix is a stable read snapshot for the
-            // life of this iterator, so the cached deletion-mask/delta flags
-            // stay valid across seeks.
-            let row = compound_key(self.src, self.dest);
-            match &mut self.vit {
-                Some(vit) => vit.seek(row, row),
-                None => self.vit = Some(self.t.me.iter(row, row)),
+            BaseIter::Backward(it) => {
+                let (row, col) = it.next()?;
+                let (src, dest) = (col, row);
+                let id = self.t.m.get_uint64(src, dest).unwrap_or(0);
+                (src, dest, id)
             }
-            return self.next();
+        };
+        self.src = src;
+        self.dest = dest;
+
+        if self.has_multi {
+            // Merge the inline first edge with any overflow ids and yield them
+            // in ascending edge-id order (matches other engines' iteration).
+            let key = compound_key(self.src, self.dest);
+            self.buf.clear();
+            for (_, id) in self.t.me.iter(key, key) {
+                self.buf.push(id);
+            }
+            if !self.buf.is_empty() {
+                self.buf.push(first_id);
+                self.buf.sort_unstable();
+                let id = self.buf[0];
+                self.buf_pos = 1;
+                return Some((self.src, self.dest, id));
+            }
+        }
+        Some((self.src, self.dest, first_id))
+    }
+}
+
+#[cfg(test)]
+mod overlay_tests {
+    use super::*;
+    use crate::graph::graphblas::test_init::ensure_init;
+
+    /// Little-endian in-memory buffer implementing both serialization sides.
+    struct Buf {
+        data: Vec<u8>,
+        pos: usize,
+    }
+
+    impl Buf {
+        const fn new() -> Self {
+            Self {
+                data: Vec::new(),
+                pos: 0,
+            }
         }
 
-        None
+        fn take(
+            &mut self,
+            n: usize,
+        ) -> &[u8] {
+            let s = &self.data[self.pos..self.pos + n];
+            self.pos += n;
+            s
+        }
+    }
+
+    impl Writer for Buf {
+        fn write_unsigned(
+            &mut self,
+            val: u64,
+        ) {
+            self.data.extend_from_slice(&val.to_le_bytes());
+        }
+
+        fn write_signed(
+            &mut self,
+            val: i64,
+        ) {
+            self.data.extend_from_slice(&val.to_le_bytes());
+        }
+
+        fn write_double(
+            &mut self,
+            val: f64,
+        ) {
+            self.data.extend_from_slice(&val.to_le_bytes());
+        }
+
+        fn write_buffer(
+            &mut self,
+            data: &[u8],
+        ) {
+            self.write_unsigned(data.len() as u64);
+            self.data.extend_from_slice(data);
+        }
+    }
+
+    impl Reader for Buf {
+        fn read_unsigned(&mut self) -> Result<u64, String> {
+            Ok(u64::from_le_bytes(self.take(8).try_into().unwrap()))
+        }
+
+        fn read_signed(&mut self) -> Result<i64, String> {
+            Ok(i64::from_le_bytes(self.take(8).try_into().unwrap()))
+        }
+
+        fn read_double(&mut self) -> Result<f64, String> {
+            Ok(f64::from_le_bytes(self.take(8).try_into().unwrap()))
+        }
+
+        fn read_buffer(&mut self) -> Result<Vec<u8>, String> {
+            let len = self.read_unsigned()? as usize;
+            Ok(self.take(len).to_vec())
+        }
+    }
+
+    /// Edge id 5 at (0,1) committed into the raw base `m`, then deleted and
+    /// re-added as id 9 in the same (uncommitted) transaction — leaving a dp
+    /// entry that *shadows* the still-present committed cell (`dp ∩ m ≠ ∅`).
+    fn overlay_tensor() -> Tensor {
+        let mut t = Tensor::new(100, 100);
+        t.set(0, 1, 5);
+        t.m.force_commit_uint64();
+        t.remove_all(&[(5, 0, 1)]);
+        t.set(0, 1, 9);
+        t
+    }
+
+    #[test]
+    fn edge_count_and_get_with_dp_overlay() {
+        ensure_init();
+        let t = overlay_tensor();
+        assert_eq!(t.edge_count(), 1);
+        assert_eq!(t.get(0, 1).collect::<Vec<_>>(), vec![9]);
+        assert_eq!(t.iter_edges().collect::<Vec<_>>(), vec![(0, 1, 9)]);
+        assert_eq!(
+            t.iter(0, u64::MAX, false).collect::<Vec<_>>(),
+            vec![(0, 1, 9)]
+        );
+    }
+
+    #[test]
+    fn rebuild_backward_with_dp_overlay() {
+        ensure_init();
+        let mut t = overlay_tensor();
+        t.rebuild_backward();
+        assert_eq!(
+            t.iter(0, u64::MAX, true).collect::<Vec<_>>(),
+            vec![(0, 1, 9)]
+        );
+    }
+
+    #[test]
+    fn encode_decode_roundtrip_with_dp_overlay() {
+        ensure_init();
+        let t = overlay_tensor();
+        let mut buf = Buf::new();
+        Encode::<19>::encode(&t, &mut buf);
+
+        let mut decoded = <Tensor as Decode<19>>::decode(&mut buf).unwrap();
+        // A wrong `total` header (e.g. the shadowed cell double-counted) would
+        // desync the stream; exact consumption proves the header was right.
+        assert_eq!(buf.pos, buf.data.len());
+
+        decoded.rebuild_backward();
+        assert_eq!(decoded.edge_count(), 1);
+        assert_eq!(decoded.get(0, 1).collect::<Vec<_>>(), vec![9]);
+        assert_eq!(
+            decoded.iter(0, u64::MAX, true).collect::<Vec<_>>(),
+            vec![(0, 1, 9)]
+        );
     }
 }
