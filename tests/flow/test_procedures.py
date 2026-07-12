@@ -355,6 +355,7 @@ class testProcedures(FlowTestsBase):
             "CALL dbms.procedures() YIELD mode, name RETURN mode, name ORDER BY name"
         ).result_set
         expected_result = [
+            ["READ", "algo.AStar"],
             ["READ", "algo.BFS"],
             ["READ", "algo.HarmonicCentrality"],
             ["READ", "algo.MSF"],
