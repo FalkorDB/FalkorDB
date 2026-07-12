@@ -289,6 +289,7 @@ pub enum Column {
 impl Column {
     /// Extracts a single [`Value`] from this column at the given row index.
     #[must_use]
+    #[inline]
     pub fn get(
         &self,
         row: usize,
@@ -786,8 +787,51 @@ impl<'a> Batch<'a> {
         }
     }
 
-    /// Concatenates the active rows of `batches` into a single dense batch.
+    /// Columnar correlated merge for the result emission of `Apply` / `Optional`
+    /// / `Merge`.
     ///
+    /// `self` is a sub-plan output batch (consumed) whose rows carry an
+    /// `origin_row` tag pointing back into `input` — a compacted input batch
+    /// where row `i` is the input row with sequential origin `i` (as produced by
+    /// [`clone_active_rows_seq_origin`](Self::clone_active_rows_seq_origin)).
+    ///
+    /// The sub-plan already carries most correlated variables forward per row, so
+    /// its own columns pass straight through ([`into_compacted`](Self::into_compacted)
+    /// is free for a dense batch); only the input columns the sub-query did *not*
+    /// bind are restored, gathered from `input` by each row's origin. This is the
+    /// columnar equivalent of `input_row.clone().merge(sub_row)` performed
+    /// row-by-row, but with no per-row `Row` materialization or transposition —
+    /// and, in the common case where the sub-plan keeps every input column, with
+    /// zero column copies at all.
+    ///
+    /// `origins[k]` must be the `origin_row` of the k-th active row of `self`
+    /// (the caller already collects these to track matched origins, so they are
+    /// passed in rather than recomputed). Matching [`Row::merge`](crate::runtime::row::Row::merge),
+    /// a value-present-but-unbound sub-plan slot is treated as unbound, so the
+    /// input binding is restored for it.
+    #[must_use]
+    pub fn merge_over_input(
+        self,
+        input: &Batch<'a>,
+        origins: &[usize],
+    ) -> Batch<'a> {
+        // Input columns the sub-plan output does not bind must be restored from
+        // the input; everything the sub-plan binds is already correct per row.
+        let mut missing: Vec<u32> = Vec::new();
+        for id in 0..input.columns.len() as u32 {
+            if input.is_bound_at(id, 0) && !self.is_bound_at(id, 0) {
+                missing.push(id);
+            }
+        }
+        // Pass the sub-plan's own columns straight through (free when dense);
+        // its rows are already in active/origin order matching `origins`.
+        let mut out = self.into_compacted();
+        for id in missing {
+            out.set_column(id, input.column(id).gather(origins.iter().copied()));
+        }
+        out
+    }
+
     /// This is the columnar replacement for repeatedly appending each batch row
     /// by row through a generic `Value` accumulator (and re-classifying the
     /// result); instead, each output column is built once. A column that is bound to the
@@ -1099,6 +1143,7 @@ impl<'a> Batch<'a> {
     /// `Column::Unbound`); returns `Some(Value::Null)` for an explicitly-null
     /// binding. Clones the value.
     #[must_use]
+    #[inline]
     pub fn value_at(
         &self,
         var_id: u32,
@@ -1241,6 +1286,7 @@ impl<'b, 'a> BatchRow<'b, 'a> {
 }
 
 impl RowView for BatchRow<'_, '_> {
+    #[inline]
     fn value_at(
         &self,
         var_id: u32,
@@ -1448,7 +1494,14 @@ impl<'a> BatchOp<'a> {
                 }
             }
             Self::Unwind(op) => op.child.set_argument_batch(batch),
-            Self::CondTraverse(op) => op.child.set_argument_batch(batch),
+            Self::CondTraverse(op) => {
+                // Drop rows queued from the previous outer iteration so a
+                // correlated plan (Apply) that stops the inner side early can't
+                // leak stale matches into the next argument batch.
+                op.emitter.reset();
+                op.pending_batches.clear();
+                op.child.set_argument_batch(batch);
+            }
             Self::ExpandInto(op) => op.child.set_argument_batch(batch),
             Self::NodeByIdSeek(op) => op.child.set_argument_batch(batch),
             Self::NodeByIndexScan(op) => op.child.set_argument_batch(batch),
@@ -1481,7 +1534,10 @@ impl<'a> BatchOp<'a> {
                 }
             }
             Self::PathBuilder(op) => op.child.set_argument_batch(batch),
-            Self::LoadCsv(op) => op.child.set_argument_batch(batch),
+            Self::LoadCsv(op) => {
+                op.emitter.reset();
+                op.child.set_argument_batch(batch);
+            }
             Self::NodeByFulltextScan(op) => {
                 // Drop rows still queued from the previous outer iteration so a
                 // correlated plan (Apply) that stops the inner side early can't
@@ -1509,8 +1565,14 @@ impl<'a> BatchOp<'a> {
                 op.emitter.reset();
                 op.child.set_argument_batch(batch);
             }
-            Self::CondVarLenTraverse(op) => op.child.set_argument_batch(batch),
-            Self::AllShortestPaths(op) => op.child.set_argument_batch(batch),
+            Self::CondVarLenTraverse(op) => {
+                op.emitter.reset();
+                op.child.set_argument_batch(batch);
+            }
+            Self::AllShortestPaths(op) => {
+                op.emitter.reset();
+                op.child.set_argument_batch(batch);
+            }
             Self::OrApplyMultiplexer(op) => op.child.set_argument_batch(batch),
             Self::ForEach(op) => op.child.set_argument_batch(batch),
             Self::ValueHashJoin(op) => {

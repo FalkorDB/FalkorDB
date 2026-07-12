@@ -25,8 +25,27 @@
 #     slowdown on a new query pattern).
 #   * GraphBLAS version is bumped in graphblas.sh.
 #
-# NOTE: PreJIT kernel sources are architecture-independent C; the harvest
-# can run on any host. The harvested files become a checked-in artifact.
+# HARMONIC HLL KERNELS: the LAGraph HyperLogLog dot4 semiring kernels
+# (GB_jit__AxB_dot4__*__lg_hll_merge_lg_hll_second, plus lg_hll_count /
+# lg_hll_delta) are only harvested because tests/flow/test_harmonic_centrality.py
+# exercises algo.HarmonicCentrality on BOTH a tiny graph (A-bitmap `...eca`
+# dot4 variant) and a larger sparse graph (test08 -> A-sparse `...ec6` variant,
+# the one the benchmark hits). Two conditions are required for these to appear:
+#   1. The harmonic iso fast path (algo_procedures.rs feeds LAGraph an ISO bool
+#      adjacency via eWiseMult ONEB) must be present -- a non-iso adjacency
+#      makes HyperBall punt to the ~3x slower generic dot2 and no dot4 kernel
+#      is ever JIT-compiled.
+#   2. The flow suite must run under --features prejit_harvest (Step 4e below).
+# If harmonic centrality regresses on medium/large graphs, confirm those dot4
+# kernels are still present in build/graphblas/PreJIT/ after a re-harvest.
+#
+# NOTE: kernels must be harvested ON LINUX, inside the Linux Docker toolchain
+# image (ghcr.io/falkordb/falkordb-build) — the CI/production target. The JIT
+# defn strings embedded in the kernels are captured AFTER host header macro
+# expansion, so a macOS harvest can bake in Apple-specific expansions (e.g.
+# fortify rewriting memcpy to __builtin___memcpy_chk) that fail the kernels'
+# _query hash check on Linux — GraphBLAS then silently falls back to slow
+# generic kernels. The harvested files become a checked-in artifact.
 
 set -euo pipefail
 
@@ -62,6 +81,28 @@ if [[ "$(uname -s)" == "Darwin" ]] && [[ -z "${CC:-}" ]]; then
             export CXX="${BREW_LLVM}/bin/clang++"
             echo "Auto-detected homebrew LLVM: CC=${CC}"
         fi
+    fi
+fi
+
+# JIT-compiled kernel .{so,dylib}s link their own copy of libomp; loading
+# them next to the module's statically-wired libomp trips OpenMP's
+# duplicate-runtime abort (__kmp_serial_initialize). Harmless for a harvest
+# run, so tell libomp to tolerate it — without this the server crashes after
+# compiling the first kernel and the cache stays nearly empty.
+export KMP_DUPLICATE_LIB_OK=TRUE
+
+# In the Linux Docker toolchain image only a static /opt/libomp/lib/libomp.a
+# exists, and it's outside the default linker search path. The JIT compile
+# line ends with `-fopenmp=libomp`, whose implicit `-lomp` then fails with
+# "cannot find -lomp" — every runtime JIT compile errors out (GxB_JIT_ERROR),
+# aborting each algorithm at its first uncached kernel so later kernels
+# never get generated. Symlink the archive into the default path.
+if [[ "$(uname -s)" == "Linux" && -f /opt/libomp/lib/libomp.a && ! -e /usr/lib/libomp.a ]]; then
+    if [[ -w /usr/lib ]]; then
+        ln -s /opt/libomp/lib/libomp.a /usr/lib/libomp.a
+        echo "Symlinked /opt/libomp/lib/libomp.a -> /usr/lib/libomp.a (JIT link needs -lomp)"
+    else
+        echo "WARNING: /usr/lib not writable; JIT kernel links may fail with 'cannot find -lomp'" >&2
     fi
 fi
 
@@ -187,6 +228,9 @@ echo "[Step 4d] Running TCK suite..."
     env TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s)
 
 echo "[Step 4e] Running flow tests..."
+# Includes tests/flow/test_harmonic_centrality.py, whose tiny + 200-node graph
+# shapes JIT-compile the LAGraph HLL dot4 kernels (see header note) into the
+# cache so Step 5 can harvest them.
 (cd "${REPO_DIR}" && run_with_retry "flow.sh" ./flow.sh)
 
 # ---------------------------------------------------------------------------
@@ -214,9 +258,10 @@ echo "   Harvested ${NEW_COUNT} kernel(s) into ${PREJIT_DIR}"
 #          prejit_harvest) and re-run the suite to verify.
 # ---------------------------------------------------------------------------
 echo "[Step 6a] Rebuilding GraphBLAS with vendored PreJIT kernels..."
+# Keep the writable harvest prefix for the verify build too — installing to
+# /usr/local would need sudo (interactive prompt on dev machines). Only the
+# harvest-mode flag is dropped so the vendored kernels get baked in.
 unset FALKORDB_PREJIT_HARVEST
-unset GRAPHBLAS_INSTALL_PREFIX
-unset GRAPHBLAS_LIB_DIR
 run_with_retry "graphblas.sh (normal)" "${REPO_DIR}/graphblas.sh"
 
 echo "[Step 6b] Rebuilding falkordb-rs release (normal)..."

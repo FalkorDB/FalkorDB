@@ -127,7 +127,7 @@ WORKDIR /data
 
 RUN python3 -m venv venv
 
-RUN venv/bin/pip install behave falkordb falkordb-bulk-loader hypothesis pytest pytest-benchmark RLTest
+RUN venv/bin/pip install behave falkordb falkordb-bulk-loader hypothesis pytest RLTest
 
 # Build SuiteSparse:GraphBLAS v10.3.1 + LAGraph v1.2.1 with the FalkorDB-
 # specific tweaks: GB_control.h patch, vendored PreJIT kernels from the

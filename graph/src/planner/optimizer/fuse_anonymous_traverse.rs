@@ -238,6 +238,7 @@ pub(super) fn fuse_anonymous_traverse(plan: &mut DynTree<IR>) {
         // Build the merged chain: child's existing chain (entry-side hops),
         // then the parent's relationship, then parent's existing chain.
         let mut merged_chain = child_chain;
+        merged_chain.reserve_exact(parent_chain.len() + 1);
         merged_chain.push(parent_rel);
         merged_chain.extend(parent_chain);
 

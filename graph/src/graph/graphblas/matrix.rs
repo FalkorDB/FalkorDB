@@ -142,7 +142,7 @@ pub fn init(
         //     not covered by PreJIT silently falls back to generic kernels
         //     (no panic, no dlopen attempts that would deadlock fork()).
         //     Local arm64 A/B vs GxB_JIT_OFF (which main shipped) shows
-        //     +6% to +87% across the test_bench.py suite; aligning with
+        //     +6% to +87% across the benchmark suite; aligning with
         //     the C module's choice keeps the runtime semantics
         //     interchangeable.
         //

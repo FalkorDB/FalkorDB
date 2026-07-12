@@ -70,6 +70,7 @@
 use super::{FnType, Functions, Type, empty_procedure_batch};
 use crate::{
     graph::{
+        attribute_store::AttributeStore,
         graph::{Graph, NodeId, RelationshipId},
         graphblas::lagraph_bindings::{self, LAGraph_Boolean, LAGraph_Graph, LAGraph_Kind},
     },
@@ -101,6 +102,125 @@ fn msg_to_string(msg: &LagMsg) -> String {
     unsafe { std::ffi::CStr::from_ptr(msg.as_ptr()) }
         .to_string_lossy()
         .into_owned()
+}
+
+/// Context for the user-defined GraphBLAS weight operator used by `algo.MSF`.
+///
+/// Holds a borrowed pointer to just the relationship [`AttributeStore`] — the
+/// only graph state the operator reads — rather than the whole graph. The
+/// pointer is valid for the whole `GrB_Matrix_apply` call: the store is
+/// read-locked and never mutated during it, and the operator is freed before the
+/// lock releases. Also carries the resolved attribute index and objective sign.
+///
+/// `#[repr(C)]` plain-old-data so GraphBLAS can memcpy it as the thunk operand
+/// and hand a pointer to it to every invocation of [`msf_weight_index_op`].
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct MsfWeightCtx {
+    attrs: *const AttributeStore,
+    attr_idx: u16,
+    maximize: bool,
+    /// Unweighted MSF: every edge scores `1.0`, skipping the attribute lookup so
+    /// the unweighted path shares the weighted path's parallel apply.
+    unit: bool,
+}
+
+/// User-defined GraphBLAS **index-unary** operator: `z = weight(edge_id = j)`.
+///
+/// Applied to a tensor's `me[compound_key(src,dst)][edge_id]` matrix, so the
+/// column index `j` *is* the edge id. Writes the edge's weight into `z` (FP64),
+/// negated when maximizing so a downstream `GrB_MIN` row-reduce over each pair's
+/// edge-id row selects the max-weight edge. Missing / non-numeric weights map to
+/// `+inf` (never selected), matching the serial fallback's score.
+///
+/// # Panic safety
+/// Invoked on GraphBLAS OpenMP worker threads; the global panic hook aborts the
+/// process, so this must not panic. It does only read-only, non-unwrapping work:
+/// an attribute-store lookup that takes a per-shard read lock and clones a
+/// `Value` (never panics). The attribute-store pointer stays valid because the
+/// caller holds the store read-locked across the whole synchronous apply and
+/// frees this operator before releasing it.
+unsafe extern "C" fn msf_weight_index_op(
+    z: *mut std::os::raw::c_void,
+    _x: *const std::os::raw::c_void,
+    _i: crate::graph::graphblas::GrB_Index,
+    j: crate::graph::graphblas::GrB_Index,
+    y: *const std::os::raw::c_void,
+) {
+    if z.is_null() || y.is_null() {
+        return;
+    }
+    let ctx = &*y.cast::<MsfWeightCtx>();
+    if ctx.unit {
+        *z.cast::<f64>() = 1.0;
+        return;
+    }
+    let miss = if ctx.maximize {
+        f64::NEG_INFINITY
+    } else {
+        f64::INFINITY
+    };
+    // No null check on `attrs`: the caller always sets it from a live
+    // `&AttributeStore` (held read-locked for the whole apply), so it can't be
+    // null, and a null check couldn't catch the only real risk — a dangling
+    // pointer — anyway. `j` is the edge id (the `me` column).
+    let raw = match (*ctx.attrs).get_attr_by_idx(j, ctx.attr_idx) {
+        Some(Value::Float(f)) => f,
+        Some(Value::Int(k)) => k as f64,
+        _ => miss,
+    };
+    *z.cast::<f64>() = if ctx.maximize { -raw } else { raw };
+}
+
+/// Plain-old-data `{score, edge}` pair, the value type of the `rel_adj` matrix.
+///
+/// Building `rel_adj` with [`msf_keep_min_score`] as the duplicate-combiner makes
+/// each node pair resolve to the relationship id of its minimum-score edge — the
+/// exact edge the weighted forest selects — so a forest edge's relationship can
+/// be recovered with an O(1) `extractElement` instead of re-scanning the tensor.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct ScoredEdge {
+    score: f64,
+    edge: u64,
+}
+
+/// User-defined GraphBLAS **binary** operator combining two [`ScoredEdge`] by
+/// keeping the smaller score (ties keep the first operand). Used as the `dup`
+/// when building and symmetrizing `rel_adj`.
+///
+/// # Panic safety
+/// Runs on GraphBLAS worker threads (the panic hook aborts the process), so it
+/// does only null-guarded plain-old-data reads and never unwinds.
+unsafe extern "C" fn msf_keep_min_score(
+    z: *mut std::os::raw::c_void,
+    x: *const std::os::raw::c_void,
+    y: *const std::os::raw::c_void,
+) {
+    if z.is_null() || x.is_null() || y.is_null() {
+        return;
+    }
+    let x = &*x.cast::<ScoredEdge>();
+    let y = &*y.cast::<ScoredEdge>();
+    *z.cast::<ScoredEdge>() = if y.score < x.score { *y } else { *x };
+}
+
+/// User-defined GraphBLAS **unary** operator projecting an [`ScoredEdge`] to its
+/// `score` (FP64). Applied to the finished `rel_adj` to derive the plain-weight
+/// `weighted_adj` Boruvka needs, so the score is stored once (in `rel_adj`) rather
+/// than built into a second matrix from a parallel array.
+///
+/// # Panic safety
+/// Runs on GraphBLAS worker threads (the panic hook aborts the process); does
+/// only null-guarded plain-old-data reads and never unwinds.
+unsafe extern "C" fn msf_score_of(
+    z: *mut std::os::raw::c_void,
+    x: *const std::os::raw::c_void,
+) {
+    if z.is_null() || x.is_null() {
+        return;
+    }
+    *z.cast::<f64>() = (*x.cast::<ScoredEdge>()).score;
 }
 
 /// Extract an optional string-or-null from a Value, returning an error if
@@ -1087,7 +1207,7 @@ fn register_msf(funcs: &mut Functions) {
             // For unweighted: use 1.0 for all entries
             // For weighted: use the attribute value
             unsafe {
-                use crate::graph::graphblas::{GrB_FP64, GrB_Index, GrB_Matrix, GrB_Matrix_extractTuples_FP64, GrB_Matrix_free, GrB_Matrix_new, GrB_Matrix_nvals, GrB_Matrix_setElement_FP64, GrB_Matrix_wait, GrB_Vector, GrB_Vector_free, GrB_WaitMode, lagraphx_bindings};
+                use crate::graph::graphblas::{GrB_BOOL, GrB_BinaryOp, GrB_BinaryOp_free, GrB_BinaryOp_new, GrB_DESC_SC, GrB_DESC_T1, GrB_Descriptor, GrB_FP64, GrB_Index, GrB_IndexUnaryOp, GrB_IndexUnaryOp_free, GrB_IndexUnaryOp_new, GrB_Info, GrB_Matrix, GrB_Matrix_apply, GrB_Matrix_apply_IndexOp_UDT, GrB_Matrix_build_UDT, GrB_Matrix_eWiseAdd_BinaryOp, GrB_Matrix_extractElement_UDT, GrB_Matrix_extractTuples_FP64, GrB_Matrix_free, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_wait, GrB_Type, GrB_Type_free, GrB_Type_new, GrB_UnaryOp, GrB_UnaryOp_free, GrB_UnaryOp_new, GrB_Vector, GrB_Vector_free, GrB_WaitMode, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_get_FP64, GxB_Iterator_new, GxB_rowIterator_attach, GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol, GxB_rowIterator_nextRow, GxB_rowIterator_seekRow, lagraphx_bindings};
 
                 let active_set: FxHashSet<u64> = active_nodes.iter().copied().collect();
 
@@ -1110,195 +1230,196 @@ fn register_msf(funcs: &mut Functions) {
                 let mut weighted_adj: GrB_Matrix = null_mut();
                 GrB_Matrix_new(&raw mut weighted_adj, GrB_FP64, n, n);
 
-                // Best edge per undirected node pair (compact IDs).
-                let mut best_pairs: FxHashMap<(u64, u64), (f64, RelationshipId)> =
-                    FxHashMap::default();
-
-                // Chosen relationship metadata for each undirected compact pair.
-                // Maps (min_compact, max_compact) -> (relationship id, original src, original dst).
+                // Chosen relationship per undirected compact pair (min,max) ->
+                // relationship id; filled by the O(1) forest-edge recovery below.
                 let mut pair_to_rel: FxHashMap<(u64, u64), RelationshipId> =
                     FxHashMap::default();
 
-                let has_multi_edges = if rel_types.is_empty() {
-                    g.relationship_tensors().iter().any(|tensor| tensor.has_multi_edge())
-                } else {
-                    rel_types.iter().any(|rt| {
-                        g.get_type_id(rt)
-                            .is_some_and(|tid| g.relationship_tensors()[tid.0].has_multi_edge())
-                    })
-                };
-
-                // Fast path: if no weight attribute, skip attribute lookups entirely.
-                if weight_attr.is_none() && !has_multi_edges {
-                    // No multi-edges: write directly into matrices and skip pair HashMap bookkeeping.
+                // Tensors in play (all, or just the requested relationship types).
+                let sel_tensors: Vec<&crate::graph::graphblas::tensor::Tensor> =
                     if rel_types.is_empty() {
-                        for tensor in g.relationship_tensors() {
-                            for (src_u, dst_u, edge_id) in tensor.iter(0, u64::MAX, false) {
-                                if src_u as usize >= id_to_compact_vec.len() || id_to_compact_vec[src_u as usize] == u64::MAX {
-                                    continue;
-                                }
-                                if dst_u as usize >= id_to_compact_vec.len() || id_to_compact_vec[dst_u as usize] == u64::MAX {
-                                    continue;
-                                }
-
-                                let cs = id_to_compact_vec[src_u as usize];
-                                let cd = id_to_compact_vec[dst_u as usize];
-                                let (a, b) = if cs <= cd { (cs, cd) } else { (cd, cs) };
-                                GrB_Matrix_setElement_FP64(weighted_adj, 1.0, cs, cd);
-                                GrB_Matrix_setElement_FP64(weighted_adj, 1.0, cd, cs);
-                                pair_to_rel.insert((a, b), RelationshipId::from(edge_id));
-                            }
-                        }
+                        g.relationship_tensors().iter().collect()
                     } else {
-                        for rt in &rel_types {
-                            let Some(tid) = g.get_type_id(rt) else { continue };
-                            let tensor = &g.relationship_tensors()[tid.0];
-                            for (src_u, dst_u, edge_id) in tensor.iter(0, u64::MAX, false) {
-                                if src_u as usize >= id_to_compact_vec.len() || id_to_compact_vec[src_u as usize] == u64::MAX {
-                                    continue;
-                                }
-                                if dst_u as usize >= id_to_compact_vec.len() || id_to_compact_vec[dst_u as usize] == u64::MAX {
-                                    continue;
-                                }
+                        rel_types
+                            .iter()
+                            .filter_map(|rt| g.get_type_id(rt))
+                            .map(|tid| &g.relationship_tensors()[tid.0])
+                            .collect()
+                    };
 
-                                let cs = id_to_compact_vec[src_u as usize];
-                                let cd = id_to_compact_vec[dst_u as usize];
-                                let (a, b) = if cs <= cd { (cs, cd) } else { (cd, cs) };
-                                GrB_Matrix_setElement_FP64(weighted_adj, 1.0, cs, cd);
-                                GrB_Matrix_setElement_FP64(weighted_adj, 1.0, cd, cs);
-                                pair_to_rel.insert((a, b), RelationshipId::from(edge_id));
-                            }
-                        }
-                    }
-                } else if weight_attr.is_none() {
-                    // Unweighted: all edges have weight 1.0
-                    if rel_types.is_empty() {
-                        for tensor in g.relationship_tensors() {
-                            for (src_u, dst_u, edge_id) in tensor.iter(0, u64::MAX, false) {
-                                if src_u as usize >= id_to_compact_vec.len() || id_to_compact_vec[src_u as usize] == u64::MAX {
-                                    continue;
-                                }
-                                if dst_u as usize >= id_to_compact_vec.len() || id_to_compact_vec[dst_u as usize] == u64::MAX {
-                                    continue;
-                                }
+                // Collect every edge once as a compact-indexed (row, col, {score,
+                // rel}) COO tuple. Weighted and unweighted differ only in how
+                // `score` is produced (Phase 1); a single min-by-score build then
+                // collapses each pair's — and cross-type / multi-edge — tuples to
+                // its minimum-score edge, so there is no gate, sort, or per-row
+                // reduce. `scored_edges` is the single source of truth for both Boruvka's
+                // weights and the forest-edge relationship recovery.
+                let mut b_rows: Vec<GrB_Index> = Vec::new();
+                let mut b_cols: Vec<GrB_Index> = Vec::new();
+                let mut scored_edges: Vec<ScoredEdge> = Vec::new();
 
-                                let cs = id_to_compact_vec[src_u as usize];
-                                let cd = id_to_compact_vec[dst_u as usize];
-                                let (a, b) = if cs <= cd { (cs, cd) } else { (cd, cs) };
-                                let rel_id = RelationshipId::from(edge_id);
-
-                                best_pairs
-                                    .entry((a, b))
-                                    .or_insert((1.0f64, rel_id));
-                            }
-                        }
-                    } else {
-                        for rt in &rel_types {
-                            let Some(tid) = g.get_type_id(rt) else { continue };
-                            let tensor = &g.relationship_tensors()[tid.0];
-                            for (src_u, dst_u, edge_id) in tensor.iter(0, u64::MAX, false) {
-                                if src_u as usize >= id_to_compact_vec.len() || id_to_compact_vec[src_u as usize] == u64::MAX {
-                                    continue;
-                                }
-                                if dst_u as usize >= id_to_compact_vec.len() || id_to_compact_vec[dst_u as usize] == u64::MAX {
-                                    continue;
-                                }
-
-                                let cs = id_to_compact_vec[src_u as usize];
-                                let cd = id_to_compact_vec[dst_u as usize];
-                                let (a, b) = if cs <= cd { (cs, cd) } else { (cd, cs) };
-                                let rel_id = RelationshipId::from(edge_id);
-
-                                best_pairs
-                                    .entry((a, b))
-                                    .or_insert((1.0f64, rel_id));
-                            }
-                        }
-                    }
-                } else {
-                    // Weighted: batch-fetch attribute values to avoid per-edge lookups.
-                    let attr_idx = g
-                        .get_relationship_attribute_id(weight_attr.as_ref().unwrap())
+                // The same parallel index-unary apply serves both paths: weighted
+                // reads the attribute; unweighted (`unit`) returns 1.0 — so neither
+                // pays a single-threaded host walk of `me`.
+                let (attr_idx, unit) = if let Some(attr) = weight_attr.as_ref() {
+                    let idx = g
+                        .get_relationship_attribute_id(attr)
                         .ok_or_else(|| String::from("Weight attribute does not exist"))?
                         as u16;
-                    let mut pair_meta_for_weights: Vec<(u64, u64)> = Vec::new();
-                    let mut rel_ids_for_weights: Vec<RelationshipId> = Vec::new();
-
-                    if rel_types.is_empty() {
-                        for tensor in g.relationship_tensors() {
-                            for (src_u, dst_u, edge_id) in tensor.iter(0, u64::MAX, false) {
-                                if src_u as usize >= id_to_compact_vec.len() || id_to_compact_vec[src_u as usize] == u64::MAX {
-                                    continue;
-                                }
-                                if dst_u as usize >= id_to_compact_vec.len() || id_to_compact_vec[dst_u as usize] == u64::MAX {
-                                    continue;
-                                }
-                                let cs = id_to_compact_vec[src_u as usize];
-                                let cd = id_to_compact_vec[dst_u as usize];
-                                let (a, b) = if cs <= cd { (cs, cd) } else { (cd, cs) };
-                                pair_meta_for_weights.push((a, b));
-                                rel_ids_for_weights.push(RelationshipId::from(edge_id));
-                            }
-                        }
-                    } else {
-                        for rt in &rel_types {
-                            let Some(tid) = g.get_type_id(rt) else { continue };
-                            let tensor = &g.relationship_tensors()[tid.0];
-                            for (src_u, dst_u, edge_id) in tensor.iter(0, u64::MAX, false) {
-                                if src_u as usize >= id_to_compact_vec.len() || id_to_compact_vec[src_u as usize] == u64::MAX {
-                                    continue;
-                                }
-                                if dst_u as usize >= id_to_compact_vec.len() || id_to_compact_vec[dst_u as usize] == u64::MAX {
-                                    continue;
-                                }
-                                let cs = id_to_compact_vec[src_u as usize];
-                                let cd = id_to_compact_vec[dst_u as usize];
-                                let (a, b) = if cs <= cd { (cs, cd) } else { (cd, cs) };
-                                pair_meta_for_weights.push((a, b));
-                                rel_ids_for_weights.push(RelationshipId::from(edge_id));
-                            }
-                        }
+                    (idx, false)
+                } else {
+                    (0u16, true)
+                };
+                let ctx = MsfWeightCtx {
+                    attrs: &raw const *g.relationship_attrs(),
+                    attr_idx,
+                    maximize,
+                    unit,
+                };
+                let mut ctx_type: GrB_Type = null_mut();
+                GrB_Type_new(&raw mut ctx_type, std::mem::size_of::<MsfWeightCtx>());
+                let mut weight_op: GrB_IndexUnaryOp = null_mut();
+                GrB_IndexUnaryOp_new(
+                    &raw mut weight_op,
+                    Some(msf_weight_index_op),
+                    GrB_FP64,
+                    GrB_BOOL,
+                    ctx_type,
+                );
+                for tensor in &sel_tensors {
+                    if tensor.edge_count() == 0 {
+                        continue;
                     }
+                    let me = tensor.edge_versioned();
+                    me.wait();
+                    // Two read-only edge sources per tensor: live base edges `m`
+                    // (masked by ¬dm to drop deletions) and pending additions `dp`
+                    // (disjoint from dm). Each fresh `score_mat` is the only output.
+                    let sources: [(GrB_Matrix, GrB_Matrix, GrB_Descriptor); 2] = [
+                        (me.m().inner(), me.dm().inner(), GrB_DESC_SC),
+                        (me.dp().inner(), null_mut(), null_mut()),
+                    ];
+                    for (src_mat, mask, desc) in sources {
+                        let mut src_nvals: GrB_Index = 0;
+                        GrB_Matrix_nvals(&raw mut src_nvals, src_mat);
+                        if src_nvals == 0 {
+                            continue;
+                        }
+                        let mut n_rows: GrB_Index = 0;
+                        let mut n_cols: GrB_Index = 0;
+                        GrB_Matrix_nrows(&raw mut n_rows, src_mat);
+                        GrB_Matrix_ncols(&raw mut n_cols, src_mat);
 
-                    let mut weight_values = Vec::with_capacity(rel_ids_for_weights.len());
-                    g.get_relationship_attributes_by_idx(
-                        &rel_ids_for_weights,
-                        attr_idx,
-                        &Value::Null,
-                        &mut weight_values,
-                    );
+                        // Phase 1 (score, parallel): apply the index-unary op so
+                        // score_mat[compound_key][edge_id] = score(edge_id = col j),
+                        // computed across GraphBLAS worker threads.
+                        let mut score_mat: GrB_Matrix = null_mut();
+                        GrB_Matrix_new(&raw mut score_mat, GrB_FP64, n_rows, n_cols);
+                        GrB_Matrix_apply_IndexOp_UDT(
+                            score_mat,
+                            mask,
+                            null_mut(),
+                            weight_op,
+                            src_mat,
+                            (&raw const ctx).cast::<std::os::raw::c_void>(),
+                            desc,
+                        );
 
-                    for ((a, b), rel_id, value) in pair_meta_for_weights
-                        .into_iter()
-                        .zip(rel_ids_for_weights.into_iter())
-                        .zip(weight_values.into_iter())
-                        .map(|((pair, rel), value)| (pair, rel, value))
-                    {
-                        let raw_weight = match value {
-                            Value::Float(f) => f,
-                            Value::Int(i) => i as f64,
-                            _ => {
-                                if maximize { f64::NEG_INFINITY } else { f64::INFINITY }
+                        // Phases 2+3 (stream): walk `score_mat` with a single row
+                        // iterator instead of `extractTuples` — no temp arrays. For
+                        // each entry decode the compound_key row into (src,dst), remap
+                        // to compact ids, and push one {score, edge} tuple.
+                        let mut it: GxB_Iterator = null_mut();
+                        GxB_Iterator_new(&raw mut it);
+                        GxB_rowIterator_attach(it, score_mat, null_mut());
+                        let mut info = GxB_rowIterator_seekRow(it, 0);
+                        while info == GrB_Info::GrB_NO_VALUE {
+                            info = GxB_rowIterator_nextRow(it);
+                        }
+                        while info == GrB_Info::GrB_SUCCESS {
+                            let compound_key = GxB_rowIterator_getRowIndex(it);
+                            let edge_id = GxB_rowIterator_getColIndex(it);
+                            let score = GxB_Iterator_get_FP64(it);
+                            let src_original = (compound_key >> 32) as usize;
+                            let dst_original = (compound_key & 0xFFFF_FFFF) as usize;
+                            if src_original < id_to_compact_vec.len()
+                                && id_to_compact_vec[src_original] != u64::MAX
+                                && dst_original < id_to_compact_vec.len()
+                                && id_to_compact_vec[dst_original] != u64::MAX
+                            {
+                                b_rows.push(id_to_compact_vec[src_original]);
+                                b_cols.push(id_to_compact_vec[dst_original]);
+                                scored_edges.push(ScoredEdge {
+                                    score,
+                                    edge: edge_id,
+                                });
                             }
-                        };
-                        let score = if maximize { -raw_weight } else { raw_weight };
-
-                        best_pairs
-                            .entry((a, b))
-                            .and_modify(|(prev_score, prev_rel)| {
-                                if score < *prev_score {
-                                    *prev_score = score;
-                                    *prev_rel = rel_id;
+                            info = GxB_rowIterator_nextCol(it);
+                            if info != GrB_Info::GrB_SUCCESS {
+                                info = GxB_rowIterator_nextRow(it);
+                                while info == GrB_Info::GrB_NO_VALUE {
+                                    info = GxB_rowIterator_nextRow(it);
                                 }
-                            })
-                            .or_insert((score, rel_id));
+                            }
+                        }
+                        GxB_Iterator_free(&raw mut it);
+                        GrB_Matrix_free(&raw mut score_mat);
                     }
                 }
+                GrB_IndexUnaryOp_free(&raw mut weight_op);
+                GrB_Type_free(&raw mut ctx_type);
 
-                for ((cs, cd), (score, rel_id)) in best_pairs {
-                    GrB_Matrix_setElement_FP64(weighted_adj, score, cs, cd);
-                    GrB_Matrix_setElement_FP64(weighted_adj, score, cd, cs);
-                    pair_to_rel.insert((cs, cd), rel_id);
+                // Phase 4 (build): one min-by-score `rel_adj` build collapses each
+                // pair's tuples to its minimum-score {score, edge}; symmetrize to the
+                // undirected minimum. Boruvka's plain-FP64 `weighted_adj` is then the
+                // score component projected out of `rel_adj` (`msf_score_of`), so the
+                // score lives once — in `rel_adj`. `rel_adj` and its type outlive this
+                // block for the recovery below; they stay null (and the recovery is
+                // skipped) when there are no edges, so nothing is allocated then.
+                let mut rel_adj: GrB_Matrix = null_mut();
+                let mut scored_edge_type: GrB_Type = null_mut();
+                if !b_rows.is_empty() {
+                    GrB_Type_new(&raw mut scored_edge_type, std::mem::size_of::<ScoredEdge>());
+                    let mut min_by_score: GrB_BinaryOp = null_mut();
+                    GrB_BinaryOp_new(
+                        &raw mut min_by_score,
+                        Some(msf_keep_min_score),
+                        scored_edge_type,
+                        scored_edge_type,
+                        scored_edge_type,
+                    );
+                    let mut score_op: GrB_UnaryOp = null_mut();
+                    GrB_UnaryOp_new(&raw mut score_op, Some(msf_score_of), GrB_FP64, scored_edge_type);
+                    GrB_Matrix_new(&raw mut rel_adj, scored_edge_type, n, n);
+                    GrB_Matrix_build_UDT(
+                        rel_adj,
+                        b_rows.as_ptr(),
+                        b_cols.as_ptr(),
+                        scored_edges.as_ptr().cast::<std::os::raw::c_void>(),
+                        b_rows.len() as GrB_Index,
+                        min_by_score,
+                    );
+                    GrB_Matrix_eWiseAdd_BinaryOp(
+                        rel_adj,
+                        null_mut(),
+                        null_mut(),
+                        min_by_score,
+                        rel_adj,
+                        rel_adj,
+                        GrB_DESC_T1,
+                    );
+                    GrB_Matrix_apply(
+                        weighted_adj,
+                        null_mut(),
+                        null_mut(),
+                        score_op,
+                        rel_adj,
+                        null_mut(),
+                    );
+                    // Ops are done once `weighted_adj` is projected; only `rel_adj`
+                    // (and its type) is needed by the forest recovery below.
+                    GrB_BinaryOp_free(&raw mut min_by_score);
+                    GrB_UnaryOp_free(&raw mut score_op);
                 }
 
                 GrB_Matrix_wait(weighted_adj, GrB_WaitMode::GrB_COMPLETE as i32);
@@ -1342,6 +1463,32 @@ fn register_msf(funcs: &mut Functions) {
 
                 GrB_Matrix_free(&raw mut forest_edges);
                 GrB_Vector_free(&raw mut component_id);
+
+                // Recover each forest edge's relationship id from `rel_adj` with a
+                // single O(1) extract per pair (both orientations resolve, since
+                // rel_adj is symmetrized). The min-by-score build already picked the
+                // edge the weighted forest selects, so weighted and unweighted share
+                // this path — no per-pair tensor scan, no weight re-read. Touching
+                // only the ~n forest pairs is leaner than masking the full, ~m-entry
+                // UDT `rel_adj` down to the forest and bulk-extracting it (measured
+                // neutral-to-slower: the UDT mask sweeps every cell to keep ~n).
+                for i in 0..nvals_out as usize {
+                    let cs = f_rows[i];
+                    let cd = f_cols[i];
+                    let (a, b) = if cs <= cd { (cs, cd) } else { (cd, cs) };
+                    let mut sr = ScoredEdge { score: 0.0, edge: 0 };
+                    if GrB_Matrix_extractElement_UDT(
+                        (&raw mut sr).cast::<std::os::raw::c_void>(),
+                        rel_adj,
+                        cs,
+                        cd,
+                    ) == GrB_Info::GrB_SUCCESS
+                    {
+                        pair_to_rel.insert((a, b), RelationshipId::from(sr.edge));
+                    }
+                }
+                GrB_Matrix_free(&raw mut rel_adj);
+                GrB_Type_free(&raw mut scored_edge_type);
 
                 // Use Vec for component mapping instead of HashMap (compact indices are 0..n-1)
                 let mut compact_to_component_vec = vec![i64::MIN; sorted_ids.len()];
@@ -1852,7 +1999,6 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
         procedure: ["node", "score", "reachable"],
         fn algo_harmonic_centrality(runtime, args) {
             use crate::graph::graphblas::{
-                lagraph_bindings,
                 lagraphx_bindings,
                 GrB_ALL,
                 GrB_BOOL,
@@ -1891,13 +2037,36 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
             }
 
             unsafe {
-                use crate::graph::graphblas::{GrB_Matrix, GrB_Matrix_dup};
+                use crate::graph::graphblas::{
+                    GrB_Matrix, GrB_Matrix_eWiseMult_BinaryOp, GrB_Matrix_ncols,
+                    GrB_Matrix_new, GrB_Matrix_nrows, GrB_ONEB_BOOL,
+                };
 
                 // Match C implementation fast path for unfiltered run.
                 let (compact_adj, compact_to_id): (GrB_Matrix, Option<Vec<u64>>) = if node_labels.is_empty() {
                     let adj = g.build_adjacency_matrix(&rel_types);
+                    // Hand LAGraph an ISO boolean matrix (a single shared `true`
+                    // value), exactly as the C module's Delta_Matrix_export does via
+                    // GrB_ONEB_BOOL. The generic HyperBall mxv inside
+                    // LAGr_HarmonicCentrality only takes GraphBLAS's fast dot4 path
+                    // when the adjacency is iso; a plain non-iso dup makes it punt to
+                    // the ~3x slower generic dot2. eWiseMult(adj, adj, ONEB) rebuilds
+                    // the same pattern with every value collapsed to iso `true`.
+                    let mut nrows: u64 = 0;
+                    let mut ncols: u64 = 0;
+                    GrB_Matrix_nrows(&raw mut nrows, adj.inner());
+                    GrB_Matrix_ncols(&raw mut ncols, adj.inner());
                     let mut raw_adj: GrB_Matrix = std::ptr::null_mut();
-                    GrB_Matrix_dup(&raw mut raw_adj, adj.inner());
+                    GrB_Matrix_new(&raw mut raw_adj, GrB_BOOL, nrows, ncols);
+                    GrB_Matrix_eWiseMult_BinaryOp(
+                        raw_adj,
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        GrB_ONEB_BOOL,
+                        adj.inner(),
+                        adj.inner(),
+                        std::ptr::null_mut(),
+                    );
                     let n = g.node_count() + g.deleted_nodes_count();
                     crate::graph::graphblas::GrB_Matrix_resize(raw_adj, n, n);
                     (raw_adj, None)
@@ -1913,8 +2082,9 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
                 )?;
 
                 let mut msg = new_msg();
-                lagraph_bindings::LAGraph_Cached_AT(lag_g, msg.as_mut_ptr());
-                lagraph_bindings::LAGraph_Cached_OutDegree(lag_g, msg.as_mut_ptr());
+                // LAGr_HarmonicCentrality only reads G->A (it builds its own compact
+                // submatrix internally); it never uses G->AT or G->out_degree, so we
+                // skip caching them here, matching the C module which also does not.
 
                 runtime.check_timeout()?;
                 let mut nodes: GrB_Vector = null_mut();
@@ -2100,9 +2270,17 @@ fn register_maxflow(funcs: &mut Functions) {
                 };
 
             let tensor = &g.relationship_tensors()[type_id.0];
-            let mut rel_pairs: Vec<(u64, u64)> = Vec::with_capacity(tensor.edge_count() as usize);
-            let mut rel_ids: Vec<RelationshipId> = Vec::with_capacity(tensor.edge_count() as usize);
-            for (src, dst, edge_id) in tensor.iter(0, u64::MAX, false) {
+            // Stream every edge directly from the edge-id matrix `me` via
+            // `edge_iter` rather than iterating the tensor pair-by-pair (which
+            // pays a binary-search seek into `me` per pair) or bulk-collecting
+            // into throwaway vectors. maxFlow rejects multi-edge tensors above,
+            // so each (src, dst) yields exactly one edge id.
+            let edge_upper = tensor.edge_count() as usize;
+            let mut rel_pairs: Vec<(u64, u64)> = Vec::with_capacity(edge_upper);
+            let mut rel_ids: Vec<RelationshipId> = Vec::with_capacity(edge_upper);
+            for (key, edge_id) in tensor.edge_iter(0, u64::MAX) {
+                let src = key >> 32;
+                let dst = key & 0xFFFF_FFFF;
                 if let Some(ref filter) = label_filter
                     && (!filter.contains(&src) || !filter.contains(&dst))
                 {
@@ -2121,7 +2299,7 @@ fn register_maxflow(funcs: &mut Functions) {
 
             let mut edges_with_cap: Vec<(u64, u64, RelationshipId, f64)> =
                 Vec::with_capacity(rel_ids.len());
-            for ((src_dst, rel_id), value) in rel_pairs.into_iter().zip(rel_ids.into_iter()).zip(attr_values.into_iter()) {
+            for ((src_dst, rel_id), value) in rel_pairs.into_iter().zip(rel_ids).zip(attr_values) {
                 let (s, d) = src_dst;
                 let parsed = match value {
                     Value::Float(f) if f >= 0.0 => Some(f),
@@ -2304,18 +2482,41 @@ fn register_maxflow(funcs: &mut Functions) {
 
             let (max_flow, flows) = unsafe {
                 use crate::graph::graphblas::{
-                    GrB_FP64, GrB_Index, GrB_Matrix, GrB_Matrix_extractTuples_FP64,
-                    GrB_Matrix_free, GrB_Matrix_new, GrB_Matrix_nvals,
-                    GrB_Matrix_setElement_FP64, GrB_Matrix_wait, GrB_WaitMode,
-                    lagraph_bindings, lagraphx_bindings,
+                    GrB_FP64, GrB_Index, GrB_MAX_FP64, GrB_Matrix, GrB_Matrix_build_FP64,
+                    GrB_Matrix_extractTuples_FP64, GrB_Matrix_free, GrB_Matrix_new,
+                    GrB_Matrix_nvals, GrB_Matrix_wait, GrB_WaitMode, lagraph_bindings,
+                    lagraphx_bindings,
                 };
 
                 let mut cap_mtx: GrB_Matrix = null_mut();
                 GrB_Matrix_new(&raw mut cap_mtx, GrB_FP64, total_nodes as u64, total_nodes as u64);
+                // Bulk-build the capacity matrix in a single GrB_Matrix_build
+                // instead of a per-edge GrB_Matrix_setElement loop (which pays
+                // FFI + pending-tuple bookkeeping and periodic reallocation per
+                // entry). Every (u, v) here is unique — maxFlow rejects
+                // multi-edge tensors above and the super-source/sink nodes get
+                // fresh ids — so the GrB_MAX_FP64 dup operator never merges
+                // distinct capacities; it is only a required argument and
+                // collapses the identical-capacity super-edges safely.
+                let mut b_rows: Vec<GrB_Index> = Vec::with_capacity(compact_edges.len());
+                let mut b_cols: Vec<GrB_Index> = Vec::with_capacity(compact_edges.len());
+                let mut b_vals: Vec<f64> = Vec::with_capacity(compact_edges.len());
                 for (u, v, c) in &compact_edges {
                     if *c > 0.0 {
-                        GrB_Matrix_setElement_FP64(cap_mtx, *c, *u as u64, *v as u64);
+                        b_rows.push(*u as GrB_Index);
+                        b_cols.push(*v as GrB_Index);
+                        b_vals.push(*c);
                     }
+                }
+                if !b_rows.is_empty() {
+                    GrB_Matrix_build_FP64(
+                        cap_mtx,
+                        b_rows.as_ptr(),
+                        b_cols.as_ptr(),
+                        b_vals.as_ptr(),
+                        b_rows.len() as GrB_Index,
+                        GrB_MAX_FP64,
+                    );
                 }
                 GrB_Matrix_wait(cap_mtx, GrB_WaitMode::GrB_COMPLETE as i32);
 

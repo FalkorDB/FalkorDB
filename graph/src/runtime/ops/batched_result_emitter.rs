@@ -309,6 +309,93 @@ impl GatherItem for (NodeId, NodeId, RelationshipId) {
     }
 }
 
+/// Binding for a variable-length traverse expansion that yields both path
+/// endpoints and an optional materialized path value. The DFS resolves the
+/// pattern's `from`/`to` (honoring reversal) before packing, so no transpose
+/// flag is needed here.
+pub(crate) struct VarLenEndpoints {
+    /// Alias of the pattern's resolved `from` endpoint.
+    pub(crate) from: u32,
+    /// Alias of the pattern's resolved `to` endpoint.
+    pub(crate) to: u32,
+    /// True when `from` and `to` are distinct aliases. When false the pattern
+    /// binds a single shared alias (`(a)-[*]->(a)`); the `to` value wins to match
+    /// the row builder's last-insert-wins semantics, so only one column is bound.
+    pub(crate) distinct: bool,
+    /// Alias of the relationship-list/path variable, when it is read downstream
+    /// (`emit_path`). `None` skips building the path column entirely.
+    pub(crate) path: Option<u32>,
+}
+
+/// Column lanes for a var-length expansion: the two endpoint node columns plus
+/// an optional path column. `tos` stays empty (and unallocated) for a shared
+/// endpoint alias; `paths` stays empty when the path is never read.
+pub(crate) struct VarLenLanes {
+    froms: Vec<NodeId>,
+    tos: Vec<NodeId>,
+    paths: Vec<Value>,
+}
+
+impl GatherItem for (NodeId, NodeId, Option<Value>) {
+    type Binding = VarLenEndpoints;
+    type Lanes = VarLenLanes;
+
+    fn new_lanes(
+        binding: &Self::Binding,
+        cap: usize,
+    ) -> Self::Lanes {
+        VarLenLanes {
+            froms: Vec::with_capacity(cap),
+            // A shared endpoint alias binds one column (via `from`), so the `to`
+            // lane is never built for it — leave it unallocated.
+            tos: if binding.distinct {
+                Vec::with_capacity(cap)
+            } else {
+                Vec::new()
+            },
+            // Only allocate the path lane when the path is read downstream.
+            paths: if binding.path.is_some() {
+                Vec::with_capacity(cap)
+            } else {
+                Vec::new()
+            },
+        }
+    }
+
+    fn push_into(
+        self,
+        binding: &Self::Binding,
+        lanes: &mut Self::Lanes,
+    ) {
+        let (from_node, to_node, path) = self;
+        if binding.distinct {
+            lanes.froms.push(from_node);
+            lanes.tos.push(to_node);
+        } else {
+            // Shared alias: the `to` insert would overwrite `from`, so bind the
+            // `to` value into the single column.
+            lanes.froms.push(to_node);
+        }
+        if binding.path.is_some() {
+            lanes.paths.push(path.unwrap_or(Value::Null));
+        }
+    }
+
+    fn finish(
+        lanes: Self::Lanes,
+        binding: &Self::Binding,
+        out: &mut Batch,
+    ) {
+        out.set_column(binding.from, Column::NodeIds(lanes.froms));
+        if binding.distinct {
+            out.set_column(binding.to, Column::NodeIds(lanes.tos));
+        }
+        if let Some(path_alias) = binding.path {
+            out.set_column(path_alias, Column::Values(lanes.paths));
+        }
+    }
+}
+
 impl GatherItem for Value {
     /// Alias of the bound variable. `set_column` upgrades the value column to
     /// the best lossless stored shape (ints/floats), so this preserves the

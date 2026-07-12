@@ -69,6 +69,10 @@ const REDISMODULE_SUBEVENT_LOADING_FAILED: u64 = 4;
 static RedisModuleEvent_ReplicationRoleChanged: RedisModuleEvent =
     RedisModuleEvent { id: 0, dataver: 1 };
 
+/// Redis event ID for replica attach/detach (REDISMODULE_EVENT_REPLICA_CHANGE).
+#[allow(non_upper_case_globals)]
+static RedisModuleEvent_ReplicaChange: RedisModuleEvent = RedisModuleEvent { id: 6, dataver: 1 };
+
 /// Redis event ID for shutdown. Only wired up under sanitizer/valgrind
 /// runs (gated by `RS_GLOBAL_DTORS`) so workers join cleanly and per-thread
 /// + module-level RediSearch/LAGraph state is released — otherwise these
@@ -402,6 +406,22 @@ pub fn graph_init(
         debug_assert_eq!(res, REDISMODULE_OK as c_int);
     }
 
+    // Latch effects-buffer building as soon as any replica attaches (or if
+    // this instance already changed roles); until then standalone masters
+    // skip serializing per-commit replication effects.
+    unsafe {
+        let res = RedisModule_SubscribeToServerEvent.unwrap()(
+            ctx.ctx,
+            RedisModuleEvent_ReplicaChange,
+            Some(on_replica_change),
+        );
+        debug_assert_eq!(res, REDISMODULE_OK as c_int);
+    }
+    if ctx.get_flags().contains(ContextFlags::SLAVE) {
+        // Loaded on a replica: replication topology already exists.
+        crate::graph_core::REPLICATION_CONSUMERS.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
     // Subscribe to keyspace notifications for graph key rename handling.
     unsafe {
         let res = redis_module::raw::RedisModule_SubscribeToKeyspaceEvents.unwrap()(
@@ -471,6 +491,21 @@ unsafe extern "C" fn on_role_change(
     _data: *mut c_void,
 ) {
     telemetry::set_is_replica(subevent == REDISMODULE_EVENT_REPLROLECHANGED_NOW_REPLICA);
+    // A role change means a replication topology exists (or is being set
+    // up); keep building effects buffers from here on.
+    crate::graph_core::REPLICATION_CONSUMERS.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Any replica attach/detach latches the sticky "replication has
+/// consumers" flag: even after the last replica detaches it may resume
+/// from the replication backlog, so effects buffers must keep being built.
+unsafe extern "C" fn on_replica_change(
+    _ctx: *mut RedisModuleCtx,
+    _eid: RedisModuleEvent,
+    _subevent: u64,
+    _data: *mut c_void,
+) {
+    crate::graph_core::REPLICATION_CONSUMERS.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Loading event callback. After a slave finishes a full RDB resync from
