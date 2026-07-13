@@ -41,7 +41,7 @@ class testSlowLog():
             self.env.assertContains("Invalid graph operation on empty key", str(e))
 
         # issue the same query twice
-        q = "UNWIND range (0, 200000) AS x RETURN max(x)"
+        q = "UNWIND range (0, 500000) AS x RETURN max(x)"
         self.graph.query(q)
         self.graph.query(q)
 
