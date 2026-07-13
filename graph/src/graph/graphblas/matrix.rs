@@ -682,6 +682,7 @@ impl<T> Matrix<T> {
         self.has_pending.store(true, Ordering::Relaxed);
     }
 
+    #[must_use]
     pub fn nrows(&self) -> u64 {
         unsafe {
             let mut nrows = 0u64;
@@ -691,6 +692,7 @@ impl<T> Matrix<T> {
         }
     }
 
+    #[must_use]
     pub fn ncols(&self) -> u64 {
         unsafe {
             let mut ncols = 0u64;
@@ -712,6 +714,7 @@ impl<T> Matrix<T> {
         self.has_pending.store(true, Ordering::Relaxed);
     }
 
+    #[must_use]
     pub fn nvals(&self) -> u64 {
         unsafe {
             let mut nvals = 0u64;
@@ -741,18 +744,6 @@ impl<T> Matrix<T> {
             let info = GxB_Matrix_fprint(*self.m, null_mut(), level as _, null_mut());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
-    }
-
-    /// Structural row-range iterator yielding `(row, col)` pairs. Reads only the
-    /// sparsity pattern, so it is valid for any element type `T`.
-    #[must_use]
-    #[allow(clippy::iter_without_into_iter)]
-    pub fn iter(
-        &self,
-        min_row: u64,
-        max_row: u64,
-    ) -> Iter {
-        Iter::new(self, min_row, max_row)
     }
 }
 
@@ -857,7 +848,7 @@ impl Matrix<u64> {
     /// UINT64 row-range iterator yielding `(row, col, value)` triples over rows
     /// in `[min_row, max_row]`. Supports `seek` for amortized per-row scans.
     #[must_use]
-    pub fn iter_range(
+    pub fn iter(
         &self,
         min_row: u64,
         max_row: u64,
@@ -886,28 +877,6 @@ impl Matrix<u64> {
                 vals.as_ptr(),
                 nvals,
                 GxB_ANY_UINT64,
-            );
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-        }
-        self.has_pending.store(true, Ordering::Relaxed);
-    }
-
-    /// Fold `other`'s UINT64 entries into `self`, with `other` winning on
-    /// overlap. Used to merge a delta-plus overlay into the base while keeping
-    /// the newest UINT64 value. Both matrices must be UINT64-typed.
-    pub fn merge_overwrite(
-        &mut self,
-        other: &Self,
-    ) {
-        unsafe {
-            let info = GrB_Matrix_eWiseAdd_BinaryOp(
-                *self.m,
-                null_mut(),
-                null_mut(),
-                GrB_SECOND_UINT64,
-                *self.m,
-                *other.m,
-                null_mut(),
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
@@ -947,6 +916,7 @@ impl Matrix<bool> {
     /// # Returns
     /// - `Some(bool)`: The boolean value at the specified position.
     /// - `None`: The element does not exist.
+    #[must_use]
     pub fn get(
         &self,
         i: u64,
@@ -1093,6 +1063,15 @@ impl Matrix<bool> {
             self.element_wise_add(None, None, Some(&ac), None);
         }
         self.has_pending.store(true, Ordering::Relaxed);
+    }
+
+    #[must_use]
+    pub fn iter(
+        &self,
+        min_row: u64,
+        max_row: u64,
+    ) -> Iter<BoolExtract> {
+        Iter::new(self, min_row, max_row)
     }
 }
 

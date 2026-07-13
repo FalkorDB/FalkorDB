@@ -33,7 +33,7 @@ use std::sync::Arc;
 
 use crate::graph::graph::{LabelId, NodeId, RelationshipId};
 use crate::graph::graphblas::matrix::Matrix;
-use crate::graph::graphblas::versioned_matrix::{Iter as EdgeIter, VersionedMatrix};
+use crate::graph::graphblas::versioned_matrix::{Iter, VersionedMatrix};
 use crate::parser::ast::{ExprIR, QueryExpr, QueryRelationship, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
@@ -81,15 +81,15 @@ impl TraversalMatrix {
 /// Lazily resolved state — built on first `expand_row`, after any sibling
 /// Commit in the subtree has had a chance to create new labels/types.
 struct CtState {
-    fwd_iter: std::cell::RefCell<EdgeIter>,
-    rev_iter: Option<std::cell::RefCell<EdgeIter>>,
+    fwd_iter: std::cell::RefCell<Iter>,
+    rev_iter: Option<std::cell::RefCell<Iter>>,
     /// Iterator over the TRANSPOSED pair matrix (dst-major). Built lazily on
     /// the first expansion where only the matrix-destination is bound — e.g.
     /// a planner-transposed traverse seeded from the pattern-source, or the
     /// reverse half of a bidirectional expansion. Seeking this by destination
     /// replaces what would otherwise be a full edge-matrix scan per input
     /// row (O(V·E) for the whole query).
-    bwd_iter: Option<std::cell::RefCell<EdgeIter>>,
+    bwd_iter: Option<std::cell::RefCell<Iter>>,
     fwd_src_label_ids: Vec<LabelId>,
     fwd_dst_label_ids: Vec<LabelId>,
     rev_src_label_ids: Vec<LabelId>,
@@ -173,7 +173,7 @@ pub struct CondTraverseOp<'a> {
 fn build_unrestricted_iter(
     g: &crate::graph::graph::Graph,
     types: &[Arc<String>],
-) -> Option<EdgeIter> {
+) -> Option<Iter> {
     if types.is_empty() {
         return Some(g.adjacency_matrix().iter(0, u64::MAX));
     }
@@ -186,7 +186,7 @@ fn build_unrestricted_iter(
     Some(VersionedMatrix::from_matrix(merged).iter(0, u64::MAX))
 }
 
-fn empty_edge_iter() -> EdgeIter {
+fn empty_edge_iter() -> Iter {
     VersionedMatrix::<bool>::new(0, 0).iter(0, u64::MAX)
 }
 
@@ -199,7 +199,7 @@ fn empty_edge_iter() -> EdgeIter {
 fn build_transposed_iter(
     g: &crate::graph::graph::Graph,
     types: &[Arc<String>],
-) -> Option<EdgeIter> {
+) -> Option<Iter> {
     if types.is_empty() {
         return Some(g.adjacency_matrix().transpose().iter(0, u64::MAX));
     }

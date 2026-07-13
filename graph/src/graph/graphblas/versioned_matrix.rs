@@ -46,6 +46,11 @@
 //!       no  --> remove (i,j) from dp   (undo pending add)
 //! ```
 //!
+//! UINT64 matrices additionally support in-place *value* updates of a
+//! committed entry: `set` masks the old entry in `dm` and writes the new
+//! value to `dp`, so `dp` never shadows a live `m` entry (see the
+//! `VersionedMatrix<u64>` impl).
+//!
 //! ## Flush
 //!
 //! When delta matrices exceed 10,000 entries, [`flush`](VersionedMatrix::flush)
@@ -63,7 +68,10 @@ use super::{
     matrix::{self, Dup, Matrix},
     serialization::{Decode, Encode, Reader, Writer},
 };
-use crate::graph::cow::Cow;
+use crate::graph::{
+    cow::Cow,
+    graphblas::matrix::{BoolExtract, IterExtract, Uint64Extract},
+};
 
 /// A matrix with MVCC delta tracking for snapshot isolation.
 ///
@@ -118,10 +126,12 @@ impl<T> VersionedMatrix<T> {
         &self.dm
     }
 
+    #[must_use]
     pub fn nrows(&self) -> u64 {
         self.m.nrows()
     }
 
+    #[must_use]
     pub fn ncols(&self) -> u64 {
         self.m.ncols()
     }
@@ -183,10 +193,11 @@ impl<T> VersionedMatrix<T> {
 
     /// Effective entry count: `|m| + |dp| − |dm|`.
     ///
-    /// Relies on the bool invariants maintained by [`Self::set`] /
-    /// [`Self::remove`]: `dp ∩ m = ∅`, `dm ⊆ m`, `dp ∩ dm = ∅`. (`u64`
-    /// matrices relax the first invariant — see the overlay-aware `nvals`
-    /// in the UINT64 impl below.)
+    /// Relies on the invariants maintained by [`Self::set`] /
+    /// [`Self::remove`]: `dm ⊆ m` and `dp ∩ (m ∖ dm) = ∅` (bool matrices
+    /// keep the stricter `dp ∩ m = ∅`; `u64` matrices mask any in-place
+    /// update in `dm`).
+    #[must_use]
     pub fn nvals(&self) -> u64 {
         self.wait();
         self.m.nvals() + self.dp.nvals() - self.dm.nvals()
@@ -232,7 +243,7 @@ impl VersionedMatrix<bool> {
         max_row: u64,
     ) -> Iter {
         self.wait();
-        Iter::new(self, min_row, max_row)
+        Iter::<BoolExtract>::new(self, min_row, max_row)
     }
 
     pub fn remove(
@@ -248,6 +259,7 @@ impl VersionedMatrix<bool> {
         }
     }
 
+    #[must_use]
     pub fn get(
         &self,
         i: u64,
@@ -282,6 +294,7 @@ impl VersionedMatrix<bool> {
         }
     }
 
+    #[must_use]
     pub fn new(
         nrows: u64,
         ncols: u64,
@@ -357,16 +370,14 @@ impl<T> Dup<Self> for VersionedMatrix<T> {
 /// delta-plus `dp` are UINT64-typed; the delta-minus `dm` stays BOOL (it is a
 /// pure deletion mask).
 ///
-/// Read precedence is **dp wins over m, minus dm**: `dp` is the newest overlay,
-/// so a value written in the current transaction (insert *or* update of a
-/// committed entry, including delete-then-re-add) is visible immediately while
-/// readers on the committed snapshot still see `m`. This is a superset of the
-/// bool existence model (which requires `dp` disjoint from `m`); the extra
-/// generality is needed because an edge id can change in place (single→multi).
-///
-/// Because `dp` can shadow `m`, every aggregate over the effective content
-/// must be overlap-aware: `nvals()` subtracts `|m ∩ dp|`, and the structural
-/// [`Iter`] / valued [`UintIter`] skip `m` entries present in `dp`.
+/// Unlike the bool model, a committed entry's *value* can change in place
+/// (e.g. an edge id changes on multi-edge promotion, or delete-then-re-add
+/// within one transaction). [`Self::set`] handles this by masking the old
+/// committed entry in `dm` and writing the new value to `dp`, preserving the
+/// no-shadow invariant `dp ∩ (m ∖ dm) = ∅`: the effective content is always
+/// `(m ∖ dm) ∪ dp` with the union disjoint, so iterators and `nvals()` need
+/// no overlap handling. Note this means `dp ∩ dm` may be non-empty (an
+/// in-place update has the pair in both), unlike the bool model.
 impl VersionedMatrix<u64> {
     /// Construct a UINT64-valued versioned matrix: `m`/`dp` UINT64, `dm` BOOL.
     #[must_use]
@@ -381,18 +392,21 @@ impl VersionedMatrix<u64> {
         }
     }
 
-    /// Iterate UINT64 entries with full overlay semantics (`dp` wins over `m`,
-    /// minus `dm`) — equivalent to `uint64_iter_range(0, u64::MAX)`.
-    ///
-    /// Used during RDB decode to read C-produced relation matrices where
-    /// single-edge entries store the edge ID as a UINT64 value.
-    pub fn iter(&self) -> UintIter {
-        self.uint64_iter_range(0, u64::MAX)
+    /// Stream effective UINT64 `(row, col, value)` triples over rows in
+    /// `[min_row, max_row]`: `(m ∖ dm) ∪ dp`.
+    #[must_use]
+    pub fn iter(
+        &self,
+        min_row: u64,
+        max_row: u64,
+    ) -> Iter<Uint64Extract> {
+        self.wait();
+        Iter::<Uint64Extract>::new(self, min_row, max_row)
     }
 
     /// Structure-only `(row, col)` iterator over the effective matrix,
-    /// ignoring the stored edge-id values. Same overlay semantics as the
-    /// bool [`VersionedMatrix::iter`].
+    /// ignoring the stored edge-id values. Same semantics as the bool
+    /// [`VersionedMatrix::iter`].
     #[must_use]
     pub fn structural_iter(
         &self,
@@ -400,11 +414,12 @@ impl VersionedMatrix<u64> {
         max_row: u64,
     ) -> Iter {
         self.wait();
-        Iter::new(self, min_row, max_row)
+        Iter::<BoolExtract>::new(self, min_row, max_row)
     }
 
-    /// Write `value` at `(i, j)` with dp-overlay semantics: the new value lands
-    /// in `dp` (newest), and any pending deletion of `(i, j)` is cleared.
+    /// Write `value` at `(i, j)`: the new value lands in `dp`, and if the
+    /// committed base holds an entry at `(i, j)` it is masked in `dm` so the
+    /// old value never shadows the new one (`dp ∩ (m ∖ dm) = ∅`).
     pub fn set(
         &mut self,
         i: u64,
@@ -413,28 +428,30 @@ impl VersionedMatrix<u64> {
     ) {
         debug_assert!(!self.m.pending());
         self.dp.set(i, j, value);
-        if self.dm.nvals() != 0 {
-            self.dm.remove(i, j);
+        if self.m.contains(i, j) {
+            self.dm.set(i, j, true);
         }
     }
 
-    /// Bulk UINT64 set with dp-overlay semantics. Unlike per-element
-    /// [`VersionedMatrix::set_uint64`] callers, this checks `dm` emptiness once
-    /// up front and never calls `get`/`wait` per entry, so it stays O(n) for a
-    /// batch of `n` writes (critical for bulk edge creation).
+    /// Bulk UINT64 set. Unlike per-element [`VersionedMatrix::set`] callers,
+    /// this checks base emptiness once up front and never calls `get`/`wait`
+    /// per entry, so it stays O(n) for a batch of `n` writes (critical for
+    /// bulk edge creation).
     pub fn set_all(
         &mut self,
         entries: impl Iterator<Item = (u64, u64, u64)>,
     ) {
         debug_assert!(!self.m.pending());
-        if self.dm.nvals() == 0 {
+        if self.m.nvals() == 0 {
             for (i, j, v) in entries {
                 self.dp.set(i, j, v);
             }
         } else {
             for (i, j, v) in entries {
                 self.dp.set(i, j, v);
-                self.dm.remove(i, j);
+                if self.m.contains(i, j) {
+                    self.dm.set(i, j, true);
+                }
             }
         }
     }
@@ -470,43 +487,6 @@ impl VersionedMatrix<u64> {
         if self.m.get(i, j).is_some() {
             self.dm.set(i, j, true);
         }
-    }
-
-    /// Collect effective `(row, col, value)` triples (full range) into a `Vec`.
-    /// Convenience wrapper over [`VersionedMatrix::uint64_iter_range`].
-    #[must_use]
-    pub fn collect(&self) -> Vec<(u64, u64, u64)> {
-        self.uint64_iter_range(0, u64::MAX).collect()
-    }
-
-    /// Flush UINT64 deltas into the base: apply deletions, then fold `dp` in
-    /// with dp winning on overlap. Clears both deltas.
-    pub fn flush(&mut self) {
-        self.wait();
-        if self.dm.nvals() >= 10000 {
-            self.m.remove_all(&self.dm);
-            self.dm.clear();
-        }
-        if self.dp.nvals() >= 10000 {
-            self.m.merge_overwrite(&self.dp);
-            self.dp.clear();
-        }
-    }
-
-    /// Test-only: unconditionally fold UINT64 deltas into the base (simulate a
-    /// commit so subsequent writes exercise the dp-overlay-over-committed path).
-    #[cfg(test)]
-    pub fn force_commit(&mut self) {
-        self.wait();
-        if self.dm.nvals() != 0 {
-            self.m.remove_all(&self.dm);
-            self.dm.clear();
-        }
-        if self.dp.nvals() != 0 {
-            self.m.merge_overwrite(&self.dp);
-            self.dp.clear();
-        }
-        self.wait();
     }
 }
 
@@ -549,50 +529,43 @@ impl<V> Decode<19> for VersionedMatrix<V> {
     }
 }
 
-pub struct Iter {
-    mit: matrix::Iter,
+pub struct Iter<E: IterExtract = BoolExtract> {
+    mit: matrix::Iter<E>,
     /// Delta-plus iterator. Lazily left `None` when `dp` is empty (the common
     /// read-only hot path on a freshly loaded graph) so we skip allocating and
     /// freeing a `GxB_Iterator` that would never yield anything. `dp` is a
     /// stable read snapshot for the life of this iterator, so once `None` it
     /// stays `None` across `seek` calls.
-    dpit: Option<matrix::Iter>,
+    dpit: Option<matrix::Iter<E>>,
     dm: Cow<Matrix<bool>>,
     /// True when the deletion mask is empty, so the `m` phase can stream `mit`
     /// without per-edge `dm` lookups. Hot path for read-only queries on a
     /// freshly loaded graph.
     dm_empty: bool,
-    dp_empty: bool,
 }
 
-unsafe impl Send for Iter {}
-unsafe impl Sync for Iter {}
+unsafe impl<E: IterExtract> Send for Iter<E> {}
+unsafe impl<E: IterExtract> Sync for Iter<E> {}
 
-impl Iter {
-    /// Creates a new iterator for traversing all elements in a matrix.
-    ///
-    /// # Parameters
-    /// - `m`: The matrix to iterate over.
-    /// - `min_row`: The minimum row index to start iterating from.
-    /// - `max_row`: The maximum row index to stop iterating at.
-    #[must_use]
-    pub fn new<V>(
-        m: &VersionedMatrix<V>,
+impl<E: IterExtract> Iter<E> {
+    /// Streams the effective content `(m ∖ dm) ∪ dp` — a disjoint union
+    /// thanks to the no-shadow invariant, so the `m` phase only needs the
+    /// `dm` mask. Valid for a `VersionedMatrix` of any element type when
+    /// `E = BoolExtract` (only the sparsity pattern is read).
+    fn new<V>(
+        vm: &VersionedMatrix<V>,
         min_row: u64,
         max_row: u64,
     ) -> Self {
-        let dm_empty = m.dm.nvals() == 0;
-        let dp_empty = m.dp.nvals() == 0;
         Self {
-            mit: m.m.iter(min_row, max_row),
-            dpit: if dp_empty {
+            mit: matrix::Iter::new(&vm.m, min_row, max_row),
+            dpit: if vm.dp.nvals() == 0 {
                 None
             } else {
-                Some(m.dp.iter(min_row, max_row))
+                Some(matrix::Iter::new(&vm.dp, min_row, max_row))
             },
-            dm: m.dm.clone(),
-            dm_empty,
-            dp_empty,
+            dm: vm.dm.clone(),
+            dm_empty: vm.dm.nvals() == 0,
         }
     }
 
@@ -612,7 +585,7 @@ impl Iter {
     }
 }
 
-impl Iterator for Iter {
+impl Iterator for Iter<BoolExtract> {
     type Item = (u64, u64);
 
     /// Advances the iterator and returns the next element in the matrix.
@@ -631,83 +604,16 @@ impl Iterator for Iter {
     }
 }
 
-/// Streaming UINT64 row-range iterator with dp-overlay semantics.
-///
-/// Yields effective `(row, col, value)` triples over rows in `[min_row,
-/// max_row]`: every `m` entry not masked by `dm` and not shadowed by `dp`,
-/// followed by every `dp` entry. Mirrors the bool [`Iter`] but carries the
-/// `u64` value. Supports [`UintIter::seek`] for amortized per-row scans.
-pub struct UintIter {
-    mit: matrix::Iter<matrix::Uint64Extract>,
-    dpit: matrix::Iter<matrix::Uint64Extract>,
-    dm: Cow<Matrix<bool>>,
-    dp: Cow<Matrix<u64>>,
-    dm_empty: bool,
-    dp_empty: bool,
-}
-
-unsafe impl Send for UintIter {}
-unsafe impl Sync for UintIter {}
-
-impl UintIter {
-    fn new(
-        vm: &VersionedMatrix<u64>,
-        min_row: u64,
-        max_row: u64,
-    ) -> Self {
-        let dm_empty = vm.dm.nvals() == 0;
-        let dp_empty = vm.dp.nvals() == 0;
-        Self {
-            mit: vm.m.iter_range(min_row, max_row),
-            dpit: vm.dp.iter_range(min_row, max_row),
-            dm: vm.dm.clone(),
-            dp: vm.dp.clone(),
-            dm_empty,
-            dp_empty,
-        }
-    }
-
-    /// Re-seek both inner iterators to a new row range without re-allocating.
-    pub fn seek(
-        &mut self,
-        min_row: u64,
-        max_row: u64,
-    ) {
-        self.mit.seek(min_row, max_row);
-        self.dpit.seek(min_row, max_row);
-    }
-}
-
-impl Iterator for UintIter {
+impl Iterator for Iter<Uint64Extract> {
     type Item = (u64, u64, u64);
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.dm_empty && self.dp_empty {
-            return self.mit.next();
-        }
         for (i, j, v) in &mut self.mit {
             if !self.dm_empty && self.dm.contains(i, j) {
-                continue; // deleted
-            }
-            if !self.dp_empty && self.dp.contains(i, j) {
-                continue; // overridden by dp; emitted in the dp phase
+                continue; // deleted (or overridden in-place; dp has the new value)
             }
             return Some((i, j, v));
         }
-        self.dpit.next()
-    }
-}
-
-impl VersionedMatrix<u64> {
-    /// Stream effective UINT64 `(row, col, value)` triples over rows in
-    /// `[min_row, max_row]` with dp-overlay semantics.
-    #[must_use]
-    pub fn uint64_iter_range(
-        &self,
-        min_row: u64,
-        max_row: u64,
-    ) -> UintIter {
-        self.wait();
-        UintIter::new(self, min_row, max_row)
+        self.dpit.as_mut().and_then(Iterator::next)
     }
 }

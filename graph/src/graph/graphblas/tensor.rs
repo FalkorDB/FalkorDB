@@ -57,6 +57,8 @@
 
 use rustc_hash::FxHashSet;
 
+use crate::graph::graphblas::matrix::{BoolExtract, Uint64Extract};
+
 use super::{
     matrix::{Dup, Matrix},
     serialization::{Decode, Encode, Reader, Writer},
@@ -116,6 +118,7 @@ pub struct Tensor {
 }
 
 impl Tensor {
+    #[must_use]
     pub fn new(
         nrows: u64,
         ncols: u64,
@@ -192,7 +195,8 @@ impl Tensor {
         }
 
         // Pairs that already have an inline first edge (committed or pending).
-        let mut present: FxHashSet<(u64, u64)> = self.m.iter().map(|(s, d, _)| (s, d)).collect();
+        let mut present: FxHashSet<(u64, u64)> =
+            self.m.iter(0, u64::MAX).map(|(s, d, _)| (s, d)).collect();
 
         let mut m_srcs: Vec<u64> = Vec::with_capacity(srcs.len());
         let mut m_dsts: Vec<u64> = Vec::with_capacity(srcs.len());
@@ -300,8 +304,8 @@ impl Tensor {
     /// structure (`(m − dm) ∪ dp`) is materialized first, then transposed into
     /// a clean base with empty deltas. Materializing (rather than transposing
     /// the three layers separately) keeps `mt` valid even when the uint64
-    /// forward matrix carries a dp overlay (`dp ∩ m ≠ ∅`), which would break
-    /// the bool disjointness invariants `mt` relies on.
+    /// forward matrix carries a dm-masked in-place update (`dp ∩ m ≠ ∅`),
+    /// which would break the bool disjointness invariants `mt` relies on.
     pub fn rebuild_backward(&mut self) {
         self.mt = VersionedMatrix::from_matrix(self.m.extract().transpose());
     }
@@ -357,7 +361,7 @@ impl Tensor {
         } else {
             Box::new(std::iter::empty())
         };
-        self.m.uint64_iter_range(0, u64::MAX).chain(overflow)
+        self.m.iter(0, u64::MAX).chain(overflow)
     }
 
     #[must_use]
@@ -425,7 +429,7 @@ impl Encode<19> for Tensor {
         let mut f_cols: Vec<u64> = Vec::new();
         let mut f_vals: Vec<u64> = Vec::new();
         let mut multi: Vec<(u64, u64, Vec<u64>)> = Vec::new();
-        for (src, dst, first_id) in self.m.uint64_iter_range(0, u64::MAX) {
+        for (src, dst, first_id) in self.m.iter(0, u64::MAX) {
             f_rows.push(src);
             f_cols.push(dst);
             if has_multi {
@@ -497,7 +501,7 @@ impl Decode<19> for Tensor {
         let mut m = VersionedMatrix::<u64>::new(nrows, ncols);
         let mut me = VersionedMatrix::<bool>::new(GrB_INDEX_MAX, GrB_INDEX_MAX);
 
-        for (src, dst, value) in forward.iter() {
+        for (src, dst, value) in forward.iter(0, u64::MAX) {
             if value & MSB_MASK == 0 {
                 // Single edge: value is the edge id; store inline.
                 m.set(src, dst, value);
@@ -545,8 +549,8 @@ impl Decode<19> for Tensor {
 /// directly from `m`; backward iteration streams the BOOL structure of `mt`
 /// (which carries no ids) and recovers each first-edge id from `m`.
 enum BaseIter {
-    Forward(versioned_matrix::UintIter),
-    Backward(versioned_matrix::Iter),
+    Forward(versioned_matrix::Iter<Uint64Extract>),
+    Backward(versioned_matrix::Iter<BoolExtract>),
 }
 
 pub struct Iter<'a> {
@@ -573,7 +577,7 @@ impl<'a> Iter<'a> {
             base: if transpose {
                 BaseIter::Backward(t.mt.iter(min_row, max_row))
             } else {
-                BaseIter::Forward(t.m.uint64_iter_range(min_row, max_row))
+                BaseIter::Forward(t.m.iter(min_row, max_row))
             },
             has_multi: t.me.nvals() != 0,
             src: 0,

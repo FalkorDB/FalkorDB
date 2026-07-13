@@ -1385,8 +1385,8 @@ fn register_msf(funcs: &mut Functions) {
 
                     // Inline pass: every pair's first edge id is the UINT64
                     // *value* of the forward matrix `m`. Materialize the
-                    // effective matrix — (m ∖ dm) overlaid by dp, where dp may
-                    // shadow m after an in-place id update — then score every id
+                    // effective matrix — (m ∖ dm) ∪ dp, a disjoint union by
+                    // the no-shadow invariant — then score every id
                     // with one parallel apply directly into `{score, edge}`
                     // pairs and bulk-extract them.
                     let vm = tensor.matrix();
@@ -1403,7 +1403,7 @@ fn register_msf(funcs: &mut Functions) {
                         GrB_DESC_SC,
                     );
                     if vm.dp().nvals() != 0 {
-                        // eff = eff ⊕ dp with SECOND, so dp wins on overlap.
+                        // eff = eff ⊕ dp (disjoint; SECOND is a no-op tiebreak).
                         GrB_Matrix_eWiseAdd_BinaryOp(
                             eff,
                             null_mut(),
