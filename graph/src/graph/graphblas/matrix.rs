@@ -976,31 +976,6 @@ impl Matrix<bool> {
         self.has_pending.store(true, Ordering::Relaxed);
     }
 
-    /// `self = a ∩ b` structurally (`ANY_PAIR_BOOL` eWiseMult): an entry is
-    /// present in the result iff it is present in both inputs. Accepts inputs
-    /// of any element types — only the sparsity patterns matter, values are
-    /// never read (e.g. intersecting a UINT64 base with its UINT64 delta-plus
-    /// to count overlay-shadowed cells).
-    pub fn intersect_structure<TA, TB>(
-        &mut self,
-        a: &Matrix<TA>,
-        b: &Matrix<TB>,
-    ) {
-        unsafe {
-            let info = GrB_Matrix_eWiseMult_Semiring(
-                *self.m,
-                null_mut(),
-                null_mut(),
-                GxB_ANY_PAIR_BOOL,
-                *a.m,
-                *b.m,
-                null_mut(),
-            );
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-        }
-        self.has_pending.store(true, Ordering::Relaxed);
-    }
-
     /// Bulk-insert entries from (row, col) arrays. Matrix must be empty.
     /// Uses a single GraphBLAS FFI call instead of N individual setElement calls.
     pub fn build_bool(

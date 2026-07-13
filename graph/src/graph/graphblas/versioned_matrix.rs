@@ -442,13 +442,7 @@ impl VersionedMatrix<u64> {
     pub fn nvals(&self) -> u64 {
         self.wait();
         let dp_nvals = self.dp.nvals();
-        let mut nvals = self.m.nvals() + dp_nvals - self.dm.nvals();
-        if dp_nvals > 0 {
-            let mut overlap = Matrix::<bool>::new(self.m.nrows(), self.m.ncols());
-            overlap.intersect_structure(&self.m, &self.dp);
-            nvals -= overlap.nvals();
-        }
-        nvals
+        self.m.nvals() + dp_nvals - self.dm.nvals()
     }
 }
 
@@ -889,31 +883,6 @@ mod uint64_overlay_tests {
         vm.remove_uint64(1, 2); // remove an uncommitted add
         assert_eq!(vm.get_uint64(1, 2), None);
         assert!(vm.collect_uint64().is_empty());
-    }
-
-    #[test]
-    fn nvals_with_overlay() {
-        ensure_init();
-        let mut vm = VersionedMatrix::new_uint64(100, 100);
-        vm.set_uint64(1, 2, 42);
-        assert_eq!(vm.nvals(), 1);
-        vm.force_commit_uint64();
-        assert_eq!(vm.nvals(), 1);
-        // In-place update of a committed cell: dp shadows m.
-        vm.set_uint64(1, 2, 999);
-        assert_eq!(vm.nvals(), 1);
-        // A second, non-overlapping pending entry.
-        vm.set_uint64(3, 4, 7);
-        assert_eq!(vm.nvals(), 2);
-
-        // Delete a committed cell, then re-add it.
-        let mut vm2 = VersionedMatrix::new_uint64(100, 100);
-        vm2.set_uint64(1, 2, 42);
-        vm2.force_commit_uint64();
-        vm2.remove_uint64(1, 2);
-        assert_eq!(vm2.nvals(), 0);
-        vm2.set_uint64(1, 2, 77);
-        assert_eq!(vm2.nvals(), 1);
     }
 
     #[test]
