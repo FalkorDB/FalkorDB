@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// GB_jit__subassign_08n__0490004111141100.c
+// GB_jit__subassign_04__7f1c404111101141.c
 //------------------------------------------------------------------------------
 // SuiteSparse:GraphBLAS v10.3.1, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
@@ -10,7 +10,7 @@
 
 #include "include/GB_jit_kernel.h"
 
-// subassign: C<M> any= A 
+// subassign: C any= A 
 #define GB_ASSIGN_KIND GB_SUBASSIGN
 #define GB_SCALAR_ASSIGN 0
 #define GB_I_KIND GB_ALL
@@ -40,13 +40,13 @@
 }
 #define GB_ACCUMULATE_scalar(Cx,pC,ywork,C_iso) /* unused */
 
-// C matrix: hypersparse
-#define GB_C_IS_HYPER  1
-#define GB_C_IS_SPARSE 0
+// C matrix: sparse
+#define GB_C_IS_HYPER  0
+#define GB_C_IS_SPARSE 1
 #define GB_C_IS_BITMAP 0
 #define GB_C_IS_FULL   0
 #define GBp_C(Cp,k,vlen) Cp [k]
-#define GBh_C(Ch,k)      Ch [k]
+#define GBh_C(Ch,k)      (k)
 #define GBi_C(Ci,p,vlen) Ci [p]
 #define GBb_C(Cb,p)      1
 #define GB_C_NVALS(e) int64_t e = C->nvals
@@ -56,13 +56,13 @@
 #define GB_C_TYPE bool
 #define GB_PUTC(zwork,Cx,p) Cx [p] = zwork
 #define GB_Cp_TYPE uint32_t
-#define GB_Cj_TYPE uint64_t
-#define GB_Cj_SIGNED_TYPE int64_t
-#define GB_Ci_TYPE uint64_t
-#define GB_Ci_SIGNED_TYPE int64_t
+#define GB_Cj_TYPE uint32_t
+#define GB_Cj_SIGNED_TYPE int32_t
+#define GB_Ci_TYPE uint32_t
+#define GB_Ci_SIGNED_TYPE int32_t
 #define GB_Cp_BITS 32
-#define GB_Cj_BITS 64
-#define GB_Ci_BITS 64
+#define GB_Cj_BITS 32
+#define GB_Ci_BITS 32
 #define GB_DECLAREC(cwork) bool cwork
 #define GB_COPY_A_to_C(Cx,pC,Ax,pA,A_iso) Cx [pC] = Ax [pA]
 #define GB_COPY_aij_to_C(Cx,pC,Ax,pA,A_iso,cwork,C_iso) \
@@ -71,39 +71,28 @@
 #define GB_COPY_cwork_to_C(Cx,pC,cwork,C_iso) /* unused */
 #define GB_COPY_scalar_to_cwork(cwork,scalar) /* unused */
 
-// M matrix: hypersparse
-#define GB_M_IS_HYPER  1
-#define GB_M_IS_SPARSE 0
-#define GB_M_IS_BITMAP 0
-#define GB_M_IS_FULL   0
-#define GBp_M(Mp,k,vlen) Mp [k]
-#define GBh_M(Mh,k)      Mh [k]
-#define GBi_M(Mi,p,vlen) Mi [p]
-#define GBb_M(Mb,p)      1
-// valued mask (1 byte):
-#define GB_M_TYPE uint8_t
-#define GB_MCAST(Mx,p,msize) (Mx [p] != 0)
-#define GB_MASK_STRUCT 0
+// M matrix: none
+#define GB_M_TYPE void
+#define GB_MCAST(Mx,p,msize) 1
+#define GB_MASK_STRUCT 1
 #define GB_MASK_COMP   0
-#define GB_NO_MASK     0
-#define GB_M_NVALS(e) int64_t e = M->nvals
-#define GB_M_NHELD(e) GB_M_NVALS(e)
-#define GB_Mp_TYPE uint32_t
+#define GB_NO_MASK     1
+#define GB_Mp_TYPE uint64_t
 #define GB_Mj_TYPE uint64_t
 #define GB_Mj_SIGNED_TYPE int64_t
 #define GB_Mi_TYPE uint64_t
 #define GB_Mi_SIGNED_TYPE int64_t
-#define GB_Mp_BITS 32
+#define GB_Mp_BITS 64
 #define GB_Mj_BITS 64
 #define GB_Mi_BITS 64
 
-// A matrix: hypersparse
-#define GB_A_IS_HYPER  1
-#define GB_A_IS_SPARSE 0
+// A matrix: sparse
+#define GB_A_IS_HYPER  0
+#define GB_A_IS_SPARSE 1
 #define GB_A_IS_BITMAP 0
 #define GB_A_IS_FULL   0
 #define GBp_A(Ap,k,vlen) Ap [k]
-#define GBh_A(Ah,k)      Ah [k]
+#define GBh_A(Ah,k)      (k)
 #define GBi_A(Ai,p,vlen) Ai [p]
 #define GBb_A(Ab,p)      1
 #define GB_A_NVALS(e) int64_t e = A->nvals
@@ -114,29 +103,47 @@
 #define GB_DECLAREA(a) bool a
 #define GB_GETA(a,Ax,p,iso) a = Ax [p]
 #define GB_Ap_TYPE uint32_t
-#define GB_Aj_TYPE uint64_t
-#define GB_Aj_SIGNED_TYPE int64_t
-#define GB_Ai_TYPE uint64_t
-#define GB_Ai_SIGNED_TYPE int64_t
+#define GB_Aj_TYPE uint32_t
+#define GB_Aj_SIGNED_TYPE int32_t
+#define GB_Ai_TYPE uint32_t
+#define GB_Ai_SIGNED_TYPE int32_t
 #define GB_Ap_BITS 32
-#define GB_Aj_BITS 64
-#define GB_Ai_BITS 64
+#define GB_Aj_BITS 32
+#define GB_Ai_BITS 32
 #define GB_COPY_aij_to_ywork(ywork,Ax,pA,A_iso) GB_GETA (ywork, Ax, pA, A_iso)
 #define GB_COPY_scalar_to_ywork(ywork,scalar) /* unused */
 
-// S matrix: not constructed
-#define GB_S_CONSTRUCTED 0
+// S matrix: hypersparse
+#define GB_S_IS_HYPER  1
+#define GB_S_IS_SPARSE 0
+#define GB_S_IS_BITMAP 0
+#define GB_S_IS_FULL   0
+#define GBp_S(Sp,k,vlen) Sp [k]
+#define GBh_S(Sh,k)      Sh [k]
+#define GBi_S(Si,p,vlen) Si [p]
+#define GBb_S(Sb,p)      1
+#define GB_S_CONSTRUCTED 1
+#define GB_Sp_TYPE uint32_t
+#define GB_Sj_TYPE uint32_t
+#define GB_Sj_SIGNED_TYPE int32_t
+#define GB_Si_TYPE uint32_t
+#define GB_Si_SIGNED_TYPE int32_t
+#define GB_Sp_BITS 32
+#define GB_Sj_BITS 32
+#define GB_Si_BITS 32
+#define GB_Sx_BITS 32
+#define GB_Sx_TYPE uint32_t
 
 #include "include/GB_assign_shared_definitions.h"
 #ifndef GB_JIT_RUNTIME
-#define GB_jit_kernel GB_jit__subassign_08n__0490004111141100
-#define GB_jit_query  GB_jit__subassign_08n__0490004111141100_query
+#define GB_jit_kernel GB_jit__subassign_04__7f1c404111101141
+#define GB_jit_query  GB_jit__subassign_04__7f1c404111101141_query
 #endif
-#include "template/GB_jit_kernel_subassign_08n.c"
+#include "template/GB_jit_kernel_subassign_04.c"
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
-    (*hash) = 0x8b67ce11004c2fd6 ;
+    (*hash) = 0x68c0cc0d9d97e9dc ;
     v [0] = 10 ; v [1] = 3 ; v [2] = 1 ;
     defn [0] = NULL ;
     defn [1] = NULL ;
