@@ -89,12 +89,12 @@ use super::{
     GrB_Matrix_extractTuples_BOOL, GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols,
     GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_removeElement,
     GrB_Matrix_resize, GrB_Matrix_setElement_BOOL, GrB_Matrix_setElement_UINT64, GrB_Matrix_wait,
-    GrB_Mode, GrB_SECOND_UINT64, GrB_UINT64, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose,
-    GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64, GxB_Container_free, GxB_Container_new,
-    GxB_Global_Option_set_INT32, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_new,
-    GxB_JIT_Control, GxB_Matrix_fprint, GxB_Matrix_isStoredElement, GxB_Matrix_memoryUsage,
-    GxB_Matrix_type, GxB_NTHREADS, GxB_Option_Field, GxB_Print_Level, GxB_init,
-    GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
+    GrB_Mode, GrB_SECOND_UINT64, GrB_Type, GrB_UINT64, GrB_WaitMode, GrB_finalize, GrB_mxm,
+    GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64, GxB_Container_free,
+    GxB_Container_new, GxB_Global_Option_set_INT32, GxB_Iterator, GxB_Iterator_free,
+    GxB_Iterator_new, GxB_JIT_Control, GxB_Matrix_fprint, GxB_Matrix_isStoredElement,
+    GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_NTHREADS, GxB_Option_Field, GxB_Print_Level,
+    GxB_init, GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
     GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol, GxB_rowIterator_nextRow,
     GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
 };
@@ -453,6 +453,41 @@ impl<T> Encode<19> for Matrix<T> {
 }
 
 impl<T> Matrix<T> {
+    /// Transposes the matrix.
+    ///
+    /// # Returns
+    /// A new matrix of the same GraphBLAS type that is the transpose of the
+    /// original.
+    #[must_use]
+    pub fn transpose(&self) -> Self {
+        unsafe {
+            let mut type_: MaybeUninit<GrB_Type> = MaybeUninit::uninit();
+            let info = GxB_Matrix_type(type_.as_mut_ptr(), *self.m);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
+            let info = GrB_Matrix_new(
+                m.as_mut_ptr(),
+                type_.assume_init(),
+                self.ncols(),
+                self.nrows(),
+            );
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GrB_Matrix_new failed: {info:?}"
+            );
+            let transpose = Self {
+                m: Arc::new(m.assume_init()),
+                lock: Arc::new(Mutex::new(())),
+                has_pending: Arc::new(AtomicBool::new(true)),
+                phantom: PhantomData,
+            };
+            let info = GrB_transpose(*transpose.m, null_mut(), null_mut(), *self.m, null_mut());
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            transpose
+        }
+    }
+
     /// Returns the raw GrB_Matrix handle for FFI calls (e.g. LAGraph).
     /// The caller must NOT free the returned handle.
     #[must_use]
@@ -698,43 +733,26 @@ impl<T> Matrix<T> {
         self.has_pending.store(true, Ordering::Relaxed);
     }
 
-    /// Retrieves the boolean value at the specified position in the matrix.
-    /// Returns `None` if the element does not exist.
-    ///
-    /// # Parameters
-    /// - `i`: The row index.
-    /// - `j`: The column index.
-    ///
-    /// # Returns
-    /// - `Some(bool)`: The boolean value at the specified position.
-    /// - `None`: The element does not exist.
-    pub fn get(
+    pub fn print(
         &self,
-        i: u64,
-        j: u64,
-    ) -> Option<bool> {
+        level: GxB_Print_Level,
+    ) {
         unsafe {
-            let mut m: MaybeUninit<bool> = MaybeUninit::uninit();
-            let info = GrB_Matrix_extractElement_BOOL(m.as_mut_ptr(), *self.m, i, j);
-            if info == GrB_Info::GrB_SUCCESS {
-                Some(m.assume_init())
-            } else {
-                None
-            }
+            let info = GxB_Matrix_fprint(*self.m, null_mut(), level as _, null_mut());
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 
-    pub fn set(
-        &mut self,
-        i: u64,
-        j: u64,
-        value: bool,
-    ) {
-        unsafe {
-            let info = GrB_Matrix_setElement_BOOL(*self.m, value, i, j);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-        }
-        self.has_pending.store(true, Ordering::Relaxed);
+    /// Structural row-range iterator yielding `(row, col)` pairs. Reads only the
+    /// sparsity pattern, so it is valid for any element type `T`.
+    #[must_use]
+    #[allow(clippy::iter_without_into_iter)]
+    pub fn iter(
+        &self,
+        min_row: u64,
+        max_row: u64,
+    ) -> Iter {
+        Iter::new(self, min_row, max_row)
     }
 }
 
@@ -780,30 +798,6 @@ impl<T> Dup<Self> for Matrix<T> {
     }
 }
 
-impl<T> Matrix<T> {
-    pub fn print(
-        &self,
-        level: GxB_Print_Level,
-    ) {
-        unsafe {
-            let info = GxB_Matrix_fprint(*self.m, null_mut(), level as _, null_mut());
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-        }
-    }
-
-    /// Structural row-range iterator yielding `(row, col)` pairs. Reads only the
-    /// sparsity pattern, so it is valid for any element type `T`.
-    #[must_use]
-    #[allow(clippy::iter_without_into_iter)]
-    pub fn iter(
-        &self,
-        min_row: u64,
-        max_row: u64,
-    ) -> Iter {
-        Iter::new(self, min_row, max_row)
-    }
-}
-
 impl Matrix<u64> {
     /// Create a new UINT64 matrix (for C-compatible tensor encoding and inline
     /// edge-id storage).
@@ -828,23 +822,8 @@ impl Matrix<u64> {
         }
     }
 
-    /// Transposes the matrix.
-    ///
-    /// # Returns
-    /// A new matrix that is the transpose of the original.
-    #[must_use]
-    pub fn transpose(&self) -> Self {
-        let transpose = Self::new(self.ncols(), self.nrows());
-        unsafe {
-            let info = GrB_transpose(*transpose.m, null_mut(), null_mut(), *self.m, null_mut());
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-        }
-        transpose.has_pending.store(true, Ordering::Relaxed);
-        transpose
-    }
-
     /// Set a UINT64 value at (i, j).
-    pub fn set_uint64(
+    pub fn set(
         &mut self,
         i: u64,
         j: u64,
@@ -859,7 +838,7 @@ impl Matrix<u64> {
 
     /// Read the UINT64 value at (i, j). Returns `None` if no entry exists.
     #[must_use]
-    pub fn get_uint64(
+    pub fn get(
         &self,
         i: u64,
         j: u64,
@@ -875,19 +854,10 @@ impl Matrix<u64> {
         }
     }
 
-    /// Iterate entries as `(row, col, value)` UINT64 triples.
-    ///
-    /// Used when loading C-produced relation matrices where single-edge
-    /// entries store the edge ID as a UINT64 value.
-    #[must_use]
-    pub fn uint64_iter(&self) -> Iter<Uint64Extract> {
-        Iter::new(self, 0, u64::MAX)
-    }
-
     /// UINT64 row-range iterator yielding `(row, col, value)` triples over rows
     /// in `[min_row, max_row]`. Supports `seek` for amortized per-row scans.
     #[must_use]
-    pub fn uint64_iter_range(
+    pub fn iter_range(
         &self,
         min_row: u64,
         max_row: u64,
@@ -896,7 +866,7 @@ impl Matrix<u64> {
     }
 
     /// Bulk-insert UINT64 entries from (row, col, val) arrays. Matrix must be empty and UINT64 typed.
-    pub fn build_uint64(
+    pub fn build(
         &mut self,
         rows: &[u64],
         cols: &[u64],
@@ -925,7 +895,7 @@ impl Matrix<u64> {
     /// Fold `other`'s UINT64 entries into `self`, with `other` winning on
     /// overlap. Used to merge a delta-plus overlay into the base while keeping
     /// the newest UINT64 value. Both matrices must be UINT64-typed.
-    pub fn merge_overwrite_uint64(
+    pub fn merge_overwrite(
         &mut self,
         other: &Self,
     ) {
@@ -967,19 +937,43 @@ impl Matrix<bool> {
         }
     }
 
-    /// Transposes the matrix.
+    /// Retrieves the boolean value at the specified position in the matrix.
+    /// Returns `None` if the element does not exist.
+    ///
+    /// # Parameters
+    /// - `i`: The row index.
+    /// - `j`: The column index.
     ///
     /// # Returns
-    /// A new matrix that is the transpose of the original.
-    #[must_use]
-    pub fn transpose(&self) -> Self {
-        let transpose = Self::new(self.ncols(), self.nrows());
+    /// - `Some(bool)`: The boolean value at the specified position.
+    /// - `None`: The element does not exist.
+    pub fn get(
+        &self,
+        i: u64,
+        j: u64,
+    ) -> Option<bool> {
         unsafe {
-            let info = GrB_transpose(*transpose.m, null_mut(), null_mut(), *self.m, null_mut());
+            let mut m: MaybeUninit<bool> = MaybeUninit::uninit();
+            let info = GrB_Matrix_extractElement_BOOL(m.as_mut_ptr(), *self.m, i, j);
+            if info == GrB_Info::GrB_SUCCESS {
+                Some(m.assume_init())
+            } else {
+                None
+            }
+        }
+    }
+
+    pub fn set(
+        &mut self,
+        i: u64,
+        j: u64,
+        value: bool,
+    ) {
+        unsafe {
+            let info = GrB_Matrix_setElement_BOOL(*self.m, value, i, j);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
-        transpose.has_pending.store(true, Ordering::Relaxed);
-        transpose
+        self.has_pending.store(true, Ordering::Relaxed);
     }
 
     /// `self = a ∩ b` structurally (`ANY_PAIR_BOOL` eWiseMult): an entry is

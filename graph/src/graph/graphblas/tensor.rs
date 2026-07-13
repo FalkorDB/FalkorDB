@@ -459,7 +459,7 @@ impl Encode<19> for Tensor {
             empty.encode(w);
         } else {
             let mut fm = Matrix::<u64>::new(nrows, ncols);
-            fm.build_uint64(&f_rows, &f_cols, &f_vals);
+            fm.build(&f_rows, &f_cols, &f_vals);
             fm.encode(w);
         }
         empty.encode(w); // delta-plus

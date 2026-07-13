@@ -171,7 +171,9 @@ impl<T> VersionedMatrix<T> {
         self.dp.resize(nrows, ncols);
         self.dm.resize(nrows, ncols);
     }
+}
 
+impl VersionedMatrix<bool> {
     pub fn remove(
         &mut self,
         i: u64,
@@ -218,9 +220,7 @@ impl<T> VersionedMatrix<T> {
             self.dp.set(i, j, value);
         }
     }
-}
 
-impl VersionedMatrix<bool> {
     pub fn new(
         nrows: u64,
         ncols: u64,
@@ -513,7 +513,7 @@ impl VersionedMatrix<u64> {
         value: u64,
     ) {
         debug_assert!(!self.m.pending());
-        self.dp.set_uint64(i, j, value);
+        self.dp.set(i, j, value);
         if self.dm.nvals() != 0 {
             self.dm.remove(i, j);
         }
@@ -530,11 +530,11 @@ impl VersionedMatrix<u64> {
         debug_assert!(!self.m.pending());
         if self.dm.nvals() == 0 {
             for (i, j, v) in entries {
-                self.dp.set_uint64(i, j, v);
+                self.dp.set(i, j, v);
             }
         } else {
             for (i, j, v) in entries {
-                self.dp.set_uint64(i, j, v);
+                self.dp.set(i, j, v);
                 self.dm.remove(i, j);
             }
         }
@@ -549,13 +549,13 @@ impl VersionedMatrix<u64> {
         j: u64,
     ) -> Option<u64> {
         self.wait();
-        if let Some(v) = self.dp.get_uint64(i, j) {
+        if let Some(v) = self.dp.get(i, j) {
             return Some(v);
         }
         if self.dm.nvals() != 0 && self.dm.get(i, j).is_some() {
             return None;
         }
-        self.m.get_uint64(i, j)
+        self.m.get(i, j)
     }
 
     /// Remove `(i, j)` (value-agnostic): drop any pending add and mask the
@@ -565,10 +565,10 @@ impl VersionedMatrix<u64> {
         i: u64,
         j: u64,
     ) {
-        if self.dp.get_uint64(i, j).is_some() {
+        if self.dp.get(i, j).is_some() {
             self.dp.remove(i, j);
         }
-        if self.m.get_uint64(i, j).is_some() {
+        if self.m.get(i, j).is_some() {
             self.dm.set(i, j, true);
         }
     }
@@ -589,7 +589,7 @@ impl VersionedMatrix<u64> {
             self.dm.clear();
         }
         if self.dp.nvals() >= 10000 {
-            self.m.merge_overwrite_uint64(&self.dp);
+            self.m.merge_overwrite(&self.dp);
             self.dp.clear();
         }
     }
@@ -604,7 +604,7 @@ impl VersionedMatrix<u64> {
             self.dm.clear();
         }
         if self.dp.nvals() != 0 {
-            self.m.merge_overwrite_uint64(&self.dp);
+            self.m.merge_overwrite(&self.dp);
             self.dp.clear();
         }
         self.wait();
@@ -780,8 +780,8 @@ impl UintIter {
         let dm_empty = vm.dm.nvals() == 0;
         let dp_empty = vm.dp.nvals() == 0;
         Self {
-            mit: vm.m.uint64_iter_range(min_row, max_row),
-            dpit: vm.dp.uint64_iter_range(min_row, max_row),
+            mit: vm.m.iter_range(min_row, max_row),
+            dpit: vm.dp.iter_range(min_row, max_row),
             dm: vm.dm.clone(),
             dp: vm.dp.clone(),
             dm_empty,
