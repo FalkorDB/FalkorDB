@@ -192,12 +192,7 @@ impl Tensor {
         }
 
         // Pairs that already have an inline first edge (committed or pending).
-        let mut present: FxHashSet<(u64, u64)> = self
-            .m
-            .collect()
-            .into_iter()
-            .map(|(s, d, _)| (s, d))
-            .collect();
+        let mut present: FxHashSet<(u64, u64)> = self.m.iter().map(|(s, d, _)| (s, d)).collect();
 
         let mut m_srcs: Vec<u64> = Vec::with_capacity(srcs.len());
         let mut m_dsts: Vec<u64> = Vec::with_capacity(srcs.len());
