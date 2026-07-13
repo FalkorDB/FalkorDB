@@ -400,7 +400,7 @@ fn populate_index(
 fn populate_index_batch(
     kind: IndexKind,
     label: Arc<String>,
-    mut indexer: Indexer,
+    indexer: Indexer,
     attrs: HashMap<Arc<String>, Vec<Arc<Field>>>,
     mut progress: u64,
     cursor: BatchCursor,
@@ -616,7 +616,7 @@ fn populate_index_batch(
 
 fn drop_index_bg(
     label: Arc<String>,
-    mut node_indexer: Indexer,
+    node_indexer: Indexer,
 ) {
     spawn(
         move || {
@@ -3242,20 +3242,6 @@ impl Graph {
         }
         infos.extend(edge_infos);
         infos
-    }
-
-    /// Quiesce indexer locks before a BGSAVE fork so the child cannot
-    /// inherit a write-held lock. Pair with [`Self::fork_unlock_indexers`]
-    /// in the parent after fork.
-    pub fn fork_lock_indexers(&self) {
-        self.node_indexer.fork_lock();
-        self.edge_indexer.fork_lock();
-    }
-
-    /// Release the locks leaked by [`Self::fork_lock_indexers`].
-    pub fn fork_unlock_indexers(&self) {
-        self.node_indexer.fork_unlock();
-        self.edge_indexer.fork_unlock();
     }
 
     // ── Constraint management ─────────────────────────────────────────

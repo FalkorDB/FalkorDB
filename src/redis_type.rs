@@ -296,32 +296,6 @@ pub unsafe extern "C" fn pre_fork_prepare() {
         let g = tg.graph.read();
         let graph = g.borrow();
         graph.wait_all();
-        // Quiesce indexer RwLocks: a writer-thread `Indexer::commit` can hold
-        // the index write lock across bulk RediSearch calls without the GIL.
-        // If fork happened then, the child (where the writer thread does not
-        // exist) would deadlock in `index_info` during RDB encoding. Taking
-        // the shared lock here blocks until any in-flight commit finishes.
-        graph.fork_lock_indexers();
-    }
-}
-
-/// pthread_atfork parent handler: release the shared indexer locks leaked by
-/// [`pre_fork_prepare`]. The registry cannot have changed between the two
-/// handlers because the main thread was inside `fork()` and registry
-/// mutations are main-thread-only.
-///
-/// # Safety
-/// Called by libc after fork, in the parent. Accesses graphs via data_ptr().
-pub unsafe extern "C" fn post_fork_parent() {
-    if !graph::thread_id::is_main_thread() {
-        return;
-    }
-    let registry = crate::graph_core::GRAPH_REGISTRY.lock();
-    for graph_arc in registry.values() {
-        let tg: &ThreadedGraph = unsafe { &*graph_arc.data_ptr() };
-        let g = tg.graph.read();
-        let graph = g.borrow();
-        graph.fork_unlock_indexers();
     }
 }
 
