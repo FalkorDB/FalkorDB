@@ -107,6 +107,30 @@ pub fn register_graph(
     }
 }
 
+/// Re-key a registry entry when a Redis RENAME moves a graph to a new key.
+///
+/// `graph_free` only runs for the *overwritten destination* value, so without
+/// this the old name keeps a stale entry: the next `register_graph` under
+/// that name (e.g. a concurrent write query re-creating the key) displaces
+/// it and trips the invariant assert above.
+pub fn rename_graph(
+    old_name: &str,
+    new_name: &str,
+) {
+    let displaced = {
+        let mut reg = GRAPH_REGISTRY.lock();
+        reg.remove(old_name)
+            .and_then(|arc| reg.insert(new_name.to_string(), arc))
+    };
+    // The destination entry is normally already removed (overwriting the key
+    // ran `graph_free` synchronously), but under lazy free that removal is
+    // deferred, so we may displace it here. Drop off the main Redis thread
+    // (see `register_graph` for the rationale).
+    if let Some(displaced) = displaced {
+        std::thread::spawn(move || drop(displaced));
+    }
+}
+
 pub struct WriteMessage {
     pub bc: BlockedClient,
     pub query: Arc<str>,

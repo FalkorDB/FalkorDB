@@ -568,6 +568,7 @@ unsafe extern "C" fn on_keyspace_event(
         "rename_to" => {
             let old = RENAME_OLD_NAME.lock().take();
             if let Some(old_name) = old {
+                crate::graph_core::rename_graph(&old_name, key_name);
                 let context = Context::new(ctx);
                 telemetry::delete_stream(&context, &old_name);
             }
