@@ -65,62 +65,27 @@ use super::{
 };
 use crate::graph::cow::Cow;
 
-mod sealed {
-    pub trait Sealed {}
-    impl Sealed for bool {}
-    impl Sealed for u64 {}
-}
-
-/// Element types storable in a [`VersionedMatrix`]: `bool` (pure structure)
-/// and `u64` (valued entries such as inline edge ids). Sealed — the delta
-/// invariants below are only proven for these two types.
-///
-/// The distinguishing capability is the **dp overlay**: `u64` writes may
-/// leave an entry in *both* `m` and `dp` (an in-place value update of a
-/// committed cell — `dp` wins on read), whereas `bool` `set`/`remove` always
-/// keep `dp ∩ m = ∅`. Structural consumers ([`Iter`], `nvals`) query this via
-/// [`Element::dp_overlay`] instead of guessing from the type.
-pub trait Element: sealed::Sealed + Sized {
-    /// The delta-plus handle when this element type permits `dp ∩ m ≠ ∅`,
-    /// `None` when disjointness is guaranteed. Only `u64` has overlay
-    /// semantics, so the overlay handle is concretely `Matrix<u64>`; callers
-    /// use it to skip base entries shadowed by `dp`.
-    fn dp_overlay(dp: &Cow<Matrix<Self>>) -> Option<Cow<Matrix<u64>>>;
-}
-
-impl Element for bool {
-    fn dp_overlay(_dp: &Cow<Matrix<Self>>) -> Option<Cow<Matrix<u64>>> {
-        None
-    }
-}
-
-impl Element for u64 {
-    fn dp_overlay(dp: &Cow<Matrix<Self>>) -> Option<Cow<Matrix<u64>>> {
-        Some(dp.clone())
-    }
-}
-
 /// A matrix with MVCC delta tracking for snapshot isolation.
 ///
 /// Wraps a base matrix with separate matrices for tracking additions
 /// and deletions, enabling concurrent reads during writes.
 ///
-/// The type parameter `V` tags the element type of the *valued* layers (base
+/// The type parameter `T` tags the element type of the *valued* layers (base
 /// `m` and delta-plus `dp`): `bool` for pure structure/presence, `u64` for
 /// valued matrices such as inline edge ids. The delta-minus `dm` is always a
-/// `bool` deletion mask. `V` defaults to `bool`.
-pub struct VersionedMatrix<V> {
+/// `bool` deletion mask. `T` defaults to `bool`.
+pub struct VersionedMatrix<T> {
     /// Base committed matrix
-    m: Cow<Matrix<V>>,
+    m: Cow<Matrix<T>>,
     /// Delta-plus: edges added in current transaction
-    dp: Cow<Matrix<V>>,
+    dp: Cow<Matrix<T>>,
     /// Delta-minus: edges removed in current transaction (always a bool mask)
     dm: Cow<Matrix<bool>>,
 }
 
 // Manual `Clone` so it holds for every `V` without a `V: Clone` bound (see the
 // note on `Matrix`'s manual `Clone`).
-impl<V> Clone for VersionedMatrix<V> {
+impl<T> Clone for VersionedMatrix<T> {
     fn clone(&self) -> Self {
         Self {
             m: self.m.clone(),
@@ -130,8 +95,8 @@ impl<V> Clone for VersionedMatrix<V> {
     }
 }
 
-unsafe impl<V> Send for VersionedMatrix<V> {}
-unsafe impl<V> Sync for VersionedMatrix<V> {}
+unsafe impl<T> Send for VersionedMatrix<T> {}
+unsafe impl<T> Sync for VersionedMatrix<T> {}
 
 impl<T> VersionedMatrix<T> {
     /// Base committed matrix. Element values are typed by `T`; structural
@@ -170,6 +135,102 @@ impl<T> VersionedMatrix<T> {
         self.m.resize(nrows, ncols);
         self.dp.resize(nrows, ncols);
         self.dm.resize(nrows, ncols);
+    }
+
+    pub fn wait(&self) {
+        debug_assert!(!self.m.pending());
+        self.dp.wait();
+        self.dm.wait();
+    }
+
+    /// Wait on all three internal matrices (m, dp, dm).
+    /// Used for fork safety — ensures no GrB internal locks are held.
+    pub fn wait_all(&self) {
+        self.m.wait();
+        self.dp.wait();
+        self.dm.wait();
+    }
+
+    /// Returns true if every internal matrix has no pending GraphBLAS
+    /// operations — i.e. wait_all was effective.
+    #[must_use]
+    pub fn is_synced(&self) -> bool {
+        self.m.is_synced() && self.dp.is_synced() && self.dm.is_synced()
+    }
+
+    #[must_use]
+    pub fn memory_usage(&self) -> usize {
+        self.m.memory_usage() + self.dp.memory_usage() + self.dm.memory_usage()
+    }
+
+    #[must_use]
+    #[allow(clippy::iter_without_into_iter)]
+    pub fn iter(
+        &self,
+        min_row: u64,
+        max_row: u64,
+    ) -> Iter {
+        self.wait();
+        Iter::new(self, min_row, max_row)
+    }
+
+    /// Materialize the effective structure as a `bool` matrix: `(m - dm) ∪ dp`,
+    /// values discarded. Works for both bool and valued (uint64) bases — only
+    /// structure is preserved, which is all the structure-only consumers
+    /// (traversal, relationship-matrix building) need.
+    #[must_use]
+    pub fn extract(&self) -> Matrix<bool> {
+        self.wait();
+        let mut m = Matrix::<bool>::new(self.m.nrows(), self.m.ncols());
+        m.element_wise_add(None, None, Some(&*self.m), None);
+        if self.dm.nvals() > 0 {
+            m.remove_all(&self.dm);
+        }
+        if self.dp.nvals() > 0 {
+            m.element_wise_add(None, None, Some(&*self.dp), None);
+        }
+        m
+    }
+
+    /// Effective entry count: `|m| + |dp| − |dm|`.
+    ///
+    /// Relies on the bool invariants maintained by [`Self::set`] /
+    /// [`Self::remove`]: `dp ∩ m = ∅`, `dm ⊆ m`, `dp ∩ dm = ∅`. (`u64`
+    /// matrices relax the first invariant — see the overlay-aware `nvals`
+    /// in the UINT64 impl below.)
+    pub fn nvals(&self) -> u64 {
+        self.wait();
+        self.m.nvals() + self.dp.nvals() - self.dm.nvals()
+    }
+
+    pub fn print(
+        &self,
+        level: GxB_Print_Level,
+    ) {
+        self.m.print(level);
+        self.dp.print(level);
+        self.dm.print(level);
+    }
+
+    /// Bulk-remove all entries matching a mask matrix.
+    ///
+    /// Equivalent to calling `remove(i, j)` for every entry `(i, j)` in `mask`,
+    /// but executes in two GraphBLAS bulk operations instead of N individual calls:
+    /// - Entries in base `m` matching `mask` are marked deleted in `dm`
+    /// - Entries in delta-plus `dp` matching `mask` are removed from `dp`
+    pub fn remove_mask(
+        &mut self,
+        mask: &Matrix<bool>,
+    ) {
+        // dm |= (m & mask): mark deleted every committed entry that `mask`
+        // selects. The set added to `dm` is the intersection `m ∩ mask`, which
+        // is symmetric — so `m`'s values are irrelevant and it can flow through
+        // the (structure-only, `PAIR`-semiring) generic `b` slot while the bool
+        // `mask` acts as the GraphBLAS write mask.
+        self.dm
+            .element_wise_add(Some(mask), None, Some(&*self.m), None);
+        // dp &= ~mask: remove entries from dp that exist in mask
+        self.dp.remove_all(mask);
     }
 }
 
@@ -247,119 +308,6 @@ impl VersionedMatrix<bool> {
         }
     }
 
-    /// Effective entry count: `|m| + |dp| − |dm|`.
-    ///
-    /// Relies on the bool invariants maintained by [`Self::set`] /
-    /// [`Self::remove`]: `dp ∩ m = ∅`, `dm ⊆ m`, `dp ∩ dm = ∅`. (`u64`
-    /// matrices relax the first invariant — see the overlay-aware `nvals`
-    /// in the UINT64 impl below.)
-    pub fn nvals(&self) -> u64 {
-        self.wait();
-        self.m.nvals() + self.dp.nvals() - self.dm.nvals()
-    }
-}
-
-impl<V> Dup<Self> for VersionedMatrix<V> {
-    fn dup(&self) -> Self {
-        Self {
-            m: self.m.new_version(),
-            dp: self.dp.new_version(),
-            dm: self.dm.new_version(),
-        }
-    }
-}
-
-impl<V> VersionedMatrix<V> {
-    pub fn wait(&self) {
-        debug_assert!(!self.m.pending());
-        self.dp.wait();
-        self.dm.wait();
-    }
-
-    /// Wait on all three internal matrices (m, dp, dm).
-    /// Used for fork safety — ensures no GrB internal locks are held.
-    pub fn wait_all(&self) {
-        self.m.wait();
-        self.dp.wait();
-        self.dm.wait();
-    }
-
-    /// Returns true if every internal matrix has no pending GraphBLAS
-    /// operations — i.e. wait_all was effective.
-    #[must_use]
-    pub fn is_synced(&self) -> bool {
-        self.m.is_synced() && self.dp.is_synced() && self.dm.is_synced()
-    }
-
-    #[must_use]
-    pub fn memory_usage(&self) -> usize {
-        self.m.memory_usage() + self.dp.memory_usage() + self.dm.memory_usage()
-    }
-
-    #[must_use]
-    #[allow(clippy::iter_without_into_iter)]
-    pub fn iter(
-        &self,
-        min_row: u64,
-        max_row: u64,
-    ) -> Iter
-    where
-        V: Element,
-    {
-        self.wait();
-        Iter::new(self, min_row, max_row)
-    }
-
-    /// Materialize the effective structure as a `bool` matrix: `(m - dm) ∪ dp`,
-    /// values discarded. Works for both bool and valued (uint64) bases — only
-    /// structure is preserved, which is all the structure-only consumers
-    /// (traversal, relationship-matrix building) need.
-    #[must_use]
-    pub fn to_matrix(&self) -> Matrix<bool> {
-        self.wait();
-        let mut m = Matrix::<bool>::new(self.m.nrows(), self.m.ncols());
-        m.element_wise_add(None, None, Some(&*self.m), None);
-        if self.dm.nvals() > 0 {
-            m.remove_all(&self.dm);
-        }
-        if self.dp.nvals() > 0 {
-            m.element_wise_add(None, None, Some(&*self.dp), None);
-        }
-        m
-    }
-
-    pub fn print(
-        &self,
-        level: GxB_Print_Level,
-    ) {
-        self.m.print(level);
-        self.dp.print(level);
-        self.dm.print(level);
-    }
-
-    /// Bulk-remove all entries matching a mask matrix.
-    ///
-    /// Equivalent to calling `remove(i, j)` for every entry `(i, j)` in `mask`,
-    /// but executes in two GraphBLAS bulk operations instead of N individual calls:
-    /// - Entries in base `m` matching `mask` are marked deleted in `dm`
-    /// - Entries in delta-plus `dp` matching `mask` are removed from `dp`
-    pub fn remove_mask(
-        &mut self,
-        mask: &Matrix<bool>,
-    ) {
-        // dm |= (m & mask): mark deleted every committed entry that `mask`
-        // selects. The set added to `dm` is the intersection `m ∩ mask`, which
-        // is symmetric — so `m`'s values are irrelevant and it can flow through
-        // the (structure-only, `PAIR`-semiring) generic `b` slot while the bool
-        // `mask` acts as the GraphBLAS write mask.
-        self.dm
-            .element_wise_add(Some(mask), None, Some(&*self.m), None);
-        // dp &= ~mask: remove entries from dp that exist in mask
-        self.dp.remove_all(mask);
-    }
-}
-
-impl VersionedMatrix<bool> {
     pub fn flush(&mut self) {
         self.wait();
         if self.dp.nvals() >= 10000 {
@@ -385,42 +333,7 @@ impl VersionedMatrix<bool> {
             (m, dp)
         }
     }
-}
 
-impl VersionedMatrix<u64> {
-    /// Iterate UINT64 entries with full overlay semantics (`dp` wins over `m`,
-    /// minus `dm`) — equivalent to `uint64_iter_range(0, u64::MAX)`.
-    ///
-    /// Used during RDB decode to read C-produced relation matrices where
-    /// single-edge entries store the edge ID as a UINT64 value.
-    pub fn uint64_iter(&self) -> impl Iterator<Item = (u64, u64, u64)> + '_ {
-        self.uint64_iter_range(0, u64::MAX)
-    }
-
-    /// Effective entry count with dp-overlay semantics:
-    /// `|m| + |dp| − |dm| − |m ∩ dp|`.
-    ///
-    /// Unlike the bool variant, `dp` may *shadow* committed `m` entries (an
-    /// in-place value update or delete-then-re-add of a committed cell), so the
-    /// structural overlap must be subtracted or shadowed cells count twice.
-    /// The overlap is computed only when `dp` is non-empty; committed
-    /// snapshots with folded deltas pay nothing extra.
-    pub fn nvals(&self) -> u64 {
-        self.wait();
-        let dp_nvals = self.dp.nvals();
-        let shadowed = if dp_nvals == 0 {
-            0
-        } else {
-            self.dp
-                .iter(0, u64::MAX)
-                .filter(|&(i, j)| self.m.contains(i, j))
-                .count() as u64
-        };
-        self.m.nvals() + dp_nvals - self.dm.nvals() - shadowed
-    }
-}
-
-impl VersionedMatrix<bool> {
     /// Set multiple entries, checking dm emptiness once upfront.
     ///
     /// If dm is empty, uses the fast path (1 FFI call per entry).
@@ -437,6 +350,16 @@ impl VersionedMatrix<bool> {
             for (i, j) in entries {
                 self.set(i, j, true);
             }
+        }
+    }
+}
+
+impl<T> Dup<Self> for VersionedMatrix<T> {
+    fn dup(&self) -> Self {
+        Self {
+            m: self.m.new_version(),
+            dp: self.dp.new_version(),
+            dm: self.dm.new_version(),
         }
     }
 }
@@ -470,6 +393,15 @@ impl VersionedMatrix<u64> {
             dp: Cow::new(Matrix::<u64>::new(nrows, ncols)),
             dm: Cow::new(Matrix::<bool>::new(nrows, ncols)),
         }
+    }
+
+    /// Iterate UINT64 entries with full overlay semantics (`dp` wins over `m`,
+    /// minus `dm`) — equivalent to `uint64_iter_range(0, u64::MAX)`.
+    ///
+    /// Used during RDB decode to read C-produced relation matrices where
+    /// single-edge entries store the edge ID as a UINT64 value.
+    pub fn uint64_iter(&self) -> impl Iterator<Item = (u64, u64, u64)> + '_ {
+        self.uint64_iter_range(0, u64::MAX)
     }
 
     /// Write `value` at `(i, j)` with dp-overlay semantics: the new value lands
@@ -627,12 +559,6 @@ pub struct Iter {
     /// stays `None` across `seek` calls.
     dpit: Option<matrix::Iter>,
     dm: Cow<Matrix<bool>>,
-    /// The dp overlay handle ([`Element::dp_overlay`]) when `m` entries may be
-    /// shadowed by `dp` (`u64` matrices with a non-empty `dp`): such entries
-    /// must be skipped in the `m` phase or they'd be emitted twice. `None` for
-    /// bool matrices (whose `set`/`remove` keep `dp ∩ m = ∅`) and whenever
-    /// `dp` is empty.
-    shadow_dp: Option<Cow<Matrix<u64>>>,
     /// True when the deletion mask is empty, so the `m` phase can stream `mit`
     /// without per-edge `dm` lookups. Hot path for read-only queries on a
     /// freshly loaded graph.
@@ -651,7 +577,7 @@ impl Iter {
     /// - `min_row`: The minimum row index to start iterating from.
     /// - `max_row`: The maximum row index to stop iterating at.
     #[must_use]
-    pub fn new<V: Element>(
+    pub fn new<V>(
         m: &VersionedMatrix<V>,
         min_row: u64,
         max_row: u64,
@@ -666,7 +592,6 @@ impl Iter {
                 Some(m.dp.iter(min_row, max_row))
             },
             dm: m.dm.clone(),
-            shadow_dp: if dp_empty { None } else { V::dp_overlay(&m.dp) },
             dm_empty,
             dp_empty,
         }
@@ -697,23 +622,9 @@ impl Iterator for Iter {
     /// - `Some((u64, u64))`: The next element in the matrix.
     /// - `None`: The iterator is depleted.
     fn next(&mut self) -> Option<Self::Item> {
-        if self.dm_empty && self.shadow_dp.is_none() {
-            if let Some(item) = self.mit.next() {
-                return Some(item);
-            }
-            if self.dp_empty {
-                return None;
-            }
-            return self.dpit.as_mut().and_then(Iterator::next);
-        }
         for (i, j) in &mut self.mit {
             if !self.dm_empty && self.dm.get(i, j).is_some() {
                 continue; // deleted
-            }
-            if let Some(dp) = &self.shadow_dp
-                && dp.contains(i, j)
-            {
-                continue; // shadowed by the dp overlay; emitted in the dp phase
             }
             return Some((i, j));
         }

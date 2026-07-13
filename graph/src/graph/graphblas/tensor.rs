@@ -308,7 +308,7 @@ impl Tensor {
     /// forward matrix carries a dp overlay (`dp ∩ m ≠ ∅`), which would break
     /// the bool disjointness invariants `mt` relies on.
     pub fn rebuild_backward(&mut self) {
-        self.mt = VersionedMatrix::from_matrix(self.m.to_matrix().transpose());
+        self.mt = VersionedMatrix::from_matrix(self.m.extract().transpose());
     }
 
     #[must_use]
