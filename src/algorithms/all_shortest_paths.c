@@ -5,9 +5,10 @@
  */
 
 #include "RG.h"
-#include "all_shortest_paths.h"
+#include "GraphBLAS.h"
 #include "../util/arr.h"
 #include "../util/rmalloc.h"
+#include "all_shortest_paths.h"
 
 // run BFS from `src` until `dest` is reached
 // add all nodes visited during traversal except for nodes in
@@ -40,11 +41,11 @@ int AllShortestPaths_FindMinimumLength
 
 	while (true) {
 		// see if we have nodes in the current level
-		uint neighborCount = arr_len(ctx->levels[depth]);
+		uint neighborCount = arr_len (ctx->levels[depth]);
 		if(neighborCount == 0) {
 			// current level depleted, move to next level
 			depth++;
-			if(depth == ctx->maxLen            ||
+			if(depth == ctx->maxLen          ||
 			   depth >= arr_len(ctx->levels) ||   // max level reached
 			   arr_len(ctx->levels[depth]) == 0)  // no way to proceed
 			{
@@ -77,12 +78,11 @@ int AllShortestPaths_FindMinimumLength
 
 		// the node has already been visited if it is already in either
 		// visited or newly_visited
-		bool x;
-		GrB_Info info = GrB_Vector_extractElement_BOOL(&x, visited, frontierID);
+		GrB_Info info = GxB_Vector_isStoredElement(visited, frontierID);
 		bool is_visited = (info == GrB_SUCCESS);
 		if(is_visited) continue;
 
-		info = GrB_Vector_extractElement_BOOL(&x, newly_visited, frontierID);
+		info = GxB_Vector_isStoredElement(newly_visited, frontierID);
 		is_visited = (info == GrB_SUCCESS);
 		if(is_visited) continue;
 

@@ -10,6 +10,8 @@
 #include "../../configuration/config.h"
 #include "../../util/path_utils.h"
 
+#include <unistd.h>
+
 // forward declarations
 static OpResult LoadCSVInit(OpBase *opBase);
 static Record LoadCSVConsume(OpBase *opBase);

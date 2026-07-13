@@ -188,7 +188,6 @@ void QueryCtx_SetGlobalExecutionCtx
 	ctx->query_data.query             = CommandCtx_GetQuery(cmd_ctx);
 	ctx->global_exec_ctx.bc           = CommandCtx_GetBlockingClient(cmd_ctx);
 	ctx->global_exec_ctx.redis_ctx    = CommandCtx_GetRedisCtx(cmd_ctx);
-	ctx->global_exec_ctx.bolt_client  = CommandCtx_GetBoltClient(cmd_ctx);
 	ctx->global_exec_ctx.command_name = CommandCtx_GetCommandName(cmd_ctx);
 
 	// copy command's timer
@@ -326,13 +325,6 @@ RedisModuleCtx *QueryCtx_GetRedisModuleCtx(void) {
 	return ctx->global_exec_ctx.redis_ctx;
 }
 
-// retrieve the bolt client
-bolt_client_t *QueryCtx_GetBoltClient(void) {
-	QueryCtx *ctx = _QueryCtx_GetCtx();
-	ASSERT(ctx != NULL);
-	return ctx->global_exec_ctx.bolt_client;
-}
-
 // retrive the resultset
 ResultSet *QueryCtx_GetResultSet(void) {
 	QueryCtx *ctx = _QueryCtx_GetCtx();
@@ -450,7 +442,8 @@ bool QueryCtx_AcquireWriteLock (void) {
 	// concurrent memory modifications by defrag
 	// must release before acquiring GIL to avoid deadlock:
 	//   worker: READ lock → GIL  vs  main thread: GIL → WRITE lock
-	if (ctx->internal_exec_ctx.read_locked == true) {
+	bool read_locked = ctx->internal_exec_ctx.read_locked ;
+	if (read_locked == true) {
 		//GraphContext_ReleaseLock (gc) ;
 		GraphContext_ReleaseReadLock (gc) ;
 		ctx->internal_exec_ctx.read_locked = false ;
@@ -507,6 +500,11 @@ clean_up:
 
 	// unlock GIL
 	_QueryCtx_ThreadSafeContextUnlock (ctx) ;
+
+	// restore read lock
+	if (read_locked) {
+		QueryCtx_AcquireReadLock () ;
+	}
 
 	// if there is a break point for runtime exception, raise it
 	// otherwise return false

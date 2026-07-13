@@ -131,6 +131,12 @@ void Index_ReleaseRSIndex
 	RSIndex *rsIdx  // handle to release
 );
 
+// returns index memory usage
+size_t Index_MemoryUsage
+(
+	const Index idx  // index to inspect
+);
+
 // responsible for creating the index structure only!
 // e.g. fields, stopwords, language
 void Index_ConstructStructure

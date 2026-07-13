@@ -8,6 +8,8 @@
 #include "graph.h"
 
 // memory usage report struct
+// all size fields are in bytes until GraphContext_EstimateMemoryUsage returns,
+// at which point they are converted to MB (the _mb suffix signals the unit)
 typedef struct {
 	size_t lbl_matrices_sz;         // label matrices memory usage
 	size_t rel_matrices_sz;         // relation matrices memory usage
@@ -20,7 +22,7 @@ typedef struct {
 	size_t indices_sz;              // indices memory usage
 } MemoryUsageResult;
 
-// get graph's memory usage
+// get graph's structural memory usage (matrices + datablocks; no attribute sampling)
 void Graph_memoryUsage
 (
 	const Graph *g,            // graph
