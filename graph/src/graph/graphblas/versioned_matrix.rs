@@ -385,40 +385,6 @@ impl VersionedMatrix<bool> {
             (m, dp)
         }
     }
-
-    /// Bulk-extract all effective entries as (row, col) arrays.
-    ///
-    /// Returns `(rows, cols)` from `(m - dm) ∪ dp`, avoiding iterator overhead
-    /// on matrices with huge dimensions (e.g., GrB_INDEX_MAX).
-    #[must_use]
-    pub fn extract_all_tuples(&self) -> (Vec<u64>, Vec<u64>) {
-        self.wait();
-        if self.dm.nvals() == 0 {
-            // Fast path: no deletions, just combine m and dp tuples
-            let (mut rows_m, mut cols_m) = self.m.extract_tuples_bool();
-            let (rows_dp, cols_dp) = self.dp.extract_tuples_bool();
-            rows_m.extend_from_slice(&rows_dp);
-            cols_m.extend_from_slice(&cols_dp);
-            (rows_m, cols_m)
-        } else {
-            // Slow path: materialize effective matrix then extract
-            let effective = self.to_matrix();
-            effective.extract_tuples_bool()
-        }
-    }
-
-    /// Bulk-extract tuples from base `m` and delta-plus `dp` separately.
-    ///
-    /// Returns `((m_rows, m_cols), (dp_rows, dp_cols))`.
-    /// Only valid when `dm` is empty (asserted in debug builds).
-    #[must_use]
-    pub fn extract_m_dp_tuples(&self) -> ((Vec<u64>, Vec<u64>), (Vec<u64>, Vec<u64>)) {
-        self.wait();
-        debug_assert_eq!(self.dm.nvals(), 0, "extract_m_dp_tuples requires empty dm");
-        let m_tuples = self.m.extract_tuples_bool();
-        let dp_tuples = self.dp.extract_tuples_bool();
-        (m_tuples, dp_tuples)
-    }
 }
 
 impl VersionedMatrix<u64> {
@@ -442,7 +408,15 @@ impl VersionedMatrix<u64> {
     pub fn nvals(&self) -> u64 {
         self.wait();
         let dp_nvals = self.dp.nvals();
-        self.m.nvals() + dp_nvals - self.dm.nvals()
+        let shadowed = if dp_nvals == 0 {
+            0
+        } else {
+            self.dp
+                .iter(0, u64::MAX)
+                .filter(|&(i, j)| self.m.contains(i, j))
+                .count() as u64
+        };
+        self.m.nvals() + dp_nvals - self.dm.nvals() - shadowed
     }
 }
 

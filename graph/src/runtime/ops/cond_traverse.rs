@@ -549,13 +549,14 @@ impl<'a> CondTraverseOp<'a> {
         }
 
         let mut f = Matrix::<bool>::new(nrows, ncols);
-        f.build_bool(&row_idx_buf, &col_idx_buf);
+        f.build(&row_idx_buf, &col_idx_buf);
         m_merged.delta_lmxm_into(&mut f);
         for hop_m in &state.chain_matrices {
             hop_m.delta_lmxm_into(&mut f);
         }
 
-        let (row_is, col_is) = f.extract_tuples_bool();
+        // Flush pending mxm work before attaching the row iterator.
+        f.wait();
         // For fused chains all hops are storage-direction (the fusion pass
         // refuses to fuse when transposed differs), so `transposed` applies
         // only to the first hop and the final destination alias comes from
@@ -581,7 +582,7 @@ impl<'a> CondTraverseOp<'a> {
         let mut out_edge_ids = Vec::new();
         let mut out_src_ids = Vec::new();
 
-        for (row_i, dest_raw) in row_is.into_iter().zip(col_is) {
+        for (row_i, dest_raw) in f.iter(0, u64::MAX) {
             let dest_id = NodeId::from(dest_raw);
             // Post-filter final-hop dst label (= F * A * R_dst in C's algebra).
             if !dst_label_ids

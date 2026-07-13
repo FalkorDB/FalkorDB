@@ -255,9 +255,9 @@ impl Tensor {
                 mt_cols.push(src);
             }
             let mut m_mask = Matrix::<bool>::new(nrows, ncols);
-            m_mask.build_bool(&m_rows, &m_cols);
+            m_mask.build(&m_rows, &m_cols);
             let mut mt_mask = Matrix::<bool>::new(ncols, nrows);
-            mt_mask.build_bool(&mt_rows, &mt_cols);
+            mt_mask.build(&mt_rows, &mt_cols);
             self.m.remove_mask(&m_mask);
             self.mt.remove_mask(&mt_mask);
             return rels.iter().map(|&(_, src, dst)| (src, dst)).collect();

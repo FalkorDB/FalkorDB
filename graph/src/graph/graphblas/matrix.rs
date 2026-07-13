@@ -85,16 +85,16 @@ use super::{
     GrB_DESC_T1, GrB_Descriptor, GrB_GLOBAL, GrB_Global_set_INT32, GrB_Info, GrB_Matrix,
     GrB_Matrix_build_BOOL, GrB_Matrix_build_UINT64, GrB_Matrix_clear, GrB_Matrix_dup,
     GrB_Matrix_eWiseAdd_BinaryOp, GrB_Matrix_eWiseAdd_Semiring, GrB_Matrix_eWiseMult_Semiring,
-    GrB_Matrix_extractElement_BOOL, GrB_Matrix_extractElement_UINT64,
-    GrB_Matrix_extractTuples_BOOL, GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols,
-    GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_removeElement,
-    GrB_Matrix_resize, GrB_Matrix_setElement_BOOL, GrB_Matrix_setElement_UINT64, GrB_Matrix_wait,
-    GrB_Mode, GrB_SECOND_UINT64, GrB_Type, GrB_UINT64, GrB_WaitMode, GrB_finalize, GrB_mxm,
-    GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64, GxB_Container_free,
-    GxB_Container_new, GxB_Global_Option_set_INT32, GxB_Iterator, GxB_Iterator_free,
-    GxB_Iterator_new, GxB_JIT_Control, GxB_Matrix_fprint, GxB_Matrix_isStoredElement,
-    GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_NTHREADS, GxB_Option_Field, GxB_Print_Level,
-    GxB_init, GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
+    GrB_Matrix_extractElement_BOOL, GrB_Matrix_extractElement_UINT64, GrB_Matrix_free,
+    GrB_Matrix_get_INT32, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals,
+    GrB_Matrix_removeElement, GrB_Matrix_resize, GrB_Matrix_setElement_BOOL,
+    GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode, GrB_SECOND_UINT64, GrB_Type,
+    GrB_UINT64, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL,
+    GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64, GxB_Container_free, GxB_Container_new,
+    GxB_Global_Option_set_INT32, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_new,
+    GxB_JIT_Control, GxB_Matrix_fprint, GxB_Matrix_isStoredElement, GxB_Matrix_memoryUsage,
+    GxB_Matrix_type, GxB_NTHREADS, GxB_Option_Field, GxB_Print_Level, GxB_init,
+    GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
     GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol, GxB_rowIterator_nextRow,
     GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
 };
@@ -978,7 +978,7 @@ impl Matrix<bool> {
 
     /// Bulk-insert entries from (row, col) arrays. Matrix must be empty.
     /// Uses a single GraphBLAS FFI call instead of N individual setElement calls.
-    pub fn build_bool(
+    pub fn build(
         &mut self,
         rows: &[u64],
         cols: &[u64],
@@ -1001,31 +1001,6 @@ impl Matrix<bool> {
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
         self.has_pending.store(true, Ordering::Relaxed);
-    }
-
-    /// Bulk-extract all (row, col) entries from a boolean matrix.
-    #[must_use]
-    pub fn extract_tuples_bool(&self) -> (Vec<u64>, Vec<u64>) {
-        let mut nvals = self.nvals();
-        if nvals == 0 {
-            return (Vec::new(), Vec::new());
-        }
-        let mut rows = vec![0u64; nvals as usize];
-        let mut cols = vec![0u64; nvals as usize];
-        let mut vals = vec![false; nvals as usize];
-        unsafe {
-            let info = GrB_Matrix_extractTuples_BOOL(
-                rows.as_mut_ptr(),
-                cols.as_mut_ptr(),
-                vals.as_mut_ptr(),
-                &raw mut nvals,
-                *self.m,
-            );
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-        }
-        rows.truncate(nvals as usize);
-        cols.truncate(nvals as usize);
-        (rows, cols)
     }
 
     /// Delta-aware matrix-multiply: `self = self * vm` operating directly on
