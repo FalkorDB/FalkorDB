@@ -675,6 +675,7 @@ impl Pending {
     }
 
     /// Returns (src, dst) for a pending-created relationship, or None if not found.
+    #[must_use]
     pub fn get_created_relationship_endpoints(
         &self,
         id: RelationshipId,
@@ -1006,7 +1007,7 @@ impl Pending {
         for id in &self.deleted_nodes {
             affected_node_ids.remove(id);
         }
-        for rel_id in self.deleted_relationships.iter() {
+        for rel_id in &self.deleted_relationships {
             affected_edge_ids.remove(rel_id);
         }
 

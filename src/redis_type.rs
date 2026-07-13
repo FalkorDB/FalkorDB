@@ -748,14 +748,8 @@ pub fn finalize_pending_graphs() {
         let pg = decode_state.pending.remove(graph_name).unwrap();
         let placeholder = decode_state.placeholders.remove(graph_name);
 
-        match serializers::decoder::finalize_pending_graph(pg) {
-            Ok(graph) => {
-                install_graph(graph_name, graph, placeholder);
-            }
-            Err(e) => {
-                eprintln!("FalkorDB: failed to finalize graph {graph_name}: {e}");
-            }
-        }
+        let graph = serializers::decoder::finalize_pending_graph(pg);
+        install_graph(graph_name, graph, placeholder);
     }
 
     // Only clear if all pending graphs have been finalized.

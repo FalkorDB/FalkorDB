@@ -236,16 +236,17 @@ pub fn create_js_edge<'js>(
     // .type - relationship type string. Resolve through the runtime when
     // available so a relationship deleted/created earlier in the same query is
     // handled; otherwise fall back to the committed graph.
-    let type_name = match runtime {
-        Some(rt) => rt
-            .get_relationship_type(rid)
-            .unwrap_or_else(|| Arc::new(String::new())),
-        None => {
+    let type_name = runtime.map_or_else(
+        || {
             let g = graph.borrow();
             g.get_type(g.get_relationship_type_id(rid))
                 .unwrap_or_else(|| Arc::new(String::new()))
-        }
-    };
+        },
+        |rt| {
+            rt.get_relationship_type(rid)
+                .unwrap_or_else(|| Arc::new(String::new()))
+        },
+    );
     obj.set("type", type_name.as_str())
         .map_err(|e| format!("JS set error: {e}"))?;
 
@@ -259,23 +260,20 @@ pub fn create_js_edge<'js>(
 
     // .attributes - properties (runtime-aware, same fallback as the type).
     let attrs_obj = Object::new(ctx.clone()).map_err(|e| format!("JS object error: {e}"))?;
-    match runtime {
-        Some(rt) => {
-            for (attr_name, value) in rt.get_relationship_attrs(rid) {
-                let js_val = type_convert::value_to_js(ctx, &value, graph, runtime)?;
-                attrs_obj
-                    .set(attr_name.as_str(), js_val)
-                    .map_err(|e| format!("JS set error: {e}"))?;
-            }
+    if let Some(rt) = runtime {
+        for (attr_name, value) in rt.get_relationship_attrs(rid) {
+            let js_val = type_convert::value_to_js(ctx, &value, graph, runtime)?;
+            attrs_obj
+                .set(attr_name.as_str(), js_val)
+                .map_err(|e| format!("JS set error: {e}"))?;
         }
-        None => {
-            let g = graph.borrow();
-            for (attr_name, value) in g.get_relationship_all_attrs(rid) {
-                let js_val = type_convert::value_to_js(ctx, &value, graph, runtime)?;
-                attrs_obj
-                    .set(attr_name.as_str(), js_val)
-                    .map_err(|e| format!("JS set error: {e}"))?;
-            }
+    } else {
+        let g = graph.borrow();
+        for (attr_name, value) in g.get_relationship_all_attrs(rid) {
+            let js_val = type_convert::value_to_js(ctx, &value, graph, runtime)?;
+            attrs_obj
+                .set(attr_name.as_str(), js_val)
+                .map_err(|e| format!("JS set error: {e}"))?;
         }
     }
     obj.set("attributes", attrs_obj)
@@ -311,10 +309,10 @@ pub fn create_js_path<'js>(
                 node_idx += 1;
             }
             Value::Relationship(rel_id) => {
-                let (src, dst) = match runtime {
-                    Some(rt) => rt.get_relationship_endpoints(*rel_id),
-                    None => graph.borrow().get_relationship_endpoints(*rel_id),
-                };
+                let (src, dst) = runtime.map_or_else(
+                    || graph.borrow().get_relationship_endpoints(*rel_id),
+                    |rt| rt.get_relationship_endpoints(*rel_id),
+                );
                 let js_edge = create_js_edge(
                     ctx,
                     (*rel_id).into(),

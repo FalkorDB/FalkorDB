@@ -282,6 +282,8 @@ impl<'a> ExprEval<'a> {
     }
 
     /// Resolve an environment variable.
+    // Hot path: forced inlining measurably matters here.
+    #[allow(clippy::inline_always)]
     #[inline(always)]
     fn resolve_var<R: RowView + ?Sized>(
         env: Option<&R>,

@@ -21,7 +21,7 @@ fn main() {
         .and_then(|v| v.checked_add(patch))
         .expect("version encoding overflowed u32");
     assert!(
-        version_int <= i32::MAX as u32,
+        i32::try_from(version_int).is_ok(),
         "encoded version {version_int} exceeds i32::MAX; redis_module! `version:` takes i32"
     );
     println!("cargo:rustc-env=FALKORDB_VERSION_INT={version_int}");

@@ -326,6 +326,7 @@ impl Column {
 
     /// Creates a new column by gathering values from this column at the given
     /// indices.
+    #[must_use]
     pub fn gather(
         &self,
         indices: impl Iterator<Item = usize>,
@@ -470,13 +471,11 @@ impl BatchBuilder {
         }
         // Index extra bindings by variable ID to avoid O(n) find() calls.
         // For small extra slices this is negligible; for larger ones it's a win.
+        // Micro-optimize common case: single extra binding. For multiple
+        // extras, skip building a full map—instead just avoid the find() per
+        // column by checking extra directly in hot loop.
         let extra_map: Option<&(u32, Value)> = if extra.len() == 1 {
-            // Micro-optimize common case: single extra binding.
             Some(&extra[0])
-        } else if extra.len() > 1 {
-            // For multiple extras, skip building a full map—instead just avoid
-            // the find() per column by checking extra directly in hot loop.
-            None
         } else {
             None
         };
@@ -812,9 +811,9 @@ impl<'a> Batch<'a> {
     #[must_use]
     pub fn merge_over_input(
         self,
-        input: &Batch<'a>,
+        input: &Self,
         origins: &[usize],
-    ) -> Batch<'a> {
+    ) -> Self {
         // Input columns the sub-plan output does not bind must be restored from
         // the input; everything the sub-plan binds is already correct per row.
         let mut missing: Vec<u32> = Vec::new();
@@ -846,7 +845,7 @@ impl<'a> Batch<'a> {
     /// active rows in active order, so any downstream tiebreaker that falls back
     /// to original row index is unaffected.
     #[must_use]
-    pub fn concat(batches: &[Batch<'a>]) -> Batch<'a> {
+    pub fn concat(batches: &[Self]) -> Self {
         let total: usize = batches.iter().map(Batch::active_len).sum();
         if total == 0 {
             return Batch::new(0);
@@ -932,7 +931,7 @@ impl<'a> Batch<'a> {
     /// column unbound, value-only, `Value`-backed, or of a different primitive
     /// type — i.e. whenever a lossless typed concat is not possible.
     fn concat_typed_column(
-        batches: &[Batch<'a>],
+        batches: &[Self],
         i: usize,
         total: usize,
     ) -> Option<Column> {
@@ -1030,7 +1029,7 @@ impl<'a> Batch<'a> {
     /// The `origin_rows` sidecar is emitted only when it would contain a
     /// non-zero entry (i.e. `n > 1`).
     #[must_use]
-    pub fn clone_active_rows_seq_origin(&self) -> Batch<'a> {
+    pub fn clone_active_rows_seq_origin(&self) -> Self {
         let mut batch = self.clone().into_compacted();
         let n = batch.len;
         batch.origin_rows = (n > 1).then(|| (0..n as u32).collect());
@@ -1197,7 +1196,7 @@ impl<'a> Batch<'a> {
     }
 
     #[must_use]
-    pub fn num_columns(&self) -> usize {
+    pub const fn num_columns(&self) -> usize {
         self.columns.len()
     }
 

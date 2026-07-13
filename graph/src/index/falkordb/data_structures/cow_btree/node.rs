@@ -54,11 +54,11 @@ enum Combined<const LEAF_MAX: usize, const BRANCH_MAX: usize> {
 /// only way `chunks(BRANCH_MAX)` would leave a singleton is a trailing remainder of exactly 1, i.e. an
 /// input length of `BRANCH_MAX + 1`; that case is split as `BRANCH_MAX - 1` + `2` instead.
 fn pack_branches<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
-    children: Vec<Node<LEAF_MAX, BRANCH_MAX>>
+    children: &[Node<LEAF_MAX, BRANCH_MAX>]
 ) -> Vec<Node<LEAF_MAX, BRANCH_MAX>> {
     // One branch per chunk of up to `BRANCH_MAX` children, so the count is known up front.
     let mut packed = Vec::with_capacity(children.len().div_ceil(BRANCH_MAX));
-    let mut rest = &children[..];
+    let mut rest = children;
     while !rest.is_empty() {
         let take = if rest.len() == BRANCH_MAX + 1 {
             BRANCH_MAX - 1
@@ -91,7 +91,7 @@ pub(super) fn build_root<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
     mut fragments: Vec<Node<LEAF_MAX, BRANCH_MAX>>
 ) -> Node<LEAF_MAX, BRANCH_MAX> {
     while fragments.len() > 1 {
-        fragments = pack_branches(fragments);
+        fragments = pack_branches(&fragments);
     }
     fragments
         .pop()
@@ -156,8 +156,8 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
         let mut node = self;
         loop {
             match node {
-                Node::Leaf(leaf) => return (leaf.key(0), leaf.doc(0)),
-                Node::Branch(branch) => node = &branch.children[0],
+                Self::Leaf(leaf) => return (leaf.key(0), leaf.doc(0)),
+                Self::Branch(branch) => node = &branch.children[0],
             }
         }
     }
@@ -169,11 +169,11 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
     pub(super) fn apply_batch(
         &self,
         batch: &[(u64, u64)],
-    ) -> Vec<Node<LEAF_MAX, BRANCH_MAX>> {
+    ) -> Vec<Self> {
         match self {
             // Leaf: merge the batch into this page (the leaf owns the encoding-specific work — an AoS page
             // that still fits is byte-merged, no decode; see [`Leaf::merge_batch`]). It may split into several.
-            Node::Leaf(leaf) => leaf
+            Self::Leaf(leaf) => leaf
                 .merge_batch(batch)
                 .into_iter()
                 .map(Node::Leaf)
@@ -182,10 +182,9 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
             // children that actually receive entries — every other child is shared by `Arc` clone,
             // never copied. Re-pack the resulting child list (which may have grown, since a touched
             // child can split into several) back into branch pages.
-            Node::Branch(branch) => {
+            Self::Branch(branch) => {
                 // At least one replacement child per existing child (a touched one may split into more).
-                let mut new_children: Vec<Node<LEAF_MAX, BRANCH_MAX>> =
-                    Vec::with_capacity(branch.children.len());
+                let mut new_children = Vec::with_capacity(branch.children.len());
                 // Split the sorted `batch` across the children with a single linear sweep — a merge of the
                 // sorted batch against the sorted separators. `cursor` only ever advances, so a child that
                 // receives nothing costs one comparison, not a binary search over the whole remaining batch:
@@ -212,7 +211,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
                         new_children.extend(child.apply_batch(for_child));
                     }
                 }
-                pack_branches(new_children)
+                pack_branches(&new_children)
             }
         }
     }
@@ -228,7 +227,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
     ) -> Option<Split<LEAF_MAX, BRANCH_MAX>> {
         match self {
             // The leaf owns the encoding-specific work (an AoS leaf splices its bytes; see [`Leaf::insert`]).
-            Node::Leaf(leaf) => match leaf.insert(key, doc)? {
+            Self::Leaf(leaf) => match leaf.insert(key, doc)? {
                 LeafInsert::Fit(new) => {
                     *leaf = new;
                     None
@@ -237,11 +236,11 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
                     *leaf = left;
                     Some(Split {
                         sep,
-                        right: Node::Leaf(right),
+                        right: Self::Leaf(right),
                     })
                 }
             },
-            Node::Branch(branch_arc) => {
+            Self::Branch(branch_arc) => {
                 let branch = make_private(branch_arc); // CoW: clone the shared branch, mutate the copy
                 let child_idx = branch.child_index(key, doc);
                 let Some(Split { sep, right }) = branch.children[child_idx].insert_one(key, doc)
@@ -264,7 +263,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
                     let promoted = branch.seps.pop().unwrap(); // the separator between the two halves
                     Some(Split {
                         sep: promoted,
-                        right: Node::Branch(Arc::new(Branch {
+                        right: Self::Branch(Arc::new(Branch {
                             seps: right_seps,
                             children: right_children,
                         })),
@@ -280,10 +279,10 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
     fn combine(
         &self,
         sep: (u64, u64),
-        right: &Node<LEAF_MAX, BRANCH_MAX>,
+        right: &Self,
     ) -> Combined<LEAF_MAX, BRANCH_MAX> {
         match (self, right) {
-            (Node::Leaf(left_leaf), Node::Leaf(right_leaf)) => {
+            (Self::Leaf(left_leaf), Self::Leaf(right_leaf)) => {
                 // Two AoS leaves are tag-free `[(key, doc) × n]` and the siblings are ordered, so the join
                 // is a byte concat (see [`Node::aos_combine`]). Compact/mixed leaves can't share a
                 // `min_value`/width, so they fall back to the decode + rebuild below.
@@ -293,25 +292,25 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
                     let mut pairs = left_leaf.to_pairs();
                     pairs.extend(right_leaf.to_pairs());
                     if pairs.len() <= LEAF_MAX {
-                        Combined::One(Node::Leaf(Leaf::from_pairs(&pairs)))
+                        Combined::One(Self::Leaf(Leaf::from_pairs(&pairs)))
                     } else {
                         let mid = pairs.len() / 2;
                         Combined::Two(
-                            Node::Leaf(Leaf::from_pairs(&pairs[..mid])),
+                            Self::Leaf(Leaf::from_pairs(&pairs[..mid])),
                             pairs[mid],
-                            Node::Leaf(Leaf::from_pairs(&pairs[mid..])),
+                            Self::Leaf(Leaf::from_pairs(&pairs[mid..])),
                         )
                     }
                 }
             }
-            (Node::Branch(left_branch), Node::Branch(right_branch)) => {
+            (Self::Branch(left_branch), Self::Branch(right_branch)) => {
                 let mut children = left_branch.children.clone();
                 children.extend(right_branch.children.iter().cloned());
                 let mut seps = left_branch.seps.clone();
                 seps.push(sep); // the parent separator becomes an internal one in the joined branch
-                seps.extend(right_branch.seps.iter().cloned());
+                seps.extend(right_branch.seps.iter().copied());
                 if children.len() <= BRANCH_MAX {
-                    Combined::One(Node::Branch(Arc::new(Branch { seps, children })))
+                    Combined::One(Self::Branch(Arc::new(Branch { seps, children })))
                 } else {
                     // Reuse the joined `children`/`seps` allocations for the left node — `split_off` hands
                     // back the right halves — instead of three more `to_vec` copies. After the splits, `seps`
@@ -323,9 +322,9 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
                         .pop()
                         .expect("a split branch always has an internal separator to promote");
                     Combined::Two(
-                        Node::Branch(Arc::new(Branch { seps, children })),
+                        Self::Branch(Arc::new(Branch { seps, children })),
                         promoted,
-                        Node::Branch(Arc::new(Branch {
+                        Self::Branch(Arc::new(Branch {
                             seps: right_seps,
                             children: right_children,
                         })),
@@ -347,7 +346,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
         let mut buf = Vec::with_capacity(left.0.len() + right.0.len());
         buf.extend_from_slice(&left.0);
         buf.extend_from_slice(&right.0);
-        let leaf = |bytes: Vec<u8>| Node::Leaf(Leaf::Aos(AosLeaf(bytes.into())));
+        let leaf = |bytes: Vec<u8>| Self::Leaf(Leaf::Aos(AosLeaf(bytes.into())));
         if buf.len() / STRIDE <= LEAF_MAX {
             Combined::One(leaf(buf))
         } else {
@@ -367,12 +366,12 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
         doc: u64,
     ) -> Option<bool> {
         match self {
-            Node::Leaf(leaf) => {
+            Self::Leaf(leaf) => {
                 let (new, underflow) = leaf.remove(key, doc)?; // `None` ⇒ not present
                 *leaf = new;
                 Some(underflow)
             }
-            Node::Branch(branch_arc) => {
+            Self::Branch(branch_arc) => {
                 let branch = make_private(branch_arc); // CoW: clone the shared branch, mutate the copy
                 let child_idx = branch.child_index(key, doc);
                 if branch.children[child_idx].remove_one(key, doc)? {
@@ -404,11 +403,11 @@ pub(super) mod cow_gate {
     use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 
     /// A key no other test inserts — the park hook keys off it so only the concurrency test triggers it.
-    pub(crate) const KEY: u64 = 0xFFFF_FFFF_FFFF_FF00;
+    pub const KEY: u64 = 0xFFFF_FFFF_FFFF_FF00;
     /// Writer → test: "I am parked mid-mutation, holding the `&mut Branch` after updating it."
-    pub(crate) static PARKED: AtomicBool = AtomicBool::new(false);
+    pub static PARKED: AtomicBool = AtomicBool::new(false);
     /// Test → writer: "you may proceed."
-    pub(crate) static RELEASE: AtomicBool = AtomicBool::new(false);
+    pub static RELEASE: AtomicBool = AtomicBool::new(false);
 
     /// Called in `insert_one` *after* the working copy's branch has been mutated (its children/seps
     /// updated from a child split). For the sentinel key only, announce that we've parked mid-mutation

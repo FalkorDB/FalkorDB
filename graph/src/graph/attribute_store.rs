@@ -79,6 +79,15 @@ pub struct AttrNameMap {
     index: FxHashMap<Arc<String>, u16>,
 }
 
+impl<'a> IntoIterator for &'a AttrNameMap {
+    type Item = &'a Arc<String>;
+    type IntoIter = std::slice::Iter<'a, Arc<String>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
 impl AttrNameMap {
     #[must_use]
     pub const fn len(&self) -> usize {
@@ -639,7 +648,7 @@ impl<'a> SpanRef<'a> {
     }
 
     #[inline]
-    fn len(self) -> usize {
+    const fn len(self) -> usize {
         self.slot.len as usize
     }
 

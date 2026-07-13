@@ -431,7 +431,7 @@ impl<'a> CondTraverseOp<'a> {
         batch: &Batch<'a>,
         active_subset: &[usize],
         out_pending: &mut VecDeque<Batch<'a>>,
-    ) -> Result<bool, String> {
+    ) -> bool {
         let runtime = self.runtime;
         let rp = self.relationship_pattern;
 
@@ -445,7 +445,7 @@ impl<'a> CondTraverseOp<'a> {
         }
         let state = state_ref.as_mut().unwrap();
         if state.no_match {
-            return Ok(true);
+            return true;
         }
 
         let g = runtime.g.borrow();
@@ -458,14 +458,14 @@ impl<'a> CondTraverseOp<'a> {
                     TraversalMatrix::U64(t.matrix().clone())
                 } else {
                     state.no_match = true;
-                    return Ok(true);
+                    return true;
                 }
             } else {
                 if let Some(m) = g.build_relationship_matrix_unrestricted(&rp.types) {
                     TraversalMatrix::Bool(VersionedMatrix::from_matrix(m))
                 } else {
                     state.no_match = true;
-                    return Ok(true);
+                    return true;
                 }
             };
             state.batched_matrix = Some(m);
@@ -482,20 +482,20 @@ impl<'a> CondTraverseOp<'a> {
                         TraversalMatrix::U64(t.matrix().clone())
                     } else {
                         state.no_match = true;
-                        return Ok(true);
+                        return true;
                     }
                 } else {
                     if let Some(m) = g.build_relationship_matrix_unrestricted(&hop.types) {
                         TraversalMatrix::Bool(VersionedMatrix::from_matrix(m))
                     } else {
                         state.no_match = true;
-                        return Ok(true);
+                        return true;
                     }
                 };
                 state.chain_matrices.push(hm);
                 let Some(dst_labels) = g.resolve_label_ids(&hop.to.labels) else {
                     state.no_match = true;
-                    return Ok(true);
+                    return true;
                 };
                 state.chain_dst_label_ids.push(dst_labels);
             }
@@ -523,13 +523,11 @@ impl<'a> CondTraverseOp<'a> {
             // colliding outer-scope slot value; `is_bound` is authoritative.
             if !batch.is_bound_at(from_alias.id, row_idx) {
                 drop(g);
-                return Ok(false);
+                return false;
             }
-            let src_id = if let Some(Value::Node(id)) = batch.value_at(from_alias.id, row_idx) {
-                id
-            } else {
+            let Some(Value::Node(src_id)) = batch.value_at(from_alias.id, row_idx) else {
                 drop(g);
-                return Ok(false);
+                return false;
             };
             // Pre-filter src by label (= L_src * F in C's algebra).
             if !state
@@ -545,7 +543,7 @@ impl<'a> CondTraverseOp<'a> {
 
         if row_idx_buf.is_empty() {
             drop(g);
-            return Ok(true);
+            return true;
         }
 
         let mut f = Matrix::<bool>::new(nrows, ncols);
@@ -580,7 +578,6 @@ impl<'a> CondTraverseOp<'a> {
         let mut out_indices = Vec::new();
         let mut out_dest_ids = Vec::new();
         let mut out_edge_ids = Vec::new();
-        let mut out_src_ids = Vec::new();
 
         for (row_i, dest_raw) in f.iter(0, u64::MAX) {
             let dest_id = NodeId::from(dest_raw);
@@ -610,9 +607,8 @@ impl<'a> CondTraverseOp<'a> {
                 // self.transposed (which only affects alias→storage mapping,
                 // not the underlying matrix orientation since
                 // build_relationship_matrix_unrestricted is non-transposed).
-                let src_id = match batch.value_at(from_alias.id, row_idx) {
-                    Some(Value::Node(id)) => id,
-                    _ => continue,
+                let Some(Value::Node(src_id)) = batch.value_at(from_alias.id, row_idx) else {
+                    continue;
                 };
                 let mat_src = u64::from(src_id);
                 let mat_dst = u64::from(dest_id);
@@ -629,7 +625,6 @@ impl<'a> CondTraverseOp<'a> {
                     out_indices.push(row_idx);
                     out_dest_ids.push(dest_id);
                     out_edge_ids.push(edge_id);
-                    out_src_ids.push(src_id);
                 }
             } else {
                 // Fused chain: edges across hops are anonymous & unreferenced
@@ -653,7 +648,6 @@ impl<'a> CondTraverseOp<'a> {
                 );
                 out_pending.push_back(out_batch);
                 out_indices.clear();
-                out_src_ids.clear();
             }
         }
 
@@ -667,7 +661,7 @@ impl<'a> CondTraverseOp<'a> {
         }
 
         drop(g);
-        Ok(true)
+        true
     }
 
     /// Enumerate the single-hop results for `batch[row_idx]`, pushing each as a
@@ -682,8 +676,8 @@ impl<'a> CondTraverseOp<'a> {
         sibling_edges: &[u32],
         transposed: bool,
         state_cell: &std::cell::RefCell<Option<CtState>>,
-        bidir_dedup: &Option<std::cell::RefCell<std::collections::HashSet<(u64, u64)>>>,
-        dedup_source_alias: &Option<Variable>,
+        bidir_dedup: Option<&std::cell::RefCell<std::collections::HashSet<(u64, u64)>>>,
+        dedup_source_alias: Option<&Variable>,
         batch: &Batch<'a>,
         row_idx: usize,
         out: &mut Vec<(NodeId, NodeId, RelationshipId)>,
@@ -866,7 +860,7 @@ impl<'a> CondTraverseOp<'a> {
         // deduplicate output rows by (scan_source, final_dest) across
         // expand_row calls — matching C FalkorDB's matrix-multiply semantics.
         if let Some(dedup) = bidir_dedup {
-            let source_alias = dedup_source_alias.as_ref().unwrap();
+            let source_alias = dedup_source_alias.unwrap();
             // The scan source is a parent-carried column, constant for every
             // result of this row, so read it once.
             let src_key = match batch.value_at(source_alias.id, row_idx) {
@@ -1087,8 +1081,8 @@ impl<'a> Iterator for CondTraverseOp<'a> {
         let sibling_edges = self.sibling_edges;
         let transposed = self.transposed;
         let state_cell = &self.state;
-        let bidir_dedup = &self.bidir_dedup;
-        let dedup_source_alias = &self.dedup_source_alias;
+        let bidir_dedup = self.bidir_dedup.as_ref();
+        let dedup_source_alias = self.dedup_source_alias.as_ref();
         let record_cap = self.record_cap;
 
         loop {
@@ -1138,27 +1132,16 @@ impl<'a> Iterator for CondTraverseOp<'a> {
                                 dedup.borrow_mut().clear();
                             }
                             // Try the batched mxm path on the whole batch. When it
-                            // fully handles the batch (`Ok(true)`) its output is
+                            // fully handles the batch (`true`) its output is
                             // queued on `pending_batches` and the emitter is left
-                            // idle; on fallback (`Ok(false)`) seed the emitter to
+                            // idle; on fallback (`false`) seed the emitter to
                             // expand the batch row-by-row.
                             let mut handled = false;
                             if self.batched_eligible {
                                 let active: Vec<usize> = b.active_indices().collect();
                                 let mut pending = std::mem::take(&mut self.pending_batches);
-                                match self.expand_batch(&b, &active, &mut pending) {
-                                    Ok(true) => {
-                                        self.pending_batches = pending;
-                                        handled = true;
-                                    }
-                                    Ok(false) => {
-                                        self.pending_batches = pending;
-                                    }
-                                    Err(e) => {
-                                        self.pending_batches = pending;
-                                        return Some(Err(e));
-                                    }
-                                }
+                                handled = self.expand_batch(&b, &active, &mut pending);
+                                self.pending_batches = pending;
                             }
                             if !handled {
                                 self.emitter.seed(b);
