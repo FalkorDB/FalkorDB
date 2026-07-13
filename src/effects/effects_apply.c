@@ -64,6 +64,29 @@ static AttributeSet ReadAttributeSet
 	return attr_set;
 }
 
+// validate that an ID read from the effects stream refers to an existing
+// schema entry, if it does not the graph is out of sync with the effects
+// stream (e.g. a replicated query failed on this side), in which case we
+// log the problem and exit instead of dereferencing an invalid matrix
+static inline void ValidateSchemaID
+(
+	const Graph *g,     // graph to validate against
+	int id,             // schema ID read from the effects stream
+	SchemaType t        // schema type (label / relationship-type)
+) {
+	int count = (t == SCHEMA_EDGE)
+		? Graph_RelationTypeCount (g)
+		: Graph_LabelTypeCount (g) ;
+
+	if (unlikely (id < 0 || id >= count)) {
+		// graph/effects-stream out of sync
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT refers to a missing %s (id: %d), graph is out of sync with the effects stream",
+				(t == SCHEMA_EDGE) ? "relationship-type" : "label", id) ;
+		exit (1) ;
+	}
+}
+
 static void ApplyCreateNode
 (
 	FILE *stream,     // effects stream
@@ -89,8 +112,10 @@ static void ApplyCreateNode
 	//--------------------------------------------------------------------------
 
 	LabelID labels[lbl_count] ;
+	Graph *g = GraphContext_GetGraph (gc) ;
 	for (uint16_t i = 0; i < lbl_count; i++) {
 		fread_assert (labels + i, sizeof (LabelID), stream) ;
+		ValidateSchemaID (g, labels[i], SCHEMA_NODE) ;
 	}
 
 	//--------------------------------------------------------------------------
@@ -170,6 +195,8 @@ static void ApplyCreateEdge
 	RelationID r      = GRAPH_UNKNOWN_RELATION ;  // current edge relation id
 	RelationID prev_r = GRAPH_UNKNOWN_RELATION ;  // last processed relation id
 
+	Graph *g = GraphContext_GetGraph (gc) ;
+
 	// encoded edge struct
 	#pragma pack(push, 1)
 	struct {
@@ -187,6 +214,7 @@ static void ApplyCreateEdge
 
 		fread_assert(&_edge_desc, sizeof (_edge_desc), stream);
 		ASSERT(_edge_desc.rel_count == 1);
+		ValidateSchemaID (g, _edge_desc.r, SCHEMA_EDGE) ;
 
 		if (prev_r == GRAPH_UNKNOWN_RELATION) {
 			prev_r = _edge_desc.r ;
