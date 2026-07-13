@@ -188,7 +188,7 @@ impl Row {
         &self,
         id: u32,
         value: Value,
-    ) -> Row {
+    ) -> Self {
         let mut row = self.clone();
         row.insert_by_id(id, value);
         row
@@ -208,7 +208,7 @@ impl Row {
     /// value-present-but-unbound distinction.
     pub fn merge(
         &mut self,
-        other: &Row,
+        other: &Self,
     ) {
         for id in 0..other.values.len() {
             if other.bound.test(id) {

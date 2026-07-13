@@ -81,6 +81,7 @@ macro_rules! cypher_fn {
      fn $fn_name:ident($rt:pat, $args:pat) $body:block
     ) => {
         $(#[$attr])*
+        #[allow(clippy::missing_const_for_fn)]
         fn $fn_name(
             $rt: &Runtime,
             $args: &[Value],
@@ -107,6 +108,7 @@ macro_rules! cypher_fn {
      fn $fn_name:ident($rt:pat, $args:pat) $body:block
     ) => {
         $(#[$attr])*
+        #[allow(clippy::missing_const_for_fn)]
         fn $fn_name(
             $rt: &Runtime,
             $args: &[Value],
@@ -132,6 +134,7 @@ macro_rules! cypher_fn {
      fn $fn_name:ident($rt:pat, $args:pat) $body:block
     ) => {
         $(#[$attr])*
+        #[allow(clippy::missing_const_for_fn)]
         fn $fn_name(
             $rt: &Runtime,
             $args: &[Value],
@@ -157,6 +160,7 @@ macro_rules! cypher_fn {
      fn $fn_name:ident($rt:pat, $args:pat) $body:block
     ) => {
         $(#[$attr])*
+        #[allow(clippy::missing_const_for_fn)]
         fn $fn_name(
             $rt: &Runtime,
             $args: &[Value],
@@ -184,6 +188,7 @@ macro_rules! cypher_fn {
      fn $fn_name:ident($rt:pat, $args:pat) $body:block
     ) => {
         $(#[$attr])*
+        #[allow(clippy::missing_const_for_fn)]
         fn $fn_name(
             $rt: &Runtime,
             $args: &[Value],
@@ -216,6 +221,7 @@ macro_rules! cypher_fn {
      fn $fn_name:ident($rt:pat, $args:pat) $body:block
     ) => {
         $(#[$attr])*
+        #[allow(clippy::missing_const_for_fn)]
         fn $fn_name(
             $rt: &Runtime,
             $args: &[Value],
@@ -246,6 +252,7 @@ macro_rules! cypher_fn {
      fn $fn_name:ident($rt:pat, $args:pat) $body:block
     ) => {
         $(#[$attr])*
+        #[allow(clippy::missing_const_for_fn)]
         fn $fn_name(
             $rt: &Runtime,
             $args: &[Value],
@@ -272,6 +279,7 @@ macro_rules! cypher_fn {
      fn $fn_name:ident($rt:pat, $args:pat) $body:block
     ) => {
         $(#[$attr])*
+        #[allow(clippy::missing_const_for_fn)]
         fn $fn_name(
             $rt: &Runtime,
             $args: &[Value],
@@ -422,11 +430,15 @@ impl RuntimeFn {
     }
 }
 
-/// Optional bulk-aggregation entry point. Receives the column of input
+/// Optional bulk-aggregation entry point.
+///
+/// Receives the column of input
 /// values for one batch (`inputs`), the number of rows being aggregated
 /// (`num_rows` — used by no-input aggregates like `count(*)` where
 /// `inputs` is empty), and the previous accumulator. Returns the new
-/// accumulator. When supplied, the keyless-single-aggregate path in
+/// accumulator.
+///
+/// When supplied, the keyless-single-aggregate path in
 /// `AggregateOp` skips per-row evaluation and calls this once per batch.
 pub type BatchAggFn =
     fn(&Runtime, inputs: &[Value], num_rows: usize, acc: Value) -> Result<Value, String>;

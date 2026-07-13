@@ -137,8 +137,8 @@ pub fn drain_pending(
     }
 }
 
-pub fn drain_pending_batches<'a>(
-    pending: &mut VecDeque<Batch<'a>>,
+pub fn drain_pending_batches(
+    pending: &mut VecDeque<Batch<'_>>,
     builder: &mut BatchBuilder,
 ) {
     while builder.len() < BATCH_SIZE {

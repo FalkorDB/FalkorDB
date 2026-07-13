@@ -347,6 +347,7 @@ impl Indexer {
     ///
     /// Caller must hold [`Self::write_lock`] — map mutations are published
     /// via clone-and-swap and would otherwise race with other schema ops.
+    #[must_use]
     pub fn drop_index(
         &self,
         label: &Arc<String>,

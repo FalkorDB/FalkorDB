@@ -741,7 +741,7 @@ pub const fn civil_from_days(z: i64) -> (i32, u32, u32) {
 }
 
 /// Write "YYYY-MM-DD" into buf[0..10]. buf must be at least 10 bytes.
-fn write_date_into(
+const fn write_date_into(
     buf: &mut [u8],
     y: i32,
     m: u32,

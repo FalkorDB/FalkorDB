@@ -647,10 +647,9 @@ fn register_pagerank(funcs: &mut Functions) {
                 // Match C implementation fast path for unfiltered run.
                 // If a label is provided but it covers all active nodes, the filtered
                 // and unfiltered graphs are equivalent, so skip compact rebuild.
-                let use_unfiltered = match label.as_ref() {
-                    None => true,
-                    Some(lbl) => g.label_node_count(lbl.as_str()) == g.node_count(),
-                };
+                let use_unfiltered = label
+                    .as_ref()
+                    .is_none_or(|lbl| g.label_node_count(lbl.as_str()) == g.node_count());
 
                 let (lag_adj, compact_to_id): (GrB_Matrix, Option<Vec<u64>>) = if use_unfiltered {
                     let adj = g.build_adjacency_matrix(&rel_types);
@@ -884,11 +883,10 @@ fn register_betweenness(funcs: &mut Functions) {
                 lagraph_bindings::LAGraph_Cached_OutDegree(lag_g, msg.as_mut_ptr());
 
                 // Select source nodes for sampling (all from compact matrix)
-                let n_nodes = if let Some(m) = &compact_to_id {
-                    m.len()
-                } else {
-                    (g.node_count() + g.deleted_nodes_count()) as usize
-                };
+                let n_nodes = compact_to_id.as_ref().map_or_else(
+                    || (g.node_count() + g.deleted_nodes_count()) as usize,
+                    Vec::len,
+                );
                 let sources: Vec<u64> = if n_nodes == 0 {
                     vec![]
                 } else if sampling_size >= n_nodes {
@@ -2265,7 +2263,9 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
 
                 runtime.check_timeout()?;
                 let mut nodes: GrB_Vector = null_mut();
-                let node_vec_len = compact_to_id.as_ref().map_or(g.node_count(), |m| m.len() as u64);
+                let node_vec_len = compact_to_id
+                    .as_ref()
+                    .map_or_else(|| g.node_count(), |m| m.len() as u64);
                 GrB_Vector_new(&raw mut nodes, GrB_BOOL, node_vec_len);
                 GrB_Vector_assign_BOOL(
                     nodes,

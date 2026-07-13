@@ -37,7 +37,7 @@ fn gallop_lower_bound(
 /// where `index` is one `u8` per entry pointing into the distinct value column (`distinct_count < entry_count`).
 /// See [`CompactIndexedLeaf::build`].
 #[derive(Clone)]
-pub(crate) struct CompactIndexedLeaf(pub(super) Arc<[u8]>);
+pub struct CompactIndexedLeaf(pub(super) Arc<[u8]>);
 
 impl CompactIndexedLeaf {
     /// Number of `(key, doc)` entries — read from the header.
@@ -161,7 +161,7 @@ impl CompactIndexedLeaf {
         key: u64,
         doc: u64,
         pos: usize,
-    ) -> CompactIndexedLeaf {
+    ) -> Self {
         let bytes = &self.0;
         let layout = CompactLayout::read(bytes);
         let count = layout.count;
@@ -193,7 +193,7 @@ impl CompactIndexedLeaf {
                 buf.extend_from_slice(&bytes[index_offset + pos..index_offset + count]);
                 // doc column: prefix | new doc | suffix
                 append_spliced_docs(&mut buf, bytes, &layout, pos, doc);
-                CompactIndexedLeaf(Arc::from(buf.as_slice()))
+                Self(Arc::from(buf.as_slice()))
             }
             Err(slot) => {
                 // new distinct value at `slot`: grow the distinct table and remap the index
@@ -228,7 +228,7 @@ impl CompactIndexedLeaf {
                 }
                 // doc column: prefix | new doc | suffix
                 append_spliced_docs(&mut buf, bytes, &layout, pos, doc);
-                CompactIndexedLeaf(Arc::from(buf.as_slice()))
+                Self(Arc::from(buf.as_slice()))
             }
         }
     }
@@ -240,7 +240,7 @@ impl CompactIndexedLeaf {
     pub(super) fn splice_remove(
         &self,
         pos: usize,
-    ) -> CompactIndexedLeaf {
+    ) -> Self {
         let bytes = &self.0;
         let layout = CompactLayout::read(bytes);
         let count = layout.count;
@@ -272,7 +272,7 @@ impl CompactIndexedLeaf {
         buf.extend_from_slice(
             &bytes[docs_offset + (pos + 1) * doc_width..docs_offset + count * doc_width],
         );
-        CompactIndexedLeaf(Arc::from(buf.as_slice()))
+        Self(Arc::from(buf.as_slice()))
     }
 
     /// Merge a sorted `batch` into this indexed page — no full decode. The caller guarantees every batch
@@ -283,7 +283,7 @@ impl CompactIndexedLeaf {
     pub(super) fn merge(
         &self,
         batch: &[(u64, u64)],
-    ) -> CompactIndexedLeaf {
+    ) -> Self {
         let bytes = &self.0;
         let layout = CompactLayout::read(bytes);
         let count = layout.count;
@@ -356,7 +356,7 @@ impl CompactIndexedLeaf {
         }
         buf.extend_from_slice(&index);
         buf.extend_from_slice(&docs);
-        CompactIndexedLeaf(Arc::from(buf.as_slice()))
+        Self(Arc::from(buf.as_slice()))
     }
 
     /// Merge a sorted `batch` whose keys are all *existing* distinct values, by galloping to each entry's
@@ -370,7 +370,7 @@ impl CompactIndexedLeaf {
     pub(super) fn block_copy_merge(
         &self,
         batch: &[(u64, u64)],
-    ) -> CompactIndexedLeaf {
+    ) -> Self {
         let bytes = &self.0;
         let layout = CompactLayout::read(bytes);
         let count = layout.count;
@@ -441,6 +441,6 @@ impl CompactIndexedLeaf {
         buf.extend_from_slice(&bytes[BODY_OFFSET..index_offset]); // distinct table unchanged (no new values)
         buf.extend_from_slice(&new_index);
         buf.extend_from_slice(&new_docs);
-        CompactIndexedLeaf(Arc::from(buf.as_slice()))
+        Self(Arc::from(buf.as_slice()))
     }
 }
