@@ -257,6 +257,9 @@ pub fn graph_init(
         //            (RediSearch's ForkGC) we return immediately, mirroring
         //            the C port's `_ForkPrepare`. See
         //            [`crate::redis_type::pre_fork_prepare`].
+        // - PARENT:  nothing — writers serialize against BGSAVE via the GIL
+        //            during their commit phase; BGSAVE forks on the main
+        //            thread which holds the GIL, so no per-fork release.
         // - CHILD:   force GraphBLAS/OpenMP to single-threaded mode so they
         //            don't touch the parent's (now-invalid) thread pools.
         //            Index state needs no quiescing: the indexer map is a
