@@ -131,8 +131,9 @@ bool EnforceUniqueEntity
 			rs_idx, QueryCtx_GetTimeoutMS());
 	if(Constraint_GetEntityType(c) == GETYPE_NODE) {
 		// first call, expecting to find 'e' in the index
+		size_t len = 0;
 		const char *doc_key =
-			(const char *)RediSearch_ResultsIteratorNext(iter, rs_idx, NULL);
+			(const char *)RediSearch_ResultsIteratorNext(iter, rs_idx, &len);
 
 		// Guard against NULL: ASSERT is a no-op under NDEBUG, and the
 		// IndexDocKey_DecodeNode call below would otherwise dereference
@@ -145,7 +146,10 @@ bool EnforceUniqueEntity
 		}
 
 		EntityID id;
-		IndexDocKey_DecodeNode(doc_key, &id);
+		if(!IndexDocKey_DecodeNode(doc_key, len, &id)) {
+			holds = false;
+			goto cleanup;
+		}
 
 		if(id != ENTITY_GET_ID(e)) {
 			holds = false;
@@ -153,8 +157,9 @@ bool EnforceUniqueEntity
 		}
 	} else {
 		// first call, expecting to find 'e' in the index
+		size_t len = 0;
 		const char *doc_key =
-			(const char *)RediSearch_ResultsIteratorNext(iter, rs_idx, NULL);
+			(const char *)RediSearch_ResultsIteratorNext(iter, rs_idx, &len);
 
 		// see node branch above for NULL-guard rationale
 		if(doc_key == NULL) {
@@ -163,7 +168,10 @@ bool EnforceUniqueEntity
 		}
 
 		EdgeIndexKey id;
-		IndexDocKey_DecodeEdge(doc_key, &id);
+		if(!IndexDocKey_DecodeEdge(doc_key, len, &id)) {
+			holds = false;
+			goto cleanup;
+		}
 
 		if(id.edge_id != ENTITY_GET_ID(e)) {
 			holds = false;

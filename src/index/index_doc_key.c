@@ -31,16 +31,20 @@ static inline void _encode(const uint8_t *src, size_t src_len, char *out) {
 	out[src_len * 2] = '\0';
 }
 
-static inline void _decode(const char *in, uint8_t *out, size_t out_len) {
+static inline bool _decode(const char *in, uint8_t *out, size_t out_len) {
 	for(size_t i = 0; i < out_len; i++) {
 		uint8_t hi = _hex_value((uint8_t)in[i * 2]);
 		uint8_t lo = _hex_value((uint8_t)in[i * 2 + 1]);
-		// Doc keys come from RediSearch which roundtrips what we encoded;
-		// any non-hex byte indicates corruption — assert in debug builds
-		// rather than silently decoding to zero.
-		ASSERT(hi != 0xFF && lo != 0xFF);
+		// Doc keys round-trip from RediSearch; a non-hex byte means corruption
+		// -- assert in debug, fail in release rather than silently decoding to
+		// a wrong value.
+		if(hi == 0xFF || lo == 0xFF) {
+			ASSERT(false);
+			return false;
+		}
 		out[i] = (hi << 4) | lo;
 	}
+	return true;
 }
 
 void IndexDocKey_EncodeNode
@@ -51,14 +55,19 @@ void IndexDocKey_EncodeNode
 	_encode((const uint8_t *)&id, sizeof(EntityID), out);
 }
 
-void IndexDocKey_DecodeNode
+bool IndexDocKey_DecodeNode
 (
 	const char *in,
+	size_t in_len,
 	EntityID *out
 ) {
 	ASSERT(in  != NULL);
 	ASSERT(out != NULL);
-	_decode(in, (uint8_t *)out, sizeof(EntityID));
+	if(in_len != NODE_DOC_KEY_LEN) {
+		ASSERT(false);
+		return false;
+	}
+	return _decode(in, (uint8_t *)out, sizeof(EntityID));
 }
 
 void IndexDocKey_EncodeEdge
@@ -70,12 +79,17 @@ void IndexDocKey_EncodeEdge
 	_encode((const uint8_t *)key, sizeof(EdgeIndexKey), out);
 }
 
-void IndexDocKey_DecodeEdge
+bool IndexDocKey_DecodeEdge
 (
 	const char *in,
+	size_t in_len,
 	EdgeIndexKey *out
 ) {
 	ASSERT(in  != NULL);
 	ASSERT(out != NULL);
-	_decode(in, (uint8_t *)out, sizeof(EdgeIndexKey));
+	if(in_len != EDGE_DOC_KEY_LEN) {
+		ASSERT(false);
+		return false;
+	}
+	return _decode(in, (uint8_t *)out, sizeof(EdgeIndexKey));
 }

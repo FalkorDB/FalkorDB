@@ -79,7 +79,7 @@ SIValue *Proc_FulltextQueryRelationshipStep
 	if(!doc_key) return NULL;
 
 	EdgeIndexKey edge_key;
-	IndexDocKey_DecodeEdge(doc_key, &edge_key);
+	if(!IndexDocKey_DecodeEdge(doc_key, len, &edge_key)) return NULL;
 
 	//--------------------------------------------------------------------------
 	// set up edge

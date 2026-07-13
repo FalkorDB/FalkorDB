@@ -104,6 +104,7 @@ static Record IndexScanConsumeFromChild
 	OpBase *opBase
 ) {
 	const char *doc_key = NULL;
+	size_t len = 0;
 	IndexScan *op  = (IndexScan *)opBase;
 	RSIndex *rsIdx = op->rsIdx;
 
@@ -113,10 +114,10 @@ pull_index:
 	//--------------------------------------------------------------------------
 
 	if(op->iter != NULL && op->child_record != NULL) {
-		while((doc_key = RediSearch_ResultsIteratorNext(op->iter, rsIdx, NULL))
+		while((doc_key = RediSearch_ResultsIteratorNext(op->iter, rsIdx, &len))
 				!= NULL) {
 			EntityID nodeId;
-			IndexDocKey_DecodeNode(doc_key, &nodeId);
+			if(!IndexDocKey_DecodeNode(doc_key, len, &nodeId)) continue;
 			// populate record with node
 			_UpdateRecord(op, op->child_record, nodeId);
 			// apply unresolved filters
@@ -217,13 +218,14 @@ static Record IndexScanConsume(OpBase *opBase) {
 	}
 
 	const char *doc_key = NULL;
+	size_t len = 0;
 
 	// populate the Record with the actual node
 	Record r = OpBase_CreateRecord((OpBase *)op);
-	while((doc_key = RediSearch_ResultsIteratorNext(op->iter, rsIdx, NULL))
+	while((doc_key = RediSearch_ResultsIteratorNext(op->iter, rsIdx, &len))
 			!= NULL) {
 		EntityID nodeId;
-		IndexDocKey_DecodeNode(doc_key, &nodeId);
+		if(!IndexDocKey_DecodeNode(doc_key, len, &nodeId)) continue;
 		// populate record with node
 		_UpdateRecord(op, r, nodeId);
 

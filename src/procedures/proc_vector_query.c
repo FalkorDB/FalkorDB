@@ -138,7 +138,7 @@ static SIValue *Proc_NodeStep
 	}
 
 	NodeID id ;
-	IndexDocKey_DecodeNode (doc_key, &id) ;
+	if (!IndexDocKey_DecodeNode (doc_key, len, &id)) return NULL ;
 
 	Node *n  = &pdata->n ;
 	bool res = Graph_GetNode (pdata->g, id, n) ;
@@ -183,7 +183,7 @@ static SIValue *Proc_EdgeStep
 	}
 
 	EdgeIndexKey edge_key;
-	IndexDocKey_DecodeEdge(doc_key, &edge_key);
+	if(!IndexDocKey_DecodeEdge(doc_key, len, &edge_key)) return NULL;
 
 	Edge *e = &pdata->e;
 	pdata->e.src_id  = edge_key.src_id;

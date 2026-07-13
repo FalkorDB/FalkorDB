@@ -134,7 +134,7 @@ SIValue *Proc_FulltextQueryNodeStep
 	if(!doc_key) return NULL;
 
 	NodeID id;
-	IndexDocKey_DecodeNode(doc_key, &id);
+	if(!IndexDocKey_DecodeNode(doc_key, len, &id)) return NULL;
 
 	double score = RediSearch_ResultsIteratorGetScore(pdata->iter);
 

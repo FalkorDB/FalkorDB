@@ -220,6 +220,7 @@ static Record EdgeIndexScanConsumeFromChild
 	OpEdgeIndexScan	*op = (OpEdgeIndexScan*) opBase ;
 	RSIndex *rsIdx = op->rsIdx ;
 	const char *doc_key = NULL ;
+	size_t     len      = 0 ;
 
 pull_index:
 
@@ -228,10 +229,10 @@ pull_index:
 	//--------------------------------------------------------------------------
 
 	if (op->iter != NULL && op->child_record != NULL) {
-		while ((doc_key = RediSearch_ResultsIteratorNext (op->iter, rsIdx, NULL))
+		while ((doc_key = RediSearch_ResultsIteratorNext (op->iter, rsIdx, &len))
 				!= NULL) {
 			EdgeIndexKey edgeKey ;
-			IndexDocKey_DecodeEdge (doc_key, &edgeKey) ;
+			if (!IndexDocKey_DecodeEdge (doc_key, len, &edgeKey)) continue ;
 			// populate record with edge
 			_UpdateRecord (op, op->child_record, &edgeKey) ;
 			// apply unresolved filters
@@ -357,13 +358,14 @@ static Record EdgeIndexScanConsume
 	}
 
 	const char *doc_key = NULL;
+	size_t len = 0;
 
 	// populate the Record with the actual edge
 	Record r = OpBase_CreateRecord((OpBase *)op);
-	while((doc_key = RediSearch_ResultsIteratorNext(op->iter, rsIdx, NULL))
+	while((doc_key = RediSearch_ResultsIteratorNext(op->iter, rsIdx, &len))
 			!= NULL) {
 		EdgeIndexKey edgeKey;
-		IndexDocKey_DecodeEdge(doc_key, &edgeKey);
+		if(!IndexDocKey_DecodeEdge(doc_key, len, &edgeKey)) continue;
 		// populate record with edge
 		_UpdateRecord(op, r, &edgeKey);
 		// apply unresolved filters

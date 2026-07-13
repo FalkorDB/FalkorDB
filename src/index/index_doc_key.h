@@ -26,9 +26,12 @@ void IndexDocKey_EncodeNode
 );
 
 // Decode NODE_DOC_KEY_LEN lowercase hex chars back to an EntityID.
-void IndexDocKey_DecodeNode
+// Returns false (leaving *out unset) on an unexpected length or non-hex byte;
+// doc keys round-trip from RediSearch, so that indicates corruption.
+bool IndexDocKey_DecodeNode
 (
 	const char *in,                // hex-encoded doc key
+	size_t in_len,                 // length of 'in' (excluding NUL)
 	EntityID *out                  // [out] decoded entity id
 );
 
@@ -41,8 +44,11 @@ void IndexDocKey_EncodeEdge
 );
 
 // Decode EDGE_DOC_KEY_LEN lowercase hex chars back to an EdgeIndexKey.
-void IndexDocKey_DecodeEdge
+// Returns false (leaving *out unset) on an unexpected length or non-hex byte;
+// doc keys round-trip from RediSearch, so that indicates corruption.
+bool IndexDocKey_DecodeEdge
 (
 	const char *in,                // hex-encoded doc key
+	size_t in_len,                 // length of 'in' (excluding NUL)
 	EdgeIndexKey *out              // [out] decoded edge doc key
 );
