@@ -393,29 +393,11 @@ static void _ShutdownEventHandler
 	//     _GraphContext_Free runs (sync, or async-dispatched onto the
 	//     still-alive pool — the destroy below drains it either way).
 	//
-	// Snapshot under the globals read lock; release before decref because
-	// the free path takes the globals write lock via Globals_RemoveGraph
-	// (deadlock otherwise).
 	ThreadPool_Wait () ;
 
-	Globals_ReadLock () ;
-	GraphContext **graphs = Globals_Get_GraphsInKeyspace () ;
-	GraphContext **snapshot = NULL ;
-	if (graphs != NULL) {
-		uint32_t n = arr_len (graphs) ;
-		snapshot = arr_new (GraphContext *, n) ;
-		for (uint32_t i = 0 ; i < n ; i++) {
-			arr_append (snapshot, graphs[i]) ;
-		}
-	}
-	Globals_Unlock () ;
-
-	if (snapshot != NULL) {
-		for (uint32_t i = 0 ; i < arr_len (snapshot) ; i++) {
-			GraphContext_DecreaseRefCount (snapshot[i]) ;
-		}
-		arr_free (snapshot) ;
-	}
+	// drop each keyspace graph's registration reference so GraphContexts -- and
+	// the RediSearch indexes they own -- are freed at shutdown rather than leaked
+	Globals_DrainGraphs () ;
 
 	// stop threads before finalize GraphBLAS
 	ThreadPool_Destroy () ;
