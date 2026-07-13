@@ -89,10 +89,7 @@ use crate::{
         attribute_store::AttributeStore,
         constraint::{Constraint, ConstraintStatus, ConstraintType},
         graphblas::{
-            matrix::{
-                Descriptor, Dup, Get, MaskedElementWiseAdd, MaskedElementWiseMultiply, Matrix, MxM,
-                New, Remove, Set, Size, Transpose,
-            },
+            matrix::{Descriptor, Dup, Matrix},
             serialization::{Encode, EncodeState, PayloadEntry, Writer},
             tensor::{Tensor, compound_key},
             versioned_matrix::{self, VersionedMatrix},
@@ -278,17 +275,17 @@ pub struct Graph {
     /// Bitmap of deleted relationship IDs
     deleted_relationships: RoaringTreemap,
     /// Empty matrix for operations
-    zero_matrix: VersionedMatrix,
+    zero_matrix: VersionedMatrix<bool>,
     /// Combined adjacency matrix (all relationship types)
-    adjacancy_matrix: VersionedMatrix,
+    adjacancy_matrix: VersionedMatrix<bool>,
     /// Matrix mapping nodes to their labels
-    node_labels_matrix: VersionedMatrix,
+    node_labels_matrix: VersionedMatrix<bool>,
     /// Matrix mapping relationships to their types
-    relationship_type_matrix: VersionedMatrix,
+    relationship_type_matrix: VersionedMatrix<bool>,
     /// Matrix with all nodes (for full scans)
-    all_nodes_matrix: VersionedMatrix,
+    all_nodes_matrix: VersionedMatrix<bool>,
     /// Per-label matrices (label ID → node membership)
-    labels_matices: Vec<VersionedMatrix>,
+    labels_matices: Vec<VersionedMatrix<bool>>,
     /// Per-type relationship tensors (type ID → src×dst×edge_id)
     relationship_matrices: Vec<Tensor>,
     /// Graph-wide reverse index: `edge_id` → `compound_key(src, dst)` for O(1)
@@ -403,7 +400,7 @@ fn populate_index(
 fn populate_index_batch(
     kind: IndexKind,
     label: Arc<String>,
-    mut indexer: Indexer,
+    indexer: Indexer,
     attrs: HashMap<Arc<String>, Vec<Arc<Field>>>,
     mut progress: u64,
     cursor: BatchCursor,
@@ -619,7 +616,7 @@ fn populate_index_batch(
 
 fn drop_index_bg(
     label: Arc<String>,
-    mut node_indexer: Indexer,
+    node_indexer: Indexer,
 ) {
     spawn(
         move || {
@@ -681,11 +678,11 @@ impl Graph {
             relationship_count: 0,
             deleted_nodes: RoaringTreemap::new(),
             deleted_relationships: RoaringTreemap::new(),
-            zero_matrix: VersionedMatrix::new(0, 0),
-            adjacancy_matrix: VersionedMatrix::new(n, n),
-            node_labels_matrix: VersionedMatrix::new(0, 0),
-            relationship_type_matrix: VersionedMatrix::new(0, 0),
-            all_nodes_matrix: VersionedMatrix::new(n, n),
+            zero_matrix: VersionedMatrix::<bool>::new(0, 0),
+            adjacancy_matrix: VersionedMatrix::<bool>::new(n, n),
+            node_labels_matrix: VersionedMatrix::<bool>::new(0, 0),
+            relationship_type_matrix: VersionedMatrix::<bool>::new(0, 0),
+            all_nodes_matrix: VersionedMatrix::<bool>::new(n, n),
             labels_matices: Vec::new(),
             relationship_matrices: Vec::new(),
             edge_endpoints: Vec::new(),
@@ -717,11 +714,11 @@ impl Graph {
         relationship_count: u64,
         deleted_nodes: RoaringTreemap,
         deleted_relationships: RoaringTreemap,
-        adjacancy_matrix: VersionedMatrix,
-        node_labels_matrix: VersionedMatrix,
-        relationship_type_matrix: VersionedMatrix,
-        all_nodes_matrix: VersionedMatrix,
-        labels_matices: Vec<VersionedMatrix>,
+        adjacancy_matrix: VersionedMatrix<bool>,
+        node_labels_matrix: VersionedMatrix<bool>,
+        relationship_type_matrix: VersionedMatrix<bool>,
+        all_nodes_matrix: VersionedMatrix<bool>,
+        labels_matices: Vec<VersionedMatrix<bool>>,
         relationship_matrices: Vec<Tensor>,
         node_labels: Vec<Arc<String>>,
         relationship_types: Vec<Arc<String>>,
@@ -732,12 +729,12 @@ impl Graph {
         // complete sync with the decoded edges.
         let mut edge_endpoints: Vec<u64> = Vec::new();
         for tensor in &relationship_matrices {
-            for (key, edge_id) in tensor.edge_iter(0, u64::MAX) {
+            for (src, dst, edge_id) in tensor.iter_edges() {
                 let idx = edge_id as usize;
                 if idx >= edge_endpoints.len() {
                     edge_endpoints.resize(idx + 1, EDGE_NO_ENDPOINT);
                 }
-                edge_endpoints[idx] = key;
+                edge_endpoints[idx] = compound_key(src, dst);
             }
         }
         // Drop the doubling slack left by the incremental resizes above.
@@ -757,7 +754,7 @@ impl Graph {
             relationship_count,
             deleted_nodes,
             deleted_relationships,
-            zero_matrix: VersionedMatrix::new(0, 0),
+            zero_matrix: VersionedMatrix::<bool>::new(0, 0),
             adjacancy_matrix,
             node_labels_matrix,
             relationship_type_matrix,
@@ -887,7 +884,7 @@ impl Graph {
         &self,
         label: &str,
     ) -> u64 {
-        self.get_label_matrix(label).map_or(0, Size::nvals)
+        self.get_label_matrix(label).map_or(0, |m| m.nvals())
     }
 
     #[must_use]
@@ -991,7 +988,7 @@ impl Graph {
 
         self.node_labels.push(Arc::new(label.to_string()));
         self.labels_matices
-            .push(VersionedMatrix::new(self.node_cap, self.node_cap));
+            .push(VersionedMatrix::<bool>::new(self.node_cap, self.node_cap));
         LabelId(self.node_labels.len() - 1)
     }
 
@@ -1151,7 +1148,7 @@ impl Graph {
     pub fn get_label_matrix(
         &self,
         label: &str,
-    ) -> Option<&VersionedMatrix> {
+    ) -> Option<&VersionedMatrix<bool>> {
         self.node_labels
             .iter()
             .position(|l| l.as_str() == label)
@@ -1161,11 +1158,11 @@ impl Graph {
     fn get_label_matrix_mut(
         &mut self,
         label: &Arc<String>,
-    ) -> &mut VersionedMatrix {
+    ) -> &mut VersionedMatrix<bool> {
         if !self.node_labels.contains(label) {
             self.node_labels.push(label.clone());
 
-            let m = VersionedMatrix::new(self.node_cap, self.node_cap);
+            let m = VersionedMatrix::<bool>::new(self.node_cap, self.node_cap);
             self.labels_matices.insert(self.node_labels.len() - 1, m);
         }
 
@@ -1576,7 +1573,7 @@ impl Graph {
 
         // Build a diagonal mask matrix from all deleted node IDs
         let n = self.node_cap;
-        let mut diag_mask = Matrix::new(n, n);
+        let mut diag_mask = Matrix::<bool>::new(n, n);
         for id in deleted_nodes {
             diag_mask.set(id, id, true);
         }
@@ -1587,8 +1584,8 @@ impl Graph {
         // Build per-label masks and nlm_mask using a single scan of the
         // node_labels_matrix instead of one iterator per deleted node.
         let num_labels = self.labels_matices.len();
-        let mut label_masks: Vec<Option<Matrix>> = vec![None; num_labels];
-        let mut nlm_mask = Matrix::new(
+        let mut label_masks: Vec<Option<Matrix<bool>>> = vec![None; num_labels];
+        let mut nlm_mask = Matrix::<bool>::new(
             self.node_labels_matrix.nrows().max(1),
             self.node_labels_matrix
                 .ncols()
@@ -1603,7 +1600,7 @@ impl Graph {
                 continue;
             }
             let lid = label_id as usize;
-            let lm = label_masks[lid].get_or_insert_with(|| Matrix::new(n, n));
+            let lm = label_masks[lid].get_or_insert_with(|| Matrix::<bool>::new(n, n));
             lm.set(node_id, node_id, true);
 
             let label = &self.node_labels[lid];
@@ -1792,15 +1789,15 @@ impl Graph {
         Box::new(
             matrices
                 .map_or_else(
-                    || self.zero_matrix.to_matrix().iter(min_row, u64::MAX),
+                    || self.zero_matrix.extract().iter(min_row, u64::MAX),
                     |mut matrices| {
                         let mut iter = matrices.iter_mut();
-                        let mut m = iter.next().unwrap().to_matrix();
+                        let mut m = iter.next().unwrap().extract();
                         for label_matrix in iter {
                             m.element_wise_multiply(
                                 None,
                                 None,
-                                Some(&label_matrix.to_matrix()),
+                                Some(&label_matrix.extract()),
                                 None,
                             );
                         }
@@ -2058,12 +2055,12 @@ impl Graph {
     }
 
     #[must_use]
-    pub fn label_matrices(&self) -> &[VersionedMatrix] {
+    pub fn label_matrices(&self) -> &[VersionedMatrix<bool>] {
         &self.labels_matices
     }
 
     #[must_use]
-    pub const fn adjacency_matrix(&self) -> &VersionedMatrix {
+    pub const fn adjacency_matrix(&self) -> &VersionedMatrix<bool> {
         &self.adjacancy_matrix
     }
 
@@ -2158,8 +2155,8 @@ impl Graph {
         // Remove every deleted edge from relationship_type_matrix in one masked op.
         if !tm_rows.is_empty() {
             let mut type_mask =
-                Matrix::new(self.relationship_cap, self.relationship_types.len() as u64);
-            type_mask.build_bool(&tm_rows, &tm_cols);
+                Matrix::<bool>::new(self.relationship_cap, self.relationship_types.len() as u64);
+            type_mask.build(&tm_rows, &tm_cols);
             self.relationship_type_matrix.remove_mask(&type_mask);
         }
 
@@ -2178,8 +2175,8 @@ impl Graph {
                 let node_cap = self.node_cap;
                 let adj_rows: Vec<u64> = adj_candidates.iter().map(|&(src, _)| src).collect();
                 let adj_cols: Vec<u64> = adj_candidates.iter().map(|&(_, dst)| dst).collect();
-                let mut adj_mask = Matrix::new(node_cap, node_cap);
-                adj_mask.build_bool(&adj_rows, &adj_cols);
+                let mut adj_mask = Matrix::<bool>::new(node_cap, node_cap);
+                adj_mask.build(&adj_rows, &adj_cols);
                 self.adjacancy_matrix.remove_mask(&adj_mask);
             }
         }
@@ -2250,8 +2247,8 @@ impl Graph {
             let tm_rows: Vec<u64> = rels.iter().map(|&(id, _, _)| id).collect();
             let tm_cols: Vec<u64> = vec![type_id; rels.len()];
             let mut type_mask =
-                Matrix::new(self.relationship_cap, self.relationship_types.len() as u64);
-            type_mask.build_bool(&tm_rows, &tm_cols);
+                Matrix::<bool>::new(self.relationship_cap, self.relationship_types.len() as u64);
+            type_mask.build(&tm_rows, &tm_cols);
 
             let del_keys: RoaringTreemap = rels.iter().map(|&(id, _, _)| id).collect();
             self.deleted_relationships |= &del_keys;
@@ -2291,7 +2288,7 @@ impl Graph {
         self.relationship_count -= all_implicit.len() as u64;
 
         // Update adjacency_matrix only for pairs where one endpoint survives
-        let mut adj_mask = Matrix::new(self.node_cap, self.node_cap);
+        let mut adj_mask = Matrix::<bool>::new(self.node_cap, self.node_cap);
         for (src, dst) in check_adj_pairs {
             let has_edges = self
                 .relationship_matrices
@@ -2324,9 +2321,7 @@ impl Graph {
         .map(|relationship_matrix| relationship_matrix.get(src.0, dest.0))
         .collect();
 
-        iters
-            .into_iter()
-            .flat_map(|iter| iter.map(|(_, id)| RelationshipId(id)))
+        iters.into_iter().flat_map(|iter| iter.map(RelationshipId))
     }
 
     /// Build a relationship matrix summing only the given types (no
@@ -2336,7 +2331,7 @@ impl Graph {
     pub fn build_relationship_matrix_unrestricted(
         &self,
         types: &[Arc<String>],
-    ) -> Option<Matrix> {
+    ) -> Option<Matrix<bool>> {
         let matrices = types
             .iter()
             .filter_map(|relationship_type| self.get_relationship_matrix(relationship_type))
@@ -2345,10 +2340,9 @@ impl Graph {
             return None;
         }
         let mut iter = matrices.into_iter();
-        let mut m = iter.next().map_or_else(
-            || self.adjacancy_matrix.to_matrix(),
-            |t| t.matrix().to_matrix(),
-        );
+        let mut m = iter
+            .next()
+            .map_or_else(|| self.adjacancy_matrix.extract(), |t| t.matrix().extract());
         for relationship_matrix in iter {
             m.element_wise_add(
                 Some(relationship_matrix.matrix().dm()),
@@ -2377,7 +2371,7 @@ impl Graph {
         types: &[Arc<String>],
         src_labels: &OrderSet<Arc<String>>,
         dest_labels: &OrderSet<Arc<String>>,
-    ) -> Matrix {
+    ) -> Matrix<bool> {
         let matrices = types
             .iter()
             .filter_map(|relationship_type| self.get_relationship_matrix(relationship_type))
@@ -2398,30 +2392,29 @@ impl Graph {
         let dest_labels_matrices = dest_labels_matrices.unwrap_or_default();
 
         if no_match {
-            self.zero_matrix.to_matrix()
+            self.zero_matrix.extract()
         } else {
             let mut iter = matrices.into_iter();
-            let mut m = iter.next().map_or_else(
-                || self.adjacancy_matrix.to_matrix(),
-                |t| t.matrix().to_matrix(),
-            );
+            let mut m = iter
+                .next()
+                .map_or_else(|| self.adjacancy_matrix.extract(), |t| t.matrix().extract());
             for relationship_matrix in iter {
                 m.element_wise_add(
                     None,
                     None,
-                    Some(&relationship_matrix.matrix().to_matrix()),
+                    Some(&relationship_matrix.matrix().extract()),
                     None,
                 );
             }
 
             if !src_labels_matrices.is_empty() {
                 let mut iter = src_labels_matrices.iter();
-                let mut src_matrix = iter.next().unwrap().to_matrix();
+                let mut src_matrix = iter.next().unwrap().extract();
                 for label_matrix in iter {
                     src_matrix.element_wise_multiply(
                         None,
                         None,
-                        Some(&label_matrix.to_matrix()),
+                        Some(&label_matrix.extract()),
                         None,
                     );
                 }
@@ -2429,12 +2422,12 @@ impl Graph {
             }
             if !dest_labels_matrices.is_empty() {
                 let mut iter = dest_labels_matrices.iter();
-                let mut dest_matrix = iter.next().unwrap().to_matrix();
+                let mut dest_matrix = iter.next().unwrap().extract();
                 for label_matrix in iter {
                     dest_matrix.element_wise_multiply(
                         None,
                         None,
-                        Some(&label_matrix.to_matrix()),
+                        Some(&label_matrix.extract()),
                         None,
                     );
                 }
@@ -2997,9 +2990,7 @@ impl Graph {
 
         let (indexer, total, kind) = match entity_type {
             EntityType::Node => {
-                let total = self
-                    .get_label_matrix(label)
-                    .map_or(0, super::graphblas::matrix::Size::nvals);
+                let total = self.get_label_matrix(label).map_or(0, |m| m.nvals());
                 (&mut self.node_indexer, total, IndexKind::Node)
             }
             EntityType::Relationship => {
@@ -3595,16 +3586,16 @@ impl Graph {
     pub fn build_adjacency_matrix(
         &self,
         rel_types: &[Arc<String>],
-    ) -> Matrix {
+    ) -> Matrix<bool> {
         if rel_types.is_empty() {
-            self.adjacancy_matrix.to_matrix()
+            self.adjacancy_matrix.extract()
         } else {
-            let mut result = Matrix::new(self.node_cap, self.node_cap);
+            let mut result = Matrix::<bool>::new(self.node_cap, self.node_cap);
             for rel_type in rel_types {
                 if let Some(type_id) = self.get_type_id(rel_type) {
                     let m = self.relationship_matrices[usize::from(type_id)]
                         .matrix()
-                        .to_matrix();
+                        .extract();
                     result.element_wise_add(None, None, Some(&m), None);
                 }
             }
@@ -3617,10 +3608,10 @@ impl Graph {
     pub fn build_symmetric_adjacency_matrix(
         &self,
         rel_types: &[Arc<String>],
-    ) -> Matrix {
+    ) -> Matrix<bool> {
         let a = self.build_adjacency_matrix(rel_types);
         let at = a.transpose();
-        let mut result = Matrix::new(self.node_cap, self.node_cap);
+        let mut result = Matrix::<bool>::new(self.node_cap, self.node_cap);
         result.element_wise_add(None, Some(&a), Some(&at), None);
         result
     }
@@ -3630,14 +3621,14 @@ impl Graph {
     pub fn build_node_mask_matrix(
         &self,
         labels: &[Arc<String>],
-    ) -> Matrix {
+    ) -> Matrix<bool> {
         if labels.is_empty() {
-            self.all_nodes_matrix.to_matrix()
+            self.all_nodes_matrix.extract()
         } else {
-            let mut result = Matrix::new(self.node_cap, self.node_cap);
+            let mut result = Matrix::<bool>::new(self.node_cap, self.node_cap);
             for label in labels {
                 if let Some(label_id) = self.get_label_id(label) {
-                    let m = self.labels_matices[usize::from(label_id)].to_matrix();
+                    let m = self.labels_matices[usize::from(label_id)].extract();
                     result.element_wise_add(None, None, Some(&m), None);
                 }
             }

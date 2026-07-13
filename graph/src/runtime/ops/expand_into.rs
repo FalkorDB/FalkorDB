@@ -22,8 +22,6 @@
 use std::sync::Arc;
 
 use crate::graph::graph::{Graph, RelationshipId};
-use crate::graph::graphblas::tensor::compound_key;
-use crate::graph::graphblas::versioned_matrix::Iter as EdgeIter;
 use crate::parser::ast::{QueryRelationship, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
@@ -68,7 +66,7 @@ pub struct ExpandIntoOp<'a> {
     /// Lazily initialized on first use rather than at construction: the
     /// relationship type may be created by a sibling Commit earlier in the
     /// same query, so capturing matrices in `new()` would miss them.
-    edge_iters: std::cell::RefCell<Option<Vec<std::cell::RefCell<EdgeIter>>>>,
+    edge_type_indices: std::cell::RefCell<Option<Vec<usize>>>,
 }
 
 impl<'a> ExpandIntoOp<'a> {
@@ -105,7 +103,7 @@ impl<'a> ExpandIntoOp<'a> {
             idx,
             record_cap,
             produced: 0,
-            edge_iters: std::cell::RefCell::new(None),
+            edge_type_indices: std::cell::RefCell::new(None),
         }
     }
 
@@ -128,7 +126,7 @@ impl<'a> ExpandIntoOp<'a> {
         sibling_edges: &'a [u32],
         g: &Graph,
         pending: &Pending,
-        iters_ref: &mut Option<Vec<std::cell::RefCell<EdgeIter>>>,
+        iters_ref: &mut Option<Vec<usize>>,
         batch: &Batch<'a>,
         row_idx: usize,
     ) -> Result<Option<RowIter<'a, RelationshipId>>, String> {
@@ -179,33 +177,29 @@ impl<'a> ExpandIntoOp<'a> {
         let pairs = [(src, dst), (dst, src)];
         let npairs = if rp.bidirectional && src != dst { 2 } else { 1 };
 
-        let edge_iters = iters_ref.get_or_insert_with(|| {
+        let edge_type_indices = iters_ref.get_or_insert_with(|| {
             if rp.types.is_empty() {
-                g.relationship_matrices_iter()
-                    .map(|tensor| std::cell::RefCell::new(tensor.edge_iter(0, u64::MAX)))
-                    .collect()
+                (0..g.relationship_tensors().len()).collect()
             } else {
                 rp.types
                     .iter()
-                    .filter_map(|t| g.get_relationship_matrix(t))
-                    .map(|tensor| std::cell::RefCell::new(tensor.edge_iter(0, u64::MAX)))
+                    .filter_map(|t| g.get_type_id(t).map(|tid| tid.0))
                     .collect()
             }
         });
 
         // Matched edge ids for this input row, drained eagerly while the caller
-        // holds the graph borrow (the GraphBLAS iterators are consumed here, never
+        // holds the graph borrow (the tensor edge lookups are consumed here, never
         // parked in the emitter).
         let mut row_edges: Vec<RelationshipId> = Vec::new();
         for &(edge_src, edge_dst) in &pairs[..npairs] {
-            let key = compound_key(u64::from(edge_src), u64::from(edge_dst));
+            let mat_src = u64::from(edge_src);
+            let mat_dst = u64::from(edge_dst);
             if !emit_relationship && !has_edge_filter {
                 // One representative edge per (src, dst) pair.
                 let mut found_id: Option<RelationshipId> = None;
-                'outer: for cell in edge_iters.iter() {
-                    let mut it = cell.borrow_mut();
-                    it.seek(key, key);
-                    for (_, raw_id) in &mut *it {
+                'outer: for &tidx in edge_type_indices.iter() {
+                    for raw_id in g.relationship_tensors()[tidx].get(mat_src, mat_dst) {
                         let id = RelationshipId::from(raw_id);
                         if !pending.is_relationship_deleted(id)
                             && !super::edge_already_used(&env, id, rp.alias.id, sibling_edges)
@@ -221,10 +215,8 @@ impl<'a> ExpandIntoOp<'a> {
                 continue;
             }
             // One row per matching edge.
-            for cell in edge_iters.iter() {
-                let mut it = cell.borrow_mut();
-                it.seek(key, key);
-                for (_, raw_id) in &mut *it {
+            for &tidx in edge_type_indices.iter() {
+                for raw_id in g.relationship_tensors()[tidx].get(mat_src, mat_dst) {
                     let id = RelationshipId::from(raw_id);
                     if pending.is_relationship_deleted(id) {
                         continue;
@@ -293,7 +285,7 @@ impl<'a> Iterator for ExpandIntoOp<'a> {
             let result = {
                 let g = runtime.g.borrow();
                 let pending = runtime.pending.borrow();
-                let mut iters_ref = self.edge_iters.borrow_mut();
+                let mut iters_ref = self.edge_type_indices.borrow_mut();
                 self.emitter.emit_lazy(|batch, row_idx| {
                     Self::expand_row(
                         runtime,

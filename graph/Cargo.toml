@@ -23,6 +23,7 @@ prejit_harvest = []
 
 [dependencies]
 ahash = "0.8"
+arc-swap = "1"
 atomic_refcell = "0.1.14"
 chrono = "0.4.45"
 crossfire = "3.1.19"

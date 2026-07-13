@@ -73,10 +73,10 @@ pub struct PendingGraph {
     pub rel_attrs: AttributeStore,
     pub deleted_nodes: RoaringTreemap,
     pub deleted_rels: RoaringTreemap,
-    pub label_matrices: Vec<VersionedMatrix>,
+    pub label_matrices: Vec<VersionedMatrix<bool>>,
     pub relationship_tensors: Vec<Tensor>,
-    pub adj_matrix: VersionedMatrix,
-    pub lbls_matrix: VersionedMatrix,
+    pub adj_matrix: VersionedMatrix<bool>,
+    pub lbls_matrix: VersionedMatrix<bool>,
 }
 
 impl DecodeState {
