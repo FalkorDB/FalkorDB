@@ -1787,15 +1787,15 @@ impl Graph {
         Box::new(
             matrices
                 .map_or_else(
-                    || self.zero_matrix.to_matrix().iter(min_row, u64::MAX),
+                    || self.zero_matrix.extract().iter(min_row, u64::MAX),
                     |mut matrices| {
                         let mut iter = matrices.iter_mut();
-                        let mut m = iter.next().unwrap().to_matrix();
+                        let mut m = iter.next().unwrap().extract();
                         for label_matrix in iter {
                             m.element_wise_multiply(
                                 None,
                                 None,
-                                Some(&label_matrix.to_matrix()),
+                                Some(&label_matrix.extract()),
                                 None,
                             );
                         }
@@ -1947,9 +1947,13 @@ impl Graph {
         self.relationship_matrices[type_idx].set_all_from_slices(srcs, dsts, rel_ids);
 
         // Maintain the graph-wide reverse index alongside the tensor edges.
+        // Reserve exactly: MVCC clones reset capacity to `len`, so amortized
+        // doubling here would only leave ~2x slack behind, never save reallocs.
         if let Some(&max_id) = rel_ids.iter().max() {
             let needed = max_id as usize + 1;
             if needed > self.edge_endpoints.len() {
+                self.edge_endpoints
+                    .reserve_exact(needed - self.edge_endpoints.len());
                 self.edge_endpoints.resize(needed, EDGE_NO_ENDPOINT);
             }
         }
@@ -1982,13 +1986,13 @@ impl Graph {
     /// Called from pthread_atfork prepare handler to ensure no internal
     /// GraphBLAS locks are held at fork time.
     pub fn wait_all(&self) {
-        self.zero_matrix.wait_all();
-        self.adjacancy_matrix.wait_all();
-        self.node_labels_matrix.wait_all();
-        self.relationship_type_matrix.wait_all();
-        self.all_nodes_matrix.wait_all();
+        self.zero_matrix.wait();
+        self.adjacancy_matrix.wait();
+        self.node_labels_matrix.wait();
+        self.relationship_type_matrix.wait();
+        self.all_nodes_matrix.wait();
         for m in &self.labels_matices {
-            m.wait_all();
+            m.wait();
         }
         for t in &self.relationship_matrices {
             t.wait_all();
@@ -2150,7 +2154,7 @@ impl Graph {
         if !tm_rows.is_empty() {
             let mut type_mask =
                 Matrix::<bool>::new(self.relationship_cap, self.relationship_types.len() as u64);
-            type_mask.build_bool(&tm_rows, &tm_cols);
+            type_mask.build(&tm_rows, &tm_cols);
             self.relationship_type_matrix.remove_mask(&type_mask);
         }
 
@@ -2170,7 +2174,7 @@ impl Graph {
                 let adj_rows: Vec<u64> = adj_candidates.iter().map(|&(src, _)| src).collect();
                 let adj_cols: Vec<u64> = adj_candidates.iter().map(|&(_, dst)| dst).collect();
                 let mut adj_mask = Matrix::<bool>::new(node_cap, node_cap);
-                adj_mask.build_bool(&adj_rows, &adj_cols);
+                adj_mask.build(&adj_rows, &adj_cols);
                 self.adjacancy_matrix.remove_mask(&adj_mask);
             }
         }
@@ -2242,7 +2246,7 @@ impl Graph {
             let tm_cols: Vec<u64> = vec![type_id; rels.len()];
             let mut type_mask =
                 Matrix::<bool>::new(self.relationship_cap, self.relationship_types.len() as u64);
-            type_mask.build_bool(&tm_rows, &tm_cols);
+            type_mask.build(&tm_rows, &tm_cols);
 
             let del_keys: RoaringTreemap = rels.iter().map(|&(id, _, _)| id).collect();
             self.deleted_relationships |= &del_keys;
@@ -2334,10 +2338,9 @@ impl Graph {
             return None;
         }
         let mut iter = matrices.into_iter();
-        let mut m = iter.next().map_or_else(
-            || self.adjacancy_matrix.to_matrix(),
-            |t| t.matrix().to_matrix(),
-        );
+        let mut m = iter
+            .next()
+            .map_or_else(|| self.adjacancy_matrix.extract(), |t| t.matrix().extract());
         for relationship_matrix in iter {
             m.element_wise_add(
                 Some(relationship_matrix.matrix().dm()),
@@ -2387,30 +2390,29 @@ impl Graph {
         let dest_labels_matrices = dest_labels_matrices.unwrap_or_default();
 
         if no_match {
-            self.zero_matrix.to_matrix()
+            self.zero_matrix.extract()
         } else {
             let mut iter = matrices.into_iter();
-            let mut m = iter.next().map_or_else(
-                || self.adjacancy_matrix.to_matrix(),
-                |t| t.matrix().to_matrix(),
-            );
+            let mut m = iter
+                .next()
+                .map_or_else(|| self.adjacancy_matrix.extract(), |t| t.matrix().extract());
             for relationship_matrix in iter {
                 m.element_wise_add(
                     None,
                     None,
-                    Some(&relationship_matrix.matrix().to_matrix()),
+                    Some(&relationship_matrix.matrix().extract()),
                     None,
                 );
             }
 
             if !src_labels_matrices.is_empty() {
                 let mut iter = src_labels_matrices.iter();
-                let mut src_matrix = iter.next().unwrap().to_matrix();
+                let mut src_matrix = iter.next().unwrap().extract();
                 for label_matrix in iter {
                     src_matrix.element_wise_multiply(
                         None,
                         None,
-                        Some(&label_matrix.to_matrix()),
+                        Some(&label_matrix.extract()),
                         None,
                     );
                 }
@@ -2418,12 +2420,12 @@ impl Graph {
             }
             if !dest_labels_matrices.is_empty() {
                 let mut iter = dest_labels_matrices.iter();
-                let mut dest_matrix = iter.next().unwrap().to_matrix();
+                let mut dest_matrix = iter.next().unwrap().extract();
                 for label_matrix in iter {
                     dest_matrix.element_wise_multiply(
                         None,
                         None,
-                        Some(&label_matrix.to_matrix()),
+                        Some(&label_matrix.extract()),
                         None,
                     );
                 }
@@ -3584,14 +3586,14 @@ impl Graph {
         rel_types: &[Arc<String>],
     ) -> Matrix<bool> {
         if rel_types.is_empty() {
-            self.adjacancy_matrix.to_matrix()
+            self.adjacancy_matrix.extract()
         } else {
             let mut result = Matrix::<bool>::new(self.node_cap, self.node_cap);
             for rel_type in rel_types {
                 if let Some(type_id) = self.get_type_id(rel_type) {
                     let m = self.relationship_matrices[usize::from(type_id)]
                         .matrix()
-                        .to_matrix();
+                        .extract();
                     result.element_wise_add(None, None, Some(&m), None);
                 }
             }
@@ -3619,12 +3621,12 @@ impl Graph {
         labels: &[Arc<String>],
     ) -> Matrix<bool> {
         if labels.is_empty() {
-            self.all_nodes_matrix.to_matrix()
+            self.all_nodes_matrix.extract()
         } else {
             let mut result = Matrix::<bool>::new(self.node_cap, self.node_cap);
             for label in labels {
                 if let Some(label_id) = self.get_label_id(label) {
-                    let m = self.labels_matices[usize::from(label_id)].to_matrix();
+                    let m = self.labels_matices[usize::from(label_id)].extract();
                     result.element_wise_add(None, None, Some(&m), None);
                 }
             }
