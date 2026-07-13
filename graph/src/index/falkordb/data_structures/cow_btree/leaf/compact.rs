@@ -15,7 +15,7 @@ pub(super) const DOC_WIDTH_OFFSET: usize = 13; // u8: bytes per doc (a power of 
 pub(super) const BODY_OFFSET: usize = 14; // first byte of the value / index / doc bodies
 
 /// Read the little-endian `u16` at byte offset `off`.
-pub(super) fn read_u16(
+pub(super) const fn read_u16(
     b: &[u8],
     off: usize,
 ) -> u16 {
@@ -25,7 +25,7 @@ pub(super) fn read_u16(
 /// True when the compact page carries a dedup index — fewer distinct values than entries. Lets
 /// [`super::Leaf::from_parts`] pick the indexed vs no-index in-RAM type from the buffer alone,
 /// keeping the header offsets private to this module.
-pub(super) fn is_indexed(bytes: &[u8]) -> bool {
+pub(super) const fn is_indexed(bytes: &[u8]) -> bool {
     read_u16(bytes, DISTINCT_COUNT_OFFSET) < read_u16(bytes, ENTRY_COUNT_OFFSET)
 }
 
@@ -119,7 +119,7 @@ pub(super) fn packing_fits(
 /// A compact leaf page **without** a dedup index: a tag-free `Arc<[u8]>` of `[header][values][docs]`, with
 /// one value delta per entry (`distinct_count == entry_count`). See [`CompactLeaf::build`].
 #[derive(Clone)]
-pub(crate) struct CompactLeaf(pub(super) Arc<[u8]>);
+pub struct CompactLeaf(pub(super) Arc<[u8]>);
 
 impl CompactLeaf {
     /// Number of `(key, doc)` entries — read from the header.
@@ -189,7 +189,7 @@ impl CompactLeaf {
         key: u64,
         doc: u64,
         pos: usize,
-    ) -> CompactLeaf {
+    ) -> Self {
         let bytes = &self.0;
         let layout = CompactLayout::read(bytes);
         let count = layout.count;
@@ -209,7 +209,7 @@ impl CompactLeaf {
         buf.extend_from_slice(&bytes[BODY_OFFSET + pos * value_width..docs_offset]);
         // doc column: prefix | new doc | suffix
         append_spliced_docs(&mut buf, bytes, &layout, pos, doc);
-        CompactLeaf(Arc::from(buf.as_slice()))
+        Self(Arc::from(buf.as_slice()))
     }
 
     /// Cut entry `pos` out of the packed page — no decode. The caller guarantees the tuple is present at
@@ -217,7 +217,7 @@ impl CompactLeaf {
     pub(super) fn splice_remove(
         &self,
         pos: usize,
-    ) -> CompactLeaf {
+    ) -> Self {
         let bytes = &self.0;
         let layout = CompactLayout::read(bytes);
         let count = layout.count;
@@ -238,7 +238,7 @@ impl CompactLeaf {
         buf.extend_from_slice(
             &bytes[docs_offset + (pos + 1) * doc_width..docs_offset + count * doc_width],
         );
-        CompactLeaf(Arc::from(buf.as_slice()))
+        Self(Arc::from(buf.as_slice()))
     }
 
     /// Merge a sorted `batch` into this no-index page — no `Vec<(u64, u64)>`, no sort. The caller guarantees
@@ -247,7 +247,7 @@ impl CompactLeaf {
     pub(super) fn merge(
         &self,
         batch: &[(u64, u64)],
-    ) -> CompactLeaf {
+    ) -> Self {
         let bytes = &self.0;
         let layout = CompactLayout::read(bytes);
         let count = layout.count;
@@ -262,31 +262,24 @@ impl CompactLeaf {
         let mut values: Vec<u8> = Vec::with_capacity(cap * value_width);
         let mut docs: Vec<u8> = Vec::with_capacity(cap * doc_width);
         // merge-walk: two-pointer over leaf entries + batch, dropping exact (key, doc) dups
-        merge_walk(
-            count,
-            leaf_key,
-            leaf_doc,
-            batch,
-            |key, doc, leaf_i| match leaf_i {
+        merge_walk(count, leaf_key, leaf_doc, batch, |key, doc, leaf_i| {
+            if let Some(vi) = leaf_i {
                 // leaf entry: copy its value/doc cells verbatim
-                Some(vi) => {
-                    let value_off = BODY_OFFSET + vi * value_width;
-                    let doc_off = docs_offset + vi * doc_width;
-                    values.extend_from_slice(&bytes[value_off..value_off + value_width]);
-                    docs.extend_from_slice(&bytes[doc_off..doc_off + doc_width]);
-                }
+                let value_off = BODY_OFFSET + vi * value_width;
+                let doc_off = docs_offset + vi * doc_width;
+                values.extend_from_slice(&bytes[value_off..value_off + value_width]);
+                docs.extend_from_slice(&bytes[doc_off..doc_off + doc_width]);
+            } else {
                 // batch entry: encode the new value delta and doc
-                None => {
-                    values.extend_from_slice(&(key - min).to_le_bytes()[..value_width]);
-                    docs.extend_from_slice(&doc.to_le_bytes()[..doc_width]);
-                }
-            },
-        );
+                values.extend_from_slice(&(key - min).to_le_bytes()[..value_width]);
+                docs.extend_from_slice(&doc.to_le_bytes()[..doc_width]);
+            }
+        });
         let new_count = values.len() / value_width;
         let mut buf = Vec::with_capacity(BODY_OFFSET + values.len() + docs.len());
         write_compact_header(&mut buf, new_count, min, value_width, new_count, doc_width);
         buf.extend_from_slice(&values);
         buf.extend_from_slice(&docs);
-        CompactLeaf(Arc::from(buf.as_slice()))
+        Self(Arc::from(buf.as_slice()))
     }
 }

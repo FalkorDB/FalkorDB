@@ -56,7 +56,7 @@ pub struct AllShortestPathsOp<'a> {
 }
 
 impl<'a> AllShortestPathsOp<'a> {
-    pub fn new(
+    pub const fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
         relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,

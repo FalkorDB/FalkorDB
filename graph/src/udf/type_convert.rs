@@ -117,10 +117,10 @@ pub fn value_to_js<'js>(
             crate::udf::js_classes::create_js_node(ctx, (*node_id).into(), graph)
         }
         Value::Relationship(rel_id) => {
-            let (src, dst) = match runtime {
-                Some(rt) => rt.get_relationship_endpoints(*rel_id),
-                None => graph.borrow().get_relationship_endpoints(*rel_id),
-            };
+            let (src, dst) = runtime.map_or_else(
+                || graph.borrow().get_relationship_endpoints(*rel_id),
+                |rt| rt.get_relationship_endpoints(*rel_id),
+            );
             crate::udf::js_classes::create_js_edge(
                 ctx,
                 (*rel_id).into(),

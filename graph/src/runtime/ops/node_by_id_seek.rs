@@ -29,7 +29,7 @@ pub struct NodeByIdSeekOp<'a> {
 }
 
 impl<'a> NodeByIdSeekOp<'a> {
-    pub fn new(
+    pub const fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
         node_pattern: &'a QueryNode<Arc<String>, Variable>,

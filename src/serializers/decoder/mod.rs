@@ -130,7 +130,7 @@ pub fn rdb_load_graph(
             let pg = decode_state.pending.remove(&graph_name).ok_or_else(|| {
                 format!("pending graph {graph_name} not found at multi-key RDB finalization")
             })?;
-            let graph = finalize_pending_graph(pg)?;
+            let graph = finalize_pending_graph(pg);
             // Store the finalized graph in DECODE_STATE for the caller to retrieve.
             decode_state.finalized.insert(graph_name, graph);
         }
@@ -267,7 +267,7 @@ fn decode_payloads_into_pending(
 }
 
 /// Finalize a pending multi-key graph: build Graph, rebuild derived matrices.
-pub fn finalize_pending_graph(pg: PendingGraph) -> Result<Graph, String> {
+pub fn finalize_pending_graph(pg: PendingGraph) -> Graph {
     let node_attrs = pg.node_attrs;
     let rel_attrs = pg.rel_attrs;
 
@@ -297,7 +297,7 @@ pub fn finalize_pending_graph(pg: PendingGraph) -> Result<Graph, String> {
     }
     graph.populate_indexes_sync();
 
-    Ok(graph)
+    graph
 }
 
 /// Rebuild indexes from the decoded schema information.

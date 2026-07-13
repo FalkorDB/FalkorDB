@@ -459,14 +459,14 @@ impl<'a> Iterator for LoadCsvOp<'a> {
                     Some(&view),
                     None,
                 )?;
-                let delimiter = match ExprEval::from_runtime(runtime).eval(
+                let Value::String(delimiter) = ExprEval::from_runtime(runtime).eval(
                     delimiter_expr,
                     delimiter_expr.root().idx(),
                     Some(&view),
                     None,
-                )? {
-                    Value::String(s) => s,
-                    _ => return Err(String::from("Delimiter must be a string")),
+                )?
+                else {
+                    return Err(String::from("Delimiter must be a string"));
                 };
                 if delimiter.len() != 1 {
                     return Err(String::from(

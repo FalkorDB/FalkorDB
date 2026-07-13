@@ -77,6 +77,7 @@ type UsedEdges = SmallVec<[u64; 12]>;
 /// iterator) is exhausted — so the graph provably cannot change between two
 /// frames of a live traversal, and the commit's exclusive borrow never races a
 /// held read borrow.
+#[allow(clippy::struct_excessive_bools)]
 struct VarLenIter<'a> {
     runtime: &'a Runtime<'a>,
     rp: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,

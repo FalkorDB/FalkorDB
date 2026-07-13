@@ -30,7 +30,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> RangeIter<LEAF_MAX, BRANCH_
         lo: (u64, u64),
         hi_key: u64,
     ) -> Self {
-        let mut it = RangeIter {
+        let mut it = Self {
             _root: root.clone(),
             stack: Vec::new(),
             leaf: None,
