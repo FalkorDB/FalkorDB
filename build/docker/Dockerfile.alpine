@@ -27,7 +27,12 @@ ENV FALKORDB_BROWSER_PATH=${FALKORDB_HOME}/browser
 # Install only runtime dependencies (openssl for TLS cert generation, libgomp for GraphBLAS,
 # ca-certificates for HTTPS in LOAD CSV)
 RUN apk upgrade --no-cache && \
-    apk add --no-cache bash libgomp openssl ca-certificates
+    apk add --no-cache bash libgomp openssl ca-certificates su-exec
+
+# Create the browser runtime user and group expected by the browser
+# docker-entrypoint.sh
+RUN addgroup -S -g 1001 nodejs && \
+    adduser -S -u 1001 -G nodejs nextjs
 
 WORKDIR ${FALKORDB_HOME}
 
