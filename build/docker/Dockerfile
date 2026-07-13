@@ -34,6 +34,11 @@ RUN ln -s ${FALKORDB_BIN_PATH} /FalkorDB/build/docker && \
     ln -s ${FALKORDB_BIN_PATH} /FalkorDB/bin/src && \
     ln -s ${FALKORDB_DATA_PATH} /data
 
+# Create the browser runtime user and group expected by the browser
+# docker-entrypoint.sh, before the passwd package is purged below
+RUN groupadd --system --gid 1001 nodejs && \
+    useradd --system --uid 1001 --gid nodejs --home /nonexistent --shell /usr/sbin/nologin nextjs
+
 RUN apt-get update && \
     apt-get install -y --no-install-recommends libgomp1 ca-certificates bash && \
     apt-get dist-upgrade -y && \
@@ -65,6 +70,12 @@ COPY --from=compiler /FalkorDB/bin/linux*/falkordb.so ${FALKORDB_BIN_PATH}/falko
 COPY --from=browser /app ${FALKORDB_BROWSER_PATH}
 
 COPY --from=browser /usr/local/bin/docker-entrypoint.sh ${FALKORDB_BROWSER_PATH}
+
+# The browser docker-entrypoint.sh drops privileges with su-exec, which is not
+# available on Debian. Provide a minimal shim backed by setpriv (util-linux).
+RUN printf '#!/bin/sh\nspec="$1"; shift\nexec setpriv --reuid "${spec%%%%:*}" --regid "${spec##*:}" --init-groups "$@"\n' > /usr/local/bin/su-exec && \
+    chmod +x /usr/local/bin/su-exec && \
+    su-exec nextjs:nodejs true
 
 ENV ARCH=${TARGETPLATFORM}
 
