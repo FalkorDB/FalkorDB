@@ -345,6 +345,21 @@ impl Block {
         self.slack = self.slack + u32::from(old_len) - new_len as u32;
     }
 
+    /// Grow `slots` to cover `slot_idx` with capacity capped at
+    /// [`block_cap`]. Plain `Vec::resize` doubling would overshoot the
+    /// block's fixed maximum, and since COW clones reset capacity to `len`,
+    /// a clone-then-grow cycle otherwise leaves up to 2x slack per block.
+    fn grow_slots(
+        &mut self,
+        slot_idx: usize,
+    ) {
+        if self.slots.len() <= slot_idx {
+            let target = (self.slots.len() * 2).clamp(slot_idx + 1, block_cap().max(slot_idx + 1));
+            self.slots.reserve_exact(target - self.slots.len());
+            self.slots.resize(slot_idx + 1, Slot::default());
+        }
+    }
+
     /// Write an entity's full attribute set, replacing any previous span.
     /// `pairs` must be sorted by attribute id; it is drained.
     fn set_span(
@@ -352,9 +367,7 @@ impl Block {
         slot_idx: usize,
         pairs: &mut Vec<(u16, Value)>,
     ) {
-        if self.slots.len() <= slot_idx {
-            self.slots.resize(slot_idx + 1, Slot::default());
-        }
+        self.grow_slots(slot_idx);
         // Setting an empty attribute set clears the entity's span entirely
         // (the entity keeps no attributes).
         if pairs.is_empty() {
@@ -418,9 +431,7 @@ impl Block {
         pairs: &[(u16, Value)],
         scratch: &mut Vec<PackedAttr>,
     ) -> (usize, usize) {
-        if self.slots.len() <= slot_idx {
-            self.slots.resize(slot_idx + 1, Slot::default());
-        }
+        self.grow_slots(slot_idx);
         let old = self.slots[slot_idx];
 
         // Fast path: every pair replaces an existing attribute (non-null,

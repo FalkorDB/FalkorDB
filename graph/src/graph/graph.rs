@@ -737,6 +737,8 @@ impl Graph {
                 edge_endpoints[idx] = compound_key(src, dst);
             }
         }
+        // Drop the doubling slack left by the incremental resizes above.
+        edge_endpoints.shrink_to_fit();
 
         let chunk = NODE_CREATION_BUFFER.load(Ordering::Relaxed);
         let node_cap = node_count + deleted_nodes.len();
