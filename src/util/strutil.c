@@ -222,21 +222,28 @@ void str_truncate
 	}
 }
 
-// trim leading and trailing spaces from a string
-// returns a newly allocated string that must be freed with rm_free
-char *str_trim
+// find the trimmed bounds of a string (only space characters trimmed)
+// returns the trimmed start pointer in out_start and the trimmed length in out_len
+void str_trim_range
 (
-	const char *str
+	const char *str,
+	const char **out_start,
+	size_t *out_len
 ) {
-	if (!str) return NULL;
+	if (!str) {
+		*out_start = NULL;
+		*out_len = 0;
+		return;
+	}
 	while (*str == ' ') {
 		str++;
 	}
+	*out_start = str;
 	size_t len = strlen(str);
 	while (len > 0 && str[len - 1] == ' ') {
 		len--;
 	}
-	return rm_strndup(str, len);
+	*out_len = len;
 }
 
 

@@ -141,29 +141,23 @@ SIValue AR_TOINTEGER(SIValue *argv, int argc, void *private_data) {
 		return SI_LongVal(0);
 	case T_STRING:
 	case T_INTERN_STRING: {
-		char *trimmed = str_trim(arg.stringval);
-		if(!trimmed || strlen(trimmed) == 0) {
-			rm_free(trimmed);
-			return SI_NullVal();
-		}
+		const char *start;
+		size_t len;
+		str_trim_range(arg.stringval, &start, &len);
+		if(len == 0) return SI_NullVal();
 		errno = 0;
-		if(strchr(trimmed, '.') == NULL) {
-			int64_t parsedval = strtoll(trimmed, &sEnd, 10);
-			if(sEnd[0] != '\0' || errno == ERANGE) {
-				rm_free(trimmed);
-				return SI_NullVal();
-			}
-			rm_free(trimmed);
+		const char *dot = memchr(start, '.', len);
+		if(dot == NULL) {
+			int64_t parsedval = strtoll(start, &sEnd, 10);
+			/* The input was not a complete number or represented a number that
+		 	* cannot be represented as a double. */
+			if(sEnd != start + len || errno == ERANGE) return SI_NullVal();
 			return SI_LongVal(parsedval);
 		}
-		double parsedval = strtod(trimmed, &sEnd);
+		double parsedval = strtod(start, &sEnd);
 		/* The input was not a complete number or represented a number that
 		 * cannot be represented as a double. */
-		if(sEnd[0] != '\0' || errno == ERANGE) {
-			rm_free(trimmed);
-			return SI_NullVal();
-		}
-		rm_free(trimmed);
+		if(sEnd != start + len || errno == ERANGE) return SI_NullVal();
 		// Remove floating point.
 		return SI_LongVal(floor(parsedval));
 	}
@@ -184,20 +178,15 @@ SIValue AR_TOFLOAT(SIValue *argv, int argc, void *private_data) {
 		return arg;
 	case T_STRING:
 	case T_INTERN_STRING: {
-		char *trimmed = str_trim(arg.stringval);
-		if(!trimmed || strlen(trimmed) == 0) {
-			rm_free(trimmed);
-			return SI_NullVal();
-		}
+		const char *start;
+		size_t len;
+		str_trim_range(arg.stringval, &start, &len);
+		if(len == 0) return SI_NullVal();
 		errno = 0;
-		double parsedval = strtof(trimmed, &sEnd);
+		double parsedval = strtof(start, &sEnd);
 		/* The input was not a complete number or represented a number that
 		 * cannot be represented as a double. */
-		if(sEnd[0] != '\0' || errno == ERANGE) {
-			rm_free(trimmed);
-			return SI_NullVal();
-		}
-		rm_free(trimmed);
+		if(sEnd != start + len || errno == ERANGE) return SI_NullVal();
 		return SI_DoubleVal(parsedval);
 	}
 	default:

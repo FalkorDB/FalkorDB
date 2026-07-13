@@ -188,13 +188,12 @@ SIValue AR_TO_BOOLEAN(SIValue *argv, int argc, void *private_data) {
 			return SI_BoolVal(v.longval);
 		case T_INTERN_STRING:
 		case T_STRING: {
-			char *trimmed = str_trim(v.stringval);
-			if (!trimmed) return SI_NullVal();
-			SIValue ret = SI_NullVal();
-			if(!strcasecmp("true", trimmed)) ret = SI_BoolVal(true);
-			else if(!strcasecmp("false", trimmed)) ret = SI_BoolVal(false);
-			rm_free(trimmed);
-			return ret;
+			const char *start;
+			size_t len;
+			str_trim_range(v.stringval, &start, &len);
+			if (len == 4 && !strncasecmp("true", start, 4)) return SI_BoolVal(true);
+			if (len == 5 && !strncasecmp("false", start, 5)) return SI_BoolVal(false);
+			return SI_NullVal();
 		}
 		case T_BOOL:
 			return v;
