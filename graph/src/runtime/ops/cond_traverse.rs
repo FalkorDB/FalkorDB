@@ -180,14 +180,14 @@ fn build_unrestricted_iter(
     if types.len() == 1 {
         return g
             .get_relationship_matrix(&types[0])
-            .map(|t| t.matrix().iter(0, u64::MAX));
+            .map(|t| t.matrix().structural_iter(0, u64::MAX));
     }
     let merged = g.build_relationship_matrix_unrestricted(types)?;
     Some(VersionedMatrix::from_matrix(merged).iter(0, u64::MAX))
 }
 
 fn empty_edge_iter() -> EdgeIter {
-    VersionedMatrix::new(0, 0).iter(0, u64::MAX)
+    VersionedMatrix::<bool>::new(0, 0).iter(0, u64::MAX)
 }
 
 /// Build an `EdgeIter` over the TRANSPOSED (dst → src) pair matrix for

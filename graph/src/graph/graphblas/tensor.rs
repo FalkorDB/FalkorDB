@@ -121,9 +121,9 @@ impl Tensor {
         ncols: u64,
     ) -> Self {
         Self {
-            m: VersionedMatrix::new_uint64(nrows, ncols),
-            mt: VersionedMatrix::new(ncols, nrows),
-            me: VersionedMatrix::new(GrB_INDEX_MAX, GrB_INDEX_MAX),
+            m: VersionedMatrix::<u64>::new(nrows, ncols),
+            mt: VersionedMatrix::<bool>::new(ncols, nrows),
+            me: VersionedMatrix::<bool>::new(GrB_INDEX_MAX, GrB_INDEX_MAX),
         }
     }
 
@@ -138,7 +138,7 @@ impl Tensor {
         dest: u64,
     ) -> std::vec::IntoIter<u64> {
         let mut ids: Vec<u64> = Vec::new();
-        if let Some(first) = self.m.get_uint64(src, dest) {
+        if let Some(first) = self.m.get(src, dest) {
             ids.push(first);
             if self.me.nvals() != 0 {
                 let key = compound_key(src, dest);
@@ -159,10 +159,10 @@ impl Tensor {
         dest: u64,
         id: u64,
     ) {
-        if self.m.get_uint64(src, dest).is_none() {
+        if self.m.get(src, dest).is_none() {
             // First edge for this pair: store inline in the forward/backward
             // adjacency.
-            self.m.set_uint64(src, dest, id);
+            self.m.set(src, dest, id);
             self.mt.set(dest, src, true);
         } else {
             // Additional edge: pair already has a first edge → overflow to `me`.
@@ -194,7 +194,7 @@ impl Tensor {
         // Pairs that already have an inline first edge (committed or pending).
         let mut present: FxHashSet<(u64, u64)> = self
             .m
-            .collect_uint64()
+            .collect()
             .into_iter()
             .map(|(s, d, _)| (s, d))
             .collect();
@@ -214,7 +214,7 @@ impl Tensor {
             }
         }
 
-        self.m.set_all_uint64(
+        self.m.set_all(
             m_srcs
                 .iter()
                 .zip(m_dsts.iter())
@@ -270,15 +270,15 @@ impl Tensor {
         let mut emptied = Vec::new();
         for &(id, src, dst) in rels {
             let key = compound_key(src, dst);
-            if self.m.get_uint64(src, dst) == Some(id) {
+            if self.m.get(src, dst) == Some(id) {
                 // Removing the inline first edge.
                 let promote = self.me.iter(key, key).next().map(|(_, eid)| eid);
                 if let Some(eid) = promote {
                     self.me.remove(key, eid);
-                    self.m.set_uint64(src, dst, eid);
+                    self.m.set(src, dst, eid);
                     // mt structure already has (dst, src); the pair survives.
                 } else {
-                    self.m.remove_uint64(src, dst);
+                    self.m.remove(src, dst);
                     self.mt.remove(dst, src);
                     emptied.push((src, dst));
                 }
@@ -499,13 +499,13 @@ impl Decode<19> for Tensor {
         // multi-edge overflow. The on-disk forward matrix (C-compatible) stores
         // single-edge ids directly (MSB clear) and `(count | MSB)` for multi-edge
         // pairs, whose real id lists follow in the tensor section.
-        let mut m = VersionedMatrix::new_uint64(nrows, ncols);
-        let mut me = VersionedMatrix::new(GrB_INDEX_MAX, GrB_INDEX_MAX);
+        let mut m = VersionedMatrix::<u64>::new(nrows, ncols);
+        let mut me = VersionedMatrix::<bool>::new(GrB_INDEX_MAX, GrB_INDEX_MAX);
 
-        for (src, dst, value) in forward.uint64_iter() {
+        for (src, dst, value) in forward.iter() {
             if value & MSB_MASK == 0 {
                 // Single edge: value is the edge id; store inline.
-                m.set_uint64(src, dst, value);
+                m.set(src, dst, value);
             }
             // Multi-edge (MSB set): ids are supplied by the tensor section.
         }
@@ -525,7 +525,7 @@ impl Decode<19> for Tensor {
                     let mut first = true;
                     for (_, edge_id) in v.iter() {
                         if first {
-                            m.set_uint64(src, dst, edge_id);
+                            m.set(src, dst, edge_id);
                             first = false;
                         } else {
                             me.set(key, edge_id, true);
@@ -537,7 +537,7 @@ impl Decode<19> for Tensor {
 
         // Backward matrix is rebuilt from `m` by the caller (`rebuild_backward`)
         // after decode, so leave it empty here.
-        let backward = VersionedMatrix::new(0, 0);
+        let backward = VersionedMatrix::<bool>::new(0, 0);
         Ok(Self {
             m,
             mt: backward,
@@ -610,7 +610,7 @@ impl Iterator for Iter<'_> {
             BaseIter::Backward(it) => {
                 let (row, col) = it.next()?;
                 let (src, dest) = (col, row);
-                let id = self.t.m.get_uint64(src, dest).unwrap_or(0);
+                let id = self.t.m.get(src, dest).unwrap_or(0);
                 (src, dest, id)
             }
         };

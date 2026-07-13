@@ -163,17 +163,6 @@ impl<T> VersionedMatrix<T> {
         self.m.memory_usage() + self.dp.memory_usage() + self.dm.memory_usage()
     }
 
-    #[must_use]
-    #[allow(clippy::iter_without_into_iter)]
-    pub fn iter(
-        &self,
-        min_row: u64,
-        max_row: u64,
-    ) -> Iter {
-        self.wait();
-        Iter::new(self, min_row, max_row)
-    }
-
     /// Materialize the effective structure as a `bool` matrix: `(m - dm) ∪ dp`,
     /// values discarded. Works for both bool and valued (uint64) bases — only
     /// structure is preserved, which is all the structure-only consumers
@@ -235,6 +224,17 @@ impl<T> VersionedMatrix<T> {
 }
 
 impl VersionedMatrix<bool> {
+    #[must_use]
+    #[allow(clippy::iter_without_into_iter)]
+    pub fn iter(
+        &self,
+        min_row: u64,
+        max_row: u64,
+    ) -> Iter {
+        self.wait();
+        Iter::new(self, min_row, max_row)
+    }
+
     pub fn remove(
         &mut self,
         i: u64,
@@ -320,20 +320,6 @@ impl VersionedMatrix<bool> {
         }
     }
 
-    #[must_use]
-    pub fn extract_m_dp(&self) -> (Matrix<bool>, Matrix<bool>) {
-        if self.dm.nvals() == 0 {
-            // Fast path: no deletions, return dups of m and dp directly
-            (self.m.dup(), self.dp.dup())
-        } else {
-            let mut m = Matrix::<bool>::new(self.m.nrows(), self.m.ncols());
-            let mut dp = Matrix::<bool>::new(self.dp.nrows(), self.dp.ncols());
-            m.select(&self.dm, &self.m);
-            dp.select(&self.dm, &self.dp);
-            (m, dp)
-        }
-    }
-
     /// Set multiple entries, checking dm emptiness once upfront.
     ///
     /// If dm is empty, uses the fast path (1 FFI call per entry).
@@ -384,7 +370,7 @@ impl<T> Dup<Self> for VersionedMatrix<T> {
 impl VersionedMatrix<u64> {
     /// Construct a UINT64-valued versioned matrix: `m`/`dp` UINT64, `dm` BOOL.
     #[must_use]
-    pub fn new_uint64(
+    pub fn new(
         nrows: u64,
         ncols: u64,
     ) -> Self {
@@ -400,13 +386,26 @@ impl VersionedMatrix<u64> {
     ///
     /// Used during RDB decode to read C-produced relation matrices where
     /// single-edge entries store the edge ID as a UINT64 value.
-    pub fn uint64_iter(&self) -> impl Iterator<Item = (u64, u64, u64)> + '_ {
+    pub fn iter(&self) -> UintIter {
         self.uint64_iter_range(0, u64::MAX)
+    }
+
+    /// Structure-only `(row, col)` iterator over the effective matrix,
+    /// ignoring the stored edge-id values. Same overlay semantics as the
+    /// bool [`VersionedMatrix::iter`].
+    #[must_use]
+    pub fn structural_iter(
+        &self,
+        min_row: u64,
+        max_row: u64,
+    ) -> Iter {
+        self.wait();
+        Iter::new(self, min_row, max_row)
     }
 
     /// Write `value` at `(i, j)` with dp-overlay semantics: the new value lands
     /// in `dp` (newest), and any pending deletion of `(i, j)` is cleared.
-    pub fn set_uint64(
+    pub fn set(
         &mut self,
         i: u64,
         j: u64,
@@ -423,7 +422,7 @@ impl VersionedMatrix<u64> {
     /// [`VersionedMatrix::set_uint64`] callers, this checks `dm` emptiness once
     /// up front and never calls `get`/`wait` per entry, so it stays O(n) for a
     /// batch of `n` writes (critical for bulk edge creation).
-    pub fn set_all_uint64(
+    pub fn set_all(
         &mut self,
         entries: impl Iterator<Item = (u64, u64, u64)>,
     ) {
@@ -443,7 +442,7 @@ impl VersionedMatrix<u64> {
     /// Effective UINT64 value at `(i, j)`: `dp` wins, then `m` unless masked by
     /// `dm`. Returns `None` if absent or deleted.
     #[must_use]
-    pub fn get_uint64(
+    pub fn get(
         &self,
         i: u64,
         j: u64,
@@ -460,7 +459,7 @@ impl VersionedMatrix<u64> {
 
     /// Remove `(i, j)` (value-agnostic): drop any pending add and mask the
     /// committed entry as deleted.
-    pub fn remove_uint64(
+    pub fn remove(
         &mut self,
         i: u64,
         j: u64,
@@ -476,13 +475,13 @@ impl VersionedMatrix<u64> {
     /// Collect effective `(row, col, value)` triples (full range) into a `Vec`.
     /// Convenience wrapper over [`VersionedMatrix::uint64_iter_range`].
     #[must_use]
-    pub fn collect_uint64(&self) -> Vec<(u64, u64, u64)> {
+    pub fn collect(&self) -> Vec<(u64, u64, u64)> {
         self.uint64_iter_range(0, u64::MAX).collect()
     }
 
     /// Flush UINT64 deltas into the base: apply deletions, then fold `dp` in
     /// with dp winning on overlap. Clears both deltas.
-    pub fn flush_uint64(&mut self) {
+    pub fn flush(&mut self) {
         self.wait();
         if self.dm.nvals() >= 10000 {
             self.m.remove_all(&self.dm);
@@ -497,7 +496,7 @@ impl VersionedMatrix<u64> {
     /// Test-only: unconditionally fold UINT64 deltas into the base (simulate a
     /// commit so subsequent writes exercise the dp-overlay-over-committed path).
     #[cfg(test)]
-    pub fn force_commit_uint64(&mut self) {
+    pub fn force_commit(&mut self) {
         self.wait();
         if self.dm.nvals() != 0 {
             self.m.remove_all(&self.dm);

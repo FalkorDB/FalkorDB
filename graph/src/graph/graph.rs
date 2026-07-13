@@ -678,11 +678,11 @@ impl Graph {
             relationship_count: 0,
             deleted_nodes: RoaringTreemap::new(),
             deleted_relationships: RoaringTreemap::new(),
-            zero_matrix: VersionedMatrix::new(0, 0),
-            adjacancy_matrix: VersionedMatrix::new(n, n),
-            node_labels_matrix: VersionedMatrix::new(0, 0),
-            relationship_type_matrix: VersionedMatrix::new(0, 0),
-            all_nodes_matrix: VersionedMatrix::new(n, n),
+            zero_matrix: VersionedMatrix::<bool>::new(0, 0),
+            adjacancy_matrix: VersionedMatrix::<bool>::new(n, n),
+            node_labels_matrix: VersionedMatrix::<bool>::new(0, 0),
+            relationship_type_matrix: VersionedMatrix::<bool>::new(0, 0),
+            all_nodes_matrix: VersionedMatrix::<bool>::new(n, n),
             labels_matices: Vec::new(),
             relationship_matrices: Vec::new(),
             edge_endpoints: Vec::new(),
@@ -754,7 +754,7 @@ impl Graph {
             relationship_count,
             deleted_nodes,
             deleted_relationships,
-            zero_matrix: VersionedMatrix::new(0, 0),
+            zero_matrix: VersionedMatrix::<bool>::new(0, 0),
             adjacancy_matrix,
             node_labels_matrix,
             relationship_type_matrix,
@@ -988,7 +988,7 @@ impl Graph {
 
         self.node_labels.push(Arc::new(label.to_string()));
         self.labels_matices
-            .push(VersionedMatrix::new(self.node_cap, self.node_cap));
+            .push(VersionedMatrix::<bool>::new(self.node_cap, self.node_cap));
         LabelId(self.node_labels.len() - 1)
     }
 
@@ -1162,7 +1162,7 @@ impl Graph {
         if !self.node_labels.contains(label) {
             self.node_labels.push(label.clone());
 
-            let m = VersionedMatrix::new(self.node_cap, self.node_cap);
+            let m = VersionedMatrix::<bool>::new(self.node_cap, self.node_cap);
             self.labels_matices.insert(self.node_labels.len() - 1, m);
         }
 
@@ -3242,6 +3242,20 @@ impl Graph {
         }
         infos.extend(edge_infos);
         infos
+    }
+
+    /// Quiesce indexer locks before a BGSAVE fork so the child cannot
+    /// inherit a write-held lock. Pair with [`Self::fork_unlock_indexers`]
+    /// in the parent after fork.
+    pub fn fork_lock_indexers(&self) {
+        self.node_indexer.fork_lock();
+        self.edge_indexer.fork_lock();
+    }
+
+    /// Release the locks leaked by [`Self::fork_lock_indexers`].
+    pub fn fork_unlock_indexers(&self) {
+        self.node_indexer.fork_unlock();
+        self.edge_indexer.fork_unlock();
     }
 
     // ── Constraint management ─────────────────────────────────────────

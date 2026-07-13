@@ -253,18 +253,22 @@ pub fn graph_init(
         // Register fork handlers:
         // - PREPARE: on the main thread (BGSAVE path), call `Matrix::wait`
         //            on all graphs so the forked child sees a fully
-        //            materialized GraphBLAS state. On non-main threads
-        //            (RediSearch's ForkGC) we return immediately, mirroring
-        //            the C port's `_ForkPrepare`. See
+        //            materialized GraphBLAS state, then fork-locks the
+        //            indexers so the child can't inherit a write-held
+        //            index lock. On non-main threads (RediSearch's ForkGC)
+        //            we return immediately, mirroring the C port's
+        //            `_ForkPrepare`. See
         //            [`crate::redis_type::pre_fork_prepare`].
-        // - PARENT:  nothing — writers serialize against BGSAVE via the GIL
-        //            during their commit phase; BGSAVE forks on the main
-        //            thread which holds the GIL, so no per-fork release.
+        // - PARENT:  release the shared indexer locks taken in PREPARE.
+        //            See [`crate::redis_type::post_fork_parent`].
         // - CHILD:   force GraphBLAS/OpenMP to single-threaded mode so they
         //            don't touch the parent's (now-invalid) thread pools.
+        //            The leaked shared indexer locks are intentionally kept:
+        //            the child only reads (`index_info` uses
+        //            `read_recursive`) and exits after the RDB save.
         pthread_atfork(
             Some(crate::redis_type::pre_fork_prepare),
-            None,
+            Some(crate::redis_type::post_fork_parent),
             Some(on_fork_child),
         );
 

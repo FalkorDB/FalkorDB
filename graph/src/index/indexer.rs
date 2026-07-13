@@ -731,6 +731,26 @@ impl Indexer {
         drop(index);
     }
 
+    /// Acquire the index lock in shared mode and leak the guard, quiescing
+    /// any in-flight `commit`/`commit_edge` on the writer thread so a BGSAVE
+    /// fork child never inherits a write-held lock (the writer thread does
+    /// not exist in the child, so such a lock would never be released and
+    /// `index_info` in the child would deadlock).
+    ///
+    /// Must be paired with [`Self::fork_unlock`] in the parent after fork.
+    pub fn fork_lock(&self) {
+        std::mem::forget(self.index.read());
+    }
+
+    /// Release the shared lock leaked by [`Self::fork_lock`].
+    ///
+    /// # Safety contract
+    /// Caller must guarantee a preceding `fork_lock` on this indexer whose
+    /// guard has not yet been released.
+    pub fn fork_unlock(&self) {
+        unsafe { self.index.force_unlock_read() };
+    }
+
     #[must_use]
     pub fn get_fields(
         &self,
@@ -756,9 +776,13 @@ impl Indexer {
 
     #[must_use]
     pub fn index_info(&self) -> Vec<IndexInfo> {
+        // read_recursive: in a BGSAVE fork child the main thread already
+        // holds the shared lock leaked by `fork_lock`; a plain `read()`
+        // would block behind any parked-writer bit inherited from the
+        // parent, deadlocking the child.
         let mut infos: Vec<IndexInfo> = self
             .index
-            .read()
+            .read_recursive()
             .iter()
             .filter(|(_, index)| !index.is_empty())
             .map(|(label, index)| {
