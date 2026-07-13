@@ -1440,8 +1440,10 @@ void Graph_GetNodeEdgesFromIterator
 	ASSERT (n       != NULL) ;
 	ASSERT (it      != NULL) ;
 	ASSERT (edges   != NULL) ;
-	ASSERT (dir == GRAPH_EDGE_DIR_OUTGOING || dir == GRAPH_EDGE_DIR_INCOMING) ;
+
+	ASSERT (it->transpose == (dir == GRAPH_EDGE_DIR_INCOMING)) ;
 	ASSERT (r != GRAPH_NO_RELATION && r != GRAPH_UNKNOWN_RELATION) ;
+	ASSERT (dir == GRAPH_EDGE_DIR_OUTGOING || dir == GRAPH_EDGE_DIR_INCOMING) ;
 
 	if (dir == GRAPH_EDGE_DIR_OUTGOING) {
 		NodeID src_id = ENTITY_GET_ID (n) ;
