@@ -740,6 +740,8 @@ impl Graph {
                 edge_endpoints[idx] = key;
             }
         }
+        // Drop the doubling slack left by the incremental resizes above.
+        edge_endpoints.shrink_to_fit();
 
         let chunk = NODE_CREATION_BUFFER.load(Ordering::Relaxed);
         let node_cap = node_count + deleted_nodes.len();
@@ -1950,9 +1952,13 @@ impl Graph {
         self.relationship_matrices[type_idx].set_all_from_slices(srcs, dsts, rel_ids);
 
         // Maintain the graph-wide reverse index alongside the tensor edges.
+        // Reserve exactly: MVCC clones reset capacity to `len`, so amortized
+        // doubling here would only leave ~2x slack behind, never save reallocs.
         if let Some(&max_id) = rel_ids.iter().max() {
             let needed = max_id as usize + 1;
             if needed > self.edge_endpoints.len() {
+                self.edge_endpoints
+                    .reserve_exact(needed - self.edge_endpoints.len());
                 self.edge_endpoints.resize(needed, EDGE_NO_ENDPOINT);
             }
         }
