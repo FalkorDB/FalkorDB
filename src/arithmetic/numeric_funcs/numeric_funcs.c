@@ -11,6 +11,8 @@
 #include "../../util/rmalloc.h"
 #include "../../errors/errors.h"
 #include "../temporal_arithmetic/temporal_arithmetic.h"
+#include "../../util/strutil.h"
+
 
 #include <math.h>
 #include <errno.h>
@@ -138,20 +140,33 @@ SIValue AR_TOINTEGER(SIValue *argv, int argc, void *private_data) {
 		}
 		return SI_LongVal(0);
 	case T_STRING:
-	case T_INTERN_STRING:
-		if(strlen(arg.stringval) == 0) return SI_NullVal();
+	case T_INTERN_STRING: {
+		char *trimmed = str_trim(arg.stringval);
+		if(!trimmed || strlen(trimmed) == 0) {
+			rm_free(trimmed);
+			return SI_NullVal();
+		}
 		errno = 0;
-		if(strchr(arg.stringval, '.') == NULL) {
-			int64_t parsedval = strtoll(arg.stringval, &sEnd, 10);
-			if(sEnd[0] != '\0' || errno == ERANGE) return SI_NullVal();
+		if(strchr(trimmed, '.') == NULL) {
+			int64_t parsedval = strtoll(trimmed, &sEnd, 10);
+			if(sEnd[0] != '\0' || errno == ERANGE) {
+				rm_free(trimmed);
+				return SI_NullVal();
+			}
+			rm_free(trimmed);
 			return SI_LongVal(parsedval);
 		}
-		double parsedval = strtod(arg.stringval, &sEnd);
+		double parsedval = strtod(trimmed, &sEnd);
 		/* The input was not a complete number or represented a number that
 		 * cannot be represented as a double. */
-		if(sEnd[0] != '\0' || errno == ERANGE) return SI_NullVal();
+		if(sEnd[0] != '\0' || errno == ERANGE) {
+			rm_free(trimmed);
+			return SI_NullVal();
+		}
+		rm_free(trimmed);
 		// Remove floating point.
 		return SI_LongVal(floor(parsedval));
+	}
 	default:
 		return SI_NullVal();
 	}
@@ -168,14 +183,23 @@ SIValue AR_TOFLOAT(SIValue *argv, int argc, void *private_data) {
 	case T_DOUBLE:
 		return arg;
 	case T_STRING:
-	case T_INTERN_STRING:
-		if(strlen(arg.stringval) == 0) return SI_NullVal();
+	case T_INTERN_STRING: {
+		char *trimmed = str_trim(arg.stringval);
+		if(!trimmed || strlen(trimmed) == 0) {
+			rm_free(trimmed);
+			return SI_NullVal();
+		}
 		errno = 0;
-		double parsedval = strtof(arg.stringval, &sEnd);
+		double parsedval = strtof(trimmed, &sEnd);
 		/* The input was not a complete number or represented a number that
 		 * cannot be represented as a double. */
-		if(sEnd[0] != '\0' || errno == ERANGE) return SI_NullVal();
+		if(sEnd[0] != '\0' || errno == ERANGE) {
+			rm_free(trimmed);
+			return SI_NullVal();
+		}
+		rm_free(trimmed);
 		return SI_DoubleVal(parsedval);
+	}
 	default:
 		return SI_NullVal();
 	}

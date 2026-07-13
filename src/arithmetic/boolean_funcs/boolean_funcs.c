@@ -7,6 +7,8 @@
 #include "boolean_funcs.h"
 #include "../func_desc.h"
 #include "../../util/arr.h"
+#include "../../util/strutil.h"
+
 #include "../../query_ctx.h"
 #include "../../errors/errors.h"
 #include "../../datatypes/map.h"
@@ -186,9 +188,13 @@ SIValue AR_TO_BOOLEAN(SIValue *argv, int argc, void *private_data) {
 			return SI_BoolVal(v.longval);
 		case T_INTERN_STRING:
 		case T_STRING: {
-			if(!strcasecmp("true", v.stringval)) return SI_BoolVal(true);
-			else if(!strcasecmp("false", v.stringval)) return SI_BoolVal(false);
-			return SI_NullVal();
+			char *trimmed = str_trim(v.stringval);
+			if (!trimmed) return SI_NullVal();
+			SIValue ret = SI_NullVal();
+			if(!strcasecmp("true", trimmed)) ret = SI_BoolVal(true);
+			else if(!strcasecmp("false", trimmed)) ret = SI_BoolVal(false);
+			rm_free(trimmed);
+			return ret;
 		}
 		case T_BOOL:
 			return v;

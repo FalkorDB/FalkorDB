@@ -222,3 +222,21 @@ void str_truncate
 	}
 }
 
+// trim leading and trailing spaces from a string
+// returns a newly allocated string that must be freed with rm_free
+char *str_trim
+(
+	const char *str
+) {
+	if (!str) return NULL;
+	while (*str == ' ') {
+		str++;
+	}
+	size_t len = strlen(str);
+	while (len > 0 && str[len - 1] == ' ') {
+		len--;
+	}
+	return rm_strndup(str, len);
+}
+
+
