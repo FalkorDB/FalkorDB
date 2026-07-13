@@ -262,6 +262,10 @@ pub fn graph_init(
         //            thread which holds the GIL, so no per-fork release.
         // - CHILD:   force GraphBLAS/OpenMP to single-threaded mode so they
         //            don't touch the parent's (now-invalid) thread pools.
+        //            Index state needs no quiescing: the indexer map is a
+        //            lock-free `ArcSwap` snapshot, so the child can read it
+        //            (`index_info` during RDB encoding) regardless of what
+        //            the parent's writer thread was doing at fork time.
         pthread_atfork(
             Some(crate::redis_type::pre_fork_prepare),
             None,
@@ -564,6 +568,7 @@ unsafe extern "C" fn on_keyspace_event(
         "rename_to" => {
             let old = RENAME_OLD_NAME.lock().take();
             if let Some(old_name) = old {
+                crate::graph_core::rename_graph(&old_name, key_name);
                 let context = Context::new(ctx);
                 telemetry::delete_stream(&context, &old_name);
             }

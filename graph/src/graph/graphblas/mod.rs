@@ -59,6 +59,35 @@ pub mod tensor;
 pub mod vector;
 pub mod versioned_matrix;
 
+/// Process-wide GraphBLAS initialization for unit tests. `GrB_init` may only
+/// be called once per process, so every `#[cfg(test)]` module must go through
+/// this shared guard rather than owning its own `Once`.
+#[cfg(test)]
+pub(crate) mod test_init {
+    use std::sync::Once;
+
+    static INIT: Once = Once::new();
+
+    unsafe extern "C" {
+        fn malloc(size: usize) -> *mut std::ffi::c_void;
+        fn calloc(
+            n: usize,
+            size: usize,
+        ) -> *mut std::ffi::c_void;
+        fn realloc(
+            p: *mut std::ffi::c_void,
+            size: usize,
+        ) -> *mut std::ffi::c_void;
+        fn free(p: *mut std::ffi::c_void);
+    }
+
+    pub fn ensure_init() {
+        INIT.call_once(|| {
+            super::matrix::init(Some(malloc), Some(calloc), Some(realloc), Some(free)).unwrap();
+        });
+    }
+}
+
 #[derive(PartialEq, Copy, Clone, Hash, Debug, Default)]
 #[repr(C)]
 pub struct __BindgenComplex<T> {

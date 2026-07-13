@@ -20,13 +20,16 @@
 //! ```text
 //! Indexer
 //!    |
-//!    +-- index: RwLock<HashMap<Label, Index>>
+//!    +-- index: ArcSwap<HashMap<Label, Arc<Index>>>
 //!    |      One Index per label; each Index wraps a single
 //!    |      RSIndex handle and its field definitions.
+//!    |      Readers `load()` a lock-free snapshot; schema changes
+//!    |      clone the map, modify the copy, and `store()` it.
 //!    |
 //!    +-- write_lock: Mutex<()>
-//!    |      Serializes background population with commit_index
-//!    |      so they never run concurrently.
+//!    |      Serializes map mutations (create/drop/remove/recreate)
+//!    |      and background population batches with write-path
+//!    |      commit_index calls so they never run concurrently.
 //!    |
 //!    +-- graph: Mutex<Option<Arc<Graph>>>
 //!           Latest committed graph snapshot shared with
@@ -36,10 +39,12 @@
 //! # Concurrency
 //!
 //! Read-side queries (`query`, `fulltext_query`, `is_label_indexed`, ...)
-//! acquire a `read()` lock.  Write-side mutations (`create_index`,
-//! `drop_index`, `commit`, ...) acquire a `write()` lock.  Background
-//! population uses `write_lock` to avoid racing with per-transaction
-//! commit calls.
+//! `load()` the current map snapshot without locking. Schema mutations
+//! (`create_index`, `drop_index`, ...) publish a new map via clone-and-swap
+//! while holding `write_lock`; per-document mutations (`commit`, ...) call
+//! `&self` methods on the internally-synchronized RediSearch spec.
+//! Background population uses `write_lock` to avoid racing with
+//! per-transaction commit calls and schema changes.
 
 use std::{
     collections::HashMap,
@@ -50,8 +55,9 @@ use std::{
     },
 };
 
+use arc_swap::{ArcSwap, ArcSwapOption};
 use atomic_refcell::AtomicRefCell;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use roaring::RoaringTreemap;
 
 use super::Index;
@@ -141,14 +147,17 @@ impl IndexOptions {
 
 #[derive(Default, Clone)]
 pub struct Indexer {
-    index: Arc<RwLock<HashMap<Arc<String>, Index>>>,
-    /// Serializes background index population batches with write-path
-    /// `commit_index` calls so they never run concurrently.
+    /// Lock-free snapshot of the per-label indexes. Readers `load()` the
+    /// current map; schema mutations clone the map, modify the copy (via
+    /// [`Index::clone_for_update`]), and `store()` it under `write_lock`.
+    index: Arc<ArcSwap<HashMap<Arc<String>, Arc<Index>>>>,
+    /// Serializes map mutations and background index population batches with
+    /// write-path `commit_index` calls so they never run concurrently.
     write_lock: Arc<Mutex<()>>,
     cancelled: Arc<AtomicBool>,
     /// Latest committed graph, shared with background index population.
     /// Updated by `MvccGraph::commit()` so background batches see fresh data.
-    graph: Arc<Mutex<Option<Arc<AtomicRefCell<Graph>>>>>,
+    graph: Arc<ArcSwapOption<AtomicRefCell<Graph>>>,
 }
 
 unsafe impl Send for Indexer {}
@@ -157,30 +166,33 @@ unsafe impl Sync for Indexer {}
 impl Indexer {
     #[must_use]
     pub fn has_indices(&self) -> bool {
-        !self.index.read().is_empty()
+        !self.index.load().is_empty()
     }
 
     #[must_use]
     pub fn memory_usage(&self) -> usize {
-        self.index.read().values().map(Index::memory_usage).sum()
+        self.index
+            .load()
+            .values()
+            .map(|index| index.memory_usage())
+            .sum()
     }
 
     pub fn create_index(
-        &mut self,
+        &self,
         index_type: &IndexType,
         label: &Arc<String>,
         attrs: &Vec<Arc<String>>,
         total: u64,
         options: Option<IndexOptions>,
     ) -> Result<(), String> {
-        // Serialize with any in-flight populate batch. Without this,
-        // a recreate (e.g. adding a second vector field) can land
-        // between a batch's id check and its commit, causing the
-        // batch to flush docs built against a stale field set into
+        // Serialize with any in-flight populate batch and other schema
+        // mutations. Without this, a recreate (e.g. adding a second vector
+        // field) can land between a batch's id check and its commit, causing
+        // the batch to flush docs built against a stale field set into
         // the freshly recreated rs_idx — corrupting HNSW state.
-        let lock = self.write_lock.clone();
-        let _guard = lock.lock();
-        let mut index = self.index.write();
+        let _guard = self.write_lock.lock();
+        let map = self.index.load_full();
 
         let (language, stopwords, field_options, vector_options) = match options {
             Some(IndexOptions::Text(text_opts)) => {
@@ -193,12 +205,10 @@ impl Indexer {
         };
 
         // Pre-validate against the existing entry (if any) *before*
-        // creating one. Using `entry(...).or_default()` here would
-        // insert an empty `Index` for a previously-unseen label, and
-        // a later validation error would leave that empty entry
-        // behind — `has_index()` / `has_indices()` would then lie
-        // about the label being indexed.
-        let existing = index.get(label);
+        // materializing a new one, so a validation error publishes nothing —
+        // `has_index()` / `has_indices()` never lie about the label being
+        // indexed.
+        let existing = map.get(label).map(Arc::as_ref);
 
         // Validate language/stopwords are not already set for existing fulltext indexes
         let has_fulltext = existing.is_some_and(Index::has_fulltext_field);
@@ -240,8 +250,10 @@ impl Indexer {
             }
         }
 
-        // Validation passed — now it's safe to materialize the entry.
-        let label_indexes = index.entry(label.clone()).or_default();
+        // Validation passed — materialize a private copy of the entry
+        // (sharing the RS spec handle and pending counters with the
+        // published generation) to mutate and publish below.
+        let mut label_indexes = existing.map_or_else(Index::default, Index::clone_for_update);
 
         let mut new_fields: HashMap<Arc<String>, Vec<Arc<Field>>> = HashMap::new();
 
@@ -323,65 +335,81 @@ impl Indexer {
         }
 
         label_indexes.set_progress(0, total);
+
+        let mut new_map = (*map).clone();
+        new_map.insert(label.clone(), Arc::new(label_indexes));
+        self.index.store(Arc::new(new_map));
         Ok(())
     }
 
     /// Drop index fields and return (dropped_count, remaining_count).
     /// Returns `None` if the label has no index.
+    ///
+    /// Caller must hold [`Self::write_lock`] — map mutations are published
+    /// via clone-and-swap and would otherwise race with other schema ops.
     pub fn drop_index(
-        &mut self,
+        &self,
         label: &Arc<String>,
         attrs: &[Arc<String>],
         index_type: &IndexType,
         total: u64,
     ) -> Option<(usize, usize)> {
-        let mut index = self.index.write();
-        if let Some(index) = index.get_mut(label) {
-            let before = index.index_count();
-            let mut removed = false;
-            // Empty `attrs` means "drop all fields of this index_type"
-            // (e.g. db.idx.fulltext.drop('L') drops every fulltext field
-            // on label L without requiring callers to enumerate them).
-            let target_attrs: Vec<Arc<String>> = if attrs.is_empty() {
-                index
-                    .fields()
-                    .iter()
-                    .filter(|(_, fields)| fields.iter().any(|f| f.ty == *index_type))
-                    .map(|(attr, _)| attr.clone())
-                    .collect()
+        let map = self.index.load_full();
+        let mut index = map.get(label)?.clone_for_update();
+        let before = index.index_count();
+        let mut removed = false;
+        // Empty `attrs` means "drop all fields of this index_type"
+        // (e.g. db.idx.fulltext.drop('L') drops every fulltext field
+        // on label L without requiring callers to enumerate them).
+        let target_attrs: Vec<Arc<String>> = if attrs.is_empty() {
+            index
+                .fields()
+                .iter()
+                .filter(|(_, fields)| fields.iter().any(|f| f.ty == *index_type))
+                .map(|(attr, _)| attr.clone())
+                .collect()
+        } else {
+            attrs.to_vec()
+        };
+        for attr in &target_attrs {
+            let (has_type, field_count) = if let Some(fields) = index.get_fields(attr) {
+                (fields.iter().any(|f| f.ty == *index_type), fields.len())
             } else {
-                attrs.to_vec()
+                continue;
             };
-            for attr in &target_attrs {
-                let (has_type, field_count) = if let Some(fields) = index.get_fields(attr) {
-                    (fields.iter().any(|f| f.ty == *index_type), fields.len())
+            if has_type {
+                if field_count == 1 {
+                    index.remove_field(attr);
                 } else {
-                    continue;
-                };
-                if has_type {
-                    if field_count == 1 {
-                        index.remove_field(attr);
-                    } else {
-                        index.retain_fields(attr, index_type);
-                    }
-                    removed = true;
+                    index.retain_fields(attr, index_type);
                 }
+                removed = true;
             }
-            if removed {
-                index.set_progress(0, total);
-            }
-            let after = index.index_count();
-            return Some((before - after, after));
         }
-        drop(index);
-        None
+        if removed {
+            index.set_progress(0, total);
+        }
+        let after = index.index_count();
+        let mut new_map = (*map).clone();
+        new_map.insert(label.clone(), Arc::new(index));
+        self.index.store(Arc::new(new_map));
+        Some((before - after, after))
     }
 
+    /// Remove the whole per-label index entry.
+    ///
+    /// Caller must hold [`Self::write_lock`] (see `drop_index_bg`).
     pub fn remove(
-        &mut self,
+        &self,
         label: &Arc<String>,
     ) {
-        self.index.write().remove(label);
+        let map = self.index.load_full();
+        if !map.contains_key(label) {
+            return;
+        }
+        let mut new_map = (*map).clone();
+        new_map.remove(label);
+        self.index.store(Arc::new(new_map));
     }
 
     #[must_use]
@@ -391,7 +419,7 @@ impl Indexer {
         field: &Arc<String>,
         index_type: &IndexType,
     ) -> bool {
-        if let Some(index) = self.index.read().get(label) {
+        if let Some(index) = self.index.load().get(label) {
             return index.has_field_with_type(field, index_type);
         }
         false
@@ -404,7 +432,7 @@ impl Indexer {
         field: &Arc<String>,
         index_type: &IndexType,
     ) -> bool {
-        if let Some(index) = self.index.read().get(label)
+        if let Some(index) = self.index.load().get(label)
             && index.is_operational()
         {
             return index.has_field_with_type(field, index_type);
@@ -418,7 +446,7 @@ impl Indexer {
         label: &Arc<String>,
         field: &Arc<String>,
     ) -> bool {
-        if let Some(index) = self.index.read().get(label)
+        if let Some(index) = self.index.load().get(label)
             && index.is_operational()
         {
             return index.contains_field(field);
@@ -432,7 +460,7 @@ impl Indexer {
         label: &Arc<String>,
         query: IndexQuery<Value>,
     ) -> IdIter {
-        if let Some(index) = self.index.read().get(label) {
+        if let Some(index) = self.index.load().get(label) {
             return index.query(query);
         }
         IndexResultsIter::empty()
@@ -446,7 +474,7 @@ impl Indexer {
         label: &Arc<String>,
         query: IndexQuery<Value>,
     ) -> super::EdgeTripleIter {
-        if let Some(index) = self.index.read().get(label) {
+        if let Some(index) = self.index.load().get(label) {
             return index.query_edges(query);
         }
         super::EdgeTripleIter::empty()
@@ -457,7 +485,7 @@ impl Indexer {
         label: &Arc<String>,
         query: &str,
     ) -> Result<ScoredIdIter, String> {
-        if let Some(index) = self.index.read().get(label) {
+        if let Some(index) = self.index.load().get(label) {
             return index.fulltext_query(query);
         }
         Ok(IndexResultsIter::empty_scored())
@@ -471,7 +499,7 @@ impl Indexer {
         label: &Arc<String>,
         query: &str,
     ) -> Result<super::ScoredEdgeTripleIter, String> {
-        if let Some(index) = self.index.read().get(label) {
+        if let Some(index) = self.index.load().get(label) {
             return index.fulltext_query_edges(query);
         }
         Ok(super::ScoredEdgeTripleIter::empty())
@@ -492,7 +520,7 @@ impl Indexer {
         vector: Arc<thin_vec::ThinVec<f32>>,
         k: usize,
     ) -> Result<VectorScoredIdIter, String> {
-        if let Some(index) = self.index.read().get(label) {
+        if let Some(index) = self.index.load().get(label) {
             return index.vector_query(field, vector, k);
         }
         Ok(VectorScoredIdIter::empty(vector))
@@ -507,7 +535,7 @@ impl Indexer {
         vector: Arc<thin_vec::ThinVec<f32>>,
         k: usize,
     ) -> Result<VectorScoredEdgeTripleIter, String> {
-        if let Some(index) = self.index.read().get(label) {
+        if let Some(index) = self.index.load().get(label) {
             return index.vector_query_edges(field, vector, k);
         }
         Ok(VectorScoredEdgeTripleIter::empty(vector))
@@ -527,7 +555,7 @@ impl Indexer {
         label: &Arc<String>,
         attr: &Arc<String>,
     ) -> Option<String> {
-        let guard = self.index.read();
+        let guard = self.index.load();
         let index = guard.get(label)?;
         let fields = index.get_fields(attr)?;
         for field in fields {
@@ -550,7 +578,7 @@ impl Indexer {
         label: &Arc<String>,
         attr: &Arc<String>,
     ) -> Option<u32> {
-        let guard = self.index.read();
+        let guard = self.index.load();
         let index = guard.get(label)?;
         let fields = index.get_fields(attr)?;
         for field in fields {
@@ -572,7 +600,7 @@ impl Indexer {
         &self,
         label: &Arc<String>,
     ) -> Option<PopulationTicket> {
-        let index = self.index.read();
+        let index = self.index.load();
         let index = index.get(label)?;
         let generation_id = index.id();
         index.increment_pending_for_generation(generation_id);
@@ -590,7 +618,7 @@ impl Indexer {
         &self,
         label: &Arc<String>,
     ) -> Option<PopulationSnapshot> {
-        let index = self.index.read();
+        let index = self.index.load();
         let index = index.get(label)?;
         let generation_id = index.id();
         let fields = index.fields().clone();
@@ -610,7 +638,7 @@ impl Indexer {
     #[must_use]
     pub fn acquire_population_snapshots(&self) -> Vec<PopulationSnapshot> {
         self.index
-            .read()
+            .load()
             .iter()
             .map(|(label, index)| {
                 let generation_id = index.id();
@@ -634,7 +662,7 @@ impl Indexer {
         &self,
         ticket: &PopulationTicket,
     ) {
-        let index = self.index.read();
+        let index = self.index.load();
         if let Some(index) = index.get(ticket.label()) {
             index.try_decrement_pending_for_generation(ticket.generation_id());
         }
@@ -647,7 +675,7 @@ impl Indexer {
         ticket: &PopulationTicket,
     ) -> bool {
         self.index
-            .read()
+            .load()
             .get(ticket.label())
             .is_some_and(|index| index.id() == ticket.generation_id())
     }
@@ -658,7 +686,7 @@ impl Indexer {
         &self,
         ticket: &PopulationTicket,
     ) -> i32 {
-        self.index.read().get(ticket.label()).map_or(0, |index| {
+        self.index.load().get(ticket.label()).map_or(0, |index| {
             index.pending_count_for_generation(ticket.generation_id())
         })
     }
@@ -668,20 +696,20 @@ impl Indexer {
         &self,
         label: &Arc<String>,
     ) -> bool {
-        if let Some(index) = self.index.read().get(label) {
+        if let Some(index) = self.index.load().get(label) {
             return index.pending_count() == 0;
         }
         false
     }
 
     pub fn commit(
-        &mut self,
+        &self,
         add_docs: &mut HashMap<Arc<String>, Vec<Document>>,
         remove_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
     ) {
-        let mut index = self.index.write();
+        let index = self.index.load();
         for (label, add_docs) in add_docs {
-            let Some(index) = index.get_mut(label) else {
+            let Some(index) = index.get(label) else {
                 continue;
             };
             for mut doc in add_docs.drain(..) {
@@ -689,14 +717,13 @@ impl Indexer {
             }
         }
         for (label, remove_docs) in remove_docs {
-            let Some(index) = index.get_mut(label) else {
+            let Some(index) = index.get(label) else {
                 continue;
             };
             for id in remove_docs.iter() {
                 index.delete_document(id);
             }
         }
-        drop(index);
     }
 
     /// Edge-index variant of `commit`: adds documents built with
@@ -706,13 +733,13 @@ impl Indexer {
     /// type-id → name conversion is done upstream in
     /// `Graph::commit_edge_index` before this call.
     pub fn commit_edge(
-        &mut self,
+        &self,
         add_docs: &mut HashMap<Arc<String>, Vec<Document>>,
         remove_docs: &mut HashMap<Arc<String>, std::collections::HashMap<u64, (u64, u64)>>,
     ) {
-        let mut index = self.index.write();
+        let index = self.index.load();
         for (label, add_docs) in add_docs {
-            let Some(index) = index.get_mut(label) else {
+            let Some(index) = index.get(label) else {
                 continue;
             };
             for mut doc in add_docs.drain(..) {
@@ -720,7 +747,7 @@ impl Indexer {
             }
         }
         for (label, edges) in remove_docs {
-            let Some(index) = index.get_mut(label) else {
+            let Some(index) = index.get(label) else {
                 continue;
             };
             for (&edge_id, &(src, dst)) in edges.iter() {
@@ -728,7 +755,6 @@ impl Indexer {
             }
             edges.clear();
         }
-        drop(index);
     }
 
     #[must_use]
@@ -737,7 +763,7 @@ impl Indexer {
         label: &Arc<String>,
     ) -> HashMap<Arc<String>, Vec<Arc<Field>>> {
         self.index
-            .read()
+            .load()
             .get(label)
             .map(|index| index.fields().clone())
             .unwrap_or_default()
@@ -747,7 +773,7 @@ impl Indexer {
     #[must_use]
     pub fn get_all_fields(&self) -> Vec<(Arc<String>, HashMap<Arc<String>, Vec<Arc<Field>>>)> {
         self.index
-            .read()
+            .load()
             .iter()
             .filter(|(_, index)| !index.is_empty())
             .map(|(label, index)| (label.clone(), index.fields().clone()))
@@ -756,9 +782,11 @@ impl Indexer {
 
     #[must_use]
     pub fn index_info(&self) -> Vec<IndexInfo> {
+        // Lock-free snapshot: safe to call from a BGSAVE fork child even if
+        // the parent's writer thread was mid-commit at fork time.
         let mut infos: Vec<IndexInfo> = self
             .index
-            .read()
+            .load()
             .iter()
             .filter(|(_, index)| !index.is_empty())
             .map(|(label, index)| {
@@ -785,7 +813,7 @@ impl Indexer {
         &self,
         label: &Arc<String>,
     ) -> bool {
-        self.index.read().contains_key(label)
+        self.index.load().contains_key(label)
     }
 
     #[must_use]
@@ -794,7 +822,7 @@ impl Indexer {
         label: &Arc<String>,
         field: &Arc<String>,
     ) -> bool {
-        if let Some(index) = self.index.read().get(label) {
+        if let Some(index) = self.index.load().get(label) {
             return index.contains_field(field);
         }
         false
@@ -805,8 +833,7 @@ impl Indexer {
         label: &Arc<String>,
         progress: u64,
     ) {
-        let mut index = self.index.write();
-        if let Some(index) = index.get_mut(label) {
+        if let Some(index) = self.index.load().get(label) {
             let (_, total) = index.progress();
             index.set_progress(progress, total);
         }
@@ -826,7 +853,7 @@ impl Indexer {
         self.cancelled.store(true, Ordering::Relaxed);
         // Clear the graph reference to break the circular Arc:
         // MvccGraph → Arc<Graph> → Indexer → Arc<Graph>
-        *self.graph.lock() = None;
+        self.graph.store(None);
     }
 
     #[must_use]
@@ -834,19 +861,28 @@ impl Indexer {
         self.cancelled.load(Ordering::Relaxed)
     }
 
+    /// Rebuild the RediSearch spec for `label` from scratch (drop + create +
+    /// re-register fields), bumping the generation id so stale populate
+    /// workers bail out.
+    ///
+    /// Caller must hold [`Self::write_lock`] — the new generation is
+    /// published via clone-and-swap.
     pub fn recreate_index(
-        &mut self,
+        &self,
         label: &Arc<String>,
     ) -> Result<(), String> {
-        let mut index = self.index.write();
-        if let Some(index) = index.get_mut(label) {
+        let map = self.index.load_full();
+        if let Some(index) = map.get(label) {
+            let mut index = index.clone_for_update();
             index.recreate_index(label)?;
+            let mut new_map = (*map).clone();
+            new_map.insert(label.clone(), Arc::new(index));
+            self.index.store(Arc::new(new_map));
         }
-        drop(index);
         Ok(())
     }
 
-    /// Only touches the `Indexer`'s own `Mutex`-guarded field, so this takes
+    /// Only touches the `Indexer`'s own lock-free `graph` slot, so this takes
     /// `&self` deliberately: it must be callable while the caller holds only
     /// an immutable borrow of the enclosing `Graph` (see
     /// `Graph::set_indexer_graph`), so that background index population
@@ -857,11 +893,11 @@ impl Indexer {
         &self,
         graph: Arc<AtomicRefCell<Graph>>,
     ) {
-        *self.graph.lock() = Some(graph);
+        self.graph.store(Some(graph));
     }
 
     #[must_use]
     pub fn get_graph(&self) -> Option<Arc<AtomicRefCell<Graph>>> {
-        self.graph.lock().clone()
+        self.graph.load_full()
     }
 }

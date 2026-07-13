@@ -3,7 +3,6 @@ use std::sync::Arc;
 use graph::entity_type::EntityType;
 use graph::graph::attribute_store::AttributeStore;
 use graph::graph::graph::Graph;
-use graph::graph::graphblas::matrix::New;
 use graph::graph::graphblas::serialization::{Decode, Reader};
 use graph::graph::graphblas::tensor::Tensor;
 use graph::graph::graphblas::versioned_matrix::VersionedMatrix;
@@ -90,8 +89,8 @@ pub fn rdb_load_graph(
                 deleted_rels: RoaringTreemap::new(),
                 label_matrices: Vec::new(),
                 relationship_tensors: Vec::new(),
-                adj_matrix: VersionedMatrix::new(0, 0),
-                lbls_matrix: VersionedMatrix::new(0, 0),
+                adj_matrix: VersionedMatrix::<bool>::new(0, 0),
+                lbls_matrix: VersionedMatrix::<bool>::new(0, 0),
             };
             decode_state.pending.insert(hdr.graph_name.clone(), pg);
         } else {
@@ -150,10 +149,10 @@ pub fn rdb_load_graph(
 
     let mut deleted_nodes = RoaringTreemap::new();
     let mut deleted_rels = RoaringTreemap::new();
-    let mut label_matrices: Vec<VersionedMatrix> = Vec::new();
+    let mut label_matrices = Vec::new();
     let mut relationship_tensors: Vec<Tensor> = Vec::new();
-    let mut adj_matrix = VersionedMatrix::new(0, 0);
-    let mut lbls_matrix = VersionedMatrix::new(0, 0);
+    let mut adj_matrix = VersionedMatrix::<bool>::new(0, 0);
+    let mut lbls_matrix = VersionedMatrix::<bool>::new(0, 0);
 
     for (state, count) in &payloads {
         match *state {
@@ -201,8 +200,8 @@ pub fn rdb_load_graph(
         deleted_rels,
         adj_matrix,
         lbls_matrix,
-        VersionedMatrix::new(0, 0),
-        VersionedMatrix::new(0, 0),
+        VersionedMatrix::<bool>::new(0, 0),
+        VersionedMatrix::<bool>::new(0, 0),
         label_matrices,
         relationship_tensors,
         schema.node_labels,
@@ -281,8 +280,8 @@ pub fn finalize_pending_graph(pg: PendingGraph) -> Result<Graph, String> {
         pg.deleted_rels,
         pg.adj_matrix,
         pg.lbls_matrix,
-        VersionedMatrix::new(0, 0),
-        VersionedMatrix::new(0, 0),
+        VersionedMatrix::<bool>::new(0, 0),
+        VersionedMatrix::<bool>::new(0, 0),
         pg.label_matrices,
         pg.relationship_tensors,
         pg.schema.node_labels,
@@ -414,10 +413,10 @@ fn load_graph_from_reader(
 
     let mut deleted_nodes = RoaringTreemap::new();
     let mut deleted_rels = RoaringTreemap::new();
-    let mut label_matrices: Vec<VersionedMatrix> = Vec::new();
+    let mut label_matrices = Vec::new();
     let mut relationship_tensors: Vec<Tensor> = Vec::new();
-    let mut adj_matrix = VersionedMatrix::new(0, 0);
-    let mut lbls_matrix = VersionedMatrix::new(0, 0);
+    let mut adj_matrix = VersionedMatrix::<bool>::new(0, 0);
+    let mut lbls_matrix = VersionedMatrix::<bool>::new(0, 0);
 
     for (state, count) in &payloads {
         match *state {
@@ -465,8 +464,8 @@ fn load_graph_from_reader(
         deleted_rels,
         adj_matrix,
         lbls_matrix,
-        VersionedMatrix::new(0, 0),
-        VersionedMatrix::new(0, 0),
+        VersionedMatrix::<bool>::new(0, 0),
+        VersionedMatrix::<bool>::new(0, 0),
         label_matrices,
         relationship_tensors,
         schema.node_labels,

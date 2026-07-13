@@ -32,9 +32,8 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use crate::graph::graph::{LabelId, NodeId, RelationshipId};
-use crate::graph::graphblas::matrix::{Matrix, New, Size, Transpose};
-use crate::graph::graphblas::tensor::compound_key;
-use crate::graph::graphblas::versioned_matrix::{Iter as EdgeIter, VersionedMatrix};
+use crate::graph::graphblas::matrix::Matrix;
+use crate::graph::graphblas::versioned_matrix::{Iter, VersionedMatrix};
 use crate::parser::ast::{ExprIR, QueryExpr, QueryRelationship, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
@@ -49,23 +48,53 @@ use orx_tree::{Dyn, NodeIdx, NodeRef};
 
 use super::batched_result_emitter::{BatchedResultEmitter, EdgeEndpoints, RowIter};
 
+/// Base matrix for the batched mxm path. Relationship matrices store inline
+/// edge ids (`u64`) while the adjacency matrix and merged multi-type matrices
+/// are `bool`; traversal only consumes the sparsity pattern (`ANY_PAIR`
+/// semiring), so both traverse identically. Cloning either variant is cheap
+/// (`Arc` handle clones, no data copy).
+enum TraversalMatrix {
+    Bool(VersionedMatrix<bool>),
+    U64(VersionedMatrix<u64>),
+}
+
+impl TraversalMatrix {
+    fn ncols(&self) -> u64 {
+        match self {
+            Self::Bool(m) => m.ncols(),
+            Self::U64(m) => m.ncols(),
+        }
+    }
+
+    /// `f = f * self` (delta-aware, structural). See [`Matrix::delta_lmxm`].
+    fn delta_lmxm_into(
+        &self,
+        f: &mut Matrix<bool>,
+    ) {
+        match self {
+            Self::Bool(m) => f.delta_lmxm(m),
+            Self::U64(m) => f.delta_lmxm(m),
+        }
+    }
+}
+
 /// Lazily resolved state — built on first `expand_row`, after any sibling
 /// Commit in the subtree has had a chance to create new labels/types.
 struct CtState {
-    fwd_iter: std::cell::RefCell<EdgeIter>,
-    rev_iter: Option<std::cell::RefCell<EdgeIter>>,
+    fwd_iter: std::cell::RefCell<Iter>,
+    rev_iter: Option<std::cell::RefCell<Iter>>,
     /// Iterator over the TRANSPOSED pair matrix (dst-major). Built lazily on
     /// the first expansion where only the matrix-destination is bound — e.g.
     /// a planner-transposed traverse seeded from the pattern-source, or the
     /// reverse half of a bidirectional expansion. Seeking this by destination
     /// replaces what would otherwise be a full edge-matrix scan per input
     /// row (O(V·E) for the whole query).
-    bwd_iter: Option<std::cell::RefCell<EdgeIter>>,
+    bwd_iter: Option<std::cell::RefCell<Iter>>,
     fwd_src_label_ids: Vec<LabelId>,
     fwd_dst_label_ids: Vec<LabelId>,
     rev_src_label_ids: Vec<LabelId>,
     rev_dst_label_ids: Vec<LabelId>,
-    edge_iters: Vec<std::cell::RefCell<EdgeIter>>,
+    edge_type_indices: Vec<usize>,
     /// True when one of the requested labels was unknown at state-build
     /// time.  We still drain the child (for side effects) but produce no
     /// output rows, since `unwrap_or_default()` would otherwise turn an
@@ -74,10 +103,10 @@ struct CtState {
     /// Materialized base matrix for batched mxm path. Built lazily on
     /// first `expand_batch`. Cached for op lifetime; safe because writes
     /// are serialized w.r.t. read queries.
-    batched_matrix: Option<VersionedMatrix>,
+    batched_matrix: Option<TraversalMatrix>,
     /// Per-hop matrices for fused chain (same lifetime/safety rules as
     /// `batched_matrix`). `chain_matrices[i]` corresponds to `chain[i]`.
-    chain_matrices: Vec<VersionedMatrix>,
+    chain_matrices: Vec<TraversalMatrix>,
     /// Per-hop label IDs for `chain[i].to` (post-multiply dst filter).
     chain_dst_label_ids: Vec<Vec<LabelId>>,
 }
@@ -144,22 +173,21 @@ pub struct CondTraverseOp<'a> {
 fn build_unrestricted_iter(
     g: &crate::graph::graph::Graph,
     types: &[Arc<String>],
-) -> Option<EdgeIter> {
+) -> Option<Iter> {
     if types.is_empty() {
         return Some(g.adjacency_matrix().iter(0, u64::MAX));
     }
     if types.len() == 1 {
         return g
             .get_relationship_matrix(&types[0])
-            .map(|t| t.matrix().iter(0, u64::MAX));
+            .map(|t| t.matrix().structural_iter(0, u64::MAX));
     }
     let merged = g.build_relationship_matrix_unrestricted(types)?;
     Some(VersionedMatrix::from_matrix(merged).iter(0, u64::MAX))
 }
 
-fn empty_edge_iter() -> EdgeIter {
-    use crate::graph::graphblas::matrix::New;
-    VersionedMatrix::new(0, 0).iter(0, u64::MAX)
+fn empty_edge_iter() -> Iter {
+    VersionedMatrix::<bool>::new(0, 0).iter(0, u64::MAX)
 }
 
 /// Build an `EdgeIter` over the TRANSPOSED (dst → src) pair matrix for
@@ -171,7 +199,7 @@ fn empty_edge_iter() -> EdgeIter {
 fn build_transposed_iter(
     g: &crate::graph::graph::Graph,
     types: &[Arc<String>],
-) -> Option<EdgeIter> {
+) -> Option<Iter> {
     if types.is_empty() {
         return Some(g.adjacency_matrix().transpose().iter(0, u64::MAX));
     }
@@ -363,15 +391,12 @@ impl<'a> CondTraverseOp<'a> {
             None
         };
 
-        let edge_iters: Vec<_> = if rp.types.is_empty() {
-            g.relationship_matrices_iter()
-                .map(|tensor| std::cell::RefCell::new(tensor.edge_iter(0, u64::MAX)))
-                .collect()
+        let edge_type_indices: Vec<usize> = if rp.types.is_empty() {
+            (0..g.relationship_tensors().len()).collect()
         } else {
             rp.types
                 .iter()
-                .filter_map(|t| g.get_relationship_matrix(t))
-                .map(|tensor| std::cell::RefCell::new(tensor.edge_iter(0, u64::MAX)))
+                .filter_map(|t| g.get_type_id(t).map(|tid| tid.0))
                 .collect()
         };
 
@@ -383,7 +408,7 @@ impl<'a> CondTraverseOp<'a> {
             fwd_dst_label_ids,
             rev_src_label_ids,
             rev_dst_label_ids,
-            edge_iters,
+            edge_type_indices,
             no_match,
             batched_matrix: None,
             chain_matrices: Vec::new(),
@@ -427,17 +452,17 @@ impl<'a> CondTraverseOp<'a> {
 
         if state.batched_matrix.is_none() {
             let m = if rp.types.is_empty() {
-                g.adjacency_matrix().clone()
+                TraversalMatrix::Bool(g.adjacency_matrix().clone())
             } else if rp.types.len() == 1 {
                 if let Some(t) = g.get_relationship_matrix(&rp.types[0]) {
-                    t.matrix().clone()
+                    TraversalMatrix::U64(t.matrix().clone())
                 } else {
                     state.no_match = true;
                     return Ok(true);
                 }
             } else {
                 if let Some(m) = g.build_relationship_matrix_unrestricted(&rp.types) {
-                    VersionedMatrix::from_matrix(m)
+                    TraversalMatrix::Bool(VersionedMatrix::from_matrix(m))
                 } else {
                     state.no_match = true;
                     return Ok(true);
@@ -451,17 +476,17 @@ impl<'a> CondTraverseOp<'a> {
             // either.
             for hop in self.chain {
                 let hm = if hop.types.is_empty() {
-                    g.adjacency_matrix().clone()
+                    TraversalMatrix::Bool(g.adjacency_matrix().clone())
                 } else if hop.types.len() == 1 {
                     if let Some(t) = g.get_relationship_matrix(&hop.types[0]) {
-                        t.matrix().clone()
+                        TraversalMatrix::U64(t.matrix().clone())
                     } else {
                         state.no_match = true;
                         return Ok(true);
                     }
                 } else {
                     if let Some(m) = g.build_relationship_matrix_unrestricted(&hop.types) {
-                        VersionedMatrix::from_matrix(m)
+                        TraversalMatrix::Bool(VersionedMatrix::from_matrix(m))
                     } else {
                         state.no_match = true;
                         return Ok(true);
@@ -523,14 +548,15 @@ impl<'a> CondTraverseOp<'a> {
             return Ok(true);
         }
 
-        let mut f = Matrix::new(nrows, ncols);
-        f.build_bool(&row_idx_buf, &col_idx_buf);
-        f.delta_lmxm(m_merged);
+        let mut f = Matrix::<bool>::new(nrows, ncols);
+        f.build(&row_idx_buf, &col_idx_buf);
+        m_merged.delta_lmxm_into(&mut f);
         for hop_m in &state.chain_matrices {
-            f.delta_lmxm(hop_m);
+            hop_m.delta_lmxm_into(&mut f);
         }
 
-        let (row_is, col_is) = f.extract_tuples_bool();
+        // Flush pending mxm work before attaching the row iterator.
+        f.wait();
         // For fused chains all hops are storage-direction (the fusion pass
         // refuses to fuse when transposed differs), so `transposed` applies
         // only to the first hop and the final destination alias comes from
@@ -556,7 +582,7 @@ impl<'a> CondTraverseOp<'a> {
         let mut out_edge_ids = Vec::new();
         let mut out_src_ids = Vec::new();
 
-        for (row_i, dest_raw) in row_is.into_iter().zip(col_is) {
+        for (row_i, dest_raw) in f.iter(0, u64::MAX) {
             let dest_id = NodeId::from(dest_raw);
             // Post-filter final-hop dst label (= F * A * R_dst in C's algebra).
             if !dst_label_ids
@@ -590,12 +616,11 @@ impl<'a> CondTraverseOp<'a> {
                 };
                 let mat_src = u64::from(src_id);
                 let mat_dst = u64::from(dest_id);
-                let key = compound_key(mat_src, mat_dst);
                 let mut found_id: Option<RelationshipId> = None;
-                for cell in &state.edge_iters {
-                    let mut it = cell.borrow_mut();
-                    it.seek(key, key);
-                    if let Some((_, raw_id)) = it.next() {
+                for &tidx in &state.edge_type_indices {
+                    if let Some(raw_id) =
+                        g.relationship_tensors()[tidx].get(mat_src, mat_dst).next()
+                    {
                         found_id = Some(RelationshipId::from(raw_id));
                         break;
                     }
@@ -784,7 +809,7 @@ impl<'a> CondTraverseOp<'a> {
                 out,
                 emit_relationship,
                 sibling_edges,
-                &state.edge_iters,
+                &state.edge_type_indices,
                 &state.fwd_src_label_ids,
                 &state.fwd_dst_label_ids,
             );
@@ -831,7 +856,7 @@ impl<'a> CondTraverseOp<'a> {
                 out,
                 emit_relationship,
                 sibling_edges,
-                &state.edge_iters,
+                &state.edge_type_indices,
                 &state.rev_src_label_ids,
                 &state.rev_dst_label_ids,
             );
@@ -885,7 +910,7 @@ impl<'a> CondTraverseOp<'a> {
         out: &mut Vec<(NodeId, NodeId, RelationshipId)>,
         emit_relationship: bool,
         sibling_edges: &[u32],
-        edge_iters: &[std::cell::RefCell<EdgeIter>],
+        edge_type_indices: &[usize],
         src_label_ids: &[LabelId],
         dst_label_ids: &[LabelId],
     ) {
@@ -954,14 +979,13 @@ impl<'a> CondTraverseOp<'a> {
             // `get_relationships` iterator already returns unique matrix-level
             // pairs, so one representative edge per pair is sufficient.
             let has_edge_filter = matches!(filter_attrs, Value::Map(m) if !m.is_empty());
-            let key = compound_key(u64::from(src), u64::from(dst));
+            let mat_src = u64::from(src);
+            let mat_dst = u64::from(dst);
             if !emit_relationship && !has_edge_filter {
                 let mut found_id: Option<RelationshipId> = None;
                 let env = BatchRow::new(batch, row_idx);
-                'outer: for cell in edge_iters {
-                    let mut it = cell.borrow_mut();
-                    it.seek(key, key);
-                    for (_, raw_id) in &mut *it {
+                'outer: for &tidx in edge_type_indices {
+                    for raw_id in g.relationship_tensors()[tidx].get(mat_src, mat_dst) {
                         let id = RelationshipId::from(raw_id);
                         if !super::edge_already_used(&env, id, rp.alias.id, sibling_edges) {
                             found_id = Some(id);
@@ -979,10 +1003,8 @@ impl<'a> CondTraverseOp<'a> {
 
             // Scan edges
             let env = BatchRow::new(batch, row_idx);
-            for cell in edge_iters {
-                let mut it = cell.borrow_mut();
-                it.seek(key, key);
-                for (_, raw_id) in &mut *it {
+            for &tidx in edge_type_indices {
+                for raw_id in g.relationship_tensors()[tidx].get(mat_src, mat_dst) {
                     let id = RelationshipId::from(raw_id);
                     // Relationship uniqueness: skip edges already bound to other
                     // relationship variables in this MATCH clause.

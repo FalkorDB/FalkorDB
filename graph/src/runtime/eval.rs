@@ -172,7 +172,7 @@ impl NeighborIter {
                 .iter()
                 .filter_map(|t| g.get_relationship_matrix(t))
             {
-                fwd.push(t.matrix().iter(0, 0));
+                fwd.push(t.matrix().structural_iter(0, 0));
                 if !directed {
                     bwd.push(t.matrix_t().iter(0, 0));
                 }
