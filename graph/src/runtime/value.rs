@@ -177,7 +177,7 @@ impl Point {
 ///
 /// Values are cloneable and use Arc for large data (strings, shared values)
 /// to minimize copying during query execution.
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub enum Value {
     /// Cypher NULL value - represents missing or unknown data
     #[default]
@@ -213,6 +213,32 @@ pub enum Value {
     Time(i64),
     /// Duration as seconds from epoch (offset encoding)
     Duration(i64),
+}
+
+// Manual impl so clone stays inlineable in hot evaluation loops: every arm
+// is a plain copy or an Arc refcount bump.
+impl Clone for Value {
+    #[inline]
+    fn clone(&self) -> Self {
+        match self {
+            Self::Null => Self::Null,
+            Self::Bool(b) => Self::Bool(*b),
+            Self::Int(i) => Self::Int(*i),
+            Self::Float(f) => Self::Float(*f),
+            Self::String(s) => Self::String(Arc::clone(s)),
+            Self::List(l) => Self::List(Arc::clone(l)),
+            Self::Map(m) => Self::Map(Arc::clone(m)),
+            Self::Node(n) => Self::Node(*n),
+            Self::Relationship(r) => Self::Relationship(*r),
+            Self::Path(p) => Self::Path(Arc::clone(p)),
+            Self::VecF32(v) => Self::VecF32(Arc::clone(v)),
+            Self::Point(p) => Self::Point(p.clone()),
+            Self::Datetime(t) => Self::Datetime(*t),
+            Self::Date(t) => Self::Date(*t),
+            Self::Time(t) => Self::Time(*t),
+            Self::Duration(t) => Self::Duration(*t),
+        }
+    }
 }
 
 impl Value {
@@ -819,16 +845,30 @@ impl Hash for Value {
 impl Add for Value {
     type Output = Result<Self, String>;
 
+    // Scalar arithmetic dominates hot per-row evaluation; keep those arms
+    // inlineable at call sites and push everything else out of line.
+    #[inline]
     fn add(
         self,
         rhs: Self,
     ) -> Self::Output {
         match (self, rhs) {
-            (Self::Null, _) | (_, Self::Null) => Ok(Self::Null),
             (Self::Int(a), Self::Int(b)) => Ok(Self::Int(a.wrapping_add(b))),
             (Self::Float(a), Self::Float(b)) => Ok(Self::Float(a + b)),
             (Self::Float(a), Self::Int(b)) => Ok(Self::Float(a + b as f64)),
             (Self::Int(a), Self::Float(b)) => Ok(Self::Float(a as f64 + b)),
+            (lhs, rhs) => lhs.add_slow(rhs),
+        }
+    }
+}
+
+impl Value {
+    fn add_slow(
+        self,
+        rhs: Self,
+    ) -> Result<Self, String> {
+        match (self, rhs) {
+            (Self::Null, _) | (_, Self::Null) => Ok(Self::Null),
             (Self::List(a), Self::List(b)) => {
                 let mut list = match Arc::try_unwrap(a) {
                     Ok(l) => l,

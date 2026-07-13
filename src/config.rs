@@ -51,7 +51,7 @@ lazy_static! {
     pub static ref CONFIGURATION_INDEX_WORKER_THREADS: RedisGILGuard<i64> =
         RedisGILGuard::new(0.into());
     pub static ref CONFIGURATION_NODE_CREATION_BUFFER: RedisGILGuard<i64> =
-        RedisGILGuard::new(16384.into());
+        RedisGILGuard::new(graph::graph::graph::DEFAULT_NODE_CREATION_BUFFER as i64);
     pub static ref CONFIGURATION_VKEY_MAX_ENTITY_COUNT: RedisGILGuard<i64> =
         RedisGILGuard::new(100_000.into());
     pub static ref CONFIGURATION_CMD_INFO: RedisGILGuard<bool> = RedisGILGuard::new(true);

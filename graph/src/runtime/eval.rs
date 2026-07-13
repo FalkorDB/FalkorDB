@@ -244,6 +244,17 @@ impl NeighborIter {
     }
 }
 
+/// A resolved node of an expression tree.
+///
+/// Navigating children through a node (`child`, `children`) is pure pointer
+/// chasing, while resolving a `NodeIdx` via `tree.node(idx)` validates the
+/// index on every call (memory-state check plus a scan of the tree's pinned
+/// memory fragments). The evaluator therefore validates an idx once at the
+/// [`ExprEval::eval`] boundary and recurses on `ExprNode`s; hot per-row
+/// callers can pre-resolve nodes once and call [`ExprEval::eval_node`]
+/// directly, paying no validation at all.
+pub type ExprNode<'t> = DynNode<'t, ExprIR<Variable>>;
+
 /// Shared expression evaluator used by both the runtime and the optimizer.
 pub struct ExprEval<'a> {
     /// Full runtime context. `None` when evaluating constant expressions at
@@ -271,6 +282,7 @@ impl<'a> ExprEval<'a> {
     }
 
     /// Resolve an environment variable.
+    #[inline(always)]
     fn resolve_var<R: RowView + ?Sized>(
         env: Option<&R>,
         x: &Variable,
@@ -290,8 +302,38 @@ impl<'a> ExprEval<'a> {
         env: Option<&R>,
         agg_group_key: Option<u64>,
     ) -> Result<Value, String> {
+        // The only idx validation on the whole evaluation path; everything
+        // below recurses on `ExprNode`s (see the type's docs).
+        self.eval_node(&ir.node(idx), env, agg_group_key)
+    }
+
+    /// Evaluate a child expression that is statistically almost always a leaf
+    /// (`Constant` / `Variable`) without the overhead of a nested `eval_node`
+    /// call: the leaf cases resolve inline at the call site; anything else
+    /// falls back to the full evaluator.
+    #[inline]
+    fn eval_operand<R: RowView + ?Sized>(
+        &self,
+        child: &ExprNode<'_>,
+        env: Option<&R>,
+        agg_group_key: Option<u64>,
+    ) -> Result<Value, String> {
+        match child.data() {
+            ExprIR::Constant(v) => Ok(v.clone()),
+            ExprIR::Variable(x) => Self::resolve_var(env, x),
+            _ => self.eval_node(child, env, agg_group_key),
+        }
+    }
+
+    #[inline]
+    pub fn eval_node<R: RowView + ?Sized>(
+        &self,
+        node: &ExprNode<'_>,
+        env: Option<&R>,
+        agg_group_key: Option<u64>,
+    ) -> Result<Value, String> {
         // Fast-path early returns for leaf / simple nodes.
-        match ir.node(idx).data() {
+        match node.data() {
             ExprIR::Constant(v) => return Ok(v.clone()),
             ExprIR::Variable(x) => {
                 return Self::resolve_var(env, x);
@@ -304,29 +346,22 @@ impl<'a> ExprEval<'a> {
                 );
             }
             ExprIR::Map => {
-                return Ok(Value::Map(Arc::new(
-                    ir.node(idx)
-                        .children()
-                        .map(|child| {
-                            Ok((
-                                if let ExprIR::Constant(Value::String(key)) = child.data() {
-                                    key.clone()
-                                } else {
-                                    return Err("Map key must be a string".into());
-                                },
-                                self.eval(ir, child.child(0).idx(), env, agg_group_key)?,
-                            ))
-                        })
-                        .collect::<Result<_, String>>()?,
-                )));
+                let mut map = OrderMap::with_capacity(node.num_children());
+                for child in node.children() {
+                    let ExprIR::Constant(Value::String(key)) = child.data() else {
+                        return Err("Map key must be a string".into());
+                    };
+                    let value = self.eval_node(&child.child(0), env, agg_group_key)?;
+                    map.insert(key.clone(), value);
+                }
+                return Ok(Value::Map(Arc::new(map)));
             }
             ExprIR::MapProjection => {
-                return self.eval_map_projection(ir, idx, env, agg_group_key);
+                return self.eval_map_projection(node, env, agg_group_key);
             }
             ExprIR::ShortestPath(info) => {
                 return self.eval_shortest_path(
-                    ir,
-                    idx,
+                    node,
                     env,
                     agg_group_key,
                     &info.rel_types,
@@ -343,7 +378,7 @@ impl<'a> ExprEval<'a> {
             // usually a `Variable` (its own fast path), so this resolves with no
             // scratch allocation. Mirrors the in-loop `Property` handler.
             ExprIR::Property(attr) => {
-                let obj = self.eval(ir, ir.node(idx).child(0).idx(), env, agg_group_key)?;
+                let obj = self.eval_operand(&node.child(0), env, agg_group_key)?;
                 return match obj {
                     Value::Node(id) => {
                         let rt = self.rt()?;
@@ -358,9 +393,30 @@ impl<'a> ExprEval<'a> {
                     other => other.get_attr(attr),
                 };
             }
+            // Binary `a + b` (e.g. `x + 1` in CREATE/SET attribute maps) is
+            // common enough to keep out of the allocating stack loop; the
+            // operands are usually leaves that `eval_operand` resolves inline.
+            ExprIR::Add if node.num_children() == 2 => {
+                let lhs = self.eval_operand(&node.child(0), env, agg_group_key)?;
+                let rhs = self.eval_operand(&node.child(1), env, agg_group_key)?;
+                return lhs + rhs;
+            }
             _ => {}
         }
 
+        self.eval_compound(node, env, agg_group_key)
+    }
+
+    /// Out-of-line continuation of [`eval_node`](Self::eval_node) for
+    /// compound expressions. Kept separate so `eval_node`'s leaf/simple
+    /// dispatch stays small enough to inline into hot per-row loops without
+    /// dragging the stack machine's code (and stack frame) along.
+    fn eval_compound<R: RowView + ?Sized>(
+        &self,
+        node: &ExprNode<'_>,
+        env: Option<&R>,
+        agg_group_key: Option<u64>,
+    ) -> Result<Value, String> {
         // Stack-based iterative evaluation. Both scratch buffers are stack-inline
         // SmallVecs, so typical expressions evaluate with zero heap allocation;
         // unusually large ones (long list literals / many-arg functions) spill to
@@ -369,9 +425,8 @@ impl<'a> ExprEval<'a> {
         let res = &mut res_owned;
 
         let mut stack: SmallVec<[_; 4]> = SmallVec::new();
-        stack.push((idx, false));
-        while let Some((idx, reenter)) = stack.pop() {
-            let node = ir.node(idx);
+        stack.push((node.clone(), false));
+        while let Some((node, reenter)) = stack.pop() {
             match node.data() {
                 ExprIR::Constant(v) => res.push(v.clone()),
                 ExprIR::Variable(x) => res.push(Self::resolve_var(env, x)?),
@@ -387,21 +442,21 @@ impl<'a> ExprEval<'a> {
                         }
                         res.push(Value::List(Arc::new(list)));
                     } else if node.num_children() > 0 {
-                        stack.push((idx, true));
-                        for idx in node.children().map(|c| c.idx()) {
-                            stack.push((idx, false));
+                        stack.push((node.clone(), true));
+                        for child in node.children() {
+                            stack.push((child, false));
                         }
                     } else {
                         res.push(Value::List(Arc::new(thin_vec![])));
                     }
                 }
-                ExprIR::Length => match self.eval(ir, node.child(0).idx(), env, agg_group_key)? {
+                ExprIR::Length => match self.eval_node(&node.child(0), env, agg_group_key)? {
                     Value::List(arr) => res.push(Value::Int(arr.len() as _)),
                     _ => return Err(String::from("Length operator requires a list")),
                 },
                 ExprIR::GetElement => {
-                    let arr = self.eval(ir, node.child(0).idx(), env, agg_group_key)?;
-                    let i = self.eval(ir, node.child(1).idx(), env, agg_group_key)?;
+                    let arr = self.eval_node(&node.child(0), env, agg_group_key)?;
+                    let i = self.eval_node(&node.child(1), env, agg_group_key)?;
                     match (arr, i) {
                         (Value::List(values), Value::Int(i)) => {
                             let len = values.len() as i64;
@@ -440,17 +495,17 @@ impl<'a> ExprEval<'a> {
                     }
                 }
                 ExprIR::GetElements => {
-                    let arr = self.eval(ir, node.child(0).idx(), env, agg_group_key)?;
-                    let a = self.eval(ir, node.child(1).idx(), env, agg_group_key)?;
-                    let b = self.eval(ir, node.child(2).idx(), env, agg_group_key)?;
+                    let arr = self.eval_node(&node.child(0), env, agg_group_key)?;
+                    let a = self.eval_node(&node.child(1), env, agg_group_key)?;
+                    let b = self.eval_node(&node.child(2), env, agg_group_key)?;
                     res.push(get_elements(&arr, &a, &b)?);
                 }
-                ExprIR::IsNode => match self.eval(ir, node.child(0).idx(), env, agg_group_key)? {
+                ExprIR::IsNode => match self.eval_node(&node.child(0), env, agg_group_key)? {
                     Value::Node(_) => res.push(Value::Bool(true)),
                     _ => res.push(Value::Bool(false)),
                 },
                 ExprIR::IsRelationship => {
-                    match self.eval(ir, node.child(0).idx(), env, agg_group_key)? {
+                    match self.eval_node(&node.child(0), env, agg_group_key)? {
                         Value::Relationship(_) => res.push(Value::Bool(true)),
                         _ => res.push(Value::Bool(false)),
                     }
@@ -459,7 +514,7 @@ impl<'a> ExprEval<'a> {
                     let mut is_null = false;
                     let mut found = false;
                     for child in node.children() {
-                        match self.eval(ir, child.idx(), env, agg_group_key)? {
+                        match self.eval_node(&child, env, agg_group_key)? {
                             Value::Bool(true) => {
                                 found = true;
                                 res.push(Value::Bool(true));
@@ -484,7 +539,7 @@ impl<'a> ExprEval<'a> {
                     let mut last = None;
                     let mut found = false;
                     for child in node.children() {
-                        match self.eval(ir, child.idx(), env, agg_group_key)? {
+                        match self.eval_node(&child, env, agg_group_key)? {
                             Value::Bool(b) => last = Some(last.map_or(b, |l| logical_xor(l, b))),
                             Value::Null => {
                                 found = true;
@@ -504,7 +559,7 @@ impl<'a> ExprEval<'a> {
                     let mut is_null = false;
                     let mut found = false;
                     for child in node.children() {
-                        match self.eval(ir, child.idx(), env, agg_group_key)? {
+                        match self.eval_node(&child, env, agg_group_key)? {
                             Value::Bool(false) => {
                                 found = true;
                                 res.push(Value::Bool(false));
@@ -525,7 +580,7 @@ impl<'a> ExprEval<'a> {
                         }
                     }
                 }
-                ExprIR::Not => match self.eval(ir, node.child(0).idx(), env, agg_group_key)? {
+                ExprIR::Not => match self.eval_node(&node.child(0), env, agg_group_key)? {
                     Value::Bool(b) => res.push(Value::Bool(!b)),
                     Value::Null => res.push(Value::Null),
                     v => {
@@ -535,7 +590,7 @@ impl<'a> ExprEval<'a> {
                         ));
                     }
                 },
-                ExprIR::Negate => match self.eval(ir, node.child(0).idx(), env, agg_group_key)? {
+                ExprIR::Negate => match self.eval_node(&node.child(0), env, agg_group_key)? {
                     Value::Int(i) => res.push(Value::Int(i.checked_neg().ok_or_else(|| {
                         String::from("ArgumentError: integer overflow in unary minus")
                     })?)),
@@ -550,15 +605,15 @@ impl<'a> ExprEval<'a> {
                 },
                 ExprIR::Eq => res.push(all_equals(
                     node.children()
-                        .map(|child| self.eval(ir, child.idx(), env, agg_group_key)),
+                        .map(|child| self.eval_node(&child, env, agg_group_key)),
                 )?),
                 ExprIR::Neq => res.push(all_not_equals(
                     node.children()
-                        .map(|child| self.eval(ir, child.idx(), env, agg_group_key)),
+                        .map(|child| self.eval_node(&child, env, agg_group_key)),
                 )?),
                 ExprIR::Lt => match self
-                    .eval(ir, node.child(0).idx(), env, agg_group_key)?
-                    .compare_value(&self.eval(ir, node.child(1).idx(), env, agg_group_key)?)
+                    .eval_node(&node.child(0), env, agg_group_key)?
+                    .compare_value(&self.eval_node(&node.child(1), env, agg_group_key)?)
                 {
                     (_, DisjointOrNull::ComparedNull | DisjointOrNull::Disjoint) => {
                         res.push(Value::Null);
@@ -568,8 +623,8 @@ impl<'a> ExprEval<'a> {
                     _ => res.push(Value::Bool(false)),
                 },
                 ExprIR::Gt => match self
-                    .eval(ir, node.child(0).idx(), env, agg_group_key)?
-                    .compare_value(&self.eval(ir, node.child(1).idx(), env, agg_group_key)?)
+                    .eval_node(&node.child(0), env, agg_group_key)?
+                    .compare_value(&self.eval_node(&node.child(1), env, agg_group_key)?)
                 {
                     (_, DisjointOrNull::ComparedNull | DisjointOrNull::Disjoint) => {
                         res.push(Value::Null);
@@ -579,8 +634,8 @@ impl<'a> ExprEval<'a> {
                     _ => res.push(Value::Bool(false)),
                 },
                 ExprIR::Le => match self
-                    .eval(ir, node.child(0).idx(), env, agg_group_key)?
-                    .compare_value(&self.eval(ir, node.child(1).idx(), env, agg_group_key)?)
+                    .eval_node(&node.child(0), env, agg_group_key)?
+                    .compare_value(&self.eval_node(&node.child(1), env, agg_group_key)?)
                 {
                     (_, DisjointOrNull::ComparedNull | DisjointOrNull::Disjoint) => {
                         res.push(Value::Null);
@@ -590,8 +645,8 @@ impl<'a> ExprEval<'a> {
                     _ => res.push(Value::Bool(false)),
                 },
                 ExprIR::Ge => match self
-                    .eval(ir, node.child(0).idx(), env, agg_group_key)?
-                    .compare_value(&self.eval(ir, node.child(1).idx(), env, agg_group_key)?)
+                    .eval_node(&node.child(0), env, agg_group_key)?
+                    .compare_value(&self.eval_node(&node.child(1), env, agg_group_key)?)
                 {
                     (_, DisjointOrNull::ComparedNull | DisjointOrNull::Disjoint) => {
                         res.push(Value::Null);
@@ -601,13 +656,13 @@ impl<'a> ExprEval<'a> {
                     _ => res.push(Value::Bool(false)),
                 },
                 ExprIR::In => {
-                    let value = self.eval(ir, node.child(0).idx(), env, agg_group_key)?;
-                    let list = self.eval(ir, node.child(1).idx(), env, agg_group_key)?;
+                    let value = self.eval_node(&node.child(0), env, agg_group_key)?;
+                    let list = self.eval_node(&node.child(1), env, agg_group_key)?;
                     res.push(list_contains(&list, value)?);
                 }
                 ExprIR::Add => res.push(
                     node.children()
-                        .map(|child| self.eval(ir, child.idx(), env, agg_group_key))
+                        .map(|child| self.eval_node(&child, env, agg_group_key))
                         .reduce(|acc, value| acc? + value?)
                         .ok_or_else(|| {
                             String::from("Add operator requires at least one operand")
@@ -615,7 +670,7 @@ impl<'a> ExprEval<'a> {
                 ),
                 ExprIR::Sub => res.push(
                     node.children()
-                        .map(|child| self.eval(ir, child.idx(), env, agg_group_key))
+                        .map(|child| self.eval_node(&child, env, agg_group_key))
                         .reduce(|acc, value| acc? - value?)
                         .ok_or_else(|| {
                             String::from("Sub operator requires at least one argument")
@@ -623,7 +678,7 @@ impl<'a> ExprEval<'a> {
                 ),
                 ExprIR::Mul => res.push(
                     node.children()
-                        .map(|child| self.eval(ir, child.idx(), env, agg_group_key))
+                        .map(|child| self.eval_node(&child, env, agg_group_key))
                         .reduce(|acc, value| acc? * value?)
                         .ok_or_else(|| {
                             String::from("Mul operator requires at least one argument")
@@ -631,7 +686,7 @@ impl<'a> ExprEval<'a> {
                 ),
                 ExprIR::Div => res.push(
                     node.children()
-                        .map(|child| self.eval(ir, child.idx(), env, agg_group_key))
+                        .map(|child| self.eval_node(&child, env, agg_group_key))
                         .reduce(|acc, value| acc? / value?)
                         .ok_or_else(|| {
                             String::from("Div operator requires at least one argument")
@@ -639,7 +694,7 @@ impl<'a> ExprEval<'a> {
                 ),
                 ExprIR::Modulo => res.push(
                     node.children()
-                        .map(|child| self.eval(ir, child.idx(), env, agg_group_key))
+                        .map(|child| self.eval_node(&child, env, agg_group_key))
                         .reduce(|acc, value| acc? % value?)
                         .ok_or_else(|| {
                             String::from("Modulo operator requires at least one argument")
@@ -647,7 +702,7 @@ impl<'a> ExprEval<'a> {
                 ),
                 ExprIR::Pow => res.push(
                     node.children()
-                        .flat_map(|child| self.eval(ir, child.idx(), env, agg_group_key))
+                        .flat_map(|child| self.eval_node(&child, env, agg_group_key))
                         .reduce(apply_pow)
                         .ok_or_else(|| {
                             String::from("Pow operator requires at least one argument")
@@ -658,10 +713,10 @@ impl<'a> ExprEval<'a> {
                     let group_id = agg_group_key.unwrap();
                     let values = node
                         .children()
-                        .map(|child| self.eval(ir, child.idx(), env, agg_group_key))
+                        .map(|child| self.eval_node(&child, env, agg_group_key))
                         .collect::<Result<ThinVec<_>, _>>()?;
                     let mut value_dedupers = rt.value_dedupers.borrow_mut();
-                    let value_deduper = value_dedupers.entry((idx, group_id)).or_default();
+                    let value_deduper = value_dedupers.entry((node.idx(), group_id)).or_default();
                     if value_deduper.is_seen(&values) {
                         res.push(Value::List(Arc::new(thin_vec![Value::Null])));
                     } else {
@@ -669,7 +724,7 @@ impl<'a> ExprEval<'a> {
                     }
                 }
                 ExprIR::Property(attr) => {
-                    let obj = self.eval(ir, node.child(0).idx(), env, agg_group_key)?;
+                    let obj = self.eval_node(&node.child(0), env, agg_group_key)?;
                     match obj {
                         Value::Node(id) => {
                             let rt = self.rt()?;
@@ -724,7 +779,7 @@ impl<'a> ExprEval<'a> {
                         let mut slots: [Value; 10] = std::array::from_fn(|_| Value::Null);
                         for (i, child) in node.children().enumerate() {
                             if !matches!(child.data(), ExprIR::Constant(Value::Null)) {
-                                slots[i] = self.eval(ir, child.idx(), env, agg_group_key)?;
+                                slots[i] = self.eval_node(&child, env, agg_group_key)?;
                             }
                         }
                         res.push(struct_fn(&slots[..n])?);
@@ -739,7 +794,7 @@ impl<'a> ExprEval<'a> {
                     {
                         let mut args = node
                             .children()
-                            .map(|child| self.eval(ir, child.idx(), env, agg_group_key))
+                            .map(|child| self.eval_node(&child, env, agg_group_key))
                             .collect::<Result<ThinVec<_>, _>>()?;
                         match args.remove(0) {
                             Value::List(values) => {
@@ -766,7 +821,7 @@ impl<'a> ExprEval<'a> {
                     // struct_fn fast path above uses with a stack array.
                     let base = res.len();
                     for child in node.children() {
-                        let v = self.eval(ir, child.idx(), env, agg_group_key)?;
+                        let v = self.eval_node(&child, env, agg_group_key)?;
                         res.push(v);
                     }
                     func.validate_args_type(&res[base..])?;
@@ -779,28 +834,25 @@ impl<'a> ExprEval<'a> {
                     res.truncate(base);
                     res.push(out);
                 }
-                ExprIR::Map => res.push(Value::Map(Arc::new(
-                    node.children()
-                        .map(|child| {
-                            Ok((
-                                if let ExprIR::Constant(Value::String(key)) = child.data() {
-                                    key.clone()
-                                } else {
-                                    return Err("Map key must be a string".into());
-                                },
-                                self.eval(ir, child.child(0).idx(), env, agg_group_key)?,
-                            ))
-                        })
-                        .collect::<Result<_, String>>()?,
-                ))),
+                ExprIR::Map => {
+                    let mut map = OrderMap::with_capacity(node.num_children());
+                    for child in node.children() {
+                        let ExprIR::Constant(Value::String(key)) = child.data() else {
+                            return Err("Map key must be a string".into());
+                        };
+                        let value = self.eval_node(&child.child(0), env, agg_group_key)?;
+                        map.insert(key.clone(), value);
+                    }
+                    res.push(Value::Map(Arc::new(map)));
+                }
                 ExprIR::MapProjection => {
-                    res.push(self.eval_map_projection(ir, idx, env, agg_group_key)?);
+                    res.push(self.eval_map_projection(&node, env, agg_group_key)?);
                 }
                 ExprIR::Quantifier {
                     quantifier_type: quantifier,
                     var,
                 } => {
-                    let list = self.eval(ir, node.child(0).idx(), env, agg_group_key)?;
+                    let list = self.eval_node(&node.child(0), env, agg_group_key)?;
                     match list {
                         Value::List(values) => {
                             let e = env.ok_or_else(|| String::from("Variable not found"))?;
@@ -811,12 +863,7 @@ impl<'a> ExprEval<'a> {
                             for value in values.iter().cloned() {
                                 row.insert(var, value);
 
-                                match self.eval(
-                                    ir,
-                                    node.child(1).idx(),
-                                    Some(&row),
-                                    agg_group_key,
-                                )? {
+                                match self.eval_node(&node.child(1), Some(&row), agg_group_key)? {
                                     Value::Bool(true) => t += 1,
                                     Value::Bool(false) => f += 1,
                                     Value::Null => n += 1,
@@ -844,19 +891,14 @@ impl<'a> ExprEval<'a> {
                     let e = env.ok_or_else(|| String::from("Variable not found"))?;
                     let mut row = e.to_owned_row();
                     let mut acc = thin_vec![];
-                    if let Some(result) = self.eval_iter_expr(ir, node.child(0).idx(), env)? {
+                    if let Some(result) = self.eval_iter_expr(&node.child(0), env)? {
                         for value in result {
                             row.insert(var, value);
-                            match self.eval(ir, node.child(1).idx(), Some(&row), agg_group_key)? {
+                            match self.eval_node(&node.child(1), Some(&row), agg_group_key)? {
                                 Value::Bool(true) => {}
                                 _ => continue,
                             }
-                            acc.push(self.eval(
-                                ir,
-                                node.child(2).idx(),
-                                Some(&row),
-                                agg_group_key,
-                            )?);
+                            acc.push(self.eval_node(&node.child(2), Some(&row), agg_group_key)?);
                         }
                     }
 
@@ -865,8 +907,8 @@ impl<'a> ExprEval<'a> {
                 ExprIR::Reduce(vars) => {
                     let (acc_var, iter_var) = (&vars.accumulator, &vars.iterator);
                     // child[0] = init, child[1] = list, child[2] = body
-                    let init = self.eval(ir, node.child(0).idx(), env, agg_group_key)?;
-                    let list = self.eval(ir, node.child(1).idx(), env, agg_group_key)?;
+                    let init = self.eval_node(&node.child(0), env, agg_group_key)?;
+                    let list = self.eval_node(&node.child(1), env, agg_group_key)?;
                     match list {
                         Value::List(values) => {
                             let e = env.ok_or_else(|| String::from("Variable not found"))?;
@@ -876,7 +918,7 @@ impl<'a> ExprEval<'a> {
                                 row.insert(acc_var, accumulator);
                                 row.insert(iter_var, value);
                                 accumulator =
-                                    self.eval(ir, node.child(2).idx(), Some(&row), agg_group_key)?;
+                                    self.eval_node(&node.child(2), Some(&row), agg_group_key)?;
                             }
                             res.push(accumulator);
                         }
@@ -893,7 +935,7 @@ impl<'a> ExprEval<'a> {
                     unreachable!("PatternComprehension should be handled by the planner")
                 }
                 ExprIR::Paren => {
-                    res.push(self.eval(ir, node.child(0).idx(), env, agg_group_key)?);
+                    res.push(self.eval_node(&node.child(0), env, agg_group_key)?);
                 }
                 ExprIR::Pattern(_) => {
                     unreachable!("Pattern should be handled by the planner")
@@ -974,11 +1016,11 @@ impl<'a> ExprEval<'a> {
         batch: &Batch<'_>,
         active: &[usize],
     ) -> Result<(Column, NullBitmap), String> {
-        let root_idx = tree.root().idx();
+        let root = tree.root();
         let mut values = Vec::with_capacity(active.len());
         for &row in active {
             let view = BatchRow::new(batch, row);
-            values.push(self.eval(tree, root_idx, Some(&view), None)?);
+            values.push(self.eval_node(&root, Some(&view), None)?);
         }
         Ok(classify_join_keys(values))
     }
@@ -1000,18 +1042,16 @@ impl<'a> ExprEval<'a> {
     /// - a lazy `range(..)` or a materialized list value -> [`RowIter::many`].
     pub(crate) fn eval_iter_expr<R: RowView + ?Sized>(
         &self,
-        ir: &DynTree<ExprIR<Variable>>,
-        idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+        node: &ExprNode<'_>,
         env: Option<&R>,
     ) -> Result<Option<RowIter<'a, Value>>, String> {
-        match ir.node(idx).data() {
+        match node.data() {
             ExprIR::FuncInvocation(func) if func.name == "range" => {
-                let start = self.eval(ir, ir.node(idx).child(0).idx(), env, None)?;
-                let end = self.eval(ir, ir.node(idx).child(1).idx(), env, None)?;
-                let step = ir
-                    .node(idx)
+                let start = self.eval_node(&node.child(0), env, None)?;
+                let end = self.eval_node(&node.child(1), env, None)?;
+                let step = node
                     .get_child(2)
-                    .map_or_else(|| Ok(Value::Int(1)), |c| self.eval(ir, c.idx(), env, None))?;
+                    .map_or_else(|| Ok(Value::Int(1)), |c| self.eval_node(&c, env, None))?;
                 func.validate_args_type(&[&start, &end, &step])?;
                 let (Value::Int(start), Value::Int(end), Value::Int(step)) = (start, end, step)
                 else {
@@ -1051,15 +1091,14 @@ impl<'a> ExprEval<'a> {
                 // `Value::List(Arc<ThinVec>)` only to immediately unwrap and
                 // iterate it. This avoids the per-row `Arc` + `ThinVec`
                 // allocation for the list literal.
-                let node = ir.node(idx);
                 let mut values: SmallVec<[Value; 4]> = SmallVec::with_capacity(node.num_children());
                 for child in node.children() {
-                    values.push(self.eval(ir, child.idx(), env, None)?);
+                    values.push(self.eval_node(&child, env, None)?);
                 }
                 Ok(Some(RowIter::spread(values.into_iter())))
             }
             _ => {
-                let res = self.eval(ir, idx, env, None)?;
+                let res = self.eval_node(node, env, None)?;
                 Ok(match res {
                     Value::List(arr) => Some(RowIter::many(Box::new(
                         Arc::unwrap_or_clone(arr).into_iter(),
@@ -1078,8 +1117,7 @@ impl<'a> ExprEval<'a> {
     #[allow(clippy::too_many_arguments)]
     fn eval_shortest_path<R: RowView + ?Sized>(
         &self,
-        ir: &DynTree<ExprIR<Variable>>,
-        idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+        node: &ExprNode<'_>,
         env: Option<&R>,
         agg_group_key: Option<u64>,
         rel_types: &[Arc<String>],
@@ -1088,9 +1126,8 @@ impl<'a> ExprEval<'a> {
         directed: bool,
         all_paths: bool,
     ) -> Result<Value, String> {
-        let node = ir.node(idx);
-        let src_val = self.eval(ir, node.child(0).idx(), env, agg_group_key)?;
-        let dst_val = self.eval(ir, node.child(1).idx(), env, agg_group_key)?;
+        let src_val = self.eval_node(&node.child(0), env, agg_group_key)?;
+        let dst_val = self.eval_node(&node.child(1), env, agg_group_key)?;
 
         let src_id = match &src_val {
             Value::Node(id) => *id,
@@ -1429,14 +1466,12 @@ impl<'a> ExprEval<'a> {
 
     pub(crate) fn eval_map_projection<R: RowView + ?Sized>(
         &self,
-        ir: &DynTree<ExprIR<Variable>>,
-        idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+        node: &ExprNode<'_>,
         env: Option<&R>,
         agg_group_key: Option<u64>,
     ) -> Result<Value, String> {
         let rt = self.rt()?;
-        let node = ir.node(idx);
-        let base = self.eval(ir, node.child(0).idx(), env, agg_group_key)?;
+        let base = self.eval_node(&node.child(0), env, agg_group_key)?;
 
         if matches!(base, Value::Null) {
             return Ok(Value::Null);
@@ -1499,7 +1534,7 @@ impl<'a> ExprEval<'a> {
                     } else {
                         unreachable!();
                     };
-                    let value = self.eval(ir, item.child(0).idx(), env, agg_group_key)?;
+                    let value = self.eval_node(&item.child(0), env, agg_group_key)?;
                     result.insert(key, value);
                 }
                 _ => {

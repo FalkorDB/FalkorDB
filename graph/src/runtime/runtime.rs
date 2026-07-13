@@ -100,6 +100,11 @@ pub struct QueryStatistics {
     pub cached: bool,
 }
 
+/// Upper bound on attr-id memo entries; queries with more distinct
+/// attribute keys (typically per-row computed keys) fall back to the
+/// name-map lookup for the excess.
+const ATTR_ID_MEMO_CAP: usize = 32;
+
 /// The query execution context.
 ///
 /// Runtime holds all state needed to execute a query plan:
@@ -148,6 +153,16 @@ pub struct Runtime<'a> {
     pub deleted_relationships: RefCell<HashMap<RelationshipId, DeletedRelationship>>,
     /// Cache for MERGE pattern matching — stores only the created entity bindings (variable id → value)
     pub merge_pattern_cache: RefCell<HashMap<u64, Vec<(u32, Value)>>>,
+    /// Pointer-identity memo of resolved node attribute ids. Plan
+    /// expressions hold the same `Arc<String>` across all rows, so after
+    /// the first resolution a lookup is a short pointer scan instead of a
+    /// string hash + equality probe. Entries hold the `Arc` so a memoized
+    /// address can never be freed and recycled by a different name
+    /// mid-query. Capped so per-row computed keys can't grow it unboundedly.
+    node_attr_id_memo: RefCell<Vec<(Arc<String>, u16)>>,
+    /// Relationship-space counterpart of `node_attr_id_memo` (the two id
+    /// spaces are independent).
+    rel_attr_id_memo: RefCell<Vec<(Arc<String>, u16)>>,
     /// Maximum number of result rows to return. Negative means unlimited.
     pub result_set_size: i64,
     /// Effects buffer built before commit, for replication.
@@ -394,6 +409,8 @@ impl<'a> Runtime<'a> {
             deleted_nodes: RefCell::new(HashMap::new()),
             deleted_relationships: RefCell::new(HashMap::new()),
             merge_pattern_cache: RefCell::new(HashMap::new()),
+            node_attr_id_memo: RefCell::new(Vec::new()),
+            rel_attr_id_memo: RefCell::new(Vec::new()),
             result_set_size,
             effects_buffer: RefCell::new(None),
             effects_count: Cell::new(0),
@@ -1272,6 +1289,94 @@ impl<'a> Runtime<'a> {
         Ok(Some(result))
     }
 
+    /// Resolve an attribute name to its id (creating it if needed) and
+    /// record the pending node property change.
+    pub(crate) fn set_pending_node_attr(
+        &self,
+        id: NodeId,
+        key: &Arc<String>,
+        value: Value,
+    ) -> Result<(), String> {
+        let attr_id = Self::memo_lookup(&self.node_attr_id_memo, key).unwrap_or_else(|| {
+            let attr_id = self.g.borrow_mut().get_or_create_node_attr_id(key);
+            Self::memo_insert(&self.node_attr_id_memo, key, attr_id);
+            attr_id
+        });
+        self.pending
+            .borrow_mut()
+            .set_node_attribute(id, attr_id, value)
+    }
+
+    /// Resolve an attribute name to its id (creating it if needed) and
+    /// record the pending relationship property change.
+    pub(crate) fn set_pending_relationship_attr(
+        &self,
+        id: RelationshipId,
+        key: &Arc<String>,
+        value: Value,
+    ) -> Result<(), String> {
+        let attr_id = Self::memo_lookup(&self.rel_attr_id_memo, key).unwrap_or_else(|| {
+            let attr_id = self.g.borrow_mut().get_or_create_rel_attr_id(key);
+            Self::memo_insert(&self.rel_attr_id_memo, key, attr_id);
+            attr_id
+        });
+        self.pending
+            .borrow_mut()
+            .set_relationship_attribute(id, attr_id, value)
+    }
+
+    fn memo_lookup(
+        memo: &RefCell<Vec<(Arc<String>, u16)>>,
+        attr: &Arc<String>,
+    ) -> Option<u16> {
+        memo.borrow()
+            .iter()
+            .find(|(name, _)| Arc::ptr_eq(name, attr))
+            .map(|&(_, id)| id)
+    }
+
+    fn memo_insert(
+        memo: &RefCell<Vec<(Arc<String>, u16)>>,
+        attr: &Arc<String>,
+        id: u16,
+    ) {
+        let mut memo = memo.borrow_mut();
+        // Bounded memo with no eviction: once full, further names simply
+        // aren't memoized and fall back to the graph's name table lookup.
+        if memo.len() < ATTR_ID_MEMO_CAP {
+            memo.push((attr.clone(), id));
+        }
+    }
+
+    /// Memoized `Graph::get_node_attr_id`. Never memoizes a miss: the id
+    /// may be created later in the same query.
+    fn node_attr_id(
+        &self,
+        g: &Graph,
+        attr: &Arc<String>,
+    ) -> Option<u16> {
+        if let Some(id) = Self::memo_lookup(&self.node_attr_id_memo, attr) {
+            return Some(id);
+        }
+        let id = g.get_node_attr_id(attr)?;
+        Self::memo_insert(&self.node_attr_id_memo, attr, id);
+        Some(id)
+    }
+
+    /// Memoized `Graph::get_rel_attr_id`.
+    fn rel_attr_id(
+        &self,
+        g: &Graph,
+        attr: &Arc<String>,
+    ) -> Option<u16> {
+        if let Some(id) = Self::memo_lookup(&self.rel_attr_id_memo, attr) {
+            return Some(id);
+        }
+        let id = g.get_rel_attr_id(attr)?;
+        Self::memo_insert(&self.rel_attr_id_memo, attr, id);
+        Some(id)
+    }
+
     pub fn get_node_attribute(
         &self,
         id: NodeId,
@@ -1297,10 +1402,12 @@ impl<'a> Runtime<'a> {
         id: NodeId,
         attr: &Arc<String>,
     ) -> Option<Value> {
-        if let Some(value) = self.pending.borrow().get_node_attribute(id, attr) {
+        let g = self.g.borrow();
+        let attr_id = self.node_attr_id(&g, attr)?;
+        if let Some(value) = self.pending.borrow().get_node_attribute(id, attr_id) {
             return Some(value.clone());
         }
-        self.g.borrow().get_node_attribute(id, attr)
+        g.get_node_attribute_by_idx(id, attr_id)
     }
 
     /// Like `get_relationship_attribute` but skips the deleted check.
@@ -1309,10 +1416,16 @@ impl<'a> Runtime<'a> {
         id: RelationshipId,
         attr: &Arc<String>,
     ) -> Option<Value> {
-        if let Some(value) = self.pending.borrow().get_relationship_attribute(id, attr) {
+        let g = self.g.borrow();
+        let attr_id = self.rel_attr_id(&g, attr)?;
+        if let Some(value) = self
+            .pending
+            .borrow()
+            .get_relationship_attribute(id, attr_id)
+        {
             return Some(value.clone());
         }
-        self.g.borrow().get_relationship_attribute(id, attr)
+        g.get_relationship_attribute_by_idx(id, attr_id)
     }
 
     pub fn get_relationship_attribute(
@@ -1330,10 +1443,16 @@ impl<'a> Runtime<'a> {
             return None;
         }
         drop(deleted);
-        if let Some(value) = self.pending.borrow().get_relationship_attribute(id, attr) {
+        let g = self.g.borrow();
+        if let Some(attr_id) = self.rel_attr_id(&g, attr)
+            && let Some(value) = self
+                .pending
+                .borrow()
+                .get_relationship_attribute(id, attr_id)
+        {
             return Some(value.clone());
         }
-        self.g.borrow().get_relationship_attribute(id, attr)
+        g.get_relationship_attribute(id, attr)
     }
 
     /// Materializes a property column for a batch of node IDs.
@@ -1361,7 +1480,7 @@ impl<'a> Runtime<'a> {
         attr: &Arc<String>,
     ) -> Vec<Value> {
         let g = self.g.borrow();
-        let attr_idx = g.get_node_attribute_id(attr).map(|i| i as u16);
+        let attr_idx = self.node_attr_id(&g, attr);
 
         let deleted = self.deleted_nodes.borrow();
         let pending = self.pending.borrow();
@@ -1378,14 +1497,14 @@ impl<'a> Runtime<'a> {
             for &id in node_ids {
                 let val = deleted.get(&id).map_or_else(
                     || {
-                        pending.get_node_attribute(id, attr).map_or_else(
-                            || {
-                                attr_idx
-                                    .and_then(|idx| g.get_node_attribute_by_idx(id, idx))
-                                    .unwrap_or(Value::Null)
-                            },
-                            Clone::clone,
-                        )
+                        attr_idx
+                            .and_then(|idx| {
+                                pending
+                                    .get_node_attribute(id, idx)
+                                    .cloned()
+                                    .or_else(|| g.get_node_attribute_by_idx(id, idx))
+                            })
+                            .unwrap_or(Value::Null)
                     },
                     |dn| dn.attrs.get(attr).cloned().unwrap_or(Value::Null),
                 );
@@ -1425,8 +1544,9 @@ impl<'a> Runtime<'a> {
                 .collect();
             return attrs;
         }
-        let mut actual = OrderMap::from_vec(self.g.borrow().get_node_all_attrs(id));
-        self.pending.borrow().update_node_attrs(id, &mut actual);
+        let g = self.g.borrow();
+        let mut actual = OrderMap::from_unique_keys(g.get_node_all_attrs(id));
+        self.pending.borrow().update_node_attrs(id, &mut actual, &g);
         actual
     }
 
@@ -1442,10 +1562,11 @@ impl<'a> Runtime<'a> {
                 .collect();
             return attrs;
         }
-        let mut actual = OrderMap::from_vec(self.g.borrow().get_relationship_all_attrs(id));
+        let g = self.g.borrow();
+        let mut actual = OrderMap::from_unique_keys(g.get_relationship_all_attrs(id));
         self.pending
             .borrow()
-            .update_relationship_attrs(id, &mut actual);
+            .update_relationship_attrs(id, &mut actual, &g);
         actual
     }
 

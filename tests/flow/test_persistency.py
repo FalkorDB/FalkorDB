@@ -603,3 +603,39 @@ class testGraphPersistency():
         # assert that peak memory did not cross 1.50 * base_memory_consumption
         self.env.assertLess(peak_memory_consumption, 1.50 * base_memory_consumption)
 
+
+    # Regression test: Redis key names are binary-safe, so a graph can live
+    # under a non-UTF-8 key name (e.g. GRAPH.QUERY "\xc3\x28" ...). The
+    # SAVE-time SCAN passes (scan_and_clean_graphdata_keys /
+    # delete_stale_graphmeta_keys) must skip such names instead of building a
+    # str over them (formerly `from_utf8_unchecked` -> UB), and skipping must
+    # not delete or corrupt the graph stored under them.
+    def test_binary_key_name_scan_skip(self):
+        binary_name = b"\xc3\x28persistency_binary"  # invalid UTF-8
+        utf8_name   = "persistency_utf8_sibling"
+
+        # Create a graph under a non-UTF-8 key name (raw command; the client's
+        # Graph API assumes str names) and a normal UTF-8 sibling graph.
+        self.conn.execute_command("GRAPH.QUERY", binary_name, "CREATE (:B {v: 1})")
+        g = self.db.select_graph(utf8_name)
+        g.query("CREATE (:U {v: 2})")
+
+        # Synchronous SAVE triggers the graphdata/graphmeta key scans, which
+        # must skip the binary-named key without touching it.
+        self.conn.execute_command("SAVE")
+
+        # The binary-named key must survive the scan (not be misidentified as
+        # a stale virtual key and deleted).
+        self.env.assertEqual(self.conn.execute_command("EXISTS", binary_name), 1)
+
+        # Reload from RDB; both graphs must round-trip.
+        self.env.dumpAndReload()
+
+        self.env.assertEqual(self.conn.execute_command("EXISTS", binary_name), 1)
+
+        res = self.conn.execute_command("GRAPH.RO_QUERY", binary_name,
+                                        "MATCH (b:B) RETURN b.v")
+        self.env.assertEqual(res[1], [[1]])
+
+        res = g.ro_query("MATCH (u:U) RETURN u.v").result_set
+        self.env.assertEqual(res, [[2]])

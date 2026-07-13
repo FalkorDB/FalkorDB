@@ -153,6 +153,28 @@ fn make_scan_subtree(node: &Arc<QueryNode<Arc<String>, Variable>>) -> DynTree<IR
     scan
 }
 
+/// Returns true if the subtree rooted at `idx` is a planner-added scan: zero
+/// or more single-child `Filter` / `IncludePending` wrappers terminating in an
+/// `AllNodeScan` or `NodeByLabelScan` — the exact shape [`make_scan_subtree`]
+/// (plus `IncludePending` wrapping) produces. A `Filter` wrapping an
+/// outer-context operator (e.g. `ExpandInto`, another traversal) must NOT
+/// match: pruning it would drop part of the query.
+fn is_planner_scan_subtree(
+    plan: &DynTree<IR>,
+    idx: NodeIdx<Dyn<IR>>,
+) -> bool {
+    let mut node = plan.node(idx);
+    loop {
+        match node.data() {
+            IR::AllNodeScan(_) | IR::NodeByLabelScan { .. } => return true,
+            IR::Filter(_) | IR::IncludePending { .. } if node.num_children() == 1 => {
+                node = node.child(0);
+            }
+            _ => return false,
+        }
+    }
+}
+
 /// Creates a new `QueryRelationship` with from and to swapped.
 fn swap_relationship(
     rel: &Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
@@ -274,31 +296,28 @@ pub(super) fn select_scan_node(
     // Paths are processed deepest-first so that a processed chain's local
     // mutations (which only ever affect its own subtree) never shift the path
     // of a not-yet-processed, shallower chain.
-    let mut bottom_ct_paths: Vec<Vec<usize>> = {
-        let indices = optimized_plan.root().indices::<Bfs>().collect::<Vec<_>>();
-        indices
-            .into_iter()
-            .filter(|&idx| {
-                let node = optimized_plan.node(idx);
-                if !matches!(node.data(), IR::CondTraverse { .. }) {
-                    return false;
-                }
-                if node.num_children() == 0 {
-                    return true; // leaf CT
-                }
-                if node.num_children() != 1 {
-                    return false;
-                }
-                // Walk through single-child Filter nodes to find the real child.
-                let mut child = node.child(0);
-                while matches!(child.data(), IR::Filter(_)) && child.num_children() == 1 {
-                    child = child.child(0);
-                }
-                !matches!(child.data(), IR::CondTraverse { .. })
-            })
-            .map(|idx| node_path(optimized_plan, idx))
-            .collect()
-    };
+    let mut bottom_ct_paths = Vec::new();
+    for idx in optimized_plan.root().indices::<Bfs>() {
+        let node = optimized_plan.node(idx);
+        if !matches!(node.data(), IR::CondTraverse { .. }) {
+            continue;
+        }
+        if node.num_children() == 0 {
+            bottom_ct_paths.push(node_path(optimized_plan, idx));
+            continue;
+        }
+        if node.num_children() != 1 {
+            continue;
+        }
+        // Walk through single-child Filter nodes to find the real child.
+        let mut child = node.child(0);
+        while matches!(child.data(), IR::Filter(_)) && child.num_children() == 1 {
+            child = child.child(0);
+        }
+        if !matches!(child.data(), IR::CondTraverse { .. }) {
+            bottom_ct_paths.push(node_path(optimized_plan, idx));
+        }
+    }
     bottom_ct_paths.sort_by_key(|p| std::cmp::Reverse(p.len()));
 
     for path in bottom_ct_paths {
@@ -316,14 +335,8 @@ pub(super) fn select_scan_node(
         let is_leaf = optimized_plan.node(bottom_idx).num_children() == 0;
         // Detect if the child is a planner-added scan (not an outer-context op).
         let has_planner_scan = !is_leaf && {
-            let child_data = optimized_plan.node(bottom_idx).child(0).data().clone();
-            matches!(
-                child_data,
-                IR::AllNodeScan(_)
-                    | IR::NodeByLabelScan { .. }
-                    | IR::IncludePending { .. }
-                    | IR::Filter(_)
-            )
+            let child_idx = optimized_plan.node(bottom_idx).child(0).idx();
+            is_planner_scan_subtree(optimized_plan, child_idx)
         };
         // Treat CTs with planner-added scans like leaf CTs for scan selection.
         let effectively_leaf = is_leaf || has_planner_scan;
@@ -453,17 +466,23 @@ pub(super) fn select_scan_node(
                 let child_is_planner_scan = if is_leaf {
                     false
                 } else {
-                    matches!(
-                        optimized_plan.node(ct_idx).child(0).data(),
-                        IR::AllNodeScan(_) | IR::NodeByLabelScan { .. } | IR::Filter(_)
-                    )
+                    let child_idx = optimized_plan.node(ct_idx).child(0).idx();
+                    is_planner_scan_subtree(optimized_plan, child_idx)
                 };
 
-                // Remove old scan child if it was a planner-added scan
-                if child_is_planner_scan {
+                // Remove old scan child if it was a planner-added scan.
+                // `prune` can trigger `Auto` memory reclaim, invalidating
+                // every NodeIdx — re-resolve the CT via its structural path
+                // (`path`, which points at chain[0] and is unaffected by
+                // removing its own child).
+                let ct_idx = if child_is_planner_scan {
                     let child_idx = optimized_plan.node(ct_idx).child(0).idx();
                     optimized_plan.node_mut(child_idx).prune();
-                }
+                    resolve_path(optimized_plan, &path)
+                        .expect("pruning a child never changes the parent's path")
+                } else {
+                    ct_idx
+                };
 
                 // Build scan subtree before taking mutable borrow
                 let scan_subtree = make_scan_subtree(&scan_node);
@@ -539,10 +558,7 @@ pub(super) fn select_scan_node(
                 None
             } else {
                 let child_idx = optimized_plan.node(bottom_idx).child(0).idx();
-                let child_is_planner_scan = matches!(
-                    optimized_plan.node(child_idx).data(),
-                    IR::AllNodeScan(_) | IR::NodeByLabelScan { .. } | IR::Filter(_)
-                );
+                let child_is_planner_scan = is_planner_scan_subtree(optimized_plan, child_idx);
                 if child_is_planner_scan {
                     None // Will create a new scan for best_node instead
                 } else {
@@ -595,14 +611,22 @@ pub(super) fn select_scan_node(
                 }
             }
 
-            // Replace the chain in the plan.
-            let top_idx = *chain.last().unwrap();
+            // Replace the chain in the plan. Each `prune` below can trigger
+            // `Auto` memory reclaim, invalidating every NodeIdx, so the top
+            // CT is re-resolved via its structural path after each removal
+            // (its own path is unaffected by removing its descendants).
+            let top_path = node_path(optimized_plan, *chain.last().unwrap());
 
             // Detach all children of the top CT (the old chain below it).
-            while optimized_plan.node(top_idx).num_children() > 0 {
+            let top_idx = loop {
+                let top_idx = resolve_path(optimized_plan, &top_path)
+                    .expect("pruning a descendant never changes the ancestor's path");
+                if optimized_plan.node(top_idx).num_children() == 0 {
+                    break top_idx;
+                }
                 let child_idx = optimized_plan.node(top_idx).child(0).idx();
                 optimized_plan.node_mut(child_idx).prune();
-            }
+            };
 
             // Replace the top CT with the root of the new subtree.
             let new_root = subtree.root();
@@ -633,11 +657,19 @@ pub(super) fn select_scan_node(
                     let edges = sibling_edges.clone();
                     let trans = *transposed;
 
-                    // Remove old planner-added scan child if present
-                    if has_planner_scan {
+                    // Remove old planner-added scan child if present.
+                    // `prune` can trigger `Auto` memory reclaim, invalidating
+                    // every NodeIdx — re-resolve the CT via its structural
+                    // path (`path`, which points at chain[0] and is
+                    // unaffected by removing its own child).
+                    let ct_idx = if has_planner_scan {
                         let child_idx = optimized_plan.node(ct_idx).child(0).idx();
                         optimized_plan.node_mut(child_idx).prune();
-                    }
+                        resolve_path(optimized_plan, &path)
+                            .expect("pruning a child never changes the parent's path")
+                    } else {
+                        ct_idx
+                    };
 
                     // Build scan subtree with optional attr filter
                     let scan_subtree = make_scan_subtree(&scan_node);

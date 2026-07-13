@@ -22,16 +22,40 @@
 //!  output batch (unchanged, mutations in Pending)
 //! ```
 
-use crate::graph::graph::{NodeId, RelationshipId};
+use crate::graph::graph::{Graph, NodeId, RelationshipId};
 use crate::parser::ast::{ExprIR, QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
+use crate::runtime::ordermap::OrderMap;
 use crate::runtime::{
     batch::{Batch, BatchOp, BatchRow},
     runtime::Runtime,
     value::{DeletedNode, DeletedRelationship, Value},
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
+use std::sync::Arc;
+
+fn node_attrs_to_map(
+    g: &Graph,
+    attrs: Vec<(u16, Value)>,
+) -> OrderMap<Arc<String>, Value> {
+    OrderMap::from_unique_keys(
+        attrs
+            .into_iter()
+            .filter_map(|(id, v)| g.node_attr_name(id).map(|k| (k, v))),
+    )
+}
+
+fn rel_attrs_to_map(
+    g: &Graph,
+    attrs: Vec<(u16, Value)>,
+) -> OrderMap<Arc<String>, Value> {
+    OrderMap::from_unique_keys(
+        attrs
+            .into_iter()
+            .filter_map(|(id, v)| g.rel_attr_name(id).map(|k| (k, v))),
+    )
+}
 
 pub struct DeleteOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
@@ -208,8 +232,8 @@ impl Runtime<'_> {
                         .borrow_mut()
                         .remove_pending_relationships_for_node(id);
                     for (rel_id, src, dest, type_name, attrs) in pending_rels {
-                        let attrs = attrs.unwrap_or_default();
                         self.g.borrow_mut().return_relationship_id(rel_id);
+                        let attrs = rel_attrs_to_map(&self.g.borrow(), attrs.unwrap_or_default());
                         self.deleted_relationships.borrow_mut().insert(
                             rel_id,
                             DeletedRelationship::new(src, dest, type_name, attrs),
@@ -235,8 +259,8 @@ impl Runtime<'_> {
             for &id in &committed {
                 let labels = g.get_node_label_ids(id).collect();
                 let mut actual =
-                    crate::runtime::ordermap::OrderMap::from_vec(g.get_node_all_attrs(id));
-                self.pending.borrow().update_node_attrs(id, &mut actual);
+                    crate::runtime::ordermap::OrderMap::from_unique_keys(g.get_node_all_attrs(id));
+                self.pending.borrow().update_node_attrs(id, &mut actual, &g);
                 deleted_nodes.insert(id, DeletedNode::new(labels, actual));
             }
         }
@@ -322,11 +346,11 @@ impl Runtime<'_> {
                     let type_name = g
                         .get_type(crate::graph::graph::TypeId(*type_idx))
                         .expect("type must exist");
-                    let mut actual = crate::runtime::ordermap::OrderMap::from_vec(
+                    let mut actual = crate::runtime::ordermap::OrderMap::from_unique_keys(
                         g.get_relationship_all_attrs(rel_id),
                     );
                     let (src, dst) = g.get_relationship_endpoints(rel_id);
-                    pending.update_relationship_attrs(rel_id, &mut actual);
+                    pending.update_relationship_attrs(rel_id, &mut actual, &g);
 
                     pending.deleted_relationship(rel_id);
                     deleted_rels.insert(
@@ -362,7 +386,7 @@ impl Runtime<'_> {
                         id,
                         DeletedNode::new(
                             label_ids.into_iter().collect(),
-                            attrs.into_iter().collect(),
+                            node_attrs_to_map(&self.g.borrow(), attrs),
                         ),
                     );
                 } else if !self.g.borrow().is_node_deleted(id) {
@@ -388,8 +412,8 @@ impl Runtime<'_> {
                         .borrow_mut()
                         .remove_pending_relationships_for_node(id);
                     for (rel_id, src, dest, type_name, attrs) in pending_rels {
-                        let attrs = attrs.unwrap_or_default();
                         self.g.borrow_mut().return_relationship_id(rel_id);
+                        let attrs = rel_attrs_to_map(&self.g.borrow(), attrs.unwrap_or_default());
                         self.deleted_relationships.borrow_mut().insert(
                             rel_id,
                             DeletedRelationship::new(src, dest, type_name, attrs),

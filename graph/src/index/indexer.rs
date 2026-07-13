@@ -846,8 +846,15 @@ impl Indexer {
         Ok(())
     }
 
+    /// Only touches the `Indexer`'s own `Mutex`-guarded field, so this takes
+    /// `&self` deliberately: it must be callable while the caller holds only
+    /// an immutable borrow of the enclosing `Graph` (see
+    /// `Graph::set_indexer_graph`), so that background index population
+    /// (which also just needs an immutable borrow of the committed graph)
+    /// never races with this call and panics with "already mutably
+    /// borrowed".
     pub fn set_graph(
-        &mut self,
+        &self,
         graph: Arc<AtomicRefCell<Graph>>,
     ) {
         *self.graph.lock() = Some(graph);

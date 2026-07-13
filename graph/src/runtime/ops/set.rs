@@ -185,22 +185,16 @@ impl Runtime<'_> {
                                     continue;
                                 }
 
-                                self.pending.borrow_mut().set_node_attribute(
-                                    id,
-                                    attr.clone(),
-                                    run_expr,
-                                )?;
+                                self.set_pending_node_attr(id, attr, run_expr)?;
                             } else {
                                 match run_expr {
                                     Value::Map(map) => {
                                         if *replace {
                                             self.pending.borrow_mut().clear_node_attributes(id);
-                                            for key in self.g.borrow().get_node_attrs(id) {
-                                                self.pending.borrow_mut().set_node_attribute(
-                                                    id,
-                                                    key,
-                                                    Value::Null,
-                                                )?;
+                                            let keys: Vec<Arc<String>> =
+                                                self.g.borrow().get_node_attrs(id).collect();
+                                            for key in keys {
+                                                self.set_pending_node_attr(id, &key, Value::Null)?;
                                             }
                                         }
                                         for (key, value) in map.iter() {
@@ -214,26 +208,19 @@ impl Runtime<'_> {
                                             {
                                                 continue;
                                             }
-                                            self.pending.borrow_mut().set_node_attribute(
-                                                id,
-                                                key.clone(),
-                                                value.clone(),
-                                            )?;
+                                            self.set_pending_node_attr(id, key, value.clone())?;
                                         }
                                     }
                                     Value::Node(tid) => {
                                         if tid == id {
                                             continue;
                                         }
-                                        let g = self.g.borrow();
                                         let attrs = self.get_node_attrs(tid);
                                         if *replace {
-                                            for key in g.get_node_attrs(id) {
-                                                self.pending.borrow_mut().set_node_attribute(
-                                                    id,
-                                                    key,
-                                                    Value::Null,
-                                                )?;
+                                            let keys: Vec<Arc<String>> =
+                                                self.g.borrow().get_node_attrs(id).collect();
+                                            for key in keys {
+                                                self.set_pending_node_attr(id, &key, Value::Null)?;
                                             }
                                         }
                                         for (key, value) in attrs {
@@ -242,21 +229,16 @@ impl Runtime<'_> {
                                             {
                                                 continue;
                                             }
-                                            self.pending
-                                                .borrow_mut()
-                                                .set_node_attribute(id, key, value)?;
+                                            self.set_pending_node_attr(id, &key, value)?;
                                         }
                                     }
                                     Value::Relationship(rel) => {
-                                        let g = self.g.borrow();
                                         let attrs = self.get_relationship_attrs(rel);
                                         if *replace {
-                                            for key in g.get_node_attrs(id) {
-                                                self.pending.borrow_mut().set_node_attribute(
-                                                    id,
-                                                    key,
-                                                    Value::Null,
-                                                )?;
+                                            let keys: Vec<Arc<String>> =
+                                                self.g.borrow().get_node_attrs(id).collect();
+                                            for key in keys {
+                                                self.set_pending_node_attr(id, &key, Value::Null)?;
                                             }
                                         }
                                         for (key, value) in attrs {
@@ -265,9 +247,7 @@ impl Runtime<'_> {
                                             {
                                                 continue;
                                             }
-                                            self.pending
-                                                .borrow_mut()
-                                                .set_node_attribute(id, key, value)?;
+                                            self.set_pending_node_attr(id, &key, value)?;
                                         }
                                     }
                                     _ => {
@@ -298,24 +278,22 @@ impl Runtime<'_> {
                                     continue;
                                 }
 
-                                self.pending.borrow_mut().set_relationship_attribute(
-                                    target_rel,
-                                    attr.clone(),
-                                    run_expr,
-                                )?;
+                                self.set_pending_relationship_attr(target_rel, attr, run_expr)?;
                             } else {
                                 match run_expr {
                                     Value::Map(map) => {
-                                        let g = self.g.borrow();
                                         if *replace {
-                                            for key in g.get_relationship_attrs(target_rel) {
-                                                self.pending
-                                                    .borrow_mut()
-                                                    .set_relationship_attribute(
-                                                        target_rel,
-                                                        key,
-                                                        Value::Null,
-                                                    )?;
+                                            let keys: Vec<Arc<String>> = self
+                                                .g
+                                                .borrow()
+                                                .get_relationship_attrs(target_rel)
+                                                .collect();
+                                            for key in keys {
+                                                self.set_pending_relationship_attr(
+                                                    target_rel,
+                                                    &key,
+                                                    Value::Null,
+                                                )?;
                                             }
                                         }
                                         for (key, value) in map.iter() {
@@ -331,25 +309,27 @@ impl Runtime<'_> {
                                             {
                                                 continue;
                                             }
-                                            self.pending.borrow_mut().set_relationship_attribute(
+                                            self.set_pending_relationship_attr(
                                                 target_rel,
-                                                key.clone(),
+                                                key,
                                                 value.clone(),
                                             )?;
                                         }
                                     }
                                     Value::Node(sid) => {
-                                        let g = self.g.borrow();
                                         let attrs = self.get_node_attrs(sid);
                                         if *replace {
-                                            for key in g.get_relationship_attrs(target_rel) {
-                                                self.pending
-                                                    .borrow_mut()
-                                                    .set_relationship_attribute(
-                                                        target_rel,
-                                                        key,
-                                                        Value::Null,
-                                                    )?;
+                                            let keys: Vec<Arc<String>> = self
+                                                .g
+                                                .borrow()
+                                                .get_relationship_attrs(target_rel)
+                                                .collect();
+                                            for key in keys {
+                                                self.set_pending_relationship_attr(
+                                                    target_rel,
+                                                    &key,
+                                                    Value::Null,
+                                                )?;
                                             }
                                         }
                                         for (key, value) in attrs {
@@ -359,8 +339,8 @@ impl Runtime<'_> {
                                             {
                                                 continue;
                                             }
-                                            self.pending.borrow_mut().set_relationship_attribute(
-                                                target_rel, key, value,
+                                            self.set_pending_relationship_attr(
+                                                target_rel, &key, value,
                                             )?;
                                         }
                                     }
@@ -368,17 +348,19 @@ impl Runtime<'_> {
                                         if source_rel == target_rel {
                                             continue;
                                         }
-                                        let g = self.g.borrow();
                                         let attrs = self.get_relationship_attrs(source_rel);
                                         if *replace {
-                                            for key in g.get_relationship_attrs(target_rel) {
-                                                self.pending
-                                                    .borrow_mut()
-                                                    .set_relationship_attribute(
-                                                        target_rel,
-                                                        key,
-                                                        Value::Null,
-                                                    )?;
+                                            let keys: Vec<Arc<String>> = self
+                                                .g
+                                                .borrow()
+                                                .get_relationship_attrs(target_rel)
+                                                .collect();
+                                            for key in keys {
+                                                self.set_pending_relationship_attr(
+                                                    target_rel,
+                                                    &key,
+                                                    Value::Null,
+                                                )?;
                                             }
                                         }
                                         for (key, value) in attrs {
@@ -388,8 +370,8 @@ impl Runtime<'_> {
                                             {
                                                 continue;
                                             }
-                                            self.pending.borrow_mut().set_relationship_attribute(
-                                                target_rel, key, value,
+                                            self.set_pending_relationship_attr(
+                                                target_rel, &key, value,
                                             )?;
                                         }
                                     }

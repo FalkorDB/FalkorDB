@@ -53,8 +53,8 @@ pub fn rdb_load_graph(
 
         if is_first_key {
             // First key: initialize the pending graph.
-            let node_attrs = AttributeStore::new(0);
-            let mut rel_attrs = AttributeStore::new(0);
+            let node_attrs = AttributeStore::new();
+            let mut rel_attrs = AttributeStore::new();
 
             // Set attribute names on the stores now -- they are the same across all keys.
             let mut node_attrs_init = node_attrs;
@@ -140,8 +140,8 @@ pub fn rdb_load_graph(
     }
 
     // Single-key path (key_count == 1): decode everything in one go.
-    let mut node_attrs = AttributeStore::new(0);
-    let mut rel_attrs = AttributeStore::new(0);
+    let mut node_attrs = AttributeStore::new();
+    let mut rel_attrs = AttributeStore::new();
 
     for name in &schema.attribute_names {
         node_attrs.attrs_name.insert(name.clone());
@@ -191,13 +191,6 @@ pub fn rdb_load_graph(
             _ => {}
         }
     }
-
-    node_attrs
-        .commit()
-        .map_err(|e| format!("commit node attrs: {e}"))?;
-    rel_attrs
-        .commit()
-        .map_err(|e| format!("commit rel attrs: {e}"))?;
 
     let mut graph = Graph::restore(
         &hdr.graph_name,
@@ -274,17 +267,10 @@ fn decode_payloads_into_pending(
     Ok(())
 }
 
-/// Finalize a pending multi-key graph: commit attrs, build Graph, rebuild derived matrices.
+/// Finalize a pending multi-key graph: build Graph, rebuild derived matrices.
 pub fn finalize_pending_graph(pg: PendingGraph) -> Result<Graph, String> {
-    let mut node_attrs = pg.node_attrs;
-    let mut rel_attrs = pg.rel_attrs;
-
-    node_attrs
-        .commit()
-        .map_err(|e| format!("commit node attrs: {e}"))?;
-    rel_attrs
-        .commit()
-        .map_err(|e| format!("commit rel attrs: {e}"))?;
+    let node_attrs = pg.node_attrs;
+    let rel_attrs = pg.rel_attrs;
 
     let mut graph = Graph::restore(
         &pg.header.graph_name,
@@ -418,8 +404,8 @@ fn load_graph_from_reader(
         payloads.push((state, count));
     }
 
-    let mut node_attrs = AttributeStore::new(0);
-    let mut rel_attrs = AttributeStore::new(0);
+    let mut node_attrs = AttributeStore::new();
+    let mut rel_attrs = AttributeStore::new();
 
     for name in &schema.attribute_names {
         node_attrs.attrs_name.insert(name.clone());
@@ -469,13 +455,6 @@ fn load_graph_from_reader(
             _ => {}
         }
     }
-
-    node_attrs
-        .commit()
-        .map_err(|e| format!("commit node attrs: {e}"))?;
-    rel_attrs
-        .commit()
-        .map_err(|e| format!("commit rel attrs: {e}"))?;
 
     let mut graph = Graph::restore(
         dest_name,

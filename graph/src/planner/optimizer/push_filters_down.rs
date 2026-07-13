@@ -130,27 +130,26 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                 };
 
             // Collect children and the variables they provide
-            let mut children: Vec<_> = optimized_plan
-                .node(idx)
-                .children()
-                .filter(|c| {
-                    c.num_children() > 0
-                        && !matches!(
-                            c.data(),
-                            IR::Project { .. }
-                                | IR::Aggregate { .. }
-                                | IR::Merge { .. }
-                                | IR::Argument
-                                | IR::IncludePending { .. }
-                                | IR::SemiApply
-                                | IR::AntiSemiApply
-                                | IR::OrApplyMultiplexer(_)
-                                | IR::Optional(_)
-                        )
-                })
-                .flat_map(|c| c.children().collect::<Vec<_>>())
-                .map(|c| (c.idx(), collect_subtree_variables(&c)))
-                .collect();
+            let mut children = Vec::new();
+            for child in optimized_plan.node(idx).children().filter(|c| {
+                c.num_children() > 0
+                    && !matches!(
+                        c.data(),
+                        IR::Project { .. }
+                            | IR::Aggregate { .. }
+                            | IR::Merge { .. }
+                            | IR::Argument
+                            | IR::IncludePending { .. }
+                            | IR::SemiApply
+                            | IR::AntiSemiApply
+                            | IR::OrApplyMultiplexer(_)
+                            | IR::Optional(_)
+                    )
+            }) {
+                for grandchild in child.children() {
+                    children.push((grandchild.idx(), collect_subtree_variables(&grandchild)));
+                }
+            }
 
             // Compute inherited variables from Apply context.
             // When Apply propagates bound variables via Argument leaves,
@@ -228,22 +227,15 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
 
             for conjunct in conjuncts {
                 let conj_vars = collect_expr_variables(&conjunct);
-                let matched_indices: Vec<usize> = children
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, (_, child_vars))| {
-                        conj_vars
-                            .iter()
-                            .all(|v| child_vars.contains(v))
-                            .then_some(i)
-                    })
-                    .collect();
-                if matched_indices.is_empty() {
-                    remaining.push(conjunct);
-                } else {
-                    for &i in &matched_indices {
+                let mut matched_any = false;
+                for (i, (_, child_vars)) in children.iter().enumerate() {
+                    if conj_vars.iter().all(|v| child_vars.contains(v)) {
                         child_conjuncts[i].push(conjunct.clone());
+                        matched_any = true;
                     }
+                }
+                if !matched_any {
+                    remaining.push(conjunct);
                 }
             }
 
