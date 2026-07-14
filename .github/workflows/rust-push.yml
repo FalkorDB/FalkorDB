@@ -158,7 +158,7 @@ jobs:
   # trend baseline (2026-07) away from the earlier small/read-only/baseline
   # workload — pre-reset points are not comparable to post-reset ones.
   benchmark-edge:
-    needs: promote-edge
+    needs: [find-pr, promote-edge]
     if: ${{ github.ref == 'refs/heads/main' && needs.promote-edge.result == 'success' }}
     uses: ./.github/workflows/_benchmark.yml
     permissions:
@@ -176,6 +176,10 @@ jobs:
       sizes: '["medium"]'
       write_ratio: "0.05"
       query_profile: "fixture-dependent"
+      # Attribute this trend snapshot to the PR that merged into main, so the
+      # drill-down chart can show which PR each data point came from. Kept as
+      # snapshot_pr_number (not pr_number) so the canonical run never comments.
+      snapshot_pr_number: ${{ needs.find-pr.outputs.pr_n }}
     secrets: inherit
 
   lint:

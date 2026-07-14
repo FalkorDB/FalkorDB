@@ -79,6 +79,11 @@ on:
         required: false
         type: string
         default: ""
+      snapshot_pr_number:
+        description: "PR that produced this snapshot, recorded in the trend history for drill-down attribution (empty if unknown)"
+        required: false
+        type: string
+        default: ""
       write_ratio:
         description: "Fraction of write queries (0.0-1.0). PR/slash runs pass 0.05 (5% writes); the canonical main-branch trend stays read-only (0.0). Callers that omit this get the read-only default."
         required: false
@@ -419,6 +424,7 @@ jobs:
           UI_DIR: ${{ github.workspace }}/benchmark-tool/ui
           GH_PAGES_DIR: ${{ github.workspace }}/gh-pages
           PR_NUMBER: ${{ inputs.pr_number }}
+          SNAPSHOT_PR_NUMBER: ${{ inputs.snapshot_pr_number }}
           NAME_A: ${{ inputs.name_a }}
           NAME_B: ${{ inputs.name_b }}
           NAME_C: ${{ inputs.name_c }}

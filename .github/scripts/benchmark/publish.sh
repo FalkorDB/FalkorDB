@@ -74,6 +74,7 @@ python3 "$SCRIPT_DIR/update-manifest.py" \
   --key "$MANIFEST_KEY" \
   --add-filename "$BASENAME" \
   --add-timestamp "$EPOCH" \
+  --add-pr-number "${SNAPSHOT_PR_NUMBER:-}" \
   --summaries-dir "$SUMMARIES_DIR" \
   --retention "$EFFECTIVE_RETENTION"
 echo "::endgroup::"
