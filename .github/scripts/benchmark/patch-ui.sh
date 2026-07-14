@@ -13,9 +13,9 @@
 # read the same base path via a NEXT_PUBLIC_ env var, which Next's build
 # *does* inline into client bundles.
 #
-# Validated manually (clone + patch + `next build` + serve-and-curl under a
-# nested path) against FalkorDB/benchmark commit
-# 0cc0e9ee45464b9cb8d71732f419e4e0c8ebdacc. The grep -qF guards below make
+# Validated against FalkorDB/benchmark commit
+# deca7752cbd8cdeb333493569472ede385d5b5db (release v2.2) — the five require()
+# patterns below still match its ui/ source. The grep -qF guards below make
 # any future upstream refactor of these exact lines fail loudly here instead
 # of silently shipping a broken sub-path deployment — if that happens, this
 # script needs a one-time update to match the new source.

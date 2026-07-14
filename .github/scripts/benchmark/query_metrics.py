@@ -1,7 +1,7 @@
 """Shared per-query metric extraction from a benchmark run's `result`.
 
 Two per-query sources in the aggregate JSON (verified against
-FalkorDB/benchmark@0cc0e9e):
+FalkorDB/benchmark@deca7752, release v2.2):
 
   * `telemetry_for_type[query]` = {wait-ms, exec-ms, report-ms} — server-side.
     `exec-ms` is the clean per-query server execution signal.

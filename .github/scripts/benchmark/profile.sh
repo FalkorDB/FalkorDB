@@ -31,10 +31,19 @@ QUERIES_COUNT="${QUERIES_COUNT:-20000}"
 PARALLEL="${PARALLEL:-20}"
 MPS="${MPS:-5000}"
 WRITE_RATIO="${WRITE_RATIO:-0.0}"      # profiling is read-only by default
+# Query coverage profile: baseline | extended-core | fixture-dependent.
+# fixture-dependent adds text/vector-index query flows; passed to both `load`
+# (runs the post-phase fixture/index setup) and `generate-queries` (emits them).
+QUERY_PROFILE="${QUERY_PROFILE:-baseline}"
 BATCH_SIZE="${BATCH_SIZE:-5000}"
 export FALKOR_QUERY_TIMEOUT_MS="${FALKOR_QUERY_TIMEOUT_MS:-5000}"
 DB_PORT="${DB_PORT:-16379}"
 PERF_FREQ="${PERF_FREQ:-997}"          # Hz; 997 avoids lock-step with timers
+# Cap how long we sample the run. DWARF call-graph perf.data grows ~unbounded
+# with run duration (full stack dump per sample); a heavy/slow workload can fill
+# the runner disk (perf: "No space left on device"). A flame graph only needs a
+# representative window, not the whole 20000-query workload.
+PROFILE_DURATION="${PROFILE_DURATION:-90}"   # seconds of workload to sample
 OUT_DIR="${OUT_DIR:-$(pwd)/profile-out}"
 CONTAINER_NAME="prof-db-$$"
 QUERIES_NAME="ab-compare-${DATASET_SIZE}"
@@ -97,21 +106,34 @@ grep -q '^\[workspace\]' Cargo.toml || printf '\n[workspace]\n' >> Cargo.toml
 cargo build --release --bin benchmark
 cargo run --release --bin benchmark -- generate-queries \
   --vendor falkor --dataset "$DATASET_SIZE" --size "$QUERIES_COUNT" \
-  --name "$QUERIES_NAME" --write-ratio "$WRITE_RATIO"
+  --name "$QUERIES_NAME" --write-ratio "$WRITE_RATIO" \
+  --query-profile "$QUERY_PROFILE"
 cargo run --release --bin benchmark -- load \
   --vendor falkor --size "$DATASET_SIZE" \
-  --endpoint "falkor://127.0.0.1:${DB_PORT}" -b "$BATCH_SIZE"
+  --endpoint "falkor://127.0.0.1:${DB_PORT}" -b "$BATCH_SIZE" \
+  --query-profile "$QUERY_PROFILE"
 echo "::endgroup::"
 
-echo "::group::perf record (server PID $PID) for the duration of the run"
-# `-p PID -- <cmd>`: sample PID until <cmd> (the workload) exits. So we profile
-# the server across exactly the run phase (not the load).
-perf record -F "$PERF_FREQ" --call-graph dwarf -o "$OUT_DIR/perf.data" -p "$PID" -- \
+echo "::group::perf record (server PID $PID) for up to ${PROFILE_DURATION}s of the run"
+# `-p PID -- <cmd>`: sample PID until <cmd> exits. `timeout` caps <cmd> so
+# perf.data stays bounded regardless of how long/heavy the workload is (it
+# otherwise fills the runner disk — see PROFILE_DURATION above). `-z` compresses
+# perf.data and `dwarf,4096` halves each sample's stack dump; both shrink it
+# further without losing function-level fidelity.
+perf_rc=0
+perf record -F "$PERF_FREQ" --call-graph "dwarf,4096" -z -o "$OUT_DIR/perf.data" -p "$PID" -- \
+  timeout "$PROFILE_DURATION" \
   cargo run --release --bin benchmark -- run \
     --vendor falkor --name "$QUERIES_NAME" \
     --parallel "$PARALLEL" --mps "$MPS" \
     --endpoint "falkor://127.0.0.1:${DB_PORT}" \
-    --results-dir "$OUT_DIR/results"
+    --results-dir "$OUT_DIR/results" || perf_rc=$?
+# `timeout` exits 124 when it caps the workload — that's the expected path here,
+# not a failure. Any other non-zero is a real perf/record error.
+if [ "$perf_rc" -ne 0 ] && [ "$perf_rc" -ne 124 ]; then
+  echo "::error::perf record failed (exit $perf_rc)" >&2
+  exit "$perf_rc"
+fi
 echo "::endgroup::"
 
 echo "::group::Render flame graph"
@@ -122,7 +144,7 @@ echo "::group::Render flame graph"
 perf script --no-inline -i "$OUT_DIR/perf.data" > "$OUT_DIR/perf.script"
 inferno-collapse-perf < "$OUT_DIR/perf.script" > "$OUT_DIR/out.folded"
 inferno-flamegraph \
-  --title "FalkorDB engine — ${DATASET_SIZE} (${QUERIES_COUNT} queries)" \
+  --title "FalkorDB engine — ${DATASET_SIZE} (${PROFILE_DURATION}s capture, ${WRITE_RATIO} writes)" \
   "$OUT_DIR/out.folded" > "$OUT_DIR/flamegraph.svg"
 perf report -i "$OUT_DIR/perf.data" --stdio --sort overhead,symbol 2>/dev/null \
   | grep -vE '^\s*#' | head -60 > "$OUT_DIR/perf-report.txt" || true

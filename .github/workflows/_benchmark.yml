@@ -11,9 +11,11 @@
 # `merge` job builds the CLI, aggregates each size's variants into one summary,
 # publishes the dashboard once and upserts one PR comment.
 #
-# Each variant generates its own query workload (generate-queries is not
-# deterministic, but the params are identical → same distribution, so the
-# percentile comparison stays valid). Aggregation is two-vendor upstream, so
+# The query workload is generated ONCE per run (the `gen-queries` job) and shared
+# to every variant as an artifact, so A/B/C replay the IDENTICAL queries (the
+# generator is unseeded — per-variant generation would diverge). A cache keyed on
+# (benchmark ref, size, profile, write-ratio) reuses the same file across runs so
+# the trend is reproducible run-to-run. Aggregation is two-vendor upstream, so
 # `merge` does it pairwise (A+B, A+C) and merges — see aggregate-variants.sh.
 #
 # Called by:
@@ -83,19 +85,30 @@ on:
         type: string
         default: ""
       write_ratio:
-        description: "Fraction of write queries (0.0-1.0). PR/slash runs are read-only (0.0); writes are opt-in via manual dispatch."
+        description: "Fraction of write queries (0.0-1.0). PR/slash runs pass 0.05 (5% writes); the canonical main-branch trend stays read-only (0.0). Callers that omit this get the read-only default."
         required: false
         type: string
         default: "0.0"
+      query_profile:
+        description: "Query coverage profile (baseline | extended-core | fixture-dependent). PR/slash runs pass fixture-dependent to exercise text+vector index flows; the canonical main-branch trend stays baseline. Callers that omit this get baseline."
+        required: false
+        type: string
+        default: "baseline"
+      arch:
+        description: "CPU architecture of the benchmark VMs: 'x86' (default, n4-highcpu-16) or 'arm' (c4a-highcpu-16 Axion). arm runs publish to the caller's <view> (a -arm-suffixed view) and a separate PR comment."
+        required: false
+        type: string
+        default: "x86"
 
 permissions:
   contents: read
 
 env:
-  # FalkorDB/benchmark rarely tags; pin to a commit validated against
-  # patch-ui.sh (static export + basePath). Bump deliberately and re-verify.
+  # Pinned to a commit validated against patch-ui.sh (static export + basePath).
+  # This is the v2.2 release commit. Bump deliberately and re-verify patch-ui.sh
+  # (its grep -qF guards on the vendored ui/ source) when moving it.
   BENCHMARK_REPO: FalkorDB/benchmark
-  BENCHMARK_REF: 0cc0e9ee45464b9cb8d71732f419e4e0c8ebdacc
+  BENCHMARK_REF: deca7752cbd8cdeb333493569472ede385d5b5db # v2.2
 
 jobs:
   # Expand (size × variant) into a flat combo list the matrices below fan out
@@ -130,6 +143,68 @@ jobs:
           echo "combos=$combos" >> "$GITHUB_OUTPUT"
           echo "combos:"; echo "$combos" | jq .
 
+  # Generate the query workload ONCE per size and share it to every variant, so
+  # A/B/C replay the identical queries (the generator is unseeded). Cached on
+  # (benchmark ref, size, profile, write-ratio) → reused across runs for a
+  # reproducible trend; regenerated only when one of those changes. Pure
+  # client-side generation (no DB), so a plain runner suffices. Runs in parallel
+  # with create-runners (no dependency on setup).
+  gen-queries:
+    strategy:
+      fail-fast: false
+      matrix:
+        size: ${{ fromJSON(inputs.sizes) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout this repo (scripts)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Checkout FalkorDB/benchmark@${{ env.BENCHMARK_REF }}
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ env.BENCHMARK_REPO }}
+          ref: ${{ env.BENCHMARK_REF }}
+          path: benchmark-tool
+          persist-credentials: false
+
+      - name: Install protobuf-compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - run: rustup default stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: benchmark-tool
+
+      # Reuse the identical workload across runs: keyed so it regenerates only
+      # when the tool ref, size, profile, or write-ratio changes. Bump the v1
+      # prefix if the sizing table (workload-sizing.sh) changes the query count.
+      - name: Restore cached query workload
+        id: qcache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        with:
+          path: benchmark-tool/ab-compare-${{ matrix.size }}
+          key: bench-queries-v1-${{ env.BENCHMARK_REF }}-${{ matrix.size }}-${{ inputs.query_profile }}-wr${{ inputs.write_ratio }}
+
+      - name: Generate query workload (${{ matrix.size }})
+        if: ${{ steps.qcache.outputs.cache-hit != 'true' }}
+        env:
+          BENCHMARK_DIR: ${{ github.workspace }}/benchmark-tool
+          DATASET_SIZE: ${{ matrix.size }}
+          WRITE_RATIO: ${{ inputs.write_ratio }}
+          QUERY_PROFILE: ${{ inputs.query_profile }}
+        run: .github/scripts/benchmark/generate-queries.sh
+
+      - name: Upload query workload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: bench-queries-${{ inputs.view }}-${{ matrix.size }}
+          path: benchmark-tool/ab-compare-${{ matrix.size }}
+          if-no-files-found: error
+          retention-days: 30
+
   # One ephemeral GCE VM per (size, variant), labelled uniquely for this run so
   # its benchmark leg lands on it and cleanup can find it. All use the same
   # machine type → all variants/sizes compared on identical hardware.
@@ -146,21 +221,27 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-      - name: Create GCE runner (${{ matrix.combo.size }}/${{ matrix.combo.variant }})
+      - name: Create GCE runner (${{ matrix.combo.size }}/${{ matrix.combo.variant }}/${{ inputs.arch }})
         uses: ./.github/actions/create-runner # gce-github-runner + retry on stockout
         with:
           token: ${{ secrets.GH_SA_TOKEN }}
           project_id: ${{ secrets.GCP_PROJECT_ID }}
           service_account_key: ${{ secrets.GCP_SA_KEY }}
-          machine_zones: ${{ vars.GCP_ZONES }}
-          machine_type: ${{ vars.BENCHMARK_MACHINE_TYPE || 'n4-highcpu-16' }}
+          # arm → Axion (c4a) in the arm-capable zones; else the x86 N4 default.
+          machine_zones: ${{ inputs.arch == 'arm' && (vars.GCP_ZONES_ARM || vars.GCP_ZONES) || vars.GCP_ZONES }}
+          machine_type: ${{ inputs.arch == 'arm' && (vars.BENCHMARK_MACHINE_TYPE_ARM || 'c4a-highcpu-16') || (vars.BENCHMARK_MACHINE_TYPE || 'n4-highcpu-16') }}
+          arm: ${{ inputs.arch == 'arm' }}
+          # debian-12-arm64 mirrors x86's gcloud-default Debian (arm64 variant),
+          # so the runner-agent bootstrap matches the working x86 path.
+          image_family: ${{ inputs.arch == 'arm' && (vars.BENCHMARK_IMAGE_FAMILY_ARM || 'debian-12-arm64') || '' }}
+          image_project: ${{ inputs.arch == 'arm' && (vars.BENCHMARK_IMAGE_PROJECT_ARM || 'debian-cloud') || '' }}
           network: gh-runner
           runner_label: bench-${{ github.run_id }}-${{ github.run_number }}-${{ matrix.combo.size }}-${{ matrix.combo.variant }}
 
   # Each leg runs ONE variant on its own VM (runs-on = the label above). The VM
   # has Docker but not Rust/git — install those. Runs as root, so no sudo.
   benchmark:
-    needs: [setup, create-runners]
+    needs: [setup, gen-queries, create-runners]
     strategy:
       fail-fast: false
       matrix:
@@ -205,6 +286,16 @@ jobs:
         with:
           workspaces: benchmark-tool
 
+      # Shared query workload from gen-queries → $BENCHMARK_DIR/ab-compare-<size>.
+      # continue-on-error so a transient miss falls back to local generation in
+      # run-variant.sh rather than failing the leg (loses cross-variant pairing).
+      - name: Download shared query workload
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: bench-queries-${{ inputs.view }}-${{ matrix.combo.size }}
+          path: ${{ github.workspace }}/benchmark-tool
+
       - name: Run variant (${{ matrix.combo.size }}/${{ matrix.combo.variant }})
         env:
           IMAGE: ${{ matrix.combo.image }}
@@ -214,12 +305,19 @@ jobs:
           # DB_CPUS empty → run-variant.sh gives the DB the VM's full core count.
           DB_CPUS: ${{ vars.BENCHMARK_DB_CPUS }}
           DB_MEMORY: ${{ vars.BENCHMARK_DB_MEMORY || '24g' }}
-          # Client + workload knobs, tunable via repo variables.
-          PARALLEL: ${{ vars.BENCHMARK_PARALLEL || '20' }}
-          MPS: ${{ vars.BENCHMARK_MPS || '5000' }}
-          QUERIES_COUNT: ${{ vars.BENCHMARK_QUERIES_COUNT || '20000' }}
-          # Read-only unless the caller opts into writes (manual dispatch only).
+          # Client + workload knobs: per-size defaults live in workload-sizing.sh
+          # (small/large 20 clients, medium 8; MPS 5000). A repo variable, if set,
+          # still overrides. QUERIES_COUNT only feeds the local generate fallback —
+          # the shared workload downloaded above already fixes the count.
+          PARALLEL: ${{ vars.BENCHMARK_PARALLEL }}
+          MPS: ${{ vars.BENCHMARK_MPS }}
+          QUERIES_COUNT: ${{ vars.BENCHMARK_QUERIES_COUNT }}
+          # Write fraction from the caller: 0.05 for PR/slash runs, 0.0 for the
+          # canonical main-branch trend (and any caller that omits it).
           WRITE_RATIO: ${{ inputs.write_ratio }}
+          # Query coverage profile from the caller: fixture-dependent for PR/slash
+          # runs (adds text+vector index flows), baseline for the canonical trend.
+          QUERY_PROFILE: ${{ inputs.query_profile }}
           # Server-side per-query timeout (ms) — 5s so heavy algos abort fast
           # instead of running to the tool's 180s default. Tunable via repo var.
           FALKOR_QUERY_TIMEOUT_MS: ${{ vars.BENCHMARK_QUERY_TIMEOUT_MS || '5000' }}
@@ -320,6 +418,8 @@ jobs:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VIEW: ${{ inputs.view }}
+          # Separate PR comment per arch so x86 and arm results don't clobber each other.
+          COMMENT_MARKER: ${{ inputs.arch == 'arm' && '<!-- ab-benchmark-comment-arm -->' || '<!-- ab-benchmark-comment -->' }}
           IS_CANONICAL: ${{ inputs.is_canonical }}
           UI_DIR: ${{ github.workspace }}/benchmark-tool/ui
           GH_PAGES_DIR: ${{ github.workspace }}/gh-pages
@@ -333,6 +433,10 @@ jobs:
           RAW: ${{ runner.temp }}/raw
           DL: ${{ runner.temp }}/summaries
           RUNNER_TMP: ${{ runner.temp }}
+          # Link the PR comment back to the run that produced it, and pass the
+          # per-query cap so the comment can flag shapes whose p99 reached it.
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TIMEOUT_MS: ${{ vars.BENCHMARK_QUERY_TIMEOUT_MS || '5000' }}
         run: |
           set -euo pipefail
           mkdir -p "$DL"
@@ -391,10 +495,11 @@ jobs:
           BODY="$RUNNER_TMP/pr-comment.md"
           python3 .github/scripts/benchmark/format-summary.py "${args[@]}" \
             --view "$VIEW" --published-url "$published_url" \
+            --run-url "$RUN_URL" --timeout-ms "$TIMEOUT_MS" \
             --name-a "$NAME_A" --name-b "$NAME_B" --name-c "$NAME_C" > "$BODY"
 
-          # Upsert one benchmark comment per PR (marker-identified).
-          MARKER="<!-- ab-benchmark-comment -->"
+          # Upsert one benchmark comment per PR *per arch* (marker-identified).
+          MARKER="$COMMENT_MARKER"
           { echo "$MARKER"; cat "$BODY"; } > "$BODY.marked"
           existing=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate \
             --jq "map(select(.body | startswith(\"$MARKER\"))) | .[0].id // empty")

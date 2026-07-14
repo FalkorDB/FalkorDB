@@ -168,6 +168,30 @@ def slowest_lines(sizes, name_a, name_b, name_c, top=8):
     return out
 
 
+def timeout_lines(sizes, name_a, name_b, name_c, has_c, timeout_ms):
+    """Per-variant count of query shapes whose client p99 reached the server cap,
+    on the largest size present. There is no true per-query timeout rate for
+    FalkorDB in the aggregate (the tool only emits one for Memgraph), and server
+    `exec` is a cumulative total — so client p99 ≥ cap is the honest signal. It
+    conflates a server-aborted query with one merely stuck behind a deep queue,
+    hence the precise 'p99 ≥ Ns' label rather than 'timed out'."""
+    if not sizes or not timeout_ms:
+        return []
+    label, summ = sizes[-1]  # largest present
+    variants = [("A", name_a), ("B", name_b)] + ([("C", name_c)] if has_c else [])
+    parts = []
+    for tag, name in variants:
+        p99 = per_query(_run(summ, name), "p99")
+        if not p99:
+            continue
+        capped = sum(1 for v in p99.values() if v >= timeout_ms)
+        parts.append(f"{tag} {capped}/{len(p99)}")
+    if not parts:
+        return []
+    return ["", f"**⏱ Slow-tail shapes** — client p99 ≥ {timeout_ms / 1000:.0f}s "
+            f"(server cap, incl. queue wait), `{label}`: " + " · ".join(parts) + " of all shapes"]
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("summary_json", nargs="?", help="single aggregate JSON (two-variant fallback)")
@@ -175,6 +199,10 @@ def main() -> int:
                    help="a size-labelled aggregate JSON; repeat for multiple sizes")
     p.add_argument("--view", required=True)
     p.add_argument("--published-url", required=True)
+    p.add_argument("--run-url", default=None,
+                   help="link to the GitHub Actions run that produced this comment")
+    p.add_argument("--timeout-ms", type=float, default=None,
+                   help="server per-query timeout (ms); shapes with client p99 >= this are counted")
     p.add_argument("--name-a", default="falkordb-c")
     p.add_argument("--name-b", default="falkordb-rs")
     p.add_argument("--name-c", default="falkordb-pr")
@@ -219,7 +247,11 @@ def main() -> int:
         lines += movers_lines(sizes, args.name_a, args.name_c,
                               "**Top per-query movers — vs C-engine** server exec")
         lines += slowest_lines(sizes, args.name_a, args.name_b, args.name_c)
-    lines += ["", f"📊 [Full dashboard]({args.published_url})"]
+    lines += timeout_lines(sizes, args.name_a, args.name_b, args.name_c, has_c, args.timeout_ms)
+    footer = [f"📊 [Full dashboard]({args.published_url})"]
+    if args.run_url:
+        footer.append(f"🔗 [CI run]({args.run_url})")
+    lines += ["", " · ".join(footer)]
     print("\n".join(lines))
     return 0
 
