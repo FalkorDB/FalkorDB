@@ -11,9 +11,11 @@
 # `merge` job builds the CLI, aggregates each size's variants into one summary,
 # publishes the dashboard once and upserts one PR comment.
 #
-# Each variant generates its own query workload (generate-queries is not
-# deterministic, but the params are identical → same distribution, so the
-# percentile comparison stays valid). Aggregation is two-vendor upstream, so
+# The query workload is generated ONCE per run (the `gen-queries` job) and shared
+# to every variant as an artifact, so A/B/C replay the IDENTICAL queries (the
+# generator is unseeded — per-variant generation would diverge). A cache keyed on
+# (benchmark ref, size, profile, write-ratio) reuses the same file across runs so
+# the trend is reproducible run-to-run. Aggregation is two-vendor upstream, so
 # `merge` does it pairwise (A+B, A+C) and merges — see aggregate-variants.sh.
 #
 # Called by:
@@ -136,6 +138,68 @@ jobs:
           echo "combos=$combos" >> "$GITHUB_OUTPUT"
           echo "combos:"; echo "$combos" | jq .
 
+  # Generate the query workload ONCE per size and share it to every variant, so
+  # A/B/C replay the identical queries (the generator is unseeded). Cached on
+  # (benchmark ref, size, profile, write-ratio) → reused across runs for a
+  # reproducible trend; regenerated only when one of those changes. Pure
+  # client-side generation (no DB), so a plain runner suffices. Runs in parallel
+  # with create-runners (no dependency on setup).
+  gen-queries:
+    strategy:
+      fail-fast: false
+      matrix:
+        size: ${{ fromJSON(inputs.sizes) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout this repo (scripts)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Checkout FalkorDB/benchmark@${{ env.BENCHMARK_REF }}
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ env.BENCHMARK_REPO }}
+          ref: ${{ env.BENCHMARK_REF }}
+          path: benchmark-tool
+          persist-credentials: false
+
+      - name: Install protobuf-compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - run: rustup default stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: benchmark-tool
+
+      # Reuse the identical workload across runs: keyed so it regenerates only
+      # when the tool ref, size, profile, or write-ratio changes. Bump the v1
+      # prefix if the sizing table (workload-sizing.sh) changes the query count.
+      - name: Restore cached query workload
+        id: qcache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        with:
+          path: benchmark-tool/ab-compare-${{ matrix.size }}
+          key: bench-queries-v1-${{ env.BENCHMARK_REF }}-${{ matrix.size }}-${{ inputs.query_profile }}-wr${{ inputs.write_ratio }}
+
+      - name: Generate query workload (${{ matrix.size }})
+        if: ${{ steps.qcache.outputs.cache-hit != 'true' }}
+        env:
+          BENCHMARK_DIR: ${{ github.workspace }}/benchmark-tool
+          DATASET_SIZE: ${{ matrix.size }}
+          WRITE_RATIO: ${{ inputs.write_ratio }}
+          QUERY_PROFILE: ${{ inputs.query_profile }}
+        run: .github/scripts/benchmark/generate-queries.sh
+
+      - name: Upload query workload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: bench-queries-${{ inputs.view }}-${{ matrix.size }}
+          path: benchmark-tool/ab-compare-${{ matrix.size }}
+          if-no-files-found: error
+          retention-days: 30
+
   # One ephemeral GCE VM per (size, variant), labelled uniquely for this run so
   # its benchmark leg lands on it and cleanup can find it. All use the same
   # machine type → all variants/sizes compared on identical hardware.
@@ -172,7 +236,7 @@ jobs:
   # Each leg runs ONE variant on its own VM (runs-on = the label above). The VM
   # has Docker but not Rust/git — install those. Runs as root, so no sudo.
   benchmark:
-    needs: [setup, create-runners]
+    needs: [setup, gen-queries, create-runners]
     strategy:
       fail-fast: false
       matrix:
@@ -217,6 +281,16 @@ jobs:
         with:
           workspaces: benchmark-tool
 
+      # Shared query workload from gen-queries → $BENCHMARK_DIR/ab-compare-<size>.
+      # continue-on-error so a transient miss falls back to local generation in
+      # run-variant.sh rather than failing the leg (loses cross-variant pairing).
+      - name: Download shared query workload
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: bench-queries-${{ inputs.view }}-${{ matrix.combo.size }}
+          path: ${{ github.workspace }}/benchmark-tool
+
       - name: Run variant (${{ matrix.combo.size }}/${{ matrix.combo.variant }})
         env:
           IMAGE: ${{ matrix.combo.image }}
@@ -226,10 +300,13 @@ jobs:
           # DB_CPUS empty → run-variant.sh gives the DB the VM's full core count.
           DB_CPUS: ${{ vars.BENCHMARK_DB_CPUS }}
           DB_MEMORY: ${{ vars.BENCHMARK_DB_MEMORY || '24g' }}
-          # Client + workload knobs, tunable via repo variables.
-          PARALLEL: ${{ vars.BENCHMARK_PARALLEL || '20' }}
-          MPS: ${{ vars.BENCHMARK_MPS || '5000' }}
-          QUERIES_COUNT: ${{ vars.BENCHMARK_QUERIES_COUNT || '20000' }}
+          # Client + workload knobs: per-size defaults live in workload-sizing.sh
+          # (small/large 20 clients, medium 8; MPS 5000). A repo variable, if set,
+          # still overrides. QUERIES_COUNT only feeds the local generate fallback —
+          # the shared workload downloaded above already fixes the count.
+          PARALLEL: ${{ vars.BENCHMARK_PARALLEL }}
+          MPS: ${{ vars.BENCHMARK_MPS }}
+          QUERIES_COUNT: ${{ vars.BENCHMARK_QUERIES_COUNT }}
           # Write fraction from the caller: 0.05 for PR/slash runs, 0.0 for the
           # canonical main-branch trend (and any caller that omits it).
           WRITE_RATIO: ${{ inputs.write_ratio }}

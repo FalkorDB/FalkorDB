@@ -15,9 +15,16 @@ set -euo pipefail
 : "${BENCHMARK_DIR:?BENCHMARK_DIR (checkout of FalkorDB/benchmark) is required}"
 
 DATASET_SIZE="${DATASET_SIZE:-small}"
-QUERIES_COUNT="${QUERIES_COUNT:-20000}"   # a benchmark, not a soak test
-PARALLEL="${PARALLEL:-20}"                 # client worker tasks
-MPS="${MPS:-5000}"                         # target scheduling rate (queries/sec)
+# Per-size workload knobs (query count, client concurrency, dispatch rate) come
+# from one shared table so gen-queries and run never drift; explicit env still wins.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=.github/scripts/benchmark/workload-sizing.sh
+# shellcheck disable=SC1091  # path resolved at runtime via $SCRIPT_DIR
+source "$SCRIPT_DIR/workload-sizing.sh"
+workload_sizing "$DATASET_SIZE"
+QUERIES_COUNT="$WL_QUERIES_COUNT"          # only the generate fallback below uses this
+PARALLEL="$WL_PARALLEL"                     # client worker tasks
+MPS="$WL_MPS"                              # target scheduling rate (queries/sec)
 BATCH_SIZE="${BATCH_SIZE:-5000}"
 WRITE_RATIO="${WRITE_RATIO:-0.0}"          # read-only by default (workflow passes it)
 # Query coverage profile: baseline | extended-core | fixture-dependent.
@@ -69,11 +76,20 @@ echo "::group::Building benchmark CLI"
 cargo build --release --bin benchmark
 echo "::endgroup::"
 
-echo "::group::Generating query workload (${QUERIES_NAME})"
-cargo run --release --bin benchmark -- generate-queries \
-  --vendor falkor --dataset "$DATASET_SIZE" --size "$QUERIES_COUNT" \
-  --name "$QUERIES_NAME" --write-ratio "$WRITE_RATIO" \
-  --query-profile "$QUERY_PROFILE"
+echo "::group::Query workload (${QUERIES_NAME})"
+# The workload is generated ONCE per run (in _benchmark.yml's gen-queries job)
+# and downloaded into $BENCHMARK_DIR so every A/B/C variant replays the IDENTICAL
+# queries — the generator is unseeded, so per-variant generation would diverge.
+# Fall back to generating locally only when no shared file is present (a
+# standalone run, or a transient artifact-download miss).
+if [ -f "$QUERIES_NAME" ]; then
+  echo "using shared pre-generated workload $BENCHMARK_DIR/$QUERIES_NAME"
+else
+  echo "no shared workload found — generating locally (fallback, NOT cross-variant paired)"
+  DATASET_SIZE="$DATASET_SIZE" WRITE_RATIO="$WRITE_RATIO" QUERY_PROFILE="$QUERY_PROFILE" \
+  QUERIES_COUNT="$QUERIES_COUNT" BENCHMARK_DIR="$BENCHMARK_DIR" \
+    "$SCRIPT_DIR/generate-queries.sh"
+fi
 echo "::endgroup::"
 
 echo "::group::Benchmarking ${NAME} (${IMAGE})"
