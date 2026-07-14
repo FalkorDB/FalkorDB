@@ -133,6 +133,8 @@ document.getElementById("themeBtn").addEventListener("click",()=>{
 });
 
 function seriesFor(q){ return (TREND.series[state.metric]||{})[q] || []; }
+/* triggering PR number for a snapshot timestamp, or null if unattributed */
+function prFor(t){ const p=(TREND.prs||{})[String(t)]; return (p==null)?null:p; }
 
 function render(){
   document.getElementById("detailMetric").textContent=METLABEL[state.metric];
@@ -218,7 +220,9 @@ function drawDetail(){
     const a=pts[i][1],b=pts[i][2];
     if(a!=null){dA.setAttribute("cx",X(i));dA.setAttribute("cy",Y(a));dA.setAttribute("opacity",1);}else dA.setAttribute("opacity",0);
     if(b!=null){dB.setAttribute("cx",X(i));dB.setAttribute("cy",Y(b));dB.setAttribute("opacity",1);}else dB.setAttribute("opacity",0);
-    showTip(e,q+" · "+dateOf(pts[i][0]),[["Rust (edge-rs)",fmt(b)+" ms",css("--b")],["C engine (edge)",fmt(a)+" ms",css("--a")]]);
+    const pr=prFor(pts[i][0]);
+    const title=q+" · "+dateOf(pts[i][0])+(pr!=null?" · PR #"+pr:"");
+    showTip(e,title,[["Rust (edge-rs)",fmt(b)+" ms",css("--b")],["C engine (edge)",fmt(a)+" ms",css("--a")]]);
   });
   rect.addEventListener("mouseleave",()=>{hoverL.setAttribute("opacity",0);dA.setAttribute("opacity",0);dB.setAttribute("opacity",0);hideTip();});
   svg.appendChild(rect);

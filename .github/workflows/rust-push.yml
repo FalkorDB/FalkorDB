@@ -151,7 +151,7 @@ jobs:
   # and benchmark.yml (the PR-label/slash-command/manual-dispatch entry
   # points, which publish to /benchmark/branch/<view>/ previews instead).
   benchmark-edge:
-    needs: promote-edge
+    needs: [find-pr, promote-edge]
     if: ${{ github.ref == 'refs/heads/main' && needs.promote-edge.result == 'success' }}
     uses: ./.github/workflows/_benchmark.yml
     permissions:
@@ -167,6 +167,10 @@ jobs:
       view: main
       is_canonical: true
       sizes: '["small"]'
+      # Attribute this trend snapshot to the PR that merged into main, so the
+      # drill-down chart can show which PR each data point came from. Kept as
+      # snapshot_pr_number (not pr_number) so the canonical run never comments.
+      snapshot_pr_number: ${{ needs.find-pr.outputs.pr_n }}
     secrets: inherit
 
   lint:
