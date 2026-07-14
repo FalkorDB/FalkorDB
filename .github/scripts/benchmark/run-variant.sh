@@ -34,10 +34,13 @@ WRITE_RATIO="${WRITE_RATIO:-0.0}"          # read-only by default (workflow pass
 QUERY_PROFILE="${QUERY_PROFILE:-baseline}"
 # Server-side per-query timeout (FalkorDB aborts the query and frees the thread
 # at this deadline; the benchmark client applies it via ro_query .with_timeout).
-# Per-size default from workload-sizing.sh: 5s for small/large (heavy algos abort
-# fast, well below the tool's 180s default), 30s for medium (its ordinary shapes
-# on 100k genuinely need seconds, so 5s turned real work into false timeouts).
-export FALKOR_QUERY_TIMEOUT_MS="$WL_TIMEOUT_MS"
+# Default 5s, well below the tool's own 180s default: the heavy graph algos
+# (maxflow/msf/harmonic) and the unbounded shortestPath otherwise run for minutes
+# each. At 5s they abort fast (recorded as timeouts) while the ordinary read
+# shapes still complete and compare cleanly. (Tried 30s on medium — it cut
+# throughput ~3x and the heavy shapes still capped, so 5s stays; see
+# workload-sizing.sh.)
+export FALKOR_QUERY_TIMEOUT_MS="${FALKOR_QUERY_TIMEOUT_MS:-5000}"
 DB_PORT="${DB_PORT:-16379}"
 # Give the DB every core of the VM by default (FalkorDB already sizes its thread
 # pool off host nproc); the client is co-located but the OS scheduler shares.
