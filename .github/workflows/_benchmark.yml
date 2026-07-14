@@ -433,6 +433,10 @@ jobs:
           RAW: ${{ runner.temp }}/raw
           DL: ${{ runner.temp }}/summaries
           RUNNER_TMP: ${{ runner.temp }}
+          # Link the PR comment back to the run that produced it, and pass the
+          # per-query cap so the comment can flag shapes whose p99 reached it.
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TIMEOUT_MS: ${{ vars.BENCHMARK_QUERY_TIMEOUT_MS || '5000' }}
         run: |
           set -euo pipefail
           mkdir -p "$DL"
@@ -491,6 +495,7 @@ jobs:
           BODY="$RUNNER_TMP/pr-comment.md"
           python3 .github/scripts/benchmark/format-summary.py "${args[@]}" \
             --view "$VIEW" --published-url "$published_url" \
+            --run-url "$RUN_URL" --timeout-ms "$TIMEOUT_MS" \
             --name-a "$NAME_A" --name-b "$NAME_B" --name-c "$NAME_C" > "$BODY"
 
           # Upsert one benchmark comment per PR *per arch* (marker-identified).
