@@ -73,9 +73,9 @@ jobs:
         run: |
           git fetch origin ${{ env.COMMIT_SHA }} --depth=1
           VERSION_H=$(git show ${{ env.COMMIT_SHA }}:src/version.h)
-          MAJOR=$(echo "$VERSION_H" | grep FALKOR_VERSION_MAJOR | awk '{print $3}')
-          MINOR=$(echo "$VERSION_H" | grep FALKOR_VERSION_MINOR | awk '{print $3}')
-          PATCH=$(echo "$VERSION_H" | grep FALKOR_VERSION_PATCH | awk '{print $3}')
+          MAJOR=$(echo "$VERSION_H" | grep '^#define FALKOR_VERSION_MAJOR ' | awk '{print $3}')
+          MINOR=$(echo "$VERSION_H" | grep '^#define FALKOR_VERSION_MINOR ' | awk '{print $3}')
+          PATCH=$(echo "$VERSION_H" | grep '^#define FALKOR_VERSION_PATCH ' | awk '{print $3}')
           FILE_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
           echo "Tag: ${{ env.TAG_NAME }}, version.h: ${FILE_VERSION}"
           if [ "${{ env.TAG_NAME }}" != "${FILE_VERSION}" ]; then
