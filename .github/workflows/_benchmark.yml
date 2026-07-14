@@ -318,9 +318,9 @@ jobs:
           # Query coverage profile from the caller: fixture-dependent for PR/slash
           # runs (adds text+vector index flows), baseline for the canonical trend.
           QUERY_PROFILE: ${{ inputs.query_profile }}
-          # Server-side per-query timeout (ms) — 5s so heavy algos abort fast
-          # instead of running to the tool's 180s default. Tunable via repo var.
-          FALKOR_QUERY_TIMEOUT_MS: ${{ vars.BENCHMARK_QUERY_TIMEOUT_MS || '5000' }}
+          # Server-side per-query timeout (ms). Per-size default in
+          # workload-sizing.sh (5s small/large, 30s medium); a repo var overrides.
+          FALKOR_QUERY_TIMEOUT_MS: ${{ vars.BENCHMARK_QUERY_TIMEOUT_MS }}
           BENCHMARK_DIR: ${{ github.workspace }}/benchmark-tool
           RESULTS_DIR: ${{ runner.temp }}/results-ab
         run: .github/scripts/benchmark/run-variant.sh
