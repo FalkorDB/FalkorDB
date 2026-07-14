@@ -499,6 +499,55 @@ jobs:
         if: matrix.platform.use_docker && matrix.build_type == 'release'
         run: docker load --input /tmp/falkordb-${{ matrix.platform.suffix }}.tar
 
+      - name: Build edge-browser image for smoke test
+        if: matrix.platform.use_docker && matrix.build_type == 'release' && env.BROWSER_TAG != 'edge'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: /FalkorDB
+          file: /FalkorDB/build/docker/${{ steps.dockerfile.outputs.final }}
+          platforms: linux/${{ matrix.platform.arch }}
+          load: true
+          tags: falkordb/falkordb-${{ matrix.platform.suffix }}:edge-smoke
+          build-args: |
+            BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
+            TARGETPLATFORM=linux/${{ matrix.platform.arch }}
+            BROWSER_TAG=edge
+
+      - name: Smoke test image (DB + browser connectivity)
+        if: matrix.platform.use_docker && matrix.build_type == 'release'
+        run: |
+          smoke_test() {
+            IMAGE=$1
+            LABEL=$2
+            echo "=== Smoke testing ${LABEL} (${IMAGE}) ==="
+            docker run -d --name smoke -p 6379:6379 -p 3000:3000 "${IMAGE}"
+
+            echo "Waiting for FalkorDB module to load..."
+            if ! timeout 60 sh -c 'until docker exec smoke redis-cli GRAPH.QUERY smoke "RETURN 1" >/dev/null 2>&1; do sleep 2; done'; then
+              echo "::error::[${LABEL}] FalkorDB did not respond to GRAPH.QUERY within 60s"
+              docker logs smoke
+              exit 1
+            fi
+
+            echo "Waiting for browser on port 3000..."
+            if ! timeout 60 sh -c 'until curl -sf http://localhost:3000 >/dev/null; do sleep 2; done'; then
+              echo "::error::[${LABEL}] Browser UI did not respond on port 3000 within 60s"
+              docker logs smoke
+              exit 1
+            fi
+
+            echo "[${LABEL}] Smoke test passed: DB and browser are up"
+            docker rm -f smoke
+          }
+
+          # Test the image as it will be shipped (browser tag: ${{ env.BROWSER_TAG }})
+          smoke_test falkordb/falkordb-${{ matrix.platform.suffix }} "browser:${{ env.BROWSER_TAG }}"
+
+          # Also test with the edge browser, unless the shipped image already uses it
+          if [[ "${{ env.BROWSER_TAG }}" != "edge" ]]; then
+            smoke_test falkordb/falkordb-${{ matrix.platform.suffix }}:edge-smoke "browser:edge"
+          fi
+
       - name: Upload base image
         if: matrix.platform.use_docker && matrix.build_type == 'release'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
