@@ -94,6 +94,17 @@ fn validate_relationship_property(value: &Value) -> Result<(), String> {
     Ok(())
 }
 
+/// Binary-search a sorted `(attr_id, Value)` slice.
+fn lookup_sorted(
+    attrs: &[(u16, Value)],
+    attr_id: u16,
+) -> Option<&Value> {
+    attrs
+        .binary_search_by_key(&attr_id, |(k, _)| *k)
+        .ok()
+        .map(|pos| &attrs[pos].1)
+}
+
 /// Accumulated write operations for deferred application.
 ///
 /// All mutations during query execution are collected here and applied
@@ -111,14 +122,15 @@ pub struct Pending {
     deleted_relationships: RoaringTreemap,
     /// Endpoints for deleted relationships — populated by commit(), used by build_effects_buffer().
     deleted_endpoints: Vec<(RelationshipId, NodeId, NodeId)>,
-    /// Property updates for newly created nodes (fast path: skip fjall)
-    new_nodes_attrs: FxHashMap<u64, OrderMap<Arc<String>, Value>>,
+    /// Property updates for newly created nodes (fast path: skip fjall).
+    /// Values are attribute-id-resolved, sorted by id, unique.
+    new_nodes_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
     /// Property updates for existing nodes (full merge path)
-    existing_nodes_attrs: FxHashMap<u64, OrderMap<Arc<String>, Value>>,
+    existing_nodes_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
     /// Property updates for newly created relationships (fast path)
-    new_relationships_attrs: FxHashMap<u64, OrderMap<Arc<String>, Value>>,
+    new_relationships_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
     /// Property updates for existing relationships (full merge path)
-    existing_relationships_attrs: FxHashMap<u64, OrderMap<Arc<String>, Value>>,
+    existing_relationships_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
     /// Labels to add: node_id → [label_ids]
     set_labels: FxHashMap<u64, Vec<u64>>,
     /// Labels to remove: node_id → [label_ids]
@@ -210,12 +222,14 @@ impl Pending {
         }
     }
 
+    /// Set all attributes for a node. `attrs` must be attribute-id-resolved,
+    /// sorted by id, and unique (last-wins dedup done by the caller).
     pub fn set_node_attributes(
         &mut self,
         id: NodeId,
-        attrs: OrderMap<Arc<String>, Value>,
+        attrs: Vec<(u16, Value)>,
     ) -> Result<(), String> {
-        for value in attrs.values() {
+        for (_, value) in &attrs {
             validate_node_property(value)?;
         }
         // Empty attribute maps from CREATE without `{...}` props would otherwise
@@ -223,6 +237,7 @@ impl Pending {
         if attrs.is_empty() {
             return Ok(());
         }
+        debug_assert!(attrs.is_sorted_by_key(|(k, _)| *k));
         let is_new = self.created_nodes.contains(id.into());
         if is_new {
             self.new_nodes_attrs.insert(id.into(), attrs);
@@ -235,7 +250,7 @@ impl Pending {
     pub fn set_node_attribute(
         &mut self,
         id: NodeId,
-        key: Arc<String>,
+        attr_id: u16,
         value: Value,
     ) -> Result<(), String> {
         validate_node_property(&value)?;
@@ -245,7 +260,10 @@ impl Pending {
             &mut self.existing_nodes_attrs
         };
         let entry = map.entry(id.into()).or_default();
-        entry.insert(key, value);
+        match entry.binary_search_by_key(&attr_id, |(k, _)| *k) {
+            Ok(pos) => entry[pos].1 = value,
+            Err(pos) => entry.insert(pos, (attr_id, value)),
+        }
         Ok(())
     }
 
@@ -273,18 +291,18 @@ impl Pending {
     pub fn get_node_attribute(
         &self,
         id: NodeId,
-        key: &Arc<String>,
+        attr_id: u16,
     ) -> Option<&Value> {
         if !self.has_node_attrs() {
             return None;
         }
         self.new_nodes_attrs
             .get(&id.into())
-            .and_then(|attrs| attrs.get(key))
+            .and_then(|attrs| lookup_sorted(attrs, attr_id))
             .or_else(|| {
                 self.existing_nodes_attrs
                     .get(&id.into())
-                    .and_then(|attrs| attrs.get(key))
+                    .and_then(|attrs| lookup_sorted(attrs, attr_id))
             })
     }
 
@@ -292,17 +310,21 @@ impl Pending {
         &self,
         id: NodeId,
         attrs: &mut OrderMap<Arc<String>, Value>,
+        g: &Graph,
     ) {
         let added = self
             .new_nodes_attrs
             .get(&id.into())
             .or_else(|| self.existing_nodes_attrs.get(&id.into()));
         if let Some(added) = added {
-            for (key, value) in added.iter() {
+            for (attr_id, value) in added {
+                let Some(key) = g.node_attr_name(*attr_id) else {
+                    continue;
+                };
                 if matches!(value, Value::Null) {
-                    attrs.remove(key);
+                    attrs.remove(&key);
                 } else {
-                    attrs.insert(key.clone(), value.clone());
+                    attrs.insert(key, value.clone());
                 }
             }
         }
@@ -381,7 +403,7 @@ impl Pending {
         id: NodeId,
     ) -> (
         OrderSet<LabelId>,
-        OrderMap<Arc<String>, Value>,
+        Vec<(u16, Value)>,
         Vec<(RelationshipId, NodeId, NodeId)>,
     ) {
         self.created_nodes.remove(id.into());
@@ -433,7 +455,7 @@ impl Pending {
         NodeId,
         NodeId,
         Arc<String>,
-        Option<OrderMap<Arc<String>, Value>>,
+        Option<Vec<(u16, Value)>>,
     )> {
         let mut rels = Vec::new();
         for (type_name, entries) in &self.created_rels_by_type {
@@ -485,12 +507,14 @@ impl Pending {
         self.created_rel_types.insert(id, type_name);
     }
 
+    /// Set all attributes for a relationship. `attrs` must be
+    /// attribute-id-resolved, sorted by id, and unique.
     pub fn set_relationship_attributes(
         &mut self,
         id: RelationshipId,
-        attrs: OrderMap<Arc<String>, Value>,
+        attrs: Vec<(u16, Value)>,
     ) -> Result<(), String> {
-        for value in attrs.values() {
+        for (_, value) in &attrs {
             validate_relationship_property(value)?;
         }
         // Empty attribute maps from CREATE without `{...}` props would otherwise
@@ -498,6 +522,7 @@ impl Pending {
         if attrs.is_empty() {
             return Ok(());
         }
+        debug_assert!(attrs.is_sorted_by_key(|(k, _)| *k));
         if self.created_rel_types.contains_key(&id) {
             self.new_relationships_attrs.insert(id.into(), attrs);
         } else {
@@ -509,7 +534,7 @@ impl Pending {
     pub fn set_relationship_attribute(
         &mut self,
         id: RelationshipId,
-        key: Arc<String>,
+        attr_id: u16,
         value: Value,
     ) -> Result<(), String> {
         validate_relationship_property(&value)?;
@@ -519,7 +544,10 @@ impl Pending {
             &mut self.existing_relationships_attrs
         };
         let entry = map.entry(id.into()).or_default();
-        entry.insert(key, value);
+        match entry.binary_search_by_key(&attr_id, |(k, _)| *k) {
+            Ok(pos) => entry[pos].1 = value,
+            Err(pos) => entry.insert(pos, (attr_id, value)),
+        }
         Ok(())
     }
 
@@ -527,18 +555,18 @@ impl Pending {
     pub fn get_relationship_attribute(
         &self,
         id: RelationshipId,
-        key: &Arc<String>,
+        attr_id: u16,
     ) -> Option<&Value> {
         if !self.has_relationship_attrs() {
             return None;
         }
         self.new_relationships_attrs
             .get(&id.into())
-            .and_then(|attrs| attrs.get(key))
+            .and_then(|attrs| lookup_sorted(attrs, attr_id))
             .or_else(|| {
                 self.existing_relationships_attrs
                     .get(&id.into())
-                    .and_then(|attrs| attrs.get(key))
+                    .and_then(|attrs| lookup_sorted(attrs, attr_id))
             })
     }
 
@@ -546,17 +574,21 @@ impl Pending {
         &self,
         id: RelationshipId,
         attrs: &mut OrderMap<Arc<String>, Value>,
+        g: &Graph,
     ) {
         let added = self
             .new_relationships_attrs
             .get(&id.into())
             .or_else(|| self.existing_relationships_attrs.get(&id.into()));
         if let Some(added) = added {
-            for (key, value) in added.iter() {
+            for (attr_id, value) in added {
+                let Some(key) = g.rel_attr_name(*attr_id) else {
+                    continue;
+                };
                 if matches!(value, Value::Null) {
-                    attrs.remove(key);
+                    attrs.remove(&key);
                 } else {
-                    attrs.insert(key.clone(), value.clone());
+                    attrs.insert(key, value.clone());
                 }
             }
         }
@@ -643,6 +675,7 @@ impl Pending {
     }
 
     /// Returns (src, dst) for a pending-created relationship, or None if not found.
+    #[must_use]
     pub fn get_created_relationship_endpoints(
         &self,
         id: RelationshipId,
@@ -892,19 +925,15 @@ impl Pending {
                 .extend(endpoints.iter().map(|(id, _, _)| u64::from(*id)));
             self.deleted_endpoints.extend(endpoints);
         }
-        // Enforce constraints before committing attrs to the store.
-        // The constraint checks read from the in-memory attribute cache
-        // which already has the dirty mutations from this transaction.
+        // Enforce constraints before accumulating index operations.
+        // The constraint checks read the attribute store, which already has
+        // the mutations from this transaction (writes apply immediately to
+        // the private MVCC graph).
         self.enforce_constraints(g)?;
 
-        // Commit attribute changes after constraint validation passes.
         // Index operations are deferred — they will be applied only after
         // the full query succeeds to avoid stale RediSearch entries on
         // rollback.
-        {
-            let mut g = g.borrow_mut();
-            g.commit_attrs()?;
-        }
 
         // Accumulate index operations into deferred fields.
         for (k, v) in self.index_add_docs.drain() {
@@ -978,7 +1007,7 @@ impl Pending {
         for id in &self.deleted_nodes {
             affected_node_ids.remove(id);
         }
-        for rel_id in self.deleted_relationships.iter() {
+        for rel_id in &self.deleted_relationships {
             affected_edge_ids.remove(rel_id);
         }
 
@@ -1015,14 +1044,12 @@ impl Pending {
                 continue;
             }
 
-            let attrs = g.get_node_all_attrs(node_id.into());
-
             match constraint.ct {
                 ConstraintType::Mandatory => {
                     for prop in &constraint.properties {
-                        let has_prop = attrs
-                            .iter()
-                            .any(|(name, val)| name == prop && !matches!(val, Value::Null));
+                        let has_prop = g
+                            .get_node_attribute(node_id.into(), prop)
+                            .is_some_and(|val| !matches!(val, Value::Null));
                         if !has_prop {
                             return Err(format!(
                                 "mandatory constraint violation: node with label {label} missing property {prop}"
@@ -1031,7 +1058,9 @@ impl Pending {
                     }
                 }
                 ConstraintType::Unique => {
-                    let key = Graph::build_composite_key(&constraint.properties, &attrs);
+                    let key = Graph::build_composite_key(&constraint.properties, |prop| {
+                        g.get_node_attribute(node_id.into(), prop)
+                    });
                     if key.is_empty() {
                         continue; // All NULL → no violation
                     }
@@ -1040,9 +1069,10 @@ impl Pending {
                     if let Some(lm) = g.get_label_matrix(label) {
                         let mut seen: FxHashMap<Vec<u8>, u64> = FxHashMap::default();
                         for (other_id, _) in lm.iter(0, u64::MAX) {
-                            let other_attrs = g.get_node_all_attrs(other_id.into());
                             let other_key =
-                                Graph::build_composite_key(&constraint.properties, &other_attrs);
+                                Graph::build_composite_key(&constraint.properties, |prop| {
+                                    g.get_node_attribute(other_id.into(), prop)
+                                });
                             if other_key.is_empty() {
                                 continue;
                             }
@@ -1075,14 +1105,12 @@ impl Pending {
                 continue;
             }
 
-            let attrs = g.get_relationship_all_attrs(edge_id.into());
-
             match constraint.ct {
                 ConstraintType::Mandatory => {
                     for prop in &constraint.properties {
-                        let has_prop = attrs
-                            .iter()
-                            .any(|(name, val)| name == prop && !matches!(val, Value::Null));
+                        let has_prop = g
+                            .get_relationship_attribute(edge_id.into(), prop)
+                            .is_some_and(|val| !matches!(val, Value::Null));
                         if !has_prop {
                             return Err(format!(
                                 "mandatory constraint violation: edge with relationship-type {type_name} missing property {prop}"
@@ -1091,7 +1119,9 @@ impl Pending {
                     }
                 }
                 ConstraintType::Unique => {
-                    let key = Graph::build_composite_key(&constraint.properties, &attrs);
+                    let key = Graph::build_composite_key(&constraint.properties, |prop| {
+                        g.get_relationship_attribute(edge_id.into(), prop)
+                    });
                     if key.is_empty() {
                         continue;
                     }
@@ -1100,9 +1130,10 @@ impl Pending {
                     if let Some(tensor) = g.get_relationship_matrix(type_name) {
                         let mut seen: FxHashMap<Vec<u8>, u64> = FxHashMap::default();
                         for (_, _, other_eid) in tensor.iter(0, u64::MAX, false) {
-                            let other_attrs = g.get_relationship_all_attrs(other_eid.into());
                             let other_key =
-                                Graph::build_composite_key(&constraint.properties, &other_attrs);
+                                Graph::build_composite_key(&constraint.properties, |prop| {
+                                    g.get_relationship_attribute(other_eid.into(), prop)
+                                });
                             if other_key.is_empty() {
                                 continue;
                             }
@@ -1141,15 +1172,43 @@ impl Pending {
 
     /// Clear all pending mutation state.
     pub fn clear(&mut self) {
+        // Dropping millions of per-entity Vec allocations is O(n) frees and
+        // stalls the serialized write thread; move large maps to a background
+        // thread and let it pay the deallocation cost.
+        const OFFLOAD_THRESHOLD: usize = 4096;
+        let big_entries = self.new_nodes_attrs.len()
+            + self.existing_nodes_attrs.len()
+            + self.new_relationships_attrs.len()
+            + self.existing_relationships_attrs.len()
+            + self.set_labels.len()
+            + self.remove_labels.len()
+            + self
+                .created_rels_by_type
+                .values()
+                .map(Vec::len)
+                .sum::<usize>();
+        if big_entries >= OFFLOAD_THRESHOLD {
+            let maps = (
+                std::mem::take(&mut self.new_nodes_attrs),
+                std::mem::take(&mut self.existing_nodes_attrs),
+                std::mem::take(&mut self.new_relationships_attrs),
+                std::mem::take(&mut self.existing_relationships_attrs),
+                std::mem::take(&mut self.set_labels),
+                std::mem::take(&mut self.remove_labels),
+                std::mem::take(&mut self.created_rels_by_type),
+            );
+            std::thread::spawn(move || drop(maps));
+        } else {
+            self.new_nodes_attrs.clear();
+            self.existing_nodes_attrs.clear();
+            self.new_relationships_attrs.clear();
+            self.existing_relationships_attrs.clear();
+            self.set_labels.clear();
+            self.remove_labels.clear();
+            self.created_rels_by_type.clear();
+        }
         self.created_nodes.clear();
-        self.created_rels_by_type.clear();
         self.created_rel_types.clear();
-        self.set_labels.clear();
-        self.remove_labels.clear();
-        self.new_nodes_attrs.clear();
-        self.existing_nodes_attrs.clear();
-        self.new_relationships_attrs.clear();
-        self.existing_relationships_attrs.clear();
         self.deleted_nodes.clear();
         self.deleted_relationships.clear();
         self.deleted_endpoints.clear();
@@ -1194,11 +1253,21 @@ impl Pending {
     ) -> u64 {
         let mut n_effects = 0u64;
 
-        // Pre-allocate buffer: ~40 bytes per created node, ~50 per edge, ~30 per delete
-        let estimated_bytes = (self.created_nodes.len() as usize) * 40
-            + self.created_rel_types.len() * 50
+        // Pre-allocate buffer: entity headers plus ~12 bytes per attribute
+        // (2-byte attribute id + tagged value payload).
+        let attr_bytes: usize = self
+            .new_nodes_attrs
+            .values()
+            .chain(self.existing_nodes_attrs.values())
+            .chain(self.new_relationships_attrs.values())
+            .chain(self.existing_relationships_attrs.values())
+            .map(|m| m.len() * 12)
+            .sum();
+        let estimated_bytes = (self.created_nodes.len() as usize) * 15
+            + self.created_rel_types.len() * 30
             + (self.deleted_nodes.len() as usize) * 10
-            + (self.deleted_relationships.len() as usize) * 25;
+            + (self.deleted_relationships.len() as usize) * 25
+            + attr_bytes;
         buf.reserve(estimated_bytes);
 
         // Version header (only write once at the start)
@@ -1241,61 +1310,66 @@ impl Pending {
             }
         }
 
+        // Attribute keys, label ids, and relationship type ids are encoded
+        // as u16 ids; the id → name mapping is established on the replica by
+        // the EFFECT_ADD_SCHEMA / EFFECT_ADD_ATTRIBUTE records above (and by
+        // in-order replay of earlier queries), which mirror the master's
+        // registration order exactly.
+
         // --- Created nodes ---
-        if !self.created_nodes.is_empty() {
-            let graph = g.borrow();
-            for node_id in &self.created_nodes {
-                buf.push(EFFECT_CREATE_NODE);
-                buf.extend_from_slice(&node_id.to_le_bytes());
+        for node_id in &self.created_nodes {
+            buf.push(EFFECT_CREATE_NODE);
+            buf.extend_from_slice(&node_id.to_le_bytes());
 
-                // Labels
-                let label_count_pos = buf.len();
-                write_u16(buf, 0); // placeholder
-                let mut label_count = 0u16;
-
-                if let Some(label_ids) = self.set_labels.get(&node_id) {
-                    for &label_id in label_ids {
-                        let label_name = graph.get_label_by_id(LabelId(label_id as usize));
-                        write_string(buf, &label_name);
-                        label_count += 1;
-                    }
+            // Labels
+            if let Some(label_ids) = self.set_labels.get(&node_id) {
+                write_u16(buf, label_ids.len() as u16);
+                for &label_id in label_ids {
+                    write_u16(buf, label_id as u16);
                 }
-                buf[label_count_pos..label_count_pos + 2]
-                    .copy_from_slice(&label_count.to_le_bytes());
-
-                // Attributes
-                if let Some(attrs) = self.new_nodes_attrs.get(&node_id) {
-                    write_u16(buf, attrs.len() as u16);
-                    for (key, value) in attrs.iter() {
-                        write_string(buf, key);
-                        write_value(buf, value);
-                    }
-                } else {
-                    write_u16(buf, 0);
-                }
-                n_effects += 1;
+            } else {
+                write_u16(buf, 0);
             }
+
+            // Attributes
+            if let Some(attrs) = self.new_nodes_attrs.get(&node_id) {
+                write_u16(buf, attrs.len() as u16);
+                for (attr_id, value) in attrs {
+                    write_u16(buf, *attr_id);
+                    write_value(buf, value);
+                }
+            } else {
+                write_u16(buf, 0);
+            }
+            n_effects += 1;
         }
 
         // --- Created relationships ---
-        for (type_name, entries) in &self.created_rels_by_type {
-            for &(rel_id, from, to) in entries {
-                buf.push(EFFECT_CREATE_EDGE);
-                buf.extend_from_slice(&u64::from(rel_id).to_le_bytes());
-                buf.extend_from_slice(&u64::from(from).to_le_bytes());
-                buf.extend_from_slice(&u64::from(to).to_le_bytes());
-                write_string(buf, type_name);
+        if !self.created_rels_by_type.is_empty() {
+            let graph = g.borrow();
+            for (type_name, entries) in &self.created_rels_by_type {
+                let type_id = graph
+                    .get_type_id(type_name)
+                    .expect("created relationship type must be registered")
+                    .0 as u16;
+                for &(rel_id, from, to) in entries {
+                    buf.push(EFFECT_CREATE_EDGE);
+                    buf.extend_from_slice(&u64::from(rel_id).to_le_bytes());
+                    buf.extend_from_slice(&u64::from(from).to_le_bytes());
+                    buf.extend_from_slice(&u64::from(to).to_le_bytes());
+                    write_u16(buf, type_id);
 
-                if let Some(attrs) = self.new_relationships_attrs.get(&u64::from(rel_id)) {
-                    write_u16(buf, attrs.len() as u16);
-                    for (key, value) in attrs.iter() {
-                        write_string(buf, key);
-                        write_value(buf, value);
+                    if let Some(attrs) = self.new_relationships_attrs.get(&u64::from(rel_id)) {
+                        write_u16(buf, attrs.len() as u16);
+                        for (attr_id, value) in attrs {
+                            write_u16(buf, *attr_id);
+                            write_value(buf, value);
+                        }
+                    } else {
+                        write_u16(buf, 0);
                     }
-                } else {
-                    write_u16(buf, 0);
+                    n_effects += 1;
                 }
-                n_effects += 1;
             }
         }
 
@@ -1304,8 +1378,8 @@ impl Pending {
             buf.push(EFFECT_UPDATE_NODE);
             buf.extend_from_slice(&node_id.to_le_bytes());
             write_u16(buf, attrs.len() as u16);
-            for (key, value) in attrs.iter() {
-                write_string(buf, key);
+            for (attr_id, value) in attrs {
+                write_u16(buf, *attr_id);
                 write_value(buf, value);
             }
             n_effects += 1;
@@ -1316,43 +1390,35 @@ impl Pending {
             buf.push(EFFECT_UPDATE_EDGE);
             buf.extend_from_slice(&rel_id.to_le_bytes());
             write_u16(buf, attrs.len() as u16);
-            for (key, value) in attrs.iter() {
-                write_string(buf, key);
+            for (attr_id, value) in attrs {
+                write_u16(buf, *attr_id);
                 write_value(buf, value);
             }
             n_effects += 1;
         }
 
         // --- Set labels (non-created nodes only) ---
-        if !self.set_labels.is_empty() {
-            let graph = g.borrow();
-            for (&node_id, label_ids) in &self.set_labels {
-                if !self.created_nodes.contains(node_id) {
-                    buf.push(EFFECT_SET_LABELS);
-                    buf.extend_from_slice(&node_id.to_le_bytes());
-                    write_u16(buf, label_ids.len() as u16);
-                    for &label_id in label_ids {
-                        let label_name = graph.get_label_by_id(LabelId(label_id as usize));
-                        write_string(buf, &label_name);
-                    }
-                    n_effects += 1;
+        for (&node_id, label_ids) in &self.set_labels {
+            if !self.created_nodes.contains(node_id) {
+                buf.push(EFFECT_SET_LABELS);
+                buf.extend_from_slice(&node_id.to_le_bytes());
+                write_u16(buf, label_ids.len() as u16);
+                for &label_id in label_ids {
+                    write_u16(buf, label_id as u16);
                 }
+                n_effects += 1;
             }
         }
 
         // --- Remove labels ---
-        if !self.remove_labels.is_empty() {
-            let graph = g.borrow();
-            for (&node_id, label_ids) in &self.remove_labels {
-                buf.push(EFFECT_REMOVE_LABELS);
-                buf.extend_from_slice(&node_id.to_le_bytes());
-                write_u16(buf, label_ids.len() as u16);
-                for &label_id in label_ids {
-                    let label_name = graph.get_label_by_id(LabelId(label_id as usize));
-                    write_string(buf, &label_name);
-                }
-                n_effects += 1;
+        for (&node_id, label_ids) in &self.remove_labels {
+            buf.push(EFFECT_REMOVE_LABELS);
+            buf.extend_from_slice(&node_id.to_le_bytes());
+            write_u16(buf, label_ids.len() as u16);
+            for &label_id in label_ids {
+                write_u16(buf, label_id as u16);
             }
+            n_effects += 1;
         }
 
         // --- Deleted relationships (before nodes, so replica removes edges first) ---
@@ -1377,7 +1443,7 @@ impl Pending {
 
 // ── Effects buffer constants and helpers ──
 
-pub const EFFECTS_VERSION: u8 = 1;
+pub const EFFECTS_VERSION: u8 = 2;
 
 pub const EFFECT_UPDATE_NODE: u8 = 1;
 pub const EFFECT_UPDATE_EDGE: u8 = 2;

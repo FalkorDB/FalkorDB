@@ -2,24 +2,35 @@
 set -e
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+# Pin RediSearch to a specific commit on falkordb/llapi-extensions-8.6 rather
+# than tracking the branch tip. The commit lives in this file, which is COPY'd
+# into build/Dockerfile, so bumping REDISEARCH_REF busts the toolchain image's
+# cached `RUN redisearch.sh` layer and keeps the build reproducible. To pick up
+# new RediSearch work, update REDISEARCH_REF to the new commit (check-files in
+# .github/workflows/rust-pr.yml rebuilds the toolchain when this file changes).
 REDISEARCH_BRANCH="falkordb/llapi-extensions-8.6"
+REDISEARCH_REF="ac45247834fec495f4d3ec76f337e3709260fdd5"
 REDISEARCH_DIR="$ROOT/redisearch/RediSearch"
 
 mkdir -p "$ROOT/redisearch"
 if [ ! -d "$REDISEARCH_DIR/.git" ]; then
-  git clone --recurse-submodules --branch "$REDISEARCH_BRANCH" --single-branch --depth 1 \
-    https://github.com/FalkorDB/RediSearch.git "$REDISEARCH_DIR"
+  # Shallow-fetch just the pinned commit (GitHub allows fetching a reachable SHA).
+  git init -q "$REDISEARCH_DIR"
+  git -C "$REDISEARCH_DIR" remote add origin https://github.com/FalkorDB/RediSearch.git
+  git -C "$REDISEARCH_DIR" fetch -q --depth 1 origin "$REDISEARCH_REF"
+  git -C "$REDISEARCH_DIR" checkout -q FETCH_HEAD
+  git -C "$REDISEARCH_DIR" submodule update --init --recursive --depth 1
 else
   # Reusing an existing checkout (fast local iteration; CI always clones fresh
   # because redisearch/ is .dockerignore'd). Warn loudly if it isn't on the
-  # expected ref so a stale or branch-switched clone doesn't silently build
+  # pinned ref so a stale or branch-switched clone doesn't silently build
   # against the wrong RediSearch ABI. We deliberately do NOT auto-reset — that
   # would clobber local RediSearch work; remove the directory to force a clean
-  # re-clone.
-  current_ref="$(git -C "$REDISEARCH_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
-  if [ "$current_ref" != "$REDISEARCH_BRANCH" ]; then
-    echo "WARNING: $REDISEARCH_DIR is on '$current_ref', expected '$REDISEARCH_BRANCH'." >&2
-    echo "         Remove that directory to re-clone, or check out the expected ref." >&2
+  # re-fetch.
+  current_ref="$(git -C "$REDISEARCH_DIR" rev-parse HEAD 2>/dev/null || echo '?')"
+  if [ "$current_ref" != "$REDISEARCH_REF" ]; then
+    echo "WARNING: $REDISEARCH_DIR is at '$current_ref', expected '$REDISEARCH_REF'." >&2
+    echo "         Remove that directory to re-fetch, or check out the expected ref." >&2
   fi
 fi
 

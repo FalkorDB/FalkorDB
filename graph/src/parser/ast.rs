@@ -226,27 +226,48 @@ pub enum ExprIR<TVar> {
     ListComprehension(TVar),
     /// Reduce expression: reduce(acc = init, var IN list | expr)
     /// Children: [init_expr, list_expr, body_expr]
-    Reduce { accumulator: TVar, iterator: TVar },
+    ///
+    /// Boxed: two inline `TVar`s (2 × 32 bytes once bound to `Variable`)
+    /// would cap the whole enum; reduce() is rare.
+    Reduce(Box<ReduceVars<TVar>>),
     /// Pattern comprehension [(pattern) WHERE cond | expr]
     /// Stores the graph pattern for runtime traversal.
     /// Children: [where_condition, result_expression]
-    PatternComprehension(QueryGraph<Arc<String>, Arc<String>, TVar>),
+    ///
+    /// Boxed: `QueryGraph` is 72 bytes but this variant is rare, so inlining
+    /// it would bloat every node of every expression tree.
+    PatternComprehension(Box<QueryGraph<Arc<String>, Arc<String>, TVar>>),
     /// Parenthesized expression (for precedence)
     Paren,
-    /// Pattern predicate should be rewritten in planner
-    Pattern(QueryGraph<Arc<String>, Arc<String>, TVar>),
+    /// Pattern predicate should be rewritten in planner (boxed; see
+    /// `PatternComprehension`).
+    Pattern(Box<QueryGraph<Arc<String>, Arc<String>, TVar>>),
     /// shortestPath((a)-[*]->(b)) or allShortestPaths((a)-[*]->(b))
     /// Children: [source_var_expr, dest_var_expr]
-    ShortestPath {
-        rel_types: Vec<Arc<String>>,
-        min_hops: u32,
-        max_hops: Option<u32>,
-        directed: bool,
-        all_paths: bool,
-    },
+    ///
+    /// Boxed: the inline payload (rel-type list, hop bounds, flags) is
+    /// ~40 bytes and shortestPath() is rare.
+    ShortestPath(Box<ShortestPathInfo>),
     /// Map projection: base { .prop, .*, key: expr, var }
     /// First child is the base expression, remaining children are projection items
     MapProjection,
+}
+
+/// Payload of [`ExprIR::Reduce`].
+#[derive(Clone, Debug)]
+pub struct ReduceVars<TVar> {
+    pub accumulator: TVar,
+    pub iterator: TVar,
+}
+
+/// Payload of [`ExprIR::ShortestPath`].
+#[derive(Clone, Debug)]
+pub struct ShortestPathInfo {
+    pub rel_types: Vec<Arc<String>>,
+    pub min_hops: u32,
+    pub max_hops: Option<u32>,
+    pub directed: bool,
+    pub all_paths: bool,
 }
 
 #[cfg_attr(tarpaulin, skip)]
@@ -303,19 +324,16 @@ impl<TVar: Display + std::fmt::Debug> Display for ExprIR<TVar> {
             Self::ListComprehension(var) => {
                 write!(f, "list comp({var})")
             }
-            Self::Reduce {
-                accumulator,
-                iterator,
-            } => {
-                write!(f, "reduce({accumulator}, {iterator})")
+            Self::Reduce(vars) => {
+                write!(f, "reduce({}, {})", vars.accumulator, vars.iterator)
             }
             Self::PatternComprehension(_) => {
                 write!(f, "pattern comp")
             }
             Self::Paren => write!(f, "()"),
             Self::Pattern(_) => write!(f, "<pattern>"),
-            Self::ShortestPath { all_paths, .. } => {
-                if *all_paths {
+            Self::ShortestPath(info) => {
+                if info.all_paths {
                     write!(f, "allShortestPaths()")
                 } else {
                     write!(f, "shortestPath()")

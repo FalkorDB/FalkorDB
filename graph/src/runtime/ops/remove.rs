@@ -123,11 +123,7 @@ impl Runtime<'_> {
                         continue;
                     }
                     if let Some(property) = property {
-                        self.pending.borrow_mut().set_node_attribute(
-                            node,
-                            property.clone(),
-                            Value::Null,
-                        )?;
+                        self.set_pending_node_attr(node, property, Value::Null)?;
                     }
                     if let Some(labels) = labels {
                         let mut current_labels = self
@@ -148,11 +144,7 @@ impl Runtime<'_> {
                 }
                 Value::Relationship(rel) => {
                     if let Some(property) = property {
-                        self.pending.borrow_mut().set_relationship_attribute(
-                            rel,
-                            property.clone(),
-                            Value::Null,
-                        )?;
+                        self.set_pending_relationship_attr(rel, property, Value::Null)?;
                     }
                     if labels.is_some() {
                         return Err(String::from(

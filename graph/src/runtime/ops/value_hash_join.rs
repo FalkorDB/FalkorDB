@@ -238,38 +238,31 @@ impl<'a> ValueHashJoinOp<'a> {
                 match &mut value_table {
                     // General path already active: re-materialize the key value.
                     Some(table) => insert_value(table, column.get(i), slot),
-                    None => match &column {
-                        // All-integer column: key directly on the `i64` — the
-                        // build side's hot path (no `Value` box / hash / drop).
-                        Column::Ints(ints) => {
+                    // All-integer column: key directly on the `i64` — the
+                    // build side's hot path (no `Value` box / hash / drop).
+                    None => {
+                        if let Column::Ints(ints) = &column {
                             int_table.entry(ints[i]).or_default().push(slot);
-                        }
-                        // Heterogeneous keys: honour `Value` numeric equality
-                        // (`30.0 == 30`) via `key_as_i64`, otherwise promote the
-                        // accumulated integer entries to the general table.
-                        _ => {
+                        } else {
+                            // Heterogeneous keys: honour `Value` numeric equality
+                            // (`30.0 == 30`) via `key_as_i64`, otherwise promote the
+                            // accumulated integer entries to the general table.
                             let key = column.get(i);
-                            match key_as_i64(&key) {
-                                Some(n) => {
-                                    int_table.entry(n).or_default().push(slot);
-                                }
-                                None => {
-                                    let mut table = promote_int_table(&mut int_table);
-                                    insert_value(&mut table, key, slot);
-                                    value_table = Some(table);
-                                }
+                            if let Some(n) = key_as_i64(&key) {
+                                int_table.entry(n).or_default().push(slot);
+                            } else {
+                                let mut table = promote_int_table(&mut int_table);
+                                insert_value(&mut table, key, slot);
+                                value_table = Some(table);
                             }
                         }
-                    },
+                    }
                 }
             }
             self.right_batches.push(batch);
         }
 
-        Ok(match value_table {
-            Some(table) => JoinHashTable::Value(table),
-            None => JoinHashTable::Int(int_table),
-        })
+        Ok(value_table.map_or_else(|| JoinHashTable::Int(int_table), JoinHashTable::Value))
     }
 
     /// Populate `right_match_envs` with the build-side rows whose key equals

@@ -45,7 +45,7 @@ use crate::runtime::value::Value;
 /// never materializes an intermediate `Vec` of tuples just to split it back into
 /// per-column `Vec`s. [`finish`](Self::finish) installs the completed lanes on
 /// the gathered batch.
-pub(crate) trait GatherItem: Sized {
+pub trait GatherItem: Sized {
     /// Per-operator binding metadata consumed by [`new_lanes`](Self::new_lanes),
     /// [`push_into`](Self::push_into) and [`finish`](Self::finish).
     type Binding;
@@ -82,7 +82,7 @@ pub(crate) trait GatherItem: Sized {
 impl GatherItem for NodeId {
     /// `Some(alias)` binds the node-id column; `None` binds no column.
     type Binding = Option<u32>;
-    type Lanes = Vec<NodeId>;
+    type Lanes = Vec<Self>;
 
     fn new_lanes(
         _binding: &Self::Binding,
@@ -113,7 +113,7 @@ impl GatherItem for NodeId {
 impl GatherItem for RelationshipId {
     /// `Some(alias)` binds the relationship-id column; `None` binds no column.
     type Binding = Option<u32>;
-    type Lanes = Vec<RelationshipId>;
+    type Lanes = Vec<Self>;
 
     fn new_lanes(
         _binding: &Self::Binding,
@@ -143,7 +143,7 @@ impl GatherItem for RelationshipId {
 
 /// Binding for a scan that yields an id plus an optional relevance score
 /// (fulltext / vector index scans).
-pub(crate) struct ScoredColumn {
+pub struct ScoredColumn {
     /// Alias of the bound entity (node or relationship).
     pub(crate) id: u32,
     /// Alias of the score column, when a score yield variable is present.
@@ -236,7 +236,7 @@ impl GatherItem for (RelationshipId, f64) {
 /// Binding for an edge scan that yields both endpoints and the edge id. The
 /// per-row iterator yields `(src, dst, edge)` in graph-tensor order;
 /// `transposed` flips which pattern endpoint (from/to) each graph side fills.
-pub(crate) struct EdgeEndpoints {
+pub struct EdgeEndpoints {
     /// Alias of the pattern's `from` endpoint.
     pub(crate) from: u32,
     /// Alias of the pattern's `to` endpoint, or `None` for a self-loop pattern
@@ -251,7 +251,7 @@ pub(crate) struct EdgeEndpoints {
 /// Column lanes for an edge scan: the two endpoint node columns plus the edge
 /// column. `tos` stays empty (and unallocated) for a self-loop pattern whose
 /// endpoints share one alias.
-pub(crate) struct EdgeLanes {
+pub struct EdgeLanes {
     froms: Vec<NodeId>,
     tos: Vec<NodeId>,
     edges: Vec<RelationshipId>,
@@ -313,7 +313,7 @@ impl GatherItem for (NodeId, NodeId, RelationshipId) {
 /// endpoints and an optional materialized path value. The DFS resolves the
 /// pattern's `from`/`to` (honoring reversal) before packing, so no transpose
 /// flag is needed here.
-pub(crate) struct VarLenEndpoints {
+pub struct VarLenEndpoints {
     /// Alias of the pattern's resolved `from` endpoint.
     pub(crate) from: u32,
     /// Alias of the pattern's resolved `to` endpoint.
@@ -330,7 +330,7 @@ pub(crate) struct VarLenEndpoints {
 /// Column lanes for a var-length expansion: the two endpoint node columns plus
 /// an optional path column. `tos` stays empty (and unallocated) for a shared
 /// endpoint alias; `paths` stays empty when the path is never read.
-pub(crate) struct VarLenLanes {
+pub struct VarLenLanes {
     froms: Vec<NodeId>,
     tos: Vec<NodeId>,
     paths: Vec<Value>,
@@ -401,7 +401,7 @@ impl GatherItem for Value {
     /// the best lossless stored shape (ints/floats), so this preserves the
     /// column specialization a row builder would have produced.
     type Binding = u32;
-    type Lanes = Vec<Value>;
+    type Lanes = Vec<Self>;
 
     fn new_lanes(
         _binding: &Self::Binding,
@@ -441,7 +441,7 @@ impl GatherItem for Value {
 /// an unbounded or lazy source (a property list, a `range(..)`, a label/index
 /// scan). At most one is ever live, since the emitter holds a single row's
 /// results at a time.
-pub(crate) enum RowIter<'a, I> {
+pub enum RowIter<'a, I> {
     One(Option<I>),
     Spread(smallvec::IntoIter<[I; 4]>),
     Many(Box<dyn Iterator<Item = I> + 'a>),
@@ -449,13 +449,13 @@ pub(crate) enum RowIter<'a, I> {
 
 impl<'a, I> RowIter<'a, I> {
     /// A row that yields exactly one result, queued inline without allocation.
-    pub(crate) fn one(item: I) -> Self {
+    pub(crate) const fn one(item: I) -> Self {
         Self::One(Some(item))
     }
 
     /// A row that yields a small, arity-bounded run of results (a list literal)
     /// held inline in a smallvec — no per-row heap allocation.
-    pub(crate) fn spread(iter: smallvec::IntoIter<[I; 4]>) -> Self {
+    pub(crate) const fn spread(iter: smallvec::IntoIter<[I; 4]>) -> Self {
         Self::Spread(iter)
     }
 
@@ -480,7 +480,7 @@ impl<I> Iterator for RowIter<'_, I> {
 
 /// Owns the parent batch being expanded plus the current row's result iterator,
 /// and performs the shared pack-and-gather emit.
-pub(crate) struct BatchedResultEmitter<'a, I: GatherItem> {
+pub struct BatchedResultEmitter<'a, I: GatherItem> {
     /// Per-operator binding describing how packed results scatter into columns.
     binding: I::Binding,
     /// Parent batch currently being expanded. Emitted rows are produced by
@@ -612,7 +612,7 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
     /// when nothing was packed.
     fn finish_batch(
         &self,
-        indices: Vec<usize>,
+        indices: &[usize],
         lanes: I::Lanes,
         count: usize,
         should_expand: bool,
@@ -622,7 +622,7 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
         }
         let batch = self.batch.as_ref().expect("batch is set while emitting");
         let mut out = if should_expand {
-            batch.gather(&indices)
+            batch.gather(indices)
         } else {
             Batch::new(0)
         };
@@ -703,7 +703,7 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
             }
             self.drain_pending_entry(&mut indices, &mut lanes, &mut count, should_expand);
         }
-        Ok(self.finish_batch(indices, lanes, count, should_expand))
+        Ok(self.finish_batch(&indices, lanes, count, should_expand))
     }
 
     /// Drop all queued state. Used by correlated (Apply) plans that re-seed the
@@ -719,7 +719,7 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
 /// whose binding is just the optional alias of the bound column. Defined once
 /// over every such item so `BatchedResultEmitter::new(..)` stays unambiguous at
 /// call sites that pin the item type through the field annotation.
-impl<'a, I> BatchedResultEmitter<'a, I>
+impl<I> BatchedResultEmitter<'_, I>
 where
     I: GatherItem<Binding = Option<u32>>,
 {

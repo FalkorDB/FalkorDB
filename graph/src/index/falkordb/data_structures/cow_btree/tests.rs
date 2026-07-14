@@ -272,10 +272,10 @@ fn leaf_format_roundtrip() {
     }
 
     fn check(
-        pairs: Vec<(u64, u64)>,
-        want: Option<Want>,
+        pairs: &[(u64, u64)],
+        want: Option<&Want>,
     ) {
-        let leaf = Leaf::<256>::from_pairs(&pairs);
+        let leaf = Leaf::<256>::from_pairs(pairs);
         assert_eq!(leaf.count(), pairs.len(), "count for {pairs:?}");
         assert_eq!(leaf.to_pairs(), pairs, "to_pairs for {pairs:?}");
         for (i, &(k, d)) in pairs.iter().enumerate() {
@@ -290,7 +290,7 @@ fn leaf_format_roundtrip() {
         );
         match want {
             Some(Want::Aos) => {
-                assert!(matches!(leaf, Leaf::Aos(_)), "expected AoS for {pairs:?}")
+                assert!(matches!(leaf, Leaf::Aos(_)), "expected AoS for {pairs:?}");
             }
             Some(Want::Compact) => assert!(
                 matches!(leaf, Leaf::Compact(_)),
@@ -303,15 +303,18 @@ fn leaf_format_roundtrip() {
             None => {}
         }
     }
-    check(vec![], None); // empty ⇒ AoS
-    check(vec![(5, 50)], Some(Want::Aos)); // single entry ⇒ AoS (header doesn't amortise)
+    check(&[], None); // empty ⇒ AoS
+    check(&[(5, 50)], Some(&Want::Aos)); // single entry ⇒ AoS (header doesn't amortise)
     // wide, all-distinct values AND docs (both need 8-byte width) ⇒ no compression ⇒ AoS
     check(
-        (0..200u64).map(|i| (i << 40, i << 40)).collect(),
-        Some(Want::Aos),
+        &(0..200u64).map(|i| (i << 40, i << 40)).collect::<Vec<_>>(),
+        Some(&Want::Aos),
     );
     // narrow consecutive values + small ids, all distinct ⇒ compact WITHOUT dedup
-    check((0..256u64).map(|i| (i, i)).collect(), Some(Want::Compact));
+    check(
+        &(0..256u64).map(|i| (i, i)).collect::<Vec<_>>(),
+        Some(&Want::Compact),
+    );
     // low cardinality (4 distinct wide values × 64 docs) ⇒ compact WITH dedup
     let mut low_card: Vec<(u64, u64)> = Vec::new();
     for v in 0..4u64 {
@@ -320,11 +323,11 @@ fn leaf_format_roundtrip() {
         }
     }
     low_card.sort_unstable();
-    check(low_card, Some(Want::CompactIndexed));
+    check(&low_card, Some(&Want::CompactIndexed));
     // single value, many docs ⇒ compact (dedup, n_distinct == 1)
     check(
-        (0..200u64).map(|d| (42, d)).collect(),
-        Some(Want::CompactIndexed),
+        &(0..200u64).map(|d| (42, d)).collect::<Vec<_>>(),
+        Some(&Want::CompactIndexed),
     );
 }
 
@@ -1083,7 +1086,7 @@ fn check_invariants<const L: usize, const B: usize>(
                     match depth {
                         None => depth = Some(cdepth),
                         Some(d) => {
-                            assert_eq!(d, cdepth, "leaves at differing depths ({d} vs {cdepth})")
+                            assert_eq!(d, cdepth, "leaves at differing depths ({d} vs {cdepth})");
                         }
                     }
                     if i == 0 {
@@ -1121,52 +1124,52 @@ fn differential<const L: usize, const B: usize>(
     ops: usize,
     key_space: u64,
 ) {
-    let mut t: CowBTree<L, B> = CowBTree::new();
+    let mut tree: CowBTree<L, B> = CowBTree::new();
     let mut oracle: BTreeSet<(u64, u64)> = BTreeSet::new();
-    let mut s = seed;
+    let mut rng = seed;
     for _ in 0..ops {
-        s = splitmix(s);
-        let key = s % key_space;
-        s = splitmix(s);
-        let doc = s % key_space;
-        s = splitmix(s);
-        if s.is_multiple_of(3) && oracle.contains(&(key, doc)) {
-            t.remove(key, doc);
+        rng = splitmix(rng);
+        let key = rng % key_space;
+        rng = splitmix(rng);
+        let doc = rng % key_space;
+        rng = splitmix(rng);
+        if rng.is_multiple_of(3) && oracle.contains(&(key, doc)) {
+            tree.remove(key, doc);
             oracle.remove(&(key, doc));
         } else {
-            t.insert(key, doc);
+            tree.insert(key, doc);
             oracle.insert((key, doc));
         }
-        assert_eq!(t.len(), oracle.len(), "len diverged");
+        assert_eq!(tree.len(), oracle.len(), "len diverged");
         assert_eq!(
-            tree_pairs(&t),
+            tree_pairs(&tree),
             oracle.iter().copied().collect::<Vec<_>>(),
             "contents diverged"
         );
-        check_invariants(&t, true);
+        check_invariants(&tree, true);
 
         // Read-path parity: `range()` and `point()` — the production read path — must agree with the
         // oracle, not just the stored contents (which `tree_pairs` decodes straight from leaf bytes).
         // A random window [lo, hi] exercises the cursor's start-descent + iteration; a point query hits
         // the `range(k, k)` fast path.
-        s = splitmix(s);
-        let a = s % key_space;
-        s = splitmix(s);
-        let b = s % key_space;
+        rng = splitmix(rng);
+        let a = rng % key_space;
+        rng = splitmix(rng);
+        let b = rng % key_space;
         let (lo, hi) = (a.min(b), a.max(b));
         assert_eq!(
-            tree_range(&t, lo, hi),
+            tree_range(&tree, lo, hi),
             ref_range(&oracle, lo, hi),
             "range [{lo}, {hi}] diverged"
         );
-        s = splitmix(s);
-        let k = s % key_space;
-        let mut pt: Vec<u64> = t.point(k).collect();
+        rng = splitmix(rng);
+        let k = rng % key_space;
+        let mut pt: Vec<u64> = tree.point(k).collect();
         pt.sort_unstable();
         assert_eq!(pt, ref_range(&oracle, k, k), "point {k} diverged");
     }
     assert_eq!(
-        tree_range(&t, 0, u64::MAX),
+        tree_range(&tree, 0, u64::MAX),
         ref_range(&oracle, 0, u64::MAX),
         "range scan diverged"
     );

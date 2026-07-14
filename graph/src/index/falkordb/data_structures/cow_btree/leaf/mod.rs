@@ -12,9 +12,12 @@ pub(super) use aos::AosLeaf;
 use compact::{BODY_OFFSET, CompactLeaf, packing_fits};
 use compact_indexed::CompactIndexedLeaf;
 
-/// The encoding of a leaf page, carried **out of band** (the [`Leaf`] enum discriminant in RAM, and the
-/// pairing tag in [`CowBTree::leaves`]). The byte buffers themselves are **tag-free** — pure data — so a
-/// tree may hold a mix of both formats, each read by its own variant type.
+/// The encoding of a leaf page, carried **out of band**.
+///
+/// The tag lives in the [`Leaf`] enum discriminant in RAM, and the pairing tag
+/// in [`CowBTree::leaves`]. The byte buffers themselves are **tag-free** — pure
+/// data — so a tree may hold a mix of both formats, each read by its own
+/// variant type.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LeafFormat {
     /// `[(key:8, doc:8) × n]` — contiguous array-of-structs tuples, 16 B/entry (see [`AosLeaf`]).
@@ -32,7 +35,7 @@ pub enum LeafFormat {
 const COMPACT_MIN_SAVING_BPE: usize = 8;
 
 /// Fewest **power-of-two** bytes (1, 2, 4, or 8) that hold `x`.
-fn pow2_bytes_for(x: u64) -> usize {
+const fn pow2_bytes_for(x: u64) -> usize {
     match x {
         0..=0xFF => 1,
         0x100..=0xFFFF => 2,
@@ -46,19 +49,19 @@ fn pow2_bytes_for(x: u64) -> usize {
 /// sort: the callers always hold two already-sorted runs (a leaf's entries and a sorted batch), which a
 /// two-pointer merge handles far faster than concatenate-and-sort.
 fn merge_sorted(
-    a: &[(u64, u64)],
-    b: &[(u64, u64)],
+    lhs: &[(u64, u64)],
+    rhs: &[(u64, u64)],
 ) -> Vec<(u64, u64)> {
-    let mut out = Vec::with_capacity(a.len() + b.len());
+    let mut out = Vec::with_capacity(lhs.len() + rhs.len());
     let (mut i, mut j) = (0usize, 0usize);
-    while i < a.len() || j < b.len() {
-        let take_a = i < a.len() && (j >= b.len() || a[i] <= b[j]);
-        let next = if take_a {
-            let v = a[i];
+    while i < lhs.len() || j < rhs.len() {
+        let take_lhs = i < lhs.len() && (j >= rhs.len() || lhs[i] <= rhs[j]);
+        let next = if take_lhs {
+            let v = lhs[i];
             i += 1;
             v
         } else {
-            let v = b[j];
+            let v = rhs[j];
             j += 1;
             v
         };
@@ -167,19 +170,19 @@ impl<const LEAF_MAX: usize> Leaf<LEAF_MAX> {
     /// types share one on-disk format — index presence lives in the buffer — so both map to `Compact`.
     /// Test-only for now (paired with [`CowBTree::leaves`]); the durable-write path re-exposes it on disk.
     #[cfg(test)]
-    pub(super) fn format(&self) -> LeafFormat {
+    pub(super) const fn format(&self) -> LeafFormat {
         match self {
-            Leaf::Aos(_) => LeafFormat::Aos,
-            Leaf::Compact(_) | Leaf::CompactIndexed(_) => LeafFormat::Compact,
+            Self::Aos(_) => LeafFormat::Aos,
+            Self::Compact(_) | Self::CompactIndexed(_) => LeafFormat::Compact,
         }
     }
 
     /// Number of `(key, doc)` entries.
     pub(super) fn count(&self) -> usize {
         match self {
-            Leaf::Aos(l) => l.count(),
-            Leaf::Compact(l) => l.count(),
-            Leaf::CompactIndexed(l) => l.count(),
+            Self::Aos(l) => l.count(),
+            Self::Compact(l) => l.count(),
+            Self::CompactIndexed(l) => l.count(),
         }
     }
 
@@ -189,9 +192,9 @@ impl<const LEAF_MAX: usize> Leaf<LEAF_MAX> {
         i: usize,
     ) -> u64 {
         match self {
-            Leaf::Aos(l) => l.key(i),
-            Leaf::Compact(l) => l.key(i),
-            Leaf::CompactIndexed(l) => l.key(i),
+            Self::Aos(l) => l.key(i),
+            Self::Compact(l) => l.key(i),
+            Self::CompactIndexed(l) => l.key(i),
         }
     }
 
@@ -201,18 +204,18 @@ impl<const LEAF_MAX: usize> Leaf<LEAF_MAX> {
         i: usize,
     ) -> u64 {
         match self {
-            Leaf::Aos(l) => l.doc(i),
-            Leaf::Compact(l) => l.doc(i),
-            Leaf::CompactIndexed(l) => l.doc(i),
+            Self::Aos(l) => l.doc(i),
+            Self::Compact(l) => l.doc(i),
+            Self::CompactIndexed(l) => l.doc(i),
         }
     }
 
     /// The doc array's `(base, stride, width)` — read once per leaf by the cursor's per-entry doc reads.
     pub(super) fn doc_layout(&self) -> (usize, usize, usize) {
         match self {
-            Leaf::Aos(_) => (FIELD, STRIDE, FIELD),
-            Leaf::Compact(l) => l.doc_layout(),
-            Leaf::CompactIndexed(l) => l.doc_layout(),
+            Self::Aos(_) => (FIELD, STRIDE, FIELD),
+            Self::Compact(l) => l.doc_layout(),
+            Self::CompactIndexed(l) => l.doc_layout(),
         }
     }
 
@@ -258,7 +261,7 @@ impl<const LEAF_MAX: usize> Leaf<LEAF_MAX> {
     pub(super) fn from_pairs(pairs: &[(u64, u64)]) -> Self {
         let count = pairs.len();
         if count == 0 {
-            return Leaf::Aos(AosLeaf::build(pairs));
+            return Self::Aos(AosLeaf::build(pairs));
         }
         // One pass for the two data-dependent inputs — the distinct-value count (runs, since sorted) and the
         // max doc. (The value range needs no scan; it's read O(1) from the sorted ends just below.)
@@ -287,7 +290,7 @@ impl<const LEAF_MAX: usize> Leaf<LEAF_MAX> {
         // floor (see the const) skips marginal wins whose extra build cost isn't worth the memory saved.
         if compact_size + COMPACT_MIN_SAVING_BPE * count <= aos_size {
             if deduplicated {
-                Leaf::CompactIndexed(CompactIndexedLeaf::build(
+                Self::CompactIndexed(CompactIndexedLeaf::build(
                     pairs,
                     count,
                     distinct_count,
@@ -296,7 +299,7 @@ impl<const LEAF_MAX: usize> Leaf<LEAF_MAX> {
                     doc_width,
                 ))
             } else {
-                Leaf::Compact(CompactLeaf::build(
+                Self::Compact(CompactLeaf::build(
                     pairs,
                     count,
                     min_value,
@@ -305,7 +308,7 @@ impl<const LEAF_MAX: usize> Leaf<LEAF_MAX> {
                 ))
             }
         } else {
-            Leaf::Aos(AosLeaf::build(pairs))
+            Self::Aos(AosLeaf::build(pairs))
         }
     }
 
@@ -319,15 +322,15 @@ impl<const LEAF_MAX: usize> Leaf<LEAF_MAX> {
         bytes: Arc<[u8]>,
     ) -> Self {
         match format {
-            LeafFormat::Aos => Leaf::Aos(AosLeaf(bytes)),
+            LeafFormat::Aos => Self::Aos(AosLeaf(bytes)),
             // The compact format carries index presence in the buffer (it is not part of [`LeafFormat`]):
             // a dedup index is present iff there are fewer distinct values than entries (see
             // [`compact::is_indexed`]), so pick the in-RAM type from the buffer alone.
             LeafFormat::Compact => {
                 if compact::is_indexed(&bytes) {
-                    Leaf::CompactIndexed(CompactIndexedLeaf(bytes))
+                    Self::CompactIndexed(CompactIndexedLeaf(bytes))
                 } else {
-                    Leaf::Compact(CompactLeaf(bytes))
+                    Self::Compact(CompactLeaf(bytes))
                 }
             }
         }
@@ -338,18 +341,18 @@ impl<const LEAF_MAX: usize> Leaf<LEAF_MAX> {
     #[cfg(test)]
     pub(super) fn bytes(&self) -> Arc<[u8]> {
         match self {
-            Leaf::Aos(l) => Arc::clone(&l.0),
-            Leaf::Compact(l) => Arc::clone(&l.0),
-            Leaf::CompactIndexed(l) => Arc::clone(&l.0),
+            Self::Aos(l) => Arc::clone(&l.0),
+            Self::Compact(l) => Arc::clone(&l.0),
+            Self::CompactIndexed(l) => Arc::clone(&l.0),
         }
     }
 
     /// The raw page bytes (for the cursor's cached doc read).
     pub(super) fn raw(&self) -> &[u8] {
         match self {
-            Leaf::Aos(l) => &l.0,
-            Leaf::Compact(l) => &l.0,
-            Leaf::CompactIndexed(l) => &l.0,
+            Self::Aos(l) => &l.0,
+            Self::Compact(l) => &l.0,
+            Self::CompactIndexed(l) => &l.0,
         }
     }
 
@@ -381,24 +384,24 @@ impl<const LEAF_MAX: usize> Leaf<LEAF_MAX> {
             // In-place splice (no decode), each variant keeping its own format. `count < LEAF_MAX` ⇒
             // `count + 1 <= LEAF_MAX`, so the result still fits one page.
             match self {
-                Leaf::Aos(aos) => {
+                Self::Aos(aos) => {
                     let cut = pos * STRIDE; // memcpy prefix + tuple + suffix; data at byte 0 (tag-free)
                     let mut buf = Vec::with_capacity(aos.0.len() + STRIDE);
                     buf.extend_from_slice(&aos.0[..cut]);
                     buf.extend_from_slice(&key.to_le_bytes());
                     buf.extend_from_slice(&doc.to_le_bytes());
                     buf.extend_from_slice(&aos.0[cut..]);
-                    return Some(LeafInsert::Fit(Leaf::Aos(AosLeaf(Arc::from(
+                    return Some(LeafInsert::Fit(Self::Aos(AosLeaf(Arc::from(
                         buf.as_slice(),
                     )))));
                 }
-                Leaf::Compact(l) if packing_fits(&l.0, key, doc) => {
-                    return Some(LeafInsert::Fit(Leaf::Compact(
+                Self::Compact(l) if packing_fits(&l.0, key, doc) => {
+                    return Some(LeafInsert::Fit(Self::Compact(
                         l.splice_insert(key, doc, pos),
                     )));
                 }
-                Leaf::CompactIndexed(l) if packing_fits(&l.0, key, doc) => {
-                    return Some(LeafInsert::Fit(Leaf::CompactIndexed(
+                Self::CompactIndexed(l) if packing_fits(&l.0, key, doc) => {
+                    return Some(LeafInsert::Fit(Self::CompactIndexed(
                         l.splice_insert(key, doc, pos),
                     )));
                 }
@@ -431,7 +434,7 @@ impl<const LEAF_MAX: usize> Leaf<LEAF_MAX> {
         &self,
         key: u64,
         doc: u64,
-    ) -> Option<(Leaf<LEAF_MAX>, bool)> {
+    ) -> Option<(Self, bool)> {
         let count = self.count();
         let pos = self.lower_bound_entry(key, doc);
         if pos >= count || self.key(pos) != key || self.doc(pos) != doc {
@@ -439,19 +442,19 @@ impl<const LEAF_MAX: usize> Leaf<LEAF_MAX> {
         }
         let new_count = count - 1;
         let leaf = match self {
-            Leaf::Aos(aos) => {
+            Self::Aos(aos) => {
                 let cut = pos * STRIDE; // data at byte 0 (tag-free)
                 let mut buf = Vec::with_capacity(aos.0.len() - STRIDE);
                 buf.extend_from_slice(&aos.0[..cut]);
                 buf.extend_from_slice(&aos.0[cut + STRIDE..]);
-                Leaf::Aos(AosLeaf(Arc::from(buf.as_slice())))
+                Self::Aos(AosLeaf(Arc::from(buf.as_slice())))
             }
             // Cut the entry in place (no decode). Indexed leaves only when the result stays validly indexed
             // (`distinct_count < new_count`); a now-emptied leaf or an indexed leaf that would no longer
             // satisfy that falls to the rebuild below (canonical empty page / re-selects the format).
-            Leaf::Compact(l) if new_count > 0 => Leaf::Compact(l.splice_remove(pos)),
-            Leaf::CompactIndexed(l) if l.distinct_count() < new_count => {
-                Leaf::CompactIndexed(l.splice_remove(pos))
+            Self::Compact(l) if new_count > 0 => Self::Compact(l.splice_remove(pos)),
+            Self::CompactIndexed(l) if l.distinct_count() < new_count => {
+                Self::CompactIndexed(l.splice_remove(pos))
             }
             _ => {
                 let mut pairs = self.to_pairs();
@@ -469,24 +472,24 @@ impl<const LEAF_MAX: usize> Leaf<LEAF_MAX> {
     pub(super) fn merge_batch(
         &self,
         batch: &[(u64, u64)],
-    ) -> Vec<Leaf<LEAF_MAX>> {
+    ) -> Vec<Self> {
         // Fast path: the whole batch fits one page and never widens a packing parameter — digest it into the
         // packed bytes (existing cells copied verbatim, only batch entries encoded), keeping the format.
         if self.count() + batch.len() <= LEAF_MAX {
             match self {
-                Leaf::Aos(aos) => return vec![Leaf::Aos(aos.merge_batch(batch))],
-                Leaf::Compact(l) if batch.iter().all(|&(k, d)| packing_fits(&l.0, k, d)) => {
-                    return vec![Leaf::Compact(l.merge(batch))];
+                Self::Aos(aos) => return vec![Self::Aos(aos.merge_batch(batch))],
+                Self::Compact(l) if batch.iter().all(|&(k, d)| packing_fits(&l.0, k, d)) => {
+                    return vec![Self::Compact(l.merge(batch))];
                 }
-                Leaf::CompactIndexed(l) if batch.iter().all(|&(k, d)| packing_fits(&l.0, k, d)) => {
+                Self::CompactIndexed(l) if batch.iter().all(|&(k, d)| packing_fits(&l.0, k, d)) => {
                     // If every batch key is *already* a distinct value, block-copy the leaf's index + doc
                     // cells between the (galloped) insert positions — no index remap, and the gallop makes
                     // this never worse than the merge-walk at any batch size (so no size guard). A batch that
                     // introduces a new distinct value needs an index remap, so it takes the merge-walk.
                     if batch.iter().all(|&(k, _)| l.distinct_slot(k).is_ok()) {
-                        return vec![Leaf::CompactIndexed(l.block_copy_merge(batch))];
+                        return vec![Self::CompactIndexed(l.block_copy_merge(batch))];
                     }
-                    return vec![Leaf::CompactIndexed(l.merge(batch))];
+                    return vec![Self::CompactIndexed(l.merge(batch))];
                 }
                 _ => {}
             }

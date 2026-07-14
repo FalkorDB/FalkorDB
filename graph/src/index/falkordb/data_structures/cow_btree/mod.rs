@@ -124,6 +124,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Default for CowBTree<LEAF_M
 
 impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_MAX> {
     /// An empty tree.
+    #[must_use]
     pub fn new() -> Self {
         const {
             assert!(
@@ -137,6 +138,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
     /// Bulk-build from `pairs` **sorted ascending and unique** by `(key, doc)`. Packs full leaf pages
     /// directly from the slice and builds the branch levels bottom-up — no per-item sort, dedup, or
     /// insert traversal, so it is far cheaper than inserting one at a time.
+    #[must_use]
     pub fn from_sorted(pairs: &[(u64, u64)]) -> Self {
         const {
             assert!(
@@ -218,6 +220,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
 
     /// Lazily iterate the doc ids whose key lies in `[lo, hi]`, in `(key, doc)` order. The returned
     /// iterator owns a snapshot of the tree (an `O(1)` root clone) and can be dropped mid-scan.
+    #[must_use]
     pub fn range(
         &self,
         lo: u64,
@@ -227,6 +230,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
     }
 
     /// Lazily iterate the doc ids whose key equals `key` (a degenerate range).
+    #[must_use]
     pub fn point(
         &self,
         key: u64,
@@ -236,6 +240,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
 
     /// Total number of live tuples. Test-only (`O(n)` page walk) — prefer [`is_empty`] in non-test code.
     #[cfg(test)]
+    #[must_use]
     pub fn len(&self) -> usize {
         fn count<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
             node: &Node<LEAF_MAX, BRANCH_MAX>
@@ -251,6 +256,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
     /// Whether the tree holds no tuples. `O(1)`: the tree is empty iff its root is an empty leaf — a
     /// non-empty tree's root is a branch or a leaf with entries, and underflowing leaves are merged, so an
     /// empty leaf only ever exists as the root of an empty tree. (Avoids walking every page like [`len`].)
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         matches!(&self.root, Node::Leaf(leaf) if leaf.count() == 0)
     }
@@ -260,6 +266,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
     /// no further encoding — re-adopt a page with [`Leaf::from_parts`]. Test-only for now (the byte-store
     /// round-trip + format assertions); the durable-write path will re-expose it when disk lands.
     #[cfg(test)]
+    #[must_use]
     pub fn leaves(&self) -> Vec<(LeafFormat, Arc<[u8]>)> {
         fn walk<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
             node: &Node<LEAF_MAX, BRANCH_MAX>,

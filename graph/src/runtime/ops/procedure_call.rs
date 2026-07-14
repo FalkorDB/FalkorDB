@@ -116,13 +116,13 @@ impl<'a> ProcedureCallOp<'a> {
     fn emit_pending_rows(
         &mut self,
         builder: &mut BatchBuilder,
-    ) -> Result<(), String> {
+    ) {
         let (Some(source_row), Some(proc_batch), Some(batch)) = (
             self.pending_source_row,
             self.pending_proc_batch.as_ref(),
             self.child_batch.as_ref(),
         ) else {
-            return Ok(());
+            return;
         };
 
         while builder.len() < BATCH_SIZE && self.pending_idx < proc_batch.active_len() {
@@ -139,8 +139,6 @@ impl<'a> ProcedureCallOp<'a> {
             self.pending_proc_batch = None;
             self.pending_idx = 0;
         }
-
-        Ok(())
     }
 
     fn remap_procedure_batch(
@@ -222,9 +220,7 @@ impl<'a> Iterator for ProcedureCallOp<'a> {
         let mut builder = BatchBuilder::new();
 
         loop {
-            if let Err(e) = self.emit_pending_rows(&mut builder) {
-                return Some(Err(e));
-            }
+            self.emit_pending_rows(&mut builder);
             if builder.len() >= BATCH_SIZE {
                 return Some(Ok(builder.finish()));
             }

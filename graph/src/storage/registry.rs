@@ -29,9 +29,10 @@ static ATTR_BACKEND: OnceLock<Arc<dyn AttrBackend>> = OnceLock::new();
 /// Register the index's storage backend. Call once at startup, before any index
 /// structure is created; panics if one was already registered.
 pub fn register_index_backend(backend: Arc<dyn IndexBackend>) {
-    if INDEX_BACKEND.set(backend).is_err() {
-        panic!("index backend already registered");
-    }
+    assert!(
+        INDEX_BACKEND.set(backend).is_ok(),
+        "index backend already registered"
+    );
 }
 
 /// The registered index backend.
@@ -49,9 +50,10 @@ pub fn index_backend() -> Arc<dyn IndexBackend> {
 /// Register the attribute store's backend. Call once at startup; panics if one
 /// was already registered.
 pub fn register_attr_backend(backend: Arc<dyn AttrBackend>) {
-    if ATTR_BACKEND.set(backend).is_err() {
-        panic!("attr backend already registered");
-    }
+    assert!(
+        ATTR_BACKEND.set(backend).is_ok(),
+        "attr backend already registered"
+    );
 }
 
 /// The registered attribute-store backend. Panics if none was registered (see

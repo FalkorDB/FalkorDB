@@ -7,7 +7,7 @@ use super::merge_walk;
 
 /// An array-of-structs leaf page: a tag-free `Arc<[u8]>` of `[(key:8, doc:8) × n]`, data at byte 0.
 #[derive(Clone)]
-pub(crate) struct AosLeaf(pub(crate) Arc<[u8]>);
+pub struct AosLeaf(pub(crate) Arc<[u8]>);
 
 impl AosLeaf {
     /// Number of `(key, doc)` entries — the buffer is tag-free `[(key, doc) × n]`, so `len / STRIDE`.
@@ -60,7 +60,7 @@ impl AosLeaf {
     pub(super) fn merge_batch(
         &self,
         batch: &[(u64, u64)],
-    ) -> AosLeaf {
+    ) -> Self {
         let count = self.count();
         let mut buf = Vec::with_capacity(self.0.len() + batch.len() * STRIDE);
         merge_walk(
@@ -73,6 +73,6 @@ impl AosLeaf {
                 buf.extend_from_slice(&doc.to_le_bytes());
             },
         );
-        AosLeaf(Arc::from(buf.as_slice()))
+        Self(Arc::from(buf.as_slice()))
     }
 }

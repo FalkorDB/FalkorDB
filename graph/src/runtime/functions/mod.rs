@@ -81,6 +81,7 @@ macro_rules! cypher_fn {
      fn $fn_name:ident($rt:pat, $args:pat) $body:block
     ) => {
         $(#[$attr])*
+        #[allow(clippy::missing_const_for_fn)]
         fn $fn_name(
             $rt: &Runtime,
             $args: &[Value],
@@ -107,6 +108,7 @@ macro_rules! cypher_fn {
      fn $fn_name:ident($rt:pat, $args:pat) $body:block
     ) => {
         $(#[$attr])*
+        #[allow(clippy::missing_const_for_fn)]
         fn $fn_name(
             $rt: &Runtime,
             $args: &[Value],
@@ -132,6 +134,7 @@ macro_rules! cypher_fn {
      fn $fn_name:ident($rt:pat, $args:pat) $body:block
     ) => {
         $(#[$attr])*
+        #[allow(clippy::missing_const_for_fn)]
         fn $fn_name(
             $rt: &Runtime,
             $args: &[Value],
@@ -157,6 +160,7 @@ macro_rules! cypher_fn {
      fn $fn_name:ident($rt:pat, $args:pat) $body:block
     ) => {
         $(#[$attr])*
+        #[allow(clippy::missing_const_for_fn)]
         fn $fn_name(
             $rt: &Runtime,
             $args: &[Value],
@@ -184,6 +188,7 @@ macro_rules! cypher_fn {
      fn $fn_name:ident($rt:pat, $args:pat) $body:block
     ) => {
         $(#[$attr])*
+        #[allow(clippy::missing_const_for_fn)]
         fn $fn_name(
             $rt: &Runtime,
             $args: &[Value],
@@ -216,6 +221,7 @@ macro_rules! cypher_fn {
      fn $fn_name:ident($rt:pat, $args:pat) $body:block
     ) => {
         $(#[$attr])*
+        #[allow(clippy::missing_const_for_fn)]
         fn $fn_name(
             $rt: &Runtime,
             $args: &[Value],
@@ -246,6 +252,7 @@ macro_rules! cypher_fn {
      fn $fn_name:ident($rt:pat, $args:pat) $body:block
     ) => {
         $(#[$attr])*
+        #[allow(clippy::missing_const_for_fn)]
         fn $fn_name(
             $rt: &Runtime,
             $args: &[Value],
@@ -272,6 +279,7 @@ macro_rules! cypher_fn {
      fn $fn_name:ident($rt:pat, $args:pat) $body:block
     ) => {
         $(#[$attr])*
+        #[allow(clippy::missing_const_for_fn)]
         fn $fn_name(
             $rt: &Runtime,
             $args: &[Value],
@@ -373,6 +381,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
 };
+use thin_vec::ThinVec;
 
 pub type ProcedureBatch = Batch<'static>;
 
@@ -421,11 +430,15 @@ impl RuntimeFn {
     }
 }
 
-/// Optional bulk-aggregation entry point. Receives the column of input
+/// Optional bulk-aggregation entry point.
+///
+/// Receives the column of input
 /// values for one batch (`inputs`), the number of rows being aggregated
 /// (`num_rows` — used by no-input aggregates like `count(*)` where
 /// `inputs` is empty), and the previous accumulator. Returns the new
-/// accumulator. When supplied, the keyless-single-aggregate path in
+/// accumulator.
+///
+/// When supplied, the keyless-single-aggregate path in
 /// `AggregateOp` skips per-row evaluation and calls this once per batch.
 pub type BatchAggFn =
     fn(&Runtime, inputs: &[Value], num_rows: usize, acc: Value) -> Result<Value, String>;
@@ -502,11 +515,21 @@ pub enum Type {
     Time,
     Duration,
     Any,
-    Union(Vec<Self>),
+    /// `ThinVec` (single pointer, len/cap in the heap header) keeps this
+    /// variant pointer-sized so `Type` is 16 bytes instead of 32; `Type`
+    /// is embedded in every `Variable`, which in turn caps
+    /// `ExprIR<Variable>` — the node type of every cached-plan expression
+    /// tree. Construct via [`Type::union`].
+    Union(ThinVec<Self>),
     Optional(Box<Self>),
 }
 
 impl Type {
+    #[must_use]
+    pub fn union(types: impl IntoIterator<Item = Self>) -> Self {
+        Self::Union(types.into_iter().collect())
+    }
+
     /// Returns true if this type can include a boolean value.
     /// This mirrors `AR_EXP_ReturnsBoolean` in the C implementation:
     /// returns true if the type is Bool, Null, Any, or a Union/Optional

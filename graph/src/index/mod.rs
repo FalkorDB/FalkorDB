@@ -274,7 +274,7 @@ pub struct IndexResultsIter<T, F: FnMut(*mut RSResultsIterator, u64) -> T> {
 }
 
 impl<T, F: FnMut(*mut RSResultsIterator, u64) -> T> IndexResultsIter<T, F> {
-    fn new(
+    const fn new(
         iter: *mut RSResultsIterator,
         index: Option<OwnedIndex>,
         map: F,
@@ -359,7 +359,7 @@ pub struct EdgeTripleIter {
 }
 
 impl EdgeTripleIter {
-    fn new(
+    const fn new(
         iter: *mut RSResultsIterator,
         index: Option<OwnedIndex>,
     ) -> Self {
@@ -423,7 +423,7 @@ pub struct ScoredEdgeTripleIter {
 }
 
 impl ScoredEdgeTripleIter {
-    fn new(
+    const fn new(
         iter: *mut RSResultsIterator,
         index: Option<OwnedIndex>,
     ) -> Self {
@@ -480,11 +480,12 @@ impl Drop for ScoredEdgeTripleIter {
 }
 
 /// `ScoredIdIter` wrapped with the `Arc<ThinVec<f32>>` whose data was
-/// passed to `RediSearch_CreateVecSimNode`. The C API stores the vector
-/// pointer *without copying*, so the underlying `f32` slice must outlive
-/// the iterator: HNSW iteration is lazy and may dereference that
-/// pointer on every `next()`. Holding the `Arc` here ties the data's
-/// lifetime to the iterator.
+/// passed to `RediSearch_CreateVecSimNode`.
+///
+/// The C API stores the vector pointer *without copying*, so the underlying
+/// `f32` slice must outlive the iterator: HNSW iteration is lazy and may
+/// dereference that pointer on every `next()`. Holding the `Arc` here ties
+/// the data's lifetime to the iterator.
 pub struct VectorScoredIdIter {
     inner: ScoredIdIter,
     _vector_owner: Arc<thin_vec::ThinVec<f32>>,
@@ -867,15 +868,21 @@ pub struct Index {
     /// CREATE round-trip, so they don't decrement the wrong counter.
     id: u64,
     /// The RediSearch index spec. `None` until `create_rs_index` runs (the
-    /// former `null` sentinel). Owns the creation strong reference.
-    index: Option<OwnedIndex>,
+    /// former `null` sentinel). Shared across `Index` generations produced by
+    /// [`Index::clone_for_update`]; the creation reference is dropped (via
+    /// `RediSearch_DropIndex` in [`SpecHandle::drop`]) when the last
+    /// generation holding it goes away.
+    spec: Option<Arc<SpecHandle>>,
     fields: HashMap<Arc<String>, Vec<Arc<Field>>>,
     /// Attribute keys in insertion order. Tracked alongside `fields` so
     /// `CALL db.indexes()` can return `properties` in declaration order.
     field_order: Vec<Arc<String>>,
-    pending_slots: Mutex<PendingSlots>,
-    progress: u64,
-    total: u64,
+    /// Shared across `clone_for_update` generations so population tickets
+    /// acquired against an older published generation are released against
+    /// the same counters.
+    pending_slots: Arc<Mutex<PendingSlots>>,
+    progress: AtomicU64,
+    total: AtomicU64,
     language: Option<Arc<String>>,
     stopwords: Option<Vec<Arc<String>>>,
 }
@@ -945,7 +952,7 @@ impl OwnedIndex {
     }
 
     /// Raw handle for an FFI call. The returned pointer must not be stored.
-    fn as_ptr(&self) -> *mut RSIndex {
+    const fn as_ptr(&self) -> *mut RSIndex {
         self.0.as_ptr()
     }
 
@@ -958,7 +965,7 @@ impl OwnedIndex {
     /// Consume the handle, returning the raw pointer without releasing the
     /// reference — for the creation ref, which `RediSearch_DropIndex` both
     /// invalidates and releases in one call.
-    fn into_raw(self) -> *mut RSIndex {
+    const fn into_raw(self) -> *mut RSIndex {
         let p = self.0.as_ptr();
         std::mem::forget(self);
         p
@@ -981,7 +988,36 @@ impl Drop for OwnedIndex {
     }
 }
 
-impl Drop for Index {
+/// Shared owner of the *creation* reference to a RediSearch index spec.
+///
+/// Wrapped in an `Arc` and shared across `Index` generations produced by
+/// [`Index::clone_for_update`], so replacing the published `Index` (add
+/// field, progress bump, ...) does not drop the live spec. When the last
+/// generation releases its `Arc`, `Drop` runs `RediSearch_DropIndex`, which
+/// both invalidates the spec and releases the creation ref (outstanding
+/// `OwnedIndex` clones held by in-flight read iterators keep the memory
+/// alive until they are released).
+#[derive(Debug)]
+struct SpecHandle(std::mem::ManuallyDrop<OwnedIndex>);
+
+impl SpecHandle {
+    const fn new(owned: OwnedIndex) -> Self {
+        Self(std::mem::ManuallyDrop::new(owned))
+    }
+
+    /// Raw handle for an FFI call. The returned pointer must not be stored.
+    fn as_ptr(&self) -> *mut RSIndex {
+        self.0.as_ptr()
+    }
+
+    /// Acquire an additional strong reference; `None` if the spec was
+    /// invalidated by a concurrent `DROP INDEX`.
+    fn try_clone_ref(&self) -> Option<OwnedIndex> {
+        self.0.try_clone()
+    }
+}
+
+impl Drop for SpecHandle {
     fn drop(&mut self) {
         // RediSearch_DropIndex transitively calls RM_StopTimer, which mutates
         // Redis-internal state (the timer rax). The Redis main thread holds
@@ -991,18 +1027,15 @@ impl Drop for Index {
         //
         // DropIndex both invalidates the spec and releases the creation ref,
         // so hand it the raw pointer via `into_raw` to avoid a double release
-        // from `OwnedIndex`'s own Drop. Outstanding clones (held by in-flight
-        // read iterators) keep the spec alive until they are released.
-        if let Some(index) = self.index.take() {
-            unsafe {
-                let _gil = if crate::thread_id::is_main_thread() {
-                    None
-                } else {
-                    GilGuard::acquire()
-                };
-                RediSearch_DropIndex(index.into_raw());
-                // _gil drops here, releasing the GIL if it was acquired.
-            }
+        // from `OwnedIndex`'s own Drop.
+        unsafe {
+            let _gil = if crate::thread_id::is_main_thread() {
+                None
+            } else {
+                GilGuard::acquire()
+            };
+            let owned = std::mem::ManuallyDrop::take(&mut self.0);
+            RediSearch_DropIndex(owned.into_raw());
         }
     }
 }
@@ -1013,16 +1046,16 @@ impl Default for Index {
         let id = NEXT_INDEX_ID.fetch_add(1, Ordering::Relaxed);
         Self {
             id,
-            index: None,
+            spec: None,
             fields: HashMap::new(),
             field_order: Vec::new(),
-            pending_slots: Mutex::new(PendingSlots {
+            pending_slots: Arc::new(Mutex::new(PendingSlots {
                 current_generation: id,
                 current_pending: 0,
                 stale_pending: 0,
-            }),
-            progress: 0,
-            total: 0,
+            })),
+            progress: AtomicU64::new(0),
+            total: AtomicU64::new(0),
             language: None,
             stopwords: None,
         }
@@ -1053,6 +1086,28 @@ impl Index {
         slots.current_generation = self.id;
         slots.current_pending = 0;
     }
+
+    /// Copy this `Index` for a clone-and-swap schema update.
+    ///
+    /// The copy shares the RediSearch spec handle and the pending-ticket
+    /// counters with `self` (so tickets acquired against the currently
+    /// published generation stay balanced), while the Rust-side metadata
+    /// (fields, language, ...) is deep-cloned so the copy can be mutated
+    /// freely before being published.
+    #[must_use]
+    pub fn clone_for_update(&self) -> Self {
+        Self {
+            id: self.id,
+            spec: self.spec.clone(),
+            fields: self.fields.clone(),
+            field_order: self.field_order.clone(),
+            pending_slots: self.pending_slots.clone(),
+            progress: AtomicU64::new(self.progress.load(Ordering::Relaxed)),
+            total: AtomicU64::new(self.total.load(Ordering::Relaxed)),
+            language: self.language.clone(),
+            stopwords: self.stopwords.clone(),
+        }
+    }
 }
 
 impl Index {
@@ -1061,14 +1116,14 @@ impl Index {
     /// Returns true if a RediSearch index has been created.
     #[must_use]
     pub const fn has_rs_index(&self) -> bool {
-        self.index.is_some()
+        self.spec.is_some()
     }
 
     /// Raw spec handle for an FFI call (null if no index yet). Transient — the
     /// returned pointer is passed straight to a `RediSearch_*` call and never
     /// stored. Valid only while `&self` (and thus the owned reference) lives.
     fn rs_ptr(&self) -> *mut RSIndex {
-        self.index.as_ref().map_or(null_mut(), OwnedIndex::as_ptr)
+        self.spec.as_ref().map_or(null_mut(), |h| h.as_ptr())
     }
 
     /// Create the underlying RediSearch index with the given options.
@@ -1131,11 +1186,12 @@ impl Index {
 
             // GIL is already held at the top of this unsafe block, covering
             // CreateIndex's transitive RM_CreateTimer call.
-            self.index = OwnedIndex::from_owned(RediSearch_CreateIndex(
+            self.spec = OwnedIndex::from_owned(RediSearch_CreateIndex(
                 clabel.as_ptr().cast::<c_char>(),
                 options,
-            ));
-            assert!(self.index.is_some(), "RediSearch_CreateIndex returned null");
+            ))
+            .map(|owned| Arc::new(SpecHandle::new(owned)));
+            assert!(self.spec.is_some(), "RediSearch_CreateIndex returned null");
 
             RediSearch_FreeIndexOptions(options);
 
@@ -1312,8 +1368,11 @@ impl Index {
                             }
 
                             // Returns REDISEARCH_OK (0) on success.
-                            if RediSearch_VectorFieldSetParams(self.rs_ptr(), field_id, &params)
-                                != 0
+                            if RediSearch_VectorFieldSetParams(
+                                self.rs_ptr(),
+                                field_id,
+                                &raw const params,
+                            ) != 0
                             {
                                 return Err(format!(
                                     "failed to configure vector field '{}'",
@@ -1659,7 +1718,7 @@ impl Index {
     ) -> IdIter {
         // Clone a strong ref for the iterator so the spec outlives a concurrent
         // DROP INDEX; `None` means the spec is gone/uninitialized.
-        let Some(index) = self.index.as_ref().and_then(OwnedIndex::try_clone) else {
+        let Some(index) = self.spec.as_ref().and_then(|h| h.try_clone_ref()) else {
             return IndexResultsIter::empty();
         };
         unsafe {
@@ -1680,7 +1739,7 @@ impl Index {
         &self,
         query: IndexQuery<Value>,
     ) -> EdgeTripleIter {
-        let Some(index) = self.index.as_ref().and_then(OwnedIndex::try_clone) else {
+        let Some(index) = self.spec.as_ref().and_then(|h| h.try_clone_ref()) else {
             return EdgeTripleIter::empty();
         };
         unsafe {
@@ -1699,7 +1758,7 @@ impl Index {
         query: &str,
     ) -> Result<ScoredIdIter, String> {
         let cstr = CString::new(query).map_err(|e| e.to_string())?;
-        let Some(index) = self.index.as_ref().and_then(OwnedIndex::try_clone) else {
+        let Some(index) = self.spec.as_ref().and_then(|h| h.try_clone_ref()) else {
             return Ok(IndexResultsIter::empty_scored());
         };
         let mut err: *mut c_char = null_mut();
@@ -1728,7 +1787,7 @@ impl Index {
         query: &str,
     ) -> Result<ScoredEdgeTripleIter, String> {
         let cstr = CString::new(query).map_err(|e| e.to_string())?;
-        let Some(index) = self.index.as_ref().and_then(OwnedIndex::try_clone) else {
+        let Some(index) = self.spec.as_ref().and_then(|h| h.try_clone_ref()) else {
             return Ok(ScoredEdgeTripleIter::empty());
         };
         let mut err: *mut c_char = null_mut();
@@ -1775,7 +1834,7 @@ impl Index {
         // memory. The `Arc<ThinVec<f32>>` is moved into the returned
         // iterator so the buffer stays valid for the iterator's lifetime.
         let nbytes = std::mem::size_of_val(vector.as_slice());
-        let Some(index) = self.index.as_ref().and_then(OwnedIndex::try_clone) else {
+        let Some(index) = self.spec.as_ref().and_then(|h| h.try_clone_ref()) else {
             return Ok(VectorScoredIdIter {
                 inner: IndexResultsIter::empty_scored(),
                 _vector_owner: vector,
@@ -1831,7 +1890,7 @@ impl Index {
         // See [`vector_query`] — RediSearch field name is `vector:<attr>`.
         let cstr = CString::new(format!("vector:{field}")).map_err(|e| e.to_string())?;
         let nbytes = std::mem::size_of_val(vector.as_slice());
-        let Some(index) = self.index.as_ref().and_then(OwnedIndex::try_clone) else {
+        let Some(index) = self.spec.as_ref().and_then(|h| h.try_clone_ref()) else {
             return Ok(VectorScoredEdgeTripleIter {
                 inner: ScoredEdgeTripleIter::empty(),
                 _vector_owner: vector,
@@ -2051,19 +2110,22 @@ impl Index {
     }
 
     /// Set the index population progress.
-    pub const fn set_progress(
-        &mut self,
+    pub fn set_progress(
+        &self,
         progress: u64,
         total: u64,
     ) {
-        self.progress = progress;
-        self.total = total;
+        self.progress.store(progress, Ordering::Relaxed);
+        self.total.store(total, Ordering::Relaxed);
     }
 
     /// Get the current progress values.
     #[must_use]
-    pub const fn progress(&self) -> (u64, u64) {
-        (self.progress, self.total)
+    pub fn progress(&self) -> (u64, u64) {
+        (
+            self.progress.load(Ordering::Relaxed),
+            self.total.load(Ordering::Relaxed),
+        )
     }
 
     // --- pending_changes ---
@@ -2165,10 +2227,9 @@ impl Index {
     /// Report memory consumed by the underlying RediSearch index.
     #[must_use]
     pub fn memory_usage(&self) -> usize {
-        match &self.index {
-            None => 0,
-            Some(index) => unsafe { RediSearch_MemUsage(index.as_ptr()) },
-        }
+        self.spec
+            .as_ref()
+            .map_or(0, |index| unsafe { RediSearch_MemUsage(index.as_ptr()) })
     }
 
     // --- index count ---
@@ -2183,19 +2244,13 @@ impl Index {
         &mut self,
         label: &Arc<String>,
     ) -> Result<(), String> {
-        // Drop the old spec (invalidate + release the creation ref) under the
-        // GIL when off the main thread, same as `Index::drop`. `create_rs_index`
-        // below installs a fresh `self.index`.
-        if let Some(index) = self.index.take() {
-            unsafe {
-                let _gil = if crate::thread_id::is_main_thread() {
-                    None
-                } else {
-                    GilGuard::acquire()
-                };
-                RediSearch_DropIndex(index.into_raw());
-            }
-        }
+        // Release this generation's reference to the old spec. The actual
+        // `RediSearch_DropIndex` (invalidate + release the creation ref)
+        // happens in `SpecHandle::drop` once the last holder releases it —
+        // a previously published `Index` generation still visible to
+        // in-flight readers keeps it alive until then. `create_rs_index`
+        // below installs a fresh `self.spec`.
+        self.spec = None;
         let stopwords = self.stopwords.clone();
         let language = self.language.clone();
         self.create_rs_index(label, stopwords.as_ref(), language.as_ref())?;

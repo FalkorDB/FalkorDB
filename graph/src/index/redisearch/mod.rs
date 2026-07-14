@@ -384,6 +384,7 @@ unsafe extern "C" {
 // against transcription drift on the supported LP64 targets.
 
 /// Vector element type (`VecSimType` in VectorSimilarity `vec_sim_common.h`).
+///
 /// `#[repr(u32)]` matches the C enum width (a `c_uint`) so it sits directly in
 /// the `#[repr(C)]` params structs and is passed by value with no conversion;
 /// the `IntoPrimitive`/`TryFromPrimitive` derives give `c_uint::from(ty)` and
@@ -422,6 +423,7 @@ pub enum VecSimMetric {
 
 /// Default per-block vector capacity for VecSim's `DataBlock` container
 /// (VectorSimilarity `vec_sim_common.h`: `#define DEFAULT_BLOCK_SIZE 1024`).
+///
 /// Unlike the `FT.CREATE` path (`spec.c` `parseVectorField_validate_hnsw`), the
 /// `RediSearch_VectorFieldSetParams` LLAPI does *not* normalize this field, and
 /// a `blockSize` of 0 corrupts the heap on the first HNSW insert/search. The
@@ -465,9 +467,11 @@ pub struct TieredHNSWParams {
 }
 
 /// Tiered-index per-backend params. Only the HNSW backend is used; the SVS and
-/// on-disk backends are not. The C union is sized by its largest member
-/// (`TieredSVSParams`, 24 bytes), so `_reserved` preserves that size to keep
-/// the enclosing `VecSimParams` ABI intact for the by-value LLAPI.
+/// on-disk backends are not.
+///
+/// The C union is sized by its largest member (`TieredSVSParams`, 24 bytes), so
+/// `_reserved` preserves that size to keep the enclosing `VecSimParams` ABI
+/// intact for the by-value LLAPI.
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub union TieredSpecificParams {

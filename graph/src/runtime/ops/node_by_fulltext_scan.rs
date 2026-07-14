@@ -66,23 +66,23 @@ impl<'a> Iterator for NodeByFulltextScanOp<'a> {
             // seed the next child batch.
             match self.emitter.emit_lazy(|b, row| {
                 let view = BatchRow::new(b, row);
-                let label_str = match ExprEval::from_runtime(self.runtime).eval(
+                let Value::String(label_str) = ExprEval::from_runtime(self.runtime).eval(
                     self.label,
                     self.label.root().idx(),
                     Some(&view),
                     None,
-                )? {
-                    Value::String(s) => s,
-                    _ => return Err("fulltext query expects a string label".into()),
+                )?
+                else {
+                    return Err("fulltext query expects a string label".into());
                 };
-                let query_str = match ExprEval::from_runtime(self.runtime).eval(
+                let Value::String(query_str) = ExprEval::from_runtime(self.runtime).eval(
                     self.query,
                     self.query.root().idx(),
                     Some(&view),
                     None,
-                )? {
-                    Value::String(s) => s,
-                    _ => return Err("fulltext query expects a string query".into()),
+                )?
+                else {
+                    return Err("fulltext query expects a string query".into());
                 };
                 let g = self.runtime.g.borrow();
                 let iter = Box::new(g.fulltext_query_nodes(&label_str, &query_str)?)

@@ -43,7 +43,7 @@ pub fn graph_restore(
     // Wrap the decoded graph and set on dest key.
     let mvcc = MvccGraph::from_graph(new_graph);
     let graph_arc = mvcc.read();
-    graph_arc.borrow_mut().set_indexer_graph(graph_arc.clone());
+    graph_arc.borrow().set_indexer_graph(graph_arc.clone());
     let tg = ThreadedGraph::from_mvcc(mvcc);
     let boxed = Arc::new(RwLock::new(tg));
 

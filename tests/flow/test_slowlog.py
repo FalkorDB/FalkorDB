@@ -41,7 +41,7 @@ class testSlowLog():
             self.env.assertContains("Invalid graph operation on empty key", str(e))
 
         # issue the same query twice
-        q = "UNWIND range (0, 200000) AS x RETURN max(x)"
+        q = "UNWIND range (0, 500000) AS x RETURN max(x)"
         self.graph.query(q)
         self.graph.query(q)
 
@@ -267,11 +267,15 @@ class testSlowLog():
 
         # issue 2 slower queries
         # expecting to have them replace existing entries
+        # NOTE: nested UNWINDs make these queries deterministically slower
+        # than the populate_slowlog baseline (UNWIND range(0, 250000)) even
+        # under coverage instrumentation, where per-row work is amplified
+        # non-uniformly (see the same fix in test01).
 
-        q0 = "UNWIND range(0, 2000000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
+        q0 = "UNWIND range(0, 2500) AS i UNWIND range(0, 2500) AS j WITH i, j WHERE i % 2 = 0 RETURN count(j)"
         self.graph.query(q0)
 
-        q1 = "UNWIND range(0, 2500000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
+        q1 = "UNWIND range(0, 2500) AS i UNWIND range(0, 2500) AS j WITH i, j WHERE j % 2 = 0 RETURN count(i)"
         self.graph.query(q1)
 
         entries = self.graph.slowlog()

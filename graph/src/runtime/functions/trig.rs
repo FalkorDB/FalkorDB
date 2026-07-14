@@ -42,55 +42,55 @@ fn apply_unary_float(
 
 pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "sin",
-        args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
-        ret: Type::Union(vec![Type::Float, Type::Null]),
+        args: [Type::union([Type::Int, Type::Float, Type::Null])],
+        ret: Type::union([Type::Float, Type::Null]),
         fn sin(_, args) { apply_unary_float(args, f64::sin) }
     );
 
     cypher_fn!(funcs, "cos",
-        args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
-        ret: Type::Union(vec![Type::Float, Type::Null]),
+        args: [Type::union([Type::Int, Type::Float, Type::Null])],
+        ret: Type::union([Type::Float, Type::Null]),
         fn cos(_, args) { apply_unary_float(args, f64::cos) }
     );
 
     cypher_fn!(funcs, "tan",
-        args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
-        ret: Type::Union(vec![Type::Float, Type::Null]),
+        args: [Type::union([Type::Int, Type::Float, Type::Null])],
+        ret: Type::union([Type::Float, Type::Null]),
         fn tan(_, args) { apply_unary_float(args, f64::tan) }
     );
 
     cypher_fn!(funcs, "cot",
-        args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
-        ret: Type::Union(vec![Type::Float, Type::Null]),
+        args: [Type::union([Type::Int, Type::Float, Type::Null])],
+        ret: Type::union([Type::Float, Type::Null]),
         fn cot(_, args) {
             apply_unary_float(args, |x| x.cos() / x.sin())
         }
     );
 
     cypher_fn!(funcs, "asin",
-        args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
-        ret: Type::Union(vec![Type::Float, Type::Null]),
+        args: [Type::union([Type::Int, Type::Float, Type::Null])],
+        ret: Type::union([Type::Float, Type::Null]),
         fn asin(_, args) { apply_unary_float(args, f64::asin) }
     );
 
     cypher_fn!(funcs, "acos",
-        args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
-        ret: Type::Union(vec![Type::Float, Type::Null]),
+        args: [Type::union([Type::Int, Type::Float, Type::Null])],
+        ret: Type::union([Type::Float, Type::Null]),
         fn acos(_, args) { apply_unary_float(args, f64::acos) }
     );
 
     cypher_fn!(funcs, "atan",
-        args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
-        ret: Type::Union(vec![Type::Float, Type::Null]),
+        args: [Type::union([Type::Int, Type::Float, Type::Null])],
+        ret: Type::union([Type::Float, Type::Null]),
         fn atan(_, args) { apply_unary_float(args, f64::atan) }
     );
 
     cypher_fn!(funcs, "atan2",
         args: [
-            Type::Union(vec![Type::Int, Type::Float, Type::Null]),
-            Type::Union(vec![Type::Int, Type::Float, Type::Null]),
+            Type::union([Type::Int, Type::Float, Type::Null]),
+            Type::union([Type::Int, Type::Float, Type::Null]),
         ],
-        ret: Type::Union(vec![Type::Float, Type::Null]),
+        ret: Type::union([Type::Float, Type::Null]),
         fn atan2(_, args) {
             match (&args[0], &args[1]) {
                 (Value::Int(y), Value::Int(x)) => Ok(Value::Float((*y as f64).atan2(*x as f64))),
@@ -104,14 +104,14 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "degrees",
-        args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
-        ret: Type::Union(vec![Type::Float, Type::Null]),
+        args: [Type::union([Type::Int, Type::Float, Type::Null])],
+        ret: Type::union([Type::Float, Type::Null]),
         fn degrees(_, args) { apply_unary_float(args, f64::to_degrees) }
     );
 
     cypher_fn!(funcs, "radians",
-        args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
-        ret: Type::Union(vec![Type::Float, Type::Null]),
+        args: [Type::union([Type::Int, Type::Float, Type::Null])],
+        ret: Type::union([Type::Float, Type::Null]),
         fn radians(_, args) { apply_unary_float(args, f64::to_radians) }
     );
 
@@ -125,8 +125,8 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "haversin",
-        args: [Type::Union(vec![Type::Int, Type::Float, Type::Null])],
-        ret: Type::Union(vec![Type::Float, Type::Null]),
+        args: [Type::union([Type::Int, Type::Float, Type::Null])],
+        ret: Type::union([Type::Float, Type::Null]),
         fn haversin(_, args) {
             apply_unary_float(args, |x| (1.0 - x.cos()) / 2.0)
         }

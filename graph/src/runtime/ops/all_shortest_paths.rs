@@ -27,7 +27,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
-use crate::graph::graph::{NodeId, RelationshipId};
+use crate::graph::graph::{EdgeDirection, NodeId, RelationshipId};
 use crate::parser::ast::{AllShortestPaths, QueryRelationship, Variable};
 use crate::planner::IR;
 use crate::runtime::{
@@ -56,7 +56,7 @@ pub struct AllShortestPathsOp<'a> {
 }
 
 impl<'a> AllShortestPathsOp<'a> {
-    pub fn new(
+    pub const fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
         relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
@@ -155,8 +155,13 @@ impl<'a> AllShortestPathsOp<'a> {
             }
 
             let current_node = NodeId::from(current);
+            let direction = if bidirectional {
+                EdgeDirection::Both
+            } else {
+                EdgeDirection::Outgoing
+            };
             for (edge_src, edge_dst, edge_id) in
-                g.get_node_relationships_by_type(current_node, &rp.types)
+                g.get_node_relationships_by_type(current_node, &rp.types, direction)
             {
                 let neighbor = if bidirectional {
                     if edge_src == current_node {

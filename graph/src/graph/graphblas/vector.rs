@@ -355,10 +355,10 @@ impl Decode<19> for Vector<bool> {
             // buffer. On failure `GxB_Vector_load` does not adopt `arr_ptr`, so
             // we still own it: free the buffer and the vector, then return Err.
             if info != GrB_Info::GrB_SUCCESS {
-                if let Some(layout) = layout {
-                    if !arr_ptr.is_null() {
-                        std::alloc::dealloc(arr_ptr.cast(), layout);
-                    }
+                if let Some(layout) = layout
+                    && !arr_ptr.is_null()
+                {
+                    std::alloc::dealloc(arr_ptr.cast(), layout);
                 }
                 GrB_Vector_free(addr_of_mut!(v));
                 return Err(format!("Vector decode: GxB_Vector_load failed: {info:?}"));

@@ -36,12 +36,12 @@ use thin_vec::{ThinVec, thin_vec};
 
 pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "size",
-        args: [Type::Union(vec![
+        args: [Type::union([
             Type::List(Box::new(Type::Any)),
             Type::String,
             Type::Null,
         ])],
-        ret: Type::Union(vec![Type::Int, Type::Null]),
+        ret: Type::union([Type::Int, Type::Null]),
         fn size(_, args) {
             match &args[0] {
                 Value::String(s) => Ok(Value::Int(s.chars().count() as i64)),
@@ -53,7 +53,7 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "head",
-        args: [Type::Union(vec![
+        args: [Type::union([
             Type::List(Box::new(Type::Any)),
             Type::Null,
         ])],
@@ -74,7 +74,7 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "last",
-        args: [Type::Union(vec![
+        args: [Type::union([
             Type::List(Box::new(Type::Any)),
             Type::Null,
         ])],
@@ -89,7 +89,7 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "tail",
-        args: [Type::Union(vec![
+        args: [Type::union([
             Type::List(Box::new(Type::Any)),
             Type::Null,
         ])],
@@ -110,12 +110,12 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "reverse",
-        args: [Type::Union(vec![
+        args: [Type::union([
             Type::List(Box::new(Type::Any)),
             Type::String,
             Type::Null,
         ])],
-        ret: Type::Union(vec![
+        ret: Type::union([
             Type::List(Box::new(Type::Any)),
             Type::String,
             Type::Null,
@@ -138,11 +138,11 @@ pub fn register(funcs: &mut Functions) {
     // Removes `count` (default 1) elements starting at `index`.
     cypher_fn!(funcs, "list.remove",
         args: [
-            Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
+            Type::union([Type::List(Box::new(Type::Any)), Type::Null]),
             Type::Int,
             Type::Optional(Box::new(Type::Int)),
         ],
-        ret: Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
+        ret: Type::union([Type::List(Box::new(Type::Any)), Type::Null]),
         fn list_remove(_, args) {
             let list = args.first();
             let index = args.get(1);
@@ -180,10 +180,10 @@ pub fn register(funcs: &mut Functions) {
     // Sorts elements. Default ascending=true.
     cypher_fn!(funcs, "list.sort",
         args: [
-            Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
+            Type::union([Type::List(Box::new(Type::Any)), Type::Null]),
             Type::Optional(Box::new(Type::Bool)),
         ],
-        ret: Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
+        ret: Type::union([Type::List(Box::new(Type::Any)), Type::Null]),
         fn list_sort(_, args) {
             let list = args.first();
             let ascending = args.get(1);
@@ -212,12 +212,12 @@ pub fn register(funcs: &mut Functions) {
     // Inserts a single value at index. Default allowDuplicate=true.
     cypher_fn!(funcs, "list.insert",
         args: [
-            Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
+            Type::union([Type::List(Box::new(Type::Any)), Type::Null]),
             Type::Int,
             Type::Any,
             Type::Optional(Box::new(Type::Bool)),
         ],
-        ret: Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
+        ret: Type::union([Type::List(Box::new(Type::Any)), Type::Null]),
         fn list_insert(_, args) {
             let list = args.first();
             let index = args.get(1);
@@ -263,12 +263,12 @@ pub fn register(funcs: &mut Functions) {
     // Inserts all elements of list2 at index. Default allowDuplicate=true.
     cypher_fn!(funcs, "list.insertListElements",
         args: [
-            Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
-            Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
+            Type::union([Type::List(Box::new(Type::Any)), Type::Null]),
+            Type::union([Type::List(Box::new(Type::Any)), Type::Null]),
             Type::Int,
             Type::Optional(Box::new(Type::Bool)),
         ],
-        ret: Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
+        ret: Type::union([Type::List(Box::new(Type::Any)), Type::Null]),
         fn list_insert_list_elements(_, args) {
             let list = args.first();
             let list2 = args.get(1);
@@ -323,8 +323,8 @@ pub fn register(funcs: &mut Functions) {
     // list.dedup(list)
     // Removes duplicate elements, preserving order.
     cypher_fn!(funcs, "list.dedup",
-        args: [Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null])],
-        ret: Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
+        args: [Type::union([Type::List(Box::new(Type::Any)), Type::Null])],
+        ret: Type::union([Type::List(Box::new(Type::Any)), Type::Null]),
         fn list_dedup(_, args) {
             match &args[0] {
                 Value::Null => Ok(Value::Null),

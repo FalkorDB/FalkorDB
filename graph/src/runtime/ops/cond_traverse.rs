@@ -32,9 +32,8 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use crate::graph::graph::{LabelId, NodeId, RelationshipId};
-use crate::graph::graphblas::matrix::{Matrix, New, Size};
-use crate::graph::graphblas::tensor::compound_key;
-use crate::graph::graphblas::versioned_matrix::{Iter as EdgeIter, VersionedMatrix};
+use crate::graph::graphblas::matrix::Matrix;
+use crate::graph::graphblas::versioned_matrix::{Iter, VersionedMatrix};
 use crate::parser::ast::{ExprIR, QueryExpr, QueryRelationship, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
@@ -44,20 +43,58 @@ use crate::runtime::{
     runtime::Runtime,
     value::Value,
 };
+use itertools::Either;
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
 use super::batched_result_emitter::{BatchedResultEmitter, EdgeEndpoints, RowIter};
 
+/// Base matrix for the batched mxm path. Relationship matrices store inline
+/// edge ids (`u64`) while the adjacency matrix and merged multi-type matrices
+/// are `bool`; traversal only consumes the sparsity pattern (`ANY_PAIR`
+/// semiring), so both traverse identically. Cloning either variant is cheap
+/// (`Arc` handle clones, no data copy).
+enum TraversalMatrix {
+    Bool(VersionedMatrix<bool>),
+    U64(VersionedMatrix<u64>),
+}
+
+impl TraversalMatrix {
+    fn ncols(&self) -> u64 {
+        match self {
+            Self::Bool(m) => m.ncols(),
+            Self::U64(m) => m.ncols(),
+        }
+    }
+
+    /// `f = f * self` (delta-aware, structural). See [`Matrix::delta_lmxm`].
+    fn delta_lmxm_into(
+        &self,
+        f: &mut Matrix<bool>,
+    ) {
+        match self {
+            Self::Bool(m) => f.delta_lmxm(m),
+            Self::U64(m) => f.delta_lmxm(m),
+        }
+    }
+}
+
 /// Lazily resolved state — built on first `expand_row`, after any sibling
 /// Commit in the subtree has had a chance to create new labels/types.
 struct CtState {
-    fwd_iter: std::cell::RefCell<EdgeIter>,
-    rev_iter: Option<std::cell::RefCell<EdgeIter>>,
+    fwd_iter: std::cell::RefCell<Iter>,
+    rev_iter: Option<std::cell::RefCell<Iter>>,
+    /// Iterator over the TRANSPOSED pair matrix (dst-major). Built lazily on
+    /// the first expansion where only the matrix-destination is bound — e.g.
+    /// a planner-transposed traverse seeded from the pattern-source, or the
+    /// reverse half of a bidirectional expansion. Seeking this by destination
+    /// replaces what would otherwise be a full edge-matrix scan per input
+    /// row (O(V·E) for the whole query).
+    bwd_iter: Option<std::cell::RefCell<Iter>>,
     fwd_src_label_ids: Vec<LabelId>,
     fwd_dst_label_ids: Vec<LabelId>,
     rev_src_label_ids: Vec<LabelId>,
     rev_dst_label_ids: Vec<LabelId>,
-    edge_iters: Vec<std::cell::RefCell<EdgeIter>>,
+    edge_type_indices: Vec<usize>,
     /// True when one of the requested labels was unknown at state-build
     /// time.  We still drain the child (for side effects) but produce no
     /// output rows, since `unwrap_or_default()` would otherwise turn an
@@ -66,10 +103,10 @@ struct CtState {
     /// Materialized base matrix for batched mxm path. Built lazily on
     /// first `expand_batch`. Cached for op lifetime; safe because writes
     /// are serialized w.r.t. read queries.
-    batched_matrix: Option<VersionedMatrix>,
+    batched_matrix: Option<TraversalMatrix>,
     /// Per-hop matrices for fused chain (same lifetime/safety rules as
     /// `batched_matrix`). `chain_matrices[i]` corresponds to `chain[i]`.
-    chain_matrices: Vec<VersionedMatrix>,
+    chain_matrices: Vec<TraversalMatrix>,
     /// Per-hop label IDs for `chain[i].to` (post-multiply dst filter).
     chain_dst_label_ids: Vec<Vec<LabelId>>,
 }
@@ -136,22 +173,43 @@ pub struct CondTraverseOp<'a> {
 fn build_unrestricted_iter(
     g: &crate::graph::graph::Graph,
     types: &[Arc<String>],
-) -> Option<EdgeIter> {
+) -> Option<Iter> {
     if types.is_empty() {
         return Some(g.adjacency_matrix().iter(0, u64::MAX));
     }
     if types.len() == 1 {
         return g
             .get_relationship_matrix(&types[0])
-            .map(|t| t.matrix().iter(0, u64::MAX));
+            .map(|t| t.matrix().structural_iter(0, u64::MAX));
     }
     let merged = g.build_relationship_matrix_unrestricted(types)?;
     Some(VersionedMatrix::from_matrix(merged).iter(0, u64::MAX))
 }
 
-fn empty_edge_iter() -> EdgeIter {
-    use crate::graph::graphblas::matrix::New;
-    VersionedMatrix::new(0, 0).iter(0, u64::MAX)
+fn empty_edge_iter() -> Iter {
+    VersionedMatrix::<bool>::new(0, 0).iter(0, u64::MAX)
+}
+
+/// Build an `EdgeIter` over the TRANSPOSED (dst → src) pair matrix for
+/// `types`, for expansions where only the destination is bound. Tensors
+/// maintain their transpose (`mt`) incrementally, so the single-type case is
+/// free; the untyped/multi-type cases pay one O(E) GraphBLAS transpose —
+/// amortized over the whole operator, unlike the per-row full scan this
+/// replaces.
+fn build_transposed_iter(
+    g: &crate::graph::graph::Graph,
+    types: &[Arc<String>],
+) -> Option<Iter> {
+    if types.is_empty() {
+        return Some(g.adjacency_matrix().transpose().iter(0, u64::MAX));
+    }
+    if types.len() == 1 {
+        return g
+            .get_relationship_matrix(&types[0])
+            .map(|t| t.matrix_t().iter(0, u64::MAX));
+    }
+    let merged = g.build_relationship_matrix_unrestricted(types)?;
+    Some(VersionedMatrix::from_matrix(merged.transpose()).iter(0, u64::MAX))
 }
 
 /// Returns true when an inline-attributes tree is structurally an empty
@@ -333,26 +391,24 @@ impl<'a> CondTraverseOp<'a> {
             None
         };
 
-        let edge_iters: Vec<_> = if rp.types.is_empty() {
-            g.relationship_matrices_iter()
-                .map(|tensor| std::cell::RefCell::new(tensor.edge_iter(0, u64::MAX)))
-                .collect()
+        let edge_type_indices: Vec<usize> = if rp.types.is_empty() {
+            (0..g.relationship_tensors().len()).collect()
         } else {
             rp.types
                 .iter()
-                .filter_map(|t| g.get_relationship_matrix(t))
-                .map(|tensor| std::cell::RefCell::new(tensor.edge_iter(0, u64::MAX)))
+                .filter_map(|t| g.get_type_id(t).map(|tid| tid.0))
                 .collect()
         };
 
         CtState {
             fwd_iter: std::cell::RefCell::new(fwd_iter),
             rev_iter: rev_iter.map(std::cell::RefCell::new),
+            bwd_iter: None,
             fwd_src_label_ids,
             fwd_dst_label_ids,
             rev_src_label_ids,
             rev_dst_label_ids,
-            edge_iters,
+            edge_type_indices,
             no_match,
             batched_matrix: None,
             chain_matrices: Vec::new(),
@@ -375,7 +431,7 @@ impl<'a> CondTraverseOp<'a> {
         batch: &Batch<'a>,
         active_subset: &[usize],
         out_pending: &mut VecDeque<Batch<'a>>,
-    ) -> Result<bool, String> {
+    ) -> bool {
         let runtime = self.runtime;
         let rp = self.relationship_pattern;
 
@@ -389,27 +445,27 @@ impl<'a> CondTraverseOp<'a> {
         }
         let state = state_ref.as_mut().unwrap();
         if state.no_match {
-            return Ok(true);
+            return true;
         }
 
         let g = runtime.g.borrow();
 
         if state.batched_matrix.is_none() {
             let m = if rp.types.is_empty() {
-                g.adjacency_matrix().clone()
+                TraversalMatrix::Bool(g.adjacency_matrix().clone())
             } else if rp.types.len() == 1 {
                 if let Some(t) = g.get_relationship_matrix(&rp.types[0]) {
-                    t.matrix().clone()
+                    TraversalMatrix::U64(t.matrix().clone())
                 } else {
                     state.no_match = true;
-                    return Ok(true);
+                    return true;
                 }
             } else {
                 if let Some(m) = g.build_relationship_matrix_unrestricted(&rp.types) {
-                    VersionedMatrix::from_matrix(m)
+                    TraversalMatrix::Bool(VersionedMatrix::from_matrix(m))
                 } else {
                     state.no_match = true;
-                    return Ok(true);
+                    return true;
                 }
             };
             state.batched_matrix = Some(m);
@@ -420,26 +476,26 @@ impl<'a> CondTraverseOp<'a> {
             // either.
             for hop in self.chain {
                 let hm = if hop.types.is_empty() {
-                    g.adjacency_matrix().clone()
+                    TraversalMatrix::Bool(g.adjacency_matrix().clone())
                 } else if hop.types.len() == 1 {
                     if let Some(t) = g.get_relationship_matrix(&hop.types[0]) {
-                        t.matrix().clone()
+                        TraversalMatrix::U64(t.matrix().clone())
                     } else {
                         state.no_match = true;
-                        return Ok(true);
+                        return true;
                     }
                 } else {
                     if let Some(m) = g.build_relationship_matrix_unrestricted(&hop.types) {
-                        VersionedMatrix::from_matrix(m)
+                        TraversalMatrix::Bool(VersionedMatrix::from_matrix(m))
                     } else {
                         state.no_match = true;
-                        return Ok(true);
+                        return true;
                     }
                 };
                 state.chain_matrices.push(hm);
                 let Some(dst_labels) = g.resolve_label_ids(&hop.to.labels) else {
                     state.no_match = true;
-                    return Ok(true);
+                    return true;
                 };
                 state.chain_dst_label_ids.push(dst_labels);
             }
@@ -467,13 +523,11 @@ impl<'a> CondTraverseOp<'a> {
             // colliding outer-scope slot value; `is_bound` is authoritative.
             if !batch.is_bound_at(from_alias.id, row_idx) {
                 drop(g);
-                return Ok(false);
+                return false;
             }
-            let src_id = if let Some(Value::Node(id)) = batch.value_at(from_alias.id, row_idx) {
-                id
-            } else {
+            let Some(Value::Node(src_id)) = batch.value_at(from_alias.id, row_idx) else {
                 drop(g);
-                return Ok(false);
+                return false;
             };
             // Pre-filter src by label (= L_src * F in C's algebra).
             if !state
@@ -489,17 +543,18 @@ impl<'a> CondTraverseOp<'a> {
 
         if row_idx_buf.is_empty() {
             drop(g);
-            return Ok(true);
+            return true;
         }
 
-        let mut f = Matrix::new(nrows, ncols);
-        f.build_bool(&row_idx_buf, &col_idx_buf);
-        f.delta_lmxm(m_merged);
+        let mut f = Matrix::<bool>::new(nrows, ncols);
+        f.build(&row_idx_buf, &col_idx_buf);
+        m_merged.delta_lmxm_into(&mut f);
         for hop_m in &state.chain_matrices {
-            f.delta_lmxm(hop_m);
+            hop_m.delta_lmxm_into(&mut f);
         }
 
-        let (row_is, col_is) = f.extract_tuples_bool();
+        // Flush pending mxm work before attaching the row iterator.
+        f.wait();
         // For fused chains all hops are storage-direction (the fusion pass
         // refuses to fuse when transposed differs), so `transposed` applies
         // only to the first hop and the final destination alias comes from
@@ -523,9 +578,8 @@ impl<'a> CondTraverseOp<'a> {
         let mut out_indices = Vec::new();
         let mut out_dest_ids = Vec::new();
         let mut out_edge_ids = Vec::new();
-        let mut out_src_ids = Vec::new();
 
-        for (row_i, dest_raw) in row_is.into_iter().zip(col_is) {
+        for (row_i, dest_raw) in f.iter(0, u64::MAX) {
             let dest_id = NodeId::from(dest_raw);
             // Post-filter final-hop dst label (= F * A * R_dst in C's algebra).
             if !dst_label_ids
@@ -553,18 +607,16 @@ impl<'a> CondTraverseOp<'a> {
                 // self.transposed (which only affects alias→storage mapping,
                 // not the underlying matrix orientation since
                 // build_relationship_matrix_unrestricted is non-transposed).
-                let src_id = match batch.value_at(from_alias.id, row_idx) {
-                    Some(Value::Node(id)) => id,
-                    _ => continue,
+                let Some(Value::Node(src_id)) = batch.value_at(from_alias.id, row_idx) else {
+                    continue;
                 };
                 let mat_src = u64::from(src_id);
                 let mat_dst = u64::from(dest_id);
-                let key = compound_key(mat_src, mat_dst);
                 let mut found_id: Option<RelationshipId> = None;
-                for cell in &state.edge_iters {
-                    let mut it = cell.borrow_mut();
-                    it.seek(key, key);
-                    if let Some((_, raw_id)) = it.next() {
+                for &tidx in &state.edge_type_indices {
+                    if let Some(raw_id) =
+                        g.relationship_tensors()[tidx].get(mat_src, mat_dst).next()
+                    {
                         found_id = Some(RelationshipId::from(raw_id));
                         break;
                     }
@@ -573,7 +625,6 @@ impl<'a> CondTraverseOp<'a> {
                     out_indices.push(row_idx);
                     out_dest_ids.push(dest_id);
                     out_edge_ids.push(edge_id);
-                    out_src_ids.push(src_id);
                 }
             } else {
                 // Fused chain: edges across hops are anonymous & unreferenced
@@ -597,7 +648,6 @@ impl<'a> CondTraverseOp<'a> {
                 );
                 out_pending.push_back(out_batch);
                 out_indices.clear();
-                out_src_ids.clear();
             }
         }
 
@@ -611,7 +661,7 @@ impl<'a> CondTraverseOp<'a> {
         }
 
         drop(g);
-        Ok(true)
+        true
     }
 
     /// Enumerate the single-hop results for `batch[row_idx]`, pushing each as a
@@ -626,8 +676,8 @@ impl<'a> CondTraverseOp<'a> {
         sibling_edges: &[u32],
         transposed: bool,
         state_cell: &std::cell::RefCell<Option<CtState>>,
-        bidir_dedup: &Option<std::cell::RefCell<std::collections::HashSet<(u64, u64)>>>,
-        dedup_source_alias: &Option<Variable>,
+        bidir_dedup: Option<&std::cell::RefCell<std::collections::HashSet<(u64, u64)>>>,
+        dedup_source_alias: Option<&Variable>,
         batch: &Batch<'a>,
         row_idx: usize,
         out: &mut Vec<(NodeId, NodeId, RelationshipId)>,
@@ -695,18 +745,49 @@ impl<'a> CondTraverseOp<'a> {
         } else {
             (from_id, to_id)
         };
+        let (rev_src_id, rev_dst_id) = if transposed {
+            (from_id, to_id)
+        } else {
+            (to_id, from_id)
+        };
+        // When only the matrix-destination is bound, enumerating that node's
+        // incoming edges via the transposed matrix is O(in-degree); the
+        // forward iterator would have to scan EVERY edge and filter on dest
+        // (quadratic across input rows). Build the shared transposed
+        // iterator once, lazily.
+        let need_bwd_fwd = fwd_src_id.is_none() && fwd_dst_id.is_some();
+        let need_bwd_rev = state.rev_iter.is_some() && rev_src_id.is_none() && rev_dst_id.is_some();
+        if (need_bwd_fwd || need_bwd_rev) && state.bwd_iter.is_none() {
+            state.bwd_iter = Some(std::cell::RefCell::new(
+                build_transposed_iter(&g, &rp.types).unwrap_or_else(empty_edge_iter),
+            ));
+        }
+
         // Reuse the persistent forward iterator: seek the row range
         // instead of allocating a fresh GxB_Iterator per input row.
         let start = out.len();
         {
-            let mut iter = state.fwd_iter.borrow_mut();
-            let (min_row, max_row) =
-                fwd_src_id.map_or((0, u64::MAX), |id| (u64::from(id), u64::from(id)));
-            iter.seek(min_row, max_row);
-            let fwd_dst_filter = fwd_dst_id.map(u64::from);
-            let pairs = (&mut *iter)
-                .filter(|(_, dest)| fwd_dst_filter.is_none_or(|d| d == *dest))
-                .map(|(src, dest)| (NodeId::from(src), NodeId::from(dest)));
+            let mut fwd_borrow;
+            let mut bwd_borrow;
+            let pairs = if need_bwd_fwd {
+                let d = u64::from(fwd_dst_id.expect("need_bwd_fwd implies dst bound"));
+                bwd_borrow = state.bwd_iter.as_ref().expect("built above").borrow_mut();
+                bwd_borrow.seek(d, d);
+                Either::Left(
+                    (&mut *bwd_borrow).map(|(dest, src)| (NodeId::from(src), NodeId::from(dest))),
+                )
+            } else {
+                fwd_borrow = state.fwd_iter.borrow_mut();
+                let (min_row, max_row) =
+                    fwd_src_id.map_or((0, u64::MAX), |id| (u64::from(id), u64::from(id)));
+                fwd_borrow.seek(min_row, max_row);
+                let fwd_dst_filter = fwd_dst_id.map(u64::from);
+                Either::Right(
+                    (&mut *fwd_borrow)
+                        .filter(move |(_, dest)| fwd_dst_filter.is_none_or(|d| d == *dest))
+                        .map(|(src, dest)| (NodeId::from(src), NodeId::from(dest))),
+                )
+            };
             Self::process_pairs(
                 pairs,
                 transposed,
@@ -722,7 +803,7 @@ impl<'a> CondTraverseOp<'a> {
                 out,
                 emit_relationship,
                 sibling_edges,
-                &state.edge_iters,
+                &state.edge_type_indices,
                 &state.fwd_src_label_ids,
                 &state.fwd_dst_label_ids,
             );
@@ -730,20 +811,30 @@ impl<'a> CondTraverseOp<'a> {
 
         // Process reverse relationships for bidirectional patterns.
         if let Some(ref rev_iter_cell) = state.rev_iter {
-            let (rev_src_id, rev_dst_id) = if transposed {
-                (from_id, to_id)
+            let mut rev_borrow;
+            let mut bwd_borrow;
+            let pairs = if need_bwd_rev {
+                let d = u64::from(rev_dst_id.expect("need_bwd_rev implies dst bound"));
+                bwd_borrow = state.bwd_iter.as_ref().expect("built above").borrow_mut();
+                bwd_borrow.seek(d, d);
+                Either::Left(
+                    (&mut *bwd_borrow)
+                        .map(|(dest, src)| (NodeId::from(src), NodeId::from(dest)))
+                        .filter(|(s, d)| s != d),
+                )
             } else {
-                (to_id, from_id)
+                rev_borrow = rev_iter_cell.borrow_mut();
+                let (min_row, max_row) =
+                    rev_src_id.map_or((0, u64::MAX), |id| (u64::from(id), u64::from(id)));
+                rev_borrow.seek(min_row, max_row);
+                let rev_dst_filter = rev_dst_id.map(u64::from);
+                Either::Right(
+                    (&mut *rev_borrow)
+                        .filter(move |(_, dest)| rev_dst_filter.is_none_or(|d| d == *dest))
+                        .map(|(src, dest)| (NodeId::from(src), NodeId::from(dest)))
+                        .filter(|(s, d)| s != d),
+                )
             };
-            let mut iter = rev_iter_cell.borrow_mut();
-            let (min_row, max_row) =
-                rev_src_id.map_or((0, u64::MAX), |id| (u64::from(id), u64::from(id)));
-            iter.seek(min_row, max_row);
-            let rev_dst_filter = rev_dst_id.map(u64::from);
-            let pairs = (&mut *iter)
-                .filter(move |(_, dest)| rev_dst_filter.is_none_or(|d| d == *dest))
-                .map(|(src, dest)| (NodeId::from(src), NodeId::from(dest)))
-                .filter(|(s, d)| s != d);
             Self::process_pairs(
                 pairs,
                 !transposed,
@@ -759,7 +850,7 @@ impl<'a> CondTraverseOp<'a> {
                 out,
                 emit_relationship,
                 sibling_edges,
-                &state.edge_iters,
+                &state.edge_type_indices,
                 &state.rev_src_label_ids,
                 &state.rev_dst_label_ids,
             );
@@ -769,7 +860,7 @@ impl<'a> CondTraverseOp<'a> {
         // deduplicate output rows by (scan_source, final_dest) across
         // expand_row calls — matching C FalkorDB's matrix-multiply semantics.
         if let Some(dedup) = bidir_dedup {
-            let source_alias = dedup_source_alias.as_ref().unwrap();
+            let source_alias = dedup_source_alias.unwrap();
             // The scan source is a parent-carried column, constant for every
             // result of this row, so read it once.
             let src_key = match batch.value_at(source_alias.id, row_idx) {
@@ -813,7 +904,7 @@ impl<'a> CondTraverseOp<'a> {
         out: &mut Vec<(NodeId, NodeId, RelationshipId)>,
         emit_relationship: bool,
         sibling_edges: &[u32],
-        edge_iters: &[std::cell::RefCell<EdgeIter>],
+        edge_type_indices: &[usize],
         src_label_ids: &[LabelId],
         dst_label_ids: &[LabelId],
     ) {
@@ -882,14 +973,13 @@ impl<'a> CondTraverseOp<'a> {
             // `get_relationships` iterator already returns unique matrix-level
             // pairs, so one representative edge per pair is sufficient.
             let has_edge_filter = matches!(filter_attrs, Value::Map(m) if !m.is_empty());
-            let key = compound_key(u64::from(src), u64::from(dst));
+            let mat_src = u64::from(src);
+            let mat_dst = u64::from(dst);
             if !emit_relationship && !has_edge_filter {
                 let mut found_id: Option<RelationshipId> = None;
                 let env = BatchRow::new(batch, row_idx);
-                'outer: for cell in edge_iters {
-                    let mut it = cell.borrow_mut();
-                    it.seek(key, key);
-                    for (_, raw_id) in &mut *it {
+                'outer: for &tidx in edge_type_indices {
+                    for raw_id in g.relationship_tensors()[tidx].get(mat_src, mat_dst) {
                         let id = RelationshipId::from(raw_id);
                         if !super::edge_already_used(&env, id, rp.alias.id, sibling_edges) {
                             found_id = Some(id);
@@ -907,10 +997,8 @@ impl<'a> CondTraverseOp<'a> {
 
             // Scan edges
             let env = BatchRow::new(batch, row_idx);
-            for cell in edge_iters {
-                let mut it = cell.borrow_mut();
-                it.seek(key, key);
-                for (_, raw_id) in &mut *it {
+            for &tidx in edge_type_indices {
+                for raw_id in g.relationship_tensors()[tidx].get(mat_src, mat_dst) {
                     let id = RelationshipId::from(raw_id);
                     // Relationship uniqueness: skip edges already bound to other
                     // relationship variables in this MATCH clause.
@@ -993,8 +1081,8 @@ impl<'a> Iterator for CondTraverseOp<'a> {
         let sibling_edges = self.sibling_edges;
         let transposed = self.transposed;
         let state_cell = &self.state;
-        let bidir_dedup = &self.bidir_dedup;
-        let dedup_source_alias = &self.dedup_source_alias;
+        let bidir_dedup = self.bidir_dedup.as_ref();
+        let dedup_source_alias = self.dedup_source_alias.as_ref();
         let record_cap = self.record_cap;
 
         loop {
@@ -1044,27 +1132,16 @@ impl<'a> Iterator for CondTraverseOp<'a> {
                                 dedup.borrow_mut().clear();
                             }
                             // Try the batched mxm path on the whole batch. When it
-                            // fully handles the batch (`Ok(true)`) its output is
+                            // fully handles the batch (`true`) its output is
                             // queued on `pending_batches` and the emitter is left
-                            // idle; on fallback (`Ok(false)`) seed the emitter to
+                            // idle; on fallback (`false`) seed the emitter to
                             // expand the batch row-by-row.
                             let mut handled = false;
                             if self.batched_eligible {
                                 let active: Vec<usize> = b.active_indices().collect();
                                 let mut pending = std::mem::take(&mut self.pending_batches);
-                                match self.expand_batch(&b, &active, &mut pending) {
-                                    Ok(true) => {
-                                        self.pending_batches = pending;
-                                        handled = true;
-                                    }
-                                    Ok(false) => {
-                                        self.pending_batches = pending;
-                                    }
-                                    Err(e) => {
-                                        self.pending_batches = pending;
-                                        return Some(Err(e));
-                                    }
-                                }
+                                handled = self.expand_batch(&b, &active, &mut pending);
+                                self.pending_batches = pending;
                             }
                             if !handled {
                                 self.emitter.seed(b);

@@ -43,9 +43,13 @@ use orx_tree::{Dyn, NodeIdx, NodeRef};
 use super::batched_result_emitter::{BatchedResultEmitter, EdgeEndpoints, RowIter};
 
 /// Invariant: `relationship.from` is always the bound endpoint of the
-/// edge scan; `transposed` flips which graph-side endpoint the edge
+/// edge scan.
+///
+/// `transposed` flips which graph-side endpoint the edge
 /// tensor keys on (src vs dst) but the bound endpoint is always read
-/// via `rp.from.alias`. The planner's `select_scan_node` pass enforces
+/// via `rp.from.alias`.
+///
+/// The planner's `select_scan_node` pass enforces
 /// this by swapping the relationship and setting `transposed`
 /// accordingly before any rewrite to `EdgeByIndexScan`.
 pub struct EdgeByIndexScanOp<'a> {
