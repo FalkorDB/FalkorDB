@@ -1052,6 +1052,11 @@ impl<'a> Runtime<'a> {
                 query,
                 score,
             } => {
+                // A downstream Skip/Limit bounds how many results are needed;
+                // pass it through so the scan drains just enough index results.
+                let record_cap = self
+                    .effective_limit(idx)
+                    .map(|l| l.saturating_add(self.effective_skip(idx)));
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::NodeByFulltextScan(NodeByFulltextScanOp::new(
                     self,
@@ -1060,6 +1065,7 @@ impl<'a> Runtime<'a> {
                     label,
                     query,
                     score,
+                    record_cap,
                     idx,
                 )))
             }
@@ -1069,6 +1075,11 @@ impl<'a> Runtime<'a> {
                 query,
                 score,
             } => {
+                // A downstream Skip/Limit bounds how many results are needed;
+                // pass it through so the scan drains just enough index results.
+                let record_cap = self
+                    .effective_limit(idx)
+                    .map(|l| l.saturating_add(self.effective_skip(idx)));
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::EdgeByFulltextScan(EdgeByFulltextScanOp::new(
                     self,
@@ -1077,6 +1088,7 @@ impl<'a> Runtime<'a> {
                     label,
                     query,
                     score,
+                    record_cap,
                     idx,
                 )))
             }

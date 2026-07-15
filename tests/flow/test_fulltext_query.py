@@ -273,3 +273,72 @@ class testFulltextIndexQuery():
             )
         except ResponseError as e:
             self.env.assertContains("requires YIELD of 'node'", str(e))
+
+    def test05_fulltext_query_with_limit_and_skip(self):
+        # A downstream LIMIT/SKIP lowers the fulltext scan's packing ceiling
+        # (limit pushdown) — verify result correctness under those plans.
+        self.graph.query("CREATE FULLTEXT INDEX FOR (n:Page) ON (n.text)")
+        self.graph.query("CREATE FULLTEXT INDEX FOR ()-[e:Link]-() ON (e.text)")
+        wait_for_indices_to_sync(self.graph)
+
+        # 20 matching nodes and 20 matching edges.
+        self.graph.query(
+            """UNWIND range(0, 19) AS i
+            CREATE (a:Page {id: i, text: 'shared keyword page'})
+                   -[:Link {id: i, text: 'shared keyword link'}]->(:Page2)"""
+        )
+
+        # LIMIT smaller than the match count.
+        result = self.graph.query(
+            """CALL db.idx.fulltext.queryNodes('Page', 'keyword')
+            YIELD node, score
+            RETURN node.id, score
+            LIMIT 5"""
+        )
+        self.env.assertEqual(len(result.result_set), 5)
+
+        # SKIP + LIMIT still yields the requested window of distinct rows.
+        result = self.graph.query(
+            """CALL db.idx.fulltext.queryNodes('Page', 'keyword')
+            YIELD node
+            RETURN node.id
+            SKIP 3 LIMIT 5"""
+        )
+        self.env.assertEqual(len(result.result_set), 5)
+        self.env.assertEqual(len({row[0] for row in result.result_set}), 5)
+
+        # LIMIT larger than the match count returns everything.
+        result = self.graph.query(
+            """CALL db.idx.fulltext.queryNodes('Page', 'keyword')
+            YIELD node
+            RETURN node.id
+            LIMIT 100"""
+        )
+        self.env.assertEqual(len(result.result_set), 20)
+
+        # LIMIT 0 returns nothing.
+        result = self.graph.query(
+            """CALL db.idx.fulltext.queryNodes('Page', 'keyword')
+            YIELD node
+            RETURN node.id
+            LIMIT 0"""
+        )
+        self.env.assertEqual(len(result.result_set), 0)
+
+        # Same for the edge fulltext scan.
+        result = self.graph.query(
+            """CALL db.idx.fulltext.queryRelationships('Link', 'keyword')
+            YIELD relationship, score
+            RETURN relationship.id, score
+            LIMIT 5"""
+        )
+        self.env.assertEqual(len(result.result_set), 5)
+
+        result = self.graph.query(
+            """CALL db.idx.fulltext.queryRelationships('Link', 'keyword')
+            YIELD relationship
+            RETURN relationship.id
+            SKIP 3 LIMIT 5"""
+        )
+        self.env.assertEqual(len(result.result_set), 5)
+        self.env.assertEqual(len({row[0] for row in result.result_set}), 5)
