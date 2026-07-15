@@ -49,6 +49,7 @@ void Proc_Register() {
 	_procRegister("algo.SPpaths",            Proc_SPpathCtx);
 	_procRegister("algo.AStar",              Proc_AStarPathCtx);
 	_procRegister("algo.SSpaths",            Proc_SSpathCtx);
+	_procRegister("algo.contractionHierarchies", Proc_ContractionHierarchiesCtx);
 	_procRegister("algo.betweenness",        Proc_BetweennessCtx);
 	_procRegister("algo.HarmonicCentrality", Proc_HarmonicCentralityCtx);
 	_procRegister("algo.labelPropagation",   Proc_CDLPCtx);

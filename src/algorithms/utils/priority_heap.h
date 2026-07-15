@@ -139,6 +139,28 @@ static inline bool NodeWeightHeap_poll
 	return true;
 }
 
+static inline bool NodeWeightHeap_empty
+(
+	NodeWeightHeap *hp
+) {
+	return (hp->count == 0) ;
+}
+
+static inline bool NodeWeightHeap_peek
+(
+	NodeWeightHeap *hp,
+	NodeWeightItem *out
+) {
+
+	if(hp->count == 0) {
+		return false;
+	}
+
+	*out = hp->items[0];
+
+	return true;
+}
+
 static inline void NodeWeightHeap_free
 (
 	NodeWeightHeap *hp
