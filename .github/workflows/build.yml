@@ -499,6 +499,27 @@ jobs:
         if: matrix.platform.use_docker && matrix.build_type == 'release'
         run: docker load --input /tmp/falkordb-${{ matrix.platform.suffix }}.tar
 
+      - name: Sanity test base image
+        if: matrix.platform.use_docker && matrix.build_type == 'release'
+        run: |
+          set -euo pipefail
+          docker run -d --name falkordb-sanity -p 6379:6379 -p 3000:3000 falkordb/falkordb-${{ matrix.platform.suffix }}
+          # Wait for redis to accept connections
+          for i in $(seq 1 30); do
+            if docker exec falkordb-sanity redis-cli ping 2>/dev/null | grep -q PONG; then break; fi
+            if [ "$i" -eq 30 ]; then echo "redis did not become ready"; docker logs falkordb-sanity; exit 1; fi
+            sleep 2
+          done
+          # Verify the FalkorDB module is loaded
+          docker exec falkordb-sanity redis-cli MODULE LIST | grep -qi graph
+          # Base image bundles the browser - check it responds on port 3000
+          for i in $(seq 1 30); do
+            if curl -fsS -o /dev/null http://localhost:3000; then break; fi
+            if [ "$i" -eq 30 ]; then echo "browser did not become ready"; docker logs falkordb-sanity; exit 1; fi
+            sleep 2
+          done
+          docker rm -f falkordb-sanity
+
       - name: Upload base image
         if: matrix.platform.use_docker && matrix.build_type == 'release'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -521,6 +542,21 @@ jobs:
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
             BROWSER_TAG=${{ env.BROWSER_TAG }}
+
+      - name: Sanity test server image
+        if: matrix.platform.use_docker && steps.dockerfile.outputs.build_server == 'true'
+        run: |
+          set -euo pipefail
+          docker load --input /tmp/falkordb-server-${{ matrix.platform.suffix }}.tar
+          docker run -d --name falkordb-server-sanity -p 6380:6379 falkordb/falkordb-server-${{ matrix.platform.suffix }}
+          # Server image has no browser - only verify redis + module
+          for i in $(seq 1 30); do
+            if docker exec falkordb-server-sanity redis-cli ping 2>/dev/null | grep -q PONG; then break; fi
+            if [ "$i" -eq 30 ]; then echo "redis did not become ready"; docker logs falkordb-server-sanity; exit 1; fi
+            sleep 2
+          done
+          docker exec falkordb-server-sanity redis-cli MODULE LIST | grep -qi graph
+          docker rm -f falkordb-server-sanity
 
       - name: Upload server image
         if: matrix.platform.use_docker && steps.dockerfile.outputs.build_server == 'true'

@@ -27,7 +27,10 @@ ENV FALKORDB_BROWSER_PATH=${FALKORDB_HOME}/browser
 # Install only runtime dependencies (openssl for TLS cert generation, libgomp for GraphBLAS,
 # ca-certificates for HTTPS in LOAD CSV)
 RUN apk upgrade --no-cache && \
-    apk add --no-cache bash libgomp openssl ca-certificates
+    apk add --no-cache bash libgomp openssl ca-certificates su-exec && \
+    # Create nextjs user for running the browser
+    addgroup -g 1001 nodejs && \
+    adduser -S -u 1001 -G nodejs nextjs
 
 WORKDIR ${FALKORDB_HOME}
 
@@ -44,6 +47,11 @@ COPY --from=compiler /FalkorDB/bin/linux*/falkordb.so ${FALKORDB_BIN_PATH}/falko
 COPY --from=browser /app ${FALKORDB_BROWSER_PATH}
 
 COPY --from=browser /usr/local/bin/docker-entrypoint.sh ${FALKORDB_BROWSER_PATH}
+
+# set ownership for the nextjs user
+RUN chown -R 1001:1001 ${FALKORDB_BROWSER_PATH} && \
+    mkdir -p /app/.data && \
+    chown -R 1001:1001 /app/.data
 
 ENV ARCH=${TARGETPLATFORM}
 
