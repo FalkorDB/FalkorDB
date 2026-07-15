@@ -43,6 +43,7 @@ pub struct EdgeByFulltextScanOp<'a> {
 }
 
 impl<'a> EdgeByFulltextScanOp<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
