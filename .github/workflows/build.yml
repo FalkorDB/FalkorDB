@@ -520,31 +520,37 @@ jobs:
             IMAGE=$1
             LABEL=$2
             echo "=== Smoke testing ${LABEL} (${IMAGE}) ==="
-            docker run -d --name smoke -p 6379:6379 -p 3000:3000 "${IMAGE}"
+            docker rm -f smoke >/dev/null 2>&1 || true
+            if ! docker run -d --name smoke -p 6379:6379 -p 3000:3000 "${IMAGE}"; then
+              echo "::error::[${LABEL}] Failed to start container from ${IMAGE}"
+              exit 1
+            fi
 
             echo "Waiting for FalkorDB module to load..."
             if ! timeout 60 sh -c 'until docker exec smoke redis-cli GRAPH.QUERY smoke "RETURN 1" >/dev/null 2>&1; do sleep 2; done'; then
               echo "::error::[${LABEL}] FalkorDB did not respond to GRAPH.QUERY within 60s"
-              docker logs smoke
+              docker logs smoke || true
+              docker rm -f smoke >/dev/null 2>&1 || true
               exit 1
             fi
 
             echo "Waiting for browser on port 3000..."
             if ! timeout 60 sh -c 'until curl -sf http://localhost:3000 >/dev/null; do sleep 2; done'; then
               echo "::error::[${LABEL}] Browser UI did not respond on port 3000 within 60s"
-              docker logs smoke
+              docker logs smoke || true
+              docker rm -f smoke >/dev/null 2>&1 || true
               exit 1
             fi
 
             echo "[${LABEL}] Smoke test passed: DB and browser are up"
-            docker rm -f smoke
+            docker rm -f smoke >/dev/null 2>&1 || true
           }
 
-          # Test the image as it will be shipped (browser tag: ${{ env.BROWSER_TAG }})
-          smoke_test falkordb/falkordb-${{ matrix.platform.suffix }} "browser:${{ env.BROWSER_TAG }}"
+          # Test the image as it will be shipped (BROWSER_TAG comes from GITHUB_ENV)
+          smoke_test falkordb/falkordb-${{ matrix.platform.suffix }} "browser:${BROWSER_TAG}"
 
           # Also test with the edge browser, unless the shipped image already uses it
-          if [[ "${{ env.BROWSER_TAG }}" != "edge" ]]; then
+          if [[ "${BROWSER_TAG}" != "edge" ]]; then
             smoke_test falkordb/falkordb-${{ matrix.platform.suffix }}:edge-smoke "browser:edge"
           fi
 
