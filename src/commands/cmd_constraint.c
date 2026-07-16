@@ -609,7 +609,8 @@ int Graph_Constraint
 	// blocking is denied, or when the command is replicated, the command
 	// must run synchronously on the Redis main thread — blocking the
 	// (fake) client here is illegal and trips the aof.c CLIENT_BLOCKED
-	// assertion during AOF replay (crash-loop on restart)
+	// assertion during AOF replay (crash-loop on restart).
+	// this mirrors the GRAPH.QUERY dispatcher in cmd_dispatcher.c
 	int flags = RedisModule_GetContextFlags (ctx) ;
 	bool main_thread = (flags & (REDISMODULE_CTX_FLAGS_REPLICATED    |
 			REDISMODULE_CTX_FLAGS_MULTI         |
