@@ -536,6 +536,23 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
         self.pack_ceiling = cap;
     }
 
+    /// Translate a downstream `Skip`/`Limit` row budget (`record_cap`) into a
+    /// packing ceiling. `None` (no usable limit) and caps at/over a full batch
+    /// keep the default [`BATCH_SIZE`] ceiling; a tighter cap lowers it so the
+    /// first [`emit_lazy`](Self::emit_lazy) returns just enough rows, clamped
+    /// to at least 1 (`LIMIT 0` still runs the op; final truncation is done by
+    /// the downstream slicing ops).
+    pub(crate) fn apply_record_cap(
+        &mut self,
+        record_cap: Option<usize>,
+    ) {
+        if let Some(cap) = record_cap
+            && cap < BATCH_SIZE
+        {
+            self.set_pack_ceiling(cap.max(1));
+        }
+    }
+
     /// Install a parent batch for the lazy expand path: installs the batch but
     /// builds **no** per-row iterators up front. Resets the active-row
     /// [`cursor`](Self::cursor) so the next [`emit_lazy`](Self::emit_lazy) starts

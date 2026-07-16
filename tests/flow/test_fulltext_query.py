@@ -342,3 +342,31 @@ class testFulltextIndexQuery():
         )
         self.env.assertEqual(len(result.result_set), 5)
         self.env.assertEqual(len({row[0] for row in result.result_set}), 5)
+
+        # ORDER BY score is the most common real-world pairing with fulltext
+        # relevance scoring. Sort is a barrier for limit pushdown — the scan
+        # must still drain ALL matches so the sort sees every score, and only
+        # then the LIMIT truncates. Pin that against a future regression.
+        result = self.graph.query(
+            """CALL db.idx.fulltext.queryNodes('Page', 'keyword')
+            YIELD node, score
+            RETURN node.id AS id, score
+            ORDER BY score DESC, id ASC
+            LIMIT 5"""
+        )
+        self.env.assertEqual(len(result.result_set), 5)
+        # All 20 matches share the same text (same score), so the id
+        # tie-breaker makes the top-5 window deterministic: ids 0..4.
+        self.env.assertEqual([row[0] for row in result.result_set], [0, 1, 2, 3, 4])
+        for row in result.result_set:
+            self.env.assertGreater(row[1], 0.0)
+
+        result = self.graph.query(
+            """CALL db.idx.fulltext.queryRelationships('Link', 'keyword')
+            YIELD relationship, score
+            RETURN relationship.id AS id, score
+            ORDER BY score DESC, id ASC
+            LIMIT 5"""
+        )
+        self.env.assertEqual(len(result.result_set), 5)
+        self.env.assertEqual([row[0] for row in result.result_set], [0, 1, 2, 3, 4])

@@ -23,7 +23,7 @@ use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchOp, BatchRow},
+    batch::{Batch, BatchOp, BatchRow},
     runtime::Runtime,
     value::Value,
 };
@@ -61,11 +61,7 @@ impl<'a> EdgeByFulltextScanOp<'a> {
         // A downstream Skip/Limit lowers how many rows are needed; shrink the
         // pack ceiling so the first emit drains just enough index results
         // instead of a full BATCH_SIZE worth of work.
-        if let Some(cap) = record_cap
-            && cap < BATCH_SIZE
-        {
-            emitter.set_pack_ceiling(cap.max(1));
-        }
+        emitter.apply_record_cap(record_cap);
         Self {
             runtime,
             child,

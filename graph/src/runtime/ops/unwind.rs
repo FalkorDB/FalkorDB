@@ -41,7 +41,7 @@ use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchOp, BatchRow},
+    batch::{Batch, BatchOp, BatchRow},
     runtime::Runtime,
     value::Value,
 };
@@ -73,13 +73,8 @@ impl<'a> UnwindOp<'a> {
         // limit (or one at/over a full batch) we pack a whole `BATCH_SIZE`; a
         // tighter limit caps each batch so the first `emit_lazy` returns just
         // enough rows (clamped to at least 1, since `LIMIT 0` still runs the op).
-        let pack_cap = match record_cap {
-            Some(0) => 1,
-            Some(cap) if cap < BATCH_SIZE => cap,
-            _ => BATCH_SIZE,
-        };
         let mut emitter = BatchedResultEmitter::with_binding(name.id);
-        emitter.set_pack_ceiling(pack_cap);
+        emitter.apply_record_cap(record_cap);
         Self {
             runtime,
             child,
