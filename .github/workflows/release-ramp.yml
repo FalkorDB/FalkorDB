@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Set SEMVER and TAG
         id: set_semver
@@ -44,9 +44,9 @@ jobs:
         run: |
           git fetch origin ${{ env.COMMIT_SHA }} --depth=1
           VERSION_H=$(git show ${{ env.COMMIT_SHA }}:src/version.h)
-          MAJOR=$(echo "$VERSION_H" | grep FALKOR_VERSION_MAJOR | awk '{print $3}')
-          MINOR=$(echo "$VERSION_H" | grep FALKOR_VERSION_MINOR | awk '{print $3}')
-          PATCH=$(echo "$VERSION_H" | grep FALKOR_VERSION_PATCH | awk '{print $3}')
+          MAJOR=$(echo "$VERSION_H" | grep '^#define FALKOR_VERSION_MAJOR ' | awk '{print $3}')
+          MINOR=$(echo "$VERSION_H" | grep '^#define FALKOR_VERSION_MINOR ' | awk '{print $3}')
+          PATCH=$(echo "$VERSION_H" | grep '^#define FALKOR_VERSION_PATCH ' | awk '{print $3}')
           FILE_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
           TAG="${{ steps.set_semver.outputs.TAG_NAME }}"
           echo "Tag: ${TAG}, version.h: ${FILE_VERSION}"

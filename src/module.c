@@ -19,7 +19,6 @@
 #include "udf/udf_ctx.h"
 #include "udf/classes.h"
 #include "util/roaring.h"
-#include "bolt/bolt_api.h"
 #include "index/indexer.h"
 #include "udf/repository.h"
 #include "udf/replication.h"
@@ -370,10 +369,6 @@ int RedisModule_OnLoad
 				Graph_UDF,
 				"deny-script",
 				0, 0, 0) == REDISMODULE_ERR) {
-		return REDISMODULE_ERR;
-	}
-
-	if(BoltApi_Register(ctx) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 

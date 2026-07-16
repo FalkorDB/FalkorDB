@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include "../bolt/bolt.h"
 #include "../redismodule.h"
 #include "../util/simple_timer.h"
 #include "../graph/graphcontext.h"
@@ -43,7 +42,6 @@ typedef struct {
 	bool timeout_rw;                     // apply timeout on both read and write queries
 	uint64_t received_ts;                // command received at this UNIX timestamp
 	simple_timer_t timer;                // stopwatch started upon command received
-	bolt_client_t *bolt_client;          // BOLT client
 } CommandCtx;
 
 // create a new command context
@@ -61,8 +59,7 @@ CommandCtx *CommandCtx_New
 	long long timeout,              // the query timeout, if specified
 	bool timeout_rw,                // apply timeout on both read and write queries
 	uint64_t received_ts,           // command received at this  UNIX timestamp
-	simple_timer_t timer,           // stopwatch started upon command received
-	bolt_client_t *bolt_client      // BOLT client
+	simple_timer_t timer            // stopwatch started upon command received
 );
 
 // increment command context reference count
@@ -73,12 +70,6 @@ void CommandCtx_Incref
 
 // get Redis module context
 RedisModuleCtx *CommandCtx_GetRedisCtx
-(
-	CommandCtx *cmd_ctx
-);
-
-// get BOLT client
-bolt_client_t *CommandCtx_GetBoltClient
 (
 	CommandCtx *cmd_ctx
 );

@@ -6,19 +6,21 @@
 
 #include "RG.h"
 #include "globals.h"
-#include "graphcontext.h"
 #include "../util/arr.h"
 #include "../util/uuid.h"
 #include "../query_ctx.h"
+#include "graphcontext.h"
 #include "../redismodule.h"
 #include "../util/rwlock.h"
 #include "../util/rmalloc.h"
 #include "graph_memoryUsage.h"
 #include "../util/thpool/pool.h"
 #include "../constraint/constraint.h"
-#include "../serializers/graphcontext_type.h"
+#include "../util/identifier_limits.h"
 #include "../commands/execution_ctx.h"
+#include "../serializers/graphcontext_type.h"
 
+#include <time.h>
 #include <pthread.h>
 #include <sys/param.h>
 #include <stdatomic.h>
@@ -28,6 +30,11 @@
 
 // import the GraphContext struct
 #include "graphcontext_struct.h"
+
+// defined in src/commands/cmd_query.c
+// process all queued write queries
+// writer will only release write access when the queue is truly empty
+extern void enter_writer_loop (GraphContext *gc) ;
 
 // forward declarations
 static void _DeleteTelemetryStream(RedisModuleCtx *ctx, const GraphContext *gc);
@@ -498,29 +505,74 @@ cleanup:
 // attempt to acquire exclusive write access to the given graph
 // returns true if the calling thread successfully acquired write ownership
 // returns false if another write is already in progress
-bool GraphContext_TryEnterWrite
+bool GraphContext_TimeTryEnterWrite
 (
-	GraphContext *gc  // graph context
+	GraphContext *gc,  // graph context
+	uint timeout_ms    // maximum time in milliseconds to wait for the lock:
+					   // - timeout_ms = 0 : non-blocking attempt (try-lock)
+					   // - timeout_ms > 0 : block up to timeout_ms milliseconds
 ) {
-	ASSERT(gc != NULL);
+	ASSERT (gc != NULL) ;
 
-	bool expected = false;
+	bool expected = false ;
 
     // atomically set to true only if current value is false
-    return atomic_compare_exchange_strong(&gc->write_in_progress, &expected,
-			true);
+	bool acquired = atomic_compare_exchange_strong (&gc->write_in_progress,
+			&expected, true) ;
+
+	if (acquired == true) {
+		return true ;
+	}
+
+	// failed to acquire, poll until acquired or the timeout elapses
+	if (timeout_ms > 0) {
+		// poll against an absolute monotonic deadline (not a decremented sleep)
+		// so the timeout stays honest if nanosleep wakes early on a signal
+		struct timespec deadline ;
+		clock_gettime (CLOCK_MONOTONIC, &deadline) ;
+		deadline.tv_sec  += timeout_ms / 1000 ;
+		deadline.tv_nsec += (long)(timeout_ms % 1000) * 1000000L ;
+		if (deadline.tv_nsec >= 1000000000L) {
+			deadline.tv_sec++ ;
+			deadline.tv_nsec -= 1000000000L ;
+		}
+
+		// 1ms poll interval — fine enough to grab the flag promptly once it frees
+		struct timespec ts = { .tv_sec = 0, .tv_nsec = 1000000 } ;
+
+		while (true) {
+			nanosleep (&ts, NULL) ;  // may wake early on signal; deadline guards us
+
+			expected = false ;  // reset, CAS clobbers it on failure
+			acquired = atomic_compare_exchange_strong (&gc->write_in_progress,
+					&expected, true) ;
+
+			if (acquired == true) {
+				return true ;
+			}
+
+			struct timespec now ;
+			clock_gettime (CLOCK_MONOTONIC, &now) ;
+			if (now.tv_sec > deadline.tv_sec ||
+				(now.tv_sec == deadline.tv_sec && now.tv_nsec >= deadline.tv_nsec)) {
+				break ;  // timeout elapsed
+			}
+		}
+	}
+
+	return false ;
 }
 
 // release exclusive write access to the graph
 // this should be called by a thread that previously acquired write ownership
-// via GraphContext_TryEnterWrite, it clears the write-in-progress flag
+// via GraphContext_TimeTryEnterWrite, it clears the write-in-progress flag
 void GraphContext_ExitWrite
 (
 	GraphContext *gc  // graph context
 ) {
-	ASSERT(gc != NULL);
+	ASSERT (gc != NULL) ;
 
-	atomic_store(&gc->write_in_progress, false);
+	atomic_store (&gc->write_in_progress, false) ;
 }
 
 // enqueue a write query for deferred execution on the specified graph
@@ -550,6 +602,45 @@ void *GraphContext_DequeueWriteQuery
 	CircularBuffer_Read (gc->pending_write_queue, &item) ;
 
 	return item ;
+}
+
+// worker-pool task: elect a writer and drain pending write queries on `gc`
+// (dispatched by Graph_DrainWriteQueue; releases the reference taken there)
+static void _drain_write_queue_task
+(
+	void *arg
+) {
+	GraphContext *gc = (GraphContext *)arg ;
+
+	// become the writer and drain; if another thread is already the writer it
+	// drains the queue itself, so there is nothing to do
+	if (GraphContext_TimeTryEnterWrite (gc, 0)) {
+		enter_writer_loop (gc) ;
+	}
+
+	GraphContext_DecreaseRefCount (gc) ;  // counter to the ref in the dispatcher
+}
+
+// asynchronously drain write queries queue
+void GraphContext_AsyncDrainWriteQueries
+(
+	GraphContext *gc  // graph context
+) {
+	ASSERT (gc != NULL) ;
+
+	// exit if the queue is empty
+	if (GraphContext_WriteQueueEmpty (gc)) {
+		return ;
+	}
+
+	// keep gc alive until the drain task runs
+	GraphContext_IncreaseRefCount (gc) ;
+
+	// force=true: never dropped for a full queue, so the only failure is an
+	// allocation error (returns non-zero); undo the ref so gc isn't leaked
+	if (ThreadPool_AddWork (_drain_write_queue_task, gc, true) != 0) {
+		GraphContext_DecreaseRefCount (gc) ;  // couldn't enqueue; decrease ref
+	}
 }
 
 // checks if the graph's pending write queue is empty
@@ -948,11 +1039,18 @@ AttributeID GraphContext_FindOrAddAttribute
 	// see if attribute already exists
 	AttributeID id = GraphContext_GetAttributeID (gc, attribute) ;
 	if (id != ATTRIBUTE_ID_NONE) {
-		return id ;	
+		return id ;
 	}
+
+	//--------------------------------------------------------------------------
+	// Create new attribute locally
+	//--------------------------------------------------------------------------
 
 	ASSERT (gc->writer_tid == (pthread_t) 0 ||
 			pthread_equal (gc->writer_tid, pthread_self ())) ;
+
+	// should only happen if an old rdb with an overlong name is loaded
+	ASSERT (strnlen (attribute, MAX_IDENTIFIER_LEN) <= MAX_IDENTIFIER_LEN) ;
 
 	// attribute missing
 	// add it as a pending attribute

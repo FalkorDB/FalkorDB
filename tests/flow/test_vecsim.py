@@ -222,3 +222,75 @@ class testVecsim():
         except Exception as e:
             self.env.assertEqual("Vector dimension mismatch, expected 2 but got 3", str(e))
 
+    def test08_reindex_after_update_keeps_node(self):
+        # regression: updating a vector-indexed node must not drop it from the
+        # vector index.
+        #
+        # Every property write re-indexes the node as a RediSearch REPLACE, which
+        # allocates a new docId and appends a new vector while the previous vector
+        # must be removed from the HNSW graph. That removal only runs when the spec
+        # flag Index_HasVecSim is set; it was never set for indexes created through
+        # the low-level C API, so the old vector was never deleted. Stale vectors
+        # accumulated as orphans (docIds no longer resolving to a document) and
+        # shadowed the live entry, so the node became unfindable at small k - e.g.
+        # k=1 returned nothing after any update to the node.
+        g = Graph(self.conn, "vecsim_reindex")
+
+        v = [42.0, 42.0]
+        g.query("CREATE (:RUser {id: 1})")
+        g.create_node_vector_index("RUser", "emb", dim=2,
+                                   similarity_function="euclidean")
+        wait_for_indices_to_sync(g)
+
+        def knn_hits(q, k=1):
+            return len(query_node_vector_index(g, "RUser", "emb", k, q).result_set)
+
+        # insert the vector - baseline
+        g.query("MATCH (u:RUser) SET u.emb = vecf32($v)", params={'v': v})
+        self.env.assertEqual(knn_hits(v), 1)
+
+        # re-SET the SAME value - node must still be found at k=1
+        g.query("MATCH (u:RUser) SET u.emb = vecf32($v)", params={'v': v})
+        self.env.assertEqual(knn_hits(v), 1)
+
+        # SET an unrelated property (embedding untouched) - still found at k=1
+        g.query("MATCH (u:RUser) SET u.name = 'bob'")
+        self.env.assertEqual(knn_hits(v), 1)
+
+        # SET a different value - found at the new location at k=1
+        v2 = [7.0, 7.0]
+        g.query("MATCH (u:RUser) SET u.emb = vecf32($v2)", params={'v2': v2})
+        self.env.assertEqual(knn_hits(v2), 1)
+
+    def test09_delete_removes_vector_from_index(self):
+        # regression: deleting a vector-indexed node must remove its vector from
+        # the HNSW graph, not leave it as an orphan.
+        #
+        # The low-level delete only dropped the doc-table entry and never removed
+        # the vector from VecSim, so a deleted node's vector lingered and shadowed
+        # a new node inserted at the same coordinates - the new node was
+        # unfindable at k=1.
+        g = Graph(self.conn, "vecsim_delete")
+
+        v = [42.0, 42.0]
+        g.create_node_vector_index("DUser", "emb", dim=2,
+                                   similarity_function="euclidean")
+        wait_for_indices_to_sync(g)
+
+        def knn_tags(q, k=1):
+            res = query_node_vector_index(g, "DUser", "emb", k, q).result_set
+            return [row[0].properties['tag'] for row in res]
+
+        # node A at v
+        g.query("CREATE (:DUser {tag: 'A', emb: vecf32($v)})", params={'v': v})
+        self.env.assertEqual(knn_tags(v), ['A'])
+
+        # delete A - nothing at v anymore
+        g.query("MATCH (u:DUser {tag: 'A'}) DELETE u")
+        self.env.assertEqual(knn_tags(v), [])
+
+        # a new node B at the SAME coordinates must be found, not shadowed by
+        # A's leftover vector
+        g.query("CREATE (:DUser {tag: 'B', emb: vecf32($v)})", params={'v': v})
+        self.env.assertEqual(knn_tags(v), ['B'])
+
