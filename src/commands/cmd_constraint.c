@@ -227,7 +227,9 @@ static bool _Constraint_Drop
 	// acquire graph write lock
 	// acquire the GIL only when running off the main thread; on the main
 	// thread (AOF/RDB load, MULTI, LUA, replicated) the GIL is already held
-	if (!main_thread) RedisModule_ThreadSafeContextLock (ctx) ;
+	if (!main_thread) {
+		RedisModule_ThreadSafeContextLock (ctx) ;
+	}
 	GraphContext_AcquireWriteLock (gc) ;
 
 	//--------------------------------------------------------------------------
@@ -308,7 +310,9 @@ static bool _Constraint_Drop
 cleanup:
 	// release graph R/W lock
 	GraphContext_ReleaseLock (gc) ;
-	if (!main_thread) RedisModule_ThreadSafeContextUnlock (ctx) ;
+	if (!main_thread) {
+		RedisModule_ThreadSafeContextUnlock (ctx) ;
+	}
 
 	if (res == false) {
 		RedisModule_ReplyWithError (ctx,
@@ -351,7 +355,9 @@ static bool _Constraint_Create
 	// acquire graph write lock
 	// acquire the GIL only when running off the main thread; on the main
 	// thread (AOF/RDB load, MULTI, LUA, replicated) the GIL is already held
-	if (!main_thread) RedisModule_ThreadSafeContextLock (ctx) ;
+	if (!main_thread) {
+		RedisModule_ThreadSafeContextLock (ctx) ;
+	}
 	GraphContext_AcquireWriteLock (gc) ;
 
 	//--------------------------------------------------------------------------
@@ -456,7 +462,9 @@ cleanup:
 
 	// release graph R/W lock
 	GraphContext_ReleaseLock (gc) ;
-	if (!main_thread) RedisModule_ThreadSafeContextUnlock (ctx) ;
+	if (!main_thread) {
+		RedisModule_ThreadSafeContextUnlock (ctx) ;
+	}
 
 	// constraint already exists
 	if (res == false) {
@@ -604,18 +612,15 @@ int Graph_Constraint
 	RedisModule_RetainString (ctx, key_name) ;
 	cmd_ctx->graph_id = key_name ;
 
-	// determine execution context
-	// when loading (AOF/RDB), within MULTI/EXEC or a LUA script, when
-	// blocking is denied, or when the command is replicated, the command
-	// must run synchronously on the Redis main thread — blocking the
-	// (fake) client here is illegal and trips the aof.c CLIENT_BLOCKED
-	// assertion during AOF replay (crash-loop on restart).
-	// this mirrors the GRAPH.QUERY dispatcher in cmd_dispatcher.c
+	// determine execution context:
+	// when loading (AOF/RDB), within MULTI/EXEC or a LUA script, or when the
+	// command is replicated, the command must run synchronously on the Redis
+	// main thread
 	int flags = RedisModule_GetContextFlags (ctx) ;
-	bool main_thread = (flags & (REDISMODULE_CTX_FLAGS_REPLICATED    |
-			REDISMODULE_CTX_FLAGS_MULTI         |
-			REDISMODULE_CTX_FLAGS_LUA           |
-			REDISMODULE_CTX_FLAGS_DENY_BLOCKING |
+	bool main_thread = (flags & (REDISMODULE_CTX_FLAGS_REPLICATED |
+			REDISMODULE_CTX_FLAGS_LUA                             |
+			REDISMODULE_CTX_FLAGS_MULTI                           |
+			REDISMODULE_CTX_FLAGS_DENY_BLOCKING                   |
 			REDISMODULE_CTX_FLAGS_LOADING)) != 0 ;
 
 	if (main_thread) {
