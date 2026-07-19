@@ -1,6 +1,6 @@
 //! A copy-on-write B⁺-tree of compact `(key, doc)` tuple pages.
 //!
-//! This is the in-RAM core structure for the native numeric index.
+//! This is the in-RAM core structure for the index.
 //! It is a persistent, copy-on-write B⁺-tree (in the immutable-snapshot sense), specialised for the index's
 //! needs:
 //!
@@ -258,6 +258,36 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
             true
         } else {
             false
+        }
+    }
+
+    /// Remove a batch of `(key, doc)` tuples, given **sorted ascending**, copying only the pages the
+    /// batch touches — every untouched subtree is shared by `Arc`, so peak memory is proportional to
+    /// the touched pages, not the tree. Under-filled pages are merged back to minimum fill, so the tree
+    /// stays as compact as repeated [`remove`](Self::remove) would leave it. The natural consumer of
+    /// the runtime's columnar mass-delete / mass-update column.
+    pub fn remove_batch(
+        &mut self,
+        sorted_removes: &[(u64, u64)],
+    ) {
+        if sorted_removes.is_empty() {
+            return;
+        }
+        // Enforced in all builds: out-of-order input would mis-subtract and silently keep or drop the
+        // wrong tuples. The O(n) check is dwarfed by the O(n) rebuild.
+        assert!(
+            sorted_removes.windows(2).all(|w| w[0] <= w[1]),
+            "remove_batch input must be sorted"
+        );
+        self.root = self.root.remove_batch(sorted_removes);
+        // A branch root that merged down to a single child loses a level.
+        while let Node::Branch(branch) = &self.root {
+            if branch.children.len() == 1 {
+                let only_child = branch.children[0].clone();
+                self.root = only_child;
+            } else {
+                break;
+            }
         }
     }
 
