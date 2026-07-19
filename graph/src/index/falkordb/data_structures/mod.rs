@@ -1,4 +1,4 @@
-//! Standalone data structures backing the native (non-RediSearch) index.
+//! Standalone data structures backing the FalkorDB (non-RediSearch) index.
 //!
 //! These are dependency-free building blocks (depend only on `std`); the index layer is wired on top
 //! in later changes.
