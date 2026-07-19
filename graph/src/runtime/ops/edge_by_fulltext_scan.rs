@@ -12,6 +12,11 @@
 //! lookups (e.g. `RETURN r.name`) without binding endpoint variables — the
 //! procedure only yields `relationship` / `score`. When a score yield variable
 //! is present, the relevance score binds to it as a float column.
+//!
+//! A downstream `Skip`/`Limit` lowers the emitter's pack ceiling (via
+//! `record_cap`), so `CALL db.idx.fulltext.queryRelationships(..) ... LIMIT k`
+//! drains only about `k` results from the RediSearch iterator instead of
+//! eagerly packing a whole `BATCH_SIZE` worth of matches per call.
 
 use crate::graph::graph::RelationshipId;
 use crate::parser::ast::{QueryExpr, Variable};
@@ -38,6 +43,7 @@ pub struct EdgeByFulltextScanOp<'a> {
 }
 
 impl<'a> EdgeByFulltextScanOp<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
@@ -45,15 +51,21 @@ impl<'a> EdgeByFulltextScanOp<'a> {
         label: &'a QueryExpr<Variable>,
         query: &'a QueryExpr<Variable>,
         score: &'a Option<Variable>,
+        record_cap: Option<usize>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
+        let mut emitter = BatchedResultEmitter::with_binding(ScoredColumn {
+            id: edge.id,
+            score: score.as_ref().map(|v| v.id),
+        });
+        // A downstream Skip/Limit lowers how many rows are needed; shrink the
+        // pack ceiling so the first emit drains just enough index results
+        // instead of a full BATCH_SIZE worth of work.
+        emitter.apply_record_cap(record_cap);
         Self {
             runtime,
             child,
-            emitter: BatchedResultEmitter::with_binding(ScoredColumn {
-                id: edge.id,
-                score: score.as_ref().map(|v| v.id),
-            }),
+            emitter,
             label,
             query,
             idx,

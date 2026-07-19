@@ -579,6 +579,18 @@ impl<'a> Runtime<'a> {
         0
     }
 
+    /// Combined downstream row budget for `idx`: `effective_limit + effective_skip`,
+    /// or `None` when no usable `Limit` ancestor exists. Accounts for both limit
+    /// and skip so a capped operator produces enough rows for a downstream
+    /// `SkipOp` + `LimitOp` pipeline.
+    fn record_cap(
+        &self,
+        idx: NodeIdx<Dyn<IR>>,
+    ) -> Option<usize> {
+        self.effective_limit(idx)
+            .map(|l| l.saturating_add(self.effective_skip(idx)))
+    }
+
     /// Returns the IR child indices that must be built before `idx` itself.
     /// Mirrors the per-variant recursion pattern that `build_batch_op` expects.
     fn children_to_recurse(
@@ -798,9 +810,7 @@ impl<'a> Runtime<'a> {
             } => {
                 // A downstream Skip/Limit bounds how many expanded rows are
                 // needed; pass it through so packing stays lazy under `LIMIT`.
-                let record_cap = self
-                    .effective_limit(idx)
-                    .map(|l| l.saturating_add(self.effective_skip(idx)));
+                let record_cap = self.record_cap(idx);
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::Unwind(UnwindOp::new(
                     self,
@@ -820,9 +830,7 @@ impl<'a> Runtime<'a> {
             } => {
                 // Account for both limit and skip so the traverse produces
                 // enough rows for a downstream SkipOp + LimitOp pipeline.
-                let record_cap = self
-                    .effective_limit(idx)
-                    .map(|l| l.saturating_add(self.effective_skip(idx)));
+                let record_cap = self.record_cap(idx);
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::CondTraverse(CondTraverseOp::new(
                     self,
@@ -843,9 +851,7 @@ impl<'a> Runtime<'a> {
             } => {
                 // Account for both limit and skip so the traverse produces
                 // enough rows for a downstream SkipOp + LimitOp pipeline.
-                let record_cap = self
-                    .effective_limit(idx)
-                    .map(|l| l.saturating_add(self.effective_skip(idx)));
+                let record_cap = self.record_cap(idx);
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::ExpandInto(ExpandIntoOp::new(
                     self,
@@ -1052,6 +1058,9 @@ impl<'a> Runtime<'a> {
                 query,
                 score,
             } => {
+                // A downstream Skip/Limit bounds how many results are needed;
+                // pass it through so the scan drains just enough index results.
+                let record_cap = self.record_cap(idx);
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::NodeByFulltextScan(NodeByFulltextScanOp::new(
                     self,
@@ -1060,6 +1069,7 @@ impl<'a> Runtime<'a> {
                     label,
                     query,
                     score,
+                    record_cap,
                     idx,
                 )))
             }
@@ -1069,6 +1079,9 @@ impl<'a> Runtime<'a> {
                 query,
                 score,
             } => {
+                // A downstream Skip/Limit bounds how many results are needed;
+                // pass it through so the scan drains just enough index results.
+                let record_cap = self.record_cap(idx);
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::EdgeByFulltextScan(EdgeByFulltextScanOp::new(
                     self,
@@ -1077,6 +1090,7 @@ impl<'a> Runtime<'a> {
                     label,
                     query,
                     score,
+                    record_cap,
                     idx,
                 )))
             }
