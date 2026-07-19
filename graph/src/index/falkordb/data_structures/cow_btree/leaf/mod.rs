@@ -231,7 +231,7 @@ impl<const LEAF_MAX: usize, const DOC_BYTES: usize> Leaf<LEAF_MAX, DOC_BYTES> {
     /// Iterate the leaf's `(key, doc)` pairs in stored order. Used by `to_pairs` (mutation rebuilds) and
     /// tests — a cold path; the range cursor has its own decode. Re-derives offsets per entry (no cached
     /// scan state), which is fine off the hot path and lets one method serve all three formats.
-    fn iter(&self) -> impl Iterator<Item = (u64, u64)> + '_ {
+    pub(super) fn iter(&self) -> impl Iterator<Item = (u64, u64)> + '_ {
         (0..self.count()).map(move |i| (self.key(i), self.doc(i)))
     }
 
