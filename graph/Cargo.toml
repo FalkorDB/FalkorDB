@@ -18,6 +18,12 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
 # process env var that could leak into a shipped binary.
 prejit_harvest = []
 
+# Native FalkorDB numeric index (the in-repo replacement for RediSearch). Gates
+# `index::falkordb` — the encoder, the cow_btree-backed index, and its runtime
+# wiring. Off by default: the shipped build is byte-for-byte unchanged until this
+# is switched on. No RediSearch fallback lives under this flag.
+index-falkordb = []
+
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

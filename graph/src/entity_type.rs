@@ -14,7 +14,7 @@
 //! scan selection), and the graph storage layer (index maintenance).
 
 /// Entity type that can be indexed.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum EntityType {
     /// Index on node properties
     Node,
