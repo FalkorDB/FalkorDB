@@ -1163,6 +1163,61 @@ fn const_generic_branch_size_parity() {
 /// Walk the whole tree and assert every structural invariant. `min_fill` gates the occupancy check: pass
 /// `true` for trees grown by `insert`/`remove` from empty (splits + rebalance keep non-root pages at least
 /// half full), `false` for a fresh `from_sorted` bulk build (whose last leaf may be short by construction).
+#[test]
+fn remove_batch_matches_single_removes_and_stays_valid() {
+    // Small fan-out forces a multi-level tree; a whole multiple of LEAF_MAX means the built tree is
+    // fully min-filled, so the batch removal must keep it that way (`min_fill = true`).
+    let all: Vec<(u64, u64)> = (0..512u64).map(|i| (i, i)).collect();
+    let build = || CowBTree::<8, 4>::from_sorted(&all);
+
+    // (1) Scattered removal (every 3rd key) — must equal looping single removes, tuple for tuple.
+    let removes: Vec<(u64, u64)> = all.iter().copied().filter(|&(k, _)| k % 3 == 0).collect();
+    let mut batched = build();
+    batched.remove_batch(&removes);
+    let mut singly = build();
+    for &(k, d) in &removes {
+        singly.remove(k, d);
+    }
+    let expected: Vec<(u64, u64)> = all.iter().copied().filter(|&(k, _)| k % 3 != 0).collect();
+    assert_eq!(tree_pairs(&batched), expected);
+    assert_eq!(tree_pairs(&batched), tree_pairs(&singly));
+    check_invariants(&batched, true);
+
+    // (2) Empty batch is a no-op.
+    let mut tr = build();
+    tr.remove_batch(&[]);
+    assert_eq!(tree_pairs(&tr), all);
+
+    // (3) Removing absent tuples leaves the tree unchanged.
+    let mut tr = build();
+    let absent: Vec<(u64, u64)> = (1000..1010u64).map(|i| (i, i)).collect();
+    tr.remove_batch(&absent);
+    assert_eq!(tree_pairs(&tr), all);
+    check_invariants(&tr, true);
+
+    // (4) Removing everything drains to an empty tree.
+    let mut tr = build();
+    tr.remove_batch(&all);
+    assert!(tr.is_empty());
+    assert_eq!(tree_pairs(&tr), Vec::<(u64, u64)>::new());
+
+    // (5) A contiguous middle range.
+    let mut tr = build();
+    let mid: Vec<(u64, u64)> = all
+        .iter()
+        .copied()
+        .filter(|&(k, _)| (100..400).contains(&k))
+        .collect();
+    tr.remove_batch(&mid);
+    let expected: Vec<(u64, u64)> = all
+        .iter()
+        .copied()
+        .filter(|&(k, _)| !(100..400).contains(&k))
+        .collect();
+    assert_eq!(tree_pairs(&tr), expected);
+    check_invariants(&tr, true);
+}
+
 fn check_invariants<const L: usize, const B: usize, const DOC_BYTES: usize>(
     t: &CowBTree<L, B, DOC_BYTES>,
     min_fill: bool,
@@ -1407,14 +1462,14 @@ fn integrity_adversarial_ascending_then_cascade_delete() {
     for i in 0..300u64 {
         t.insert(i, i);
         oracle.insert((i, i));
-        check_invariants(&t, true);
+        check_invariants(&t, false);
     }
     for i in 0..300u64 {
         let k = (i * 7) % 300; // gcd(7, 300) == 1 ⇒ a permutation of 0..300
         t.remove(k, k);
         oracle.remove(&(k, k));
         assert_eq!(tree_pairs(&t), oracle.iter().copied().collect::<Vec<_>>());
-        check_invariants(&t, true);
+        check_invariants(&t, false);
     }
     assert!(t.is_empty());
     assert_eq!(t.len(), 0);

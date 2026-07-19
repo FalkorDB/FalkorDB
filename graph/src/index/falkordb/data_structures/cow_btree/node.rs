@@ -98,6 +98,65 @@ pub(super) fn build_root<const LEAF_MAX: usize, const BRANCH_MAX: usize, const D
         .unwrap_or_else(|| Node::Leaf(Leaf::from_pairs(&[])))
 }
 
+/// Merge under-full adjacent children left-to-right (re-checking a merged node) so the child list
+/// regains minimum fill after a batch removal — the batch analog of [`Branch::rebalance`]. Each
+/// [`Node::combine`] either fuses the pair into one node (dropping the inter-pair separator) or
+/// rebalances them into two (updating it). A merge that itself stays under-full (a nearly-empty
+/// subtree draining) shrinks the list further and, if the whole branch drops below minimum, propagates
+/// up as this branch's own underflow — resolved by the parent's merge or the root-level level-collapse.
+fn merge_underfull<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>(
+    children: &mut Vec<Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>>,
+    seps: &mut Vec<(u64, u64)>,
+) {
+    let mut i = 0;
+    while children.len() > 1 && i < children.len() {
+        if !children[i].is_underfull() {
+            i += 1;
+            continue;
+        }
+        // Pair the under-full child with its right neighbour, or its left when it is the last.
+        let (left, right) = if i + 1 < children.len() {
+            (i, i + 1)
+        } else {
+            (i - 1, i)
+        };
+        match children[left].combine(seps[left], &children[right]) {
+            Combined::One(merged) => {
+                children[left] = merged;
+                children.remove(right);
+                seps.remove(left);
+                i = left; // the merged node may still be under-full — re-check it
+            }
+            Combined::Two(new_left, sep, new_right) => {
+                children[left] = new_left;
+                children[right] = new_right;
+                seps[left] = sep;
+                i = right; // `new_left` is now min-full
+            }
+        }
+    }
+}
+
+/// Drop children that hold nothing (all their tuples were removed) along with the matching separator.
+/// Dropping child `i` fuses its two boundaries into one: keep the far side, drop the near separator
+/// (`seps[i]` for a non-last child, else the trailing separator).
+fn strip_empty<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>(
+    children: &mut Vec<Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>>,
+    seps: &mut Vec<(u64, u64)>,
+) {
+    let mut i = 0;
+    while i < children.len() {
+        if children[i].is_empty_node() {
+            if !seps.is_empty() {
+                seps.remove(i.min(seps.len() - 1));
+            }
+            children.remove(i);
+        } else {
+            i += 1;
+        }
+    }
+}
+
 impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
     Branch<LEAF_MAX, BRANCH_MAX, DOC_BYTES>
 {
@@ -401,6 +460,84 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
                 Some(branch.children.len() < BRANCH_MAX / 2)
             }
         }
+    }
+
+    /// Remove a sorted `batch` (every entry routing into this subtree) by **copying only the nodes the
+    /// batch touches** — every untouched subtree is shared by `Arc` clone, never materialized, so peak
+    /// memory is proportional to the *touched* pages, not the tree. Removal only shrinks, so this
+    /// returns a single replacement node (no split fragments); under-filled children left behind are
+    /// merged by [`merge_underfull`] so the tree stays compact.
+    pub(super) fn remove_batch(
+        &self,
+        batch: &[(u64, u64)],
+    ) -> Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES> {
+        match self {
+            Node::Leaf(leaf) => {
+                // Subtract the sorted `batch` from this sorted page — a linear merge-walk — and rebuild
+                // just this one leaf. Iterate the page's pairs directly; no full `to_pairs` copy.
+                let mut survivors = Vec::with_capacity(leaf.count());
+                let mut bi = 0usize;
+                for pair in leaf.iter() {
+                    while bi < batch.len() && batch[bi] < pair {
+                        bi += 1;
+                    }
+                    if bi < batch.len() && batch[bi] == pair {
+                        continue; // this tuple is removed
+                    }
+                    survivors.push(pair);
+                }
+                Node::Leaf(Leaf::from_pairs(&survivors))
+            }
+            Node::Branch(branch) => {
+                // Hand each child the slice of `batch` that routes into it (one linear sweep against the
+                // separators, as in `apply_batch`), recursing only into touched children — others share
+                // by `Arc`. Separators need no rewrite: removal only raises a child's min and lowers its
+                // max, so every boundary `max(left) < sep <= min(right)` still holds.
+                let mut children = Vec::with_capacity(branch.children.len());
+                let mut seps = branch.seps.clone();
+                let mut cursor = 0usize;
+                for (child_idx, child) in branch.children.iter().enumerate() {
+                    let child_upper = branch
+                        .seps
+                        .get(child_idx)
+                        .copied()
+                        .unwrap_or((u64::MAX, u64::MAX));
+                    let start = cursor;
+                    while cursor < batch.len() && batch[cursor] < child_upper {
+                        cursor += 1;
+                    }
+                    let for_child = &batch[start..cursor];
+                    if for_child.is_empty() {
+                        children.push(child.clone()); // nothing routes here ⇒ share the page
+                    } else {
+                        children.push(child.remove_batch(for_child));
+                    }
+                }
+                // A child that emptied entirely has nothing to merge into a sibling — drop it (with
+                // its separator). If every child emptied, the whole subtree collapses to one leaf.
+                strip_empty(&mut children, &mut seps);
+                if children.is_empty() {
+                    return Node::Leaf(Leaf::from_pairs(&[]));
+                }
+                // Merge any child that merely under-filled back to minimum.
+                merge_underfull(&mut children, &mut seps);
+                Node::Branch(Arc::new(Branch { seps, children }))
+            }
+        }
+    }
+
+    /// Whether this node dropped below its minimum fill (so a parent must merge it).
+    fn is_underfull(&self) -> bool {
+        match self {
+            Node::Leaf(leaf) => leaf.count() < LEAF_MAX / 2,
+            Node::Branch(branch) => branch.children.len() < BRANCH_MAX / 2,
+        }
+    }
+
+    /// Whether this node holds nothing. After a batch removal only ever an all-emptied leaf — an
+    /// emptied branch is returned as an empty leaf, never a childless branch.
+    fn is_empty_node(&self) -> bool {
+        matches!(self, Node::Leaf(leaf) if leaf.count() == 0)
     }
 }
 
