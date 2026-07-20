@@ -12,7 +12,7 @@
 # to remove), not an error.
 #
 # Env:
-#   REPO      - owner/name, e.g. FalkorDB/falkordb-rs-next-gen
+#   REPO      - owner/name, e.g. FalkorDB/FalkorDB
 #   GH_TOKEN  - token with contents:write on REPO
 # Args:
 #   $1 - commit message

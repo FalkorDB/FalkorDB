@@ -27,7 +27,7 @@
 set -euo pipefail
 
 : "${UI_DIR:?UI_DIR (path to the vendored FalkorDB/benchmark ui/ directory) is required}"
-: "${BASE_PATH:?BASE_PATH is required (e.g. /falkordb-rs-next-gen/benchmark)}"
+: "${BASE_PATH:?BASE_PATH is required (e.g. /FalkorDB/benchmark)}"
 
 PAGE="$UI_DIR/app/falkordb-compare/page.tsx"
 DASHBOARD="$UI_DIR/app/components/dashboard.tsx"

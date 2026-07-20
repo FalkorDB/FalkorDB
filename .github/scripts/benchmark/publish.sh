@@ -21,7 +21,7 @@
 # (not the upstream repo's neo4j/memgraph/aws-tests pages).
 set -euo pipefail
 
-: "${REPO:?REPO is required (e.g. FalkorDB/falkordb-rs-next-gen)}"
+: "${REPO:?REPO is required (e.g. FalkorDB/FalkorDB)}"
 : "${VIEW:?VIEW is required (slug, e.g. main or a branch slug)}"
 : "${IS_CANONICAL:?IS_CANONICAL is required (true|false)}"
 : "${SUMMARY_JSON:?SUMMARY_JSON path is required (falkordb_vs_falkordb_<epoch>.json produced by the merge job via aggregate-variants.sh)}"
