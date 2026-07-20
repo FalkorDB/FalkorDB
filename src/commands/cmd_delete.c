@@ -9,9 +9,15 @@
 #include "graph/graphcontext.h"
 #include "query_ctx.h"
 #include "resultset/resultset.h"
+#include "../enterprise_api.h"
 
 // graphContext type as it is registered at Redis
 extern RedisModuleType *GraphContextRedisModuleType;
+
+// offloaded-graph-stub type, exported by the enterprise module via its
+// shared API - resolved lazily; stays NULL when that module isn't loaded
+// (community edition)
+static GraphStubType_Get_t GraphStubType_Get = NULL;
 
 // delete graph, removing the key from Redis and
 // freeing every resource allocated by the graph
@@ -32,7 +38,17 @@ int Graph_Delete
 	// remove graph from keyspace
 	RedisModuleKey *key = RedisModule_OpenKey(ctx, key_name, REDISMODULE_WRITE);
 	if(key != NULL) {
-		if(RedisModule_ModuleTypeGetType(key) == GraphContextRedisModuleType) {
+		RedisModuleType *type = RedisModule_ModuleTypeGetType(key);
+
+		if(GraphStubType_Get == NULL) {
+			GraphStubType_Get = RedisModule_GetSharedAPI(ctx, "GraphStubType_Get");
+		}
+
+		// a stub (offloaded graph) can be deleted outright, without first
+		// loading it - it is not registered in the global graph registry,
+		// so no ref count / untracking is involved
+		if(type == GraphContextRedisModuleType ||
+		   (GraphStubType_Get != NULL && type == GraphStubType_Get())) {
 			deleted = true;
 			RedisModule_DeleteKey(key);  // untrack graph & decreases graph ref count
 			RedisModule_ReplyWithSimpleString(ctx, "OK");

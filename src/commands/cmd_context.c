@@ -6,11 +6,12 @@
 
 #include "RG.h"
 #include "commands.h"
-#include "cmd_context.h"
 #include "../globals.h"
+#include "cmd_context.h"
 #include "../util/rmalloc.h"
-#include "../slow_log/slow_log.h"
 #include "../util/thpool/pool.h"
+#include "../errors/error_msgs.h"
+#include "../slow_log/slow_log.h"
 #include "../util/blocked_client.h"
 
 #include <stdatomic.h>
@@ -205,9 +206,9 @@ void CommandCtx_ResumeAfterGraphLoad
 		void (*handler) (void *) ;
 
 		switch (CommandFromString (CommandCtx_GetCommandName (command_ctx))) {
-			case: CMD_QUERY:
+			case CMD_QUERY:
 				handler = Graph_Query ;
-				  break ;
+				break ;
 
 			case CMD_PROFILE:
 				handler = Graph_Profile ;
@@ -228,9 +229,13 @@ void CommandCtx_ResumeAfterGraphLoad
 			return ;
 		}
 
-		// pool queue is full - fail the same way cmd_dispatcher.c does
+		// pool queue is full - this is the thread pool's own general work
+		// queue (shared by every command, not just graph-loading waiters),
+		// a distinct resource from the per-graph load-wait list checked
+		// earlier in graphcontext_retrieve.c - fail the same way
+		// cmd_dispatcher.c does for that same condition
 		RedisModuleCtx *ctx = CommandCtx_GetRedisCtx (command_ctx) ;
-		RedisModule_ReplyWithError (ctx, "Max pending queries exceeded") ;
+		RedisModule_ReplyWithError (ctx, EMSG_MAX_PENDING_QUERIES) ;
 	} else {
 		RedisModuleCtx *ctx = CommandCtx_GetRedisCtx (command_ctx) ;
 		RedisModule_ReplyWithErrorFormat (ctx,

@@ -5,9 +5,11 @@
 
 #include "RG.h"
 #include "graphcontext.h"
-#include "graph_load_queue.h"
-#include "graphcontext_retrieve.h"
 #include "../redismodule.h"
+#include "graph_load_queue.h"
+#include "../enterprise_api.h"
+#include "../errors/error_msgs.h"
+#include "graphcontext_retrieve.h"
 
 extern uint aux_field_counter ;
 extern pthread_t MAIN_THREAD_ID;  // redis main thread ID
@@ -17,32 +19,6 @@ extern RedisModuleType *GraphContextRedisModuleType ;
 
 // stub type representing a graph that has been offloaded to disk
 static RedisModuleType *GraphStubType = NULL ;
-
-//------------------------------------------------------------------------------
-// Enterprise - FalkorDB exported API — function pointer types
-//------------------------------------------------------------------------------
-
-typedef enum {
-    GraphLoad_SUCCESS,      // graph restored from disk successfully
-    GraphLoad_LOADING,      // another load for this key is already in progress
-    GraphLoad_OFFLOADING,   // an offload for this key is already in progress
-    GraphLoad_KEY_MISSING,  // key does not exist
-    GraphLoad_NOT_STUB,     // key exists but is not an offloaded graph stub
-    GraphLoad_DUMP_MISSING, // stub is valid but its dump file was not found
-    GraphLoad_OOM,          // not enough memory to hold the loaded graph
-    GraphLoad_ERR,          // all other failures
-} GraphLoadResult ;
-
-typedef RedisModuleType* (*GraphStubType_Get_t) (void) ;
-
-typedef GraphLoadResult (*graph_load_t)
-(
-    RedisModuleCtx    *ctx,
-    RedisModuleString *key_name,
-    bool              from_thread,
-	bool              force,
-	bool              bypass_claim
-) ;
 
 //------------------------------------------------------------------------------
 // Enterprise - FalkorDB exported API — function pointers
@@ -319,8 +295,7 @@ static GraphRetrieveStatus _GraphContext_Retrieve
 	}
 
 	if (qstatus == GraphLoadQueue_FULL) {
-		RedisModule_ReplyWithErrorFormat (ctx,
-				"ERR too many queries waiting for graph: %s to finish loading",
+		RedisModule_ReplyWithErrorFormat (ctx, EMSG_GRAPH_LOAD_QUEUE_FULL,
 				graph_name) ;
 		return GraphRetrieve_FAILED ;
 	}
