@@ -1000,14 +1000,12 @@ class testConstraintEdges():
 
 class testConstraintPersistence():
     def __init__(self):
-        self.env, self.db = Env()
+        self.env, self.db = Env(useAof=True)
         self.con = self.env.getConnection()
         self.g = self.db.select_graph("constraints_persistency")
         self.con.delete(self.g.name)
 
     def test01_constraint_aof_reload(self):
-        self.con.config_set("appendonly", "yes")
-        self.con.config_rewrite()
         create_unique_node_constraint(self.g, "Person", "id", sync=True)
         self.con.save()
         self.env.restart_and_reload()

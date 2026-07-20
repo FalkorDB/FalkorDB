@@ -76,6 +76,7 @@ def Env(
     moduleArgs=None,
     env="oss",
     useSlaves=False,
+    useAof=None,
     enableDebugCommand=False,
     shardsCount=None,
 ):
@@ -84,6 +85,7 @@ def Env(
         moduleArgs=moduleArgs,
         env=env,
         useSlaves=useSlaves,
+        useAof=useAof,
         enableDebugCommand=enableDebugCommand,
         shardsCount=shardsCount,
     )
