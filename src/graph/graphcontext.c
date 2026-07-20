@@ -1241,6 +1241,7 @@ int GraphContext_DeleteIndex
 	ASSERT (gc    != NULL) ;
 	ASSERT (label != NULL) ;
 	ASSERT (field != NULL) ;
+	ASSERT (GraphContext_IsWriteLocked (gc)) ;
 
 	// retrieve the schema for this label
 	int res = INDEX_FAIL ;
@@ -1564,21 +1565,32 @@ void GraphContext_Free
 	// free node schemas
 	//--------------------------------------------------------------------------
 
-	if (gc->_node_schemas     != NULL ||
-		gc->_relation_schemas != NULL ||
-		gc->_attributes       != NULL) {
-		// should not happen
-		// unless a graph wasn't fully loaded
-		// and its virtual keys are being deleted
-		// TODO: should be logged?
+	// Prefer pending arrays if available.
+	// Under lifecycle races we can observe both committed and pending arrays;
+	// in that case, drop only the committed containers and keep the pending
+	// arrays as the ownership source for element cleanup below.
+	if (gc->_attributes != NULL) {
+		if (gc->attributes != NULL) {
+			arr_free (gc->attributes) ;
+		}
+		gc->attributes = gc->_attributes ;
+		gc->_attributes = NULL ;
+	}
 
-		ASSERT (gc->attributes       == NULL) ;
-		ASSERT (gc->node_schemas     == NULL) ;
-		ASSERT (gc->relation_schemas == NULL) ;
+	if (gc->_node_schemas != NULL) {
+		if (gc->node_schemas != NULL) {
+			arr_free (gc->node_schemas) ;
+		}
+		gc->node_schemas = gc->_node_schemas ;
+		gc->_node_schemas = NULL ;
+	}
 
-		gc->attributes       = gc->_attributes ;
-		gc->node_schemas     = gc->_node_schemas ;
+	if (gc->_relation_schemas != NULL) {
+		if (gc->relation_schemas != NULL) {
+			arr_free (gc->relation_schemas) ;
+		}
 		gc->relation_schemas = gc->_relation_schemas ;
+		gc->_relation_schemas = NULL ;
 	}
 
 	arr_free_cb (gc->node_schemas, Schema_Free) ;
@@ -1635,4 +1647,3 @@ void GraphContext_Free
 	rm_free (gc->graph_name) ;
 	rm_free (gc) ;
 }
-
