@@ -1007,6 +1007,7 @@ class testConstraintPersistence():
 
     def test01_constraint_aof_reload(self):
         self.con.config_set("appendonly", "yes")
+        self.con.config_rewrite()
         create_unique_node_constraint(self.g, "Person", "id", sync=True)
         self.con.save()
         self.env.restart_and_reload()
