@@ -22,6 +22,16 @@ void ModuleEventHandler_AUXAfterKeyspaceEvent(void);
 // declaration of the type for redis registration
 RedisModuleType *GraphContextRedisModuleType;
 
+// returns the RedisModuleType* used to tag keys holding a live GraphContext
+// exported as a shared API so the enterprise graph-offloading module can
+// test RedisModule_ModuleTypeGetType(key) == GraphContextRedisModuleType_Get()
+// to tell "this key is a live graph" apart from "this key holds some other,
+// unrelated Redis type" - mirrors GraphStubType_Get, which exposes the
+// enterprise module's stub type to core in the opposite direction
+RedisModuleType *GraphContextRedisModuleType_Get (void) {
+	return GraphContextRedisModuleType ;
+}
+
 static void *_GraphContextType_RdbLoad
 (
 	RedisModuleIO *rdb,

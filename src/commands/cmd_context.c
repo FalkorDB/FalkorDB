@@ -5,10 +5,12 @@
  */
 
 #include "RG.h"
+#include "commands.h"
 #include "cmd_context.h"
 #include "../globals.h"
 #include "../util/rmalloc.h"
 #include "../slow_log/slow_log.h"
+#include "../util/thpool/pool.h"
 #include "../util/blocked_client.h"
 
 #include <stdatomic.h>
@@ -183,6 +185,61 @@ void CommandCtx_UnblockClient
 			cmd_ctx->ctx = NULL;
 		}
 	}
+}
+
+// invoked once, with the outcome, when a graph load that a query-family
+// command (`waiter`, a parked CommandCtx) was waiting on resolves: on
+// success the command is requeued from scratch according to its command
+// name, on failure a reply is emitted and the parked client is unblocked
+void CommandCtx_ResumeAfterGraphLoad
+(
+	void *waiter,
+	bool  success
+) {
+	ASSERT (waiter != NULL) ;
+
+	CommandCtx *command_ctx = (CommandCtx *)waiter ;
+
+	if (success) {
+		// requeue the right graph command according to the command's name
+		void (*handler) (void *) ;
+
+		switch (CommandFromString (CommandCtx_GetCommandName (command_ctx))) {
+			case: CMD_QUERY:
+				handler = Graph_Query ;
+				  break ;
+
+			case CMD_PROFILE:
+				handler = Graph_Profile ;
+				break ;
+
+			case CMD_EXPLAIN:
+				handler = Graph_Explain ;
+				break ;
+
+			default:
+				RedisModule_Assert ("unexpected command" && false) ;
+				break ;
+		}
+
+		// queue command
+		if (ThreadPool_AddWork (handler, command_ctx, false) !=
+				THPOOL_QUEUE_FULL) {
+			return ;
+		}
+
+		// pool queue is full - fail the same way cmd_dispatcher.c does
+		RedisModuleCtx *ctx = CommandCtx_GetRedisCtx (command_ctx) ;
+		RedisModule_ReplyWithError (ctx, "Max pending queries exceeded") ;
+	} else {
+		RedisModuleCtx *ctx = CommandCtx_GetRedisCtx (command_ctx) ;
+		RedisModule_ReplyWithErrorFormat (ctx,
+				"ERR graph: %s failed to load from disk",
+				RedisModule_StringPtrLen (command_ctx->rm_graph_name, NULL)) ;
+	}
+
+	CommandCtx_UnblockClient (command_ctx) ;
+	CommandCtx_Free (command_ctx) ;
 }
 
 void CommandCtx_Free

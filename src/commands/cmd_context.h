@@ -123,6 +123,16 @@ void CommandCtx_UnblockClient
 	CommandCtx *cmd_ctx
 );
 
+// invoked once, with the outcome, when a graph load that a query-family
+// command (`waiter`, a parked CommandCtx) was waiting on resolves: on
+// success the command is requeued from scratch according to its command
+// name, on failure a reply is emitted and the parked client is unblocked
+void CommandCtx_ResumeAfterGraphLoad
+(
+	void *waiter,
+	bool  success
+);
+
 // free command context
 void CommandCtx_Free
 (
