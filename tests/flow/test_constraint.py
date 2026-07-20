@@ -1008,7 +1008,10 @@ class testConstraintPersistence():
     def test01_constraint_aof_reload(self):
         create_unique_node_constraint(self.g, "Person", "id", sync=True)
         self.con.save()
-        self.env.restart_and_reload()
+        if SANITIZER:
+            self.env.dumpAndReload()
+        else:
+            self.env.restart_and_reload()
 
         constraints = list_constraints(self.g)
         self.env.assertEqual(len(constraints), 1)
