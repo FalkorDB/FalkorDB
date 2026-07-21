@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "../commands/cmd_context.h"
+
 #include <stdbool.h>
 
 //------------------------------------------------------------------------------
@@ -21,8 +23,7 @@
 // registering as a waiter, have the owner finish and drain an empty list —
 // the two operations are atomic with respect to each other.
 //
-// This module knows nothing about CommandCtx / the thread pool / Redis
-// replies — waiters are opaque pointers paired with a caller-supplied
+// Waiters are parked CommandCtx pointers paired with a caller-supplied
 // callback, invoked once, exactly one time, when the wait ends.
 //------------------------------------------------------------------------------
 
@@ -53,7 +54,7 @@ typedef void (*GraphLoadWaiterCB)
 GraphLoadQueueStatus GraphLoadQueue_AcquireOrWait
 (
 	const char        *graph_name,
-	void              *waiter,
+	CommandCtx        *waiter,
 	GraphLoadWaiterCB  cb
 ) ;
 
@@ -66,3 +67,13 @@ void GraphLoadQueue_Drain
 	const char *graph_name,
 	bool        success
 ) ;
+
+// release every resource held by this module: any graph names and waiter
+// lists still tracked (e.g. loads that never drained because the server
+// shut down mid-flight), and the registry itself
+// each remaining waiter's callback is still invoked, with success=false -
+// same as a normal failed drain, this replies with an error and frees the
+// CommandCtx; there is simply no real load outcome left to report
+// not thread-safe with concurrent GraphLoadQueue_AcquireOrWait / _Drain
+// calls - intended for server shutdown only
+void GraphLoadQueue_Free (void) ;

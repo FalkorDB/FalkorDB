@@ -14,7 +14,7 @@
 
 // a single parked waiter
 typedef struct {
-	void               *waiter ;  // opaque handle, owned by the caller
+	CommandCtx         *waiter ;  // parked command context, owned by the caller
 	GraphLoadWaiterCB   cb ;      // invoked once, on drain
 } Waiter ;
 
@@ -25,7 +25,7 @@ static pthread_mutex_t  _lock     = PTHREAD_MUTEX_INITIALIZER ;
 GraphLoadQueueStatus GraphLoadQueue_AcquireOrWait
 (
 	const char        *graph_name,
-	void              *waiter,
+	CommandCtx        *waiter,
 	GraphLoadWaiterCB  cb
 ) {
 	ASSERT (graph_name != NULL) ;
@@ -94,4 +94,33 @@ void GraphLoadQueue_Drain
 	}
 
 	arr_free (waiters) ;
+}
+
+void GraphLoadQueue_Free (void) {
+	if (_entries == NULL) {
+		return ;
+	}
+
+	dictIterator *iter = HashTableGetIterator (_entries) ;
+	dictEntry *de ;
+
+	while ((de = HashTableNext (iter)) != NULL) {
+		rm_free (HashTableGetKey (de)) ;
+
+		Waiter *waiters = HashTableGetVal (de) ;
+		uint32_t n = arr_len (waiters) ;
+		for (uint32_t i = 0 ; i < n ; i++) {
+			// success=false - there is no real load outcome left to report;
+			// same as any other failed drain, this replies with an error and
+			// frees the CommandCtx
+			waiters[i].cb (waiters[i].waiter, false) ;
+		}
+
+		arr_free (waiters) ;
+	}
+
+	HashTableReleaseIterator (iter) ;
+
+	HashTableRelease (_entries) ;
+	_entries = NULL ;
 }
