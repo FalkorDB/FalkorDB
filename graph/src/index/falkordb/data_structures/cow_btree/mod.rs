@@ -36,7 +36,7 @@ mod node;
 #[cfg(test)]
 mod tests;
 
-pub use cursor::RangeIter;
+pub use cursor::{DocExtract, Extract, RangeIter, TupleExtract};
 use leaf::Leaf;
 pub use leaf::LeafFormat;
 use node::{Branch, Node, Split, build_root};
@@ -53,10 +53,25 @@ use node::{Branch, Node, Split, build_root};
 // Max children per branch page (fan-out) is the `BRANCH_MAX` const generic on [`CowBTree`] (default 256):
 // a branch splits on overflow and merges below `BRANCH_MAX / 2`.
 
-/// Byte width of one `u64` field (a key or a doc).
+/// Byte width of the `u64` key field.
 const FIELD: usize = std::mem::size_of::<u64>();
-/// Byte stride of one `(key, doc)` entry in the [`AosLeaf`] layout.
-const STRIDE: usize = 2 * FIELD;
+
+/// Little-endian `DOC_BYTES` bytes of `doc` for the [`AosLeaf`] layout. The AoS
+/// entry is `key:8 + doc:DOC_BYTES`, so a tree built with `DOC_BYTES = 4` stores
+/// 12 B/entry (docs — node/edge ids — are u32-ranged) while `DOC_BYTES = 8`
+/// keeps the full-width 16 B/entry. Panics if `doc` does not fit the configured
+/// width: ids are width-bounded by construction, so a loud failure beats
+/// silently truncating an id.
+fn doc_le_bytes<const DOC_BYTES: usize>(doc: u64) -> [u8; DOC_BYTES] {
+    let le = doc.to_le_bytes();
+    assert!(
+        le[DOC_BYTES..].iter().all(|&b| b == 0),
+        "cow_btree doc exceeds the configured doc width (DOC_BYTES)"
+    );
+    let mut out = [0u8; DOC_BYTES];
+    out.copy_from_slice(&le[..DOC_BYTES]);
+    out
+}
 
 /// Read the little-endian `u64` at byte offset `off`. The `unwrap` is infallible: `b[off..off + FIELD]`
 /// is always exactly `FIELD` bytes; an out-of-bounds `off` means a malformed page — a build bug, since the
@@ -104,11 +119,17 @@ fn read_width(
 /// [`CowBTree::new`] / [`CowBTree::from_sorted`] / `Default` trips any out-of-range monomorphization that
 /// builds a tree.
 #[derive(Clone)]
-pub struct CowBTree<const LEAF_MAX: usize = 256, const BRANCH_MAX: usize = 256> {
-    root: Node<LEAF_MAX, BRANCH_MAX>,
+pub struct CowBTree<
+    const LEAF_MAX: usize = 256,
+    const BRANCH_MAX: usize = 256,
+    const DOC_BYTES: usize = 8,
+> {
+    root: Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>,
 }
 
-impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Default for CowBTree<LEAF_MAX, BRANCH_MAX> {
+impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize> Default
+    for CowBTree<LEAF_MAX, BRANCH_MAX, DOC_BYTES>
+{
     fn default() -> Self {
         const {
             assert!(
@@ -122,7 +143,9 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Default for CowBTree<LEAF_M
     }
 }
 
-impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_MAX> {
+impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
+    CowBTree<LEAF_MAX, BRANCH_MAX, DOC_BYTES>
+{
     /// An empty tree.
     #[must_use]
     pub fn new() -> Self {
@@ -156,7 +179,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
         if pairs.is_empty() {
             return Self::default();
         }
-        let leaves: Vec<Node<LEAF_MAX, BRANCH_MAX>> = pairs
+        let leaves: Vec<Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>> = pairs
             .chunks(LEAF_MAX)
             .map(|chunk| Node::Leaf(Leaf::from_pairs(chunk)))
             .collect();
@@ -165,13 +188,16 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
         }
     }
 
-    /// Insert a single `(key, doc)`. Idempotent: inserting an existing tuple is a no-op.
+    /// Insert a single `(key, doc)`. Idempotent: inserting an existing tuple is a no-op. Returns
+    /// `true` iff the tuple was newly inserted (so callers can maintain an exact live count).
+    #[must_use]
     pub fn insert(
         &mut self,
         key: u64,
         doc: u64,
-    ) {
-        if let Some(Split { sep, right }) = self.root.insert_one(key, doc) {
+    ) -> bool {
+        let (inserted, split) = self.root.insert_one(key, doc);
+        if let Some(Split { sep, right }) = split {
             // The root split — grow a fresh level above the two halves.
             let left = std::mem::replace(&mut self.root, Node::Leaf(Leaf::from_pairs(&[])));
             self.root = Node::Branch(Arc::new(Branch {
@@ -179,6 +205,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
                 children: vec![left, right],
             }));
         }
+        inserted
     }
 
     /// Apply a batch of `(key, doc)` adds **sorted ascending**, copying each touched page once.
@@ -199,12 +226,13 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
     }
 
     /// Remove a single `(key, doc)`; merges underflowing pages so the tree stays compact. A missing
-    /// tuple is a no-op.
+    /// tuple is a no-op. Returns `true` iff a tuple was actually removed (for exact-count callers).
+    #[must_use]
     pub fn remove(
         &mut self,
         key: u64,
         doc: u64,
-    ) {
+    ) -> bool {
         if self.root.remove_one(key, doc).is_some() {
             // A branch root that shrank to a single child loses a level.
             while let Node::Branch(branch) = &self.root {
@@ -215,6 +243,9 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
                     break;
                 }
             }
+            true
+        } else {
+            false
         }
     }
 
@@ -225,7 +256,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
         &self,
         lo: u64,
         hi: u64,
-    ) -> RangeIter<LEAF_MAX, BRANCH_MAX> {
+    ) -> RangeIter<LEAF_MAX, BRANCH_MAX, DOC_BYTES> {
         RangeIter::new(&self.root, (lo, 0), hi)
     }
 
@@ -234,16 +265,125 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
     pub fn point(
         &self,
         key: u64,
-    ) -> RangeIter<LEAF_MAX, BRANCH_MAX> {
+    ) -> RangeIter<LEAF_MAX, BRANCH_MAX, DOC_BYTES> {
         self.range(key, key)
+    }
+
+    /// Whether any doc is stored under `key`. Descends to the first matching entry
+    /// and stops — no full point scan.
+    #[must_use]
+    pub fn contains_key(
+        &self,
+        key: u64,
+    ) -> bool {
+        self.first_doc(key).is_some()
+    }
+
+    /// The smallest doc stored under `key`, or `None`. A direct reference-descent
+    /// to the leaf — unlike [`point`](Self::point) it clones no page `Arc`s and
+    /// allocates no cursor stack, so it's the cheap primitive for the hot
+    /// "one representative edge per pair" lookups (traversal / expand-into).
+    #[must_use]
+    pub fn first_doc(
+        &self,
+        key: u64,
+    ) -> Option<u64> {
+        let mut node = &self.root;
+        // The first entry immediately to the right of the descent path. When a
+        // key's entries begin exactly at a child boundary (the key is the min of
+        // `children[ci + 1]`), `child_index(key, 0)` steers into the *previous*
+        // child, whose leaf then has no matching entry — the answer is this
+        // recorded separator. (The cursor instead advances leaves via its stack.)
+        let mut right_sep: Option<(u64, u64)> = None;
+        loop {
+            match node {
+                Node::Leaf(leaf) => {
+                    let pos = leaf.lower_bound(key);
+                    if pos < leaf.count() && leaf.key(pos) == key {
+                        return Some(leaf.doc(pos));
+                    }
+                    // Overshot this leaf: the next entry is the right separator.
+                    return right_sep.filter(|s| s.0 == key).map(|s| s.1);
+                }
+                Node::Branch(branch) => {
+                    let ci = branch.child_index(key, 0);
+                    if ci < branch.seps.len() {
+                        right_sep = Some(branch.seps[ci]); // == min(children[ci + 1])
+                    }
+                    node = &branch.children[ci];
+                }
+            }
+        }
+    }
+
+    /// Lazily iterate the full `(key, doc)` tuples whose key lies in `[lo, hi]`, in `(key, doc)` order.
+    /// Like [`range`](Self::range) but yields the key too — for consumers that must recover it (e.g. the
+    /// relationship tensor's edge-id store rebuilding `(src, dst, edge_id)`). Owns a snapshot.
+    #[must_use]
+    pub fn range_tuples(
+        &self,
+        lo: u64,
+        hi: u64,
+    ) -> RangeIter<LEAF_MAX, BRANCH_MAX, DOC_BYTES, TupleExtract> {
+        RangeIter::new(&self.root, (lo, 0), hi)
+    }
+
+    /// Call `f(key, doc)` for every tuple in the tree, in `(key, doc)` order. A bulk full-scan that
+    /// matches each leaf's format once and runs a tight inner loop — faster than collecting the lazy
+    /// [`range_tuples`](Self::range_tuples) cursor when the whole tree is consumed (`iter_edges`, the MSF
+    /// rebuild). No allocation, no per-entry `Iterator::next` dispatch.
+    pub fn for_each_tuple<F: FnMut(u64, u64)>(
+        &self,
+        mut f: F,
+    ) {
+        fn walk<
+            F: FnMut(u64, u64),
+            const LEAF_MAX: usize,
+            const BRANCH_MAX: usize,
+            const DOC_BYTES: usize,
+        >(
+            node: &Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>,
+            f: &mut F,
+        ) {
+            match node {
+                Node::Leaf(leaf) => leaf.for_each_tuple(&mut *f),
+                Node::Branch(branch) => branch.children.iter().for_each(|c| walk(c, f)),
+            }
+        }
+        walk(&self.root, &mut f);
+    }
+
+    /// Approximate resident heap bytes: the sum of every leaf's byte blob plus branch child/separator
+    /// vectors. Walks all pages (`O(pages)`), so call it off hot paths (memory reporting).
+    #[must_use]
+    pub fn heap_bytes(&self) -> usize {
+        fn walk<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>(
+            node: &Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>,
+            acc: &mut usize,
+        ) {
+            match node {
+                Node::Leaf(leaf) => *acc += leaf.raw().len(),
+                Node::Branch(branch) => {
+                    // `seps` is `Vec<(u64, u64)>` — each separator is a full
+                    // `(key, doc)` pair, not a bare key.
+                    *acc += branch.seps.len() * std::mem::size_of::<(u64, u64)>()
+                        + branch.children.len()
+                            * std::mem::size_of::<Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>>();
+                    branch.children.iter().for_each(|c| walk(c, acc));
+                }
+            }
+        }
+        let mut acc = 0;
+        walk(&self.root, &mut acc);
+        acc
     }
 
     /// Total number of live tuples. Test-only (`O(n)` page walk) — prefer [`is_empty`] in non-test code.
     #[cfg(test)]
     #[must_use]
     pub fn len(&self) -> usize {
-        fn count<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
-            node: &Node<LEAF_MAX, BRANCH_MAX>
+        fn count<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>(
+            node: &Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>
         ) -> usize {
             match node {
                 Node::Leaf(leaf) => leaf.count(),
@@ -268,8 +408,8 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
     #[cfg(test)]
     #[must_use]
     pub fn leaves(&self) -> Vec<(LeafFormat, Arc<[u8]>)> {
-        fn walk<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
-            node: &Node<LEAF_MAX, BRANCH_MAX>,
+        fn walk<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>(
+            node: &Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>,
             out: &mut Vec<(LeafFormat, Arc<[u8]>)>,
         ) {
             match node {
