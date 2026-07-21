@@ -194,12 +194,12 @@ void CommandCtx_UnblockClient
 // name, on failure a reply is emitted and the parked client is unblocked
 void CommandCtx_ResumeAfterGraphLoad
 (
-	void *waiter,
-	bool  success
+	CommandCtx *waiter,
+	bool        success
 ) {
 	ASSERT (waiter != NULL) ;
 
-	CommandCtx *command_ctx = (CommandCtx *)waiter ;
+	CommandCtx *command_ctx = waiter ;
 
 	if (success) {
 		// requeue the right graph command according to the command's name

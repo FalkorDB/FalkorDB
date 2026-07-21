@@ -45,8 +45,8 @@ typedef enum {
 // completes; `success` reflects whether the load succeeded
 typedef void (*GraphLoadWaiterCB)
 (
-	void *waiter,
-	bool  success
+	CommandCtx *waiter,
+	bool        success
 ) ;
 
 // attempt to become the load owner for `graph_name`, or park `waiter` behind

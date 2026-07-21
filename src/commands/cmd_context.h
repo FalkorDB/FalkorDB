@@ -129,8 +129,8 @@ void CommandCtx_UnblockClient
 // name, on failure a reply is emitted and the parked client is unblocked
 void CommandCtx_ResumeAfterGraphLoad
 (
-	void *waiter,
-	bool  success
+	CommandCtx *waiter,
+	bool        success
 );
 
 // free command context
