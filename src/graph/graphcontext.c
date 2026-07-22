@@ -732,17 +732,12 @@ uint64_t GraphContext_MemoryUsage
 	GraphContext *_gc = (GraphContext *)gc ;
 
 	MemoryUsageResult result = {0} ;
-	result.node_attr_by_label_sz = arr_new (size_t, 0) ;
-	result.edge_attr_by_type_sz  = arr_new (size_t, 0) ;
 
 	GraphContext_AcquireReadLock (_gc) ;
 	GraphContext_EstimateMemoryUsage (_gc, 1000, &result) ;
 	GraphContext_ReleaseReadLock (_gc) ;
 
-	arr_free (result.node_attr_by_label_sz) ;
-	arr_free (result.edge_attr_by_type_sz) ;
-
-	return (uint64_t)result.total_graph_sz_mb * (1 << 20) ;
+	return (uint64_t) result.total_graph_sz_mb * (1 << 20) ;
 }
 
 //------------------------------------------------------------------------------
