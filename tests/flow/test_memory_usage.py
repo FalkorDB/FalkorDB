@@ -548,28 +548,6 @@ class testGraphMemoryUsage(FlowTestsBase):
         self.env.assertGreater(res.edge_block_storage_sz_mb, 0)
         self.env.assertGreater(res.total_edge_attributes_sz_mb, 0)
 
-    def test_edge_attribute_sampling_threshold(self):
-        """exercise both edge total attribute paths: sampling and full-scan fallback"""
-
-        # create one dense relation type with enough edges to keep sampled path active
-        q = """CREATE (a), (b)
-               WITH a, b
-               UNWIND range(1, 50000) AS x
-               CREATE (a)-[:R {v: x, s: toString(x), arr: [x, x + 1, x + 2, x + 3, x + 4]}]->(b)"""
-        self.graph.query(q)
-
-        # sample_size=100 -> 100*10 <= 50000, should stay on sampled path
-        sampled = self._graph_memory_usage(samples=100)
-
-        # sample_size=6000 -> 6000*10 > 50000, should switch to full scan
-        full_scan = self._graph_memory_usage(samples=6000)
-
-        self.env.assertGreater(full_scan.total_edge_attributes_sz_mb, 0)
-        # With current edge accounting, sampled and higher-sample runs may quantize
-        # to the same MB value.
-        self.env.assertGreaterEqual(full_scan.total_edge_attributes_sz_mb,
-                                    sampled.total_edge_attributes_sz_mb)
-
     def test_graph_with_empty_relationship_type(self):
         """test memory consumption of a graph containing an empty relationship-type"""
 

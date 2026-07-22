@@ -20,28 +20,7 @@
 // attribute and index estimation helpers
 //------------------------------------------------------------------------------
 
-// estimate total memory usage for all entities in the datablock
-static size_t _TotalAttributeMemory
-(
-	DataBlockIterator *it  // DataBlock to iterate
-) {
-	ASSERT (it != NULL) ;
-
-	AttributeSet *set = NULL ;
-	size_t memory_usage = 0 ;
-
-	while ((set = (AttributeSet*) (DataBlockIterator_Next (it, NULL))) != NULL) {
-		// entity has no attributes, skip
-		if (*set != NULL) {
-			memory_usage += AttributeSet_memoryUsage (*set) ;
-		}
-	}
-
-	DataBlockIterator_Free (it) ;
-	return memory_usage ;
-}
-
-// estimate total memory usage for all entities in the datablock
+// estimate total memory usage for a datablock by sampling
 static size_t _EstimateTotalAttributeMemory
 (
 	DataBlock *block,     // DataBlock to iterate
@@ -53,10 +32,9 @@ static size_t _EstimateTotalAttributeMemory
 	
 	if (itemcount == 0) {
 		return 0;
-	} else if (sample_size * 10 > itemcount) {
-		// if sample is close to the total, just scan all nodes.
-		return _TotalAttributeMemory(DataBlock_Scan(block)) ;
 	}
+
+	sample_size = MIN(sample_size, itemcount) ;
 
 	int64_t datablock_size = DataBlock_DeletedItemsCount(block) + itemcount;
 
@@ -69,11 +47,12 @@ static size_t _EstimateTotalAttributeMemory
 		simple_rand (&r) ;
 		set = (AttributeSet*) DataBlock_GetItem (block, r % datablock_size) ;
 
+		// skip deleted items
 		if (set != NULL) {
+			// NULL attribute sets return 0
 			memory_usage += AttributeSet_memoryUsage (*set) ;
 			++i ;
 		}
-		// skip deleted items
 	}
 
 	double avg = memory_usage / (double) sample_size ;

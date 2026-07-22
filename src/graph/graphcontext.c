@@ -723,6 +723,7 @@ Graph *GraphContext_GetGraph
 
 // returns the graph's current RAM footprint in bytes
 // samples attributes and indices for an accurate estimate
+// used internally to get an estimate of a Graph's memory footprint
 uint64_t GraphContext_MemoryUsage
 (
 	const GraphContext *gc
@@ -734,6 +735,8 @@ uint64_t GraphContext_MemoryUsage
 	MemoryUsageResult result = {0} ;
 
 	GraphContext_AcquireReadLock (_gc) ;
+
+	// Number of samples is hardcoded at 1000
 	GraphContext_EstimateMemoryUsage (_gc, 1000, &result) ;
 	GraphContext_ReleaseReadLock (_gc) ;
 
