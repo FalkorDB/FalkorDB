@@ -28,38 +28,7 @@ static void _Replay
 	MemoryUsageResult result,
 	GraphContext *gc
 ) {
-	ASSERT (_ctx != NULL) ;
-
-	GraphMemoryCtx           *ctx    = (GraphMemoryCtx*)_ctx ;
-	int64_t                  samples = ctx->samples ;
-	RedisModuleBlockedClient *bc     = ctx->bc ;
-	RedisModuleCtx           *rm_ctx = RedisModule_GetThreadSafeContext (bc) ;
-
-	//--------------------------------------------------------------------------
-	// compute graph memory usage
-	//--------------------------------------------------------------------------
-
-	// declare result before any goto so cleanup can safely arr_free the arrays
-	MemoryUsageResult result = {0} ;
-
-	//--------------------------------------------------------------------------
-	// get graph key
-	//--------------------------------------------------------------------------
-
-	GraphContext *gc = NULL ;
-	GraphContext_Retrieve (rm_ctx, ctx->graph_id, true, false, true, &gc) ;
-	if (gc == NULL) {
-		// error alreay emitted by GraphContext_Retrieve
-		goto cleanup ;
-	}
-
-	// acquire read lock
-	GraphContext_AcquireReadLock (gc) ;
-
-	GraphContext_EstimateMemoryUsage (gc, samples, &result) ;
-
-	// release read lock
-	GraphContext_ReleaseReadLock (gc) ;
+	ASSERT (rm_ctx != NULL) ;
 
 	//--------------------------------------------------------------------------
 	// reply to caller
@@ -101,7 +70,7 @@ static void _Replay
 	RedisModule_ReplyWithCString  (rm_ctx, "amortized_node_block_sz_mb") ;
 	RedisModule_ReplyWithLongLong (rm_ctx, result.node_block_storage_sz) ;
 
-	// amortized_node_by_label_sz_mb
+	// amortized_node_attributes_sz_mb
 	RedisModule_ReplyWithCString (rm_ctx, "amortized_node_attributes_sz_mb") ;
 	RedisModule_ReplyWithLongLong (rm_ctx, result.node_attr_sz) ;
 
@@ -109,7 +78,7 @@ static void _Replay
 	RedisModule_ReplyWithCString  (rm_ctx, "amortized_edge_block_sz_mb") ;
 	RedisModule_ReplyWithLongLong (rm_ctx, result.edge_block_storage_sz) ;
 
-	// amortized_edge_attributes_by_type_sz_mb
+	// amortized_edge_attributes_sz_mb
 	RedisModule_ReplyWithCString (rm_ctx, "amortized_edge_attributes_sz_mb") ;
 	RedisModule_ReplyWithLongLong (rm_ctx, result.edge_attr_sz) ;
 
@@ -172,9 +141,6 @@ static void _Graph_Memory
 		// error alreay emitted by GraphContext_Retrieve
 		goto cleanup ;
 	}
-
-	result.edge_attr_by_type_sz  = arr_new (size_t, 0) ;
-	result.node_attr_by_label_sz = arr_new (size_t, 0) ;
 
 	// acquire read lock
 	GraphContext_AcquireReadLock (gc) ;

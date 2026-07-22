@@ -1122,6 +1122,7 @@ void sds_free(void *ptr) { s_free(ptr); }
 #include "testhelp.h"
 #include "limits.h"
 
+#undef UNUSED
 #define UNUSED(x) (void)(x)
 int sdsTest(void) {
     {
