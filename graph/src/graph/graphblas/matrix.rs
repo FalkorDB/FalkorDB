@@ -91,10 +91,10 @@ use super::{
     GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode, GrB_SECOND_UINT64, GrB_Type,
     GrB_UINT64, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL,
     GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64, GxB_Container_free, GxB_Container_new,
-    GxB_Global_Option_set_INT32, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_new,
-    GxB_JIT_Control, GxB_Matrix_fprint, GxB_Matrix_isStoredElement, GxB_Matrix_memoryUsage,
-    GxB_Matrix_type, GxB_NTHREADS, GxB_Option_Field, GxB_Print_Level, GxB_init,
-    GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
+    GxB_Global_Option_set_INT32, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_get_UINT64,
+    GxB_Iterator_new, GxB_JIT_Control, GxB_Matrix_fprint, GxB_Matrix_isStoredElement,
+    GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_NTHREADS, GxB_Option_Field, GxB_Print_Level,
+    GxB_init, GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
     GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol, GxB_rowIterator_nextRow,
     GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
 };
@@ -1129,12 +1129,13 @@ impl Matrix<bool> {
 pub trait IterExtract {
     type Item;
 
-    /// Extract the item from the current iterator position.
+    /// Extract the item at the iterator's current position (an O(1) cursor
+    /// read — no per-entry matrix lookup).
     ///
     /// # Safety
-    /// `m` must be a valid `GrB_Matrix` and the iterator must be positioned on a valid entry.
+    /// `it` must be a valid attached `GxB_Iterator` positioned on a valid entry.
     unsafe fn extract(
-        m: GrB_Matrix,
+        it: GxB_Iterator,
         row: u64,
         col: u64,
     ) -> Self::Item;
@@ -1150,7 +1151,7 @@ impl IterExtract for BoolExtract {
     type Item = (u64, u64);
 
     unsafe fn extract(
-        _m: GrB_Matrix,
+        _it: GxB_Iterator,
         row: u64,
         col: u64,
     ) -> Self::Item {
@@ -1169,12 +1170,11 @@ impl IterExtract for Uint64Extract {
     type Item = (u64, u64, u64);
 
     unsafe fn extract(
-        m: GrB_Matrix,
+        it: GxB_Iterator,
         row: u64,
         col: u64,
     ) -> Self::Item {
-        let mut val: u64 = 0;
-        unsafe { GrB_Matrix_extractElement_UINT64(&raw mut val, m, row, col) };
+        let val = unsafe { GxB_Iterator_get_UINT64(it) };
         (row, col, val)
     }
 
@@ -1300,7 +1300,7 @@ impl<E: IterExtract> Iterator for Iter<E> {
         unsafe {
             let row = GxB_rowIterator_getRowIndex(self.inner);
             let col = GxB_rowIterator_getColIndex(self.inner);
-            let item = E::extract(*self.m, row, col);
+            let item = E::extract(self.inner, row, col);
             if GxB_rowIterator_nextCol(self.inner) != GrB_Info::GrB_SUCCESS {
                 let mut info = GxB_rowIterator_nextRow(self.inner);
                 debug_assert!(

@@ -260,27 +260,28 @@ impl Tensor {
     }
 
     /// Edge ids for the `(src, dest)` pair, in ascending edge-id order.
-    /// Single-edge pairs answer straight from the inline value; multi-edge
-    /// pairs (inline value == [`MULTI_EDGE`]) read their id row from `me`,
-    /// which GraphBLAS already yields in ascending column order. Returns an
-    /// owned iterator (borrows nothing).
+    /// Single-edge pairs answer straight from the inline value — no heap
+    /// allocation; multi-edge pairs (inline value == [`MULTI_EDGE`]) read
+    /// their id row from `me`, which GraphBLAS already yields in ascending
+    /// column order. Returns an owned iterator (borrows nothing).
     #[must_use]
     pub fn get(
         &self,
         src: u64,
         dest: u64,
-    ) -> std::vec::IntoIter<u64> {
+    ) -> EdgeIds {
         match self.eff_get(src, dest) {
-            None => Vec::new().into_iter(),
             Some(MULTI_EDGE) => {
                 let key = compound_key(src, dest);
-                self.me
-                    .iter(key, key)
-                    .map(|(_, edge_id)| edge_id)
-                    .collect::<Vec<_>>()
-                    .into_iter()
+                EdgeIds::Multi(
+                    self.me
+                        .iter(key, key)
+                        .map(|(_, edge_id)| edge_id)
+                        .collect::<Vec<_>>()
+                        .into_iter(),
+                )
             }
-            Some(id) => vec![id].into_iter(),
+            inline => EdgeIds::Inline(inline.into_iter()),
         }
     }
 
@@ -877,6 +878,32 @@ impl Decode<19> for Tensor {
             me,
             multi_count,
         })
+    }
+}
+
+/// Owned edge-id iterator for one `(src, dest)` pair (see [`Tensor::get`]).
+/// The common single-edge case is allocation-free; only multi-edge pairs
+/// buffer their `me` row into a `Vec`.
+pub enum EdgeIds {
+    Inline(std::option::IntoIter<u64>),
+    Multi(std::vec::IntoIter<u64>),
+}
+
+impl Iterator for EdgeIds {
+    type Item = u64;
+
+    fn next(&mut self) -> Option<u64> {
+        match self {
+            Self::Inline(it) => it.next(),
+            Self::Multi(it) => it.next(),
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            Self::Inline(it) => it.size_hint(),
+            Self::Multi(it) => it.size_hint(),
+        }
     }
 }
 
