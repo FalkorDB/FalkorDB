@@ -46,10 +46,12 @@
 //!       no  --> remove (i,j) from dp   (undo pending add)
 //! ```
 //!
-//! UINT64 matrices additionally support in-place *value* updates of a
-//! committed entry: `set` masks the old entry in `dm` and writes the new
-//! value to `dp`, so `dp` never shadows a live `m` entry (see the
-//! `VersionedMatrix<u64>` impl).
+//! UINT64-valued layers (e.g. `Tensor`'s forward adjacency, which owns its
+//! own `m`/`dp`/`dm` triple) additionally support in-place *value* updates of
+//! a committed entry: the new value is written to `dp`, *shadowing* the live
+//! `m` entry (no `dm` mask — `dm` marks pure deletions only, so `dp ∩ dm = ∅`
+//! and `dm ⊆ m`). Iteration over such layers must skip shadowed `m` entries
+//! (see [`Iter::from_layers`]'s `dp_may_shadow`).
 //!
 //! ## Flush
 //!
@@ -363,133 +365,6 @@ impl<T> Dup<Self> for VersionedMatrix<T> {
     }
 }
 
-/// UINT64-valued overlay support.
-///
-/// A UINT64 `VersionedMatrix` carries a `u64` *value* at each `(i, j)` (e.g. an
-/// edge id) rather than a plain boolean presence bit. The base `m` and
-/// delta-plus `dp` are UINT64-typed; the delta-minus `dm` stays BOOL (it is a
-/// pure deletion mask).
-///
-/// Unlike the bool model, a committed entry's *value* can change in place
-/// (e.g. an edge id changes on multi-edge promotion, or delete-then-re-add
-/// within one transaction). [`Self::set`] handles this by masking the old
-/// committed entry in `dm` and writing the new value to `dp`, preserving the
-/// no-shadow invariant `dp ∩ (m ∖ dm) = ∅`: the effective content is always
-/// `(m ∖ dm) ∪ dp` with the union disjoint, so iterators and `nvals()` need
-/// no overlap handling. Note this means `dp ∩ dm` may be non-empty (an
-/// in-place update has the pair in both), unlike the bool model.
-impl VersionedMatrix<u64> {
-    /// Construct a UINT64-valued versioned matrix: `m`/`dp` UINT64, `dm` BOOL.
-    #[must_use]
-    pub fn new(
-        nrows: u64,
-        ncols: u64,
-    ) -> Self {
-        Self {
-            m: Cow::new(Matrix::<u64>::new(nrows, ncols)),
-            dp: Cow::new(Matrix::<u64>::new(nrows, ncols)),
-            dm: Cow::new(Matrix::<bool>::new(nrows, ncols)),
-        }
-    }
-
-    /// Stream effective UINT64 `(row, col, value)` triples over rows in
-    /// `[min_row, max_row]`: `(m ∖ dm) ∪ dp`.
-    #[must_use]
-    pub fn iter(
-        &self,
-        min_row: u64,
-        max_row: u64,
-    ) -> Iter<Uint64Extract> {
-        self.wait();
-        Iter::<Uint64Extract>::new(self, min_row, max_row)
-    }
-
-    /// Structure-only `(row, col)` iterator over the effective matrix,
-    /// ignoring the stored edge-id values. Same semantics as the bool
-    /// [`VersionedMatrix::iter`].
-    #[must_use]
-    pub fn structural_iter(
-        &self,
-        min_row: u64,
-        max_row: u64,
-    ) -> Iter {
-        self.wait();
-        Iter::<BoolExtract>::new(self, min_row, max_row)
-    }
-
-    /// Write `value` at `(i, j)`: the new value lands in `dp`, and if the
-    /// committed base holds an entry at `(i, j)` it is masked in `dm` so the
-    /// old value never shadows the new one (`dp ∩ (m ∖ dm) = ∅`).
-    pub fn set(
-        &mut self,
-        i: u64,
-        j: u64,
-        value: u64,
-    ) {
-        debug_assert!(!self.m.pending());
-        self.dp.set(i, j, value);
-        if self.m.contains(i, j) {
-            self.dm.set(i, j, true);
-        }
-    }
-
-    /// Bulk UINT64 set. Unlike per-element [`VersionedMatrix::set`] callers,
-    /// this checks base emptiness once up front and never calls `get`/`wait`
-    /// per entry, so it stays O(n) for a batch of `n` writes (critical for
-    /// bulk edge creation).
-    pub fn set_all(
-        &mut self,
-        entries: impl Iterator<Item = (u64, u64, u64)>,
-    ) {
-        debug_assert!(!self.m.pending());
-        if self.m.nvals() == 0 {
-            for (i, j, v) in entries {
-                self.dp.set(i, j, v);
-            }
-        } else {
-            for (i, j, v) in entries {
-                self.dp.set(i, j, v);
-                if self.m.contains(i, j) {
-                    self.dm.set(i, j, true);
-                }
-            }
-        }
-    }
-
-    /// Effective UINT64 value at `(i, j)`: `dp` wins, then `m` unless masked by
-    /// `dm`. Returns `None` if absent or deleted.
-    #[must_use]
-    pub fn get(
-        &self,
-        i: u64,
-        j: u64,
-    ) -> Option<u64> {
-        self.wait();
-        if let Some(v) = self.dp.get(i, j) {
-            return Some(v);
-        }
-        if self.dm.nvals() != 0 && self.dm.get(i, j).is_some() {
-            return None;
-        }
-        self.m.get(i, j)
-    }
-
-    /// Remove `(i, j)` (value-agnostic): drop any pending add and mask the
-    /// committed entry as deleted.
-    pub fn remove(
-        &mut self,
-        i: u64,
-        j: u64,
-    ) {
-        if self.dp.get(i, j).is_some() {
-            self.dp.remove(i, j);
-        }
-        if self.m.get(i, j).is_some() {
-            self.dm.set(i, j, true);
-        }
-    }
-}
-
 impl VersionedMatrix<bool> {
     /// Transposes the matrix.
     ///
@@ -542,30 +417,59 @@ pub struct Iter<E: IterExtract = BoolExtract> {
     /// without per-edge `dm` lookups. Hot path for read-only queries on a
     /// freshly loaded graph.
     dm_empty: bool,
+    /// Structural view of `dp`, present only when the caller's layer model
+    /// lets `dp` shadow `m` without a `dm` mask (the `Tensor` forward
+    /// adjacency). The `m` phase skips shadowed pairs so each pair is yielded
+    /// exactly once — with its live `dp` value. `None` when `dp` is empty or
+    /// under the classic no-shadow invariant.
+    dp_shadow: Option<Matrix<bool>>,
 }
 
 unsafe impl<E: IterExtract> Send for Iter<E> {}
 unsafe impl<E: IterExtract> Sync for Iter<E> {}
 
 impl<E: IterExtract> Iter<E> {
-    /// Streams the effective content `(m ∖ dm) ∪ dp` — a disjoint union
-    /// thanks to the no-shadow invariant, so the `m` phase only needs the
-    /// `dm` mask. Valid for a `VersionedMatrix` of any element type when
-    /// `E = BoolExtract` (only the sparsity pattern is read).
+    /// Streams the effective content `(m ∖ dm) ∪ dp` — disjoint here thanks
+    /// to `VersionedMatrix`'s no-shadow invariant, so the `m` phase only
+    /// needs the `dm` mask. Valid for a `VersionedMatrix` of any element type
+    /// when `E = BoolExtract` (only the sparsity pattern is read).
     fn new<V>(
         vm: &VersionedMatrix<V>,
         min_row: u64,
         max_row: u64,
     ) -> Self {
+        Self::from_layers(&vm.m, &vm.dp, &vm.dm, min_row, max_row, false)
+    }
+
+    /// Build the effective-content iterator directly from the three delta
+    /// layers, for owners that manage `m`/`dp`/`dm` themselves (e.g.
+    /// `Tensor`'s forward adjacency). Callers must have waited `dp`/`dm`.
+    /// Pass `dp_may_shadow` when `dp` may hold pairs also present in `m`
+    /// without a `dm` mask (in-place updates); the shadowed `m` entries are
+    /// then skipped in favor of their live `dp` values.
+    pub(crate) fn from_layers<V>(
+        m: &Matrix<V>,
+        dp: &Matrix<V>,
+        dm: &Cow<Matrix<bool>>,
+        min_row: u64,
+        max_row: u64,
+        dp_may_shadow: bool,
+    ) -> Self {
+        let dp_empty = dp.nvals() == 0;
         Self {
-            mit: matrix::Iter::new(&vm.m, min_row, max_row),
-            dpit: if vm.dp.nvals() == 0 {
+            mit: matrix::Iter::new(m, min_row, max_row),
+            dpit: if dp_empty {
                 None
             } else {
-                Some(matrix::Iter::new(&vm.dp, min_row, max_row))
+                Some(matrix::Iter::new(dp, min_row, max_row))
             },
-            dm: vm.dm.clone(),
-            dm_empty: vm.dm.nvals() == 0,
+            dm: dm.clone(),
+            dm_empty: dm.nvals() == 0,
+            dp_shadow: if dp_may_shadow && !dp_empty {
+                Some(dp.structural_view())
+            } else {
+                None
+            },
         }
     }
 
@@ -598,6 +502,11 @@ impl Iterator for Iter<BoolExtract> {
             if !self.dm_empty && self.dm.get(i, j).is_some() {
                 continue; // deleted
             }
+            if let Some(dp) = &self.dp_shadow
+                && dp.contains(i, j)
+            {
+                continue; // shadowed; dp phase yields the live value
+            }
             return Some((i, j));
         }
         self.dpit.as_mut().and_then(Iterator::next)
@@ -610,7 +519,12 @@ impl Iterator for Iter<Uint64Extract> {
     fn next(&mut self) -> Option<Self::Item> {
         for (i, j, v) in &mut self.mit {
             if !self.dm_empty && self.dm.contains(i, j) {
-                continue; // deleted (or overridden in-place; dp has the new value)
+                continue; // deleted
+            }
+            if let Some(dp) = &self.dp_shadow
+                && dp.contains(i, j)
+            {
+                continue; // shadowed; dp phase yields the live value
             }
             return Some((i, j, v));
         }

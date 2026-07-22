@@ -510,6 +510,43 @@ impl<T> Matrix<T> {
         unsafe { GxB_Matrix_isStoredElement(*self.m, i, j) == GrB_Info::GrB_SUCCESS }
     }
 
+    /// Type-erased structural view sharing this matrix's GraphBLAS handle
+    /// (no data copy). Only pattern probes ([`Self::contains`], `nvals`) are
+    /// meaningful on it — never read element values through it.
+    #[must_use]
+    pub(crate) fn structural_view(&self) -> Matrix<bool> {
+        Matrix {
+            m: self.m.clone(),
+            lock: self.lock.clone(),
+            has_pending: self.has_pending.clone(),
+            phantom: PhantomData,
+        }
+    }
+
+    /// Number of positions stored in both `self` and `b` (structural
+    /// intersection size). `ANY_PAIR` only inspects the sparsity pattern, so
+    /// the element types of the operands are never read.
+    #[must_use]
+    pub fn intersection_nvals<TB>(
+        &self,
+        b: &Matrix<TB>,
+    ) -> u64 {
+        let t = Matrix::<bool>::new(self.nrows(), self.ncols());
+        unsafe {
+            let info = GrB_Matrix_eWiseMult_Semiring(
+                *t.m,
+                null_mut(),
+                null_mut(),
+                GxB_ANY_PAIR_BOOL,
+                *self.m,
+                *b.m,
+                null_mut(),
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        t.nvals()
+    }
+
     #[must_use]
     pub fn pending(&self) -> bool {
         unsafe {
@@ -827,6 +864,29 @@ impl Matrix<u64> {
         self.has_pending.store(true, Ordering::Relaxed);
     }
 
+    /// `self = self ⊕ b`, value-preserving: on intersecting entries `b`'s
+    /// value wins (`SECOND`). Unlike the bool-semiring [`Self::element_wise_add`],
+    /// this keeps u64 values intact, so a delta-plus layer that shadows its
+    /// base can be merged with the live (`dp`) value taking precedence.
+    pub fn element_wise_add_second(
+        &mut self,
+        b: &Self,
+    ) {
+        unsafe {
+            let info = GrB_Matrix_eWiseAdd_BinaryOp(
+                *self.m,
+                null_mut(),
+                null_mut(),
+                GrB_SECOND_UINT64,
+                *self.m,
+                *b.m,
+                null_mut(),
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+
     /// Read the UINT64 value at (i, j). Returns `None` if no entry exists.
     #[must_use]
     pub fn get(
@@ -973,35 +1033,35 @@ impl Matrix<bool> {
         self.has_pending.store(true, Ordering::Relaxed);
     }
 
-    /// Delta-aware matrix-multiply: `self = self * vm` operating directly on
-    /// the versioned matrix's base/dp/dm components, mirroring C FalkorDB's
-    /// `Delta_mxm`.
+    /// Delta-aware matrix-multiply: `self = self * (m, dp, dm)` operating
+    /// directly on the base/dp/dm layers of a versioned matrix (or a
+    /// `Tensor`'s forward adjacency), mirroring C FalkorDB's `Delta_mxm`.
     ///
     /// Computes `(self * (m + dp))<!(self * dm)>` without first materializing
     /// the merged matrix. In the common read-only case (`dp.nvals() == 0 &&
-    /// dm.nvals() == 0`) this is a single `GrB_mxm` against `vm.m()`, avoiding
-    /// the eWiseAdd that `to_matrix()` would otherwise pay.
+    /// dm.nvals() == 0`) this is a single `GrB_mxm` against `m`, avoiding
+    /// the eWiseAdd that a materialized merge would otherwise pay.
     ///
-    /// Accepts a versioned matrix of any element type: the `ANY_PAIR_BOOL`
-    /// semiring only inspects the sparsity pattern, so a UINT64 relationship
-    /// matrix (inline edge-id values) traverses identically to a BOOL one.
+    /// Accepts layers of any element type: the `ANY_PAIR_BOOL` semiring only
+    /// inspects the sparsity pattern, so a UINT64 relationship matrix (inline
+    /// edge-id values) traverses identically to a BOOL one.
     pub fn delta_lmxm<TV>(
         &mut self,
-        vm: &super::versioned_matrix::VersionedMatrix<TV>,
+        m: &Matrix<TV>,
+        dp: &Matrix<TV>,
+        dm: &Matrix<bool>,
     ) {
-        let dp = vm.dp();
-        let dm = vm.dm();
         let dp_nvals = dp.nvals();
         let dm_nvals = dm.nvals();
 
         if dp_nvals == 0 && dm_nvals == 0 {
-            // Hot path: clean snapshot, just self * vm.m()
-            self.lmxm(vm.m());
+            // Hot path: clean snapshot, just self * m
+            self.lmxm(m);
             return;
         }
 
         let nrows = self.nrows();
-        let ncols = vm.ncols();
+        let ncols = m.ncols();
 
         let mut mask: Option<Matrix<bool>> = None;
         if dm_nvals > 0 {
@@ -1053,7 +1113,7 @@ impl Matrix<bool> {
                 null_mut(),
                 GxB_ANY_PAIR_BOOL,
                 *self.m,
-                *vm.m().m,
+                *m.m,
                 desc,
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
