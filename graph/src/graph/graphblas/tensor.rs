@@ -56,8 +56,8 @@
 //!   a pair clears its `dm` bit).
 //! - `dp` may *shadow* `m` (in-place value update: promotion, demotion, or
 //!   replace-in-one-transaction), carrying the live value; `dp ∩ m` may be
-//!   non-empty. Iteration skips shadowed `m` entries (see the `dp_may_shadow`
-//!   flag of `versioned_matrix::Iter::from_layers`).
+//!   non-empty. The sorted-merge iterator yields the live `dp` value for a
+//!   shadowed pair and skips the stale `m` entry.
 //! - *Cancel-to-clean*: restoring a pair's committed value drops its deltas
 //!   — `dp` never holds a value equal to the pair's live `m` value (in
 //!   particular `dp = M` never shadows `m = M`).
@@ -612,7 +612,7 @@ impl Tensor {
     ) -> versioned_matrix::Iter<BoolExtract> {
         self.wait_fwd();
         versioned_matrix::Iter::<BoolExtract>::from_layers(
-            &self.m, &self.dp, &self.dm, min_row, max_row, true,
+            &self.m, &self.dp, &self.dm, min_row, max_row,
         )
     }
 
@@ -624,7 +624,7 @@ impl Tensor {
     ) -> versioned_matrix::Iter<Uint64Extract> {
         self.wait_fwd();
         versioned_matrix::Iter::<Uint64Extract>::from_layers(
-            &self.m, &self.dp, &self.dm, min_row, max_row, true,
+            &self.m, &self.dp, &self.dm, min_row, max_row,
         )
     }
 

@@ -510,19 +510,6 @@ impl<T> Matrix<T> {
         unsafe { GxB_Matrix_isStoredElement(*self.m, i, j) == GrB_Info::GrB_SUCCESS }
     }
 
-    /// Type-erased structural view sharing this matrix's GraphBLAS handle
-    /// (no data copy). Only pattern probes ([`Self::contains`], `nvals`) are
-    /// meaningful on it — never read element values through it.
-    #[must_use]
-    pub(crate) fn structural_view(&self) -> Matrix<bool> {
-        Matrix {
-            m: self.m.clone(),
-            lock: self.lock.clone(),
-            has_pending: self.has_pending.clone(),
-            phantom: PhantomData,
-        }
-    }
-
     /// Number of positions stored in both `self` and `b` (structural
     /// intersection size). `ANY_PAIR` only inspects the sparsity pattern, so
     /// the element types of the operands are never read.
@@ -1151,6 +1138,9 @@ pub trait IterExtract {
         row: u64,
         col: u64,
     ) -> Self::Item;
+
+    /// `(row, col)` position of an item, for sorted-merge ordering.
+    fn pos(item: &Self::Item) -> (u64, u64);
 }
 
 /// Extracts `(row, col)` pairs from a boolean matrix.
@@ -1165,6 +1155,10 @@ impl IterExtract for BoolExtract {
         col: u64,
     ) -> Self::Item {
         (row, col)
+    }
+
+    fn pos(item: &Self::Item) -> (u64, u64) {
+        *item
     }
 }
 
@@ -1182,6 +1176,10 @@ impl IterExtract for Uint64Extract {
         let mut val: u64 = 0;
         unsafe { GrB_Matrix_extractElement_UINT64(&raw mut val, m, row, col) };
         (row, col, val)
+    }
+
+    fn pos(item: &Self::Item) -> (u64, u64) {
+        (item.0, item.1)
     }
 }
 
