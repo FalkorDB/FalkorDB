@@ -163,6 +163,34 @@ pub struct Pending {
     schema_rel_attr_count: usize,
 }
 
+/// Deferred index document operations extracted from a completed write, applied
+/// to the graph under the commit (L1-write) lock so the RediSearch index and the
+/// committed graph version become visible to concurrent readers atomically —
+/// mirroring the C write path, where the index doc update happens inside the
+/// graph write lock. Applying them in the earlier (L1-read) execute phase would
+/// let a concurrent reader observe new index entries over an old graph version.
+#[derive(Default)]
+pub struct DeferredIndexes {
+    node_adds: FxHashMap<u64, RoaringTreemap>,
+    node_removes: FxHashMap<u64, RoaringTreemap>,
+    edge_adds: FxHashMap<u64, RoaringTreemap>,
+    edge_removes: FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
+}
+
+impl DeferredIndexes {
+    /// Apply the deferred index doc changes to `g`. MUST be called while holding
+    /// the outer write lock (readers excluded), in the same critical section as
+    /// `MvccGraph::commit`, so the index and graph stay consistent for readers.
+    pub fn commit(
+        &mut self,
+        g: &AtomicRefCell<Graph>,
+    ) {
+        let mut g = g.borrow_mut();
+        g.commit_index(&mut self.node_adds, &mut self.node_removes);
+        g.commit_edge_index(&mut self.edge_adds, &mut self.edge_removes);
+    }
+}
+
 impl Default for Pending {
     fn default() -> Self {
         Self::new()
@@ -1153,21 +1181,28 @@ impl Pending {
         Ok(())
     }
 
-    /// Apply deferred index operations to RediSearch. Called only after the
-    /// full query succeeds, so a failed query never leaves stale index entries.
+    /// Extract the deferred index operations, leaving pending empty. The
+    /// returned [`DeferredIndexes`] is applied later, under the commit
+    /// (L1-write) lock, so the index and the committed graph version become
+    /// visible to readers atomically. See [`DeferredIndexes::commit`].
+    pub fn take_deferred_indexes(&mut self) -> DeferredIndexes {
+        DeferredIndexes {
+            node_adds: std::mem::take(&mut self.deferred_index_adds),
+            node_removes: std::mem::take(&mut self.deferred_index_removes),
+            edge_adds: std::mem::take(&mut self.deferred_edge_index_adds),
+            edge_removes: std::mem::take(&mut self.deferred_edge_index_removes),
+        }
+    }
+
+    /// Apply deferred index operations to RediSearch inline. Called only after
+    /// the full query succeeds, so a failed query never leaves stale index
+    /// entries. Callers that run under the L1-read execute phase must instead
+    /// use [`Self::take_deferred_indexes`] and apply them under the commit lock.
     pub fn commit_deferred_indexes(
         &mut self,
         g: &AtomicRefCell<Graph>,
     ) {
-        let mut g = g.borrow_mut();
-        g.commit_index(
-            &mut self.deferred_index_adds,
-            &mut self.deferred_index_removes,
-        );
-        g.commit_edge_index(
-            &mut self.deferred_edge_index_adds,
-            &mut self.deferred_edge_index_removes,
-        );
+        self.take_deferred_indexes().commit(g);
     }
 
     /// Clear all pending mutation state.

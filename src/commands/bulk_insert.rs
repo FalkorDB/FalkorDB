@@ -521,49 +521,67 @@ pub fn graph_bulk_insert(
         .collect();
     spawn(
         move || {
-            let mut tg = graph.write();
-            let Some(g_arc) = tg.graph.write() else {
-                let ts_ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
-                unsafe { ffi::lock_thread_safe_ctx(ts_ctx) };
-                let cerr = ffi::sanitise_error("ERR write lock unavailable");
-                unsafe { ffi::reply_error(ts_ctx, cerr.as_ptr()) };
-                unsafe { ffi::unlock_thread_safe_ctx(ts_ctx) };
-                drop(bc);
-                unsafe { ffi::free_thread_safe_context(ts_ctx) };
-                return;
-            };
-            let result = {
-                let mut g = g_arc.borrow_mut();
-                let tokens: Vec<&[u8]> = token_data.iter().map(std::vec::Vec::as_slice).collect();
-                bulk_insert_sync(
-                    &mut g,
-                    &tokens,
-                    node_count,
-                    edge_count,
-                    node_token_count,
-                    rel_token_count,
-                )
-            };
             let ts_ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
-            match result {
-                Ok(()) => {
-                    tg.graph.commit(g_arc);
-                    unsafe { ffi::lock_thread_safe_ctx(ts_ctx) };
+            // Phase 1: build the new version under L1-READ, GIL-free (issue
+            // #726 — never hold L1-write while acquiring the GIL). The inner
+            // MVCC slot serializes this against other writers; a concurrent
+            // writer holding the slot yields a retryable "write lock
+            // unavailable" rather than blocking.
+            let outcome = {
+                let tg = graph.read();
+                let _l1 = graph::thread_id::L1HeldScope::new();
+                match tg.graph.write() {
+                    None => Err("ERR write lock unavailable".to_string()),
+                    Some(g_arc) => {
+                        let result = {
+                            let mut g = g_arc.borrow_mut();
+                            let tokens: Vec<&[u8]> =
+                                token_data.iter().map(std::vec::Vec::as_slice).collect();
+                            bulk_insert_sync(
+                                &mut g,
+                                &tokens,
+                                node_count,
+                                edge_count,
+                                node_token_count,
+                                rel_token_count,
+                            )
+                        };
+                        match result {
+                            Ok(()) => Ok(g_arc),
+                            Err(e) => {
+                                tg.graph.rollback();
+                                Err(format!("ERR bulk insert failed: {e}"))
+                            }
+                        }
+                    }
+                }
+            };
+            // Phase 2: commit + replicate (or reply the error) under GIL→L1-write.
+            // Committing under the GIL keeps the Arc-swap fork-safe (#452), and
+            // acquiring the GIL before L1 never inverts against a main-thread
+            // command holding the GIL and waiting for L1.
+            unsafe { ffi::lock_thread_safe_ctx(ts_ctx) };
+            graph::thread_id::set_gil_held(true);
+            match outcome {
+                Ok(g_arc) => {
+                    {
+                        let mut tg = graph.write();
+                        let _l1 = graph::thread_id::L1HeldScope::new();
+                        tg.graph.commit(g_arc);
+                    }
                     raw::replicate_verbatim(ts_ctx);
                     let reply =
                         format!("{node_count} nodes created, {edge_count} relations created");
                     let c_reply = std::ffi::CString::new(reply).expect("reply has no NUL bytes");
                     raw::reply_with_simple_string(ts_ctx, c_reply.as_ptr());
-                    unsafe { ffi::unlock_thread_safe_ctx(ts_ctx) };
                 }
-                Err(e) => {
-                    tg.graph.rollback();
-                    unsafe { ffi::lock_thread_safe_ctx(ts_ctx) };
-                    let cerr = ffi::sanitise_error(format!("ERR bulk insert failed: {e}"));
+                Err(msg) => {
+                    let cerr = ffi::sanitise_error(msg);
                     unsafe { ffi::reply_error(ts_ctx, cerr.as_ptr()) };
-                    unsafe { ffi::unlock_thread_safe_ctx(ts_ctx) };
                 }
             }
+            graph::thread_id::set_gil_held(false);
+            unsafe { ffi::unlock_thread_safe_ctx(ts_ctx) };
             drop(bc);
             unsafe { ffi::free_thread_safe_context(ts_ctx) };
         },

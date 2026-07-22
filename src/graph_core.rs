@@ -50,7 +50,8 @@ use graph::{
     runtime::{
         eval::evaluate_param,
         pending::{
-            EFFECT_CREATE_INDEX, EFFECT_DROP_INDEX, EFFECTS_VERSION, write_string, write_u16,
+            DeferredIndexes, EFFECT_CREATE_INDEX, EFFECT_DROP_INDEX, EFFECTS_VERSION, write_string,
+            write_u16,
         },
         runtime::Runtime,
     },
@@ -141,6 +142,16 @@ pub struct WriteMessage {
     pub received_at: i64,
     pub enqueue_instant: Instant,
     pub waiting_id: u64,
+    /// True if the plan is DDL (CREATE/DROP INDEX). DDL calls RediSearch
+    /// spec-lifecycle FFI (which needs the GIL) eagerly during execution, so
+    /// the write loop runs it under GIL→L1-write instead of the lockless
+    /// data-write phase. See `process_write_queued_query`.
+    pub is_ddl: bool,
+    /// True if this is a GRAPH.PROFILE write: execute with profiling enabled and
+    /// reply with the profile tree instead of the result set. Otherwise handled
+    /// exactly like a GRAPH.QUERY write — same two-phase commit, DDL routing, and
+    /// effects replication (so a profiled write no longer diverges from replicas).
+    pub profile: bool,
 }
 
 pub struct WriteQueryOk {
@@ -149,6 +160,10 @@ pub struct WriteQueryOk {
     pub modified: bool,
     pub execution_time_ms: f64,
     pub params_offset: usize,
+    /// Deferred index doc changes, applied under the commit (L1-write) lock —
+    /// NOT during the GIL-free execute phase — so the index and the committed
+    /// graph version are visible to readers atomically (issue #726 follow-up).
+    pub deferred_indexes: DeferredIndexes,
 }
 type WriteQueryResult = Result<WriteQueryOk, String>;
 
@@ -156,10 +171,23 @@ type WriteQueryResult = Result<WriteQueryOk, String>;
 /// needed for telemetry.
 pub struct ReadQueryResult {
     pub is_write: bool,
+    /// True if the plan is DDL (CREATE/DROP INDEX) — a write that eagerly calls
+    /// RediSearch spec-lifecycle FFI (needs the GIL) during execution.
+    pub is_ddl: bool,
     pub cached: bool,
     pub execution_time_ms: f64,
     pub params_offset: usize,
     pub timed_out: bool,
+}
+
+/// Outcome of the GRAPH.PROFILE read/detect phase (`execute_profile`).
+pub enum ProfileDetect {
+    /// Read query — it was profiled and the reply was already sent on this path.
+    ReadReplied,
+    /// Write query — must run through the write queue like GRAPH.QUERY (carries
+    /// DDL-ness so the write loop can pick the GIL→L1-write path). The reply is
+    /// the profile tree, emitted by `execute_query_write` in profile mode.
+    Write { is_ddl: bool },
 }
 
 /// Safe wrappers over Redis module FFI function pointers.
@@ -245,6 +273,8 @@ pub mod ffi {
     /// # Safety
     /// `ctx` must be a valid thread-safe context.
     pub unsafe fn lock_thread_safe_ctx(ctx: *mut raw::RedisModuleCtx) {
+        // Lock-order guard (#726): must not hold L1 when acquiring the GIL.
+        graph::thread_id::assert_gil_lock_order();
         let f = unsafe { raw::RedisModule_ThreadSafeContextLock }.expect(MSG);
         unsafe { f(ctx) };
     }
@@ -389,12 +419,22 @@ impl ThreadedGraph {
             .into_iter()
             .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
             .collect::<Result<HashMap<_, _>, String>>()?;
-        let is_write = plan.iter().any(|n| {
-            matches!(
-                n,
-                IR::Commit | IR::CreateIndex { .. } | IR::DropIndex { .. }
-            )
-        });
+        // Single pass over the plan: DDL (CREATE/DROP INDEX) implies write; a
+        // Commit node also makes it a write. is_ddl is carried to the write
+        // loop so it can pick the GIL→L1-write path (DDL calls GIL-needing
+        // RediSearch spec FFI eagerly during execution).
+        let mut is_ddl = false;
+        let mut is_write = false;
+        for n in plan.iter() {
+            match n {
+                IR::CreateIndex { .. } | IR::DropIndex { .. } => {
+                    is_ddl = true;
+                    is_write = true;
+                }
+                IR::Commit => is_write = true,
+                _ => {}
+            }
+        }
         let g = if is_write {
             if !write {
                 return Err(String::from(
@@ -403,6 +443,7 @@ impl ThreadedGraph {
             }
             return Ok(ReadQueryResult {
                 is_write: true,
+                is_ddl,
                 cached,
                 execution_time_ms: 0.0,
                 params_offset,
@@ -439,6 +480,7 @@ impl ThreadedGraph {
         self.slow_log.add(cmd, query, params_offset, latency);
         Ok(ReadQueryResult {
             is_write: false,
+            is_ddl: false,
             cached,
             execution_time_ms,
             params_offset,
@@ -453,6 +495,7 @@ impl ThreadedGraph {
         compact: bool,
         first_cached: bool,
         per_query_timeout: Option<i64>,
+        profile: bool,
     ) -> WriteQueryResult {
         let wall_start = Instant::now();
         let Plan {
@@ -472,16 +515,19 @@ impl ThreadedGraph {
         )));
 
         let is_non_deterministic = plan_is_non_deterministic(&plan);
-
-        // Invariant: callers hold the outer `RwLock<ThreadedGraph>` write guard
-        // (via `process_write_queued_query` or `query_sync`), so the MVCC write
-        // slot must be free here. If it is not, the write queue has been bypassed
-        // and the MVCC single-writer invariant is violated.
-        let g = self
-            .graph
-            .write()
-            .expect("MVCC write slot busy: single-writer invariant violated");
+        // Compute the timeout before taking the MVCC write slot, so an error
+        // here cannot leak the slot.
         let timeout_ms = compute_effective_timeout(per_query_timeout, true)?;
+
+        // Acquire the MVCC write slot (single-writer serialization). Under the
+        // two-phase write loop (issue #726) a data write runs here holding only
+        // the outer L1-READ lock, so a concurrent inline writer racing in the
+        // commit gap can momentarily hold the slot. Return a retryable error
+        // rather than panicking. NOTE: on this branch we did NOT acquire the
+        // slot, so callers must not roll back — it belongs to the other writer.
+        let Some(g) = self.graph.write() else {
+            return Err("write lock unavailable, retry the query".to_string());
+        };
         let runtime = Runtime::new(
             g.clone(),
             parameters,
@@ -490,7 +536,7 @@ impl ThreadedGraph {
             false,
             (*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone(),
             RESULTSET_SIZE.load(Ordering::Relaxed),
-            false,
+            profile,
             timeout_ms,
             QUERY_MEM_CAPACITY.load(Ordering::Relaxed),
             Some(net_thread_usage),
@@ -502,16 +548,24 @@ impl ThreadedGraph {
         let mut result = match runtime.query() {
             Ok(r) => r,
             Err(err) => {
-                // The private MVCC graph is dropped on rollback, discarding
-                // all attribute writes with it.
+                // Query failed after we took the MVCC write slot: release it
+                // here (the private new version is dropped with all its writes).
+                // Slot ownership lives in this function now — callers must NOT
+                // roll back.
+                self.graph.rollback();
                 return Err(err);
             }
         };
 
-        // Query succeeded — commit deferred index operations to RediSearch
-        // without holding the GIL; RediSearch's ForkGC would deadlock against
-        // a held GIL during its fork+exec cycle.
-        runtime.commit_deferred_indexes();
+        // Query succeeded — EXTRACT the deferred index document changes, but do
+        // NOT apply them here: this runs in the GIL-free L1-read phase, so
+        // applying index doc updates now would make them visible to concurrent
+        // readers before the matrix version is committed (a reader would see a
+        // new index over an old graph — inconsistent). They are applied under
+        // the commit (L1-write) lock instead, atomically with `MvccGraph::commit`
+        // — see `commit_and_replicate`. This mirrors the C write-lock model,
+        // where the RediSearch doc update happens inside the graph write lock.
+        let deferred_indexes = runtime.take_deferred_indexes();
 
         // If any CreateIndex carries OPTIONS, the binary effect format can't
         // currently round-trip them — fall back to verbatim GRAPH.QUERY
@@ -534,7 +588,13 @@ impl ThreadedGraph {
         }
 
         result.stats.cached = cached;
-        if compact {
+        if profile {
+            // GRAPH.PROFILE: reply with the annotated plan tree (per-operator
+            // records + timing collected because the runtime ran profile=true),
+            // not the result set. Everything else — effects, deferred indexes,
+            // commit, replication — is identical to a GRAPH.QUERY write.
+            reply_profile(ctx, &runtime, &runtime.plan);
+        } else if compact {
             reply_compact(ctx, &runtime, &result);
         } else {
             reply_verbose(ctx, &runtime, &result);
@@ -552,40 +612,57 @@ impl ThreadedGraph {
             || result.stats.indexes_created > 0
             || result.stats.indexes_dropped > 0
             || runtime.effects_count.get() > 0;
-        self.slow_log
-            .add("GRAPH.QUERY", query, params_offset, latency);
+        self.slow_log.add(
+            if profile { "GRAPH.PROFILE" } else { "GRAPH.QUERY" },
+            query,
+            params_offset,
+            latency,
+        );
         Ok(WriteQueryOk {
             graph: g,
             effects_buffer,
             modified,
             execution_time_ms,
             params_offset,
+            deferred_indexes,
         })
     }
 
-    /// Execute a query with profiling enabled (read path).
+    /// GRAPH.PROFILE read/detect phase. For a read query it runs with profiling
+    /// and replies here; for a write it returns [`ProfileDetect::Write`] so the
+    /// caller routes it through the write queue (exactly like GRAPH.QUERY), where
+    /// it is executed and replied by `execute_query_write` in profile mode.
     pub fn execute_profile(
         &self,
         ctx: &Context,
         query: &str,
         per_query_timeout: Option<i64>,
-    ) -> Result<bool, String> {
+    ) -> Result<ProfileDetect, String> {
         let Plan {
             plan, parameters, ..
         } = self.graph.read().borrow().get_plan(query)?;
+        // Detect write + DDL in a single pass (mirrors `execute_query`). A write
+        // is NOT executed here — it must go through the serialized write queue so
+        // it gets the two-phase GIL→L1 commit and effects replication.
+        let mut is_ddl = false;
+        let mut is_write = false;
+        for n in plan.iter() {
+            match n {
+                IR::CreateIndex { .. } | IR::DropIndex { .. } => {
+                    is_ddl = true;
+                    is_write = true;
+                }
+                IR::Commit => is_write = true,
+                _ => {}
+            }
+        }
+        if is_write {
+            return Ok(ProfileDetect::Write { is_ddl });
+        }
         let parameters = parameters
             .into_iter()
             .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
             .collect::<Result<HashMap<_, _>, String>>()?;
-        let is_write = plan.iter().any(|n| {
-            matches!(
-                n,
-                IR::Commit | IR::CreateIndex { .. } | IR::DropIndex { .. }
-            )
-        });
-        if is_write {
-            return Ok(true);
-        }
         let g = self.graph.read();
         let timeout_ms = compute_effective_timeout(per_query_timeout, false)?;
         let runtime = Runtime::new(
@@ -603,59 +680,9 @@ impl ThreadedGraph {
         );
         let _ = runtime.query()?;
         reply_profile(ctx, &runtime, &plan);
-        Ok(false)
+        Ok(ProfileDetect::ReadReplied)
     }
 
-    /// Execute a write query with profiling enabled.
-    pub fn execute_profile_write(
-        &self,
-        ctx: &Context,
-        query: &str,
-        per_query_timeout: Option<i64>,
-    ) -> WriteQueryResult {
-        let Plan {
-            plan, parameters, ..
-        } = self.graph.read().borrow().get_plan(query)?;
-        let parameters = parameters
-            .into_iter()
-            .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
-            .collect::<Result<HashMap<_, _>, String>>()?;
-
-        // Invariant: see `execute_query_write` — outer RwLock guarantees the
-        // MVCC write slot is free at this point.
-        let g = self
-            .graph
-            .write()
-            .expect("MVCC write slot busy: single-writer invariant violated");
-        let timeout_ms = compute_effective_timeout(per_query_timeout, true)?;
-        let runtime = Runtime::new(
-            g.clone(),
-            parameters,
-            true,
-            plan.clone(),
-            false,
-            String::new(),
-            -1,
-            true,
-            timeout_ms,
-            QUERY_MEM_CAPACITY.load(Ordering::Relaxed),
-            Some(net_thread_usage),
-        );
-        match runtime.query() {
-            Ok(_) => {
-                runtime.commit_deferred_indexes();
-                reply_profile(ctx, &runtime, &plan);
-                Ok(WriteQueryOk {
-                    graph: g,
-                    effects_buffer: None,
-                    modified: false,
-                    execution_time_ms: 0.0,
-                    params_offset: 0,
-                })
-            }
-            Err(err) => Err(err),
-        }
-    }
 }
 
 /// Reply with profile output: DFS walk of the plan tree, each line annotated
@@ -885,6 +912,8 @@ pub fn query_mut(
                             received_at,
                             enqueue_instant: Instant::now(),
                             waiting_id,
+                            is_ddl: read_result.is_ddl,
+                            profile: false,
                         });
                         if let Err(send_err) = graph.sender.send(msg) {
                             let msg = send_err.0;
@@ -993,19 +1022,22 @@ fn query_sync(
                     compact,
                     read_result.cached,
                     per_query_timeout,
+                    false,
                 );
                 let write_wall_ms = write_start.elapsed().as_secs_f64() * 1000.0;
                 telemetry::unregister_running(running_id2);
                 match res {
                     Ok(wq) => {
-                        g.graph.commit(wq.graph);
-                        if wq.modified {
-                            replicate_effects(ctx, key_name, wq.effects_buffer, query);
-                        }
+                        // Commit (deferred indexes + matrix), signal WATCH, and
+                        // replicate under this L1-write guard — the same path the
+                        // async write loop uses. The main thread already holds the
+                        // implicit GIL, satisfying commit_and_replicate's GIL→L1
+                        // contract.
+                        let (params_offset, exec_ms) =
+                            commit_and_replicate(&mut g, ctx, key_name, query, wq);
                         // Write telemetry
-                        let query_text = &query[wq.params_offset..];
-                        let params_text = &query[..wq.params_offset];
-                        let exec_ms = wq.execution_time_ms;
+                        let query_text = &query[params_offset..];
+                        let params_text = &query[..params_offset];
                         let report_ms = (write_wall_ms - exec_ms).max(0.0);
 
                         let entry = telemetry::TelemetryEntry {
@@ -1023,7 +1055,9 @@ fn query_sync(
                         telemetry::enqueue_entry(key_name, entry);
                     }
                     Err(err) => {
-                        g.graph.rollback();
+                        // execute_query_write already released the MVCC write
+                        // slot on failure (rollback lives there now); just
+                        // surface the error.
                         return Err(redis_module::RedisError::String(err));
                     }
                 }
@@ -1075,6 +1109,8 @@ pub fn profile_mut(
     let bc = unsafe { BlockedClient::new(ctx.ctx) };
     let graph = graph.clone();
     let query: Arc<str> = Arc::from(query);
+    let key_name = key_name.clone();
+    let received_at = telemetry::unix_now_secs();
     spawn(
         move || {
             let mem_capacity = QUERY_MEM_CAPACITY.load(Ordering::Relaxed);
@@ -1091,34 +1127,53 @@ pub fn profile_mut(
 
             let res = graph_read.execute_profile(&ctx, &query, per_query_timeout);
 
+            // Read-phase memory tracking ends here; a write is tracked
+            // separately inside process_write_queued_query.
+            if mem_capacity > 0 {
+                disable_tracking();
+            }
+
             match res {
-                Ok(is_write) => {
-                    if is_write {
-                        // Write path: drop read lock, acquire write lock.
-                        // Free the read-phase context before creating a new one.
+                // Read query — already profiled and replied on this path.
+                Ok(ProfileDetect::ReadReplied) => {
+                    drop(graph_read);
+                    drop(bc);
+                    unsafe { ffi::free_thread_safe_context(ctx.ctx) };
+                }
+                // Write query — enqueue exactly like GRAPH.QUERY so it runs
+                // through the two-phase write loop (GIL→L1-write commit + effects
+                // replication); `execute_query_write` in profile mode replies with
+                // the profile tree instead of the result set.
+                Ok(ProfileDetect::Write { is_ddl }) => {
+                    let waiting_id = telemetry::register_waiting(received_at, &key_name, &query);
+                    let msg = Box::new(WriteMessage {
+                        bc,
+                        query,
+                        compact: false,
+                        cached: false,
+                        key_name,
+                        timeout: per_query_timeout,
+                        received_at,
+                        enqueue_instant: Instant::now(),
+                        waiting_id,
+                        is_ddl,
+                        profile: true,
+                    });
+                    if let Err(send_err) = graph_read.sender.send(msg) {
+                        let msg = send_err.0;
+                        telemetry::unregister_waiting(msg.waiting_id);
+                        let cerr =
+                            ffi::sanitise_error("ERR graph write queue unavailable".to_string());
+                        unsafe { ffi::reply_error(ctx.ctx, cerr.as_ptr()) };
+                        drop(msg.bc);
                         drop(graph_read);
                         unsafe { ffi::free_thread_safe_context(ctx.ctx) };
-                        let mut graph_write = g.write();
-                        let ctx2 = unsafe { ffi::get_thread_safe_context(bc.inner) };
-                        let ctx2 = Context::new(ctx2);
-                        let res =
-                            graph_write.execute_profile_write(&ctx2, &query, per_query_timeout);
-                        match res {
-                            Ok(wq) => {
-                                graph_write.graph.commit(wq.graph);
-                            }
-                            Err(err) => {
-                                let cerr = ffi::sanitise_error(err);
-                                unsafe { ffi::reply_error(ctx2.ctx, cerr.as_ptr()) };
-                                graph_write.graph.rollback();
-                            }
-                        }
-                        drop(bc);
-                        unsafe { ffi::free_thread_safe_context(ctx2.ctx) };
-                    } else {
-                        drop(bc);
-                        unsafe { ffi::free_thread_safe_context(ctx.ctx) };
+                        return;
                     }
+                    drop(graph_read);
+                    // BlockedClient now lives in the queued WriteMessage.
+                    unsafe { ffi::free_thread_safe_context(ctx.ctx) };
+                    process_write_queued_query(&g);
                 }
                 Err(err) => {
                     let cerr = ffi::sanitise_error(err);
@@ -1126,9 +1181,6 @@ pub fn profile_mut(
                     drop(bc);
                     unsafe { ffi::free_thread_safe_context(ctx.ctx) };
                 }
-            }
-            if mem_capacity > 0 {
-                disable_tracking();
             }
         },
         None,
@@ -1140,7 +1192,7 @@ fn profile_sync(
     ctx: &Context,
     graph: &Arc<RwLock<ThreadedGraph>>,
     query: &str,
-    _key_name: &Arc<str>,
+    key_name: &Arc<str>,
     per_query_timeout: Option<i64>,
 ) -> RedisResult {
     let mem_capacity = QUERY_MEM_CAPACITY.load(Ordering::Relaxed);
@@ -1153,24 +1205,32 @@ fn profile_sync(
         g.execute_profile(ctx, query, per_query_timeout)
     };
     match res {
-        Ok(is_write) => {
-            if is_write {
-                let mut g = graph.write();
-                let res = g.execute_profile_write(ctx, query, per_query_timeout);
-                match res {
-                    Ok(wq) => {
-                        g.graph.commit(wq.graph);
-                    }
-                    Err(err) => {
-                        g.graph.rollback();
-                        if mem_capacity > 0 {
-                            disable_tracking();
-                        }
-                        return Err(redis_module::RedisError::String(err));
-                    }
+        // Read query — already profiled and replied.
+        Ok(ProfileDetect::ReadReplied) => {}
+        // Write query. This runs on the main thread, which already holds the
+        // implicit GIL, so DDL's `GilGuard` no-ops and there is no L1→GIL
+        // inversion. Execute + commit under L1-write, then replicate — mirroring
+        // query_sync's write branch, so a profiled write reaches replicas.
+        Ok(ProfileDetect::Write { .. }) => {
+            let mut g = graph.write();
+            match g.execute_query_write(ctx, query, false, false, per_query_timeout, true) {
+                Ok(wq) => {
+                    // Same commit → signal WATCH → replicate path as query_sync
+                    // and the async write loop (commit_and_replicate); the main
+                    // thread holds the implicit GIL, satisfying its GIL→L1
+                    // contract.
+                    commit_and_replicate(&mut g, ctx, key_name, query, wq);
                 }
-                drop(g);
+                Err(err) => {
+                    // execute_query_write already released the MVCC slot on
+                    // failure (rollback lives there); just surface the error.
+                    if mem_capacity > 0 {
+                        disable_tracking();
+                    }
+                    return Err(redis_module::RedisError::String(err));
+                }
             }
+            drop(g);
         }
         Err(err) => {
             if mem_capacity > 0 {
@@ -1185,131 +1245,187 @@ fn profile_sync(
     Ok(RedisValue::NoReply)
 }
 
+/// Commit a successfully-executed write and replicate it. Runs under the
+/// GIL AND the outer L1-write guard `g` (GIL→L1 order), so the `commit`
+/// Arc-swap is fork-safe (#452) and commit+replicate are atomic vs. inline
+/// main-thread writers. Returns `(params_offset, execution_time_ms)` for
+/// telemetry.
+fn commit_and_replicate(
+    g: &mut ThreadedGraph,
+    ctx: &Context,
+    key_name: &Arc<str>,
+    query: &str,
+    mut wq: WriteQueryOk,
+) -> (usize, f64) {
+    let params_offset = wq.params_offset;
+    let execution_time_ms = wq.execution_time_ms;
+    // Apply the deferred index doc changes here, under the L1-write lock,
+    // BEFORE publishing the new matrix version — so a reader (L1-read) never
+    // observes the new index over the old graph. Both become visible only when
+    // this write guard is released. (Matches the C write-lock model.)
+    wq.deferred_indexes.commit(&wq.graph);
+    g.graph.commit(Arc::clone(&wq.graph));
+    // Signal the key as modified so WATCH gets triggered.
+    unsafe { ffi::signal_modified_key(ctx.ctx, key_name.as_bytes()) };
+    // Send replication while the GIL is held.
+    if wq.modified {
+        replicate_effects(ctx, key_name, wq.effects_buffer, query);
+    }
+    (params_offset, execution_time_ms)
+}
+
 pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
-    let g = graph.read();
-    if g.write_loop
+    if graph
+        .read()
+        .write_loop
         .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
-        .is_ok()
+        .is_err()
     {
-        drop(g);
-        loop {
-            // Acquire write lock per-message, releasing between messages.
-            // This allows BGSAVE's create_virtual_keys (which needs a read
-            // lock) to interleave between write operations.
-            let mut g = graph.write();
-            let Ok(msg) = g.receiver.try_recv() else {
-                g.write_loop.store(false, Ordering::Release);
-                if g.receiver.is_empty() {
-                    return;
+        return;
+    }
+    loop {
+        // Dequeue under a read lock — the channel and `write_loop` are
+        // self-synchronized, and holding only L1-read here lets reads and
+        // BGSAVE interleave between messages.
+        let msg = {
+            let g = graph.read();
+            let _l1 = graph::thread_id::L1HeldScope::new();
+            match g.receiver.try_recv() {
+                Ok(msg) => msg,
+                Err(_) => {
+                    g.write_loop.store(false, Ordering::Release);
+                    if g.receiver.is_empty() {
+                        return;
+                    }
+                    if g.write_loop
+                        .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
+                        .is_err()
+                    {
+                        return;
+                    }
+                    // A producer raced an enqueue after we saw empty; keep draining.
+                    continue;
                 }
-                if g.write_loop
-                    .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
-                    .is_err()
+            }
+        };
+        let WriteMessage {
+            bc,
+            query,
+            compact,
+            cached,
+            key_name,
+            timeout: per_query_timeout,
+            received_at,
+            enqueue_instant,
+            waiting_id,
+            is_ddl,
+            profile,
+        } = *msg;
+        let running_id = telemetry::transition_waiting_to_running(waiting_id);
+        let write_start = Instant::now();
+        let wait_ms = write_start.duration_since(enqueue_instant).as_secs_f64() * 1000.0;
+        let ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
+        let ctx = Context::new(ctx);
+        let mem_capacity = QUERY_MEM_CAPACITY.load(Ordering::Relaxed);
+        if mem_capacity > 0 {
+            reset_counter();
+            enable_tracking();
+        }
+
+        // Two-phase, GIL→L1 lock order (issue #726). The write loop must never
+        // hold L1-write while acquiring the GIL, or it deadlocks against an
+        // inline main-thread command holding the GIL and waiting for L1.
+        //
+        // Data writes: execute under L1-READ (GIL-free; matrices are MVCC and
+        // the inner MVCC slot serializes the single writer), then commit under
+        // GIL→L1-write. `commit` stays under the GIL so the Arc-swap is
+        // fork-safe (#452) and commit+replicate stay atomic.
+        //
+        // DDL (CREATE/DROP INDEX): eagerly calls RediSearch spec FFI (needs the
+        // GIL) inside execution, so it runs under GIL→L1-write from the start;
+        // `set_gil_held` makes the nested `GilGuard` a no-op instead of a
+        // (non-recursive) self-deadlock. DDL is brief — spec create; index
+        // population runs on the background indexer.
+        let res: Result<(usize, f64), String> = if is_ddl {
+            unsafe { ffi::lock_thread_safe_ctx(ctx.ctx) };
+            graph::thread_id::set_gil_held(true);
+            let out = {
+                let mut g = graph.write();
+                let _l1 = graph::thread_id::L1HeldScope::new();
+                match g.execute_query_write(&ctx, &query, compact, cached, per_query_timeout, profile)
                 {
-                    return;
+                    // execute_query_write releases the MVCC slot on failure.
+                    Ok(wq) => Ok(commit_and_replicate(&mut g, &ctx, &key_name, &query, wq)),
+                    Err(err) => Err(err),
                 }
-                // Retry with fresh lock acquisition.
-                drop(g);
-                continue;
             };
-            let WriteMessage {
-                bc,
-                query,
-                compact,
-                cached,
-                key_name,
-                timeout: per_query_timeout,
-                received_at,
-                enqueue_instant,
-                waiting_id,
-            } = *msg;
-            // Transition from waiting to running
-            let running_id = telemetry::transition_waiting_to_running(waiting_id);
-            let write_start = Instant::now();
-            let wait_ms = write_start.duration_since(enqueue_instant).as_secs_f64() * 1000.0;
-            let ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
-            let ctx = Context::new(ctx);
-            let mem_capacity = QUERY_MEM_CAPACITY.load(Ordering::Relaxed);
-            if mem_capacity > 0 {
-                reset_counter();
-                enable_tracking();
-            }
-            // Lock order:
-            //   outer RwLock<ThreadedGraph> write (acquired above)
-            //     → execute_query_write WITHOUT the GIL (matrix mutations
-            //       + RediSearch FFI live here; RediSearch's ForkGC
-            //       deadlocks against a held GIL during its fork cycle)
-            //     → success path: GIL → MvccGraph::commit + signal +
-            //       replicate (one window shared by everything that
-            //       needs the GIL).
-            //     → error path: rollback runs WITHOUT the GIL (atomic
-            //       store only). GIL acquired afterwards just for
-            //       reply_error.
-            //
-            // BGSAVE forks on the main thread which holds the GIL during
-            // command dispatch. Taking the GIL immediately before
-            // `commit` guarantees no writer is mid-Arc-swap in
-            // MvccGraph::commit when fork() runs — the original #452
-            // panic.
-            let res = g.execute_query_write(&ctx, &query, compact, cached, per_query_timeout);
-            if mem_capacity > 0 {
-                disable_tracking();
-            }
-            let write_wall_ms = write_start.elapsed().as_secs_f64() * 1000.0;
-            if let Some(rid) = running_id {
-                telemetry::unregister_running(rid);
-            }
+            graph::thread_id::set_gil_held(false);
+            unsafe { ffi::unlock_thread_safe_ctx(ctx.ctx) };
+            out
+        } else {
+            // Phase 1: execute holding only L1-READ (no GIL).
+            let res = {
+                let g = graph.read();
+                let _l1 = graph::thread_id::L1HeldScope::new();
+                g.execute_query_write(&ctx, &query, compact, cached, per_query_timeout, profile)
+            };
+            // Phase 2: commit+replicate under GIL→L1-write.
             match res {
                 Ok(wq) => {
                     unsafe { ffi::lock_thread_safe_ctx(ctx.ctx) };
-                    g.graph.commit(Arc::clone(&wq.graph));
-                    // Signal the key as modified so WATCH gets triggered.
-                    unsafe { ffi::signal_modified_key(ctx.ctx, key_name.as_bytes()) };
-                    // Send replication while GIL is held
-                    if wq.modified {
-                        replicate_effects(&ctx, &key_name, wq.effects_buffer, &query);
-                    }
-                    unsafe {
-                        ffi::unlock_thread_safe_ctx(ctx.ctx);
-                        ffi::free_thread_safe_context(ctx.ctx);
+                    graph::thread_id::set_gil_held(true);
+                    let out = {
+                        let mut g = graph.write();
+                        let _l1 = graph::thread_id::L1HeldScope::new();
+                        commit_and_replicate(&mut g, &ctx, &key_name, &query, wq)
                     };
-                    let query_text = &query[wq.params_offset..];
-                    let params_text = &query[..wq.params_offset];
-                    let exec_ms = wq.execution_time_ms;
-                    let report_ms = (write_wall_ms - exec_ms).max(0.0);
-
-                    let entry = telemetry::TelemetryEntry {
-                        received_at,
-                        query: telemetry::truncate(query_text.trim_start()),
-                        params: telemetry::truncate(params_text.trim()),
-
-                        wait_duration_ms: wait_ms,
-                        execution_duration_ms: exec_ms,
-                        report_duration_ms: report_ms,
-                        utilized_cache: cached,
-                        is_write: true,
-                        timed_out: false,
-                    };
-                    // Enqueue telemetry entry for background flusher
-                    telemetry::enqueue_entry(&key_name, entry);
-                    drop(bc);
+                    graph::thread_id::set_gil_held(false);
+                    unsafe { ffi::unlock_thread_safe_ctx(ctx.ctx) };
+                    Ok(out)
                 }
-                Err(err) => {
-                    g.graph.rollback();
-                    let cerr = ffi::sanitise_error(err);
-                    // reply_error on a blocked-client ThreadSafeContext
-                    // writes into the client's reply buffer; the buffer is
-                    // synchronized by the blocked-client machinery, so the
-                    // module GIL is not required.
-                    unsafe {
-                        ffi::reply_error(ctx.ctx, cerr.as_ptr());
-                        ffi::free_thread_safe_context(ctx.ctx);
-                    };
-                    drop(bc);
-                }
+                Err(err) => Err(err),
             }
-            // Release write lock after each message.
-            drop(g);
+        };
+
+        if mem_capacity > 0 {
+            disable_tracking();
+        }
+        let write_wall_ms = write_start.elapsed().as_secs_f64() * 1000.0;
+        if let Some(rid) = running_id {
+            telemetry::unregister_running(rid);
+        }
+        match res {
+            Ok((params_offset, exec_ms)) => {
+                unsafe { ffi::free_thread_safe_context(ctx.ctx) };
+                let query_text = &query[params_offset..];
+                let params_text = &query[..params_offset];
+                let report_ms = (write_wall_ms - exec_ms).max(0.0);
+                let entry = telemetry::TelemetryEntry {
+                    received_at,
+                    query: telemetry::truncate(query_text.trim_start()),
+                    params: telemetry::truncate(params_text.trim()),
+
+                    wait_duration_ms: wait_ms,
+                    execution_duration_ms: exec_ms,
+                    report_duration_ms: report_ms,
+                    utilized_cache: cached,
+                    is_write: true,
+                    timed_out: false,
+                };
+                telemetry::enqueue_entry(&key_name, entry);
+                drop(bc);
+            }
+            Err(err) => {
+                let cerr = ffi::sanitise_error(err);
+                // reply_error on a blocked-client ThreadSafeContext writes into
+                // the client's reply buffer; the buffer is synchronized by the
+                // blocked-client machinery, so the module GIL is not required.
+                unsafe {
+                    ffi::reply_error(ctx.ctx, cerr.as_ptr());
+                    ffi::free_thread_safe_context(ctx.ctx);
+                };
+                drop(bc);
+            }
         }
     }
 }

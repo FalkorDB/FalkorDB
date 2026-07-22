@@ -30,73 +30,42 @@
 //! The `total_graph_sz_mb` value is the sum of all other MB-rounded
 //! components, which avoids truncation discrepancies when clients verify
 //! the total against the individual parts.
+//!
+//! Sampling can be non-trivial, so like `GRAPH.QUERY`/`GRAPH.RECORD` the report
+//! is built on the thread pool with the client blocked; the main thread only
+//! resolves the graph key. Running inline on the main thread would also
+//! deadlock the server against a committing write (issue #726): the handler
+//! holds the GIL while waiting for the read lock, while the write holds the
+//! write lock and waits for the GIL.
 
-use crate::{graph_core::ThreadedGraph, redis_type::GRAPH_TYPE};
+use crate::{
+    graph_core::{BlockedClient, ThreadedGraph, ffi},
+    redis_type::GRAPH_TYPE,
+};
+use graph::threadpool::spawn;
 use parking_lot::RwLock;
-use redis_module::{Context, NextArg, RedisError, RedisResult, RedisString, RedisValue};
+use redis_module::{
+    Context, ContextFlags, NextArg, RedisError, RedisResult, RedisString, RedisValue,
+};
 use std::sync::Arc;
 
 const MB: usize = 1 << 20;
 
+/// The critical section: take the graph read lock, sample the attribute stores,
+/// and build the flat key-value reply array. Runs on a worker thread (or
+/// synchronously for MULTI/REPLICATED), never inline on the main thread under
+/// the GIL.
 #[allow(clippy::too_many_lines)]
-pub fn graph_memory(
-    ctx: &Context,
-    args: Vec<RedisString>,
+fn memory_report(
+    graph: &Arc<RwLock<ThreadedGraph>>,
+    samples: usize,
 ) -> RedisResult {
-    // GRAPH.MEMORY USAGE <key> [SAMPLES <count>]
-    // args[0] = "GRAPH.MEMORY"
-    let mut args = args.into_iter().skip(1);
-    let arg_count = args.len();
-
-    // Must have 2 or 4 remaining args: USAGE <key> [SAMPLES <n>]
-    if arg_count != 2 && arg_count != 4 {
-        return Err(RedisError::WrongArity);
-    }
-
-    // First arg must be "USAGE"
-    let subcmd = args.next_arg()?;
-    if !subcmd.to_string_lossy().eq_ignore_ascii_case("USAGE") {
-        return Err(RedisError::Str(
-            "ERR unknown subcommand. Try GRAPH.MEMORY USAGE <key> [SAMPLES <count>]",
-        ));
-    }
-
-    let key_name = args.next_arg()?;
-
-    // Parse optional SAMPLES <count>
-    let samples: usize = if arg_count == 4 {
-        let samples_kw = args.next_arg()?;
-        if !samples_kw.to_string_lossy().eq_ignore_ascii_case("SAMPLES") {
-            return Err(RedisError::Str("ERR expected SAMPLES keyword"));
-        }
-        let count_str = args.next_arg()?;
-        let count_s = count_str.to_string_lossy();
-        // Reject negative values (starts with '-')
-        if count_s.starts_with('-') {
-            return Err(RedisError::Str(
-                "ERR SAMPLES count must be a positive integer",
-            ));
-        }
-        let count = count_s
-            .parse::<usize>()
-            .map_err(|_| RedisError::Str("ERR SAMPLES count must be a positive integer"))?;
-        if count == 0 {
-            return Err(RedisError::Str(
-                "ERR SAMPLES count must be a positive integer",
-            ));
-        }
-        count
-    } else {
-        100
-    };
-
-    let key = ctx.open_key(&key_name);
-
-    let g = key
-        .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?
-        .ok_or(RedisError::Str("Graph does not exist"))?;
-
-    let report = g.read().graph.read().borrow().memory_usage_report(samples);
+    let report = graph
+        .read()
+        .graph
+        .read()
+        .borrow()
+        .memory_usage_report(samples);
 
     // Convert each component to MB using integer division, then compute total
     // as the sum of MB-rounded values (matches the C implementation, avoiding
@@ -193,4 +162,88 @@ pub fn graph_memory(
     out.push(RedisValue::Integer(indices_mb));
 
     Ok(RedisValue::Array(out))
+}
+
+pub fn graph_memory(
+    ctx: &Context,
+    args: Vec<RedisString>,
+) -> RedisResult {
+    // GRAPH.MEMORY USAGE <key> [SAMPLES <count>]
+    // args[0] = "GRAPH.MEMORY"
+    let mut args = args.into_iter().skip(1);
+    let arg_count = args.len();
+
+    // Must have 2 or 4 remaining args: USAGE <key> [SAMPLES <n>]
+    if arg_count != 2 && arg_count != 4 {
+        return Err(RedisError::WrongArity);
+    }
+
+    // First arg must be "USAGE"
+    let subcmd = args.next_arg()?;
+    if !subcmd.to_string_lossy().eq_ignore_ascii_case("USAGE") {
+        return Err(RedisError::Str(
+            "ERR unknown subcommand. Try GRAPH.MEMORY USAGE <key> [SAMPLES <count>]",
+        ));
+    }
+
+    let key_name = args.next_arg()?;
+
+    // Parse optional SAMPLES <count>
+    let samples: usize = if arg_count == 4 {
+        let samples_kw = args.next_arg()?;
+        if !samples_kw.to_string_lossy().eq_ignore_ascii_case("SAMPLES") {
+            return Err(RedisError::Str("ERR expected SAMPLES keyword"));
+        }
+        let count_str = args.next_arg()?;
+        let count_s = count_str.to_string_lossy();
+        // Reject negative values (starts with '-')
+        if count_s.starts_with('-') {
+            return Err(RedisError::Str(
+                "ERR SAMPLES count must be a positive integer",
+            ));
+        }
+        let count = count_s
+            .parse::<usize>()
+            .map_err(|_| RedisError::Str("ERR SAMPLES count must be a positive integer"))?;
+        if count == 0 {
+            return Err(RedisError::Str(
+                "ERR SAMPLES count must be a positive integer",
+            ));
+        }
+        count
+    } else {
+        100
+    };
+
+    let key = ctx.open_key(&key_name);
+    let graph = key
+        .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?
+        .ok_or(RedisError::Str("Graph does not exist"))?
+        .clone();
+
+    // Blocking clients are not allowed inside MULTI/EXEC, and replicated
+    // commands must complete before the handler returns (same rules as
+    // GRAPH.QUERY) — run synchronously in those cases.
+    if ctx.get_flags().contains(ContextFlags::MULTI)
+        || ctx.get_flags().contains(ContextFlags::REPLICATED)
+    {
+        return memory_report(&graph, samples);
+    }
+
+    // Run on the thread pool (issue #726): executing on the main thread holds
+    // the GIL while waiting for the read lock, which deadlocks against a
+    // committing write holding the write lock and waiting for the GIL.
+    let bc = unsafe { BlockedClient::new(ctx.ctx) };
+    spawn(
+        move || {
+            let ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
+            let ctx = Context::new(ctx);
+            let _ = ctx.reply(memory_report(&graph, samples));
+            drop(bc);
+            unsafe { ffi::free_thread_safe_context(ctx.ctx) };
+        },
+        None,
+    );
+
+    Ok(RedisValue::NoReply)
 }

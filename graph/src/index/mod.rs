@@ -921,6 +921,26 @@ impl GilGuard {
             Some(Self(ctx))
         }
     }
+
+    /// Acquire the GIL only if this thread does not already hold it. Returns
+    /// `None` (a no-op, GIL untouched) when running on the main thread (which
+    /// holds the GIL implicitly during command dispatch) or on a worker that
+    /// already took the GIL explicitly (`thread_id::gil_held()`). The module
+    /// GIL is non-recursive, so a nested acquire would self-deadlock — this is
+    /// how spec-lifecycle FFI (CREATE/DROP INDEX, field registration) stays
+    /// safe when reached from the write loop's GIL-held commit/DDL window.
+    ///
+    /// # Safety
+    /// Same contract as [`GilGuard::acquire`].
+    unsafe fn acquire_unless_held() -> Option<Self> {
+        if crate::thread_id::is_main_thread() || crate::thread_id::gil_held() {
+            None
+        } else {
+            // Lock-order guard (#726): must not hold L1 when acquiring the GIL.
+            crate::thread_id::assert_gil_lock_order();
+            unsafe { Self::acquire() }
+        }
+    }
 }
 
 impl Drop for GilGuard {
@@ -978,11 +998,7 @@ impl Drop for OwnedIndex {
         // which mutates Redis timer state; off-main-thread callers must hold
         // the module GIL (mirrors `Index::drop` / `create_rs_index`).
         unsafe {
-            let _gil = if crate::thread_id::is_main_thread() {
-                None
-            } else {
-                GilGuard::acquire()
-            };
+            let _gil = GilGuard::acquire_unless_held();
             RediSearch_IndexRelease(self.0.as_ptr());
         }
     }
@@ -1029,11 +1045,7 @@ impl Drop for SpecHandle {
         // so hand it the raw pointer via `into_raw` to avoid a double release
         // from `OwnedIndex`'s own Drop.
         unsafe {
-            let _gil = if crate::thread_id::is_main_thread() {
-                None
-            } else {
-                GilGuard::acquire()
-            };
+            let _gil = GilGuard::acquire_unless_held();
             let owned = std::mem::ManuallyDrop::take(&mut self.0);
             RediSearch_DropIndex(owned.into_raw());
         }
@@ -1138,11 +1150,7 @@ impl Index {
         // GCContext_Start), which mutates Redis-internal timer state. Off-thread
         // callers (background populate / write worker) must hold the module GIL.
         unsafe {
-            let _gil = if crate::thread_id::is_main_thread() {
-                None
-            } else {
-                GilGuard::acquire()
-            };
+            let _gil = GilGuard::acquire_unless_held();
             let options = RediSearch_CreateIndexOptions();
             RediSearch_IndexOptionsSetGCPolicy(options, GC_POLICY_FORK as _);
 
@@ -1226,11 +1234,7 @@ impl Index {
             // is why the crash is reliably reproduced only in coverage builds.
             // Mirrors the GIL guards in `create_rs_index`, `Index::drop`, and
             // `OwnedIndex::drop`.
-            let _gil = if crate::thread_id::is_main_thread() {
-                None
-            } else {
-                GilGuard::acquire()
-            };
+            let _gil = GilGuard::acquire_unless_held();
             for field in fields.values().flat_map(|f| f.iter()) {
                 match field.ty {
                     IndexType::Range => {

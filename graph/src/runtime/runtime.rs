@@ -455,6 +455,14 @@ impl<'a> Runtime<'a> {
         self.pending.borrow_mut().commit_deferred_indexes(&self.g);
     }
 
+    /// Extract the deferred index operations (leaving the runtime's pending
+    /// empty) so the caller can apply them under the commit (L1-write) lock,
+    /// keeping the index and the committed graph version consistent for
+    /// concurrent readers. See [`crate::runtime::pending::DeferredIndexes`].
+    pub fn take_deferred_indexes(&self) -> crate::runtime::pending::DeferredIndexes {
+        self.pending.borrow_mut().take_deferred_indexes()
+    }
+
     pub fn query(&'a self) -> Result<ResultSummary<'a>, String> {
         let start = Instant::now();
         let idx = self.plan.root().idx();
