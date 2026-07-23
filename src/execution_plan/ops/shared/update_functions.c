@@ -83,6 +83,19 @@ static void _WriteUpdatesToEffectsBuffer
 	}
 }
 
+// _Graph_EntityIsDeleted is used as a pre check for candidate entities
+// prior to actually deleting them, the delete operation considers an entity to
+// be marked as deleted if:
+// 1. its attribute-set is NULL (cheap check)
+// 2. the datablock marked that entity as deleted
+static inline bool _Graph_EntityIsDeleted
+(
+	GraphEntity *e
+) {
+	ASSERT (e != NULL) ;
+	return (e->attributes == NULL || DataBlock_ItemIsDeleted (e->attributes)) ;
+}
+
 static void _ClearAttributeSet
 (
 	GraphEntity *e,
@@ -840,7 +853,7 @@ bool EvalUpdates
 			// deletion takes precedence over update
 			// if attributes is NULL, the entity was deleted earlier in the
 			// query.
-			if (unlikely (entity->attributes == NULL || Graph_EntityIsDeleted (entity))) {
+			if (unlikely (_Graph_EntityIsDeleted(entity))) {
 				continue ;
 			}
 
