@@ -698,3 +698,23 @@ class testQueryValidationFlow(FlowTestsBase):
 
         q = "OPTIONAL MATCH (a) RETURN a UNION MATCH (a) RETURN a"
         self.graph.query(q)
+
+    # Repro for issue #2196: this query shape must not terminate the server.
+    def test46_merge_duplicate_properties_does_not_crash(self):
+        self.graph.query("CREATE(),()")
+
+        q = "OPTIONAL MATCH(a) MERGE(b{x:1,x:2})<-[:S]-(c) ON MATCH SET a:L"
+        try:
+            self.graph.query(q)
+        except redis.exceptions.ResponseError:
+            pass
+
+        q = "MATCH(a) MERGE(b{x:1,x:2}) ON MATCH SET a:L"
+        try:
+            self.graph.query(q)
+        except redis.exceptions.ResponseError:
+            pass
+        # Verify the server remains alive after the repro query.
+        res = self.graph.query("RETURN 1")
+        self.env.assertEquals(res.result_set, [[1]])
+
