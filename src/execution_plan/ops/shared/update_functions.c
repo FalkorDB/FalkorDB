@@ -838,7 +838,9 @@ bool EvalUpdates
 
 			// a concurrently deleted entity is silently skipped
 			// deletion takes precedence over update
-			if (unlikely (Graph_EntityIsDeleted (entity))) {
+			// if attributes is NULL, the entity was deleted earlier in the
+			// query.
+			if (unlikely (entity->attributes == NULL || Graph_EntityIsDeleted (entity))) {
 				continue ;
 			}
 
