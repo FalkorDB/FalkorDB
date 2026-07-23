@@ -182,3 +182,19 @@ def _profile_ddl(r):
 
 def test_profile_ddl_concurrent_with_writes():
     _hammer_under_write_load(_profile_ddl)
+
+
+def _index_scan_write(r):
+    # A write whose plan includes an index scan (n.id is indexed). The scan's
+    # cloned RediSearch index handle (OwnedIndex) is dropped mid-execute while the
+    # write loop holds L1-read. Before the reaper fix, OwnedIndex::drop acquired
+    # the module GIL there — an L1->GIL inversion (#726) that deadlocked against a
+    # main-thread GIL->L1 command. Now the release is deferred to the index-reaper
+    # thread (holds only the GIL). Must not hang/crash under concurrent writes.
+    r.execute_command("GRAPH.QUERY", "test", "MATCH (n:Node) WHERE n.id = 42 SET n.hit = 1")
+
+
+def test_index_scan_write_concurrent_with_writes():
+    # Index on n.id so the MATCH above plans as a NodeByIndexScan.
+    common.g.query("CREATE INDEX FOR (n:Node) ON (n.id)")
+    _hammer_under_write_load(_index_scan_write)

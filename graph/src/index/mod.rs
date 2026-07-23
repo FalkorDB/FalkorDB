@@ -994,11 +994,24 @@ impl OwnedIndex {
 
 impl Drop for OwnedIndex {
     fn drop(&mut self) {
-        // The final release frees the spec -> IndexSpec_Free -> RM_StopTimer,
-        // which mutates Redis timer state; off-main-thread callers must hold
-        // the module GIL (mirrors `Index::drop` / `create_rs_index`).
+        // Release this strong reference to the RediSearch spec.
+        //
+        // This never needs the module GIL, even for the final (spec-freeing)
+        // release. `RediSearch_IndexRelease` -> `StrongRef_Release` -> (last ref)
+        // `IndexSpec_Free` touches NO Redis timer: `IndexSpec_Free` asserts the
+        // temporary-index timer is already stopped (LLAPI specs never set one,
+        // and that timer is stopped only on the main thread in
+        // `IndexSpec_RemoveFromGlobals`) and offloads the memory free to a
+        // cleanup pool; the ForkGC timer self-terminates by simply not
+        // rescheduling once it observes the spec was freed (RediSearch `gc.c`
+        // `taskCallback`). Only index *creation* needs the GIL
+        // (`create_rs_index` -> `GCContext_Start` -> `RM_CreateTimer`).
+        //
+        // Being GIL-free is what makes this safe under #726: an index-scan
+        // iterator can drop its cloned handle mid-query-execute while holding
+        // the per-graph L1 (read) lock without ever acquiring the GIL, so there
+        // is no L1->GIL inversion — and no reaper/deferral is needed.
         unsafe {
-            let _gil = GilGuard::acquire_unless_held();
             RediSearch_IndexRelease(self.0.as_ptr());
         }
     }
