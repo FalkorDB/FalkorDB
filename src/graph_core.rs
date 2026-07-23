@@ -613,7 +613,11 @@ impl ThreadedGraph {
             || result.stats.indexes_dropped > 0
             || runtime.effects_count.get() > 0;
         self.slow_log.add(
-            if profile { "GRAPH.PROFILE" } else { "GRAPH.QUERY" },
+            if profile {
+                "GRAPH.PROFILE"
+            } else {
+                "GRAPH.QUERY"
+            },
             query,
             params_offset,
             latency,
@@ -682,7 +686,6 @@ impl ThreadedGraph {
         reply_profile(ctx, &runtime, &plan);
         Ok(ProfileDetect::ReadReplied)
     }
-
 }
 
 /// Reply with profile output: DFS walk of the plan tree, each line annotated
@@ -1352,8 +1355,14 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
             let out = {
                 let mut g = graph.write();
                 let _l1 = graph::thread_id::L1HeldScope::new();
-                match g.execute_query_write(&ctx, &query, compact, cached, per_query_timeout, profile)
-                {
+                match g.execute_query_write(
+                    &ctx,
+                    &query,
+                    compact,
+                    cached,
+                    per_query_timeout,
+                    profile,
+                ) {
                     // execute_query_write releases the MVCC slot on failure.
                     Ok(wq) => Ok(commit_and_replicate(&mut g, &ctx, &key_name, &query, wq)),
                     Err(err) => Err(err),
