@@ -91,10 +91,10 @@ use super::{
     GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode, GrB_SECOND_UINT64, GrB_Type,
     GrB_UINT64, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL,
     GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64, GxB_Container_free, GxB_Container_new,
-    GxB_Global_Option_set_INT32, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_new,
-    GxB_JIT_Control, GxB_Matrix_fprint, GxB_Matrix_isStoredElement, GxB_Matrix_memoryUsage,
-    GxB_Matrix_type, GxB_NTHREADS, GxB_Option_Field, GxB_Print_Level, GxB_init,
-    GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
+    GxB_Global_Option_set_INT32, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_get_UINT64,
+    GxB_Iterator_new, GxB_JIT_Control, GxB_Matrix_fprint, GxB_Matrix_isStoredElement,
+    GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_NTHREADS, GxB_Option_Field, GxB_Print_Level,
+    GxB_init, GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
     GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol, GxB_rowIterator_nextRow,
     GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
 };
@@ -398,6 +398,13 @@ impl<T> Decode<19> for Matrix<T> {
             let info = GxB_load_Matrix_from_Container(m, container, null_mut());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
 
+            // The hyper-hash (Y) was nullified above and is not serialized, so
+            // a hypersparse matrix comes back with GxB_WILL_WAIT set. Rebuild
+            // it now so `pending()` reflects real pending work (no-op for
+            // non-hypersparse matrices).
+            let info = GrB_Matrix_wait(m, GrB_WaitMode::GrB_MATERIALIZE as _);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+
             let mut c = container;
             let info = GxB_Container_free(&raw mut c);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -508,6 +515,30 @@ impl<T> Matrix<T> {
         j: u64,
     ) -> bool {
         unsafe { GxB_Matrix_isStoredElement(*self.m, i, j) == GrB_Info::GrB_SUCCESS }
+    }
+
+    /// Number of positions stored in both `self` and `b` (structural
+    /// intersection size). `ANY_PAIR` only inspects the sparsity pattern, so
+    /// the element types of the operands are never read.
+    #[must_use]
+    pub fn intersection_nvals<TB>(
+        &self,
+        b: &Matrix<TB>,
+    ) -> u64 {
+        let t = Matrix::<bool>::new(self.nrows(), self.ncols());
+        unsafe {
+            let info = GrB_Matrix_eWiseMult_Semiring(
+                *t.m,
+                null_mut(),
+                null_mut(),
+                GxB_ANY_PAIR_BOOL,
+                *self.m,
+                *b.m,
+                null_mut(),
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        t.nvals()
     }
 
     #[must_use]
@@ -827,6 +858,29 @@ impl Matrix<u64> {
         self.has_pending.store(true, Ordering::Relaxed);
     }
 
+    /// `self = self ⊕ b`, value-preserving: on intersecting entries `b`'s
+    /// value wins (`SECOND`). Unlike the bool-semiring [`Self::element_wise_add`],
+    /// this keeps u64 values intact, so a delta-plus layer that shadows its
+    /// base can be merged with the live (`dp`) value taking precedence.
+    pub fn element_wise_add_second(
+        &mut self,
+        b: &Self,
+    ) {
+        unsafe {
+            let info = GrB_Matrix_eWiseAdd_BinaryOp(
+                *self.m,
+                null_mut(),
+                null_mut(),
+                GrB_SECOND_UINT64,
+                *self.m,
+                *b.m,
+                null_mut(),
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+
     /// Read the UINT64 value at (i, j). Returns `None` if no entry exists.
     #[must_use]
     pub fn get(
@@ -973,35 +1027,35 @@ impl Matrix<bool> {
         self.has_pending.store(true, Ordering::Relaxed);
     }
 
-    /// Delta-aware matrix-multiply: `self = self * vm` operating directly on
-    /// the versioned matrix's base/dp/dm components, mirroring C FalkorDB's
-    /// `Delta_mxm`.
+    /// Delta-aware matrix-multiply: `self = self * (m, dp, dm)` operating
+    /// directly on the base/dp/dm layers of a versioned matrix (or a
+    /// `Tensor`'s forward adjacency), mirroring C FalkorDB's `Delta_mxm`.
     ///
     /// Computes `(self * (m + dp))<!(self * dm)>` without first materializing
     /// the merged matrix. In the common read-only case (`dp.nvals() == 0 &&
-    /// dm.nvals() == 0`) this is a single `GrB_mxm` against `vm.m()`, avoiding
-    /// the eWiseAdd that `to_matrix()` would otherwise pay.
+    /// dm.nvals() == 0`) this is a single `GrB_mxm` against `m`, avoiding
+    /// the eWiseAdd that a materialized merge would otherwise pay.
     ///
-    /// Accepts a versioned matrix of any element type: the `ANY_PAIR_BOOL`
-    /// semiring only inspects the sparsity pattern, so a UINT64 relationship
-    /// matrix (inline edge-id values) traverses identically to a BOOL one.
+    /// Accepts layers of any element type: the `ANY_PAIR_BOOL` semiring only
+    /// inspects the sparsity pattern, so a UINT64 relationship matrix (inline
+    /// edge-id values) traverses identically to a BOOL one.
     pub fn delta_lmxm<TV>(
         &mut self,
-        vm: &super::versioned_matrix::VersionedMatrix<TV>,
+        m: &Matrix<TV>,
+        dp: &Matrix<TV>,
+        dm: &Matrix<bool>,
     ) {
-        let dp = vm.dp();
-        let dm = vm.dm();
         let dp_nvals = dp.nvals();
         let dm_nvals = dm.nvals();
 
         if dp_nvals == 0 && dm_nvals == 0 {
-            // Hot path: clean snapshot, just self * vm.m()
-            self.lmxm(vm.m());
+            // Hot path: clean snapshot, just self * m
+            self.lmxm(m);
             return;
         }
 
         let nrows = self.nrows();
-        let ncols = vm.ncols();
+        let ncols = m.ncols();
 
         let mut mask: Option<Matrix<bool>> = None;
         if dm_nvals > 0 {
@@ -1053,7 +1107,7 @@ impl Matrix<bool> {
                 null_mut(),
                 GxB_ANY_PAIR_BOOL,
                 *self.m,
-                *vm.m().m,
+                *m.m,
                 desc,
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -1082,15 +1136,15 @@ impl Matrix<bool> {
 pub trait IterExtract {
     type Item;
 
-    /// Extract the item from the current iterator position.
+    /// Extract the item at the iterator's current position (an O(1) cursor
+    /// read — no per-entry matrix lookup).
     ///
     /// # Safety
-    /// `m` must be a valid `GrB_Matrix` and the iterator must be positioned on a valid entry.
-    unsafe fn extract(
-        m: GrB_Matrix,
-        row: u64,
-        col: u64,
-    ) -> Self::Item;
+    /// `it` must be a valid attached `GxB_Iterator` positioned on a valid entry.
+    unsafe fn extract(it: GxB_Iterator) -> Self::Item;
+
+    /// `(row, col)` position of an item, for sorted-merge ordering.
+    fn pos(item: &Self::Item) -> (u64, u64);
 }
 
 /// Extracts `(row, col)` pairs from a boolean matrix.
@@ -1099,12 +1153,16 @@ pub struct BoolExtract;
 impl IterExtract for BoolExtract {
     type Item = (u64, u64);
 
-    unsafe fn extract(
-        _m: GrB_Matrix,
-        row: u64,
-        col: u64,
-    ) -> Self::Item {
-        (row, col)
+    unsafe fn extract(it: GxB_Iterator) -> Self::Item {
+        unsafe {
+            let row = GxB_rowIterator_getRowIndex(it);
+            let col = GxB_rowIterator_getColIndex(it);
+            (row, col)
+        }
+    }
+
+    fn pos(item: &Self::Item) -> (u64, u64) {
+        *item
     }
 }
 
@@ -1114,14 +1172,17 @@ pub struct Uint64Extract;
 impl IterExtract for Uint64Extract {
     type Item = (u64, u64, u64);
 
-    unsafe fn extract(
-        m: GrB_Matrix,
-        row: u64,
-        col: u64,
-    ) -> Self::Item {
-        let mut val: u64 = 0;
-        unsafe { GrB_Matrix_extractElement_UINT64(&raw mut val, m, row, col) };
-        (row, col, val)
+    unsafe fn extract(it: GxB_Iterator) -> Self::Item {
+        unsafe {
+            let row = GxB_rowIterator_getRowIndex(it);
+            let col = GxB_rowIterator_getColIndex(it);
+            let val = GxB_Iterator_get_UINT64(it);
+            (row, col, val)
+        }
+    }
+
+    fn pos(item: &Self::Item) -> (u64, u64) {
+        (item.0, item.1)
     }
 }
 
@@ -1240,9 +1301,7 @@ impl<E: IterExtract> Iterator for Iter<E> {
             return None;
         }
         unsafe {
-            let row = GxB_rowIterator_getRowIndex(self.inner);
-            let col = GxB_rowIterator_getColIndex(self.inner);
-            let item = E::extract(*self.m, row, col);
+            let item = E::extract(self.inner);
             if GxB_rowIterator_nextCol(self.inner) != GrB_Info::GrB_SUCCESS {
                 let mut info = GxB_rowIterator_nextRow(self.inner);
                 debug_assert!(
