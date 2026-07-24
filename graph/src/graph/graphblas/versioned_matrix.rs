@@ -46,10 +46,12 @@
 //!       no  --> remove (i,j) from dp   (undo pending add)
 //! ```
 //!
-//! UINT64 matrices additionally support in-place *value* updates of a
-//! committed entry: `set` masks the old entry in `dm` and writes the new
-//! value to `dp`, so `dp` never shadows a live `m` entry (see the
-//! `VersionedMatrix<u64>` impl).
+//! UINT64-valued layers (e.g. `Tensor`'s forward adjacency, which owns its
+//! own `m`/`dp`/`dm` triple) additionally support in-place *value* updates of
+//! a committed entry: the new value is written to `dp`, *shadowing* the live
+//! `m` entry (no `dm` mask — `dm` marks pure deletions only, so `dp ∩ dm = ∅`
+//! and `dm ⊆ m`). [`Iter`]'s sorted merge yields the live `dp` value for
+//! shadowed pairs and skips the stale `m` entry.
 //!
 //! ## Flush
 //!
@@ -59,9 +61,12 @@
 //!
 //! ## Iterator
 //!
-//! [`Iter`] chains the base matrix iterator (skipping entries present in `dm`)
-//! with the delta-plus iterator, producing the effective state without
-//! materializing a merged matrix.
+//! [`Iter`] performs a three-way sorted merge over the `m`, `dp`, and `dm`
+//! iterators (GraphBLAS row iterators yield ascending `(row, col)` order):
+//! `m` entries matched by the `dm` lookahead are dropped, `dp` entries are
+//! interleaved in order (winning over a shadowed `m` entry at the same
+//! position), producing the effective state — sorted by `(row, col)` —
+//! without materializing a merged matrix or issuing per-entry point lookups.
 
 use super::{
     GxB_Print_Level,
@@ -70,7 +75,7 @@ use super::{
 };
 use crate::graph::{
     cow::Cow,
-    graphblas::matrix::{BoolExtract, IterExtract, Uint64Extract},
+    graphblas::matrix::{BoolExtract, IterExtract},
 };
 
 /// A matrix with MVCC delta tracking for snapshot isolation.
@@ -363,133 +368,6 @@ impl<T> Dup<Self> for VersionedMatrix<T> {
     }
 }
 
-/// UINT64-valued overlay support.
-///
-/// A UINT64 `VersionedMatrix` carries a `u64` *value* at each `(i, j)` (e.g. an
-/// edge id) rather than a plain boolean presence bit. The base `m` and
-/// delta-plus `dp` are UINT64-typed; the delta-minus `dm` stays BOOL (it is a
-/// pure deletion mask).
-///
-/// Unlike the bool model, a committed entry's *value* can change in place
-/// (e.g. an edge id changes on multi-edge promotion, or delete-then-re-add
-/// within one transaction). [`Self::set`] handles this by masking the old
-/// committed entry in `dm` and writing the new value to `dp`, preserving the
-/// no-shadow invariant `dp ∩ (m ∖ dm) = ∅`: the effective content is always
-/// `(m ∖ dm) ∪ dp` with the union disjoint, so iterators and `nvals()` need
-/// no overlap handling. Note this means `dp ∩ dm` may be non-empty (an
-/// in-place update has the pair in both), unlike the bool model.
-impl VersionedMatrix<u64> {
-    /// Construct a UINT64-valued versioned matrix: `m`/`dp` UINT64, `dm` BOOL.
-    #[must_use]
-    pub fn new(
-        nrows: u64,
-        ncols: u64,
-    ) -> Self {
-        Self {
-            m: Cow::new(Matrix::<u64>::new(nrows, ncols)),
-            dp: Cow::new(Matrix::<u64>::new(nrows, ncols)),
-            dm: Cow::new(Matrix::<bool>::new(nrows, ncols)),
-        }
-    }
-
-    /// Stream effective UINT64 `(row, col, value)` triples over rows in
-    /// `[min_row, max_row]`: `(m ∖ dm) ∪ dp`.
-    #[must_use]
-    pub fn iter(
-        &self,
-        min_row: u64,
-        max_row: u64,
-    ) -> Iter<Uint64Extract> {
-        self.wait();
-        Iter::<Uint64Extract>::new(self, min_row, max_row)
-    }
-
-    /// Structure-only `(row, col)` iterator over the effective matrix,
-    /// ignoring the stored edge-id values. Same semantics as the bool
-    /// [`VersionedMatrix::iter`].
-    #[must_use]
-    pub fn structural_iter(
-        &self,
-        min_row: u64,
-        max_row: u64,
-    ) -> Iter {
-        self.wait();
-        Iter::<BoolExtract>::new(self, min_row, max_row)
-    }
-
-    /// Write `value` at `(i, j)`: the new value lands in `dp`, and if the
-    /// committed base holds an entry at `(i, j)` it is masked in `dm` so the
-    /// old value never shadows the new one (`dp ∩ (m ∖ dm) = ∅`).
-    pub fn set(
-        &mut self,
-        i: u64,
-        j: u64,
-        value: u64,
-    ) {
-        debug_assert!(!self.m.pending());
-        self.dp.set(i, j, value);
-        if self.m.contains(i, j) {
-            self.dm.set(i, j, true);
-        }
-    }
-
-    /// Bulk UINT64 set. Unlike per-element [`VersionedMatrix::set`] callers,
-    /// this checks base emptiness once up front and never calls `get`/`wait`
-    /// per entry, so it stays O(n) for a batch of `n` writes (critical for
-    /// bulk edge creation).
-    pub fn set_all(
-        &mut self,
-        entries: impl Iterator<Item = (u64, u64, u64)>,
-    ) {
-        debug_assert!(!self.m.pending());
-        if self.m.nvals() == 0 {
-            for (i, j, v) in entries {
-                self.dp.set(i, j, v);
-            }
-        } else {
-            for (i, j, v) in entries {
-                self.dp.set(i, j, v);
-                if self.m.contains(i, j) {
-                    self.dm.set(i, j, true);
-                }
-            }
-        }
-    }
-
-    /// Effective UINT64 value at `(i, j)`: `dp` wins, then `m` unless masked by
-    /// `dm`. Returns `None` if absent or deleted.
-    #[must_use]
-    pub fn get(
-        &self,
-        i: u64,
-        j: u64,
-    ) -> Option<u64> {
-        self.wait();
-        if let Some(v) = self.dp.get(i, j) {
-            return Some(v);
-        }
-        if self.dm.nvals() != 0 && self.dm.get(i, j).is_some() {
-            return None;
-        }
-        self.m.get(i, j)
-    }
-
-    /// Remove `(i, j)` (value-agnostic): drop any pending add and mask the
-    /// committed entry as deleted.
-    pub fn remove(
-        &mut self,
-        i: u64,
-        j: u64,
-    ) {
-        if self.dp.get(i, j).is_some() {
-            self.dp.remove(i, j);
-        }
-        if self.m.get(i, j).is_some() {
-            self.dm.set(i, j, true);
-        }
-    }
-}
-
 impl VersionedMatrix<bool> {
     /// Transposes the matrix.
     ///
@@ -531,45 +409,72 @@ impl<V> Decode<19> for VersionedMatrix<V> {
 
 pub struct Iter<E: IterExtract = BoolExtract> {
     mit: matrix::Iter<E>,
+    /// Lookahead on `mit` (buffered while waiting for the merge to pick it).
+    m_next: Option<E::Item>,
     /// Delta-plus iterator. Lazily left `None` when `dp` is empty (the common
     /// read-only hot path on a freshly loaded graph) so we skip allocating and
     /// freeing a `GxB_Iterator` that would never yield anything. `dp` is a
     /// stable read snapshot for the life of this iterator, so once `None` it
     /// stays `None` across `seek` calls.
     dpit: Option<matrix::Iter<E>>,
-    dm: Cow<Matrix<bool>>,
-    /// True when the deletion mask is empty, so the `m` phase can stream `mit`
-    /// without per-edge `dm` lookups. Hot path for read-only queries on a
-    /// freshly loaded graph.
-    dm_empty: bool,
+    /// Lookahead on `dpit`.
+    dp_next: Option<E::Item>,
+    /// Delta-minus iterator, `None` when `dm` is empty (same rationale as
+    /// `dpit`).
+    dmit: Option<matrix::Iter<BoolExtract>>,
+    /// Lookahead on `dmit`.
+    dm_next: Option<(u64, u64)>,
 }
 
 unsafe impl<E: IterExtract> Send for Iter<E> {}
 unsafe impl<E: IterExtract> Sync for Iter<E> {}
 
 impl<E: IterExtract> Iter<E> {
-    /// Streams the effective content `(m ∖ dm) ∪ dp` — a disjoint union
-    /// thanks to the no-shadow invariant, so the `m` phase only needs the
-    /// `dm` mask. Valid for a `VersionedMatrix` of any element type when
-    /// `E = BoolExtract` (only the sparsity pattern is read).
+    /// Streams the effective content `(m ∖ dm) ∪ dp` as a sorted merge of the
+    /// three layer iterators. Valid for a `VersionedMatrix` of any element
+    /// type when `E = BoolExtract` (only the sparsity pattern is read).
     fn new<V>(
         vm: &VersionedMatrix<V>,
         min_row: u64,
         max_row: u64,
     ) -> Self {
+        Self::from_layers(&vm.m, &vm.dp, &vm.dm, min_row, max_row)
+    }
+
+    /// Build the effective-content iterator directly from the three delta
+    /// layers, for owners that manage `m`/`dp`/`dm` themselves (e.g.
+    /// `Tensor`'s forward adjacency). Callers must have waited `dp`/`dm`.
+    /// When `dp` shadows a committed `m` pair (an in-place update with no
+    /// `dm` mask), the merge yields the live `dp` value and skips the `m`
+    /// entry.
+    pub(crate) fn from_layers<V>(
+        m: &Matrix<V>,
+        dp: &Matrix<V>,
+        dm: &Cow<Matrix<bool>>,
+        min_row: u64,
+        max_row: u64,
+    ) -> Self {
+        let mut dmit = if dm.nvals() == 0 {
+            None
+        } else {
+            Some(matrix::Iter::<BoolExtract>::new(&**dm, min_row, max_row))
+        };
+        let dm_next = dmit.as_mut().and_then(Iterator::next);
         Self {
-            mit: matrix::Iter::new(&vm.m, min_row, max_row),
-            dpit: if vm.dp.nvals() == 0 {
+            mit: matrix::Iter::new(m, min_row, max_row),
+            m_next: None,
+            dpit: if dp.nvals() == 0 {
                 None
             } else {
-                Some(matrix::Iter::new(&vm.dp, min_row, max_row))
+                Some(matrix::Iter::new(dp, min_row, max_row))
             },
-            dm: vm.dm.clone(),
-            dm_empty: vm.dm.nvals() == 0,
+            dp_next: None,
+            dmit,
+            dm_next,
         }
     }
 
-    /// Re-seek both inner GraphBLAS iterators to a new row range without
+    /// Re-seek the inner GraphBLAS iterators to a new row range without
     /// re-allocating them. Hot-loop callers (e.g. `CondTraverseOp` and
     /// `ExpandInto` looking up edges by `(src, dst)`) use this to amortize
     /// the per-pair iterator allocation.
@@ -579,41 +484,64 @@ impl<E: IterExtract> Iter<E> {
         max_row: u64,
     ) {
         self.mit.seek(min_row, max_row);
+        self.m_next = None;
         if let Some(dpit) = &mut self.dpit {
             dpit.seek(min_row, max_row);
         }
+        self.dp_next = None;
+        if let Some(dmit) = &mut self.dmit {
+            dmit.seek(min_row, max_row);
+            self.dm_next = dmit.next();
+        }
     }
 }
 
-impl Iterator for Iter<BoolExtract> {
-    type Item = (u64, u64);
+/// Three-way sorted merge over the layer iterators. GraphBLAS row iterators
+/// yield entries in ascending `(row, col)` order, so the output is sorted by
+/// `(row, col)` too. `m` entries masked by `dm` are dropped; when `dp` holds
+/// the same pair as `m` (shadow), the live `dp` item wins.
+impl<E: IterExtract> Iterator for Iter<E> {
+    type Item = E::Item;
 
-    /// Advances the iterator and returns the next element in the matrix.
-    ///
-    /// # Returns
-    /// - `Some((u64, u64))`: The next element in the matrix.
-    /// - `None`: The iterator is depleted.
-    fn next(&mut self) -> Option<Self::Item> {
-        for (i, j) in &mut self.mit {
-            if !self.dm_empty && self.dm.get(i, j).is_some() {
-                continue; // deleted
-            }
-            return Some((i, j));
+    fn next(&mut self) -> Option<E::Item> {
+        if self.m_next.is_none() {
+            self.m_next = self.mit.next();
         }
-        self.dpit.as_mut().and_then(Iterator::next)
-    }
-}
-
-impl Iterator for Iter<Uint64Extract> {
-    type Item = (u64, u64, u64);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        for (i, j, v) in &mut self.mit {
-            if !self.dm_empty && self.dm.contains(i, j) {
-                continue; // deleted (or overridden in-place; dp has the new value)
+        // Skip m entries deleted by dm (both streams ascending, dm ⊆ m).
+        while let Some(m) = &self.m_next {
+            let mp = E::pos(m);
+            while let Some(dm) = self.dm_next {
+                if dm < mp {
+                    self.dm_next = self.dmit.as_mut().and_then(Iterator::next);
+                } else {
+                    break;
+                }
             }
-            return Some((i, j, v));
+            if self.dm_next == Some(mp) {
+                self.dm_next = self.dmit.as_mut().and_then(Iterator::next);
+                self.m_next = self.mit.next();
+            } else {
+                break;
+            }
         }
-        self.dpit.as_mut().and_then(Iterator::next)
+        if self.dp_next.is_none() {
+            self.dp_next = self.dpit.as_mut().and_then(Iterator::next);
+        }
+        match (&self.m_next, &self.dp_next) {
+            (Some(m), Some(dp)) => {
+                let mp = E::pos(m);
+                let dpp = E::pos(dp);
+                if dpp <= mp {
+                    if dpp == mp {
+                        self.m_next = None; // shadowed; dp yields the live value
+                    }
+                    self.dp_next.take()
+                } else {
+                    self.m_next.take()
+                }
+            }
+            (Some(_), None) => self.m_next.take(),
+            (None, _) => self.dp_next.take(),
+        }
     }
 }
