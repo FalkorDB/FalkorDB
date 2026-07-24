@@ -1134,11 +1134,7 @@ pub trait IterExtract {
     ///
     /// # Safety
     /// `it` must be a valid attached `GxB_Iterator` positioned on a valid entry.
-    unsafe fn extract(
-        it: GxB_Iterator,
-        row: u64,
-        col: u64,
-    ) -> Self::Item;
+    unsafe fn extract(it: GxB_Iterator) -> Self::Item;
 
     /// `(row, col)` position of an item, for sorted-merge ordering.
     fn pos(item: &Self::Item) -> (u64, u64);
@@ -1150,12 +1146,12 @@ pub struct BoolExtract;
 impl IterExtract for BoolExtract {
     type Item = (u64, u64);
 
-    unsafe fn extract(
-        _it: GxB_Iterator,
-        row: u64,
-        col: u64,
-    ) -> Self::Item {
-        (row, col)
+    unsafe fn extract(it: GxB_Iterator) -> Self::Item {
+        unsafe {
+            let row = GxB_rowIterator_getRowIndex(it);
+            let col = GxB_rowIterator_getColIndex(it);
+            (row, col)
+        }
     }
 
     fn pos(item: &Self::Item) -> (u64, u64) {
@@ -1169,13 +1165,13 @@ pub struct Uint64Extract;
 impl IterExtract for Uint64Extract {
     type Item = (u64, u64, u64);
 
-    unsafe fn extract(
-        it: GxB_Iterator,
-        row: u64,
-        col: u64,
-    ) -> Self::Item {
-        let val = unsafe { GxB_Iterator_get_UINT64(it) };
-        (row, col, val)
+    unsafe fn extract(it: GxB_Iterator) -> Self::Item {
+        unsafe {
+            let row = GxB_rowIterator_getRowIndex(it);
+            let col = GxB_rowIterator_getColIndex(it);
+            let val = GxB_Iterator_get_UINT64(it);
+            (row, col, val)
+        }
     }
 
     fn pos(item: &Self::Item) -> (u64, u64) {
@@ -1298,9 +1294,7 @@ impl<E: IterExtract> Iterator for Iter<E> {
             return None;
         }
         unsafe {
-            let row = GxB_rowIterator_getRowIndex(self.inner);
-            let col = GxB_rowIterator_getColIndex(self.inner);
-            let item = E::extract(self.inner, row, col);
+            let item = E::extract(self.inner);
             if GxB_rowIterator_nextCol(self.inner) != GrB_Info::GrB_SUCCESS {
                 let mut info = GxB_rowIterator_nextRow(self.inner);
                 debug_assert!(

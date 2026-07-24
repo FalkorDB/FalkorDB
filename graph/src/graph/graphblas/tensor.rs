@@ -273,13 +273,7 @@ impl Tensor {
         match self.eff_get(src, dest) {
             Some(MULTI_EDGE) => {
                 let key = compound_key(src, dest);
-                EdgeIds::Multi(
-                    self.me
-                        .iter(key, key)
-                        .map(|(_, edge_id)| edge_id)
-                        .collect::<Vec<_>>()
-                        .into_iter(),
-                )
+                EdgeIds::Multi(self.me.iter(key, key))
             }
             inline => EdgeIds::Inline(inline.into_iter()),
         }
@@ -882,11 +876,12 @@ impl Decode<19> for Tensor {
 }
 
 /// Owned edge-id iterator for one `(src, dest)` pair (see [`Tensor::get`]).
-/// The common single-edge case is allocation-free; only multi-edge pairs
-/// buffer their `me` row into a `Vec`.
+/// The common single-edge case is allocation-free; multi-edge pairs stream
+/// their `me` row live (the inner iterator keeps the underlying GraphBLAS
+/// matrix alive via its own `Arc`, so no borrow of the tensor is held).
 pub enum EdgeIds {
     Inline(std::option::IntoIter<u64>),
-    Multi(std::vec::IntoIter<u64>),
+    Multi(versioned_matrix::Iter<BoolExtract>),
 }
 
 impl Iterator for EdgeIds {
@@ -895,7 +890,7 @@ impl Iterator for EdgeIds {
     fn next(&mut self) -> Option<u64> {
         match self {
             Self::Inline(it) => it.next(),
-            Self::Multi(it) => it.next(),
+            Self::Multi(it) => it.next().map(|(_, edge_id)| edge_id),
         }
     }
 
