@@ -398,6 +398,13 @@ impl<T> Decode<19> for Matrix<T> {
             let info = GxB_load_Matrix_from_Container(m, container, null_mut());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
 
+            // The hyper-hash (Y) was nullified above and is not serialized, so
+            // a hypersparse matrix comes back with GxB_WILL_WAIT set. Rebuild
+            // it now so `pending()` reflects real pending work (no-op for
+            // non-hypersparse matrices).
+            let info = GrB_Matrix_wait(m, GrB_WaitMode::GrB_MATERIALIZE as _);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+
             let mut c = container;
             let info = GxB_Container_free(&raw mut c);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
