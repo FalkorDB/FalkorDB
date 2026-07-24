@@ -1993,6 +1993,9 @@ impl Graph {
         }
         self.adjacancy_matrix.flush();
         self.relationship_type_matrix.flush();
+        for t in &mut self.relationship_matrices {
+            t.flush();
+        }
     }
 
     /// Materialize all pending GraphBLAS operations on every matrix.
@@ -2354,15 +2357,15 @@ impl Graph {
         let mut iter = matrices.into_iter();
         let mut m = iter
             .next()
-            .map_or_else(|| self.adjacancy_matrix.extract(), |t| t.matrix().extract());
+            .map_or_else(|| self.adjacancy_matrix.extract(), |t| t.extract());
         for relationship_matrix in iter {
             m.element_wise_add(
-                Some(relationship_matrix.matrix().dm()),
+                Some(relationship_matrix.fwd_dm()),
                 None,
-                Some(relationship_matrix.matrix().m()),
+                Some(relationship_matrix.fwd_m()),
                 Some(Descriptor::C),
             );
-            m.element_wise_add(None, None, Some(relationship_matrix.matrix().dp()), None);
+            m.element_wise_add(None, None, Some(relationship_matrix.fwd_dp()), None);
         }
         Some(m)
     }
@@ -2411,14 +2414,9 @@ impl Graph {
             let mut iter = matrices.into_iter();
             let mut m = iter
                 .next()
-                .map_or_else(|| self.adjacancy_matrix.extract(), |t| t.matrix().extract());
+                .map_or_else(|| self.adjacancy_matrix.extract(), |t| t.extract());
             for relationship_matrix in iter {
-                m.element_wise_add(
-                    None,
-                    None,
-                    Some(&relationship_matrix.matrix().extract()),
-                    None,
-                );
+                m.element_wise_add(None, None, Some(&relationship_matrix.extract()), None);
             }
 
             if !src_labels_matrices.is_empty() {
@@ -3616,9 +3614,7 @@ impl Graph {
             let mut result = Matrix::<bool>::new(self.node_cap, self.node_cap);
             for rel_type in rel_types {
                 if let Some(type_id) = self.get_type_id(rel_type) {
-                    let m = self.relationship_matrices[usize::from(type_id)]
-                        .matrix()
-                        .extract();
+                    let m = self.relationship_matrices[usize::from(type_id)].extract();
                     result.element_wise_add(None, None, Some(&m), None);
                 }
             }

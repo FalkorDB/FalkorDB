@@ -161,11 +161,11 @@ unsafe fn msf_score(
     if ctx.maximize { -raw } else { raw }
 }
 
-/// User-defined GraphBLAS **index-unary** operator for the multi-edge overflow
+/// User-defined GraphBLAS **index-unary** operator for the multi-edge
 /// matrix `me[compound_key(src,dst)][edge_id]`, where the column index `j` *is*
 /// the edge id (the `bool` value carries no information). Emits the full
 /// `{score, edge}` pair so the subsequent monoid row-reduction resolves each
-/// pair to its minimum-score overflow edge entirely inside GraphBLAS.
+/// pair to its minimum-score edge entirely inside GraphBLAS.
 ///
 /// # Panic safety
 /// Runs on GraphBLAS worker threads; see [`msf_score`].
@@ -1251,7 +1251,7 @@ fn register_msf(funcs: &mut Functions) {
             // For unweighted: use 1.0 for all entries
             // For weighted: use the attribute value
             unsafe {
-                use crate::graph::graphblas::{GrB_BOOL, GrB_BinaryOp, GrB_BinaryOp_free, GrB_BinaryOp_new, GrB_DESC_SC, GrB_DESC_T1, GrB_Descriptor, GrB_FP64, GrB_Index, GrB_IndexUnaryOp, GrB_IndexUnaryOp_free, GrB_IndexUnaryOp_new, GrB_Info, GrB_Matrix, GrB_Matrix_apply, GrB_Matrix_apply_IndexOp_UDT, GrB_Matrix_build_UDT, GrB_Matrix_eWiseAdd_BinaryOp, GrB_Matrix_extract, GrB_Matrix_extractElement_UDT, GrB_Matrix_extractTuples_FP64, GrB_Matrix_free, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_reduce_Monoid, GrB_Matrix_wait, GrB_Monoid, GrB_Monoid_free, GrB_Monoid_new_UDT, GrB_IDENTITY_UINT64, GrB_SECOND_UINT64, GrB_Type, GrB_Type_free, GrB_Type_new, GrB_UINT64, GrB_UnaryOp, GrB_UnaryOp_free, GrB_UnaryOp_new, GrB_Vector, GrB_Vector_extractTuples_UDT, GrB_Vector_free, GrB_Vector_new, GrB_Vector_nvals, GrB_WaitMode, lagraphx_bindings};
+                use crate::graph::graphblas::{GrB_BOOL, GrB_BinaryOp, GrB_BinaryOp_free, GrB_BinaryOp_new, GrB_DESC_SC, GrB_DESC_T1, GrB_Descriptor, GrB_FP64, GrB_Index, GrB_IndexUnaryOp, GrB_IndexUnaryOp_free, GrB_IndexUnaryOp_new, GrB_Info, GrB_Matrix, GrB_Matrix_apply, GrB_Matrix_apply_IndexOp_UDT, GrB_Matrix_build_UDT, GrB_Matrix_eWiseAdd_BinaryOp, GrB_Matrix_extract, GrB_Matrix_extractElement_UDT, GrB_Matrix_extractTuples_FP64, GrB_Matrix_free, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_reduce_Monoid, GrB_Matrix_select_UINT64, GrB_Matrix_wait, GrB_Monoid, GrB_Monoid_free, GrB_Monoid_new_UDT, GrB_IDENTITY_UINT64, GrB_SECOND_UINT64, GrB_Type, GrB_Type_free, GrB_Type_new, GrB_UINT64, GrB_UnaryOp, GrB_UnaryOp_free, GrB_UnaryOp_new, GrB_VALUENE_UINT64, GrB_Vector, GrB_Vector_extractTuples_UDT, GrB_Vector_free, GrB_Vector_new, GrB_Vector_nvals, GrB_WaitMode, lagraphx_bindings};
 
                 let active_set: FxHashSet<u64> = active_nodes.iter().copied().collect();
 
@@ -1296,8 +1296,8 @@ fn register_msf(funcs: &mut Functions) {
                 // matrix is compacted with a GrB extract and scored with one
                 // parallel apply straight into `rel_adj` via a min-by-score
                 // eWiseAdd — no host-side COO triplets for the main pass.
-                // Multi-edge overflow (2nd, 3rd, … edge of a pair, stored
-                // under compound-key rows) is monoid-row-reduced to one
+                // Multi-edge pairs (all their ids stored under compound-key
+                // rows in `me`) are monoid-row-reduced to one
                 // min-score entry per pair inside GraphBLAS; only the
                 // compound-key → (src,dst) index split happens on the host,
                 // into these small per-pair COO arrays.
@@ -1381,34 +1381,49 @@ fn register_msf(funcs: &mut Functions) {
                         continue;
                     }
 
-                    // Inline pass: every pair's first edge id is the UINT64
-                    // *value* of the forward matrix `m`. Materialize the
-                    // effective matrix — (m ∖ dm) ∪ dp, a disjoint union by
-                    // the no-shadow invariant — then score every id
-                    // with one parallel apply directly into `{score, edge}`
-                    // pairs and bulk-extract them.
-                    let vm = tensor.matrix();
-                    vm.wait();
+                    // Inline pass: every single-edge pair's edge id is the
+                    // UINT64 *value* of the forward matrix `m` (multi-edge
+                    // pairs hold the MULTI_EDGE sentinel and are handled by
+                    // the multi pass below). Materialize the effective matrix
+                    // — (m ∖ dm) ∪ dp, where dp wins on shadowed pairs — then
+                    // score every id with one parallel apply directly into
+                    // `{score, edge}` pairs and bulk-extract them.
+                    tensor.wait();
+                    let (fm, fdp, fdm) = (tensor.fwd_m(), tensor.fwd_dp(), tensor.fwd_dm());
                     let mut eff: GrB_Matrix = null_mut();
-                    GrB_Matrix_new(&raw mut eff, GrB_UINT64, vm.nrows(), vm.ncols());
+                    GrB_Matrix_new(&raw mut eff, GrB_UINT64, fm.nrows(), fm.ncols());
                     // eff<¬dm> = m
                     GrB_Matrix_apply(
                         eff,
-                        vm.dm().inner(),
+                        fdm.inner(),
                         null_mut(),
                         GrB_IDENTITY_UINT64,
-                        vm.m().inner(),
+                        fm.inner(),
                         GrB_DESC_SC,
                     );
-                    if vm.dp().nvals() != 0 {
-                        // eff = eff ⊕ dp (disjoint; SECOND is a no-op tiebreak).
+                    if fdp.nvals() != 0 {
+                        // eff = eff ⊕ dp; SECOND picks dp's value for pairs
+                        // where dp shadows m (in-place update).
                         GrB_Matrix_eWiseAdd_BinaryOp(
                             eff,
                             null_mut(),
                             null_mut(),
                             GrB_SECOND_UINT64,
                             eff,
-                            vm.dp().inner(),
+                            fdp.inner(),
+                            null_mut(),
+                        );
+                    }
+                    if tensor.has_multi_edge() {
+                        // Drop MULTI_EDGE sentinels: those pairs' real ids are
+                        // scored by the multi pass below.
+                        GrB_Matrix_select_UINT64(
+                            eff,
+                            null_mut(),
+                            null_mut(),
+                            GrB_VALUENE_UINT64,
+                            eff,
+                            u64::MAX,
                             null_mut(),
                         );
                     }
@@ -1457,9 +1472,9 @@ fn register_msf(funcs: &mut Functions) {
                     }
                     GrB_Matrix_free(&raw mut eff);
 
-                    // Overflow pass: only the 2nd, 3rd, … edge of multi-edge
-                    // pairs live in `me[compound_key(src,dst)][edge_id]`; skip
-                    // it entirely on single-edge tensors.
+                    // Multi pass: every edge id of a multi-edge pair lives in
+                    // `me[compound_key(src,dst)][edge_id]`; skip it entirely
+                    // on single-edge tensors.
                     if !tensor.has_multi_edge() {
                         continue;
                     }
@@ -1472,7 +1487,7 @@ fn register_msf(funcs: &mut Functions) {
                         (me.m().inner(), me.dm().inner(), GrB_DESC_SC),
                         (me.dp().inner(), null_mut(), null_mut()),
                     ];
-                    // v[compound_key(src,dst)] = the pair's minimum-score overflow
+                    // v[compound_key(src,dst)] = the pair's minimum-score
                     // edge, via a parallel monoid row-reduction instead of a host
                     // iterator walk; the accum merges the two sources.
                     let mut me_rows: GrB_Index = 0;
@@ -1514,7 +1529,7 @@ fn register_msf(funcs: &mut Functions) {
 
                     // Host step: only the compound-key → (src,dst) index split —
                     // arithmetic GraphBLAS cannot express — one entry per
-                    // multi-edge pair, not per overflow edge.
+                    // multi-edge pair, not per edge.
                     let mut v_nvals: GrB_Index = 0;
                     GrB_Vector_nvals(&raw mut v_nvals, v);
                     if v_nvals != 0 {
@@ -1549,7 +1564,7 @@ fn register_msf(funcs: &mut Functions) {
                 GrB_IndexUnaryOp_free(&raw mut inline_op);
                 GrB_Type_free(&raw mut ctx_type);
 
-                // Merge the multi-edge overflow (if any) into `rel_adj`, then
+                // Merge the multi-edge winners (if any) into `rel_adj`, then
                 // symmetrize to the undirected minimum. Boruvka's plain-FP64
                 // `weighted_adj` is the score component projected out of
                 // `rel_adj` (`msf_score_of`), so the score lives once — in
@@ -2448,7 +2463,7 @@ fn register_maxflow(funcs: &mut Functions) {
 
             let tensor = &g.relationship_tensors()[type_id.0];
             // Stream every edge via `iter_edges`, which walks the inline UINT64
-            // forward matrix directly (the multi-edge overflow `me` is empty —
+            // forward matrix directly (the multi-edge matrix `me` is empty —
             // maxFlow rejects multi-edge tensors above), rather than iterating
             // pair-by-pair or bulk-collecting into throwaway vectors.
             let edge_upper = tensor.edge_count() as usize;
