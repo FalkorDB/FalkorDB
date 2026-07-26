@@ -68,10 +68,24 @@ jobs:
         id: find_prs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          echo "Searching for merged PRs with label '$VERSION' since ${{ steps.tag_date.outputs.TAG_DATE }}..."
+          # Backports cherry-pick trunk PRs onto a version branch, so the search
+          # base is the trunk this run was dispatched from — `main` here, or
+          # `main-rs` (the interim Rust branch in FalkorDB/FalkorDB). Hardcoding
+          # `base:main` would silently match zero PRs on main-rs and produce an
+          # empty backport.
+          case "$REF_NAME" in
+            main|main-rs) TRUNK="$REF_NAME" ;;
+            *) if git ls-remote --exit-code --heads origin main >/dev/null 2>&1; then
+                 TRUNK="main"
+               else
+                 TRUNK="main-rs"
+               fi ;;
+          esac
+          echo "Searching for merged PRs with label '$VERSION' (base:$TRUNK) since ${{ steps.tag_date.outputs.TAG_DATE }}..."
 
-          SEARCH_QUERY="is:pr is:merged label:\"$VERSION\" base:main merged:>${{ steps.tag_date.outputs.TAG_DATE }} repo:${{ github.repository }}"
+          SEARCH_QUERY="is:pr is:merged label:\"$VERSION\" base:$TRUNK merged:>${{ steps.tag_date.outputs.TAG_DATE }} repo:${{ github.repository }}"
 
           PR_DATA=$(gh api -X GET search/issues \
             -f q="$SEARCH_QUERY" \

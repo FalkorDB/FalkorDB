@@ -6,7 +6,9 @@ on:
   workflow_run:
     workflows: ["Rust Push"]
     types: [completed]
-    branches: [main]
+    # Both trunks: `main` here and `main-rs` (the interim Rust branch in
+    # FalkorDB/FalkorDB). Keep in sync with the compiled .lock.yml.
+    branches: [main, main-rs]
   workflow_dispatch:
     inputs:
       run_id:

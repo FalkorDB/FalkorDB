@@ -15,6 +15,21 @@ on:
         description: "Also tag :latest (moves the latest pointer — use with care)"
         type: boolean
         default: false
+  workflow_call:
+    inputs:
+      tag:
+        description: "Image tag (v prefix optional), e.g. 6.0.0"
+        required: true
+        type: string
+      commit_sha:
+        description: "Tagged commit SHA"
+        required: true
+        type: string
+      mode:
+        description: "retag (reuse the validated rc-pr-<N> manifest) or rebuild (build from source)"
+        required: false
+        type: string
+        default: retag
 
 permissions:
   contents: read
@@ -24,11 +39,14 @@ concurrency:
   cancel-in-progress: false
 
 # Two modes:
-#   - release event → RETAG the validated rc-pr-<N> images to semver + maybe
-#     :latest. No source rebuild — the artifact that PR CI tested is exactly
-#     what ships. Requires the rc-pr-<N> tag to still exist on GHCR (lives
-#     for the TTL window set by cleanup-rc-images.yml).
-#   - workflow_dispatch → REBUILD from source at the supplied commit. Escape
+#   - RETAG the validated rc-pr-<N> images to semver + maybe :latest. No source
+#     rebuild — the artifact that PR CI tested is exactly what ships. Requires
+#     the rc-pr-<N> tag to still exist on GHCR (lives for the TTL window set by
+#     cleanup-rc-images.yml). Used by the release event and by workflow_call
+#     from release-tag.yml (the tag-push pipeline, primary path for >= 6.0.0 —
+#     tag-driven, so it does not depend on the DEFAULT-branch-only `release:`
+#     event).
+#   - REBUILD from source at the supplied commit (workflow_dispatch). Escape
 #     hatch when the RC was swept, when the commit never had a PR, or when an
 #     operator just wants to rebuild a specific SHA.
 jobs:
@@ -46,24 +64,27 @@ jobs:
       rc_pr_n:           ${{ steps.derive.outputs.rc_pr_n }}
       push_to_dockerhub: ${{ steps.derive.outputs.push_to_dockerhub }}
     steps:
-      # Refuse workflow_dispatch from anywhere except main or a version branch
-      # (X.Y). Release events are unaffected — they're triggered by tagging a
-      # release, which in practice only happens off main / a version branch
-      # anyway. This guards against a dispatch from a feature branch pushing
-      # user-facing tags (latest-rs, semver) built from un-merged code.
+      # Refuse workflow_dispatch from anywhere except a trunk (main, or the
+      # interim main-rs in FalkorDB/FalkorDB) or a version branch (X.Y). Release
+      # events and workflow_call (from release-tag.yml) are unaffected — those
+      # are driven by a tag, which in practice only points at a trunk / version
+      # branch anyway. This guards against a dispatch from a feature branch
+      # pushing user-facing tags (latest-rs, semver) built from un-merged code.
       - name: Reject dispatch from non-release-bearing ref
         if: github.event_name == 'workflow_dispatch'
         env:
           REF_NAME: ${{ github.ref_name }}
         run: |
-          if [[ "$REF_NAME" != "main" && ! "$REF_NAME" =~ ^[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::workflow_dispatch must run from main or a version branch (X.Y); got ref_name=$REF_NAME"
+          if [[ "$REF_NAME" != "main" && "$REF_NAME" != "main-rs" && ! "$REF_NAME" =~ ^[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::workflow_dispatch must run from a trunk (main, main-rs) or a version branch (X.Y); got ref_name=$REF_NAME"
             exit 1
           fi
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.commit_sha || github.sha }}
+          # inputs.commit_sha covers workflow_dispatch AND workflow_call; on a
+          # release event it is empty and github.sha is the release commit.
+          ref: ${{ inputs.commit_sha || github.sha }}
           persist-credentials: false
 
       - name: Derive mode, tag, latest flag, commit SHA, RC PR number
@@ -76,10 +97,20 @@ jobs:
           INPUT_TAG:      ${{ inputs.tag }}
           INPUT_LATEST:   ${{ inputs.mark_latest }}
           INPUT_COMMIT:   ${{ inputs.commit_sha }}
+          INPUT_MODE:     ${{ inputs.mode }}
           GH_TOKEN:       ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
+          IS_LATEST=false
+          RC_PR_N=""
+
+          # Dispatch on the EVENT first, so the two pre-existing paths keep their
+          # exact behaviour regardless of how `inputs` defaults are surfaced.
+          # Anything that is neither `release` nor `workflow_dispatch` is a
+          # workflow_call: in a reusable workflow github.event_name is the
+          # CALLER's event ("push" for a tag push from release-tag.yml), so it can
+          # never be the literal "workflow_call".
           case "$EVENT_NAME" in
             release)
               MODE="retag"
@@ -87,33 +118,6 @@ jobs:
               BROWSER_TAG="latest"
               COMMIT_SHA="$GH_SHA"
               PUSH_HUB=true
-
-              # PR lookup — the validated artifact is keyed by PR number, not
-              # by commit SHA, because squash/rebase merges produce new SHAs
-              # that were never built. Fail loudly if the release commit has
-              # no associated merged PR; the operator can fall back to
-              # workflow_dispatch for a fresh build from that SHA.
-              RC_PR_N=$(gh api "/repos/${REPO}/commits/${COMMIT_SHA}/pulls" \
-                --jq 'map(select(.merged_at != null)) | .[0].number // empty')
-              if [ -z "$RC_PR_N" ]; then
-                echo "::error::no merged PR associated with release commit ${COMMIT_SHA}"
-                echo "::error::if you need to ship this commit, re-run via workflow_dispatch with commit_sha=${COMMIT_SHA}"
-                exit 1
-              fi
-
-              # IS_LATEST=true only when this release is the highest semver
-              # across all (non-draft, non-prerelease) releases. A backport
-              # patch on an old version branch shouldn't clobber :latest.
-              HIGHEST=$(gh api "/repos/${REPO}/releases" --paginate \
-                --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' \
-                | sed 's/^v//' \
-                | sort -V \
-                | tail -1)
-              if [ "$HIGHEST" = "$TAG" ]; then
-                IS_LATEST=true
-              else
-                IS_LATEST=false
-              fi
               ;;
             workflow_dispatch)
               MODE="rebuild"
@@ -123,22 +127,61 @@ jobs:
               COMMIT_SHA="$INPUT_COMMIT"
               # Manual dispatch publishes to Docker Hub too — that's the "promote" escape hatch.
               PUSH_HUB=true
-              RC_PR_N=""
               ;;
             *)
-              echo "::error::unsupported event $EVENT_NAME"
-              exit 1
+              # workflow_call (release-tag.yml). `mode` defaults to retag.
+              if [ -z "$INPUT_TAG" ] || [ -z "$INPUT_COMMIT" ]; then
+                echo "::error::workflow_call requires both tag and commit_sha inputs (event=$EVENT_NAME)"
+                exit 1
+              fi
+              MODE="${INPUT_MODE:-retag}"
+              TAG="${INPUT_TAG#v}"
+              BROWSER_TAG="latest"
+              COMMIT_SHA="$INPUT_COMMIT"
+              PUSH_HUB=true
               ;;
           esac
 
+          # Retag needs the validated RC manifest and the latest-pointer
+          # decision. Shared by the release event and the tag-push path, so it
+          # lives outside the branching above.
+          if [ "$MODE" = "retag" ]; then
+            # PR lookup — the validated artifact is keyed by PR number, not
+            # by commit SHA, because squash/rebase merges produce new SHAs
+            # that were never built. Fail loudly if the release commit has
+            # no associated merged PR; the operator can fall back to
+            # workflow_dispatch for a fresh build from that SHA.
+            RC_PR_N=$(gh api "/repos/${REPO}/commits/${COMMIT_SHA}/pulls" \
+              --jq 'map(select(.merged_at != null)) | .[0].number // empty')
+            if [ -z "$RC_PR_N" ]; then
+              echo "::error::no merged PR associated with release commit ${COMMIT_SHA}"
+              echo "::error::if you need to ship this commit, re-run via workflow_dispatch with commit_sha=${COMMIT_SHA}"
+              exit 1
+            fi
+
+            # IS_LATEST=true only when this release is the highest semver
+            # across all (non-draft, non-prerelease) releases. A backport
+            # patch on an old version branch shouldn't clobber :latest.
+            # NOTE: the GitHub Release for this tag must already exist, else it
+            # isn't in the list and the pointer won't move — release-tag.yml
+            # therefore creates the release BEFORE calling this workflow.
+            HIGHEST=$(gh api "/repos/${REPO}/releases" --paginate \
+              --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' \
+              | sed 's/^v//' \
+              | sort -V \
+              | tail -1)
+            if [ "$HIGHEST" = "$TAG" ]; then
+              IS_LATEST=true
+            else
+              IS_LATEST=false
+            fi
+          fi
+
           # Validate Cargo.toml against any semver-shaped tag (always on release;
-          # on dispatch only when the tag looks like X.Y.Z, so operators can still
+          # otherwise only when the tag looks like X.Y.Z, so operators can still
           # dispatch ad-hoc tags like 'edge-test' without enforcement).
           VALIDATE=0
-          if [ "$EVENT_NAME" = "release" ]; then
-            VALIDATE=1
-          elif [ "$EVENT_NAME" = "workflow_dispatch" ] && \
-               echo "$TAG" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+          if [ "$EVENT_NAME" = "release" ] || echo "$TAG" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
             VALIDATE=1
           fi
           if [ "$VALIDATE" = "1" ]; then

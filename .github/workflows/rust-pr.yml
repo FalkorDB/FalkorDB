@@ -2,15 +2,22 @@ name: Rust PR
 
 on:
   pull_request:
-    # Fire on PRs to main AND to version branches (e.g. "6.0", "7.1"). Backport
-    # PRs from batch-backport.yml target the version branch directly, so they
-    # need the same RC build + flow gate as main PRs. rc-pr-<N> tags are
+    # Fire on PRs to a trunk AND to version branches (e.g. "6.0", "7.1").
+    # Backport PRs from batch-backport.yml target the version branch directly,
+    # so they need the same RC build + flow gate as trunk PRs. rc-pr-<N> tags are
     # globally unique by PR number so there's no collision across base branches.
+    #
+    # Two trunks exist during the migration to FalkorDB/FalkorDB (see the repo
+    # migration plan): `main` here, and `main-rs` — the interim Rust branch in
+    # FalkorDB/FalkorDB, which carries this tree on unrelated history while the
+    # C engine keeps `master`. Both must build/test identically.
+    #
     # GHA branch filters are glob patterns, not regex — `*` matches a run of
     # chars, `[0-9]` is a digit class, so `[0-9]*.[0-9]*` matches `6.0`, `7.1`,
     # `10.5`, etc. (A literal `+` would NOT have matched anything.)
     branches:
       - "main"
+      - "main-rs"
       - "[0-9]*.[0-9]*"
 
 concurrency:
@@ -40,25 +47,32 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         # Pick the right diff target for "did the toolchain change":
-        #   - PRs targeting main, or stacked feat/ branches that ultimately
-        #     land on main → diff against origin/main's merge-base. Catches
-        #     toolchain changes anywhere in the stack so the :pr-<N> tag is
-        #     rebuilt for this PR (downstream jobs would otherwise fall back
-        #     to :latest, which doesn't exist on GHCR until the stack lands).
-        #   - PRs targeting a version branch (e.g. 6.0, 7.1, set by
-        #     batch-backport.yml) → diff against that version branch's
-        #     merge-base. :latest already exists on GHCR (the version branch
-        #     was cut from a released main), so an immediate-base diff is
-        #     correct and avoids spuriously rebuilding when main and the
-        #     version branch diverge on the Dockerfile.
+        #   - PRs targeting a trunk (main, or the interim main-rs in
+        #     FalkorDB/FalkorDB) or a version branch (e.g. 6.0, 7.1, set by
+        #     batch-backport.yml) → diff against that base's own merge-base.
+        #     For a version branch :latest already exists on GHCR (it was cut
+        #     from a released trunk), so an immediate-base diff is correct and
+        #     avoids spuriously rebuilding when trunk and the version branch
+        #     diverge on the Dockerfile.
+        #   - Stacked feat/ branches that ultimately land on a trunk → diff
+        #     against the trunk's merge-base. Catches toolchain changes
+        #     anywhere in the stack so the :pr-<N> tag is rebuilt for this PR
+        #     (downstream jobs would otherwise fall back to :latest, which
+        #     doesn't exist on GHCR until the stack lands).
         run: |
           # actions/checkout above used fetch-depth: 0 so we have full history,
           # but only the PR's branch is fetched by default — pull the diff
           # target as a ref too so merge-base can find the actual divergence.
-          if [[ "$BASE_REF" =~ ^[0-9]+\.[0-9]+$ ]]; then
+          #
+          # The trunk fallback is resolved against the remote rather than
+          # hardcoded: FalkorDB/FalkorDB has `main-rs` (+ C's `master`) and no
+          # `main`, so a bare `git fetch origin main` there would fail.
+          if [[ "$BASE_REF" =~ ^[0-9]+\.[0-9]+$ || "$BASE_REF" == "main" || "$BASE_REF" == "main-rs" ]]; then
             DIFF_TARGET="$BASE_REF"
-          else
+          elif git ls-remote --exit-code --heads origin main >/dev/null 2>&1; then
             DIFF_TARGET="main"
+          else
+            DIFF_TARGET="main-rs"
           fi
           git fetch --no-tags origin "$DIFF_TARGET"
           MERGE_BASE=$(git merge-base "origin/$DIFF_TARGET" "$HEAD_SHA")

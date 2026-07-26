@@ -3,11 +3,19 @@ name: Rust Push
 on:
   push:
     # Mirror rust-pr.yml's filter so post-merge CI on version branches works
-    # the same as on main. Channel-pointer promotion (toolchain :latest, edge-rs)
-    # is still gated to main further down — see the `if:` on those jobs.
-    # The version glob is `[0-9]*.[0-9]*` (glob, not regex; `*` is multi-char).
+    # the same as on a trunk. Channel-pointer promotion (toolchain :latest,
+    # edge-rs) is still gated to a TRUNK further down — see the `if:` on those
+    # jobs. The version glob is `[0-9]*.[0-9]*` (glob, not regex; `*` is
+    # multi-char).
+    #
+    # TRUNK = `main` (this repo) or `main-rs` (the interim Rust branch in
+    # FalkorDB/FalkorDB, which carries this tree while the C engine keeps
+    # `master`). Both promote the same channels, so the migration doesn't
+    # silently stop publishing `edge-rs`. Gates below spell this as
+    # contains(fromJSON('["refs/heads/main","refs/heads/main-rs"]'), github.ref).
     branches:
       - "main"
+      - "main-rs"
       - "[0-9]*.[0-9]*"
 
 permissions:
@@ -47,10 +55,10 @@ jobs:
           fi
   # Look up the merging PR once and share the number with the promote-* jobs.
   # Same SHA→PR API call used by release-image.yml's release-event flow.
-  # Main-only: version branches don't promote toolchain or edge-rs.
+  # Trunk-only: version branches don't promote toolchain or edge-rs.
   find-pr:
     needs: check-files
-    if: ${{ github.ref == 'refs/heads/main' }}
+    if: ${{ contains(fromJSON('["refs/heads/main","refs/heads/main-rs"]'), github.ref) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -84,7 +92,7 @@ jobs:
   # build/Dockerfile actually changed in that PR.
   docker:
     needs: [check-files, find-pr]
-    if: ${{ needs.check-files.outputs.file_changed == 'true' && github.ref == 'refs/heads/main' }}
+    if: ${{ needs.check-files.outputs.file_changed == 'true' && contains(fromJSON('["refs/heads/main","refs/heads/main-rs"]'), github.ref) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -109,13 +117,13 @@ jobs:
             "ghcr.io/falkordb/falkordb-build:pr-${PR_NUM}"
 
   # Promote the merging PR's runtime RC images (rc-pr-<N>) to the edge-rs
-  # channel on every main merge — same byte-identical retag, no rebuild.
+  # channel on every trunk merge — same byte-identical retag, no rebuild.
   # `edge-rs` distinguishes the Rust port from the C port's `:edge` on the
   # shared falkordb/falkordb Docker Hub repo. GHCR-only; Docker Hub publish
   # happens at release time via release-image.yml.
   promote-edge:
     needs: find-pr
-    if: ${{ github.ref == 'refs/heads/main' }}
+    if: ${{ contains(fromJSON('["refs/heads/main","refs/heads/main-rs"]'), github.ref) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -159,7 +167,7 @@ jobs:
   # workload — pre-reset points are not comparable to post-reset ones.
   benchmark-edge:
     needs: [find-pr, promote-edge]
-    if: ${{ github.ref == 'refs/heads/main' && needs.promote-edge.result == 'success' }}
+    if: ${{ contains(fromJSON('["refs/heads/main","refs/heads/main-rs"]'), github.ref) && needs.promote-edge.result == 'success' }}
     uses: ./.github/workflows/_benchmark.yml
     permissions:
       contents: write

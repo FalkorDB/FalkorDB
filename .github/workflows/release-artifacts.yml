@@ -6,6 +6,9 @@
 # the FULL expected set is present, generates SHA256SUMS, then uploads.
 #
 # Triggers:
+#   - workflow_call        → the tag-push release pipeline (release-tag.yml), which
+#     is the primary path for >= 6.0.0. Driven by the tag, so it does not depend on
+#     the `release:` event (which only fires from the DEFAULT branch).
 #   - release: published   → build at the release commit, upload to that release.
 #   - workflow_dispatch    → repair/escape hatch: rebuild + (re)upload assets for
 #     an existing tag at a given commit (uses --clobber so re-runs are idempotent).
@@ -26,12 +29,22 @@ on:
       commit_sha:
         description: "Commit SHA to build"
         required: true
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag to build + upload assets for (e.g. v6.0.0)"
+        required: true
+        type: string
+      commit_sha:
+        description: "Commit SHA to build"
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-artifacts-${{ github.event.release.tag_name || github.event.inputs.tag }}
+  group: release-artifacts-${{ github.event.release.tag_name || inputs.tag }}
   cancel-in-progress: false
 
 jobs:
@@ -45,22 +58,25 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          # Check out the RELEASE TAG (release event) or the requested commit
-          # (dispatch). The resolved commit is then read back via `git rev-parse`
-          # below — `github.sha` is NOT guaranteed to be the tagged commit for a
-          # release event, so we never rely on it.
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.commit_sha || github.event.release.tag_name }}
+          # Check out the requested commit (dispatch / workflow_call) or the
+          # RELEASE TAG (release event). The resolved commit is then read back via
+          # `git rev-parse` below — `github.sha` is NOT guaranteed to be the tagged
+          # commit for a release event, so we never rely on it.
+          # `inputs.*` covers workflow_dispatch AND workflow_call; it is empty on a
+          # release event, so the `||` falls through to the release tag.
+          ref: ${{ inputs.commit_sha || github.event.release.tag_name }}
           persist-credentials: false
 
       - name: Derive tag, commit SHA, cells; validate Cargo.toml version
         id: derive
         env:
-          EVENT: ${{ github.event_name }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
-          INPUT_TAG: ${{ github.event.inputs.tag }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          if [ "$EVENT" = "workflow_dispatch" ]; then
+          # Presence-based, not event-based: inputs.tag is set for both
+          # workflow_dispatch and workflow_call, empty on a release event.
+          if [ -n "$INPUT_TAG" ]; then
             TAG="$INPUT_TAG"
           else
             TAG="$RELEASE_TAG"
