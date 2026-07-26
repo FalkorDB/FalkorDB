@@ -1407,17 +1407,10 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    /// Parses `shortestPath((src)-[rel:TYPE*min..max]->(dst))` or
-    /// `allShortestPaths(...)` after the opening `(`.
-    fn parse_shortest_path_expr(
-        &mut self,
-        all_paths: bool,
-    ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
-        let fn_name = if all_paths {
-            "allShortestPaths"
-        } else {
-            "shortestPath"
-        };
+    /// Parses `shortestPath((src)-[rel:TYPE*min..max]->(dst))` after the
+    /// opening `(`.
+    fn parse_shortest_path_expr(&mut self) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
+        let fn_name = "shortestPath";
 
         // Verify pattern starts with `(` — otherwise it's not a valid shortestPath call
         if self.lexer.current()? != Token::LParen {
@@ -1598,7 +1591,6 @@ impl<'a> Parser<'a> {
                 min_hops,
                 max_hops,
                 directed,
-                all_paths,
             })),
             tree!(ExprIR::Variable(actual_src)),
             tree!(ExprIR::Variable(actual_dst))
@@ -1651,7 +1643,7 @@ impl<'a> Parser<'a> {
 
                     // shortestPath((a)-[*]->(b)) or allShortestPaths((a)-[*]->(b))
                     if ident.eq_ignore_ascii_case("shortestPath") {
-                        return Ok((self.parse_shortest_path_expr(false)?, false));
+                        return Ok((self.parse_shortest_path_expr()?, false));
                     }
                     if ident.eq_ignore_ascii_case("allShortestPaths") {
                         return Err(self.lexer.format_error(

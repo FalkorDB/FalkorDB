@@ -242,7 +242,7 @@ pub enum ExprIR<TVar> {
     /// Pattern predicate should be rewritten in planner (boxed; see
     /// `PatternComprehension`).
     Pattern(Box<QueryGraph<Arc<String>, Arc<String>, TVar>>),
-    /// shortestPath((a)-[*]->(b)) or allShortestPaths((a)-[*]->(b))
+    /// shortestPath((a)-[*]->(b))
     /// Children: [source_var_expr, dest_var_expr]
     ///
     /// Boxed: the inline payload (rel-type list, hop bounds, flags) is
@@ -251,6 +251,30 @@ pub enum ExprIR<TVar> {
     /// Map projection: base { .prop, .*, key: expr, var }
     /// First child is the base expression, remaining children are projection items
     MapProjection,
+    /// A regex function (`=~`, `string.matchRegEx`, `string.replaceRegEx`)
+    /// whose pattern argument is a constant string. The binder compiles the
+    /// regex once so the compiled program lives in the cached plan instead
+    /// of being rebuilt per row.
+    /// Children: the remaining runtime arguments (text [, replacement]).
+    CompiledRegex(RegexFn),
+}
+
+/// Payload of [`ExprIR::CompiledRegex`].
+#[derive(Clone, Debug)]
+pub struct RegexFn {
+    pub kind: RegexFnKind,
+    pub regex: Arc<regex::Regex>,
+}
+
+/// Which regex function [`ExprIR::CompiledRegex`] replaces.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RegexFnKind {
+    /// `lhs =~ pattern` (internal `regex_matches`)
+    Matches,
+    /// `string.matchRegEx(text, pattern)`
+    MatchList,
+    /// `string.replaceRegEx(text, pattern[, replacement])`
+    Replace,
 }
 
 /// Payload of [`ExprIR::Reduce`].
@@ -267,7 +291,6 @@ pub struct ShortestPathInfo {
     pub min_hops: u32,
     pub max_hops: Option<u32>,
     pub directed: bool,
-    pub all_paths: bool,
 }
 
 #[cfg_attr(tarpaulin, skip)]
@@ -332,14 +355,13 @@ impl<TVar: Display + std::fmt::Debug> Display for ExprIR<TVar> {
             }
             Self::Paren => write!(f, "()"),
             Self::Pattern(_) => write!(f, "<pattern>"),
-            Self::ShortestPath(info) => {
-                if info.all_paths {
-                    write!(f, "allShortestPaths()")
-                } else {
-                    write!(f, "shortestPath()")
-                }
-            }
+            Self::ShortestPath(_) => write!(f, "shortestPath()"),
             Self::MapProjection => write!(f, "map_projection"),
+            Self::CompiledRegex(rf) => match rf.kind {
+                RegexFnKind::Matches => write!(f, "regex_matches()"),
+                RegexFnKind::MatchList => write!(f, "string.matchRegEx()"),
+                RegexFnKind::Replace => write!(f, "string.replaceRegEx()"),
+            },
         }
     }
 }

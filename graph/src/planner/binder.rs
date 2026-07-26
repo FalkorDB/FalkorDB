@@ -27,7 +27,8 @@
 
 use crate::parser::ast::{
     AllShortestPaths, BoundQueryIR, ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
-    QueryRelationship, RawQueryIR, ReduceVars, SetItem, SupportAggregation, Variable,
+    QueryRelationship, RawQueryIR, ReduceVars, RegexFn, RegexFnKind, SetItem, SupportAggregation,
+    Variable,
 };
 use crate::runtime::functions::{FnArguments, FnType, Type};
 use crate::runtime::orderset::OrderSet;
@@ -1803,16 +1804,11 @@ impl Binder {
             _ => {
                 // For ShortestPath, wrap child binding errors as "requires bound nodes"
                 if let ExprIR::ShortestPath(info) = node_ref.data() {
-                    let fn_name = if info.all_paths {
-                        "allShortestPaths"
-                    } else {
-                        "shortestPath"
-                    };
                     let children = node_ref
                         .children()
                         .map(|child| self.bind_expr_node(expr, &child, locals))
                         .collect::<Result<Vec<_>, _>>()
-                        .map_err(|_| format!("A {fn_name} requires bound nodes"))?;
+                        .map_err(|_| "A shortestPath requires bound nodes".to_string())?;
                     let mut new_tree = DynTree::new(ExprIR::ShortestPath(info.clone()));
                     let mut root = new_tree.root_mut();
                     for child in children {
@@ -1911,12 +1907,7 @@ impl Binder {
                             if let ExprIR::Variable(var) = child.root().data()
                                 && var.name.is_none()
                             {
-                                let fn_name = if info.all_paths {
-                                    "allShortestPaths"
-                                } else {
-                                    "shortestPath"
-                                };
-                                return Err(format!("A {fn_name} requires bound nodes"));
+                                return Err("A shortestPath requires bound nodes".to_string());
                             }
                         }
                         ExprIR::ShortestPath(info)
@@ -1926,6 +1917,9 @@ impl Binder {
                     | ExprIR::ListComprehension(_)
                     | ExprIR::Reduce(_)
                     | ExprIR::PatternComprehension(_) => unreachable!("handled above"),
+                    ExprIR::CompiledRegex(_) => {
+                        unreachable!("produced only by the binder itself")
+                    }
                     ExprIR::Pattern(pattern) => {
                         // Snapshot outer scope so pattern-local aliases can be
                         // cleaned up after binding (they must not leak outward).
@@ -1963,6 +1957,10 @@ impl Binder {
                 // strings. Rewrite to an internal positional-arg function so
                 // the runtime skips per-row Map+Arc allocation.
                 let (new_data, children) = rewrite_struct_constructor(new_data, children);
+
+                // Regex compile hoisting: constant patterns compile once at
+                // bind time and ride the plan cache (see rewrite_compiled_regex).
+                let (new_data, children) = rewrite_compiled_regex(new_data, children);
 
                 // Constant folding: when the bound node is a function
                 // invocation whose arguments are already concrete constants
@@ -2208,6 +2206,10 @@ impl Binder {
 
             // Pre-evaluated constant – only Bool/Null are boolean-shaped
             ExprIR::Constant(v) => matches!(v, Value::Bool(_) | Value::Null),
+
+            // All regex kinds may return Null (and Matches returns Bool),
+            // matching the original functions' declared return types
+            ExprIR::CompiledRegex(_) => true,
         }
     }
 
@@ -2260,6 +2262,7 @@ impl Binder {
             | ExprIR::IsRelationship
             | ExprIR::Quantifier { .. }
             | ExprIR::ShortestPath(_)
+            | ExprIR::CompiledRegex(_)
             | ExprIR::Pattern(_) => false,
 
             // Pre-evaluated constant – only Null and entity values count
@@ -2385,6 +2388,43 @@ fn rewrite_struct_constructor(
     }
 
     (new_data, new_children)
+}
+
+/// If `new_data` is a regex function (`=~` / `string.matchRegEx` /
+/// `string.replaceRegEx`) whose pattern argument (child 1) is a constant
+/// string, compile the regex now and rewrite to [`ExprIR::CompiledRegex`] so
+/// the compiled program lives in the plan cache instead of being rebuilt per
+/// row. A pattern that fails to compile is left unrewritten: the runtime
+/// path reports the error only if a row actually reaches the expression.
+fn rewrite_compiled_regex(
+    new_data: ExprIR<Variable>,
+    children: Vec<DynTree<ExprIR<Variable>>>,
+) -> (ExprIR<Variable>, Vec<DynTree<ExprIR<Variable>>>) {
+    let ExprIR::FuncInvocation(func) = &new_data else {
+        return (new_data, children);
+    };
+    let kind = match func.name.as_str() {
+        "regex_matches" => RegexFnKind::Matches,
+        "string.matchRegEx" => RegexFnKind::MatchList,
+        "string.replaceRegEx" => RegexFnKind::Replace,
+        _ => return (new_data, children),
+    };
+    let Some(ExprIR::Constant(Value::String(pattern))) = children.get(1).map(|c| c.root().data())
+    else {
+        return (new_data, children);
+    };
+    let Ok(regex) = regex::Regex::new(pattern.as_str()) else {
+        return (new_data, children);
+    };
+    let mut children = children;
+    children.remove(1);
+    (
+        ExprIR::CompiledRegex(RegexFn {
+            kind,
+            regex: Arc::new(regex),
+        }),
+        children,
+    )
 }
 
 /// Recursively walk an ORDER BY expression tree and replace any aggregation

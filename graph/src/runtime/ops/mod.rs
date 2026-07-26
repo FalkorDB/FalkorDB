@@ -115,7 +115,7 @@ use crate::graph::graph::RelationshipId;
 use crate::runtime::value::Value;
 
 use super::{
-    batch::{BATCH_SIZE, Batch, BatchBuilder},
+    batch::{BATCH_SIZE, BatchBuilder},
     row::{Row, RowView},
 };
 
@@ -131,38 +131,6 @@ pub fn drain_pending(
     while builder.len() < BATCH_SIZE {
         if let Some(row) = pending.pop_front() {
             builder.push_row(&row);
-        } else {
-            break;
-        }
-    }
-}
-
-pub fn drain_pending_batches(
-    pending: &mut VecDeque<Batch<'_>>,
-    builder: &mut BatchBuilder,
-) {
-    while builder.len() < BATCH_SIZE {
-        if let Some(batch) = pending.pop_front() {
-            // Count and index *active* rows only: a batch may carry a selection
-            // vector, so `len()` (total rows) would overshoot the fit check and
-            // raw `0..` indices could address filtered-out rows.
-            if builder.len() + batch.active_len() <= BATCH_SIZE {
-                // The whole batch fits: push every active row.
-                for row in batch.active_indices() {
-                    builder.push_batch_row(&batch, row, batch.origin_row(row));
-                }
-            } else {
-                // Only part of the batch fits: push the first `remaining` active
-                // rows and re-queue the rest (gathering by active index keeps the
-                // selection honoured).
-                let remaining = BATCH_SIZE - builder.len();
-                let active: Vec<usize> = batch.active_indices().collect();
-                for &row in &active[..remaining] {
-                    builder.push_batch_row(&batch, row, batch.origin_row(row));
-                }
-                pending.push_front(batch.gather(&active[remaining..]));
-                break;
-            }
         } else {
             break;
         }

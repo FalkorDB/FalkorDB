@@ -1395,16 +1395,27 @@ impl Graph {
         Ok((nremoved, nset))
     }
 
+    /// Import attributes for nodes created in the current transaction.
+    ///
+    /// `new_labels` maps each created node to the label ids set this
+    /// transaction (a created node has no committed labels, so this is its
+    /// complete label set). Reading labels from here instead of
+    /// `node_labels_matrix` keeps the write path off `iter`, whose `wait`
+    /// forces a pending-delta merge per query — O(accumulated delta).
     pub fn import_node_attrs(
         &mut self,
         attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
+        new_labels: &FxHashMap<u64, Vec<u64>>,
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) -> usize {
         let nset = self.node_attrs.import_attrs(attrs);
 
         if self.node_indexer.has_indices() {
             for (id, attrs) in attrs {
-                for (_, label_id) in self.node_labels_matrix.iter(*id, *id) {
+                let Some(label_ids) = new_labels.get(id) else {
+                    continue;
+                };
+                for &label_id in label_ids {
                     let label = &self.node_labels[label_id as usize];
                     for (attr_id, _) in attrs {
                         let Some(key) = self.node_attrs.attrs_name.get(*attr_id as usize) else {
