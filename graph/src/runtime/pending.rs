@@ -982,11 +982,9 @@ impl Pending {
 
         // Collect affected edge IDs
         let mut affected_edge_ids = RoaringTreemap::new();
-        let mut created_edge_ids = RoaringTreemap::new();
         for rels in self.created_rels_by_type.values() {
             for &(rel_id, _, _) in rels {
                 affected_edge_ids.insert(rel_id.into());
-                created_edge_ids.insert(rel_id.into());
             }
         }
         for &id in self.new_relationships_attrs.keys() {
@@ -1015,12 +1013,7 @@ impl Pending {
                     self.check_node_constraint(&g, constraint, &affected_node_ids)?;
                 }
                 EntityType::Relationship => {
-                    self.check_edge_constraint(
-                        &g,
-                        constraint,
-                        &affected_edge_ids,
-                        &created_edge_ids,
-                    )?;
+                    self.check_edge_constraint(&g, constraint, &affected_edge_ids)?;
                 }
             }
         }
@@ -1131,27 +1124,18 @@ impl Pending {
         g: &Graph,
         constraint: &crate::graph::constraint::Constraint,
         affected_edge_ids: &RoaringTreemap,
-        created_edge_ids: &RoaringTreemap,
     ) -> Result<(), String> {
         let type_name = &constraint.label;
-        // Edges created this transaction are grouped by type in Pending —
-        // resolve their membership without a relationship-matrix read, which
-        // would materialize the delta's pending tuples on every commit.
-        let created_of_type: RoaringTreemap = self
-            .created_rels_by_type
-            .iter()
-            .filter(|(name, _)| name.as_str() == type_name.as_str())
-            .flat_map(|(_, rels)| rels.iter().map(|&(rel_id, _, _)| u64::from(rel_id)))
-            .collect();
 
         for edge_id in affected_edge_ids {
-            let has_type = if created_of_type.contains(edge_id) {
-                true
-            } else if created_edge_ids.contains(edge_id) {
-                // Created under a different type; an edge's type never changes.
-                false
-            } else {
-                g.edge_has_type(edge_id.into(), type_name)
+            // Edges created this transaction resolve their type from
+            // Pending's reverse index — no relationship-matrix read, which
+            // would materialize the delta's pending tuples on every commit.
+            // An edge's type never changes, so created under a different
+            // type means not a member.
+            let has_type = match self.created_rel_types.get(&edge_id.into()) {
+                Some(created_type) => created_type.as_str() == type_name.as_str(),
+                None => g.edge_has_type(edge_id.into(), type_name),
             };
             if !has_type {
                 continue;
