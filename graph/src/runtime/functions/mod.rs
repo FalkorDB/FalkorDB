@@ -365,6 +365,7 @@ pub mod temporal;
 mod trig;
 
 pub use math::apply_pow;
+pub(crate) use string::regex_captures_list;
 
 use crate::runtime::{
     batch::{Batch, BatchBuilder},

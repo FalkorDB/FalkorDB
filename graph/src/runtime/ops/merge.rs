@@ -26,7 +26,7 @@
 
 use std::cell::OnceCell;
 use std::collections::VecDeque;
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use crate::graph::graph::LabelId;
@@ -182,7 +182,7 @@ impl<'a> MergeOp<'a> {
         pattern: &QueryGraph<Arc<String>, LabelId, Variable>,
         vars: &Row,
     ) -> Result<u64, String> {
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = rustc_hash::FxHasher::default();
 
         // Hash nodes in the pattern
         for node in pattern.nodes() {

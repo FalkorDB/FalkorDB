@@ -45,7 +45,6 @@
 //! [`RangeIter`] or an inline spread — without materializing the whole list.
 
 use std::cmp::Ordering;
-use std::collections::VecDeque;
 use std::sync::Arc;
 
 use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
@@ -54,15 +53,15 @@ use thin_vec::{ThinVec, thin_vec};
 
 use crate::{
     graph::graph::NodeId,
-    parser::ast::{ExprIR, QuantifierType, Variable},
+    parser::ast::{ExprIR, QuantifierType, RegexFn, RegexFnKind, Variable},
     runtime::{
         batch::{Batch, BatchRow, Column, FloatLane, NullBitmap, classify_numeric},
-        functions::{FnType, apply_pow},
+        functions::{FnType, Type, apply_pow, regex_captures_list},
         ops::batched_result_emitter::RowIter,
         ordermap::OrderMap,
         row::RowView,
         runtime::Runtime,
-        value::{CompareValue, Contains, DisjointOrNull, Value},
+        value::{CompareValue, Contains, DisjointOrNull, Value, ValueTypeOf},
     },
 };
 
@@ -370,7 +369,6 @@ impl<'a> ExprEval<'a> {
                     info.min_hops,
                     info.max_hops,
                     info.directed,
-                    info.all_paths,
                 );
             }
             // Property access (`n.prop`) is the most common non-leaf expression
@@ -744,6 +742,9 @@ impl<'a> ExprEval<'a> {
                         }
                     }
                 }
+                ExprIR::CompiledRegex(rf) => {
+                    res.push(self.eval_compiled_regex(rf, &node, env, agg_group_key)?);
+                }
                 ExprIR::FuncInvocation(func) => {
                     let rt = self.rt()?;
                     if agg_group_key.is_none()
@@ -1112,6 +1113,68 @@ impl<'a> ExprEval<'a> {
         }
     }
 
+    /// Evaluate an [`ExprIR::CompiledRegex`] node: a regex function whose
+    /// constant pattern was compiled at bind time (see
+    /// `rewrite_compiled_regex` in the binder). Children are the remaining
+    /// runtime arguments: `[text]` or `[text, replacement]` for `Replace`.
+    /// Argument validation mirrors `validate_args_type`, which the generic
+    /// `FuncInvocation` path runs before invoking the closure.
+    fn eval_compiled_regex<R: RowView + ?Sized>(
+        &self,
+        rf: &RegexFn,
+        node: &ExprNode<'_>,
+        env: Option<&R>,
+        agg_group_key: Option<u64>,
+    ) -> Result<Value, String> {
+        fn check_string_or_null(v: &Value) -> Result<(), String> {
+            if let Some((actual, expected)) =
+                v.value_of_type(&Type::union([Type::String, Type::Null]))
+            {
+                return Err(format!(
+                    "Type mismatch: expected {expected} but was {actual}"
+                ));
+            }
+            Ok(())
+        }
+
+        let text = self.eval_node(&node.child(0), env, agg_group_key)?;
+        check_string_or_null(&text)?;
+        match rf.kind {
+            RegexFnKind::Matches => match text {
+                Value::String(s) => Ok(Value::Bool(rf.regex.is_match(s.as_str()))),
+                _ => Ok(Value::Null),
+            },
+            RegexFnKind::MatchList => match text {
+                Value::String(s) => Ok(regex_captures_list(&rf.regex, s.as_str())),
+                _ => Ok(Value::List(Arc::new(thin_vec![]))),
+            },
+            RegexFnKind::Replace => {
+                let replacement = if node.num_children() > 1 {
+                    let r = self.eval_node(&node.child(1), env, agg_group_key)?;
+                    check_string_or_null(&r)?;
+                    Some(r)
+                } else {
+                    None
+                };
+                let Value::String(text) = text else {
+                    return Ok(Value::Null);
+                };
+                match replacement {
+                    None => Ok(Value::String(Arc::new(
+                        rf.regex.replace_all(text.as_str(), "").into_owned(),
+                    ))),
+                    Some(Value::Null) => Ok(Value::Null),
+                    Some(Value::String(repl)) => Ok(Value::String(Arc::new(
+                        rf.regex
+                            .replace_all(text.as_str(), repl.as_str())
+                            .into_owned(),
+                    ))),
+                    Some(_) => unreachable!(),
+                }
+            }
+        }
+    }
+
     /// Evaluate a `shortestPath()` or `allShortestPaths()` expression.
     ///
     /// Children: [source_var_expr, dest_var_expr]
@@ -1126,7 +1189,6 @@ impl<'a> ExprEval<'a> {
         min_hops: u32,
         max_hops: Option<u32>,
         directed: bool,
-        all_paths: bool,
     ) -> Result<Value, String> {
         let src_val = self.eval_node(&node.child(0), env, agg_group_key)?;
         let dst_val = self.eval_node(&node.child(1), env, agg_group_key)?;
@@ -1148,11 +1210,6 @@ impl<'a> ExprEval<'a> {
         // min_hops == 0: if src == dest, return single-node path
         if min_hops == 0 && src_id == dst_id {
             let path: ThinVec<Value> = thin_vec![Value::Node(src_id)];
-            if all_paths {
-                return Ok(Value::List(Arc::new(thin_vec![Value::Path(Arc::new(
-                    path
-                ))])));
-            }
             return Ok(Value::Path(Arc::new(path)));
         }
 
@@ -1166,42 +1223,27 @@ impl<'a> ExprEval<'a> {
         let max_level = max_hops.map_or(u64::MAX, |m| m as u64);
         let node_cap = g.node_cap();
 
-        if all_paths {
-            let mut neighbors = NeighborIter::new(&g, rel_types, directed);
-            // All shortest paths: BFS to find distance, then enumerate
-            Ok(self.bfs_all_shortest_paths(
-                &g,
-                &mut neighbors,
-                src_id,
-                dst_id,
-                max_level,
-                node_cap,
-                rel_types,
-                min_hops,
-            ))
+        // Single shortest path via bidirectional BFS. The backward side
+        // follows incoming edges for directed traversal; for undirected
+        // traversal neighbours are symmetric so both sides use the same
+        // (separately-stateful) iterator construction.
+        let mut fwd_nbrs = NeighborIter::new(&g, rel_types, directed);
+        let mut bwd_nbrs = if directed {
+            NeighborIter::new_reversed(&g, rel_types)
         } else {
-            // Single shortest path via bidirectional BFS. The backward side
-            // follows incoming edges for directed traversal; for undirected
-            // traversal neighbours are symmetric so both sides use the same
-            // (separately-stateful) iterator construction.
-            let mut fwd_nbrs = NeighborIter::new(&g, rel_types, directed);
-            let mut bwd_nbrs = if directed {
-                NeighborIter::new_reversed(&g, rel_types)
-            } else {
-                NeighborIter::new(&g, rel_types, false)
-            };
-            Ok(self.bfs_shortest_path(
-                &g,
-                &mut fwd_nbrs,
-                &mut bwd_nbrs,
-                src_id,
-                dst_id,
-                max_level,
-                node_cap,
-                rel_types,
-                min_hops,
-            ))
-        }
+            NeighborIter::new(&g, rel_types, false)
+        };
+        Ok(self.bfs_shortest_path(
+            &g,
+            &mut fwd_nbrs,
+            &mut bwd_nbrs,
+            src_id,
+            dst_id,
+            max_level,
+            node_cap,
+            rel_types,
+            min_hops,
+        ))
     }
 
     /// Bidirectional BFS to find a single shortest path between two nodes.
@@ -1350,120 +1392,6 @@ impl<'a> ExprEval<'a> {
         }
 
         Value::Path(Arc::new(path))
-    }
-
-    /// BFS to find all shortest paths between two nodes.
-    #[allow(clippy::too_many_arguments)]
-    fn bfs_all_shortest_paths(
-        &self,
-        g: &crate::graph::graph::Graph,
-        neighbors: &mut NeighborIter,
-        src_id: crate::graph::graph::NodeId,
-        dst_id: crate::graph::graph::NodeId,
-        max_level: u64,
-        _node_cap: u64,
-        rel_types: &[Arc<String>],
-        min_hops: u32,
-    ) -> Value {
-        use crate::graph::graph::{NodeId, RelationshipId};
-
-        let src = u64::from(src_id);
-        let dst = u64::from(dst_id);
-
-        // BFS to find distance and all shortest-path predecessors.
-        // Maps keyed by visited nodes only (SEC-3).
-        let mut distances: rustc_hash::FxHashMap<u64, u64> = rustc_hash::FxHashMap::default();
-        distances.insert(src, 0);
-
-        // predecessors[n] = list of all nodes that are parents on some shortest path
-        let mut predecessors: rustc_hash::FxHashMap<u64, Vec<u64>> =
-            rustc_hash::FxHashMap::default();
-
-        let mut queue: VecDeque<u64> = VecDeque::new();
-        queue.push_back(src);
-
-        let mut found_dist: Option<u64> = None;
-
-        while let Some(cur) = queue.pop_front() {
-            let cur_dist = *distances.get(&cur).expect("BFS dequeued unvisited node");
-            if let Some(fd) = found_dist
-                && cur_dist >= fd
-            {
-                continue;
-            }
-            if cur_dist >= max_level {
-                continue;
-            }
-            for &col in neighbors.neighbors(cur) {
-                let new_dist = cur_dist + 1;
-                match distances.get(&col).copied() {
-                    None => {
-                        distances.insert(col, new_dist);
-                        predecessors.entry(col).or_default().push(cur);
-                        if col == dst {
-                            found_dist = Some(new_dist);
-                        } else {
-                            queue.push_back(col);
-                        }
-                    }
-                    Some(d) if d == new_dist => {
-                        predecessors.entry(col).or_default().push(cur);
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        if found_dist.is_none() {
-            return Value::Null;
-        }
-
-        // Enumerate all shortest paths by DFS from dst back to src
-        let mut all_paths: Vec<ThinVec<Value>> = Vec::new();
-        let mut stack: Vec<(u64, Vec<u64>)> = vec![(dst, vec![dst])];
-
-        while let Some((cur, path_so_far)) = stack.pop() {
-            if cur == src {
-                // Reconstruct forward path
-                let mut fwd = path_so_far.clone();
-                fwd.reverse();
-                let mut path: ThinVec<Value> = ThinVec::with_capacity(fwd.len() * 2 - 1);
-                path.push(Value::Node(NodeId::from(fwd[0])));
-                for i in 0..fwd.len() - 1 {
-                    let from = NodeId::from(fwd[i]);
-                    let to = NodeId::from(fwd[i + 1]);
-                    let rel_id: Option<RelationshipId> = g
-                        .get_src_dest_relationships(from, to, rel_types)
-                        .next()
-                        .or_else(|| g.get_src_dest_relationships(to, from, rel_types).next());
-                    if let Some(rid) = rel_id {
-                        path.push(Value::Relationship(rid));
-                    }
-                    path.push(Value::Node(to));
-                }
-                all_paths.push(path);
-                continue;
-            }
-            if let Some(preds) = predecessors.get(&cur) {
-                for &pred in preds {
-                    let mut new_path = path_so_far.clone();
-                    new_path.push(pred);
-                    stack.push((pred, new_path));
-                }
-            }
-        }
-
-        // Filter paths by min_hops and return list of paths
-        let result: ThinVec<Value> = all_paths
-            .into_iter()
-            .filter(|p| {
-                // Number of hops = number of nodes - 1; nodes are at even indices
-                let node_count = p.iter().filter(|v| matches!(v, Value::Node(_))).count();
-                node_count > 0 && (node_count - 1) >= min_hops as usize
-            })
-            .map(|p| Value::Path(Arc::new(p)))
-            .collect();
-        Value::List(Arc::new(result))
     }
 
     pub(crate) fn eval_map_projection<R: RowView + ?Sized>(

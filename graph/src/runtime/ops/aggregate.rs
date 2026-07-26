@@ -41,7 +41,7 @@ use crate::runtime::{
 use ahash::RandomState;
 use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 use std::collections::HashMap;
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use thin_vec::{ThinVec, thin_vec};
 
@@ -1055,7 +1055,7 @@ trait HashU64 {
 
 impl HashU64 for Row {
     fn hash_u64(&self) -> u64 {
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = rustc_hash::FxHasher::default();
         self.hash(&mut hasher);
         hasher.finish()
     }
