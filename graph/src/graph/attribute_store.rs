@@ -244,6 +244,16 @@ impl PackedAttr {
 /// from `NODE_CREATION_BUFFER`, which sizes the C-style allocation block.
 const DEFAULT_ATTR_BLOCK_CAP: u32 = 64;
 
+/// Arena floor below which a block is never compacted: the relative rule
+/// (`waste * 2 > len`) already bounds steady-state waste at ~2x the live
+/// payload, and this only stops us re-compacting a trivially small arena.
+///
+/// It must stay *below* a block's live arena (`block_cap` x attrs/entity) or it
+/// becomes the binding constraint and waste is bounded by
+/// `floor / live` instead of 2x — at the 64-slot grain a 1024-entry floor let a
+/// 2-attribute block bloat 5x (measured) before compaction could fire.
+const COMPACT_MIN_ARENA: usize = 256;
+
 #[inline]
 const fn default_block_cap() -> u32 {
     DEFAULT_ATTR_BLOCK_CAP
@@ -688,7 +698,7 @@ impl Block {
     /// Compact when abandoned entries dominate the arena.
     fn maybe_compact(&mut self) {
         let waste = self.dead as usize + self.slack as usize;
-        if waste * 2 > self.arena.len() && self.arena.len() > 1024 {
+        if waste * 2 > self.arena.len() && self.arena.len() > COMPACT_MIN_ARENA {
             self.compact();
         }
     }
@@ -932,7 +942,7 @@ impl DataBlock {
                 // engine's realloc churn — without recopying every block on
                 // each commit.
                 let waste = block.dead as usize + block.slack as usize;
-                if waste * 2 >= block.arena.len() && block.arena.len() > 1024 {
+                if waste * 2 >= block.arena.len() && block.arena.len() > COMPACT_MIN_ARENA {
                     block.compact();
                 }
                 if block.slots.len() == cap {
@@ -1491,7 +1501,9 @@ mod tests {
         }
         let block = store.data.block(0).unwrap();
         // Compaction must have run: dead entries bounded by live ones.
-        assert!(block.dead as usize * 2 <= block.arena.len() || block.arena.len() <= 1024);
+        assert!(
+            block.dead as usize * 2 <= block.arena.len() || block.arena.len() <= COMPACT_MIN_ARENA
+        );
         // Values intact after compaction.
         for i in 0..100u16 {
             assert_eq!(
