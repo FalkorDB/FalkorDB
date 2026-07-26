@@ -1,5 +1,7 @@
 <div align="center">
-  <img width="100" height="100" alt="FalkorDB Logo Square B" src="https://github.com/user-attachments/assets/ec67e5e3-a060-405d-b229-1fe2badcf8ad" />
+	<a href="https://www.falkordb.com">
+  		<img width="100" height="100" alt="FalkorDB Logo Square B" src="https://github.com/user-attachments/assets/ec67e5e3-a060-405d-b229-1fe2badcf8ad" />
+	</a>
 </div>
 <div align="center">
   <h1>FalkorDB</h1>
