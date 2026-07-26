@@ -172,21 +172,22 @@ pub fn create_js_node<'js>(
     // .getNeighbors(config?) method. A single shared JS function reads the
     // node id from `this.__falkor_node_id`; it is eval'd ONCE per context —
     // per-node `ctx.eval` string builds made QuickJS re-parse JS source for
-    // every node/edge materialized, dominating UDF traversal profiles.
+    // every node/edge materialized, dominating UDF traversal profiles. The
+    // native helper is captured in the closure (not looked up through a
+    // global at call time), so user JS clobbering globals can't break
+    // already-materialized nodes.
     let globals = ctx.globals();
     let method: Function = match globals.get("__falkor_getNeighborsMethod") {
         Ok(f) => f,
         Err(_) => {
             let helper = Function::new(ctx.clone(), js_get_neighbors_entry)
                 .map_err(|e| format!("JS function error: {e}"))?;
-            globals
-                .set("__falkor_getNeighbors", helper)
-                .map_err(|e| format!("JS set error: {e}"))?;
-            let f: Function = ctx
-                .eval(
-                    "(function(config) { return __falkor_getNeighbors(this.__falkor_node_id, config); })",
-                )
+            let factory: Function = ctx
+                .eval("(h) => function(config) { return h(this.__falkor_node_id, config); }")
                 .map_err(|e| format!("JS eval error: {e}"))?;
+            let f: Function = factory
+                .call((helper,))
+                .map_err(|e| format!("JS call error: {e}"))?;
             globals
                 .set("__falkor_getNeighborsMethod", f.clone())
                 .map_err(|e| format!("JS set error: {e}"))?;
