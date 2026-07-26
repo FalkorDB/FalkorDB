@@ -186,12 +186,12 @@ impl<T> VersionedMatrix<T> {
     pub fn extract(&self) -> Matrix<bool> {
         self.wait();
         let mut m = Matrix::<bool>::new(self.m.nrows(), self.m.ncols());
-        m.element_wise_add(None, None, Some(&*self.m), None);
+        m.set_pattern(None, &*self.m, None);
         if self.dm.nvals() > 0 {
             m.remove_all(&self.dm);
         }
         if self.dp.nvals() > 0 {
-            m.element_wise_add(None, None, Some(&*self.dp), None);
+            m.set_pattern(None, &*self.dp, None);
         }
         m
     }
@@ -227,13 +227,12 @@ impl<T> VersionedMatrix<T> {
         &mut self,
         mask: &Matrix<bool>,
     ) {
-        // dm |= (m & mask): mark deleted every committed entry that `mask`
-        // selects. The set added to `dm` is the intersection `m ∩ mask`, which
-        // is symmetric — so `m`'s values are irrelevant and it can flow through
-        // the (structure-only, `PAIR`-semiring) generic `b` slot while the bool
-        // `mask` acts as the GraphBLAS write mask.
+        // dm<mask> = mask ∩ m: mark deleted every committed entry that `mask`
+        // selects. eWiseMult's `PAIR` semiring never reads `m`'s values — an
+        // eWiseAdd copy would typecast a u64 value of 0 to `false`, which
+        // valued masks then skip.
         self.dm
-            .element_wise_add(Some(mask), None, Some(&*self.m), None);
+            .element_wise_multiply(Some(mask), Some(mask), Some(&*self.m), None);
         // dp &= ~mask: remove entries from dp that exist in mask
         self.dp.remove_all(mask);
     }

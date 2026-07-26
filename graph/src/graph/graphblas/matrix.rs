@@ -83,20 +83,21 @@ use super::{
     GrB_DESC_RT0T1, GrB_DESC_RT1, GrB_DESC_S, GrB_DESC_SC, GrB_DESC_SCT0, GrB_DESC_SCT0T1,
     GrB_DESC_SCT1, GrB_DESC_ST0, GrB_DESC_ST0T1, GrB_DESC_ST1, GrB_DESC_T0, GrB_DESC_T0T1,
     GrB_DESC_T1, GrB_Descriptor, GrB_GLOBAL, GrB_Global_set_INT32, GrB_Info, GrB_Matrix,
-    GrB_Matrix_build_BOOL, GrB_Matrix_build_UINT64, GrB_Matrix_clear, GrB_Matrix_dup,
-    GrB_Matrix_eWiseAdd_BinaryOp, GrB_Matrix_eWiseAdd_Semiring, GrB_Matrix_eWiseMult_Semiring,
-    GrB_Matrix_extractElement_BOOL, GrB_Matrix_extractElement_UINT64, GrB_Matrix_free,
-    GrB_Matrix_get_INT32, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals,
-    GrB_Matrix_removeElement, GrB_Matrix_resize, GrB_Matrix_setElement_BOOL,
-    GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode, GrB_SECOND_UINT64, GrB_Type,
-    GrB_UINT64, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL,
-    GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64, GxB_Container_free, GxB_Container_new,
-    GxB_Global_Option_set_INT32, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_get_UINT64,
-    GxB_Iterator_new, GxB_JIT_Control, GxB_Matrix_fprint, GxB_Matrix_isStoredElement,
-    GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_NTHREADS, GxB_Option_Field, GxB_Print_Level,
-    GxB_init, GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
-    GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol, GxB_rowIterator_nextRow,
-    GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
+    GrB_Matrix_apply, GrB_Matrix_build_BOOL, GrB_Matrix_build_UINT64, GrB_Matrix_clear,
+    GrB_Matrix_dup, GrB_Matrix_eWiseAdd_BinaryOp, GrB_Matrix_eWiseAdd_Semiring,
+    GrB_Matrix_eWiseMult_Semiring, GrB_Matrix_extractElement_BOOL,
+    GrB_Matrix_extractElement_UINT64, GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols,
+    GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_removeElement,
+    GrB_Matrix_resize, GrB_Matrix_setElement_BOOL, GrB_Matrix_setElement_UINT64, GrB_Matrix_wait,
+    GrB_Mode, GrB_SECOND_UINT64, GrB_Type, GrB_UINT64, GrB_WaitMode, GrB_finalize, GrB_mxm,
+    GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64, GxB_Container_free,
+    GxB_Container_new, GxB_Global_Option_set_INT32, GxB_Iterator, GxB_Iterator_free,
+    GxB_Iterator_get_UINT64, GxB_Iterator_new, GxB_JIT_Control, GxB_Matrix_fprint,
+    GxB_Matrix_isStoredElement, GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_NTHREADS,
+    GxB_ONE_BOOL, GxB_Option_Field, GxB_Print_Level, GxB_init, GxB_load_Matrix_from_Container,
+    GxB_rowIterator_attach, GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex,
+    GxB_rowIterator_nextCol, GxB_rowIterator_nextRow, GxB_rowIterator_seekRow,
+    GxB_unload_Matrix_into_Container,
 };
 
 /// Initializes the GraphBLAS library in non-blocking mode.
@@ -647,11 +648,11 @@ impl<T> Matrix<T> {
         self.has_pending.store(true, Ordering::Relaxed);
     }
 
-    pub fn element_wise_multiply(
+    pub fn element_wise_multiply<TB>(
         &mut self,
-        mask: Option<&Self>,
-        a: Option<&Self>,
-        b: Option<&Self>,
+        mask: Option<&Matrix<bool>>,
+        a: Option<&Matrix<bool>>,
+        b: Option<&Matrix<TB>>,
         descriptor: Option<Descriptor>,
     ) {
         unsafe {
@@ -662,6 +663,34 @@ impl<T> Matrix<T> {
                 GxB_ANY_PAIR_BOOL,
                 a.map_or(*self.m, |a| *a.m),
                 b.map_or(*self.m, |b| *b.m),
+                descriptor.map_or(null_mut(), std::convert::Into::into),
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+
+    /// `self<mask> ∪= pattern(a)`: union `a`'s sparsity pattern into `self`
+    /// as all-`true` entries (`GrB_Matrix_apply` with `GxB_ONE_BOOL`, which
+    /// never reads `a`'s values).
+    ///
+    /// Use this instead of a single-sided `element_wise_add` when `a` is a
+    /// valued matrix: eWiseAdd *typecasts* single-side entries, so a `u64`
+    /// edge id of 0 would land as `false` — invisible to valued masks and a
+    /// source of corruption.
+    pub fn set_pattern<TB>(
+        &mut self,
+        mask: Option<&Matrix<bool>>,
+        a: &Matrix<TB>,
+        descriptor: Option<Descriptor>,
+    ) {
+        unsafe {
+            let info = GrB_Matrix_apply(
+                *self.m,
+                mask.map_or(null_mut(), |m| *m.m),
+                GxB_ANY_BOOL,
+                GxB_ONE_BOOL,
+                *a.m,
                 descriptor.map_or(null_mut(), std::convert::Into::into),
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
