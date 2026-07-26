@@ -242,7 +242,7 @@ pub enum ExprIR<TVar> {
     /// Pattern predicate should be rewritten in planner (boxed; see
     /// `PatternComprehension`).
     Pattern(Box<QueryGraph<Arc<String>, Arc<String>, TVar>>),
-    /// shortestPath((a)-[*]->(b)) or allShortestPaths((a)-[*]->(b))
+    /// shortestPath((a)-[*]->(b))
     /// Children: [source_var_expr, dest_var_expr]
     ///
     /// Boxed: the inline payload (rel-type list, hop bounds, flags) is
@@ -267,7 +267,6 @@ pub struct ShortestPathInfo {
     pub min_hops: u32,
     pub max_hops: Option<u32>,
     pub directed: bool,
-    pub all_paths: bool,
 }
 
 #[cfg_attr(tarpaulin, skip)]
@@ -332,13 +331,7 @@ impl<TVar: Display + std::fmt::Debug> Display for ExprIR<TVar> {
             }
             Self::Paren => write!(f, "()"),
             Self::Pattern(_) => write!(f, "<pattern>"),
-            Self::ShortestPath(info) => {
-                if info.all_paths {
-                    write!(f, "allShortestPaths()")
-                } else {
-                    write!(f, "shortestPath()")
-                }
-            }
+            Self::ShortestPath(_) => write!(f, "shortestPath()"),
             Self::MapProjection => write!(f, "map_projection"),
         }
     }

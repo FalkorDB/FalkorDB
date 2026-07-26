@@ -480,19 +480,6 @@ impl Pending {
         result
     }
 
-    pub fn created_relationships(
-        &mut self,
-        rels: Vec<(RelationshipId, NodeId, NodeId, Arc<String>)>,
-    ) {
-        for (id, from, to, type_name) in rels {
-            self.created_rels_by_type
-                .entry(type_name.clone())
-                .or_default()
-                .push((id, from, to));
-            self.created_rel_types.insert(id, type_name);
-        }
-    }
-
     pub fn created_relationship(
         &mut self,
         id: RelationshipId,
