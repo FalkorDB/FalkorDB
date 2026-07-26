@@ -10,20 +10,45 @@
 //! vectors) are stored once in a block-level side array and referenced by
 //! index from the packed payload.
 //!
+//! Blocks are reached through a **two-level radix directory** rather than one
+//! flat vector, so a write copies only the root→page→block path it touches
+//! (see *Copy-on-write* below) and the block can stay small enough to double as
+//! a future RAM↔disk residency unit.
+//!
+//! ## Addressing
+//!
+//! The dense entity id *is* the address: it splits into radix digits that index
+//! each level directly — no key comparisons anywhere in the descent. Shown for
+//! the constants (`BLOCK_CAP` slots/block, `DIR_FANOUT`
+//! blocks/page ⇒ one directory page spans 4096 ids):
+//!
+//! ```text
+//!  entity_id   bits 63 ............ 12 │ 11 ...... 6 │ 5 ...... 0
+//!                   └──── dir_idx ────┘ └ page_slot ┘ └ slot_idx ┘
+//!                    id / (cap*FANOUT)   (id/cap)%64     id % cap
+//! ```
+//!
 //! ## Memory layout
 //!
 //! ```text
 //! DataBlock
 //! ┌────────────────────────────────────────────────────────────────────┐
-//! │ blocks: Vec<Arc<Block>>   (entity_id / block_cap() picks a block)  │
-//! │   [ Arc<Block 0> ][ Arc<Block 1> ][ Arc<Block 2> ] ...             │
+//! │ root: Arc<Vec<Option<Arc<DirPage>>>>   8 B/slot, grows with max id │
+//! │   [ DirPage 0 ][ None ][ DirPage 2 ] ...                           │
 //! └───────────┬────────────────────────────────────────────────────────┘
-//!             │ shared across MVCC snapshots, COW on first write
+//!             │ dir_idx           (shared across MVCC snapshots)
 //!             ▼
-//! Block
+//! DirPage — 512 B, the directory's COW unit
+//! ┌────────────────────────────────────────────────────────────────────┐
+//! │ blocks: [Option<Arc<Block>>; DIR_FANOUT]                           │
+//! │   [ Arc<Block> ][ Arc<Block> ][ None ] ...                         │
+//! └───────────┬────────────────────────────────────────────────────────┘
+//!             │ page_slot         (untouched pages stay Arc-shared)
+//!             ▼
+//! Block — `BLOCK_CAP` entities (~4 KB), the data COW unit
 //! ┌────────────────────────────────────────────────────────────────────┐
 //! │ slots: Vec<Slot>          one 8-byte span descriptor per entity    │
-//! │   idx (entity_id % block_cap())                                    │
+//! │   idx = slot_idx                                                   │
 //! │   ┌─────0─────┬─────1─────┬─────2─────┬─────3─────┐                │
 //! │   │ off:0     │ off:3     │ cap:0     │ off:5     │ ...            │
 //! │   │ len:3 cap:3 len:2 cap:2 (no attrs)│ len:1 cap:4                │
@@ -47,17 +72,45 @@
 //! Per-entity cost: 8 B slot + 12 B x attrs in the shared arena —
 //! no per-entity allocation. Scalars (Int/Float/Bool/...) live entirely
 //! in the 8-byte packed payload; only heap values touch `heap`.
+//! A read is two dependent loads (root → page → block), then a binary
+//! search over the entity's tiny sorted span.
 //! ```
+//!
+//! ## Copy-on-write: what one write copies
+//!
+//! ```text
+//!  ✎ SET one attribute of one entity
+//!
+//!    root ──────────── path-copied      root_len x 8 B
+//!      └─ DirPage[i] ── path-copied      512 B
+//!           └─ Block ── path-copied      slots + arena (~4 KB default)
+//!
+//!    every OTHER DirPage and Block stays SHARED with the reader's
+//!    snapshot — one Arc refcount bump each, no data copied
+//! ```
+//!
+//! A flat `Vec<Arc<Block>>` directory would instead clone **every** block
+//! pointer per write, which is why the block could not be made small: the
+//! pointer vector grows as the block shrinks. The radix split decouples the
+//! two, so blocks stay ~4 KB *and* the copied directory stays tiny.
 //!
 //! ## Concurrency / MVCC
 //!
 //! The store contains no locks and no unsafe code. Isolation comes from the
 //! MVCC design: a write transaction operates on a *private* clone of the
 //! graph (`Graph::new_version`), which is published atomically on commit or
-//! simply discarded on rollback. Cloning the store is cheap — blocks are
-//! shared via `Arc` and copied on first write per block (`Arc::make_mut`),
-//! so older snapshots keep reading their own blocks untouched. In-place
-//! arena writes are safe because they only ever happen after `make_mut`.
+//! simply discarded on rollback. Cloning the store is cheap — it bumps the
+//! root `Arc`, sharing every directory page and block. The first write to a
+//! block then `Arc::make_mut`s just its root→page→block path, so older
+//! snapshots keep reading their own pages untouched. In-place arena writes are
+//! safe because they only ever happen after `make_mut`.
+//!
+//! Note that this is why the directory is *not* built from interior-mutable
+//! cells (e.g. `arc_swap::ArcSwapOption`): `Arc::make_mut` is what structurally
+//! guarantees a writer cannot disturb a snapshot a reader still holds. Such a
+//! cell is the right primitive for a future RAM↔disk *residency* swizzle
+//! (`Resident ⇄ Cold` is cache state over identical bytes, and must be mutable
+//! from outside the versioned tree) — not for versioned state.
 
 use std::cmp::Ordering;
 use std::sync::Arc;
@@ -183,13 +236,32 @@ impl PackedAttr {
 // Block / DataBlock: arena-based slot storage (C engine's DataBlock, COW)
 // ============================================================================
 
-/// Slots per block, matching the C engine's DataBlock granularity. Driven
-/// by the NODE_CREATION_BUFFER configuration, which is normalized to a
-/// power of two at module init and immutable afterwards.
-#[inline]
-fn block_cap() -> usize {
-    super::graph::NODE_CREATION_BUFFER.load(std::sync::atomic::Ordering::Relaxed) as usize
-}
+/// Block capacity (slots per block) — ~4 KB blocks at a few attributes/entity,
+/// matching the native index's leaf-page size. The grain is the copy-on-write
+/// (and future residency) unit: a smaller grain bounds the bytes a single write
+/// copies via `Arc::make_mut`, while the radix directory keeps the *directory*
+/// copy small at the same time (see the module docs). Deliberately decoupled
+/// from `NODE_CREATION_BUFFER`, which sizes the C-style allocation block.
+const BLOCK_CAP: usize = 64;
+
+/// `entity_id` → block / slot split, folded at compile time.
+const BLOCK_SHIFT: u32 = BLOCK_CAP.trailing_zeros();
+const BLOCK_MASK: usize = BLOCK_CAP - 1;
+
+const _: () = assert!(
+    BLOCK_CAP.is_power_of_two(),
+    "BLOCK_CAP must be a power of two: the id split is a shift + mask"
+);
+
+/// Arena floor below which a block is never compacted: the relative rule
+/// (`waste * 2 > len`) already bounds steady-state waste at ~2x the live
+/// payload, and this only stops us re-compacting a trivially small arena.
+///
+/// It must stay *below* a block's live arena (`BLOCK_CAP` x attrs/entity) or it
+/// becomes the binding constraint and waste is bounded by
+/// `floor / live` instead of 2x — at the 64-slot grain a 1024-entry floor let a
+/// 2-attribute block bloat 5x (measured) before compaction could fire.
+const COMPACT_MIN_ARENA: usize = 256;
 
 /// Arena span descriptor for one entity. `cap == 0` means the entity has no
 /// attribute span (the equivalent of C's NULL AttributeSet); live spans have
@@ -205,7 +277,7 @@ struct Slot {
 }
 
 /// One block of entity slots plus the arena holding their packed attributes.
-/// Slots grow lazily up to [`block_cap`].
+/// Slots grow lazily up to [`BLOCK_CAP`].
 #[derive(Clone, Default)]
 struct Block {
     slots: Vec<Slot>,
@@ -354,16 +426,16 @@ impl Block {
         self.slack = self.slack + u32::from(old_len) - new_len as u32;
     }
 
-    /// Grow `slots` to cover `slot_idx` with capacity capped at
-    /// [`block_cap`]. Plain `Vec::resize` doubling would overshoot the
-    /// block's fixed maximum, and since COW clones reset capacity to `len`,
-    /// a clone-then-grow cycle otherwise leaves up to 2x slack per block.
+    /// Grow `slots` to cover `slot_idx`, capped at the block's capacity `cap`.
+    /// Plain `Vec::resize` doubling would overshoot the block's fixed maximum,
+    /// and since COW clones reset capacity to `len`, a clone-then-grow cycle
+    /// otherwise leaves up to 2x slack per block.
     fn grow_slots(
         &mut self,
         slot_idx: usize,
     ) {
         if self.slots.len() <= slot_idx {
-            let target = (self.slots.len() * 2).clamp(slot_idx + 1, block_cap().max(slot_idx + 1));
+            let target = (self.slots.len() * 2).clamp(slot_idx + 1, BLOCK_CAP.max(slot_idx + 1));
             self.slots.reserve_exact(target - self.slots.len());
             self.slots.resize(slot_idx + 1, Slot::default());
         }
@@ -627,7 +699,7 @@ impl Block {
     /// Compact when abandoned entries dominate the arena.
     fn maybe_compact(&mut self) {
         let waste = self.dead as usize + self.slack as usize;
-        if waste * 2 > self.arena.len() && self.arena.len() > 1024 {
+        if waste * 2 > self.arena.len() && self.arena.len() > COMPACT_MIN_ARENA {
             self.compact();
         }
     }
@@ -689,18 +761,80 @@ impl<'a> SpanRef<'a> {
 ///
 /// Blocks are shared across MVCC versions via `Arc` and copied on first
 /// write per version (`Arc::make_mut`), so snapshots never observe writes.
+/// Blocks per directory page — the middle radix level's fanout (power of two).
+/// A single-entity write path-copies the root vector plus one `DirPage` (this
+/// many block pointers), not the whole flat directory — turning the per-write
+/// directory copy from `O(num_blocks)` into `O(root_len + DIR_FANOUT)`, so
+/// untouched dir pages stay shared across MVCC versions.
+const DIR_FANOUT: usize = 64;
+
+/// One middle radix level: `DIR_FANOUT` block pointers. The copy-on-write unit
+/// for the directory's leaf level.
+#[derive(Clone)]
+struct DirPage {
+    blocks: [Option<Arc<Block>>; DIR_FANOUT],
+}
+
+impl Default for DirPage {
+    fn default() -> Self {
+        Self {
+            blocks: std::array::from_fn(|_| None),
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 struct DataBlock {
-    blocks: Vec<Arc<Block>>,
+    /// Two-level radix directory over `block_idx = entity_id / BLOCK_CAP`:
+    /// `root[block_idx / DIR_FANOUT]` → `DirPage.blocks[block_idx % DIR_FANOUT]`
+    /// → `Block`. `root` is `Arc`-wrapped so `new_version` is one `Arc` bump; a
+    /// write path-copies only the root vector, the touched `DirPage`, and the
+    /// touched `Block`, sharing every other dir page across MVCC versions.
+    root: Arc<Vec<Option<Arc<DirPage>>>>,
 }
 
 impl DataBlock {
     #[inline]
-    fn locate(entity_id: u64) -> (usize, usize) {
-        let cap = block_cap();
-        debug_assert!(cap.is_power_of_two());
+    const fn locate(entity_id: u64) -> (usize, usize) {
         let id = entity_id as usize;
-        (id >> cap.trailing_zeros(), id & (cap - 1))
+        (id >> BLOCK_SHIFT, id & BLOCK_MASK)
+    }
+
+    /// The block for `block_idx`, if present — two dependent loads
+    /// (`root` → `DirPage` → `Block`), zero comparisons.
+    #[inline]
+    fn block(
+        &self,
+        block_idx: usize,
+    ) -> Option<&Block> {
+        self.root.get(block_idx / DIR_FANOUT)?.as_ref()?.blocks[block_idx % DIR_FANOUT].as_deref()
+    }
+
+    /// The `Arc<Block>` for `block_idx` (for tests that assert sharing identity).
+    #[cfg(test)]
+    fn block_arc(
+        &self,
+        block_idx: usize,
+    ) -> Option<&Arc<Block>> {
+        self.root.get(block_idx / DIR_FANOUT)?.as_ref()?.blocks[block_idx % DIR_FANOUT].as_ref()
+    }
+
+    /// Copy-on-write path-copy to the block for `block_idx`, creating the
+    /// directory levels as needed. Clones only the root vector, the touched
+    /// `DirPage`, and the touched `Block` when they are shared with another
+    /// version.
+    #[inline]
+    fn block_mut(
+        &mut self,
+        block_idx: usize,
+    ) -> &mut Block {
+        let (dir_idx, page_slot) = (block_idx / DIR_FANOUT, block_idx % DIR_FANOUT);
+        let root = Arc::make_mut(&mut self.root);
+        if root.len() <= dir_idx {
+            root.resize(dir_idx + 1, None);
+        }
+        let page = Arc::make_mut(root[dir_idx].get_or_insert_with(|| Arc::new(DirPage::default())));
+        Arc::make_mut(page.blocks[page_slot].get_or_insert_with(|| Arc::new(Block::default())))
     }
 
     #[inline]
@@ -709,7 +843,7 @@ impl DataBlock {
         entity_id: u64,
     ) -> Option<SpanRef<'_>> {
         let (block_idx, slot_idx) = Self::locate(entity_id);
-        let block = self.blocks.get(block_idx)?;
+        let block = self.block(block_idx)?;
         let slot = *block.slots.get(slot_idx)?;
         if slot.cap == 0 {
             return None;
@@ -729,10 +863,7 @@ impl DataBlock {
             return;
         }
         let (block_idx, slot_idx) = Self::locate(entity_id);
-        if self.blocks.len() <= block_idx {
-            self.blocks.resize_with(block_idx + 1, Arc::default);
-        }
-        let block = Arc::make_mut(&mut self.blocks[block_idx]);
+        let block = self.block_mut(block_idx);
         block.set_span(slot_idx, pairs);
         block.maybe_compact();
     }
@@ -749,16 +880,12 @@ impl DataBlock {
         // Avoid COW (and empty-slot creation) when there is nothing to do:
         // no existing span and only removals.
         let has_span = self
-            .blocks
-            .get(block_idx)
+            .block(block_idx)
             .is_some_and(|block| block.slots.get(slot_idx).is_some_and(|slot| slot.cap != 0));
         if !has_span && pairs.iter().all(|(_, v)| matches!(v, Value::Null)) {
             return (0, 0);
         }
-        if self.blocks.len() <= block_idx {
-            self.blocks.resize_with(block_idx + 1, Arc::default);
-        }
-        let block = Arc::make_mut(&mut self.blocks[block_idx]);
+        let block = self.block_mut(block_idx);
         let counts = block.merge_span(slot_idx, pairs, scratch);
         block.maybe_compact();
         counts
@@ -774,23 +901,32 @@ impl DataBlock {
     /// for slop that the next batch reclaims anyway. Residual slop is
     /// bounded by one partially-filled tail block per store.
     fn trim(&mut self) {
-        let cap = block_cap();
-        for arc in &mut self.blocks {
-            if let Some(block) = Arc::get_mut(arc) {
+        // Only exclusively-owned levels are shrunk: a shared root / dir page /
+        // block belongs to another version and must not be mutated. `get_mut`
+        // returns `None` for shared, so the walk skips it.
+        let Some(root) = Arc::get_mut(&mut self.root) else {
+            return;
+        };
+        for page in root.iter_mut().flatten() {
+            let Some(page) = Arc::get_mut(page) else {
+                continue;
+            };
+            for arc in page.blocks.iter_mut().flatten() {
+                let Some(block) = Arc::get_mut(arc) else {
+                    continue;
+                };
                 // Commit-time compaction: reclaim update churn (dead spans +
                 // in-span slack) once it reaches half the arena. Steady-state
                 // waste stays bounded at 2x live payload — still below the C
                 // engine's realloc churn — without recopying every block on
                 // each commit.
                 let waste = block.dead as usize + block.slack as usize;
-                if waste * 2 >= block.arena.len() && block.arena.len() > 1024 {
+                if waste * 2 >= block.arena.len() && block.arena.len() > COMPACT_MIN_ARENA {
                     block.compact();
                 }
-                if block.slots.len() == cap {
+                if block.slots.len() == BLOCK_CAP {
                     block.arena.shrink_to_fit();
                     block.heap.shrink_to_fit();
-                    // Slots fill in hash order, so `resize` can double past
-                    // the block capacity from a non-power-of-two start.
                     block.slots.shrink_to_fit();
                 }
                 block.heap_free.shrink_to_fit();
@@ -805,23 +941,36 @@ impl DataBlock {
         let (block_idx, slot_idx) = Self::locate(entity_id);
         // Check occupancy before make_mut so clearing an already-empty slot
         // doesn't deep-copy a shared block.
-        if let Some(block) = self.blocks.get(block_idx)
-            && block.slots.get(slot_idx).is_some_and(|slot| slot.cap != 0)
+        if self
+            .block(block_idx)
+            .is_some_and(|block| block.slots.get(slot_idx).is_some_and(|slot| slot.cap != 0))
         {
-            let block = Arc::make_mut(&mut self.blocks[block_idx]);
+            let block = self.block_mut(block_idx);
             block.free_span(slot_idx);
             block.maybe_compact();
         }
     }
 
-    /// Structural overhead of the slot storage, excluding attribute payload.
+    /// Structural overhead of the directory + slot storage, excluding attribute
+    /// payload (arena entries and out-of-line heap values).
+    ///
+    /// Each level is counted exactly once: the root vector's own storage holds
+    /// the page pointers, and a `DirPage`'s size already includes its block
+    /// pointers — so only the *pointed-to* allocation (plus its `Arc` header) is
+    /// added per level, never the pointer again.
     fn memory_usage(&self) -> usize {
-        self.blocks.len() * (std::mem::size_of::<Arc<Block>>() + std::mem::size_of::<Block>())
-            + self
-                .blocks
-                .iter()
-                .map(|block| block.slots.capacity() * std::mem::size_of::<Slot>())
-                .sum::<usize>()
+        // An `Arc` allocation carries strong + weak refcounts ahead of its value.
+        const ARC_HDR: usize = 2 * std::mem::size_of::<usize>();
+        let mut total = self.root.capacity() * std::mem::size_of::<Option<Arc<DirPage>>>();
+        for page in self.root.iter().flatten() {
+            total += ARC_HDR + std::mem::size_of::<DirPage>();
+            for block in page.blocks.iter().flatten() {
+                total += ARC_HDR
+                    + std::mem::size_of::<Block>()
+                    + block.slots.capacity() * std::mem::size_of::<Slot>();
+            }
+        }
+        total
     }
 }
 
@@ -847,7 +996,8 @@ impl AttributeStore {
         Self::default()
     }
 
-    /// Cheap snapshot clone for a new MVCC version (one `Arc` bump per block).
+    /// Cheap snapshot clone for a new MVCC version: one root `Arc` bump, which
+    /// shares every directory page and block until a write path-copies one.
     #[must_use]
     pub fn new_version(&self) -> Self {
         self.clone()
@@ -1273,7 +1423,7 @@ mod tests {
         let store = store_with(&[(1, &pairs)]);
         assert_eq!(store.entity_memory_usage(1), 4 * 12);
         assert_eq!(store.entity_memory_usage(2), 0);
-        assert!(store.data.blocks[0].heap.is_empty());
+        assert!(store.data.block(0).unwrap().heap.is_empty());
     }
 
     #[test]
@@ -1293,7 +1443,7 @@ mod tests {
         assert_eq!(store.get_attr(1, &name("b")), Some(s1));
         assert_eq!(store.get_attr(1, &name("c")), Some(Value::Float(1.5)));
         assert_eq!(store.get_attr(1, &name("d")), Some(s2));
-        assert_eq!(store.data.blocks[0].heap.len(), 2);
+        assert_eq!(store.data.block(0).unwrap().heap.len(), 2);
     }
 
     #[test]
@@ -1309,7 +1459,7 @@ mod tests {
             Some(Value::String(Arc::new("new".to_string())))
         );
         // The old string's heap slot must be recycled, not leaked.
-        let block = &store.data.blocks[0];
+        let block = store.data.block(0).unwrap();
         assert_eq!(block.heap.len(), 1);
         assert!(block.heap_free.is_empty());
     }
@@ -1328,9 +1478,11 @@ mod tests {
             attrs.insert(1u64, pairs);
             store.insert_attrs(&attrs).unwrap();
         }
-        let block = &store.data.blocks[0];
+        let block = store.data.block(0).unwrap();
         // Compaction must have run: dead entries bounded by live ones.
-        assert!(block.dead as usize * 2 <= block.arena.len() || block.arena.len() <= 1024);
+        assert!(
+            block.dead as usize * 2 <= block.arena.len() || block.arena.len() <= COMPACT_MIN_ARENA
+        );
         // Values intact after compaction.
         for i in 0..100u16 {
             assert_eq!(
@@ -1435,17 +1587,17 @@ mod tests {
     #[test]
     fn remove_absent_slot_does_not_copy_block() {
         let mut store = store_with(&[(1, &[("a", Value::Int(1))])]);
-        let block_before = store.data.blocks[0].clone();
+        let block_before = store.data.block_arc(0).unwrap().clone();
 
         // Entity 2 shares block 0 but has no attributes; removing it must not
         // trigger a COW copy of the block.
         let mut keys = RoaringTreemap::new();
         keys.insert(2);
         // Also an id in a block that doesn't exist at all.
-        keys.insert(block_cap() as u64 * 10);
+        keys.insert(BLOCK_CAP as u64 * 10);
         store.remove_all(&keys);
 
-        assert!(Arc::ptr_eq(&block_before, &store.data.blocks[0]));
+        assert!(Arc::ptr_eq(&block_before, store.data.block_arc(0).unwrap()));
     }
 
     #[test]
@@ -1457,9 +1609,82 @@ mod tests {
         assert_eq!(out, vec![Value::Int(1), Value::Null, Value::Null]);
     }
 
+    /// First id of block `block_idx` under the default grain.
+    fn id_in_block(block_idx: u64) -> u64 {
+        block_idx * BLOCK_CAP as u64
+    }
+
+    #[test]
+    fn spans_directory_page_boundary() {
+        // One directory page covers DIR_FANOUT blocks, so block DIR_FANOUT is the
+        // first block of root[1] — the level the flat directory never had.
+        let last_of_page0 = id_in_block(DIR_FANOUT as u64 - 1);
+        let first_of_page1 = id_in_block(DIR_FANOUT as u64);
+        let far_page = id_in_block(DIR_FANOUT as u64 * 5 + 2);
+
+        let store = store_with(&[
+            (last_of_page0, &[("a", Value::Int(1))]),
+            (first_of_page1, &[("a", Value::Int(2))]),
+            (far_page, &[("a", Value::Int(3))]),
+        ]);
+
+        // The ids really do land in distinct directory pages.
+        assert!(store.data.root.len() > 5, "spans several directory pages");
+        assert!(store.data.root[0].is_some() && store.data.root[1].is_some());
+
+        assert_eq!(
+            store.get_attr(last_of_page0, &name("a")),
+            Some(Value::Int(1))
+        );
+        assert_eq!(
+            store.get_attr(first_of_page1, &name("a")),
+            Some(Value::Int(2))
+        );
+        assert_eq!(store.get_attr(far_page, &name("a")), Some(Value::Int(3)));
+        // Neighbours across the boundary are independent.
+        assert_eq!(store.get_attr(last_of_page0 + 1, &name("a")), None);
+        assert_eq!(store.get_attr(first_of_page1 + 1, &name("a")), None);
+        // A never-populated directory page reads as absent, not as a panic.
+        assert_eq!(
+            store.get_attr(id_in_block(DIR_FANOUT as u64 * 3), &name("a")),
+            None
+        );
+    }
+
+    #[test]
+    fn write_shares_untouched_directory_pages() {
+        let in_page0 = 1u64;
+        let in_page1 = id_in_block(DIR_FANOUT as u64);
+        let v1 = store_with(&[
+            (in_page0, &[("a", Value::Int(1))]),
+            (in_page1, &[("a", Value::Int(2))]),
+        ]);
+        let page1_before = Arc::clone(v1.data.root[1].as_ref().expect("page 1 present"));
+
+        // Write only into directory page 0.
+        let mut v2 = v1.new_version();
+        let a = v2.get_or_create_attr_id(&name("a"));
+        let mut attrs = FxHashMap::default();
+        attrs.insert(in_page0, vec![(a, Value::Int(99))]);
+        v2.insert_attrs(&attrs).unwrap();
+
+        // Page 1 was not on the copied path: still the very same allocation.
+        assert!(
+            Arc::ptr_eq(
+                &page1_before,
+                v2.data.root[1].as_ref().expect("page 1 present")
+            ),
+            "untouched directory page must stay shared, not be copied"
+        );
+        // And the write is invisible to the older snapshot.
+        assert_eq!(v2.get_attr(in_page0, &name("a")), Some(Value::Int(99)));
+        assert_eq!(v1.get_attr(in_page0, &name("a")), Some(Value::Int(1)));
+        assert_eq!(v2.get_attr(in_page1, &name("a")), Some(Value::Int(2)));
+    }
+
     #[test]
     fn cross_block_ids() {
-        let far_id = block_cap() as u64 * 3 + 7;
+        let far_id = BLOCK_CAP as u64 * 3 + 7;
         let store = store_with(&[(far_id, &[("a", Value::Int(42))])]);
         assert_eq!(store.get_attr(far_id, &name("a")), Some(Value::Int(42)));
         assert_eq!(store.get_attr(far_id - 1, &name("a")), None);
