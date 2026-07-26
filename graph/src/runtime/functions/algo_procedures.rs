@@ -379,6 +379,36 @@ unsafe fn delete_lagraph_graph(g: &mut LAGraph_Graph) {
     lagraph_bindings::LAGraph_Delete(g, msg.as_mut_ptr());
 }
 
+/// Create an LAGraph_Graph that borrows `adj`: the caller keeps ownership of
+/// the matrix and must free the graph with [`delete_lagraph_graph_borrowed`].
+/// `LAGraph_New` only fails before taking the matrix, so the error path never
+/// leaves the handle inside a graph.
+unsafe fn create_lagraph_graph_borrowed(
+    adj: crate::graph::graphblas::GrB_Matrix,
+    kind: LAGraph_Kind,
+) -> Result<LAGraph_Graph, String> {
+    let mut g: LAGraph_Graph = null_mut();
+    let mut msg = new_msg();
+    let mut adj_mut = adj;
+    let info = lagraph_bindings::LAGraph_New(&raw mut g, &raw mut adj_mut, kind, msg.as_mut_ptr());
+    if info != 0 {
+        return Err(format!("LAGraph_New failed: {info}"));
+    }
+    if g.is_null() {
+        return Err(String::from("LAGraph_New returned null graph"));
+    }
+    Ok(g)
+}
+
+/// Free an LAGraph_Graph whose adjacency matrix is borrowed: detach `G->A`
+/// first so `LAGraph_Delete` does not free the caller-owned handle.
+unsafe fn delete_lagraph_graph_borrowed(g: &mut LAGraph_Graph) {
+    if let Some(graph) = g.as_mut() {
+        graph.A = null_mut();
+    }
+    delete_lagraph_graph(g);
+}
+
 /// Extract GrB_Vector entries as (index, f64) pairs.
 unsafe fn extract_vector_f64(v: crate::graph::graphblas::GrB_Vector) -> Vec<(u64, f64)> {
     use crate::graph::graphblas::{GrB_Index, GrB_Vector_extractTuples_FP64, GrB_Vector_nvals};
@@ -995,22 +1025,17 @@ fn register_bfs(funcs: &mut Functions) {
             let want_edges = yields & 0b10 != 0;
 
             unsafe {
-                use crate::graph::graphblas::{
-                    GrB_Info, GrB_Matrix, GrB_Matrix_dup, GrB_Vector, GrB_Vector_free,
-                    lagraphx_bindings,
-                };
+                use crate::graph::graphblas::{GrB_Vector, GrB_Vector_free, lagraphx_bindings};
 
                 // Run directly on full adjacency; no compaction needed for BFS.
-                // Duplicate the raw matrix directly so LAGraph_New takes sole
-                // ownership — adj.dup().inner() would double-free because the
-                // temporary Matrix wrapper also calls GrB_Matrix_free on drop.
+                // `adj` is freshly built and uniquely owned, so lend its handle
+                // to LAGraph instead of duplicating it; the borrowed delete
+                // detaches `G->A` so only the `Matrix` wrapper frees it.
                 let compact_source = u64::from(source_id);
-                let mut raw_adj: GrB_Matrix = null_mut();
-                let info = GrB_Matrix_dup(&raw mut raw_adj, adj.inner());
-                if info != GrB_Info::GrB_SUCCESS {
-                    return Err(format!("GrB_Matrix_dup failed: {info:?}"));
-                }
-                let mut lag_g = create_lagraph_graph(raw_adj, LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED)?;
+                let mut lag_g = create_lagraph_graph_borrowed(
+                    adj.inner(),
+                    LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED,
+                )?;
 
                 let mut msg = new_msg();
 
@@ -1031,7 +1056,7 @@ fn register_bfs(funcs: &mut Functions) {
                 );
 
                 if info != 0 {
-                    delete_lagraph_graph(&mut lag_g);
+                    delete_lagraph_graph_borrowed(&mut lag_g);
                     return Err(format!("LAGr_BreadthFirstSearch_Extended failed: {info}"));
                 }
 
@@ -1092,7 +1117,7 @@ fn register_bfs(funcs: &mut Functions) {
                 if !parent.is_null() {
                     GrB_Vector_free(&raw mut parent);
                 }
-                delete_lagraph_graph(&mut lag_g);
+                delete_lagraph_graph_borrowed(&mut lag_g);
 
                 // If no nodes were reached, return empty list (no result row)
                 if nodes.is_empty() {
