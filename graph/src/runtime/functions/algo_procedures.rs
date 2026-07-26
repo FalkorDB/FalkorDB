@@ -363,6 +363,8 @@ unsafe fn create_lagraph_graph(
     let mut adj_mut = adj;
     let info = lagraph_bindings::LAGraph_New(&raw mut g, &raw mut adj_mut, kind, msg.as_mut_ptr());
     if info != 0 {
+        // LAGraph_New did not take ownership; free the matrix to avoid a leak.
+        crate::graph::graphblas::GrB_Matrix_free(&raw mut adj_mut);
         return Err(format!("LAGraph_New failed: {info}"));
     }
     if g.is_null() {
@@ -1002,7 +1004,7 @@ fn register_bfs(funcs: &mut Functions) {
                 // Transfer ownership of the freshly-built matrix to LAGraph
                 // instead of duplicating it.
                 let compact_source = u64::from(source_id);
-                let mut lag_g = create_lagraph_graph(adj.into_raw(), LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED)?;
+                let mut lag_g = create_lagraph_graph(adj.into_raw()?, LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED)?;
 
                 let mut msg = new_msg();
 

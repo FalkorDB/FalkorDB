@@ -506,16 +506,22 @@ impl<T> Matrix<T> {
     /// caller, who becomes responsible for freeing it (e.g. via
     /// `LAGraph_Delete`). Falls back to `GrB_Matrix_dup` when the handle is
     /// shared with other wrappers.
-    #[must_use]
-    pub fn into_raw(mut self) -> GrB_Matrix {
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the fallback `GrB_Matrix_dup` fails (e.g. OOM).
+    pub fn into_raw(mut self) -> Result<GrB_Matrix, String> {
         if let Some(m) = Arc::get_mut(&mut self.m) {
-            std::mem::replace(m, null_mut())
+            Ok(std::mem::replace(m, null_mut()))
         } else {
             unsafe {
                 let mut dup: GrB_Matrix = null_mut();
                 let info = GrB_Matrix_dup(&raw mut dup, *self.m);
-                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-                dup
+                if info == GrB_Info::GrB_SUCCESS {
+                    Ok(dup)
+                } else {
+                    Err(format!("GrB_Matrix_dup failed: {info:?}"))
+                }
             }
         }
     }
