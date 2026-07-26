@@ -502,6 +502,24 @@ impl<T> Matrix<T> {
         *self.m
     }
 
+    /// Consume the wrapper and transfer ownership of the raw handle to the
+    /// caller, who becomes responsible for freeing it (e.g. via
+    /// `LAGraph_Delete`). Falls back to `GrB_Matrix_dup` when the handle is
+    /// shared with other wrappers.
+    #[must_use]
+    pub fn into_raw(mut self) -> GrB_Matrix {
+        if let Some(m) = Arc::get_mut(&mut self.m) {
+            std::mem::replace(m, null_mut())
+        } else {
+            unsafe {
+                let mut dup: GrB_Matrix = null_mut();
+                let info = GrB_Matrix_dup(&raw mut dup, *self.m);
+                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+                dup
+            }
+        }
+    }
+
     /// Whether an entry is stored at `(i, j)`, for **any** element type — a
     /// pure sparsity-pattern probe (`GxB_Matrix_isStoredElement`) that never
     /// reads or typecasts the element value.
