@@ -53,15 +53,15 @@ use thin_vec::{ThinVec, thin_vec};
 
 use crate::{
     graph::graph::NodeId,
-    parser::ast::{ExprIR, QuantifierType, Variable},
+    parser::ast::{ExprIR, QuantifierType, RegexFn, RegexFnKind, Variable},
     runtime::{
         batch::{Batch, BatchRow, Column, FloatLane, NullBitmap, classify_numeric},
-        functions::{FnType, apply_pow},
+        functions::{FnType, Type, apply_pow, regex_captures_list},
         ops::batched_result_emitter::RowIter,
         ordermap::OrderMap,
         row::RowView,
         runtime::Runtime,
-        value::{CompareValue, Contains, DisjointOrNull, Value},
+        value::{CompareValue, Contains, DisjointOrNull, Value, ValueTypeOf},
     },
 };
 
@@ -742,6 +742,9 @@ impl<'a> ExprEval<'a> {
                         }
                     }
                 }
+                ExprIR::CompiledRegex(rf) => {
+                    res.push(self.eval_compiled_regex(rf, &node, env, agg_group_key)?);
+                }
                 ExprIR::FuncInvocation(func) => {
                     let rt = self.rt()?;
                     if agg_group_key.is_none()
@@ -1106,6 +1109,68 @@ impl<'a> ExprEval<'a> {
                     Value::Null => None,
                     other => Some(RowIter::one(other)),
                 })
+            }
+        }
+    }
+
+    /// Evaluate an [`ExprIR::CompiledRegex`] node: a regex function whose
+    /// constant pattern was compiled at bind time (see
+    /// `rewrite_compiled_regex` in the binder). Children are the remaining
+    /// runtime arguments: `[text]` or `[text, replacement]` for `Replace`.
+    /// Argument validation mirrors `validate_args_type`, which the generic
+    /// `FuncInvocation` path runs before invoking the closure.
+    fn eval_compiled_regex<R: RowView + ?Sized>(
+        &self,
+        rf: &RegexFn,
+        node: &ExprNode<'_>,
+        env: Option<&R>,
+        agg_group_key: Option<u64>,
+    ) -> Result<Value, String> {
+        fn check_string_or_null(v: &Value) -> Result<(), String> {
+            if let Some((actual, expected)) =
+                v.value_of_type(&Type::union([Type::String, Type::Null]))
+            {
+                return Err(format!(
+                    "Type mismatch: expected {expected} but was {actual}"
+                ));
+            }
+            Ok(())
+        }
+
+        let text = self.eval_node(&node.child(0), env, agg_group_key)?;
+        check_string_or_null(&text)?;
+        match rf.kind {
+            RegexFnKind::Matches => match text {
+                Value::String(s) => Ok(Value::Bool(rf.regex.is_match(s.as_str()))),
+                _ => Ok(Value::Null),
+            },
+            RegexFnKind::MatchList => match text {
+                Value::String(s) => Ok(regex_captures_list(&rf.regex, s.as_str())),
+                _ => Ok(Value::List(Arc::new(thin_vec![]))),
+            },
+            RegexFnKind::Replace => {
+                let replacement = if node.num_children() > 1 {
+                    let r = self.eval_node(&node.child(1), env, agg_group_key)?;
+                    check_string_or_null(&r)?;
+                    Some(r)
+                } else {
+                    None
+                };
+                let Value::String(text) = text else {
+                    return Ok(Value::Null);
+                };
+                match replacement {
+                    None => Ok(Value::String(Arc::new(
+                        rf.regex.replace_all(text.as_str(), "").into_owned(),
+                    ))),
+                    Some(Value::Null) => Ok(Value::Null),
+                    Some(Value::String(repl)) => Ok(Value::String(Arc::new(
+                        rf.regex
+                            .replace_all(text.as_str(), repl.as_str())
+                            .into_owned(),
+                    ))),
+                    Some(_) => unreachable!(),
+                }
             }
         }
     }
