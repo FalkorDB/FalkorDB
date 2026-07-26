@@ -842,7 +842,11 @@ impl Pending {
         if !self.new_nodes_attrs.is_empty() || !self.existing_nodes_attrs.is_empty() {
             let mut g = g.borrow_mut();
             if !self.new_nodes_attrs.is_empty() {
-                let nset = g.import_node_attrs(&self.new_nodes_attrs, &mut self.index_add_docs);
+                let nset = g.import_node_attrs(
+                    &self.new_nodes_attrs,
+                    &self.set_labels,
+                    &mut self.index_add_docs,
+                );
                 stats.borrow_mut().properties_set += nset;
             }
             if !self.existing_nodes_attrs.is_empty() {
@@ -1017,6 +1021,37 @@ impl Pending {
         Ok(())
     }
 
+    /// Label check for constraint enforcement that answers from this
+    /// transaction's own bookkeeping first. Reading the label matrix here
+    /// would force a pending-tuple materialization of its delta on every
+    /// commit (`O(|delta|)` per write query, quadratic between folds) —
+    /// measured as the dominant cost of small repeated creates. Mirrors
+    /// [`Self::update_node_labels`] semantics: a removed label wins over a
+    /// pending set.
+    fn constraint_node_has_label(
+        &self,
+        g: &Graph,
+        node_id: u64,
+        label_id: u64,
+    ) -> bool {
+        if let Some(removed) = self.remove_labels.get(&node_id)
+            && removed.contains(&label_id)
+        {
+            return false;
+        }
+        if let Some(set) = self.set_labels.get(&node_id)
+            && set.contains(&label_id)
+        {
+            return true;
+        }
+        if self.created_nodes.contains(node_id) {
+            // Labels of nodes created this transaction live entirely in
+            // set_labels — no need to touch the graph.
+            return false;
+        }
+        g.node_has_label_id(node_id.into(), LabelId(label_id as usize))
+    }
+
     fn check_node_constraint(
         &self,
         g: &Graph,
@@ -1024,10 +1059,15 @@ impl Pending {
         affected_node_ids: &RoaringTreemap,
     ) -> Result<(), String> {
         let label = &constraint.label;
+        let Some(label_id) = g.get_label_id(label) else {
+            // Label doesn't exist yet — no node can carry it.
+            return Ok(());
+        };
+        let label_id = usize::from(label_id) as u64;
 
         for node_id in affected_node_ids {
             // Check if this node has the constrained label
-            if !g.node_has_label(node_id.into(), label) {
+            if !self.constraint_node_has_label(g, node_id, label_id) {
                 continue;
             }
 
@@ -1088,7 +1128,16 @@ impl Pending {
         let type_name = &constraint.label;
 
         for edge_id in affected_edge_ids {
-            if !g.edge_has_type(edge_id.into(), type_name) {
+            // Edges created this transaction resolve their type from
+            // Pending's reverse index — no relationship-matrix read, which
+            // would materialize the delta's pending tuples on every commit.
+            // An edge's type never changes, so created under a different
+            // type means not a member.
+            let has_type = match self.created_rel_types.get(&edge_id.into()) {
+                Some(created_type) => created_type.as_str() == type_name.as_str(),
+                None => g.edge_has_type(edge_id.into(), type_name),
+            };
+            if !has_type {
                 continue;
             }
 
