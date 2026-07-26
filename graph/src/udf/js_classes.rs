@@ -57,6 +57,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use atomic_refcell::AtomicRefCell;
+use rquickjs::object::Property;
 use rquickjs::{Array, Ctx, Function, Object, Value as JsValue};
 
 use crate::graph::graph::{Graph, NodeId, RelationshipId};
@@ -168,40 +169,32 @@ pub fn create_js_node<'js>(
 
     drop(g);
 
-    // .getNeighbors(config?) method
-    // We embed the node_id in a JS closure to avoid Rust lifetime issues with rquickjs closures
-    let node_id_js = node_id;
-
-    // Register the global helper if not already done
+    // .getNeighbors(config?) method. A single shared JS function reads the
+    // node id from `this.__falkor_node_id`; it is eval'd ONCE per context —
+    // per-node `ctx.eval` string builds made QuickJS re-parse JS source for
+    // every node/edge materialized, dominating UDF traversal profiles.
     let globals = ctx.globals();
-    let has_helper: bool = globals
-        .get::<_, JsValue>("__falkor_getNeighbors")
-        .is_ok_and(|v| v.is_function());
-    if !has_helper {
-        let helper = Function::new(ctx.clone(), js_get_neighbors_entry)
-            .map_err(|e| format!("JS function error: {e}"))?;
-        globals
-            .set("__falkor_getNeighbors", helper)
-            .map_err(|e| format!("JS set error: {e}"))?;
-    }
-
-    // Expose the object via temp global so JS eval can attach the method
-    globals
-        .set("__tmp_obj", obj.as_value().clone())
-        .map_err(|e| format!("JS set error: {e}"))?;
-
-    // Create the method via JS eval, closing over this node's numeric ID
-    ctx.eval::<(), _>(format!(
-        "Object.defineProperty(globalThis.__tmp_obj, 'getNeighbors', {{\
-            value: function(config) {{ return __falkor_getNeighbors({node_id_js}, config); }},\
-            enumerable: false\
-        }})"
-    ))
-    .map_err(|e| format!("Failed to set getNeighbors: {e}"))?;
-
-    // Clean up temp ref
-    ctx.eval::<(), _>("delete globalThis.__tmp_obj;")
-        .map_err(|e| format!("JS cleanup error: {e}"))?;
+    let method: Function = match globals.get("__falkor_getNeighborsMethod") {
+        Ok(f) => f,
+        Err(_) => {
+            let helper = Function::new(ctx.clone(), js_get_neighbors_entry)
+                .map_err(|e| format!("JS function error: {e}"))?;
+            globals
+                .set("__falkor_getNeighbors", helper)
+                .map_err(|e| format!("JS set error: {e}"))?;
+            let f: Function = ctx
+                .eval(
+                    "(function(config) { return __falkor_getNeighbors(this.__falkor_node_id, config); })",
+                )
+                .map_err(|e| format!("JS eval error: {e}"))?;
+            globals
+                .set("__falkor_getNeighborsMethod", f.clone())
+                .map_err(|e| format!("JS set error: {e}"))?;
+            f
+        }
+    };
+    obj.prop("getNeighbors", Property::from(method))
+        .map_err(|e| format!("Failed to set getNeighbors: {e}"))?;
 
     Ok(obj.into_value())
 }
