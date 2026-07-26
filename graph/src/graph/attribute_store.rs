@@ -10,20 +10,45 @@
 //! vectors) are stored once in a block-level side array and referenced by
 //! index from the packed payload.
 //!
+//! Blocks are reached through a **two-level radix directory** rather than one
+//! flat vector, so a write copies only the root→page→block path it touches
+//! (see *Copy-on-write* below) and the block can stay small enough to double as
+//! a future RAM↔disk residency unit.
+//!
+//! ## Addressing
+//!
+//! The dense entity id *is* the address: it splits into radix digits that index
+//! each level directly — no key comparisons anywhere in the descent. Shown for
+//! the defaults (`DEFAULT_ATTR_BLOCK_CAP` slots/block, `DIR_FANOUT`
+//! blocks/page ⇒ one directory page spans 4096 ids):
+//!
+//! ```text
+//!  entity_id   bits 63 ............ 12 │ 11 ...... 6 │ 5 ...... 0
+//!                   └──── dir_idx ────┘ └ page_slot ┘ └ slot_idx ┘
+//!                    id / (cap*FANOUT)   (id/cap)%64     id % cap
+//! ```
+//!
 //! ## Memory layout
 //!
 //! ```text
 //! DataBlock
 //! ┌────────────────────────────────────────────────────────────────────┐
-//! │ blocks: Vec<Arc<Block>>   (entity_id / block_cap() picks a block)  │
-//! │   [ Arc<Block 0> ][ Arc<Block 1> ][ Arc<Block 2> ] ...             │
+//! │ root: Arc<Vec<Option<Arc<DirPage>>>>   8 B/slot, grows with max id │
+//! │   [ DirPage 0 ][ None ][ DirPage 2 ] ...                           │
 //! └───────────┬────────────────────────────────────────────────────────┘
-//!             │ shared across MVCC snapshots, COW on first write
+//!             │ dir_idx           (shared across MVCC snapshots)
 //!             ▼
-//! Block
+//! DirPage — 512 B, the directory's COW unit
+//! ┌────────────────────────────────────────────────────────────────────┐
+//! │ blocks: [Option<Arc<Block>>; DIR_FANOUT]                           │
+//! │   [ Arc<Block> ][ Arc<Block> ][ None ] ...                         │
+//! └───────────┬────────────────────────────────────────────────────────┘
+//!             │ page_slot         (untouched pages stay Arc-shared)
+//!             ▼
+//! Block — `block_cap` entities (~4 KB by default), the data COW unit
 //! ┌────────────────────────────────────────────────────────────────────┐
 //! │ slots: Vec<Slot>          one 8-byte span descriptor per entity    │
-//! │   idx (entity_id % block_cap())                                    │
+//! │   idx = slot_idx                                                   │
 //! │   ┌─────0─────┬─────1─────┬─────2─────┬─────3─────┐                │
 //! │   │ off:0     │ off:3     │ cap:0     │ off:5     │ ...            │
 //! │   │ len:3 cap:3 len:2 cap:2 (no attrs)│ len:1 cap:4                │
@@ -47,17 +72,45 @@
 //! Per-entity cost: 8 B slot + 12 B x attrs in the shared arena —
 //! no per-entity allocation. Scalars (Int/Float/Bool/...) live entirely
 //! in the 8-byte packed payload; only heap values touch `heap`.
+//! A read is two dependent loads (root → page → block), then a binary
+//! search over the entity's tiny sorted span.
 //! ```
+//!
+//! ## Copy-on-write: what one write copies
+//!
+//! ```text
+//!  ✎ SET one attribute of one entity
+//!
+//!    root ──────────── path-copied      root_len x 8 B
+//!      └─ DirPage[i] ── path-copied      512 B
+//!           └─ Block ── path-copied      slots + arena (~4 KB default)
+//!
+//!    every OTHER DirPage and Block stays SHARED with the reader's
+//!    snapshot — one Arc refcount bump each, no data copied
+//! ```
+//!
+//! A flat `Vec<Arc<Block>>` directory would instead clone **every** block
+//! pointer per write, which is why the block could not be made small: the
+//! pointer vector grows as the block shrinks. The radix split decouples the
+//! two, so blocks stay ~4 KB *and* the copied directory stays tiny.
 //!
 //! ## Concurrency / MVCC
 //!
 //! The store contains no locks and no unsafe code. Isolation comes from the
 //! MVCC design: a write transaction operates on a *private* clone of the
 //! graph (`Graph::new_version`), which is published atomically on commit or
-//! simply discarded on rollback. Cloning the store is cheap — blocks are
-//! shared via `Arc` and copied on first write per block (`Arc::make_mut`),
-//! so older snapshots keep reading their own blocks untouched. In-place
-//! arena writes are safe because they only ever happen after `make_mut`.
+//! simply discarded on rollback. Cloning the store is cheap — it bumps the
+//! root `Arc`, sharing every directory page and block. The first write to a
+//! block then `Arc::make_mut`s just its root→page→block path, so older
+//! snapshots keep reading their own pages untouched. In-place arena writes are
+//! safe because they only ever happen after `make_mut`.
+//!
+//! Note that this is why the directory is *not* built from interior-mutable
+//! cells (e.g. `arc_swap::ArcSwapOption`): `Arc::make_mut` is what structurally
+//! guarantees a writer cannot disturb a snapshot a reader still holds. Such a
+//! cell is the right primitive for a future RAM↔disk *residency* swizzle
+//! (`Resident ⇄ Cold` is cache state over identical bytes, and must be mutable
+//! from outside the versioned tree) — not for versioned state.
 
 use std::cmp::Ordering;
 use std::sync::Arc;
@@ -183,12 +236,12 @@ impl PackedAttr {
 // Block / DataBlock: arena-based slot storage (C engine's DataBlock, COW)
 // ============================================================================
 
-/// Default per-store block capacity (slots per block) when a store is created
-/// without an explicit grain — ~4 KB blocks at a few attributes/entity, matching
-/// the native index's leaf-page size. The grain is the copy-on-write (and future
-/// residency) unit: a smaller grain bounds the bytes a single write copies via
-/// `Arc::make_mut`. Decoupled from `NODE_CREATION_BUFFER` (the C alloc block) and
-/// tunable per store via [`AttributeStore::with_block_cap`].
+/// Block capacity (slots per block) — ~4 KB blocks at a few attributes/entity,
+/// matching the native index's leaf-page size. The grain is the copy-on-write
+/// (and future residency) unit: a smaller grain bounds the bytes a single write
+/// copies via `Arc::make_mut`, while the radix directory keeps the *directory*
+/// copy small at the same time (see the module docs). Deliberately decoupled
+/// from `NODE_CREATION_BUFFER`, which sizes the C-style allocation block.
 const DEFAULT_ATTR_BLOCK_CAP: u32 = 64;
 
 #[inline]
@@ -359,10 +412,10 @@ impl Block {
         self.slack = self.slack + u32::from(old_len) - new_len as u32;
     }
 
-    /// Grow `slots` to cover `slot_idx` with capacity capped at
-    /// [`block_cap`]. Plain `Vec::resize` doubling would overshoot the
-    /// block's fixed maximum, and since COW clones reset capacity to `len`,
-    /// a clone-then-grow cycle otherwise leaves up to 2x slack per block.
+    /// Grow `slots` to cover `slot_idx`, capped at the block's capacity `cap`.
+    /// Plain `Vec::resize` doubling would overshoot the block's fixed maximum,
+    /// and since COW clones reset capacity to `len`, a clone-then-grow cycle
+    /// otherwise leaves up to 2x slack per block.
     fn grow_slots(
         &mut self,
         slot_idx: usize,
@@ -744,19 +797,6 @@ impl Default for DataBlock {
 }
 
 impl DataBlock {
-    /// Construct with an explicit block capacity (slots per block, a power of
-    /// two >= 64). Lets the grain be tuned independently of the alloc block.
-    fn with_block_cap(block_cap: u32) -> Self {
-        assert!(
-            block_cap.is_power_of_two() && block_cap >= 64,
-            "attribute-store block_cap must be a power of two >= 64, got {block_cap}"
-        );
-        Self {
-            root: Arc::new(Vec::new()),
-            block_cap,
-        }
-    }
-
     #[inline]
     fn locate(
         &self,
@@ -924,13 +964,21 @@ impl DataBlock {
 
     /// Structural overhead of the directory + slot storage, excluding attribute
     /// payload (arena entries and out-of-line heap values).
+    ///
+    /// Each level is counted exactly once: the root vector's own storage holds
+    /// the page pointers, and a `DirPage`'s size already includes its block
+    /// pointers — so only the *pointed-to* allocation (plus its `Arc` header) is
+    /// added per level, never the pointer again.
     fn memory_usage(&self) -> usize {
-        let per_block = std::mem::size_of::<Arc<Block>>() + std::mem::size_of::<Block>();
+        // An `Arc` allocation carries strong + weak refcounts ahead of its value.
+        const ARC_HDR: usize = 2 * std::mem::size_of::<usize>();
         let mut total = self.root.capacity() * std::mem::size_of::<Option<Arc<DirPage>>>();
         for page in self.root.iter().flatten() {
-            total += std::mem::size_of::<Arc<DirPage>>() + std::mem::size_of::<DirPage>();
+            total += ARC_HDR + std::mem::size_of::<DirPage>();
             for block in page.blocks.iter().flatten() {
-                total += per_block + block.slots.capacity() * std::mem::size_of::<Slot>();
+                total += ARC_HDR
+                    + std::mem::size_of::<Block>()
+                    + block.slots.capacity() * std::mem::size_of::<Slot>();
             }
         }
         total
@@ -959,26 +1007,8 @@ impl AttributeStore {
         Self::default()
     }
 
-    /// Construct a store with an explicit block capacity (slots per block, a
-    /// power of two >= 64) — the copy-on-write / residency grain, decoupled
-    /// from `NODE_CREATION_BUFFER`. A smaller grain copies fewer bytes per
-    /// single-attribute write (`Arc::make_mut`) at the cost of more per-block
-    /// overhead; used to sweep that trade-off.
-    #[must_use]
-    pub fn with_block_cap(block_cap: u32) -> Self {
-        Self {
-            attrs_name: AttrNameMap::default(),
-            data: DataBlock::with_block_cap(block_cap),
-        }
-    }
-
-    /// The store's block capacity (slots per block).
-    #[must_use]
-    pub fn block_cap(&self) -> u32 {
-        self.data.block_cap
-    }
-
-    /// Cheap snapshot clone for a new MVCC version (one `Arc` bump per block).
+    /// Cheap snapshot clone for a new MVCC version: one root `Arc` bump, which
+    /// shares every directory page and block until a write path-copies one.
     #[must_use]
     pub fn new_version(&self) -> Self {
         self.clone()
@@ -1586,6 +1616,79 @@ mod tests {
         let mut out = Vec::new();
         store.get_attrs_by_idx_batch_into(&[1, 2, 3], idx, &Value::Null, &mut out);
         assert_eq!(out, vec![Value::Int(1), Value::Null, Value::Null]);
+    }
+
+    /// First id of block `block_idx` under the default grain.
+    fn id_in_block(block_idx: u64) -> u64 {
+        block_idx * u64::from(default_block_cap())
+    }
+
+    #[test]
+    fn spans_directory_page_boundary() {
+        // One directory page covers DIR_FANOUT blocks, so block DIR_FANOUT is the
+        // first block of root[1] — the level the flat directory never had.
+        let last_of_page0 = id_in_block(DIR_FANOUT as u64 - 1);
+        let first_of_page1 = id_in_block(DIR_FANOUT as u64);
+        let far_page = id_in_block(DIR_FANOUT as u64 * 5 + 2);
+
+        let store = store_with(&[
+            (last_of_page0, &[("a", Value::Int(1))]),
+            (first_of_page1, &[("a", Value::Int(2))]),
+            (far_page, &[("a", Value::Int(3))]),
+        ]);
+
+        // The ids really do land in distinct directory pages.
+        assert!(store.data.root.len() > 5, "spans several directory pages");
+        assert!(store.data.root[0].is_some() && store.data.root[1].is_some());
+
+        assert_eq!(
+            store.get_attr(last_of_page0, &name("a")),
+            Some(Value::Int(1))
+        );
+        assert_eq!(
+            store.get_attr(first_of_page1, &name("a")),
+            Some(Value::Int(2))
+        );
+        assert_eq!(store.get_attr(far_page, &name("a")), Some(Value::Int(3)));
+        // Neighbours across the boundary are independent.
+        assert_eq!(store.get_attr(last_of_page0 + 1, &name("a")), None);
+        assert_eq!(store.get_attr(first_of_page1 + 1, &name("a")), None);
+        // A never-populated directory page reads as absent, not as a panic.
+        assert_eq!(
+            store.get_attr(id_in_block(DIR_FANOUT as u64 * 3), &name("a")),
+            None
+        );
+    }
+
+    #[test]
+    fn write_shares_untouched_directory_pages() {
+        let in_page0 = 1u64;
+        let in_page1 = id_in_block(DIR_FANOUT as u64);
+        let v1 = store_with(&[
+            (in_page0, &[("a", Value::Int(1))]),
+            (in_page1, &[("a", Value::Int(2))]),
+        ]);
+        let page1_before = Arc::clone(v1.data.root[1].as_ref().expect("page 1 present"));
+
+        // Write only into directory page 0.
+        let mut v2 = v1.new_version();
+        let a = v2.get_or_create_attr_id(&name("a"));
+        let mut attrs = FxHashMap::default();
+        attrs.insert(in_page0, vec![(a, Value::Int(99))]);
+        v2.insert_attrs(&attrs).unwrap();
+
+        // Page 1 was not on the copied path: still the very same allocation.
+        assert!(
+            Arc::ptr_eq(
+                &page1_before,
+                v2.data.root[1].as_ref().expect("page 1 present")
+            ),
+            "untouched directory page must stay shared, not be copied"
+        );
+        // And the write is invisible to the older snapshot.
+        assert_eq!(v2.get_attr(in_page0, &name("a")), Some(Value::Int(99)));
+        assert_eq!(v1.get_attr(in_page0, &name("a")), Some(Value::Int(1)));
+        assert_eq!(v2.get_attr(in_page1, &name("a")), Some(Value::Int(2)));
     }
 
     #[test]
