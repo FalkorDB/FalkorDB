@@ -363,6 +363,8 @@ unsafe fn create_lagraph_graph(
     let mut adj_mut = adj;
     let info = lagraph_bindings::LAGraph_New(&raw mut g, &raw mut adj_mut, kind, msg.as_mut_ptr());
     if info != 0 {
+        // LAGraph_New did not take ownership; free the matrix to avoid a leak.
+        crate::graph::graphblas::GrB_Matrix_free(&raw mut adj_mut);
         return Err(format!("LAGraph_New failed: {info}"));
     }
     if g.is_null() {
@@ -375,6 +377,36 @@ unsafe fn create_lagraph_graph(
 unsafe fn delete_lagraph_graph(g: &mut LAGraph_Graph) {
     let mut msg = new_msg();
     lagraph_bindings::LAGraph_Delete(g, msg.as_mut_ptr());
+}
+
+/// Create an LAGraph_Graph that borrows `adj`: the caller keeps ownership of
+/// the matrix and must free the graph with [`delete_lagraph_graph_borrowed`].
+/// `LAGraph_New` only fails before taking the matrix, so the error path never
+/// leaves the handle inside a graph.
+unsafe fn create_lagraph_graph_borrowed(
+    adj: crate::graph::graphblas::GrB_Matrix,
+    kind: LAGraph_Kind,
+) -> Result<LAGraph_Graph, String> {
+    let mut g: LAGraph_Graph = null_mut();
+    let mut msg = new_msg();
+    let mut adj_mut = adj;
+    let info = lagraph_bindings::LAGraph_New(&raw mut g, &raw mut adj_mut, kind, msg.as_mut_ptr());
+    if info != 0 {
+        return Err(format!("LAGraph_New failed: {info}"));
+    }
+    if g.is_null() {
+        return Err(String::from("LAGraph_New returned null graph"));
+    }
+    Ok(g)
+}
+
+/// Free an LAGraph_Graph whose adjacency matrix is borrowed: detach `G->A`
+/// first so `LAGraph_Delete` does not free the caller-owned handle.
+unsafe fn delete_lagraph_graph_borrowed(g: &mut LAGraph_Graph) {
+    if let Some(graph) = g.as_mut() {
+        graph.A = null_mut();
+    }
+    delete_lagraph_graph(g);
 }
 
 /// Extract GrB_Vector entries as (index, f64) pairs.
@@ -959,7 +991,7 @@ fn register_bfs(funcs: &mut Functions) {
         args: [Type::Any, Type::Any, Type::Any],
         ret: Type::Any,
         procedure: ["nodes", "edges"],
-        fn algo_bfs(runtime, args) {
+        fn algo_bfs(runtime, args, yields) {
             // arg 0: source node (Node or Null)
             let source_id = match &args[0] {
                 Value::Node(id) => *id,
@@ -987,24 +1019,25 @@ fn register_bfs(funcs: &mut Functions) {
             let rel_types: Vec<Arc<String>> = rel_type.into_iter().collect();
             let adj = g.build_adjacency_matrix(&rel_types);
 
+            // Parent tracking is only needed to reconstruct edges; skip it
+            // (like the C implementation passes pPI = NULL) when the edges
+            // column was not yielded.
+            let want_edges = yields & 0b10 != 0;
+
             unsafe {
-                use crate::graph::graphblas::{
-                    lagraph_bindings, GrB_Matrix, GrB_Matrix_dup, GrB_Vector,
-                    lagraphx_bindings, GrB_Vector_free,
-                };
+                use crate::graph::graphblas::{GrB_Vector, GrB_Vector_free, lagraphx_bindings};
 
                 // Run directly on full adjacency; no compaction needed for BFS.
-                // Duplicate the raw matrix directly so LAGraph_New takes sole
-                // ownership — adj.dup().inner() would double-free because the
-                // temporary Matrix wrapper also calls GrB_Matrix_free on drop.
+                // `adj` is freshly built and uniquely owned, so lend its handle
+                // to LAGraph instead of duplicating it; the borrowed delete
+                // detaches `G->A` so only the `Matrix` wrapper frees it.
                 let compact_source = u64::from(source_id);
-                let mut raw_adj: GrB_Matrix = std::ptr::null_mut();
-                GrB_Matrix_dup(&raw mut raw_adj, adj.inner());
-                let mut lag_g = create_lagraph_graph(raw_adj, LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED)?;
+                let mut lag_g = create_lagraph_graph_borrowed(
+                    adj.inner(),
+                    LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED,
+                )?;
 
                 let mut msg = new_msg();
-                lagraph_bindings::LAGraph_Cached_AT(lag_g, msg.as_mut_ptr());
-                lagraph_bindings::LAGraph_Cached_OutDegree(lag_g, msg.as_mut_ptr());
 
                 let mut level: GrB_Vector = null_mut();
                 let mut parent: GrB_Vector = null_mut();
@@ -1013,7 +1046,7 @@ fn register_bfs(funcs: &mut Functions) {
                 let max_level = if max_depth < 0 { -1i64 } else { max_depth };
                 let info = lagraphx_bindings::LAGr_BreadthFirstSearch_Extended(
                     &raw mut level,
-                    &raw mut parent,
+                    if want_edges { &raw mut parent } else { null_mut() },
                     lag_g,
                     compact_source,
                     max_level,
@@ -1023,40 +1056,58 @@ fn register_bfs(funcs: &mut Functions) {
                 );
 
                 if info != 0 {
-                    delete_lagraph_graph(&mut lag_g);
+                    delete_lagraph_graph_borrowed(&mut lag_g);
                     return Err(format!("LAGr_BreadthFirstSearch_Extended failed: {info}"));
                 }
 
-                // Extract parent vector to reconstruct nodes and edges (compact indices)
-                let parent_entries = extract_vector_i64(parent);
-
-                // Build nodes list (excluding the source itself) and edges list
-                let mut nodes: ThinVec<Value> = ThinVec::with_capacity(parent_entries.len());
-                let mut edges: ThinVec<Value> = ThinVec::with_capacity(parent_entries.len());
                 let has_deleted = g.deleted_nodes_count() != 0;
+                let mut nodes: ThinVec<Value>;
+                let mut edges: ThinVec<Value> = ThinVec::new();
 
-                for (compact_idx, compact_par) in &parent_entries {
-                    if *compact_idx == compact_source {
-                        continue; // skip source itself
-                    }
-                    let orig_child = *compact_idx;
-                    let orig_parent = *compact_par as u64;
-                    if has_deleted
-                        && (g.is_node_deleted(NodeId::from(orig_child))
-                            || g.is_node_deleted(NodeId::from(orig_parent)))
-                    {
-                        continue;
-                    }
-                    let child = NodeId::from(orig_child);
-                    let parent_node = NodeId::from(orig_parent);
-                    nodes.push(node_value(child));
+                if want_edges {
+                    // Extract parent vector to reconstruct nodes and edges
+                    let parent_entries = extract_vector_i64(parent);
+                    nodes = ThinVec::with_capacity(parent_entries.len());
+                    edges.reserve(parent_entries.len());
 
-                    // Find the relationship from parent to child without
-                    // materializing an intermediate Vec per row.
-                    if let Some(rel_id) =
-                        g.get_src_dest_relationships(parent_node, child, &rel_types).next()
-                    {
-                        edges.push(Value::Relationship(rel_id));
+                    for (compact_idx, compact_par) in &parent_entries {
+                        if *compact_idx == compact_source {
+                            continue; // skip source itself
+                        }
+                        let orig_child = *compact_idx;
+                        let orig_parent = *compact_par as u64;
+                        if has_deleted
+                            && (g.is_node_deleted(NodeId::from(orig_child))
+                                || g.is_node_deleted(NodeId::from(orig_parent)))
+                        {
+                            continue;
+                        }
+                        let child = NodeId::from(orig_child);
+                        let parent_node = NodeId::from(orig_parent);
+                        nodes.push(node_value(child));
+
+                        // Find the relationship from parent to child without
+                        // materializing an intermediate Vec per row.
+                        if let Some(rel_id) =
+                            g.get_src_dest_relationships(parent_node, child, &rel_types).next()
+                        {
+                            edges.push(Value::Relationship(rel_id));
+                        }
+                    }
+                } else {
+                    // No parent vector: reached nodes are the level entries
+                    // (level(src) = 0, so skip the source).
+                    let level_entries = extract_vector_i64(level);
+                    nodes = ThinVec::with_capacity(level_entries.len());
+
+                    for (compact_idx, _lvl) in &level_entries {
+                        if *compact_idx == compact_source {
+                            continue; // skip source itself
+                        }
+                        if has_deleted && g.is_node_deleted(NodeId::from(*compact_idx)) {
+                            continue;
+                        }
+                        nodes.push(node_value(NodeId::from(*compact_idx)));
                     }
                 }
 
@@ -1066,7 +1117,7 @@ fn register_bfs(funcs: &mut Functions) {
                 if !parent.is_null() {
                     GrB_Vector_free(&raw mut parent);
                 }
-                delete_lagraph_graph(&mut lag_g);
+                delete_lagraph_graph_borrowed(&mut lag_g);
 
                 // If no nodes were reached, return empty list (no result row)
                 if nodes.is_empty() {
