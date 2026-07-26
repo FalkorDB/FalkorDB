@@ -897,62 +897,6 @@ struct PendingSlots {
     stale_pending: i32,
 }
 
-/// RAII guard for the Redis module GIL. Constructed by [`GilGuard::acquire`],
-/// which returns `None` if any required FFI symbol is unresolved or the
-/// context allocation returned null — so callers fall through to the
-/// unlocked path rather than panicking in `Drop`.
-struct GilGuard(*mut redisearch::redis::RedisModuleCtx);
-
-impl GilGuard {
-    /// Acquire the Redis module GIL. All four FFI symbols are checked
-    /// up-front so the matching `Drop` impl below can never see a missing
-    /// `Unlock`/`FreeThreadSafeContext` (panic in `Drop` would abort).
-    unsafe fn acquire() -> Option<Self> {
-        unsafe {
-            let get = redisearch::redis::RedisModule_GetThreadSafeContext?;
-            let lock = redisearch::redis::RedisModule_ThreadSafeContextLock?;
-            redisearch::redis::RedisModule_ThreadSafeContextUnlock?;
-            redisearch::redis::RedisModule_FreeThreadSafeContext?;
-            let ctx = get(std::ptr::null_mut());
-            if ctx.is_null() {
-                return None;
-            }
-            lock(ctx);
-            Some(Self(ctx))
-        }
-    }
-
-    /// Acquire the GIL only if this thread does not already hold it. Returns
-    /// `None` (a no-op, GIL untouched) when running on the main thread (which
-    /// holds the GIL implicitly during command dispatch) or on a worker that
-    /// already took the GIL explicitly (`thread_id::gil_held()`). The module
-    /// GIL is non-recursive, so a nested acquire would self-deadlock — this is
-    /// how spec-lifecycle FFI (CREATE/DROP INDEX, field registration) stays
-    /// safe when reached from the write loop's GIL-held commit/DDL window.
-    ///
-    /// # Safety
-    /// Same contract as [`GilGuard::acquire`].
-    unsafe fn acquire_unless_held() -> Option<Self> {
-        if crate::thread_id::is_main_thread() || crate::thread_id::gil_held() {
-            None
-        } else {
-            // Lock-order guard (#726): must not hold L1 when acquiring the GIL.
-            crate::thread_id::assert_gil_lock_order();
-            unsafe { Self::acquire() }
-        }
-    }
-}
-
-impl Drop for GilGuard {
-    fn drop(&mut self) {
-        unsafe {
-            // Both symbols verified `Some` in `acquire`.
-            redisearch::redis::RedisModule_ThreadSafeContextUnlock.unwrap()(self.0);
-            redisearch::redis::RedisModule_FreeThreadSafeContext.unwrap()(self.0);
-        }
-    }
-}
-
 /// RAII handle for a RediSearch index spec (`RefManager`). Owns one strong
 /// reference; `Drop` releases it. The raw `*mut RSIndex` never escapes
 /// this type except as a transient passed straight into an FFI call.
@@ -1048,17 +992,25 @@ impl SpecHandle {
 
 impl Drop for SpecHandle {
     fn drop(&mut self) {
-        // RediSearch_DropIndex transitively calls RM_StopTimer, which mutates
-        // Redis-internal state (the timer rax). The Redis main thread holds
-        // the module GIL implicitly during command execution, so off-thread
-        // callers must acquire it explicitly. Mirrors the C FalkorDB pattern
-        // in `_GraphContext_Free` (FalkorDB/src/graph/graphcontext.c).
+        // Deliberately does NOT take the host global lock, for the same reason
+        // `OwnedIndex::drop` doesn't: `RediSearch_DropIndex` is
+        // `StrongRef_Invalidate` + `StrongRef_Release`, and the terminal
+        // `IndexSpec_Free` stops no timer (it asserts the temporary-index timer is
+        // already unset, and the ForkGC timer self-terminates by not rescheduling).
+        // Verified by call-graph trace and by an lldb run in which
+        // `RM_CreateTimer` fired only on the index-*create* path and
+        // `RM_StopTimer` never fired at all.
         //
-        // DropIndex both invalidates the spec and releases the creation ref,
-        // so hand it the raw pointer via `into_raw` to avoid a double release
-        // from `OwnedIndex`'s own Drop.
+        // Being lock-free here is load-bearing: an index *scan* can be the last
+        // holder of the spec (a concurrent `drop_index_bg` swaps the index map
+        // while a reader still holds the old one), so this `drop` can run on a
+        // reader thread holding the per-graph READ lock. Acquiring the host lock
+        // there would be the #726 inversion.
+        //
+        // DropIndex both invalidates the spec and releases the creation ref, so
+        // hand it the raw pointer via `into_raw` to avoid a double release from
+        // `OwnedIndex`'s own Drop.
         unsafe {
-            let _gil = GilGuard::acquire_unless_held();
             let owned = std::mem::ManuallyDrop::take(&mut self.0);
             RediSearch_DropIndex(owned.into_raw());
         }
@@ -1163,7 +1115,12 @@ impl Index {
         // GCContext_Start), which mutates Redis-internal timer state. Off-thread
         // callers (background populate / write worker) must hold the module GIL.
         unsafe {
-            let _gil = GilGuard::acquire_unless_held();
+            // Host global lock required (RediSearch registers/stops GC timers in
+            // the host event loop). A no-op when we already hold it — a query
+            // that escalated to writer mode, or a background index task that
+            // correctly took it *before* its own locks. Teardown paths (graph
+            // free) reach here holding nothing, so acquire it here.
+            let _host = crate::query_lock::HostLock::acquire();
             let options = RediSearch_CreateIndexOptions();
             RediSearch_IndexOptionsSetGCPolicy(options, GC_POLICY_FORK as _);
 
@@ -1247,7 +1204,12 @@ impl Index {
             // is why the crash is reliably reproduced only in coverage builds.
             // Mirrors the GIL guards in `create_rs_index`, `Index::drop`, and
             // `OwnedIndex::drop`.
-            let _gil = GilGuard::acquire_unless_held();
+            // Host global lock required (RediSearch registers/stops GC timers in
+            // the host event loop). A no-op when we already hold it — a query
+            // that escalated to writer mode, or a background index task that
+            // correctly took it *before* its own locks. Teardown paths (graph
+            // free) reach here holding nothing, so acquire it here.
+            let _host = crate::query_lock::HostLock::acquire();
             for field in fields.values().flat_map(|f| f.iter()) {
                 match field.ty {
                     IndexType::Range => {

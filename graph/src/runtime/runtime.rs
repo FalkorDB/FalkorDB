@@ -449,8 +449,21 @@ impl<'a> Runtime<'a> {
         Ok(())
     }
 
-    /// Apply deferred index operations to RediSearch. Must be called only
-    /// after the full query succeeds.
+    /// Undo index documents published by earlier `Commit` operators in this query
+    /// by re-synchronising them against committed state. See
+    /// [`Pending::resync_published_indexes`].
+    pub fn resync_published_indexes(
+        &self,
+        committed: &Arc<AtomicRefCell<Graph>>,
+    ) {
+        self.pending
+            .borrow_mut()
+            .resync_published_indexes(committed);
+    }
+
+    /// Apply deferred index operations to RediSearch. Must be called only after
+    /// the full query succeeds, and only in writer mode: a failed query must not
+    /// leave documents behind for entities its rollback discards.
     pub fn commit_deferred_indexes(&self) {
         self.pending.borrow_mut().commit_deferred_indexes(&self.g);
     }
@@ -1219,6 +1232,10 @@ impl<'a> Runtime<'a> {
                     }
                     None => None,
                 };
+                // Index DDL mutates the shared, non-MVCC index directly (not via
+                // `pending`) and calls host FFI that requires the host lock, so
+                // escalate to writer mode first — same contract as `CommitOp`.
+                crate::query_lock::upgrade_to_write()?;
                 self.g.borrow_mut().create_index(
                     index_type,
                     entity_type,
@@ -1241,6 +1258,9 @@ impl<'a> Runtime<'a> {
                     ));
                 }
 
+                // See `CreateIndex` above: DDL mutates shared index state, so it
+                // runs in writer mode.
+                crate::query_lock::upgrade_to_write()?;
                 let dropped =
                     self.g
                         .borrow_mut()

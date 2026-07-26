@@ -527,10 +527,9 @@ pub fn graph_bulk_insert(
             // MVCC slot serializes this against other writers; a concurrent
             // writer holding the slot yields a retryable "write lock
             // unavailable" rather than blocking.
+            let _session = crate::query_lock::ScopedSession::begin(&graph, false);
             let outcome = {
-                let tg = graph.read();
-                let _l1 = graph::thread_id::L1HeldScope::new();
-                match tg.graph.write() {
+                match crate::query_lock::with_graph(|tg| tg.graph.write()) {
                     None => Err("ERR write lock unavailable".to_string()),
                     Some(g_arc) => {
                         let result = {
@@ -549,7 +548,7 @@ pub fn graph_bulk_insert(
                         match result {
                             Ok(()) => Ok(g_arc),
                             Err(e) => {
-                                tg.graph.rollback();
+                                crate::query_lock::with_graph(|tg| tg.graph.rollback());
                                 Err(format!("ERR bulk insert failed: {e}"))
                             }
                         }
@@ -560,15 +559,29 @@ pub fn graph_bulk_insert(
             // Committing under the GIL keeps the Arc-swap fork-safe (#452), and
             // acquiring the GIL before L1 never inverts against a main-thread
             // command holding the GIL and waiting for L1.
-            unsafe { ffi::lock_thread_safe_ctx(ts_ctx) };
-            graph::thread_id::set_gil_held(true);
             match outcome {
                 Ok(g_arc) => {
-                    {
-                        let mut tg = graph.write();
-                        let _l1 = graph::thread_id::L1HeldScope::new();
-                        tg.graph.commit(g_arc);
+                    // Escalate through the lock protocol: release read, take the
+                    // host lock, take the write lock (never GIL-under-L1, #726).
+                    if let Err(e) = graph::query_lock::upgrade_to_write() {
+                        // Release the MVCC write slot we acquired in phase 1 —
+                        // only commit()/rollback() clear it, so skipping this
+                        // leaves the graph permanently unwritable.
+                        crate::query_lock::with_graph(|tg| tg.graph.rollback());
+                        let cerr = ffi::sanitise_error(e);
+                        unsafe { ffi::reply_error(ts_ctx, cerr.as_ptr()) };
+                        drop(_session);
+                        drop(bc);
+                        unsafe { ffi::free_thread_safe_context(ts_ctx) };
+                        return;
                     }
+                    crate::query_lock::with_current(|s| {
+                        s.graph_mut()
+                            .expect("writer mode after upgrade_to_write")
+                            .graph
+                            .commit(g_arc);
+                    })
+                    .expect("lock session installed");
                     raw::replicate_verbatim(ts_ctx);
                     let reply =
                         format!("{node_count} nodes created, {edge_count} relations created");
@@ -580,8 +593,9 @@ pub fn graph_bulk_insert(
                     unsafe { ffi::reply_error(ts_ctx, cerr.as_ptr()) };
                 }
             }
-            graph::thread_id::set_gil_held(false);
-            unsafe { ffi::unlock_thread_safe_ctx(ts_ctx) };
+            // Release the write lock + host lock before unblocking the client,
+            // preserving the previous ordering.
+            drop(_session);
             drop(bc);
             unsafe { ffi::free_thread_safe_context(ts_ctx) };
         },

@@ -73,6 +73,7 @@ pub mod graph;
 pub mod index;
 pub mod parser;
 pub mod planner;
+pub mod query_lock;
 pub mod runtime;
 pub mod storage;
 pub mod thread_id;

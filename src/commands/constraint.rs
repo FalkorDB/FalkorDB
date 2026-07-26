@@ -1,8 +1,4 @@
-use crate::{
-    config::CONFIGURATION_CACHE_SIZE,
-    graph_core::{ThreadedGraph, ffi},
-    redis_type::GRAPH_TYPE,
-};
+use crate::{config::CONFIGURATION_CACHE_SIZE, graph_core::ThreadedGraph, redis_type::GRAPH_TYPE};
 use graph::entity_type::EntityType;
 use graph::graph::constraint::ConstraintType;
 use parking_lot::RwLock;
@@ -185,12 +181,13 @@ pub fn graph_constraint(
                     // Phase 1: the long-running validation runs under L1-READ,
                     // GIL-free, so concurrent `db.constraints()` reads still see
                     // the constraint UNDER CONSTRUCTION.
-                    let results = {
-                        let tg = graph_clone.read();
-                        let _l1 = graph::thread_id::L1HeldScope::new();
-                        let g = tg.graph.read();
-                        g.borrow().compute_pending_constraint_results()
-                    };
+                    let _session = crate::query_lock::ScopedSession::begin(&graph_clone, false);
+                    let results = crate::query_lock::with_graph(|tg| {
+                        tg.graph
+                            .read()
+                            .borrow()
+                            .compute_pending_constraint_results()
+                    });
                     // Phase 2: publish the status update under GIL → L1-write
                     // (issue #726 / #452). This is a detached background thread,
                     // so acquire the module GIL explicitly (client-less
@@ -198,22 +195,19 @@ pub fn graph_constraint(
                     // Arc-swap under the GIL so it cannot race a BGSAVE fork —
                     // mirroring bulk_insert's Phase 2. Acquiring the GIL first
                     // (never while holding L1) preserves the GIL→L1 order.
-                    let ts_ctx = unsafe { ffi::get_thread_safe_context(std::ptr::null_mut()) };
-                    unsafe { ffi::lock_thread_safe_ctx(ts_ctx) };
-                    graph::thread_id::set_gil_held(true);
-                    {
-                        let mut tg = graph_clone.write();
-                        let _l1 = graph::thread_id::L1HeldScope::new();
-                        if let Some(g_arc) = tg.graph.write() {
-                            g_arc
-                                .borrow_mut()
-                                .apply_constraint_validation_results(results);
-                            tg.graph.commit(g_arc);
-                        }
+                    if graph::query_lock::upgrade_to_write().is_ok() {
+                        crate::query_lock::with_current(|s| {
+                            let tg = s.graph_mut().expect("writer mode after upgrade_to_write");
+                            if let Some(g_arc) = tg.graph.write() {
+                                g_arc
+                                    .borrow_mut()
+                                    .apply_constraint_validation_results(results);
+                                tg.graph.commit(g_arc);
+                            }
+                        })
+                        .expect("lock session installed");
                     }
-                    graph::thread_id::set_gil_held(false);
-                    unsafe { ffi::unlock_thread_safe_ctx(ts_ctx) };
-                    unsafe { ffi::free_thread_safe_context(ts_ctx) };
+                    // `_session` releases the write lock + host lock here.
                 });
             }
 

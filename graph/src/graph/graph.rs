@@ -421,6 +421,13 @@ fn populate_index_batch(
             // recreates an entry under the same label, release still targets
             // the original generation via `ticket.generation_id`.
             {
+                // NOTE: deliberately does *not* take the host global lock. This
+                // batch only touches ticket bookkeeping and document add/delete,
+                // none of which reach the RediSearch spec lifecycle (index
+                // create/recreate/drop) — so the "host lock before indexer lock"
+                // rule (see `drop_index_bg`) does not apply, and holding the host
+                // lock for every batch would serialize background index
+                // population against the main thread.
                 let lock = indexer.write_lock();
                 let guard = lock.lock();
 
@@ -620,6 +627,11 @@ fn drop_index_bg(
 ) {
     spawn(
         move || {
+            // Host lock FIRST, then the indexer lock. A query doing index DDL
+            // escalates to writer mode (host lock) and *then* takes the indexer
+            // lock; taking them in the opposite order here is an AB-BA deadlock
+            // (issue #726) — it is what hung `test_index_create`.
+            let _host = crate::query_lock::HostLock::acquire();
             // Serialize with `populate_index_batch`, which holds the same
             // lock for the duration of a batch. Without this, the populate
             // worker can be mid-batch when we remove the label.
@@ -2502,6 +2514,37 @@ impl Graph {
         if let Some(slot) = self.edge_endpoints.get_mut(edge_id as usize) {
             *slot = EDGE_NO_ENDPOINT;
         }
+    }
+
+    /// True if node `id` still carries the label in slot `slot`.
+    ///
+    /// Used by the index undo path to decide whether a published document should be
+    /// re-written from committed state or deleted outright.
+    #[must_use]
+    pub fn node_has_label_slot(
+        &self,
+        id: u64,
+        slot: u64,
+    ) -> bool {
+        self.get_node_label_ids(NodeId(id))
+            .any(|label_id| label_id.0 as u64 == slot)
+    }
+
+    /// Endpoints of relationship `id`, or `None` if it does not exist.
+    #[must_use]
+    pub fn try_relationship_endpoints(
+        &self,
+        id: u64,
+    ) -> Option<(u64, u64)> {
+        self.endpoints_for_edge(id)
+    }
+
+    /// True if relationship `id` still exists (has endpoints).
+    pub fn relationship_exists(
+        &self,
+        id: u64,
+    ) -> bool {
+        self.endpoints_for_edge(id).is_some()
     }
 
     /// Returns (src, dst) for an edge via the maintained reverse index.

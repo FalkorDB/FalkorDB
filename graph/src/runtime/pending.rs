@@ -153,6 +153,15 @@ pub struct Pending {
     deferred_index_removes: FxHashMap<u64, RoaringTreemap>,
     deferred_edge_index_adds: FxHashMap<u64, RoaringTreemap>,
     deferred_edge_index_removes: FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
+    /// Entities whose index documents this query has already published, keyed by
+    /// label/type slot. A query can still fail after an inner `Commit` published
+    /// docs, and the private graph version is then discarded — so the index has to
+    /// be brought back in line with committed state. See
+    /// [`Self::resync_published_indexes`]. Edge entries keep their endpoints
+    /// because an edge doc key is `(src, dst, edge_id)`, and a rolled-back edge no
+    /// longer has resolvable endpoints anywhere.
+    published_node_docs: FxHashMap<u64, RoaringTreemap>,
+    published_edge_docs: FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
     /// Schema baseline: number of labels when the current commit window started.
     schema_label_count: usize,
     /// Schema baseline: number of relationship types when the current commit window started.
@@ -217,6 +226,8 @@ impl Pending {
             index_remove_docs: FxHashMap::default(),
             index_add_edge_docs: FxHashMap::default(),
             index_remove_edge_docs: FxHashMap::default(),
+            published_node_docs: FxHashMap::default(),
+            published_edge_docs: FxHashMap::default(),
             deferred_index_adds: FxHashMap::default(),
             deferred_index_removes: FxHashMap::default(),
             deferred_edge_index_adds: FxHashMap::default(),
@@ -1198,11 +1209,89 @@ impl Pending {
     /// the full query succeeds, so a failed query never leaves stale index
     /// entries. Callers that run under the L1-read execute phase must instead
     /// use [`Self::take_deferred_indexes`] and apply them under the commit lock.
+    /// Bring the shared index back in line with committed state after this query
+    /// failed, undoing documents published by earlier `Commit` operators.
+    ///
+    /// Mirrors FalkorDB C's undo log (`_UndoLog_Rollback_Update_Entity`): a failed
+    /// *create* has its document deleted, while a failed *update* is re-indexed
+    /// from the entity's previous values — deleting it instead would drop a live
+    /// entity out of the index. We need no undo log for that: MVCC already keeps
+    /// the previous state, so `committed` (the still-published version) *is* the
+    /// old value, and re-adding replaces the document in place.
+    ///
+    /// Caller must be in writer mode, and must call this BEFORE releasing the
+    /// write lock.
+    pub fn resync_published_indexes(
+        &mut self,
+        committed: &AtomicRefCell<Graph>,
+    ) {
+        let nodes = std::mem::take(&mut self.published_node_docs);
+        let edges = std::mem::take(&mut self.published_edge_docs);
+        if nodes.is_empty() && edges.is_empty() {
+            return;
+        }
+
+        let mut node_adds: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
+        let mut node_removes: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
+        let mut edge_adds: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
+        let mut edge_removes: FxHashMap<u64, FxHashMap<u64, (u64, u64)>> = FxHashMap::default();
+        {
+            let g = committed.borrow();
+            for (slot, ids) in &nodes {
+                for id in ids {
+                    if g.node_has_label_slot(id, *slot) {
+                        // Still live: rewrite the document from committed values.
+                        node_adds.entry(*slot).or_default().insert(id);
+                    } else {
+                        // Never existed outside the discarded version.
+                        node_removes.entry(*slot).or_default().insert(id);
+                    }
+                }
+            }
+            for (slot, ids) in &edges {
+                for (id, endpoints) in ids {
+                    if g.relationship_exists(*id) {
+                        edge_adds.entry(*slot).or_default().insert(*id);
+                    } else {
+                        edge_removes
+                            .entry(*slot)
+                            .or_default()
+                            .insert(*id, *endpoints);
+                    }
+                }
+            }
+        }
+
+        let mut g = committed.borrow_mut();
+        g.commit_index(&mut node_adds, &mut node_removes);
+        g.commit_edge_index(&mut edge_adds, &mut edge_removes);
+    }
+
     pub fn commit_deferred_indexes(
         &mut self,
         g: &AtomicRefCell<Graph>,
     ) {
-        self.take_deferred_indexes().commit(g);
+        let mut deferred = self.take_deferred_indexes();
+        // Note what we are about to publish so a later failure in this query can
+        // bring the index back in line with committed state.
+        for (slot, ids) in &deferred.node_adds {
+            self.published_node_docs
+                .entry(*slot)
+                .or_default()
+                .extend(ids.iter());
+        }
+        if !deferred.edge_adds.is_empty() {
+            let graph = g.borrow();
+            for (slot, ids) in &deferred.edge_adds {
+                let entry = self.published_edge_docs.entry(*slot).or_default();
+                for id in ids {
+                    if let Some((src, dst)) = graph.try_relationship_endpoints(id) {
+                        entry.insert(id, (src, dst));
+                    }
+                }
+            }
+        }
+        deferred.commit(g);
     }
 
     /// Clear all pending mutation state.
