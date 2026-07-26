@@ -1803,16 +1803,11 @@ impl Binder {
             _ => {
                 // For ShortestPath, wrap child binding errors as "requires bound nodes"
                 if let ExprIR::ShortestPath(info) = node_ref.data() {
-                    let fn_name = if info.all_paths {
-                        "allShortestPaths"
-                    } else {
-                        "shortestPath"
-                    };
                     let children = node_ref
                         .children()
                         .map(|child| self.bind_expr_node(expr, &child, locals))
                         .collect::<Result<Vec<_>, _>>()
-                        .map_err(|_| format!("A {fn_name} requires bound nodes"))?;
+                        .map_err(|_| "A shortestPath requires bound nodes".to_string())?;
                     let mut new_tree = DynTree::new(ExprIR::ShortestPath(info.clone()));
                     let mut root = new_tree.root_mut();
                     for child in children {
@@ -1911,12 +1906,7 @@ impl Binder {
                             if let ExprIR::Variable(var) = child.root().data()
                                 && var.name.is_none()
                             {
-                                let fn_name = if info.all_paths {
-                                    "allShortestPaths"
-                                } else {
-                                    "shortestPath"
-                                };
-                                return Err(format!("A {fn_name} requires bound nodes"));
+                                return Err("A shortestPath requires bound nodes".to_string());
                             }
                         }
                         ExprIR::ShortestPath(info)

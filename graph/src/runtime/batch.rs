@@ -416,27 +416,6 @@ impl BatchBuilder {
         self.rows == 0
     }
 
-    /// Truncates the builder to keep only the first `n` pushed rows.
-    ///
-    /// Used by scan/traverse operators that enforce a `record_cap` after
-    /// buffering. These operators emit rows of homogeneous column shape (every
-    /// row binds the same variable slots), so dropping a suffix of rows never
-    /// changes which columns are present; the per-column `present`/`any_bound`
-    /// flags therefore remain accurate.
-    pub fn truncate(
-        &mut self,
-        n: usize,
-    ) {
-        if n >= self.rows {
-            return;
-        }
-        for col in &mut self.cols {
-            col.values.truncate(n);
-        }
-        self.origins.truncate(n);
-        self.rows = n;
-    }
-
     /// Appends one row from a [`Row`], transposing its bindings into the
     /// growing columns, taking the pool-free owned row.
     pub fn push_row(
@@ -517,53 +496,6 @@ impl BatchBuilder {
                 }
             } else {
                 col.values.push(Value::Null);
-            }
-        }
-        if origin != 0 {
-            self.any_origin = true;
-        }
-        self.origins.push(origin);
-        self.rows += 1;
-    }
-
-    /// Appends one row read directly from `batch[row]`, transposing its columns
-    /// into the growing builder columns. Columnar equivalent of
-    /// `push_row(&BatchRow::new(batch, row).to_owned_row())` that avoids
-    /// materializing an intermediate [`Row`]: `value_only` slots are preserved
-    /// as value-present-but-unbound and the supplied `origin` is recorded.
-    pub fn push_batch_row(
-        &mut self,
-        batch: &Batch,
-        row: usize,
-        origin: u32,
-    ) {
-        let r = self.rows;
-        let n = batch.columns.len();
-        while self.cols.len() < n {
-            self.cols.push(ColumnBuilder {
-                values: vec![Value::Null; r],
-                present: false,
-                any_bound: false,
-            });
-        }
-        for (id, col) in self.cols.iter_mut().enumerate() {
-            match batch.columns.get(id) {
-                Some(c) if !matches!(c, Column::Unbound) => {
-                    let v = c.get(row);
-                    if batch.value_only.test(id) {
-                        // Value-present-but-unbound slot (e.g. aggregate alias).
-                        let is_null = matches!(v, Value::Null);
-                        col.values.push(v);
-                        if !is_null {
-                            col.present = true;
-                        }
-                    } else {
-                        col.values.push(v);
-                        col.present = true;
-                        col.any_bound = true;
-                    }
-                }
-                _ => col.values.push(Value::Null),
             }
         }
         if origin != 0 {
@@ -1091,19 +1023,6 @@ impl<'a> Batch<'a> {
         }
     }
 
-    /// Returns a mutable reference to the column at the given variable id.
-    /// Grows the columns vector if needed.
-    pub fn column_mut(
-        &mut self,
-        var_id: u32,
-    ) -> &mut Column {
-        let idx = var_id as usize;
-        while self.columns.len() <= idx {
-            self.columns.push(Column::Unbound);
-        }
-        &mut self.columns[idx]
-    }
-
     /// Sets a column at the given variable id.
     pub fn set_column(
         &mut self,
@@ -1234,20 +1153,6 @@ impl<'a> Batch<'a> {
         } else {
             debug_assert_eq!(values.len(), self.len);
             self.set_column(var_id, Column::Values(values));
-        }
-    }
-
-    /// Takes a column out of this batch, replacing it with `Unbound`.
-    pub fn take_column(
-        &mut self,
-        var_id: u32,
-    ) -> Column {
-        let idx = var_id as usize;
-        if idx < self.columns.len() {
-            self.value_only.clear(idx);
-            std::mem::replace(&mut self.columns[idx], Column::Unbound)
-        } else {
-            Column::Unbound
         }
     }
 
