@@ -996,15 +996,21 @@ fn register_bfs(funcs: &mut Functions) {
 
             unsafe {
                 use crate::graph::graphblas::{
-                    GrB_Vector,
-                    lagraphx_bindings, GrB_Vector_free,
+                    GrB_Info, GrB_Matrix, GrB_Matrix_dup, GrB_Vector, GrB_Vector_free,
+                    lagraphx_bindings,
                 };
 
                 // Run directly on full adjacency; no compaction needed for BFS.
-                // Transfer ownership of the freshly-built matrix to LAGraph
-                // instead of duplicating it.
+                // Duplicate the raw matrix directly so LAGraph_New takes sole
+                // ownership — adj.dup().inner() would double-free because the
+                // temporary Matrix wrapper also calls GrB_Matrix_free on drop.
                 let compact_source = u64::from(source_id);
-                let mut lag_g = create_lagraph_graph(adj.into_raw()?, LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED)?;
+                let mut raw_adj: GrB_Matrix = null_mut();
+                let info = GrB_Matrix_dup(&raw mut raw_adj, adj.inner());
+                if info != GrB_Info::GrB_SUCCESS {
+                    return Err(format!("GrB_Matrix_dup failed: {info:?}"));
+                }
+                let mut lag_g = create_lagraph_graph(raw_adj, LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED)?;
 
                 let mut msg = new_msg();
 
