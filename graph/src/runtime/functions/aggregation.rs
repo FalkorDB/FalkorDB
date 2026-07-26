@@ -222,6 +222,7 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::union([Type::Float, Type::Null]),
         agg_init: Value::List(Arc::new(thin_vec![Value::Float(0.0), Value::List(Arc::new(thin_vec![]))])),
         finalizer: finalize_percentile_disc,
+        batch_agg: percentile_batch,
         fn percentile(_, args) {
             let val = args[0].clone();
             let percentile_val = args[1].clone();
@@ -271,7 +272,7 @@ pub fn register(funcs: &mut Functions) {
                 Value::List(Arc::new(thin_vec![]))
             ])),
             finalizer: Some(Box::new(finalize_percentile_cont)),
-            batch_agg: None,
+            batch_agg: Some(percentile_batch),
         },
         Type::union([Type::Float, Type::Null]),
     );
@@ -281,6 +282,7 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::union([Type::Float, Type::Null]),
         agg_init: Value::List(Arc::new(thin_vec![Value::Float(0.0), Value::List(Arc::new(thin_vec![]))])),
         finalizer: finalize_stdev,
+        batch_agg: stdev_batch,
         fn stdev(_, args) {
             let mut iter = args.iter().cloned();
             let val = iter.next().unwrap();
@@ -320,7 +322,7 @@ pub fn register(funcs: &mut Functions) {
                 Value::List(Arc::new(thin_vec![]))
             ])),
             finalizer: Some(Box::new(finalize_stdevp)),
-            batch_agg: None,
+            batch_agg: Some(stdev_batch),
         },
         Type::union([Type::Float, Type::Null]),
     );
@@ -503,6 +505,79 @@ fn min_batch(
         }
     }
     Ok(best)
+}
+
+/// Batch-path shim for `percentileDisc`/`percentileCont`. Multi-arg
+/// aggregations are never column-vectorized (`analyze_agg_tree` rejects
+/// them), so this only ever receives the per-row shape
+/// `inputs = [value, percentile]`. Registering it still matters: the batch
+/// path passes the accumulator by value, so `Arc::make_mut` mutates in
+/// place instead of deep-cloning the collected-values list every row
+/// (which made the scalar path O(n²)).
+#[allow(clippy::needless_pass_by_value)]
+fn percentile_batch(
+    _: &Runtime,
+    inputs: &[Value],
+    _num_rows: usize,
+    acc: Value,
+) -> Result<Value, String> {
+    let mut state = match acc {
+        Value::List(l) => l,
+        _ => unreachable!("percentile accumulator must be a List"),
+    };
+    if matches!(inputs[0], Value::Null) {
+        return Ok(Value::List(state));
+    }
+    let state_mut = Arc::make_mut(&mut state);
+    let (first, rest) = state_mut.split_at_mut(1);
+    let Value::Float(stored_percentile) = &mut first[0] else {
+        unreachable!("first element of percentile state must be the percentile");
+    };
+    let Value::List(values) = &mut rest[0] else {
+        unreachable!("second element of percentile state must be a List");
+    };
+    *stored_percentile = inputs[1].get_numeric();
+    Arc::make_mut(values).push(Value::Float(inputs[0].get_numeric()));
+    Ok(Value::List(state))
+}
+
+/// Bulk `stDev`/`stDevP` aggregator. Folds all non-null numeric inputs into
+/// the `[sum, values]` accumulator in one pass; owning the accumulator makes
+/// `Arc::make_mut` in-place (the shared-ref scalar path deep-cloned the
+/// values list every row — O(n²)).
+#[allow(clippy::needless_pass_by_value)]
+fn stdev_batch(
+    _: &Runtime,
+    inputs: &[Value],
+    _num_rows: usize,
+    acc: Value,
+) -> Result<Value, String> {
+    let mut state = match acc {
+        Value::List(l) => l,
+        Value::Null => Arc::new(thin_vec![
+            Value::Float(0.0),
+            Value::List(Arc::new(thin_vec![]))
+        ]),
+        _ => unreachable!("stdev accumulator must be a List"),
+    };
+    let state_mut = Arc::make_mut(&mut state);
+    let (first, rest) = state_mut.split_at_mut(1);
+    let (Value::Float(sum), Value::List(values)) = (&mut first[0], &mut rest[0]) else {
+        unreachable!("stdev accumulator should be [sum, values]");
+    };
+    let vals = Arc::make_mut(values);
+    vals.reserve(inputs.len());
+    for val in inputs {
+        let v = match val {
+            Value::Null => continue,
+            Value::Int(i) => *i as f64,
+            Value::Float(f) => *f,
+            _ => unreachable!("stdev expects Integer, Float, or Null"),
+        };
+        *sum += v;
+        vals.push(Value::Float(v));
+    }
+    Ok(Value::List(state))
 }
 
 pub fn finalize_avg(value: Value) -> Value {
