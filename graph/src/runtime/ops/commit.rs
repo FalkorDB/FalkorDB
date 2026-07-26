@@ -95,7 +95,7 @@ impl<'a> Iterator for CommitOp<'a> {
             // lock and the per-graph write lock and keeps them for the rest of the
             // query (see `crate::query_lock`); idempotent, so nested Commits after
             // the first are free.
-            if let Err(e) = crate::query_lock::upgrade_to_write() {
+            if let Err(e) = self.runtime.query_lock().upgrade_to_write() {
                 return Some(Err(e));
             }
             // Publish this commit's index documents now, so an operator above us

@@ -153,15 +153,17 @@ pub struct Pending {
     deferred_index_removes: FxHashMap<u64, RoaringTreemap>,
     deferred_edge_index_adds: FxHashMap<u64, RoaringTreemap>,
     deferred_edge_index_removes: FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
-    /// Entities whose index documents this query has already published, keyed by
-    /// label/type slot. A query can still fail after an inner `Commit` published
-    /// docs, and the private graph version is then discarded — so the index has to
-    /// be brought back in line with committed state. See
+    /// Every entity whose index document this query has already written — added
+    /// **or** removed — keyed by label/type slot. A query can still fail after an
+    /// inner `Commit` wrote documents, and the private graph version is then
+    /// discarded, so the index has to be brought back in line with committed
+    /// state: a rolled-back create must lose its document, a rolled-back update or
+    /// delete must get its previous document back. See
     /// [`Self::resync_published_indexes`]. Edge entries keep their endpoints
     /// because an edge doc key is `(src, dst, edge_id)`, and a rolled-back edge no
     /// longer has resolvable endpoints anywhere.
-    published_node_docs: FxHashMap<u64, RoaringTreemap>,
-    published_edge_docs: FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
+    touched_node_docs: FxHashMap<u64, RoaringTreemap>,
+    touched_edge_docs: FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
     /// Schema baseline: number of labels when the current commit window started.
     schema_label_count: usize,
     /// Schema baseline: number of relationship types when the current commit window started.
@@ -226,8 +228,8 @@ impl Pending {
             index_remove_docs: FxHashMap::default(),
             index_add_edge_docs: FxHashMap::default(),
             index_remove_edge_docs: FxHashMap::default(),
-            published_node_docs: FxHashMap::default(),
-            published_edge_docs: FxHashMap::default(),
+            touched_node_docs: FxHashMap::default(),
+            touched_edge_docs: FxHashMap::default(),
             deferred_index_adds: FxHashMap::default(),
             deferred_index_removes: FxHashMap::default(),
             deferred_edge_index_adds: FxHashMap::default(),
@@ -1261,8 +1263,8 @@ impl Pending {
         &mut self,
         committed: &AtomicRefCell<Graph>,
     ) {
-        let nodes = std::mem::take(&mut self.published_node_docs);
-        let edges = std::mem::take(&mut self.published_edge_docs);
+        let nodes = std::mem::take(&mut self.touched_node_docs);
+        let edges = std::mem::take(&mut self.touched_edge_docs);
         if nodes.is_empty() && edges.is_empty() {
             return;
         }
@@ -1308,23 +1310,35 @@ impl Pending {
         g: &AtomicRefCell<Graph>,
     ) {
         let mut deferred = self.take_deferred_indexes();
-        // Note what we are about to publish so a later failure in this query can
-        // bring the index back in line with committed state.
-        for (slot, ids) in &deferred.node_adds {
-            self.published_node_docs
-                .entry(*slot)
-                .or_default()
-                .extend(ids.iter());
+        // Note every document we are about to write — additions *and* removals —
+        // so a later failure in this query can bring the index back in line with
+        // committed state. Removals matter as much as additions: a rolled-back
+        // DELETE must get its document back, or the entity silently disappears
+        // from the index.
+        for ids in [&deferred.node_adds, &deferred.node_removes] {
+            for (slot, ids) in ids {
+                self.touched_node_docs
+                    .entry(*slot)
+                    .or_default()
+                    .extend(ids.iter());
+            }
         }
         if !deferred.edge_adds.is_empty() {
             let graph = g.borrow();
             for (slot, ids) in &deferred.edge_adds {
-                let entry = self.published_edge_docs.entry(*slot).or_default();
+                let entry = self.touched_edge_docs.entry(*slot).or_default();
                 for id in ids {
                     if let Some((src, dst)) = graph.try_relationship_endpoints(id) {
                         entry.insert(id, (src, dst));
                     }
                 }
+            }
+        }
+        // Edge removals already carry their endpoints.
+        for (slot, ids) in &deferred.edge_removes {
+            let entry = self.touched_edge_docs.entry(*slot).or_default();
+            for (id, endpoints) in ids {
+                entry.insert(*id, *endpoints);
             }
         }
         deferred.commit(g);

@@ -1120,7 +1120,7 @@ impl Index {
             // that escalated to writer mode, or a background index task that
             // correctly took it *before* its own locks. Teardown paths (graph
             // free) reach here holding nothing, so acquire it here.
-            let _host = crate::query_lock::HostLock::acquire();
+            let _host = crate::host_lock::HostLockGuard::acquire();
             let options = RediSearch_CreateIndexOptions();
             RediSearch_IndexOptionsSetGCPolicy(options, GC_POLICY_FORK as _);
 
@@ -1209,7 +1209,7 @@ impl Index {
             // that escalated to writer mode, or a background index task that
             // correctly took it *before* its own locks. Teardown paths (graph
             // free) reach here holding nothing, so acquire it here.
-            let _host = crate::query_lock::HostLock::acquire();
+            let _host = crate::host_lock::HostLockGuard::acquire();
             for field in fields.values().flat_map(|f| f.iter()) {
                 match field.ty {
                     IndexType::Range => {

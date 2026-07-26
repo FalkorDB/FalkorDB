@@ -70,6 +70,7 @@
 
 pub mod entity_type;
 pub mod graph;
+pub mod host_lock;
 pub mod index;
 pub mod parser;
 pub mod planner;

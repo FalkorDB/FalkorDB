@@ -243,7 +243,10 @@ class testConcurrentQueryFlow(FlowTestsBase):
             result = results[0]
             if type(result) is ResponseError:
                 possible_exceptions = ["Encountered different graph value when opened key " + GRAPH_ID,
-                                       "Encountered an empty key when opened key " + GRAPH_ID]
+                                       "Encountered an empty key when opened key " + GRAPH_ID,
+                                       # The write escalated to writer mode and found the key no
+                                       # longer holds this graph, so it aborted before mutating.
+                                       "graph was deleted or replaced while the query was running, aborting"]
                 self.env.assertContains(str(result), possible_exceptions)
             else:
                 self.env.assertEqual(1000000, result.result_set[0][0])
@@ -346,7 +349,10 @@ class testConcurrentQueryFlow(FlowTestsBase):
             if type(result) is ResponseError:
                 possible_exceptions = ["Encountered a non-graph value type when opened key " + GRAPH_ID,
                                        "WRONGTYPE Operation against a key holding the wrong kind of value",
-                                       "Existing key has wrong Redis type"]
+                                       "Existing key has wrong Redis type",
+                                       # The write escalated to writer mode and found the key no
+                                       # longer holds this graph, so it aborted before mutating.
+                                       "graph was deleted or replaced while the query was running, aborting"]
                 self.env.assertContains(str(result), possible_exceptions)
             else:
                 self.env.assertEqual(1000000, result.result_set[0][0])

@@ -131,6 +131,11 @@ pub struct Runtime<'a> {
     pub stats: RefCell<QueryStatistics>,
     /// Query execution plan tree
     pub plan: Arc<DynTree<IR>>,
+    /// The lock protocol governing this query, injected by the host at
+    /// construction (see [`crate::query_lock`]). Operators reach it through
+    /// [`Runtime::query_lock`] rather than through a global, so the dependency is
+    /// explicit at the point of use and swappable in tests.
+    query_lock: &'a dyn crate::query_lock::QueryLock,
     /// Deduplication state for DISTINCT operations, keyed by the DISTINCT
     /// expression's node index plus its aggregation group hash. Uses a
     /// cheap `FxHashMap` over a `(NodeIdx, u64)` tuple so the hot per-row
@@ -388,6 +393,7 @@ impl<'a> Runtime<'a> {
         timeout_ms: Option<u64>,
         mem_capacity: i64,
         current_usage_fn: Option<fn() -> usize>,
+        query_lock: &'a dyn crate::query_lock::QueryLock,
     ) -> Self {
         let return_names = plan.root().get_return_names();
         let pending = Lazy::new((|| RefCell::new(Pending::new())) as fn() -> RefCell<Pending>);
@@ -401,6 +407,7 @@ impl<'a> Runtime<'a> {
             pending,
             stats: RefCell::new(QueryStatistics::default()),
             plan,
+            query_lock,
             return_names,
             value_dedupers: RefCell::new(rustc_hash::FxHashMap::default()),
             inspect,
@@ -447,6 +454,17 @@ impl<'a> Runtime<'a> {
             return Err("Query's mem consumption exceeded capacity".to_string());
         }
         Ok(())
+    }
+
+    /// This query's lock protocol. Escalate to writer mode with
+    /// `runtime.query_lock().upgrade_to_write()` before mutating shared state.
+    ///
+    /// Not a guard: the lock's *lifetime* is owned by the host for the whole query
+    /// (it must outlive `query()` so the host can commit), so releasing is the
+    /// host's business — this is the handle used to change mode.
+    #[must_use]
+    pub fn query_lock(&self) -> &dyn crate::query_lock::QueryLock {
+        self.query_lock
     }
 
     /// Undo index documents published by earlier `Commit` operators in this query
@@ -1235,7 +1253,7 @@ impl<'a> Runtime<'a> {
                 // Index DDL mutates the shared, non-MVCC index directly (not via
                 // `pending`) and calls host FFI that requires the host lock, so
                 // escalate to writer mode first — same contract as `CommitOp`.
-                crate::query_lock::upgrade_to_write()?;
+                self.query_lock().upgrade_to_write()?;
                 self.g.borrow_mut().create_index(
                     index_type,
                     entity_type,
@@ -1260,7 +1278,7 @@ impl<'a> Runtime<'a> {
 
                 // See `CreateIndex` above: DDL mutates shared index state, so it
                 // runs in writer mode.
-                crate::query_lock::upgrade_to_write()?;
+                self.query_lock().upgrade_to_write()?;
                 let dropped =
                     self.g
                         .borrow_mut()

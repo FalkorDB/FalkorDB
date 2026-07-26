@@ -627,11 +627,18 @@ fn drop_index_bg(
 ) {
     spawn(
         move || {
-            // Host lock FIRST, then the indexer lock. A query doing index DDL
-            // escalates to writer mode (host lock) and *then* takes the indexer
-            // lock; taking them in the opposite order here is an AB-BA deadlock
-            // (issue #726) — it is what hung `test_index_create`.
-            let _host = crate::query_lock::HostLock::acquire();
+            // Host lock FIRST, then the indexer lock — never the reverse, which is
+            // the AB-BA that hung `test_index_create` (issue #726): index DDL holds
+            // the host lock and then wants the indexer lock.
+            //
+            // Strictly speaking the critical section below no longer *needs* the
+            // host lock (`Indexer::remove` only swaps the index map, and the
+            // `Index` it drops reaches only the host-lock-free `SpecHandle::drop` /
+            // `OwnedIndex::drop`). It is kept deliberately: removing it produced an
+            // unexplained crash in `test_index_create`, and the cost here is one
+            // uncontended acquire on a rare path — cheap insurance against
+            // reopening a deadlock class that cost a 6-hour CI hang.
+            let _host = crate::host_lock::HostLockGuard::acquire();
             // Serialize with `populate_index_batch`, which holds the same
             // lock for the duration of a batch. Without this, the populate
             // worker can be mid-batch when we remove the label.

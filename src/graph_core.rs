@@ -279,7 +279,7 @@ pub mod ffi {
     /// `ctx` must be a valid thread-safe context.
     pub unsafe fn lock_thread_safe_ctx(ctx: *mut raw::RedisModuleCtx) {
         // Lock-order guard (#726): must not hold L1 when acquiring the GIL.
-        graph::query_lock::assert_safe_to_take_host_lock();
+        crate::query_lock::assert_safe_to_take_host_lock();
         let f = unsafe { raw::RedisModule_ThreadSafeContextLock }.expect(MSG);
         unsafe { f(ctx) };
     }
@@ -469,6 +469,7 @@ pub fn execute_query(
         timeout_ms,
         QUERY_MEM_CAPACITY.load(Ordering::Relaxed),
         Some(net_thread_usage),
+        &crate::query_lock::RedisQueryLock,
     );
     let mut result = runtime.query()?;
     result.stats.cached = cached;
@@ -536,6 +537,7 @@ pub fn execute_profile(
         timeout_ms,
         QUERY_MEM_CAPACITY.load(Ordering::Relaxed),
         Some(net_thread_usage),
+        &crate::query_lock::RedisQueryLock,
     );
     let _ = runtime.query()?;
     reply_profile(ctx, &runtime, &plan);
@@ -600,6 +602,7 @@ pub fn execute_query_write(
         timeout_ms,
         QUERY_MEM_CAPACITY.load(Ordering::Relaxed),
         Some(net_thread_usage),
+        &crate::query_lock::RedisQueryLock,
     );
     runtime.build_effects.set(
         REPLICATION_CONSUMERS.load(Ordering::Relaxed)

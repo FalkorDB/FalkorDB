@@ -28,8 +28,6 @@
 //! including reads of the shared index — observes a consistent, exclusively
 //! locked graph.
 
-use std::sync::{Arc, OnceLock};
-
 /// Lock mode held for the current query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccessMode {
@@ -56,10 +54,6 @@ pub trait QueryLock: Send + Sync {
     /// expressed here rather than half here and half in host code.
     fn acquire_read(&self) -> Result<(), String>;
 
-    /// Release every lock held for the current query (write lock and host lock if
-    /// escalated, otherwise the read lock). Idempotent.
-    fn release(&self);
-
     /// The lock mode currently held by the calling thread.
     fn mode(&self) -> AccessMode;
 
@@ -71,160 +65,4 @@ pub trait QueryLock: Send + Sync {
     /// disappeared while the read lock was released), in which case the caller
     /// must abort the query rather than mutate.
     fn upgrade_to_write(&self) -> Result<(), String>;
-
-    /// Acquire **only** the host global lock — no per-graph lock — for
-    /// background maintenance that is not part of a query (index population,
-    /// index teardown).
-    ///
-    /// Such tasks take their own internal locks (e.g. the indexer's
-    /// serialization lock) and may call host FFI that requires the global lock.
-    /// They must therefore acquire the host lock *first*, matching the order a
-    /// query uses after escalating (host lock → … → indexer lock); acquiring it
-    /// afterwards is an AB-BA deadlock against a query doing index DDL.
-    ///
-    /// Must be a no-op when the calling thread already holds the host lock.
-    fn lock_host(&self);
-
-    /// Release a host lock taken by [`QueryLock::lock_host`]; a no-op if that
-    /// call was itself a no-op.
-    fn unlock_host(&self);
-
-    /// True if the calling thread holds the host global lock by any route:
-    /// implicitly (host's main thread), via escalation, or via [`Self::lock_host`].
-    fn holds_host_lock(&self) -> bool;
-}
-
-/// RAII guard for [`QueryLock::lock_host`].
-///
-/// Bind one *before* taking any lock of your own:
-/// `let _host = HostLock::acquire();`
-#[must_use]
-pub struct HostLock(bool);
-
-impl HostLock {
-    /// Acquire the host global lock for the duration of the guard. No-op (and
-    /// harmless) when no host implementation is registered.
-    pub fn acquire() -> Self {
-        match QUERY_LOCK.get() {
-            Some(lock) => {
-                lock.lock_host();
-                Self(true)
-            }
-            None => Self(false),
-        }
-    }
-}
-
-impl Drop for HostLock {
-    fn drop(&mut self) {
-        if self.0
-            && let Some(lock) = QUERY_LOCK.get()
-        {
-            lock.unlock_host();
-        }
-    }
-}
-
-/// True if the calling thread holds the host global lock. `true` when no host
-/// implementation is registered (nothing to hold).
-#[must_use]
-pub fn holds_host_lock() -> bool {
-    QUERY_LOCK.get().is_none_or(|lock| lock.holds_host_lock())
-}
-
-/// Debug-only guard for taking the host global lock: the current query must not
-/// be holding the per-graph **read** lock.
-///
-/// That is precisely the issue #726 AB-BA inversion — a worker holding the read
-/// lock and waiting for the host lock, versus the host's main thread holding the
-/// host lock and waiting for the write lock. Escalation avoids it by releasing
-/// the read lock first, so this catches any *other* path that reaches for the
-/// host lock mid-query.
-#[inline]
-pub fn assert_safe_to_take_host_lock() {
-    debug_assert!(
-        mode() != AccessMode::Read,
-        "taking the host global lock while holding the per-graph read lock is the \
-         #726 deadlock; release the read lock first (upgrade_to_write does this)"
-    );
-}
-
-/// Debug-only assertion that the caller holds the host global lock.
-///
-/// Guards host FFI that mutates global host state (for Redis: the RediSearch
-/// spec lifecycle, which registers/stops GC timers in the Redis event loop).
-#[inline]
-pub fn assert_holds_host_lock(what: &str) {
-    debug_assert!(
-        holds_host_lock(),
-        "{what} requires the host global lock; acquire it before your own locks \
-         (HostLock::acquire / upgrade_to_write) — issue #726"
-    );
-}
-
-static QUERY_LOCK: OnceLock<Arc<dyn QueryLock>> = OnceLock::new();
-
-/// Register the host's commit-lock implementation. Idempotent; the first call
-/// wins. Intended to be called once from the host's module-init callback.
-pub fn set_query_lock(lock: Arc<dyn QueryLock>) {
-    let _ = QUERY_LOCK.set(lock);
-}
-
-/// Escalate the current query to writer mode; see
-/// [`QueryLock::upgrade_to_write`].
-///
-/// When no host implementation is registered (unit tests, embedders that drive
-/// the graph directly with no concurrent readers) this is a no-op success: with
-/// no host lock there is nothing to order and nothing to exclude.
-pub fn upgrade_to_write() -> Result<(), String> {
-    match QUERY_LOCK.get() {
-        Some(lock) => lock.upgrade_to_write(),
-        None => Ok(()),
-    }
-}
-
-/// Enter reader mode for the current query; see [`QueryLock::acquire_read`].
-pub fn acquire_read() -> Result<(), String> {
-    match QUERY_LOCK.get() {
-        Some(lock) => lock.acquire_read(),
-        None => Ok(()),
-    }
-}
-
-/// Release all locks held for the current query; see [`QueryLock::release`].
-pub fn release() {
-    if let Some(lock) = QUERY_LOCK.get() {
-        lock.release();
-    }
-}
-
-/// The lock mode held by the calling thread.
-#[must_use]
-pub fn mode() -> AccessMode {
-    QUERY_LOCK
-        .get()
-        .map_or(AccessMode::Unlocked, |lock| lock.mode())
-}
-
-/// True if the calling thread holds writer mode. `false` when no host
-/// implementation is registered.
-#[must_use]
-pub fn holds_write() -> bool {
-    mode() == AccessMode::Write
-}
-
-/// Debug-only assertion that the caller is in writer mode.
-///
-/// Guards the operations that mutate shared non-MVCC state (index documents,
-/// RediSearch spec lifecycle) or publish a graph version. No-op in release
-/// builds and when no host implementation is registered.
-#[inline]
-pub fn assert_holds_write(what: &str) {
-    debug_assert!(
-        QUERY_LOCK
-            .get()
-            .is_none_or(|lock| lock.mode() == AccessMode::Write),
-        "{what} requires writer mode (commit lock held); \
-         call query_lock::upgrade_to_write() first (issue #726)"
-    );
 }

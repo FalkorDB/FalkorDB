@@ -22,6 +22,7 @@
 //! `RwLockReadGuard` in a caller frame could never allow.
 
 use crate::graph_core::{ThreadedGraph, ffi};
+use graph::host_lock::HostLock;
 use graph::query_lock::{AccessMode, QueryLock};
 use parking_lot::{ArcRwLockReadGuard, ArcRwLockWriteGuard, RawRwLock, RwLock};
 use redis_module::raw;
@@ -160,14 +161,19 @@ impl LockSession {
         //    by re-opening the key under WRITE. Locks stay held; the caller aborts
         //    the query and the session releases them on drop.
         if !crate::graph_core::graph_is_registered(&self.graph) {
-            return Err("graph was deleted while the query was running, aborting".to_string());
+            return Err(
+                "graph was deleted or replaced while the query was running, aborting".to_string(),
+            );
         }
         Ok(())
     }
 
     /// Release everything held by the session (write lock then GIL, reverse
-    /// order of acquisition). Called on query completion.
-    pub fn release(&mut self) {
+    /// order of acquisition).
+    ///
+    /// Not public: release happens through `Drop` — of the session itself, or of
+    /// the [`ScopedSession`] that owns it — so no caller can forget it.
+    fn release(&mut self) {
         MODE.with(|m| m.set(AccessMode::Unlocked));
         match self.mode.take() {
             Some(Mode::Writer { guard, ts_ctx }) => {
@@ -263,7 +269,8 @@ impl ScopedSession {
         install(LockSession::new_target(graph, gil_already_held));
         // Bind the guard first so a failure still releases the session.
         let guard = Self(());
-        graph::query_lock::acquire_read().expect("failed to acquire the per-graph read lock");
+        QueryLock::acquire_read(&RedisQueryLock)
+            .expect("failed to acquire the per-graph read lock");
         guard
     }
 
@@ -306,12 +313,6 @@ impl QueryLock for RedisQueryLock {
         with_current(LockSession::acquire_read).unwrap_or(Ok(()))
     }
 
-    fn release(&self) {
-        if let Some(mut session) = take() {
-            session.release();
-        }
-    }
-
     fn mode(&self) -> AccessMode {
         MODE.with(Cell::get)
     }
@@ -323,13 +324,27 @@ impl QueryLock for RedisQueryLock {
         if MODE.with(Cell::get) == AccessMode::Write {
             return Ok(());
         }
-        // No session installed => not running inside a managed query (e.g. a
-        // background index task that already ordered its own locks): nothing to
-        // escalate.
-        with_current(LockSession::escalate).unwrap_or(Ok(()))
+        match with_current(LockSession::escalate) {
+            Some(res) => res,
+            // No session on this thread. Reaching here means a caller is about to
+            // mutate shared state believing it escalated, when in fact nothing is
+            // locked — a silent lost-lock, not a benign no-op. Every real caller
+            // runs on its query's own thread, where a `ScopedSession` is installed.
+            None => {
+                debug_assert!(
+                    false,
+                    "upgrade_to_write() with no lock session installed on this \
+                     thread: the caller would mutate shared state unlocked"
+                );
+                Err("no lock session for this query; refusing to escalate".to_string())
+            }
+        }
     }
+}
 
-    fn lock_host(&self) {
+/// The process-wide host lock: Redis's module GIL.
+impl HostLock for RedisQueryLock {
+    fn lock(&self) {
         // Already covered: the main thread holds the GIL implicitly during
         // command dispatch, and an escalated query holds it explicitly. The
         // module GIL is NOT recursive, so re-acquiring would self-deadlock.
@@ -343,7 +358,7 @@ impl QueryLock for RedisQueryLock {
         HOST_DEPTH.with(|d| d.set(d.get() + 1));
     }
 
-    fn unlock_host(&self) {
+    fn unlock(&self) {
         let depth = HOST_DEPTH.with(|d| {
             let n = d.get().saturating_sub(1);
             d.set(n);
@@ -361,7 +376,7 @@ impl QueryLock for RedisQueryLock {
         }
     }
 
-    fn holds_host_lock(&self) -> bool {
+    fn holds(&self) -> bool {
         graph::thread_id::is_main_thread() || holds_gil()
     }
 }
@@ -373,8 +388,28 @@ fn holds_gil() -> bool {
     MODE.with(Cell::get) == AccessMode::Write || HOST_DEPTH.with(Cell::get) > 0
 }
 
-/// Register the Redis commit lock with the `graph` crate. Called once at module
-/// init, before any query runs.
+/// Debug-only guard for taking the host lock: the current query must not be
+/// holding the per-graph **read** lock.
+///
+/// That is the issue #726 AB-BA inversion — a worker holding the read lock and
+/// waiting for the GIL, versus the main thread holding the GIL and waiting for the
+/// write lock. Escalation avoids it by releasing the read lock first, so this
+/// catches any *other* path reaching for the GIL mid-query.
+#[inline]
+pub fn assert_safe_to_take_host_lock() {
+    debug_assert!(
+        MODE.with(Cell::get) != AccessMode::Read,
+        "taking the host lock while holding the per-graph read lock is the #726 \
+         deadlock; release the read lock first (upgrade_to_write does this)"
+    );
+}
+
+/// Register the process-wide host lock with the `graph` crate. Called once at
+/// module init.
+///
+/// Only the *host* lock is global — there is one module GIL per process. The
+/// per-query lock is handed to each `Runtime` instead (see
+/// `graph::query_lock::QueryLock`), so it needs no registration.
 pub fn register() {
-    graph::query_lock::set_query_lock(Arc::new(RedisQueryLock));
+    graph::host_lock::set_host_lock(Arc::new(RedisQueryLock));
 }

@@ -563,7 +563,9 @@ pub fn graph_bulk_insert(
                 Ok(g_arc) => {
                     // Escalate through the lock protocol: release read, take the
                     // host lock, take the write lock (never GIL-under-L1, #726).
-                    if let Err(e) = graph::query_lock::upgrade_to_write() {
+                    if let Err(e) = graph::query_lock::QueryLock::upgrade_to_write(
+                        &crate::query_lock::RedisQueryLock,
+                    ) {
                         // Release the MVCC write slot we acquired in phase 1 —
                         // only commit()/rollback() clear it, so skipping this
                         // leaves the graph permanently unwritable.

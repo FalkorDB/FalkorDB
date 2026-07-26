@@ -195,7 +195,11 @@ pub fn graph_constraint(
                     // Arc-swap under the GIL so it cannot race a BGSAVE fork —
                     // mirroring bulk_insert's Phase 2. Acquiring the GIL first
                     // (never while holding L1) preserves the GIL→L1 order.
-                    if graph::query_lock::upgrade_to_write().is_ok() {
+                    if graph::query_lock::QueryLock::upgrade_to_write(
+                        &crate::query_lock::RedisQueryLock,
+                    )
+                    .is_ok()
+                    {
                         crate::query_lock::with_current(|s| {
                             let tg = s.graph_mut().expect("writer mode after upgrade_to_write");
                             if let Some(g_arc) = tg.graph.write() {
