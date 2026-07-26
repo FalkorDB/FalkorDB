@@ -19,7 +19,7 @@
 //!
 //! The dense entity id *is* the address: it splits into radix digits that index
 //! each level directly — no key comparisons anywhere in the descent. Shown for
-//! the defaults (`DEFAULT_ATTR_BLOCK_CAP` slots/block, `DIR_FANOUT`
+//! the constants (`BLOCK_CAP` slots/block, `DIR_FANOUT`
 //! blocks/page ⇒ one directory page spans 4096 ids):
 //!
 //! ```text
@@ -45,7 +45,7 @@
 //! └───────────┬────────────────────────────────────────────────────────┘
 //!             │ page_slot         (untouched pages stay Arc-shared)
 //!             ▼
-//! Block — `block_cap` entities (~4 KB by default), the data COW unit
+//! Block — `BLOCK_CAP` entities (~4 KB), the data COW unit
 //! ┌────────────────────────────────────────────────────────────────────┐
 //! │ slots: Vec<Slot>          one 8-byte span descriptor per entity    │
 //! │   idx = slot_idx                                                   │
@@ -242,22 +242,26 @@ impl PackedAttr {
 /// copies via `Arc::make_mut`, while the radix directory keeps the *directory*
 /// copy small at the same time (see the module docs). Deliberately decoupled
 /// from `NODE_CREATION_BUFFER`, which sizes the C-style allocation block.
-const DEFAULT_ATTR_BLOCK_CAP: u32 = 64;
+const BLOCK_CAP: usize = 64;
+
+/// `entity_id` → block / slot split, folded at compile time.
+const BLOCK_SHIFT: u32 = BLOCK_CAP.trailing_zeros();
+const BLOCK_MASK: usize = BLOCK_CAP - 1;
+
+const _: () = assert!(
+    BLOCK_CAP.is_power_of_two(),
+    "BLOCK_CAP must be a power of two: the id split is a shift + mask"
+);
 
 /// Arena floor below which a block is never compacted: the relative rule
 /// (`waste * 2 > len`) already bounds steady-state waste at ~2x the live
 /// payload, and this only stops us re-compacting a trivially small arena.
 ///
-/// It must stay *below* a block's live arena (`block_cap` x attrs/entity) or it
+/// It must stay *below* a block's live arena (`BLOCK_CAP` x attrs/entity) or it
 /// becomes the binding constraint and waste is bounded by
 /// `floor / live` instead of 2x — at the 64-slot grain a 1024-entry floor let a
 /// 2-attribute block bloat 5x (measured) before compaction could fire.
 const COMPACT_MIN_ARENA: usize = 256;
-
-#[inline]
-const fn default_block_cap() -> u32 {
-    DEFAULT_ATTR_BLOCK_CAP
-}
 
 /// Arena span descriptor for one entity. `cap == 0` means the entity has no
 /// attribute span (the equivalent of C's NULL AttributeSet); live spans have
@@ -273,7 +277,7 @@ struct Slot {
 }
 
 /// One block of entity slots plus the arena holding their packed attributes.
-/// Slots grow lazily up to [`block_cap`].
+/// Slots grow lazily up to [`BLOCK_CAP`].
 #[derive(Clone, Default)]
 struct Block {
     slots: Vec<Slot>,
@@ -429,10 +433,9 @@ impl Block {
     fn grow_slots(
         &mut self,
         slot_idx: usize,
-        cap: usize,
     ) {
         if self.slots.len() <= slot_idx {
-            let target = (self.slots.len() * 2).clamp(slot_idx + 1, cap.max(slot_idx + 1));
+            let target = (self.slots.len() * 2).clamp(slot_idx + 1, BLOCK_CAP.max(slot_idx + 1));
             self.slots.reserve_exact(target - self.slots.len());
             self.slots.resize(slot_idx + 1, Slot::default());
         }
@@ -444,9 +447,8 @@ impl Block {
         &mut self,
         slot_idx: usize,
         pairs: &mut Vec<(u16, Value)>,
-        cap: usize,
     ) {
-        self.grow_slots(slot_idx, cap);
+        self.grow_slots(slot_idx);
         // Setting an empty attribute set clears the entity's span entirely
         // (the entity keeps no attributes).
         if pairs.is_empty() {
@@ -509,9 +511,8 @@ impl Block {
         slot_idx: usize,
         pairs: &[(u16, Value)],
         scratch: &mut Vec<PackedAttr>,
-        cap: usize,
     ) -> (usize, usize) {
-        self.grow_slots(slot_idx, cap);
+        self.grow_slots(slot_idx);
         let old = self.slots[slot_idx];
 
         // Fast path: every pair replaces an existing attribute (non-null,
@@ -782,40 +783,21 @@ impl Default for DirPage {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct DataBlock {
-    /// Two-level radix directory over `block_idx = entity_id / block_cap`:
+    /// Two-level radix directory over `block_idx = entity_id / BLOCK_CAP`:
     /// `root[block_idx / DIR_FANOUT]` → `DirPage.blocks[block_idx % DIR_FANOUT]`
     /// → `Block`. `root` is `Arc`-wrapped so `new_version` is one `Arc` bump; a
     /// write path-copies only the root vector, the touched `DirPage`, and the
     /// touched `Block`, sharing every other dir page across MVCC versions.
     root: Arc<Vec<Option<Arc<DirPage>>>>,
-    /// Slots per block — the entity-id → (block, slot) split and the
-    /// copy-on-write / residency granularity. A **per-store** field (default
-    /// [`default_block_cap`]) so the store's grain is decoupled from
-    /// `NODE_CREATION_BUFFER`. Must be a power of two.
-    block_cap: u32,
-}
-
-impl Default for DataBlock {
-    fn default() -> Self {
-        Self {
-            root: Arc::new(Vec::new()),
-            block_cap: default_block_cap(),
-        }
-    }
 }
 
 impl DataBlock {
     #[inline]
-    fn locate(
-        &self,
-        entity_id: u64,
-    ) -> (usize, usize) {
-        let cap = self.block_cap as usize;
-        debug_assert!(cap.is_power_of_two());
+    const fn locate(entity_id: u64) -> (usize, usize) {
         let id = entity_id as usize;
-        (id >> cap.trailing_zeros(), id & (cap - 1))
+        (id >> BLOCK_SHIFT, id & BLOCK_MASK)
     }
 
     /// The block for `block_idx`, if present — two dependent loads
@@ -860,7 +842,7 @@ impl DataBlock {
         &self,
         entity_id: u64,
     ) -> Option<SpanRef<'_>> {
-        let (block_idx, slot_idx) = self.locate(entity_id);
+        let (block_idx, slot_idx) = Self::locate(entity_id);
         let block = self.block(block_idx)?;
         let slot = *block.slots.get(slot_idx)?;
         if slot.cap == 0 {
@@ -880,10 +862,9 @@ impl DataBlock {
             self.remove(entity_id);
             return;
         }
-        let (block_idx, slot_idx) = self.locate(entity_id);
-        let cap = self.block_cap as usize;
+        let (block_idx, slot_idx) = Self::locate(entity_id);
         let block = self.block_mut(block_idx);
-        block.set_span(slot_idx, pairs, cap);
+        block.set_span(slot_idx, pairs);
         block.maybe_compact();
     }
 
@@ -895,7 +876,7 @@ impl DataBlock {
         pairs: &[(u16, Value)],
         scratch: &mut Vec<PackedAttr>,
     ) -> (usize, usize) {
-        let (block_idx, slot_idx) = self.locate(entity_id);
+        let (block_idx, slot_idx) = Self::locate(entity_id);
         // Avoid COW (and empty-slot creation) when there is nothing to do:
         // no existing span and only removals.
         let has_span = self
@@ -904,9 +885,8 @@ impl DataBlock {
         if !has_span && pairs.iter().all(|(_, v)| matches!(v, Value::Null)) {
             return (0, 0);
         }
-        let cap = self.block_cap as usize;
         let block = self.block_mut(block_idx);
-        let counts = block.merge_span(slot_idx, pairs, scratch, cap);
+        let counts = block.merge_span(slot_idx, pairs, scratch);
         block.maybe_compact();
         counts
     }
@@ -921,7 +901,6 @@ impl DataBlock {
     /// for slop that the next batch reclaims anyway. Residual slop is
     /// bounded by one partially-filled tail block per store.
     fn trim(&mut self) {
-        let cap = self.block_cap as usize;
         // Only exclusively-owned levels are shrunk: a shared root / dir page /
         // block belongs to another version and must not be mutated. `get_mut`
         // returns `None` for shared, so the walk skips it.
@@ -945,7 +924,7 @@ impl DataBlock {
                 if waste * 2 >= block.arena.len() && block.arena.len() > COMPACT_MIN_ARENA {
                     block.compact();
                 }
-                if block.slots.len() == cap {
+                if block.slots.len() == BLOCK_CAP {
                     block.arena.shrink_to_fit();
                     block.heap.shrink_to_fit();
                     block.slots.shrink_to_fit();
@@ -959,7 +938,7 @@ impl DataBlock {
         &mut self,
         entity_id: u64,
     ) {
-        let (block_idx, slot_idx) = self.locate(entity_id);
+        let (block_idx, slot_idx) = Self::locate(entity_id);
         // Check occupancy before make_mut so clearing an already-empty slot
         // doesn't deep-copy a shared block.
         if self
@@ -1615,7 +1594,7 @@ mod tests {
         let mut keys = RoaringTreemap::new();
         keys.insert(2);
         // Also an id in a block that doesn't exist at all.
-        keys.insert(default_block_cap() as u64 * 10);
+        keys.insert(BLOCK_CAP as u64 * 10);
         store.remove_all(&keys);
 
         assert!(Arc::ptr_eq(&block_before, store.data.block_arc(0).unwrap()));
@@ -1632,7 +1611,7 @@ mod tests {
 
     /// First id of block `block_idx` under the default grain.
     fn id_in_block(block_idx: u64) -> u64 {
-        block_idx * u64::from(default_block_cap())
+        block_idx * BLOCK_CAP as u64
     }
 
     #[test]
@@ -1705,7 +1684,7 @@ mod tests {
 
     #[test]
     fn cross_block_ids() {
-        let far_id = default_block_cap() as u64 * 3 + 7;
+        let far_id = BLOCK_CAP as u64 * 3 + 7;
         let store = store_with(&[(far_id, &[("a", Value::Int(42))])]);
         assert_eq!(store.get_attr(far_id, &name("a")), Some(Value::Int(42)));
         assert_eq!(store.get_attr(far_id - 1, &name("a")), None);
