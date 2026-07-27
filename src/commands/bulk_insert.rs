@@ -522,15 +522,17 @@ pub fn graph_bulk_insert(
     spawn(
         move || {
             let ts_ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
-            // Phase 1: build the new version as a reader, GIL-free. The MVCC slot
-            // serializes against other writers; one already holding it yields a
-            // retryable "write lock unavailable" rather than blocking.
-            let session = crate::query_session::QuerySession::begin(&graph);
-            let outcome = {
-                match session.with_graph(|tg| tg.graph.write()) {
+            // Build, commit and replicate under one session, which releases its locks
+            // when this block ends — before the client is unblocked below.
+            let result: Result<(), String> = {
+                let session = crate::query_session::QuerySession::begin(&graph);
+                // Phase 1: build the new version as a reader, GIL-free. The MVCC slot
+                // serializes against other writers; one already holding it yields a
+                // retryable "write lock unavailable" rather than blocking.
+                let built = match session.with_graph(|tg| tg.graph.write()) {
                     None => Err("ERR write lock unavailable".to_string()),
                     Some(g_arc) => {
-                        let result = {
+                        let inserted = {
                             let mut g = g_arc.borrow_mut();
                             let tokens: Vec<&[u8]> =
                                 token_data.iter().map(std::vec::Vec::as_slice).collect();
@@ -543,7 +545,7 @@ pub fn graph_bulk_insert(
                                 rel_token_count,
                             )
                         };
-                        match result {
+                        match inserted {
                             Ok(()) => Ok(g_arc),
                             Err(e) => {
                                 session.with_graph(|tg| tg.graph.rollback());
@@ -551,30 +553,32 @@ pub fn graph_bulk_insert(
                             }
                         }
                     }
+                };
+                // Phase 2: commit + replicate as a writer, so the commit Arc-swap
+                // happens under the GIL and stays fork-safe (#452).
+                match built {
+                    Err(msg) => Err(msg),
+                    Ok(g_arc) => {
+                        // Escalate: release read, take the global lock, take the write
+                        // lock — never the reverse (#726).
+                        if let Err(e) = session.upgrade_to_write() {
+                            // Release the MVCC slot from phase 1 — only
+                            // commit()/rollback() clear it, so skipping this leaves
+                            // the graph permanently unwritable.
+                            session.with_graph(|tg| tg.graph.rollback());
+                            Err(e)
+                        } else {
+                            session
+                                .with_graph_mut(|tg| tg.graph.commit(g_arc))
+                                .expect("writer mode after upgrade_to_write");
+                            raw::replicate_verbatim(ts_ctx);
+                            Ok(())
+                        }
+                    }
                 }
             };
-            // Phase 2: commit + replicate (or reply the error) as a writer, so the
-            // commit Arc-swap happens under the GIL and stays fork-safe (#452).
-            match outcome {
-                Ok(g_arc) => {
-                    // Escalate: release read, take the global lock, take the write
-                    // lock — never the reverse (#726).
-                    if let Err(e) = session.upgrade_to_write() {
-                        // Release the MVCC slot from phase 1 — only
-                        // commit()/rollback() clear it, so skipping this leaves the
-                        // graph permanently unwritable.
-                        session.with_graph(|tg| tg.graph.rollback());
-                        let cerr = ffi::sanitise_error(e);
-                        unsafe { ffi::reply_error(ts_ctx, cerr.as_ptr()) };
-                        drop(session);
-                        drop(bc);
-                        unsafe { ffi::free_thread_safe_context(ts_ctx) };
-                        return;
-                    }
-                    session
-                        .with_graph_mut(|tg| tg.graph.commit(g_arc))
-                        .expect("writer mode after upgrade_to_write");
-                    raw::replicate_verbatim(ts_ctx);
+            match result {
+                Ok(()) => {
                     let reply =
                         format!("{node_count} nodes created, {edge_count} relations created");
                     let c_reply = std::ffi::CString::new(reply).expect("reply has no NUL bytes");
@@ -585,8 +589,6 @@ pub fn graph_bulk_insert(
                     unsafe { ffi::reply_error(ts_ctx, cerr.as_ptr()) };
                 }
             }
-            // Release the locks before unblocking the client.
-            drop(session);
             drop(bc);
             unsafe { ffi::free_thread_safe_context(ts_ctx) };
         },

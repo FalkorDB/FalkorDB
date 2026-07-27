@@ -1332,41 +1332,43 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
         // documents inline (visible to later operators in *this* query, readers
         // excluded) and `commit`'s Arc-swap still happens under the GIL (#452); and
         // index DDL needs no special path, since creating a spec is just a mutation.
-        let session = crate::query_session::QuerySession::begin(graph);
-        let exec = execute_query_write(
-            &session,
-            &ctx,
-            &query,
-            compact,
-            cached,
-            per_query_timeout,
-            profile,
-        );
-        let res: Result<(usize, f64), String> = match exec {
-            Ok(wq) => {
-                // The query escalated (every write plan ends in a Commit), so we are
-                // a writer here: commit, signal and replicate directly.
-                session
-                    .with_graph_mut(|g| commit_and_replicate(g, &ctx, &key_name, &query, wq))
-                    .map_or_else(
-                        || {
-                            // Defensive: a write that somehow never escalated cannot
-                            // be committed safely under a read lock. Release the MVCC
-                            // slot (only commit/rollback clears it) so the graph stays
-                            // writable.
-                            session.with_graph(|tg| tg.graph.rollback());
-                            Err("write query did not acquire the graph write lock".to_string())
-                        },
-                        Ok,
-                    )
+        //
+        // The session lives only for this block, so its locks are released — the read
+        // lock, or the GIL + write lock if the query escalated — on every path out,
+        // including the error returns, and before the reply below.
+        let res: Result<(usize, f64), String> = {
+            let session = crate::query_session::QuerySession::begin(graph);
+            let exec = execute_query_write(
+                &session,
+                &ctx,
+                &query,
+                compact,
+                cached,
+                per_query_timeout,
+                profile,
+            );
+            match exec {
+                Ok(wq) => {
+                    // The query escalated (every write plan ends in a Commit), so we
+                    // are a writer here: commit, signal and replicate directly.
+                    session
+                        .with_graph_mut(|g| commit_and_replicate(g, &ctx, &key_name, &query, wq))
+                        .map_or_else(
+                            || {
+                                // Defensive: a write that somehow never escalated cannot
+                                // be committed safely under a read lock. Release the MVCC
+                                // slot (only commit/rollback clears it) so the graph stays
+                                // writable.
+                                session.with_graph(|tg| tg.graph.rollback());
+                                Err("write query did not acquire the graph write lock".to_string())
+                            },
+                            Ok,
+                        )
+                }
+                // execute_query_write already released the MVCC slot on failure.
+                Err(err) => Err(err),
             }
-            // execute_query_write released the MVCC slot on failure; dropping the
-            // session releases the read lock (and the GIL if it had escalated).
-            Err(err) => Err(err),
         };
-        // `session` releases the read lock — or the GIL + write lock if the query
-        // escalated — on every path, including the error returns.
-        drop(session);
 
         if mem_capacity > 0 {
             disable_tracking();
