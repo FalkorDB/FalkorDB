@@ -1010,8 +1010,10 @@ mod tests {
         let ids: Vec<u64> = (0..N).collect();
         t.set_all_from_slices(&srcs, &dsts, &ids);
         // Fold the pending adds into the committed base so edge id 0 lives
-        // in the u64 base matrix.
+        // in the u64 base matrix. `flush` folds via a (possibly pending)
+        // eWiseAdd, so materialize before the structural probe.
         t.flush();
+        t.fwd_m().wait();
         assert!(t.fwd_m().contains(0, 1), "edge id 0 not folded into base");
 
         // Bulk-delete edge id 0 (and a nonzero control) via the fast path.
@@ -1021,6 +1023,8 @@ mod tests {
         assert!(t.get(5, 6).next().is_none(), "edge id 5 still readable");
 
         let ex = t.extract();
+        ex.wait();
+        assert!(ex.contains(1, 2), "unrelated live pair (1,2) disappeared");
         assert!(!ex.contains(5, 6), "control pair (5,6) not deleted");
         assert!(
             !ex.contains(0, 1),

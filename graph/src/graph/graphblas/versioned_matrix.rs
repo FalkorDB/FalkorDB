@@ -316,6 +316,10 @@ impl VersionedMatrix<bool> {
     /// dup overhead of re-building inside the versioned wrapper.
     #[must_use]
     pub fn from_matrix(m: Matrix<bool>) -> Self {
+        // Freshly merged matrices (e.g. `set_pattern` unions) may carry
+        // pending GraphBLAS work; the base slot is required to be synced
+        // (`wait` debug-asserts `!m.pending()`).
+        m.wait();
         let nrows = m.nrows();
         let ncols = m.ncols();
         Self {
