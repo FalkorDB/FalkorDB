@@ -2,7 +2,7 @@
 //! this process is a fork child.
 //!
 //! Lock bookkeeping used to live here too (GIL-held / lock-order tracking); it now
-//! belongs to the host, behind the two seams in [`crate::locks`].
+//! belongs to the host, behind [`crate::locks::WriteEscalation`].
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};

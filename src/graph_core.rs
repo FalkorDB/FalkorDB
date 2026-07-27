@@ -276,9 +276,9 @@ pub mod ffi {
     }
 
     // NOTE: the GIL itself (`RedisModule_ThreadSafeContextLock` / `…Unlock`) is
-    // deliberately *not* wrapped here. It is private to `crate::query_session`, so
-    // `graph::locks::GlobalLockGuard` is the only way to take it and the lock
-    // ordering rule (global → per-graph → indexer, issue #726) cannot be bypassed.
+    // deliberately *not* wrapped here. It is private to `crate::query_session`, so a
+    // `QuerySession` is the only thing that can take it and the ordering rule
+    // (global → per-graph → indexer, issue #726) cannot be bypassed.
 
     /// Mark `key_name` as modified so `WATCH` clients are notified. Must be
     /// called with the GIL held (see [`lock_thread_safe_ctx`]).

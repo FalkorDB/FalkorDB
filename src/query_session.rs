@@ -1,4 +1,4 @@
-//! A query's locks, and the Redis side of the two seams in [`graph::locks`].
+//! A query's locks, and the Redis side of [`graph::locks::WriteEscalation`].
 //!
 //! [`QuerySession`] is the value that **owns** the locks a query holds: the host
 //! creates one, hands `&session` to the `Runtime`, reaches the locked graph through
@@ -14,16 +14,16 @@
 //! The guards are `Arc`-owned (`parking_lot`'s `arc_lock`), which is what lets one
 //! session hold them across a whole query and swap read for write mid-flight.
 //!
-//! [`RedisGil`] provides the global lock and is registered once at module init. The
-//! FFI that takes the GIL is **private to this module**, so [`GlobalLockGuard`] is
-//! the only way to acquire it anywhere in the process — that is what makes the
-//! ordering rule enforceable rather than merely documented.
+//! The GIL never leaves this module: [`Gil`] and the FFI beneath it are private, so a
+//! session is the only thing in the process that can take it. That is what makes the
+//! ordering rule enforceable rather than merely documented — the `graph` crate cannot
+//! reach it at all.
 
 use crate::graph_core::{ThreadedGraph, ffi};
-use graph::locks::{GlobalLock, GlobalLockGuard, WriteEscalation};
+use graph::locks::WriteEscalation;
 use parking_lot::{ArcRwLockReadGuard, ArcRwLockWriteGuard, RawRwLock, RwLock};
 use redis_module::raw;
-use std::{cell::Cell, cell::RefCell, ptr::NonNull, sync::Arc};
+use std::{cell::Cell, cell::RefCell, marker::PhantomData, ptr::NonNull, sync::Arc};
 
 /// Which lock(s) a query holds.
 enum Mode {
@@ -34,7 +34,7 @@ enum Mode {
     /// acquisition. `_gil` is never read, only held for its `Drop`.
     Writer {
         guard: ArcRwLockWriteGuard<RawRwLock, ThreadedGraph>,
-        _gil: GlobalLockGuard,
+        _gil: Gil,
     },
 }
 
@@ -64,7 +64,7 @@ impl QuerySession {
     /// callers that write for the whole query and have nothing to escalate. On the
     /// main thread the GIL acquire is the no-op it must be.
     pub fn begin_writer(graph: &Arc<RwLock<ThreadedGraph>>) -> Self {
-        let gil = GlobalLockGuard::acquire();
+        let gil = Gil::acquire();
         let session = Self {
             graph: Arc::clone(graph),
             mode: RefCell::new(Some(Mode::Writer {
@@ -140,14 +140,14 @@ impl QuerySession {
             return false;
         }
         // Drop the read lock FIRST — holding it across the GIL acquire is the #726
-        // inversion. Publish `Unlocked` so the assertion in `RedisGil::lock` sees the
+        // inversion. Publish `Unlocked` so the assertion in `Gil::acquire` sees the
         // truth.
         *mode = None;
         ACCESS.set(AccessMode::Unlocked);
 
         // GIL, then the write lock — the order every inline main-thread command
         // already has.
-        let gil = GlobalLockGuard::acquire();
+        let gil = Gil::acquire();
         let guard = RwLock::write_arc(&self.graph);
         *mode = Some(Mode::Writer { guard, _gil: gil });
         ACCESS.set(AccessMode::Write);
@@ -181,9 +181,8 @@ impl WriteEscalation for NoEscalation {
 }
 
 /// Which locks the query on *this thread* holds. Written only by [`QuerySession`],
-/// and read for one job: [`RedisGil::lock`] must reject a GIL acquire made while the
-/// per-graph read lock is held (#726), and it is reached from index FFI with no
-/// session in sight.
+/// and read for one job: [`Gil::acquire`] must reject a GIL acquire made while the
+/// per-graph read lock is held (#726).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AccessMode {
     Unlocked,
@@ -201,18 +200,23 @@ thread_local! {
     static GIL_CTX: Cell<Option<NonNull<raw::RedisModuleCtx>>> = const { Cell::new(None) };
 }
 
-/// The process-wide global lock — Redis's module GIL.
-pub struct RedisGil;
+/// RAII guard for the host's global lock: Redis's module GIL.
+///
+/// Not `Send` — the GIL and the bookkeeping below are released by the thread that took
+/// them, which is also what keeps [`QuerySession`] `!Send`.
+struct Gil(PhantomData<*const ()>);
 
-impl GlobalLock for RedisGil {
-    fn lock(&self) {
+impl Gil {
+    /// Acquire the GIL, or note one more level of nesting if this thread already holds
+    /// it (the module GIL is not recursive, so re-acquiring would self-deadlock).
+    fn acquire() -> Self {
         GIL_DEPTH.set(GIL_DEPTH.get() + 1);
         // Nothing to do for a nested acquire, or on the main thread which holds the
         // GIL implicitly for the whole command callback — the module GIL is not
         // recursive. `GIL_DEPTH` is a complete record of this thread's acquisitions
         // because `lock_gil` is the only place that takes the GIL.
         if GIL_DEPTH.get() > 1 || graph::thread_id::is_main_thread() {
-            return;
+            return Self(PhantomData);
         }
         // The ordering rule, checked at the one funnel every acquire passes through.
         // Escalation satisfies it by releasing the read lock first; this catches
@@ -232,9 +236,12 @@ impl GlobalLock for RedisGil {
         // matching `unlock` releases it.
         unsafe { lock_gil(ctx.as_ptr()) };
         GIL_CTX.set(Some(ctx));
+        Self(PhantomData)
     }
+}
 
-    fn unlock(&self) {
+impl Drop for Gil {
+    fn drop(&mut self) {
         let depth = GIL_DEPTH.get().saturating_sub(1);
         GIL_DEPTH.set(depth);
         if depth > 0 {
@@ -243,14 +250,14 @@ impl GlobalLock for RedisGil {
         let Some(ctx) = GIL_CTX.take() else {
             return; // the acquire was a no-op (GIL already held)
         };
-        // SAFETY: `ctx` is the context this thread locked in `lock`, taken out of
+        // SAFETY: `ctx` is the context this thread locked in `acquire`, taken out of
         // the thread-local so it is released exactly once.
         unsafe { release_gil(ctx.as_ptr()) };
     }
 }
 
-/// Acquire the module GIL through `ctx`. Private on purpose, so
-/// [`GlobalLockGuard`] is the only way to take the GIL anywhere in the process.
+/// Acquire the module GIL through `ctx`. Private on purpose, so [`Gil`] is the only
+/// way to take the GIL anywhere in the process.
 ///
 /// # Safety
 /// `ctx` must be a valid thread-safe context this thread does not already hold.
@@ -276,10 +283,4 @@ unsafe fn release_gil(ctx: *mut raw::RedisModuleCtx) {
             free(ctx);
         }
     }
-}
-
-/// Register the module GIL as the `graph` crate's global lock. Called once at
-/// module init, before any query can run.
-pub fn register() {
-    graph::locks::set_global_lock(Box::new(RedisGil));
 }

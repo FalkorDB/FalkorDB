@@ -1093,11 +1093,11 @@ impl Index {
         language: Option<&Arc<String>>,
     ) -> Result<(), String> {
         unsafe {
-            // Needs the global lock: `RediSearch_CreateIndex` registers a GC timer in
-            // the host event loop (`GCContext_Start` -> `RM_CreateTimer`). A no-op
-            // when already held (an escalated query, or a background index task that
-            // took it before its own locks); teardown reaches here holding nothing.
-            let _global = crate::locks::GlobalLockGuard::acquire();
+            // Requires the global lock (the host's module GIL):
+            // `RediSearch_CreateIndex` registers a GC timer in the host event loop
+            // (`GCContext_Start` -> `RM_CreateTimer`). Every caller holds it already —
+            // a query escalated to writer mode, or the host's own thread on the
+            // RDB-load and replica-`GRAPH.EFFECT` paths — so it is not taken here.
             let options = RediSearch_CreateIndexOptions();
             RediSearch_IndexOptionsSetGCPolicy(options, GC_POLICY_FORK as _);
 
@@ -1172,12 +1172,11 @@ impl Index {
         field_options: Option<&TextIndexOptions>,
     ) -> Result<(), String> {
         unsafe {
-            // Global lock as in `create_rs_index`: `RediSearch_CreateField` mutates
-            // the spec's field array, which the ForkGC timer callback on the main
-            // thread can read concurrently — a heap-corrupting race without it
-            // (reliably reproducible only in coverage builds, where the window is
-            // 10-100× wider).
-            let _global = crate::locks::GlobalLockGuard::acquire();
+            // Requires the global lock, like `create_rs_index` and for the same
+            // reason: `RediSearch_CreateField` mutates the spec's field array, which
+            // the ForkGC timer callback on the main thread can read concurrently — a
+            // heap-corrupting race otherwise (reliably reproducible only in coverage
+            // builds, where the window is 10-100× wider).
             for field in fields.values().flat_map(|f| f.iter()) {
                 match field.ty {
                     IndexType::Range => {

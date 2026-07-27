@@ -61,7 +61,7 @@
 //! - [`graph`]: Graph data structures (sparse matrices, vectors, MVCC)
 //! - [`graph::graphblas`]: GraphBLAS FFI bindings (auto-generated)
 //! - [`index`]: Index types, management, and RediSearch FFI bindings
-//! - [`locks`]: The two lock seams the host provides (write escalation, global lock)
+//! - [`locks`]: The lock seam the host provides (escalate a query to writer mode)
 //! - [`runtime`]: Query execution engine and built-in functions
 //! - [`storage`]: Shared storage seam (per-store backend registry; an in-memory
 //!   backend by default, an alternate backend swapped in by a statically-linked add-on)
