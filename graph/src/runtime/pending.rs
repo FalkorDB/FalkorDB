@@ -156,11 +156,14 @@ pub struct Pending {
     /// Every entity whose index document this query has written — added **or**
     /// removed — keyed by label/type slot, so a failure after an inner `Commit` can
     /// resync the index against committed state (see
-    /// [`Self::resync_published_indexes`]). Edge entries keep their endpoints
-    /// because an edge doc key is `(src, dst, edge_id)` and a rolled-back edge has
-    /// no resolvable endpoints left anywhere.
+    /// [`Self::resync_published_indexes`]).
+    ///
+    /// Deliberately **not** reset by [`Self::clear`], which runs after every
+    /// `Commit`: the undo has to cover every `Commit` in the query, not just the
+    /// last. They are per-query state — `Pending` belongs to one `Runtime` — and
+    /// [`Self::resync_published_indexes`] takes them when it uses them.
     touched_node_docs: FxHashMap<u64, RoaringTreemap>,
-    touched_edge_docs: FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
+    touched_edge_docs: FxHashMap<u64, RoaringTreemap>,
     /// Schema baseline: number of labels when the current commit window started.
     schema_label_count: usize,
     /// Schema baseline: number of relationship types when the current commit window started.
@@ -190,7 +193,9 @@ impl DeferredIndexes {
         &mut self,
         g: &AtomicRefCell<Graph>,
     ) {
-        let mut g = g.borrow_mut();
+        // A shared borrow is enough (see `Graph::commit_index`), so this cannot
+        // conflict with a concurrent reader of the same version.
+        let g = g.borrow();
         g.commit_index(&mut self.node_adds, &mut self.node_removes);
         g.commit_edge_index(&mut self.edge_adds, &mut self.edge_removes);
     }
@@ -1243,10 +1248,15 @@ impl Pending {
     /// index. No undo log is needed for that, because MVCC still holds the previous
     /// state: `committed` *is* the old value, and re-adding rewrites the document.
     ///
+    /// `private` is the version this query built and is about to discard; a removed
+    /// edge's document key comes from there, since committed state no longer has the
+    /// edge at all.
+    ///
     /// Writer mode only, and before the write lock is released.
     pub fn resync_published_indexes(
         &mut self,
         committed: &AtomicRefCell<Graph>,
+        private: &AtomicRefCell<Graph>,
     ) {
         let nodes = std::mem::take(&mut self.touched_node_docs);
         let edges = std::mem::take(&mut self.touched_edge_docs);
@@ -1271,21 +1281,25 @@ impl Pending {
                     }
                 }
             }
+            let p = private.borrow();
             for (slot, ids) in &edges {
-                for (id, endpoints) in ids {
-                    if g.endpoints_for_edge(*id).is_some() {
-                        edge_adds.entry(*slot).or_default().insert(*id);
-                    } else {
-                        edge_removes
-                            .entry(*slot)
-                            .or_default()
-                            .insert(*id, *endpoints);
+                for id in ids {
+                    if g.endpoints_for_edge(id).is_some() {
+                        edge_adds.entry(*slot).or_default().insert(id);
+                    } else if let Some(endpoints) = p.endpoints_for_edge(id) {
+                        // The doc key is `(src, dst, edge_id)` as written, and only the
+                        // discarded version still knows the endpoints.
+                        edge_removes.entry(*slot).or_default().insert(id, endpoints);
                     }
                 }
             }
         }
 
-        let mut g = committed.borrow_mut();
+        // Shared borrow, deliberately: this runs against the *published* version,
+        // which a background index-populate batch may be reading at the same time. A
+        // `borrow_mut` here would panic against that reader, and taking the indexer
+        // lock first (populate's order) would self-deadlock inside `commit_index`.
+        let g = committed.borrow();
         g.commit_index(&mut node_adds, &mut node_removes);
         g.commit_edge_index(&mut edge_adds, &mut edge_removes);
     }
@@ -1308,28 +1322,26 @@ impl Pending {
                     .extend(ids.iter());
             }
         }
-        if !deferred.edge_adds.is_empty() {
-            let graph = g.borrow();
-            for (slot, ids) in &deferred.edge_adds {
-                let entry = self.touched_edge_docs.entry(*slot).or_default();
-                for id in ids {
-                    if let Some((src, dst)) = graph.endpoints_for_edge(id) {
-                        entry.insert(id, (src, dst));
-                    }
-                }
-            }
+        for (slot, ids) in &deferred.edge_adds {
+            self.touched_edge_docs
+                .entry(*slot)
+                .or_default()
+                .extend(ids.iter());
         }
-        // Edge removals already carry their endpoints.
         for (slot, ids) in &deferred.edge_removes {
-            let entry = self.touched_edge_docs.entry(*slot).or_default();
-            for (id, endpoints) in ids {
-                entry.insert(*id, *endpoints);
-            }
+            self.touched_edge_docs
+                .entry(*slot)
+                .or_default()
+                .extend(ids.keys().copied());
         }
         deferred.commit(g);
     }
 
     /// Clear all pending mutation state.
+    ///
+    /// Runs after every `Commit`, so it must NOT touch `touched_node_docs` /
+    /// `touched_edge_docs` — a later failure has to undo the documents *all* of this
+    /// query's `Commit`s published, not just the last one's.
     pub fn clear(&mut self) {
         // Dropping millions of per-entity Vec allocations is O(n) frees and
         // stalls the serialized write thread; move large maps to a background

@@ -263,3 +263,40 @@ class testIndexUpdatesFlow(FlowTestsBase):
 
         result = self.graph.query("MATCH (n:RYOW) WHERE n.v = 78 RETURN count(n)")
         self.env.assertEqual(result.result_set[0][0], 1)
+
+    # A query that publishes index documents and then fails must not disturb a
+    # background index population running over the same graph version.
+    #
+    # The undo path resyncs the *published* version's index while the populate worker
+    # is reading that same version. While the undo took a *mutable* borrow of it, the
+    # two collided — `atomic_refcell` reports that by panicking, so the module died on
+    # the first failing write (verified against the pre-fix build).
+    def test11_failed_write_during_index_population(self):
+        g = self.db.select_graph('idx_pop_race')
+        g.query("UNWIND range(1, 20000) AS i CREATE (:PopRace {v: i})")
+        # Returns as soon as the spec exists; population continues in the background.
+        create_node_range_index(g, 'PopRace', 'v', sync=False)
+
+        # Hammer failing writes while the index is still building. Each one publishes
+        # a document in its inner Commit, then fails, which invokes the undo.
+        for _ in range(300):
+            try:
+                g.query("CREATE (n:PopRace {v: -1}) WITH n UNWIND [1, 0] AS d RETURN 1/d")
+                self.env.assertTrue(False)
+            except ResponseError as e:
+                self.env.assertContains("Division by zero", str(e))
+            status = g.ro_query(
+                "CALL db.indexes() YIELD status RETURN status").result_set
+            if status and status[0][0] == 'OPERATIONAL':
+                break
+
+        # The server survived and the population completed.
+        wait_for_indices_to_sync(g)
+
+        # The index holds exactly the committed nodes: no phantom document for the
+        # rolled-back `v: -1`, and nothing dropped by the resync either.
+        result = g.query("MATCH (n:PopRace) WHERE n.v = -1 RETURN count(n)")
+        self.env.assertEqual(result.result_set[0][0], 0)
+        result = g.query("MATCH (n:PopRace) WHERE n.v > 0 RETURN count(n)")
+        self.env.assertEqual(result.result_set[0][0], 20000)
+        g.delete()

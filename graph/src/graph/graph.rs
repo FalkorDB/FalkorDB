@@ -2858,16 +2858,27 @@ impl Graph {
         }
     }
 
+    /// Write node index documents to RediSearch.
+    ///
+    /// Takes `&self`, not `&mut self`: every `Indexer` method used here is `&self`
+    /// (its map is an `ArcSwap` behind its own mutex). That matters beyond tidiness —
+    /// a caller only needs a *shared* borrow of the graph, so the index undo path can
+    /// run against the published version while a background populate batch holds a
+    /// shared borrow of the same version. Requiring `&mut` there made the two
+    /// orderings (graph-then-indexer vs indexer-then-graph) collide, which
+    /// `AtomicRefCell` reports by panicking.
     pub fn commit_index(
-        &mut self,
+        &self,
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
         remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) {
         self.commit_index_kind(IndexKind::Node, index_add_docs, remove_docs);
     }
 
+    /// Write edge index documents to RediSearch. `&self` for the same reason as
+    /// [`Self::commit_index`].
     pub fn commit_edge_index(
-        &mut self,
+        &self,
         index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
         remove_edge_docs: &mut FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
     ) {
@@ -2875,7 +2886,7 @@ impl Graph {
             return;
         }
 
-        let indexer = &mut self.edge_indexer;
+        let indexer = &self.edge_indexer;
         let lock = indexer.write_lock();
         let _guard = lock.lock();
 
@@ -2944,7 +2955,7 @@ impl Graph {
     /// matching attribute store, then hand them to the underlying
     /// `Indexer::commit`.
     fn commit_index_kind(
-        &mut self,
+        &self,
         kind: IndexKind,
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
         remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
@@ -2954,7 +2965,7 @@ impl Graph {
         }
 
         let (indexer, names, attr_store) = match kind {
-            IndexKind::Node => (&mut self.node_indexer, &self.node_labels, &self.node_attrs),
+            IndexKind::Node => (&self.node_indexer, &self.node_labels, &self.node_attrs),
             IndexKind::Edge => unreachable!("use commit_edge_index for edges"),
         };
 

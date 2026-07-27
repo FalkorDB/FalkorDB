@@ -465,8 +465,6 @@ pub fn execute_query(
     }
     let latency = wall_start.elapsed().as_secs_f64() * 1000.0;
     let execution_time_ms = result.stats.execution_time;
-    drop(result);
-    drop(runtime);
     session.with_graph(|tg| tg.slow_log.add(cmd, query, params_offset, latency));
     Ok(ReadQueryResult {
         is_write: false,

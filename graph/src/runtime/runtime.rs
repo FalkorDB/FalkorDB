@@ -474,7 +474,7 @@ impl<'a> Runtime<'a> {
     ) {
         self.pending
             .borrow_mut()
-            .resync_published_indexes(committed);
+            .resync_published_indexes(committed, &self.g);
     }
 
     /// Write this `Commit`'s index documents to RediSearch. Writer mode only.
