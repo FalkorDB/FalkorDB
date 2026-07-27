@@ -184,14 +184,38 @@ static FT_FilterNode *_convertInlinedProperties(const cypher_astnode_t *entity,
 
 	FT_FilterNode *root = NULL;
 	uint nelems = cypher_ast_map_nentries(props);
+	const char **keys = arr_new(const char *, nelems);
+	const cypher_astnode_t **vals = arr_new(const cypher_astnode_t *, nelems);
+
+	// Inline map properties follow last-write-wins semantics.
 	for(uint i = 0; i < nelems; i ++) {
 		// key is of type CYPHER_AST_PROP_NAME
 		const char *prop = cypher_ast_prop_name_get_value(cypher_ast_map_get_key(props, i));
-
-		AR_ExpNode *graph_entity = AR_EXP_NewVariableOperandNode(alias);
-		AR_ExpNode *lhs = AR_EXP_NewAttributeAccessNode(graph_entity, prop);
 		// val is of type CYPHER_AST_EXPRESSION
 		const cypher_astnode_t *val = cypher_ast_map_get_value(props, i);
+
+		uint count = arr_len(keys);
+		uint j;
+		for(j = 0; j < count; j++) {
+			if(strcmp(prop, keys[j]) == 0) {
+				break;
+			}
+		}
+
+		if(j == count) {
+			arr_append(keys, prop);
+			arr_append(vals, val);
+		} else {
+			vals[j] = val;
+		}
+	}
+
+	uint count = arr_len(keys);
+	for(uint i = 0; i < count; i++) {
+		const char *prop = keys[i];
+		AR_ExpNode *graph_entity = AR_EXP_NewVariableOperandNode(alias);
+		AR_ExpNode *lhs = AR_EXP_NewAttributeAccessNode(graph_entity, prop);
+		const cypher_astnode_t *val = vals[i];
 		AR_ExpNode *rhs = AR_EXP_FromASTNode(val);
 		/* TODO In a query like:
 		 * "MATCH (r:person {name:"Roi"}) RETURN r"
@@ -200,6 +224,10 @@ static FT_FilterNode *_convertInlinedProperties(const cypher_astnode_t *entity,
 		FT_FilterNode *t = FilterTree_CreatePredicateFilter(OP_EQUAL, lhs, rhs);
 		_FT_Append(&root, t);
 	}
+
+	arr_free(keys);
+	arr_free(vals);
+
 	return root;
 }
 
@@ -372,4 +400,3 @@ FT_FilterNode *AST_BuildFilterTreeFromClauses
 
 	return filter_tree;
 }
-
