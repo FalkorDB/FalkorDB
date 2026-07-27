@@ -463,7 +463,7 @@ impl<'a> Runtime<'a> {
     /// (it must outlive `query()` so the host can commit), so releasing is the
     /// host's business — this is the handle used to change mode.
     #[must_use]
-    pub fn query_lock(&self) -> &dyn crate::query_lock::QueryLock {
+    pub fn query_lock(&self) -> &'a dyn crate::query_lock::QueryLock {
         self.query_lock
     }
 
