@@ -56,6 +56,10 @@ jobs:
   # Look up the merging PR once and share the number with the promote-* jobs.
   # Same SHA→PR API call used by release-image.yml's release-event flow.
   # Trunk-only: version branches don't promote toolchain or edge-rs.
+  #
+  # A commit with no PR *in this repo* is not an error — it just means no
+  # rc-pr-<N> image was ever built for it, so there is nothing to promote. The
+  # promote-* jobs gate on a non-empty pr_n and skip cleanly. See the step body.
   find-pr:
     needs: check-files
     if: ${{ contains(fromJSON('["refs/heads/main","refs/heads/main-rs"]'), github.ref) }}
@@ -80,8 +84,19 @@ jobs:
           N=$(gh api "/repos/${REPO}/commits/${SHA}/pulls" \
             --jq 'map(select(.state == "closed" and .merged_at != null)) | .[0].number // empty')
           if [ -z "$N" ]; then
-            echo "::error::no merged PR associated with commit ${SHA}"
-            exit 1
+            # No PR in THIS repo => no rc-pr-<N> image exists for this commit, so
+            # promotion is impossible and failing would only add a red X. Commits
+            # reach a trunk without a PR when:
+            #   - this tree is seeded into another repo (FalkorDB/FalkorDB main-rs):
+            #     the commits' PRs live in the source repo, not the target;
+            #   - someone pushes (or force-pushes) straight to a trunk.
+            # Emit an empty pr_n; the promote-* jobs below skip on it. Downside
+            # accepted: a direct push to a trunk now skips promotion quietly
+            # instead of erroring, so watch for this notice if edge-rs stops
+            # advancing.
+            echo "::notice::commit ${SHA} has no merged PR in ${REPO}; skipping channel promotion (no rc-pr-<N> image to retag)"
+            echo "n=" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           echo "n=$N" >> "$GITHUB_OUTPUT"
 
@@ -92,7 +107,7 @@ jobs:
   # build/Dockerfile actually changed in that PR.
   docker:
     needs: [check-files, find-pr]
-    if: ${{ needs.check-files.outputs.file_changed == 'true' && contains(fromJSON('["refs/heads/main","refs/heads/main-rs"]'), github.ref) }}
+    if: ${{ needs.check-files.outputs.file_changed == 'true' && needs.find-pr.outputs.pr_n != '' && contains(fromJSON('["refs/heads/main","refs/heads/main-rs"]'), github.ref) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -123,7 +138,7 @@ jobs:
   # happens at release time via release-image.yml.
   promote-edge:
     needs: find-pr
-    if: ${{ contains(fromJSON('["refs/heads/main","refs/heads/main-rs"]'), github.ref) }}
+    if: ${{ needs.find-pr.outputs.pr_n != '' && contains(fromJSON('["refs/heads/main","refs/heads/main-rs"]'), github.ref) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
