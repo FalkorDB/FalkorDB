@@ -88,16 +88,17 @@ use super::{
     GrB_Matrix_eWiseMult_Semiring, GrB_Matrix_extractElement_BOOL,
     GrB_Matrix_extractElement_UINT64, GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols,
     GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_removeElement,
-    GrB_Matrix_resize, GrB_Matrix_setElement_BOOL, GrB_Matrix_setElement_UINT64, GrB_Matrix_wait,
-    GrB_Mode, GrB_SECOND_UINT64, GrB_Type, GrB_UINT64, GrB_WaitMode, GrB_finalize, GrB_mxm,
-    GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64, GxB_Container_free,
-    GxB_Container_new, GxB_Global_Option_set_INT32, GxB_Iterator, GxB_Iterator_free,
+    GrB_Matrix_resize, GrB_Matrix_set_INT32, GrB_Matrix_setElement_BOOL,
+    GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode, GrB_Orientation, GrB_SECOND_UINT64,
+    GrB_Type, GrB_UINT64, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL,
+    GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64, GxB_Container_free, GxB_Container_new,
+    GxB_Global_Option_set_INT32, GxB_HYPERSPARSE, GxB_Iterator, GxB_Iterator_free,
     GxB_Iterator_get_UINT64, GxB_Iterator_new, GxB_JIT_Control, GxB_Matrix_fprint,
     GxB_Matrix_isStoredElement, GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_NTHREADS,
-    GxB_ONE_BOOL, GxB_Option_Field, GxB_Print_Level, GxB_init, GxB_load_Matrix_from_Container,
-    GxB_rowIterator_attach, GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex,
-    GxB_rowIterator_nextCol, GxB_rowIterator_nextRow, GxB_rowIterator_seekRow,
-    GxB_unload_Matrix_into_Container,
+    GxB_ONE_BOOL, GxB_Option_Field, GxB_Print_Level, GxB_SPARSE, GxB_init,
+    GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
+    GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol, GxB_rowIterator_nextRow,
+    GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
 };
 
 /// Initializes the GraphBLAS library in non-blocking mode.
@@ -341,6 +342,33 @@ impl<T> Drop for Matrix<T> {
     }
 }
 
+/// Pin a matrix to (hyper)sparse storage, like the C implementation's delta
+/// matrices. Without this GraphBLAS auto-converts dense-ish matrices (e.g.
+/// node-labels: nodes × few-labels) to bitmap, and every later fold/wait
+/// pays a whole-bitmap memset + assign.
+unsafe fn pin_sparse(m: GrB_Matrix) {
+    let info = unsafe {
+        GrB_Matrix_set_INT32(
+            m,
+            (GxB_SPARSE | GxB_HYPERSPARSE) as i32,
+            GxB_Option_Field::GxB_SPARSITY_CONTROL as _,
+        )
+    };
+    debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+    // SuiteSparse stores n-by-1 matrices by column by default; row iterators
+    // (GxB_rowIterator_attach) fail with GrB_NOT_IMPLEMENTED on such a
+    // matrix, and a later resize keeps the orientation. Pin row-major so a
+    // matrix created while a dimension happens to be 1 stays iterable.
+    let info = unsafe {
+        GrB_Matrix_set_INT32(
+            m,
+            GrB_Orientation::GrB_ROWMAJOR as i32,
+            GxB_Option_Field::GrB_STORAGE_ORIENTATION_HINT as _,
+        )
+    };
+    debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+}
+
 impl<T> Decode<19> for Matrix<T> {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
         let container_bytes = r.read_buffer()?;
@@ -395,6 +423,7 @@ impl<T> Decode<19> for Matrix<T> {
                 "GrB_Matrix_new failed: {info:?}"
             );
             let m = m.assume_init();
+            pin_sparse(m);
 
             let info = GxB_load_Matrix_from_Container(m, container, null_mut());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -461,6 +490,33 @@ impl<T> Encode<19> for Matrix<T> {
 }
 
 impl<T> Matrix<T> {
+    /// Pin this matrix to hypersparse storage and return it (builder-style,
+    /// for delta matrices at construction). Deltas inherit the base's
+    /// dimensions but stay small; in plain sparse format every `GB_wait` /
+    /// zombie-select on them pays `O(nrows)` row-pointer work (measured on
+    /// 100-node creates after a bulk write inflated capacity to 1m rows).
+    /// Hypersparse makes those ops `O(nvec)`. The C implementation pins its
+    /// delta matrices hypersparse for the same reason.
+    #[must_use]
+    pub(super) fn into_hyper(self) -> Self {
+        unsafe {
+            let info = GrB_Matrix_set_INT32(
+                *self.m,
+                GxB_HYPERSPARSE as i32,
+                GxB_Option_Field::GxB_SPARSITY_CONTROL as _,
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            // Deltas also opt out of the hyper hash: GrB_Matrix_wait
+            // (MATERIALIZE) rebuilds A->Y from scratch on every commit, an
+            // O(nvec) sort that grows with the accumulating delta — measured
+            // as the dominant cost of small repeated creates. Without A->Y,
+            // lookups binary-search A->h, which is fine at delta sizes.
+            let info = GrB_Matrix_set_INT32(*self.m, 0, GxB_Option_Field::GxB_HYPER_HASH as _);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        self
+    }
+
     /// Transposes the matrix.
     ///
     /// # Returns
@@ -484,8 +540,10 @@ impl<T> Matrix<T> {
                 GrB_Info::GrB_SUCCESS,
                 "GrB_Matrix_new failed: {info:?}"
             );
+            let m = m.assume_init();
+            pin_sparse(m);
             let transpose = Self {
-                m: Arc::new(m.assume_init()),
+                m: Arc::new(m),
                 lock: Arc::new(Mutex::new(())),
                 has_pending: Arc::new(AtomicBool::new(true)),
                 phantom: PhantomData,
@@ -840,7 +898,23 @@ impl<T> Dup<Self> for Matrix<T> {
                     GrB_Info::GrB_SUCCESS,
                     "GrB_Matrix_dup failed: {info:?}"
                 );
-                m.assume_init()
+                let m = m.assume_init();
+                // GrB_Matrix_dup copies sparsity_control but resets
+                // no_hyper_hash (GB_new), so delta matrices would regain the
+                // per-commit O(nvec) hyper-hash rebuild after their first COW
+                // dup — carry the opt-out over explicitly.
+                let mut hyper_hash: i32 = 1;
+                let info = GrB_Matrix_get_INT32(
+                    *self.m,
+                    &raw mut hyper_hash,
+                    GxB_Option_Field::GxB_HYPER_HASH as _,
+                );
+                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+                if hyper_hash == 0 {
+                    let info = GrB_Matrix_set_INT32(m, 0, GxB_Option_Field::GxB_HYPER_HASH as _);
+                    debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+                }
+                m
             }),
             lock: Arc::new(Mutex::new(())),
             has_pending: Arc::new(AtomicBool::new(dup_pending)),
@@ -864,8 +938,10 @@ impl Matrix<u64> {
                 GrB_Info::GrB_SUCCESS,
                 "GrB_Matrix_new failed: {info:?}"
             );
+            let m = m.assume_init();
+            pin_sparse(m);
             Self {
-                m: Arc::new(m.assume_init()),
+                m: Arc::new(m),
                 lock: Arc::new(Mutex::new(())),
                 has_pending: Arc::new(AtomicBool::new(false)),
                 phantom: PhantomData,
@@ -980,8 +1056,10 @@ impl Matrix<bool> {
                 GrB_Info::GrB_SUCCESS,
                 "GrB_Matrix_new failed: {info:?}"
             );
+            let m = m.assume_init();
+            pin_sparse(m);
             Self {
-                m: Arc::new(m.assume_init()),
+                m: Arc::new(m),
                 lock: Arc::new(Mutex::new(())),
                 has_pending: Arc::new(AtomicBool::new(false)),
                 phantom: PhantomData,

@@ -305,8 +305,8 @@ impl VersionedMatrix<bool> {
     ) -> Self {
         Self {
             m: Cow::new(Matrix::<bool>::new(nrows, ncols)),
-            dp: Cow::new(Matrix::<bool>::new(nrows, ncols)),
-            dm: Cow::new(Matrix::<bool>::new(nrows, ncols)),
+            dp: Cow::new(Matrix::<bool>::new(nrows, ncols).into_hyper()),
+            dm: Cow::new(Matrix::<bool>::new(nrows, ncols).into_hyper()),
         }
     }
 
@@ -320,8 +320,8 @@ impl VersionedMatrix<bool> {
         let ncols = m.ncols();
         Self {
             m: Cow::new(m),
-            dp: Cow::new(Matrix::<bool>::new(nrows, ncols)),
-            dm: Cow::new(Matrix::<bool>::new(nrows, ncols)),
+            dp: Cow::new(Matrix::<bool>::new(nrows, ncols).into_hyper()),
+            dm: Cow::new(Matrix::<bool>::new(nrows, ncols).into_hyper()),
         }
     }
 
@@ -376,8 +376,8 @@ impl VersionedMatrix<bool> {
     pub fn transpose(&self) -> Self {
         Self {
             m: Cow::new(self.m.transpose()),
-            dp: Cow::new(self.dp.transpose()),
-            dm: Cow::new(self.dm.transpose()),
+            dp: Cow::new(self.dp.transpose().into_hyper()),
+            dm: Cow::new(self.dm.transpose().into_hyper()),
         }
     }
 }
@@ -400,8 +400,8 @@ impl<V> Decode<19> for VersionedMatrix<V> {
         let dm = Matrix::<bool>::decode(r)?;
         Ok(Self {
             m: Cow::new(m),
-            dp: Cow::new(dp),
-            dm: Cow::new(dm),
+            dp: Cow::new(dp.into_hyper()),
+            dm: Cow::new(dm.into_hyper()),
         })
     }
 }

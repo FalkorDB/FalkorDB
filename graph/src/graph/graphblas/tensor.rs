@@ -225,8 +225,8 @@ impl Tensor {
     ) -> Self {
         Self {
             m: Cow::new(Matrix::<u64>::new(nrows, ncols)),
-            dp: Cow::new(Matrix::<u64>::new(nrows, ncols)),
-            dm: Cow::new(Matrix::<bool>::new(nrows, ncols)),
+            dp: Cow::new(Matrix::<u64>::new(nrows, ncols).into_hyper()),
+            dm: Cow::new(Matrix::<bool>::new(nrows, ncols).into_hyper()),
             mt: VersionedMatrix::<bool>::new(ncols, nrows),
             me: VersionedMatrix::<bool>::new(GrB_INDEX_MAX, GrB_INDEX_MAX),
             multi_count: 0,
@@ -868,8 +868,8 @@ impl Decode<19> for Tensor {
         // decode, so leave it empty here.
         Ok(Self {
             m: Cow::new(m),
-            dp: Cow::new(Matrix::<u64>::new(nrows, ncols)),
-            dm: Cow::new(Matrix::<bool>::new(nrows, ncols)),
+            dp: Cow::new(Matrix::<u64>::new(nrows, ncols).into_hyper()),
+            dm: Cow::new(Matrix::<bool>::new(nrows, ncols).into_hyper()),
             mt: VersionedMatrix::<bool>::new(0, 0),
             me,
             multi_count,
