@@ -85,8 +85,10 @@ impl QuerySession {
         &self,
         f: impl FnOnce(&ThreadedGraph) -> R,
     ) -> R {
+        // Both arms hold a guard that derefs to `&ThreadedGraph`; only the variant
+        // differs.
         match self.mode.borrow().as_ref().expect("session holds no lock") {
-            Mode::Reader(graph) => f(graph),
+            Mode::Reader(guard) => f(guard),
             Mode::Writer { guard, .. } => f(guard),
         }
     }
@@ -105,40 +107,51 @@ impl QuerySession {
         }
     }
 
-    /// Escalate reader → writer: **release read, take the GIL, take write**.
+    /// Become a writer, if not one already.
     ///
     /// Idempotent. The brief window holding no per-graph lock is safe: this query
     /// owns the single MVCC write slot for its whole lifetime, so no other writer
     /// can commit, and it has not yet touched the shared index — a reader entering
     /// the window sees a consistent older state.
     pub fn upgrade_to_write(&self) -> Result<(), String> {
+        if self.escalate() {
+            // The key could have been deleted in the window where we held no
+            // per-graph lock, so re-verify the graph is still reachable before
+            // mutating it — as C does by re-opening the key under WRITE. The locks
+            // stay held; the caller aborts the query and `Drop` releases them.
+            if !crate::graph_core::graph_is_registered(&self.graph) {
+                return Err(
+                    "graph was deleted or replaced while the query was running, aborting"
+                        .to_string(),
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Release the read lock, take the GIL, take the write lock — in that order.
+    /// `false` if this query was already a writer, so there was nothing to do.
+    ///
+    /// Separate from [`Self::upgrade_to_write`] so the `mode` borrow ends here, by
+    /// scope, instead of spanning that method's call out to the graph registry.
+    fn escalate(&self) -> bool {
         let mut mode = self.mode.borrow_mut();
         if matches!(*mode, Some(Mode::Writer { .. })) {
-            return Ok(());
+            return false;
         }
-        // 1. Drop the read lock FIRST — holding it across the GIL acquire is the
-        //    #726 inversion. Publish `Unlocked` so the assertion in `RedisGil::lock`
-        //    sees the truth.
+        // Drop the read lock FIRST — holding it across the GIL acquire is the #726
+        // inversion. Publish `Unlocked` so the assertion in `RedisGil::lock` sees the
+        // truth.
         *mode = None;
         ACCESS.set(AccessMode::Unlocked);
 
-        // 2. GIL, then 3. the write lock — the order every inline main-thread
-        //    command already has.
+        // GIL, then the write lock — the order every inline main-thread command
+        // already has.
         let gil = GlobalLockGuard::acquire();
         let guard = RwLock::write_arc(&self.graph);
         *mode = Some(Mode::Writer { guard, _gil: gil });
         ACCESS.set(AccessMode::Write);
-        drop(mode);
-
-        // 4. The key could have been deleted while we held no per-graph lock —
-        //    re-verify the graph is still reachable before mutating it, as C does
-        //    by re-opening the key under WRITE. The locks stay held; the caller
-        //    aborts the query and `Drop` releases them.
-        if crate::graph_core::graph_is_registered(&self.graph) {
-            Ok(())
-        } else {
-            Err("graph was deleted or replaced while the query was running, aborting".to_string())
-        }
+        true
     }
 }
 
@@ -210,8 +223,9 @@ impl GlobalLock for RedisGil {
             "taking the global lock while holding the per-graph read lock is the \
              #726 deadlock; escalate to writer mode first"
         );
-        // SAFETY: a null blocked-client yields a detached context, which is what
-        // we want — we need the GIL, not a client to reply to.
+        // SAFETY: a null blocked-client yields a detached context, which is what we
+        // want — we need the GIL, not a client to reply to. It is ours, so `unlock`
+        // frees it.
         let ctx = unsafe { ffi::get_thread_safe_context(std::ptr::null_mut()) };
         let ctx = NonNull::new(ctx).expect("RedisModule_GetThreadSafeContext returned null");
         // SAFETY: `ctx` was just created and is owned by this thread until the
