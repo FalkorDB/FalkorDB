@@ -204,13 +204,13 @@ pub fn hold_gil() -> impl Drop {
 
 /// RAII guard for the host's global lock: Redis's module GIL.
 ///
-/// `locked` records whether *this* guard is the one that took the GIL, so a nested
-/// guard releases nothing.
+/// `need_release` records whether *this* guard is the one that took the GIL — a
+/// nested guard, or one on the main thread, releases nothing.
 ///
 /// Not `Send`: the GIL is released by the thread that took it, which is also what
 /// keeps [`QuerySession`] `!Send`.
 struct Gil {
-    locked: bool,
+    need_release: bool,
     _not_send: PhantomData<*const ()>,
 }
 
@@ -223,7 +223,7 @@ impl Gil {
     fn acquire() -> Self {
         if graph::thread_id::is_main_thread() || GIL_CTX.get().is_some() {
             return Self {
-                locked: false,
+                need_release: false,
                 _not_send: PhantomData,
             };
         }
@@ -236,7 +236,7 @@ impl Gil {
         unsafe { lock_gil(ctx.as_ptr()) };
         GIL_CTX.set(Some(ctx));
         Self {
-            locked: true,
+            need_release: true,
             _not_send: PhantomData,
         }
     }
@@ -244,13 +244,13 @@ impl Gil {
 
 impl Drop for Gil {
     fn drop(&mut self) {
-        if !self.locked {
+        if !self.need_release {
             return; // a nested guard, or the main thread's implicit hold
         }
         // `take` rather than `get`: the context leaves the thread-local as it is
-        // released, so no later guard can release it again. Only the guard that locked
-        // gets here, so `None` is unreachable — but this runs from a `Drop`, where a
-        // panic aborts, so leak rather than assert.
+        // released, so no later guard can release it again. Only the guard that took
+        // the GIL gets here, so `None` is unreachable — but this runs from a `Drop`,
+        // where a panic aborts, so leak rather than assert.
         if let Some(ctx) = GIL_CTX.take() {
             // SAFETY: `ctx` is the context this thread locked in `acquire`, taken out
             // of the thread-local so it is released exactly once.
