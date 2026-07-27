@@ -44,6 +44,7 @@ pub struct ProcedureCallOp<'a> {
     trees: &'a [QueryExpr<Variable>],
     output_var_ids: Vec<u32>,
     output_source_positions: Vec<usize>,
+    yield_mask: u32,
     pending_source_row: Option<usize>,
     pending_origin: u32,
     pending_proc_batch: Option<Batch<'static>>,
@@ -85,6 +86,13 @@ impl<'a> ProcedureCallOp<'a> {
             output_source_positions.push(source_pos);
         }
 
+        let mut yield_mask = 0u32;
+        for pos in &output_source_positions {
+            if *pos < 32 {
+                yield_mask |= 1 << pos;
+            }
+        }
+
         Ok(Self {
             runtime,
             child,
@@ -92,6 +100,7 @@ impl<'a> ProcedureCallOp<'a> {
             trees,
             output_var_ids,
             output_source_positions,
+            yield_mask,
             pending_source_row: None,
             pending_origin: 0,
             pending_proc_batch: None,
@@ -264,10 +273,14 @@ impl<'a> Iterator for ProcedureCallOp<'a> {
                 return Some(Err(e));
             }
 
-            let proc_batch = match self.func.call_procedure_batch(self.runtime, &args) {
-                Ok(v) => v,
-                Err(e) => return Some(Err(e)),
-            };
+            let proc_batch =
+                match self
+                    .func
+                    .call_procedure_batch(self.runtime, &args, self.yield_mask)
+                {
+                    Ok(v) => v,
+                    Err(e) => return Some(Err(e)),
+                };
             let proc_batch = if self.output_var_ids.is_empty() {
                 let mut out_builder = BatchBuilder::new();
                 for _ in proc_batch.active_indices() {

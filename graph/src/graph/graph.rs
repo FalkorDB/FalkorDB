@@ -2378,13 +2378,12 @@ impl Graph {
             .next()
             .map_or_else(|| self.adjacancy_matrix.extract(), |t| t.extract());
         for relationship_matrix in iter {
-            m.element_wise_add(
+            m.set_pattern(
                 Some(relationship_matrix.fwd_dm()),
-                None,
-                Some(relationship_matrix.fwd_m()),
+                relationship_matrix.fwd_m(),
                 Some(Descriptor::C),
             );
-            m.element_wise_add(None, None, Some(relationship_matrix.fwd_dp()), None);
+            m.set_pattern(None, relationship_matrix.fwd_dp(), None);
         }
         Some(m)
     }

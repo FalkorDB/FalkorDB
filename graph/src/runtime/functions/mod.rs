@@ -309,6 +309,34 @@ macro_rules! cypher_fn {
         fn $fn_name(
             $rt: &Runtime,
             $args: &[Value],
+            _yields: u32,
+        ) -> Result<crate::runtime::functions::ProcedureBatch, String>
+        $body
+
+        $funcs.add_procedure(
+            $name,
+            $fn_name,
+            false,
+            false,
+            vec![$($arg),*],
+            FnType::Procedure(vec![$(String::from($yield_col)),*]),
+            $ret,
+        );
+    };
+
+    // ── Read-only procedure (with yields bitmask) ──
+    ($funcs:ident, $name:expr,
+     args: [$($arg:expr),* $(,)?],
+     ret: $ret:expr,
+     procedure: [$($yield_col:expr),* $(,)?],
+     $(#[$attr:meta])*
+     fn $fn_name:ident($rt:pat, $args:pat, $yields:pat) $body:block
+    ) => {
+        $(#[$attr])*
+        fn $fn_name(
+            $rt: &Runtime,
+            $args: &[Value],
+            $yields: u32,
         ) -> Result<crate::runtime::functions::ProcedureBatch, String>
         $body
 
@@ -335,6 +363,7 @@ macro_rules! cypher_fn {
         fn $fn_name(
             $rt: &Runtime,
             $args: &[Value],
+            _yields: u32,
         ) -> Result<crate::runtime::functions::ProcedureBatch, String>
         $body
 
@@ -398,7 +427,7 @@ pub fn empty_procedure_batch() -> ProcedureBatch {
 /// `Arc<dyn Fn>` indirection and vtable dispatch on the hot path.
 pub enum RuntimeFn {
     Native(fn(&Runtime, &[Value]) -> Result<Value, String>),
-    NativeProcedureBatch(fn(&Runtime, &[Value]) -> Result<ProcedureBatch, String>),
+    NativeProcedureBatch(fn(&Runtime, &[Value], u32) -> Result<ProcedureBatch, String>),
     Udf(String),
 }
 
@@ -423,9 +452,10 @@ impl RuntimeFn {
         &self,
         rt: &Runtime,
         args: &[Value],
+        yields: u32,
     ) -> Result<ProcedureBatch, String> {
         match self {
-            Self::NativeProcedureBatch(f) => f(rt, args),
+            Self::NativeProcedureBatch(f) => f(rt, args, yields),
             _ => Err("Function is not a procedure runtime function".into()),
         }
     }
@@ -708,7 +738,7 @@ impl GraphFn {
     #[must_use]
     pub fn new_procedure(
         name: &str,
-        func: fn(&Runtime, &[Value]) -> Result<ProcedureBatch, String>,
+        func: fn(&Runtime, &[Value], u32) -> Result<ProcedureBatch, String>,
         write: bool,
         non_deterministic: bool,
         args_type: FnArguments,
@@ -850,15 +880,18 @@ impl GraphFn {
     }
 
     /// Execute a procedure and return its native columnar batch output.
+    /// `yields` is a bitmask over the procedure's schema output positions;
+    /// bit N set means output column N was YIELDed and must be produced.
     pub fn call_procedure_batch(
         &self,
         rt: &Runtime,
         args: &[Value],
+        yields: u32,
     ) -> Result<ProcedureBatch, String> {
         if !matches!(self.fn_type, FnType::Procedure(_)) {
             return Err(format!("Function '{}' is not a procedure", self.name));
         }
-        self.func.call_procedure_batch(rt, args)
+        self.func.call_procedure_batch(rt, args, yields)
     }
 }
 
@@ -909,7 +942,7 @@ impl Functions {
     pub fn add_procedure(
         &mut self,
         name: &str,
-        func: fn(&Runtime, &[Value]) -> Result<ProcedureBatch, String>,
+        func: fn(&Runtime, &[Value], u32) -> Result<ProcedureBatch, String>,
         write: bool,
         non_deterministic: bool,
         args_type: Vec<Type>,
