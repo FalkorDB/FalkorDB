@@ -1,8 +1,5 @@
-//! Thread identity helpers: which thread is the host's main thread, and whether
-//! this process is a fork child.
-//!
-//! Lock bookkeeping used to live here too (GIL-held / lock-order tracking); it now
-//! belongs to the host, behind [`crate::locks::WriteEscalation`].
+//! Thread identity helpers: which thread is the host's main thread, and whether this
+//! process is a fork child.
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};

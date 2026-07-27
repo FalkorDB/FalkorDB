@@ -122,7 +122,9 @@ def _create_index(r):
     try:
         r.execute_command("GRAPH.QUERY", "test", "CREATE INDEX FOR (n:Node) ON (n.id)")
     except Exception:
-        pass
+        # Expected once the index exists ("already indexed"); this test only cares
+        # that the command returns instead of hanging.
+        return
 
 
 def test_create_index_concurrent_with_writes():
@@ -136,7 +138,7 @@ def _multi_write(r):
     # Before the #726 fix this DEADLOCKED against the pool write loop (query_sync
     # holds the GIL and waits for L1; the write loop holds L1 and waits for the
     # GIL). Now it either succeeds or, when it races the write loop for the MVCC
-    # slot in the brief commit gap, returns a retryable "write lock unavailable"
+    # slot in the brief commit gap, returns a retryable "another write is in progress"
     # (the client is expected to retry). Either way the server does not hang —
     # which is what this test guards. Swallow only that expected transient error.
     try:
@@ -144,7 +146,7 @@ def _multi_write(r):
         p.execute_command("GRAPH.QUERY", "test", "CREATE (:Node {id: -2})")
         p.execute()
     except Exception as e:  # noqa: BLE001 - narrow check below
-        if "write lock unavailable" not in str(e):
+        if "another write is in progress" not in str(e):
             raise
 
 

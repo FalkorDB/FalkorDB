@@ -18,6 +18,7 @@
 //! Like `GRAPH.QUERY`, execution happens on the thread pool with the client
 //! blocked; the main thread only resolves (or creates) the graph key.
 
+use crate::query_session::QuerySession;
 use crate::{
     config::{CONFIGURATION_CACHE_SIZE, CONFIGURATION_IMPORT_FOLDER},
     graph_core::{BlockedClient, ThreadedGraph, ffi},
@@ -26,6 +27,7 @@ use crate::{
 };
 use graph::{
     graph::graph::Plan,
+    planner::IR,
     runtime::{
         eval::evaluate_param,
         runtime::{GetVariables, Runtime},
@@ -45,24 +47,44 @@ fn record_mut(
     graph: &Arc<RwLock<ThreadedGraph>>,
     query: &str,
 ) -> RedisResult {
+    // A recorded query may be a write, so run it under a real session: it takes the
+    // per-graph lock, escalates at the first `Commit` like any write, and mutates a
+    // *private* MVCC version. The version is then rolled back rather than committed —
+    // RECORD is an introspection command, so it reports the operator trace of a write
+    // without letting it land, and never replicates.
+    let session = QuerySession::begin(graph);
     let Plan {
         plan, parameters, ..
-    } = graph
-        .read()
-        .graph
-        .read()
-        .borrow()
-        .get_plan(query)
+    } = session
+        .with_graph(|tg| tg.graph.read().borrow().get_plan(query))
         .map_err(RedisError::String)?;
     let parameters = parameters
         .into_iter()
         .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
         .collect::<Result<HashMap<_, _>, String>>()
         .map_err(RedisError::String)?;
+    let is_write = plan.iter().any(|n| {
+        matches!(
+            n,
+            IR::Commit | IR::CreateIndex { .. } | IR::DropIndex { .. }
+        )
+    });
+    // Writes need the MVCC write slot so they build a private version instead of
+    // mutating the published one in place; reads run on the committed snapshot.
+    let g = if is_write {
+        let Some(g) = session.with_graph(|tg| tg.graph.write()) else {
+            return Err(RedisError::String(
+                "ERR another write is in progress, retry the query".to_string(),
+            ));
+        };
+        g
+    } else {
+        session.with_graph(|tg| tg.graph.read())
+    };
     let runtime = Runtime::new(
-        graph.read().graph.read(),
+        g,
         parameters,
-        true,
+        is_write,
         plan.clone(),
         true,
         (*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone(),
@@ -71,9 +93,16 @@ fn record_mut(
         None,
         0,
         None,
-        &crate::query_session::NoEscalation,
+        &session,
     );
     let _ = runtime.query();
+    if is_write {
+        // Discard the private version and release the slot; index documents published
+        // by any inner `Commit` are undone the same way a failed write undoes them.
+        let committed = session.with_graph(|tg| tg.graph.read());
+        runtime.resync_published_indexes(&committed);
+        session.with_graph(|tg| tg.graph.rollback());
+    }
     let ids = plan.root().indices::<Bfs>().collect::<Vec<_>>();
     raw::reply_with_array(ctx.ctx, 2);
     raw::reply_with_array(ctx.ctx, runtime.record.borrow().len() as _);

@@ -153,17 +153,14 @@ pub struct Pending {
     deferred_index_removes: FxHashMap<u64, RoaringTreemap>,
     deferred_edge_index_adds: FxHashMap<u64, RoaringTreemap>,
     deferred_edge_index_removes: FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
-    /// Every entity whose index document this query has written — added **or**
-    /// removed — keyed by label/type slot, so a failure after an inner `Commit` can
-    /// resync the index against committed state (see
-    /// [`Self::resync_published_indexes`]).
+    /// Union of every index document this query has published, accumulated across
+    /// all of its `Commit`s, so a later failure can resync them against committed
+    /// state (see [`Self::resync_published_indexes`]).
     ///
     /// Deliberately **not** reset by [`Self::clear`], which runs after every
-    /// `Commit`: the undo has to cover every `Commit` in the query, not just the
-    /// last. They are per-query state — `Pending` belongs to one `Runtime` — and
-    /// [`Self::resync_published_indexes`] takes them when it uses them.
-    touched_node_docs: FxHashMap<u64, RoaringTreemap>,
-    touched_edge_docs: FxHashMap<u64, RoaringTreemap>,
+    /// `Commit`: the undo has to cover the whole query, not just the last `Commit`.
+    /// Per-query state — `Pending` belongs to one `Runtime`.
+    published: DeferredIndexes,
     /// Schema baseline: number of labels when the current commit window started.
     schema_label_count: usize,
     /// Schema baseline: number of relationship types when the current commit window started.
@@ -185,6 +182,49 @@ pub struct DeferredIndexes {
 }
 
 impl DeferredIndexes {
+    /// Fold `other` in, for accumulating everything one query published.
+    fn merge(
+        &mut self,
+        other: &Self,
+    ) {
+        for (slot, ids) in &other.node_adds {
+            *self.node_adds.entry(*slot).or_default() |= ids;
+        }
+        for (slot, ids) in &other.node_removes {
+            *self.node_removes.entry(*slot).or_default() |= ids;
+        }
+        for (slot, ids) in &other.edge_adds {
+            *self.edge_adds.entry(*slot).or_default() |= ids;
+        }
+        for (slot, ids) in &other.edge_removes {
+            self.edge_removes.entry(*slot).or_default().extend(ids);
+        }
+    }
+
+    /// Every id in this set per slot, regardless of direction — all the undo path
+    /// needs, since it re-derives each document from committed state.
+    fn ids_by_slot(
+        &self
+    ) -> (
+        FxHashMap<u64, RoaringTreemap>,
+        FxHashMap<u64, RoaringTreemap>,
+    ) {
+        let mut nodes: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
+        let mut edges: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
+        for docs in [&self.node_adds, &self.node_removes] {
+            for (slot, ids) in docs {
+                *nodes.entry(*slot).or_default() |= ids;
+            }
+        }
+        for (slot, ids) in &self.edge_adds {
+            *edges.entry(*slot).or_default() |= ids;
+        }
+        for (slot, ids) in &self.edge_removes {
+            edges.entry(*slot).or_default().extend(ids.keys().copied());
+        }
+        (nodes, edges)
+    }
+
     /// Write the batch to the shared RediSearch index.
     ///
     /// Only valid in writer mode: the index is not MVCC, so readers must be
@@ -227,8 +267,7 @@ impl Pending {
             index_remove_docs: FxHashMap::default(),
             index_add_edge_docs: FxHashMap::default(),
             index_remove_edge_docs: FxHashMap::default(),
-            touched_node_docs: FxHashMap::default(),
-            touched_edge_docs: FxHashMap::default(),
+            published: DeferredIndexes::default(),
             deferred_index_adds: FxHashMap::default(),
             deferred_index_removes: FxHashMap::default(),
             deferred_edge_index_adds: FxHashMap::default(),
@@ -1258,8 +1297,7 @@ impl Pending {
         committed: &AtomicRefCell<Graph>,
         private: &AtomicRefCell<Graph>,
     ) {
-        let nodes = std::mem::take(&mut self.touched_node_docs);
-        let edges = std::mem::take(&mut self.touched_edge_docs);
+        let (nodes, edges) = std::mem::take(&mut self.published).ids_by_slot();
         if nodes.is_empty() && edges.is_empty() {
             return;
         }
@@ -1310,38 +1348,19 @@ impl Pending {
         g: &AtomicRefCell<Graph>,
     ) {
         let mut deferred = self.take_deferred_indexes();
-        // Record every document we are about to write — additions *and* removals —
-        // so a later failure can resync against committed state. Removals matter as
-        // much as additions: a rolled-back DELETE must get its document back, or the
-        // entity silently disappears from the index.
-        for ids in [&deferred.node_adds, &deferred.node_removes] {
-            for (slot, ids) in ids {
-                self.touched_node_docs
-                    .entry(*slot)
-                    .or_default()
-                    .extend(ids.iter());
-            }
-        }
-        for (slot, ids) in &deferred.edge_adds {
-            self.touched_edge_docs
-                .entry(*slot)
-                .or_default()
-                .extend(ids.iter());
-        }
-        for (slot, ids) in &deferred.edge_removes {
-            self.touched_edge_docs
-                .entry(*slot)
-                .or_default()
-                .extend(ids.keys().copied());
-        }
+        // Fold the batch into the published log *before* writing it, because `commit`
+        // drains the batch. Removals matter as much as additions: a rolled-back
+        // DELETE must get its document back, or the entity silently disappears from
+        // the index.
+        self.published.merge(&deferred);
         deferred.commit(g);
     }
 
     /// Clear all pending mutation state.
     ///
-    /// Runs after every `Commit`, so it must NOT touch `touched_node_docs` /
-    /// `touched_edge_docs` — a later failure has to undo the documents *all* of this
-    /// query's `Commit`s published, not just the last one's.
+    /// Runs after every `Commit`, so it must NOT touch `published` — a later failure
+    /// has to undo the documents *all* of this query's `Commit`s published, not just
+    /// the last one's.
     pub fn clear(&mut self) {
         // Dropping millions of per-entity Vec allocations is O(n) frees and
         // stalls the serialized write thread; move large maps to a background

@@ -89,6 +89,17 @@ use libfuzzer_sys::{Corpus, fuzz_target};
 //     }
 // }
 
+/// `WriteEscalation` for the fuzzer: there is no host and no locks, so becoming a
+/// writer always succeeds. Returning `Err` instead would reject every mutating
+/// query and starve the corpus of the write paths this target exists to exercise.
+struct AlwaysWritable;
+
+impl graph::locks::WriteEscalation for AlwaysWritable {
+    fn upgrade_to_write(&self) -> Result<(), String> {
+        Ok(())
+    }
+}
+
 fuzz_target!(init: {
         unsafe {
             GrB_init(GrB_Mode::GrB_NONBLOCKING as _);
@@ -129,7 +140,20 @@ fuzz_target!(init: {
         // valid queries (e.g. UNWIND range(..1M) CREATE 15 nodes per row) that
         // blow past libFuzzer's 2048MB rss limit. Timed-out inputs return Err
         // and are rejected from the corpus.
-        let runtime = Runtime::new(g.read(), parameters, true, plan, false, String::new(), -1, false, Some(100), 0, None);
+        let runtime = Runtime::new(
+            g.read(),
+            parameters,
+            true,
+            plan,
+            false,
+            String::new(),
+            -1,
+            false,
+            Some(100),
+            0,
+            None,
+            &AlwaysWritable,
+        );
         match runtime.query() {
             Ok(_) => Corpus::Keep,
             _ => Corpus::Reject,

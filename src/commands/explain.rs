@@ -18,6 +18,7 @@
 //! deadlock: the handler holds the GIL while waiting for the graph read lock, and a
 //! committing write holds the write lock while waiting for the GIL (issue #726).
 
+use crate::query_session::QuerySession;
 use crate::{
     commands::EMPTY_KEY_ERR,
     graph_core::{BlockedClient, ThreadedGraph, ffi},
@@ -42,7 +43,7 @@ fn explain(
     // the index to pick scans, and a session is what publishes the lock mode that the
     // GIL lock-order assertion reads (#726).
     let Plan { plan, .. } = {
-        let session = crate::query_session::QuerySession::begin(graph);
+        let session = QuerySession::begin(graph);
         session.with_graph(|tg| tg.graph.read().borrow().get_plan(query))
     }
     .map_err(RedisError::String)?;

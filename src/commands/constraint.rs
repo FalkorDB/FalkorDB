@@ -1,3 +1,4 @@
+use crate::query_session::QuerySession;
 use crate::{config::CONFIGURATION_CACHE_SIZE, graph_core::ThreadedGraph, redis_type::GRAPH_TYPE};
 use graph::entity_type::EntityType;
 use graph::graph::constraint::ConstraintType;
@@ -144,7 +145,7 @@ pub fn graph_constraint(
     let mut tg = graph.write();
     let Some(g_arc) = tg.graph.write() else {
         return Err(redis_module::RedisError::String(
-            "ERR write lock unavailable".into(),
+            "ERR another write is in progress, retry the query".into(),
         ));
     };
 
@@ -181,7 +182,7 @@ pub fn graph_constraint(
                     // Phase 1: the long-running validation runs as a reader, so
                     // concurrent `db.constraints()` still sees the constraint UNDER
                     // CONSTRUCTION.
-                    let session = crate::query_session::QuerySession::begin(&graph_clone);
+                    let session = QuerySession::begin(&graph_clone);
                     let results = session.with_graph(|tg| {
                         tg.graph
                             .read()

@@ -37,6 +37,7 @@
 //! handler holds the GIL while waiting for the read lock, and the write holds the
 //! write lock while waiting for the GIL.
 
+use crate::query_session::QuerySession;
 use crate::{
     graph_core::{BlockedClient, ThreadedGraph, ffi},
     redis_type::GRAPH_TYPE,
@@ -61,7 +62,7 @@ fn memory_report(
     // from RediSearch FFI (`RediSearch_MemUsage`), and a session is what publishes the
     // lock mode that the GIL lock-order assertion reads (#726).
     let report = {
-        let session = crate::query_session::QuerySession::begin(graph);
+        let session = QuerySession::begin(graph);
         session.with_graph(|tg| tg.graph.read().borrow().memory_usage_report(samples))
     };
 

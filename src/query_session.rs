@@ -14,10 +14,11 @@
 //! The guards are `Arc`-owned (`parking_lot`'s `arc_lock`), which is what lets one
 //! session hold them across a whole query and swap read for write mid-flight.
 //!
-//! The GIL never leaves this module: [`Gil`] and the FFI beneath it are private, so a
-//! session is the only thing in the process that can take it. That is what makes the
-//! ordering rule enforceable rather than merely documented — the `graph` crate cannot
-//! reach it at all.
+//! The GIL never leaves this module: the FFI that takes it is private, so the only
+//! ways to acquire it anywhere in the process are a [`QuerySession`] and
+//! [`hold_gil`] (telemetry's flush thread). That is what makes the ordering rule
+//! enforceable rather than merely documented — the `graph` crate cannot reach it at
+//! all.
 
 use crate::graph_core::{ThreadedGraph, ffi};
 use graph::locks::WriteEscalation;
@@ -52,12 +53,10 @@ pub struct QuerySession {
 impl QuerySession {
     /// Enter **reader** mode: take the per-graph read lock.
     pub fn begin(graph: &Arc<RwLock<ThreadedGraph>>) -> Self {
-        let session = Self {
+        Self {
             graph: Arc::clone(graph),
             mode: RefCell::new(Some(Mode::Reader(RwLock::read_arc(graph)))),
-        };
-        ACCESS.set(AccessMode::Read);
-        session
+        }
     }
 
     /// Enter **writer** mode immediately — GIL, then the per-graph write lock — for
@@ -65,15 +64,34 @@ impl QuerySession {
     /// main thread the GIL acquire is the no-op it must be.
     pub fn begin_writer(graph: &Arc<RwLock<ThreadedGraph>>) -> Self {
         let gil = Gil::acquire();
-        let session = Self {
+        Self {
             graph: Arc::clone(graph),
             mode: RefCell::new(Some(Mode::Writer {
                 guard: RwLock::write_arc(graph),
                 _gil: gil,
             })),
-        };
-        ACCESS.set(AccessMode::Write);
-        session
+        }
+    }
+
+    /// Release the locks now, before the session itself goes out of scope.
+    ///
+    /// For the one case where the two must differ: a write's reply is serialized from
+    /// the runtime, which borrows this session for its whole life, so the session
+    /// cannot be dropped before the reply — but the GIL and the write lock should be.
+    /// Idempotent, and `Drop` still covers every other path.
+    ///
+    /// Afterwards this session holds nothing, so [`Self::with_graph`] would panic:
+    /// call it last.
+    pub fn release_locks(&self) {
+        *self.mode.borrow_mut() = None;
+    }
+
+    /// The graph this session locks, as an owned handle.
+    ///
+    /// Lets a caller reach the graph *after* dropping the session — the slow log is
+    /// written once the writer window is closed, so it takes its own brief read lock.
+    pub fn graph_arc(&self) -> Arc<RwLock<ThreadedGraph>> {
+        Arc::clone(&self.graph)
     }
 
     /// Run `f` against the locked graph in a **short-lived** borrow.
@@ -139,18 +157,15 @@ impl QuerySession {
         if matches!(*mode, Some(Mode::Writer { .. })) {
             return false;
         }
-        // Drop the read lock FIRST — holding it across the GIL acquire is the #726
-        // inversion. Publish `Unlocked` so the assertion in `Gil::acquire` sees the
-        // truth.
+        // Drop the read lock FIRST: holding it across the GIL acquire below is the
+        // #726 inversion, and this assignment is what guarantees we never do.
         *mode = None;
-        ACCESS.set(AccessMode::Unlocked);
 
         // GIL, then the write lock — the order every inline main-thread command
         // already has.
         let gil = Gil::acquire();
         let guard = RwLock::write_arc(&self.graph);
         *mode = Some(Mode::Writer { guard, _gil: gil });
-        ACCESS.set(AccessMode::Write);
         true
     }
 }
@@ -164,95 +179,83 @@ impl WriteEscalation for QuerySession {
 impl Drop for QuerySession {
     /// Releases the write lock then the GIL (see [`Mode::Writer`]), or the read lock.
     fn drop(&mut self) {
-        ACCESS.set(AccessMode::Unlocked);
         *self.mode.borrow_mut() = None;
     }
 }
 
-/// `WriteEscalation` for paths that must never write. `GRAPH.RECORD` replays a plan
-/// against an MVCC snapshot holding no session, so a write there has nowhere to
-/// commit — refuse rather than mutate shared state unlocked.
-pub struct NoEscalation;
-
-impl WriteEscalation for NoEscalation {
-    fn upgrade_to_write(&self) -> Result<(), String> {
-        Err("this command cannot execute write queries".to_string())
-    }
-}
-
-/// Which locks the query on *this thread* holds. Written only by [`QuerySession`],
-/// and read for one job: [`Gil::acquire`] must reject a GIL acquire made while the
-/// per-graph read lock is held (#726).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AccessMode {
-    Unlocked,
-    Read,
-    Write,
-}
-
 thread_local! {
-    static ACCESS: Cell<AccessMode> = const { Cell::new(AccessMode::Unlocked) };
-
-    /// Nesting depth of GIL acquisitions on this thread, and the thread-safe
-    /// context whose GIL we actually took (`None` when the acquire was a no-op
-    /// because the GIL was already held).
-    static GIL_DEPTH: Cell<usize> = const { Cell::new(0) };
+    /// The thread-safe context whose GIL this thread holds, if any. `None` also means
+    /// "not held by us", which is how [`Gil::acquire`] detects a nested acquire.
     static GIL_CTX: Cell<Option<NonNull<raw::RedisModuleCtx>>> = const { Cell::new(None) };
+}
+
+/// Take the module GIL for the duration of the returned guard.
+///
+/// The one entry point for code that needs the GIL outside a query — telemetry's
+/// flush thread. Keeping it the *only* other caller is what lets the ordering rule be
+/// enforced by construction rather than by convention.
+///
+/// Bind the guard: dropping it immediately would release the GIL in the same statement
+/// that took it.
+#[must_use]
+pub fn hold_gil() -> impl Drop {
+    Gil::acquire()
 }
 
 /// RAII guard for the host's global lock: Redis's module GIL.
 ///
-/// Not `Send` — the GIL and the bookkeeping below are released by the thread that took
-/// them, which is also what keeps [`QuerySession`] `!Send`.
-struct Gil(PhantomData<*const ()>);
+/// `locked` records whether *this* guard is the one that took the GIL, so a nested
+/// guard releases nothing.
+///
+/// Not `Send`: the GIL is released by the thread that took it, which is also what
+/// keeps [`QuerySession`] `!Send`.
+struct Gil {
+    locked: bool,
+    _not_send: PhantomData<*const ()>,
+}
 
 impl Gil {
-    /// Acquire the GIL, or note one more level of nesting if this thread already holds
-    /// it (the module GIL is not recursive, so re-acquiring would self-deadlock).
+    #[must_use]
+    /// Take the GIL, unless this thread already holds it — the module GIL is not
+    /// recursive, so re-acquiring would self-deadlock. Two ways it can already be
+    /// held: the main thread holds it implicitly for the whole command callback, and a
+    /// nested acquire finds our own context in [`GIL_CTX`].
     fn acquire() -> Self {
-        GIL_DEPTH.set(GIL_DEPTH.get() + 1);
-        // Nothing to do for a nested acquire, or on the main thread which holds the
-        // GIL implicitly for the whole command callback — the module GIL is not
-        // recursive. `GIL_DEPTH` is a complete record of this thread's acquisitions
-        // because `lock_gil` is the only place that takes the GIL.
-        if GIL_DEPTH.get() > 1 || graph::thread_id::is_main_thread() {
-            return Self(PhantomData);
+        if graph::thread_id::is_main_thread() || GIL_CTX.get().is_some() {
+            return Self {
+                locked: false,
+                _not_send: PhantomData,
+            };
         }
-        // The ordering rule, checked at the one funnel every acquire passes through.
-        // Escalation satisfies it by releasing the read lock first; this catches
-        // anything else, e.g. index FFI reached from a read path.
-        debug_assert_ne!(
-            ACCESS.get(),
-            AccessMode::Read,
-            "taking the global lock while holding the per-graph read lock is the \
-             #726 deadlock; escalate to writer mode first"
-        );
         // SAFETY: a null blocked-client yields a detached context, which is what we
-        // want — we need the GIL, not a client to reply to. It is ours, so `unlock`
+        // want — we need the GIL, not a client to reply to. It is ours, so `Drop`
         // frees it.
         let ctx = unsafe { ffi::get_thread_safe_context(std::ptr::null_mut()) };
         let ctx = NonNull::new(ctx).expect("RedisModule_GetThreadSafeContext returned null");
-        // SAFETY: `ctx` was just created and is owned by this thread until the
-        // matching `unlock` releases it.
+        // SAFETY: `ctx` was just created and is owned by this thread until `Drop`.
         unsafe { lock_gil(ctx.as_ptr()) };
         GIL_CTX.set(Some(ctx));
-        Self(PhantomData)
+        Self {
+            locked: true,
+            _not_send: PhantomData,
+        }
     }
 }
 
 impl Drop for Gil {
     fn drop(&mut self) {
-        let depth = GIL_DEPTH.get().saturating_sub(1);
-        GIL_DEPTH.set(depth);
-        if depth > 0 {
-            return;
+        if !self.locked {
+            return; // a nested guard, or the main thread's implicit hold
         }
-        let Some(ctx) = GIL_CTX.take() else {
-            return; // the acquire was a no-op (GIL already held)
-        };
-        // SAFETY: `ctx` is the context this thread locked in `acquire`, taken out of
-        // the thread-local so it is released exactly once.
-        unsafe { release_gil(ctx.as_ptr()) };
+        // `take` rather than `get`: the context leaves the thread-local as it is
+        // released, so no later guard can release it again. Only the guard that locked
+        // gets here, so `None` is unreachable — but this runs from a `Drop`, where a
+        // panic aborts, so leak rather than assert.
+        if let Some(ctx) = GIL_CTX.take() {
+            // SAFETY: `ctx` is the context this thread locked in `acquire`, taken out
+            // of the thread-local so it is released exactly once.
+            unsafe { release_gil(ctx.as_ptr()) };
+        }
     }
 }
 

@@ -74,6 +74,7 @@ use std::{
 use crate::allocator::{
     current_thread_usage, disable_tracking, enable_tracking, net_thread_usage, reset_counter,
 };
+use crate::query_session::QuerySession;
 
 /// Global registry of all live graph instances.
 /// Used by the pthread_atfork prepare handler to sync all GraphBLAS matrices
@@ -111,14 +112,25 @@ pub fn register_graph(
 
 /// True if `arc` is still the graph registered under some Redis key.
 ///
-/// `graph_free` removes a graph from the registry when its key is deleted,
-/// overwritten or expired, so a missing entry means the key is gone. A query that
-/// escalated to writer mode checks this before committing: the key can disappear
-/// (`GRAPH.DELETE`, `FLUSHALL`, overwrite) during the window where escalation has
-/// released the read lock and not yet taken the write lock. Our `Arc` keeps the
-/// object alive, so this is not a use-after-free — but committing into a graph
-/// nobody can reach any more would silently discard the write. Mirrors the
-/// re-open-and-verify step in C's `QueryCtx_AcquireWriteLock`.
+/// A query that has just escalated to writer mode checks this before mutating, and
+/// **aborts** if it fails — mirroring C's `QueryCtx_AcquireWriteLock`, which re-opens
+/// the key under WRITE and raises a runtime exception when the key is empty, is not a
+/// graph, or holds a *different* value than the one the query started on (our
+/// `data_ptr` comparison is that third check).
+///
+/// Aborting rather than committing-and-discarding is required, not just tidy: the
+/// write would still be replicated, and a replica's `GRAPH.EFFECT` handler *creates* a
+/// graph when the key is missing, so it would resurrect a key the primary no longer
+/// has — a diverged replica.
+///
+/// One check is enough. The exposed window is exactly [release read lock → take GIL],
+/// because every path that removes a key (`GRAPH.DELETE`, `FLUSHALL`, overwrite,
+/// expiry) runs inline on the main thread, which cannot execute a command callback
+/// while this query holds the GIL.
+///
+/// The scan compares `data_ptr` rather than looking the name up: `rename_graph`
+/// re-keys the registry without updating `Graph::name()`, so an O(1) by-name lookup
+/// would wrongly abort after a `RENAME`.
 pub fn graph_is_registered(arc: &Arc<RwLock<ThreadedGraph>>) -> bool {
     let target = arc.data_ptr() as usize;
     GRAPH_REGISTRY
@@ -168,14 +180,12 @@ pub struct WriteMessage {
     pub profile: bool,
 }
 
-pub struct WriteQueryOk {
-    pub graph: Arc<AtomicRefCell<Graph>>,
-    pub effects_buffer: Option<Vec<u8>>,
-    pub modified: bool,
-    pub execution_time_ms: f64,
-    pub params_offset: usize,
+/// What `commit_and_replicate` needs to publish a finished write.
+struct WriteQueryOk {
+    graph: Arc<AtomicRefCell<Graph>>,
+    effects_buffer: Option<Vec<u8>>,
+    modified: bool,
 }
-type WriteQueryResult = Result<WriteQueryOk, String>;
 
 /// Result from a read-path `execute_query` call, surfacing timing metadata
 /// needed for telemetry.
@@ -276,8 +286,8 @@ pub mod ffi {
     }
 
     // NOTE: the GIL itself (`RedisModule_ThreadSafeContextLock` / `…Unlock`) is
-    // deliberately *not* wrapped here. It is private to `crate::query_session`, so a
-    // `QuerySession` is the only thing that can take it and the ordering rule
+    // deliberately *not* wrapped here. It is private to `crate::query_session`, whose
+    // `QuerySession` and `hold_gil` are the only ways to take it, so the ordering rule
     // (global → per-graph → indexer, issue #726) cannot be bypassed.
 
     /// Mark `key_name` as modified so `WATCH` clients are notified. Must be
@@ -395,7 +405,7 @@ impl ThreadedGraph {
 /// lock and may swap its read guard for a write guard mid-query, so a long-lived
 /// borrow would be invalidated. See `crate::query_session`.
 pub fn execute_query(
-    session: &crate::query_session::QuerySession,
+    session: &QuerySession,
     ctx: &Context,
     query: &str,
     compact: bool,
@@ -482,7 +492,7 @@ pub fn execute_query(
 /// queue (exactly like GRAPH.QUERY), where `execute_query_write` executes and
 /// replies it in profile mode.
 pub fn execute_profile(
-    session: &crate::query_session::QuerySession,
+    session: &QuerySession,
     ctx: &Context,
     query: &str,
     per_query_timeout: Option<i64>,
@@ -527,21 +537,30 @@ pub fn execute_profile(
     Ok(ProfileDetect::ReadReplied)
 }
 
-/// Execute a write query end-to-end under `session`.
+/// Execute a write query end-to-end: run it, commit, replicate, reply.
 ///
-/// The session *swaps* its read guard for a write guard when the query escalates
-/// to writer mode (see `crate::query_session`), so a long-lived `&ThreadedGraph`
-/// would be invalidated mid-query; every access here is a short-lived
-/// `session.with_graph` borrow instead.
+/// Takes the session **by value** so the writer window can be closed as early as
+/// possible. The GIL is held from the query's first mutation through commit and
+/// replication, and dropped *before* the result set is serialized — a large reply
+/// would otherwise stall every other client for the whole serialization (the reply is
+/// built from the query's own MVCC version, so it needs no lock).
+///
+/// The session swaps its read guard for a write guard when the query escalates, so a
+/// long-lived `&ThreadedGraph` would be invalidated mid-query; every access here is a
+/// short-lived `session.with_graph` borrow instead.
+///
+/// Returns `(params_offset, execution_time_ms)` for telemetry.
+#[allow(clippy::too_many_arguments)]
 pub fn execute_query_write(
-    session: &crate::query_session::QuerySession,
+    session: QuerySession,
     ctx: &Context,
+    key_name: &Arc<str>,
     query: &str,
     compact: bool,
     first_cached: bool,
     per_query_timeout: Option<i64>,
     profile: bool,
-) -> WriteQueryResult {
+) -> Result<(usize, f64), String> {
     let wall_start = Instant::now();
     let Plan {
         plan,
@@ -564,12 +583,14 @@ pub fn execute_query_write(
     // here cannot leak the slot.
     let timeout_ms = compute_effective_timeout(per_query_timeout, true)?;
 
-    // Take the MVCC write slot (single-writer serialization). We are still a
-    // reader here, so a concurrent inline writer can hold the slot — return a
-    // retryable error rather than panicking. On this branch we did NOT acquire it,
-    // so callers must not roll back: it belongs to the other writer.
+    // Claim the MVCC write slot: `MvccGraph::write` CASes the single-writer flag and
+    // hands back a fresh COW version to build into — it is not a lock, so a writer
+    // that already owns the slot makes this fail rather than block. We are still a
+    // reader here, so an inline writer can be holding it; return a retryable error.
+    // On this branch we did NOT claim it, so callers must not roll back — the slot and
+    // its version belong to the other writer.
     let Some(g) = session.with_graph(|tg| tg.graph.write()) else {
-        return Err("write lock unavailable, retry the query".to_string());
+        return Err("another write is in progress, retry the query".to_string());
     };
     let runtime = Runtime::new(
         g.clone(),
@@ -583,7 +604,7 @@ pub fn execute_query_write(
         timeout_ms,
         QUERY_MEM_CAPACITY.load(Ordering::Relaxed),
         Some(net_thread_usage),
-        session,
+        &session,
     );
     runtime.build_effects.set(
         REPLICATION_CONSUMERS.load(Ordering::Relaxed)
@@ -627,18 +648,6 @@ pub fn execute_query_write(
     }
 
     result.stats.cached = cached;
-    if profile {
-        // GRAPH.PROFILE: reply with the annotated plan tree (per-operator
-        // records + timing collected because the runtime ran profile=true),
-        // not the result set. Everything else — effects, deferred indexes,
-        // commit, replication — is identical to a GRAPH.QUERY write.
-        reply_profile(ctx, &runtime, &runtime.plan);
-    } else if compact {
-        reply_compact(ctx, &runtime, &result);
-    } else {
-        reply_verbose(ctx, &runtime, &result);
-    }
-    let latency = wall_start.elapsed().as_secs_f64() * 1000.0;
     let execution_time_ms = result.stats.execution_time;
     let modified = result.stats.nodes_created > 0
         || result.stats.nodes_deleted > 0
@@ -651,19 +660,52 @@ pub fn execute_query_write(
         || result.stats.indexes_created > 0
         || result.stats.indexes_dropped > 0
         || runtime.effects_count.get() > 0;
+
+    // Commit → signal WATCH → replicate, the last work that needs the GIL.
+    let wq = WriteQueryOk {
+        graph: g,
+        effects_buffer,
+        modified,
+    };
+    let graph = session.graph_arc();
+    if session
+        .with_graph_mut(|tg| commit_and_replicate(tg, ctx, key_name, query, wq))
+        .is_none()
+    {
+        // Defensive: a write that somehow never escalated cannot be committed under a
+        // read lock. Release the MVCC write slot (only commit/rollback clears it) so
+        // the graph stays writable.
+        session.with_graph(|tg| tg.graph.rollback());
+        return Err("write query did not acquire the graph write lock".to_string());
+    }
+    session.release_locks();
+
+    // Writer window is closed. Serializing the reply reads this query's own MVCC
+    // version through the runtime, so it needs no lock — and holding the GIL across it
+    // would stall the server for as long as the result set takes to write.
+    if profile {
+        // GRAPH.PROFILE: reply with the annotated plan tree (per-operator records +
+        // timing collected because the runtime ran profile=true), not the result set.
+        // Everything else — effects, commit, replication — is identical to a
+        // GRAPH.QUERY write.
+        reply_profile(ctx, &runtime, &runtime.plan);
+    } else if compact {
+        reply_compact(ctx, &runtime, &result);
+    } else {
+        reply_verbose(ctx, &runtime, &result);
+    }
+
+    let latency = wall_start.elapsed().as_secs_f64() * 1000.0;
     let cmd_name = if profile {
         "GRAPH.PROFILE"
     } else {
         "GRAPH.QUERY"
     };
-    session.with_graph(|tg| tg.slow_log.add(cmd_name, query, params_offset, latency));
-    Ok(WriteQueryOk {
-        graph: g,
-        effects_buffer,
-        modified,
-        execution_time_ms,
-        params_offset,
-    })
+    graph
+        .read()
+        .slow_log
+        .add(cmd_name, query, params_offset, latency);
+    Ok((params_offset, execution_time_ms))
 }
 
 /// Reply with profile output: DFS walk of the plan tree, each line annotated
@@ -846,7 +888,7 @@ pub fn query_mut(
             let binding = graph.clone();
             // Every query runs under a session: a read never escalates, a write
             // escalates at its first `Commit`.
-            let session = crate::query_session::QuerySession::begin(&binding);
+            let session = QuerySession::begin(&binding);
             let bc = bc;
             let ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
             let ctx = Context::new(ctx);
@@ -996,7 +1038,7 @@ fn query_sync(
     let query_arc: Arc<str> = Arc::from(query);
     let running_id = telemetry::register_running(received_at, key_name, &query_arc, false);
     let res = {
-        let session = crate::query_session::QuerySession::begin(graph);
+        let session = QuerySession::begin(graph);
         execute_query(&session, ctx, query, compact, write, cmd, per_query_timeout)
     };
     let wall_ms = wall_start.elapsed().as_secs_f64() * 1000.0;
@@ -1010,10 +1052,10 @@ fn query_sync(
                     telemetry::register_running(received_at, key_name, &query_arc, false);
                 // On the main thread the GIL is already held, so start as a writer:
                 // the order is satisfied and there is nothing to escalate.
-                let session = crate::query_session::QuerySession::begin_writer(graph);
                 let res = execute_query_write(
-                    &session,
+                    QuerySession::begin_writer(graph),
                     ctx,
+                    key_name,
                     query,
                     compact,
                     read_result.cached,
@@ -1023,12 +1065,7 @@ fn query_sync(
                 let write_wall_ms = write_start.elapsed().as_secs_f64() * 1000.0;
                 telemetry::unregister_running(running_id2);
                 match res {
-                    Ok(wq) => {
-                        // Commit (index docs already published inline), signal WATCH
-                        // and replicate — the same path the write loop uses.
-                        let (params_offset, exec_ms) = session
-                            .with_graph_mut(|g| commit_and_replicate(g, ctx, key_name, query, wq))
-                            .expect("writer-mode session on the sync write path");
+                    Ok((params_offset, exec_ms)) => {
                         // Write telemetry
                         let query_text = &query[params_offset..];
                         let params_text = &query[..params_offset];
@@ -1114,7 +1151,7 @@ pub fn profile_mut(
             }
             let g = graph.clone();
             let binding = graph.clone();
-            let session = crate::query_session::QuerySession::begin(&binding);
+            let session = QuerySession::begin(&binding);
             let bc = bc;
             let ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
             let ctx = Context::new(ctx);
@@ -1194,7 +1231,7 @@ fn profile_sync(
         enable_tracking();
     }
     let res = {
-        let session = crate::query_session::QuerySession::begin(graph);
+        let session = QuerySession::begin(graph);
         execute_profile(&session, ctx, query, per_query_timeout)
     };
     match res {
@@ -1204,19 +1241,18 @@ fn profile_sync(
         // so start as a writer and every global-lock acquire below is a no-op.
         // Mirrors query_sync's write branch, so a profiled write reaches replicas.
         Ok(ProfileDetect::Write) => {
-            let session = crate::query_session::QuerySession::begin_writer(graph);
-            let res =
-                execute_query_write(&session, ctx, query, false, false, per_query_timeout, true);
+            let res = execute_query_write(
+                QuerySession::begin_writer(graph),
+                ctx,
+                key_name,
+                query,
+                false,
+                false,
+                per_query_timeout,
+                true,
+            );
             match res {
-                Ok(wq) => {
-                    // Same commit → signal WATCH → replicate path as query_sync and
-                    // the write loop.
-                    session
-                        .with_graph_mut(|g| {
-                            commit_and_replicate(g, ctx, key_name, query, wq);
-                        })
-                        .expect("writer-mode session on the sync profile path");
-                }
+                Ok(_) => {}
                 Err(err) => {
                     // execute_query_write already released the MVCC slot on
                     // failure (rollback lives there); just surface the error.
@@ -1251,9 +1287,7 @@ fn commit_and_replicate(
     key_name: &Arc<str>,
     query: &str,
     wq: WriteQueryOk,
-) -> (usize, f64) {
-    let params_offset = wq.params_offset;
-    let execution_time_ms = wq.execution_time_ms;
+) {
     // Index document changes were already applied by each `CommitOp` while this
     // query held the write lock (so a later operator in the same query could see
     // them); nothing left to publish but the matrix version.
@@ -1264,7 +1298,6 @@ fn commit_and_replicate(
     if wq.modified {
         replicate_effects(ctx, key_name, wq.effects_buffer, query);
     }
-    (params_offset, execution_time_ms)
 }
 
 pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
@@ -1334,39 +1367,16 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
         // The session lives only for this block, so its locks are released — the read
         // lock, or the GIL + write lock if the query escalated — on every path out,
         // including the error returns, and before the reply below.
-        let res: Result<(usize, f64), String> = {
-            let session = crate::query_session::QuerySession::begin(graph);
-            let exec = execute_query_write(
-                &session,
-                &ctx,
-                &query,
-                compact,
-                cached,
-                per_query_timeout,
-                profile,
-            );
-            match exec {
-                Ok(wq) => {
-                    // The query escalated (every write plan ends in a Commit), so we
-                    // are a writer here: commit, signal and replicate directly.
-                    session
-                        .with_graph_mut(|g| commit_and_replicate(g, &ctx, &key_name, &query, wq))
-                        .map_or_else(
-                            || {
-                                // Defensive: a write that somehow never escalated cannot
-                                // be committed safely under a read lock. Release the MVCC
-                                // slot (only commit/rollback clears it) so the graph stays
-                                // writable.
-                                session.with_graph(|tg| tg.graph.rollback());
-                                Err("write query did not acquire the graph write lock".to_string())
-                            },
-                            Ok,
-                        )
-                }
-                // execute_query_write already released the MVCC slot on failure.
-                Err(err) => Err(err),
-            }
-        };
+        let res = execute_query_write(
+            QuerySession::begin(graph),
+            &ctx,
+            &key_name,
+            &query,
+            compact,
+            cached,
+            per_query_timeout,
+            profile,
+        );
 
         if mem_capacity > 0 {
             disable_tracking();
