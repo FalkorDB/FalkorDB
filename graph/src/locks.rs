@@ -1,35 +1,27 @@
 //! The two things this crate needs from its host's locks.
 //!
-//! Everything else about locking — which graph is locked, when the locks are
-//! taken and released, what they even are — is the host's business and stays in
-//! the host crate. Under Redis they are the module GIL and a per-graph
-//! `RwLock`; nothing here knows that.
+//! Everything else — which graph is locked, when the locks are taken and released,
+//! what they even are — is the host's business. Under Redis they are the module GIL
+//! and a per-graph `RwLock`; nothing here knows that.
 //!
 //! ## Ordering rule
 //!
 //! **global lock → per-graph lock → indexer lock.** One direction, always. A
-//! background task that took the indexer lock and then reached for the global
-//! lock deadlocked the server for six hours (issue #726).
+//! background task that took the indexer lock and then reached for the global lock
+//! deadlocked the server for six hours (issue #726).
 //!
-//! ## Two-phase locking (mirrors FalkorDB C's `QueryCtx`)
+//! ## Two-phase locking (mirrors C's `QueryCtx_AcquireWriteLock`)
 //!
-//! A write query cannot know up front that it will write, so it starts in
-//! *reader* mode — holding only the per-graph read lock, running concurrently
-//! with other readers through its match phase — and **escalates** on its first
-//! mutation. Escalation must
+//! A write query cannot know up front that it will write, so it starts as a
+//! *reader* — per-graph read lock only, concurrent with other readers through its
+//! match phase — and **escalates** on its first mutation: release read, take the
+//! global lock, take the per-graph write lock, in that order. Taking the global
+//! lock while still holding the read lock is the #726 AB-BA against a main-thread
+//! command holding the GIL and waiting for the write lock.
 //!
-//! 1. release the read lock,
-//! 2. acquire the global lock,
-//! 3. acquire the per-graph write lock,
-//!
-//! in that order; taking the global lock while holding the read lock is the #726
-//! AB-BA (a worker holding the read lock waiting for the GIL, against the main
-//! thread holding the GIL waiting for the write lock). This is C's
-//! `QueryCtx_AcquireWriteLock` flow (`src/query_ctx.c`).
-//!
-//! Escalation is **idempotent** and **sticky**: once a query is a writer it stays
-//! one until it ends, so everything after the first mutation — including reads of
-//! the shared, non-MVCC index — sees an exclusively locked graph.
+//! Escalation is **idempotent** and **sticky**: once a writer, a query stays one
+//! until it ends, so everything after the first mutation — including reads of the
+//! shared, non-MVCC index — sees an exclusively locked graph.
 
 use std::{marker::PhantomData, sync::OnceLock};
 
@@ -51,12 +43,11 @@ pub trait WriteEscalation {
 
 /// The host's process-wide lock — under Redis, the module GIL.
 ///
-/// Needed because some host FFI mutates global host state: the RediSearch index
-/// spec lifecycle registers and stops garbage-collection timers in the Redis
-/// event loop, which must be serialised against the host's own thread. Such code
-/// runs both inside queries and far from any query (background index
-/// maintenance, teardown), which is why this is a process-wide registration
-/// rather than something threaded through a query.
+/// Needed because creating a RediSearch index registers a garbage-collection timer
+/// in the host's event loop, which must be serialised against the host's own
+/// thread. That happens both inside queries and far from any query (background
+/// index maintenance, teardown), hence a process-wide registration rather than
+/// something threaded through a query.
 ///
 /// Implementations must be **re-entrancy tolerant**: `lock` is a no-op when the
 /// calling thread already holds the lock (the module GIL is not recursive), and

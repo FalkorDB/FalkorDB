@@ -13,11 +13,10 @@
 //!  │       └─ NodeByLabelScan
 //! ```
 //!
-//! Like `GRAPH.QUERY`/`GRAPH.RECORD`, planning happens on the thread pool with
-//! the client blocked; the main thread only resolves the graph key. Running the
-//! plan build inline on the main thread deadlocks the server: the handler holds
-//! the GIL while waiting for the `ThreadedGraph` read lock, while a committing
-//! write holds the write lock and waits for the GIL (issue #726).
+//! Like `GRAPH.QUERY`, planning happens on the thread pool with the client blocked;
+//! the main thread only resolves the graph key. Building the plan inline would
+//! deadlock: the handler holds the GIL while waiting for the graph read lock, and a
+//! committing write holds the write lock while waiting for the GIL (issue #726).
 
 use crate::{
     commands::EMPTY_KEY_ERR,
@@ -32,9 +31,8 @@ use redis_module::{
 };
 use std::{os::raw::c_char, sync::Arc};
 
-/// The critical section: acquire the graph read lock, build the plan, and reply
-/// the linearized tree. Runs on a worker thread (or synchronously for
-/// MULTI/REPLICATED), never inline on the main thread under the GIL.
+/// Acquire the graph read lock, build the plan, reply the linearized tree. Runs on a
+/// worker thread, or synchronously for MULTI/REPLICATED.
 fn explain(
     ctx: &Context,
     graph: &Arc<RwLock<ThreadedGraph>>,
@@ -81,10 +79,8 @@ pub fn graph_explain(
         return explain(ctx, &graph, query);
     }
 
-    // Run on the thread pool like GRAPH.QUERY/GRAPH.RECORD. Executing on the
-    // main thread deadlocks the server (issue #726): the handler holds the GIL
-    // while waiting for the ThreadedGraph read lock, while a committing write
-    // query holds the write lock and waits for the GIL.
+    // Run on the thread pool like GRAPH.QUERY — see the module docs for why inline
+    // on the main thread deadlocks (#726).
     let bc = unsafe { BlockedClient::new(ctx.ctx) };
     let query: Arc<str> = Arc::from(query);
     spawn(

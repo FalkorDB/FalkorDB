@@ -31,12 +31,11 @@
 //! components, which avoids truncation discrepancies when clients verify
 //! the total against the individual parts.
 //!
-//! Sampling can be non-trivial, so like `GRAPH.QUERY`/`GRAPH.RECORD` the report
-//! is built on the thread pool with the client blocked; the main thread only
-//! resolves the graph key. Running inline on the main thread would also
-//! deadlock the server against a committing write (issue #726): the handler
-//! holds the GIL while waiting for the read lock, while the write holds the
-//! write lock and waits for the GIL.
+//! Sampling can be non-trivial, so like `GRAPH.QUERY` the report is built on the
+//! thread pool with the client blocked; the main thread only resolves the graph key.
+//! Running inline would also deadlock against a committing write (issue #726): the
+//! handler holds the GIL while waiting for the read lock, and the write holds the
+//! write lock while waiting for the GIL.
 
 use crate::{
     graph_core::{BlockedClient, ThreadedGraph, ffi},
@@ -51,10 +50,8 @@ use std::sync::Arc;
 
 const MB: usize = 1 << 20;
 
-/// The critical section: take the graph read lock, sample the attribute stores,
-/// and build the flat key-value reply array. Runs on a worker thread (or
-/// synchronously for MULTI/REPLICATED), never inline on the main thread under
-/// the GIL.
+/// Take the graph read lock, sample the attribute stores, build the flat key-value
+/// reply array. Runs on a worker thread, or synchronously for MULTI/REPLICATED.
 #[allow(clippy::too_many_lines)]
 fn memory_report(
     graph: &Arc<RwLock<ThreadedGraph>>,
@@ -230,9 +227,8 @@ pub fn graph_memory(
         return memory_report(&graph, samples);
     }
 
-    // Run on the thread pool (issue #726): executing on the main thread holds
-    // the GIL while waiting for the read lock, which deadlocks against a
-    // committing write holding the write lock and waiting for the GIL.
+    // Run on the thread pool — see the module docs for why inline on the main
+    // thread deadlocks (#726).
     let bc = unsafe { BlockedClient::new(ctx.ctx) };
     spawn(
         move || {

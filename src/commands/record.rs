@@ -71,7 +71,7 @@ fn record_mut(
         None,
         0,
         None,
-        &crate::query_lock::RedisQueryLock,
+        &crate::query_session::NoEscalation,
     );
     let _ = runtime.query();
     let ids = plan.root().indices::<Bfs>().collect::<Vec<_>>();

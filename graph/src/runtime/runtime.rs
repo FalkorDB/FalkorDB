@@ -131,11 +131,10 @@ pub struct Runtime<'a> {
     pub stats: RefCell<QueryStatistics>,
     /// Query execution plan tree
     pub plan: Arc<DynTree<IR>>,
-    /// The lock protocol governing this query, injected by the host at
-    /// construction (see [`crate::query_lock`]). Operators reach it through
-    /// [`Runtime::query_lock`] rather than through a global, so the dependency is
-    /// explicit at the point of use and swappable in tests.
-    query_lock: &'a dyn crate::query_lock::QueryLock,
+    /// The host value holding this query's locks (see [`crate::locks`]). Reached
+    /// through [`Runtime::write_escalation`] by the operators that mutate shared
+    /// state, so the dependency is explicit at the point of use.
+    write_escalation: &'a dyn crate::locks::WriteEscalation,
     /// Deduplication state for DISTINCT operations, keyed by the DISTINCT
     /// expression's node index plus its aggregation group hash. Uses a
     /// cheap `FxHashMap` over a `(NodeIdx, u64)` tuple so the hot per-row
@@ -393,7 +392,7 @@ impl<'a> Runtime<'a> {
         timeout_ms: Option<u64>,
         mem_capacity: i64,
         current_usage_fn: Option<fn() -> usize>,
-        query_lock: &'a dyn crate::query_lock::QueryLock,
+        write_escalation: &'a dyn crate::locks::WriteEscalation,
     ) -> Self {
         let return_names = plan.root().get_return_names();
         let pending = Lazy::new((|| RefCell::new(Pending::new())) as fn() -> RefCell<Pending>);
@@ -407,7 +406,7 @@ impl<'a> Runtime<'a> {
             pending,
             stats: RefCell::new(QueryStatistics::default()),
             plan,
-            query_lock,
+            write_escalation,
             return_names,
             value_dedupers: RefCell::new(rustc_hash::FxHashMap::default()),
             inspect,
@@ -456,20 +455,19 @@ impl<'a> Runtime<'a> {
         Ok(())
     }
 
-    /// This query's lock protocol. Escalate to writer mode with
-    /// `runtime.query_lock().upgrade_to_write()` before mutating shared state.
+    /// Call `runtime.write_escalation().upgrade_to_write()?` before mutating
+    /// shared state (the index, or the published graph version).
     ///
-    /// Not a guard: the lock's *lifetime* is owned by the host for the whole query
-    /// (it must outlive `query()` so the host can commit), so releasing is the
-    /// host's business — this is the handle used to change mode.
+    /// Not a guard: the host owns the locks for the whole query — they must
+    /// outlive `query()` so the host can commit — so this only *changes mode*,
+    /// never releases.
     #[must_use]
-    pub fn query_lock(&self) -> &'a dyn crate::query_lock::QueryLock {
-        self.query_lock
+    pub fn write_escalation(&self) -> &'a dyn crate::locks::WriteEscalation {
+        self.write_escalation
     }
 
-    /// Undo index documents published by earlier `Commit` operators in this query
-    /// by re-synchronising them against committed state. See
-    /// [`Pending::resync_published_indexes`].
+    /// Undo the index documents earlier `Commit`s published, after this query
+    /// failed. See [`Pending::resync_published_indexes`].
     pub fn resync_published_indexes(
         &self,
         committed: &Arc<AtomicRefCell<Graph>>,
@@ -479,19 +477,9 @@ impl<'a> Runtime<'a> {
             .resync_published_indexes(committed);
     }
 
-    /// Apply deferred index operations to RediSearch. Must be called only after
-    /// the full query succeeds, and only in writer mode: a failed query must not
-    /// leave documents behind for entities its rollback discards.
+    /// Write this `Commit`'s index documents to RediSearch. Writer mode only.
     pub fn commit_deferred_indexes(&self) {
         self.pending.borrow_mut().commit_deferred_indexes(&self.g);
-    }
-
-    /// Extract the deferred index operations (leaving the runtime's pending
-    /// empty) so the caller can apply them under the commit (L1-write) lock,
-    /// keeping the index and the committed graph version consistent for
-    /// concurrent readers. See [`crate::runtime::pending::DeferredIndexes`].
-    pub fn take_deferred_indexes(&self) -> crate::runtime::pending::DeferredIndexes {
-        self.pending.borrow_mut().take_deferred_indexes()
     }
 
     pub fn query(&'a self) -> Result<ResultSummary<'a>, String> {
@@ -1251,9 +1239,9 @@ impl<'a> Runtime<'a> {
                     None => None,
                 };
                 // Index DDL mutates the shared, non-MVCC index directly (not via
-                // `pending`) and calls host FFI that requires the host lock, so
-                // escalate to writer mode first — same contract as `CommitOp`.
-                self.query_lock().upgrade_to_write()?;
+                // `pending`) and calls host FFI that needs the global lock, so
+                // become a writer first — same contract as `CommitOp`.
+                self.write_escalation().upgrade_to_write()?;
                 self.g.borrow_mut().create_index(
                     index_type,
                     entity_type,
@@ -1276,9 +1264,8 @@ impl<'a> Runtime<'a> {
                     ));
                 }
 
-                // See `CreateIndex` above: DDL mutates shared index state, so it
-                // runs in writer mode.
-                self.query_lock().upgrade_to_write()?;
+                // See `CreateIndex` above: DDL runs in writer mode.
+                self.write_escalation().upgrade_to_write()?;
                 let dropped =
                     self.g
                         .borrow_mut()

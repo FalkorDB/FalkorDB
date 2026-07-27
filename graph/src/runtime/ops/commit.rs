@@ -79,9 +79,8 @@ impl<'a> Iterator for CommitOp<'a> {
                     None => break,
                 }
             }
-            // Applying `pending` mutates only this query's *private* MVCC graph
-            // version, so it needs no lock at all — keep it outside the writer
-            // window, which the host holds its global lock for.
+            // Applying `pending` mutates only this query's *private* MVCC version,
+            // so it needs no lock — keep it outside the writer window.
             if let Err(e) = self
                 .runtime
                 .pending
@@ -90,21 +89,16 @@ impl<'a> Iterator for CommitOp<'a> {
             {
                 return Some(Err(e));
             }
-            // Publishing index documents *is* a mutation of shared, non-MVCC
-            // state, so escalate to writer mode first. The host takes its global
-            // lock and the per-graph write lock and keeps them for the rest of the
-            // query (see `crate::query_lock`); idempotent, so nested Commits after
-            // the first are free.
-            if let Err(e) = self.runtime.query_lock().upgrade_to_write() {
+            // Publishing index documents *is* a mutation of shared, non-MVCC state,
+            // so become a writer first — sticky for the rest of the query, and
+            // idempotent, so nested Commits after the first are free.
+            if let Err(e) = self.runtime.write_escalation().upgrade_to_write() {
                 return Some(Err(e));
             }
-            // Publish this commit's index documents now, so an operator above us
-            // can scan what an earlier subquery wrote (e.g.
-            // `CREATE (n:L) WITH n MATCH (m:L) WHERE m.id > 0`). Safe against
-            // concurrent readers because we hold the write lock; safe against this
-            // query failing later because `resync_published_indexes` brings the
-            // index back in line with committed state — the same guarantee C gets
-            // from its undo log.
+            // Publish index documents now, so an operator above us can scan what an
+            // earlier subquery wrote (`CREATE (n:L) WITH n MATCH (m:L) ...`). Readers
+            // are excluded by the write lock; a later failure is undone by
+            // `resync_published_indexes`, C's undo-log guarantee.
             self.runtime.commit_deferred_indexes();
             // Commit succeeded — build effects buffer from pending data, then clear.
             {

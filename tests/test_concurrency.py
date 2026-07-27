@@ -93,10 +93,9 @@ def _hammer_under_write_load(command):
 
 
 def test_slowlog_concurrent_with_writes():
-    # GRAPH.SLOWLOG runs inline on the main thread (it is not moved to a
-    # worker), so it directly exercises the two-phase write-loop fix: while it
-    # holds the GIL and takes the per-graph read lock, the write loop must not
-    # be holding the write lock while waiting for the GIL.
+    # GRAPH.SLOWLOG runs inline on the main thread, so it exercises the #726 fix
+    # directly: while it holds the GIL and takes the per-graph read lock, the write
+    # loop must not be holding the write lock and waiting for the GIL.
     _hammer_under_write_load(lambda r: r.execute_command("GRAPH.SLOWLOG", "test"))
 
 
@@ -107,8 +106,8 @@ def test_memory_concurrent_with_writes():
 
 
 def test_explain_concurrent_with_writes():
-    # GRAPH.EXPLAIN is dispatched to a worker thread (this PR supersedes the
-    # side-branch #735 fix). It must not deadlock against committing writes.
+    # GRAPH.EXPLAIN is dispatched to a worker thread; it must not deadlock against
+    # committing writes.
     _hammer_under_write_load(
         lambda r: r.execute_command(
             "GRAPH.EXPLAIN", "test", "MATCH (n:Node) RETURN n.id LIMIT 1"
@@ -117,10 +116,9 @@ def test_explain_concurrent_with_writes():
 
 
 def _create_index(r):
-    # First call creates the index; later calls error ("already indexed") but
-    # still plan as DDL and run through the GIL->L1-write DDL branch (eager
-    # create_rs_index / GilGuard). We only care that the command returns rather
-    # than hanging, so swallow the expected error.
+    # First call creates the index; later calls error ("already indexed") but still
+    # plan as DDL and escalate to writer mode, calling the RediSearch spec FFI. We
+    # only care that the command returns rather than hanging, so swallow the error.
     try:
         r.execute_command("GRAPH.QUERY", "test", "CREATE INDEX FOR (n:Node) ON (n.id)")
     except Exception:
@@ -128,8 +126,8 @@ def _create_index(r):
 
 
 def test_create_index_concurrent_with_writes():
-    # DDL runs under GIL->L1-write with the GilGuard made a no-op; must not
-    # deadlock or self-deadlock against concurrent committing writes.
+    # DDL escalates to writer mode and then takes the global lock re-entrantly; must
+    # not deadlock or self-deadlock against concurrent committing writes.
     _hammer_under_write_load(_create_index)
 
 
@@ -155,11 +153,10 @@ def test_multi_write_concurrent_with_writes():
 
 
 def _profile_write(r):
-    # GRAPH.PROFILE of a write now routes through the SAME write queue as
-    # GRAPH.QUERY (two-phase GIL->L1 commit), instead of the old bespoke path
-    # that held L1-write across execute+commit. Under the two-phase change that
-    # old path could also panic on a busy MVCC slot (.expect). It must return,
-    # not hang or crash, under concurrent write load.
+    # GRAPH.PROFILE of a write routes through the SAME write queue as GRAPH.QUERY,
+    # instead of the old bespoke path that held L1-write across execute+commit (and
+    # could panic on a busy MVCC slot). It must return, not hang or crash, under
+    # concurrent write load.
     r.execute_command("GRAPH.PROFILE", "test", "CREATE (:Node {id: -3})")
 
 

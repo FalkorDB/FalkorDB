@@ -938,23 +938,14 @@ impl OwnedIndex {
 
 impl Drop for OwnedIndex {
     fn drop(&mut self) {
-        // Release this strong reference to the RediSearch spec.
+        // No global lock, even for the last release: `IndexSpec_Free` touches no
+        // Redis timer (it asserts the temporary-index timer is already stopped, and
+        // the ForkGC timer self-terminates by not rescheduling — RediSearch `gc.c`).
+        // Only index *creation* needs it, via `RM_CreateTimer`.
         //
-        // This never needs the module GIL, even for the final (spec-freeing)
-        // release. `RediSearch_IndexRelease` -> `StrongRef_Release` -> (last ref)
-        // `IndexSpec_Free` touches NO Redis timer: `IndexSpec_Free` asserts the
-        // temporary-index timer is already stopped (LLAPI specs never set one,
-        // and that timer is stopped only on the main thread in
-        // `IndexSpec_RemoveFromGlobals`) and offloads the memory free to a
-        // cleanup pool; the ForkGC timer self-terminates by simply not
-        // rescheduling once it observes the spec was freed (RediSearch `gc.c`
-        // `taskCallback`). Only index *creation* needs the GIL
-        // (`create_rs_index` -> `GCContext_Start` -> `RM_CreateTimer`).
-        //
-        // Being GIL-free is what makes this safe under #726: an index-scan
-        // iterator can drop its cloned handle mid-query-execute while holding
-        // the per-graph L1 (read) lock without ever acquiring the GIL, so there
-        // is no L1->GIL inversion — and no reaper/deferral is needed.
+        // That is load-bearing for #726: an index-scan iterator drops its cloned
+        // handle mid-execute while holding the per-graph read lock, so acquiring the
+        // global lock here would be the L1→global inversion.
         unsafe {
             RediSearch_IndexRelease(self.0.as_ptr());
         }
@@ -992,24 +983,14 @@ impl SpecHandle {
 
 impl Drop for SpecHandle {
     fn drop(&mut self) {
-        // Deliberately does NOT take the host global lock, for the same reason
-        // `OwnedIndex::drop` doesn't: `RediSearch_DropIndex` is
-        // `StrongRef_Invalidate` + `StrongRef_Release`, and the terminal
-        // `IndexSpec_Free` stops no timer (it asserts the temporary-index timer is
-        // already unset, and the ForkGC timer self-terminates by not rescheduling).
-        // Verified by call-graph trace and by an lldb run in which
-        // `RM_CreateTimer` fired only on the index-*create* path and
-        // `RM_StopTimer` never fired at all.
+        // No global lock, for the same reason as `OwnedIndex::drop`: nothing here
+        // stops a timer. Load-bearing too — a reader holding the per-graph read lock
+        // can be the last holder of the spec (a concurrent `drop_index_bg` swaps the
+        // index map under it), and taking the global lock there is the #726
+        // inversion.
         //
-        // Being lock-free here is load-bearing: an index *scan* can be the last
-        // holder of the spec (a concurrent `drop_index_bg` swaps the index map
-        // while a reader still holds the old one), so this `drop` can run on a
-        // reader thread holding the per-graph READ lock. Acquiring the host lock
-        // there would be the #726 inversion.
-        //
-        // DropIndex both invalidates the spec and releases the creation ref, so
-        // hand it the raw pointer via `into_raw` to avoid a double release from
-        // `OwnedIndex`'s own Drop.
+        // `DropIndex` invalidates the spec *and* releases the creation ref, so pass
+        // the raw pointer via `into_raw` to avoid a second release from `OwnedIndex`.
         unsafe {
             let owned = std::mem::ManuallyDrop::take(&mut self.0);
             RediSearch_DropIndex(owned.into_raw());
@@ -1111,16 +1092,12 @@ impl Index {
         stopwords: Option<&Vec<Arc<String>>>,
         language: Option<&Arc<String>>,
     ) -> Result<(), String> {
-        // RediSearch_CreateIndex transitively calls RM_CreateTimer (via
-        // GCContext_Start), which mutates Redis-internal timer state. Off-thread
-        // callers (background populate / write worker) must hold the module GIL.
         unsafe {
-            // Host global lock required (RediSearch registers/stops GC timers in
-            // the host event loop). A no-op when we already hold it — a query
-            // that escalated to writer mode, or a background index task that
-            // correctly took it *before* its own locks. Teardown paths (graph
-            // free) reach here holding nothing, so acquire it here.
-            let _host = crate::host_lock::HostLockGuard::acquire();
+            // Needs the global lock: `RediSearch_CreateIndex` registers a GC timer in
+            // the host event loop (`GCContext_Start` -> `RM_CreateTimer`). A no-op
+            // when already held (an escalated query, or a background index task that
+            // took it before its own locks); teardown reaches here holding nothing.
+            let _global = crate::locks::GlobalLockGuard::acquire();
             let options = RediSearch_CreateIndexOptions();
             RediSearch_IndexOptionsSetGCPolicy(options, GC_POLICY_FORK as _);
 
@@ -1195,18 +1172,12 @@ impl Index {
         field_options: Option<&TextIndexOptions>,
     ) -> Result<(), String> {
         unsafe {
-            // `RediSearch_CreateField` modifies the index spec's internal field
-            // array (numFields, fields[], inverted-index trie setup). RediSearch's
-            // ForkGC timer callback – fired on the Redis main thread – can concurrently
-            // read or mutate the same spec during its periodic scan. Without the GIL
-            // this is a data race that corrupts heap state and crashes the process.
-            // Under coverage instrumentation the race window is 10-100× wider, which
-            // is why the crash is reliably reproduced only in coverage builds.
-            //
-            // Same host-lock requirement as `create_rs_index` above; the release
-            // paths (`OwnedIndex::drop` / `SpecHandle::drop`) deliberately take no
-            // lock — see the comments there.
-            let _host = crate::host_lock::HostLockGuard::acquire();
+            // Global lock as in `create_rs_index`: `RediSearch_CreateField` mutates
+            // the spec's field array, which the ForkGC timer callback on the main
+            // thread can read concurrently — a heap-corrupting race without it
+            // (reliably reproducible only in coverage builds, where the window is
+            // 10-100× wider).
+            let _global = crate::locks::GlobalLockGuard::acquire();
             for field in fields.values().flat_map(|f| f.iter()) {
                 match field.ty {
                     IndexType::Range => {

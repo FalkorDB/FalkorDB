@@ -421,12 +421,9 @@ fn populate_index_batch(
             // recreates an entry under the same label, release still targets
             // the original generation via `ticket.generation_id`.
             {
-                // NOTE: deliberately does *not* take the host global lock. This
-                // batch only touches ticket bookkeeping and document add/delete,
-                // none of which reach the RediSearch spec lifecycle (index
-                // create/recreate/drop) — so the "host lock before indexer lock"
-                // rule (see `drop_index_bg`) does not apply, and holding the host
-                // lock for every batch would serialize background index
+                // Deliberately no global lock: a batch only touches ticket
+                // bookkeeping and document add/delete, never the RediSearch spec
+                // lifecycle, and taking it per batch would serialize background
                 // population against the main thread.
                 let lock = indexer.write_lock();
                 let guard = lock.lock();
@@ -627,17 +624,13 @@ fn drop_index_bg(
 ) {
     spawn(
         move || {
-            // Takes the indexer lock only, and deliberately *not* the host lock:
-            // `Indexer::remove` swaps the index map, and the `Index` it drops
-            // reaches only the host-lock-free `SpecHandle::drop` / `OwnedIndex::drop`.
-            // Reaching for the host lock while holding the indexer lock is the AB-BA
-            // that hung `test_index_create` for six hours (issue #726) — the one
-            // direction allowed anywhere is host lock → indexer lock, so a task that
-            // needs neither must take neither.
+            // Indexer lock only, never the global lock: `Indexer::remove` swaps the
+            // index map, and the `Index` it drops takes no lock either. Reaching for
+            // the global lock *under* the indexer lock is the AB-BA that hung
+            // `test_index_create` for six hours (issue #726).
             //
-            // Serialize with `populate_index_batch`, which holds the same
-            // lock for the duration of a batch. Without this, the populate
-            // worker can be mid-batch when we remove the label.
+            // The lock serializes against `populate_index_batch`, which holds it for
+            // a whole batch, so the populate worker can't be mid-batch here.
             let lock = node_indexer.write_lock();
             let _guard = lock.lock();
             node_indexer.remove(&label);

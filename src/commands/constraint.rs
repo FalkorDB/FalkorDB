@@ -178,35 +178,33 @@ pub fn graph_constraint(
             if needs_async_validation {
                 let graph_clone = graph.clone();
                 std::thread::spawn(move || {
-                    // Phase 1: the long-running validation runs under L1-READ,
-                    // GIL-free, so concurrent `db.constraints()` reads still see
-                    // the constraint UNDER CONSTRUCTION.
-                    let _session = crate::query_lock::ScopedSession::begin(&graph_clone);
-                    let results = crate::query_lock::with_graph(|tg| {
+                    // Phase 1: the long-running validation runs as a reader, so
+                    // concurrent `db.constraints()` still sees the constraint UNDER
+                    // CONSTRUCTION.
+                    let session = crate::query_session::QuerySession::begin(&graph_clone);
+                    let results = session.with_graph(|tg| {
                         tg.graph
                             .read()
                             .borrow()
                             .compute_pending_constraint_results()
                     });
-                    // Phase 2: publish the status update under GIL → L1-write
-                    // (issue #726 / #452). This is a detached background thread,
-                    // so acquire the module GIL explicitly (client-less
-                    // thread-safe context) BEFORE L1-write and keep the commit
-                    // Arc-swap under the GIL so it cannot race a BGSAVE fork —
-                    // mirroring bulk_insert's Phase 2. Acquiring the GIL first
-                    // (never while holding L1) preserves the GIL→L1 order.
-                    if crate::query_lock::upgrade_to_write().is_ok() {
-                        crate::query_lock::with_graph_mut(|tg| {
-                            if let Some(g_arc) = tg.graph.write() {
-                                g_arc
-                                    .borrow_mut()
-                                    .apply_constraint_validation_results(results);
-                                tg.graph.commit(g_arc);
-                            }
-                        })
-                        .expect("writer mode after upgrade_to_write");
+                    // Phase 2: publish the status update as a writer. Escalation
+                    // takes the global lock before the write lock (#726) and keeps the
+                    // commit Arc-swap under it, so it cannot race a BGSAVE fork
+                    // (#452) — same shape as bulk_insert's Phase 2.
+                    if session.upgrade_to_write().is_ok() {
+                        session
+                            .with_graph_mut(|tg| {
+                                if let Some(g_arc) = tg.graph.write() {
+                                    g_arc
+                                        .borrow_mut()
+                                        .apply_constraint_validation_results(results);
+                                    tg.graph.commit(g_arc);
+                                }
+                            })
+                            .expect("writer mode after upgrade_to_write");
                     }
-                    // `_session` releases the write lock + host lock here.
+                    // `session` releases both locks here.
                 });
             }
 

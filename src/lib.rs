@@ -43,7 +43,7 @@ mod commands;
 mod config;
 mod graph_core;
 mod module_init;
-mod query_lock;
+mod query_session;
 mod redis_type;
 mod reply;
 mod serializers;

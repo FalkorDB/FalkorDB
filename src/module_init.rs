@@ -137,9 +137,9 @@ pub fn graph_init(
     args: &[redis_module::RedisString],
 ) -> Status {
     graph::thread_id::set_main_thread();
-    // Teach the `graph` crate how to escalate a query to writer mode (module GIL
-    // + per-graph write lock) without it knowing anything about Redis.
-    crate::query_lock::register();
+    // Give the `graph` crate the module GIL as its global lock; per-query locks are
+    // handed to each `Runtime` instead (see `crate::query_session`).
+    crate::query_session::register();
     panic::set_hook(Box::new(|info| {
         // Route the panic message + backtrace through RedisModule_Log so
         // it lands in the Redis log file uploaded by CI on test failure.

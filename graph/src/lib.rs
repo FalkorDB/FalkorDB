@@ -61,6 +61,7 @@
 //! - [`graph`]: Graph data structures (sparse matrices, vectors, MVCC)
 //! - [`graph::graphblas`]: GraphBLAS FFI bindings (auto-generated)
 //! - [`index`]: Index types, management, and RediSearch FFI bindings
+//! - [`locks`]: The two lock seams the host provides (write escalation, global lock)
 //! - [`runtime`]: Query execution engine and built-in functions
 //! - [`storage`]: Shared storage seam (per-store backend registry; an in-memory
 //!   backend by default, an alternate backend swapped in by a statically-linked add-on)
@@ -70,11 +71,10 @@
 
 pub mod entity_type;
 pub mod graph;
-pub mod host_lock;
 pub mod index;
+pub mod locks;
 pub mod parser;
 pub mod planner;
-pub mod query_lock;
 pub mod runtime;
 pub mod storage;
 pub mod thread_id;

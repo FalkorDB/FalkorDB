@@ -522,14 +522,12 @@ pub fn graph_bulk_insert(
     spawn(
         move || {
             let ts_ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
-            // Phase 1: build the new version under L1-READ, GIL-free (issue
-            // #726 — never hold L1-write while acquiring the GIL). The inner
-            // MVCC slot serializes this against other writers; a concurrent
-            // writer holding the slot yields a retryable "write lock
-            // unavailable" rather than blocking.
-            let _session = crate::query_lock::ScopedSession::begin(&graph);
+            // Phase 1: build the new version as a reader, GIL-free. The MVCC slot
+            // serializes against other writers; one already holding it yields a
+            // retryable "write lock unavailable" rather than blocking.
+            let session = crate::query_session::QuerySession::begin(&graph);
             let outcome = {
-                match crate::query_lock::with_graph(|tg| tg.graph.write()) {
+                match session.with_graph(|tg| tg.graph.write()) {
                     None => Err("ERR write lock unavailable".to_string()),
                     Some(g_arc) => {
                         let result = {
@@ -548,34 +546,33 @@ pub fn graph_bulk_insert(
                         match result {
                             Ok(()) => Ok(g_arc),
                             Err(e) => {
-                                crate::query_lock::with_graph(|tg| tg.graph.rollback());
+                                session.with_graph(|tg| tg.graph.rollback());
                                 Err(format!("ERR bulk insert failed: {e}"))
                             }
                         }
                     }
                 }
             };
-            // Phase 2: commit + replicate (or reply the error) under GIL→L1-write.
-            // Committing under the GIL keeps the Arc-swap fork-safe (#452), and
-            // acquiring the GIL before L1 never inverts against a main-thread
-            // command holding the GIL and waiting for L1.
+            // Phase 2: commit + replicate (or reply the error) as a writer, so the
+            // commit Arc-swap happens under the GIL and stays fork-safe (#452).
             match outcome {
                 Ok(g_arc) => {
-                    // Escalate through the lock protocol: release read, take the
-                    // host lock, take the write lock (never GIL-under-L1, #726).
-                    if let Err(e) = crate::query_lock::upgrade_to_write() {
-                        // Release the MVCC write slot we acquired in phase 1 —
-                        // only commit()/rollback() clear it, so skipping this
-                        // leaves the graph permanently unwritable.
-                        crate::query_lock::with_graph(|tg| tg.graph.rollback());
+                    // Escalate: release read, take the global lock, take the write
+                    // lock — never the reverse (#726).
+                    if let Err(e) = session.upgrade_to_write() {
+                        // Release the MVCC slot from phase 1 — only
+                        // commit()/rollback() clear it, so skipping this leaves the
+                        // graph permanently unwritable.
+                        session.with_graph(|tg| tg.graph.rollback());
                         let cerr = ffi::sanitise_error(e);
                         unsafe { ffi::reply_error(ts_ctx, cerr.as_ptr()) };
-                        drop(_session);
+                        drop(session);
                         drop(bc);
                         unsafe { ffi::free_thread_safe_context(ts_ctx) };
                         return;
                     }
-                    crate::query_lock::with_graph_mut(|tg| tg.graph.commit(g_arc))
+                    session
+                        .with_graph_mut(|tg| tg.graph.commit(g_arc))
                         .expect("writer mode after upgrade_to_write");
                     raw::replicate_verbatim(ts_ctx);
                     let reply =
@@ -588,9 +585,8 @@ pub fn graph_bulk_insert(
                     unsafe { ffi::reply_error(ts_ctx, cerr.as_ptr()) };
                 }
             }
-            // Release the write lock + host lock before unblocking the client,
-            // preserving the previous ordering.
-            drop(_session);
+            // Release the locks before unblocking the client.
+            drop(session);
             drop(bc);
             unsafe { ffi::free_thread_safe_context(ts_ctx) };
         },

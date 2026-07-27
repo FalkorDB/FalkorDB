@@ -2,8 +2,7 @@
 //! this process is a fork child.
 //!
 //! Lock bookkeeping used to live here too (GIL-held / lock-order tracking); it now
-//! belongs to [`crate::query_lock`], which models the whole lock protocol behind a
-//! host-provided trait.
+//! belongs to the host, behind the two seams in [`crate::locks`].
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};

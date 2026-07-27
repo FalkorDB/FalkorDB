@@ -153,15 +153,12 @@ pub struct Pending {
     deferred_index_removes: FxHashMap<u64, RoaringTreemap>,
     deferred_edge_index_adds: FxHashMap<u64, RoaringTreemap>,
     deferred_edge_index_removes: FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
-    /// Every entity whose index document this query has already written — added
-    /// **or** removed — keyed by label/type slot. A query can still fail after an
-    /// inner `Commit` wrote documents, and the private graph version is then
-    /// discarded, so the index has to be brought back in line with committed
-    /// state: a rolled-back create must lose its document, a rolled-back update or
-    /// delete must get its previous document back. See
-    /// [`Self::resync_published_indexes`]. Edge entries keep their endpoints
-    /// because an edge doc key is `(src, dst, edge_id)`, and a rolled-back edge no
-    /// longer has resolvable endpoints anywhere.
+    /// Every entity whose index document this query has written — added **or**
+    /// removed — keyed by label/type slot, so a failure after an inner `Commit` can
+    /// resync the index against committed state (see
+    /// [`Self::resync_published_indexes`]). Edge entries keep their endpoints
+    /// because an edge doc key is `(src, dst, edge_id)` and a rolled-back edge has
+    /// no resolvable endpoints left anywhere.
     touched_node_docs: FxHashMap<u64, RoaringTreemap>,
     touched_edge_docs: FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
     /// Schema baseline: number of labels when the current commit window started.
@@ -174,12 +171,8 @@ pub struct Pending {
     schema_rel_attr_count: usize,
 }
 
-/// Deferred index document operations extracted from a completed write, applied
-/// to the graph under the commit (L1-write) lock so the RediSearch index and the
-/// committed graph version become visible to concurrent readers atomically —
-/// mirroring the C write path, where the index doc update happens inside the
-/// graph write lock. Applying them in the earlier (L1-read) execute phase would
-/// let a concurrent reader observe new index entries over an old graph version.
+/// One `Commit`'s index document changes, collected while applying `pending` and
+/// written to RediSearch as a batch.
 #[derive(Default)]
 pub struct DeferredIndexes {
     node_adds: FxHashMap<u64, RoaringTreemap>,
@@ -189,9 +182,10 @@ pub struct DeferredIndexes {
 }
 
 impl DeferredIndexes {
-    /// Apply the deferred index doc changes to `g`. MUST be called while holding
-    /// the outer write lock (readers excluded), in the same critical section as
-    /// `MvccGraph::commit`, so the index and graph stay consistent for readers.
+    /// Write the batch to the shared RediSearch index.
+    ///
+    /// Only valid in writer mode: the index is not MVCC, so readers must be
+    /// excluded (mirrors C, which updates index docs inside the graph write lock).
     pub fn commit(
         &mut self,
         g: &AtomicRefCell<Graph>,
@@ -1230,10 +1224,7 @@ impl Pending {
         Ok(())
     }
 
-    /// Extract the deferred index operations, leaving pending empty. The
-    /// returned [`DeferredIndexes`] is applied later, under the commit
-    /// (L1-write) lock, so the index and the committed graph version become
-    /// visible to readers atomically. See [`DeferredIndexes::commit`].
+    /// Take the accumulated index document changes, leaving pending empty.
     pub fn take_deferred_indexes(&mut self) -> DeferredIndexes {
         DeferredIndexes {
             node_adds: std::mem::take(&mut self.deferred_index_adds),
@@ -1243,22 +1234,16 @@ impl Pending {
         }
     }
 
-    /// Apply deferred index operations to RediSearch inline. Called only after
-    /// the full query succeeds, so a failed query never leaves stale index
-    /// entries. Callers that run under the L1-read execute phase must instead
-    /// use [`Self::take_deferred_indexes`] and apply them under the commit lock.
-    /// Bring the shared index back in line with committed state after this query
-    /// failed, undoing documents published by earlier `Commit` operators.
+    /// Undo the index documents earlier `Commit`s published, after this query
+    /// failed, by re-synchronising them against committed state.
     ///
-    /// Mirrors FalkorDB C's undo log (`_UndoLog_Rollback_Update_Entity`): a failed
-    /// *create* has its document deleted, while a failed *update* is re-indexed
-    /// from the entity's previous values — deleting it instead would drop a live
-    /// entity out of the index. We need no undo log for that: MVCC already keeps
-    /// the previous state, so `committed` (the still-published version) *is* the
-    /// old value, and re-adding replaces the document in place.
+    /// Mirrors C's undo log (`_UndoLog_Rollback_Update_Entity`): a failed *create*
+    /// loses its document, a failed *update* is re-indexed from the entity's
+    /// previous values — deleting it instead would drop a live entity out of the
+    /// index. No undo log is needed for that, because MVCC still holds the previous
+    /// state: `committed` *is* the old value, and re-adding rewrites the document.
     ///
-    /// Caller must be in writer mode, and must call this BEFORE releasing the
-    /// write lock.
+    /// Writer mode only, and before the write lock is released.
     pub fn resync_published_indexes(
         &mut self,
         committed: &AtomicRefCell<Graph>,
@@ -1305,16 +1290,16 @@ impl Pending {
         g.commit_edge_index(&mut edge_adds, &mut edge_removes);
     }
 
+    /// Write this `Commit`'s index documents to RediSearch. Writer mode only.
     pub fn commit_deferred_indexes(
         &mut self,
         g: &AtomicRefCell<Graph>,
     ) {
         let mut deferred = self.take_deferred_indexes();
-        // Note every document we are about to write — additions *and* removals —
-        // so a later failure in this query can bring the index back in line with
-        // committed state. Removals matter as much as additions: a rolled-back
-        // DELETE must get its document back, or the entity silently disappears
-        // from the index.
+        // Record every document we are about to write — additions *and* removals —
+        // so a later failure can resync against committed state. Removals matter as
+        // much as additions: a rolled-back DELETE must get its document back, or the
+        // entity silently disappears from the index.
         for ids in [&deferred.node_adds, &deferred.node_removes] {
             for (slot, ids) in ids {
                 self.touched_node_docs
