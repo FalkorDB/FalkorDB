@@ -5,9 +5,9 @@
  */
 
 #include "RG.h"
+#include "commands.h"
 #include "../ast/ast.h"
 #include "cmd_context.h"
-#include "../util/arr.h"
 #include "cron/cron.h"
 #include "../globals.h"
 #include "../query_ctx.h"
@@ -18,7 +18,6 @@
 #include "../errors/errors.h"
 #include "index_operations.h"
 #include "../effects/effects.h"
-#include "../util/cache/cache.h"
 #include "../configuration/config.h"
 #include "../graph/graphcontext_retrieve.h"
 #include "../execution_plan/execution_plan.h"
@@ -430,15 +429,16 @@ void _query
 			status = GraphContext_RetrieveOrForce (ctx,
 					command_ctx->rm_graph_name, true, false, &gc) ;
 		} else {
+			void (*handler) (void *) = profile ? Graph_Profile : Graph_Query ;
 			status = GraphContext_RetrieveOrQueue (ctx,
-					command_ctx->rm_graph_name, true, false, command_ctx, &gc) ;
+					command_ctx->rm_graph_name, true, false, handler,
+					command_ctx, &gc) ;
 		}
 
 		if (status == GraphRetrieve_LOADING) {
 			// parked behind another thread's in-flight load of this graph
-			// (only reachable via the queueing path above);
-			// CommandCtx_ResumeAfterGraphLoad will resubmit (or fail) this
-			// command once that load resolves - undo this attempt's
+			// (only reachable via the queueing path above); `handler` will
+			// be resubmitted once that load resolves - undo this attempt's
 			// thread-local setup, leave the CommandCtx / blocked client alone
 			Globals_UntrackCommandCtx (command_ctx) ;
 			QueryCtx_Free () ;

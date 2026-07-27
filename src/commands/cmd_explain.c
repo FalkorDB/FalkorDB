@@ -9,7 +9,6 @@
 #include "../query_ctx.h"
 #include "execution_ctx.h"
 #include "../index/index.h"
-#include "../util/rmalloc.h"
 #include "../errors/errors.h"
 #include "../graph/graphcontext_retrieve.h"
 #include "../execution_plan/execution_plan.h"
@@ -39,13 +38,14 @@ void Graph_Explain
 
 	if (gc == NULL) {
 		GraphRetrieveStatus status = GraphContext_RetrieveOrQueue (ctx,
-				command_ctx->rm_graph_name, true, false, command_ctx, &gc) ;
+				command_ctx->rm_graph_name, true, false, Graph_Explain,
+				command_ctx, &gc) ;
 
 		if (status == GraphRetrieve_LOADING) {
 			// parked behind another thread's in-flight load of this graph;
-			// CommandCtx_ResumeAfterGraphLoad will resubmit (or fail) this
-			// command once that load resolves - undo this attempt's
-			// thread-local setup, leave the CommandCtx / blocked client alone
+			// Graph_Explain will be resubmitted once that load resolves -
+			// undo this attempt's thread-local setup, leave the CommandCtx /
+			// blocked client alone
 			Globals_UntrackCommandCtx (command_ctx) ;
 			QueryCtx_Free () ;
 			return ;

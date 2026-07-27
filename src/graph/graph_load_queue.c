@@ -8,14 +8,15 @@
 #include "../util/arr.h"
 #include "../util/dict.h"
 #include "../util/rmalloc.h"
+#include "../util/thpool/pool.h"
 #include "../configuration/config.h"
 
 #include <pthread.h>
 
 // a single parked waiter
 typedef struct {
-	CommandCtx         *waiter ;  // parked command context, owned by the caller
-	GraphLoadWaiterCB   cb ;      // invoked once, on drain
+	void (*handler) (void *) ;  // resubmitted to the thread pool on drain
+	void  *arg ;                // passed to `handler` on drain
 } Waiter ;
 
 // graph name (owned copy) -> arr_t of Waiter, parked behind the owner
@@ -24,13 +25,13 @@ static pthread_mutex_t  _lock     = PTHREAD_MUTEX_INITIALIZER ;
 
 GraphLoadQueueStatus GraphLoadQueue_AcquireOrWait
 (
-	const char        *graph_name,
-	CommandCtx        *waiter,
-	GraphLoadWaiterCB  cb
+	const char *graph_name,
+	void      (*handler) (void *),
+	void       *arg
 ) {
 	ASSERT (graph_name != NULL) ;
-	ASSERT (waiter     != NULL) ;
-	ASSERT (cb         != NULL) ;
+	ASSERT (handler     != NULL) ;
+	ASSERT (arg         != NULL) ;
 
 	GraphLoadQueueStatus status ;
 
@@ -57,7 +58,7 @@ GraphLoadQueueStatus GraphLoadQueue_AcquireOrWait
 		if ((uint64_t) arr_len (waiters) >= cap) {
 			status = GraphLoadQueue_FULL ;
 		} else {
-			Waiter w = { .waiter = waiter, .cb = cb } ;
+			Waiter w = { .handler = handler, .arg = arg } ;
 			arr_append (waiters, w) ;  // may reallocate - write the pointer back
 			HashTableSetVal (_entries, de, waiters) ;
 			status = GraphLoadQueue_PARKED ;
@@ -71,8 +72,7 @@ GraphLoadQueueStatus GraphLoadQueue_AcquireOrWait
 
 void GraphLoadQueue_Drain
 (
-	const char *graph_name,
-	bool        success
+	const char *graph_name
 ) {
 	ASSERT (graph_name != NULL) ;
 	ASSERT (_entries    != NULL) ;
@@ -90,7 +90,10 @@ void GraphLoadQueue_Drain
 
 	uint32_t n = arr_len (waiters) ;
 	for (uint32_t i = 0 ; i < n ; i++) {
-		waiters[i].cb (waiters[i].waiter, success) ;
+		// force=true - these waiters were already accepted into the
+		// per-graph wait list (a separate capacity from the thread pool's
+		// own work queue) and must not be silently dropped
+		ThreadPool_AddWork (waiters[i].handler, waiters[i].arg, true) ;
 	}
 
 	arr_free (waiters) ;
@@ -110,10 +113,8 @@ void GraphLoadQueue_Free (void) {
 		Waiter *waiters = HashTableGetVal (de) ;
 		uint32_t n = arr_len (waiters) ;
 		for (uint32_t i = 0 ; i < n ; i++) {
-			// success=false - there is no real load outcome left to report;
-			// same as any other failed drain, this replies with an error and
-			// frees the CommandCtx
-			waiters[i].cb (waiters[i].waiter, false) ;
+			// same as a normal drain - resubmit, force=true
+			ThreadPool_AddWork (waiters[i].handler, waiters[i].arg, true) ;
 		}
 
 		arr_free (waiters) ;
@@ -124,3 +125,4 @@ void GraphLoadQueue_Free (void) {
 	HashTableRelease (_entries) ;
 	_entries = NULL ;
 }
+

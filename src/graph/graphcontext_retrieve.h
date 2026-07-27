@@ -6,24 +6,26 @@
 #pragma once
 
 #include "graphcontext.h"
-#include "../commands/cmd_context.h"
 
 // Like GraphContext_Retrieve (see graphcontext.h), always attempting to load
 // the graph from disk if it is offloaded, but with different handling of
 // concurrent loads: if another thread is already loading this stub,
-// `command_ctx` is parked instead of GraphRetrieve_LOADING being returned
-// immediately. Once that in-flight load resolves, CommandCtx_ResumeAfterGraphLoad
-// (see cmd_context.h) is invoked with `command_ctx` - the caller must not
-// touch it again until then.
+// (`handler`, `arg`) is parked instead of GraphRetrieve_LOADING being
+// returned immediately. Once that in-flight load resolves, `handler(arg)`
+// is resubmitted to the thread pool - as if freshly dispatched - so the
+// caller must not touch `arg` again until then. This lets the resumed call
+// re-discover the load's outcome itself (already loaded vs. still a stub)
+// rather than being told.
 // May be called from any thread.
 GraphRetrieveStatus GraphContext_RetrieveOrQueue
 (
-	RedisModuleCtx    *ctx,             // Redis module context
-	RedisModuleString *graphID,         // key identifying the graph
-	bool               readOnly,        // if true, opens the key in read mode
-	bool               shouldCreate,    // create new graph if the key is absent
-	CommandCtx        *command_ctx,     // parked if the graph is being loaded
-	GraphContext     **gc               // out: graph context on success
+	RedisModuleCtx *ctx,         // Redis module context
+	RedisModuleString *graphID,  // key identifying the graph
+	bool readOnly,               // if true, opens the key in read mode
+	bool shouldCreate,           // create new graph if the key is absent
+	void (*handler) (void *),    // resubmitted if the graph is loading
+	void *arg,                   // passed to `handler` if parked
+	GraphContext **gc            // out: graph context on success
 ) ;
 
 // Like GraphContext_Retrieve (see graphcontext.h), always attempting to load
@@ -40,9 +42,10 @@ GraphRetrieveStatus GraphContext_RetrieveOrQueue
 // May be called from any thread.
 GraphRetrieveStatus GraphContext_RetrieveOrForce
 (
-	RedisModuleCtx    *ctx,             // Redis module context
-	RedisModuleString *graphID,         // key identifying the graph
-	bool               readOnly,        // if true, opens the key in read mode
-	bool               shouldCreate,    // create new graph if the key is absent
-	GraphContext     **gc               // out: graph context on success
+	RedisModuleCtx *ctx,         // Redis module context
+	RedisModuleString *graphID,  // key identifying the graph
+	bool readOnly,               // if true, opens the key in read mode
+	bool shouldCreate,           // create new graph if the key is absent
+	GraphContext **gc            // out: graph context on success
 ) ;
+

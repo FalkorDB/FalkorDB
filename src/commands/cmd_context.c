@@ -5,13 +5,8 @@
  */
 
 #include "RG.h"
-#include "commands.h"
-#include "../globals.h"
 #include "cmd_context.h"
 #include "../util/rmalloc.h"
-#include "../util/thpool/pool.h"
-#include "../errors/error_msgs.h"
-#include "../slow_log/slow_log.h"
 #include "../util/blocked_client.h"
 
 #include <stdatomic.h>
@@ -186,65 +181,6 @@ void CommandCtx_UnblockClient
 			cmd_ctx->ctx = NULL;
 		}
 	}
-}
-
-// invoked once, with the outcome, when a graph load that a query-family
-// command (`waiter`, a parked CommandCtx) was waiting on resolves: on
-// success the command is requeued from scratch according to its command
-// name, on failure a reply is emitted and the parked client is unblocked
-void CommandCtx_ResumeAfterGraphLoad
-(
-	CommandCtx *waiter,
-	bool        success
-) {
-	ASSERT (waiter != NULL) ;
-
-	CommandCtx *command_ctx = waiter ;
-
-	if (success) {
-		// requeue the right graph command according to the command's name
-		void (*handler) (void *) ;
-
-		switch (CommandFromString (CommandCtx_GetCommandName (command_ctx))) {
-			case CMD_QUERY:
-				handler = Graph_Query ;
-				break ;
-
-			case CMD_PROFILE:
-				handler = Graph_Profile ;
-				break ;
-
-			case CMD_EXPLAIN:
-				handler = Graph_Explain ;
-				break ;
-
-			default:
-				RedisModule_Assert ("unexpected command" && false) ;
-				break ;
-		}
-
-		// queue command
-		if (ThreadPool_AddWork (handler, command_ctx, false) !=
-				THPOOL_QUEUE_FULL) {
-			return ;
-		}
-
-		// pool queue is full - this is the thread pool's own general work
-		// queue (shared by every command, not just graph-loading waiters),
-		// a distinct resource from the per-graph load-wait list checked
-		// earlier in graphcontext_retrieve.c - fail the same way
-		// cmd_dispatcher.c does for that same condition
-		RedisModuleCtx *ctx = CommandCtx_GetRedisCtx (command_ctx) ;
-		RedisModule_ReplyWithError (ctx, EMSG_MAX_PENDING_QUERIES) ;
-	} else {
-		RedisModuleCtx *ctx = CommandCtx_GetRedisCtx (command_ctx) ;
-		RedisModule_ReplyWithErrorFormat (ctx,
-				"ERR graph: %s failed to load from disk",
-				RedisModule_StringPtrLen (command_ctx->rm_graph_name, NULL)) ;
-	}
-
-	CommandCtx_UnblockClient (command_ctx) ;
-	CommandCtx_Free (command_ctx) ;
 }
 
 void CommandCtx_Free

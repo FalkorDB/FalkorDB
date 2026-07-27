@@ -4,10 +4,16 @@
  */
 
 #include "cmd_memory.h"
-#include "../errors/error_msgs.h"
+#include "../enterprise_api.h"
 #include "../util/thpool/pool.h"
+#include "../errors/error_msgs.h"
 #include "../graph/graphcontext.h"
 #include "../graph/graph_memoryUsage.h"
+
+// offloaded-graph-stub type, exported by the enterprise module via its
+// shared API - resolved lazily; stays NULL when that module isn't loaded
+// (community edition)
+static GraphStubType_Get_t GraphStubType_Get = NULL ;
 
 // GRAPH.MEMORY command context
 typedef struct {
@@ -40,6 +46,31 @@ static void _Graph_Memory
 	//--------------------------------------------------------------------------
 	// get graph key
 	//--------------------------------------------------------------------------
+
+	// an offloaded stub consumes no RAM right now - check the key's type
+	// directly (mirrors cmd_delete.c) so this never triggers a disk load
+	// just to answer GRAPH.MEMORY, even for a graph that got offloaded
+	// after Graph_Memory blocked the client but before this worker got to
+	// run
+	RedisModule_ThreadSafeContextLock (rm_ctx) ;
+	RedisModuleKey  *rkey = RedisModule_OpenKey (rm_ctx, ctx->graph_id,
+			REDISMODULE_READ) ;
+	RedisModuleType *type = RedisModule_ModuleTypeGetType (rkey) ;
+	if (GraphStubType_Get == NULL) {
+		GraphStubType_Get = RedisModule_GetSharedAPI (rm_ctx, "GraphStubType_Get") ;
+	}
+	bool is_stub = (GraphStubType_Get != NULL && type == GraphStubType_Get ()) ;
+	RedisModule_CloseKey (rkey) ;
+	RedisModule_ThreadSafeContextUnlock (rm_ctx) ;
+
+	if (is_stub) {
+		// a stub isn't loaded, so it consumes no RAM right now - report a
+		// plain 0 rather than the full USAGE breakdown map (there is
+		// nothing to break down), and never call GraphContext_Retrieve
+		// for it
+		RedisModule_ReplyWithLongLong (rm_ctx, 0) ;
+		goto cleanup ;
+	}
 
 	GraphContext *gc = NULL ;
 	GraphContext_Retrieve (rm_ctx, ctx->graph_id, true, false, true, &gc) ;

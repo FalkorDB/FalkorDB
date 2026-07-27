@@ -5,10 +5,6 @@
 
 #pragma once
 
-#include "../commands/cmd_context.h"
-
-#include <stdbool.h>
-
 //------------------------------------------------------------------------------
 // Per-graph coordination for concurrent loads of an offloaded stub
 //
@@ -23,57 +19,54 @@
 // registering as a waiter, have the owner finish and drain an empty list —
 // the two operations are atomic with respect to each other.
 //
-// Waiters are parked CommandCtx pointers paired with a caller-supplied
-// callback, invoked once, exactly one time, when the wait ends.
+// Waiters are parked as a generic (handler, arg) pair - e.g. a command's
+// top-level entry point paired with its CommandCtx - so any caller that may
+// get parked behind an in-flight load can be resumed the same way: by
+// resubmitting `handler(arg)` to the thread pool, as if freshly dispatched.
+// Each parked waiter is resumed exactly once.
 //------------------------------------------------------------------------------
 
 typedef enum {
 	GraphLoadQueue_OWNER,   // no load is currently in flight for this graph;
 	                        // caller must perform the load itself and, once
 	                        // it resolves, call GraphLoadQueue_Drain exactly
-	                        // once with the outcome
+	                        // once
 	GraphLoadQueue_PARKED,  // another thread already owns the in-flight load;
-	                        // `waiter` was parked, `cb` will be invoked
-	                        // exactly once with the outcome once the owner
-	                        // calls GraphLoadQueue_Drain
+	                        // (`handler`, `arg`) was parked and will be
+	                        // resubmitted to the thread pool exactly once,
+	                        // once the owner calls GraphLoadQueue_Drain
 	GraphLoadQueue_FULL,    // another thread owns the in-flight load and the
 	                        // per-graph wait list is already at capacity;
-	                        // `waiter` was NOT parked, caller must handle it
+	                        // (`handler`, `arg`) was NOT parked, caller must
+	                        // handle it
 } GraphLoadQueueStatus ;
 
-// invoked once for a parked waiter when the in-flight load it was waiting on
-// completes; `success` reflects whether the load succeeded
-typedef void (*GraphLoadWaiterCB)
-(
-	CommandCtx *waiter,
-	bool        success
-) ;
-
-// attempt to become the load owner for `graph_name`, or park `waiter` behind
-// whichever thread already owns it
+// attempt to become the load owner for `graph_name`, or park (`handler`,
+// `arg`) behind whichever thread already owns it
 GraphLoadQueueStatus GraphLoadQueue_AcquireOrWait
 (
-	const char        *graph_name,
-	CommandCtx        *waiter,
-	GraphLoadWaiterCB  cb
+	const char *graph_name,
+	void      (*handler) (void *),  // resubmitted to the thread pool on drain
+	void       *arg                 // passed to `handler` on drain
 ) ;
 
 // called exactly once, by the thread for which GraphLoadQueue_AcquireOrWait
-// returned GraphLoadQueue_OWNER, once its load attempt resolves; wakes every
-// waiter parked on `graph_name` with `success`, then clears bookkeeping for
-// `graph_name` so the next load attempt starts a fresh round
+// returned GraphLoadQueue_OWNER, once its load attempt resolves; resubmits
+// every waiter parked on `graph_name` to the thread pool (regardless of the
+// load's outcome - each resumed handler re-discovers that outcome itself,
+// e.g. by re-attempting the retrieval it was parked behind), then clears
+// bookkeeping for `graph_name` so the next load attempt starts a fresh round
 void GraphLoadQueue_Drain
 (
-	const char *graph_name,
-	bool        success
+	const char *graph_name
 ) ;
 
 // release every resource held by this module: any graph names and waiter
 // lists still tracked (e.g. loads that never drained because the server
 // shut down mid-flight), and the registry itself
-// each remaining waiter's callback is still invoked, with success=false -
-// same as a normal failed drain, this replies with an error and frees the
-// CommandCtx; there is simply no real load outcome left to report
+// each remaining waiter is still resubmitted to the thread pool, same as a
+// normal drain
 // not thread-safe with concurrent GraphLoadQueue_AcquireOrWait / _Drain
 // calls - intended for server shutdown only
 void GraphLoadQueue_Free (void) ;
+
