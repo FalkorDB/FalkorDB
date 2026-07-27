@@ -15,6 +15,17 @@ use graph::{
 #[macro_use]
 extern crate afl;
 
+/// `WriteEscalation` for the fuzzer: there is no host and no locks, so becoming a
+/// writer always succeeds. Returning `Err` instead would reject every mutating query
+/// and starve the corpus of the write paths this target exists to exercise.
+struct AlwaysWritable;
+
+impl graph::locks::WriteEscalation for AlwaysWritable {
+    fn upgrade_to_write(&self) -> Result<(), String> {
+        Ok(())
+    }
+}
+
 fn main() {
     unsafe {
         GrB_init(GrB_Mode::GrB_NONBLOCKING as _);
@@ -48,6 +59,7 @@ fn main() {
                 None,
                 0,
                 None,
+                &AlwaysWritable,
             );
             let _ = runtime.query();
         }

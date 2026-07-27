@@ -43,6 +43,7 @@ mod commands;
 mod config;
 mod graph_core;
 mod module_init;
+mod query_session;
 mod redis_type;
 mod reply;
 mod serializers;
@@ -77,11 +78,11 @@ redis_module! {
         ["graph.RESTORE", graph_restore, "write deny-script", 1, 1, 1, ""],
         ["graph.QUERY", graph_query, "write deny-oom deny-script blocking", 1, 1, 1, ""],
         ["graph.RO_QUERY", graph_ro_query, "readonly deny-script blocking", 1, 1, 1, ""],
-        ["graph.EXPLAIN", graph_explain, "write deny-oom deny-script", 1, 1, 1, ""],
+        ["graph.EXPLAIN", graph_explain, "write deny-oom deny-script blocking", 1, 1, 1, ""],
         ["graph.PROFILE", graph_profile, "write deny-oom deny-script blocking", 1, 1, 1, ""],
         ["graph.LIST", graph_list, "readonly deny-script allow-busy", 0, 0, 0, ""],
         ["graph.RECORD", graph_record, "write deny-oom deny-script blocking", 1, 1, 1, ""],
-        ["graph.MEMORY", graph_memory, "readonly deny-script", 2, 2, 1, ""],
+        ["graph.MEMORY", graph_memory, "readonly deny-script blocking", 2, 2, 1, ""],
         ["graph.CONFIG", graph_config, "readonly deny-script allow-busy", 0, 0, 0, ""],
         ["graph.UDF", graph_udf, "write deny-script", 0, 0, 0, ""],
         ["graph.DEBUG", graph_debug, "write deny-script", 0, 0, 0, ""],

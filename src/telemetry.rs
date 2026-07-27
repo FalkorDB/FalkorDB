@@ -509,16 +509,14 @@ fn flusher_loop() {
             .map(|pe| prepare_xadd(pe, &max_len))
             .collect();
 
-        // Single GIL acquisition for the whole batch.
-        unsafe {
-            raw::RedisModule_ThreadSafeContextLock.expect("ThreadSafeContextLock")(tsc);
-        }
-        let ctx = Context::new(tsc);
-        for p in &prepared {
-            dispatch_xadd(&ctx, p, &call_options);
-        }
-        unsafe {
-            raw::RedisModule_ThreadSafeContextUnlock.expect("ThreadSafeContextUnlock")(tsc);
+        // Single GIL acquisition for the whole batch, through the same guard queries
+        // use, so every acquisition in the process funnels through one place.
+        {
+            let _gil = crate::query_session::hold_gil();
+            let ctx = Context::new(tsc);
+            for p in &prepared {
+                dispatch_xadd(&ctx, p, &call_options);
+            }
         }
     }
 

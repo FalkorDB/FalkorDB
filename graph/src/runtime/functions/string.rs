@@ -419,26 +419,7 @@ pub fn register(funcs: &mut Functions) {
             match (iter.next(), iter.next()) {
                 (Some(Value::String(text)), Some(Value::String(pattern))) => {
                     match regex::Regex::new(pattern.as_str()) {
-                        Ok(re) => {
-                            let mut all_matches = thin_vec![];
-                            // For each match, create a sub-list containing the full match and all capture groups
-                            for caps in re.captures_iter(text.as_str()) {
-                                let mut match_list = thin_vec![];
-                                // Iterate through all capture groups (0 = full match, 1+ = capture groups)
-                                // Include NULL for non-participating optional groups to maintain index consistency
-                                for i in 0..caps.len() {
-                                    if let Some(m) = caps.get(i) {
-                                        match_list.push(Value::String(Arc::new(String::from(m.as_str()))));
-                                    } else {
-                                        // Non-participating optional group - use NULL to preserve position
-                                        match_list.push(Value::Null);
-                                    }
-                                }
-                                // Add this match's captures as a sub-list
-                                all_matches.push(Value::List(Arc::new(match_list)));
-                            }
-                            Ok(Value::List(Arc::new(all_matches)))
-                        }
+                        Ok(re) => Ok(regex_captures_list(&re, text.as_str())),
                         Err(e) => Err(format!("Invalid regex, {e}")),
                     }
                 }
@@ -501,4 +482,26 @@ pub fn register(funcs: &mut Functions) {
             }
         }
     );
+}
+
+/// Build the `string.matchRegEx` result: one sub-list per match, containing
+/// the full match followed by all capture groups, with `Null` for
+/// non-participating optional groups to preserve index positions.
+pub(crate) fn regex_captures_list(
+    re: &regex::Regex,
+    text: &str,
+) -> Value {
+    let mut all_matches = thin_vec![];
+    for caps in re.captures_iter(text) {
+        let mut match_list = thin_vec![];
+        for i in 0..caps.len() {
+            if let Some(m) = caps.get(i) {
+                match_list.push(Value::String(Arc::new(String::from(m.as_str()))));
+            } else {
+                match_list.push(Value::Null);
+            }
+        }
+        all_matches.push(Value::List(Arc::new(match_list)));
+    }
+    Value::List(Arc::new(all_matches))
 }

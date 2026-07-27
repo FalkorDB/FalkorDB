@@ -79,6 +79,8 @@ impl<'a> Iterator for CommitOp<'a> {
                     None => break,
                 }
             }
+            // Applying `pending` mutates only this query's *private* MVCC version,
+            // so it needs no lock — keep it outside the writer window.
             if let Err(e) = self
                 .runtime
                 .pending
@@ -87,6 +89,17 @@ impl<'a> Iterator for CommitOp<'a> {
             {
                 return Some(Err(e));
             }
+            // Publishing index documents *is* a mutation of shared, non-MVCC state,
+            // so become a writer first — sticky for the rest of the query, and
+            // idempotent, so nested Commits after the first are free.
+            if let Err(e) = self.runtime.write_escalation().upgrade_to_write() {
+                return Some(Err(e));
+            }
+            // Publish index documents now, so an operator above us can scan what an
+            // earlier subquery wrote (`CREATE (n:L) WITH n MATCH (m:L) ...`). Readers
+            // are excluded by the write lock; a later failure is undone by
+            // `resync_published_indexes`, C's undo-log guarantee.
+            self.runtime.commit_deferred_indexes();
             // Commit succeeded — build effects buffer from pending data, then clear.
             {
                 let pending = self.runtime.pending.borrow();
