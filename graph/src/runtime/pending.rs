@@ -233,9 +233,10 @@ impl DeferredIndexes {
         &mut self,
         g: &AtomicRefCell<Graph>,
     ) {
-        // A shared borrow is enough (see `Graph::commit_index`), so this cannot
-        // conflict with a concurrent reader of the same version.
-        let g = g.borrow();
+        // This is the query's own private version, which nothing else can borrow, so
+        // graph-then-indexer is safe here — see `Pending::resync_published_indexes`
+        // for the published version, where the order has to be the other way round.
+        let mut g = g.borrow_mut();
         g.commit_index(&mut self.node_adds, &mut self.node_removes);
         g.commit_edge_index(&mut self.edge_adds, &mut self.edge_removes);
     }
@@ -1333,13 +1334,17 @@ impl Pending {
             }
         }
 
-        // Shared borrow, deliberately: this runs against the *published* version,
-        // which a background index-populate batch may be reading at the same time. A
-        // `borrow_mut` here would panic against that reader, and taking the indexer
-        // lock first (populate's order) would self-deadlock inside `commit_index`.
-        let g = committed.borrow();
-        g.commit_index(&mut node_adds, &mut node_removes);
-        g.commit_edge_index(&mut edge_adds, &mut edge_removes);
+        // Indexer locks *before* the graph borrow — the order `populate_index_batch`
+        // uses, and the only one that keeps this mutable borrow of the published
+        // version from colliding with a populate batch reading it (`AtomicRefCell`
+        // reports that collision by panicking). Concurrent *readers* are excluded
+        // instead by the write lock this query holds.
+        let (node_lock, edge_lock) = committed.borrow().index_locks();
+        let node_guard = node_lock.lock();
+        let edge_guard = edge_lock.lock();
+        let mut g = committed.borrow_mut();
+        g.commit_index_locked(&node_guard, &mut node_adds, &mut node_removes);
+        g.commit_edge_index_locked(&edge_guard, &mut edge_adds, &mut edge_removes);
     }
 
     /// Write this `Commit`'s index documents to RediSearch. Writer mode only.
