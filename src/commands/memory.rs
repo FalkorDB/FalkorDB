@@ -57,12 +57,13 @@ fn memory_report(
     graph: &Arc<RwLock<ThreadedGraph>>,
     samples: usize,
 ) -> RedisResult {
-    let report = graph
-        .read()
-        .graph
-        .read()
-        .borrow()
-        .memory_usage_report(samples);
+    // L1-read for exactly the sampling pass, through a session: the index sizes come
+    // from RediSearch FFI (`RediSearch_MemUsage`), and a session is what publishes the
+    // lock mode that the GIL lock-order assertion reads (#726).
+    let report = {
+        let session = crate::query_session::QuerySession::begin(graph);
+        session.with_graph(|tg| tg.graph.read().borrow().memory_usage_report(samples))
+    };
 
     // Convert each component to MB using integer division, then compute total
     // as the sum of MB-rounded values (matches the C implementation, avoiding

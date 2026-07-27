@@ -38,13 +38,14 @@ fn explain(
     graph: &Arc<RwLock<ThreadedGraph>>,
     query: &str,
 ) -> RedisResult {
-    let Plan { plan, .. } = graph
-        .read()
-        .graph
-        .read()
-        .borrow()
-        .get_plan(query)
-        .map_err(RedisError::String)?;
+    // L1-read for exactly the plan build, through a session: the optimizer consults
+    // the index to pick scans, and a session is what publishes the lock mode that the
+    // GIL lock-order assertion reads (#726).
+    let Plan { plan, .. } = {
+        let session = crate::query_session::QuerySession::begin(graph);
+        session.with_graph(|tg| tg.graph.read().borrow().get_plan(query))
+    }
+    .map_err(RedisError::String)?;
     let ops = plan.root().indices::<Dfs>().collect::<Vec<_>>();
     raw::reply_with_array(ctx.ctx, ops.len() as _);
     for idx in ops {
