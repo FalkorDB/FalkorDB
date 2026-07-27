@@ -181,10 +181,10 @@ pub struct WriteMessage {
 }
 
 /// What `commit_and_replicate` needs to publish a finished write.
-struct WriteQueryOk {
-    graph: Arc<AtomicRefCell<Graph>>,
-    effects_buffer: Option<Vec<u8>>,
-    modified: bool,
+pub(crate) struct WriteQueryOk {
+    pub(crate) graph: Arc<AtomicRefCell<Graph>>,
+    pub(crate) effects_buffer: Option<Vec<u8>>,
+    pub(crate) modified: bool,
 }
 
 /// Result from a read-path `execute_query` call, surfacing timing metadata
@@ -672,11 +672,11 @@ pub fn execute_query_write(
         .with_graph_mut(|tg| commit_and_replicate(tg, ctx, key_name, query, wq))
         .is_none()
     {
-        // Defensive: a write that somehow never escalated cannot be committed under a
-        // read lock. Release the MVCC write slot (only commit/rollback clears it) so
-        // the graph stays writable.
+        // Never escalated, so the plan's `Commit` never ran and nothing was mutated —
+        // `LIMIT 0` short-circuits above `Commit`, for instance. There is nothing to
+        // publish or replicate; just release the MVCC write slot (only
+        // commit/rollback clears it) and reply as usual.
         session.with_graph(|tg| tg.graph.rollback());
-        return Err("write query did not acquire the graph write lock".to_string());
     }
     session.release_locks();
 
@@ -1280,8 +1280,9 @@ fn profile_sync(
 ///
 /// Runs in writer mode — GIL *and* per-graph write lock — so the `commit` Arc-swap
 /// is fork-safe (#452) and commit+replicate are atomic against inline main-thread
-/// writers. Returns `(params_offset, execution_time_ms)` for telemetry.
-fn commit_and_replicate(
+/// writers. The last work a write does under the GIL; its caller releases the locks
+/// immediately afterwards and only then serializes the reply.
+pub(crate) fn commit_and_replicate(
     g: &mut ThreadedGraph,
     ctx: &Context,
     key_name: &Arc<str>,
@@ -1424,7 +1425,7 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
 /// Decide whether to use effects replication and get the pre-built buffer.
 /// The buffer was built in `CommitOp` before pending was cleared.
 /// Returns Some(buffer) if effects should be sent, None for verbatim replication.
-fn should_use_effects(
+pub(crate) fn should_use_effects(
     is_non_deterministic: bool,
     runtime: &Runtime,
     exec_time_ms: f64,
@@ -1490,7 +1491,7 @@ const fn entity_type_tag(et: &graph::entity_type::EntityType) -> u8 {
 /// effects to the buffer. Returns the (possibly new) effects buffer.
 /// Caller must ensure no CreateIndex carries OPTIONS — those can't currently
 /// round-trip in the binary effect format and require verbatim replication.
-fn build_index_effects(
+pub(crate) fn build_index_effects(
     runtime: &Runtime,
     mut effects_buffer: Option<Vec<u8>>,
 ) -> Option<Vec<u8>> {

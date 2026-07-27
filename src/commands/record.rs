@@ -45,13 +45,14 @@ use std::{collections::HashMap, os::raw::c_char, sync::Arc};
 fn record_mut(
     ctx: &Context,
     graph: &Arc<RwLock<ThreadedGraph>>,
+    key_name: &Arc<str>,
     query: &str,
 ) -> RedisResult {
-    // A recorded query may be a write, so run it under a real session: it takes the
-    // per-graph lock, escalates at the first `Commit` like any write, and mutates a
-    // *private* MVCC version. The version is then rolled back rather than committed —
-    // RECORD is an introspection command, so it reports the operator trace of a write
-    // without letting it land, and never replicates.
+    // A recorded query may be a write, and it is a *real* write: run it under a real
+    // session (per-graph lock, escalation at the first `Commit`, mutations into a
+    // private MVCC version), then commit and replicate exactly like `GRAPH.QUERY`.
+    // RECORD adds the operator trace to a normal write; it does not turn it into a dry
+    // run, so effects land and reach replicas.
     let session = QuerySession::begin(graph);
     let Plan {
         plan, parameters, ..
@@ -81,6 +82,7 @@ fn record_mut(
     } else {
         session.with_graph(|tg| tg.graph.read())
     };
+    let g_arc = Arc::clone(&g);
     let runtime = Runtime::new(
         g,
         parameters,
@@ -95,13 +97,62 @@ fn record_mut(
         None,
         &session,
     );
-    let _ = runtime.query();
+    let outcome = runtime.query();
     if is_write {
-        // Discard the private version and release the slot; index documents published
-        // by any inner `Commit` are undone the same way a failed write undoes them.
-        let committed = session.with_graph(|tg| tg.graph.read());
-        runtime.resync_published_indexes(&committed);
-        session.with_graph(|tg| tg.graph.rollback());
+        match &outcome {
+            Err(_) => {
+                // Same undo a failed write does: bring the index back in line with
+                // committed state, then release the MVCC write slot.
+                let committed = session.with_graph(|tg| tg.graph.read());
+                runtime.resync_published_indexes(&committed);
+                session.with_graph(|tg| tg.graph.rollback());
+            }
+            Ok(result) => {
+                let stats = &result.stats;
+                let modified = stats.nodes_created > 0
+                    || stats.nodes_deleted > 0
+                    || stats.relationships_created > 0
+                    || stats.relationships_deleted > 0
+                    || stats.properties_set > 0
+                    || stats.properties_removed > 0
+                    || stats.labels_added > 0
+                    || stats.labels_removed > 0
+                    || stats.indexes_created > 0
+                    || stats.indexes_dropped > 0
+                    || runtime.effects_count.get() > 0;
+                // Effects encoding mirrors `execute_query_write`: index DDL carrying
+                // OPTIONS cannot round-trip, so those fall back to verbatim
+                // replication of the query.
+                let has_unencodable_index = runtime.plan.iter().any(
+                    |node| matches!(node, IR::CreateIndex { options, .. } if options.is_some()),
+                );
+                let effects_buffer = if has_unencodable_index {
+                    None
+                } else {
+                    let buf = crate::graph_core::should_use_effects(
+                        false,
+                        &runtime,
+                        stats.execution_time,
+                    );
+                    crate::graph_core::build_index_effects(&runtime, buf)
+                };
+                let wq = crate::graph_core::WriteQueryOk {
+                    graph: g_arc,
+                    effects_buffer,
+                    modified,
+                };
+                if session
+                    .with_graph_mut(|tg| {
+                        crate::graph_core::commit_and_replicate(tg, ctx, key_name, query, wq)
+                    })
+                    .is_none()
+                {
+                    // The plan's `Commit` never ran (`LIMIT 0` above it, say), so
+                    // nothing was mutated — release the slot without publishing.
+                    session.with_graph(|tg| tg.graph.rollback());
+                }
+            }
+        }
     }
     let ids = plan.root().indices::<Bfs>().collect::<Vec<_>>();
     raw::reply_with_array(ctx.ctx, 2);
@@ -175,6 +226,7 @@ pub fn graph_record(
     let key_str = args.next_arg()?;
     let query = args.next_str()?;
 
+    let key_name: Arc<str> = Arc::from(key_str.to_string().as_str());
     let key = ctx.open_key_writable(&key_str);
 
     let graph = if let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
@@ -195,7 +247,7 @@ pub fn graph_record(
     if ctx.get_flags().contains(ContextFlags::MULTI)
         || ctx.get_flags().contains(ContextFlags::REPLICATED)
     {
-        return record_mut(ctx, &graph, query);
+        return record_mut(ctx, &graph, &key_name, query);
     }
 
     // Run on the thread pool like GRAPH.QUERY. Executing on the main thread
@@ -204,11 +256,12 @@ pub fn graph_record(
     // write lock and waits for the GIL.
     let bc = unsafe { BlockedClient::new(ctx.ctx) };
     let query: Arc<str> = Arc::from(query);
+    let key_name = key_name.clone();
     spawn(
         move || {
             let ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
             let ctx = Context::new(ctx);
-            if let Err(err) = record_mut(&ctx, &graph, &query) {
+            if let Err(err) = record_mut(&ctx, &graph, &key_name, &query) {
                 let cerr = ffi::sanitise_error(err.to_string());
                 unsafe { ffi::reply_error(ctx.ctx, cerr.as_ptr()) };
             }
