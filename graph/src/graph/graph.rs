@@ -627,18 +627,14 @@ fn drop_index_bg(
 ) {
     spawn(
         move || {
-            // Host lock FIRST, then the indexer lock — never the reverse, which is
-            // the AB-BA that hung `test_index_create` (issue #726): index DDL holds
-            // the host lock and then wants the indexer lock.
+            // Takes the indexer lock only, and deliberately *not* the host lock:
+            // `Indexer::remove` swaps the index map, and the `Index` it drops
+            // reaches only the host-lock-free `SpecHandle::drop` / `OwnedIndex::drop`.
+            // Reaching for the host lock while holding the indexer lock is the AB-BA
+            // that hung `test_index_create` for six hours (issue #726) — the one
+            // direction allowed anywhere is host lock → indexer lock, so a task that
+            // needs neither must take neither.
             //
-            // Strictly speaking the critical section below no longer *needs* the
-            // host lock (`Indexer::remove` only swaps the index map, and the
-            // `Index` it drops reaches only the host-lock-free `SpecHandle::drop` /
-            // `OwnedIndex::drop`). It is kept deliberately: removing it produced an
-            // unexplained crash in `test_index_create`, and the cost here is one
-            // uncontended acquire on a rare path — cheap insurance against
-            // reopening a deadlock class that cost a 6-hour CI hang.
-            let _host = crate::host_lock::HostLockGuard::acquire();
             // Serialize with `populate_index_batch`, which holds the same
             // lock for the duration of a batch. Without this, the populate
             // worker can be mid-batch when we remove the label.
@@ -2556,6 +2552,7 @@ impl Graph {
     }
 
     /// True if relationship `id` still exists (has endpoints).
+    #[must_use]
     pub fn relationship_exists(
         &self,
         id: u64,

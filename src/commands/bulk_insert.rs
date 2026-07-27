@@ -527,7 +527,7 @@ pub fn graph_bulk_insert(
             // MVCC slot serializes this against other writers; a concurrent
             // writer holding the slot yields a retryable "write lock
             // unavailable" rather than blocking.
-            let _session = crate::query_lock::ScopedSession::begin(&graph, false);
+            let _session = crate::query_lock::ScopedSession::begin(&graph);
             let outcome = {
                 match crate::query_lock::with_graph(|tg| tg.graph.write()) {
                     None => Err("ERR write lock unavailable".to_string()),
@@ -563,9 +563,7 @@ pub fn graph_bulk_insert(
                 Ok(g_arc) => {
                     // Escalate through the lock protocol: release read, take the
                     // host lock, take the write lock (never GIL-under-L1, #726).
-                    if let Err(e) = graph::query_lock::QueryLock::upgrade_to_write(
-                        &crate::query_lock::RedisQueryLock,
-                    ) {
+                    if let Err(e) = crate::query_lock::upgrade_to_write() {
                         // Release the MVCC write slot we acquired in phase 1 —
                         // only commit()/rollback() clear it, so skipping this
                         // leaves the graph permanently unwritable.
@@ -577,13 +575,8 @@ pub fn graph_bulk_insert(
                         unsafe { ffi::free_thread_safe_context(ts_ctx) };
                         return;
                     }
-                    crate::query_lock::with_current(|s| {
-                        s.graph_mut()
-                            .expect("writer mode after upgrade_to_write")
-                            .graph
-                            .commit(g_arc);
-                    })
-                    .expect("lock session installed");
+                    crate::query_lock::with_graph_mut(|tg| tg.graph.commit(g_arc))
+                        .expect("writer mode after upgrade_to_write");
                     raw::replicate_verbatim(ts_ctx);
                     let reply =
                         format!("{node_count} nodes created, {edge_count} relations created");

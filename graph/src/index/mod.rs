@@ -1202,13 +1202,10 @@ impl Index {
             // this is a data race that corrupts heap state and crashes the process.
             // Under coverage instrumentation the race window is 10-100× wider, which
             // is why the crash is reliably reproduced only in coverage builds.
-            // Mirrors the GIL guards in `create_rs_index`, `Index::drop`, and
-            // `OwnedIndex::drop`.
-            // Host global lock required (RediSearch registers/stops GC timers in
-            // the host event loop). A no-op when we already hold it — a query
-            // that escalated to writer mode, or a background index task that
-            // correctly took it *before* its own locks. Teardown paths (graph
-            // free) reach here holding nothing, so acquire it here.
+            //
+            // Same host-lock requirement as `create_rs_index` above; the release
+            // paths (`OwnedIndex::drop` / `SpecHandle::drop`) deliberately take no
+            // lock — see the comments there.
             let _host = crate::host_lock::HostLockGuard::acquire();
             for field in fields.values().flat_map(|f| f.iter()) {
                 match field.ty {

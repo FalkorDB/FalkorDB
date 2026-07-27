@@ -284,15 +284,26 @@ pub mod ffi {
         unsafe { f(ctx) };
     }
 
-    /// Release the global Redis lock previously acquired with
-    /// [`lock_thread_safe_ctx`].
+    /// Release the global Redis lock acquired with [`lock_thread_safe_ctx`] and
+    /// free the context.
+    ///
+    /// Unlike the other wrappers this one *resolves* the symbols instead of
+    /// `expect`ing them: it runs from a `Drop` impl, where a panic aborts the
+    /// process. If Redis no longer exposes the API, leaking the context is
+    /// strictly better than killing the server.
     ///
     /// # Safety
-    /// `ctx` must be a valid thread-safe context whose lock the current
-    /// thread already holds.
-    pub unsafe fn unlock_thread_safe_ctx(ctx: *mut raw::RedisModuleCtx) {
-        let f = unsafe { raw::RedisModule_ThreadSafeContextUnlock }.expect(MSG);
-        unsafe { f(ctx) };
+    /// `ctx` must be a valid thread-safe context whose lock the current thread
+    /// holds, and must not be used again.
+    pub unsafe fn release_thread_safe_ctx(ctx: *mut raw::RedisModuleCtx) {
+        unsafe {
+            if let Some(unlock) = raw::RedisModule_ThreadSafeContextUnlock {
+                unlock(ctx);
+            }
+            if let Some(free) = raw::RedisModule_FreeThreadSafeContext {
+                free(ctx);
+            }
+        }
     }
 
     /// Mark `key_name` as modified so `WATCH` clients are notified. Must be
@@ -868,7 +879,7 @@ pub fn query_mut(
             // Every query — read or write — runs under a lock session, so all
             // lock transitions go through `crate::query_lock`. A read query simply
             // never escalates; a write query escalates at its first `Commit`.
-            let _session = crate::query_lock::ScopedSession::begin(&binding, false);
+            let _session = crate::query_lock::ScopedSession::begin(&binding);
             let bc = bc;
             let ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
             let ctx = Context::new(ctx);
@@ -1011,7 +1022,7 @@ fn query_sync(
     let query_arc: Arc<str> = Arc::from(query);
     let running_id = telemetry::register_running(received_at, key_name, &query_arc, false);
     let res = {
-        let _session = crate::query_lock::ScopedSession::begin(graph, true);
+        let _session = crate::query_lock::ScopedSession::begin(graph);
         execute_query(ctx, query, compact, write, cmd, per_query_timeout)
     };
     let wall_ms = wall_start.elapsed().as_secs_f64() * 1000.0;
@@ -1042,13 +1053,10 @@ fn query_sync(
                         // Commit (index docs already applied inline), signal WATCH,
                         // and replicate under this L1-write guard — the same path
                         // the async write loop uses.
-                        let (params_offset, exec_ms) = crate::query_lock::with_current(|s| {
-                            let g = s
-                                .graph_mut()
-                                .expect("writer-mode session on the sync write path");
+                        let (params_offset, exec_ms) = crate::query_lock::with_graph_mut(|g| {
                             commit_and_replicate(g, ctx, key_name, query, wq)
                         })
-                        .expect("lock session installed");
+                        .expect("writer-mode session on the sync write path");
                         // Write telemetry
                         let query_text = &query[params_offset..];
                         let params_text = &query[..params_offset];
@@ -1134,7 +1142,7 @@ pub fn profile_mut(
             }
             let g = graph.clone();
             let binding = graph.clone();
-            let _session = crate::query_lock::ScopedSession::begin(&binding, false);
+            let _session = crate::query_lock::ScopedSession::begin(&binding);
             let bc = bc;
             let ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
             let ctx = Context::new(ctx);
@@ -1215,15 +1223,15 @@ fn profile_sync(
         enable_tracking();
     }
     let res = {
-        let _session = crate::query_lock::ScopedSession::begin(graph, true);
+        let _session = crate::query_lock::ScopedSession::begin(graph);
         execute_profile(ctx, query, per_query_timeout)
     };
     match res {
         // Read query — already profiled and replied.
         Ok(ProfileDetect::ReadReplied) => {}
         // Write query. This runs on the main thread, which already holds the
-        // implicit GIL, so DDL's `GilGuard` no-ops and there is no L1→GIL
-        // inversion. Execute + commit under L1-write, then replicate — mirroring
+        // implicit GIL, so the host-lock acquires inside index DDL no-op and there
+        // is no L1→GIL inversion. Execute + commit under L1-write, then replicate — mirroring
         // query_sync's write branch, so a profiled write reaches replicas.
         Ok(ProfileDetect::Write) => {
             let _session = crate::query_lock::ScopedSession::begin_writer(graph);
@@ -1234,13 +1242,10 @@ fn profile_sync(
                     // and the async write loop (commit_and_replicate); the main
                     // thread holds the implicit GIL, satisfying its GIL→L1
                     // contract.
-                    crate::query_lock::with_current(|s| {
-                        let g = s
-                            .graph_mut()
-                            .expect("writer-mode session on the sync profile path");
+                    crate::query_lock::with_graph_mut(|g| {
                         commit_and_replicate(g, ctx, key_name, query, wq);
                     })
-                    .expect("lock session installed");
+                    .expect("writer-mode session on the sync profile path");
                 }
                 Err(err) => {
                     // execute_query_write already released the MVCC slot on
@@ -1367,7 +1372,7 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
         // DDL (CREATE/DROP INDEX) needs no special path any more: creating the
         // RediSearch spec is a mutation, so it escalates like any other write and
         // finds the GIL already held.
-        let _session = crate::query_lock::ScopedSession::begin(graph, false);
+        let _session = crate::query_lock::ScopedSession::begin(graph);
         let exec = execute_query_write(&ctx, &query, compact, cached, per_query_timeout, profile);
         let res: Result<(usize, f64), String> = match exec {
             Ok(wq) => {

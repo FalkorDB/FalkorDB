@@ -2,8 +2,8 @@
 //!
 //! Distinct from [`crate::query_lock`], and deliberately shaped differently:
 //!
-//! * A query lock is **per query** — a query acquires it, escalates it, releases
-//!   it — so it is *injected* into the runtime that owns the query.
+//! * A query lock is **per query** — a query escalates it and releases it — so it
+//!   is *injected* into the runtime that owns the query.
 //! * The host lock is **per process**. Under Redis it is the module GIL, of which
 //!   there is exactly one. A global is therefore an accurate model of it, not a
 //!   shortcut.
@@ -21,14 +21,16 @@
 //! took the indexer lock first and reached for this one deadlocked the server for
 //! six hours (issue #726). One direction only: host lock → everything else.
 
-use std::sync::{Arc, OnceLock};
+use std::{marker::PhantomData, sync::OnceLock};
 
 /// Host-provided access to the process-wide host lock.
 ///
 /// Implementations must be **re-entrancy tolerant**: `lock` is expected to be a
 /// no-op when the calling thread already holds the lock, because the underlying
 /// primitive (Redis's module GIL) is not recursive and re-acquiring it would
-/// self-deadlock.
+/// self-deadlock. `unlock` must likewise release only at the outermost level.
+///
+/// Use through [`HostLockGuard`] rather than calling these directly.
 pub trait HostLock: Send + Sync {
     /// Acquire the host lock, or note one more level of nesting if this thread
     /// already holds it.
@@ -36,65 +38,50 @@ pub trait HostLock: Send + Sync {
 
     /// Release one level; releases the lock itself only at the outermost level.
     fn unlock(&self);
-
-    /// True if the calling thread holds the host lock by any route.
-    fn holds(&self) -> bool;
 }
 
-static HOST_LOCK: OnceLock<Arc<dyn HostLock>> = OnceLock::new();
+static HOST_LOCK: OnceLock<Box<dyn HostLock>> = OnceLock::new();
 
-/// Register the host's implementation. Idempotent; the first call wins. Intended
-/// to be called once from the host's module-init callback.
-pub fn set_host_lock(lock: Arc<dyn HostLock>) {
-    let _ = HOST_LOCK.set(lock);
-}
-
-/// True if the calling thread holds the host lock — or if no host registered one,
-/// in which case there is nothing to hold and every such precondition is met.
-#[must_use]
-pub fn holds_host_lock() -> bool {
-    HOST_LOCK.get().is_none_or(|lock| lock.holds())
+/// Register the host's implementation. Intended to be called once from the host's
+/// module-init callback, before any query can run.
+pub fn set_host_lock(lock: Box<dyn HostLock>) {
+    let already_set = HOST_LOCK.set(lock).is_err();
+    debug_assert!(!already_set, "the host lock was registered twice");
 }
 
 /// RAII guard for the host lock.
 ///
 /// Bind one *before* taking any lock of your own:
 /// `let _host = HostLockGuard::acquire();`
+///
+/// Not `Send`: the lock is released by `Drop`, and the host releases it on the
+/// thread that took it.
 #[must_use]
-pub struct HostLockGuard(bool);
+pub struct HostLockGuard {
+    lock: Option<&'static dyn HostLock>,
+    _not_send: PhantomData<*const ()>,
+}
 
 impl HostLockGuard {
     /// Acquire the host lock for the guard's lifetime. A no-op — and harmless —
-    /// when no host has registered an implementation.
+    /// when no host has registered an implementation (unit tests of the `graph`
+    /// crate, where there is no host state to serialise against).
     pub fn acquire() -> Self {
-        match HOST_LOCK.get() {
-            Some(lock) => {
-                lock.lock();
-                Self(true)
-            }
-            None => Self(false),
+        let lock = HOST_LOCK.get().map(|l| &**l);
+        if let Some(lock) = lock {
+            lock.lock();
+        }
+        Self {
+            lock,
+            _not_send: PhantomData,
         }
     }
 }
 
 impl Drop for HostLockGuard {
     fn drop(&mut self) {
-        if self.0
-            && let Some(lock) = HOST_LOCK.get()
-        {
+        if let Some(lock) = self.lock {
             lock.unlock();
         }
     }
-}
-
-/// Debug-only assertion that the caller holds the host lock.
-///
-/// Guards host FFI that mutates global host state.
-#[inline]
-pub fn assert_holds_host_lock(what: &str) {
-    debug_assert!(
-        holds_host_lock(),
-        "{what} requires the host lock; acquire it before your own locks \
-         (HostLockGuard::acquire) — issue #726"
-    );
 }

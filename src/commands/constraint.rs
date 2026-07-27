@@ -181,7 +181,7 @@ pub fn graph_constraint(
                     // Phase 1: the long-running validation runs under L1-READ,
                     // GIL-free, so concurrent `db.constraints()` reads still see
                     // the constraint UNDER CONSTRUCTION.
-                    let _session = crate::query_lock::ScopedSession::begin(&graph_clone, false);
+                    let _session = crate::query_lock::ScopedSession::begin(&graph_clone);
                     let results = crate::query_lock::with_graph(|tg| {
                         tg.graph
                             .read()
@@ -195,13 +195,8 @@ pub fn graph_constraint(
                     // Arc-swap under the GIL so it cannot race a BGSAVE fork —
                     // mirroring bulk_insert's Phase 2. Acquiring the GIL first
                     // (never while holding L1) preserves the GIL→L1 order.
-                    if graph::query_lock::QueryLock::upgrade_to_write(
-                        &crate::query_lock::RedisQueryLock,
-                    )
-                    .is_ok()
-                    {
-                        crate::query_lock::with_current(|s| {
-                            let tg = s.graph_mut().expect("writer mode after upgrade_to_write");
+                    if crate::query_lock::upgrade_to_write().is_ok() {
+                        crate::query_lock::with_graph_mut(|tg| {
                             if let Some(g_arc) = tg.graph.write() {
                                 g_arc
                                     .borrow_mut()
@@ -209,7 +204,7 @@ pub fn graph_constraint(
                                 tg.graph.commit(g_arc);
                             }
                         })
-                        .expect("lock session installed");
+                        .expect("writer mode after upgrade_to_write");
                     }
                     // `_session` releases the write lock + host lock here.
                 });
