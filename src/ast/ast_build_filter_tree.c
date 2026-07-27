@@ -206,6 +206,7 @@ static FT_FilterNode *_convertInlinedProperties(const cypher_astnode_t *entity,
 			arr_append(keys, prop);
 			arr_append(vals, val);
 		} else {
+			// duplicate: overwrite old value
 			vals[j] = val;
 		}
 	}
@@ -400,3 +401,4 @@ FT_FilterNode *AST_BuildFilterTreeFromClauses
 
 	return filter_tree;
 }
+

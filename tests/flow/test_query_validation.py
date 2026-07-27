@@ -698,3 +698,29 @@ class testQueryValidationFlow(FlowTestsBase):
 
         q = "OPTIONAL MATCH (a) RETURN a UNION MATCH (a) RETURN a"
         self.graph.query(q)
+
+    # Regression test for issue #2196:
+    # MERGE with duplicate property keys followed by ON MATCH SET should not
+    # crash the server.
+    def test46_merge_duplicate_property_keys_on_match_set(self):
+        self.graph.query("CREATE (), ()")
+
+        queries = [
+            """MATCH () MERGE (b{x:1,x:2})""",
+            """MATCH () MERGE (b{x:1,x:2}) ON MATCH SET b.id=3""",
+            """OPTIONAL MATCH(a)
+                MERGE(b{x:1,x:2})<-[:S]-(c)
+                ON MATCH SET a:L""",
+        ]
+
+        for q in queries:
+            try:
+                self.graph.query(q)
+            except redis.exceptions.ResponseError:
+                # Query may fail validation, but should not crash the server.
+                continue
+
+        # Server should remain responsive after both queries.
+        res = self.graph.query("RETURN 1")
+        self.env.assertEquals(res.result_set, [[1]])
+
