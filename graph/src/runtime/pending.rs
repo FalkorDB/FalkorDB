@@ -1262,7 +1262,7 @@ impl Pending {
             let g = committed.borrow();
             for (slot, ids) in &nodes {
                 for id in ids {
-                    if g.node_has_label_slot(id, *slot) {
+                    if g.node_has_label_id(NodeId::from(id), LabelId(*slot as usize)) {
                         // Still live: rewrite the document from committed values.
                         node_adds.entry(*slot).or_default().insert(id);
                     } else {
@@ -1273,7 +1273,7 @@ impl Pending {
             }
             for (slot, ids) in &edges {
                 for (id, endpoints) in ids {
-                    if g.relationship_exists(*id) {
+                    if g.endpoints_for_edge(*id).is_some() {
                         edge_adds.entry(*slot).or_default().insert(*id);
                     } else {
                         edge_removes
@@ -1313,7 +1313,7 @@ impl Pending {
             for (slot, ids) in &deferred.edge_adds {
                 let entry = self.touched_edge_docs.entry(*slot).or_default();
                 for id in ids {
-                    if let Some((src, dst)) = graph.try_relationship_endpoints(id) {
+                    if let Some((src, dst)) = graph.endpoints_for_edge(id) {
                         entry.insert(id, (src, dst));
                     }
                 }

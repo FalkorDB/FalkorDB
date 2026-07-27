@@ -2498,9 +2498,10 @@ impl Graph {
     }
 
     /// Decode the (src, dst) endpoints for an edge from the graph-wide reverse
-    /// index. Returns None if the edge_id is not present.
+    /// index. `None` if the edge does not exist — the fallible counterpart of
+    /// [`Self::get_relationship_endpoints`], which panics.
     #[must_use]
-    fn endpoints_for_edge(
+    pub fn endpoints_for_edge(
         &self,
         edge_id: u64,
     ) -> Option<(u64, u64)> {
@@ -2519,38 +2520,6 @@ impl Graph {
         if let Some(slot) = self.edge_endpoints.get_mut(edge_id as usize) {
             *slot = EDGE_NO_ENDPOINT;
         }
-    }
-
-    /// True if node `id` still carries the label in slot `slot`.
-    ///
-    /// Used by the index undo path to decide whether a published document should be
-    /// re-written from committed state or deleted outright.
-    #[must_use]
-    pub fn node_has_label_slot(
-        &self,
-        id: u64,
-        slot: u64,
-    ) -> bool {
-        self.get_node_label_ids(NodeId(id))
-            .any(|label_id| label_id.0 as u64 == slot)
-    }
-
-    /// Endpoints of relationship `id`, or `None` if it does not exist.
-    #[must_use]
-    pub fn try_relationship_endpoints(
-        &self,
-        id: u64,
-    ) -> Option<(u64, u64)> {
-        self.endpoints_for_edge(id)
-    }
-
-    /// True if relationship `id` still exists (has endpoints).
-    #[must_use]
-    pub fn relationship_exists(
-        &self,
-        id: u64,
-    ) -> bool {
-        self.endpoints_for_edge(id).is_some()
     }
 
     /// Returns (src, dst) for an edge via the maintained reverse index.
