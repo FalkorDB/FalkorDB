@@ -80,7 +80,7 @@ use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use atomic_refcell::AtomicRefCell;
 use lru::LruCache;
 use orx_tree::DynTree;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, MutexGuard};
 use roaring::RoaringTreemap;
 
 use crate::{
@@ -421,6 +421,10 @@ fn populate_index_batch(
             // recreates an entry under the same label, release still targets
             // the original generation via `ticket.generation_id`.
             {
+                // Deliberately no global lock: a batch only touches ticket
+                // bookkeeping and document add/delete, never the RediSearch spec
+                // lifecycle, and taking it per batch would serialize background
+                // population against the main thread.
                 let lock = indexer.write_lock();
                 let guard = lock.lock();
 
@@ -620,9 +624,13 @@ fn drop_index_bg(
 ) {
     spawn(
         move || {
-            // Serialize with `populate_index_batch`, which holds the same
-            // lock for the duration of a batch. Without this, the populate
-            // worker can be mid-batch when we remove the label.
+            // Indexer lock only, never the global lock: `Indexer::remove` swaps the
+            // index map, and the `Index` it drops takes no lock either. Reaching for
+            // the global lock *under* the indexer lock is the AB-BA that hung
+            // `test_index_create` for six hours (issue #726).
+            //
+            // The lock serializes against `populate_index_batch`, which holds it for
+            // a whole batch, so the populate worker can't be mid-batch here.
             let lock = node_indexer.write_lock();
             let _guard = lock.lock();
             node_indexer.remove(&label);
@@ -2489,9 +2497,10 @@ impl Graph {
     }
 
     /// Decode the (src, dst) endpoints for an edge from the graph-wide reverse
-    /// index. Returns None if the edge_id is not present.
+    /// index. `None` if the edge does not exist — the fallible counterpart of
+    /// [`Self::get_relationship_endpoints`], which panics.
     #[must_use]
-    fn endpoints_for_edge(
+    pub fn endpoints_for_edge(
         &self,
         edge_id: u64,
     ) -> Option<(u64, u64)> {
@@ -2848,16 +2857,60 @@ impl Graph {
         }
     }
 
+    /// The indexer serialization locks, cloned so a caller can take them **before**
+    /// borrowing the graph.
+    ///
+    /// That is the order `populate_index_batch` uses (indexer lock held across its
+    /// graph borrow), so anything that needs a *mutable* borrow of the same version —
+    /// the index undo path — must take these first or the two collide, which
+    /// `AtomicRefCell` reports by panicking.
+    #[must_use]
+    pub fn index_locks(&self) -> (Arc<Mutex<()>>, Arc<Mutex<()>>) {
+        (
+            self.node_indexer.write_lock(),
+            self.edge_indexer.write_lock(),
+        )
+    }
+
+    /// Write node index documents to RediSearch, taking the node indexer lock.
     pub fn commit_index(
         &mut self,
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
         remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) {
-        self.commit_index_kind(IndexKind::Node, index_add_docs, remove_docs);
+        let lock = self.node_indexer.write_lock();
+        let guard = lock.lock();
+        self.commit_index_kind(&guard, IndexKind::Node, index_add_docs, remove_docs);
     }
 
+    /// As [`Self::commit_index`], for a caller that already holds the node indexer
+    /// lock from [`Self::index_locks`] — which it must, to have borrowed the graph in
+    /// the sanctioned order.
+    pub fn commit_index_locked(
+        &mut self,
+        guard: &MutexGuard<'_, ()>,
+        index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
+    ) {
+        self.commit_index_kind(guard, IndexKind::Node, index_add_docs, remove_docs);
+    }
+
+    /// Write edge index documents to RediSearch, taking the edge indexer lock.
     pub fn commit_edge_index(
         &mut self,
+        index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        remove_edge_docs: &mut FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
+    ) {
+        let lock = self.edge_indexer.write_lock();
+        let guard = lock.lock();
+        self.commit_edge_index_locked(&guard, index_add_edge_docs, remove_edge_docs);
+    }
+
+    /// As [`Self::commit_edge_index`], for a caller already holding the edge indexer
+    /// lock from [`Self::index_locks`].
+    pub fn commit_edge_index_locked(
+        &mut self,
+        _guard: &MutexGuard<'_, ()>,
         index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
         remove_edge_docs: &mut FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
     ) {
@@ -2865,9 +2918,7 @@ impl Graph {
             return;
         }
 
-        let indexer = &mut self.edge_indexer;
-        let lock = indexer.write_lock();
-        let _guard = lock.lock();
+        let indexer = &self.edge_indexer;
 
         let mut add_docs: HashMap<Arc<String>, Vec<Document>> = HashMap::new();
         for (type_id, ids) in index_add_edge_docs.drain() {
@@ -2935,6 +2986,7 @@ impl Graph {
     /// `Indexer::commit`.
     fn commit_index_kind(
         &mut self,
+        _guard: &MutexGuard<'_, ()>,
         kind: IndexKind,
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
         remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
@@ -2944,12 +2996,9 @@ impl Graph {
         }
 
         let (indexer, names, attr_store) = match kind {
-            IndexKind::Node => (&mut self.node_indexer, &self.node_labels, &self.node_attrs),
+            IndexKind::Node => (&self.node_indexer, &self.node_labels, &self.node_attrs),
             IndexKind::Edge => unreachable!("use commit_edge_index for edges"),
         };
-
-        let lock = indexer.write_lock();
-        let _guard = lock.lock();
 
         let mut add_docs = HashMap::new();
         for (slot, ids) in index_add_docs.drain() {

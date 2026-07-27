@@ -1,3 +1,4 @@
+use crate::query_session::QuerySession;
 use crate::{config::CONFIGURATION_CACHE_SIZE, graph_core::ThreadedGraph, redis_type::GRAPH_TYPE};
 use graph::entity_type::EntityType;
 use graph::graph::constraint::ConstraintType;
@@ -144,7 +145,7 @@ pub fn graph_constraint(
     let mut tg = graph.write();
     let Some(g_arc) = tg.graph.write() else {
         return Err(redis_module::RedisError::String(
-            "ERR write lock unavailable".into(),
+            "ERR another write is in progress, retry the query".into(),
         ));
     };
 
@@ -178,18 +179,33 @@ pub fn graph_constraint(
             if needs_async_validation {
                 let graph_clone = graph.clone();
                 std::thread::spawn(move || {
-                    let results = {
-                        let tg = graph_clone.read();
-                        let g = tg.graph.read();
-                        g.borrow().compute_pending_constraint_results()
-                    };
-                    let mut tg = graph_clone.write();
-                    if let Some(g_arc) = tg.graph.write() {
-                        g_arc
-                            .borrow_mut()
-                            .apply_constraint_validation_results(results);
-                        tg.graph.commit(g_arc);
+                    // Phase 1: the long-running validation runs as a reader, so
+                    // concurrent `db.constraints()` still sees the constraint UNDER
+                    // CONSTRUCTION.
+                    let session = QuerySession::begin(&graph_clone);
+                    let results = session.with_graph(|tg| {
+                        tg.graph
+                            .read()
+                            .borrow()
+                            .compute_pending_constraint_results()
+                    });
+                    // Phase 2: publish the status update as a writer. Escalation
+                    // takes the global lock before the write lock (#726) and keeps the
+                    // commit Arc-swap under it, so it cannot race a BGSAVE fork
+                    // (#452) — same shape as bulk_insert's Phase 2.
+                    if session.upgrade_to_write().is_ok() {
+                        session
+                            .with_graph_mut(|tg| {
+                                if let Some(g_arc) = tg.graph.write() {
+                                    g_arc
+                                        .borrow_mut()
+                                        .apply_constraint_validation_results(results);
+                                    tg.graph.commit(g_arc);
+                                }
+                            })
+                            .expect("writer mode after upgrade_to_write");
                     }
+                    // `session` releases both locks here.
                 });
             }
 

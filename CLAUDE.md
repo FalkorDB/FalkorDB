@@ -158,6 +158,10 @@ Cypher Query String
 ## Code Style
 
 - Uses `rustfmt` with vertical function parameter layout (`fn_params_layout = "Vertical"`)
+- Bring items into scope with `use`; do not write fully-qualified paths at the call
+  site. Prefer `use crate::query_session::QuerySession;` and then
+  `QuerySession::begin(graph)` over `crate::query_session::QuerySession::begin(graph)`
+  (see `src/commands/explain.rs`)
 - The parser (`cypher.rs`) is hand-written, not generated from Cypher.g4 grammar file
 - GraphBLAS FFI bindings are in `graph/src/graph/GraphBLAS.rs` (auto-generated, do not edit)
 

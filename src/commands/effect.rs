@@ -62,7 +62,7 @@ pub fn graph_effect(
     let mut tg = graph.write();
     let Some(g_arc) = tg.graph.write() else {
         return Err(redis_module::RedisError::String(
-            "ERR write lock unavailable".to_string(),
+            "ERR another write is in progress, retry the query".to_string(),
         ));
     };
 

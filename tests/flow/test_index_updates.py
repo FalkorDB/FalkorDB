@@ -195,3 +195,108 @@ class testIndexUpdatesFlow(FlowTestsBase):
         result = self.graph.query("CALL db.idx.fulltext.queryNodes('label_a', 'Group C')")
         self.env.assertEqual(len(result.result_set), 0)
 
+    # A query that fails *after* an inner Commit already published index documents
+    # must leave nothing behind: the rollback discards the entities those documents
+    # point at, and `get_indexed_nodes` does not validate ids against the reader's
+    # snapshot, so a leftover document surfaces as a phantom row.
+    def test08_failed_create_leaves_no_index_entry(self):
+        create_node_range_index(self.graph, 'RB', 'v', sync=True)
+
+        # Fails on the division, i.e. after the CREATE has been committed and its
+        # index document published by the nested Commit.
+        try:
+            self.graph.query(
+                "CREATE (n:RB {v: 1}) WITH n UNWIND [1, 0] AS d RETURN n.v / d")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Division by zero", str(e))
+
+        # The node itself is rolled back ...
+        result = self.graph.query("MATCH (n:RB) RETURN count(n)")
+        self.env.assertEqual(result.result_set[0][0], 0)
+
+        # ... and so is its index document (an index scan must not find a phantom).
+        result = self.graph.query("MATCH (n:RB) WHERE n.v = 1 RETURN count(n)")
+        self.env.assertEqual(result.result_set[0][0], 0)
+
+    # The undo for a failed *update* must restore the previous document, not delete
+    # it: the entity still exists with its old value, so deleting would drop a live
+    # entity out of the index and cause silent false negatives.
+    def test09_failed_update_restores_previous_index_entry(self):
+        create_node_range_index(self.graph, 'RBU', 'v', sync=True)
+        self.graph.query("CREATE (:RBU {v: 10})")
+
+        result = self.graph.query("MATCH (n:RBU) WHERE n.v = 10 RETURN count(n)")
+        self.env.assertEqual(result.result_set[0][0], 1)
+
+        try:
+            self.graph.query(
+                """MATCH (n:RBU) WHERE n.v = 10 SET n.v = 20
+                   WITH n UNWIND [1, 0] AS d RETURN n.v / d""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Division by zero", str(e))
+
+        # The old value is still indexed ...
+        result = self.graph.query("MATCH (n:RBU) WHERE n.v = 10 RETURN count(n)")
+        self.env.assertEqual(result.result_set[0][0], 1)
+
+        # ... the rolled-back new value is not ...
+        result = self.graph.query("MATCH (n:RBU) WHERE n.v = 20 RETURN count(n)")
+        self.env.assertEqual(result.result_set[0][0], 0)
+
+        # ... and the graph agrees with the index.
+        result = self.graph.query("MATCH (n:RBU) RETURN n.v")
+        self.env.assertEqual(result.result_set, [[10]])
+
+    # An index scan above a nested Commit must see what an earlier part of the same
+    # query wrote (read-your-own-writes across a write -> read boundary).
+    def test10_index_scan_sees_earlier_subquery_writes(self):
+        create_node_range_index(self.graph, 'RYOW', 'v', sync=True)
+
+        # The MATCH is served by a Node By Index Scan above the Commit that created
+        # the node, so it only yields a row if that write is visible to the index.
+        result = self.graph.query(
+            """CREATE (n:RYOW {v: 77}) WITH n
+               MATCH (m:RYOW) WHERE m.v = 77 CREATE (:RYOW {v: 78})""")
+        self.env.assertEqual(result.nodes_created, 2)
+
+        result = self.graph.query("MATCH (n:RYOW) WHERE n.v = 78 RETURN count(n)")
+        self.env.assertEqual(result.result_set[0][0], 1)
+
+    # A query that publishes index documents and then fails must not disturb a
+    # background index population running over the same graph version.
+    #
+    # The undo path resyncs the *published* version's index while the populate worker
+    # is reading that same version. While the undo took a *mutable* borrow of it, the
+    # two collided — `atomic_refcell` reports that by panicking, so the module died on
+    # the first failing write (verified against the pre-fix build).
+    def test11_failed_write_during_index_population(self):
+        g = self.db.select_graph('idx_pop_race')
+        g.query("UNWIND range(1, 20000) AS i CREATE (:PopRace {v: i})")
+        # Returns as soon as the spec exists; population continues in the background.
+        create_node_range_index(g, 'PopRace', 'v', sync=False)
+
+        # Hammer failing writes while the index is still building. Each one publishes
+        # a document in its inner Commit, then fails, which invokes the undo.
+        for _ in range(300):
+            try:
+                g.query("CREATE (n:PopRace {v: -1}) WITH n UNWIND [1, 0] AS d RETURN 1/d")
+                self.env.assertTrue(False)
+            except ResponseError as e:
+                self.env.assertContains("Division by zero", str(e))
+            status = g.ro_query(
+                "CALL db.indexes() YIELD status RETURN status").result_set
+            if status and status[0][0] == 'OPERATIONAL':
+                break
+
+        # The server survived and the population completed.
+        wait_for_indices_to_sync(g)
+
+        # The index holds exactly the committed nodes: no phantom document for the
+        # rolled-back `v: -1`, and nothing dropped by the resync either.
+        result = g.query("MATCH (n:PopRace) WHERE n.v = -1 RETURN count(n)")
+        self.env.assertEqual(result.result_set[0][0], 0)
+        result = g.query("MATCH (n:PopRace) WHERE n.v > 0 RETURN count(n)")
+        self.env.assertEqual(result.result_set[0][0], 20000)
+        g.delete()

@@ -1,14 +1,5 @@
-//! Redis main-thread identity, used to decide whether GIL acquisition is
-//! needed before calling Redis-module FFI from a `Drop`.
-//!
-//! `RedisModule_ThreadSafeContextLock` is a non-recursive mutex that the Redis
-//! main thread holds implicitly during command execution; calling it again
-//! from the main thread would deadlock. Off-thread callers (worker threads,
-//! lazyfree) must acquire it explicitly.
-//!
-//! The host crate calls [`set_main_thread`] once from the module-init
-//! callback (which Redis runs on the main thread). After that,
-//! [`is_main_thread`] tells `Drop` impls which path to take.
+//! Thread identity helpers: which thread is the host's main thread, and whether this
+//! process is a fork child.
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
