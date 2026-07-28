@@ -1233,3 +1233,35 @@ class testIndexScanFlow():
         res = self.graph.query(q, {'entries': entries}).result_set
         self.env.assertEqual(len(res), 1)
 
+    # regression test for issue #2239:
+    # string '<' and '<=' range filters must honor upper bounds when executed
+    # via range index scans.
+    def test_35_string_range_lt_lte_index_scan(self):
+        g = Graph(self.env.getConnection(), 'issue_2239')
+
+        g.query("UNWIND range(0,4) AS i CREATE (:E {u: 'uuid-' + toString(i)})")
+
+        # baseline without index
+        res = g.query("MATCH (n:E) WHERE n.u < 'uuid-3' RETURN n.u ORDER BY n.u")
+        self.env.assertEquals(res.result_set, [['uuid-0'], ['uuid-1'], ['uuid-2']])
+
+        create_node_range_index(g, 'E', 'u', sync=True)
+
+        cases = [
+            ("MATCH (n:E) WHERE n.u <= 'uuid-3' RETURN n.u ORDER BY n.u", None,
+             [['uuid-0'], ['uuid-1'], ['uuid-2'], ['uuid-3']]),
+            ("MATCH (n:E) WHERE n.u < 'uuid-1' RETURN n.u ORDER BY n.u", None,
+             [['uuid-0']]),
+            ("MATCH (n:E) WHERE n.u > 'uuid-1' RETURN n.u ORDER BY n.u", None,
+             [['uuid-2'], ['uuid-3'], ['uuid-4']]),
+            ("CYPHER v='uuid-3' MATCH (n:E) WHERE n.u > $v RETURN n.u ORDER BY n.u", None,
+             [['uuid-4']]),
+            ("CYPHER v='uuid-3' MATCH (n:E) WHERE n.u >= $v RETURN n.u ORDER BY n.u", None,
+             [['uuid-3'], ['uuid-4']]),
+        ]
+
+        for q, params, expected in cases:
+            plan = str(g.explain(q, params=params))
+            self.env.assertIn('Node By Index Scan', plan)
+            res = g.query(q, params=params)
+            self.env.assertEquals(res.result_set, expected)

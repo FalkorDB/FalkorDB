@@ -522,3 +522,37 @@ class testVarLengthTraversal(FlowTestsBase):
         self.assert_range_split_invariant(0, n=3)
         self.assert_traversal_union_invariant(0, n=4)
 
+    def test09_build_filter_query(self):
+        """Regression for issue #2241.
+
+        A fixed-length undirected traversal combined with `NOT ... IS NULL`
+        must not crash when endpoints exist but no relationships are present.
+        """
+        # control: empty graph should return 0
+        query = (
+            "MATCH (a:L2)-[*2]-(b:L1) "
+            "WHERE NOT b.k3 IS NULL "
+            "RETURN count(*)"
+        )
+        result = self.graph.query(query)
+        self.env.assertEqual(result.result_set, [[0]])
+
+        # additional repro path: same labels without properties + explain
+        self.conn.delete(GRAPH_ID)
+        self.graph.query("CREATE (:L2), (:L1)")
+
+        explain_query = (
+            "MATCH (a:L2)-[*2]->(b:L1) "
+            "WHERE id(b)=0 "
+            "RETURN 1"
+        )
+        plan = str(self.graph.explain(explain_query))
+        self.env.assertIn("Conditional Traverse", plan)
+
+        # issue repro: two labeled nodes, no edges
+        self.conn.delete(GRAPH_ID)
+        self.graph.query("CREATE (:L2 {k6: 1}), (:L1 {k3: 1})")
+
+        result = self.graph.query(query)
+        self.env.assertEqual(result.result_set, [[0]])
+
