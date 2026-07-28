@@ -406,6 +406,59 @@ impl<'a> ExprEval<'a> {
             ExprIR::Case { has_subject } => {
                 return self.eval_case(*has_subject, node, env, agg_group_key);
             }
+            // Fixed-arity operators, dispatched directly.
+            //
+            // `eval_compound` below is built to accumulate an arbitrary number
+            // of operands: it initialises two `SmallVec` scratch buffers, runs
+            // a push/pop work loop, and folds children through an
+            // iterator+`reduce` chain. That machinery costs ~1,600
+            // instructions to enter, measured, and it is pure overhead for an
+            // operator whose arity is fixed at two — which is most operators in
+            // most queries. Each *additional* operand only costs ~200-400
+            // instructions, so the entry is the cost worth removing.
+            //
+            // Measured on `UNWIND range(0, 999) AS i RETURN sum(...)`:
+            // `sum(i)` (leaf, never enters `eval_compound`) 551,831 instr vs
+            // `sum(i * 3)` 2,161,998 — a single binary operator over 1000 rows
+            // costing 1.6M instructions, essentially all of it setup.
+            op @ (ExprIR::Sub | ExprIR::Mul | ExprIR::Div | ExprIR::Modulo)
+                if node.num_children() == 2 =>
+            {
+                let lhs = self.eval_operand(&node.child(0), env, agg_group_key)?;
+                let rhs = self.eval_operand(&node.child(1), env, agg_group_key)?;
+                return match op {
+                    ExprIR::Sub => lhs - rhs,
+                    ExprIR::Mul => lhs * rhs,
+                    ExprIR::Div => lhs / rhs,
+                    _ => lhs % rhs,
+                };
+            }
+            ExprIR::Eq if node.num_children() == 2 => {
+                let lhs = self.eval_operand(&node.child(0), env, agg_group_key)?;
+                let rhs = self.eval_operand(&node.child(1), env, agg_group_key)?;
+                return all_equals([Ok(lhs), Ok(rhs)].into_iter());
+            }
+            ExprIR::Neq if node.num_children() == 2 => {
+                let lhs = self.eval_operand(&node.child(0), env, agg_group_key)?;
+                let rhs = self.eval_operand(&node.child(1), env, agg_group_key)?;
+                return all_not_equals([Ok(lhs), Ok(rhs)].into_iter());
+            }
+            op @ (ExprIR::Lt | ExprIR::Gt | ExprIR::Le | ExprIR::Ge)
+                if node.num_children() == 2 =>
+            {
+                let lhs = self.eval_operand(&node.child(0), env, agg_group_key)?;
+                let rhs = self.eval_operand(&node.child(1), env, agg_group_key)?;
+                return Ok(match lhs.compare_value(&rhs) {
+                    (_, DisjointOrNull::ComparedNull | DisjointOrNull::Disjoint) => Value::Null,
+                    (_, DisjointOrNull::NaN) => Value::Bool(false),
+                    (ord, _) => Value::Bool(match op {
+                        ExprIR::Lt => ord == Ordering::Less,
+                        ExprIR::Gt => ord == Ordering::Greater,
+                        ExprIR::Le => ord != Ordering::Greater,
+                        _ => ord != Ordering::Less,
+                    }),
+                });
+            }
             _ => {}
         }
 
