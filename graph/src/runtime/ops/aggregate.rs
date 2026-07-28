@@ -105,6 +105,32 @@ enum AggInputKind {
     Variable(Variable),
     /// Property access: `sum(n.age)`
     Property { var: Variable, attr: Arc<String> },
+    /// Any other expression: `sum(i * 3)`, `sum(n.age + 1)`, …
+    ///
+    /// The column is built by evaluating the expression once per active row —
+    /// a loop, but confined to materialising this one column. What matters is
+    /// that the rest of the vectorized path is kept: bulk key extraction and
+    /// the columnar accumulate loop. Falling back to `consume_input_per_row`
+    /// instead abandons those too and rebuilds a full owned `Row` per row,
+    /// measured at ~1,320 instructions/row for a single multiply (`sum(i)`
+    /// 620,879 instr vs `sum(i * 3)` 1,948,488, over 1000 rows).
+    Computed {
+        tree: QueryExpr<Variable>,
+        idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+    },
+}
+
+/// True if `node`'s subtree contains an aggregate call.
+///
+/// Such an input cannot be materialised as a column: the inner aggregate needs
+/// the per-row path's group-aware evaluation, so those trees keep falling back.
+fn subtree_has_aggregate(node: &DynNode<'_, ExprIR<Variable>>) -> bool {
+    if let ExprIR::FuncInvocation(func) = node.data()
+        && func.is_aggregate()
+    {
+        return true;
+    }
+    node.children().any(|child| subtree_has_aggregate(&child))
 }
 
 /// A single aggregation that can be evaluated via the vectorized path.
@@ -313,7 +339,19 @@ impl<'a> AggregateOp<'a> {
                     // count(*) is represented as count(1) (or other non-null literal).
                     None
                 }
-                _ => return None, // complex expression or non-count literal
+                // Anything else: materialise the column by evaluating the
+                // expression per row, keeping the rest of the vectorized path.
+                // A nested aggregate still falls back — it needs the per-row
+                // path's group-aware evaluation.
+                _ => {
+                    if subtree_has_aggregate(&arg) {
+                        return None;
+                    }
+                    Some(AggInputKind::Computed {
+                        tree: tree.clone(),
+                        idx: arg.idx(),
+                    })
+                }
             }
         } else {
             // Multi-argument aggregation (e.g., percentileDisc(n.age, 0.5)).
@@ -625,6 +663,18 @@ impl<'a> AggregateOp<'a> {
                     let active_ids: Vec<_> = active.iter().map(|&i| node_ids[i]).collect();
                     let (col, nulls) = runtime.materialize_node_property(&active_ids, attr);
                     agg_columns.push(column_to_values(&col, &nulls, active.len()));
+                }
+                Some(AggInputKind::Computed { tree, idx }) => {
+                    // Evaluated against `BatchRow` directly: the per-row path
+                    // calls `to_owned_row()` first, which allocates a `Vec` of
+                    // every column for every row.
+                    let mut col = Vec::with_capacity(active.len());
+                    let eval = ExprEval::from_runtime(runtime);
+                    for &row in active {
+                        let view = BatchRow::new(batch, row);
+                        col.push(eval.eval(tree, *idx, Some(&view), None).map_err(|_| ())?);
+                    }
+                    agg_columns.push(col);
                 }
             }
         }
