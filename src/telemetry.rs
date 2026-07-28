@@ -272,7 +272,13 @@ pub fn unregister_waiting(id: u64) {
     }
 }
 
-/// Register a query as waiting in the write queue. Returns its unique ID.
+/// Register a query as **waiting**: accepted but not yet executing, because it
+/// sits either in the thread-pool queue (before a worker picks it up) or in a
+/// graph's write queue (before the write loop drains it). Mirrors C, where
+/// `GRAPH.INFO WaitingQueries` reports the thread pool's queued tasks.
+///
+/// Returns its unique ID, to be passed to [`transition_waiting_to_running`] once
+/// the query starts, or to [`unregister_waiting`] if it never does.
 pub fn register_waiting(
     received_at: i64,
     graph_name: &Arc<str>,
@@ -290,23 +296,24 @@ pub fn register_waiting(
     id
 }
 
-/// Transition a waiting query to running. Returns the waiting info if found.
+/// Transition a waiting query to running, keeping its id — and therefore its
+/// shard, so the move costs a single lock acquisition instead of two.
+///
+/// Returns the id to pass to [`unregister_running`], or `None` if the query was
+/// never registered as waiting.
 pub fn transition_waiting_to_running(waiting_id: u64) -> Option<u64> {
-    let waiting = {
-        let mut reg = shard_for(waiting_id).lock();
-        let pos = reg.waiting.iter().position(|q| q.id == waiting_id)?;
-        reg.waiting.swap_remove(pos)
-    };
-    let running_id = next_id();
-    shard_for(running_id).lock().running.push(RunningQueryInfo {
-        id: running_id,
+    let mut reg = shard_for(waiting_id).lock();
+    let pos = reg.waiting.iter().position(|q| q.id == waiting_id)?;
+    let waiting = reg.waiting.swap_remove(pos);
+    reg.running.push(RunningQueryInfo {
+        id: waiting.id,
         received_at: waiting.received_at,
         graph_name: waiting.graph_name,
         query: waiting.query,
         start: Instant::now(),
         is_replicated: false,
     });
-    Some(running_id)
+    Some(waiting.id)
 }
 
 /// Snapshot of all currently running queries.
