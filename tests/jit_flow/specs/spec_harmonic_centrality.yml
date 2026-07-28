@@ -1,0 +1,6 @@
+queries:
+  - id: algo.HarmonicCentrality.default
+    cypher: >
+      CALL algo.HarmonicCentrality() YIELD node, score
+      RETURN count(node), sum(score)
+

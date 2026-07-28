@@ -1,0 +1,51 @@
+queries:
+  - id: algo.SPpaths.general
+    cypher: >
+      MATCH (s), (t)
+      WHERE id(s) <> id(t)
+      WITH s, t LIMIT 1
+      CALL algo.SPpaths({
+        sourceNode: s,
+        targetNode: t,
+        maxLen: 5,
+        pathCount: 1
+      }) YIELD path, pathWeight, pathCost
+      RETURN count(path), sum(pathWeight), sum(pathCost)
+    prerequisites:
+      - has_two_nodes
+
+  - id: algo.SPpaths.incoming
+    cypher: >
+      MATCH (s), (t)
+      WHERE id(s) <> id(t)
+      WITH s, t LIMIT 1
+      CALL algo.SPpaths({
+        sourceNode: s,
+        targetNode: t,
+        relDirection: 'incoming',
+        maxLen: 5,
+        pathCount: 0
+      }) YIELD path, pathWeight, pathCost
+      RETURN count(path), sum(pathWeight), sum(pathCost)
+    prerequisites:
+      - has_two_nodes
+
+  - id: algo.SPpaths.reltype-filter
+    cypher: >
+      MATCH (s), (t)
+      WHERE id(s) <> id(t)
+      WITH s, t LIMIT 1
+      MATCH ()-[r]->()
+      WITH s, t, type(r) AS rel LIMIT 1
+      CALL algo.SPpaths({
+        sourceNode: s,
+        targetNode: t,
+        relTypes: [rel],
+        maxLen: 5,
+        pathCount: 2
+      }) YIELD path, pathWeight, pathCost
+      RETURN count(path), sum(pathWeight), sum(pathCost)
+    prerequisites:
+      - has_two_nodes
+      - has_relationship_types
+

@@ -1,0 +1,6 @@
+queries:
+  - id: algo.pageRank.default
+    cypher: >
+      CALL algo.pageRank(NULL, NULL) YIELD node, score
+      RETURN count(node), sum(score)
+

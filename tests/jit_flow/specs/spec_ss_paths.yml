@@ -1,0 +1,45 @@
+queries:
+  - id: algo.SSpaths.general
+    cypher: >
+      MATCH (s)
+      WITH s LIMIT 1
+      CALL algo.SSpaths({
+        sourceNode: s,
+        maxLen: 5,
+        pathCount: 1
+      }) YIELD path, pathWeight, pathCost
+      RETURN count(path), sum(pathWeight), sum(pathCost)
+    prerequisites:
+      - has_nodes
+
+  - id: algo.SSpaths.incoming
+    cypher: >
+      MATCH (s)
+      WITH s LIMIT 1
+      CALL algo.SSpaths({
+        sourceNode: s,
+        relDirection: 'incoming',
+        maxLen: 5,
+        pathCount: 0
+      }) YIELD path, pathWeight, pathCost
+      RETURN count(path), sum(pathWeight), sum(pathCost)
+    prerequisites:
+      - has_nodes
+
+  - id: algo.SSpaths.reltype-filter
+    cypher: >
+      MATCH (s)
+      WITH s LIMIT 1
+      MATCH ()-[r]->()
+      WITH s, type(r) AS rel LIMIT 1
+      CALL algo.SSpaths({
+        sourceNode: s,
+        relTypes: [rel],
+        maxLen: 5,
+        pathCount: 2
+      }) YIELD path, pathWeight, pathCost
+      RETURN count(path), sum(pathWeight), sum(pathCost)
+    prerequisites:
+      - has_nodes
+      - has_relationship_types
+

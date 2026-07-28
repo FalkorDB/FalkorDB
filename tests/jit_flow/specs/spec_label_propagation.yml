@@ -1,0 +1,31 @@
+queries:
+  - id: algo.labelPropagation.default
+    cypher: >
+      CALL algo.labelPropagation() YIELD node, communityId
+      RETURN count(node)
+
+  - id: algo.labelPropagation.max-iterations
+    cypher: >
+      CALL algo.labelPropagation({maxIterations: 5}) YIELD node, communityId
+      RETURN count(node)
+
+  - id: algo.labelPropagation.node-label-filter
+    cypher: >
+      MATCH (n)
+      WITH head(labels(n)) AS label
+      LIMIT 1
+      CALL algo.labelPropagation({nodeLabels: [label], maxIterations: 3}) YIELD node, communityId
+      RETURN count(node)
+    prerequisites:
+      - has_labels
+
+  - id: algo.labelPropagation.relationship-type-filter
+    cypher: >
+      MATCH ()-[r]->()
+      WITH type(r) AS rel
+      LIMIT 1
+      CALL algo.labelPropagation({relationshipTypes: [rel], maxIterations: 3}) YIELD node, communityId
+      RETURN count(node)
+    prerequisites:
+      - has_relationship_types
+

@@ -1,0 +1,6 @@
+queries:
+  - id: algo.WCC.default
+    cypher: >
+      CALL algo.WCC() YIELD node, componentId
+      RETURN count(node)
+

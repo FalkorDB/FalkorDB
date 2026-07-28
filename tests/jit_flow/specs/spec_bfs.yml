@@ -1,0 +1,10 @@
+queries:
+  - id: algo.BFS.default
+    cypher: >
+      MATCH (s)
+      WITH s LIMIT 1
+      CALL algo.BFS(s, -1, NULL) YIELD nodes
+      RETURN count(nodes)
+    prerequisites:
+      - has_nodes
+

@@ -1,0 +1,6 @@
+queries:
+  - id: algo.MSF.default
+    cypher: >
+      CALL algo.MSF() YIELD nodes, edges
+      RETURN size(nodes), size(edges)
+
