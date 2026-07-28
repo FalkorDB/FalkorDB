@@ -1,0 +1,90 @@
+# Require every PR to close an issue.
+#
+# This check is intended to be REQUIRED in branch protection, which drives two
+# deliberate design choices:
+#
+#   1. No `paths:` filter. A required status check that never reports leaves the
+#      PR blocked forever, so this job must run on every PR to a covered branch.
+#   2. `edited` is in the trigger list. Editing the PR body is how a PR gains (or
+#      loses) a `Closes #N` link, so without it the verdict would go stale.
+#
+# There are no exemptions: bot PRs (dependabot, batch-backport) must also close
+# an issue. That is a deliberate policy choice, not an oversight.
+
+name: PR linked issue
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+    # Mirrors rust-pr.yml's branch filter.
+    branches:
+      - "main"
+      - "main-rs"
+      - "[0-9]*.[0-9]*"
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pr-linked-issue-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  linked-issue:
+    name: PR closes an issue
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert the PR closes an issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          # closingIssuesReferences is the only source that covers BOTH a
+          # `Closes #N` keyword in the PR body AND an issue attached through the
+          # PR's "Development" sidebar. REST exposes neither.
+          #
+          # The query is single-quoted on purpose: $owner/$repo/$n are GraphQL
+          # variables bound by the -F flags below and must NOT be expanded by the
+          # shell.
+          # shellcheck disable=SC2016
+          COUNT=$(gh api graphql \
+            -f query='
+              query($owner: String!, $repo: String!, $n: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $n) {
+                    closingIssuesReferences(first: 1) { totalCount }
+                  }
+                }
+              }' \
+            -F owner="$OWNER" -F repo="$REPO" -F n="$PR" \
+            --jq '.data.repository.pullRequest.closingIssuesReferences.totalCount')
+
+          if [ "${COUNT:-0}" -gt 0 ]; then
+            echo "PR #${PR} closes ${COUNT} issue(s)."
+            {
+              echo "### PR closes an issue"
+              echo ""
+              echo "Linked closing issues: **${COUNT}**."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "::error title=No linked issue::This PR does not close an issue. Add 'Closes #<n>' to the PR body."
+          {
+            echo "### No linked issue"
+            echo ""
+            echo "Every PR must close an issue. Fix it in one of two ways:"
+            echo ""
+            echo "1. **Recommended** — add \`Closes #<n>\` (or \`Fixes #<n>\`) to the PR body."
+            echo "   Editing the body re-runs this check automatically."
+            echo "2. Attach the issue via the PR's **Development** sidebar."
+            echo "   Note: that does *not* emit a \`pull_request\` event, so this check"
+            echo "   will not re-evaluate on its own — re-run it afterwards."
+            echo ""
+            echo "If no issue exists yet, open one describing the change and link it."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
