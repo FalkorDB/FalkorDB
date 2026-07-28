@@ -401,10 +401,61 @@ impl<'a> ExprEval<'a> {
                 let rhs = self.eval_operand(&node.child(1), env, agg_group_key)?;
                 return lhs + rhs;
             }
+            // CASE short-circuits, so it cannot go through the eager
+            // post-order stack machine below.
+            ExprIR::Case { has_subject } => {
+                return self.eval_case(*has_subject, node, env, agg_group_key);
+            }
             _ => {}
         }
 
         self.eval_compound(node, env, agg_group_key)
+    }
+
+    /// Evaluates a `CASE` expression, trying the `WHEN` conditions in order
+    /// and evaluating only the branch that matches.
+    ///
+    /// Children are `[subject,] List(when1, then1, …), else` — see
+    /// [`ExprIR::Case`]. Laziness is the point: the previous encoding routed
+    /// `CASE` through the internal `case` function, so every `WHEN` and every
+    /// `THEN` of every arm was evaluated into a `Value::List` (one heap
+    /// allocation per row) before the function picked one.
+    ///
+    /// Semantics match the function this replaces:
+    /// - searched form (`CASE WHEN cond THEN …`): a condition selects its
+    ///   branch unless it is `false` or `null`, so a non-boolean condition is
+    ///   truthy rather than an error;
+    /// - value form (`CASE subject WHEN v THEN …`): a branch is selected when
+    ///   its condition compares equal to the subject.
+    fn eval_case<R: RowView + ?Sized>(
+        &self,
+        has_subject: bool,
+        node: &ExprNode<'_>,
+        env: Option<&R>,
+        agg_group_key: Option<u64>,
+    ) -> Result<Value, String> {
+        let subject = if has_subject {
+            Some(self.eval_node(&node.child(0), env, agg_group_key)?)
+        } else {
+            None
+        };
+        let arms = node.child(usize::from(has_subject));
+        let num_arms = arms.num_children();
+        let mut i = 0;
+        while i + 1 < num_arms {
+            let when = self.eval_node(&arms.child(i), env, agg_group_key)?;
+            let matched = match &subject {
+                Some(subject) => when == *subject,
+                None => !matches!(when, Value::Bool(false) | Value::Null),
+            };
+            if matched {
+                return self.eval_node(&arms.child(i + 1), env, agg_group_key);
+            }
+            i += 2;
+        }
+        // ELSE is always the last child; the parser substitutes a null
+        // constant when the query omits it.
+        self.eval_node(&node.child(node.num_children() - 1), env, agg_group_key)
     }
 
     /// Out-of-line continuation of [`eval_node`](Self::eval_node) for
@@ -430,6 +481,11 @@ impl<'a> ExprEval<'a> {
             match node.data() {
                 ExprIR::Constant(v) => res.push(v.clone()),
                 ExprIR::Variable(x) => res.push(Self::resolve_var(env, x)?),
+                // Evaluated eagerly as a unit (it is lazy internally), the
+                // same way the other non-stackable nodes here recurse.
+                ExprIR::Case { has_subject } => {
+                    res.push(self.eval_case(*has_subject, &node, env, agg_group_key)?);
+                }
                 ExprIR::Parameter(x) => res.push(self.rt()?.parameters.get(x).map_or_else(
                     || Err(format!("Parameter {x} not found")),
                     |v| Ok(v.clone()),
