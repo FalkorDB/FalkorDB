@@ -64,10 +64,13 @@ use crate::{
 pub enum IR {
     /// Receives input from parent operator.
     ///
-    /// The payload lists the variable IDs the argument rows are known to
-    /// bind: `Some(ids)` means the incoming rows bind exactly these
-    /// variables, `None` means unknown (optimizers must stay conservative).
-    Argument(Option<Vec<u32>>),
+    /// The payload lists the variables the argument rows are known to bind,
+    /// as `(id, scope_id)` pairs: `Some(vars)` means the incoming rows bind
+    /// exactly these variables, `None` means unknown (optimizers must stay
+    /// conservative). The scope must be carried — `fresh_var` numbers ids
+    /// per scope (`id = scope_vars[scope_id].len()`), so a bare id is
+    /// ambiguous across scopes.
+    Argument(Option<Vec<(u32, u32)>>),
     /// OPTIONAL MATCH - returns nulls if no match
     Optional(Vec<Variable>),
     /// CALL procedure with arguments, yielding outputs
@@ -683,7 +686,7 @@ impl Planner {
     /// runtime creates an inline Argument for the input.
     fn add_argument_to_leaves(
         tree: &mut DynTree<IR>,
-        bound_vars: Option<Vec<u32>>,
+        bound_vars: Option<Vec<(u32, u32)>>,
     ) {
         let mut leaves = Vec::new();
 
@@ -2329,8 +2332,9 @@ impl Planner {
                 let create_pattern = pattern.filter_visited(&self.visited);
                 // Snapshot before plan_match: it adds the pattern's own
                 // variables to `visited`, which are NOT bound by the
-                // incoming Argument rows.
-                let bound: Vec<u32> = self.visited.iter().map(|(id, _)| *id).collect();
+                // incoming Argument rows. Keep the scope on each entry —
+                // ids are only unique within a scope.
+                let bound: Vec<(u32, u32)> = self.visited.iter().copied().collect();
                 let mut match_branch = self.plan_match(&pattern, None);
                 Self::set_include_pending_on_scans(&mut match_branch);
                 // The Argument rows bind exactly the variables visited so
