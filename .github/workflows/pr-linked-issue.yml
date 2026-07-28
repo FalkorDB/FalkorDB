@@ -5,11 +5,24 @@
 #
 #   1. No `paths:` filter. A required status check that never reports leaves the
 #      PR blocked forever, so this job must run on every PR to a covered branch.
-#   2. `edited` is in the trigger list. Editing the PR body is how a PR gains (or
-#      loses) a `Closes #N` link, so without it the verdict would go stale.
+#   2. `edited` is in the trigger list, so re-titling/re-describing a PR
+#      re-evaluates the verdict rather than leaving a stale one.
 #
 # There are no exemptions: bot PRs (dependabot, batch-backport) must also close
 # an issue. That is a deliberate policy choice, not an oversight.
+#
+# WHY THE DEVELOPMENT SIDEBAR, NOT `Closes #N` KEYWORDS: GitHub only registers a
+# closing link from a body keyword when the PR targets the repository's DEFAULT
+# branch. Verified on this repo — PR #2245 (base `main-rs`, default `master`)
+# reported 0 closing references with `Closes #2243` as the first line of its
+# body, then reported 1 as soon as the issue was attached through the
+# Development sidebar. Development happens on non-default branches (`main-rs`,
+# `main`, version branches), so the sidebar is the mechanism authors must use and
+# the one the failure message points at. Do not "simplify" that guidance back to
+# keywords.
+#
+# Consequence: a sidebar link emits no `pull_request` event, so this check does
+# not re-evaluate itself after linking — it has to be re-run.
 
 name: PR linked issue
 
@@ -73,17 +86,22 @@ jobs:
             exit 0
           fi
 
-          echo "::error title=No linked issue::This PR does not close an issue. Add 'Closes #<n>' to the PR body."
+          echo "::error title=No linked issue::This PR does not close an issue. Link one via the PR's Development sidebar, then re-run this check."
           {
             echo "### No linked issue"
             echo ""
-            echo "Every PR must close an issue. Fix it in one of two ways:"
+            echo "Every PR must close an issue."
             echo ""
-            echo "1. **Recommended** — add \`Closes #<n>\` (or \`Fixes #<n>\`) to the PR body."
-            echo "   Editing the body re-runs this check automatically."
-            echo "2. Attach the issue via the PR's **Development** sidebar."
-            echo "   Note: that does *not* emit a \`pull_request\` event, so this check"
-            echo "   will not re-evaluate on its own — re-run it afterwards."
+            echo "**Link it via the PR's \`Development\` sidebar** — right-hand panel →"
+            echo "*Development* → pick the issue."
+            echo ""
+            echo "Linking that way emits no \`pull_request\` event, so this check does not"
+            echo "re-evaluate on its own — **re-run it** once the issue is linked."
+            echo ""
+            echo "> A \`Closes #<n>\` keyword in the PR body only registers a closing link when"
+            echo "> the PR targets the repository's **default branch**. On \`main-rs\`, \`main\`"
+            echo "> and version branches it has no effect, so the sidebar is the mechanism that"
+            echo "> works. Writing the keyword anyway is still useful for humans reading the PR."
             echo ""
             echo "If no issue exists yet, open one describing the change and link it."
           } >> "$GITHUB_STEP_SUMMARY"
