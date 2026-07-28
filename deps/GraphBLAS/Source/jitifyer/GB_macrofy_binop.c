@@ -26,7 +26,7 @@ void GB_macrofy_binop
     bool is_kron,               // if true: binop for kronecker
     int ecode,                  // binary operator ecode from GB_enumify_binop
     bool C_iso,                 // if true: C is iso
-    GrB_BinaryOp op,
+    GrB_BinaryOp op,            // may be NULL
     // output:
     const char **f_handle,      // basic expression z=f(x,y)
     const char **u_handle,      // update z=f(z,y) for the CPU
@@ -46,7 +46,7 @@ void GB_macrofy_binop
 
         if (is_monoid_or_build)
         {
-            if (op->ztype == op->xtype)
+            if (op == NULL || (op->ztype == op->xtype))
             { 
                 fprintf (fp, "#define GB_UPDATE(z,y)\n") ;
             }
@@ -776,6 +776,7 @@ void GB_macrofy_binop
         {
             // additive operator: no i,k,j parameters
             fprintf (fp, "#define %s(z,x,y) %s\n", macro_name, f) ;
+            ASSERT (op != NULL) ;
             if (op->ztype == op->xtype)
             {
                 if (g != NULL)

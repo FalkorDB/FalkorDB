@@ -14,7 +14,8 @@ GrB_Info GB_Semiring_new            // create a semiring
 (
     GrB_Semiring semiring,          // semiring to create
     GrB_Monoid add,                 // additive monoid of the semiring
-    GrB_BinaryOp multiply           // multiply operator of the semiring
+    GrB_BinaryOp multiply,          // multiply operator of the semiring
+    const int header_arena
 ) ;
 
 #endif

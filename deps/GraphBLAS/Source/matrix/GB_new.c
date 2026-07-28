@@ -32,10 +32,13 @@
 // input.
 
 #include "GB.h"
+#define GB_FREE_ALL ;
 
 GrB_Info GB_new                 // create matrix, except for indices & values
 (
+    // output:
     GrB_Matrix *Ahandle,        // handle of matrix to create
+    // inputs:
     const GrB_Type type,        // matrix type
     const int64_t vlen,         // length of each vector
     const int64_t vdim,         // number of vectors
@@ -47,7 +50,9 @@ GrB_Info GB_new                 // create matrix, except for indices & values
                                 // Ignored if A is not hypersparse.
     bool p_is_32,               // if true, A->p is 32 bit; 64 bit otherwise
     bool j_is_32,               // if true, A->h and A->Y are 32 bit; else 64
-    bool i_is_32                // if true, A->i is 32 bit; 64 bit otherwise
+    bool i_is_32,               // if true, A->i is 32 bit; 64 bit otherwise
+    const int header_arena,     // arena for header, if allocated
+    const int data_arena        // arena for matrix data
 )
 {
 
@@ -55,6 +60,7 @@ GrB_Info GB_new                 // create matrix, except for indices & values
     // check inputs
     //--------------------------------------------------------------------------
 
+    GrB_Info info ;
     ASSERT (Ahandle != NULL) ;
     ASSERT_TYPE_OK (type, "type for GB_new", GB0) ;
     ASSERT (vlen >= 0 && vlen <= GB_NMAX)
@@ -77,28 +83,14 @@ GrB_Info GB_new                 // create matrix, except for indices & values
     // allocate the matrix header, if not already allocated on input
     //--------------------------------------------------------------------------
 
+    uint64_t mem = GB_mem (data_arena, 0) ;
     bool allocated_header = false ;
     if ((*Ahandle) == NULL)
     {
-        size_t header_size ;
-        (*Ahandle) = GB_CALLOC_MEMORY (1, sizeof (struct GB_Matrix_opaque),
-            &header_size) ;
-        if (*Ahandle == NULL)
-        { 
-            // out of memory
-            return (GrB_OUT_OF_MEMORY) ;
-        }
+        // allocate a new header in the header_arena
+        GB_OK (GB_matrix_header_new (Ahandle, header_arena, data_arena)) ;
         allocated_header = true ;
-        (*Ahandle)->header_size = header_size ;
     }
-//  else
-//  {
-//      // the header of A has been provided on input.  It may already be
-//      // malloc'd, or it might be statically allocated in the caller.  In the
-//      // latter case, the header_size is zero.  Thus,
-//      // (*Ahandle)->header_size is not modified.
-//  }
-
     GrB_Matrix A = *Ahandle ;
 
     //--------------------------------------------------------------------------
@@ -108,10 +100,8 @@ GrB_Info GB_new                 // create matrix, except for indices & values
     // basic information
     A->magic = GB_MAGIC2 ;                 // object is not yet valid
     A->type = type ;
-    A->user_name = NULL ;
-    A->user_name_size = 0 ;     // no user_name yet
-    A->logger = NULL ;          // no error logged yet
-    A->logger_size = 0 ;
+    A->user_name = NULL ; A->user_name_mem = 0 ;    // no user_name yet
+    A->logger = NULL ; A->logger_mem = 0 ;          // no error logged yet
 
     // CSR/CSC format
     A->is_csc = is_csc ;
@@ -177,12 +167,12 @@ GrB_Info GB_new                 // create matrix, except for indices & values
     }
 
     // no content yet
-    A->p = NULL ; A->p_shallow = false ; A->p_size = 0 ;
-    A->h = NULL ; A->h_shallow = false ; A->h_size = 0 ;
+    A->p = NULL ; A->p_shallow = false ; A->p_mem = mem ;
+    A->h = NULL ; A->h_shallow = false ; A->h_mem = mem ;
     A->Y = NULL ; A->Y_shallow = false ; A->no_hyper_hash = false ;
-    A->b = NULL ; A->b_shallow = false ; A->b_size = 0 ;
-    A->i = NULL ; A->i_shallow = false ; A->i_size = 0 ;
-    A->x = NULL ; A->x_shallow = false ; A->x_size = 0 ;
+    A->b = NULL ; A->b_shallow = false ; A->b_mem = mem ;
+    A->i = NULL ; A->i_shallow = false ; A->i_mem = mem ;
+    A->x = NULL ; A->x_shallow = false ; A->x_mem = mem ;
 
     A->nvals = 0 ;
     A->nzombies = 0 ;
@@ -217,12 +207,12 @@ GrB_Info GB_new                 // create matrix, except for indices & values
     {
         // Sets the vector pointers to zero, which defines all vectors as empty
         A->magic = GB_MAGIC ;
-        A->p = GB_CALLOC_MEMORY (A->plen+1, psize, &(A->p_size)) ;
+        A->p = GB_CALLOC_MEMORY (A->plen+1, psize, &(A->p_mem)) ;
         ok = (A->p != NULL) ;
         if (A_is_hyper)
         { 
             // since nvec is zero, there is never any need to initialize A->h
-            A->h = GB_MALLOC_MEMORY (A->plen, jsize, &(A->h_size)) ;
+            A->h = GB_MALLOC_MEMORY (A->plen, jsize, &(A->h_mem)) ;
             ok = ok && (A->h != NULL) ;
         }
     }
@@ -233,11 +223,11 @@ GrB_Info GB_new                 // create matrix, except for indices & values
         // caller must set A->p [0..plen] and then set A->magic to GB_MAGIC,
         // before returning the matrix to the user application.
         A->magic = GB_MAGIC2 ;
-        A->p = GB_MALLOC_MEMORY (A->plen+1, psize, &(A->p_size)) ;
+        A->p = GB_MALLOC_MEMORY (A->plen+1, psize, &(A->p_mem)) ;
         ok = (A->p != NULL) ;
         if (A_is_hyper)
         { 
-            A->h = GB_MALLOC_MEMORY (A->plen, jsize, &(A->h_size)) ;
+            A->h = GB_MALLOC_MEMORY (A->plen, jsize, &(A->h_mem)) ;
             ok = ok && (A->h != NULL) ;
         }
     }

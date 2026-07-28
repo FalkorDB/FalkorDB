@@ -93,22 +93,22 @@ void mexFunction
 
     void *f1 = NULL ;
     OK (GxB_Global_Option_get (GxB_MALLOC_FUNCTION, &f1)) ;
-    CHECK (f1 == (void *) mxMalloc) ;
+    CHECK (f1 == (void *) malloc) ;
     OK (GxB_Global_Option_get (GxB_CALLOC_FUNCTION, &f1)) ;
-    CHECK (f1 == (void *) mxCalloc) ;
+    CHECK (f1 == (void *) calloc) ;
     OK (GxB_Global_Option_get (GxB_REALLOC_FUNCTION, &f1)) ;
-    CHECK (f1 == (void *) mxRealloc) ;
+    CHECK (f1 == (void *) realloc) ;
     OK (GxB_Global_Option_get (GxB_FREE_FUNCTION, &f1)) ;
-    CHECK (f1 == (void *) mxFree) ;
+    CHECK (f1 == (void *) free) ;
 
     OK (GxB_Global_Option_get_FUNCTION (GxB_MALLOC_FUNCTION, &f1)) ;
-    CHECK (f1 == (void *) mxMalloc) ;
+    CHECK (f1 == (void *) malloc) ;
     OK (GxB_Global_Option_get_FUNCTION (GxB_CALLOC_FUNCTION, &f1)) ;
-    CHECK (f1 == (void *) mxCalloc) ;
+    CHECK (f1 == (void *) calloc) ;
     OK (GxB_Global_Option_get_FUNCTION (GxB_REALLOC_FUNCTION, &f1)) ;
-    CHECK (f1 == (void *) mxRealloc) ;
+    CHECK (f1 == (void *) realloc) ;
     OK (GxB_Global_Option_get_FUNCTION (GxB_FREE_FUNCTION, &f1)) ;
-    CHECK (f1 == (void *) mxFree) ;
+    CHECK (f1 == (void *) free) ;
 
     //--------------------------------------------------------------------------
     // wrapup

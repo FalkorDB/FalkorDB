@@ -163,8 +163,7 @@ if (jit_enabled)
 
     OK (GxB_Global_Option_get_CHAR (GxB_JIT_C_COMPILER_NAME, &c)) ;
     printf ("default compiler [%s]\n", c) ;
-    strncpy (save_string, c, MAXLEN) ;
-    save_string [MAXLEN] = '\0' ;
+    GB_string_copy (save_string, c, MAXLEN) ;
 
     OK (GxB_set (GxB_JIT_C_COMPILER_NAME, "cc")) ;
     OK (GxB_get (GxB_JIT_C_COMPILER_NAME, &s)) ;
@@ -186,8 +185,7 @@ if (jit_enabled)
 
     OK (GxB_Global_Option_get_CHAR (GxB_JIT_C_COMPILER_FLAGS, &s)) ;
     printf ("default flags [%s]\n", s) ;
-    strncpy (save_string, s, MAXLEN) ;
-    save_string [MAXLEN] = '\0' ;
+    GB_string_copy (save_string, s, MAXLEN) ;
 
     OK (GxB_set (GxB_JIT_C_COMPILER_FLAGS, "-g")) ;
     OK (GxB_get (GxB_JIT_C_COMPILER_FLAGS, &s)) ;
@@ -209,8 +207,7 @@ if (jit_enabled)
 
     OK (GxB_get (GxB_JIT_C_CMAKE_LIBS, &s)) ;
     printf ("default C cmake libs [%s]\n", s) ;
-    strncpy (save_string, s, MAXLEN) ;
-    save_string [MAXLEN] = '\0' ;
+    GB_string_copy (save_string, s, MAXLEN) ;
 
     printf ("set cmake libs:\n") ;
     OK (GxB_set (GxB_JIT_C_CMAKE_LIBS, "m")) ;
@@ -251,8 +248,7 @@ if (jit_enabled)
 
     OK (GxB_get (GxB_JIT_C_LINKER_FLAGS, &s)) ;
     printf ("default linker flags [%s]\n", s) ;
-    strncpy (save_string, s, MAXLEN) ;
-    save_string [MAXLEN] = '\0' ;
+    GB_string_copy (save_string, s, MAXLEN) ;
 
     OK (GxB_set (GxB_JIT_C_LINKER_FLAGS, "-shared")) ;
     OK (GxB_get (GxB_JIT_C_LINKER_FLAGS, &s)) ;
@@ -274,8 +270,7 @@ if (jit_enabled)
 
     OK (GxB_get (GxB_JIT_C_LIBRARIES, &s)) ;
     printf ("default C libraries [%s]\n", s) ;
-    strncpy (save_string, s, MAXLEN) ;
-    save_string [MAXLEN] = '\0' ;
+    GB_string_copy (save_string, s, MAXLEN) ;
 
     OK (GxB_set (GxB_JIT_C_LIBRARIES, "-lm")) ;
     OK (GxB_get (GxB_JIT_C_LIBRARIES, &s)) ;
@@ -297,8 +292,7 @@ if (jit_enabled)
 
     OK (GxB_get (GxB_JIT_C_PREFACE, &s)) ;
     printf ("default C preface [%s]\n", s) ;
-    strncpy (save_string, s, MAXLEN) ;
-    save_string [MAXLEN] = '\0' ;
+    GB_string_copy (save_string, s, MAXLEN) ;
 
     OK (GxB_set (GxB_JIT_C_PREFACE, "// stuff here")) ;
     OK (GxB_get (GxB_JIT_C_PREFACE, &s)) ;
@@ -320,8 +314,7 @@ if (jit_enabled)
 
     OK (GxB_get (GxB_JIT_CUDA_PREFACE, &s)) ;
     printf ("default CUDA preface [%s]\n", s) ;
-    strncpy (save_string, s, MAXLEN) ;
-    save_string [MAXLEN] = '\0' ;
+    GB_string_copy (save_string, s, MAXLEN) ;
 
     OK (GxB_set (GxB_JIT_CUDA_PREFACE, "// cuda stuff here")) ;
     OK (GxB_get (GxB_JIT_CUDA_PREFACE, &s)) ;
@@ -400,8 +393,7 @@ if (jit_enabled)
 
     OK (GxB_get (GxB_JIT_CACHE_PATH, &cache)) ;
     printf ("default cache path: [%s]\n", cache) ;
-    strncpy (save_string, cache, MAXLEN) ;
-    save_string [MAXLEN] = '\0' ;
+    GB_string_copy (save_string, cache, MAXLEN) ;
 
     OK (GxB_set (GxB_JIT_CACHE_PATH, "/tmp/grb_cache")) ;
     OK (GxB_get (GxB_JIT_CACHE_PATH, &s)) ;
@@ -652,7 +644,7 @@ if (jit_enabled)
         &Ikind, Icolon,
         // output:
         &I_is_unsorted, &I_has_dupl, &I_is_contig,
-        &imin_result, &imax_result, Werk)) ;
+        &imin_result, &imax_result, GB_ARENA_TEST, Werk)) ;
     printf ("ijproperties: imin %ld imax %ld\n", imin_result, imax_result) ;
     CHECK (imin_result == 5) ;
     CHECK (imax_result == -1) ;

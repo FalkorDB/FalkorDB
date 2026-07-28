@@ -21,13 +21,12 @@
 // Both the grid and block are 1D, so blockDim.x is the # threads in a
 // threadblock, and the # of threadblocks is grid.x
 
-// Let b = blockIdx.x, and let s be blockDim.x. s= 32 with a variable number of
-// active threads = min( min(g_xnz, g_ynz), 32) 
+// This method requires blockDim.x to be equal to GB_CUDA_TILE_SIZE.
 
 // Thus, threadblock b owns a part of the index set spanned by g_xi and g_yi.
 // Its job is to find the intersection of the index sets g_xi and g_yi, perform
 // the semi-ring dot product on those items in the intersection, and finally
-// reduce this data to a scalar, on exit write it to g_odata [b].
+// reduce this data to a scalar, on exit write it to Cx [...].
 
 //  int64_t start          <- start of vector pairs for this kernel
 //  int64_t end            <- end of vector pairs for this kernel
@@ -104,8 +103,8 @@ __global__ void GB_cuda_AxB_dot3_phase3_mp_kernel
 //  int tid_global = threadIdx.x+ blockDim.x* blockIdx.x;
     int tid = threadIdx.x;
 
-
-    thread_block_tile<tile_sz> tile = tiled_partition<tile_sz>( this_thread_block());
+    thread_block_tile<GB_CUDA_TILE_SIZE> tile =
+        tiled_partition<GB_CUDA_TILE_SIZE>( this_thread_block());
     int all_in_one = ( (end - start) == Mp [(M->nvec)] ) ;
 
     // Main loop over pairs 
@@ -214,7 +213,7 @@ __global__ void GB_cuda_AxB_dot3_phase3_mp_kernel
         #if !GB_C_ISO
         if (cij_exists)
         {
-            // FIXME: the ANY monoid needs the cij_exists for each thread
+            // fixme: the ANY monoid needs the cij_exists for each thread
             cij = GB_cuda_tile_reduce_ztype (tile, cij) ;
         }
         #endif

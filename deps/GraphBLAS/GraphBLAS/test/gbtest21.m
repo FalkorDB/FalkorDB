@@ -1,10 +1,14 @@
-function gbtest21
+function gbtest21 (ghb)
 %GBTEST21 test isfinite, isinf, isnan
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-rng ('default') ;
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
+
 for trial = 1:40
     fprintf ('.') ;
     for m = 0:5
@@ -16,7 +20,7 @@ for trial = 1:40
                 A (1,1) = nan ; %#ok<*SPRIX>
                 A (2,2) = inf ;
             end
-            G = GrB (A) ;
+            G = gtb (ghb, A) ;
 
             assert (gbtest_eq (isfinite (A), isfinite (G))) ;
             assert (gbtest_eq (isinf    (A), isinf    (G))) ;
@@ -28,5 +32,5 @@ for trial = 1:40
     end
 end
 
-fprintf ('\ngbtest21: all tests passed\n') ;
+fprintf ('\ngbtest21 (%d): all tests passed\n', ghb) ;
 

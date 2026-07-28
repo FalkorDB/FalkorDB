@@ -1,8 +1,13 @@
-function gbtest71
-%GBTEST71 test GrB.selectopinfo
+function gbtest71 (ghb)
+%GBTEST71 test [GrB,GhB].selectopinfo
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
+
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
 ops = {
     'tril'
@@ -36,7 +41,7 @@ ops = {
 
 nops = length (ops) ;
 for k = 1:nops
-    GrB.selectopinfo (ops {k}) ;
+    gtb_selectopinfo (ghb, ops {k}) ;
 end
 
 ops = {
@@ -57,13 +62,13 @@ for k1 = 1:nops
         if (gb_contains (types {k2}, 'complex') && k1 > 2)
             % skip this
         else
-            GrB.selectopinfo (ops {k1}, types {k2}) ;
+            gtb_selectopinfo (ghb, ops {k1}, types {k2}) ;
         end
     end
 end
 
 fprintf ('\n\n') ;
-GrB.selectopinfo
+gtb_selectopinfo (ghb)
 
-fprintf ('gbtest71: all tests passed\n') ;
+fprintf ('gbtest71 (%d): all tests passed\n', ghb) ;
 

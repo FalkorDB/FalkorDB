@@ -1,7 +1,7 @@
 function result = selectops
-%GRB.SELECTOPS list all select ops
-% Redundant select ops are not listed.  For example 'tril.double'
-% exists, but it is identical to just 'tril'.
+%SELECTOPS list all select ops
+% Redundant select ops are not listed.  For example 'tril.double' exists, but
+% it is identical to just 'tril'.
 %
 % Example:
 %   GrB.selectops ;         % prints a list, with descriptions
@@ -9,7 +9,7 @@ function result = selectops
 %
 % See also GrB.selectopinfo.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 types = {
@@ -82,7 +82,7 @@ end
             end
 
             try
-                ok = gbselectopinfo (selectop) ;
+                ok = gbmex_selectopinfo (selectop) ;
                 nselectops = nselectops + 1 ;
                 if (nargout > 0)
                     result = [result ; selectop] ; %#ok<AGROW>

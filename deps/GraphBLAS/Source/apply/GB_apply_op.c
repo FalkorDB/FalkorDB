@@ -39,6 +39,7 @@ GrB_Info GB_apply_op        // apply a unary op, idxunop, or binop, Cx = op (A)
         bool binop_bind1st,         // if true, C=binop(s,A), else C=binop(A,s)
         bool flipij,                // if true, flip i,j for user idxunop
     const GrB_Matrix A,             // input matrix
+    const int data_arena,           // arena for workspace
     GB_Werk Werk
 )
 {
@@ -53,7 +54,10 @@ GrB_Info GB_apply_op        // apply a unary op, idxunop, or binop, Cx = op (A)
     ASSERT_MATRIX_OK (A, "A input for GB_apply_op", GB0) ;
     ASSERT (GB_JUMBLED_OK (A)) ;        // A can be jumbled
     ASSERT (!GB_ZOMBIES (A)) ;
-    GB_WERK_DECLARE (A_ek_slicing, int64_t) ;
+
+    uint64_t mem = GB_mem (data_arena, 0) ;
+
+    GB_WERK_DECLARE (A_ek_slicing, int64_t, mem) ;
     ASSERT (GB_IMPLIES (op != NULL, ctype == op->ztype)) ;
     ASSERT_SCALAR_OK_OR_NULL (scalar, "scalar for GB_apply_op", GB0) ;
 
@@ -622,7 +626,7 @@ GrB_Info GB_apply_op        // apply a unary op, idxunop, or binop, Cx = op (A)
             if (GB_cuda_apply_binop_branch (ctype, (GrB_BinaryOp) op, A))
             {
                 info = GB_cuda_apply_binop (Cx, ctype, (GrB_BinaryOp) op, A,
-                scalarx, false) ;
+                    scalarx, false) ;
             }
             #endif
 

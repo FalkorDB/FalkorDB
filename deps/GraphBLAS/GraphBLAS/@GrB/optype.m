@@ -1,9 +1,9 @@
 function type = optype (a, b)
 %GRB.OPTYPE determine the default type of a binary operator.
-% type = GrB.optype (a, b) returns a string that defines the
-% default type of operator to use for two inputs A and B, of type
-% atype and btype, respectively.  The input a can be either the
-% matrix A or the string atype = GrB.type (A), and likewise for b.
+% type = GrB.optype (a, b) returns a string that defines the default type of
+% operator to use for two inputs A and B, of type atype and btype,
+% respectively.  The input a can be either the matrix A or the string atype =
+% GrB.type (A), and likewise for b.
 %
 % The rules are listed below; the first one that applies is used:
 %
@@ -19,15 +19,15 @@ function type = optype (a, b)
 %
 % (3) both integer:
 %
-%   if A and B are both integers (with ka and kb bits, respectively):
-%       optype is signed if either A or B are signed, and the optype has
-%       max(ka,kb) bits.  For example, uint32*int8 uses an int32 optype.
+%   if A and B are both integers (with ka and kb bits, respectively): optype is
+%   signed if either A or B are signed, and the optype has max(ka,kb) bits.
+%   For example, uint32*int8 uses an int32 optype.
 %
 % (4) mixing integer and floating-point:
 %
-%   if one operand is any integer, and the other is any floating-point
-%       (single, double, single complex, or double complex): optype has
-%       the floating-point type of the other operand.
+%   if one operand is any integer, and the other is any floating-point (single,
+%   double, single complex, or double complex): optype has the floating-point
+%   type of the other operand.
 %
 % (5) both floating-point:
 %
@@ -46,26 +46,20 @@ function type = optype (a, b)
 %
 % See also GrB.binopinfo, GrB.semiringinfo, GrB.type.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (ischar (a))
     atype = a ;
-elseif (isobject (a))
-    a = a.opaque ;
-    atype = gbtype (a) ;
 else
-    atype = gbtype (a) ;
+    atype = gb_type (a) ;
 end
 
 if (ischar (b))
     btype = b ;
-elseif (isobject (b))
-    b = b.opaque ;
-    btype = gbtype (b) ;
 else
-    btype = gbtype (b) ;
+    btype = gb_type (b) ;
 end
 
-type = gboptype (atype, btype) ;
+type = gbmex_optype (atype, btype) ;
 

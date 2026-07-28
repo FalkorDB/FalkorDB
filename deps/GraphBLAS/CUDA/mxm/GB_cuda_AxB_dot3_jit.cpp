@@ -17,7 +17,7 @@ extern "C"
 GrB_Info GB_cuda_AxB_dot3_jit
 (
     // input/output:
-    GrB_Matrix C,               // FIXME: allow iso for this kernel
+    GrB_Matrix C,               // fixme: allow iso for this kernel
     // input:
     const GrB_Matrix M, const bool Mask_struct,
     const GrB_Matrix A,
@@ -39,7 +39,7 @@ GrB_Info GB_cuda_AxB_dot3_jit
     char *suffix ;
     uint64_t hash = GB_encodify_mxm (&encoding, &suffix,
         GB_JIT_CUDA_KERNEL_AXB_DOT3,
-        // FIXME: allow C to be iso:
+        // fixme: allow C to be iso:
         /* C->iso: */ false, /* C_in_iso: */ false,
         GB_sparsity (C), C->type, C->p_is_32, C->j_is_32, C->i_is_32,
         M, Mask_struct, /* Mask_comp: */ false, semiring, flipxy, A, B) ;

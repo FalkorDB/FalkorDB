@@ -1,10 +1,14 @@
-function gbtest22
+function gbtest22 (ghb)
 %GBTEST22 test reduce to scalar
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-rng ('default') ;
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
+
 desc.kind = 'sparse' ;
 
 A = magic (3) ;
@@ -13,7 +17,7 @@ for k = 1:length (types)
     type = types {k} ;
     if (isequal (type, 'logical'))
         c = false ;
-        c = GrB.reduce (c, '|', '|', gbtest_cast (A, 'logical')) ; %#ok<*NASGU>
+        c = gtb_reduce (ghb, c, '|', '|', gbtest_cast (A, 'logical')) ; %#ok<*NASGU>
     else
         % c = ones (1, 1, type) ;
         is_double_complex = isequal (type, 'double complex') ;
@@ -27,7 +31,7 @@ for k = 1:length (types)
             c = ones (1, 1, type) ;
         end
 
-        c = GrB.reduce (c, '+', '+', gbtest_cast (A, type)) ;
+        c = gtb_reduce (ghb, c, '+', '+', gbtest_cast (A, type)) ;
         assert (c == sum (sum (A)) + 1) ;
     end
 end
@@ -38,22 +42,24 @@ for trial = 1:10
     for m = 0:5
         for n = 0:5
             A = 100 * sprand (m, n, 0.5) ;
-            G = GrB (A) ;
+            G = gtb (ghb, A) ;
             [i, j, x] = find (A) ; %#ok<*ASGLU>
 
             % c1 = sum (A, 'all') ;
             c1 = sum (sum (A)) ;
-            c2 = GrB.reduce ('+', A) ;
+            c2 = gtb_reduce (ghb, '+', A) ;
             c3 = sum (G, 'all') ;
-            c4 = GrB.reduce ('+', A, desc) ;
+            c4 = gtb_reduce (ghb, '+', A, desc) ;
+            c5 = gzb_reduce (ghb, '+', G) ;
             assert (norm (c1-c2,1) <= 1e-12 * norm (c1,1)) ;
             assert (norm (c1-c3,1) <= 1e-12 * norm (c1,1)) ;
             assert (norm (c1-c4,1) <= 1e-12 * norm (c1,1)) ;
             assert (isequal (class (c4), 'double')) ;
+            assert (norm (c1-c5,1) <= 1e-12 * norm (c1,1)) ;
 
             % c1 = pi + sum (A, 'all') ;
             c1 = pi + sum (sum (A)) ;
-            c2 = GrB.reduce (pi, '+', '+', A) ;
+            c2 = gtb_reduce (ghb, pi, '+', '+', A) ;
             c3 = pi + sum (G, 'all') ;
             assert (norm (c1-c2,1) <= 1e-12 * norm (c1,1)) ;
             assert (norm (c1-c3,1) <= 1e-12 * norm (c1,1)) ;
@@ -64,7 +70,7 @@ for trial = 1:10
             else
                 c1 = prod (x) ;
             end
-            c2 = GrB.reduce ('*', A) ;
+            c2 = gtb_reduce (ghb, '*', A) ;
             assert (norm (c1-c2,1) <= 1e-12 * norm (c1,1)) ;
 
             % c1 = prod (A, 'all') ;
@@ -82,12 +88,12 @@ for trial = 1:10
             else
                 c1 = pi + prod (x) ;
             end
-            c2 = GrB.reduce (pi, '+', '*', A) ;
+            c2 = gtb_reduce (ghb, pi, '+', '*', A) ;
             assert (norm (c1-c2,1) <= 1e-12 * norm (c1,1)) ;
 
             % c1 = max (A, [ ], 'all') ;
             c1 = max (max (A)) ;
-            c2 = GrB.reduce ('max', A) ;
+            c2 = gtb_reduce (ghb, 'max', A) ;
             if (nnz (A) < m*n)
                 c2 = max (full (c2), 0) ;
             end
@@ -97,7 +103,7 @@ for trial = 1:10
 
             % c1 = min (A, [ ], 'all') ;
             c1 = min (min (A)) ;
-            c2 = GrB.reduce ('min', A) ;
+            c2 = gtb_reduce (ghb, 'min', A) ;
             if (nnz (A) < m*n)
                 c2 = min (full (c2), 0) ;
             end
@@ -106,11 +112,11 @@ for trial = 1:10
             assert (norm (c1-c3,1) <= 1e-12 * norm (c1,1)) ;
 
             B = logical (A) ;
-            G = GrB (B) ;
+            G = gtb (ghb, B) ;
 
             % c1 = any (A, 'all') ;
             c1 = any (any (A)) ;
-            c2 = GrB.reduce ('|.logical', A) ;
+            c2 = gtb_reduce (ghb, '|.logical', A) ;
             c3 = any (G, 'all') ;
             assert (c1 == logical (c2)) ;
             assert (c1 == logical (c3)) ;
@@ -131,12 +137,12 @@ for trial = 1:10
             else
                 c1 = all (x) ;
             end
-            c2 = GrB.reduce ('&.logical', A) ;
+            c2 = gtb_reduce (ghb, '&.logical', A) ;
             assert (c1 == logical (c2)) ;
 
         end
     end
 end
 
-fprintf ('\ngbtest22: all tests passed\n') ;
+fprintf ('\ngbtest22 (%d): all tests passed\n', ghb) ;
 

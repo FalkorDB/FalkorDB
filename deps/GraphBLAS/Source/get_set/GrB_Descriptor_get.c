@@ -93,6 +93,12 @@ static GrB_Info GB_desc_get
                 GrB_DEFAULT : desc->val_list) ;
             break ;
 
+        case GxB_ARENA_HEADER : 
+
+            (*value) = (int32_t) ((desc == NULL) ?
+                GrB_DEFAULT : GB_arena (desc->header_mem)) ;
+            break ;
+
         default : 
 
             return (GrB_INVALID_VALUE) ;
@@ -228,7 +234,7 @@ GrB_Info GrB_Descriptor_get_SIZE
 
     if (desc != NULL && desc->user_name != NULL)
     { 
-        (*value) = desc->user_name_size ;
+        (*value) = GB_memsize (desc->user_name_mem) ;
     }
     else
     { 

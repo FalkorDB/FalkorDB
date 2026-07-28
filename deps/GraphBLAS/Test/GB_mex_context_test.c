@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// GB_mex_context_text: based on Demo/Programcontext_demo
+// GB_mex_context_text: based on Demo/Program/context_demo
 //------------------------------------------------------------------------------
 
 // SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
@@ -97,6 +97,9 @@ void mexFunction
     ERR (GxB_Context_get (Context, 999, &nth)) ;
     ERR (GxB_Context_set (Context, 999, nth)) ;
 
+    OK (GxB_Context_get (Context, GxB_NTHREADS, &nth)) ;
+    OK (GxB_Context_get (Context, GxB_NTHREADS, &nth)) ;
+
     OK (GxB_Context_disengage (NULL)) ;
     GrB_free (&Context) ;
 
@@ -128,12 +131,29 @@ void mexFunction
     OK (GrB_Matrix_new (&C, GrB_FP64, n, n)) ;
     OK (GrB_Matrix_build (C, I, J, X, nvals, GrB_PLUS_FP64)) ;
 
+    // MATLAB cannot print in parallel with mexPrintf
+    #undef printf
+    OK (GrB_Global_set_VOID (GrB_GLOBAL, (void *) printf, GxB_PRINTF,
+        sizeof (GB_printf_function_t))) ;
+
+    #undef OK
+    #define OK(method)                              \
+    {                                               \
+        info = method ;                             \
+        if (info < 0)                               \
+        {                                           \
+            printf ("[%d] Test failed\n", info) ;   \
+            all_ok = false ;                        \
+        }                                           \
+    }
+
     //--------------------------------------------------------------------------
-    // create random matrices parallel
+    // create random matrices in parallel
     //--------------------------------------------------------------------------
 
     int nmats = MIN (2*nthreads, 256) ;
     GrB_Matrix G [256] ;
+    bool all_ok = true ;
 
     for (int nmat = 1 ; nmat <= nmats ; nmat = 2*nmat)
     {
@@ -203,6 +223,11 @@ void mexFunction
     mxFree (J) ;
     mxFree (X) ;
     GrB_free (&C) ;
+
+    OK (GrB_Global_set_VOID (GrB_GLOBAL, (void *) mexPrintf, GxB_PRINTF,
+        sizeof (GB_printf_function_t))) ;
+
+    if (!all_ok) FAIL (GB_mex_context_test) ;
 
     GB_mx_put_global (true) ;
 }

@@ -1,19 +1,22 @@
-function gbtest38
+function gbtest38 (ghb)
 %GBTEST38 test sqrt, eps, ceil, floor, round, fix, real, conj, ...
 % isfinite, isinf, isnan, spfun, eig
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-rng ('default') ;
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
 for trial = 1:40
 
     A = 1e3 * rand (3) ;
     B = single (A) ;
 
-    G = GrB (A) ;
-    H = GrB (B) ;
+    G = gtb (ghb, A) ;
+    H = gtb (ghb, B) ;
 
     err = norm (sqrt (A) - sqrt (G), 1) ; assert (err < 8 * eps ('double')) ;
     err = norm (sqrt (B) - sqrt (H), 1) ; assert (err < 8 * eps ('single')) ;
@@ -39,31 +42,31 @@ for trial = 1:40
     assert (gbtest_eq (conj (A), conj (G))) ;
     assert (gbtest_eq (conj (B), conj (H))) ;
 
-    C = A ;
+    C = gtb (ghb, A) ;
     C (1,1) = inf ;
     C (2,2) = nan ;
-    G = GrB (C) ;
+    G = gtb (ghb, C) ;
 
     assert (gbtest_eq (isfinite (C), isfinite (G))) ;
     assert (gbtest_eq (isnan    (C), isnan    (G))) ;
 
     A = sprand (10, 10, 0.5) ;
-    G = GrB (A) ;
+    G = gtb (ghb, A) ;
     assert (gbtest_eq (spfun (@exp, A), double (spfun (@exp, G)))) ;
 
     A = rand (10) ;
-    G = GrB (A) ;
+    G = gtb (ghb, A) ;
     assert (isequal (eig (A), double (eig (G)))) ;
 
     A = sparse (A+A') ;
-    G = GrB (A) ;
+    G = gtb (ghb, A) ;
     err = norm (eig (A) - double (eig (G)), 2) ;
     assert (err < 1e-12) ;
 
     A = rand (10) ;
     B = rand (10) ;
-    G = GrB (A) ;
-    H = GrB (B) ;
+    G = gtb (ghb, A) ;
+    H = gtb (ghb, B) ;
     [V1,D1] = eig (A, B) ;
     [V2,D2] = eig (G, H) ;
     assert (isequal (V1, double (V2))) ;
@@ -71,4 +74,5 @@ for trial = 1:40
 
 end
 
-fprintf ('gbtest38: all tests passed\n') ;
+fprintf ('gbtest38 (%d): all tests passed\n', ghb) ;
+

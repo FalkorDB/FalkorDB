@@ -18,7 +18,7 @@
 GrB_Info GrB_Matrix_serializeSize   // estimate the size of a blob
 (
     // output:
-    uint64_t *blob_size_handle,     // upper bound on the required size of the
+    uint64_t *blob_memsize_handle,  // upper bound on the required size of the
                                     // blob on output.
     // input:
     GrB_Matrix A                    // matrix to serialize
@@ -29,24 +29,23 @@ GrB_Info GrB_Matrix_serializeSize   // estimate the size of a blob
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_RETURN_IF_NULL (blob_size_handle) ;
+    GB_RETURN_IF_NULL (blob_memsize_handle) ;
     GB_RETURN_IF_NULL (A) ;
-    GB_WHERE_1 (A, "GrB_Matrix_serializeSize (&blob_size, A)") ;
+    GB_WHERE_1 (A, "GrB_Matrix_serializeSize (&blob_memsize, A)") ;
     GB_BURBLE_START ("GrB_Matrix_serialize") ;
 
     // no descriptor, so assume the default method
     int method = GxB_DEFAULT ;
 
-    // Werk will hold the default # of threads, which can be controlled
-    // by GxB_Global_Option_set.
+    int data_arena = A->data_arena ;    // for temporary workspace
 
     //--------------------------------------------------------------------------
     // serialize the matrix
     //--------------------------------------------------------------------------
 
-    size_t blob_size ;
-    info = GB_serialize (NULL, &blob_size, A, method, Werk) ;
-    (*blob_size_handle) = (uint64_t) blob_size ;
+    uint64_t blob_memsize ;
+    info = GB_serialize (NULL, &blob_memsize, A, method, data_arena, Werk) ;
+    (*blob_memsize_handle) = blob_memsize ;
     GB_BURBLE_END ;
     #pragma omp flush
     return (info) ;

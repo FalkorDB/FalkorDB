@@ -11,7 +11,7 @@
 
 #include "GB_mex.h"
 
-#define USAGE "c = GB_mex_reduce_complex (A, mangle)"
+#define USAGE "c = GB_mex_reduce_complex (A, mangle, arena)"
 
 #define FREE_ALL                            \
 {                                           \
@@ -35,7 +35,7 @@ void mexFunction
     GrB_Monoid Times_terminal = NULL ;
 
     // check inputs
-    if (nargout > 1 || nargin < 1 || nargin > 2)
+    if (nargout > 1 || nargin < 1 || nargin > 3)
     {
         mexErrMsgTxt ("Usage: " USAGE) ;
     }
@@ -63,20 +63,45 @@ void mexFunction
     GxB_FC64_t one  = GxB_CMPLX (1,0) ;
     GxB_FC64_t zero = GxB_CMPLX (0,0) ;
 
+    // get the arena to use
+    int arena = GB_ARENA_TEST ; // revised below
+    if (nargin > 2)
+    {
+        arena = (int) mxGetScalar (pargin [2]) ;
+    }
+
     // create the monoid
     if (Complex == GxB_FC64)
     {
         Times_terminal = GxB_TIMES_FC64_MONOID ;
+        arena = GrB_DEFAULT ;   // builtin monoids are in the default arena
     }
     else
     {
-        info = GxB_Monoid_terminal_new_UDT (&Times_terminal,
-            Complex_times, &one, &zero) ;
+        if (arena == GB_ARENA_TEST)
+        {
+            info = GxB_Monoid_terminal_new_UDT_(&Times_terminal,
+                Complex_times, (void *) &one, &zero) ;
+        }
+        else
+        {
+            info = GxB_Monoid_terminal_new_arena_UDT_(&Times_terminal,
+                Complex_times, (void *) &one, &zero, arena) ;
+        }
         if (info != GrB_SUCCESS)
         {
             FREE_ALL ;
             mexErrMsgTxt ("Times_terminal failed") ;
         }
+        // GxB_Monoid_fprint (Times_terminal, "Times_terminal", 5, NULL) ;
+    }
+
+    int arena2 = 42 ;
+    GrB_Monoid_get_INT32 (Times_terminal, &arena2, GxB_ARENA_HEADER) ;
+    if (arena != arena2)
+    {
+        FREE_ALL ;
+        mexErrMsgTxt ("Times_terminal arena failed") ;
     }
 
     int64_t GET_SCALAR (1, int64_t, mangle, -1) ;

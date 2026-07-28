@@ -9,14 +9,12 @@ function C = any (G, option)
 %
 % See also GrB/all, GrB/sum, GrB/nnz, GrB.entries, GrB.nonz.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-G = G.opaque ;
-
 if (nargin == 1)
-    C = GrB (gb_sum ('|.logical', G)) ;
+    C = gb_sum (0, '|.logical', 'logical', G) ;
 else
-    C = GrB (gb_sum ('|.logical', G, option)) ;
+    C = gb_sum (0, '|.logical', 'logical', G, option) ;
 end
 

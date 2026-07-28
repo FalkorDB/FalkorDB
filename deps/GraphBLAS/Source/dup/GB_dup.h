@@ -14,18 +14,26 @@ GrB_Info GB_dup             // make an exact copy of a matrix
 (
     GrB_Matrix *Chandle,    // handle of output matrix to create
     const GrB_Matrix A,     // input matrix to copy
+    const int header_arena,
+    const int data_arena,
     GB_Werk Werk
 ) ;
 
 GrB_Info GB_dup_worker      // make an exact copy of a matrix
 (
-    GrB_Matrix *Chandle,    // output matrix, NULL or existing static/dynamic
+    GrB_Matrix *Chandle,    // output matrix, NULL or existing
     const bool C_iso,       // if true, construct C as iso
     const GrB_Matrix A,     // input matrix to copy
     const bool numeric,     // if true, duplicate the numeric values; if A is
                             // iso, only the first entry is copied, regardless
                             // of C_iso on input
-    const GrB_Type ctype    // type of C, if numeric is false
+    const GrB_Type ctype,   // type of C, if numeric is false
+    const bool Cp_is_32,
+    const bool Cj_is_32,
+    const bool Ci_is_32,
+    const int header_arena,
+    const int data_arena,
+    GB_Werk Werk
 ) ;
 
 #endif
