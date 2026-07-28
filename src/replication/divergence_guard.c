@@ -5,7 +5,7 @@
  */
 
 #include "RG.h"
-#include "replication_guard.h"
+#include "divergence_guard.h"
 #include "../util/rmalloc.h"
 
 #include <stdlib.h>
@@ -158,13 +158,28 @@ static void _ForceFullResync
 	_ResyncCtx_Free (rc) ;
 }
 
-void ReplicationGuard_OnFailure
+void DivergenceGuard_OnFailure
 (
 	RedisModuleCtx *ctx,
 	const char *graph_name,
 	const char *cmd_name,
 	const char *detail
 ) {
+	// a full resync can only repair a live replication link - it can't
+	// repair state we've already loaded from our own AOF/RDB on disk, and
+	// the replication subsystem isn't even running yet to attempt it
+	// against; bail out immediately instead of scheduling a fix that can't
+	// apply and that leaves the rest of the file replaying against an
+	// already-diverged dataset in the meantime
+	if (RedisModule_GetContextFlags (ctx) & REDISMODULE_CTX_FLAGS_LOADING) {
+		RedisModule_Log (ctx, "warning",
+				"Diverged applying %s on graph '%s' while loading from "
+				"disk: %s. A full resync can't repair already-loaded "
+				"state, shutting down.",
+				cmd_name, graph_name, detail) ;
+		exit (1) ;
+	}
+
 	RedisModule_Log (ctx, "warning",
 			"Replica diverged from master applying %s on graph '%s': %s. "
 			"Scheduling a forced full resync with master.",

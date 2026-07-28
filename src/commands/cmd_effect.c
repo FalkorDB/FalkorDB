@@ -7,7 +7,7 @@
 #include "RG.h"
 #include "../effects/effects.h"
 #include "../graph/graphcontext.h"
-#include "../replication/replication_guard.h"
+#include "../replication/divergence_guard.h"
 
 // GRAPH.EFFECT command handler
 int Graph_Effect
@@ -57,7 +57,7 @@ int Graph_Effect
 	if (!ok) {
 		// replica has diverged from the master, don't propagate this
 		// effect any further down a replication sub-chain
-		ReplicationGuard_OnFailure (ctx, graph_name, "GRAPH.EFFECT",
+		DivergenceGuard_OnFailure (ctx, graph_name, "GRAPH.EFFECT",
 				"failed to apply effects, see preceding log entries") ;
 		RedisModule_ReplyWithError (ctx, "ERR graph diverged from master") ;
 		return REDISMODULE_OK ;

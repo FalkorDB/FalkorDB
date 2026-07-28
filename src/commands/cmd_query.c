@@ -18,7 +18,7 @@
 #include "../errors/errors.h"
 #include "index_operations.h"
 #include "../effects/effects.h"
-#include "../replication/replication_guard.h"
+#include "../replication/divergence_guard.h"
 #include "../util/cache/cache.h"
 #include "../configuration/config.h"
 #include "../execution_plan/execution_plan.h"
@@ -269,7 +269,7 @@ static void _ExecuteQuery
 		// replica has diverged from the master
 		if (command_ctx->replicated_command) {
 			const char *detail = ErrorCtx_Get ()->error ;
-			ReplicationGuard_OnFailure (rm_ctx, GraphContext_GetName (gc),
+			DivergenceGuard_OnFailure (rm_ctx, GraphContext_GetName (gc),
 					command_ctx->command_name,
 					detail != NULL ? detail : "query execution failed") ;
 		}
