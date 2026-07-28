@@ -25,6 +25,7 @@
 
 use super::{
     FnArguments, FnType, Functions, Type, empty_procedure_batch, get_functions, get_udf_functions,
+    udf_version,
 };
 use crate::{
     index::indexer::{IndexInfo, IndexType},
@@ -35,8 +36,14 @@ use crate::{
         value::Value,
     },
 };
+use parking_lot::RwLock;
 use std::sync::Arc;
 use thin_vec::{ThinVec, thin_vec};
+
+/// Cached dbms.functions() result columns, invalidated when the UDF registry
+/// changes. Rebuilding the table formats a type-union string per argument of
+/// every function — far more expensive than the Arc clones a cache hit costs.
+static DBMS_FUNCTIONS_CACHE: RwLock<Option<(u64, [Vec<Value>; 8])>> = RwLock::new(None);
 
 pub fn register(funcs: &mut Functions) {
     // ── db.labels ──────────────────────────────────────────────────────
@@ -409,6 +416,12 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Any,
         procedure: ["name", "return_type", "arguments", "internal", "reducible", "aggregation", "variable_len", "udf"],
         fn dbms_functions(_, _args) {
+            let version = udf_version();
+            if let Some((v, cols)) = DBMS_FUNCTIONS_CACHE.read().as_ref()
+                && *v == version
+            {
+                return Ok(Batch::from_columns(cols.clone().map(Column::Values)));
+            }
             let funcs = get_functions();
             let mut seen_names = std::collections::HashSet::new();
             // Gather all function references (built-ins + UDFs), de-duplicated
@@ -468,16 +481,18 @@ pub fn register(funcs: &mut Functions) {
                 col_udf.push(Value::Bool(matches!(f.fn_type, FnType::Udf)));
             }
 
-            Ok(Batch::from_columns([
-                Column::Values(col_name),
-                Column::Values(col_return_type),
-                Column::Values(col_arguments),
-                Column::Values(col_internal),
-                Column::Values(col_reducible),
-                Column::Values(col_aggregation),
-                Column::Values(col_variable_len),
-                Column::Values(col_udf),
-            ]))
+            let cols = [
+                col_name,
+                col_return_type,
+                col_arguments,
+                col_internal,
+                col_reducible,
+                col_aggregation,
+                col_variable_len,
+                col_udf,
+            ];
+            *DBMS_FUNCTIONS_CACHE.write() = Some((version, cols.clone()));
+            Ok(Batch::from_columns(cols.map(Column::Values)))
         }
     );
 }
