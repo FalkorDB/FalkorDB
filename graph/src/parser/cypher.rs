@@ -1243,12 +1243,14 @@ impl<'a> Parser<'a> {
     fn parse_case_expression(&mut self) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
         self.lexer.next();
         let mut children = vec![];
-        if let Token::IdentifierOrKeyword {
-            keyword: Some(Keyword::When),
-            ..
-        } = self.lexer.current()?
-        {
-        } else {
+        let has_subject = !matches!(
+            self.lexer.current()?,
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::When),
+                ..
+            }
+        );
+        if has_subject {
             children.push(self.parse_expr(false)?);
         }
         let mut conditions = vec![];
@@ -1267,9 +1269,7 @@ impl<'a> Parser<'a> {
             children.push(tree!(ExprIR::Constant(Value::Null)));
         }
         match_token!(self.lexer => End);
-        Ok(tree!(
-            ExprIR::FuncInvocation(get_functions().get("case", &FnType::Internal)?); children
-        ))
+        Ok(tree!(ExprIR::Case { has_subject }; children))
     }
 
     fn parse_quantifier_expr(

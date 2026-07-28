@@ -1827,6 +1827,7 @@ impl Binder {
                     ExprIR::List => ExprIR::List,
                     ExprIR::Map => ExprIR::Map,
                     ExprIR::MapProjection => ExprIR::MapProjection,
+                    ExprIR::Case { has_subject } => ExprIR::Case { has_subject },
                     ExprIR::Parameter(p) => ExprIR::Parameter(p),
                     ExprIR::Length => ExprIR::Length,
                     ExprIR::GetElement => ExprIR::GetElement,
@@ -2169,6 +2170,13 @@ impl Binder {
             // Function calls – use the registered return type
             ExprIR::FuncInvocation(func) => func.ret_type.can_return_boolean(),
 
+            // CASE: the branch results decide the type, and they are not
+            // inspected here. Defers to the runtime check, matching what the
+            // internal `case` function's `Type::Any` return did before CASE
+            // became its own variant — being stricter would reject queries
+            // that used to reach the runtime.
+            ExprIR::Case { .. } => true,
+
             // Non-boolean: literals, unary arithmetic, subscript, list comprehension
             ExprIR::List
             | ExprIR::Map
@@ -2221,6 +2229,11 @@ impl Binder {
 
             // Function calls – check the return type
             ExprIR::FuncInvocation(func) => func.ret_type.can_return_entity(),
+
+            // CASE: as above, the branch results decide this and are not
+            // inspected. `Type::Any::can_return_entity()` is true, so this
+            // matches the pre-variant behaviour.
+            ExprIR::Case { .. } => true,
 
             // Transparent wrappers – recurse into the single child
             ExprIR::Paren | ExprIR::Distinct => {
