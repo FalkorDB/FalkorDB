@@ -416,12 +416,22 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Any,
         procedure: ["name", "return_type", "arguments", "internal", "reducible", "aggregation", "variable_len", "udf"],
         fn dbms_functions(_, _args) {
-            let version = udf_version();
+            // Compare the cached tag against the version as of *now*, not a
+            // snapshot read earlier: a registration racing this call then
+            // biases to a rebuild instead of serving the pre-registration
+            // table.
             if let Some((v, cols)) = DBMS_FUNCTIONS_CACHE.read().as_ref()
-                && *v == version
+                && *v == udf_version()
             {
                 return Ok(Batch::from_columns(cols.clone().map(Column::Values)));
             }
+            // Read the version *before* building. If the registry changes
+            // while we build, the table may already include the change but
+            // stays tagged with the older version, so the next caller misses
+            // and rebuilds. Tagging with a version read after the build would
+            // be the unsafe direction: a table that missed a concurrent
+            // registration would be stamped current and served indefinitely.
+            let version = udf_version();
             let funcs = get_functions();
             let mut seen_names = std::collections::HashSet::new();
             // Gather all function references (built-ins + UDFs), de-duplicated
