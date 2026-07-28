@@ -7,6 +7,7 @@
 #include "RG.h"
 #include "../effects/effects.h"
 #include "../graph/graphcontext.h"
+#include "../replication/replication_guard.h"
 
 // GRAPH.EFFECT command handler
 int Graph_Effect
@@ -40,7 +41,7 @@ int Graph_Effect
 	const char *effects_buff = RedisModule_StringPtrLen (argv[2], &l) ;
 
 	// apply effects
-	Effects_Apply (gc, effects_buff, l) ;
+	bool ok = Effects_Apply (gc, effects_buff, l) ;
 
 	// restore graph sync policy
 	Graph_SetMatrixPolicy (g, policy) ;
@@ -48,8 +49,19 @@ int Graph_Effect
 	// release write lock
 	GraphContext_ReleaseLock (gc) ;
 
+	const char *graph_name = GraphContext_GetName (gc) ;
+
 	// release GraphContext
 	GraphContext_DecreaseRefCount (gc) ;
+
+	if (!ok) {
+		// replica has diverged from the master, don't propagate this
+		// effect any further down a replication sub-chain
+		ReplicationGuard_OnFailure (ctx, graph_name, "GRAPH.EFFECT",
+				"failed to apply effects, see preceding log entries") ;
+		RedisModule_ReplyWithError (ctx, "ERR graph diverged from master") ;
+		return REDISMODULE_OK ;
+	}
 
 	// replicate effect
 	RedisModule_ReplicateVerbatim (ctx) ;

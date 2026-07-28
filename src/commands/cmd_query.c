@@ -18,6 +18,7 @@
 #include "../errors/errors.h"
 #include "index_operations.h"
 #include "../effects/effects.h"
+#include "../replication/replication_guard.h"
 #include "../util/cache/cache.h"
 #include "../configuration/config.h"
 #include "../execution_plan/execution_plan.h"
@@ -261,6 +262,16 @@ static void _ExecuteQuery
 		ResultSet_Clear (result_set) ;
 		if (query_ctx->status != QueryExecutionStatus_TIMEDOUT) {
 			query_ctx->status = QueryExecutionStatus_FAILURE;
+		}
+
+		// the master only ever replicates a command after it succeeded
+		// locally, so a replicated command failing here means this
+		// replica has diverged from the master
+		if (command_ctx->replicated_command) {
+			const char *detail = ErrorCtx_Get ()->error ;
+			ReplicationGuard_OnFailure (rm_ctx, GraphContext_GetName (gc),
+					command_ctx->command_name,
+					detail != NULL ? detail : "query execution failed") ;
 		}
 	} else {
 		// replicate if graph was modified
