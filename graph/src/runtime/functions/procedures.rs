@@ -25,7 +25,6 @@
 
 use super::{
     FnArguments, FnType, Functions, Type, empty_procedure_batch, get_functions, get_udf_functions,
-    udf_version,
 };
 use crate::{
     index::indexer::{IndexInfo, IndexType},
@@ -36,14 +35,8 @@ use crate::{
         value::Value,
     },
 };
-use parking_lot::RwLock;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use thin_vec::{ThinVec, thin_vec};
-
-/// Cached dbms.functions() result columns, invalidated when the UDF registry
-/// changes. Rebuilding the table formats a type-union string per argument of
-/// every function — far more expensive than the Arc clones a cache hit costs.
-static DBMS_FUNCTIONS_CACHE: RwLock<Option<(u64, [Vec<Value>; 8])>> = RwLock::new(None);
 
 pub fn register(funcs: &mut Functions) {
     // ── db.labels ──────────────────────────────────────────────────────
@@ -416,98 +409,185 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Any,
         procedure: ["name", "return_type", "arguments", "internal", "reducible", "aggregation", "variable_len", "udf"],
         fn dbms_functions(_, _args) {
-            // Compare the cached tag against the version as of *now*, not a
-            // snapshot read earlier: a registration racing this call then
-            // biases to a rebuild instead of serving the pre-registration
-            // table.
-            if let Some((v, cols)) = DBMS_FUNCTIONS_CACHE.read().as_ref()
-                && *v == udf_version()
-            {
-                return Ok(Batch::from_columns(cols.clone().map(Column::Values)));
-            }
-            // Read the version *before* building. If the registry changes
-            // while we build, the table may already include the change but
-            // stays tagged with the older version, so the next caller misses
-            // and rebuilds. Tagging with a version read after the build would
-            // be the unsafe direction: a table that missed a concurrent
-            // registration would be stamped current and served indefinitely.
-            let version = udf_version();
-            let funcs = get_functions();
-            let mut seen_names = std::collections::HashSet::new();
-            // Gather all function references (built-ins + UDFs), de-duplicated
-            // by lowercase name, then sort by name once. Sorting the function
-            // refs is far cheaper than building maps and sorting them while
-            // re-allocating Arc<String> keys for every comparison.
-            let mut entries: Vec<Arc<super::GraphFn>> = Vec::new();
+            // Built-in rows are precomputed and only ever cloned. UDF rows are
+            // built fresh, so the per-call cost scales with the number of UDFs
+            // (typically a handful) rather than the ~110 built-ins. Reading the
+            // registry on every call also means a newly registered UDF is
+            // visible immediately — no cache, no version, no staleness window.
+            let mut udfs: Vec<Arc<super::GraphFn>> = get_udf_functions()
+                .into_iter()
+                .filter(|f| {
+                    // Built-ins take precedence on a lowercase-name collision.
+                    BUILTIN_LOWER_NAMES
+                        .binary_search(&f.name.to_lowercase())
+                        .is_err()
+                })
+                .collect();
 
-            // Built-in functions first (non-procedure entries).
-            for f in funcs.iter().filter(|f| !matches!(f.fn_type, FnType::Procedure(_))) {
-                if seen_names.insert(f.name.to_lowercase()) {
-                    entries.push(Arc::clone(f));
+            if udfs.is_empty() {
+                return Ok(Batch::from_columns(BUILTIN_COLUMNS.clone().map(Column::Values)));
+            }
+
+            udfs.sort_by(|a, b| a.name.cmp(&b.name));
+            let udf_cols = build_columns(&udfs);
+
+            // Both sides are sorted by name; merge them so the output keeps the
+            // global name order without re-sorting or rebuilding built-in rows.
+            let (n, m) = (BUILTIN_ENTRIES.len(), udfs.len());
+            let mut picks: Vec<(bool, usize)> = Vec::with_capacity(n + m);
+            let (mut i, mut j) = (0usize, 0usize);
+            while i < n || j < m {
+                let take_udf = i >= n
+                    || (j < m && udfs[j].name < BUILTIN_ENTRIES[i].name);
+                if take_udf {
+                    picks.push((true, j));
+                    j += 1;
+                } else {
+                    picks.push((false, i));
+                    i += 1;
                 }
             }
 
-            // UDF entries from the dynamic registry.
-            for f in get_udf_functions() {
-                if seen_names.insert(f.name.to_lowercase()) {
-                    entries.push(f);
-                }
-            }
-
-            entries.sort_by(|a, b| a.name.cmp(&b.name));
-
-            let mut col_name = Vec::with_capacity(entries.len());
-            let mut col_return_type = Vec::with_capacity(entries.len());
-            let mut col_arguments = Vec::with_capacity(entries.len());
-            let mut col_internal = Vec::with_capacity(entries.len());
-            let mut col_reducible = Vec::with_capacity(entries.len());
-            let mut col_aggregation = Vec::with_capacity(entries.len());
-            let mut col_variable_len = Vec::with_capacity(entries.len());
-            let mut col_udf = Vec::with_capacity(entries.len());
-
-            for f in &entries {
-                col_name.push(Value::String(Arc::new(f.name.clone())));
-                col_return_type.push(Value::String(Arc::new(type_to_dbms_string(&f.ret_type))));
-
-                let args_list: thin_vec::ThinVec<Value> = match &f.args_type {
-                    FnArguments::Fixed(types) => types
-                        .iter()
-                        .map(|t| Value::String(Arc::new(type_to_dbms_string(t))))
-                        .collect(),
-                    FnArguments::VarLength(t) => {
-                        thin_vec::thin_vec![Value::String(Arc::new(type_to_dbms_string(t)))]
-                    }
-                };
-                col_arguments.push(Value::List(Arc::new(args_list)));
-
-                col_internal.push(Value::Bool(matches!(f.fn_type, FnType::Internal)));
-
-                let reducible = !f.non_deterministic
-                    && !matches!(f.fn_type, FnType::Aggregation { .. } | FnType::Procedure(_));
-                col_reducible.push(Value::Bool(reducible));
-
-                col_aggregation.push(Value::Bool(matches!(f.fn_type, FnType::Aggregation { .. })));
-                col_variable_len.push(Value::Bool(matches!(f.args_type, FnArguments::VarLength(_))));
-                col_udf.push(Value::Bool(matches!(f.fn_type, FnType::Udf)));
-            }
-
-            let cols = [
-                col_name,
-                col_return_type,
-                col_arguments,
-                col_internal,
-                col_reducible,
-                col_aggregation,
-                col_variable_len,
-                col_udf,
-            ];
-            *DBMS_FUNCTIONS_CACHE.write() = Some((version, cols.clone()));
+            let cols: [Vec<Value>; 8] = std::array::from_fn(|c| {
+                picks
+                    .iter()
+                    .map(|&(is_udf, idx)| {
+                        if is_udf { udf_cols[c][idx].clone() } else { BUILTIN_COLUMNS[c][idx].clone() }
+                    })
+                    .collect()
+            });
             Ok(Batch::from_columns(cols.map(Column::Values)))
         }
     );
 }
 
+/// Non-procedure built-in functions, sorted by name.
+///
+/// `Functions` is keyed by lowercase name, so built-ins are already unique —
+/// the de-duplication in `dbms.functions()` exists only to drop a UDF that
+/// collides with a built-in. Built-ins are registered once during
+/// `init_functions` and never change, so both this list and the columns
+/// derived from it are computed on first use and then only cloned. That is
+/// why the procedure needs no result cache: the immutable part is immutable
+/// by construction, with no version to compare and no staleness window.
+static BUILTIN_ENTRIES: LazyLock<Vec<Arc<super::GraphFn>>> = LazyLock::new(|| {
+    let mut entries: Vec<Arc<super::GraphFn>> = get_functions()
+        .iter()
+        .filter(|f| !matches!(f.fn_type, FnType::Procedure(_)))
+        .map(Arc::clone)
+        .collect();
+    entries.sort_by(|a, b| a.name.cmp(&b.name));
+    entries
+});
+
+/// Lowercase built-in names, sorted, for the UDF shadow check. Lets each UDF
+/// cost one binary search instead of re-lowercasing every built-in per call.
+static BUILTIN_LOWER_NAMES: LazyLock<Vec<String>> = LazyLock::new(|| {
+    let mut names: Vec<String> = BUILTIN_ENTRIES
+        .iter()
+        .map(|f| f.name.to_lowercase())
+        .collect();
+    names.sort_unstable();
+    names
+});
+
+/// The eight `dbms.functions()` columns for [`BUILTIN_ENTRIES`].
+static BUILTIN_COLUMNS: LazyLock<[Vec<Value>; 8]> =
+    LazyLock::new(|| build_columns(&BUILTIN_ENTRIES));
+
+/// Builds the eight `dbms.functions()` columns for `entries`.
+fn build_columns(entries: &[Arc<super::GraphFn>]) -> [Vec<Value>; 8] {
+    let n = entries.len();
+    let mut col_name = Vec::with_capacity(n);
+    let mut col_return_type = Vec::with_capacity(n);
+    let mut col_arguments = Vec::with_capacity(n);
+    let mut col_internal = Vec::with_capacity(n);
+    let mut col_reducible = Vec::with_capacity(n);
+    let mut col_aggregation = Vec::with_capacity(n);
+    let mut col_variable_len = Vec::with_capacity(n);
+    let mut col_udf = Vec::with_capacity(n);
+
+    for f in entries {
+        col_name.push(Value::String(Arc::new(f.name.clone())));
+        col_return_type.push(type_to_dbms_value(&f.ret_type));
+
+        let args_list: ThinVec<Value> = match &f.args_type {
+            FnArguments::Fixed(types) => types.iter().map(type_to_dbms_value).collect(),
+            FnArguments::VarLength(t) => thin_vec![type_to_dbms_value(t)],
+        };
+        col_arguments.push(Value::List(Arc::new(args_list)));
+
+        col_internal.push(Value::Bool(matches!(f.fn_type, FnType::Internal)));
+        col_reducible.push(Value::Bool(
+            !f.non_deterministic
+                && !matches!(f.fn_type, FnType::Aggregation { .. } | FnType::Procedure(_)),
+        ));
+        col_aggregation.push(Value::Bool(matches!(f.fn_type, FnType::Aggregation { .. })));
+        col_variable_len.push(Value::Bool(matches!(
+            f.args_type,
+            FnArguments::VarLength(_)
+        )));
+        col_udf.push(Value::Bool(matches!(f.fn_type, FnType::Udf)));
+    }
+
+    [
+        col_name,
+        col_return_type,
+        col_arguments,
+        col_internal,
+        col_reducible,
+        col_aggregation,
+        col_variable_len,
+        col_udf,
+    ]
+}
+
 /// Convert a `Type` to a display string matching the original `FalkorDB` format.
+/// The `Type::Any` spelling: a 17-name union, ~130 bytes. Built once — most
+/// functions accept and return `Any`, so `dbms.functions()` would otherwise
+/// rebuild this string a few hundred times per call.
+static ANY_UNION: LazyLock<Arc<String>> =
+    LazyLock::new(|| Arc::new(type_to_dbms_string(&Type::Any)));
+
+/// A type's `dbms.functions()` display string, as a ready-to-clone [`Value`].
+///
+/// Every spelling except the composite `Union` case is fixed at compile time,
+/// so it is interned and handed out as an `Arc` refcount bump instead of a
+/// fresh allocation. This is what makes rebuilding the procedure table cheap
+/// enough not to need a result cache.
+fn type_to_dbms_value(t: &Type) -> Value {
+    /// Interns one fixed spelling in its own `static`.
+    macro_rules! interned {
+        ($name:literal) => {{
+            static S: LazyLock<Arc<String>> = LazyLock::new(|| Arc::new(String::from($name)));
+            Value::String(Arc::clone(&S))
+        }};
+    }
+    match t {
+        Type::Any => Value::String(Arc::clone(&ANY_UNION)),
+        Type::Null => interned!("Null"),
+        Type::Bool => interned!("Boolean"),
+        Type::Int => interned!("Integer"),
+        Type::Float => interned!("Float"),
+        Type::String => interned!("String"),
+        Type::List(_) => interned!("List"),
+        Type::Map => interned!("Map"),
+        Type::Node => interned!("Node"),
+        Type::Relationship => interned!("Edge"),
+        Type::Path => interned!("Path"),
+        Type::VecF32 => interned!("Vectorf32"),
+        Type::Point => interned!("Point"),
+        Type::Datetime => interned!("Datetime"),
+        Type::Date => interned!("Date"),
+        Type::Time => interned!("Time"),
+        Type::Duration => interned!("Duration"),
+        // Composite: the spelling depends on the members, so it is built.
+        // Rare — no registered function uses it in a hot column.
+        Type::Union(_) => Value::String(Arc::new(type_to_dbms_string(t))),
+        Type::Optional(inner) => type_to_dbms_value(inner),
+    }
+}
+
 fn type_to_dbms_string(t: &Type) -> String {
     match t {
         Type::Any => format_union(&[
