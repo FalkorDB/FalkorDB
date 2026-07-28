@@ -85,12 +85,12 @@ def pollUntil(f, description, timeout=30, interval=0.01):
        poll running at thousands of iterations per second grows the result set
        without bound."""
 
-    deadline = time.time() + timeout
+    deadline = time.monotonic() + timeout
     while True:
         res = f()
         if res:
             return res
-        if time.time() >= deadline:
+        if time.monotonic() >= deadline:
             raise AssertionError(f"timed out after {timeout}s waiting for {description}")
         time.sleep(interval)
 

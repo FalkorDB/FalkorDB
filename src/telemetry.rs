@@ -296,6 +296,42 @@ pub fn register_waiting(
     id
 }
 
+/// Owns a waiting-registry entry and removes it on drop unless
+/// [`Self::promote`] consumes it.
+///
+/// The entry is created on the dispatching thread but consumed by a worker, and
+/// two paths never reach the worker: `threadpool::spawn` deliberately drops the
+/// job when the channel has disconnected during shutdown, and a worker can
+/// panic before promoting. Either would otherwise leave the query in
+/// `GRAPH.INFO WaitingQueries` forever. Moving this guard into the job closure
+/// ties the entry's lifetime to the closure instead.
+pub struct WaitingEntry(Option<u64>);
+
+impl WaitingEntry {
+    /// Registers a waiting query and returns the guard owning its entry.
+    pub fn register(
+        received_at: i64,
+        graph_name: &Arc<str>,
+        query: &Arc<str>,
+    ) -> Self {
+        Self(Some(register_waiting(received_at, graph_name, query)))
+    }
+
+    /// Moves the query from waiting to running, disarming the guard. Returns
+    /// the running id, or `None` if the entry was already taken.
+    pub fn promote(&mut self) -> Option<u64> {
+        self.0.take().and_then(transition_waiting_to_running)
+    }
+}
+
+impl Drop for WaitingEntry {
+    fn drop(&mut self) {
+        if let Some(id) = self.0.take() {
+            unregister_waiting(id);
+        }
+    }
+}
+
 /// Transition a waiting query to running, keeping its id — and therefore its
 /// shard, so the move costs a single lock acquisition instead of two.
 ///

@@ -877,7 +877,11 @@ pub fn query_mut(
     // read straight off the thread pool's task queue. Our jobs are opaque
     // closures, so the registry stands in for that queue — register here, on the
     // dispatching thread, and promote to "running" inside the worker.
-    let pool_waiting_id = telemetry::register_waiting(received_at, &key_name, &query);
+    // Guarded, not a bare id: `spawn` drops the job when the pool is shutting
+    // down, and a worker can panic before promoting. Either would leave the
+    // query in `GRAPH.INFO WaitingQueries` forever, so the entry's lifetime is
+    // tied to the closure that owns it.
+    let mut pool_waiting = telemetry::WaitingEntry::register(received_at, &key_name, &query);
     spawn(
         move || {
             let mem_capacity = QUERY_MEM_CAPACITY.load(Ordering::Relaxed);
@@ -908,10 +912,9 @@ pub fn query_mut(
             // Leaves the waiting list and joins the running list in one step. The
             // fallback cannot normally happen (only this worker consumes the id);
             // it keeps the running report correct rather than silently empty.
-            let running_id = telemetry::transition_waiting_to_running(pool_waiting_id)
-                .unwrap_or_else(|| {
-                    telemetry::register_running(received_at, &key_name, &query, false)
-                });
+            let running_id = pool_waiting.promote().unwrap_or_else(|| {
+                telemetry::register_running(received_at, &key_name, &query, false)
+            });
             let wall_start = Instant::now();
             // Time spent waiting in the thread pool before this worker started.
             let wait_ms = wall_start.duration_since(dispatch_instant).as_secs_f64() * 1000.0;
