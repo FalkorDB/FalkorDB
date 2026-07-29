@@ -5,7 +5,6 @@
  */
 
 #include "RG.h"
-#include "module_event_handlers.h"
 #include "LAGraph.h"
 #include "globals.h"
 #include "util/uuid.h"
@@ -15,6 +14,8 @@
 #include "util/redis_version.h"
 #include "graph/graphcontext.h"
 #include "configuration/config.h"
+#include "module_event_handlers.h"
+#include "graph/graph_load_queue.h"
 #include "serializers/graphmeta_type.h"
 #include "serializers/graphcontext_type.h"
 
@@ -357,6 +358,9 @@ static void _ShutdownEventHandler
 	if (!getenv("RS_GLOBAL_DTORS")) {  // used only with sanitizer or valgrind
 		return; 
 	}
+
+	// drain any graph loads still parked waiting on another thread's load
+	GraphLoadQueue_Free () ;
 
 	// stop cron
 	Cron_Stop () ;
