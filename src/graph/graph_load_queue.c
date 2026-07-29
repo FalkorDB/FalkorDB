@@ -75,7 +75,10 @@ void GraphLoadQueue_Drain
 	const char *graph_name
 ) {
 	ASSERT (graph_name != NULL) ;
-	ASSERT (_entries    != NULL) ;
+
+	if (_entries == NULL) {
+		return ;
+	}
 
 	pthread_mutex_lock (&_lock) ;
 
@@ -104,6 +107,8 @@ void GraphLoadQueue_Free (void) {
 		return ;
 	}
 
+	pthread_mutex_lock (&_lock) ;
+
 	dictIterator *iter = HashTableGetIterator (_entries) ;
 	dictEntry *de ;
 
@@ -124,5 +129,7 @@ void GraphLoadQueue_Free (void) {
 
 	HashTableRelease (_entries) ;
 	_entries = NULL ;
+
+	pthread_mutex_unlock  (&_lock) ;
 }
 
