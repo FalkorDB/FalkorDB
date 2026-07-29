@@ -138,19 +138,77 @@ fn collect_filtered_vars(
     vars
 }
 
-/// Creates a scan subtree for the given node, with an optional inline attr filter.
-/// Returns a `DynTree<IR>` containing `[Filter →] NodeByLabelScan|AllNodeScan`.
-fn make_scan_subtree(node: &Arc<QueryNode<Arc<String>, Variable>>) -> DynTree<IR> {
+/// Creates a scan subtree for the given node, with an optional inline attr
+/// filter. Shape: `[Filter →] [IncludePending →] Scan [→ Argument]`.
+///
+/// `include_pending` wraps the scan with `IncludePending`, required inside
+/// MERGE match branches so the scan sees in-flight mutations. `argument`
+/// attaches an `Argument` leaf below the scan, so correlated rows keep
+/// flowing when the scan replaces a bare `Argument` child.
+fn make_scan_subtree(
+    node: &Arc<QueryNode<Arc<String>, Variable>>,
+    include_pending: bool,
+    argument: Option<IR>,
+) -> DynTree<IR> {
     let attr_filter = inline_attrs_to_filter(&node.alias, &node.attrs);
     let mut scan = if node.labels.is_empty() {
         DynTree::new(IR::AllNodeScan(node.clone()))
     } else {
         DynTree::new(IR::NodeByLabelScan { node: node.clone() })
     };
+    if let Some(arg) = argument {
+        let root_idx = scan.root().idx();
+        scan.node_mut(root_idx).push_child(arg);
+    }
+    if include_pending {
+        scan = tree!(IR::IncludePending { node: node.clone() }, scan);
+    }
     if let Some(filter_expr) = attr_filter {
         scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
     }
     scan
+}
+
+/// Returns the `Argument` leaf of a scan subtree, if it has one.
+///
+/// `add_argument_to_leaves` attaches an `Argument` *below* the leaf scan of a
+/// correlated sub-plan, and this pass builds the same shape itself, so a
+/// planner-scan subtree can look like
+/// `Filter → IncludePending → Scan → Argument`. Whenever such a subtree is
+/// pruned and rebuilt the leaf has to come along: without it the rebuilt scan
+/// stops replaying outer rows and the sub-plan loses its correlation (and
+/// row multiplicity).
+fn argument_leaf_of(
+    plan: &DynTree<IR>,
+    idx: NodeIdx<Dyn<IR>>,
+) -> Option<IR> {
+    let mut node = plan.node(idx);
+    loop {
+        if let IR::Argument(_) = node.data() {
+            return Some(node.data().clone());
+        }
+        if node.num_children() != 1 {
+            return None;
+        }
+        node = node.child(0);
+    }
+}
+
+/// Returns true if `idx` sits inside the match branch (last child) of the
+/// nearest enclosing `Merge`. Scans inserted there must be wrapped with
+/// `IncludePending`, mirroring what the planner does for its own scans.
+fn in_merge_match_branch(
+    plan: &DynTree<IR>,
+    idx: NodeIdx<Dyn<IR>>,
+) -> bool {
+    let mut current = plan.node(idx);
+    while let Some(parent) = current.parent() {
+        if matches!(parent.data(), IR::Merge { .. }) {
+            return current.sibling_idx() == parent.num_children() - 1;
+        }
+        current = parent;
+    }
+    false
 }
 
 /// Returns true if the subtree rooted at `idx` is a planner-added scan: zero
@@ -229,6 +287,15 @@ fn collect_output_aliases(ir: &IR) -> HashSet<u32> {
         }
         IR::Unwind { var, .. } => {
             aliases.insert(var.id);
+        }
+        // Argument with known bound vars: the incoming rows bind exactly
+        // these variables. `Argument(None)` stays opaque (conservative).
+        // Only the id is kept: this set feeds `score_endpoint`, which is a
+        // preference heuristic over bare ids (as `filtered_vars` already is)
+        // and never decides plan validity. The scope-sensitive decision —
+        // whether the Argument is transparent — compares full pairs.
+        IR::Argument(Some(vars)) => {
+            aliases.extend(vars.iter().map(|(id, _)| *id));
         }
         _ => {}
     }
@@ -392,6 +459,19 @@ pub(super) fn select_scan_node(
             }
         };
 
+        // If the child is an Argument with a known bound-var set, capture the
+        // set: when it binds none of the chain's endpoints, the Argument only
+        // replays outer rows for correlation/multiplicity and a scan can be
+        // inserted between the CT and the Argument.
+        let child_argument_vars: Option<Vec<(u32, u32)>> = if is_leaf {
+            None
+        } else {
+            match optimized_plan.node(bottom_idx).child(0).data() {
+                IR::Argument(Some(vars)) => Some(vars.clone()),
+                _ => None,
+            }
+        };
+
         // Collect all candidate endpoints from the chain.
         // Each endpoint is (node, chain_position, is_from).
         // chain_position 0 = bottom, higher = closer to root.
@@ -411,6 +491,27 @@ pub(super) fn select_scan_node(
                 }
             }
         }
+
+        // The Argument is "transparent" when it provably binds none of the
+        // chain's endpoint variables. Treat the CT like a leaf then: a scan
+        // will be inserted with the Argument re-attached beneath it.
+        let arg_transparent = child_argument_vars.as_ref().is_some_and(|vars| {
+            candidates
+                .iter()
+                .all(|(node, _, _)| !vars.contains(&(node.alias.id, node.alias.scope_id)))
+        });
+        let effectively_leaf = effectively_leaf || arg_transparent;
+        // Any scan this pass builds inside a MERGE match branch must see
+        // in-flight mutations, mirroring the planner's
+        // set_include_pending_on_scans. This depends only on where the
+        // traversal sits, never on why we are rebuilding the scan: the
+        // non-transparent paths below also replace planner-added scan
+        // subtrees (which may already carry IncludePending), and rebuilding
+        // one without the wrapper would silently stop it observing pending
+        // mutations.
+        let in_merge = in_merge_match_branch(optimized_plan, bottom_idx);
+        // The Argument leaf to re-attach beneath any scan that replaces it.
+        let make_argument = || IR::Argument(child_argument_vars.clone());
 
         // Score each candidate and find the best.
         let best = candidates.iter().max_by(|a, b| {
@@ -462,20 +563,31 @@ pub(super) fn select_scan_node(
                 let edges = sibling_edges.clone();
                 let scan_node = relationship.to.clone();
 
-                // Check if child is a planner-added scan before mutating
-                let child_is_planner_scan = if is_leaf {
-                    false
+                // Check if child is a planner-added scan before mutating, and
+                // capture any Argument leaf it carries so the rebuilt scan
+                // keeps replaying outer rows.
+                let (child_is_planner_scan, preserved_argument) = if is_leaf {
+                    (false, None)
                 } else {
                     let child_idx = optimized_plan.node(ct_idx).child(0).idx();
-                    is_planner_scan_subtree(optimized_plan, child_idx)
+                    let is_scan = is_planner_scan_subtree(optimized_plan, child_idx);
+                    let arg = if arg_transparent {
+                        Some(make_argument())
+                    } else if is_scan {
+                        argument_leaf_of(optimized_plan, child_idx)
+                    } else {
+                        None
+                    };
+                    (is_scan, arg)
                 };
 
-                // Remove old scan child if it was a planner-added scan.
+                // Remove the old child if it was a planner-added scan or a
+                // transparent Argument (re-attached beneath the new scan).
                 // `prune` can trigger `Auto` memory reclaim, invalidating
                 // every NodeIdx — re-resolve the CT via its structural path
                 // (`path`, which points at chain[0] and is unaffected by
                 // removing its own child).
-                let ct_idx = if child_is_planner_scan {
+                let ct_idx = if child_is_planner_scan || arg_transparent {
                     let child_idx = optimized_plan.node(ct_idx).child(0).idx();
                     optimized_plan.node_mut(child_idx).prune();
                     resolve_path(optimized_plan, &path)
@@ -485,7 +597,7 @@ pub(super) fn select_scan_node(
                 };
 
                 // Build scan subtree before taking mutable borrow
-                let scan_subtree = make_scan_subtree(&scan_node);
+                let scan_subtree = make_scan_subtree(&scan_node, in_merge, preserved_argument);
 
                 let mut op = optimized_plan.node_mut(ct_idx);
                 *op.data_mut() = IR::CondTraverse {
@@ -496,7 +608,7 @@ pub(super) fn select_scan_node(
                     chain: Vec::new(),
                 };
 
-                if is_leaf || child_is_planner_scan {
+                if is_leaf || child_is_planner_scan || arg_transparent {
                     // Add scan subtree (with optional attr filter) as child.
                     op.push_child_tree(scan_subtree);
                 }
@@ -553,13 +665,21 @@ pub(super) fn select_scan_node(
             }
 
             // Detach existing child of the bottom CT (if non-leaf) for reattachment,
-            // but only if it's NOT a planner-added scan (those get replaced).
+            // but only if it's NOT a planner-added scan or a transparent
+            // Argument (those get replaced by a new scan for best_node). When
+            // it is replaced, carry over any Argument leaf it held.
+            let mut preserved_argument = None;
             let existing_child = if is_leaf {
                 None
             } else {
                 let child_idx = optimized_plan.node(bottom_idx).child(0).idx();
                 let child_is_planner_scan = is_planner_scan_subtree(optimized_plan, child_idx);
-                if child_is_planner_scan {
+                if child_is_planner_scan || arg_transparent {
+                    preserved_argument = if arg_transparent {
+                        Some(make_argument())
+                    } else {
+                        argument_leaf_of(optimized_plan, child_idx)
+                    };
                     None // Will create a new scan for best_node instead
                 } else {
                     Some(optimized_plan.node_mut(child_idx).clone_as_tree())
@@ -588,7 +708,8 @@ pub(super) fn select_scan_node(
             // A filter collected at original position `i` should be inserted
             // right after the hop for original chain[i] is wrapped around the
             // subtree (and before the next hop wraps it).
-            let mut subtree = existing_child.unwrap_or_else(|| make_scan_subtree(&best_node));
+            let mut subtree = existing_child
+                .unwrap_or_else(|| make_scan_subtree(&best_node, in_merge, preserved_argument));
             for (step, (rel, emit, edges, transposed)) in new_rels.into_iter().rev().enumerate() {
                 subtree = tree!(
                     IR::CondTraverse {
@@ -657,12 +778,24 @@ pub(super) fn select_scan_node(
                     let edges = sibling_edges.clone();
                     let trans = *transposed;
 
-                    // Remove old planner-added scan child if present.
-                    // `prune` can trigger `Auto` memory reclaim, invalidating
-                    // every NodeIdx — re-resolve the CT via its structural
-                    // path (`path`, which points at chain[0] and is
-                    // unaffected by removing its own child).
-                    let ct_idx = if has_planner_scan {
+                    // Remove the old child if it was a planner-added scan or
+                    // a transparent Argument (re-attached beneath the new
+                    // scan). `prune` can trigger `Auto` memory reclaim,
+                    // invalidating every NodeIdx — re-resolve the CT via its
+                    // structural path (`path`, which points at chain[0] and
+                    // is unaffected by removing its own child).
+                    // Capture the pruned subtree's Argument leaf (if any)
+                    // before it is dropped, so the rebuilt scan keeps it.
+                    let preserved_argument = if arg_transparent {
+                        Some(make_argument())
+                    } else if has_planner_scan {
+                        let child_idx = optimized_plan.node(ct_idx).child(0).idx();
+                        argument_leaf_of(optimized_plan, child_idx)
+                    } else {
+                        None
+                    };
+
+                    let ct_idx = if has_planner_scan || arg_transparent {
                         let child_idx = optimized_plan.node(ct_idx).child(0).idx();
                         optimized_plan.node_mut(child_idx).prune();
                         resolve_path(optimized_plan, &path)
@@ -672,7 +805,7 @@ pub(super) fn select_scan_node(
                     };
 
                     // Build scan subtree with optional attr filter
-                    let scan_subtree = make_scan_subtree(&scan_node);
+                    let scan_subtree = make_scan_subtree(&scan_node, in_merge, preserved_argument);
 
                     let mut op = optimized_plan.node_mut(ct_idx);
                     *op.data_mut() = IR::CondTraverse {
