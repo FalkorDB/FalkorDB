@@ -1,0 +1,510 @@
+# Reusable workflow: run the FalkorDB-vs-FalkorDB benchmark across one or more
+# dataset sizes and two or three variants, then publish to GitHub Pages.
+#
+#   A/B   — canonical main-branch trend (C engine `edge` vs Rust `edge-rs`).
+#   A/B/C — a PR run, where C is the PR's `rc-pr-<N>` image, so B→C is exactly
+#           the PR's impact and A/C compares it to the C engine.
+#
+# Shape: `setup` expands (size × variant) into a combo list; then, per combo, an
+# ephemeral self-hosted GCE VM is created, runs ONE variant (so all variants of
+# all sizes run in parallel on identical VMs), and is torn down. A single
+# `merge` job builds the CLI, aggregates each size's variants into one summary,
+# publishes the dashboard once and upserts one PR comment.
+#
+# The query workload is generated ONCE per run (the `gen-queries` job) and shared
+# to every variant as an artifact, so A/B/C replay the IDENTICAL queries (the
+# generator is unseeded — per-variant generation would diverge). A cache keyed on
+# (benchmark ref, size, profile, write-ratio) reuses the same file across runs so
+# the trend is reproducible run-to-run. Aggregation is two-vendor upstream, so
+# `merge` does it pairwise (A+B, A+C) and merges — see aggregate-variants.sh.
+#
+# Called by:
+#   - benchmark.yml   (PR `benchmark` label / `/benchmark` / manual dispatch)
+#   - rust-push.yml   (canonical trend, after `edge-rs` promotion on merge)
+#
+# Runners are self-hosted GCE VMs (no GitHub larger runners), mirroring
+# FalkorDB/FalkorDB. Prerequisites, all available to this repo (org-level is
+# fine — callers pass `secrets: inherit`): secrets GH_SA_TOKEN, GCP_SA_KEY,
+# GCP_PROJECT_ID; var GCP_ZONES; and the `gh-runner` GCP network. All VMs use
+# vars.BENCHMARK_MACHINE_TYPE and DB limits vars.BENCHMARK_DB_CPUS/MEMORY.
+name: A/B/C benchmark (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      image_a:
+        description: "Variant A full image ref (baseline C engine)"
+        required: true
+        type: string
+      image_b:
+        description: "Variant B full image ref (published Rust)"
+        required: true
+        type: string
+      image_c:
+        description: "Variant C full image ref (the PR image); empty for a two-variant run"
+        required: false
+        type: string
+        default: ""
+      name_a:
+        description: "Label for variant A"
+        required: false
+        type: string
+        default: "falkordb-c"
+      name_b:
+        description: "Label for variant B"
+        required: false
+        type: string
+        default: "falkordb-rs"
+      name_c:
+        description: "Label for variant C"
+        required: false
+        type: string
+        default: "falkordb-pr"
+      view:
+        description: "Slugified view name (branch slug, or 'main' for the canonical trend)"
+        required: true
+        type: string
+      is_canonical:
+        description: "true only for the main-branch trend; publishes to gh-pages root /benchmark/ (unbounded history) instead of /benchmark/branch/<view>/"
+        required: false
+        type: boolean
+        default: false
+      sizes:
+        description: 'JSON array of dataset sizes, e.g. ["small","medium","large"]'
+        required: false
+        type: string
+        default: '["small"]'
+      pr_number:
+        description: "PR number to comment on (empty for non-PR runs)"
+        required: false
+        type: string
+        default: ""
+      snapshot_pr_number:
+        description: "PR that produced this snapshot, recorded in the trend history for drill-down attribution (empty if unknown)"
+        required: false
+        type: string
+        default: ""
+      write_ratio:
+        description: "Fraction of write queries (0.0-1.0). PR/slash runs pass 0.05 (5% writes); the canonical main-branch trend stays read-only (0.0). Callers that omit this get the read-only default."
+        required: false
+        type: string
+        default: "0.0"
+      query_profile:
+        description: "Query coverage profile (baseline | extended-core | fixture-dependent). PR/slash runs pass fixture-dependent to exercise text+vector index flows; the canonical main-branch trend stays baseline. Callers that omit this get baseline."
+        required: false
+        type: string
+        default: "baseline"
+      arch:
+        description: "CPU architecture of the benchmark VMs: 'x86' (default, n4-highcpu-16) or 'arm' (c4a-highcpu-16 Axion). arm runs publish to the caller's <view> (a -arm-suffixed view) and a separate PR comment."
+        required: false
+        type: string
+        default: "x86"
+
+permissions:
+  contents: read
+
+env:
+  # Pinned to a commit validated against patch-ui.sh (static export + basePath).
+  # This is the v2.2 release commit. Bump deliberately and re-verify patch-ui.sh
+  # (its grep -qF guards on the vendored ui/ source) when moving it.
+  BENCHMARK_REPO: FalkorDB/benchmark
+  BENCHMARK_REF: deca7752cbd8cdeb333493569472ede385d5b5db # v2.2
+
+jobs:
+  # Expand (size × variant) into a flat combo list the matrices below fan out
+  # over — one VM per combo, so variants run in parallel instead of in sequence.
+  setup:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      combos: ${{ steps.c.outputs.combos }}
+    steps:
+      - name: Build (size × variant) combos
+        id: c
+        env:
+          SIZES: ${{ inputs.sizes }}
+          NAME_A: ${{ inputs.name_a }}
+          IMAGE_A: ${{ inputs.image_a }}
+          NAME_B: ${{ inputs.name_b }}
+          IMAGE_B: ${{ inputs.image_b }}
+          NAME_C: ${{ inputs.name_c }}
+          IMAGE_C: ${{ inputs.image_c }}
+        run: |
+          set -euo pipefail
+          variants=$(jq -cn \
+            --arg na "$NAME_A" --arg ia "$IMAGE_A" \
+            --arg nb "$NAME_B" --arg ib "$IMAGE_B" \
+            --arg nc "$NAME_C" --arg ic "$IMAGE_C" \
+            '[{name:$na,image:$ia},{name:$nb,image:$ib}]
+               + (if $ic != "" then [{name:$nc,image:$ic}] else [] end)')
+          combos=$(jq -cn --argjson sizes "$SIZES" --argjson variants "$variants" \
+            '[ $sizes[] as $s | $variants[] as $v | {size:$s, variant:$v.name, image:$v.image} ]')
+          echo "combos=$combos" >> "$GITHUB_OUTPUT"
+          echo "combos:"; echo "$combos" | jq .
+
+  # Generate the query workload ONCE per size and share it to every variant, so
+  # A/B/C replay the identical queries (the generator is unseeded). Cached on
+  # (benchmark ref, size, profile, write-ratio) → reused across runs for a
+  # reproducible trend; regenerated only when one of those changes. Pure
+  # client-side generation (no DB), so a plain runner suffices. Runs in parallel
+  # with create-runners (no dependency on setup).
+  gen-queries:
+    strategy:
+      fail-fast: false
+      matrix:
+        size: ${{ fromJSON(inputs.sizes) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout this repo (scripts)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Checkout FalkorDB/benchmark@${{ env.BENCHMARK_REF }}
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ env.BENCHMARK_REPO }}
+          ref: ${{ env.BENCHMARK_REF }}
+          path: benchmark-tool
+          persist-credentials: false
+
+      - name: Install protobuf-compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - run: rustup default stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: benchmark-tool
+
+      # Reuse the identical workload across runs: keyed so it regenerates only
+      # when the tool ref, size, profile, or write-ratio changes. Bump the v1
+      # prefix if the sizing table (workload-sizing.sh) changes the query count.
+      - name: Restore cached query workload
+        id: qcache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        with:
+          path: benchmark-tool/ab-compare-${{ matrix.size }}
+          key: bench-queries-v1-${{ env.BENCHMARK_REF }}-${{ matrix.size }}-${{ inputs.query_profile }}-wr${{ inputs.write_ratio }}
+
+      - name: Generate query workload (${{ matrix.size }})
+        if: ${{ steps.qcache.outputs.cache-hit != 'true' }}
+        env:
+          BENCHMARK_DIR: ${{ github.workspace }}/benchmark-tool
+          DATASET_SIZE: ${{ matrix.size }}
+          WRITE_RATIO: ${{ inputs.write_ratio }}
+          QUERY_PROFILE: ${{ inputs.query_profile }}
+        run: .github/scripts/benchmark/generate-queries.sh
+
+      - name: Upload query workload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: bench-queries-${{ inputs.view }}-${{ matrix.size }}
+          path: benchmark-tool/ab-compare-${{ matrix.size }}
+          if-no-files-found: error
+          retention-days: 30
+
+  # One ephemeral GCE VM per (size, variant), labelled uniquely for this run so
+  # its benchmark leg lands on it and cleanup can find it. All use the same
+  # machine type → all variants/sizes compared on identical hardware.
+  create-runners:
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        combo: ${{ fromJSON(needs.setup.outputs.combos) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Create GCE runner (${{ matrix.combo.size }}/${{ matrix.combo.variant }}/${{ inputs.arch }})
+        uses: ./.github/actions/create-runner # gce-github-runner + retry on stockout
+        with:
+          token: ${{ secrets.GH_SA_TOKEN }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          # arm → Axion (c4a) in the arm-capable zones; else the x86 N4 default.
+          machine_zones: ${{ inputs.arch == 'arm' && (vars.GCP_ZONES_ARM || vars.GCP_ZONES) || vars.GCP_ZONES }}
+          machine_type: ${{ inputs.arch == 'arm' && (vars.BENCHMARK_MACHINE_TYPE_ARM || 'c4a-highcpu-16') || (vars.BENCHMARK_MACHINE_TYPE || 'n4-highcpu-16') }}
+          arm: ${{ inputs.arch == 'arm' }}
+          # debian-12-arm64 mirrors x86's gcloud-default Debian (arm64 variant),
+          # so the runner-agent bootstrap matches the working x86 path.
+          image_family: ${{ inputs.arch == 'arm' && (vars.BENCHMARK_IMAGE_FAMILY_ARM || 'debian-12-arm64') || '' }}
+          image_project: ${{ inputs.arch == 'arm' && (vars.BENCHMARK_IMAGE_PROJECT_ARM || 'debian-cloud') || '' }}
+          network: gh-runner
+          runner_label: bench-${{ github.run_id }}-${{ github.run_number }}-${{ matrix.combo.size }}-${{ matrix.combo.variant }}
+
+  # Each leg runs ONE variant on its own VM (runs-on = the label above). The VM
+  # has Docker but not Rust/git — install those. Runs as root, so no sudo.
+  benchmark:
+    needs: [setup, gen-queries, create-runners]
+    strategy:
+      fail-fast: false
+      matrix:
+        combo: ${{ fromJSON(needs.setup.outputs.combos) }}
+    runs-on: bench-${{ github.run_id }}-${{ github.run_number }}-${{ matrix.combo.size }}-${{ matrix.combo.variant }}
+    timeout-minutes: 330
+    permissions:
+      contents: read
+    # The GCE runner registers as root but doesn't export HOME; rustup/cargo/git
+    # all need it (else `set -u` hits "HOME: unbound variable"). Point at /root.
+    env:
+      HOME: /root
+    steps:
+      - name: Install toolchain deps
+        run: |
+          set -euo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            git curl ca-certificates build-essential pkg-config libssl-dev protobuf-compiler
+
+      - name: Install Rust
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain stable --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Checkout this repo (scripts)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Checkout FalkorDB/benchmark@${{ env.BENCHMARK_REF }}
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ env.BENCHMARK_REPO }}
+          ref: ${{ env.BENCHMARK_REF }}
+          path: benchmark-tool
+          persist-credentials: false
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: benchmark-tool
+
+      # Shared query workload from gen-queries → $BENCHMARK_DIR/ab-compare-<size>.
+      # continue-on-error so a transient miss falls back to local generation in
+      # run-variant.sh rather than failing the leg (loses cross-variant pairing).
+      - name: Download shared query workload
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: bench-queries-${{ inputs.view }}-${{ matrix.combo.size }}
+          path: ${{ github.workspace }}/benchmark-tool
+
+      - name: Run variant (${{ matrix.combo.size }}/${{ matrix.combo.variant }})
+        env:
+          IMAGE: ${{ matrix.combo.image }}
+          NAME: ${{ matrix.combo.variant }}
+          DATASET_SIZE: ${{ matrix.combo.size }}
+          # DB limits — same for every variant AND size (fair by construction).
+          # DB_CPUS empty → run-variant.sh gives the DB the VM's full core count.
+          DB_CPUS: ${{ vars.BENCHMARK_DB_CPUS }}
+          DB_MEMORY: ${{ vars.BENCHMARK_DB_MEMORY || '24g' }}
+          # Client + workload knobs: per-size defaults live in workload-sizing.sh
+          # (small/large 20 clients, medium 8; MPS 5000). A repo variable, if set,
+          # still overrides. QUERIES_COUNT only feeds the local generate fallback —
+          # the shared workload downloaded above already fixes the count.
+          PARALLEL: ${{ vars.BENCHMARK_PARALLEL }}
+          MPS: ${{ vars.BENCHMARK_MPS }}
+          QUERIES_COUNT: ${{ vars.BENCHMARK_QUERIES_COUNT }}
+          # Write fraction from the caller: 0.05 for PR/slash runs, 0.0 for the
+          # canonical main-branch trend (and any caller that omits it).
+          WRITE_RATIO: ${{ inputs.write_ratio }}
+          # Query coverage profile from the caller: fixture-dependent for PR/slash
+          # runs (adds text+vector index flows), baseline for the canonical trend.
+          QUERY_PROFILE: ${{ inputs.query_profile }}
+          # Server-side per-query timeout (ms) — 5s so heavy algos abort fast
+          # instead of running to the tool's 180s default. Tunable via repo var.
+          FALKOR_QUERY_TIMEOUT_MS: ${{ vars.BENCHMARK_QUERY_TIMEOUT_MS || '5000' }}
+          BENCHMARK_DIR: ${{ github.workspace }}/benchmark-tool
+          RESULTS_DIR: ${{ runner.temp }}/results-ab
+        run: .github/scripts/benchmark/run-variant.sh
+
+      # Raw results are laid out as <size>/<variant>/… so merge-multiple in the
+      # merge job reassembles every variant of a size side by side.
+      - name: Upload raw results
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: bench-raw-${{ inputs.view }}-${{ matrix.combo.size }}-${{ matrix.combo.variant }}
+          path: ${{ runner.temp }}/results-ab
+          if-no-files-found: error
+          retention-days: 30
+
+  # Tear down each VM once its leg ends (success, failure, or cancel). The create
+  # action's 6h auto-delete is the backstop; cleanup no-ops on a missing VM.
+  cleanup-runners:
+    needs: [setup, benchmark]
+    if: ${{ always() && needs.setup.result == 'success' }}
+    strategy:
+      matrix:
+        combo: ${{ fromJSON(needs.setup.outputs.combos) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/cleanup-runner
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          instance_label: bench-${{ github.run_id }}-${{ github.run_number }}-${{ matrix.combo.size }}-${{ matrix.combo.variant }}
+
+  # Aggregate each size's variants into one summary, publish the dashboard once,
+  # and upsert one all-sizes PR comment. Runs even if some legs failed
+  # (aggregates what's there); no-ops if nothing was produced.
+  merge:
+    needs: [setup, benchmark]
+    if: ${{ !cancelled() && needs.setup.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout this repo (scripts)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Checkout gh-pages
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: gh-pages
+          path: gh-pages
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout FalkorDB/benchmark@${{ env.BENCHMARK_REF }}
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ env.BENCHMARK_REPO }}
+          ref: ${{ env.BENCHMARK_REF }}
+          path: benchmark-tool
+          persist-credentials: false
+
+      - name: Install protobuf-compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - run: rustup default stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: benchmark-tool
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Build benchmark CLI (for aggregation)
+        run: |
+          set -euo pipefail
+          cd benchmark-tool
+          grep -q '^\[workspace\]' Cargo.toml || printf '\n[workspace]\n' >> Cargo.toml
+          cargo build --release --bin benchmark
+
+      - name: Download raw results
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: bench-raw-${{ inputs.view }}-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/raw
+
+      - name: Aggregate, publish, and comment
+        env:
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VIEW: ${{ inputs.view }}
+          # Separate PR comment per arch so x86 and arm results don't clobber each other.
+          COMMENT_MARKER: ${{ inputs.arch == 'arm' && '<!-- ab-benchmark-comment-arm -->' || '<!-- ab-benchmark-comment -->' }}
+          IS_CANONICAL: ${{ inputs.is_canonical }}
+          UI_DIR: ${{ github.workspace }}/benchmark-tool/ui
+          GH_PAGES_DIR: ${{ github.workspace }}/gh-pages
+          PR_NUMBER: ${{ inputs.pr_number }}
+          SNAPSHOT_PR_NUMBER: ${{ inputs.snapshot_pr_number }}
+          NAME_A: ${{ inputs.name_a }}
+          NAME_B: ${{ inputs.name_b }}
+          NAME_C: ${{ inputs.name_c }}
+          SIZES: ${{ inputs.sizes }}
+          BENCHMARK_DIR: ${{ github.workspace }}/benchmark-tool
+          RAW: ${{ runner.temp }}/raw
+          DL: ${{ runner.temp }}/summaries
+          RUNNER_TMP: ${{ runner.temp }}
+          # Link the PR comment back to the run that produced it, and pass the
+          # per-query cap so the comment can flag shapes whose p99 reached it.
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TIMEOUT_MS: ${{ vars.BENCHMARK_QUERY_TIMEOUT_MS || '5000' }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$DL"
+          # One summary per size, aggregating that size's variant raw-results.
+          for sz in $(echo "$SIZES" | jq -r '.[]'); do
+            [ -d "$RAW/$sz" ] || { echo "no raw results for $sz"; continue; }
+            VARIANTS_DIR="$RAW/$sz" OUT_JSON="$DL/summary-$sz.json" \
+            NAME_A="$NAME_A" NAME_B="$NAME_B" NAME_C="$NAME_C" BENCHMARK_DIR="$BENCHMARK_DIR" \
+              .github/scripts/benchmark/aggregate-variants.sh
+          done
+
+          # Accumulate across runs: a run does one size, but rehydrate the
+          # previously-published per-size summaries for this view so the impact
+          # page (size switcher) and the comment show every size run so far.
+          # cp -n → the size just aggregated above wins over its stored copy.
+          if [ "$IS_CANONICAL" = "true" ]; then rel="benchmark"; else rel="benchmark/branch/$VIEW"; fi
+          prev="$GH_PAGES_DIR/$rel/abc-summaries"
+          if [ -d "$prev" ]; then
+            cp -n "$prev"/summary-*.json "$DL"/ 2>/dev/null || true
+            n=$(find "$DL" -maxdepth 1 -name 'summary-*.json' | wc -l | tr -d ' ')
+            echo "rehydrated prior sizes → ${n} size(s) total"
+          fi
+
+          # Largest size present becomes the published dashboard; the comment
+          # covers every size.
+          primary=""
+          for sz in small medium large; do
+            [ -f "$DL/summary-$sz.json" ] && primary="$sz"
+          done
+          if [ -z "$primary" ]; then
+            echo "no summaries produced — nothing to publish"
+            exit 0
+          fi
+          echo "primary dashboard size: $primary"
+
+          epoch=$(date +%s)
+          mkdir -p "$RUNNER_TMP/pub"
+          cp "$DL/summary-$primary.json" "$RUNNER_TMP/pub/falkordb_vs_falkordb_$epoch.json"
+
+          export SUMMARY_JSON="$RUNNER_TMP/pub/falkordb_vs_falkordb_$epoch.json"
+          export ABC_SUMMARIES_DIR="$DL"   # all per-size summaries → the impact page (PR views)
+          .github/scripts/benchmark/publish.sh | tee "$RUNNER_TMP/publish.log"
+          published_url=$(grep -o 'RESULT: published_url=.*' "$RUNNER_TMP/publish.log" | tail -n1 | sed 's/RESULT: published_url=//')
+
+          if [ -z "$PR_NUMBER" ]; then
+            echo "no PR to comment on"
+            exit 0
+          fi
+
+          args=()
+          for sz in small medium large; do
+            f="$DL/summary-$sz.json"
+            [ -f "$f" ] && args+=(--summary "$sz:$f")
+          done
+
+          BODY="$RUNNER_TMP/pr-comment.md"
+          python3 .github/scripts/benchmark/format-summary.py "${args[@]}" \
+            --view "$VIEW" --published-url "$published_url" \
+            --run-url "$RUN_URL" --timeout-ms "$TIMEOUT_MS" \
+            --name-a "$NAME_A" --name-b "$NAME_B" --name-c "$NAME_C" > "$BODY"
+
+          # Upsert one benchmark comment per PR *per arch* (marker-identified).
+          MARKER="$COMMENT_MARKER"
+          { echo "$MARKER"; cat "$BODY"; } > "$BODY.marked"
+          existing=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate \
+            --jq "map(select(.body | startswith(\"$MARKER\"))) | .[0].id // empty")
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$existing" -F body=@"$BODY.marked"
+          else
+            gh api -X POST "repos/$REPO/issues/$PR_NUMBER/comments" -F body=@"$BODY.marked"
+          fi

@@ -26,16 +26,11 @@ On stop, samply opens the Firefox Profiler UI in your browser. Use
 
 ## 2. Benchmark suite
 
-There is **no benchmark or profiling CI in this repository** — the A/B
-pipeline, the flame-graph workflow and their `gh-pages` dashboards were
-removed, because they depended on a `gh-pages` branch and GCE-runner
-variables that do not exist here. So there is no trend history to compare a
-suspected regression against.
-
-To measure a change, run the [`FalkorDB/benchmark`](https://github.com/FalkorDB/benchmark)
-tool locally against two containers (before/after, or vs the C engine's
-`docker.io/falkordb/falkordb-server:edge`), and treat samply flamegraphs
-above as the primary tool for locating a bottleneck.
+CI runs the A/B FalkorDB-vs-FalkorDB benchmark pipeline
+(`.github/workflows/_benchmark.yml`, driven by the `FalkorDB/benchmark`
+tool) and publishes the trend to
+<https://falkordb.github.io/falkordb-rs-next-gen/benchmark/> — compare
+against that history when checking for a regression.
 
 ## Notes
 
