@@ -22,78 +22,12 @@ typedef struct {
 	RedisModuleBlockedClient *bc;  // blocked client
 } GraphMemoryCtx;
 
-// GRAPH.MEMORY USAGE internal command handler
-// the function is executed on a reader thread to avoid blocking the main thread
-static void _Graph_Memory
+static void _Replay
 (
-	void *_ctx  // command context
+	RedisModuleCtx *rm_ctx,
+	MemoryUsageResult result,
+	GraphContext *gc
 ) {
-	ASSERT (_ctx != NULL) ;
-
-	GraphMemoryCtx           *ctx    = (GraphMemoryCtx*)_ctx ;
-	int64_t                  samples = ctx->samples ;
-	RedisModuleBlockedClient *bc     = ctx->bc ;
-	RedisModuleCtx           *rm_ctx = RedisModule_GetThreadSafeContext (bc) ;
-
-	//--------------------------------------------------------------------------
-	// compute graph memory usage
-	//--------------------------------------------------------------------------
-
-	// declare result before any goto so cleanup can safely arr_free the arrays
-	// (arr_free checks for NULL, so zero-initialized pointers are safe)
-	MemoryUsageResult result = {0} ;
-
-	//--------------------------------------------------------------------------
-	// get graph key
-	//--------------------------------------------------------------------------
-
-	// an offloaded stub consumes no RAM right now - check the key's type
-	// directly (mirrors cmd_delete.c) so this never triggers a disk load
-	// just to answer GRAPH.MEMORY, even for a graph that got offloaded
-	// after Graph_Memory blocked the client but before this worker got to
-	// run
-	RedisModule_ThreadSafeContextLock (rm_ctx) ;
-	RedisModuleKey  *rkey = RedisModule_OpenKey (rm_ctx, ctx->graph_id,
-			REDISMODULE_READ) ;
-	RedisModuleType *type = RedisModule_ModuleTypeGetType (rkey) ;
-	if (GraphStubType_Get == NULL) {
-		GraphStubType_Get = RedisModule_GetSharedAPI (rm_ctx, "GraphStubType_Get") ;
-	}
-	bool is_stub = (GraphStubType_Get != NULL && type == GraphStubType_Get ()) ;
-	RedisModule_CloseKey (rkey) ;
-	RedisModule_ThreadSafeContextUnlock (rm_ctx) ;
-
-	if (is_stub) {
-		// a stub isn't loaded, so it consumes no RAM right now - report a
-		// plain 0 rather than the full USAGE breakdown map (there is
-		// nothing to break down), and never call GraphContext_Retrieve
-		// for it
-		RedisModule_ReplyWithLongLong (rm_ctx, 0) ;
-		goto cleanup ;
-	}
-
-	GraphContext *gc = NULL ;
-	GraphContext_Retrieve (rm_ctx, ctx->graph_id, true, false, true, &gc) ;
-	if (gc == NULL) {
-		// error alreay emitted by GraphContext_Retrieve
-		goto cleanup ;
-	}
-
-	result.edge_attr_by_type_sz  = arr_new (size_t, 0) ;
-	result.node_attr_by_label_sz = arr_new (size_t, 0) ;
-
-	// acquire read lock
-	GraphContext_AcquireReadLock (gc) ;
-
-	GraphContext_EstimateMemoryUsage (gc, samples, &result) ;
-
-	// release read lock
-	GraphContext_ReleaseReadLock (gc) ;
-
-	//--------------------------------------------------------------------------
-	// reply to caller
-	//--------------------------------------------------------------------------
-
 	// reply structure:
 	// {
 	//    total_graph_sz_mb: <total_graph_sz_mb>
@@ -173,12 +107,84 @@ static void _Graph_Memory
 	// indices_sz_mb
 	RedisModule_ReplyWithCString  (rm_ctx, "indices_sz_mb") ;
 	RedisModule_ReplyWithLongLong (rm_ctx, result.indices_sz) ;
+}
+
+// GRAPH.MEMORY USAGE internal command handler
+// the function is executed on a reader thread to avoid blocking the main thread
+static void _Graph_Memory
+(
+	void *_ctx  // command context
+) {
+	ASSERT (_ctx != NULL) ;
+
+	GraphMemoryCtx           *ctx    = (GraphMemoryCtx*)_ctx ;
+	int64_t                  samples = ctx->samples ;
+	RedisModuleBlockedClient *bc     = ctx->bc ;
+	RedisModuleCtx           *rm_ctx = RedisModule_GetThreadSafeContext (bc) ;
+
+	//--------------------------------------------------------------------------
+	// compute graph memory usage
+	//--------------------------------------------------------------------------
+
+	// declare result before any goto so cleanup can safely arr_free the arrays
+	// (arr_free checks for NULL, so zero-initialized pointers are safe)
+	MemoryUsageResult result = {0} ;
+
+	//--------------------------------------------------------------------------
+	// get graph key
+	//--------------------------------------------------------------------------
+
+	// an offloaded stub consumes no RAM right now - check the key's type
+	// directly (mirrors cmd_delete.c) so this never triggers a disk load
+	// just to answer GRAPH.MEMORY, even for a graph that got offloaded
+	// after Graph_Memory blocked the client but before this worker got to
+	// run
+	RedisModule_ThreadSafeContextLock (rm_ctx) ;
+	RedisModuleKey  *rkey = RedisModule_OpenKey (rm_ctx, ctx->graph_id,
+			REDISMODULE_READ) ;
+	RedisModuleType *type = RedisModule_ModuleTypeGetType (rkey) ;
+	if (GraphStubType_Get == NULL) {
+		GraphStubType_Get = RedisModule_GetSharedAPI (rm_ctx, "GraphStubType_Get") ;
+	}
+	bool is_stub = (GraphStubType_Get != NULL && type == GraphStubType_Get ()) ;
+	RedisModule_CloseKey (rkey) ;
+	RedisModule_ThreadSafeContextUnlock (rm_ctx) ;
+
+	if (is_stub) {
+		// a stub isn't loaded, so it consumes no RAM right now - report a
+		// plain 0 rather than the full USAGE breakdown map (there is
+		// nothing to break down), and never call GraphContext_Retrieve
+		// for it
+		RedisModule_ReplyWithLongLong (rm_ctx, 0) ;
+		goto cleanup ;
+	}
+
+	GraphContext *gc = NULL ;
+	GraphContext_Retrieve (rm_ctx, ctx->graph_id, true, false, true, &gc) ;
+	if (gc == NULL) {
+		// error alreay emitted by GraphContext_Retrieve
+		goto cleanup ;
+	}
+
+	result.edge_attr_by_type_sz  = arr_new (size_t, 0) ;
+	result.node_attr_by_label_sz = arr_new (size_t, 0) ;
+
+	// acquire read lock
+	GraphContext_AcquireReadLock (gc) ;
+
+	GraphContext_EstimateMemoryUsage (gc, samples, &result) ;
+
+cleanup:
+	// reply to caller
+	_Replay (rm_ctx, result, gc) ;
 
 	// counter to GraphContext_Retrieve
 	// held until here so schema name lookups above are not use-after-free
-	GraphContext_DecreaseRefCount (gc) ;
+	if (gc != NULL) {
+		GraphContext_ReleaseReadLock  (gc) ;
+		GraphContext_DecreaseRefCount (gc) ;
+	}
 
-cleanup:
 	RedisModule_FreeString (rm_ctx, ctx->graph_id) ;
 
 	// unblock client
