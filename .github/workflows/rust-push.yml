@@ -19,10 +19,11 @@ on:
       - "[0-9]*.[0-9]*"
 
 permissions:
-  # deployments permission to deploy GitHub pages website
-  deployments: write
-  # contents permission to update benchmark contents in gh-pages branch
-  contents: write
+  # `deployments: write` + `contents: write` used to exist only so the benchmark
+  # trend could publish to the gh-pages branch. That job is gone, and every
+  # remaining job either declares its own permissions (find-pr, docker,
+  # promote-edge) or needs read only.
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -178,44 +179,6 @@ jobs:
             -t "ghcr.io/falkordb/${REPO}:edge-rs" \
             -t "docker.io/falkordb/${REPO}:edge-rs" \
             "ghcr.io/falkordb/${REPO}:rc-pr-${PR_NUM}"
-
-  # Feed the canonical, continuously-updated A/B benchmark trend (production
-  # C `:edge` vs this repo's freshly-promoted `:edge-rs`) every time
-  # promote-edge succeeds. This is the only trigger that ever publishes to
-  # gh-pages' /benchmark/ root — see _benchmark.yml (the reusable pipeline)
-  # and benchmark.yml (the PR-label/slash-command/manual-dispatch entry
-  # points, which publish to /benchmark/branch/<view>/ previews instead).
-  #
-  # The trend runs the medium dataset with 5% writes and the fixture-dependent
-  # profile (text + vector index flows) — i.e. the same workload a PR's
-  # benchmark-medium label produces (minus the PR's 3rd variant), so a PR run is
-  # a faithful preview of what lands here on merge. This deliberately reset the
-  # trend baseline (2026-07) away from the earlier small/read-only/baseline
-  # workload — pre-reset points are not comparable to post-reset ones.
-  benchmark-edge:
-    needs: [find-pr, promote-edge]
-    if: ${{ contains(fromJSON('["refs/heads/main","refs/heads/main-rs"]'), github.ref) && needs.promote-edge.result == 'success' }}
-    uses: ./.github/workflows/_benchmark.yml
-    permissions:
-      contents: write
-      # _benchmark.yml's merge job declares pull-requests: write; a reusable
-      # workflow can't request a permission the caller didn't grant, so omitting
-      # this made the whole Rust Push run startup_fail. (The canonical run never
-      # comments — no PR — but the grant must still cover the declaration.)
-      pull-requests: write
-    with:
-      image_a: docker.io/falkordb/falkordb-server:edge
-      image_b: ghcr.io/falkordb/falkordb-server:edge-rs
-      view: main
-      is_canonical: true
-      sizes: '["medium"]'
-      write_ratio: "0.05"
-      query_profile: "fixture-dependent"
-      # Attribute this trend snapshot to the PR that merged into main, so the
-      # drill-down chart can show which PR each data point came from. Kept as
-      # snapshot_pr_number (not pr_number) so the canonical run never comments.
-      snapshot_pr_number: ${{ needs.find-pr.outputs.pr_n }}
-    secrets: inherit
 
   lint:
     runs-on: ubuntu-latest
