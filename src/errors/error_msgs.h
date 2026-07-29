@@ -7,6 +7,8 @@
 #pragma once
 
 #define EMSG_GRAPH_EXISTS "Graph %s already exists"
+#define EMSG_GRAPH_LOAD_QUEUE_FULL "ERR too many queries waiting for graph: %s to finish loading"
+#define EMSG_MAX_PENDING_QUERIES "Max pending queries exceeded"
 #define EMSG_EMPTY_KEY "Encountered an empty key when opened key %s"
 #define EMSG_NON_GRAPH_KEY "Encountered a non-graph value type when opened key %s"
 #define EMSG_DIFFERENT_VALUE "Encountered different graph value when opened key %s"
