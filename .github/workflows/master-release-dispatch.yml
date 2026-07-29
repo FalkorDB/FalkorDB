@@ -1,23 +1,24 @@
-# Keep the C engine's publishing alive after the default branch moved here.
+# Keep the C engine's STABLE releases publishing after the default branch moved
+# here.
 #
-# `workflow_run` and `release` are delivered ONLY from the repository's default
-# branch. Now that the Rust tree is the default branch, master's
-# release-image.yml / release-ramp.yml / browser-tests-trigger.yml never fire on
-# those events again — silently. A branch filter on master cannot fix it: GitHub
-# reads the workflow from the default branch.
+# `release` is delivered ONLY from the repository's default branch. Now that the
+# Rust tree is the default branch, master's release-image.yml / release-ramp.yml
+# / browser-tests-trigger.yml never see a published release again — silently. A
+# branch filter on master cannot fix it: GitHub reads the workflow from the
+# default branch, so the compensation has to live here. This workflow drives
+# master's existing `workflow_dispatch` entry points; none of C's release logic
+# is rewritten.
 #
-# This workflow lives here (the default branch) so `workflow_run` works again,
-# and drives master's existing `workflow_dispatch` entry points. None of C's
-# release logic is rewritten.
+# SCOPE: stable releases only. The rolling `edge` channel used to arrive here too
+# (via `workflow_run` on Build), but master's own build.yml now hands off to
+# release-image.yml directly after a successful build. That keeps C's edge
+# channel inside C's own tree, removes a cross-branch dependency on the busiest
+# path, and leaves this workflow responsible only for the one event that cannot
+# be heard from a non-default branch.
 #
-# ⚠️ THE CLOUD/TESTFLIGHT FLAGS ARE LOAD-BEARING. master's release-image.yml
-# gates two repository_dispatch jobs on
-#   github.event_name == 'release' || github.event.inputs.run_* == 'true'
-# and BOTH inputs default to "true". Dispatching without setting them false
-# would fire `bump-falkordb-version` at FalkorDB/falkordb-omnistrate and
-# `release-created` at FalkorDB/testflight on EVERY master push — i.e. it would
-# bump FalkorDB Cloud to "edge". So the rolling-edge path below passes false and
-# only a real release passes true, reproducing today's behaviour exactly.
+# ⚠️ `release` is REPO-WIDE and VERSION-BLIND — it fires here for the Rust
+# engine's releases as well as C's. The major-version gate in the derive step
+# below is what keeps a Rust release from being published out of C's pipeline.
 #
 # GITHUB_TOKEN is sufficient: per GitHub's docs `workflow_dispatch` and
 # `repository_dispatch` are the explicit exceptions that "always create workflow
@@ -28,15 +29,12 @@
 name: master release dispatch
 
 on:
-  workflow_run:
-    workflows: ["Build"]
-    types: [completed]
-    # Mirrors master release-image.yml's own filter verbatim. NOTE: the actual
-    # version branches in this repo are unprefixed ("4.18", "4.20"), so the
-    # "v[0-9]+.[0-9]+" arm likely never matched even before the migration. It is
-    # reproduced rather than "fixed" so this change introduces no new behaviour;
-    # see the PR discussion if that arm should be corrected.
-    branches: [master, "v[0-9]+.[0-9]+"]
+  # `release` is the ONLY event here that structurally has to be compensated from
+  # the default branch: nothing on `master` can hear it once master stops being
+  # default. The rolling `edge` channel deliberately does NOT go through this
+  # workflow — master's own build.yml hands off to release-image.yml directly
+  # after a successful build, keeping C's edge channel inside C's own tree with
+  # no cross-branch dependency (see the master-side change of #2255).
   release:
     types: [published]
   workflow_dispatch:
@@ -61,15 +59,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: master-release-dispatch-${{ github.event.workflow_run.head_branch || github.event.release.tag_name || inputs.tag }}
+  group: master-release-dispatch-${{ github.event.release.tag_name || inputs.tag }}
   cancel-in-progress: false
 
 jobs:
   dispatch:
-    # Only meaningful where a `master` branch exists.
-    if: >-
-      github.repository == 'FalkorDB/FalkorDB' &&
-      (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
+    # Only meaningful where a `master` branch exists. Guards against this file
+    # being merged into a repo without one.
+    if: ${{ github.repository == 'FalkorDB/FalkorDB' }}
     runs-on: ubuntu-latest
     outputs:
       skip: ${{ steps.derive.outputs.skip }}
@@ -80,8 +77,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           EVENT: ${{ github.event_name }}
-          WR_BRANCH: ${{ github.event.workflow_run.head_branch }}
-          WR_SHA: ${{ github.event.workflow_run.head_commit.id }}
           REL_TAG: ${{ github.event.release.tag_name }}
           REL_TARGET: ${{ github.event.release.target_commitish }}
           IN_TAG: ${{ inputs.tag }}
@@ -105,22 +100,6 @@ jobs:
           REF="master"
 
           case "$EVENT" in
-            workflow_run)
-              # Reproduces master release-image.yml's own tag rules:
-              #   Build on master        -> "edge"
-              #   Build on a vX.Y branch -> "v<branch>"
-              if [ "$WR_BRANCH" = "master" ]; then
-                TAG="edge"
-              else
-                TAG="v${WR_BRANCH#v}"
-              fi
-              SHA="$WR_SHA"
-              REF="$WR_BRANCH"
-              # Rolling channel: must NOT notify downstream (see header) and must
-              # NOT move :latest.
-              NOTIFY=false
-              LATEST=false
-              ;;
             release)
               TAG="$REL_TAG"
               # `release` is a REPO-WIDE, version-blind event, and after the
