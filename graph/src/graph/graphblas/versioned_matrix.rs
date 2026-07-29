@@ -148,6 +148,14 @@ impl<T> VersionedMatrix<T> {
     ) {
         self.wait();
         self.m.resize(nrows, ncols);
+        // `GrB_Matrix_resize` can leave pending work on the base, and every
+        // other path here relies on the base never being pending — `wait` and
+        // `set` both assert it. Growing by enough to change GraphBLAS's
+        // internal representation is what actually queues work, so a small
+        // resize hides this and a large one panics. Materialize here, at the
+        // one place that writes the base outside a fold: resize only happens
+        // on capacity growth, so this costs nothing on the hot paths.
+        self.m.wait();
         self.dp.resize(nrows, ncols);
         self.dm.resize(nrows, ncols);
     }
@@ -186,12 +194,12 @@ impl<T> VersionedMatrix<T> {
     pub fn extract(&self) -> Matrix<bool> {
         self.wait();
         let mut m = Matrix::<bool>::new(self.m.nrows(), self.m.ncols());
-        m.element_wise_add(None, None, Some(&*self.m), None);
+        m.set_pattern(None, &*self.m, None);
         if self.dm.nvals() > 0 {
             m.remove_all(&self.dm);
         }
         if self.dp.nvals() > 0 {
-            m.element_wise_add(None, None, Some(&*self.dp), None);
+            m.set_pattern(None, &*self.dp, None);
         }
         m
     }
@@ -227,13 +235,12 @@ impl<T> VersionedMatrix<T> {
         &mut self,
         mask: &Matrix<bool>,
     ) {
-        // dm |= (m & mask): mark deleted every committed entry that `mask`
-        // selects. The set added to `dm` is the intersection `m ∩ mask`, which
-        // is symmetric — so `m`'s values are irrelevant and it can flow through
-        // the (structure-only, `PAIR`-semiring) generic `b` slot while the bool
-        // `mask` acts as the GraphBLAS write mask.
+        // dm<mask> = mask ∩ m: mark deleted every committed entry that `mask`
+        // selects. eWiseMult's `PAIR` semiring never reads `m`'s values — an
+        // eWiseAdd copy would typecast a u64 value of 0 to `false`, which
+        // valued masks then skip.
         self.dm
-            .element_wise_add(Some(mask), None, Some(&*self.m), None);
+            .element_wise_multiply(Some(mask), Some(mask), Some(&*self.m), None);
         // dp &= ~mask: remove entries from dp that exist in mask
         self.dp.remove_all(mask);
     }
@@ -306,8 +313,8 @@ impl VersionedMatrix<bool> {
     ) -> Self {
         Self {
             m: Cow::new(Matrix::<bool>::new(nrows, ncols)),
-            dp: Cow::new(Matrix::<bool>::new(nrows, ncols)),
-            dm: Cow::new(Matrix::<bool>::new(nrows, ncols)),
+            dp: Cow::new(Matrix::<bool>::new(nrows, ncols).into_hyper()),
+            dm: Cow::new(Matrix::<bool>::new(nrows, ncols).into_hyper()),
         }
     }
 
@@ -317,12 +324,16 @@ impl VersionedMatrix<bool> {
     /// dup overhead of re-building inside the versioned wrapper.
     #[must_use]
     pub fn from_matrix(m: Matrix<bool>) -> Self {
+        // Freshly merged matrices (e.g. `set_pattern` unions) may carry
+        // pending GraphBLAS work; the base slot is required to be synced
+        // (`wait` debug-asserts `!m.pending()`).
+        m.wait();
         let nrows = m.nrows();
         let ncols = m.ncols();
         Self {
             m: Cow::new(m),
-            dp: Cow::new(Matrix::<bool>::new(nrows, ncols)),
-            dm: Cow::new(Matrix::<bool>::new(nrows, ncols)),
+            dp: Cow::new(Matrix::<bool>::new(nrows, ncols).into_hyper()),
+            dm: Cow::new(Matrix::<bool>::new(nrows, ncols).into_hyper()),
         }
     }
 
@@ -377,8 +388,8 @@ impl VersionedMatrix<bool> {
     pub fn transpose(&self) -> Self {
         Self {
             m: Cow::new(self.m.transpose()),
-            dp: Cow::new(self.dp.transpose()),
-            dm: Cow::new(self.dm.transpose()),
+            dp: Cow::new(self.dp.transpose().into_hyper()),
+            dm: Cow::new(self.dm.transpose().into_hyper()),
         }
     }
 }
@@ -401,8 +412,8 @@ impl<V> Decode<19> for VersionedMatrix<V> {
         let dm = Matrix::<bool>::decode(r)?;
         Ok(Self {
             m: Cow::new(m),
-            dp: Cow::new(dp),
-            dm: Cow::new(dm),
+            dp: Cow::new(dp.into_hyper()),
+            dm: Cow::new(dm.into_hyper()),
         })
     }
 }

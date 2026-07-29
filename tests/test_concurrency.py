@@ -65,3 +65,135 @@ def test_record_concurrent_with_writes():
 
     res = common.g.query("MATCH (n:Node) RETURN count(n)")
     assert res.result_set[0][0] == 801
+
+
+def _hammer_under_write_load(command):
+    """Repeatedly invoke `command(r)` on the main-thread client while 8 writer
+    processes burst writes into graph "test". `command` must return (not hang)
+    each call; a #726 lock-order deadlock (write loop holding L1 while
+    acquiring the GIL vs. a main-thread command holding the GIL and waiting for
+    L1) would hang the server, which the 30s socket timeout turns into a fast
+    failure. Returns after all writers complete.
+    """
+    common.g.query("CREATE (:Node {id: -1})")
+    r = Redis(
+        host=os.environ.get("FALKORDB_HOST", "localhost"),
+        port=int(os.environ.get("FALKORDB_PORT", os.environ.get("PORT", "6379"))),
+        socket_timeout=30,
+    )
+    with Pool(processes=8) as pool:
+        writers = pool.map_async(run_write_burst, range(8))
+        while not writers.ready():
+            command(r)
+        assert sorted(writers.get()) == list(range(8))
+    # >= 801 (800 burst writes + the initial -1 node); a hammering command that
+    # itself writes (MULTI) may add more. The point of this guard is no hang.
+    res = common.g.query("MATCH (n:Node) RETURN count(n)")
+    assert res.result_set[0][0] >= 801
+
+
+def test_slowlog_concurrent_with_writes():
+    # GRAPH.SLOWLOG runs inline on the main thread, so it exercises the #726 fix
+    # directly: while it holds the GIL and takes the per-graph read lock, the write
+    # loop must not be holding the write lock and waiting for the GIL.
+    _hammer_under_write_load(lambda r: r.execute_command("GRAPH.SLOWLOG", "test"))
+
+
+def test_memory_concurrent_with_writes():
+    # GRAPH.MEMORY is dispatched to a worker thread; it must not deadlock
+    # against committing writes.
+    _hammer_under_write_load(lambda r: r.execute_command("GRAPH.MEMORY", "USAGE", "test"))
+
+
+def test_explain_concurrent_with_writes():
+    # GRAPH.EXPLAIN is dispatched to a worker thread; it must not deadlock against
+    # committing writes.
+    _hammer_under_write_load(
+        lambda r: r.execute_command(
+            "GRAPH.EXPLAIN", "test", "MATCH (n:Node) RETURN n.id LIMIT 1"
+        )
+    )
+
+
+def _create_index(r):
+    # First call creates the index; later calls error ("already indexed") but still
+    # plan as DDL and escalate to writer mode, calling the RediSearch spec FFI. We
+    # only care that the command returns rather than hanging, so swallow the error.
+    try:
+        r.execute_command("GRAPH.QUERY", "test", "CREATE INDEX FOR (n:Node) ON (n.id)")
+    except Exception:
+        # Expected once the index exists ("already indexed"); this test only cares
+        # that the command returns instead of hanging.
+        return
+
+
+def test_create_index_concurrent_with_writes():
+    # DDL escalates to writer mode and then takes the global lock re-entrantly; must
+    # not deadlock or self-deadlock against concurrent committing writes.
+    _hammer_under_write_load(_create_index)
+
+
+def _multi_write(r):
+    # A MULTI-wrapped write runs synchronously on the main thread (query_sync).
+    # Before the #726 fix this DEADLOCKED against the pool write loop (query_sync
+    # holds the GIL and waits for L1; the write loop holds L1 and waits for the
+    # GIL). Now it either succeeds or, when it races the write loop for the MVCC
+    # slot in the brief commit gap, returns a retryable "another write is in progress"
+    # (the client is expected to retry). Either way the server does not hang —
+    # which is what this test guards. Swallow only that expected transient error.
+    try:
+        p = r.pipeline(transaction=True)
+        p.execute_command("GRAPH.QUERY", "test", "CREATE (:Node {id: -2})")
+        p.execute()
+    except Exception as e:  # noqa: BLE001 - narrow check below
+        if "another write is in progress" not in str(e):
+            raise
+
+
+def test_multi_write_concurrent_with_writes():
+    _hammer_under_write_load(_multi_write)
+
+
+def _profile_write(r):
+    # GRAPH.PROFILE of a write routes through the SAME write queue as GRAPH.QUERY,
+    # instead of the old bespoke path that held L1-write across execute+commit (and
+    # could panic on a busy MVCC slot). It must return, not hang or crash, under
+    # concurrent write load.
+    r.execute_command("GRAPH.PROFILE", "test", "CREATE (:Node {id: -3})")
+
+
+def test_profile_write_concurrent_with_writes():
+    _hammer_under_write_load(_profile_write)
+
+
+def _profile_ddl(r):
+    # GRAPH.PROFILE of DDL (CREATE INDEX) is the case that previously took the
+    # GIL under L1-write on the background profile path — an uncovered #726
+    # inversion (the profile path installed no L1HeldScope, so the assertion
+    # could not even catch it). It now runs through the write loop's
+    # GIL->L1-write DDL branch. Swallow the expected "already indexed" after the
+    # first success; we only assert the command returns rather than hanging.
+    try:
+        r.execute_command("GRAPH.PROFILE", "test", "CREATE INDEX FOR (n:Node) ON (n.v)")
+    except Exception:
+        pass
+
+
+def test_profile_ddl_concurrent_with_writes():
+    _hammer_under_write_load(_profile_ddl)
+
+
+def _index_scan_write(r):
+    # A write whose plan includes an index scan (n.id is indexed). The scan's
+    # cloned RediSearch index handle (OwnedIndex) is dropped mid-execute while the
+    # write loop holds L1-read. Before the reaper fix, OwnedIndex::drop acquired
+    # the module GIL there — an L1->GIL inversion (#726) that deadlocked against a
+    # main-thread GIL->L1 command. Now the release is deferred to the index-reaper
+    # thread (holds only the GIL). Must not hang/crash under concurrent writes.
+    r.execute_command("GRAPH.QUERY", "test", "MATCH (n:Node) WHERE n.id = 42 SET n.hit = 1")
+
+
+def test_index_scan_write_concurrent_with_writes():
+    # Index on n.id so the MATCH above plans as a NodeByIndexScan.
+    common.g.query("CREATE INDEX FOR (n:Node) ON (n.id)")
+    _hammer_under_write_load(_index_scan_write)

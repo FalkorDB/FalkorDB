@@ -225,8 +225,8 @@ impl Tensor {
     ) -> Self {
         Self {
             m: Cow::new(Matrix::<u64>::new(nrows, ncols)),
-            dp: Cow::new(Matrix::<u64>::new(nrows, ncols)),
-            dm: Cow::new(Matrix::<bool>::new(nrows, ncols)),
+            dp: Cow::new(Matrix::<u64>::new(nrows, ncols).into_hyper()),
+            dm: Cow::new(Matrix::<bool>::new(nrows, ncols).into_hyper()),
             mt: VersionedMatrix::<bool>::new(ncols, nrows),
             me: VersionedMatrix::<bool>::new(GrB_INDEX_MAX, GrB_INDEX_MAX),
             multi_count: 0,
@@ -438,12 +438,14 @@ impl Tensor {
             m_mask.build(&m_rows, &m_cols);
             let mut mt_mask = Matrix::<bool>::new(ncols, nrows);
             mt_mask.build(&mt_rows, &mt_cols);
-            // dm |= (m ∩ mask): mark every committed entry the mask selects as
-            // deleted; dp &= ¬mask: drop pending adds (including the shadow
-            // value of any in-place-updated pair, whose committed entry the dm
-            // update just masked — keeping `dp ∩ dm = ∅`).
+            // dm<mask> = mask ∩ m: mark every committed entry the mask selects
+            // as deleted (eWiseMult's PAIR never reads m's u64 values — an
+            // eWiseAdd copy would typecast edge id 0 to `false`, which valued
+            // masks then skip); dp &= ¬mask: drop pending adds (including the
+            // shadow value of any in-place-updated pair, whose committed entry
+            // the dm update just masked — keeping `dp ∩ dm = ∅`).
             self.dm
-                .element_wise_add(Some(&m_mask), None, Some(&*self.m), None);
+                .element_wise_multiply(Some(&m_mask), Some(&m_mask), Some(&*self.m), None);
             self.dp.remove_all(&m_mask);
             self.mt.remove_mask(&mt_mask);
             return rels.iter().map(|&(_, src, dst)| (src, dst)).collect();
@@ -511,6 +513,11 @@ impl Tensor {
     ) {
         self.wait_fwd();
         self.m.resize(nrows, ncols);
+        // `GrB_Matrix_resize` can leave pending work on the base, which breaks
+        // the invariant `wait_fwd` asserts — see the note in
+        // `VersionedMatrix::resize`, which had the same hole. Resize only runs
+        // on capacity growth, so materializing here is off the hot paths.
+        self.m.wait();
         self.dp.resize(nrows, ncols);
         self.dm.resize(nrows, ncols);
         self.mt.resize(ncols, nrows);
@@ -544,12 +551,12 @@ impl Tensor {
     pub fn extract(&self) -> Matrix<bool> {
         self.wait_fwd();
         let mut m = Matrix::<bool>::new(self.m.nrows(), self.m.ncols());
-        m.element_wise_add(None, None, Some(&*self.m), None);
+        m.set_pattern(None, &*self.m, None);
         if self.dm.nvals() > 0 {
             m.remove_all(&self.dm);
         }
         if self.dp.nvals() > 0 {
-            m.element_wise_add(None, None, Some(&*self.dp), None);
+            m.set_pattern(None, &*self.dp, None);
         }
         m
     }
@@ -866,8 +873,8 @@ impl Decode<19> for Tensor {
         // decode, so leave it empty here.
         Ok(Self {
             m: Cow::new(m),
-            dp: Cow::new(Matrix::<u64>::new(nrows, ncols)),
-            dm: Cow::new(Matrix::<bool>::new(nrows, ncols)),
+            dp: Cow::new(Matrix::<u64>::new(nrows, ncols).into_hyper()),
+            dm: Cow::new(Matrix::<bool>::new(nrows, ncols).into_hyper()),
             mt: VersionedMatrix::<bool>::new(0, 0),
             me,
             multi_count,
@@ -984,5 +991,90 @@ impl Iterator for Iter<'_> {
             return Some((self.src, self.dest, id));
         }
         Some((self.src, self.dest, inline))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::test_init::ensure_init;
+    use super::*;
+
+    /// Edge id 0 must survive the bool round-trips in the delta layers: the
+    /// bulk `remove_all` path derives `dm` from the committed u64 matrix, and
+    /// `extract` derives a bool pattern from it. Any op that *typecasts* the
+    /// u64 edge id instead of reading only the sparsity pattern turns id 0
+    /// into a `false` entry, which valued masks then treat as absent — the
+    /// deletion is silently lost.
+    #[test]
+    fn bulk_remove_and_extract_edge_id_zero() {
+        ensure_init();
+        const N: u64 = 10_000;
+        let mut t = Tensor::new(N + 1, N + 1);
+        let srcs: Vec<u64> = (0..N).collect();
+        let dsts: Vec<u64> = (0..N).map(|i| i + 1).collect();
+        let ids: Vec<u64> = (0..N).collect();
+        t.set_all_from_slices(&srcs, &dsts, &ids);
+        // Fold the pending adds into the committed base so edge id 0 lives
+        // in the u64 base matrix. `flush` folds via a (possibly pending)
+        // eWiseAdd, so materialize before the structural probe.
+        t.flush();
+        t.fwd_m().wait();
+        assert!(t.fwd_m().contains(0, 1), "edge id 0 not folded into base");
+
+        // Bulk-delete edge id 0 (and a nonzero control) via the fast path.
+        t.remove_all(&[(0, 0, 1), (5, 5, 6)]);
+
+        assert!(t.get(0, 1).next().is_none(), "edge id 0 still readable");
+        assert!(t.get(5, 6).next().is_none(), "edge id 5 still readable");
+
+        let ex = t.extract();
+        ex.wait();
+        assert!(ex.contains(1, 2), "unrelated live pair (1,2) disappeared");
+        assert!(!ex.contains(5, 6), "control pair (5,6) not deleted");
+        assert!(
+            !ex.contains(0, 1),
+            "deleted pair (0,1) still present in extract: edge id 0 was typecast to false in dm"
+        );
+    }
+
+    /// `resize` must leave the committed base materialized.
+    ///
+    /// `wait_fwd` asserts `!self.m.pending()` — the base is only written by a
+    /// fold, which materializes. `resize` also writes it, and
+    /// `GrB_Matrix_resize` can leave pending work, so afterwards every read
+    /// path that calls `wait_fwd` panicked. Release compiles the assert out,
+    /// so only debug builds saw it.
+    ///
+    /// Found by `bench/coverage.sh` (a debug build): with a graph loaded from
+    /// RDB — which is what makes relationship tensors exist to be resized —
+    /// `UNWIND range(1, 100000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t`
+    /// grew node capacity to 114,688 and killed the server via
+    /// `Pending::commit` -> `delete_implicit_edges` -> `Tensor::iter`.
+    ///
+    /// The growth must be large enough to change GraphBLAS's internal
+    /// representation: growing 10,001 -> 10,501 leaves nothing pending and the
+    /// bug hides.
+    #[test]
+    fn resize_leaves_base_materialized() {
+        ensure_init();
+        const N: u64 = 10_000;
+        let mut t = Tensor::new(N + 1, N + 1);
+        let srcs: Vec<u64> = (0..N).collect();
+        let dsts: Vec<u64> = (0..N).map(|i| i + 1).collect();
+        let ids: Vec<u64> = (0..N).collect();
+        t.set_all_from_slices(&srcs, &dsts, &ids);
+        t.flush();
+        t.m.wait();
+
+        t.resize(114_688, 114_688);
+
+        assert!(
+            !t.m.pending(),
+            "resize left the committed base pending; the next wait_fwd panics"
+        );
+        // Exercise the assert the way the read paths reach it.
+        t.wait_fwd();
+        // And a read must still see the data.
+        assert!(t.get(0, 1).next().is_some(), "edge lost across resize");
     }
 }

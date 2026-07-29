@@ -131,6 +131,10 @@ pub struct Runtime<'a> {
     pub stats: RefCell<QueryStatistics>,
     /// Query execution plan tree
     pub plan: Arc<DynTree<IR>>,
+    /// The host value holding this query's locks (see [`crate::locks`]). Reached
+    /// through [`Runtime::write_escalation`] by the operators that mutate shared
+    /// state, so the dependency is explicit at the point of use.
+    write_escalation: &'a dyn crate::locks::WriteEscalation,
     /// Deduplication state for DISTINCT operations, keyed by the DISTINCT
     /// expression's node index plus its aggregation group hash. Uses a
     /// cheap `FxHashMap` over a `(NodeIdx, u64)` tuple so the hot per-row
@@ -230,7 +234,7 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                     vars.push(var.clone());
                 }
                 IR::Delete { .. }
-                | IR::Argument
+                | IR::Argument(_)
                 | IR::Set(_)
                 | IR::Remove(_)
                 | IR::Filter(_)
@@ -388,6 +392,7 @@ impl<'a> Runtime<'a> {
         timeout_ms: Option<u64>,
         mem_capacity: i64,
         current_usage_fn: Option<fn() -> usize>,
+        write_escalation: &'a dyn crate::locks::WriteEscalation,
     ) -> Self {
         let return_names = plan.root().get_return_names();
         let pending = Lazy::new((|| RefCell::new(Pending::new())) as fn() -> RefCell<Pending>);
@@ -401,6 +406,7 @@ impl<'a> Runtime<'a> {
             pending,
             stats: RefCell::new(QueryStatistics::default()),
             plan,
+            write_escalation,
             return_names,
             value_dedupers: RefCell::new(rustc_hash::FxHashMap::default()),
             inspect,
@@ -449,8 +455,29 @@ impl<'a> Runtime<'a> {
         Ok(())
     }
 
-    /// Apply deferred index operations to RediSearch. Must be called only
-    /// after the full query succeeds.
+    /// Call `runtime.write_escalation().upgrade_to_write()?` before mutating
+    /// shared state (the index, or the published graph version).
+    ///
+    /// Not a guard: the host owns the locks for the whole query — they must
+    /// outlive `query()` so the host can commit — so this only *changes mode*,
+    /// never releases.
+    #[must_use]
+    pub fn write_escalation(&self) -> &'a dyn crate::locks::WriteEscalation {
+        self.write_escalation
+    }
+
+    /// Undo the index documents earlier `Commit`s published, after this query
+    /// failed. See [`Pending::resync_published_indexes`].
+    pub fn resync_published_indexes(
+        &self,
+        committed: &Arc<AtomicRefCell<Graph>>,
+    ) {
+        self.pending
+            .borrow_mut()
+            .resync_published_indexes(committed, &self.g);
+    }
+
+    /// Write this `Commit`'s index documents to RediSearch. Writer mode only.
     pub fn commit_deferred_indexes(&self) {
         self.pending.borrow_mut().commit_deferred_indexes(&self.g);
     }
@@ -599,7 +626,9 @@ impl<'a> Runtime<'a> {
     ) -> Vec<NodeIdx<Dyn<IR>>> {
         let node = self.plan.node(idx);
         match node.data() {
-            IR::Union | IR::Argument | IR::CreateIndex { .. } | IR::DropIndex { .. } => Vec::new(),
+            IR::Union | IR::Argument(_) | IR::CreateIndex { .. } | IR::DropIndex { .. } => {
+                Vec::new()
+            }
             IR::CartesianProduct => node.children().map(|c| c.idx()).collect(),
             IR::ValueHashJoin { .. } => {
                 vec![node.child(0).idx(), node.child(1).idx()]
@@ -1179,7 +1208,7 @@ impl<'a> Runtime<'a> {
                     idx,
                 )))
             }
-            IR::Argument => Ok(BatchOp::Argument(Some(self.default_batch()))),
+            IR::Argument(_) => Ok(BatchOp::Argument(Some(self.default_batch()))),
             IR::CreateIndex {
                 label,
                 attrs,
@@ -1211,6 +1240,10 @@ impl<'a> Runtime<'a> {
                     }
                     None => None,
                 };
+                // Index DDL mutates the shared, non-MVCC index directly (not via
+                // `pending`) and calls host FFI that needs the global lock, so
+                // become a writer first — same contract as `CommitOp`.
+                self.write_escalation().upgrade_to_write()?;
                 self.g.borrow_mut().create_index(
                     index_type,
                     entity_type,
@@ -1233,6 +1266,8 @@ impl<'a> Runtime<'a> {
                     ));
                 }
 
+                // See `CreateIndex` above: DDL runs in writer mode.
+                self.write_escalation().upgrade_to_write()?;
                 let dropped =
                     self.g
                         .borrow_mut()

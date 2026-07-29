@@ -153,6 +153,14 @@ pub struct Pending {
     deferred_index_removes: FxHashMap<u64, RoaringTreemap>,
     deferred_edge_index_adds: FxHashMap<u64, RoaringTreemap>,
     deferred_edge_index_removes: FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
+    /// Union of every index document this query has published, accumulated across
+    /// all of its `Commit`s, so a later failure can resync them against committed
+    /// state (see [`Self::resync_published_indexes`]).
+    ///
+    /// Deliberately **not** reset by [`Self::clear`], which runs after every
+    /// `Commit`: the undo has to cover the whole query, not just the last `Commit`.
+    /// Per-query state — `Pending` belongs to one `Runtime`.
+    published: DeferredIndexes,
     /// Schema baseline: number of labels when the current commit window started.
     schema_label_count: usize,
     /// Schema baseline: number of relationship types when the current commit window started.
@@ -161,6 +169,77 @@ pub struct Pending {
     schema_node_attr_count: usize,
     /// Schema baseline: number of relationship attribute names when the current commit window started.
     schema_rel_attr_count: usize,
+}
+
+/// One `Commit`'s index document changes, collected while applying `pending` and
+/// written to RediSearch as a batch.
+#[derive(Default)]
+pub struct DeferredIndexes {
+    node_adds: FxHashMap<u64, RoaringTreemap>,
+    node_removes: FxHashMap<u64, RoaringTreemap>,
+    edge_adds: FxHashMap<u64, RoaringTreemap>,
+    edge_removes: FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
+}
+
+impl DeferredIndexes {
+    /// Fold `other` in, for accumulating everything one query published.
+    fn merge(
+        &mut self,
+        other: &Self,
+    ) {
+        for (slot, ids) in &other.node_adds {
+            *self.node_adds.entry(*slot).or_default() |= ids;
+        }
+        for (slot, ids) in &other.node_removes {
+            *self.node_removes.entry(*slot).or_default() |= ids;
+        }
+        for (slot, ids) in &other.edge_adds {
+            *self.edge_adds.entry(*slot).or_default() |= ids;
+        }
+        for (slot, ids) in &other.edge_removes {
+            self.edge_removes.entry(*slot).or_default().extend(ids);
+        }
+    }
+
+    /// Every id in this set per slot, regardless of direction — all the undo path
+    /// needs, since it re-derives each document from committed state.
+    fn ids_by_slot(
+        &self
+    ) -> (
+        FxHashMap<u64, RoaringTreemap>,
+        FxHashMap<u64, RoaringTreemap>,
+    ) {
+        let mut nodes: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
+        let mut edges: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
+        for docs in [&self.node_adds, &self.node_removes] {
+            for (slot, ids) in docs {
+                *nodes.entry(*slot).or_default() |= ids;
+            }
+        }
+        for (slot, ids) in &self.edge_adds {
+            *edges.entry(*slot).or_default() |= ids;
+        }
+        for (slot, ids) in &self.edge_removes {
+            edges.entry(*slot).or_default().extend(ids.keys().copied());
+        }
+        (nodes, edges)
+    }
+
+    /// Write the batch to the shared RediSearch index.
+    ///
+    /// Only valid in writer mode: the index is not MVCC, so readers must be
+    /// excluded (mirrors C, which updates index docs inside the graph write lock).
+    pub fn commit(
+        &mut self,
+        g: &AtomicRefCell<Graph>,
+    ) {
+        // This is the query's own private version, which nothing else can borrow, so
+        // graph-then-indexer is safe here — see `Pending::resync_published_indexes`
+        // for the published version, where the order has to be the other way round.
+        let mut g = g.borrow_mut();
+        g.commit_index(&mut self.node_adds, &mut self.node_removes);
+        g.commit_edge_index(&mut self.edge_adds, &mut self.edge_removes);
+    }
 }
 
 impl Default for Pending {
@@ -189,6 +268,7 @@ impl Pending {
             index_remove_docs: FxHashMap::default(),
             index_add_edge_docs: FxHashMap::default(),
             index_remove_edge_docs: FxHashMap::default(),
+            published: DeferredIndexes::default(),
             deferred_index_adds: FxHashMap::default(),
             deferred_index_removes: FxHashMap::default(),
             deferred_edge_index_adds: FxHashMap::default(),
@@ -1189,24 +1269,103 @@ impl Pending {
         Ok(())
     }
 
-    /// Apply deferred index operations to RediSearch. Called only after the
-    /// full query succeeds, so a failed query never leaves stale index entries.
+    /// Take the accumulated index document changes, leaving pending empty.
+    pub fn take_deferred_indexes(&mut self) -> DeferredIndexes {
+        DeferredIndexes {
+            node_adds: std::mem::take(&mut self.deferred_index_adds),
+            node_removes: std::mem::take(&mut self.deferred_index_removes),
+            edge_adds: std::mem::take(&mut self.deferred_edge_index_adds),
+            edge_removes: std::mem::take(&mut self.deferred_edge_index_removes),
+        }
+    }
+
+    /// Undo the index documents earlier `Commit`s published, after this query
+    /// failed, by re-synchronising them against committed state.
+    ///
+    /// Mirrors C's undo log (`_UndoLog_Rollback_Update_Entity`): a failed *create*
+    /// loses its document, a failed *update* is re-indexed from the entity's
+    /// previous values — deleting it instead would drop a live entity out of the
+    /// index. No undo log is needed for that, because MVCC still holds the previous
+    /// state: `committed` *is* the old value, and re-adding rewrites the document.
+    ///
+    /// `private` is the version this query built and is about to discard; a removed
+    /// edge's document key comes from there, since committed state no longer has the
+    /// edge at all.
+    ///
+    /// Writer mode only, and before the write lock is released.
+    pub fn resync_published_indexes(
+        &mut self,
+        committed: &AtomicRefCell<Graph>,
+        private: &AtomicRefCell<Graph>,
+    ) {
+        let (nodes, edges) = std::mem::take(&mut self.published).ids_by_slot();
+        if nodes.is_empty() && edges.is_empty() {
+            return;
+        }
+
+        let mut node_adds: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
+        let mut node_removes: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
+        let mut edge_adds: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
+        let mut edge_removes: FxHashMap<u64, FxHashMap<u64, (u64, u64)>> = FxHashMap::default();
+        {
+            let g = committed.borrow();
+            for (slot, ids) in &nodes {
+                for id in ids {
+                    if g.node_has_label_id(NodeId::from(id), LabelId(*slot as usize)) {
+                        // Still live: rewrite the document from committed values.
+                        node_adds.entry(*slot).or_default().insert(id);
+                    } else {
+                        // Never existed outside the discarded version.
+                        node_removes.entry(*slot).or_default().insert(id);
+                    }
+                }
+            }
+            let p = private.borrow();
+            for (slot, ids) in &edges {
+                for id in ids {
+                    if g.endpoints_for_edge(id).is_some() {
+                        edge_adds.entry(*slot).or_default().insert(id);
+                    } else if let Some(endpoints) = p.endpoints_for_edge(id) {
+                        // The doc key is `(src, dst, edge_id)` as written, and only the
+                        // discarded version still knows the endpoints.
+                        edge_removes.entry(*slot).or_default().insert(id, endpoints);
+                    }
+                }
+            }
+        }
+
+        // Indexer locks *before* the graph borrow — the order `populate_index_batch`
+        // uses, and the only one that keeps this mutable borrow of the published
+        // version from colliding with a populate batch reading it (`AtomicRefCell`
+        // reports that collision by panicking). Concurrent *readers* are excluded
+        // instead by the write lock this query holds.
+        let (node_lock, edge_lock) = committed.borrow().index_locks();
+        let node_guard = node_lock.lock();
+        let edge_guard = edge_lock.lock();
+        let mut g = committed.borrow_mut();
+        g.commit_index_locked(&node_guard, &mut node_adds, &mut node_removes);
+        g.commit_edge_index_locked(&edge_guard, &mut edge_adds, &mut edge_removes);
+    }
+
+    /// Write this `Commit`'s index documents to RediSearch. Writer mode only.
     pub fn commit_deferred_indexes(
         &mut self,
         g: &AtomicRefCell<Graph>,
     ) {
-        let mut g = g.borrow_mut();
-        g.commit_index(
-            &mut self.deferred_index_adds,
-            &mut self.deferred_index_removes,
-        );
-        g.commit_edge_index(
-            &mut self.deferred_edge_index_adds,
-            &mut self.deferred_edge_index_removes,
-        );
+        let mut deferred = self.take_deferred_indexes();
+        // Fold the batch into the published log *before* writing it, because `commit`
+        // drains the batch. Removals matter as much as additions: a rolled-back
+        // DELETE must get its document back, or the entity silently disappears from
+        // the index.
+        self.published.merge(&deferred);
+        deferred.commit(g);
     }
 
     /// Clear all pending mutation state.
+    ///
+    /// Runs after every `Commit`, so it must NOT touch `published` — a later failure
+    /// has to undo the documents *all* of this query's `Commit`s published, not just
+    /// the last one's.
     pub fn clear(&mut self) {
         // Dropping millions of per-entity Vec allocations is O(n) frees and
         // stalls the serialized write thread; move large maps to a background

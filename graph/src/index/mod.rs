@@ -897,42 +897,6 @@ struct PendingSlots {
     stale_pending: i32,
 }
 
-/// RAII guard for the Redis module GIL. Constructed by [`GilGuard::acquire`],
-/// which returns `None` if any required FFI symbol is unresolved or the
-/// context allocation returned null — so callers fall through to the
-/// unlocked path rather than panicking in `Drop`.
-struct GilGuard(*mut redisearch::redis::RedisModuleCtx);
-
-impl GilGuard {
-    /// Acquire the Redis module GIL. All four FFI symbols are checked
-    /// up-front so the matching `Drop` impl below can never see a missing
-    /// `Unlock`/`FreeThreadSafeContext` (panic in `Drop` would abort).
-    unsafe fn acquire() -> Option<Self> {
-        unsafe {
-            let get = redisearch::redis::RedisModule_GetThreadSafeContext?;
-            let lock = redisearch::redis::RedisModule_ThreadSafeContextLock?;
-            redisearch::redis::RedisModule_ThreadSafeContextUnlock?;
-            redisearch::redis::RedisModule_FreeThreadSafeContext?;
-            let ctx = get(std::ptr::null_mut());
-            if ctx.is_null() {
-                return None;
-            }
-            lock(ctx);
-            Some(Self(ctx))
-        }
-    }
-}
-
-impl Drop for GilGuard {
-    fn drop(&mut self) {
-        unsafe {
-            // Both symbols verified `Some` in `acquire`.
-            redisearch::redis::RedisModule_ThreadSafeContextUnlock.unwrap()(self.0);
-            redisearch::redis::RedisModule_FreeThreadSafeContext.unwrap()(self.0);
-        }
-    }
-}
-
 /// RAII handle for a RediSearch index spec (`RefManager`). Owns one strong
 /// reference; `Drop` releases it. The raw `*mut RSIndex` never escapes
 /// this type except as a transient passed straight into an FFI call.
@@ -974,15 +938,15 @@ impl OwnedIndex {
 
 impl Drop for OwnedIndex {
     fn drop(&mut self) {
-        // The final release frees the spec -> IndexSpec_Free -> RM_StopTimer,
-        // which mutates Redis timer state; off-main-thread callers must hold
-        // the module GIL (mirrors `Index::drop` / `create_rs_index`).
+        // No global lock, even for the last release: `IndexSpec_Free` touches no
+        // Redis timer (it asserts the temporary-index timer is already stopped, and
+        // the ForkGC timer self-terminates by not rescheduling — RediSearch `gc.c`).
+        // Only index *creation* needs it, via `RM_CreateTimer`.
+        //
+        // That is load-bearing for #726: an index-scan iterator drops its cloned
+        // handle mid-execute while holding the per-graph read lock, so acquiring the
+        // global lock here would be the L1→global inversion.
         unsafe {
-            let _gil = if crate::thread_id::is_main_thread() {
-                None
-            } else {
-                GilGuard::acquire()
-            };
             RediSearch_IndexRelease(self.0.as_ptr());
         }
     }
@@ -1019,21 +983,15 @@ impl SpecHandle {
 
 impl Drop for SpecHandle {
     fn drop(&mut self) {
-        // RediSearch_DropIndex transitively calls RM_StopTimer, which mutates
-        // Redis-internal state (the timer rax). The Redis main thread holds
-        // the module GIL implicitly during command execution, so off-thread
-        // callers must acquire it explicitly. Mirrors the C FalkorDB pattern
-        // in `_GraphContext_Free` (FalkorDB/src/graph/graphcontext.c).
+        // No global lock, for the same reason as `OwnedIndex::drop`: nothing here
+        // stops a timer. Load-bearing too — a reader holding the per-graph read lock
+        // can be the last holder of the spec (a concurrent `drop_index_bg` swaps the
+        // index map under it), and taking the global lock there is the #726
+        // inversion.
         //
-        // DropIndex both invalidates the spec and releases the creation ref,
-        // so hand it the raw pointer via `into_raw` to avoid a double release
-        // from `OwnedIndex`'s own Drop.
+        // `DropIndex` invalidates the spec *and* releases the creation ref, so pass
+        // the raw pointer via `into_raw` to avoid a second release from `OwnedIndex`.
         unsafe {
-            let _gil = if crate::thread_id::is_main_thread() {
-                None
-            } else {
-                GilGuard::acquire()
-            };
             let owned = std::mem::ManuallyDrop::take(&mut self.0);
             RediSearch_DropIndex(owned.into_raw());
         }
@@ -1134,15 +1092,12 @@ impl Index {
         stopwords: Option<&Vec<Arc<String>>>,
         language: Option<&Arc<String>>,
     ) -> Result<(), String> {
-        // RediSearch_CreateIndex transitively calls RM_CreateTimer (via
-        // GCContext_Start), which mutates Redis-internal timer state. Off-thread
-        // callers (background populate / write worker) must hold the module GIL.
         unsafe {
-            let _gil = if crate::thread_id::is_main_thread() {
-                None
-            } else {
-                GilGuard::acquire()
-            };
+            // Requires the global lock (the host's module GIL):
+            // `RediSearch_CreateIndex` registers a GC timer in the host event loop
+            // (`GCContext_Start` -> `RM_CreateTimer`). Every caller holds it already —
+            // a query escalated to writer mode, or the host's own thread on the
+            // RDB-load and replica-`GRAPH.EFFECT` paths — so it is not taken here.
             let options = RediSearch_CreateIndexOptions();
             RediSearch_IndexOptionsSetGCPolicy(options, GC_POLICY_FORK as _);
 
@@ -1217,20 +1172,11 @@ impl Index {
         field_options: Option<&TextIndexOptions>,
     ) -> Result<(), String> {
         unsafe {
-            // `RediSearch_CreateField` modifies the index spec's internal field
-            // array (numFields, fields[], inverted-index trie setup). RediSearch's
-            // ForkGC timer callback – fired on the Redis main thread – can concurrently
-            // read or mutate the same spec during its periodic scan. Without the GIL
-            // this is a data race that corrupts heap state and crashes the process.
-            // Under coverage instrumentation the race window is 10-100× wider, which
-            // is why the crash is reliably reproduced only in coverage builds.
-            // Mirrors the GIL guards in `create_rs_index`, `Index::drop`, and
-            // `OwnedIndex::drop`.
-            let _gil = if crate::thread_id::is_main_thread() {
-                None
-            } else {
-                GilGuard::acquire()
-            };
+            // Requires the global lock, like `create_rs_index` and for the same
+            // reason: `RediSearch_CreateField` mutates the spec's field array, which
+            // the ForkGC timer callback on the main thread can read concurrently — a
+            // heap-corrupting race otherwise (reliably reproducible only in coverage
+            // builds, where the window is 10-100× wider).
             for field in fields.values().flat_map(|f| f.iter()) {
                 match field.ty {
                     IndexType::Range => {

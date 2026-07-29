@@ -80,7 +80,7 @@ use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use atomic_refcell::AtomicRefCell;
 use lru::LruCache;
 use orx_tree::DynTree;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, MutexGuard};
 use roaring::RoaringTreemap;
 
 use crate::{
@@ -291,10 +291,11 @@ pub struct Graph {
     /// Graph-wide reverse index: `edge_id` → `compound_key(src, dst)` for O(1)
     /// endpoint lookup, stored as a dense vector indexed by edge id. Edge IDs
     /// are densely allocated, so a `Vec` is far more compact than a hash map
-    /// (8 B/edge vs ~31 B with control bytes + load-factor slack) and clones
-    /// faster across MVCC versions. Empty/deleted slots hold
-    /// [`EDGE_NO_ENDPOINT`].
-    edge_endpoints: Vec<u64>,
+    /// (8 B/edge vs ~31 B with control bytes + load-factor slack). Wrapped in
+    /// `Arc` so MVCC `new_version` is O(1); the first edge mutation per
+    /// version pays one `Arc::make_mut` deep clone, node-only writes pay
+    /// nothing. Empty/deleted slots hold [`EDGE_NO_ENDPOINT`].
+    edge_endpoints: Arc<Vec<u64>>,
     /// Node property storage
     node_attrs: AttributeStore,
     /// Relationship property storage
@@ -421,6 +422,10 @@ fn populate_index_batch(
             // recreates an entry under the same label, release still targets
             // the original generation via `ticket.generation_id`.
             {
+                // Deliberately no global lock: a batch only touches ticket
+                // bookkeeping and document add/delete, never the RediSearch spec
+                // lifecycle, and taking it per batch would serialize background
+                // population against the main thread.
                 let lock = indexer.write_lock();
                 let guard = lock.lock();
 
@@ -620,9 +625,13 @@ fn drop_index_bg(
 ) {
     spawn(
         move || {
-            // Serialize with `populate_index_batch`, which holds the same
-            // lock for the duration of a batch. Without this, the populate
-            // worker can be mid-batch when we remove the label.
+            // Indexer lock only, never the global lock: `Indexer::remove` swaps the
+            // index map, and the `Index` it drops takes no lock either. Reaching for
+            // the global lock *under* the indexer lock is the AB-BA that hung
+            // `test_index_create` for six hours (issue #726).
+            //
+            // The lock serializes against `populate_index_batch`, which holds it for
+            // a whole batch, so the populate worker can't be mid-batch here.
             let lock = node_indexer.write_lock();
             let _guard = lock.lock();
             node_indexer.remove(&label);
@@ -687,7 +696,7 @@ impl Graph {
             all_nodes_matrix: VersionedMatrix::<bool>::new(n, n),
             labels_matices: Vec::new(),
             relationship_matrices: Vec::new(),
-            edge_endpoints: Vec::new(),
+            edge_endpoints: Arc::new(Vec::new()),
             node_attrs: AttributeStore::new(),
             relationship_attrs: AttributeStore::new(),
             node_indexer: Indexer::default(),
@@ -763,7 +772,7 @@ impl Graph {
             all_nodes_matrix,
             labels_matices,
             relationship_matrices,
-            edge_endpoints,
+            edge_endpoints: Arc::new(edge_endpoints),
             node_attrs,
             relationship_attrs,
             node_indexer: Indexer::default(),
@@ -832,8 +841,9 @@ impl Graph {
         let node_attrs = self.node_attrs.new_version();
         let relationship_attrs = self.relationship_attrs.new_version();
 
-        // Tensor::dup() is copy-on-write; the graph-wide edge_endpoints vec is
-        // cloned once below.
+        // Tensor::dup() is copy-on-write; edge_endpoints is behind an Arc, so
+        // the clone below is O(1) and the deep copy is deferred to the first
+        // edge mutation in the new version.
         let relationship_matrices: Vec<Tensor> =
             self.relationship_matrices.iter().map(Tensor::dup).collect();
 
@@ -1973,16 +1983,16 @@ impl Graph {
         // Maintain the graph-wide reverse index alongside the tensor edges.
         // Reserve exactly: MVCC clones reset capacity to `len`, so amortized
         // doubling here would only leave ~2x slack behind, never save reallocs.
+        let endpoints = Arc::make_mut(&mut self.edge_endpoints);
         if let Some(&max_id) = rel_ids.iter().max() {
             let needed = max_id as usize + 1;
-            if needed > self.edge_endpoints.len() {
-                self.edge_endpoints
-                    .reserve_exact(needed - self.edge_endpoints.len());
-                self.edge_endpoints.resize(needed, EDGE_NO_ENDPOINT);
+            if needed > endpoints.len() {
+                endpoints.reserve_exact(needed - endpoints.len());
+                endpoints.resize(needed, EDGE_NO_ENDPOINT);
             }
         }
         for ((&src, &dst), &id) in srcs.iter().zip(dsts.iter()).zip(rel_ids.iter()) {
-            self.edge_endpoints[id as usize] = compound_key(src, dst);
+            endpoints[id as usize] = compound_key(src, dst);
         }
 
         self.adjacancy_matrix
@@ -2370,13 +2380,12 @@ impl Graph {
             .next()
             .map_or_else(|| self.adjacancy_matrix.extract(), |t| t.extract());
         for relationship_matrix in iter {
-            m.element_wise_add(
+            m.set_pattern(
                 Some(relationship_matrix.fwd_dm()),
-                None,
-                Some(relationship_matrix.fwd_m()),
+                relationship_matrix.fwd_m(),
                 Some(Descriptor::C),
             );
-            m.element_wise_add(None, None, Some(relationship_matrix.fwd_dp()), None);
+            m.set_pattern(None, relationship_matrix.fwd_dp(), None);
         }
         Some(m)
     }
@@ -2490,9 +2499,10 @@ impl Graph {
     }
 
     /// Decode the (src, dst) endpoints for an edge from the graph-wide reverse
-    /// index. Returns None if the edge_id is not present.
+    /// index. `None` if the edge does not exist — the fallible counterpart of
+    /// [`Self::get_relationship_endpoints`], which panics.
     #[must_use]
-    fn endpoints_for_edge(
+    pub fn endpoints_for_edge(
         &self,
         edge_id: u64,
     ) -> Option<(u64, u64)> {
@@ -2508,7 +2518,7 @@ impl Graph {
         &mut self,
         edge_id: u64,
     ) {
-        if let Some(slot) = self.edge_endpoints.get_mut(edge_id as usize) {
+        if let Some(slot) = Arc::make_mut(&mut self.edge_endpoints).get_mut(edge_id as usize) {
             *slot = EDGE_NO_ENDPOINT;
         }
     }
@@ -2849,16 +2859,60 @@ impl Graph {
         }
     }
 
+    /// The indexer serialization locks, cloned so a caller can take them **before**
+    /// borrowing the graph.
+    ///
+    /// That is the order `populate_index_batch` uses (indexer lock held across its
+    /// graph borrow), so anything that needs a *mutable* borrow of the same version —
+    /// the index undo path — must take these first or the two collide, which
+    /// `AtomicRefCell` reports by panicking.
+    #[must_use]
+    pub fn index_locks(&self) -> (Arc<Mutex<()>>, Arc<Mutex<()>>) {
+        (
+            self.node_indexer.write_lock(),
+            self.edge_indexer.write_lock(),
+        )
+    }
+
+    /// Write node index documents to RediSearch, taking the node indexer lock.
     pub fn commit_index(
         &mut self,
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
         remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) {
-        self.commit_index_kind(IndexKind::Node, index_add_docs, remove_docs);
+        let lock = self.node_indexer.write_lock();
+        let guard = lock.lock();
+        self.commit_index_kind(&guard, IndexKind::Node, index_add_docs, remove_docs);
     }
 
+    /// As [`Self::commit_index`], for a caller that already holds the node indexer
+    /// lock from [`Self::index_locks`] — which it must, to have borrowed the graph in
+    /// the sanctioned order.
+    pub fn commit_index_locked(
+        &mut self,
+        guard: &MutexGuard<'_, ()>,
+        index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
+    ) {
+        self.commit_index_kind(guard, IndexKind::Node, index_add_docs, remove_docs);
+    }
+
+    /// Write edge index documents to RediSearch, taking the edge indexer lock.
     pub fn commit_edge_index(
         &mut self,
+        index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        remove_edge_docs: &mut FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
+    ) {
+        let lock = self.edge_indexer.write_lock();
+        let guard = lock.lock();
+        self.commit_edge_index_locked(&guard, index_add_edge_docs, remove_edge_docs);
+    }
+
+    /// As [`Self::commit_edge_index`], for a caller already holding the edge indexer
+    /// lock from [`Self::index_locks`].
+    pub fn commit_edge_index_locked(
+        &mut self,
+        _guard: &MutexGuard<'_, ()>,
         index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
         remove_edge_docs: &mut FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
     ) {
@@ -2866,9 +2920,7 @@ impl Graph {
             return;
         }
 
-        let indexer = &mut self.edge_indexer;
-        let lock = indexer.write_lock();
-        let _guard = lock.lock();
+        let indexer = &self.edge_indexer;
 
         let mut add_docs: HashMap<Arc<String>, Vec<Document>> = HashMap::new();
         for (type_id, ids) in index_add_edge_docs.drain() {
@@ -2936,6 +2988,7 @@ impl Graph {
     /// `Indexer::commit`.
     fn commit_index_kind(
         &mut self,
+        _guard: &MutexGuard<'_, ()>,
         kind: IndexKind,
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
         remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
@@ -2945,12 +2998,9 @@ impl Graph {
         }
 
         let (indexer, names, attr_store) = match kind {
-            IndexKind::Node => (&mut self.node_indexer, &self.node_labels, &self.node_attrs),
+            IndexKind::Node => (&self.node_indexer, &self.node_labels, &self.node_attrs),
             IndexKind::Edge => unreachable!("use commit_edge_index for edges"),
         };
-
-        let lock = indexer.write_lock();
-        let _guard = lock.lock();
 
         let mut add_docs = HashMap::new();
         for (slot, ids) in index_add_docs.drain() {

@@ -272,7 +272,13 @@ pub fn unregister_waiting(id: u64) {
     }
 }
 
-/// Register a query as waiting in the write queue. Returns its unique ID.
+/// Register a query as **waiting**: accepted but not yet executing, because it
+/// sits either in the thread-pool queue (before a worker picks it up) or in a
+/// graph's write queue (before the write loop drains it). Mirrors C, where
+/// `GRAPH.INFO WaitingQueries` reports the thread pool's queued tasks.
+///
+/// Returns its unique ID, to be passed to [`transition_waiting_to_running`] once
+/// the query starts, or to [`unregister_waiting`] if it never does.
 pub fn register_waiting(
     received_at: i64,
     graph_name: &Arc<str>,
@@ -290,23 +296,60 @@ pub fn register_waiting(
     id
 }
 
-/// Transition a waiting query to running. Returns the waiting info if found.
+/// Owns a waiting-registry entry and removes it on drop unless
+/// [`Self::promote`] consumes it.
+///
+/// The entry is created on the dispatching thread but consumed by a worker, and
+/// two paths never reach the worker: `threadpool::spawn` deliberately drops the
+/// job when the channel has disconnected during shutdown, and a worker can
+/// panic before promoting. Either would otherwise leave the query in
+/// `GRAPH.INFO WaitingQueries` forever. Moving this guard into the job closure
+/// ties the entry's lifetime to the closure instead.
+pub struct WaitingEntry(Option<u64>);
+
+impl WaitingEntry {
+    /// Registers a waiting query and returns the guard owning its entry.
+    pub fn register(
+        received_at: i64,
+        graph_name: &Arc<str>,
+        query: &Arc<str>,
+    ) -> Self {
+        Self(Some(register_waiting(received_at, graph_name, query)))
+    }
+
+    /// Moves the query from waiting to running, disarming the guard. Returns
+    /// the running id, or `None` if the entry was already taken.
+    pub fn promote(&mut self) -> Option<u64> {
+        self.0.take().and_then(transition_waiting_to_running)
+    }
+}
+
+impl Drop for WaitingEntry {
+    fn drop(&mut self) {
+        if let Some(id) = self.0.take() {
+            unregister_waiting(id);
+        }
+    }
+}
+
+/// Transition a waiting query to running, keeping its id — and therefore its
+/// shard, so the move costs a single lock acquisition instead of two.
+///
+/// Returns the id to pass to [`unregister_running`], or `None` if the query was
+/// never registered as waiting.
 pub fn transition_waiting_to_running(waiting_id: u64) -> Option<u64> {
-    let waiting = {
-        let mut reg = shard_for(waiting_id).lock();
-        let pos = reg.waiting.iter().position(|q| q.id == waiting_id)?;
-        reg.waiting.swap_remove(pos)
-    };
-    let running_id = next_id();
-    shard_for(running_id).lock().running.push(RunningQueryInfo {
-        id: running_id,
+    let mut reg = shard_for(waiting_id).lock();
+    let pos = reg.waiting.iter().position(|q| q.id == waiting_id)?;
+    let waiting = reg.waiting.swap_remove(pos);
+    reg.running.push(RunningQueryInfo {
+        id: waiting.id,
         received_at: waiting.received_at,
         graph_name: waiting.graph_name,
         query: waiting.query,
         start: Instant::now(),
         is_replicated: false,
     });
-    Some(running_id)
+    Some(waiting.id)
 }
 
 /// Snapshot of all currently running queries.
@@ -509,16 +552,14 @@ fn flusher_loop() {
             .map(|pe| prepare_xadd(pe, &max_len))
             .collect();
 
-        // Single GIL acquisition for the whole batch.
-        unsafe {
-            raw::RedisModule_ThreadSafeContextLock.expect("ThreadSafeContextLock")(tsc);
-        }
-        let ctx = Context::new(tsc);
-        for p in &prepared {
-            dispatch_xadd(&ctx, p, &call_options);
-        }
-        unsafe {
-            raw::RedisModule_ThreadSafeContextUnlock.expect("ThreadSafeContextUnlock")(tsc);
+        // Single GIL acquisition for the whole batch, through the same guard queries
+        // use, so every acquisition in the process funnels through one place.
+        {
+            let _gil = crate::query_session::hold_gil();
+            let ctx = Context::new(tsc);
+            for p in &prepared {
+                dispatch_xadd(&ctx, p, &call_options);
+            }
         }
     }
 
