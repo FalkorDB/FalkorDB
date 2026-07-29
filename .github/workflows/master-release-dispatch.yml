@@ -51,6 +51,10 @@ on:
         description: "Also trigger FalkorDB Cloud + testflight (release semantics)"
         type: boolean
         default: false
+      mark_latest:
+        description: "Also move the :latest tags (release semantics)"
+        type: boolean
+        default: false
 
 permissions:
   actions: write
@@ -83,10 +87,18 @@ jobs:
           IN_TAG: ${{ inputs.tag }}
           IN_SHA: ${{ inputs.commit_sha }}
           IN_NOTIFY: ${{ inputs.notify_downstream }}
+          IN_LATEST: ${{ inputs.mark_latest }}
         run: |
           set -euo pipefail
 
           SKIP=false
+          # Should the :latest tags move? Only a real release should.
+          # release-image.yml sets IS_LATEST=1 for the `release` event ONLY, so a
+          # dispatched run publishes the version tags but leaves :latest frozen —
+          # hence the explicit mark_latest input.
+          # NOTE: C sets it for ANY release, so a 4.18 patch moves :latest even
+          # when 4.20 is newer. Reproduced as-is rather than "fixed" here.
+          LATEST=false
           # Which ref release-image/release-ramp are dispatched on. Their copies
           # on the version branches already expose workflow_dispatch, so a
           # release can be published by its own release line's pipeline.
@@ -104,8 +116,10 @@ jobs:
               fi
               SHA="$WR_SHA"
               REF="$WR_BRANCH"
-              # Rolling channel: must NOT notify downstream (see header).
+              # Rolling channel: must NOT notify downstream (see header) and must
+              # NOT move :latest.
               NOTIFY=false
+              LATEST=false
               ;;
             release)
               TAG="$REL_TAG"
@@ -138,13 +152,16 @@ jobs:
               else
                 echo "::notice::release target '${REL_TARGET:-}' is not a branch; dispatching on master"
               fi
-              # Matches today's `release` behaviour, where both jobs run.
+              # Matches today's `release` behaviour: both downstream jobs run and
+              # :latest moves.
               NOTIFY=true
+              LATEST=true
               ;;
             workflow_dispatch)
               TAG="$IN_TAG"
               SHA="$IN_SHA"
               NOTIFY="${IN_NOTIFY:-false}"
+              LATEST="${IN_LATEST:-false}"
               ;;
             *)
               echo "::error::unsupported event $EVENT"; exit 1 ;;
@@ -159,10 +176,11 @@ jobs:
             echo "tag=$TAG"
             echo "sha=$SHA"
             echo "notify=$NOTIFY"
+            echo "latest=$LATEST"
             echo "ref=$REF"
             echo "skip=$SKIP"
           } >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG sha=$SHA notify=$NOTIFY ref=$REF skip=$SKIP (event=$EVENT)"
+          echo "tag=$TAG sha=$SHA notify=$NOTIFY latest=$LATEST ref=$REF skip=$SKIP (event=$EVENT)"
 
       - name: Dispatch release-image.yml
         if: ${{ steps.derive.outputs.skip != 'true' }}
@@ -172,15 +190,23 @@ jobs:
           TAG: ${{ steps.derive.outputs.tag }}
           SHA: ${{ steps.derive.outputs.sha }}
           NOTIFY: ${{ steps.derive.outputs.notify }}
+          LATEST: ${{ steps.derive.outputs.latest }}
           REF: ${{ steps.derive.outputs.ref }}
         run: |
           set -euo pipefail
+          # mark_latest carries the release semantics that the `release` event
+          # used to imply on its own: release-image.yml sets IS_LATEST=1 only for
+          # that event, so a dispatch would publish the version tags but leave
+          # :latest frozen. Requires the mark_latest input added in the master-side
+          # change of #2255 — branches cut before it (4.18, 4.20) need that
+          # backported before a release can be dispatched on their ref.
           gh workflow run release-image.yml --ref "$REF" \
             -f tag="$TAG" \
             -f commit_sha="$SHA" \
             -f run_falkordb_cloud_update="$NOTIFY" \
-            -f run_testflight_workflow="$NOTIFY"
-          echo "dispatched release-image.yml on $REF (tag=$TAG notify=$NOTIFY)"
+            -f run_testflight_workflow="$NOTIFY" \
+            -f mark_latest="$LATEST"
+          echo "dispatched release-image.yml on $REF (tag=$TAG notify=$NOTIFY latest=$LATEST)"
 
       # RAMP packaging only ever applied to v-prefixed version branches, and its
       # own job condition requires a v-prefixed tag. Keep that shape.
