@@ -14,7 +14,7 @@
 //
 // The workspace must already be declared as follows:
 //
-//      GB_WERK_DECLARE (A_ek_slicing, int64_t) ;
+//      GB_WERK_DECLARE (A_ek_slicing, int64_t, mem) ;
 //      int A_ntasks = 0, A_nthreads = 0 ;
 //
 // The workspace is allocated and tasks are computed, if not already done.

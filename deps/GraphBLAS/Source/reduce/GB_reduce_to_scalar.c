@@ -53,16 +53,21 @@ GrB_Info GB_reduce_to_scalar    // z = reduce_to_scalar (A)
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
+
     GB_RETURN_IF_NULL_OR_FAULTY (monoid) ;
     GB_RETURN_IF_FAULTY_OR_POSITIONAL (accum) ;
     GB_RETURN_IF_NULL (c) ;
-    GB_WERK_DECLARE (W, GB_void) ;
-    GB_WERK_DECLARE (F, bool) ;
 
     ASSERT_TYPE_OK (ctype, "type of scalar c", GB0) ;
     ASSERT_MONOID_OK (monoid, "monoid for reduce_to_scalar", GB0) ;
     ASSERT_BINARYOP_OK_OR_NULL (accum, "accum for reduce_to_scalar", GB0) ;
     ASSERT_MATRIX_OK (A, "A for reduce_to_scalar", GB0) ;
+
+    int data_arena = A->data_arena ;
+    uint64_t mem = GB_mem (data_arena, 0) ;
+
+    GB_WERK_DECLARE (W, GB_void, mem) ;
+    GB_WERK_DECLARE (F, bool, mem) ;
 
     // check domains and dimensions for c = accum (c,z)
     GrB_Type ztype = monoid->op->ztype ;

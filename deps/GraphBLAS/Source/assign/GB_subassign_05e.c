@@ -17,7 +17,7 @@
 // A:           scalar
 // S:           none
 
-// C and M can have any sparsity on input.  The content of C is replace with
+// C and M can have any sparsity on input.  The content of C is replaced with
 // the structure of M, and the values of C are all set to the scalar.  If M is
 // bitmap, only assignments where (Mb [pC] == 1) are needed, but it's faster to
 // just assign all entries.
@@ -61,6 +61,9 @@ GrB_Info GB_subassign_05e
     ASSERT (GB_JUMBLED_OK (M)) ;
     ASSERT (!GB_PENDING (M)) ;
 
+    int header_arena = GB_arena (C->header_mem) ;
+    int data_arena = C->data_arena ;
+
     //--------------------------------------------------------------------------
     // Method 05e: C(:,:)<M> = x ; C is empty, x is a scalar, M is structural
     //--------------------------------------------------------------------------
@@ -76,10 +79,16 @@ GrB_Info GB_subassign_05e
     // the same type and CSR/CSC for C.  Allocate C->x and assign to it the
     // scalar.
 
+    // C is allocated with its desired pji integers, which can differ from M.
+
     bool C_is_csc = C->is_csc ;
     GB_phybix_free (C) ;
-    // set C->iso = true    OK
-    GB_OK (GB_dup_worker (&C, true, M, false, C->type)) ;   // OK: C is empty
+    bool Cp_is_32, Cj_is_32, Ci_is_32 ;
+    GB_determine_pji_is_32 (&Cp_is_32, &Cj_is_32, &Ci_is_32,
+        GB_sparsity (M), GB_nnz (M), M->vlen, M->vdim, Werk) ;
+    GB_OK (GB_dup_worker (&C, /* C_iso: */ true, M, /* numeric: */ false,
+        C->type, Cp_is_32, Cj_is_32, Ci_is_32, header_arena, data_arena,
+        Werk)) ;
     C->is_csc = C_is_csc ;
     GB_cast_scalar (C->x, C->type->code, scalar, scalar_type->code,
         scalar_type->size) ;

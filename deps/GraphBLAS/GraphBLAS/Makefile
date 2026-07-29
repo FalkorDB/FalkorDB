@@ -2,7 +2,7 @@
 # GraphBLAS/GraphBLAS/Makefile: compile libgraphblas_matlab for use in MATLAB
 #-------------------------------------------------------------------------------
 
-# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 #-------------------------------------------------------------------------------
@@ -61,7 +61,7 @@ purge: distclean
 
 # remove all files not in the distribution
 distclean:
-	rm -rf build/*
+	rm -rf build/* *.mex*
 	( cd test/tcov ; $(MAKE) distclean )
-	( cd @GrB/private ; $(MAKE) distclean )
+	( cd private ; $(MAKE) distclean )
 

@@ -45,11 +45,11 @@
 
 GrB_Info GB_masker_phase2           // phase2 for R = masker (C,M,Z)
 (
-    GrB_Matrix R,                   // output matrix, static header
+    GrB_Matrix R,                   // output matrix, existing header
     const bool R_is_csc,            // format of output matrix R
     // from phase1:
     void **Rp_handle,               // vector pointers for R
-    size_t Rp_size,
+    uint64_t Rp_mem,
     const int64_t Rnvec_nonempty,   // # of non-empty vectors in R
     // tasks from phase1a:
     const GB_task_struct *restrict TaskList,     // array of structs
@@ -58,7 +58,7 @@ GrB_Info GB_masker_phase2           // phase2 for R = masker (C,M,Z)
     // analysis from phase0:
     const int64_t Rnvec,
     void **Rh_handle,               // R->h hyperlist
-    size_t Rh_size,
+    uint64_t Rh_mem,
     const int64_t *restrict R_to_M,
     const int64_t *restrict R_to_C,
     const int64_t *restrict R_to_Z,
@@ -80,8 +80,13 @@ GrB_Info GB_masker_phase2           // phase2 for R = masker (C,M,Z)
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WERK_DECLARE (C_ek_slicing, int64_t) ;
-    GB_WERK_DECLARE (M_ek_slicing, int64_t) ;
+    ASSERT (R != NULL) ;
+    int header_arena = GB_arena (R->header_mem) ;
+    int data_arena = R->data_arena ;
+    uint64_t mem = GB_mem (data_arena, 0) ;
+
+    GB_WERK_DECLARE (C_ek_slicing, int64_t, mem) ;
+    GB_WERK_DECLARE (M_ek_slicing, int64_t, mem) ;
     int C_nthreads = 0, C_ntasks = 0 ;
     int M_nthreads = 0, M_ntasks = 0 ;
 
@@ -105,8 +110,6 @@ GrB_Info GB_masker_phase2           // phase2 for R = masker (C,M,Z)
     ASSERT (C->vdim == Z->vdim && C->vlen == Z->vlen) ;
     ASSERT (C->vdim == M->vdim && C->vlen == M->vlen) ;
     ASSERT (C->type == Z->type) ;
-
-    ASSERT (R != NULL && (R->header_size == 0 || GBNSTATIC)) ;
 
     ASSERT (Rp_handle != NULL) ;
     ASSERT (Rh_handle != NULL) ;
@@ -154,12 +157,12 @@ GrB_Info GB_masker_phase2           // phase2 for R = masker (C,M,Z)
     GrB_Info info = GB_new_bix (&R, // any sparsity, existing header
         C->type, C->vlen, C->vdim, GB_ph_null, R_is_csc,
         R_sparsity, true, C->hyper_switch, Rnvec, rnz, true, R_iso,
-        Rp_is_32, Rj_is_32, Ri_is_32) ;
+        Rp_is_32, Rj_is_32, Ri_is_32, header_arena, data_arena) ;
     if (info != GrB_SUCCESS)
     { 
         // out of memory; caller must free R_to_M, R_to_C, R_to_Z
-        GB_FREE_MEMORY (Rp_handle, Rp_size) ;
-        GB_FREE_MEMORY (Rh_handle, Rh_size) ;
+        GB_FREE_MEMORY (Rp_handle, Rp_mem) ;
+        GB_FREE_MEMORY (Rh_handle, Rh_mem) ;
         return (info) ;
     }
 
@@ -172,7 +175,7 @@ GrB_Info GB_masker_phase2           // phase2 for R = masker (C,M,Z)
     { 
 //      R->nvec_nonempty = Rnvec_nonempty ;
         GB_nvec_nonempty_set (R, Rnvec_nonempty) ;
-        R->p = Rp ; R->p_size = Rp_size ;
+        R->p = Rp ; R->p_mem = Rp_mem ;
         R->nvals = rnz ;
         (*Rp_handle) = NULL ;
     }
@@ -180,7 +183,7 @@ GrB_Info GB_masker_phase2           // phase2 for R = masker (C,M,Z)
     // add Rh as the hypersparse list for R, from GB_add_phase0
     if (R_is_hyper)
     { 
-        R->h = Rh ; R->h_size = Rh_size ;
+        R->h = Rh ; R->h_mem = Rh_mem ;
         R->nvec = Rnvec ;
         (*Rh_handle) = NULL ;
     }

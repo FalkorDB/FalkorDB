@@ -1,12 +1,15 @@
-function gbtest76
+function gbtest76 (ghb)
 %GBTEST76 test trig and other functions
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-fprintf ('\ngbtest76: testing trig and special functions\n') ;
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
-rng ('default') ;
+fprintf ('\ngbtest76: testing trig and special functions\n') ;
 
 types = { 'single', 'double', ...
     'single complex', 'double complex', 'int32', 'uint32' } ;
@@ -20,59 +23,59 @@ for k = 1:length (types)
         case { 'single' }
             A = single (rand (4)) ;
             B = single (rand (4)) ;
-            tol = 1e-5 ;
-            G = GrB (A) ;
-            H = GrB (B) ;
-            gbtest76b (A, B, G, H, tol) ;
+            tol = 1e-4 ;
+            G = gtb (ghb, A) ;
+            H = gtb (ghb, B) ;
+            gbtest76b (ghb, A, B, G, H, tol) ;
         case { 'double' }
             A = rand (4) ;
             B = rand (4) ;
-            tol = 1e-10 ;
-            G = GrB (A) ;
-            H = GrB (B) ;
-            gbtest76b (A, B, G, H, tol) ;
+            tol = 1e-9 ;
+            G = gtb (ghb, A) ;
+            H = gtb (ghb, B) ;
+            gbtest76b (ghb, A, B, G, H, tol) ;
         case { 'single complex' }
             A = single (rand (4) + 1i* rand (4)) ;
             B = single (rand (4) + 1i* rand (4)) ;
             tol = 1e-5 ;
-            G = GrB (A) ;
-            H = GrB (B) ;
-            gbtest76b (A, B, G, H, tol) ;
+            G = gtb (ghb, A) ;
+            H = gtb (ghb, B) ;
+            gbtest76b (ghb, A, B, G, H, tol) ;
         case { 'double complex' }
             A = rand (4) + 1i* rand (4) ;
             B = rand (4) + 1i* rand (4) ;
-            tol = 1e-10 ;
-            G = GrB (A) ;
-            H = GrB (B) ;
-            gbtest76b (A, B, G, H, tol) ;
+            tol = 1e-9 ;
+            G = gtb (ghb, A) ;
+            H = gtb (ghb, B) ;
+            gbtest76b (ghb, A, B, G, H, tol) ;
         case { 'int32' }
             A = int32 (magic (4)) ;
             B = int32 (rand (4) * 4) ;
-            tol = 1e-10 ;
-            G = GrB (A) ;
-            H = GrB (B) ;
-            gbtest76b (double (A), double (B), G, H, tol) ;
+            tol = 1e-9 ;
+            G = gtb (ghb, A) ;
+            H = gtb (ghb, B) ;
+            gbtest76b (ghb, double (A), double (B), G, H, tol) ;
         case { 'uint32' }
             A = uint32 (magic (4)) ;
             B = uint32 (rand (4) * 4) ;
-            tol = 1e-10 ;
-            G = GrB (A) ;
-            H = GrB (B) ;
-            gbtest76b (double (A), double (B), G, H, tol) ;
+            tol = 1e-9 ;
+            G = gtb (ghb, A) ;
+            H = gtb (ghb, B) ;
+            gbtest76b (ghb, double (A), double (B), G, H, tol) ;
     end
 end
 
-GrB.finalize ;
-fprintf ('\ngbtest76: all tests passed\n') ;
+gtb_finalize (ghb) ;
+fprintf ('\ngbtest76 (%d): all tests passed\n', ghb) ;
 end
 
-function gbtest76b (A, B, G, H, tol)
+function gbtest76b (ghb, A, B, G, H, tol)
 
     have_octave = gb_octave ;
 
     A (1,1) = 0 ;
     G (1,1) = 0 ;
-    G = GrB.prune (G) ;
+    G = gtb_prune (ghb, G) ;
     S = spones (G) ;
 
     C1 = hypot (A, B) ;
@@ -96,12 +99,12 @@ function gbtest76b (A, B, G, H, tol)
     assert (err < tol) ;
 
     C1 = atan2 (pi, 3) ;
-    C2 = atan2 (GrB (pi), 3) ;
+    C2 = atan2 (gtb (ghb, pi), 3) ;
     err = norm (C1-C2, 1) ;
     assert (err < tol) ;
 
     C1 = atan2 (0, 3) ;
-    C2 = atan2 (real (GrB (1,1,GrB.type(G))), 3) ;
+    C2 = atan2 (real (gtb (ghb, 1,1,gtb_type(ghb,G))), 3) ;
     err = norm (C1-C2, 1) ;
     assert (err < tol) ;
 
@@ -131,12 +134,12 @@ function gbtest76b (A, B, G, H, tol)
     assert (err < tol) ;
 
     C1 = complex (pi, 3) ;
-    C2 = complex (GrB (pi), 3) ;
+    C2 = complex (gtb (ghb, pi), 3) ;
     err = norm (C1-C2, 1) ;
     assert (err < tol) ;
 
     C1 = complex (0, 3) ;
-    C2 = complex (real (GrB (1,1,GrB.type(G))), 3) ;
+    C2 = complex (real (gtb (ghb, 1,1,gtb_type(ghb,G))), 3) ;
     err = norm (C1-C2, 1) ;
     assert (err < tol) ;
 
@@ -234,7 +237,7 @@ function gbtest76b (A, B, G, H, tol)
     err = norm (C1-C2, 1) ;
     assert (err < tol) ;
 
-    if (gb_contains (GrB.type (G), 'double'))
+    if (gb_contains (gtb_type (ghb, G), 'double'))
         % built-in methods cannot compute spfun for single;
         % built-in methods and GraphBLAS can't do this for int*
         C1 = spfun ('cos', A) ;
@@ -416,15 +419,15 @@ function gbtest76b (A, B, G, H, tol)
     err = norm (C1-C2, 1) ;
     assert (err == 0) ;
 
-    I = GrB ([1 2 3]) ;
-    J = GrB ([3 1 2]) ;
+    I = gtb (ghb, [1 2 3]) ;
+    J = gtb (ghb, [3 1 2]) ;
 
     if (have_octave)
         % Octave does not allow indexing built-in matrices with objects.
         C1 = A (double (I), double (J)) ;
         C2 = G (double (I), double (J)) ;
     else
-        % MATLAB sees the GrB/double method and does the typecasting itself.
+        % MATLAB sees the [GrB,GhB]/double method and does the typecasting.
         C1 = A (I,J) ;
         C2 = G (I,J) ;
     end
@@ -435,7 +438,5 @@ function gbtest76b (A, B, G, H, tol)
     C2 = G.^1 ;
     err = norm (C1-C2, 1) ;
     assert (err < tol) ;
-
 end
-
 

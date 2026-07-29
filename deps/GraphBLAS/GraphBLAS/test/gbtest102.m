@@ -1,14 +1,18 @@
-function gbtest102
+function gbtest102 (ghb)
 %GBTEST102 test horzcat, vertcat, cat, cell2mat, mat2cell, num2cell
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
+
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
 have_octave = gb_octave ;
 
-rng ('default') ;
-A = GrB (rand (2)) ;
-B = GrB (speye (2)) ;
+A = gtb (ghb, rand (2)) ;
+B = gtb (ghb, speye (2)) ;
 C1 = [A B] ;
 C2 = [double(A) double(B)] ;
 assert (isequal (C1, C2)) ;
@@ -44,11 +48,11 @@ for n = 100:100:1000
     fprintf ('.') ;
     for d = [1e-4 0.01]
 
-        % create random GrB matrices
-        A1 = GrB.random (n, n, d) ;
-        A2 = GrB.random (n, n, d) ;
-        A3 = GrB.random (n, n, d) ;
-        A4 = GrB.random (n, n, d) ;
+        % create random GraphBLAS matrices
+        A1 = gtb_random (ghb, n, n, d) ;
+        A2 = gtb_random (ghb, n, n, d) ;
+        A3 = gtb_random (ghb, n, n, d) ;
+        A4 = gtb_random (ghb, n, n, d) ;
 
         % convert to built-in double sparse matrices
         B1 = double (A1) ;
@@ -56,7 +60,7 @@ for n = 100:100:1000
         B3 = double (A3) ;
         B4 = double (A4) ;
 
-        C1 = [A1 A2 ; A3 A4] ;  % using GrB horzcat and vertcat
+        C1 = [A1 A2 ; A3 A4] ;  % using GraphBLAS horzcat and vertcat
         C2 = [B1 B2 ; B3 B4] ;  % using built-in horzcat and vercat
         assert (isequal (C1, C2)) ;
 
@@ -64,14 +68,24 @@ for n = 100:100:1000
         S1 = mat2cell (C1, [n n], [n n]) ;
         S2 = mat2cell (C2, [n n], [n n]) ;
         assert (isequal (S1, S2)) ;
+        S1 = mat2cell (C1, int64 ([n n]), [n n]) ;
+        assert (isequal (S1, S2)) ;
+        S1 = mat2cell (C1, uint64 ([n n]), [n n]) ;
+        assert (isequal (S1, S2)) ;
 
-        % test GrB.cell2mat
+        S1 = mat2cell (C1, single ([n n]), [n n]) ;
+        assert (isequal (S1, S2)) ;
+
+        S1 = mat2cell (C1, gtb (ghb, [n n]), [n n]) ;
+        assert (isequal (S1, S2)) ;
+
+        % test cell2mat
         S1 = cell (2,2) ;
         S1 {1,1} = A1 ;
         S1 {1,2} = A2 ;
         S1 {2,1} = A3 ;
         S1 {2,2} = A4 ;
-        C3 = GrB.cell2mat (S1) ;
+        C3 = gtb_cell2mat (ghb, S1) ;
 
         % and compare with the built-in cell2mat
         S2 = cell (2,2) ;
@@ -84,16 +98,16 @@ for n = 100:100:1000
         assert (isequal (C3, C4)) ;
 
         % test cat
-        C1 = [A1 A2 A3 A4] ;            % GrB/horzcat
-        C2 = cat (2, A1, A2, A3, A4) ;  % GrB/cat
+        C1 = [A1 A2 A3 A4] ;            % GraphBLAS/horzcat
+        C2 = cat (2, A1, A2, A3, A4) ;  % GraphBLAS/cat
         C3 = [B1 B2 B3 B4] ;            % built-in/horzcat
         C4 = cat (2, B1, B2, B3, B4) ;  % built-in/cat
         assert (isequal (C1, C2)) ;
         assert (isequal (C1, C3)) ;
         assert (isequal (C1, C4)) ;
 
-        C1 = [A1 ; A2 ; A3 ; A4] ;      % GrB/vertcat
-        C2 = cat (1, A1, A2, A3, A4) ;  % GrB/cat
+        C1 = [A1 ; A2 ; A3 ; A4] ;      % GraphBLAS/vertcat
+        C2 = cat (1, A1, A2, A3, A4) ;  % GraphBLAS/cat
         C3 = [B1 ; B2 ; B3 ; B4] ;      % built-in/vertcat
         C4 = cat (1, B1, B2, B3, B4) ;  % built-in/cat
         assert (isequal (C1, C2)) ;
@@ -116,12 +130,12 @@ for n1 = [10 100 1000]
                             end
                         end
 
-                        S {1,1} = GrB.random (m1, n1, d) ;
-                        S {1,2} = GrB.random (m1, n2, d) ;
-                        S {1,3} = GrB.random (m1, n3, d) ;
-                        S {2,1} = GrB.random (m2, n1, d) ;
-                        S {2,2} = GrB.random (m2, n2, d) ;
-                        S {2,3} = GrB.random (m2, n3, d) ;
+                        S {1,1} = gtb_random (ghb, m1, n1, d) ;
+                        S {1,2} = gtb_random (ghb, m1, n2, d) ;
+                        S {1,3} = gtb_random (ghb, m1, n3, d) ;
+                        S {2,1} = gtb_random (ghb, m2, n1, d) ;
+                        S {2,2} = gtb_random (ghb, m2, n2, d) ;
+                        S {2,3} = gtb_random (ghb, m2, n3, d) ;
 
                         T {1,1} = double (S {1,1}) ;
                         T {1,2} = double (S {1,2}) ;
@@ -130,7 +144,7 @@ for n1 = [10 100 1000]
                         T {2,2} = double (S {2,2}) ;
                         T {2,3} = double (S {2,3}) ;
 
-                        C1 = GrB.cell2mat (S) ;
+                        C1 = gtb_cell2mat (ghb, S) ;
                         C2 = cell2mat (T) ;
                         assert (isequal (C1, C2)) ;
 
@@ -144,4 +158,5 @@ for n1 = [10 100 1000]
     end
 end
 
-fprintf ('\ngbtest102: all tests passed\n') ;
+fprintf ('\ngbtest102 (%d): all tests passed\n', ghb) ;
+

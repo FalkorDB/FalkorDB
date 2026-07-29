@@ -28,6 +28,8 @@ apply               GrB_apply
 
 assign              GrB_assign and GxB_assign
 
+atfork              methods for pthread_atfork
+
 binaryop            GrB_BinaryOp object
 
 builder             GrB_build
@@ -51,6 +53,8 @@ compatible          testing if operators and types are compatible (if they can
                     be typecasted to another type.
 
 concat              GxB_concat
+
+container           GxB_Container object
 
 context             GxB_Context object
 
@@ -97,6 +101,7 @@ ij                  determining properities of I and J index lists for
                     GrB_extract, GrB_assign, and GxB_subassign
 
 import_export       GrB_import, GrB_export, GxB_import, and GxB_export
+                    (historical)
 
 include             general-purpose header files that do not fit into any
                     particular subfolder of GraphBLAS/Source, such as compiler
@@ -148,9 +153,11 @@ omp                 OpenMP interface and atomics
 
 op                  methods for operators (GrB_UnaryOp, GrB_BinaryOp, etc)
 
-pack_unpack         GxB_pack, GxB_unpack
+pack_unpack         GxB_pack, GxB_unpack (historical)
 
 pending             pending tuples for updates to matrices, vectors, and scalars
+
+pji_control         controlling 32/64-bit integers
 
 positional          methods for positional operators
 
@@ -195,5 +202,4 @@ werk                the Werk space is a small amount of space on the stack
                     and such.  It is spell differently for easier 'grep'.
 
 zstd_wrapper        wrapper for the zstd compression package
-
 

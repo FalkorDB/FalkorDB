@@ -1,10 +1,22 @@
-function gbtest128
-%GBTEST128 test GrB.unops
+function gbtest128 (ghb)
+%GBTEST128 test [GrB,GhB].unops
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-list = GrB.unops
-GrB.unops ;
-help GrB.unops ;
-fprintf ('\ngbtest128: all tests passed\n') ;
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
+
+list = gtb_unops (ghb)
+gtb_unops (ghb) ;
+have_octave = gb_octave ;
+if (ghb && ~have_octave)
+    help GhB.unops ;
+else
+    help GrB.unops ;
+end
+
+fprintf ('\ngbtest128 (%d): all tests passed\n', ghb) ;
+

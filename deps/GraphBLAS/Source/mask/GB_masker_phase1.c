@@ -23,13 +23,13 @@
 #include "jitifyer/GB_stringify.h"
 #include "include/GB_masker_shared_definitions.h"
 
-#define GB_FREE_ALL GB_FREE_MEMORY (&Rp, Rp_size) ;
+#define GB_FREE_ALL GB_FREE_MEMORY (&Rp, Rp_mem) ;
 
 GrB_Info GB_masker_phase1           // count nnz in each R(:,j)
 (
     // computed by phase1:
     void **Rp_handle,               // vector pointers for R
-    size_t *Rp_size_handle,
+    uint64_t *Rp_mem_handle,
     int64_t *Rnvec_nonempty,        // # of non-empty vectors in R
     // tasks from phase1a:
     GB_task_struct *restrict TaskList,       // array of structs
@@ -58,8 +58,13 @@ GrB_Info GB_masker_phase1           // count nnz in each R(:,j)
     // check inputs
     //--------------------------------------------------------------------------
 
+    ASSERT (C != NULL) ;
+
+    int data_arena = C->data_arena ;
+    uint64_t mem = GB_mem (data_arena, 0) ;
+
     ASSERT (Rp_handle != NULL) ;
-    ASSERT (Rp_size_handle != NULL) ;
+    ASSERT (Rp_mem_handle != NULL) ;
     ASSERT (Rnvec_nonempty != NULL) ;
     ASSERT (R_sparsity == GxB_SPARSE || R_sparsity == GxB_HYPERSPARSE) ;
 
@@ -88,9 +93,9 @@ GrB_Info GB_masker_phase1           // count nnz in each R(:,j)
     //--------------------------------------------------------------------------
 
     (*Rp_handle) = NULL ;
-    void *Rp = NULL ; size_t Rp_size = 0 ;
+    void *Rp = NULL ; uint64_t Rp_mem = mem ;
     size_t rpsize = (Rp_is_32) ? sizeof (uint32_t) : sizeof (uint64_t) ;
-    Rp = GB_CALLOC_MEMORY (GB_IMAX (2, Rnvec+1), rpsize, &Rp_size) ;
+    Rp = GB_CALLOC_MEMORY (GB_IMAX (2, Rnvec+1), rpsize, &Rp_mem) ;
     if (Rp == NULL)
     { 
         // out of memory
@@ -131,14 +136,14 @@ GrB_Info GB_masker_phase1           // count nnz in each R(:,j)
     //--------------------------------------------------------------------------
 
     GB_task_cumsum (Rp, Rp_is_32, Rnvec, Rnvec_nonempty, TaskList, R_ntasks,
-        R_nthreads, Werk) ;
+        R_nthreads, data_arena, Werk) ;
 
     //--------------------------------------------------------------------------
     // return the result
     //--------------------------------------------------------------------------
 
     (*Rp_handle) = Rp ;
-    (*Rp_size_handle) = Rp_size ;
+    (*Rp_mem_handle) = Rp_mem ;
     return (GrB_SUCCESS) ;
 }
 

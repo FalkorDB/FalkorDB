@@ -1,19 +1,24 @@
-function gbtest78
+function gbtest78 (ghb)
 %GBTEST78 test integer operators
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
+
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
 A = uint8 (magic (4)) ;
 A = A (:,1:3) ;
 A (1,1) = 0 ;
 
-assert (GrB.isbycol (A)) ;
-assert (~GrB.isbyrow (A)) ;
+assert (gtb_isbycol (ghb, A)) ;
+assert (~gtb_isbyrow (ghb, A)) ;
 
-disp (A, GrB (5)) ;
+disp (A, gtb (ghb, 5)) ;
 
-G = GrB (A) ;
+G = gtb (ghb, A) ;
 
 C = (G < -1) ;
 assert (isequal (C, sparse (false (4,3)))) ;
@@ -21,11 +26,11 @@ assert (isequal (C, sparse (false (4,3)))) ;
 C = (-1 < G) ;
 assert (isequal (C, sparse (true (4,3)))) ;
 
-C = GrB.empty ;
+C = gtb_empty (ghb) ;
 assert (isequal (C, [ ])) ;
 
 C1 = bitset (A, 1, 1) ;
-C2 = bitset (G, 1, GrB (1)) ;
+C2 = bitset (G, 1, gtb (ghb, 1)) ;
 assert (isequal (C1, C2)) ;
 
 C1 = bitshift (uint64 (3), A) ;
@@ -46,7 +51,7 @@ types = {
 
 % bitset (a,b,V) where a and b are scalars
 V = magic (4) .* mod (magic (4), 2) ;
-G = GrB (V) ;
+G = gtb (ghb, V) ;
 for k = 1:length (types)
     type = types {k} ;
     fprintf ('%s ', type) ;
@@ -61,5 +66,5 @@ for k = 1:length (types)
     end
 end
 
-fprintf ('\ngbtest78: all tests passed\n') ;
+fprintf ('\ngbtest78 (%d): all tests passed\n', ghb) ;
 

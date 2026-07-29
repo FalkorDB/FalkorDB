@@ -131,8 +131,8 @@ void GB_EVAL2 (GB (AxB_saxpy3_sym), GB_MASK_A_B_SUFFIX)
         // get the task descriptor
         //----------------------------------------------------------------------
 
-        uint64_t hash_size = SaxpyTasks [taskid].hsize ;
-        bool use_Gustavson = (hash_size == cvlen) ;
+        uint64_t hash_nitems = SaxpyTasks [taskid].hash_nitems ;
+        bool use_Gustavson = (hash_nitems == cvlen) ;
 
         if (taskid < nfine)
         {
@@ -157,11 +157,11 @@ void GB_EVAL2 (GB (AxB_saxpy3_sym), GB_MASK_A_B_SUFFIX)
                 // partition M(:,j)
                 GB_GET_M_j ;        // get M(:,j)
 
-                int team_size = SaxpyTasks [taskid].team_size ;
-                int leader    = SaxpyTasks [taskid].leader ;
-                int my_teamid = taskid - leader ;
+                int team_nfine = SaxpyTasks [taskid].team_nfine ;
+                int leader     = SaxpyTasks [taskid].leader ;
+                int my_teamid  = taskid - leader ;
                 int64_t mystart, myend ;
-                GB_PARTITION (mystart, myend, mjnz, my_teamid, team_size) ;
+                GB_PARTITION (mystart, myend, mjnz, my_teamid, team_nfine) ;
                 mystart += pM_start ;
                 myend   += pM_start ;
 
@@ -252,7 +252,7 @@ void GB_EVAL2 (GB (AxB_saxpy3_sym), GB_MASK_A_B_SUFFIX)
                 //--------------------------------------------------------------
 
                 uint64_t *restrict Hi = SaxpyTasks [taskid].Hi ;
-                uint64_t hash_bits = (hash_size-1) ;
+                uint64_t hash_bits = (hash_nitems-1) ;
 
                 #if ( GB_NO_MASK )
                 { 
@@ -436,8 +436,8 @@ void GB_EVAL2 (GB (AxB_saxpy3_sym), GB_MASK_A_B_SUFFIX)
             // get the task descriptor
             //------------------------------------------------------------------
 
-            uint64_t hash_size = SaxpyTasks [taskid].hsize ;
-            bool use_Gustavson = (hash_size == cvlen) ;
+            uint64_t hash_nitems = SaxpyTasks [taskid].hash_nitems ;
+            bool use_Gustavson = (hash_nitems == cvlen) ;
 
             if (!use_Gustavson && !M_in_place)
             {
@@ -455,11 +455,11 @@ void GB_EVAL2 (GB (AxB_saxpy3_sym), GB_MASK_A_B_SUFFIX)
                 // partition M(:,j)
                 GB_GET_M_j ;        // get M(:,j)
 
-                int team_size = SaxpyTasks [taskid].team_size ;
-                int leader    = SaxpyTasks [taskid].leader ;
-                int my_teamid = taskid - leader ;
+                int team_nfine = SaxpyTasks [taskid].team_nfine ;
+                int leader     = SaxpyTasks [taskid].leader ;
+                int my_teamid  = taskid - leader ;
                 int64_t mystart, myend ;
-                GB_PARTITION (mystart, myend, mjnz, my_teamid, team_size) ;
+                GB_PARTITION (mystart, myend, mjnz, my_teamid, team_nfine) ;
                 mystart += pM_start ;
                 myend   += pM_start ;
 
@@ -488,8 +488,8 @@ void GB_EVAL2 (GB (AxB_saxpy3_sym), GB_MASK_A_B_SUFFIX)
                     (GB_IGET (Bp, kk+1) - GB_IGET (Bp, kk)) ;
             // no work to do if B(:,j) is empty
             if (bjnz == 0) continue ;
-            uint64_t hash_size = SaxpyTasks [taskid].hsize ;
-            bool use_Gustavson = (hash_size == cvlen) ;
+            uint64_t hash_nitems = SaxpyTasks [taskid].hash_nitems ;
+            bool use_Gustavson = (hash_nitems == cvlen) ;
             int leader = SaxpyTasks [taskid].leader ;
             if (leader != taskid) continue ;
             GB_GET_M_j ;        // get M(:,j)
@@ -526,7 +526,7 @@ void GB_EVAL2 (GB (AxB_saxpy3_sym), GB_MASK_A_B_SUFFIX)
                 // h == i+1, f == 1: occupied with M(i,j)=1
                 uint64_t *restrict
                     Hf = (uint64_t *restrict) SaxpyTasks [taskid].Hf ;
-                uint64_t hash_bits = (hash_size-1) ;
+                uint64_t hash_bits = (hash_nitems-1) ;
                 for (int64_t pM = pM_start ; pM < pM_end ; pM++)
                 {
                     GB_GET_M_ij (pM) ;              // get M(i,j)
@@ -549,7 +549,7 @@ void GB_EVAL2 (GB (AxB_saxpy3_sym), GB_MASK_A_B_SUFFIX)
                 }
                 ASSERT (mjcount == mjcount2) ;
                 mjcount2 = 0 ;
-                for (uint64_t hash = 0 ; hash < hash_size ; hash++)
+                for (uint64_t hash = 0 ; hash < hash_nitems ; hash++)
                 {
                     uint64_t hf = Hf [hash] ;
                     uint64_t h = (hf >> 2) ; // empty (0), or a 1-based index

@@ -19,4 +19,3 @@ int64_t GB_nnz_full      // return nnz(A) or INT64_MAX if integer overflow
     return (ok ? ((int64_t) nz) : INT64_MAX) ;
 }
 
-

@@ -50,7 +50,6 @@ GrB_Info GB_extract                 // C<M> = accum (C, A(I,J))
     // C may be aliased with M and/or A
 
     GrB_Info info ;
-    struct GB_Matrix_opaque T_header ;
     GrB_Matrix T = NULL ;
     GB_RETURN_IF_NULL (Rows) ;
     GB_RETURN_IF_NULL (Cols) ;
@@ -61,9 +60,10 @@ GrB_Info GB_extract                 // C<M> = accum (C, A(I,J))
     ASSERT_BINARYOP_OK_OR_NULL (accum, "accum for GB_Matrix_extract", GB0) ;
     ASSERT_MATRIX_OK (A, "A input for GB_Matrix_extract", GB0) ;
 
+    int data_arena = C->data_arena ;
+
     // check domains and dimensions for C<M> = accum (C,T)
-    GB_OK (GB_compatible (C->type, C, M, Mask_struct, accum, A->type,
-        Werk)) ;
+    GB_OK (GB_compatible (C->type, C, M, Mask_struct, accum, A->type, Werk)) ;
 
     // check the dimensions of C
     int64_t cnrows = GB_NROWS (C) ;
@@ -177,7 +177,7 @@ GrB_Info GB_extract                 // C<M> = accum (C, A(I,J))
 
     // TODO::: iso:  if accum is PAIR, extract T as iso
 
-    GB_CLEAR_MATRIX_HEADER (T, &T_header) ;
+    GB_OK (GB_matrix_header_new (&T, data_arena, data_arena)) ;
     GB_OK (GB_subref (T, false, T_is_csc, A,
         I, I_is_32, ni, J, J_is_32, nj, false, Werk)) ;
     ASSERT_MATRIX_OK (T, "T extracted", GB0) ;

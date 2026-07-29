@@ -14,7 +14,7 @@ typedef GB_JIT_KERNEL_MASKER_PHASE2_PROTO ((*GB_jit_dl_function)) ;
 
 GrB_Info GB_masker_phase2_jit       // phase2 for R = masker (C,M,Z)
 (
-    GrB_Matrix R,                   // output matrix, static header
+    GrB_Matrix R,                   // output matrix, existing header
     // tasks from phase1a:
     const GB_task_struct *restrict TaskList,     // array of structs
     const int R_ntasks,               // # of tasks

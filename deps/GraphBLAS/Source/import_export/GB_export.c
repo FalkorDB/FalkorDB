@@ -1,30 +1,34 @@
 //------------------------------------------------------------------------------
-// GB_export: export a matrix or vector
+// GB_export: export a matrix or vector (HISTORICAL)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
-// No conversion is done, except to convert to non-iso if requested, and all
-// integers are converted to 64-bits.  The matrix is exported in its current
-// sparsity structure and by-row/by-col format.
+// No conversion is done, except: the matrix A is moved to the data arena
+// determined by the Context or global context if no Context is engaged (if not
+// already there), A is convert to non-iso if requested, and all integers are
+// converted to 64-bits.  The matrix is exported in its current sparsity
+// structure and by-row/by-col format.
+
+// If unpacking is true, the header arena of A remains unchanged.
+// Otherwise, A is freed so it is no longer in any arena.
+
+// All uses of this method are historical.
 
 #include "import_export/GB_export.h"
 
-#define GB_FREE_ALL                     \
-{                                       \
-    GB_FREE_MEMORY (&Ap_new, Ap_new_size) ;    \
-    GB_FREE_MEMORY (&Ah_new, Ah_new_size) ;    \
+#define GB_FREE_ALL                         \
+{                                           \
+    GB_FREE_MEMORY (&Ap_new, Ap_new_mem) ;  \
+    GB_FREE_MEMORY (&Ah_new, Ah_new_mem) ;  \
 }
 
 GrB_Info GB_export      // export/unpack a matrix in any format
 (
     bool unpacking,     // unpack if true, export and free if false.
-                        // The false case is historical; GxB*unpack sets this
-                        // flag to true, and GrB*export does not use this
-                        // method.
 
     GrB_Matrix *A,      // handle of matrix to export and free, or unpack
     GrB_Type *type,     // type of matrix to export
@@ -34,19 +38,19 @@ GrB_Info GB_export      // export/unpack a matrix in any format
 
     // the 5 arrays:
     uint64_t **Ap,      // pointers
-    uint64_t *Ap_size,  // size of Ap in bytes
+    uint64_t *Ap_memsize,  // size of Ap in bytes
 
     uint64_t **Ah,      // vector indices
-    uint64_t *Ah_size,  // size of Ah in bytes
+    uint64_t *Ah_memsize,  // size of Ah in bytes
 
     int8_t **Ab,        // bitmap
-    uint64_t *Ab_size,  // size of Ab in bytes
+    uint64_t *Ab_memsize,  // size of Ab in bytes
 
     uint64_t **Ai,      // indices
-    uint64_t *Ai_size,  // size of Ai in bytes
+    uint64_t *Ai_memsize,  // size of Ai in bytes
 
     void **Ax,          // values
-    uint64_t *Ax_size,  // size of Ax in bytes
+    uint64_t *Ax_memsize,  // size of Ax in bytes
 
     // additional information for specific formats:
     uint64_t *nvals,    // # of entries for bitmap format.
@@ -67,13 +71,31 @@ GrB_Info GB_export      // export/unpack a matrix in any format
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    int64_t *Ap_new = NULL ; size_t Ap_new_size = 0 ;   // OK; only 64-bit
-    int64_t *Ah_new = NULL ; size_t Ah_new_size = 0 ;   // OK; only 64-bit
+
+    int data_arena = GB_Context_data_arena ( ) ;
+    uint64_t mem = GB_mem (data_arena, 0) ;
+
+    int64_t *Ap_new = NULL ; uint64_t Ap_new_mem = mem ;
+    int64_t *Ah_new = NULL ; uint64_t Ah_new_mem = mem ;
     ASSERT (A != NULL) ;
     GB_RETURN_IF_NULL (*A) ;
 
+    //--------------------------------------------------------------------------
+    // ensure the data_arena of A matches the Context data arena
+    //--------------------------------------------------------------------------
+
+    (*A)->data_arena = data_arena ;
+    GB_OK (GB_wait_arenas (*A)) ;
+
+    //--------------------------------------------------------------------------
     // ensure the matrix is all-64-bit
+    //--------------------------------------------------------------------------
+
     GB_OK (GB_convert_int (*A, false, false, false, false)) ;
+
+    //--------------------------------------------------------------------------
+    // check more inputs
+    //--------------------------------------------------------------------------
 
     GB_RETURN_IF_NULL_OR_INVALID (*A) ;
     ASSERT_MATRIX_OK (*A, "A to export", GB0) ;
@@ -85,7 +107,7 @@ GrB_Info GB_export      // export/unpack a matrix in any format
     GB_RETURN_IF_NULL (vlen) ;
     GB_RETURN_IF_NULL (vdim) ;
     GB_RETURN_IF_NULL (Ax) ;
-    GB_RETURN_IF_NULL (Ax_size) ;
+    GB_RETURN_IF_NULL (Ax_memsize) ;
 
     int s = GB_sparsity (*A) ;
 
@@ -93,7 +115,7 @@ GrB_Info GB_export      // export/unpack a matrix in any format
     {
         case GxB_HYPERSPARSE : 
             GB_RETURN_IF_NULL (nvec) ;
-            GB_RETURN_IF_NULL (Ah) ; GB_RETURN_IF_NULL (Ah_size) ;
+            GB_RETURN_IF_NULL (Ah) ; GB_RETURN_IF_NULL (Ah_memsize) ;
             // fall through to the sparse case
 
         case GxB_SPARSE : 
@@ -103,14 +125,14 @@ GrB_Info GB_export      // export/unpack a matrix in any format
             }
             else
             { 
-                GB_RETURN_IF_NULL (Ap) ; GB_RETURN_IF_NULL (Ap_size) ;
+                GB_RETURN_IF_NULL (Ap) ; GB_RETURN_IF_NULL (Ap_memsize) ;
             }
-            GB_RETURN_IF_NULL (Ai) ; GB_RETURN_IF_NULL (Ai_size) ;
+            GB_RETURN_IF_NULL (Ai) ; GB_RETURN_IF_NULL (Ai_memsize) ;
             break ;
 
         case GxB_BITMAP : 
             GB_RETURN_IF_NULL (nvals) ;
-            GB_RETURN_IF_NULL (Ab) ; GB_RETURN_IF_NULL (Ab_size) ;
+            GB_RETURN_IF_NULL (Ab) ; GB_RETURN_IF_NULL (Ab_memsize) ;
             // fall through to the full case
 
         case GxB_FULL : 
@@ -130,12 +152,12 @@ GrB_Info GB_export      // export/unpack a matrix in any format
         plen_new = (avdim == 0) ? 0 : 1 ;
         nvec_new = (avdim == 1) ? 1 : 0 ;
         Ap_new = GB_CALLOC_MEMORY (plen_new+1, sizeof (int64_t),
-            &(Ap_new_size)) ;
+            &(Ap_new_mem)) ;
         if (avdim > 1)
         { 
             // A is sparse if avdim <= 1, hypersparse if avdim > 1
             Ah_new = GB_CALLOC_MEMORY (1, sizeof (int64_t),
-                &(Ah_new_size)) ;
+                &(Ah_new_mem)) ;
         }
         if (Ap_new == NULL || (avdim > 1 && Ah_new == NULL))
         { 
@@ -181,7 +203,7 @@ GrB_Info GB_export      // export/unpack a matrix in any format
     GBMDUMP ("export A->x from memtable: %p\n", (*A)->x) ;
     GB_Global_memtable_remove ((*A)->x) ;
     (*Ax) = (*A)->x ; (*A)->x = NULL ;
-    (*Ax_size) = (*A)->x_size ;
+    (*Ax_memsize) = GB_memsize ((*A)->x_mem) ;
 
     switch (s)
     {
@@ -192,7 +214,7 @@ GrB_Info GB_export      // export/unpack a matrix in any format
             GBMDUMP ("export A->h from memtable: %p\n", (*A)->h) ;
             GB_Global_memtable_remove ((*A)->h) ;
             (*Ah) = (uint64_t *) ((*A)->h) ; (*A)->h = NULL ;
-            (*Ah_size) = (*A)->h_size ;
+            (*Ah_memsize) = GB_memsize ((*A)->h_mem) ;
             // fall through to the sparse case
 
         case GxB_SPARSE : 
@@ -212,14 +234,14 @@ GrB_Info GB_export      // export/unpack a matrix in any format
                 GBMDUMP ("export A->p from memtable: %p\n", (*A)->p) ;
                 GB_Global_memtable_remove ((*A)->p) ;
                 (*Ap) = (uint64_t *) ((*A)->p) ; (*A)->p = NULL ;
-                (*Ap_size) = (*A)->p_size ;
+                (*Ap_memsize) = GB_memsize ((*A)->p_mem) ;
             }
 
             // export A->i
             GBMDUMP ("export A->i from memtable: %p\n", (*A)->i) ;
             GB_Global_memtable_remove ((*A)->i) ;
             (*Ai) = (uint64_t *) ((*A)->i) ; (*A)->i = NULL ;
-            (*Ai_size) = (*A)->i_size ;
+            (*Ai_memsize) = GB_memsize ((*A)->i_mem) ;
             break ;
 
         case GxB_BITMAP : 
@@ -229,7 +251,7 @@ GrB_Info GB_export      // export/unpack a matrix in any format
             GBMDUMP ("export A->b from memtable: %p\n", (*A)->b) ;
             GB_Global_memtable_remove ((*A)->b) ;
             (*Ab) = (*A)->b ; (*A)->b = NULL ;
-            (*Ab_size) = (*A)->b_size ;
+            (*Ab_memsize) = GB_memsize ((*A)->b_mem) ;
 
         case GxB_FULL : 
 
@@ -258,8 +280,8 @@ GrB_Info GB_export      // export/unpack a matrix in any format
         GB_phybix_free (*A) ;
         (*A)->plen = plen_new ;
         (*A)->nvec = nvec_new ;
-        (*A)->p = Ap_new ; (*A)->p_size = Ap_new_size ;
-        (*A)->h = Ah_new ; (*A)->h_size = Ah_new_size ;
+        (*A)->p = Ap_new ; (*A)->p_mem = Ap_new_mem ;
+        (*A)->h = Ah_new ; (*A)->h_mem = Ah_new_mem ;
         (*A)->magic = GB_MAGIC ;
         (*A)->p_is_32 = false ;
         (*A)->j_is_32 = false ;
@@ -269,7 +291,7 @@ GrB_Info GB_export      // export/unpack a matrix in any format
     else
     { 
         // GxB_export: free the header of A, and A->p if A is a sparse
-        // GrB_Vector.  This method is historical.
+        // GrB_Vector.
         GB_Matrix_free (A) ;
         ASSERT ((*A) == NULL) ;
     }

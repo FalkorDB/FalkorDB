@@ -19,6 +19,7 @@ bool GB_cumsum                  // cumulative sum of an array
     const int64_t n,
     int64_t *restrict kresult,  // return k, if needed by the caller
     int nthreads,
+    const int data_arena,       // arena for workspace
     GB_Werk Werk
 ) ;
 
@@ -27,6 +28,7 @@ bool GB_cumsum_float            // cumulative sum of an array
     float *restrict count,      // size n+1, input/output
     const int64_t n,
     int nthreads,
+    const int data_arena,       // arena for workspace
     GB_Werk Werk
 ) ;
 

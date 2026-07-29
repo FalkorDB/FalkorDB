@@ -10,8 +10,13 @@
 #include "assign/GB_assign.h"
 #include "mask/GB_get_mask.h"
 #include "ij/GB_ij.h"
-#define GB_FREE_ALL                             \
-    if (J_size > 0) GB_FREE_MEMORY (&J, J_size) ;
+#define GB_FREE_ALL                     \
+{                                       \
+    if (GB_memsize (J_mem) > 0)         \
+    {                                   \
+        GB_FREE_MEMORY (&J, J_mem) ;    \
+    }                                   \
+}
 
 GrB_Info GxB_Row_assign_Vector      // C<mask'>(i,J) = accum(C(i,j),u')
 (
@@ -36,6 +41,8 @@ GrB_Info GxB_Row_assign_Vector      // C<mask'>(i,J) = accum(C(i,j),u')
         "GxB_Row_assign_Vector (C, M, accum, u, i, J, desc)") ;
     GB_BURBLE_START ("GxB_Row_assign_Vector") ;
 
+    int data_arena = C->data_arena ;
+
     ASSERT (mask == NULL || GB_VECTOR_OK (mask)) ;
     ASSERT (GB_VECTOR_OK (u)) ;
 
@@ -51,11 +58,11 @@ GrB_Info GxB_Row_assign_Vector      // C<mask'>(i,J) = accum(C(i,j),u')
     //--------------------------------------------------------------------------
 
     void *J = NULL ;
-    size_t J_size = 0 ;
+    uint64_t J_mem = 0 ;        // set by GB_ijxvector
     int64_t nj = 0 ;
     GrB_Type J_type = NULL ;
     GB_OK (GB_ijxvector (J_vector, false, 1, desc, false,
-        &J, &nj, &J_size, &J_type, Werk)) ;
+        &J, &nj, &J_mem, &J_type, data_arena, Werk)) ;
     bool J_is_32 = (J_type == GrB_UINT32) ;
 
     //--------------------------------------------------------------------------

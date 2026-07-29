@@ -61,6 +61,11 @@ GrB_Info GB_AxB_dot4                // C+=A'*B, dot product method
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
+
+    ASSERT (C != NULL) ;
+    int data_arena = C->data_arena ;
+    uint64_t mem = GB_mem (data_arena, 0) ;
+
     ASSERT_MATRIX_OK (C, "C for dot in-place += A'*B", GB0) ;
     ASSERT_MATRIX_OK (A, "A for dot in-place += A'*B", GB0) ;
     ASSERT_MATRIX_OK (B, "B for dot in-place += A'*B", GB0) ;
@@ -77,8 +82,8 @@ GrB_Info GB_AxB_dot4                // C+=A'*B, dot product method
     ASSERT_SEMIRING_OK (semiring, "semiring for in-place += A'*B", GB0) ;
     ASSERT (A->vlen == B->vlen) ;
 
-    GB_WERK_DECLARE (A_slice, int64_t) ;
-    GB_WERK_DECLARE (B_slice, int64_t) ;
+    GB_WERK_DECLARE (A_slice, int64_t, mem) ;
+    GB_WERK_DECLARE (B_slice, int64_t, mem) ;
 
     //--------------------------------------------------------------------------
     // get the semiring operators

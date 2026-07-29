@@ -96,7 +96,8 @@ GrB_Info GB_msort_2     // sort array A of size 2-by-n
     void *restrict A_1,         // size n array
     bool A1_is_32,              // if true: A_1 is uint32, else uint64
     const int64_t n,
-    int nthreads_max            // max # of threads to use
+    int nthreads_max,           // max # of threads to use
+    const int data_arena        // arena for workspace
 )
 {
 
@@ -120,22 +121,22 @@ GrB_Info GB_msort_2     // sort array A of size 2-by-n
     { 
         if (A1_is_32)
         { 
-            return (GB_msort_2_32_32 (A_0, A_1, n, nthreads)) ;
+            return (GB_msort_2_32_32 (A_0, A_1, n, nthreads, data_arena)) ;
         }
         else
         { 
-            return (GB_msort_2_32_64 (A_0, A_1, n, nthreads)) ;
+            return (GB_msort_2_32_64 (A_0, A_1, n, nthreads, data_arena)) ;
         }
     }
     else
     {
         if (A1_is_32)
         { 
-            return (GB_msort_2_64_32 (A_0, A_1, n, nthreads)) ;
+            return (GB_msort_2_64_32 (A_0, A_1, n, nthreads, data_arena)) ;
         }
         else
         { 
-            return (GB_msort_2_64_64 (A_0, A_1, n, nthreads)) ;
+            return (GB_msort_2_64_64 (A_0, A_1, n, nthreads, data_arena)) ;
         }
     }
 }

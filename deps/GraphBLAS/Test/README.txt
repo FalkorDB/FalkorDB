@@ -51,8 +51,8 @@ reset, and the test is done again.  The initial state of this counter is
 increased until the function succeeds.  During this entire process, a count is
 kept of malloc'd blocks, and an error is reported if a leak is found.
 GraphBLAS will be very slow with malloc debugging enabled.  It is only done
-through the @GrB interface and has no effect when GraphBLAS is used through a
-C program.
+through this MATLAB interface and has no effect when GraphBLAS is used through
+a C program.
 
 To enable further debugging tests, see the comments in Source/GB.h.
 

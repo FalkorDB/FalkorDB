@@ -1,7 +1,7 @@
 function result = monoids
 %GRB.MONOIDS list all monoids
-% Redundant monoids are not listed.  For example '+.logical'
-% exists, but it is identical to '|.logical'.
+% Redundant monoids are not listed.  For example '+.logical' exists, but it is
+% identical to '|.logical'.
 %
 % Example:
 %   GrB.monoids ;           % prints a list, with descriptions
@@ -9,7 +9,7 @@ function result = monoids
 %
 % See also GrB.monoidinfo.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 types = {
@@ -65,7 +65,7 @@ for k1 = 1:nops
             end
 
             try
-                ok = gbmonoidinfo (monoid) ;
+                ok = gbmex_monoidinfo (monoid) ;
                 nmonoids = nmonoids + 1 ;
                 if (nargout > 0)
                     result = [result ; monoid] ; %#ok<AGROW>

@@ -25,6 +25,8 @@ GrB_Info GB_split_full              // split a full matrix
     const int64_t *restrict Tile_rows,  // size m+1
     const int64_t *restrict Tile_cols,  // size n+1
     const GrB_Matrix A,             // input matrix
+    const int header_arena,
+    const int data_arena,
     GB_Werk Werk
 )
 {
@@ -84,7 +86,7 @@ GrB_Info GB_split_full              // split a full matrix
             GB_OK (GB_new_bix (&C, // new header
                 atype, cvlen, cvdim, GB_ph_null, csc, GxB_FULL, false,
                 hyper_switch, 0, cnz, true, A_iso,
-                /* OK: */ false, false, false)) ;
+                /* OK: */ false, false, false, header_arena, data_arena)) ;
             C->sparsity_control = sparsity_control ;
             C->hyper_switch = hyper_switch ;
             int C_nthreads = GB_nthreads (cnz, chunk, nthreads_max) ;

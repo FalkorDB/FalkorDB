@@ -82,7 +82,9 @@ void mexFunction
     // create the reduce monoid
     if (has_terminal)
     {
-        info = GxB_Monoid_terminal_new_BOOL_(&reduce, reduceop, identity, terminal) ;
+//      info = GxB_Monoid_terminal_new_BOOL_(&reduce, reduceop, identity, terminal) ;
+        info = GxB_Monoid_terminal_new_arena_BOOL_(&reduce, reduceop, identity, terminal,
+            GrB_DEFAULT) ;
     }
     else
     {

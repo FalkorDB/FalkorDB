@@ -54,7 +54,9 @@
 
 // for internal static inline functions (will be redefined for CUDA)
 #undef  GB_STATIC_INLINE
-#define GB_STATIC_INLINE static inline
+#define GB_STATIC_INLINE      static inline
+#undef  GB_STATIC_INLINE_BOTH
+#define GB_STATIC_INLINE_BOTH static inline
 
 //------------------------------------------------------------------------------
 // internal #include files
@@ -64,6 +66,7 @@
 #include "include/GB_prefix.h"
 #include "include/GB_defaults.h"
 #include "include/GB_rand.h"
+#include "include/GB_ph_code.h"
 
 #ifdef GB_JIT_KERNEL
 
@@ -88,7 +91,6 @@
     #include "include/GB_iceil.h"
     #include "include/GB_memory_macros.h"
     #include "include/GB_printf_kernels.h"
-    #include "include/GB_clear_matrix_header.h"
     #include "include/GB_werk.h"
     #include "include/GB_task_struct.h"
     #include "include/GB_callback_proto.h"
@@ -131,7 +133,6 @@
     #include "math/include/GB_iceil.h"
     #include "memory/include/GB_memory_macros.h"
     #include "print/include/GB_printf_kernels.h"
-    #include "matrix/include/GB_clear_matrix_header.h"
     #include "werk/include/GB_werk.h"
     #include "slice/include/GB_task_struct.h"
     #include "callback/include/GB_callback_proto.h"

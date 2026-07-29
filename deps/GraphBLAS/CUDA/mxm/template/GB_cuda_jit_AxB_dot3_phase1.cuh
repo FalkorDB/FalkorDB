@@ -97,7 +97,7 @@ __global__ void GB_jit_AxB_dot3_phase1_kernel
     // for zombies, or bucket assignment:
     GB_Ci_SIGNED_TYPE *__restrict__ Ci = (GB_Ci_SIGNED_TYPE *) C->i ;
 
-    // FIXME: use (k << 2) not (k << 4)
+    // fixme: use (k << 2) not (k << 4)
 
     // Ci [p] for an entry C(i,j) contains either GB_ZOMBIE (i) if C(i,j) is a
     // zombie, or (k << 4) + bucket otherwise, where C(:,j) is the kth vector
@@ -121,13 +121,13 @@ __global__ void GB_jit_AxB_dot3_phase1_kernel
     // assign buckets to all entries in C(i,j), one chunk at a time
     //--------------------------------------------------------------------------
 
-    // FIXME: tune this loop (and all others) for GPU architectures, where # of
+    // fixme: tune this loop (and all others) for GPU architectures, where # of
     // threadblocks can differ on different GPUs.
 
     // grid-stride loop for each threadblock:
-    for (int64_t pfirst = blockIdx.x << log2_chunk_size ;
+    for (int64_t pfirst = blockIdx.x << LOG2_CHUNKSIZE ;
                  pfirst < mnz ;
-                 pfirst += gridDim.x << log2_chunk_size)
+                 pfirst += gridDim.x << LOG2_CHUNKSIZE)
     {
 
         //----------------------------------------------------------------------
@@ -138,7 +138,7 @@ __global__ void GB_jit_AxB_dot3_phase1_kernel
         // pfirst + my_chunk_size - 1.
         int64_t my_chunk_size, mnvec1, kfirst, klast ;
         float slope ;
-        GB_cuda_ek_slice_setup<GB_Mp_TYPE> (Mp, mnvec, mnz, pfirst, chunk_size,
+        GB_cuda_ek_slice_setup<GB_Mp_TYPE> (Mp, mnvec, mnz, pfirst, CHUNKSIZE,
             &kfirst, &klast, &my_chunk_size, &mnvec1, &slope) ;
 
         //----------------------------------------------------------------------
@@ -316,7 +316,7 @@ __global__ void GB_jit_AxB_dot3_phase1_kernel
     // cumulative sum of each bucket
     //--------------------------------------------------------------------------
 
-    typedef cub::BlockScan<int64_t, 32, cub::BLOCK_SCAN_WARP_SCANS> BlockCumSum;
+    typedef cub::BlockScan<int64_t, GB_CUDA_TILE_SIZE, cub::BLOCK_SCAN_WARP_SCANS> BlockCumSum;
     __shared__ typename BlockCumSum::TempStorage temp_storage ;
 
     // The taskbucket for this thread block is an array of size

@@ -131,7 +131,7 @@ GrB_Info GrB_BinaryOp_get_SIZE
     // get the field
     //--------------------------------------------------------------------------
 
-    return (GB_op_size_get ((GB_Operator) op, value, field)) ;
+    return (GB_op_strsize_get ((GB_Operator) op, value, field)) ;
 }
 
 //------------------------------------------------------------------------------

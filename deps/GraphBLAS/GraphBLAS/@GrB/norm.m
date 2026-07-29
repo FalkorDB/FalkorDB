@@ -20,14 +20,10 @@ function s = norm (G, kind)
 %
 % See also GrB.reduce, GrB.normdiff.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 % FUTURE: add the p-norm for vectors.
-
-if (isobject (G))
-    G = G.opaque ;
-end
 
 if (nargin == 2)
     if (~ischar (kind))
@@ -37,5 +33,5 @@ else
     kind = 2 ;
 end
 
-s = gbnorm (G, kind) ;
+s = gzb_norm (G, kind) ;
 
