@@ -23,6 +23,14 @@ on:
       - "[0-9]+.[0-9]+"
   schedule:
     - cron: "33 5 * * 1"
+  # `schedule` is delivered only from the repository's DEFAULT branch. Once the
+  # default branch moves to `main` (Rust engine) this cron stops firing from
+  # `master`, and no branch filter here can change that — GitHub reads the
+  # scheduled workflow from the default branch. `workflow_dispatch` lets a
+  # scheduled dispatcher on the default branch re-fire this scan against
+  # `master` (`gh workflow run codeql-analysis.yml --ref master`), so the weekly
+  # analysis survives the migration. See issue #2255.
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
