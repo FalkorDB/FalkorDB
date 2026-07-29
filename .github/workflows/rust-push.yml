@@ -134,8 +134,9 @@ jobs:
   # Promote the merging PR's runtime RC images (rc-pr-<N>) to the edge-rs
   # channel on every trunk merge — same byte-identical retag, no rebuild.
   # `edge-rs` distinguishes the Rust port from the C port's `:edge` on the
-  # shared falkordb/falkordb Docker Hub repo. GHCR-only; Docker Hub publish
-  # happens at release time via release-image.yml.
+  # shared falkordb/falkordb repos, so publishing to BOTH registries cannot
+  # clobber the C channel. Bare `:latest` is untouched (that pointer only moves
+  # at 6.0 GA, via release-image.yml).
   promote-edge:
     needs: find-pr
     if: ${{ needs.find-pr.outputs.pr_n != '' && contains(fromJSON('["refs/heads/main","refs/heads/main-rs"]'), github.ref) }}
@@ -157,14 +158,25 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Login to Docker Hub
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
       - name: Promote rc-pr-${{ needs.find-pr.outputs.pr_n }} → edge-rs (${{ matrix.repo }})
         env:
           PR_NUM: ${{ needs.find-pr.outputs.pr_n }}
           REPO:   ${{ matrix.repo }}
         run: |
           set -euo pipefail
+          # One imagetools call fans the SAME multi-arch manifest out to both
+          # registries — still a retag, never a rebuild, so the bytes PR CI
+          # validated are the bytes that ship. Same pattern release-image.yml
+          # uses for semver tags.
           docker buildx imagetools create \
             -t "ghcr.io/falkordb/${REPO}:edge-rs" \
+            -t "docker.io/falkordb/${REPO}:edge-rs" \
             "ghcr.io/falkordb/${REPO}:rc-pr-${PR_NUM}"
 
   # Feed the canonical, continuously-updated A/B benchmark trend (production
