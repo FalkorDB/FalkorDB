@@ -60,11 +60,21 @@ typedef enum {
 	GraphRetrieve_RETRIEVED,  // gc is valid, ref count incremented
 	GraphRetrieve_FAILED,     // error emitted, gc is NULL
 	GraphRetrieve_OFFLOADED,  // graph is offloaded
+	GraphRetrieve_LOADING,    // graph is offloaded and already being loaded
+	                          // by another thread; no reply emitted, caller
+	                          // decides how to proceed (e.g. queue and retry)
+	                          // only ever returned by
+	                          // GraphContext_RetrieveOrQueue (see
+	                          // graphcontext_retrieve.h) - GraphContext_Retrieve
+	                          // itself folds this case into GraphRetrieve_FAILED
 } GraphRetrieveStatus ;
 
 // Retrieve the GraphContext for graphID.
 // On success sets *gc and returns GraphRetrieve_RETRIEVED.
-// On error emits a reply and returns GraphRetrieve_FAILED.
+// On error emits a reply and returns GraphRetrieve_FAILED. This includes the
+// case where load_from_disk=true and another thread is already loading this
+// stub - there is no queueing here, it is treated as a regular failure; see
+// GraphContext_RetrieveOrQueue (graphcontext_retrieve.h) for that.
 // When load_from_disk=false and the graph is a stub, returns
 // GraphRetrieve_OFFLOADED with no error reply.
 // When load_from_disk=true the function loads the graph from disk and
