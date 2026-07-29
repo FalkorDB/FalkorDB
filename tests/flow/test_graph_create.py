@@ -109,18 +109,14 @@ class testGraphCreationFlow(FlowTestsBase):
             except redis.exceptions.ResponseError as e:
                 self.env.assertContains("Property values can only be of primitive types or arrays of primitive types", str(e))
 
-    # test creating a node with multiple attributes with the same name
-    # expecting node with single attribute 'name' with the last mentioned value 'B'
+    # Duplicate inline properties should fail validation.
     def test08_create_node_with_2_attr_same_name(self):
         query = """CREATE (a:N {name:'A', name:'B'})"""
-        result = self.graph.query(query)
-        self.env.assertEquals(result.nodes_created, 1)
-        self.env.assertEquals(result.properties_set, 1)
-
-        query = """MATCH (a:N) RETURN a.name"""
-        result = self.graph.query(query)
-        expected_result = [['B']]
-        self.env.assertEquals(result.result_set, expected_result)
+        try:
+            self.graph.query(query)
+            self.env.assertTrue(False)
+        except redis.exceptions.ResponseError as e:
+            self.env.assertContains("Duplicate property key 'name' in inline property map", str(e))
 
     # test creating a node with some alias, and then creating an edge that touches that node
     # "variable redeclared" error should return only if the relation alias was already declared
