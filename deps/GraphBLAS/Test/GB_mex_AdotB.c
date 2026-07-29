@@ -34,7 +34,6 @@ GrB_Info adotb_complex (GB_Werk Werk) ;
 GrB_Info adotb (GB_Werk Werk) ;
 uint64_t anrows, ancols, bnrows, bncols, mnrows, mncols ;
 bool flipxy = false ;
-struct GB_Matrix_opaque C_header ;
 
 //------------------------------------------------------------------------------
 
@@ -215,8 +214,7 @@ void mexFunction
     // get flipxy
     GET_SCALAR (3, bool, flipxy, false) ;
 
-    struct GB_Matrix_opaque C_header ;
-    C = GB_clear_matrix_header (&C_header) ;
+    GB_matrix_header_new (&C, GB_ARENA_TEST, GB_ARENA_TEST) ;
 
     if (A->type == Complex)
     {

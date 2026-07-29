@@ -1,17 +1,31 @@
-function gbtest40
+function gbtest40 (ghb)
 %GBTEST40 test sum, prod, max, min, any, all, norm
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-rng ('default')
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
-x = GrB.random (10, 1, inf, 'range', complex ([0 1])) ;
+x = gtb_random (ghb, 10, 1, inf, 'range', double ([0 1])) ;
 s1 = norm (x, 2) ;
 s2 = norm (double (x), 2) ;
 assert (abs (s1-s2) < 1e-12) ;
 
-x = GrB.random (10, 1, inf, 'range', int16 ([1 16])) ;
+y = gtb_random (ghb, 10, 1, inf, 'range', double ([0 1])) ;
+x = x + y*1i ;
+s1 = norm (x, 2) ;
+s2 = norm (double (x), 2) ;
+assert (abs (s1-s2) < 1e-12) ;
+
+x = gtb (ghb, x, 'single complex') ;
+s1 = norm (x, 2) ;
+s2 = norm (single (x), 2) ;
+assert (abs (s1-s2) < 1e-6) ;
+
+x = gtb_random (ghb, 10, 1, inf, 'range', int16 ([1 16])) ;
 s1 = norm (x, 2) ;
 s2 = norm (double (x), 2) ;
 assert (abs (s1-s2) < 1e-6) ;
@@ -35,7 +49,7 @@ for trial = 1:3
                     if (kind == 1)
                         A = logical (A) ;
                     end
-                    G = GrB (A) ;
+                    G = gtb (ghb, A) ;
 
                     s1 = sum (A) ;
                     s2 = sum (G) ;
@@ -179,5 +193,5 @@ for trial = 1:3
     end
 end
 
-fprintf ('\ngbtest40: all tests passed\n') ;
+fprintf ('\ngbtest40 (%d): all tests passed\n', ghb) ;
 

@@ -59,6 +59,7 @@ GrB_Info GB_assign_zombie5
     // check inputs
     //--------------------------------------------------------------------------
 
+    ASSERT (C != NULL) ;
     ASSERT (!GB_IS_FULL (C)) ;
     ASSERT (!GB_IS_BITMAP (C)) ;
     ASSERT (GB_ZOMBIES_OK (C)) ;
@@ -68,6 +69,9 @@ GrB_Info GB_assign_zombie5
     ASSERT (!GB_JUMBLED (M)) ;      // binary search on M
     ASSERT (!GB_PENDING (M)) ; 
     ASSERT (!GB_any_aliased (C, M)) ;   // NO ALIAS of C==M
+
+    int data_arena = C->data_arena ;
+    uint64_t mem = GB_mem (data_arena, 0) ;
 
     //--------------------------------------------------------------------------
     // get C
@@ -114,7 +118,7 @@ GrB_Info GB_assign_zombie5
     //--------------------------------------------------------------------------
 
     int C_ntasks, C_nthreads ;
-    GB_WERK_DECLARE (C_ek_slicing, int64_t) ;
+    GB_WERK_DECLARE (C_ek_slicing, int64_t, mem) ;
     GB_SLICE_MATRIX (C, 64) ;
 
     //--------------------------------------------------------------------------

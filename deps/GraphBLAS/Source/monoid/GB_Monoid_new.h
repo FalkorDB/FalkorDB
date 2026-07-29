@@ -17,6 +17,7 @@ GrB_Info GB_Monoid_new          // create a monoid
     const void *identity,       // identity value
     const void *terminal,       // terminal value, if any (may be NULL)
     const GB_Type_code idcode,  // identity and terminal type code
+    const int header_arena,
     GB_Werk Werk
 ) ;
 

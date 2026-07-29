@@ -1,22 +1,26 @@
-function gbtest42
+function gbtest42 (ghb)
 %GBTEST42 test for nan
 %
 % Also tests the JIT
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-rng ('default') ;
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
+
 types = { 'single', 'double', 'single complex', 'double complex' } ;
 
-save_status = GrB.jit ;
+save_status = gtb_jit (ghb) ;
 states = { '', 'on', 'run', 'off', 'load', 'pause', 'flush', '', 'run' } ;
 
 for nstate = 1:length(states)
 
     state = states {nstate} ;
     fprintf ('\nJIT: %s', state) ;
-    new_state = GrB.jit (state) ;
+    new_state = gtb_jit (ghb, state) ;
     if (isequal (state, 'flush'))
         assert (isequal (new_state, 'on')) ;
     elseif (~isempty (state))
@@ -44,17 +48,17 @@ for nstate = 1:length(states)
                 xtype = types {k2} ;
                 xnan = gbtest_cast (nan, xtype) ;
 
-                G = GrB.select (A, '==', xnan) ;
+                G = gtb_select (ghb, A, '==', xnan) ;
                 X1 = full (double (G)) ;
                 X2 = double (A_nan) ;
                 assert (isequaln (X1, X2)) ;
 
-                G = GrB.select (A, '~=', xnan) ;
+                G = gtb_select (ghb, A, '~=', xnan) ;
                 X1 = full (double (G)) ;
                 X2 = double (A_notnan) ;
                 assert (isequaln (X1, X2)) ;
 
-                G = GrB.prune (A, xnan) ;
+                G = gtb_prune (ghb, A, xnan) ;
                 X1 = full (double (G)) ;
                 X2 = double (A_notnan) ;
                 assert (isequaln (X1, X2)) ;
@@ -64,7 +68,7 @@ for nstate = 1:length(states)
     end
 end
 
-GrB.jit (save_status) ;
+gtb_jit (ghb, save_status) ;
 
-fprintf ('\ngbtest42: all tests passed\n') ;
+fprintf ('\ngbtest42 (%d): all tests passed\n', ghb) ;
 

@@ -72,6 +72,9 @@ GrB_Info GB_subassign_25
     ASSERT_MATRIX_OK (A, "A for subassign method_25", GB0) ;
     ASSERT (GB_IS_FULL (A) || GB_IS_BITMAP (A)) ;
 
+    int header_arena = GB_arena (C->header_mem) ;
+    int data_arena = C->data_arena ;
+
     //--------------------------------------------------------------------------
     // get inputs
     //--------------------------------------------------------------------------
@@ -99,9 +102,15 @@ GrB_Info GB_subassign_25
     // the same type and CSR/CSC for C.  Allocate the values of C but do not
     // initialize them.
 
+    // C is allocated with its desired pji integers; can differ from M.
+
     bool C_is_csc = C->is_csc ;
     GB_phybix_free (C) ;
-    GB_OK (GB_dup_worker (&C, C_iso, M, false, C->type)) ;
+    bool Cp_is_32, Cj_is_32, Ci_is_32 ;
+    GB_determine_pji_is_32 (&Cp_is_32, &Cj_is_32, &Ci_is_32,
+        GB_sparsity (M), GB_nnz (M), M->vlen, M->vdim, Werk) ;
+    GB_OK (GB_dup_worker (&C, C_iso, M, /* numeric: */ false, C->type,
+        Cp_is_32, Cj_is_32, Ci_is_32, header_arena, data_arena, Werk)) ;
     C->is_csc = C_is_csc ;
 
     //--------------------------------------------------------------------------

@@ -55,7 +55,7 @@ void mexFunction
     memcpy (Iout, I, n * (I_is_32 ? sizeof (uint32_t) : sizeof (uint64_t))) ;
 
     double t = WALLCLOCK ;
-    GB_msort_1 (Iout, I_is_32, n, nthreads) ;
+    GB_msort_1 (Iout, I_is_32, n, nthreads, GB_ARENA_TEST) ;
     t = WALLCLOCK - t ;
     printf ("nthreads %d, n: %ld, time: %g\n", nthreads, n, t) ;
 

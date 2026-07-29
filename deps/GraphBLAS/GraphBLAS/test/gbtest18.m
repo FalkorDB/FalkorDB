@@ -1,8 +1,13 @@
-function gbtest18
+function gbtest18 (ghb)
 %GBTEST18 test comparators (and, or, >, ...)
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
+
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
 have_octave = gb_octave ;
 tol = 1e-14 ;
@@ -27,8 +32,8 @@ for trial = 1:21
         MB = logical (MB) ;
     end
 
-    GA = GrB (MA) ;
-    GB = GrB (MB) ;
+    GA = gtb (ghb, MA) ;
+    GB = gtb (ghb, MB) ;
 
     C1 = (MA < MB) ;
     C2 = (GA < GB) ;
@@ -141,7 +146,7 @@ for trial = 1:21
     if (islogical (MA))
         b = logical (b) ;
     end
-    g = GrB (b) ;
+    g = gtb (ghb, b) ;
 
     assert (gbtest_eq (MA <  b, GA <  b)) ;
     assert (gbtest_eq (MA <= b, GA <= b)) ;
@@ -208,7 +213,7 @@ for trial = 1:21
     end
 
     k = (mod (trial,2) == 0) ;
-    gbk = GrB (k) ;
+    gbk = gtb (ghb, k) ;
 
     C1 = (MA & k) ;
     C2 = (GA & gbk) ;
@@ -268,7 +273,7 @@ for trial = 1:21
     assert (gbtest_eq (C1, C4)) ;
 
     k = double (k) ;
-    gbk = GrB (k) ;
+    gbk = gtb (ghb, k) ;
     if (~islogical (MA))
         C1 = (k   .^ MA) ;
         C2 = (gbk .^ GA) ;
@@ -281,5 +286,5 @@ for trial = 1:21
 
 end
 
-fprintf ('\ngbtest18: all tests passed\n') ;
+fprintf ('\ngbtest18 (%d): all tests passed\n', ghb) ;
 

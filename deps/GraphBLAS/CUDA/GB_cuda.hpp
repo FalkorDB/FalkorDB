@@ -43,7 +43,7 @@ extern "C"
 //------------------------------------------------------------------------------
 
 // for the "which" parameter of GB_cuda_matrix_prefetch:
-// FIXME: rename this to GB_WHATEVER_P for GB_cuda_matrix_memadvise
+// fixme: rename this to GB_WHATEVER_P for GB_cuda_matrix_memadvise
 
 #define GB_PREFETCH_P   1
 #define GB_PREFETCH_H   2

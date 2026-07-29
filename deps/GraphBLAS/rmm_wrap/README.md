@@ -14,11 +14,9 @@ Create/destroy an RMM resource:
     rmm_wrap_initialize: create the RMM resource
     rmm_wrap_finalize: destroy the RMM resource
 
-C-style malloc/calloc/realloc/free methods:
+C-style malloc/realloc/free methods:
 
     rmm_wrap_malloc:  malloc a block of memory using RMM
-    rmm_wrap_calloc:  calloc a block of memory using RMM
-    rmm_wrap_realloc: realloc a block of allocated by this RMM wrapper
     rmm_wrap_free:    free a block of memory allocated by this RMM wrapper
 
 PMR-based allocate/deallocate methods (C-callable):

@@ -1,10 +1,13 @@
-function gbtest82
+function gbtest82 (ghb)
 %GBTEST82 test complex A*B, A'*B, A*B', A'*B', A+B
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-rng ('default') ;
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
 nlist = [1 4 10] ;
 r = complex ([-1 1]) ;
@@ -12,10 +15,10 @@ maxerr = 0 ;
 for m = nlist
     for n = nlist
         for k = nlist
-            A = GrB.random (k, m, (m*5)/(k*m), 'range', r) ;
-            B = GrB.random (k, n, (n*5)/(k*n), 'range', r) ;
+            A = gtb_random (ghb, k, m, (m*5)/(k*m), 'range', r) ;
+            B = gtb_random (ghb, k, n, (n*5)/(k*n), 'range', r) ;
             C = double (A).'*double (B) ;
-            C2 = GrB.mxm (A, '+.*', B, struct ('in0', 'transpose')) ;
+            C2 = gtb_mxm (ghb, A, '+.*', B, struct ('in0', 'transpose')) ;
             err = norm (C-C2,1) ;
             maxerr = max (maxerr, err) ;
             assert (err < 1e-12)
@@ -28,8 +31,8 @@ maxerr = 0 ;
 for m = nlist
     for n = nlist
 
-            A = GrB.random (m, n, (m*5)/(k*m), 'range', r) ;
-            B = GrB.random (m, n, (n*5)/(k*n), 'range', r) ;
+            A = gtb_random (ghb, m, n, (m*5)/(k*m), 'range', r) ;
+            B = gtb_random (ghb, m, n, (n*5)/(k*n), 'range', r) ;
             C = double (A) + double (B) ;
             C2 = A + B  ;
             err = norm (C-C2,1) ;
@@ -46,14 +49,14 @@ for m = nlist
             for at = 0:1
                 for bt = 0:1
                     if (at)
-                        A = GrB.random (k, m, (n*5)/(k*m), 'range', r) ;
+                        A = gtb_random (ghb, k, m, (n*5)/(k*m), 'range', r) ;
                     else
-                        A = GrB.random (m, k, (m*5)/(k*m), 'range', r) ;
+                        A = gtb_random (ghb, m, k, (m*5)/(k*m), 'range', r) ;
                     end
                     if (bt)
-                        B = GrB.random (n, k, (m*5)/(k*m), 'range', r) ;
+                        B = gtb_random (ghb, n, k, (m*5)/(k*m), 'range', r) ;
                     else
-                        B = GrB.random (k, n, (m*5)/(k*m), 'range', r) ;
+                        B = gtb_random (ghb, k, n, (m*5)/(k*m), 'range', r) ;
                     end
 
                     desc = struct ;
@@ -67,9 +70,9 @@ for m = nlist
                     M = sparse (m, n) ;
                     M (1,1) = 1 ; %#ok
 
-                    C = GrB.mxm (A, '+.*', B, desc) ;
-                    Cin = GrB (m, n, 'double complex') ;
-                    CM = GrB.mxm (Cin, M, A, '+.*', B, desc) ;
+                    C = gtb_mxm (ghb, A, '+.*', B, desc) ;
+                    Cin = gtb (ghb, m, n, 'double complex') ;
+                    CM = gtb_mxm (ghb, Cin, M, A, '+.*', B, desc) ;
 
                     A = double (A) ;
                     B = double (B) ;
@@ -106,5 +109,5 @@ for m = nlist
 end
 
 fprintf ('maxerr: %g\n', maxerr) ;
-fprintf ('gbtest82: all tests passed\n') ;
+fprintf ('gbtest82 (%d): all tests passed\n', ghb) ;
 

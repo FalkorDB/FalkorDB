@@ -5,16 +5,16 @@ function unopinfo (op, type)
 %   GrB.unopinfo (op)
 %   GrB.unopinfo (op, type)
 %
-% For GrB.unopinfo(op), the op must be a string of the form 'op.type',
-% where 'op' is listed below.  The second usage allows the type to be
-% omitted from the first argument, as just 'op'.  This is valid for all
-% GraphBLAS operations, since the type defaults to the type of the input
-% matrix.  However, GrB.unopinfo does not have a default type and thus one
-% must be provided, either in the op as GrB.unopinfo ('abs.double'), or in
-% the second argument, GrB.unopinfo ('abs', 'double').
+% For GrB.unopinfo(op), the op must be a string of the form 'op.type', where
+% 'op' is listed below.  The second usage allows the type to be omitted from
+% the first argument, as just 'op'.  This is valid for all GraphBLAS
+% operations, since the type defaults to the type of the input matrix.
+% However, GrB.unopinfo does not have a default type and thus one must be
+% provided, either in the op as GrB.unopinfo ('abs.double'), or in the second
+% argument, GrB.unopinfo ('abs', 'double').
 %
-% The functions z=f(x) are listed below.  Unless otherwise specified,
-% z and x have the same type.  Some functions have synonyms, as listed.
+% The functions z=f(x) are listed below.  Unless otherwise specified, z and x
+% have the same type.  Some functions have synonyms, as listed.
 %
 % For all 13 types:
 %   identity    z = x       also '+', 'uplus'
@@ -100,14 +100,14 @@ function unopinfo (op, type)
 % See also GrB.unops, GrB.binopinfo, GrB.descriptorinfo,
 % GrB.monoidinfo, GrB.selectopinfo, GrB.semiringinfo.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (nargin == 0)
     help GrB.unopinfo
 elseif (nargin == 1)
-    gbunopinfo (op) ;
+    gbmex_unopinfo (op) ;
 else
-    gbunopinfo (op, type) ;
+    gbmex_unopinfo (op, type) ;
 end
 

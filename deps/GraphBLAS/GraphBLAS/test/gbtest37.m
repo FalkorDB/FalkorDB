@@ -1,11 +1,15 @@
-function gbtest37
+function gbtest37 (ghb)
 %GBTEST37 test istril, istriu, isbanded, isdiag, ishermitian, ...
 % issymmetric, bandwith
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-rng ('default') ;
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
+
 nmax = 5 ;
 for trial = 1:10
     fprintf ('.') ;
@@ -43,24 +47,24 @@ for trial = 1:10
             U = triu (A) ;
             D = diag (diag (A)) ;
 
-            GA = GrB (A) ;
+            GA = gtb (ghb, A) ;
             GL = tril (GA) ;
             GU = triu (GA) ;
             GD = diag (diag (GA)) ;
             if (m == n)
-                GC = GrB.prune (GA + GA') ;
+                GC = gtb_prune (ghb, GA + GA') ;
             else
-                GC = GrB.prune (GA * GA') ;
+                GC = gtb_prune (ghb, GA * GA') ;
             end
 
             for fmt = 0:1
 
                 if (fmt == 1)
-                    GA = GrB (GA, 'by row') ;
-                    GL = GrB (GL, 'by row') ;
-                    GU = GrB (GU, 'by row') ;
-                    GD = GrB (GD, 'by row') ;
-                    GC = GrB (GC, 'by row') ;
+                    GA = gtb (ghb, GA, 'by row') ;
+                    GL = gtb (ghb, GL, 'by row') ;
+                    GU = gtb (ghb, GU, 'by row') ;
+                    GD = gtb (ghb, GD, 'by row') ;
+                    GC = gtb (ghb, GC, 'by row') ;
                 end
 
                 assert (gbtest_eq (A, GA)) ;
@@ -144,5 +148,5 @@ for trial = 1:10
     end
 end
 
-fprintf ('\ngbtest37: all tests passed\n') ;
+fprintf ('\ngbtest37 (%d): all tests passed\n', ghb) ;
 

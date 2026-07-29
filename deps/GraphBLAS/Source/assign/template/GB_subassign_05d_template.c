@@ -33,7 +33,11 @@
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    GB_WERK_DECLARE (M_ek_slicing, int64_t) ;
+
+    int data_arena = C->data_arena ;
+    uint64_t mem = GB_mem (data_arena, 0) ;
+
+    GB_WERK_DECLARE (M_ek_slicing, int64_t, mem) ;
     int M_ntasks, M_nthreads ;
     GB_M_NHELD (M_nnz_held) ;
     GB_SLICE_MATRIX_WORK (M, 8, M_nnz_held + M->nvec, M_nnz_held) ;

@@ -7,15 +7,17 @@
 
 //------------------------------------------------------------------------------
 
-// GrB_init or GxB_init must called before any other GraphBLAS
-// operation; all three rely on this internal function.  If GraphBLAS is used
-// by multiple user threads, only one can call GrB_init or GxB_init.
+// GrB_init or GxB_init must called before any other GraphBLAS operation; all
+// three rely on this internal function.  If GraphBLAS is used by multiple user
+// threads, only one can call GrB_init or GxB_init.
 
 // Result are undefined if multiple user threads simultaneously call GrB_init
 // or GxB_init.
 
-// GrB_finalize must be called as the last GraphBLAS operation.
-// Not even GrB_Matrix_free can be safely called after GrB_finalize.
+// GrB_finalize must be called as the last GraphBLAS operation.  Not even
+// GrB_Matrix_free can be safely called after GrB_finalize.  However,
+// GrB_init/GxB_init can be called after GrB_finalize, to start another
+// session of GraphBLAS.
 
 // GrB_init or GxB_init define the mode that GraphBLAS will use:  blocking or
 // non-blocking.  With blocking mode, all operations finish before returning to
@@ -31,10 +33,11 @@
 // The calloc function pointer is also optional and can be NULL.
 
 // If the mode is GxB_BLOCKING_GPU or GxB_NONBLOCKING_GPU, the 4 function
-// pointers are ignored, and rmm_wrap_malloc/.../rmm_wrap_free are used
-// instead.
+// pointers are ignored, and GB_rmm_malloc/GB_rmm_free are used instead.
 
-#define GB_FREE_ALL ;
+#define GB_FREE_ALL                                         \
+    GrB_finalize ( ) ;
+
 #include "GB.h"
 #include "init/GB_init.h"
 #include "jitifyer/GB_stringify.h"
@@ -47,26 +50,31 @@ GrB_Info GB_init            // start up GraphBLAS
 (
     int mode,               // blocking or non-blocking mode
 
-    // pointers to memory management functions.
-    void * (* malloc_function  ) (size_t),          // required
-    void * (* calloc_function  ) (size_t, size_t),  // optional, can be NULL
-    void * (* realloc_function ) (void *, size_t),  // optional, can be NULL
-    void   (* free_function    ) (void *),          // required
+    // pointers to memory management functions:
+    GB_malloc_function_t malloc_function,           // required
+    GB_calloc_function_t calloc_function,           // unused, can be NULL
+    GB_realloc_function_t realloc_function,         // optional, can be NULL
+    GB_free_function_t free_function,               // required
 
     GB_Werk Werk      // from GrB_init or GxB_init
 )
 {
 
     //--------------------------------------------------------------------------
-    // check inputs
+    // ensure GraphBLAS has not been initialized
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
     if (GB_Global_GrB_init_called_get ( ))
     { 
-        // GrB_init can only be called once
+        // GrB_init can only be called if GraphBLAS has not already been
+        // initialized
         return (GrB_INVALID_VALUE) ;
     }
+
+    //--------------------------------------------------------------------------
+    // check inputs
+    //--------------------------------------------------------------------------
 
     if (!(mode == GrB_NONBLOCKING || mode == GrB_BLOCKING ||
           mode == GxB_NONBLOCKING_GPU || mode == GxB_BLOCKING_GPU))
@@ -85,20 +93,26 @@ GrB_Info GB_init            // start up GraphBLAS
     // establish malloc/calloc/realloc/free
     //--------------------------------------------------------------------------
 
-    bool malloc_is_thread_safe = true ;
-
     #if defined ( GRAPHBLAS_HAS_CUDA )
-    mode = GxB_NONBLOCKING_GPU ;    // HACK FIXME for CUDA: force GPU to be used
-    if (mode == GxB_NONBLOCKING_GPU || mode == GxB_BLOCKING_GPU)
+    // fixme arena for CUDA: use GB_rmm_malloc etc for GxB_ARENA_RMM,
+    // which is reserved and cannot be modified by the user.
+    GB_Global_gpu_count_set (true) ;
+    int gpu_count = GB_Global_gpu_count_get ( ) ;
+    printf ("GB_init: gpu_count: %d\n", gpu_count) ;
+    if (gpu_count > 0)
     {
-        // ignore the memory management function pointers and use rmm_wrap_*
-        malloc_function  = rmm_wrap_malloc ;
-        calloc_function  = rmm_wrap_calloc ;
-        realloc_function = rmm_wrap_realloc ;
-        free_function    = rmm_wrap_free ;
-        // the rmm_wrap methods are not thread-safe
-        malloc_is_thread_safe = false ;
+        mode = GxB_NONBLOCKING_GPU ;    // HACK fixme for CUDA: force GPU
+        if (mode == GxB_NONBLOCKING_GPU || mode == GxB_BLOCKING_GPU)
+        {
+            // ignore the memory management function pointers and use GB_rmm_*
+            malloc_function  = GB_rmm_malloc ;
+            calloc_function  = NULL ;           // using malloc_function
+            realloc_function = NULL ;           // using malloc/free instead
+            free_function    = GB_rmm_free ;
+        }
     }
+    #else
+    GB_Global_gpu_count_set (false) ;
     #endif
 
     if (malloc_function == NULL || free_function == NULL)
@@ -107,16 +121,13 @@ GrB_Info GB_init            // start up GraphBLAS
         return (GrB_NULL_POINTER) ;
     }
 
-    GB_Global_GrB_init_called_set (true) ;
+    // GrB_init passes in the C11 malloc/calloc/realloc/free; these methods
+    // are used for arena 0 (GrB_DEFAULT)
+    GB_Global_malloc_function_set  (malloc_function , GrB_DEFAULT) ;
+    GB_Global_calloc_function_set  (calloc_function , GrB_DEFAULT) ;
+    GB_Global_realloc_function_set (realloc_function, GrB_DEFAULT) ;
+    GB_Global_free_function_set    (free_function   , GrB_DEFAULT) ;
 
-    // GrB_init passes in the C11 malloc/calloc/realloc/free.
-
-    GB_Global_malloc_function_set  (malloc_function ) ; // cannot be NULL
-    GB_Global_calloc_function_set  (calloc_function ) ; // ok if NULL
-    GB_Global_realloc_function_set (realloc_function) ; // ok if NULL
-    GB_Global_free_function_set    (free_function   ) ; // cannot be NULL
-
-    GB_Global_malloc_is_thread_safe_set (malloc_is_thread_safe) ;
     GB_Global_memtable_clear ( ) ;
 
     GB_Global_malloc_tracking_set (false) ;
@@ -142,7 +153,6 @@ GrB_Info GB_init            // start up GraphBLAS
 
     GB_Context_nthreads_max_set (NULL, GB_omp_get_max_threads ( )) ;
     GB_Context_chunk_set        (NULL, GB_CHUNK_DEFAULT) ;
-    GB_Context_gpu_ids_set      (NULL, NULL, 0) ;
 
     //--------------------------------------------------------------------------
     // initialize the blocking/nonblocking mode
@@ -161,12 +171,7 @@ GrB_Info GB_init            // start up GraphBLAS
         // initialize the GPUs
         GB_OK (GB_cuda_init ( )) ;
     }
-    else
     #endif
-    { 
-        // CUDA not available at compile-time, or not requested at run time
-        GB_Global_gpu_count_set (0) ;
-    }
 
     //--------------------------------------------------------------------------
     // set the global default format
@@ -200,17 +205,22 @@ GrB_Info GB_init            // start up GraphBLAS
     GB_OK (GB_jitifyer_init ( )) ;
 
     //--------------------------------------------------------------------------
-    // return result
+    // CUDA hacks
     //--------------------------------------------------------------------------
 
     #pragma omp flush
     #if defined ( GRAPHBLAS_HAS_CUDA )
 //  this hack_get setting is used by GB_ngpus_to_use:
-//  GB_Global_hack_set (2,0) ;  // HACK FIXME for CUDA: default: GPU for big enough probs
-    GB_Global_hack_set (2,1) ;  // HACK FIXME for CUDA: force the GPU always to be used
-//  GB_Global_hack_set (2,2) ;  // HACK FIXME for CUDA: force the GPU never to be used
+//  GB_Global_hack_set (2,0) ;  // HACK fixme for CUDA: default: GPU for big enough probs
+    GB_Global_hack_set (2,1) ;  // HACK fixme for CUDA: force the GPU always to be used
+//  GB_Global_hack_set (2,2) ;  // HACK fixme for CUDA: force the GPU never to be used
     #endif
 
+    //--------------------------------------------------------------------------
+    // GraphBLAS has now been initialized
+    //--------------------------------------------------------------------------
+
+    GB_Global_GrB_init_called_set (true) ;
     return (GrB_SUCCESS) ;
 }
 

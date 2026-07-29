@@ -37,24 +37,28 @@ GrB_Info GrB_Type_get_Scalar
 
     int32_t i ;
     uint64_t u ;
+    GrB_Matrix s = (GrB_Matrix) scalar ;
 
-    switch ((int) field)
+    switch (field)
     {
         case GrB_EL_TYPE_CODE : 
             i = (int32_t) GB_type_code_get (type->code) ;
-            return (GB_setElement ((GrB_Matrix) scalar, NULL, &i, 0, 0,
-                GB_INT32_code, Werk)) ;
             break ;
 
         case GrB_SIZE : 
             u = (uint64_t) type->size ;
-            return (GB_setElement ((GrB_Matrix) scalar, NULL, &u, 0, 0,
-                GB_UINT64_code, Werk)) ;
+            return (GB_setElement (s, NULL, &u, 0, 0, GB_UINT64_code, Werk)) ;
+            break ;
+
+        case GxB_ARENA_HEADER : 
+            i = GB_arena (type->header_mem) ;
             break ;
 
         default : 
             return (GrB_INVALID_VALUE) ;
     }
+
+    return (GB_setElement (s, NULL, &i, 0, 0, GB_INT32_code, Werk)) ;
 }
 
 //------------------------------------------------------------------------------
@@ -92,7 +96,7 @@ GrB_Info GrB_Type_get_String
 
             name = GB_type_name_get (type) ;
             if (name != NULL)
-            {
+            { 
                 strcpy (value, name) ;
             }
             #pragma omp flush
@@ -150,6 +154,11 @@ GrB_Info GrB_Type_get_INT32
         case GrB_EL_TYPE_CODE : 
 
             (*value) = (int32_t) GB_type_code_get (type->code) ;
+            break ;
+
+        case GxB_ARENA_HEADER : 
+
+            (*value) = GB_arena (type->header_mem) ;
             break ;
 
         default : 

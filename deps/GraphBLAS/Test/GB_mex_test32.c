@@ -2157,6 +2157,11 @@ void mexFunction
     OK (GrB_Scalar_extractElement_INT32_(&code, s_int32)) ;
     CHECK (code == GrB_BOOL_CODE) ;
 
+    int arena = 42 ;
+    OK (GrB_Semiring_get_INT32_(GrB_PLUS_TIMES_SEMIRING_FP64, &arena,
+        GxB_ARENA_HEADER)) ;
+    CHECK (arena == GrB_DEFAULT) ;
+
     expected = GrB_INVALID_VALUE ;
     ERR (GrB_Semiring_get_INT32_(GrB_LOR_LAND_SEMIRING_BOOL, &code,
         GrB_NAME)) ;
@@ -2184,7 +2189,11 @@ void mexFunction
     CHECK (size == 1) ;
     OK (GxB_print (monoid, 3)) ;
 
-    OK (GrB_Semiring_new (&semiring, monoid, times)) ;
+    OK (GxB_Semiring_new_arena (&semiring, monoid, times, GrB_DEFAULT)) ;
+
+    arena = 42 ;
+    OK (GrB_Semiring_get_INT32_(semiring, &arena, GxB_ARENA_HEADER)) ;
+    CHECK (arena == GrB_DEFAULT) ;
 
     OK (GrB_Semiring_get_SIZE_(semiring, &size, GrB_INP0_TYPE_STRING)) ;
     CHECK (size == strlen ("GrB_FP32") + 1) ;

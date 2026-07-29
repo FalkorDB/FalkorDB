@@ -42,14 +42,14 @@ void GB_convert_any_to_full     // convert any matrix to full
 
     GB_phy_free (A) ;
 
-    if (!A->i_shallow) GB_FREE_MEMORY (&(A->i), A->i_size) ;
+    if (!A->i_shallow) GB_FREE_MEMORY (&(A->i), A->i_mem) ;
     A->i = NULL ;
     A->i_shallow = false ;
     A->p_is_32 = false ;    // OK: full always has p_is_32 = false
     A->j_is_32 = false ;    // OK: full always has j_is_32 = false
     A->i_is_32 = false ;    // OK: full always has i_is_32 = false
 
-    if (!A->b_shallow) GB_FREE_MEMORY (&(A->b), A->b_size) ;
+    if (!A->b_shallow) GB_FREE_MEMORY (&(A->b), A->b_mem) ;
     A->b = NULL ;
     A->b_shallow = false ;
 

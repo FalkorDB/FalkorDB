@@ -1,7 +1,7 @@
 function result = semirings
 %GRB.SEMIRINGS list all semirings
-% Redundant semirings are not listed.  For example '+.*.logical'
-% exists, but it is identical to '|.&.logical'.
+% Redundant semirings are not listed.  For example '+.*.logical' exists, but it
+% is identical to '|.&.logical'.
 %
 % Example:
 %   GrB.semirings ;         % prints a list, with descriptions
@@ -9,7 +9,7 @@ function result = semirings
 %
 % See also GrB.semiringinfo.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 types = {
@@ -70,7 +70,7 @@ for k1 = 1:nops
             end
 
             try
-                ok = gbsemiringinfo (semiring) ;
+                ok = gbmex_semiringinfo (semiring) ;
                 nsemirings = nsemirings + 1 ;
                 if (nargout > 0)
                     result = [result ; semiring] ; %#ok<AGROW>

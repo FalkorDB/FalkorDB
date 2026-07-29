@@ -33,6 +33,8 @@ typedef GB_CALLBACK_PENDING_ENSURE_PROTO ((*GB_Pending_ensure_f)) ;
 typedef GB_CALLBACK_SUBASSIGN_08N_SLICE_PROTO ((*GB_subassign_08n_slice_f)) ;
 typedef GB_CALLBACK_BITMAP_ASSIGN_TO_FULL_PROTO ((*GB_bitmap_assign_to_full_f));
 typedef GB_CALLBACK_P_SLICE_PROTO ((*GB_p_slice_f)) ;
+typedef GB_CALLBACK_NEW_BIX_PROTO ((*GB_new_bix_f)) ;
+typedef GB_CALLBACK_MATRIX_FREE_PROTO ((*GB_Matrix_free_f)) ;
 
 //------------------------------------------------------------------------------
 // GB_callback: a struct to pass to kernels to give them their callback methods
@@ -60,6 +62,8 @@ typedef struct
     GB_bitmap_assign_to_full_f  GB_bitmap_assign_to_full_func ;
     GB_p_slice_f                GB_p_slice_func ;
     GB_abort_f                  GB_abort_func ;
+    GB_new_bix_f                GB_new_bix_func ;
+    GB_Matrix_free_f            GB_Matrix_free_func ;
 }
 GB_callback_struct ;
 

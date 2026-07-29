@@ -7,21 +7,13 @@
 
 //------------------------------------------------------------------------------
 
+// The iterator is allocated in header arena determined by the current Context.
+
 #include "GB.h"
 
 GrB_Info GxB_Iterator_new (GxB_Iterator *iterator)
 {
-    GB_CHECK_INIT ;
-    GB_RETURN_IF_NULL (iterator) ;
-    size_t header_size ;
-    (*iterator) = GB_CALLOC_MEMORY (1, sizeof (struct GB_Iterator_opaque),
-        &header_size) ;
-    if (*iterator == NULL)
-    { 
-        // out of memory
-        return (GrB_OUT_OF_MEMORY) ;
-    }
-    (*iterator)->header_size = header_size ;
-    return (GrB_SUCCESS) ;
+    int header_arena = GB_Context_header_arena ( ) ;
+    return (GxB_Iterator_new_arena (iterator, header_arena)) ;
 }
 

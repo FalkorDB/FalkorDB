@@ -47,7 +47,7 @@
 
 GrB_Info GB_AxB_dot                 // dot product (multiple methods)
 (
-    GrB_Matrix C,                   // output matrix, static header
+    GrB_Matrix C,                   // output matrix, existing header
     GrB_Matrix C_in,                // input/output matrix, if done in-place
     GrB_Matrix M,                   // optional mask matrix
     const bool Mask_comp,           // if true, use !M
@@ -68,7 +68,10 @@ GrB_Info GB_AxB_dot                 // dot product (multiple methods)
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
+    ASSERT (C != NULL) ;
+
+    int header_arena = GB_arena (C->header_mem) ;
+    int data_arena = C->data_arena ;
 
     ASSERT_MATRIX_OK_OR_NULL (M, "M for dot A'*B", GB0) ;
     ASSERT (!GB_PENDING (M)) ;
@@ -116,7 +119,7 @@ GrB_Info GB_AxB_dot                 // dot product (multiple methods)
             info = GB_new_bix (&C, // existing header
                 ztype, A->vdim, B->vdim, GB_ph_null, true, GxB_FULL, false,
                 GB_HYPER_SWITCH_DEFAULT, -1, 1, true, true,
-                /* OK: */ false, false, false) ;
+                /* OK: */ false, false, false, header_arena, data_arena) ;
             if (info == GrB_SUCCESS)
             { 
                 C->magic = GB_MAGIC ;
@@ -169,7 +172,8 @@ GrB_Info GB_AxB_dot                 // dot product (multiple methods)
         if (C_in != NULL) return (GrB_SUCCESS) ;
         return (GB_new (&C, // auto sparsity, existing header
             ztype, A->vdim, B->vdim, GB_ph_calloc, true, GxB_AUTO_SPARSITY,
-            GB_Global_hyper_switch_get ( ), 1, Cp_is_32, Cj_is_32, Ci_is_32)) ;
+            GB_Global_hyper_switch_get ( ), 1, Cp_is_32, Cj_is_32, Ci_is_32,
+            header_arena, data_arena)) ;
     }
 
     //--------------------------------------------------------------------------
@@ -200,7 +204,7 @@ GrB_Info GB_AxB_dot                 // dot product (multiple methods)
 
         info = GrB_NO_VALUE ;
         #if defined ( GRAPHBLAS_HAS_CUDA )
-        if (!C_iso &&   // FIXME for CUDA, remove and create C iso on output
+        if (!C_iso &&   // fixme for CUDA, remove and create C iso on output
             GB_cuda_AxB_dot3_branch (M, Mask_struct, A, B, semiring, flipxy))
         {
             info = (GB_cuda_AxB_dot3 (C, M, Mask_struct, A, B, semiring,

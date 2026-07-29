@@ -13,7 +13,7 @@ int GB_type_code_get  // return the GrB_Type_Code for the code
 (
     const GB_Type_code code     // type code to convert
 )
-{
+{ 
 
     ASSERT (code >= 0 && code <= GB_UDT_code) ;
     switch (code)
