@@ -1,0 +1,66 @@
+# Browser tests for a released Rust-engine image.
+#
+# The Rust images bundle falkordb-browser exactly like the C ones do
+# (build/runtime/Dockerfile's `full` target pulls
+# falkordb/falkordb-browser:$BROWSER_TAG), so a stable release should exercise
+# the browser the same way the C engine's browser-tests-trigger.yml does.
+#
+# WHY workflow_call AND NOT `release:`
+# `release` is a repo-wide, version-blind event, and once the Rust tree is the
+# default branch GitHub delivers it here for EVERY release — including the C
+# engine's <= 5.x ones. Being called from release-tag.yml instead keeps this
+# tag-driven and correctly scoped to Rust releases (its tag globs are v[6-9].*),
+# with no version guard needed.
+#
+# It also fixes an ordering problem the C side has: browser tests need the
+# PUBLISHED image, but `release:` fires the moment the release is published,
+# racing the image push. Here the caller runs this only after the image job
+# succeeds, so the artifact under test is guaranteed to exist.
+#
+# STATUS: placeholder, mirroring the C engine's equivalent. The real Playwright
+# suite lives in FalkorDB/falkordb-browser (`playwright.yml`) but currently
+# hardcodes `falkordb/falkordb:v4.18.10` in 8 places and exposes no input to
+# override the image under test, so it cannot yet be pointed at a release. Wiring
+# it up needs an image/tag input added there first. Until then this reports the
+# tag it would have tested, keeping the hook in place.
+
+name: browser tests trigger
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "Released tag whose image should be exercised (e.g. v6.0.0)"
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Released tag whose image should be exercised (e.g. v6.0.0)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  browser-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report the image under test
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          SEMVER="${TAG#v}"
+          echo "Release published: ${TAG}"
+          echo "Image that browser tests should exercise:"
+          echo "  docker.io/falkordb/falkordb:${SEMVER}"
+          {
+            echo "### Browser tests (placeholder)"
+            echo ""
+            echo "Release \`${TAG}\` → would test \`docker.io/falkordb/falkordb:${SEMVER}\`."
+            echo ""
+            echo "The Playwright suite in \`FalkorDB/falkordb-browser\` needs an input for"
+            echo "the FalkorDB image under test before this can run for real — it currently"
+            echo "hardcodes \`falkordb/falkordb:v4.18.10\`."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -67,6 +67,8 @@ jobs:
       github.repository == 'FalkorDB/FalkorDB' &&
       (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.derive.outputs.skip }}
     steps:
       - name: Derive tag, commit and downstream policy
         id: derive
@@ -77,11 +79,18 @@ jobs:
           WR_BRANCH: ${{ github.event.workflow_run.head_branch }}
           WR_SHA: ${{ github.event.workflow_run.head_commit.id }}
           REL_TAG: ${{ github.event.release.tag_name }}
+          REL_TARGET: ${{ github.event.release.target_commitish }}
           IN_TAG: ${{ inputs.tag }}
           IN_SHA: ${{ inputs.commit_sha }}
           IN_NOTIFY: ${{ inputs.notify_downstream }}
         run: |
           set -euo pipefail
+
+          SKIP=false
+          # Which ref release-image/release-ramp are dispatched on. Their copies
+          # on the version branches already expose workflow_dispatch, so a
+          # release can be published by its own release line's pipeline.
+          REF="master"
 
           case "$EVENT" in
             workflow_run)
@@ -94,14 +103,41 @@ jobs:
                 TAG="v${WR_BRANCH#v}"
               fi
               SHA="$WR_SHA"
+              REF="$WR_BRANCH"
               # Rolling channel: must NOT notify downstream (see header).
               NOTIFY=false
               ;;
             release)
               TAG="$REL_TAG"
+              # `release` is a REPO-WIDE, version-blind event, and after the
+              # migration it is delivered from THIS (default) branch for every
+              # release — including the Rust engine's. Route by major version:
+              # the C engine owns <= 5.x, the Rust engine >= 6.0 and publishes
+              # itself via release-tag.yml. Without this gate a Rust release
+              # would be dispatched into C's pipeline and published from C
+              # source under a 6.x version number.
+              MAJOR="$(printf '%s' "${TAG#v}" | cut -d. -f1)"
+              if ! printf '%s' "$MAJOR" | grep -qE '^[0-9]+$'; then
+                echo "::error::release tag '${TAG}' has no numeric major version"
+                exit 1
+              fi
+              if [ "$MAJOR" -ge 6 ]; then
+                echo "::notice::release ${TAG} is a Rust-engine release (major ${MAJOR} >= 6); the Rust pipeline owns it, not C's — skipping"
+                SKIP=true
+              fi
               # github.sha here is the DEFAULT branch's SHA, not the release
-              # commit, so resolve the tag on master explicitly.
+              # commit, so resolve the tag explicitly.
               SHA=$(gh api "repos/${GH_REPO}/git/ref/tags/${TAG}" --jq '.object.sha')
+              # Releases are cut from version branches (verified: v4.20.1 ->
+              # "4.20", v4.18.11 -> "4.18"), so publish from that release line's
+              # own pipeline. target_commitish can also be a SHA, which is not a
+              # valid dispatch ref — fall back to master when it is not a branch.
+              if [ -n "$REL_TARGET" ] && \
+                 gh api "repos/${GH_REPO}/branches/${REL_TARGET}" --jq .name >/dev/null 2>&1; then
+                REF="$REL_TARGET"
+              else
+                echo "::notice::release target '${REL_TARGET:-}' is not a branch; dispatching on master"
+              fi
               # Matches today's `release` behaviour, where both jobs run.
               NOTIFY=true
               ;;
@@ -123,47 +159,52 @@ jobs:
             echo "tag=$TAG"
             echo "sha=$SHA"
             echo "notify=$NOTIFY"
+            echo "ref=$REF"
+            echo "skip=$SKIP"
           } >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG sha=$SHA notify=$NOTIFY (event=$EVENT)"
+          echo "tag=$TAG sha=$SHA notify=$NOTIFY ref=$REF skip=$SKIP (event=$EVENT)"
 
-      - name: Dispatch release-image.yml on master
+      - name: Dispatch release-image.yml
+        if: ${{ steps.derive.outputs.skip != 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ steps.derive.outputs.tag }}
           SHA: ${{ steps.derive.outputs.sha }}
           NOTIFY: ${{ steps.derive.outputs.notify }}
+          REF: ${{ steps.derive.outputs.ref }}
         run: |
           set -euo pipefail
-          gh workflow run release-image.yml --ref master \
+          gh workflow run release-image.yml --ref "$REF" \
             -f tag="$TAG" \
             -f commit_sha="$SHA" \
             -f run_falkordb_cloud_update="$NOTIFY" \
             -f run_testflight_workflow="$NOTIFY"
-          echo "dispatched release-image.yml (tag=$TAG notify=$NOTIFY)"
+          echo "dispatched release-image.yml on $REF (tag=$TAG notify=$NOTIFY)"
 
       # RAMP packaging only ever applied to v-prefixed version branches, and its
       # own job condition requires a v-prefixed tag. Keep that shape.
-      - name: Dispatch release-ramp.yml on master
-        if: ${{ startsWith(steps.derive.outputs.tag, 'v') }}
+      - name: Dispatch release-ramp.yml
+        if: ${{ steps.derive.outputs.skip != 'true' && startsWith(steps.derive.outputs.tag, 'v') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ steps.derive.outputs.tag }}
           SHA: ${{ steps.derive.outputs.sha }}
+          REF: ${{ steps.derive.outputs.ref }}
         run: |
           set -euo pipefail
-          gh workflow run release-ramp.yml --ref master \
+          gh workflow run release-ramp.yml --ref "$REF" \
             -f tag="$TAG" -f commit_sha="$SHA"
-          echo "dispatched release-ramp.yml (tag=$TAG)"
+          echo "dispatched release-ramp.yml on $REF (tag=$TAG)"
 
       # Only on a real release, matching its `release:`-only trigger today.
       # NOTE: master's browser-tests-trigger.yml reads
       # github.event.release.tag_name, which is empty under workflow_dispatch.
       # Today that job only echoes the tag, so the sole effect is a blank line in
       # its log. If it grows real behaviour it needs a `tag` input on master.
-      - name: Dispatch browser-tests-trigger.yml on master
-        if: ${{ github.event_name == 'release' }}
+      - name: Dispatch browser-tests-trigger.yml (on master)
+        if: ${{ steps.derive.outputs.skip != 'true' && github.event_name == 'release' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}

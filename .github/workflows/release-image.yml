@@ -1,8 +1,12 @@
 name: Release image
 
 on:
-  release:
-    types: [published]
+  # NOTE: no `release:` trigger. That event is REPO-WIDE and version-blind, and
+  # once the Rust tree is the default branch GitHub delivers it here for EVERY
+  # release — including the C engine's <= 5.x ones, which would then be validated
+  # against this tree's Cargo.toml and fail. release-tag.yml (push: tags v[6-9].*)
+  # is the Rust entry point and calls this workflow via workflow_call; use
+  # workflow_dispatch for a manual re-run. See issue #2255.
   workflow_dispatch:
     inputs:
       tag:
