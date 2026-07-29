@@ -158,7 +158,7 @@ jobs:
       arch: ${{ steps.derive.outputs.arch }}
     steps:
       - name: Checkout benchmark scripts
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           sparse-checkout: .github/scripts/benchmark
           persist-credentials: false
@@ -342,14 +342,14 @@ jobs:
       # gh-pages-push.sh once this lands) rather than the PR merge ref, which
       # can be gone by the time a closed PR is cleaned up.
       - name: Checkout benchmark scripts
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.base.ref }}
           sparse-checkout: .github/scripts/benchmark
           persist-credentials: false
 
       - name: Checkout gh-pages
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: gh-pages
           path: gh-pages
