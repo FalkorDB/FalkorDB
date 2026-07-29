@@ -51,6 +51,7 @@
 #define EMSG_INVALID_USAGE_OF_DISTINCT_STAR_PARAMETER "Cannot specify both DISTINCT and * in COUNT(DISTINCT *)"
 #define EMSG_MISSING_EVAL_EXP_IN_REDUCE "No eval expression given in reduce"
 #define EMSG_UNHANDLED_TYPE_INLINE_PROPERTIES "Encountered unhandled type in inlined properties."
+#define EMSG_DUPLICATE_INLINE_PROPERTY "Duplicate property key '%s' in inline property map"
 #define EMSG_CREATE_DIRECTED_RELATIONSHIP "Only directed relationships are supported in CREATE"
 #define EMSG_SAME_ALIAS_NODE_RELATIONSHIP "The alias '%s' was specified for both a node and a relationship."
 #define EMSG_SAME_ALIAS_MULTIPLE_PATTERNS "Cannot use the same relationship variable '%s' for multiple patterns."

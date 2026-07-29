@@ -151,11 +151,9 @@ static void _Graph_Memory
 	RedisModule_ThreadSafeContextUnlock (rm_ctx) ;
 
 	if (is_stub) {
-		// a stub isn't loaded, so it consumes no RAM right now - report a
-		// plain 0 rather than the full USAGE breakdown map (there is
-		// nothing to break down), and never call GraphContext_Retrieve
-		// for it
-		RedisModule_ReplyWithLongLong (rm_ctx, 0) ;
+		// a stub isn't loaded, so it consumes no RAM right now
+		// reply using 0s and go to clean up
+		_Replay (rm_ctx, result, NULL) ;
 		goto cleanup ;
 	}
 
@@ -174,17 +172,16 @@ static void _Graph_Memory
 
 	GraphContext_EstimateMemoryUsage (gc, samples, &result) ;
 
-cleanup:
+	GraphContext_ReleaseReadLock  (gc) ;
+
 	// reply to caller
 	_Replay (rm_ctx, result, gc) ;
 
 	// counter to GraphContext_Retrieve
 	// held until here so schema name lookups above are not use-after-free
-	if (gc != NULL) {
-		GraphContext_ReleaseReadLock  (gc) ;
-		GraphContext_DecreaseRefCount (gc) ;
-	}
+	GraphContext_DecreaseRefCount (gc) ;
 
+cleanup:
 	RedisModule_FreeString (rm_ctx, ctx->graph_id) ;
 
 	// unblock client
