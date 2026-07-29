@@ -148,6 +148,14 @@ impl<T> VersionedMatrix<T> {
     ) {
         self.wait();
         self.m.resize(nrows, ncols);
+        // `GrB_Matrix_resize` can leave pending work on the base, and every
+        // other path here relies on the base never being pending — `wait` and
+        // `set` both assert it. Growing by enough to change GraphBLAS's
+        // internal representation is what actually queues work, so a small
+        // resize hides this and a large one panics. Materialize here, at the
+        // one place that writes the base outside a fold: resize only happens
+        // on capacity growth, so this costs nothing on the hot paths.
+        self.m.wait();
         self.dp.resize(nrows, ncols);
         self.dm.resize(nrows, ncols);
     }

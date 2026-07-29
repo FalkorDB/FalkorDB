@@ -234,7 +234,7 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                     vars.push(var.clone());
                 }
                 IR::Delete { .. }
-                | IR::Argument
+                | IR::Argument(_)
                 | IR::Set(_)
                 | IR::Remove(_)
                 | IR::Filter(_)
@@ -626,7 +626,9 @@ impl<'a> Runtime<'a> {
     ) -> Vec<NodeIdx<Dyn<IR>>> {
         let node = self.plan.node(idx);
         match node.data() {
-            IR::Union | IR::Argument | IR::CreateIndex { .. } | IR::DropIndex { .. } => Vec::new(),
+            IR::Union | IR::Argument(_) | IR::CreateIndex { .. } | IR::DropIndex { .. } => {
+                Vec::new()
+            }
             IR::CartesianProduct => node.children().map(|c| c.idx()).collect(),
             IR::ValueHashJoin { .. } => {
                 vec![node.child(0).idx(), node.child(1).idx()]
@@ -1206,7 +1208,7 @@ impl<'a> Runtime<'a> {
                     idx,
                 )))
             }
-            IR::Argument => Ok(BatchOp::Argument(Some(self.default_batch()))),
+            IR::Argument(_) => Ok(BatchOp::Argument(Some(self.default_batch()))),
             IR::CreateIndex {
                 label,
                 attrs,
