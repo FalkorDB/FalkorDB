@@ -931,6 +931,7 @@ static AST_Validation _ValidateInlinedProperties
 	// traverse map entries
 	uint prop_count = cypher_ast_map_nentries(props);
 	for(uint i = 0; i < prop_count; i++) {
+		const char *key = cypher_ast_prop_name_get_value(cypher_ast_map_get_key(props, i));
 		const cypher_astnode_t *prop_val = cypher_ast_map_get_value(props, i);
 		const cypher_astnode_t **patterns = AST_GetTypedNodes(prop_val, CYPHER_AST_PATTERN_PATH);
 		uint patterns_count = arr_len(patterns);
@@ -940,6 +941,16 @@ static AST_Validation _ValidateInlinedProperties
 			// MATCH (a {prop: ()-[]->()}) RETURN a
 			ErrorCtx_SetError(EMSG_UNHANDLED_TYPE_INLINE_PROPERTIES);
 			return AST_INVALID;
+		}
+
+		// Error if there are duplicate inlined properties
+		uint j = 0;
+		for(; j < i; j++) {
+			const char *prev_key = cypher_ast_prop_name_get_value(cypher_ast_map_get_key(props, j));
+			if(strcmp(key, prev_key) == 0) {
+				ErrorCtx_SetError(EMSG_DUPLICATE_INLINE_PROPERTY, key);
+				return AST_INVALID;
+			}
 		}
 	}
 

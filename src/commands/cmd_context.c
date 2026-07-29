@@ -6,9 +6,7 @@
 
 #include "RG.h"
 #include "cmd_context.h"
-#include "../globals.h"
 #include "../util/rmalloc.h"
-#include "../slow_log/slow_log.h"
 #include "../util/blocked_client.h"
 
 #include <stdatomic.h>

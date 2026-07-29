@@ -645,6 +645,9 @@ jobs:
     # images built; entries whose artifact is missing fail individually.
     if: ${{ !cancelled() && needs.build.result != 'skipped' }}
     runs-on: ${{ matrix.platform.machine_label }}
+    permissions:
+      contents: read
+      pull-requests: write
     strategy:
       fail-fast: false
       matrix:
@@ -708,7 +711,7 @@ jobs:
         if: github.event_name == 'pull_request' && steps.trivy_gate.outcome == 'failure'
         uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0 # v3
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           header: "Trivy Vulnerability Scan Results for ${{ matrix.platform.suffix }}"
           message: |
             Architecture: ${{ matrix.platform.suffix }}

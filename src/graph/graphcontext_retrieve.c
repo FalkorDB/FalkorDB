@@ -6,6 +6,10 @@
 #include "RG.h"
 #include "graphcontext.h"
 #include "../redismodule.h"
+#include "graph_load_queue.h"
+#include "../enterprise_api.h"
+#include "../errors/error_msgs.h"
+#include "graphcontext_retrieve.h"
 
 extern uint aux_field_counter ;
 extern pthread_t MAIN_THREAD_ID;  // redis main thread ID
@@ -15,28 +19,6 @@ extern RedisModuleType *GraphContextRedisModuleType ;
 
 // stub type representing a graph that has been offloaded to disk
 static RedisModuleType *GraphStubType = NULL ;
-
-//------------------------------------------------------------------------------
-// Enterprise - FalkorDB exported API — function pointer types
-//------------------------------------------------------------------------------
-
-typedef enum {
-    GraphLoad_SUCCESS,  // graph restored from disk successfully
-    GraphLoad_LOADING,  // a load for this key is already in progress
-    GraphLoad_MISSING,  // key or dump file does not exist
-    GraphLoad_OOM,      // not enough memory to hold the loaded graph
-    GraphLoad_ERR,      // all other failures
-} GraphLoadResult ;
-
-typedef RedisModuleType* (*GraphStubType_Get_t) (void) ;
-
-typedef GraphLoadResult (*graph_load_t)
-(
-    RedisModuleCtx    *ctx,
-    RedisModuleString *key_name,
-    bool              from_thread,
-	bool              force
-) ;
 
 //------------------------------------------------------------------------------
 // Enterprise - FalkorDB exported API — function pointers
@@ -110,25 +92,95 @@ void GraphContext_SetKey
 	RedisModule_CloseKey (key) ;
 }
 
-// retrieve the GraphContext for graphID
-// on success sets *gc and returns GraphRetrieve_RETRIEVED
-// on error emits a reply and returns GraphRetrieve_FAILED
-// when load_from_disk=false and the graph is a stub, returns
-// GraphRetrieve_OFFLOADED with no error reply
-// may be called from any thread when load_from_disk=true
-// must be called from the Redis main thread when load_from_disk=false
-GraphRetrieveStatus GraphContext_Retrieve
+// emits an appropriate error reply for a graph_load failure result
+// (never called with GraphLoad_SUCCESS); full diagnostic detail for the
+// failure was already logged server-side by graph_load itself
+static void _reply_graph_load_error
 (
-	RedisModuleCtx    *ctx,             // Redis module context
-	RedisModuleString *graphID,         // key identifying the graph
-	bool               readOnly,        // if true, opens the key in read mode
-	bool               shouldCreate,    // create new graph if the key is absent
-	bool               load_from_disk,  // load graph from disk if offloaded
-	GraphContext     **gc               // out: graph context on success
+	RedisModuleCtx *ctx,
+	const char *graph_name,
+	GraphLoadResult result
+) {
+	switch (result) {
+		case GraphLoad_LOADING:
+			RedisModule_ReplyWithErrorFormat (ctx,
+					"ERR graph: %s is currently being loaded, please retry",
+					graph_name) ;
+			break ;
+
+		case GraphLoad_OFFLOADING:
+			RedisModule_ReplyWithErrorFormat (ctx,
+					"ERR graph: %s is currently being offloaded, please retry",
+					graph_name) ;
+			break ;
+
+		case GraphLoad_KEY_MISSING:
+			RedisModule_ReplyWithErrorFormat (ctx,
+					"ERR graph: %s does not exist", graph_name) ;
+			break ;
+
+		case GraphLoad_NOT_STUB:
+			RedisModule_ReplyWithErrorFormat (ctx,
+					"ERR graph: %s is not an offloaded graph stub", graph_name) ;
+			break ;
+
+		case GraphLoad_DUMP_MISSING:
+			RedisModule_ReplyWithErrorFormat (ctx,
+					"ERR dump file for graph: %s not found", graph_name) ;
+			break ;
+
+		case GraphLoad_OOM:
+			RedisModule_ReplyWithErrorFormat (ctx,
+					"ERR not enough memory to load graph: %s", graph_name) ;
+			break ;
+
+		case GraphLoad_SUCCESS:
+			ASSERT ("_reply_graph_load_error called with GraphLoad_SUCCESS" && false) ;
+			break ;
+
+		case GraphLoad_ERR:
+		default:
+			RedisModule_ReplyWithErrorFormat (ctx,
+					"ERR failed to load graph: %s", graph_name) ;
+			break ;
+	}
+}
+
+// shared implementation backing GraphContext_Retrieve,
+// GraphContext_RetrieveOrQueue and GraphContext_RetrieveOrForce
+//
+// command_ctx and bypass_claim are mutually exclusive - at most one may be
+// set/true on any given call
+//
+// when command_ctx is NULL and bypass_claim is false: legacy behavior - on
+// contention, an error is replied and GraphRetrieve_FAILED is returned
+//
+// when command_ctx is non-NULL (load_from_disk is implicitly true): this
+// call either becomes the owner of the graph's load (and performs it), or
+// parks `command_ctx` behind whichever thread already owns it - see
+// graph_load_queue.h
+//
+// when bypass_claim is true (load_from_disk is implicitly true): never
+// returns GraphRetrieve_FAILED due to another load being in flight - an
+// independent load is attempted regardless (see graph_load.h in the
+// enterprise repo); an in-flight offload is never bypassed, since there is
+// nothing yet to load in that case
+static GraphRetrieveStatus _GraphContext_Retrieve
+(
+	RedisModuleCtx *ctx,         // Redis module context
+	RedisModuleString *graphID,  // key identifying the graph
+	bool readOnly,               // if true, opens the key in read mode
+	bool shouldCreate,           // create new graph if the key is absent
+	bool load_from_disk,         // load graph from disk if offloaded
+	void (*handler) (void *),    // resubmitted if the graph is loading
+	void *arg,                   // passed to `handler` if parked
+	bool bypass_claim,           // never fail due to contention
+	GraphContext **gc            // out: graph context on success
 ) {
 	ASSERT (gc      != NULL) ;
 	ASSERT (ctx     != NULL) ;
 	ASSERT (graphID != NULL) ;
+	ASSERT (!(handler != NULL && bypass_claim)) ;
 
 	*gc = NULL ;
 
@@ -217,11 +269,122 @@ GraphRetrieveStatus GraphContext_Retrieve
 	// on success, recursive call re-enters Phase 1 to fetch the live graph
 	//--------------------------------------------------------------------------
 
-	if (graph_load (ctx, graphID, from_thread, false) == GraphLoad_SUCCESS) {
-		return GraphContext_Retrieve (ctx, graphID, readOnly, shouldCreate,
-				false, gc) ;
+	const char *graph_name = RedisModule_StringPtrLen (graphID, NULL) ;
+
+	if (handler == NULL) {
+		// legacy path, or bypass_claim (GraphContext_RetrieveOrForce)
+		GraphLoadResult result =
+			graph_load (ctx, graphID, from_thread, false, bypass_claim) ;
+
+		if (result == GraphLoad_SUCCESS) {
+			return _GraphContext_Retrieve (ctx, graphID, readOnly, shouldCreate,
+					false, NULL, NULL, false, gc) ;
+		}
+
+		_reply_graph_load_error (ctx, graph_name, result) ;
+
+		return GraphRetrieve_FAILED ;
 	}
 
+	// queueing path: become the owner of this graph's load, or park behind
+	// whichever thread already owns it
+	GraphLoadQueueStatus qstatus = GraphLoadQueue_AcquireOrWait (graph_name,
+			handler, arg) ;
+
+	if (qstatus == GraphLoadQueue_PARKED) {
+		return GraphRetrieve_LOADING ;  // parked; caller does nothing further
+	}
+
+	if (qstatus == GraphLoadQueue_FULL) {
+		RedisModule_ReplyWithErrorFormat (ctx, EMSG_GRAPH_LOAD_QUEUE_FULL,
+				graph_name) ;
+		return GraphRetrieve_FAILED ;
+	}
+
+	// qstatus == GraphLoadQueue_OWNER: perform the load ourselves
+	GraphLoadResult result = graph_load (ctx, graphID, from_thread, false,
+			false) ;
+
+	// wake everyone parked behind us - each resumed call re-discovers our
+	// outcome itself when it re-enters this function
+	GraphLoadQueue_Drain (graph_name) ;
+
+	if (result == GraphLoad_SUCCESS) {
+		return _GraphContext_Retrieve (ctx, graphID, readOnly, shouldCreate,
+				false, NULL, NULL, false, gc) ;
+	}
+
+	_reply_graph_load_error (ctx, graph_name, result) ;
+
 	return GraphRetrieve_FAILED ;
+}
+
+// retrieve the GraphContext for graphID
+// on success sets *gc and returns GraphRetrieve_RETRIEVED
+// on error emits a reply and returns GraphRetrieve_FAILED
+// when load_from_disk=false and the graph is a stub, returns
+// GraphRetrieve_OFFLOADED with no error reply
+// may be called from any thread when load_from_disk=true
+// must be called from the Redis main thread when load_from_disk=false
+GraphRetrieveStatus GraphContext_Retrieve
+(
+	RedisModuleCtx *ctx,         // Redis module context
+	RedisModuleString *graphID,  // key identifying the graph
+	bool readOnly,               // if true, opens the key in read mode
+	bool shouldCreate,           // create new graph if the key is absent
+	bool load_from_disk,         // load graph from disk if offloaded
+	GraphContext **gc            // out: graph context on success
+) {
+	return _GraphContext_Retrieve (ctx, graphID, readOnly, shouldCreate,
+			load_from_disk, NULL, NULL, false, gc) ;
+}
+
+// Like GraphContext_Retrieve, always attempting to load
+// the graph from disk if it is offloaded, but with different handling of
+// concurrent loads: if another thread is already loading this stub,
+// (`handler`, `arg`) is parked instead of GraphRetrieve_LOADING being
+// returned immediately. Once that in-flight load resolves, `handler(arg)`
+// is resubmitted to the thread pool - as if freshly dispatched - the caller
+// must not touch `arg` again until then.
+// may be called from any thread
+GraphRetrieveStatus GraphContext_RetrieveOrQueue
+(
+	RedisModuleCtx *ctx,
+	RedisModuleString *graphID,
+	bool readOnly,
+	bool shouldCreate,
+	void (*handler) (void *),
+	void *arg,
+	GraphContext **gc
+) {
+	ASSERT (handler != NULL) ;
+	ASSERT (arg     != NULL) ;
+
+	return _GraphContext_Retrieve (ctx, graphID, readOnly, shouldCreate,
+			true, handler, arg, false, gc) ;
+}
+
+// Like GraphContext_Retrieve, always attempting to load
+// the graph from disk if it is offloaded, but never failing due to another
+// load being in flight: an independent load is attempted regardless (see
+// bypass_claim in the enterprise repo's graph_load.h), so
+// GraphRetrieve_FAILED is only ever returned for a genuine failure (missing
+// dump, OOM, corruption, etc.), never for mere contention with another
+// load. An in-flight offload is never bypassed, since there is nothing yet
+// to load in that case, so this may still fail while a concurrent offload
+// of the same graph is in progress.
+// For use by callers that cannot tolerate a transient retrieval failure -
+// e.g. GRAPH.EFFECT, where a failure risks master/replica divergence.
+// May be called from any thread.
+GraphRetrieveStatus GraphContext_RetrieveOrForce
+(
+	RedisModuleCtx *ctx,
+	RedisModuleString *graphID,
+	bool readOnly,
+	bool shouldCreate,
+	GraphContext **gc
+) {
+	return _GraphContext_Retrieve (ctx, graphID, readOnly, shouldCreate,
+			true, NULL, NULL, true, gc) ;
 }
 
