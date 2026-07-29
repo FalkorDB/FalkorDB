@@ -28,11 +28,24 @@ on:
         description: "Also move the :latest tags (release semantics)"
         required: false
         default: "false"
-  workflow_run:
-    workflows: ["Build"]
-    types:
-      - completed
-    branches: [master, "v[0-9]+.[0-9]+"]
+  # NO `workflow_run` trigger — removed deliberately, do not re-add.
+  #
+  # It used to subscribe to Build completing on [master, "v[0-9]+.[0-9]+"] and
+  # publish the rolling :edge image. build.yml's `publish-edge` job now performs
+  # that hand-off explicitly via workflow_dispatch, so keeping the subscription
+  # would run this workflow TWICE per master push — and with no concurrency group
+  # here, both runs would race the same `imagetools create ... :edge` against
+  # Docker Hub.
+  #
+  # Removing it is also what makes the hand-off survive the migration: GitHub
+  # honours `workflow_run` only from the DEFAULT branch's copy of a workflow, so
+  # this subscription stops firing the moment `master` is no longer the default
+  # branch. The explicit dispatch from build.yml has no such dependency.
+  #
+  # (The "v[0-9]+.[0-9]+" arm never matched anyway: the real version branches are
+  # unprefixed — 4.18, 4.20 — so only the master/edge path was ever live.)
+  #
+  # See issue #2255.
   release:
     types: [published]
 
