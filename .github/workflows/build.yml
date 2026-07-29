@@ -645,6 +645,9 @@ jobs:
     # images built; entries whose artifact is missing fail individually.
     if: ${{ !cancelled() && needs.build.result != 'skipped' }}
     runs-on: ${{ matrix.platform.machine_label }}
+    permissions:
+      contents: read
+      pull-requests: write
     strategy:
       fail-fast: false
       matrix:
