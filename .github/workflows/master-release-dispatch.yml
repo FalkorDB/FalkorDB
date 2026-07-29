@@ -1,0 +1,173 @@
+# Keep the C engine's publishing alive after the default branch moved here.
+#
+# `workflow_run` and `release` are delivered ONLY from the repository's default
+# branch. Now that the Rust tree is the default branch, master's
+# release-image.yml / release-ramp.yml / browser-tests-trigger.yml never fire on
+# those events again — silently. A branch filter on master cannot fix it: GitHub
+# reads the workflow from the default branch.
+#
+# This workflow lives here (the default branch) so `workflow_run` works again,
+# and drives master's existing `workflow_dispatch` entry points. None of C's
+# release logic is rewritten.
+#
+# ⚠️ THE CLOUD/TESTFLIGHT FLAGS ARE LOAD-BEARING. master's release-image.yml
+# gates two repository_dispatch jobs on
+#   github.event_name == 'release' || github.event.inputs.run_* == 'true'
+# and BOTH inputs default to "true". Dispatching without setting them false
+# would fire `bump-falkordb-version` at FalkorDB/falkordb-omnistrate and
+# `release-created` at FalkorDB/testflight on EVERY master push — i.e. it would
+# bump FalkorDB Cloud to "edge". So the rolling-edge path below passes false and
+# only a real release passes true, reproducing today's behaviour exactly.
+#
+# GITHUB_TOKEN is sufficient: per GitHub's docs `workflow_dispatch` and
+# `repository_dispatch` are the explicit exceptions that "always create workflow
+# runs" even when triggered by GITHUB_TOKEN. No PAT needed.
+#
+# See issue #2255.
+
+name: master release dispatch
+
+on:
+  workflow_run:
+    workflows: ["Build"]
+    types: [completed]
+    # Mirrors master release-image.yml's own filter verbatim. NOTE: the actual
+    # version branches in this repo are unprefixed ("4.18", "4.20"), so the
+    # "v[0-9]+.[0-9]+" arm likely never matched even before the migration. It is
+    # reproduced rather than "fixed" so this change introduces no new behaviour;
+    # see the PR discussion if that arm should be corrected.
+    branches: [master, "v[0-9]+.[0-9]+"]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish on master (e.g. edge, v5.2.0)"
+        required: true
+      commit_sha:
+        description: "Commit SHA on master to publish"
+        required: true
+      notify_downstream:
+        description: "Also trigger FalkorDB Cloud + testflight (release semantics)"
+        type: boolean
+        default: false
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: master-release-dispatch-${{ github.event.workflow_run.head_branch || github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    # Only meaningful where a `master` branch exists.
+    if: >-
+      github.repository == 'FalkorDB/FalkorDB' &&
+      (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Derive tag, commit and downstream policy
+        id: derive
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          WR_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          WR_SHA: ${{ github.event.workflow_run.head_commit.id }}
+          REL_TAG: ${{ github.event.release.tag_name }}
+          IN_TAG: ${{ inputs.tag }}
+          IN_SHA: ${{ inputs.commit_sha }}
+          IN_NOTIFY: ${{ inputs.notify_downstream }}
+        run: |
+          set -euo pipefail
+
+          case "$EVENT" in
+            workflow_run)
+              # Reproduces master release-image.yml's own tag rules:
+              #   Build on master        -> "edge"
+              #   Build on a vX.Y branch -> "v<branch>"
+              if [ "$WR_BRANCH" = "master" ]; then
+                TAG="edge"
+              else
+                TAG="v${WR_BRANCH#v}"
+              fi
+              SHA="$WR_SHA"
+              # Rolling channel: must NOT notify downstream (see header).
+              NOTIFY=false
+              ;;
+            release)
+              TAG="$REL_TAG"
+              # github.sha here is the DEFAULT branch's SHA, not the release
+              # commit, so resolve the tag on master explicitly.
+              SHA=$(gh api "repos/${GH_REPO}/git/ref/tags/${TAG}" --jq '.object.sha')
+              # Matches today's `release` behaviour, where both jobs run.
+              NOTIFY=true
+              ;;
+            workflow_dispatch)
+              TAG="$IN_TAG"
+              SHA="$IN_SHA"
+              NOTIFY="${IN_NOTIFY:-false}"
+              ;;
+            *)
+              echo "::error::unsupported event $EVENT"; exit 1 ;;
+          esac
+
+          if [ -z "${TAG:-}" ] || [ -z "${SHA:-}" ]; then
+            echo "::error::could not derive tag ('${TAG:-}') and commit ('${SHA:-}')"
+            exit 1
+          fi
+
+          {
+            echo "tag=$TAG"
+            echo "sha=$SHA"
+            echo "notify=$NOTIFY"
+          } >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG sha=$SHA notify=$NOTIFY (event=$EVENT)"
+
+      - name: Dispatch release-image.yml on master
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.derive.outputs.tag }}
+          SHA: ${{ steps.derive.outputs.sha }}
+          NOTIFY: ${{ steps.derive.outputs.notify }}
+        run: |
+          set -euo pipefail
+          gh workflow run release-image.yml --ref master \
+            -f tag="$TAG" \
+            -f commit_sha="$SHA" \
+            -f run_falkordb_cloud_update="$NOTIFY" \
+            -f run_testflight_workflow="$NOTIFY"
+          echo "dispatched release-image.yml (tag=$TAG notify=$NOTIFY)"
+
+      # RAMP packaging only ever applied to v-prefixed version branches, and its
+      # own job condition requires a v-prefixed tag. Keep that shape.
+      - name: Dispatch release-ramp.yml on master
+        if: ${{ startsWith(steps.derive.outputs.tag, 'v') }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.derive.outputs.tag }}
+          SHA: ${{ steps.derive.outputs.sha }}
+        run: |
+          set -euo pipefail
+          gh workflow run release-ramp.yml --ref master \
+            -f tag="$TAG" -f commit_sha="$SHA"
+          echo "dispatched release-ramp.yml (tag=$TAG)"
+
+      # Only on a real release, matching its `release:`-only trigger today.
+      # NOTE: master's browser-tests-trigger.yml reads
+      # github.event.release.tag_name, which is empty under workflow_dispatch.
+      # Today that job only echoes the tag, so the sole effect is a blank line in
+      # its log. If it grows real behaviour it needs a `tag` input on master.
+      - name: Dispatch browser-tests-trigger.yml on master
+        if: ${{ github.event_name == 'release' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh workflow run browser-tests-trigger.yml --ref master
+          echo "dispatched browser-tests-trigger.yml"
