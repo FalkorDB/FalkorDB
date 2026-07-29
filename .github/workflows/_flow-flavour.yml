@@ -123,7 +123,7 @@ jobs:
         test_file: ${{ fromJson(inputs.services_files) }}
         arch: ${{ fromJson(inputs.archs) }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Pre-create cov dir (coverage flavour only)
         if: inputs.collect_coverage
         run: mkdir -p "${GITHUB_WORKSPACE}/cov" && chmod 0777 "${GITHUB_WORKSPACE}/cov"
@@ -198,7 +198,7 @@ jobs:
         test_file: ${{ fromJson(inputs.spawn_files) }}
         arch: ${{ fromJson(inputs.archs) }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Pre-create cov dir (coverage flavour only)
         if: inputs.collect_coverage
         run: mkdir -p "${GITHUB_WORKSPACE}/cov" && chmod 0777 "${GITHUB_WORKSPACE}/cov"
