@@ -2884,3 +2884,32 @@ updating clause.")
         res = self.graph.query(q).result_set
         self.env.assertEquals(res[0][0], 2) # avgX
 
+    def test_54_delete_in_subquery(self):
+        """ This is a regression test for issue #2234 """
+        g = self.db.select_graph("call_subquery_2234")
+        g.query("CREATE (), (), ()")
+
+        q = """MATCH (a)
+               CALL {WITH a DELETE a}
+               RETURN 1"""
+
+        res = g.query(q)
+        self.env.assertEquals(res.result_set, [[1], [1], [1]])
+        self.env.assertEquals(res.nodes_deleted, 3)
+
+        count = g.query("MATCH (n) RETURN count(n)").result_set[0][0]
+        self.env.assertEquals(count, 0)
+
+        g.query("CREATE ()-[:R]->(), ()-[:R]->(), ()-[:R]->()")
+
+        q = """MATCH ()-[r]->()
+               CALL {WITH r DELETE r}
+               RETURN 1"""
+
+        res = g.query(q)
+        self.env.assertEquals(res.result_set, [[1], [1], [1]])
+        self.env.assertEquals(res.edges_deleted, 3)
+
+        count = g.query("MATCH ()-[r]->() RETURN count(r)").result_set[0][0]
+        self.env.assertEquals(count, 0)
+
