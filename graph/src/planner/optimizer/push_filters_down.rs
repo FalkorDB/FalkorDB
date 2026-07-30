@@ -138,7 +138,7 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                         IR::Project { .. }
                             | IR::Aggregate { .. }
                             | IR::Merge { .. }
-                            | IR::Argument
+                            | IR::Argument(_)
                             | IR::IncludePending { .. }
                             | IR::SemiApply
                             | IR::AntiSemiApply
@@ -213,8 +213,9 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
             // Augment variable sets for subtrees containing Argument leaves.
             if !inherited.is_empty() {
                 for (child_idx, vars) in &mut children {
-                    if subtree_contains(optimized_plan, *child_idx, |ir| matches!(ir, IR::Argument))
-                    {
+                    if subtree_contains(optimized_plan, *child_idx, |ir| {
+                        matches!(ir, IR::Argument(_))
+                    }) {
                         vars.extend(&inherited);
                     }
                 }

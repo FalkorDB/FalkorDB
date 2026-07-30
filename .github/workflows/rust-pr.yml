@@ -38,7 +38,7 @@ jobs:
       file_changed: ${{ steps.check.outputs.changed }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Check if specific file changed
@@ -166,7 +166,7 @@ jobs:
       - docker
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup default stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
@@ -211,7 +211,7 @@ jobs:
       FALKORDB_HOST: falkordb
       FALKORDB_PORT: "6379"
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup default stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
@@ -266,7 +266,7 @@ jobs:
       # that don't go through docker and just need every test file.
       test_files: ${{ steps.set-matrix.outputs.test_files }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Generate test matrix
         id: set-matrix
         # tests/flow/test_matrix_split.py classifies each entry in
@@ -349,7 +349,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup default stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
@@ -405,7 +405,7 @@ jobs:
       - docker
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup default nightly
       - run: rustup component add llvm-tools-preview
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
