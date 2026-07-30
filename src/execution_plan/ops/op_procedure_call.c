@@ -9,6 +9,8 @@
 #include "../../util/arr.h"
 #include "../../util/rmalloc.h"
 #include "../../query_ctx.h"
+#include "../../errors/errors.h"
+#include "../../errors/error_msgs.h"
 
 // forward declarations
 static Record ProcCallConsume(OpBase *opBase);
@@ -144,9 +146,17 @@ static Record ProcCallConsume
 
 		ProcedureResult res = Proc_Invoke(op->procedure, op->args, op->output);
 
-		/* TODO: should rise run-time exception?
-		 * op->r will be freed in ProcCallFree. */
-		if(res != PROCEDURE_OK) return NULL;
+		// procedure invocation failed — raise a runtime exception so callers
+		// never observe a silent empty "success" (e.g. missing fulltext index,
+		// invalid algo.BFS arguments)
+		// op->r will be freed in ProcCallFree
+		if(res != PROCEDURE_OK) {
+			if(!ErrorCtx_EncounteredError()) {
+				ErrorCtx_SetError(EMSG_PROC_INVALID_ARGUMENTS, op->proc_name);
+			}
+			ErrorCtx_RaiseRuntimeException(NULL);
+			return NULL;
+		}
 	}
 
 	return yield_record;

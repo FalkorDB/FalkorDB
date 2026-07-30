@@ -467,3 +467,41 @@ class testProcedures(FlowTestsBase):
         self.env.assertEquals(reducible, True)
         self.env.assertEquals(aggregation, False)
         self.env.assertEquals(variable_len, True)
+
+    # Procedure invoke failures must raise runtime errors instead of
+    # returning an empty successful result set.
+    def test_procedure_invoke_errors(self):
+        # missing fulltext index previously returned an empty "success"
+        try:
+            self.graph.query(
+                "CALL db.idx.fulltext.queryNodes('NoSuchLabel', 'x') YIELD node RETURN node"
+            )
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("no fulltext index", str(e))
+
+        # wrong argument types for algo.BFS previously returned empty success
+        try:
+            self.graph.query(
+                "MATCH (a) CALL algo.BFS(a, 'hello', NULL) YIELD nodes RETURN nodes LIMIT 1"
+            )
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Invalid arguments for procedure 'algo.BFS'", str(e))
+
+        try:
+            self.graph.query(
+                "MATCH (a) CALL algo.BFS(a, -1, 0) YIELD nodes RETURN nodes LIMIT 1"
+            )
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Invalid arguments for procedure 'algo.BFS'", str(e))
+
+        # missing relationship fulltext index
+        try:
+            self.graph.query(
+                "CALL db.idx.fulltext.queryRelationships('NoSuchRel', 'x') YIELD relationship RETURN relationship"
+            )
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("no fulltext index", str(e))

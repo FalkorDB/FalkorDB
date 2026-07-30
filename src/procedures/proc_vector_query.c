@@ -10,6 +10,7 @@
 #include "../index/index.h"
 #include "proc_vector_query.h"
 #include "../datatypes/map.h"
+#include "../errors/errors.h"
 #include "../datatypes/vector.h"
 #include "../graph/graphcontext.h"
 #include <string.h>
@@ -257,6 +258,9 @@ static ProcedureResult Proc_VectorQueryInvoke
 			st);
 
 	if(idx == NULL) {
+		ErrorCtx_SetError(EMSG_VECTOR_INDEX_NOT_FOUND,
+				et == GETYPE_NODE ? "label" : "relationship-type",
+				label, attribute);
 		return PROCEDURE_ERR;
 	}
 
