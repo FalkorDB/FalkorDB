@@ -17,17 +17,6 @@ on:
         description: "Trigger Testflight workflow"
         required: false
         default: "true"
-      # IS_LATEST is set below only on the `release` event, so a dispatched run
-      # publishes the version tags but never moves :latest. That is fine for the
-      # rolling `edge` channel, but once `master` is no longer the default branch
-      # the `release` event is delivered to the default branch instead and C
-      # releases have to be dispatched — at which point :latest would silently
-      # freeze at the last release published before the migration. This input
-      # lets the caller ask for release semantics explicitly. See issue #2255.
-      mark_latest:
-        description: "Also move the :latest tags (release semantics)"
-        required: false
-        default: "false"
   # NO `workflow_run` trigger — removed deliberately, do not re-add.
   #
   # It used to subscribe to Build completing on [master, "v[0-9]+.[0-9]+"] and
@@ -78,13 +67,6 @@ jobs:
           # If the event is a workflow_dispatch, use the input value
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             TAG_NAME=${{ github.event.inputs.tag }}
-            # Opt in to release semantics. Needed once `master` stops being the
-            # default branch: the `release` event is then delivered to the
-            # default branch, so C releases arrive here as a dispatch and would
-            # otherwise never move :latest.
-            if [ "${{ github.event.inputs.mark_latest }}" == "true" ]; then
-              echo "IS_LATEST=1" >> $GITHUB_ENV
-            fi
           fi
 
           # If the event is a workflow_run, and branch is master, set to "edge"

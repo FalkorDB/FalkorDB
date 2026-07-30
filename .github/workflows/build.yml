@@ -892,14 +892,16 @@ jobs:
   # and its own branch, with no dependency on a workflow living on another
   # branch. See issue #2255.
   #
-  # The three `false` flags are load-bearing. release-image.yml gates its
+  # The two `false` flags are load-bearing. release-image.yml gates its
   # FalkorDB-Cloud and testflight repository_dispatch jobs on
   #   github.event_name == 'release' || github.event.inputs.run_* == 'true'
   # and BOTH of those inputs default to "true", so omitting them here would fire
   # `bump-falkordb-version` at FalkorDB/falkordb-omnistrate and
   # `release-created` at FalkorDB/testflight on EVERY master push — bumping
-  # FalkorDB Cloud to "edge". mark_latest=false likewise keeps the rolling
-  # channel from moving the :latest pointer; only a real release does that.
+  # FalkorDB Cloud to "edge".
+  #
+  # The :latest pointer needs no flag here: release-image.yml sets IS_LATEST=1
+  # only on the `release` event, so a dispatched run never moves it.
   publish-edge:
     needs: [build, test, security-scan]
     # Mirrors the old `workflow_run` gate (which required the whole Build
@@ -926,7 +928,6 @@ jobs:
           gh workflow run release-image.yml --ref master \
             -f tag=edge \
             -f commit_sha="$SHA" \
-            -f mark_latest=false \
             -f run_falkordb_cloud_update=false \
             -f run_testflight_workflow=false
           echo "dispatched release-image.yml for edge at ${SHA}"

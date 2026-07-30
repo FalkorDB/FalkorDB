@@ -3,12 +3,6 @@ name: browser tests trigger on new tag release
 on:
   release:
     types: [published]
-  # `release` is delivered only from the repository's DEFAULT branch. Once the
-  # default branch moves to `main` (Rust engine), a release cut from `master`
-  # will no longer fire this workflow. `workflow_dispatch` lets a release
-  # listener on the default branch re-fire it against `master`
-  # (`gh workflow run browser-tests-trigger.yml --ref master`). See issue #2255.
-  workflow_dispatch:
 
 jobs:
   post-release:
