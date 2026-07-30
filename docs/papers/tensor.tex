@@ -1,0 +1,1710 @@
+% =====================================================================
+%  Inline Edge Identifiers for Multi-Edge Property Graphs
+%  arXiv-style preprint. Self-contained: no external .bib required.
+%  Build:  pdflatex tensor && pdflatex tensor
+% =====================================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,fit,backgrounds}
+\usepackage[hidelinks]{hyperref}
+
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{invariant}{Invariant}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+\newcommand{\M}{\mathsf{M}}
+\newcommand{\dom}{\operatorname{dom}}
+
+% switch/case for algpseudocode (not provided by default)
+\algnewcommand\algorithmicswitch{\textbf{switch}}
+\algnewcommand\algorithmiccase{\textbf{case}}
+\algdef{SE}[SWITCH]{Switch}{EndSwitch}[1]
+  {\algorithmicswitch\ #1\ \algorithmicdo}{\algorithmicend\ \algorithmicswitch}
+\algdef{SE}[CASE]{Case}{EndCase}[1]
+  {\algorithmiccase\ #1}{\algorithmicend\ \algorithmiccase}
+
+\definecolor{kw}{RGB}{0,90,160}
+\definecolor{cmt}{RGB}{100,110,100}
+\definecolor{str}{RGB}{150,60,20}
+\lstdefinestyle{rust}{
+  basicstyle=\ttfamily\footnotesize,
+  keywordstyle=\color{kw}\bfseries,
+  commentstyle=\color{cmt}\itshape,
+  stringstyle=\color{str},
+  showstringspaces=false,
+  columns=fullflexible,
+  breaklines=true,
+  frame=single,
+  framesep=4pt,
+  rulecolor=\color{black!25},
+  morekeywords={fn,let,mut,match,if,else,for,in,pub,struct,enum,impl,Self,self,
+    return,continue,break,Some,None,u64,bool,usize,const,use,where,as,true,false},
+  morecomment=[l]{//},
+}
+\lstset{style=rust}
+
+% ---------------------------------------------------------------------
+\title{\textbf{Inline Edge Identifiers for Multi-Edge Property Graphs:\\
+A Sentinel-Promotion Tensor over Sparse Linear Algebra}}
+
+\author{The FalkorDB Authors\\
+\small\texttt{https://github.com/FalkorDB/FalkorDB}}
+
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Graph databases built on sparse linear algebra represent a graph as a set of
+adjacency matrices and express traversal as matrix--matrix and
+matrix--vector products. The representation is elegant but structurally
+lossy for \emph{property multigraphs}: a matrix cell holds one value, whereas
+a property graph may connect an ordered node pair by arbitrarily many
+distinct edges, each carrying its own identity and property map. The
+canonical remedy is to store a container per cell --- conceptually a
+three-dimensional tensor $T[i,j,\cdot]$ --- which restores expressiveness
+but pays a per-cell container in the overwhelmingly common case of exactly
+one edge per pair.
+
+We describe and analyse the design of \texttt{Tensor}, the per-relationship-type
+edge store of FalkorDB's Rust storage engine. Its central idea is
+\emph{inline-first representation with sentinel promotion}: the forward
+adjacency matrix is \texttt{UINT64}-valued and stores a single edge's
+identifier \emph{directly} as the matrix value, so a simple graph requires no
+auxiliary edge structure whatsoever. A reserved sentinel value $\M = 2^{64}-1$
+in the cell announces that the pair has become multi-edge, at which point
+\emph{all} of the pair's identifiers migrate to a single global hypersparse
+overflow matrix keyed by a packed $(\text{src},\text{dst})$ compound key.
+The scheme is provably safe --- edge identifiers are bounded by the GraphBLAS
+index limit $2^{60}-1$ and therefore cannot collide with the sentinel --- and
+it reduces the steady-state cost of a single-edge pair to one $\langle$32-bit
+index, 64-bit value$\rangle$ pair, roughly $12$ bytes, with no per-pair
+container object and no second matrix.
+
+The structure is simultaneously a multi-version concurrency control (MVCC)
+object: three delta layers (committed base, pending additions, pending
+deletion mask) give snapshot isolation over the same cells. We show that
+value-carrying cells force a strictly richer delta algebra than the
+Boolean case --- a pending layer must be able to \emph{shadow} a live
+committed value rather than only add to or subtract from a pattern --- and we
+give the resulting ten-state per-pair automaton, a closed-form cardinality
+identity, and a proof that the three-way sorted-merge iterator streams
+exactly the effective edge multiset in $(\text{src},\text{dst},\text{id})$
+order. We further analyse two classes of correctness hazard that arise from
+embedding a data structure in a non-blocking sparse-linear-algebra runtime:
+\emph{value typecasting}, where using a value-carrying operator instead of a
+pattern-only operator silently destroys the edge whose identifier is $0$; and
+\emph{deferred computation}, where a resize leaves the ``committed'' base with
+queued work and violates an invariant every read path depends on. Both were
+observed in practice and are now pinned by regression tests. We close with an
+analytic cost model, a comparison against the pointer-tagged
+container-per-cell design used by FalkorDB's C implementation, and a
+discussion of the domain restrictions the compound key imposes.
+\end{abstract}
+
+\noindent\textbf{Keywords:} property graphs, multigraphs, GraphBLAS, sparse
+matrices, hypersparse, multi-version concurrency control, delta encoding,
+graph databases
+
+% =====================================================================
+\section{Introduction}
+\label{sec:intro}
+
+The linear-algebraic view of graph computation --- represent a graph by its
+adjacency matrix, express traversal as products over a semiring --- is old
+\cite{kepnergilbert2011} and, since the GraphBLAS standardisation effort
+\cite{mattson2013,kepner2016,brock2021spec} and the arrival of a
+high-performance reference implementation in SuiteSparse:GraphBLAS
+\cite{davis2019toms,davis2023toms}, practical. Several systems now use it as
+their storage substrate rather than merely as an algorithm library; FalkorDB
+(originally RedisGraph \cite{cailliau2019}) executes openCypher
+\cite{francis2018cypher} query plans directly against GraphBLAS matrices,
+turning a pattern match into a chain of masked matrix products.
+
+The mismatch this paper addresses is narrow and concrete. A matrix is a
+partial function $A : \mathbb{N} \times \mathbb{N} \rightharpoonup S$: an
+ordered pair maps to \emph{at most one} value. A property graph
+\cite{angles2017foundations} is a multigraph: an ordered node pair may be
+connected by many edges of the same type, each a first-class entity with its
+own identifier and property map. ``Alice \texttt{TRANSFERRED} Bob'' is not a
+fact about a pair of accounts, it is a set of facts, each with its own amount
+and timestamp, each of which a query may bind, filter, project and delete
+individually. The adjacency matrix can record that the pair is connected; it
+cannot, by itself, record \emph{which} edges connect it.
+
+The textbook fix is to lift the value domain from a scalar to a container,
+giving a three-dimensional structure $T$ where $T[i,j,\cdot]$ enumerates the
+identifiers joining $i$ to $j$. FalkorDB's C implementation does exactly
+this, storing a tagged \texttt{GrB\_Vector} handle in the cell: the
+most-significant bit of the 64-bit value distinguishes ``this is a scalar
+edge id'' from ``this is a pointer to a vector of edge ids.''\footnote{See
+\texttt{src/graph/tensor/tensor.h} in the FalkorDB C sources: the macros
+\texttt{SCALAR\_ENTRY(x)} and \texttt{AS\_VECTOR(x)} implement precisely this
+pointer tagging.} This is expressive and, for genuinely multi-edge graphs,
+efficient. It is also unsatisfying for the case that dominates real
+workloads, where almost every connected pair has exactly one edge: the
+representation is fully general and pays for generality everywhere.
+
+\paragraph{Contributions.}
+This paper documents and analyses the design that replaces it in FalkorDB's
+Rust storage engine. Specifically:
+
+\begin{enumerate}
+  \item \textbf{Inline-first representation with sentinel promotion}
+        (\S\ref{sec:representation}). The forward adjacency matrix is
+        \texttt{UINT64} rather than \texttt{BOOL} and stores a lone edge's
+        identifier \emph{as} the cell value. A reserved sentinel
+        $\M = 2^{64}-1$ marks a pair that has outgrown one edge; only then do
+        identifiers move to an auxiliary structure, and \emph{all} of them
+        move, so the cell value is never ambiguous. We prove the sentinel
+        cannot collide with a real identifier
+        (Lemma~\ref{lem:sentinel}).
+  \item \textbf{A single global overflow matrix instead of per-cell
+        containers} (\S\ref{sec:compound}). Multi-edge identifiers live in one
+        hypersparse \cite{bulucgilbert2008} Boolean matrix indexed by a
+        \emph{compound key} $\kappa(s,d) = (s \ll 32) \mathbin{|} d$ in the
+        row dimension and by edge identifier in the column dimension. This
+        removes $N$ container objects and their allocation, lifetime and
+        serialisation obligations in exchange for one wide, mostly empty
+        matrix that GraphBLAS already stores in $O(\mathrm{nvals})$ space.
+  \item \textbf{A delta algebra for value-carrying MVCC layers}
+        (\S\ref{sec:deltas}). Boolean delta matrices need only
+        \emph{add} to and \emph{subtract} from a pattern. Value-carrying
+        layers additionally need in-place \emph{update}, which we implement by
+        allowing the pending layer to \emph{shadow} a live committed cell
+        without masking it. We give the invariants this requires, the induced
+        ten-state per-pair automaton
+        (\S\ref{sec:automaton}, Figure~\ref{fig:automaton}), and a
+        \emph{cancel-to-clean} normalisation rule that keeps the state space
+        finite and the cardinality identity exact.
+  \item \textbf{A closed-form edge count and a streaming-iteration theorem}
+        (\S\ref{sec:correctness}). We prove
+        $|E| = |m| + |dp| - |dm| - |dp \cap m| - \textit{multi} + |me|$
+        (Theorem~\ref{thm:count}) --- computable from GraphBLAS metadata plus a
+        single structural intersection, with no scan --- and that the
+        three-way sorted merge emits each effective edge exactly once in
+        lexicographic order without materialising an intermediate matrix
+        (Theorem~\ref{thm:iter}).
+  \item \textbf{Two hazard classes from the host runtime}
+        (\S\ref{sec:hazards}). \emph{Value typecasting}: GraphBLAS
+        \texttt{eWiseAdd} propagates a single-sided operand's \emph{value},
+        so building a Boolean deletion mask from a \texttt{UINT64} matrix
+        turns the edge whose identifier is $0$ into a \texttt{false} entry,
+        which valued masks then treat as absent --- a silently lost deletion.
+        \emph{Deferred computation}: \texttt{GrB\_Matrix\_resize} may queue
+        pending work on the committed base, violating an invariant asserted by
+        every read path, and only in debug builds. Both are analysed and
+        pinned by tests.
+  \item \textbf{An analytic cost and space model}
+        (\S\ref{sec:cost}) and an explicit account of the design's
+        \emph{domain restrictions} (\S\ref{sec:limits}), including the
+        observation that although the compound-key guard admits node
+        identifiers up to $2^{32}-1$, the overflow matrix's dimension bounds
+        the source identifier of a multi-edge pair by $2^{28}$.
+\end{enumerate}
+
+\paragraph{Scope.} This is a design and analysis paper about a single data
+structure, written against a specific artifact: \texttt{Tensor} in
+\texttt{graph/src/graph/graphblas/tensor.rs} on the \texttt{main-rs} branch of
+the FalkorDB repository at commit \texttt{a30d4ca}. Our evaluation
+(\S\ref{sec:cost}) is analytic: we derive space and operation costs from the
+storage formats and the GraphBLAS operations invoked, and we do not report
+end-to-end query benchmarks. We flag this plainly because the design's
+central claim --- that inline-first is cheaper for the common case --- is a
+claim about constants, and constants deserve measurement; \S\ref{sec:future}
+says what we would measure.
+
+% =====================================================================
+\section{Background}
+\label{sec:background}
+
+\subsection{GraphBLAS, sparsity formats, and non-blocking execution}
+
+GraphBLAS \cite{brock2021spec} specifies opaque sparse matrix and vector
+objects over user-selectable semirings, with masked, accumulated operations
+as the primitive vocabulary. Three properties of the SuiteSparse
+implementation \cite{davis2019toms,davis2023toms} shape our design.
+
+\paragraph{Multiple storage formats, including hypersparse.}
+SuiteSparse selects among \emph{full}, \emph{bitmap}, \emph{sparse}
+(compressed, CSR/CSC-like \cite{gustavson1978}) and \emph{hypersparse}
+representations. The hypersparse format \cite{bulucgilbert2008} additionally
+compresses the vector dimension, storing only the indices of non-empty
+vectors, so a matrix's space is $O(\mathrm{nvals})$ \emph{independent of its
+declared dimensions}. This is what makes a $(2^{60}-1) \times (2^{60}-1)$
+matrix a sensible object to allocate. The artifact leans on it deliberately:
+matrices are pinned to \texttt{SPARSE | HYPERSPARSE} so that the runtime never
+promotes a mostly-empty matrix to bitmap (which would make every subsequent
+fold pay a whole-bitmap \texttt{memset}), and delta layers are pinned
+\emph{fully} hypersparse --- a small delta over a matrix whose row capacity
+has been inflated to a million by a bulk load costs $O(\mathrm{nvec})$ rather
+than $O(\mathrm{nrows})$ per materialisation.
+
+\paragraph{Non-blocking execution.}
+Operations may be queued rather than performed. A matrix carries
+\emph{pending tuples} and \emph{zombies} until a \texttt{GrB\_Matrix\_wait}
+materialises it. This is a performance feature --- $n$ scattered
+\texttt{setElement} calls become one bulk build --- but it leaks into the
+design of anything built on top, because a \emph{read} of a pending matrix
+must first materialise it. A data structure that interleaves reads and writes
+element-wise therefore risks $\Theta(n)$ materialisations for $n$ writes; we
+return to this in \S\ref{sec:insert}.
+
+\paragraph{Typed operators.}
+Every operation names an operator or semiring, and the choice determines
+whether operand \emph{values} are read. \texttt{GxB\_ANY\_PAIR\_BOOL} and
+\texttt{GxB\_ONE\_BOOL} inspect only the sparsity pattern;
+\texttt{GrB\_eWiseAdd} with a binary operator propagates and \emph{typecasts}
+values from cells present on only one side. When the value domain is edge
+identifiers, this distinction is a correctness boundary
+(\S\ref{sec:hazard-zero}).
+
+\subsection{Matrices as the storage layer of a property graph}
+
+FalkorDB assigns each node a dense integer identifier and each relationship
+type its own $n \times n$ matrix; a label becomes a diagonal matrix, and a
+Cypher pattern becomes a masked product chain. Node identifiers index rows
+and columns; the value domain of a relationship matrix is what this paper is
+about.
+
+\subsection{Delta matrices and snapshot isolation}
+\label{sec:bg-delta}
+
+To let readers proceed against a consistent snapshot while a writer mutates
+\cite{bernstein1983mvcc,neumann2015mvcc}, each logical matrix is a triple of
+physical matrices, in the artifact's naming: a committed base $m$, a
+\emph{delta-plus} $dp$ of pending additions, and a \emph{delta-minus} $dm$ of
+pending deletions. The effective content is
+\[
+  \mathcal{E} \;=\; (m \setminus dm) \cup dp ,
+\]
+and when a delta exceeds a threshold (10{,}000 entries) it is folded into the
+base and cleared --- structurally the same amortisation as an LSM tree's
+compaction \cite{oneil1996lsm}, at one level. Each physical matrix sits behind
+a copy-on-write cell, so opening a write transaction clones handles in $O(1)$
+and the first mutation of a given matrix pays its deep copy; read-only
+transactions pay nothing.
+
+For \emph{Boolean} layers this is complete, and the invariants are the strict
+ones: $dm \subseteq \dom(m)$ and $\dom(dp) \cap \dom(m) = \emptyset$. A cell
+is present or absent, so ``update'' is not an operation. Once cells carry
+values, it is, and \S\ref{sec:deltas} shows that the natural encoding of an
+update breaks the second invariant on purpose.
+
+% =====================================================================
+\section{Design space}
+\label{sec:designspace}
+
+Fix a relationship type $r$ and let $P$ be its set of connected ordered node
+pairs, $E$ its edge set, and $\mu = |E|/|P|$ the mean multiplicity. Three
+designs answer ``where do the identifiers live?''
+
+\paragraph{(A) Container per cell (pointer tagging).}
+The cell holds either a scalar identifier or a tagged pointer to a container
+of identifiers, discriminated by a reserved bit. This is FalkorDB's C design.
+Reads are direct; the cost is one heap-allocated container object per
+multi-edge pair, plus the obligations that come with storing raw pointers
+inside matrix values: the containers are invisible to the matrix's own
+lifetime management, so duplication, serialisation, and deallocation must all
+walk the cells and handle the tagged case explicitly, and any bulk GraphBLAS
+operation that would \emph{copy} values is unsafe unless every consumer knows
+the tagging discipline.
+
+\paragraph{(B) Always-materialised auxiliary matrix.}
+Keep the adjacency matrix Boolean and hold every identifier in a second
+$|P| \times |E|$-shaped structure. Uniform and pointer-free, but a simple
+graph --- $\mu = 1$, the common case --- pays a second matrix, a second index
+per edge, and a second traversal per lookup for information the adjacency
+matrix could have carried itself.
+
+\paragraph{(C) Inline-first with lazy overflow (this work).}
+Make the adjacency matrix \texttt{UINT64} and store a lone identifier in the
+cell. Allocate the auxiliary matrix but leave it empty until some pair gains a
+second edge; then \emph{promote} that pair, moving all its identifiers to the
+auxiliary matrix and writing the sentinel $\M$ into the cell. On removal,
+\emph{demote} symmetrically. A graph with $\mu = 1$ never touches the
+auxiliary matrix and never allocates a container; a graph with large $\mu$
+degenerates gracefully to (B) plus one wasted cell per pair.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+ & \textbf{(A) container/cell} & \textbf{(B) always aux.} & \textbf{(C) inline-first} \\
+\midrule
+Space, single-edge pair      & 1 cell                & 1 cell $+$ 1 aux.\ entry & 1 cell \\
+Space, $k$-edge pair ($k\ge2$) & 1 cell $+$ container($k$) & 1 cell $+$ $k$ aux.    & 1 cell $+$ $k$ aux. \\
+Aux.\ structure when $\mu=1$ & absent                & fully materialised       & allocated, empty \\
+Heap objects outside GraphBLAS & $|\{k\ge2\}|$        & none                     & none \\
+Point read, single edge      & 1 lookup              & 2 lookups                & 1 lookup \\
+Point read, $k$-edge         & 1 lookup $+$ scan     & 2 lookups $+$ scan       & 1 lookup $+$ row scan \\
+Values safe under bulk ops   & no (tagged pointers)  & yes                      & yes (sentinel) \\
+Transition cost on 2nd edge  & allocate container    & none                     & promote: 2 aux.\ writes \\
+\bottomrule
+\end{tabular}
+\caption{The three designs. (C) is (B) with the $\mu = 1$ case specialised
+into the adjacency matrix, and (A) with the heap containers replaced by rows
+of one global matrix. Its distinguishing cost is the promotion/demotion
+transition, which (A) and (B) do not have.}
+\label{tab:designspace}
+\end{table}
+
+Table~\ref{tab:designspace} summarises. Design (C) buys the common case at
+the price of a state transition and the invariant discipline that transition
+requires; the rest of this paper is largely about that price.
+
+% =====================================================================
+\section{Representation}
+\label{sec:representation}
+
+\subsection{Components}
+
+\begin{lstlisting}
+pub struct Tensor {
+    m:  Cow<Matrix<u64>>,        // committed forward adjacency: src -> dst = edge id | MULTI
+    dp: Cow<Matrix<u64>>,        // pending additions / in-place value updates
+    dm: Cow<Matrix<bool>>,       // pending deletions (mask over m)
+    mt: VersionedMatrix<bool>,   // backward adjacency: dst -> src, structure only
+    me: VersionedMatrix<bool>,   // overflow: compound_key(src,dst) -> edge id
+    multi_count: u64,            // number of pairs whose effective value is MULTI
+}
+pub const MULTI_EDGE: u64 = u64::MAX;
+pub const GrB_INDEX_MAX: u64 = (1u64 << 60) - 1;
+\end{lstlisting}
+
+Two asymmetries are deliberate. First, the forward adjacency is \emph{not}
+wrapped in the generic \texttt{VersionedMatrix}; the tensor owns its three
+layers directly, because the delta semantics it needs (\S\ref{sec:deltas})
+are strictly richer than the Boolean ones and the edge-identifier meaning of
+the values must stay local to this module. Second, the backward matrix
+$mt$ is Boolean: it mirrors the effective forward \emph{structure} and stores
+no identifiers at all. Incoming-edge iteration recovers identifiers by
+looking the pair up in the forward layers. This trades one point lookup per
+backward pair for not duplicating every identifier in the graph --- a
+worthwhile trade given that the forward matrix is the authority and any
+duplicated copy would be a second thing to keep consistent.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  font=\small,
+  box/.style={draw,rounded corners=2pt,minimum height=8mm,align=center,inner sep=4pt},
+  lay/.style={box,fill=blue!5},
+  aux/.style={box,fill=orange!8},
+  >={Stealth[length=2mm]}
+]
+\node[lay] (m)  at (0,0)      {$m$ \;\texttt{UINT64}\\\scriptsize committed base};
+\node[lay] (dp) at (0,-1.35)  {$dp$ \texttt{UINT64}\\\scriptsize pending adds/updates};
+\node[lay] (dm) at (0,-2.7)   {$dm$ \;\texttt{BOOL}\\\scriptsize deletion mask};
+\node[draw,dashed,rounded corners,fit=(m)(dp)(dm),inner sep=7pt,
+      label={[align=center]above:forward adjacency\\\scriptsize
+      $\mathcal{E}=(m\setminus dm)\cup dp$, values are edge ids}] (fwd) {};
+
+\node[aux] (mt) at (8.4,0)     {$mt$ \;\texttt{BOOL}\\\scriptsize backward structure, $dst \to src$};
+\node[aux] (me) at (8.4,-2.7)  {$me$ \;\texttt{BOOL}, $(2^{60}\!-\!1)^2$\\\scriptsize $\kappa(src,dst) \to$ edge id};
+
+\draw[->,black!60] (fwd.east |- m) -- node[midway,above,font=\scriptsize,
+      align=center,fill=white,inner sep=1.5pt]
+      {transpose of the\\effective structure} (mt.west);
+\draw[->,black!60] (fwd.east |- dm) -- node[midway,below,font=\scriptsize,
+      align=center,fill=white,inner sep=1.5pt]
+      {ids of every pair whose\\effective cell value is $\M$} (me.west);
+\end{tikzpicture}
+\caption{Components. The three forward layers carry edge identifiers as
+matrix values; $mt$ and $me$ are Boolean. $me$ is empty unless some pair has
+more than one edge, so a simple graph consists of the forward layers and a
+Boolean transpose.}
+\label{fig:components}
+\end{figure}
+
+\subsection{The sentinel and why it is safe}
+
+\begin{lemma}[Sentinel non-collision]
+\label{lem:sentinel}
+No real edge identifier equals $\M = 2^{64}-1$.
+\end{lemma}
+
+\begin{proof}
+Edge identifiers are used as \emph{column indices} of the overflow matrix
+$me$, whose declared dimensions are $\texttt{GrB\_INDEX\_MAX} = 2^{60}-1$ in
+both directions. Any identifier that could ever be stored is therefore
+$< 2^{60}-1 < 2^{64}-1$. Identifiers are allocated densely from $0$ upward by
+the graph's relationship-identifier allocator, so the bound is not merely
+sufficient but a hard ceiling imposed by the storage. Hence the sentinel is
+outside the identifier domain.
+\end{proof}
+
+This is the reason design (C) is available at all. Note the contrast with
+design (A): pointer tagging reserves a \emph{bit}, which constrains the value
+domain to $2^{63}$ and makes every value observation conditional on the tag;
+sentinel reservation removes a single \emph{point} from a domain the storage
+already bounds far below it, and every non-sentinel value is a valid
+identifier with no unmasking step.
+
+\begin{remark}
+The on-disk format (\S\ref{sec:serialisation}) does use MSB tagging, because
+it must remain readable by the C implementation. There the tagged payload is a
+\emph{count}, not a pointer, so the tag is a format detail rather than a
+representation invariant.
+\end{remark}
+
+\subsection{The compound key}
+\label{sec:compound}
+
+The overflow matrix must associate a \emph{pair} with a set of identifiers.
+Rather than a matrix per pair, or a three-dimensional object GraphBLAS does
+not provide, the pair is folded into one index:
+\[
+  \kappa(s,d) \;=\; (s \ll 32) \mathbin{|} d ,
+  \qquad me\bigl[\kappa(s,d),\, e\bigr] = \texttt{true} .
+\]
+A pair's identifiers are exactly one \emph{row} of $me$; the row scan
+GraphBLAS provides yields them in ascending column order, i.e.\ in ascending
+identifier order, for free. Because $me$ is hypersparse, its $2^{60}$-row
+declaration costs nothing: space is proportional to stored entries, and the
+row dimension exists only to give $\kappa$ room.
+
+The packing is only injective if both operands fit in $32$ bits, and the
+artifact checks this unconditionally rather than under a debug assertion:
+
+\begin{lstlisting}
+pub fn compound_key(src: u64, dst: u64) -> u64 {
+    assert!(u32::try_from(src).is_ok() && u32::try_from(dst).is_ok(),
+        "Tensor compound key overflow: src={src}, dst={dst} (each must fit in u32)");
+    (src << 32) | dst
+}
+\end{lstlisting}
+
+The choice of an unconditional check is worth stating explicitly, because it
+is the opposite of the usual advice for a hot path. Silent truncation here
+does not produce a wrong answer that a test would catch; it produces
+\emph{key aliasing}, conflating the identifier sets of two different node
+pairs, and the corruption is durable --- it survives into the on-disk
+snapshot. A panic is strictly preferable to a graph that has silently merged
+two relationships, and the cost is two comparisons on a path already
+dominated by FFI calls. \S\ref{sec:limits} notes that this guard is in fact
+looser than the storage admits.
+
+% =====================================================================
+\section{Delta algebra for value-carrying layers}
+\label{sec:deltas}
+
+\subsection{Effective value}
+
+\begin{definition}[Effective inline value]
+\label{def:eff}
+For an ordered pair $p = (s,d)$,
+\[
+  \varepsilon(p) \;=\;
+  \begin{cases}
+    dp(p), & p \in \dom(dp),\\
+    \bot,  & p \notin \dom(dp) \text{ and } p \in dm,\\
+    m(p),  & p \notin \dom(dp),\ p \notin dm,\ p \in \dom(m),\\
+    \bot,  & \text{otherwise.}
+  \end{cases}
+\]
+Informally: \emph{$dp$ wins; otherwise $m$, unless its $dm$ bit is set.} The
+edge-identifier set of $p$ is
+\[
+  \mathrm{Ids}(p) =
+  \begin{cases}
+    \emptyset, & \varepsilon(p) = \bot,\\
+    \{\, e : me[\kappa(p), e] \,\}, & \varepsilon(p) = \M,\\
+    \{\varepsilon(p)\}, & \text{otherwise.}
+  \end{cases}
+\]
+\end{definition}
+
+\subsection{Shadowing: why the Boolean invariants do not survive}
+
+In the Boolean setting (\S\ref{sec:bg-delta}) $dp$ and $m$ are disjoint,
+because there is nothing to say about a cell that is already present. With
+values there is: a pair's identifier can \emph{change} within a transaction
+--- on promotion (real identifier $\to \M$), on demotion ($\M \to$ real
+identifier), and on delete-then-insert of a different identifier for the same
+pair in one transaction.
+
+Two encodings of ``update'' are available. One could mask the committed cell
+in $dm$ and write the new value in $dp$; this preserves
+$\dom(dp) \cap \dom(m) = \emptyset$ at the cost of making $dm$ mean two
+different things --- ``deleted'' and ``superseded'' --- which the bulk removal
+and folding paths would then have to disambiguate. The artifact takes the
+other option: $dp$ \emph{shadows} $m$, carrying the live value at a pair that
+is also present in $m$, with \emph{no} $dm$ bit. Thus $dm$ retains a single
+crisp meaning, \emph{pure deletion}, and $\dom(dp) \cap \dom(m)$ becomes
+legitimately non-empty. The price is paid once, in the iterator, which must
+recognise a shadowed pair and drop the stale $m$ entry (\S\ref{sec:iter}).
+
+\subsection{Invariants}
+\label{sec:invariants}
+
+Write $|X|$ for $\mathrm{nvals}$, $\textit{multi}$ for \texttt{multi\_count},
+and $P^{\ast} = \{p : \varepsilon(p) \neq \bot\}$ for the effective pattern.
+
+\begin{invariant}[Mask domain]\label{inv:masksub}
+$dm \subseteq \dom(m)$: the deletion mask only ever marks committed cells.
+\end{invariant}
+\begin{invariant}[Purity]\label{inv:pure}
+$\dom(dp) \cap dm = \emptyset$: writing a pair clears its $dm$ bit, so a cell
+is never simultaneously deleted and pending.
+\end{invariant}
+\begin{invariant}[Cancel-to-clean]\label{inv:cancel}
+$\forall p \in \dom(dp) \cap \dom(m): dp(p) \neq m(p)$. If an operation would
+restore a pair's committed value, its deltas are dropped instead. In
+particular $dp(p) = \M$ never shadows $m(p) = \M$.
+\end{invariant}
+\begin{invariant}[Promotion completeness]\label{inv:promotion}
+$\varepsilon(p) = \M \iff |\mathrm{Ids}(p)| \ge 2$, and then \emph{every}
+identifier of $p$ --- including the one that was previously inline --- is a
+column of row $\kappa(p)$ of $me$. Conversely, if
+$|\mathrm{Ids}(p)| \le 1$ then row $\kappa(p)$ of $me$ is empty.
+\end{invariant}
+\begin{invariant}[Counter agreement]\label{inv:counter}
+$\textit{multi} = |\{p : \varepsilon(p) = \M\}|$.
+\end{invariant}
+\begin{invariant}[Transpose agreement]\label{inv:mt}
+$\dom(mt) = \{(d,s) : (s,d) \in P^{\ast}\}$.
+\end{invariant}
+
+Invariant~\ref{inv:cancel} is the least obvious and the most load-bearing.
+Without it, a transaction that promotes a pair, demotes it, and promotes it
+again could leave $dp(p) = \M$ shadowing $m(p) = \M$ --- harmless for reads,
+but it inflates $|dp \cap m|$ relative to the number of \emph{semantically}
+shadowed pairs and thereby breaks the cardinality identity below. Making the
+representation canonical --- deltas exist only where the state genuinely
+differs from the committed state --- keeps counting exact and bounds the
+per-pair state space to the ten states of \S\ref{sec:automaton}.
+Invariant~\ref{inv:promotion} is what makes a cell value self-describing: a
+non-sentinel value is \emph{the} identifier, never one of several, so no
+reader must consult $me$ speculatively.
+
+Invariant~\ref{inv:counter} deserves a note: $\textit{multi}$ is maintained
+incrementally and is not derivable from the matrices in $O(1)$ (deriving it
+would require counting sentinel-valued cells, i.e.\ a scan). It is therefore
+the one piece of state whose consistency rests on every mutation path
+updating it, rather than on a structural argument --- a genuine, if small,
+soundness liability, and one reason the cardinality identity is worth stating
+as a theorem to be tested against.
+
+\subsection{The per-pair automaton}
+\label{sec:automaton}
+
+Invariants~\ref{inv:masksub}--\ref{inv:cancel} bound the reachable layer
+configurations of a single pair to exactly ten. Table~\ref{tab:states} lists
+them with the artifact's own labels; Figure~\ref{fig:automaton} gives the
+transition structure.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}clllll@{}}
+\toprule
+ & $m$ & $dp$ & $dm$ & $me$ row & meaning \\
+\midrule
+\textbf{A} & --- & --- & --- & --- & absent \\
+\textbf{B} & --- & $1$ & --- & --- & pending single edge \\
+\textbf{C} & --- & $\M$ & --- & $\{1,2\}$ & pending multi-edge pair \\
+\midrule
+\textbf{D} & $1$ & --- & --- & --- & committed single, clean \\
+\textbf{G} & $1$ & --- & set & --- & committed single, deleted \\
+\textbf{H} & $1$ & $2$ & --- & --- & value replaced \hfill\emph{($dp$ shadows $m$)} \\
+\textbf{F} & $1$ & $\M$ & --- & $\{1,2\}$ & promoted \hfill\emph{($dp$ shadows $m$)} \\
+\midrule
+\textbf{E} & $\M$ & --- & --- & $\{1,2\}$ & committed multi, clean \\
+\textbf{I} & $\M$ & $1$ & --- & $\emptyset$ & demoted \hfill\emph{($dp$ shadows $m$)} \\
+\textbf{J} & $\M$ & --- & set & $\emptyset$ & committed multi, deleted \\
+\bottomrule
+\end{tabular}
+\caption{The ten reachable per-pair states (example identifiers $1,2,3$).
+Rows are grouped by committed status: uncommitted, committed-single,
+committed-multi. States \textbf{F}, \textbf{H}, \textbf{I} are exactly the
+shadowed ones, and exist only because cells carry values.}
+\label{tab:states}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  font=\small,
+  st/.style={draw,circle,minimum size=8.5mm,inner sep=1pt,fill=blue!4},
+  sh/.style={st,fill=orange!12},
+  >={Stealth[length=2mm]},
+  lbl/.style={font=\scriptsize,inner sep=1.5pt,fill=white},
+  ed/.style={->,shorten >=1pt,shorten <=1pt},
+  cancel/.style={ed,dashed,black!55},
+  band/.style={font=\scriptsize\itshape,anchor=west,align=left,black!70}
+]
+% ---------------- band 1: uncommitted (pair absent from m) ----------------
+\node[st] (A) at (0,0)    {A};
+\node[st] (B) at (2.7,0)  {B};
+\node[st] (C) at (5.4,0)  {C};
+\draw[ed,bend left=14]  (A) to node[lbl,above]{add 1} (B);
+\draw[ed,bend left=14]  (B) to node[lbl,below]{del 1} (A);
+\draw[ed,bend left=14]  (B) to node[lbl,above]{add 2} (C);
+\draw[ed,bend left=14]  (C) to node[lbl,below]{del 2} (B);
+\node[band] at (9.9,0) {pair absent from $m$};
+
+% ---------------- band 2: committed single, m = 1 ----------------
+\node[st] (D) at (0,-3.5)    {D};
+\node[st] (G) at (2.7,-3.5)  {G};
+\node[sh] (H) at (5.4,-3.5)  {H};
+\node[sh] (F) at (8.1,-3.5)  {F};
+\draw[ed,bend left=14]     (D) to node[lbl,above]{del 1} (G);
+\draw[cancel,bend left=14] (G) to node[lbl,below]{add 1} (D);
+\draw[ed,bend left=14]     (G) to node[lbl,above]{add 2} (H);
+\draw[ed,bend left=14]     (H) to node[lbl,below]{del 2} (G);
+\draw[ed,bend left=14]     (H) to node[lbl,above]{add 3} (F);
+\draw[ed,bend left=14]     (F) to node[lbl,below]{del 1} (H);
+% long arcs, both routed above
+\draw[ed,bend left=26]     (D) to node[lbl,above,pos=0.5]{add 2} (F);
+\draw[cancel,bend right=44](F) to node[lbl,above,pos=0.5]{del 2} (D);
+% long arcs, both routed below
+\draw[ed,bend right=26]    (G) to node[lbl,below,pos=0.4]{add 2,3} (F);
+\draw[ed,bend left=44]     (F) to node[lbl,below,pos=0.6]{del 1,2} (G);
+\node[band] at (9.9,-3.5) {committed single,\\$m = 1$};
+
+% ---------------- band 3: committed multi, m = M ----------------
+\node[st] (E) at (0,-7.4)    {E};
+\node[sh] (I) at (2.7,-7.4)  {I};
+\node[st] (J) at (5.4,-7.4)  {J};
+\draw[ed,bend left=14]     (E) to node[lbl,above]{del 2} (I);
+\draw[cancel,bend left=14] (I) to node[lbl,below]{add 3} (E);
+\draw[ed,bend left=14]     (I) to node[lbl,above]{del 1} (J);
+\draw[ed,bend left=14]     (J) to node[lbl,below]{add 3} (I);
+\draw[ed,bend left=30]     (E) to node[lbl,above,pos=0.5]{del 1,2} (J);
+\draw[cancel,bend left=44] (J) to node[lbl,below,pos=0.5]{add 3,4} (E);
+\node[band] at (9.9,-7.4) {committed multi,\\$m = \M$};
+
+% ---------------- legend ----------------
+\draw[->,black]           (0,-9.2) -- (0.7,-9.2)
+  node[right,font=\scriptsize]{mutation};
+\draw[->,dashed,black!55] (3.4,-9.2) -- (4.1,-9.2)
+  node[right,font=\scriptsize]{cancel-to-clean};
+\node[draw,circle,fill=orange!12,minimum size=3.5mm,inner sep=0pt] at (7.6,-9.2) {};
+\node[right,font=\scriptsize] at (7.8,-9.2) {$dp$ shadows $m$};
+\end{tikzpicture}
+\caption{Per-pair transitions. Dashed edges are
+Invariant~\ref{inv:cancel} at work: an operation that restores the pair's
+committed value \emph{removes} deltas rather than adding a shadow. Shaded
+states are those where $dp$ and $m$ hold the same pair with different values
+--- impossible in a Boolean delta matrix, and the reason the iterator needs a
+shadow rule.}
+\label{fig:automaton}
+\end{figure}
+
+Reading the diagram: the three horizontal bands are the pair's committed
+status, which a transaction cannot change (only a fold can), so no transition
+crosses bands. Within a band, adding and removing identifiers moves left and
+right, and every cycle returns to the canonical state --- $\mathbf{D}
+\xrightarrow{\text{add}} \mathbf{F} \xrightarrow{\text{del}} \mathbf{D}$
+leaves no residue, which is exactly what Invariant~\ref{inv:cancel} demands.
+
+% =====================================================================
+\section{Algorithms}
+\label{sec:algorithms}
+
+\subsection{Point reads}
+
+\begin{algorithm}[H]
+\caption{Effective read and identifier enumeration}
+\label{alg:get}
+\begin{algorithmic}[1]
+\Function{EffGet}{$s,d$}
+  \State \Call{WaitFwd}{} \Comment{materialise $dp,dm$; $m$ is never pending (\S\ref{sec:hazard-resize})}
+  \If{$dp$ has $(s,d)$}
+    \State \Return $dp(s,d)$
+  \EndIf
+  \If{$|dm| \neq 0$ \textbf{and} $dm$ has $(s,d)$}
+    \State \Return $\bot$ \Comment{deleted}
+  \EndIf
+  \State \Return $m(s,d)$ \Comment{possibly $\bot$}
+\EndFunction
+\Statex
+\Function{Get}{$s,d$} \Comment{returns an owned iterator}
+  \State $v \gets \Call{EffGet}{s,d}$
+  \If{$v = \M$}
+    \State \Return \Call{RowScan}{$me,\ \kappa(s,d)$} \Comment{ascending identifier order}
+  \Else
+    \State \Return \Call{AtMostOne}{$v$} \Comment{no allocation}
+  \EndIf
+\EndFunction
+\end{algorithmic}
+\end{algorithm}
+
+The single-edge path costs at most three FFI lookups and \emph{no}
+allocation: the returned iterator is an \texttt{Option} iterator by value.
+This matters because \textsc{Get} is the inner loop of the query operators
+that resolve a bound $(s,d)$ pair to concrete edges --- \texttt{ExpandInto}
+and the bound-destination case of \texttt{CondTraverse} call it once per
+candidate pair. The $|dm| \neq 0$ test before probing $dm$ is a
+micro-optimisation with macro consequences: on a read-only workload against a
+freshly loaded graph, $dm$ is empty, and skipping the probe removes an FFI
+call from the hottest path in the engine.
+
+\subsection{Bulk insertion}
+\label{sec:insert}
+
+Insertion is where the host runtime's non-blocking semantics dictate program
+structure. The naive loop --- for each edge, read the pair's current state,
+then write --- interleaves reads and writes of $dp$. Every write leaves $dp$
+pending; every subsequent read must materialise it. With $n$ edges that is
+$\Theta(n)$ materialisations, each at least linear in the accumulated delta:
+\emph{quadratic} bulk insertion. The artifact therefore splits the operation
+into a read phase that touches $dp$ only for reading and a write phase that
+touches it only for writing (Algorithm~\ref{alg:insert}).
+
+\begin{algorithm}[!ht]
+\small
+\caption{\textsc{SetAllFromSlices}: bulk insert with in-batch promotion}
+\label{alg:insert}
+\begin{algorithmic}[1]
+\Require parallel slices $\mathit{srcs}, \mathit{dsts}, \mathit{ids}$ of length $n$
+\State \Call{WaitFwd}{}; \ $\mathit{dmEmpty} \gets (|dm| = 0)$
+\State $\mathit{batch} \gets$ empty hash map $(s,d) \mapsto$ slot index
+\State $Q \gets$ empty list of $(s, d, \mathit{val}, \mathit{committed})$ \Comment{queued inline writes}
+\Statex \textit{// ---- read phase: decide placement; write only to $me$ ----}
+\For{$(s,d,e)$ in the input}
+  \State $k \gets \kappa(s,d)$
+  \If{$(s,d) \in \mathit{batch}$}
+    \State $i \gets \mathit{batch}[(s,d)]$
+    \If{$i \neq \textsc{marked}$} \Comment{2nd edge of a pair new in this batch}
+      \State $me[k,\, Q[i].\mathit{val}] \gets \mathrm{true}$;\quad $Q[i].\mathit{val} \gets \M$
+      \State $\textit{multi} \gets \textit{multi} + 1$;\quad $\mathit{batch}[(s,d)] \gets \textsc{marked}$
+    \EndIf
+    \State $me[k,e] \gets \mathrm{true}$
+  \Else
+    \State $\mathit{masked} \gets \lnot \mathit{dmEmpty} \wedge dm \text{ has } (s,d)$
+    \State $\mathit{fromDp} \gets dp(s,d)$
+    \State $\mathit{cur} \gets \mathit{fromDp}$ if present, else ($\bot$ if $\mathit{masked}$, else $m(s,d)$)
+    \If{$\mathit{cur} = \M$} \Comment{already multi-edge}
+      \State $me[k,e] \gets \mathrm{true}$;\ \ $\mathit{batch}[(s,d)] \gets \textsc{marked}$
+    \ElsIf{$\mathit{cur} \neq \bot$} \Comment{promote an existing single edge}
+      \State $me[k, \mathit{cur}] \gets \mathrm{true}$;\ \ $me[k,e] \gets \mathrm{true}$;\ \ $\textit{multi} \gets \textit{multi} + 1$
+      \State $\mathit{batch}[(s,d)] \gets \textsc{marked}$
+      \State append $(s,d,\M,\ m(s,d)$ if $\mathit{fromDp}$ present else $\bot)$ to $Q$
+    \Else \Comment{first edge for this pair: inline}
+      \State $\mathit{batch}[(s,d)] \gets |Q|$
+      \State append $(s,d,e,\ m(s,d)$ if $\mathit{masked}$ else $\bot)$ to $Q$
+    \EndIf
+  \EndIf
+\EndFor
+\Statex \textit{// ---- write phase: inline values into $dp$, structure into $mt$ ----}
+\For{$(s,d,\mathit{val},\mathit{committed})$ in $Q$}
+  \State $mt[d,s] \gets \mathrm{true}$
+  \If{$\mathit{committed} \neq \bot$}
+    \State remove $(s,d)$ from $dm$ \Comment{restore Invariant~\ref{inv:pure}}
+    \If{$\mathit{committed} = \mathit{val}$}
+      \State remove $(s,d)$ from $dp$;\ \ \textbf{continue}
+        \Comment{cancel to clean, Invariant~\ref{inv:cancel}}
+    \EndIf
+  \EndIf
+  \State $dp[s,d] \gets \mathit{val}$
+\EndFor
+\end{algorithmic}
+\end{algorithm}
+
+Three details carry the weight.
+
+\paragraph{$me$ may be written during the read phase.}
+The phase split is not ``no writes then all writes''; it is ``no writes
+\emph{to matrices this phase reads}''. $me$ is never read here --- promotion
+decisions are made from the inline value alone, by
+Invariant~\ref{inv:promotion} --- so its pending work is harmless and can
+accumulate into one bulk build.
+
+\paragraph{In-batch duplicates need retroactive promotion.}
+A batch may contain two edges for the same previously-absent pair. When the
+first is seen, its identifier is queued for the inline slot; when the second
+arrives, that queued slot is rewritten to $\M$ \emph{in place} and the
+already-queued identifier is pushed to $me$. The $\mathit{batch}$ map exists
+exactly to make this possible, and the \textsc{marked} sentinel
+(\texttt{usize::MAX} in the artifact) distinguishes ``this pair has a pending
+inline slot at index $i$'' from ``this pair is already multi-edge, send
+further identifiers straight to $me$''.
+
+\paragraph{Delta reconciliation is deferred to the write phase.}
+The read phase records, per queued pair, the \emph{committed} value it will
+need to reconcile against: for a $dm$-masked pair, so the write phase can
+clear the mask (Invariant~\ref{inv:pure}); and for a $dp$-shadowed pair being
+promoted, because that pair may have $m = \M$ already --- it was demoted
+earlier in the same transaction --- in which case re-promotion must
+\emph{cancel} the shadow rather than write $dp = \M$ over $m = \M$
+(Invariant~\ref{inv:cancel}). This is the $\mathbf{I} \to \mathbf{E}$ dashed
+edge of Figure~\ref{fig:automaton}.
+
+\begin{proposition}[Cost]
+\label{prop:insertcost}
+Algorithm~\ref{alg:insert} performs $O(n)$ FFI calls, $O(1)$ matrix
+materialisations, and $O(n)$ expected hash operations, with $O(n)$ auxiliary
+memory.
+\end{proposition}
+\begin{proof}
+\textsc{WaitFwd} is called once. The read phase makes at most three point
+probes ($dm$, $dp$, $m$) and at most two $me$ writes per input element and no
+call that reads $dp$ or $dm$ after the wait; the write phase makes at most
+three writes per queued element and never reads them. No point read of a
+matrix follows a write to that same matrix, so no further materialisation is
+triggered. Hash operations are one \texttt{entry} lookup per element,
+expected $O(1)$.
+\end{proof}
+
+\subsection{Bulk deletion}
+\label{sec:delete}
+
+Deletion has a fast path chosen by a single test, $|me| \neq 0$
+(\textsc{HasMultiEdge}). If \emph{no} pair in the tensor is multi-edge, every
+edge is its pair's inline value, so removing a set of edges is removing a set
+of pairs --- expressible in three bulk GraphBLAS operations regardless of how
+many edges are involved:
+
+\begin{align}
+  dm\langle \mathit{mask}\rangle &\mathrel{{=}} \mathit{mask} \cap m
+    &&\text{(mark committed cells deleted)} \label{eq:dmmask}\\
+  dp &\mathrel{{=}} dp \setminus \mathit{mask}
+    &&\text{(drop pending adds, incl.\ shadows)} \notag\\
+  mt &\mathrel{{=}} \text{\textsc{RemoveMask}}(mt, \mathit{mask}^{\!\top})
+    &&\text{(same layer math, Boolean)} \notag
+\end{align}
+
+Equation~\eqref{eq:dmmask} is implemented with \texttt{eWiseMult} over
+\texttt{ANY\_PAIR\_BOOL} and \emph{not} with a masked \texttt{eWiseAdd} copy;
+\S\ref{sec:hazard-zero} explains why that is a correctness requirement rather
+than a style preference. Removing pending adds in the same sweep is what
+keeps Invariant~\ref{inv:pure} true: a pair in state $\mathbf{H}$ or
+$\mathbf{F}$ has both a $dp$ shadow and a live $m$ cell, and the two
+operations together move it to $\mathbf{G}$.
+
+The slow path is per-edge and is the only place demotion happens. For a
+multi-edge pair, the identifier is removed from $me$ and the row is then
+probed for \emph{at most two} survivors --- enough to distinguish ``still
+multi'', ``exactly one left, demote'', and ``empty, delete the pair'' without
+counting the row:
+
+\begin{algorithm}[H]
+\caption{\textsc{RemoveAll}, slow path (per edge $(e,s,d)$)}
+\label{alg:remove}
+\begin{algorithmic}[1]
+\State $k \gets \kappa(s,d)$
+\Switch{\Call{EffGet}{$s,d$}}
+  \Case{$\M$}
+    \State remove column $e$ from row $k$ of $me$
+    \State $\mathit{survivor} \gets$ first entry of row $k$ (or $\bot$)
+    \State $\mathit{stillMulti} \gets$ a second entry of row $k$ exists
+    \If{$\mathit{stillMulti}$}
+      \State \Return \Comment{no state change}
+    \EndIf
+    \State $\textit{multi} \gets \textit{multi} - 1$
+    \If{$\mathit{survivor} \neq \bot$} \Comment{demote: it returns inline}
+      \State remove column $\mathit{survivor}$ from row $k$ of $me$
+      \If{$m(s,d) = \mathit{survivor}$}
+        \State remove $(s,d)$ from $dp$ \Comment{cancel to clean}
+      \Else
+        \State $dp[s,d] \gets \mathit{survivor}$ \Comment{shadow $m$}
+      \EndIf
+    \Else \Comment{row emptied: the pair is gone}
+      \State remove $(s,d)$ from $dp$
+      \If{$m$ has $(s,d)$} \State $dm[s,d] \gets \mathrm{true}$ \EndIf
+      \State remove $(d,s)$ from $mt$;\ \ report $(s,d)$ emptied
+    \EndIf
+  \EndCase
+  \Case{$e$ --- the inline value matches}
+    \State remove $(s,d)$ from $dp$
+    \If{$m$ has $(s,d)$} \State $dm[s,d] \gets \mathrm{true}$ \EndIf
+    \State remove $(d,s)$ from $mt$;\ \ report $(s,d)$ emptied
+  \EndCase
+  \Case{otherwise} \Comment{unknown identifier, or absent pair}
+    \State \Return
+  \EndCase
+\EndSwitch
+\end{algorithmic}
+\end{algorithm}
+
+The returned list of emptied pairs is the interface to the graph-wide
+adjacency matrix, which is the union over relationship types: a pair is
+removed from it only if it is empty in \emph{every} tensor, so the caller
+intersects this report across types.
+
+\begin{remark}[An asymmetry worth naming]
+The fast path reports \emph{all} input pairs as emptied without verifying
+that the supplied identifier is the pair's inline value; the slow path
+reports only pairs it actually emptied. The asymmetry is sound given how the
+method is called --- callers derive the removal list from the tensor itself,
+by scanning it for edges incident to deleted nodes or by resolving bound
+edges --- so a supplied identifier that does not match is not a case that
+arises. It is nonetheless a precondition of the fast path that is documented
+rather than checked, and the kind of thing that a future caller with a
+different provenance for its removal list could violate quietly.
+\end{remark}
+
+\subsection{Iteration}
+\label{sec:iter}
+
+Iteration composes a three-way sorted merge over the forward layers with a
+per-pair row scan of $me$. The merge exploits the fact that GraphBLAS row
+iterators yield ascending $(\mathit{row}, \mathit{col})$ order, so no sorting
+or intermediate materialisation is needed; $dm$ is consumed as a lookahead
+that drops matching $m$ entries, and a $dp$ entry at the same position as an
+$m$ entry wins and \emph{suppresses} it --- the shadow rule. Both delta
+iterators are elided entirely when their layer is empty, which on a
+read-mostly workload avoids allocating and freeing two \texttt{GxB\_Iterator}
+objects per scan.
+
+Two orientations are supported. Forward iteration streams inline values
+directly. Backward iteration streams the Boolean structure of $mt$ and
+recovers each pair's inline value with \textsc{EffGet}, paying one point
+lookup per incoming pair --- the deliberate consequence of not storing
+identifiers twice (\S\ref{sec:representation}).
+
+A separate whole-tensor enumeration, \textsc{IterEdges}, exists for
+consumers that need every edge but not in pair order (snapshot writing, index
+rebuilds). It concatenates the forward stream with sentinels filtered out and
+a single flat scan of $me$, unpacking $\kappa$ back into $(s,d)$ by shifting.
+On a simple graph $me$ is empty and this degenerates to one streaming pass
+with no sub-iterator at all --- the point of the whole design, visible in one
+line of code.
+
+\subsection{Folding}
+
+Folding merges an oversized delta into the base. For the Boolean layers the
+usual pattern union suffices; for the \texttt{UINT64} forward layer it must
+be \emph{value-preserving and $dp$-favouring}, because a shadowed pair's live
+value is in $dp$:
+\[
+  m \mathrel{{=}} m \oplus_{\textsc{second}} dp, \qquad dp \mathrel{{=}} \emptyset;
+  \qquad\quad m \mathrel{{=}} m \setminus dm, \qquad dm \mathrel{{=}} \emptyset .
+\]
+\textsc{Second} makes $dp$ win on the intersection, which is exactly the
+shadow semantics. By Invariant~\ref{inv:pure} the two folds are
+order-independent, so they can be applied under independent size thresholds
+--- the artifact folds each at $10{,}000$ entries.
+
+Note what folding does to the automaton: it collapses the shadowed states.
+$\mathbf{F} \to \mathbf{E}$, $\mathbf{I} \to \mathbf{D}$, $\mathbf{H} \to
+\mathbf{D}$, and $\mathbf{G},\mathbf{J} \to \mathbf{A}$. The ten states are a
+transaction-local phenomenon; a quiescent tensor occupies only
+$\{\mathbf{A}, \mathbf{D}, \mathbf{E}\}$.
+
+\subsection{Rebuilding the transpose}
+
+$mt$ must equal the transpose of the effective forward \emph{structure}
+(Invariant~\ref{inv:mt}). It is tempting to transpose the three forward
+layers into $mt$'s three layers separately, and wrong: a shadowed pair
+appears in both $m$ and $dp$, and the Boolean $mt$ layers are required to be
+disjoint. The artifact instead materialises $(m \setminus dm) \cup dp$ as a
+Boolean matrix and transposes \emph{that} into a clean base with empty
+deltas. The materialisation itself must use a pattern-only apply rather than
+a valued union, for the reason in \S\ref{sec:hazard-zero}.
+
+% =====================================================================
+\section{Correctness}
+\label{sec:correctness}
+
+\begin{theorem}[Cardinality identity]
+\label{thm:count}
+Under Invariants~\ref{inv:masksub}--\ref{inv:counter},
+\[
+  |E| \;=\; \underbrace{|m| + |dp| - |dm| - |dp \cap m|}_{|P^{\ast}|}
+            \;-\; \textit{multi} \;+\; |me| ,
+\]
+where $|dp \cap m|$ is the size of the structural intersection of $dp$ and
+$m$. All six quantities are $O(1)$ GraphBLAS metadata reads except
+$|dp \cap m|$, which is one \texttt{eWiseMult} over
+\texttt{ANY\_PAIR\_BOOL} and is skipped entirely when $|dp| = 0$.
+\end{theorem}
+
+\begin{proof}
+\emph{Pattern size.} By Definition~\ref{def:eff},
+$P^{\ast} = \dom(dp) \cup (\dom(m) \setminus dm)$. By
+Invariant~\ref{inv:masksub} $dm \subseteq \dom(m)$, so
+$|\dom(m) \setminus dm| = |m| - |dm|$; by Invariant~\ref{inv:pure}
+$\dom(dp) \cap dm = \emptyset$, so the union's inclusion--exclusion term is
+$|\dom(dp) \cap (\dom(m)\setminus dm)| = |\dom(dp) \cap \dom(m)| = |dp \cap m|$.
+Hence $|P^{\ast}| = |dp| + |m| - |dm| - |dp \cap m|$.
+
+\emph{Edges per pair.} Each $p \in P^{\ast}$ contributes $|\mathrm{Ids}(p)|$
+edges. If $\varepsilon(p) \neq \M$ that is $1$. If $\varepsilon(p) = \M$ it is
+the number of entries in row $\kappa(p)$ of $me$, and by
+Invariant~\ref{inv:promotion} those rows are non-empty exactly for such $p$
+and empty for all others, so summing over $P^{\ast}$,
+\[
+  |E| = \bigl(|P^{\ast}| - |\{p : \varepsilon(p) = \M\}|\bigr)
+        + \sum_{\varepsilon(p) = \M} |\text{row } \kappa(p)|
+      = |P^{\ast}| - \textit{multi} + |me| ,
+\]
+using Invariant~\ref{inv:counter} for the middle term and the fact that
+$\kappa$ is injective (\S\ref{sec:compound}) so the rows partition $me$.
+\end{proof}
+
+\begin{remark}
+The identity is computed in \texttt{u64} arithmetic with subtractions, so a
+violated invariant does not merely give a wrong count --- it can wrap.
+Combined with Invariant~\ref{inv:counter}'s reliance on incremental
+maintenance, this makes \texttt{edge\_count} a useful oracle: asserting it
+against an independent scan is a cheap, total test of the invariant set, and
+we would recommend it as a debug-mode check.
+\end{remark}
+
+\begin{theorem}[Iteration]
+\label{thm:iter}
+Forward iteration emits, for each $p \in P^{\ast}$ in ascending
+$(\mathit{src},\mathit{dst})$ order, every element of $\mathrm{Ids}(p)$ in
+ascending identifier order, each exactly once; and it allocates no matrix.
+\end{theorem}
+
+\begin{proof}
+\emph{Pair level.} The merge consumes three ascending streams. An $m$ entry at
+position $q$ is discarded iff the $dm$ lookahead, advanced monotonically past
+all positions $< q$, equals $q$; by Invariant~\ref{inv:masksub} every $dm$
+position occurs in the $m$ stream, so no $dm$ entry is stranded and the test
+is exact. Of the remaining $m$ entries and the $dp$ entries, the merge emits
+the lexicographically smaller and, on a tie, emits the $dp$ item while
+discarding the $m$ item. Thus the emitted positions are
+$\dom(dp) \cup (\dom(m)\setminus dm) = P^{\ast}$, each once, ascending, and the
+emitted value at a tie is $dp(p) = \varepsilon(p)$; elsewhere it is the unique
+layer's value, also $\varepsilon(p)$.
+
+\emph{Identifier level.} If $\varepsilon(p) \neq \M$ the emitted value is the
+pair's single identifier by Invariant~\ref{inv:promotion}. If
+$\varepsilon(p) = \M$ the iterator buffers row $\kappa(p)$ of $me$, which
+GraphBLAS yields in ascending column order, and drains it before advancing;
+the row is non-empty by Invariant~\ref{inv:promotion}, so the buffer is
+well-defined.
+
+\emph{Space.} The only allocation is the per-pair identifier buffer, reused
+across pairs, of size $\max_p |\mathrm{Ids}(p)|$; no intermediate matrix is
+built.
+\end{proof}
+
+\begin{remark}[Invariants as unchecked preconditions]
+The last step of the proof is load-bearing in the implementation: having
+buffered a sentinel pair's row, the iterator indexes element $0$ directly. If
+Invariant~\ref{inv:promotion} were violated --- a cell holding $\M$ with an
+empty $me$ row --- this is an out-of-bounds index, i.e.\ a panic. That is the
+right failure mode (loud, immediate, memory-safe), but it is worth being
+explicit that the invariant is a precondition of iteration and not
+re-established by it.
+\end{remark}
+
+% =====================================================================
+\section{Two hazards from the host runtime}
+\label{sec:hazards}
+
+Both hazards below were found empirically, both are now regression-tested in
+the artifact, and both generalise beyond this data structure: they are what
+happens when a data structure with its own invariants is layered on a runtime
+with typed operators and deferred execution.
+
+\subsection{Value typecasting destroys the edge whose identifier is $0$}
+\label{sec:hazard-zero}
+
+Consider building the Boolean deletion mask of
+Equation~\eqref{eq:dmmask} with the obvious operation: a masked
+\texttt{eWiseAdd} that copies the selected cells of the \texttt{UINT64} base
+$m$ into the \texttt{BOOL} matrix $dm$. \texttt{eWiseAdd} propagates cells
+present on only one side, \emph{typecasting} the value; the \texttt{UINT64}
+value $0$ becomes the \texttt{BOOL} value \texttt{false}. GraphBLAS
+distinguishes a stored \texttt{false} from an absent entry structurally, but a
+\emph{valued} mask --- the default --- treats a stored \texttt{false} as
+absent. Therefore:
+
+\begin{quote}
+Deleting the edge whose identifier is $0$ writes a stored \texttt{false} into
+$dm$; every later valued-mask use of $dm$ skips it; the deletion is silently
+lost, and the edge remains readable.
+\end{quote}
+
+The bug is invisible in almost every test, because identifier $0$ is one
+value out of $2^{60}$ --- and unavoidable in production, because identifiers
+are allocated densely from $0$, so the \emph{first edge ever created} is the
+one affected. The fix is to use operations that provably never read operand
+values: \texttt{eWiseMult} over \texttt{GxB\_ANY\_PAIR\_BOOL} for the mask
+intersection, and \texttt{GrB\_Matrix\_apply} with \texttt{GxB\_ONE\_BOOL} for
+pattern unions (the artifact's \texttt{set\_pattern}). The artifact's
+regression test builds $10{,}000$ edges with identifiers $0 \ldots 9999$,
+folds them into the base so that identifier $0$ genuinely lives in the
+\texttt{UINT64} base, deletes identifier $0$ through the fast path with a
+non-zero control, and asserts on both the point read and the materialised
+pattern.
+
+The general lesson is a typing discipline: \emph{in a system where matrix
+values are identifiers rather than numbers, an operation that can read a value
+is an operation that can corrupt state.} Pattern-only operators should be the
+default, and any valued operator on an identifier-carrying matrix should be
+justified at the call site.
+
+\subsection{Deferred computation breaks the ``base is never pending'' invariant}
+\label{sec:hazard-resize}
+
+Every read path calls \textsc{WaitFwd}, which materialises the deltas and
+\emph{asserts} that the committed base is not pending. The assertion is
+justified by an argument about who writes the base: only a fold does, and a
+fold materialises. \texttt{GrB\_Matrix\_resize} is the counterexample. Growth
+that is large enough to change the internal representation leaves pending
+work on the base, after which every read path's assertion fires.
+
+Two properties made this hazard nasty. It is \emph{debug-only}: the assertion
+compiles out in release, where the consequence is instead a base read
+without materialisation. And it is \emph{scale-dependent}: growing capacity
+from $10{,}001$ to $10{,}501$ queues nothing and the bug hides, whereas the
+growth to $114{,}688$ that a real workload produced --- creating and deleting
+$100{,}000$ temporary nodes against a graph loaded from a snapshot, which is
+what makes relationship tensors exist to be resized at all --- crashed the
+server through
+$\textsc{Commit} \to \textsc{DeleteImplicitEdges} \to \textsc{Iter}$.
+
+The fix is to materialise immediately after resizing, at the one site that
+writes the base outside a fold. This costs nothing on hot paths --- resize
+happens only on capacity growth --- and the same hole existed, and was closed
+the same way, in the generic \texttt{VersionedMatrix}. The lesson generalises:
+\emph{when a runtime defers work, ``I did not write this object'' is not the
+same claim as ``this object has no queued work,''} and any invariant of the
+second form needs enumerating every call that can queue work, including the
+ones that look like metadata changes.
+
+% =====================================================================
+\section{Serialisation}
+\label{sec:serialisation}
+
+The on-disk format (encoding version 19) must be readable by the C
+implementation, which uses design (A). The two representations are reconciled
+at the boundary rather than in memory:
+
+\begin{itemize}
+  \item The forward matrix is written from the \emph{effective} state, with
+        deltas folded in, so the on-disk form is canonical: a single-edge pair
+        stores its identifier directly (MSB necessarily clear, by
+        Lemma~\ref{lem:sentinel}), and a multi-edge pair stores
+        $(\mathit{count} \mathbin{|} 2^{63})$ --- the C tag bit, but with a
+        count instead of a pointer as payload.
+  \item Two empty matrices follow, standing in for the delta layers, so the
+        layout matches what a delta-matrix reader expects.
+  \item A \emph{tensor section} then lists, for each multi-edge pair, its
+        endpoints and a dense vector of its identifiers, in two groups (base
+        and delta-plus) to match the C layout; the second group is always
+        empty here because the deltas were folded.
+\end{itemize}
+
+Decoding inverts this defensively: it merges $(m \setminus dm) \cup dp$ rather
+than trusting that the deltas are empty, maps every MSB-tagged cell to the
+in-memory sentinel $\M$ (discarding the count, which the $me$ rows will
+supply), materialises the freshly built base to satisfy the invariant of
+\S\ref{sec:hazard-resize}, and leaves $mt$ empty for the caller to rebuild
+--- an $O(|E|)$ transpose is cheaper than serialising a structure that is
+fully determined by the forward matrix.
+
+Two observations. First, the count payload is redundant in this
+representation: the identifier list in the tensor section determines it. It is
+retained purely for format compatibility, which is the usual fate of such
+fields. Second, the format is where MSB tagging survives; the in-memory
+design's escape from bit-tagging (\S\ref{sec:representation}) is complete
+only up to the persistence boundary.
+
+% =====================================================================
+\section{Cost model}
+\label{sec:cost}
+
+\subsection{Space}
+
+SuiteSparse's sparse format stores, per entry, one index and one value, plus
+$O(\mathrm{nvec})$ vector pointers; since v10 the index arrays may be 32-bit
+when the matrix's dimensions permit. Two refinements matter for an honest
+count. First, a Boolean layer whose entries are all \texttt{true} is
+\emph{iso-valued}, and SuiteSparse then stores one shared scalar instead of a
+value array --- so such a layer costs its index array alone; a non-iso Boolean
+layer costs one further byte per entry. Second, $me$'s declared dimensions of
+$2^{60}-1$ \emph{force 64-bit indices}, so although hypersparsity makes the
+wide declaration free with respect to the \emph{unused} dimensions, it is not
+free for the entries actually stored.
+
+Writing $b_i$ for the forward/backward index width, a tensor over $|P|$
+effective pairs and $|E|$ edges with multi-edge pairs $P_{\ge 2}$ occupies
+approximately
+\[
+  \underbrace{|P|\,(b_i + 8)}_{m:\ \text{ids or sentinels}}
+  \;+\; \underbrace{|P|\,b_i}_{mt:\ \text{iso Boolean structure}}
+  \;+\; \underbrace{8\Bigl(\textstyle\sum_{p \in P_{\ge 2}} |\mathrm{Ids}(p)|\Bigr)}_{me:\ \text{64-bit indices}}
+  \;+\; O(\mathrm{nvec}) \ \text{vector pointers} .
+\]
+With $b_i = 4$: a single-edge pair costs $12$ bytes in $m$ plus $4$ in $mt$
+and contributes nothing to $me$ --- the $\approx 12$ bytes per edge the
+implementation's own documentation claims for the forward layer.
+Table~\ref{tab:space} instantiates this at $\mu = 1$ and contrasts the
+designs. Note that the $me$ term is a further argument for narrowing the
+compound key (\S\ref{sec:limits}): a key that fits in $30+30$ bits would
+still need 64-bit row indices, but a key space below $2^{32}$ would not.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+$\mu = 1$ (simple graph), per edge & \textbf{(A) container/cell} & \textbf{(B) always aux.} & \textbf{(C) inline-first} \\
+\midrule
+forward cell            & $12$\,B & $4$\,B  & $12$\,B \\
+backward cell           & $4$\,B  & $4$\,B  & $4$\,B \\
+auxiliary entry         & ---     & $8$\,B  & --- \\
+per-pair heap object    & ---     & ---     & --- \\
+\midrule
+\textbf{total}          & $\approx16$\,B & $\approx16$\,B & $\approx16$\,B \\
+\midrule
+\multicolumn{4}{@{}l@{}}{\emph{and at $\mu > 1$, per multi-edge pair:}}\\
+extra objects            & 1 container, heap & --- & --- \\
+extra entries            & container payload & $8$\,B/edge in aux. & $8$\,B/edge in $me$ \\
+wasted forward cell      & ---     & ---     & $12$\,B (holds $\M$) \\
+\bottomrule
+\end{tabular}
+\caption{Per-edge space, $32$-bit forward/backward indices, $64$-bit indices in
+the wide auxiliary matrix. At $\mu = 1$ all three designs land at roughly the
+same total --- (B) trades a narrower forward cell for an auxiliary entry it
+cannot avoid --- so (C)'s advantage is not raw bytes at unit multiplicity but
+that the auxiliary matrix is \emph{empty}: no second structure to allocate,
+iterate, fold, serialise or keep consistent. At $\mu > 1$ the designs separate:
+(A) allocates a container object per pair outside GraphBLAS's ownership,
+whereas (B) and (C) add entries to one shared matrix and (C) additionally
+wastes the pair's now-sentinel forward cell.}
+\label{tab:space}
+\end{table}
+
+The honest summary is that at unit multiplicity the three designs are within
+noise of each other on \emph{bytes}, and the design's case has to be made on
+other grounds. Against (A), the gain is what (C) does not have: no container
+objects, hence no allocator pressure proportional to the number of multi-edge
+pairs, no lifetime obligations invisible to GraphBLAS, and no value-copying
+operation that must be audited for tag-awareness. Against (B), the gain is
+that the auxiliary matrix is \emph{empty} on a simple graph --- one structure
+instead of two to allocate, materialise, fold, serialise and keep consistent;
+one lookup instead of two on the hot read path; and one iterator instead of a
+nested pair on a full scan (\S\ref{sec:iter}). Those are the claims worth
+measuring, and they are claims about operations rather than about space.
+
+\subsection{Operations}
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}llp{7.4cm}@{}}
+\toprule
+Operation & Cost & Notes \\
+\midrule
+\textsc{Get}, single edge & $O(1)$ FFI, $0$ alloc & $\le 3$ probes; $dm$ probe skipped when $dm$ empty \\
+\textsc{Get}, $k$-edge    & $O(1) + O(k)$ & one row scan, ascending id order for free \\
+\textsc{EdgeCount}        & $O(1)$ metadata $+$ one \texttt{eWiseMult} & intersection skipped when $|dp| = 0$ (Thm.~\ref{thm:count}) \\
+\textsc{HasMultiEdge}     & $O(1)$ & $|me| \neq 0$ \\
+\textsc{SetAll}, $n$ edges & $O(n)$ FFI, $O(1)$ waits & phase split; without it, $\Theta(n)$ waits (Prop.~\ref{prop:insertcost}) \\
+\textsc{RemoveAll}, flat  & $3$ bulk ops $+ O(n)$ build & independent of $|E|$ \\
+\textsc{RemoveAll}, multi & $O(n)$ FFI $+$ demotions & $\le 2$ row probes per edge, no row count \\
+Forward scan              & $O(|P^{\ast}| + |E|)$, no matrix alloc & 3-way merge; delta iterators elided when empty \\
+Backward scan             & $+\,O(1)$ probe per pair & identifiers not duplicated in $mt$ \\
+\textsc{Flush}            & $2$ bulk ops, amortised & threshold $10{,}000$; order-free by Inv.~\ref{inv:pure} \\
+\textsc{RebuildBackward}  & $O(|P^{\ast}|)$ & materialise-then-transpose \\
+\bottomrule
+\end{tabular}
+\caption{Analytic operation costs. ``FFI'' counts calls across the GraphBLAS
+boundary, which dominate at these sizes; ``waits'' count matrix
+materialisations, which are the asymptotic hazard.}
+\label{tab:ops}
+\end{table}
+
+Table~\ref{tab:ops} makes the design's two performance ideas visible. The
+first is that the common case should touch one matrix: single-edge read,
+single-edge write, and whole-graph scan on a simple graph all avoid $me$
+entirely. The second is that \emph{materialisation count}, not FFI count, is
+what turns a linear operation quadratic --- which is why the phase split of
+\S\ref{sec:insert} is a structural property of the algorithm rather than an
+optimisation.
+
+% =====================================================================
+\section{Limitations and domain restrictions}
+\label{sec:limits}
+
+\paragraph{The compound key restricts node identifiers --- more than its guard says.}
+$\kappa$ requires $s,d < 2^{32}$, and this is checked. But $\kappa(s,d)$ is
+used as a \emph{row index} of $me$, whose declared row dimension is
+$\texttt{GrB\_INDEX\_MAX} = 2^{60}-1$. A valid row index therefore needs
+$\kappa(s,d) < 2^{60}-1$, i.e.\
+\[
+  s \;<\; 2^{28} \;=\; 268{,}435{,}456 ,
+\]
+a bound $16$ times tighter than the guard enforces. For a graph with a
+multi-edge pair whose source identifier exceeds $2^{28}$, the write to $me$
+is out of range. The gap is unreachable at present scales and only for
+multi-edge pairs --- a simple graph never indexes $me$ --- but it is a
+discrepancy between a checked precondition and an actual one, and the natural
+repair is to derive the guard from the storage: assert
+$\kappa(s,d) < \mathrm{nrows}(me)$, or widen $me$'s declared dimension. Since
+$me$ is hypersparse, widening costs nothing except that GraphBLAS's own index
+limit is $2^{60}$, so the real fix is a narrower packing (e.g.\ $30 + 30$
+bits) or a non-packed key.
+
+\paragraph{Two values are reserved.}
+$\M = 2^{64}-1$ is removed from the identifier domain, and the $2^{63}$ bit is
+reserved in the on-disk format. Both are far above the $2^{60}$ ceiling
+GraphBLAS already imposes, so neither restricts anything reachable --- but
+they are assumptions that a future change to identifier allocation would have
+to preserve.
+
+\paragraph{\texttt{multi\_count} is incrementally maintained.}
+It cannot be recomputed in $O(1)$ (\S\ref{sec:invariants}), so
+Theorem~\ref{thm:count} depends on every mutation path updating it. A
+divergence would surface as a wrong --- possibly wrapped --- edge count rather
+than as corrupt data, but it would surface late.
+
+\paragraph{The transaction-local state space is genuinely larger.}
+Ten per-pair states with shadowing is more than the four a Boolean delta
+matrix admits, and the extra states exist \emph{only} to support in-place
+value update. That is the concrete complexity cost of carrying identifiers in
+matrix values, and it is not small: three of the ten states, and the whole
+cancel-to-clean normalisation, exist because of it. A design that kept the
+adjacency matrix Boolean would need none of it --- and would carry design
+(B)'s always-materialised auxiliary matrix, and its second lookup on every
+read, forever.
+
+\paragraph{No empirical evaluation.}
+As stated in \S\ref{sec:intro}, our costs are analytic. The claims most in
+need of measurement are the ones about constants: the single-edge read path
+against design (B)'s two-lookup path, allocator behaviour under churn against
+design (A), and the promotion/demotion cost on workloads whose multiplicity
+oscillates around $2$ --- the one regime where (C) does strictly more work
+than either alternative.
+
+% =====================================================================
+\section{Related work}
+\label{sec:related}
+
+\paragraph{Linear-algebraic graph processing.}
+The formulation of graph algorithms over semirings is developed in
+\cite{kepnergilbert2011} and standardised through \cite{mattson2013},
+\cite{kepner2016} and the C API specification \cite{brock2021spec};
+SuiteSparse:GraphBLAS \cite{davis2019toms,davis2023toms} is the reference
+implementation whose storage formats, non-blocking execution and operator
+typing shape everything in \S\ref{sec:hazards}. LAGraph \cite{lagraph2019}
+collects algorithms above it. Hypersparse representation, which makes an
+overflow matrix with $2^{60}$ declared rows practical, is due to Buluç and
+Gilbert \cite{bulucgilbert2008}; the compressed-sparse layouts underlying the
+per-entry space model go back to Gustavson \cite{gustavson1978}. Our
+contribution is not to this literature but downstream of it: we take the
+matrix as given and ask how to store a multigraph's edge identities in it.
+
+\paragraph{Property graphs and multigraph semantics.}
+Cypher \cite{francis2018cypher} and the broader survey of graph query
+languages \cite{angles2017foundations} make edge identity and per-edge
+properties first-class, which is precisely what forces the problem this paper
+addresses; LDBC's workloads \cite{ldbc2015} exercise multiplicity at scale.
+RedisGraph \cite{cailliau2019} established the approach of executing Cypher
+directly against GraphBLAS matrices, and FalkorDB's C tensor is the
+container-per-cell design (A) we compare against.
+
+\paragraph{Delta encoding and multi-versioning.}
+Splitting a structure into a committed base plus pending deltas for snapshot
+isolation is classical MVCC \cite{bernstein1983mvcc,neumann2015mvcc}, and the
+threshold-triggered fold is one level of LSM compaction \cite{oneil1996lsm}.
+What is specific here is the interaction between delta layers and
+\emph{valued} cells: the standard presentations assume a cell is present or
+absent, so ``a pending layer that shadows a live committed value'' has no
+counterpart, and the invariants of \S\ref{sec:invariants} --- particularly
+cancel-to-clean --- do not appear in that literature.
+
+\paragraph{Value tagging.}
+Reserving bits or values in a machine word to discriminate representations is
+old and ubiquitous: tagged pointers, NaN-boxing in dynamic-language runtimes,
+tombstones in log-structured stores. Design (A) is pointer tagging; ours is
+value reservation, which differs in that the reserved value is a single point
+outside a domain the storage already bounds, so no unmasking accompanies a
+normal read, and --- relevant in a Rust implementation --- no raw pointer is
+ever stored inside data the runtime owns and may copy.
+
+% =====================================================================
+\section{Future work}
+\label{sec:future}
+
+\paragraph{Measurement.} The experiment we would run first is a multiplicity
+sweep: fix $|E|$, vary $\mu \in \{1, 1.1, 2, 4, 16\}$, and measure resident
+size, single-pair lookup latency, full-scan throughput and bulk-insert
+throughput for (A), (B) and (C). The interesting region is $\mu$ slightly
+above $1$, where a small fraction of pairs forces promotions and (C) pays a
+transition that neither alternative has.
+
+\paragraph{Tighten the key.} Derive the compound-key guard from
+$\mathrm{nrows}(me)$ rather than from $32$-bit packing
+(\S\ref{sec:limits}), which removes the discrepancy and makes the bound
+self-documenting.
+
+\paragraph{Make \texttt{multi\_count} checkable.} A debug-mode assertion of
+Theorem~\ref{thm:count} against a scan would convert the whole invariant set
+into a testable property, at a cost paid only in debug builds.
+
+\paragraph{Demotion policy.} Demotion is currently eager: the moment a pair
+drops to one edge, its identifier returns inline and its $me$ row is emptied.
+A workload that oscillates across the boundary pays a promotion and a
+demotion per oscillation. Hysteresis --- keeping a pair in $me$ until the
+transaction ends --- would trade a little space for stability, and it is not
+obvious which wins.
+
+\paragraph{Generalising the pattern.} Inline-first with sentinel promotion is
+not specific to edge identifiers. Any sparse-matrix-backed store whose cell
+values are drawn from a domain strictly smaller than the machine word, and
+whose multiplicity distribution is dominated by $1$, can use it: reserve a
+point, keep the common case inline, and overflow to one shared hypersparse
+matrix keyed by a packed coordinate. Stating the pattern in those terms, with
+the invariant discipline of \S\ref{sec:invariants} as its obligations, may be
+the most transferable part of this design.
+
+% =====================================================================
+\section{Conclusion}
+
+A matrix cell holds one value; a property multigraph needs many. The
+conventional resolution --- a container per cell --- is general and pays for
+generality in the case that actually dominates. FalkorDB's Rust
+\texttt{Tensor} resolves it the other way round: keep one edge identifier
+\emph{in} the cell, reserve a single sentinel value to announce that a pair
+has outgrown the cell, and only then spill \emph{all} of that pair's
+identifiers into one shared hypersparse matrix keyed by a packed coordinate.
+A simple graph then needs no auxiliary edge structure at all, and reads,
+writes and scans on it touch exactly one matrix.
+
+The design's cost is not space but invariant discipline, and the
+paper's more general contribution may be that accounting. Making matrix cells
+carry identity forces a delta algebra richer than the Boolean one --- a
+pending layer must be able to shadow a live committed value --- which yields
+ten transaction-local per-pair states, a normalisation rule
+(cancel-to-clean) to keep them finite and counting exact, and a cardinality
+identity that is provable but arithmetically fragile. Layering all of it on a
+non-blocking runtime with typed operators adds two hazard classes that are
+easy to state after the fact and were not obvious before: a value-propagating
+operator silently destroys the edge whose identifier is $0$, and a resize
+leaves the ``committed'' base with queued work in violation of an assertion
+every read path makes. Both are the same underlying mistake --- assuming an
+operation does less than it does --- and both are the price of building a
+data structure with its own invariants inside someone else's execution model.
+
+% =====================================================================
+\section*{Availability}
+
+The implementation described here is \texttt{Tensor} in
+\texttt{graph/src/graph/graphblas/tensor.rs}, with supporting code in
+\texttt{versioned\_matrix.rs}, \texttt{matrix.rs} and \texttt{cow.rs}, on the
+\texttt{main-rs} branch of \url{https://github.com/FalkorDB/FalkorDB} at
+commit \texttt{a30d4ca}. It is built against SuiteSparse:GraphBLAS v10.3.1
+and LAGraph v1.2.1. The C implementation used for comparison as design (A) is
+under \texttt{src/graph/tensor/}.
+
+% =====================================================================
+\begin{thebibliography}{99}
+\small
+
+\bibitem{angles2017foundations}
+R.~Angles, M.~Arenas, P.~Barceló, A.~Hogan, J.~Reutter, and D.~Vrgoč.
+\newblock Foundations of Modern Query Languages for Graph Databases.
+\newblock \emph{ACM Computing Surveys}, 50(5):68:1--68:40, 2017.
+
+\bibitem{bernstein1983mvcc}
+P.~A. Bernstein and N.~Goodman.
+\newblock Multiversion Concurrency Control---Theory and Algorithms.
+\newblock \emph{ACM Transactions on Database Systems}, 8(4):465--483, 1983.
+
+\bibitem{brock2021spec}
+B.~Brock, A.~Buluç, T.~Mattson, S.~McMillan, and J.~Moreira.
+\newblock The GraphBLAS C API Specification, Version 2.0.
+\newblock Technical report, GraphBLAS.org, 2021.
+
+\bibitem{bulucgilbert2008}
+A.~Buluç and J.~R. Gilbert.
+\newblock On the Representation and Multiplication of Hypersparse Matrices.
+\newblock In \emph{IEEE International Symposium on Parallel and Distributed
+Processing (IPDPS)}, 2008.
+
+\bibitem{cailliau2019}
+P.~Cailliau, T.~Davis, V.~Gadepally, J.~Kepner, R.~Lipman, J.~Lovitz, and
+K.~Ouaknine.
+\newblock RedisGraph GraphBLAS Enabled Graph Database.
+\newblock In \emph{IEEE International Parallel and Distributed Processing
+Symposium Workshops (GrAPL)}, 2019.
+
+\bibitem{davis2019toms}
+T.~A. Davis.
+\newblock Algorithm 1000: SuiteSparse:GraphBLAS: Graph Algorithms in the
+Language of Sparse Linear Algebra.
+\newblock \emph{ACM Transactions on Mathematical Software}, 45(4):44:1--44:25,
+2019.
+
+\bibitem{davis2023toms}
+T.~A. Davis.
+\newblock Algorithm 1037: SuiteSparse:GraphBLAS: Parallel Graph Algorithms in
+the Language of Sparse Linear Algebra.
+\newblock \emph{ACM Transactions on Mathematical Software}, 49(3), 2023.
+
+\bibitem{francis2018cypher}
+N.~Francis, A.~Green, P.~Guagliardo, L.~Libkin, T.~Lindaaker, V.~Marsault,
+S.~Plantikow, M.~Rydberg, P.~Selmer, and A.~Taylor.
+\newblock Cypher: An Evolving Query Language for Property Graphs.
+\newblock In \emph{ACM SIGMOD International Conference on Management of Data},
+pages 1433--1445, 2018.
+
+\bibitem{gustavson1978}
+F.~G. Gustavson.
+\newblock Two Fast Algorithms for Sparse Matrices: Multiplication and Permuted
+Transposition.
+\newblock \emph{ACM Transactions on Mathematical Software}, 4(3):250--269,
+1978.
+
+\bibitem{kepner2016}
+J.~Kepner, P.~Aaltonen, D.~Bader, A.~Buluç, F.~Franchetti, J.~Gilbert,
+D.~Hutchison, M.~Kumar, A.~Lumsdaine, H.~Meyerhenke, S.~McMillan, C.~Yang,
+J.~D. Owens, M.~Zalewski, T.~Mattson, and J.~Moreira.
+\newblock Mathematical Foundations of the GraphBLAS.
+\newblock In \emph{IEEE High Performance Extreme Computing Conference (HPEC)},
+2016.
+
+\bibitem{kepnergilbert2011}
+J.~Kepner and J.~Gilbert, editors.
+\newblock \emph{Graph Algorithms in the Language of Linear Algebra}.
+\newblock SIAM, Philadelphia, 2011.
+
+\bibitem{lagraph2019}
+T.~Mattson, T.~A. Davis, M.~Kumar, A.~Buluç, S.~McMillan, J.~Moreira, and
+C.~Yang.
+\newblock LAGraph: A Community Effort to Collect Graph Algorithms Built on Top
+of the GraphBLAS.
+\newblock In \emph{IEEE International Parallel and Distributed Processing
+Symposium Workshops (GrAPL)}, 2019.
+
+\bibitem{ldbc2015}
+O.~Erling, A.~Averbuch, J.~Larriba-Pey, H.~Chafi, A.~Gubichev, A.~Prat,
+M.-D. Pham, and P.~Boncz.
+\newblock The LDBC Social Network Benchmark: Interactive Workload.
+\newblock In \emph{ACM SIGMOD International Conference on Management of Data},
+pages 619--630, 2015.
+
+\bibitem{mattson2013}
+T.~Mattson, D.~Bader, J.~Berry, A.~Buluç, J.~Dongarra, C.~Faloutsos,
+J.~Feo, J.~Gilbert, J.~Gonzalez, B.~Hendrickson, J.~Kepner, C.~Leiserson,
+A.~Lumsdaine, D.~Padua, S.~Poole, S.~Reinhardt, M.~Stonebraker, S.~Wallach,
+and A.~Yoo.
+\newblock Standards for Graph Algorithm Primitives.
+\newblock In \emph{IEEE High Performance Extreme Computing Conference (HPEC)},
+2013.
+
+\bibitem{neumann2015mvcc}
+T.~Neumann, T.~Mühlbauer, and A.~Kemper.
+\newblock Fast Serializable Multi-Version Concurrency Control for Main-Memory
+Database Systems.
+\newblock In \emph{ACM SIGMOD International Conference on Management of Data},
+pages 677--689, 2015.
+
+\bibitem{oneil1996lsm}
+P.~O'Neil, E.~Cheng, D.~Gawlick, and E.~O'Neil.
+\newblock The Log-Structured Merge-Tree (LSM-Tree).
+\newblock \emph{Acta Informatica}, 33(4):351--385, 1996.
+
+\end{thebibliography}
+
+% =====================================================================
+\appendix
+
+\section{Effective-state decision table}
+\label{app:table}
+
+For a pair $p$, given the presence of $p$ in each layer, the effective
+inline value and identifier set are:
+
+\begin{center}
+\small
+\begin{tabular}{@{}cccll@{}}
+\toprule
+$p \in \dom(dp)$ & $p \in dm$ & $p \in \dom(m)$ & $\varepsilon(p)$ & $\mathrm{Ids}(p)$ \\
+\midrule
+yes & \emph{n/a}\,$^{\dagger}$ & any & $dp(p)$        & inline, or $me$ row if $dp(p)=\M$ \\
+no  & yes & yes$^{\ddagger}$   & $\bot$         & $\emptyset$ \\
+no  & no  & yes                & $m(p)$         & inline, or $me$ row if $m(p)=\M$ \\
+no  & no  & no                 & $\bot$         & $\emptyset$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+$^{\dagger}$ excluded by Invariant~\ref{inv:pure}.\quad
+$^{\ddagger}$ guaranteed by Invariant~\ref{inv:masksub}.
+
+\section{Transition table}
+\label{app:transitions}
+
+Using the state labels of Table~\ref{tab:states}, with example identifiers
+$1,2,3,4$ and ``cancel'' marking transitions that \emph{remove} deltas by
+Invariant~\ref{inv:cancel}:
+
+\begin{center}
+\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+from & operation & to & note \\
+\midrule
+A & add 1        & B & first pending edge \\
+B & add 2        & C & in-batch or in-transaction promotion \\
+C & del 2        & B & demote (pending) \\
+B & del 1        & A & \\
+\midrule
+D & del 1        & G & mask the committed cell \\
+G & add 1        & D & \emph{cancel} \\
+G & add 2        & H & shadow with a different id \\
+H & del 2        & G & \\
+D & add 2        & F & promote a committed single \\
+F & del 2        & D & \emph{cancel} \\
+G & add 2,3      & F & promote from deleted \\
+F & del 1        & H & demote to a shadowed single \\
+H & add 3        & F & $me=\{2,3\}$ \\
+F & del 1,2      & G & \\
+\midrule
+E & del 2        & I & demote a committed multi \\
+I & add 3        & E & \emph{cancel}, $me=\{1,3\}$ \\
+E & del 1,2      & J & \\
+J & add 3,4      & E & \emph{cancel}, $me=\{3,4\}$ \\
+I & del 1        & J & \\
+J & add 3        & I & \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Regression tests as invariant witnesses}
+\label{app:tests}
+
+The artifact carries two tests that correspond directly to
+\S\ref{sec:hazards}, and both are worth reading as specifications rather than
+as tests.
+
+\paragraph{\texttt{bulk\_remove\_and\_extract\_edge\_id\_zero}.}
+Builds $10{,}000$ edges with identifiers $0\ldots9999$, folds them so that
+identifier $0$ lives in the \texttt{UINT64} base, materialises, asserts the
+base structurally contains the pair, then deletes identifier $0$ and a
+non-zero control through the flat path and asserts that both are unreadable
+and that the materialised pattern excludes them while retaining an unrelated
+pair. It fails if any operation on the path typecasts a \texttt{UINT64}
+identifier into a \texttt{BOOL} (\S\ref{sec:hazard-zero}).
+
+\paragraph{\texttt{resize\_leaves\_base\_materialized}.}
+Builds and folds $10{,}000$ edges, grows the tensor to $114{,}688 \times
+114{,}688$ --- growth large enough to change the internal representation;
+$10{,}001 \to 10{,}501$ queues nothing and the bug hides --- then asserts the
+base is not pending, exercises the assertion the way read paths reach it, and
+reads an edge back (\S\ref{sec:hazard-resize}).
+
+\end{document}
