@@ -711,7 +711,7 @@ static AR_FuncDesc _desc_in = {
 
 static AR_FuncDesc _desc_size = {
     .name="size", .func=AR_SIZE,
-    TA (T_STRING | T_ARRAY | T_NULL), .ret_type=T_NULL | T_INT64,
+    TA (T_STRING | T_ARRAY | T_MAP | T_NULL), .ret_type=T_NULL | T_INT64,
     .min_argc=1, .max_argc=1,
     .reducible=true, .deterministic=true };
 
