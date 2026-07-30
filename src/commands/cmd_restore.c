@@ -7,6 +7,7 @@
 #include "../graph/graphcontext.h"
 #include "../serializers/serializer_io.h"
 #include "../serializers/decoders/current/v19/decode_v19.h"
+#include "../redismodule.h"
 
 extern RedisModuleType *GraphContextRedisModuleType;
 
@@ -36,7 +37,20 @@ int Graph_Restore
 		return RedisModule_WrongArity(ctx);
 	}
 
-	// TODO: reject GRAPH.RESTORE if caller isn't the master
+	//--------------------------------------------------------------------------
+	// reject client-issued RESTORE on replicas
+	//--------------------------------------------------------------------------
+
+	// GRAPH.COPY replicates via GRAPH.RESTORE, so replicated commands must be
+	// allowed on replicas; only direct client calls on a replica are rejected
+	int flags = RedisModule_GetContextFlags(ctx);
+	bool is_master = flags & REDISMODULE_CTX_FLAGS_MASTER;
+	bool is_replicated = flags & REDISMODULE_CTX_FLAGS_REPLICATED;
+	if(!is_master && !is_replicated) {
+		RedisModule_ReplyWithError(ctx,
+				"ERR GRAPH.RESTORE can only be called on a master, or via replication");
+		return REDISMODULE_OK;
+	}
 
 	//--------------------------------------------------------------------------
 	// make sure graph key doesn't exists
