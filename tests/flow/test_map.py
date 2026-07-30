@@ -271,3 +271,26 @@ class testMap(FlowTestsBase):
         self.env.assertEquals(len(res), 1)
         self.env.assertEquals(res[0][1], {'name': 'John', 'age': 30, 'x': [{'z':1}]})
 
+
+
+    def test11_map_size(self):
+        # size() on maps returns the number of keys
+        cases = [
+            ("RETURN size({})", 0),
+            ("RETURN size({a: 1})", 1),
+            ("RETURN size({a: 1, b: 2})", 2),
+            ("RETURN size({a: 1, b: 2, c: {d: 3}})", 3),
+            ("WITH {x: 1, y: 2} AS m RETURN size(m), size(keys(m))", (2, 2)),
+        ]
+        for q, expected in cases:
+            res = self.graph.query(q).result_set[0]
+            if isinstance(expected, tuple):
+                self.env.assertEquals(tuple(res), expected)
+            else:
+                self.env.assertEquals(res[0], expected)
+
+        # size(map) agrees with keys(map) length for dynamic maps
+        q = """UNWIND [{}, {a:1}, {a:1, b:2}, {a:1, b:2, c:3}] AS m
+               RETURN size(m), size(keys(m)) ORDER BY size(m)"""
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res, [[0, 0], [1, 1], [2, 2], [3, 3]])
