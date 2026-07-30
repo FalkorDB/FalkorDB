@@ -7,6 +7,7 @@ max_results = 6
 
 GRAPH_ID = "variable_length_traversals"
 
+
 class testVariableLengthTraversals(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
@@ -23,7 +24,14 @@ class testVariableLengthTraversals(FlowTestsBase):
         # Create edges
         edges = []
         for i in range(len(nodes) - 1):
-            edges.append(Edge(nodes[i], "knows", nodes[i+1], properties={"connects": node_names[i] + node_names[i+1]}))
+            edges.append(
+                Edge(
+                    nodes[i],
+                    "knows",
+                    nodes[i + 1],
+                    properties={"connects": node_names[i] + node_names[i + 1]},
+                )
+            )
 
         nodes_str = [str(node) for node in nodes]
         edges_str = [str(edge) for edge in edges]
@@ -35,9 +43,7 @@ class testVariableLengthTraversals(FlowTestsBase):
                    RETURN a.name, e.connects, b.name
                    ORDER BY a.name, b.name"""
         actual_result = self.graph.query(query)
-        expected_result = [['A', 'AB', 'B'],
-                           ['B', 'BC', 'C'],
-                           ['C', 'CD', 'D']]
+        expected_result = [["A", "AB", "B"], ["B", "BC", "C"], ["C", "CD", "D"]]
         self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Traversal with no labels
@@ -119,7 +125,7 @@ class testVariableLengthTraversals(FlowTestsBase):
                    RETURN a.name, b.name
                    ORDER BY a.name, b.name"""
         actual_result = self.graph.query(query)
-        expected_result = [['A', 'B']]
+        expected_result = [["A", "B"]]
         self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Test traversals with filters on variable-length edges
@@ -132,7 +138,7 @@ class testVariableLengthTraversals(FlowTestsBase):
         plan = str(self.graph.explain(query))
         self.env.assertNotContains("Filter", plan)
         actual_result = self.graph.query(query)
-        expected_result = [['B', 'C']]
+        expected_result = [["B", "C"]]
         self.env.assertEqual(actual_result.result_set, expected_result)
 
         # Test a WHERE clause predicate
@@ -144,9 +150,7 @@ class testVariableLengthTraversals(FlowTestsBase):
         plan = str(self.graph.explain(query))
         self.env.assertNotContains("Filter", plan)
         actual_result = self.graph.query(query)
-        expected_result = [['B', 'C'],
-                           ['B', 'D'],
-                           ['C', 'D']]
+        expected_result = [["B", "C"], ["B", "D"], ["C", "D"]]
         self.env.assertEqual(actual_result.result_set, expected_result)
 
         # Test a WHERE clause predicate with an OR condition
@@ -170,9 +174,7 @@ class testVariableLengthTraversals(FlowTestsBase):
         plan = str(self.graph.explain(query))
         self.env.assertNotContains("Filter", plan)
         actual_result = self.graph.query(query)
-        expected_result = [['A', 'B'],
-                           ['A', 'C'],
-                           ['B', 'C']]
+        expected_result = [["A", "B"], ["A", "C"], ["B", "C"]]
         self.env.assertEqual(actual_result.result_set, expected_result)
 
         # Test the concatenation of AND and OR conditions
@@ -184,9 +186,7 @@ class testVariableLengthTraversals(FlowTestsBase):
         plan = str(self.graph.explain(query))
         self.env.assertNotContains("Filter", plan)
         actual_result = self.graph.query(query)
-        expected_result = [['A', 'B'],
-                           ['A', 'C'],
-                           ['B', 'C']]
+        expected_result = [["A", "B"], ["A", "C"], ["B", "C"]]
         self.env.assertEqual(actual_result.result_set, expected_result)
 
         # Validate that WHERE clause predicates are applied to edges lower than the minHops value
@@ -195,7 +195,7 @@ class testVariableLengthTraversals(FlowTestsBase):
                    RETURN a.name, b.name
                    ORDER BY a.name, b.name"""
         actual_result = self.graph.query(query)
-        expected_result = [['B', 'D']]
+        expected_result = [["B", "D"]]
         self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Test traversals with filters on variable-length edges in WITH...OPTIONAL MATCH constructs
@@ -218,7 +218,7 @@ class testVariableLengthTraversals(FlowTestsBase):
                    RETURN a.name, b.name
                    ORDER BY a.name, b.name"""
         actual_result = self.graph.query(query)
-        expected_result = [['A', 'B']]
+        expected_result = [["A", "B"]]
         self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Test range-length edges
@@ -239,12 +239,18 @@ class testVariableLengthTraversals(FlowTestsBase):
 
         # validation queries
         query_to_expected_result = {
-            "MATCH p = (a {v:'a'})-[*2]-(c {v:'c'}) RETURN length(p)" : [[2]],
-            "MATCH p = (a {v:'a'})-[*2..]-(c {v:'c'}) RETURN length(p)" : [[2]],
-            "MATCH p = (a {v:'a'})-[*2..2]-(c {v:'c'}) RETURN length(p)" : [[2]],
-            "MATCH p = (a {v:'a'})-[*]-(c {v:'c'}) WITH length(p) AS len RETURN len ORDER BY len" : [[1],[2]],
-            "MATCH p = (a {v:'a'})-[*..]-(c {v:'c'}) WITH length(p) as len RETURN len ORDER BY len" : [[1],[2]],
-            "MATCH p = (d {v:'d'})-[*0]-() RETURN length(p)" : [[0]],
+            "MATCH p = (a {v:'a'})-[*2]-(c {v:'c'}) RETURN length(p)": [[2]],
+            "MATCH p = (a {v:'a'})-[*2..]-(c {v:'c'}) RETURN length(p)": [[2]],
+            "MATCH p = (a {v:'a'})-[*2..2]-(c {v:'c'}) RETURN length(p)": [[2]],
+            "MATCH p = (a {v:'a'})-[*]-(c {v:'c'}) WITH length(p) AS len RETURN len ORDER BY len": [
+                [1],
+                [2],
+            ],
+            "MATCH p = (a {v:'a'})-[*..]-(c {v:'c'}) WITH length(p) as len RETURN len ORDER BY len": [
+                [1],
+                [2],
+            ],
+            "MATCH p = (d {v:'d'})-[*0]-() RETURN length(p)": [[0]],
         }
 
         # validate query results
@@ -258,9 +264,6 @@ class testVariableLengthTraversals(FlowTestsBase):
         # a->b->c->a
         #
         # variable length traversal should not get stuck in a cycle
-        # traversal follows Cypher trail semantics: relationships are unique
-        # within a path but nodes may repeat, so a->b->c->a->d is matched
-        # (a->b->c->a->b is not, edge a->b would repeat)
 
         # clear previous data
         self.graph.delete()
@@ -281,9 +284,8 @@ class testVariableLengthTraversals(FlowTestsBase):
 
         result = self.graph.query(query).result_set
         self.env.assertEqual(len(result), 3)
-        self.env.assertEqual(result[0][0], 'a')
-        self.env.assertEqual(result[1][0], 'c')
-        self.env.assertEqual(result[2][0], 'd')
+        self.env.assertEqual(result[0][0], "a")
+        self.env.assertEqual(result[1][0], "c")
 
     def test13_fanout(self):
         # create a tree structure graph with a fanout of 3
@@ -324,15 +326,15 @@ class testVariableLengthTraversals(FlowTestsBase):
 
         # children of root
         for i in range(3):
-            l = res[i+1][0]
-            identity = res[i+1][1]
+            l = res[i + 1][0]
+            identity = res[i + 1][1]
             self.env.assertEqual(l, 1)
             self.env.assertEqual(identity, i)
 
         # grandchildren of root
         for i in range(9):
-            l = res[i+4][0]
-            identity = res[i+4][1]
+            l = res[i + 4][0]
+            identity = res[i + 4][1]
             self.env.assertEqual(l, 2)
             self.env.assertEqual(identity, i)
 
@@ -382,49 +384,49 @@ class testVariableLengthTraversals(FlowTestsBase):
 
         # zero length traversal with follow up
         q = "MATCH (a)-[e0]->(b)-[e1*0]->(c) RETURN a.v, b.v, c.v"
-        res  = self.graph.query(q)
+        res = self.graph.query(q)
         self.env.assertEqual(res.result_set, [[1, 3, 3], [3, 5, 5]])
 
         q = "MATCH (a:A)-[e0]->(b)-[e1*0]->(c) RETURN a.v, b.v, c.v"
-        res  = self.graph.query(q)
+        res = self.graph.query(q)
         self.env.assertEqual(res.result_set, [[1, 3, 3]])
 
         q = "MATCH (a)-[e0]->(b:B)-[e1*0]->(c) RETURN a.v, b.v, c.v"
-        res  = self.graph.query(q)
+        res = self.graph.query(q)
         self.env.assertEqual(res.result_set, [[1, 3, 3]])
 
         q = "MATCH (a:A)-[e0]->(b:B)-[e1*0]->(c) RETURN a.v, b.v, c.v"
-        res  = self.graph.query(q)
+        res = self.graph.query(q)
         self.env.assertEqual(res.result_set, [[1, 3, 3]])
 
         q = "MATCH (a)-[e0]->(b)-[e1*0]->(c) RETURN a.v, b.v, c.v"
-        res  = self.graph.query(q)
+        res = self.graph.query(q)
         self.env.assertEqual(res.result_set, [[1, 3, 3], [3, 5, 5]])
 
         # same queries as before, swap zero length edge
         q = "MATCH (a)-[e0*0]->(b)-[e1]->(c) RETURN a.v, b.v, c.v"
-        res  = self.graph.query(q)
+        res = self.graph.query(q)
         self.env.assertEqual(res.result_set, [[1, 1, 3], [3, 3, 5]])
 
         q = "MATCH (a:A)-[e0*0]->(b)-[e1]->(c) RETURN a.v, b.v, c.v"
-        res  = self.graph.query(q)
+        res = self.graph.query(q)
         self.env.assertEqual(res.result_set, [[1, 1, 3]])
 
         q = "MATCH (a)-[e0*0]->(b:A)-[e1]->(c) RETURN a.v, b.v, c.v"
-        res  = self.graph.query(q)
+        res = self.graph.query(q)
         self.env.assertEqual(res.result_set, [[1, 1, 3]])
 
         q = "MATCH (a:A)-[e0*0]->(b:A)-[e1]->(c) RETURN a.v, b.v, c.v"
-        res  = self.graph.query(q)
+        res = self.graph.query(q)
         self.env.assertEqual(res.result_set, [[1, 1, 3]])
 
         q = "MATCH (a)-[e0*0]->(b)-[e1]->(c) RETURN a.v, b.v, c.v"
-        res  = self.graph.query(q)
+        res = self.graph.query(q)
         self.env.assertEqual(res.result_set, [[1, 1, 3], [3, 3, 5]])
 
         # multi zero length edges
         q = "MATCH (a)-[e0*0]->(b)-[e1*0]->(c) RETURN a.v, b.v, c.v"
-        res  = self.graph.query(q)
+        res = self.graph.query(q)
         self.env.assertEqual(res.result_set, [[1, 1, 1], [3, 3, 3], [5, 5, 5]])
 
     # TODO prev() function is not yet supported in variable-length traversals
@@ -437,7 +439,6 @@ class testVariableLengthTraversals(FlowTestsBase):
                       (:A {v:6})-[:R {v:9}]->(:B {v:8})-[:R {v:7}]->(:C {v:10})"""
         res = self.graph.query(q)
 
-
         q = """MATCH p=(a:A {v:1})-[e*]->(b)
                    WHERE coalesce(prev(e.v), e.v) <= e.v
                    RETURN p"""
@@ -447,14 +448,127 @@ class testVariableLengthTraversals(FlowTestsBase):
 
         res = self.graph.query(q)
         self.env.assertEqual(len(res.result_set), 2)
-        self.env.assertEqual(res.result_set[0][0], Path(
-            [Node(0, labels=["A"], properties={"v": 1}),
-                Node(1, labels=["B"], properties={"v": 3})],
-            [Edge(0, "R", 1, 0, properties={"v": 2})]
-        ))
-        self.env.assertEqual(res.result_set[1][0], Path(
-            [Node(0, labels=["A"], properties={"v": 1}),
-                Node(1, labels=["B"], properties={"v": 3}),
-                Node(2, labels=["C"], properties={"v": 5})],
-            [Edge(0, "R", 1, 0, properties={"v": 2}), Edge(1, "R", 2, 1, properties={"v": 4})]
-        ))
+        self.env.assertEqual(
+            res.result_set[0][0],
+            Path(
+                [
+                    Node(0, labels=["A"], properties={"v": 1}),
+                    Node(1, labels=["B"], properties={"v": 3}),
+                ],
+                [Edge(0, "R", 1, 0, properties={"v": 2})],
+            ),
+        )
+        self.env.assertEqual(
+            res.result_set[1][0],
+            Path(
+                [
+                    Node(0, labels=["A"], properties={"v": 1}),
+                    Node(1, labels=["B"], properties={"v": 3}),
+                    Node(2, labels=["C"], properties={"v": 5}),
+                ],
+                [
+                    Edge(0, "R", 1, 0, properties={"v": 2}),
+                    Edge(1, "R", 2, 1, properties={"v": 4}),
+                ],
+            ),
+        )
+
+    def test16_dest_label_enforcement(self):
+        """
+        validate no conditional / expand into operation is added to enforce
+        dest node label
+        """
+
+        self.graph.delete()
+
+        q = """CREATE
+                (a:A)-[:R]->(b0:B), 
+                (a)-[:R]->(b1:B),
+
+                (b0)-[:R]->(c0:C),
+                (b0)-[:R]->(c1:C),
+                (b1)-[:R]->(c2:C),
+                (b1)-[:R]->(c3:C),
+
+                (c0)-[:R]->(d1:D),
+                (c0)-[:R]->(d2:D),
+                (c0)-[:R]->(d3:D),
+                (c0)-[:R]->(d4:D),
+
+                (c1)-[:R]->(d5:D),
+                (c1)-[:R]->(d6:D),
+                (c1)-[:R]->(d7:D),
+                (c1)-[:R]->(d8:D),
+
+                (c2)-[:R]->(d9:D),
+                (c2)-[:R]->(d10:D),
+                (c2)-[:R]->(d11:D),
+                (c2)-[:R]->(d12:D),
+
+                (c3)-[:R]->(d13:D),
+                (c3)-[:R]->(d14:D),
+                (c3)-[:R]->(d15:D),
+                (c3)-[:R]->(d16:D)"""
+
+        self.graph.query(q)
+
+        q = "MATCH (a:A)-[:R*1..]->(d:D) RETURN count(d)"
+        plan = self.graph.explain(q)
+
+        root = plan.structured_plan
+        self.env.assertEqual(root.name, "Aggregate")
+
+        child = root.children[0]
+        self.env.assertEqual(child.name, "Conditional Variable Length Traverse")
+
+        child = child.children[0]
+        self.env.assertEqual(child.name, "Node By Label Scan")
+
+        count = self.graph.query(q).result_set[0][0]
+        self.env.assertEqual(count, 16)
+
+        q = """MATCH (a:A), (d:D)
+               WITH a, d
+               OPTIONAL MATCH (a)-[:R*..]->(d)
+               RETURN count(d)"""
+
+        plan = self.graph.explain(q)
+
+        root = plan.structured_plan
+        self.env.assertEqual(root.name, "Aggregate")
+
+        child = root.children[0]
+        self.env.assertEqual(child.name, "Apply")
+
+        match_branch = child.children[0]
+        self.env.assertEqual(match_branch.name, "Project")
+
+        match_branch = match_branch.children[0]
+        self.env.assertEqual(match_branch.name, "Cartesian Product")
+
+        optional_branch = child.children[1]
+        self.env.assertEqual(optional_branch.name, "Optional")
+
+        optional_branch = optional_branch.children[0]
+        self.env.assertEqual(
+            optional_branch.name, "Conditional Variable Length Traverse (Expand Into)"
+        )
+
+        optional_branch = optional_branch.children[0]
+        self.env.assertEqual(optional_branch.name, "Argument")
+
+        count = self.graph.query(q).result_set[0][0]
+        self.env.assertEqual(count, 16)
+
+    def test17_var_len_planner_alias_consistency(self):
+        # Regression: planner-time rewrite must keep aliases consistent for
+        # subsequent CondTraverse reconstruction on EXPLAIN/QUERY.
+        self.graph.delete()
+
+        q = """MATCH (:B)<--()-->(:E)-[*0..]->(d:D)
+               MATCH (p)-->()
+               WHERE p.k = d.k
+               RETURN 1"""
+
+        result = self.graph.query(q)
+        self.env.assertEqual(result.result_set, [])

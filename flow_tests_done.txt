@@ -37,6 +37,7 @@ tests/flow/test_graph_info.py
 tests/flow/test_graph_merge
 tests/flow/test_graph_versioning.py
 tests/flow/test_hashjoin.py
+tests/flow/test_identifier_limits
 tests/flow/test_imdb
 tests/flow/test_index_create
 tests/flow/test_index_delete.py
@@ -44,6 +45,7 @@ tests/flow/test_index_scans.py
 tests/flow/test_index_updates.py
 tests/flow/test_intern_string.py
 tests/flow/test_keyspace_accesses.py
+tests/flow/test_label_update
 tests/flow/test_list
 tests/flow/test_load_csv
 tests/flow/test_maintain_record_order.py
@@ -80,6 +82,7 @@ tests/flow/test_query_mem_limit.py
 tests/flow/test_query_validation
 tests/flow/test_rdb_load.py
 tests/flow/test_reduce.py
+tests/flow/test_redundant_ops
 tests/flow/test_relation_patterns.py
 tests/flow/test_replication.py
 tests/flow/test_replication_states.py
@@ -102,6 +105,7 @@ tests/flow/test_union
 tests/flow/test_unwind_clause
 tests/flow/test_value_comparisons
 tests/flow/test_variable_length_traversals.py
+tests/flow/test_varlength_traversal
 tests/flow/test_vecsim.py
 tests/flow/test_wcc.py
 tests/flow/test_with_clause

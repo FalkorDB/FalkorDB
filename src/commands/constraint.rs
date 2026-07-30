@@ -2,6 +2,7 @@ use crate::query_session::QuerySession;
 use crate::{config::CONFIGURATION_CACHE_SIZE, graph_core::ThreadedGraph, redis_type::GRAPH_TYPE};
 use graph::entity_type::EntityType;
 use graph::graph::constraint::ConstraintType;
+use graph::identifier_limits::validate_identifier_len;
 use parking_lot::RwLock;
 use redis_module::{Context, ContextFlags, NextArg, RedisResult, RedisString, RedisValue};
 use std::sync::Arc;
@@ -70,6 +71,7 @@ pub fn graph_constraint(
 
     // Label name
     let label_str = args.next_str()?;
+    validate_identifier_len(label_str, "Label name").map_err(redis_module::RedisError::String)?;
     if !is_valid_identifier(label_str) {
         return Err(redis_module::RedisError::String(format!(
             "Label name {label_str} is invalid"
@@ -102,6 +104,8 @@ pub fn graph_constraint(
     let mut properties = Vec::with_capacity(prop_count as usize);
     for _ in 0..prop_count {
         let prop_str = args.next_str()?;
+        validate_identifier_len(prop_str, "Property name")
+            .map_err(redis_module::RedisError::String)?;
         if !is_valid_identifier(prop_str) {
             return Err(redis_module::RedisError::String(format!(
                 "Property name {prop_str} is invalid"

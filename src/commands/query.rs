@@ -20,11 +20,11 @@
 
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
-    graph_core::{ThreadedGraph, query_mut},
+    graph_core::{ThreadedGraph, query_mut, reply_invalid_graph_version},
     redis_type::GRAPH_TYPE,
 };
 use parking_lot::RwLock;
-use redis_module::{Context, NextArg, RedisResult, RedisString, raw};
+use redis_module::{Context, NextArg, RedisResult, RedisString};
 use std::sync::Arc;
 #[cfg(feature = "fuzz")]
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -33,18 +33,6 @@ use std::{fs::File, io::Write};
 
 #[cfg(feature = "fuzz")]
 static FILE_ID: AtomicI32 = AtomicI32::new(0);
-
-/// Replies `[error, current_version]` for a client-supplied version that does
-/// not match the graph's current schema version.
-fn reply_invalid_graph_version(
-    ctx: &Context,
-    current_version: i64,
-) {
-    const ERR: &std::ffi::CStr = c"ERR invalid graph version";
-    raw::reply_with_array(ctx.ctx, 2);
-    raw::reply_with_error(ctx.ctx, ERR.as_ptr());
-    raw::reply_with_long_long(ctx.ctx, current_version);
-}
 
 #[allow(unused_imports)]
 pub fn graph_query(
@@ -86,18 +74,6 @@ pub fn graph_query(
 
     if let Some(graph) = read_key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
         let graph = graph.clone();
-
-        // Check version if provided
-        if let Some(provided_version) = version_check {
-            let current_schema_version = graph.read().graph.read().borrow().schema_version;
-            if provided_version != current_schema_version {
-                drop(read_key);
-                drop(graph);
-                reply_invalid_graph_version(ctx, current_schema_version as i64);
-                return Ok(redis_module::RedisValue::NoReply);
-            }
-        }
-
         drop(read_key);
         return query_mut(
             ctx,
@@ -108,6 +84,7 @@ pub fn graph_query(
             track_memory,
             key_name,
             timeout,
+            version_check,
         );
     }
 
@@ -117,16 +94,6 @@ pub fn graph_query(
     // Re-check: another client may have created it between our read and write open.
     if let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
         let graph = graph.clone();
-
-        // Check version if provided
-        if let Some(provided_version) = version_check {
-            let current_schema_version = graph.read().graph.read().borrow().schema_version;
-            if provided_version != current_schema_version {
-                reply_invalid_graph_version(ctx, current_schema_version as i64);
-                return Ok(redis_module::RedisValue::NoReply);
-            }
-        }
-
         return query_mut(
             ctx,
             &graph,
@@ -136,6 +103,7 @@ pub fn graph_query(
             track_memory,
             key_name,
             timeout,
+            version_check,
         );
     }
 
@@ -144,7 +112,8 @@ pub fn graph_query(
         &key_str.to_string(),
     )));
 
-    // For a newly-created graph, the initial schema_version is 0
+    // For a newly-created graph, the initial schema_version is 0. Checked
+    // here (not in query_mut) so a mismatch doesn't create the graph key.
     if let Some(provided_version) = version_check
         && provided_version != 0
     {
@@ -161,6 +130,7 @@ pub fn graph_query(
         track_memory,
         key_name,
         timeout,
+        None,
     );
     key.set_value(&GRAPH_TYPE, graph.clone())?;
     crate::graph_core::register_graph(key_str.to_string(), graph);

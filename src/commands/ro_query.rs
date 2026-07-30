@@ -33,12 +33,16 @@ pub fn graph_ro_query(
     let query = args.next_str()?;
     let mut compact = false;
     let mut track_memory = false;
+    let mut version_check: Option<u64> = None;
     let mut timeout: Option<i64> = None;
     while let Ok(arg) = args.next_str() {
         if arg == "--compact" {
             compact = true;
         } else if arg == "--track-memory" {
             track_memory = true;
+        } else if arg == "version" {
+            let ver_str = args.next_str()?;
+            version_check = Some(ver_str.parse::<u64>()?);
         } else if arg == "timeout"
             && let Ok(t_str) = args.next_str()
         {
@@ -59,6 +63,7 @@ pub fn graph_ro_query(
             track_memory,
             key_name,
             timeout,
+            version_check,
         )
     })
 }

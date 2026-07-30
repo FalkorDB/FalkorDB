@@ -160,8 +160,17 @@ pub fn create_js_node<'js>(
     let attrs_obj = Object::new(ctx.clone()).map_err(|e| format!("JS object error: {e}"))?;
     for (attr_name, value) in g.get_node_all_attrs(nid) {
         let js_val = type_convert::value_to_js(ctx, &value, graph, None)?;
+        // Also expose the property directly on the node (node.name), unless it
+        // would shadow a reserved field.
+        let name = attr_name.as_str();
+        if !matches!(name, "id" | "labels" | "attributes" | "getNeighbors")
+            && !name.starts_with("__falkor")
+        {
+            obj.set(name, js_val.clone())
+                .map_err(|e| format!("JS set error: {e}"))?;
+        }
         attrs_obj
-            .set(attr_name.as_str(), js_val)
+            .set(name, js_val)
             .map_err(|e| format!("JS set error: {e}"))?;
     }
     obj.set("attributes", attrs_obj)
@@ -483,6 +492,162 @@ fn js_get_neighbors<'js>(
         }
 
         Ok(results.into_value())
+    })
+}
+
+fn throw_js_error<'js>(
+    ctx: &Ctx<'js>,
+    e: &str,
+) -> rquickjs::Error {
+    match rquickjs::String::from_str(ctx.clone(), e) {
+        Ok(s) => ctx.throw(s.into_value()),
+        Err(_) => rquickjs::Error::Exception,
+    }
+}
+
+/// graph.getNodeById(id) - retrieve a node by its internal ID, or null.
+#[allow(clippy::needless_pass_by_value)]
+pub fn js_get_node_by_id<'js>(
+    ctx: Ctx<'js>,
+    args: rquickjs::function::Rest<JsValue<'js>>,
+) -> Result<JsValue<'js>, rquickjs::Error> {
+    js_get_node_by_id_impl(&ctx, &args.0).map_err(|e| throw_js_error(&ctx, &e))
+}
+
+fn js_get_node_by_id_impl<'js>(
+    ctx: &Ctx<'js>,
+    args: &[JsValue<'js>],
+) -> Result<JsValue<'js>, String> {
+    const ERR: &str = "getNodeById: expected a non-negative integer node id";
+    let arg = args.first().ok_or(ERR)?;
+    let id: u64 = if let Some(i) = arg.as_int() {
+        u64::try_from(i).map_err(|_| ERR.to_string())?
+    } else if let Some(f) = arg.as_float() {
+        if !f.is_finite() || f < 0.0 || f.fract() != 0.0 {
+            return Err(ERR.into());
+        }
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        {
+            f as u64
+        }
+    } else {
+        return Err(ERR.into());
+    };
+
+    with_current_graph(|graph| {
+        let exists = {
+            let g = graph.borrow();
+            g.node_count() > 0 && id <= g.max_node_id() && !g.is_node_deleted(NodeId::from(id))
+        };
+        if exists {
+            create_js_node(ctx, id, graph)
+        } else {
+            Ok(JsValue::new_null(ctx.clone()))
+        }
+    })
+}
+
+/// graph.iterateNodes(label?) - array of nodes with the given label
+/// (all nodes when label is null/omitted).
+#[allow(clippy::needless_pass_by_value)]
+pub fn js_iterate_nodes<'js>(
+    ctx: Ctx<'js>,
+    args: rquickjs::function::Rest<JsValue<'js>>,
+) -> Result<JsValue<'js>, rquickjs::Error> {
+    js_iterate_nodes_impl(&ctx, &args.0).map_err(|e| throw_js_error(&ctx, &e))
+}
+
+fn js_iterate_nodes_impl<'js>(
+    ctx: &Ctx<'js>,
+    args: &[JsValue<'js>],
+) -> Result<JsValue<'js>, String> {
+    let label = match args.first() {
+        None => None,
+        Some(v) if v.is_null() || v.is_undefined() => None,
+        Some(v) => Some(
+            v.as_string()
+                .ok_or("iterateNodes: label must be a string")?
+                .to_string()
+                .map_err(|e| format!("iterateNodes: {e}"))?,
+        ),
+    };
+
+    with_current_graph(|graph| {
+        let ids: Vec<u64> = {
+            let g = graph.borrow();
+            match &label {
+                Some(l) => g
+                    .get_label_matrix(l)
+                    .map(|m| m.iter(0, u64::MAX).map(|(id, _)| id).collect())
+                    .unwrap_or_default(),
+                None => {
+                    if g.node_count() == 0 {
+                        Vec::new()
+                    } else {
+                        (0..=g.max_node_id())
+                            .filter(|id| !g.is_node_deleted(NodeId::from(*id)))
+                            .collect()
+                    }
+                }
+            }
+        };
+
+        let arr = Array::new(ctx.clone()).map_err(|e| format!("JS array error: {e}"))?;
+        for (i, id) in ids.iter().enumerate() {
+            let js_node = create_js_node(ctx, *id, graph)?;
+            arr.set(i, js_node).map_err(|e| format!("JS set error: {e}"))?;
+        }
+        Ok(arr.into_value())
+    })
+}
+
+/// graph.iterateEdges(relType?) - array of edges with the given relationship
+/// type (all edges when relType is null/omitted).
+#[allow(clippy::needless_pass_by_value)]
+pub fn js_iterate_edges<'js>(
+    ctx: Ctx<'js>,
+    args: rquickjs::function::Rest<JsValue<'js>>,
+) -> Result<JsValue<'js>, rquickjs::Error> {
+    js_iterate_edges_impl(&ctx, &args.0).map_err(|e| throw_js_error(&ctx, &e))
+}
+
+fn js_iterate_edges_impl<'js>(
+    ctx: &Ctx<'js>,
+    args: &[JsValue<'js>],
+) -> Result<JsValue<'js>, String> {
+    let rel_type = match args.first() {
+        None => None,
+        Some(v) if v.is_null() || v.is_undefined() => None,
+        Some(v) => Some(
+            v.as_string()
+                .ok_or("iterateEdges: relationship type must be a string")?
+                .to_string()
+                .map_err(|e| format!("iterateEdges: {e}"))?,
+        ),
+    };
+
+    with_current_graph(|graph| {
+        // (src, dst, edge_id) triples
+        let edges: Vec<(u64, u64, u64)> = {
+            let g = graph.borrow();
+            match &rel_type {
+                Some(t) => g
+                    .get_relationship_matrix(&Arc::new(t.clone()))
+                    .map(|tensor| tensor.iter(0, u64::MAX, false).collect())
+                    .unwrap_or_default(),
+                None => g
+                    .relationship_matrices_iter()
+                    .flat_map(|tensor| tensor.iter(0, u64::MAX, false).collect::<Vec<_>>())
+                    .collect(),
+            }
+        };
+
+        let arr = Array::new(ctx.clone()).map_err(|e| format!("JS array error: {e}"))?;
+        for (i, (src, dst, eid)) in edges.iter().enumerate() {
+            let js_edge = create_js_edge(ctx, *eid, *src, *dst, graph, None)?;
+            arr.set(i, js_edge).map_err(|e| format!("JS set error: {e}"))?;
+        }
+        Ok(arr.into_value())
     })
 }
 

@@ -743,14 +743,21 @@ impl<'a> SpanRef<'a> {
             .map(move |attr| (attr.id, block.unpack(attr)))
     }
 
-    /// Estimated heap bytes attributable to this entity: its arena span plus
-    /// its share of the block-level heap array.
+    /// Bytes attributable to this entity: its live arena entries, plus the
+    /// block-level heap slot and amortized payload of each out-of-line value it
+    /// references.
+    ///
+    /// This is the *live* half of the store's memory. Everything else the store
+    /// has allocated - slot tables, reserved-but-unused arena and heap capacity,
+    /// abandoned spans - is reported by
+    /// [`AttributeStore::structural_memory_usage`], so the two together account
+    /// for the whole store exactly once.
     fn heap_bytes(self) -> usize {
         let mut bytes = self.len() * std::mem::size_of::<PackedAttr>();
         for attr in self.entries() {
             if attr.tag == Tag::Heap {
                 let value = &self.block.heap[attr.heap_index()];
-                bytes += std::mem::size_of::<Value>() + value.heap_size();
+                bytes += std::mem::size_of::<Value>() + value.amortized_heap_size();
             }
         }
         bytes
@@ -951,23 +958,39 @@ impl DataBlock {
         }
     }
 
-    /// Structural overhead of the directory + slot storage, excluding attribute
-    /// payload (arena entries and out-of-line heap values).
+    /// Bytes the store has allocated that are *not* attributable to a live
+    /// entity: the directory, the slot tables, and the reserved-but-unused parts
+    /// of each block's arena and heap.
     ///
-    /// Each level is counted exactly once: the root vector's own storage holds
-    /// the page pointers, and a `DirPage`'s size already includes its block
-    /// pointers — so only the *pointed-to* allocation (plus its `Arc` header) is
-    /// added per level, never the pointer again.
-    fn memory_usage(&self) -> usize {
+    /// Complements [`SpanRef::heap_bytes`], which covers the live payload. Every
+    /// allocated byte falls in exactly one of the two, so a caller that adds the
+    /// sampled per-entity estimate to this figure accounts for the whole store
+    /// without double counting.
+    ///
+    /// Each directory level is counted exactly once: the root vector's own
+    /// storage holds the page pointers, and a `DirPage`'s size already includes
+    /// its block pointers — so only the *pointed-to* allocation (plus its `Arc`
+    /// header) is added per level, never the pointer again.
+    fn structural_memory_usage(&self) -> usize {
         // An `Arc` allocation carries strong + weak refcounts ahead of its value.
         const ARC_HDR: usize = 2 * std::mem::size_of::<usize>();
         let mut total = self.root.capacity() * std::mem::size_of::<Option<Arc<DirPage>>>();
         for page in self.root.iter().flatten() {
             total += ARC_HDR + std::mem::size_of::<DirPage>();
             for block in page.blocks.iter().flatten() {
+                // `dead` (abandoned spans) and `slack` (reserved tail of a live
+                // span) are allocated but referenced by no live entry, so they
+                // belong here rather than in the per-entity payload; the same
+                // holds for recycled heap holes and spare vector capacity.
+                let live_arena = block.arena.len() - block.dead as usize - block.slack as usize;
+                let live_heap = block.heap.len() - block.heap_free.len();
+
                 total += ARC_HDR
                     + std::mem::size_of::<Block>()
-                    + block.slots.capacity() * std::mem::size_of::<Slot>();
+                    + block.slots.capacity() * std::mem::size_of::<Slot>()
+                    + (block.arena.capacity() - live_arena) * std::mem::size_of::<PackedAttr>()
+                    + (block.heap.capacity() - live_heap) * std::mem::size_of::<Value>()
+                    + block.heap_free.capacity() * std::mem::size_of::<u32>();
             }
         }
         total
@@ -1216,10 +1239,11 @@ impl AttributeStore {
         self.attrs_name.get_index_of(attr)
     }
 
-    /// Structural slot-storage overhead, excluding attribute payload heap.
+    /// Allocated bytes not attributable to any live entity — see
+    /// [`DataBlock::structural_memory_usage`].
     #[must_use]
-    pub fn memory_usage(&self) -> usize {
-        self.data.memory_usage()
+    pub fn structural_memory_usage(&self) -> usize {
+        self.data.structural_memory_usage()
     }
 
     // ---- serialization -----------------------------------------------------

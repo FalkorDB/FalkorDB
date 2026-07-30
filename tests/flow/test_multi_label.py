@@ -203,6 +203,35 @@ class testMultiLabel():
         query_result = self.graph.query(query)
         self.env.assertEqual(query_result.result_set, expected_result)
 
+    # every occurrence of an alias in a pattern is a predicate, whether the
+    # occurrences are comma separated or spread over several MATCH clauses
+    def test09_repeated_alias_predicates(self):
+        # (v1:L0:L1 {v: 1})-[:E]->(v2:L1 {v: 2})-[:E]->(v3:L1:L2 {v: 3})
+
+        # labels accumulate: only v1 carries both L0 and L1
+        for query in ["MATCH (n:L0) MATCH (n:L1) RETURN n.v",
+                      "MATCH (n:L1) MATCH (n:L0) RETURN n.v",
+                      "MATCH (n:L0), (n:L1) RETURN n.v"]:
+            query_result = self.graph.query(query)
+            self.env.assertEqual(query_result.result_set, [[1]])
+
+        # no node carries both L0 and L2
+        query_result = self.graph.query("MATCH (n:L1) MATCH (n:L0:L2) RETURN n.v")
+        self.env.assertEqual(query_result.result_set, [])
+
+        # inline properties accumulate as well, so contradicting predicates
+        # match nothing
+        query_result = self.graph.query("MATCH (n {v: 1}), (n {v: 2}) RETURN n.v")
+        self.env.assertEqual(query_result.result_set, [])
+
+        query_result = self.graph.query("MATCH (n:L1 {v: 3}), (n:L2) RETURN n.v")
+        self.env.assertEqual(query_result.result_set, [[3]])
+
+        # a label added to an alias which is also a traversal endpoint
+        query = "MATCH (a:L1)-[]->(b), (a:L0) RETURN a.v, b.v"
+        query_result = self.graph.query(query)
+        self.env.assertEqual(query_result.result_set, [[1, 2]])
+
     def test10_test_delete_label(self):
         self.graph = self.db.select_graph('delete_multi_label')
 

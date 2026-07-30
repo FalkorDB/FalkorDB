@@ -115,11 +115,13 @@ impl Binder {
         ir: &mut BoundQueryIR,
     ) {
         match ir {
-            QueryIR::Match { pattern, .. } => {
-                Self::update_graph_labels(pattern, &self.node_labels);
+            QueryIR::Match {
+                pattern, optional, ..
+            } => {
+                Self::update_graph_labels(pattern, &self.node_labels, *optional);
             }
             QueryIR::Create(graph) | QueryIR::Merge { pattern: graph, .. } => {
-                Self::update_graph_labels(graph, &self.node_labels);
+                Self::update_graph_labels(graph, &self.node_labels, false);
             }
             QueryIR::Query { clauses, .. } => {
                 for clause in clauses {
@@ -143,34 +145,58 @@ impl Binder {
     }
 
     /// Replace QueryNode labels in the graph with the full accumulated set.
+    /// When `union` is set (OPTIONAL MATCH patterns) the accumulated labels
+    /// are merged into the node's own labels instead of replacing them, so
+    /// clause-local optional labels are preserved.
     fn update_graph_labels(
         graph: &mut QueryGraph<Arc<String>, Arc<String>, Variable>,
         node_labels: &HashMap<(u32, u32), OrderSet<Arc<String>>>,
+        union: bool,
     ) {
+        let merged_labels = |own: &OrderSet<Arc<String>>,
+                             accumulated: &OrderSet<Arc<String>>|
+         -> OrderSet<Arc<String>> {
+            if union {
+                let mut merged = own.clone();
+                for l in accumulated.iter() {
+                    if !merged.contains(l) {
+                        merged.insert(l.clone());
+                    }
+                }
+                merged
+            } else {
+                accumulated.clone()
+            }
+        };
         for node in graph.nodes_mut() {
             let key = (node.alias.scope_id, node.alias.id);
-            if let Some(labels) = node_labels.get(&key)
-                && node.labels != *labels
-            {
-                *node = Arc::new(QueryNode::new(
-                    node.alias.clone(),
-                    labels.clone(),
-                    node.attrs.clone(),
-                ));
+            if let Some(labels) = node_labels.get(&key) {
+                let new_labels = merged_labels(&node.labels, labels);
+                if node.labels != new_labels {
+                    *node = Arc::new(QueryNode::new(
+                        node.alias.clone(),
+                        new_labels,
+                        node.attrs.clone(),
+                    ));
+                }
             }
         }
         for rel in graph.relationships_mut() {
             let from_key = (rel.from.alias.scope_id, rel.from.alias.id);
             let to_key = (rel.to.alias.scope_id, rel.to.alias.id);
-            let from_new = node_labels.get(&from_key);
-            let to_new = node_labels.get(&to_key);
-            let from_changed = from_new.is_some_and(|l| rel.from.labels != *l);
-            let to_changed = to_new.is_some_and(|l| rel.to.labels != *l);
+            let from_new = node_labels
+                .get(&from_key)
+                .map(|l| merged_labels(&rel.from.labels, l));
+            let to_new = node_labels
+                .get(&to_key)
+                .map(|l| merged_labels(&rel.to.labels, l));
+            let from_changed = from_new.as_ref().is_some_and(|l| rel.from.labels != *l);
+            let to_changed = to_new.as_ref().is_some_and(|l| rel.to.labels != *l);
             if from_changed || to_changed {
                 let from = if from_changed {
                     Arc::new(QueryNode::new(
                         rel.from.alias.clone(),
-                        from_new.unwrap().clone(),
+                        from_new.unwrap(),
                         rel.from.attrs.clone(),
                     ))
                 } else {
@@ -179,7 +205,7 @@ impl Binder {
                 let to = if to_changed {
                     Arc::new(QueryNode::new(
                         rel.to.alias.clone(),
-                        to_new.unwrap().clone(),
+                        to_new.unwrap(),
                         rel.to.attrs.clone(),
                     ))
                 } else {
@@ -296,7 +322,19 @@ impl Binder {
                         }
                     }
                 }
-                let pattern = self.bind_graph(&pattern, false)?;
+                // Labels appearing in an OPTIONAL MATCH constrain the alias
+                // only within the optional clause; they must not leak into
+                // the global accumulation and tighten earlier mandatory scans.
+                let saved_labels = if optional {
+                    Some(self.node_labels.clone())
+                } else {
+                    None
+                };
+                let pattern_result = self.bind_graph(&pattern, false);
+                if let Some(saved) = saved_labels {
+                    self.node_labels = saved;
+                }
+                let pattern = pattern_result?;
                 let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
                 if let Some(ref f) = filter
                     && !Self::expr_may_return_boolean(f.root())
@@ -524,8 +562,8 @@ impl Binder {
                         let field_name = aliases.get(i).and_then(|a| a.as_ref()).unwrap_or(name);
                         if !fields.iter().any(|f| f.as_str() == field_name.as_str()) {
                             return Err(format!(
-                                "Unknown yield field '{}' for procedure '{}'",
-                                field_name, func.name
+                                "Procedure `{}` does not yield output `{}`",
+                                func.name, field_name
                             ));
                         }
                         // Deduplicate on the projected/output name (the name
@@ -1315,6 +1353,14 @@ impl Binder {
                             merged_labels.insert(l.clone());
                         }
                     }
+                    // Record the endpoint's labels as part of the alias'
+                    // accumulated set, otherwise `update_graph_labels` would
+                    // later overwrite this enriched endpoint with the stale
+                    // accumulation and drop the extra labels.
+                    self.node_labels
+                        .entry((bound_node.alias.scope_id, bound_node.alias.id))
+                        .or_default()
+                        .extend(merged_labels.iter().cloned());
                     Arc::new(QueryNode::new(
                         bound_node.alias.clone(),
                         merged_labels,
@@ -1362,6 +1408,12 @@ impl Binder {
                             merged_labels.insert(l.clone());
                         }
                     }
+                    // See the 'from' endpoint above: keep the accumulated set
+                    // in sync so the labels survive `update_graph_labels`.
+                    self.node_labels
+                        .entry((bound_node.alias.scope_id, bound_node.alias.id))
+                        .or_default()
+                        .extend(merged_labels.iter().cloned());
                     Arc::new(QueryNode::new(
                         bound_node.alias.clone(),
                         merged_labels,
@@ -1879,6 +1931,20 @@ impl Binder {
                         ExprIR::Property(prop)
                     }
                     ExprIR::FuncInvocation(func) => {
+                        // Traversal patterns are not valid function arguments
+                        // (e.g. `exists((p)-->())`) — matches FalkorDB C,
+                        // which rejects patterns inside exists(). Bare
+                        // pattern predicates (`WHERE (p)-->()`) and pattern
+                        // comprehensions remain supported.
+                        if func.name == "exists"
+                            && children
+                                .iter()
+                                .any(|c| matches!(c.root().data(), ExprIR::Pattern(_)))
+                        {
+                            return Err("Invalid input: traversal patterns are not allowed as \
+                                 arguments to exists()"
+                                .to_string());
+                        }
                         // Compile-time type check: validate argument types
                         // against the function's declared parameter types.
                         // Skip hasLabels — it is generated internally by the parser

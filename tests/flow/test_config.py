@@ -367,10 +367,7 @@ class testConfigTempFolder:
     def test_01_temp_folder_is_file(self):
         # try setting TEMP_FOLDER to a file
         # expecting config update to fail
-        # mountable_mkstemp puts the file under the workspace so it is
-        # visible to the docker-per-class spawned container via the
-        # bind-mount logic in common._spawn_falkordb.
-        fd, file_path = mountable_mkstemp()
+        fd, file_path = tempfile.mkstemp()
         os.close(fd)
 
         # try updating TEMP_FOLDER
@@ -401,9 +398,8 @@ class testConfigTempFolder:
         # try setting TEMP_FOLDER to a folder which we can't write to
         # expecting config update to fail, as write access is mandatory
 
-        # create a temp folder with no write access (workspace-rooted so
-        # spawned sibling containers see it via the bind-mount in common.py)
-        no_perm_dir = mountable_mkdtemp()
+        # create a temp folder with no write access
+        no_perm_dir = tempfile.mkdtemp()
         os.chmod(no_perm_dir, stat.S_IREAD)
 
         # check if directory is truly unwritable
@@ -427,8 +423,7 @@ class testConfigTempFolder:
         # try setting TEMP_FOLDER to a valid folder
         # expecting config update to succeed
 
-        # workspace-rooted so the spawned container can see it
-        valid_dir = mountable_mkdtemp()
+        valid_dir = tempfile.mkdtemp()
 
         try:
             self.set_temp_folder(valid_dir)
@@ -496,4 +491,3 @@ class testLoadTimeConfig(FlowTestsBase):
                 val = False
 
             env.assertEqual(db.config_get(name), val)
-

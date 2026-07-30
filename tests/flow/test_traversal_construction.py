@@ -52,7 +52,7 @@ class testTraversalConstruction():
 
         for q in queries:
             plan = str(self.graph.explain(q))
-            ops = plan.splitlines()
+            ops = plan.split(os.linesep)
             ops.reverse()
             self.env.assertTrue("Node By Label Scan" in ops[0])
 
@@ -65,7 +65,7 @@ class testTraversalConstruction():
         for e in entities:
             q = """MATCH (A)-->(B)-->(C) WHERE {}.val = 1 RETURN *""".format(e)
             plan = str(self.graph.explain(q))
-            ops = plan.splitlines()
+            ops = plan.split(os.linesep)
             ops.reverse()
 
             self.env.assertTrue("All Node Scan | ({})".format(e) in ops[0])
@@ -80,25 +80,19 @@ class testTraversalConstruction():
         for e in entities:
             q = "MATCH (X) WITH X as {} MATCH (A)-->(B)-->(C) RETURN *".format(e)
             plan = str(self.graph.explain(q))
-            ops = plan.splitlines()
+            ops = plan.split(os.linesep)
             ops.reverse()
             self.env.assertTrue("Conditional Traverse | ({}".format(e) in ops[2])
 
     # make sure traversal begins with bound entity and follows with filter
     def test_start_with_bound_follows_with_filter(self):
-        # Query 1: filter on A (reached first from B), filter at ops[3]
-        q = "MATCH (X) WITH X AS B MATCH (A {v:1})-->(B)-->(C) RETURN *"
-        plan = str(self.graph.explain(q))
-        ops = plan.split(os.linesep)
-        ops.reverse()
-        self.env.assertTrue("Filter" in ops[3])
-
-        # Query 2: filter on C (reached last from B), filter above C's CT
-        q = "MATCH (X) WITH X AS B MATCH (A)-->(B)-->(C {v:1}) RETURN *"
-        plan = str(self.graph.explain(q))
-        ops = plan.split(os.linesep)
-        ops.reverse()
-        self.env.assertTrue("Filter" in ops[4])
+        queries = ["MATCH (X) WITH X AS B MATCH (A {v:1})-->(B)-->(C) RETURN *",
+                "MATCH (X) WITH X AS B MATCH (A)-->(B)-->(C {v:1}) RETURN *"]
+        for q in queries:
+            plan = str(self.graph.explain(q))
+            ops = plan.split(os.linesep)
+            ops.reverse()
+            self.env.assertTrue("Filter" in ops[3])
 
     def test_filter_as_early_as_possible(self):
         q = """MATCH (A:L {v: 1})-->(B)-->(C), (B)-->(D:L {v: 1}) RETURN 1"""
@@ -115,6 +109,9 @@ class testTraversalConstruction():
         q = """match (a)--(b)--(c)--(d)--(e)--(f)--(g)--(h)--(i)--(j)--(k)--(l) return *"""
         plan = str(self.graph.explain(q))
         ops = plan.split(os.linesep)
+        # 13, not upstream's 14: the plan is C-equivalent (Project + 11
+        # Conditional Traverses + a scan) but this engine has no root
+        # `Results` operator, which is C's 14th line.
         self.env.assertEqual(len(ops), 13)
 
     def test_start_with_index_filter(self):
@@ -213,8 +210,6 @@ class testTraversalConstruction():
         #-----------------------------------------------------------------------
 
         # traverse from 'a' to 'b' using 0 length edge
-        # Rust CVLT handles destination label filtering internally,
-        # so no extra Conditional Traverse is needed in the plan.
         q = """MATCH (a:A)-[*0]->(b:B) RETURN a, b"""
         plan = self.graph.explain(q)
 
@@ -239,7 +234,6 @@ class testTraversalConstruction():
         self.env.assertEqual(result.nodes_created, 1)
 
         # traverse from a multi label node 'a' to itself using a 0 length edge
-        # Rust CVLT handles destination label filtering internally.
         q1 = """MATCH (a:X)-[*0]->(b:Y) RETURN a, b"""
         q2 = """MATCH (a:Y)-[*0]->(b:X) RETURN a, b"""
         q3 = """MATCH (a:X:Y)-[*0]->(b:X) RETURN a, b"""
@@ -266,47 +260,32 @@ class testTraversalConstruction():
 
         #-----------------------------------------------------------------------
 
-        # traverse from 'a' to itself - filter on 'from' node (below CVLT)
-        q = """MATCH (a{v:1})-[*0]->(b) RETURN a, b"""
-        plan = self.graph.explain(q)
+        # traverse from 'a' to itself
+        q1 = """MATCH (a)-[*0]->(b{v:1}) RETURN a, b"""
+        q2 = """MATCH (a{v:1})-[*0]->(b) RETURN a, b"""
 
-        root = plan.structured_plan
-        self.env.assertTrue(root.name == "Project")
+        queries = [q1, q2]
 
-        child = root.children[0]
-        self.env.assertTrue("Conditional Variable Length Traverse" in child.name)
+        for q in queries:
+            plan = self.graph.explain(q)
 
-        child = child.children[0]
-        self.env.assertTrue(child.name == "Filter")
+            root = plan.structured_plan
+            self.env.assertTrue(root.name == "Project")
 
-        child = child.children[0]
-        self.env.assertTrue("All Node Scan" in child.name)
+            child = root.children[0]
+            self.env.assertTrue("Conditional Variable Length Traverse" in child.name)
 
-        result = self.graph.query(q).result_set
-        self.env.assertTrue(len(result) == 1)
-        for row in result:
-            self.env.assertTrue(row[0] == row[1])
+            child = child.children[0]
+            self.env.assertTrue(child.name == "Filter")
 
-        # traverse from 'a' to itself - filter on 'to' node (above CVLT)
-        q = """MATCH (a)-[*0]->(b{v:1}) RETURN a, b"""
-        plan = self.graph.explain(q)
+            child = child.children[0]
+            self.env.assertTrue("All Node Scan" in child.name)
 
-        root = plan.structured_plan
-        self.env.assertTrue(root.name == "Project")
-
-        child = root.children[0]
-        self.env.assertTrue(child.name == "Filter")
-
-        child = child.children[0]
-        self.env.assertTrue("Conditional Variable Length Traverse" in child.name)
-
-        child = child.children[0]
-        self.env.assertTrue("All Node Scan" in child.name)
-
-        result = self.graph.query(q).result_set
-        self.env.assertTrue(len(result) == 1)
-        for row in result:
-            self.env.assertTrue(row[0] == row[1])
+            # validate that 'a' == 'b'
+            result = self.graph.query(q).result_set
+            self.env.assertTrue(len(result) == 1)
+            for row in result:
+                self.env.assertTrue(row[0] == row[1])
 
         #-----------------------------------------------------------------------
 
@@ -404,3 +383,4 @@ class testTraversalConstruction():
         q = """MATCH (a)-[*0]->(b)-[]->(c:C) RETURN c"""
         result = self.graph.query(q).result_set
         self.env.assertTrue(result == expected)
+

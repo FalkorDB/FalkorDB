@@ -106,8 +106,6 @@ class testGraphPersistency():
 
         return dense_graph
 
-    # TODO: enable after indexes completed
-    @skip()
     def test_save_load(self):
         graph_names = ["G", "{tag}_G"]
         for graph_name in graph_names:
@@ -213,8 +211,8 @@ class testGraphPersistency():
 
             # Verify that the properties are loaded correctly.
             expected_result = [[True, 5.5, 'str', [1, 2, 3], {"latitude": 5.5, "longitude": 6.0},
-                                [1.0, 0.0, 3.0],
-                                [[1.0, 8.0, 3.0], [1.0, -1.0, 4.0], [2.0, 2.0, 3.0]],
+                                [1, 0, 3],
+                                [[1, 8, 3], [1, -1, 4], [2, 2, 3]],
                                 date(year=1984, month=10, day=21),
                                 time(hour=10, minute=30, second=10),
                                 datetime(year=1984, month=10, day=21, hour=5, minute=30, second=10, tzinfo=timezone.utc),

@@ -316,6 +316,11 @@ fn rebuild_indexes(
             _ => EntityType::Node,
         };
 
+        // Index-level language/stopwords ride on the first fulltext field
+        // create only: `create_index` rejects language/stopwords once the
+        // label already has a fulltext field ("Can not override ...").
+        let mut text_meta_pending = info.language.is_some() || info.stopwords.is_some();
+
         for attr_name in &info.field_order {
             let Some(fields) = info.fields.get(attr_name) else {
                 continue;
@@ -327,9 +332,14 @@ fn rebuild_indexes(
 
                 let options = field.vector_options().map_or_else(
                     || {
-                        field
-                            .options()
-                            .map(|topts| graph::index::indexer::IndexOptions::Text(topts.clone()))
+                        let mut topts = field.options().cloned();
+                        if text_meta_pending && field.ty == graph::index::IndexType::Fulltext {
+                            let topts = topts.get_or_insert_with(Default::default);
+                            topts.language = info.language.clone();
+                            topts.stopwords = info.stopwords.clone();
+                            text_meta_pending = false;
+                        }
+                        topts.map(graph::index::indexer::IndexOptions::Text)
                     },
                     |vopts| Some(graph::index::indexer::IndexOptions::Vector(vopts.clone())),
                 );

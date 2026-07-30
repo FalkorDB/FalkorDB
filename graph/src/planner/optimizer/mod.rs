@@ -48,6 +48,7 @@
 mod absorb_edge_filters_into_vlt;
 mod eliminate_true_filters;
 mod fuse_anonymous_traverse;
+mod fuse_optional_traverse;
 mod push_filters_down;
 mod reduce_count;
 mod reduce_expand_into;
@@ -73,6 +74,7 @@ use super::IR;
 use absorb_edge_filters_into_vlt::absorb_edge_filters_into_vlt;
 use eliminate_true_filters::eliminate_true_filters;
 use fuse_anonymous_traverse::fuse_anonymous_traverse;
+use fuse_optional_traverse::fuse_optional_traverse;
 use push_filters_down::push_filters_down;
 use reduce_count::reduce_count;
 use reduce_expand_into::reduce_expand_into;
@@ -143,6 +145,9 @@ pub fn optimize(
     utilize_node_by_id(&mut optimized_plan);
 
     reorder_labels(&mut optimized_plan, graph);
+
+    // Runs last so no earlier pass has to reason about optional traverses.
+    fuse_optional_traverse(&mut optimized_plan);
 
     optimized_plan
 }
