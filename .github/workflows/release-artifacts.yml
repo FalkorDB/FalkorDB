@@ -19,12 +19,13 @@
 name: Release artifacts
 
 on:
-  # NOTE: no `release:` trigger. That event is REPO-WIDE and version-blind, and
-  # once the Rust tree is the default branch GitHub delivers it here for EVERY
-  # release — including the C engine's <= 5.x ones, which would then be validated
-  # against this tree's Cargo.toml and fail. release-tag.yml (push: tags v[6-9].*)
-  # is the Rust entry point and calls this workflow via workflow_call; use
-  # workflow_dispatch for a manual re-run. See issue #2255.
+  # `release:` is REF-scoped, not default-branch-scoped — GitHub reads the
+  # workflow from the tagged ref's own tree (verified: the v4.20.1 release run's
+  # head_sha is identical to branch 4.20, diverged from master). A C release tag
+  # therefore carries only C's workflows and can never reach this file, so this
+  # trigger stays safe after the Rust tree becomes the default branch.
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       tag:

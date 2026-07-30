@@ -6,16 +6,14 @@
 # the browser the same way the C engine's browser-tests-trigger.yml does.
 #
 # WHY workflow_call AND NOT `release:`
-# `release` is a repo-wide, version-blind event, and once the Rust tree is the
-# default branch GitHub delivers it here for EVERY release — including the C
-# engine's <= 5.x ones. Being called from release-tag.yml instead keeps this
-# tag-driven and correctly scoped to Rust releases (its tag globs are v[6-9].*),
-# with no version guard needed.
+# Ordering. Browser tests need the PUBLISHED image, but `release:` fires the
+# moment the release is created — racing the image push. Being called from
+# release-tag.yml lets the caller run this only after the image job succeeds, so
+# the artifact under test is guaranteed to exist. That is a real ordering bug the
+# C side still has.
 #
-# It also fixes an ordering problem the C side has: browser tests need the
-# PUBLISHED image, but `release:` fires the moment the release is published,
-# racing the image push. Here the caller runs this only after the image job
-# succeeds, so the artifact under test is guaranteed to exist.
+# (Not for engine scoping: `release:` is REF-scoped, so a C release tag carries
+# only C's workflows and could never reach this file anyway.)
 #
 # STATUS: placeholder, mirroring the C engine's equivalent. The real Playwright
 # suite lives in FalkorDB/falkordb-browser (`playwright.yml`) but currently
