@@ -56,7 +56,12 @@ class testGraphMemoryUsage(FlowTestsBase):
         self.graph = self.db.select_graph(GRAPH_ID)
 
     def __init__(self):
-        self.env, self.db = Env(env='oss-cluster')
+        # No env='oss-cluster' — the tests below never use shardId or
+        # cross-shard semantics; they only call self.env.getConnection() and
+        # run queries against a single connection. Image-based CI doesn't
+        # implement cluster spawn, and a raw shard connection answers
+        # GRAPH.MEMORY USAGE with MOVED, so the flag has to stay off.
+        self.env, self.db = Env()
         self.conn = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
 

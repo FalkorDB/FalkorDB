@@ -2376,9 +2376,10 @@ impl Graph {
             return None;
         }
         let mut iter = matrices.into_iter();
-        let mut m = iter
-            .next()
-            .map_or_else(|| self.adjacancy_matrix.extract(), super::graphblas::tensor::Tensor::extract);
+        let mut m = iter.next().map_or_else(
+            || self.adjacancy_matrix.extract(),
+            super::graphblas::tensor::Tensor::extract,
+        );
         for relationship_matrix in iter {
             m.set_pattern(
                 Some(relationship_matrix.fwd_dm()),
@@ -2432,9 +2433,10 @@ impl Graph {
             self.zero_matrix.extract()
         } else {
             let mut iter = matrices.into_iter();
-            let mut m = iter
-                .next()
-                .map_or_else(|| self.adjacancy_matrix.extract(), super::graphblas::tensor::Tensor::extract);
+            let mut m = iter.next().map_or_else(
+                || self.adjacancy_matrix.extract(),
+                super::graphblas::tensor::Tensor::extract,
+            );
             for relationship_matrix in iter {
                 m.element_wise_add(None, None, Some(&relationship_matrix.extract()), None);
             }

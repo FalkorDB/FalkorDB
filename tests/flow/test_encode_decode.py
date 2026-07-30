@@ -214,36 +214,41 @@ class test_encode_decode(FlowTestsBase):
     # test changes to the VKEY_MAX_ENTITY_COUNT configuration are reflected in
     # the number of virtual keys created
     def test_10_vkey_max_entity_count(self):
-        logfilename = self.env.envRunner._getFileName("master", ".log")
-        logfile = open(f"{self.env.logDir}/{logfilename}")
-        log = logfile.read()
+        # env.log_path is redis's --logfile output, bind-mounted from the
+        # spawned container under CI or written directly by RLTest in local
+        # dev. Same attribute, same file-handle semantics, no per-mode branch.
+        with open(self.env.log_path) as logfile:
+            # advance past startup logs; the regex below only matches save events
+            logfile.read()
 
-        # Set configuration
-        response = self.db.config_set("VKEY_MAX_ENTITY_COUNT", 10)
-        self.env.assertEqual(response, "OK")
+            # Set configuration
+            response = self.db.config_set("VKEY_MAX_ENTITY_COUNT", 10)
+            self.env.assertEqual(response, "OK")
 
-        # Create 30 nodes
-        self.graph.query("UNWIND range(0, 30) as v CREATE (:L {v: v})")
+            # Create 30 nodes
+            self.graph.query("UNWIND range(0, 30) as v CREATE (:L {v: v})")
 
-        # Save RDB & Load from RDB
-        self.redis_con.save()
+            # Save RDB & Load from RDB
+            self.redis_con.save()
 
-        # Set configuration
-        response = self.db.config_set("VKEY_MAX_ENTITY_COUNT", 5)
-        self.env.assertEqual(response, "OK")
+            # Set configuration
+            response = self.db.config_set("VKEY_MAX_ENTITY_COUNT", 5)
+            self.env.assertEqual(response, "OK")
 
-        # Save RDB & Load from RDB
-        self.redis_con.save()
+            # Save RDB & Load from RDB
+            self.redis_con.save()
 
-        #log = logfile.read()
+            log = logfile.read()
 
-        #matches = re.findall(f"Created (.) virtual keys for graph {GRAPH_ID}", log)
+            matches = re.findall(
+                f"Created (.) virtual keys for graph {GRAPH_ID}", log)
 
-        #self.env.assertEqual(matches, ["3", "6"])
+            self.env.assertEqual(matches, ["3", "6"])
 
-        #matches = re.findall(f"Deleted (.) virtual keys for graph {GRAPH_ID}", log)
+            matches = re.findall(
+                f"Deleted (.) virtual keys for graph {GRAPH_ID}", log)
 
-        #self.env.assertEqual(matches, ["3", "6"])
+            self.env.assertEqual(matches, ["3", "6"])
 
     def test_11_decode_single_edge_relation_with_deleted_nodes(self):
         # Set configuration

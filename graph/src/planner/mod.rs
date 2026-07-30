@@ -1752,9 +1752,10 @@ impl Planner {
                     tree!(IR::AllShortestPaths(relationship.clone()), res)
                 } else if relationship.min_hops.is_some() {
                     let expand_into = relationship.from.alias.id != relationship.to.alias.id
-                        && self
-                            .visited
-                            .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id))
+                        && self.visited.contains(&(
+                            relationship.from.alias.id,
+                            relationship.from.alias.scope_id,
+                        ))
                         && self
                             .visited
                             .contains(&(relationship.to.alias.id, relationship.to.alias.scope_id));

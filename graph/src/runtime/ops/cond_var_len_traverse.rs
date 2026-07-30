@@ -128,6 +128,24 @@ struct VarLenIter<'a> {
 }
 
 impl VarLenIter<'_> {
+    /// Wrap DFS-order path elements as a `Value::Path` oriented from the
+    /// pattern's `from` endpoint to its `to` endpoint.
+    ///
+    /// The DFS accumulates `[Node, Rel, Node, ...]` in walk order, which for a
+    /// reversed traversal starts at the pattern's `to` node. Reversing the
+    /// element sequence yields the same alternating shape read the other way
+    /// round, so `nodes(p)` / `relationships(p)` follow the pattern instead of
+    /// the walk.
+    fn path_value(
+        mut elems: ThinVec<Value>,
+        reversed: bool,
+    ) -> Value {
+        if reversed {
+            elems.reverse();
+        }
+        Value::Path(Arc::new(elems))
+    }
+
     /// Open the DFS for one start node: queue the 0-hop emission when
     /// applicable and push the initial frame. Borrows the graph only for the
     /// duration of this step.
@@ -331,7 +349,8 @@ impl VarLenIter<'_> {
                     // move the original onto the stack below. When the path isn't
                     // emitted, the (empty) `new_path` moves straight onto the stack
                     // with no clone.
-                    let emit_path_val = emit_path.then(|| Value::Path(Arc::new(new_path.clone())));
+                    let emit_path_val =
+                        emit_path.then(|| Self::path_value(new_path.clone(), reversed));
                     let owned = new_path;
                     self.buf.push((from_node, to_node, emit_path_val));
                     let mut next_used = if is_last {
@@ -343,7 +362,7 @@ impl VarLenIter<'_> {
                     self.stack.push((dest, owned, next_used, hop));
                 } else if will_emit {
                     // Emit only — move path directly into Arc
-                    let emit_path_val = emit_path.then(|| Value::Path(Arc::new(new_path)));
+                    let emit_path_val = emit_path.then(|| Self::path_value(new_path, reversed));
                     self.buf.push((from_node, to_node, emit_path_val));
                 } else if will_continue {
                     // Continue only — move path to stack
@@ -440,12 +459,13 @@ impl<'a> CondVarLenTraverseOp<'a> {
         // Locate the `@prev(<id>)` marker variable (previous-edge reference
         // rewritten by the binder) inside the absorbed edge filter, if any.
         let prev_var = edge_filter.and_then(|filter| {
-            filter.root().indices::<orx_tree::Bfs>().find_map(|idx| {
-                match filter.node(idx).data() {
+            filter
+                .root()
+                .indices::<orx_tree::Bfs>()
+                .find_map(|idx| match filter.node(idx).data() {
                     ExprIR::Variable(var) if var.as_str().starts_with("@prev(") => Some(var),
                     _ => None,
-                }
-            })
+                })
         });
         Self {
             runtime,
@@ -604,7 +624,14 @@ impl<'a> Iterator for CondVarLenTraverseOp<'a> {
                     return Err(e.clone());
                 }
                 Self::expand_row(
-                    runtime, rp, edge_filter, prev_var, emit_path, &error, batch, row,
+                    runtime,
+                    rp,
+                    edge_filter,
+                    prev_var,
+                    emit_path,
+                    &error,
+                    batch,
+                    row,
                 )
             }) {
                 Ok(Some(out)) => {

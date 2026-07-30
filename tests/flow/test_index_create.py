@@ -235,7 +235,9 @@ class testIndexCreationFlow():
                 await g.delete()
 
         async def run(self):
-            pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
+            pool = BlockingConnectionPool(max_connections=16, timeout=None,
+                                          host=self.env.host, port=self.env.port,
+                                          decode_responses=True)
             db = FalkorDB(connection_pool=pool)
 
             tasks = []

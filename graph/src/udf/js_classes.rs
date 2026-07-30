@@ -595,7 +595,8 @@ fn js_iterate_nodes_impl<'js>(
         let arr = Array::new(ctx.clone()).map_err(|e| format!("JS array error: {e}"))?;
         for (i, id) in ids.iter().enumerate() {
             let js_node = create_js_node(ctx, *id, graph)?;
-            arr.set(i, js_node).map_err(|e| format!("JS set error: {e}"))?;
+            arr.set(i, js_node)
+                .map_err(|e| format!("JS set error: {e}"))?;
         }
         Ok(arr.into_value())
     })
@@ -645,7 +646,8 @@ fn js_iterate_edges_impl<'js>(
         let arr = Array::new(ctx.clone()).map_err(|e| format!("JS array error: {e}"))?;
         for (i, (src, dst, eid)) in edges.iter().enumerate() {
             let js_edge = create_js_edge(ctx, *eid, *src, *dst, graph, None)?;
-            arr.set(i, js_edge).map_err(|e| format!("JS set error: {e}"))?;
+            arr.set(i, js_edge)
+                .map_err(|e| format!("JS set error: {e}"))?;
         }
         Ok(arr.into_value())
     })

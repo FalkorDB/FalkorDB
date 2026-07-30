@@ -1233,11 +1233,7 @@ impl<'a> Iterator for CondTraverseOp<'a> {
                                 .batch()
                                 .expect("unmatched rows imply a seeded batch");
                             let fb = self.null_pad(src, &unmatched);
-                            return Some(Ok(Self::trim_to_cap(
-                                record_cap,
-                                &mut self.produced,
-                                fb,
-                            )));
+                            return Some(Ok(Self::trim_to_cap(record_cap, &mut self.produced, fb)));
                         }
                     }
                     // Seeded batch exhausted (or none installed). Pull the next
