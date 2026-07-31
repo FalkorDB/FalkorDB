@@ -523,28 +523,44 @@ class testGraphPersistency():
                 pings.append(datetime.now())
                 sleep(0.005) # sleep for 5ms
 
+        # An RDB child may already be forking when we get here — a replica
+        # serving a full resync makes the master fork one, and the tests before
+        # this one leave a multi-hundred-MB dataset to transfer. BGSAVE errors
+        # out with "Background save already in progress" while such a child is
+        # alive, so drain any in-flight save first.
+        for _ in range(1000):
+            if not self.conn.info("persistence").get("rdb_bgsave_in_progress"):
+                break
+            sleep(0.01) # every 10ms, up to 10 seconds
+
         stop_event = threading.Event()
         pings = []
-        thread = threading.Thread(target=ping_worker, args=(self.conn, pings))
+        # daemon=True plus the try/finally below: an exception in the body used
+        # to leave this worker looping forever, and a live non-daemon thread
+        # keeps the interpreter up — the failure printed a traceback and then
+        # hung until CI cancelled the job 20 minutes later.
+        thread = threading.Thread(target=ping_worker, args=(self.conn, pings),
+                                 daemon=True)
         thread.start()
 
-        # Issue BGSAVE
-        self.conn.bgsave()
-        start = datetime.now()
-        max_iterations = 100
+        try:
+            # Issue BGSAVE
+            self.conn.bgsave()
+            start = datetime.now()
+            max_iterations = 100
 
-        # Wait for BGSAVE to complete for a maximum of 10 seconds
-        for _ in range(max_iterations):
-            pending = self.conn.info("persistence").get("rdb_bgsave_in_progress")
-            if not pending:
-                break
-            sleep(0.1) # every 100ms
-        
-        self.env.assertFalse(pending)
-        end = datetime.now()
+            # Wait for BGSAVE to complete for a maximum of 10 seconds
+            for _ in range(max_iterations):
+                pending = self.conn.info("persistence").get("rdb_bgsave_in_progress")
+                if not pending:
+                    break
+                sleep(0.1) # every 100ms
 
-        stop_event.set()  # Signal the BGSave thread to stop
-        thread.join()
+            self.env.assertFalse(pending)
+            end = datetime.now()
+        finally:
+            stop_event.set()  # Signal the BGSave thread to stop
+            thread.join()
 
         # Make sure PINGs were answered during the save period
         self.env.assertGreater(len(pings), 5)
