@@ -1,15 +1,14 @@
 //------------------------------------------------------------------------------
-// GB_memset: parallel memset
+// GB_memset: parallel memset on the CPU (not for CUDA)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
-// Note that this function uses its own hard-coded chunk size.
-
-// FIXME for CUDA: use CUDA memset if the array is on the GPU
+// This function uses its own hard-coded chunk size.
+// The work is always done on the CPU; CUDA requires its own memset method.
 
 #include "GB.h"
 

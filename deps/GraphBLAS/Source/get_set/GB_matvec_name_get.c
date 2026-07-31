@@ -10,7 +10,7 @@
 #include "get_set/GB_get_set.h"
 
 GrB_Info GB_matvec_name_get (GrB_Matrix A, char *name, int field)
-{
+{ 
     const char *typename ;
     (*name) = '\0' ;
 
@@ -19,7 +19,7 @@ GrB_Info GB_matvec_name_get (GrB_Matrix A, char *name, int field)
 
         case GrB_NAME : 
             if (A->user_name != NULL)
-            {
+            { 
                 strcpy (name, A->user_name) ;
             }
             break ;
@@ -31,7 +31,7 @@ GrB_Info GB_matvec_name_get (GrB_Matrix A, char *name, int field)
         case GrB_EL_TYPE_STRING : 
             typename = GB_type_name_get (A->type) ;
             if (typename != NULL)
-            {
+            { 
                 strcpy (name, typename) ;
             }
             break ;

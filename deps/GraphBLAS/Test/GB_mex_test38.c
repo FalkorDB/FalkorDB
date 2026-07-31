@@ -89,14 +89,14 @@ void mexFunction
     int64_t kresult ;
     bool ok ;
 
-    ok = GB_cumsum (W, true, n, NULL, 1, Werk) ;
+    ok = GB_cumsum (W, true, n, NULL, 1, GB_ARENA_TEST, Werk) ;
     CHECK (!ok) ;
-    ok = GB_cumsum (W, true, n, NULL, 4, Werk) ;
+    ok = GB_cumsum (W, true, n, NULL, 4, GB_ARENA_TEST, Werk) ;
     CHECK (!ok) ;
 
-    ok = GB_cumsum (W, true, n, &kresult, 1, Werk) ;
+    ok = GB_cumsum (W, true, n, &kresult, 1, GB_ARENA_TEST, Werk) ;
     CHECK (!ok) ;
-    ok = GB_cumsum (W, true, n, &kresult, 4, Werk) ;
+    ok = GB_cumsum (W, true, n, &kresult, 4, GB_ARENA_TEST, Werk) ;
     CHECK (!ok) ;
 
     //--------------------------------------------------------------------------
@@ -148,7 +148,7 @@ void mexFunction
     expected = GrB_INVALID_VALUE ;
     ERR (GB_new_bix (&B, GrB_FP64, INT64_MAX / 4, INT64_MAX / 4, GB_ph_null,
         true, GxB_HYPERSPARSE, false, 0.1, 2, 2, true, true,
-        true, true, true)) ;
+        true, true, true, GB_ARENA_TEST, GB_ARENA_TEST)) ;
     CHECK (B == NULL) ;
 
     //--------------------------------------------------------------------------

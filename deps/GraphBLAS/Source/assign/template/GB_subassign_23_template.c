@@ -38,6 +38,10 @@
     // get inputs
     //--------------------------------------------------------------------------
 
+    ASSERT (C != NULL) ;
+    int data_arena = C->data_arena ;
+    uint64_t mem = GB_mem (data_arena, 0) ;
+
     const bool A_is_bitmap = GB_IS_BITMAP (A) ;
     const bool A_is_full = GB_IS_FULL (A) ;
     const bool A_iso = A->iso ;
@@ -46,7 +50,7 @@
     // slice the A matrix
     //--------------------------------------------------------------------------
 
-    GB_WERK_DECLARE (A_ek_slicing, int64_t) ;
+    GB_WERK_DECLARE (A_ek_slicing, int64_t, mem) ;
     int A_ntasks, A_nthreads ;
     GB_A_NHELD (anz) ;      // int64_t anz = GB_nnz_held (A) ;
     double work = anz + A->nvec ;

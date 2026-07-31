@@ -15,7 +15,7 @@
 GrB_Info GB_cuda_AxB_dot3_jit
 (
     // input/output:
-    GrB_Matrix C,               // FIXME: allow iso for this kernel
+    GrB_Matrix C,               // fixme: allow iso for this kernel
     // input:
     const GrB_Matrix M, const bool Mask_struct,
     const GrB_Matrix A,

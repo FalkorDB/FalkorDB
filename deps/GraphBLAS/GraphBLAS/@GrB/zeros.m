@@ -9,9 +9,8 @@ function C = zeros (varargin)
 %
 % See also GrB.ones, GrB.false, GrB.true, GrB.eye, GrB.speye.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-[m, n, type] = gb_parse_args ('zeros', varargin {:}) ;
-C = GrB (gbnew (m, n, type)) ;
+C = gb_zeros (0, varargin {:}) ;
 

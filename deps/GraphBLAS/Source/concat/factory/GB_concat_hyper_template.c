@@ -20,13 +20,13 @@
     {
         GB_OK (GB_extractTuples (WORK_I + pC, Ci_is_32, WORK_J + pC, Cj_is_32,
             (C_iso) ? NULL : (Wx + pC * csize),
-            (uint64_t *) (&anz), ctype, A, Werk)) ;
+            (uint64_t *) (&anz), ctype, A, data_arena, Werk)) ;
     }
     else
     {
         GB_OK (GB_extractTuples (WORK_J + pC, Cj_is_32, WORK_I + pC, Ci_is_32,
             (C_iso) ? NULL : (Wx + pC * csize),
-            (uint64_t *) (&anz), ctype, A, Werk)) ;
+            (uint64_t *) (&anz), ctype, A, data_arena, Werk)) ;
     }
 
     // adjust the indices to reflect their new place in C

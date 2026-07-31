@@ -36,7 +36,8 @@ GrB_Info GB_Semiring_check          // check a GraphBLAS semiring
     //--------------------------------------------------------------------------
 
     GB_CHECK_MAGIC (semiring) ;
-    GBPR0 (semiring->header_size > 0 ? "(user-defined):" : "(built-in):") ;
+    GBPR0 (GB_memsize (semiring->header_mem) > 0 ?
+        "(user-defined):" : "(built-in):") ;
 
     GrB_Monoid add = semiring->add ;
     GrB_BinaryOp mult = semiring->multiply ;

@@ -40,10 +40,13 @@ void mexFunction
     // startup GraphBLAS
     //--------------------------------------------------------------------------
 
+    printf ("GB_mex_test13: start up GraphBLAS\n") ;
     GB_mx_at_exit ( ) ;
+    printf ("GB_mex_test13: get global\n") ;
     bool malloc_debug = GB_mx_get_global (true) ;
 
     char *cache ;
+    printf ("GB_mex_test13: get cache path\n") ;
     OK (GxB_get (GxB_JIT_CACHE_PATH, &cache)) ;
     printf ("cache: [%s]\n", cache) ;
 
@@ -62,6 +65,15 @@ void mexFunction
     // finalize GraphBLAS
     //--------------------------------------------------------------------------
 
+    int flag = true ;
+    ERR (GxB_finalized (NULL)) ;
+    OK (GxB_finalized (&flag)) ;
+    CHECK (flag == false) ;
+
+    ERR (GxB_initialized (NULL)) ;
+    OK (GxB_initialized (&flag)) ;
+    CHECK (flag == true) ;
+
     if (no_cache)
     {
         unsetenv ("GRAPHBLAS_CACHE_PATH") ;
@@ -70,7 +82,9 @@ void mexFunction
     cache_env = getenv ("GRAPHBLAS_CACHE_PATH") ;
     CHECK (cache_env == NULL) ;
 
+    printf ("GB_mex_test13: put global\n") ;
     GB_mx_put_global (true) ;
+    printf ("GB_mex_test13: at_exit\n") ;
     GB_mx_at_exit ( ) ;
     printf ("\nGB_mex_test13:  all tests passed\n\n") ;
 }

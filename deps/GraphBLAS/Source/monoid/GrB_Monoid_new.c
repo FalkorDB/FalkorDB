@@ -11,6 +11,8 @@
 // y, and z must all be the same, and the identity value must also have the
 // same type.  No typecasting is done for the identity value.
 
+// The monoid is allocated in header arena determined by the current Context.
+
 #include "GB.h"
 #include "monoid/GB_Monoid_new.h"
 
@@ -25,8 +27,9 @@ GrB_Info GB_EVAL3 (prefix, _Monoid_new_, T) /* create a new monoid */       \
     GB_CHECK_INIT ;                                                         \
     GB_WERK ("GrB_Monoid_new_" GB_STR(T) " (&monoid, op, identity)") ;      \
     type id = identity ;                                                    \
+    int header_arena = GB_Context_header_arena ( ) ;                        \
     return (GB_Monoid_new (monoid, op, &id, NULL, GB_ ## T ## _code,        \
-        Werk)) ;                                                            \
+        header_arena, Werk)) ;                                              \
 }
 
 GB_MONOID_NEW (GrB, bool      , BOOL   )
@@ -52,6 +55,8 @@ GrB_Info GrB_Monoid_new_UDT         // create a monoid with a user-defined type
 { 
     GB_CHECK_INIT ;
     GB_WERK ("GrB_Monoid_new_UDT (&monoid, op, identity)") ;
-    return (GB_Monoid_new (monoid, op, identity, NULL, GB_UDT_code, Werk)) ;
+    int header_arena = GB_Context_header_arena ( ) ;
+    return (GB_Monoid_new (monoid, op, identity, NULL, GB_UDT_code,
+        header_arena, Werk)) ;
 }
 

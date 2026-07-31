@@ -94,11 +94,18 @@ void mexFunction
     }
 
     // create the semiring
-    OK (GxB_BinaryOp_new (&MyPlus, (GxB_binary_function) gb_myplus64,
-        GrB_FP64, GrB_FP64, GrB_FP64, "gb_myplus64", MYPLUS64_DEFN)) ;
+    OK (GxB_BinaryOp_new_arena (&MyPlus, (GxB_binary_function) gb_myplus64,
+        GrB_FP64, GrB_FP64, GrB_FP64, "gb_myplus64", MYPLUS64_DEFN,
+        GrB_DEFAULT)) ;
     double zero = 0 ;
-    OK (GrB_Monoid_new_FP64 (&MyAdd, MyPlus, zero)) ;
+    OK (GxB_Monoid_new_arena_FP64_(&MyAdd, MyPlus, zero, GrB_DEFAULT)) ;
     OK (GrB_Semiring_new (&MyPlusOne, MyAdd, GrB_ONEB_FP64)) ;
+    int arena = 42 ;
+    OK (GrB_Monoid_get_INT32 (MyAdd, &arena, GxB_ARENA_HEADER)) ;
+    CHECK (arena == GrB_DEFAULT) ;
+    arena = 42 ;
+    OK (GrB_BinaryOp_get_INT32 (MyPlus, &arena, GxB_ARENA_HEADER)) ;
+    CHECK (arena == GrB_DEFAULT) ;
 
     // get accum, if present
     GrB_BinaryOp accum ;
@@ -114,6 +121,12 @@ void mexFunction
     {
         FREE_ALL ;
         mexErrMsgTxt ("desc failed") ;
+    }
+
+    if (desc != NULL)
+    {
+        OK (GrB_Descriptor_get_INT32 (desc, &arena, GxB_ARENA_HEADER)) ;
+        CHECK (arena == GB_ARENA_TEST) ;
     }
 
     // C<M> = accum(C,A*B)

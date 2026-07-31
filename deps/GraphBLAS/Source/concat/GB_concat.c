@@ -31,8 +31,12 @@ GrB_Info GB_concat                  // concatenate a 2D array of matrices
     // allocate workspace
     //--------------------------------------------------------------------------
 
-    GB_WERK_DECLARE (Tile_rows, int64_t) ;
-    GB_WERK_DECLARE (Tile_cols, int64_t) ;
+    ASSERT (C != NULL) ;
+    int data_arena = C->data_arena ;
+    uint64_t mem = GB_mem (data_arena, 0) ;
+
+    GB_WERK_DECLARE (Tile_rows, int64_t, mem) ;
+    GB_WERK_DECLARE (Tile_cols, int64_t, mem) ;
     GB_WERK_PUSH (Tile_rows, m+1, int64_t) ;
     GB_WERK_PUSH (Tile_cols, n+1, int64_t) ;
     if (Tile_rows == NULL || Tile_cols == NULL)

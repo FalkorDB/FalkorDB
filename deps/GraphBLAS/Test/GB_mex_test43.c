@@ -9,6 +9,7 @@
 
 #include "GB_mex.h"
 #include "GB_mex_errors.h"
+#include "helper/GB_helper.h"
 
 #undef  FREE_ALL
 #define FREE_ALL                        \
@@ -31,7 +32,7 @@ int64_t gb_43_print         // print the gb_43_type
     // output:
     char *string,           // value is printed to the string 
     // input:
-    size_t string_size,     // size of the string array
+    size_t string_memsize,     // size of the string array
     const void *value,      // value to print
     int verbose             // if >0, print verbosely; else tersely
 ) ;
@@ -41,7 +42,7 @@ int64_t gb_43_print         // print the gb_43_type
     // output:
     char *string,           // value is printed to the string 
     // input:
-    size_t string_size,     // size of the string array
+    size_t string_memsize,     // size of the string array
     const void *value,      // value to print
     int verbose             // if >0, print verbosely; else tersely
 )
@@ -50,11 +51,11 @@ int64_t gb_43_print         // print the gb_43_type
     if (g->z == 42)
     { 
         // tell GraphBLAS the string needs to be longer
-        if (string_size < 8000)
+        if (string_memsize < 8000)
         {
             return (8000) ;
         }
-        return ((int64_t) snprintf (string, string_size, "the answer is 42")) ;
+        return ((int64_t) snprintf (string, string_memsize, "the answer is 42")) ;
     }
     else if (g->z < 0)
     {
@@ -64,7 +65,7 @@ int64_t gb_43_print         // print the gb_43_type
     else
     {
         // typical case
-        return ((int64_t) snprintf (string, string_size,
+        return ((int64_t) snprintf (string, string_memsize,
                 verbose ?  "(x: %.16g, y: %d, z: %d)" : "(x: %g, y: %d, z: %d)",
                 g->x, g->y, g->z)) ;
     }
@@ -118,15 +119,21 @@ void mexFunction
     OK (GrB_Scalar_new (&t, type)) ;
     OK (GrB_Scalar_setElement_UDT (t, (void *) &stuff)) ;
     METHOD (GxB_Scalar_fprint (t, "t", GxB_COMPLETE_VERBOSE, stdout)) ;
+    double nzmax = GB_helper11 ((GrB_Matrix) t) ;
+    CHECK (nzmax == 1) ;
 
     // create A as an iso-valued matrix
     OK (GrB_Matrix_new (&A, type, 4, 3)) ;
     OK (GrB_Matrix_assign_Scalar (A, NULL, NULL, t, GrB_ALL, 4, GrB_ALL, 3,
         NULL)) ;
     METHOD (GxB_Matrix_fprint (A, "A iso", GxB_COMPLETE_VERBOSE, stdout)) ;
+    nzmax = GB_helper11 (A) ;
+    CHECK (nzmax == 12) ;
 
     OK (GrB_Matrix_setElement_UDT (A, (void *) &good, 2, 2)) ;
     METHOD (GxB_Matrix_fprint (A, "A good", GxB_COMPLETE_VERBOSE, stdout)) ;
+    nzmax = GB_helper11 (A) ;
+    CHECK (nzmax == 12) ;
 
     OK (GrB_Matrix_setElement_UDT (A, (void *) &bad, 2, 2)) ;
     info = (GxB_Matrix_fprint (A, "A bad", GxB_COMPLETE_VERBOSE, stdout)) ;
@@ -138,6 +145,12 @@ void mexFunction
     OK (GrB_Matrix_setElement_UDT (A, (void *) &stuff, 1, 1)) ;
     OK (GrB_Matrix_setElement_UDT (A, (void *) &stuff, 1, 2)) ;
     METHOD (GxB_Matrix_fprint (A, "A pending", GxB_COMPLETE_VERBOSE, stdout)) ;
+    nzmax = GB_helper11 (A) ;
+    printf ("nzmax: %g\n", nzmax) ;
+    CHECK (nzmax > 3) ;
+
+    nzmax = GB_helper11 ((GrB_Matrix) NULL) ;
+    CHECK (nzmax == 0) ;
 
     //--------------------------------------------------------------------------
     // finalize GraphBLAS

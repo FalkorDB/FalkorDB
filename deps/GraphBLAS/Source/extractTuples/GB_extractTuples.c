@@ -23,9 +23,9 @@
 #include "GB.h"
 #include "extractTuples/GB_extractTuples.h"
 
-#define GB_FREE_ALL                             \
-{                                               \
-    GB_FREE_MEMORY (&Cp, Cp_size) ;               \
+#define GB_FREE_ALL                 \
+{                                   \
+    GB_FREE_MEMORY (&Cp, Cp_mem) ;  \
 }
 
 GrB_Info GB_extractTuples       // extract all tuples from a matrix
@@ -38,6 +38,7 @@ GrB_Info GB_extractTuples       // extract all tuples from a matrix
     uint64_t *p_nvals,          // I,J,X size on input; # tuples on output
     const GrB_Type xtype,       // type of array X
     const GrB_Matrix A,         // matrix to extract tuples from
+    const int data_arena,       // arena for workspace
     GB_Werk Werk
 )
 {
@@ -47,7 +48,12 @@ GrB_Info GB_extractTuples       // extract all tuples from a matrix
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    void *Cp = NULL ; size_t Cp_size = 0 ;
+
+    ASSERT (A != NULL) ;
+
+    uint64_t mem = GB_mem (data_arena, 0) ;
+
+    void *Cp = NULL ; uint64_t Cp_mem = mem ;
     ASSERT_MATRIX_OK (A, "A to extract", GB0) ;
     ASSERT_TYPE_OK (xtype, "xtype to extract", GB0) ;
     ASSERT (p_nvals != NULL) ;
@@ -119,7 +125,7 @@ GrB_Info GB_extractTuples       // extract all tuples from a matrix
 
         bool Cp_is_32 = GB_determine_p_is_32 (true, anz) ;   // OK
         size_t cpsize = (Cp_is_32) ? sizeof (uint32_t) : sizeof (uint64_t) ;
-        Cp = GB_MALLOC_MEMORY (A->vdim+1, cpsize, &Cp_size) ;
+        Cp = GB_MALLOC_MEMORY (A->vdim+1, cpsize, &Cp_mem) ;
         if (Cp == NULL)
         { 
             // out of memory
@@ -139,7 +145,7 @@ GrB_Info GB_extractTuples       // extract all tuples from a matrix
         // to add to I and J.
 
         GB_OK (GB_convert_b2s (Cp, I, J, (GB_void *) X, NULL,
-            Cp_is_32, I_is_32, J_is_32, xtype, A, Werk)) ;
+            Cp_is_32, J_is_32, I_is_32, xtype, A, data_arena, Werk)) ;
 
         if (A->iso && X != NULL)
         { 
@@ -195,7 +201,7 @@ GrB_Info GB_extractTuples       // extract all tuples from a matrix
 
         if (J != NULL)
         { 
-            GB_OK (GB_extract_vector_list (J, J_is_32, A, Werk)) ;
+            GB_OK (GB_extract_vector_list (J, J_is_32, A, data_arena, Werk)) ;
         }
 
         //----------------------------------------------------------------------

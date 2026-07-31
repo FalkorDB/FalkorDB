@@ -1,10 +1,13 @@
-function gbtest122
-%GBTEST122 test reshape (extended methods in GrB)
+function gbtest122 (ghb)
+%GBTEST122 test reshape (extended methods in GrB, GhB)
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-rng ('default')
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
 for m = 1:12
     fprintf ('.') ;
@@ -15,9 +18,9 @@ for m = 1:12
             else
                 A = sprand (m, n, 0.3) ;
             end
-            G = GrB (A) ;
+            G = gtb (ghb, A) ;
             mn = m*n ;
-            H = GrB (A, 'by row') ;
+            H = gtb (ghb, A, 'by row') ;
 
             f = factor (mn) ;
 
@@ -62,4 +65,5 @@ for m = 1:12
     end
 end
 
-fprintf ('\ngbtest122: all tests passed\n') ;
+fprintf ('\ngbtest122 (%d): all tests passed\n', ghb) ;
+

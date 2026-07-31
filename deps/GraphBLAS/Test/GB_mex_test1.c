@@ -535,18 +535,28 @@ void mexFunction
     float    f32 = 3.14 ;
     double   f64 = 99.4 ;
 
-    GB_entry_check (GrB_BOOL,   &b,     5, stdout, NULL, NULL) ; printf ("\n");
-    GB_entry_check (GrB_INT8,   &int8,  5, stdout, NULL, NULL) ; printf ("\n");
-    GB_entry_check (GrB_UINT8,  &u8,    5, stdout, NULL, NULL) ; printf ("\n");
-    GB_entry_check (GrB_INT16,  &int16, 5, stdout, NULL, NULL) ; printf ("\n");
-    GB_entry_check (GrB_UINT16, &u16,   5, stdout, NULL, NULL) ; printf ("\n");
-    GB_entry_check (GrB_INT32,  &int32, 5, stdout, NULL, NULL) ; printf ("\n");
-    GB_entry_check (GrB_UINT32, &u32,   5, stdout, NULL, NULL) ; printf ("\n");
-    GB_entry_check (GrB_INT64,  &int64, 5, stdout, NULL, NULL) ; printf ("\n");
-    GB_entry_check (GrB_UINT64, &u64,   5, stdout, NULL, NULL) ; printf ("\n");
-    GB_entry_check (GrB_FP32,   &f32,   5, stdout, NULL, NULL) ; printf ("\n");
-    GB_entry_check (GrB_FP64,   &f64,   5, stdout, NULL, NULL) ; printf ("\n");
-//  GB_entry_check ( ,    &f64, 5, stdout) ; printf ("\n");
+    GB_entry_check (GrB_BOOL,   &b,     5, stdout, NULL,NULL) ;
+    printf ("\n");
+    GB_entry_check (GrB_INT8,   &int8,  5, stdout, NULL,NULL) ;
+    printf ("\n");
+    GB_entry_check (GrB_UINT8,  &u8,    5, stdout, NULL,NULL) ;
+    printf ("\n");
+    GB_entry_check (GrB_INT16,  &int16, 5, stdout, NULL,NULL) ;
+    printf ("\n");
+    GB_entry_check (GrB_UINT16, &u16,   5, stdout, NULL,NULL) ;
+    printf ("\n");
+    GB_entry_check (GrB_INT32,  &int32, 5, stdout, NULL,NULL) ;
+    printf ("\n");
+    GB_entry_check (GrB_UINT32, &u32,   5, stdout, NULL,NULL) ;
+    printf ("\n");
+    GB_entry_check (GrB_INT64,  &int64, 5, stdout, NULL,NULL) ;
+    printf ("\n");
+    GB_entry_check (GrB_UINT64, &u64,   5, stdout, NULL,NULL) ;
+    printf ("\n");
+    GB_entry_check (GrB_FP32,   &f32,   5, stdout, NULL,NULL) ;
+    printf ("\n");
+    GB_entry_check (GrB_FP64,   &f64,   5, stdout, NULL,NULL) ;
+    printf ("\n");
 
     printf ("Check status codes\n") ;
     #define CHKSTAT(code,string)                        \
@@ -644,8 +654,8 @@ void mexFunction
     //--------------------------------------------------------------------------
 
     OK (GrB_Matrix_new (&A, GrB_BOOL, 10000, 10000)) ;
-    struct GB_Matrix_opaque Q_header ;
-    GrB_Matrix Q = GB_clear_matrix_header (&Q_header) ;
+    GrB_Matrix Q = NULL ;
+    GB_matrix_header_new (&Q, GB_ARENA_TEST, GB_ARENA_TEST) ;
     OK (GB_shallow_copy (Q, A->is_csc, A, NULL)) ;      // A is empty, not iso
     OK (GxB_Matrix_fprint_(Q, GxB_COMPLETE, NULL)) ;
     GrB_Matrix_free_(&A) ;
@@ -669,12 +679,6 @@ void mexFunction
     CHECK (ok) ;
     GB_free_memory ((void **) &p, nbytes) ;
     CHECK (p == NULL) ;
-
-    CHECK (!GB_Global_malloc_is_thread_safe_get ( )) ;
-    GB_Global_malloc_is_thread_safe_set (true) ;
-    CHECK (GB_Global_malloc_is_thread_safe_get ( )) ;
-    GB_Global_malloc_is_thread_safe_set (false) ;
-    CHECK (!GB_Global_malloc_is_thread_safe_get ( )) ;
 
     GB_Global_malloc_tracking_set (true) ;
 
@@ -969,7 +973,7 @@ void mexFunction
     //--------------------------------------------------------------------------
 
     uint64_t nvals = 42 ;
-    GrB_Scalar scalar = NULL, scalar2 = NULL ;
+    GrB_Scalar scalar = NULL, scalar2 = NULL, scalar3 = NULL ;
     OK (GrB_Scalar_new (&scalar, GrB_FP64)) ;
     OK (GrB_Scalar_nvals (&nvals, scalar)) ;
     OK (GrB_Scalar_wait_(scalar, GrB_MATERIALIZE)) ;
@@ -1029,14 +1033,26 @@ void mexFunction
     OK (GrB_Scalar_wait_(scalar2, GrB_MATERIALIZE)) ;
     CHECK (nvals == 1) ;
 
+    u_64 = 0 ;
+    OK (GxB_Scalar_dup (&scalar3, scalar2)) ;
+    OK (GxB_Scalar_fprint (scalar3, "scalar3", GxB_COMPLETE, NULL)) ;
+    OK (GrB_Scalar_extractElement_UINT64_(&u_64, scalar3)) ; CHECK (u_64 == 1) ;
+
     expected = GrB_INVALID_OBJECT ;
     scalar2->vlen = 2 ;
     ERR (GxB_Scalar_fprint (scalar2, "scalar2", GxB_COMPLETE, NULL)) ;
     scalar2->vlen = 1 ;
     OK (GxB_Scalar_fprint (scalar2, "scalar2", GxB_COMPLETE, NULL)) ;
 
+    GrB_Scalar_free_(&scalar3) ;
+    u_64 = 0 ;
+    OK (GxB_Scalar_dup_arena (&scalar3, scalar2, 0, 0)) ;
+    OK (GxB_Scalar_fprint (scalar3, "scalar3 (arena 0)", GxB_COMPLETE, NULL)) ;
+    OK (GrB_Scalar_extractElement_UINT64_(&u_64, scalar3)) ; CHECK (u_64 == 1) ;
+
     GrB_Scalar_free_(&scalar) ;
     GrB_Scalar_free_(&scalar2) ;
+    GrB_Scalar_free_(&scalar3) ;
 
     //--------------------------------------------------------------------------
     // predefined descriptors

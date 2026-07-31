@@ -22,7 +22,10 @@ GrB_Info GB_matvec_name_set
         return (GrB_INVALID_VALUE) ;
     }
 
-    return (GB_user_name_set (&(A->user_name), &(A->user_name_size), value,
-        false)) ;
+    ASSERT (A != NULL) ;
+    int header_arena = GB_arena (A->header_mem) ;
+
+    return (GB_user_name_set (&(A->user_name), &(A->user_name_mem), value,
+        false, header_arena)) ;
 }
 

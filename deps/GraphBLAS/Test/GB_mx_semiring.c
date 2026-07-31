@@ -10,8 +10,6 @@
 #include "GB_mex.h"
 #include "../Source/binaryop/GB_binop.h"
 
-// See GraphBLAS/GraphBLAS/@GrB/private/util/gb_semiring.c for a description
-
 GrB_Semiring GB_mx_semiring         // semiring, or NULL if error
 (
     const GrB_Monoid add_monoid,    // input monoid

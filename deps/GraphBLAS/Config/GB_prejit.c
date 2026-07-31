@@ -8,7 +8,7 @@
 //------------------------------------------------------------------------------
 
 // This file is configured by cmake from Config/GB_prejit.c.in, which has
-// indexed the following 187 kernels in GraphBLAS/PreJIT:
+// indexed the following 202 kernels in GraphBLAS/PreJIT:
 
 #include "GB.h"
 #include "jitifyer/GB_jitifyer.h"
@@ -31,15 +31,17 @@ JIT_DOT2 (GB_jit__AxB_dot2__0384410b0b3b0ba6)
 JIT_DOT2 (GB_jit__AxB_dot2__038460f990091087)
 JIT_DOT2 (GB_jit__AxB_dot2__038460f9900910c7)
 JIT_DOT3 (GB_jit__AxB_dot3__ff80034ee62ee653__LG_MF_Rxd_Add32_LG_MF_Rxd_Mult32)
+JIT_DOT4 (GB_jit__AxB_dot4__0000000e1e0e1eca__lg_hll_merge_lg_hll_second)
 JIT_DOT4 (GB_jit__AxB_dot4__0000400e1e0e1eca__lg_hll_merge_lg_hll_second)
 JIT_DOT4 (GB_jit__AxB_dot4__0000800eb90eb9cb__LG_MSF_tupleMin_double_LG_MSF_combine_double)
 JIT_DOT4 (GB_jit__AxB_dot4__0000c00eb90eb9cb__LG_MSF_tupleMin_double_LG_MSF_combine_double)
 JIT_DOT4 (GB_jit__AxB_dot4__0004c10a0a0a0acb)
-JIT_DOT4 (GB_jit__AxB_dot4__0380400e1e0e1ec6__lg_hll_merge_lg_hll_second)
+JIT_DOT4 (GB_jit__AxB_dot4__0380000e1e0e1ec6__lg_hll_merge_lg_hll_second)
 JIT_DOT4 (GB_jit__AxB_dot4__0380800eb90eb9c7__LG_MSF_tupleMin_double_LG_MSF_combine_double)
 JIT_DOT4 (GB_jit__AxB_dot4__0380c00eb90eb9c7__LG_MSF_tupleMin_double_LG_MSF_combine_double)
 JIT_DOT4 (GB_jit__AxB_dot4__0384c10a0a0a0ac7)
 JIT_SAXB (GB_jit__AxB_saxbit__000420fbb00bb08f)
+JIT_SAXB (GB_jit__AxB_saxbit__038120f110011083)
 JIT_SAXB (GB_jit__AxB_saxbit__0384610b0b3b0ba6)
 JIT_SAX3 (GB_jit__AxB_saxpy3__e3f120f110011041)
 JIT_SAX3 (GB_jit__AxB_saxpy3__e3f120f110011045)
@@ -56,7 +58,9 @@ JIT_ADD  (GB_jit__add__000214aaa0aaacf)
 JIT_ADD  (GB_jit__add__e3f010b0b0bbb00)
 JIT_ADD  (GB_jit__add__e3f010b0b0bbb44)
 JIT_ADD  (GB_jit__add__e3f010e0e0eee00__LG_MF_flowEdge)
+JIT_ADD  (GB_jit__add__e3f011100019900)
 JIT_ADD  (GB_jit__add__e3f101111019100)
+JIT_ADD  (GB_jit__add__e3f111100019900)
 JIT_ADD  (GB_jit__add__e3f301111019100)
 JIT_AP1  (GB_jit__apply_bind1st__000000eb90ef9c3__LG_MSF_combine_double)
 JIT_AP2  (GB_jit__apply_bind2nd__000014aaa0a8fc8)
@@ -71,11 +75,9 @@ JIT_AP0  (GB_jit__apply_unop__004005bb0bbe)
 JIT_AP0  (GB_jit__apply_unop__004007aa0aaf)
 JIT_AP0  (GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractJ32)
 JIT_AP0  (GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractYJ32)
-JIT_AP0  (GB_jit__apply_unop__03c0009e09ed__LG_MSF_get_second_double)
 JIT_AP0  (GB_jit__apply_unop__03c000be0bec__LG_MF_ExtractMatrixFlow)
 JIT_AP0  (GB_jit__apply_unop__03c000be0bec__LG_MF_GetResidual)
 JIT_AP0  (GB_jit__apply_unop__03c000be0bed__LG_MF_ResidualFlow32)
-JIT_AP0  (GB_jit__apply_unop__03c000be0bed__LG_MSF_get_first_double)
 JIT_AP0  (GB_jit__apply_unop__03c000eb0ebc__LG_MF_ResidualBackward)
 JIT_AP0  (GB_jit__apply_unop__03c000eb0ebc__LG_MF_ResidualForward)
 JIT_AP0  (GB_jit__apply_unop__03c000eb0ebd__LG_MF_MakeFlow)
@@ -84,17 +86,19 @@ JIT_SUB  (GB_jit__bitmap_assign_2_whole__0000003f0002aaa3)
 JIT_SUB  (GB_jit__bitmap_assign_2_whole__0000003f000499b3)
 JIT_SUB  (GB_jit__bitmap_assign_2_whole__0000103f00020aa3)
 JIT_SUB  (GB_jit__bitmap_assign_2_whole__0000803f000299a2)
-JIT_SUB  (GB_jit__bitmap_assign_2_whole__0000a03f000301a0)
-JIT_SUB  (GB_jit__bitmap_assign_2_whole__001c903f000301a0)
+JIT_SUB  (GB_jit__bitmap_assign_2_whole__0000903f000201a2)
+JIT_SUB  (GB_jit__bitmap_assign_2_whole__0000a03f000511a0)
+JIT_SUB  (GB_jit__bitmap_assign_2_whole__001c803f000311a0)
 JIT_SUB  (GB_jit__bitmap_assign_4_whole__00e0203f00026890)
 JIT_SUB  (GB_jit__bitmap_assign_4_whole__00fc003f00026691)
 JIT_SUB  (GB_jit__bitmap_assign_5_whole__00000004bbb0bb82)
 JIT_SUB  (GB_jit__bitmap_assign_8_whole__00e0803f0003bb92)
-JIT_BLD  (GB_jit__build__e9011119)
-JIT_BLD  (GB_jit__build__e9066668)
-JIT_BLD  (GB_jit__build__e90bbbbb)
-JIT_BLD  (GB_jit__build__f9066668)
-JIT_BLD  (GB_jit__build__f90bbbb6)
+JIT_SUB  (GB_jit__bitmap_assign_8_whole__00e0903f00030192)
+JIT_BLD  (GB_jit__build__1fe9011119)
+JIT_BLD  (GB_jit__build__1fe9066668)
+JIT_BLD  (GB_jit__build__1fe90bbbbb)
+JIT_BLD  (GB_jit__build__1ff9066668)
+JIT_BLD  (GB_jit__build__1ff90bbbb6)
 JIT_EM2  (GB_jit__emult_02__e38000ee60ee647__LG_MF_CreateCompareVec32)
 JIT_EM2  (GB_jit__emult_02__e38002bbb0bbb47)
 JIT_EM2  (GB_jit__emult_02__e38005bbb0bbb46)
@@ -120,6 +124,7 @@ JIT_MAS2 (GB_jit__masker_phase2__fff02904)
 JIT_MAS2 (GB_jit__masker_phase2__fff02b54)
 JIT_MAS2 (GB_jit__masker_phase2__fff02e00__LG_MF_flowEdge)
 JIT_MAS2 (GB_jit__masker_phase2__fff03141)
+JIT_MAS2 (GB_jit__masker_phase2__fff03154)
 JIT_MAS2 (GB_jit__masker_phase2__fff03900)
 JIT_MAS2 (GB_jit__masker_phase2__fff03941)
 JIT_MAS2 (GB_jit__masker_phase2__fff03945)
@@ -143,6 +148,9 @@ JIT_SEL2 (GB_jit__select_phase2__3f331beb5__LG_MSF_removeEdge_double)
 JIT_SEL2 (GB_jit__select_phase2__3f331beb5__LG_MSF_selectEdge_double)
 JIT_SEL2 (GB_jit__select_phase2__3ff31beb5__LG_MSF_removeEdge_double)
 JIT_SEL2 (GB_jit__select_phase2__3ff31beb5__LG_MSF_selectEdge_double)
+JIT_SUB  (GB_jit__subassign_01__7f00647f00000144)
+JIT_SUB  (GB_jit__subassign_01__7f02647f00000144)
+JIT_SUB  (GB_jit__subassign_01__7f026c7f00000144)
 JIT_SUB  (GB_jit__subassign_02__7f1c417f00001101)
 JIT_SUB  (GB_jit__subassign_02__7f1c517f00000101)
 JIT_SUB  (GB_jit__subassign_04__7f1c4140eee0ee01__LG_MF_InitForw)
@@ -152,6 +160,7 @@ JIT_SUB  (GB_jit__subassign_05__07e0207f00026850)
 JIT_SUB  (GB_jit__subassign_05d__0000207f0004eef0__LG_MSF_tuple_double)
 JIT_SUB  (GB_jit__subassign_06n__071c007f00029971)
 JIT_SUB  (GB_jit__subassign_06n__07e0007f00021100)
+JIT_SUB  (GB_jit__subassign_06n__07e0007f00021110)
 JIT_SUB  (GB_jit__subassign_06n__07fc007f00020651)
 JIT_SUB  (GB_jit__subassign_06n__07fc007f00020900)
 JIT_SUB  (GB_jit__subassign_06n__07fc007f00021100)
@@ -162,10 +171,13 @@ JIT_SUB  (GB_jit__subassign_06n__07fc007f00029940)
 JIT_SUB  (GB_jit__subassign_06n__07fc007f00029951)
 JIT_SUB  (GB_jit__subassign_06n__07fc007f0002ee00__LG_MF_flowEdge)
 JIT_SUB  (GB_jit__subassign_06n__07fc107f00020100)
+JIT_SUB  (GB_jit__subassign_06n__07fc107f00020111)
 JIT_SUB  (GB_jit__subassign_06n__07fc107f00020140)
 JIT_SUB  (GB_jit__subassign_06n__07fc107f00020900)
+JIT_SUB  (GB_jit__subassign_06n__07fc107f00020940)
 JIT_SUB  (GB_jit__subassign_06n__07fc107f00021140)
 JIT_SUB  (GB_jit__subassign_06n__07fc107f00029900)
+JIT_SUB  (GB_jit__subassign_06n__07fc107f00029940)
 JIT_SUB  (GB_jit__subassign_06s__7f1c407f00029965)
 JIT_SUB  (GB_jit__subassign_06s__7fe0407f00021100)
 JIT_SUB  (GB_jit__subassign_06s__7fe0407f00021110)
@@ -173,6 +185,7 @@ JIT_SUB  (GB_jit__subassign_06s__7fe0407f00029110)
 JIT_SUB  (GB_jit__subassign_06s__7ffc407f00029910)
 JIT_SUB  (GB_jit__subassign_06s__7ffc407f0002bb54)
 JIT_SUB  (GB_jit__subassign_06s__7ffc407f00030b55)
+JIT_SUB  (GB_jit__subassign_06s__7ffc407f00031155)
 JIT_SUB  (GB_jit__subassign_06s__7ffc407f00036655)
 JIT_SUB  (GB_jit__subassign_06s__7ffc407f00039900)
 JIT_SUB  (GB_jit__subassign_06s__7ffc407f0003bb55)
@@ -201,6 +214,8 @@ JIT_BREF (GB_jit__subref_bitmap__08000ef__LG_MSF_tuple_double)
 JIT_BREF (GB_jit__subref_bitmap__0800c9f)
 JIT_BREF (GB_jit__subref_bitmap__0800cef__LG_MSF_tuple_double)
 JIT_BREF (GB_jit__subref_bitmap__0808c6f)
+JIT_SREF (GB_jit__subref_sparse__0bf0010)
+JIT_SREF (GB_jit__subref_sparse__0bf0015)
 JIT_SREF (GB_jit__subref_sparse__0bf00b0)
 JIT_SREF (GB_jit__subref_sparse__0bf8490)
 JIT_SREF (GB_jit__subref_sparse__e3f8c90)
@@ -224,15 +239,17 @@ JIT_Q (GB_jit__AxB_dot2__0384410b0b3b0ba6_query)
 JIT_Q (GB_jit__AxB_dot2__038460f990091087_query)
 JIT_Q (GB_jit__AxB_dot2__038460f9900910c7_query)
 JIT_Q (GB_jit__AxB_dot3__ff80034ee62ee653__LG_MF_Rxd_Add32_LG_MF_Rxd_Mult32_query)
+JIT_Q (GB_jit__AxB_dot4__0000000e1e0e1eca__lg_hll_merge_lg_hll_second_query)
 JIT_Q (GB_jit__AxB_dot4__0000400e1e0e1eca__lg_hll_merge_lg_hll_second_query)
 JIT_Q (GB_jit__AxB_dot4__0000800eb90eb9cb__LG_MSF_tupleMin_double_LG_MSF_combine_double_query)
 JIT_Q (GB_jit__AxB_dot4__0000c00eb90eb9cb__LG_MSF_tupleMin_double_LG_MSF_combine_double_query)
 JIT_Q (GB_jit__AxB_dot4__0004c10a0a0a0acb_query)
-JIT_Q (GB_jit__AxB_dot4__0380400e1e0e1ec6__lg_hll_merge_lg_hll_second_query)
+JIT_Q (GB_jit__AxB_dot4__0380000e1e0e1ec6__lg_hll_merge_lg_hll_second_query)
 JIT_Q (GB_jit__AxB_dot4__0380800eb90eb9c7__LG_MSF_tupleMin_double_LG_MSF_combine_double_query)
 JIT_Q (GB_jit__AxB_dot4__0380c00eb90eb9c7__LG_MSF_tupleMin_double_LG_MSF_combine_double_query)
 JIT_Q (GB_jit__AxB_dot4__0384c10a0a0a0ac7_query)
 JIT_Q (GB_jit__AxB_saxbit__000420fbb00bb08f_query)
+JIT_Q (GB_jit__AxB_saxbit__038120f110011083_query)
 JIT_Q (GB_jit__AxB_saxbit__0384610b0b3b0ba6_query)
 JIT_Q (GB_jit__AxB_saxpy3__e3f120f110011041_query)
 JIT_Q (GB_jit__AxB_saxpy3__e3f120f110011045_query)
@@ -249,7 +266,9 @@ JIT_Q (GB_jit__add__000214aaa0aaacf_query)
 JIT_Q (GB_jit__add__e3f010b0b0bbb00_query)
 JIT_Q (GB_jit__add__e3f010b0b0bbb44_query)
 JIT_Q (GB_jit__add__e3f010e0e0eee00__LG_MF_flowEdge_query)
+JIT_Q (GB_jit__add__e3f011100019900_query)
 JIT_Q (GB_jit__add__e3f101111019100_query)
+JIT_Q (GB_jit__add__e3f111100019900_query)
 JIT_Q (GB_jit__add__e3f301111019100_query)
 JIT_Q (GB_jit__apply_bind1st__000000eb90ef9c3__LG_MSF_combine_double_query)
 JIT_Q (GB_jit__apply_bind2nd__000014aaa0a8fc8_query)
@@ -264,11 +283,9 @@ JIT_Q (GB_jit__apply_unop__004005bb0bbe_query)
 JIT_Q (GB_jit__apply_unop__004007aa0aaf_query)
 JIT_Q (GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractJ32_query)
 JIT_Q (GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractYJ32_query)
-JIT_Q (GB_jit__apply_unop__03c0009e09ed__LG_MSF_get_second_double_query)
 JIT_Q (GB_jit__apply_unop__03c000be0bec__LG_MF_ExtractMatrixFlow_query)
 JIT_Q (GB_jit__apply_unop__03c000be0bec__LG_MF_GetResidual_query)
 JIT_Q (GB_jit__apply_unop__03c000be0bed__LG_MF_ResidualFlow32_query)
-JIT_Q (GB_jit__apply_unop__03c000be0bed__LG_MSF_get_first_double_query)
 JIT_Q (GB_jit__apply_unop__03c000eb0ebc__LG_MF_ResidualBackward_query)
 JIT_Q (GB_jit__apply_unop__03c000eb0ebc__LG_MF_ResidualForward_query)
 JIT_Q (GB_jit__apply_unop__03c000eb0ebd__LG_MF_MakeFlow_query)
@@ -277,17 +294,19 @@ JIT_Q (GB_jit__bitmap_assign_2_whole__0000003f0002aaa3_query)
 JIT_Q (GB_jit__bitmap_assign_2_whole__0000003f000499b3_query)
 JIT_Q (GB_jit__bitmap_assign_2_whole__0000103f00020aa3_query)
 JIT_Q (GB_jit__bitmap_assign_2_whole__0000803f000299a2_query)
-JIT_Q (GB_jit__bitmap_assign_2_whole__0000a03f000301a0_query)
-JIT_Q (GB_jit__bitmap_assign_2_whole__001c903f000301a0_query)
+JIT_Q (GB_jit__bitmap_assign_2_whole__0000903f000201a2_query)
+JIT_Q (GB_jit__bitmap_assign_2_whole__0000a03f000511a0_query)
+JIT_Q (GB_jit__bitmap_assign_2_whole__001c803f000311a0_query)
 JIT_Q (GB_jit__bitmap_assign_4_whole__00e0203f00026890_query)
 JIT_Q (GB_jit__bitmap_assign_4_whole__00fc003f00026691_query)
 JIT_Q (GB_jit__bitmap_assign_5_whole__00000004bbb0bb82_query)
 JIT_Q (GB_jit__bitmap_assign_8_whole__00e0803f0003bb92_query)
-JIT_Q (GB_jit__build__e9011119_query)
-JIT_Q (GB_jit__build__e9066668_query)
-JIT_Q (GB_jit__build__e90bbbbb_query)
-JIT_Q (GB_jit__build__f9066668_query)
-JIT_Q (GB_jit__build__f90bbbb6_query)
+JIT_Q (GB_jit__bitmap_assign_8_whole__00e0903f00030192_query)
+JIT_Q (GB_jit__build__1fe9011119_query)
+JIT_Q (GB_jit__build__1fe9066668_query)
+JIT_Q (GB_jit__build__1fe90bbbbb_query)
+JIT_Q (GB_jit__build__1ff9066668_query)
+JIT_Q (GB_jit__build__1ff90bbbb6_query)
 JIT_Q (GB_jit__emult_02__e38000ee60ee647__LG_MF_CreateCompareVec32_query)
 JIT_Q (GB_jit__emult_02__e38002bbb0bbb47_query)
 JIT_Q (GB_jit__emult_02__e38005bbb0bbb46_query)
@@ -313,6 +332,7 @@ JIT_Q (GB_jit__masker_phase2__fff02904_query)
 JIT_Q (GB_jit__masker_phase2__fff02b54_query)
 JIT_Q (GB_jit__masker_phase2__fff02e00__LG_MF_flowEdge_query)
 JIT_Q (GB_jit__masker_phase2__fff03141_query)
+JIT_Q (GB_jit__masker_phase2__fff03154_query)
 JIT_Q (GB_jit__masker_phase2__fff03900_query)
 JIT_Q (GB_jit__masker_phase2__fff03941_query)
 JIT_Q (GB_jit__masker_phase2__fff03945_query)
@@ -336,6 +356,9 @@ JIT_Q (GB_jit__select_phase2__3f331beb5__LG_MSF_removeEdge_double_query)
 JIT_Q (GB_jit__select_phase2__3f331beb5__LG_MSF_selectEdge_double_query)
 JIT_Q (GB_jit__select_phase2__3ff31beb5__LG_MSF_removeEdge_double_query)
 JIT_Q (GB_jit__select_phase2__3ff31beb5__LG_MSF_selectEdge_double_query)
+JIT_Q (GB_jit__subassign_01__7f00647f00000144_query)
+JIT_Q (GB_jit__subassign_01__7f02647f00000144_query)
+JIT_Q (GB_jit__subassign_01__7f026c7f00000144_query)
 JIT_Q (GB_jit__subassign_02__7f1c417f00001101_query)
 JIT_Q (GB_jit__subassign_02__7f1c517f00000101_query)
 JIT_Q (GB_jit__subassign_04__7f1c4140eee0ee01__LG_MF_InitForw_query)
@@ -345,6 +368,7 @@ JIT_Q (GB_jit__subassign_05__07e0207f00026850_query)
 JIT_Q (GB_jit__subassign_05d__0000207f0004eef0__LG_MSF_tuple_double_query)
 JIT_Q (GB_jit__subassign_06n__071c007f00029971_query)
 JIT_Q (GB_jit__subassign_06n__07e0007f00021100_query)
+JIT_Q (GB_jit__subassign_06n__07e0007f00021110_query)
 JIT_Q (GB_jit__subassign_06n__07fc007f00020651_query)
 JIT_Q (GB_jit__subassign_06n__07fc007f00020900_query)
 JIT_Q (GB_jit__subassign_06n__07fc007f00021100_query)
@@ -355,10 +379,13 @@ JIT_Q (GB_jit__subassign_06n__07fc007f00029940_query)
 JIT_Q (GB_jit__subassign_06n__07fc007f00029951_query)
 JIT_Q (GB_jit__subassign_06n__07fc007f0002ee00__LG_MF_flowEdge_query)
 JIT_Q (GB_jit__subassign_06n__07fc107f00020100_query)
+JIT_Q (GB_jit__subassign_06n__07fc107f00020111_query)
 JIT_Q (GB_jit__subassign_06n__07fc107f00020140_query)
 JIT_Q (GB_jit__subassign_06n__07fc107f00020900_query)
+JIT_Q (GB_jit__subassign_06n__07fc107f00020940_query)
 JIT_Q (GB_jit__subassign_06n__07fc107f00021140_query)
 JIT_Q (GB_jit__subassign_06n__07fc107f00029900_query)
+JIT_Q (GB_jit__subassign_06n__07fc107f00029940_query)
 JIT_Q (GB_jit__subassign_06s__7f1c407f00029965_query)
 JIT_Q (GB_jit__subassign_06s__7fe0407f00021100_query)
 JIT_Q (GB_jit__subassign_06s__7fe0407f00021110_query)
@@ -366,6 +393,7 @@ JIT_Q (GB_jit__subassign_06s__7fe0407f00029110_query)
 JIT_Q (GB_jit__subassign_06s__7ffc407f00029910_query)
 JIT_Q (GB_jit__subassign_06s__7ffc407f0002bb54_query)
 JIT_Q (GB_jit__subassign_06s__7ffc407f00030b55_query)
+JIT_Q (GB_jit__subassign_06s__7ffc407f00031155_query)
 JIT_Q (GB_jit__subassign_06s__7ffc407f00036655_query)
 JIT_Q (GB_jit__subassign_06s__7ffc407f00039900_query)
 JIT_Q (GB_jit__subassign_06s__7ffc407f0003bb55_query)
@@ -394,6 +422,8 @@ JIT_Q (GB_jit__subref_bitmap__08000ef__LG_MSF_tuple_double_query)
 JIT_Q (GB_jit__subref_bitmap__0800c9f_query)
 JIT_Q (GB_jit__subref_bitmap__0800cef__LG_MSF_tuple_double_query)
 JIT_Q (GB_jit__subref_bitmap__0808c6f_query)
+JIT_Q (GB_jit__subref_sparse__0bf0010_query)
+JIT_Q (GB_jit__subref_sparse__0bf0015_query)
 JIT_Q (GB_jit__subref_sparse__0bf00b0_query)
 JIT_Q (GB_jit__subref_sparse__0bf8490_query)
 JIT_Q (GB_jit__subref_sparse__e3f8c90_query)
@@ -405,8 +435,8 @@ JIT_Q (GB_jit__union__e3f312bbb0bbb00_query)
 // GB_prejit_kernels: a list of function pointers to PreJIT kernels
 //------------------------------------------------------------------------------
 
-#if ( 187 > 0 )
-static void *GB_prejit_kernels [187] =
+#if ( 202 > 0 )
+static void *GB_prejit_kernels [202] =
 {
 GB_jit__AxB_dot2__0000000eb94eb9bb__LG_MSF_tupleMin_double_LG_MSF_combine_double,
 GB_jit__AxB_dot2__0000400eb94eb9bb__LG_MSF_tupleMin_double_LG_MSF_combine_double,
@@ -420,15 +450,17 @@ GB_jit__AxB_dot2__0384410b0b3b0ba6,
 GB_jit__AxB_dot2__038460f990091087,
 GB_jit__AxB_dot2__038460f9900910c7,
 GB_jit__AxB_dot3__ff80034ee62ee653__LG_MF_Rxd_Add32_LG_MF_Rxd_Mult32,
+GB_jit__AxB_dot4__0000000e1e0e1eca__lg_hll_merge_lg_hll_second,
 GB_jit__AxB_dot4__0000400e1e0e1eca__lg_hll_merge_lg_hll_second,
 GB_jit__AxB_dot4__0000800eb90eb9cb__LG_MSF_tupleMin_double_LG_MSF_combine_double,
 GB_jit__AxB_dot4__0000c00eb90eb9cb__LG_MSF_tupleMin_double_LG_MSF_combine_double,
 GB_jit__AxB_dot4__0004c10a0a0a0acb,
-GB_jit__AxB_dot4__0380400e1e0e1ec6__lg_hll_merge_lg_hll_second,
+GB_jit__AxB_dot4__0380000e1e0e1ec6__lg_hll_merge_lg_hll_second,
 GB_jit__AxB_dot4__0380800eb90eb9c7__LG_MSF_tupleMin_double_LG_MSF_combine_double,
 GB_jit__AxB_dot4__0380c00eb90eb9c7__LG_MSF_tupleMin_double_LG_MSF_combine_double,
 GB_jit__AxB_dot4__0384c10a0a0a0ac7,
 GB_jit__AxB_saxbit__000420fbb00bb08f,
+GB_jit__AxB_saxbit__038120f110011083,
 GB_jit__AxB_saxbit__0384610b0b3b0ba6,
 GB_jit__AxB_saxpy3__e3f120f110011041,
 GB_jit__AxB_saxpy3__e3f120f110011045,
@@ -445,7 +477,9 @@ GB_jit__add__000214aaa0aaacf,
 GB_jit__add__e3f010b0b0bbb00,
 GB_jit__add__e3f010b0b0bbb44,
 GB_jit__add__e3f010e0e0eee00__LG_MF_flowEdge,
+GB_jit__add__e3f011100019900,
 GB_jit__add__e3f101111019100,
+GB_jit__add__e3f111100019900,
 GB_jit__add__e3f301111019100,
 GB_jit__apply_bind1st__000000eb90ef9c3__LG_MSF_combine_double,
 GB_jit__apply_bind2nd__000014aaa0a8fc8,
@@ -460,11 +494,9 @@ GB_jit__apply_unop__004005bb0bbe,
 GB_jit__apply_unop__004007aa0aaf,
 GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractJ32,
 GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractYJ32,
-GB_jit__apply_unop__03c0009e09ed__LG_MSF_get_second_double,
 GB_jit__apply_unop__03c000be0bec__LG_MF_ExtractMatrixFlow,
 GB_jit__apply_unop__03c000be0bec__LG_MF_GetResidual,
 GB_jit__apply_unop__03c000be0bed__LG_MF_ResidualFlow32,
-GB_jit__apply_unop__03c000be0bed__LG_MSF_get_first_double,
 GB_jit__apply_unop__03c000eb0ebc__LG_MF_ResidualBackward,
 GB_jit__apply_unop__03c000eb0ebc__LG_MF_ResidualForward,
 GB_jit__apply_unop__03c000eb0ebd__LG_MF_MakeFlow,
@@ -473,17 +505,19 @@ GB_jit__bitmap_assign_2_whole__0000003f0002aaa3,
 GB_jit__bitmap_assign_2_whole__0000003f000499b3,
 GB_jit__bitmap_assign_2_whole__0000103f00020aa3,
 GB_jit__bitmap_assign_2_whole__0000803f000299a2,
-GB_jit__bitmap_assign_2_whole__0000a03f000301a0,
-GB_jit__bitmap_assign_2_whole__001c903f000301a0,
+GB_jit__bitmap_assign_2_whole__0000903f000201a2,
+GB_jit__bitmap_assign_2_whole__0000a03f000511a0,
+GB_jit__bitmap_assign_2_whole__001c803f000311a0,
 GB_jit__bitmap_assign_4_whole__00e0203f00026890,
 GB_jit__bitmap_assign_4_whole__00fc003f00026691,
 GB_jit__bitmap_assign_5_whole__00000004bbb0bb82,
 GB_jit__bitmap_assign_8_whole__00e0803f0003bb92,
-GB_jit__build__e9011119,
-GB_jit__build__e9066668,
-GB_jit__build__e90bbbbb,
-GB_jit__build__f9066668,
-GB_jit__build__f90bbbb6,
+GB_jit__bitmap_assign_8_whole__00e0903f00030192,
+GB_jit__build__1fe9011119,
+GB_jit__build__1fe9066668,
+GB_jit__build__1fe90bbbbb,
+GB_jit__build__1ff9066668,
+GB_jit__build__1ff90bbbb6,
 GB_jit__emult_02__e38000ee60ee647__LG_MF_CreateCompareVec32,
 GB_jit__emult_02__e38002bbb0bbb47,
 GB_jit__emult_02__e38005bbb0bbb46,
@@ -509,6 +543,7 @@ GB_jit__masker_phase2__fff02904,
 GB_jit__masker_phase2__fff02b54,
 GB_jit__masker_phase2__fff02e00__LG_MF_flowEdge,
 GB_jit__masker_phase2__fff03141,
+GB_jit__masker_phase2__fff03154,
 GB_jit__masker_phase2__fff03900,
 GB_jit__masker_phase2__fff03941,
 GB_jit__masker_phase2__fff03945,
@@ -532,6 +567,9 @@ GB_jit__select_phase2__3f331beb5__LG_MSF_removeEdge_double,
 GB_jit__select_phase2__3f331beb5__LG_MSF_selectEdge_double,
 GB_jit__select_phase2__3ff31beb5__LG_MSF_removeEdge_double,
 GB_jit__select_phase2__3ff31beb5__LG_MSF_selectEdge_double,
+GB_jit__subassign_01__7f00647f00000144,
+GB_jit__subassign_01__7f02647f00000144,
+GB_jit__subassign_01__7f026c7f00000144,
 GB_jit__subassign_02__7f1c417f00001101,
 GB_jit__subassign_02__7f1c517f00000101,
 GB_jit__subassign_04__7f1c4140eee0ee01__LG_MF_InitForw,
@@ -541,6 +579,7 @@ GB_jit__subassign_05__07e0207f00026850,
 GB_jit__subassign_05d__0000207f0004eef0__LG_MSF_tuple_double,
 GB_jit__subassign_06n__071c007f00029971,
 GB_jit__subassign_06n__07e0007f00021100,
+GB_jit__subassign_06n__07e0007f00021110,
 GB_jit__subassign_06n__07fc007f00020651,
 GB_jit__subassign_06n__07fc007f00020900,
 GB_jit__subassign_06n__07fc007f00021100,
@@ -551,10 +590,13 @@ GB_jit__subassign_06n__07fc007f00029940,
 GB_jit__subassign_06n__07fc007f00029951,
 GB_jit__subassign_06n__07fc007f0002ee00__LG_MF_flowEdge,
 GB_jit__subassign_06n__07fc107f00020100,
+GB_jit__subassign_06n__07fc107f00020111,
 GB_jit__subassign_06n__07fc107f00020140,
 GB_jit__subassign_06n__07fc107f00020900,
+GB_jit__subassign_06n__07fc107f00020940,
 GB_jit__subassign_06n__07fc107f00021140,
 GB_jit__subassign_06n__07fc107f00029900,
+GB_jit__subassign_06n__07fc107f00029940,
 GB_jit__subassign_06s__7f1c407f00029965,
 GB_jit__subassign_06s__7fe0407f00021100,
 GB_jit__subassign_06s__7fe0407f00021110,
@@ -562,6 +604,7 @@ GB_jit__subassign_06s__7fe0407f00029110,
 GB_jit__subassign_06s__7ffc407f00029910,
 GB_jit__subassign_06s__7ffc407f0002bb54,
 GB_jit__subassign_06s__7ffc407f00030b55,
+GB_jit__subassign_06s__7ffc407f00031155,
 GB_jit__subassign_06s__7ffc407f00036655,
 GB_jit__subassign_06s__7ffc407f00039900,
 GB_jit__subassign_06s__7ffc407f0003bb55,
@@ -590,6 +633,8 @@ GB_jit__subref_bitmap__08000ef__LG_MSF_tuple_double,
 GB_jit__subref_bitmap__0800c9f,
 GB_jit__subref_bitmap__0800cef__LG_MSF_tuple_double,
 GB_jit__subref_bitmap__0808c6f,
+GB_jit__subref_sparse__0bf0010,
+GB_jit__subref_sparse__0bf0015,
 GB_jit__subref_sparse__0bf00b0,
 GB_jit__subref_sparse__0bf8490,
 GB_jit__subref_sparse__e3f8c90,
@@ -602,8 +647,8 @@ GB_jit__union__e3f312bbb0bbb00
 // GB_prejit_queries: a list of function pointers to PreJIT query kernels
 //------------------------------------------------------------------------------
 
-#if ( 187 > 0 )
-static void *GB_prejit_queries [187] =
+#if ( 202 > 0 )
+static void *GB_prejit_queries [202] =
 {
 GB_jit__AxB_dot2__0000000eb94eb9bb__LG_MSF_tupleMin_double_LG_MSF_combine_double_query,
 GB_jit__AxB_dot2__0000400eb94eb9bb__LG_MSF_tupleMin_double_LG_MSF_combine_double_query,
@@ -617,15 +662,17 @@ GB_jit__AxB_dot2__0384410b0b3b0ba6_query,
 GB_jit__AxB_dot2__038460f990091087_query,
 GB_jit__AxB_dot2__038460f9900910c7_query,
 GB_jit__AxB_dot3__ff80034ee62ee653__LG_MF_Rxd_Add32_LG_MF_Rxd_Mult32_query,
+GB_jit__AxB_dot4__0000000e1e0e1eca__lg_hll_merge_lg_hll_second_query,
 GB_jit__AxB_dot4__0000400e1e0e1eca__lg_hll_merge_lg_hll_second_query,
 GB_jit__AxB_dot4__0000800eb90eb9cb__LG_MSF_tupleMin_double_LG_MSF_combine_double_query,
 GB_jit__AxB_dot4__0000c00eb90eb9cb__LG_MSF_tupleMin_double_LG_MSF_combine_double_query,
 GB_jit__AxB_dot4__0004c10a0a0a0acb_query,
-GB_jit__AxB_dot4__0380400e1e0e1ec6__lg_hll_merge_lg_hll_second_query,
+GB_jit__AxB_dot4__0380000e1e0e1ec6__lg_hll_merge_lg_hll_second_query,
 GB_jit__AxB_dot4__0380800eb90eb9c7__LG_MSF_tupleMin_double_LG_MSF_combine_double_query,
 GB_jit__AxB_dot4__0380c00eb90eb9c7__LG_MSF_tupleMin_double_LG_MSF_combine_double_query,
 GB_jit__AxB_dot4__0384c10a0a0a0ac7_query,
 GB_jit__AxB_saxbit__000420fbb00bb08f_query,
+GB_jit__AxB_saxbit__038120f110011083_query,
 GB_jit__AxB_saxbit__0384610b0b3b0ba6_query,
 GB_jit__AxB_saxpy3__e3f120f110011041_query,
 GB_jit__AxB_saxpy3__e3f120f110011045_query,
@@ -642,7 +689,9 @@ GB_jit__add__000214aaa0aaacf_query,
 GB_jit__add__e3f010b0b0bbb00_query,
 GB_jit__add__e3f010b0b0bbb44_query,
 GB_jit__add__e3f010e0e0eee00__LG_MF_flowEdge_query,
+GB_jit__add__e3f011100019900_query,
 GB_jit__add__e3f101111019100_query,
+GB_jit__add__e3f111100019900_query,
 GB_jit__add__e3f301111019100_query,
 GB_jit__apply_bind1st__000000eb90ef9c3__LG_MSF_combine_double_query,
 GB_jit__apply_bind2nd__000014aaa0a8fc8_query,
@@ -657,11 +706,9 @@ GB_jit__apply_unop__004005bb0bbe_query,
 GB_jit__apply_unop__004007aa0aaf_query,
 GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractJ32_query,
 GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractYJ32_query,
-GB_jit__apply_unop__03c0009e09ed__LG_MSF_get_second_double_query,
 GB_jit__apply_unop__03c000be0bec__LG_MF_ExtractMatrixFlow_query,
 GB_jit__apply_unop__03c000be0bec__LG_MF_GetResidual_query,
 GB_jit__apply_unop__03c000be0bed__LG_MF_ResidualFlow32_query,
-GB_jit__apply_unop__03c000be0bed__LG_MSF_get_first_double_query,
 GB_jit__apply_unop__03c000eb0ebc__LG_MF_ResidualBackward_query,
 GB_jit__apply_unop__03c000eb0ebc__LG_MF_ResidualForward_query,
 GB_jit__apply_unop__03c000eb0ebd__LG_MF_MakeFlow_query,
@@ -670,17 +717,19 @@ GB_jit__bitmap_assign_2_whole__0000003f0002aaa3_query,
 GB_jit__bitmap_assign_2_whole__0000003f000499b3_query,
 GB_jit__bitmap_assign_2_whole__0000103f00020aa3_query,
 GB_jit__bitmap_assign_2_whole__0000803f000299a2_query,
-GB_jit__bitmap_assign_2_whole__0000a03f000301a0_query,
-GB_jit__bitmap_assign_2_whole__001c903f000301a0_query,
+GB_jit__bitmap_assign_2_whole__0000903f000201a2_query,
+GB_jit__bitmap_assign_2_whole__0000a03f000511a0_query,
+GB_jit__bitmap_assign_2_whole__001c803f000311a0_query,
 GB_jit__bitmap_assign_4_whole__00e0203f00026890_query,
 GB_jit__bitmap_assign_4_whole__00fc003f00026691_query,
 GB_jit__bitmap_assign_5_whole__00000004bbb0bb82_query,
 GB_jit__bitmap_assign_8_whole__00e0803f0003bb92_query,
-GB_jit__build__e9011119_query,
-GB_jit__build__e9066668_query,
-GB_jit__build__e90bbbbb_query,
-GB_jit__build__f9066668_query,
-GB_jit__build__f90bbbb6_query,
+GB_jit__bitmap_assign_8_whole__00e0903f00030192_query,
+GB_jit__build__1fe9011119_query,
+GB_jit__build__1fe9066668_query,
+GB_jit__build__1fe90bbbbb_query,
+GB_jit__build__1ff9066668_query,
+GB_jit__build__1ff90bbbb6_query,
 GB_jit__emult_02__e38000ee60ee647__LG_MF_CreateCompareVec32_query,
 GB_jit__emult_02__e38002bbb0bbb47_query,
 GB_jit__emult_02__e38005bbb0bbb46_query,
@@ -706,6 +755,7 @@ GB_jit__masker_phase2__fff02904_query,
 GB_jit__masker_phase2__fff02b54_query,
 GB_jit__masker_phase2__fff02e00__LG_MF_flowEdge_query,
 GB_jit__masker_phase2__fff03141_query,
+GB_jit__masker_phase2__fff03154_query,
 GB_jit__masker_phase2__fff03900_query,
 GB_jit__masker_phase2__fff03941_query,
 GB_jit__masker_phase2__fff03945_query,
@@ -729,6 +779,9 @@ GB_jit__select_phase2__3f331beb5__LG_MSF_removeEdge_double_query,
 GB_jit__select_phase2__3f331beb5__LG_MSF_selectEdge_double_query,
 GB_jit__select_phase2__3ff31beb5__LG_MSF_removeEdge_double_query,
 GB_jit__select_phase2__3ff31beb5__LG_MSF_selectEdge_double_query,
+GB_jit__subassign_01__7f00647f00000144_query,
+GB_jit__subassign_01__7f02647f00000144_query,
+GB_jit__subassign_01__7f026c7f00000144_query,
 GB_jit__subassign_02__7f1c417f00001101_query,
 GB_jit__subassign_02__7f1c517f00000101_query,
 GB_jit__subassign_04__7f1c4140eee0ee01__LG_MF_InitForw_query,
@@ -738,6 +791,7 @@ GB_jit__subassign_05__07e0207f00026850_query,
 GB_jit__subassign_05d__0000207f0004eef0__LG_MSF_tuple_double_query,
 GB_jit__subassign_06n__071c007f00029971_query,
 GB_jit__subassign_06n__07e0007f00021100_query,
+GB_jit__subassign_06n__07e0007f00021110_query,
 GB_jit__subassign_06n__07fc007f00020651_query,
 GB_jit__subassign_06n__07fc007f00020900_query,
 GB_jit__subassign_06n__07fc007f00021100_query,
@@ -748,10 +802,13 @@ GB_jit__subassign_06n__07fc007f00029940_query,
 GB_jit__subassign_06n__07fc007f00029951_query,
 GB_jit__subassign_06n__07fc007f0002ee00__LG_MF_flowEdge_query,
 GB_jit__subassign_06n__07fc107f00020100_query,
+GB_jit__subassign_06n__07fc107f00020111_query,
 GB_jit__subassign_06n__07fc107f00020140_query,
 GB_jit__subassign_06n__07fc107f00020900_query,
+GB_jit__subassign_06n__07fc107f00020940_query,
 GB_jit__subassign_06n__07fc107f00021140_query,
 GB_jit__subassign_06n__07fc107f00029900_query,
+GB_jit__subassign_06n__07fc107f00029940_query,
 GB_jit__subassign_06s__7f1c407f00029965_query,
 GB_jit__subassign_06s__7fe0407f00021100_query,
 GB_jit__subassign_06s__7fe0407f00021110_query,
@@ -759,6 +816,7 @@ GB_jit__subassign_06s__7fe0407f00029110_query,
 GB_jit__subassign_06s__7ffc407f00029910_query,
 GB_jit__subassign_06s__7ffc407f0002bb54_query,
 GB_jit__subassign_06s__7ffc407f00030b55_query,
+GB_jit__subassign_06s__7ffc407f00031155_query,
 GB_jit__subassign_06s__7ffc407f00036655_query,
 GB_jit__subassign_06s__7ffc407f00039900_query,
 GB_jit__subassign_06s__7ffc407f0003bb55_query,
@@ -787,6 +845,8 @@ GB_jit__subref_bitmap__08000ef__LG_MSF_tuple_double_query,
 GB_jit__subref_bitmap__0800c9f_query,
 GB_jit__subref_bitmap__0800cef__LG_MSF_tuple_double_query,
 GB_jit__subref_bitmap__0808c6f_query,
+GB_jit__subref_sparse__0bf0010_query,
+GB_jit__subref_sparse__0bf0015_query,
 GB_jit__subref_sparse__0bf00b0_query,
 GB_jit__subref_sparse__0bf8490_query,
 GB_jit__subref_sparse__e3f8c90_query,
@@ -799,8 +859,8 @@ GB_jit__union__e3f312bbb0bbb00_query
 // GB_prejit_names: a list of names of PreJIT kernels
 //------------------------------------------------------------------------------
 
-#if ( 187 > 0 )
-static char *GB_prejit_names [187] =
+#if ( 202 > 0 )
+static char *GB_prejit_names [202] =
 {
 "GB_jit__AxB_dot2__0000000eb94eb9bb__LG_MSF_tupleMin_double_LG_MSF_combine_double",
 "GB_jit__AxB_dot2__0000400eb94eb9bb__LG_MSF_tupleMin_double_LG_MSF_combine_double",
@@ -814,15 +874,17 @@ static char *GB_prejit_names [187] =
 "GB_jit__AxB_dot2__038460f990091087",
 "GB_jit__AxB_dot2__038460f9900910c7",
 "GB_jit__AxB_dot3__ff80034ee62ee653__LG_MF_Rxd_Add32_LG_MF_Rxd_Mult32",
+"GB_jit__AxB_dot4__0000000e1e0e1eca__lg_hll_merge_lg_hll_second",
 "GB_jit__AxB_dot4__0000400e1e0e1eca__lg_hll_merge_lg_hll_second",
 "GB_jit__AxB_dot4__0000800eb90eb9cb__LG_MSF_tupleMin_double_LG_MSF_combine_double",
 "GB_jit__AxB_dot4__0000c00eb90eb9cb__LG_MSF_tupleMin_double_LG_MSF_combine_double",
 "GB_jit__AxB_dot4__0004c10a0a0a0acb",
-"GB_jit__AxB_dot4__0380400e1e0e1ec6__lg_hll_merge_lg_hll_second",
+"GB_jit__AxB_dot4__0380000e1e0e1ec6__lg_hll_merge_lg_hll_second",
 "GB_jit__AxB_dot4__0380800eb90eb9c7__LG_MSF_tupleMin_double_LG_MSF_combine_double",
 "GB_jit__AxB_dot4__0380c00eb90eb9c7__LG_MSF_tupleMin_double_LG_MSF_combine_double",
 "GB_jit__AxB_dot4__0384c10a0a0a0ac7",
 "GB_jit__AxB_saxbit__000420fbb00bb08f",
+"GB_jit__AxB_saxbit__038120f110011083",
 "GB_jit__AxB_saxbit__0384610b0b3b0ba6",
 "GB_jit__AxB_saxpy3__e3f120f110011041",
 "GB_jit__AxB_saxpy3__e3f120f110011045",
@@ -839,7 +901,9 @@ static char *GB_prejit_names [187] =
 "GB_jit__add__e3f010b0b0bbb00",
 "GB_jit__add__e3f010b0b0bbb44",
 "GB_jit__add__e3f010e0e0eee00__LG_MF_flowEdge",
+"GB_jit__add__e3f011100019900",
 "GB_jit__add__e3f101111019100",
+"GB_jit__add__e3f111100019900",
 "GB_jit__add__e3f301111019100",
 "GB_jit__apply_bind1st__000000eb90ef9c3__LG_MSF_combine_double",
 "GB_jit__apply_bind2nd__000014aaa0a8fc8",
@@ -854,11 +918,9 @@ static char *GB_prejit_names [187] =
 "GB_jit__apply_unop__004007aa0aaf",
 "GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractJ32",
 "GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractYJ32",
-"GB_jit__apply_unop__03c0009e09ed__LG_MSF_get_second_double",
 "GB_jit__apply_unop__03c000be0bec__LG_MF_ExtractMatrixFlow",
 "GB_jit__apply_unop__03c000be0bec__LG_MF_GetResidual",
 "GB_jit__apply_unop__03c000be0bed__LG_MF_ResidualFlow32",
-"GB_jit__apply_unop__03c000be0bed__LG_MSF_get_first_double",
 "GB_jit__apply_unop__03c000eb0ebc__LG_MF_ResidualBackward",
 "GB_jit__apply_unop__03c000eb0ebc__LG_MF_ResidualForward",
 "GB_jit__apply_unop__03c000eb0ebd__LG_MF_MakeFlow",
@@ -867,17 +929,19 @@ static char *GB_prejit_names [187] =
 "GB_jit__bitmap_assign_2_whole__0000003f000499b3",
 "GB_jit__bitmap_assign_2_whole__0000103f00020aa3",
 "GB_jit__bitmap_assign_2_whole__0000803f000299a2",
-"GB_jit__bitmap_assign_2_whole__0000a03f000301a0",
-"GB_jit__bitmap_assign_2_whole__001c903f000301a0",
+"GB_jit__bitmap_assign_2_whole__0000903f000201a2",
+"GB_jit__bitmap_assign_2_whole__0000a03f000511a0",
+"GB_jit__bitmap_assign_2_whole__001c803f000311a0",
 "GB_jit__bitmap_assign_4_whole__00e0203f00026890",
 "GB_jit__bitmap_assign_4_whole__00fc003f00026691",
 "GB_jit__bitmap_assign_5_whole__00000004bbb0bb82",
 "GB_jit__bitmap_assign_8_whole__00e0803f0003bb92",
-"GB_jit__build__e9011119",
-"GB_jit__build__e9066668",
-"GB_jit__build__e90bbbbb",
-"GB_jit__build__f9066668",
-"GB_jit__build__f90bbbb6",
+"GB_jit__bitmap_assign_8_whole__00e0903f00030192",
+"GB_jit__build__1fe9011119",
+"GB_jit__build__1fe9066668",
+"GB_jit__build__1fe90bbbbb",
+"GB_jit__build__1ff9066668",
+"GB_jit__build__1ff90bbbb6",
 "GB_jit__emult_02__e38000ee60ee647__LG_MF_CreateCompareVec32",
 "GB_jit__emult_02__e38002bbb0bbb47",
 "GB_jit__emult_02__e38005bbb0bbb46",
@@ -903,6 +967,7 @@ static char *GB_prejit_names [187] =
 "GB_jit__masker_phase2__fff02b54",
 "GB_jit__masker_phase2__fff02e00__LG_MF_flowEdge",
 "GB_jit__masker_phase2__fff03141",
+"GB_jit__masker_phase2__fff03154",
 "GB_jit__masker_phase2__fff03900",
 "GB_jit__masker_phase2__fff03941",
 "GB_jit__masker_phase2__fff03945",
@@ -926,6 +991,9 @@ static char *GB_prejit_names [187] =
 "GB_jit__select_phase2__3f331beb5__LG_MSF_selectEdge_double",
 "GB_jit__select_phase2__3ff31beb5__LG_MSF_removeEdge_double",
 "GB_jit__select_phase2__3ff31beb5__LG_MSF_selectEdge_double",
+"GB_jit__subassign_01__7f00647f00000144",
+"GB_jit__subassign_01__7f02647f00000144",
+"GB_jit__subassign_01__7f026c7f00000144",
 "GB_jit__subassign_02__7f1c417f00001101",
 "GB_jit__subassign_02__7f1c517f00000101",
 "GB_jit__subassign_04__7f1c4140eee0ee01__LG_MF_InitForw",
@@ -935,6 +1003,7 @@ static char *GB_prejit_names [187] =
 "GB_jit__subassign_05d__0000207f0004eef0__LG_MSF_tuple_double",
 "GB_jit__subassign_06n__071c007f00029971",
 "GB_jit__subassign_06n__07e0007f00021100",
+"GB_jit__subassign_06n__07e0007f00021110",
 "GB_jit__subassign_06n__07fc007f00020651",
 "GB_jit__subassign_06n__07fc007f00020900",
 "GB_jit__subassign_06n__07fc007f00021100",
@@ -945,10 +1014,13 @@ static char *GB_prejit_names [187] =
 "GB_jit__subassign_06n__07fc007f00029951",
 "GB_jit__subassign_06n__07fc007f0002ee00__LG_MF_flowEdge",
 "GB_jit__subassign_06n__07fc107f00020100",
+"GB_jit__subassign_06n__07fc107f00020111",
 "GB_jit__subassign_06n__07fc107f00020140",
 "GB_jit__subassign_06n__07fc107f00020900",
+"GB_jit__subassign_06n__07fc107f00020940",
 "GB_jit__subassign_06n__07fc107f00021140",
 "GB_jit__subassign_06n__07fc107f00029900",
+"GB_jit__subassign_06n__07fc107f00029940",
 "GB_jit__subassign_06s__7f1c407f00029965",
 "GB_jit__subassign_06s__7fe0407f00021100",
 "GB_jit__subassign_06s__7fe0407f00021110",
@@ -956,6 +1028,7 @@ static char *GB_prejit_names [187] =
 "GB_jit__subassign_06s__7ffc407f00029910",
 "GB_jit__subassign_06s__7ffc407f0002bb54",
 "GB_jit__subassign_06s__7ffc407f00030b55",
+"GB_jit__subassign_06s__7ffc407f00031155",
 "GB_jit__subassign_06s__7ffc407f00036655",
 "GB_jit__subassign_06s__7ffc407f00039900",
 "GB_jit__subassign_06s__7ffc407f0003bb55",
@@ -984,6 +1057,8 @@ static char *GB_prejit_names [187] =
 "GB_jit__subref_bitmap__0800c9f",
 "GB_jit__subref_bitmap__0800cef__LG_MSF_tuple_double",
 "GB_jit__subref_bitmap__0808c6f",
+"GB_jit__subref_sparse__0bf0010",
+"GB_jit__subref_sparse__0bf0015",
 "GB_jit__subref_sparse__0bf00b0",
 "GB_jit__subref_sparse__0bf8490",
 "GB_jit__subref_sparse__e3f8c90",
@@ -1004,8 +1079,8 @@ void GB_prejit
     char ***Name_handle     // return list of kernel names
 )
 {
-    (*nkernels) = 187 ;
-    #if ( 187 == 0 )
+    (*nkernels) = 202 ;
+    #if ( 202 == 0 )
     (*Kernel_handle) = NULL ;
     (*Query_handle) = NULL ;
     (*Name_handle) = NULL ;

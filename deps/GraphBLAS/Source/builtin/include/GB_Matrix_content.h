@@ -32,13 +32,16 @@
 // GraphBLAS objects.   The first 6 match the GrB_Descriptor struct.
 
 int64_t magic ;         // for detecting uninitialized objects
-size_t header_size ;    // size of the malloc'd block for this struct, or 0
+uint64_t header_mem ;   // memsize of the malloc'd block for this struct, or 0,
+                        // and arena
 // ---------------------//
 char *user_name ;       // user name for GrB_get/GrB_set
-size_t user_name_size ; // allocated size of user_name for GrB_get/GrB_set
+uint64_t user_name_mem ;// memsize of user_name for GrB_get/GrB_set,
+                        // and arena
 // ---------------------//
 char *logger ;          // error logger string
-size_t logger_size ;    // size of the malloc'd block for logger, or 0
+uint64_t logger_mem ;   // memsize of the malloc'd block for logger, or 0,
+                        // and arena
 // ---------------------//
 
 // The remaining items are specific the GrB_Matrix, GrB_Vector and GrB_Scalar
@@ -220,19 +223,19 @@ int64_t nvec_nonempty ; // the actual number of non-empty vectors, or -1 if
                         // not known
 
 // A->p, A->h, and A->i can be 32 or 64 bit integers
-void *h ;               // non-empty vector list: h_size >= (4 or 8)*max(plen,1)
-void *p ;               // pointers: p_size >= (4 or 8)*(plen+1)
-void *i ;               // indices:  i_size >= (4 or 8)*max(anz,1)
-void *x ;               // values:   x_size >= max(anz*A->type->size,1),
-                        //           or x_size >= 1 if A is iso
-int8_t *b ;             // bitmap:   b_size >= max(anz,1)
+void *h ;               // non-empty vector list: size >= (4 or 8)*max(plen,1)
+void *p ;               // pointers: size >= (4 or 8)*(plen+1)
+void *i ;               // indices:  size >= (4 or 8)*max(anz,1)
+void *x ;               // values:   size >= max(anz*A->type->size,1), or
+                        //           size >= 1 if A is iso
+int8_t *b ;             // bitmap:   size >= max(anz,1)
 int64_t nvals ;         // nvals(A) if A is sparse, hypersparse, or bitmap
 
-size_t p_size ;         // exact size of A->p in bytes, zero if A->p is NULL
-size_t h_size ;         // exact size of A->h in bytes, zero if A->h is NULL
-size_t b_size ;         // exact size of A->b in bytes, zero if A->b is NULL
-size_t i_size ;         // exact size of A->i in bytes, zero if A->i is NULL
-size_t x_size ;         // exact size of A->x in bytes, zero if A->x is NULL
+uint64_t p_mem ;    // size of A->p in bytes, zero if A->p is NULL, and arena
+uint64_t h_mem ;    // size of A->h in bytes, zero if A->h is NULL, and arena
+uint64_t b_mem ;    // size of A->b in bytes, zero if A->b is NULL, and arena
+uint64_t i_mem ;    // size of A->i in bytes, zero if A->i is NULL, and arena
+uint64_t x_mem ;    // size of A->x in bytes, zero if A->x is NULL, and arena
 
 //------------------------------------------------------------------------------
 // hashing the hypersparse list
@@ -456,7 +459,7 @@ uint64_t nzombies ;     // number of zombies marked for deletion
 float hyper_switch ;    // controls conversion hyper to/from sparse
 float bitmap_switch ;   // controls conversion sparse to/from bitmap
 
-// the remaining content of this struct is 17 bytes
+// the remaining content of this struct is 18 bytes
 
 // 5 bytes:
 int8_t sparsity_control ;   // controls sparsity structure: hypersparse,
@@ -534,6 +537,29 @@ bool iso ;          // true if all entries have the same value and only a
 bool p_is_32 ;  // true if A->p is 32-bit, false if 64
 bool j_is_32 ;  // true if A->h and A->Y->[pix] are 32-bit, false if 64
 bool i_is_32 ;  // true if A->i is 32-bit, false if 64
+
+//------------------------------------------------------------------------------
+// arena control
+//------------------------------------------------------------------------------
+
+// The A->[p,h,Y,b,i,x,Pending] data is allocated in A->data_arena by default.
+// A->data_arena and the A->Y->data_arena values will always be identical.
+// These arrays can temporarily appear on other arenas, which may occur if they
+// are transplanted from other matrices.  GrB_wait will move them to the
+// desired arena (A->data_arena) if they are not already there.  Thus, in
+// matrix with no pending work, A->data_arena, GB_arena (A->[p,etc]_mem),
+// GB_arena (A->Y->[p...header]_mem), and GB_arena (A->Pending->[*]_mem)
+// state will all match.
+
+// The header of the matrix (in GB_arena (A->header_mem)) and A->data_arena
+// can differ, and this is not revised by GrB_wait.  Changing the arena of
+// the header requires a malloc/copy/free, and thus changes the pointer *A.
+
+// GrB_get can return the header_area = GB_area (A->header_mem) and the
+// A->data_arena.  GrB_set can only modify A->data_arena.  GxB_*_set_arenas can
+// modify both.
+
+uint8_t data_arena ;
 
 //------------------------------------------------------------------------------
 // iterating through a matrix
