@@ -41,7 +41,12 @@ class testSlowLog():
             self.env.assertContains("Invalid graph operation on empty key", str(e))
 
         # issue the same query twice
-        q = "UNWIND range (0, 500000) AS x RETURN max(x)"
+        # the range is sized to run an order of magnitude past the slowlog's
+        # 10ms floor (SLOW_LOG_MIN_REQ_LATENCY). range(0, 500000) used to sit
+        # right on it — ~12ms cold but ~7.9ms once warm, and 8.8-13.8ms under
+        # the load `--parallelism` creates — so whether the entry got logged
+        # at all was a coin flip. range(0, 5000000) measures 70-84ms.
+        q = "UNWIND range (0, 5000000) AS x RETURN max(x)"
         self.graph.query(q)
         self.graph.query(q)
 
