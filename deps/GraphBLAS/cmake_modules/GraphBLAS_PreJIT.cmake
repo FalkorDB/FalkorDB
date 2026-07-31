@@ -139,7 +139,7 @@ configure_file ( "Config/GB_prejit.c.in"
 # create a list of files of CUDA PreJIT kernels
 #-------------------------------------------------------------------------------
 
-# Fixme for CUDA: add CUDA PreJIT kernels.  For example:
+# fixme for CUDA: add CUDA PreJIT kernels.  For example:
 
 #   ...
 #   elseif ( ${F} MATCHES "^GB_jit__cuda_reduce" )

@@ -17,37 +17,53 @@ for k1 = 1:length (types)
     for is_hyper = 0:1
         for is_csc = 0:1
 
-            % create a random A
-            A = GB_spec_random (4, 4, 0.8, 128, atype, is_csc, is_hyper) ;
-            A.matrix (1,1) = -1 ;
-            A.pattern (1,1) = true ;
-            A_matrix = full (A.matrix) ;
-            A_pattern = full (A.pattern) ;
-            assert (GB_spok (1*A.matrix) == 1) ;
-            assert (GB_spok (A.pattern) == 1) ;
+            for nrows = [1 4]
+                for ncols = [1 4]
 
-            for k2 = 1:length (types)
-                fprintf ('.') ;
-                ctype = types {k2} ;
-                % typecast to type of C
+                    % create a random A
+                    A = GB_spec_random (nrows, ncols, 0.8, 128, ...
+                        atype, is_csc, is_hyper) ;
+                    A.matrix (1,1) = -1 ;
+                    A.pattern (1,1) = true ;
+                    A_matrix = full (A.matrix) ;
+                    A_pattern = full (A.pattern) ;
+                    assert (GB_spok (1*A.matrix) == 1) ;
+                    assert (GB_spok (A.pattern) == 1) ;
+                    fprintf ('.') ;
 
-                C = GB_mex_dup (A, ctype) ;
-                C_matrix = full (C.matrix) ;
-                C_pattern = full (GB_spones_mex (C.matrix)) ;
-                assert (GB_spok (1*C.matrix) == 1) ;
+                    for k2 = 1:length (types)
+                        ctype = types {k2} ;
+                        % typecast to type of C
 
-                if (k1 == k2)
-                    % also try another method
-                    assert (isequal (A_pattern, C_pattern)) ;
-                    assert (isequal (A.class, C.class)) ;
+                        C = GB_mex_dup (A, ctype) ;
+                        C_matrix = full (C.matrix) ;
+                        if (issparse (C.matrix))
+                            C_pattern = full (GB_spones_mex (C.matrix)) ;
+                        else
+                            C_pattern = true (nrows, ncols) ;
+                        end
+                        assert (GB_spok (1*C.matrix) == 1) ;
 
-                    C2 = GB_mex_dup (A, ctype, 1) ;
-                    C2_matrix = full (C2.matrix) ;
-                    C2_pattern = full (GB_spones_mex (C2.matrix)) ;
-                    assert (GB_isequal_ignore_32 (C, C2))  ;
-                    assert (GB_spok (1*C2.matrix) == 1) ;
+                        if (k1 == k2)
+                            % also try another method
+                            assert (isequal (A_pattern, C_pattern)) ;
+                            assert (isequal (A.class, C.class)) ;
+
+                            for method = 1:3
+                                C2 = GB_mex_dup (A, ctype, method) ;
+                                C2_matrix = full (C2.matrix) ;
+                                if (issparse (C2.matrix))
+                                    C2_pattern = ...
+                                        full (GB_spones_mex (C2.matrix)) ;
+                                else
+                                    C2_pattern = true (nrows, ncols) ;
+                                end
+                                assert (GB_isequal_ignore_32 (C, C2))  ;
+                                assert (GB_spok (1*C2.matrix) == 1) ;
+                           end
+                        end
+                    end
                 end
-
             end
         end
     end

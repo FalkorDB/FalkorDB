@@ -8,7 +8,7 @@
 //------------------------------------------------------------------------------
 
 // On input C must exist but the content of the C header is uninitialized
-// except for C->header_size.  No memory is allocated to construct C as the
+// except for C->header_mem.  No memory is allocated to construct C as the
 // hyper_shallow version of A.  C is purely shallow.  If A is iso then so is C.
 
 #include "GB.h"
@@ -26,7 +26,7 @@ GrB_Matrix GB_hyper_shallow         // return C
     //--------------------------------------------------------------------------
 
     ASSERT_MATRIX_OK (A, "hyper_shallow input", GB0) ;
-    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
+    ASSERT (C != NULL) ;
     ASSERT (GB_IS_HYPERSPARSE (A)) ;
 
     //--------------------------------------------------------------------------
@@ -34,17 +34,16 @@ GrB_Matrix GB_hyper_shallow         // return C
     //--------------------------------------------------------------------------
 
     // save the C header status
-    bool C_header_size = C->header_size ;
+    uint64_t C_header_mem = C->header_mem ;
 
     // copy the header
     memcpy (C, A, sizeof (struct GB_Matrix_opaque)) ;
 
     // restore the C header status
-    C->header_size = C_header_size ;
+    C->header_mem = C_header_mem ;
 
     // remove the user_name
-    C->user_name = NULL ;
-    C->user_name_size = 0 ;
+    C->user_name = NULL ; C->user_name_mem = 0 ;
 
     // remove the hyperlist and the hyper_hash
     C->h = NULL ;

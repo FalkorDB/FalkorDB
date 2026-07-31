@@ -4,8 +4,8 @@ function p = symrcm (G)
 %
 % See also GrB/amd, GrB/colamd, GrB/symamd.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-p = builtin ('symrcm', logical (G)) ;
+p = symrcm (logical (G)) ;
 

@@ -22,7 +22,7 @@
 GrB_Info GB_subassign_symbolic  // S = C(I,J), extracting pattern not values
 (
     // output
-    GrB_Matrix S,           // S = symbolic(C(I,J)), static header
+    GrB_Matrix S,           // S = symbolic(C(I,J)), existing header
     // inputs, not modified:
     const GrB_Matrix C,     // matrix to extract the pattern of
     const void *I,          // I index list

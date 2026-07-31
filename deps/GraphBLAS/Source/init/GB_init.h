@@ -14,11 +14,11 @@ GrB_Info GB_init            // start up GraphBLAS
 (
     int mode,               // blocking or non-blocking mode
 
-    // pointers to memory management functions.
-    void * (* malloc_function  ) (size_t),          // required
-    void * (* calloc_function  ) (size_t, size_t),  // optional, can be NULL
-    void * (* realloc_function ) (void *, size_t),  // optional, can be NULL
-    void   (* free_function    ) (void *),          // required
+    // pointers to memory management functions:
+    GB_malloc_function_t malloc_function,           // required
+    GB_calloc_function_t calloc_function,           // unused, can be NULL
+    GB_realloc_function_t realloc_function,         // optional, can be NULL
+    GB_free_function_t free_function,               // required
 
     GB_Werk Werk      // from GrB_init or GxB_init
 ) ;

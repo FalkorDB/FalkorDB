@@ -15,7 +15,7 @@ GrB_Info GxB_Vector_unpack_Full   // unpack a full vector
 (
     GrB_Vector v,       // vector to unpack (type and length unchanged)
     void **vx,          // values
-    uint64_t *vx_size,  // size of vx in bytes
+    uint64_t *vx_memsize,  // size of vx in bytes
     bool *iso,          // if true, v is iso
     const GrB_Descriptor desc
 )
@@ -27,7 +27,7 @@ GrB_Info GxB_Vector_unpack_Full   // unpack a full vector
 
     GB_RETURN_IF_NULL (v) ;
     GB_RETURN_IF_OUTPUT_IS_READONLY (v) ;
-    GB_WHERE_1 (v, "GxB_Vector_unpack_Full (v, &vx, &vx_size, &iso, desc)") ;
+    GB_WHERE_1 (v, "GxB_Vector_unpack_Full (v, &vx, &vx_memsize, &iso, desc)") ;
     GB_BURBLE_START ("GxB_Vector_unpack_Full") ;
 
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
@@ -70,7 +70,7 @@ GrB_Info GxB_Vector_unpack_Full   // unpack a full vector
         NULL, NULL,     // Ah
         NULL, NULL,     // Ab
         NULL, NULL,     // Ai
-        vx,   vx_size,  // Ax
+        vx,   vx_memsize,  // Ax
         NULL, NULL, NULL,
         &sparsity, &is_csc,                 // full by col
         iso, Werk) ;

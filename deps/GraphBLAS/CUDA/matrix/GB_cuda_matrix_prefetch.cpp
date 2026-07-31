@@ -29,6 +29,8 @@ GrB_Info GB_cuda_matrix_prefetch
     size_t jsize = A->j_is_32 ? sizeof (uint32_t) : sizeof (uint64_t) ;
     size_t isize = A->i_is_32 ? sizeof (uint32_t) : sizeof (uint64_t) ;
 
+// fixme: API changes for CUDA 13.2:
+#if 0
     if (A->p != NULL && (which & GB_PREFETCH_P))
     {
         CUDA_OK (cudaMemPrefetchAsync (A->p, (anvec+1) * psize,
@@ -65,6 +67,7 @@ GrB_Info GB_cuda_matrix_prefetch
         CUDA_OK (cudaMemPrefetchAsync (A->x, (A->iso ? 1:anz) * A->type->size,
             device, stream)) ;
     }
+#endif
 
     return (GrB_SUCCESS) ;
 }

@@ -81,6 +81,7 @@ static int _ExportAPIs
 	EXPORT_API ("GraphContext_MemoryUsage",       GraphContext_MemoryUsage)
 	EXPORT_API ("RdbLoadGraphContext_latest",     RdbLoadGraphContext_latest)
 	EXPORT_API ("GraphContext_DecreaseRefCount",  GraphContext_DecreaseRefCount)
+	EXPORT_API ("GraphContextRedisModuleType_Get", GraphContextRedisModuleType_Get)
 
 #undef EXPORT_API
 

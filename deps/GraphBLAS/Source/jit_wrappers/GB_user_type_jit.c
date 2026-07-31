@@ -15,7 +15,7 @@ typedef GB_JIT_KERNEL_USER_TYPE_PROTO ((*GB_jit_dl_function)) ;
 GrB_Info GB_user_type_jit       // construct a user type in a JIT kernel
 (
     // output:
-    size_t *user_type_size,     // sizeof the user type
+    uint64_t *user_type_memsize,     // sizeof the user type
     // input:
     const GrB_Type type         // user-defined type
 )
@@ -47,6 +47,6 @@ GrB_Info GB_user_type_jit       // construct a user type in a JIT kernel
     #include "include/GB_pedantic_disable.h"
     GB_jit_dl_function GB_jit_kernel = (GB_jit_dl_function) dl_function ;
     char *ignore ;
-    return (GB_jit_kernel (user_type_size, &ignore)) ;
+    return (GB_jit_kernel (user_type_memsize, &ignore)) ;
 }
 

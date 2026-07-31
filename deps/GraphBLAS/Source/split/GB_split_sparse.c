@@ -12,7 +12,7 @@
 
 #define GB_FREE_WORKSPACE                   \
     GB_WERK_POP (C_ek_slicing, int64_t) ;   \
-    GB_FREE_MEMORY (&Wp, Wp_size) ;
+    GB_FREE_MEMORY (&Wp, Wp_mem) ;
 
 #define GB_FREE_ALL                         \
     GB_FREE_WORKSPACE ;                     \
@@ -30,6 +30,8 @@ GrB_Info GB_split_sparse            // split a sparse matrix
     const int64_t *restrict Tile_rows,  // size m+1
     const int64_t *restrict Tile_cols,  // size n+1
     const GrB_Matrix A,             // input matrix
+    const int header_arena,
+    const int data_arena,
     GB_Werk Werk
 )
 {
@@ -39,15 +41,19 @@ GrB_Info GB_split_sparse            // split a sparse matrix
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    int A_sparsity = GB_sparsity (A) ;
-    bool A_is_hyper = (A_sparsity == GxB_HYPERSPARSE) ;
-    ASSERT (A_is_hyper || A_sparsity == GxB_SPARSE) ;
-    GrB_Matrix C = NULL ;
-    GB_WERK_DECLARE (C_ek_slicing, int64_t) ;
+
     ASSERT_MATRIX_OK (A, "A sparse for split", GB0) ;
     ASSERT (!GB_JUMBLED (A)) ;
     ASSERT (!GB_ZOMBIES (A)) ;
     ASSERT (!GB_PENDING (A)) ;
+
+    uint64_t mem = GB_mem (data_arena, 0) ;
+
+    int A_sparsity = GB_sparsity (A) ;
+    bool A_is_hyper = (A_sparsity == GxB_HYPERSPARSE) ;
+    ASSERT (A_is_hyper || A_sparsity == GxB_SPARSE) ;
+    GrB_Matrix C = NULL ;
+    GB_WERK_DECLARE (C_ek_slicing, int64_t, mem) ;
 
     int sparsity_control = A->sparsity_control ;
     float hyper_switch = A->hyper_switch ;
@@ -84,9 +90,9 @@ GrB_Info GB_split_sparse            // split a sparse matrix
     // FUTURE: Wp is allocated with the same integers as Ap, but it could be
     // chosen based on anz instead.
 
-    GB_MDECL (Wp, , u) ; size_t Wp_size = 0 ;
+    GB_MDECL (Wp, , u) ; uint64_t Wp_mem = mem ;
     size_t apsize = (Ap_is_32) ? sizeof (uint32_t) : sizeof (uint64_t) ;
-    Wp = GB_MALLOC_MEMORY (anvec, apsize, &Wp_size) ;
+    Wp = GB_MALLOC_MEMORY (anvec, apsize, &Wp_mem) ;
     if (Wp == NULL)
     { 
         // out of memory
@@ -162,7 +168,8 @@ GrB_Info GB_split_sparse            // split a sparse matrix
             C = NULL ;
             GB_OK (GB_new (&C, // new header
                 atype, cvlen, cvdim, GB_ph_malloc, csc, A_sparsity,
-                hyper_switch, cnvec, Cp_is_32, Cj_is_32, Ci_is_32)) ;
+                hyper_switch, cnvec, Cp_is_32, Cj_is_32, Ci_is_32,
+                header_arena, data_arena)) ;
             C->sparsity_control = sparsity_control ;
             C->hyper_switch = hyper_switch ;
             C->nvec = cnvec ;
@@ -227,7 +234,8 @@ GrB_Info GB_split_sparse            // split a sparse matrix
             }
 
             int64_t nvec_nonempty ;
-            GB_cumsum (Cp, Cp_is_32, cnvec, &nvec_nonempty, nth, Werk) ;
+            GB_cumsum (Cp, Cp_is_32, cnvec, &nvec_nonempty, nth,
+                data_arena, Werk) ;
             GB_nvec_nonempty_set (C, nvec_nonempty) ;
             int64_t cnz = GB_IGET (Cp, cnvec) ;
 

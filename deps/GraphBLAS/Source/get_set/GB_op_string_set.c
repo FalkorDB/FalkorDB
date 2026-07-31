@@ -29,9 +29,11 @@ GrB_Info GB_op_string_set
         (op->ytype == NULL || op->ytype->hash != UINT64_MAX) &&
         (op->theta_type == NULL || op->theta_type->hash != UINT64_MAX) ;
 
+    int header_arena = GB_arena (op->header_mem) ;
+
     return (GB_op_or_type_string_set (user_defined, jitable, value, field,
-        &(op->user_name), &(op->user_name_size),
-        op->name, &(op->name_len), &(op->defn), &(op->defn_size),
-        &(op->hash))) ;
+        &(op->user_name), &(op->user_name_mem),
+        op->name, &(op->name_len), &(op->defn), &(op->defn_mem),
+        &(op->hash), header_arena)) ;
 }
 

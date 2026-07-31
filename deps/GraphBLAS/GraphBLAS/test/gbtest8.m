@@ -1,8 +1,13 @@
-function gbtest8
-%GBTEST8 test GrB.select
+function gbtest8 (ghb)
+%GBTEST8 test GrB.select and GhB.select
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
+
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
 %   tril
 %   triu
@@ -23,7 +28,6 @@ function gbtest8
 %   <
 %   <=
 
-rng ('default') ;
 n = 5 ;
 m = 8 ;
 A = sparse (10 * rand (m,n) - 5) .* sprand (m, n, 0.8) ;
@@ -41,29 +45,29 @@ A (3,4) = b ;
 %-------------------------------------------------------------------------
 
     C1 = tril (A) ;
-    C2 = GrB.select ('tril', A, 0) ;
+    C2 = gtb_select (ghb, 'tril', A, 0) ;
     assert (gbtest_eq (C1, C2))
     for k = -m:n
         C1 = tril (A, k) ;
-        C2 = GrB.select ('tril', A, k) ;
-        C3 = GrB.select ('tril', A, k, desc) ;
+        C2 = gtb_select (ghb, 'tril', A, k) ;
+        C3 = gtb_select (ghb, 'tril', A, k, desc) ;
         assert (gbtest_eq (C1, C2))
         assert (gbtest_eq (C1, C3))
         assert (isequal (class (C3), 'double')) ;
     end
 
     C1 = tril (A, 0) ;
-    C2 = GrB.select ('tril', A, 0) ;
+    C2 = gtb_select (ghb, 'tril', A, 0) ;
     assert (gbtest_eq (C1, C2))
 
     C1 = A + tril (A, 0) ;
-    C2 = GrB.select (A, '+', 'tril', A, 0) ;
+    C2 = gtb_select (ghb, A, '+', 'tril', A, 0) ;
     assert (gbtest_eq (C1, C2))
 
     C1 = A ;
     T = A + tril (A, 0) ;
     C1 (M) = T (M) ;
-    C2 = GrB.select (A, M, '+', 'tril', A, 0) ;
+    C2 = gtb_select (ghb, A, M, '+', 'tril', A, 0) ;
     assert (gbtest_eq (C1, C2))
 
 %-------------------------------------------------------------------------
@@ -71,15 +75,15 @@ A (3,4) = b ;
 %-------------------------------------------------------------------------
 
     C1 = triu (A) ;
-    C2 = GrB.select ('triu', A, 0) ;
+    C2 = gtb_select (ghb, 'triu', A, 0) ;
     assert (gbtest_eq (C1, C2))
     for k = -m:n
         C1 = triu (A, k) ;
-        C2 = GrB.select ('triu', A, k) ;
+        C2 = gtb_select (ghb, 'triu', A, k) ;
         assert (gbtest_eq (C1, C2))
     end
     C1 = triu (A, 0) ;
-    C2 = GrB.select ('triu', A, 0) ;
+    C2 = gtb_select (ghb, 'triu', A, 0) ;
     assert (gbtest_eq (C1, C2))
 
 %-------------------------------------------------------------------------
@@ -88,15 +92,15 @@ A (3,4) = b ;
 
     d = min (m,n) ;
     C1 = A .* spdiags (ones (d,1), 0, m, n) ;
-    C2 = GrB.select ('diag', A, 0) ;
+    C2 = gtb_select (ghb, 'diag', A, 0) ;
     assert (gbtest_eq (C1, C2))
     for k = -m:n
         C1 = A .* spdiags (ones (d,1), k, m, n) ;
-        C2 = GrB.select ('diag', A, k) ;
+        C2 = gtb_select (ghb, 'diag', A, k) ;
         assert (gbtest_eq (C1, C2))
     end
     C1 = A .* spdiags (ones (d,1), 0, m, n) ;
-    C2 = GrB.select ('diag', A, 0) ;
+    C2 = gtb_select (ghb, 'diag', A, 0) ;
     assert (gbtest_eq (C1, C2))
 
 %-------------------------------------------------------------------------
@@ -105,15 +109,15 @@ A (3,4) = b ;
 
     d = min (m,n) ;
     C1 = A .* (1 - spdiags (ones (d,1), 0, m, n)) ;
-    C2 = GrB.select ('offdiag', A, 0) ;
+    C2 = gtb_select (ghb, 'offdiag', A, 0) ;
     assert (gbtest_eq (C1, C2))
     for k = -m:n
         C1 = A .* (1 - spdiags (ones (d,1), k, m, n)) ;
-        C2 = GrB.select ('offdiag', A, k) ;
+        C2 = gtb_select (ghb, 'offdiag', A, k) ;
         assert (gbtest_eq (C1, C2))
     end
     C1 = A .* (1 - spdiags (ones (d,1), 0, m, n)) ;
-    C2 = GrB.select ('offdiag', A, 0) ;
+    C2 = gtb_select (ghb, 'offdiag', A, 0) ;
     assert (gbtest_eq (C1, C2))
 
 %-------------------------------------------------------------------------
@@ -128,13 +132,13 @@ A (3,4) = b ;
     C1 = sparse (m,n) ;
     C1 (M) = A (M) ;
 
-    C2 = GrB.select ('nonzero', A) ;
+    C2 = gtb_select (ghb, 'nonzero', A) ;
     assert (gbtest_eq (C1, C2))
 
-    C2 = GrB.select ('~=0', A) ;
+    C2 = gtb_select (ghb, '~=0', A) ;
     assert (gbtest_eq (C1, C2))
 
-    C2 = GrB.select (A, '~=0') ;
+    C2 = gtb_select (ghb, A, '~=0') ;
     assert (gbtest_eq (C1, C2))
 
 %-------------------------------------------------------------------------
@@ -146,13 +150,13 @@ A (3,4) = b ;
 
     C1 = sparse (m,n) ;
 
-    C2 = GrB.select ('zero', A) ;
+    C2 = gtb_select (ghb, 'zero', A) ;
     assert (gbtest_eq (C1, C2))
 
-    C2 = GrB.select ('==0', A) ;
+    C2 = gtb_select (ghb, '==0', A) ;
     assert (gbtest_eq (C1, C2))
 
-    C2 = GrB.select (A, '==0') ;
+    C2 = gtb_select (ghb, A, '==0') ;
     assert (gbtest_eq (C1, C2))
 
 %-------------------------------------------------------------------------
@@ -163,16 +167,16 @@ A (3,4) = b ;
     C1 = sparse (m,n) ;
     C1 (M) = A (M) ;
 
-    C2 = GrB.select ('positive', A) ;
+    C2 = gtb_select (ghb, 'positive', A) ;
     assert (gbtest_eq (C1, C2))
 
-    C2 = GrB.select ('>0', A) ;
+    C2 = gtb_select (ghb, '>0', A) ;
     assert (gbtest_eq (C1, C2))
 
-    C2 = GrB.select (A, '>0') ;
+    C2 = gtb_select (ghb, A, '>0') ;
     assert (gbtest_eq (C1, C2))
 
-    C2 = GrB.select ('positive.double', A) ;
+    C2 = gtb_select (ghb, 'positive.double', A) ;
     assert (gbtest_eq (C1, C2))
 
 %-------------------------------------------------------------------------
@@ -183,13 +187,13 @@ A (3,4) = b ;
     C1 = sparse (m,n) ;
     C1 (M) = A (M) ;
 
-    C2 = GrB.select ('nonnegative', A) ;
+    C2 = gtb_select (ghb, 'nonnegative', A) ;
     assert (gbtest_eq (C1, C2))
 
-    C2 = GrB.select ('>=0', A) ;
+    C2 = gtb_select (ghb, '>=0', A) ;
     assert (gbtest_eq (C1, C2))
 
-    C2 = GrB.select (A, '>=0') ;
+    C2 = gtb_select (ghb, A, '>=0') ;
     assert (gbtest_eq (C1, C2))
 
 %-------------------------------------------------------------------------
@@ -200,13 +204,13 @@ A (3,4) = b ;
     C1 = sparse (m,n) ;
     C1 (M) = A (M) ;
 
-    C2 = GrB.select ('negative', A) ;
+    C2 = gtb_select (ghb, 'negative', A) ;
     assert (gbtest_eq (C1, C2))
 
-    C2 = GrB.select ('<0', A) ;
+    C2 = gtb_select (ghb, '<0', A) ;
     assert (gbtest_eq (C1, C2))
 
-    C2 = GrB.select (A, '<0') ;
+    C2 = gtb_select (ghb, A, '<0') ;
     assert (gbtest_eq (C1, C2))
 
 %-------------------------------------------------------------------------
@@ -217,13 +221,13 @@ A (3,4) = b ;
     C1 = sparse (m,n) ;
     C1 (M) = A (M) ;
 
-    C2 = GrB.select ('nonpositive', A) ;
+    C2 = gtb_select (ghb, 'nonpositive', A) ;
     assert (gbtest_eq (C1, C2))
 
-    C2 = GrB.select ('<=0', A) ;
+    C2 = gtb_select (ghb, '<=0', A) ;
     assert (gbtest_eq (C1, C2))
 
-    C2 = GrB.select (A, '<=0') ;
+    C2 = gtb_select (ghb, A, '<=0') ;
     assert (gbtest_eq (C1, C2))
 
 %-------------------------------------------------------------------------
@@ -234,10 +238,10 @@ A (3,4) = b ;
     C1 = sparse (m,n) ;
     C1 (M) = A (M) ;
 
-    C2 = GrB.select ('~=', A, b) ;
+    C2 = gtb_select (ghb, '~=', A, b) ;
     assert (gbtest_eq (C1, C2))
 
-    C2 = GrB.select (A, '~=', b) ;
+    C2 = gtb_select (ghb, A, '~=', b) ;
     assert (gbtest_eq (C1, C2))
 
 %-------------------------------------------------------------------------
@@ -248,10 +252,10 @@ A (3,4) = b ;
     C1 = sparse (m,n) ;
     C1 (M) = A (M) ;
 
-    C2 = GrB.select ('==', A, b) ;
+    C2 = gtb_select (ghb, '==', A, b) ;
     assert (gbtest_eq (C1, C2))
 
-    C2 = GrB.select (A, '==', b) ;
+    C2 = gtb_select (ghb, A, '==', b) ;
     assert (gbtest_eq (C1, C2))
 
 %-------------------------------------------------------------------------
@@ -262,10 +266,10 @@ A (3,4) = b ;
     C1 = sparse (m,n) ;
     C1 (M) = A (M) ;
 
-    C2 = GrB.select ('>', A, b) ;
+    C2 = gtb_select (ghb, '>', A, b) ;
     assert (gbtest_eq (C1, C2))
 
-    C2 = GrB.select (A, '>', b) ;
+    C2 = gtb_select (ghb, A, '>', b) ;
     assert (gbtest_eq (C1, C2))
 
 %-------------------------------------------------------------------------
@@ -276,10 +280,10 @@ A (3,4) = b ;
     C1 = sparse (m,n) ;
     C1 (M) = A (M) ;
 
-    C2 = GrB.select ('>=', A, b) ;
+    C2 = gtb_select (ghb, '>=', A, b) ;
     assert (gbtest_eq (C1, C2))
 
-    C2 = GrB.select (A, '>=', b) ;
+    C2 = gtb_select (ghb, A, '>=', b) ;
     assert (gbtest_eq (C1, C2))
 
 %-------------------------------------------------------------------------
@@ -290,10 +294,10 @@ A (3,4) = b ;
     C1 = sparse (m,n) ;
     C1 (M) = A (M) ;
 
-    C2 = GrB.select ('<', A, b) ;
+    C2 = gtb_select (ghb, '<', A, b) ;
     assert (gbtest_eq (C1, C2))
 
-    C2 = GrB.select (A, '<', b) ;
+    C2 = gtb_select (ghb, A, '<', b) ;
     assert (gbtest_eq (C1, C2))
 
 %-------------------------------------------------------------------------
@@ -304,10 +308,10 @@ A (3,4) = b ;
     C1 = sparse (m,n) ;
     C1 (M) = A (M) ;
 
-    C2 = GrB.select ('<=', A, b) ;
+    C2 = gtb_select (ghb, '<=', A, b) ;
     assert (gbtest_eq (C1, C2))
 
-    C2 = GrB.select (A, '<=', b) ;
+    C2 = gtb_select (ghb, A, '<=', b) ;
     assert (gbtest_eq (C1, C2))
 
 %-------------------------------------------------------------------------
@@ -315,26 +319,26 @@ A (3,4) = b ;
 %-------------------------------------------------------------------------
 
     Cin = sprand (m, n, 0.5) ;
-    C2 = GrB.select (Cin, '+', '>0', A) ;
+    C2 = gtb_select (ghb, Cin, '+', '>0', A) ;
     C1 = Cin ;
     C1 (A > 0) = C1 (A > 0) + A (A > 0) ; 
     assert (gbtest_eq (C1, C2))
 
     M = logical (sprand (m, n, 0.5)) ;
     Cin = sprand (m, n, 0.5) ;
-    C2 = GrB.select (Cin, M, '>0', A) ;
+    C2 = gtb_select (ghb, Cin, M, '>0', A) ;
     C1 = Cin ;
     T = sparse (m, n) ;
     T (A > 0) = A (A > 0) ;
     C1 (M) = T (M) ;
     assert (gbtest_eq (C1, C2))
 
-    C2 = GrB.select (Cin, M, '+', '>0', A) ;
+    C2 = gtb_select (ghb, Cin, M, '+', '>0', A) ;
     C1 = Cin ;
     T = sparse (m, n) ;
     T (A > 0) = A (A > 0) ;
     C1 (M) = C1 (M) + T (M) ;
     assert (gbtest_eq (C1, C2))
 
-fprintf ('gbtest8: all tests passed\n') ;
+fprintf ('gbtest8 (%d): all tests passed\n', ghb) ;
 

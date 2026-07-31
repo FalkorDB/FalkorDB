@@ -411,7 +411,7 @@ void mexFunction
     OK (GrB_Global_set_VOID_ (GrB_GLOBAL, (void *) myflush, GxB_FLUSH,
         sizeof (GB_flush_function_t))) ;
     OK (GxB_print (s_int32, 3)) ;
-    OK (GrB_Global_set_VOID_ (GrB_GLOBAL, (void *) mexPrintf, GxB_PRINTF,
+    OK (GrB_Global_set_VOID_ (GrB_GLOBAL, (void *) printf, GxB_PRINTF,
         sizeof (GB_printf_function_t))) ;
     OK (GrB_Global_set_VOID_ (GrB_GLOBAL, (void *) NULL, GxB_FLUSH,
         sizeof (GB_flush_function_t))) ;
@@ -429,13 +429,13 @@ void mexFunction
 
     void *f = NULL ;
     OK (GrB_Global_get_VOID_(GrB_GLOBAL, (void *) &f, GxB_MALLOC_FUNCTION)) ;
-    CHECK (f == mxMalloc) ;
-    OK (GrB_Global_get_VOID_(GrB_GLOBAL, (void *) &f, GxB_REALLOC_FUNCTION)) ;
-    CHECK (f == mxRealloc) ;
+    CHECK (f == malloc) ;
     OK (GrB_Global_get_VOID (GrB_GLOBAL, (void *) &f, GxB_CALLOC_FUNCTION)) ;
-    CHECK (f == mxCalloc) ;
+    CHECK (f == calloc) ;
+    OK (GrB_Global_get_VOID_(GrB_GLOBAL, (void *) &f, GxB_REALLOC_FUNCTION)) ;
+    CHECK (f == realloc) ;
     OK (GrB_Global_get_VOID (GrB_GLOBAL, (void *) &f, GxB_FREE_FUNCTION)) ;
-    CHECK (f == mxFree) ;
+    CHECK (f == free) ;
 
     OK (GrB_Global_get_SIZE_ (GrB_GLOBAL, &size, GxB_MALLOC_FUNCTION)) ;
     CHECK (size == sizeof (void *)) ;
@@ -445,6 +445,19 @@ void mexFunction
     CHECK (size == sizeof (void *)) ;
     OK (GrB_Global_get_SIZE_ (GrB_GLOBAL, &size, GxB_FREE_FUNCTION)) ;
     CHECK (size == sizeof (void *)) ;
+
+    OK (GrB_Global_get_VOID_(GrB_GLOBAL, (void *) &f,
+        GxB_ARENA_MALLOC + GB_ARENA_TEST)) ;
+    CHECK (f == mxMalloc) ;
+    OK (GrB_Global_get_VOID_(GrB_GLOBAL, (void *) &f,
+        GxB_ARENA_REALLOC + GB_ARENA_TEST)) ;
+    CHECK (f == mxRealloc) ;
+    OK (GrB_Global_get_VOID (GrB_GLOBAL, (void *) &f,
+        GxB_ARENA_CALLOC + GB_ARENA_TEST)) ;
+    CHECK (f == mxCalloc) ;
+    OK (GrB_Global_get_VOID (GrB_GLOBAL, (void *) &f,
+        GxB_ARENA_FREE + GB_ARENA_TEST)) ;
+    CHECK (f == mxFree) ;
 
     //--------------------------------------------------------------------------
     // finalize GraphBLAS

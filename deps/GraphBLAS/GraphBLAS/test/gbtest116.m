@@ -1,8 +1,13 @@
-function gbtest116
-%GBTEST116 list all idxunop operators for GrB.apply2
+function gbtest116 (ghb)
+%GBTEST116 list all idxunop operators for [GrB,GhB].apply2
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
+
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
 opnames = {
     'tril',
@@ -20,8 +25,8 @@ opnames = {
 for k1 = 1:length(opnames)
     op = opnames {k1} ;
     fprintf ('\n=================================== %s\n', op) ;
-    GrB.binopinfo (op) ;
+    gtb_binopinfo (ghb, op) ;
 end
 
-fprintf ('gbtest116: all tests passed\n') ;
+fprintf ('gbtest116 (%d): all tests passed\n', ghb) ;
 

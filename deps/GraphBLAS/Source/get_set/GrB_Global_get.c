@@ -17,7 +17,7 @@
 struct GB_Global_opaque GB_OPAQUE (WORLD_OBJECT) =
 {
     GB_MAGIC,                       // magic: initialized
-    0,                              // header_size: statically allocated
+    0,                              // header_mem: statically allocated
 } ;
 
 const GrB_Global GrB_GLOBAL = & GB_OPAQUE (WORLD_OBJECT) ;
@@ -122,6 +122,16 @@ static GrB_Info GB_global_enum_get (int32_t *value, int field)
             (*value) = GB_Global_gpu_count_get ( ) ;
             break ;
 
+        case GxB_ARENA_DATA : 
+
+            (*value) = GB_Context_data_arena_get (NULL) ;
+            break ;
+
+        case GxB_ARENA_HEADER : 
+
+            (*value) = GB_Context_header_arena_get (NULL) ;
+            break ;
+
         case GxB_BURBLE : 
 
             (*value) = (int) GB_Global_burble_get ( ) ;
@@ -192,7 +202,7 @@ GrB_Info GrB_Global_get_Scalar
 
     info = GrB_NO_VALUE ;
 
-    GB_OPENMP_LOCK_SET (0)
+    GB_OPENMP_LOCK_SET (0)      // global get (enum)
     {
         int32_t i ;
         info = GB_global_enum_get (&i, field) ;
@@ -393,7 +403,7 @@ GrB_Info GrB_Global_get_String
 
     GrB_Info info = GrB_NO_VALUE ;
 
-    GB_OPENMP_LOCK_SET (0)
+    GB_OPENMP_LOCK_SET (0)      // global get (string)
     {
         const char *s ;
         info = GB_global_string_get (&s, field) ;
@@ -402,7 +412,7 @@ GrB_Info GrB_Global_get_String
             strcpy (value, s) ;
         }
     }
-    GB_OPENMP_LOCK_UNSET (0)
+    GB_OPENMP_LOCK_UNSET (0)    // global get (string)
 
     #pragma omp flush
     return (info) ;
@@ -434,11 +444,11 @@ GrB_Info GrB_Global_get_INT32
 
     GrB_Info info = GrB_NO_VALUE ;
 
-    GB_OPENMP_LOCK_SET (0)
+    GB_OPENMP_LOCK_SET (0)      // global get (enum)
     {
         info = GB_global_enum_get (value, field) ;
     }
-    GB_OPENMP_LOCK_UNSET (0)
+    GB_OPENMP_LOCK_UNSET (0)    // global get (enum)
 
     return (info) ;
 }
@@ -471,7 +481,7 @@ GrB_Info GrB_Global_get_SIZE
     const char *s ;
     GrB_Info info = GrB_NO_VALUE ;
 
-    GB_OPENMP_LOCK_SET (0)
+    GB_OPENMP_LOCK_SET (0)      // global get (string)
     {
         info = GB_global_string_get (&s, field) ;
         if (info == GrB_SUCCESS)
@@ -516,7 +526,7 @@ GrB_Info GrB_Global_get_SIZE
             }
         }
     }
-    GB_OPENMP_LOCK_UNSET (0)
+    GB_OPENMP_LOCK_UNSET (0)        // global get (string)
 
     #pragma omp flush
     return (info) ;
@@ -548,8 +558,47 @@ GrB_Info GrB_Global_get_VOID
 
     GrB_Info info = GrB_NO_VALUE ;
 
-    GB_OPENMP_LOCK_SET (0)
-    {
+    uint32_t arena_option = ((uint32_t) field) & (~0xFFFF) ;
+    uint32_t arena = ((uint32_t) field) & (0xFFFF) ;
+
+    if (((arena_option == GxB_ARENA_MALLOC) ||
+        (arena_option == GxB_ARENA_CALLOC) ||
+        (arena_option == GxB_ARENA_REALLOC) ||
+        (arena_option == GxB_ARENA_FREE)) &&
+        (GB_Global_malloc_function_get ((int) arena) == NULL))
+    { 
+        // arena out of range or not initialized
+        return (GrB_INVALID_VALUE) ;
+    }
+
+    GB_OPENMP_LOCK_SET (0)      // global get (void)
+
+    if (arena_option == GxB_ARENA_MALLOC)
+    { 
+        void **f = (void **) value ;
+        (*f) = GB_Global_malloc_function_get (arena) ;
+        info = GrB_SUCCESS ;
+    }
+    else if (arena_option == GxB_ARENA_CALLOC)
+    { 
+        void **f = (void **) value ;
+        (*f) = GB_Global_calloc_function_get (arena) ;
+        info = GrB_SUCCESS ;
+    }
+    else if (arena_option == GxB_ARENA_REALLOC)
+    { 
+        void **f = (void **) value ;
+        (*f) = GB_Global_realloc_function_get (arena) ;
+        info = GrB_SUCCESS ;
+    }
+    else if (arena_option == GxB_ARENA_FREE)
+    { 
+        void **f = (void **) value ;
+        (*f) = GB_Global_free_function_get (arena) ;
+        info = GrB_SUCCESS ;
+    }
+    else
+    { 
         switch (field)
         {
 
@@ -576,34 +625,34 @@ GrB_Info GrB_Global_get_VOID
                 info = GrB_SUCCESS ;
                 break ;
 
-            case GxB_MALLOC_FUNCTION : 
+            case GxB_MALLOC_FUNCTION :  // default arena only (historical)
                 {
-                    void **func = (void **) value ;
-                    (*func) = GB_Global_malloc_function_get ( ) ;
+                    void **f = (void **) value ;
+                    (*f) = GB_Global_malloc_function_get (GrB_DEFAULT) ;
                 }
                 info = GrB_SUCCESS ;
                 break ;
 
-            case GxB_CALLOC_FUNCTION : 
+            case GxB_CALLOC_FUNCTION :  // default arena only (historical)
                 {
-                    void **func = (void **) value ;
-                    (*func) = GB_Global_calloc_function_get ( ) ;
+                    void **f = (void **) value ;
+                    (*f) = GB_Global_calloc_function_get (GrB_DEFAULT) ;
                 }
                 info = GrB_SUCCESS ;
                 break ;
 
-            case GxB_REALLOC_FUNCTION : 
+            case GxB_REALLOC_FUNCTION : // default arena only (historical)
                 {
-                    void **func = (void **) value ;
-                    (*func) = GB_Global_realloc_function_get ( ) ;
+                    void **f = (void **) value ;
+                    (*f) = GB_Global_realloc_function_get (GrB_DEFAULT) ;
                 }
                 info = GrB_SUCCESS ;
                 break ;
 
-            case GxB_FREE_FUNCTION : 
+            case GxB_FREE_FUNCTION :    // default arena only (historical)
                 {
-                    void **func = (void **) value ;
-                    (*func) = GB_Global_free_function_get ( ) ;
+                    void **f = (void **) value ;
+                    (*f) = GB_Global_free_function_get (GrB_DEFAULT) ;
                 }
                 info = GrB_SUCCESS ;
                 break ;
@@ -619,7 +668,8 @@ GrB_Info GrB_Global_get_VOID
                 info = GrB_INVALID_VALUE ;
         }
     }
-    GB_OPENMP_LOCK_UNSET (0)
+
+    GB_OPENMP_LOCK_UNSET (0)      // global get (void)
 
     #pragma omp flush
     return (info) ;

@@ -31,7 +31,7 @@ GrB_Info GrB_Scalar_wait    // finish all work on a scalar
     // finish all pending work on the scalar
     //--------------------------------------------------------------------------
 
-    if (waitmode != GrB_COMPLETE && GB_ANY_PENDING_WORK (s))
+    if (waitmode != GrB_COMPLETE && GB_will_wait ((GrB_Matrix) s))
     { 
         GB_BURBLE_START ("GrB_Scalar_wait") ;
         GB_OK (GB_wait ((GrB_Matrix) s, "scalar", Werk)) ;

@@ -5,15 +5,8 @@ function C = exp (G)
 %
 % See also GrB/exp, GrB/expm1, GrB/pow2, GrB/log, GrB/log10, GrB/log2.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-G = G.opaque ;
-type = gbtype (G) ;
-
-if (~gb_isfloat (type))
-    type = 'double' ;
-end
-
-C = GrB (gbapply ('exp', gbfull (G, type))) ;
+C = gb_exp (0, G) ;
 

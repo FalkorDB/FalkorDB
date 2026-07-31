@@ -1,9 +1,14 @@
-function gbtest80
+function gbtest80 (ghb)
 %GBTEST80 test complex division and power
 % Tests all real, inf, and nan cases.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
+
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
 list = [-2:0.5:2 inf -inf nan] ;
 
@@ -19,17 +24,17 @@ for xr = list
     for xi = list
         fprintf ('.')
         X = complex (xr, xi) ;
-        GX = GrB (X) ;
+        GX = gtb (ghb, X) ;
         Xs = single (X) ;
-        GXs = GrB (Xs) ;
+        GXs = gtb (ghb, Xs) ;
 
         for yr = list
             for yi = list
 
                 Y = complex (yr, yi) ;
-                GY = GrB (Y) ;
+                GY = gtb (ghb, Y) ;
                 Ys = single (Y) ;
-                GYs = GrB (Ys) ;
+                GYs = gtb (ghb, Ys) ;
 
                 Z = X / Y ;
                 Z2 = GX / GY ;
@@ -115,5 +120,5 @@ fprintf ('\nmaxerr: %g %g\n', maxerr, maxerr_single) ;
 assert (maxerr < dtol)
 assert (maxerr_single < stol)
 
-fprintf ('\ngbtest80: all tests passed\n') ;
+fprintf ('\ngbtest80 (%d): all tests passed\n', ghb) ;
 

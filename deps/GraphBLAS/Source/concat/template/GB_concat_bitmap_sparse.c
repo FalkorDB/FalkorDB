@@ -12,7 +12,10 @@
     ASSERT (GB_IS_BITMAP (C)) ;
 
     #ifdef GB_JIT_KERNEL
-    GB_WERK_DECLARE (A_ek_slicing, int64_t) ;
+    ASSERT (C != NULL) ;
+    int data_arena = C->data_arena ;
+    uint64_t mem = GB_mem (data_arena, 0) ;
+    GB_WERK_DECLARE (A_ek_slicing, int64_t, mem) ;
     #undef  GB_FREE_ALL
     #define GB_FREE_ALL GB_WERK_POP (A_ek_slicing, int64_t) ;
     #endif

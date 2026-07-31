@@ -1,48 +1,53 @@
-function gbtest61
+function gbtest61 (ghb)
 %GBTEST61 test GrB.laplacian
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-rng ('default') ;
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
+
 n = 10 ;
 A = sprand (n, n, 0.4) ;
 
 S = tril (A, -1) ;
 S = S+S' ;
-G = GrB (S) ;
+G = gtb (ghb, S) ;
 
 L0 = laplacian (graph (S, 'OmitSelfLoops')) ;
 
 % GrB.laplacian places explicit zeros on the diagonal
-L1 = GrB.laplacian (S) ;
-L2 = GrB.laplacian (G) ;
-L3 = GrB.laplacian (G, 'double', 'check') ;
+L1 = gtb_laplacian (ghb, S) ;
+L2 = gtb_laplacian (ghb, G) ;
+L3 = gtb_laplacian (ghb, G, 'double', 'check') ;
+L4 = gtb_laplacian (ghb, gtb (ghb, G, 'by row')) ;
 
 assert (norm (L0-L1,1) == 0) ;
-assert (isequal (GrB.offdiag (L0), GrB.offdiag (L1))) ;
+assert (isequal (gtb_offdiag (ghb, L0), gtb_offdiag (ghb, L1))) ;
 assert (isequal (L0, double (L1))) ;
 
 assert (isequal (L1, L2)) ;
 assert (isequal (L1, L3)) ;
+assert (isequal (L1, L4)) ;
 
-G = GrB (G, 'by row') ;
+G = gtb (ghb, G, 'by row') ;
 
-L2 = GrB.laplacian (G) ;
-L3 = GrB.laplacian (G, 'double', 'check') ;
+L2 = gtb_laplacian (ghb, G) ;
+L3 = gtb_laplacian (ghb, G, 'double', 'check') ;
 
 assert (norm (L0-L2,1) == 0) ;
-assert (isequal (GrB.offdiag (L0), GrB.offdiag (L2))) ;
+assert (isequal (gtb_offdiag (ghb, L0), gtb_offdiag (ghb, L2))) ;
 assert (isequal (L2, L3)) ;
 
 types = { 'double', 'single', 'int8', 'int16', 'int32', 'int64' } ;
 for k = 1:6
     type = types {k} ;
-    L2 = GrB.laplacian (G, type) ;
-    assert (isequal (GrB.type (L2), type)) ;
+    L2 = gtb_laplacian (ghb, G, type) ;
+    assert (isequal (gtb_type (ghb, L2), type)) ;
     assert (isequal (L0, double (L2))) ;
 end
 
-
-fprintf ('gbtest61: all tests passed\n') ;
+fprintf ('gbtest61 (%d): all tests passed\n', ghb) ;
 

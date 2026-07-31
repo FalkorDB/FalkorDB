@@ -18,7 +18,7 @@ TODO (Mar 2024):
 
 --------------------------------------------------------------------------------
 
-all the FIXMEs
+all the fixmes
 
 clean up comments and code style
 
