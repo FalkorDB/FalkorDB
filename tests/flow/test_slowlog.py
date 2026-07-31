@@ -211,11 +211,16 @@ class testSlowLog():
         # clear slowlog
         self.redis_con.execute_command("GRAPH.SLOWLOG", GRAPH_ID, "RESET")
 
-        # heavy double-UNWIND body so the query deterministically exceeds the
-        # slowlog MIN_LATENCY_MS threshold; $i only differs between the two
-        # runs so the query TEXT stays identical (same slowlog entry).
-        query = "UNWIND range(0, 2500) AS i UNWIND range(0, 2500) AS j WITH i, j WHERE i > 0 AND j < 500 AND i + j < $i RETURN SUM(i + j)"
-        self.graph.query(query, {'i': 100})
+        # $i drives how many rows the second UNWIND produces, so the same query
+        # TEXT (one slowlog entry) does ~10x the work on the second run below.
+        # The entry's params are only refreshed on a strictly greater latency
+        # (slow_log.rs MIN_LATENCY_MS path; C's slow_log.c returns early when
+        # latency <= existing), so run 2 must be the slower of the two. The
+        # previous body differed by only ~31ms on a ~400ms baseline and lost
+        # that ordering to scheduling noise under --parallelism, failing ~1 run
+        # in 12; this pair keeps a ~700ms gap even on a fully loaded machine.
+        query = "UNWIND range(0, 500000) AS x UNWIND range(0, $i) AS y RETURN SUM(x + y)"
+        self.graph.query(query, {'i': 4})
 
         slowlog = self.graph.slowlog()
         self.env.assertEqual(len(slowlog), 1)
@@ -226,8 +231,8 @@ class testSlowLog():
         p0 = entry[4]
 
         # re-issue the same query but with different params
-        query = "UNWIND range(0, 2500) AS i UNWIND range(0, 2500) AS j WITH i, j WHERE i > 0 AND j < 500 AND i + j < $i RETURN SUM(i + j)"
-        self.graph.query(query, {'i': 400000})
+        query = "UNWIND range(0, 500000) AS x UNWIND range(0, $i) AS y RETURN SUM(x + y)"
+        self.graph.query(query, {'i': 49})
 
         slowlog = self.graph.slowlog()
         self.env.assertEqual(len(slowlog), 1)
@@ -242,7 +247,7 @@ class testSlowLog():
 
         # expecting params to update
         self.env.assertNotEqual(p0, p1)
-        self.env.assertContains('400000', p1)
+        self.env.assertContains('49', p1)
 
     def test05_fast_queries(self):
         # make sure fast queries do not enter the slowlog
