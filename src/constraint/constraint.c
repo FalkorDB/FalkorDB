@@ -371,7 +371,7 @@ void Constraint_Replicate
 
 	// replicate
 	RedisModule_Replicate(ctx, "GRAPH.CONSTRAINT", fmt, "CREATE", graph_name,
-			c_type, et, label, "PROPERTIES", c->n_attr, attrs, (size_t)c->n_attr);
+			c_type, et, label, "PROPERTIES", (long long)c->n_attr, attrs, (size_t)c->n_attr);
 
 	// free strings
 	for(uint i = 0; i < c->n_attr; i++) {

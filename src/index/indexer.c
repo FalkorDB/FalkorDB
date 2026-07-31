@@ -9,6 +9,7 @@
 #include "../util/rmalloc.h"
 #include <assert.h>
 #include <pthread.h>
+#include <stdatomic.h>
 
 // lock indexer task queue
 #define INDEXER_LOCK_QUEUE()                            \
@@ -65,6 +66,7 @@ typedef struct {
 } ConstraintDropCtx;
 
 typedef struct {
+	atomic_bool stop;    // indexer is shutting down
 	pthread_t t;         // worker thread handel
 	pthread_mutex_t m;   // queue mutex
 	pthread_mutex_t cm;  // conditional variable mutex
@@ -80,7 +82,58 @@ static Indexer *indexer = NULL;
 // clear indexer's tasks
 static void _Indexer_ClearTasks(void) {
 	INDEXER_LOCK_QUEUE () ;
-	arr_clear (indexer->q) ;
+
+	uint n = arr_len (indexer->q) ;
+
+	while ((n-- > 0)) {
+		IndexerTask task = arr_pop (indexer->q) ;
+		void *pdata = task.pdata ;
+
+		switch (task.op) {
+			case INDEXER_IDX_DROP :
+				{
+					IndexDropCtx *ctx = (IndexDropCtx*) pdata ;
+					Index_Free (ctx->idx) ;
+					GraphContext_DecreaseRefCount (ctx->gc) ;
+					rm_free (ctx) ;
+					break;
+				}
+
+			case INDEXER_IDX_POPULATE :
+				{
+					IndexPopulateCtx *ctx = (IndexPopulateCtx*)pdata ;
+					GraphContext_DecreaseRefCount (ctx->gc) ;
+					rm_free (ctx) ;
+					break ;
+				}
+
+			case INDEXER_CONSTRAINT_DROP :
+				{
+					ConstraintDropCtx *ctx = (ConstraintDropCtx*)pdata ;
+					Constraint_Free (&ctx->c) ;
+					GraphContext_DecreaseRefCount (ctx->gc) ;
+					rm_free (ctx) ;
+					break ;
+				}
+
+			case INDEXER_CONSTRAINT_ENFORCE :
+				{
+					ConstraintEnforceCtx *ctx = (ConstraintEnforceCtx*)pdata ;
+					GraphContext_DecreaseRefCount (ctx->gc) ;
+					rm_free (ctx) ;
+					break ;
+				}
+
+			case INDEXER_EXIT :
+				// nothing to free
+				break ;
+
+			default:
+				break;
+		}
+	}
+
+	ASSERT (arr_len (indexer->q) == 0) ;
 	INDEXER_UNLOCK_QUEUE () ;
 }
 
@@ -278,8 +331,8 @@ void _indexer_AddTask
 	INDEXER_UNLOCK_QUEUE () ;
 
 	// signal conditional variable
-	pthread_mutex_lock (&indexer->cm) ;
-	pthread_cond_signal (&indexer->c) ;
+	pthread_mutex_lock   (&indexer->cm) ;
+	pthread_cond_signal  (&indexer->c)  ;
 	pthread_mutex_unlock (&indexer->cm) ;
 }
 
@@ -289,7 +342,7 @@ static void _indexer_PopTask
 (
 	IndexerTask *task
 ) {
-	ASSERT(task != NULL);
+	ASSERT (task != NULL) ;
 
 	// lock queue
 	INDEXER_LOCK_QUEUE () ;
@@ -298,20 +351,20 @@ static void _indexer_PopTask
 	if (arr_len (indexer->q) == 0) {
 		// waiting for work
 		// lock conditional variable mutex
-		pthread_mutex_lock(&indexer->cm);
+		pthread_mutex_lock (&indexer->cm) ;
 
 		// unlock queue mutex
 		INDEXER_UNLOCK_QUEUE () ;
 
 		// wait on conditional variable
-		pthread_cond_wait(&indexer->c, &indexer->cm);
-		pthread_mutex_unlock(&indexer->cm);
+		pthread_cond_wait (&indexer->c, &indexer->cm) ;
+		pthread_mutex_unlock (&indexer->cm) ;
 
 		// work been added to queue
 		INDEXER_LOCK_QUEUE () ;
 	}
 
-	*task = indexer->q[0] ;
+	*task = indexer->q [0] ;
 	arr_del (indexer->q, 0) ;
 
 	INDEXER_UNLOCK_QUEUE () ;
@@ -320,77 +373,77 @@ static void _indexer_PopTask
 // initialize indexer
 // create indexer worker thread and task queue
 bool Indexer_Init(void) {
-	ASSERT(indexer == NULL);
+	ASSERT (indexer == NULL) ;
 
-	int a_res  = 0;  // attribute create result code
-	int c_res  = 0;  // conditional variable create result code
-	int t_res  = 0;  // thread create result code
-	int m_res  = 0;  // mutex create result code
-	int cm_res = 0;  // conditional variable mutex create result code
+	int a_res  = 0 ;  // attribute create result code
+	int c_res  = 0 ;  // conditional variable create result code
+	int t_res  = 0 ;  // thread create result code
+	int m_res  = 0 ;  // mutex create result code
+	int cm_res = 0 ;  // conditional variable mutex create result code
 
-	indexer = rm_calloc(1, sizeof(Indexer));
+	indexer = rm_calloc (1, sizeof (Indexer)) ;
 
 	// create queue mutex
-	m_res = pthread_mutex_init(&indexer->m, NULL);
-	if(m_res != 0) {
-		goto cleanup;
+	m_res = pthread_mutex_init (&indexer->m, NULL) ;
+	if (m_res != 0) {
+		goto cleanup ;
 	}
 
 	// create conditional variable mutex
-	cm_res = pthread_mutex_init(&indexer->cm, NULL);
-	if(cm_res != 0) {
-		goto cleanup;
+	cm_res = pthread_mutex_init (&indexer->cm, NULL) ;
+	if (cm_res != 0) {
+		goto cleanup ;
 	}
 
 	// create conditional var
-	c_res = pthread_cond_init(&indexer->c, NULL);
-	if(c_res != 0) {
-		goto cleanup;
+	c_res = pthread_cond_init (&indexer->c, NULL) ;
+	if (c_res != 0) {
+		goto cleanup ;
 	}
 
 	// create task queue
 	indexer->q = arr_new (IndexerTask, 0) ;
 
 	// create worker thread
-	pthread_attr_t attr;
-	a_res = pthread_attr_init(&attr);
-	if(a_res != 0) {
-		goto cleanup;
+	pthread_attr_t attr ;
+	a_res = pthread_attr_init (&attr) ;
+	if (a_res != 0) {
+		goto cleanup ;
 	}
 
-	t_res = pthread_create(&indexer->t, &attr, _indexer_run, NULL);
-	if(t_res != 0) {
-		goto cleanup;	
+	t_res = pthread_create (&indexer->t, &attr, _indexer_run, NULL) ;
+	if (t_res != 0) {
+		goto cleanup ;
 	}
 
-	pthread_attr_destroy(&attr);
+	pthread_attr_destroy (&attr) ;
 
-	return true;
+	return true ;
 
 cleanup:
-	if(c_res == 0) {
-		pthread_cond_destroy(&indexer->c);
+	if (c_res == 0) {
+		pthread_cond_destroy (&indexer->c) ;
 	}
 
-	if(m_res == 0) {
-		pthread_mutex_destroy(&indexer->m);
+	if (m_res == 0) {
+		pthread_mutex_destroy (&indexer->m) ;
 	}
 
-	if(cm_res == 0) {
-		pthread_mutex_destroy(&indexer->cm);
+	if (cm_res == 0) {
+		pthread_mutex_destroy (&indexer->cm) ;
 	}
 
-	if(a_res == 0) {
-		pthread_attr_destroy(&attr);
+	if (a_res == 0) {
+		pthread_attr_destroy (&attr) ;
 	}
 
-	if(indexer->q != NULL) {
+	if (indexer->q != NULL) {
 		arr_free (indexer->q) ;
 	}
 
-	rm_free(indexer);
+	rm_free (indexer) ;
 
-	return false;
+	return false ;
 }
 
 // populates index asynchronously
@@ -402,26 +455,31 @@ void Indexer_PopulateIndex
 	Schema *s,        // schema containing the idx
 	Index idx         // index to populate
 ) {
-	ASSERT(s       != NULL);
-	ASSERT(gc      != NULL);
-	ASSERT(idx     != NULL);
-	ASSERT(indexer != NULL);
-	ASSERT(Index_Enabled(idx) == false);
+	ASSERT (s       != NULL) ;
+	ASSERT (gc      != NULL) ;
+	ASSERT (idx     != NULL) ;
+	ASSERT (indexer != NULL) ;
+	ASSERT (Index_Enabled (idx) == false) ;
+
+	// reject task
+	if (indexer->stop) {
+		return ;
+	}
 
 	// create work item
-	IndexPopulateCtx *ctx = rm_malloc(sizeof(IndexPopulateCtx));
-	ctx->s   = s;
-	ctx->gc  = gc;
-	ctx->idx = idx;
+	IndexPopulateCtx *ctx = rm_malloc (sizeof (IndexPopulateCtx)) ;
+	ctx->s   = s ;
+	ctx->gc  = gc ;
+	ctx->idx = idx ;
 
 	// increase graph reference count
 	// count will be reduced once this task is perfomed
 	// this is done to handle the case where a graph has pending index
 	// population tasks and it is being asked to be deleted
-	GraphContext_IncreaseRefCount(gc);
+	GraphContext_IncreaseRefCount (gc) ;
 
 	// place task into queue
-	_indexer_AddTask(INDEXER_IDX_POPULATE, ctx);
+	_indexer_AddTask (INDEXER_IDX_POPULATE, ctx) ;
 }
 
 // drops index asynchronously
@@ -434,6 +492,11 @@ void Indexer_DropIndex
 ) {
 	ASSERT(idx     != NULL);
 	ASSERT(indexer != NULL);
+
+	// reject task
+	if (indexer->stop) {
+		return ;
+	}
 
 	// create work item
 	IndexDropCtx *ctx = rm_malloc(sizeof(IndexDropCtx));
@@ -461,6 +524,11 @@ void Indexer_EnforceConstraint
 	ASSERT(gc      != NULL);
 	ASSERT(indexer != NULL);
 
+	// reject task
+	if (indexer->stop) {
+		return ;
+	}
+
 	ConstraintEnforceCtx *ctx = rm_malloc(sizeof(ConstraintEnforceCtx));
 	ctx->c  = c;
 	ctx->gc = gc;
@@ -485,6 +553,11 @@ void Indexer_DropConstraint
 	ASSERT(c       != NULL);
 	ASSERT(indexer != NULL);
 
+	// reject task
+	if (indexer->stop) {
+		return ;
+	}
+
 	ConstraintDropCtx *ctx = rm_malloc(sizeof(ConstraintDropCtx));
 	ctx->c  = c;
 	ctx->gc = gc;
@@ -501,8 +574,13 @@ void Indexer_DropConstraint
 
 // stop and free indexer
 void Indexer_Stop(void) {
-	// add fake task to cause indexer thread to exit
+	// flag indexer to reject any further tasks
+	indexer->stop = true ;
+
+	// free queued tasks
 	_Indexer_ClearTasks () ;
+
+	// add fake task to cause indexer thread to exit
 	_indexer_AddTask (INDEXER_EXIT, NULL) ;
 	
 	// wait for indexer thread to exit
