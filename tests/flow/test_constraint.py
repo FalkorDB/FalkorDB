@@ -1103,11 +1103,11 @@ class testConstraintReplication():
         wait_on_constraint(replica, 'MANDATORY', 'RELATIONSHIP', 'Wrote',  'year')
 
         c = get_constraint(replica, 'UNIQUE', 'NODE', 'Artist', 'nickname')
-        self.env.assertTrue(c is not None)
+        self.env.assertIsNotNone (c)
         self.env.assertEqual(c.status, 'OPERATIONAL')
 
         c = get_constraint(replica, 'MANDATORY', 'RELATIONSHIP', 'Wrote', 'year')
-        self.env.assertTrue(c is not None)
+        self.env.assertIsNotNone (c)
         self.env.assertEqual(c.status, 'OPERATIONAL')
 
         #-----------------------------------------------------------------------
@@ -1262,10 +1262,10 @@ class testConstraintAOF():
             self.env.assertEqual(c.status, 'OPERATIONAL')
 
         # the dropped constraints must not have been resurrected by the reload
-        self.env.assertTrue(get_constraint(g, 'UNIQUE',    'NODE',         'Person', 'height') is None)
-        self.env.assertTrue(get_constraint(g, 'MANDATORY', 'NODE',         'Person', 'height') is None)
-        self.env.assertTrue(get_constraint(g, 'UNIQUE',    'RELATIONSHIP', 'Knows',  'weight') is None)
-        self.env.assertTrue(get_constraint(g, 'MANDATORY', 'RELATIONSHIP', 'Knows',  'weight') is None)
+        self.env.assertIsNone (get_constraint(g, 'UNIQUE',    'NODE',         'Person', 'height'))
+        self.env.assertIsNone (get_constraint(g, 'MANDATORY', 'NODE',         'Person', 'height'))
+        self.env.assertIsNone (get_constraint(g, 'UNIQUE',    'RELATIONSHIP', 'Knows',  'weight'))
+        self.env.assertIsNone (get_constraint(g, 'MANDATORY', 'RELATIONSHIP', 'Knows',  'weight'))
 
         #-----------------------------------------------------------------------
         # surviving constraints should still be enforced after the reload
@@ -1347,11 +1347,11 @@ class testConstraintAOF():
         #-----------------------------------------------------------------------
 
         c = get_constraint(g, 'UNIQUE', 'NODE', 'Poet', 'penname')
-        self.env.assertTrue(c is not None)
+        self.env.assertIsNotNone (c)
         self.env.assertEqual(c.status, 'OPERATIONAL')
 
         c = get_constraint(g, 'MANDATORY', 'RELATIONSHIP', 'Painted', 'year')
-        self.env.assertTrue(c is not None)
+        self.env.assertIsNotNone (c)
         self.env.assertEqual(c.status, 'OPERATIONAL')
 
         labels = g.ro_query("CALL db.labels() YIELD label RETURN label").result_set

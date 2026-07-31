@@ -274,7 +274,8 @@ static bool _Constraint_Drop
 
 	if (force_retrieve) {
 		GraphContext_RetrieveOrForce (ctx, key, false, false, &gc) ;
-		// TODO: if gc is NULL, we should either crash to perform full sync
+		// if gc is NULL, we should either crash to perform full sync (we crash)
+		RELEASE_ASSERT (gc != NULL) ;
 	} else {
 		GraphContext_Retrieve (ctx, key, false, false, true, &gc) ;
 	}
@@ -411,7 +412,8 @@ static bool _Constraint_Create
 
 	if (force_retrieve) {
 		GraphContext_RetrieveOrForce (ctx, key, false, true, &gc) ;
-		// TODO: if gc is NULL, we should either crash to perform full sync
+		// if gc is NULL, we should either crash to perform full sync (we crash)
+		RELEASE_ASSERT (gc != NULL) ;
 	} else {
 		GraphContext_Retrieve (ctx, key, false, true, true, &gc) ;
 	}

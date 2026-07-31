@@ -463,6 +463,7 @@ void Indexer_PopulateIndex
 
 	// reject task
 	if (indexer->stop) {
+		// index is not owned: do not free
 		return ;
 	}
 
@@ -495,6 +496,8 @@ void Indexer_DropIndex
 
 	// reject task
 	if (indexer->stop) {
+		// index is owned: free
+		Index_Free (idx) ;
 		return ;
 	}
 
@@ -526,6 +529,7 @@ void Indexer_EnforceConstraint
 
 	// reject task
 	if (indexer->stop) {
+		// constraint is not owned: do not free
 		return ;
 	}
 
@@ -555,6 +559,8 @@ void Indexer_DropConstraint
 
 	// reject task
 	if (indexer->stop) {
+		// constraint is owned: free
+		Constraint_Free (&c) ;
 		return ;
 	}
 
