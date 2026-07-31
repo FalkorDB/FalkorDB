@@ -24,7 +24,6 @@ static _ResyncCtx *_ResyncCtx_New
 	_ResyncCtx *rc = rm_malloc (sizeof (_ResyncCtx)) ;
 
 	rc->graph_name = rm_strdup (graph_name) ;
-	rc->cmd_name   = rm_strdup (cmd_name) ;
 
 	return rc ;
 }
@@ -34,7 +33,6 @@ static void _ResyncCtx_Free
 	_ResyncCtx *rc
 ) {
 	rm_free (rc->graph_name) ;
-	rm_free (rc->cmd_name) ;
 	rm_free (rc) ;
 }
 

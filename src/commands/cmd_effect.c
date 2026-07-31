@@ -77,9 +77,6 @@ int Graph_Effect
 
 	const char *graph_name = GraphContext_GetName (gc) ;
 
-	// release GraphContext
-	GraphContext_DecreaseRefCount (gc) ;
-
 	if (!ok) {
 		// replica has diverged from the master, don't propagate this
 		// effect any further down a replication sub-chain
@@ -96,6 +93,9 @@ int Graph_Effect
 	RedisModule_ReplyWithSimpleString (ctx, "OK") ;
 
 cleanup:
+	// release GraphContext
+	GraphContext_DecreaseRefCount (gc) ;
+
 	ErrorCtx_Clear () ;
 	return REDISMODULE_OK ;
 }
