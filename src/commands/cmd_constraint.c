@@ -8,6 +8,7 @@
 #include "util/strutil.h"
 #include "../query_ctx.h"
 #include "../index/indexer.h"
+#include "../errors/errors.h"
 #include "../graph/graph_hub.h"
 #include "../util/thpool/pool.h"
 #include "../errors/error_msgs.h"
@@ -477,6 +478,10 @@ static void _Graph_Constraint
 ) {
 	ASSERT(_ctx != NULL);
 
+	// clear any stale error left in this pooled thread's TLS by
+	// whatever job (query, constraint, ...) previously ran on it
+	ErrorCtx_Clear () ;
+
 	GraphConstraintCtx       *ctx    = (GraphConstraintCtx *)_ctx ;
 	RedisModuleBlockedClient *bc     = ctx->bc ;
 	RedisModuleCtx           *rm_ctx = RedisModule_GetThreadSafeContext (bc) ;
@@ -508,6 +513,9 @@ static void _Graph_Constraint
 
 	// unblock client
 	RedisModule_UnblockClient (bc, NULL) ;
+
+	// clear any error this job may have set before freeing the context
+	ErrorCtx_Clear () ;
 
 	// free thread-safe context
 	RedisModule_FreeThreadSafeContext (rm_ctx) ;

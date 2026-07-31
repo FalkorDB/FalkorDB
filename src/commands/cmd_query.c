@@ -160,6 +160,11 @@ static void _ExecuteQuery
 ) {
 	ASSERT (args != NULL) ;
 
+	// this may run on a writer thread that `_query` never touched
+	// (queries are queued and later drained by `enter_writer_loop`)
+	// so it needs its own entry-clear
+	ErrorCtx_Clear () ;
+
 	GraphQueryCtx  *gq_ctx      = args ;
 	QueryCtx       *query_ctx   = gq_ctx->query_ctx ;
 	GraphContext   *gc          = gq_ctx->graph_ctx ;
@@ -411,6 +416,10 @@ void _query
 	bool profile,
 	void *args
 ) {
+	// clear any stale error left in this thread's TLS by a
+	// previously executed command
+	ErrorCtx_Clear () ;
+
 	CommandCtx *command_ctx = (CommandCtx *)args ;
 	RedisModuleCtx *ctx = CommandCtx_GetRedisCtx (command_ctx) ;
 	ExecutionCtx *exec_ctx = NULL ;

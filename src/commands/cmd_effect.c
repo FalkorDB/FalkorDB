@@ -6,6 +6,7 @@
 
 #include "RG.h"
 #include "../effects/effects.h"
+#include "../errors/errors.h"
 #include "../graph/graphcontext.h"
 #include "../replication/divergence_guard.h"
 
@@ -16,6 +17,10 @@ int Graph_Effect
 	RedisModuleString **argv,  // command arguments
 	int argc                   // number of arguments
 ) {
+	// clear any stale error left in this thread's TLS by a
+	// previously executed command
+	ErrorCtx_Clear () ;
+
 	// GRAPH.EFFECT <key> <effects>
 	if (argc != 3) {
 		return RedisModule_WrongArity (ctx) ;
@@ -60,7 +65,7 @@ int Graph_Effect
 		DivergenceGuard_OnFailure (ctx, graph_name, "GRAPH.EFFECT",
 				"failed to apply effects, see preceding log entries") ;
 		RedisModule_ReplyWithError (ctx, "ERR graph diverged from master") ;
-		return REDISMODULE_OK ;
+		goto cleanup ;
 	}
 
 	// replicate effect
@@ -69,6 +74,8 @@ int Graph_Effect
 	// reply back to caller
 	RedisModule_ReplyWithSimpleString (ctx, "OK") ;
 
+cleanup:
+	ErrorCtx_Clear () ;
 	return REDISMODULE_OK ;
 }
 
