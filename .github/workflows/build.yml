@@ -323,7 +323,7 @@ jobs:
 
       - name: Save dependency cache (macOS)
         if: matrix.platform.os == 'macos' && steps.restore-deps-macos.outputs.cache-hit != 'true'
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: ./bin/${{ matrix.platform.cache_path }}-${{ matrix.build_type }}
           key: ${{ steps.cache-key-macos.outputs.key }}
@@ -429,7 +429,7 @@ jobs:
 
       - name: Save dependency cache (Docker)
         if: matrix.platform.use_docker && steps.restore-deps.outputs.cache-hit != 'true' && steps.build_compiler.outcome == 'success'
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: |
             /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/GraphBLAS
