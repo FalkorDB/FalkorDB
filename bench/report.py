@@ -31,6 +31,16 @@ ALLOC_FLOOR = 65536
 # rather than an executed query — see c_cell().
 C_ERROR_FLOOR = 20000
 
+# The fixed per-query floor. Its PR/base wall-clock ratio is the per-runner
+# speed difference, since it does almost no query work — dividing the other
+# rows by it cancels that offset. See the wall-clock block in measure_section().
+CONTROL_QUERY = "RETURN 1"
+
+# How far a control-normalised wall-clock ratio must move to be worth printing.
+# Measured on identical engines: median 0.973, p99 1.110, max 1.17. 50% is well
+# clear of that.
+MS_THRESHOLD = 0.50
+
 
 def read_rows(pattern):
     """query -> row dict, merged over every file matching `pattern`.
@@ -142,6 +152,55 @@ def measure_section(out, m):
                     f"vs base, {metric} geomean {geo:.3f}.**{note}", ""]
     else:
         out += ["_No base measurement — see the `measure (base)` job._", ""]
+
+    # Wall-clock, as a coarse net for a regression that neither allocates nor
+    # lands in the callgrind subset.
+    #
+    # Raw `ms` is useless here and the numbers say so. On a null comparison
+    # (byte-identical engines both sides) the median PR/base ms ratio was
+    # 1.464, with 316 of 317 rows off by more than 5% — because each side runs
+    # on its own hosted runner and those runners differ in speed. Reporting
+    # that would have claimed a 46% regression on a PR that changed no engine
+    # code.
+    #
+    # Dividing every row by the control row's ratio cancels the per-runner
+    # offset, since it hits every query equally. That took the same null data
+    # to median 0.973, p99 1.110, and nothing beyond 1.17x. So ±50% is the
+    # threshold: comfortably outside the measured noise, and still tight enough
+    # to catch a gross regression. Anything smaller belongs to the two
+    # deterministic metrics, not to this one.
+    if base and CONTROL_QUERY in pr and CONTROL_QUERY in base:
+        cp, cb = num(pr[CONTROL_QUERY], "ms"), num(base[CONTROL_QUERY], "ms")
+        if cp and cb and cb > 0:
+            offset = cp / cb
+            flagged = []
+            for q in set(pr) & set(base):
+                a, b = num(base[q], "ms"), num(pr[q], "ms")
+                if a and b and a > 0:
+                    r = (b / a) / offset
+                    if abs(r - 1) > MS_THRESHOLD:
+                        flagged.append((r, q, a, b))
+            flagged.sort(reverse=True)
+            out += ["### Wall-clock outliers", ""]
+            if flagged:
+                out += [
+                    f"{len(flagged)} quer{'ies' if len(flagged) != 1 else 'y'} moved "
+                    f"more than {MS_THRESHOLD:.0%} after cancelling the per-runner "
+                    f"speed offset (this run: {offset:.2f}x, from `{CONTROL_QUERY}`). "
+                    f"Wall-clock is noisy — on identical engines nothing exceeded "
+                    f"1.17x — so treat these as leads to re-measure, not results.",
+                    "",
+                    "| query | base ms | PR ms | normalised |",
+                    "|---|---|---|---|",
+                ]
+                out += [f"| {q} | {a:.3f} | {b:.3f} | {r:.2f}x |"
+                        for r, q, a, b in flagged[:15]]
+                out.append("")
+            else:
+                out += [f"None. No query moved more than {MS_THRESHOLD:.0%} in "
+                        f"wall-clock after cancelling the per-runner speed offset "
+                        f"(this run: {offset:.2f}x, measured from `{CONTROL_QUERY}`).",
+                        ""]
 
     if c:
         rows = []
