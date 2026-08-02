@@ -745,6 +745,50 @@ struct ExtractedComprehension {
     nested: Vec<ExtractedComprehension>,
 }
 
+/// What `extract_pattern_comprehensions` does with a bare existential
+/// `Pattern` node.  Pattern comprehensions are always extracted; only
+/// existential patterns are ambiguous, because they are a boolean in a
+/// predicate but a list of paths anywhere else.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PatternMode {
+    /// Collect the matched paths into a list variable.  Used where the
+    /// expression's value is what matters: projections, UNWIND, FOREACH.
+    Collect,
+    /// Leave the pattern in place for `collect_patterns_and_rebuild`, which
+    /// turns it into a SemiApply / AntiSemiApply.  This is the preferred
+    /// form in a WHERE predicate: a semi-join stops at the first match
+    /// instead of materializing every path.
+    SemiApply,
+    /// Collect as in `Collect`, but yield `size(paths) > 0` so the result
+    /// still reads as a boolean.  A `SemiApply` filters the whole row, so it
+    /// cannot stand in for one operand of an operator like `XOR`; `Predicate`
+    /// degrades to this once the walk descends past such an operator.
+    Exists,
+}
+
+impl PatternMode {
+    /// The mode to use for the children of `parent`.
+    ///
+    /// `SemiApply` only survives under the operators `expr_to_plan` can take
+    /// apart.  Anywhere else the pattern is an ordinary operand and has to
+    /// become a value.
+    fn descend(
+        self,
+        parent: &ExprIR<Variable>,
+    ) -> Self {
+        if self == Self::SemiApply
+            && !matches!(
+                parent,
+                ExprIR::And | ExprIR::Or | ExprIR::Not | ExprIR::Paren
+            )
+        {
+            Self::Exists
+        } else {
+            self
+        }
+    }
+}
+
 impl Planner {
     #[must_use]
     pub fn new(scope_vars: Vec<Vec<Variable>>) -> Self {
@@ -930,15 +974,14 @@ impl Planner {
     /// `[(i)-->(p) | [(p)-->(o) | o.name]]`).  Those sub-plans therefore have to
     /// be applied inside the enclosing comprehension's sub-plan.
     ///
-    /// `comprehensions_only` leaves bare `Pattern` nodes in place.  WHERE
-    /// predicates need that: an existential pattern there is a boolean handled
-    /// by `collect_patterns_and_rebuild` as a SemiApply, not a list to collect.
+    /// `mode` decides what happens to bare existential `Pattern` nodes; see
+    /// [`PatternMode`].  Pattern comprehensions are always extracted.
     fn extract_pattern_comprehensions(
         &mut self,
         node: &DynNode<ExprIR<Variable>>,
         scope_id: u32,
         extracted: &mut Vec<ExtractedComprehension>,
-        comprehensions_only: bool,
+        mode: PatternMode,
     ) -> DynTree<ExprIR<Variable>> {
         match node.data() {
             ExprIR::PatternComprehension(graph) => {
@@ -950,7 +993,7 @@ impl Planner {
                         &node.child(0),
                         scope_id,
                         &mut nested,
-                        comprehensions_only,
+                        mode,
                     );
                     if matches!(t.root().data(), ExprIR::Constant(Value::Bool(true))) {
                         None
@@ -962,7 +1005,7 @@ impl Planner {
                     &node.child(1),
                     scope_id,
                     &mut nested,
-                    comprehensions_only,
+                    mode,
                 ));
 
                 extracted.push(ExtractedComprehension {
@@ -975,7 +1018,7 @@ impl Planner {
                 });
                 DynTree::new(ExprIR::Variable(var))
             }
-            ExprIR::Pattern(graph) if !comprehensions_only => {
+            ExprIR::Pattern(graph) if mode != PatternMode::SemiApply => {
                 let var = self.fresh_var(scope_id, Type::List(Box::new(Type::Any)));
 
                 // Build a path variable and path component variables from the
@@ -1002,17 +1045,27 @@ impl Planner {
                     paths: vec![query_path],
                     nested: vec![],
                 });
-                DynTree::new(ExprIR::Variable(var))
+                if mode == PatternMode::Exists {
+                    // The pattern was a predicate, so hand the caller a
+                    // boolean rather than the list of matched paths.
+                    let mut length = DynTree::new(ExprIR::Length);
+                    length
+                        .root_mut()
+                        .push_child_tree(DynTree::new(ExprIR::Variable(var)));
+                    let mut gt = DynTree::new(ExprIR::Gt);
+                    gt.root_mut().push_child_tree(length);
+                    gt.root_mut().push_child(ExprIR::Constant(Value::Int(0)));
+                    gt
+                } else {
+                    DynTree::new(ExprIR::Variable(var))
+                }
             }
             _ => {
+                let child_mode = mode.descend(node.data());
                 let mut new_tree = DynTree::new(node.data().clone());
                 for child in node.children() {
-                    let child_tree = self.extract_pattern_comprehensions(
-                        &child,
-                        scope_id,
-                        extracted,
-                        comprehensions_only,
-                    );
+                    let child_tree = self
+                        .extract_pattern_comprehensions(&child, scope_id, extracted, child_mode);
                     new_tree.root_mut().push_child_tree(child_tree);
                 }
                 new_tree
@@ -1038,8 +1091,12 @@ impl Planner {
         }
 
         let mut extracted = Vec::new();
-        let rebuilt =
-            self.extract_pattern_comprehensions(&expr.root(), scope_id, &mut extracted, false);
+        let rebuilt = self.extract_pattern_comprehensions(
+            &expr.root(),
+            scope_id,
+            &mut extracted,
+            PatternMode::Collect,
+        );
         // Build the innermost Apply first (last comprehension), then wrap
         // outward, so the chain reads Apply(Apply(input, sub2), sub1).
         let mut chain: Option<DynTree<IR>> = None;
@@ -1056,31 +1113,45 @@ impl Planner {
         (Arc::new(rebuilt), chain)
     }
 
-    /// Extract the pattern comprehensions of a WHERE predicate into their own
-    /// sub-plans.  Each is replaced in the predicate by a variable holding the
-    /// collected list, and returned as a sub-plan the caller must `Apply` below
-    /// the `Filter` so the variable is bound by the time the predicate runs.
+    /// Extract the parts of a WHERE predicate that need their own sub-plan:
+    /// every pattern comprehension, plus any existential pattern sitting where
+    /// `expr_to_plan` cannot reach it with a SemiApply (an `XOR` operand, a
+    /// comparison, a function argument, …).  Each is replaced in the predicate
+    /// by an expression over a variable, and returned as a sub-plan the caller
+    /// must `Apply` below the `Filter` so that variable is bound by the time
+    /// the predicate runs.
     ///
-    /// Existential patterns are left alone — `collect_patterns_and_rebuild`
-    /// turns those into SemiApply / AntiSemiApply instead.
+    /// Existential patterns the decomposer *can* reach are left alone, so the
+    /// common `WHERE (a)-->(b)` shapes keep their cheaper semi-join plan.
     fn extract_filter_comprehensions(
         &mut self,
         filter: QueryExpr<Variable>,
         scope_id: u32,
     ) -> (QueryExpr<Variable>, Vec<DynTree<IR>>) {
-        fn has_comprehension(node: &DynNode<ExprIR<Variable>>) -> bool {
+        fn needs_extraction(
+            node: &DynNode<ExprIR<Variable>>,
+            mode: PatternMode,
+        ) -> bool {
             match node.data() {
                 ExprIR::PatternComprehension(_) => true,
-                _ => node.children().any(|c| has_comprehension(&c)),
+                ExprIR::Pattern(_) => mode == PatternMode::Exists,
+                other => {
+                    let child_mode = mode.descend(other);
+                    node.children().any(|c| needs_extraction(&c, child_mode))
+                }
             }
         }
-        if !has_comprehension(&filter.root()) {
+        if !needs_extraction(&filter.root(), PatternMode::SemiApply) {
             return (filter, vec![]);
         }
 
         let mut extracted = Vec::new();
-        let rebuilt =
-            self.extract_pattern_comprehensions(&filter.root(), scope_id, &mut extracted, true);
+        let rebuilt = self.extract_pattern_comprehensions(
+            &filter.root(),
+            scope_id,
+            &mut extracted,
+            PatternMode::SemiApply,
+        );
         let sub_plans: Vec<DynTree<IR>> = extracted
             .iter()
             .map(|c| self.build_pattern_comprehension_plan(c))
@@ -2191,7 +2262,7 @@ impl Planner {
                         &expr.root(),
                         pre_scope_id,
                         &mut all_extracted,
-                        false,
+                        PatternMode::Collect,
                     );
                     (var, Arc::new(rebuilt) as QueryExpr<Variable>)
                 })
@@ -2208,7 +2279,7 @@ impl Planner {
                         &expr.root(),
                         pre_scope_id,
                         &mut all_extracted,
-                        false,
+                        PatternMode::Collect,
                     );
                     (Arc::new(rebuilt) as QueryExpr<Variable>, desc)
                 })

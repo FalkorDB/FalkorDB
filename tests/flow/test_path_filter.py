@@ -1,6 +1,7 @@
 import re
 from common import *
 from index_utils import *
+from execution_plan_util import locate_operation
 from collections import Counter
 
 from tests.flow.query_info import QueryInfo
@@ -344,3 +345,81 @@ class testPathFilter(FlowTestsBase):
         # clean up
         self.graph.query ("MATCH (s:Service) DELETE s")
 
+
+    def test18_path_filter_under_non_decomposable_operator(self):
+        # A path filter under XOR (or any operator a SemiApply cannot stand in
+        # for) has to be evaluated to a boolean instead of filtering the row.
+        # https://github.com/FalkorDB/FalkorDB/issues/1983
+        self.graph.query("""CREATE (a:Person {name: 'Alice'}),
+                                   (b:Person {name: 'Bob'}),
+                                   (a)-[:KNOWS]->(b)""")
+
+        # the reported repro: the pattern is true for every row, so XOR keeps
+        # exactly the rows whose name is not 'Alice'
+        query = """MATCH (n)
+                   WHERE ()-[:KNOWS]-() XOR n.name = 'Alice'
+                   RETURN n.name ORDER BY n.name LIMIT 5"""
+        self.env.assertEqual(self.graph.query(query).result_set, [['Bob']])
+
+        # same predicate after WITH
+        query = """MATCH (n) WITH n
+                   WHERE ()-[:KNOWS]-() XOR n.name = 'Alice'
+                   RETURN n.name ORDER BY n.name LIMIT 5"""
+        self.env.assertEqual(self.graph.query(query).result_set, [['Bob']])
+
+        # and under OPTIONAL MATCH
+        query = """OPTIONAL MATCH (a)--(b)
+                   WHERE ()--() XOR a.name = 'Alice'
+                   RETURN a.name, b.name"""
+        self.env.assertEqual(self.graph.query(query).result_set, [['Bob', 'Alice']])
+
+        # correlated pattern: true for Alice, false for Bob
+        query = """MATCH (n)
+                   WHERE (n)-[:KNOWS]->() XOR n.name = 'Bob'
+                   RETURN n.name ORDER BY n.name"""
+        self.env.assertEqual(self.graph.query(query).result_set, [['Alice'], ['Bob']])
+
+        # XOR between two patterns
+        query = """MATCH (n)
+                   WHERE ()-[:KNOWS]-() XOR ()-[:NOPE]-()
+                   RETURN n.name ORDER BY n.name"""
+        self.env.assertEqual(self.graph.query(query).result_set, [['Alice'], ['Bob']])
+
+        # nested inside operators the decomposer does handle
+        query = """MATCH (n)
+                   WHERE n.name IS NOT NULL AND
+                         ((n)-[:KNOWS]->() XOR n.name = 'Bob')
+                   RETURN n.name ORDER BY n.name"""
+        self.env.assertEqual(self.graph.query(query).result_set, [['Alice'], ['Bob']])
+
+        query = """MATCH (n)
+                   WHERE NOT (()-[:KNOWS]-() XOR n.name = 'Alice')
+                   RETURN n.name ORDER BY n.name"""
+        self.env.assertEqual(self.graph.query(query).result_set, [['Alice']])
+
+        # other non-decomposable positions: a comparison operand and a
+        # function argument
+        query = """MATCH (n)
+                   WHERE ()-[:KNOWS]-() = true
+                   RETURN n.name ORDER BY n.name"""
+        self.env.assertEqual(self.graph.query(query).result_set,
+                             [['Alice'], ['Bob']])
+
+        query = """MATCH (n)
+                   WHERE toString((n)-[:KNOWS]->()) = 'true'
+                   RETURN n.name ORDER BY n.name"""
+        self.env.assertEqual(self.graph.query(query).result_set, [['Alice']])
+
+        # the decomposable shapes must keep their cheaper semi-join plans
+        plan = self.graph.explain(
+            "MATCH (n) WHERE (n)-[:KNOWS]-() RETURN n").structured_plan
+        self.env.assertIsNotNone(locate_operation(plan, "Semi Apply"))
+
+        plan = self.graph.explain(
+            "MATCH (n) WHERE NOT (n)-[:KNOWS]-() RETURN n").structured_plan
+        self.env.assertIsNotNone(locate_operation(plan, "Anti Semi Apply"))
+
+        plan = self.graph.explain(
+            """MATCH (n) WHERE (n)-[:KNOWS]-() OR n.name = 'Alice'
+               RETURN n""").structured_plan
+        self.env.assertIsNotNone(locate_operation(plan, "Or Apply Multiplexer"))
