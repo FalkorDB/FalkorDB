@@ -6,6 +6,7 @@
 
 #include "query_ctx.h"
 #include "RG.h"
+#include <math.h>
 #include "errors.h"
 #include "globals.h"
 #include "util/simple_timer.h"
@@ -577,25 +578,34 @@ uint64_t QueryCtx_GetReceivedTS (void) {
 	return ctx->stats.received_ts ;
 }
 
-uint64_t QueryCtx_GetTimeoutMS (void) {
-	QueryCtx *ctx = _QueryCtx_GetCtx();
-	if(ctx == NULL) return 0;
-
-	// 0 = unlimited; preserve no-timeout semantics for callers
-	if(ctx->timeout_ms == 0) return 0;
-
-	// compute total elapsed since query start: completed stage durations
-	// plus the current stage's running timer
+// total elapsed query time in ms: completed stage durations plus the current
+// running stage's timer
+static double _QueryCtx_ElapsedMS(const QueryCtx *ctx) {
 	double elapsed_ms = TIMER_GET_ELAPSED_MILLISECONDS(ctx->stats.timer);
 	for(int s = 0; s < (int)ctx->stage && s < 3; s++) {
 		elapsed_ms += ctx->stats.durations[s];
 	}
+	return elapsed_ms;
+}
 
-	// remaining budget; clamp to >=1 so a non-zero timeout never becomes
-	// 0 (which RediSearch treats as "no timeout")
-	if(elapsed_ms >= (double)ctx->timeout_ms) return 1;
-	uint64_t remaining = ctx->timeout_ms - (uint64_t)elapsed_ms;
-	return (remaining == 0) ? 1 : remaining;
+bool QueryCtx_TimedOut(void) {
+	QueryCtx *ctx = _QueryCtx_GetCtx();
+	// no context or no configured budget (0 = unlimited) => never timed out
+	if(ctx == NULL || ctx->timeout_ms == 0) return false;
+	return _QueryCtx_ElapsedMS(ctx) >= (double)ctx->timeout_ms;
+}
+
+uint64_t QueryCtx_GetRemainingTimeMS(void) {
+	QueryCtx *ctx = _QueryCtx_GetCtx();
+	// no configured budget => no deadline (0 is RediSearch's "unlimited")
+	if(ctx == NULL || ctx->timeout_ms == 0) return 0;
+
+	double remaining = (double)ctx->timeout_ms - _QueryCtx_ElapsedMS(ctx);
+	// callers gate on QueryCtx_TimedOut() before iterating, so a live query
+	// always has time left; ceil() keeps a sub-millisecond remainder >= 1ms
+	// without special-casing (and never collapses to 0 == "unlimited").
+	ASSERT(remaining > 0);
+	return remaining > 0 ? (uint64_t)ceil(remaining) : 1;
 }
 
 // free the allocations within the QueryCtx and reset it for the next query

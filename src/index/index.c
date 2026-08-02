@@ -750,7 +750,7 @@ RSResultsIterator *Index_Query
 	ASSERT(query != NULL);
 
 	return RediSearch_IterateQueryWithTimeout(idx->rsIdx, query, strlen(query),
-			QueryCtx_GetTimeoutMS(), err);
+			QueryCtx_GetRemainingTimeMS(), err);
 }
 
 // returns index graph entity type

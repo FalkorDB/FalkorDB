@@ -318,7 +318,7 @@ pull_index:
 		// create iterator
 		ASSERT(rs_query_node != NULL);
 		op->iter = RediSearch_GetResultsIteratorWithTimeout(rs_query_node, rsIdx,
-				QueryCtx_GetTimeoutMS());
+				QueryCtx_GetRemainingTimeMS());
 	} else {
 		// build index query only once (first call)
 		// reset it if already initialized
@@ -328,7 +328,7 @@ pull_index:
 					&op->unresolved_filters, op->idx, op->filter);
 			ASSERT(rs_query_node != NULL);
 			op->iter = RediSearch_GetResultsIteratorWithTimeout(rs_query_node,
-					rsIdx, QueryCtx_GetTimeoutMS());
+					rsIdx, QueryCtx_GetRemainingTimeMS());
 		} else {
 			// reset existing iterator
 			RediSearch_ResultsIteratorReset(op->iter);
@@ -354,7 +354,7 @@ static Record EdgeIndexScanConsume
 				op->idx, op->filter);
 
 		op->iter = RediSearch_GetResultsIteratorWithTimeout(rs_query_node, rsIdx,
-				QueryCtx_GetTimeoutMS());
+				QueryCtx_GetRemainingTimeMS());
 	}
 
 	const char *doc_key = NULL;
