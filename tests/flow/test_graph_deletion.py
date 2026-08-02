@@ -469,6 +469,94 @@ class testGraphDeletionFlow(FlowTestsBase):
             self.graph.query("MATCH (n:N) WITH n LIMIT 10000 DELETE n")
             self.graph.query("MATCH (n:N) RETURN n.v LIMIT 1")
 
+    def test24_delete_visible_to_subsequent_pattern_predicate(self):
+        # clean the db
+        self.graph.delete()
+
+        # regression test for issue:
+        # DELETE not visible to subsequent WHERE pattern predicate in same query
+        #
+        # after DELETE r, the pattern predicate `NOT (b)<-[]-()` must reflect
+        # the deletion - otherwise b is incorrectly filtered out and the
+        # following DELETE b silently fails to persist
+
+        # case 1: a single (orphaned) incoming edge - WHERE should pass and
+        # the orphaned target node should be deleted
+        result = self.graph.query("""CREATE (a:A {id:1})-[e:R]->(b:B {id:2})
+        RETURN a, e, b""").result_set
+        a = result[0][0]
+        e = result[0][1]
+        b = result[0][2]
+
+        result = self.graph.query(
+            """MATCH (a:A)-[r:R]->(b:B)
+            DELETE r
+            WITH b
+            WHERE NOT (b)<-[]-()
+            DELETE b""")
+
+        self.env.assertEqual(result.nodes_deleted, 1)
+        self.env.assertEqual(result.relationships_deleted, 1)
+
+        # only the A node should remain
+        result = self.graph.query("MATCH (n) RETURN n").result_set
+        self.env.assertEqual(len(result), 1)
+        self.env.assertEqual(result[0][0], a)
+
+        # cleanup
+        self.graph.delete()
+
+        # case 2: multiple incoming edges - after deleting one, the target
+        # still has another incoming edge so WHERE should filter it out
+        # and the target node should NOT be deleted
+        result = self.graph.query("""
+            CREATE (a0:A {id:1})-[:R]->(b:B {id:2})<-[:R]-(a1:A {id:3})
+            RETURN a0, b, a1""").result_set
+
+        a0 = result[0][0]
+        b  = result[0][1]
+        a1 = result[0][2]
+
+        result = self.graph.query("""
+            MATCH (a:A {id:1})-[r:R]->(b:B)
+            DELETE r
+            WITH b
+            WHERE NOT (b)<-[]-()
+            DELETE b""")
+
+        self.env.assertEqual(result.nodes_deleted, 0)
+        self.env.assertEqual(result.relationships_deleted, 1)
+
+        # both A nodes and the B node should still exist
+        result = self.graph.query("""
+        MATCH (n)
+        RETURN n ORDER BY n.id""").result_set
+
+        self.env.assertEqual(len(result), 3)
+        self.env.assertEqual(result[0][0], a0)
+        self.env.assertEqual(result[1][0], b)
+        self.env.assertEqual(result[2][0], a1)
+
+    def test25_delete_does_not_leave_phantom_label_entries(self):
+        # clean the db
+        self.graph.delete()
+
+        # create a single labeled node and then grow the graph dimensions
+        self.graph.query("CREATE (ghost:BOO)")
+        self.graph.query("UNWIND range(0, 100000) AS x CREATE ()")
+
+        # delete a subset that includes the BOO node (id 0)
+        res = self.graph.query("MATCH (x) WITH x LIMIT 10000 DELETE x")
+        self.env.assertEqual(res.nodes_deleted, 10000)
+
+        # regression: deleted node must not remain discoverable via label scan
+        res = self.graph.query("MATCH (x:BOO) RETURN count(x)")
+        self.env.assertEqual(res.result_set[0][0], 0)
+
+        # regression: property access on labeled result must not hit undefined attribute
+        res = self.graph.query("MATCH (x:BOO) WHERE x.id = 0 RETURN x")
+        self.env.assertEqual(res.result_set, [])
+
 class testGraphBulkDeletion(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
@@ -730,4 +818,3 @@ class testGraphBulkDeletion(FlowTestsBase):
         self.env.assertEqual(relTypes,  relTypes_expected)
         self.env.assertEqual(relCount,  relCount_expected)
         self.env.assertEqual(nodeCount, nodeCount_expected)
-

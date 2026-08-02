@@ -378,3 +378,28 @@ class testAccessDelEdge():
         self.env.assertEqual(edges[1].properties['v'], 2)
         self.env.assertEqual(edges[1].relation, 'R2')
 
+    def test09_implicitly_deleted_edge_in_write_only_query(self):
+        # an edge removed implicitly by DETACH DELETE must remain readable by
+        # later clauses even when the query has no RETURN clause
+        self.graph.delete()
+
+        q = """CREATE (a:EdgeCluster)-[r:R]->(a)
+               WITH r, a DETACH DELETE a
+               WITH startNode(r) AS ec DETACH DELETE ec"""
+        res = self.graph.query(q)
+        self.env.assertEqual(res.nodes_created, 1)
+        self.env.assertEqual(res.relationships_created, 1)
+        self.env.assertEqual(res.nodes_deleted, 1)
+        self.env.assertEqual(res.relationships_deleted, 1)
+
+        # same shape, but reading the implicitly deleted edge's type and
+        # endpoints across two separate nodes
+        self.graph.delete()
+
+        q = """CREATE (a:A {v:'a'})-[r:R {v:1}]->(b:B {v:'b'})
+               WITH r, a DETACH DELETE a
+               WITH startNode(r) AS s, endNode(r) AS e, type(r) AS t, r AS r
+               RETURN s.v, e.v, t, r.v"""
+        res = self.graph.query(q)
+        self.env.assertEqual(res.result_set[0], ['a', 'b', 'R', 1])
+

@@ -819,6 +819,18 @@ fn compute_effective_timeout(
     Ok(None)
 }
 
+/// Replies `[error, current_version]` for a client-supplied version that does
+/// not match the graph's current schema version.
+pub(crate) fn reply_invalid_graph_version(
+    ctx: &Context,
+    current_version: i64,
+) {
+    const ERR: &std::ffi::CStr = c"ERR invalid graph version";
+    raw::reply_with_array(ctx.ctx, 2);
+    raw::reply_with_error(ctx.ctx, ERR.as_ptr());
+    raw::reply_with_long_long(ctx.ctx, current_version);
+}
+
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub fn query_mut(
@@ -830,7 +842,17 @@ pub fn query_mut(
     track_mem: bool,
     key_name: Arc<str>,
     per_query_timeout: Option<i64>,
+    version_check: Option<u64>,
 ) -> RedisResult {
+    // Reject a stale client-supplied schema version before doing any work.
+    if let Some(provided_version) = version_check {
+        let current_schema_version = graph.read().graph.read().borrow().schema_version;
+        if provided_version != current_schema_version {
+            reply_invalid_graph_version(ctx, current_schema_version as i64);
+            return Ok(RedisValue::NoReply);
+        }
+    }
+
     // Inside MULTI/EXEC: execute synchronously (blocking commands not allowed).
     // Also run replicated commands synchronously on the main thread (matches
     // FalkorDB C): otherwise the replica's handler returns NoReply before the

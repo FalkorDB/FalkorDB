@@ -141,6 +141,14 @@ pub struct CondTraverseOp<'a> {
     /// hop's `from` is the previous hop's `to` (anonymous & unreferenced);
     /// only the final hop's `to` alias is bound on the output env.
     chain: &'a [Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>],
+    /// OPTIONAL MATCH semantics (fused from an `Optional` wrapper): input rows
+    /// producing no expansion are emitted once with the edge and destination
+    /// aliases bound to NULL instead of being dropped.
+    optional: bool,
+    /// Input-batch row indices that produced no expansion on the per-row path,
+    /// buffered until the seeded batch is exhausted, then flushed as one
+    /// null-padded fallback batch. Only populated when `optional` is true.
+    optional_unmatched: std::cell::RefCell<Vec<usize>>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
     /// Maximum number of records this operator should produce. Once reached,
     /// subsequent `next()` calls return `None`. Set by limit propagation.
@@ -233,6 +241,7 @@ impl<'a> CondTraverseOp<'a> {
         sibling_edges: &'a [u32],
         transposed: bool,
         chain: &'a [Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>],
+        optional: bool,
         idx: NodeIdx<Dyn<IR>>,
         record_cap: Option<usize>,
     ) -> Self {
@@ -322,6 +331,8 @@ impl<'a> CondTraverseOp<'a> {
             sibling_edges,
             transposed,
             chain,
+            optional,
+            optional_unmatched: std::cell::RefCell::new(Vec::new()),
             idx,
             record_cap,
             produced: 0,
@@ -444,6 +455,9 @@ impl<'a> CondTraverseOp<'a> {
         }
         let state = state_ref.as_mut().unwrap();
         if state.no_match {
+            if self.optional {
+                out_pending.push_back(self.null_pad(batch, active_subset));
+            }
             return true;
         }
 
@@ -457,6 +471,9 @@ impl<'a> CondTraverseOp<'a> {
                     TraversalMatrix::U64(t.clone())
                 } else {
                     state.no_match = true;
+                    if self.optional {
+                        out_pending.push_back(self.null_pad(batch, active_subset));
+                    }
                     return true;
                 }
             } else {
@@ -464,6 +481,9 @@ impl<'a> CondTraverseOp<'a> {
                     TraversalMatrix::Bool(VersionedMatrix::from_matrix(m))
                 } else {
                     state.no_match = true;
+                    if self.optional {
+                        out_pending.push_back(self.null_pad(batch, active_subset));
+                    }
                     return true;
                 }
             };
@@ -481,6 +501,9 @@ impl<'a> CondTraverseOp<'a> {
                         TraversalMatrix::U64(t.clone())
                     } else {
                         state.no_match = true;
+                        if self.optional {
+                            out_pending.push_back(self.null_pad(batch, active_subset));
+                        }
                         return true;
                     }
                 } else {
@@ -488,12 +511,18 @@ impl<'a> CondTraverseOp<'a> {
                         TraversalMatrix::Bool(VersionedMatrix::from_matrix(m))
                     } else {
                         state.no_match = true;
+                        if self.optional {
+                            out_pending.push_back(self.null_pad(batch, active_subset));
+                        }
                         return true;
                     }
                 };
                 state.chain_matrices.push(hm);
                 let Some(dst_labels) = g.resolve_label_ids(&hop.to.labels) else {
                     state.no_match = true;
+                    if self.optional {
+                        out_pending.push_back(self.null_pad(batch, active_subset));
+                    }
                     return true;
                 };
                 state.chain_dst_label_ids.push(dst_labels);
@@ -525,6 +554,12 @@ impl<'a> CondTraverseOp<'a> {
                 return false;
             }
             let Some(Value::Node(src_id)) = batch.value_at(from_alias.id, row_idx) else {
+                // Optional traverses null-pad rows whose source is bound to a
+                // non-Node (e.g. NULL from a preceding OPTIONAL MATCH) instead
+                // of bailing to the per-row path.
+                if self.optional {
+                    continue;
+                }
                 drop(g);
                 return false;
             };
@@ -542,6 +577,10 @@ impl<'a> CondTraverseOp<'a> {
 
         if row_idx_buf.is_empty() {
             drop(g);
+            if self.optional {
+                // No source expanded, so every active row is unmatched.
+                out_pending.push_back(self.null_pad(batch, active_subset));
+            }
             return true;
         }
 
@@ -577,6 +616,13 @@ impl<'a> CondTraverseOp<'a> {
         let mut out_indices = Vec::new();
         let mut out_dest_ids = Vec::new();
         let mut out_edge_ids = Vec::new();
+        // Per-active-row match flags (indexed by active_subset position),
+        // used to build the null-padded fallback batch for optional traverses.
+        let mut matched = if self.optional {
+            vec![false; active_subset.len()]
+        } else {
+            Vec::new()
+        };
 
         for (row_i, dest_raw) in f.iter(0, u64::MAX) {
             let dest_id = NodeId::from(dest_raw);
@@ -624,6 +670,9 @@ impl<'a> CondTraverseOp<'a> {
                     out_indices.push(row_idx);
                     out_dest_ids.push(dest_id);
                     out_edge_ids.push(edge_id);
+                    if self.optional {
+                        matched[row_i as usize] = true;
+                    }
                 }
             } else {
                 // Fused chain: edges across hops are anonymous & unreferenced
@@ -631,6 +680,9 @@ impl<'a> CondTraverseOp<'a> {
                 // no intermediate node alias is exposed.
                 out_indices.push(row_idx);
                 out_dest_ids.push(dest_id);
+                if self.optional {
+                    matched[row_i as usize] = true;
+                }
             }
 
             if out_indices.len() >= BATCH_SIZE {
@@ -657,6 +709,18 @@ impl<'a> CondTraverseOp<'a> {
             }
             out_batch.set_column(to_alias.id, Column::NodeIds(out_dest_ids));
             out_pending.push_back(out_batch);
+        }
+
+        if self.optional {
+            let unmatched: Vec<usize> = matched
+                .iter()
+                .enumerate()
+                .filter(|&(_, &m)| !m)
+                .map(|(i, _)| active_subset[i])
+                .collect();
+            if !unmatched.is_empty() {
+                out_pending.push_back(self.null_pad(batch, &unmatched));
+            }
         }
 
         drop(g);
@@ -1052,6 +1116,37 @@ impl<'a> CondTraverseOp<'a> {
             batch
         }
     }
+
+    /// Alias id of the endpoint this traverse introduces (respecting
+    /// transposition and any fused chain).
+    fn out_alias_id(&self) -> u32 {
+        if let Some(last_hop) = self.chain.last() {
+            last_hop.to.alias.id
+        } else if self.transposed {
+            self.relationship_pattern.from.alias.id
+        } else {
+            self.relationship_pattern.to.alias.id
+        }
+    }
+
+    /// OPTIONAL MATCH fallback: gather the unexpanded input rows and bind the
+    /// edge and destination aliases to NULL (mirrors `OptionalOp`'s fallback).
+    fn null_pad(
+        &self,
+        batch: &Batch<'a>,
+        rows: &[usize],
+    ) -> Batch<'a> {
+        let mut fb = batch.gather(rows);
+        fb.set_column(
+            self.relationship_pattern.alias.id,
+            Column::Values(vec![Value::Null; rows.len()]),
+        );
+        fb.set_column(
+            self.out_alias_id(),
+            Column::Values(vec![Value::Null; rows.len()]),
+        );
+        fb
+    }
 }
 
 impl<'a> Iterator for CondTraverseOp<'a> {
@@ -1083,6 +1178,8 @@ impl<'a> Iterator for CondTraverseOp<'a> {
         let bidir_dedup = self.bidir_dedup.as_ref();
         let dedup_source_alias = self.dedup_source_alias.as_ref();
         let record_cap = self.record_cap;
+        let optional = self.optional;
+        let unmatched_cell = &self.optional_unmatched;
 
         loop {
             // 1. Emit any batches produced by the batched F·A path first.
@@ -1112,6 +1209,11 @@ impl<'a> Iterator for CondTraverseOp<'a> {
                     &mut expanded,
                 )?;
                 if expanded.is_empty() {
+                    // Optional traverse: remember the unexpanded row so it can
+                    // be null-padded once the seeded batch is exhausted.
+                    if optional {
+                        unmatched_cell.borrow_mut().push(row_idx);
+                    }
                     Ok(None)
                 } else {
                     Ok(Some(RowIter::many(Box::new(expanded.into_iter()))))
@@ -1121,6 +1223,19 @@ impl<'a> Iterator for CondTraverseOp<'a> {
                     return Some(Ok(Self::trim_to_cap(record_cap, &mut self.produced, out)));
                 }
                 Ok(None) => {
+                    // Seeded batch exhausted: flush any null-padded fallback
+                    // rows accumulated by the optional per-row path first.
+                    if optional {
+                        let unmatched = std::mem::take(&mut *unmatched_cell.borrow_mut());
+                        if !unmatched.is_empty() {
+                            let src = self
+                                .emitter
+                                .batch()
+                                .expect("unmatched rows imply a seeded batch");
+                            let fb = self.null_pad(src, &unmatched);
+                            return Some(Ok(Self::trim_to_cap(record_cap, &mut self.produced, fb)));
+                        }
+                    }
                     // Seeded batch exhausted (or none installed). Pull the next
                     // child batch and decide fast vs. per-row path for it.
                     match self.child.next() {

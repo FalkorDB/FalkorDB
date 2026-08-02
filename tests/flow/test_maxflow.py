@@ -1,4 +1,4 @@
-from common import FlowTestsBase, Env
+from common import *
 
 GRAPH_ID = "max_flow"
 
@@ -13,9 +13,7 @@ class testMaxFlow(FlowTestsBase):
         self.graph = self.db.select_graph(GRAPH_ID)
 
     def max_flow(self, sourceNodes, targetNodes, capacityProperty=None,
-                 nodeLabels=None, relationshipTypes=None):
-        if nodeLabels is None:
-            nodeLabels = []
+                 nodeLabels=[], relationshipTypes=None):
         config = {
             'srcs': sourceNodes,
             'snks': targetNodes,
@@ -457,7 +455,7 @@ class testMaxFlow(FlowTestsBase):
 
         node_ids = [n.id for n in nodes]
         for idx, e in enumerate(edges):
-            self.env.assertIn(e.src_node, node_ids)
+            self.env.assertContains(e.src_node, node_ids)
             self.env.assertTrue(e.properties['cap'] == flows[idx])
 
     # ------------------------------------------------------------------ #

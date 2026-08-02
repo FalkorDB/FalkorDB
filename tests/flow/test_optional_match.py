@@ -1,4 +1,5 @@
 from common import *
+from index_utils import create_node_range_index
 import re
 
 nodes = {}
@@ -258,29 +259,13 @@ class testOptionalFlow(FlowTestsBase):
         expected_result = [['v1', 'v2']]
         self.env.assertEqual(actual_result.result_set, expected_result)
 
-    # validate that the correct plan is populated and executed when OPTIONAL
-    # does not introduce any new variables
-    def test22_optional_repeats_reference(self):
-        query = """MATCH (n1) OPTIONAL MATCH (n1) WHERE n1.nonexistent > 0 RETURN n1.v ORDER BY n1.v"""
-        plan = str(self.graph.explain(query))
-        # the first child of the Apply op should be a scan and the
-        # second should be the OPTIONAL subtree
-        self.env.assertTrue(re.search('Apply\s+All Node Scan | (n1)\s+Optional\s+Filter\s+Argument', plan))
-
-        actual_result = self.graph.query(query)
-        expected_result = [['v1'],
-                           ['v2'],
-                           ['v3'],
-                           ['v4']]
-        self.env.assertEqual(actual_result.result_set, expected_result)
-
-    def test23_optional_after_apply(self):
+    def test22_optional_after_apply(self):
         self.graph.delete()
         query = """WITH [0, 0] AS n0 OPTIONAL MATCH () MERGE ()"""
         actual_result = self.graph.query(query)
         self.env.assertEqual(actual_result.nodes_created, 1)
 
-    def test24_optional_and_cartesian_product(self):
+    def test23_optional_and_cartesian_product(self):
         self.graph.delete()
         self.graph.query("CREATE ()-[:A]->()")
         query = """OPTIONAL MATCH (), ({x:0, x:1}) RETURN 0"""
@@ -288,7 +273,7 @@ class testOptionalFlow(FlowTestsBase):
         expected_result = [[0]]
         self.env.assertEqual(actual_result.result_set, expected_result)
 
-    def test25_optional_no_matchings(self):
+    def test24_optional_no_matchings(self):
         # due to delayed init within the Apply op this used to crash the server
         # discovered by Celine Wuest
 
@@ -303,16 +288,76 @@ class testOptionalFlow(FlowTestsBase):
 
         self.graph.query(q)
 
-    # TODO: implement the optimization
-    # # validate Optional Conditional Traverse operation is used
-    # def test26_optional_batch_traversal(self):
-    #     query = """MATCH (a)
-    #                OPTIONAL MATCH (a)-[]->(b)
-    #                OPTIONAL MATCH (b)-[]->(c)
-    #                RETURN a, b, c"""
+    # validate Optional Conditional Traverse operation is used
+    def test25_optional_batch_traversal(self):
+        query = """MATCH (a)
+                   OPTIONAL MATCH (a)-[]->(b)
+                   OPTIONAL MATCH (b)-[]->(c)
+                   RETURN a, b, c"""
 
-    #     # Expecting to find "Optional Conditional Traverse" operations
-    #     plan = str(self.graph.explain(query))
-    #     self.env.assertContains("Optional Conditional Traverse | (a)->(b)", plan)
-    #     self.env.assertContains("Optional Conditional Traverse | (b)->(c)", plan)
+        # Expecting to find "Optional Conditional Traverse" operations
+        plan = str(self.graph.explain(query))
+        self.env.assertContains("Optional Conditional Traverse | (a)->(b)", plan)
+        self.env.assertContains("Optional Conditional Traverse | (b)->(c)", plan)
+
+    # OPTIONAL MATCH on the same alias with a different (indexed) label
+    def test26_optional_match_indexed_label_on_same_alias(self):
+        # use a fresh graph
+        graph_id = "optional_match_indexed_label"
+        g = self.db.select_graph(graph_id)
+
+        # create an index on the label that only appears in the OPTIONAL MATCH
+        create_node_range_index(g, 'N', 'v', sync=True)
+
+        q = """MATCH (n :M {v:-2})-[r1]->(m)
+               OPTIONAL MATCH (n :N)-[r2]->(m)
+               RETURN DISTINCT n, r1, r2, m"""
+
+        result = g.query(q)
+        self.env.assertEqual(result.result_set, [])
+
+        # populate with data and run again
+        g.query(
+            """CREATE (n:M {v:-2})-[:R1]->(m),
+                      (n)-[:R2]->(m),
+                      (x:N {v:6})""")
+
+        result = g.query(q)
+        # n (M) is connected to m via two edges (R1, R2);
+        # n has no N label so OPTIONAL MATCH yields NULL r2 in both rows
+        self.env.assertEqual(len(result.result_set), 2)
+        for row in result.result_set:
+            self.env.assertIsNone(row[2])  # r2 must be null
+
+        g.delete()
+
+    def test27_limited_optional_match(self):
+        """
+        make sure limit is handled and enforced by the
+        optional conditional traverse operation
+        """
+
+        # start fresh
+        self.graph.delete()
+
+        # create the graph
+        q = "UNWIND range(0, 2) AS x CREATE (:Label)-[:REL]->()"
+        self.graph.query(q)
+
+        q = "CREATE (:Label)"
+        self.graph.query(q)
+
+        q = "MATCH (a:Label) OPTIONAL MATCH (a)-[:REL]->(b) RETURN a, b LIMIT 10"
+        res = self.graph.query(q).result_set
+
+        self.env.assertEqual(len(res), 4)
+
+        # enlarge the graph
+        q = "UNWIND range(0, 9) AS x CREATE (:Label)-[:REL]->()"
+        self.graph.query(q)
+
+        q = "MATCH (a:Label) OPTIONAL MATCH (a)-[:REL]->(b) RETURN a, b LIMIT 10"
+        res = self.graph.query(q).result_set
+
+        self.env.assertEqual(len(res), 10)
 

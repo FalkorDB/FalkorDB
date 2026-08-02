@@ -371,6 +371,66 @@ impl Value {
         }
     }
 
+    /// Heap bytes owned by this value, with each `Arc`-shared allocation
+    /// divided by the number of holders sharing it.
+    ///
+    /// [`Self::heap_size`] charges every holder for the whole allocation, which
+    /// badly over-reports shared storage: 250k nodes created with the same
+    /// string literal hold 250k `Arc` clones of *one* buffer, and charging each
+    /// of them the full buffer reported 17 MB for 12 MB of real memory. Every
+    /// out-of-line `Value` payload is behind an `Arc`, so dividing by
+    /// `strong_count` gives each holder its share - which is what the
+    /// `amortized_*` fields of `GRAPH.MEMORY USAGE` are meant to report.
+    ///
+    /// Counts the `Arc` control block and the *capacity* of the owned buffers,
+    /// both of which `heap_size` ignores.
+    #[must_use]
+    pub fn amortized_heap_size(&self) -> usize {
+        // An `Arc` allocation carries strong + weak refcounts ahead of its value.
+        const ARC_HDR: usize = 2 * std::mem::size_of::<usize>();
+
+        match self {
+            Self::Null
+            | Self::Bool(_)
+            | Self::Int(_)
+            | Self::Float(_)
+            | Self::Point(_)
+            | Self::Datetime(_)
+            | Self::Date(_)
+            | Self::Time(_)
+            | Self::Duration(_)
+            | Self::Node(_) => 0,
+            Self::Relationship(_) => std::mem::size_of::<(RelationshipId, NodeId, NodeId)>(),
+            Self::String(s) => {
+                (ARC_HDR + std::mem::size_of::<String>() + s.capacity()) / Arc::strong_count(s)
+            }
+            Self::List(l) | Self::Path(l) => {
+                // Elements live inside the shared allocation, so their own
+                // shares are part of what this allocation costs.
+                let owned = ARC_HDR
+                    + l.capacity() * std::mem::size_of::<Self>()
+                    + l.iter().map(Self::amortized_heap_size).sum::<usize>();
+                owned / Arc::strong_count(l)
+            }
+            Self::Map(m) => {
+                let owned = ARC_HDR
+                    + m.iter()
+                        .map(|(k, v)| {
+                            std::mem::size_of::<Arc<String>>()
+                                + (ARC_HDR + std::mem::size_of::<String>() + k.capacity())
+                                    / Arc::strong_count(k)
+                                + std::mem::size_of::<Self>()
+                                + v.amortized_heap_size()
+                        })
+                        .sum::<usize>();
+                owned / Arc::strong_count(m)
+            }
+            Self::VecF32(v) => {
+                (ARC_HDR + v.capacity() * std::mem::size_of::<f32>()) / Arc::strong_count(v)
+            }
+        }
+    }
+
     /// Get a named attribute/component from this value.
     ///
     /// Handles Map key lookup, Point fields, and temporal component extraction.

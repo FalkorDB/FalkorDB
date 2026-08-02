@@ -457,7 +457,6 @@ class testOptimizationsPlan(FlowTestsBase):
     # illustrates this scenario by traversing from a non-existing label 
     # (populating our execution-plan cache) which afterwards is being 
     # created. once created we want to make sure the correct label ID is used.
-    @skip()
     def test29_optimize_label_scan_cached_label_id(self):
         self.graph.delete()
 
@@ -466,7 +465,7 @@ class testOptimizationsPlan(FlowTestsBase):
 
         # Make sure N is traversed first, as it has no nodes. (none existing)
         plan = str(self.graph.explain("MATCH (n:N:Q) RETURN n"))
-        self.env.assertContains("Node By Label Scan | (n:N)", plan)
+        self.env.assertContains("Node By Label Scan | (n:Q:N)", plan)
 
         # Add label `N` to only node in the graph
         query = """MATCH (n:Q) SET n:N"""
@@ -482,11 +481,10 @@ class testOptimizationsPlan(FlowTestsBase):
         self.env.assertEqual(res.result_set, [[1]])
 
         plan = str(self.graph.explain(query))
-        self.env.assertContains("Node By Label Scan | (n:N)", plan)
+        self.env.assertContains("Node By Label Scan | (n:Q:N)", plan)
 
     # mandatory match labels should not be replaced with optional ones in
     # optimize-label-scan
-    @skip()
     def test30_optimize_mandatory_labels_order_only(self):
         # clean db
         self.graph.delete()
@@ -515,15 +513,17 @@ class testOptimizationsPlan(FlowTestsBase):
 
         for q in queries:
             plan = str(self.graph.explain(q))
-            self.env.assertContains("Node By Label Scan | (n:Q)", plan)
-            self.env.assertContains("Conditional Traverse | (n)->(n:N)", plan)
+            # both mandatory labels are enforced by a single multi-label scan
+            # (the runtime intersects the label matrices), while the optional
+            # label `Z` is never used to seed a scan
+            self.env.assertContains("Node By Label Scan | (n:N:Q)", plan)
+            self.env.assertNotContains("Node By Label Scan | (n:Z", plan)
 
             # assert correctness of the results
             res = self.graph.query(q)
             self.env.assertEqual(len(res.result_set), 1)
             self.env.assertEqual(res.result_set[0][0], Node(labels=['N', 'Q'], properties={'v': 2}))
 
-    @skip()
     def test31_optimize_optional_labels(self):
         """Tests that the optimization of the Label-Scan op works on optional
         labels properly"""
@@ -531,11 +531,17 @@ class testOptimizationsPlan(FlowTestsBase):
         # create a node with label `N`
         self.graph.query("CREATE (:N)")
 
-        plan = str(self.graph.explain("OPTIONAL MATCH (n:N:M) RETURN n"))
+        query = "OPTIONAL MATCH (n:N:M) RETURN n"
+        plan = str(self.graph.explain(query))
 
-        # make sure `M` is traversed first, as it has less labels
-        self.env.assertContains("Node By Label Scan | (n:M)", plan)
-        self.env.assertContains("Conditional Traverse | (n)->(n:N)", plan)
+        # both labels are enforced by a single multi-label scan, and the scan
+        # sits under the `Optional` so unmatched rows are still null-padded
+        self.env.assertContains("Node By Label Scan | (n:N:M)", plan)
+        self.env.assertContains("Optional", plan)
+
+        # no node carries label `M`, so the single row is null-padded
+        res = self.graph.query(query)
+        self.env.assertEqual(res.result_set, [[None]])
 
         # make sure that labels from different `OPTIONAL MATCH` clauses are not
         # "mixed" in Label-Scan optimization
@@ -544,8 +550,10 @@ class testOptimizationsPlan(FlowTestsBase):
 
         # make sure `N` is the first label traversed, even though there are less
         # labels with label `M`
+        # enforcing label `M` is redundant
+        # the planner should discard the second OPTIONAL MATCH
         self.env.assertContains("Node By Label Scan | (n:N)", plan)
-        self.env.assertContains("Conditional Traverse | (n)->(n:M)", plan)
+        self.env.assertNotContains("Conditional Traverse | (n:M)->(n:M)", plan)
 
     def test32_remove_redundant_filters(self):
         # test that filter reduction is a run-time optimization

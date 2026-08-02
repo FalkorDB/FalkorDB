@@ -2376,9 +2376,10 @@ impl Graph {
             return None;
         }
         let mut iter = matrices.into_iter();
-        let mut m = iter
-            .next()
-            .map_or_else(|| self.adjacancy_matrix.extract(), |t| t.extract());
+        let mut m = iter.next().map_or_else(
+            || self.adjacancy_matrix.extract(),
+            super::graphblas::tensor::Tensor::extract,
+        );
         for relationship_matrix in iter {
             m.set_pattern(
                 Some(relationship_matrix.fwd_dm()),
@@ -2432,9 +2433,10 @@ impl Graph {
             self.zero_matrix.extract()
         } else {
             let mut iter = matrices.into_iter();
-            let mut m = iter
-                .next()
-                .map_or_else(|| self.adjacancy_matrix.extract(), |t| t.extract());
+            let mut m = iter.next().map_or_else(
+                || self.adjacancy_matrix.extract(),
+                super::graphblas::tensor::Tensor::extract,
+            );
             for relationship_matrix in iter {
                 m.element_wise_add(None, None, Some(&relationship_matrix.extract()), None);
             }
@@ -3737,19 +3739,32 @@ impl Graph {
         }
 
         // --- relation matrices ---
-        let mut relation_matrices_sz: usize = 0;
+        // Per-type tensors plus the combined adjacency matrix and the zero
+        // matrix, matching what C's `Graph_memoryUsage` folds in here.
+        let mut relation_matrices_sz: usize =
+            self.adjacancy_matrix.memory_usage() + self.zero_matrix.memory_usage();
         for rm in &self.relationship_matrices {
             relation_matrices_sz += rm.memory_usage();
         }
 
         // --- node block storage ---
-        let node_block_storage_sz: usize =
-            self.node_attrs.memory_usage() + self.deleted_nodes.serialized_size();
+        // Everything a node costs that is not its property values: the matrix
+        // recording that the node exists (the Rust stand-in for C's per-node
+        // DataBlock item, and the reason an attribute-less node is not free),
+        // the attribute store's unattributed bytes, and the deleted-id bitmap.
+        // Property values are reported under the attribute components, and
+        // `structural_memory_usage` excludes exactly those, so the two halves
+        // cover the store without overlap.
+        let node_block_storage_sz: usize = self.all_nodes_matrix.memory_usage()
+            + self.node_attrs.structural_memory_usage()
+            + self.deleted_nodes.serialized_size();
 
         // --- edge block storage ---
-        // Includes the graph-wide edge_id → compound_key reverse index, a dense
-        // vector holding one u64 per edge slot.
-        let edge_block_storage_sz: usize = self.relationship_attrs.memory_usage()
+        // Mirrors the node side: the matrix recording each edge's existence and
+        // type, plus the graph-wide edge_id → compound_key reverse index (a dense
+        // vector holding one u64 per edge slot).
+        let edge_block_storage_sz: usize = self.relationship_type_matrix.memory_usage()
+            + self.relationship_attrs.structural_memory_usage()
             + self.deleted_relationships.serialized_size()
             + self.edge_endpoints.capacity() * std::mem::size_of::<u64>();
 
