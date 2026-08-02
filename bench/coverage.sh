@@ -11,8 +11,19 @@ EXT=$([ "$(uname -s)" = Darwin ] && echo dylib || echo so)
 COVDIR=bench/results/cov
 rm -rf "$COVDIR" && mkdir -p "$COVDIR"
 
+# The link-arg is required on Linux (and so in CI): the embedded RediSearch
+# static libs otherwise fail to link with duplicate-symbol errors. macOS's
+# linker does not take the flag and does not need it. Same pair the coverage
+# skill uses for the full-suite run.
+COV_RUSTFLAGS="-C instrument-coverage"
+if [ "$(uname -s)" != Darwin ]; then
+  COV_RUSTFLAGS="$COV_RUSTFLAGS -C link-arg=-Wl,--allow-multiple-definition"
+  # graph/build.rs compiles C++ shims; the toolchain image has no default CXX.
+  export CXX="${CXX:-clang++}"
+fi
+
 echo "== instrumented debug build =="
-RUSTFLAGS="-C instrument-coverage" cargo build
+RUSTFLAGS="$COV_RUSTFLAGS" cargo build
 
 echo "== running query set once each =="
 LLVM_PROFILE_FILE="$PWD/$COVDIR/cov-%p.profraw" \

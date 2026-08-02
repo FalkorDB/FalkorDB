@@ -83,11 +83,15 @@ stale ranking is worse than none: it sends people to work on rows that are
 already fixed.
 
 Generate it from a live run instead. Labelling a PR `benchmark-cov` measures
-the PR base and the PR and posts the comparison. Its `benchmark-cov` job (macOS,
-full 317-query set) has **no C column** — there is no macOS build of the C
-module to load — but the `cachegrind` job does: a curated subset with exact
-callgrind instruction counts vs `falkordb/falkordb-server:edge`, plus the full
-set compared on allocated bytes.
+the PR, its base and the C engine and posts one comparison comment. Nothing is
+compiled: all three modules come from prebuilt images (`rc-pr-<N>`, `edge-rs`
+and `edge`), each measured on its own runner in parallel inside the C engine's
+image. Two readings per side — the full 317-query set on allocated bytes, and a
+curated subset with exact callgrind instruction counts.
+
+Its one caveat: the base side is the `edge-rs` image, i.e. the tip of `main-rs`
+when it was last built, not the PR's merge base. For a borderline row, confirm
+locally against a real base build before acting on it.
 
 For a vs-C reading locally, you need a C module. Build the `master` branch of
 this repo (it lands under `bin/`), or on Linux copy one out of the image:
