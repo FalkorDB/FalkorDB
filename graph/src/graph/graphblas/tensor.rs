@@ -513,6 +513,11 @@ impl Tensor {
     ) {
         self.wait_fwd();
         self.m.resize(nrows, ncols);
+        // `GrB_Matrix_resize` can leave pending work on the base, which breaks
+        // the invariant `wait_fwd` asserts — see the note in
+        // `VersionedMatrix::resize`, which had the same hole. Resize only runs
+        // on capacity growth, so materializing here is off the hot paths.
+        self.m.wait();
         self.dp.resize(nrows, ncols);
         self.dm.resize(nrows, ncols);
         self.mt.resize(ncols, nrows);
@@ -1030,5 +1035,46 @@ mod tests {
             !ex.contains(0, 1),
             "deleted pair (0,1) still present in extract: edge id 0 was typecast to false in dm"
         );
+    }
+
+    /// `resize` must leave the committed base materialized.
+    ///
+    /// `wait_fwd` asserts `!self.m.pending()` — the base is only written by a
+    /// fold, which materializes. `resize` also writes it, and
+    /// `GrB_Matrix_resize` can leave pending work, so afterwards every read
+    /// path that calls `wait_fwd` panicked. Release compiles the assert out,
+    /// so only debug builds saw it.
+    ///
+    /// Found by `bench/coverage.sh` (a debug build): with a graph loaded from
+    /// RDB — which is what makes relationship tensors exist to be resized —
+    /// `UNWIND range(1, 100000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t`
+    /// grew node capacity to 114,688 and killed the server via
+    /// `Pending::commit` -> `delete_implicit_edges` -> `Tensor::iter`.
+    ///
+    /// The growth must be large enough to change GraphBLAS's internal
+    /// representation: growing 10,001 -> 10,501 leaves nothing pending and the
+    /// bug hides.
+    #[test]
+    fn resize_leaves_base_materialized() {
+        ensure_init();
+        const N: u64 = 10_000;
+        let mut t = Tensor::new(N + 1, N + 1);
+        let srcs: Vec<u64> = (0..N).collect();
+        let dsts: Vec<u64> = (0..N).map(|i| i + 1).collect();
+        let ids: Vec<u64> = (0..N).collect();
+        t.set_all_from_slices(&srcs, &dsts, &ids);
+        t.flush();
+        t.m.wait();
+
+        t.resize(114_688, 114_688);
+
+        assert!(
+            !t.m.pending(),
+            "resize left the committed base pending; the next wait_fwd panics"
+        );
+        // Exercise the assert the way the read paths reach it.
+        t.wait_fwd();
+        // And a read must still see the data.
+        assert!(t.get(0, 1).next().is_some(), "edge lost across resize");
     }
 }

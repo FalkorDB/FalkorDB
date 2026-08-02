@@ -119,37 +119,16 @@ pub fn register(funcs: &mut Functions) {
         }
     );
 
+    // ── case (internal, for dbms.functions() enumeration) ─────────────
+    // CASE is handled by ExprIR::Case in the evaluator, which short-circuits
+    // instead of evaluating every branch into a list first. This registration
+    // exists so dbms.functions() can enumerate it.
     cypher_fn!(funcs, "case",
         var_arg: Type::Any,
         ret: Type::Any,
         internal,
-        fn internal_case(_, args) {
-            let mut iter = args.iter();
-            match (iter.next(), iter.next(), iter.next()) {
-                (Some(Value::List(alts)), Some(else_), None) => {
-                    for pair in alts.chunks(2) {
-                        match (&pair[0], &pair[1]) {
-                            (Value::Bool(false) | Value::Null, _) => {}
-                            (_, result) => return Ok(result.clone()),
-                        }
-                    }
-                    Ok(else_.clone())
-                }
-                (Some(value), Some(alt), Some(else_)) => {
-                    let Value::List(alts) = alt else {
-                        unreachable!()
-                    };
-                    for pair in alts.chunks(2) {
-                        if let [condition, result] = pair
-                            && condition == value
-                        {
-                            return Ok(result.clone());
-                        }
-                    }
-                    Ok(else_.clone())
-                }
-                _ => unreachable!(),
-            }
+        fn internal_case(_, _args) {
+            Err(String::from("Internal function 'case' should not be called directly"))
         }
     );
 

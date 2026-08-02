@@ -123,7 +123,7 @@ jobs:
         test_file: ${{ fromJson(inputs.services_files) }}
         arch: ${{ fromJson(inputs.archs) }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Pre-create cov dir (coverage flavour only)
         if: inputs.collect_coverage
         run: mkdir -p "${GITHUB_WORKSPACE}/cov" && chmod 0777 "${GITHUB_WORKSPACE}/cov"
@@ -198,12 +198,12 @@ jobs:
         test_file: ${{ fromJson(inputs.spawn_files) }}
         arch: ${{ fromJson(inputs.archs) }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Pre-create cov dir (coverage flavour only)
         if: inputs.collect_coverage
         run: mkdir -p "${GITHUB_WORKSPACE}/cov" && chmod 0777 "${GITHUB_WORKSPACE}/cov"
       - name: Login to GHCR (for in-container docker pull)
-        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

@@ -217,6 +217,28 @@ pub enum ExprIR<TVar> {
     Property(Arc<String>),
     /// Function call with function definition
     FuncInvocation(Arc<GraphFn>),
+    /// `CASE` expression, in either Cypher form.
+    ///
+    /// Children, in order:
+    /// 1. the subject expression — present only in the value form
+    ///    (`CASE x WHEN 1 THEN …`), absent in the searched form
+    ///    (`CASE WHEN x = 1 THEN …`); `has_subject` says which;
+    /// 2. a [`Self::List`] of alternating `when, then` expressions, always
+    ///    present and always non-empty;
+    /// 3. the `ELSE` expression, always present — the parser substitutes
+    ///    `Constant(Null)` when the query omits it.
+    ///
+    /// A dedicated variant rather than an internal `FuncInvocation`: the
+    /// evaluator must try the conditions in order and evaluate only the
+    /// branch that matches, which a function call cannot express (its
+    /// arguments are evaluated first). Encoding the shape here also means
+    /// the shape is decided once at parse time instead of being re-derived
+    /// per row.
+    ///
+    /// The `case` function stays registered in `functions::internal` as the
+    /// introspectable declaration behind `dbms.functions()`; it is no longer
+    /// on the evaluation path.
+    Case { has_subject: bool },
     /// List quantifier (all/any/none/single)
     Quantifier {
         quantifier_type: QuantifierType,
@@ -362,6 +384,7 @@ impl<TVar: Display + std::fmt::Debug> Display for ExprIR<TVar> {
                 RegexFnKind::MatchList => write!(f, "string.matchRegEx()"),
                 RegexFnKind::Replace => write!(f, "string.replaceRegEx()"),
             },
+            Self::Case { .. } => write!(f, "CASE"),
         }
     }
 }
