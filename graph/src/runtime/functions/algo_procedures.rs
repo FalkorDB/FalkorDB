@@ -82,6 +82,9 @@ use crate::{
     },
 };
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
+use std::mem::swap;
 use std::ptr::null_mut;
 use std::sync::Arc;
 use thin_vec::{ThinVec, thin_vec};
@@ -1988,211 +1991,517 @@ fn to_numeric_value(v: f64) -> Value {
     }
 }
 
-fn run_path_algo(
-    runtime: &Runtime,
+/// A path discovered by one of the searches below: its edges in traversal
+/// order (each kept in its original direction as
+/// `(edge_id, edge_src, edge_dst)`), followed by the path's weight and cost.
+type FoundPath = (Vec<(RelationshipId, NodeId, NodeId)>, f64, f64);
+
+/// How often the path searches poll the query deadline and the memory cap.
+/// Polling every iteration would mean an `Instant::now()` per edge examined;
+/// 1024 keeps that overhead invisible while still aborting a runaway search
+/// long before it can exhaust memory.
+const PATH_ALGO_CHECK_INTERVAL: u64 = 1024;
+
+/// Order candidate paths the way `algo.SPpaths` / `algo.SSpaths` report them:
+/// ascending weight, then ascending cost, then ascending hop count. Mirrors
+/// the C engine's `path_cmp`.
+fn cmp_found_path(
+    a: &FoundPath,
+    b: &FoundPath,
+) -> Ordering {
+    a.1.partial_cmp(&b.1)
+        .unwrap_or(Ordering::Equal)
+        .then_with(|| a.2.partial_cmp(&b.2).unwrap_or(Ordering::Equal))
+        .then_with(|| a.0.len().cmp(&b.0.len()))
+}
+
+/// Read a numeric edge attribute, falling back to `default` when the property
+/// was not configured, is absent from the edge, or is not numeric.
+fn edge_numeric_attr(
+    g: &Graph,
+    edge_id: RelationshipId,
+    prop: Option<&Arc<String>>,
+    default: f64,
+) -> f64 {
+    prop.map_or(default, |p| {
+        match g.get_relationship_attribute(edge_id, p) {
+            Some(Value::Float(f)) => f,
+            Some(Value::Int(i)) => i as f64,
+            _ => default,
+        }
+    })
+}
+
+/// The endpoint an edge leads to when leaving `from`, or `None` when the edge
+/// does not leave `from` in the requested direction.
+fn far_endpoint(
+    from: NodeId,
+    edge_src: NodeId,
+    edge_dst: NodeId,
+    dir: EdgeDirection,
+) -> Option<NodeId> {
+    match dir {
+        EdgeDirection::Outgoing => (edge_src == from).then_some(edge_dst),
+        EdgeDirection::Incoming => (edge_dst == from).then_some(edge_src),
+        EdgeDirection::Both => {
+            if edge_src == from {
+                Some(edge_dst)
+            } else if edge_dst == from {
+                Some(edge_src)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// Every edge leaving `node`, as `(edge_id, edge_src, edge_dst, far_endpoint)`.
+///
+/// Eager on purpose. Returning the underlying lazy iterator and keeping one
+/// suspended per depth reads like the cheaper option — O(depth) iterator
+/// positions instead of O(depth x degree) materialised tuples — but measured on
+/// pokec-small (max out-degree 426, max both-direction degree 797) it was a
+/// wash on memory and ~1.6x slower overall: DFS depth here is small, so the
+/// tuples cost tens of KB, while each `next()` re-enters a `flat_map`/`chain`
+/// stack over freshly attached GraphBLAS iterators. Collecting once per node
+/// visit pays that setup a single time and turns the inner step into a
+/// `Vec::pop`.
+fn node_successors(
+    g: &Graph,
     config: &PathAlgoConfig,
-) -> Result<super::ProcedureBatch, String> {
-    use std::cmp::Ordering;
-    use std::collections::BinaryHeap;
+    node: NodeId,
+) -> Vec<(RelationshipId, NodeId, NodeId, NodeId)> {
+    g.get_node_relationships_by_type(node, &config.rel_types, config.rel_direction)
+        .filter_map(|(edge_src, edge_dst, edge_id)| {
+            far_endpoint(node, edge_src, edge_dst, config.rel_direction)
+                .map(|far| (edge_id, edge_src, edge_dst, far))
+        })
+        .collect()
+}
 
-    struct State {
-        weight: f64,
-        cost: f64,
-        path_len: u32,
-        current: NodeId,
-        visited: FxHashSet<u64>,
-        // Edges stored in original direction (edge_id, edge_src, edge_dst)
-        edges: Vec<(RelationshipId, NodeId, NodeId)>,
+/// The cheapest known way to reach one node. One of these per *node* reached,
+/// which is what bounds Dijkstra's memory to O(V) — as opposed to keeping
+/// state per path explored, which is exponential in the hop count.
+struct DijkstraLabel {
+    parent: NodeId,
+    /// Edge reaching this node, in its original direction.
+    edge: (RelationshipId, NodeId, NodeId),
+    weight: f64,
+}
+
+/// A `(weight, node)` candidate waiting to be finalised. Small enough to store
+/// by value, so pushing never allocates; superseded entries are left in the
+/// heap and skipped at pop time (lazy deletion).
+#[derive(PartialEq)]
+struct DijkstraItem {
+    weight: f64,
+    node: NodeId,
+}
+
+impl Eq for DijkstraItem {}
+
+impl Ord for DijkstraItem {
+    fn cmp(
+        &self,
+        other: &Self,
+    ) -> Ordering {
+        // `BinaryHeap` is a max-heap; reverse the weight comparison so the
+        // lightest candidate pops first.
+        other
+            .weight
+            .partial_cmp(&self.weight)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| other.node.cmp(&self.node))
     }
+}
 
-    impl Eq for State {}
-    impl PartialEq for State {
-        fn eq(
-            &self,
-            other: &Self,
-        ) -> bool {
-            self.weight == other.weight
-                && self.cost == other.cost
-                && self.path_len == other.path_len
-        }
+impl PartialOrd for DijkstraItem {
+    fn partial_cmp(
+        &self,
+        other: &Self,
+    ) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
-    impl PartialOrd for State {
-        fn partial_cmp(
-            &self,
-            other: &Self,
-        ) -> Option<Ordering> {
-            Some(self.cmp(other))
-        }
-    }
-    impl Ord for State {
-        fn cmp(
-            &self,
-            other: &Self,
-        ) -> Ordering {
-            // Min-heap: reverse comparison (smallest weight first)
-            other
-                .weight
-                .partial_cmp(&self.weight)
-                .unwrap_or(Ordering::Equal)
-                .then_with(|| {
-                    other
-                        .cost
-                        .partial_cmp(&self.cost)
-                        .unwrap_or(Ordering::Equal)
-                })
-                .then_with(|| other.path_len.cmp(&self.path_len))
-        }
-    }
+}
 
-    let g = runtime.g.borrow();
+/// Textbook Dijkstra from `config.source` to `target`: O((V+E) log V) time and
+/// one label per reached node.
+///
+/// Only sound for the single-cheapest-path shape with no `maxCost` and no
+/// `maxLen` — see the dispatch guard in [`run_path_algo`]. Assumes a
+/// non-negative `weightProp` on every edge, exactly as the C engine's
+/// `Dijkstra_ShortestPath` does: a negative weight breaks the invariant that a
+/// node popped from the heap has its final distance.
+fn dijkstra_single_path(
+    runtime: &Runtime,
+    g: &Graph,
+    config: &PathAlgoConfig,
+    target: NodeId,
+) -> Result<Option<FoundPath>, String> {
+    let mut labels: FxHashMap<NodeId, DijkstraLabel> = FxHashMap::default();
+    let mut settled: FxHashSet<NodeId> = FxHashSet::default();
+    let mut heap: BinaryHeap<DijkstraItem> = BinaryHeap::new();
 
-    let mut heap = BinaryHeap::new();
-    let mut initial_visited = FxHashSet::default();
-    initial_visited.insert(u64::from(config.source));
-
-    heap.push(State {
+    heap.push(DijkstraItem {
         weight: 0.0,
-        cost: 0.0,
-        path_len: 0,
-        current: config.source,
-        visited: initial_visited,
-        edges: Vec::new(),
+        node: config.source,
     });
 
-    let mut results: Vec<(Vec<(RelationshipId, NodeId, NodeId)>, f64, f64)> = Vec::new();
-    let mut min_weight: Option<f64> = None;
+    let mut iters: u64 = 0;
+    let mut reached = false;
 
-    while let Some(state) = heap.pop() {
-        // Stop if we have enough results
-        if config.path_count > 0 && results.len() >= config.path_count as usize {
-            break;
-        }
-        // pathCount=0: collect all paths with minimum weight
-        if config.path_count == 0
-            && let Some(mw) = min_weight
-            && state.weight > mw + f64::EPSILON
-        {
-            break;
+    while let Some(DijkstraItem { weight, node }) = heap.pop() {
+        iters += 1;
+        if iters.is_multiple_of(PATH_ALGO_CHECK_INTERVAL) {
+            runtime.check_timeout()?;
+            runtime.check_mem_capacity()?;
         }
 
-        // Check if at target (must have at least one edge)
-        let at_target = state.path_len > 0
-            && match config.target {
-                Some(t) => state.current == t,
-                None => true, // SSpaths: any non-empty path is a result
-            };
-
-        if at_target {
-            if config.path_count == 0 && min_weight.is_none() {
-                min_weight = Some(state.weight);
-            }
-            results.push((state.edges.clone(), state.weight, state.cost));
-            // For SPpaths at target, don't explore further from target
-            if config.target.is_some() {
-                continue;
-            }
-        }
-
-        // Don't explore further if at maxLen
-        if state.path_len >= config.max_len {
+        // a lighter entry for this node was already finalised
+        if !settled.insert(node) {
             continue;
+        }
+        if node == target {
+            reached = true;
+            break;
         }
 
         for (edge_src, edge_dst, edge_id) in
-            g.get_node_relationships_by_type(state.current, &config.rel_types, config.rel_direction)
+            g.get_node_relationships_by_type(node, &config.rel_types, config.rel_direction)
         {
-            let neighbor = match config.rel_direction {
-                EdgeDirection::Outgoing => {
-                    if edge_src == state.current {
-                        Some(edge_dst)
-                    } else {
-                        None
-                    }
-                }
-                EdgeDirection::Incoming => {
-                    if edge_dst == state.current {
-                        Some(edge_src)
-                    } else {
-                        None
-                    }
-                }
-                EdgeDirection::Both => {
-                    if edge_src == state.current {
-                        Some(edge_dst)
-                    } else if edge_dst == state.current {
-                        Some(edge_src)
-                    } else {
-                        None
-                    }
-                }
+            let Some(far) = far_endpoint(node, edge_src, edge_dst, config.rel_direction) else {
+                continue;
             };
-
-            let Some(next) = neighbor else { continue };
-            if state.visited.contains(&u64::from(next)) {
+            if settled.contains(&far) {
                 continue;
             }
 
-            let edge_weight = config.weight_prop.as_ref().map_or(1.0, |prop| {
-                match g.get_relationship_attribute(edge_id, prop) {
-                    Some(Value::Float(f)) => f,
-                    Some(Value::Int(i)) => i as f64,
-                    _ => 1.0,
-                }
-            });
-
-            let edge_cost = config.cost_prop.as_ref().map_or(0.0, |prop| {
-                match g.get_relationship_attribute(edge_id, prop) {
-                    Some(Value::Float(f)) => f,
-                    Some(Value::Int(i)) => i as f64,
-                    _ => 0.0,
-                }
-            });
-
-            let new_weight = state.weight + edge_weight;
-            let new_cost = state.cost + edge_cost;
-
-            // Prune by maxCost (cost only increases with positive edge costs)
-            if let Some(mc) = config.max_cost
-                && new_cost > mc
+            let far_weight =
+                weight + edge_numeric_attr(g, edge_id, config.weight_prop.as_ref(), 1.0);
+            // A NaN or infinite weight has no meaningful ordering: relaxing on
+            // it would settle a label no later comparison can displace, and the
+            // procedure would report `nan` as a path weight. Skip the edge.
+            if !far_weight.is_finite() {
+                continue;
+            }
+            if labels
+                .get(&far)
+                .is_none_or(|label| far_weight < label.weight)
             {
-                continue;
+                labels.insert(
+                    far,
+                    DijkstraLabel {
+                        parent: node,
+                        edge: (edge_id, edge_src, edge_dst),
+                        weight: far_weight,
+                    },
+                );
+                heap.push(DijkstraItem {
+                    weight: far_weight,
+                    node: far,
+                });
             }
-
-            let mut new_visited = state.visited.clone();
-            new_visited.insert(u64::from(next));
-
-            let mut new_edges = state.edges.clone();
-            // Always store edges in original direction (edge_src, edge_dst)
-            new_edges.push((edge_id, edge_src, edge_dst));
-
-            heap.push(State {
-                weight: new_weight,
-                cost: new_cost,
-                path_len: state.path_len + 1,
-                current: next,
-                visited: new_visited,
-                edges: new_edges,
-            });
         }
     }
 
+    if !reached {
+        return Ok(None);
+    }
+
+    // walk the parent chain back to the source, then flip to traversal order
+    let mut edges = Vec::new();
+    let mut cur = target;
+    while cur != config.source {
+        let label = &labels[&cur];
+        edges.push(label.edge);
+        cur = label.parent;
+    }
+    edges.reverse();
+
+    // `costProp` is not what the search optimises for, just an attribute the
+    // caller asked to have reported: sum it over the winning path only.
+    let cost = edges.iter().fold(0.0, |acc, &(edge_id, _, _)| {
+        acc + edge_numeric_attr(g, edge_id, config.cost_prop.as_ref(), 0.0)
+    });
+
+    Ok(Some((edges, labels[&target].weight, cost)))
+}
+
+/// Level-synchronised BFS from `config.source` looking for `target`, honouring
+/// `relTypes` / `relDirection` / `maxLen`, keeping one parent record per node.
+///
+/// Returns the weight and cost of the path it found, or `None` when no path
+/// exists within `maxLen`. `None` lets the caller skip enumeration entirely:
+/// if no path exists structurally then none can satisfy `maxCost` either, and
+/// without this pre-pass an unreachable pair drives the enumeration through
+/// every simple path in the reachable component.
+fn bfs_find_bound(
+    runtime: &Runtime,
+    g: &Graph,
+    config: &PathAlgoConfig,
+    target: NodeId,
+) -> Result<Option<(f64, f64)>, String> {
+    if config.max_len == 0 {
+        return Ok(None);
+    }
+
+    let mut parents: FxHashMap<NodeId, (NodeId, RelationshipId)> = FxHashMap::default();
+    let mut seen: FxHashSet<NodeId> = FxHashSet::default();
+    seen.insert(config.source);
+
+    let mut frontier = vec![config.source];
+    let mut next_frontier: Vec<NodeId> = Vec::new();
+    let mut iters: u64 = 0;
+    let mut found = false;
+
+    'levels: for _hop in 1..=config.max_len {
+        if frontier.is_empty() {
+            break;
+        }
+        for &node in &frontier {
+            iters += 1;
+            if iters.is_multiple_of(PATH_ALGO_CHECK_INTERVAL) {
+                runtime.check_timeout()?;
+                runtime.check_mem_capacity()?;
+            }
+
+            for (edge_src, edge_dst, edge_id) in
+                g.get_node_relationships_by_type(node, &config.rel_types, config.rel_direction)
+            {
+                let Some(far) = far_endpoint(node, edge_src, edge_dst, config.rel_direction) else {
+                    continue;
+                };
+                if !seen.insert(far) {
+                    continue;
+                }
+                parents.insert(far, (node, edge_id));
+                if far == target {
+                    found = true;
+                    break 'levels;
+                }
+                next_frontier.push(far);
+            }
+        }
+        swap(&mut frontier, &mut next_frontier);
+        next_frontier.clear();
+    }
+
+    if !found {
+        return Ok(None);
+    }
+
+    // Collect the parent chain, then fold source->target — the same order
+    // `enumerate_paths` accumulates in. Folding along the reverse walk instead
+    // would be a different summation order, and float addition is not
+    // associative: the seed could land an ULP below the forward sum of the very
+    // same edges, and the `next_weight > bound` test would then prune the path
+    // this bound came from. With 0.1/0.2/0.3 that is exactly what happens
+    // (forward 0.6000000000000001 vs reverse 0.6), losing the only result.
+    let mut chain = Vec::new();
+    let mut cur = target;
+    while cur != config.source {
+        let (parent, edge_id) = parents[&cur];
+        chain.push(edge_id);
+        cur = parent;
+    }
+    chain.reverse();
+
+    let mut weight = 0.0;
+    let mut cost = 0.0;
+    for edge_id in chain {
+        weight += edge_numeric_attr(g, edge_id, config.weight_prop.as_ref(), 1.0);
+        cost += edge_numeric_attr(g, edge_id, config.cost_prop.as_ref(), 0.0);
+    }
+
+    Ok(Some((weight, cost)))
+}
+
+/// Fold a newly found path into the result set and tighten the weight bound
+/// the search prunes with.
+fn record_found_path(
+    results: &mut Vec<FoundPath>,
+    found: FoundPath,
+    path_count: i64,
+    bound: &mut f64,
+) {
+    match path_count {
+        // the single cheapest path
+        1 => {
+            if results
+                .first()
+                .is_none_or(|best| cmp_found_path(&found, best) == Ordering::Less)
+            {
+                *bound = found.1;
+                results.clear();
+                results.push(found);
+            }
+        }
+        // every path tied at the minimum weight
+        0 => match results.first() {
+            Some(best) if found.1 > best.1 => {}
+            Some(best) if found.1 < best.1 => {
+                *bound = found.1;
+                results.clear();
+                results.push(found);
+            }
+            Some(_) => results.push(found),
+            None => {
+                *bound = found.1;
+                results.push(found);
+            }
+        },
+        // the k cheapest paths, which may legitimately span a range of weights.
+        // `results` is kept sorted so the worst kept path is always last: once
+        // full, a candidate that cannot beat it is rejected in O(1). Sorting the
+        // whole vector per found path instead is O(P*k log k) and measurably
+        // quadratic in `pathCount` — C keeps a size-k heap for the same reason.
+        k => {
+            let k = k as usize;
+            if results.len() == k {
+                if cmp_found_path(&found, &results[k - 1]) != Ordering::Less {
+                    return;
+                }
+                results.pop();
+            }
+            let pos =
+                results.partition_point(|kept| cmp_found_path(kept, &found) == Ordering::Less);
+            results.insert(pos, found);
+            if results.len() == k {
+                *bound = results[k - 1].1;
+            }
+        }
+    }
+}
+
+/// Enumerate simple paths from `config.source`, depth-first with backtracking.
+///
+/// Only ever holds one live path plus the untried successors at each of its
+/// depths, so memory is O(maxLen x degree) regardless of how many paths get
+/// explored. (A best-first search over paths, by contrast, must hold every
+/// frontier path at once — exponential in the hop count.)
+///
+/// `bound` is an upper limit on path weight, tightened as better results are
+/// found; `maxCost` prunes independently since cost only ever increases.
+fn enumerate_paths(
+    runtime: &Runtime,
+    g: &Graph,
+    config: &PathAlgoConfig,
+    initial_bound: f64,
+) -> Result<Vec<FoundPath>, String> {
+    // untried successors at each depth; index `d` belongs to the node reached
+    // after `d` edges. `None` is a depth we deliberately do not expand from
+    // (maxLen reached, or an SPpaths target), which reads the same as exhausted.
+    let mut levels = Vec::new();
+    // the single live path: nodes visited, and the edges between them with
+    // their weight and cost so backtracking is a subtraction rather than
+    // another attribute lookup
+    let mut nodes: Vec<NodeId> = vec![config.source];
+    // Each entry carries the *prefix* weight and cost of the path up to and
+    // including that edge, not the edge's own values. Restoring the running
+    // totals on backtrack is then a pop rather than a subtraction: `w + x - x`
+    // does not round-trip in f64, so subtracting let a dead-end sibling branch
+    // leave the accumulator an ULP high and prune the real path on the way back
+    // down. Folding each prefix from its parent's makes a given edge sequence
+    // always sum to the same bits, whatever order the DFS reached it in.
+    let mut edges: Vec<(RelationshipId, NodeId, NodeId, f64, f64)> = Vec::new();
+    let mut on_path: FxHashSet<NodeId> = FxHashSet::default();
+    on_path.insert(config.source);
+
+    levels.push((config.max_len > 0).then(|| node_successors(g, config, config.source)));
+
+    let mut results: Vec<FoundPath> = Vec::new();
+    let mut bound = initial_bound;
+    let mut iters: u64 = 0;
+
+    loop {
+        iters += 1;
+        if iters.is_multiple_of(PATH_ALGO_CHECK_INTERVAL) {
+            runtime.check_timeout()?;
+            runtime.check_mem_capacity()?;
+        }
+
+        let depth = edges.len();
+        let advance = levels[depth].as_mut().and_then(Vec::pop);
+        if let Some((edge_id, edge_src, edge_dst, next)) = advance {
+            // simple paths only: a node may appear at most once
+            if on_path.contains(&next) {
+                continue;
+            }
+
+            let (weight, cost) = edges.last().map_or((0.0, 0.0), |&(_, _, _, w, c)| (w, c));
+            let next_weight =
+                weight + edge_numeric_attr(g, edge_id, config.weight_prop.as_ref(), 1.0);
+            let next_cost = cost + edge_numeric_attr(g, edge_id, config.cost_prop.as_ref(), 0.0);
+
+            // C gates on `weight + w <= max_weight` (max_weight defaulting to
+            // DBL_MAX), which rejects NaN and infinity. The negated `> bound`
+            // form admits both, and a non-finite prefix then propagates into
+            // every path explored below this one — reporting finite paths as
+            // `nan`. Test finiteness explicitly so the two agree.
+            if !next_weight.is_finite() || next_weight > bound {
+                continue;
+            }
+            if !next_cost.is_finite() || config.max_cost.is_some_and(|max| next_cost > max) {
+                continue;
+            }
+
+            edges.push((edge_id, edge_src, edge_dst, next_weight, next_cost));
+            nodes.push(next);
+            on_path.insert(next);
+
+            // SSpaths (no target) reports every non-empty path; SPpaths only
+            // those ending at the target
+            let at_target = config.target.is_none_or(|t| next == t);
+            if at_target {
+                let found = (
+                    edges
+                        .iter()
+                        .map(|&(id, src, dst, _, _)| (id, src, dst))
+                        .collect(),
+                    next_weight,
+                    next_cost,
+                );
+                record_found_path(&mut results, found, config.path_count, &mut bound);
+            }
+
+            // No point extending past an SPpaths target: it is on the path
+            // now, so no longer path can end there.
+            let expand = !(at_target && config.target.is_some())
+                && u32::try_from(edges.len()).is_ok_and(|len| len < config.max_len);
+            levels.push(expand.then(|| node_successors(g, config, next)));
+        } else {
+            // this depth is exhausted; step back up
+            if depth == 0 {
+                break;
+            }
+            levels.pop();
+            edges.pop().expect("depth > 0 implies a live edge");
+            let left = nodes.pop().expect("depth > 0 implies a live node");
+            on_path.remove(&left);
+        }
+    }
+
+    Ok(results)
+}
+
+/// Build the three-column procedure result: `path`, `pathWeight`, `pathCost`.
+fn build_path_batch(
+    config: &PathAlgoConfig,
+    results: Vec<FoundPath>,
+) -> super::ProcedureBatch {
     let mut paths = Vec::with_capacity(results.len());
     let mut path_weights = Vec::with_capacity(results.len());
     let mut path_costs = Vec::with_capacity(results.len());
+
     for (edges, weight, cost) in results {
-        let mut path_elems = ThinVec::new();
+        let mut path_elems = ThinVec::with_capacity(edges.len() * 2 + 1);
         path_elems.push(Value::Node(config.source));
-        for (eid, esrc, edst) in &edges {
-            let prev_id = path_elems.iter().rev().find_map(|v| {
-                if let Value::Node(id) = v {
-                    Some(*id)
-                } else {
-                    None
-                }
-            });
-            path_elems.push(Value::Relationship(*eid));
-            let next = if prev_id == Some(*esrc) { *edst } else { *esrc };
+        let mut prev = config.source;
+        for (edge_id, edge_src, edge_dst) in edges {
+            path_elems.push(Value::Relationship(edge_id));
+            let next = if prev == edge_src { edge_dst } else { edge_src };
             path_elems.push(Value::Node(next));
+            prev = next;
         }
 
         paths.push(Value::Path(Arc::new(path_elems)));
@@ -2200,11 +2509,62 @@ fn run_path_algo(
         path_costs.push(to_numeric_value(cost));
     }
 
-    Ok(Batch::from_columns([
+    Batch::from_columns([
         Column::Values(paths),
         classify_stored_column(path_weights),
         classify_stored_column(path_costs),
-    ]))
+    ])
+}
+
+fn run_path_algo(
+    runtime: &Runtime,
+    config: &PathAlgoConfig,
+) -> Result<super::ProcedureBatch, String> {
+    let g = runtime.g.borrow();
+
+    // Fast path: one cheapest path, no cost cap, no hop cap — exactly what
+    // Dijkstra solves, in O((V+E) log V) time and O(V) memory. The general
+    // enumeration below has to consider every simple path, which is
+    // exponential in the hop count even when it prunes well.
+    //
+    // `source == target` is excluded on purpose: Dijkstra would "reach" the
+    // source at distance zero having traversed no edges, but these procedures
+    // only report paths of at least one edge. Let the enumeration handle that
+    // degenerate case, where it correctly finds nothing.
+    if let Some(target) = config.target
+        && config.path_count == 1
+        && config.max_cost.is_none()
+        && config.max_len == u32::MAX
+        && config.source != target
+    {
+        let found = dijkstra_single_path(runtime, &g, config, target)?;
+        return Ok(build_path_batch(config, found.into_iter().collect()));
+    }
+
+    // Otherwise, first ask whether any path honouring relTypes/relDirection/
+    // maxLen exists at all. An unreachable pair then costs one linear sweep
+    // instead of walking every simple path in the component, and the weight
+    // this finds seeds the enumeration's pruning bound.
+    let mut bound = f64::INFINITY;
+    if let Some(target) = config.target {
+        let Some((bound_weight, bound_cost)) = bfs_find_bound(runtime, &g, config, target)? else {
+            return Ok(build_path_batch(config, Vec::new()));
+        };
+
+        // k-minimal has to fill k candidates before a weight bound means
+        // anything, and those can legitimately be heavier than this one.
+        if (config.path_count == 0 || config.path_count == 1)
+            && config
+                .max_cost
+                .is_none_or(|max_cost| bound_cost <= max_cost)
+        {
+            bound = bound_weight;
+        }
+    }
+
+    let mut results = enumerate_paths(runtime, &g, config, bound)?;
+    results.sort_by(cmp_found_path);
+    Ok(build_path_batch(config, results))
 }
 
 fn register_sp_paths(funcs: &mut Functions) {
