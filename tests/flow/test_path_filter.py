@@ -1,6 +1,7 @@
 import re
 from common import *
 from index_utils import *
+from execution_plan_util import locate_operation
 from collections import Counter
 
 from tests.flow.query_info import QueryInfo
@@ -273,3 +274,152 @@ class testPathFilter(FlowTestsBase):
 
         res = self.graph.query(q).result_set
         self.env.assertEqual(res[0][0], 1)
+
+    def test16_bidirectional_filter_path(self):
+        # check bidirectional filter
+        # create a graph where
+        # s0->s1
+        # s2 isn't connected
+
+        res = self.graph.query("""CREATE (s0:Service {name:'s0'}),
+                         (s1:Service {name:'s1'}),
+                         (s2:Service {name:'s2'}),
+                         (s0)-[:R]->(s1)
+                         RETURN s0, s1, s2""").result_set
+        s0 = res[0][0]
+        s1 = res[0][1]
+        s2 = res[0][2]
+
+        # find all services which aren't connected
+        q = "MATCH (s:Service) WHERE NOT (s)--(:Service) RETURN s"
+        res = self.graph.query(q).result_set
+
+        self.env.assertEqual(len(res), 1)
+        self.env.assertEqual(res[0][0], s2)
+
+        # find all connected services
+        q = "MATCH (s:Service) WHERE (s)--(:Service) RETURN s ORDER BY ID(s)"
+        res = self.graph.query(q).result_set
+
+        self.env.assertEqual(len(res), 2)
+        self.env.assertEqual(res[0][0], s0)
+        self.env.assertEqual(res[1][0], s1)
+
+        # clean up
+        self.graph.query ("MATCH (s:Service) DELETE s")
+
+    def test17_filter_count(self):
+        # filter paths should hit multiple times for tensors
+        # create a graph where
+        # s0->s1, s0->s1, s0->s2
+
+        self.graph.query("""CREATE (s0:Service {name:'s0'}),
+        (s1:Service {name:'s1'}),
+        (s2:Service {name:'s2'}),
+        (s0)-[:R]->(s1),
+        (s0)-[:R]->(s1),
+        (s0)-[:R]->(s2)""")
+
+        # count all services which aren't connected
+        queries = ["MATCH (s:Service) WHERE NOT (s)-[]->(:Service) RETURN count(1)",
+                   "MATCH (s:Service) WHERE NOT (s)-[*1..]->(:Service) RETURN count(1)",
+                   "MATCH (s:Service) WHERE NOT (:Service)<-[]-(s) RETURN count(1)",
+                   "MATCH (s:Service) WHERE NOT (:Service)<-[*1..]-(s) RETURN count(1)"
+                   ]
+
+        for q in queries:
+            res = self.graph.query(q).result_set
+            self.env.assertEqual(res[0][0], 2)
+
+        # count all connected services
+        queries = ["MATCH (s:Service) WHERE (s)-[]->(:Service) RETURN count(1)",
+                   "MATCH (s:Service) WHERE (s)-[*1..]->(:Service) RETURN count(1)",
+                   "MATCH (s:Service) WHERE (:Service)<-[]-(s) RETURN count(1)",
+                   "MATCH (s:Service) WHERE (:Service)<-[*1..]-(s) RETURN count(1)"
+                   ]
+
+        for q in queries:
+            res = self.graph.query(q).result_set
+            self.env.assertEqual(res[0][0], 1)
+
+        # clean up
+        self.graph.query ("MATCH (s:Service) DELETE s")
+
+
+    def test18_path_filter_under_non_decomposable_operator(self):
+        # A path filter under XOR (or any operator a SemiApply cannot stand in
+        # for) has to be evaluated to a boolean instead of filtering the row.
+        # https://github.com/FalkorDB/FalkorDB/issues/1983
+        self.graph.query("""CREATE (a:Person {name: 'Alice'}),
+                                   (b:Person {name: 'Bob'}),
+                                   (a)-[:KNOWS]->(b)""")
+
+        # the reported repro: the pattern is true for every row, so XOR keeps
+        # exactly the rows whose name is not 'Alice'
+        query = """MATCH (n)
+                   WHERE ()-[:KNOWS]-() XOR n.name = 'Alice'
+                   RETURN n.name ORDER BY n.name LIMIT 5"""
+        self.env.assertEqual(self.graph.query(query).result_set, [['Bob']])
+
+        # same predicate after WITH
+        query = """MATCH (n) WITH n
+                   WHERE ()-[:KNOWS]-() XOR n.name = 'Alice'
+                   RETURN n.name ORDER BY n.name LIMIT 5"""
+        self.env.assertEqual(self.graph.query(query).result_set, [['Bob']])
+
+        # and under OPTIONAL MATCH
+        query = """OPTIONAL MATCH (a)--(b)
+                   WHERE ()--() XOR a.name = 'Alice'
+                   RETURN a.name, b.name"""
+        self.env.assertEqual(self.graph.query(query).result_set, [['Bob', 'Alice']])
+
+        # correlated pattern: true for Alice, false for Bob
+        query = """MATCH (n)
+                   WHERE (n)-[:KNOWS]->() XOR n.name = 'Bob'
+                   RETURN n.name ORDER BY n.name"""
+        self.env.assertEqual(self.graph.query(query).result_set, [['Alice'], ['Bob']])
+
+        # XOR between two patterns
+        query = """MATCH (n)
+                   WHERE ()-[:KNOWS]-() XOR ()-[:NOPE]-()
+                   RETURN n.name ORDER BY n.name"""
+        self.env.assertEqual(self.graph.query(query).result_set, [['Alice'], ['Bob']])
+
+        # nested inside operators the decomposer does handle
+        query = """MATCH (n)
+                   WHERE n.name IS NOT NULL AND
+                         ((n)-[:KNOWS]->() XOR n.name = 'Bob')
+                   RETURN n.name ORDER BY n.name"""
+        self.env.assertEqual(self.graph.query(query).result_set, [['Alice'], ['Bob']])
+
+        query = """MATCH (n)
+                   WHERE NOT (()-[:KNOWS]-() XOR n.name = 'Alice')
+                   RETURN n.name ORDER BY n.name"""
+        self.env.assertEqual(self.graph.query(query).result_set, [['Alice']])
+
+        # other non-decomposable positions: a comparison operand and a
+        # function argument
+        query = """MATCH (n)
+                   WHERE ()-[:KNOWS]-() = true
+                   RETURN n.name ORDER BY n.name"""
+        self.env.assertEqual(self.graph.query(query).result_set,
+                             [['Alice'], ['Bob']])
+
+        query = """MATCH (n)
+                   WHERE toString((n)-[:KNOWS]->()) = 'true'
+                   RETURN n.name ORDER BY n.name"""
+        self.env.assertEqual(self.graph.query(query).result_set, [['Alice']])
+
+        # the decomposable shapes must keep their cheaper semi-join plans
+        plan = self.graph.explain(
+            "MATCH (n) WHERE (n)-[:KNOWS]-() RETURN n").structured_plan
+        self.env.assertIsNotNone(locate_operation(plan, "Semi Apply"))
+
+        plan = self.graph.explain(
+            "MATCH (n) WHERE NOT (n)-[:KNOWS]-() RETURN n").structured_plan
+        self.env.assertIsNotNone(locate_operation(plan, "Anti Semi Apply"))
+
+        plan = self.graph.explain(
+            """MATCH (n) WHERE (n)-[:KNOWS]-() OR n.name = 'Alice'
+               RETURN n""").structured_plan
+        self.env.assertIsNotNone(locate_operation(plan, "Or Apply Multiplexer"))

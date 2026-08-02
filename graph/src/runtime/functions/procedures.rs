@@ -124,31 +124,75 @@ pub fn register(funcs: &mut Functions) {
                             let mut types_map = OrderMap::default();
                             for attr in &field_order {
                                 let mut seen = [false; 3];
-                                let mut types = thin_vec![];
                                 for field in &fields[attr] {
-                                    let (slot, name) = match field.ty {
-                                        IndexType::Range => (0, "RANGE"),
-                                        IndexType::Vector => (1, "VECTOR"),
-                                        IndexType::Fulltext => (2, "FULLTEXT"),
+                                    let slot = match field.ty {
+                                        IndexType::Range => 0,
+                                        IndexType::Vector => 1,
+                                        IndexType::Fulltext => 2,
                                     };
-                                    if !seen[slot] {
-                                        seen[slot] = true;
+                                    seen[slot] = true;
+                                }
+                                let mut types = thin_vec![];
+                                for (slot, name) in
+                                    [(0, "RANGE"), (1, "VECTOR"), (2, "FULLTEXT")]
+                                {
+                                    if seen[slot] {
                                         types.push(Value::String(Arc::new(name.to_string())));
                                     }
                                 }
                                 types_map.insert(attr.clone(), Value::List(Arc::new(types)));
                             }
                             col_types.push(Value::Map(Arc::new(types_map)));
-                            col_options.push(Value::Null);
-                            col_language.push(language.map_or_else(|| Value::Null, Value::String));
 
-                            let is_fulltext = field_order.iter().any(|attr| {
-                                fields.get(attr).is_some_and(|fs| fs.iter().any(|f| f.ty == IndexType::Fulltext))
-                            });
-                            col_stopwords.push(stopwords.map_or_else(
-                                || if is_fulltext { Value::List(Arc::new(thin_vec![])) } else { Value::Null },
-                                |sw| Value::List(Arc::new(sw.into_iter().map(Value::String).collect())),
+                            // Per-attribute options map: vector attributes
+                            // surface their HNSW parameters, everything else
+                            // gets an empty map (parity with FalkorDB C).
+                            let mut options_map = OrderMap::default();
+                            for attr in &field_order {
+                                let mut attr_opts = OrderMap::default();
+                                if let Some(vopts) = fields
+                                    .get(attr)
+                                    .and_then(|fs| fs.iter().find_map(|f| f.vector_options()))
+                                {
+                                    attr_opts.insert(
+                                        Arc::new(String::from("dimension")),
+                                        Value::Int(i64::from(vopts.dimension)),
+                                    );
+                                    attr_opts.insert(
+                                        Arc::new(String::from("similarityFunction")),
+                                        Value::String(Arc::new(
+                                            vopts
+                                                .similarity_function
+                                                .clone()
+                                                .unwrap_or_else(|| String::from("euclidean")),
+                                        )),
+                                    );
+                                    attr_opts.insert(
+                                        Arc::new(String::from("M")),
+                                        Value::Int(vopts.m.unwrap_or(16) as i64),
+                                    );
+                                    attr_opts.insert(
+                                        Arc::new(String::from("efConstruction")),
+                                        Value::Int(vopts.ef_construction.unwrap_or(200) as i64),
+                                    );
+                                    attr_opts.insert(
+                                        Arc::new(String::from("efRuntime")),
+                                        Value::Int(vopts.ef_runtime.unwrap_or(10) as i64),
+                                    );
+                                }
+                                options_map.insert(attr.clone(), Value::Map(Arc::new(attr_opts)));
+                            }
+                            col_options.push(Value::Map(Arc::new(options_map)));
+
+                            // Language defaults to english and stopwords to an
+                            // empty list (parity with FalkorDB C).
+                            col_language.push(Value::String(
+                                language.unwrap_or_else(|| Arc::new(String::from("english"))),
                             ));
+                            col_stopwords.push(Value::List(Arc::new(stopwords.map_or_else(
+                                ThinVec::new,
+                                |sw| sw.into_iter().map(Value::String).collect(),
+                            ))));
                             col_entitytype.push(Value::String(Arc::new(entity_type)));
                             col_status.push(if pending > 0 {
                                 Value::String(Arc::new(format!(

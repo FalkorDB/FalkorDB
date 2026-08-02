@@ -322,18 +322,18 @@ class testQueryValidationFlow(FlowTestsBase):
 
         # refer to procedure call original output when output is aliased.
         try:
-           query = """CALL db.idx.fulltext.queryNodes('A', 'B') YIELD node AS n RETURN node"""
-           self.graph.query(query)
-           self.env.assertTrue(False)
+            query = """CALL db.idx.fulltext.queryNodes('A', 'B') YIELD node AS n RETURN node"""
+            self.graph.query(query)
+            assert(False)
         except redis.ResponseError as e:
-           # Expecting an error.
-           assert("not defined" in str(e))
-           pass
+            # Expecting an error.
+            assert("not defined" in str(e))
+            pass
 
         # valid procedure call, no output aliasing
         query = """CALL db.idx.fulltext.queryNodes('A', 'B') YIELD node RETURN node"""
         self.graph.query(query)
-        
+
         # valid procedure call, output aliasing
         query = """CALL db.idx.fulltext.queryNodes('A', 'B') YIELD node AS n RETURN n"""
         self.graph.query(query)
@@ -377,10 +377,10 @@ class testQueryValidationFlow(FlowTestsBase):
         for query in queries:
             try:
                 self.graph.query(query)
-                assert(False)
+                self.env.assertTrue(False)
             except redis.ResponseError as e:
                 # Expecting an error.
-                assert("Expected boolean predicate" in str(e))
+                self.env.assertContains("Expected boolean predicate", str(e))
                 pass
 
     # The NOT operator does not compare left and right side expressions.
@@ -510,13 +510,13 @@ class testQueryValidationFlow(FlowTestsBase):
         self.env.assertEqual(actual_result.result_set[0][0], retval)
 
     def test36_multiple_proc_calls(self):
-       query = """MATCH (a)
-                  CALL algo.BFS(a, 3, NULL) YIELD nodes as ns1
-                  MATCH (b)
-                  CALL algo.BFS(b, 3, NULL) YIELD nodes as ns2
-                  RETURN ns1"""
-       plan = str(self.graph.explain(query))
-       self.env.assertTrue(plan.count("ProcedureCall") == 2)
+        query = """MATCH (a)
+                   CALL algo.BFS(a, 3, NULL) YIELD nodes as ns1
+                   MATCH (b)
+                   CALL algo.BFS(b, 3, NULL) YIELD nodes as ns2
+                   RETURN ns1"""
+        plan = str(self.graph.explain(query))
+        self.env.assertTrue(plan.count("ProcedureCall") == 2)
 
     def test37_list_comprehension_missuse(self):
         # all expect list comprehension,
@@ -570,7 +570,10 @@ class testQueryValidationFlow(FlowTestsBase):
                 self.env.assertContains("query with more than one statement is not supported", str(e))
 
         queries = ["RETURN 1;",
-                   "RETURN 1;;"]
+                   "RETURN 1;;",
+                   "RETURN 1; ",
+                   "RETURN 1;\n",
+                   "RETURN 1; \n;"]
         for q in queries:
             res = self.graph.query(q)
             self.env.assertEqual(res.result_set, [[1]])

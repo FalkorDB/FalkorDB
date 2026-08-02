@@ -552,6 +552,43 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
         # make sure the same edge is returned
         self.env.assertEqual(expected, actual)
 
+    def test15_chained_optional_match_indexed_edge(self):
+        # test chained OPTIONAL MATCH feeds a NULL node into an Edge By Index Scan.
+        # The first OPTIONAL MATCH produces a NULL node
+        # the second OPTIONAL MATCH performs an edge-index scan whose source node
+        # is NULL.
+        self.graph.delete()
+
+        # seed graph with a single node and no RELATES_TO edges
+        self.graph.query("CREATE (:Hypothesis {id:'h1'})")
+
+        # index the edge property used by the scan
+        create_edge_range_index(self.graph, "RELATES_TO", "name", sync=True)
+
+        q = """MATCH (h:Hypothesis {id:'h1'})
+               OPTIONAL MATCH (h)-[:RELATES_TO {name:'HasABLEDecomposition'}]->(able:ABLEDecomposition)
+               OPTIONAL MATCH (able)-[:RELATES_TO {name:'UsesDataSource'}]->(ds:DataSource)
+               RETURN h.id, able, ds"""
+
+        # ensure the second OPTIONAL MATCH actually plans an edge-index scan
+        plan = str(self.graph.explain(q))
+        self.env.assertContains("Edge By Index Scan", plan)
+
+        # both optional sides resolve to NULL.
+        res = self.graph.query(q)
+        self.env.assertEqual(res.result_set, [["h1", None, None]])
+
+        # also exercise the destination-aware code path: the second OPTIONAL
+        # MATCH treats `able` (NULL from the first OPTIONAL MATCH) as the
+        # destination of the indexed edge scan.
+        q_dest = """MATCH (h:Hypothesis {id:'h1'})
+                    OPTIONAL MATCH (h)-[:RELATES_TO {name:'HasABLEDecomposition'}]->(able:ABLEDecomposition)
+                    OPTIONAL MATCH (src:Source)-[:RELATES_TO {name:'PointsTo'}]->(able)
+                    RETURN h.id, able, src"""
+        plan_dest = str(self.graph.explain(q_dest))
+        self.env.assertContains("Edge By Index Scan", plan_dest)
+        res = self.graph.query(q_dest)
+        self.env.assertEqual(res.result_set, [["h1", None, None]])
 
 # Regression tests for PR #393 review feedback. Placed in their own
 # class so they can own a dedicated graph without polluting the main

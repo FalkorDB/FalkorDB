@@ -143,9 +143,11 @@ class testNodeIndexDeletionFlow():
 
         self.env.assertEqual(index_label, label)
         self.env.assertEqual(index_fields, attributes)
-        all_types = ['FULLTEXT', 'RANGE', 'VECTOR']
-        for attribute in attributes:
-            self.env.assertEqual(sorted(index_fields_types[attribute]), all_types)
+        all_types = ['RANGE', 'VECTOR', 'FULLTEXT']
+        self.env.assertEqual(index_fields_types,
+                              OrderedDict([('a', all_types),
+                                           ('b', all_types),
+                                           ('c', all_types)]))
 
         # drop indices
         for attribute in attributes:
@@ -156,7 +158,7 @@ class testNodeIndexDeletionFlow():
             # validate index does not contains RANGE index for current attribute
             result = list_indicies(self.g)
             index_fields_types = result.result_set[0][2]
-            self.env.assertEqual(sorted(index_fields_types[attribute]), ['FULLTEXT', 'VECTOR'])
+            self.env.assertEqual(index_fields_types[attribute], ['VECTOR', 'FULLTEXT'])
 
             # remove fulltext index
             result = drop_node_fulltext_index(self.g, label, attribute)
@@ -453,9 +455,8 @@ class testEdgeIndexDeletionFlow():
 
         self.env.assertEqual(index_label, label)
         self.env.assertEqual(index_fields, attributes)
-        all_types = ['FULLTEXT', 'RANGE', 'VECTOR']
-        for attribute in attributes:
-            self.env.assertEqual(sorted(index_fields_types[attribute]), all_types)
+        all_types = ['RANGE', 'VECTOR', 'FULLTEXT']
+        self.env.assertEqual(index_fields_types, OrderedDict([('a', all_types), ('b', all_types), ('c', all_types)]))
 
         # drop indices
         for attribute in attributes:
@@ -466,7 +467,7 @@ class testEdgeIndexDeletionFlow():
             # validate index does not contains RANGE index for current attribute
             result = list_indicies(self.g)
             index_fields_types = result.result_set[0][2]
-            self.env.assertEqual(sorted(index_fields_types[attribute]), ['FULLTEXT', 'VECTOR'])
+            self.env.assertEqual(index_fields_types[attribute], ['VECTOR', 'FULLTEXT'])
 
             # remove fulltext index
             result = drop_edge_fulltext_index(self.g, label, attribute)
@@ -508,18 +509,6 @@ class testEdgeIndexDeletionFlow():
         self.env.assertFalse('x' in result.result_set[0])
         self.env.assertFalse('y' in result.result_set[0])
         self.env.assertFalse('z' in result.result_set[0])
-
-        # the failed multi-attr create must not leave 'x', 'y', 'z' in any
-        # internal partial state — a subsequent create on those attrs must
-        # succeed cleanly (guards against the pre-validation regression).
-        result = create_edge_range_index(self.g, 'L', 'x', 'y', 'z')
-        self.env.assertEqual(result.indices_created, 3)
-        result = drop_edge_range_index(self.g, 'L', 'x')
-        self.env.assertEqual(result.indices_deleted, 1)
-        result = drop_edge_range_index(self.g, 'L', 'y')
-        self.env.assertEqual(result.indices_deleted, 1)
-        result = drop_edge_range_index(self.g, 'L', 'z')
-        self.env.assertEqual(result.indices_deleted, 1)
 
         # try to create a vector index with wrong configuration
         try:

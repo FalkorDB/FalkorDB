@@ -477,14 +477,21 @@ impl Pending {
 
     /// Delete a pending-created node: mark it deleted, collect its labels and attrs,
     /// and also mark any pending-created relationships connected to it for deletion.
-    /// Returns (label_ids, attrs, connected_pending_rels).
+    /// Returns (label_ids, attrs, connected_pending_rels) — the relationships carry
+    /// their type and staged attrs so callers can snapshot them for later reads.
     pub fn delete_pending_node(
         &mut self,
         id: NodeId,
     ) -> (
         OrderSet<LabelId>,
         Vec<(u16, Value)>,
-        Vec<(RelationshipId, NodeId, NodeId)>,
+        Vec<(
+            RelationshipId,
+            NodeId,
+            NodeId,
+            Arc<String>,
+            Option<Vec<(u16, Value)>>,
+        )>,
     ) {
         self.created_nodes.remove(id.into());
         // Collect pending labels
@@ -499,26 +506,7 @@ impl Pending {
             .or_else(|| self.existing_nodes_attrs.remove(&id.into()))
             .unwrap_or_default();
 
-        // Find pending-created relationships connected to this node
-        let mut rels = Vec::new();
-        for (type_name, entries) in &self.created_rels_by_type {
-            for &(rel_id, from, to) in entries {
-                if from == id || to == id {
-                    rels.push((rel_id, from, to, type_name.clone()));
-                }
-            }
-        }
-
-        for (rel_id, _, _, type_name) in &rels {
-            self.created_rel_types.remove(rel_id);
-            if let Some(entries) = self.created_rels_by_type.get_mut(type_name) {
-                entries.retain(|(rid, _, _)| rid != rel_id);
-            }
-        }
-        let rels: Vec<_> = rels
-            .into_iter()
-            .map(|(id, from, to, _)| (id, from, to))
-            .collect();
+        let rels = self.remove_pending_relationships_for_node(id);
 
         (label_ids, attrs, rels)
     }

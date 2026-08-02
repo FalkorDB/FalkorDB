@@ -119,9 +119,33 @@ fn apply_effects(
     let mut node_attr_count = g.get_node_attribute_names().len();
     let mut rel_attr_count = g.get_relationship_attribute_names().len();
 
+    // Deletions are batched: the writer emits them as contiguous runs (edges
+    // then nodes, see `Pending::build_effects_buffer`), and both graph-side
+    // deletes are bulk operations whose per-call overhead — a full-size
+    // GraphBLAS mask per matrix, a scan of `node_labels_matrix` — is paid once
+    // per call, not once per entity. Applying a node's edges one record at a
+    // time made a replica ~40x slower than the master that produced the writes.
+    // Mirrors C's `ApplyDeleteNode` / `ApplyDeleteEdge` stream look-ahead.
+    let mut del_nodes = RoaringTreemap::new();
+    let mut del_edges = RoaringTreemap::new();
+
     while offset < buf.len() {
         let effect_type = buf[offset];
         offset += 1;
+
+        // Flush a pending batch as soon as the run of same-type records ends, so
+        // effects still take hold in stream order. Only one batch is ever
+        // non-empty: starting one flushes the other.
+        match effect_type {
+            EFFECT_DELETE_EDGE => flush_del_nodes(g, &mut del_nodes, &mut index_remove_docs)?,
+            EFFECT_DELETE_NODE => {
+                flush_del_edges(g, &mut del_edges, &mut index_remove_edge_docs)?;
+            }
+            _ => {
+                flush_del_edges(g, &mut del_edges, &mut index_remove_edge_docs)?;
+                flush_del_nodes(g, &mut del_nodes, &mut index_remove_docs)?;
+            }
+        }
 
         match effect_type {
             EFFECT_CREATE_NODE => {
@@ -238,19 +262,13 @@ fn apply_effects(
             }
 
             EFFECT_DELETE_NODE => {
-                let node_id = read_u64(buf, &mut offset)?;
-                let mut nodes = RoaringTreemap::new();
-                nodes.insert(node_id);
-                g.delete_nodes(&nodes, &mut index_remove_docs)?;
+                del_nodes.insert(read_u64(buf, &mut offset)?);
             }
 
             EFFECT_DELETE_EDGE => {
-                let rel_id = read_u64(buf, &mut offset)?;
+                del_edges.insert(read_u64(buf, &mut offset)?);
                 let _src_id = read_u64(buf, &mut offset)?;
                 let _dst_id = read_u64(buf, &mut offset)?;
-                let mut rels = RoaringTreemap::new();
-                rels.insert(rel_id);
-                g.delete_relationships(&rels, &mut index_remove_edge_docs)?;
             }
 
             EFFECT_ADD_SCHEMA => {
@@ -323,6 +341,9 @@ fn apply_effects(
         }
     }
 
+    flush_del_edges(g, &mut del_edges, &mut index_remove_edge_docs)?;
+    flush_del_nodes(g, &mut del_nodes, &mut index_remove_docs)?;
+
     g.commit_index(&mut index_add_docs, &mut index_remove_docs);
     g.commit_edge_index(&mut index_add_edge_docs, &mut index_remove_edge_docs);
 
@@ -330,6 +351,34 @@ fn apply_effects(
         g.populate_indexes_sync();
     }
 
+    Ok(())
+}
+
+/// Apply a batch of `EFFECT_DELETE_NODE` ids, leaving the batch empty.
+fn flush_del_nodes(
+    g: &mut Graph,
+    nodes: &mut RoaringTreemap,
+    index_remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
+) -> Result<(), String> {
+    if nodes.is_empty() {
+        return Ok(());
+    }
+    g.delete_nodes(nodes, index_remove_docs)?;
+    nodes.clear();
+    Ok(())
+}
+
+/// Apply a batch of `EFFECT_DELETE_EDGE` ids, leaving the batch empty.
+fn flush_del_edges(
+    g: &mut Graph,
+    rels: &mut RoaringTreemap,
+    index_remove_edge_docs: &mut FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
+) -> Result<(), String> {
+    if rels.is_empty() {
+        return Ok(());
+    }
+    g.delete_relationships(rels, index_remove_edge_docs)?;
+    rels.clear();
     Ok(())
 }
 

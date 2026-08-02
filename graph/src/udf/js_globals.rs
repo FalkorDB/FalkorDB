@@ -164,6 +164,24 @@ pub fn setup_runtime_globals(ctx: &Ctx<'_>) -> Result<(), String> {
         .set("traverse", traverse_fn)
         .map_err(|e| format!("Failed to set graph.traverse: {e}"))?;
 
+    let get_node_by_id_fn = Function::new(ctx.clone(), crate::udf::js_classes::js_get_node_by_id)
+        .map_err(|e| format!("Failed to create getNodeById function: {e}"))?;
+    graph_obj
+        .set("getNodeById", get_node_by_id_fn)
+        .map_err(|e| format!("Failed to set graph.getNodeById: {e}"))?;
+
+    let iterate_nodes_fn = Function::new(ctx.clone(), crate::udf::js_classes::js_iterate_nodes)
+        .map_err(|e| format!("Failed to create iterateNodes function: {e}"))?;
+    graph_obj
+        .set("iterateNodes", iterate_nodes_fn)
+        .map_err(|e| format!("Failed to set graph.iterateNodes: {e}"))?;
+
+    let iterate_edges_fn = Function::new(ctx.clone(), crate::udf::js_classes::js_iterate_edges)
+        .map_err(|e| format!("Failed to create iterateEdges function: {e}"))?;
+    graph_obj
+        .set("iterateEdges", iterate_edges_fn)
+        .map_err(|e| format!("Failed to set graph.iterateEdges: {e}"))?;
+
     globals
         .set("graph", graph_obj)
         .map_err(|e| format!("Failed to set global graph: {e}"))?;

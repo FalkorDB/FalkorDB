@@ -374,10 +374,11 @@ fn encode_schema_index_block(
             w.write_unsigned(vopts.m.unwrap_or(16) as u64);
             w.write_unsigned(vopts.ef_construction.unwrap_or(200) as u64);
             w.write_unsigned(vopts.ef_runtime.unwrap_or(10) as u64);
-            // similarity function: 0 = cosine (default)
+            // similarity function, VecSimMetric-encoded:
+            // 0 = L2/euclidean (default), 1 = IP, 2 = cosine
             let sim = match vopts.similarity_function.as_deref() {
-                Some("L2") => 1u64,
-                Some("IP") => 2u64,
+                Some(s) if s.eq_ignore_ascii_case("ip") => 1u64,
+                Some(s) if s.eq_ignore_ascii_case("cosine") => 2u64,
                 _ => 0u64,
             };
             w.write_unsigned(sim);
@@ -605,10 +606,12 @@ fn decode_index_field(r: &mut dyn Reader) -> Result<(Arc<String>, Field), String
         let ef_construction = r.read_unsigned()? as usize;
         let ef_runtime = r.read_unsigned()? as usize;
         let sim_func = r.read_unsigned()?;
+        // Inverse of the VecSimMetric encoding above; spellings match what
+        // `map_to_index_options` accepts so a rebuilt index round-trips.
         let similarity_function = match sim_func {
-            1 => Some("L2".to_string()),
-            2 => Some("IP".to_string()),
-            _ => None, // 0 = cosine (default)
+            1 => Some("ip".to_string()),
+            2 => Some("cosine".to_string()),
+            _ => Some("euclidean".to_string()), // VecSimMetric_L2 = 0
         };
         Some(VectorIndexOptions {
             dimension,

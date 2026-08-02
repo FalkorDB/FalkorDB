@@ -97,6 +97,7 @@
 //! and context from the original query string.
 
 use crate::entity_type::EntityType;
+use crate::identifier_limits::{is_identifier_too_long, validate_identifier_len};
 use crate::index::indexer::IndexType;
 use crate::parser::ast::{
     AllShortestPaths, ExprIR, QuantifierType, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
@@ -202,7 +203,18 @@ impl<'a> Parser<'a> {
                         self.restore_state(state);
                         break;
                     }
-                    params.insert(String::from(id.as_str()), self.parse_expr(false)?);
+                    let value = self.parse_expr(false).map_err(|e| {
+                        // An over-long map key inside the value names the exact
+                        // thing to fix, so it survives; a syntax error inside a
+                        // parameter is more useful reported as the parameter
+                        // that failed (see test_params).
+                        if is_identifier_too_long(&e) {
+                            e
+                        } else {
+                            format!("Failed to parse the value of parameter '{}'", id.as_str())
+                        }
+                    })?;
+                    params.insert(String::from(id.as_str()), value);
                     state = self.save_state();
                 }
             } else {
@@ -724,6 +736,7 @@ impl<'a> Parser<'a> {
         // CALL procedure() — existing procedure call parsing
         // Parentheses are optional: `CALL db.labels` is equivalent to `CALL db.labels()`.
         let function_name = self.parse_dotted_ident()?;
+        validate_identifier_len(function_name.as_str(), "Procedure name")?;
         let func = get_functions().get(function_name.as_str(), &FnType::Procedure(vec![]))?;
         let args: Vec<Arc<_>> = if optional_match_token!(self.lexer, LParen) {
             self.parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen), false)?
@@ -1021,6 +1034,27 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// Adds a pattern node to `query_graph`, folding a repeated alias into the
+    /// entry that is already there.
+    ///
+    /// In MATCH every occurrence of an alias contributes predicates, so labels
+    /// and inline attributes accumulate: `MATCH (n:A) MATCH (n:B)` requires
+    /// both labels, `MATCH (n {v: 1}), (n {w: 2})` both properties. CREATE and
+    /// MERGE keep the first occurrence — a repeated alias there refers back to
+    /// the entity being created, it does not add predicates.
+    fn add_pattern_node(
+        query_graph: &mut QueryGraph<Arc<String>, Arc<String>, Arc<String>>,
+        nodes_alias: &mut HashSet<Arc<String>>,
+        node: &Arc<QueryNode<Arc<String>, Arc<String>>>,
+        clause: &Keyword,
+    ) {
+        if nodes_alias.insert(node.alias.clone()) {
+            query_graph.add_node(node.clone());
+        } else if *clause == Keyword::Match {
+            query_graph.merge_node(node);
+        }
+    }
+
     fn parse_pattern(
         &mut self,
         clause: &Keyword,
@@ -1047,9 +1081,7 @@ impl<'a> Parser<'a> {
                         let left = self.parse_node_pattern()?;
                         let left_alias = left.alias.clone();
                         vars.push(left.alias.clone());
-                        if nodes_alias.insert(left.alias.clone()) {
-                            query_graph.add_node(left.clone());
-                        }
+                        Self::add_pattern_node(&mut query_graph, &mut nodes_alias, &left, clause);
 
                         // Parse relationship chain inside allShortestPaths.
                         // Multiple relationships are allowed: fixed-length prefix
@@ -1133,9 +1165,12 @@ impl<'a> Parser<'a> {
                                     ));
                                 }
                             }
-                            if nodes_alias.insert(right.alias.clone()) {
-                                query_graph.add_node(right.clone());
-                            }
+                            Self::add_pattern_node(
+                                &mut query_graph,
+                                &mut nodes_alias,
+                                &right,
+                                clause,
+                            );
                             prev_node = right;
                         }
 
@@ -1160,9 +1195,7 @@ impl<'a> Parser<'a> {
                 let mut vars = vec![];
                 let mut left = self.parse_node_pattern()?;
                 vars.push(left.alias.clone());
-                if nodes_alias.insert(left.alias.clone()) {
-                    query_graph.add_node(left.clone());
-                }
+                Self::add_pattern_node(&mut query_graph, &mut nodes_alias, &left, clause);
                 loop {
                     if let Token::Dash | Token::LessThan = self.lexer.current()? {
                         let (relationship, right) =
@@ -1178,9 +1211,7 @@ impl<'a> Parser<'a> {
                                 relationship.alias.as_str()
                             ));
                         }
-                        if nodes_alias.insert(right.alias.clone()) {
-                            query_graph.add_node(right);
-                        }
+                        Self::add_pattern_node(&mut query_graph, &mut nodes_alias, &right, clause);
                     } else {
                         query_graph.add_path(Arc::new(QueryPath::new(ident, vars)));
                         break;
@@ -1189,9 +1220,7 @@ impl<'a> Parser<'a> {
             } else {
                 let mut left = self.parse_node_pattern()?;
 
-                if nodes_alias.insert(left.alias.clone()) {
-                    query_graph.add_node(left.clone());
-                }
+                Self::add_pattern_node(&mut query_graph, &mut nodes_alias, &left, clause);
                 while let Token::Dash | Token::LessThan = self.lexer.current()? {
                     let (relationship, right) = self.parse_relationship_pattern(left, clause)?;
                     left = right.clone();
@@ -1209,9 +1238,7 @@ impl<'a> Parser<'a> {
                             ));
                         }
                     }
-                    if nodes_alias.insert(right.alias.clone()) {
-                        query_graph.add_node(right);
-                    }
+                    Self::add_pattern_node(&mut query_graph, &mut nodes_alias, &right, clause);
                 }
             }
 
@@ -1610,7 +1637,20 @@ impl<'a> Parser<'a> {
             Token::IdentifierOrKeyword {
                 keyword: Some(Keyword::All | Keyword::Any | Keyword::None | Keyword::Single),
                 ..
-            } => Ok((self.parse_quantifier_expr(allow_pattern_predicate)?, false)),
+            } => {
+                // Quantifier only when followed by '(': all(x IN list WHERE ...).
+                // Otherwise treat the keyword as a plain variable name.
+                let state = self.save_state();
+                self.lexer.next();
+                let is_quantifier = matches!(self.lexer.current(), Ok(Token::LParen));
+                self.restore_state(state);
+                if is_quantifier {
+                    Ok((self.parse_quantifier_expr(allow_pattern_predicate)?, false))
+                } else {
+                    let ident = self.parse_ident()?;
+                    Ok((tree!(ExprIR::Variable(ident)), false))
+                }
+            }
             Token::IdentifierOrKeyword {
                 keyword: Some(Keyword::Null),
                 ..
@@ -1636,6 +1676,10 @@ impl<'a> Parser<'a> {
                 let state = self.save_state();
                 let ident = self.parse_dotted_ident()?;
                 if optional_match_token!(self.lexer, LParen) {
+                    // The dotted name is a call target: a `Lib.func` UDF name
+                    // is capped as a whole, not per dot-separated component.
+                    validate_identifier_len(ident.as_str(), "Function name")?;
+
                     // reduce(acc = init, var IN list | expr)
                     if ident.eq_ignore_ascii_case("reduce") {
                         return Ok((self.parse_reduce_expr(allow_pattern_predicate)?, false));
@@ -2236,6 +2280,7 @@ impl<'a> Parser<'a> {
     fn parse_ident(&mut self) -> Result<Arc<String>, String> {
         match self.lexer.current() {
             Ok(Token::IdentifierOrKeyword { ident: id, .. }) => {
+                validate_identifier_len(id.as_str(), "Identifier")?;
                 self.lexer.next();
                 Ok(id)
             }
@@ -2249,6 +2294,7 @@ impl<'a> Parser<'a> {
     fn parse_property_name(&mut self) -> Result<Arc<String>, String> {
         match self.lexer.current() {
             Ok(Token::IdentifierOrKeyword { ident: id, .. }) => {
+                validate_identifier_len(id.as_str(), "Property name")?;
                 self.lexer.next();
                 Ok(id)
             }
@@ -2352,6 +2398,7 @@ impl<'a> Parser<'a> {
             && self.lexer.current()? == Token::LParen
             && let Ok(result) = self.parse_pattern_comprehension(Some(var), allow_pattern_predicate)
         {
+            self.reject_aggregate(&result)?;
             return Ok((result, false));
         }
         self.restore_state(saved);
@@ -2359,6 +2406,7 @@ impl<'a> Parser<'a> {
         // 3) Try unnamed pattern comprehension: [(pattern) ... | expr]
         if self.lexer.current()? == Token::LParen {
             if let Ok(result) = self.parse_pattern_comprehension(None, allow_pattern_predicate) {
+                self.reject_aggregate(&result)?;
                 return Ok((result, false));
             }
             self.restore_state(saved);
@@ -2947,6 +2995,24 @@ impl<'a> Parser<'a> {
             var,
             body,
         })
+    }
+
+    /// Reject aggregation functions anywhere inside `tree`.
+    ///
+    /// Called on a fully-parsed pattern comprehension, after the backtracking
+    /// caller has committed to that interpretation — validating inside
+    /// `parse_pattern_comprehension` would let the caller swallow the error and
+    /// retry the input as a list literal, masking it with a syntax error.
+    fn reject_aggregate(
+        &self,
+        tree: &DynTree<ExprIR<Arc<String>>>,
+    ) -> Result<(), String> {
+        if let Some(func) = Self::find_aggregate_name(tree) {
+            return Err(self
+                .lexer
+                .format_error(&format!("Invalid use of aggregating function '{func}'")));
+        }
+        Ok(())
     }
 
     fn find_aggregate_name(tree: &DynTree<ExprIR<Arc<String>>>) -> Option<&str> {

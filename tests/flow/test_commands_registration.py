@@ -39,18 +39,19 @@ class testCmdReg(FlowTestsBase):
             except ResponseError as e:
                 self.env.assertContains("This Redis command is not allowed from script", str(e))
 
-    def test_command_info_flags(self):
-        command_info = self.conn.execute_command(
-            "COMMAND", "INFO", "GRAPH.SLOWLOG", "GRAPH.CONSTRAINT", "GRAPH.COPY"
-        )
-        if isinstance(command_info, dict):
-            flags_by_command = {
-                name.upper(): set(info["flags"] if isinstance(info, dict) else info[2])
-                for name, info in command_info.items()
-            }
-        else:
-            flags_by_command = {info[0].upper(): set(info[2]) for info in command_info}
+    def test_command_metadata_flags(self):
+        def _command_flags(command):
+            info = self.conn.execute_command("COMMAND", "INFO", command)
+            if isinstance(info, dict):
+                command_info = next(iter(info.values()))
+                return set(command_info["flags"])
+            return set(info[0][2])
 
-        self.env.assertContains("allow_busy", flags_by_command["GRAPH.SLOWLOG"])
-        self.env.assertContains("denyoom", flags_by_command["GRAPH.CONSTRAINT"])
-        self.env.assertContains("denyoom", flags_by_command["GRAPH.COPY"])
+        self.env.assertContains("denyoom", _command_flags("graph.query"))
+        self.env.assertContains("denyoom", _command_flags("graph.profile"))
+        self.env.assertContains("denyoom", _command_flags("graph.constraint"))
+        self.env.assertContains("denyoom", _command_flags("graph.copy"))
+
+        self.env.assertContains("allow_busy", _command_flags("graph.config"))
+        self.env.assertContains("allow_busy", _command_flags("graph.slowlog"))
+        self.env.assertNotContains("allow_busy", _command_flags("graph.query"))

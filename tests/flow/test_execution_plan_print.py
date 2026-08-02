@@ -10,30 +10,31 @@ class test_execution_plan_print():
         # create key
         self.graph.query("RETURN 1")
     
-    # label scan handles all labels for the node
-    def test01_multi_label_scan(self):
+    # 'conditional traverse' after a 'label scan' should not print
+    # the label scanned
+    def test01_conditional_traverse(self):
+        # empty graph (first test) --> order of traversal stays as in query (A --> B).
         plan = str(self.graph.explain("MATCH (n:A:B) RETURN n"))
 
-        # all labels are handled by the label scan
+        # label A is scanned
         self.env.assertContains("Node By Label Scan | (n:A:B)", plan)
-
-        # no separate conditional traverse for the extra label
-        self.env.assertNotContains("Conditional Traverse", plan)
-
-    # label scan handles all labels for the node
-    def test02_multi_label_scan(self):
+    
+    # 'expand into' should not print the label scanned
+    def test02_expand_into(self):
         plan = str(self.graph.explain("MATCH (n:A:B:C) RETURN n"))
 
-        # all labels are handled by the label scan
+        # label A is scanned
         self.env.assertContains("Node By Label Scan | (n:A:B:C)", plan)
-
-        # no separate expand into for the extra labels
-        self.env.assertNotContains("Expand Into", plan)
-
-    # variable length traverse with labeled endpoints
-    def test03_variable_length_traverse(self):
+    
+    # Make sure the 'conditional traverse' and 'expand into' operations
+    # which do not come after a 'label scan' print all labels
+    def test03_operations_not_after_scan(self):
         plan = str(self.graph.explain("match p=(n:A:B)-[*]-(m:C:D) RETURN p"))
 
-        # variable length traverse handles the traversal
-        self.env.assertContains("Variable Length Traverse | (n)-[_anon_0]-(m)", plan)
+        # A is scanned
+        self.env.assertContains("Node By Label Scan | (n:A:B)", plan)
+
+        # 'conditional variable length traverse' shouldn't print labels
+        # as it does not enforce them
+        self.env.assertContains("Conditional Variable Length Traverse | (n)-[_anon_0*1..INF]->(m)", plan)
 

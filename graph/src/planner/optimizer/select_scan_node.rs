@@ -61,7 +61,7 @@ use orx_tree::{Bfs, Dyn, DynTree, NodeIdx, NodeRef};
 
 use crate::{
     graph::graph::Graph,
-    parser::ast::{ExprIR, QueryNode, QueryRelationship, Variable},
+    parser::ast::{AllShortestPaths, ExprIR, QueryNode, QueryRelationship, Variable},
     tree,
 };
 
@@ -233,6 +233,25 @@ fn is_planner_scan_subtree(
     }
 }
 
+/// Returns the alias id of the scan at the bottom of a planner-added scan
+/// subtree (the shape [`is_planner_scan_subtree`] accepts), or `None` when
+/// `idx` does not root such a subtree.
+fn planner_scan_alias(
+    plan: &DynTree<IR>,
+    idx: NodeIdx<Dyn<IR>>,
+) -> Option<u32> {
+    let mut node = plan.node(idx);
+    loop {
+        match node.data() {
+            IR::AllNodeScan(n) | IR::NodeByLabelScan { node: n, .. } => return Some(n.alias.id),
+            IR::Filter(_) | IR::IncludePending { .. } if node.num_children() == 1 => {
+                node = node.child(0);
+            }
+            _ => return None,
+        }
+    }
+}
+
 /// Creates a new `QueryRelationship` with from and to swapped.
 fn swap_relationship(
     rel: &Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
@@ -332,6 +351,119 @@ fn resolve_path(
         node = node.get_child(pos)?;
     }
     Some(node.idx())
+}
+
+/// Picks which endpoint of a leaf `CondVarLenTraverse` to scan.
+///
+/// The planner always scans the pattern's `from` endpoint. When `to` is the
+/// more selective one (labeled, or filtered by inline attributes / a `WHERE`
+/// predicate) scanning it instead is cheaper: `CondVarLenTraverseOp` sees a
+/// bound `to` with an unbound `from` and walks the relationship backwards, so
+/// the pattern still binds exactly the same rows. This mirrors what the
+/// `CondTraverse` chain logic does, and matches FalkorDB C — which likewise
+/// only reverses on selectivity, never on label cardinality.
+fn select_var_len_scan_node(
+    optimized_plan: &mut DynTree<IR>,
+    graph: &Graph,
+) {
+    // Paths rather than `NodeIdx`es, and deepest-first, for the same reason
+    // `select_scan_node` uses them: `prune` can reorganize the tree.
+    let mut vlt_paths = Vec::new();
+    for idx in optimized_plan.root().indices::<Bfs>() {
+        if matches!(
+            optimized_plan.node(idx).data(),
+            IR::CondVarLenTraverse { .. }
+        ) {
+            vlt_paths.push(node_path(optimized_plan, idx));
+        }
+    }
+    vlt_paths.sort_by_key(|p| std::cmp::Reverse(p.len()));
+
+    for path in vlt_paths {
+        let Some(idx) = resolve_path(optimized_plan, &path) else {
+            continue;
+        };
+        let node = optimized_plan.node(idx);
+        let IR::CondVarLenTraverse {
+            relationship,
+            expand_into,
+            ..
+        } = node.data()
+        else {
+            continue;
+        };
+        // Nothing to choose between: both endpoints are already bound, both
+        // ends are the same variable, or the runtime has no backwards walk for
+        // this pattern (bidirectional / allShortestPaths).
+        if *expand_into
+            || relationship.bidirectional
+            || relationship.all_shortest_paths != AllShortestPaths::No
+            || relationship.from.alias.id == relationship.to.alias.id
+        {
+            continue;
+        }
+        // Only rewrite when the planner put its own scan for `from` here.
+        if node.num_children() != 1 {
+            continue;
+        }
+        let child_idx = node.child(0).idx();
+        if planner_scan_alias(optimized_plan, child_idx) != Some(relationship.from.alias.id) {
+            continue;
+        }
+        let from = relationship.from.clone();
+        let to = relationship.to.clone();
+
+        // A correlated sub-plan may already bind `to` from its outer context;
+        // scanning it here would rebind it. `Argument(None)` is opaque about
+        // what it carries, so treat it as binding everything.
+        let argument = argument_leaf_of(optimized_plan, child_idx);
+        match &argument {
+            Some(IR::Argument(None)) => continue,
+            Some(IR::Argument(Some(vars))) if vars.contains(&(to.alias.id, to.alias.scope_id)) => {
+                continue;
+            }
+            _ => {}
+        }
+
+        let filtered_vars = collect_filtered_vars(optimized_plan, idx);
+        // Both endpoints' inline attributes are enforced by Filters the planner
+        // placed above this traverse, so replacing the scan subtree cannot lose
+        // them — but only reverse once those Filters are confirmed present.
+        // `push_filters_down` then lands the `to` one back onto the new scan.
+        if [&from, &to]
+            .iter()
+            .any(|n| n.attrs.root().num_children() > 0 && !filtered_vars.contains(&n.alias.id))
+        {
+            continue;
+        }
+
+        let bound = HashSet::new();
+        let (from_score, _) = score_endpoint(&from, &filtered_vars, &bound, graph);
+        let (to_score, _) = score_endpoint(&to, &filtered_vars, &bound, graph);
+        // A tie keeps the pattern's own direction.
+        if to_score <= from_score {
+            continue;
+        }
+
+        let in_merge = in_merge_match_branch(optimized_plan, idx);
+        let mut scan = if to.labels.is_empty() {
+            DynTree::new(IR::AllNodeScan(to.clone()))
+        } else {
+            DynTree::new(IR::NodeByLabelScan { node: to.clone() })
+        };
+        if let Some(arg) = argument {
+            let root_idx = scan.root().idx();
+            scan.node_mut(root_idx).push_child(arg);
+        }
+        if in_merge {
+            scan = tree!(IR::IncludePending { node: to.clone() }, scan);
+        }
+
+        optimized_plan.node_mut(child_idx).prune();
+        let idx = resolve_path(optimized_plan, &path)
+            .expect("pruning a child never changes the parent's path");
+        optimized_plan.node_mut(idx).push_child_tree(scan);
+    }
 }
 
 /// Selects the optimal scan node for leaf `CondTraverse` operators.
@@ -606,6 +738,7 @@ pub(super) fn select_scan_node(
                     sibling_edges: edges,
                     transposed: true,
                     chain: Vec::new(),
+                    optional: false,
                 };
 
                 if is_leaf || child_is_planner_scan || arg_transparent {
@@ -718,6 +851,7 @@ pub(super) fn select_scan_node(
                         sibling_edges: edges,
                         transposed,
                         chain: Vec::new(),
+                        optional: false,
                     },
                     subtree
                 );
@@ -814,6 +948,7 @@ pub(super) fn select_scan_node(
                         sibling_edges: edges,
                         transposed: trans,
                         chain: Vec::new(),
+                        optional: false,
                     };
 
                     op.push_child_tree(scan_subtree);
@@ -822,4 +957,6 @@ pub(super) fn select_scan_node(
         }
         // else: no swap needed and non-leaf — nothing to do, child already attached.
     }
+
+    select_var_len_scan_node(optimized_plan, graph);
 }

@@ -791,17 +791,26 @@ impl Encode<19> for Tensor {
 
         // Tensor section: two groups (base TM, delta-plus TDP). All multi-edge
         // pairs live in the base group; the delta-plus group is empty since dp
-        // was folded into the base above.
-        let mut v = Vector::<u64>::new(GrB_INDEX_MAX);
+        // was folded into the base above. The scratch vector is allocated only
+        // when there is a multi-edge pair to write — a GraphBLAS vector per
+        // tensor is pure overhead on the single-edge graphs that dominate.
         w.write_unsigned(multi.len() as u64);
-        for (src, dst, ids) in &multi {
-            v.clear();
-            for (idx, &edge_id) in ids.iter().enumerate() {
-                v.set(idx as u64, edge_id);
+        if !multi.is_empty() {
+            // C stores a pair's id list as a BOOL vector *indexed by edge id*
+            // (`GrB_Vector_setElement_BOOL(V, true, edge_id)`), so the ids are
+            // the indices, not the values. Writing them as values at positions
+            // 0..n-1 made C read the positions back as edge ids — the ids only
+            // looked right when they happened to be 0..n-1.
+            let mut v = Vector::<bool>::new(GrB_INDEX_MAX);
+            for (src, dst, ids) in &multi {
+                v.clear();
+                for &edge_id in ids {
+                    v.set(edge_id, true);
+                }
+                w.write_unsigned(*src);
+                w.write_unsigned(*dst);
+                v.encode_blob(w);
             }
-            w.write_unsigned(*src);
-            w.write_unsigned(*dst);
-            v.encode(w);
         }
         w.write_unsigned(0); // empty delta-plus tensor group
     }
@@ -857,9 +866,12 @@ impl Decode<19> for Tensor {
                 for _ in 0..count {
                     let src = r.read_unsigned()?;
                     let dst = r.read_unsigned()?;
-                    let v = Vector::<u64>::decode(r)?;
+                    // BOOL vector indexed by edge id (see `encode`): the id is
+                    // the index. Reading the *values* instead collapsed every
+                    // pair written by C to the single edge id 1.
+                    let v = Vector::<bool>::decode_blob(r)?;
                     let key = compound_key(src, dst);
-                    for (_, edge_id) in v.iter() {
+                    for edge_id in v.iter() {
                         me.set(key, edge_id, true);
                     }
                 }

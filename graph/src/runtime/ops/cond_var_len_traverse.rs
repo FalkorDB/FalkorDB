@@ -37,7 +37,7 @@ use std::sync::Arc;
 use ahash::RandomState;
 
 use crate::graph::graph::{EdgeDirection, LabelId, NodeId, RelationshipId};
-use crate::parser::ast::{QueryExpr, QueryRelationship, Variable};
+use crate::parser::ast::{ExprIR, QueryExpr, QueryRelationship, Variable};
 use crate::planner::IR;
 use crate::runtime::{
     batch::{Batch, BatchOp, BatchRow},
@@ -84,6 +84,9 @@ struct VarLenIter<'a> {
     /// WHERE-clause per-hop edge filter plus the owned input row used as its
     /// evaluation environment (only cloned when a filter is present).
     edge_filter: Option<(&'a QueryExpr<Variable>, Row)>,
+    /// `@prev(<id>)` marker variable inside the edge filter; bound per frame
+    /// to the edge that led to the current node (Null on the first hop).
+    prev_var: Option<&'a Variable>,
     emit_path: bool,
     /// Evaluated inline edge-attribute filter (`{k: v}`), shared by all hops.
     filter_attrs: Value,
@@ -125,6 +128,24 @@ struct VarLenIter<'a> {
 }
 
 impl VarLenIter<'_> {
+    /// Wrap DFS-order path elements as a `Value::Path` oriented from the
+    /// pattern's `from` endpoint to its `to` endpoint.
+    ///
+    /// The DFS accumulates `[Node, Rel, Node, ...]` in walk order, which for a
+    /// reversed traversal starts at the pattern's `to` node. Reversing the
+    /// element sequence yields the same alternating shape read the other way
+    /// round, so `nodes(p)` / `relationships(p)` follow the pattern instead of
+    /// the walk.
+    fn path_value(
+        mut elems: ThinVec<Value>,
+        reversed: bool,
+    ) -> Value {
+        if reversed {
+            elems.reverse();
+        }
+        Value::Path(Arc::new(elems))
+    }
+
     /// Open the DFS for one start node: queue the 0-hop emission when
     /// applicable and push the initial frame. Borrows the graph only for the
     /// duration of this step.
@@ -200,6 +221,17 @@ impl VarLenIter<'_> {
             let hop = depth + 1;
             if hop > max_hops {
                 continue;
+            }
+
+            // Bind the previous-edge marker for this frame: the edge used to
+            // reach `current`, Null when starting out.
+            if let Some(prev_var) = self.prev_var
+                && let Some((_, filter_env)) = &mut self.edge_filter
+            {
+                let prev_val = used_edges
+                    .last()
+                    .map_or(Value::Null, |&e| Value::Relationship(e.into()));
+                filter_env.insert(prev_var, prev_val);
             }
 
             // Lazily cache the adjacency list to avoid creating GraphBLAS iterators
@@ -317,7 +349,8 @@ impl VarLenIter<'_> {
                     // move the original onto the stack below. When the path isn't
                     // emitted, the (empty) `new_path` moves straight onto the stack
                     // with no clone.
-                    let emit_path_val = emit_path.then(|| Value::Path(Arc::new(new_path.clone())));
+                    let emit_path_val =
+                        emit_path.then(|| Self::path_value(new_path.clone(), reversed));
                     let owned = new_path;
                     self.buf.push((from_node, to_node, emit_path_val));
                     let mut next_used = if is_last {
@@ -329,7 +362,7 @@ impl VarLenIter<'_> {
                     self.stack.push((dest, owned, next_used, hop));
                 } else if will_emit {
                     // Emit only — move path directly into Arc
-                    let emit_path_val = emit_path.then(|| Value::Path(Arc::new(new_path)));
+                    let emit_path_val = emit_path.then(|| Self::path_value(new_path, reversed));
                     self.buf.push((from_node, to_node, emit_path_val));
                 } else if will_continue {
                     // Continue only — move path to stack
@@ -390,6 +423,8 @@ pub struct CondVarLenTraverseOp<'a> {
     relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
     /// Optional per-hop edge filter expression (absorbed from WHERE clause by the optimizer).
     edge_filter: Option<&'a QueryExpr<Variable>>,
+    /// `@prev(<id>)` marker variable found in `edge_filter`, if any.
+    prev_var: Option<&'a Variable>,
     /// When false, the path/relationship-list binding is never read downstream,
     /// so `expand_row` skips building the per-row `Value::Path` (see the
     /// `reduce_var_len_path` optimizer pass).
@@ -409,6 +444,7 @@ impl<'a> CondVarLenTraverseOp<'a> {
         relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
         edge_filter: Option<&'a QueryExpr<Variable>>,
         emit_path: bool,
+        path_var: Option<u32>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
         let emitter = BatchedResultEmitter::with_binding(VarLenEndpoints {
@@ -418,6 +454,18 @@ impl<'a> CondVarLenTraverseOp<'a> {
             // `to` value (last-insert-wins) to match the row builder.
             distinct: relationship_pattern.from.alias.id != relationship_pattern.to.alias.id,
             path: emit_path.then_some(relationship_pattern.alias.id),
+            path_copy: path_var,
+        });
+        // Locate the `@prev(<id>)` marker variable (previous-edge reference
+        // rewritten by the binder) inside the absorbed edge filter, if any.
+        let prev_var = edge_filter.and_then(|filter| {
+            filter
+                .root()
+                .indices::<orx_tree::Bfs>()
+                .find_map(|idx| match filter.node(idx).data() {
+                    ExprIR::Variable(var) if var.as_str().starts_with("@prev(") => Some(var),
+                    _ => None,
+                })
         });
         Self {
             runtime,
@@ -425,7 +473,9 @@ impl<'a> CondVarLenTraverseOp<'a> {
             emitter,
             relationship_pattern,
             edge_filter,
-            emit_path,
+            prev_var,
+            // A directly-bound named path also needs the materialized path.
+            emit_path: emit_path || path_var.is_some(),
             error: Rc::new(RefCell::new(None)),
             idx,
         }
@@ -442,6 +492,7 @@ impl<'a> CondVarLenTraverseOp<'a> {
         runtime: &'a Runtime<'a>,
         rp: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
         edge_filter: Option<&'a QueryExpr<Variable>>,
+        prev_var: Option<&'a Variable>,
         emit_path: bool,
         error: &Rc<RefCell<Option<String>>>,
         batch: &Batch,
@@ -523,6 +574,7 @@ impl<'a> CondVarLenTraverseOp<'a> {
             runtime,
             rp,
             edge_filter,
+            prev_var,
             emit_path,
             filter_attrs,
             has_edge_filter,
@@ -551,6 +603,7 @@ impl<'a> Iterator for CondVarLenTraverseOp<'a> {
         let runtime = self.runtime;
         let rp = self.relationship_pattern;
         let edge_filter = self.edge_filter;
+        let prev_var = self.prev_var;
         let emit_path = self.emit_path;
         let error = Rc::clone(&self.error);
         loop {
@@ -570,7 +623,16 @@ impl<'a> Iterator for CondVarLenTraverseOp<'a> {
                 if let Some(e) = error.borrow().as_ref() {
                     return Err(e.clone());
                 }
-                Self::expand_row(runtime, rp, edge_filter, emit_path, &error, batch, row)
+                Self::expand_row(
+                    runtime,
+                    rp,
+                    edge_filter,
+                    prev_var,
+                    emit_path,
+                    &error,
+                    batch,
+                    row,
+                )
             }) {
                 Ok(Some(out)) => {
                     // A traversal may have failed mid-drain; surface the error

@@ -197,7 +197,15 @@ impl Indexer {
         let (language, stopwords, field_options, vector_options) = match options {
             Some(IndexOptions::Text(text_opts)) => {
                 let language = text_opts.language.clone();
-                let stopwords = text_opts.stopwords.clone();
+                // RediSearch lowercases stopwords internally; mirror that in
+                // the index metadata so db.indexes() and the RDB encoding
+                // report what the index actually matches on.
+                let stopwords = text_opts.stopwords.as_ref().map(|words| {
+                    words
+                        .iter()
+                        .map(|w| Arc::new(w.to_lowercase()))
+                        .collect::<Vec<_>>()
+                });
                 (language, stopwords, Some(text_opts), None)
             }
             Some(IndexOptions::Vector(vec_opts)) => (None, None, None, Some(vec_opts)),
