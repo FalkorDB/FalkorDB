@@ -11,8 +11,9 @@ Teardown work after the final poll (~25 ms) is lost — fine for comparisons.
 
 Usage:
   python3 bench/flow_bench.py --out bench/results/flow_rust.csv
+  # the C module: a `master`-branch build of this repo lands under bin/
   python3 bench/flow_bench.py \
-      --module ~/repos/FalkorDB/bin/macos-arm64v8-release/falkordb.so \
+      --module bin/macos-arm64v8-release/falkordb.so \
       --out bench/results/flow_c.csv
   python3 bench/flow_bench.py --compare bench/results/flow_c.csv \
       [--current bench/results/flow_rust.csv]

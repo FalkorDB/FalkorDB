@@ -8,7 +8,13 @@ FalkorDB-rs is a Rust implementation of FalkorDB, a graph database that runs as 
 
 ## Reference implementation and performance bar
 
-The C implementation at `~/repos/FalkorDB` (binaries under `~/repos/FalkorDB/bin/`) is the reference. Success criterion for performance work: p99 latency of all benchmark queries must be the same or better than C, and memory usage must match C with no per-entity overhead. Always benchmark against the C binary and report real numbers.
+The C implementation is the reference. It lives on the `master` branch of this
+same repository; the easiest way to get a loadable C module is the published
+image `docker.io/falkordb/falkordb-server:edge`, whose module sits at
+`/var/lib/falkordb/bin/falkordb.so` (that is what `benchmark-cov.yml` measures
+against). A local `master` build puts one under `bin/`.
+
+Success criterion for performance work: p99 latency of all benchmark queries must be the same or better than C, and memory usage must match C with no per-entity overhead. Always benchmark against the C module and report real numbers.
 
 Prefer general optimizations in shared paths (e.g. expression eval, runtime iterators) over op-specific special cases.
 
