@@ -83,13 +83,21 @@ stale ranking is worse than none: it sends people to work on rows that are
 already fixed.
 
 Generate it from a live run instead. Labelling a PR `benchmark-cov` measures
-`main` and the PR and posts the comparison, but **not the C engine** — that job
-runs on a macOS runner and there is no macOS build of the C module to load. For
-a vs-C reading, run it locally:
+the PR base and the PR and posts the comparison. Its `benchmark-cov` job (macOS,
+full 317-query set) has **no C column** — there is no macOS build of the C
+module to load — but the `cachegrind` job does: a curated subset with exact
+callgrind instruction counts vs `falkordb/falkordb-server:edge`, plus the full
+set compared on allocated bytes.
+
+For a vs-C reading locally, you need a C module. Build the `master` branch of
+this repo (it lands under `bin/`), or on Linux copy one out of the image:
 
 ```bash
+docker create --name c falkordb/falkordb-server:edge
+docker cp c:/var/lib/falkordb/bin/falkordb.so /tmp/falkordb-c.so && docker rm c
+
 python3 bench/run_bench.py --out /tmp/rust.csv                     # this build
-python3 bench/run_bench.py --c-compat --module <c-module> --out /tmp/c.csv
+python3 bench/run_bench.py --c-compat --module /tmp/falkordb-c.so --out /tmp/c.csv
 python3 bench/compare.py /tmp/rust.csv /tmp/c.csv | sort -k4 -rn | head -20
 ```
 

@@ -26,16 +26,28 @@ On stop, samply opens the Firefox Profiler UI in your browser. Use
 
 ## 2. Benchmark suite
 
-There is **no benchmark or profiling CI in this repository** — the A/B
-pipeline, the flame-graph workflow and their `gh-pages` dashboards were
-removed, because they depended on a `gh-pages` branch and GCE-runner
-variables that do not exist here. So there is no trend history to compare a
-suspected regression against.
+Use the per-query harness in `bench/` — see the **`bench`** skill for the full
+loop and `bench/README.md` for the details. In short:
 
-To measure a change, run the [`FalkorDB/benchmark`](https://github.com/FalkorDB/benchmark)
-tool locally against two containers (before/after, or vs the C engine's
-`docker.io/falkordb/falkordb-server:edge`), and treat samply flamegraphs
-above as the primary tool for locating a bottleneck.
+```bash
+cargo build --release
+python3 bench/run_bench.py     # 317 queries -> bench/results/current.csv
+python3 bench/compare.py       # regression gate vs your own baseline
+```
+
+In CI, labelling a PR **`benchmark-cov`** runs the same harness against the PR
+and its base and posts a per-query comparison, plus deterministic callgrind
+instruction counts against the production C engine
+(`.github/workflows/benchmark-cov.yml`). It is on-demand only — there is no
+trend history, so a suspected regression is compared against the PR base
+rather than against a stored series.
+
+The macro throughput/latency A/B pipeline and its `gh-pages` dashboards were
+removed (they depended on a `gh-pages` branch and GCE-runner variables that do
+not exist here). For a macro reading, run
+[`FalkorDB/benchmark`](https://github.com/FalkorDB/benchmark) locally against
+two containers. Treat samply flamegraphs above as the primary tool for
+*locating* a bottleneck and `bench/` for *quantifying* it.
 
 ## Notes
 

@@ -32,7 +32,12 @@ server) and skips queries whose warmup reply errors.
 
 ```bash
 python3 bench/flow_bench.py --out bench/results/flow_rust.csv
-python3 bench/flow_bench.py --module ~/repos/FalkorDB/bin/macos-arm64v8-release/falkordb.so \
+# The C module: build the `master` branch of this repo (lands under bin/), or
+# pull it out of the published image:
+#   docker create --name c falkordb/falkordb-server:edge
+#   docker cp c:/var/lib/falkordb/bin/falkordb.so /tmp/falkordb-c.so && docker rm c
+# (that copy is Linux — on macOS you need a local `master` build)
+python3 bench/flow_bench.py --module bin/macos-arm64v8-release/falkordb.so \
     --out bench/results/flow_c.csv
 python3 bench/flow_bench.py --compare bench/results/flow_c.csv --current bench/results/flow_rust.csv
 ```
@@ -95,40 +100,25 @@ The isolation restructure immediately found three delta-scaling bugs:
   create 100 7.7x→**4.79x**, create 10k 6.1x→**2.99x**,
   create node 3.1x→**2.48x**, write 100 →**0.85x**, write 1k →1.21x.
 
-Ranked Rust/C **cycles** ratio — what to improve next:
+One known structural gap is worth recording because fixing it needs a design
+decision rather than a patch: the MVCC COW `GrB_Matrix_dup` of delta matrices
+in `create_nodes` / `set_nodes_labels_bulk` waits on pending work first, so it
+scales with the accumulated delta (up to the 10k flush threshold, avg ~5k) per
+query, independent of batch size. C never merges pending tuples on the write
+path. That is what keeps the create/delete rows above 1.0x.
 
-1. **Create/commit dup at accumulated delta** — create 100 4.79x,
-   create 10k 2.99x, create node 2.48x, delete 10k 1.78x. Was
-   7.7x/6.1x/3.1x: `import_node_attrs` used to re-read
-   `node_labels_matrix` per created node, forcing the pending-delta
-   merge each query; fixed by passing the created nodes' labels from
-   `Pending::set_labels` (a created node's complete label set). The
-   remaining cost (sample_create100.txt) is the MVCC COW
-   `GrB_Matrix_dup` of delta matrices in `create_nodes` /
-   `set_nodes_labels_bulk` — dup waits pending work first, so it scales
-   with the accumulated delta (up to the 10k flush threshold, avg ~5k)
-   per query, independent of batch size. C never merges pending tuples
-   on the write path. Fix needs a design decision (avoid forced dup of
-   delta layers).
-2. **String building** — split+trim+replace 2.66x (3.6x instructions).
-3. **percentileDisc/Cont 2.0x** — multi-arg aggregations are never
-   column-vectorized (`analyze_agg_tree` rejects them), so they stay on
-   the per-row path.
-4. **Large-batch super-linearity** — write 1m 1.39x (1.56x instructions);
-   write 1k 1.21x; write 10k **0.78x** is the sweet spot.
-5. **Expression interpreter tail** — type conversion 1.79x, float math
-   1.70x, count distinct 1.69x, WITH pipeline 1.66x, list ops 1.56x,
-   coalesce 1.33x.
-6. **Small-write commit + fixed overhead** — FOREACH 1.75x, MERGE
-   existing 1.51x, REMOVE 1.44x, CALL procedure 1.48x, id seek 1.47x,
-   RETURN 1 1.41x (~75K extra instructions/query), var-length 1.5x.
+**A ranked Rust-vs-C table is deliberately NOT kept here.** It goes stale the
+moment anything merges, and a stale ranking is worse than none — it sends
+people to work on rows that are already fixed. Generate it from a live run:
 
-Where Rust already wins big (don't regress these): pattern OR filter 0.05x,
-shortestPath 0.16x, EXISTS pattern 0.20x, RETURN DISTINCT 0.34x, filter scan
-0.42x, two-hop 0.44x, SKIP+LIMIT 0.46x, simple aggs 0.46-0.63x (count, sum,
-min, max, avg), aggregates 0.50x, traversal 0.49x, hash join 0.49x,
-algo.pageRank 0.51x, stDev/P 0.66x, write 10k 0.78x, write 100 0.85x,
-list comprehension 0.85x, algo.WCC 0.67x.
+```bash
+python3 bench/run_bench.py --out /tmp/rust.csv
+python3 bench/run_bench.py --c-compat --module <c-module> --out /tmp/c.csv
+python3 bench/compare.py /tmp/rust.csv /tmp/c.csv | sort -k4 -rn | head -20
+```
+
+See `.claude/skills/bench/SKILL.md` for how to read that output — which columns
+to trust, and which C rows are artifacts rather than measurements.
 
 **Coverage**: the pre-restructure set covered **44.0%** of graph-crate lines
 (excluding the generated GraphBLAS.rs FFI). The remaining 0%-coverage areas

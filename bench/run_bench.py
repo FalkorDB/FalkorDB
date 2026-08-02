@@ -370,6 +370,13 @@ def main():
             # nothing, turning every id-0 row into a no-op (e.g. algo.BFS).
             if args.c_compat and cmd == ["DEBUG", "RELOAD"]:
                 continue
+            # UDFs are Rust-only. The C server answers `ERR unknown command`,
+            # which the check below turns into a hard exit — so a --c-compat run
+            # died in setup and never measured a single query. The udf/* rows
+            # are then skipped later by the same warmup-error path that handles
+            # every other query the C engine does not implement.
+            if args.c_compat and cmd[0] == "GRAPH.UDF":
+                continue
             out = cli(args.port, *[a.replace("{graph}", "bench") for a in cmd])
             if "error" in out.lower() or out.startswith("ERR"):
                 sys.exit(f"setup command failed: {cmd[0]} {cmd[1]}: {out[:200]}")

@@ -1,256 +1,53 @@
-# Per-query benchmark + query-set coverage, on demand, on a dedicated VM.
+# Per-query benchmark + query-set coverage, on demand.
 #
-# Complements `benchmark.yml` without overlapping it: that one runs a macro
-# throughput/latency A/B/C against published images. This one runs `bench/` —
-# the per-query harness (317 queries) — and reports per-query deltas plus how
-# much of the `graph` crate
-# the query set covers.
+# Runs `bench/` — the per-query harness (317 queries) — against both the PR and
+# its base, and reports per-query deltas plus how much of the `graph` crate the
+# query set covers. Two independent jobs:
+#
+#   benchmark-cov  macOS. Per-process instructions/cycles from `proc_pid_rusage`
+#                  plus jemalloc allocation deltas, PR vs base.
+#   cachegrind     Linux. Deterministic instruction counts under callgrind for
+#                  the PR, the base *and* the production C engine, all three in
+#                  one container so the numbers are directly comparable.
 #
 # Trigger: add the `benchmark-cov` label to a PR. Only on the `labeled` event,
-# never on later pushes while the label happens to sit there — this creates a
-# VM and builds the module twice, so it must be an explicit request. To re-run,
-# remove and re-add the label. Fork PRs are skipped: their GITHUB_TOKEN is
-# read-only and could not comment.
+# never on later pushes while the label happens to sit there — this builds the
+# module twice, so it must be an explicit request. To re-run, remove and re-add
+# the label. Skipped for fork PRs (read-only GITHUB_TOKEN, cannot comment) and
+# for PRs that do not target `main-rs` (the C tree on `master` has no Cargo
+# workspace to build).
 #
-# ## A red herring in the create-runner log
-#
-# `create-runner` routinely prints
-# `ERROR: (gcloud.compute.instances.create) Could not fetch resource ...
-# ZONE_RESOURCE_POOL_EXHAUSTED_WITH_DETAILS` followed by
-# `Zone us-central1-a is exhausted. Trying next configured zone ...`.
-#
-# That is not a failure. n4-highcpu-16 is frequently stocked out in the first
-# configured zone; the action walks `machine_zones` and the next zone succeeds
-# (`Created [.../zones/us-central1-b/instances/...]` a few lines later). The
-# ERROR text comes from gcloud inside the third-party action, so it cannot be
-# suppressed here — check the job's conclusion, not that line.
-#
-# ## Why a self-hosted VM rather than ubuntu-latest
+# ## Why instructions, and why two runners
 #
 # Instruction counts are the only stable signal at this granularity — cycles and
 # wall-clock on a shared runner move 10-60% with co-tenancy, enough to invent
-# regressions that do not exist. Per-process instruction counts need the PMU,
-# which needs (a) `kernel.perf_event_paranoid <= 0` and (b) a host that actually
-# exposes counters. A GitHub-hosted runner gives neither. An ephemeral GCE VM
-# runs as root, so this job sets the sysctl itself and runs the toolchain image
-# `--privileged`.
+# regressions that do not exist.
 #
-# ## Historical: why the GCE variant used no job `container:`
+# On macOS `proc_pid_rusage` gives per-process instructions and cycles with no
+# privileges, no PMU, no sysctl and no beta APIs. That is the same backend every
+# local measurement in this repo uses. It costs two from-source builds (the
+# published images are Linux) and gives no C comparison, but it runs the full
+# 317-query set.
 #
-# The first run of this workflow died in "Initialize containers" on the GCE VM.
-# No other self-hosted job in this repo uses a job container — `_benchmark.yml`
-# and `profile.yml` both run directly on the VM and install what they need — so
-# this follows that proven pattern instead of fighting it.
+# Linux hosted runners expose no PMU at all, so the `cachegrind` job counts in
+# software instead — slow, hence a curated subset, but exact and able to load
+# the C module from its own image.
 #
-# That also removes the need to compile: both modules are extracted from the
-# already-published server images with `docker cp`, exactly as
-# `.github/scripts/benchmark/profile.sh` does (module path
-# `/var/lib/falkordb/bin/falkordb.so`). The PR side is `rc-pr-<N>`, built early
-# by rust-pr.yml; the main side is `edge-rs`. The harness then runs against each
-# with its own redis-server, so `perf` attaches to a plain host pid.
+# What is NOT done, deliberately: substituting wall-clock for instructions.
+# Everything here reports instr/cycles as EMPTY when counters are unavailable
+# and ranks by allocated bytes instead. A time-based stand-in would turn the
+# gate into a noise detector while still looking like a measurement.
 #
-# Coverage is the exception — it needs an *instrumented* build, which no
-# published image carries. That step runs the toolchain image explicitly via
-# `docker run` (not as a job container) and is best-effort: a failure there
-# annotates the run and still lets the perf comparison be reported.
+# ## Historical: the GCE attempt
 #
-# ## Why macOS, and why instruction counts work here
-#
-# `runs-on: macos-14`. On macOS the harness reads per-process instructions and
-# cycles from `proc_pid_rusage` — no privileges, no PMU, no sysctl, no beta API.
-# That is the same backend used for every local measurement in this repo.
-#
-# It is here because four attempts to get counters out of a GCE VM did not
-# converge, recorded so nobody repeats them:
-#
-#   1. `perf` installed and `kernel.perf_event_paranoid=-1` set: counters still
-#      `<not supported>`. The GCE virtual PMU must be enabled at instance
-#      creation.
-#   2. Added a `performance_monitoring_unit` input upstream
-#      (FalkorDB/gce-github-runner) and requested it. GCE:
-#      `PerformanceMonitoringUnit is not supported for <type> on API version v1`
-#      — on n4-highcpu-16 and c3-highcpu-8 alike. The operative clause is the
-#      API version, not the machine family.
-#   3. Switched the action to `gcloud beta` when the vPMU is requested. The
-#      surface was then right and the error moved on:
-#      `Invalid value ... 'ARCHITECTURAL'. Invalid performance monitoring unit.`
-#   4. Stopped. Guessing at accepted (value, machine-family) pairs against an
-#      API that will not enumerate them costs a VM per attempt.
-#
-# Both upstream changes were kept — they are correct regardless — and the
-# request is inert (`vars.BENCHMARK_PMU` unset). If someone learns the accepted
-# value, a GCE variant becomes viable again; nothing in the harness needs to
-# change, because it probes for working counters rather than trusting a flag.
-#
-# Trade-offs of the macOS runner, stated plainly:
-#   * Both modules are built from source (the published images are Linux), so
-#     this job compiles twice. The native GraphBLAS/RediSearch deps are cached
-#     with the same key shape as _build-artifacts-macos.yml and symlinked into
-#     the second checkout, so they are built at most once.
-#   * No C-engine comparison: there is no macOS build of it to load. Use the
-#     recipe in .claude/skills/bench/SKILL.md for a vs-C reading.
-#   * A GitHub-hosted macOS runner is a VM. Whether it populates
-#     `ri_instructions` is the one thing this job proves or disproves on its
-#     first run — and if it does not, the harness reports instr/cycles as EMPTY
-#     and ranks by allocated bytes rather than substituting wall-clock.
-#
-# ## Why no job `container:`
-#
-# The first run of this workflow died in "Initialize containers" on the GCE VM.
-# No other self-hosted job in this repo uses a job container — `_benchmark.yml`
-# and `profile.yml` both run directly on the VM and install what they need — so
-# this follows that proven pattern instead of fighting it.
-#
-# That also removes the need to compile: both modules are extracted from the
-# already-published server images with `docker cp`, exactly as
-# `.github/scripts/benchmark/profile.sh` does (module path
-# `/var/lib/falkordb/bin/falkordb.so`). The PR side is `rc-pr-<N>`, built early
-# by rust-pr.yml; the main side is `edge-rs`. The harness then runs against each
-# with its own redis-server, so `perf` attaches to a plain host pid.
-#
-# Coverage is the exception — it needs an *instrumented* build, which no
-# published image carries. That step runs the toolchain image explicitly via
-# `docker run` (not as a job container) and is best-effort: a failure there
-# annotates the run and still lets the perf comparison be reported.
-#
-# ## Hardware counters
-#
-# Getting instruction counts out of a GCE VM took three steps, recorded here so
-# nobody repeats them:
-#
-#   1. `perf` present, `kernel.perf_event_paranoid=-1` set, counters still
-#      `<not supported>`: the GCE virtual PMU must be enabled at instance
-#      creation, and the runner action had no input for it.
-#   2. Input added upstream (FalkorDB/gce-github-runner) and requested as
-#      `architectural`. GCE then answered:
-#        `PerformanceMonitoringUnit is not supported for <machine-type> on API
-#         version v1`
-#      — tried on n4-highcpu-16 and c3-highcpu-8, same answer. The clause that
-#      matters is **API version v1**: the vPMU is a beta-API field, and the
-#      action creates instances with `gcloud compute instances create`, i.e. v1.
-#      No machine family fixes that.
-#
-#   3. Action switched to `gcloud beta` when the vPMU is requested (v1
-#      otherwise, so no other caller is touched). That fixed the surface — the
-#      error changed — and revealed the next one:
-#        `Invalid value for field
-#         'resource.advancedMachineFeatures.performanceMonitoringUnit':
-#         'ARCHITECTURAL'. Invalid performance monitoring unit.`
-#      Beta accepts the field and rejects the value. Either the enum spelling
-#      differs from gcloud's client-side choices, or this machine family
-#      supports only `standard`/`enhanced`.
-#
-# Stopped there. Four rounds of trial-and-error against an API whose accepted
-# (value, machine-family) pairs are not visible from here is not a good use of
-# CI cycles, and each round costs a VM. The request is left INERT: set
-# `vars.BENCHMARK_PMU` to a value that GCE accepts and it starts working, since
-# the harness probes for working counters rather than trusting the flag.
-#
-# The cheaper route, and the recommended one: a GitHub-hosted macOS runner.
-# There `proc_pid_rusage` yields instructions and cycles with no privileges, no
-# PMU, no sysctl and no beta APIs, and `_build-artifacts-macos.yml` already
-# produces a validated `libfalkordb.dylib` to measure. Zero upstream changes.
-#
-# Cheaper alternative if that stalls: a GitHub-hosted macOS runner. There the
-# harness reads instructions from `proc_pid_rusage` with no privileges, no PMU
-# and no sysctl, and `_build-artifacts-macos.yml` already produces a validated
-# `libfalkordb.dylib` to measure.
-#
-# What is NOT done, deliberately: substituting wall-clock for instructions. It
-# would turn the gate into a noise detector while still looking like a
-# measurement.
-#
-# ## Why no job `container:`
-#
-# The first run of this workflow died in "Initialize containers" on the GCE VM.
-# No other self-hosted job in this repo uses a job container — `_benchmark.yml`
-# and `profile.yml` both run directly on the VM and install what they need — so
-# this follows that proven pattern instead of fighting it.
-#
-# That also removes the need to compile: both modules are extracted from the
-# already-published server images with `docker cp`, exactly as
-# `.github/scripts/benchmark/profile.sh` does (module path
-# `/var/lib/falkordb/bin/falkordb.so`). The PR side is `rc-pr-<N>`, built early
-# by rust-pr.yml; the main side is `edge-rs`. The harness then runs against each
-# with its own redis-server, so `perf` attaches to a plain host pid.
-#
-# Coverage is the exception — it needs an *instrumented* build, which no
-# published image carries. That step runs the toolchain image explicitly via
-# `docker run` (not as a job container) and is best-effort: a failure there
-# annotates the run and still lets the perf comparison be reported.
-#
-# ## Hardware counters
-#
-# Instruction counts need the GCE virtual PMU, which can only be set at
-# instance creation. FalkorDB/gce-github-runner#4 added a
-# `performance_monitoring_unit` input for exactly this, and `create-runner` now
-# forwards it; this workflow requests `architectural`. gcloud's choices are
-# lowercase (`architectural` | `standard` | `enhanced`) and it rejects the
-# uppercase spelling used in GCP's own docs.
-#
-# The harness probes rather than trusts any of the above: it runs one
-# `perf stat -e instructions,cycles -- true` at startup and only selects the
-# perf backend if a real value comes back. If counters are unavailable it
-# reports instr/cycles as EMPTY and ranks by allocated bytes instead. It never
-# substitutes wall-clock, which would turn the gate into a noise detector while
-# still looking like a measurement.
-#
-# ## Why no job `container:`
-#
-# The first run of this workflow died in "Initialize containers" on the GCE VM.
-# No other self-hosted job in this repo uses a job container — `_benchmark.yml`
-# and `profile.yml` both run directly on the VM and install what they need — so
-# this follows that proven pattern instead of fighting it.
-#
-# That also removes the need to compile: both modules are extracted from the
-# already-published server images with `docker cp`, exactly as
-# `.github/scripts/benchmark/profile.sh` does (module path
-# `/var/lib/falkordb/bin/falkordb.so`). The PR side is `rc-pr-<N>`, built early
-# by rust-pr.yml; the main side is `edge-rs`. The harness then runs against each
-# with its own redis-server, so `perf` attaches to a plain host pid.
-#
-# Coverage is the exception — it needs an *instrumented* build, which no
-# published image carries. That step runs the toolchain image explicitly via
-# `docker run` (not as a job container) and is best-effort: a failure there
-# annotates the run and still lets the perf comparison be reported.
-#
-# ## The one prerequisite outside this workflow
-#
-# GCE exposes hardware counters only when the instance is created with
-# `--performance-monitoring-unit` — an instance-creation flag that cannot be
-# changed on a running VM. This workflow requests `ARCHITECTURAL`, and
-# `.github/actions/create-runner` now forwards it to the SHA-pinned
-# `FalkorDB/gce-github-runner` it wraps.
-#
-# This workflow does NOT request it, because it cannot: the pinned
-# FalkorDB/gce-github-runner rejects the input. Its valid list is token,
-# project_id, service_account_key, runner_ver, machine_zone, machine_zones,
-# machine_type, disk_size, network, subnet, accelerator,
-# runner_service_account, image_project, image, image_family, preemptible,
-# ephemeral, no_external_address, scopes, shutdown_timeout,
-# actions_preinstalled, runner_label, arm, maintenance_policy_terminate,
-# boot_disk_type — no PMU input and no pass-through for arbitrary gcloud flags.
-#
-# Passing it anyway only produced an `Unexpected input(s)` warning on every
-# run, which is noise that cannot be acted on from this repo, so it was
-# removed. The `Preflight — PMU availability` step reports the consequence
-# where it actually matters instead.
-#
-# To enable instruction counts later: add a `performance_monitoring_unit`
-# input to FalkorDB/gce-github-runner (forwarding
-# `--performance-monitoring-unit` to `gcloud compute instances create`), bump
-# the pin in `.github/actions/create-runner`, then pass `ARCHITECTURAL` from
-# the create-runner step here. Nothing else in this workflow needs to change —
-# the preflight will start reporting `pmu=yes` and the comment will rank by
-# instructions automatically.
-# That is why the `Preflight — PMU availability` step probes rather than
-# assumes: it loosens `kernel.perf_event_paranoid`, installs `perf`, checks
-# whether counters actually read, and annotates the run if not. The job then
-# continues and reports what it can trust.
-#
-# It never substitutes wall-clock for instructions. A time-based stand-in would
-# turn the gate into a noise detector while still looking like a measurement,
-# which is worse than reporting the metric as absent.
+# An earlier version ran on an ephemeral GCE VM to get `perf` counters. Four
+# rounds failed — the vPMU can only be set at instance creation, it is a
+# beta-API field so `gcloud compute instances create` (v1) rejects it, and once
+# `FalkorDB/gce-github-runner` was switched to `gcloud beta` the API rejected
+# every enum spelling tried for the value. Both upstream changes were kept and
+# are inert. Do not re-litigate this without an accepted (value, machine-family)
+# pair in hand; the harness probes for working counters rather than trusting a
+# flag, so nothing here needs to change if one turns up.
 name: Benchmark + coverage
 
 on:
@@ -265,19 +62,24 @@ concurrency:
   group: benchmark-cov-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
-env:
-  RUNNER_LABEL: benchcov-${{ github.run_id }}-${{ github.run_number }}
-
 jobs:
   benchmark-cov:
     if: >-
       github.event.label.name == 'benchmark-cov' &&
+      github.event.pull_request.base.ref == 'main-rs' &&
       github.event.pull_request.head.repo.full_name == github.repository
-    # macOS, not a GCE VM: `proc_pid_rusage` yields per-process instructions and
-    # cycles with no privileges, no PMU, no sysctl and no beta APIs. See the
-    # header for the four GCE attempts that did not.
     runs-on: macos-14
     timeout-minutes: 150
+    env:
+      # Same three as _build-artifacts-macos.yml, and for the same reasons:
+      # graphblas.sh reads GRAPHBLAS_INSTALL_PREFIX, graph/build.rs reads
+      # GRAPHBLAS_LIB_DIR and LIBOMP_PREFIX. Without them graphblas.sh installs
+      # under /usr/local (needing sudo) and `.deps` is never created, which is
+      # what made the "share native deps with the base checkout" symlink below
+      # dangle and what broke the first attempt at caching them.
+      LIBOMP_PREFIX: /opt/homebrew/opt/libomp
+      GRAPHBLAS_INSTALL_PREFIX: ${{ github.workspace }}/pr/.deps/graphblas
+      GRAPHBLAS_LIB_DIR: ${{ github.workspace }}/pr/.deps/graphblas/lib
     steps:
       - name: Acknowledge the request
         env:
@@ -292,10 +94,13 @@ jobs:
           path: pr
           persist-credentials: false
 
-      - name: Checkout main
+      # The PR's merge base, not the tip of main-rs: the delta must be
+      # attributable to this PR, and a tip that has moved ahead folds other
+      # people's changes into every row.
+      - name: Checkout the PR base
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: main
+          ref: ${{ github.event.pull_request.base.sha }}
           path: base
           persist-credentials: false
 
@@ -320,25 +125,47 @@ jobs:
           # llvm-profdata/llvm-cov for bench/coverage.sh; not installed by default.
           rustup component add llvm-tools-preview
 
+      # Both workspaces: the base build is as expensive as the PR build, and
+      # leaving it out meant recompiling it from scratch on every run.
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          workspaces: pr -> target
+          workspaces: |
+            pr -> target
+            base -> target
           shared-key: "benchmark-cov-macos"
 
-      # Deliberately NOT cached. The first attempt cached
-      # `.deps/graphblas`, `lagraph_lib` and `redisearch/RediSearch/bin` (the
-      # key shape _build-artifacts-macos.yml uses) and skipped the build on a
-      # hit — but graphblas.sh also installs a static library outside those
-      # paths, so the hit produced
-      # `could not find native static library 'graphblas'`. A cache that makes
-      # the job fail only on the second run is worse than no cache; correctness
-      # first, and revisit with the full set of installed paths if the ~10
-      # minutes matters.
+      # Same paths and key shape as _build-artifacts-macos.yml. The first
+      # attempt at this cached the same three paths but did not set
+      # GRAPHBLAS_INSTALL_PREFIX, so graphblas.sh installed under /usr/local
+      # instead and a cache hit produced `could not find native static library
+      # 'graphblas'`. With the env block above, everything the build needs is
+      # inside the cached paths.
+      - name: Restore GraphBLAS + RediSearch native builds
+        id: native-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        with:
+          path: |
+            pr/.deps/graphblas
+            pr/lagraph_lib
+            pr/redisearch/RediSearch/bin
+          key: macos-native-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pr/graphblas.sh', 'pr/redisearch.sh', 'pr/build/graphblas/**') }}-llvm${{ env.BREW_LLVM_VERSION }}
+
       - name: Build GraphBLAS + RediSearch
+        if: steps.native-cache.outputs.cache-hit != 'true'
         working-directory: pr
         run: |
           ./graphblas.sh
           ./redisearch.sh
+
+      - name: Save GraphBLAS + RediSearch native builds
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        with:
+          path: |
+            pr/.deps/graphblas
+            pr/lagraph_lib
+            pr/redisearch/RediSearch/bin
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
 
       # Share the native deps with the main checkout instead of building them
       # twice: build.rs resolves them relative to the repo root, so symlinks are
@@ -347,10 +174,17 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p base/redisearch/RediSearch
-          ln -sfn "$PWD/pr/.deps" base/.deps
+          # GraphBLAS is found through the absolute GRAPHBLAS_LIB_DIR above, but
+          # graph/build.rs resolves lagraph_lib and redisearch/RediSearch/bin
+          # relative to its own manifest, so those two need symlinks.
           ln -sfn "$PWD/pr/lagraph_lib" base/lagraph_lib
           ln -sfn "$PWD/pr/redisearch/RediSearch/bin" base/redisearch/RediSearch/bin
-          ls -l base/lagraph_lib base/redisearch/RediSearch/bin >/dev/null
+          # -e follows the link and fails on a dangling one. The previous
+          # version checked with `ls -l`, which happily lists a broken symlink,
+          # so a missing target only surfaced later as a link error.
+          for p in "$GRAPHBLAS_LIB_DIR" base/lagraph_lib base/redisearch/RediSearch/bin; do
+            [ -e "$p" ] || { echo "::error::$p missing"; exit 1; }
+          done
 
       # pmc_tool is NOT built here. It compiles on macos-14 (Apple silicon) and
       # sudo is passwordless, but kperf does not work inside the runner VM:
@@ -362,14 +196,14 @@ jobs:
         working-directory: pr
         run: cargo build --release
 
-      - name: Build main module
+      - name: Build base module
         working-directory: base
         run: cargo build --release
 
       # Sequential, never parallel: both bind a redis port and contend for the
       # same CPUs, and overlapping them produces numbers that are not
       # measurements.
-      - name: Measure main
+      - name: Measure base
         working-directory: pr
         run: python3 bench/run_bench.py --module "$GITHUB_WORKSPACE/base/target/release/libfalkordb.dylib" --out /tmp/main.csv
 
@@ -378,15 +212,18 @@ jobs:
         run: python3 bench/run_bench.py --module "$GITHUB_WORKSPACE/pr/target/release/libfalkordb.dylib" --out /tmp/pr.csv
 
       # No C engine here: its published artifacts are Linux images, and there is
-      # no macOS build of it to load. The PR-vs-main comparison is the point of
-      # this job; use the ranking recipe in .claude/skills/bench/SKILL.md for a
-      # vs-C reading.
-      - name: Compare PR vs main
+      # no macOS build of it to load. The PR-vs-base comparison is the point of
+      # this job; the `cachegrind` job below carries the vs-C reading.
+      #
+      # Not fatal: this job reports deltas, and gating on them belongs to
+      # whoever reads the comment. compare.py exits 1 on any threshold breach,
+      # so `set +e` is what keeps a reported regression from also failing the
+      # run before the comment is posted.
+      - name: Compare PR vs base
         working-directory: pr
         run: |
           set +e
           python3 bench/compare.py /tmp/pr.csv /tmp/main.csv > /tmp/compare.txt 2>&1
-          echo "compare_exit=$?" >> "$GITHUB_ENV"
           set -e
           tail -40 /tmp/compare.txt
 
@@ -449,20 +286,20 @@ jobs:
 
           print("## Benchmark + coverage")
           print()
-          print("317-query harness, main and this PR each built from source and "
-                "measured in sequence on a macOS runner.")
+          print("317-query harness, the PR base and this PR each built from source "
+                "and measured in sequence on a macOS runner.")
           print()
           if have_instr:
               print(f"Ranked by **instructions** (deterministic). Cycles are also "
                     f"recorded but move with the host; wall-clock `ms` is advisory only.")
           else:
-              print("> **Instructions and cycles are unavailable on this VM.** GCE exposes "
-                    "the PMU only when the instance is created with "
-                    "`--performance-monitoring-unit=ARCHITECTURAL`, and "
-                    "`.github/actions/create-runner` pins a third-party action whose "
-                    "inputs do not pass that through. Those columns are left **empty** "
-                    "rather than filled with a wall-clock substitute, which would turn "
-                    "the gate into a noise detector.")
+              print("> **Instructions and cycles are unavailable on this runner.** A "
+                    "hosted macOS runner is itself a VM, and `proc_pid_rusage` reported "
+                    "0 instructions for a live redis process — so the host does not "
+                    "expose the counters. Those columns are left **empty** rather than "
+                    "filled with a wall-clock substitute, which would turn the gate "
+                    "into a noise detector. The `cachegrind` job counts in software and "
+                    "is unaffected.")
               print(">")
               print("> Ranked by **allocated bytes** instead — jemalloc merged-arena "
                     "deltas, which are deterministic and have repeatedly been the "
@@ -538,8 +375,7 @@ jobs:
 
       # Report first, then fail: a coverage/query-validation failure means the
       # query set no longer runs clean, which must not be reported as success.
-      # compare_exit is deliberately NOT fatal — this job reports deltas, and
-      # gating on them belongs to whoever reads the comment.
+      # This is the only fatal step — the perf comparison is informational.
       - name: Fail if coverage did not run clean
         if: ${{ env.coverage_exit != '0' }}
         run: |
@@ -548,10 +384,9 @@ jobs:
 
   # Separate job, separate runner: valgrind does not support Apple silicon, so
   # the deterministic counts have to come from Linux. No PMU needed — that is
-  # the entire point of counting in software.
-  # Deterministic instruction counts for main, the PR *and the production C
-  # engine*, all three measured in the same container so the numbers are
-  # directly comparable.
+  # the entire point of counting in software. Deterministic instruction counts
+  # for the PR base, the PR *and the production C engine*, all three measured in
+  # the same container so the numbers are directly comparable.
   #
   # No job `container:` here, deliberately: the measurement runs inside the C
   # engine's own image (`falkordb/falkordb-server:edge`), which needs docker,
@@ -568,6 +403,7 @@ jobs:
   cachegrind:
     if: >-
       github.event.label.name == 'benchmark-cov' &&
+      github.event.pull_request.base.ref == 'main-rs' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -580,9 +416,10 @@ jobs:
         with:
           path: pr
           persist-credentials: false
+      # The PR's merge base, for the same reason as the macOS job above.
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: main
+          ref: ${{ github.event.pull_request.base.sha }}
           path: base
           persist-credentials: false
 
