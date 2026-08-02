@@ -594,3 +594,74 @@ class testComprehensionFunctions(FlowTestsBase):
         finally:
             g.delete()
 
+
+    def test23_pattern_comprehension_in_where_predicate(self):
+        # Pattern comprehensions used inside a WHERE predicate must be planned
+        # as their own sub-plan, exactly as they are in WITH / RETURN.
+        # https://github.com/FalkorDB/FalkorDB/issues/2028
+        g = self.db.select_graph("pattern_comprehension_where")
+
+        try:
+            g.delete()
+        except:
+            pass
+
+        g.query("""CREATE (:Person {name: 'Alice'})
+                          -[:FRIEND_OF {tags: ['friend']}]->
+                          (:Person {name: 'Bob'})""")
+
+        try:
+            # the reported repro: ANY() over a pattern comprehension that
+            # refers to two already-bound aliases
+            query = """MATCH (n:Person {name: 'Alice'}), (m:Person {name: 'Bob'})
+                       WHERE ANY(rel IN [(n)-[r:FRIEND_OF]->(m) | r]
+                                 WHERE 'friend' IN rel.tags)
+                       RETURN n.name AS person1, m.name AS person2"""
+            self.env.assertEqual(g.query(query).result_set, [['Alice', 'Bob']])
+
+            # same shape, predicate that must not match
+            query = """MATCH (n:Person {name: 'Alice'}), (m:Person {name: 'Bob'})
+                       WHERE ANY(rel IN [(n)-[r:FRIEND_OF]->(m) | r]
+                                 WHERE 'enemy' IN rel.tags)
+                       RETURN n.name AS person1, m.name AS person2"""
+            self.env.assertEqual(g.query(query).result_set, [])
+
+            # an empty comprehension is still a row: size(...) = 0 keeps Bob
+            query = """MATCH (n:Person)
+                       WHERE size([(n)-[:FRIEND_OF]->(x) | x]) = 0
+                       RETURN n.name AS name ORDER BY name"""
+            self.env.assertEqual(g.query(query).result_set, [['Bob']])
+
+            # two pattern comprehensions in one predicate
+            query = """MATCH (n:Person)
+                       WHERE size([(n)-[:FRIEND_OF]->(a) | a]) +
+                             size([(n)<-[:FRIEND_OF]-(b) | b]) = 1
+                       RETURN n.name AS name ORDER BY name"""
+            self.env.assertEqual(g.query(query).result_set, [['Alice'], ['Bob']])
+
+            # a pattern comprehension alongside an existential pattern, which
+            # is still planned as a SemiApply rather than collected
+            query = """MATCH (n:Person)
+                       WHERE (n)-[:FRIEND_OF]->()
+                          OR size([(n)<-[:FRIEND_OF]-(y) | y]) > 0
+                       RETURN n.name AS name ORDER BY name"""
+            self.env.assertEqual(g.query(query).result_set, [['Alice'], ['Bob']])
+
+            # WITH ... WHERE, resolving against the projected scope
+            query = """MATCH (n:Person)
+                       WITH n
+                       WHERE size([(n)-[:FRIEND_OF]->(x) | x]) > 0
+                       RETURN n.name AS name"""
+            self.env.assertEqual(g.query(query).result_set, [['Alice']])
+
+            # a preceding clause must still stitch below the comprehension's
+            # Apply
+            query = """MATCH (n:Person {name: 'Alice'})
+                       WITH n
+                       MATCH (m:Person {name: 'Bob'})
+                       WHERE size([(n)-[:FRIEND_OF]->(m) | m]) > 0
+                       RETURN n.name AS person1, m.name AS person2"""
+            self.env.assertEqual(g.query(query).result_set, [['Alice', 'Bob']])
+
+        finally:
+            g.delete()

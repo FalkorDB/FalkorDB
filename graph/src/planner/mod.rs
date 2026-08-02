@@ -864,6 +864,20 @@ impl Planner {
         }
     }
 
+    /// Is this an `Apply` that already holds its input stream?
+    ///
+    /// A WHERE-predicate pattern comprehension is applied as
+    /// `Apply(input, sub_plan)`, so stitching has to descend past it to reach
+    /// the input's leaves.  A single-child `Apply` is the opposite case — it is
+    /// still waiting for stitching to supply child(0) — so it must be left
+    /// alone.
+    fn is_saturated_apply(
+        tree: &DynTree<IR>,
+        idx: NodeIdx<Dyn<IR>>,
+    ) -> bool {
+        matches!(tree.node(idx).data(), IR::Apply) && tree.node(idx).num_children() > 1
+    }
+
     /// Walk past the Apply chain a `ForEach` carries for pattern
     /// comprehensions in its list expression, so the preceding clause is
     /// stitched below the sub-plans rather than as an extra `ForEach` child.
@@ -905,11 +919,16 @@ impl Planner {
     /// enclosing comprehension binds (e.g. `p` in
     /// `[(i)-->(p) | [(p)-->(o) | o.name]]`).  Those sub-plans therefore have to
     /// be applied inside the enclosing comprehension's sub-plan.
+    ///
+    /// `comprehensions_only` leaves bare `Pattern` nodes in place.  WHERE
+    /// predicates need that: an existential pattern there is a boolean handled
+    /// by `collect_patterns_and_rebuild` as a SemiApply, not a list to collect.
     fn extract_pattern_comprehensions(
         &mut self,
         node: &DynNode<ExprIR<Variable>>,
         scope_id: u32,
         extracted: &mut Vec<ExtractedComprehension>,
+        comprehensions_only: bool,
     ) -> DynTree<ExprIR<Variable>> {
         match node.data() {
             ExprIR::PatternComprehension(graph) => {
@@ -917,8 +936,12 @@ impl Planner {
 
                 let mut nested = Vec::new();
                 let where_tree = {
-                    let t =
-                        self.extract_pattern_comprehensions(&node.child(0), scope_id, &mut nested);
+                    let t = self.extract_pattern_comprehensions(
+                        &node.child(0),
+                        scope_id,
+                        &mut nested,
+                        comprehensions_only,
+                    );
                     if matches!(t.root().data(), ExprIR::Constant(Value::Bool(true))) {
                         None
                     } else {
@@ -929,6 +952,7 @@ impl Planner {
                     &node.child(1),
                     scope_id,
                     &mut nested,
+                    comprehensions_only,
                 ));
 
                 extracted.push(ExtractedComprehension {
@@ -941,7 +965,7 @@ impl Planner {
                 });
                 DynTree::new(ExprIR::Variable(var))
             }
-            ExprIR::Pattern(graph) => {
+            ExprIR::Pattern(graph) if !comprehensions_only => {
                 let var = self.fresh_var(scope_id, Type::List(Box::new(Type::Any)));
 
                 // Build a path variable and path component variables from the
@@ -973,13 +997,52 @@ impl Planner {
             _ => {
                 let mut new_tree = DynTree::new(node.data().clone());
                 for child in node.children() {
-                    let child_tree =
-                        self.extract_pattern_comprehensions(&child, scope_id, extracted);
+                    let child_tree = self.extract_pattern_comprehensions(
+                        &child,
+                        scope_id,
+                        extracted,
+                        comprehensions_only,
+                    );
                     new_tree.root_mut().push_child_tree(child_tree);
                 }
                 new_tree
             }
         }
+    }
+
+    /// Extract the pattern comprehensions of a WHERE predicate into their own
+    /// sub-plans.  Each is replaced in the predicate by a variable holding the
+    /// collected list, and returned as a sub-plan the caller must `Apply` below
+    /// the `Filter` so the variable is bound by the time the predicate runs.
+    ///
+    /// Existential patterns are left alone — `collect_patterns_and_rebuild`
+    /// turns those into SemiApply / AntiSemiApply instead.
+    fn extract_filter_comprehensions(
+        &mut self,
+        filter: QueryExpr<Variable>,
+        scope_id: u32,
+    ) -> (QueryExpr<Variable>, Vec<DynTree<IR>>) {
+        fn has_comprehension(node: &DynNode<ExprIR<Variable>>) -> bool {
+            match node.data() {
+                ExprIR::PatternComprehension(_) => true,
+                _ => node.children().any(|c| has_comprehension(&c)),
+            }
+        }
+        if !has_comprehension(&filter.root()) {
+            return (filter, vec![]);
+        }
+
+        let mut extracted = Vec::new();
+        let rebuilt =
+            self.extract_pattern_comprehensions(&filter.root(), scope_id, &mut extracted, true);
+        let sub_plans: Vec<DynTree<IR>> = extracted
+            .iter()
+            .map(|c| self.build_pattern_comprehension_plan(c))
+            .collect();
+        for c in &extracted {
+            self.visited.insert((c.var.id, c.var.scope_id));
+        }
+        (Arc::new(rebuilt), sub_plans)
     }
 
     /// Build the Apply + Aggregate sub-plan for a single pattern comprehension.
@@ -1981,6 +2044,15 @@ impl Planner {
         //   - "inline" patterns (under OR, etc.) are handled by expr_to_plan
         //   - remaining scalar predicates become a Filter node
         if let Some(filter) = filter {
+            // Pattern comprehensions in the predicate get their own sub-plans,
+            // applied below the Filter so their result lists are bound first.
+            let scope_id = pattern.variables().next().map_or(0, |v| v.scope_id);
+            let (filter, comprehension_plans) =
+                self.extract_filter_comprehensions(filter, scope_id);
+            for sub_plan in comprehension_plans {
+                res = tree!(IR::Apply, res, sub_plan);
+            }
+
             let mut extractable = vec![];
             let mut inline = HashMap::new();
             let rebuilt = self.collect_patterns_and_rebuild(
@@ -2073,6 +2145,7 @@ impl Planner {
                         &expr.root(),
                         pre_scope_id,
                         &mut all_extracted,
+                        false,
                     );
                     (var, Arc::new(rebuilt) as QueryExpr<Variable>)
                 })
@@ -2089,6 +2162,7 @@ impl Planner {
                         &expr.root(),
                         pre_scope_id,
                         &mut all_extracted,
+                        false,
                     );
                     (Arc::new(rebuilt) as QueryExpr<Variable>, desc)
                 })
@@ -2214,6 +2288,14 @@ impl Planner {
         // WITH ... WHERE filter (not applicable to RETURN, which passes None).
         // Same pattern-predicate decomposition as in plan_match.
         if let Some(filter) = filter {
+            // The predicate runs after the projection, so its pattern
+            // comprehensions resolve against the projected scope.
+            let (filter, comprehension_plans) =
+                self.extract_filter_comprehensions(filter, scope_id);
+            for sub_plan in comprehension_plans {
+                res = tree!(IR::Apply, res, sub_plan);
+            }
+
             let mut extractable = vec![];
             let mut inline = HashMap::new();
             let rebuilt = self.collect_patterns_and_rebuild(
@@ -2360,6 +2442,7 @@ impl Planner {
             | IR::SemiApply
             | IR::AntiSemiApply
             | IR::OrApplyMultiplexer(_))
+            || Self::is_saturated_apply(&res, idx)
         {
             idx = res.node(idx).child(0).idx();
         }
@@ -2426,7 +2509,7 @@ impl Planner {
             } else {
                 idx = res.node_mut(idx).push_child_tree(n);
             }
-            while res.node(idx).num_children() > 0
+            while (res.node(idx).num_children() > 0
                 && matches!(res.node(idx).data(), |IR::Sort(_)| IR::Skip(_)
                     | IR::Limit(_)
                     | IR::Distinct
@@ -2439,7 +2522,8 @@ impl Planner {
                     | IR::AllShortestPaths(_)
                     | IR::ExpandInto { .. }
                     | IR::EdgeByIndexScan { .. }
-                    | IR::PathBuilder(_))
+                    | IR::PathBuilder(_)))
+                || Self::is_saturated_apply(&res, idx)
             {
                 idx = res.node(idx).child(0).idx();
             }
@@ -2959,6 +3043,7 @@ impl Planner {
                         &list_expr.root(),
                         var.scope_id,
                         &mut extracted,
+                        false,
                     ))
                 } else {
                     list_expr
