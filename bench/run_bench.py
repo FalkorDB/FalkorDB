@@ -163,11 +163,31 @@ def run_and_count(pid, cmd, pmc, pmc_ok):
 
 
 def pmc_run(pmc, cmd):
-    out = subprocess.run([pmc, "runcmd"] + cmd, capture_output=True, text=True)
-    if "EVENT" not in out.stdout:
+    """Run `cmd` inside a pmc_tool counter window; return (events, elapsed).
+
+    pmc_tool deliberately does not run `cmd` itself — it is setuid-root, and a
+    setuid binary that execs a caller-supplied command is a local privilege
+    escalation. It opens a counter window, prints READY, and waits on stdin; we
+    run `cmd` ourselves (unprivileged) in the gap and then close the window.
+    """
+    proc = subprocess.Popen(
+        [pmc, "window"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        if (proc.stdout.readline() or "").strip() != "READY":
+            proc.kill()
+            return None, None
+        subprocess.run(cmd, capture_output=True)
+        out, _ = proc.communicate("\n", timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        proc.kill()
+        return None, None
+    if "EVENT" not in out:
         return None, None
     ev, elapsed = {}, 0.0
-    for line in out.stdout.splitlines():
+    for line in out.splitlines():
         p = line.split()
         if not p:
             continue

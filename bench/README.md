@@ -76,6 +76,14 @@ Without it, `run_bench.py` still measures instructions/cycles/latency
 (those are the regression-gate columns). PMU numbers are system-wide and
 include the redis-benchmark client; treat values under ~1K/query as noise.
 
+`pmc_tool window` opens a counter window, prints `READY`, and waits on stdin;
+the harness runs the measured command itself in that gap and then closes the
+window. It deliberately does not run the command for you — it is installed
+setuid-root, and a setuid binary that execs a caller-supplied command is a
+local privilege escalation (put your own `redis-benchmark` earlier in `$PATH`
+and you have root). Not exec'ing at all removes the whole class of bug, and
+the counters are system-wide so bracketing in time is all that was needed.
+
 ## Findings (2026-07-26 baseline, M3 Pro)
 
 Query set restructured for issue isolation (single feature per query first,

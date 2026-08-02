@@ -1,8 +1,28 @@
 // PMU counter tool for Apple Silicon using private kperf/kperfdata frameworks.
-// Requires root. Counts system-wide events (all CPUs) around a child command.
+// Requires root. Counts system-wide events (all CPUs) across a time window.
 // Usage:
 //   pmc_tool list [filter]
-//   pmc_tool runcmd <cmd> [args...]
+//   pmc_tool window
+//
+// `window` programs the counters, prints `READY`, and then blocks until it
+// reads a line on stdin; the counter delta it prints covers everything that
+// happened in between, on every CPU. The caller runs whatever it wants to
+// measure during that gap:
+//
+//     p = Popen([pmc, "window"], stdin=PIPE, stdout=PIPE, text=True)
+//     p.stdout.readline()          # "READY"
+//     subprocess.run(cmd)          # measured, run by the caller
+//     out, _ = p.communicate("\n") # counter deltas
+//
+// This deliberately does NOT run the command itself. The binary is deployed
+// setuid-root so it can program the PMU, and a setuid binary that execs a
+// caller-supplied command is a local privilege escalation waiting to happen —
+// the previous version did exactly that and had to drop groups, gid and uid by
+// hand before the exec to stay safe. Not exec'ing at all removes that whole
+// class of bug: the privileged process now takes no caller-controlled input,
+// and the measured command runs as the unprivileged caller because the caller
+// is the one that spawns it. The counters are system-wide, so bracketing the
+// command in time is all that was ever needed.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,8 +32,6 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <unistd.h>
-#include <sys/wait.h>
-#include <grp.h>       // setgroups
 #include <sys/sysctl.h>
 #include <sys/time.h>
 
@@ -101,7 +119,7 @@ static void read_counters(uint32_t classes, int ncpu, uint32_t counter_count, ui
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        fprintf(stderr, "usage: %s list [filter] | runcmd <cmd> [args...]\n", argv[0]);
+        fprintf(stderr, "usage: %s list [filter] | window\n", argv[0]);
         return 1;
     }
 
@@ -125,8 +143,8 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    if (strcmp(argv[1], "runcmd") != 0 || argc < 3) {
-        fprintf(stderr, "usage: %s runcmd <cmd> [args...]\n", argv[0]);
+    if (strcmp(argv[1], "window") != 0) {
+        fprintf(stderr, "usage: %s list [filter] | window\n", argv[0]);
         return 1;
     }
 
@@ -178,44 +196,23 @@ int main(int argc, char **argv) {
     read_counters(classes, ncpu, counter_count, before);
     gettimeofday(&t0, NULL);
 
-    pid_t pid = fork();
-    if (pid == 0) {
-        /* Drop privileges before exec'ing the caller's command.
-         *
-         * This binary is deployed setuid-root so it can program the PMU. The
-         * child then runs an arbitrary caller-named command (redis-benchmark,
-         * sleep, ...) resolved through $PATH. Exec'ing that while still
-         * euid 0 is a local privilege escalation: anyone who can run the tool
-         * gets root by putting their own `redis-benchmark` earlier in $PATH.
-         *
-         * The counters are already programmed and are read by the *parent*, so
-         * the child needs no privileges at all. Clear the supplementary groups
-         * first (dropping uid/gid leaves an inherited root group list in place,
-         * which is still an escalation), then setgid before setuid, and refuse
-         * to continue if any of them fails — silently running as root would be
-         * the whole bug. */
-        if (setgroups(0, NULL) != 0) {
-            perror("setgroups");
-            _exit(126);
+    /* Hand the window to the caller: announce readiness, then block until it
+     * tells us the measured command has finished. stdout is a pipe in normal
+     * use, so it must be flushed explicitly or READY sits in the buffer and
+     * the caller deadlocks waiting for it. */
+    printf("READY\n");
+    fflush(stdout);
+
+    int wait_failed = 0;
+    {
+        char line[64];
+        if (fgets(line, sizeof(line), stdin) == NULL) {
+            /* EOF without a line means the caller died or closed the pipe
+             * early. Report it rather than printing a window that ended at an
+             * arbitrary point and looks like a real measurement. */
+            wait_failed = 1;
         }
-        if (setgid(getgid()) != 0) {
-            perror("setgid");
-            _exit(126);
-        }
-        if (setuid(getuid()) != 0) {
-            perror("setuid");
-            _exit(126);
-        }
-        if (geteuid() == 0 && getuid() != 0) {
-            fprintf(stderr, "pmc_tool: failed to drop privileges; refusing to exec\n");
-            _exit(126);
-        }
-        execvp(argv[2], &argv[2]);
-        perror("execvp");
-        _exit(127);
     }
-    int status = 0;
-    waitpid(pid, &status, 0);
 
     gettimeofday(&t1, NULL);
     read_counters(classes, ncpu, counter_count, after);
@@ -223,21 +220,26 @@ int main(int argc, char **argv) {
     kpc_set_counting(0);
     kpc_force_all_ctrs_set(0);
 
-    double elapsed = (t1.tv_sec - t0.tv_sec) + (t1.tv_usec - t0.tv_usec) / 1e6;
-    printf("ELAPSED %.6f\n", elapsed);
-    for (int i = 0; i < n_events; i++)
-        printf("EVENT %s %llu\n", event_names[i],
-               (unsigned long long)(after[counter_map[i]] - before[counter_map[i]]));
-    // WEXITSTATUS is only defined when the child exited normally. A child killed
-    // by a signal (SIGSEGV in the server under test, say) would otherwise report
-    // 0 and the caller would treat a crash as a clean run.
-    if (WIFSIGNALED(status)) {
-        fprintf(stderr, "pmc_tool: child killed by signal %d\n", WTERMSIG(status));
-        return 128 + WTERMSIG(status);
-    }
-    if (!WIFEXITED(status)) {
-        fprintf(stderr, "pmc_tool: child did not exit normally (status %d)\n", status);
+    if (wait_failed) {
+        fprintf(stderr, "pmc_tool: stdin closed before the window was ended\n");
         return 1;
     }
-    return WEXITSTATUS(status);
+
+    double elapsed = (t1.tv_sec - t0.tv_sec) + (t1.tv_usec - t0.tv_usec) / 1e6;
+    printf("ELAPSED %.6f\n", elapsed);
+    for (int i = 0; i < n_events; i++) {
+        uint64_t a = after[counter_map[i]], b = before[counter_map[i]];
+        // The counters are free-running and monotonic, so after < before means
+        // something reprogrammed or wrapped them mid-window. Refuse rather than
+        // print the underflowed difference, which would be an enormous number
+        // that still looks like a measurement.
+        if (a < b) {
+            fprintf(stderr, "pmc_tool: counter %s went backwards (%llu -> %llu)\n",
+                    event_names[i], (unsigned long long)b, (unsigned long long)a);
+            return 1;
+        }
+        printf("EVENT %s %llu\n", event_names[i], (unsigned long long)(a - b));
+    }
+    fflush(stdout);
+    return 0;
 }
