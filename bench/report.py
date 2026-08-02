@@ -14,7 +14,7 @@ Every input is optional: a job that failed simply contributes no section, and
 the rest of the report is still posted. That is deliberate — a C-side failure
 must not cost the PR-vs-base reading, which is the part that gates the PR.
 """
-import argparse, csv, json, os, sys
+import argparse, csv, glob, json, os, sys
 
 # A C row is reported as a range when the two passes disagree by more than
 # this. The C engine cannot be pinned as tightly as the Rust module (see the
@@ -27,16 +27,28 @@ C_TOLERANCE = 0.02
 # are just not ranked.
 ALLOC_FLOOR = 65536
 
+# Below this, a callgrind instruction count for the C engine is an error reply
+# rather than an executed query — see c_cell().
+C_ERROR_FLOOR = 20000
 
-def read_rows(path):
-    """query -> row dict. Missing/unreadable file is an empty result."""
-    if not path or not os.path.exists(path):
-        return {}
-    try:
-        with open(path, newline="") as f:
-            return {r["query"]: r for r in csv.DictReader(f) if r.get("query")}
-    except OSError:
-        return {}
+
+def read_rows(pattern):
+    """query -> row dict, merged over every file matching `pattern`.
+
+    A glob rather than a path because the callgrind subset is sharded across
+    parallel jobs and arrives as cg-<side>-1.csv .. cg-<side>-4.csv. A shard
+    that failed contributes nothing and the rest still report.
+    """
+    out = {}
+    for path in sorted(glob.glob(pattern)) if pattern else []:
+        try:
+            with open(path, newline="") as f:
+                for r in csv.DictReader(f):
+                    if r.get("query"):
+                        out[r["query"]] = r
+        except OSError:
+            continue
+    return out
 
 
 def num(row, key):
@@ -172,8 +184,15 @@ def callgrind_section(out, cg):
     def c_cell(q):
         """(C display, PR/C display), as a range when the two passes disagree."""
         vals = [v for v in (c.get(q), c2.get(q)) if v]
+        # A C value far below the cheapest real query is an error reply, not a
+        # measurement: the C engine rejects a few things this set exercises
+        # (`=~`, for one) and the error path costs ~500-2500 instructions,
+        # against ~149k for `RETURN 1` on C. Reporting that as a ratio invents
+        # a 60x win. The floor sits well under any real query and well over any
+        # error path.
+        vals = [v for v in vals if v >= C_ERROR_FLOOR]
         if not vals:
-            return "—", "—"
+            return "n/a", "n/a"
         b = pr.get(q)
         if len(vals) == 1 or abs(max(vals) / min(vals) - 1) <= C_TOLERANCE:
             mid = sum(vals) / len(vals)
@@ -197,16 +216,34 @@ def callgrind_section(out, cg):
         "these absolute numbers are not comparable to its rows — only the "
         "ratios are.",
         "",
-        "| query | base | PR | PR/base | C | PR/C |",
-        "|---|---|---|---|---|---|",
     ]
-    for q in sorted(set(pr) & set(base), key=lambda q: pr[q] / base[q] if base[q] else 1):
+
+    shared = sorted(set(pr) & set(base), key=lambda q: pr[q] / base[q] if base[q] else 1)
+
+    def row(q):
         a, b = base[q], pr[q]
         cd, cr = c_cell(q)
-        out.append(f"| {q} | {a:,.0f} | {b:,.0f} | "
-                   f"{f'{b / a:.4f}x' if a else '—'} | {cd} | {cr} |")
+        return (f"| {q} | {a:,.0f} | {b:,.0f} | "
+                f"{f'{b / a:.4f}x' if a else '—'} | {cd} | {cr} |")
+
+    HEAD = ["| query | base | PR | PR/base | C | PR/C |", "|---|---|---|---|---|---|"]
+
+    # 93 rows is too many to read inline, and the ones that matter are the ones
+    # that moved. Anything past 0.5% is worth a look per the note above, so that
+    # is the cut: movers up front, everything else one click away.
+    movers = [q for q in shared if base[q] and abs(pr[q] / base[q] - 1) > 0.005]
+    if movers:
+        out += [f"### Moved more than 0.5% ({len(movers)} of {len(shared)})", ""]
+        out += HEAD + [row(q) for q in movers] + [""]
+    else:
+        out += [f"**No query moved more than 0.5%** across {len(shared)} measured "
+                f"— the PR is instruction-neutral against its base.", ""]
+
+    out += ["<details><summary>All " + str(len(shared)) + " queries</summary>", ""]
+    out += HEAD + [row(q) for q in shared]
+    out += ["", "</details>", ""]
+
     out += [
-        "",
         "`RETURN 1` is the fixed per-query floor — it should read ~1.00x for "
         "PR/base, and if it does not, something changed in the request path "
         "rather than in the query being measured.",
@@ -247,11 +284,18 @@ def main():
         with open(args.provenance) as f:
             prov = json.load(f)
         out += ["<details><summary>What was measured</summary>", ""]
+        head = prov.get("_head_sha")
+        if head:
+            out += [f"PR head `{head[:9]}` — the `rc-pr` image below was confirmed "
+                    f"built from this commit before measuring.", ""]
         out += [
             "| side | image | digest |",
             "|---|---|---|",
         ]
+        # `_`-prefixed keys are metadata, not sides.
         for side, info in prov.items():
+            if side.startswith("_"):
+                continue
             out.append(f"| {side} | `{info.get('image', '?')}` | "
                        f"`{(info.get('digest') or '?')[:19]}` |")
         out += [

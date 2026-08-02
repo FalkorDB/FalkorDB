@@ -102,7 +102,54 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Without this the run silently measures whatever `rc-pr-<N>` happens to
+      # point at. Observed: a labelled run measured an image built two commits
+      # earlier because rust-pr.yml was still building the current head — the
+      # tag existed, so nothing complained, and the comment attributed someone
+      # else's code to this PR. The tag carries no digest or commit label, so
+      # freshness has to come from the Actions API: find rust-pr.yml's run for
+      # this exact head SHA and wait for its build-rc-image jobs.
+      - name: Wait for the PR image to be built from this commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          deadline=$(( SECONDS + 45 * 60 ))
+          while :; do
+            RUN=$(gh api "repos/$REPO/actions/runs?head_sha=$HEAD_SHA&per_page=100" \
+                    --jq '[.workflow_runs[] | select(.path == ".github/workflows/rust-pr.yml")]
+                          | sort_by(.run_number) | last | .id // empty')
+            if [ -n "$RUN" ]; then
+              # `build-rc-image` calls a reusable workflow, so its jobs surface
+              # as "build-rc-image / build (...)" — match on the prefix.
+              STATES=$(gh api "repos/$REPO/actions/runs/$RUN/jobs?per_page=100" --paginate \
+                         --jq '[.jobs[] | select(.name | startswith("build-rc-image"))
+                                | .conclusion // "pending"] | join(",")')
+              case "$STATES" in
+                "")            echo "run $RUN has not scheduled build-rc-image yet" ;;
+                *pending*)     echo "build-rc-image still running: $STATES" ;;
+                *failure*|*cancelled*|*timed_out*)
+                  echo "::error::build-rc-image did not succeed for $HEAD_SHA ($STATES). The rc-pr image would be stale; fix that build and re-apply the label."
+                  exit 1 ;;
+                *)
+                  echo "build-rc-image complete for $HEAD_SHA ($STATES)"
+                  break ;;
+              esac
+            else
+              echo "no rust-pr.yml run for $HEAD_SHA yet"
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::timed out waiting for rust-pr.yml to publish an image for $HEAD_SHA."
+              exit 1
+            fi
+            sleep 30
+          done
+
       - name: Resolve the three images
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           python3 - <<'PY' > provenance.json
@@ -125,6 +172,7 @@ jobs:
               d = json.loads(r.stdout)
               d = d[0] if isinstance(d, list) else d
               out[side] = {"image": image, "digest": d.get("Descriptor", {}).get("digest")}
+          out["_head_sha"] = os.environ.get("HEAD_SHA", "")
           print(json.dumps(out, indent=2))
           PY
           cat provenance.json
@@ -218,31 +266,38 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
+      # Two real dimensions, 4x4 = 16 jobs. Deliberately NOT `include:` to pair
+      # side with source — an include entry that names no matrix key is applied
+      # to every combination, so the four of them would overwrite each other
+      # rather than fan out. `c2` maps to the `c` module in the step below.
+      #
+      # 93 queries at ~14.5s each is ~22 min of measurement per side. Sharded 4
+      # ways that is ~5.5 min of wall-clock, which is what the full-set
+      # `measure` job costs anyway — so the subset got 12x wider for free.
       matrix:
-        include:
-          - { side: pr,   source: pr }
-          - { side: base, source: base }
-          - { side: c,    source: c }
-          - { side: c2,   source: c }
+        side: [pr, base, c, c2]
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
+      # `c2` is a second, independent pass over the same C module — not a second
+      # image — so only `pr` needs the private registry.
       - uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
-        if: matrix.source == 'pr'
+        if: matrix.side == 'pr'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract the ${{ matrix.source }} module
+      - name: Extract the ${{ matrix.side }} module
         run: |
           set -euo pipefail
-          case "${{ matrix.source }}" in
-            pr)   SRC="$PR_IMAGE" ;;
-            base) SRC="$BASE_IMAGE" ;;
-            c)    SRC="$C_IMAGE" ;;
+          case "${{ matrix.side }}" in
+            pr)     SRC="$PR_IMAGE" ;;
+            base)   SRC="$BASE_IMAGE" ;;
+            c|c2)   SRC="$C_IMAGE" ;;
           esac
           docker pull -q "$SRC"
           cid=$(docker create "$SRC")
@@ -265,14 +320,16 @@ jobs:
             apt-get install -y -qq --no-install-recommends valgrind python3 >/dev/null
             valgrind --version
             python3 bench/cachegrind.py --module /w/module.so \
-              --out /w/cg-${{ matrix.side }}.csv --module-args THREAD_COUNT 1
+              --shard ${{ matrix.shard }}/4 \
+              --out /w/cg-${{ matrix.side }}-${{ matrix.shard }}.csv \
+              --module-args THREAD_COUNT 1
           '
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ !cancelled() }}
         with:
-          name: callgrind-${{ matrix.side }}
-          path: cg-${{ matrix.side }}.csv
+          name: callgrind-${{ matrix.side }}-${{ matrix.shard }}
+          path: cg-${{ matrix.side }}-${{ matrix.shard }}.csv
           retention-days: 7
 
   # The one job that must build from source: coverage needs an instrumented
@@ -329,10 +386,12 @@ jobs:
         run: |
           set -euo pipefail
           ls -R art || true
+          # Quoted: the callgrind values are globs for report.py to expand over
+          # the four shards, not for the shell to expand here.
           python3 bench/report.py \
             --measure pr=art/full-pr.csv base=art/full-base.csv c=art/full-c.csv \
-            --callgrind pr=art/cg-pr.csv base=art/cg-base.csv \
-                        c=art/cg-c.csv c2=art/cg-c2.csv \
+            --callgrind 'pr=art/cg-pr-*.csv' 'base=art/cg-base-*.csv' \
+                        'c=art/cg-c-*.csv' 'c2=art/cg-c2-*.csv' \
             --coverage art/coverage.txt \
             --provenance art/provenance.json \
             > comment.md
@@ -357,9 +416,11 @@ jobs:
             gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@comment.md
           fi
 
-      # Report first, then fail: a coverage/query-validation failure means the
-      # query set no longer runs clean, which must not be reported as success.
-      # The measurement jobs are informational — gating on a delta belongs to
+      # Report first, then fail. Two different things are being caught here:
+      # coverage failing means the query set no longer runs clean, and a
+      # measure/callgrind job failing means the comment above is missing rows.
+      # Neither may be reported as success. Note this gates on jobs *crashing*,
+      # never on a delta — deciding whether a ratio is acceptable belongs to
       # whoever reads the comment.
       - name: Fail if a measurement or coverage job did not run clean
         if: >-

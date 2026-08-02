@@ -11,8 +11,11 @@ Callgrind counts instructions in *software*, so it needs no PMU and no
 privileges, and its counts are near-deterministic: far steadier than sampled
 counters, though not bit-exact (see "Measured precision").
 
-The cost is a large slowdown, so this measures a curated subset on a smaller
-graph than `bench/run_bench.py`. See "Not comparable to run_bench.py" below.
+The cost is a large slowdown (~14.5s per query), so this measures a subset on a
+smaller graph than `bench/run_bench.py` — everything in the query set that runs
+on the reduced CG_SETUP graph, 93 queries. See "Not comparable to run_bench.py"
+below. Use `--shard I/N` to spread them over parallel jobs; CI runs 4 shards per
+engine, which brings each job in line with the full-set run's wall-clock.
 
 ## How a query is isolated: differencing, not windowing
 
@@ -180,23 +183,64 @@ GRAPH_CMD = ("GRAPH.QUERY", "bench")
 # and the only way these numbers mean anything.
 MODULE_ARGS = []
 
-# One representative per family that has shown movement in this work.
+# Every query that runs on the CG_SETUP graph, grouped by the engine path it
+# exercises. CI measures ~14.5s per query (two instrumented server lifecycles,
+# each paying CG_SETUP again), so this list costs ~22 minutes of runner time —
+# spread over `--shard`ed jobs it is ~5.5 minutes of wall-clock, which is what
+# the full-set `measure` job takes anyway.
 #
-# Each query costs two instrumented server lifecycles and each lifecycle pays
-# CG_SETUP again, which sounded expensive enough to keep this list to five —
-# but CI measured ~10s per query (a run is ~236M instructions, a few seconds
-# under valgrind), so the whole set costs well under two minutes per build.
-# Widen it freely. Extra queries can also be passed as positional arguments
-# without editing this list.
+# Membership rule: CG_SETUP provides 1,000 `:Person` (id/name/age/score, index
+# on id), a `:KNOWS` ring and 5,000 `:Tmp`. Anything needing a fulltext or
+# vector index, a constraint, a UDF, LOAD CSV or a composite/edge index cannot
+# be here, and neither can a query that consumes entities faster than the pool
+# supplies them — at MAX_SPAN a destructive query runs thousands of times, and
+# running dry does not fail loudly, it quietly measures a no-op.
+#
+# Every name below was verified to run clean 300x on the CG_SETUP graph against
+# both engines. `regex` is the one exception: the C engine rejects `=~`, so its
+# C cell is an error-path artifact and the report suppresses it. It stays
+# because PR-vs-base is still meaningful for it.
 DEFAULT_SUBSET = [
-    "RETURN 1",              # fixed per-query floor; the control
-    "arithmetic",            # scalar expression evaluation
-    "CASE",                  # branchy expression + property access
-    "list comprehension",    # scoped iteration
-    "reduce",                # accumulator loop
-    "create node",           # small write path
-    "delete node",           # small delete path
-    "two-hop",               # matrix traversal
+    # control — the fixed per-query floor
+    "RETURN 1",
+    # scalar expression evaluation
+    "arithmetic", "float math", "CASE", "CASE forms", "coalesce", "boolean ops",
+    "chained arithmetic", "scalar arithmetic", "null handling", "type conversion",
+    "math extras", "trig", "negation", "query params",
+    # strings
+    "string predicates", "string funcs", "split+trim+replace", "string namespace",
+    "regex",
+    # lists, maps, comprehensions
+    "list comprehension", "reduce", "list ops", "list slicing", "list namespace",
+    "map ops", "map projection", "pattern comprehension", "nested comprehension",
+    "quantifiers",
+    # scans and seeks
+    "label scan + count", "index lookup", "id seek", "filter scan", "all-node scan",
+    # traversal
+    "traversal + count", "two-hop", "edge + type()", "var-length 1..3",
+    "expand into", "undirected", "degree by type", "reversed 2hop chain",
+    # paths
+    "shortestPath", "allShortestPaths", "path + length", "path funcs",
+    # aggregation
+    "agg count", "agg sum", "agg min", "agg max", "agg avg", "collect",
+    "count distinct", "aggregates", "percentileDisc", "stDev", "ORDER BY agg",
+    # projection and pipeline
+    "RETURN DISTINCT", "ORDER BY + LIMIT", "SKIP + LIMIT", "WITH pipeline",
+    "WITH star", "UNION", "UNION ALL", "CALL subquery",
+    # pattern predicates and joins
+    "EXISTS pattern", "pattern OR filter", "NOT pattern", "hash join",
+    "cross product filter", "OR mixed filter", "AND pattern filter",
+    # writes — only self-balancing or pool-backed ones, see the rule above
+    "create node", "delete node", "SET property", "REMOVE", "SET += map",
+    "MERGE existing", "CREATE + DELETE", "FOREACH",
+    # temporal
+    "temporal", "temporal components", "temporal arithmetic", "date components",
+    # algorithms
+    "algo.pageRank", "algo.BFS", "algo.WCC",
+    # procedures
+    "CALL procedure", "db.propertyKeys", "db.indexes",
+    # parser
+    "comments", "lexer variety",
 ]
 
 
@@ -347,6 +391,14 @@ def main():
         help="extra --loadmodule arguments, e.g. --module-args THREAD_COUNT 1. "
         "Pin the thread count: see MODULE_ARGS.",
     )
+    ap.add_argument(
+        "--shard",
+        metavar="I/N",
+        help="measure only shard I of N (1-based), so CI can spread the subset "
+        "over parallel jobs. Round-robin rather than contiguous: per-query cost "
+        "varies 11-17s and the expensive ones cluster by family, so contiguous "
+        "chunks would finish at noticeably different times.",
+    )
     ap.add_argument("names", nargs="*", help="queries to measure (default: a curated subset)")
     args = ap.parse_args()
     MODULE_ARGS[:] = args.module_args
@@ -369,6 +421,20 @@ def main():
     missing = set(wanted) - {q[0] for q in queries}
     if missing:
         sys.exit(f"unknown queries: {sorted(missing)}")
+
+    if args.shard:
+        try:
+            i, n = (int(x) for x in args.shard.split("/", 1))
+        except ValueError:
+            sys.exit(f"--shard wants I/N, got {args.shard!r}")
+        if not 1 <= i <= n:
+            sys.exit(f"--shard {args.shard}: need 1 <= I <= N")
+        # Order by the canonical query list, not by `wanted`, so the split is
+        # stable no matter how the names were passed in.
+        queries = queries[i - 1::n]
+        print(f"shard {i}/{n}: {len(queries)} of {len(wanted)} queries", flush=True)
+        if not queries:
+            sys.exit(0)
 
     outdir = os.path.join(HERE, "results/callgrind")
     span = args.n2 - args.n1
