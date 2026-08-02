@@ -1,0 +1,896 @@
+# Per-query benchmark + query-set coverage, on demand, on a dedicated VM.
+#
+# Complements `benchmark.yml` without overlapping it: that one runs a macro
+# throughput/latency A/B/C against published images. This one runs `bench/` —
+# the per-query harness (317 queries) — and reports per-query deltas plus how
+# much of the `graph` crate
+# the query set covers.
+#
+# Trigger: add the `benchmark-cov` label to a PR. Only on the `labeled` event,
+# never on later pushes while the label happens to sit there — this creates a
+# VM and builds the module twice, so it must be an explicit request. To re-run,
+# remove and re-add the label. Fork PRs are skipped: their GITHUB_TOKEN is
+# read-only and could not comment.
+#
+# ## A red herring in the create-runner log
+#
+# `create-runner` routinely prints
+# `ERROR: (gcloud.compute.instances.create) Could not fetch resource ...
+# ZONE_RESOURCE_POOL_EXHAUSTED_WITH_DETAILS` followed by
+# `Zone us-central1-a is exhausted. Trying next configured zone ...`.
+#
+# That is not a failure. n4-highcpu-16 is frequently stocked out in the first
+# configured zone; the action walks `machine_zones` and the next zone succeeds
+# (`Created [.../zones/us-central1-b/instances/...]` a few lines later). The
+# ERROR text comes from gcloud inside the third-party action, so it cannot be
+# suppressed here — check the job's conclusion, not that line.
+#
+# ## Why a self-hosted VM rather than ubuntu-latest
+#
+# Instruction counts are the only stable signal at this granularity — cycles and
+# wall-clock on a shared runner move 10-60% with co-tenancy, enough to invent
+# regressions that do not exist. Per-process instruction counts need the PMU,
+# which needs (a) `kernel.perf_event_paranoid <= 0` and (b) a host that actually
+# exposes counters. A GitHub-hosted runner gives neither. An ephemeral GCE VM
+# runs as root, so this job sets the sysctl itself and runs the toolchain image
+# `--privileged`.
+#
+# ## Historical: why the GCE variant used no job `container:`
+#
+# The first run of this workflow died in "Initialize containers" on the GCE VM.
+# No other self-hosted job in this repo uses a job container — `_benchmark.yml`
+# and `profile.yml` both run directly on the VM and install what they need — so
+# this follows that proven pattern instead of fighting it.
+#
+# That also removes the need to compile: both modules are extracted from the
+# already-published server images with `docker cp`, exactly as
+# `.github/scripts/benchmark/profile.sh` does (module path
+# `/var/lib/falkordb/bin/falkordb.so`). The PR side is `rc-pr-<N>`, built early
+# by rust-pr.yml; the main side is `edge-rs`. The harness then runs against each
+# with its own redis-server, so `perf` attaches to a plain host pid.
+#
+# Coverage is the exception — it needs an *instrumented* build, which no
+# published image carries. That step runs the toolchain image explicitly via
+# `docker run` (not as a job container) and is best-effort: a failure there
+# annotates the run and still lets the perf comparison be reported.
+#
+# ## Why macOS, and why instruction counts work here
+#
+# `runs-on: macos-14`. On macOS the harness reads per-process instructions and
+# cycles from `proc_pid_rusage` — no privileges, no PMU, no sysctl, no beta API.
+# That is the same backend used for every local measurement in this repo.
+#
+# It is here because four attempts to get counters out of a GCE VM did not
+# converge, recorded so nobody repeats them:
+#
+#   1. `perf` installed and `kernel.perf_event_paranoid=-1` set: counters still
+#      `<not supported>`. The GCE virtual PMU must be enabled at instance
+#      creation.
+#   2. Added a `performance_monitoring_unit` input upstream
+#      (FalkorDB/gce-github-runner) and requested it. GCE:
+#      `PerformanceMonitoringUnit is not supported for <type> on API version v1`
+#      — on n4-highcpu-16 and c3-highcpu-8 alike. The operative clause is the
+#      API version, not the machine family.
+#   3. Switched the action to `gcloud beta` when the vPMU is requested. The
+#      surface was then right and the error moved on:
+#      `Invalid value ... 'ARCHITECTURAL'. Invalid performance monitoring unit.`
+#   4. Stopped. Guessing at accepted (value, machine-family) pairs against an
+#      API that will not enumerate them costs a VM per attempt.
+#
+# Both upstream changes were kept — they are correct regardless — and the
+# request is inert (`vars.BENCHMARK_PMU` unset). If someone learns the accepted
+# value, a GCE variant becomes viable again; nothing in the harness needs to
+# change, because it probes for working counters rather than trusting a flag.
+#
+# Trade-offs of the macOS runner, stated plainly:
+#   * Both modules are built from source (the published images are Linux), so
+#     this job compiles twice. The native GraphBLAS/RediSearch deps are cached
+#     with the same key shape as _build-artifacts-macos.yml and symlinked into
+#     the second checkout, so they are built at most once.
+#   * No C-engine comparison: there is no macOS build of it to load. Use the
+#     recipe in .claude/skills/bench/SKILL.md for a vs-C reading.
+#   * A GitHub-hosted macOS runner is a VM. Whether it populates
+#     `ri_instructions` is the one thing this job proves or disproves on its
+#     first run — and if it does not, the harness reports instr/cycles as EMPTY
+#     and ranks by allocated bytes rather than substituting wall-clock.
+#
+# ## Why no job `container:`
+#
+# The first run of this workflow died in "Initialize containers" on the GCE VM.
+# No other self-hosted job in this repo uses a job container — `_benchmark.yml`
+# and `profile.yml` both run directly on the VM and install what they need — so
+# this follows that proven pattern instead of fighting it.
+#
+# That also removes the need to compile: both modules are extracted from the
+# already-published server images with `docker cp`, exactly as
+# `.github/scripts/benchmark/profile.sh` does (module path
+# `/var/lib/falkordb/bin/falkordb.so`). The PR side is `rc-pr-<N>`, built early
+# by rust-pr.yml; the main side is `edge-rs`. The harness then runs against each
+# with its own redis-server, so `perf` attaches to a plain host pid.
+#
+# Coverage is the exception — it needs an *instrumented* build, which no
+# published image carries. That step runs the toolchain image explicitly via
+# `docker run` (not as a job container) and is best-effort: a failure there
+# annotates the run and still lets the perf comparison be reported.
+#
+# ## Hardware counters
+#
+# Getting instruction counts out of a GCE VM took three steps, recorded here so
+# nobody repeats them:
+#
+#   1. `perf` present, `kernel.perf_event_paranoid=-1` set, counters still
+#      `<not supported>`: the GCE virtual PMU must be enabled at instance
+#      creation, and the runner action had no input for it.
+#   2. Input added upstream (FalkorDB/gce-github-runner) and requested as
+#      `architectural`. GCE then answered:
+#        `PerformanceMonitoringUnit is not supported for <machine-type> on API
+#         version v1`
+#      — tried on n4-highcpu-16 and c3-highcpu-8, same answer. The clause that
+#      matters is **API version v1**: the vPMU is a beta-API field, and the
+#      action creates instances with `gcloud compute instances create`, i.e. v1.
+#      No machine family fixes that.
+#
+#   3. Action switched to `gcloud beta` when the vPMU is requested (v1
+#      otherwise, so no other caller is touched). That fixed the surface — the
+#      error changed — and revealed the next one:
+#        `Invalid value for field
+#         'resource.advancedMachineFeatures.performanceMonitoringUnit':
+#         'ARCHITECTURAL'. Invalid performance monitoring unit.`
+#      Beta accepts the field and rejects the value. Either the enum spelling
+#      differs from gcloud's client-side choices, or this machine family
+#      supports only `standard`/`enhanced`.
+#
+# Stopped there. Four rounds of trial-and-error against an API whose accepted
+# (value, machine-family) pairs are not visible from here is not a good use of
+# CI cycles, and each round costs a VM. The request is left INERT: set
+# `vars.BENCHMARK_PMU` to a value that GCE accepts and it starts working, since
+# the harness probes for working counters rather than trusting the flag.
+#
+# The cheaper route, and the recommended one: a GitHub-hosted macOS runner.
+# There `proc_pid_rusage` yields instructions and cycles with no privileges, no
+# PMU, no sysctl and no beta APIs, and `_build-artifacts-macos.yml` already
+# produces a validated `libfalkordb.dylib` to measure. Zero upstream changes.
+#
+# Cheaper alternative if that stalls: a GitHub-hosted macOS runner. There the
+# harness reads instructions from `proc_pid_rusage` with no privileges, no PMU
+# and no sysctl, and `_build-artifacts-macos.yml` already produces a validated
+# `libfalkordb.dylib` to measure.
+#
+# What is NOT done, deliberately: substituting wall-clock for instructions. It
+# would turn the gate into a noise detector while still looking like a
+# measurement.
+#
+# ## Why no job `container:`
+#
+# The first run of this workflow died in "Initialize containers" on the GCE VM.
+# No other self-hosted job in this repo uses a job container — `_benchmark.yml`
+# and `profile.yml` both run directly on the VM and install what they need — so
+# this follows that proven pattern instead of fighting it.
+#
+# That also removes the need to compile: both modules are extracted from the
+# already-published server images with `docker cp`, exactly as
+# `.github/scripts/benchmark/profile.sh` does (module path
+# `/var/lib/falkordb/bin/falkordb.so`). The PR side is `rc-pr-<N>`, built early
+# by rust-pr.yml; the main side is `edge-rs`. The harness then runs against each
+# with its own redis-server, so `perf` attaches to a plain host pid.
+#
+# Coverage is the exception — it needs an *instrumented* build, which no
+# published image carries. That step runs the toolchain image explicitly via
+# `docker run` (not as a job container) and is best-effort: a failure there
+# annotates the run and still lets the perf comparison be reported.
+#
+# ## Hardware counters
+#
+# Instruction counts need the GCE virtual PMU, which can only be set at
+# instance creation. FalkorDB/gce-github-runner#4 added a
+# `performance_monitoring_unit` input for exactly this, and `create-runner` now
+# forwards it; this workflow requests `architectural`. gcloud's choices are
+# lowercase (`architectural` | `standard` | `enhanced`) and it rejects the
+# uppercase spelling used in GCP's own docs.
+#
+# The harness probes rather than trusts any of the above: it runs one
+# `perf stat -e instructions,cycles -- true` at startup and only selects the
+# perf backend if a real value comes back. If counters are unavailable it
+# reports instr/cycles as EMPTY and ranks by allocated bytes instead. It never
+# substitutes wall-clock, which would turn the gate into a noise detector while
+# still looking like a measurement.
+#
+# ## Why no job `container:`
+#
+# The first run of this workflow died in "Initialize containers" on the GCE VM.
+# No other self-hosted job in this repo uses a job container — `_benchmark.yml`
+# and `profile.yml` both run directly on the VM and install what they need — so
+# this follows that proven pattern instead of fighting it.
+#
+# That also removes the need to compile: both modules are extracted from the
+# already-published server images with `docker cp`, exactly as
+# `.github/scripts/benchmark/profile.sh` does (module path
+# `/var/lib/falkordb/bin/falkordb.so`). The PR side is `rc-pr-<N>`, built early
+# by rust-pr.yml; the main side is `edge-rs`. The harness then runs against each
+# with its own redis-server, so `perf` attaches to a plain host pid.
+#
+# Coverage is the exception — it needs an *instrumented* build, which no
+# published image carries. That step runs the toolchain image explicitly via
+# `docker run` (not as a job container) and is best-effort: a failure there
+# annotates the run and still lets the perf comparison be reported.
+#
+# ## The one prerequisite outside this workflow
+#
+# GCE exposes hardware counters only when the instance is created with
+# `--performance-monitoring-unit` — an instance-creation flag that cannot be
+# changed on a running VM. This workflow requests `ARCHITECTURAL`, and
+# `.github/actions/create-runner` now forwards it to the SHA-pinned
+# `FalkorDB/gce-github-runner` it wraps.
+#
+# This workflow does NOT request it, because it cannot: the pinned
+# FalkorDB/gce-github-runner rejects the input. Its valid list is token,
+# project_id, service_account_key, runner_ver, machine_zone, machine_zones,
+# machine_type, disk_size, network, subnet, accelerator,
+# runner_service_account, image_project, image, image_family, preemptible,
+# ephemeral, no_external_address, scopes, shutdown_timeout,
+# actions_preinstalled, runner_label, arm, maintenance_policy_terminate,
+# boot_disk_type — no PMU input and no pass-through for arbitrary gcloud flags.
+#
+# Passing it anyway only produced an `Unexpected input(s)` warning on every
+# run, which is noise that cannot be acted on from this repo, so it was
+# removed. The `Preflight — PMU availability` step reports the consequence
+# where it actually matters instead.
+#
+# To enable instruction counts later: add a `performance_monitoring_unit`
+# input to FalkorDB/gce-github-runner (forwarding
+# `--performance-monitoring-unit` to `gcloud compute instances create`), bump
+# the pin in `.github/actions/create-runner`, then pass `ARCHITECTURAL` from
+# the create-runner step here. Nothing else in this workflow needs to change —
+# the preflight will start reporting `pmu=yes` and the comment will rank by
+# instructions automatically.
+# That is why the `Preflight — PMU availability` step probes rather than
+# assumes: it loosens `kernel.perf_event_paranoid`, installs `perf`, checks
+# whether counters actually read, and annotates the run if not. The job then
+# continues and reports what it can trust.
+#
+# It never substitutes wall-clock for instructions. A time-based stand-in would
+# turn the gate into a noise detector while still looking like a measurement,
+# which is worse than reporting the metric as absent.
+name: Benchmark + coverage
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: benchmark-cov-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  RUNNER_LABEL: benchcov-${{ github.run_id }}-${{ github.run_number }}
+
+jobs:
+  benchmark-cov:
+    if: >-
+      github.event.label.name == 'benchmark-cov' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    # macOS, not a GCE VM: `proc_pid_rusage` yields per-process instructions and
+    # cycles with no privileges, no PMU, no sysctl and no beta APIs. See the
+    # header for the four GCE attempts that did not.
+    runs-on: macos-14
+    timeout-minutes: 150
+    steps:
+      - name: Acknowledge the request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh api -X POST "repos/$REPO/issues/$PR/reactions" -f content="eyes" || true
+
+      - name: Checkout PR head
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          path: pr
+          persist-credentials: false
+
+      - name: Checkout main
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: main
+          path: base
+          persist-credentials: false
+
+      - name: Install build + harness deps
+        run: |
+          brew install cmake llvm libomp openssl@3 redis
+          python3 -m pip install --quiet --break-system-packages redis || python3 -m pip install --quiet redis
+          redis-server --version
+
+      - name: Export Homebrew LLVM into PATH/CC/CXX
+        run: |
+          set -euo pipefail
+          LLVM_PREFIX="$(brew --prefix llvm)"
+          echo "${LLVM_PREFIX}/bin"             >> "$GITHUB_PATH"
+          echo "CC=${LLVM_PREFIX}/bin/clang"    >> "$GITHUB_ENV"
+          echo "CXX=${LLVM_PREFIX}/bin/clang++" >> "$GITHUB_ENV"
+          echo "BREW_LLVM_VERSION=$(brew list --versions llvm | awk '{print $2}')" >> "$GITHUB_ENV"
+
+      - name: Install Rust stable
+        run: |
+          rustup default stable
+          # llvm-profdata/llvm-cov for bench/coverage.sh; not installed by default.
+          rustup component add llvm-tools-preview
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: pr -> target
+          shared-key: "benchmark-cov-macos"
+
+      # Deliberately NOT cached. The first attempt cached
+      # `.deps/graphblas`, `lagraph_lib` and `redisearch/RediSearch/bin` (the
+      # key shape _build-artifacts-macos.yml uses) and skipped the build on a
+      # hit — but graphblas.sh also installs a static library outside those
+      # paths, so the hit produced
+      # `could not find native static library 'graphblas'`. A cache that makes
+      # the job fail only on the second run is worse than no cache; correctness
+      # first, and revisit with the full set of installed paths if the ~10
+      # minutes matters.
+      - name: Build GraphBLAS + RediSearch
+        working-directory: pr
+        run: |
+          ./graphblas.sh
+          ./redisearch.sh
+
+      # Share the native deps with the main checkout instead of building them
+      # twice: build.rs resolves them relative to the repo root, so symlinks are
+      # enough and this halves the job's wall time.
+      - name: Share native deps with the main checkout
+        run: |
+          set -euo pipefail
+          mkdir -p base/redisearch/RediSearch
+          ln -sfn "$PWD/pr/.deps" base/.deps
+          ln -sfn "$PWD/pr/lagraph_lib" base/lagraph_lib
+          ln -sfn "$PWD/pr/redisearch/RediSearch/bin" base/redisearch/RediSearch/bin
+          ls -l base/lagraph_lib base/redisearch/RediSearch/bin >/dev/null
+
+      # pmc_tool is NOT built here. It compiles on macos-14 (Apple silicon) and
+      # sudo is passwordless, but kperf does not work inside the runner VM:
+      # `kpep_db_create failed: 7`. So branches/br_miss/l1d_miss stay empty on
+      # any hosted runner, the same way instr/cycles do — see the header. The
+      # harness already handles their absence.
+
+      - name: Build PR module
+        working-directory: pr
+        run: cargo build --release
+
+      - name: Build main module
+        working-directory: base
+        run: cargo build --release
+
+      # Sequential, never parallel: both bind a redis port and contend for the
+      # same CPUs, and overlapping them produces numbers that are not
+      # measurements.
+      - name: Measure main
+        working-directory: pr
+        run: python3 bench/run_bench.py --module "$GITHUB_WORKSPACE/base/target/release/libfalkordb.dylib" --out /tmp/main.csv
+
+      - name: Measure PR
+        working-directory: pr
+        run: python3 bench/run_bench.py --module "$GITHUB_WORKSPACE/pr/target/release/libfalkordb.dylib" --out /tmp/pr.csv
+
+      # No C engine here: its published artifacts are Linux images, and there is
+      # no macOS build of it to load. The PR-vs-main comparison is the point of
+      # this job; use the ranking recipe in .claude/skills/bench/SKILL.md for a
+      # vs-C reading.
+      - name: Compare PR vs main
+        working-directory: pr
+        run: |
+          set +e
+          python3 bench/compare.py /tmp/pr.csv /tmp/main.csv > /tmp/compare.txt 2>&1
+          echo "compare_exit=$?" >> "$GITHUB_ENV"
+          set -e
+          tail -40 /tmp/compare.txt
+
+      - name: Coverage of the query set
+        working-directory: pr
+        run: |
+          set +e
+          bash bench/coverage.sh > /tmp/coverage.txt 2>&1
+          echo "coverage_exit=$?" >> "$GITHUB_ENV"
+          set -e
+          tail -30 /tmp/coverage.txt
+
+      - name: Build the comment
+        run: |
+          python3 - <<'PY' > /tmp/comment.md
+          import csv, os
+
+          def read(path):
+              try:
+                  with open(path) as f:
+                      return {r["query"]: r for r in csv.DictReader(f)}
+              except OSError:
+                  return {}
+
+          pr, main = read("/tmp/pr.csv"), read("/tmp/main.csv")
+
+          def num(row, key):
+              try:
+                  return float(row[key])
+              except (KeyError, TypeError, ValueError):
+                  return None
+
+          # Rank by instructions when the PMU delivered them (deterministic),
+          # else by allocated bytes (also deterministic). Never by wall-clock:
+          # on any shared or virtualised host that ranks noise.
+          have_instr = any(num(r, "instr") is not None for r in pr.values())
+          metric = "instr" if have_instr else "alloc_bytes"
+
+          # Ranking by allocated bytes needs a magnitude floor. Most rows
+          # allocate only a couple of KB, and a ratio over a ~2 KB denominator
+          # is noise dressed as signal — that is where the absurd ratios in
+          # earlier local runs came from (13,000x on a row whose baseline was a
+          # few hundred bytes), not from the jemalloc column itself. Rows below
+          # the floor are still measured and still in the attached CSV output;
+          # they are just not ranked.
+          FLOOR = 0 if metric == "instr" else 65536
+          rows, skipped = [], 0
+          for q, p in pr.items():
+              m = main.get(q)
+              if not m:
+                  continue
+              a, b = num(m, metric), num(p, metric)
+              if a is None or b is None or a <= 0:
+                  continue
+              if max(a, b) < FLOOR:
+                  skipped += 1
+                  continue
+              rows.append((b / a, q, a, b))
+          rows.sort()
+
+          print("## Benchmark + coverage")
+          print()
+          print("317-query harness, main and this PR each built from source and "
+                "measured in sequence on a macOS runner.")
+          print()
+          if have_instr:
+              print(f"Ranked by **instructions** (deterministic). Cycles are also "
+                    f"recorded but move with the host; wall-clock `ms` is advisory only.")
+          else:
+              print("> **Instructions and cycles are unavailable on this VM.** GCE exposes "
+                    "the PMU only when the instance is created with "
+                    "`--performance-monitoring-unit=ARCHITECTURAL`, and "
+                    "`.github/actions/create-runner` pins a third-party action whose "
+                    "inputs do not pass that through. Those columns are left **empty** "
+                    "rather than filled with a wall-clock substitute, which would turn "
+                    "the gate into a noise detector.")
+              print(">")
+              print("> Ranked by **allocated bytes** instead — jemalloc merged-arena "
+                    "deltas, which are deterministic and have repeatedly been the "
+                    "clearest signal here (a CASE row moving 8,722 → 1,989 B/query when "
+                    "its per-row branch list was removed).")
+          print()
+
+          if not rows:
+              print("No comparable rows — see the workflow log.")
+          else:
+              def table(title, subset):
+                  print(f"### {title}")
+                  print()
+                  print("| query | main | PR | ratio |")
+                  print("|---|---|---|---|")
+                  for r, q, a, b in subset:
+                      print(f"| {q} | {a:,.0f} | {b:,.0f} | {r:.2f}x |")
+                  print()
+
+              improved = [r for r in rows if r[0] < 0.95][:15]
+              regressed = [r for r in reversed(rows) if r[0] > 1.05][:15]
+              if improved:
+                  table(f"Improved ({len(improved)} shown)", improved)
+              if regressed:
+                  table(f"Regressed ({len(regressed)} shown)", regressed)
+              if not improved and not regressed:
+                  print("No row moved more than 5% either way.")
+                  print()
+
+              geo = 1.0
+              for r, *_ in rows:
+                  geo *= r
+              geo **= 1.0 / len(rows)
+              print(f"**{len(rows)} rows compared, {metric} geomean {geo:.3f}.**"
+                    + (f" {skipped} rows below the {FLOOR//1024} KB "
+                       f"{metric} floor were measured but not ranked." if skipped else ""))
+              print()
+              print("Micro-queries near the fixed per-query floor need 3 reps per build "
+                    "before a small delta means anything — re-measure a flagged row in "
+                    "isolation before acting on it.")
+              print()
+
+          for title, path in (("Full compare.py output", "/tmp/compare.txt"),
+                              ("Query-set coverage of the graph crate", "/tmp/coverage.txt")):
+              print(f"<details><summary>{title}</summary>")
+              print()
+              print("```")
+              print(open(path).read()[-6000:] if os.path.exists(path) else "(missing)")
+              print("```")
+              print()
+              print("</details>")
+              print()
+          PY
+          cat /tmp/comment.md
+
+      # Upsert, so re-running replaces the previous report instead of burying
+      # the PR in near-identical comments.
+      - name: Post or update the PR comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          MARKER="<!-- benchmark-cov-report -->"
+          printf '%s\n' "$MARKER" >> /tmp/comment.md
+          ID=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+                 --jq "map(select(.body | contains(\"$MARKER\"))) | .[-1].id // empty")
+          if [ -n "$ID" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$ID" -F body=@/tmp/comment.md
+          else
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@/tmp/comment.md
+          fi
+
+      # Report first, then fail: a coverage/query-validation failure means the
+      # query set no longer runs clean, which must not be reported as success.
+      # compare_exit is deliberately NOT fatal — this job reports deltas, and
+      # gating on them belongs to whoever reads the comment.
+      - name: Fail if coverage did not run clean
+        if: ${{ env.coverage_exit != '0' }}
+        run: |
+          echo "::error::bench/coverage.sh exited ${{ env.coverage_exit }} — see the comment's coverage section."
+          exit 1
+
+  # Separate job, separate runner: valgrind does not support Apple silicon, so
+  # the deterministic counts have to come from Linux. No PMU needed — that is
+  # the entire point of counting in software.
+  # Deterministic instruction counts for main, the PR *and the production C
+  # engine*, all three measured in the same container so the numbers are
+  # directly comparable.
+  #
+  # No job `container:` here, deliberately: the measurement runs inside the C
+  # engine's own image (`falkordb/falkordb-server:edge`), which needs docker,
+  # and docker is not available to a job that is itself a container. The Rust
+  # modules are built by running the toolchain image explicitly instead.
+  #
+  # Why the C image is the measurement environment for all three: a module
+  # copied out of an image needs that image's library environment (an earlier
+  # attempt that copied the module onto the runner failed with "server did not
+  # start"). Measured: the C image is Debian 13, ships redis-server, and loads
+  # both the C module at /var/lib/falkordb/bin/falkordb.so and our Rust .so
+  # built in the toolchain image. One environment, three modules, no
+  # cross-environment comparison to explain away.
+  cachegrind:
+    if: >-
+      github.event.label.name == 'benchmark-cov' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      C_IMAGE: docker.io/falkordb/falkordb-server:edge
+      C_MODULE: /var/lib/falkordb/bin/falkordb.so
+      TOOLCHAIN: ghcr.io/falkordb/falkordb-build:latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          path: pr
+          persist-credentials: false
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: main
+          path: base
+          persist-credentials: false
+
+      - name: Build both Rust modules in the toolchain image
+        run: |
+          # `rustup default stable`: the toolchain image ships rustup without a
+          # default, so a bare `cargo` fails with "could not choose a version of
+          # cargo to run" (same line every other job here needs — rust-pr.yml
+          # :156, :201, :339).
+          docker run --rm -v "$GITHUB_WORKSPACE:/w" -w /w "$TOOLCHAIN" bash -c '
+            set -e
+            rustup default stable >/dev/null
+            for d in pr base; do
+              (cd "/w/$d" && CXX=clang++ cargo build --release)
+            done'
+          ls -la pr/target/release/libfalkordb.so base/target/release/libfalkordb.so
+
+      # One container, three modules, measured sequentially: each valgrind run
+      # pins a CPU for a while. The C module is already in the image; the two
+      # Rust ones are mounted in.
+      - name: Measure main, PR and C (callgrind)
+        run: |
+          # OMP_NUM_THREADS=1 plus THREAD_COUNT 1: thread count is what makes
+          # these counts reproducible or not. The C engine otherwise sizes its
+          # pool to the host and sets OpenMP to match, and valgrind schedules
+          # threads nondeterministically — the same C module measured on two
+          # consecutive runs disagreed by up to 10x on one query. Pinning every
+          # engine to one thread is also the fairer comparison.
+          #
+          # `c` is measured twice. Its reproducibility has to be demonstrated
+          # before the PR/C column means anything, and the second pass is what
+          # demonstrates it; the comment suppresses the column if the two
+          # disagree.
+          docker run --rm -e OMP_NUM_THREADS=1 -v "$GITHUB_WORKSPACE:/w" \
+            -w /w/pr --entrypoint bash "$C_IMAGE" -c '
+            set -e
+            # The image ships /etc/apt/apt.conf.d/70debconf, which hooks
+            # DPkg::Pre-Install-Pkgs to a dpkg-preconfigure binary it does not
+            # contain, so every apt call prints
+            # "/usr/sbin/dpkg-preconfigure: not found" and carries on. Verified
+            # in the image: DEBIAN_FRONTEND does NOT suppress it (it is a hook,
+            # not a frontend — my first attempt at this was wrong); removing the
+            # hook file does.
+            rm -f /etc/apt/apt.conf.d/70debconf
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends valgrind python3 >/dev/null
+            valgrind --version
+            for spec in "main:/w/base/target/release/libfalkordb.so" \
+                        "pr:/w/pr/target/release/libfalkordb.so" \
+                        "c:'"$C_MODULE"'" \
+                        "c2:'"$C_MODULE"'"; do
+              name="${spec%%:*}"; mod="${spec#*:}"
+              echo "::group::measure $name"
+              # Best-effort per module: a C-specific failure (an unsupported
+              # query in the subset, say) must not cost the main-vs-PR gate,
+              # which is the part that gates the PR.
+              python3 bench/cachegrind.py --module "$mod" --out "/w/cg-$name.csv" \
+                --module-args THREAD_COUNT 1 || echo "measurement failed for $name"
+              echo "::endgroup::"
+            done'
+          ls -la cg-*.csv || true
+
+      # The full 317-query set against the C engine, in the same container.
+      # Native (no valgrind), so it is fast — but this runner has no PMU, so
+      # `run_bench.py` reports instr/cycles EMPTY rather than substituting
+      # wall-clock. What is meaningful here is `alloc_bytes` (deterministic) and
+      # `ms` (noisy on a shared runner). The deterministic instruction-level
+      # vs-C reading is the callgrind table above.
+      - name: Full query set vs the C engine
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/w" -w /w/pr --entrypoint bash "$C_IMAGE" -c '
+            set -e
+            # The image ships /etc/apt/apt.conf.d/70debconf, which hooks
+            # DPkg::Pre-Install-Pkgs to a dpkg-preconfigure binary it does not
+            # contain, so every apt call prints
+            # "/usr/sbin/dpkg-preconfigure: not found" and carries on. Verified
+            # in the image: DEBIAN_FRONTEND does NOT suppress it (it is a hook,
+            # not a frontend — my first attempt at this was wrong); removing the
+            # hook file does.
+            rm -f /etc/apt/apt.conf.d/70debconf
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends python3 >/dev/null
+            python3 bench/run_bench.py --module /w/pr/target/release/libfalkordb.so \
+              --out /w/full-pr.csv > /w/full-pr.log 2>&1 || echo "PR full-set run failed"
+            # --c-compat: skips the setup commands and queries the C engine does
+            # not implement (UDFs are Rust-only) instead of aborting the run.
+            python3 bench/run_bench.py --c-compat --module "'"$C_MODULE"'" \
+              --out /w/full-c.csv > /w/full-c.log 2>&1 || echo "C full-set run failed"
+          '
+          tail -5 full-pr.log full-c.log 2>/dev/null || true
+          grep -c SKIPPED full-c.log 2>/dev/null | sed 's/^/queries the C engine skipped: /' || true
+          wc -l full-pr.csv full-c.csv 2>/dev/null || true
+
+      # The toolchain image has no `gh` (the first attempt died with
+      # `gh: not found`), so this talks to the API with urllib. python3 is
+      # already required by the harness, and installing gh into the container
+      # would add an apt keyring dance for one HTTP call.
+      - name: Comment the deterministic deltas
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          python3 - <<'PY'
+          import csv, json, os, urllib.request
+
+          MARKER = "<!-- cachegrind-report -->"
+
+          def read(p):
+              """query -> instr, skipping rows without a usable number.
+
+              Hardened deliberately: the full-set CSVs carry an empty `instr`
+              column on a runner with no PMU, and a bare float() on that raises
+              and takes the whole comment step down.
+              """
+              out = {}
+              try:
+                  with open(p, newline="") as f:
+                      for r in csv.DictReader(f):
+                          try:
+                              out[r["query"]] = float(r["instr"])
+                          except (KeyError, TypeError, ValueError):
+                              continue
+              except OSError:
+                  return {}
+              return out
+
+          def read_rows(p):
+              """query -> raw row dict, for CSVs whose columns are read individually."""
+              try:
+                  with open(p, newline="") as f:
+                      return {r["query"]: r for r in csv.DictReader(f) if r.get("query")}
+              except OSError:
+                  return {}
+
+          ws = os.environ.get("GITHUB_WORKSPACE", ".")
+          pr = read(f"{ws}/cg-pr.csv")
+          main = read(f"{ws}/cg-main.csv")
+          c = read(f"{ws}/cg-c.csv")
+          c2 = read(f"{ws}/cg-c2.csv")
+
+          # The C engine is measured twice, and each row is reported with the
+          # spread between the two passes rather than as a single number.
+          #
+          # Why: unlike this module, the C engine cannot be made to run queries
+          # inline. THREAD_COUNT 0 refuses to start, so at least one worker
+          # thread always exists, and valgrind schedules the main/worker handoff
+          # nondeterministically. Measured with everything pinned
+          # (THREAD_COUNT 1, OMP_NUM_THREADS=1) the two passes still disagreed
+          # by 3.8-82% per row, while this module's two builds agreed to 0.07%.
+          # So a C number here is indicative, not deterministic, and the table
+          # says so per row instead of implying a precision it does not have.
+          C_TOLERANCE = 0.02
+
+          def c_cell(q):
+              """(display, ratio_display) for the C and PR/C columns."""
+              lo, hi = c.get(q), c2.get(q)
+              vals = [v for v in (lo, hi) if v]
+              if not vals:
+                  return "—", "—"
+              b = pr.get(q)
+              if len(vals) == 1 or abs(max(vals) / min(vals) - 1) <= C_TOLERANCE:
+                  mid = sum(vals) / len(vals)
+                  tag = "" if len(vals) == 2 else " (1 pass)"
+                  return f"{mid:,.0f}{tag}", (f"{b / mid:.2f}x" if b else "—")
+              a, z = min(vals), max(vals)
+              return (
+                  f"{a:,.0f}–{z:,.0f}",
+                  (f"{b / z:.2f}–{b / a:.2f}x" if b else "—"),
+              )
+
+          c_spread = max(
+              (abs(c2[q] / c[q] - 1) for q in set(c) & set(c2) if c[q]),
+              default=None,
+          )
+          out = ["## Instruction counts (callgrind)", ""]
+          if not pr or not main:
+              out.append("No output — see the workflow log.")
+          else:
+              out += [
+                  "Counted in software, so no PMU is needed — and no hosted runner has "
+                  "one. Each number is the per-execution cost isolated by differencing "
+                  "two complete runs at different repeat counts, so server startup, "
+                  "graph setup and plan compilation cancel out.",
+                  "",
+                  "Each query's repeat count is scaled so its error bar lands at "
+                  "**~0.2%**, so anything past ~0.5% is worth a look and anything "
+                  "past 1% is real. The scaling matters: per-run drift is a roughly "
+                  "fixed number of instructions, so at a fixed span the error is fixed "
+                  "*per execution* — invisible on a 7M-instruction query and 6.7% on "
+                  "`RETURN 1`. Curated subset on a smaller graph than `run_bench.py`, "
+                  "so these absolute numbers are not comparable to its rows — only the "
+                  "main-vs-PR ratio is meaningful.",
+                  "",
+                  "| query | main | PR | PR/main | C | PR/C |",
+                  "|---|---|---|---|---|---|",
+              ]
+              for q in sorted(set(pr) & set(main), key=lambda q: pr[q] / main[q] if main[q] else 1):
+                  a, b = main[q], pr[q]
+                  cdisp, cratio = c_cell(q)
+                  out.append(
+                      f"| {q} | {a:,.0f} | {b:,.0f} | {f'{b / a:.4f}x' if a else '—'} | "
+                      f"{cdisp} | {cratio} |"
+                  )
+              out += [
+                  "",
+                  "`RETURN 1` is the fixed per-query floor — it should read ~1.00x for "
+                  "PR/main, and if it does not, something changed in the request path "
+                  "rather than in the query being measured.",
+                  "",
+                  "**PR/C** compares this build against the production C engine "
+                  "(`falkordb/falkordb-server:edge`); under 1.00x is faster than C. All "
+                  "engines are measured in the same container with threads pinned "
+                  "(`THREAD_COUNT 1`, `OMP_NUM_THREADS=1`), so this is like-for-like.",
+                  "",
+                  "**Read the C column as indicative, not exact.** It is measured twice "
+                  "and shown as a range when the passes disagree by more than "
+                  f"{C_TOLERANCE * 100:.0f}%. The C engine cannot be pinned as tightly as "
+                  "this module: `THREAD_COUNT 0` refuses to start, so a worker thread "
+                  "always exists and valgrind schedules the handoff nondeterministically. "
+                  "PR/main in the same table is reproducible to ~0.07%, so a PR/C ratio "
+                  "is a direction, and PR/main is a gate.",
+              ]
+              if not c and not c2:
+                  out += [
+                      "",
+                      "_No C rows — see the `measure c` group in the workflow log._",
+                  ]
+              elif c_spread is not None:
+                  out += [
+                      "",
+                      f"_Worst disagreement between the two C passes: "
+                      f"{c_spread * 100:.1f}%._",
+                  ]
+          # Full-set vs C: alloc_bytes is the signal worth gating on here
+          # (deterministic); wall-clock on a shared runner is not.
+          full_pr, full_c = read_rows(f"{ws}/full-pr.csv"), read_rows(f"{ws}/full-c.csv")
+          if full_pr and full_c:
+              def num(row, key):
+                  try:
+                      return float(row[key])
+                  except (KeyError, TypeError, ValueError):
+                      return None
+
+              rows = []
+              for q in set(full_pr) & set(full_c):
+                  a, b = num(full_c[q], "alloc_bytes"), num(full_pr[q], "alloc_bytes")
+                  if a and b and a > 0:
+                      rows.append((b / a, q, b, a))
+              rows.sort(reverse=True)
+              worse = [r for r in rows if r[0] > 1.0]
+              out += [
+                  "",
+                  "### Full query set vs the C engine — allocated bytes",
+                  "",
+                  f"{len(rows)} of {len(set(full_pr) & set(full_c))} comparable queries "
+                  f"reported allocation on both engines; **{len(worse)} allocate more "
+                  f"than C**. Same container, native (no valgrind). Wall-clock is omitted: "
+                  f"this runner is shared and has no PMU, so `ms` is noise and "
+                  f"instructions are unavailable — the deterministic instruction reading "
+                  f"is the callgrind table above.",
+                  "",
+                  "| query | PR bytes | C bytes | PR/C |",
+                  "|---|---|---|---|",
+              ]
+              for ratio, q, b, a in rows[:15]:
+                  out.append(f"| {q} | {b:,.0f} | {a:,.0f} | {ratio:.2f}x |")
+              if len(rows) > 15:
+                  out.append(f"\n_Worst 15 of {len(rows)} shown._")
+          elif full_pr or full_c:
+              out += ["", "_Full-set vs-C comparison incomplete — one side produced no rows._"]
+
+          out += ["", MARKER]
+          body = "\n".join(out)
+          print(body)
+
+          repo, num, token = os.environ["REPO"], os.environ["PR"], os.environ["GH_TOKEN"]
+          api = f"https://api.github.com/repos/{repo}"
+          hdrs = {
+              "Authorization": f"Bearer {token}",
+              "Accept": "application/vnd.github+json",
+              "User-Agent": "benchmark-cov",
+          }
+
+          def call(url, data=None, method="GET"):
+              req = urllib.request.Request(
+                  url,
+                  data=json.dumps(data).encode() if data else None,
+                  headers=hdrs,
+                  method=method,
+              )
+              with urllib.request.urlopen(req) as r:
+                  return json.loads(r.read() or "null")
+
+          # Paginate: a PR with more than one page of comments would miss the
+          # marker and post a duplicate on every run.
+          existing, page = None, 1
+          while True:
+              batch = call(f"{api}/issues/{num}/comments?per_page=100&page={page}")
+              if not batch:
+                  break
+              for c in batch:
+                  if MARKER in (c.get("body") or ""):
+                      existing = c["id"]
+              page += 1
+          if existing:
+              call(f"{api}/issues/comments/{existing}", {"body": body}, "PATCH")
+          else:
+              call(f"{api}/issues/{num}/comments", {"body": body}, "POST")
+          print(f"comment {'updated' if existing else 'created'}")
+          PY

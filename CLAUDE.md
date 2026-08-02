@@ -6,6 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 FalkorDB-rs is a Rust implementation of FalkorDB, a graph database that runs as a Redis module. It implements the Cypher query language using GraphBLAS sparse matrices for efficient graph storage and traversal.
 
+## Reference implementation and performance bar
+
+The C implementation at `~/repos/FalkorDB` (binaries under `~/repos/FalkorDB/bin/`) is the reference. Success criterion for performance work: p99 latency of all benchmark queries must be the same or better than C, and memory usage must match C with no per-entity overhead. Always benchmark against the C binary and report real numbers.
+
+Prefer general optimizations in shared paths (e.g. expression eval, runtime iterators) over op-specific special cases.
+
 ## Build Commands
 
 ```bash
@@ -33,13 +39,13 @@ cargo test -p graph
 ```bash
 # Activate virtualenv first
 source venv/bin/activate
-pytest tests/test_e2e.py tests/test_functions.py -vv
+RELEASE=1 pytest tests/test_e2e.py tests/test_functions.py -vv
 ```
 
 **TCK (Technology Compatibility Kit) tests:**
 ```bash
 # Run all passing TCK tests
-TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
+RELEASE=1 TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
 
 # Run specific TCK test subset
 TCK_INCLUDE=tests/tck/features/expressions/list pytest tests/tck/test_tck.py -s
@@ -47,12 +53,16 @@ TCK_INCLUDE=tests/tck/features/expressions/list pytest tests/tck/test_tck.py -s
 
 **MVCC and concurrency tests:**
 ```bash
-pytest tests/test_mvcc.py tests/test_concurrency.py -vv
+RELEASE=1  pytest tests/test_mvcc.py tests/test_concurrency.py -vv
 ```
 
 **Flow tests:**
 ```bash
+# All flow tests
 ./flow.sh
+
+# Single test, release build, quiet output (the usual way to run these)
+RELEASE=1 VERBOSE=0 TEST=test_name ./flow.sh
 ```
 
 ## Dependencies
