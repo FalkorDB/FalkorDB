@@ -30,7 +30,6 @@
 
 Feature: Return7 - Return all variables
 
-  @skip
   Scenario: [1] Return all variables
     Given an empty graph
     And having executed:

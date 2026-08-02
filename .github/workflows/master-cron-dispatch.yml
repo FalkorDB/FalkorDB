@@ -1,0 +1,97 @@
+# Keep the C engine's scheduled jobs alive after the default branch moved here.
+#
+# GitHub delivers `schedule` ONLY from the repository's default branch. Now that
+# the Rust tree is the default branch, `master`'s own cron entries never fire —
+# silently, with no failing run to notice. A branch filter on master cannot fix
+# it: GitHub reads scheduled workflows from the default branch.
+#
+# So this workflow lives here (the default branch) and re-fires master's jobs on
+# their original cadence through their existing `workflow_dispatch` entry points.
+# Nothing in master's job logic is rewritten.
+#
+# `workflow_dispatch` is safe to drive with GITHUB_TOKEN: per GitHub's docs,
+# `workflow_dispatch` and `repository_dispatch` are the explicit exceptions that
+# "always create workflow runs" even when triggered by GITHUB_TOKEN. No PAT.
+#
+# Keep the cron lines below in sync with master's copies. See issue #2255.
+
+name: master cron dispatch
+
+on:
+  schedule:
+    # mirrors master .github/workflows/cleanup-rc-images.yml
+    - cron: "17 4 * * *"
+    # mirrors master .github/workflows/submodule-update.yml
+    - cron: "0 0 * * 1"
+    # mirrors master .github/workflows/codeql-analysis.yml
+    - cron: "33 5 * * 1"
+  workflow_dispatch:
+    inputs:
+      workflow:
+        description: "Which master workflow to dispatch"
+        type: choice
+        default: all
+        options:
+          - all
+          - cleanup-rc-images.yml
+          - submodule-update.yml
+          - codeql-analysis.yml
+
+permissions:
+  actions: write
+
+concurrency:
+  group: master-cron-dispatch-${{ github.event.schedule || inputs.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    # Only meaningful in the repo that actually has a `master` branch. Guards
+    # against this file being merged into a repo where master does not exist.
+    if: ${{ github.repository == 'FalkorDB/FalkorDB' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch master's scheduled workflows
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          SCHEDULE: ${{ github.event.schedule }}
+          CHOICE: ${{ inputs.workflow }}
+        run: |
+          set -euo pipefail
+
+          # Map the cron that fired back to the master workflow it stands in for.
+          case "${SCHEDULE:-}" in
+            "17 4 * * *") WFS="cleanup-rc-images.yml" ;;
+            "0 0 * * 1")  WFS="submodule-update.yml" ;;
+            "33 5 * * 1") WFS="codeql-analysis.yml" ;;
+            "")
+              # Manual run.
+              if [ "${CHOICE:-all}" = "all" ]; then
+                WFS="cleanup-rc-images.yml submodule-update.yml codeql-analysis.yml"
+              else
+                WFS="$CHOICE"
+              fi
+              ;;
+            *)
+              echo "::error::unmapped schedule '${SCHEDULE}' — add it to the case block"
+              exit 1
+              ;;
+          esac
+
+          rc=0
+          for wf in $WFS; do
+            echo "::group::dispatch ${wf} --ref master"
+            # Each is dispatched independently so one missing/failing entry point
+            # does not suppress the others. codeql-analysis.yml only became
+            # dispatchable in the master-side change of #2255; until that lands,
+            # its dispatch fails here and is reported at the end.
+            if gh workflow run "$wf" --ref master; then
+              echo "dispatched ${wf}"
+            else
+              echo "::error::failed to dispatch ${wf} on master"
+              rc=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$rc"

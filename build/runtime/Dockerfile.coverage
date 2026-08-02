@@ -1,0 +1,114 @@
+ARG BUILD_IMAGE=ghcr.io/falkordb/falkordb-build:latest
+ARG TARGETPLATFORM=linux/amd64
+ARG REDIS_VERSION=8.6.3
+
+# Stage 1: chef/planner — same cache split as the regular Dockerfile so a
+# source-only change skips the dep cook.
+FROM $BUILD_IMAGE AS chef
+RUN cargo install cargo-chef --locked
+WORKDIR /src
+
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# Stage 2: builder — instrumented .so via -C instrument-coverage. Dev profile
+# (no --release) preserves debuginfo + line tables that llvm-cov needs for
+# accurate source mapping. Output lands in target/debug/.
+FROM chef AS builder
+COPY --from=planner /src/recipe.json recipe.json
+RUN CXX=clang++-22 RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" \
+    cargo chef cook --recipe-path recipe.json
+COPY . .
+RUN CXX=clang++-22 RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo build && \
+    mkdir -p /out && cp target/debug/libfalkordb.so /out/falkordb.so
+
+# Stage 3: redis-builder — stock redis on debian:trixie-slim. Coverage
+# instrumentation lives in the .so only (LLVM_PROFILE_FILE writes profraw
+# from rustc -C instrument-coverage), so redis-server itself is uninstrumented.
+# Mirrors the redis-builder stage in build/runtime/Dockerfile — duplicated
+# rather than shared because Docker has no native include mechanism.
+FROM debian:trixie-slim AS redis-builder
+ARG REDIS_VERSION
+ENV DEBIAN_FRONTEND=noninteractive
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        ca-certificates git dpkg-dev gcc g++ libc6-dev libssl-dev make; \
+    rm -rf /var/lib/apt/lists/*
+WORKDIR /tmp
+RUN git clone --depth 1 --branch "${REDIS_VERSION}" https://github.com/redis/redis.git redis-src
+WORKDIR /tmp/redis-src
+RUN set -eux; \
+    sed -ri 's!^( *createBoolConfig[(]"protected-mode",.*, *)1( *,.*[)],)$!\10\2!' src/config.c; \
+    grep -E '^ *createBoolConfig[(]"protected-mode",.*, *0 *,.*[)],$' src/config.c; \
+    gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)"; \
+    arch="$(dpkg --print-architecture | awk -F- '{ print $NF }')"; \
+    extraJemallocConfigureFlags="--build=$gnuArch"; \
+    case "${arch##*-}" in \
+        amd64 | i386 | x32) extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-page=12" ;; \
+        *) extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-page=16" ;; \
+    esac; \
+    extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-hugepage=21"; \
+    sed -ri 's!cd jemalloc && ./configure !&'"$extraJemallocConfigureFlags"' !' deps/Makefile; \
+    export BUILD_TLS=yes BUILD_WITH_MODULES=no; \
+    make -j "$(nproc)" all; \
+    make PREFIX=/redis-install install; \
+    strip /redis-install/bin/redis-server /redis-install/bin/redis-cli; \
+    /redis-install/bin/redis-server --version
+
+FROM debian:trixie-slim AS server
+
+ARG TARGETPLATFORM
+
+ENV FALKORDB_HOME=/var/lib/falkordb \
+    FALKORDB_DATA_PATH=/var/lib/falkordb/data \
+    FALKORDB_BIN_PATH=/var/lib/falkordb/bin \
+    FALKORDB_IMPORT_PATH=/var/lib/falkordb/import \
+    FALKORDB_TLS_PATH=/var/lib/falkordb/tls \
+    FALKORDB_COV_PATH=/var/lib/falkordb/cov
+
+RUN mkdir -p ${FALKORDB_DATA_PATH} ${FALKORDB_COV_PATH} && ln -s ${FALKORDB_DATA_PATH} /data
+
+# Runtime apt install — bare essentials only. After PR #483 GraphBLAS JIT is
+# disabled and libomp is statically linked into the instrumented .so (see
+# graph/build.rs + build/libomp.sh), so this image no longer needs clang,
+# libomp5, libomp-22-dev, the LLVM repo, or any dpkg force-removes. The
+# coverage runtime itself is baked into the instrumented .so by rustc's
+# -C instrument-coverage profile.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates bash openssl libssl3 && \
+    apt-get upgrade -y && \
+    # Match upstream redis image's uid/gid 999 before purging passwd.
+    groupadd -r -g 999 redis && useradd -r -g redis -u 999 redis && \
+    (apt-get purge -y python3.13 python3.13-minimal libpython3.13-minimal libpython3.13-stdlib || true) && \
+    (dpkg --force-remove-essential --purge ncurses-base ncurses-bin || true) && \
+    (dpkg --force-remove-essential --purge perl-base || true) && \
+    (dpkg --force-remove-protected --force-remove-essential --purge login || true) && \
+    (dpkg --purge passwd || true) && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Pull only the redis binaries from the redis-builder stage.
+COPY --from=redis-builder /redis-install/bin/redis-server /usr/local/bin/redis-server
+COPY --from=redis-builder /redis-install/bin/redis-cli    /usr/local/bin/redis-cli
+
+WORKDIR ${FALKORDB_HOME}
+
+COPY ./build/runtime/run.sh       ${FALKORDB_BIN_PATH}/run.sh
+COPY ./build/runtime/gen-certs.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
+RUN chmod +x ${FALKORDB_BIN_PATH}/run.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
+COPY --from=builder /out/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
+
+# Instrumentation runtime: every llvm-cov-aware binary writes profraw files
+# named per the LLVM_PROFILE_FILE template. %p = pid, %m = module hash; both
+# substitutions are needed because redis forks (BGSAVE / RDB) and the test
+# loads the module fresh per Env(). FALKORDB_COV_PATH should be bind-mounted
+# from the host so the test job can collect the files after the run.
+ENV ARCH=${TARGETPLATFORM} \
+    TLS=0 \
+    BROWSER=0 \
+    FALKORDB_ARGS="MAX_QUEUED_QUERIES 25 TIMEOUT 1000 RESULTSET_SIZE 10000" \
+    LLVM_PROFILE_FILE=/var/lib/falkordb/cov/profraw_%p_%m.profraw
+
+EXPOSE 6379/tcp
+ENTRYPOINT ["/var/lib/falkordb/bin/run.sh"]

@@ -1,5 +1,0 @@
-% version of SuiteSparse:GraphBLAS
-\date{VERSION
-@GraphBLAS_VER_MAJOR@.@GraphBLAS_VER_MINOR@.@GraphBLAS_VER_SUB@,
-@GraphBLAS_VER_DATE@}
-

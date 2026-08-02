@@ -1,0 +1,91 @@
+//! Batch-mode label-and-ID scan operator — retrieves nodes by label filtered by ID range.
+//!
+//! Combines a label scan with an ID range constraint from the optimizer.
+//! For each active row in each input batch, evaluates the ID filter to
+//! determine the candidate range, scans nodes with the given label starting
+//! from the minimum candidate ID, and yields those whose ID falls within
+//! the evaluated filter range.
+
+use std::sync::Arc;
+
+use crate::graph::graph::NodeId;
+use crate::parser::ast::{ExprIR, QueryExpr, QueryNode, Variable};
+use crate::planner::IR;
+use crate::runtime::{
+    batch::{Batch, BatchOp, BatchRow},
+    runtime::Runtime,
+};
+use orx_tree::{Dyn, NodeIdx};
+
+use super::batched_result_emitter::{BatchedResultEmitter, RowIter};
+
+pub struct NodeByLabelAndIdScanOp<'a> {
+    pub(crate) runtime: &'a Runtime<'a>,
+    pub(crate) child: Box<BatchOp<'a>>,
+    /// Holds the parent batch being expanded and the per-row id iterators, and
+    /// performs the shared pack-and-gather emit.
+    pub(crate) emitter: BatchedResultEmitter<'a, NodeId>,
+    node_pattern: &'a QueryNode<Arc<String>, Variable>,
+    filter: &'a Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
+    pub(crate) idx: NodeIdx<Dyn<IR>>,
+}
+
+impl<'a> NodeByLabelAndIdScanOp<'a> {
+    pub const fn new(
+        runtime: &'a Runtime<'a>,
+        child: Box<BatchOp<'a>>,
+        node_pattern: &'a QueryNode<Arc<String>, Variable>,
+        filter: &'a Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
+        idx: NodeIdx<Dyn<IR>>,
+    ) -> Self {
+        Self {
+            runtime,
+            child,
+            emitter: BatchedResultEmitter::new(node_pattern.alias.id),
+            node_pattern,
+            filter,
+            idx,
+        }
+    }
+}
+
+impl<'a> Iterator for NodeByLabelAndIdScanOp<'a> {
+    type Item = Result<Batch<'a>, String>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            // For each active parent row, evaluate the id filter to a candidate
+            // range and queue a label scan from the range minimum, folding the
+            // `id <= max` cutoff and `range.contains` membership into the
+            // iterator so the shared emit stays generic. Iterators are built
+            // lazily, one row at a time. When the batch is exhausted (`Ok(None)`),
+            // pull and seed the next child batch.
+            match self.emitter.emit_lazy(|b, row| {
+                let view = BatchRow::new(b, row);
+                let Some(range) = self.runtime.evaluate_id_filter(self.filter, &view)? else {
+                    return Ok(None);
+                };
+                let Some(min) = range.min() else {
+                    return Ok(None);
+                };
+                let max = range.max().expect("range has a min, so it has a max");
+                let iter = self
+                    .runtime
+                    .g
+                    .borrow()
+                    .get_nodes(&self.node_pattern.labels, min)
+                    .take_while(move |nid| u64::from(*nid) <= max)
+                    .filter(move |nid| range.contains(u64::from(*nid)));
+                Ok(Some(RowIter::many(Box::new(iter))))
+            }) {
+                Ok(Some(out)) => return Some(Ok(out)),
+                Ok(None) => match self.child.next() {
+                    Some(Ok(batch)) => self.emitter.seed(batch),
+                    Some(Err(e)) => return Some(Err(e)),
+                    None => return None,
+                },
+                Err(e) => return Some(Err(e)),
+            }
+        }
+    }
+}

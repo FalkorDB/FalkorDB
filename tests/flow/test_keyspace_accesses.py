@@ -1,7 +1,6 @@
 from common import *
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../..')
-from demo import QueryInfo
+from tests.flow.query_info import QueryInfo
 
 GRAPH_ID = "G"
 NEW_GRAPH_ID = "G2"
@@ -36,16 +35,16 @@ class testKeyspaceAccesses(FlowTestsBase):
             query = """MATCH (n) RETURN noneExistingFunc(n.age) AS cast"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
-            assert("WRONGTYPE" in str(e))
+            self.env.assertContains("Existing key has wrong Redis type", str(e))
             pass
 
         try:
             self.redis_con.execute_command("GRAPH.DELETE", "integer_key")
             assert(False)
-        except redis.exceptions.ResponseError as e:
-            self.env.assertIn("Invalid graph operation on empty key", str(e))
+        except redis.ResponseError as e:
+            self.env.assertContains("Existing key has wrong Redis type", str(e))
 
     # Fail gracefully on attempting a graph deletion of an empty key.
     def test02_graph_delete_on_empty_key(self):
@@ -53,7 +52,7 @@ class testKeyspaceAccesses(FlowTestsBase):
         try:
             self.graph.delete()
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("empty key" in str(e))
             pass

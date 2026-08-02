@@ -1,11 +1,8 @@
 behave
-click
-docker
-falkordb==1.2.2
+falkordb
 falkordb-bulk-loader
-grammarinator
-wheel
-rmtest
-psutil
-python-dateutil
-RLTest==0.7.20
+hypothesis
+pytest
+textual
+textual-dev
+RLTest>=0.7.25

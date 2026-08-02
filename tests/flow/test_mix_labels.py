@@ -36,44 +36,44 @@ class testGraphMixLabelsFlow(FlowTestsBase):
     def test_male_to_all(self):
         query = """MATCH (m:male)-[:knows]->(t) RETURN m,t ORDER BY m.name"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(len(actual_result.result_set), (len(male) * (len(male + female)-1)))
+        self.env.assertEqual(len(actual_result.result_set), (len(male) * (len(male + female)-1)))
     
     def test_male_to_male(self):
         query = """MATCH (m:male)-[:knows]->(t:male) RETURN m,t ORDER BY m.name"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(len(actual_result.result_set), (len(male) * (len(male)-1)))
+        self.env.assertEqual(len(actual_result.result_set), (len(male) * (len(male)-1)))
     
     def test_male_to_female(self):
         query = """MATCH (m:male)-[:knows]->(t:female) RETURN m,t ORDER BY m.name"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(len(actual_result.result_set), (len(male) * len(female)))
+        self.env.assertEqual(len(actual_result.result_set), (len(male) * len(female)))
     
     def test_female_to_all(self):
         query = """MATCH (f:female)-[:knows]->(t) RETURN f,t ORDER BY f.name"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(len(actual_result.result_set), (len(female) * (len(male + female)-1)))
+        self.env.assertEqual(len(actual_result.result_set), (len(female) * (len(male + female)-1)))
 
     def test_female_to_male(self):
         query = """MATCH (f:female)-[:knows]->(t:male) RETURN f,t ORDER BY f.name"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(len(actual_result.result_set), (len(female) * len(male)))
+        self.env.assertEqual(len(actual_result.result_set), (len(female) * len(male)))
     
     def test_female_to_female(self):
         query = """MATCH (f:female)-[:knows]->(t:female) RETURN f,t ORDER BY f.name"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(len(actual_result.result_set), (len(female) * (len(female)-1)))
+        self.env.assertEqual(len(actual_result.result_set), (len(female) * (len(female)-1)))
     
     def test_all_to_female(self):
         query = """MATCH (f)-[:knows]->(t:female) RETURN f,t ORDER BY f.name"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(len(actual_result.result_set), (len(male) * len(female)) + (len(female) * (len(female)-1)))
+        self.env.assertEqual(len(actual_result.result_set), (len(male) * len(female)) + (len(female) * (len(female)-1)))
 
     def test_all_to_male(self):
         query = """MATCH (f)-[:knows]->(t:male) RETURN f,t ORDER BY f.name"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(len(actual_result.result_set), (len(male) * (len(male)-1)) + len(female) * len(male))
+        self.env.assertEqual(len(actual_result.result_set), (len(male) * (len(male)-1)) + len(female) * len(male))
     
     def test_all_to_all(self):
         query = """MATCH (f)-[:knows]->(t) RETURN f,t ORDER BY f.name"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(len(actual_result.result_set), (len(male+female) * (len(male+female)-1)))
+        self.env.assertEqual(len(actual_result.result_set), (len(male+female) * (len(male+female)-1)))

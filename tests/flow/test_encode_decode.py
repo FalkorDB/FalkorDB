@@ -13,11 +13,11 @@ GRAPH_ID = "encode_decode"
 
 
 def compare_nodes_result_set(env, result_set_a, result_set_b):
-    env.assertEquals(len(result_set_a), len(result_set_b))
+    env.assertEqual(len(result_set_a), len(result_set_b))
     for i in range(0, len(result_set_a)):
-        env.assertEquals(result_set_a[i][0].id, result_set_b[i][0].id)
-        env.assertEquals(set(result_set_a[i][0].labels), set(result_set_b[i][0].labels))
-        env.assertEquals(result_set_a[i][0].properties, result_set_b[i][0].properties)
+        env.assertEqual(result_set_a[i][0].id, result_set_b[i][0].id)
+        env.assertEqual(set(result_set_a[i][0].labels), set(result_set_b[i][0].labels))
+        env.assertEqual(result_set_a[i][0].properties, result_set_b[i][0].properties)
 
 
 class test_encode_decode(FlowTestsBase):
@@ -47,7 +47,7 @@ class test_encode_decode(FlowTestsBase):
         # Save RDB & Load from RDB
         self.redis_con.execute_command("DEBUG", "RELOAD")
         actual = self.graph.query(query)
-        self.env.assertEquals(expected.result_set, actual.result_set)
+        self.env.assertEqual(expected.result_set, actual.result_set)
 
     def test_02_no_compaction_on_nodes_delete(self):
         # Create 20 nodes meta keys
@@ -65,14 +65,14 @@ class test_encode_decode(FlowTestsBase):
 
         actual = self.graph.query(query)
         # Validate no compaction, all IDs are the same
-        self.env.assertEquals(
+        self.env.assertEqual(
             expected_nodes_id_after_delete.result_set, actual.result_set
         )
 
         # Validate reuse of node ids - create 3 nodes.
         self.graph.query("UNWIND range (0, 2) as i CREATE (:Node)")
         actual = self.graph.query(query)
-        self.env.assertEquals(
+        self.env.assertEqual(
             expected_full_graph_nodes_id.result_set, actual.result_set
         )
 
@@ -85,7 +85,7 @@ class test_encode_decode(FlowTestsBase):
         # Save RDB & Load from RDB
         self.redis_con.execute_command("DEBUG", "RELOAD")
         actual = self.graph.query(query)
-        self.env.assertEquals(expected.result_set, actual.result_set)
+        self.env.assertEqual(expected.result_set, actual.result_set)
 
     def test_04_no_compaction_on_edges_delete(self):
         # Create 3 nodes meta keys
@@ -104,13 +104,13 @@ class test_encode_decode(FlowTestsBase):
         self.redis_con.execute_command("DEBUG", "RELOAD")
         actual = self.graph.query(query)
         # Validate no compaction, all IDs are the same
-        self.env.assertEquals(
+        self.env.assertEqual(
             expected_nodes_id_after_delete.result_set, actual.result_set
         )
         # Validate reuse of edges ids - create 3 edges.
         self.graph.query("UNWIND range (0,2) as i CREATE (:Src)-[:R]->(:Dest)")
         actual = self.graph.query(query)
-        self.env.assertEquals(
+        self.env.assertEqual(
             expected_full_graph_nodes_id.result_set, actual.result_set
         )
 
@@ -125,7 +125,7 @@ class test_encode_decode(FlowTestsBase):
         # Save RDB & Load from RDB
         self.redis_con.execute_command("DEBUG", "RELOAD")
         actual = self.graph.query(query)
-        self.env.assertEquals(expected.result_set, actual.result_set)
+        self.env.assertEqual(expected.result_set, actual.result_set)
 
     def test_06_no_compaction_on_multiple_edges_delete(self):
         # Create 3 nodes meta keys
@@ -146,7 +146,7 @@ class test_encode_decode(FlowTestsBase):
         self.redis_con.execute_command("DEBUG", "RELOAD")
         actual = self.graph.query(query)
         # Validate no compaction, all IDs are the same
-        self.env.assertEquals(
+        self.env.assertEqual(
             expected_nodes_id_after_delete.result_set, actual.result_set
         )
         # Validate reuse of edges ids - create 3 edges.
@@ -154,7 +154,7 @@ class test_encode_decode(FlowTestsBase):
             "MATCH (n1:Src {val:1}), (n2:Dest {val:2}) WITH n1, n2 UNWIND range (0,2) as i CREATE (n1)-[:R]->(n2)"
         )
         actual = self.graph.query(query)
-        self.env.assertEquals(
+        self.env.assertEqual(
             expected_full_graph_nodes_id.result_set, actual.result_set
         )
 
@@ -162,12 +162,12 @@ class test_encode_decode(FlowTestsBase):
         create_node_range_index(self.graph, "N", "val", sync=True)
         # Verify indices exists.
         plan = str(self.graph.explain("MATCH (n:N {val:1}) RETURN n"))
-        self.env.assertIn("Index Scan", plan)
+        self.env.assertContains("Index Scan", plan)
         # Save RDB & Load from RDB
         self.redis_con.execute_command("DEBUG", "RELOAD")
         # Verify indices exists after loading RDB.
         plan = str(self.graph.explain("MATCH (n:N {val:1}) RETURN n"))
-        self.env.assertIn("Index Scan", plan)
+        self.env.assertContains("Index Scan", plan)
 
     def test_08_multiple_graphs_with_index(self):
         # Create a multi-key graph.
@@ -188,10 +188,10 @@ class test_encode_decode(FlowTestsBase):
         # The load should be successful and the index should still be built.
         query = "MATCH (n:L {v:1}) RETURN n.v"
         plan = str(self.graph.explain(query))
-        self.env.assertIn("Index Scan", plan)
+        self.env.assertContains("Index Scan", plan)
         expected = [[1]]
         actual = self.graph.query(query)
-        self.env.assertEquals(actual.result_set, expected)
+        self.env.assertEqual(actual.result_set, expected)
 
     def test_09_multiple_reltypes(self):
         # Create 10 nodes
@@ -209,41 +209,46 @@ class test_encode_decode(FlowTestsBase):
         self.redis_con.execute_command("DEBUG", "RELOAD")
 
         actual = self.graph.query(query)
-        self.env.assertEquals(expected.result_set, actual.result_set)
+        self.env.assertEqual(expected.result_set, actual.result_set)
 
     # test changes to the VKEY_MAX_ENTITY_COUNT configuration are reflected in
     # the number of virtual keys created
     def test_10_vkey_max_entity_count(self):
-        logfilename = self.env.envRunner._getFileName("master", ".log")
-        logfile = open(f"{self.env.logDir}/{logfilename}")
-        log = logfile.read()
+        # env.log_path is redis's --logfile output, bind-mounted from the
+        # spawned container under CI or written directly by RLTest in local
+        # dev. Same attribute, same file-handle semantics, no per-mode branch.
+        with open(self.env.log_path) as logfile:
+            # advance past startup logs; the regex below only matches save events
+            logfile.read()
 
-        # Set configuration
-        response = self.db.config_set("VKEY_MAX_ENTITY_COUNT", 10)
-        self.env.assertEqual(response, "OK")
+            # Set configuration
+            response = self.db.config_set("VKEY_MAX_ENTITY_COUNT", 10)
+            self.env.assertEqual(response, "OK")
 
-        # Create 30 nodes
-        self.graph.query("UNWIND range(0, 30) as v CREATE (:L {v: v})")
+            # Create 30 nodes
+            self.graph.query("UNWIND range(0, 30) as v CREATE (:L {v: v})")
 
-        # Save RDB & Load from RDB
-        self.redis_con.save()
+            # Save RDB & Load from RDB
+            self.redis_con.save()
 
-        # Set configuration
-        response = self.db.config_set("VKEY_MAX_ENTITY_COUNT", 5)
-        self.env.assertEqual(response, "OK")
+            # Set configuration
+            response = self.db.config_set("VKEY_MAX_ENTITY_COUNT", 5)
+            self.env.assertEqual(response, "OK")
 
-        # Save RDB & Load from RDB
-        self.redis_con.save()
+            # Save RDB & Load from RDB
+            self.redis_con.save()
 
-        #log = logfile.read()
+            log = logfile.read()
 
-        #matches = re.findall(f"Created (.) virtual keys for graph {GRAPH_ID}", log)
+            matches = re.findall(
+                f"Created (.) virtual keys for graph {GRAPH_ID}", log)
 
-        #self.env.assertEqual(matches, ["3", "6"])
+            self.env.assertEqual(matches, ["3", "6"])
 
-        #matches = re.findall(f"Deleted (.) virtual keys for graph {GRAPH_ID}", log)
+            matches = re.findall(
+                f"Deleted (.) virtual keys for graph {GRAPH_ID}", log)
 
-        #self.env.assertEqual(matches, ["3", "6"])
+            self.env.assertEqual(matches, ["3", "6"])
 
     def test_11_decode_single_edge_relation_with_deleted_nodes(self):
         # Set configuration
@@ -269,7 +274,7 @@ class test_encode_decode(FlowTestsBase):
         res_after = self.graph.query(
             "MATCH (n:L)-[r:R]->(m:M) RETURN id(n), id(r), id(m)"
         )
-        self.env.assertEquals(res_before.result_set, res_after.result_set)
+        self.env.assertEqual(res_before.result_set, res_after.result_set)
 
     def test_12_decode_multi_edge_relation_with_deleted_nodes(self):
         # Set configuration
@@ -295,7 +300,7 @@ class test_encode_decode(FlowTestsBase):
         res_after = self.graph.query(
             "MATCH (n:L)-[r:R]->(m:M) RETURN id(n), id(r), id(m)"
         )
-        self.env.assertEquals(res_before.result_set, res_after.result_set)
+        self.env.assertEqual(res_before.result_set, res_after.result_set)
 
     def test_14_large_label_matrix_encode_decode(self):
         # Regression test for standalone blob boundary bug.
@@ -314,7 +319,7 @@ class test_encode_decode(FlowTestsBase):
         self.redis_con.execute_command("DEBUG", "RELOAD")
 
         actual = self.graph.query("MATCH (n:foo) RETURN count(n)")
-        self.env.assertEquals(expected.result_set, actual.result_set)
+        self.env.assertEqual(expected.result_set, actual.result_set)
 
     def test_13_random_graph(self):
         nodes, edges = create_random_schema()
@@ -331,7 +336,7 @@ class test_encode_decode(FlowTestsBase):
         compare_nodes_result_set(
             self.env, nodes_before.result_set, nodes_after.result_set
         )
-        self.env.assertEquals(edges_before.result_set, edges_after.result_set)
+        self.env.assertEqual(edges_before.result_set, edges_after.result_set)
 
         res = run_random_graph_ops(self.graph, nodes, edges, ALL_OPS)
 
@@ -346,7 +351,7 @@ class test_encode_decode(FlowTestsBase):
         compare_nodes_result_set(
             self.env, nodes_before.result_set, nodes_after.result_set
         )
-        self.env.assertEquals(edges_before.result_set, edges_after.result_set)
+        self.env.assertEqual(edges_before.result_set, edges_after.result_set)
 
     def test_15_varied_label_sizes(self):
         # verify that a graph with multiple labels of different sizes
@@ -374,9 +379,9 @@ class test_encode_decode(FlowTestsBase):
 
         for label in sizes:
             actual = self.graph.query(f"MATCH (n:{label}) RETURN count(n)")
-            self.env.assertEquals(expected[label].result_set, actual.result_set)
+            self.env.assertEqual(expected[label].result_set, actual.result_set)
         actual_edges = self.graph.query("MATCH ()-[e:R]->() RETURN count(e)")
-        self.env.assertEquals(expected_edges.result_set, actual_edges.result_set)
+        self.env.assertEqual(expected_edges.result_set, actual_edges.result_set)
 
     def test_16_deletions_across_labels(self):
         # verify that deleted entities across multiple labels and their
@@ -401,9 +406,9 @@ class test_encode_decode(FlowTestsBase):
         actual_a = self.graph.query("MATCH (n:A) RETURN count(n)")
         actual_b = self.graph.query("MATCH (n:B) RETURN count(n)")
         actual_e = self.graph.query("MATCH ()-[e:E]->() RETURN count(e)")
-        self.env.assertEquals(expected_a.result_set, actual_a.result_set)
-        self.env.assertEquals(expected_b.result_set, actual_b.result_set)
-        self.env.assertEquals(expected_e.result_set, actual_e.result_set)
+        self.env.assertEqual(expected_a.result_set, actual_a.result_set)
+        self.env.assertEqual(expected_b.result_set, actual_b.result_set)
+        self.env.assertEqual(expected_e.result_set, actual_e.result_set)
 
     def test_17_large_string_properties(self):
         # verify that nodes with large string properties survive
@@ -426,4 +431,4 @@ class test_encode_decode(FlowTestsBase):
         actual = self.graph.query(
             "MATCH (n:Str) RETURN n.id, size(n.val) ORDER BY n.id"
         )
-        self.env.assertEquals(expected.result_set, actual.result_set)
+        self.env.assertEqual(expected.result_set, actual.result_set)

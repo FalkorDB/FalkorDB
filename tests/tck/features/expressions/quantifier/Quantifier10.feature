@@ -30,7 +30,6 @@
 
 Feature: Quantifier10 - Single quantifier invariants
 
-  @skip
   Scenario: [1] Single quantifier is always false if the predicate is statically false and the list is not empty
     Given any graph
     When executing query:
@@ -54,7 +53,6 @@ Feature: Quantifier10 - Single quantifier invariants
       | false  |
     And no side effects
 
-  @skip
   Scenario: [2] Single quantifier is always false if the predicate is statically true and the list has more than one element
     Given any graph
     When executing query:

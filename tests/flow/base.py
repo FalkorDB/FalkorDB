@@ -22,7 +22,7 @@ class FlowTestsBase(object):
 
         # Assert actual values vs expected values.
         for res in query_info.expected_result:
-            self.env.assertIn(res, actual_result_set)
+            self.env.assertContains(res, actual_result_set)
 
     def _assert_actual_results_contained_in_expected_results(self,
                                                              actual_result,
@@ -51,11 +51,11 @@ class FlowTestsBase(object):
 
         # Assert actual values vs expected values.
         for res in query_info.expected_result:
-            self.env.assertIn(res, actual_result_set)
+            self.env.assertContains(res, actual_result_set)
         
         # Assert expected values vs actual values.
         for res in actual_result_set:
-            self.env.assertIn(res, query_info.expected_result)
+            self.env.assertContains(res, query_info.expected_result)
 
     def _assert_resultset_equals_expected(self, actual_result, query_info):
         actual_result_set = actual_result.result_set or []
@@ -67,4 +67,4 @@ class FlowTestsBase(object):
             graph.query(query)
             self.env.assertTrue(False)
         except Exception as e:
-            self.env.assertIn(expected_err_msg, str(e))
+            self.env.assertContains(expected_err_msg, str(e))

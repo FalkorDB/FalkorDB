@@ -1,0 +1,249 @@
+# Reusable workflow: run the flow-test matrix for ONE flavour.
+#
+# Why reusable: GHA caps a single workflow run's matrix at 256 cells.
+# `97 services-bucket files × multiple flavours × multiple archs` blows past
+# that limit, and GHA silently drops the over-budget matrix. By calling this
+# workflow once per flavour from rust-pr.yml, each call gets its own 256-cell
+# budget — so adding a new flavour (tsan/ubsan/msan) is one more `uses:`
+# block in the caller, no matrix-budget juggling needed.
+#
+# Adds a flavour by:
+#   1. Build a Dockerfile.<flavour> and a corresponding build-rc-<flavour>-image
+#      job in rust-pr.yml.
+#   2. Add a `flow-<flavour>:` block in rust-pr.yml that `uses:` this workflow
+#      with the matching `flavour:` / `image:` / `archs:` / `sanitizer_env:` /
+#      `collect_coverage:` inputs.
+
+name: Flow tests (flavour)
+
+on:
+  workflow_call:
+    inputs:
+      flavour:
+        description: "Flavour label used in cell names (release / a-sanitizer / coverage / t-sanitizer / ...)"
+        required: true
+        type: string
+      image:
+        description: "Full image ref for the falkordb service+replica containers (e.g. ghcr.io/falkordb/falkordb-server:rc-pr-42)"
+        required: true
+        type: string
+      archs:
+        description: "JSON array of architectures (e.g. '[\"amd64\",\"arm64\"]' or '[\"amd64\"]')"
+        required: true
+        type: string
+      services_files:
+        description: "JSON array of test files for the services-bucket matrix (output of flow-test-matrix)"
+        required: true
+        type: string
+      spawn_files:
+        description: "JSON array of test files for the spawn-bucket matrix"
+        required: true
+        type: string
+      build_image:
+        description: "Toolchain image used as the job container (cargo + pytest + clang)"
+        required: true
+        type: string
+      pr_number:
+        description: "PR number — used for log-artifact naming + coverage image lookup"
+        required: true
+        type: string
+      sanitizer_env:
+        description: "Value for the SANITIZER env var (set to 'address' for a-sanitizer; empty otherwise)"
+        required: false
+        type: string
+        default: ""
+      collect_coverage:
+        description: "Gates the profraw collection + codecov upload steps. Only true for the coverage flavour."
+        required: false
+        type: boolean
+        default: false
+      include_spawn:
+        description: "Run the spawn-bucket matrix too. Coverage sets this false until spawn-mode bind-mount lands in common.py."
+        required: false
+        type: boolean
+        default: true
+jobs:
+  # Services-bucket flow tests for this flavour. Cells matrix on
+  # test_file × arch; the flavour is fixed by the caller. The image at
+  # `inputs.image` must already exist — the caller is responsible for
+  # building it via _build-flavour.yml in rust-pr.yml.
+  services:
+    name: ${{ inputs.flavour }}-flow-svc ${{ matrix.test_file }} (${{ matrix.arch }})
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    container:
+      image: ${{ inputs.build_image }}
+      options: --volume /var/run/docker.sock:/var/run/docker.sock
+    permissions:
+      contents: read
+      packages: read
+    services:
+      falkordb:
+        image: ${{ inputs.image }}
+        credentials:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+        # Bind-mount the host cov/ dir so coverage cells can collect the
+        # profraw files the instrumented .so writes to /var/lib/falkordb/cov
+        # (via LLVM_PROFILE_FILE in Dockerfile.coverage). Harmless for non-
+        # coverage cells — only the coverage image emits profraw.
+        volumes:
+          - ${{ github.workspace }}/cov:/var/lib/falkordb/cov
+        env:
+          # Empty FALKORDB_ARGS overrides the image's compiled-in default
+          # (MAX_QUEUED_QUERIES 25 ...) so the service starts with the
+          # module's true zero-config defaults; tests that need specific
+          # config bring it via GRAPH.CONFIG SET.
+          FALKORDB_ARGS: ""
+          REDIS_ARGS: "--enable-debug-command yes"
+      replica:
+        image: ${{ inputs.image }}
+        credentials:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+        volumes:
+          - ${{ github.workspace }}/cov:/var/lib/falkordb/cov
+        env:
+          FALKORDB_ARGS: ""
+          REDIS_ARGS: "--replicaof falkordb 6379 --enable-debug-command yes"
+    env:
+      FALKORDB_TEST_IMAGE: ${{ inputs.image }}
+      FALKORDB_USE_SERVICE: "1"
+      FALKORDB_HOST: falkordb
+      FALKORDB_PORT: "6379"
+      FALKORDB_REPLICA_HOST: replica
+      FALKORDB_REPLICA_PORT: "6379"
+      SANITIZER: ${{ inputs.sanitizer_env }}
+      # Mirrors the spawn-cell env below so tests/flow/common.py can detect
+      # the coverage flavour (CODE_COVERAGE='1') and apply the longer
+      # socket / BGSAVE polling budgets needed under instrumentation.
+      CODE_COVERAGE: ${{ inputs.collect_coverage && '1' || '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        test_file: ${{ fromJson(inputs.services_files) }}
+        arch: ${{ fromJson(inputs.archs) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Pre-create cov dir (coverage flavour only)
+        if: inputs.collect_coverage
+        run: mkdir -p "${GITHUB_WORKSPACE}/cov" && chmod 0777 "${GITHUB_WORKSPACE}/cov"
+      - name: Run Flow test - ${{ matrix.test_file }} (${{ inputs.flavour }}, ${{ matrix.arch }})
+        env:
+          TEST_FILE: ${{ matrix.test_file }}
+        run: |
+          . /data/venv/bin/activate
+          TEST="$TEST_FILE" FAIL_FAST=1 RELEASE=1 ./flow.sh
+      - name: Collect coverage (profraw → lcov)
+        if: ${{ !cancelled() && inputs.collect_coverage }}
+        env:
+          COV_IMAGE: ${{ inputs.image }}
+        run: |
+          set -euo pipefail
+          CID=$(docker create "$COV_IMAGE")
+          docker cp "${CID}:/var/lib/falkordb/bin/falkordb.so" ./libfalkordb-coverage.so
+          docker rm "$CID" >/dev/null
+          PROFRAW=$(find "${GITHUB_WORKSPACE}/cov" -name "*.profraw" 2>/dev/null || true)
+          if [ -z "$PROFRAW" ]; then
+            echo "::warning::no profraw files produced — skipping coverage export"
+            exit 0
+          fi
+          llvm-profdata-22 merge --sparse $PROFRAW -o cov.profdata
+          llvm-cov-22 export --format=lcov --instr-profile cov.profdata ./libfalkordb-coverage.so > codecov.txt.all
+          lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
+      - name: Upload coverage to Codecov
+        if: ${{ !cancelled() && inputs.collect_coverage }}
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+      - name: Capture service container logs on failure
+        if: failure()
+        run: |
+          mkdir -p tests/flow/logs
+          for cid in $(docker ps -aq); do
+            name=$(docker inspect -f '{{.Name}}' "$cid" 2>/dev/null | sed 's|^/||')
+            docker logs "$cid" > "tests/flow/logs/service-${name:-$cid}.log" 2>&1 || true
+          done
+      - name: Upload flow logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ inputs.flavour }}-flow-svc-logs-${{ strategy.job-index }}
+          path: tests/flow/logs/
+          if-no-files-found: ignore
+
+  # Spawn-bucket flow tests. Cells matrix on test_file × arch.
+  # Disabled when the caller passes include_spawn=false (coverage, until
+  # spawn-mode profraw bind-mount lands in tests/flow/common.py).
+  spawn:
+    if: ${{ inputs.include_spawn }}
+    name: ${{ inputs.flavour }}-flow ${{ matrix.test_file }} (${{ matrix.arch }})
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    container:
+      image: ${{ inputs.build_image }}
+      options: --volume /var/run/docker.sock:/var/run/docker.sock
+    permissions:
+      contents: read
+      packages: read
+    env:
+      FALKORDB_TEST_IMAGE: ${{ inputs.image }}
+      SANITIZER: ${{ inputs.sanitizer_env }}
+      # Signals common.py:_coverage_mount_args() to bind-mount a per-spawn
+      # subdir of ${GITHUB_WORKSPACE}/cov into each spawned falkordb container
+      # so the coverage image's LLVM_PROFILE_FILE writes profraws onto the
+      # host runner. Empty string for non-coverage flavours = no mount.
+      CODE_COVERAGE: ${{ inputs.collect_coverage && '1' || '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        test_file: ${{ fromJson(inputs.spawn_files) }}
+        arch: ${{ fromJson(inputs.archs) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Pre-create cov dir (coverage flavour only)
+        if: inputs.collect_coverage
+        run: mkdir -p "${GITHUB_WORKSPACE}/cov" && chmod 0777 "${GITHUB_WORKSPACE}/cov"
+      - name: Login to GHCR (for in-container docker pull)
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pre-pull RC image
+        env:
+          IMAGE: ${{ inputs.image }}
+        run: docker pull "$IMAGE"
+      - name: Run Flow test - ${{ matrix.test_file }} (${{ inputs.flavour }}, ${{ matrix.arch }})
+        env:
+          TEST_FILE: ${{ matrix.test_file }}
+        run: |
+          . /data/venv/bin/activate
+          TEST="$TEST_FILE" FAIL_FAST=1 RELEASE=1 ./flow.sh
+      - name: Collect coverage (profraw → lcov)
+        if: ${{ !cancelled() && inputs.collect_coverage }}
+        env:
+          COV_IMAGE: ${{ inputs.image }}
+        run: |
+          set -euo pipefail
+          CID=$(docker create "$COV_IMAGE")
+          docker cp "${CID}:/var/lib/falkordb/bin/falkordb.so" ./libfalkordb-coverage.so
+          docker rm "$CID" >/dev/null
+          PROFRAW=$(find "${GITHUB_WORKSPACE}/cov" -name "*.profraw" 2>/dev/null || true)
+          if [ -z "$PROFRAW" ]; then
+            echo "::warning::no profraw files produced — skipping coverage export"
+            exit 0
+          fi
+          llvm-profdata-22 merge --sparse $PROFRAW -o cov.profdata
+          llvm-cov-22 export --format=lcov --instr-profile cov.profdata ./libfalkordb-coverage.so > codecov.txt.all
+          lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
+      - name: Upload coverage to Codecov
+        if: ${{ !cancelled() && inputs.collect_coverage }}
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+      - name: Upload flow logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ inputs.flavour }}-flow-spawn-logs-${{ strategy.job-index }}
+          path: tests/flow/logs/
+          if-no-files-found: ignore

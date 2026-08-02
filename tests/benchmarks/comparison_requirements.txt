@@ -1,2 +1,0 @@
-mdformat
-mdformat-gfm

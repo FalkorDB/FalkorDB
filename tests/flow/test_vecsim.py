@@ -104,7 +104,7 @@ class testVecsim():
         result = query_node_vector_index(self.graph, "Person", "embeddings", k,
                                          [x,y]).result_set
 
-        assert len(result) == 3
+        self.env.assertEqual(len(result), 3)
         for row in result:
             embeddings = row[0].properties['embeddings']
             self.env.assertLess(abs(embeddings[0] - x), k)
@@ -117,7 +117,7 @@ class testVecsim():
         result = query_edge_vector_index(self.graph, "Points", "embeddings", k,
                                          [x,y]).result_set
 
-        assert len(result) == 3
+        self.env.assertEqual(len(result), 3)
         for row in result:
             embeddings = row[0].properties['embeddings']
             self.env.assertLess(abs(embeddings[0] - x), k)
@@ -228,12 +228,10 @@ class testVecsim():
         #
         # Every property write re-indexes the node as a RediSearch REPLACE, which
         # allocates a new docId and appends a new vector while the previous vector
-        # must be removed from the HNSW graph. That removal only runs when the spec
-        # flag Index_HasVecSim is set; it was never set for indexes created through
-        # the low-level C API, so the old vector was never deleted. Stale vectors
-        # accumulated as orphans (docIds no longer resolving to a document) and
-        # shadowed the live entry, so the node became unfindable at small k - e.g.
-        # k=1 returned nothing after any update to the node.
+        # must be removed from the HNSW graph. If the stale vector is not removed
+        # it lingers as an orphan (a docId that no longer resolves) and shadows
+        # the live entry, making the node unfindable at small k - e.g. k=1
+        # returns nothing after any update to the node.
         g = Graph(self.conn, "vecsim_reindex")
 
         v = [42.0, 42.0]

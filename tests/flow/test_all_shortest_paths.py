@@ -71,8 +71,8 @@ class testAllShortestPaths():
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
-            self.env.assertIn("Source and destination must already be resolved to call allShortestPaths", str(e))
+        except redis.ResponseError as e:
+            self.env.assertContains("Source and destination must already be resolved to call allShortestPaths", str(e))
 
         # Test non-node endpoint
         query = """MATCH (v1 {v: 1}) WITH v1, 'stringval' AS v4
@@ -81,8 +81,8 @@ class testAllShortestPaths():
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
-            self.env.assertIn("encountered unexpected type in Record; expected Node", str(e))
+        except redis.ResponseError as e:
+            self.env.assertContains("encountered unexpected type in Record; expected Node", str(e))
 
         # Test NULL endpoint
         query = """MATCH (v1 {v: 1}) OPTIONAL MATCH (v9 {v: v9}) WITH v1, v9 MATCH p = allShortestPaths((v1)-[*]->(v9)) RETURN p"""
@@ -99,8 +99,8 @@ class testAllShortestPaths():
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
-            self.env.assertIn("allShortestPaths(...) does not support a minimal length different from 1", str(e))
+        except redis.ResponseError as e:
+            self.env.assertContains("allShortestPaths(...) does not support a minimal length different from 1", str(e))
 
         # Test unsupported in return
         query = """MATCH (a),(b)
@@ -109,8 +109,8 @@ class testAllShortestPaths():
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
-            self.env.assertIn("FalkorDB support allShortestPaths only in match clauses", str(e))
+        except redis.ResponseError as e:
+            self.env.assertContains("FalkorDB support allShortestPaths only in match clauses", str(e))
         
         # Test unsupported in where
         query = """MATCH (a),(b)
@@ -120,8 +120,8 @@ class testAllShortestPaths():
         try:
             self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
-            self.env.assertIn("FalkorDB support allShortestPaths only in match clauses", str(e))
+        except redis.ResponseError as e:
+            self.env.assertContains("FalkorDB support allShortestPaths only in match clauses", str(e))
 
     def test02_all_shortest_paths(self):
         # running against following graph

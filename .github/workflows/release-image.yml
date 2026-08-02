@@ -1,489 +1,290 @@
-name: Release image to DockerHub
+name: Release image
 
 on:
+  # `release:` is REF-scoped, not default-branch-scoped: GitHub reads the
+  # workflow from the tagged ref's own tree. Verified on this repo — the
+  # release-event run for v4.20.1 has head_sha identical to branch 4.20 and
+  # diverged from master. So a C release tag carries only C's workflows and can
+  # never reach this file, and this trigger is safe to keep even after the Rust
+  # tree becomes the default branch.
+  #
+  # The primary Rust entry point is still release-tag.yml (push: tags v[6-9].*),
+  # which calls this workflow via workflow_call. This trigger covers a release
+  # created by hand for an existing tag; workflow_dispatch is the manual re-run.
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Image tag"
+        description: "Image tag (no v prefix). If it matches X.Y.Z it must equal Cargo.toml version."
         required: true
       commit_sha:
-        description: "Commit SHA"
+        description: "Commit SHA to build"
         required: true
-      run_falkordb_cloud_update:
-        description: "Trigger FalkorDB Cloud version update"
+      mark_latest:
+        description: "Also tag :latest (moves the latest pointer — use with care)"
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      tag:
+        description: "Image tag (v prefix optional), e.g. 6.0.0"
+        required: true
+        type: string
+      commit_sha:
+        description: "Tagged commit SHA"
+        required: true
+        type: string
+      mode:
+        description: "retag (reuse the validated rc-pr-<N> manifest) or rebuild (build from source)"
         required: false
-        default: "true"
-      run_testflight_workflow:
-        description: "Trigger Testflight workflow"
-        required: false
-        default: "true"
-  workflow_run:
-    workflows: ["Build"]
-    types:
-      - completed
-    branches: [master, "v[0-9]+.[0-9]+"]
-  release:
-    types: [published]
+        type: string
+        default: retag
 
-env:
-  BUILD_WORKFLOW_NAME: build.yml
-  # Get the commit SHA from the event that triggered the workflow
-  # If the event is a workflow_dispatch, use the input value
-  # If the event is a workflow_run, use the head_commit.id
-  # If the event is a release, use the sha
-  COMMIT_SHA: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.commit_sha || github.event_name == 'workflow_run' && github.event.workflow_run.head_commit.id || github.sha }}
+permissions:
+  contents: read
 
+concurrency:
+  group: release-image-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
+# Two modes:
+#   - RETAG the validated rc-pr-<N> images to semver + maybe :latest. No source
+#     rebuild — the artifact that PR CI tested is exactly what ships. Requires
+#     the rc-pr-<N> tag to still exist on GHCR (lives for the TTL window set by
+#     cleanup-rc-images.yml). Used by the release event and by workflow_call
+#     from release-tag.yml (the tag-push pipeline, primary path for >= 6.0.0 —
+#     tag-driven, so it does not depend on the DEFAULT-branch-only `release:`
+#     event).
+#   - REBUILD from source at the supplied commit (workflow_dispatch). Escape
+#     hatch when the RC was swept, when the commit never had a PR, or when an
+#     operator just wants to rebuild a specific SHA.
 jobs:
-  release:
-    # Only run this job if the workflow_run event is successful or if the event is not a workflow_run
-    if: ${{ (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') || github.event_name != 'workflow_run' }}
+  prepare:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      mode:              ${{ steps.derive.outputs.mode }}
+      tag:               ${{ steps.derive.outputs.tag }}
+      is_latest:         ${{ steps.derive.outputs.is_latest }}
+      browser_tag:       ${{ steps.derive.outputs.browser_tag }}
+      commit_sha:        ${{ steps.derive.outputs.commit_sha }}
+      rc_pr_n:           ${{ steps.derive.outputs.rc_pr_n }}
+      push_to_dockerhub: ${{ steps.derive.outputs.push_to_dockerhub }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-
-      - name: Set tag name
-        id: set_tag
+      # Refuse workflow_dispatch from anywhere except a trunk (main, or the
+      # interim main-rs in FalkorDB/FalkorDB) or a version branch (X.Y). Release
+      # events and workflow_call (from release-tag.yml) are unaffected — those
+      # are driven by a tag, which in practice only points at a trunk / version
+      # branch anyway. This guards against a dispatch from a feature branch
+      # pushing user-facing tags (latest-rs, semver) built from un-merged code.
+      - name: Reject dispatch from non-release-bearing ref
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          # If the event is a release, use the release tag name
-          if [ "${{ github.event_name }}" == "release" ]; then
-            TAG_NAME=${{ github.event.release.tag_name }}
-            echo "IS_LATEST=1" >> $GITHUB_ENV
-          fi
-
-          # If the event is a workflow_dispatch, use the input value
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            TAG_NAME=${{ github.event.inputs.tag }}
-          fi
-
-          # If the event is a workflow_run, and branch is master, set to "edge"
-          if [ "${{ github.event_name }}" == "workflow_run" ] && [ "${{ github.event.workflow_run.head_branch }}" == "master" ]; then
-            TAG_NAME="edge"
-          fi
-
-          # If the event is a workflow_run, and branch is not master, set to the branch name
-          if [ "${{ github.event_name }}" == "workflow_run" ] && [ "${{ github.event.workflow_run.head_branch }}" != "master" ]; then
-            TAG_NAME="v${{ github.event.workflow_run.head_branch }}"
-          fi
-
-          echo "TAG_NAME=${TAG_NAME}" >> $GITHUB_ENV
-
-      - name: Verify tag matches version.h
-        if: ${{ startsWith(env.TAG_NAME, 'v') && env.TAG_NAME != 'edge' }}
-        run: |
-          git fetch origin ${{ env.COMMIT_SHA }} --depth=1
-          VERSION_H=$(git show ${{ env.COMMIT_SHA }}:src/version.h)
-          MAJOR=$(echo "$VERSION_H" | grep '^#define FALKOR_VERSION_MAJOR ' | awk '{print $3}')
-          MINOR=$(echo "$VERSION_H" | grep '^#define FALKOR_VERSION_MINOR ' | awk '{print $3}')
-          PATCH=$(echo "$VERSION_H" | grep '^#define FALKOR_VERSION_PATCH ' | awk '{print $3}')
-          FILE_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
-          echo "Tag: ${{ env.TAG_NAME }}, version.h: ${FILE_VERSION}"
-          if [ "${{ env.TAG_NAME }}" != "${FILE_VERSION}" ]; then
-            echo "::error::Tag '${{ env.TAG_NAME }}' does not match version.h '${FILE_VERSION}'"
+          if [[ "$REF_NAME" != "main" && "$REF_NAME" != "main-rs" && ! "$REF_NAME" =~ ^[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::workflow_dispatch must run from a trunk (main, main-rs) or a version branch (X.Y); got ref_name=$REF_NAME"
             exit 1
           fi
 
-      - name: Retrieve built image AMD
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-x64
-          path: /tmp
-          if_no_artifact_found: error
+          # inputs.commit_sha covers workflow_dispatch AND workflow_call; on a
+          # release event it is empty and github.sha is the release commit.
+          ref: ${{ inputs.commit_sha || github.sha }}
+          persist-credentials: false
 
-      - name: Retrieve built image ARM
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-arm64v8
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built image RHEL8 AMD
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-rhel8-x64
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built image RHEL9 AMD
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-rhel9-x64
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built image Alpine AMD
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-alpine-x64
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built image Alpine ARM
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-alpine-arm64v8
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built image Alpine AMD server only
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-server-alpine-x64
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built image Alpine ARM server only
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-server-alpine-arm64v8
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built image Amazon Linux AMD
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-amazonlinux2023-x64
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built image Ubuntu AMD server only
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-server-x64
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built image Ubuntu ARM server only
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-server-arm64v8
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built .so AMD
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-x64.so
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built .so ARM
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-arm64v8.so
-          path: /tmp
-          if_no_artifact_found: error
-      - name: Retrieve built .so RHEL9 AMD
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-rhel9-x64.so
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built .so RHEL8 AMD
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-rhel8-x64.so
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built .so Alpine AMD
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-alpine-x64.so
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built .so Alpine ARM
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-alpine-arm64v8.so
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built .so Amazon Linux AMD
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-amazonlinux2023-x64.so
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built debug.so AMD
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-debug-x64.so
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built debug.so ARM
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-debug-arm64v8.so
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built debug.so RHEL9 AMD
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-debug-rhel9-x64.so
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built debug.so RHEL8 AMD
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-debug-rhel8-x64.so
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built debug.so Alpine AMD
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-debug-alpine-x64.so
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built debug.so Alpine ARM
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-debug-alpine-arm64v8.so
-          path: /tmp
-          if_no_artifact_found: error
-
-      - name: Retrieve built .so macOS ARM64
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-macos-arm64v8.so
-          path: /tmp
-          if_no_artifact_found: ignore
-
-      - name: Retrieve built debug.so macOS ARM64
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
-        with:
-          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ env.COMMIT_SHA }}
-          workflow_conclusion: success
-          name: falkordb-debug-macos-arm64v8.so
-          path: /tmp
-          if_no_artifact_found: ignore
-
-      - name: Load image
+      - name: Derive mode, tag, latest flag, commit SHA, RC PR number
+        id: derive
+        env:
+          EVENT_NAME:     ${{ github.event_name }}
+          GH_SHA:         ${{ github.sha }}
+          REPO:           ${{ github.repository }}
+          RELEASE_TAG:    ${{ github.event.release.tag_name }}
+          INPUT_TAG:      ${{ inputs.tag }}
+          INPUT_LATEST:   ${{ inputs.mark_latest }}
+          INPUT_COMMIT:   ${{ inputs.commit_sha }}
+          INPUT_MODE:     ${{ inputs.mode }}
+          GH_TOKEN:       ${{ secrets.GITHUB_TOKEN }}
         run: |
-          docker load -i /tmp/falkordb-x64.tar
-          docker load -i /tmp/falkordb-arm64v8.tar
-          docker load -i /tmp/falkordb-rhel9-x64.tar
-          docker load -i /tmp/falkordb-rhel8-x64.tar
-          docker load -i /tmp/falkordb-server-alpine-x64.tar
-          docker load -i /tmp/falkordb-server-alpine-arm64v8.tar
-          docker load -i /tmp/falkordb-server-x64.tar
-          docker load -i /tmp/falkordb-server-arm64v8.tar
-          docker load -i /tmp/falkordb-alpine-x64.tar
-          docker load -i /tmp/falkordb-alpine-arm64v8.tar
-          docker load -i /tmp/falkordb-amazonlinux2023-x64.tar
+          set -euo pipefail
 
-      - name: Login to DockerHub
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
+          IS_LATEST=false
+          RC_PR_N=""
+
+          # Dispatch on the EVENT first, so the two pre-existing paths keep their
+          # exact behaviour regardless of how `inputs` defaults are surfaced.
+          # Anything that is neither `release` nor `workflow_dispatch` is a
+          # workflow_call: in a reusable workflow github.event_name is the
+          # CALLER's event ("push" for a tag push from release-tag.yml), so it can
+          # never be the literal "workflow_call".
+          case "$EVENT_NAME" in
+            release)
+              MODE="retag"
+              TAG="${RELEASE_TAG#v}"
+              BROWSER_TAG="latest"
+              COMMIT_SHA="$GH_SHA"
+              PUSH_HUB=true
+              ;;
+            workflow_dispatch)
+              MODE="rebuild"
+              TAG="$INPUT_TAG"
+              IS_LATEST="$INPUT_LATEST"
+              BROWSER_TAG="latest"
+              COMMIT_SHA="$INPUT_COMMIT"
+              # Manual dispatch publishes to Docker Hub too — that's the "promote" escape hatch.
+              PUSH_HUB=true
+              ;;
+            *)
+              # workflow_call (release-tag.yml). `mode` defaults to retag.
+              if [ -z "$INPUT_TAG" ] || [ -z "$INPUT_COMMIT" ]; then
+                echo "::error::workflow_call requires both tag and commit_sha inputs (event=$EVENT_NAME)"
+                exit 1
+              fi
+              MODE="${INPUT_MODE:-retag}"
+              TAG="${INPUT_TAG#v}"
+              BROWSER_TAG="latest"
+              COMMIT_SHA="$INPUT_COMMIT"
+              PUSH_HUB=true
+              ;;
+          esac
+
+          # Retag needs the validated RC manifest and the latest-pointer
+          # decision. Shared by the release event and the tag-push path, so it
+          # lives outside the branching above.
+          if [ "$MODE" = "retag" ]; then
+            # PR lookup — the validated artifact is keyed by PR number, not
+            # by commit SHA, because squash/rebase merges produce new SHAs
+            # that were never built. Fail loudly if the release commit has
+            # no associated merged PR; the operator can fall back to
+            # workflow_dispatch for a fresh build from that SHA.
+            RC_PR_N=$(gh api "/repos/${REPO}/commits/${COMMIT_SHA}/pulls" \
+              --jq 'map(select(.merged_at != null)) | .[0].number // empty')
+            if [ -z "$RC_PR_N" ]; then
+              echo "::error::no merged PR associated with release commit ${COMMIT_SHA}"
+              echo "::error::if you need to ship this commit, re-run via workflow_dispatch with commit_sha=${COMMIT_SHA}"
+              exit 1
+            fi
+
+            # IS_LATEST=true only when this release is the highest semver
+            # across all (non-draft, non-prerelease) releases. A backport
+            # patch on an old version branch shouldn't clobber :latest.
+            # NOTE: the GitHub Release for this tag must already exist, else it
+            # isn't in the list and the pointer won't move — release-tag.yml
+            # therefore creates the release BEFORE calling this workflow.
+            HIGHEST=$(gh api "/repos/${REPO}/releases" --paginate \
+              --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' \
+              | sed 's/^v//' \
+              | sort -V \
+              | tail -1)
+            if [ "$HIGHEST" = "$TAG" ]; then
+              IS_LATEST=true
+            else
+              IS_LATEST=false
+            fi
+          fi
+
+          # Validate Cargo.toml against any semver-shaped tag (always on release;
+          # otherwise only when the tag looks like X.Y.Z, so operators can still
+          # dispatch ad-hoc tags like 'edge-test' without enforcement).
+          VALIDATE=0
+          if [ "$EVENT_NAME" = "release" ] || echo "$TAG" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            VALIDATE=1
+          fi
+          if [ "$VALIDATE" = "1" ]; then
+            CARGO_VERSION=$(cargo metadata --no-deps --format-version=1 \
+              | jq -r '.packages[] | select(.name=="falkordb-rs") | .version')
+            if [ "$CARGO_VERSION" != "$TAG" ]; then
+              echo "::error::Cargo.toml version ($CARGO_VERSION) does not match tag ($TAG)"
+              exit 1
+            fi
+          fi
+
+          {
+            echo "mode=${MODE}"
+            echo "tag=${TAG}"
+            echo "is_latest=${IS_LATEST}"
+            echo "browser_tag=${BROWSER_TAG}"
+            echo "commit_sha=${COMMIT_SHA}"
+            echo "rc_pr_n=${RC_PR_N}"
+            echo "push_to_dockerhub=${PUSH_HUB}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Derived: mode=${MODE} tag=${TAG} is_latest=${IS_LATEST} commit_sha=${COMMIT_SHA} rc_pr=${RC_PR_N} push_hub=${PUSH_HUB}"
+
+  # Retag path: release event. docker buildx imagetools create copies the
+  # multi-arch manifest from rc-pr-<N> to the release tags on both registries
+  # in one go. No layer rebuild — what PR CI validated is what ships.
+  retag:
+    needs: prepare
+    if: needs.prepare.outputs.mode == 'retag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        repo: [falkordb, falkordb-server]
+    steps:
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Tag x64, ARM, and rhel-x64 images
-        run: |
-          docker tag falkordb/falkordb-x64 falkordb/falkordb:${{ env.TAG_NAME }}-x64
-          docker tag falkordb/falkordb-arm64v8 falkordb/falkordb:${{ env.TAG_NAME }}-arm64v8
-          docker tag falkordb/falkordb-rhel9-x64 falkordb/falkordb:${{ env.TAG_NAME }}-rhel9-x64
-          docker tag falkordb/falkordb-rhel8-x64 falkordb/falkordb:${{ env.TAG_NAME }}-rhel8-x64
-
-          docker tag falkordb/falkordb-amazonlinux2023-x64 falkordb/falkordb:${{ env.TAG_NAME }}-amazonlinux2023-x64
-
-          docker tag falkordb/falkordb-alpine-x64 falkordb/falkordb:${{ env.TAG_NAME }}-alpine-x64
-          docker tag falkordb/falkordb-alpine-arm64v8 falkordb/falkordb:${{ env.TAG_NAME }}-alpine-arm64v8
-
-          docker tag falkordb/falkordb-server-alpine-x64 falkordb/falkordb-server:${{ env.TAG_NAME }}-alpine-x64
-          docker tag falkordb/falkordb-server-alpine-arm64v8 falkordb/falkordb-server:${{ env.TAG_NAME }}-alpine-arm64v8
-
-          docker tag falkordb/falkordb-server-x64 falkordb/falkordb-server:${{ env.TAG_NAME }}-x64
-          docker tag falkordb/falkordb-server-arm64v8 falkordb/falkordb-server:${{ env.TAG_NAME }}-arm64v8
-
-      - name: Push x64, ARM, rhel-x64 images & create manifest
-        run: |
-          docker push falkordb/falkordb:${{ env.TAG_NAME }}-x64
-          docker push falkordb/falkordb:${{ env.TAG_NAME }}-arm64v8
-          docker push falkordb/falkordb:${{ env.TAG_NAME }}-rhel9-x64
-          docker push falkordb/falkordb:${{ env.TAG_NAME }}-rhel8-x64
-          docker push falkordb/falkordb:${{ env.TAG_NAME }}-alpine-x64
-          docker push falkordb/falkordb:${{ env.TAG_NAME }}-alpine-arm64v8
-          docker push falkordb/falkordb:${{ env.TAG_NAME }}-amazonlinux2023-x64
-          docker push falkordb/falkordb-server:${{ env.TAG_NAME }}-alpine-x64
-          docker push falkordb/falkordb-server:${{ env.TAG_NAME }}-alpine-arm64v8
-          docker push falkordb/falkordb-server:${{ env.TAG_NAME }}-x64
-          docker push falkordb/falkordb-server:${{ env.TAG_NAME }}-arm64v8
-
-          docker buildx imagetools create -t falkordb/falkordb:${{ env.TAG_NAME }} ${{ env.IS_LATEST == '1' && '-t falkordb/falkordb:latest' || '' }} \
-          falkordb/falkordb:${{ env.TAG_NAME }}-x64 \
-          falkordb/falkordb:${{ env.TAG_NAME }}-arm64v8
-
-          docker buildx imagetools create -t falkordb/falkordb:${{ env.TAG_NAME }}-alpine ${{ env.IS_LATEST == '1' && '-t falkordb/falkordb:latest-alpine' || '' }} \
-          falkordb/falkordb:${{ env.TAG_NAME }}-alpine-x64 \
-          falkordb/falkordb:${{ env.TAG_NAME }}-alpine-arm64v8
-
-          docker buildx imagetools create -t falkordb/falkordb-server:${{ env.TAG_NAME }} ${{ env.IS_LATEST == '1' && '-t falkordb/falkordb-server:latest' || '' }} \
-          falkordb/falkordb-server:${{ env.TAG_NAME }}-x64 \
-          falkordb/falkordb-server:${{ env.TAG_NAME }}-arm64v8
-
-          docker buildx imagetools create -t falkordb/falkordb-server:${{ env.TAG_NAME }}-alpine ${{ env.IS_LATEST == '1' && '-t falkordb/falkordb-server:latest-alpine' || '' }} \
-          falkordb/falkordb-server:${{ env.TAG_NAME }}-alpine-x64 \
-          falkordb/falkordb-server:${{ env.TAG_NAME }}-alpine-arm64v8
-
-      - name: Inspect image
-        run: |
-          docker buildx imagetools inspect falkordb/falkordb:${{ env.TAG_NAME }}
-          docker buildx imagetools inspect falkordb/falkordb:${{ env.TAG_NAME }}-alpine
-          docker buildx imagetools inspect falkordb/falkordb-server:${{ env.TAG_NAME }}
-          docker buildx imagetools inspect falkordb/falkordb-server:${{ env.TAG_NAME }}-alpine
-
-      - name: Check if release exists
-        id: check_release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if gh release view ${{ env.TAG_NAME }} > /dev/null 2>&1; then
-            echo "RELEASE_EXISTS=true" >> $GITHUB_OUTPUT
-          else
-            echo "RELEASE_EXISTS=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Upload falkordb.so files to release
-        if: steps.check_release.outputs.RELEASE_EXISTS == 'true'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # Ubuntu binaries
-          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-x64.so
-          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-arm64v8.so
-          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-debug-x64.so
-          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-debug-arm64v8.so
-
-          # RHEL binaries
-          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-rhel9-x64.so
-          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-debug-rhel9-x64.so
-          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-rhel8-x64.so
-          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-debug-rhel8-x64.so
-
-          # Alpine binaries
-          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-alpine-x64.so
-          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-alpine-arm64v8.so
-          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-debug-alpine-x64.so
-          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-debug-alpine-arm64v8.so
-
-          # Amazon Linux binaries
-          gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-amazonlinux2023-x64.so
-
-          # macOS binaries (if they exist)
-          if [ -f /tmp/falkordb-macos-arm64v8.so ]; then
-            gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-macos-arm64v8.so
-          fi
-          if [ -f /tmp/falkordb-debug-macos-arm64v8.so ]; then
-            gh release upload ${{ env.TAG_NAME }} /tmp/falkordb-debug-macos-arm64v8.so
-          fi
-
-  trigger-falkordb-cloud-update:
-    needs: release
-    runs-on: ubuntu-latest
-    if: github.event_name == 'release' || github.event.inputs.run_falkordb_cloud_update == 'true'
-    steps:
-      - name: Trigger FalkorDB Cloud version update
-        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4
+      - name: Login to GHCR
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
         with:
-          token: ${{ secrets.FALKORDB_OMNISTRATE_PAT }}
-          repository: FalkorDB/falkordb-omnistrate
-          event-type: bump-falkordb-version
-          client-payload: '{"new_version": "${{ github.event.release.tag_name || github.event.inputs.tag }}"}'
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-  trigger-testflight-workflow:
-    needs: release
-    runs-on: ubuntu-latest
-    if: github.event_name == 'release' || github.event.inputs.run_testflight_workflow == 'true'
-    steps:
-      - name: Trigger Redis Enterprise tests in FalkorDB/testflight
-        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4
-        with:
-          token: ${{ secrets.GH_TESTFLIGHT_TOKEN }}
-          repository: FalkorDB/testflight
-          event-type: release-created
-          client-payload: '{"tag_name": "${{ github.event.release.tag_name || github.event.inputs.tag }}"}'
+      - name: Retag rc-pr-${{ needs.prepare.outputs.rc_pr_n }} → ${{ needs.prepare.outputs.tag }} (${{ matrix.repo }})
+        env:
+          TAG:       ${{ needs.prepare.outputs.tag }}
+          IS_LATEST: ${{ needs.prepare.outputs.is_latest }}
+          RC_PR_N:   ${{ needs.prepare.outputs.rc_pr_n }}
+          REPO:      ${{ matrix.repo }}
+        run: |
+          set -euo pipefail
+          SRC="ghcr.io/falkordb/${REPO}:rc-pr-${RC_PR_N}"
+          EXTRA_TAGS=""
+          if [ "$IS_LATEST" = "true" ]; then
+            # GHCR gets :latest (Rust port is the only thing there).
+            # Docker Hub gets :latest-rs — the bare :latest tag on Docker
+            # Hub currently points at the C-port image and we don't want
+            # to clobber it until/unless we decide to flip the default.
+            EXTRA_TAGS="$EXTRA_TAGS -t ghcr.io/falkordb/${REPO}:latest -t falkordb/${REPO}:latest-rs"
+          fi
+          docker buildx imagetools create \
+            -t "ghcr.io/falkordb/${REPO}:${TAG}" \
+            -t "falkordb/${REPO}:${TAG}" \
+            $EXTRA_TAGS \
+            "${SRC}"
+
+  # Rebuild path: workflow_dispatch only. Same code path as the original
+  # release pipeline — build from source at the supplied commit. The
+  # `cells:` input describes the release matrix shape (2 archs × 2 variants).
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.mode == 'rebuild'
+    uses: ./.github/workflows/_build-flavour.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      flavour: release
+      tag: ${{ needs.prepare.outputs.tag }}
+      commit_sha: ${{ needs.prepare.outputs.commit_sha }}
+      cells: '[{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"full","repo":"falkordb"},{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"server","repo":"falkordb-server"},{"arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","target":"full","repo":"falkordb"},{"arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","target":"server","repo":"falkordb-server"}]'
+      browser_tag: ${{ needs.prepare.outputs.browser_tag }}
+      push_to_dockerhub: ${{ fromJSON(needs.prepare.outputs.push_to_dockerhub) }}
+      is_latest: ${{ fromJSON(needs.prepare.outputs.is_latest) }}
+    # Forward DOCKER_USERNAME + DOCKER_PASSWORD (org-level secrets) to the
+    # reusable workflow's Docker Hub login.
+    secrets: inherit

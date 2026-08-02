@@ -66,7 +66,7 @@ class testEdgeIndexUpdatesFlow():
     def validate_indexed(self):
         for field in fields:
             resp = str(self.graph.explain("""MATCH ()-[a:type_a]->() WHERE a.%s > 0 RETURN a""" % (field)))
-            self.env.assertIn('Edge By Index Scan', resp)
+            self.env.assertContains('Edge By Index Scan', resp)
 
     # So long as 'unique' is not modified, label_a.unique will always be even and label_b.unique will always be odd
     def validate_unique(self):
@@ -74,19 +74,19 @@ class testEdgeIndexUpdatesFlow():
         # Remove the header
         result.result_set.pop(0)
         for val in result.result_set:
-            self.env.assertEquals(int(float(val[0])) % 2, 0)
+            self.env.assertEqual(int(float(val[0])) % 2, 0)
 
         result = self.graph.query("MATCH ()-[r:type_b]->() RETURN r.unique")
         # Remove the header
         result.result_set.pop(0)
         for val in result.result_set:
-            self.env.assertEquals(int(float(val[0])) % 2, 1)
+            self.env.assertEqual(int(float(val[0])) % 2, 1)
 
     # The index scan ought to return identical results to a label scan over the same range of values.
     def validate_doubleval(self):
         for type in types:
             resp = str(self.graph.explain("""MATCH ()-[a:%s]->() WHERE a.doubleval < 100 RETURN a.doubleval ORDER BY a.doubleval""" % (type)))
-            self.env.assertIn('Edge By Index Scan', resp)
+            self.env.assertContains('Edge By Index Scan', resp)
             indexed_result = self.graph.query("""MATCH ()-[a:%s]->() WHERE a.doubleval < 100 RETURN a.doubleval ORDER BY a.doubleval""" % (type))
             scan_result = self.graph.query("""MATCH ()-[a:%s]->() RETURN a.doubleval ORDER BY a.doubleval""" % (type))
 
@@ -101,7 +101,7 @@ class testEdgeIndexUpdatesFlow():
     def validate_intval(self):
         for type in types:
             resp = str(self.graph.explain("""MATCH ()-[a:%s]->() WHERE a.intval > 0 RETURN a.intval ORDER BY a.intval""" % (type)))
-            self.env.assertIn('Edge By Index Scan', resp)
+            self.env.assertContains('Edge By Index Scan', resp)
             indexed_result = self.graph.query("""MATCH ()-[a:%s]->() WHERE a.intval > 0 RETURN a.intval ORDER BY a.intval""" % (type))
             scan_result = self.graph.query("""MATCH ()-[a:%s]->() RETURN a.intval ORDER BY a.intval""" % (type))
 
@@ -117,7 +117,7 @@ class testEdgeIndexUpdatesFlow():
     # Modify a property, triggering updates to all edges in two indices
     def test01_full_property_update(self):
         result = self.graph.query("MATCH ()-[a]->() SET a.doubleval = a.doubleval + 1.1")
-        self.env.assertEquals(result.properties_set, 1000)
+        self.env.assertEqual(result.properties_set, 1000)
         # Verify that index scans still function and return correctly
         self.validate_state()
 
@@ -159,7 +159,7 @@ class testEdgeIndexUpdatesFlow():
         # Delete edges one at a time
         for i in range(0, 100, 2):
             result = self.graph.query("MATCH ()-[a]->() WHERE ID(a) = %d DELETE a" % (i))
-            self.env.assertEquals(result.relationships_deleted, 1)
+            self.env.assertEqual(result.relationships_deleted, 1)
             edge_ctr -= 1
         self.validate_state()
 
@@ -178,28 +178,28 @@ class testEdgeIndexUpdatesFlow():
         query = """MATCH ()-[a {unique: %s }]->() SET a.unindexed = 5, a.unique = %s RETURN a.unindexed, a.unique""" % (unique_prop, unique_prop)
         result = self.graph.query(query)
         expected_result = [[5, unique_prop]]
-        self.env.assertEquals(result.result_set, expected_result)
-        self.env.assertEquals(result.properties_set, 1)
+        self.env.assertEqual(result.result_set, expected_result)
+        self.env.assertEqual(result.properties_set, 1)
 
     # Validate that after deleting an indexed property, that property can no longer be found in the index.
     def test06_remove_indexed_prop(self):
         # Create a new edge with a single indexed property
         query = """CREATE ()-[:NEW {v: 5}]->()"""
         result = self.graph.query(query)
-        self.env.assertEquals(result.properties_set, 1)
+        self.env.assertEqual(result.properties_set, 1)
         create_edge_range_index(self.graph, 'NEW', 'v', sync=True)
 
         # Delete the entity's property
         query = """MATCH ()-[a:NEW {v: 5}]->() SET a.v = NULL"""
         result = self.graph.query(query)
-        self.env.assertEquals(result.properties_set, 0)
-        self.env.assertEquals(result.properties_removed, 1)
+        self.env.assertEqual(result.properties_set, 0)
+        self.env.assertEqual(result.properties_removed, 1)
 
         # Query the index for the entity
         query = """MATCH ()-[a:NEW {v: 5}]->() RETURN a"""
         plan = str(self.graph.explain(query))
-        self.env.assertIn("Edge By Index Scan", plan)
+        self.env.assertContains("Edge By Index Scan", plan)
         result = self.graph.query(query)
         # No entities should be returned
         expected_result = []
-        self.env.assertEquals(result.result_set, expected_result)
+        self.env.assertEqual(result.result_set, expected_result)

@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; [ -n \"$f\" ] || exit 0; case \"$f\" in *.rs) rustfmt --edition 2024 --check \"$f\" >/dev/null 2>&1 || echo \"rustfmt: $f needs formatting — run: cargo fmt\";; esac; }"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+target/
+# Host-built native dep outputs that would shadow the build image's prebuilt versions
+# (graph/build.rs's link-search adds ../lagraph_lib and redisearch/... before /data paths).
+lagraph_lib/
+redisearch/
+.git/
+.github/
+.claude/
+.devcontainer/
+.vscode/
+.idea/
+docs/
+tests/flow/logs/
+*.log
+*.profraw
+*.profdata
+codecov.txt*
+.DS_Store

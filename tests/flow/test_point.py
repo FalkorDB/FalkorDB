@@ -44,7 +44,7 @@ class testPath():
             assert(False)
         except Exception as e:
             # Expecting an error.
-            self.env.assertIn('latitude should be within', str(e))
+            self.env.assertContains('latitude should be within', str(e))
 
         try:
             # latitude < -90
@@ -53,7 +53,7 @@ class testPath():
             assert(False)
         except Exception as e:
             # Expecting an error.
-            self.env.assertIn('latitude should be within', str(e))
+            self.env.assertContains('latitude should be within', str(e))
 
         try:
             # longitude > 180
@@ -62,7 +62,7 @@ class testPath():
             assert(False)
         except Exception as e:
             # Expecting an error.
-            self.env.assertIn('longitude should be within', str(e))
+            self.env.assertContains('longitude should be within', str(e))
 
         try:
             # longitude < -180
@@ -71,7 +71,7 @@ class testPath():
             assert(False)
         except Exception as e:
             # Expecting an error.
-            self.env.assertIn('longitude should be within', str(e))
+            self.env.assertContains('longitude should be within', str(e))
 
     def test_point_index_lookup(self):
         home = {'lat': 32.070794860, 'lon': 34.820751118}
@@ -92,11 +92,11 @@ class testPath():
         # validate that the entities were created and can be returned properly
         q = """match (n:N) RETURN n.name, n.loc ORDER BY n.name"""
         actual_result = self.graph.query(q)
-        self.env.assertEquals(actual_result.result_set[0][0], "home")
+        self.env.assertEqual(actual_result.result_set[0][0], "home")
         self.env.assertAlmostEqual(actual_result.result_set[0][1]["latitude"], 32.070794860, 1e-5)
         self.env.assertAlmostEqual(actual_result.result_set[0][1]["longitude"], 34.820751118, 1e-5)
 
-        self.env.assertEquals(actual_result.result_set[1][0], "univ")
+        self.env.assertEqual(actual_result.result_set[1][0], "univ")
         self.env.assertAlmostEqual(actual_result.result_set[1][1]["latitude"], 30.621734079, 1e-5)
         self.env.assertAlmostEqual(actual_result.result_set[1][1]["longitude"], -96.33775507, 1e-5)
 
@@ -105,7 +105,7 @@ class testPath():
 
         # make sure index is being utilized
         plan = str(self.graph.explain(idx_q % (32.12, 43.32, 100)))
-        self.env.assertIn('Index Scan', plan)
+        self.env.assertContains('Index Scan', plan)
 
         # near kiosk (200m)
         distance = 200
@@ -113,53 +113,53 @@ class testPath():
         none_idx_res = self.graph.query(none_idx_q % (kiosk['lat'], kiosk['lon'], distance)).result_set
 
         # expecting just a single result: 'home'
-        self.env.assertEquals(len(idx_res), 1)
-        self.env.assertEquals(idx_res, none_idx_res)
-        self.env.assertEquals(idx_res[0][0], 'home')
+        self.env.assertEqual(len(idx_res), 1)
+        self.env.assertEqual(idx_res, none_idx_res)
+        self.env.assertEqual(idx_res[0][0], 'home')
 
         # near "Miradouro do Cerrado das Freiras" (100km)
         # expecting no results
         distance = 100000
         idx_res = self.graph.query(idx_q % (miradouro['lat'], miradouro['lon'], distance)).result_set
         none_idx_res = self.graph.query(none_idx_q % (miradouro['lat'], miradouro['lon'], distance)).result_set
-        self.env.assertEquals(idx_res, none_idx_res)
-        self.env.assertEquals(len(idx_res), 0)
+        self.env.assertEqual(idx_res, none_idx_res)
+        self.env.assertEqual(len(idx_res), 0)
 
         # near Austin Texas (200km)
         # expecting just a single result: 'univ'
         distance = 200000
         idx_res = self.graph.query(idx_q % (austin['lat'], austin['lon'], distance)).result_set
         none_idx_res = self.graph.query(none_idx_q % (austin['lat'], austin['lon'], distance)).result_set
-        self.env.assertEquals(idx_res, none_idx_res)
-        self.env.assertEquals(len(idx_res), 1)
-        self.env.assertEquals(idx_res[0][0], 'univ')
+        self.env.assertEqual(idx_res, none_idx_res)
+        self.env.assertEqual(len(idx_res), 1)
+        self.env.assertEqual(idx_res[0][0], 'univ')
 
 
         # return all nodes
         q = """MATCH (n:N) WHERE  %d < distance(n.loc, point({latitude:%f, longitude:%f})) RETURN n.name"""
         distance = 0
         res = self.graph.query(q % (distance, austin['lat'], austin['lon'])).result_set
-        self.env.assertEquals(len(res), 2)
-        self.env.assertEquals(res, [['home'], ['univ']])
+        self.env.assertEqual(len(res), 2)
+        self.env.assertEqual(res, [['home'], ['univ']])
 
     def test_nested_point(self):
         expected_value = [{'latitude':32, 'longitude':34}]
         # point as an array element
         q = "RETURN [point({latitude:32, longitude:34})]" 
         res = self.graph.query(q)
-        self.env.assertEquals(res.result_set[0][0], expected_value)
+        self.env.assertEqual(res.result_set[0][0], expected_value)
 
         # test setting an array with a point as an entity attribute
         q = "CREATE (n:L {v: [point({latitude:32, longitude:34})]}) RETURN n.v"
         res = self.graph.query(q)
-        self.env.assertEquals(res.result_set[0][0], expected_value)
+        self.env.assertEqual(res.result_set[0][0], expected_value)
 
         # update expected value
         expected_value = [{'latitude':34, 'longitude':35}]
         # update existing node, place a different point in its array
         q = "MATCH (n:L) SET n.v = [point({latitude:34, longitude:35})] RETURN n.v"
         res = self.graph.query(q)
-        self.env.assertEquals(res.result_set[0][0], expected_value)
+        self.env.assertEqual(res.result_set[0][0], expected_value)
 
         # order a list of points
         expected_value = [
@@ -179,12 +179,12 @@ class testPath():
         WITH p ORDER BY p RETURN collect(p)"""
 
         res = self.graph.query(q)
-        self.env.assertEquals(res.result_set[0][0], expected_value)
+        self.env.assertEqual(res.result_set[0][0], expected_value)
 
         expected_value = "point({latitude: 32.000000, longitude: 34.000000})"
         q = "RETURN tostring(point({latitude:32, longitude:34}))"
         res = self.graph.query(q)
-        self.env.assertEquals(res.result_set[0][0], expected_value)
+        self.env.assertEqual(res.result_set[0][0], expected_value)
 
     def test_point_coordinates(self):
         # read latitude
@@ -226,4 +226,4 @@ class testPath():
         # read invalid key
         q = "RETURN point({latitude:32.070794860, longitude:34.820751118}).v"
         res = self.graph.query(q)
-        self.env.assertEquals(res.result_set, [[None]])
+        self.env.assertEqual(res.result_set, [[None]])

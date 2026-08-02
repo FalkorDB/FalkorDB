@@ -36,7 +36,7 @@ class testOptionalFlow(FlowTestsBase):
                            ['v1', 'v2'],
                            ['v1', 'v3'],
                            ['v1', 'v4']]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Optional MATCH clause that extends the mandatory MATCH pattern and has matches for all results.
     def test02_optional_traverse(self):
@@ -44,7 +44,7 @@ class testOptionalFlow(FlowTestsBase):
         actual_result = self.graph.query(query)
         expected_result = [['v1', 'v2'],
                            ['v2', 'v3']]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Optional MATCH clause that extends the mandatory MATCH pattern and has null results.
     def test03_optional_traverse_with_nulls(self):
@@ -55,7 +55,7 @@ class testOptionalFlow(FlowTestsBase):
                            ['v2', 'v3'],
                            ['v3', None],
                            ['v4', None]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Optional MATCH clause that extends the mandatory MATCH pattern and has a WHERE clause.
     def test04_optional_traverse_with_predicate(self):
@@ -66,7 +66,7 @@ class testOptionalFlow(FlowTestsBase):
                            ['v2', None],
                            ['v3', None],
                            ['v4', None]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Optional MATCH clause with endpoints resolved by the mandatory MATCH pattern.
     def test05_optional_expand_into(self):
@@ -74,12 +74,12 @@ class testOptionalFlow(FlowTestsBase):
         actual_result = self.graph.query(query)
         expected_result = [['v1', 'v2', 'E1'],
                            ['v2', 'v3', 'E2']]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # The OPTIONAL MATCH exactly repeats the MATCH, producing identical results.
         query_without_optional = """MATCH (a)-[e]->(b) RETURN a.v, b.v, TYPE(e) ORDER BY a.v, b.v"""
         result_without_optional = self.graph.query(query_without_optional)
-        self.env.assertEquals(actual_result.result_set, result_without_optional.result_set)
+        self.env.assertEqual(actual_result.result_set, result_without_optional.result_set)
 
     # Optional MATCH clause with endpoints resolved by the mandatory MATCH pattern and new filters introduced.
     def test06_optional_expand_into_with_reltype(self):
@@ -88,7 +88,7 @@ class testOptionalFlow(FlowTestsBase):
         # Only (v2)-[E2]->(v3) fulfills the constraint of the OPTIONAL MATCH clause.
         expected_result = [['v1', 'v2', None],
                            ['v2', 'v3', 'E2']]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Optional MATCH clause with endpoints resolved by the mandatory MATCH pattern, but no mandatory traversal.
     def test07_optional_expand_into_cartesian_product(self):
@@ -99,7 +99,7 @@ class testOptionalFlow(FlowTestsBase):
                            ['v1', 'v2', 'E1'],
                            ['v1', 'v3', None],
                            ['v1', 'v4', None]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     # TODO ExpandInto doesn't evaluate bidirectionally properly
     # Optional MATCH clause with endpoints resolved by the mandatory MATCH pattern and a bidirectional optional pattern.
@@ -111,7 +111,7 @@ class testOptionalFlow(FlowTestsBase):
                            #  ['v2', 'v2', None],
                            #  ['v3', 'v2', 'E2'],
                            #  ['v3', 'v2', None]]
-        #  self.env.assertEquals(actual_result.result_set, expected_result)
+        #  self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Optional MATCH clause with variable-length traversal and some results match.
     def test09_optional_variable_length(self):
@@ -122,7 +122,7 @@ class testOptionalFlow(FlowTestsBase):
                            ['v2', 'v3'],
                            ['v3', None],
                            ['v4', None]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Optional MATCH clause with variable-length traversal and all results match.
     def test10_optional_variable_length_all_matches(self):
@@ -130,14 +130,14 @@ class testOptionalFlow(FlowTestsBase):
         actual_result = self.graph.query(query)
         expected_result = [['v1', 'v2'],
                            ['v1', 'v3']]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Optional MATCH clause with a variable-length traversal that has no matches.
     def test11_optional_variable_length_no_matches(self):
         query = """MATCH (a {v: 'v3'}) OPTIONAL MATCH (a)-[*]->(b) RETURN a.v, b.v ORDER BY a.v, b.v"""
         actual_result = self.graph.query(query)
         expected_result = [['v3', None]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Multiple interdependent optional MATCH clauses.
     def test12_multiple_optional_traversals(self):
@@ -151,7 +151,7 @@ class testOptionalFlow(FlowTestsBase):
                            ['v2', 'v3', None],
                            ['v3', None, None],
                            ['v4', None, None]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Multiple interdependent optional MATCH clauses with both directed and bidirectional traversals.
     def test13_multiple_optional_multi_directional_traversals(self):
@@ -162,7 +162,7 @@ class testOptionalFlow(FlowTestsBase):
                            ['v2', 'v3', None],
                            ['v3', 'v2', 'v3'],
                            ['v4', None, None]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Multiple interdependent optional MATCH clauses with exclusively bidirectional traversals.
     def test14_multiple_optional_bidirectional_traversals(self):
@@ -175,7 +175,7 @@ class testOptionalFlow(FlowTestsBase):
                            ['v3', 'v2', 'v1'],
                            ['v3', 'v2', 'v3'],
                            ['v4', None, None]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Build a named path in an optional clause.
     def test15_optional_named_path(self):
@@ -189,7 +189,7 @@ class testOptionalFlow(FlowTestsBase):
                            [1],
                            [None],
                            [None]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Return a result set with null values in the first record and non-null values in subsequent records.
     def test16_optional_null_first_result(self):
@@ -199,7 +199,7 @@ class testOptionalFlow(FlowTestsBase):
                            [nodes['v4'], None, None],
                            [nodes['v1'], nodes['v2'], 'E1'],
                            [nodes['v2'], nodes['v3'], 'E2']]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test17_optional_label_introductions(self):
         query = """MATCH (a)
@@ -211,7 +211,7 @@ class testOptionalFlow(FlowTestsBase):
                            ['v2', 'v3'],
                            ['v3', None],
                            ['v4', None]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Make sure highly connected nodes aren't lost
     def test18_optional_over_intermidate(self):
@@ -220,14 +220,14 @@ class testOptionalFlow(FlowTestsBase):
         # Expecting to find "Expand Into" operation as both 'b' and 'c'
         # are bounded, which means 'b' is treated as an intermidate node
         # that needs to be tracked.
-        self.env.assertIn("Expand Into", plan)
+        self.env.assertContains("Expand Into", plan)
 
     # Validate that filters are created properly when OPTIONAL MATCH is the first clause.
     def test19_leading_optional_match(self):
         query = """MATCH (n) WHERE n.v = 'v1' RETURN n.v"""
         actual_result = self.graph.query(query)
         expected_result = [['v1']]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Validate that path filters on OPTIONAL MATCH clauses are constructed properly.
     def test20_optional_path_filter(self):
@@ -235,7 +235,7 @@ class testOptionalFlow(FlowTestsBase):
         actual_result = self.graph.query(query)
         expected_result = [['v1', 'v1'],
                            ['v1', 'v2']]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         query = """MATCH (n) OPTIONAL MATCH (m {v:'v1'})--() WHERE (n)--() RETURN n.v, m.v ORDER BY n.v, m.v"""
         actual_result = self.graph.query(query)
@@ -243,7 +243,7 @@ class testOptionalFlow(FlowTestsBase):
                            ['v2', 'v1'],
                            ['v3', 'v1'],
                            ['v4', None]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         query = """OPTIONAL MATCH (n {v: 'v1'}) OPTIONAL MATCH (m {v: 'v2'}) WHERE (n)--(m) RETURN n.v, m.v"""
 
@@ -252,28 +252,26 @@ class testOptionalFlow(FlowTestsBase):
         query = """OPTIONAL MATCH (a {v: 'v1'}), (b {v: 'v2'}) WHERE false RETURN a, b"""
         actual_result = self.graph.query(query)
         expected_result = [[None, None]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         query = """OPTIONAL MATCH (a {v: 'v1'}), (b {v: 'v2'}) WHERE true RETURN a.v, b.v"""
         actual_result = self.graph.query(query)
         expected_result = [['v1', 'v2']]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test22_optional_after_apply(self):
         self.graph.delete()
         query = """WITH [0, 0] AS n0 OPTIONAL MATCH () MERGE ()"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.nodes_created, 1)
+        self.env.assertEqual(actual_result.nodes_created, 1)
 
     def test23_optional_and_cartesian_product(self):
         self.graph.delete()
         self.graph.query("CREATE ()-[:A]->()")
         query = """OPTIONAL MATCH (), ({x:0, x:1}) RETURN 0"""
-        try:
-            self.graph.query(query)
-            self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
-            self.env.assertContains("Duplicate property key 'x' in inline property map", str(e))
+        actual_result = self.graph.query(query)
+        expected_result = [[0]]
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test24_optional_no_matchings(self):
         # due to delayed init within the Apply op this used to crash the server
@@ -299,8 +297,8 @@ class testOptionalFlow(FlowTestsBase):
 
         # Expecting to find "Optional Conditional Traverse" operations
         plan = str(self.graph.explain(query))
-        self.env.assertIn("Optional Conditional Traverse | (a)->(b)", plan)
-        self.env.assertIn("Optional Conditional Traverse | (b)->(c)", plan)
+        self.env.assertContains("Optional Conditional Traverse | (a)->(b)", plan)
+        self.env.assertContains("Optional Conditional Traverse | (b)->(c)", plan)
 
     # OPTIONAL MATCH on the same alias with a different (indexed) label
     def test26_optional_match_indexed_label_on_same_alias(self):
@@ -316,7 +314,7 @@ class testOptionalFlow(FlowTestsBase):
                RETURN DISTINCT n, r1, r2, m"""
 
         result = g.query(q)
-        self.env.assertEquals(result.result_set, [])
+        self.env.assertEqual(result.result_set, [])
 
         # populate with data and run again
         g.query(
@@ -327,7 +325,7 @@ class testOptionalFlow(FlowTestsBase):
         result = g.query(q)
         # n (M) is connected to m via two edges (R1, R2);
         # n has no N label so OPTIONAL MATCH yields NULL r2 in both rows
-        self.env.assertEquals(len(result.result_set), 2)
+        self.env.assertEqual(len(result.result_set), 2)
         for row in result.result_set:
             self.env.assertIsNone(row[2])  # r2 must be null
 
@@ -352,7 +350,7 @@ class testOptionalFlow(FlowTestsBase):
         q = "MATCH (a:Label) OPTIONAL MATCH (a)-[:REL]->(b) RETURN a, b LIMIT 10"
         res = self.graph.query(q).result_set
 
-        self.env.assertEquals(len(res), 4)
+        self.env.assertEqual(len(res), 4)
 
         # enlarge the graph
         q = "UNWIND range(0, 9) AS x CREATE (:Label)-[:REL]->()"
@@ -361,5 +359,5 @@ class testOptionalFlow(FlowTestsBase):
         q = "MATCH (a:Label) OPTIONAL MATCH (a)-[:REL]->(b) RETURN a, b LIMIT 10"
         res = self.graph.query(q).result_set
 
-        self.env.assertEquals(len(res), 10)
+        self.env.assertEqual(len(res), 10)
 

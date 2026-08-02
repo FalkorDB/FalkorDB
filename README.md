@@ -17,14 +17,14 @@
   <a href="https://hub.docker.com/r/falkordb/falkordb/">
     <img src="https://img.shields.io/docker/pulls/falkordb/falkordb?label=Docker" alt="Dockerhub" />
   </a>
-  <a href="https://discord.gg/6M4QwDXn2w">
-    <img src="https://img.shields.io/discord/1146782921294884966?style=flat-square" alt="Discord" />
+  <a href="https://codecov.io/gh/FalkorDB/FalkorDB">
+    <img src="https://codecov.io/gh/FalkorDB/FalkorDB/branch/main/graph/badge.svg?token=0G4HBEJMW0" alt="codecov" />
   </a>
-  <a href="https://codecov.io/gh/falkordb/falkordb">
-    <img src="https://codecov.io/gh/falkordb/falkordb/graph/badge.svg?token=0G4HBEJMW0" alt="codecov" />
+  <a href="https://github.com/FalkorDB/FalkorDB/actions/workflows/rust-push.yml">
+    <img src="https://github.com/FalkorDB/FalkorDB/actions/workflows/rust-push.yml/badge.svg?branch=main" alt="Rust" />
   </a>
-  <a href="https://github.com/FalkorDB/FalkorDB/actions/workflows/build.yml">
-    <img src="https://github.com/FalkorDB/FalkorDB/actions/workflows/build.yml/badge.svg?branch=master" alt="Workflow" />
+  <a href="https://github.com/FalkorDB/FalkorDB/blob/main/LICENSE">
+    <img src="https://img.shields.io/badge/license-Server_Side_Public_License-green" alt="license" />
   </a>
 </div>
 
@@ -51,21 +51,9 @@ Our goal is to build a high-performance Knowledge Graph tailored for Large Langu
 * **Property Graph Model Compliance**: Supports nodes and relationships with attributes, adhering to the Property Graph Model.
 
 
-* **OpenCypher Support:** Compatible with [OpenCypher](ttps://github.com/opencypher/openCypher/blob/master/docs/property-graph-model.adoc) query language, including proprietary extensions for advanced querying capabilities.
+* **OpenCypher Support:** Compatible with [OpenCypher](https://github.com/opencypher/openCypher/blob/master/docs/property-graph-model.adoc) query language, including proprietary extensions for advanced querying capabilities.
 
 >Explore FalkorDB in action by visiting the [Demos](https://github.com/FalkorDB/FalkorDB/tree/master/demo).
-
-## DOCUMENTATION
-
-[Official Docs](https://docs.falkordb.com/) | [Clients](https://docs.falkordb.com/clients.html) | [Commands](https://docs.falkordb.com/commands/) | 📊 [Latest Performance Benchmarks](https://benchmark.falkordb.com/)
-
-### Community and Support
-
-* **Discussions**: Join our community discussions on [GitHub Discussions](https://github.com/FalkorDB/FalkorDB/discussions) to ask questions, share ideas, and connect with other users.
-
-* **Contributing**: We welcome contributions! Please see our [Contributing Guide](https://github.com/FalkorDB/FalkorDB/blob/master/CONTRIBUTING.md) for more details.
-
-* **License**: This project is licensed under the Server Side Public License v1 (SSPLv1). See the [LICENSE](https://github.com/FalkorDB/FalkorDB/blob/master/LICENSE.txt) file for details.
 
 ## GET STARTED
 
@@ -117,73 +105,6 @@ res = g.query("""MATCH (r:Rider)-[:rides]->(t:Team {name:'Ducati'})
 print(res.result_set[0][0])
 # Prints: 1
 ```
-
-## START BUILDING
-
-### Compiling
-
-Make sure to complete these requirements:
-
-1️⃣ The FalkorDB repository: `git clone --recurse-submodules -j8 https://github.com/FalkorDB/FalkorDB.git`
-
-* Ubuntu, install: `apt-get install build-essential cmake m4 automake peg libtool autoconf python3 python3-pip`
-* Alpine, install: `apk add build-base cmake m4 automake libtool autoconf python3 py3-pip peg git libgomp openssl-dev`
-* OS X, verify that `homebrew` is installed and run: `brew install cmake m4 automake peg libtool autoconf`.
-	* The version of Clang that ships with the OS X toolchain does not support OpenMP, which is a requirement for FalkorDB. One way to resolve this is to run `brew install gcc g++` and follow the on-screen instructions to update the symbolic links. Note that this is a system-wide change - setting the environment variables for `CC` and `CXX` will work if that is not an option.
-
-2️⃣ Build by running `make` in the project's directory.
-
-Congratulations! You can find the compiled binary at `bin/<arch>/src/falkordb.so`.
-
-### Running tests
-
-Start by installing the required Python packages by running ```pip install -r requirements.txt``` from the ```tests``` directory.
-
-> Note: If you've got ```redis-server``` in PATH, just invoke ```make test```. Otherwise, invoke ```REDIS_SERVER=<redis-server-location> make test```. For a more verbose output, run ```make test V=1```.
-
-### Building in a docker
-
-The FalkorDB build system runs within docker. For detailed instructions on building, please [see here](https://docs.falkordb.com/docker-examples/README.html).
-
-## LOADING FALKORDB INTO REDIS
-
-FalkorDB is hosted by [Redis](https://redis.io), so you'll first have to load it as a Module to a Redis server. 
-> Note: [Redis 7.4](https://redis.io/download) is required for the latest FalkorDB version.
-
-💡 We recommend having Redis load FalkorDB during startup by adding the following to your redis.conf file:
-
-```
-loadmodule /path/to/module/src/falkordb.so
-```
-
-In the line above, replace `/path/to/module/src/falkordb.so` with the actual path to FalkorDB's library.
-If Redis is running as a service, you must ensure that the `redis` user (default) has the necessary file/folder permissions
-to access `falkordb.so`.
-
-Alternatively, you can have Redis load FalkorDB using the following command line argument syntax:
-
-```sh
-~/$ redis-server --loadmodule /path/to/module/src/falkordb.so
-```
-
-Lastly, you can also use the [`MODULE LOAD`](http://redis.io/commands/module-load) command. Note, however, that `MODULE LOAD` is a dangerous command and may be blocked/deprecated in the future due to security considerations.
-
-Once you've successfully loaded FalkorDB your Redis log should see lines similar to:
-
-```
-...
-30707:M 20 Jun 02:08:12.314 * Module 'graph' loaded from <redacted>/src/falkordb.so
-...
-```
-
-If the server fails to launch with output similar to:
-
-```
-# Module /usr/lib/redis/modules/falkordb.so failed to load: libgomp.so.1: cannot open shared object file: No such file or directory
-# Can't load module from /usr/lib/redis/modules/falkordb.so: server aborting
-```
-
-The system is missing the run-time dependency OpenMP. This can be installed on Ubuntu with `apt-get install libgomp1`, on RHEL/CentOS with `yum install libgomp`, and on OSX with `brew install libomp`.
 
 ## USING FALKORDB
 
@@ -351,9 +272,146 @@ reply = g.query("CREATE (:person {name:'roi', age:33, gender:'male', status:'mar
 [rustis-author]: https://github.com/dahomey-technologies
 [rustis-stars]: https://img.shields.io/github/stars/dahomey-technologies/rustis.svg?style=social&amp;label=Star&amp;maxAge=2592000
 
+## DOCUMENTATION
+
+[Official Docs](https://docs.falkordb.com/) | [Clients](https://docs.falkordb.com/clients.html) | [Commands](https://docs.falkordb.com/commands/) | 📊 [Latest Performance Benchmarks](https://benchmark.falkordb.com/)
+
+### Community and Support
+
+* **Discussions**: Join our community discussions on [GitHub Discussions](https://github.com/FalkorDB/FalkorDB/discussions) to ask questions, share ideas, and connect with other users.
+
+* **Contributing**: We welcome contributions! See the [Developer Guide](#developer-guide) below to build FalkorDB from source and run the test suites.
+
+* **License**: This project is licensed under the Server Side Public License v1 (SSPLv1). See the [LICENSE](LICENSE) file for details.
+
+## Developer Guide
+
+This repository is the Rust implementation of FalkorDB. It builds the `falkordb` Redis
+module (`libfalkordb.{so,dylib}`) from Rust, using GraphBLAS sparse matrices for graph
+storage and traversal.
+
+### Quick Start with Dev Container (Recommended)
+
+The easiest way to get started is using the development container, which includes all dependencies pre-installed:
+
+1. Install [Docker](https://docs.docker.com/get-docker/) and [VS Code](https://code.visualstudio.com/)
+2. Install the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
+3. Open this project in VS Code
+4. Click "Reopen in Container" when prompted (or press F1 and select "Dev Containers: Reopen in Container")
+5. Wait for the container to build (first time takes ~10-15 minutes)
+6. Start developing! All dependencies are ready to use.
+
+See [.devcontainer/README.md](.devcontainer/README.md) for more details.
+
+### Manual Setup
+
+If you prefer to set up the environment manually:
+
+#### Build
+
+```
+cargo build
+```
+
+#### Dependencies:
+
+GraphBLAS, LAGraph, and RediSearch must be built and installed before building this project.
+
+##### Toolchain prerequisites
+
+| Host | Compiler | OpenMP runtime |
+| --- | --- | --- |
+| macOS | `brew install llvm` (provides `clang` with OpenMP support) | `brew install libomp` |
+| Linux | `clang-22` (e.g. from [apt.llvm.org](https://apt.llvm.org/)) | `apt install libomp-22-dev` |
+
+Local builds use whatever OpenMP package is on the system — `build/libomp.sh`
+is **not** required for local development. It is only invoked by the Docker
+toolchain image (`build/Dockerfile`) to produce `/opt/libomp/lib/libomp.a`,
+which lets the published `libfalkordb.{so,dylib}` embed libomp statically
+and have no `libomp.so.5` / `libgomp.so.1` / `libomp.dylib` runtime
+dependency. A locally-built artifact will dynamically link the system
+libomp instead — fine for dev, but CI/Docker is the source of truth for
+the self-contained image.
+
+If you do want a self-contained local artifact (e.g. to mirror the Docker
+build), run `build/libomp.sh` with a writable `PREFIX` and point
+`graph/build.rs` at it via `LIBOMP_PREFIX`:
+
+```bash
+CC=$(brew --prefix llvm)/bin/clang PREFIX=$HOME/libomp ./build/libomp.sh
+LIBOMP_PREFIX=$HOME/libomp cargo build
+```
+
+The script auto-detects the libomp source release from `${CC:-clang}
+--version`, so it stays ABI-matched to your compiler with no manual
+version arg. In Docker the same auto-detection runs against
+`clang-${CLANG_MAJOR}`, eliminating the prior drift risk between the
+apt-installed clang and a hand-pinned `LLVMORG_VERSION`.
+
+##### Building GraphBLAS + LAGraph
+
+[GraphBLAS](https://github.com/DrTimothyAldenDavis/GraphBLAS.git) and
+[LAGraph](https://github.com/GraphBLAS/LAGraph.git) are built by a single
+script: GraphBLAS is installed system-wide, LAGraph is emitted under
+`./lagraph_lib`.
+
+On macOS, point the script at homebrew clang first:
+
+```bash
+export CC=$(brew --prefix llvm)/bin/clang
+export CXX=$(brew --prefix llvm)/bin/clang++
+./graphblas.sh
+```
+
+On Linux:
+
+```bash
+CC=clang-22 CXX=clang++-22 ./graphblas.sh
+```
+
+##### Building RediSearch
+
+```bash
+./redisearch.sh
+```
+
+- pytest - create virtualenv and install tests/requirements.txt
+
+The virtual environment should be activated before running tests.
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r tests/requirements.txt
+```
+
+### Testing
+
+- run unit tests with `cargo test -p graph`
+
+- run e2e and function tests with `pytest tests/test_e2e.py tests/test_functions.py -vv`
+
+- run MVCC and concurrency tests with `pytest tests/test_mvcc.py tests/test_concurrency.py -vv`
+
+- run flow tests with `./flow.sh`
+
+- run tck tests with `pytest tests/tck/test_tck.py -s`
+
+There is an option to run only part of the TCK tests and stop on the first fail
+
+```bash
+TCK_INCLUDE=tests/tck/features/expressions/list pytest tests/tck/test_tck.py -s
+```
+
+To run all passing TCK tests use:
+
+```bash
+TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
+```
+
 ## LICENSE
 
-Licensed under the Server Side Public License v1 (SSPLv1). See [LICENSE](LICENSE.txt).
+Licensed under the Server Side Public License v1 (SSPLv1). See [LICENSE](LICENSE).
 
 ### Support our work
 

@@ -10,7 +10,7 @@ class testAggregations():
 
     def get_res_and_assertEquals(self, query, expected_result):
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
     
     def get_res_and_assertAlmostEquals(self, query, expected_result):
         actual_result = self.graph.query(query)
@@ -39,7 +39,7 @@ class testAggregations():
                    stDev(n.v), stDevP(n.v), collect(n),
                    percentileDisc(n.v, 0.5), percentileCont(n.v, 0.5)"""
         result = self.graph.query(query)
-        self.env.assertEquals(result.result_set[0], expected_result)
+        self.env.assertEqual(result.result_set[0], expected_result)
 
         # issue a similar query only perform aggregations within a WITH clause
         query = """MATCH (n) WHERE n.v = 'noneExisting'
@@ -50,19 +50,19 @@ class testAggregations():
                    RETURN *"""
 
         result = self.graph.query(query)
-        self.env.assertEquals(result.result_set[0], expected_result)
+        self.env.assertEqual(result.result_set[0], expected_result)
     
     def test02_countTest(self):
         query = "UNWIND [NULL, NULL, NULL, NULL, NULL] AS x RETURN count(1)"
         expected = 5
         actual_result = self.graph.query(query).result_set[0][0]
-        self.env.assertEquals(actual_result, expected)
+        self.env.assertEqual(actual_result, expected)
     
     def test03_partialCountTest(self):
         query = "UNWIND [NULL, 1, NULL, 1, NULL, 1, NULL, 1, NULL, 1] AS x RETURN count(x)"
         expected = 5
         actual_result = self.graph.query(query).result_set[0][0]
-        self.env.assertEquals(actual_result, expected)
+        self.env.assertEqual(actual_result, expected)
     
     def test04_percentileCont(self):
         expected_values = []
@@ -120,7 +120,7 @@ class testAggregations():
         query2 = f'RETURN ({double_max} / 2 + {double_max} / 4)'
         res1 = self.graph.query(query).result_set[0][0]
         res2 = self.graph.query(query2).result_set[0][0]
-        self.env.assertEquals(res1, res2)
+        self.env.assertEqual(res1, res2)
     
     def test08_AggregateLongOverflow(self):
         long_max = 2147483647
@@ -195,7 +195,7 @@ class testAggregations():
 
         expected = ['Alice', 'Bob']
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], expected)
+        self.env.assertEqual(res[0][0], expected)
 
         # Collecting nodes
         q = """MATCH (p:Person)
@@ -204,7 +204,7 @@ class testAggregations():
                RETURN collect(p) AS nodes"""
         expected = nodes
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], expected)
+        self.env.assertEqual(res[0][0], expected)
 
         # Collecting relationships
         res = self.graph.query("""UNWIND range(0,1) AS x
@@ -220,7 +220,7 @@ class testAggregations():
 
         expected = edges
         res = self.graph.query(q).result_set[0][0]
-        self.env.assertEquals(res, expected)
+        self.env.assertEqual(res, expected)
 
         # Collecting maps (dictionaries)
         q = "RETURN collect({key:'value', num:42}) AS collection"
@@ -240,7 +240,7 @@ class testAggregations():
                 [ [x, -x]                for x in range(1, 10001) ]
         ]
         res = self.graph.query(q).result_set[0]
-        self.env.assertEquals(res, expected)
+        self.env.assertEqual(res, expected)
 
         # Collecting passed values
         q = """
@@ -259,4 +259,4 @@ class testAggregations():
              {'a': 'Hello', 'b': [1, {'x': 'y'}, 'GoodBye!']}]
         ]
 
-        self.env.assertEquals(res, expected)
+        self.env.assertEqual(res, expected)

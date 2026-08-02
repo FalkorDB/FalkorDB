@@ -63,7 +63,6 @@ Feature: Literals6 - String
       | '🧐🍌❖⋙⚐' |
     And no side effects
 
-  @skip
   Scenario: [4] Return a single-quoted string with escaped single-quoted
     Given any graph
     When executing query:
@@ -76,7 +75,6 @@ Feature: Literals6 - String
     And no side effects
 
   @skipStyleCheck
-  @skip
   Scenario: [5] Return a single-quoted string with escaped characters
     Given any graph
     When executing query:
@@ -133,7 +131,6 @@ Feature: Literals6 - String
       | ''      |
     And no side effects
 
-  @skip
   Scenario: [10] Accept valid Unicode literal
     Given any graph
     When executing query:
@@ -170,7 +167,6 @@ Feature: Literals6 - String
     And no side effects
 
   @skipGrammarCheck
-  @skip
   Scenario: [13] Failing on incorrect unicode literal
     Given any graph
     When executing query:

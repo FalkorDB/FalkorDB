@@ -1,0 +1,16 @@
+[package]
+name = "runtime-fuzz-target"
+version = "0.1.0"
+edition = "2024"
+description = "AFL++ fuzz of the database"
+license = "SSPL-1.0"
+repository = "https://github.com/FalkorDB/FalkorDB"
+readme = "../README.md"
+keywords = ["graph", "database"]
+categories = ["data-structures", "database"]
+
+[dependencies]
+afl = "*"
+
+[dependencies.graph]
+path = "../graph"

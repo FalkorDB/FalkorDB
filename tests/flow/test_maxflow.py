@@ -205,7 +205,7 @@ class testMaxFlow(FlowTestsBase):
     # ------------------------------------------------------------------ #
 
     def test_02_max_flow_empty_graph(self):
-        """Flow on an empty graph should throw an exceptiont."""
+        """Flow on an empty graph should throw an exception."""
         self.graph.query("CREATE (a)-[e:PIPE]->(b) DELETE a,e,b")
 
         try:
@@ -455,7 +455,7 @@ class testMaxFlow(FlowTestsBase):
 
         node_ids = [n.id for n in nodes]
         for idx, e in enumerate(edges):
-            self.env.assertIn(e.src_node, node_ids)
+            self.env.assertContains(e.src_node, node_ids)
             self.env.assertTrue(e.properties['cap'] == flows[idx])
 
     # ------------------------------------------------------------------ #

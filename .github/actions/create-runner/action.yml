@@ -1,0 +1,96 @@
+name: Create GCE runner (with retry)
+description: >
+  Create an ephemeral self-hosted GCE runner, retrying on transient GCP
+  capacity stockouts (ZONE_RESOURCE_POOL_EXHAUSTED across all configured
+  zones). The (size × variant) benchmark matrix bursts many VMs at once, so a
+  momentary stockout on one is likely; a couple of backed-off retries recover
+  it instead of failing the create — and thereby skipping the whole benchmark
+  matrix that depends on it. A persistent regional stockout still fails fast
+  (better than a partial run), so just re-trigger later.
+inputs:
+  token:
+    required: true
+  project_id:
+    required: true
+  service_account_key:
+    required: true
+  machine_zones:
+    required: true
+  machine_type:
+    required: true
+  network:
+    required: true
+  runner_label:
+    required: true
+  arm:
+    description: "Provision an arm64 VM (installs the arm64 runner agent). Requires an arm64 machine_type + image."
+    required: false
+    default: "false"
+  image_family:
+    description: "Boot-disk image family (e.g. debian-12-arm64 for arm). Empty → gce-github-runner default (gcloud picks Debian x86)."
+    required: false
+    default: ""
+  image_project:
+    description: "Project the image_family resolves against (e.g. ubuntu-os-cloud). Empty → gce-github-runner default."
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Create runner (attempt 1)
+      id: a1
+      continue-on-error: true
+      uses: FalkorDB/gce-github-runner@0caf8406cd6353630fcd0b2eade420d3da124e01
+      with:
+        token: ${{ inputs.token }}
+        project_id: ${{ inputs.project_id }}
+        service_account_key: ${{ inputs.service_account_key }}
+        machine_zones: ${{ inputs.machine_zones }}
+        machine_type: ${{ inputs.machine_type }}
+        network: ${{ inputs.network }}
+        runner_label: ${{ inputs.runner_label }}
+        arm: ${{ inputs.arm }}
+        image_family: ${{ inputs.image_family }}
+        image_project: ${{ inputs.image_project }}
+
+    - name: Backoff before attempt 2
+      if: steps.a1.outcome == 'failure'
+      shell: bash
+      run: sleep 90
+
+    - name: Create runner (attempt 2)
+      id: a2
+      if: steps.a1.outcome == 'failure'
+      continue-on-error: true
+      uses: FalkorDB/gce-github-runner@0caf8406cd6353630fcd0b2eade420d3da124e01
+      with:
+        token: ${{ inputs.token }}
+        project_id: ${{ inputs.project_id }}
+        service_account_key: ${{ inputs.service_account_key }}
+        machine_zones: ${{ inputs.machine_zones }}
+        machine_type: ${{ inputs.machine_type }}
+        network: ${{ inputs.network }}
+        runner_label: ${{ inputs.runner_label }}
+        arm: ${{ inputs.arm }}
+        image_family: ${{ inputs.image_family }}
+        image_project: ${{ inputs.image_project }}
+
+    - name: Backoff before attempt 3
+      if: steps.a1.outcome == 'failure' && steps.a2.outcome == 'failure'
+      shell: bash
+      run: sleep 150
+
+    - name: Create runner (attempt 3)
+      if: steps.a1.outcome == 'failure' && steps.a2.outcome == 'failure'
+      uses: FalkorDB/gce-github-runner@0caf8406cd6353630fcd0b2eade420d3da124e01
+      with:
+        token: ${{ inputs.token }}
+        project_id: ${{ inputs.project_id }}
+        service_account_key: ${{ inputs.service_account_key }}
+        machine_zones: ${{ inputs.machine_zones }}
+        machine_type: ${{ inputs.machine_type }}
+        network: ${{ inputs.network }}
+        runner_label: ${{ inputs.runner_label }}
+        arm: ${{ inputs.arm }}
+        image_family: ${{ inputs.image_family }}
+        image_project: ${{ inputs.image_project }}
