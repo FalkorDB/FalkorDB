@@ -271,12 +271,13 @@ jobs:
       # to every combination, so the four of them would overwrite each other
       # rather than fan out. `c2` maps to the `c` module in the step below.
       #
-      # 93 queries at ~14.5s each is ~22 min of measurement per side. Sharded 4
-      # ways that is ~5.5 min of wall-clock, which is what the full-set
-      # `measure` job costs anyway — so the subset got 12x wider for free.
+      # 93 queries at ~21s each (three runs per query since the drift
+      # replicate was added) is ~33 min of measurement per side. Sharded 6 ways
+      # that is ~5.5 min of wall-clock, matching the full-set `measure` job, so
+      # callgrind stays off the critical path.
       matrix:
         side: [pr, base, c, c2]
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -320,7 +321,7 @@ jobs:
             apt-get install -y -qq --no-install-recommends valgrind python3 >/dev/null
             valgrind --version
             python3 bench/cachegrind.py --module /w/module.so \
-              --shard ${{ matrix.shard }}/4 \
+              --shard ${{ matrix.shard }}/6 \
               --out /w/cg-${{ matrix.side }}-${{ matrix.shard }}.csv \
               --module-args THREAD_COUNT 1
           '

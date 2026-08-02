@@ -132,6 +132,13 @@ DRIFT_INSTR = 600_000
 TARGET_REL = 0.002
 MAX_SPAN = 4000
 
+# Widest per-execution error bar still worth reporting. A row that cannot be
+# resolved to better than this on the host it ran on is dropped rather than
+# printed — see the drift measurement in the loop below. 2% is loose enough to
+# keep every well-behaved row (this module resolves to ~0.2%) and tight enough
+# that a PR/base ratio built from two such rows is meaningful.
+MAX_REL_ERR = 0.02
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
@@ -486,33 +493,64 @@ def main():
             )
             continue
 
-        per = (hi - lo) / span
+        # Measure this engine's drift instead of assuming DRIFT_INSTR.
+        #
+        # DRIFT_INSTR was calibrated on this module. The C engine cannot be
+        # pinned as tightly — THREAD_COUNT 0 refuses to start, so a worker
+        # thread always exists and valgrind schedules the handoff
+        # nondeterministically — and its real drift is far larger. Assuming the
+        # calibrated value there produced `RETURN 1` at 4,053,858 instr against
+        # a true cost near 150k, reported as +-0.15% because the error estimate
+        # divides by the very number the drift inflated. Two self-reinforcing
+        # failures: the widening never triggers (a too-high `per` asks for a
+        # too-small span) and the confidence looks best when the number is
+        # worst.
+        #
+        # `rep` re-runs n1. Identical work, so the whole difference is drift.
+        try:
+            rep = run_total(args.module, args.port, outdir, q, args.n1)
+        except (RuntimeError, subprocess.TimeoutExpired) as e:
+            print(f"{name:<24} FAILED on the drift replicate: {e}", flush=True)
+            continue
+        drift = abs(rep - lo)
+        base_lo = min(lo, rep)
+
+        per = (hi - base_lo) / span
         used_span, note = span, ""
 
-        # Widen the span for cheap queries. The per-run drift is roughly a
-        # fixed number of instructions, so dividing it by the span makes the
-        # *absolute* error per execution fixed — which is negligible for a
-        # 7M-instruction query and enormous for a 90k one. Choosing
-        # span = DRIFT / (TARGET_REL * cost) makes the differenced work
-        # constant instead, so precision is uniform and the extra cost is
-        # bounded at DRIFT/TARGET_REL instructions per query.
-        if per > 0:
-            want = math.ceil(DRIFT_INSTR / (TARGET_REL * per))
-            want = min(want, MAX_SPAN)
+        # Same widening rule, but driven by the drift actually observed. Cheap
+        # queries get a wide span so the differenced work stays constant and
+        # precision is uniform; the extra cost is bounded at drift/TARGET_REL.
+        if per > 0 and drift > 0:
+            want = min(math.ceil(drift / (TARGET_REL * per)), MAX_SPAN)
             if want > span:
                 try:
                     hi2 = run_total(args.module, args.port, outdir, q, args.n1 + want)
                 except (RuntimeError, subprocess.TimeoutExpired) as e:
                     print(f"{name:<24} refine failed, keeping span {span}: {e}", flush=True)
                     hi2 = None
-                if hi2 is not None and hi2 > lo:
-                    per = (hi2 - lo) / want
+                if hi2 is not None and hi2 > base_lo:
+                    per = (hi2 - base_lo) / want
                     used_span, note = want, f" [span widened {span}->{want}]"
+
+        # Honest per-row error bar, from the measured drift rather than a
+        # constant. A row the host is too noisy to resolve is dropped: a number
+        # nobody can reproduce is worse than a gap, because it still lands in
+        # the table looking like a measurement.
+        rel = (drift / used_span / per) if per > 0 else float("inf")
+        if rel > MAX_REL_ERR:
+            print(
+                f"{name:<24} DROPPED: +-{rel * 100:.1f}% at span {used_span} "
+                f"(drift {drift:,} over two identical n1={args.n1} runs) — "
+                f"too noisy on this host to report",
+                flush=True,
+            )
+            continue
 
         rows.append({"query": name, "instr": f"{per:.0f}"})
         print(
             f"{name:<24}{per:>15,.0f} instr/exec   "
-            f"(span {used_span}, +-{DRIFT_INSTR / used_span / per * 100:.2f}%, "
+            f"(span {used_span}, +-{rel * 100:.2f}%, drift {drift:,}, "
             f"{time.time() - t0:.0f}s){note}",
             flush=True,
         )

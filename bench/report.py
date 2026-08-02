@@ -191,14 +191,22 @@ def callgrind_section(out, cg):
         # a 60x win. The floor sits well under any real query and well over any
         # error path.
         vals = [v for v in vals if v >= C_ERROR_FLOOR]
-        if not vals:
+        # Both passes required. A single pass is not a measurement: the whole
+        # reason C is run twice is that it cannot be pinned as tightly as this
+        # module, and one number with nothing to check it against is exactly
+        # the case where the noise is invisible. An earlier revision printed
+        # these as "(1 pass)" and 43 of 93 rows in one report were single-pass
+        # — including `RETURN 1` at 4.0M instructions against a true cost near
+        # 150k. Report nothing rather than that.
+        if len(vals) < 2:
             return "n/a", "n/a"
-        b = pr.get(q)
-        if len(vals) == 1 or abs(max(vals) / min(vals) - 1) <= C_TOLERANCE:
-            mid = sum(vals) / len(vals)
-            tag = "" if len(vals) == 2 else " (1 pass)"
-            return f"{mid:,.0f}{tag}", (f"{b / mid:.2f}x" if b else "—")
         lo, hi = min(vals), max(vals)
+        b = pr.get(q)
+        if hi / lo - 1 <= C_TOLERANCE:
+            mid = (lo + hi) / 2
+            return f"{mid:,.0f}", (f"{b / mid:.2f}x" if b else "—")
+        # The passes disagree. Show the range so the width is visible rather
+        # than hiding it behind a midpoint.
         return (f"{lo:,.0f}–{hi:,.0f}",
                 (f"{b / hi:.2f}–{b / lo:.2f}x" if b else "—"))
 
