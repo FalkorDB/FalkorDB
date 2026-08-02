@@ -665,3 +665,74 @@ class testComprehensionFunctions(FlowTestsBase):
 
         finally:
             g.delete()
+
+    def test24_unwind_pattern_comprehension(self):
+        # UNWIND over a pattern comprehension must plan the comprehension as
+        # its own sub-plan instead of evaluating it inline.
+        # https://github.com/FalkorDB/FalkorDB/issues/2027
+        g = self.db.select_graph("unwind_pattern_comprehension")
+
+        try:
+            g.delete()
+        except:
+            pass
+
+        g.query("CREATE (:A {id: 1})-[:R]->(:B {v: 1})")
+        g.query("MATCH (a:A {id: 1}) CREATE (a)-[:R]->(:B {v: 2})")
+
+        try:
+            # the reported repro and its variations on the projected expression
+            self.env.assertEqual(
+                g.query("UNWIND [()-[]->() | 1] AS x RETURN x ORDER BY x").result_set,
+                [[1], [1]])
+            self.env.assertEqual(
+                g.query("UNWIND [()-[]->() | true] AS x RETURN DISTINCT x").result_set,
+                [[True]])
+            self.env.assertEqual(
+                g.query("""UNWIND [()-[]->() | reduce(a = 0, b IN [1,2,3] | a + b)]
+                           AS x RETURN DISTINCT x""").result_set,
+                [[6]])
+
+            # an explicit path variable in the pattern
+            self.env.assertEqual(
+                g.query("UNWIND [p = ()-[]->() | 1] AS x RETURN x ORDER BY x").result_set,
+                [[1], [1]])
+
+            # correlated with a preceding MATCH
+            self.env.assertEqual(
+                g.query("""MATCH (a:A {id: 1})
+                           UNWIND [(a)-[:R]->(b:B) | b.v] AS v
+                           RETURN v ORDER BY v""").result_set,
+                [[1], [2]])
+
+            # two comprehensions in one unwound expression
+            self.env.assertEqual(
+                g.query("""MATCH (a:A {id: 1})
+                           UNWIND [(a)-[:R]->(b:B) | b.v] + [(a)-[:R]->(c:B) | c.v]
+                           AS v RETURN v ORDER BY v""").result_set,
+                [[1], [1], [2], [2]])
+
+            # a predicate inside the comprehension
+            self.env.assertEqual(
+                g.query("""MATCH (a:A {id: 1})
+                           UNWIND [(a)-[:R]->(b:B) WHERE b.v = 2 | b.v] AS v
+                           RETURN v""").result_set,
+                [[2]])
+
+            # an empty comprehension unwinds to no rows
+            self.env.assertEqual(
+                g.query("""MATCH (n:B)
+                           UNWIND [(n)-[:R]->(x) | x] AS y
+                           RETURN count(y)""").result_set,
+                [[0]])
+
+            # the unwound values feed a following clause
+            self.env.assertEqual(
+                g.query("""MATCH (a:A {id: 1})
+                           UNWIND [(a)-[:R]->(b:B) | b] AS n
+                           MATCH (n)<-[:R]-(z)
+                           RETURN n.v, z.id ORDER BY n.v""").result_set,
+                [[1, 1], [2, 1]])
+
+        finally:
+            g.delete()
