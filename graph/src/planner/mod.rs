@@ -44,7 +44,7 @@ use crate::runtime::functions::{FnType, Type, get_functions};
 use crate::runtime::value::Value;
 use crate::tree;
 
-use orx_tree::{Bfs, DynNode, DynTree, NodeRef, Side, Traversal, Traverser};
+use orx_tree::{Bfs, Dyn, DynNode, DynTree, NodeIdx, NodeRef, Side, Traversal, Traverser};
 
 use crate::{
     entity_type::EntityType,
@@ -853,6 +853,32 @@ impl Planner {
         let mut tr = Traversal.bfs().over_nodes();
         node.walk_with(&mut tr)
             .any(|n| matches!(n.data(), ExprIR::Variable(v) if inline_var_ids.contains(&v.id)))
+    }
+
+    /// Does this expression tree contain a pattern comprehension or an
+    /// existential pattern that has to be planned as a sub-plan?
+    fn has_pattern_expr(node: &DynNode<ExprIR<Variable>>) -> bool {
+        match node.data() {
+            ExprIR::PatternComprehension(_) | ExprIR::Pattern(_) => true,
+            _ => node.children().any(|c| Self::has_pattern_expr(&c)),
+        }
+    }
+
+    /// Walk past the Apply chain a `ForEach` carries for pattern
+    /// comprehensions in its list expression, so the preceding clause is
+    /// stitched below the sub-plans rather than as an extra `ForEach` child.
+    fn descend_foreach_applies(
+        tree: &DynTree<IR>,
+        mut idx: NodeIdx<Dyn<IR>>,
+    ) -> NodeIdx<Dyn<IR>> {
+        if matches!(tree.node(idx).data(), IR::ForEach { .. }) {
+            while tree.node(idx).num_children() > 1
+                && matches!(tree.node(idx).child(0).data(), IR::Apply)
+            {
+                idx = tree.node(idx).child(0).idx();
+            }
+        }
+        idx
     }
 
     /// Build a pattern sub-plan for a graph, saving and restoring visited state.
@@ -2025,14 +2051,10 @@ impl Planner {
     ) -> DynTree<IR> {
         // Check if any expressions contain pattern comprehensions or patterns.
         // Only rebuild expressions if patterns need to be extracted.
-        fn has_patterns(node: &DynNode<ExprIR<Variable>>) -> bool {
-            match node.data() {
-                ExprIR::PatternComprehension(_) | ExprIR::Pattern(_) => true,
-                _ => node.children().any(|c| has_patterns(&c)),
-            }
-        }
-        let needs_extraction = exprs.iter().any(|(_, e)| has_patterns(&e.root()))
-            || orderby.iter().any(|(e, _)| has_patterns(&e.root()));
+        let needs_extraction = exprs.iter().any(|(_, e)| Self::has_pattern_expr(&e.root()))
+            || orderby
+                .iter()
+                .any(|(e, _)| Self::has_pattern_expr(&e.root()));
 
         // Extract pattern comprehensions from all projection expressions BEFORE
         // clearing visited — the sub-plans need to know which variables are
@@ -2357,6 +2379,7 @@ impl Planner {
                 idx = res.node(idx).child(0).idx();
             }
         }
+        idx = Self::descend_foreach_applies(&res, idx);
         // Insert each remaining clause plan (in reverse order) at the
         // current insertion point, then walk down again to find the next
         // insertion point for the clause before it.
@@ -2434,6 +2457,7 @@ impl Planner {
                     idx = res.node(idx).child(0).idx();
                 }
             }
+            idx = Self::descend_foreach_applies(&res, idx);
         }
 
         // For write queries without an explicit WITH/RETURN commit, wrap
@@ -2921,6 +2945,29 @@ impl Planner {
                 var,
                 body,
             } => {
+                // A pattern comprehension in the list expression can't be
+                // evaluated inline — it needs its own traversal sub-plan.
+                // Extract it while `visited` still reflects the outer scope
+                // (the loop variable isn't bound in the list expression), so
+                // the sub-plan binds to the variables the preceding clauses
+                // produced.  Each extraction becomes an Apply below the
+                // ForEach; the list expression is left referencing the
+                // collected result variable.
+                let mut extracted = Vec::new();
+                let list_expr: QueryExpr<Variable> = if Self::has_pattern_expr(&list_expr.root()) {
+                    Arc::new(self.extract_pattern_comprehensions(
+                        &list_expr.root(),
+                        var.scope_id,
+                        &mut extracted,
+                    ))
+                } else {
+                    list_expr
+                };
+                let apply_plans: Vec<DynTree<IR>> = extracted
+                    .iter()
+                    .map(|c| self.build_pattern_comprehension_plan(c))
+                    .collect();
+
                 // Add the loop variable to visited so body clauses (MERGE, CREATE)
                 // know it's already bound and don't create new entities for it.
                 let saved_visited = self.visited.clone();
@@ -2930,13 +2977,18 @@ impl Planner {
                 let body_plans: Vec<DynTree<IR>> =
                     body.into_iter().map(|clause| self.plan(clause)).collect();
 
-                // Restore visited to pre-FOREACH state
+                // Restore visited to pre-FOREACH state; the extracted
+                // comprehension variables stay bound, since their Apply
+                // sub-plans run below the ForEach on the outer stream.
                 self.visited = saved_visited;
+                for c in &extracted {
+                    self.visited.insert((c.var.id, c.var.scope_id));
+                }
 
                 // Stitch body plans together (same as plan_query stitching)
                 let mut body_iter = body_plans.into_iter().rev();
                 let mut body_plan = body_iter.next().unwrap();
-                let mut idx = body_plan.root().idx();
+                let mut idx = Self::descend_foreach_applies(&body_plan, body_plan.root().idx());
                 for n in body_iter {
                     if body_plan.node(idx).num_children() > 0 {
                         idx = body_plan
@@ -2946,19 +2998,34 @@ impl Planner {
                     } else {
                         idx = body_plan.node_mut(idx).push_child_tree(n);
                     }
+                    idx = Self::descend_foreach_applies(&body_plan, idx);
                 }
                 // Do NOT wrap in Commit — mutations accumulate in pending
                 // across all iterations and are committed by the outer Commit
                 // after the entire FOREACH completes.
                 // Add Argument leaves so the body gets the loop env
                 Self::add_argument_to_leaves(&mut body_plan, None);
-                tree!(
-                    IR::ForEach {
-                        list: list_expr,
-                        var
-                    },
-                    body_plan
-                )
+
+                let mut res = tree!(IR::ForEach {
+                    list: list_expr,
+                    var
+                });
+                // Pattern-comprehension sub-plans go below the ForEach, as an
+                // Apply chain on the input stream.  The innermost Apply is
+                // left single-child so stitching can insert the preceding
+                // clause as its child(0) (see `descend_foreach_applies`).
+                let mut apply_chain: Option<DynTree<IR>> = None;
+                for sub_plan in apply_plans.into_iter().rev() {
+                    apply_chain = Some(match apply_chain {
+                        Some(inner) => tree!(IR::Apply, inner, sub_plan),
+                        None => tree!(IR::Apply, sub_plan),
+                    });
+                }
+                if let Some(chain) = apply_chain {
+                    res.root_mut().push_child_tree(chain);
+                }
+                res.root_mut().push_child_tree(body_plan);
+                res
             }
         }
     }

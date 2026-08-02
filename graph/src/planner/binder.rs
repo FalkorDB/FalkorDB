@@ -675,8 +675,22 @@ impl Binder {
                 for clause in body {
                     bound_body.push(self.bind_ir(clause)?);
                 }
-                // Restore the outer scope.
-                *self.current_env_mut() = saved_env;
+                // Restore the outer scope, but keep every ID slot allocated
+                // inside the FOREACH reserved under a unique key.  IDs are
+                // handed out as `env.len()`, so dropping those entries would
+                // let a later variable in this scope — including the
+                // planner's own fresh variables — reuse an ID the FOREACH
+                // still uses, silently aliasing two variables in the record.
+                let scope_id = self.env_stack.len() as u32 - 1;
+                let inner_env = std::mem::replace(self.current_env_mut(), saved_env);
+                let restored: HashSet<u32> = self.current_env().values().map(|v| v.id).collect();
+                for v in inner_env.into_values() {
+                    if restored.contains(&v.id) {
+                        continue;
+                    }
+                    let key = Arc::new(format!("_foreach_{}_{}", scope_id, v.id));
+                    self.current_env_mut().insert(key, v);
+                }
                 Ok(QueryIR::ForEach {
                     list: bound_list,
                     var,
