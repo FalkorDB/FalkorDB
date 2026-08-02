@@ -22,11 +22,11 @@ class testReturnDistinctFlow1(FlowTestsBase):
     def test_distinct_optimization(self):
         # Make sure we do not omit distinct when performain none aggregated projection.
         execution_plan = str(self.graph1.explain("MATCH (n) RETURN DISTINCT n.name, n.age"))
-        self.env.assertIn("Distinct", execution_plan)
+        self.env.assertContains("Distinct", execution_plan)
 
         # Distinct should be omitted when performain aggregation.
         execution_plan = str(self.graph1.explain("MATCH (n) RETURN DISTINCT n.name, max(n.age)"))
-        self.env.assertNotIn("Distinct", execution_plan)
+        self.env.assertNotContains("Distinct", execution_plan)
 
     def test_issue_395_scenario(self):
         # all
@@ -145,19 +145,19 @@ class testDistinct(FlowTestsBase):
         query = """UNWIND [1, 2, 2, "a", "a", null] as x RETURN count(distinct x)"""
         actual_result = self.graph3.query(query)
         expected_result = [[3]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test_match_count_distinct(self):
         query = """MATCH (a)-[]->(x) RETURN count(distinct x)"""
         actual_result = self.graph3.query(query)
         expected_result = [[2]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test_collect_distinct(self):
         query = "UNWIND ['a', 'a', null, 1, 2, 2, 3, 3, 3] AS x RETURN collect(distinct x)"
         actual_result = self.graph3.query(query)
         expected_result = [[['a', 1, 2, 3]]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test_distinct_path(self):
         # Create duplicate paths using a Cartesian Product, collapse into 1 column,
@@ -165,14 +165,14 @@ class testDistinct(FlowTestsBase):
         query = """MATCH p1 = ()-[]->(), p2 = ()-[]->() UNWIND [p1, p2] AS a RETURN DISTINCT a"""
         actual_result = self.graph3.query(query)
         # Only three paths should be returned, one for each edge.
-        self.env.assertEquals(len(actual_result.result_set), 3)
+        self.env.assertEqual(len(actual_result.result_set), 3)
 
     def test_distinct_multiple_nulls(self):
         # DISTINCT should remove multiple null values.
         query = """UNWIND [null, null, null] AS x RETURN DISTINCT x"""
         actual_result = self.graph3.query(query)
         expected_result = [[None]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test_distinct_union(self):
         # UNION performs implicit distinct, following query has 2 branches coming into a JOIN op
@@ -185,29 +185,29 @@ class testDistinct(FlowTestsBase):
         query = "MATCH (n) WITH n AS n RETURN 1 UNION MATCH (n), (z) WHERE ID(n) = ID(z) RETURN 1"
         actual_result = self.graph3.query(query)
         expected_result = [[1]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # left hand side performs aggregations
         query = "MATCH (n) WITH n AS n RETURN max(1) AS one UNION MATCH (n), (z) WHERE ID(n) = ID(z) RETURN 1 AS one"
         actual_result = self.graph3.query(query)
         expected_result = [[1]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # right hand side performs aggregations
         query = "MATCH (n) WITH n AS n RETURN 1 AS one UNION MATCH (n), (z) WHERE ID(n) = ID(z) RETURN max(1) AS one"
         actual_result = self.graph3.query(query)
         expected_result = [[1]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # both ends perform aggregations
         query = "MATCH (n) WITH n AS n RETURN max(1) AS one UNION MATCH (n), (z) WHERE ID(n) = ID(z) RETURN min(1) AS one"
         actual_result = self.graph3.query(query)
         expected_result = [[1]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # aggregation with explicit group key
         query = "MATCH (n) WITH n AS n RETURN 2 as key, max(1) AS one UNION MATCH (n), (z) WHERE ID(n) = ID(z) RETURN 2 as key, min(1) AS one"
         actual_result = self.graph3.query(query)
         expected_result = [[2, 1]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 

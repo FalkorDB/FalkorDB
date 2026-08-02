@@ -160,8 +160,8 @@ class testDefrag():
         self.env.assertGreater(len(res), 0)
 
         for row in res:
-            self.env.assertEquals(props, row[0])
-            self.env.assertEquals(props, row[1])
+            self.env.assertEqual(props, row[0])
+            self.env.assertEqual(props, row[1])
 
     def test_concurrent_writers_during_defrag(self):
         """Regression test for issue #1831: writer queries must hold a graph
@@ -279,7 +279,7 @@ class testDefrag():
 
             # verify no connection-lost errors (would indicate a crash)
             crash_errors = [e for e in errors if "crash" in e.lower()]
-            self.env.assertEquals(len(crash_errors), 0)
+            self.env.assertEqual(len(crash_errors), 0)
 
         finally:
             #------------------------------------------------------------------
@@ -423,7 +423,7 @@ class testDefragStagedUpdate():
                     else:
                         tg.query("MERGE (n:Ent {name:$name}) ON MATCH SET n.tag=$t",
                                  {"name": nm, "t": _rnd(random.randint(48, 160))})
-                except redis.exceptions.ResponseError:
+                except redis.ResponseError:
                     pass  # cypher/runtime error, not a crash
                 except Exception as e:  # noqa: BLE001
                     if "connection" in str(e).lower() or isinstance(
@@ -450,7 +450,7 @@ class testDefragStagedUpdate():
                     i += 1
                     if i % 5 == 0:            # purge occasionally, not every cycle
                         conn.execute_command("MEMORY PURGE")
-                except redis.exceptions.ResponseError:
+                except redis.ResponseError:
                     pass
                 except Exception:  # noqa: BLE001
                     return
@@ -586,13 +586,13 @@ class testDefragWriteHang():
             # load must complete (no hung write) ...
             self.env.assertTrue(finished)            # False => a write hung
             self.env.assertIsNone(state["error"])
-            self.env.assertEquals(state["completed"], BATCHES)
+            self.env.assertEqual(state["completed"], BATCHES)
 
             # ... with every write landed exactly once
             if finished and state["error"] is None:
                 res = self.db.select_graph(gname).query(
                     "MATCH (n:Node) RETURN count(n)").result_set
-                self.env.assertEquals(res[0][0], BATCHES * BATCH)
+                self.env.assertEqual(res[0][0], BATCHES * BATCH)
 
         finally:
             if t is not None:

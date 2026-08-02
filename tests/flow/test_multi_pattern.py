@@ -23,8 +23,8 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
         query = """MATCH(r:person {name:"Roi"}), (f:person) WHERE f.name <> r.name CREATE (r)-[:friend]->(f) RETURN count(f)"""
         actual_result = self.graph.query(query)
         friend_count = actual_result.result_set[0][0]
-        self.env.assertEquals(friend_count, 6)
-        self.env.assertEquals(actual_result.relationships_created, 6)
+        self.env.assertEqual(friend_count, 6)
+        self.env.assertEqual(actual_result.relationships_created, 6)
 
     def test02_verify_cartesian_product_streams_reset(self):
         # See https://github.com/RedisGraph/RedisGraph/issues/249
@@ -37,7 +37,7 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
         for q in queries:
             actual_result = self.graph.query(q)
             records_count = len(actual_result.result_set)
-            self.env.assertEquals(records_count, expected_resultset_size)
+            self.env.assertEqual(records_count, expected_resultset_size)
 
 
     def test03_reset_nested_cartesian_product(self):
@@ -74,8 +74,8 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
         query = """MATCH(a:person), (b:person) WHERE a.name <> b.name CREATE (a)-[f:friend]->(b) RETURN count(f)"""
         actual_result = self.graph.query(query)
         friend_count = actual_result.result_set[0][0]
-        self.env.assertEquals(friend_count, 42)
-        self.env.assertEquals(actual_result.relationships_created, 42)
+        self.env.assertEqual(friend_count, 42)
+        self.env.assertEqual(actual_result.relationships_created, 42)
     
     # Perform a cartesian product of 3 sets.
     def test05_cartesian_product(self):
@@ -88,7 +88,7 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
         for q, c in queries.items():
             actual_result = self.graph.query(q)
             friend_count = actual_result.result_set[0][0]
-            self.env.assertEquals(friend_count, c)
+            self.env.assertEqual(friend_count, c)
 
     def test06_multiple_create_clauses(self):
         queries = ["""CREATE (:a {v:1}), (:b {v:2, z:3}), (:c), (:a)-[:r0 {k:9}]->(:b), (:c)-[:r1]->(:d)""",
@@ -96,7 +96,7 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
                    """CREATE (:a {v:1}), (:b {v:2, z:3}) CREATE (:c), (:a)-[:r0 {k:9}]->(:b) CREATE (:c)-[:r1]->(:d)"""]
         for q in queries:
             actual_result = self.graph.query(q)
-            self.env.assertEquals(actual_result.relationships_created, 2)
-            self.env.assertEquals(actual_result.properties_set, 4)
-            self.env.assertEquals(actual_result.nodes_created, 7)
+            self.env.assertEqual(actual_result.relationships_created, 2)
+            self.env.assertEqual(actual_result.properties_set, 4)
+            self.env.assertEqual(actual_result.nodes_created, 7)
 

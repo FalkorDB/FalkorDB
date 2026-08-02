@@ -2,7 +2,7 @@ import time
 from graph_utils import graph_eq
 from redis import BusyLoadingError, ResponseError
 from constraint_utils import create_constraint
-from common import Env, FalkorDB, SANITIZER, VALGRIND
+from common import Env, FalkorDB, SANITIZER
 from random_graph import create_random_schema, create_random_graph
 
 GRAPH_ID = "graph_copy"
@@ -97,7 +97,7 @@ class testGraphCopy():
             self.graph_copy(src, src)
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertIn("destination key already exists", str(e))
+            self.env.assertContains("destination key already exists", str(e))
 
         # clean up
         self.conn.delete(src, dest)
@@ -285,9 +285,9 @@ class testGraphCopy():
         src_graph.delete()
 
     def test_08_replicated_copy(self):
-        # skip test if we're running under Valgrind or sanitizer
-        if VALGRIND or SANITIZER:
-            self.env.skip() # valgrind is not working correctly with replication
+        # skip test if we're running under sanitizer
+        if SANITIZER:
+            self.env.skip() # sanitizer is not working correctly with replication
 
         # make sure the GRAPH.COPY command is replicated
 
@@ -314,9 +314,13 @@ class testGraphCopy():
         # the WAIT command forces master slave sync to complete
         master_con.execute_command("WAIT", "1", "0")
 
-        # make sure dest graph was replicated
-        # assuming replica port is env port+1
-        replica_db = FalkorDB("localhost", self.env.port+1)
+        # make sure dest graph was replicated.
+        # Under RLTest (local dev) the replica lives on the same host at
+        # port+1; under docker-per-class the replica is a sibling container
+        # exposed via env.replica_host:env.replica_port.
+        replica_host = getattr(self.env, "replica_host", "localhost")
+        replica_port = getattr(self.env, "replica_port", self.env.port + 1)
+        replica_db = FalkorDB(replica_host, replica_port)
         replica_cloned_graph = replica_db.select_graph(copy_graph_id)
         
         # make sure src graph on master is the same as cloned graph on replica

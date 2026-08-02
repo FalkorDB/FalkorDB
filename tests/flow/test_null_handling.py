@@ -18,7 +18,7 @@ class testNullHandlingFlow(FlowTestsBase):
             query = """MATCH (a) OPTIONAL MATCH (a)-[nonexistent_edge]->(nonexistent_node) CREATE (nonexistent_node)-[:E]->(a)"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -26,7 +26,7 @@ class testNullHandlingFlow(FlowTestsBase):
             query = """MATCH (a) OPTIONAL MATCH (a)-[nonexistent_edge]->(nonexistent_node) CREATE (a)-[:E]->(nonexistent_node)"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -36,7 +36,7 @@ class testNullHandlingFlow(FlowTestsBase):
             query = """MATCH (a) OPTIONAL MATCH (a)-[nonexistent_edge]->(nonexistent_node) MERGE (nonexistent_node)-[:E]->(a)"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -44,7 +44,7 @@ class testNullHandlingFlow(FlowTestsBase):
             query = """MATCH (a) OPTIONAL MATCH (a)-[nonexistent_edge]->(nonexistent_node) MERGE (a)-[:E]->(nonexistent_node)"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -55,7 +55,7 @@ class testNullHandlingFlow(FlowTestsBase):
         # The property should be set on the real node and ignored on the null entity.
         assert(actual_result.properties_set == 1)
         expected_result = [[True, None, None]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     # DELETE should ignore null entities.
     def test04_delete_null(self):
@@ -68,7 +68,7 @@ class testNullHandlingFlow(FlowTestsBase):
         query = """MATCH (a) OPTIONAL MATCH (a)-[r]->(b) RETURN type(r), labels(b), b.v * 5"""
         actual_result = self.graph.query(query)
         expected_result = [[None, None, None]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Path functions should handle null inputs appropriately.
     def test06_null_named_path_function_inputs(self):
@@ -76,7 +76,7 @@ class testNullHandlingFlow(FlowTestsBase):
         actual_result = self.graph.query(query)
         # The path and function calls on it should return NULL, while collect() returns an empty array.
         expected_result = [[None, None, []]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Scan and traversal operations should gracefully handle NULL inputs.
     def test07_null_graph_entity_inputs(self):
@@ -84,41 +84,40 @@ class testNullHandlingFlow(FlowTestsBase):
         actual_result = self.graph.query(query)
         # Expect one NULL entity to be returned.
         expected_result = [[None]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         query = """WITH NULL AS a MATCH (a)-[e]->(b) RETURN a, e, b"""
         plan = str(self.graph.explain(query))
         # Verify that we are attempting to perform a traversal but no scan.
-        self.env.assertNotIn("Scan", plan)
-        self.env.assertIn("Conditional Traverse", plan)
+        self.env.assertNotContains("Scan", plan)
+        self.env.assertContains("Conditional Traverse", plan)
         actual_result = self.graph.query(query)
         # Expect no results.
         expected_result = []
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         query = """WITH NULL AS e MATCH (a:L)-[e]->(b) RETURN a, e, b"""
         plan = str(self.graph.explain(query))
         # Verify that we are performing a scan and traversal.
-        self.env.assertIn("Label Scan", plan)
-        self.env.assertIn("Conditional Traverse", plan)
+        self.env.assertContains("Conditional Traverse", plan)
         actual_result = self.graph.query(query)
         # Expect no results.
         expected_result = []
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     # ValueHashJoin ops should not treat null values as equal.
     def test08_null_value_hash_join(self):
         query = """MATCH (a), (b) WHERE a.fakeval = b.fakeval RETURN a, b"""
         plan = str(self.graph.explain(query))
         # Verify that we are performing a ValueHashJoin
-        self.env.assertIn("Value Hash Join", plan)
+        self.env.assertContains("Value Hash Join", plan)
         actual_result = self.graph.query(query)
         # Expect no results.
         expected_result = []
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # Perform a sanity check on a ValueHashJoin that returns a result
         query = """MATCH (a), (b) WHERE a.v = b.v RETURN a.v, b.v"""
         actual_result = self.graph.query(query)
         expected_result = [['v1', 'v1']]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)

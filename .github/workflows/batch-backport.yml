@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version_branch:
-        description: "Version branch to backport to (e.g., 4.16)"
+        description: "Version branch to backport to (e.g., 0.1)"
         required: true
         type: string
 
@@ -17,16 +17,17 @@ jobs:
       pull-requests: write
     steps:
       - name: Validate version format
+        env:
+          VERSION_INPUT: ${{ github.event.inputs.version_branch }}
         run: |
-          VERSION="${{ github.event.inputs.version_branch }}"
-          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Invalid version format '$VERSION'. Expected format: X.Y (e.g., 4.16)"
+          if [[ ! "$VERSION_INPUT" =~ ^[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version format. Expected format: X.Y (e.g., 6.0)"
             exit 1
           fi
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "VERSION=$VERSION_INPUT" >> $GITHUB_ENV
 
       - name: Checkout repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           # A PAT with `workflow` scope is required so that the cherry-picked
@@ -59,7 +60,6 @@ jobs:
         run: |
           TAG="${{ steps.find_tag.outputs.LATEST_TAG }}"
           TAG_DATE=$(git log -1 --format="%cI" "$TAG")
-          # Extract just the date part (YYYY-MM-DD) for the search query
           TAG_DATE_SHORT=$(echo "$TAG_DATE" | cut -d'T' -f1)
           echo "Tag date: $TAG_DATE_SHORT"
           echo "TAG_DATE=$TAG_DATE_SHORT" >> $GITHUB_OUTPUT
@@ -68,11 +68,24 @@ jobs:
         id: find_prs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          echo "Searching for merged PRs with label '$VERSION' since ${{ steps.tag_date.outputs.TAG_DATE }}..."
+          # Backports cherry-pick trunk PRs onto a version branch, so the search
+          # base is the trunk this run was dispatched from — `main` here, or
+          # `main-rs` (the interim Rust branch in FalkorDB/FalkorDB). Hardcoding
+          # `base:main` would silently match zero PRs on main-rs and produce an
+          # empty backport.
+          case "$REF_NAME" in
+            main|main-rs) TRUNK="$REF_NAME" ;;
+            *) if git ls-remote --exit-code --heads origin main >/dev/null 2>&1; then
+                 TRUNK="main"
+               else
+                 TRUNK="main-rs"
+               fi ;;
+          esac
+          echo "Searching for merged PRs with label '$VERSION' (base:$TRUNK) since ${{ steps.tag_date.outputs.TAG_DATE }}..."
 
-          # Search for merged PRs with the version label
-          SEARCH_QUERY="is:pr is:merged label:\"$VERSION\" base:master merged:>${{ steps.tag_date.outputs.TAG_DATE }} repo:${{ github.repository }}"
+          SEARCH_QUERY="is:pr is:merged label:\"$VERSION\" base:$TRUNK merged:>${{ steps.tag_date.outputs.TAG_DATE }} repo:${{ github.repository }}"
 
           PR_DATA=$(gh api -X GET search/issues \
             -f q="$SEARCH_QUERY" \
@@ -98,7 +111,6 @@ jobs:
         run: |
           echo "Getting merge commit SHAs for each PR..."
 
-          # Process each PR and get its merge commit SHA and merged_at timestamp
           COMMITS_DATA="[]"
 
           while read -r PR_NUMBER; do
@@ -132,11 +144,9 @@ jobs:
           SUCCESS_COUNT=0
           FAIL_COUNT=0
 
-          # Initialize result JSON files
           echo "[]" > /tmp/success.json
           echo "[]" > /tmp/failed.json
 
-          # Configure git for cherry-pick
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
@@ -148,7 +158,18 @@ jobs:
 
             echo "Cherry-picking #$PR_NUMBER ($MERGE_SHA): $PR_TITLE"
 
-            if git cherry-pick "$MERGE_SHA" --allow-empty -m 1; then
+            # Squash-merge commits have a single parent (-m 1 would error);
+            # true-merge commits have 2+ parents and need -m 1 to pick the
+            # mainline diff. rev-list --parents emits "<sha> <p1> [<p2> ...]".
+            PARENT_COUNT=$(git rev-list --parents -n 1 "$MERGE_SHA" | awk '{print NF-1}')
+            if [ "$PARENT_COUNT" -ge 2 ]; then
+              CP_ARGS="-m 1"
+            else
+              CP_ARGS=""
+            fi
+
+            # shellcheck disable=SC2086
+            if git cherry-pick --allow-empty $CP_ARGS "$MERGE_SHA"; then
               echo "  ✓ Success"
               SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
               jq --argjson item "$COMMIT_INFO" '. + [$item]' /tmp/success.json > /tmp/success_tmp.json
@@ -172,23 +193,35 @@ jobs:
 
           echo "Cherry-pick summary: $SUCCESS_COUNT successful, $FAIL_COUNT failed"
 
-      - name: Bump patch version
+      - name: Bump patch version in Cargo.toml
         run: |
           TAG="${{ steps.find_tag.outputs.LATEST_TAG }}"
-          # Parse version components from tag (e.g., v4.16.2)
+          # Parse version components from tag (e.g., v0.1.2)
           MAJOR=$(echo "$TAG" | sed 's/^v//' | cut -d. -f1)
           MINOR=$(echo "$TAG" | sed 's/^v//' | cut -d. -f2)
           PATCH=$(echo "$TAG" | sed 's/^v//' | cut -d. -f3)
           NEW_PATCH=$((PATCH + 1))
+          NEW_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
 
-          echo "Bumping version: ${MAJOR}.${MINOR}.${PATCH} -> ${MAJOR}.${MINOR}.${NEW_PATCH}"
+          echo "Bumping version: ${MAJOR}.${MINOR}.${PATCH} -> ${NEW_VERSION}"
 
-          sed -i "s/#define FALKOR_VERSION_MAJOR .*/#define FALKOR_VERSION_MAJOR ${MAJOR}/" src/version.h
-          sed -i "s/#define FALKOR_VERSION_MINOR .*/#define FALKOR_VERSION_MINOR ${MINOR}/" src/version.h
-          sed -i "s/#define FALKOR_VERSION_PATCH .*/#define FALKOR_VERSION_PATCH ${NEW_PATCH}/" src/version.h
+          # Edit only the version line inside the [package] section so we don't
+          # accidentally touch the path-dependency line `graph = { path = ..., version = "..." }`.
+          awk -v new_version="$NEW_VERSION" '
+            /^\[/ { section=$0 }
+            section=="[package]" && /^version = / { print "version = \"" new_version "\""; next }
+            { print }
+          ' Cargo.toml > Cargo.toml.new && mv Cargo.toml.new Cargo.toml
 
-          git add src/version.h
-          git commit -m "Bump version to ${MAJOR}.${MINOR}.${NEW_PATCH}"
+          # Keep Cargo.lock in sync with the bumped version. Scope to the
+          # workspace root package only so we don't drag in unrelated dep
+          # upgrades on backport branches (which want a minimal Cargo.lock
+          # diff).
+          cargo update --package falkordb-rs --offline 2>/dev/null \
+            || cargo update --package falkordb-rs
+
+          git add Cargo.toml Cargo.lock
+          git commit -m "Bump version to ${NEW_VERSION}"
 
       - name: Push branch
         run: |
@@ -202,41 +235,33 @@ jobs:
           SUCCESS_COUNT="${{ steps.cherry_pick.outputs.SUCCESS_COUNT }}"
           FAIL_COUNT="${{ steps.cherry_pick.outputs.FAIL_COUNT }}"
 
-          # Build PR title
           if [ "$FAIL_COUNT" -gt 0 ]; then
             PR_TITLE="[$VERSION] Batch backport ($SUCCESS_COUNT commits, $FAIL_COUNT conflicts)"
           else
             PR_TITLE="[$VERSION] Batch backport ($SUCCESS_COUNT commits)"
           fi
 
-          # Build PR body using a file
           cat > /tmp/pr_body.md << HEADER
           ## Batch Backport to $VERSION
 
-          Backporting commits from \`master\` since tag \`${{ steps.find_tag.outputs.LATEST_TAG }}\`.
+          Backporting commits from \`main\` since tag \`${{ steps.find_tag.outputs.LATEST_TAG }}\`.
 
           HEADER
-
-          # Remove leading whitespace from heredoc content
           sed -i 's/^          //' /tmp/pr_body.md
 
-          # Add successful cherry-picks section
           echo "### Successfully Cherry-Picked ($SUCCESS_COUNT)" >> /tmp/pr_body.md
           jq -r '.[] | "- [x] #\(.number) - \(.title) (@\(.user))"' /tmp/success.json >> /tmp/pr_body.md
 
-          # Add failed cherry-picks section if any
           if [ "$FAIL_COUNT" -gt 0 ]; then
             echo "" >> /tmp/pr_body.md
             echo "### Failed Cherry-Picks ($FAIL_COUNT) - Manual Resolution Required" >> /tmp/pr_body.md
             jq -r '.[] | "- [ ] #\(.number) - \(.title) (@\(.user)) - `\(.merge_commit_sha | .[0:7])`"' /tmp/failed.json >> /tmp/pr_body.md
           fi
 
-          # Add footer
           echo "" >> /tmp/pr_body.md
           echo "---" >> /tmp/pr_body.md
           echo "*This PR was automatically generated by the batch-backport workflow.*" >> /tmp/pr_body.md
 
-          # Create the PR
           PR_URL=$(gh pr create \
             --base "$VERSION" \
             --head "${{ steps.create_branch.outputs.BRANCH_NAME }}" \
@@ -267,7 +292,6 @@ jobs:
           ${{ steps.create_pr.outputs.PR_URL }}
           EOF
 
-          # Remove leading whitespace from summary
           sed -i 's/^          //' $GITHUB_STEP_SUMMARY
 
           if [ "$FAIL_COUNT" -gt 0 ]; then

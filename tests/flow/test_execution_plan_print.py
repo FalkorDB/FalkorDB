@@ -17,20 +17,14 @@ class test_execution_plan_print():
         plan = str(self.graph.explain("MATCH (n:A:B) RETURN n"))
 
         # label A is scanned
-        self.env.assertIn("Node By Label Scan | (n:A)", plan)
-
-        # conditional traverse prints only B
-        self.env.assertIn("Conditional Traverse | (n:B)->(n:B)", plan)
+        self.env.assertContains("Node By Label Scan | (n:A:B)", plan)
     
     # 'expand into' should not print the label scanned
     def test02_expand_into(self):
         plan = str(self.graph.explain("MATCH (n:A:B:C) RETURN n"))
 
         # label A is scanned
-        self.env.assertIn("Node By Label Scan | (n:A)", plan)
-
-        # expand_into does not print A
-        self.env.assertIn("Expand Into | (n:B:C)", plan)
+        self.env.assertContains("Node By Label Scan | (n:A:B:C)", plan)
     
     # Make sure the 'conditional traverse' and 'expand into' operations
     # which do not come after a 'label scan' print all labels
@@ -38,12 +32,9 @@ class test_execution_plan_print():
         plan = str(self.graph.explain("match p=(n:A:B)-[*]-(m:C:D) RETURN p"))
 
         # A is scanned
-        self.env.assertIn("Node By Label Scan | (n:A)", plan)
-
-        # B is printed alone in 'conditional traverse'
-        self.env.assertIn("Conditional Traverse | (n:B)->(n:B)", plan)
+        self.env.assertContains("Node By Label Scan | (n:A:B)", plan)
 
         # 'conditional variable length traverse' shouldn't print labels
         # as it does not enforce them
-        self.env.assertIn("Conditional Variable Length Traverse | (n)-[@anon_0*1..INF]->(m)", plan)
+        self.env.assertContains("Conditional Variable Length Traverse | (n)-[_anon_0*1..INF]->(m)", plan)
 

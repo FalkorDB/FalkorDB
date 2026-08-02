@@ -47,11 +47,11 @@ class testCmdReg(FlowTestsBase):
                 return set(command_info["flags"])
             return set(info[0][2])
 
-        self.env.assertIn("denyoom", _command_flags("graph.query"))
-        self.env.assertIn("denyoom", _command_flags("graph.profile"))
-        self.env.assertIn("denyoom", _command_flags("graph.constraint"))
-        self.env.assertIn("denyoom", _command_flags("graph.copy"))
+        self.env.assertContains("denyoom", _command_flags("graph.query"))
+        self.env.assertContains("denyoom", _command_flags("graph.profile"))
+        self.env.assertContains("denyoom", _command_flags("graph.constraint"))
+        self.env.assertContains("denyoom", _command_flags("graph.copy"))
 
-        self.env.assertIn("allow_busy", _command_flags("graph.config"))
-        self.env.assertIn("allow_busy", _command_flags("graph.slowlog"))
-        self.env.assertNotIn("allow_busy", _command_flags("graph.query"))
+        self.env.assertContains("allow_busy", _command_flags("graph.config"))
+        self.env.assertContains("allow_busy", _command_flags("graph.slowlog"))
+        self.env.assertNotContains("allow_busy", _command_flags("graph.query"))

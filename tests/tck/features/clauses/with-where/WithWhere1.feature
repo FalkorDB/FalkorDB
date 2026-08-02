@@ -70,7 +70,6 @@ Feature: WithWhere1 - Filter single variable
       | 'B'  |
     And no side effects
 
-  @skip
   Scenario: [3] Filter for an unbound relationship variable
     Given an empty graph
     And having executed:

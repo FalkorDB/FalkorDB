@@ -1,0 +1,176 @@
+# Release the Rust engine (>= 6.0.0) by pushing a tag.
+#
+# WHY TAG-PUSH: a tag push runs the workflow files from the TAGGED COMMIT'S OWN
+# TREE, so this pipeline is immune to which branch is the repository default.
+# `release:` and `workflow_run` are default-branch-only events — after the Rust
+# tree becomes the default branch of FalkorDB/FalkorDB (with the C engine still
+# on `master`), a `release:`-driven publish would fire the WRONG tree's workflows
+# (or none at all). Routing on the tag makes engine selection automatic:
+#
+#   git push origin v5.2.0   → C tree's workflows   (master lineage, no this file)
+#   git push origin v6.0.0   → this pipeline        (Rust lineage)
+#
+# The version split is the contract: C never exceeds 5.x, Rust starts at 6.0.
+# The tag globs below only match >= v6, and the guard job re-checks the major so
+# a mis-tagged Rust release fails loudly instead of publishing as C.
+#
+# WHAT IT DOES
+#   1. guard          — validate tag shape, major >= 6, Cargo.toml version match
+#   2. create-release — create the GitHub Release for the tag (idempotent)
+#   3. artifacts      — build + upload the per-platform .so assets
+#   4. image          — retag the validated rc-pr-<N> manifest to semver
+#
+# Steps 3 and 4 reuse release-artifacts.yml / release-image.yml via workflow_call
+# — the same code paths the `release:` event uses, so there is one publish
+# implementation, not two. create-release runs BEFORE image because the
+# latest-pointer decision in release-image.yml compares against the list of
+# published releases.
+
+name: Release (tag)
+
+on:
+  push:
+    tags:
+      # GHA ref filters are globs, not regex. `v[6-9].*` covers v6..v9;
+      # `v[1-9][0-9]*.*` covers v10 and up. The two are disjoint (the second
+      # requires a digit straight after the first, which `v6.` does not have).
+      - "v[6-9].*"
+      - "v[1-9][0-9]*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)release, e.g. v6.0.0"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-tag-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.check.outputs.tag }}
+      semver: ${{ steps.check.outputs.semver }}
+      commit_sha: ${{ steps.check.outputs.commit_sha }}
+      prerelease: ${{ steps.check.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+          persist-credentials: false
+
+      - name: Validate tag and Cargo.toml version
+        id: check
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          TAG="${INPUT_TAG:-$REF_NAME}"
+
+          # vMAJOR.MINOR.PATCH with an optional prerelease suffix (v6.0.0-rc.1).
+          if [[ ! "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::tag '$TAG' is not vMAJOR.MINOR.PATCH[-prerelease]"
+            exit 1
+          fi
+          MAJOR="${BASH_REMATCH[1]}"
+          PRE="${BASH_REMATCH[4]:-}"
+
+          # Engine routing guard. The C engine owns <= 5.x and publishes from its
+          # own tree; this pipeline must never ship under a C version number.
+          if [ "$MAJOR" -lt 6 ]; then
+            echo "::error::this pipeline releases the Rust engine (>= 6.0.0); tag '$TAG' has major version $MAJOR"
+            echo "::error::C-engine releases (<= 5.x) are published by the C tree's own workflows"
+            exit 1
+          fi
+
+          SEMVER="${TAG#v}"
+          CARGO_VERSION=$(cargo metadata --no-deps --format-version=1 \
+            | jq -r '.packages[] | select(.name=="falkordb-rs") | .version')
+          if [ "$CARGO_VERSION" != "$SEMVER" ]; then
+            echo "::error::Cargo.toml version ($CARGO_VERSION) does not match tag ($TAG)"
+            echo "::error::bump the workspace version to $SEMVER and re-tag"
+            exit 1
+          fi
+
+          if [ -n "$PRE" ]; then PRERELEASE=true; else PRERELEASE=false; fi
+
+          {
+            echo "tag=$TAG"
+            echo "semver=$SEMVER"
+            echo "commit_sha=$(git rev-parse HEAD)"
+            echo "prerelease=$PRERELEASE"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing $TAG (semver=$SEMVER prerelease=$PRERELEASE) at $(git rev-parse HEAD)"
+
+  # Create the Release up front: release-artifacts.yml uploads assets to it, and
+  # release-image.yml's :latest decision reads the published-release list.
+  create-release:
+    needs: guard
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create GitHub Release (if absent)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.guard.outputs.tag }}
+          PRERELEASE: ${{ needs.guard.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists — reusing it (assets are uploaded with --clobber)."
+            exit 0
+          fi
+          FLAGS=(--verify-tag --generate-notes --title "$TAG")
+          if [ "$PRERELEASE" = "true" ]; then FLAGS+=(--prerelease); fi
+          gh release create "$TAG" "${FLAGS[@]}"
+          echo "Created release $TAG"
+
+  # Per-platform .so assets → uploaded to the release.
+  artifacts:
+    needs: [guard, create-release]
+    uses: ./.github/workflows/release-artifacts.yml
+    permissions:
+      contents: write
+      packages: read
+    with:
+      tag: ${{ needs.guard.outputs.tag }}
+      commit_sha: ${{ needs.guard.outputs.commit_sha }}
+
+  # Browser tests for the released image. Mirrors the C engine's
+  # browser-tests-trigger.yml hook so both engines exercise the browser on a
+  # stable release. Deliberately chained AFTER `image` rather than off a
+  # `release:` event: browser tests need the PUBLISHED image, and `release:`
+  # fires the moment the release is created — racing the image push. It is also
+  # why this is not a `release:` listener at all; that event is version-blind and
+  # would fire for the C engine's releases too.
+  browser-tests:
+    needs: [guard, image]
+    uses: ./.github/workflows/browser-tests-trigger.yml
+    permissions:
+      contents: read
+    with:
+      tag: ${{ needs.guard.outputs.tag }}
+
+  # Runtime images → retag the rc-pr-<N> manifest that PR CI already validated.
+  image:
+    needs: [guard, create-release]
+    uses: ./.github/workflows/release-image.yml
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: read
+    with:
+      tag: ${{ needs.guard.outputs.semver }}
+      commit_sha: ${{ needs.guard.outputs.commit_sha }}
+      mode: retag
+    # Docker Hub credentials for the release push.
+    secrets: inherit

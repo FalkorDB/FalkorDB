@@ -277,3 +277,46 @@ class testCentrality(FlowTestsBase):
         # C has no outgoing FRIEND edges within Person subgraph
         self.env.assertEqual(scores["C"], 0.0)
 
+    def test08_centrality_large_sparse(self):
+        """Harmonic centrality on a larger sparse graph (HLL dot4 fast path).
+
+        Builds 200 nodes 0..199 with directed edges i->i+1 and i->i+7. This is
+        large and sparse enough that LAGr_HarmonicCentrality's HyperBall mxv
+        selects GraphBLAS's fast *dot4* path over an A-sparse / 32-bit-index
+        adjacency, JIT-compiling the
+        `AxB_dot4__0380400e1e0e1ec6__lg_hll_merge_lg_hll_second` (+ `lg_hll_count`
+        apply / `lg_hll_delta` ewise) kernels. The tiny graphs in the tests above
+        instead produce the A-bitmap `...eca` dot4 variant. Keeping both shapes
+        under test means `gen_prejit.sh` (which runs this suite with
+        `--features prejit_harvest`) re-harvests the full HLL PreJIT kernel set
+        that ships in `build/graphblas/PreJIT/`; without this larger shape the
+        benchmark-relevant `...ec6` kernel would never be exercised and would
+        silently drop out of the vendored PreJIT set, regressing harmonic
+        centrality back onto the ~3x slower generic dot2 path.
+        """
+        N = 200
+        self.graph.query(f"UNWIND range(0, {N - 1}) AS i CREATE (:P {{id: i}})")
+        self.graph.query(
+            """MATCH (a:P), (b:P)
+               WHERE b.id = a.id + 1 OR b.id = a.id + 7
+               CREATE (a)-[:E]->(b)"""
+        )
+
+        result = self.graph.query(
+            """CALL algo.HarmonicCentrality()
+               YIELD node, score
+               RETURN node.id AS id, score
+               ORDER BY score DESC"""
+        )
+        rows = result.result_set
+        scores = {row[0]: row[1] for row in rows}
+
+        # every node is scored
+        self.env.assertEqual(len(scores), N)
+
+        # node 0 reaches the whole downstream chain -> strictly highest score
+        self.env.assertEqual(rows[0][0], 0)
+
+        # the final node has no outgoing edges -> score is exactly 0
+        self.env.assertEqual(scores[N - 1], 0.0)
+

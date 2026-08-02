@@ -1,0 +1,471 @@
+name: Rust PR
+
+on:
+  pull_request:
+    # Fire on PRs to a trunk AND to version branches (e.g. "6.0", "7.1").
+    # Backport PRs from batch-backport.yml target the version branch directly,
+    # so they need the same RC build + flow gate as trunk PRs. rc-pr-<N> tags are
+    # globally unique by PR number so there's no collision across base branches.
+    #
+    # Two trunks exist during the migration to FalkorDB/FalkorDB (see the repo
+    # migration plan): `main` here, and `main-rs` — the interim Rust branch in
+    # FalkorDB/FalkorDB, which carries this tree on unrelated history while the
+    # C engine keeps `master`. Both must build/test identically.
+    #
+    # GHA branch filters are glob patterns, not regex — `*` matches a run of
+    # chars, `[0-9]` is a digit class, so `[0-9]*.[0-9]*` matches `6.0`, `7.1`,
+    # `10.5`, etc. (A literal `+` would NOT have matched anything.)
+    branches:
+      - "main"
+      - "main-rs"
+      - "[0-9]*.[0-9]*"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_FUZZ_VERSION: 0.13.1
+
+permissions:
+  contents: read
+
+jobs:
+  check-files:
+    runs-on: ubuntu-latest
+    outputs:
+      file_changed: ${{ steps.check.outputs.changed }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Check if specific file changed
+        id: check
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        # Pick the right diff target for "did the toolchain change":
+        #   - PRs targeting a trunk (main, or the interim main-rs in
+        #     FalkorDB/FalkorDB) or a version branch (e.g. 6.0, 7.1, set by
+        #     batch-backport.yml) → diff against that base's own merge-base.
+        #     For a version branch :latest already exists on GHCR (it was cut
+        #     from a released trunk), so an immediate-base diff is correct and
+        #     avoids spuriously rebuilding when trunk and the version branch
+        #     diverge on the Dockerfile.
+        #   - Stacked feat/ branches that ultimately land on a trunk → diff
+        #     against the trunk's merge-base. Catches toolchain changes
+        #     anywhere in the stack so the :pr-<N> tag is rebuilt for this PR
+        #     (downstream jobs would otherwise fall back to :latest, which
+        #     doesn't exist on GHCR until the stack lands).
+        run: |
+          # actions/checkout above used fetch-depth: 0 so we have full history,
+          # but only the PR's branch is fetched by default — pull the diff
+          # target as a ref too so merge-base can find the actual divergence.
+          #
+          # The trunk fallback is resolved against the remote rather than
+          # hardcoded: FalkorDB/FalkorDB has `main-rs` (+ C's `master`) and no
+          # `main`, so a bare `git fetch origin main` there would fail.
+          if [[ "$BASE_REF" =~ ^[0-9]+\.[0-9]+$ || "$BASE_REF" == "main" || "$BASE_REF" == "main-rs" ]]; then
+            DIFF_TARGET="$BASE_REF"
+          elif git ls-remote --exit-code --heads origin main >/dev/null 2>&1; then
+            DIFF_TARGET="main"
+          else
+            DIFF_TARGET="main-rs"
+          fi
+          git fetch --no-tags origin "$DIFF_TARGET"
+          MERGE_BASE=$(git merge-base "origin/$DIFF_TARGET" "$HEAD_SHA")
+          if git diff --name-only "$MERGE_BASE" "$HEAD_SHA" | grep -qE "^(build/Dockerfile|build/libomp\.sh|build/graphblas/.*|graphblas\.sh|redisearch\.sh|\.github/workflows/build-toolchain\.yml)$"; then
+            echo "changed=true"
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false"
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+  # When build/Dockerfile changes, rebuild the toolchain image at a PR-scoped
+  # tag (ghcr.io/falkordb/falkordb-build:pr-<N>, multi-arch). Other jobs in
+  # this workflow pick up the new toolchain via the `container:` references
+  # and the build-rc-image's build_image input.
+  docker:
+    needs: check-files
+    if: needs.check-files.outputs.file_changed == 'true'
+    uses: ./.github/workflows/build-toolchain.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      tag: pr-${{ github.event.pull_request.number }}
+    # build-toolchain.yml only uses the auto-injected GITHUB_TOKEN; no
+    # custom secrets to forward, so we don't need `secrets: inherit`.
+
+  # Build the runtime image (rc-pr-<N>) once, push to GHCR. All flow / e2e test
+  # jobs below pull this image as a services container instead of dynamically
+  # loading a locally-built .so. When the toolchain was rebuilt this PR
+  # (build/Dockerfile changed), the runtime build uses the PR's toolchain too —
+  # so test feedback reflects the same image bytes main will publish on merge.
+  build-rc-image:
+    needs: [check-files, docker]
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
+    uses: ./.github/workflows/_build-flavour.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      flavour: release
+      tag: rc-pr-${{ github.event.pull_request.number }}
+      commit_sha: ${{ github.event.pull_request.head.sha }}
+      cells: '[{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"full","repo":"falkordb"},{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"server","repo":"falkordb-server"},{"arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","target":"full","repo":"falkordb"},{"arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","target":"server","repo":"falkordb-server"}]'
+      browser_tag: edge
+      build_image: ${{ needs.check-files.outputs.file_changed == 'true' && format('ghcr.io/falkordb/falkordb-build:pr-{0}', github.event.pull_request.number) || 'ghcr.io/falkordb/falkordb-build:latest' }}
+      # push_to_dockerhub left at default false — PR RC builds stay on GHCR.
+      # create_manifest defaults true (release is multi-arch).
+
+  # Build the asan instrumented runtime image (amd64-only). Single cell,
+  # no manifest needed (push directly to the bare tag).
+  build-rc-asan-image:
+    needs: [check-files, docker]
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
+    uses: ./.github/workflows/_build-flavour.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      flavour: a-sanitizer
+      # Note: asan image lives under the `falkordb` repo (not `falkordb-server`)
+      # — historical from when the asan image bundled the browser stage.
+      tag: rc-pr-${{ github.event.pull_request.number }}-asan
+      commit_sha: ${{ github.event.pull_request.head.sha }}
+      cells: '[{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"server","repo":"falkordb"}]'
+      dockerfile: build/runtime/Dockerfile.asan
+      build_image: ${{ needs.check-files.outputs.file_changed == 'true' && format('ghcr.io/falkordb/falkordb-build:pr-{0}', github.event.pull_request.number) || 'ghcr.io/falkordb/falkordb-build:latest' }}
+      create_manifest: false
+
+  # Build the coverage-instrumented runtime image (amd64-only).
+  build-rc-coverage-image:
+    needs: [check-files, docker]
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
+    uses: ./.github/workflows/_build-flavour.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      flavour: coverage
+      tag: rc-pr-${{ github.event.pull_request.number }}-coverage
+      commit_sha: ${{ github.event.pull_request.head.sha }}
+      cells: '[{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"server","repo":"falkordb-server"}]'
+      dockerfile: build/runtime/Dockerfile.coverage
+      build_image: ${{ needs.check-files.outputs.file_changed == 'true' && format('ghcr.io/falkordb/falkordb-build:pr-{0}', github.event.pull_request.number) || 'ghcr.io/falkordb/falkordb-build:latest' }}
+      create_manifest: false
+
+  lint:
+    runs-on: ubuntu-latest
+    container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
+    needs:
+      - check-files
+      - docker
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup default stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: "clippy"
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Lint
+        run: |
+          CXX=clang++-22 cargo clippy --all-targets
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
+      # Mount the runner's docker socket so the "Capture service container
+      # logs on failure" step below can run `docker ps`/`docker logs` against
+      # the GHA service container. Without this the log-capture step is a
+      # silent no-op (and could mask the upload-artifact step).
+      options: --volume /var/run/docker.sock:/var/run/docker.sock
+    needs:
+      - check-files
+      - docker
+      - build-rc-image
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.build-rc-image.result == 'success' }}
+    permissions:
+      contents: read
+      packages: read
+    services:
+      falkordb:
+        image: ghcr.io/falkordb/falkordb-server:rc-pr-${{ github.event.pull_request.number }}
+        credentials:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+        ports: ["6379:6379"]
+        env:
+          # Empty FALKORDB_ARGS overrides the image's compiled-in default
+          # (MAX_QUEUED_QUERIES 25 ...) so the service starts with the
+          # module's true zero-config defaults; tests that need specific
+          # config bring it via GRAPH.CONFIG SET.
+          FALKORDB_ARGS: ""
+    env:
+      EXISTING_ENV: "1"
+      FALKORDB_HOST: falkordb
+      FALKORDB_PORT: "6379"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup default stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: "release"
+      # Cargo unit tests run against in-process code and don't touch redis.
+      - name: Run cargo unit tests
+        run: |
+          # Doctests are linked separately by rustdoc (which ignores RUSTFLAGS /
+          # .cargo rustflags), so they need the duplicate-symbol allowance for
+          # libredisearch_rs.a's bundled std via RUSTDOCFLAGS. Also disable release
+          # LTO for the test build: the embedded C/Rust archives carry no LLVM
+          # bitcode, so a release-LTO doctest fails with "Can't find section .llvmbc"
+          # (same reason the fuzz job sets CARGO_PROFILE_RELEASE_LTO=false).
+          CARGO_PROFILE_RELEASE_LTO=false RUSTDOCFLAGS="-C link-arg=-Wl,--allow-multiple-definition" cargo test --release -p graph
+      - name: Run pytest tests against the RC image
+        run: |
+          . /data/venv/bin/activate
+          pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
+      - name: Run TCK tests against the RC image
+        run: |
+          . /data/venv/bin/activate
+          TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
+      # Capture the GHA service container's stdout/stderr so a failing run
+      # carries the redis lifecycle, module RedisModule_Log output, and any
+      # ASAN/LSan reports off the runner. The service container is named
+      # after its YAML key ("falkordb"); `docker logs` is run via the
+      # /var/run/docker.sock the runner shares with the job container.
+      - name: Capture service container logs on failure
+        if: failure()
+        run: |
+          mkdir -p tests/flow/logs
+          # Dump every container the runner can see — GHA service containers
+          # are named after their YAML key but a workflow-run prefix can show
+          # up too; iterating all containers is safer than matching by name.
+          for cid in $(docker ps -aq); do
+            name=$(docker inspect -f '{{.Name}}' "$cid" 2>/dev/null | sed 's|^/||')
+            docker logs "$cid" > "tests/flow/logs/service-${name:-$cid}.log" 2>&1 || true
+          done
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: test-service-logs
+          path: tests/flow/logs/
+          if-no-files-found: ignore
+  flow-test-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      services_files: ${{ steps.set-matrix.outputs.services_files }}
+      spawn_files: ${{ steps.set-matrix.outputs.spawn_files }}
+      # Union of services_files + spawn_files for callers like coverage-flow
+      # that don't go through docker and just need every test file.
+      test_files: ${{ steps.set-matrix.outputs.test_files }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Generate test matrix
+        id: set-matrix
+        # tests/flow/test_matrix_split.py classifies each entry in
+        # flow_tests_done.txt: files whose Env() invocations never pass
+        # special flags (moduleArgs / useSlaves / enableDebugCommand /
+        # oss-cluster / shardsCount) go to services_files (cheap shared
+        # service); the rest go to spawn_files (private docker run per class).
+        run: |
+          python3 tests/flow/test_matrix_split.py >> $GITHUB_OUTPUT
+  # Per-flavour flow-test cells. Each `flow-<flavour>` block calls
+  # _flow-flavour.yml, which runs the services + spawn matrices for that
+  # one flavour. Calling the reusable workflow once per flavour gives each
+  # call its own 256-cell GHA matrix budget — splitting the otherwise
+  # over-the-limit (97 × multi-flavour × multi-arch) matrix into chunks.
+  # Adding a new flavour later = one more block here + one Dockerfile.<f> +
+  # one build-rc-<f>-image job.
+
+  flow-release:
+    needs: [check-files, docker, flow-test-matrix, build-rc-image]
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.flow-test-matrix.result == 'success' && needs.build-rc-image.result == 'success' }}
+    uses: ./.github/workflows/_flow-flavour.yml
+    permissions:
+      contents: read
+      packages: read
+    with:
+      flavour: release
+      image: ghcr.io/falkordb/falkordb-server:rc-pr-${{ github.event.pull_request.number }}
+      archs: '["amd64", "arm64"]'
+      services_files: ${{ needs.flow-test-matrix.outputs.services_files }}
+      spawn_files: ${{ needs.flow-test-matrix.outputs.spawn_files }}
+      build_image: ${{ needs.check-files.outputs.file_changed == 'true' && format('ghcr.io/falkordb/falkordb-build:pr-{0}', github.event.pull_request.number) || 'ghcr.io/falkordb/falkordb-build:latest' }}
+      pr_number: ${{ github.event.pull_request.number }}
+    secrets: inherit
+
+  flow-asan:
+    needs: [check-files, docker, flow-test-matrix, build-rc-asan-image]
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.flow-test-matrix.result == 'success' && needs.build-rc-asan-image.result == 'success' }}
+    uses: ./.github/workflows/_flow-flavour.yml
+    permissions:
+      contents: read
+      packages: read
+    with:
+      flavour: a-sanitizer
+      # Note: asan image lives under the `falkordb` repo (not `falkordb-server`)
+      # — historical from when the asan image bundled the browser stage.
+      image: ghcr.io/falkordb/falkordb:rc-pr-${{ github.event.pull_request.number }}-asan
+      archs: '["amd64"]'
+      services_files: ${{ needs.flow-test-matrix.outputs.services_files }}
+      spawn_files: ${{ needs.flow-test-matrix.outputs.spawn_files }}
+      build_image: ${{ needs.check-files.outputs.file_changed == 'true' && format('ghcr.io/falkordb/falkordb-build:pr-{0}', github.event.pull_request.number) || 'ghcr.io/falkordb/falkordb-build:latest' }}
+      pr_number: ${{ github.event.pull_request.number }}
+      sanitizer_env: address
+    secrets: inherit
+
+  flow-coverage:
+    needs: [check-files, docker, flow-test-matrix, build-rc-coverage-image]
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.flow-test-matrix.result == 'success' && needs.build-rc-coverage-image.result == 'success' }}
+    uses: ./.github/workflows/_flow-flavour.yml
+    permissions:
+      contents: read
+      packages: read
+    with:
+      flavour: coverage
+      image: ghcr.io/falkordb/falkordb-server:rc-pr-${{ github.event.pull_request.number }}-coverage
+      archs: '["amd64"]'
+      services_files: ${{ needs.flow-test-matrix.outputs.services_files }}
+      spawn_files: ${{ needs.flow-test-matrix.outputs.spawn_files }}
+      build_image: ${{ needs.check-files.outputs.file_changed == 'true' && format('ghcr.io/falkordb/falkordb-build:pr-{0}', github.event.pull_request.number) || 'ghcr.io/falkordb/falkordb-build:latest' }}
+      pr_number: ${{ github.event.pull_request.number }}
+      collect_coverage: true
+    secrets: inherit
+
+  coverage:
+    runs-on: ubuntu-latest
+    container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
+    needs:
+      - check-files
+      - docker
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup default stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: "coverage"
+          env-vars: "RUSTFLAGS"
+      - name: Run code coverage
+        run: |
+          RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo build
+          RUSTDOCFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo test -p graph
+          # `cargo build` only produces libfalkordb.so's coverage map, which is
+          # blind to code with no caller reachable from the cdylib (e.g.
+          # graph/src/index/falkordb's cow_btree, not wired into the runtime
+          # yet). Locate the `cargo test -p graph` unit-test binary too (cache
+          # hit, same RUSTFLAGS as above, so this doesn't rebuild or re-run
+          # anything) so llvm-cov can also credit coverage recorded by
+          # test-only call paths, not just the shared library's. Cargo prints
+          # "  Executable <target> (<path>)" to stderr for every test binary
+          # it builds (one per test target; today that's just the lib's own
+          # unit tests) — no jq/python needed to find it.
+          TEST_OBJECTS=""
+          for bin in $(RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo test -p graph --no-run 2>&1 | grep -w Executable | grep -oE 'target/debug/deps/[^)]+'); do
+            TEST_OBJECTS="$TEST_OBJECTS -object $bin"
+          done
+          echo "Additional coverage objects: $TEST_OBJECTS"
+          # Snapshot coverage here, before the e2e/TCK suites run below, so
+          # cargo test's own profraw can be reported as its own Codecov flag
+          # (unit-tests) instead of being indistinguishable from e2e coverage.
+          llvm-profdata-22 merge --sparse `find . -name "*.profraw"` -o cov-unit.profdata
+          llvm-cov-22 export --format=lcov --instr-profile cov-unit.profdata target/debug/libfalkordb.so $TEST_OBJECTS > codecov-unit.txt.all
+          lcov --ignore-errors unused -r codecov-unit.txt.all -o codecov-unit.txt
+          . /data/venv/bin/activate
+          pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
+          TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
+          llvm-profdata-22 merge --sparse `find . -name "*.profraw"` -o cov.profdata
+          llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so $TEST_OBJECTS > codecov.txt.all
+          lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
+      - name: Upload unit test coverage to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./codecov-unit.txt
+          flags: unit-tests
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+  fuzz:
+    runs-on: ubuntu-latest
+    container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
+    needs:
+      - check-files
+      - docker
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup default nightly
+      - run: rustup component add llvm-tools-preview
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        with:
+          path: ${{ runner.tool_cache }}/cargo-fuzz
+          key: cargo-fuzz-bin-${{ env.CARGO_FUZZ_VERSION }}
+      - run: echo "${{ runner.tool_cache }}/cargo-fuzz/bin" >> $GITHUB_PATH
+      - run: cargo install --root "${{ runner.tool_cache }}/cargo-fuzz" --version ${{ env.CARGO_FUZZ_VERSION }} cargo-fuzz
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: fuzzing-corpus
+          path: fuzz/corpus
+        continue-on-error: true
+      - name: Run fuzz tests
+        run: |
+          cargo build --features fuzz
+          . /data/venv/bin/activate
+          mkdir -p fuzz/corpus/fuzz_target_runtime/
+          TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
+          # cargo-fuzz sets its own RUSTFLAGS (sanitizer), which replaces the
+          # .cargo/config.toml flags; repeat the duplicate-symbol allowance so
+          # the embedded libredisearch_rs.a (its own std) links. cargo-fuzz
+          # appends to an existing RUSTFLAGS env.
+          export RUSTFLAGS="-C link-arg=-Wl,--allow-multiple-definition"
+          CXX=clang++-22 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz build fuzz_target_runtime
+          CXX=clang++-22 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz run fuzz_target_runtime -- -max_total_time=300
+          CXX=clang++-22 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz cmin fuzz_target_runtime
+          CXX=clang++-22 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz coverage fuzz_target_runtime
+          TOOLCHAIN_LLVM_COV=$(find $(rustc --print sysroot) -name "llvm-cov" -type f | head -1)
+          echo "Using llvm-cov from: $TOOLCHAIN_LLVM_COV"
+          "$TOOLCHAIN_LLVM_COV" --version
+          "$TOOLCHAIN_LLVM_COV" export --format=lcov --instr-profile fuzz/coverage/fuzz_target_runtime/coverage.profdata target/x86_64-unknown-linux-gnu/coverage/x86_64-unknown-linux-gnu/release/fuzz_target_runtime > codecov.txt.all
+          lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          flags: fuzz
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: ${{ !cancelled() }}
+        with:
+          name: fuzzing-corpus
+          path: fuzz/corpus
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: failure()
+        with:
+          name: fuzzing-artifacts-fuzz_target_runtime-${{ github.sha }}
+          path: fuzz/artifacts
+      - name: Display fuzz artifacts if they exist
+        if: failure()
+        run: |
+          if [ -d "fuzz/artifacts" ] && [ "$(ls -A fuzz/artifacts)" ]; then
+            echo "Found fuzz artifacts, displaying content:"
+            find fuzz/artifacts -type f -not -path "*/\.*" | while read file; do
+              echo "=== Content of $file ==="
+              cat "$file" || echo "Failed to cat file (might be binary content)"
+              echo ""
+              echo "========================="
+            done
+          else                                                              
+            echo "No fuzz artifacts found or directory is empty"           
+          fi                                                                

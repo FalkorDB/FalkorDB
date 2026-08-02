@@ -259,7 +259,7 @@ class testCache():
         async def run(self):
             # connection pool with 16 connections
             # blocking when there's no connections available
-            pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
+            pool = BlockingConnectionPool(max_connections=16, timeout=None, host=self.env.host, port=self.env.port, decode_responses=True)
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph('cache_eviction')
 

@@ -1,8 +1,0 @@
-# Ignore these files:
-build/
-rmm_wrap_test
-rmm_log.txt
-
-# Do not ignore this file
-!.gitignore
-

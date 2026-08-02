@@ -188,13 +188,13 @@ class testBetweenness(FlowTestsBase):
         self.env.assertEqual(len(centrality_scores), 3)
 
         # Verify Person nodes A, B, C are included
-        self.env.assertIn('A', centrality_scores)
-        self.env.assertIn('B', centrality_scores)
-        self.env.assertIn('C', centrality_scores)
+        self.env.assertContains('A', centrality_scores)
+        self.env.assertContains('B', centrality_scores)
+        self.env.assertContains('C', centrality_scores)
 
         # Verify non-Person nodes are excluded
-        self.env.assertNotIn('D', centrality_scores)
-        self.env.assertNotIn('E', centrality_scores)
+        self.env.assertNotContains('D', centrality_scores)
+        self.env.assertNotContains('E', centrality_scores)
 
         # B should have highest centrality among Person nodes
         self.env.assertGreater(centrality_scores['B'], centrality_scores['A'])
@@ -321,10 +321,10 @@ class testBetweenness(FlowTestsBase):
 
         # Should only contain Person nodes
         self.env.assertEqual(len(centrality_scores1), 3)
-        self.env.assertIn('A', centrality_scores1)
-        self.env.assertIn('B', centrality_scores1)
-        self.env.assertIn('C', centrality_scores1)
-        self.env.assertNotIn('D', centrality_scores1)
+        self.env.assertContains('A', centrality_scores1)
+        self.env.assertContains('B', centrality_scores1)
+        self.env.assertContains('C', centrality_scores1)
+        self.env.assertNotContains('D', centrality_scores1)
 
         # Test 2: Filter only by FRIEND relationships
         result2 = self.betweenness_centrality(relationshipTypes = ['FRIEND'])
@@ -373,8 +373,8 @@ class testBetweenness(FlowTestsBase):
 
         # Should only contain Employee nodes
         self.env.assertEqual(len(centrality_scores4), 2)
-        self.env.assertIn('D', centrality_scores4)
-        self.env.assertIn('E', centrality_scores4)
+        self.env.assertContains('D', centrality_scores4)
+        self.env.assertContains('E', centrality_scores4)
 
         # Test 5: Multiple node labels
         result5 = self.betweenness_centrality(nodeLabels=['Person', 'Employee'])
@@ -387,11 +387,11 @@ class testBetweenness(FlowTestsBase):
 
         # Should contain Person and Employee nodes
         self.env.assertEqual(len(centrality_scores5), 5)
-        self.env.assertIn('A', centrality_scores5)
-        self.env.assertIn('B', centrality_scores5)
-        self.env.assertIn('C', centrality_scores5)
-        self.env.assertIn('D', centrality_scores5)
-        self.env.assertIn('E', centrality_scores5)
+        self.env.assertContains('A', centrality_scores5)
+        self.env.assertContains('B', centrality_scores5)
+        self.env.assertContains('C', centrality_scores5)
+        self.env.assertContains('D', centrality_scores5)
+        self.env.assertContains('E', centrality_scores5)
 
         # Test 6: Multiple relationship types
         result6 = self.betweenness_centrality(relationshipTypes=['FRIEND', 'COLLEAGUE', 'WORKS_WITH'],

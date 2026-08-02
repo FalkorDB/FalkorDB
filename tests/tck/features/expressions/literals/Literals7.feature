@@ -96,7 +96,6 @@ Feature: Literals7 - List
       | [372036854] |
     And no side effects
 
-  @skip
   Scenario: [7] Return a list containing a float
     Given any graph
     When executing query:
@@ -152,7 +151,6 @@ Feature: Literals7 - List
       | [[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]] |
     And no side effects
 
-  @crash
   Scenario: [12] Return 40-deep nested empty lists
     Given any graph
     When executing query:

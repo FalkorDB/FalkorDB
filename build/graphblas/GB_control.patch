@@ -1,0 +1,33 @@
+# Mirror of the GB_control.h customization committed in the FalkorDB C project
+# (`deps/GraphBLAS/Source/GB_control.h`). It disables four extra
+# FactoryKernel families (FP32 / FP64 / FC32 / FC64) that the C engine has
+# determined are not exercised by the FalkorDB query workload.
+#
+# Effect: reduces libgraphblas.a code size and lets us bake a curated PreJIT
+# kernel set that covers only the integer/bool ops we actually use. The
+# floating-point and complex ops still work — they fall back to generic
+# methods (2-3x slower for those types), which is acceptable because FalkorDB
+# query plans never traverse adjacency matrices with FP/complex semirings.
+#
+# Apply against an upstream `SuiteSparse:GraphBLAS` v10.3.1 checkout:
+#   git -C GraphBLAS apply ../build/graphblas/GB_control.patch
+#
+# Re-derive when bumping GraphBLAS by running:
+#   diff -u <upstream>/Source/GB_control.h <FalkorDB-C>/deps/GraphBLAS/Source/GB_control.h
+--- a/Source/GB_control.h
++++ b/Source/GB_control.h
+@@ -96,10 +96,10 @@
+ // GrB_reduce, GrB_*_build, GrB_apply, and GrB_transpose for this type.
+ 
+ // #define GxB_NO_BOOL      1
+-// #define GxB_NO_FP32      1
+-// #define GxB_NO_FP64      1
+-// #define GxB_NO_FC32      1
+-// #define GxB_NO_FC64      1
++   #define GxB_NO_FP32      1
++   #define GxB_NO_FP64      1
++   #define GxB_NO_FC32      1
++   #define GxB_NO_FC64      1
+    #define GxB_NO_INT16     1
+ // #define GxB_NO_INT32     1
+ // #define GxB_NO_INT64     1

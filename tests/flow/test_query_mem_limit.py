@@ -33,7 +33,7 @@ class testQueryMemoryLimit():
             thread_count = int(self.db.config_get("THREAD_COUNT"))
 
             # connection pool blocking when there's no available connections 
-            pool = BlockingConnectionPool(max_connections=thread_count, timeout=None, port=self.env.port, decode_responses=True)
+            pool = BlockingConnectionPool(max_connections=thread_count, timeout=None, host=self.env.host, port=self.env.port, decode_responses=True)
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 
@@ -51,10 +51,10 @@ class testQueryMemoryLimit():
             for i, res in enumerate(results):
                 if should_fails[i]:
                     # query should have failed
-                    self.env.assertIn("Query's mem consumption exceeded capacity", str(res))
+                    self.env.assertContains("Query's mem consumption exceeded capacity", str(res))
                 else:
                     # make sure query did not throw an exception
-                    self.env.assertNotEqual(type(res), redis.exceptions.ResponseError)
+                    self.env.assertNotEqual(type(res), redis.ResponseError)
 
             # close the connection pool
             await pool.aclose()
@@ -64,7 +64,7 @@ class testQueryMemoryLimit():
     def test_01_read_memory_limit_config(self):
         # read configuration, test default value, expecting unlimited memory cap
         query_mem_capacity = int(self.db.config_get("QUERY_MEM_CAPACITY"))
-        self.env.assertEquals(query_mem_capacity, 0)
+        self.env.assertEqual(query_mem_capacity, 0)
 
         # update configuration, set memory limit to 1MB
         MB = 1024*1024
@@ -72,7 +72,7 @@ class testQueryMemoryLimit():
 
         # re-read configuration
         query_mem_capacity = int(self.db.config_get("QUERY_MEM_CAPACITY"))
-        self.env.assertEquals(query_mem_capacity, MB)
+        self.env.assertEqual(query_mem_capacity, MB)
 
     def test_02_overflow_no_limit(self):
         # execute query on each one of the threads

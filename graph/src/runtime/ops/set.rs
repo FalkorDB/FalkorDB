@@ -1,0 +1,418 @@
+//! Batch-mode set operator — updates properties and labels on nodes/relationships.
+//!
+//! For each active row in each input batch, resolves set items (lazily on
+//! first row) and calls `Runtime::set` to record property/label changes
+//! in the pending batch.
+//!
+//! Supports three SET forms:
+//! - `SET n.prop = expr` — set a single property
+//! - `SET n = expr` / `SET n += expr` — replace or merge all properties
+//! - `SET n:Label` — add a label to a node
+//!
+//! Property changes are skipped when the new value equals the existing
+//! value (change-detection optimization).
+
+use std::sync::Arc;
+
+use once_cell::unsync::OnceCell;
+
+use crate::graph::graph::LabelId;
+use crate::parser::ast::{ExprIR, SetItem, Variable};
+use crate::planner::IR;
+use crate::runtime::eval::ExprEval;
+use crate::runtime::{
+    batch::{Batch, BatchOp, BatchRow},
+    row::RowView,
+    runtime::Runtime,
+    value::Value,
+};
+use orx_tree::{Dyn, NodeIdx, NodeRef};
+
+pub struct SetOp<'a> {
+    pub(crate) runtime: &'a Runtime<'a>,
+    pub(crate) child: Box<BatchOp<'a>>,
+    items: &'a [SetItem<Arc<String>, Variable>],
+    resolved_items: OnceCell<Vec<SetItem<LabelId, Variable>>>,
+    pub(crate) idx: NodeIdx<Dyn<IR>>,
+}
+
+impl<'a> SetOp<'a> {
+    pub const fn new(
+        runtime: &'a Runtime<'a>,
+        child: Box<BatchOp<'a>>,
+        items: &'a [SetItem<Arc<String>, Variable>],
+        idx: NodeIdx<Dyn<IR>>,
+    ) -> Self {
+        Self {
+            runtime,
+            child,
+            items,
+            resolved_items: OnceCell::new(),
+            idx,
+        }
+    }
+}
+
+impl<'a> Iterator for SetOp<'a> {
+    type Item = Result<Batch<'a>, String>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let batch = match self.child.next()? {
+            Ok(b) => b,
+            Err(e) => return Some(Err(e)),
+        };
+
+        let resolved = self
+            .resolved_items
+            .get_or_init(|| self.runtime.resolve_set_items(self.items));
+        if let Err(e) = self.runtime.set_batch(resolved, &batch) {
+            return Some(Err(e));
+        }
+
+        Some(Ok(batch))
+    }
+}
+impl Runtime<'_> {
+    pub fn set_batch(
+        &self,
+        items: &Vec<SetItem<LabelId, Variable>>,
+        batch: &Batch<'_>,
+    ) -> Result<(), String> {
+        // Pre-check: if no nodes/relationships have been deleted in this
+        // transaction, we can skip the per-row deletion checks entirely.
+        let has_deleted_nodes = !self.deleted_nodes.borrow().is_empty();
+        let has_pending_deleted_nodes = self.pending.borrow().has_deleted_nodes();
+        let has_pending_deleted_rels = self.pending.borrow().has_deleted_relationships();
+        let skip_delete_checks =
+            !has_deleted_nodes && !has_pending_deleted_nodes && !has_pending_deleted_rels;
+
+        for row in batch.active_indices() {
+            let view = BatchRow::new(batch, row);
+            self.set_inner(items, &view, skip_delete_checks)?;
+        }
+        Ok(())
+    }
+
+    pub fn resolve_set_items(
+        &self,
+        items: &[SetItem<Arc<String>, Variable>],
+    ) -> Vec<SetItem<LabelId, Variable>> {
+        items
+            .iter()
+            .map(|item| match item {
+                SetItem::Label { var, labels } => SetItem::Label {
+                    var: var.clone(),
+                    labels: labels
+                        .iter()
+                        .map(|l| self.g.borrow_mut().get_label_id_mut(l.as_str()))
+                        .collect(),
+                },
+                SetItem::Attribute {
+                    target: entity,
+                    value,
+                    replace,
+                } => SetItem::Attribute {
+                    target: entity.clone(),
+                    value: value.clone(),
+                    replace: *replace,
+                },
+            })
+            .collect()
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn set_inner<R: RowView + ?Sized>(
+        &self,
+        items: &Vec<SetItem<LabelId, Variable>>,
+        vars: &R,
+        skip_delete_checks: bool,
+    ) -> Result<(), String> {
+        for item in items {
+            match item {
+                SetItem::Attribute {
+                    target: entity,
+                    value,
+                    replace,
+                } => {
+                    let run_expr = ExprEval::from_runtime(self).eval(
+                        value,
+                        value.root().idx(),
+                        Some(vars),
+                        None,
+                    )?;
+                    let (entity, attr) = match entity.root().data() {
+                        ExprIR::Variable(name) => {
+                            let entity = vars
+                                .value_at(name.id)
+                                .ok_or_else(|| format!("Variable {} not found", name.as_str()))?;
+                            (entity, None)
+                        }
+                        ExprIR::Property(property) => (
+                            {
+                                let this = &self;
+                                let idx = entity.root().child(0).idx();
+                                crate::runtime::eval::ExprEval::from_runtime(this).eval(
+                                    entity,
+                                    idx,
+                                    Some(vars),
+                                    None,
+                                )
+                            }?,
+                            Some(property),
+                        ),
+                        _ => {
+                            unreachable!("set target must be Variable or Property");
+                        }
+                    };
+                    match entity {
+                        Value::Node(id) => {
+                            if !skip_delete_checks
+                                && ((self.g.borrow().is_node_deleted(id)
+                                    && !self.pending.borrow().is_node_created(id))
+                                    || self.pending.borrow().is_node_deleted(id))
+                            {
+                                continue;
+                            }
+                            if let Some(attr) = attr {
+                                let existing = if skip_delete_checks {
+                                    self.get_node_attribute_no_delete_check(id, attr)
+                                } else {
+                                    self.get_node_attribute(id, attr)
+                                };
+                                if let Some(v) = existing
+                                    && v == run_expr
+                                {
+                                    continue;
+                                }
+
+                                self.set_pending_node_attr(id, attr, run_expr)?;
+                            } else {
+                                match run_expr {
+                                    Value::Map(map) => {
+                                        if *replace {
+                                            self.pending.borrow_mut().clear_node_attributes(id);
+                                            let keys: Vec<Arc<String>> =
+                                                self.g.borrow().get_node_attrs(id).collect();
+                                            for key in keys {
+                                                self.set_pending_node_attr(id, &key, Value::Null)?;
+                                            }
+                                        }
+                                        for (key, value) in map.iter() {
+                                            let existing = if skip_delete_checks {
+                                                self.get_node_attribute_no_delete_check(id, key)
+                                            } else {
+                                                self.get_node_attribute(id, key)
+                                            };
+                                            if let Some(v) = existing
+                                                && v == *value
+                                            {
+                                                continue;
+                                            }
+                                            self.set_pending_node_attr(id, key, value.clone())?;
+                                        }
+                                    }
+                                    Value::Node(tid) => {
+                                        if tid == id {
+                                            continue;
+                                        }
+                                        let attrs = self.get_node_attrs(tid);
+                                        if *replace {
+                                            let keys: Vec<Arc<String>> =
+                                                self.g.borrow().get_node_attrs(id).collect();
+                                            for key in keys {
+                                                self.set_pending_node_attr(id, &key, Value::Null)?;
+                                            }
+                                        }
+                                        for (key, value) in attrs {
+                                            if let Some(v) = self.get_node_attribute(id, &key)
+                                                && v == value
+                                            {
+                                                continue;
+                                            }
+                                            self.set_pending_node_attr(id, &key, value)?;
+                                        }
+                                    }
+                                    Value::Relationship(rel) => {
+                                        let attrs = self.get_relationship_attrs(rel);
+                                        if *replace {
+                                            let keys: Vec<Arc<String>> =
+                                                self.g.borrow().get_node_attrs(id).collect();
+                                            for key in keys {
+                                                self.set_pending_node_attr(id, &key, Value::Null)?;
+                                            }
+                                        }
+                                        for (key, value) in attrs {
+                                            if let Some(v) = self.get_node_attribute(id, &key)
+                                                && v == value
+                                            {
+                                                continue;
+                                            }
+                                            self.set_pending_node_attr(id, &key, value)?;
+                                        }
+                                    }
+                                    _ => {
+                                        return Err("Property values can only be of primitive types or arrays of primitive types".to_string());
+                                    }
+                                }
+                            }
+                        }
+                        Value::Relationship(target_rel) => {
+                            if !skip_delete_checks
+                                && ((self.g.borrow().is_relationship_deleted(target_rel)
+                                    && !self.pending.borrow().is_relationship_created(target_rel))
+                                    || self.pending.borrow().is_relationship_deleted(target_rel))
+                            {
+                                continue;
+                            }
+                            if let Some(attr) = attr {
+                                let existing = if skip_delete_checks {
+                                    self.get_relationship_attribute_no_delete_check(
+                                        target_rel, attr,
+                                    )
+                                } else {
+                                    self.get_relationship_attribute(target_rel, attr)
+                                };
+                                if let Some(v) = existing
+                                    && v == run_expr
+                                {
+                                    continue;
+                                }
+
+                                self.set_pending_relationship_attr(target_rel, attr, run_expr)?;
+                            } else {
+                                match run_expr {
+                                    Value::Map(map) => {
+                                        if *replace {
+                                            let keys: Vec<Arc<String>> = self
+                                                .g
+                                                .borrow()
+                                                .get_relationship_attrs(target_rel)
+                                                .collect();
+                                            for key in keys {
+                                                self.set_pending_relationship_attr(
+                                                    target_rel,
+                                                    &key,
+                                                    Value::Null,
+                                                )?;
+                                            }
+                                        }
+                                        for (key, value) in map.iter() {
+                                            let existing = if skip_delete_checks {
+                                                self.get_relationship_attribute_no_delete_check(
+                                                    target_rel, key,
+                                                )
+                                            } else {
+                                                self.get_relationship_attribute(target_rel, key)
+                                            };
+                                            if let Some(v) = existing
+                                                && v == *value
+                                            {
+                                                continue;
+                                            }
+                                            self.set_pending_relationship_attr(
+                                                target_rel,
+                                                key,
+                                                value.clone(),
+                                            )?;
+                                        }
+                                    }
+                                    Value::Node(sid) => {
+                                        let attrs = self.get_node_attrs(sid);
+                                        if *replace {
+                                            let keys: Vec<Arc<String>> = self
+                                                .g
+                                                .borrow()
+                                                .get_relationship_attrs(target_rel)
+                                                .collect();
+                                            for key in keys {
+                                                self.set_pending_relationship_attr(
+                                                    target_rel,
+                                                    &key,
+                                                    Value::Null,
+                                                )?;
+                                            }
+                                        }
+                                        for (key, value) in attrs {
+                                            if let Some(v) =
+                                                self.get_relationship_attribute(target_rel, &key)
+                                                && v == value
+                                            {
+                                                continue;
+                                            }
+                                            self.set_pending_relationship_attr(
+                                                target_rel, &key, value,
+                                            )?;
+                                        }
+                                    }
+                                    Value::Relationship(source_rel) => {
+                                        if source_rel == target_rel {
+                                            continue;
+                                        }
+                                        let attrs = self.get_relationship_attrs(source_rel);
+                                        if *replace {
+                                            let keys: Vec<Arc<String>> = self
+                                                .g
+                                                .borrow()
+                                                .get_relationship_attrs(target_rel)
+                                                .collect();
+                                            for key in keys {
+                                                self.set_pending_relationship_attr(
+                                                    target_rel,
+                                                    &key,
+                                                    Value::Null,
+                                                )?;
+                                            }
+                                        }
+                                        for (key, value) in attrs {
+                                            if let Some(v) =
+                                                self.get_relationship_attribute(target_rel, &key)
+                                                && v == value
+                                            {
+                                                continue;
+                                            }
+                                            self.set_pending_relationship_attr(
+                                                target_rel, &key, value,
+                                            )?;
+                                        }
+                                    }
+                                    _ => {
+                                        return Err("Property values can only be of primitive types or arrays of primitive types".to_string());
+                                    }
+                                }
+                            }
+                        }
+                        // Silently ignore SET on Null and non-entity types
+                        // (e.g. Path), matching C FalkorDB behavior.
+                        _ => {}
+                    }
+                }
+                SetItem::Label {
+                    var: entity,
+                    labels,
+                } => {
+                    let run_expr = vars.value_at(entity.id);
+                    match run_expr {
+                        Some(Value::Node(id)) => {
+                            if !skip_delete_checks
+                                && ((self.g.borrow().is_node_deleted(id)
+                                    && !self.pending.borrow().is_node_created(id))
+                                    || self.pending.borrow().is_node_deleted(id))
+                            {
+                                continue;
+                            }
+                            self.pending.borrow_mut().set_node_labels(id, labels);
+                        }
+                        Some(Value::Null) => {}
+                        _ => {
+                            return Err(format!(
+                                "Type mismatch: expected Node but was {}",
+                                run_expr.as_ref().map_or_else(|| "undefined", Value::name)
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}

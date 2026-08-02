@@ -30,6 +30,17 @@ def list_indicies(graph, label=None):
 
     return graph.ro_query(q)
 
+def _value_to_cypher(value):
+    """Serialize a Python value into Cypher literal syntax."""
+    if isinstance(value, str):
+        return f"'{value}'"
+    elif isinstance(value, bool):
+        return 'true' if value else 'false'
+    elif isinstance(value, list):
+        return '[' + ', '.join(_value_to_cypher(v) for v in value) + ']'
+    else:
+        return str(value)
+
 def _create_typed_index(graph, idx_type, entity_type, label, *properties, options=None, sync=False):
     if entity_type == "NODE":
         pattern = f"(e:{label})"
@@ -47,22 +58,16 @@ def _create_typed_index(graph, idx_type, entity_type, label, *properties, option
 
     if options is not None:
         # convert options to a Cypher map
-        options_map = "{"
-        for key, value in options.items():
-            if type(value) == str:
-                options_map += key + ":'" + value + "',"
-            else:
-                options_map += key + ':' + str(value) + ','
-        options_map = options_map[:-1] + "}"
-        q += f" OPTIONS {options_map}"
+        pairs = [f"{key}:{_value_to_cypher(value)}" for key, value in options.items()]
+        q += " OPTIONS {" + ", ".join(pairs) + "}"
 
     return _create_index(graph, q, label, sync)
 
 def create_node_range_index(graph, label, *properties, sync=False):
     return _create_typed_index(graph, "RANGE", "NODE", label, *properties, sync=sync)
 
-def create_node_fulltext_index(graph, label, *properties, sync=False):
-    return _create_typed_index(graph, "FULLTEXT", "NODE", label, *properties, sync=sync)
+def create_node_fulltext_index(graph, label, *properties, options=None, sync=False):
+    return _create_typed_index(graph, "FULLTEXT", "NODE", label, *properties, options=options, sync=sync)
 
 def create_node_vector_index(graph, label, *properties, dim=0, similarity_function="euclidean", m=16, efConstruction=200, efRuntime=10, sync=False):
     options = {'dimension': dim, 'similarityFunction': similarity_function, 'M': m, 'efConstruction': efConstruction, 'efRuntime': efRuntime}
@@ -71,8 +76,8 @@ def create_node_vector_index(graph, label, *properties, dim=0, similarity_functi
 def create_edge_range_index(graph, relation, *properties, sync=False):
     return _create_typed_index(graph, "RANGE", "EDGE", relation, *properties, sync=sync)
 
-def create_edge_fulltext_index(graph, relation, *properties, sync=False):
-    return _create_typed_index(graph, "FULLTEXT", "EDGE", relation, *properties, sync=sync)
+def create_edge_fulltext_index(graph, relation, *properties, options=None, sync=False):
+    return _create_typed_index(graph, "FULLTEXT", "EDGE", relation, *properties, options=options, sync=sync)
 
 def create_edge_vector_index(graph, relation, *properties, dim, similarity_function="euclidean", m=16, efConstruction=200, efRuntime=10, sync=False):
     options = {'dimension': dim, 'similarityFunction': similarity_function, 'M': m, 'efConstruction': efConstruction, 'efRuntime': efRuntime}

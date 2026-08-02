@@ -8,7 +8,7 @@ GRAPH_ID = "call_subquery"
 def _assert_subquery_contains_single(plan: ExecutionPlan, operation_name: str, env):
     """Asserts that the plan contains a single operation with name
     `operation_name`."""
-    env.assertEquals(count_operation(plan.structured_plan, operation_name), 1)
+    env.assertEqual(count_operation(plan.structured_plan, operation_name), 1)
 
 class testCallSubqueryFlow():
     def __init__(self):
@@ -19,7 +19,7 @@ class testCallSubqueryFlow():
         """Run the query and assert the result set is as expected"""
 
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
         return actual_result
 
     def expect_error(self, query, expected_err_msg):
@@ -28,8 +28,8 @@ class testCallSubqueryFlow():
         try:
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
-            self.env.assertIn(expected_err_msg, str(e))
+        except redis.ResponseError as e:
+            self.env.assertContains(expected_err_msg, str(e))
 
     def test01_test_validations(self):
         """Make sure we fail on invalid queries"""
@@ -130,7 +130,7 @@ updating clause.")
         # the graph is empty
         # create a node
         res = self.graph.query("CREATE (n:N {name: 'Raz'})")
-        self.env.assertEquals(res.nodes_created, 1)
+        self.env.assertEqual(res.nodes_created, 1)
 
         # find and return a node via CALL {}
         res = self.graph.query(
@@ -144,9 +144,9 @@ updating clause.")
         )
 
         # one node should have been found
-        self.env.assertEquals(len(res.result_set), 1)
+        self.env.assertEqual(len(res.result_set), 1)
         # node labels and props should match created node
-        self.env.assertEquals(res.result_set[0][0],
+        self.env.assertEqual(res.result_set[0][0],
                               Node(labels='N', properties={'name': 'Raz'}))
 
     def test03_filter_results(self):
@@ -156,7 +156,7 @@ updating clause.")
         # the graph has one node with label `N` and prop `name` with val `Raz`
         # add the `v` property to the one node currently existing, with val 4
         res = self.graph.query("MATCH (n:N) SET n.v = 4")
-        self.env.assertEquals(res.properties_set, 1)
+        self.env.assertEqual(res.properties_set, 1)
 
         # if a returning subquery doesn't return records, the input record is
         # not passed as well. Here, only one record should be returned
@@ -172,8 +172,8 @@ updating clause.")
         )
 
         # assert correctness of the result
-        self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(res.result_set[0][0],
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertEqual(res.result_set[0][0],
             Node(labels='N', properties={'name': 'Raz', 'v': 4}))
 
     def test04_reference_innerReturn_alias(self):
@@ -192,7 +192,7 @@ updating clause.")
             """
         )
 
-        self.env.assertEquals(res.result_set, [[5], [6], [7], [8]])
+        self.env.assertEqual(res.result_set, [[5], [6], [7], [8]])
 
         res = self.graph.query (
             """
@@ -208,10 +208,10 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 4)
+        self.env.assertEqual(len(res.result_set), 4)
         for i in range(0, 4):
-            self.env.assertEquals(res.result_set[i][0], i + 1)
-            self.env.assertEquals(res.result_set[i][1], 4 - i)
+            self.env.assertEqual(res.result_set[i][0], i + 1)
+            self.env.assertEqual(res.result_set[i][1], 4 - i)
 
     def test05_many_to_one_not_first(self):
         """Tests the case Call {} gets several records, and returns only one,
@@ -230,8 +230,8 @@ updating clause.")
             """
         )
         # assert correctness of the result
-        self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(res.result_set[0][0],
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertEqual(res.result_set[0][0],
             Node(labels='N', properties={'name': 'Raz', 'v': 4}))
 
     def test06_one_to_many(self):
@@ -252,11 +252,11 @@ updating clause.")
         )
 
         # validate the results
-        self.env.assertEquals(len(res.result_set), 2)
-        self.env.assertEquals(res.result_set[0][0], 1)
-        self.env.assertEquals(res.result_set[0][1], 1)
-        self.env.assertEquals(res.result_set[1][0], 2)
-        self.env.assertEquals(res.result_set[1][1], 1)
+        self.env.assertEqual(len(res.result_set), 2)
+        self.env.assertEqual(res.result_set[0][0], 1)
+        self.env.assertEqual(res.result_set[0][1], 1)
+        self.env.assertEqual(res.result_set[1][0], 2)
+        self.env.assertEqual(res.result_set[1][1], 1)
 
         # more than one component in the outer loop
         res = self.graph.query(
@@ -271,11 +271,11 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 8)
+        self.env.assertEqual(len(res.result_set), 8)
         for i in range(0, 4):
             for j in range(0, 2):
-                self.env.assertEquals(res.result_set[i * 2 + j][0], i + 1)
-                self.env.assertEquals(res.result_set[i * 2 + j][1], j + 1)
+                self.env.assertEqual(res.result_set[i * 2 + j][0], i + 1)
+                self.env.assertEqual(res.result_set[i * 2 + j][1], j + 1)
 
     def test07_optional_match(self):
         """Tests that OPTIONAL MATCH within the subquery works appropriately,
@@ -295,13 +295,13 @@ updating clause.")
         )
 
         # validate the results
-        self.env.assertEquals(len(res.result_set), 4)
-        self.env.assertEquals(res.result_set[0][0],
+        self.env.assertEqual(len(res.result_set), 4)
+        self.env.assertEqual(res.result_set[0][0],
         Node(labels='N', properties={'name': 'Raz', 'v': 1}))
-        self.env.assertEquals(res.result_set[1][0],
+        self.env.assertEqual(res.result_set[1][0],
         Node(labels='N', properties={'name': 'Raz', 'v': 4}))
-        self.env.assertEquals(res.result_set[2][0], None)
-        self.env.assertEquals(res.result_set[3][0], None)
+        self.env.assertEqual(res.result_set[2][0], None)
+        self.env.assertEqual(res.result_set[3][0], None)
 
     def test08_filtering(self):
         """Tests filtering within the subquery"""
@@ -319,8 +319,8 @@ updating clause.")
         )
 
         # assert the correctness of the results
-        self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(res.result_set[0][0],
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertEqual(res.result_set[0][0],
         Node(labels='N', properties={'name': 'Raz', 'v': 1}))
 
     def test09_simple_ret_eager(self):
@@ -340,10 +340,10 @@ updating clause.")
         )
 
         # make sure the wanted actions occurred
-        self.env.assertEquals(res.properties_set, 2)
-        self.env.assertEquals(res.result_set[0][0], Node(labels='N',
+        self.env.assertEqual(res.properties_set, 2)
+        self.env.assertEqual(res.result_set[0][0], Node(labels='N',
             properties={'name': 'Raz', 'v': 2}))
-        self.env.assertEquals(res.result_set[1][0], Node(labels='N',
+        self.env.assertEqual(res.result_set[1][0], Node(labels='N',
             properties={'name': 'Raz', 'v': 5}))
 
         # import outer-scope aliases, reference them inside and outside the sq
@@ -361,9 +361,9 @@ updating clause.")
         )
 
         # make sure the wanted actions occurred
-        self.env.assertEquals(res.properties_set, 1)
-        self.env.assertEquals(res.result_set[0][0], Node(labels='N', properties={'name': 'Raz', 'v': 4}))
-        self.env.assertEquals(res.result_set[0][1], 2)
+        self.env.assertEqual(res.properties_set, 1)
+        self.env.assertEqual(res.result_set[0][0], Node(labels='N', properties={'name': 'Raz', 'v': 4}))
+        self.env.assertEqual(res.result_set[0][1], 2)
 
     # test FOREACH within CALL {} (updating (eager), returning)
     def test10_embedded_foreach(self):
@@ -386,9 +386,9 @@ updating clause.")
         )
 
         # assert the correctness of the results
-        self.env.assertEquals(res.result_set[0][0],
+        self.env.assertEqual(res.result_set[0][0],
             Node(labels='N', properties={'name': 'Raz', 'v': 5}))
-        self.env.assertEquals(res.result_set[1][0],
+        self.env.assertEqual(res.result_set[1][0],
             Node(labels='N', properties={'name': 'Raz', 'v': 6}))
 
         # Test with a non-returning subquery
@@ -406,15 +406,15 @@ updating clause.")
 
         # assert the correctness of the results
         res = self.graph.query("MATCH (n:TEMP) RETURN n ORDER BY n.v ASC")
-        self.env.assertEquals(len(res.result_set), 2)
-        self.env.assertEquals(res.result_set[0][0],
+        self.env.assertEqual(len(res.result_set), 2)
+        self.env.assertEqual(res.result_set[0][0],
             Node(labels='TEMP', properties={'v': 5}))
-        self.env.assertEquals(res.result_set[1][0],
+        self.env.assertEqual(res.result_set[1][0],
             Node(labels='TEMP', properties={'v': 6}))
 
         # delete the nodes with label :TEMP
         res = self.graph.query("MATCH (n:TEMP) DELETE n")
-        self.env.assertEquals(res.nodes_deleted, 2)
+        self.env.assertEqual(res.nodes_deleted, 2)
 
         # FOREACH is first clause inside {}
         self.graph.query(
@@ -429,11 +429,11 @@ updating clause.")
 
         # assert the correctness of the results
         res = self.graph.query("MATCH (n:TEMP) RETURN n ORDER BY n.v ASC")
-        self.env.assertEquals(len(res.result_set), 2)
+        self.env.assertEqual(len(res.result_set), 2)
 
         # delete the nodes with label :TEMP
         res = self.graph.query("MATCH (n:TEMP) DELETE n")
-        self.env.assertEquals(res.nodes_deleted, 2)
+        self.env.assertEqual(res.nodes_deleted, 2)
 
         # tests that `FOREACH` is interpreted as an updating clause, properly
         res = self.graph.query(
@@ -450,14 +450,14 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(res.nodes_created, 2)
-        self.env.assertEquals(len(res.result_set), 2)
-        self.env.assertEquals(res.result_set[0][0], Node(labels='N',
+        self.env.assertEqual(res.nodes_created, 2)
+        self.env.assertEqual(len(res.result_set), 2)
+        self.env.assertEqual(res.result_set[0][0], Node(labels='N',
             properties={'name': 'Raz', 'v': 5}))
-        self.env.assertEquals(res.result_set[0][1], 1)
-        self.env.assertEquals(res.result_set[1][0], Node(labels='N',
+        self.env.assertEqual(res.result_set[0][1], 1)
+        self.env.assertEqual(res.result_set[1][0], Node(labels='N',
             properties={'name': 'Raz', 'v': 6}))
-        self.env.assertEquals(res.result_set[1][1], 1)
+        self.env.assertEqual(res.result_set[1][1], 1)
 
         # delete the nodes with label :TEMP
         res = self.graph.query("MATCH (n:TEMP) DELETE n")
@@ -482,8 +482,8 @@ updating clause.")
         )
 
         # assert that only one record was returned
-        self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(res.result_set[0][0],
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertEqual(res.result_set[0][0],
             Node(labels='N', properties={'name': 'Raz', 'v': 5}))
 
         # Test SKIP
@@ -500,15 +500,15 @@ updating clause.")
         )
 
         # assert that only one record was returned
-        self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(res.result_set[0][0],
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertEqual(res.result_set[0][0],
             Node(labels='N', properties={'name': 'Raz', 'v': 6}))
 
         # Tests SKIP and LIMIT together
 
         # Create 10 nodes with label :W
         res = self.graph.query("UNWIND range(1,10) AS i CREATE(:W {name:tostring(i), value:i})")
-        self.env.assertEquals(res.nodes_created, 10)
+        self.env.assertEqual(res.nodes_created, 10)
 
         res = self.graph.query(
             """
@@ -524,15 +524,15 @@ updating clause.")
         )
 
         # assert that only two records were returned
-        self.env.assertEquals(len(res.result_set), 2)
-        self.env.assertEquals(res.result_set[0][0],
+        self.env.assertEqual(len(res.result_set), 2)
+        self.env.assertEqual(res.result_set[0][0],
             Node(labels='W', properties={'name': '6', 'value': 6}))
-        self.env.assertEquals(res.result_set[1][0],
+        self.env.assertEqual(res.result_set[1][0],
             Node(labels='W', properties={'name': '7', 'value': 7}))
 
         # delete the nodes with label :W created only for LIMIT tests purpose
         res = self.graph.query("MATCH (n:W) DELETE n")
-        self.env.assertEquals(res.nodes_deleted, 10)
+        self.env.assertEqual(res.nodes_deleted, 10)
 
     def test12_order_by(self):
         """Tests the ordering of the output of the sq, and the outer query"""
@@ -552,10 +552,10 @@ updating clause.")
         )
 
         # validate the results
-        self.env.assertEquals(len(res.result_set), 2)
-        self.env.assertEquals(res.result_set[0][0],
+        self.env.assertEqual(len(res.result_set), 2)
+        self.env.assertEqual(res.result_set[0][0],
         Node(labels='N', properties={'name': 'Raz', 'v': 5}))
-        self.env.assertEquals(res.result_set[1][0],
+        self.env.assertEqual(res.result_set[1][0],
         Node(labels='N', properties={'name': 'Raz', 'v': 6}))
 
         # same query, but with descending order
@@ -571,10 +571,10 @@ updating clause.")
         )
 
         # validate the results
-        self.env.assertEquals(len(res.result_set), 2)
-        self.env.assertEquals(res.result_set[0][0],
+        self.env.assertEqual(len(res.result_set), 2)
+        self.env.assertEqual(res.result_set[0][0],
         Node(labels='N', properties={'name': 'Raz', 'v': 6}))
-        self.env.assertEquals(res.result_set[1][0],
+        self.env.assertEqual(res.result_set[1][0],
         Node(labels='N', properties={'name': 'Raz', 'v': 5}))
 
         # multiple Sort operations, in and outside the CallSubquery op
@@ -590,10 +590,10 @@ updating clause.")
         )
 
         # validate the results
-        self.env.assertEquals(len(res.result_set), 2)
-        self.env.assertEquals(res.result_set[0][0],
+        self.env.assertEqual(len(res.result_set), 2)
+        self.env.assertEqual(res.result_set[0][0],
         Node(labels='N', properties={'name': 'Raz', 'v': 5}))
-        self.env.assertEquals(res.result_set[1][0],
+        self.env.assertEqual(res.result_set[1][0],
         Node(labels='N', properties={'name': 'Raz', 'v': 6}))
 
     def test13_midrun_fail(self):
@@ -612,7 +612,7 @@ updating clause.")
 
         # make sure the TEMP node was deleted
         res = self.graph.query("MATCH (n:TEMP) RETURN n")
-        self.env.assertEquals(len(res.result_set), 0)
+        self.env.assertEqual(len(res.result_set), 0)
 
         # eager non-returning case
         query = """
@@ -626,7 +626,7 @@ updating clause.")
 
         # make sure the TEMP node was deleted
         res = self.graph.query("MATCH (n:TEMP) RETURN n")
-        self.env.assertEquals(len(res.result_set), 0)
+        self.env.assertEqual(len(res.result_set), 0)
 
     def test14_nested_call_subquery(self):
         """Tests that embedded call subqueries are handled correctly."""
@@ -740,7 +740,7 @@ updating clause.")
 
         # assert results
         expected_res = {'name': 'Canada',
-                        'langs': ['French', 'English'],
+                        'langs': ['English', 'French'],
                         'states':
                             [OrderedDict({'type': 'State',
                                           'name': 'Ontario',
@@ -751,7 +751,7 @@ updating clause.")
                                           'cities':
                                             [OrderedDict({'type': 'City', 'name': 'Victoria'})]})]}
 
-        self.env.assertEquals(res.result_set[0][0], expected_res)
+        self.env.assertEqual(res.result_set[0][0], expected_res)
 
     def test16_rewrite_same_clauses(self):
         """Tests that the AST-rewriting of same consecutive clauses works
@@ -817,8 +817,8 @@ updating clause.")
         res = self.graph.query(query)
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(res.result_set[0][0], Node(labels='N'))
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertEqual(res.result_set[0][0], Node(labels='N'))
 
         query = """
         UNWIND ['a', 'b', 'c', 'a', 'b', 'b'] AS x
@@ -832,21 +832,21 @@ updating clause.")
         res = self.graph.query(query)
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 6)
-        self.env.assertEquals(res.result_set[0][0], 'A')
-        self.env.assertEquals(res.result_set[0][1], 1)
-        self.env.assertEquals(res.result_set[1][0], 'A')
-        self.env.assertEquals(res.result_set[1][1], 1)
+        self.env.assertEqual(len(res.result_set), 6)
+        self.env.assertEqual(res.result_set[0][0], 'A')
+        self.env.assertEqual(res.result_set[0][1], 1)
+        self.env.assertEqual(res.result_set[1][0], 'A')
+        self.env.assertEqual(res.result_set[1][1], 1)
 
-        self.env.assertEquals(res.result_set[2][0], 'B')
-        self.env.assertEquals(res.result_set[2][1], 1)
-        self.env.assertEquals(res.result_set[3][0], 'B')
-        self.env.assertEquals(res.result_set[3][1], 1)
-        self.env.assertEquals(res.result_set[4][0], 'B')
-        self.env.assertEquals(res.result_set[4][1], 1)
+        self.env.assertEqual(res.result_set[2][0], 'B')
+        self.env.assertEqual(res.result_set[2][1], 1)
+        self.env.assertEqual(res.result_set[3][0], 'B')
+        self.env.assertEqual(res.result_set[3][1], 1)
+        self.env.assertEqual(res.result_set[4][0], 'B')
+        self.env.assertEqual(res.result_set[4][1], 1)
 
-        self.env.assertEquals(res.result_set[5][0], 'C')
-        self.env.assertEquals(res.result_set[5][1], 1)
+        self.env.assertEqual(res.result_set[5][0], 'C')
+        self.env.assertEqual(res.result_set[5][1], 1)
 
 
         query = """UNWIND [ [1,2], [1,3], [1,2] ] AS x
@@ -860,14 +860,14 @@ updating clause.")
 
         # assert results
         # expecting 3 records
-        self.env.assertEquals(len(res), 3)
+        self.env.assertEqual(len(res), 3)
 
-        self.env.assertEquals(res[0][0], [1, 2])
-        self.env.assertEquals(res[0][1], 2)
-        self.env.assertEquals(res[1][0], [1, 3] )
-        self.env.assertEquals(res[1][1], 3)
-        self.env.assertEquals(res[2][0], [1, 2])
-        self.env.assertEquals(res[2][1], 2)
+        self.env.assertEqual(res[0][0], [1, 2])
+        self.env.assertEqual(res[0][1], 2)
+        self.env.assertEqual(res[1][0], [1, 3] )
+        self.env.assertEqual(res[1][1], 3)
+        self.env.assertEqual(res[2][0], [1, 2])
+        self.env.assertEqual(res[2][1], 2)
 
     def test18_optional_match(self):
         """Tests that we deal properly with `OPTIONAL MATCH` clauses in a
@@ -886,9 +886,9 @@ updating clause.")
         )
 
         # validate the results
-        self.env.assertEquals(len(res.result_set), 2)
-        self.env.assertEquals(res.result_set[0][0], None)
-        self.env.assertEquals(res.result_set[1][0], None)
+        self.env.assertEqual(len(res.result_set), 2)
+        self.env.assertEqual(res.result_set[0][0], None)
+        self.env.assertEqual(res.result_set[1][0], None)
 
     def test19_aggregation_in_subquery(self):
         """Tests that we deal properly with aggregations in a subquery"""
@@ -941,9 +941,9 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 2)
-        self.env.assertEquals(res.result_set[0][0], 1)
-        self.env.assertEquals(res.result_set[1][0], 2)
+        self.env.assertEqual(len(res.result_set), 2)
+        self.env.assertEqual(res.result_set[0][0], 1)
+        self.env.assertEqual(res.result_set[1][0], 2)
 
         # a simple subquery, using input from the outer query
         res = self.graph.query(
@@ -962,15 +962,15 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 4)
-        self.env.assertEquals(res.result_set[0][0], 1)
-        self.env.assertEquals(res.result_set[0][1], 1)
-        self.env.assertEquals(res.result_set[1][0], 1)
-        self.env.assertEquals(res.result_set[1][1], 2)
-        self.env.assertEquals(res.result_set[2][0], 2)
-        self.env.assertEquals(res.result_set[2][1], 2)
-        self.env.assertEquals(res.result_set[3][0], 2)
-        self.env.assertEquals(res.result_set[3][1], 3)
+        self.env.assertEqual(len(res.result_set), 4)
+        self.env.assertEqual(res.result_set[0][0], 1)
+        self.env.assertEqual(res.result_set[0][1], 1)
+        self.env.assertEqual(res.result_set[1][0], 1)
+        self.env.assertEqual(res.result_set[1][1], 2)
+        self.env.assertEqual(res.result_set[2][0], 2)
+        self.env.assertEqual(res.result_set[2][1], 2)
+        self.env.assertEqual(res.result_set[3][0], 2)
+        self.env.assertEqual(res.result_set[3][1], 3)
 
         # create nodes in both branches of the UNION
         res = self.graph.query(
@@ -987,10 +987,10 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 2)
-        self.env.assertEquals(res.result_set[0][0], Node(labels='N',
+        self.env.assertEqual(len(res.result_set), 2)
+        self.env.assertEqual(res.result_set[0][0], Node(labels='N',
             properties={'v': 1}))
-        self.env.assertEquals(res.result_set[1][0], Node(labels='M',
+        self.env.assertEqual(res.result_set[1][0], Node(labels='M',
             properties={'v': 2}))
 
         # match nodes in one branch, and create nodes in the other
@@ -1008,10 +1008,10 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 2)
-        self.env.assertEquals(res.result_set[0][0], Node(labels='N',
+        self.env.assertEqual(len(res.result_set), 2)
+        self.env.assertEqual(res.result_set[0][0], Node(labels='N',
             properties={'v': 1}))
-        self.env.assertEquals(res.result_set[1][0], Node(labels='M',
+        self.env.assertEqual(res.result_set[1][0], Node(labels='M',
             properties={'v': 2}))
 
         # use bound data
@@ -1030,15 +1030,15 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 4)
-        self.env.assertEquals(res.result_set[0][0], 1)
-        self.env.assertEquals(res.result_set[0][1], 1)
-        self.env.assertEquals(res.result_set[1][0], 1)
-        self.env.assertEquals(res.result_set[1][1], 1)
-        self.env.assertEquals(res.result_set[2][0], 2)
-        self.env.assertEquals(res.result_set[2][1], 1)
-        self.env.assertEquals(res.result_set[3][0], 2)
-        self.env.assertEquals(res.result_set[3][1], 2)
+        self.env.assertEqual(len(res.result_set), 4)
+        self.env.assertEqual(res.result_set[0][0], 1)
+        self.env.assertEqual(res.result_set[0][1], 1)
+        self.env.assertEqual(res.result_set[1][0], 1)
+        self.env.assertEqual(res.result_set[1][1], 1)
+        self.env.assertEqual(res.result_set[2][0], 2)
+        self.env.assertEqual(res.result_set[2][1], 1)
+        self.env.assertEqual(res.result_set[3][0], 2)
+        self.env.assertEqual(res.result_set[3][1], 2)
 
         # match nodes in both branches
         # the graph contains: (:N {v: 1}), (:M {v: 2}), (:M {v: 2})
@@ -1056,12 +1056,12 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 3)
-        self.env.assertEquals(res.result_set[0][0], Node(labels='N',
+        self.env.assertEqual(len(res.result_set), 3)
+        self.env.assertEqual(res.result_set[0][0], Node(labels='N',
             properties={'v': 1}))
-        self.env.assertEquals(res.result_set[1][0], Node(labels='M',
+        self.env.assertEqual(res.result_set[1][0], Node(labels='M',
             properties={'v': 2}))
-        self.env.assertEquals(res.result_set[2][0], Node(labels='M',
+        self.env.assertEqual(res.result_set[2][0], Node(labels='M',
             properties={'v': 2}))
 
         # simple embedded call with UNION
@@ -1080,9 +1080,9 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 2)
-        self.env.assertEquals(res.result_set[0][0], 1)
-        self.env.assertEquals(res.result_set[1][0], 2)
+        self.env.assertEqual(len(res.result_set), 2)
+        self.env.assertEqual(res.result_set[0][0], 1)
+        self.env.assertEqual(res.result_set[1][0], 2)
 
         # simple embedded call with UNION
         res = self.graph.query(
@@ -1100,11 +1100,11 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 2)
-        self.env.assertEquals(res.result_set[0][0], 1)
-        self.env.assertEquals(res.result_set[0][1], 5)
-        self.env.assertEquals(res.result_set[1][0], 2)
-        self.env.assertEquals(res.result_set[1][1], 5)
+        self.env.assertEqual(len(res.result_set), 2)
+        self.env.assertEqual(res.result_set[0][0], 1)
+        self.env.assertEqual(res.result_set[0][1], 5)
+        self.env.assertEqual(res.result_set[1][0], 2)
+        self.env.assertEqual(res.result_set[1][1], 5)
 
         # TODO:
         # this is a subquery that will require a change for the Join operation,
@@ -1133,9 +1133,9 @@ updating clause.")
         # )
 
         # # assert results
-        # self.env.assertEquals(len(res.result_set), 1)
-        # self.env.assertEquals(res.result_set[0][0], 2)
-        # self.env.assertEquals(res.nodes_created, 2)
+        # self.env.assertEqual(len(res.result_set), 1)
+        # self.env.assertEqual(res.result_set[0][0], 2)
+        # self.env.assertEqual(res.nodes_created, 2)
 
         # union and aggregation function
         res = self.graph.query (
@@ -1151,9 +1151,9 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 2)
-        self.env.assertEquals(res.result_set[0][0], 0)
-        self.env.assertEquals(res.result_set[1][0], 1)
+        self.env.assertEqual(len(res.result_set), 2)
+        self.env.assertEqual(res.result_set[0][0], 0)
+        self.env.assertEqual(res.result_set[1][0], 1)
 
         # one branch is eager and the other is not
         res = self.graph.query (
@@ -1171,11 +1171,11 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 2)
-        self.env.assertEquals(res.result_set[0][0], 0)
-        self.env.assertEquals(res.result_set[1][0], 1)
-        self.env.assertEquals(res.nodes_created, 1)
-        self.env.assertEquals(res.properties_set, 1)
+        self.env.assertEqual(len(res.result_set), 2)
+        self.env.assertEqual(res.result_set[0][0], 0)
+        self.env.assertEqual(res.result_set[1][0], 1)
+        self.env.assertEqual(res.nodes_created, 1)
+        self.env.assertEqual(res.properties_set, 1)
 
         # both branches are eager
         res = self.graph.query (
@@ -1193,11 +1193,11 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 2)
-        self.env.assertEquals(res.result_set[0][0], 0)
-        self.env.assertEquals(res.result_set[1][0], 2)
-        self.env.assertEquals(res.nodes_created, 1)
-        self.env.assertEquals(res.properties_set, 2)
+        self.env.assertEqual(len(res.result_set), 2)
+        self.env.assertEqual(res.result_set[0][0], 0)
+        self.env.assertEqual(res.result_set[1][0], 2)
+        self.env.assertEqual(res.nodes_created, 1)
+        self.env.assertEqual(res.properties_set, 2)
 
         # both branches are not eager
         self.graph.query("CREATE (:X {v: 1})")
@@ -1216,10 +1216,10 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(res.result_set[0][0], 1)
-        self.env.assertEquals(res.nodes_created, 0)
-        self.env.assertEquals(res.properties_set, 0)
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertEqual(res.result_set[0][0], 1)
+        self.env.assertEqual(res.nodes_created, 0)
+        self.env.assertEqual(res.properties_set, 0)
 
         # UNION ALL with more than 2 branches
         res = self.graph.query (
@@ -1246,15 +1246,15 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 6)
-        self.env.assertEquals(res.result_set[0][0], 7)
-        self.env.assertEquals(res.result_set[1][0], 1)
-        self.env.assertEquals(res.result_set[2][0], 1)
-        self.env.assertEquals(res.result_set[3][0], 2)
-        self.env.assertEquals(res.result_set[4][0], 3)
-        self.env.assertEquals(res.result_set[5][0], 1)
-        self.env.assertEquals(res.nodes_created, 1)
-        self.env.assertEquals(res.properties_set, 1)
+        self.env.assertEqual(len(res.result_set), 6)
+        self.env.assertEqual(res.result_set[0][0], 7)
+        self.env.assertEqual(res.result_set[1][0], 1)
+        self.env.assertEqual(res.result_set[2][0], 1)
+        self.env.assertEqual(res.result_set[3][0], 2)
+        self.env.assertEqual(res.result_set[4][0], 3)
+        self.env.assertEqual(res.result_set[5][0], 1)
+        self.env.assertEqual(res.nodes_created, 1)
+        self.env.assertEqual(res.properties_set, 1)
 
         # single eager & returning branch out of 2, using input data inside and
         # outside the subquery
@@ -1274,15 +1274,15 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 4)
-        self.env.assertEquals(res.result_set[0][0], 1)
-        self.env.assertEquals(res.result_set[0][1], [1])
-        self.env.assertEquals(res.result_set[1][0], 1)
-        self.env.assertEquals(res.result_set[1][1], 1)
-        self.env.assertEquals(res.result_set[2][0], 2)
-        self.env.assertEquals(res.result_set[2][1], [2])
-        self.env.assertEquals(res.result_set[3][0], 2)
-        self.env.assertEquals(res.result_set[3][1], 2)
+        self.env.assertEqual(len(res.result_set), 4)
+        self.env.assertEqual(res.result_set[0][0], 1)
+        self.env.assertEqual(res.result_set[0][1], [1])
+        self.env.assertEqual(res.result_set[1][0], 1)
+        self.env.assertEqual(res.result_set[1][1], 1)
+        self.env.assertEqual(res.result_set[2][0], 2)
+        self.env.assertEqual(res.result_set[2][1], [2])
+        self.env.assertEqual(res.result_set[3][0], 2)
+        self.env.assertEqual(res.result_set[3][1], 2)
 
         # both branches are eager and returning
         res = self.graph.query(
@@ -1300,9 +1300,9 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 4)
+        self.env.assertEqual(len(res.result_set), 4)
         for i, subres in enumerate([[1, [1]], [1, [1]], [2, [2]], [2, [2]]]):
-            self.env.assertEquals(res.result_set[i], subres)
+            self.env.assertEqual(res.result_set[i], subres)
 
         # same query with Distinct (UNION instead of UNION ALL)
         res = self.graph.query(
@@ -1320,10 +1320,10 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 2)
+        self.env.assertEqual(len(res.result_set), 2)
         for i in [1, 2]:
-            self.env.assertEquals(res.result_set[i-1][0], i)
-            self.env.assertEquals(res.result_set[i-1][1], [i])
+            self.env.assertEqual(res.result_set[i-1][0], i)
+            self.env.assertEqual(res.result_set[i-1][1], [i])
 
         # mix union and union all in call sub query
         res = self.graph.query(
@@ -1338,7 +1338,7 @@ updating clause.")
             RETURN 0 AS n2
             """
         )
-        self.env.assertEquals(res.result_set, [[0]])
+        self.env.assertEqual(res.result_set, [[0]])
 
     def test21_indexes(self):
         """Tests that operations on indexes are properly executed (and reset)
@@ -1372,8 +1372,8 @@ updating clause.")
         res = self.graph.query(query)
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(res.result_set[0][0], '11')
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertEqual(res.result_set[0][0], '11')
 
     def test22_named_paths(self):
         """Tests that named paths are handled correctly, when defined/referred
@@ -1399,8 +1399,8 @@ updating clause.")
         res = self.graph.query(query)
 
         # assert results
-        self.env.assertEquals(len(self.graph.query(query).result_set), 1)
-        self.env.assertEquals(res.result_set[0][0], node)
+        self.env.assertEqual(len(self.graph.query(query).result_set), 1)
+        self.env.assertEqual(res.result_set[0][0], node)
 
         # refer a named path defined inside of a subquery, from within the
         # subquery
@@ -1415,8 +1415,8 @@ updating clause.")
         res = self.graph.query(query)
 
         # assert results
-        self.env.assertEquals(len(self.graph.query(query).result_set), 1)
-        self.env.assertEquals(res.result_set[0][0], node)
+        self.env.assertEqual(len(self.graph.query(query).result_set), 1)
+        self.env.assertEqual(res.result_set[0][0], node)
 
         # return a path from a subquery and refer to it outside of the subquery
         query = """
@@ -1430,8 +1430,8 @@ updating clause.")
         res = self.graph.query(query)
 
         # assert results
-        self.env.assertEquals(len(self.graph.query(query).result_set), 1)
-        self.env.assertEquals(res.result_set[0][0], node)
+        self.env.assertEqual(len(self.graph.query(query).result_set), 1)
+        self.env.assertEqual(res.result_set[0][0], node)
 
         # refer to a named path defined in a subquery, from a nested subquery
         query = """
@@ -1449,8 +1449,8 @@ updating clause.")
         res = self.graph.query(query)
 
         # assert results
-        self.env.assertEquals(len(self.graph.query(query).result_set), 1)
-        self.env.assertEquals(res.result_set[0][0], node)
+        self.env.assertEqual(len(self.graph.query(query).result_set), 1)
+        self.env.assertEqual(res.result_set[0][0], node)
 
         # import named paths inside a subquery containing a UNION clause
         query = """
@@ -1467,9 +1467,9 @@ updating clause.")
         res = self.graph.query(query)
 
         # assert results
-        self.env.assertEquals(len(self.graph.query(query).result_set), 2)
-        self.env.assertEquals(res.result_set[0][0], node)
-        self.env.assertEquals(res.result_set[1][0], OrderedDict([('v', 2)]))
+        self.env.assertEqual(len(self.graph.query(query).result_set), 2)
+        self.env.assertEqual(res.result_set[0][0], node)
+        self.env.assertEqual(res.result_set[1][0], OrderedDict([('v', 2)]))
 
     def test23_eager_returning(self):
         """Tests the eager and returning case of Call {}"""
@@ -1488,9 +1488,9 @@ updating clause.")
         res = self.graph.query(query)
 
         # assert results
-        self.env.assertEquals(res.nodes_created, 1)
-        self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(res.result_set[0][0],
+        self.env.assertEqual(res.nodes_created, 1)
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertEqual(res.result_set[0][0],
             Node(labels='N', properties={'name': 'Raz'}))
 
         # use memory from outer scope after the subquery
@@ -1506,12 +1506,12 @@ updating clause.")
         res = self.graph.query(query)
 
         # assert results
-        self.env.assertEquals(res.nodes_created, 1)
-        self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(len(res.result_set[0]), 2)
-        self.env.assertEquals(res.result_set[0][0], Node(labels='N',
+        self.env.assertEqual(res.nodes_created, 1)
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertEqual(len(res.result_set[0]), 2)
+        self.env.assertEqual(res.result_set[0][0], Node(labels='N',
             properties={'name': 'Raz'}))
-        self.env.assertEquals(res.result_set[0][1], Node(labels='M',
+        self.env.assertEqual(res.result_set[0][1], Node(labels='M',
             properties={'name': 'Moshe'}))
 
         # nested eager & returning subquery
@@ -1532,14 +1532,14 @@ updating clause.")
         res = self.graph.query(query)
 
         # assert results
-        self.env.assertEquals(res.nodes_created, 2)
-        self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(len(res.result_set[0]), 3)
-        self.env.assertEquals(res.result_set[0][0], Node(labels='N',
+        self.env.assertEqual(res.nodes_created, 2)
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertEqual(len(res.result_set[0]), 3)
+        self.env.assertEqual(res.result_set[0][0], Node(labels='N',
             properties={'name': 'Raz'}))
-        self.env.assertEquals(res.result_set[0][1], Node(labels='M',
+        self.env.assertEqual(res.result_set[0][1], Node(labels='M',
             properties={'name': 'Moshe'}))
-        self.env.assertEquals(res.result_set[0][2], Node(labels='O',
+        self.env.assertEqual(res.result_set[0][2], Node(labels='O',
             properties={'name': 'Omer'}))
 
         # highly nested eager & returning subquery
@@ -1565,16 +1565,16 @@ updating clause.")
         res = self.graph.query(query)
 
         # assert results
-        self.env.assertEquals(res.nodes_created, 3)
-        self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(len(res.result_set[0]), 4)
-        self.env.assertEquals(res.result_set[0][0], Node(labels='N',
+        self.env.assertEqual(res.nodes_created, 3)
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertEqual(len(res.result_set[0]), 4)
+        self.env.assertEqual(res.result_set[0][0], Node(labels='N',
             properties={'name': 'Raz'}))
-        self.env.assertEquals(res.result_set[0][1], Node(labels='M',
+        self.env.assertEqual(res.result_set[0][1], Node(labels='M',
             properties={'name': 'Moshe'}))
-        self.env.assertEquals(res.result_set[0][2], Node(labels='O',
+        self.env.assertEqual(res.result_set[0][2], Node(labels='O',
             properties={'name': 'Omer'}))
-        self.env.assertEquals(res.result_set[0][3], Node(labels='P',
+        self.env.assertEqual(res.result_set[0][3], Node(labels='P',
             properties={'name': 'Pini'}))
 
         # multiple eager & returning subqueries sequentially
@@ -1594,14 +1594,14 @@ updating clause.")
         res = self.graph.query(query)
 
         # assert results
-        self.env.assertEquals(res.nodes_created, 2)
-        self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(len(res.result_set[0]), 3)
-        self.env.assertEquals(res.result_set[0][0], Node(labels='N',
+        self.env.assertEqual(res.nodes_created, 2)
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertEqual(len(res.result_set[0]), 3)
+        self.env.assertEqual(res.result_set[0][0], Node(labels='N',
             properties={'name': 'Raz'}))
-        self.env.assertEquals(res.result_set[0][1], Node(labels='M',
+        self.env.assertEqual(res.result_set[0][1], Node(labels='M',
             properties={'name': 'Moshe'}))
-        self.env.assertEquals(res.result_set[0][2], Node(labels='O',
+        self.env.assertEqual(res.result_set[0][2], Node(labels='O',
             properties={'name': 'Omer'}))
 
         # nested eager & returning subquery in a non-(eager & returning)
@@ -1621,12 +1621,12 @@ updating clause.")
         res = self.graph.query(query)
 
         # assert results
-        self.env.assertEquals(res.nodes_created, 1)
-        self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(len(res.result_set[0]), 2)
-        self.env.assertEquals(res.result_set[0][0], Node(labels='N',
+        self.env.assertEqual(res.nodes_created, 1)
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertEqual(len(res.result_set[0]), 2)
+        self.env.assertEqual(res.result_set[0][0], Node(labels='N',
             properties={'name': 'Raz'}))
-        self.env.assertEquals(res.result_set[0][1], Node(labels='M',
+        self.env.assertEqual(res.result_set[0][1], Node(labels='M',
             properties={'name': 'Moshe'}))
 
         # outer {} is not eager, inner is
@@ -1646,10 +1646,10 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(len(res.result_set[0]), 2)
-        self.env.assertEquals(res.result_set[0][0], 1)
-        self.env.assertEquals(res.result_set[0][1], list(range(1, 6)))
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertEqual(len(res.result_set[0]), 2)
+        self.env.assertEqual(res.result_set[0][0], 1)
+        self.env.assertEqual(res.result_set[0][1], list(range(1, 6)))
 
         # outer {} is eager, but not returning, inner is
         res = self.graph.query(
@@ -1669,16 +1669,16 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(res.nodes_created, 1)
-        self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(len(res.result_set[0]), 1)
-        self.env.assertEquals(res.result_set[0][0], Node(labels='N',
+        self.env.assertEqual(res.nodes_created, 1)
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertEqual(len(res.result_set[0]), 1)
+        self.env.assertEqual(res.result_set[0][0], Node(labels='N',
             properties={'name': 'Raz', 'v': 1}))
 
         # same concept as the above test, using input data
         # create 3 nodes (:TEMP {v: 1\2\3})
         res = self.graph.query("UNWIND range(1, 3) AS x CREATE (n:TEMP {v: x})")
-        self.env.assertEquals(res.nodes_created, 3)
+        self.env.assertEqual(res.nodes_created, 3)
 
         res = self.graph.query(
             """
@@ -1698,13 +1698,13 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 3)
-        self.env.assertEquals(res.result_set[0][0], 1)
-        self.env.assertEquals(res.result_set[0][1], list(range(0, 2)))
-        self.env.assertEquals(res.result_set[1][0], 2)
-        self.env.assertEquals(res.result_set[1][1], list(range(0, 3)))
-        self.env.assertEquals(res.result_set[2][0], 3)
-        self.env.assertEquals(res.result_set[2][1], list(range(0, 4)))
+        self.env.assertEqual(len(res.result_set), 3)
+        self.env.assertEqual(res.result_set[0][0], 1)
+        self.env.assertEqual(res.result_set[0][1], list(range(0, 2)))
+        self.env.assertEqual(res.result_set[1][0], 2)
+        self.env.assertEqual(res.result_set[1][1], list(range(0, 3)))
+        self.env.assertEqual(res.result_set[2][0], 3)
+        self.env.assertEqual(res.result_set[2][1], list(range(0, 4)))
 
     def test24_read_no_with_after_writing_subquery(self):
         """Tests that a read clause following a writing subquery is handled
@@ -1726,13 +1726,13 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(res.result_set[0][0], Node(labels='N',
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertEqual(res.result_set[0][0], Node(labels='N',
             properties={'name': 'Roi'}))
 
         # delete the node
         res = self.graph.query("MATCH (n) DELETE n")
-        self.env.assertEquals(res.nodes_deleted, 1)
+        self.env.assertEqual(res.nodes_deleted, 1)
 
         # same query, without a separating `WITH`
         res = self.graph.query(
@@ -1747,13 +1747,13 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(res.result_set[0][0], Node(labels='N',
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertEqual(res.result_set[0][0], Node(labels='N',
             properties={'name': 'Roi'}))
 
         # delete the node
         res = self.graph.query("MATCH (n) DELETE n")
-        self.env.assertEquals(res.nodes_deleted, 1)
+        self.env.assertEqual(res.nodes_deleted, 1)
 
         # same query, without a separating `WITH`, and without a `RETURN` clause
         res = self.graph.query(
@@ -1767,8 +1767,8 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(res.result_set[0][0], Node(labels='N',
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertEqual(res.result_set[0][0], Node(labels='N',
             properties={'name': 'Roi'}))
 
     def test25_reset(self):
@@ -1798,12 +1798,12 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 2)
-        self.env.assertEquals(res.result_set[0][0], 2)
-        self.env.assertEquals(res.result_set[0][1], Node(labels='N',
+        self.env.assertEqual(len(res.result_set), 2)
+        self.env.assertEqual(res.result_set[0][0], 2)
+        self.env.assertEqual(res.result_set[0][1], Node(labels='N',
             properties={'v': 2}))
-        self.env.assertEquals(res.result_set[1][0], 4)
-        self.env.assertEquals(res.result_set[1][1], Node(labels='N',
+        self.env.assertEqual(res.result_set[1][0], 4)
+        self.env.assertEqual(res.result_set[1][1], Node(labels='N',
             properties={'v': 4}))
 
     def test26_rewrite_star_projections(self):
@@ -1824,10 +1824,10 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(len(res.result_set[0]), 3)
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertEqual(len(res.result_set[0]), 3)
         for i in range(3):
-            self.env.assertEquals(res.result_set[0][i], i + 1)
+            self.env.assertEqual(res.result_set[0][i], i + 1)
 
         res = self.graph.query(
             """
@@ -1841,10 +1841,10 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(len(res.result_set[0]), 2)
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertEqual(len(res.result_set[0]), 2)
         for i in range(2):
-            self.env.assertEquals(res.result_set[0][i], i + 1)
+            self.env.assertEqual(res.result_set[0][i], i + 1)
 
         # both import with * and return with *
         res = self.graph.query(
@@ -1860,10 +1860,10 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(len(res.result_set[0]), 3)
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertEqual(len(res.result_set[0]), 3)
         for i in range(3):
-            self.env.assertEquals(res.result_set[0][i], i + 1)
+            self.env.assertEqual(res.result_set[0][i], i + 1)
 
         # using union
         res = self.graph.query(
@@ -1881,13 +1881,13 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 2)
-        self.env.assertEquals(len(res.result_set[0]), 2)
-        self.env.assertEquals(len(res.result_set[1]), 2)
-        self.env.assertEquals(res.result_set[0][0], 1)
-        self.env.assertEquals(res.result_set[0][1], 1)
-        self.env.assertEquals(res.result_set[1][0], 1)
-        self.env.assertEquals(res.result_set[1][1], 2)
+        self.env.assertEqual(len(res.result_set), 2)
+        self.env.assertEqual(len(res.result_set[0]), 2)
+        self.env.assertEqual(len(res.result_set[1]), 2)
+        self.env.assertEqual(res.result_set[0][0], 1)
+        self.env.assertEqual(res.result_set[0][1], 1)
+        self.env.assertEqual(res.result_set[1][0], 1)
+        self.env.assertEqual(res.result_set[1][1], 2)
 
         # embedded call {}
         query = """
@@ -1927,11 +1927,11 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(len(res.result_set[0]), 3)
-        self.env.assertEquals(res.result_set[0][0], 1)
-        self.env.assertEquals(res.result_set[0][1], 2)
-        self.env.assertEquals(res.result_set[0][2], Node(labels='N'))
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertEqual(len(res.result_set[0]), 3)
+        self.env.assertEqual(res.result_set[0][0], 1)
+        self.env.assertEqual(res.result_set[0][1], 2)
+        self.env.assertEqual(res.result_set[0][2], Node(labels='N'))
 
         # create node and project it with star
         res = self.graph.query(
@@ -1948,11 +1948,11 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(len(res.result_set[0]), 3)
-        self.env.assertEquals(res.result_set[0][0], 1)
-        self.env.assertEquals(res.result_set[0][1], 2)
-        self.env.assertEquals(res.result_set[0][2], Node(labels='C'))
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertEqual(len(res.result_set[0]), 3)
+        self.env.assertEqual(res.result_set[0][0], 1)
+        self.env.assertEqual(res.result_set[0][1], 2)
+        self.env.assertEqual(res.result_set[0][2], Node(labels='C'))
 
         # merge node and project it with star
         res = self.graph.query(
@@ -1969,11 +1969,11 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(len(res.result_set[0]), 3)
-        self.env.assertEquals(res.result_set[0][0], 1)
-        self.env.assertEquals(res.result_set[0][1], 2)
-        self.env.assertEquals(res.result_set[0][2], Node(labels='C'))
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertEqual(len(res.result_set[0]), 3)
+        self.env.assertEqual(res.result_set[0][0], 1)
+        self.env.assertEqual(res.result_set[0][1], 2)
+        self.env.assertEqual(res.result_set[0][2], Node(labels='C'))
 
         # create node and return it
         res = self.graph.query(
@@ -1990,11 +1990,11 @@ updating clause.")
         )
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(len(res.result_set[0]), 3)
-        self.env.assertEquals(res.result_set[0][0], 1)
-        self.env.assertEquals(res.result_set[0][1], 2)
-        self.env.assertEquals(res.result_set[0][2], Node(labels='C'))
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertEqual(len(res.result_set[0]), 3)
+        self.env.assertEqual(res.result_set[0][0], 1)
+        self.env.assertEqual(res.result_set[0][1], 2)
+        self.env.assertEqual(res.result_set[0][2], Node(labels='C'))
 
     def test27_surrounding_matches(self):
         """Tests that in case the call {} is surrounded by matches, the
@@ -2030,14 +2030,14 @@ updating clause.")
         n1 = Node(labels='N', properties={'v': 1})
         n2 = Node(labels='N', properties={'v': 2})
         n3 = Node(labels='I')
-        self.env.assertEquals(len(res.result_set), 2)
-        self.env.assertEquals(len(res.result_set[0]), 3)
-        self.env.assertEquals(res.result_set[0][0], n1)
-        self.env.assertEquals(res.result_set[0][1], n3)
-        self.env.assertEquals(res.result_set[0][2], 1)
-        self.env.assertEquals(res.result_set[1][0], n2)
-        self.env.assertEquals(res.result_set[1][1], n3)
-        self.env.assertEquals(res.result_set[1][2], 1)
+        self.env.assertEqual(len(res.result_set), 2)
+        self.env.assertEqual(len(res.result_set[0]), 3)
+        self.env.assertEqual(res.result_set[0][0], n1)
+        self.env.assertEqual(res.result_set[0][1], n3)
+        self.env.assertEqual(res.result_set[0][2], 1)
+        self.env.assertEqual(res.result_set[1][0], n2)
+        self.env.assertEqual(res.result_set[1][1], n3)
+        self.env.assertEqual(res.result_set[1][2], 1)
 
     def test28_following_scans(self):
         """Tests that in case the call {} is followed by scans, the
@@ -2062,9 +2062,9 @@ updating clause.")
 
         # assert results
         n = Node(labels='N', properties={'v': 1})
-        self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(len(res.result_set[0]), 1)
-        self.env.assertEquals(res.result_set[0][0], n)
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertEqual(len(res.result_set[0]), 1)
+        self.env.assertEqual(res.result_set[0][0], n)
 
         # query with a match clause following a call {} clause with a scan,
         # using the same alias (reduce-scans optimization fixed)
@@ -2083,13 +2083,13 @@ updating clause.")
         plan = self.graph.explain(query)
         n_label_scans = count_operation(plan.structured_plan,
             "Node By Label Scan")
-        self.env.assertEquals(n_label_scans, 2)
+        self.env.assertEqual(n_label_scans, 2)
 
         res = self.graph.query(query)
         # assert results
-        self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(len(res.result_set[0]), 1)
-        self.env.assertEquals(res.result_set[0][0], n)
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertEqual(len(res.result_set[0]), 1)
+        self.env.assertEqual(res.result_set[0][0], n)
 
         # query with a match clause, followed by a call {} clause with a scan
         # with the same alias, followed by a match clause with the same alias.
@@ -2108,15 +2108,17 @@ updating clause.")
         """
 
         plan = self.graph.explain(query)
-        self.env.assertEquals(count_operation(plan.structured_plan, "Node By Label Scan"), 2)
-        self.env.assertEquals(count_operation(plan.structured_plan, "Conditional Traverse"), 1)
+        self.env.assertEqual(count_operation(plan.structured_plan, "Node By Label Scan"), 2)
+        self.env.assertEqual(count_operation(plan.structured_plan, "Conditional Traverse"), 0)
 
-        # assert that the `O` label is scanned via cond-traverse
-        scan = locate_operation(plan.structured_plan, "Conditional Traverse")
-        self.env.assertEquals(str(scan), "Conditional Traverse | (n:O)->(n:O)")
+        # assert that the `O` label is scanned via a label scan
+        scan = locate_operation(plan.structured_plan, "Node By Label Scan")
+        self.env.assertEqual(str(scan), "Node By Label Scan | (n:N:O)")
 
         # return a bound variable from the call {} clause, with a scan on it
-        # after
+        # after. The inner CALL body scans (n:M); the outer MATCH (n:N) adds
+        # an Expand Into filter since the inner and outer n are in different
+        # scopes.
         query = """
             CALL {
                 MATCH (n:M)
@@ -2127,10 +2129,9 @@ updating clause.")
             RETURN n
         """
 
-        # assert that the execution-plan holds a cond-traverse for :N
         plan = self.graph.explain(query)
-        scan = locate_operation(plan.structured_plan, "Conditional Traverse")
-        self.env.assertEquals(str(scan), "Conditional Traverse | (n:N)->(n:N)")
+        scan = locate_operation(plan.structured_plan, "Node By Label Scan")
+        self.env.assertEqual(str(scan), "Node By Label Scan | (n:M)")
 
     def test29_rewrite_call_subquery(self):
         self.graph.delete()
@@ -2147,7 +2148,7 @@ updating clause.")
                        RETURN 0 AS n3
                }
                RETURN 0""")
-        self.env.assertEquals(res.result_set, [[0]])
+        self.env.assertEqual(res.result_set, [[0]])
 
     def test30_merge_after_call_subquery(self):
         self.graph.delete()
@@ -2161,7 +2162,7 @@ updating clause.")
             MERGE (n:N {v: 1})
             RETURN n.v
             """)
-        self.env.assertEquals(res.result_set, [[1]])
+        self.env.assertEqual(res.result_set, [[1]])
 
     def test31_create_within_call(self):
         # The query will:
@@ -2177,8 +2178,8 @@ updating clause.")
                RETURN 0"""
 
         res = self.graph.query(q)
-        self.env.assertEquals(res.nodes_created, 1)
-        self.env.assertEquals(len(res.result_set), 0)
+        self.env.assertEqual(res.nodes_created, 1)
+        self.env.assertEqual(len(res.result_set), 0)
 
     def test32_variable_scope_propagation(self):
         q = """WITH 1 AS a, 2 AS b
@@ -2189,9 +2190,9 @@ updating clause.")
                RETURN a, b, c"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], 1) # a
-        self.env.assertEquals(res[0][1], 2) # b
-        self.env.assertEquals(res[0][2], 2) # c
+        self.env.assertEqual(res[0][0], 1) # a
+        self.env.assertEqual(res[0][1], 2) # b
+        self.env.assertEqual(res[0][2], 2) # c
 
         q = """WITH 1 AS a
                CALL {
@@ -2204,8 +2205,8 @@ updating clause.")
                 RETURN a, y"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], 1) # a
-        self.env.assertEquals(res[0][1], 2) # y
+        self.env.assertEqual(res[0][0], 1) # a
+        self.env.assertEqual(res[0][1], 2) # y
 
         q = """WITH 10 AS base
                CALL {
@@ -2218,8 +2219,8 @@ updating clause.")
                } RETURN base, doubled"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], 10) # base
-        self.env.assertEquals(res[0][1], 30) # double
+        self.env.assertEqual(res[0][0], 10) # base
+        self.env.assertEqual(res[0][1], 30) # double
 
         q = """WITH 1 AS a, 2 AS b
                CALL {
@@ -2235,8 +2236,8 @@ updating clause.")
                ORDER BY c DESC"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], 3) # sum
-        self.env.assertEquals(res[1][0], 1) # diff
+        self.env.assertEqual(res[0][0], 3) # sum
+        self.env.assertEqual(res[1][0], 1) # diff
 
         q = """WITH 1 AS a
                CALL {
@@ -2247,7 +2248,7 @@ updating clause.")
                RETURN lst"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], [1, 2, 3]) # lst
+        self.env.assertEqual(res[0][0], [1, 2, 3]) # lst
 
     def test33_nested_call(self):
         q = """UNWIND range(1, 3) AS i
@@ -2259,12 +2260,12 @@ updating clause.")
                RETURN i, s ORDER BY i"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], 1) # i
-        self.env.assertEquals(res[0][1], 1) # s
-        self.env.assertEquals(res[1][0], 2) # i
-        self.env.assertEquals(res[1][1], 3) # s
-        self.env.assertEquals(res[2][0], 3) # i
-        self.env.assertEquals(res[2][1], 6) # s
+        self.env.assertEqual(res[0][0], 1) # i
+        self.env.assertEqual(res[0][1], 1) # s
+        self.env.assertEqual(res[1][0], 2) # i
+        self.env.assertEqual(res[1][1], 3) # s
+        self.env.assertEqual(res[2][0], 3) # i
+        self.env.assertEqual(res[2][1], 6) # s
 
         q = """WITH 1 AS dummy
                CALL {
@@ -2277,7 +2278,7 @@ updating clause.")
                } RETURN vals"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], [20, 40, 60]) # vals
+        self.env.assertEqual(res[0][0], [20, 40, 60]) # vals
 
         q = """UNWIND [1, 2] AS x
                CALL {
@@ -2292,10 +2293,10 @@ updating clause.")
                RETURN x, a"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], 1)   # x
-        self.env.assertEquals(res[0][1], 1.5) # a
-        self.env.assertEquals(res[1][0], 2)   # x
-        self.env.assertEquals(res[1][1], 2)   # a
+        self.env.assertEqual(res[0][0], 1)   # x
+        self.env.assertEqual(res[0][1], 1.5) # a
+        self.env.assertEqual(res[1][0], 2)   # x
+        self.env.assertEqual(res[1][1], 2)   # a
 
     def test34_path_graph_pattern_scope(self):
         q = "CREATE (:N)-[:R]->(:M), (:N)-[:R]->(:N)-[:R]->(:M)"
@@ -2310,10 +2311,10 @@ updating clause.")
                ORDER BY l ASC"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][1], 1) # l
-        self.env.assertEquals(res[1][1], 1) # l
-        self.env.assertEquals(res[2][1], 1) # l
-        self.env.assertEquals(res[3][1], 2) # l
+        self.env.assertEqual(res[0][1], 1) # l
+        self.env.assertEqual(res[1][1], 1) # l
+        self.env.assertEqual(res[2][1], 1) # l
+        self.env.assertEqual(res[3][1], 2) # l
 
 
         q = """MATCH (a:N)-[:R]->(b)
@@ -2324,7 +2325,7 @@ updating clause.")
                RETURN a, b, cs"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(len(res), 3)
+        self.env.assertEqual(len(res), 3)
 
         q = """MATCH p = (n:N)-[:R]->(m:M)
                CALL {
@@ -2334,7 +2335,7 @@ updating clause.")
                RETURN dest"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(len(res), 2)
+        self.env.assertEqual(len(res), 2)
 
     def test_35_recursive(self):
         q = """WITH 2 AS a
@@ -2349,7 +2350,7 @@ updating clause.")
                RETURN c"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], 6)
+        self.env.assertEqual(res[0][0], 6)
 
         q = """WITH 5 AS a
                CALL {
@@ -2364,7 +2365,7 @@ updating clause.")
                RETURN total"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], 15) # total
+        self.env.assertEqual(res[0][0], 15) # total
 
 
     def test_36_call_write_interplay(self):
@@ -2379,8 +2380,8 @@ updating clause.")
                RETURN m.v, m.created"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], 1)    # v
-        self.env.assertEquals(res[0][1], True) # created
+        self.env.assertEqual(res[0][0], 1)    # v
+        self.env.assertEqual(res[0][1], True) # created
 
         q = """WITH 1 AS id
                CALL {
@@ -2392,7 +2393,7 @@ updating clause.")
                RETURN n.v"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], 1) # v
+        self.env.assertEqual(res[0][0], 1) # v
 
     def test_37_call_inside_optional(self):
         q = """OPTIONAL MATCH (n:N)
@@ -2403,12 +2404,12 @@ updating clause.")
                RETURN v ORDER BY v ASC"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], 0) # v
-        self.env.assertEquals(res[1][0], 0) # v
-        self.env.assertEquals(res[2][0], 0) # v
-        self.env.assertEquals(res[3][0], 1) # v
-        self.env.assertEquals(res[4][0], 1) # v
-        self.env.assertEquals(res[5][0], 1) # v
+        self.env.assertEqual(res[0][0], 0) # v
+        self.env.assertEqual(res[1][0], 0) # v
+        self.env.assertEqual(res[2][0], 0) # v
+        self.env.assertEqual(res[3][0], 1) # v
+        self.env.assertEqual(res[4][0], 1) # v
+        self.env.assertEqual(res[5][0], 1) # v
 
         q = """CALL {
                    OPTIONAL MATCH (n:N {missing: true})
@@ -2417,7 +2418,7 @@ updating clause.")
                RETURN cnt"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], 0) # cnt
+        self.env.assertEqual(res[0][0], 0) # cnt
 
     def test_38_call_aggregation_distinct(self):
         q = """UNWIND ['a', 'b', 'a', 'c'] AS name
@@ -2430,21 +2431,21 @@ updating clause.")
 
         res = self.graph.query(q).result_set
 
-        self.env.assertEquals(res[0][0], "a") # name
-        self.env.assertEquals(res[0][1], "a") # key
-        self.env.assertEquals(res[0][2], 1)   # cnt
+        self.env.assertEqual(res[0][0], "a") # name
+        self.env.assertEqual(res[0][1], "a") # key
+        self.env.assertEqual(res[0][2], 1)   # cnt
 
-        self.env.assertEquals(res[1][0], "a") # name
-        self.env.assertEquals(res[1][1], "a") # key
-        self.env.assertEquals(res[1][2], 1)   # cnt
+        self.env.assertEqual(res[1][0], "a") # name
+        self.env.assertEqual(res[1][1], "a") # key
+        self.env.assertEqual(res[1][2], 1)   # cnt
 
-        self.env.assertEquals(res[2][0], "b") # name
-        self.env.assertEquals(res[2][1], "b") # key
-        self.env.assertEquals(res[2][2], 1)   # cnt
+        self.env.assertEqual(res[2][0], "b") # name
+        self.env.assertEqual(res[2][1], "b") # key
+        self.env.assertEqual(res[2][2], 1)   # cnt
 
-        self.env.assertEquals(res[3][0], "c") # name
-        self.env.assertEquals(res[3][1], "c") # key
-        self.env.assertEquals(res[3][2], 1)   # cnt
+        self.env.assertEqual(res[3][0], "c") # name
+        self.env.assertEqual(res[3][1], "c") # key
+        self.env.assertEqual(res[3][2], 1)   # cnt
 
         q = """CALL {
                    UNWIND range(1, 5) AS x
@@ -2455,7 +2456,7 @@ updating clause.")
                RETURN odds"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], [1,3,5]) # odds
+        self.env.assertEqual(res[0][0], [1,3,5]) # odds
 
     def test_39_call_returning_complex_structures(self):
         q = """WITH 2 AS x
@@ -2465,8 +2466,8 @@ updating clause.")
                } RETURN info.val, info.square"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], 2) # val
-        self.env.assertEquals(res[0][1], 4) # square
+        self.env.assertEqual(res[0][0], 2) # val
+        self.env.assertEqual(res[0][1], 4) # square
 
         q = """WITH ['a','b'] AS lst
                CALL {
@@ -2476,7 +2477,7 @@ updating clause.")
                RETURN meta"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], {"len": 2, "joined": "ab"}) # meta
+        self.env.assertEqual(res[0][0], {"len": 2, "joined": "ab"}) # meta
 
         q = """CALL {
                    UNWIND range(1,3) AS i
@@ -2485,7 +2486,7 @@ updating clause.")
                RETURN data"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], [{"num": 1, "sq": 1},
+        self.env.assertEqual(res[0][0], [{"num": 1, "sq": 1},
                                           {"num": 2, "sq": 4},
                                           {"num": 3, "sq": 9}]) # data
 
@@ -2496,7 +2497,7 @@ updating clause.")
                RETURN val + other AS sum"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], 3) # sum
+        self.env.assertEqual(res[0][0], 3) # sum
 
         q = """CALL {
                     RETURN rand() AS r
@@ -2505,7 +2506,7 @@ updating clause.")
 
         res = self.graph.query(q).result_set
         r = res[0][0]
-        self.env.assertEquals(res[0][1], r > 0.5) # gt_half
+        self.env.assertEqual(res[0][1], r > 0.5) # gt_half
 
     def test_41_deep_nesting_multiple_union(self):
         q = """CALL {
@@ -2521,9 +2522,9 @@ updating clause.")
                RETURN x ORDER BY x ASC"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], 1) # x
-        self.env.assertEquals(res[1][0], 2) # x
-        self.env.assertEquals(res[2][0], 3) # x
+        self.env.assertEqual(res[0][0], 1) # x
+        self.env.assertEqual(res[1][0], 2) # x
+        self.env.assertEqual(res[2][0], 3) # x
 
         q = """CALL {
                    UNWIND range(1, 3) AS i
@@ -2539,12 +2540,12 @@ updating clause.")
                ORDER BY i ASC"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], 1) # i
-        self.env.assertEquals(res[1][0], 2) # i
-        self.env.assertEquals(res[2][0], 3) # i
-        self.env.assertEquals(res[3][0], 4) # i
-        self.env.assertEquals(res[4][0], 5) # i
-        self.env.assertEquals(res[5][0], 6) # i
+        self.env.assertEqual(res[0][0], 1) # i
+        self.env.assertEqual(res[1][0], 2) # i
+        self.env.assertEqual(res[2][0], 3) # i
+        self.env.assertEqual(res[3][0], 4) # i
+        self.env.assertEqual(res[4][0], 5) # i
+        self.env.assertEqual(res[5][0], 6) # i
 
     def test_42_with_where_propagation(self):
         q = """WITH 1 AS a, 2 AS b
@@ -2557,7 +2558,7 @@ updating clause.")
                RETURN sum"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], 3) # sum
+        self.env.assertEqual(res[0][0], 3) # sum
 
         q = """WITH 10 AS limit
                CALL {
@@ -2570,7 +2571,7 @@ updating clause.")
                RETURN size(filtered) AS count"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], 9) # count
+        self.env.assertEqual(res[0][0], 9) # count
 
     def test_43_call_foreach(self):
         q = """CALL {
@@ -2581,7 +2582,7 @@ updating clause.")
                RETURN created"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], 3) # created
+        self.env.assertEqual(res[0][0], 3) # created
 
     def test_44_subpath_manipulation(self):
         q = """MATCH p = (a)-[:R*1..3]->(b)
@@ -2593,7 +2594,7 @@ updating clause.")
                RETURN collect(relType) AS rels"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], ["R", "R", "R", "R", "R"]) # rels
+        self.env.assertEqual(res[0][0], ["R", "R", "R", "R", "R"]) # rels
 
     def test_45_pattern_comprehension_list_expressions(self):
         q = """CALL {
@@ -2602,10 +2603,10 @@ updating clause.")
                } RETURN doubled"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], [2]) # doubled
-        self.env.assertEquals(res[1][0], [2, 4]) # rels
-        self.env.assertEquals(res[2][0], [2, 4, 6]) # rels
-        self.env.assertEquals(res[3][0], [2, 4, 6, 8]) # rels
+        self.env.assertEqual(res[0][0], [2]) # doubled
+        self.env.assertEqual(res[1][0], [2, 4]) # rels
+        self.env.assertEqual(res[2][0], [2, 4, 6]) # rels
+        self.env.assertEqual(res[3][0], [2, 4, 6, 8]) # rels
 
         q = """WITH 3 AS n
                CALL {
@@ -2615,7 +2616,7 @@ updating clause.")
                RETURN evens"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], [2]) # evens
+        self.env.assertEqual(res[0][0], [2]) # evens
 
 
     def test_46_reduce(self):
@@ -2626,7 +2627,7 @@ updating clause.")
                } RETURN val"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], "OOF") # val
+        self.env.assertEqual(res[0][0], "OOF") # val
 
         q = """WITH [1,2,3] AS list
                CALL {
@@ -2636,7 +2637,7 @@ updating clause.")
                RETURN total"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], 6) # total
+        self.env.assertEqual(res[0][0], 6) # total
 
     def test_47_type_boundries(self):
         # Divide-by-zero inside subquery
@@ -2720,7 +2721,7 @@ updating clause.")
                ORDER BY j ASC"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(len(res), 10)
+        self.env.assertEqual(len(res), 10)
 
         q = """CALL {
                    UNWIND range(1,5) AS x
@@ -2732,8 +2733,8 @@ updating clause.")
                RETURN x"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(len(res), 1)
-        self.env.assertEquals(res[0][0], 3)
+        self.env.assertEqual(len(res), 1)
+        self.env.assertEqual(res[0][0], 3)
 
         q = """UNWIND [3, 1, 2] AS a
                CALL {
@@ -2746,13 +2747,13 @@ updating clause.")
                ORDER BY a"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(len(res), 3)
-        self.env.assertEquals(res[0][0], 1) # a
-        self.env.assertEquals(res[0][1], 1) # val
-        self.env.assertEquals(res[1][0], 2) # a
-        self.env.assertEquals(res[1][1], 2) # val
-        self.env.assertEquals(res[2][0], 3) # a
-        self.env.assertEquals(res[2][1], 3) # val
+        self.env.assertEqual(len(res), 3)
+        self.env.assertEqual(res[0][0], 1) # a
+        self.env.assertEqual(res[0][1], 1) # val
+        self.env.assertEqual(res[1][0], 2) # a
+        self.env.assertEqual(res[1][1], 2) # val
+        self.env.assertEqual(res[2][0], 3) # a
+        self.env.assertEqual(res[2][1], 3) # val
 
     def test_49_multiple_calls(self):
         q = """WITH 1 AS a, 2 AS b
@@ -2767,10 +2768,10 @@ updating clause.")
                RETURN a, b, plus, mult"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], 1) # a
-        self.env.assertEquals(res[0][1], 2) # b
-        self.env.assertEquals(res[0][2], 11) # plus
-        self.env.assertEquals(res[0][3], 4) # mult
+        self.env.assertEqual(res[0][0], 1) # a
+        self.env.assertEqual(res[0][1], 2) # b
+        self.env.assertEqual(res[0][2], 11) # plus
+        self.env.assertEqual(res[0][3], 4) # mult
 
         q = """MATCH (n:N)
                WHERE n.v IS NOT NULL
@@ -2787,7 +2788,7 @@ updating clause.")
         res = self.graph.query(q).result_set
         self.env.assertGreater(len(res), 0)
         for row in res:
-            self.env.assertEquals(row[0] + 1, row[1])
+            self.env.assertEqual(row[0] + 1, row[1])
 
     def test_50_Independent_call_chains(self):
         q = """CALL {
@@ -2801,7 +2802,7 @@ updating clause.")
                } RETURN sum"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], 3) # sum
+        self.env.assertEqual(res[0][0], 3) # sum
 
     def test_51_union_limit_aggregation_interplay(self):
         q = """CALL {
@@ -2814,7 +2815,7 @@ updating clause.")
                RETURN sum(n) AS total"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], 6) # total
+        self.env.assertEqual(res[0][0], 6) # total
 
         q = """CALL {
                    RETURN 1 AS n
@@ -2826,7 +2827,7 @@ updating clause.")
                RETURN count(DISTINCT n) AS c"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], 2) # c
+        self.env.assertEqual(res[0][0], 2) # c
 
         q = """CALL {
                    UNWIND range(1,10) AS x
@@ -2838,7 +2839,7 @@ updating clause.")
                ORDER BY vals ASC"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], [1,2,3,4,5,6,7,8,9,10])
+        self.env.assertEqual(res[0][0], [1,2,3,4,5,6,7,8,9,10])
 
     def test_52_create_delete(self):
         pass
@@ -2865,8 +2866,8 @@ updating clause.")
         #       RETURN n"""
 
         #res = self.graph.query(q)
-        #self.env.assertEquals(res.nodes_created, 1)
-        #self.env.assertEquals(res.nodes_deleted, 1)
+        #self.env.assertEqual(res.nodes_created, 1)
+        #self.env.assertEqual(res.nodes_deleted, 1)
 
     def test_53_nested_union(self):
         q = """CALL {
@@ -2882,5 +2883,5 @@ updating clause.")
                RETURN avg(x) AS avgX"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(res[0][0], 2) # avgX
+        self.env.assertEqual(res[0][0], 2) # avgX
 

@@ -67,15 +67,15 @@ class testMultiExecFlow(FlowTestsBase):
 
         two_edges = results[1]
         two_edges = two_edges[1][0][1]        
-        self.env.assertEquals(two_edges, 2)
+        self.env.assertEqual(two_edges, 2)
 
         one_edge = results[3]
         one_edge = one_edge[1][0][1]
-        self.env.assertEquals(one_edge, 1)
+        self.env.assertEqual(one_edge, 1)
 
         no_edges = results[5]
         no_edges = no_edges[1]
-        self.env.assertEquals(len(no_edges), 0)
+        self.env.assertEqual(len(no_edges), 0)
 
     def test_transaction_failure(self):
         redis_con_a = self.env.getConnection()

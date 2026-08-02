@@ -11,9 +11,9 @@ class testQueryTimeout():
     def __init__(self):
         self.env, self.db = Env(moduleArgs="TIMEOUT 1000")
 
-        # skip test if we're running under Valgrind
-        if VALGRIND or SANITIZER:
-            self.env.skip() # valgrind is not working correctly with replication
+        # skip test if we're running under sanitizer
+        if SANITIZER:
+            self.env.skip() # sanitizer is not working correctly with replication
 
         self.graph = self.db.select_graph(GRAPH_ID)
 
@@ -43,12 +43,12 @@ class testQueryTimeout():
     def test02_configured_timeout(self):
         # Verify that the module-level timeout is set to the default of 0
         timeout = self.db.config_get("timeout")
-        self.env.assertEquals(timeout, 1000)
+        self.env.assertEqual(timeout, 1000)
 
         # Set a default timeout of 1 millisecond
         self.db.config_set("timeout", 1)
         timeout = self.db.config_get("timeout")
-        self.env.assertEquals(timeout, 1)
+        self.env.assertEqual(timeout, 1)
 
         # Validate that a read query times out
         query = "UNWIND range(0,1000000) AS x WITH x AS x WHERE x = 10000 RETURN x"
@@ -98,8 +98,16 @@ class testQueryTimeout():
             try:
                 res = self.graph.query(q, timeout=5)
                 timeouts.append(res.run_time_ms)
-            except:
-                timeouts.append(res.run_time_ms)
+            except ResponseError as error:
+                # The only ResponseError we expect here is "Query timed out"
+                # — anything else (Cypher error, wrong arity, ...) is a real
+                # problem and should surface, not be papered over.
+                self.env.assertContains("Query timed out", str(error))
+                # `res` is unbound when the query raises, so we can't use
+                # res.run_time_ms. The second loop only needs a number that
+                # clamps into [1, 10] ms; the just-attempted 5 ms is a
+                # reasonable upper-bound proxy (the query took at least that).
+                timeouts.append(5)
 
         for i, q in enumerate(queries):
             try:
@@ -122,7 +130,7 @@ class testQueryTimeout():
 
         try:
             # The query is expected to timeout
-            res = self.graph.query(query, timeout=int(res.run_time_ms))
+            res = self.graph.query(query, timeout=max(int(res.run_time_ms), 1))
             self.env.assertTrue(False)
         except ResponseError as error:
             self.env.assertContains("Query timed out", str(error))
@@ -137,13 +145,18 @@ class testQueryTimeout():
 
     def test06_error_timeout_default_higher_than_timeout_max(self):
         self.env, self.db = Env(moduleArgs="TIMEOUT_DEFAULT 10 TIMEOUT_MAX 10")
+        # Refresh self.graph: spawn-mode Env() returns a new client/container,
+        # so the self.graph captured in __init__ would still talk to the old
+        # one (with its now-stale config). Subsequent tests in this class
+        # query via self.graph and rely on the new TIMEOUT_DEFAULT.
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         # get current timeout configuration
         max_timeout = self.db.config_get("TIMEOUT_MAX")
         default_timeout = self.db.config_get("TIMEOUT_DEFAULT")
 
-        self.env.assertEquals(max_timeout, 10)
-        self.env.assertEquals(default_timeout, 10)
+        self.env.assertEqual(max_timeout, 10)
+        self.env.assertEqual(default_timeout, 10)
 
         # try to set default-timeout to a higher value than max-timeout
         try:
@@ -216,6 +229,7 @@ class testQueryTimeout():
     def test09_fallback(self):
         self.env.stop()
         self.env, self.db = Env(moduleArgs="TIMEOUT 1")
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         configs = ["TIMEOUT_DEFAULT", "TIMEOUT_MAX"]
 
@@ -256,6 +270,7 @@ class testQueryTimeout():
         # reset timeout params to default
         self.env.stop()
         self.env, self.db = Env()
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         # Set timeout parameters to small values (1 millisecond)
         self.db.config_set("TIMEOUT_MAX", 1)
@@ -268,17 +283,18 @@ class testQueryTimeout():
                    CREATE (:P{v:x * y + y})"""
             self.graph.profile(q)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # expecting to get a timeout error
-            self.env.assertIn("Query timed out", str(e))
+            self.env.assertContains("Query timed out", str(e))
 
         # make sure no pending result exists
         res = self.graph.query("RETURN 1")
-        self.env.assertEquals(res.result_set[0][0], 1)
+        self.env.assertEqual(res.result_set[0][0], 1)
 
     def test12_concurrent_timeout(self):
         self.env.stop()
         self.env, self.db = Env()
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         self.graph.query("UNWIND range(1, 1000) AS x CREATE (:N {v:x})")
 
@@ -286,6 +302,7 @@ class testQueryTimeout():
             # connection pool with 16 connections
             # blocking when there's no connections available
             pool = BlockingConnectionPool(max_connections=16, timeout=None,
+                                          host=self.env.host,
                                           port=self.env.port,
                                           decode_responses=True)
 

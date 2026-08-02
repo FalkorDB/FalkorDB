@@ -2,7 +2,7 @@ import os
 from common import *
 
 GRAPH_ID = "config"
-NUMBER_OF_CONFIGURATIONS = 21 # number of configurations available
+NUMBER_OF_CONFIGURATIONS = 23 # number of configurations available
 
 class testConfig(FlowTestsBase):
     def __init__(self):
@@ -21,7 +21,7 @@ class testConfig(FlowTestsBase):
         response = self.redis_con.execute_command("GRAPH.CONFIG GET *")
 
         # 16 configurations should be reported
-        self.env.assertEquals(len(response), NUMBER_OF_CONFIGURATIONS)
+        self.env.assertEqual(len(response), NUMBER_OF_CONFIGURATIONS)
 
         # validate default configuration values
 
@@ -33,6 +33,7 @@ class testConfig(FlowTestsBase):
                 ("ASYNC_DELETE", [0,1]), # could be either 0 or 1 depending on load time config
                 ("OMP_THREAD_COUNT", os.cpu_count()),
                 ("THREAD_COUNT", os.cpu_count()),
+                ("INDEX_WORKER_THREADS", 0),
                 ("RESULTSET_SIZE", -1),
                 ("VKEY_MAX_ENTITY_COUNT", 100000),
                 ("MAX_QUEUED_QUERIES", 4294967295),
@@ -42,6 +43,7 @@ class testConfig(FlowTestsBase):
                 ("CMD_INFO", 1),
                 ("MAX_INFO_QUERIES", 1000),
                 ("EFFECTS_THRESHOLD", 300),
+                ("BOLT_PORT", 65535),
                 ("DELAY_INDEXING", 0),
                 ("IMPORT_FOLDER", "/var/lib/FalkorDB/import/"),
                 ("TEMP_FOLDER", "/tmp"),
@@ -54,13 +56,13 @@ class testConfig(FlowTestsBase):
             value = config[1]
 
             # validate config name
-            self.env.assertEquals(name, default_config[i][0])
+            self.env.assertEqual(name, default_config[i][0])
 
             # validate config value
             if type(default_config[i][1]) is list:
-                self.env.assertIn(value, default_config[i][1])
+                self.env.assertContains(value, default_config[i][1])
             else:
-                self.env.assertEquals(value, default_config[i][1])
+                self.env.assertEqual(value, default_config[i][1])
 
     def test02_config_get_invalid_name(self):
         # Ensure that getter fails on invalid parameters appropriately
@@ -69,7 +71,7 @@ class testConfig(FlowTestsBase):
         try:
             self.db.config_get(fake_config_name)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("Unknown configuration field" in str(e))
             pass
@@ -121,7 +123,7 @@ class testConfig(FlowTestsBase):
             # a runtime configuration, expecting this command to fail
             response = self.redis_con.execute_command("GRAPH.CONFIG SET QUERY_MEM_CAPACITY 150 THREAD_COUNT 40")
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("This configuration parameter cannot be set at run-time" in str(e))
 
@@ -130,7 +132,7 @@ class testConfig(FlowTestsBase):
             # configuration, expecting this command to fail
             response = self.redis_con.execute_command("GRAPH.CONFIG SET QUERY_MEM_CAPACITY 150 FAKE_CONFIG_NAME 40")
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("Unknown configuration field" in str(e))
 
@@ -139,7 +141,7 @@ class testConfig(FlowTestsBase):
             # MAX_QUEUED_QUERIES, expecting this command to fail
             response = self.redis_con.execute_command("GRAPH.CONFIG SET QUERY_MEM_CAPACITY 150 MAX_QUEUED_QUERIES -1")
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("Failed to set config value" in str(e))
 
@@ -155,7 +157,7 @@ class testConfig(FlowTestsBase):
         try:
             self.db.config_set(fake_config_name, " 5")
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("Unknown configuration field" in str(e))
             pass
@@ -167,7 +169,7 @@ class testConfig(FlowTestsBase):
         try:
             response = self.redis_con.execute_command("GRAPH.CONFIG DREP " + config_name + " 3")
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             assert("Unknown subcommand for GRAPH.CONFIG" in str(e))
             pass
 
@@ -283,7 +285,7 @@ class testConfig(FlowTestsBase):
             # MAX_QUEUED_QUERIES must be a positive value
             self.db.config_set("MAX_QUEUED_QUERIES", 0)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             assert("Failed to set config value MAX_QUEUED_QUERIES to 0" in str(e))
             pass
 
@@ -293,7 +295,7 @@ class testConfig(FlowTestsBase):
             try:
                 self.db.config_set(f"{config}", -1)
                 assert(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 assert("Failed to set config value %s to -1" % config in str(e))
                 pass
 
@@ -303,7 +305,7 @@ class testConfig(FlowTestsBase):
             try:
                 self.db.config_set(config, "invalid")
                 assert(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 assert(("Failed to set config value %s to invalid" % config) in str(e))
 
     def test10_set_get_vkey_max_entity_count(self):
@@ -349,7 +351,7 @@ import tempfile
 class testConfigTempFolder:
     def __init__(self):
         self.env, self.db = Env()
-        if SANITIZER or VALGRIND:
+        if SANITIZER:
             self.env.skip()
 
     def teardown_method(self):
@@ -365,7 +367,10 @@ class testConfigTempFolder:
     def test_01_temp_folder_is_file(self):
         # try setting TEMP_FOLDER to a file
         # expecting config update to fail
-        fd, file_path = tempfile.mkstemp()
+        # mountable_mkstemp puts the file under the workspace so it is
+        # visible to the docker-per-class spawned container via the
+        # bind-mount logic in common._spawn_falkordb.
+        fd, file_path = mountable_mkstemp()
         os.close(fd)
 
         # try updating TEMP_FOLDER
@@ -396,8 +401,9 @@ class testConfigTempFolder:
         # try setting TEMP_FOLDER to a folder which we can't write to
         # expecting config update to fail, as write access is mandatory
 
-        # create a temp folder with no write access
-        no_perm_dir = tempfile.mkdtemp()
+        # create a temp folder with no write access (workspace-rooted so
+        # spawned sibling containers see it via the bind-mount in common.py)
+        no_perm_dir = mountable_mkdtemp()
         os.chmod(no_perm_dir, stat.S_IREAD)
 
         # check if directory is truly unwritable
@@ -421,7 +427,8 @@ class testConfigTempFolder:
         # try setting TEMP_FOLDER to a valid folder
         # expecting config update to succeed
 
-        valid_dir = tempfile.mkdtemp()
+        # workspace-rooted so the spawned container can see it
+        valid_dir = mountable_mkdtemp()
 
         try:
             self.set_temp_folder(valid_dir)

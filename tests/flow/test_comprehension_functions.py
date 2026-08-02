@@ -39,78 +39,78 @@ class testComprehensionFunctions(FlowTestsBase):
         # Test logically identical queries that generate the same input array with different methods.
         query = """WITH [1,2,3] AS arr RETURN [elem IN arr WHERE elem % 2 = 1 | elem * 2]"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         query = """RETURN [elem IN [1,2,3] WHERE elem % 2 = 1 | elem * 2]"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         query = """RETURN [elem IN range(1,3) WHERE elem % 2 = 1 | elem * 2]"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test02_list_comprehension_no_filter_no_map(self):
         expected_result = [[[1, 2, 3]]]
         query = """WITH [1,2,3] AS arr RETURN [elem IN arr]"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
         query = """RETURN [elem IN [1,2,3]]"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test03_list_comprehension_map_no_filter(self):
         query = """WITH [1,2,3] AS arr RETURN [elem IN arr | elem * 2]"""
         actual_result = self.graph.query(query)
         expected_result = [[[2, 4, 6]]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test04_list_comprehension_filter_no_map(self):
         query = """WITH [1,2,3] AS arr RETURN [elem IN arr WHERE elem % 2 = 1]"""
         actual_result = self.graph.query(query)
         expected_result = [[[1, 3]]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test05_list_comprehension_on_allocated_values(self):
         query = """WITH [toUpper('str1'), toUpper('str2'), toUpper('str3')] AS arr RETURN [elem IN arr]"""
         actual_result = self.graph.query(query)
         expected_result = [[['STR1', 'STR2', 'STR3']]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         query = """WITH [toUpper('str1'), toUpper('str2'), toUpper('str3')] AS arr RETURN [elem IN arr WHERE toLower(elem) = 'str2']"""
         actual_result = self.graph.query(query)
         expected_result = [[['STR2']]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         query = """WITH [toUpper('str1'), toUpper('str2'), toUpper('str3')] AS arr RETURN [elem IN arr WHERE toLower(elem) = 'str2' | elem + 'low']"""
         actual_result = self.graph.query(query)
         expected_result = [[['STR2low']]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test06_list_comprehension_on_graph_entities(self):
         query = """MATCH p=()-[*]->() WITH nodes(p) AS nodes RETURN [elem IN nodes]"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(len(actual_result.result_set), 3)
+        self.env.assertEqual(len(actual_result.result_set), 3)
 
         query = """MATCH p=()-[*]->() WITH nodes(p) AS nodes WITH [elem IN nodes | elem.val] AS vals RETURN vals ORDER BY vals"""
         actual_result = self.graph.query(query)
         expected_result = [[['v1', 'v2']],
                            [['v1', 'v2', 'v3']],
                            [['v2', 'v3']]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         query = """MATCH p=()-[*]->() WITH nodes(p) AS nodes RETURN [elem IN nodes WHERE elem.val = 'v2' | elem.val]"""
         actual_result = self.graph.query(query)
         expected_result = [[['v2']],
                            [['v2']],
                            [['v2']]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         query = """MATCH p=()-[*]->() WITH nodes(p) AS nodes RETURN [elem IN nodes WHERE elem.val = 'v2' | elem.val + 'a']"""
         actual_result = self.graph.query(query)
         expected_result = [[['v2a']],
                            [['v2a']],
                            [['v2a']]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test07_list_comprehension_in_where_predicate(self):
         # List comprehension with predicate in WHERE predicate on MATCH clause - evaluates to true
@@ -118,107 +118,107 @@ class testComprehensionFunctions(FlowTestsBase):
         actual_result = self.graph.query(query)
         expected_result = [['v1'],
                            ['v3']]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # List comprehension with predicate in WHERE predicate - evaluates to true
         query = """WITH 1 AS a WHERE a IN [x in [1, 2]] RETURN a"""
         actual_result = self.graph.query(query)
         expected_result = [[1]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # List comprehension with predicate in WHERE predicate - evaluates to false
         query = """WITH 1 AS a WHERE a IN [x in [2,3]] RETURN a"""
         actual_result = self.graph.query(query)
         expected_result = []
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # List comprehension with predicate and eval in WHERE predicate - evaluates to false
         query = """WITH 1 AS a WHERE size([i in [2,3] WHERE i > 5]) > 0 RETURN a"""
         actual_result = self.graph.query(query)
         expected_result = []
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # List comprehension without predicate or eval in WHERE predicate - evaluates to true
         query = """WITH 1 AS a WHERE size([i in [2,3]]) > 0 RETURN a"""
         actual_result = self.graph.query(query)
         expected_result = [[1]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test08_list_comprehension_on_property_array(self):
         query = """MATCH (n)-[e]->() WITH n, e ORDER BY n.val RETURN [elem IN e.edge_val WHERE elem = n.val]"""
         actual_result = self.graph.query(query)
         expected_result = [[['v1']],
                            [['v2']]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test09_nested_list_comprehension(self):
         query = """RETURN [elem IN [nested_val IN range(0, 6) WHERE nested_val % 2 = 0] WHERE elem * 2 >= 4 | elem * 2]"""
         actual_result = self.graph.query(query)
         expected_result = [[[4, 8, 12]]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test10_any_all_comprehension_acceptance(self):
         # Reject ANY and ALL comprehensions that don't include a WHERE predicate.
         try:
             self.graph.query("RETURN any(x IN [1,2])")
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting a type error.
-            self.env.assertIn("requires a WHERE predicate", str(e))
+            self.env.assertContains("requires a WHERE predicate", str(e))
 
         try:
             self.graph.query("RETURN all(x IN [1,2])")
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting a type error.
-            self.env.assertIn("requires a WHERE predicate", str(e))
+            self.env.assertContains("requires a WHERE predicate", str(e))
 
     def test11_any_all_truth_table(self):
         # Test inputs and predicates where ANY and ALL are both false.
         query = """RETURN any(x IN [0,1] WHERE x = 2)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, [[False]])
+        self.env.assertEqual(actual_result.result_set, [[False]])
 
         query = """RETURN all(x IN [0,1] WHERE x = 2)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, [[False]])
+        self.env.assertEqual(actual_result.result_set, [[False]])
 
         # Test inputs and predicates where ANY is true and ALL is false.
         query = """RETURN any(x IN [0,1] WHERE x = 1)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, [[True]])
+        self.env.assertEqual(actual_result.result_set, [[True]])
 
         query = """RETURN all(x IN [0,1] WHERE x = 1)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, [[False]])
+        self.env.assertEqual(actual_result.result_set, [[False]])
 
         # Test inputs and predicates where ANY and ALL are both true.
         query = """RETURN any(x IN [0,1] WHERE x = 0 OR x = 1)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, [[True]])
+        self.env.assertEqual(actual_result.result_set, [[True]])
 
         query = """RETURN all(x IN [0,1] WHERE x = 0 OR x = 1)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, [[True]])
+        self.env.assertEqual(actual_result.result_set, [[True]])
 
         # Test inputs and predicates where ANY and ALL are both NULL.
         query = """RETURN any(x IN NULL WHERE x = 1)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, [[None]])
+        self.env.assertEqual(actual_result.result_set, [[None]])
 
         query = """RETURN all(x IN NULL WHERE x = 1)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, [[None]])
+        self.env.assertEqual(actual_result.result_set, [[None]])
 
     def test12_any_all_on_property_arrays(self):
         # The first array evaluates to ['v1', 'v2'] and the second evaluates to ['v2', 'v3']
         query = """MATCH ()-[e]->() WITH e ORDER BY e.edge_val RETURN ANY(elem IN e.edge_val WHERE elem = 'v2' OR elem = 'v3')"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, [[True], [True]])
+        self.env.assertEqual(actual_result.result_set, [[True], [True]])
 
         query = """MATCH ()-[e]->() WITH e ORDER BY e.edge_val RETURN ALL(elem IN e.edge_val WHERE elem = 'v2' OR elem = 'v3')"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, [[False], [True]])
+        self.env.assertEqual(actual_result.result_set, [[False], [True]])
 
     def test13_any_all_path_filtering(self):
         # Use ANY and ALL to introspect on named variable-length paths.
@@ -226,22 +226,22 @@ class testComprehensionFunctions(FlowTestsBase):
         expected_result = [['v1'], ['v1'], ['v2']]
         query = """MATCH p=()-[*]->() WHERE any(node IN nodes(p) WHERE node.val STARTS WITH 'v') WITH head(nodes(p)) AS n RETURN n.val ORDER BY n.val"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         query = """MATCH p=()-[*]->() WHERE all(node IN nodes(p) WHERE node.val STARTS WITH 'v') WITH head(nodes(p)) AS n RETURN n.val ORDER BY n.val"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # Run a query in which 2 paths pass an ANY filter and 1 path passes an ALL filter.
         query = """MATCH p=()-[*0..1]->() WHERE any(node IN nodes(p) WHERE node.val = 'v1') RETURN length(p) ORDER BY length(p)"""
         actual_result = self.graph.query(query)
         expected_result = [[0], [1]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         query = """MATCH p=()-[*0..1]->() WHERE all(node IN nodes(p) WHERE node.val = 'v1') RETURN length(p) ORDER BY length(p)"""
         actual_result = self.graph.query(query)
         expected_result = [[0]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test14_simple_pattern_comprehension(self):
         # Match all nodes and collect their destination's property in an array
@@ -252,32 +252,32 @@ class testComprehensionFunctions(FlowTestsBase):
         expected_result = [['v1', ['v2']],
                            ['v2', ['v3']],
                            ['v3', []]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # Test logically equivalent rewrites of the pattern comprehension
         query = """MATCH (a) RETURN a.val AS v, [(a)-[:E]->(b:L) | b.val] ORDER BY v"""
         plan = self.graph.explain(query)
         self.env.assertTrue(_check_pattern_comprehension_plan(plan))
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         query = """MATCH (a) RETURN a.val AS v, [(a:L)-[:E]->(b:L) | b.val] ORDER BY v"""
         plan = self.graph.explain(query)
         self.env.assertTrue(_check_pattern_comprehension_plan(plan))
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         query = """MATCH (a) RETURN a.val AS v, [(b)<-[:E]-(a) | b.val] ORDER BY v"""
         plan = self.graph.explain(query)
         self.env.assertTrue(_check_pattern_comprehension_plan(plan))
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         query = """MATCH (a) RETURN a.val AS v, [(b)<-[:E]-(a) WHERE NOT FALSE | b.val] ORDER BY v"""
         plan = self.graph.explain(query)
         self.env.assertTrue(_check_pattern_comprehension_plan(plan))
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test15_variable_length_pattern_comprehension(self):
         # Match all nodes and collect their destination's property over all hops in an array
@@ -288,20 +288,20 @@ class testComprehensionFunctions(FlowTestsBase):
         expected_result = [['v1', ['v1', 'v2', 'v3']],
                            ['v2', ['v2', 'v3']],
                            ['v3', ['v3']]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # Test logically equivalent rewrites of the pattern comprehension
         query = """MATCH (a) RETURN a.val AS v, [(a)-[:E*0..]->(b) | b.val] ORDER BY v"""
         plan = self.graph.explain(query)
         self.env.assertTrue(_check_pattern_comprehension_plan(plan))
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         query = """MATCH (a) RETURN a.val AS v, [(a)-[:E*0..]->(b:L) | b.val] ORDER BY v"""
         plan = self.graph.explain(query)
         self.env.assertTrue(_check_pattern_comprehension_plan(plan))
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test16_nested_pattern_comprehension(self):
         # Perform pattern comprehension inside a function call
@@ -312,7 +312,7 @@ class testComprehensionFunctions(FlowTestsBase):
         expected_result = [['v1', 3],
                            ['v2', 2],
                            ['v3', 1]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test16b_nested_pattern_comprehension_outer_scope(self):
         # Inner pattern comprehensions must be able to reference variables
@@ -338,7 +338,7 @@ class testComprehensionFunctions(FlowTestsBase):
             actual_result = self.graph.query(query)
             expected_result = [[{'name': 'Alice',
                                  'worksFor': [{'name': 'Acme'}]}]]
-            self.env.assertEquals(actual_result.result_set, expected_result)
+            self.env.assertEqual(actual_result.result_set, expected_result)
 
             # Triple-nested pattern comprehensions
             query = """MATCH (i:Issue)
@@ -356,7 +356,7 @@ class testComprehensionFunctions(FlowTestsBase):
             expected_result = [[{'name': 'Alice',
                                  'worksFor': [{'name': 'Acme',
                                                'employs': ['Alice']}]}]]
-            self.env.assertEquals(actual_result.result_set, expected_result)
+            self.env.assertEqual(actual_result.result_set, expected_result)
 
         finally:
             # Restore the populated graph for subsequent tests
@@ -373,7 +373,7 @@ class testComprehensionFunctions(FlowTestsBase):
                            [3, ['v2']],
                            [3, ['v3']]]
 
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # Perform pattern comprehension in an aggregation value
         query = """UNWIND range(1, 3) AS x MATCH (a) RETURN a.val AS v, collect([p=(a)-[*0..]->(b) | b.val]) ORDER BY v"""
@@ -383,7 +383,7 @@ class testComprehensionFunctions(FlowTestsBase):
         expected_result = [['v1', [['v1', 'v2', 'v3'], ['v1', 'v2', 'v3'], ['v1', 'v2', 'v3']]],
                            ['v2', [['v2', 'v3'], ['v2', 'v3'], ['v2', 'v3']]],
                            ['v3', [['v3'], ['v3'], ['v3']]]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test18_pattern_comprehension_with_filters(self):
         # Match all nodes and collect their destination's property in an array
@@ -397,7 +397,7 @@ class testComprehensionFunctions(FlowTestsBase):
         expected_result = [['v1', ['v2']],
                            ['v2', []],
                            ['v3', []]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         query = """MATCH (a) RETURN a.val AS v, [(a)-[]->(b) WHERE b.val CONTAINS '3' | b.val] ORDER BY v"""
         plan = self.graph.explain(query)
@@ -409,7 +409,7 @@ class testComprehensionFunctions(FlowTestsBase):
         expected_result = [['v1', []],
                            ['v2', ['v3']],
                            ['v3', []]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test19_variable_redefinition(self):
         # Use a list comprehension's variable in two different contexts
@@ -418,7 +418,7 @@ class testComprehensionFunctions(FlowTestsBase):
                    RETURN [x IN nodes(x) | [elem IN range(1, 2) | size(({val: 'v2'})-[]->(x))]]"""
         actual_result = self.graph.query(query)
         expected_result = [[[[1, 1]]]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # Clear data
         self.graph.delete()
@@ -441,13 +441,13 @@ class testComprehensionFunctions(FlowTestsBase):
             [[[1, 2, 3, 4, 5, 6, 7, 8]]],
             [[[1, 2, 3, 4, 5, 6, 7, 8, 9]]],
             [[[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]]] ]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test20_pattern_comprehension_in_switch_case(self):
         query = "RETURN CASE WHEN [()-[]-() | 1] THEN [()-[]-() | 0] END AS v3"
         actual_result = self.graph.query(query)
         expected_result = [[[]]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # Create a single relationship
         query = "CREATE ()-[:R]->()"
@@ -459,13 +459,13 @@ class testComprehensionFunctions(FlowTestsBase):
         query = "RETURN CASE WHEN [()-[]-() | 1] THEN [()-[]-() | 0] END AS v3"
         actual_result = self.graph.query(query)
         expected_result = [[[0, 0]]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # Similar but with more complex plan
         query = "RETURN CASE WHEN [()-[]-() | 1] THEN [()-[]-() | 0] WHEN [()-[]-()-[]-() | 1] THEN [()-[]-()-[]-() | 0] END AS v3"
         actual_result = self.graph.query(query)
         expected_result = [[[0, 0]]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # Clear data
         self.graph.delete()
@@ -486,7 +486,7 @@ class testComprehensionFunctions(FlowTestsBase):
         query = "RETURN CASE WHEN [()-[]-() | 1] THEN [(a)-[]-() | a.val] END AS v3"
         actual_result = self.graph.query(query)
         expected_result = [[[1, 1, 2, 3]]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # For each node, lookup for its undirected relationship. For each releationship there will be an entry with the value 1.
         # The result of the case will be to lookup again and for each relationship add the matched node's val field value to an array.
@@ -499,7 +499,7 @@ class testComprehensionFunctions(FlowTestsBase):
         query = "MATCH (n) WITH CASE WHEN [(n)-[]-() | 1] THEN [(n)-[]-() | n.val] END AS v3 RETURN v3"
         actual_result = self.graph.query(query)
         expected_result = [[[1, 1]], [[2]], [[3]], [[]]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test21_aggregation_in_pattern_comprehension(self):
         # Aggregation functions are not allowed inside a pattern comprehension's
@@ -511,15 +511,15 @@ class testComprehensionFunctions(FlowTestsBase):
         try:
             self.graph.query("MATCH (n1) RETURN [(n1)-[]->(n2) | count(n1)] AS v1")
             assert(False)
-        except redis.exceptions.ResponseError as e:
-            self.env.assertIn("Invalid use of aggregating function", str(e))
+        except redis.ResponseError as e:
+            self.env.assertContains("Invalid use of aggregating function", str(e))
 
         # aggregation in predicate
         try:
             self.graph.query("MATCH (n1) RETURN [(n1)-[]->(n2) WHERE count(n2) > 0 | n2] AS v1")
             assert(False)
-        except redis.exceptions.ResponseError as e:
-            self.env.assertIn("Invalid use of aggregating function", str(e))
+        except redis.ResponseError as e:
+            self.env.assertContains("Invalid use of aggregating function", str(e))
 
     def test22_comprehension_predicate_after_with(self):
         # Validate that aliases referenced within comprehension predicate
@@ -540,57 +540,199 @@ class testComprehensionFunctions(FlowTestsBase):
                        WITH a
                        WHERE all(item IN ['friend', 'colleague'] WHERE item IN a.tags)
                        RETURN a.name AS name"""
-            self.env.assertEquals(g.query(query).result_set, [['Alice']])
+            self.env.assertEqual(g.query(query).result_set, [['Alice']])
 
             # all() over a renamed carried variable
             query = """MATCH (a:Person)
                        WITH a AS p
                        WHERE all(item IN ['friend', 'colleague'] WHERE item IN p.tags)
                        RETURN p.name AS name"""
-            self.env.assertEquals(g.query(query).result_set, [['Alice']])
+            self.env.assertEqual(g.query(query).result_set, [['Alice']])
 
             # any() over a carried variable
             query = """MATCH (a:Person)
                        WITH a
                        WHERE any(item IN ['friend', 'missing'] WHERE item IN a.tags)
                        RETURN a.name AS name"""
-            self.env.assertEquals(g.query(query).result_set, [['Alice']])
+            self.env.assertEqual(g.query(query).result_set, [['Alice']])
 
             # none() over a carried variable
             query = """MATCH (a:Person)
                        WITH a
                        WHERE none(item IN ['x', 'y'] WHERE item IN a.tags)
                        RETURN a.name AS name"""
-            self.env.assertEquals(g.query(query).result_set, [['Alice']])
+            self.env.assertEqual(g.query(query).result_set, [['Alice']])
 
             # single() over a carried variable
             query = """MATCH (a:Person)
                        WITH a
                        WHERE single(item IN ['friend', 'x'] WHERE item IN a.tags)
                        RETURN a.name AS name"""
-            self.env.assertEquals(g.query(query).result_set, [['Alice']])
+            self.env.assertEqual(g.query(query).result_set, [['Alice']])
 
             # list comprehension with predicate over a carried variable
             query = """MATCH (a:Person)
                        WITH a
                        WHERE size([item IN ['friend', 'colleague'] WHERE item IN a.tags]) = 2
                        RETURN a.name AS name"""
-            self.env.assertEquals(g.query(query).result_set, [['Alice']])
+            self.env.assertEqual(g.query(query).result_set, [['Alice']])
 
             # reduce over a carried variable
             query = """MATCH (a:Person)
                        WITH a
                        WHERE reduce(s = 0, x IN a.tags | s + 1) = 2
                        RETURN a.name AS name"""
-            self.env.assertEquals(g.query(query).result_set, [['Alice']])
+            self.env.assertEqual(g.query(query).result_set, [['Alice']])
 
             # negative case - predicate that should filter the row out
             query = """MATCH (a:Person)
                        WITH a
                        WHERE all(item IN ['x', 'y'] WHERE item IN a.tags)
                        RETURN a.name AS name"""
-            self.env.assertEquals(g.query(query).result_set, [])
+            self.env.assertEqual(g.query(query).result_set, [])
 
         finally:
             g.delete()
 
+
+    def test23_pattern_comprehension_in_where_predicate(self):
+        # Pattern comprehensions used inside a WHERE predicate must be planned
+        # as their own sub-plan, exactly as they are in WITH / RETURN.
+        # https://github.com/FalkorDB/FalkorDB/issues/2028
+        g = self.db.select_graph("pattern_comprehension_where")
+
+        try:
+            g.delete()
+        except:
+            pass
+
+        g.query("""CREATE (:Person {name: 'Alice'})
+                          -[:FRIEND_OF {tags: ['friend']}]->
+                          (:Person {name: 'Bob'})""")
+
+        try:
+            # the reported repro: ANY() over a pattern comprehension that
+            # refers to two already-bound aliases
+            query = """MATCH (n:Person {name: 'Alice'}), (m:Person {name: 'Bob'})
+                       WHERE ANY(rel IN [(n)-[r:FRIEND_OF]->(m) | r]
+                                 WHERE 'friend' IN rel.tags)
+                       RETURN n.name AS person1, m.name AS person2"""
+            self.env.assertEqual(g.query(query).result_set, [['Alice', 'Bob']])
+
+            # same shape, predicate that must not match
+            query = """MATCH (n:Person {name: 'Alice'}), (m:Person {name: 'Bob'})
+                       WHERE ANY(rel IN [(n)-[r:FRIEND_OF]->(m) | r]
+                                 WHERE 'enemy' IN rel.tags)
+                       RETURN n.name AS person1, m.name AS person2"""
+            self.env.assertEqual(g.query(query).result_set, [])
+
+            # an empty comprehension is still a row: size(...) = 0 keeps Bob
+            query = """MATCH (n:Person)
+                       WHERE size([(n)-[:FRIEND_OF]->(x) | x]) = 0
+                       RETURN n.name AS name ORDER BY name"""
+            self.env.assertEqual(g.query(query).result_set, [['Bob']])
+
+            # two pattern comprehensions in one predicate
+            query = """MATCH (n:Person)
+                       WHERE size([(n)-[:FRIEND_OF]->(a) | a]) +
+                             size([(n)<-[:FRIEND_OF]-(b) | b]) = 1
+                       RETURN n.name AS name ORDER BY name"""
+            self.env.assertEqual(g.query(query).result_set, [['Alice'], ['Bob']])
+
+            # a pattern comprehension alongside an existential pattern, which
+            # is still planned as a SemiApply rather than collected
+            query = """MATCH (n:Person)
+                       WHERE (n)-[:FRIEND_OF]->()
+                          OR size([(n)<-[:FRIEND_OF]-(y) | y]) > 0
+                       RETURN n.name AS name ORDER BY name"""
+            self.env.assertEqual(g.query(query).result_set, [['Alice'], ['Bob']])
+
+            # WITH ... WHERE, resolving against the projected scope
+            query = """MATCH (n:Person)
+                       WITH n
+                       WHERE size([(n)-[:FRIEND_OF]->(x) | x]) > 0
+                       RETURN n.name AS name"""
+            self.env.assertEqual(g.query(query).result_set, [['Alice']])
+
+            # a preceding clause must still stitch below the comprehension's
+            # Apply
+            query = """MATCH (n:Person {name: 'Alice'})
+                       WITH n
+                       MATCH (m:Person {name: 'Bob'})
+                       WHERE size([(n)-[:FRIEND_OF]->(m) | m]) > 0
+                       RETURN n.name AS person1, m.name AS person2"""
+            self.env.assertEqual(g.query(query).result_set, [['Alice', 'Bob']])
+
+        finally:
+            g.delete()
+
+    def test24_unwind_pattern_comprehension(self):
+        # UNWIND over a pattern comprehension must plan the comprehension as
+        # its own sub-plan instead of evaluating it inline.
+        # https://github.com/FalkorDB/FalkorDB/issues/2027
+        g = self.db.select_graph("unwind_pattern_comprehension")
+
+        try:
+            g.delete()
+        except:
+            pass
+
+        g.query("CREATE (:A {id: 1})-[:R]->(:B {v: 1})")
+        g.query("MATCH (a:A {id: 1}) CREATE (a)-[:R]->(:B {v: 2})")
+
+        try:
+            # the reported repro and its variations on the projected expression
+            self.env.assertEqual(
+                g.query("UNWIND [()-[]->() | 1] AS x RETURN x ORDER BY x").result_set,
+                [[1], [1]])
+            self.env.assertEqual(
+                g.query("UNWIND [()-[]->() | true] AS x RETURN DISTINCT x").result_set,
+                [[True]])
+            self.env.assertEqual(
+                g.query("""UNWIND [()-[]->() | reduce(a = 0, b IN [1,2,3] | a + b)]
+                           AS x RETURN DISTINCT x""").result_set,
+                [[6]])
+
+            # an explicit path variable in the pattern
+            self.env.assertEqual(
+                g.query("UNWIND [p = ()-[]->() | 1] AS x RETURN x ORDER BY x").result_set,
+                [[1], [1]])
+
+            # correlated with a preceding MATCH
+            self.env.assertEqual(
+                g.query("""MATCH (a:A {id: 1})
+                           UNWIND [(a)-[:R]->(b:B) | b.v] AS v
+                           RETURN v ORDER BY v""").result_set,
+                [[1], [2]])
+
+            # two comprehensions in one unwound expression
+            self.env.assertEqual(
+                g.query("""MATCH (a:A {id: 1})
+                           UNWIND [(a)-[:R]->(b:B) | b.v] + [(a)-[:R]->(c:B) | c.v]
+                           AS v RETURN v ORDER BY v""").result_set,
+                [[1], [1], [2], [2]])
+
+            # a predicate inside the comprehension
+            self.env.assertEqual(
+                g.query("""MATCH (a:A {id: 1})
+                           UNWIND [(a)-[:R]->(b:B) WHERE b.v = 2 | b.v] AS v
+                           RETURN v""").result_set,
+                [[2]])
+
+            # an empty comprehension unwinds to no rows
+            self.env.assertEqual(
+                g.query("""MATCH (n:B)
+                           UNWIND [(n)-[:R]->(x) | x] AS y
+                           RETURN count(y)""").result_set,
+                [[0]])
+
+            # the unwound values feed a following clause
+            self.env.assertEqual(
+                g.query("""MATCH (a:A {id: 1})
+                           UNWIND [(a)-[:R]->(b:B) | b] AS n
+                           MATCH (n)<-[:R]-(z)
+                           RETURN n.v, z.id ORDER BY n.v""").result_set,
+                [[1, 1], [2, 1]])
+
+        finally:
+            g.delete()

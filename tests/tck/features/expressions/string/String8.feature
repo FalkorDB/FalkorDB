@@ -113,7 +113,6 @@ Feature: String8 - Exact String Prefix Search
       | ' Foo ' |
     And no side effects
 
-  @skip
   Scenario: [5] Finding strings starting with newline
     Given an empty graph
     And having executed:
@@ -172,7 +171,6 @@ Feature: String8 - Exact String Prefix Search
       | a |
     And no side effects
 
-  @skip
   Scenario: [8] Handling non-string operands for STARTS WITH
     Given an empty graph
     And having executed:
