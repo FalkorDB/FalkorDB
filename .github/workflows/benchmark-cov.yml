@@ -37,11 +37,21 @@
 #
 # ## Why every side is its own job
 #
-# The first version did all of this in two jobs, serially: 4 callgrind passes
-# back to back, then 2 full-set runs back to back, 32 minutes wall-clock. The
-# sides are independent, so they are now a matrix — 3 measure jobs, 4 callgrind
-# jobs and coverage all run at once and `report` fans them in. Each job's CSV
-# is an artifact, so one side failing costs that side's column and nothing else.
+# The first version did all of this in two jobs, serially: 32 minutes
+# wall-clock. The sides are independent, so they are now a matrix — 3 measure
+# jobs, 12 callgrind jobs (2 engines x 6 shards) and coverage all run at once
+# and `report` fans them in. Each job's CSV is an artifact, so one side failing
+# costs that side's column and nothing else.
+#
+# ## What each metric is good for
+#
+# Instructions (callgrind) gate PR-vs-base: reproducible to ~0.2% once the
+# span is chosen from measured drift, so a real change is visible. They are NOT
+# used against the C engine — see the note on the callgrind matrix below.
+#
+# Allocated bytes (jemalloc merged-arena deltas, in `measure`) carry the vs-C
+# comparison. They are deterministic, unaffected by thread scheduling, and
+# cover all 317 queries rather than the callgrind subset.
 #
 # ## Why not macOS, and why not wall-clock
 #
@@ -271,20 +281,35 @@ jobs:
       # to every combination, so the four of them would overwrite each other
       # rather than fan out. `c2` maps to the `c` module in the step below.
       #
-      # 93 queries at ~21s each (three runs per query since the drift
-      # replicate was added) is ~33 min of measurement per side. Sharded 6 ways
-      # that is ~5.5 min of wall-clock, matching the full-set `measure` job, so
-      # callgrind stays off the critical path.
+      # The C engine is deliberately NOT measured here any more.
+      #
+      # It cannot be: callgrind needs the process to be deterministic, and the
+      # C engine busy-waits on a worker thread that valgrind schedules
+      # arbitrarily. Measured, with everything pinned (THREAD_COUNT 1,
+      # OMP_NUM_THREADS=1): 331,579,187 instructions of drift between two
+      # *identical* runs of `list ops`, against ~100k for this module — four
+      # orders of magnitude. Rows came back anti-correlated with work
+      # (`allShortestPaths` cost 679M more on the run doing 3,980 *fewer*
+      # queries), which is a spin-wait, not drift. The honest guards then
+      # dropped or n/a'd most C rows, so 12 jobs ran for 20-44 minutes each to
+      # produce almost nothing.
+      #
+      # vs-C lives on allocated bytes in the `measure` job instead: jemalloc
+      # merged-arena deltas are unaffected by thread scheduling, and that
+      # comparison covers all 317 queries rather than 93.
+      #
+      # 93 queries at ~21s each (three runs per query since the drift replicate
+      # was added) is ~33 min per side. Sharded 6 ways that is ~5.5 min of
+      # wall-clock, matching the full-set `measure` job, so callgrind stays off
+      # the critical path.
       matrix:
-        side: [pr, base, c, c2]
+        side: [pr, base]
         shard: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
-      # `c2` is a second, independent pass over the same C module — not a second
-      # image — so only `pr` needs the private registry.
       - uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
         if: matrix.side == 'pr'
         with:
@@ -296,9 +321,8 @@ jobs:
         run: |
           set -euo pipefail
           case "${{ matrix.side }}" in
-            pr)     SRC="$PR_IMAGE" ;;
-            base)   SRC="$BASE_IMAGE" ;;
-            c|c2)   SRC="$C_IMAGE" ;;
+            pr)   SRC="$PR_IMAGE" ;;
+            base) SRC="$BASE_IMAGE" ;;
           esac
           docker pull -q "$SRC"
           cid=$(docker create "$SRC")
@@ -392,7 +416,6 @@ jobs:
           python3 bench/report.py \
             --measure pr=art/full-pr.csv base=art/full-base.csv c=art/full-c.csv \
             --callgrind 'pr=art/cg-pr-*.csv' 'base=art/cg-base-*.csv' \
-                        'c=art/cg-c-*.csv' 'c2=art/cg-c2-*.csv' \
             --coverage art/coverage.txt \
             --provenance art/provenance.json \
             > comment.md

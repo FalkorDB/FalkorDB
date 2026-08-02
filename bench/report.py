@@ -228,13 +228,24 @@ def callgrind_section(out, cg):
 
     shared = sorted(set(pr) & set(base), key=lambda q: pr[q] / base[q] if base[q] else 1)
 
+    # The C engine is not measured under callgrind any more — it busy-waits on
+    # a worker thread that valgrind schedules arbitrarily, so its counts are
+    # not reproducible (331M instructions of drift between two identical runs).
+    # Keep the columns working for a local run that does supply C data, but
+    # drop them entirely rather than print a column of n/a.
+    have_c = bool(c or c2)
+
     def row(q):
         a, b = base[q], pr[q]
-        cd, cr = c_cell(q)
-        return (f"| {q} | {a:,.0f} | {b:,.0f} | "
-                f"{f'{b / a:.4f}x' if a else '—'} | {cd} | {cr} |")
+        cells = f"| {q} | {a:,.0f} | {b:,.0f} | {f'{b / a:.4f}x' if a else '—'} |"
+        if have_c:
+            cd, cr = c_cell(q)
+            cells += f" {cd} | {cr} |"
+        return cells
 
-    HEAD = ["| query | base | PR | PR/base | C | PR/C |", "|---|---|---|---|---|---|"]
+    HEAD = (["| query | base | PR | PR/base | C | PR/C |", "|---|---|---|---|---|---|"]
+            if have_c else
+            ["| query | base | PR | PR/base |", "|---|---|---|---|"])
 
     # 93 rows is too many to read inline, and the ones that matter are the ones
     # that moved. Anything past 0.5% is worth a look per the note above, so that
@@ -256,15 +267,26 @@ def callgrind_section(out, cg):
         "PR/base, and if it does not, something changed in the request path "
         "rather than in the query being measured.",
         "",
-        "**Read the C column as indicative, not exact.** It is measured twice "
-        f"and shown as a range when the passes disagree by more than "
-        f"{C_TOLERANCE * 100:.0f}%. The C engine cannot be pinned as tightly as "
-        "this module: `THREAD_COUNT 0` refuses to start, so a worker thread "
-        "always exists and valgrind schedules the handoff nondeterministically. "
-        "PR/base in the same table is reproducible to ~0.07%, so a PR/C ratio "
-        "is a direction, and PR/base is a gate.",
-        "",
     ]
+    if have_c:
+        out += [
+            "**Read the C column as indicative, not exact.** It is measured "
+            f"twice and shown as a range when the passes disagree by more than "
+            f"{C_TOLERANCE * 100:.0f}%; a row with only one usable pass is shown "
+            "as n/a, because one number with nothing to check it against is "
+            "exactly where the noise hides.",
+            "",
+        ]
+    else:
+        out += [
+            "_The C engine is not in this table._ callgrind needs a "
+            "deterministic process, and the C engine busy-waits on a worker "
+            "thread that valgrind schedules arbitrarily — measured at "
+            "331,579,187 instructions of drift between two identical runs, "
+            "against ~100k for this module. The vs-C comparison lives on "
+            "allocated bytes above, which thread scheduling does not affect.",
+            "",
+        ]
     spread = max((abs(c2[q] / c[q] - 1) for q in set(c) & set(c2) if c[q]),
                  default=None)
     if spread is not None:
