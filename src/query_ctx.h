@@ -251,6 +251,10 @@ uint64_t QueryCtx_GetReceivedTS (void) ;
 // operation and fail with a timeout rather than proceeding.
 bool QueryCtx_TimedOut(void);
 
+// marks the current query as timed out (QueryExecutionStatus_TIMEDOUT) so the
+// command layer reports a timeout rather than a generic failure.
+void QueryCtx_SetStatusTimedOut(void);
+
 // returns the remaining per-query time budget in ms, for RediSearch's
 // deadline-based iterators; 0 = unlimited (no configured timeout, which
 // RediSearch treats as no enforcement). For a configured budget the value is

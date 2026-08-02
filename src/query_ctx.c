@@ -595,6 +595,11 @@ bool QueryCtx_TimedOut(void) {
 	return _QueryCtx_ElapsedMS(ctx) >= (double)ctx->timeout_ms;
 }
 
+void QueryCtx_SetStatusTimedOut(void) {
+	QueryCtx *ctx = _QueryCtx_GetCtx();
+	if(ctx != NULL) ctx->status = QueryExecutionStatus_TIMEDOUT;
+}
+
 uint64_t QueryCtx_GetRemainingTimeMS(void) {
 	QueryCtx *ctx = _QueryCtx_GetCtx();
 	// no configured budget => no deadline (0 is RediSearch's "unlimited")
