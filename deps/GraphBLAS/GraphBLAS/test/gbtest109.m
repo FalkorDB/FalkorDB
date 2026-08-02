@@ -1,13 +1,16 @@
-function gbtest109
+function gbtest109 (ghb)
 %GBTEST109 test num2cell
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-rng ('default') ;
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
 S = magic (5) ;
-A = GrB (S) ;
+A = gtb (ghb, S) ;
 
 ok = true ;
 try
@@ -19,9 +22,9 @@ end
 assert (ok) ;
 
 dim = 1 ;
-C1 = num2cell (S, GrB (dim)) ;
+C1 = num2cell (S, gtb (ghb, dim)) ;
 C2 = num2cell (S, dim) ;
 assert (isequal (C1, C2)) ;
 
-fprintf ('\ngbtest109: all tests passed\n') ;
+fprintf ('\ngbtest109 (%d): all tests passed\n', ghb) ;
 

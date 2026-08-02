@@ -56,14 +56,14 @@ void mexFunction
     if (!malloc_debug)
     {
         // normal usage
-        GB_cumsum (p, false, n, kresult, nthreads, NULL) ;
+        GB_cumsum (p, false, n, kresult, nthreads, GB_ARENA_TEST, NULL) ;
     }
     else
     {
         // test with malloc failures
         GB_Global_malloc_debug_set (true) ;
         GB_Global_malloc_debug_count_set (malloc_debug_count) ;
-        GB_cumsum (p, false, n, kresult, nthreads, NULL) ;
+        GB_cumsum (p, false, n, kresult, nthreads, GB_ARENA_TEST, NULL) ;
         GB_Global_malloc_debug_set (false) ;
     }
 

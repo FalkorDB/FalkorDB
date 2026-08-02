@@ -1,68 +1,78 @@
 function C = emult (arg1, arg2, arg3, arg4, arg5, arg6, arg7)
 %GRB.EMULT sparse element-wise 'multiplication'.
 %
-%   C = GrB.emult (op, A, B, desc)
-%   C = GrB.emult (Cin, accum, op, A, B, desc)
-%   C = GrB.emult (Cin, M, op, A, B, desc)
-%   C = GrB.emult (Cin, M, accum, op, A, B, desc)
+% syntax for a new matrix C:                    computation:
+% C = GrB.emult (op, A, B, desc)                % C = op(A,B)
+% C = GrB.emult (Cin, accum, op, A, B, desc)    % C = Cin + op(A,B)
+% C = GrB.emult (Cin, M, op, A, B, desc)        % C = Cin ; C<M> = op(A,B)
+% C = GrB.emult (Cin, M, accum, op, A, B, desc) % C = Cin ; C<M> += op(A,B)
 %
-% GrB.emult computes the element-wise 'multiplication' T=A.*B.  The result
-% T has the pattern of the intersection of A and B. The operator is used
-% where A(i,j) and B(i,j) are present.  Otherwise the entry does not
-% appear in T.
+% GrB.emult computes the element-wise 'multiplication' T=A.*B, using any binary
+% op (shown as op(A,B) in the computations listed above).  The result T has the
+% pattern of the intersection of A and B. The operator is used where A(i,j) and
+% B(i,j) are present.  Otherwise the entry does not appear in T.
 %
 %   if (A(i,j) and B(i,j) is present)
 %       T(i,j) = op (A(i,j), B(i,j))
 %
-% T is then accumulated into C via C<#M,replace> = accum (C,T).
+% T is then accumulated into C via C<M> = accum (C,T), where the accum step is
+% computed using GrB.eadd and M can be modified by the descriptor desc.
 %
-% Cin, M, accum, and the optional descriptor desc are the same as all other
-% GrB.methods; see GrB.mxm and GrB.descriptorinfo for more details.  For the
-% binary operator, see GrB.binopinfo.
+% accum: a binary operator to accumulate the results; in the computations
+% listed above it is shown as "+=" but any binary operator may be used.
+%
+% Cin, the mask matrix M, the accum operator, and desc are optional.  If either
+% accum or M is present, then C or Cin is a required input.  If desc.in0 is
+% 'transpose' then A is transposed before applying the operator.  If desc.in1
+% is 'transpose', then the input matrix B is transposed before applying the
+% operator.  See 'help GrB.descriptorinfo' for more details.
 %
 % See also GrB.eadd, GrB.binopinfo.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-if (isobject (arg1))
-    arg1 = arg1.opaque ;
+narginchk (3, 7) ;
+
+if (gb_is_grb (arg1))
+    arg1 = struct (arg1) ;
 end
 
-if (isobject (arg2))
-    arg2 = arg2.opaque ;
+if (gb_is_grb (arg2))
+    arg2 = struct (arg2) ;
 end
 
-if (nargin > 2 && isobject (arg3))
-    arg3 = arg3.opaque ;
+if (gb_is_grb (arg3))
+    arg3 = struct (arg3) ;
 end
 
-if (nargin > 3 && isobject (arg4))
-    arg4 = arg4.opaque ;
+if (nargin >= 4 && gb_is_grb (arg4))
+    arg4 = struct (arg4) ;
 end
 
-if (nargin > 4 && isobject (arg5))
-    arg5 = arg5.opaque ;
+if (nargin >= 5 && gb_is_grb (arg5))
+    arg5 = struct (arg5) ;
 end
 
-if (nargin > 5 && isobject (arg6))
-    arg6 = arg6.opaque ;
+if (nargin >= 6 && gb_is_grb (arg6))
+    arg6 = struct (arg6) ;
 end
 
-switch (nargin)
-    case 3
-        [C, k] = gbemult (arg1, arg2, arg3) ;
-    case 4
-        [C, k] = gbemult (arg1, arg2, arg3, arg4) ;
-    case 5
-        [C, k] = gbemult (arg1, arg2, arg3, arg4, arg5) ;
-    case 6
-        [C, k] = gbemult (arg1, arg2, arg3, arg4, arg5, arg6) ;
-    case 7
-        [C, k] = gbemult (arg1, arg2, arg3, arg4, arg5, arg6, arg7) ;
-end
+% arg7: if present, it must be the descriptor
 
-if (k == 0)
-    C = GrB (C) ;
-end
+    switch (nargin)
+        case 3
+            [C_opaque, kind] = gbmex_emult (0, arg1, arg2, arg3) ;
+        case 4
+            [C_opaque, kind] = gbmex_emult (0, arg1, arg2, arg3, arg4) ;
+        case 5
+            [C_opaque, kind] = gbmex_emult (0, arg1, arg2, arg3, arg4, arg5) ;
+        case 6
+            [C_opaque, kind] = gbmex_emult (0, arg1, arg2, arg3, arg4, arg5, ...
+                arg6) ;
+        case 7
+            [C_opaque, kind] = gbmex_emult (0, arg1, arg2, arg3, arg4, arg5, ...
+                arg6, arg7) ;
+    end
+    C = gb_mexfunction_result (0, C_opaque, kind) ;
 

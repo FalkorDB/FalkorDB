@@ -53,7 +53,7 @@
 // Otherwise, the set of k values can be computed in a shared array ks, using
 // the single method GB_cuda_ek_slice.
 
-// FIXME: discuss grid-stride loops, the pdelta loop, and the max chunk size
+// fixme: discuss grid-stride loops, the pdelta loop, and the max chunk size
 // here
 
 // question: why chunks are necessary? why not just do ek_slice_setup across

@@ -193,9 +193,9 @@ static inline void GB_find_Ap_start_end
 #define GB_FREE_ALL                                 \
 {                                                   \
     GB_FREE_WORKSPACE ;                             \
-    GB_FREE_MEMORY (&Ch, Ch_size) ;                 \
-    GB_FREE_MEMORY (&Ap_start, Ap_start_size) ;     \
-    GB_FREE_MEMORY (&Ap_end, Ap_end_size) ;         \
+    GB_FREE_MEMORY (&Ch, Ch_mem) ;                  \
+    GB_FREE_MEMORY (&Ap_start, Ap_start_mem) ;      \
+    GB_FREE_MEMORY (&Ap_end, Ap_end_mem) ;          \
 }
 
 GrB_Info GB_subref_phase0
@@ -204,11 +204,11 @@ GrB_Info GB_subref_phase0
     void **p_Ch,            // Ch = C->h hyperlist, or NULL
     bool *p_Cj_is_32,       // if true, C->h is 32-bit; else 64-bit
     bool *p_Ci_is_32,       // if true, C->i is 32-bit; else 64-bit
-    size_t *p_Ch_size,
+    uint64_t *p_Ch_mem,
     void **p_Ap_start,      // A(:,kA) starts at Ap_start [kC]
-    size_t *p_Ap_start_size,
+    uint64_t *p_Ap_start_mem,
     void **p_Ap_end,        // ... and ends at Ap_end [kC] - 1
-    size_t *p_Ap_end_size,
+    uint64_t *p_Ap_end_mem,
     int64_t *p_Cnvec,       // # of vectors in C
     bool *p_need_qsort,     // true if C must be sorted
     int *p_Ikind,           // kind of I
@@ -223,6 +223,7 @@ GrB_Info GB_subref_phase0
     const void *J,          // index list for C = A(I,J), or GrB_ALL, etc.
     const bool J_is_32,     // if true, I is 32-bit; else 64-bit
     const int64_t nj,       // length of J, or special
+    const int data_arena,
     GB_Werk Werk
 )
 {
@@ -231,9 +232,12 @@ GrB_Info GB_subref_phase0
     // check inputs
     //--------------------------------------------------------------------------
 
+    GrB_Info info ;
+
+    uint64_t mem = GB_mem (data_arena, 0) ;
+
     ASSERT_MATRIX_OK (A, "A for subref phase 0", GB0) ;
     ASSERT (GB_IS_SPARSE (A) || GB_IS_HYPERSPARSE (A)) ;
-
     ASSERT (p_Ch != NULL) ;
     ASSERT (p_Ap_start != NULL) ;
     ASSERT (p_Ap_end != NULL) ;
@@ -245,12 +249,11 @@ GrB_Info GB_subref_phase0
     ASSERT (I != NULL) ;
     ASSERT (J != NULL) ;
 
-    GrB_Info info ;
-    GB_WERK_DECLARE (Count, uint64_t) ;
-    GB_MDECL (Ch, , u) ; size_t Ch_size = 0 ;
+    GB_WERK_DECLARE (Count, uint64_t, mem) ;
+    GB_MDECL (Ch, , u) ; uint64_t Ch_mem = mem ;
 
-    void *Ap_start = NULL ; size_t Ap_start_size = 0 ;
-    void *Ap_end   = NULL ; size_t Ap_end_size   = 0 ;
+    void *Ap_start = NULL ; uint64_t Ap_start_mem = mem ;
+    void *Ap_end   = NULL ; uint64_t Ap_end_mem   = mem ;
 
     (*p_Ch        ) = NULL ;
     (*p_Ap_start  ) = NULL ;
@@ -292,7 +295,7 @@ GrB_Info GB_subref_phase0
     int64_t imin, imax, jmin, jmax ;
 
     info = GB_ijproperties (I, I_is_32, ni, nI, avlen, &Ikind, Icolon,
-        &I_unsorted, &I_has_dupl, &I_contig, &imin, &imax, Werk) ;
+        &I_unsorted, &I_has_dupl, &I_contig, &imin, &imax, data_arena, Werk) ;
     if (info != GrB_SUCCESS)
     { 
         // I invalid or out of memory
@@ -300,7 +303,7 @@ GrB_Info GB_subref_phase0
     }
 
     info = GB_ijproperties (J, J_is_32, nj, nJ, avdim, &Jkind, Jcolon,
-        &J_unsorted, &J_has_dupl, &J_contig, &jmin, &jmax, Werk) ;
+        &J_unsorted, &J_has_dupl, &J_contig, &jmin, &jmax, data_arena, Werk) ;
     if (info != GrB_SUCCESS)
     { 
         // J invalid or out of memory
@@ -591,7 +594,7 @@ GrB_Info GB_subref_phase0
 
     if (C_is_hyper)
     {
-        Ch = GB_MALLOC_MEMORY (Cnvec, cjsize, &Ch_size) ;
+        Ch = GB_MALLOC_MEMORY (Cnvec, cjsize, &Ch_mem) ;
         if (Ch == NULL)
         { 
             GB_FREE_ALL ;
@@ -602,8 +605,8 @@ GrB_Info GB_subref_phase0
 
     if (Cnvec > 0)
     {
-        Ap_start = GB_MALLOC_MEMORY (Cnvec, apsize, &Ap_start_size) ;
-        Ap_end   = GB_MALLOC_MEMORY (Cnvec, apsize, &Ap_end_size) ;
+        Ap_start = GB_MALLOC_MEMORY (Cnvec, apsize, &Ap_start_mem) ;
+        Ap_end   = GB_MALLOC_MEMORY (Cnvec, apsize, &Ap_end_mem) ;
         if (Ap_start == NULL || Ap_end == NULL)
         { 
             // out of memory
@@ -858,13 +861,13 @@ GrB_Info GB_subref_phase0
 
     GB_FREE_WORKSPACE ;
     (*p_Ch           ) = Ch ;
-    (*p_Ch_size      ) = Ch_size ;
+    (*p_Ch_mem       ) = Ch_mem ;
     (*p_Cj_is_32     ) = Cj_is_32 ;
     (*p_Ci_is_32     ) = Ci_is_32 ;
     (*p_Ap_start     ) = Ap_start ;
-    (*p_Ap_start_size) = Ap_start_size ;
+    (*p_Ap_start_mem ) = Ap_start_mem ;
     (*p_Ap_end       ) = Ap_end ;
-    (*p_Ap_end_size  ) = Ap_end_size ;
+    (*p_Ap_end_mem   ) = Ap_end_mem ;
     (*p_Cnvec        ) = Cnvec ;
     (*p_need_qsort   ) = need_qsort ;
     (*p_Ikind        ) = Ikind ;

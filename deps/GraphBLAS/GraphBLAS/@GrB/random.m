@@ -1,53 +1,50 @@
 function C = random (varargin)
 %GRB.RANDOM random sparse matrix.
-% C = GrB.random (A) has the same pattern as A, but with uniformly
-%   distributed random entries.
+% C = GrB.random (A) has the same pattern as A, but with uniformly distributed
+%   random entries.
 %
-% C = GrB.random (m, n, d) is a random m-by-n GraphBLAS matrix, with
-%   about d*m*n uniformly distributed entries.  The entries are
-%   constructed by computing d*m*n entries at random positions, and
-%   then any duplicates are discarded, so if d is large or m*n is
-%   small, then C will have fewer than d*m*n entries.  The value of
-%   d may exceed 1 (this differs from the built-in sprand, which limits
-%   d to 1).  If d is inf, then C is generated as a full GraphBLAS
-%   matrix, with numel (C) = m*n.
+% C = GrB.random (m, n, d) is a random m-by-n GraphBLAS matrix, with about
+%   d*m*n uniformly distributed entries.  The entries are constructed by
+%   computing d*m*n entries at random positions, and then any duplicates are
+%   discarded, so if d is large or m*n is small, then C will have fewer than
+%   d*m*n entries.  The value of d may exceed 1 (this differs from the built-in
+%   sprand, which limits d to 1).  If d is inf, then C is generated as a full
+%   GraphBLAS matrix, with numel (C) = m*n.
 %
 % Optional parameters may be used, in any order, after the A or m,n,d
 % arguments:
 %
-%   C = GrB.random (..., 'uniform', ...) uses a uniform distribution
-%           of values, with entries greater than zero and less than one.
+%   C = GrB.random (..., 'uniform', ...) uses a uniform distribution of values,
+%           with entries greater than zero and less than one.
 %
-%   C = GrB.random (..., 'normal', ...) uses a normal distribution, like
-%           the built-in sprandn.
+%   C = GrB.random (..., 'normal', ...) uses a normal distribution, like the
+%           built-in sprandn.
 %
-%   C = GrB.random (..., 'range', [lo hi], ...) changes the range of
-%           the random numbers.  If 'range' is not present, the default
-%           is double ([0 1]).  The type of [lo hi] determines the type
-%           of the random matrix C.  If [lo hi] is logical, all entries
-%           in the pattern are true.  If [lo hi] is 'double' or 'single',
-%           then if the random number generator (rand or randn) produces
-%           a double random value of x, it is scaled to (hi-lo)*x+lo.  If
-%           [lo hi] is integer, then x becomes floor ((hi-lo+1)*x + lo),
-%           which is then typecasted to the requested. integer type. This
-%           scaling applies to both the 'uniform' and 'normal'
-%           distribution.  To construct a random complex matrix, pass in
-%           [lo hi] as single complex or double complex.
+%   C = GrB.random (..., 'range', [lo hi], ...) changes the range of the random
+%           numbers.  If 'range' is not present, the default is double ([0 1]).
+%           The type of [lo hi] determines the type of the random matrix C.  If
+%           [lo hi] is logical, all entries in the pattern are true.  If [lo
+%           hi] is 'double' or 'single', then if the random number generator
+%           (rand or randn) produces a double random value of x, it is scaled
+%           to (hi-lo)*x+lo.  If [lo hi] is integer, then x becomes floor
+%           ((hi-lo+1)*x + lo), which is then typecasted to the requested.
+%           integer type. This scaling applies to both the 'uniform' and
+%           'normal' distribution.  To construct a random complex matrix, pass
+%           in [lo hi] as single complex or double complex.
 %
 %           With the normal distribution, [lo hi] specifies the mean (lo)
 %           and the standard deviation (hi) of the final distribution.
 %
-%   C = GrB.random (A, 'symmetric', ...) creates a symmetric matrix, like
-%           the built-in C = sprandsym (A), except that the default
-%           distribution is 'uniform'.  The input matrix A must be
-%           square.  Only tril(A) is used to construct C.
+%   C = GrB.random (A, 'symmetric', ...) creates a symmetric matrix, like the
+%           built-in C = sprandsym (A), except that the default distribution is
+%           'uniform'.  The input matrix A must be square.  Only tril(A) is
+%           used to construct C.
 %
-%   C = GrB.random (n, d, 'symmetric', ...) creates an n-by-n symmetric
-%           matrix C, with a uniform distribution of values.  To create a
-%           matrix like C = srandsym (n,d) with the built-in sprandym, use
-%           C = GrB.random (n, d, 'symmetric', 'normal').  Note that the
-%           arguments (m, n, ...) do not appear; just a single
-%           dimension (n, ...).
+%   C = GrB.random (n, d, 'symmetric', ...) creates an n-by-n symmetric matrix
+%           C, with a uniform distribution of values.  To create a matrix like
+%           C = srandsym (n,d) with the built-in sprandym, use C = GrB.random
+%           (n, d, 'symmetric', 'normal').  Note that the arguments (m, n, ...)
+%           do not appear; just a single dimension (n, ...).
 %
 %   To construct a Hermitian matrix instead, use 'hermitian' in place of
 %   'symmetric'.
@@ -93,8 +90,8 @@ function C = random (varargin)
 %
 % See also GrB/sprand, GrB/sprandn, GrB/sprandsym.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-C = GrB (gb_random (varargin {:})) ;
+C = gb_random (0, varargin {:}) ;
 

@@ -104,8 +104,12 @@ void mexFunction
     zero32.c = 0 ;
     zero32.d = 0 ;
     GrB_Monoid Monoid32 = NULL ;
-    OK (GrB_Monoid_new_UDT (&Monoid32, MyAdd32, (void *) &zero32)) ;
+    OK (GxB_Monoid_new_arena_UDT_(&Monoid32, MyAdd32, (void *) &zero32,
+        GrB_DEFAULT)) ;
     OK (GxB_print (Monoid32, 3)) ;
+    int arena = 32 ;
+    OK (GrB_Monoid_get_INT32_(Monoid32, &arena, GxB_ARENA_HEADER)) ;
+    CHECK (arena == GrB_DEFAULT) ;
 
     //--------------------------------------------------------------------------
     // create a gb_my32 matrix and reduce it to a scalar
@@ -162,8 +166,12 @@ void mexFunction
     zero64.g = 0 ;
     zero64.k = 0 ;
     GrB_Monoid Monoid64 = NULL ;
-    OK (GrB_Monoid_new_UDT (&Monoid64, MyAdd64, (void *) &zero64)) ;
+    OK (GxB_Monoid_new_arena_UDT_(&Monoid64, MyAdd64, (void *) &zero64,
+        GrB_DEFAULT)) ;
     OK (GxB_print (Monoid64, 3)) ;
+    arena = 32 ;
+    OK (GrB_Monoid_get_INT32_(Monoid64, &arena, GxB_ARENA_HEADER)) ;
+    CHECK (arena == GrB_DEFAULT) ;
 
     //--------------------------------------------------------------------------
     // create a gb_my64 matrix and reduce it to a scalar

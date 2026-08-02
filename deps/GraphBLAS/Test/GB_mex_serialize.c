@@ -17,7 +17,7 @@
 #include "GB_mex_errors.h"
 
 // method:
-// -2                          // GrB*serialize with default LZ4 compression
+// -2                          // serialize with default LZ4 compression
 // GxB_COMPRESSION_NONE -1     // no compression
 // GxB_COMPRESSION_DEFAULT 0   // ZSTD level 1
 // GxB_COMPRESSION_LZ4   1000  // LZ4
@@ -52,7 +52,7 @@ void mexFunction
     GrB_Matrix A = NULL, C = NULL ;
     GrB_Descriptor desc = NULL ;
     void *blob = NULL ;
-    uint64_t blob_size = 0 ;
+    uint64_t blob_memsize = 0 ;
 
     // check inputs
     if (nargout > 1 || nargin < 1 || nargin > 3)
@@ -94,19 +94,20 @@ void mexFunction
 //      if (GB_VECTOR_OK (A))
 //      {
 //          // test the vector methods
-//          METHOD (GrB_Vector_serializeSize (&blob_size, (GrB_Vector) A)) ;
-//          blob = mxMalloc (blob_size) ;
-//          METHOD (GrB_Vector_serialize (blob, &blob_size, (GrB_Vector) A)) ;
+//          METHOD (GrB_Vector_serializeSize (&blob_memsize, (GrB_Vector) A)) ;
+//          blob = mxMalloc (blob_memsize) ;
+//          METHOD (GrB_Vector_serialize (blob, &blob_memsize,
+//              (GrB_Vector) A)) ;
 //          METHOD (GrB_Vector_deserialize ((GrB_Vector *) &C, atype,
-//              blob, blob_size)) ;
+//              blob, blob_memsize)) ;
 //      }
 //      else
         {
             // test the matrix methods
-            METHOD (GrB_Matrix_serializeSize (&blob_size, A)) ;
-            blob = mxMalloc (blob_size) ;
-            METHOD (GrB_Matrix_serialize (blob, &blob_size, A)) ;
-            METHOD (GrB_Matrix_deserialize (&C, atype, blob, blob_size)) ;
+            METHOD (GrB_Matrix_serializeSize (&blob_memsize, A)) ;
+            blob = mxMalloc (blob_memsize) ;
+            METHOD (GrB_Matrix_serialize (blob, &blob_memsize, A)) ;
+            METHOD (GrB_Matrix_deserialize (&C, atype, blob, blob_memsize)) ;
         }
     }
     else
@@ -114,16 +115,17 @@ void mexFunction
         if (GB_VECTOR_OK (A))
         {
             // test the vector methods
-            METHOD (GxB_Vector_serialize (&blob, &blob_size, (GrB_Vector) A,
+            METHOD (GxB_Vector_serialize (&blob, &blob_memsize, (GrB_Vector) A,
                 desc));
             METHOD (GxB_Vector_deserialize ((GrB_Vector *) &C, atype,
-                blob, blob_size, desc)) ;
+                blob, blob_memsize, desc)) ;
         }
         else
         {
             // test the matrix methods
-            METHOD (GxB_Matrix_serialize (&blob, &blob_size, A, desc)) ;
-            METHOD (GxB_Matrix_deserialize (&C, atype, blob, blob_size, desc)) ;
+            METHOD (GxB_Matrix_serialize (&blob, &blob_memsize, A, desc)) ;
+            METHOD (GxB_Matrix_deserialize (&C, atype, blob, blob_memsize,
+                desc)) ;
         }
     }
 
@@ -132,7 +134,7 @@ void mexFunction
          type_name3 [GxB_MAX_NAME_LEN] ;
     GxB_Matrix_type_name (type_name1, C) ;
     GxB_Matrix_type_name (type_name2, A) ;
-    GxB_deserialize_type_name (type_name3, blob, blob_size) ;
+    GxB_deserialize_type_name (type_name3, blob, blob_memsize) ;
 //  printf ("\n[%s]\n[%s]\n[%s]\n", type_name1, type_name2, type_name3) ;
     CHECK (MATCH (type_name1, type_name2)) ;
     CHECK (MATCH (type_name1, type_name3)) ;

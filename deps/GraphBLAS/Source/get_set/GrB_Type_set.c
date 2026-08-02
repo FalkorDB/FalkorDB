@@ -50,10 +50,12 @@ GrB_Info GrB_Type_set_String
 
     bool user_defined = (type->code == GB_UDT_code) ;
 
+    int header_arena = GB_arena (type->header_mem) ;
+
     return (GB_op_or_type_string_set (user_defined, true, value, field,
-        &(type->user_name), &(type->user_name_size),
-        type->name, &(type->name_len), &(type->defn), &(type->defn_size),
-        &(type->hash))) ;
+        &(type->user_name), &(type->user_name_mem),
+        type->name, &(type->name_len), &(type->defn), &(type->defn_mem),
+        &(type->hash), header_arena)) ;
 }
 
 //------------------------------------------------------------------------------
@@ -99,7 +101,7 @@ GrB_Info GrB_Type_set_VOID
     if (field == GxB_PRINT_FUNCTION && type->code == GB_UDT_code &&
         size == sizeof (GxB_print_function))
     { 
-        type->print_function = (GxB_print_function *) value ;
+        type->print_function = (GxB_print_function) value ;
         return (GrB_SUCCESS) ;
     }
 

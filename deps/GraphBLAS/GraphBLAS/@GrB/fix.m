@@ -5,14 +5,8 @@ function C = fix (G)
 %
 % See also GrB/ceil, GrB/floor, GrB/round.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-Q = G.opaque ;
-
-if (gb_isfloat (gbtype (Q)) && gbnvals (Q) > 0)
-    C = GrB (gbapply ('trunc', Q)) ;
-else
-    C = G ;
-end
+C = gb_fix (0, G) ;
 

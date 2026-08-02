@@ -20,6 +20,7 @@ void GB_task_cumsum
     GB_task_struct *restrict TaskList,  // array of structs
     const int ntasks,                   // # of tasks
     const int nthreads,                 // # of threads
+    const int data_arena,               // arena for workspace
     GB_Werk Werk
 )
 {
@@ -66,7 +67,8 @@ void GB_task_cumsum
     // replace Cp with its cumulative sum
     //--------------------------------------------------------------------------
 
-    GB_cumsum (Cp, Cp_is_32, Cnvec, Cnvec_nonempty, nthreads, Werk) ;
+    GB_cumsum (Cp, Cp_is_32, Cnvec, Cnvec_nonempty, nthreads,
+        data_arena, Werk) ;
 
     //--------------------------------------------------------------------------
     // shift the cumulative sum of the fine tasks

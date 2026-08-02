@@ -57,6 +57,10 @@ GrB_Info GB_subassign_04
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
+
+    ASSERT (C != NULL) ;
+    int data_arena = C->data_arena ;
+
     GrB_Matrix S = NULL ;
     ASSERT (!GB_IS_BITMAP (C)) ;
     ASSERT (!GB_any_aliased (C, A)) ;   // NO ALIAS of C==A
@@ -66,8 +70,7 @@ GrB_Info GB_subassign_04
     // S = C(I,J)
     //--------------------------------------------------------------------------
 
-    struct GB_Matrix_opaque S_header ;
-    GB_CLEAR_MATRIX_HEADER (S, &S_header) ;
+    GB_OK (GB_matrix_header_new (&S, data_arena, data_arena)) ;
     GB_OK (GB_subassign_symbolic (S, C, I, I_is_32, ni, J, J_is_32, nj, true,
         Werk)) ;
 

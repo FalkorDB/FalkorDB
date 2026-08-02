@@ -15,7 +15,7 @@
 #include "get_set/GB_get_set.h"
 
 const char *GB_op_name_get (GB_Operator op)
-{
+{ 
 
     GB_Opcode opcode = op->opcode ;
     GB_Type_code xcode = (op->xtype == NULL) ? 0 : op->xtype->code ;

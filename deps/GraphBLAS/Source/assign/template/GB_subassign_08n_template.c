@@ -124,8 +124,8 @@
     GB_MDECL (Zh_shallow, const, u) ;
     bool Zj_is_32 ;
     GB_OK (GB_subassign_08n_slice (
-        &TaskList, &TaskList_size, &ntasks, &nthreads,
-        &Znvec, &Zh_shallow, &Z_to_A, &Z_to_A_size, &Z_to_M, &Z_to_M_size,
+        &TaskList, &TaskList_mem, &ntasks, &nthreads,
+        &Znvec, &Zh_shallow, &Z_to_A, &Z_to_A_mem, &Z_to_M, &Z_to_M_mem,
         &Zj_is_32, C,
         I, GB_I_IS_32, nI, GB_I_KIND, Icolon,
         J, GB_J_IS_32, nJ, GB_J_KIND, Jcolon,

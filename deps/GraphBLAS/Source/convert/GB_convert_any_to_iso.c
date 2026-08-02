@@ -42,7 +42,7 @@ GrB_Info GB_convert_any_to_iso // convert non-iso matrix to iso
     // compact the matrix
     //--------------------------------------------------------------------------
 
-    if (A->x_size != asize || A->x_shallow || A->x == NULL)
+    if (GB_memsize (A->x_mem) != asize || A->x_shallow || A->x == NULL)
     {
 
         //----------------------------------------------------------------------
@@ -52,11 +52,11 @@ GrB_Info GB_convert_any_to_iso // convert non-iso matrix to iso
         if (!A->x_shallow)
         { 
             // free the old space
-            GB_FREE_MEMORY (&(A->x), A->x_size) ;
+            GB_FREE_MEMORY (&(A->x), A->x_mem) ;
         }
 
         // allocate the new space
-        A->x = GB_MALLOC_MEMORY (1, asize, &(A->x_size)) ;
+        A->x = GB_MALLOC_MEMORY (1, asize, &(A->x_mem)) ;
         A->x_shallow = false ;
         if (A->x == NULL)
         { 

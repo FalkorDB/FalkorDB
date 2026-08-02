@@ -119,6 +119,13 @@ F100 = {4,4,0,0} ;
 %===============================================================================
 
 % < 1 second: debug_on
+logstat ('test306'    ,t, J0   , F0   ) ; % arenas
+logstat ('test305'    ,t, J0   , F0   ) ; % arenas
+logstat ('test304'    ,t, J0   , F0   ) ; % extractElement
+logstat ('test302'    ,t, J0   , F0   ) ; % GPU controls
+logstat ('test277'    ,t, J0   , F1   ) ; % context get/set
+
+% < 1 second: debug_on
 set_malloc_debug (mdebug, 1) ;
 logstat ('test303'    ,t, J404 , F110 ) ; % C=A(I,J), method 6
 logstat ('test300'    ,t, J0   , F0   ) ; % print function for a type
@@ -136,11 +143,11 @@ logstat ('test294'    ,t, J0   , F1   ) ; % reduce with zombies
 logstat ('test293'    ,t, J0   , F0   ) ; % msort/qsort: all int variants
 logstat ('test291'    ,t, J0   , F0   , [0 1 2 4]) ; % GB_ix_realloc
 logstat ('test290'    ,t, J0   , F0   ) ; % large symbolic bitmap_subref
-logstat ('test287'    ,t, J0   , F0   , [0 4]) ; % misc tests
-logstat ('test286'    ,t, J40  , F00  , [0 1 2 4]) ; % kron with index binop
-logstat ('test78'     ,t, J40  , F00  , [0 4]) ; % subref
+logstat ('test287'    ,t, J0   , F0   , 0) ; % misc tests
+logstat ('test286'    ,t, J40  , F00  , [0 1]) ; % kron with index binop
+logstat ('test78'     ,t, J4   , F0   , [0 4]) ; % subref
 logstat ('test285'    ,t, J40  , F00  ) ; % GB_mex_assign (bitmap, 7_whole)
-logstat ('test247'    ,t, J40  , F10  ) ; % GrB_mxm: fine Hash method
+logstat ('test247'    ,t, J4   , F1   ) ; % GrB_mxm: fine Hash method
 logstat ('test109'    ,t, J4040, F1100) ; % terminal monoid with user-defn type
 logstat ('test138'    ,s, J40  , F10  ) ; % assign, coarse-only in IxJ slice
 logstat ('test172'    ,t, J40  , F10  ) ; % eWiseMult with M bitmap/full
@@ -168,7 +175,7 @@ logstat ('test272'    ,t, J0   , F1   ) ; % misc simple tests
 logstat ('test273'    ,t, J0   , F1   ) ; % Global get/set
 logstat ('test274'    ,t, J0   , F1   ) ; % index unary op get/set
 logstat ('test276'    ,t, J0   , F1   ) ; % semiring get/set
-logstat ('test277'    ,t, J0   , F1   ) ; % context get/set
+% logstat ('test277'    ,t, J0   , F1   ) ; % context get/set
 logstat ('test279'    ,t, J0   , F1   ) ; % blob get/set
 logstat ('test281'    ,t, J4   , F1   ) ; % user-defined idx unop, no JIT
 logstat ('test268'    ,t, J40  , F10  ) ; % C<M>=Z sparse masker
@@ -199,7 +206,7 @@ logstat ('test223'    ,t, J40  , F10  ) ; % matrix multiply, C<!M>=A*B
 logstat ('test241'    ,t, J40  , F10  ) ; % GrB_mxm, trigger swap_rule
 logstat ('test270'    ,t, J0   , F1   ) ; % unary op get/set
 logstat ('test199'    ,t, J4   , F1   ) ; % dot2 with hypersparse
-logstat ('test210'    ,t, J40  , F10  ) ; % iso assign25: C<M,struct>=A
+logstat ('test210'    ,t, J0   , F0   ) ; % iso assign25: C<M,struct>=A
 logstat ('test165'    ,t, J4   , F1   ) ; % C=A*B', A diagonal, B bitmap
 logstat ('test221'    ,t, J40  , F10  ) ; % C += A, C bitmap, A full
 logstat ('test278'    ,t, J0   , F1   ) ; % descriptor get/set
@@ -250,7 +257,7 @@ logstat ('test179'    ,t, J44  , F10  ) ; % bitmap select
 hack (2) = 1 ; GB_mex_hack (hack) ;     % disable the Werk stack
 logstat ('test188b'   ,t, J0   , F1   ) ; % concat
 logstat ('test185'    ,s, J4   , F1   ) ; % dot4, saxpy for all sparsity
-logstat ('test256'    ,t, J40  , F00  , [0 1]) ; % JIT error handling
+logstat ('test256'    ,t, J4   , F0   , [0 1]) ; % JIT error handling
 logstat ('test238b'   ,t, J4   , F0   ) ; % GrB_mxm (dot4 and dot2)
 logstat ('test238'    ,t, J4   , F1   ) ; % GrB_mxm (dot4 and dot2)
 % Note that test186 can sometimes non-deterministically miss this block of code
@@ -298,7 +305,7 @@ logstat ('test240'    ,t, J40  , F10  ) ; % dot4, saxpy4, and saxpy5
 logstat ('test237'    ,t, J40  , F10  ) ; % GrB_mxm (saxpy4)
 logstat ('test237'    ,s, J40  , F10  ) ; % GrB_mxm (saxpy4) (1 task)
 logstat ('test184'    ,t, J4   , F1   ) ; % mxm, transp, build
-logstat ('test236'    ,t, J4   , F1   ) ; % GxB_*_sort
+logstat ('test236'    ,t, J4   , F1   , [0 1 2]) ; % GxB_*_sort
 hack (2) = 0 ; GB_mex_hack (hack) ;     % re-enable the Werk stack
 
 %===============================================================================

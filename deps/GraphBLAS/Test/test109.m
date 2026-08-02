@@ -19,6 +19,10 @@ for k = [false true]
     err = norm (s-t) ;
     assert (err < 1e-12)
 
+    t = GB_mex_reduce_complex (A, -1, 0) ;
+    err = norm (s-t) ;
+    assert (err < 1e-12)
+
     A (3,1) = 0 ;
 
     [i j x] = find (A) ;

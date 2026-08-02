@@ -23,7 +23,7 @@ void GB_phybix_free             // free all content of a matrix
     { 
         GB_phy_free (A) ;           // free A->p, A->h, and A->Y
         GB_bix_free (A) ;           // free A->b, A->i, and A->x
-        GB_FREE_MEMORY (&(A->logger), A->logger_size) ; // free the error logger
+        GB_FREE_MEMORY (&(A->logger), A->logger_mem) ; // free the error logger
     }
 }
 

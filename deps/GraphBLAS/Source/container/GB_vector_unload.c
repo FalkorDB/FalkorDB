@@ -43,11 +43,12 @@ GrB_Info GB_vector_unload
     // output:
     GrB_Type *type,         // type of X
     uint64_t *n,            // # of entries in X
-    uint64_t *X_size,       // size of X in bytes (at least n*(sizeof the type))
+    uint64_t *X_mem,        // memsize of X in bytes (>= n*(sizeof the type))
+                            // and arena
     bool *readonly,         // if true, X is treated as readonly
     GB_Werk Werk
 )
-{ 
+{
 
     //--------------------------------------------------------------------------
     // check inputs
@@ -58,8 +59,12 @@ GrB_Info GB_vector_unload
     GB_RETURN_IF_NULL (type) ;
     GB_RETURN_IF_NULL (X) ;
     GB_RETURN_IF_NULL (n) ;
-    GB_RETURN_IF_NULL (X_size) ;
+    GB_RETURN_IF_NULL (X_mem) ;
     ASSERT_VECTOR_OK (V, "V to unload", GB0) ;
+    (*X) = NULL ;
+    (*X_mem) = 0 ;
+    (*readonly) = false ;
+    (*n) = 0 ;
 
     //--------------------------------------------------------------------------
     // finish any pending work and ensure V is not iso
@@ -69,7 +74,7 @@ GrB_Info GB_vector_unload
     // component of a Container obtained by unloading a GrB_Matrix or
     // GrB_Vector into the Container.
 
-    if (GB_ANY_PENDING_WORK (V))
+    if (GB_will_wait ((GrB_Matrix) V))
     { 
         GB_OK (GB_wait ((GrB_Matrix) V, "V_to_unload", Werk)) ;
     }
@@ -87,11 +92,10 @@ GrB_Info GB_vector_unload
 
     (*X) = V->x ;
     (*n) = V->vlen ;
-    (*X_size) = V->x_size ;
+    (*X_mem) = V->x_mem ;       // including memsize and arena
     (*type) = V->type ;
-    (*readonly) = V->x_shallow ;
-    V->x = NULL ;
-    V->x_size = 0 ;
+    (*readonly) = V->x_shallow  && (V->x != NULL) ;
+    V->x = NULL ; V->x_mem = 0 ;
     V->x_shallow = false ;
 
     //--------------------------------------------------------------------------

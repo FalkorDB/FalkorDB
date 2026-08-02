@@ -31,8 +31,7 @@ GrB_Info GrB_Matrix_wait    // finish all work on a matrix
     // finish all pending work on the matrix, including creating A->Y
     //--------------------------------------------------------------------------
 
-    if (waitmode != GrB_COMPLETE &&
-        (GB_ANY_PENDING_WORK (A) || GB_hyper_hash_need (A)))
+    if (waitmode != GrB_COMPLETE && GB_will_wait (A))
     { 
         GB_BURBLE_START ("GrB_Matrix_wait") ;
         GB_OK (GB_wait (A, "matrix", Werk)) ;

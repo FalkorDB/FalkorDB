@@ -14,6 +14,7 @@ GraphBLAS_UserGuide.pdf: GraphBLAS_UserGuide.tex GraphBLAS_UserGuide.bib \
     UserGuide/GrB_abstract.tex \
     UserGuide/GrB_acknowledgements.tex \
     UserGuide/GrB_colon.tex \
+    UserGuide/GrB_arenas.tex \
     UserGuide/GrB_concepts.tex \
     UserGuide/GrB_context.tex \
     UserGuide/GrB_examples.tex \

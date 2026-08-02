@@ -7,10 +7,9 @@
 
 //------------------------------------------------------------------------------
 
-// GB_zstd is a wrapper for the ZSTD compression library.  The
-// ZSTD library is compiled with ZSTD_DEP enabled (which is not
-// the default), and configured to use the SuiteSparse:GraphBLAS functions
-// in place of malloc/calloc/free.
+// GB_zstd is a wrapper for the ZSTD compression library.  The ZSTD library is
+// compiled with ZSTD_DEP enabled (which is not the default), and configured to
+// use the SuiteSparse:GraphBLAS functions in place of malloc/calloc/free.
 
 #include "GB.h"
 #include "serialize/GB_serialize.h"
@@ -18,24 +17,26 @@
 
 void *ZSTD_malloc (size_t s)
 {
-    return (GB_Global_malloc_function (s)) ;
+    int data_arena = GB_Context_data_arena ( ) ;
+    return (GB_Global_malloc_function (s, data_arena)) ;
 }
 
 void *ZSTD_calloc (size_t n, size_t s)
 {
     // ns = n*s, the size of the space to allocate
     size_t ns = 0 ;
-    bool ok = GB_size_t_multiply (&ns, n, s) ;
+    bool ok = GB_Size_t_multiply (&ns, n, s) ;
     if (!ok) return (NULL) ;
     // malloc the space and then use memset to clear it
-    void *p = GB_Global_malloc_function (ns) ;
+    void *p = ZSTD_malloc (ns) ;
     if (p != NULL) memset (p, 0, ns) ;
     return (p) ;
 }
 
 void ZSTD_free (void *p)
 {
-    GB_Global_free_function (p) ;
+    int data_arena = GB_Context_data_arena ( ) ;
+    GB_Global_free_function (p, data_arena) ;
 }
 
 // ZSTD uses switch statements with no default case.

@@ -33,7 +33,7 @@ GrB_Info GB_split_bitmap_jit      // split A into a bitmap tile C
     char *suffix ;
     uint64_t hash = GB_encodify_apply (&encoding, &suffix,
         GB_JIT_KERNEL_SPLIT_BITMAP, GxB_BITMAP, true, C->type, C->p_is_32,
-        C->i_is_32, false, op, false, GB_sparsity (A), true, A->type,
+        false, C->i_is_32, op, false, GB_sparsity (A), true, A->type,
         A->p_is_32, A->j_is_32, A->i_is_32, A->iso, A->nzombies) ;
 
     //--------------------------------------------------------------------------

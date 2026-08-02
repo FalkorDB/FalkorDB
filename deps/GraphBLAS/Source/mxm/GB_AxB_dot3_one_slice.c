@@ -21,7 +21,7 @@
 #define GB_FREE_ALL                             \
 {                                               \
     GB_FREE_WORKSPACE ;                         \
-    GB_FREE_MEMORY (&TaskList, TaskList_size) ;   \
+    GB_FREE_MEMORY (&TaskList, TaskList_mem) ;  \
 }
 
 #include "mxm/GB_mxm.h"
@@ -36,11 +36,12 @@ GrB_Info GB_AxB_dot3_one_slice
 (
     // output:
     GB_task_struct **p_TaskList,    // array of structs
-    size_t *p_TaskList_size,        // size of TaskList
+    uint64_t *p_TaskList_mem,       // memsize and arena of TaskList
     int *p_ntasks,                  // # of tasks constructed
     int *p_nthreads,                // # of threads to use
     // input:
     const GrB_Matrix M,             // matrix to slice
+    const int data_arena,           // arena for workspace
     GB_Werk Werk
 )
 {
@@ -49,8 +50,10 @@ GrB_Info GB_AxB_dot3_one_slice
     // check inputs
     //--------------------------------------------------------------------------
 
+    uint64_t mem = GB_mem (data_arena, 0) ;
+
     ASSERT (p_TaskList != NULL) ;
-    ASSERT (p_TaskList_size != NULL) ;
+    ASSERT (p_TaskList_mem != NULL) ;
     ASSERT (p_ntasks != NULL) ;
     ASSERT (p_nthreads != NULL) ;
     ASSERT_MATRIX_OK (M, "M for dot3_one_slice", GB0) ;
@@ -63,7 +66,7 @@ GrB_Info GB_AxB_dot3_one_slice
     ASSERT (!GB_IS_FULL (M)) ;
 
     (*p_TaskList  ) = NULL ;
-    (*p_TaskList_size) = 0 ;
+    (*p_TaskList_mem) = 0 ;
     (*p_ntasks    ) = 0 ;
     (*p_nthreads  ) = 1 ;
 
@@ -88,10 +91,11 @@ GrB_Info GB_AxB_dot3_one_slice
     // allocate the initial TaskList
     //--------------------------------------------------------------------------
 
-    GB_WERK_DECLARE (Coarse, int64_t) ;
+    GB_WERK_DECLARE (Coarse, int64_t, mem) ;
     int ntasks1 = 0 ;
     int nthreads = GB_nthreads (mnz, chunk, nthreads_max) ;
-    GB_task_struct *restrict TaskList = NULL ; size_t TaskList_size = 0 ;
+    GB_task_struct *restrict TaskList = NULL ;
+    uint64_t TaskList_mem = mem ;
     int max_ntasks = 0 ;
     int ntasks = 0 ;
     int ntasks0 = (nthreads == 1) ? 1 : (GB_NTASKS_PER_THREAD * nthreads) ;
@@ -107,7 +111,7 @@ GrB_Info GB_AxB_dot3_one_slice
         TaskList [0].kfirst = 0 ;
         TaskList [0].klast  = mnvec-1 ;
         (*p_TaskList  ) = TaskList ;
-        (*p_TaskList_size) = TaskList_size ;
+        (*p_TaskList_mem) = TaskList_mem ;
         (*p_ntasks    ) = (mnvec == 0) ? 0 : 1 ;
         (*p_nthreads  ) = 1 ;
         return (GrB_SUCCESS) ;
@@ -117,9 +121,9 @@ GrB_Info GB_AxB_dot3_one_slice
     // determine # of threads and tasks
     //--------------------------------------------------------------------------
 
-    double target_task_size = ((double) mnz) / (double) (ntasks0) ;
-    target_task_size = GB_IMAX (target_task_size, chunk) ;
-    ntasks1 = ((double) mnz) / target_task_size ;
+    double target_work_per_task = ((double) mnz) / (double) (ntasks0) ;
+    target_work_per_task = GB_IMAX (target_work_per_task, chunk) ;
+    ntasks1 = ((double) mnz) / target_work_per_task ;
     ntasks1 = GB_IMAX (ntasks1, 1) ;
 
     //--------------------------------------------------------------------------
@@ -207,7 +211,7 @@ GrB_Info GB_AxB_dot3_one_slice
 
             int64_t mknz = (Mp == NULL) ? mvlen :
                 (GB_IGET (Mp, k+1) - GB_IGET (Mp, k)) ;
-            int nfine = ((double) mknz) / target_task_size ;
+            int nfine = ((double) mknz) / target_work_per_task ;
             nfine = GB_IMAX (nfine, 1) ;
 
             // make the TaskList bigger, if needed
@@ -269,7 +273,7 @@ GrB_Info GB_AxB_dot3_one_slice
 
     GB_FREE_WORKSPACE ;
     (*p_TaskList  ) = TaskList ;
-    (*p_TaskList_size) = TaskList_size ;
+    (*p_TaskList_mem) = TaskList_mem ;
     (*p_ntasks    ) = ntasks ;
     (*p_nthreads  ) = nthreads ;
     return (GrB_SUCCESS) ;

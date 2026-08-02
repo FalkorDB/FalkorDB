@@ -42,7 +42,7 @@
         int nold = (max_ntasks == 0) ? 0 : (max_ntasks + 1) ;               \
         int nnew = 2 * (ntasks) + 1 ;                                       \
         GB_REALLOC_MEMORY (TaskList, nnew, sizeof (GB_task_struct),         \
-            &TaskList_size, &ok) ;                                          \
+            &TaskList_mem, &ok) ;                                           \
         if (!ok)                                                            \
         {                                                                   \
             /* out of memory */                                             \
@@ -101,6 +101,7 @@ void GB_task_cumsum
     GB_task_struct *restrict TaskList,  // array of structs
     const int ntasks,                   // # of tasks
     const int nthreads,                 // # of threads
+    const int data_arena,               // arena for workspace
     GB_Werk Werk
 ) ;
 

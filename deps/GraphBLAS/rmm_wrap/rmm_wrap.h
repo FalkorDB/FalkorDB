@@ -11,7 +11,7 @@
 
 //#include <cuda_runtime.h>
 
-// FIXME: consider another way to report the error (not std::cout)
+// fixme for CUDA: consider another way to report the error (not std::cout)
 #define cudaSucess 0 
 #define RMM_WRAP_CHECK_CUDA(call)                                         \
   do {                                                                    \
@@ -43,8 +43,8 @@ typedef enum
 RMM_MODE ;
 
 // get id of currently selected device
-// FIXME: wrong name.  call it rmm_wrap_get_current_device
-int get_current_device();
+// fixme for CUDA: wrong name.  call it rmm_wrap_get_current_device
+int get_current_device (void) ;
 
 // determine if RMM has been initialized
 bool rmm_wrap_is_initialized (void) ;
@@ -54,9 +54,8 @@ int rmm_wrap_initialize
 (
     uint32_t device_id,
     RMM_MODE mode,
-    size_t init_pool_size,
-    size_t max_pool_size
-    // , size_t stream_pool_size
+    size_t init_pool_memsize,
+    size_t max_pool_memsize
 ) ;
 
 // initialize rmm_wrap_contexts for each device in CUDA_VISIBLE_DEVICES
@@ -64,9 +63,8 @@ int rmm_wrap_initialize
 int rmm_wrap_initialize_all_same
 (
     RMM_MODE mode,
-    size_t init_pool_size,
-    size_t max_pool_size
-    // , size_t stream_pool_size
+    size_t init_pool_memsize,
+    size_t max_pool_memsize
 ) ;
 
 // destroy an RMM resource
@@ -78,8 +76,8 @@ void  rmm_wrap_deallocate (void *p, size_t size) ;
 
 // The four malloc/calloc/realloc/free signatures (based on current device_id):
 void *rmm_wrap_malloc (size_t size) ;
-void *rmm_wrap_calloc (size_t n, size_t size) ;
-void *rmm_wrap_realloc (void *p, size_t newsize) ;
+// void *rmm_wrap_calloc (size_t n, size_t size) ;      // not used
+// void *rmm_wrap_realloc (void *p, size_t newsize) ;   // not used
 void  rmm_wrap_free (void *p) ;
 
 // Get streams from context (based on current device_id):

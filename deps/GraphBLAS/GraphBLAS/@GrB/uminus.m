@@ -4,9 +4,8 @@ function C = uminus (G)
 %
 % See also GrB.apply, GrB/minus, GrB/uplus.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-G = G.opaque ;
-C = GrB (gbapply ('-', G)) ;
+C = gzb_apply (0, '-', G) ;
 

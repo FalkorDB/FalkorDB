@@ -45,8 +45,8 @@
     // be the same as the size of the A and B types.
     // flipxy false: aki = (xtype) A(k,i) and bkj = (ytype) B(k,j)
     // flipxy true:  aki = (ytype) A(k,i) and bkj = (xtype) B(k,j)
-    size_t aki_size = flipxy ? ysize : xsize ;
-    size_t bkj_size = flipxy ? xsize : ysize ;
+    size_t akisize = flipxy ? ysize : xsize ;
+    size_t bkjsize = flipxy ? xsize : ysize ;
 
     bool is_terminal = (add->terminal != NULL) ;
 
@@ -77,7 +77,7 @@
     #define GB_A_IS_PATTERN 0
     #undef  GB_DECLAREA
     #define GB_DECLAREA(aki)                                        \
-        GB_void aki [GB_VLA(aki_size)] ;
+        GB_void aki [GB_VLA(akisize)] ;
     #undef  GB_GETA
     #define GB_GETA(aki,Ax,pA,A_iso)                                \
         if (!A_is_pattern) cast_A (aki, Ax +((A_iso) ? 0:(pA)*asize), asize)
@@ -87,7 +87,7 @@
     #define GB_B_IS_PATTERN 0
     #undef  GB_DECLAREB
     #define GB_DECLAREB(bkj)                                        \
-        GB_void bkj [GB_VLA(bkj_size)] ;
+        GB_void bkj [GB_VLA(bkjsize)] ;
     #undef  GB_GETB
     #define GB_GETB(bkj,Bx,pB,B_iso)                                \
         if (!B_is_pattern) cast_B (bkj, Bx +((B_iso) ? 0:(pB)*bsize), bsize)

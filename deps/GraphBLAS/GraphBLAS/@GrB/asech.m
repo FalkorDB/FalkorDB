@@ -1,19 +1,13 @@
 function C = asech (G)
 %ASECH inverse hyperbolic secant.
-% C = asech (G) is the inverse hyperbolic secant of each entry of G.
-% Since asech (0) is nonzero, the result is a full matrix.  C is complex
-% if G is complex, or if any real entries are outside of the range [0,1].
+% C = asech (G) is the inverse hyperbolic secant of each entry of G.  Since
+% asech (0) is nonzero, the result is a full matrix.  C is complex if G is
+% complex, or if any real entries are outside of the range [0,1].
 %
 % See also GrB/sec, GrB/asec, GrB/sech.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-G = G.opaque ;
-type = gbtype (G) ;
-if (~gb_isfloat (type))
-    type = 'double' ;
-end
-
-C = GrB (gb_trig ('acosh', gbapply ('minv', gbfull (G, type)))) ;
+C = gb_asech (0, G) ;
 

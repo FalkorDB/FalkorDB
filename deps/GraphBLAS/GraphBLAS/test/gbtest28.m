@@ -1,21 +1,26 @@
-function gbtest28
-%GBTEST28 test GrB.build
+function gbtest28 (ghb)
+%GBTEST28 test [GrB,GhB].build
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-fprintf ('\ngbtest28: testing GrB.build and compare with A=sparse(i,j,x)\n') ;
-nthreads = GrB.threads ;
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
+
+fprintf ('\ngbtest28: testing %s.build and compare with A=sparse(i,j,x)\n', ...
+    gtb_name) ;
+nthreads = gtb_threads (ghb) ;
 fprintf ('using %d threads in GraphBLAS\n', nthreads) ;
 
-rng ('default') ;
 m = 10 ;
 n = 5 ;
 A = sprand (m, n, 0.5) ;
 
 [i, j, x] = find (A) ;
 
-C = GrB.build (i, j, x, m, n) ;
+C = gtb_build (ghb, i, j, x, m, n) ;
 
 assert (gbtest_eq (C, A)) ;
 
@@ -49,29 +54,33 @@ t = toc ;
 fprintf ('%12.4f sec : A = sparse (i, j, x, m, n) ;\n', t) ;
 
 tic
-A3 = GrB.build (i, j, x, m, n) ;
+A3 = gtb_build (ghb, i, j, x, m, n) ;
 t = toc ;
-fprintf ('%12.4f sec : A = GrB.build (...), same inputs as built-in\n', t) ;
+fprintf ('%12.4f sec : A = %s.build (...), same inputs as built-in\n', ...
+    t, gtb_name) ;
 assert (gbtest_eq (A1, A3)) ;
 
 tic
-A4 = GrB.build (i, j, x, m, n, d) ;
+A4 = gtb_build (ghb, i, j, x, m, n, d) ;
 t = toc ;
-fprintf ('%12.4f sec : A = GrB.build (...), same inputs/outputs as built-in\n',t);
+fprintf ('%12.4f sec : A = %s.build (..), same inputs/outputs as built-in\n',...
+    t, gtb_name) ;
 assert (gbtest_eq (A1, A4)) ;
 
 tic
-A2 = GrB.build (i0, j0, x, m, n, desc0) ;
+A2 = gtb_build (ghb, i0, j0, x, m, n, desc0) ;
 t = toc ;
-fprintf ('%12.4f sec : A = GrB.build (i0,j0, ...), with i0 and j0 uint64\n',t);
+fprintf ('%12.4f sec : A = %s.build (i0,j0, ...), with i0 and j0 uint64\n',...
+    t, gtb_name) ;
 assert (gbtest_eq (A1, A2)) ;
 
 i32 = uint32 (i0) ;
 j32 = uint32 (j0) ;
 tic
-A5 = GrB.build (i32, j32, x, m, n, desc0) ;
+A5 = gtb_build (ghb, i32, j32, x, m, n, desc0) ;
 t = toc ;
-fprintf ('%12.4f sec : A = GrB.build (i0,j0, ...), with i0 and j0 uint32\n',t);
+fprintf ('%12.4f sec : A = %s.build (i0,j0, ...), with i0 and j0 uint32\n',...
+    t, gtb_name) ;
 assert (gbtest_eq (A1, A5)) ;
 clear A5
 
@@ -89,31 +98,35 @@ t = toc ;
 fprintf ('%12.4f sec : A = sparse (i, j, x, m, n) ;\n', t) ;
 
 tic
-A3 = GrB.build (i, j, x, m, n) ;
+A3 = gtb_build (ghb, i, j, x, m, n) ;
 t = toc ;
-fprintf ('%12.4f sec : A = GrB.build (...), same inputs as built-in\n', t) ;
+fprintf ('%12.4f sec : A = %s.build (...), same inputs as built-in\n',...
+    t, gtb_name) ;
 assert (gbtest_eq (A1, A3)) ;
 
 tic
-A4 = GrB.build (i, j, x, m, n, d) ;
+A4 = gtb_build (ghb, i, j, x, m, n, d) ;
 t = toc ;
-fprintf ('%12.4f sec : A = GrB.build (...), same inputs/outputs as built-in\n',t);
+fprintf ('%12.4f sec : A = %s.build (..), same inputs/outputs as built-in\n',...
+    t, gtb_name) ;
 assert (gbtest_eq (A1, A4)) ;
 
 tic
-A2 = GrB.build (i0, j0, x, m, n, desc0) ;
+A2 = gtb_build (ghb, i0, j0, x, m, n, desc0) ;
 t = toc ;
-fprintf ('%12.4f sec : A = GrB.build (i0,j0, ...), with i0 and j0 uint64\n', t);
+fprintf ('%12.4f sec : A = %s.build (i0,j0, ...), with i0 and j0 uint64\n',...
+    t, gtb_name) ;
 assert (gbtest_eq (A1, A2)) ;
 
 i32 = uint32 (i0) ;
 j32 = uint32 (j0) ;
 tic
-A5 = GrB.build (i32, j32, x, m, n, desc0) ;
+A5 = gtb_build (ghb, i32, j32, x, m, n, desc0) ;
 t = toc ;
-fprintf ('%12.4f sec : A = GrB.build (i0,j0, ...), with i0 and j0 uint32\n',t);
+fprintf ('%12.4f sec : A = %s.build (i0,j0, ...), with i0 and j0 uint32\n',...
+    t, gtb_name) ;
 assert (gbtest_eq (A1, A5)) ;
 clear A5
 
-fprintf ('\ngbtest28: all tests passed\n') ;
+fprintf ('\ngbtest28 (%d): all tests passed\n', ghb) ;
 
