@@ -44,7 +44,7 @@ GrB_Info GrB_Monoid_set_String
     GB_RETURN_IF_NULL (value) ;
     ASSERT_MONOID_OK (monoid, "monoid to get option", GB0) ;
 
-    if (monoid->header_size == 0 || field != GrB_NAME)
+    if (monoid->header_mem == 0 || field != GrB_NAME)
     { 
         // built-in monoids may not be modified
         return (GrB_INVALID_VALUE) ;
@@ -54,8 +54,10 @@ GrB_Info GrB_Monoid_set_String
     // set the field
     //--------------------------------------------------------------------------
 
+    int header_arena = GB_arena (monoid->header_mem) ;
+
     return (GB_user_name_set (&(monoid->user_name),
-        &(monoid->user_name_size), value, true)) ;
+        &(monoid->user_name_mem), value, true, header_arena)) ;
 }
 
 //------------------------------------------------------------------------------

@@ -46,7 +46,7 @@ void mexFunction
     // and segfaults in v6.2.3 and earlier.  The bug first occurs in v5.1.1,
     // released on June 29, 2021.
 
-    GrB_init (GrB_NONBLOCKING) ;
+//  GrB_init (GrB_NONBLOCKING) ;
     // GxB_set (GxB_BURBLE, true) ;
     GrB_Matrix M_0 ;
     GrB_Vector v_0, v_1 ;

@@ -91,6 +91,7 @@ GrB_Info GxB_Vector_load
     int handling,           // GrB_DEFAULT (0): transfer ownership to GraphBLAS
                             // GxB_IS_READONLY: X treated as read-only;
                             //      ownership kept by the user application
+                            // +arena is added to indicate the memory arena
     const GrB_Descriptor desc   // currently unused; for future expansion
 ) ;
 \end{verbatim}
@@ -135,6 +136,9 @@ frees the rest of the object \verb'V'.
 
 Note that this method does not rely on the \verb'GxB_Container' object.
 Instead, it loads a C array \verb'X' directly into a dense \verb'GrB_Vector V'.
+
+The \verb'handling' parameter also indicates the memory arena of \verb'X'.
+See Section~\ref{load_arena} when non-default memory arenas are in use.
 
 %-------------------------------------------------------------------------------
 \subsubsection{{\sf GxB\_Vector\_unload:} unload data from a vector}
@@ -195,6 +199,75 @@ Note that this method does not rely on the \verb'GxB_Container' object.
 Instead, it unloads a dense \verb'GrB_Vector' \verb'V' directly into a
 C array \verb'X'.
 
+The \verb'handling' parameter also indicates the memory arena of \verb'X'.
+See Section~\ref{load_arena} when non-default memory arenas are in use.
+
+%-------------------------------------------------------------------------------
+\subsubsection{Memory arenas for {\sf GxB\_Vector\_load} and {\sf GxB\_Vector\_unload}}
+%-------------------------------------------------------------------------------
+\label{load_arena}
+
+The value of \verb'handling' parameter for \verb'GxB_Vector_load' and
+\verb'GxB_Vector_unload' is modified when non-default memory arenas are used
+See Section~\ref{sec:arenas} for a discussion of memory arenas.
+
+If the handling of \verb'X' default (read/write), then the value of the
+handling parameter is \verb'GrB_DEFAULT + arena', if the data arena of \verb'X'
+is given by \verb'arena'.  If instead \verb'X' is \verb'GxB_IS_READONLY', then
+the value of \verb'handling' is \verb'GxB_IS_READONLY + arena'.
+
+To extract the data arena and the read-only status, use the following code:
+
+\newpage
+{\footnotesize
+\begin{verbatim}
+    int handling = -1, data_arena ;
+    bool readonly ;
+    GxB_Vector_unload (V, &X, &type, &n, &X_size, &handling, NULL) ;
+    if (handling >= GrB_DEFAULT &&
+        handling < GrB_DEFAULT + GxB_NARENAS)
+    {
+        data_arena = handling - GrB_DEFAULT ;
+        readonly = false ;
+    }
+    else if (handling >= GxB_IS_READONLY &&
+             handling <  GxB_IS_READONLY + GxB_NARENAS)
+    {
+        data_arena = handling - GxB_IS_READONLY ;
+        readonly = true ;
+    }
+    else
+    {
+        // invalid handling; GxB_Vector_unload failed
+    } \end{verbatim}}
+
+If \verb'X' has been allocated in a non-default data arena \verb'data_arena',
+and is then passed to GraphBLAS via \verb'GxB_vector_load' (as either
+read-only, or as modifiable by GraphBLAS), use the following:
+
+{\footnotesize
+\begin{verbatim}
+    int handling = ((readonly) ? GxB_IS_READONLY : GrB_DEFAULT) + data_arena ;
+    GxB_Vector_load (V, &X, type, n, X_size, handling, NULL) ; \end{verbatim}}
+
+This API is admittedly a bit awkward, but it is used to ensure backward
+compatibility.  Tf no memory arenas are used except the default arena, then the
+APIs of \verb'GxB_Vector_unload' and \verb'GxB_Vector_load' are identical to
+GraphBLAS 10.3.2, prior to the introduction of memory arenas in GraphBLAS
+10.4.0.  Thus, GraphBLAS 10.4.0 is backward-compatible to prior versions of
+GraphBLAS.
+
+If \verb'X' is first created by a call to \verb'GxB_Vector_unload', instead of
+being directly allocated by the user application, and it is then later reloaded
+back into a GraphBLAS vector with \verb'GxB_Vector_load', then no change to the
+user application code is needed, assuming the \verb'handling' parameter
+returned by \verb'GxB_Vector_unload' has already been properly passed back
+unchanged to \verb'GxB_Vector_load'.  An example of this usage is given in
+Section~\ref{container_example}, which is unchanged from the same example in
+the GraphBLAS 10.3.2 User Guide; it works as-is even when non-default memory
+arenas are used in GraphBLAS 10.4.0.
+
+\newpage
 %-------------------------------------------------------------------------------
 \subsubsection{{\sf GxB\_Container\_new:} create a container}
 %-------------------------------------------------------------------------------
@@ -266,7 +339,6 @@ data for the matrix or vector, and a single \verb'GrB_Matrix' \verb'Y' that
 holds an optional optimization structure called the hyper-hash.  These
 components are fully described in Section~\ref{formats}.
 
-\newpage
 %-------------------------------------------------------------------------------
 \subsubsection{{\sf GxB\_Container\_free:} free a container}
 %-------------------------------------------------------------------------------
@@ -335,7 +407,6 @@ The container vectors \verb'p' and \verb'i' may be any signed or
 unsigned integer type of size 32 or 64 bits.  Any other types will result in
 an error.
 
-\newpage
 %-------------------------------------------------------------------------------
 \subsubsection{{\sf GxB\_unload\_Matrix\_into\_Container:} unload a matrix into a container}
 %-------------------------------------------------------------------------------
@@ -355,7 +426,6 @@ GrB_Info GxB_unload_Matrix_into_Container   // GrB_Matrix -> GxB_Container
 
 \verb'GxB_unload_Matrix_into_Container': moves all of the data from
 a \verb'GrB_Matrix' into a \verb'GxB_Container' in O(1) time.
-
 The container vector \verb'p' is unloaded as \verb'GrB_UINT32' or \verb'GrB_UINT64',
 while \verb'h', and \verb'i' are unloaded as \verb'GrB_INT32' or \verb'GrB_INT64'.
 
@@ -378,7 +448,6 @@ GrB_Info GxB_unload_Vector_into_Container   // GrB_Vector -> GxB_Container
 
 \verb'GxB_unload_Vector_into_Container': moves all of the data from
 a \verb'GrB_Vector' into a \verb'GxB_Container' in O(1) time.
-
 The container vector \verb'p' is unloaded as \verb'GrB_UINT32' or \verb'GrB_UINT64',
 while \verb'i' is unloaded as \verb'GrB_INT32' or \verb'GrB_INT64'.
 

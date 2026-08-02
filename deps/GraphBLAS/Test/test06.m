@@ -165,9 +165,6 @@ for k1 = k1_list % 1:length(mult_ops)
                 [ add_opname  add_optype] = GB_spec_operator (add_op) ;
                 identity = GB_spec_identity (semiring.add, add_optype) ;
             catch me
-                if (~isempty (strfind (me.message, 'gotcha')))
-                    semiring
-                end
                 continue
             end
 

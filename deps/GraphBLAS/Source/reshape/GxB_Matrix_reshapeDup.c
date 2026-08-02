@@ -7,13 +7,15 @@
 
 //------------------------------------------------------------------------------
 
-// See GxB_Matrix_reshape for a description of the output matrix c.
+// See GxB_Matrix_reshape for a description of the output matrix C.
 
 // If the input matrix A is nrows-by-ncols, and the size of the newly-created
 // matrix C is nrows_new-by-ncols_new, then nrows*ncols must equal
 // nrows_new*ncols_new.  The format of the input matrix A (by row or by column)
 // determines the format of the output matrix C, which need not match the
 // by_col input parameter.
+
+// The matrix is allocated in arenas determined by the current Context.
 
 #include "GB.h"
 #include "reshape/GB_reshape.h"
@@ -30,24 +32,9 @@ GrB_Info GxB_Matrix_reshapeDup  // reshape a GrB_Matrix into another GrB_Matrix
     const GrB_Descriptor desc   // to control # of threads used
 )
 { 
-
-    //--------------------------------------------------------------------------
-    // check inputs
-    //--------------------------------------------------------------------------
-
-    GB_RETURN_IF_NULL (C) ;
-    GB_RETURN_IF_NULL (A) ;
-    GB_WHERE_1 (A, "GxB_Matrix_reshapeDup (&C, A, nrows_new, ncols_new, desc)");
-    GB_BURBLE_START ("GxB_Matrix_reshapeDup") ;
-
-    GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
-
-    //--------------------------------------------------------------------------
-    // reshape the matrix
-    //--------------------------------------------------------------------------
-
-    info = GB_reshape (C, A, by_col, nrows_new, ncols_new, Werk) ;
-    GB_BURBLE_END ;
-    return (info) ;
+    int header_arena = GB_Context_header_arena ( ) ;
+    int data_arena = GB_Context_data_arena ( ) ;
+    return (GxB_Matrix_reshapeDup_arena (C, A, by_col, nrows_new, ncols_new,
+        header_arena, data_arena, desc)) ;
 }
 

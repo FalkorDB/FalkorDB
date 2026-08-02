@@ -7,13 +7,13 @@
 
 //------------------------------------------------------------------------------
 
-/*
-    m = 2^40 ;
-    n = 2^48 ;
-    H = pi * GrB.ones (m, n) ;
-    H
-    s = sum (H, 'all') ;
-*/
+// performs the following test:
+
+// m = 2^40 ;
+// n = 2^48 ;
+// H = pi * ones (m, n) ;
+// H
+// s = sum (H, 'all') ;
 
 #include "GB_mex.h"
 #include "GB_mex_errors.h"

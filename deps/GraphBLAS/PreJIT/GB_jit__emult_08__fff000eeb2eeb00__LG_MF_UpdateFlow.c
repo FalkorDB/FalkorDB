@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 // GB_jit__emult_08__fff000eeb2eeb00__LG_MF_UpdateFlow.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.3.1, Timothy A. Davis, (c) 2017-2026,
+// SuiteSparse:GraphBLAS v10.4.0, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -144,7 +144,7 @@ GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
     (*hash) = 0xec24c5453ec15f52 ;
-    v [0] = 10 ; v [1] = 3 ; v [2] = 1 ;
+    v [0] = 10 ; v [1] = 4 ; v [2] = 0 ;
     defn [0] = GB_LG_MF_UpdateFlow_USER_DEFN ;
     defn [1] = NULL ;
     defn [2] = GB_LG_MF_flowEdge_USER_DEFN ;

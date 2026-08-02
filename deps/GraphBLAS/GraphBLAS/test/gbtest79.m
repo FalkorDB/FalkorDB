@@ -1,9 +1,14 @@
-function gbtest79
+function gbtest79 (ghb)
 %GBTEST79 test real power
 % Tests all real, inf, and nan cases.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
+
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
 list = [-2:0.5:2 inf -inf nan] ;
 
@@ -16,15 +21,15 @@ for xr = list
     fprintf ('.') ;
 
     X = xr ;
-    GX = GrB (X) ;
+    GX = gtb (ghb, X) ;
     Xs = single (X) ;
-    GXs = GrB (Xs) ;
+    GXs = gtb (ghb, Xs) ;
 
     for yr = list
         Y = yr ;
-        GY = GrB (Y) ;
+        GY = gtb (ghb, Y) ;
         Ys = single (Y) ;
-        GYs = GrB (Ys) ;
+        GYs = gtb (ghb, Ys) ;
 
         Z = X .^ Y ;
         Z2 = GX .^ GY ;
@@ -41,7 +46,6 @@ for xr = list
             fprintf (' err: %g', err) ;
             fprintf (' DOUBLE DIFFERS') ;
             fprintf ('\n') ;
-            % pause
         end
         if (~errnan)
             maxerr = max (maxerr, err) ;
@@ -66,7 +70,6 @@ for xr = list
             fprintf (' err: %g', err) ;
             fprintf (' SINGLE DIFFERS') ;
             fprintf ('\n') ;
-            % pause
         end
 
         % assert (maxerr_single < 1e-6) ;
@@ -75,8 +78,8 @@ end
 
 A = int32 (magic (4)) ;
 B = int32 (2 * rand (4)) ;
-GA = GrB (A) ;
-GB = GrB (B) ;
+GA = gtb (ghb, A) ;
+GB = gtb (ghb, B) ;
 C1 = A.^B ;
 C2 = GA.^GB ;
 assert (isequal (C1, C2)) ;
@@ -85,5 +88,5 @@ fprintf ('\nmaxerr: %g %g\n', maxerr, maxerr_single) ;
 assert (maxerr < 1e-14)
 assert (maxerr_single < 1e-6)
 
-fprintf ('\ngbtest79: all tests passed\n') ;
+fprintf ('\ngbtest79 (%d): all tests passed\n', ghb) ;
 

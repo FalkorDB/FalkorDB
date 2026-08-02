@@ -1,10 +1,14 @@
-function gbtest105
+function gbtest105 (ghb)
 %GBTEST105 test logical assignment with iso matrices
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-rng ('default') ;
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
+
 types = gbtest_types ;
 
 X = magic (5) ;
@@ -33,8 +37,8 @@ for k = 1:length (types)
     C1 (M) = A (M) ;
 
     % pure GraphBLAS
-    G1 = GrB (C) ;
-    H = GrB (A) ;
+    G1 = gtb (ghb, C) ;
+    H = gtb (ghb, A) ;
     G1 (M) = H (M) ;
 
     assert (isequal (G1, C1)) ;
@@ -43,14 +47,14 @@ for k = 1:length (types)
     if (gb_contains (type, 'complex'))
         A (A ~= 0) = 1i ;
         H (H ~= 0) = 1i ; 
-        H = GrB.prune (H) ;
+        H = gtb_prune (ghb, H) ;
         H = spones (H) ;
         H = H * 1i ;
-        H = GrB (H, type) ;
+        H = gtb (ghb, H, type) ;
     else
         A (A ~= 0) = 1 ;
         H (H ~= 0) = 1 ; 
-        H = GrB.prune (H) ;
+        H = gtb_prune (ghb, H) ;
         H = spones (H) ;
     end
     assert (isequal (full (H), A)) ;
@@ -61,12 +65,12 @@ for k = 1:length (types)
     C1 (M) = A (M) ;
 
     % pure GraphBLAS
-    G1 = GrB (C) ;
+    G1 = gtb (ghb, C) ;
     G1 (M) = H (M) ;
-    G1 = GrB.prune (G1) ;
+    G1 = gtb_prune (ghb, G1) ;
 
     assert (isequal (full (G1), C1)) ;
 end
 
-fprintf ('\ngbtest105: all tests passed\n') ;
+fprintf ('\ngbtest105 (%d: all tests passed\n', ghb) ;
 

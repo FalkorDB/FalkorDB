@@ -82,16 +82,19 @@
             //------------------------------------------------------------------
 
             // allocate workspace
-            GB_WERK_DECLARE (ws, uint64_t) ;
-            GB_WERK_DECLARE (wk, uint64_t) ;
+            GB_WERK_DECLARE (ws, uint64_t, mem) ;
+            GB_WERK_DECLARE (wk, uint64_t, mem) ;
             GB_WERK_PUSH (ws, nthreads, uint64_t) ;
             GB_WERK_PUSH (wk, nthreads, uint64_t) ;
             if (ws == NULL || wk == NULL)
             { 
-                // out of memory; use a single thread instead
+                // out of memory; use a single thread instead, which will
+                // always succeed since no memory will be allocated.  The
+                // data_arena is not used.
                 GB_WERK_POP (wk, uint64_t) ;
                 GB_WERK_POP (ws, uint64_t) ;
-                return (GB_cumsum (count, count_is_32, n, kresult, 1, NULL)) ;
+                return (GB_cumsum (count, count_is_32, n, kresult, 1,
+                    /* not used: */ data_arena, NULL)) ;
             }
 
             int tid ;
@@ -200,7 +203,7 @@
             //------------------------------------------------------------------
 
             // allocate workspace
-            GB_WERK_DECLARE (ws, GB_WS_TYPE) ;
+            GB_WERK_DECLARE (ws, GB_WS_TYPE, mem) ;
             GB_WERK_PUSH (ws, nthreads, GB_WS_TYPE) ;
             if (ws == NULL)
             { 

@@ -8,8 +8,9 @@
 //------------------------------------------------------------------------------
 
 // These methods are used for all kernels, include CUDA kernels, which is why
-// GB_STATIC_INLINE is used.  It becomes "static inline" on the CPU, and
-// "static __device__ inline" on the GPU.
+// GB_STATIC_INLINE_BOTH is used.  It becomes "static inline" on the CPU, and
+// "static __forceinline__ __device__ __host__" on the GPU (both host code
+// and device code)
 
 #ifndef GB_BINARY_SEARCH_H
 #define GB_BINARY_SEARCH_H
@@ -22,7 +23,7 @@
 // The list X [pleft ... pright] is in ascending order.  It may have
 // duplicates.
 
-GB_STATIC_INLINE void GB_trim_binary_search_32
+GB_STATIC_INLINE_BOTH void GB_trim_binary_search_32
 (
     const uint32_t i,           // item to look for
     const uint32_t *restrict X, // array to search; no zombies
@@ -62,7 +63,7 @@ GB_STATIC_INLINE void GB_trim_binary_search_32
     ASSERT (*pleft == *pright || *pleft == *pright + 1) ;
 }
 
-GB_STATIC_INLINE void GB_trim_binary_search_64
+GB_STATIC_INLINE_BOTH void GB_trim_binary_search_64
 (
     const uint64_t i,           // item to look for
     const uint64_t *restrict X, // array to search; no zombies
@@ -97,7 +98,7 @@ GB_STATIC_INLINE void GB_trim_binary_search_64
     ASSERT (*pleft == *pright || *pleft == *pright + 1) ;
 }
 
-GB_STATIC_INLINE void GB_trim_binary_search
+GB_STATIC_INLINE_BOTH void GB_trim_binary_search
 (
     const uint64_t i,           // item to look for
     const void *X,              // array to search; no zombies
@@ -127,7 +128,7 @@ GB_STATIC_INLINE void GB_trim_binary_search
 //    X [pleft+1 ... original_pright] > i holds.
 // The value X [pleft] may be either < or > i.
 
-GB_STATIC_INLINE bool GB_binary_search_32
+GB_STATIC_INLINE_BOTH bool GB_binary_search_32
 (
     const uint32_t i,           // item to look for
     const uint32_t *restrict X, // array to search; no zombies
@@ -139,7 +140,7 @@ GB_STATIC_INLINE bool GB_binary_search_32
     return (*pleft == *pright && X [*pleft] == i) ;
 }
 
-GB_STATIC_INLINE bool GB_binary_search_64
+GB_STATIC_INLINE_BOTH bool GB_binary_search_64
 (
     const uint64_t i,           // item to look for
     const uint64_t *restrict X, // array to search; no zombies
@@ -151,7 +152,7 @@ GB_STATIC_INLINE bool GB_binary_search_64
     return (*pleft == *pright && X [*pleft] == i) ;
 }
 
-GB_STATIC_INLINE bool GB_binary_search
+GB_STATIC_INLINE_BOTH bool GB_binary_search
 (
     const uint64_t i,           // item to look for
     const void *X,              // array to search; no zombies
@@ -183,7 +184,7 @@ GB_STATIC_INLINE bool GB_binary_search
 //    X [original_pleft ... pleft-1] < i and
 //    X [pleft ... original_pright] >= i holds.
 
-GB_STATIC_INLINE bool GB_split_binary_search_32
+GB_STATIC_INLINE_BOTH bool GB_split_binary_search_32
 (
     const uint32_t i,           // item to look for
     const uint32_t *restrict X, // array to search; no zombies
@@ -206,7 +207,7 @@ GB_STATIC_INLINE bool GB_split_binary_search_32
     return (found) ;
 }
 
-GB_STATIC_INLINE bool GB_split_binary_search_64
+GB_STATIC_INLINE_BOTH bool GB_split_binary_search_64
 (
     const uint64_t i,           // item to look for
     const uint64_t *restrict X, // array to search; no zombies
@@ -229,7 +230,7 @@ GB_STATIC_INLINE bool GB_split_binary_search_64
     return (found) ;
 }
 
-GB_STATIC_INLINE bool GB_split_binary_search
+GB_STATIC_INLINE_BOTH bool GB_split_binary_search
 (
     const uint64_t i,           // item to look for
     const void *X,              // array to search; no zombies
@@ -254,7 +255,7 @@ GB_STATIC_INLINE bool GB_split_binary_search
 // GB_trim_binary_search_zombie: binary search in the presence of zombies
 //------------------------------------------------------------------------------
 
-GB_STATIC_INLINE void GB_trim_binary_search_zombie_32
+GB_STATIC_INLINE_BOTH void GB_trim_binary_search_zombie_32
 (
     const uint32_t i,           // item to look for
     const int32_t *restrict X,  // array to search; with zombies
@@ -293,7 +294,7 @@ GB_STATIC_INLINE void GB_trim_binary_search_zombie_32
     ASSERT (*pleft == *pright || *pleft == *pright + 1) ;
 }
 
-GB_STATIC_INLINE void GB_trim_binary_search_zombie_64
+GB_STATIC_INLINE_BOTH void GB_trim_binary_search_zombie_64
 (
     const uint64_t i,           // item to look for
     const int64_t *restrict X,  // array to search; with zombies
@@ -336,7 +337,7 @@ GB_STATIC_INLINE void GB_trim_binary_search_zombie_64
 // GB_binary_search_zombie: binary search with zombies; check if found
 //------------------------------------------------------------------------------
 
-GB_STATIC_INLINE bool GB_binary_search_zombie_32
+GB_STATIC_INLINE_BOTH bool GB_binary_search_zombie_32
 (
     const uint32_t i,           // item to look for
     const int32_t *restrict X,  // array to search; with zombies
@@ -366,7 +367,7 @@ GB_STATIC_INLINE bool GB_binary_search_zombie_32
     return (found) ;
 }
 
-GB_STATIC_INLINE bool GB_binary_search_zombie_64
+GB_STATIC_INLINE_BOTH bool GB_binary_search_zombie_64
 (
     const uint64_t i,           // item to look for
     const int64_t *restrict X,  // array to search; with zombies
@@ -396,7 +397,7 @@ GB_STATIC_INLINE bool GB_binary_search_zombie_64
     return (found) ;
 }
 
-GB_STATIC_INLINE bool GB_binary_search_zombie
+GB_STATIC_INLINE_BOTH bool GB_binary_search_zombie
 (
     const uint64_t i,           // item to look for
     const void *X,              // array to search; with zombies
@@ -423,7 +424,7 @@ GB_STATIC_INLINE bool GB_binary_search_zombie
 // GB_split_binary_search_zombie: binary search with zombies; then partition
 //------------------------------------------------------------------------------
 
-GB_STATIC_INLINE bool GB_split_binary_search_zombie_32
+GB_STATIC_INLINE_BOTH bool GB_split_binary_search_zombie_32
 (
     const uint32_t i,           // item to look for
     const int32_t *restrict X,  // array to search; with zombies
@@ -465,7 +466,7 @@ GB_STATIC_INLINE bool GB_split_binary_search_zombie_32
     return (found) ;
 }
 
-GB_STATIC_INLINE bool GB_split_binary_search_zombie_64
+GB_STATIC_INLINE_BOTH bool GB_split_binary_search_zombie_64
 (
     const uint64_t i,           // item to look for
     const int64_t *restrict X,  // array to search; with zombies
@@ -507,7 +508,7 @@ GB_STATIC_INLINE bool GB_split_binary_search_zombie_64
     return (found) ;
 }
 
-GB_STATIC_INLINE bool GB_split_binary_search_zombie
+GB_STATIC_INLINE_BOTH bool GB_split_binary_search_zombie
 (
     const uint64_t i,           // item to look for
     const void *X,              // array to search; with zombies

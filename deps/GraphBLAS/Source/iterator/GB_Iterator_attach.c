@@ -39,7 +39,7 @@ GrB_Info GB(Iterator_attach)
     // finish any pending work on the matrix
     //--------------------------------------------------------------------------
 
-    if (GB_ANY_PENDING_WORK (A))
+    if (GB_will_wait (A))
     { 
         GrB_Info info ;
         GB_WERK ("GxB_Iterator_attach") ;

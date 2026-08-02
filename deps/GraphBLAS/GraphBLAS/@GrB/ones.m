@@ -7,14 +7,13 @@ function C = ones (varargin)
 %   C = GrB.ones (..., type) ;      matrix of all ones of given type.
 %   C = GrB.ones (..., 'like', G) ; matrix of all ones, same type as G.
 %
-% The memory required to store C is O(1) not O(m*n), so both m and
-% n can be as large as 2^60.
+% The memory required to store C is O(1) not O(m*n), so both m and n can be as
+% large as 2^60.
 %
 % See also GrB.zeros, GrB.false, GrB.true, GrB.eye, GrB.speye.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-[m, n, type] = gb_parse_args ('ones', varargin {:}) ;
-C = GrB (gb_scalar_to_full (m, n, type, gbformat, 1)) ;
+C = gb_ones (0, varargin {:}) ;
 

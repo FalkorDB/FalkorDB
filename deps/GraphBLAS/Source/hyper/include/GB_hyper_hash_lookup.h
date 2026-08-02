@@ -34,7 +34,7 @@
 #define GB_binary_search_T     GB_binary_search_64
 #include "include/GB_hyper_hash_lookup_template.h"
 
-GB_STATIC_INLINE int64_t GB_hyper_hash_lookup // k if j==Ah[k]; -1 if not found
+GB_STATIC_INLINE_BOTH int64_t GB_hyper_hash_lookup // k if j==Ah[k]; else -1
 (
     // inputs, not modified:
     const bool Ap_is_32,            // if true, Ap is 32-bit; else 64-bit

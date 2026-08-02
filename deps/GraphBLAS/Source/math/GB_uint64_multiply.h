@@ -22,7 +22,7 @@
 
 #define GB_TWO_TO_THE_30 (0x40000000L)
 
-GB_STATIC_INLINE bool GB_uint64_multiply    // c = a*b, return true if ok
+GB_STATIC_INLINE_BOTH bool GB_uint64_multiply    // c = a*b, return true if ok
 (
     uint64_t *restrict c,
     const uint64_t a,

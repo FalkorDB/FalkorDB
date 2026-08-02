@@ -56,6 +56,8 @@ GrB_Info GxB_Matrix_extractTuples_Vector    // [I,J,X] = find (A)
         return (GrB_NOT_IMPLEMENTED) ;  // input vectors cannot be aliased
     }
 
+    int data_arena = A->data_arena ;
+
     //--------------------------------------------------------------------------
     // finish any pending work in A
     //--------------------------------------------------------------------------
@@ -88,7 +90,7 @@ GrB_Info GxB_Matrix_extractTuples_Vector    // [I,J,X] = find (A)
     //--------------------------------------------------------------------------
 
     GB_OK (GB_extractTuples (I, I_is_32, J, J_is_32, X, &nvals, X_type, A,
-        Werk)) ;
+        data_arena, Werk)) ;
 
     //--------------------------------------------------------------------------
     // return results

@@ -4,12 +4,8 @@ function C = offdiag (A)
 %
 % See also GrB/tril, GrB/triu, GrB/diag, GrB.select.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-if (isobject (A))
-    A = A.opaque ;
-end
-
-C = GrB (gbselect ('offdiag', A, 0)) ;
+C = gzb_select (0, 'offdiag', A, 0) ;
 

@@ -46,7 +46,7 @@
 
 GrB_Info GB_emult_04        // C<M>=A.*B, M sparse/hyper, A and B bitmap/full
 (
-    GrB_Matrix C,           // output matrix, static header
+    GrB_Matrix C,           // output matrix, header already allocated
     const GrB_Type ctype,   // type of output matrix C
     const bool C_is_csc,    // format of output matrix C
     const GrB_Matrix M,     // sparse/hyper, not NULL
@@ -65,7 +65,11 @@ GrB_Info GB_emult_04        // C<M>=A.*B, M sparse/hyper, A and B bitmap/full
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
+
+    ASSERT (C != NULL) ;
+    int header_arena = GB_arena (C->header_mem) ;
+    int data_arena = C->data_arena ;
+    uint64_t mem = GB_mem (data_arena, 0) ;
 
     ASSERT_MATRIX_OK (M, "M for emult_04", GB0) ;
     ASSERT_MATRIX_OK (A, "A for emult_04", GB0) ;
@@ -91,8 +95,8 @@ GrB_Info GB_emult_04        // C<M>=A.*B, M sparse/hyper, A and B bitmap/full
     // declare workspace
     //--------------------------------------------------------------------------
 
-    GB_WERK_DECLARE (Work, uint64_t) ;
-    GB_WERK_DECLARE (M_ek_slicing, int64_t) ;
+    GB_WERK_DECLARE (Work, uint64_t, mem) ;
+    GB_WERK_DECLARE (M_ek_slicing, int64_t, mem) ;
 
     //--------------------------------------------------------------------------
     // get M, A, and B
@@ -127,7 +131,8 @@ GrB_Info GB_emult_04        // C<M>=A.*B, M sparse/hyper, A and B bitmap/full
     GB_OK (GB_new (&C, // sparse or hyper (same as M), existing header
         ctype, vlen, vdim, GB_ph_calloc, C_is_csc,
         C_sparsity, M->hyper_switch, nvec,
-        M->p_is_32, M->j_is_32, M->i_is_32)) ;
+        M->p_is_32, M->j_is_32, M->i_is_32,
+        header_arena, data_arena)) ;
 
     GB_Cp_DECLARE (Cp, ) ; GB_Cp_PTR (Cp, C) ;
     GB_Ci_DECLARE (Ci, ) ; GB_Ci_PTR (Ci, C) ;
@@ -216,7 +221,8 @@ GrB_Info GB_emult_04        // C<M>=A.*B, M sparse/hyper, A and B bitmap/full
 
     GB_ek_slice_merge1 (Cp, Cp_is_32, Wfirst, Wlast, M_ek_slicing, M_ntasks) ;
     int64_t nvec_nonempty ;
-    GB_cumsum (Cp, Cp_is_32, nvec, &nvec_nonempty, M_nthreads, Werk) ;
+    GB_cumsum (Cp, Cp_is_32, nvec, &nvec_nonempty, M_nthreads,
+        data_arena, Werk) ;
     GB_nvec_nonempty_set (C, nvec_nonempty) ;
     GB_ek_slice_merge2 (Cp_kfirst, Cp, Cp_is_32,
         Wfirst, Wlast, M_ek_slicing, M_ntasks) ;

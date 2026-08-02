@@ -31,7 +31,7 @@
 
 GrB_Info GB_colscale                // C = A*D, column scale with diagonal D
 (
-    GrB_Matrix C,                   // output matrix, static header
+    GrB_Matrix C,                   // output matrix, existing header
     const GrB_Matrix A,             // input matrix
     const GrB_Matrix D,             // diagonal input matrix
     const GrB_Semiring semiring,    // semiring that defines C=A*D;
@@ -46,7 +46,7 @@ GrB_Info GB_colscale                // C = A*D, column scale with diagonal D
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
+    ASSERT (C != NULL) ;
     ASSERT_MATRIX_OK (A, "A for colscale A*D", GB0) ;
     ASSERT_MATRIX_OK (D, "D for colscale A*D", GB0) ;
     ASSERT (!GB_ZOMBIES (A)) ;
@@ -59,10 +59,14 @@ GrB_Info GB_colscale                // C = A*D, column scale with diagonal D
     ASSERT (A->vdim == D->vlen) ;
     ASSERT (GB_is_diagonal (D)) ;
 
+    int header_arena = GB_arena (C->header_mem) ;
+    int data_arena = C->data_arena ;
+    uint64_t mem = GB_mem (data_arena, 0) ;
+
     ASSERT (!GB_IS_BITMAP (A)) ;        // TODO: ok for now
     ASSERT (!GB_IS_BITMAP (D)) ;
     ASSERT (!GB_IS_FULL (D)) ;
-    GB_WERK_DECLARE (A_ek_slicing, int64_t) ;
+    GB_WERK_DECLARE (A_ek_slicing, int64_t, mem) ;
 
     GBURBLE ("(%s=%s*%s) ",
         GB_sparsity_char_matrix (A),    // C has the sparsity structure of A
@@ -99,7 +103,13 @@ GrB_Info GB_colscale                // C = A*D, column scale with diagonal D
     //--------------------------------------------------------------------------
 
     // allocate C->x but do not initialize it
-    GB_OK (GB_dup_worker (&C, C_iso, A, false, ztype)) ;
+    // C is allocated with its desired pji ints, which can differ from A
+
+    bool Cp_is_32, Cj_is_32, Ci_is_32 ;
+    GB_determine_pji_is_32 (&Cp_is_32, &Cj_is_32, &Ci_is_32,
+        GB_sparsity (A), GB_nnz (A), A->vlen, A->vdim, Werk) ;
+    GB_OK (GB_dup_worker (&C, C_iso, A, /* numeric: */ false, ztype,
+        Cp_is_32, Cj_is_32, Ci_is_32, header_arena, data_arena, Werk)) ;
     info = GrB_NO_VALUE ;
     ASSERT (C->type == ztype) ;
 
@@ -153,7 +163,7 @@ GrB_Info GB_colscale                // C = A*D, column scale with diagonal D
         }
         GB_OK (GB_apply_op (C->x, C->type, GB_NON_ISO,
             (GB_Operator) op,   // positional op
-            NULL, false, false, A, Werk)) ;
+            NULL, false, false, A, data_arena, Werk)) ;
         ASSERT_MATRIX_OK (C, "colscale positional: C = A*D output", GB0) ;
         info = GrB_SUCCESS ;
 
@@ -321,8 +331,8 @@ GrB_Info GB_colscale                // C = A*D, column scale with diagonal D
             // be the same as the size of the A and D types.
             // flipxy false: aij = (xtype) A(i,j) and djj = (ytype) D(j,j)
             // flipxy true:  aij = (ytype) A(i,j) and djj = (xtype) D(j,j)
-            size_t aij_size = flipxy ? ysize : xsize ;
-            size_t djj_size = flipxy ? xsize : ysize ;
+            size_t aijsize = flipxy ? ysize : xsize ;
+            size_t djjsize = flipxy ? xsize : ysize ;
 
             GB_cast_function cast_A, cast_D ;
             if (flipxy)
@@ -348,7 +358,7 @@ GrB_Info GB_colscale                // C = A*D, column scale with diagonal D
 
             // aij = A(i,j), located in Ax [pA]
             #define GB_DECLAREA(aij)                                    \
-                GB_void aij [GB_VLA(aij_size)] ;
+                GB_void aij [GB_VLA(aijsize)] ;
             #define GB_GETA(aij,Ax,pA,A_iso)                            \
                 if (!A_is_pattern)                                      \
                 {                                                       \
@@ -357,7 +367,7 @@ GrB_Info GB_colscale                // C = A*D, column scale with diagonal D
 
             // dji = D(j,j), located in Dx [j]
             #define GB_DECLAREB(djj)                                    \
-                GB_void djj [GB_VLA(djj_size)] ;
+                GB_void djj [GB_VLA(djjsize)] ;
             #define GB_GETB(djj,Dx,j,D_iso)                             \
                 if (!D_is_pattern)                                      \
                 {                                                       \

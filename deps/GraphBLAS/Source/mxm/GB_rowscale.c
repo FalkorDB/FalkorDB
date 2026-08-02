@@ -22,7 +22,7 @@
 
 GrB_Info GB_rowscale                // C = D*B, row scale with diagonal D
 (
-    GrB_Matrix C,                   // output matrix, static header
+    GrB_Matrix C,                   // output matrix, existing header
     const GrB_Matrix D,             // diagonal input matrix
     const GrB_Matrix B,             // input matrix
     const GrB_Semiring semiring,    // semiring that defines C=D*A
@@ -37,7 +37,7 @@ GrB_Info GB_rowscale                // C = D*B, row scale with diagonal D
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
+    ASSERT (C != NULL) ;
     ASSERT_MATRIX_OK (D, "D for rowscale D*B", GB0) ;
     ASSERT_MATRIX_OK (B, "B for rowscale D*B", GB0) ;
     ASSERT (!GB_ZOMBIES (D)) ;
@@ -49,6 +49,9 @@ GrB_Info GB_rowscale                // C = D*B, row scale with diagonal D
     ASSERT_SEMIRING_OK (semiring, "semiring for numeric D*B", GB0) ;
     ASSERT (D->vdim == B->vlen) ;
     ASSERT (GB_is_diagonal (D)) ;
+
+    int header_arena = GB_arena (C->header_mem) ;
+    int data_arena = C->data_arena ;
 
     ASSERT (!GB_IS_BITMAP (D)) ;        // bitmap or full: not needed
     ASSERT (!GB_IS_BITMAP (B)) ;
@@ -79,6 +82,7 @@ GrB_Info GB_rowscale                // C = D*B, row scale with diagonal D
     //--------------------------------------------------------------------------
     // determine if C is iso (ignore the monoid since it isn't used)
     //--------------------------------------------------------------------------
+
     size_t zsize = ztype->size ;
     GB_void cscalar [GB_VLA(zsize)] ;
     bool C_iso = GB_AxB_iso (cscalar, D, B, D->vdim, semiring, flipxy, true) ;
@@ -88,7 +92,13 @@ GrB_Info GB_rowscale                // C = D*B, row scale with diagonal D
     //--------------------------------------------------------------------------
 
     // allocate C->x but do not initialize it
-    GB_OK (GB_dup_worker (&C, C_iso, B, false, ztype)) ;
+    // C is allocated with its desired pji ints, which can differ from A
+
+    bool Cp_is_32, Cj_is_32, Ci_is_32 ;
+    GB_determine_pji_is_32 (&Cp_is_32, &Cj_is_32, &Ci_is_32,
+        GB_sparsity (B), GB_nnz (B), B->vlen, B->vdim, Werk) ;
+    GB_OK (GB_dup_worker (&C, C_iso, B, /* numeric: */ false, ztype,
+        Cp_is_32, Cj_is_32, Ci_is_32, header_arena, data_arena, Werk)) ;
     info = GrB_NO_VALUE ;
     ASSERT (C->type == ztype) ;
 
@@ -142,7 +152,7 @@ GrB_Info GB_rowscale                // C = D*B, row scale with diagonal D
         }
         GB_OK (GB_apply_op (C->x, C->type, GB_NON_ISO,
             (GB_Operator) op,   // positional op
-            NULL, false, false, B, Werk)) ;
+            NULL, false, false, B, data_arena, Werk)) ;
         ASSERT_MATRIX_OK (C, "rowscale positional: C = D*B output", GB0) ;
         info = GrB_SUCCESS ;
 
@@ -294,8 +304,8 @@ GrB_Info GB_rowscale                // C = D*B, row scale with diagonal D
             // be the same as the size of the D and B types.
             // flipxy false: dii = (xtype) D(i,i) and bij = (ytype) B(i,j)
             // flipxy true:  dii = (ytype) D(i,i) and bij = (xtype) B(i,j)
-            size_t dii_size = flipxy ? ysize : xsize ;
-            size_t bij_size = flipxy ? xsize : ysize ;
+            size_t diisize = flipxy ? ysize : xsize ;
+            size_t bijsize = flipxy ? xsize : ysize ;
 
             GB_cast_function cast_D, cast_B ;
             if (flipxy)
@@ -321,7 +331,7 @@ GrB_Info GB_rowscale                // C = D*B, row scale with diagonal D
 
             // dii = D(i,i), located in Dx [i]
             #define GB_DECLAREA(dii)                                    \
-                GB_void dii [GB_VLA(dii_size)] ;
+                GB_void dii [GB_VLA(diisize)] ;
             #define GB_GETA(dii,Dx,i,D_iso)                             \
                 if (!D_is_pattern)                                      \
                 {                                                       \
@@ -330,7 +340,7 @@ GrB_Info GB_rowscale                // C = D*B, row scale with diagonal D
 
             // bij = B(i,j), located in Bx [pB]
             #define GB_DECLAREB(bij)                                    \
-                GB_void bij [GB_VLA(bij_size)] ;
+                GB_void bij [GB_VLA(bijsize)] ;
             #define GB_GETB(bij,Bx,pB,B_iso)                            \
                 if (!B_is_pattern)                                      \
                 {                                                       \

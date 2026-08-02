@@ -38,7 +38,7 @@ GrB_Info GB_cuda_reduce_to_scalar_jit   // z = reduce_to_scalar (A) via CUDA JIT
     uint64_t hash = GB_encodify_reduce (&encoding, &suffix,
         GB_JIT_CUDA_KERNEL_REDUCE, monoid, A) ;
 
-    // FIXME: could get has_cheesburger here, and allocate zscalar
+    // fixme: could get has_cheesburger here, and allocate zscalar
     // and V accordingly.
 
     //--------------------------------------------------------------------------

@@ -24,6 +24,13 @@ GrB_Info GB_op_enum_get
     GrB_Type type = NULL ;
     (*value) = -1 ;
 
+    if ((int) field == GxB_ARENA_HEADER)
+    { 
+        (*value) = GB_arena (op->header_mem) ;
+        #pragma omp flush
+        return (GrB_SUCCESS) ;
+    }
+
     switch ((int) field)
     {
         case GrB_INP0_TYPE_CODE : type = op->xtype ; break ;
@@ -41,6 +48,7 @@ GrB_Info GB_op_enum_get
     }
 
     (*value) = (int32_t) GB_type_code_get (type->code) ;
+
     #pragma omp flush
     return (GrB_SUCCESS) ;
 }
