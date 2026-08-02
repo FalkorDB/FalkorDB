@@ -145,6 +145,21 @@ jobs:
       tag: ${{ needs.guard.outputs.tag }}
       commit_sha: ${{ needs.guard.outputs.commit_sha }}
 
+  # Browser tests for the released image. Mirrors the C engine's
+  # browser-tests-trigger.yml hook so both engines exercise the browser on a
+  # stable release. Deliberately chained AFTER `image` rather than off a
+  # `release:` event: browser tests need the PUBLISHED image, and `release:`
+  # fires the moment the release is created — racing the image push. It is also
+  # why this is not a `release:` listener at all; that event is version-blind and
+  # would fire for the C engine's releases too.
+  browser-tests:
+    needs: [guard, image]
+    uses: ./.github/workflows/browser-tests-trigger.yml
+    permissions:
+      contents: read
+    with:
+      tag: ${{ needs.guard.outputs.tag }}
+
   # Runtime images → retag the rc-pr-<N> manifest that PR CI already validated.
   image:
     needs: [guard, create-release]

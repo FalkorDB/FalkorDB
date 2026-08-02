@@ -19,6 +19,11 @@
 name: Release artifacts
 
 on:
+  # `release:` is REF-scoped, not default-branch-scoped — GitHub reads the
+  # workflow from the tagged ref's own tree (verified: the v4.20.1 release run's
+  # head_sha is identical to branch 4.20, diverged from master). A C release tag
+  # therefore carries only C's workflows and can never reach this file, so this
+  # trigger stays safe after the Rust tree becomes the default branch.
   release:
     types: [published]
   workflow_dispatch:
