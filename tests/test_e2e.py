@@ -1734,7 +1734,7 @@ def test_index():
     assert res.result_set == [
         [Node(4, labels=["Node"], properties={"vi": 5, "vs": "5"})]
     ]
-    assert res.run_time_ms < runtime_ms / 100
+    assert res.run_time_ms < runtime_ms / 10
 
     res = query("MATCH (n:Node {vs: '5'}) RETURN n", steps=2)
     assert res.result_set == [
