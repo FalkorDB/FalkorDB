@@ -87,8 +87,14 @@ the PR, its base and the C engine and posts one comparison comment. Nothing is
 compiled: all three modules come from prebuilt images (`rc-pr-<N>`, `edge-rs`
 and `edge`), each measured on its own runner in parallel inside the C engine's
 image. Two readings per side — the full 317-query set on allocated bytes, and a
-93-query subset with exact callgrind instruction counts, sharded 4 ways so it
+93-query subset with exact callgrind instruction counts, sharded 6 ways so it
 finishes in the same wall-clock as the full set.
+
+The callgrind table is **PR-vs-base only**. The C engine cannot be measured
+that way: it busy-waits on a worker thread that valgrind schedules arbitrarily,
+which showed up as 331,579,187 instructions of drift between two identical runs
+(this module: ~100k) and rows that cost *more* on the run doing *fewer*
+queries. vs-C is on allocated bytes, which thread scheduling does not affect.
 
 Its one caveat: the base side is the `edge-rs` image, i.e. the tip of `main-rs`
 when it was last built, not the PR's merge base. For a borderline row, confirm

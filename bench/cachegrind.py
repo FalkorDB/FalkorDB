@@ -512,7 +512,17 @@ def main():
         except (RuntimeError, subprocess.TimeoutExpired) as e:
             print(f"{name:<24} FAILED on the drift replicate: {e}", flush=True)
             continue
-        drift = abs(rep - lo)
+        # One difference of two samples is a noisy estimator of the spread —
+        # roughly |N(0, s*sqrt(2))|, which lands below the true s about half the
+        # time and badly under-widens when it does. Measured: taking it at face
+        # value dropped `RETURN 1` from span 3193 to 991 and the residual noise
+        # on a null comparison (identical engine code both sides) went from
+        # under 0.5% to 1.5%. So DRIFT_INSTR stays as a conservative floor for
+        # well-behaved engines, and the measurement only takes over when it is
+        # larger — which is the case this exists for: the C engine measured
+        # 331,579,187 instructions of drift between two identical runs, against
+        # ~100k here.
+        drift = max(abs(rep - lo), DRIFT_INSTR)
         base_lo = min(lo, rep)
 
         per = (hi - base_lo) / span
