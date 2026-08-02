@@ -771,7 +771,7 @@ class testAllShortestPaths():
         # reported once it finishes on its own
         self.env.assertLess(time.time() - start, 30)
 
-    def test09_sp_dijkstra_unconstrained_cost(self):
+    def test15_sp_dijkstra_unconstrained_cost(self):
         # pathCount == 1 with no maxCost set routes through the Dijkstra
         # fast path (SPpaths_dijkstra_single) instead of the DFS-based
         # search used everywhere else in this file. Verify it agrees with
@@ -796,7 +796,7 @@ class testAllShortestPaths():
             self.env.assertEqual(len(result.result_set), 1)
             self.env.assertAlmostEqual(result.result_set[0][1], min_weight, delta=1e-9)
 
-    def test10_sp_unreachable(self):
+    def test16_sp_unreachable(self):
         # two nodes with no path between them at all: the BFS bound
         # pre-pass (finite maxCost) and Dijkstra (unconstrained maxCost)
         # must both report "no path" cleanly rather than erroring or
@@ -824,7 +824,7 @@ class testAllShortestPaths():
         # pathCount>1 (k-minimal), finite maxCost -> pre-pass short-circuit
         self.env.assertEqual(len(ur_query(3, 100).result_set), 0)
 
-    def test11_sp_duplicate_edges(self):
+    def test17_sp_duplicate_edges(self):
         # (a) a self-loop combined with relDirection: 'both' can surface
         # the same edge as a candidate via both the outgoing and incoming
         # scan; it must be rejected like any other cycle, not corrupt or
@@ -867,7 +867,7 @@ class testAllShortestPaths():
         for row in dup.result_set:
             self.env.assertContains(row, single.result_set)
 
-    def test12_sp_src_eq_dst(self):
+    def test18_sp_src_eq_dst(self):
         # sourceNode == targetNode is degenerate: minLen==1 requires at
         # least one edge, so this must always return no results, whether
         # or not a self-loop exists, and regardless of which code path
@@ -969,7 +969,7 @@ class testAllShortestPaths():
                     self.env.assertContains(key, actual)
                     self.env.assertAlmostEqual(actual[key], exp_weight, delta=1e-9)
 
-    def test13_dijkstra_line_graph(self):
+    def test19_dijkstra_line_graph(self):
         # simple directed line 0->1->2->...->(n-1) with strictly increasing
         # weights. exactly one path exists between any (src, dst) pair, and
         # only "forward" pairs are reachable at all -- a baseline sanity
@@ -979,7 +979,7 @@ class testAllShortestPaths():
         edges = [(i, i + 1, i + 1) for i in range(n - 1)]
         self._verify_dijkstra_all_pairs("dijkstra_line", n, edges)
 
-    def test14_dijkstra_diamond_graph(self):
+    def test20_dijkstra_diamond_graph(self):
         # a DAG made of two chained "diamonds", each offering a cheap and an
         # expensive parallel route between the same pair of nodes:
         #   0 -> 1 -> 3 -> 4 -> 6 -> 7   (cheap branch: weight 1 each hop)
@@ -994,7 +994,7 @@ class testAllShortestPaths():
         ]
         self._verify_dijkstra_all_pairs("dijkstra_diamond", 8, edges)
 
-    def test15_dijkstra_grid_graph(self):
+    def test21_dijkstra_grid_graph(self):
         # a 4x4 grid with only rightward/downward edges and randomized
         # weights: many equal-length alternative routes exist between any
         # two nodes on the same diagonal, forcing Dijkstra to actually
@@ -1016,7 +1016,7 @@ class testAllShortestPaths():
 
         self._verify_dijkstra_all_pairs("dijkstra_grid", rows * cols, edges)
 
-    def test16_dijkstra_dense_cyclic_graph(self):
+    def test22_dijkstra_dense_cyclic_graph(self):
         # a dense graph with edges in both directions between most node
         # pairs, forming many cycles. exercises Dijkstra's finalize-once
         # invariant and lazy heap-deletion under heavy relabeling: many
