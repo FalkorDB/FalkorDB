@@ -69,9 +69,15 @@ jobs:
             TAG_NAME=${{ github.event.inputs.tag }}
           fi
 
-          # If the event is a workflow_run, and branch is master, set to "edge"
+          # If the event is a workflow_run, and branch is master, set to "edge-c"
+          #
+          # Currently UNREACHABLE: the workflow_run trigger was removed above, so
+          # build.yml's publish-edge job dispatches this workflow instead. Kept in
+          # step with that dispatch (`edge-c`, not `edge`) so that re-adding the
+          # trigger cannot resurrect a C-side publisher for the plain `:edge`
+          # channel, which now serves the Rust image from `main`. See #2290.
           if [ "${{ github.event_name }}" == "workflow_run" ] && [ "${{ github.event.workflow_run.head_branch }}" == "master" ]; then
-            TAG_NAME="edge"
+            TAG_NAME="edge-c"
           fi
 
           # If the event is a workflow_run, and branch is not master, set to the branch name
