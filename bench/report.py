@@ -389,7 +389,7 @@ def main():
                        f"`{(info.get('digest') or '?')[:19]}` |")
         out += [
             "",
-            "The **base** side is the `edge-rs` image — the tip of `main-rs` at "
+            "The **base** side is the `edge-rs` image — the tip of the trunk at "
             "the time the images were built, which is not necessarily this PR's "
             "merge base. Rebuilding both sides from source would be exact but "
             "costs ~10 minutes of compile per side; if a row looks surprising, "

@@ -7,7 +7,11 @@
 # Trigger: add the `benchmark-cov` label to a PR. Only on the `labeled` event,
 # never on later pushes while the label happens to sit there. To re-run, remove
 # and re-add the label. Skipped for fork PRs (read-only GITHUB_TOKEN, cannot
-# comment) and for PRs that do not target `main-rs`.
+# comment) and for PRs that do not target a trunk. TRUNK is `main` or `main-rs`
+# — the same pair rust-push.yml gates channel promotion on, since #2279 migrated
+# the default development branch to `main` while `main-rs` still carries the
+# tree. The C engine keeps `master`, which has no Cargo workspace to build, so a
+# PR targeting it is skipped rather than failed.
 #
 # ## Everything measured is a prebuilt image
 #
@@ -15,10 +19,10 @@
 # other workflows already published:
 #
 #   pr    ghcr.io/falkordb/falkordb-server:rc-pr-<N>   (rust-pr.yml)
-#   base  falkordb/falkordb-server:edge-rs             (rust-push.yml, main-rs)
+#   base  falkordb/falkordb-server:edge-rs             (rust-push.yml, trunk)
 #   c     falkordb/falkordb-server:edge                (the C engine)
 #
-# The cost: `edge-rs` is the tip of `main-rs` when it was last built, not this
+# The cost: `edge-rs` is the tip of the trunk when it was last built, not this
 # PR's merge base, so the base side can be off by whatever landed in between.
 # That is stated in the posted comment. Building both sides from source instead
 # is exact and costs ~10 minutes of compile per side — worth it for a
@@ -94,7 +98,7 @@ jobs:
   preflight:
     if: >-
       github.event.label.name == 'benchmark-cov' &&
-      github.event.pull_request.base.ref == 'main-rs' &&
+      contains(fromJSON('["main","main-rs"]'), github.event.pull_request.base.ref) &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 10

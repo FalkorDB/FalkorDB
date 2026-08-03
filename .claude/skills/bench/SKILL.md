@@ -96,8 +96,8 @@ which showed up as 331,579,187 instructions of drift between two identical runs
 (this module: ~100k) and rows that cost *more* on the run doing *fewer*
 queries. vs-C is on allocated bytes, which thread scheduling does not affect.
 
-Its one caveat: the base side is the `edge-rs` image, i.e. the tip of `main-rs`
-when it was last built, not the PR's merge base. For a borderline row, confirm
+Its one caveat: the base side is the `edge-rs` image, i.e. the tip of the
+trunk when it was last built, not the PR's merge base. For a borderline row, confirm
 locally against a real base build before acting on it.
 
 For a vs-C reading locally, you need a C module. Build the `master` branch of
