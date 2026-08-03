@@ -217,6 +217,28 @@ pub enum ExprIR<TVar> {
     Property(Arc<String>),
     /// Function call with function definition
     FuncInvocation(Arc<GraphFn>),
+    /// `CASE` expression, in either Cypher form.
+    ///
+    /// Children, in order:
+    /// 1. the subject expression — present only in the value form
+    ///    (`CASE x WHEN 1 THEN …`), absent in the searched form
+    ///    (`CASE WHEN x = 1 THEN …`); `has_subject` says which;
+    /// 2. a [`Self::List`] of alternating `when, then` expressions, always
+    ///    present and always non-empty;
+    /// 3. the `ELSE` expression, always present — the parser substitutes
+    ///    `Constant(Null)` when the query omits it.
+    ///
+    /// A dedicated variant rather than an internal `FuncInvocation`: the
+    /// evaluator must try the conditions in order and evaluate only the
+    /// branch that matches, which a function call cannot express (its
+    /// arguments are evaluated first). Encoding the shape here also means
+    /// the shape is decided once at parse time instead of being re-derived
+    /// per row.
+    ///
+    /// The `case` function stays registered in `functions::internal` as the
+    /// introspectable declaration behind `dbms.functions()`; it is no longer
+    /// on the evaluation path.
+    Case { has_subject: bool },
     /// List quantifier (all/any/none/single)
     Quantifier {
         quantifier_type: QuantifierType,
@@ -362,6 +384,7 @@ impl<TVar: Display + std::fmt::Debug> Display for ExprIR<TVar> {
                 RegexFnKind::MatchList => write!(f, "string.matchRegEx()"),
                 RegexFnKind::Replace => write!(f, "string.replaceRegEx()"),
             },
+            Self::Case { .. } => write!(f, "CASE"),
         }
     }
 }
@@ -613,6 +636,29 @@ impl<T: Display + PartialEq, L: Display + PartialEq, TVar: Display + PartialEq +
     }
 }
 
+/// Concatenates the entries of two inline-attribute maps (`{k: v, ...}`).
+///
+/// Both trees are rooted at [`ExprIR::Map`] whose children are the keys, each
+/// holding its value expression as its single child. Repeated keys are kept as
+/// separate entries: `{v: 1}` merged with `{v: 2}` becomes `{v: 1, v: 2}`,
+/// which the planner turns into `n.v = 1 AND n.v = 2`.
+fn merge_attr_maps<TVar: Clone>(
+    lhs: &QueryExpr<TVar>,
+    rhs: &QueryExpr<TVar>,
+) -> QueryExpr<TVar> {
+    if rhs.root().num_children() == 0 {
+        return lhs.clone();
+    }
+    if lhs.root().num_children() == 0 {
+        return rhs.clone();
+    }
+    let mut merged = (**lhs).clone();
+    for entry in rhs.root().children() {
+        merged.root_mut().push_child_tree(entry.as_cloned_subtree());
+    }
+    Arc::new(merged)
+}
+
 impl<T, L, TVar: Clone + Hash + Eq> QueryGraph<T, L, TVar> {
     pub fn add_node(
         &mut self,
@@ -623,6 +669,33 @@ impl<T, L, TVar: Clone + Hash + Eq> QueryGraph<T, L, TVar> {
         }
         self.nodes.push(node);
         true
+    }
+
+    /// Merges an additional occurrence of an already-present node alias into
+    /// the existing entry, accumulating its labels and inline attributes.
+    ///
+    /// A MATCH pattern may mention the same alias several times, e.g.
+    /// `MATCH (n:A) MATCH (n:B)` or `MATCH (n {v: 1}), (n {w: 2})`. Every
+    /// occurrence is a predicate the node has to satisfy, so the label sets are
+    /// unioned and the inline-attribute maps concatenated (duplicate keys turn
+    /// into a conjunction of equality filters downstream). Falls back to
+    /// inserting `node` when the alias isn't present yet.
+    pub fn merge_node(
+        &mut self,
+        node: &Arc<QueryNode<L, TVar>>,
+    ) where
+        L: Clone + PartialEq,
+        TVar: Clone,
+    {
+        let Some(pos) = self.nodes.iter().position(|n| n.alias == node.alias) else {
+            self.nodes.push(node.clone());
+            return;
+        };
+        let existing = &self.nodes[pos];
+        let mut labels = existing.labels.clone();
+        labels.extend(node.labels.iter().cloned());
+        let attrs = merge_attr_maps(&existing.attrs, &node.attrs);
+        self.nodes[pos] = Arc::new(QueryNode::new(existing.alias.clone(), labels, attrs));
     }
 
     pub fn replace_node(

@@ -325,6 +325,9 @@ pub struct VarLenEndpoints {
     /// Alias of the relationship-list/path variable, when it is read downstream
     /// (`emit_path`). `None` skips building the path column entirely.
     pub(crate) path: Option<u32>,
+    /// Alias of a named-path variable bound directly by the traverse (the
+    /// planner elided the `PathBuilder` op); receives a copy of the path lane.
+    pub(crate) path_copy: Option<u32>,
 }
 
 /// Column lanes for a var-length expansion: the two endpoint node columns plus
@@ -354,7 +357,7 @@ impl GatherItem for (NodeId, NodeId, Option<Value>) {
                 Vec::new()
             },
             // Only allocate the path lane when the path is read downstream.
-            paths: if binding.path.is_some() {
+            paths: if binding.path.is_some() || binding.path_copy.is_some() {
                 Vec::with_capacity(cap)
             } else {
                 Vec::new()
@@ -376,7 +379,7 @@ impl GatherItem for (NodeId, NodeId, Option<Value>) {
             // `to` value into the single column.
             lanes.froms.push(to_node);
         }
-        if binding.path.is_some() {
+        if binding.path.is_some() || binding.path_copy.is_some() {
             lanes.paths.push(path.unwrap_or(Value::Null));
         }
     }
@@ -389,6 +392,9 @@ impl GatherItem for (NodeId, NodeId, Option<Value>) {
         out.set_column(binding.from, Column::NodeIds(lanes.froms));
         if binding.distinct {
             out.set_column(binding.to, Column::NodeIds(lanes.tos));
+        }
+        if let Some(copy_alias) = binding.path_copy {
+            out.set_column(copy_alias, Column::Values(lanes.paths.clone()));
         }
         if let Some(path_alias) = binding.path {
             out.set_column(path_alias, Column::Values(lanes.paths));
@@ -729,6 +735,13 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
         self.pending = None;
         self.batch = None;
         self.cursor = 0;
+    }
+
+    /// The currently seeded parent batch, if any. Lets an operator gather
+    /// additional rows from the input it is expanding (e.g. the optional
+    /// traverse's null-padded fallback).
+    pub(crate) const fn batch(&self) -> Option<&Batch<'a>> {
+        self.batch.as_ref()
     }
 }
 

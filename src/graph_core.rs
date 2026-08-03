@@ -819,6 +819,18 @@ fn compute_effective_timeout(
     Ok(None)
 }
 
+/// Replies `[error, current_version]` for a client-supplied version that does
+/// not match the graph's current schema version.
+pub(crate) fn reply_invalid_graph_version(
+    ctx: &Context,
+    current_version: i64,
+) {
+    const ERR: &std::ffi::CStr = c"ERR invalid graph version";
+    raw::reply_with_array(ctx.ctx, 2);
+    raw::reply_with_error(ctx.ctx, ERR.as_ptr());
+    raw::reply_with_long_long(ctx.ctx, current_version);
+}
+
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub fn query_mut(
@@ -830,7 +842,17 @@ pub fn query_mut(
     track_mem: bool,
     key_name: Arc<str>,
     per_query_timeout: Option<i64>,
+    version_check: Option<u64>,
 ) -> RedisResult {
+    // Reject a stale client-supplied schema version before doing any work.
+    if let Some(provided_version) = version_check {
+        let current_schema_version = graph.read().graph.read().borrow().schema_version;
+        if provided_version != current_schema_version {
+            reply_invalid_graph_version(ctx, current_schema_version as i64);
+            return Ok(RedisValue::NoReply);
+        }
+    }
+
     // Inside MULTI/EXEC: execute synchronously (blocking commands not allowed).
     // Also run replicated commands synchronously on the main thread (matches
     // FalkorDB C): otherwise the replica's handler returns NoReply before the
@@ -872,6 +894,16 @@ pub fn query_mut(
     // Monotonic clock captured at dispatch time so the worker can attribute the
     // thread-pool queueing delay (receipt → worker start) to "Wait duration".
     let dispatch_instant = Instant::now();
+    // The query is *waiting* from now until a worker picks it up: that queueing
+    // delay is exactly what `GRAPH.INFO WaitingQueries` reports, and in C it is
+    // read straight off the thread pool's task queue. Our jobs are opaque
+    // closures, so the registry stands in for that queue — register here, on the
+    // dispatching thread, and promote to "running" inside the worker.
+    // Guarded, not a bare id: `spawn` drops the job when the pool is shutting
+    // down, and a worker can panic before promoting. Either would leave the
+    // query in `GRAPH.INFO WaitingQueries` forever, so the entry's lifetime is
+    // tied to the closure that owns it.
+    let mut pool_waiting = telemetry::WaitingEntry::register(received_at, &key_name, &query);
     spawn(
         move || {
             let mem_capacity = QUERY_MEM_CAPACITY.load(Ordering::Relaxed);
@@ -899,7 +931,12 @@ pub fn query_mut(
                 "GRAPH.RO_QUERY"
             };
 
-            let running_id = telemetry::register_running(received_at, &key_name, &query, false);
+            // Leaves the waiting list and joins the running list in one step. The
+            // fallback cannot normally happen (only this worker consumes the id);
+            // it keeps the running report correct rather than silently empty.
+            let running_id = pool_waiting.promote().unwrap_or_else(|| {
+                telemetry::register_running(received_at, &key_name, &query, false)
+            });
             let wall_start = Instant::now();
             // Time spent waiting in the thread pool before this worker started.
             let wait_ms = wall_start.duration_since(dispatch_instant).as_secs_f64() * 1000.0;

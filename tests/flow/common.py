@@ -24,16 +24,29 @@ SANITIZER     = os.getenv('SANITIZER', '')      != ''
 CODE_COVERAGE = os.getenv('CODE_COVERAGE', '0') == '1'
 
 # Per-socket read timeout (seconds) applied to redis clients constructed
-# from this module. Under ASAN/coverage instrumentation the GraphBLAS+
-# falkordb binary runs 3-5x slower (see PR #539); tests that issue heavy
-# synthetic workloads (test_index_create.test08_async_index_creation —
-# 1 M-node CREATE, test_slowlog.populate_slowlog — 19 concurrent
-# UNWIND(250k), test_pending_queries_limit — 16 concurrent UNWIND(1M))
-# overrun redis-py's default read deadline and trip a misleading
-# "Timeout reading from socket" instead of completing or surfacing the
-# real assertion. Bump the deadline generously on instrumented builds;
-# leave it unbounded otherwise.
-SOCKET_TIMEOUT = 600 if (SANITIZER or CODE_COVERAGE) else None
+# from this module. Tests that issue heavy synthetic workloads
+# (test_index_create.test08_async_index_creation — 1 M-node CREATE,
+# test_slowlog.populate_slowlog — 19 concurrent UNWIND(250k),
+# test_pending_queries_limit — 16 concurrent UNWIND(1M)) run well past any
+# short deadline, and under ASAN/coverage instrumentation the
+# GraphBLAS+falkordb binary is another 3-5x slower (see PR #539).
+#
+# An *unset* value is not "no deadline": redis-py >= 6 defaults
+# socket_timeout to 5s. Combined with its default retrying Retry policy that
+# is worse than a plain timeout — the command is silently re-issued on a new
+# connection. A re-issued WAIT is the dangerous one: WAIT compares against
+# the calling connection's own write offset, which is 0 on a fresh
+# connection, so it returns "acked" while the replica is still behind (this
+# is what let test_effects.test17_random_ops compare a stale replica). A
+# re-issued write can also apply twice. So state the deadline explicitly and
+# pair it with NO_RETRY below.
+SOCKET_TIMEOUT = 600
+
+# Retry policy for every client this module hands to a test: none. A tripped
+# deadline must surface as a TimeoutError naming the slow command, not be
+# quietly re-run. Connect-time retries are separately disabled where we probe
+# for liveness (see _wait_for_redis).
+NO_RETRY = Retry(NoBackoff(), 0)
 
 # Normalized OS name for cross-platform test guards (matches the C FalkorDB
 # convention used by tests/memcheck): "macos", "linux", "windows", or the
@@ -430,23 +443,42 @@ def _bootstrap_cluster(shard_addrs, attempts=100, interval=0.2):
             raise RuntimeError(msg)
 
 
+def _no_retry_client(c):
+    """Pin SOCKET_TIMEOUT and NO_RETRY onto an already-built client.
+
+    Clients this module constructs get both as kwargs; this is for the ones
+    RLTest and falkordb-py build, which pass neither. set_retry() updates the
+    pool's kwargs *and* every connection already in it, so it also covers a
+    client that has already been used."""
+    try:
+        c.connection_pool.connection_kwargs['socket_timeout'] = SOCKET_TIMEOUT
+        c.set_retry(NO_RETRY)
+    except Exception:
+        pass
+    return c
+
+
+def _db_handle(host, port):
+    """FalkorDB handle whose underlying redis client carries our deadline and
+    NO_RETRY. falkordb-py builds that client itself, so normalize after."""
+    db = FalkorDB(host, port)
+    _no_retry_client(db.connection)
+    return db
+
+
 def _wrap_get_connection_with_timeout(env_obj):
-    """Wrap env_obj.getConnection so the returned redis.Redis client carries
-    SOCKET_TIMEOUT. RLTest's native getConnection ignores socket_timeout, but
-    heavy synthetic workloads (e.g. 1M-node CREATE) overrun redis-py's default
-    read deadline under ASAN/coverage and surface as misleading socket
-    timeouts. No-op when SOCKET_TIMEOUT is None."""
-    if SOCKET_TIMEOUT is None:
-        return
-    inner = env_obj.getConnection
-    def _get_connection_with_timeout(*args, **kwargs):
-        c = inner(*args, **kwargs)
-        try:
-            c.connection_pool.connection_kwargs['socket_timeout'] = SOCKET_TIMEOUT
-        except Exception:
-            pass
-        return c
-    env_obj.getConnection = _get_connection_with_timeout
+    """Wrap env_obj.getConnection / getSlaveConnection so every client a test
+    receives carries SOCKET_TIMEOUT and NO_RETRY. RLTest's native accessors
+    pass neither, so their clients otherwise inherit redis-py's 5s deadline
+    and its retrying default — see the SOCKET_TIMEOUT comment for why a silent
+    retry is worse than a timeout here."""
+    for attr in ("getConnection", "getSlaveConnection"):
+        inner = getattr(env_obj, attr, None)
+        if inner is None:
+            continue
+        def _wrapped(*args, _inner=inner, **kwargs):
+            return _no_retry_client(_inner(*args, **kwargs))
+        setattr(env_obj, attr, _wrapped)
 
 
 def _attach_cluster(env_obj, shard_addrs):
@@ -468,7 +500,7 @@ def _attach_cluster(env_obj, shard_addrs):
             )
         h, p = shards[idx]
         return redis.Redis(host=h, port=p, decode_responses=True,
-                           socket_timeout=SOCKET_TIMEOUT)
+                           socket_timeout=SOCKET_TIMEOUT, retry=NO_RETRY)
 
     env_obj.getConnection = _get_connection
     env_obj.shards = shards
@@ -568,7 +600,7 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
         else:
             env_obj.log_path = None
         _wrap_get_connection_with_timeout(env_obj)
-        db = FalkorDB("localhost", env_obj.port)
+        db = _db_handle("localhost", env_obj.port)
         return (env_obj, db)
 
     # Mode 2: services — shared GHA service container per matrix cell.
@@ -622,7 +654,7 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
             _wait_for_replication(replica_host, replica_port)
             _attach_slave(env_obj, replica_host, replica_port)
         _wrap_get_connection_with_timeout(env_obj)
-        db = FalkorDB(host, port)
+        db = _db_handle(host, port)
         return (env_obj, db)
 
     # Mode 3: CI spawn — every Env() call gets a fresh master container
@@ -674,7 +706,7 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
         # FalkorDB(host, port) auto-detects cluster mode via Is_Cluster
         # (checks INFO for cluster_enabled:1) and returns a cluster-aware
         # client, so udf_load / queries route through the cluster.
-        db = FalkorDB(host, port)
+        db = _db_handle(host, port)
         return (env_obj, db)
 
     master_alias, master_port, master_cid, master_log_path = _spawn_falkordb(
@@ -713,7 +745,7 @@ def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False, s
         env_obj.envRunner.host = host
 
     _wrap_get_connection_with_timeout(env_obj)
-    db = FalkorDB(host, port)
+    db = _db_handle(host, port)
     return (env_obj, db)
 
 
@@ -788,7 +820,7 @@ def _attach_slave(env_obj, host, port):
     where the replica is a sibling container on a network alias."""
     def _get_slave_connection(*_args, **_kwargs):
         return redis.Redis(host=host, port=port, decode_responses=True,
-                           socket_timeout=SOCKET_TIMEOUT)
+                           socket_timeout=SOCKET_TIMEOUT, retry=NO_RETRY)
     env_obj.getSlaveConnection = _get_slave_connection
     env_obj.replica_host = host
     env_obj.replica_port = port

@@ -146,6 +146,53 @@ impl Vector<bool> {
     pub fn iter(&self) -> Iter<bool> {
         Iter::new(self)
     }
+
+    /// Serialize as a `GxB_Vector_serialize` blob — the form C's RDB tensor
+    /// section uses for a multi-edge pair's id list (`GrB_Vector_new(&V,
+    /// GrB_BOOL, GrB_INDEX_MAX)` with `setElement_BOOL(V, true, edge_id)`, so
+    /// the edge ids are the vector's *indices*).
+    ///
+    /// Distinct from `<Vector<bool> as Encode<19>>::encode`, which writes the
+    /// unload-to-array form that `Matrix::encode` uses for container payloads.
+    pub fn encode_blob(
+        &self,
+        w: &mut dyn Writer,
+    ) {
+        unsafe {
+            let mut blob: *mut c_void = null_mut();
+            let mut blob_size: u64 = 0;
+
+            let info = GxB_Vector_serialize(&raw mut blob, &raw mut blob_size, self.v, null_mut());
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+
+            let blob_slice = std::slice::from_raw_parts(blob.cast::<u8>(), blob_size as usize);
+            w.write_buffer(blob_slice);
+
+            let layout = std::alloc::Layout::from_size_align(blob_size as usize, 8).unwrap();
+            std::alloc::dealloc(blob.cast::<u8>(), layout);
+        }
+    }
+
+    /// Inverse of [`Self::encode_blob`].
+    pub fn decode_blob(r: &mut dyn Reader) -> Result<Self, String> {
+        let blob = r.read_buffer()?;
+        unsafe {
+            let mut v: MaybeUninit<GrB_Vector> = MaybeUninit::uninit();
+            let info = GxB_Vector_deserialize(
+                v.as_mut_ptr(),
+                null_mut(),
+                blob.as_ptr().cast(),
+                blob.len() as u64,
+                null_mut(),
+            );
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GxB_Vector_deserialize failed: {info:?}"
+            );
+            Ok(Self::from(v.assume_init()))
+        }
+    }
 }
 
 impl Encode<19> for Vector<u64> {

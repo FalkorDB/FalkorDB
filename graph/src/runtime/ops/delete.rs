@@ -32,7 +32,7 @@ use crate::runtime::{
     runtime::Runtime,
     value::{DeletedNode, DeletedRelationship, Value},
 };
-use orx_tree::{Dyn, NodeIdx, NodeRef};
+use orx_tree::{Dyn, DynTree, NodeIdx, NodeRef};
 use std::sync::Arc;
 
 fn node_attrs_to_map(
@@ -57,25 +57,52 @@ fn rel_attrs_to_map(
     )
 }
 
+/// Does anything above this `Delete` still get to look at the rows it passes
+/// through? A deleted entity keeps its labels/type/endpoints/attributes only in
+/// the runtime's `deleted_*` snapshot maps, so every operator layered on top of
+/// the delete — a later `WITH`, `RETURN`, filter, procedure call — needs those
+/// snapshots to be taken. Only `Commit` is transparent here: it neither reads
+/// nor forwards entity data to a consumer.
+///
+/// For the common write-only `MATCH (n) DELETE n` the delete is the last thing
+/// that happens, and snapshotting would cost an O(E) tensor scan for nothing.
+fn snapshot_required(
+    plan: &DynTree<IR>,
+    idx: NodeIdx<Dyn<IR>>,
+) -> bool {
+    let mut current = plan.node(idx);
+    while let Some(parent) = current.parent() {
+        if !matches!(parent.data(), IR::Commit) {
+            return true;
+        }
+        current = parent;
+    }
+    false
+}
+
 pub struct DeleteOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
     trees: &'a Vec<QueryExpr<Variable>>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
+    /// Whether deleted entities must be snapshotted for later reads.
+    snapshot: bool,
 }
 
 impl<'a> DeleteOp<'a> {
-    pub const fn new(
+    pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
         trees: &'a Vec<QueryExpr<Variable>>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
+        let snapshot = snapshot_required(&runtime.plan, idx);
         Self {
             runtime,
             child,
             trees,
             idx,
+            snapshot,
         }
     }
 }
@@ -89,7 +116,7 @@ impl<'a> Iterator for DeleteOp<'a> {
             Err(e) => return Some(Err(e)),
         };
 
-        if let Err(e) = self.runtime.delete_batch(self.trees, &batch) {
+        if let Err(e) = self.runtime.delete_batch(self.trees, &batch, self.snapshot) {
             return Some(Err(e));
         }
 
@@ -101,6 +128,7 @@ impl Runtime<'_> {
         &self,
         trees: &Vec<QueryExpr<Variable>>,
         batch: &Batch<'_>,
+        snapshot: bool,
     ) -> Result<(), String> {
         // Partition trees: collect var IDs for simple variable references (fast path),
         // and keep references to non-variable trees (slow path).
@@ -126,16 +154,16 @@ impl Runtime<'_> {
                         Value::Relationship(rel) => rel_ids.push(rel),
                         val => {
                             // Paths, etc. go through per-entity path
-                            self.delete_entity(&val)?;
+                            self.delete_entity(&val, snapshot)?;
                         }
                     }
                 }
             }
             if !node_ids.is_empty() {
-                self.delete_nodes_bulk(&node_ids)?;
+                self.delete_nodes_bulk(&node_ids, snapshot)?;
             }
             if !rel_ids.is_empty() {
-                self.delete_relationships_bulk(&rel_ids)?;
+                self.delete_relationships_bulk(&rel_ids, snapshot)?;
             }
         }
 
@@ -150,7 +178,7 @@ impl Runtime<'_> {
                         Some(&env),
                         None,
                     )?;
-                    self.delete_entity(&value)?;
+                    self.delete_entity(&value, snapshot)?;
                 }
             }
         }
@@ -163,6 +191,7 @@ impl Runtime<'_> {
     fn delete_nodes_bulk(
         &self,
         node_ids: &[NodeId],
+        snapshot: bool,
     ) -> Result<(), String> {
         // First pass: partition into already-deleted, pending-created, and committed
         let mut committed = Vec::with_capacity(node_ids.len());
@@ -172,7 +201,7 @@ impl Runtime<'_> {
             }
             if self.pending.borrow().is_node_created(id) {
                 // Created in this txn — use existing per-node path
-                self.delete_entity(&Value::Node(id))?;
+                self.delete_entity(&Value::Node(id), snapshot)?;
             } else if !self.g.borrow().is_node_deleted(id) {
                 committed.push(id);
             }
@@ -182,11 +211,11 @@ impl Runtime<'_> {
             return Ok(());
         }
 
-        // Snapshot implicit-edge type/attrs only when a RETURN clause may
+        // Snapshot implicit-edge type/attrs only when a later clause may
         // reference them. The actual cascade delete and effects/replication
         // bookkeeping is handled at commit time by `delete_implicit_edges`,
         // which is O(E) once instead of O(E) per batch.
-        if !self.return_names.is_empty() {
+        if snapshot {
             // Build a set of committed IDs for O(1) lookups
             let committed_set: std::collections::HashSet<NodeId> =
                 committed.iter().copied().collect();
@@ -249,10 +278,10 @@ impl Runtime<'_> {
             }
         }
 
-        // Snapshot labels and attrs only when needed (i.e., a RETURN clause
-        // references the deleted nodes).  For the common write-only pattern
-        // `MATCH (n) DELETE n` this saves ~30-40ms on 100K nodes.
-        if !self.return_names.is_empty() {
+        // Snapshot labels and attrs only when needed (i.e., a later clause can
+        // still reference the deleted nodes).  For the common write-only
+        // pattern `MATCH (n) DELETE n` this saves ~30-40ms on 100K nodes.
+        if snapshot {
             let mut deleted_nodes = self.deleted_nodes.borrow_mut();
             deleted_nodes.reserve(committed.len());
             let g = self.g.borrow();
@@ -273,6 +302,7 @@ impl Runtime<'_> {
     fn delete_relationships_bulk(
         &self,
         rels: &[RelationshipId],
+        snapshot: bool,
     ) -> Result<(), String> {
         if rels.is_empty() {
             return Ok(());
@@ -303,7 +333,7 @@ impl Runtime<'_> {
 
         // Handle pending-created relationships via the per-entity path
         for rel_id in pending_created {
-            self.delete_entity(&Value::Relationship(rel_id))?;
+            self.delete_entity(&Value::Relationship(rel_id), snapshot)?;
         }
 
         if committed.is_empty() {
@@ -314,11 +344,8 @@ impl Runtime<'_> {
         {
             let mut pending = self.pending.borrow_mut();
 
-            if self.return_names.is_empty() {
-                // Fast path: no RETURN clause — skip snapshotting, just mark for deletion
-                pending.deleted_relationships_bulk(&committed);
-            } else {
-                // Need snapshot for RETURN to reference deleted relationship data.
+            if snapshot {
+                // Need snapshot for later clauses to reference deleted relationship data.
                 // Build edge_id -> type_id mapping using a single type matrix scan
                 // instead of N individual GraphBLAS iterators.
                 let edge_set: rustc_hash::FxHashSet<u64> =
@@ -358,6 +385,10 @@ impl Runtime<'_> {
                         DeletedRelationship::new(src, dst, type_name, actual),
                     );
                 }
+            } else {
+                // Fast path: nothing above can read them — skip snapshotting,
+                // just mark for deletion.
+                pending.deleted_relationships_bulk(&committed);
             }
         }
 
@@ -367,6 +398,7 @@ impl Runtime<'_> {
     pub fn delete_entity(
         &self,
         value: &Value,
+        snapshot: bool,
     ) -> Result<(), String> {
         match value {
             Value::Node(id) => {
@@ -379,8 +411,17 @@ impl Runtime<'_> {
                         self.pending.borrow_mut().delete_pending_node(id);
                     // Return the node ID and relationship IDs to the graph for reuse.
                     self.g.borrow_mut().return_node_id(id);
-                    for (rel_id, _, _) in &pending_rels {
-                        self.g.borrow_mut().return_relationship_id(*rel_id);
+                    // Snapshot the cascaded relationships so expressions still
+                    // holding them (e.g. `startNode(r)`) can be evaluated after
+                    // the node — and with it the edge — is gone.
+                    for (rel_id, src, dest, type_name, rel_attrs) in pending_rels {
+                        self.g.borrow_mut().return_relationship_id(rel_id);
+                        let rel_attrs =
+                            rel_attrs_to_map(&self.g.borrow(), rel_attrs.unwrap_or_default());
+                        self.deleted_relationships.borrow_mut().insert(
+                            rel_id,
+                            DeletedRelationship::new(src, dest, type_name, rel_attrs),
+                        );
                     }
                     self.deleted_nodes.borrow_mut().insert(
                         id,
@@ -421,7 +462,7 @@ impl Runtime<'_> {
                     }
                     // Mark as implicit — edge cleanup deferred to commit time
                     self.pending.borrow_mut().deleted_node(id);
-                    if !self.return_names.is_empty() {
+                    if snapshot {
                         let labels = self.g.borrow().get_node_label_ids(id).collect();
                         let attrs = self.get_node_attrs(id);
                         self.deleted_nodes
@@ -447,7 +488,7 @@ impl Runtime<'_> {
             }
             Value::Path(values) => {
                 for value in values.iter() {
-                    self.delete_entity(value)?;
+                    self.delete_entity(value, snapshot)?;
                 }
             }
             Value::Null => {}

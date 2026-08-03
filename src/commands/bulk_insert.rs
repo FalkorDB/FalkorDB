@@ -1,11 +1,13 @@
-use crate::query_session::QuerySession;
+use crate::query_session::{QuerySession, hold_gil};
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
     graph_core::{BlockedClient, ThreadedGraph, ffi},
     redis_type::GRAPH_TYPE,
+    telemetry,
 };
 use graph::{
     graph::graph::{Graph, NodeId, RelationshipId},
+    identifier_limits::validate_identifier_len,
     runtime::value::Value,
     threadpool::spawn,
 };
@@ -165,9 +167,14 @@ fn read_property(
 }
 
 /// Parse header: label names (colon-separated) + property names
+///
+/// `entity` names the kind of identifier the leading names carry — a label
+/// for a node token, a relationship type for an edge token — so an overlong
+/// name is reported the way the query paths report it.
 fn parse_header(
     data: &[u8],
     idx: &mut usize,
+    entity: &str,
 ) -> Result<(Vec<String>, Vec<Arc<String>>), String> {
     // Read colon-delimited label/type names
     let labels_str = read_cstring(data, idx)?;
@@ -175,6 +182,9 @@ fn parse_header(
         .split(':')
         .map(std::string::ToString::to_string)
         .collect();
+    for label in &labels {
+        validate_identifier_len(label, entity)?;
+    }
 
     // Read property count (4 bytes)
     let prop_count = read_u32_ne(data, idx)? as usize;
@@ -183,10 +193,28 @@ fn parse_header(
     let mut prop_names = Vec::with_capacity(prop_count);
     for _ in 0..prop_count {
         let name = read_cstring(data, idx)?;
+        validate_identifier_len(name, "Property name")?;
         prop_names.push(Arc::new(name.to_string()));
     }
 
     Ok((labels, prop_names))
+}
+
+/// Drop the graph key that a failed `BEGIN` batch had just created.
+///
+/// Mirrors C's bulk-insert cleanup (`cmd_bulk_insert.c`): a first batch that
+/// fails must leave no key behind, otherwise re-running the loader against a
+/// corrected input trips the "already exists" guard instead of retrying.
+///
+/// Requires the GIL — the caller either runs on the main Redis thread or holds
+/// it explicitly.
+fn discard_created_graph(
+    ctx: &Context,
+    key_str: &RedisString,
+) {
+    telemetry::delete_stream(ctx, &key_str.to_string());
+    let key = ctx.open_key_writable(key_str);
+    let _ = key.delete();
 }
 
 /// Yield to Redis if running on the main thread (non-null context).
@@ -206,7 +234,7 @@ fn process_node_token(
     raw_ctx: *mut raw::RedisModuleCtx,
 ) -> Result<(), String> {
     let mut idx = 0;
-    let (labels, prop_names) = parse_header(data, &mut idx)?;
+    let (labels, prop_names) = parse_header(data, &mut idx, "Label name")?;
 
     // Get or create label IDs
     let label_ids: Vec<_> = labels.iter().map(|l| g.get_label_id_mut(l)).collect();
@@ -278,7 +306,7 @@ fn process_edge_token(
     raw_ctx: *mut raw::RedisModuleCtx,
 ) -> Result<(), String> {
     let mut idx = 0;
-    let (type_names, prop_names) = parse_header(data, &mut idx)?;
+    let (type_names, prop_names) = parse_header(data, &mut idx, "Relationship type")?;
 
     if type_names.len() != 1 {
         return Err(format!(
@@ -421,30 +449,34 @@ pub fn graph_bulk_insert(
         (false, next)
     };
 
-    // Get or create graph
-    let key = ctx.open_key_writable(&key_str);
-    let graph = if begin {
-        if key
-            .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?
-            .is_some()
-        {
-            return Err(redis_module::RedisError::String(format!(
-                "Graph with name '{key_str}' cannot be created, as key '{key_str}' already exists."
+    // Get or create graph. The key handle is scoped to this block so a later
+    // failure can re-open the key to delete it (see `discard_created_graph`)
+    // without a second live handle to the same key.
+    let graph = {
+        let key = ctx.open_key_writable(&key_str);
+        if begin {
+            if key
+                .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?
+                .is_some()
+            {
+                return Err(redis_module::RedisError::String(format!(
+                    "Graph with name '{key_str}' cannot be created, as key '{key_str}' already exists."
+                )));
+            }
+            let g = Arc::new(RwLock::new(ThreadedGraph::new(
+                *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
+                &key_str.to_string(),
             )));
+            key.set_value(&GRAPH_TYPE, g.clone())?;
+            crate::graph_core::register_graph(key_str.to_string(), g.clone());
+            g
+        } else if let Some(g) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
+            g.clone()
+        } else {
+            return Err(redis_module::RedisError::Str(
+                "ERR Invalid graph operation on empty key",
+            ));
         }
-        let g = Arc::new(RwLock::new(ThreadedGraph::new(
-            *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
-            &key_str.to_string(),
-        )));
-        key.set_value(&GRAPH_TYPE, g.clone())?;
-        crate::graph_core::register_graph(key_str.to_string(), g.clone());
-        g
-    } else if let Some(g) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
-        g.clone()
-    } else {
-        return Err(redis_module::RedisError::Str(
-            "ERR Invalid graph operation on empty key",
-        ));
     };
 
     // Parse counts
@@ -506,6 +538,10 @@ pub fn graph_bulk_insert(
             }
             Err(e) => {
                 tg.graph.rollback();
+                drop(tg);
+                if begin {
+                    discard_created_graph(ctx, &key_str);
+                }
                 Err(redis_module::RedisError::String(format!(
                     "ERR bulk insert failed: {e}"
                 )))
@@ -520,6 +556,9 @@ pub fn graph_bulk_insert(
         .iter()
         .map(|rs| rs.as_slice().to_vec())
         .collect();
+    // `RedisString` is tied to the calling context, so carry the name as a
+    // plain `String` for the cleanup path to rebuild on the worker thread.
+    let graph_name = key_str.to_string();
     spawn(
         move || {
             let ts_ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
@@ -577,6 +616,14 @@ pub fn graph_bulk_insert(
                     raw::reply_with_simple_string(ts_ctx, c_reply.as_ptr());
                 }
                 Err(msg) => {
+                    if begin {
+                        // The session — and with it the GIL — is gone by now, so
+                        // retake the GIL for this keyspace write.
+                        let _gil = hold_gil();
+                        let cleanup_ctx = Context::new(ts_ctx);
+                        let key_name = cleanup_ctx.create_string(graph_name.as_str());
+                        discard_created_graph(&cleanup_ctx, &key_name);
+                    }
                     let cerr = ffi::sanitise_error(msg);
                     unsafe { ffi::reply_error(ts_ctx, cerr.as_ptr()) };
                 }

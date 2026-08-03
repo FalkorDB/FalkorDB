@@ -93,6 +93,7 @@ fn can_fuse(
             sibling_edges: p_sib,
             transposed: p_trans,
             chain: _p_chain,
+            optional: p_opt,
         },
         IR::CondTraverse {
             relationship: c_rel,
@@ -100,11 +101,18 @@ fn can_fuse(
             sibling_edges: c_sib,
             transposed: c_trans,
             chain: c_chain,
+            optional: c_opt,
         },
     ) = (parent_ct, child_ct)
     else {
         return false;
     };
+
+    // Optional traverses null-pad unmatched rows; fusing them into a chain
+    // would lose that per-hop semantics.
+    if *p_opt || *c_opt {
+        return false;
+    }
 
     // Direction simplification: only fuse when both hops are storage-direction.
     if *p_trans || *c_trans {
@@ -260,6 +268,7 @@ pub(super) fn fuse_anonymous_traverse(plan: &mut DynTree<IR>) {
             sibling_edges: parent_sib,
             transposed: false,
             chain: merged_chain,
+            optional: false,
         };
         // Attach the original grandchildren under the merged op (now parent
         // has [child_CT, g1, g2, ...]).

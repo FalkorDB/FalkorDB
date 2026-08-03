@@ -38,6 +38,7 @@
 //!
 //! All mutating subcommands (LOAD, DELETE, FLUSH) call `replicate_verbatim()`
 //! so that UDF state is consistent across Redis primary and replica nodes.
+use graph::identifier_limits::validate_identifier_len;
 use graph::runtime::functions::{GraphFn, flush_udfs, register_udf, unregister_udf};
 use graph::udf::get_udf_repo;
 use redis_module::{Context, NextArg, RedisError, RedisResult, RedisString, RedisValue};
@@ -112,6 +113,8 @@ fn udf_load(
             "Unknown option given: '{extra_str}'"
         )));
     }
+
+    validate_identifier_len(&lib_name, "Library name").map_err(RedisError::String)?;
 
     let repo = get_udf_repo();
     let function_names = repo

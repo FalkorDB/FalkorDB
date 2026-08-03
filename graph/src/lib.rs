@@ -66,11 +66,13 @@
 //! - [`storage`]: Shared storage seam (per-store backend registry; an in-memory
 //!   backend by default, an alternate backend swapped in by a statically-linked add-on)
 //! - [`entity_type`]: Node and relationship entity type discriminator
+//! - [`identifier_limits`]: Maximum accepted length of an identifier
 //! - [`threadpool`]: Thread pool for parallel query execution
 //! - [`udf`]: User-defined function registration and dispatch
 
 pub mod entity_type;
 pub mod graph;
+pub mod identifier_limits;
 pub mod index;
 pub mod locks;
 pub mod parser;

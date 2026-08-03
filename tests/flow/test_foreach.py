@@ -708,3 +708,67 @@ class testForeachFlow():
             self.env.assertTrue(True)
         except:
             self.env.assertTrue(False)
+
+    def test19_pattern_comprehension_in_list_expression(self):
+        """Tests that a pattern comprehension can be used in the FOREACH list
+        expression (https://github.com/FalkorDB/FalkorDB/issues/2176)"""
+
+        self.graph.delete()
+
+        self.graph.query("""CREATE (a:A {id: 1}), (b1:B {v: 1}), (b2:B {v: 2}),
+                                   (a)-[:R]->(b1), (a)-[:R]->(b2)""")
+
+        # correlated pattern comprehension, guarded by a CASE
+        res = self.graph.query("""
+        MATCH (a:A)
+        FOREACH (ignored IN
+            CASE WHEN size([(a)-[:R]->(b:B) | b]) > 1 THEN [1] ELSE [] END |
+            SET a.multi = true
+        )""")
+        self.env.assertEqual(res.properties_set, 1)
+
+        # uncorrelated pattern comprehension
+        res = self.graph.query("""
+        MATCH (a:A)
+        FOREACH (ignored IN
+            CASE WHEN size([(:A)-[:R]->(b:B) | b]) > 1 THEN [1] ELSE [] END |
+            SET a.literal_pc = true
+        )""")
+        self.env.assertEqual(res.properties_set, 1)
+
+        # pattern comprehension inside a nested FOREACH, referencing the
+        # enclosing FOREACH's loop variable
+        res = self.graph.query("""
+        MATCH (a:A)
+        WITH collect(a) AS nodes
+        FOREACH (x IN nodes |
+            FOREACH (ignored IN
+                CASE WHEN size([(x)-[:R]->(b:B) | b]) > 1 THEN [1] ELSE [] END |
+                SET x.nested = true
+            )
+        )""")
+        self.env.assertEqual(res.properties_set, 1)
+
+        self.get_res_and_assertEquals(
+            "MATCH (a:A) RETURN a.multi, a.literal_pc, a.nested",
+            [[True, True, True]])
+
+        # a false predicate must not run the body
+        res = self.graph.query("""
+        MATCH (a:A)
+        FOREACH (ignored IN
+            CASE WHEN size([(a)-[:R]->(b:B) | b]) > 5 THEN [1] ELSE [] END |
+            SET a.never = true
+        )""")
+        self.env.assertEqual(res.properties_set, 0)
+
+        # the comprehension itself drives the loop
+        res = self.graph.query("""
+        MATCH (a:A)
+        FOREACH (b IN [(a)-[:R]->(x:B) WHERE x.v = 2 | x] | SET b.filtered = 1)
+        """)
+        self.env.assertEqual(res.properties_set, 1)
+
+        self.get_res_and_assertEquals(
+            "MATCH (b:B) RETURN b.v, b.filtered ORDER BY b.v",
+            [[1, None], [2, 1]])

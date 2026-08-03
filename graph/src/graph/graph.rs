@@ -291,10 +291,11 @@ pub struct Graph {
     /// Graph-wide reverse index: `edge_id` → `compound_key(src, dst)` for O(1)
     /// endpoint lookup, stored as a dense vector indexed by edge id. Edge IDs
     /// are densely allocated, so a `Vec` is far more compact than a hash map
-    /// (8 B/edge vs ~31 B with control bytes + load-factor slack) and clones
-    /// faster across MVCC versions. Empty/deleted slots hold
-    /// [`EDGE_NO_ENDPOINT`].
-    edge_endpoints: Vec<u64>,
+    /// (8 B/edge vs ~31 B with control bytes + load-factor slack). Wrapped in
+    /// `Arc` so MVCC `new_version` is O(1); the first edge mutation per
+    /// version pays one `Arc::make_mut` deep clone, node-only writes pay
+    /// nothing. Empty/deleted slots hold [`EDGE_NO_ENDPOINT`].
+    edge_endpoints: Arc<Vec<u64>>,
     /// Node property storage
     node_attrs: AttributeStore,
     /// Relationship property storage
@@ -695,7 +696,7 @@ impl Graph {
             all_nodes_matrix: VersionedMatrix::<bool>::new(n, n),
             labels_matices: Vec::new(),
             relationship_matrices: Vec::new(),
-            edge_endpoints: Vec::new(),
+            edge_endpoints: Arc::new(Vec::new()),
             node_attrs: AttributeStore::new(),
             relationship_attrs: AttributeStore::new(),
             node_indexer: Indexer::default(),
@@ -771,7 +772,7 @@ impl Graph {
             all_nodes_matrix,
             labels_matices,
             relationship_matrices,
-            edge_endpoints,
+            edge_endpoints: Arc::new(edge_endpoints),
             node_attrs,
             relationship_attrs,
             node_indexer: Indexer::default(),
@@ -840,8 +841,9 @@ impl Graph {
         let node_attrs = self.node_attrs.new_version();
         let relationship_attrs = self.relationship_attrs.new_version();
 
-        // Tensor::dup() is copy-on-write; the graph-wide edge_endpoints vec is
-        // cloned once below.
+        // Tensor::dup() is copy-on-write; edge_endpoints is behind an Arc, so
+        // the clone below is O(1) and the deep copy is deferred to the first
+        // edge mutation in the new version.
         let relationship_matrices: Vec<Tensor> =
             self.relationship_matrices.iter().map(Tensor::dup).collect();
 
@@ -1981,16 +1983,16 @@ impl Graph {
         // Maintain the graph-wide reverse index alongside the tensor edges.
         // Reserve exactly: MVCC clones reset capacity to `len`, so amortized
         // doubling here would only leave ~2x slack behind, never save reallocs.
+        let endpoints = Arc::make_mut(&mut self.edge_endpoints);
         if let Some(&max_id) = rel_ids.iter().max() {
             let needed = max_id as usize + 1;
-            if needed > self.edge_endpoints.len() {
-                self.edge_endpoints
-                    .reserve_exact(needed - self.edge_endpoints.len());
-                self.edge_endpoints.resize(needed, EDGE_NO_ENDPOINT);
+            if needed > endpoints.len() {
+                endpoints.reserve_exact(needed - endpoints.len());
+                endpoints.resize(needed, EDGE_NO_ENDPOINT);
             }
         }
         for ((&src, &dst), &id) in srcs.iter().zip(dsts.iter()).zip(rel_ids.iter()) {
-            self.edge_endpoints[id as usize] = compound_key(src, dst);
+            endpoints[id as usize] = compound_key(src, dst);
         }
 
         self.adjacancy_matrix
@@ -2374,9 +2376,10 @@ impl Graph {
             return None;
         }
         let mut iter = matrices.into_iter();
-        let mut m = iter
-            .next()
-            .map_or_else(|| self.adjacancy_matrix.extract(), |t| t.extract());
+        let mut m = iter.next().map_or_else(
+            || self.adjacancy_matrix.extract(),
+            super::graphblas::tensor::Tensor::extract,
+        );
         for relationship_matrix in iter {
             m.set_pattern(
                 Some(relationship_matrix.fwd_dm()),
@@ -2430,9 +2433,10 @@ impl Graph {
             self.zero_matrix.extract()
         } else {
             let mut iter = matrices.into_iter();
-            let mut m = iter
-                .next()
-                .map_or_else(|| self.adjacancy_matrix.extract(), |t| t.extract());
+            let mut m = iter.next().map_or_else(
+                || self.adjacancy_matrix.extract(),
+                super::graphblas::tensor::Tensor::extract,
+            );
             for relationship_matrix in iter {
                 m.element_wise_add(None, None, Some(&relationship_matrix.extract()), None);
             }
@@ -2516,7 +2520,7 @@ impl Graph {
         &mut self,
         edge_id: u64,
     ) {
-        if let Some(slot) = self.edge_endpoints.get_mut(edge_id as usize) {
+        if let Some(slot) = Arc::make_mut(&mut self.edge_endpoints).get_mut(edge_id as usize) {
             *slot = EDGE_NO_ENDPOINT;
         }
     }
@@ -3735,19 +3739,32 @@ impl Graph {
         }
 
         // --- relation matrices ---
-        let mut relation_matrices_sz: usize = 0;
+        // Per-type tensors plus the combined adjacency matrix and the zero
+        // matrix, matching what C's `Graph_memoryUsage` folds in here.
+        let mut relation_matrices_sz: usize =
+            self.adjacancy_matrix.memory_usage() + self.zero_matrix.memory_usage();
         for rm in &self.relationship_matrices {
             relation_matrices_sz += rm.memory_usage();
         }
 
         // --- node block storage ---
-        let node_block_storage_sz: usize =
-            self.node_attrs.memory_usage() + self.deleted_nodes.serialized_size();
+        // Everything a node costs that is not its property values: the matrix
+        // recording that the node exists (the Rust stand-in for C's per-node
+        // DataBlock item, and the reason an attribute-less node is not free),
+        // the attribute store's unattributed bytes, and the deleted-id bitmap.
+        // Property values are reported under the attribute components, and
+        // `structural_memory_usage` excludes exactly those, so the two halves
+        // cover the store without overlap.
+        let node_block_storage_sz: usize = self.all_nodes_matrix.memory_usage()
+            + self.node_attrs.structural_memory_usage()
+            + self.deleted_nodes.serialized_size();
 
         // --- edge block storage ---
-        // Includes the graph-wide edge_id → compound_key reverse index, a dense
-        // vector holding one u64 per edge slot.
-        let edge_block_storage_sz: usize = self.relationship_attrs.memory_usage()
+        // Mirrors the node side: the matrix recording each edge's existence and
+        // type, plus the graph-wide edge_id → compound_key reverse index (a dense
+        // vector holding one u64 per edge slot).
+        let edge_block_storage_sz: usize = self.relationship_type_matrix.memory_usage()
+            + self.relationship_attrs.structural_memory_usage()
             + self.deleted_relationships.serialized_size()
             + self.edge_endpoints.capacity() * std::mem::size_of::<u64>();
 

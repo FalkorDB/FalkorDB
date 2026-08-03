@@ -37,8 +37,14 @@ class testKeyspaceAccesses(FlowTestsBase):
             assert(False)
         except redis.ResponseError as e:
             # Expecting an error.
-            assert("WRONGTYPE" in str(e) or "Existing key has wrong Redis type" in str(e))
+            self.env.assertContains("Existing key has wrong Redis type", str(e))
             pass
+
+        try:
+            self.redis_con.execute_command("GRAPH.DELETE", "integer_key")
+            assert(False)
+        except redis.ResponseError as e:
+            self.env.assertContains("Existing key has wrong Redis type", str(e))
 
     # Fail gracefully on attempting a graph deletion of an empty key.
     def test02_graph_delete_on_empty_key(self):

@@ -39,6 +39,7 @@
 #![allow(clippy::cast_precision_loss)]
 use crate::{
     graph::graph::{Graph, NodeId, RelationshipId},
+    identifier_limits::validate_identifier_len,
     index::indexer::{IndexOptions, IndexType, TextIndexOptions, VectorIndexOptions},
     parser::ast::{ExprIR, QueryExpr, Variable},
     planner::IR,
@@ -234,7 +235,7 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                     vars.push(var.clone());
                 }
                 IR::Delete { .. }
-                | IR::Argument
+                | IR::Argument(_)
                 | IR::Set(_)
                 | IR::Remove(_)
                 | IR::Filter(_)
@@ -282,10 +283,6 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                     relationship: query_relationship,
                     ..
                 }
-                | IR::CondVarLenTraverse {
-                    relationship: query_relationship,
-                    ..
-                }
                 | IR::AllShortestPaths(query_relationship)
                 | IR::ExpandInto {
                     relationship: query_relationship,
@@ -294,6 +291,18 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                     vars.push(query_relationship.alias.clone());
                     vars.push(query_relationship.from.alias.clone());
                     vars.push(query_relationship.to.alias.clone());
+                }
+                IR::CondVarLenTraverse {
+                    relationship: query_relationship,
+                    path_var,
+                    ..
+                } => {
+                    vars.push(query_relationship.alias.clone());
+                    vars.push(query_relationship.from.alias.clone());
+                    vars.push(query_relationship.to.alias.clone());
+                    if let Some(path_var) = path_var {
+                        vars.push(path_var.clone());
+                    }
                 }
                 IR::PathBuilder(query_paths) => {
                     for path in query_paths {
@@ -626,7 +635,9 @@ impl<'a> Runtime<'a> {
     ) -> Vec<NodeIdx<Dyn<IR>>> {
         let node = self.plan.node(idx);
         match node.data() {
-            IR::Union | IR::Argument | IR::CreateIndex { .. } | IR::DropIndex { .. } => Vec::new(),
+            IR::Union | IR::Argument(_) | IR::CreateIndex { .. } | IR::DropIndex { .. } => {
+                Vec::new()
+            }
             IR::CartesianProduct => node.children().map(|c| c.idx()).collect(),
             IR::ValueHashJoin { .. } => {
                 vec![node.child(0).idx(), node.child(1).idx()]
@@ -854,6 +865,7 @@ impl<'a> Runtime<'a> {
                 sibling_edges,
                 transposed,
                 chain,
+                optional,
             } => {
                 // Account for both limit and skip so the traverse produces
                 // enough rows for a downstream SkipOp + LimitOp pipeline.
@@ -867,6 +879,7 @@ impl<'a> Runtime<'a> {
                     sibling_edges,
                     *transposed,
                     chain,
+                    *optional,
                     idx,
                     record_cap,
                 )))
@@ -1177,6 +1190,8 @@ impl<'a> Runtime<'a> {
                 relationship: relationship_pattern,
                 edge_filter,
                 emit_path,
+                path_var,
+                ..
             } => {
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::CondVarLenTraverse(CondVarLenTraverseOp::new(
@@ -1185,6 +1200,7 @@ impl<'a> Runtime<'a> {
                     relationship_pattern,
                     edge_filter.as_ref(),
                     *emit_path,
+                    path_var.as_ref().map(|v| v.id),
                     idx,
                 )))
             }
@@ -1206,7 +1222,7 @@ impl<'a> Runtime<'a> {
                     idx,
                 )))
             }
-            IR::Argument => Ok(BatchOp::Argument(Some(self.default_batch()))),
+            IR::Argument(_) => Ok(BatchOp::Argument(Some(self.default_batch()))),
             IR::CreateIndex {
                 label,
                 attrs,
@@ -1344,6 +1360,7 @@ impl<'a> Runtime<'a> {
         key: &Arc<String>,
         value: Value,
     ) -> Result<(), String> {
+        validate_identifier_len(key, "Property name")?;
         let attr_id = Self::memo_lookup(&self.node_attr_id_memo, key).unwrap_or_else(|| {
             let attr_id = self.g.borrow_mut().get_or_create_node_attr_id(key);
             Self::memo_insert(&self.node_attr_id_memo, key, attr_id);
@@ -1362,6 +1379,7 @@ impl<'a> Runtime<'a> {
         key: &Arc<String>,
         value: Value,
     ) -> Result<(), String> {
+        validate_identifier_len(key, "Property name")?;
         let attr_id = Self::memo_lookup(&self.rel_attr_id_memo, key).unwrap_or_else(|| {
             let attr_id = self.g.borrow_mut().get_or_create_rel_attr_id(key);
             Self::memo_insert(&self.rel_attr_id_memo, key, attr_id);

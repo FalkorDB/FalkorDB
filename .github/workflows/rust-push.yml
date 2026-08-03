@@ -19,10 +19,11 @@ on:
       - "[0-9]*.[0-9]*"
 
 permissions:
-  # deployments permission to deploy GitHub pages website
-  deployments: write
-  # contents permission to update benchmark contents in gh-pages branch
-  contents: write
+  # `deployments: write` + `contents: write` used to exist only so the benchmark
+  # trend could publish to the gh-pages branch. That job is gone, and every
+  # remaining job either declares its own permissions (find-pr, docker,
+  # promote-edge) or needs read only.
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -39,7 +40,7 @@ jobs:
       file_changed: ${{ steps.check.outputs.changed }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -116,7 +117,7 @@ jobs:
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - name: Login to GHCR
-        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -134,8 +135,9 @@ jobs:
   # Promote the merging PR's runtime RC images (rc-pr-<N>) to the edge-rs
   # channel on every trunk merge — same byte-identical retag, no rebuild.
   # `edge-rs` distinguishes the Rust port from the C port's `:edge` on the
-  # shared falkordb/falkordb Docker Hub repo. GHCR-only; Docker Hub publish
-  # happens at release time via release-image.yml.
+  # shared falkordb/falkordb repos, so publishing to BOTH registries cannot
+  # clobber the C channel. Bare `:latest` is untouched (that pointer only moves
+  # at 6.0 GA, via release-image.yml).
   promote-edge:
     needs: find-pr
     if: ${{ needs.find-pr.outputs.pr_n != '' && contains(fromJSON('["refs/heads/main","refs/heads/main-rs"]'), github.ref) }}
@@ -151,11 +153,17 @@ jobs:
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - name: Login to GHCR
-        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Promote rc-pr-${{ needs.find-pr.outputs.pr_n }} → edge-rs (${{ matrix.repo }})
         env:
@@ -163,47 +171,14 @@ jobs:
           REPO:   ${{ matrix.repo }}
         run: |
           set -euo pipefail
+          # One imagetools call fans the SAME multi-arch manifest out to both
+          # registries — still a retag, never a rebuild, so the bytes PR CI
+          # validated are the bytes that ship. Same pattern release-image.yml
+          # uses for semver tags.
           docker buildx imagetools create \
             -t "ghcr.io/falkordb/${REPO}:edge-rs" \
+            -t "docker.io/falkordb/${REPO}:edge-rs" \
             "ghcr.io/falkordb/${REPO}:rc-pr-${PR_NUM}"
-
-  # Feed the canonical, continuously-updated A/B benchmark trend (production
-  # C `:edge` vs this repo's freshly-promoted `:edge-rs`) every time
-  # promote-edge succeeds. This is the only trigger that ever publishes to
-  # gh-pages' /benchmark/ root — see _benchmark.yml (the reusable pipeline)
-  # and benchmark.yml (the PR-label/slash-command/manual-dispatch entry
-  # points, which publish to /benchmark/branch/<view>/ previews instead).
-  #
-  # The trend runs the medium dataset with 5% writes and the fixture-dependent
-  # profile (text + vector index flows) — i.e. the same workload a PR's
-  # benchmark-medium label produces (minus the PR's 3rd variant), so a PR run is
-  # a faithful preview of what lands here on merge. This deliberately reset the
-  # trend baseline (2026-07) away from the earlier small/read-only/baseline
-  # workload — pre-reset points are not comparable to post-reset ones.
-  benchmark-edge:
-    needs: [find-pr, promote-edge]
-    if: ${{ contains(fromJSON('["refs/heads/main","refs/heads/main-rs"]'), github.ref) && needs.promote-edge.result == 'success' }}
-    uses: ./.github/workflows/_benchmark.yml
-    permissions:
-      contents: write
-      # _benchmark.yml's merge job declares pull-requests: write; a reusable
-      # workflow can't request a permission the caller didn't grant, so omitting
-      # this made the whole Rust Push run startup_fail. (The canonical run never
-      # comments — no PR — but the grant must still cover the declaration.)
-      pull-requests: write
-    with:
-      image_a: docker.io/falkordb/falkordb-server:edge
-      image_b: ghcr.io/falkordb/falkordb-server:edge-rs
-      view: main
-      is_canonical: true
-      sizes: '["medium"]'
-      write_ratio: "0.05"
-      query_profile: "fixture-dependent"
-      # Attribute this trend snapshot to the PR that merged into main, so the
-      # drill-down chart can show which PR each data point came from. Kept as
-      # snapshot_pr_number (not pr_number) so the canonical run never comments.
-      snapshot_pr_number: ${{ needs.find-pr.outputs.pr_n }}
-    secrets: inherit
 
   lint:
     runs-on: ubuntu-latest
@@ -213,7 +188,7 @@ jobs:
       - docker
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup default stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
@@ -231,7 +206,7 @@ jobs:
       - docker
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup default stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
@@ -264,7 +239,7 @@ jobs:
       - docker
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup default stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
@@ -282,7 +257,7 @@ jobs:
     outputs:
       test_files: ${{ steps.set-matrix.outputs.test_files }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Generate test matrix
         id: set-matrix
         run: |
@@ -301,7 +276,7 @@ jobs:
       matrix:
         test_file: ${{ fromJson(needs.flow-test-matrix.outputs.test_files) }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Download release binary
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -328,7 +303,7 @@ jobs:
     needs: docker
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup default stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
@@ -384,7 +359,7 @@ jobs:
       - docker
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup default stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
@@ -411,7 +386,7 @@ jobs:
       matrix:
         test_file: ${{ fromJson(needs.flow-test-matrix.outputs.test_files) }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Download coverage binary
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -445,7 +420,7 @@ jobs:
     needs: docker
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup default nightly
       - run: rustup component add llvm-tools-preview
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5

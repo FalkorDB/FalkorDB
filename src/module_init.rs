@@ -43,7 +43,7 @@ use graph::{
 use redis_module::{
     Context, ContextFlags, REDISMODULE_OK, RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free,
     RedisModule_Realloc, RedisModule_SubscribeToServerEvent, RedisModuleCtx, RedisModuleEvent,
-    Status,
+    Status, logging::log_warning,
 };
 use std::{os::raw::c_int, os::raw::c_void, panic, sync::atomic::AtomicI64};
 
@@ -148,18 +148,7 @@ pub fn graph_init(
             std::backtrace::Backtrace::force_capture()
         )
         .replace('\0', " ");
-        unsafe {
-            if let Some(log) = graph::index::redisearch::redis::RedisModule_Log
-                && let Ok(c_msg) = std::ffi::CString::new(msg)
-            {
-                log(
-                    std::ptr::null_mut(),
-                    c"warning".as_ptr(),
-                    c"%s".as_ptr(),
-                    c_msg.as_ptr(),
-                );
-            }
-        }
+        log_warning(msg);
         std::process::exit(1);
     }));
 

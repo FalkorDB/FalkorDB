@@ -47,6 +47,37 @@ use crate::{
 use super::super::{IR, subtree_contains};
 use super::{collect_expr_variables, collect_subtree_variables};
 
+/// Variables a filter hoisted directly above `node` is allowed to reference,
+/// for the env-resetting operators only.
+///
+/// `Project` and `Aggregate` establish a fresh environment: only the variables
+/// they name survive them, so a filter placed above one cannot see anything
+/// else — not the variables its own subtree matched, and not the variables an
+/// enclosing `Apply` propagates through `Argument`. Returns `None` for
+/// operators that pass their input environment through unchanged, where the
+/// subtree's variables are the right answer.
+fn branch_output_variables(node: &orx_tree::DynNode<IR>) -> Option<HashSet<u32>> {
+    match node.data() {
+        IR::Project { exprs, copies } => Some(
+            exprs
+                .iter()
+                .map(|(v, _)| v.id)
+                .chain(copies.iter().map(|(v, _)| v.id))
+                .collect(),
+        ),
+        IR::Aggregate {
+            names, projections, ..
+        } => Some(
+            names
+                .iter()
+                .map(|v| v.id)
+                .chain(projections.iter().map(|(v, _)| v.id))
+                .collect(),
+        ),
+        _ => None,
+    }
+}
+
 /// Pushes filter conjuncts down through nodes.
 ///
 /// Transforms:
@@ -138,7 +169,7 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                         IR::Project { .. }
                             | IR::Aggregate { .. }
                             | IR::Merge { .. }
-                            | IR::Argument
+                            | IR::Argument(_)
                             | IR::IncludePending { .. }
                             | IR::SemiApply
                             | IR::AntiSemiApply
@@ -147,7 +178,13 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                     )
             }) {
                 for grandchild in child.children() {
-                    children.push((grandchild.idx(), collect_subtree_variables(&grandchild)));
+                    // `resets_env` branches expose only their named outputs, so
+                    // they must not inherit Argument-propagated variables below.
+                    let (vars, resets_env) = match branch_output_variables(&grandchild) {
+                        Some(outputs) => (outputs, true),
+                        None => (collect_subtree_variables(&grandchild), false),
+                    };
+                    children.push((grandchild.idx(), vars, resets_env));
                 }
             }
 
@@ -162,7 +199,7 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
             // available in the right branch via Argument.
             if let Some(child) = optimized_plan.node(idx).get_child(0)
                 && matches!(child.data(), IR::Apply)
-                && let Some((_, left_vars)) = children.first()
+                && let Some((_, left_vars, _)) = children.first()
             {
                 inherited.extend(left_vars.iter());
             }
@@ -212,8 +249,11 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
 
             // Augment variable sets for subtrees containing Argument leaves.
             if !inherited.is_empty() {
-                for (child_idx, vars) in &mut children {
-                    if subtree_contains(optimized_plan, *child_idx, |ir| matches!(ir, IR::Argument))
+                for (child_idx, vars, resets_env) in &mut children {
+                    if !*resets_env
+                        && subtree_contains(optimized_plan, *child_idx, |ir| {
+                            matches!(ir, IR::Argument(_))
+                        })
                     {
                         vars.extend(&inherited);
                     }
@@ -228,7 +268,7 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
             for conjunct in conjuncts {
                 let conj_vars = collect_expr_variables(&conjunct);
                 let mut matched_any = false;
-                for (i, (_, child_vars)) in children.iter().enumerate() {
+                for (i, (_, child_vars, _)) in children.iter().enumerate() {
                     if conj_vars.iter().all(|v| child_vars.contains(v)) {
                         child_conjuncts[i].push(conjunct.clone());
                         matched_any = true;
@@ -259,7 +299,7 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                     let solving: Vec<usize> = children
                         .iter()
                         .enumerate()
-                        .filter(|(_, (_, child_vars))| {
+                        .filter(|(_, (_, child_vars, _))| {
                             conj_vars.iter().any(|v| child_vars.contains(v))
                         })
                         .map(|(i, _)| i)
