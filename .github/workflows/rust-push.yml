@@ -4,14 +4,14 @@ on:
   push:
     # Mirror rust-pr.yml's filter so post-merge CI on version branches works
     # the same as on a trunk. Channel-pointer promotion (toolchain :latest,
-    # edge-rs) is still gated to a TRUNK further down — see the `if:` on those
+    # :edge) is still gated to a TRUNK further down — see the `if:` on those
     # jobs. The version glob is `[0-9]*.[0-9]*` (glob, not regex; `*` is
     # multi-char).
     #
     # TRUNK = `main` (this repo) or `main-rs` (the interim Rust branch in
     # FalkorDB/FalkorDB, which carries this tree while the C engine keeps
     # `master`). Both promote the same channels, so the migration doesn't
-    # silently stop publishing `edge-rs`. Gates below spell this as
+    # silently stop publishing the rolling image. Gates below spell this as
     # contains(fromJSON('["refs/heads/main","refs/heads/main-rs"]'), github.ref).
     branches:
       - "main"
@@ -56,7 +56,7 @@ jobs:
           fi
   # Look up the merging PR once and share the number with the promote-* jobs.
   # Same SHA→PR API call used by release-image.yml's release-event flow.
-  # Trunk-only: version branches don't promote toolchain or edge-rs.
+  # Trunk-only: version branches don't promote toolchain or :edge.
   #
   # A commit with no PR *in this repo* is not an error — it just means no
   # rc-pr-<N> image was ever built for it, so there is nothing to promote. The
@@ -93,7 +93,7 @@ jobs:
             #   - someone pushes (or force-pushes) straight to a trunk.
             # Emit an empty pr_n; the promote-* jobs below skip on it. Downside
             # accepted: a direct push to a trunk now skips promotion quietly
-            # instead of erroring, so watch for this notice if edge-rs stops
+            # instead of erroring, so watch for this notice if :edge stops
             # advancing.
             echo "::notice::commit ${SHA} has no merged PR in ${REPO}; skipping channel promotion (no rc-pr-<N> image to retag)"
             echo "n=" >> "$GITHUB_OUTPUT"
@@ -132,12 +132,15 @@ jobs:
             -t ghcr.io/falkordb/falkordb-build:latest \
             "ghcr.io/falkordb/falkordb-build:pr-${PR_NUM}"
 
-  # Promote the merging PR's runtime RC images (rc-pr-<N>) to the edge-rs
-  # channel on every trunk merge — same byte-identical retag, no rebuild.
-  # `edge-rs` distinguishes the Rust port from the C port's `:edge` on the
-  # shared falkordb/falkordb repos, so publishing to BOTH registries cannot
-  # clobber the C channel. Bare `:latest` is untouched (that pointer only moves
-  # at 6.0 GA, via release-image.yml).
+  # Promote the merging PR's runtime RC images (rc-pr-<N>) to the rolling
+  # `:edge` channel on every trunk merge — same byte-identical retag, no
+  # rebuild.
+  #
+  # `:edge` serves the Rust engine now that this tree is the default branch.
+  # The C engine's rolling images moved to the `edge-c` family on `master`, and
+  # C never published to GHCR, so there is no contention on either registry.
+  # `:edge-rs` stays as a deprecated alias. Bare `:latest` is untouched — that
+  # pointer only moves at 6.0 GA, via release-image.yml. See issue #2290.
   promote-edge:
     needs: find-pr
     if: ${{ needs.find-pr.outputs.pr_n != '' && contains(fromJSON('["refs/heads/main","refs/heads/main-rs"]'), github.ref) }}
@@ -165,7 +168,7 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Promote rc-pr-${{ needs.find-pr.outputs.pr_n }} → edge-rs (${{ matrix.repo }})
+      - name: Promote rc-pr-${{ needs.find-pr.outputs.pr_n }} → :edge (${{ matrix.repo }})
         env:
           PR_NUM: ${{ needs.find-pr.outputs.pr_n }}
           REPO:   ${{ matrix.repo }}
@@ -175,7 +178,17 @@ jobs:
           # registries — still a retag, never a rebuild, so the bytes PR CI
           # validated are the bytes that ship. Same pattern release-image.yml
           # uses for semver tags.
+          # `:edge` is the primary rolling channel now that this tree is the
+          # default branch. `:edge-rs` is kept as an alias so anything already
+          # pinned to it keeps working — same manifest, so the extra tags cost
+          # nothing. It is deprecated and will be dropped once consumers move.
+          #
+          # No contention with the C engine: its rolling images moved to the
+          # `edge-c` family on `master`, and C never published to GHCR at all.
+          # See issue #2290.
           docker buildx imagetools create \
+            -t "ghcr.io/falkordb/${REPO}:edge" \
+            -t "docker.io/falkordb/${REPO}:edge" \
             -t "ghcr.io/falkordb/${REPO}:edge-rs" \
             -t "docker.io/falkordb/${REPO}:edge-rs" \
             "ghcr.io/falkordb/${REPO}:rc-pr-${PR_NUM}"
