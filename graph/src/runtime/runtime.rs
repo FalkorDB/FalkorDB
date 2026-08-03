@@ -1305,11 +1305,21 @@ impl<'a> Runtime<'a> {
                 let idx = expr.root().idx();
                 super::eval::ExprEval::from_runtime(this).eval(expr, idx, Some(vars), None)
             }? {
-                Value::Int(id) => id as u64,
+                Value::Int(id) => id,
                 _ => {
                     return Err(String::from("Node ID must be an integer"));
                 }
             };
+            // IDs are non-negative: negative equality/upper bounds cannot match,
+            // while negative lower bounds are trivially satisfied.
+            if id < 0 {
+                match op {
+                    ExprIR::Eq | ExprIR::Lt | ExprIR::Le => return Ok(None),
+                    ExprIR::Gt | ExprIR::Ge => continue,
+                    _ => unreachable!(),
+                }
+            }
+            let id = id as u64;
             match op {
                 ExprIR::Eq => {
                     if id < min || id > max {
