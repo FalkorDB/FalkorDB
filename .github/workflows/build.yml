@@ -918,16 +918,29 @@ jobs:
     permissions:
       actions: write
     steps:
-      - name: Dispatch release-image.yml for the edge channel
+      - name: Dispatch release-image.yml for the edge-c channel
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          # `edge-c`, not `edge`: now that `main` (Rust engine) is the default
+          # branch, the plain `:edge` channel serves the Rust image, published by
+          # rust-push.yml on `main`. This is the C engine's own rolling channel.
+          #
+          # release-image.yml derives EVERY tag it pushes from TAG_NAME, so this
+          # one value renames the whole family in step:
+          #   edge-c, edge-c-x64, edge-c-arm64v8, edge-c-alpine{,-x64,-arm64v8},
+          #   edge-c-rhel8-x64, edge-c-rhel9-x64, edge-c-amazonlinux2023-x64
+          # and the falkordb-server equivalents.
+          #
+          # Renaming rather than deleting keeps a rolling image for testing
+          # `master` before a 5.x release, and makes reverting the channel swap a
+          # one-line change. See issue #2290.
           gh workflow run release-image.yml --ref master \
-            -f tag=edge \
+            -f tag=edge-c \
             -f commit_sha="$SHA" \
             -f run_falkordb_cloud_update=false \
             -f run_testflight_workflow=false
-          echo "dispatched release-image.yml for edge at ${SHA}"
+          echo "dispatched release-image.yml for edge-c at ${SHA}"
