@@ -66,4 +66,3 @@ class testOperatorPrecedence():
                   RETURN count(*)"""
         result = self.g.query(query)
         self.env.assertTrue(result.result_set[0][0] >= 0)
-
