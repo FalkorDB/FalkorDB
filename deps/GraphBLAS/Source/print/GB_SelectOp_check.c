@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// GB_SelectOp_check: check and print a select operator
+// GB_SelectOp_check: check and print a select operator (HISTORICAL)
 //------------------------------------------------------------------------------
 
 // SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.

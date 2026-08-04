@@ -6,22 +6,26 @@ function [arg1, arg2] = bandwidth (G, uplo)
 %
 % See also GrB/isbanded, GrB/isdiag, GrB/istril, GrB/istriu.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
+
+if (gb_is_grb (G))
+    G = struct (G) ;
+end
 
 if (nargin == 1)
     % compute lo, and compute hi if present in output argument list
-    [lo, hi] = gbbandwidth (G.opaque, 1, nargout > 1) ;
+    [lo, hi] = gbmex_bandwidth (G, 1, nargout > 1) ;
     arg1 = lo ;
     arg2 = hi ;
 else
     if (nargout > 1)
         error ('GrB:error', 'too many output arguments') ;
     elseif isequal (uplo, 'lower')
-        [lo, ~] = gbbandwidth (G.opaque, 1, 0) ;
+        [lo, ~] = gbmex_bandwidth (G, 1, 0) ;
         arg1 = lo ;
     elseif isequal (uplo, 'upper')
-        [~, hi] = gbbandwidth (G.opaque, 0, 1) ;
+        [~, hi] = gbmex_bandwidth (G, 0, 1) ;
         arg1 = hi ;
     else
         error ('GrB:error', 'unrecognized option') ;

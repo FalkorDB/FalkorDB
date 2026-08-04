@@ -20,9 +20,32 @@ see the documentation in the \verb'GraphBLAS/GraphBLAS' folder for details.
 Start with the \verb'README.md' file in that directory.  An easy-to-read output
 of the MATLAB demos can be found in \verb'GraphBLAS/GraphBLAS/demo/html'.
 
-The MATLAB/Octave interface adds the \verb'@GrB' class, which is an opaque
-MATLAB/Octave object that contains a GraphBLAS matrix, either double or single
-precision (real or complex), boolean, or any of the built-in integer types.
+The quick start instructions on Linux or Windows are to type the following in
+MATLAB/Octave (assuming you have GraphBLAS installed in your home directory).
+See the \verb'README.md' for additional required instructions if you have a Mac.
+
+{\footnotesize
+    \begin{verbatim}
+        cd ~/GraphBLAS/GraphBLAS
+        graphblas_install
+        addpath (pwd)
+        cd test
+        gbtest \end{verbatim}}
+
+The MATLAB/Octave interface provides two classes that hold a matrix, vector or
+scalar: \verb'GrB' value class, and the \verb'GhB' handle class.  The latter
+is new to GraphBLAS 10.4.0.  It exploits the memory arenas and is much faster
+than using \verb'GrB' value class.  The two classes can be mixed arbitrarily,
+along with MATLAB/Octave built-in matrices.  For details, type the following
+in the MATLAB/Octave command window:
+
+{\footnotesize
+    \begin{verbatim}
+        help GrB
+        help GhB \end{verbatim}}
+
+Both objects contain a GraphBLAS matrix, either double or single precision
+(real or complex), boolean, or any of the built-in integer types.
 MATLAB/Octave sparse and full matrices can be arbitrarily mixed with GraphBLAS
 matrices.  The following overloaded operators and methods all work as you would
 expect for any matrix.  The matrix multiplication \verb'A*B' uses the
@@ -34,18 +57,51 @@ conventional \verb'PLUS_TIMES' semiring.
     -A     +A    ~A     A'     A.'    A&B    A|B     b\A    C(I,J)=A
     A~=B   A>B   A==B   A<=B   A>=B   A<B    [A,B]   [A;B]  A(1:end,1:end) \end{verbatim}}
 
-For a list of overloaded operations and static methods, type
-\verb'methods GrB' in MATLAB/Octave, or \verb'help GrB' for more details.
+The new \verb'GhB' handle object is faster than the \verb'GrB' value object
+because the former can be modified in-place with calls to \verb'GhB' methods,
+and it can exploit the non-blocking feature of GraphBLAS.  The non-blocking
+mode of GraphBLAS allows work to be left pending in a matrix, to be done later
+when it is more efficient.  This cannot be done with the \verb'GrB' value
+object.
+
+All methods work on any mix of \verb'GrB', \verb'GhB', and/or MATLAB/Octave
+built-in matrices.  A few new methods work only on \verb'GhB' methods; see the
+MATLAB \verb'help GhB' for details.
+
+The only minor downside to the \verb'GhB' handle object is that it changes the
+MATLAB/Octave evaluation of a simple assignment statement, \verb'C=A'.  If
+\verb'A' is a \verb'GrB' value object, \verb'C' is created as a copy of
+\verb'A', and changing either one later on does not change the other.  If
+instead \verb'A' is a \verb'GhB' handle object, \verb'C=A' does not make a
+copy.  Instead \verb'C' is now just another name of the \verb'A' matrix.
+Changing \verb'A' causes \verb'C' to change, and visa versa.  To construct
+\verb'C' as a deep copy of the \verb'GhB' object \verb'A', use \verb'C=GhB(A)'
+instead of \verb'C=A'.  This is a built-in feature of any handle class in
+MATLAB/Octave that cannot be changed.  The handle object characteristics are
+required for the \verb'GhB' matrix to hold pending work, but this comes with a
+change in the semantics of \verb'C=A' that cannot be avoided.
+
+Internally, the two classes require the use of different memory arenas,
+introduced in GraphBLAS 10.4.0 and described in Section~\ref{sec:arenas}.  The
+\verb'GrB' object uses \verb'mxMalloc' and \verb'mxFree', while the \verb'GhB'
+handle object uses the system \verb'malloc' and \verb'free'.  The use of
+different arenas are not visible to user application code written in
+MATLAB/Octave, however.
 
 {\bf Limitations:}
-Some features for MATLAB/Octave sparse matrices are not yet available for
+Some features for MATLAB/Octave matrices are not yet available for
 GraphBLAS matrices.  Some of these may be added in future releases.
 
 \begin{packed_itemize}
-    \item \verb'GrB' matrices with dimension larger than \verb'2^53' do not
-        display properly in the \verb'whos' command.  The size is displayed
-        correctly with \verb'disp' or \verb'display'.
-    \item Non-blocking mode is not exploited.
+    \item The MATLAB \verb'whos' command:  \verb'GrB' matrices with dimension
+        larger than \verb'2^53' do not display properly in the \verb'whos'
+        command.  The dimensions are displayed correctly with \verb'disp' or
+        \verb'display'.  The size in bytes of \verb'GhB' matrices are not
+        displayed properly by the \verb'whos' command; they just show 8 bytes
+        regardless of the size of the matrix.  Use \verb'GhB.bytes(A)' or
+        \verb'GrB.bytes(A)' to obtain the true size in bytes of any matrix A
+        (\verb'A' can be a built-in MATLAB/Octave matrices, \verb'GrB'
+        matrices, or \verb'GhB' matrices).
     \item Linear indexing: \verb'A(:)' for a 2D matrix, and \verb'I=find(A)'.
     \item Singleton expansion.
     \item Dynamically growing arrays, where \verb'C(i)=x' can increase

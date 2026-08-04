@@ -17,8 +17,8 @@
 //      // to unpack all of A:
 //      GxB_unpack_HyperHash (A, &Y, desc) ;    // first unpack A->Y into Y
 //      GxB_Matrix_unpack_HyperCSC (A,          // then unpack the rest of A
-//          &Ap, &Ah, &Ai, &Ax, &Ap_size, &Ah_size, &Ai_size, &Ax_size,
-//          &iso, &nvec, &jumbled, descriptor) ;
+//          &Ap, &Ah, &Ai, &Ax, &Ap_memsize, &Ah_memsize, &Ai_memsize,
+//          &Ax_memsize, &iso, &nvec, &jumbled, descriptor) ;
 //
 //      // use the unpacked contents of A here, but do not change Ah or nvec.
 //      ...

@@ -1,12 +1,16 @@
-function gbtest31
-%GBTEST31 test GrB and casting
+function gbtest31 (ghb)
+%GBTEST31 test GrB, GhB, and casting
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
+
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
 types = gbtest_types ;
 fprintf ('gbtest31: typecasting\n') ;
-rng ('default') ;
 
 for k = 1:length (types)
     type = types {k} ;
@@ -15,24 +19,24 @@ for k = 1:length (types)
     for m = 0:5
         for n = 0:5
             A = gbtest_cast (zeros (m, n), type) ;
-            G = GrB (m, n, type) ;
-            C = GrB (G, type) ;
+            G = gtb (ghb, m, n, type) ;
+            C = gtb (ghb, G, type) ;
             assert (gbtest_eq (A, C)) ;
         end
     end
 
     A = 100 * rand (5, 5) ;
     A = gbtest_cast (A, type) ;
-    G = GrB (A) ;
+    G = gtb (ghb, A) ;
 
     G2 = sparse (G) ;
     assert (gbtest_eq (G, G2)) ;
 
     for k2 = 1:length (types)
         type2 = types {k} ;
-        G2 = GrB (G, type2) ;
+        G2 = gtb (ghb, G, type2) ;
         A2 = gbtest_cast (A, type2) ;
-        C = GrB (G2, type2) ;
+        C = gtb (ghb, G2, type2) ;
         assert (gbtest_eq (A2, C)) ;
     end
 
@@ -42,15 +46,15 @@ for k = 1:length (types)
 
     A = 100 * sparse (diag (1:5)) ;
 
-    G = GrB (A, type) ;
-    G2 = GrB (F) ;
+    G = gtb (ghb, A, type) ;
+    G2 = gtb (ghb, F) ;
     G2 (logical (speye (5))) = 100:100:500 ;
 
     for k2 = 1:length (types)
         type2 = types {k} ;
         G3 = full (G, type2, id) ;
-        H5 = full (G, type2, GrB (id)) ;
-        G4 = GrB (G2, type2) ;
+        H5 = full (G, type2, gtb (ghb, id)) ;
+        G4 = gtb (ghb, G2, type2) ;
         assert (gbtest_eq (G3, G4)) ;
         assert (gbtest_eq (G3, H5)) ;
         assert (gbtest_eq (double (G3), double (G4))) ;
@@ -60,4 +64,4 @@ for k = 1:length (types)
 
 end
 
-fprintf ('\ngbtest31: all tests passed\n') ;
+fprintf ('\ngbtest31 (%d): all tests passed\n', ghb) ;

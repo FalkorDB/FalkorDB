@@ -1,10 +1,22 @@
-function gbtest127
-%GBTEST127 test GrB.semirings
+function gbtest127 (ghb)
+%GBTEST127 test [GrB,GhB].semirings
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-list = GrB.semirings
-GrB.semirings ;
-help GrB.semirings ;
-fprintf ('\ngbtest127: all tests passed\n') ;
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
+
+list = gtb_semirings (ghb)
+gtb_semirings (ghb) ;
+have_octave = gb_octave ;
+if (ghb && ~have_octave)
+    help GhB.semirings ;
+else
+    help GrB.semirings ;
+end
+
+fprintf ('\ngbtest127 (%d): all tests passed\n', ghb) ;
+

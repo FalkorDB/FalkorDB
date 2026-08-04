@@ -1,3 +1,27 @@
+July 31, 2026, version 10.4.0
+
+    * Memory arenas: allows the use of multiple memory allocators.
+    * substantial revision to MATLAB/Octave interface: GhB is a new handle   
+        object, so that m-files and mexFunctions can modify their inputs.  This
+        allows pending work to be left in a GhB matrix, speeding up algorithms
+        that use GraphBLAS.
+    * GrB_Matrix_extractElement: no longer waits if the entry can be
+        found without finalizing pending tuples
+    * GxB_atfork_(prepare,parent,child): added to support an application
+        needing to fork, while still using GraphBLAS.
+    * static GrB_Matrix headers: used internally; removed, except for
+        GB_Scalar_wrap, and unary/binary ops, to simplify memory arena feature
+        and future CUDA kernels
+    * MATLAB/Octave (68) bug fix:  v10.0 to v10.3 do not properly load GrB
+        hypersparse matrices from *.mat files saved by v9 and earlier, when
+        using the built-in load/save methods in MATLAB.  The load/save of a
+        serialized blob is not affected by this bug.
+
+July 21, 2026, version 10.3.2
+
+    * compiler port: changes required for recent clang compilers
+    * cmake: 3.23 now required; SuiteSparsePolicy.cmake revised.
+
 Jan 21, 2026, version 10.3.1
 
     * (67) bug fix:  incorrect JIT kernel constructed for R=masker(C,M,Z)
@@ -393,7 +417,7 @@ Version 7.3.0, Oct 14, 2022
             GrB_assign, for hypersparse matrices.
         * added GxB_unpack_HyperHash and GxB_pack_HyperHash: to pack/unpack
             the A->Y hyper_hash
-    * @GrB MATLAB/Octave interface: changed license to Apache-2.0
+    * GrB MATLAB/Octave interface: changed license to Apache-2.0
     * MATLAB library: renamed to libgraphblas_matlab.so
     * performance: faster C=A*B when using a single thread and B is a
         sparse vector with many entries
@@ -486,8 +510,8 @@ Version 6.2.1 Feb 16, 2022
 Version 6.2.0 Feb 14, 2022
 
     * added row/column/entry/vector iterators
-    * @GrB C=A*B: revised sparse-times-full rule
-    * static_header: no longer used if CUDA enabled
+    * GrB C=A*B: revised sparse-times-full rule
+    * static header: no longer used if CUDA enabled
     * GB_BURBLE: removed.  Burble can no longer be disabled at compile-time.
 
 Version 6.1.4, Jan 13, 2022
@@ -499,7 +523,7 @@ Version 6.1.4, Jan 13, 2022
         optionally disable the use of cpu_features completely.
     * Octave 7: port to Apple Silicon (thanks to Gabor Szarnyas)
     * min/max monoids:  real case (FP32 and FP64) no longer terminal
-    * @GrB interface: overloaded C=A*B syntax where one matrix is full always
+    * GrB interface: overloaded C=A*B syntax where one matrix is full always
         results in a full matrix C, which is faster and matches the Octave/
         MATLAB policy.
 
@@ -675,13 +699,13 @@ Version 5.1.0, June 28, 2021
     * GxB_*_build_Scalar added: builds an iso matrix or vector
     * import/export: can now import/export iso matrices and vectors
     * GxB_*_pack/unpack methods added
-    * GrB.argmin/argmax: added to @GrB interface
+    * GrB.argmin/argmax: added to GrB interface
     * GxB_PRINT_1BASED: added to the global settings
-    * GxB_*_memoryUsage added
+    * GxB_Matrix_memoryUsage and related methods: added
     * Source/Generated: split into Source/Generated1 and Source/Generated2
         for faster compilation when GBCOMPACT is enabled
     * port to Octave:  gbmake and gbtest work in Octave7 to build and test
-        the @GrB interface to GraphBLAS.  Octave 7.0.0 is required.
+        the GrB interface to GraphBLAS.  Octave 7.0.0 is required.
 
 Version 5.0.6, May 24, 2021
 
@@ -699,7 +723,7 @@ Version 5.0.5, May 17, 2021
 
 Version 5.0.4, May 13, 2021
 
-    * @GrB interface: changed license from Apache-2.0
+    * GrB interface: changed license from Apache-2.0
         to GNU GPLv3 or later.
 
 Version 5.0.3, May 12, 2021
@@ -724,7 +748,7 @@ Version 5.0.2, May 5, 2021
     * memory pool added for faster memory allocation
     * calloc no longer used: using malloc+memset(0) instead
     * realloc option: if not available, uses malloc+memcpy+free
-    * @GrB interface ported to R2021a.
+    * GrB interface ported to R2021a.
     * GxB_Matrix_diag: construct a diagonal matrix from a vector
     * GxB_Vector_diag: extract a diagonal from a matrix
     * concat/split: added methods to concatenate and split matrices
@@ -738,7 +762,7 @@ Version 5.0.2, May 5, 2021
 Version 4.0.3, Jan 19, 2021
 
     * faster min/max monoids
-    * @GrB: G=GrB(G) converts G from v3 object to v4
+    * GrB: G=GrB(G) converts G from v3 object to v4
 
 Version 4.0.2, Jan 11, 2021
 
@@ -773,7 +797,7 @@ Version 4.0.1, Jan 4, 2021
     * GxB_SelectOp: nrows and ncols removed from function signature
     * OpenMP tasking removed from mergesort: just as fast; now ports to Windows
     * GxB_BURBLE added: for diagnostic output
-    * (21) bug fix: A({lo,hi})=scalar in @GrB; A(lo:hi)=scalar was OK
+    * (21) bug fix: A({lo,hi})=scalar in GrB; A(lo:hi)=scalar was OK
 
 Version 3.3.3, July 14, 2020
 
@@ -801,7 +825,7 @@ Version 3.3.0, June 26, 2020
     * added GrB_*_apply_BinaryOp1st and 2nd: also GxB version with GxB_Scalar
     * added bitwise operators: and their monoids and semirings
     * added predefined GrB* monoids and semirings: from the v1.3 spec.
-    * @GrB interface: added complex matrices and operators, bitwise
+    * GrB interface: added complex matrices and operators, bitwise
         operators; improved performance
     * changed typecasting rules: for casting floating point types to integers
     * added GrB_*_wait: wait for specific object to complete
@@ -815,7 +839,7 @@ Version 3.3.0, June 26, 2020
 
 Version 3.2.2, Apr 2, 2020
 
-    * (16) bug fix to @GrB interface: for matrices with dimension > 2^53.
+    * (16) bug fix to GrB interface: for matrices with dimension > 2^53.
     * port to Microsoft Visual Studio: including GraphBLAS/Demo and
         GraphBLAS/Test, which had not been ported in v3.1.2.
     * remove dependency on m4: end-users no longer need m4;  still needed by
@@ -827,8 +851,8 @@ Version 3.2.1, Mar 10, 2020
     * atomic read/write: faster atomics for icc (see Source/GB_atomics.h)
     * install name for Mac: in alternative/Makefile and Tcov/Makefile
     * enable -DGBCOMPACT from CMake: for faster Travis builds
-    * @GrB interface: better error message in GrB.reduce
-    * @GrB triangle count: added sorting heuristic in GrB.tricount.
+    * GrB interface: better error message in GrB.reduce
+    * GrB triangle count: added sorting heuristic in GrB.tricount.
     * bug fix for GraphBLAS/Demo/simple_timer: better selection of which
         timer to use; simple_timer.[ch] made consistent.
     * no bug fixes needed in primary GraphBLAS library: just in Demo, test,
@@ -862,7 +886,7 @@ Version 3.1.2, Dec 16, 2019
     * (15) bug fix in parallel matrix-matrix multiply: could occur when # of
         threads is larger than the # of columns of B, for C=A*B, and when
         B is a standard matrix with one or more empty vectors.
-    * (14) bug fix for @GrB interface: A(58) and A(:) were conflated.
+    * (14) bug fix for GrB interface: A(58) and A(:) were conflated.
     * compiler port: changes to allow GraphBLAS to be compiled with older
         compilers (pre C11), and Microsoft Visual Studio.
 
@@ -872,20 +896,20 @@ Version 3.1.1, Oct 21, 2019
 
 Version 3.1.0, Oct 2, 2019
 
-    * added @GrB interface: GraphBLAS/GraphBLAS is new.  In Source/, added
+    * added GrB interface: GraphBLAS/GraphBLAS is new.  In Source/, added
         global pointer to printf for mexPrintf, pointer to
         mexMakeMemoryPersistent for Sauna workspace.  Changed how GraphBLAS
         objects are printed with GxB_print.  Changed how duplicate indices are
         handled in assign and extract, to match the built-in stadard.
         Added helper functions.
-        Code size: @GrB is 9.7KLOC, test/ is 4.5KLOC).
+        Code size: GrB is 9.7KLOC, test/ is 4.5KLOC).
     * bug counter added to this ChangeLog: to count # of bugs that appeared
         in formal releases that affect production code.  The count excludes
         bug fixes for test code, bugs in the demo codes, bugs introduced
         in beta versions that were fixed before any formal release, and
         bugs prior to version 1.0.  Code size of Source/, Include/ excluding
         Source/Generated, and Config/*.m4, is 42,659 lines (not including the
-        new @GrB interface).  13 bugs / 42K lines is a bug rate of 0.3 bugs
+        new GrB interface).  13 bugs / 42K lines is a bug rate of 0.3 bugs
         per KLOC, much lower than most commercial software, but higher than
         UMFPACK, CHOLMOD, etc (with about 0.1 bug per KLOC).  GraphBLAS is a
         much more complex library, from the external view, than solving Ax=b.
@@ -914,7 +938,7 @@ Version 3.0.1, July 26, 2019
     * added GxB_Scalar: acts like a GrB_Vector of length 1.
     * OpenMP parallelism: added nthreads and chunk parameters to GxB_set/get.
     * added parameter to GxB_init: bool user_malloc_is_thread_safe,
-        for the @GrB mexFunction interface, or any other malloc library that
+        for the GrB mexFunction interface, or any other malloc library that
         might not be thread-safe.  mxMalloc is not thread-safe.
         This change is not backward compatible with Version 2.x.
     * changed thunk parameter of GxB_select:  was (void *), now GxB_Scalar.
@@ -957,7 +981,7 @@ Version 2.3.0, Feb 25, 2019
     * early exit: for integer TIMES monoids (terminal value is 0);
         cannot use zero for floating-point, to preserve NaN behavior
     * GrB_assign / GxB_subassign: further exploit of aliased inputs
-    * Test/: @GrB mexFunctions now link against the dynamic -lgraphblas
+    * Test/: GrB mexFunctions now link against the dynamic -lgraphblas
     * bug fix for Demo/mis*: random number generator could create
         duplicate scores, which leads to a stall
     * terminal values for user monoids: added GxB_Monoid_terminal_new,

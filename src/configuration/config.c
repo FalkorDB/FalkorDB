@@ -68,9 +68,6 @@
 // effects replication threshold
 #define EFFECTS_THRESHOLD "EFFECTS_THRESHOLD"
 
-// bolt protocol port
-#define BOLT_PORT "BOLT_PORT"
-
 // delay indexing
 #define DELAY_INDEXING "DELAY_INDEXING"
 
@@ -95,7 +92,6 @@
 #define VKEY_MAX_ENTITY_COUNT_DEFAULT 100000
 #define CMD_INFO_DEFAULT true
 #define CMD_INFO_QUERIES_MAX_COUNT_DEFAULT 1000
-#define BOLT_PROTOCOL_PORT_DEFAULT -1 // disabled by default
 #define DELAY_INDEXING_DEFAULT false
 #define IMPORT_DIR_DEFAULT "/var/lib/FalkorDB/import/"
 #define TEMP_DIR_DEFAULT "/tmp"
@@ -121,7 +117,6 @@ typedef struct
 	bool cmd_info_on;				   // if true, the GRAPH.INFO is enabled
 	uint64_t effects_threshold;		   // replicate via effects when runtime exceeds threshold
 	uint64_t max_info_queries_count;   // maximum number of query info elements
-	int16_t bolt_port;				   // bolt protocol port
 	bool delay_indexing;			   // delay index construction when decoding
 	char *import_folder;			   // path to import folder, used for CSV loading
 	char *temp_folder;				   // path to temp folder, used for storing temporary files
@@ -479,22 +474,6 @@ static uint64_t Config_effects_threshold_get(void)
 }
 
 //------------------------------------------------------------------------------
-// bolt protocol port
-//------------------------------------------------------------------------------
-
-static void Config_bolt_port_set(
-	int16_t port)
-{
-	int16_t p = (port < 0) ? BOLT_PROTOCOL_PORT_DEFAULT : port;
-	config.bolt_port = p;
-}
-
-static int16_t Config_bolt_port_get(void)
-{
-	return config.bolt_port;
-}
-
-//------------------------------------------------------------------------------
 // delay indexing
 //------------------------------------------------------------------------------
 
@@ -666,10 +645,6 @@ bool Config_Contains_field(
 	{
 		f = Config_EFFECTS_THRESHOLD;
 	}
-	else if (!(strcasecmp(field_str, BOLT_PORT)))
-	{
-		f = Config_BOLT_PORT;
-	}
 	else if (!(strcasecmp(field_str, DELAY_INDEXING)))
 	{
 		f = Config_DELAY_INDEXING;
@@ -753,9 +728,6 @@ SIType Config_Field_type(
 		return T_INT64;
 
 	case Config_EFFECTS_THRESHOLD:
-		return T_INT64;
-
-	case Config_BOLT_PORT:
 		return T_INT64;
 
 	case Config_DELAY_INDEXING:
@@ -855,10 +827,6 @@ const char *Config_Field_name(
 		name = EFFECTS_THRESHOLD;
 		break;
 
-	case Config_BOLT_PORT:
-		name = BOLT_PORT;
-		break;
-
 	case Config_DELAY_INDEXING:
 		name = DELAY_INDEXING;
 		break;
@@ -949,9 +917,6 @@ static void _Config_SetToDefaults(void)
 
 	// replicate effects if avg change time μs > effects_threshold μs
 	config.effects_threshold = 300;
-
-	// bolt protocol port (disabled by default)
-	config.bolt_port = BOLT_PROTOCOL_PORT_DEFAULT;
 
 	// index entities as they're being decoded
 	config.delay_indexing = DELAY_INDEXING_DEFAULT;
@@ -1292,21 +1257,6 @@ bool Config_Option_get(
 
 		ASSERT(effects_threshold != NULL);
 		(*effects_threshold) = Config_effects_threshold_get();
-	}
-	break;
-
-		//----------------------------------------------------------------------
-		// bolt protocol port
-		//----------------------------------------------------------------------
-
-	case Config_BOLT_PORT:
-	{
-		va_start(ap, field);
-		int16_t *bolt_port = va_arg(ap, int16_t *);
-		va_end(ap);
-
-		ASSERT(bolt_port != NULL);
-		(*bolt_port) = Config_bolt_port_get();
 	}
 	break;
 
@@ -1723,23 +1673,6 @@ bool Config_Option_set
 			}
 			if (Config_effects_threshold_get () != threshold) {
 				Config_effects_threshold_set (threshold) ;
-				updated = true ;
-			}
-		}
-		break ;
-
-		//----------------------------------------------------------------------
-		// bolt protocol port
-		//----------------------------------------------------------------------
-
-		case Config_BOLT_PORT:
-		{
-			long long port ;
-			if (!_Config_ParseInteger (val, &port)) {
-				return false ;
-			}
-			if (Config_bolt_port_get () != port) {
-				Config_bolt_port_set (port) ;
 				updated = true ;
 			}
 		}

@@ -1,31 +1,29 @@
-function gbtest81
+function gbtest81 (ghb)
 %GBTEST81 test complex operators
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
+
 fprintf ('gbtest81: test complex operators\n') ;
-rng ('default')
 have_octave = gb_octave ;
 
-% min and max for complex matrices are not supported in GraphBLAS:
-% a = min (GrB (complex(1)), 1i, 1)  ;
-% b = min (complex (1), 1i)  ;
-% assert (isequal (a, complex (b))) ;
-% a = max (GrB (complex (1)), -1i, 1)  ;
-% b = max (complex (1), -1i)  ;
-% assert (isequal (a, b)) ;
+% NOTE: min and max for complex matrices are not supported in GraphBLAS
 
 A = sparse (rand (2) + 1i * rand (2))  ;
 
-C = GrB (A)    %#ok<NOPRT,NASGU>
+C = gtb (ghb, A)    %#ok<NOPRT,NASGU>
 
 B = sparse (rand (2) + 1i * rand (2))  ;
 
 A = full (A) ;
 B = full (B) ;
 
-C1 = GrB (A) + GrB (B) ;
+C1 = gtb (ghb, A) + gtb (ghb, B) ;
 C2 = A+B ;
 
 assert (isequal (C1,C2)) ;
@@ -33,7 +31,7 @@ assert (isequal (C1,C2)) ;
 E = rand (2) ;
 F = rand (2) ;
 
-C1 = complex (GrB (E), GrB (F)) ;
+C1 = complex (gtb (ghb, E), gtb (ghb, F)) ;
 C2 = complex (E,F) ;
 assert (isequal (C1,C2)) ;
 
@@ -66,7 +64,7 @@ for m = [1 5 10 ]
             % test unary ops with complex x
             for k = 1:length (complex_unary)
                 op = complex_unary {k} ;
-                C1 = GrB.apply (op, A) ;
+                C1 = gtb_apply (ghb, op, A) ;
                 % try built-in methods
                 switch (op)
                     case { 'minv' }
@@ -105,7 +103,7 @@ for m = [1 5 10 ]
                     case 5
                         B = complex (rand (m,n), rand (m,n)) ;
                     case 6
-                        B = A ;
+                        B = gtb (ghb, A) ;
                 end
 
                 % test all but the last one, 'cmplex', which requires
@@ -115,7 +113,7 @@ for m = [1 5 10 ]
                     if (isequal (op, 'cmplx'))
                         continue
                     end
-                    C1 = GrB.emult (op, A, B) ;
+                    C1 = gtb_emult (ghb, op, A, B) ;
                     % try built-in methods
                     switch (op)
                         case { '1st' }
@@ -158,15 +156,16 @@ for m = [1 5 10 ]
                 end
 
                 % test complex(A,B)
-                C1 = GrB.emult ('cmplx', real (A), real (B)) ;
+                C1 = gtb_emult (ghb, 'cmplx', real (A), real (B)) ;
                 C2 = complex (real (A), real (B)) ;
-                assert (isequal (C1, C2)) 
+                % octave can return C2 as real, not complex,
+                % so just asset this instead:
+                assert (norm (abs (C1-C2), 1) == 0)
 
             end
         end
     end
 end
 
-fprintf ('\ngbtest81: all tests passed\n') ;
-
+fprintf ('\ngbtest81 (%d): all tests passed\n', ghb) ;
 

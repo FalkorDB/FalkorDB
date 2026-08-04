@@ -43,18 +43,18 @@ void mexFunction
     // OK (GxB_print (A, 2)) ;
 
     void *blob = NULL ;
-    uint64_t blob_size ;
+    uint64_t blob_memsize ;
 
     // default compression
-    OK (GxB_Matrix_serialize (&blob, &blob_size, A, NULL)) ;
-    OK (GxB_Matrix_deserialize (&C, NULL, blob, blob_size, NULL)) ;
-    printf ("default compression, blob size %lu\n", blob_size) ;
+    OK (GxB_Matrix_serialize (&blob, &blob_memsize, A, NULL)) ;
+    OK (GxB_Matrix_deserialize (&C, NULL, blob, blob_memsize, NULL)) ;
+    printf ("default compression, blob size %lu\n", blob_memsize) ;
     CHECK (GB_mx_isequal (A, C, 0)) ;
     GrB_free (&C) ;
 
     // mangle the blob (set Cx_Sblocks [0] = -1)
     GrB_Info expected = GrB_INVALID_OBJECT ;
-    ERR (GxB_Matrix_deserialize (&C, NULL, blob, blob_size - 4, NULL)) ;
+    ERR (GxB_Matrix_deserialize (&C, NULL, blob, blob_memsize - 4, NULL)) ;
     size_t s = 
           sizeof (uint64_t) 
         + sizeof (int32_t)  * 14
@@ -62,7 +62,7 @@ void mexFunction
         + sizeof (float) * 2 ;
     int64_t Cx_Sblocks = -1 ;
     memcpy (((uint8_t *) blob) + s, &Cx_Sblocks, sizeof (int64_t)) ;
-    ERR (GxB_Matrix_deserialize (&C, NULL, blob, blob_size, NULL)) ;
+    ERR (GxB_Matrix_deserialize (&C, NULL, blob, blob_memsize, NULL)) ;
 
     // free the blob
     mxFree (blob) ;
@@ -71,9 +71,9 @@ void mexFunction
     GrB_Descriptor desc ;
     OK (GrB_Descriptor_new (&desc)) ;
     OK (GxB_set (desc, GxB_COMPRESSION, GxB_COMPRESSION_NONE)) ;
-    OK (GxB_Matrix_serialize (&blob, &blob_size, A, desc)) ;
-    OK (GxB_Matrix_deserialize (&C, NULL, blob, blob_size, NULL)) ;
-    printf ("no compression, blob size %lu\n", blob_size) ;
+    OK (GxB_Matrix_serialize (&blob, &blob_memsize, A, desc)) ;
+    OK (GxB_Matrix_deserialize (&C, NULL, blob, blob_memsize, NULL)) ;
+    printf ("no compression, blob size %lu\n", blob_memsize) ;
     CHECK (GB_mx_isequal (A, C, 0)) ;
     GrB_free (&C) ;
 
@@ -85,7 +85,7 @@ void mexFunction
         + sizeof (float) * 2 ;
     int32_t Cx_nblocks = 4 ;
     memcpy (((uint8_t *) blob) + s, &Cx_nblocks, sizeof (int32_t)) ;
-    ERR (GxB_Matrix_deserialize (&C, NULL, blob, blob_size, NULL)) ;
+    ERR (GxB_Matrix_deserialize (&C, NULL, blob, blob_memsize, NULL)) ;
 
     // free the blob
     mxFree (blob) ;

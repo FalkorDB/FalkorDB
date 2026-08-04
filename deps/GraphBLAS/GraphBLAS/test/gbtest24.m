@@ -1,10 +1,14 @@
-function gbtest24
+function gbtest24 (ghb)
 %GBTEST24 test any, all
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-rng ('default') ;
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
+
 for trial = 1:10
     for m = 1:5
         fprintf ('.') ;
@@ -18,8 +22,8 @@ for trial = 1:10
             S = -(sprand (m, n, 0.5) > 0.5) ;
             MB = MB .* S ;
 
-            GA = GrB (MA) ;
-            GB = GrB (MB) ; %#ok<*NASGU>
+            GA = gtb (ghb, MA) ;
+            GB = gtb (ghb, MB) ; %#ok<*NASGU>
 
             c1 = all (MA) ;
             c2 = all (GA) ;
@@ -59,5 +63,5 @@ for trial = 1:10
     end
 end
 
-fprintf ('\ngbtest24: all tests passed\n') ;
+fprintf ('\ngbtest24 (%d): all tests passed\n', ghb) ;
 

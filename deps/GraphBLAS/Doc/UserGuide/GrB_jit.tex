@@ -68,7 +68,7 @@ field                       & value         & description \\
 }
 \vspace{0.15in}
 
-To control the JIT in the MATLAB \verb'@GrB' interface, use the \verb'GrB.jit'
+To control the JIT in the MATLAB \verb'GrB' interface, use the \verb'GrB.jit'
 method.  Refer to \verb'help GrB.jit' for details.
 
 Kernels compiled during one run of a user application are kept in the cache
@@ -510,7 +510,7 @@ In general, the JIT kernels compiled by the C interface and the kernels
 compiled while using GraphBLAS in MATLAB are interchangable, and the same cache
 folder can be used for both.  This is the default.
 
-However, when using the \verb'@GrB' MATLAB interface to GraphBLAS on Apple
+However, when using the \verb'GrB' MATLAB interface to GraphBLAS on Apple
 Silicon, using an older version of MATLAB, the MATLAB JIT kernels are compiled
 as x86 binaries and executed inside MATLAB via Rosetta.  The pure C
 installation may compile native Arm64 binaries for its JIT kernels.  Do not mix

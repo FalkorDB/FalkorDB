@@ -7,6 +7,7 @@ function test301
 fprintf ('test301 ------------------  assign alias tests (method 27)\n') ;
 
 rng ('default') ;
+GB_mex_burble (0) ;
 
 desc.mask = 'structural' ;
 

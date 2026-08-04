@@ -21,6 +21,19 @@ static Record DeleteConsume(OpBase *opBase);
 static OpBase *DeleteClone(const ExecutionPlan *plan, const OpBase *opBase);
 static void DeleteFree(OpBase *opBase);
 
+// _Graph_EntityIsDeleted is used as a pre check for candidate entities
+// prior to actually deleting them, the delete operation considers an entity to
+// be marked as deleted if:
+// 1. its attribute-set is NULL (cheap check)
+// 2. the datablock marked that entity as deleted
+static inline bool _Graph_EntityIsDeleted
+(
+	GraphEntity *e
+) {
+	ASSERT (e != NULL) ;
+	return (e->attributes == NULL || DataBlock_ItemIsDeleted (e->attributes)) ;
+}
+
 static void _BulkDeleteEntities
 (
 	OpDelete *op
@@ -165,7 +178,7 @@ static void _DeleteEntities
 			EntityID eid = ENTITY_GET_ID (e) ;
 
 			// edge shouldn't be already deleted
-			ASSERT (!Graph_EntityIsDeleted ((GraphEntity *)e)) ;
+			ASSERT (!_Graph_EntityIsDeleted ((GraphEntity *)e)) ;
 
 			if (!roaring64_bitmap_add_checked (op->edge_bitmap, eid)) {
 				// duplicated edge, remove it
@@ -250,7 +263,7 @@ static inline void _CollectDeletedEntities
 			Node *n = (Node *)value.ptrval ;
 
 			// skip duplicated & deleted nodes
-			if (!Graph_EntityIsDeleted ((GraphEntity *)n) &&
+			if (!_Graph_EntityIsDeleted ((GraphEntity *)n) &&
 				roaring64_bitmap_add_checked (op->node_bitmap, ENTITY_GET_ID (n))) {
 				arr_append (op->deleted_nodes, *n) ;
 			}
@@ -260,7 +273,7 @@ static inline void _CollectDeletedEntities
 			Edge *e = (Edge *)value.ptrval ;
 
 			// skip already deleted edges
-			if (!Graph_EntityIsDeleted ((GraphEntity *)e)                &&
+			if (!_Graph_EntityIsDeleted ((GraphEntity *)e)               &&
 				!roaring64_bitmap_contains (op->node_bitmap, e->src_id)  &&
 				!roaring64_bitmap_contains (op->node_bitmap, e->dest_id) &&
 				roaring64_bitmap_add_checked (op->edge_bitmap, ENTITY_GET_ID (e))) {
@@ -277,7 +290,7 @@ static inline void _CollectDeletedEntities
 				Node *n = Path_GetNode (p, j) ;
 
 				// skip duplicated & deleted nodes
-				if (!Graph_EntityIsDeleted ((GraphEntity *)n) &&
+				if (!_Graph_EntityIsDeleted ((GraphEntity *)n) &&
 					roaring64_bitmap_add_checked (op->node_bitmap, ENTITY_GET_ID (n))) {
 					arr_append (op->deleted_nodes, *n) ;
 				}

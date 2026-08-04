@@ -1,5 +1,5 @@
 function Y = dnn_builtin (W, bias, Y0)
-%DNN_BUILTIN Sparse deep neural network without @GrB
+%DNN_BUILTIN Sparse deep neural network without GrB or GhB
 % Performs ReLU inference using input feature vector(s) Y0, DNN weights W,
 % and bias vectors.
 %

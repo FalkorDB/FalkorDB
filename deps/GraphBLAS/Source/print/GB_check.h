@@ -28,13 +28,14 @@
 
 GrB_Info GB_entry_check     // print a single value
 (
+    // input:
     const GrB_Type type,    // type of value to print
     const void *x,          // value to print
     int pr,                 // print level
     FILE *f,                // file to print to
-    // for user-defined types only:
+    // input/output, for user-defined types only:
     char **string_handle,   // string buffer for printing
-    size_t *string_size     // size of the string buffer
+    uint64_t *string_mem    // memsize and arena of the string buffer
 ) ;
 
 GrB_Info GB_Type_check      // check a GraphBLAS Type

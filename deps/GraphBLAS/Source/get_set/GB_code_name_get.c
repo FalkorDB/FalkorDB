@@ -10,7 +10,7 @@
 #include "get_set/GB_get_set.h"
 
 const char *GB_code_name_get (GB_Type_code code, char *user_name)
-{
+{ 
     switch (code)
     {
         case GB_BOOL_code   : return ("GrB_BOOL")   ;

@@ -29,8 +29,9 @@ void GB_macrofy_apply           // construct all macros for GrB_apply
 
     // C and A properties (3 hex digits)
     bool Cp_is_32   = GB_RSHIFT (method_code, 44, 1) ;
-    bool Ci_is_32   = GB_RSHIFT (method_code, 43, 1) ;
-    bool Cj_is_32   = GB_RSHIFT (method_code, 42, 1) ;
+    bool Cj_is_32   = GB_RSHIFT (method_code, 43, 1) ;
+    bool Ci_is_32   = GB_RSHIFT (method_code, 42, 1) ;
+
     bool Ap_is_32   = GB_RSHIFT (method_code, 41, 1) ;
     bool Aj_is_32   = GB_RSHIFT (method_code, 40, 1) ;
     bool Ai_is_32   = GB_RSHIFT (method_code, 39, 1) ;

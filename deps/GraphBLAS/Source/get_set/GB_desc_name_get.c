@@ -64,6 +64,6 @@ const char *GB_desc_name_get
     DNAME (GrB_DESC_RSCT0T1) ;
 
     // user-defined descriptor
-    return (desc->user_name_size > 0 ? desc->user_name : NULL) ;
+    return (GB_memsize (desc->user_name_mem) > 0 ? desc->user_name : NULL) ;
 }
 

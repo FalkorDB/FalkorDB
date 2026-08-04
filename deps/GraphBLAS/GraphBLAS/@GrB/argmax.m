@@ -6,21 +6,20 @@ function [x,p] = argmax (A, dim)
 %       where A is m-by-n.  If x(j) and p(j) are present, then x(j) =
 %       max(A(:,j)) = A(p(j),j).
 %
-% [x,p] = argmax(A,2) computes the argmax of each row of A, with x and p
-%       being m-by-1 vectors where A is m-by-n.  If x(i) and p(i) are
-%       present, then x(i) = max(A(i,:)) = A(i,p(i)).
+% [x,p] = argmax(A,2) computes the argmax of each row of A, with x and p being
+%       m-by-1 vectors where A is m-by-n.  If x(i) and p(i) are present, then
+%       x(i) = max(A(i,:)) = A(i,p(i)).
 %
-% [x,p] = argmax(A,0) computes the argmax of all of A, where x is a scalar,
-%       and p is a 2-by-1 vector, with x = max(A,[],'all') = A(p(1),p(2)).
-%       If dim is not present, it defaults to 0.
+% [x,p] = argmax(A,0) computes the argmax of all of A, where x is a scalar, and
+%       p is a 2-by-1 vector, with x = max(A,[],'all') = A(p(1),p(2)).  If dim
+%       is not present, it defaults to 0.
 %
-% Unlike the built-in max, entries not present in A are not assumed
-% to have the value zero.  Instead, they are ignored.  If column A(:,j)
-% has no entries, x(j) and p(j) are not present in the sparsity pattern of
-% x and p, respectively.  GrB.argmax always returns x and p as column
-% vectors, while the built-in max returns x and p as either row or column
-% or vectors, depending on dim.  NaNs are ignored.  If x(j) is NaN, p(j)
-% is empty.
+% Unlike the built-in max, entries not present in A are not assumed to have the
+% value zero.  Instead, they are ignored.  If column A(:,j) has no entries,
+% x(j) and p(j) are not present in the sparsity pattern of x and p,
+% respectively.  GrB.argmax always returns x and p as GrB column vectors, while
+% the built-in max returns x and p as either row or column or vectors,
+% depending on dim.  NaNs are ignored.  If x(j) is NaN, p(j) is empty.
 %
 % Example:
 %
@@ -44,24 +43,18 @@ function [x,p] = argmax (A, dim)
 %   x = max (A, [ ], 'all')
 %   [x,p] = GrB.argmax (A)
 %
-% Complex matrices are not supported.  If A(i,j) is NaN, then x(i) is NaN
-% for argmax(A,2) and p(i) is not present, and x(j) is NaN for argmax(A,1)
-% and p(j) is not present.
+% Complex matrices are not supported.  If A(i,j) is NaN, then x(i) is NaN for
+% argmax(A,2) and p(i) is not present, and x(j) is NaN for argmax(A,1) and p(j)
+% is not present.
 %
 % See also min, max, GrB/min, GrB/max, GrB.argmin, GrB.argsort.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
-
-if (isobject (A))
-    A = A.opaque ;
-end
 
 if (nargin < 2)
     dim = 0 ;
 end
 
-[x,p] = gbargminmax (A, 1, dim) ;
-x = GrB (x) ;
-p = GrB (p) ;
+[x, p] = gzb_argminmax (0, A, 1, dim) ;
 

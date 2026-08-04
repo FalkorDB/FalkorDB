@@ -10,7 +10,8 @@
 GraphContext *RdbLoadGraphContext_latest
 (
 	SerializerIO rdb,
-	const RedisModuleString *rm_key_name
+	const RedisModuleString *rm_key_name,
+	bool detached
 );
 
 // encode DB UDFs

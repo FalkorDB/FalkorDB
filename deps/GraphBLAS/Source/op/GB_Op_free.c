@@ -21,23 +21,23 @@ GrB_Info GB_Op_free             // free a user-created op
         GB_Operator op = *op_handle ;
         if (op != NULL)
         {
-            GB_FREE_MEMORY (&(op->user_name), op->user_name_size) ;
-            size_t defn_size = op->defn_size ;
-            if (defn_size > 0)
+            GB_FREE_MEMORY (&(op->user_name), op->user_name_mem) ;
+            size_t defn_mem = op->defn_mem ;
+            if (GB_memsize (defn_mem) > 0)
             { 
-                GB_FREE_MEMORY (&(op->defn), defn_size) ;
+                GB_FREE_MEMORY (&(op->defn), defn_mem) ;
             }
-            size_t theta_size = op->theta_size ;
-            if (theta_size > 0)
+            size_t theta_mem = op->theta_mem ;
+            if (GB_memsize (theta_mem) > 0)
             { 
-                GB_FREE_MEMORY (&(op->theta), theta_size) ;
+                GB_FREE_MEMORY (&(op->theta), theta_mem) ;
             }
-            size_t header_size = op->header_size ;
-            if (header_size > 0)
+            uint64_t header_mem = op->header_mem ;
+            if (GB_memsize (header_mem) > 0)
             { 
                 op->magic = GB_FREED ;  // to help detect dangling pointers
-                op->header_size = 0 ;
-                GB_FREE_MEMORY (op_handle, header_size) ;
+                op->header_mem = 0 ;    // header is free
+                GB_FREE_MEMORY (op_handle, header_mem) ;
             }
         }
     }

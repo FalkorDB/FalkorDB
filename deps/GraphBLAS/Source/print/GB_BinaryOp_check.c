@@ -157,11 +157,12 @@ GrB_Info GB_BinaryOp_check  // check a GraphBLAS binary operator
         if (pr != GxB_SILENT)
         { 
             char *string = NULL ;
-            size_t string_size = 0 ;
+            int header_arena = GB_arena (op->header_mem) ;
+            uint64_t string_mem = GB_mem (header_arena, 0) ;
             GBPR ("    theta: [ ") ;
-            info = GB_entry_check (op->theta_type, op->theta, pr, f,
-                &string, &string_size) ;
-            GB_FREE_MEMORY (&string, string_size) ;
+            info = GB_entry_check (op->theta_type, op->theta, pr, f, &string,
+                &string_mem) ;
+            GB_FREE_MEMORY (&string, string_mem) ;
             if (info != GrB_SUCCESS) return (info) ;
             GBPR ("]") ;
         }

@@ -26,12 +26,12 @@ int64_t GB_nnz_max
         return (0) ;
     }
     int64_t nnz_max ;
-    int64_t xmax = A->x_size / A->type->size ;
+    int64_t xmax = GB_memsize (A->x_mem) / A->type->size ;
     if (A->p != NULL)
     {
         // A is sparse (p,i,x) or hypersparse (p,h,i,x):
         size_t isize = (A->i_is_32) ? sizeof (uint32_t) : sizeof (uint64_t) ;
-        nnz_max = (A->i == NULL) ? 0 : (A->i_size / isize) ;
+        nnz_max = (A->i == NULL) ? 0 : (GB_memsize (A->i_mem) / isize) ;
         if (!A->iso)
         { 
             nnz_max = GB_IMIN (nnz_max, xmax) ;
@@ -40,7 +40,7 @@ int64_t GB_nnz_max
     else if (A->b != NULL)
     {
         // A is bitmap (b,x):
-        nnz_max = A->b_size / sizeof (bool) ;
+        nnz_max = GB_memsize (A->b_mem) / sizeof (bool) ;
         if (!A->iso)
         { 
             nnz_max = GB_IMIN (nnz_max, xmax) ;

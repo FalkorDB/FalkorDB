@@ -48,9 +48,11 @@ GrB_Info GB_kroner                  // C = kron (A,B)
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
+    ASSERT (C != NULL) ;
 
-    struct GB_Matrix_opaque Awork_header, Bwork_header ;
+    int header_arena = GB_arena (C->header_mem) ;
+    int data_arena = C->data_arena ;
+
     GrB_Matrix Awork = NULL, Bwork = NULL ;
 
     ASSERT_MATRIX_OK (A_in, "A_in for kron (A,B)", GB0) ;
@@ -72,8 +74,8 @@ GrB_Info GB_kroner                  // C = kron (A,B)
     if (GB_IS_BITMAP (A))
     { 
         GBURBLE ("A:") ;
-        GB_CLEAR_MATRIX_HEADER (Awork, &Awork_header) ;
-        GB_OK (GB_dup_worker (&Awork, A->iso, A, true, NULL)) ;
+        // Awork = an exact copy of A, then convert Awork to sparse
+        GB_OK (GB_dup (&Awork, A, data_arena, data_arena, Werk)) ;
         ASSERT_MATRIX_OK (Awork, "dup Awork for kron (A,B)", GB0) ;
         GB_OK (GB_convert_bitmap_to_sparse (Awork, Werk)) ;
         ASSERT_MATRIX_OK (Awork, "to sparse, Awork for kron (A,B)", GB0) ;
@@ -84,8 +86,8 @@ GrB_Info GB_kroner                  // C = kron (A,B)
     if (GB_IS_BITMAP (B))
     { 
         GBURBLE ("B:") ;
-        GB_CLEAR_MATRIX_HEADER (Bwork, &Bwork_header) ;
-        GB_OK (GB_dup_worker (&Bwork, B->iso, B, true, NULL)) ;
+        // Bwork = an exact copy of B, then convert Bwork to sparse
+        GB_OK (GB_dup (&Bwork, B, data_arena, data_arena, Werk)) ;
         ASSERT_MATRIX_OK (Bwork, "dup Bwork for kron (A,B)", GB0) ;
         GB_OK (GB_convert_bitmap_to_sparse (Bwork, Werk)) ;
         ASSERT_MATRIX_OK (Bwork, "to sparse, Bwork for kron (A,B)", GB0) ;
@@ -168,7 +170,7 @@ GrB_Info GB_kroner                  // C = kron (A,B)
     GB_OK (GB_new_bix (&C, // full, sparse, or hyper; existing header
         ctype, (int64_t) cvlen, (int64_t) cvdim, GB_ph_malloc, C_is_csc,
         C_sparsity, true, B->hyper_switch, cnvec, cnzmax, true, C_iso,
-        Cp_is_32, Cj_is_32, Ci_is_32)) ;
+        Cp_is_32, Cj_is_32, Ci_is_32, header_arena, data_arena)) ;
 
     //--------------------------------------------------------------------------
     // compute the column counts of C: Cp and Ch if C is hypersparse
@@ -207,7 +209,8 @@ GrB_Info GB_kroner                  // C = kron (A,B)
         }
 
         int64_t nvec_nonempty ;
-        GB_cumsum (Cp, Cp_is_32, cnvec, &nvec_nonempty, nthreads, Werk) ;
+        GB_cumsum (Cp, Cp_is_32, cnvec, &nvec_nonempty, nthreads,
+            data_arena, Werk) ;
         GB_nvec_nonempty_set (C, nvec_nonempty) ;
         C->nvals = GB_IGET (Cp, cnvec) ;
         if (C_is_hyper) C->nvec = cnvec ;

@@ -35,17 +35,18 @@
     //      case 11 :   // hypersparse CSC, not jumbled
 
 #include "GB_mex.h"
+#include "GB_mex_errors.h"
 
 #define USAGE "C = GB_mex_unpack_pack (A, format_matrix, format_export)"
 
-#define FREE_WORK                                   \
-{                                                   \
-    if (Cp != NULL) { mxFree (Cp) ; Cp = NULL ; }   \
-    if (Ch != NULL) { mxFree (Ch) ; Ch = NULL ; }   \
-    if (Cb != NULL) { mxFree (Cb) ; Cb = NULL ; }   \
-    if (Ci != NULL) { mxFree (Ci) ; Ci = NULL ; }   \
-    if (Cx != NULL) { mxFree (Cx) ; Cx = NULL ; }   \
-    GrB_Matrix_free_(&C) ;                          \
+#define FREE_WORK                                       \
+{                                                       \
+    if (Cp != NULL) { free_func (Cp) ; Cp = NULL ; }    \
+    if (Ch != NULL) { free_func (Ch) ; Ch = NULL ; }    \
+    if (Cb != NULL) { free_func (Cb) ; Cb = NULL ; }    \
+    if (Ci != NULL) { free_func (Ci) ; Ci = NULL ; }    \
+    if (Cx != NULL) { free_func (Cx) ; Cx = NULL ; }    \
+    GrB_Matrix_free_(&C) ;                              \
 }
 
 #define FREE_ALL                        \
@@ -55,6 +56,7 @@
     GB_mx_put_global (true) ;           \
 }
 
+#undef  OK
 #define OK(method)                              \
 {                                               \
     info = method ;                             \
@@ -73,11 +75,11 @@ void *Cx = NULL ;
 int8_t *Cb = NULL ;
 uint64_t nvec = 0, nvals = 0 ;
 
-uint64_t Cp_size = 0 ;
-uint64_t Ch_size = 0 ;
-uint64_t Cb_size = 0 ;
-uint64_t Ci_size = 0 ;
-uint64_t Cx_size = 0 ;
+uint64_t Cp_memsize = 0 ;
+uint64_t Ch_memsize = 0 ;
+uint64_t Cb_memsize = 0 ;
+uint64_t Ci_memsize = 0 ;
+uint64_t Cx_memsize = 0 ;
 bool iso = false ;
 
 int64_t ignore = -1 ;
@@ -106,7 +108,26 @@ void mexFunction
         mexErrMsgTxt ("Usage: " USAGE) ;
     }
 
+    //--------------------------------------------------------------------------
+    // get the free function for the current arena
+    //--------------------------------------------------------------------------
+
+    int data_arena = -1 ;
+    GB_free_function_t free_func = NULL ;
+    GrB_Global_get_INT32 (GrB_GLOBAL, &data_arena, GxB_ARENA_DATA) ;
+    CHECK (data_arena == GB_ARENA_TEST) ;
+    GrB_Global_get_VOID (GrB_GLOBAL, (void *) &free_func,
+        GxB_ARENA_FREE + GB_ARENA_TEST) ;
+    CHECK (free_func == mxFree) ;
+
+    int header_arena = -1 ;
+    GrB_Global_get_INT32 (GrB_GLOBAL, &header_arena, GxB_ARENA_HEADER) ;
+    CHECK (header_arena == GB_ARENA_TEST) ;
+
+    //--------------------------------------------------------------------------
     // get A (shallow copy)
+    //--------------------------------------------------------------------------
+
     {
         A = GB_mx_mxArray_to_Matrix (pargin [0], "A input", false, true) ;
         if (A == NULL)
@@ -116,7 +137,10 @@ void mexFunction
         }
     }
 
+    //--------------------------------------------------------------------------
     // get matrix format (1 to 8, and -1 to -8)
+    //--------------------------------------------------------------------------
+
     int GET_SCALAR (1, int, format_matrix, 0) ;
     bool do_matrix = (format_matrix > 0) ;
     if (format_matrix < 0)
@@ -124,7 +148,10 @@ void mexFunction
         format_matrix = -format_matrix ;
     }
 
+    //--------------------------------------------------------------------------
     // get export/import format (0 to 11)
+    //--------------------------------------------------------------------------
+
     int GET_SCALAR (2, int, format_export, 0) ;
 
     #define GET_DEEP_COPY           \
@@ -133,10 +160,16 @@ void mexFunction
 
     #define FREE_DEEP_COPY  GrB_Matrix_free (&C) ;
 
+    //--------------------------------------------------------------------------
     // C = deep copy of A
+    //--------------------------------------------------------------------------
+
     GET_DEEP_COPY ;
 
+    //--------------------------------------------------------------------------
     // convert matrix, unpack, then import
+    //--------------------------------------------------------------------------
+
     if (do_matrix)
     {
         METHOD (unpack_pack (format_matrix, format_export)) ;
@@ -145,13 +178,19 @@ void mexFunction
     FREE_DEEP_COPY ;
     GET_DEEP_COPY ;
 
+    //--------------------------------------------------------------------------
     // convert vector, unpack, then import, if C can be cast as a GrB_Vector
+    //--------------------------------------------------------------------------
+
     if (GB_VECTOR_OK (C))
     {
         METHOD (vector_unpack_pack (format_matrix, format_export)) ;
     }
 
+    //--------------------------------------------------------------------------
     // return C as a struct and free the GraphBLAS C
+    //--------------------------------------------------------------------------
+
     pargout [0] = GB_mx_Matrix_to_mxArray (&C, "C output", true) ;
     FREE_ALL ;
 }
@@ -166,6 +205,18 @@ GrB_Info unpack_pack
     int format_export
 )
 {
+
+    //--------------------------------------------------------------------------
+    // get the free function for the current arena
+    //--------------------------------------------------------------------------
+
+    int data_arena = -1 ;
+    GB_free_function_t free_func = NULL ;
+    GrB_Global_get_INT32 (GrB_GLOBAL, &data_arena, GxB_ARENA_DATA) ;
+    CHECK (data_arena == GB_ARENA_TEST) ;
+    GrB_Global_get_VOID (GrB_GLOBAL, (void *) &free_func,
+        GxB_ARENA_FREE + GB_ARENA_TEST) ;
+    CHECK (free_func == mxFree) ;
 
     //--------------------------------------------------------------------------
     // convert C to the requested format
@@ -269,11 +320,11 @@ GrB_Info unpack_pack
         //----------------------------------------------------------------------
 
             OK (GxB_Matrix_unpack_CSR (C,
-                &Cp, &Ci, &Cx, &Cp_size, &Ci_size, &Cx_size, &iso,
+                &Cp, &Ci, &Cx, &Cp_memsize, &Ci_memsize, &Cx_memsize, &iso,
                 &jumbled, NULL)) ;
 
             OK (GxB_Matrix_pack_CSR (C,
-                &Cp, &Ci, &Cx, Cp_size, Ci_size, Cx_size, iso,
+                &Cp, &Ci, &Cx, Cp_memsize, Ci_memsize, Cx_memsize, iso,
                 jumbled, NULL)) ;
 
             break ;
@@ -283,11 +334,11 @@ GrB_Info unpack_pack
         //----------------------------------------------------------------------
 
             OK (GxB_Matrix_unpack_CSC (C,
-                &Cp, &Ci, &Cx, &Cp_size, &Ci_size, &Cx_size, &iso,
+                &Cp, &Ci, &Cx, &Cp_memsize, &Ci_memsize, &Cx_memsize, &iso,
                 &jumbled, NULL)) ;
 
             OK (GxB_Matrix_pack_CSC (C,
-                &Cp, &Ci, &Cx, Cp_size, Ci_size, Cx_size, iso,
+                &Cp, &Ci, &Cx, Cp_memsize, Ci_memsize, Cx_memsize, iso,
                 jumbled, NULL)) ;
 
             break ;
@@ -300,12 +351,12 @@ GrB_Info unpack_pack
 
             OK (GxB_Matrix_unpack_HyperCSR (C,
                 &Cp, &Ch, &Ci, &Cx,
-                &Cp_size, &Ch_size, &Ci_size, &Cx_size, &iso,
+                &Cp_memsize, &Ch_memsize, &Ci_memsize, &Cx_memsize, &iso,
                 &nvec, &jumbled, NULL)) ;
 
             OK (GxB_Matrix_pack_HyperCSR (C,
                 &Cp, &Ch, &Ci, &Cx,
-                Cp_size, Ch_size, Ci_size, Cx_size, iso,
+                Cp_memsize, Ch_memsize, Ci_memsize, Cx_memsize, iso,
                 nvec, jumbled, NULL)) ;
 
             OK (GxB_pack_HyperHash (C, &Y, NULL)) ;
@@ -323,12 +374,12 @@ GrB_Info unpack_pack
 
             OK (GxB_Matrix_unpack_HyperCSC (C,
                 &Cp, &Ch, &Ci, &Cx,
-                &Cp_size, &Ch_size, &Ci_size, &Cx_size, &iso,
+                &Cp_memsize, &Ch_memsize, &Ci_memsize, &Cx_memsize, &iso,
                 &nvec, &jumbled, NULL)) ;
 
             OK (GxB_Matrix_pack_HyperCSC (C,
                 &Cp, &Ch, &Ci, &Cx,
-                Cp_size, Ch_size, Ci_size, Cx_size, iso,
+                Cp_memsize, Ch_memsize, Ci_memsize, Cx_memsize, iso,
                 nvec, jumbled, NULL)) ;
 
             // silently check the result to make sure the hyper_hash is valid
@@ -342,10 +393,10 @@ GrB_Info unpack_pack
         //----------------------------------------------------------------------
 
             OK (GxB_Matrix_unpack_BitmapR (C,
-                &Cb, &Cx, &Cb_size, &Cx_size, &iso, &nvals, NULL)) ;
+                &Cb, &Cx, &Cb_memsize, &Cx_memsize, &iso, &nvals, NULL)) ;
 
             OK (GxB_Matrix_pack_BitmapR (C,
-                &Cb, &Cx, Cb_size, Cx_size, iso, nvals, NULL)) ;
+                &Cb, &Cx, Cb_memsize, Cx_memsize, iso, nvals, NULL)) ;
 
             break ;
 
@@ -354,10 +405,10 @@ GrB_Info unpack_pack
         //----------------------------------------------------------------------
 
             OK (GxB_Matrix_unpack_BitmapC (C,
-                &Cb, &Cx, &Cb_size, &Cx_size, &iso, &nvals, NULL)) ;
+                &Cb, &Cx, &Cb_memsize, &Cx_memsize, &iso, &nvals, NULL)) ;
 
             OK (GxB_Matrix_pack_BitmapC (C,
-                &Cb, &Cx, Cb_size, Cx_size, iso, nvals, NULL)) ;
+                &Cb, &Cx, Cb_memsize, Cx_memsize, iso, nvals, NULL)) ;
 
             break ;
 
@@ -365,16 +416,16 @@ GrB_Info unpack_pack
         case 6 :    // FullR
         //----------------------------------------------------------------------
 
-            OK (GxB_Matrix_unpack_FullR (C, &Cx, &Cx_size, &iso, NULL)) ;
-            OK (GxB_Matrix_pack_FullR (C, &Cx, Cx_size, iso, NULL)) ;
+            OK (GxB_Matrix_unpack_FullR (C, &Cx, &Cx_memsize, &iso, NULL)) ;
+            OK (GxB_Matrix_pack_FullR (C, &Cx, Cx_memsize, iso, NULL)) ;
             break ;
 
         //----------------------------------------------------------------------
         case 7 :    // FullC
         //----------------------------------------------------------------------
 
-            OK (GxB_Matrix_unpack_FullC (C, &Cx, &Cx_size, &iso, NULL)) ;
-            OK (GxB_Matrix_pack_FullC (C, &Cx, Cx_size, iso, NULL)) ;
+            OK (GxB_Matrix_unpack_FullC (C, &Cx, &Cx_memsize, &iso, NULL)) ;
+            OK (GxB_Matrix_pack_FullC (C, &Cx, Cx_memsize, iso, NULL)) ;
             break ;
 
         //----------------------------------------------------------------------
@@ -382,11 +433,11 @@ GrB_Info unpack_pack
         //----------------------------------------------------------------------
 
             OK (GxB_Matrix_unpack_CSR (C,
-                &Cp, &Ci, &Cx, &Cp_size, &Ci_size, &Cx_size, &iso,
+                &Cp, &Ci, &Cx, &Cp_memsize, &Ci_memsize, &Cx_memsize, &iso,
                 NULL, NULL)) ;
 
             OK (GxB_Matrix_pack_CSR (C,
-                &Cp, &Ci, &Cx, Cp_size, Ci_size, Cx_size, iso, false, NULL)) ;
+                &Cp, &Ci, &Cx, Cp_memsize, Ci_memsize, Cx_memsize, iso, false, NULL)) ;
 
             break ;
 
@@ -395,11 +446,11 @@ GrB_Info unpack_pack
         //----------------------------------------------------------------------
 
             OK (GxB_Matrix_unpack_CSC (C,
-                &Cp, &Ci, &Cx, &Cp_size, &Ci_size, &Cx_size, &iso,
+                &Cp, &Ci, &Cx, &Cp_memsize, &Ci_memsize, &Cx_memsize, &iso,
                 NULL, NULL)) ;
 
             OK (GxB_Matrix_pack_CSC (C,
-                &Cp, &Ci, &Cx, Cp_size, Ci_size, Cx_size, iso, false, NULL)) ;
+                &Cp, &Ci, &Cx, Cp_memsize, Ci_memsize, Cx_memsize, iso, false, NULL)) ;
 
             break ;
 
@@ -411,11 +462,11 @@ GrB_Info unpack_pack
 
             OK (GxB_Matrix_unpack_HyperCSR (C,
                 &Cp, &Ch, &Ci, &Cx,
-                &Cp_size, &Ch_size, &Ci_size, &Cx_size, &iso,
+                &Cp_memsize, &Ch_memsize, &Ci_memsize, &Cx_memsize, &iso,
                 &nvec, NULL, NULL)) ;
 
             OK (GxB_Matrix_pack_HyperCSR (C,
-                &Cp, &Ch, &Ci, &Cx, Cp_size, Ch_size, Ci_size, Cx_size,
+                &Cp, &Ch, &Ci, &Cx, Cp_memsize, Ch_memsize, Ci_memsize, Cx_memsize,
                 iso, nvec, false, NULL)) ;
 
             OK (GxB_pack_HyperHash (C, &Y, NULL)) ;
@@ -430,11 +481,11 @@ GrB_Info unpack_pack
 
             OK (GxB_Matrix_unpack_HyperCSC (C,
                 &Cp, &Ch, &Ci, &Cx,
-                &Cp_size, &Ch_size, &Ci_size, &Cx_size, &iso,
+                &Cp_memsize, &Ch_memsize, &Ci_memsize, &Cx_memsize, &iso,
                 &nvec, NULL, NULL)) ;
 
             OK (GxB_Matrix_pack_HyperCSC (C,
-                &Cp, &Ch, &Ci, &Cx, Cp_size, Ch_size, Ci_size, Cx_size, iso,
+                &Cp, &Ch, &Ci, &Cx, Cp_memsize, Ch_memsize, Ci_memsize, Cx_memsize, iso,
                 nvec, false, NULL)) ;
 
             OK (GxB_pack_HyperHash (C, &Y, NULL)) ;
@@ -456,6 +507,18 @@ GrB_Info vector_unpack_pack
     int format_export
 )
 {
+
+    //--------------------------------------------------------------------------
+    // get the free function for the current arena
+    //--------------------------------------------------------------------------
+
+    int data_arena = -1 ;
+    GB_free_function_t free_func = NULL ;
+    GrB_Global_get_INT32 (GrB_GLOBAL, &data_arena, GxB_ARENA_DATA) ;
+    CHECK (data_arena == GB_ARENA_TEST) ;
+    GrB_Global_get_VOID (GrB_GLOBAL, (void *) &free_func,
+        GxB_ARENA_FREE + GB_ARENA_TEST) ;
+    CHECK (free_func == mxFree) ;
 
     //--------------------------------------------------------------------------
     // convert C as a vector to the requested format, if available
@@ -542,11 +605,11 @@ GrB_Info vector_unpack_pack
         //----------------------------------------------------------------------
 
             OK (GxB_Vector_unpack_CSC ((GrB_Vector) C,
-                &Ci, &Cx, &Ci_size, &Cx_size, &iso,
+                &Ci, &Cx, &Ci_memsize, &Cx_memsize, &iso,
                 &nvals, &jumbled, NULL)) ;
 
             OK (GxB_Vector_pack_CSC ((GrB_Vector) C,
-                &Ci, &Cx, Ci_size, Cx_size, iso,
+                &Ci, &Cx, Ci_memsize, Cx_memsize, iso,
                 nvals, jumbled, NULL)) ;
 
             break ;
@@ -574,10 +637,10 @@ GrB_Info vector_unpack_pack
         //----------------------------------------------------------------------
 
             OK (GxB_Vector_unpack_Bitmap ((GrB_Vector) C,
-                &Cb, &Cx, &Cb_size, &Cx_size, &iso, &nvals, NULL)) ;
+                &Cb, &Cx, &Cb_memsize, &Cx_memsize, &iso, &nvals, NULL)) ;
 
             OK (GxB_Vector_pack_Bitmap ((GrB_Vector) C,
-                &Cb, &Cx, Cb_size, Cx_size, iso, nvals, NULL)) ;
+                &Cb, &Cx, Cb_memsize, Cx_memsize, iso, nvals, NULL)) ;
 
             break ;
 
@@ -592,10 +655,10 @@ GrB_Info vector_unpack_pack
         //----------------------------------------------------------------------
 
             OK (GxB_Vector_unpack_Full ((GrB_Vector) C,
-                &Cx, &Cx_size, &iso, NULL)) ;
+                &Cx, &Cx_memsize, &iso, NULL)) ;
 
             OK (GxB_Vector_pack_Full ((GrB_Vector) C,
-                &Cx, Cx_size, iso, NULL)) ;
+                &Cx, Cx_memsize, iso, NULL)) ;
 
             break ;
 
@@ -610,10 +673,10 @@ GrB_Info vector_unpack_pack
         //----------------------------------------------------------------------
 
             OK (GxB_Vector_unpack_CSC ((GrB_Vector) C,
-                &Ci, &Cx, &Ci_size, &Cx_size, &iso, &nvals, NULL, NULL)) ;
+                &Ci, &Cx, &Ci_memsize, &Cx_memsize, &iso, &nvals, NULL, NULL)) ;
 
             OK (GxB_Vector_pack_CSC ((GrB_Vector) C,
-                &Ci, &Cx, Ci_size, Cx_size, iso, nvals, false, NULL)) ;
+                &Ci, &Cx, Ci_memsize, Cx_memsize, iso, nvals, false, NULL)) ;
 
             break ;
 

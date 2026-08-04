@@ -44,8 +44,19 @@ GrB_Info GB_build_jit               // GB_builder JIT kernel
     GB_jit_encoding encoding ;
     char *suffix ;
     uint64_t hash = GB_encodify_build (&encoding, &suffix,
-        GB_JIT_KERNEL_BUILD, dup, ttype, stype, Ti_is_32, I_is_32, K_is_32,
-        K_is_null, ndupl == 0) ;
+        GB_JIT_KERNEL_BUILD, dup, ttype, stype,
+        /* is_matrix, not used: */ true,
+        /* iso_build, not used: */ false,
+        /* Tp_is_32, not used: */ true,
+        /* Tj_is_32, not used: */ true,
+        Ti_is_32,
+        I_is_32,
+        /* J_is_32, not used: */ true,
+        K_is_32,
+        K_is_null,
+        /* Key_preloaded, Key_is_32, not used: */ false, true,
+        /* known_no_duplicates: */ ndupl == 0,
+        /* known_sorted (not used): */ false) ;
 
     //--------------------------------------------------------------------------
     // get the kernel function pointer, loading or compiling it if needed

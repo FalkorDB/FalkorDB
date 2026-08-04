@@ -28,24 +28,24 @@ typedef struct {
 } LevelConnection;
 
 typedef struct {
-	LevelConnection **levels;   // Nodes reached at depth i, and edges leading to them.
-	Path *path;                 // Current path.
-	Graph *g;                   // Graph to traverse.
-	Edge *neighbors;            // Reusable buffer of edges along the current path.
-	RelationID *relationIDs;    // edge type(s) to traverse (owned, may be expanded from GRAPH_NO_RELATION).
-	int relationCount;          // length of relationIDs.
-	Tensor *matrices;           // cached relation matrices, matrices[i] for relationIDs[i].
-	bool *multi_edge;           // multi_edge[i] true if matrices[i] contains multi-edges.
-	GRAPH_EDGE_DIR dir;         // traverse direction.
-	uint minLen;                // Path minimum length.
-	uint maxLen;                // Path max length.
-	Node *dst;                  // Destination node, defaults to NULL in case of general all paths execution.
-	Record r;                   // Record the traversal is being performed upon, only used for edge filtering.
-	FT_FilterNode *ft;          // FilterTree of predicates to be applied to traversed edges.
-	int edge_idx;               // Record index of the edge alias; -1 if edge is not referenced.
-	bool fetch_edges;           // true when edge attributes must be populated (filter or referenced edge).
-	bool shortest_paths;        // Only collect shortest paths.
-	GrB_Vector visited;         // Visited nodes in shortest path.
+	LevelConnection **levels;   // nodes reached at depth i, and edges leading to them
+	Path *path;                 // current path
+	Graph *g;                   // graph to traverse
+	Edge *neighbors;            // reusable buffer of edges along the current path
+	RelationID *relationIDs;    // edge type(s) to traverse (owned, may be expanded from GRAPH_NO_RELATION)
+	int relationCount;          // length of relationIDs
+	Tensor *matrices;           // cached relation matrices, matrices[i] for relationIDs[i]
+	bool *multi_edge;           // multi_edge[i] true if matrices[i] contains multi-edges
+	GRAPH_EDGE_DIR dir;         // traverse direction
+	uint minLen;                // path minimum length
+	uint maxLen;                // path max length
+	Node *dst;                  // destination node, defaults to NULL in case of general all paths execution
+	Record r;                   // record the traversal is being performed upon, only used for edge filtering
+	FT_FilterNode *ft;          // filterTree of predicates to be applied to traversed edges
+	int edge_idx;               // record index of the edge alias; -1 if edge is not referenced
+	bool fetch_edges;           // true when edge attributes must be populated (filter or referenced edge)
+	bool shortest_paths;        // only collect shortest paths
+	GrB_Vector visited;         // visited nodes in shortest path
 } AllPathsCtx;
 
 // Create a new All paths context object.
@@ -56,7 +56,7 @@ AllPathsCtx *AllPathsCtx_New(
 	RelationID *relationIDs,  // Edge type(s) on which we'll traverse.
 	int relationCount,   // Length of relationIDs.
 	GRAPH_EDGE_DIR dir,  // Traversal direction.
-	uint minLen,         // Path length must contain be at least minLen + 1 nodes.
+	uint minLen,         // Path length must contain at least minLen + 1 nodes.
 	uint maxLen,         // Path length must not exceed maxLen + 1 nodes.
 	Record r,            // Record the traversal is being performed upon.
 	FT_FilterNode *ft,   // FilterTree of predicates to be applied to traversed edges.

@@ -29,11 +29,13 @@ void mexFunction
     GB_mx_at_exit ( ) ;
 
     // initialize GraphBLAS
-    GxB_init (GrB_NONBLOCKING, mxMalloc, NULL, NULL, mxFree) ;
+//  GxB_init (GrB_NONBLOCKING, mxMalloc, NULL, NULL, mxFree) ;
+    GB_mx_init ( ) ;
 
-    // mxMalloc, mxCalloc, mxRealloc, and mxFree are not thread safe
-    GB_Global_malloc_is_thread_safe_set (false) ;
+    // abort
     GB_Global_abort_set (GB_mx_abort) ;
+
+    // enable debug malloc tracking
     GB_Global_malloc_tracking_set (true) ;
 
     // built-in default is by column

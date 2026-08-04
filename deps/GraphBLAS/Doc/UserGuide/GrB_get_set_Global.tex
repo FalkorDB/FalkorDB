@@ -110,10 +110,31 @@ GrB_Info GrB_set (GrB_Global g, void *     value, int f, size_t s) ;
                                                                 See Section~\ref{diag}. \\
 \verb'GxB_FLUSH'                    & W    & \verb'void *' & pointer to \verb'flush' function for diagnostic output.
                                                                 See Section~\ref{diag}. \\
-\verb'GxB_MALLOC_FUNCTION'  & R    & \verb'void *' & malloc function \\
-\verb'GxB_CALLOC_FUNCTION'  & R    & \verb'void *' & calloc function \\
-\verb'GxB_REALLOC_FUNCTION' & R    & \verb'void *' & realloc function \\
-\verb'GxB_FREE_FUNCTION'    & R    & \verb'void *' & free function \\
+\verb'GxB_MALLOC_FUNCTION'  & R    & \verb'void *' & malloc function of arena 0 \\
+\verb'GxB_CALLOC_FUNCTION'  & R    & \verb'void *' & calloc function of arena 0 \\
+\verb'GxB_REALLOC_FUNCTION' & R    & \verb'void *' & realloc function of arena 0 \\
+\verb'GxB_FREE_FUNCTION'    & R    & \verb'void *' & free function of arena 0 \\
+\hline
+\end{tabular}
+}
+
+\newpage
+See Section~\ref{sec:arenas} for a description of the following parameters:
+
+\vspace{0.1in}
+\noindent
+{\small
+\begin{tabular}{|l|l|l|p{2.5in}|}
+\hline
+\verb'int field'                    & R/W  & C type        & description \\
+\hline
+\verb'GxB_ARENA_MALLOC'  & R    & \verb'void *' & malloc function of an arena \\
+\verb'GxB_ARENA_CALLOC'  & R    & \verb'void *' & calloc function of an arena \\
+\verb'GxB_ARENA_REALLOC' & R    & \verb'void *' & realloc function of an arena \\
+\verb'GxB_ARENA_FREE'    & R    & \verb'void *' & free function of an arena \\
+\hline
+\verb'GxB_ARENA_DATA'   & R/W & \verb'int32_t' & data arena.  See Section~\ref{sec:arenas}). \\
+\verb'GxB_ARENA_HEADER' & R/W & \verb'int32_t' & header arena.  See Section~\ref{sec:arenas}). \\
 \hline
 \end{tabular}
 }

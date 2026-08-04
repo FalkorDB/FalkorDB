@@ -1,7 +1,7 @@
 function result = binops
 %GRB.BINOPS list all binary ops
-% Redundant binary ops are not listed.  For example '+.logical'
-% exists, but it is identical to '|.logical'.
+% Redundant binary ops are not listed.  For example '+.logical' exists, but it
+% is identical to '|.logical'.
 %
 % Example:
 %   GrB.binops ;            % prints a list, with descriptions
@@ -9,7 +9,7 @@ function result = binops
 %
 % See also GrB.binopinfo.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 types = {
@@ -56,7 +56,7 @@ end
             end
 
             try
-                ok = gbbinopinfo (binop) ;
+                ok = gbmex_binopinfo (binop) ;
                 nbinops = nbinops + 1 ;
                 if (nargout > 0)
                     result = [result ; binop] ; %#ok<AGROW>
