@@ -108,7 +108,10 @@ static void _get_edge_capacity
 	}
 }
 
-// Process-lifetime singletons for edge-capacity UDT type and index unary op.
+//------------------------------------------------------------------------------
+// Create process-lifetime constants for GrB_ Ops, each initialized exactly once
+//------------------------------------------------------------------------------
+
 static GrB_Type maxflow_cap_ctx_type = NULL;
 static GrB_IndexUnaryOp maxflow_get_capacity_op = NULL;
 static pthread_once_t maxflow_capacity_once = PTHREAD_ONCE_INIT;
