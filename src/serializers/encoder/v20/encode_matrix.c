@@ -5,6 +5,7 @@
 
 #include "RG.h"
 #include "GraphBLAS.h"
+#include "../container_workspace.h"
 #include "../../../globals.h"
 #include "../../serializer_io.h"
 #include "../../../graph/graphcontext.h"
@@ -79,8 +80,10 @@ static void _Encode_multiedge
 	ASSERT (v   != NULL) ;
 	ASSERT (rdb != NULL) ;
 
-    GxB_Container container;
-	GrB_OK (GxB_Container_new (&container)) ;
+	GxB_Container container = NULL;
+	bool borrowed = false;
+	EncoderContainerWorkspace_Acquire(ENCODER_CONTAINER_VECTOR, &container,
+			&borrowed);
 
 	// unload matrix into a container
 	GrB_OK (GxB_unload_Vector_into_Container(v, container, NULL)) ;
@@ -97,7 +100,7 @@ static void _Encode_multiedge
 	}
 
 	// clean up
-	GxB_Container_free(&container);
+	EncoderContainerWorkspace_Release(&container, borrowed);
 }
 
 static void _encode_multiedge_array
@@ -141,13 +144,13 @@ static void _Encode_GrB_Matrix
 
 	GrB_Info info;
 
-    GxB_Container container;
-	info = GxB_Container_new (&container) ;
-	ASSERT (info == GrB_SUCCESS);
+	GxB_Container container = NULL;
+	bool borrowed = false;
+	EncoderContainerWorkspace_Acquire(ENCODER_CONTAINER_MATRIX, &container,
+			&borrowed);
 
 	// unload matrix into a container
-	info = GxB_unload_Matrix_into_Container (A, container, NULL) ;
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (GxB_unload_Matrix_into_Container (A, container, NULL)) ;
 
 	// encode entire container
 	SerializerIO_WriteBuffer (rdb, container,
@@ -169,12 +172,11 @@ static void _Encode_GrB_Matrix
 
 	if (reload) {
 		// reload matrix
-		info = GxB_load_Matrix_from_Container (A, container, NULL) ;
-		ASSERT (info == GrB_SUCCESS) ;
+		GrB_OK (GxB_load_Matrix_from_Container (A, container, NULL)) ;
 	}
 
 	// clean up
-	GxB_Container_free(&container);
+	EncoderContainerWorkspace_Release(&container, borrowed);
 }
 
 // encode delta matrix
