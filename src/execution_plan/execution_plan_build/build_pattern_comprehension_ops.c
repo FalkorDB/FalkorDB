@@ -302,6 +302,12 @@ void buildPatternPathOps
 		// construct sub execution-plan resolving path
 		match_stream = ExecutionPlan_BuildOpsFromPath(plan, arguments, path);
 
+		// ExecutionPlan_BuildOpsFromPath may return NULL when the path
+		// produces no operations, e.g. a projection holding multiple pattern
+		// paths such as `RETURN exists((a)-[]-(b), (c)-[]-(d))`
+		// guard against it to avoid a NULL dereference in ExecutionPlan_AddOp
+		if(match_stream == NULL) continue;
+
 		// count number of elements in path
 		// construct a `topath` expression combining elements into a PATH object
 		uint path_len = cypher_ast_pattern_path_nelements(path);
