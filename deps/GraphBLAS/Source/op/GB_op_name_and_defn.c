@@ -22,12 +22,13 @@ GrB_Info GB_op_name_and_defn
     int32_t *op_name_len,       // op->name_len
     uint64_t *op_hash,          // op->hash
     char **op_defn,             // op->defn
-    size_t *op_defn_size,       // op->defn_size
+    uint64_t *op_defn_mem,      // op->defn_mem
     // input
     const char *input_name,     // user-provided name, may be NULL
     const char *input_defn,     // user-provided name, may be NULL
     bool user_op,               // if true, a user-defined op
-    bool jitable                // if true, the op can be JIT'd
+    bool jitable,               // if true, the op can be JIT'd
+    int header_arena
 )
 {
 
@@ -39,9 +40,9 @@ GrB_Info GB_op_name_and_defn
     ASSERT (op_name_len != NULL) ;
     ASSERT (op_hash != NULL) ;
     ASSERT (op_defn != NULL) ;
-    ASSERT (op_defn_size != NULL) ;
+    ASSERT (op_defn_mem != NULL) ;
     (*op_defn) = NULL ;
-    (*op_defn_size) = 0 ;
+    (*op_defn_mem) = 0 ;
 
     //--------------------------------------------------------------------------
     // get the name of the operator
@@ -53,11 +54,8 @@ GrB_Info GB_op_name_and_defn
     if (input_name != NULL)
     {
         // copy the input_name
-        strncpy (op_name, input_name, GxB_MAX_NAME_LEN-1) ;
+        GB_string_copy (op_name, input_name, GxB_MAX_NAME_LEN) ;
     }
-
-    // ensure op_name is null-terminated
-    op_name [GxB_MAX_NAME_LEN-1] = '\0' ;
 
     // get the operator name length (zero if no name given)
     (*op_name_len) = (int32_t) strlen (op_name) ;
@@ -67,8 +65,9 @@ GrB_Info GB_op_name_and_defn
     //--------------------------------------------------------------------------
 
     char *defn = NULL ;
-    size_t defn_size = 0 ;
-    size_t defn_len = 0 ;
+    uint64_t mem = GB_mem (header_arena, 0) ;
+    uint64_t defn_mem = mem ;
+    uint64_t defn_len = 0 ;
 
     if (input_defn != NULL)
     { 
@@ -76,7 +75,7 @@ GrB_Info GB_op_name_and_defn
         defn_len = strlen (input_defn) ;
 
         // allocate space for the definition
-        defn = GB_MALLOC_MEMORY (defn_len+1, sizeof (char), &defn_size) ;
+        defn = GB_MALLOC_MEMORY (defn_len+1, sizeof (char), &defn_mem) ;
         if (defn == NULL)
         { 
             // out of memory
@@ -101,7 +100,7 @@ GrB_Info GB_op_name_and_defn
     //--------------------------------------------------------------------------
 
     (*op_defn) = defn ;
-    (*op_defn_size) = defn_size ;
+    (*op_defn_mem) = defn_mem ;
     return (GrB_SUCCESS) ;
 }
 

@@ -281,7 +281,8 @@ static GrB_Info GB_msort_1_method      // sort array A of size 1-by-n
 (
     GB_A0_t *restrict A_0,      // size n array
     const int64_t n,
-    int nthreads                // # of threads to use
+    int nthreads,               // # of threads to use
+    const int data_arena        // arena for workspace
 )
 {
 
@@ -307,17 +308,19 @@ static GrB_Info GB_msort_1_method      // sort array A of size 1-by-n
     // allocate workspace
     //--------------------------------------------------------------------------
 
-    GB_A0_t *restrict W_0 = NULL ; size_t W_0_size = 0 ;
-    int64_t *restrict W_T = NULL ; size_t W_T_size = 0 ;
+    uint64_t mem = GB_mem (data_arena, 0) ;
 
-    W_0 = GB_MALLOC_MEMORY (n, sizeof (GB_A0_t), &W_0_size) ;
-    W_T = GB_MALLOC_MEMORY (6*ntasks + 1, sizeof (int64_t), &W_T_size) ;
+    GB_A0_t *restrict W_0 = NULL ; uint64_t W_0_mem = mem ;
+    int64_t *restrict W_T = NULL ; uint64_t W_T_mem = mem ;
+
+    W_0 = GB_MALLOC_MEMORY (n, sizeof (GB_A0_t), &W_0_mem) ;
+    W_T = GB_MALLOC_MEMORY (6*ntasks + 1, sizeof (int64_t), &W_T_mem) ;
 
     if (W_0 == NULL || W_T == NULL)
     { 
         // out of memory
-        GB_FREE_MEMORY (&W_0, W_0_size) ;
-        GB_FREE_MEMORY (&W_T, W_T_size) ;
+        GB_FREE_MEMORY (&W_0, W_0_mem) ;
+        GB_FREE_MEMORY (&W_T, W_T_mem) ;
         return (GrB_OUT_OF_MEMORY) ;
     }
 
@@ -413,8 +416,8 @@ static GrB_Info GB_msort_1_method      // sort array A of size 1-by-n
     // free workspace and return result
     //--------------------------------------------------------------------------
 
-    GB_FREE_MEMORY (&W_0, W_0_size) ;
-    GB_FREE_MEMORY (&W_T, W_T_size) ;
+    GB_FREE_MEMORY (&W_0, W_0_mem) ;
+    GB_FREE_MEMORY (&W_T, W_T_mem) ;
     return (GrB_SUCCESS) ;
 }
 

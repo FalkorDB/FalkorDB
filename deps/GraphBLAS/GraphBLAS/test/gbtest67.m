@@ -1,17 +1,20 @@
-function gbtest67
+function gbtest67 (ghb)
 %GBTEST67 test digraph
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-rng ('default') ;
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
 n = 32 ;
 for trial = 1:40
     fprintf ('.') ;
 
     A = sprand (n, n, 0.5) ;
-    G = GrB (A) ;
+    G = gtb (ghb, A) ;
 
     D1 = digraph (A) ;
     D2 = digraph (G) ;
@@ -22,11 +25,11 @@ for trial = 1:40
     assert (isequal (D1, D2)) ;
 
     D1 = digraph (logical (A)) ;
-    D2 = digraph (GrB (A, 'logical')) ;
+    D2 = digraph (gtb (ghb, A, 'logical')) ;
     assert (isequal (D1, D2)) ;
 
     D1 = digraph (logical (A), 'omitselfloops') ;
-    D2 = digraph (GrB (A, 'logical'), 'omitselfloops') ;
+    D2 = digraph (gtb (ghb, A, 'logical'), 'omitselfloops') ;
     assert (isequal (D1, D2)) ;
 
 end
@@ -37,18 +40,19 @@ for k = 1:length (types)
     type = types {k} ;
 
     A = gbtest_cast (rand (4), type) ;
-    G = GrB (A) ;
+    G = gtb (ghb, A) ;
 
     if (isequal (type, 'double') || isequal (type, 'single') || ...
         isequal (type, 'logical'))
         D1 = digraph (A) ;
     else
-        D1 = digraph (double (A)) ;
+        A2 = real (double (A)) ;
+        D1 = digraph (A2) ;
     end
 
     D2 = digraph (G) ;
     assert (isequal (D1, D2)) ;
 end
 
-fprintf ('\ngbtest67: all tests passed\n') ;
+fprintf ('\ngbtest67 (%d): all tests passed\n', ghb) ;
 

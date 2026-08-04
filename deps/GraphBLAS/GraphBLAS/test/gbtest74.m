@@ -1,8 +1,13 @@
-function gbtest74
+function gbtest74 (ghb)
 %GBTEST74 test bitwise operators
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
+
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
 int_types = {
 'int8'
@@ -15,8 +20,6 @@ int_types = {
 'uint64' } ;
 
 int_nbits = [ 8, 16, 32, 64, 8, 16, 32, 64 ] ;
-
-rng ('default') ;
 
 for k = 1:8
 
@@ -32,16 +35,16 @@ for k = 1:8
         imax = double (intmax (type) / 4) ;
         A = cast (imax * rand (4), type) ;
         B = cast ((nbits-1) * rand (4), type) + 1 ;
-        A2 = GrB (A) ;
-        B2 = GrB (B) ;
+        A2 = gtb (ghb, A) ;
+        B2 = gtb (ghb, B) ;
         V = rand (4) > 0.5 ;
-
-        C1 = bitget (A, B) ;
-        C2 = bitget (A2, B2) ;
-        assert (isequal (C1, C2)) ;
 
         C1 = bitset (A, B) ;
         C2 = bitset (A2, B2) ;
+        assert (isequal (C1, C2)) ;
+
+        C1 = bitget (A, B) ;
+        C2 = bitget (A2, B2) ;
         assert (isequal (C1, C2)) ;
 
         C1 = bitset (A, B, 1) ;
@@ -59,13 +62,13 @@ for k = 1:8
         for a = 0:3
             for b = 1:4
                 C1 = bitset (a, b, 1) ;
-                C2 = bitset (a, b, GrB (1)) ;
+                C2 = bitset (a, b, gtb (ghb, 1)) ;
                 assert (isequal (C1, C2)) ;
             end
         end
 
         C1 = bitset (a, B, 1) ;
-        C2 = bitset (a, B, GrB (1)) ;
+        C2 = bitset (a, B, gtb (ghb, 1)) ;
         assert (isequal (C1, C2)) ;
 
         C1 = bitand (A, B) ;
@@ -87,11 +90,15 @@ for k = 1:8
         % dense double case, with assumedtype
         A = double (A) ;
         B = double (B) ;
-        A2 = GrB (A) ;
-        B2 = GrB (B) ;
+        A2 = gtb (ghb, A) ;
+        B2 = gtb (ghb, B) ;
 
         C1 = bitget (A, B, type) ;
-        C2 = bitget (A2, B2, type) ;
+        C2 = bitget (uint64 (A2), B2, type) ;
+        assert (isequal (C1, double (C2))) ;
+
+        C1 = bitget (A, B, type) ;
+        C2 = bitget (A2, uint64 (B2), type) ;
         assert (isequal (C1, C2)) ;
 
         C1 = bitset (A, B, type) ;
@@ -144,8 +151,8 @@ for k = 1:8
         % B ranges in value from 0 to 8
         B = round (sprand (10, 10, 0.5) * nbits) ;
         Bfull = cast (full (B), type) ;
-        A2 = GrB.prune (GrB (Afull)) ;
-        B2 = GrB.prune (GrB (Bfull)) ;
+        A2 = gtb_prune (ghb, gtb (ghb, Afull)) ;
+        B2 = gtb_prune (ghb, gtb (ghb, Bfull)) ;
 
         C1 = bitxor (Afull, Bfull) ;
         C2 = bitxor (A2, B2) ;
@@ -193,12 +200,12 @@ for k = 1:8
 
         imax = double (intmax (type)) ;
         imin = double (intmin (type)) ;
-        A1 = GrB ((imax-imin) * rand (4) - imin, type) ;
-        B1 = GrB ((imax-imin) * rand (4) - imin, type) ;
+        A1 = gtb (ghb, (imax-imin) * rand (4) - imin, type) ;
+        B1 = gtb (ghb, (imax-imin) * rand (4) - imin, type) ;
         A  = cast (A1, type) ;
         B  = cast (B1, type) ;
-        A2 = GrB.prune (GrB (A1)) ;
-        B2 = GrB.prune (GrB (B1)) ;
+        A2 = gtb_prune (ghb, gtb (ghb, A1)) ;
+        B2 = gtb_prune (ghb, gtb (ghb, B1)) ;
 
         C1 = bitxor (A, B) ;
         C2 = bitxor (A1, B1) ;
@@ -223,5 +230,5 @@ for k = 1:8
     end
 end
 
-fprintf ('\ngbtest74: all tests passed\n') ;
+fprintf ('\ngbtest74 (%d): all tests passed\n', ghb) ;
 

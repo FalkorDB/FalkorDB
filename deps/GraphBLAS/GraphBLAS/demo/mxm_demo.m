@@ -27,7 +27,7 @@ G = GrB (1) ;
 G = G*G ;
 clear G
 
-if (demo_octave)
+if (gb_octave)
     thread_list = ncores ;
 else
     thread_list = [ 1 ncores 2*ncores] ;

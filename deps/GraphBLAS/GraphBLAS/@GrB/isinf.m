@@ -1,20 +1,12 @@
 function C = isinf (G)
 %ISINF true for infinite elements.
-% C = isinf (G) returns a logical matrix C where C(i,j) = true
-% if G(i,j) is infinite.
+% C = isinf (G) returns a logical matrix C where C(i,j) = true if G(i,j) is
+% infinite.
 %
 % See also GrB/isnan, GrB/isfinite.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-G = G.opaque ;
-[m, n, type] = gbsize (G) ;
-
-if (gb_isfloat (type) && gbnvals (G) > 0)
-    C = GrB (gbapply ('isinf', G)) ;
-else
-    % C is all false
-    C = GrB (m, n, 'logical') ;
-end
+C = gb_isinf (0, G) ;
 

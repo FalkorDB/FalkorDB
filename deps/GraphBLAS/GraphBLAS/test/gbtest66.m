@@ -1,10 +1,13 @@
-function gbtest66
+function gbtest66 (ghb)
 %GBTEST66 test graph
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-rng ('default') ;
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
 n = 32 ;
 for trial = 1:40
@@ -12,7 +15,7 @@ for trial = 1:40
 
     A = sprand (n, n, 0.5) ;
     A = A + A' ;
-    G = GrB (A) ;
+    G = gtb (ghb, A) ;
 
     D1 = graph (A) ;
     D2 = graph (G) ;
@@ -55,11 +58,11 @@ for trial = 1:40
     assert (isequal (D1, D4)) ;
 
     D1 = graph (logical (A)) ;
-    D2 = graph (GrB (A, 'logical')) ;
+    D2 = graph (gtb (ghb, A, 'logical')) ;
     assert (isequal (D1, D2)) ;
 
     D1 = graph (logical (A), 'omitselfloops') ;
-    D2 = graph (GrB (A, 'logical'), 'omitselfloops') ;
+    D2 = graph (gtb (ghb, A, 'logical'), 'omitselfloops') ;
     assert (isequal (D1, D2)) ;
 end
 
@@ -70,7 +73,7 @@ for k = 1:length (types)
 
     A = gbtest_cast (rand (4), type) ;
     A = A + A' ;
-    G = GrB (A) ;
+    G = gtb (ghb, A) ;
 
     if (isequal (type, 'double') || isequal (type, 'single') || ...
         isequal (type, 'logical'))
@@ -79,9 +82,12 @@ for k = 1:length (types)
         D1 = graph (double (A)) ;
     end
 
+    % type
     D2 = graph (G) ;
+    % D1.Edges
+    % D2.Edges
     assert (isequal (D1, D2)) ;
 end
 
-fprintf ('\ngbtest66: all tests passed\n') ;
+fprintf ('\ngbtest66 (%d): all tests passed\n', ghb) ;
 

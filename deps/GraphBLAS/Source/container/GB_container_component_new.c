@@ -12,8 +12,12 @@
 
 GrB_Info GB_container_component_new
 (
+    // output:
     GrB_Vector *component,
-    GrB_Type type
+    // inputs
+    GrB_Type type,
+    int header_arena,
+    int data_arena
 )
 { 
 
@@ -30,7 +34,8 @@ GrB_Info GB_container_component_new
 
     GB_OK (GB_new ((GrB_Matrix *) component,
         type, 0, 1, GB_ph_null, /* is_csc: */ true, GxB_FULL,
-        GB_HYPER_SWITCH_DEFAULT, 0, /* pji: */ false, false, false)) ;
+        GB_HYPER_SWITCH_DEFAULT, 0, /* pji: */ false, false, false,
+        header_arena, data_arena)) ;
 
     GB_vector_reset (*component) ;
 

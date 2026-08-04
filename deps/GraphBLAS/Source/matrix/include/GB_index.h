@@ -90,7 +90,7 @@ static inline int8_t GB_pji_control
     }
     else
     { 
-        // use the matrix-specific cisontrol
+        // use the matrix-specific [pji]_control
         return (matrix_pji_control) ;
     }
 }

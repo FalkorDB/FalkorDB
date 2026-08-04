@@ -1,7 +1,7 @@
 function gbcovshow
 %GBCOVSHOW report GraphBLAS statement coverage
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 % report the coverage summary
@@ -21,7 +21,7 @@ fprintf ('test coverage: %d of %d (%0.1f%%), not covered: %d\n', ...
 
 % create the coverage reports in tmp/cover
 
-infiles = dir ('tmp/@GrB/*/*.c') ;
+infiles = dir ('tmp/*.c') ;
 
 nfiles = length (infiles) ;
 

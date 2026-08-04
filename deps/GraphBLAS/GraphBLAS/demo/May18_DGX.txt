@@ -1,16 +1,5 @@
 mxm_demo
-{Invalid MEX-file
-'/home/faculty/d/davis/master/GraphBLAS/GraphBLAS/@GrB/private/gbclear.mexa64':
-/home/faculty/d/davis/bin/libgraphblas_matlab.so.8: undefined symbol:
-__svml_ldexp2
 
-Error in GrB.clear (line 12)
-gbclear ;
-
-Error in mxm_demo (line 11)
-GrB.clear ;
-} 
-diary off
 100799 / 3600
 
 ans =

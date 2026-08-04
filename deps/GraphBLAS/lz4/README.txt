@@ -23,7 +23,8 @@ Files in this folder:
 When LZ4 is compiled for use in SuiteSparse:GraphBLAS,
 LZ4_USER_MEMORY_FUNCTIONS is defined, and LZ4_malloc, LZ4_calloc, and LZ4_free,
 are provided to LZ4.  Those functions use whatever memory manager is given to
-GxB_init, or the C11 malloc/calloc/free for GrB_init.
+GxB_init, or the C11 malloc/calloc/free for GrB_init (GrB_DEFAULT).
+This cannot be changed to a different arena.
 
 This compile-time change could cause a conflict if LZ4 is also installed as a
 system-wide library.  To avoid the conflict, all LZ4 function names are renamed

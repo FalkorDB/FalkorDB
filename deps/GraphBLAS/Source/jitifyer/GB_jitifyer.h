@@ -189,11 +189,15 @@ typedef enum
 
     // apply methods:
     GB_JIT_CUDA_KERNEL_APPLYUNOP = 1026,
+    GB_JIT_CUDA_KERNEL_TRANSPOSE_PREP = 1027,
     //... (up to 9 apply methods?)
 
     // select methods:
     GB_JIT_CUDA_KERNEL_SELECT_BITMAP = 1035,
-    GB_JIT_CUDA_KERNEL_SELECT_SPARSE = 1036
+    GB_JIT_CUDA_KERNEL_SELECT_SPARSE = 1036,
+
+    // build:
+    GB_JIT_CUDA_KERNEL_BUILD = 1037
 
 }
 GB_jit_kcode ;
@@ -248,6 +252,7 @@ static inline void GB_encodify_kcode
     {
         // CUDA kernel
         int device = 0 ;
+        // fixme for CUDA: this assumes device is set OK:
         GB_cuda_get_device (&device) ;
         int major = GB_Global_gpu_compute_capability_major_get (device) ;
         int minor = GB_Global_gpu_compute_capability_minor_get (device) ;
@@ -449,7 +454,7 @@ GrB_Info GB_jitifyer_set_error_log_worker (const char *new_error_log) ;
 bool GB_jitifyer_get_use_cmake (void) ;
 void GB_jitifyer_set_use_cmake (bool use_cmake) ;
 
-void GB_jitifyer_sanitize (char *string, size_t len) ;
+void GB_jitifyer_sanitize (char *string, uint64_t len) ;
 
 GB_jit_query_func GB_jitifyer_get_query (void *p) ;
 GB_user_op_f GB_jitifyer_get_user_op (void *p) ;

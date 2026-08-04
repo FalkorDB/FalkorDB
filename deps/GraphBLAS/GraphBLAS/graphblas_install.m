@@ -1,16 +1,16 @@
-function graphblas_install (cmake_options)
+function graphblas_install (cmake_options, cmake_config)
 %GRAPHBLAS_INSTALL compile SuiteSparse:GraphBLAS for MATLAB or Octave
 %
 % Usage:
 %   graphblas_install
 %
-% MATLAB 9.4 (R2018a) or Octave 7 later is required.  This function must
-% be run while your current working directory is the same as the directory
-% that contains graphblas_install.m.
+% MATLAB 9.4 (R2018a) or Octave 7 or later are required.  This function
+% must be run while your current working directory is the same as the
+% directory that contains graphblas_install.m.
 %
 % See also mex.
 %
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 % make sure we are in the right place
@@ -29,13 +29,14 @@ if (~isempty (slash))
     end
 end
 
-have_octave = (exist ('OCTAVE_VERSION', 'builtin') == 5) ;
+addpath (here) ;
+have_octave = gb_octave ;
 
 if (have_octave)
     % Octave can use the normal libgraphblas.so
     need_rename = false ;
-    if verLessThan ('octave', '7')
-        error ('GrB:mex', 'Octave 7 or later is required') ;
+    if verLessThan ('octave', '10.0')
+        error ('GrB:mex', 'Octave 10.0 or later is required') ;
     end
 else
     if verLessThan ('matlab', '9.4')
@@ -50,6 +51,15 @@ end
 
 if (nargin < 1)
     cmake_options = '' ;
+end
+
+if (nargin < 2)
+    cmake_config = 'Release' ;
+end
+
+cmake_options2 = '' ;
+if (isequal (cmake_config, 'Debug'))
+    cmake_options2 = '-DCMAKE_BUILD_TYPE=Debug' ;
 end
 
 % by default, use OpenMP as found by cmake
@@ -108,19 +118,21 @@ try
 
     % cmd1: configure with cmake
     build_folder = pwd ;
-    cmd1 = sprintf ('%s cmake %s ..', ld_path, cmake_options) ;
+    cmd1 = sprintf ('%s cmake %s %s ..', ld_path, cmake_options, cmake_options2) ;
 
     % build the GraphBLAS library
-    cmd2 = sprintf ('%s cmake --build . --config Release -j%d', ...
-        ld_path, threads) ;
+    cmd2 = sprintf ('%s cmake --build . --config %s -j%d', ...
+        ld_path, cmake_config, threads) ;
 
     % execute cmd1: configure with cmake
     clear mex
     fprintf ('\n================================\n%s\n', cmd1) ;
 
-    [status, result] = system (cmd1, '-echo') ;
     if (have_octave)
+        [status, result] = system (cmd1) ;
         disp (result)
+    else
+        status = system (cmd1, '-echo') ;
     end
     if (status ~= 0)
         cd (here) ;
@@ -133,11 +145,10 @@ try
     if (have_octave)
         fprintf ('When using octave, intermediate progress is not displayed.\n') ;
         fprintf ('Be assured that the GraphBLAS library is now being compiled ...\n') ;
-    end
-    [status, result] = system (cmd2, '-echo') ;
-    if (have_octave)
-        % display all progress, all at once
-        disp (result)
+        [status, result] = system (cmd2) ;
+        disp (result) ;
+    else
+        status = system (cmd2, '-echo') ;
     end
     cd (here) ;
     if (status ~= 0)
@@ -146,21 +157,32 @@ try
 
 catch me
     me
-    fprintf ('Building GraphBLAS with cmake failed.  Try this outside of MATLAB:\n') ;
-    fprintf ('\n    cd %s\n    %s\n    %s\n', build_folder, cmd1, cmd2) ;
-    cd (here) ;
-
-    fprintf ('\nThen do this inside MATLAB/Octave:\n\n') ;
-    fprintf ('    cd %s/@GrB/private\n    gbmake\n', here) ;
+    fprintf ('Building GraphBLAS with cmake failed.\n') ;
+    if (ismac)
+        fprintf ('If you have errors like this:\n\n') ;
+        fprintf ('    Undefined symbols for architecture arm64:\n') ;
+        fprintf ('    "___kmpc_dispatch_deinit", referenced from: ...\n\n') ;
+        fprintf ('Then MATLAB mexFunctions on the Mac cannot use OpenMP.\n') ;
+        fprintf ('See the GraphBLAS/GraphBLAS/README.md file for details.\n') ;
+        fprintf ('\nTry compiling without OpenMP, with this command:\n\n') ;
+        fprintf ('    graphblas_install (''-DGRAPHBLAS_USE_OPENMP=0'')\n') ;
+    else
+        fprintf ('Try this outside of MATLAB:\n') ;
+        fprintf ('\n    cd %s\n    %s\n    %s\n', build_folder, cmd1, cmd2) ;
+        cd (here) ;
+        fprintf ('\nThen do this inside MATLAB/Octave:\n\n') ;
+        fprintf ('    cd %s/private\n    gbmake\n', here) ;
+    end
     return ;
 end
 
 % build the GraphBLAS MATLAB interface
 try
-    cd '@GrB/private'
+    cd 'private'
     gbmake
 catch me
-    fprintf ('Building GraphBLAS @GrB interface failed\n') ;
+    me
+    fprintf ('Building GraphBLAS GrB/GhB interface failed\n') ;
 end
 
 cd (here) ;

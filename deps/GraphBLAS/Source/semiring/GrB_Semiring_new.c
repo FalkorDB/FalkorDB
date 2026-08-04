@@ -30,12 +30,14 @@
 // The multiply operator can be any GrB_BinaryOp, including ones created from a
 // GxB_IndexBinaryOp.
 
+// The semiring is allocated in header arena determined by the current Context.
+
 #include "GB.h"
 #include "semiring/GB_Semiring_new.h"
 
-#define GB_FREE_ALL                     \
-{                                       \
-    GB_FREE_MEMORY (semiring, header_size) ;   \
+#define GB_FREE_ALL                         \
+{                                           \
+    GB_FREE_MEMORY (semiring, header_mem) ; \
 }
 
 GrB_Info GrB_Semiring_new           // create a semiring
@@ -45,41 +47,7 @@ GrB_Info GrB_Semiring_new           // create a semiring
     GrB_BinaryOp multiply           // multiply operator of the semiring
 )
 {
-
-    //--------------------------------------------------------------------------
-    // check inputs
-    //--------------------------------------------------------------------------
-
-    GB_CHECK_INIT ;
-    GB_RETURN_IF_NULL (semiring) ;
-
-    GrB_Info info ;
-    (*semiring) = NULL ;
-    GB_RETURN_IF_NULL_OR_FAULTY (add) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (multiply) ;
-    ASSERT_MONOID_OK (add, "semiring->add", GB0) ;
-    ASSERT_BINARYOP_OK (multiply, "semiring->multiply", GB0) ;
-
-    //--------------------------------------------------------------------------
-    // allocate the semiring
-    //--------------------------------------------------------------------------
-
-    size_t header_size ;
-    (*semiring) = GB_MALLOC_MEMORY (1, sizeof (struct GB_Semiring_opaque),
-        &header_size) ;
-    if (*semiring == NULL)
-    { 
-        // out of memory
-        return (GrB_OUT_OF_MEMORY) ;
-    }
-
-    (*semiring)->header_size = header_size ;
-
-    //--------------------------------------------------------------------------
-    // create the semiring
-    //--------------------------------------------------------------------------
-
-    GB_OK (GB_Semiring_new (*semiring, add, multiply)) ;
-    return (GrB_SUCCESS) ;
+    int header_arena = GB_Context_header_arena ( ) ;
+    return (GxB_Semiring_new_arena (semiring, add, multiply, header_arena));
 }
 

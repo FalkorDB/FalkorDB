@@ -164,15 +164,15 @@ int main (int argc, char **argv)
         int ch;
         do
         {
-            ch = fgetc (fr);
+            ch = fgetc (fr) ;
             if (ch == '\n')
             {
                 nfiles++;
             }
-        } while (ch != EOF);
+        } while (ch != EOF) ;
 
         // read file list from response file
-        rewind (fr);
+        rewind (fr) ;
         file_list = malloc ( (nfiles+1) * sizeof (file_list) );
         OK (file_list != NULL) ;
         // prepend empty element for compatibility with argv
@@ -186,10 +186,10 @@ int main (int argc, char **argv)
         for (size_t i = 1 ; i < nfiles+1 ; i++)
         {
             OK ( fgets (temp, BUF_LENGTH, fr) != NULL );
-            length = safe_strlen (temp, BUF_LENGTH);
-            file_list[i] = malloc (length+1);
+            length = safe_strlen (temp, BUF_LENGTH) ;
+            file_list[i] = malloc (length+1) ;
             OK (file_list [i] != NULL) ;
-            strncpy (file_list[i], temp, length);
+            strncpy (file_list[i], temp, length) ; // SAFE: not in libgraphblas
             file_list[i][length-1] = '\0';
         }
     }

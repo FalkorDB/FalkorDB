@@ -13,7 +13,7 @@
 #ifndef GB_INT64_MULTIPLY_H
 #define GB_INT64_MULTIPLY_H
 
-GB_STATIC_INLINE bool GB_int64_multiply      // true if ok, false if overflow
+GB_STATIC_INLINE_BOTH bool GB_int64_multiply    // true if ok, false if overflow
 (
     uint64_t *restrict c,   // c = a*b, or zero if overflow occurs
     const int64_t a,

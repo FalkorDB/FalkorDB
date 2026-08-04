@@ -50,6 +50,9 @@ GrB_Info GB_subassign_24    // C = A, copy A into an existing matrix C
     ASSERT (GB_JUMBLED_OK (A)) ;
     ASSERT (GB_PENDING_OK (A)) ;
 
+    int header_arena = GB_arena (C->header_mem) ;
+    int data_arena = C->data_arena ;
+
     //--------------------------------------------------------------------------
     // delete any lingering zombies and assemble any pending tuples
     //--------------------------------------------------------------------------
@@ -108,11 +111,17 @@ GrB_Info GB_subassign_24    // C = A, copy A into an existing matrix C
         // copy the pattern from A to C
         //----------------------------------------------------------------------
 
-        // clear prior content of C, but keep the CSR/CSC format and its type
+        // clear prior content of C, but keep the CSR/CSC format and its type.
+        // C is allocated with its desired pji integers; can differ from A.
+
         bool C_is_csc = C->is_csc ;
         GB_phybix_free (C) ;
         // copy the pattern, not the values
-        GB_OK (GB_dup_worker (&C, C_iso, A, false, C->type)) ;
+        bool Cp_is_32, Cj_is_32, Ci_is_32 ;
+        GB_determine_pji_is_32 (&Cp_is_32, &Cj_is_32, &Ci_is_32,
+            GB_sparsity (A), GB_nnz (A), A->vlen, A->vdim, Werk) ;
+        GB_OK (GB_dup_worker (&C, C_iso, A, /* numeric: */ false, C->type,
+            Cp_is_32, Cj_is_32, Ci_is_32, header_arena, data_arena, Werk)) ;
         C->is_csc = C_is_csc ;      // do not change the CSR/CSC format of C
         // GB_assign_prep has assigned the C->x iso value, but this has just
         // been cleared, so it needs to be reassigned below by GB_cast_matrix.

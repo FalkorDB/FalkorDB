@@ -13,7 +13,7 @@
 // method, this method allocates the blob itself, and hands over the allocated
 // space to the user application.  The blob must be freed by the same free
 // function passed in to GxB_init, or by the C11 free() if GrB_init was
-// used.  On input, the blob_size need not be initialized; it is returned as
+// used.  On input, the blob_memsize need not be initialized; it is returned as
 // the size of the blob as allocated.
 
 // This method also includes the descriptor as the last parameter, which allows
@@ -22,13 +22,15 @@
 
 /*
     void *blob = NULL ;
-    uint64_t blob_size = 0 ;
+    uint64_t blob_memsize = 0 ;
     GrB_Matrix A, B = NULL ;
     // construct a matrix A, then serialized it:
-    GxB_Matrix_serialize (&blob, &blob_size, A, NULL) ; // GxB mallocs the blob
-    GxB_Matrix_deserialize (&B, atype, blob, blob_size, NULL) ;
+    GxB_Matrix_serialize (&blob, &blob_memsize, A, NULL) ; // GxB mallocs blob
+    GxB_Matrix_deserialize (&B, atype, blob, blob_memsize, NULL) ;
     free (blob) ;                                   // user frees the blob
 */
+
+// The blob is created in the current data arena, as defined by the Context.
 
 #include "GB.h"
 #include "serialize/GB_serialize.h"
@@ -36,41 +38,17 @@
 GrB_Info GxB_Matrix_serialize       // serialize a GrB_Matrix to a blob
 (
     // output:
-    void **blob_handle,             // the blob, allocated on output
-    uint64_t *blob_size_handle,     // size of the blob on output
+    void **blob_handle,             // the blob, allocated on output, in the
+                                    // data arena defined by the current Context
+    uint64_t *blob_memsize_handle,  // size of the blob on output
     // input:
     GrB_Matrix A,                   // matrix to serialize
     const GrB_Descriptor desc       // descriptor to select compression method
                                     // and to control # of threads used
 )
 { 
-
-    //--------------------------------------------------------------------------
-    // check inputs
-    //--------------------------------------------------------------------------
-
-    GB_RETURN_IF_NULL (blob_handle) ;
-    GB_RETURN_IF_NULL (blob_size_handle) ;
-    GB_RETURN_IF_NULL (A) ;
-    GB_WHERE_1 (A, "GxB_Matrix_serialize (&blob, &blob_size, A, desc)") ;
-    GB_BURBLE_START ("GxB_Matrix_serialize") ;
-
-    GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
-
-    // get the compression method from the descriptor
-    int method = (desc == NULL) ? GxB_DEFAULT : desc->compression ;
-
-    //--------------------------------------------------------------------------
-    // serialize the matrix
-    //--------------------------------------------------------------------------
-
-    (*blob_handle) = NULL ;
-    size_t blob_size = 0 ;
-    info = GB_serialize ((GB_void **) blob_handle, &blob_size, A, method,
-        Werk) ;
-    (*blob_size_handle) = (uint64_t) blob_size ;
-    GB_BURBLE_END ;
-    #pragma omp flush
-    return (info) ;
+    int data_arena = GB_Context_data_arena ( ) ;
+    return (GxB_Matrix_serialize_arena (blob_handle, blob_memsize_handle, A,
+        data_arena, desc)) ;
 }
 

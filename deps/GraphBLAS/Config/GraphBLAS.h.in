@@ -1,4 +1,4 @@
-// SuiteSparse:GraphBLAS @GraphBLAS_VERSION_MAJOR@.@GraphBLAS_VERSION_MINOR@.@GraphBLAS_VERSION_SUB@
+// SuiteSparse:GraphBLAS @GraphBLAS_VER_MAJOR@.@GraphBLAS_VER_MINOR@.@GraphBLAS_VER_SUB@
 //------------------------------------------------------------------------------
 // GraphBLAS.h: definitions for the GraphBLAS package
 //------------------------------------------------------------------------------
@@ -286,10 +286,10 @@
 
 // The version of this implementation, and the GraphBLAS API version:
 #define GxB_IMPLEMENTATION_NAME "SuiteSparse:GraphBLAS"
-#define GxB_IMPLEMENTATION_DATE "@GraphBLAS_DATE@"
-#define GxB_IMPLEMENTATION_MAJOR @GraphBLAS_VERSION_MAJOR@
-#define GxB_IMPLEMENTATION_MINOR @GraphBLAS_VERSION_MINOR@
-#define GxB_IMPLEMENTATION_SUB   @GraphBLAS_VERSION_SUB@
+#define GxB_IMPLEMENTATION_DATE "@GraphBLAS_VER_DATE@"
+#define GxB_IMPLEMENTATION_MAJOR @GraphBLAS_VER_MAJOR@
+#define GxB_IMPLEMENTATION_MINOR @GraphBLAS_VER_MINOR@
+#define GxB_IMPLEMENTATION_SUB   @GraphBLAS_VER_SUB@
 #define GxB_SPEC_DATE "@GraphBLAS_API_DATE@"
 #define GxB_SPEC_MAJOR @GraphBLAS_API_VERSION_MAJOR@
 #define GxB_SPEC_MINOR @GraphBLAS_API_VERSION_MINOR@
@@ -547,7 +547,7 @@ typedef struct GB_Scalar_opaque *GxB_Scalar ;       // use GrB_Scalar
 //      GxB*_pack* methods.
 
 #ifndef GRAPHBLAS_VANILLA
-// The following are enumerated values in both the GrB_Desc_Field and the
+// The following are enumerated values in both the GxB_Context_Field and the
 // GxB_Option_Field for global options.  They are defined with the same integer
 // value for both enums, so the user can use them for both.
 #define GxB_NTHREADS 7086
@@ -556,6 +556,14 @@ typedef struct GB_Scalar_opaque *GxB_Scalar ;       // use GrB_Scalar
 // GPU control
 #define GxB_GPU_IDS 7101
 #define GxB_NGPUS 7102
+
+// arena control
+#define GxB_ARENA_DATA   7105
+#define GxB_ARENA_HEADER 7106
+
+// pre-defined arenas
+// #define GrB_DEFAULT (0): default arena for header and data: 0
+#define GxB_ARENA_RMM     1     /* arena 1 reserved for CUDA Rapids */
 #endif
 
 typedef enum    // GrB_Desc_Field ;
@@ -1600,10 +1608,19 @@ typedef enum    // GxB_Option_Field ;
     GxB_COMPILER_VERSION = 7016,     // compiler version (3 int's)
     GxB_COMPILER_NAME = 7017,        // compiler name (char *)
     GxB_LIBRARY_OPENMP = 7018,       // library compiled with OpenMP
-    GxB_MALLOC_FUNCTION = 7037,      // malloc function pointer
-    GxB_CALLOC_FUNCTION = 7038,      // calloc function pointer
-    GxB_REALLOC_FUNCTION = 7039,     // realloc function pointer
-    GxB_FREE_FUNCTION = 7040,        // free function pointer
+
+    // historical; use GxB_ARENA_* values instead to query any arena:
+    GxB_MALLOC_FUNCTION = 7037,      // malloc function pointer (arena 0 only)
+    GxB_CALLOC_FUNCTION = 7038,      // calloc function pointer (arena 0 only)
+    GxB_REALLOC_FUNCTION = 7039,     // realloc function pointer (arena 0 only)
+    GxB_FREE_FUNCTION = 7040,        // free function pointer (arena 0 only)
+
+    // for GrB_Global_get_VOID only: add k to get the function pointer
+    // for the kth arena
+    GxB_ARENA_MALLOC  = 0x10000,    // +k to get malloc function of kth arena
+    GxB_ARENA_CALLOC  = 0x20000,    // +k to get calloc function of kth arena
+    GxB_ARENA_REALLOC = 0x30000,    // +k to get realloc function of kth arena
+    GxB_ARENA_FREE    = 0x40000,    // +k to get free function of kth arena
 
     //------------------------------------------------------------
     // GrB_get / GrB_set for GrB_GLOBAL:
@@ -1753,6 +1770,7 @@ typedef enum    // GxB_Context_Field
     // GPU control
     GxB_CONTEXT_NGPUS = GxB_NGPUS,        // # of GPU(s) to use
     GxB_CONTEXT_GPU_IDS = GxB_GPU_IDS,    // list of GPU(s) to use
+
 }
 GxB_Context_Field ;
 #endif
@@ -2746,7 +2764,7 @@ typedef int64_t (*GxB_print_function)
     // output:
     char *string,           // value is printed to the string
     // input:
-    size_t string_size,     // size of the string array
+    size_t string_len,      // size of the string array in bytes
     const void *value,      // value to print
     int verbose             // if >0, print verbosely; else tersely
 ) ;
@@ -2814,19 +2832,204 @@ GrB_Info GrB_init           // start up GraphBLAS
     int mode                // blocking or non-blocking mode, no GPU (GrB_Mode)
 ) ;
 
+GrB_Info GrB_finalize (void) ;     // finish GraphBLAS
+
 #ifndef GRAPHBLAS_VANILLA
+
 GrB_Info GxB_init           // start up GraphBLAS and also define malloc, etc
 (
     int mode,               // blocking or non-blocking mode (GrB_Mode)
-    // pointers to memory management functions
+    // pointers to memory management functions for the default memory arena
     void * (* user_malloc_function  ) (size_t),
     void * (* user_calloc_function  ) (size_t, size_t),
     void * (* user_realloc_function ) (void *, size_t),
     void   (* user_free_function    ) (void *)
 ) ;
+
+// SuiteSparse:GraphBLAS can be initialized and finalized any number of times.
+// Each call to GrB_init/GxB_init must be followed by a call to GrB_finalize.
+// Between those to calls, any GraphBLAS method can be used except GrB_init/
+// GxB_init.  Before the first call to GrB_init/GxB_init, or after a call to
+// GrB_finalize, the only methods that can be called are GrB_init, GxB_init,
+// GxB_initialized, and GxB_finalized.
+
+// GrB_init and GxB_init return GrB_INVALID_VALUE if GraphBLAS is already
+// initialized.  GrB_finalize returns GrB_INVALID_VALUE if GraphBLAS has not
+// been initialized, and sets the state of GraphBLAS to not-initialized.
+
+GrB_Info GxB_initialized    // determine if GraphBLAS is initialized
+(
+    int *flag               // returns true if GrB_init or GxB_init has been
+                            // called (and the corresponding GrB_finalize
+                            // has not), false otherwise
+) ;
+
+GrB_Info GxB_finalized      // determine if GraphBLAS is finalized
+(
+    int *flag               // returns true if GrB_init or GxB_init has not
+                            // yet been called or if GrB_finalize has been
+                            // called, false otherwise
+) ;
+
 #endif
 
-GrB_Info GrB_finalize (void) ;     // finish GraphBLAS
+//==============================================================================
+// arena methods
+//==============================================================================
+
+// GraphBLAS supports multiple memory allocators, and matrices or other objects
+// allocated with different memory alloctors can be mixed.  A set of memory
+// routines for malloc/calloc/realloc/free is called a GraphBLAS arena.
+
+// GrB_init or GxB_init initializes the default arena, GrB_DEFAULT, or arena 0.
+// GrB_init simply initializes the default arena to the builtin C
+// malloc/calloc/realloc/free methods.  GxB_init allows the user application to
+// use different allocator functions for the default arena.
+
+// Once an arena is initialized, it cannot be changed except by GrB_finalize,
+// which clears all arenas.  A new arena can be created with
+
+//      GxB_arena_init (arena, malloc, calloc, realloc, free) ;
+
+// where the arena is an integer in the range 2 to GxB_NARENAS-1.
+// Arena 1 is reserved for future use by the CUDA kernels in GraphBLAS.
+
+// Matrices, vectors, and scalars can use two different arenas: one for their
+// header and one for their data.  The header is the value of A for the
+// GrB_Matrix A, which is a pointer to an struct containing opaque content.
+// Other objects (types, operators, monoids, semirings, descriptors, etc)
+// use a single arena (the header arena).
+
+// The arena(s) of an object can be queried by GrB_get.  The data arenas of a
+// matrix, vector, or scalar can be set by GrB_set.  To set the header and
+// data arena of a matrix, vector, or scalar, use
+
+//      GxB_Matrix_set_arenas (&A, header_arena, data_arena) ;
+//      GxB_Vector_set_arenas (&V, header_arena, data_arena) ;
+//      GxB_Scalar_set_arenas (&s, header_arena, data_arena) ;
+
+// These methods modify the pointer to the header, and thus the first input
+// parameter is a pointer to a matrix, vector, or scalar.
+
+// By default, constructors such as GrB_Matrix_new use the default arena,
+// or arena 0.  This can be changed with GrB_set (GrB_GLOBAL, ...) or
+// GrB_set (Context, ...).  See the list of get/set methods below.
+
+/*
+    int arena ;
+
+    changes the data arena only:
+    GrB_Matrix_set_INT32 (A, arena, GxB_ARENA_DATA) ;
+    GrB_Vector_set_INT32 (V, arena, GxB_ARENA_DATA) ;
+    GrB_Scalar_set_INT32 (S, arena, GxB_ARENA_DATA) ;
+
+    get the data arena or header arena of a matrix:
+    GrB_Matrix_get_INT32 (A, &arena, GxB_ARENA_DATA) ;
+    GrB_Vector_get_INT32 (V, &arena, GxB_ARENA_DATA) ;
+    GrB_Scalar_get_INT32 (S, &arena, GxB_ARENA_DATA) ;
+    GrB_Matrix_get_INT32 (A, &arena, GxB_ARENA_HEADER) ;
+    GrB_Vector_get_INT32 (V, &arena, GxB_ARENA_HEADER) ;
+    GrB_Scalar_get_INT32 (S, &arena, GxB_ARENA_HEADER) ;
+
+    get the header arena for all other objects:
+    GrB_*_get_INT32 (object, &arena, GxB_ARENA_HEADER) ;
+
+    get the malloc, calloc, realloc, and free functions of an arena:
+    GrB_Global_get_VOID (GrB_GLOBAL, &malloc_func,  GxB_ARENA_MALLOC  + arena) ;
+    GrB_Global_get_VOID (GrB_GLOBAL, &calloc_func,  GxB_ARENA_CALLOC  + arena) ;
+    GrB_Global_get_VOID (GrB_GLOBAL, &realloc_func, GxB_ARENA_REALLOC + arena) ;
+    GrB_Global_get_VOID (GrB_GLOBAL, &free_func,    GxB_ARENA_FREE    + arena) ;
+
+    get the global default arena:
+    GrB_Global_get_INT32 (GrB_GLOBAL, &arena, GxB_ARENA_DATA) ;
+    GrB_Global_get_INT32 (GrB_GLOBAL, &arena, GxB_ARENA_HEADER) ;
+
+    set the global default arena:
+    GrB_Global_set_INT32 (GrB_GLOBAL, arena, GxB_ARENA_DATA) ;
+    GrB_Global_set_INT32 (GrB_GLOBAL, arena, GxB_ARENA_HEADER) ;
+
+    get the arena of a Context:
+    GxB_Context_get_INT (Context, &arena, GxB_ARENA_DATA) ;
+    GxB_Context_get_INT (Context, &arena, GxB_ARENA_HEADER) ;
+
+    set the arena of a Context:
+    GxB_Context_set_INT (Context, arena, GxB_ARENA_DATA) ;
+    GxB_Context_set_INT (Context, arena, GxB_ARENA_HEADER) ;
+*/
+
+// The following methods create new objects but do not use the header/data
+// arenas defined by the global state (GrB_GLOBAL) or a Context.  Instead, they
+// take one or two arena parameters that define which arena(s) to use:
+
+//      GxB_Descriptor_new_arena
+//      GxB_Type_new_arena
+//      GxB_UnaryOp_new_arena
+//      GxB_BinaryOp_new_arena
+//      GxB_IndexBinaryOp_new_arena
+//      GxB_IndexUnaryOp_new_arena
+//      GxB_Monoid_new_arena*
+//      GxB_Monoid_terminal_new_arena*
+//      GxB_Semiring_new_arena
+//      GxB_Scalar_new_arena
+//      GxB_Vector_new_arena
+//      GxB_Matrix_new_arena
+//      GxB_Context_new_arena
+//      GxB_Container_new_arena
+//      GxB_Iterator_new_arena
+
+//      GxB_Scalar_dup_arena
+//      GxB_Vector_dup_arena
+//      GxB_Matrix_dup_arena
+//      GxB_Matrix_split_arena
+//      GxB_Matrix_diag_arena
+//      GxB_Matrix_serialize_arena
+//      GxB_Vector_serialize_arena
+//      GxB_Matrix_deserialize_arena
+//      GxB_Vector_deserialize_arena
+//      GxB_Matrix_reshapeDup_arena
+
+#ifndef GRAPHBLAS_VANILLA
+
+#define GxB_NARENAS 8       /* max number of arenas */
+
+GrB_Info GxB_arena_init     // create a new arena
+(
+    // input
+    int arena,              // 2 to GxB_NARENAS-1
+    void * (* user_malloc_function  ) (size_t),         // required
+    void * (* user_calloc_function  ) (size_t, size_t), // not used
+    void * (* user_realloc_function ) (void *, size_t), // optional, can be NULL
+    void   (* user_free_function    ) (void *)          // required
+) ;
+
+// GxB_[Matrix,Vector,Scalar]_set_arenas: change the header and data arena:
+GrB_Info GxB_Matrix_set_arenas
+(
+    // input/output
+    GrB_Matrix *Ahandle,        // handle of matrix to modify
+    // input
+    const int new_header_arena, // new arena for the header of A
+    const int new_data_arena    // new arena for the data content of A
+) ;
+
+GrB_Info GxB_Vector_set_arenas
+(
+    // input/output
+    GrB_Vector *Vhandle,        // handle of vector to modify
+    // input
+    const int new_header_arena, // new arena for the header of V
+    const int new_data_arena    // new arena for the data content of V
+) ;
+
+GrB_Info GxB_Scalar_set_arenas
+(
+    // input/output:
+    GrB_Scalar *Shandle,        // handle of vector to modify
+    // input:
+    const int new_header_arena, // new arena for the header of S
+    const int new_data_arena    // new arena for the data content of S
+) ;
+#endif
 
 //==============================================================================
 // GrB_Descriptor: the GraphBLAS descriptor
@@ -2836,6 +3039,14 @@ GrB_Info GrB_Descriptor_new     // create a new descriptor
 (
     GrB_Descriptor *descriptor  // handle of descriptor to create
 ) ;
+
+#ifndef GRAPHBLAS_VANILLA
+GrB_Info GxB_Descriptor_new_arena // create a new descriptor in given arena
+(
+    GrB_Descriptor *descriptor, // handle of descriptor to create
+    const int header_arena
+) ;
+#endif
 
 //==============================================================================
 // helper macros for polymorphic functions
@@ -3017,6 +3228,15 @@ GrB_Info GxB_Type_new           // create a new named GraphBLAS type
     const char *type_defn       // typedef for the type (no max length)
 ) ;
 
+GrB_Info GxB_Type_new_arena
+(
+    GrB_Type *type,             // handle of user type to create
+    size_t sizeof_type,         // size of the user type
+    const char *type_name,      // name of the user type
+    const char *type_defn,      // typedef of the C type (any length)
+    const int header_arena
+) ;
+
 GrB_Info GxB_Type_from_name     // return the built-in GrB_Type from a name
 (
     GrB_Type *type,             // built-in type, or NULL if user-defined.
@@ -3051,6 +3271,17 @@ GrB_Info GxB_UnaryOp_new            // create a new user-defined unary operator
     const char *unop_name,          // name of the user function
     const char *unop_defn           // definition of the user function
 ) ;
+
+GrB_Info GxB_UnaryOp_new_arena      // create a new user-defined unary operator
+(
+    GrB_UnaryOp *op_handle,         // handle for the new unary operator
+    GxB_unary_function function,    // pointer to the unary function
+    GrB_Type ztype,                 // type of output z
+    GrB_Type xtype,                 // type of input x
+    const char *unop_name,          // name of the user function
+    const char *unop_defn,          // definition of the user function
+    const int header_arena
+) ;
 #endif
 
 //==============================================================================
@@ -3079,6 +3310,18 @@ GrB_Info GxB_BinaryOp_new
     const char *binop_name,         // name of the user function
     const char *binop_defn          // definition of the user function
 ) ;
+
+GrB_Info GxB_BinaryOp_new_arena
+(
+    GrB_BinaryOp *op_handle,        // handle for the new binary operator
+    GxB_binary_function function,   // pointer to the binary function
+    GrB_Type ztype,                 // type of output z
+    GrB_Type xtype,                 // type of input x
+    GrB_Type ytype,                 // type of input y
+    const char *binop_name,         // name of the user function
+    const char *binop_defn,         // definition of the user function
+    const int header_arena
+) ;
 #endif
 
 //==============================================================================
@@ -3099,12 +3342,34 @@ GrB_Info GxB_IndexBinaryOp_new
     const char *idxbinop_defn       // definition of the user function
 ) ;
 
+GrB_Info GxB_IndexBinaryOp_new_arena
+(
+    GxB_IndexBinaryOp *op_handle,   // handle for the new index binary operator
+    GxB_index_binary_function function, // pointer to the index binary function
+    GrB_Type ztype,                 // type of output z
+    GrB_Type xtype,                 // type of input x
+    GrB_Type ytype,                 // type of input y
+    GrB_Type theta_type,            // type of input theta
+    const char *idxop_name,         // name of the user function
+    const char *idxop_defn,         // definition of the user function
+    const int header_arena
+) ;
+
 // GxB_BinaryOp_new_IndexOp: create a new binary op from an index binary op
 GrB_Info GxB_BinaryOp_new_IndexOp
 (
     GrB_BinaryOp *binop,            // handle of binary op to create
     GxB_IndexBinaryOp idxbinop,     // based on this index binary op
     GrB_Scalar theta                // theta value to bind to the new binary op
+) ;
+
+// GxB_BinaryOp_new_IndexOp_arena: create new binary op from an index binary op
+GrB_Info GxB_BinaryOp_new_IndexOp_arena
+(
+    GrB_BinaryOp *binop_handle,     // handle of binary op to create
+    GxB_IndexBinaryOp idxbinop,     // based on this index binary op
+    GrB_Scalar theta,               // theta value to bind to the new binary op
+    const int header_arena
 ) ;
 #endif
 
@@ -3133,6 +3398,18 @@ GrB_Info GxB_IndexUnaryOp_new   // create a named user-created IndexUnaryOp
     GrB_Type ytype,                 // type of input y (the scalar)
     const char *idxop_name,         // name of the user function
     const char *idxop_defn          // definition of the user function
+) ;
+
+GrB_Info GxB_IndexUnaryOp_new_arena // create a named user-created IndexUnaryOp
+(
+    GrB_IndexUnaryOp *op_handle,    // handle for the new IndexUnary operator
+    GxB_index_unary_function function,    // pointer to index_unary function
+    GrB_Type ztype,                 // type of output z
+    GrB_Type xtype,                 // type of input x (the A(i,j) entry)
+    GrB_Type ytype,                 // type of input y (the scalar)
+    const char *idxop_name,         // name of the user function
+    const char *idxop_defn,         // definition of the user function
+    const int header_arena
 ) ;
 #endif
 
@@ -3166,6 +3443,25 @@ GB_DECLARE_14 (GrB_, void *)
     _Generic ((identity), GB_CASES (GrB, Monoid_new)) (monoid, op, identity)
 #endif
 
+#ifndef GRAPHBLAS_VANILLA
+#undef  GB_DECLARE
+#define GB_DECLARE(prefix,suffix,type)                                        \
+GrB_Info GxB_Monoid_new_arena ## suffix   /* create a new monoid */           \
+(                                                                             \
+    GrB_Monoid *monoid,             /* handle of monoid to create */          \
+    GrB_BinaryOp op,                /* binary operator of the monoid */       \
+    type identity,                  /* identity value of the monoid */        \
+    const int header_arena                                                    \
+) ;
+GB_DECLARE_14 (GxB_, void *)
+
+#if GxB_STDC_VERSION >= 201112L
+#define GxB_Monoid_new_arena(monoid,op,identity,header_arena)                 \
+    _Generic ((identity), GB_CASES (GxB, Monoid_new_arena))                   \
+        (monoid, op, identity, header_arena)
+#endif
+#endif
+
 // GxB_Monoid_terminal_new is identical to GrB_Monoid_new, except that a
 // terminal value can be specified.  The terminal may be NULL, which indicates
 // no terminal value (and in this case, it is identical to GrB_Monoid_new).
@@ -3180,9 +3476,10 @@ GB_DECLARE_14 (GrB_, void *)
 //  ) ;
 
 #ifndef GRAPHBLAS_VANILLA
+
 #undef  GB_DECLARE
 #define GB_DECLARE(prefix,suffix,type)                                        \
-GrB_Info GxB_Monoid_terminal_new ## suffix /* create a new termainal monoid */\
+GrB_Info GxB_Monoid_terminal_new ## suffix /* create a new terminal monoid */ \
 (                                                                             \
     GrB_Monoid *monoid,             /* handle of monoid to create */          \
     GrB_BinaryOp op,                /* binary operator of the monoid */       \
@@ -3192,10 +3489,29 @@ GrB_Info GxB_Monoid_terminal_new ## suffix /* create a new termainal monoid */\
 GB_DECLARE_14 (GxB_, void *)
 
 #if GxB_STDC_VERSION >= 201112L
-#define GxB_Monoid_terminal_new(monoid,op,identity,terminal)    \
-    _Generic ((identity), GB_CASES (GxB, Monoid_terminal_new))  \
+#define GxB_Monoid_terminal_new(monoid,op,identity,terminal)                  \
+    _Generic ((identity), GB_CASES (GxB, Monoid_terminal_new))                \
     (monoid, op, identity, terminal)
 #endif
+
+#undef  GB_DECLARE
+#define GB_DECLARE(prefix,suffix,type)                                        \
+GrB_Info GxB_Monoid_terminal_new_arena ## suffix /* new terminal monoid */    \
+(                                                                             \
+    GrB_Monoid *monoid,             /* handle of monoid to create */          \
+    GrB_BinaryOp op,                /* binary operator of the monoid */       \
+    type identity,                  /* identity value of the monoid */        \
+    type terminal,                  /* terminal value of the monoid */        \
+    const int header_arena                                                    \
+) ;
+GB_DECLARE_14 (GxB_, void *)
+
+#if GxB_STDC_VERSION >= 201112L
+#define GxB_Monoid_terminal_new_arena(monoid,op,id,terminal,header_arena)     \
+    _Generic ((id), GB_CASES (GxB, Monoid_terminal_new_arena))                \
+    (monoid, op, id, terminal, header_arena)
+#endif
+
 #endif
 
 //==============================================================================
@@ -3211,6 +3527,16 @@ GrB_Info GrB_Semiring_new           // create a semiring
     GrB_Monoid add,                 // add monoid of the semiring
     GrB_BinaryOp multiply           // multiply operator of the semiring
 ) ;
+
+#ifndef GRAPHBLAS_VANILLA
+GrB_Info GxB_Semiring_new_arena     // create a semiring
+(
+    GrB_Semiring *semiring,         // handle of semiring to create
+    GrB_Monoid add,                 // additive monoid of the semiring
+    GrB_BinaryOp multiply,          // multiply operator of the semiring
+    const int header_arena
+) ;
+#endif
 
 //==============================================================================
 // GrB_Scalar: a GraphBLAS scalar
@@ -3230,6 +3556,24 @@ GrB_Info GrB_Scalar_dup     // make an exact copy of a GrB_Scalar
     GrB_Scalar *s,          // handle of output GrB_Scalar to create
     const GrB_Scalar t      // input GrB_Scalar to copy
 ) ;
+
+#ifndef GRAPHBLAS_VANILLA
+GrB_Info GxB_Scalar_new_arena // create a new GrB_Scalar with no entry
+(
+    GrB_Scalar *s,          // handle of GrB_Scalar to create
+    GrB_Type type,          // type of GrB_Scalar to create
+    const int header_arena,
+    const int data_arena
+) ;
+
+GrB_Info GxB_Scalar_dup_arena // make an exact copy of a GrB_Scalar
+(
+    GrB_Scalar *s,          // handle of output GrB_Scalar to create
+    const GrB_Scalar t,     // input GrB_Scalar to copy
+    const int header_arena,
+    const int data_arena
+) ;
+#endif
 
 GrB_Info GrB_Scalar_clear   // clear a GrB_Scalar of its entry
 (                           // type remains unchanged.
@@ -3330,6 +3674,26 @@ GrB_Info GrB_Vector_dup     // make an exact copy of a vector
     GrB_Vector *w,          // handle of output vector to create
     const GrB_Vector u      // input vector to copy
 ) ;
+
+#ifndef GRAPHBLAS_VANILLA
+GrB_Info GxB_Vector_new_arena  // create a new vector with no entries
+(
+    GrB_Vector *v,          // handle of vector to create
+    GrB_Type type,          // type of vector to create
+    GrB_Index n,            // vector dimension is n-by-1
+                            // (n must be <= GrB_INDEX_MAX+1)
+    const int header_arena,
+    const int data_arena
+) ;
+
+GrB_Info GxB_Vector_dup_arena     // make an exact copy of a vector
+(
+    GrB_Vector *w,          // handle of output vector to create
+    const GrB_Vector u,     // input vector to copy
+    const int header_arena,
+    const int data_arena
+) ;
+#endif
 
 GrB_Info GrB_Vector_clear   // clear a vector of all entries;
 (                           // type and dimension remain unchanged.
@@ -3651,6 +4015,26 @@ GrB_Info GrB_Matrix_dup     // make an exact copy of a matrix
     GrB_Matrix *C,          // handle of output matrix to create
     const GrB_Matrix A      // input matrix to copy
 ) ;
+
+#ifndef GRAPHBLAS_VANILLA
+GrB_Info GxB_Matrix_new_arena  // create a new matrix with no entries
+(
+    GrB_Matrix *A,          // handle of matrix to create
+    GrB_Type type,          // type of matrix to create
+    GrB_Index nrows,        // matrix dimension is nrows-by-ncols
+    GrB_Index ncols,        // (nrows and ncols must be <= GrB_INDEX_MAX+1)
+    const int header_arena,
+    const int data_arena
+) ;
+
+GrB_Info GxB_Matrix_dup_arena     // make an exact copy of a matrix
+(
+    GrB_Matrix *C,          // handle of output matrix to create
+    const GrB_Matrix A,     // input matrix to copy
+    const int header_arena,
+    const int data_arena
+) ;
+#endif
 
 GrB_Info GrB_Matrix_clear   // clear a matrix of all entries;
 (                           // type and dimensions remain unchanged
@@ -4034,6 +4418,19 @@ GrB_Info GxB_Matrix_split           // split a matrix into 2D array of matrices
     const GrB_Matrix A,             // input matrix to split
     const GrB_Descriptor desc       // unused, except threading control
 ) ;
+
+GrB_Info GxB_Matrix_split_arena     // split a matrix into 2D array of matrices
+(
+    GrB_Matrix *Tiles,              // 2D row-major array of size m-by-n
+    const GrB_Index m,
+    const GrB_Index n,
+    const GrB_Index *Tile_nrows,    // array of size m
+    const GrB_Index *Tile_ncols,    // array of size n
+    const GrB_Matrix A,             // input matrix to split
+    const int header_arena,
+    const int data_arena,
+    const GrB_Descriptor desc       // unused, except threading control
+) ;
 #endif
 
 //------------------------------------------------------------------------------
@@ -4055,6 +4452,17 @@ GrB_Info GrB_Matrix_diag    // build a diagonal matrix from a vector
     const GrB_Vector v,             // input vector
     int64_t k
 ) ;
+
+#ifndef GRAPHBLAS_VANILLA
+GrB_Info GxB_Matrix_diag_arena    // build a diagonal matrix from a vector
+(
+    GrB_Matrix *C,                  // output matrix
+    const GrB_Vector v,             // input vector
+    int64_t k,
+    const int header_arena,
+    const int data_arena
+) ;
+#endif
 
 // GrB_Matrix_diag is like GxB_Matrix_diag (&C, v, k, NULL), except that C must
 // already exist on input, of the correct size.  Any existing entries in C are
@@ -4107,6 +4515,12 @@ GrB_Info GxB_Vector_diag    // extract a diagonal from a matrix, as a vector
 GrB_Info GxB_Context_new            // create a new Context
 (
     GxB_Context *Context            // handle of Context to create
+) ;
+
+GrB_Info GxB_Context_new_arena      // create a new Context in given arena
+(
+    GxB_Context *Context_handle,    // handle of Context to create
+    const int header_arena
 ) ;
 
 GrB_Info GxB_Context_engage         // engage a Context
@@ -6490,7 +6904,9 @@ struct GxB_Container_struct
     int32_t format ;                // GxB_HYPERSPARSE, GxB_SPARSE, GxB_BITMAP,
                                     // or GxB_FULL
     int32_t orientation ;           // GrB_ROWMAJOR or GrB_COLMAJOR
-    uint32_t u32_future [14] ;      // for future expansion
+    int32_t header_arena ;          // arena of the Container struct itself,
+                                    // for GxB_Container_free.  Do NOT modify.
+    uint32_t u32_future [13] ;      // for future expansion
 
     // 16 GrB_Vector objects:
     GrB_Vector p ;
@@ -6516,6 +6932,13 @@ struct GxB_Container_struct
 typedef struct GxB_Container_struct *GxB_Container ;
 
 GrB_Info GxB_Container_new (GxB_Container *Container) ;
+
+GrB_Info GxB_Container_new_arena
+(
+    GxB_Container *Container,
+    const int header_arena,
+    const int data_arena
+) ;
 
 GrB_Info GxB_load_Matrix_from_Container     // GrB_Matrix <- GxB_Container
 (
@@ -6556,10 +6979,11 @@ GrB_Info GxB_Vector_load
     // input:
     GrB_Type type,          // type of X
     uint64_t n,             // # of entries in X
-    uint64_t X_size,        // size of X in bytes (at least n*(sizeof the type))
+    uint64_t X_memsize,     // size of X in bytes (at least n*(sizeof the type))
     int handling,           // GrB_DEFAULT (0): transfer ownership to GraphBLAS
                             // GxB_IS_READONLY: X treated as readonly;
                             //      ownership kept by the user application
+                            // handling+arena is returned
     const GrB_Descriptor desc   // currently unused; for future expansion
 ) ;
 
@@ -6571,7 +6995,7 @@ GrB_Info GxB_Vector_unload
     // output:
     GrB_Type *type,         // type of X
     uint64_t *n,            // # of entries in X
-    uint64_t *X_size,       // size of X in bytes (at least n*(sizeof the type))
+    uint64_t *X_memsize,    // size of X in bytes (at least n*(sizeof the type))
     int *handling,          // see GxB_Vector_load
     const GrB_Descriptor desc   // currently unused; for future expansion
 ) ;
@@ -6583,15 +7007,15 @@ GrB_Info GxB_Vector_unload
 
 // The GrB_Matrix_import method copies from user-provided arrays into an
 // opaque GrB_Matrix and GrB_Matrix_export copies data out, from an opaque
-// GrB_Matrix into user-provided arrays.  Unlike the GxB pack/unpack methods,
+// GrB_Matrix into user-provided arrays.  Unlike the GxB Container methods,
 // memory is not handed off between the user application and GraphBLAS.
 
-// These methods are much slower than the GxB pack/unpack methods, since they
+// These methods are much slower than the GxB Container methods, since they
 // require a copy of the data to be made.  GrB_Matrix_import also must assume
 // its input data cannot be trusted, and so it does extensive checks.  The GxB
 // pack takes O(1) time in all cases (unless it is told the input data is
-// untrusted, via the descriptor).  GxB unpack takes O(1) time unless the
-// matrix is exported in a different format than it currently has.
+// untrusted, via the descriptor).  GxB Container methods take O(1) time unless
+// the matrix has pending work that must be finished first.
 
 // No typecasting of the values is done on import or export.  The GrB_Type type
 // parameter must be the equivalent of the ctype of the *Ax parameter.
@@ -6696,6 +7120,11 @@ GrB_Info GrB_Matrix_exportHint  // suggest the best export format
 // the data is untrusted, use this to check the matrix:
 //      GxB_Matrix_fprint (A, "A deserialized", GxB_SILENT, NULL)
 
+// GxB*_serialize methods always construct the blob in the data arena defined
+// by the current Context.  There is no method for query a blob for its arena,
+// since the user application can move it unchanged into a file, and load it
+// back, or move it to another arena, without using GraphBLAS.
+
 // Example usage:
 
 /*
@@ -6791,10 +7220,24 @@ GrB_Info GrB_Matrix_exportHint  // suggest the best export format
 GrB_Info GxB_Matrix_serialize       // serialize a GrB_Matrix to a blob
 (
     // output:
-    void **blob_handle,             // the blob, allocated on output
-    GrB_Index *blob_size_handle,    // size of the blob on output
+    void **blob_handle,             // the blob, allocated on output, in the
+                                    // default data arena
+    GrB_Index *blob_size,           // size of the blob on output
     // input:
     GrB_Matrix A,                   // matrix to serialize
+    const GrB_Descriptor desc       // descriptor to select compression method
+                                    // and to control # of threads used
+) ;
+
+GrB_Info GxB_Matrix_serialize_arena // serialize a GrB_Matrix to a blob
+(
+    // output:
+    void **blob_handle,             // the blob, allocated on output, in the
+                                    // data arena given below
+    GrB_Index *blob_size,           // size of the blob on output
+    // input:
+    GrB_Matrix A,                   // matrix to serialize
+    const int data_arena,
     const GrB_Descriptor desc       // descriptor to select compression method
                                     // and to control # of threads used
 ) ;
@@ -6805,7 +7248,7 @@ GrB_Info GrB_Matrix_serialize       // serialize a GrB_Matrix to a blob
     // output:
     void *blob,                     // the blob, already allocated in input
     // input/output:
-    GrB_Index *blob_size_handle,    // size of the blob on input.  On output,
+    GrB_Index *blob_size,           // size of the blob on input.  On output,
                                     // the # of bytes used in the blob.
     // input:
     GrB_Matrix A                    // matrix to serialize
@@ -6815,10 +7258,24 @@ GrB_Info GrB_Matrix_serialize       // serialize a GrB_Matrix to a blob
 GrB_Info GxB_Vector_serialize       // serialize a GrB_Vector to a blob
 (
     // output:
-    void **blob_handle,             // the blob, allocated on output
-    GrB_Index *blob_size_handle,    // size of the blob on output
+    void **blob_handle,             // the blob, allocated on output, in the
+                                    // default data arena
+    GrB_Index *blob_size,           // size of the blob on output
     // input:
     GrB_Vector u,                   // vector to serialize
+    const GrB_Descriptor desc       // descriptor to select compression method
+                                    // and to control # of threads used
+) ;
+
+GrB_Info GxB_Vector_serialize_arena // serialize a GrB_Vector to a blob
+(
+    // output:
+    void **blob_handle,             // the blob, allocated on output, in the
+                                    // data arena given below
+    GrB_Index *blob_size,           // size of the blob on output
+    // input:
+    GrB_Vector u,                   // vector to serialize
+    const int data_arena,
     const GrB_Descriptor desc       // descriptor to select compression method
                                     // and to control # of threads used
 ) ;
@@ -6827,7 +7284,7 @@ GrB_Info GxB_Vector_serialize       // serialize a GrB_Vector to a blob
 GrB_Info GrB_Matrix_serializeSize   // estimate the size of a blob
 (
     // output:
-    GrB_Index *blob_size_handle,    // upper bound on the required size of the
+    GrB_Index *blob_size,           // upper bound on the required size of the
                                     // blob on output.
     // input:
     GrB_Matrix A                    // matrix to serialize
@@ -6835,13 +7292,15 @@ GrB_Info GrB_Matrix_serializeSize   // estimate the size of a blob
 
 // The GrB* and GxB* deserialize methods are nearly identical.  The GxB*
 // deserialize methods simply add the descriptor, which allows for optional
-// control of the # of threads used to deserialize the blob.
+// control of the # of threads used to deserialize the blob, and additional
+// parameters to control the header and data arenas of the output matrix/vector.
 
 #ifndef GRAPHBLAS_VANILLA
 GrB_Info GxB_Matrix_deserialize     // deserialize blob into a GrB_Matrix
 (
     // output:
-    GrB_Matrix *C,      // output matrix created from the blob
+    GrB_Matrix *C,      // output matrix created from the blob, created in the
+                        // default header and data arena
     // input:
     GrB_Type type,      // type of the matrix C.  Required if the blob holds a
                         // matrix of user-defined type.  May be NULL if blob
@@ -6851,12 +7310,30 @@ GrB_Info GxB_Matrix_deserialize     // deserialize blob into a GrB_Matrix
     GrB_Index blob_size,    // size of the blob
     const GrB_Descriptor desc       // to control # of threads used
 ) ;
+
+GrB_Info GxB_Matrix_deserialize_arena // deserialize blob into a GrB_Matrix
+(
+    // output:
+    GrB_Matrix *C,      // output matrix created from the blob, created in the
+                        // header and data arena given by inputs below
+    // input:
+    GrB_Type type,      // type of the matrix C.  Required if the blob holds a
+                        // matrix of user-defined type.  May be NULL if blob
+                        // holds a built-in type; otherwise must match the
+                        // type of C.
+    const void *blob,   // the blob
+    uint64_t blob_memsize, // size of the blob
+    const int header_arena,
+    const int data_arena,
+    const GrB_Descriptor desc       // to control # of threads used
+) ;
 #endif
 
 GrB_Info GrB_Matrix_deserialize     // deserialize blob into a GrB_Matrix
 (
     // output:
-    GrB_Matrix *C,      // output matrix created from the blob
+    GrB_Matrix *C,      // output matrix created from the blob, created in the
+                        // default header and data arena
     // input:
     GrB_Type type,      // type of the matrix C.  Required if the blob holds a
                         // matrix of user-defined type.  May be NULL if blob
@@ -6870,7 +7347,8 @@ GrB_Info GrB_Matrix_deserialize     // deserialize blob into a GrB_Matrix
 GrB_Info GxB_Vector_deserialize     // deserialize blob into a GrB_Vector
 (
     // output:
-    GrB_Vector *w,      // output vector created from the blob
+    GrB_Vector *w,      // output vector created from the blob, created in the
+                        // default header and data arena
     // input:
     GrB_Type type,      // type of the vector w.  Required if the blob holds a
                         // vector of user-defined type.  May be NULL if blob
@@ -6878,6 +7356,23 @@ GrB_Info GxB_Vector_deserialize     // deserialize blob into a GrB_Vector
                         // type of w.
     const void *blob,       // the blob
     GrB_Index blob_size,    // size of the blob
+    const GrB_Descriptor desc       // to control # of threads used
+) ;
+
+GrB_Info GxB_Vector_deserialize_arena // deserialize blob into a GrB_Vector
+(
+    // output:
+    GrB_Vector *w,      // output vector created from the blob, created in the
+                        // header and data arena given by inputs below
+    // input:
+    GrB_Type type,      // type of the vector w.  Required if the blob holds a
+                        // vector of user-defined type.  May be NULL if blob
+                        // holds a built-in type; otherwise must match the
+                        // type of w.
+    const void *blob,       // the blob
+    GrB_Index blob_size,    // size of the blob
+    const int header_arena,
+    const int data_arena,
     const GrB_Descriptor desc       // to control # of threads used
 ) ;
 #endif
@@ -6975,6 +7470,21 @@ GrB_Info GxB_Matrix_reshapeDup // reshape a GrB_Matrix into another GrB_Matrix
     bool by_col,                // true if reshape by column, false if by row
     GrB_Index nrows_new,        // number of rows of C
     GrB_Index ncols_new,        // number of columns of C
+    const GrB_Descriptor desc   // to control # of threads used
+) ;
+
+GrB_Info GxB_Matrix_reshapeDup_arena  // reshape into another GrB_Matrix
+(
+    // output:
+    GrB_Matrix *C,              // newly created output matrix, not in place;
+                                // allocated in given header and data arenas
+    // input:
+    GrB_Matrix A,               // input matrix, not modified
+    bool by_col,                // true if reshape by column, false if by row
+    uint64_t nrows_new,         // number of rows of C
+    uint64_t ncols_new,         // number of columns of C
+    const int header_arena,
+    const int data_arena,
     const GrB_Descriptor desc   // to control # of threads used
 ) ;
 #endif
@@ -7077,7 +7587,7 @@ struct GB_Iterator_opaque
     int64_t k ;                 // the current vector
 
     // only changes when the iterator is created:
-    size_t header_size ;        // size of this iterator object
+    size_t header_size ;        // size of this iterator object in bytes
 
     // these components only change when the iterator is attached:
     int64_t pmax ;              // avlen*avdim for bitmap; nvals(A) otherwise
@@ -7096,13 +7606,24 @@ struct GB_Iterator_opaque
     const void     *GB_restrict Ax ;   // values for all 4 data structures
 
     size_t type_size ;          // size of the type of A
-    int A_sparsity ;            // sparse, hyper, bitmap, or full
+    int32_t A_sparsity ;        // sparse, hyper, bitmap, or full
     bool iso ;                  // true if A is iso-valued, false otherwise
     bool by_col ;               // true if A is held by column, false if by row
+
+    // added in GraphBLAS 10.4.0:
+    bool reserved_bool [2] ;    // reserved for future use
+    int32_t header_arena ;      // arena for the iterator struct itself
+    uint64_t reserved [8] ;     // reserved for future use
 } ;
 
 // GxB_Iterator_new: create a new iterator, not attached to any matrix/vector
 GrB_Info GxB_Iterator_new (GxB_Iterator *iterator) ;
+
+GrB_Info GxB_Iterator_new_arena
+(
+    GxB_Iterator *iterator,
+    const int header_arena
+) ;
 
 //==============================================================================
 // GB_Iterator_*: implements user-callable GxB_*Iterator_* methods
@@ -8011,6 +8532,23 @@ GB_DECLARE (GxB_Iterator     )
 #endif
 
 //==============================================================================
+// GxB_atfork_* methods: handling the POSIX fork()
+//==============================================================================
+
+// If a process using GraphBLAS calls the POSIX fork() method, the new child
+// must restrict itself to using only async-signal-safe methods.  See
+// https://man7.org/linux/man-pages/man7/signal-safety.7.html .  The child
+// cannot use malloc/free, nor can it use OpenMP.
+
+// These methods are suitable for passing to pthread_atfork
+// (see https://man7.org/linux/man-pages/man3/pthread_atfork.3.html ), or for
+// non-POSIX systems such as Windows, they can be directly called.
+
+void GxB_atfork_prepare (void) ;    // the parent must call this before fork()
+void GxB_atfork_parent (void) ;     // the parent must call this after fork()
+void GxB_atfork_child (void) ;      // the child must call this after fork()
+
+//==============================================================================
 //=== Historical methods =======================================================
 //==============================================================================
 
@@ -8030,8 +8568,8 @@ GB_DECLARE (GxB_Iterator     )
 
 #ifndef NHISTORICAL
 
-typedef int GrB_Field ; // STRONGLY DEPRECATED: will be removed in v11.0.0,
-    // to allow the creation of a GraphBLAS object that represents a
+typedef int GrB_Field ; // STRONGLY DEPRECATED: will be removed in a future
+    // version to allow the creation of a GraphBLAS object that represents a
     // mathematical field: https://en.wikipedia.org/wiki/Field_(mathematics)
 
 // GrB_getVersion: use GrB_get instead
@@ -8211,7 +8749,7 @@ GrB_Info GxB_kron (GrB_Matrix, const GrB_Matrix, const GrB_BinaryOp,
 GrB_Info GxB_Matrix_resize (GrB_Matrix, uint64_t, uint64_t) ;
 GrB_Info GxB_Vector_resize (GrB_Vector, uint64_t) ;
 
-// GxB_*_import/export_[FORMAT]: use GxB_*_pack/unpack_[FORMAT] instead
+// GxB_*_import/export_[FORMAT]: use Container methods instead
 GrB_Info GxB_Matrix_import_CSR (GrB_Matrix *, GrB_Type, uint64_t, uint64_t,
     uint64_t **, uint64_t **, void **, uint64_t, uint64_t, uint64_t, bool,
     bool, const GrB_Descriptor) ;
