@@ -444,6 +444,11 @@ static bool _Constraint_Create
 	AttributeID attr_ids [n] ;
 	for (uint i = 0 ; i < n ; i++) {
 		attr_ids [i] = GraphHub_FindOrAddAttribute (gc, props [i], true) ;
+		if (attr_ids [i] == ATTRIBUTE_ID_NONE) {
+			error_msg = "Max number of attributes exceeded" ;
+			res = false ;
+			goto cleanup ;
+		}
 	}
 
 	//--------------------------------------------------------------------------
@@ -552,7 +557,8 @@ cleanup:
 		Constraint_Enforce (c, (struct GraphContext*)gc) ;
 	}
 
-	QueryCtx_Free () ;
+	QueryCtx_Free  () ;
+	ErrorCtx_Clear () ;
 
 	// decrease graph reference count
 	GraphContext_DecreaseRefCount (gc) ;
