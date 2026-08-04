@@ -81,7 +81,7 @@ GraphContext *Decode_Previous
 			io = SerializerIO_FromBufferedRedisModuleIO(rdb, false);
 			const RedisModuleString *rm_key_name =
 				RedisModule_GetKeyNameFromIO(rdb);
-			ctx = RdbLoadGraphContext_v19(io, rm_key_name);
+			ctx = RdbLoadGraphContext_v19(io, rm_key_name, false);
 			SerializerIO_Free(&io);
 			break;
 		}
