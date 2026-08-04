@@ -9,35 +9,126 @@
 #include "../delta_matrix/delta_utils.h"
 #include "../delta_matrix/delta_matrix.h"
 #include "../delta_matrix/delta_matrix_iter.h"
+#include <pthread.h>
+
+
+#define _JIT_STR(x) #x
+#define JIT_STR(f, name) char *name = _JIT_STR (f); f
+
+//------------------------------------------------------------------------------
+// Create GraphBLAS operator functions
+//------------------------------------------------------------------------------
 
 // free vector entries of a tensor
+JIT_STR (
 static void _free_vectors
 (
-	void *z,       // [ignored] new value
-	const void *x  // current entry
+	void *z,           // [ignored] new value
+	const uint64_t *x  // current entry
 ) {
 	// see if entry is a vector
-	uint64_t _x = *(uint64_t*)(x);
-	if(!SCALAR_ENTRY(_x)) {
+	if(!SCALAR_ENTRY(*x)) {
 		// free vector
-		GrB_Vector V = AS_VECTOR(_x);
-		GrB_free(&V);
+		GrB_Vector V = AS_VECTOR(*x);
+		GrB_free (&V);
 	}
-}
+}, FREE_VECTORS_JIT_STR)
 
 // locate tensors within a matrix
+JIT_STR(
 static void locate_tensors
 (
-    void *z,        // output value z, of type ztype
-    const void *x,  // input value x of type xtype; value of v(i) or A(i,j)
-    GrB_Index i,    // row index of A(i,j)
-    GrB_Index j,    // column index of A(i,j), or zero for v(i)
-    const void *y   // input scalar y
+    bool *z,            // output value z, of type ztype
+    const uint64_t *x,  // input value x of type xtype; value of v(i) or A(i,j)
+    GrB_Index i,        // row index of A(i,j)
+    GrB_Index j,        // column index of A(i,j), or zero for v(i)
+    const void *y       // input scalar y
 ) {
-	bool *_z           = (bool *) z ;
-	const uint64_t *_x = (const uint64_t *) x ;
+	*z = !SCALAR_ENTRY (*x) ;
+}, LOCATE_TENSORS_JIT_STR)
 
-	*_z = !SCALAR_ENTRY (*_x) ;
+static void _multiedge_memory
+(
+	uint64_t *z,
+	const uint64_t *x,
+	const void *y
+);
+
+//------------------------------------------------------------------------------
+// Create process-lifetime constants for GrB_ Ops
+// Each initialized exactly once
+//------------------------------------------------------------------------------
+
+// used to free vector entries in tensor cells
+static GrB_UnaryOp free_vectors_unaryop = NULL;
+static pthread_once_t free_vectors_unaryop_once = PTHREAD_ONCE_INIT;
+
+// used by Tensor_ClearElements to detect tensor entries
+static GrB_IndexUnaryOp locate_tensors_op = NULL;
+static pthread_once_t locate_tensors_op_once = PTHREAD_ONCE_INIT;
+
+// used by Tensor_memoryUsage.
+static GrB_BinaryOp multiedge_memory_op = NULL;
+static GrB_Semiring multiedge_memory_semiring = NULL;
+static pthread_once_t multiedge_memory_once = PTHREAD_ONCE_INIT;
+
+static void _init_free_vectors_unaryop
+(
+	void
+) {
+	GrB_OK (GxB_UnaryOp_new (
+		&free_vectors_unaryop, (GxB_unary_function) _free_vectors, GrB_UINT64,
+			GrB_UINT64, "_free_vectors", FREE_VECTORS_JIT_STR));
+}
+
+static GrB_UnaryOp _get_free_vectors_unaryop
+(
+	void
+) {
+	pthread_once(&free_vectors_unaryop_once, _init_free_vectors_unaryop);
+	ASSERT(free_vectors_unaryop != NULL);
+	return free_vectors_unaryop;
+}
+
+
+static void _init_locate_tensors_op
+(
+	void
+) {
+	GrB_OK (GxB_IndexUnaryOp_new(
+		&locate_tensors_op, (GxB_index_unary_function) locate_tensors, GrB_BOOL,
+		GrB_UINT64, GrB_BOOL, "locate_tensors", LOCATE_TENSORS_JIT_STR));
+}
+
+static GrB_IndexUnaryOp _get_locate_tensors_op
+(
+	void
+) {
+	pthread_once(&locate_tensors_op_once, _init_locate_tensors_op);
+	ASSERT(locate_tensors_op != NULL);
+	return locate_tensors_op;
+}
+
+
+static void _init_multiedge_memory
+(
+	void
+) {
+	GrB_OK (GrB_BinaryOp_new(&multiedge_memory_op,
+			(GxB_binary_function) _multiedge_memory, GrB_UINT64, GrB_UINT64,
+			GrB_BOOL));
+
+	GrB_OK (GrB_Semiring_new(&multiedge_memory_semiring, GrB_PLUS_MONOID_UINT64,
+			multiedge_memory_op));
+}
+
+static GrB_Semiring _get_multiedge_memory_semiring
+(
+	void
+) {
+	pthread_once(&multiedge_memory_once, _init_multiedge_memory);
+	ASSERT(multiedge_memory_semiring != NULL);
+	return multiedge_memory_semiring;
 }
 
 // init new tensor
@@ -72,8 +163,7 @@ void Tensor_SetElement
 	//--------------------------------------------------------------------------
 
 	if(info == GrB_NO_VALUE) {
-		info = Delta_Matrix_setElement_UINT64(T, x, row, col);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (Delta_Matrix_setElement_UINT64(T, x, row, col));
 		return;
 	}
 
@@ -82,24 +172,19 @@ void Tensor_SetElement
 	//--------------------------------------------------------------------------
 
 	if(SCALAR_ENTRY(_x)) {
-		info = GrB_Vector_new(&V, GrB_BOOL, GrB_INDEX_MAX);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_Vector_new(&V, GrB_BOOL, GrB_INDEX_MAX);
 
 		// T[row, col] = V
 		uint64_t vec_entry = SET_MSB((uint64_t)(uintptr_t)V);
-		info = Delta_Matrix_setElement_UINT64(T, vec_entry, row, col);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (Delta_Matrix_setElement_UINT64(T, vec_entry, row, col));
 
 		// populate vector with both original entry and newly added value
-		info = GrB_Vector_setElement_BOOL(V, true, _x);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GrB_Vector_setElement_BOOL(V, true, _x));
 
-		info = GrB_Vector_setElement_BOOL(V, true, x);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GrB_Vector_setElement_BOOL(V, true, x));
 
 		// flush vector
-		info = GrB_wait(V, GrB_MATERIALIZE);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GrB_wait(V, GrB_MATERIALIZE));
 
 		return;
 	}
@@ -109,12 +194,10 @@ void Tensor_SetElement
 	//--------------------------------------------------------------------------
 
 	V = AS_VECTOR(_x);
-	info = GrB_Vector_setElement_BOOL(V, true, x);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (GrB_Vector_setElement_BOOL(V, true, x));
 
 	// flush vector
-	info = GrB_wait(V, GrB_MATERIALIZE);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (GrB_wait(V, GrB_MATERIALIZE));
 }
 
 // different set methods available for tensor
@@ -726,9 +809,7 @@ void Tensor_ClearElements
 	GrB_OK (GrB_Matrix_ncols (&ncols, M)) ;
 	GrB_OK (GrB_Matrix_new (&C, GrB_UINT64, nrows, ncols)) ;
 
-    GrB_IndexUnaryOp op ;
-	GrB_OK (GrB_IndexUnaryOp_new (&op, locate_tensors, GrB_BOOL, GrB_UINT64,
-				GrB_BOOL)) ;
+	GrB_IndexUnaryOp op = _get_locate_tensors_op();
 
 	//--------------------------------------------------------------------------
 	// collect tensors
@@ -749,12 +830,8 @@ void Tensor_ClearElements
 	//--------------------------------------------------------------------------
 
 	if (nvals > 0) {
-		GrB_UnaryOp unaryop = NULL;
-		GrB_OK (GrB_UnaryOp_new (&unaryop, _free_vectors, GrB_UINT64,
-					GrB_UINT64)) ;
-
+		GrB_UnaryOp unaryop = _get_free_vectors_unaryop();
 		GrB_OK (GrB_Matrix_apply (C, NULL, NULL, unaryop, C, NULL)) ;
-		GrB_OK (GrB_free (&unaryop)) ;
 	}
 
 	// set deleted elements from M in DM
@@ -769,7 +846,6 @@ void Tensor_ClearElements
 	// clean up
 	GrB_OK (GrB_free (&s)) ;
 	GrB_OK (GrB_free (&C)) ;
-	GrB_OK (GrB_free (&op)) ;
 }
 
 // computes row degree of T[row:]
@@ -876,12 +952,7 @@ void Tensor_free
 	// get delta matrix M matrix
 	GrB_Matrix M = Delta_Matrix_M(t);
 
-	// initialize unaryop only once
-	static GrB_UnaryOp unaryop = NULL;
-	if(unaryop == NULL) {
-		info = GrB_UnaryOp_new(&unaryop, _free_vectors, GrB_UINT64, GrB_UINT64);
-		ASSERT(info == GrB_SUCCESS);
-	}
+	GrB_UnaryOp unaryop = _get_free_vectors_unaryop();
 
 	// apply _free_vectors on every entry of the tensor
 	info = GrB_Matrix_apply(M, NULL, NULL, unaryop, M, NULL);
@@ -892,7 +963,7 @@ void Tensor_free
 }
 
 // GrB_BinaryOp function: returns size of x if vector and 0 if scalar
-void _multiedge_memory (
+static void _multiedge_memory (
 	uint64_t *z,        // sizeof x
 	const uint64_t *x,  // possible multiedge
 	const void *y       // unused
@@ -900,7 +971,9 @@ void _multiedge_memory (
 	if (*x <= MSB_MASK) {
 		*z = 0;
 	} else {
-		GrB_OK(GxB_Vector_memoryUsage(z, AS_VECTOR(*x)));
+		size_t size;
+		GrB_OK(GxB_Vector_memoryUsage(&size, AS_VECTOR(*x)));
+		*z = size;
 	}
 }
 
@@ -921,8 +994,6 @@ GrB_Info Tensor_memoryUsage
 	GrB_Matrix dp = DELTA_MATRIX_DELTA_PLUS(A);
 	GrB_Matrix dm = DELTA_MATRIX_DELTA_MINUS(A);
 
-	GrB_BinaryOp size_op  = NULL;  // query size of entry 0 if scalar
-	GrB_Semiring semiring = NULL;  // [plus.sizeof]
 	GrB_Vector   row_size = NULL;  // size of multiedges per row
 	GrB_Vector   x        = NULL;  // full vector for reduction
 
@@ -937,9 +1008,7 @@ GrB_Info Tensor_memoryUsage
 
 	GrB_OK (Delta_Matrix_nvals(&nvals, A)) ;
 
-	GrB_OK (GrB_BinaryOp_new (&size_op, (GxB_binary_function) _multiedge_memory,
-						   GrB_UINT64, GrB_UINT64, GrB_BOOL)) ;
-	GrB_OK (GrB_Semiring_new (&semiring, GrB_PLUS_MONOID_UINT64, size_op));
+	GrB_Semiring semiring = _get_multiedge_memory_semiring();
 
 	GrB_OK (GrB_Matrix_nrows (&nrows, m));
 	GrB_OK (GrB_Vector_new (&row_size, GrB_UINT64, nrows)) ;
@@ -958,8 +1027,6 @@ GrB_Info Tensor_memoryUsage
 
 	GrB_free (&x) ;
 	GrB_free (&row_size) ;
-	GrB_free (&semiring) ;
-	GrB_free (&size_op) ;
 
 	// Add transpose
 	if(DELTA_MATRIX_MAINTAIN_TRANSPOSE(A)){
@@ -971,3 +1038,4 @@ GrB_Info Tensor_memoryUsage
 	
 	return GrB_SUCCESS;
 }
+
