@@ -143,8 +143,9 @@ for k = 1:length (types)
     
 end
 
+
 % iso cases
-fprintf (' iso') ;
+fprintf ('\n iso') ;
 lt.optype = 'double' ;
 clear A
 A.matrix = pi * spones (sprand (m, n, 0.4)) ;
@@ -171,36 +172,67 @@ C2 = GB_spec_Matrix_sort (lt, A, [ ]) ;
 GB_spec_compare (C1, C2) ;
 
 % with typecasting
-fprintf (' typecast') ;
+fprintf ('\n typecast') ;
 lt.optype = 'single' ;
 gt.optype = 'single' ;
 is_csc = 1 ;
 
-    A = GB_spec_random (m, n, 0.3, 100, 'double', is_csc) ;
+for is_csc = 0:1
+    for trials = 1:20
 
-    fprintf ('.') ;
-    [C1,P1] = GB_mex_Matrix_sort  (lt, A) ;
-    [C2,P2] = GB_spec_Matrix_sort (lt, A, [ ]) ;
-    GB_spec_compare (C1, C2) ;
-    GB_spec_compare (P1, P2) ;
+        A = GB_spec_random (m, n, 0.3, 100, 'double', is_csc) ;
+        A.p_control = mod (trials, 5) ;
+        A.i_control = mod (trials, 2) ;
+        A.j_control = mod (trials, 3) ;
+        A.p_is_32 = mod (trials, 5) ;
+        A.i_is_32 = mod (trials, 2) ;
+        A.j_is_32 = mod (trials, 3) ;
+        A.sparsity = 2 ;
 
-    fprintf ('.') ;
-    [C1,P1] = GB_mex_Matrix_sort  (gt, A) ;
-    [C2,P2] = GB_spec_Matrix_sort (gt, A, [ ]) ;
-    GB_spec_compare (C1, C2) ;
-    GB_spec_compare (P1, P2) ;
+        fprintf ('.') ;
+        [C1,P1] = GB_mex_Matrix_sort  (lt, A) ;
+        [C2,P2] = GB_spec_Matrix_sort (lt, A, [ ]) ;
+        GB_spec_compare (C1, C2) ;
+        GB_spec_compare (P1, P2) ;
+
+        fprintf ('.') ;
+        [C1,P1] = GB_mex_Matrix_sort  (gt, A) ;
+        [C2,P2] = GB_spec_Matrix_sort (gt, A, [ ]) ;
+        GB_spec_compare (C1, C2) ;
+        GB_spec_compare (P1, P2) ;
+
+        fprintf ('.') ;
+        C1 = GB_mex_Matrix_sort (gt, A) ;
+        GB_spec_compare (C1, C2) ;
+
+    end
+end
 
 % with typecasing, to bool 
 lt.optype = 'bool' ;
 
+for trials = 1:20
+
     A.matrix = double (A.matrix > 0) ;
     A.pattern = logical (spones (A.matrix)) ;
+    A.p_control = mod (trials, 5) ;
+    A.i_control = mod (trials, 2) ;
+    A.j_control = mod (trials, 3) ;
+    A.p_is_32 = mod (trials, 5) ;
+    A.i_is_32 = mod (trials, 2) ;
+    A.j_is_32 = mod (trials, 3) ;
+    A.sparsity = 2 ;
 
     fprintf ('.') ;
     [C1,P1] = GB_mex_Matrix_sort  (lt, A) ;
     [C2,P2] = GB_spec_Matrix_sort (lt, A, [ ]) ;
     GB_spec_compare (C1, C2) ;
     GB_spec_compare (P1, P2) ;
+
+    fprintf ('.') ;
+    C1 = GB_mex_Matrix_sort (lt, A) ;
+    GB_spec_compare (C1, C2) ;
+end
 
 lt.opname = 'lt' ;
 gt.opname = 'gt' ;

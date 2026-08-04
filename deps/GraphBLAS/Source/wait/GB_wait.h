@@ -76,5 +76,15 @@ GrB_Info GB_unjumble        // unjumble a matrix
     ASSERT (!GB_JUMBLED (A)) ;                                          \
 }
 
+static inline bool GB_will_wait (GrB_Matrix A)
+{
+    // return true if the matrix has any pending work (zombies,
+    // pending tuples, or is jumbled), or if it needs a hyper hash,
+    // or if any non-shallow components are not in A->data_arena.
+    return (GB_ANY_PENDING_WORK (A) ||
+            GB_hyper_hash_need (A) ||
+            GB_arenas_will_wait (A)) ;
+}
+
 #endif
 

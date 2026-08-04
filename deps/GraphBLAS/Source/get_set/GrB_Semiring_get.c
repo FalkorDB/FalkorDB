@@ -124,6 +124,13 @@ GrB_Info GrB_Semiring_get_INT32
     // get the field
     //--------------------------------------------------------------------------
 
+    if (field == GxB_ARENA_HEADER)
+    { 
+        (*value) = GB_arena (semiring->header_mem) ;
+        #pragma omp flush
+        return (GrB_SUCCESS) ;
+    }
+
     return (GB_op_enum_get ((GB_Operator) (semiring->multiply), value, field)) ;
 }
 

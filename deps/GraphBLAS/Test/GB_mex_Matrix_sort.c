@@ -84,6 +84,12 @@ void mexFunction
     // get ptype; defaults to GrB_INT64
     GrB_Type ptype = GB_mx_string_to_Type (PARGIN (4), GrB_INT64) ;
 
+    // determine pji control from A
+    int pbits, jbits, ibits ;
+    GrB_Matrix_get_INT32 (A, &pbits, GxB_OFFSET_INTEGER_BITS) ;
+    GrB_Matrix_get_INT32 (A, &jbits, GxB_COLINDEX_INTEGER_BITS) ;
+    GrB_Matrix_get_INT32 (A, &ibits, GxB_ROWINDEX_INTEGER_BITS) ;
+
     // create C and P
     uint64_t nrows, ncols ;
     GrB_Matrix_nrows (&nrows, A) ;
@@ -96,11 +102,15 @@ void mexFunction
     {
         if (P_only)
         {
-            // P = sort (op, A, desc), do not return C
+            // P = sort (op, A, desc, 1), do not return C
             #undef  FREE_DEEP_COPY
             #define FREE_DEEP_COPY GrB_Matrix_free (&P) ;
             #undef  GET_DEEP_COPY
-            #define GET_DEEP_COPY  GrB_Matrix_new (&P, ptype, nrows, ncols) ;
+            #define GET_DEEP_COPY  \
+                GrB_Matrix_new (&P, ptype, nrows, ncols) ;                   \
+                GrB_Matrix_set_INT32 (P, pbits, GxB_OFFSET_INTEGER_HINT) ;   \
+                GrB_Matrix_set_INT32 (P, jbits, GxB_COLINDEX_INTEGER_HINT) ; \
+                GrB_Matrix_set_INT32 (P, ibits, GxB_ROWINDEX_INTEGER_HINT) ;
             GET_DEEP_COPY ;
             METHOD (GxB_Matrix_sort (NULL, P, op, A, desc)) ;
         }
@@ -110,7 +120,11 @@ void mexFunction
             #undef  FREE_DEEP_COPY
             #define FREE_DEEP_COPY GrB_Matrix_free (&C) ;
             #undef  GET_DEEP_COPY
-            #define GET_DEEP_COPY  GrB_Matrix_dup (&C, A) ;
+            #define GET_DEEP_COPY                                            \
+                GrB_Matrix_dup (&C, A) ;                                     \
+                GrB_Matrix_set_INT32 (C, pbits, GxB_OFFSET_INTEGER_HINT) ;   \
+                GrB_Matrix_set_INT32 (C, jbits, GxB_COLINDEX_INTEGER_HINT) ; \
+                GrB_Matrix_set_INT32 (C, ibits, GxB_ROWINDEX_INTEGER_HINT) ;
             GET_DEEP_COPY ;
             METHOD (GxB_Matrix_sort (C, NULL, op, C, desc)) ;
         }
@@ -124,8 +138,14 @@ void mexFunction
                 GrB_Matrix_free (&P) ;
         #undef  GET_DEEP_COPY
         #define GET_DEEP_COPY   \
-            GrB_Matrix_new (&C, A->type, nrows, ncols) ;    \
-            GrB_Matrix_new (&P, ptype, nrows, ncols) ;
+            GrB_Matrix_new (&C, A->type, nrows, ncols) ;                 \
+            GrB_Matrix_set_INT32 (C, pbits, GxB_OFFSET_INTEGER_HINT) ;   \
+            GrB_Matrix_set_INT32 (C, jbits, GxB_COLINDEX_INTEGER_HINT) ; \
+            GrB_Matrix_set_INT32 (C, ibits, GxB_ROWINDEX_INTEGER_HINT) ; \
+            GrB_Matrix_new (&P, ptype, nrows, ncols) ;                   \
+            GrB_Matrix_set_INT32 (P, pbits, GxB_OFFSET_INTEGER_HINT) ;   \
+            GrB_Matrix_set_INT32 (P, jbits, GxB_COLINDEX_INTEGER_HINT) ; \
+            GrB_Matrix_set_INT32 (P, ibits, GxB_ROWINDEX_INTEGER_HINT) ;
         GET_DEEP_COPY ;
         METHOD (GxB_Matrix_sort (C, P, op, A, desc)) ;
     }

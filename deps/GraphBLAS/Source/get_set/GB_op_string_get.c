@@ -15,7 +15,7 @@ GrB_Info GB_op_string_get
     char * value,
     int field
 )
-{
+{ 
 
     //--------------------------------------------------------------------------
     // get the field
@@ -70,7 +70,7 @@ GrB_Info GB_op_string_get
 
     name = GB_type_name_get (type) ;
     if (name != NULL)
-    {
+    { 
         strcpy (value, name) ;
     }
     #pragma omp flush

@@ -4,16 +4,8 @@ function C = atan (G)
 %
 % See also GrB/tan, GrB/tanh, GrB/atanh, GrB/atan2.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-G = G.opaque ;
-
-if (~gb_isfloat (gbtype (G)))
-    op = 'atan.double' ;
-else
-    op = 'atan' ;
-end
-
-C = GrB (gbapply (op, G)) ;
+C = gb_atan (0, G) ;
 

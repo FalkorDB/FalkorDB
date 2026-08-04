@@ -85,6 +85,7 @@ GrB_Info GB_AxB_saxpy3_flopcount
     const bool Mask_comp,       // if true, mask is complemented
     const GrB_Matrix A,
     const GrB_Matrix B,
+    const int data_arena,       // arena for workspace
     GB_Werk Werk
 )
 {
@@ -92,6 +93,8 @@ GrB_Info GB_AxB_saxpy3_flopcount
     //--------------------------------------------------------------------------
     // check inputs
     //--------------------------------------------------------------------------
+
+    uint64_t mem = GB_mem (data_arena, 0) ;
 
     ASSERT_MATRIX_OK_OR_NULL (M, "M for flop count A*B", GB0) ;
     ASSERT (!GB_ZOMBIES (M)) ;
@@ -186,8 +189,8 @@ GrB_Info GB_AxB_saxpy3_flopcount
     // declare workspace
     //--------------------------------------------------------------------------
 
-    GB_WERK_DECLARE (Work, uint64_t) ;
-    GB_WERK_DECLARE (B_ek_slicing, int64_t) ;
+    GB_WERK_DECLARE (Work, uint64_t, mem) ;
+    GB_WERK_DECLARE (B_ek_slicing, int64_t, mem) ;
 
     //--------------------------------------------------------------------------
     // construct the parallel tasks
@@ -463,7 +466,7 @@ GrB_Info GB_AxB_saxpy3_flopcount
 
     // Bflops = cumsum ([0 Bflops]) ;
     ASSERT (Bflops [bnvec] == 0) ;
-    GB_cumsum (Bflops, false, bnvec, NULL, B_nthreads, Werk) ;
+    GB_cumsum (Bflops, false, bnvec, NULL, B_nthreads, data_arena, Werk) ;
     // Bflops [bnvec] is now the total flop count, including the time to
     // compute A*B and to handle the mask.  total_Mwork is part of this total
     // flop count, but is also returned separtely.

@@ -55,7 +55,7 @@ GrB_Info GrB_vxm                    // w'<M> = accum (w', u'*A)
     //--------------------------------------------------------------------------
 
     // w, M, and u are treated as column vectors and passed as n-by-1 matrices
-    // to GB_mxm A and u are swapped, and A_transpose is negated:
+    // to GB_mxm.  A and u are swapped, and A_transpose is negated:
     //      u'*A  == A'*u
     //      u'*A' == A*u
     // Since A and u are swapped, in all the matrix multiply kernels,

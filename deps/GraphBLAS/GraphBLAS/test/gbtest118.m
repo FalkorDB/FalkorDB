@@ -1,10 +1,13 @@
-function gbtest118
-%GBTEST118 test GrB.argsort
+function gbtest118 (ghb)
+%GBTEST118 test [GrB,GhB].argsort
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-rng ('default') ;
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
 m = 20 ;
 n = 30 ;
@@ -48,12 +51,12 @@ for k = 1:length (types)
 
 for d = [0.2 inf]
 
-    A = GrB.random (m, n, d, 'range', range) ;
+    A = gtb_random (ghb, m, n, d, 'range', range) ;
 
-    [C, P] = GrB.argsort (A) ;
+    [C, P] = gtb_argsort (ghb, A) ;
     for k = 1:n
         Ak = A (:,k) ;
-        [Ai, ~, Ax] = GrB.extracttuples (Ak) ;
+        [Ai, ~, Ax] = gtb_extracttuples (ghb, Ak) ;
         [x, p] = sort (Ax) ;
         nz = length (x) ;
         Ck = C (:,k) ;
@@ -65,13 +68,13 @@ for d = [0.2 inf]
         assert (isequal (Pk, a)) ;
     end
 
-    C2 = GrB.argsort (A) ;
+    C2 = gtb_argsort (ghb, A) ;
     assert (isequal (C, C2)) ;
 
-    [C, P] = GrB.argsort (A, 'descend') ;
+    [C, P] = gtb_argsort (ghb, A, 'descend') ;
     for k = 1:n
         Ak = A (:,k) ;
-        [Ai, ~, Ax] = GrB.extracttuples (Ak) ;
+        [Ai, ~, Ax] = gtb_extracttuples (ghb, Ak) ;
         [x, p] = sort (Ax, 'descend') ;
         nz = length (x) ;
         Ck = C (:,k) ;
@@ -83,10 +86,10 @@ for d = [0.2 inf]
         assert (isequal (Pk, a)) ;
     end
 
-    [C, P] = GrB.argsort (A, 2) ;
+    [C, P] = gtb_argsort (ghb, A, 2) ;
     for k = 1:m
         Ak = A (k,:) ;
-        [~, Aj, Ax] = GrB.extracttuples (Ak) ;
+        [~, Aj, Ax] = gtb_extracttuples (ghb, Ak) ;
         [x, p] = sort (Ax) ;
         nz = length (x) ;
         Ck = C (k,:) ;
@@ -98,10 +101,10 @@ for d = [0.2 inf]
         assert (isequal (Pk', a)) ;
     end
 
-    [C, P] = GrB.argsort (A, 2, 'descend') ;
+    [C, P] = gtb_argsort (ghb, A, 2, 'descend') ;
     for k = 1:m
         Ak = A (k,:) ;
-        [~, Aj, Ax] = GrB.extracttuples (Ak) ;
+        [~, Aj, Ax] = gtb_extracttuples (ghb, Ak) ;
         [x, p] = sort (Ax, 'descend') ;
         nz = length (x) ;
         Ck = C (k,:) ;
@@ -115,9 +118,9 @@ for d = [0.2 inf]
 end
 
 for d = [0.8 inf]
-    X = GrB.random (100000, 1, d, 'range', range) ;
-    [C, P] = GrB.argsort (X) ;
-    [Xi, ~, Xx] = GrB.extracttuples (X) ;
+    X = gtb_random (ghb, 100000, 1, d, 'range', range) ;
+    [C, P] = gtb_argsort (ghb, X) ;
+    [Xi, ~, Xx] = gtb_extracttuples (ghb, X) ;
     [x, p] = sort (Xx) ;
     nz = length (x) ;
     Ck = C (1:nz) ;
@@ -129,4 +132,5 @@ end
 
 end
 
-fprintf ('\ngbtest118: all tests passed\n') ;
+fprintf ('\ngbtest118 (%d): all tests passed\n', ghb) ;
+

@@ -134,9 +134,9 @@
         //----------------------------------------------------------------------
 
         int64_t kk = SaxpyTasks [taskid].vector ;
-        int team_size = SaxpyTasks [taskid].team_size ;
-        uint64_t hash_size = SaxpyTasks [taskid].hsize ;
-        bool use_Gustavson = (hash_size == cvlen) ;
+        int team_nfine = SaxpyTasks [taskid].team_nfine ;
+        uint64_t hash_nitems = SaxpyTasks [taskid].hash_nitems ;
+        bool use_Gustavson = (hash_nitems == cvlen) ;
         int64_t pB     = SaxpyTasks [taskid].start ;
         int64_t pB_end = SaxpyTasks [taskid].end + 1 ;
         int64_t j = GBh_B (Bh, kk) ;
@@ -232,7 +232,7 @@
             // h == (anything), f == 3: locked.
 
             uint64_t *restrict Hf = (uint64_t *restrict) SaxpyTasks [taskid].Hf;
-            uint64_t hash_bits = (hash_size-1) ;
+            uint64_t hash_bits = (hash_nitems-1) ;
 
             #if ( GB_NO_MASK )
             { 
@@ -400,8 +400,8 @@
         #if !GB_IS_ANY_PAIR_SEMIRING
         GB_C_TYPE *restrict Hx = (GB_C_TYPE *) SaxpyTasks [taskid].Hx ;
         #endif
-        uint64_t hash_size = SaxpyTasks [taskid].hsize ;
-        bool use_Gustavson = (hash_size == cvlen) ;
+        uint64_t hash_nitems = SaxpyTasks [taskid].hash_nitems ;
+        bool use_Gustavson = (hash_nitems == cvlen) ;
         bool task_C_jumbled = false ;
 
         if (taskid < nfine)
@@ -412,9 +412,9 @@
             //------------------------------------------------------------------
 
             int64_t kk = SaxpyTasks [taskid].vector ;
-            int team_size = SaxpyTasks [taskid].team_size ;
-            int leader    = SaxpyTasks [taskid].leader ;
-            int my_teamid = taskid - leader ;
+            int team_nfine = SaxpyTasks [taskid].team_nfine ;
+            int leader     = SaxpyTasks [taskid].leader ;
+            int my_teamid  = taskid - leader ;
             int64_t pC = GB_Cp_IGET (kk) ;
 
             if (use_Gustavson)
@@ -429,7 +429,7 @@
                     Hf = (int8_t *restrict) SaxpyTasks [taskid].Hf ;
                 int64_t cjnz = GB_Cp_IGET (kk+1) - pC ;
                 int64_t istart, iend ;
-                GB_PARTITION (istart, iend, cvlen, my_teamid, team_size) ;
+                GB_PARTITION (istart, iend, cvlen, my_teamid, team_nfine) ;
                 if (cjnz == cvlen)
                 {
                     // C(:,j) is dense
@@ -469,7 +469,8 @@
                 uint64_t *restrict
                     Hf = (uint64_t *restrict) SaxpyTasks [taskid].Hf ;
                 int64_t mystart, myend ;
-                GB_PARTITION (mystart, myend, hash_size, my_teamid, team_size) ;
+                GB_PARTITION (mystart, myend, hash_nitems, my_teamid,
+                    team_nfine) ;
                 pC += SaxpyTasks [taskid].my_cjnz ;
                 for (uint64_t hash = mystart ; hash < myend ; hash++)
                 {
@@ -540,7 +541,7 @@
                 //--------------------------------------------------------------
 
                 uint64_t *restrict Hi = SaxpyTasks [taskid].Hi ;
-                uint64_t hash_bits = (hash_size-1) ;
+                uint64_t hash_bits = (hash_nitems-1) ;
 
                 #if ( GB_NO_MASK )
                 { 

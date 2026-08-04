@@ -21,7 +21,7 @@ for scale = 1:6
 
     % or create it with GrB.random: same pattern, but different
     % values because of how duplicates are handled
-    if (demo_octave)
+    if (gb_octave)
         A2 = GrB (A1) ;
     else
         rng ('default') ;
@@ -29,21 +29,21 @@ for scale = 1:6
         A2 = GrB.random (n, n, d) ;
         t2 = toc ;
         assert (isequal (spones (A1), spones (A2)))
-        fprintf ('create @GrB    sprand: %g sec\n', t2) ;
-        fprintf ('@GrB speedup: %g\n', t1/t2) ;
+        fprintf ('create GrB    sprand: %g sec\n', t2) ;
+        fprintf ('GrB speedup: %g\n', t1/t2) ;
         % make them identical
         A1 = double (A2) ;
     end
 
     GrB.burble (1) ;
     tic ; C1 = [A1 A1] ; t1 = toc ;      % using built-in sparse matrices
-    tic ; C2 = [A2 A2] ; t2 = toc ;      % using @GrB sparse matrices
+    tic ; C2 = [A2 A2] ; t2 = toc ;      % using GrB sparse matrices
     GrB.burble (0) ;
     assert (isequal (C1, C2)) ;
     fprintf ('\n') ;
     fprintf ('builtin C = [A A] : %g sec\n', t1) ;
-    fprintf ('@GrB    C = [A A] : %g sec\n', t2) ;
-    fprintf ('@GrB speedup: %g\n', t1/t2) ;
+    fprintf ('GrB     C = [A A] : %g sec\n', t2) ;
+    fprintf ('GrB speedup: %g\n', t1/t2) ;
     clear C1 C2 A2
 
     S = cell (2,2) ;
@@ -69,7 +69,7 @@ for scale = 1:6
 
     fprintf ('\n') ;
     fprintf ('builtin C = cell2mat (S)     : %g sec\n', t1) ;
-    fprintf ('@GrB    C = GrB.cell2mat (S) : %g sec\n', t2) ;
-    fprintf ('@GrB speedup: %g\n', t1/t2) ;
+    fprintf ('GrB     C = GrB.cell2mat (S) : %g sec\n', t2) ;
+    fprintf ('GrB speedup: %g\n', t1/t2) ;
 end
 

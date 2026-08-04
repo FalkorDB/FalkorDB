@@ -2,7 +2,7 @@
 // GB_mex.h: definitions for the Test interface to GraphBLAS
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -24,6 +24,11 @@
 #include "matrix.h"
 #include "../Source/include/GB_dev.h"
 
+// The MATLAB test code in GraphBLAS/Test test uses mxMalloc/mxFree only, in
+// the arena 2, established after calling GrB_init.
+#define MXARENA 2
+#define GB_ARENA_TEST MXARENA
+
 #define SIMPLE_RAND_MAX 32767
 uint64_t simple_rand (void) ;
 void simple_rand_seed (uint64_t seed) ;
@@ -43,6 +48,8 @@ uint64_t simple_rand_i (void) ;
 void GB_mx_abort (void) ;               // assertion failure
 
 void GB_mx_at_exit ( void ) ;           // for mexAtExit
+
+GrB_Info GB_mx_init ( void ) ;
 
 bool GB_mx_mxArray_to_BinaryOp          // true if successful, false otherwise
 (

@@ -70,7 +70,7 @@
         if ( shared_steps_Y > 1) Ywork = shared_vector_size;  
         int64_t nxy = Xwork + Ywork;
 
-        // ceil Divide by 32 = blockDim.x :
+        // work_per_thread = ceil (nxy / blockDim.x) :
         int work_per_thread = (nxy + blockDim.x -1)/blockDim.x;
         int diag     = GB_IMIN( work_per_thread*tid, nxy);
         int diag_end = GB_IMIN( diag + work_per_thread, nxy);

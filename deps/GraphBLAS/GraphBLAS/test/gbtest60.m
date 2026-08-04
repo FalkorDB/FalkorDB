@@ -1,8 +1,13 @@
-function gbtest60
-%GBTEST60 test GrB.issigned
+function gbtest60 (ghb)
+%GBTEST60 test [GrB,GhB].issigned
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
+
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
 % 8 signed types:
 signed_types   = { 'double', 'single', ...
@@ -14,9 +19,9 @@ unsigned_types = { 'logical', 'uint8', 'uint16', 'uint32', 'uint64' } ;
 
 for k = 1:length (signed_types)
     type = signed_types {k} ;
-    assert (GrB.issigned (type)) ;
-    G = GrB (1, type) ;
-    assert (GrB.issigned (G)) ;
+    assert (gtb_issigned (ghb, type)) ;
+    G = gtb (ghb, 1, type) ;
+    assert (gtb_issigned (ghb, G)) ;
     if (isequal (type, 'single complex'))
         A = complex (single (pi)) ;
     elseif (isequal (type, 'double complex'))
@@ -24,17 +29,17 @@ for k = 1:length (signed_types)
     else
         A = cast (pi, type) ;
     end
-    assert (GrB.issigned (A)) ;
+    assert (gtb_issigned (ghb, A)) ;
 end
 
 for k = 1:length (unsigned_types)
     type = unsigned_types {k} ;
-    assert (~GrB.issigned (type)) ;
-    G = GrB (1, type) ;
-    assert (~GrB.issigned (G)) ;
+    assert (~gtb_issigned (ghb, type)) ;
+    G = gtb (ghb, 1, type) ;
+    assert (~gtb_issigned (ghb, G)) ;
     A = cast (1, type) ;
-    assert (~GrB.issigned (A)) ;
+    assert (~gtb_issigned (ghb, A)) ;
 end
 
-fprintf ('gbtest60: all tests passed\n') ;
+fprintf ('gbtest60 (%d): all tests passed\n', ghb) ;
 

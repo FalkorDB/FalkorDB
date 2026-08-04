@@ -44,7 +44,7 @@ GrB_Info GrB_Semiring_set_String
     GB_RETURN_IF_NULL (value) ;
     ASSERT_SEMIRING_OK (semiring, "semiring to get option", GB0) ;
 
-    if (semiring->header_size == 0 || field != GrB_NAME)
+    if (semiring->header_mem == 0 || field != GrB_NAME)
     { 
         // built-in semirings may not be modified
         return (GrB_INVALID_VALUE) ;
@@ -54,8 +54,10 @@ GrB_Info GrB_Semiring_set_String
     // set the field
     //--------------------------------------------------------------------------
 
+    int header_arena = GB_arena (semiring->header_mem) ;
+
     return (GB_user_name_set (&(semiring->user_name),
-        &(semiring->user_name_size), value, true)) ;
+        &(semiring->user_name_mem), value, true, header_arena)) ;
 }
 
 //------------------------------------------------------------------------------

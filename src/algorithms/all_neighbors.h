@@ -17,9 +17,13 @@
 // returns the newly discovered destination node
 // it is possible for the same destination node to be returned multiple times
 // if it is on multiple different paths from src
-// we allow cycles to be closed, but we don't expand once a cycle been closed
-// path: (a)->(b)->(a), 'a' will not be expanded again during traversal of this
-// current path
+// the only restriction inforced is edge uniqueness
+
+// depth threshold at which the visited-edge lookup switches from a
+// linear array scan to an O(1) hashmap
+// queries with maxLen below this use the array
+// (better cache behaviour); others use the hashmap
+#define VISITED_HASHMAP_THRESHOLD 128
 
 typedef struct {
 	EntityID src;                   // traverse begin here
@@ -28,10 +32,11 @@ typedef struct {
 	uint maxLen;                    // maximum allowed depth
 	int current_level;              // current depth
 	bool first_pull;                // first call to Next
-	EntityID *visited;              // visited nodes
+	bool use_hashmap;               // true once hashmap lookup is active
+	EntityID *visited;              // edge stack – always maintained for backtracking
+	dict *visited_edges;            // hashmap for O(1) lookup (NULL while in array mode)
 	Delta_MatrixTupleIter *levels;  // array of neighbors iterator
 	uint n_levels;                  // number of levels
-	dict *visited_nodes;            // visited nodes
 } AllNeighborsCtx;
 
 void AllNeighborsCtx_Reset

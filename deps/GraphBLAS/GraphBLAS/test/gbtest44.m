@@ -1,25 +1,28 @@
-function gbtest44
+function gbtest44 (ghb)
 %GBTEST44 test subsasgn, mtimes, plus, false, ...
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-rng ('default') ;
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
 A = rand (4,1) ;
-G = GrB (A) ;
+G = gtb (ghb, A) ;
 G (1) = pi ;
 A (1) = pi ;
 assert (isequal (A, G)) ;
 
 A = pi ;
-G = GrB (pi) ;
+G = gtb (ghb, pi) ;
 C = A*G ;
 assert (isequal (C, pi^2))
 
 A = pi ;
 B = rand (2) ;
-G = GrB (B) ;
+G = gtb (ghb, B) ;
 A
 B
 G
@@ -51,7 +54,7 @@ assert (isequal (C, G))
 
 % test linear indexing for subsasgn
 A = sprand (4, 3, 0.5) ;
-G = GrB (A) ;
+G = gtb (ghb, A) ;
 C1 = A ; C1 (:) = pi ;
 C2 = G ; C2 (:) = pi ;
 assert (isequal (C1, C2)) ;
@@ -62,5 +65,5 @@ C2 = G ; C2 (:) = X
 whos
 assert (isequal (C1, C2)) ;
 
-fprintf ('gbtest44: all tests passed\n') ;
+fprintf ('gbtest44 (%d): all tests passed\n', ghb) ;
 

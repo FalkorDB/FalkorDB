@@ -76,7 +76,7 @@
 
 GrB_Info GB_emult_02        // C=A.*B when A is sparse/hyper, B bitmap/full
 (
-    GrB_Matrix C,           // output matrix, static header
+    GrB_Matrix C,           // output matrix, header already allocated
     const GrB_Type ctype,   // type of output matrix C
     const bool C_is_csc,    // format of output matrix C
     const GrB_Matrix M,     // optional mask, unused if NULL
@@ -95,7 +95,11 @@ GrB_Info GB_emult_02        // C=A.*B when A is sparse/hyper, B bitmap/full
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
+
+    ASSERT (C != NULL) ;
+    int header_arena = GB_arena (C->header_mem) ;
+    int data_arena = C->data_arena ;
+    uint64_t mem = GB_mem (data_arena, 0) ;
 
     ASSERT_MATRIX_OK_OR_NULL (M, "M for emult_02", GB0) ;
     ASSERT_MATRIX_OK (A, "A for emult_02", GB0) ;
@@ -134,8 +138,8 @@ GrB_Info GB_emult_02        // C=A.*B when A is sparse/hyper, B bitmap/full
     // declare workspace
     //--------------------------------------------------------------------------
 
-    GB_WERK_DECLARE (Work, uint64_t) ;
-    GB_WERK_DECLARE (A_ek_slicing, int64_t) ;
+    GB_WERK_DECLARE (Work, uint64_t, mem) ;
+    GB_WERK_DECLARE (A_ek_slicing, int64_t, mem) ;
 
     //--------------------------------------------------------------------------
     // get M, A, and B
@@ -169,7 +173,8 @@ GrB_Info GB_emult_02        // C=A.*B when A is sparse/hyper, B bitmap/full
     GB_OK (GB_new (&C, // sparse or hyper (same as A), existing header
         ctype, vlen, vdim, GB_ph_calloc, C_is_csc,
         C_sparsity, A->hyper_switch, nvec,
-        A->p_is_32, A->j_is_32, A->i_is_32)) ;
+        A->p_is_32, A->j_is_32, A->i_is_32,
+        header_arena, data_arena)) ;
 
     ASSERT (C->p_is_32 == A->p_is_32) ;
     ASSERT (C->j_is_32 == A->j_is_32) ;

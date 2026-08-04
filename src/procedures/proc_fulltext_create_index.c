@@ -4,7 +4,7 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "proc_fulltext_create_index.h"
+
 #include "../value.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"
@@ -15,6 +15,8 @@
 #include "../graph/graph_hub.h"
 #include "../graph/graphcontext.h"
 #include "../datatypes/datatypes.h"
+#include "../util/identifier_limits.h"
+#include "proc_fulltext_create_index.h"
 
 //------------------------------------------------------------------------------
 // fulltext createNodeIndex
@@ -234,6 +236,12 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 	// label is mandatory
 	ASSERT(label != NULL);
 
+	if (strnlen (label, MAX_IDENTIFIER_LEN + 1) > MAX_IDENTIFIER_LEN) {
+		ErrorCtx_SetError (EMSG_IDENTIFIER_TOO_LONG, "Label name",
+				MAX_IDENTIFIER_LEN) ;
+		return PROCEDURE_ERR ;
+	}
+
 	// validation passed, create full-text index
 	Index idx             = NULL;
 	char *language        = NULL;
@@ -249,9 +257,9 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 
 	// collect fields and configuration
 	for(uint i = 0; i < fields_count; i++) {
-		weights[i]   = INDEX_FIELD_DEFAULT_WEIGHT;
-		nostems[i]   = INDEX_FIELD_DEFAULT_NOSTEM;
-		phonetics[i] = INDEX_FIELD_DEFAULT_PHONETIC;
+		weights  [i] = INDEX_FIELD_DEFAULT_WEIGHT ;
+		nostems  [i] = INDEX_FIELD_DEFAULT_NOSTEM ;
+		phonetics[i] = INDEX_FIELD_DEFAULT_PHONETIC ;
 
 		if(SI_TYPE(fields[i]) & T_STRING) {
 			_fields[i] = fields[i].stringval;
@@ -269,6 +277,12 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 			if(MAP_GET(fields[i], "phonetic", tmp)) {
 				phonetics[i] = tmp.stringval;
 			}
+		}
+
+		if (strnlen (_fields [i], MAX_IDENTIFIER_LEN + 1) > MAX_IDENTIFIER_LEN) {
+			ErrorCtx_SetError (EMSG_IDENTIFIER_TOO_LONG, "Property name",
+					MAX_IDENTIFIER_LEN) ;
+			return PROCEDURE_ERR ;
 		}
 	}
 

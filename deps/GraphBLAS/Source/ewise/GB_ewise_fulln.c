@@ -62,6 +62,9 @@ GrB_Info GB_ewise_fulln      // C = A+B
     ASSERT_BINARYOP_OK (op, "op for full C=A+B", GB0) ;
     ASSERT (!GB_OP_IS_POSITIONAL (op)) ;
 
+    int header_arena = GB_arena (C->header_mem) ;
+    int data_arena = C->data_arena ;
+
     //--------------------------------------------------------------------------
     // determine the number of threads to use
     //--------------------------------------------------------------------------
@@ -86,7 +89,7 @@ GrB_Info GB_ewise_fulln      // C = A+B
         GB_OK (GB_new_bix (&C,  // existing header
             C->type, C->vlen, C->vdim, GB_ph_null, C->is_csc, GxB_FULL, false,
             C->hyper_switch, -1, GB_nnz_full (C), true, false,
-            /* OK: */ false, false, false)) ;
+            /* OK: */ false, false, false, header_arena, data_arena)) ;
         C->magic = GB_MAGIC ;
     }
     else if (!GB_IS_FULL (C))

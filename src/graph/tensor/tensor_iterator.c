@@ -280,6 +280,7 @@ void TensorIterator_ScanRange
 	memset (it, 0, sizeof (TensorIterator)) ;
 
 	it->T = T;
+	it->transpose = transpose ;
 
 	if (transpose) {
 		Delta_Matrix TT = Delta_Matrix_getTranspose (T) ;
@@ -289,6 +290,48 @@ void TensorIterator_ScanRange
 		Delta_MatrixTupleIter_AttachRange (&it->a_it, it->T, min_row, max_row) ;
 		it->iter_func = _RangeIter ;
 	}
+}
+
+// attach iterator to a tensor (or its transpose) without restricting it to a
+// row range, for callers that will repeatedly reseek the same iterator via
+// TensorIterator_IterateRow rather than re-attach on every query
+void TensorIterator_Attach
+(
+	TensorIterator *it,  // iterator
+	Delta_Matrix T,      // tensor
+	bool transpose       // attach to transpose of T
+) {
+	ASSERT(T  != NULL);
+	ASSERT(it != NULL);
+
+	// reset iterator
+	memset(it, 0, sizeof(TensorIterator));
+
+	it->T         = T;
+	it->transpose = transpose;
+
+	Delta_Matrix A = transpose ? Delta_Matrix_getTranspose(T) : T;
+	Delta_MatrixTupleIter_attach(&it->a_it, A);
+
+	it->iter_func = transpose ? _TransposeRangeIter : _RangeIter;
+}
+
+// reseek an already-attached iterator to a single row, without re-attaching
+// the underlying row iterators
+void TensorIterator_IterateRow
+(
+	TensorIterator *it,  // iterator, must already be attached
+	GrB_Index row        // row to iterate
+) {
+	ASSERT (it    != NULL) ;
+	ASSERT (it->T != NULL) ;
+
+	// abandon any in-progress vector scan from the previous row, and restore
+	// the iteration strategy in case the previous row depleted the iterator
+	it->vec       = false;
+	it->iter_func = it->transpose ? _TransposeRangeIter : _RangeIter;
+
+	Delta_MatrixTupleIter_iterate_row(&it->a_it, row);
 }
 
 // advance iterator

@@ -30,6 +30,7 @@ GrB_Info GB_selectop_to_idxunop
     GxB_SelectOp selectop,
     GrB_Scalar Thunk,
     GrB_Type atype,
+    const int data_arena,           // arena for workspace
     GB_Werk Werk
 )
 {
@@ -209,7 +210,8 @@ GrB_Info GB_selectop_to_idxunop
     // allocate the NewThunk as a full scalar
     GB_OK (GB_new_bix ((GrB_Matrix *) &NewThunk, idxunop->ytype, 1, 1,
         GB_ph_calloc, true, GxB_FULL, false, GB_Global_hyper_switch_get ( ),
-        1, 1, true, false, false, false, false)) ;
+        1, 1, true, false, false, false, false,
+        data_arena, data_arena)) ;
 
     // NewThunk = 0
     memset (NewThunk->x, 0, idxunop->ytype->size) ;

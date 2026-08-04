@@ -115,6 +115,13 @@ GrB_Info GrB_Monoid_get_INT32
     // get the field
     //--------------------------------------------------------------------------
 
+    if (field == GxB_ARENA_HEADER)
+    { 
+        (*value) = GB_arena (monoid->header_mem) ;
+        #pragma omp flush
+        return (GrB_SUCCESS) ;
+    }
+
     return (GB_op_enum_get ((GB_Operator) (monoid->op), value, field)) ;
 }
 

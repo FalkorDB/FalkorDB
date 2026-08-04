@@ -876,7 +876,7 @@ toc
 %
 %   in GrB syntax:  C<#M,replace> = accum (C, A*B)
 %
-%   in @GrB: C = GrB.mxm (Cin, M, accum, semiring, A, B, desc) ;
+%   in GrB: C = GrB.mxm (Cin, M, accum, semiring, A, B, desc) ;
 %
 % In the above expression, #M is either empty (no mask), M (with a mask
 % matrix) or ~M (with a complemented mask matrix), as determined by the

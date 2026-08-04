@@ -72,7 +72,7 @@ void mexFunction
 
     CHECK (type == GrB_FP64) ;
     CHECK (n == n2) ;
-    CHECK (handling == GrB_DEFAULT) ;
+    CHECK (handling == GB_ARENA_TEST) ;
     CHECK (xsize >= n * sizeof (double)) ;
     for (int i = 0 ; i < n ; i++)
     {

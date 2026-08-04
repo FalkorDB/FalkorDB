@@ -2,6 +2,7 @@
 // GB_cuda_select.hpp: CPU definitions for CUDA select operations
 //------------------------------------------------------------------------------
 
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------

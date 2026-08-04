@@ -41,6 +41,10 @@
     // get inputs
     //--------------------------------------------------------------------------
 
+    ASSERT (C != NULL) ;
+    int data_arena = C->data_arena ;
+    uint64_t mem = GB_mem (data_arena, 0) ;
+
     const bool A_is_bitmap = GB_IS_BITMAP (A) ;
     const bool A_iso = A->iso ;
     ASSERT (GB_IS_FULL (A) || GB_A_IS_BITMAP) ;
@@ -49,7 +53,7 @@
     // Parallel: slice M into equal-sized chunks
     //--------------------------------------------------------------------------
 
-    GB_WERK_DECLARE (M_ek_slicing, int64_t) ;
+    GB_WERK_DECLARE (M_ek_slicing, int64_t, mem) ;
     int M_nthreads, M_ntasks ;
     GB_M_NHELD (M_nnz_held) ;
     GB_SLICE_MATRIX_WORK (M, 8, M_nnz_held + M->nvec, M_nnz_held) ;

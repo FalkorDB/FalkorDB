@@ -371,6 +371,23 @@ GrB_Info Delta_MatrixTupleIter_AttachRange
 	return GrB_SUCCESS ;
 }
 
+// return the position of the iterator
+// p is read before next() advances the iterator, giving the position of
+// the entry about to be returned; unique and stable across re-scans of
+// the same matrix
+GrB_Index Delta_Matrix_Iterator_getp
+(
+	Delta_MatrixTupleIter *iter  // iterator to query
+) {
+	if (!iter->m_depleted) {
+		return GxB_Matrix_Iterator_getp (&iter->m_it) ;
+	}
+	// M is exhausted: use nvals(M) as a fixed offset so dp positions
+	// don't collide with any M entry position (0..nvals(M)-1)
+	return GxB_Matrix_Iterator_getpmax (&iter->m_it)
+		+ GxB_Matrix_Iterator_getp (&iter->dp_it) ;
+}
+
 // free iterator data
 GrB_Info Delta_MatrixTupleIter_detach
 (

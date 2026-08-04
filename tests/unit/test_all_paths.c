@@ -105,7 +105,7 @@ void test_noPaths() {
 		GRAPH_EDGE_DIR_OUTGOING, minLen, maxLen, NULL, NULL, 0, false);
 	Path *p = AllPathsCtx_NextPath(ctx);
 
-	TEST_ASSERT(p == NULL);
+	TEST_ASSERT (p == NULL);
 
 	AllPathsCtx_Free(ctx);
 	Graph_Free(g);
@@ -131,8 +131,9 @@ void test_longest_Paths() {
 		if(longestPath < pathLen) longestPath = pathLen;
 	}
 
-	// 0,1,2,3,0
-	TEST_ASSERT(longestPath == 4);
+	// Under edge-based semantics, the longest path uses all 7 edges:
+	// 0->1->2->3->0->2->1->0  (e0,e3,e5,e6,e1,e4,e2)
+	TEST_CHECK (longestPath == 7);
 
 	AllPathsCtx_Free(ctx);
 	Graph_Free(g);
@@ -176,20 +177,22 @@ void test_upToThreeLegsPaths() {
 	NodeID p6[4] = {2, 0, 2, 3};
 
 	// Three leg paths.
-	NodeID p7[5] = {3, 0, 1, 2, 1};
-	NodeID p8[5] = {3, 0, 1, 2, 3};
-	NodeID p9[5] = {3, 0, 2, 1, 0};
-	NodeID p10[5] = {3, 0, 2, 1, 2};
-	NodeID p11[5] = {3, 0, 2, 3, 0};
+	// Under edge-based semantics, 0->1->0->2 is now valid (edges e0,e2,e1 are distinct).
+	NodeID p7[5] = {3, 0, 1, 0, 2};
+	NodeID p8[5] = {3, 0, 1, 2, 1};
+	NodeID p9[5] = {3, 0, 1, 2, 3};
+	NodeID p10[5] = {3, 0, 2, 1, 0};
+	NodeID p11[5] = {3, 0, 2, 1, 2};
+	NodeID p12[5] = {3, 0, 2, 3, 0};
 
-	NodeID *expectedPaths[12] = {p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11};
+	NodeID *expectedPaths[13] = {p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12};
 
 	while((path = AllPathsCtx_NextPath(ctx))) {
 		bool expectedPathFound = false;
-		assert(pathsCount < 12);
+		assert(pathsCount < 13);
 
 		// Try to match a path.
-		for(int i = 0; i < 12; i++) {
+		for(int i = 0; i < 13; i++) {
 			NodeID *expectedPath = expectedPaths[i];
 			size_t expectedPathLen = expectedPath[0];
 			expectedPath++; // Skip path length.
@@ -206,10 +209,10 @@ void test_upToThreeLegsPaths() {
 				break;
 			}
 		}
-		TEST_ASSERT(expectedPathFound);
+		TEST_CHECK (expectedPathFound);
 		pathsCount++;
 	}
-	TEST_ASSERT(pathsCount == 12);
+	TEST_ASSERT (pathsCount == 13);
 
 	AllPathsCtx_Free(ctx);
 	Graph_Free(g);
@@ -243,8 +246,8 @@ void test_twoLegPaths() {
 	NodeID *expectedPaths[4] = {p0, p1, p2, p3};
 
 	while((path = AllPathsCtx_NextPath(ctx))) {
-		TEST_ASSERT(pathsCount < 4);
-		TEST_ASSERT(Path_Len(path) == 2);
+		TEST_CHECK (pathsCount < 4);
+		TEST_CHECK (Path_Len(path) == 2);
 		bool expectedPathFound = false;
 
 		for(int i = 0; i < 4; i++) {
@@ -258,11 +261,11 @@ void test_twoLegPaths() {
 			if(expectedPathFound) break;
 		}
 
-		TEST_ASSERT(expectedPathFound);
+		TEST_CHECK (expectedPathFound);
 		pathsCount++;
 	}
 
-	TEST_ASSERT(pathsCount == 4);
+	TEST_ASSERT (pathsCount == 4);
 
 	AllPathsCtx_Free(ctx);
 	Graph_Free(g);
@@ -270,14 +273,36 @@ void test_twoLegPaths() {
 
 // Test all paths from source to a specific destination node.
 void test_destinationSpecificPaths() {
-	NodeID p00_0[2] = {1, 0};
-	NodeID p00_1[4] = {3, 0, 1, 0};
-	NodeID p00_2[6] = {5, 0, 1, 2, 1, 0};
-	NodeID p00_4[6] = {5, 0, 1, 2, 3, 0};
-	NodeID p00_3[5] = {4, 0, 2, 1, 0};
-	NodeID p00_5[5] = {4, 0, 2, 3, 0};
+	/* Under edge-based semantics, paths from 0 back to 0 (all 15):
+	 * len=0: {0}
+	 * len=2: {0,1,0}
+	 * len=3: {0,2,1,0}, {0,2,3,0}
+	 * len=4: {0,1,2,1,0}, {0,1,2,3,0}
+	 * len=5: {0,1,0,2,3,0}, {0,2,1,2,3,0}, {0,2,3,0,1,0}
+	 * len=7: {0,1,0,2,1,2,3,0}, {0,1,2,1,0,2,3,0}, {0,1,2,3,0,2,1,0},
+	 *        {0,2,1,0,1,2,3,0}, {0,2,1,2,3,0,1,0}, {0,2,3,0,1,2,1,0}
+	 */
+	NodeID p00_0[2]  = {1, 0};
+	NodeID p00_1[4]  = {3, 0, 1, 0};
+	NodeID p00_2[5]  = {4, 0, 2, 1, 0};
+	NodeID p00_3[5]  = {4, 0, 2, 3, 0};
+	NodeID p00_4[6]  = {5, 0, 1, 2, 1, 0};
+	NodeID p00_5[6]  = {5, 0, 1, 2, 3, 0};
+	NodeID p00_6[7]  = {6, 0, 1, 0, 2, 3, 0};
+	NodeID p00_7[7]  = {6, 0, 2, 1, 2, 3, 0};
+	NodeID p00_8[7]  = {6, 0, 2, 3, 0, 1, 0};
+	NodeID p00_9[9]  = {8, 0, 1, 0, 2, 1, 2, 3, 0};
+	NodeID p00_10[9] = {8, 0, 1, 2, 1, 0, 2, 3, 0};
+	NodeID p00_11[9] = {8, 0, 1, 2, 3, 0, 2, 1, 0};
+	NodeID p00_12[9] = {8, 0, 2, 1, 0, 1, 2, 3, 0};
+	NodeID p00_13[9] = {8, 0, 2, 1, 2, 3, 0, 1, 0};
+	NodeID p00_14[9] = {8, 0, 2, 3, 0, 1, 2, 1, 0};
 
-	NodeID *p00[6] = {p00_0, p00_1, p00_2, p00_3, p00_4, p00_5};
+	NodeID *p00[15] = {
+		p00_0, p00_1, p00_2, p00_3, p00_4,
+		p00_5, p00_6, p00_7, p00_8, p00_9,
+		p00_10, p00_11, p00_12, p00_13, p00_14
+	};
 
 	Graph *g = BuildGraph();
 
@@ -293,12 +318,12 @@ void test_destinationSpecificPaths() {
 		GRAPH_EDGE_DIR_OUTGOING, minLen, maxLen, NULL, NULL, 0, false);
 
 	while((path = AllPathsCtx_NextPath(ctx))) {
-		TEST_ASSERT(pathsCount < 5);
-		TEST_ASSERT(pathArrayContainsPath(p00, 6, path));
+		TEST_CHECK(pathsCount < 15);
+		TEST_CHECK(pathArrayContainsPath(p00, 15, path));
 		pathsCount++;
 	}
 
-	TEST_ASSERT(pathsCount == 5);
+	TEST_ASSERT (pathsCount == 15);
 
 	AllPathsCtx_Free(ctx);
 	Graph_Free(g);

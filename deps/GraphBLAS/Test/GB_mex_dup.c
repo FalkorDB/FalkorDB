@@ -61,9 +61,38 @@ void mexFunction
     if (ctype == A->type)
     {
         // copy C with the same type as A, with default sparsity
-        if (method == 0 && sparsity == GxB_DEFAULT)
+        if ((method == 0 || method >= 2) && sparsity == GxB_DEFAULT)
         {
-            METHOD (GrB_Matrix_dup (&C, A)) ;
+            if (method == 0)
+            {
+                METHOD (GrB_Matrix_dup (&C, A)) ;
+            }
+            else if (method == 2)
+            {
+                METHOD (GxB_Matrix_dup_arena (&C, A,
+                    GB_ARENA_TEST, GB_ARENA_TEST)) ;
+            }
+            else
+            {
+                GxB_Matrix_dup_arena (&C, A, GrB_DEFAULT, GrB_DEFAULT) ;
+                GrB_Index nrows, ncols ;
+                GrB_Matrix_nrows (&nrows, C) ;
+                GrB_Matrix_ncols (&ncols, C) ;
+                if (nrows == 1 && ncols == 1)
+                {
+                    GxB_Scalar_set_arenas ((GrB_Scalar *) &C,
+                        GB_ARENA_TEST, GB_ARENA_TEST) ;
+                }
+                else if (nrows > 1 && ncols == 1)
+                {
+                    GxB_Vector_set_arenas ((GrB_Vector *) &C,
+                        GB_ARENA_TEST, GB_ARENA_TEST) ;
+                }
+                else
+                {
+                    GxB_Matrix_set_arenas (&C, GB_ARENA_TEST, GB_ARENA_TEST) ;
+                }
+            }
 
             // get the name of the C matrix
             char name [256] ;

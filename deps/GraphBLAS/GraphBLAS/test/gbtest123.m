@@ -1,34 +1,33 @@
-function gbtest123
+function gbtest123 (ghb)
 %GBTEST123 test build
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-rng ('default')
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
 n = 1000 ;
-H = GrB (n, n) ;
+H = gtb (ghb, n, n) ;
 H (1,1) = 1 ;
-S = GrB.build (H,H,pi) ;
+S = gtb_build (ghb, H,H,pi) ;
 P = sparse (pi) ;
 assert (isequal (S, P)) ;
 
 n = flintmax ;
-H = GrB (n, n) ;
+H = gtb (ghb, n, n) ;
 H (1,1) = 1 ;
 try
-    S = GrB.build (H,H,H) ;
+    S = gtb_build (ghb, H,H,H) ;
     ok = false ;
-catch me
-    me
-    have_octave = gb_octave ;
-    if (have_octave)
-        assert (isequal (me.message, 'gbbuild: input matrix dimensions are too large')) ;
-    else
-        assert (isequal (me.message, 'input matrix dimensions are too large')) ;
-    end
+catch expected_error
+    msg = expected_error.message ;
     ok = true ;
 end
 assert (ok) ;
+assert (gb_contains (msg, 'input matrix dimensions are too large')) ;
 
-fprintf ('\ngbtest123: all tests passed\n') ;
+fprintf ('\ngbtest123 (%d): all tests passed\n', ghb) ;
+

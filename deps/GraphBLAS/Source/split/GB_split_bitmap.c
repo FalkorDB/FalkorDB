@@ -25,6 +25,8 @@ GrB_Info GB_split_bitmap            // split a bitmap matrix
     const int64_t *restrict Tile_rows,  // size m+1
     const int64_t *restrict Tile_cols,  // size n+1
     const GrB_Matrix A,             // input matrix
+    const int header_arena,
+    const int data_arena,
     GB_Werk Werk
 )
 {
@@ -85,7 +87,7 @@ GrB_Info GB_split_bitmap            // split a bitmap matrix
             GB_OK (GB_new_bix (&C, // new header
                 atype, cvlen, cvdim, GB_ph_null, csc, GxB_BITMAP, false,
                 hyper_switch, 0, cnzmax, true, A_iso,
-                /* OK: */ false, false, false)) ;
+                /* OK: */ false, false, false, header_arena, data_arena)) ;
             int8_t *restrict Cb = C->b ;
             C->sparsity_control = sparsity_control ;
             C->hyper_switch = hyper_switch ;

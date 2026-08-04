@@ -60,6 +60,7 @@ void mexFunction
     GrB_Type myint = NULL, My4x64 = NULL ;
     GB_void *Null = NULL ;
     char *err ;
+    printf ("\nGB_mex_test3: starting...\n\n") ;
 
     //--------------------------------------------------------------------------
     // startup GraphBLAS
@@ -318,7 +319,8 @@ void mexFunction
     }
 
     GrB_Type type ;
-    uint64_t nrows, ncols, Ap_size, Ai_size, Ax_size, Ah_size, nvec ;
+    uint64_t nrows, ncols, Ap_memsize, Ai_memsize, Ax_memsize, Ah_memsize,
+        nvec ;
     uint64_t *Ap = NULL, *Ai = NULL, *Ah = NULL ;   // OK
     float *Ax = NULL ;
     bool iso, jumbled ;
@@ -327,44 +329,47 @@ void mexFunction
 
     // export as CSC
     OK (GxB_Matrix_export_CSC (&C, &type, &nrows, &ncols, &Ap, &Ai,
-        (void **) &Ax, &Ap_size, &Ai_size, &Ax_size, &iso, &jumbled, NULL)) ;
+        (void **) &Ax, &Ap_memsize, &Ai_memsize, &Ax_memsize, &iso, &jumbled,
+        NULL)) ;
 
     // import as CSC
     expected = GrB_INVALID_VALUE ;
     ERR (GxB_Matrix_import_CSC (&C, type, nrows, ncols, &Ap, &Ai,
-        (void **) &Ax, 0, Ai_size, Ax_size, iso, jumbled, NULL)) ;
+        (void **) &Ax, 0, Ai_memsize, Ax_memsize, iso, jumbled, NULL)) ;
     ERR (GxB_Matrix_import_CSC (&C, type, nrows, ncols, &Ap, &Ai,
-        (void **) &Ax, Ap_size, 0, Ax_size, iso, jumbled, NULL)) ;
+        (void **) &Ax, Ap_memsize, 0, Ax_memsize, iso, jumbled, NULL)) ;
     ERR (GxB_Matrix_import_CSC (&C, type, nrows, ncols, &Ap, &Ai,
-        (void **) &Ax, Ap_size, Ai_size, 0, iso, jumbled, NULL)) ;
+        (void **) &Ax, Ap_memsize, Ai_memsize, 0, iso, jumbled, NULL)) ;
     ERR (GxB_Matrix_import_CSC (&C, type, nrows, ncols, &Ap, &Ai,
-        (void **) &Null, Ap_size, Ai_size, 0, true, jumbled, NULL)) ;
+        (void **) &Null, Ap_memsize, Ai_memsize, 0, true, jumbled, NULL)) ;
 
     OK (GxB_Matrix_import_CSC (&C, type, nrows, ncols, &Ap, &Ai,
-        (void **) &Ax, Ap_size, Ai_size, Ax_size, iso, jumbled, NULL)) ;
+        (void **) &Ax, Ap_memsize, Ai_memsize, Ax_memsize, iso, jumbled, NULL));
     OK (GxB_Matrix_fprint (C, "C imported sparse", GxB_COMPLETE, NULL)) ;
 
     // export as HyperCSC
     OK (GxB_Matrix_export_HyperCSC (&C, &type, &nrows, &ncols,
         &Ap, &Ah, &Ai, (void **) &Ax,
-        &Ap_size, &Ah_size, &Ai_size, &Ax_size, &iso, &nvec, &jumbled, NULL)) ;
+        &Ap_memsize, &Ah_memsize, &Ai_memsize, &Ax_memsize, &iso, &nvec,
+        &jumbled, NULL)) ;
 
     // import as HyperCSC
     ERR (GxB_Matrix_import_HyperCSC (&C, type, nrows, ncols,
         &Ap, &Ah, &Ai, (void **) &Ax,
-        0, Ah_size, Ai_size, Ax_size, iso, nvec, jumbled, NULL)) ;
+        0, Ah_memsize, Ai_memsize, Ax_memsize, iso, nvec, jumbled, NULL)) ;
     ERR (GxB_Matrix_import_HyperCSC (&C, type, nrows, ncols,
         &Ap, &Ah, &Ai, (void **) &Ax,
-        Ap_size, 0, Ai_size, Ax_size, iso, nvec, jumbled, NULL)) ;
+        Ap_memsize, 0, Ai_memsize, Ax_memsize, iso, nvec, jumbled, NULL)) ;
     ERR (GxB_Matrix_import_HyperCSC (&C, type, nrows, ncols,
         &Ap, &Ah, &Ai, (void **) &Ax,
-        Ap_size, Ah_size, 0, Ax_size, iso, nvec, jumbled, NULL)) ;
+        Ap_memsize, Ah_memsize, 0, Ax_memsize, iso, nvec, jumbled, NULL)) ;
     ERR (GxB_Matrix_import_HyperCSC (&C, type, nrows, ncols,
         &Ap, &Ah, &Ai, (void **) &Ax,
-        Ap_size, Ah_size, Ai_size, 0, iso, nvec, jumbled, NULL)) ;
+        Ap_memsize, Ah_memsize, Ai_memsize, 0, iso, nvec, jumbled, NULL)) ;
     OK (GxB_Matrix_import_HyperCSC (&C, type, nrows, ncols,
         &Ap, &Ah, &Ai, (void **) &Ax,
-        Ap_size, Ah_size, Ai_size, Ax_size, iso, nvec, jumbled, NULL)) ;
+        Ap_memsize, Ah_memsize, Ai_memsize, Ax_memsize, iso, nvec, jumbled,
+        NULL)) ;
     OK (GxB_Matrix_fprint (C, "C imported hyper", GxB_SHORT, NULL)) ;
     GrB_Matrix_free_(&C) ;
 
@@ -374,13 +379,15 @@ void mexFunction
 
     // export as CSC, non-iso
     OK (GxB_Matrix_export_CSC (&C, &type, &nrows, &ncols, &Ap, &Ai,
-        (void **) &Ax, &Ap_size, &Ai_size, &Ax_size, NULL, &jumbled, NULL)) ;
+        (void **) &Ax, &Ap_memsize, &Ai_memsize, &Ax_memsize, NULL, &jumbled,
+        NULL)) ;
 
     ERR (GxB_Matrix_import_CSC (&C, type, nrows, ncols, &Ap, &Ai,
-        (void **) &Ax, Ap_size, Ai_size, 0, false, jumbled, NULL)) ;
+        (void **) &Ax, Ap_memsize, Ai_memsize, 0, false, jumbled, NULL)) ;
 
     OK (GxB_Matrix_import_CSC (&C, type, nrows, ncols, &Ap, &Ai,
-        (void **) &Ax, Ap_size, Ai_size, Ax_size, false, jumbled, NULL)) ;
+        (void **) &Ax, Ap_memsize, Ai_memsize, Ax_memsize, false, jumbled,
+        NULL)) ;
 
     OK (GxB_Matrix_fprint (C, "C imported non-iso", GxB_SHORT, NULL)) ;
     OK (GrB_Matrix_free_(&C)) ;
@@ -390,11 +397,12 @@ void mexFunction
     OK (GrB_Matrix_assign_FP32 (C, NULL, NULL, 1, GrB_ALL, 10, GrB_ALL, 10,
         NULL)) ;
     OK (GxB_Matrix_export_CSC (&C, &type, &nrows, &ncols, &Ap, &Ai,
-        (void **) &Ax, &Ap_size, &Ai_size, &Ax_size, &iso, &jumbled, NULL)) ;
+        (void **) &Ax, &Ap_memsize, &Ai_memsize, &Ax_memsize, &iso, &jumbled,
+        NULL)) ;
 
     // import as CSC iso
     OK (GxB_Matrix_import_CSC (&C, type, nrows, ncols, &Ap, &Ai,
-        (void **) &Ax, Ap_size, Ai_size, Ax_size, iso, jumbled, NULL)) ;
+        (void **) &Ax, Ap_memsize, Ai_memsize, Ax_memsize, iso, jumbled, NULL));
     OK (GxB_Matrix_fprint (C, "C imported iso", GxB_SHORT, NULL)) ;
     OK (GrB_Matrix_free_(&C)) ;
 
@@ -488,11 +496,11 @@ void mexFunction
 
     // export as FullC, non-iso
     OK (GxB_Matrix_export_FullC (&C, &type, &nrows, &ncols,
-        (void **) &Ax, &Ax_size, NULL, NULL)) ;
+        (void **) &Ax, &Ax_memsize, NULL, NULL)) ;
 
     // import as FullC, non-iso
     OK (GxB_Matrix_import_FullC (&C, type, nrows, ncols,
-        (void **) &Ax, Ax_size, false, NULL)) ;
+        (void **) &Ax, Ax_memsize, false, NULL)) ;
 
     OK (GxB_Matrix_fprint (C, "C stuff iso imported", GxB_COMPLETE, NULL)) ;
 

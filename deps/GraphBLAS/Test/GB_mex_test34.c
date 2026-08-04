@@ -425,6 +425,10 @@ GrB_DESC_RSCT0T1 ; // GrB_REPLACE  GrB_STRUCTURE  GrB_COMP   GrB_TRAN  GrB_TRAN
     OK (GrB_Descriptor_get_SIZE_ (desc, &size, GrB_NAME)) ;
     CHECK (size == strlen (name) + 1) ;
 
+    int arena = 42 ;
+    OK (GrB_Descriptor_get_INT32_ (desc, &arena, GxB_ARENA_HEADER)) ;
+    CHECK (arena == GB_ARENA_TEST) ;
+
     //--------------------------------------------------------------------------
     // error handling
     //--------------------------------------------------------------------------

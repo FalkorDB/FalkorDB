@@ -7,6 +7,8 @@
 #pragma once
 
 #define EMSG_GRAPH_EXISTS "Graph %s already exists"
+#define EMSG_GRAPH_LOAD_QUEUE_FULL "ERR too many queries waiting for graph: %s to finish loading"
+#define EMSG_MAX_PENDING_QUERIES "Max pending queries exceeded"
 #define EMSG_EMPTY_KEY "Encountered an empty key when opened key %s"
 #define EMSG_NON_GRAPH_KEY "Encountered a non-graph value type when opened key %s"
 #define EMSG_DIFFERENT_VALUE "Encountered different graph value when opened key %s"
@@ -49,6 +51,7 @@
 #define EMSG_INVALID_USAGE_OF_DISTINCT_STAR_PARAMETER "Cannot specify both DISTINCT and * in COUNT(DISTINCT *)"
 #define EMSG_MISSING_EVAL_EXP_IN_REDUCE "No eval expression given in reduce"
 #define EMSG_UNHANDLED_TYPE_INLINE_PROPERTIES "Encountered unhandled type in inlined properties."
+#define EMSG_DUPLICATE_INLINE_PROPERTY "Duplicate property key '%s' in inline property map"
 #define EMSG_CREATE_DIRECTED_RELATIONSHIP "Only directed relationships are supported in CREATE"
 #define EMSG_SAME_ALIAS_NODE_RELATIONSHIP "The alias '%s' was specified for both a node and a relationship."
 #define EMSG_SAME_ALIAS_MULTIPLE_PATTERNS "Cannot use the same relationship variable '%s' for multiple patterns."
@@ -133,6 +136,7 @@
 #define EMSG_FAILED_TO_LOAD_CSV "failed to open CSV file: %s"
 #define EMSG_FAILED_TO_READ_CSV_ROW "Failed to get next row"
 #define EMSG_FAILED_TO_READ_CSV_HEADERS "failed to read headers row"
+#define EMSG_IDENTIFIER_TOO_LONG "%s exceeds maximum length of %d characters"
 #define EMSG_MERGE_MAP_ERROR "Cannot merge a map with a non-map value"
 #define EMSG_INVALID_CONSTRAINT_COMMAND "Invalid constraint command use the GRAPH.CONSTRAINT command instead"
 #define EMSG_WRITE_QUEUE_FULL "Write queue is full: cannot accept additional write queries at this time. Please retry later."

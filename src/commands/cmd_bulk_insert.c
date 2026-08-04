@@ -84,10 +84,10 @@ int Graph_BulkInsert
 		goto cleanup ;
 	}
 
-	gc = GraphContext_Retrieve (ctx, rs_graph_name, false, begin) ;
+	GraphContext_Retrieve (ctx, rs_graph_name, false, begin, true, &gc) ;
 
 	// failed to retrieve GraphContext; an error has been emitted
-	if(gc == NULL) {
+	if (gc == NULL) {
 		goto cleanup ;
 	}
 

@@ -33,7 +33,7 @@ GrB_Info GB_EXTRACT_ELEMENT     // extract a single entry from S
     GB_RETURN_IF_NULL (x) ;
 
     // delete any lingering zombies, assemble any pending tuples, and unjumble
-    if (GB_ANY_PENDING_WORK (S))
+    if (GB_will_wait ((GrB_Matrix) S))
     { 
         // extract scalar with pending tuples or zombies.  It cannot be
         // actually jumbled, but S->jumbled might true anyway.
@@ -43,7 +43,7 @@ GrB_Info GB_EXTRACT_ELEMENT     // extract a single entry from S
         GB_BURBLE_END ;
     }
 
-    ASSERT (!GB_ANY_PENDING_WORK (S)) ;
+    ASSERT (!GB_will_wait ((GrB_Matrix) S)) ;
 
     // GB_XCODE and S must be compatible
     GB_Type_code scalar_code = S->type->code ;

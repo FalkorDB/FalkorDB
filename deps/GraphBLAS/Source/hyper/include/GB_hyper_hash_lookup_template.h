@@ -10,7 +10,7 @@
 // Let j = Ah [k]
 // k = A->Y (j, hash(j)), if present, or k=-1 if not found.
 
-GB_STATIC_INLINE int64_t GB_hyper_hash_lookup_T // k if j==Ah[k]; -1 not found
+GB_STATIC_INLINE_BOTH int64_t GB_hyper_hash_lookup_T // k if j==Ah[k]; else -1
 (
     // inputs, not modified:
     const GB_JTYPE *restrict Ah,    // A->h [0..A->nvec-1]: list of vectors

@@ -101,8 +101,8 @@ __global__ void GB_cuda_AxB_dot3_phase3_spdn_kernel
     // zombie count for this threadblock
     uint64_t zc = 0 ;
 
-    thread_block_tile<tile_sz> tile = 
-        tiled_partition<tile_sz> (this_thread_block()) ;
+    thread_block_tile<GB_CUDA_TILE_SIZE> tile = 
+        tiled_partition<GB_CUDA_TILE_SIZE> (this_thread_block()) ;
 
     GB_M_NVALS (mnz) ;
     ASSERT (GB_M_IS_SPARSE || GB_M_IS_HYPER) ;
@@ -262,7 +262,7 @@ __global__ void GB_cuda_AxB_dot3_phase3_spdn_kernel
         #if !GB_C_ISO
         if (cij_exists)
         {
-            // FIXME: the ANY monoid needs cij_exists for each thread
+            // fixme: the ANY monoid needs cij_exists for each thread
             cij = GB_cuda_tile_reduce_ztype (tile, cij) ;
         }
         #endif
