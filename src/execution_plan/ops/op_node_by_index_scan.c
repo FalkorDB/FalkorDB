@@ -182,8 +182,7 @@ pull_index:
 
 		// create iterator
 		ASSERT(rs_query_node != NULL);
-		op->iter = RediSearch_GetResultsIteratorWithTimeout(rs_query_node, rsIdx,
-				QueryCtx_GetRemainingTimeMS());
+		op->iter = RediSearch_GetResultsIterator(rs_query_node, rsIdx);
 	} else {
 		// build index query only once (first call)
 		// reset it if already initialized
@@ -192,8 +191,8 @@ pull_index:
 			RSQNode *rs_query_node = Index_BuildQueryTree(
 					&op->unresolved_filters, op->idx, op->filter);
 			ASSERT(rs_query_node != NULL);
-			op->iter = RediSearch_GetResultsIteratorWithTimeout(rs_query_node,
-					rsIdx, QueryCtx_GetRemainingTimeMS());
+			op->iter = RediSearch_GetResultsIterator(rs_query_node,
+					rsIdx);
 		} else {
 			// reset existing iterator
 			RediSearch_ResultsIteratorReset(op->iter);
@@ -213,8 +212,7 @@ static Record IndexScanConsume(OpBase *opBase) {
 		RSQNode *rs_query_node = Index_BuildQueryTree(&op->unresolved_filters,
 				op->idx, op->filter);
 
-		op->iter = RediSearch_GetResultsIteratorWithTimeout(rs_query_node, rsIdx,
-				QueryCtx_GetRemainingTimeMS());
+		op->iter = RediSearch_GetResultsIterator(rs_query_node, rsIdx);
 	}
 
 	const char *doc_key = NULL;

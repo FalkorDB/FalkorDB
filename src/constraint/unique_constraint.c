@@ -6,7 +6,6 @@
 
 #include "RG.h"
 #include "constraint.h"
-#include "../errors/errors.h"
 #include "../query_ctx.h"
 #include "../index/index.h"
 #include "../index/index_doc_key.h"
@@ -107,17 +106,6 @@ bool EnforceUniqueEntity
 	// query RediSearch index
 	//--------------------------------------------------------------------------
 
-	// fail fast if the query already exhausted its time budget: we cannot
-	// confirm uniqueness, so abort with a timeout rather than a false violation
-	if(QueryCtx_TimedOut()) {
-		QueryCtx_SetStatusTimedOut();
-		if(err_msg != NULL) {
-			int res = asprintf(err_msg, "%s", EMSG_QUERY_TIMEOUT);
-			UNUSED(res);
-		}
-		return false;
-	}
-
 	// construct a unique constraint query tree
 	// TODO: prefer to have the RediSearch query "template" constructed
 	// once and reused for each entity
@@ -125,8 +113,7 @@ bool EnforceUniqueEntity
 	RSQNode *root = Index_BuildUniqueConstraintQuery (idx, attrs, _c->attrs,
 			_c->n_attr);
 
-	bool holds     = false;  // return value none-optimistic
-	bool timed_out = false;  // iterator hit the query deadline
+	bool holds = false;  // return value none-optimistic
 
 	// A live constraint keeps its backing index pinned -- DROP INDEX is rejected
 	// while a constraint depends on it -- so the strong ref is always valid.
@@ -134,20 +121,15 @@ bool EnforceUniqueEntity
 	ASSERT(rs_idx != NULL);
 
 	// constraint holds if there are no duplicates, a single index match
-	RSResultsIterator *iter = RediSearch_GetResultsIteratorWithTimeout(root,
-			rs_idx, QueryCtx_GetRemainingTimeMS());
+	RSResultsIterator *iter = RediSearch_GetResultsIterator(root, rs_idx);
 	if(Constraint_GetEntityType(c) == GETYPE_NODE) {
 		// first call, expecting to find 'e' in the index
 		size_t len = 0;
 		const char *doc_key =
 			(const char *)RediSearch_ResultsIteratorNext(iter, rs_idx, &len);
 
-		// NULL means the iterator either timed out or matched no docs. On a
-		// timeout we cannot confirm uniqueness, so flag it and abort as a
-		// timeout in cleanup; otherwise refuse the entity (consistent with the
-		// second-call branch).
+		// no match: refuse the entity (consistent with the second-call branch)
 		if(doc_key == NULL) {
-			timed_out = RediSearch_ResultsIteratorTimedOut(iter);
 			holds = false;
 			goto cleanup;
 		}
@@ -168,9 +150,8 @@ bool EnforceUniqueEntity
 		const char *doc_key =
 			(const char *)RediSearch_ResultsIteratorNext(iter, rs_idx, &len);
 
-		// see node branch above for the NULL / timeout rationale
+		// see node branch above
 		if(doc_key == NULL) {
-			timed_out = RediSearch_ResultsIteratorTimedOut(iter);
 			holds = false;
 			goto cleanup;
 		}
@@ -187,29 +168,12 @@ bool EnforceUniqueEntity
 		}
 	}
 
-	// second call: a NULL means either "no duplicate" (holds) or a timeout --
-	// a timeout must not be read as uniqueness confirmed
-	if(RediSearch_ResultsIteratorNext(iter, rs_idx, NULL) == NULL) {
-		timed_out = RediSearch_ResultsIteratorTimedOut(iter);
-		holds     = !timed_out;
-	} else {
-		holds = false;  // a second match => duplicate => violation
-	}
+	// second call, holds if no value is returned
+	holds = RediSearch_ResultsIteratorNext(iter, rs_idx, NULL) == NULL;
 
 cleanup:
 	RediSearch_ResultsIteratorFree(iter);
 	Index_ReleaseRSIndex(rs_idx);
-
-	// timeout takes precedence over a (possibly spurious) violation: we could
-	// not confirm uniqueness, so report the timeout rather than reject the write
-	if(timed_out) {
-		QueryCtx_SetStatusTimedOut();
-		if(err_msg != NULL) {
-			int res = asprintf(err_msg, "%s", EMSG_QUERY_TIMEOUT);
-			UNUSED(res);
-		}
-		return false;
-	}
 
 	if(holds == false && err_msg != NULL) {
 		int res;

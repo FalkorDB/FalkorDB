@@ -6,7 +6,6 @@
 
 #include "query_ctx.h"
 #include "RG.h"
-#include <math.h>
 #include "errors.h"
 #include "globals.h"
 #include "util/simple_timer.h"
@@ -196,9 +195,6 @@ void QueryCtx_SetGlobalExecutionCtx
 
 	// received timestamp (epoch time)
 	ctx->stats.received_ts = cmd_ctx->received_ts;
-
-	// configured per-query timeout budget; 0 = unlimited
-	ctx->timeout_ms = (cmd_ctx->timeout > 0) ? (uint64_t)cmd_ctx->timeout : 0;
 }
 
 // set the provided AST for access through the QueryCtx
@@ -576,41 +572,6 @@ uint64_t QueryCtx_GetReceivedTS (void) {
 	ASSERT(ctx != NULL);
 
 	return ctx->stats.received_ts ;
-}
-
-// total elapsed query time in ms: completed stage durations plus the current
-// running stage's timer
-static double _QueryCtx_ElapsedMS(const QueryCtx *ctx) {
-	double elapsed_ms = TIMER_GET_ELAPSED_MILLISECONDS(ctx->stats.timer);
-	for(int s = 0; s < (int)ctx->stage && s < 3; s++) {
-		elapsed_ms += ctx->stats.durations[s];
-	}
-	return elapsed_ms;
-}
-
-bool QueryCtx_TimedOut(void) {
-	QueryCtx *ctx = _QueryCtx_GetCtx();
-	// no context or no configured budget (0 = unlimited) => never timed out
-	if(ctx == NULL || ctx->timeout_ms == 0) return false;
-	return _QueryCtx_ElapsedMS(ctx) >= (double)ctx->timeout_ms;
-}
-
-void QueryCtx_SetStatusTimedOut(void) {
-	QueryCtx *ctx = _QueryCtx_GetCtx();
-	if(ctx != NULL) ctx->status = QueryExecutionStatus_TIMEDOUT;
-}
-
-uint64_t QueryCtx_GetRemainingTimeMS(void) {
-	QueryCtx *ctx = _QueryCtx_GetCtx();
-	// no configured budget => no deadline (0 is RediSearch's "unlimited")
-	if(ctx == NULL || ctx->timeout_ms == 0) return 0;
-
-	double remaining = (double)ctx->timeout_ms - _QueryCtx_ElapsedMS(ctx);
-	// callers gate on QueryCtx_TimedOut() before iterating, so a live query
-	// always has time left; ceil() keeps a sub-millisecond remainder >= 1ms
-	// without special-casing (and never collapses to 0 == "unlimited").
-	ASSERT(remaining > 0);
-	return remaining > 0 ? (uint64_t)ceil(remaining) : 1;
 }
 
 // free the allocations within the QueryCtx and reset it for the next query

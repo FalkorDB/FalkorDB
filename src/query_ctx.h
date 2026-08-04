@@ -86,7 +86,6 @@ typedef struct QueryCtx {
 	bool deterministic;                          // false if query contains a non deterministic element
 	QueryExecutionStatus status;                 // query execution status
 	QueryExecutionTypeFlag flags;                // execution flags
-	uint64_t timeout_ms;                         // configured per-query timeout budget; 0 = unlimited
 	EffectsBuffer *effects_buffer;               // effects-buffer for replication, used when write query succeed and replication is needed
 	QueryCtx_QueryData query_data;               // data related to the query syntax
 	QueryCtx_GlobalExecCtx global_exec_ctx;      // data related to global redis execution
@@ -245,22 +244,6 @@ double QueryCtx_GetRuntime(void);
 
 // returns query received timestamp
 uint64_t QueryCtx_GetReceivedTS (void) ;
-
-// returns true if the query has a configured timeout budget that is fully
-// consumed. Callers should gate on this before starting a (potentially long)
-// operation and fail with a timeout rather than proceeding.
-bool QueryCtx_TimedOut(void);
-
-// marks the current query as timed out (QueryExecutionStatus_TIMEDOUT) so the
-// command layer reports a timeout rather than a generic failure.
-void QueryCtx_SetStatusTimedOut(void);
-
-// returns the remaining per-query time budget in ms, for RediSearch's
-// deadline-based iterators; 0 = unlimited (no configured timeout, which
-// RediSearch treats as no enforcement). For a configured budget the value is
-// rounded up (>= 1ms) so a live query never collapses to 0. Gate on
-// QueryCtx_TimedOut() first -- this must not be called for an expired query.
-uint64_t QueryCtx_GetRemainingTimeMS(void);
 
 // free the allocations within the QueryCtx and reset it for the next query
 void QueryCtx_Free(void);
