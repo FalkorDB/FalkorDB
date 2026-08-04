@@ -27,7 +27,7 @@ void _free_vectors
 	const uint64_t *x  // current entry
 ) {
 	// see if entry is a vector
-	if(!SCALAR_ENTRY(*x)) {
+	if(IS_VECTOR_ENTRY(*x)) {
 		// free vector
 		GrB_Vector V = AS_VECTOR(*x);
 		GrB_free (&V);
@@ -44,7 +44,7 @@ void locate_tensors
     GrB_Index j,        // column index of A(i,j), or zero for v(i)
     const void *y       // input scalar y
 ) {
-	*z = !SCALAR_ENTRY (*x) ;
+	*z = IS_VECTOR_ENTRY (*x) ;
 }, LOCATE_TENSORS_JIT_STR)
 
 static void _multiedge_memory
@@ -139,8 +139,8 @@ void Tensor_SetElement
 	// single entry -> vector
 	//--------------------------------------------------------------------------
 
-	if(SCALAR_ENTRY(_x)) {
-		GrB_Vector_new(&V, GrB_BOOL, GrB_INDEX_MAX);
+	if(IS_SCALAR_ENTRY(_x)) {
+		GrB_OK (GrB_Vector_new(&V, GrB_BOOL, GrB_INDEX_MAX));
 
 		// T[row, col] = V
 		uint64_t vec_entry = SET_MSB((uint64_t)(uintptr_t)V);
@@ -222,7 +222,7 @@ void Tensor_SetElements
 		if(info == GrB_NO_VALUE) {
 			// new entry
 			method = NEW_SCALAR;
-		} else if(SCALAR_ENTRY(_x)) {
+		} else if(IS_SCALAR_ENTRY(_x)) {
 			// switch from scalar entry to vector
 			method = NEW_VECTOR;
 		} else {
@@ -409,7 +409,7 @@ void Tensor_SetEdges
 		if(info == GrB_NO_VALUE) {
 			// new entry
 			method = NEW_SCALAR;
-		} else if(SCALAR_ENTRY(_x)) {
+		} else if(IS_SCALAR_ENTRY(_x)) {
 			// switch from scalar entry to vector
 			method = NEW_VECTOR;
 		} else {
@@ -639,7 +639,7 @@ void Tensor_RemoveElements
 		uint64_t d = j - i;  // number of consecutive elements
 
 		// expecting entry to exists
-		if(SCALAR_ENTRY(_x)) {
+		if(IS_SCALAR_ENTRY(_x)) {
 			// removing a single entry
 			ASSERT(d == 1);
 			// postpone clear entry
@@ -841,7 +841,7 @@ uint64_t Tensor_RowDegree
 
 	// scan T[row:]
 	while(Delta_MatrixTupleIter_next_UINT64(&it, NULL, NULL, &x) == GrB_SUCCESS) {
-		if(SCALAR_ENTRY(x)) {
+		if(IS_SCALAR_ENTRY(x)) {
 			// scalar entry, increase degree by 1
 			degree++;
 		} else {
@@ -888,7 +888,7 @@ uint64_t Tensor_ColDegree
 		info = Delta_Matrix_extractElement_UINT64(&x, T, row, col);
 		ASSERT(info == GrB_SUCCESS);
 
-		if(SCALAR_ENTRY(x)) {
+		if(IS_SCALAR_ENTRY(x)) {
 			// scalar entry, increase degree by 1
 			degree++;
 		} else {

@@ -115,7 +115,7 @@ static void _encode_multiedge_array
 	for (uint64_t i = 0; i < arr_n; i++) {
 		uint64_t x;
 		GrB_OK (GrB_Vector_extractElement_UINT64(&x, v, i));
-		if(!SCALAR_ENTRY(x)) {
+		if(IS_VECTOR_ENTRY(x)) {
 			GrB_Vector u = AS_VECTOR(x);
 			SerializerIO_WriteUnsigned (rdb, i) ;
 			_Encode_multiedge(rdb, u, reload);
