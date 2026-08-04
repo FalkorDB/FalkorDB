@@ -11,7 +11,7 @@
 #include "../index/index.h"
 #include "../index/index_doc_key.h"
 #include "redisearch_api.h"
-#include "../src/datatypes/point.h"
+#include "../datatypes/point.h"
 #include "../graph/entities/attribute_set.h"
 
 #include <stdatomic.h>
