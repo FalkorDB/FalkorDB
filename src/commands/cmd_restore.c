@@ -66,7 +66,7 @@ int Graph_Restore
 	SerializerIO io = SerializerIO_FromStream(stream, false);
 
 	// decode graph
-	GraphContext *gc = RdbLoadGraphContext_latest (io, argv[1], false) ;
+	GraphContext *gc = RdbLoadGraphContext_latest (io, argv[1]) ;
 	ASSERT (gc != NULL) ;
 
 	// add graph to keyspace
@@ -90,3 +90,4 @@ int Graph_Restore
 
 	return REDISMODULE_OK;
 }
+

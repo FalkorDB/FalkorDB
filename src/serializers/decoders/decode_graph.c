@@ -13,7 +13,7 @@ GraphContext *RdbLoadGraph
 	const RedisModuleString *rm_key_name = RedisModule_GetKeyNameFromIO (rdb) ;
 
 	SerializerIO io = SerializerIOv2_FromBufferedRedisModuleIO (rdb, false) ;
-	GraphContext *gc = RdbLoadGraphContext_latest (io, rm_key_name, false) ;
+	GraphContext *gc = RdbLoadGraphContext_latest (io, rm_key_name) ;
 	SerializerIO_Free (&io) ;
 
 	return gc ;

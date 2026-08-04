@@ -301,7 +301,7 @@ static void LoadGraphFromFile
 	RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
 			"Decoding graph: %s from: %s", copy_ctx->dest, copy_ctx->path);
 
-	GraphContext *gc = RdbLoadGraphContext_latest (io, copy_ctx->rm_dest, false) ;
+	GraphContext *gc = RdbLoadGraphContext_latest (io, copy_ctx->rm_dest) ;
 	ASSERT (gc != NULL) ;
 
 	//--------------------------------------------------------------------------
@@ -567,3 +567,4 @@ int Graph_Copy
 
 	return REDISMODULE_OK;
 }
+
