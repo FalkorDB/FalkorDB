@@ -504,6 +504,9 @@ class testQueryValidationFlow(FlowTestsBase):
 
         # A self-reference nested inside a comprehension is the same error, but
         # it used to reach evaluation and crash the server in GraphEntity_Keys.
+        # The query must be *rejected*: returning an empty key/property list
+        # for an entity that does not exist yet would silently accept an
+        # invalid query.
         # See https://github.com/FalkorDB/FalkorDB/issues/415
         node_count = self.graph.query("MATCH (n) RETURN count(n)").result_set[0][0]
 
@@ -516,8 +519,12 @@ class testQueryValidationFlow(FlowTestsBase):
                           (child2:IntNode {v0: 0})""",
                 # minimal forms of the same thing
                 """CREATE (a:L {v: keys(a)})""",
+                """CREATE (a:L {v: properties(a)})""",
                 """CREATE (a:L {v: [x IN keys(a) | x]})""",
-                """CREATE (a:L {v: any(x IN [1] WHERE a.q = 1)})"""]
+                """CREATE (a:L {v: any(x IN [1] WHERE a.q = 1)})""",
+                # the same holds for a relationship reading itself
+                """CREATE (a:L)-[r:R {v: keys(r)}]->(b:L)""",
+                """CREATE (a:L)-[r:R {v: properties(r)}]->(b:L)"""]
 
         for query in queries:
             try:
