@@ -78,7 +78,7 @@
 
 GrB_Info GB_emult_bitmap    // C=A.*B, C<M>=A.*B, or C<!M>=A.*B
 (
-    GrB_Matrix C,           // output matrix, static header
+    GrB_Matrix C,           // output matrix, header already allocated
     const int ewise_method,
     const GrB_Type ctype,   // type of output matrix C
     const bool C_is_csc,    // format of output matrix C
@@ -99,7 +99,11 @@ GrB_Info GB_emult_bitmap    // C=A.*B, C<M>=A.*B, or C<!M>=A.*B
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
+
+    ASSERT (C != NULL) ;
+    int header_arena = GB_arena (C->header_mem) ;
+    int data_arena = C->data_arena ;
+    uint64_t mem = GB_mem (data_arena, 0) ;
 
     ASSERT_MATRIX_OK (A, "A for bitmap emult ", GB0) ;
     ASSERT_MATRIX_OK (B, "B for bitmap emult ", GB0) ;
@@ -113,7 +117,7 @@ GrB_Info GB_emult_bitmap    // C=A.*B, C<M>=A.*B, or C<!M>=A.*B
     // declare workspace
     //--------------------------------------------------------------------------
 
-    GB_WERK_DECLARE (M_ek_slicing, int64_t) ;
+    GB_WERK_DECLARE (M_ek_slicing, int64_t, mem) ;
     int M_ntasks = 0 ; int M_nthreads = 0 ;
 
     //--------------------------------------------------------------------------
@@ -174,7 +178,7 @@ GrB_Info GB_emult_bitmap    // C=A.*B, C<M>=A.*B, or C<!M>=A.*B
     GB_OK (GB_new_bix (&C, // bitmap, existing header
         ctype, A->vlen, A->vdim, GB_ph_null, C_is_csc,
         GxB_BITMAP, true, A->hyper_switch, -1, cnz, true, C_iso,
-        /* OK: */ false, false, false)) ;
+        /* OK: */ false, false, false, header_arena, data_arena)) ;
 
     C->magic = GB_MAGIC ;
     GB_Type_code ccode = ctype->code ;

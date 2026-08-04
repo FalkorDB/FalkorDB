@@ -40,12 +40,13 @@ GrB_Info GB_apply_op        // apply a unary op, idxunop, or binop, Cx = op (A)
         bool binop_bind1st,         // if true, C=binop(s,A), else C=binop(A,s)
         bool flipij,                // if true, flip i,j for user idxunop
     const GrB_Matrix A,             // input matrix
+    const int data_arena,           // arena for workspace
     GB_Werk Werk
 ) ;
 
 GrB_Info GB_shallow_op      // create shallow matrix and apply operator
 (
-    GrB_Matrix C,           // output C, of type op*->ztype, static header
+    GrB_Matrix C,           // output C, of type op*->ztype, existing header
     const bool C_is_csc,    // desired CSR/CSC format of C
         const GB_Operator op,       // unary/index-unary/binop to apply
         const GrB_Scalar scalar,    // scalar to bind to binary operator

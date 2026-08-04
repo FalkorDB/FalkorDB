@@ -15,6 +15,7 @@
 #include "include/GB_include.h"
 
 // These are not needed by JIT kernels and do not appear in GB_jit_kernel.h:
+#include "context/GB_Context.h"
 #include "global/GB_Global.h"
 #include "pji_control/GB_determine_pji_is_32.h"
 #include "print/GB_printf.h"
@@ -32,7 +33,6 @@
 #include "pending/GB_Pending_n.h"
 #include "nvals/GB_nvals.h"
 #include "aliased/GB_aliased.h"
-#include "matrix/GB_matrix.h"
 #include "clear/GB_clear.h"
 #include "dup/GB_dup.h"
 #include "compatible/GB_code_compatible.h"
@@ -42,20 +42,21 @@
 #include "type/GB_type.h"
 #include "math/GB_uint64_multiply.h"
 #include "math/GB_int64_multiply.h"
-#include "math/GB_size_t_multiply.h"
+#include "math/GB_Size_t_multiply.h"
 #include "cumsum/GB_cumsum.h"
 #include "get_set/GB_Descriptor_get.h"
 #include "element/GB_Element.h"
 #include "op/GB_op.h"
 #include "hyper/GB_hyper.h"
-#include "werk/GB_where.h"
+#include "werk/GB_werk_init.h"
 #include "cast/GB_cast.h"
+#include "arena/GB_arena.h"
 #include "wait/GB_wait.h"
 #include "convert/GB_convert.h"
-#include "context/GB_Context.h"
 #include "gateway/GB_cuda_gateway.h"
 #include "callback/GB_callbacks.h"
 #include "helper/GB_factory.h"
+#include "matrix/GB_matrix.h"
 
 #endif
 

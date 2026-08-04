@@ -18,7 +18,7 @@
 #undef  GB_FREE_WORKSPACE
 #define GB_FREE_WORKSPACE                                   \
 {                                                           \
-    GB_FREE_MEMORY (&zscalar, zscalar_size) ;               \
+    GB_FREE_MEMORY (&zscalar, zscalar_mem) ;                \
 }
 
 #define GB_FREE_ALL                                         \
@@ -47,8 +47,10 @@ GrB_Info GB_cuda_reduce_to_scalar
     // check inputs
     //--------------------------------------------------------------------------
 
+    uint64_t mem = GB_mem (GB_ARENA_RMM, 0) ;
+
     GB_void *zscalar = NULL ;
-    size_t zscalar_size = 0 ;
+    uint64_t zscalar_mem = mem ;
     GrB_Matrix V = NULL ;
     (*V_handle) = NULL ;
     GrB_Info info = GrB_SUCCESS ;
@@ -79,7 +81,7 @@ GrB_Info GB_cuda_reduce_to_scalar
     raw_gridsz = std::min (raw_gridsz, (int64_t) (number_of_sms * 256)) ;
     int gridsz = (int) raw_gridsz ;
 
-    // FIXME: GB_enumify_reduce is called twice: here (to get has_cheeseburger)
+    // fixme: GB_enumify_reduce is called twice: here (to get has_cheeseburger)
     // and in GB_cuda_reduce_to_scalar_jit.  Can we just call it once?
 
     uint64_t rcode ;
@@ -95,7 +97,7 @@ GrB_Info GB_cuda_reduce_to_scalar
         // allocate and initialize zscalar (upscaling it to at least 32 bits)
         size_t zscalar_space = GB_IMAX (zsize, sizeof (uint32_t)) ;
         zscalar = (GB_void *) GB_MALLOC_MEMORY (1, zscalar_space,
-            &zscalar_size) ;
+            &zscalar_mem) ;
         if (zscalar == NULL)
         {
             // out of memory
@@ -113,7 +115,8 @@ GrB_Info GB_cuda_reduce_to_scalar
             /* is_csc: */ true, /* sparsity: */ GxB_FULL,
             /* bitmap_calloc: */ false, /* hyper_switch: */ 0,
             /* plen: */ -1, /* nzmax: */ gridsz, /* numeric: */ true,
-            /* iso: */ false, /* pji_is_32: */ false, false, false)) ;
+            /* iso: */ false, /* pji_is_32: */ false, false, false,
+            GB_ARENA_RMM, GB_ARENA_RMM)) ;
     }
 
     GBURBLE ("(cuda reduce launch %d threads in %d blocks)",

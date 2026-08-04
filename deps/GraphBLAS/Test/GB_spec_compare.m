@@ -66,15 +66,15 @@ end
 %{
 if (~ok_class)
     fprintf ('class is wrong:\n') ;
-    % C1.class
-    % C2.class
+    C1.class
+    C2.class
 end
 
 if (~ok_matrix)
     fprintf ('matrix is wrong:\n') ;
     identity
-    % C1.matrix
-    % C2.matrix
+    C1.matrix
+    C2.matrix
 end
 if (~ok_pattern)
     fprintf ('pattern is wrong:\n') ;

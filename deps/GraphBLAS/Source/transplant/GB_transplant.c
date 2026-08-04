@@ -12,10 +12,10 @@
 // ignored.  Then A is freed, except for any shallow components of A which are
 // left untouched (after unlinking them from A).  The resulting matrix C is not
 // shallow.  This function is not user-callable.  The new type of C (ctype)
-// must be compatible with A->type.
+// must be compatible with A->type.  The pji integer sizes are unchanged.
 
-// C->hyper_switch, C->bitmap_switch, C->sparsity_control, C->header_size,
-// C->user_name, C->user_name_size, C->p_control, C->j_control, and
+// C->hyper_switch, C->bitmap_switch, C->sparsity_control, C->header_mem,
+// C->user_name, C->user_name_mem, C->p_control, C->j_control, and
 // C->i_control are not modified by the transplant.
 
 #define GB_FREE_ALL                 \
@@ -56,6 +56,9 @@ GrB_Info GB_transplant          // transplant one matrix into another
     ASSERT (GB_ZOMBIES_OK (C)) ;
     ASSERT (GB_JUMBLED_OK (C)) ;
 
+    int data_arena = C->data_arena ;
+    uint64_t mem = GB_mem (data_arena, 0) ;
+
     // the ctype and A->type must be compatible.  C->type is ignored
     ASSERT (GB_Type_compatible (ctype, A->type)) ;
 
@@ -95,7 +98,6 @@ GrB_Info GB_transplant          // transplant one matrix into another
     C->is_csc = A->is_csc ;
     C->vlen = avlen ;
     C->vdim = avdim ;
-//  C->nvec_nonempty = A->nvec_nonempty ;
     GB_nvec_nonempty_set (C, GB_nvec_nonempty_get (A)) ;
     C->iso = A_iso ;
 
@@ -137,7 +139,7 @@ GrB_Info GB_transplant          // transplant one matrix into another
         else if (A->Y_shallow || GB_is_shallow (A->Y))
         { 
             // A->Y is shallow, so create a deep copy for C
-            GB_OK (GB_dup (&(C->Y), A->Y, Werk)) ;
+            GB_OK (GB_dup (&(C->Y), A->Y, data_arena, data_arena, Werk)) ;
         }
         else
         { 
@@ -174,22 +176,25 @@ GrB_Info GB_transplant          // transplant one matrix into another
     if (allocate_Cb)
     { 
         // allocate new C->b component
-        C->b = GB_MALLOC_MEMORY (anz, sizeof (int8_t), &(C->b_size)) ;
+        C->b_mem = mem ;
+        C->b = GB_MALLOC_MEMORY (anz, sizeof (int8_t), &(C->b_mem)) ;
         ok = ok && (C->b != NULL) ;
     }
 
     if (allocate_Ci)
     { 
         // allocate new C->i component
-        C->i = GB_MALLOC_MEMORY (anz, isize, &(C->i_size)) ;
+        C->i_mem = mem ;
+        C->i = GB_MALLOC_MEMORY (anz, isize, &(C->i_mem)) ;
         ok = ok && (C->i != NULL) ;
     }
 
     if (allocate_Cx)
     { 
         // allocate new C->x component; use calloc if C is bitmap
+        C->x_mem = mem ;
         C->x = GB_XALLOC_MEMORY (C_is_bitmap, A_iso, anz, C->type->size,
-            &(C->x_size)) ;
+            &(C->x_mem)) ;
         ok = ok && (C->x != NULL) ;
     }
 
@@ -219,7 +224,7 @@ GrB_Info GB_transplant          // transplant one matrix into another
         else
         { 
             // OK to move pointers instead
-            C->x = A->x ; C->x_size = A->x_size ;
+            C->x = A->x ; C->x_mem = A->x_mem ;
             A->x = NULL ;
         }
     }
@@ -229,7 +234,7 @@ GrB_Info GB_transplant          // transplant one matrix into another
         GB_OK (GB_cast_matrix (C, A)) ;
         if (!A->x_shallow)
         { 
-            GB_FREE_MEMORY (&(A->x), A->x_size) ;
+            GB_FREE_MEMORY (&(A->x), A->x_mem) ;
         }
         A->x = NULL ;
     }
@@ -270,8 +275,10 @@ GrB_Info GB_transplant          // transplant one matrix into another
             // A is hypersparse, create new C->p and C->h
             C->plen = GB_IMAX (1, anvec) ;
             C->nvec = anvec ;
-            C->p = GB_MALLOC_MEMORY (C->plen+1, psize, &(C->p_size)) ;
-            C->h = GB_MALLOC_MEMORY (C->plen  , jsize, &(C->h_size)) ;
+            C->p_mem = mem ;
+            C->h_mem = mem ;
+            C->p = GB_MALLOC_MEMORY (C->plen+1, psize, &(C->p_mem)) ;
+            C->h = GB_MALLOC_MEMORY (C->plen  , jsize, &(C->h_mem)) ;
             if (C->p == NULL || C->h == NULL)
             { 
                 // out of memory
@@ -288,7 +295,8 @@ GrB_Info GB_transplant          // transplant one matrix into another
             // A is sparse, create new C->p
             C->plen = avdim ;
             C->nvec = avdim ;
-            C->p = GB_MALLOC_MEMORY (C->plen+1, psize, &(C->p_size)) ;
+            C->p_mem = mem ;
+            C->p = GB_MALLOC_MEMORY (C->plen+1, psize, &(C->p_mem)) ;
             if (C->p == NULL)
             { 
                 // out of memory
@@ -315,8 +323,8 @@ GrB_Info GB_transplant          // transplant one matrix into another
         // sparse and hypersparse cases.
         ASSERT (C->p == NULL) ;
         ASSERT (C->h == NULL) ;
-        C->p = A->p ; C->p_size = A->p_size ;
-        C->h = A->h ; C->h_size = A->h_size ;
+        C->p = A->p ; C->p_mem = A->p_mem ;
+        C->h = A->h ; C->h_mem = A->h_mem ;
         C->plen = A->plen ;
         C->nvec = anvec ;
     }
@@ -368,7 +376,7 @@ GrB_Info GB_transplant          // transplant one matrix into another
         // A->i is not shallow, so just transplant the pointer from A to C
         //----------------------------------------------------------------------
 
-        C->i = A->i ; C->i_size = A->i_size ;
+        C->i = A->i ; C->i_mem = A->i_mem ;
         A->i = NULL ;
         A->i_shallow = false ;
     }
@@ -412,7 +420,7 @@ GrB_Info GB_transplant          // transplant one matrix into another
         // A->b is not shallow, so just transplant the pointer from A to C
         //----------------------------------------------------------------------
 
-        C->b = A->b ; C->b_size = A->b_size ;
+        C->b = A->b ; C->b_mem = A->b_mem ;
         A->b = NULL ;
         A->b_shallow = false ;
     }

@@ -1,8 +1,13 @@
-function gbtest53
-%GBTEST53 test GrB.monoidinfo
+function gbtest53 (ghb)
+%GBTEST53 test [GrB,GhB].monoidinfo
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
+
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
 types10 = {
     'double'
@@ -26,8 +31,8 @@ for k1 = 1:5
     fprintf ('\nop ( %s )=============================================\n', op) ;
     for k2 = 1:10
         type = types10 {k2} ;
-        GrB.monoidinfo ([op '.' type]) ;
-        GrB.monoidinfo (op, type) ;
+        gtb_monoidinfo (ghb, [op '.' type]) ;
+        gtb_monoidinfo (ghb, op, type) ;
         nmonoids = nmonoids + 1 ;
     end
 end
@@ -37,8 +42,8 @@ ops = { '|', '&', 'xor', 'xnor', 'any' } ;
 for k1 = 1:5
     op = ops {k1} ;
     fprintf ('\nop ( %s )=============================================\n', op) ;
-    GrB.monoidinfo ([op '.logical']) ;
-    GrB.monoidinfo (op, 'logical') ;
+    gtb_monoidinfo (ghb, [op '.logical']) ;
+    gtb_monoidinfo (ghb, op, 'logical') ;
     nmonoids = nmonoids + 1 ;
 end
 
@@ -50,8 +55,8 @@ for k1 = 1:3
     fprintf ('\nop ( %s )=============================================\n', op) ;
     for k2 = 1:2
         type = types {k2} ;
-        GrB.monoidinfo ([op '.' type]) ;
-        GrB.monoidinfo (op, type) ;
+        gtb_monoidinfo (ghb, [op '.' type]) ;
+        gtb_monoidinfo (ghb, op, type) ;
         nmonoids = nmonoids + 1 ;
     end
 end
@@ -64,17 +69,17 @@ for k1 = 1:4
     fprintf ('\nop ( %s )=============================================\n', op) ;
     for k2 = 1:4
         type = types {k2} ;
-        GrB.monoidinfo ([op '.' type]) ;
-        GrB.monoidinfo (op, type) ;
+        gtb_monoidinfo (ghb, [op '.' type]) ;
+        gtb_monoidinfo (ghb, op, type) ;
         nmonoids = nmonoids + 1 ;
     end
 end
 
 fprintf ('\n\n') ;
-GrB.monoidinfo
+gtb_monoidinfo (ghb)
 
 fprintf ('number of monoids: %d\n', nmonoids) ;
 assert (nmonoids == 77) ;
 
-fprintf ('gbtest53: all tests passed\n') ;
+fprintf ('gbtest53 (%d): all tests passed\n', ghb) ;
 

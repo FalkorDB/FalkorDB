@@ -4,9 +4,8 @@ function [parent, varargout] = etree (G, varargin)
 %
 % See also GrB/amd.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-G = logical (G) ;
-[parent, varargout{1:nargout-1}] = builtin ('etree', G, varargin {:}) ;
+[parent, varargout{1:nargout-1}] = etree (logical (G), varargin {:}) ;
 

@@ -1,10 +1,14 @@
-function gbtest30
+function gbtest30 (ghb)
 %GBTEST30 test colon notation
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-rng ('default') ;
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
+
 n = 1e8 %#ok<*NOPRT>
 A = sparse (n, 1) ;
 
@@ -15,7 +19,7 @@ A (k) = 87 ;
 A (n) = 92 ;
 
 A
-G = GrB (A)
+G = gtb (ghb, A)
 
 % computes z = G (1:2:k), very quickly, without forming
 % the explicit vector 1:2:k
@@ -41,7 +45,7 @@ assert (gbtest_eq (x, y)) ;
 tic
 [c, huge] = computer %#ok<*ASGLU>
 huge = 2^48 ;
-H = GrB (huge, huge)
+H = gtb (ghb, huge, huge)
 I = sort (randperm (huge, 4)) ;
 M = magic (4)
 H (I,I) = M
@@ -68,5 +72,5 @@ catch expected_error
     expected_error
 end
 
-fprintf ('gbtest30: all tests passed\n') ;
+fprintf ('gbtest30 (%d): all tests passed\n', ghb) ;
 

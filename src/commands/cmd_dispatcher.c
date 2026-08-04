@@ -8,6 +8,7 @@
 #include "commands.h"
 #include "cmd_context.h"
 #include "../util/thpool/pool.h"
+#include "../errors/error_msgs.h"
 #include "../util/simple_timer.h"
 #include "../util/blocked_client.h"
 #include "../configuration/config.h"
@@ -272,7 +273,7 @@ int CommandDispatch
 			// report an error once our workers thread pool internal queue
 			// is full, this error usually happens when the server is
 			// under heavy load and is unable to catch up
-			RedisModule_ReplyWithError (ctx, "Max pending queries exceeded") ;
+			RedisModule_ReplyWithError (ctx, EMSG_MAX_PENDING_QUERIES) ;
 
 			// release the GraphContext, as we increased its reference count
 			// when retrieving it

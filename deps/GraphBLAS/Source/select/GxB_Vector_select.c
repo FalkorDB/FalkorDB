@@ -51,8 +51,9 @@ GrB_Info GxB_Vector_select          // w<M> = accum (w, select(u,k))
 
     GrB_IndexUnaryOp op = NULL ;
     GrB_Scalar Thunk = NULL ;
+    int data_arena = w->data_arena ;
     info = GB_selectop_to_idxunop (&op, &Thunk, op_in, Thunk_in, u->type,
-        Werk) ;
+        data_arena, Werk) ;
     if (info != GrB_SUCCESS)
     { 
         // op is not supported, not compatible, or out of memory

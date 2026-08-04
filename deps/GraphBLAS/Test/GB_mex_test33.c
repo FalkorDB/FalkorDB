@@ -50,6 +50,14 @@ void mexFunction
     // GxB_Context get/set
     //--------------------------------------------------------------------------
 
+    int ngpus ;
+    OK (GxB_Context_get_INT_ (GxB_CONTEXT_WORLD, &ngpus, GxB_NGPUS)) ;
+    printf ("ngpus at start, in GxB_CONTEXT_WORLD): %d\n", ngpus) ;
+    OK (GxB_Context_set_INT_ (GxB_CONTEXT_WORLD, 0, GxB_NGPUS)) ;
+    OK (GxB_Context_get_INT_ (GxB_CONTEXT_WORLD, &ngpus, GxB_NGPUS)) ;
+    printf ("ngpus at now, in GxB_CONTEXT_WORLD): %d\n", ngpus) ;
+    CHECK (ngpus == 0) ;
+
     int32_t nthreads1 = 999, nthreads2 = 777 ;
     GxB_get (GxB_NTHREADS, &nthreads1) ;
     printf ("nthreads: %d\n", nthreads1) ;
@@ -121,6 +129,46 @@ void mexFunction
     CHECK (MATCH (name, "another_name")) ;
     OK (GxB_Context_get_SIZE_ (context, &size, GrB_NAME)) ;
     CHECK (size == strlen (name) + 1) ;
+
+    int arena = -1 ;
+    OK (GxB_Context_get_INT_(context, &arena, GxB_ARENA_DATA)) ;
+    printf ("arena: %d\n", arena) ;
+    CHECK (arena == GrB_DEFAULT) ;
+    arena = -1 ;
+    OK (GxB_Context_get_INT_(context, &arena, GxB_ARENA_HEADER)) ;
+    CHECK (arena == GrB_DEFAULT) ;
+
+    arena = -1 ;
+    OK (GxB_Context_get_Scalar_(context, s_int32, GxB_ARENA_DATA)) ;
+    OK (GrB_Scalar_extractElement_INT32 (&arena, s_int32)) ;
+    CHECK (arena == GrB_DEFAULT) ;
+
+    arena = -1 ;
+    OK (GxB_Context_get_Scalar_(context, s_int32, GxB_ARENA_HEADER)) ;
+    OK (GrB_Scalar_extractElement_INT32 (&arena, s_int32)) ;
+    CHECK (arena == GrB_DEFAULT) ;
+
+    arena = -1 ;
+    OK (GxB_Context_set_INT_(context, GB_ARENA_TEST, GxB_ARENA_DATA)) ;
+    OK (GxB_Context_get_INT_(context, &arena, GxB_ARENA_DATA)) ;
+    CHECK (arena == GB_ARENA_TEST) ;
+    arena = -1 ;
+    OK (GxB_Context_set_INT_(context, GB_ARENA_TEST, GxB_ARENA_HEADER)) ;
+    OK (GxB_Context_get_INT_(context, &arena, GxB_ARENA_HEADER)) ;
+    CHECK (arena == GB_ARENA_TEST) ;
+
+    OK (GrB_Scalar_setElement_INT32 (s_int32, 0)) ;
+    OK (GxB_Context_set_Scalar_(context, s_int32, GxB_ARENA_DATA)) ;
+    OK (GxB_Context_get_INT_(context, &arena, GxB_ARENA_DATA)) ;
+    CHECK (arena == 0) ;
+    arena = -1 ;
+    OK (GxB_Context_set_Scalar_(context, s_int32, GxB_ARENA_HEADER)) ;
+    OK (GxB_Context_get_INT_(context, &arena, GxB_ARENA_HEADER)) ;
+    CHECK (arena == 0) ;
+
+    expected = GrB_INVALID_VALUE ;
+    ERR (GxB_Context_set_INT_(context, 99, GxB_ARENA_HEADER)) ;
+    ERR (GxB_Context_set_INT_(context, 99, GxB_ARENA_DATA)) ;
 
     OK (GxB_Context_disengage (NULL)) ;
     GrB_free (&context) ;

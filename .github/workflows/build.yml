@@ -499,6 +499,27 @@ jobs:
         if: matrix.platform.use_docker && matrix.build_type == 'release'
         run: docker load --input /tmp/falkordb-${{ matrix.platform.suffix }}.tar
 
+      - name: Sanity test base image
+        if: matrix.platform.use_docker && matrix.build_type == 'release'
+        run: |
+          set -euo pipefail
+          docker run -d --name falkordb-sanity -p 6379:6379 -p 3000:3000 falkordb/falkordb-${{ matrix.platform.suffix }}
+          # Wait for redis to accept connections
+          for i in $(seq 1 30); do
+            if docker exec falkordb-sanity redis-cli ping 2>/dev/null | grep -q PONG; then break; fi
+            if [ "$i" -eq 30 ]; then echo "redis did not become ready"; docker logs falkordb-sanity; exit 1; fi
+            sleep 2
+          done
+          # Verify the FalkorDB module is loaded
+          docker exec falkordb-sanity redis-cli MODULE LIST | grep -qi graph
+          # Base image bundles the browser - check it responds on port 3000
+          for i in $(seq 1 30); do
+            if curl -fsS -o /dev/null http://localhost:3000; then break; fi
+            if [ "$i" -eq 30 ]; then echo "browser did not become ready"; docker logs falkordb-sanity; exit 1; fi
+            sleep 2
+          done
+          docker rm -f falkordb-sanity
+
       - name: Upload base image
         if: matrix.platform.use_docker && matrix.build_type == 'release'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -521,6 +542,21 @@ jobs:
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler-${{ matrix.platform.suffix }}
             TARGETPLATFORM=linux/${{ matrix.platform.arch }}
             BROWSER_TAG=${{ env.BROWSER_TAG }}
+
+      - name: Sanity test server image
+        if: matrix.platform.use_docker && steps.dockerfile.outputs.build_server == 'true'
+        run: |
+          set -euo pipefail
+          docker load --input /tmp/falkordb-server-${{ matrix.platform.suffix }}.tar
+          docker run -d --name falkordb-server-sanity -p 6380:6379 falkordb/falkordb-server-${{ matrix.platform.suffix }}
+          # Server image has no browser - only verify redis + module
+          for i in $(seq 1 30); do
+            if docker exec falkordb-server-sanity redis-cli ping 2>/dev/null | grep -q PONG; then break; fi
+            if [ "$i" -eq 30 ]; then echo "redis did not become ready"; docker logs falkordb-server-sanity; exit 1; fi
+            sleep 2
+          done
+          docker exec falkordb-server-sanity redis-cli MODULE LIST | grep -qi graph
+          docker rm -f falkordb-server-sanity
 
       - name: Upload server image
         if: matrix.platform.use_docker && steps.dockerfile.outputs.build_server == 'true'
@@ -609,6 +645,9 @@ jobs:
     # images built; entries whose artifact is missing fail individually.
     if: ${{ !cancelled() && needs.build.result != 'skipped' }}
     runs-on: ${{ matrix.platform.machine_label }}
+    permissions:
+      contents: read
+      pull-requests: write
     strategy:
       fail-fast: false
       matrix:
@@ -672,7 +711,7 @@ jobs:
         if: github.event_name == 'pull_request' && steps.trivy_gate.outcome == 'failure'
         uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0 # v3
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           header: "Trivy Vulnerability Scan Results for ${{ matrix.platform.suffix }}"
           message: |
             Architecture: ${{ matrix.platform.suffix }}
@@ -838,3 +877,70 @@ jobs:
           docker buildx imagetools create \
             -t "ghcr.io/falkordb/falkordb-build:${OS}" \
             "ghcr.io/falkordb/falkordb-build:${OS}-pr-${PR_N}"
+
+  # Publish the rolling `edge` image after a successful master build.
+  #
+  # This hand-off used to be implicit: release-image.yml subscribed to
+  # `workflow_run: workflows: ["Build"]` and published :edge whenever this
+  # workflow finished successfully. That subscription only works while `master`
+  # is the repository's DEFAULT branch — GitHub honours `workflow_run` solely
+  # from the default branch's copy of a workflow. Once the default branch moves
+  # to the Rust engine's tree, master's release-image.yml stops hearing "Build
+  # completed" and :edge silently stops being published.
+  #
+  # Doing the hand-off here keeps C's edge channel entirely within C's own tree
+  # and its own branch, with no dependency on a workflow living on another
+  # branch. See issue #2255.
+  #
+  # The two `false` flags are load-bearing. release-image.yml gates its
+  # FalkorDB-Cloud and testflight repository_dispatch jobs on
+  #   github.event_name == 'release' || github.event.inputs.run_* == 'true'
+  # and BOTH of those inputs default to "true", so omitting them here would fire
+  # `bump-falkordb-version` at FalkorDB/falkordb-omnistrate and
+  # `release-created` at FalkorDB/testflight on EVERY master push — bumping
+  # FalkorDB Cloud to "edge".
+  #
+  # The :latest pointer needs no flag here: release-image.yml sets IS_LATEST=1
+  # only on the `release` event, so a dispatched run never moves it.
+  publish-edge:
+    needs: [build, test, security-scan]
+    # Mirrors the old `workflow_run` gate (which required the whole Build
+    # workflow to succeed): build and the post-build gates must pass, with
+    # `test` allowed to be skipped via the skip_tests input.
+    if: |
+      !cancelled() &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/master' &&
+      needs.build.result == 'success' &&
+      (needs.test.result == 'success' || needs.test.result == 'skipped') &&
+      (needs.security-scan.result == 'success' || needs.security-scan.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch release-image.yml for the edge-c channel
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # `edge-c`, not `edge`: now that `main` (Rust engine) is the default
+          # branch, the plain `:edge` channel serves the Rust image, published by
+          # rust-push.yml on `main`. This is the C engine's own rolling channel.
+          #
+          # release-image.yml derives EVERY tag it pushes from TAG_NAME, so this
+          # one value renames the whole family in step:
+          #   edge-c, edge-c-x64, edge-c-arm64v8, edge-c-alpine{,-x64,-arm64v8},
+          #   edge-c-rhel8-x64, edge-c-rhel9-x64, edge-c-amazonlinux2023-x64
+          # and the falkordb-server equivalents.
+          #
+          # Renaming rather than deleting keeps a rolling image for testing
+          # `master` before a 5.x release, and makes reverting the channel swap a
+          # one-line change. See issue #2290.
+          gh workflow run release-image.yml --ref master \
+            -f tag=edge-c \
+            -f commit_sha="$SHA" \
+            -f run_falkordb_cloud_update=false \
+            -f run_testflight_workflow=false
+          echo "dispatched release-image.yml for edge-c at ${SHA}"

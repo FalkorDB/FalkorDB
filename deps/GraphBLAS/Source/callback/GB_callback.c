@@ -32,5 +32,7 @@ GB_callback_struct GB_callback =
     .GB_bitmap_assign_to_full_func  = GB_bitmap_assign_to_full,
     .GB_p_slice_func                = GB_p_slice,
     .GB_abort_func                  = GB_abort,
+    .GB_new_bix_func                = GB_new_bix,
+    .GB_Matrix_free_func            = GB_Matrix_free,
 } ;
 

@@ -23,13 +23,13 @@
 #define GB_FREE_WORKSPACE                       \
 {                                               \
     GB_WERK_POP (Coarse, int64_t) ;             \
-    GB_FREE_MEMORY (&Cwork, Cwork_size) ;       \
+    GB_FREE_MEMORY (&Cwork, Cwork_mem) ;        \
 }
 
 #define GB_FREE_ALL                             \
 {                                               \
     GB_FREE_WORKSPACE ;                         \
-    GB_FREE_MEMORY (&TaskList, TaskList_size) ; \
+    GB_FREE_MEMORY (&TaskList, TaskList_mem) ;  \
 }
 
 #include "GB.h"
@@ -42,7 +42,7 @@
 //  (
 //      // output:
 //      GB_task_struct **p_TaskList,    // array of structs
-//      size_t *p_TaskList_size,        // size of TaskList
+//      uint64_t *p_TaskList_mem,       // memsize and arena of TaskList
 //      int *p_ntasks,                  // # of tasks constructed
 //      int *p_nthreads,                // # of threads for eWise operation
 //      // input:
@@ -56,6 +56,7 @@
 //      const GrB_Matrix M,             // mask matrix to slice (optional)
 //      const GrB_Matrix A,             // matrix to slice
 //      const GrB_Matrix B,             // matrix to slice
+//      const int data_arena,           // arena for workspace
 //      GB_Werk Werk
 //  )
 
@@ -66,8 +67,10 @@ GB_CALLBACK_EWISE_SLICE_PROTO (GB_ewise_slice)
     // check inputs
     //--------------------------------------------------------------------------
 
+    uint64_t mem = GB_mem (data_arena, 0) ;
+
     ASSERT (p_TaskList != NULL) ;
-    ASSERT (p_TaskList_size != NULL) ;
+    ASSERT (p_TaskList_mem != NULL) ;
     ASSERT (p_ntasks != NULL) ;
     ASSERT (p_nthreads != NULL) ;
 
@@ -87,12 +90,12 @@ GB_CALLBACK_EWISE_SLICE_PROTO (GB_ewise_slice)
     ASSERT (!GB_PENDING (M)) ; 
 
     (*p_TaskList  ) = NULL ;
-    (*p_TaskList_size) = 0 ;
+    (*p_TaskList_mem) = mem ;
     (*p_ntasks    ) = 0 ;
     (*p_nthreads  ) = 1 ;
 
-    GB_MDECL (Cwork, , u) ; size_t Cwork_size = 0 ;
-    GB_WERK_DECLARE (Coarse, int64_t) ;     // size ntasks1+1
+    GB_MDECL (Cwork, , u) ; uint64_t Cwork_mem = mem ;
+    GB_WERK_DECLARE (Coarse, int64_t, mem) ;     // size ntasks1+1
     int ntasks1 = 0 ;
 
     //--------------------------------------------------------------------------
@@ -114,7 +117,8 @@ GB_CALLBACK_EWISE_SLICE_PROTO (GB_ewise_slice)
     // When the mask is present, it is often fastest to break the work up
     // into tasks, even when nthreads_max is 1.
 
-    GB_task_struct *restrict TaskList = NULL ; size_t TaskList_size = 0 ;
+    GB_task_struct *restrict TaskList = NULL ;
+    uint64_t TaskList_mem = mem ;
     int max_ntasks = 0 ;
     int ntasks0 = (M == NULL && nthreads_max == 1) ? 1 : (32 * nthreads_max) ;
     GB_REALLOC_TASK_WORK (TaskList, ntasks0, max_ntasks) ;
@@ -128,10 +132,10 @@ GB_CALLBACK_EWISE_SLICE_PROTO (GB_ewise_slice)
         // construct a single coarse task that computes all of C
         TaskList [0].kfirst = 0 ;
         TaskList [0].klast  = Cnvec-1 ;
-        (*p_TaskList  ) = TaskList ;
-        (*p_TaskList_size) = TaskList_size ;
-        (*p_ntasks    ) = (Cnvec == 0) ? 0 : 1 ;
-        (*p_nthreads  ) = 1 ;
+        (*p_TaskList    ) = TaskList ;
+        (*p_TaskList_mem) = TaskList_mem ;
+        (*p_ntasks      ) = (Cnvec == 0) ? 0 : 1 ;
+        (*p_nthreads    ) = 1 ;
         return (GrB_SUCCESS) ;
     }
 
@@ -177,7 +181,7 @@ GB_CALLBACK_EWISE_SLICE_PROTO (GB_ewise_slice)
     bool Cwork_is_32 = (cnzmax < UINT32_MAX) ;
     size_t cwsize = (Cwork_is_32) ? sizeof (uint32_t) : sizeof (uint64_t) ;
 
-    Cwork = GB_MALLOC_MEMORY (Cnvec+1, cwsize, &Cwork_size) ;
+    Cwork = GB_MALLOC_MEMORY (Cnvec+1, cwsize, &Cwork_mem) ;
     if (Cwork == NULL)
     { 
         // out of memory
@@ -284,7 +288,8 @@ GB_CALLBACK_EWISE_SLICE_PROTO (GB_ewise_slice)
     // replace Cwork with its cumulative sum
     //--------------------------------------------------------------------------
 
-    GB_cumsum (Cwork, Cwork_is_32, Cnvec, NULL, nthreads_for_Cwork, Werk) ;
+    GB_cumsum (Cwork, Cwork_is_32, Cnvec, NULL, nthreads_for_Cwork,
+        data_arena, Werk) ;
     double cwork = (double) GB_IGET (Cwork, Cnvec) ;
 
     //--------------------------------------------------------------------------
@@ -294,9 +299,9 @@ GB_CALLBACK_EWISE_SLICE_PROTO (GB_ewise_slice)
     int nthreads = GB_nthreads (cwork, chunk, nthreads_max) ;
 
     ntasks0 = (M == NULL && nthreads == 1) ? 1 : (32 * nthreads) ;
-    double target_task_size = cwork / (double) (ntasks0) ;
-    target_task_size = GB_IMAX (target_task_size, chunk) ;
-    ntasks1 = cwork / target_task_size ;
+    double target_work_per_task = cwork / (double) (ntasks0) ;
+    target_work_per_task = GB_IMAX (target_work_per_task, chunk) ;
+    ntasks1 = cwork / target_work_per_task ;
     ntasks1 = GB_IMAX (ntasks1, 1) ;
 
     //--------------------------------------------------------------------------
@@ -480,7 +485,7 @@ GB_CALLBACK_EWISE_SLICE_PROTO (GB_ewise_slice)
             //------------------------------------------------------------------
 
             double ckwork = GB_IGET (Cwork, k+1) - GB_IGET (Cwork, k) ;
-            int nfine = ckwork / target_task_size ;
+            int nfine = ckwork / target_work_per_task ;
             nfine = GB_IMAX (nfine, 1) ;
 
             // make the TaskList bigger, if needed
@@ -568,10 +573,10 @@ GB_CALLBACK_EWISE_SLICE_PROTO (GB_ewise_slice)
     //--------------------------------------------------------------------------
 
     GB_FREE_WORKSPACE ;
-    (*p_TaskList     ) = TaskList ;
-    (*p_TaskList_size) = TaskList_size ;
-    (*p_ntasks       ) = ntasks ;
-    (*p_nthreads     ) = nthreads ;
+    (*p_TaskList    ) = TaskList ;
+    (*p_TaskList_mem) = TaskList_mem ;
+    (*p_ntasks      ) = ntasks ;
+    (*p_nthreads    ) = nthreads ;
     return (GrB_SUCCESS) ;
 }
 

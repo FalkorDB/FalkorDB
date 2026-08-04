@@ -1,19 +1,28 @@
-function gbtest100
-%GBTEST100 test GrB.ver and GrB.version
+function gbtest100 (ghb)
+%GBTEST100 test [GrB,GhB].ver and [GrB,GhB].version
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-GrB.MATLAB_vs_GrB ;
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
-fprintf ('v = GrB.ver\n') ;
-v = GrB.ver ;
+if (ghb)
+    GhB.MATLAB_vs_GrB ;
+else
+    GrB.MATLAB_vs_GrB ;
+end
+
+fprintf ('v = %s.ver\n', gtb_name) ;
+v = gtb_ver (ghb) ;
 display (v) ;
 
-fprintf ('v = GrB.version\n') ;
-v = GrB.version ;
+fprintf ('v = %s.version\n', gtb_name) ;
+v = gtb_version (ghb) ;
 display (v) ;
 
-fprintf ('GrB.ver\n\n') ;
-GrB.ver
+fprintf ('%s.ver\n\n', gtb_name) ;
+gtb_ver (ghb)
 

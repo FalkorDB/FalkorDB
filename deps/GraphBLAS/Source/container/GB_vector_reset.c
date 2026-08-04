@@ -27,7 +27,6 @@ void GB_vector_reset
         V->vlen = 0 ;
         V->vdim = 1 ;
         V->nvec = 1 ;
-//      V->nvec_nonempty = 0 ;
         GB_nvec_nonempty_set ((GrB_Matrix) V, 0) ;
         V->nvals = 0 ;
         V->sparsity_control = V->sparsity_control | GxB_FULL ;

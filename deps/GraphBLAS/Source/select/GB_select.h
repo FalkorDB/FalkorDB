@@ -73,7 +73,7 @@ GrB_Info GB_select_column
 
 GrB_Info GB_select_bitmap
 (
-    GrB_Matrix C,               // output matrix, static header
+    GrB_Matrix C,               // output matrix, existing header
     const bool C_iso,           // if true, C is iso
     const GrB_IndexUnaryOp op,
     const bool flipij,          // if true, flip i and j for user operator
@@ -93,6 +93,7 @@ GrB_Info GB_selectop_to_idxunop
     GxB_SelectOp selectop,
     GrB_Scalar Thunk,
     GrB_Type atype,
+    const int data_arena,           // arena for workspace
     GB_Werk Werk
 ) ;
 

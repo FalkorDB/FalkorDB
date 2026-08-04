@@ -4,16 +4,8 @@ function C = angle (G)
 %
 % See also GrB/abs.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-G = G.opaque ;
-[m, n, type] = gbsize (G) ;
-
-if (gb_contains (type, 'complex'))
-    C = GrB (gbapply ('carg', G)) ;
-else
-    % C is all zero
-    C = GrB (gbnew (m, n, type)) ;
-end
+C = gb_angle (0, G) ;
 

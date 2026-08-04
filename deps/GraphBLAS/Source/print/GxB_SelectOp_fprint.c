@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// GxB_SelectOp_fprint: print and check a GxB_SelectOp object
+// GxB_SelectOp_fprint: print and check a GxB_SelectOp object (HISTORICAL)
 //------------------------------------------------------------------------------
 
 // SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.

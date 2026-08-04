@@ -146,18 +146,11 @@ GrB_Info GB_assign_prep
     GrB_Matrix *Mwork_handle,          // NULL, or a temporary matrix
     GrB_Matrix *Awork_handle,          // NULL, or a temporary matrix
 
-    // static headers for Cwork, Mwork, Awork, MT and AT
-    GrB_Matrix Cwork_header_handle,
-    GrB_Matrix Mwork_header_handle,
-    GrB_Matrix Awork_header_handle,
-    GrB_Matrix MT_header_handle,
-    GrB_Matrix AT_header_handle,
-
     // modified versions of the Rows/Cols lists, and their analysis:
     void **I_handle,            // Rows, Cols, or a modified copy I2
     bool *I_is_32_handle,
     void **I2_handle,           // NULL, or sorted/pruned Rows or Cols
-    size_t *I2_size_handle,
+    uint64_t *I2_mem_handle,
     int64_t *ni_handle,
     int64_t *nI_handle,
     int *Ikind_handle,
@@ -166,7 +159,7 @@ GrB_Info GB_assign_prep
     void **J_handle,            // Rows, Cols, or a modified copy J2
     bool *J_is_32_handle,
     void **J2_handle,           // NULL, or sorted/pruned Rows or Cols
-    size_t *J2_size_handle,
+    uint64_t *J2_mem_handle,
     int64_t *nj_handle,
     int64_t *nJ_handle,
     int *Jkind_handle,
