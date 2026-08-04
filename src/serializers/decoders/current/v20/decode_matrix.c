@@ -246,7 +246,7 @@ void RdbLoadRelationMatrices_v20
 				info = GxB_Matrix_Iterator_seek (it, 0) ;
 				while (info != GxB_EXHAUSTED) {
 					uint64_t aij = GxB_Iterator_get_UINT64 (it) ;
-					if (!SCALAR_ENTRY (aij)) {
+					if (IS_VECTOR_ENTRY (aij)) {
 						n_tensors++ ;
 						GrB_Index nv ;
 						GrB_OK (GrB_Vector_nvals (&nv, AS_VECTOR (aij))) ;
@@ -293,3 +293,4 @@ void RdbLoadLblsMatrix_v20
 	Delta_Matrix lbl = Graph_GetNodeLabelMatrix(g);
 	_Decode_Delta_Matrix(rdb, lbl, false);
 }
+

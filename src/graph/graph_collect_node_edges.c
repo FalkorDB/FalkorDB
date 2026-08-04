@@ -89,7 +89,7 @@ void Graph_CollectInOutEdges
 			GxB_Matrix_Iterator_getIndex (iterator, &src, &dest) ;
 			uint64_t id = GxB_Iterator_get_UINT64 (iterator) ;
 
-			if (SCALAR_ENTRY (id)) {
+			if (IS_SCALAR_ENTRY (id)) {
 				Edge e = {.id         = id,
 						  .src_id     = src,
 						  .dest_id    = dest,
@@ -156,7 +156,7 @@ void Graph_CollectInOutEdges
 			info = Delta_Matrix_extractElement_UINT64 (&id, R, dest, src) ;
 			ASSERT (info == GrB_SUCCESS) ;
 
-			if (SCALAR_ENTRY (id)) {
+			if (IS_SCALAR_ENTRY (id)) {
 				Edge e = {.id         = id,
 						  .src_id     = dest,
 						  .dest_id    = src,
@@ -276,7 +276,7 @@ void Graph_CollectOutgoingEdges
 			GxB_Matrix_Iterator_getIndex (iterator, &src, &dest) ;
 			uint64_t id = GxB_Iterator_get_UINT64 (iterator) ;
 
-			if (SCALAR_ENTRY (id)) {
+			if (IS_SCALAR_ENTRY (id)) {
 				Edge e = {.id         = id,
 						  .src_id     = src,
 						  .dest_id    = dest,
@@ -396,7 +396,7 @@ void Graph_CollectIncomingEdges
 			info = Delta_Matrix_extractElement_UINT64 (&id, R, dest, src) ;
 			ASSERT (info == GrB_SUCCESS) ;
 
-			if (SCALAR_ENTRY (id)) {
+			if (IS_SCALAR_ENTRY (id)) {
 				Edge e = {.id         = id,
 						  .src_id     = dest,
 						  .dest_id    = src,
