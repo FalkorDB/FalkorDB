@@ -18,8 +18,10 @@
 #include "../errors/errors.h"
 #include "index_operations.h"
 #include "../effects/effects.h"
+#include "../util/cache/cache.h"
 #include "../configuration/config.h"
 #include "../graph/graphcontext_retrieve.h"
+#include "../replication/divergence_guard.h"
 #include "../execution_plan/execution_plan.h"
 
 // GraphQueryCtx stores the allocations required to execute a query
@@ -159,6 +161,11 @@ static void _ExecuteQuery
 ) {
 	ASSERT (args != NULL) ;
 
+	// this may run on a writer thread that `_query` never touched
+	// (queries are queued and later drained by `enter_writer_loop`)
+	// so it needs its own entry-clear
+	ErrorCtx_Clear () ;
+
 	GraphQueryCtx  *gq_ctx      = args ;
 	QueryCtx       *query_ctx   = gq_ctx->query_ctx ;
 	GraphContext   *gc          = gq_ctx->graph_ctx ;
@@ -261,6 +268,16 @@ static void _ExecuteQuery
 		ResultSet_Clear (result_set) ;
 		if (query_ctx->status != QueryExecutionStatus_TIMEDOUT) {
 			query_ctx->status = QueryExecutionStatus_FAILURE;
+		}
+
+		// the master only ever replicates a command after it succeeded
+		// locally, so a replicated command failing here means this
+		// replica has diverged from the master
+		if (command_ctx->replicated_command) {
+			const char *detail = ErrorCtx_Get ()->error ;
+			DivergenceGuard_OnFailure (rm_ctx, GraphContext_GetName (gc),
+					command_ctx->command_name,
+					detail != NULL ? detail : "query execution failed") ;
 		}
 	} else {
 		// replicate if graph was modified
@@ -400,6 +417,10 @@ void _query
 	bool profile,
 	void *args
 ) {
+	// clear any stale error left in this thread's TLS by a
+	// previously executed command
+	ErrorCtx_Clear () ;
+
 	CommandCtx *command_ctx = (CommandCtx *)args ;
 	RedisModuleCtx *ctx = CommandCtx_GetRedisCtx (command_ctx) ;
 	ExecutionCtx *exec_ctx = NULL ;
