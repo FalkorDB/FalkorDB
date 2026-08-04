@@ -5,8 +5,10 @@
  */
 
 #include "RG.h"
+#include "../errors/errors.h"
 #include "../effects/effects.h"
 #include "../graph/graphcontext_retrieve.h"
+#include "../replication/divergence_guard.h"
 
 // GRAPH.EFFECT command handler
 int Graph_Effect
@@ -15,6 +17,10 @@ int Graph_Effect
 	RedisModuleString **argv,  // command arguments
 	int argc                   // number of arguments
 ) {
+	// clear any stale error left in this thread's TLS by a
+	// previously executed command
+	ErrorCtx_Clear () ;
+
 	// GRAPH.EFFECT <key> <effects>
 	if (argc != 3) {
 		return RedisModule_WrongArity (ctx) ;
@@ -61,7 +67,7 @@ int Graph_Effect
 	const char *effects_buff = RedisModule_StringPtrLen (argv[2], &l) ;
 
 	// apply effects
-	Effects_Apply (gc, effects_buff, l) ;
+	bool ok = Effects_Apply (gc, effects_buff, l) ;
 
 	// restore graph sync policy
 	Graph_SetMatrixPolicy (g, policy) ;
@@ -69,8 +75,16 @@ int Graph_Effect
 	// release write lock
 	GraphContext_ReleaseLock (gc) ;
 
-	// release GraphContext
-	GraphContext_DecreaseRefCount (gc) ;
+	const char *graph_name = GraphContext_GetName (gc) ;
+
+	if (!ok) {
+		// replica has diverged from the master, don't propagate this
+		// effect any further down a replication sub-chain
+		DivergenceGuard_OnFailure (ctx, graph_name, "GRAPH.EFFECT",
+				"failed to apply effects, see preceding log entries") ;
+		RedisModule_ReplyWithError (ctx, "ERR graph diverged from master") ;
+		goto cleanup ;
+	}
 
 	// replicate effect
 	RedisModule_ReplicateVerbatim (ctx) ;
@@ -78,6 +92,11 @@ int Graph_Effect
 	// reply back to caller
 	RedisModule_ReplyWithSimpleString (ctx, "OK") ;
 
+cleanup:
+	// release GraphContext
+	GraphContext_DecreaseRefCount (gc) ;
+
+	ErrorCtx_Clear () ;
 	return REDISMODULE_OK ;
 }
 
