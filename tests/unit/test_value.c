@@ -440,13 +440,13 @@ void test_path() {
 	TEST_ASSERT(Path_EdgeCount(path) == 1);
 
 	// Make sure removed node not in path
-	bool res = Path_ContainsNode(path, &pop_n);
-	TEST_ASSERT(!res);
+	bool res = Path_ContainsNode (path, ENTITY_GET_ID (&pop_n)) ;
+	TEST_ASSERT (!res) ;
 
 	// Make sure node is in path
-	pop_n.id = 0;
-	res = Path_ContainsNode(path, &pop_n);
-	TEST_ASSERT(res);
+	pop_n.id = 0 ;
+	res = Path_ContainsNode (path, ENTITY_GET_ID (&pop_n)) ;
+	TEST_ASSERT (res) ;
 
 	Path_SetNode(path, 1, pop_n);
 	Node *n1 = Path_GetNode(path, 1);

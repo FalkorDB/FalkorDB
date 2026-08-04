@@ -6,10 +6,10 @@
 
 #include "RG.h"
 #include "func_desc.h"
-#include "builtin_funcs_lookup.h"
 #include "../util/arr.h"
 #include "../util/rmalloc.h"
 #include "../util/strutil.h"
+#include "builtin_funcs_lookup.h"
 #include "aggregate_funcs/agg_funcs.h"
 
 #include <ctype.h>

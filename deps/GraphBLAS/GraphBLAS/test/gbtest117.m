@@ -1,10 +1,13 @@
-function gbtest117
-%GBTEST117 test idxunop in GrB.apply2
+function gbtest117 (ghb)
+%GBTEST117 test idxunop in [GrB,GhB].apply2
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-rng ('default') ;
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
 m = 6 ;
 n = 4 ;
@@ -18,6 +21,14 @@ for k = -6:6
     x = (j <= (i + k)) ;
     C2 = GrB.build (i, j, x, m, n) ;
     assert (isequal (C1, C2))
+
+    % test internal method for tril
+    C3 = gzb_apply2 (ghb, GrB (A), 'tril', k) ;
+    assert (isequal (C1, C3))
+    C3 = gzb_apply2 (ghb, 'tril', GrB (A), k) ;
+    assert (isequal (C1, C3))
+    C3 = gzb_apply2 (ghb, 'tril', GrB (A), GrB (k)) ;
+    assert (isequal (C1, C3))
 
     %   triu            j >= (i + thunk)
     C1 = GrB.apply2 ('triu', A, k) ;
@@ -87,4 +98,6 @@ assert (C1 == -3) ;
 C1 = GrB.apply2 ('diagindex', 1, 0) ;
 assert (C1 == 0) ;
 
-fprintf ('gbtest117: all tests passed\n') ;
+
+fprintf ('gbtest117 (%d): all tests passed\n', ghb) ;
+

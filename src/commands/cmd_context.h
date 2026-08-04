@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include "../bolt/bolt.h"
 #include "../redismodule.h"
 #include "../util/simple_timer.h"
 #include "../graph/graphcontext.h"
@@ -28,7 +27,8 @@ typedef struct {
 	RedisModuleCtx *ctx;                 // redis module context
 
 	const char *command_name;            // command to execute
-	RedisModuleString *rm_command_name;  // rm_string command_name
+	RedisModuleString *rm_command_name;  // rm_string command name
+	RedisModuleString *rm_graph_name;    // rm_string graph name
 
 	char *params;                        // populated by parse_params
 
@@ -42,25 +42,24 @@ typedef struct {
 	bool timeout_rw;                     // apply timeout on both read and write queries
 	uint64_t received_ts;                // command received at this UNIX timestamp
 	simple_timer_t timer;                // stopwatch started upon command received
-	bolt_client_t *bolt_client;          // BOLT client
 } CommandCtx;
 
 // create a new command context
 CommandCtx *CommandCtx_New
 (
-	RedisModuleCtx *ctx,           // redis module context
-	RedisModuleBlockedClient *bc,  // blocked client
-	RedisModuleString *cmd_name,   // command to execute
-	RedisModuleString *query,      // query string
-	GraphContext *graph_ctx,       // graph context
-	ExecutorThread thread,         // which thread executes this command
-	bool replicated_command,       // whether this instance was spawned by a replication command
-	bool compact,                  // whether this query was issued with the compact flag
-	long long timeout,             // the query timeout, if specified
-	bool timeout_rw,               // apply timeout on both read and write queries
-	uint64_t received_ts,          // command received at this  UNIX timestamp
-	simple_timer_t timer,          // stopwatch started upon command received
-	bolt_client_t *bolt_client     // BOLT client
+	RedisModuleCtx *ctx,            // redis module context
+	RedisModuleBlockedClient *bc,   // blocked client
+	RedisModuleString *cmd_name,    // command to execute
+	RedisModuleString *graph_name,  // graph name
+	RedisModuleString *query,       // query string
+	GraphContext *graph_ctx,        // graph context
+	ExecutorThread thread,          // which thread executes this command
+	bool replicated_command,        // whether this instance was spawned by a replication command
+	bool compact,                   // whether this query was issued with the compact flag
+	long long timeout,              // the query timeout, if specified
+	bool timeout_rw,                // apply timeout on both read and write queries
+	uint64_t received_ts,           // command received at this  UNIX timestamp
+	simple_timer_t timer            // stopwatch started upon command received
 );
 
 // increment command context reference count
@@ -75,17 +74,18 @@ RedisModuleCtx *CommandCtx_GetRedisCtx
 	CommandCtx *cmd_ctx
 );
 
-// get BOLT client
-bolt_client_t *CommandCtx_GetBoltClient
-(
-	CommandCtx *cmd_ctx
-);
-
 // get blocking client
 RedisModuleBlockedClient *CommandCtx_GetBlockingClient
 (
 	const CommandCtx *cmd_ctx
 );
+
+// set GraphContext
+void CommandCtx_SetGraphContext
+(
+	CommandCtx *cmd_ctx,
+	GraphContext *graph_ctx
+) ;
 
 // get GraphContext
 GraphContext *CommandCtx_GetGraphContext

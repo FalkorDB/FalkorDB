@@ -3,14 +3,8 @@ function C = ceil (G)
 %
 % See also GrB/floor, GrB/round, GrB/fix.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-Q = G.opaque ;
-
-if (gb_isfloat (gbtype (Q)) && gbnvals (Q) > 0)
-    C = GrB (gbapply ('ceil', Q)) ;
-else
-    C = G ;
-end
+C = gb_ceil (0, G) ;
 

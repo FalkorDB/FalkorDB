@@ -7,7 +7,7 @@
 
 #-------------------------------------------------------------------------------
 
-cmake_minimum_required ( VERSION 3.20 ) # GraphBLAS can be built stand-alone
+cmake_minimum_required ( VERSION 3.23 )
 project ( jitpackage LANGUAGES C )
 
 set ( GRAPHBLAS_CROSS_TOOLCHAIN_FLAGS_NATIVE "" CACHE STRING

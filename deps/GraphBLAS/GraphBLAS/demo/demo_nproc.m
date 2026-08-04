@@ -10,7 +10,7 @@ function ncores = demo_nproc (ncores_set)
 % SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-if (demo_octave)
+if (gb_octave)
     % Octave: return the default # of cores, no way to change # of cores to use
     ncores = nproc ;
 else

@@ -135,7 +135,7 @@ void GB_macrofy_query
         int zsize = (int) monoid->op->ztype->size ;
         int tsize = (has_terminal) ? zsize : 0 ;
         fprintf (fp,
-            "    if (id_size != %d || term_size != %d) return (false) ;\n"
+            "    if (id_memsize != %d || term_memsize != %d) return (false) ;\n"
             "    GB_DECLARE_IDENTITY_CONST (zidentity) ;\n"
             "    if (id == NULL || memcmp (id, &zidentity, %d) != 0) "
                      "return (false) ;\n", zsize, tsize, zsize) ;

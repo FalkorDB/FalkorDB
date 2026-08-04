@@ -20,11 +20,8 @@
 // Both the grid and block are 1D, so blockDim.x is the # threads in a
 // threadblock, and the # of threadblocks is grid.x
 
-// Let b = blockIdx.x, and let s be blockDim.x. s= 32 with a variable number
-// of active threads = min( min(nzA, nzB), 32) 
-
-// Thus, threadblock b owns a semi-ring dot product on a pair of vectors. 
-// The work is to load the data, do the multiply and add work and finally 
+// Thus, each threadblock owns a semi-ring dot product on a pair of vectors.
+// The work is to load the data, do the multiply and add work and finally
 // reduce this data to a scalar, and write it to Cx[pair].
 
 //------------------------------------------------------------------------------
@@ -113,7 +110,7 @@ __global__ void GB_cuda_AxB_dot3_phase3_dndn_kernel
             {
                 cij_exists = true ;
                 for (int64_t k = threadIdx.x ; k < vlen ; k += blockDim.x)
-                { 
+                {
                     // cij += A(k,i) * B(k,j)
                     GB_GETA (aki, Ax, pA+k, ) ;           // aki = A(k,i)
                     GB_GETB (bkj, Bx, pB+k, ) ;           // bkj = B(k,j)
@@ -123,7 +120,7 @@ __global__ void GB_cuda_AxB_dot3_phase3_dndn_kernel
             #elif GB_A_IS_BITMAP && GB_B_IS_BITMAP
             {
                 for ( int64_t k = threadIdx.x ; k < vlen ; k += blockDim.x)
-                { 
+                {
                     GB_GETA (aki, Ax, pA+k, ) ;           // aki = A(k,i)
                     GB_GETB (bkj, Bx, pB+k, ) ;           // bkj = B(k,j)
                     int8_t b = (Ab [pA+k] && Bb [pB+k]) ;
@@ -138,7 +135,7 @@ __global__ void GB_cuda_AxB_dot3_phase3_dndn_kernel
             #elif GB_A_IS_FULL && GB_B_IS_BITMAP
             {
                 for ( int64_t k = threadIdx.x ; k < vlen ; k += blockDim.x)
-                { 
+                {
                     if (Bb [pB+k])
                     {
                         GB_GETA (aki, Ax, pA+k, ) ;           // aki = A(k,i)
@@ -152,7 +149,7 @@ __global__ void GB_cuda_AxB_dot3_phase3_dndn_kernel
             #elif GB_A_IS_BITMAP && GB_B_IS_FULL
             {
                 for ( int64_t k = threadIdx.x ; k < vlen ; k += blockDim.x)
-                { 
+                {
                     if (Ab [pB+k])
                     {
                         GB_GETA (aki, Ax, pA+k, ) ;           // aki = A(k,i)
@@ -170,29 +167,30 @@ __global__ void GB_cuda_AxB_dot3_phase3_dndn_kernel
         // reduce per-thread sums to a single scalar
         //----------------------------------------------------------------------
 
-        // FIXME: no need to do this if C(i,j) is a zombie (cij_exists is
+        // fixme: no need to do this if C(i,j) is a zombie (cij_exists is
         // always false), or if A and B are both full and C(i,j) is not a
         // zombie (cij_exists is always true).
 
-        // FIXME: this only works if the size of the thread block is 32,
-        // right?
+        // NOTE: The following only works if the size of the thread block
+        // (blockDim.x) is the same as the tile size, GB_CUDA_TILE_SIZE.
 
         // Do vote here for control.
-        thread_block_tile<32> tile = tiled_partition<32> (this_thread_block()) ;
+        thread_block_tile<GB_CUDA_TILE_SIZE> tile =
+            tiled_partition<GB_CUDA_TILE_SIZE> (this_thread_block()) ;
 
-        // FIXME: tile.any takes an int predicate, not bool. How does this work?
+        // fixme: tile.any takes an int predicate, not bool. How does this work?
         cij_exists = tile.any (cij_exists) ;
         tile.sync();
 
         #if !GB_C_ISO
-        // FIXME: the ANY monoid needs the cij_exists for each thread
+        // fixme: the ANY monoid needs the cij_exists for each thread
         cij = GB_cuda_tile_reduce_ztype (tile, cij) ;
         #endif
 
-        // FIXME: if A and B are full, and GB_MASK_STRUCT is true, cij_exists
+        // fixme: if A and B are full, and GB_MASK_STRUCT is true, cij_exists
         // is always true because vlen > 0 always holds for this kernel.
 
-        // FIXME: if kth < 0, C(i,j) is a prezombie, and Ci [pM] already holds
+        // fixme: if kth < 0, C(i,j) is a prezombie, and Ci [pM] already holds
         // GB_ZOMBIE (i).
 
         // write result for this block to global mem

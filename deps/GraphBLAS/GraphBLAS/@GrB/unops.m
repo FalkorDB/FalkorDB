@@ -7,7 +7,7 @@ function result = unops
 %
 % See also GrB.unopinfo.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 types = {
@@ -95,7 +95,7 @@ for k1 = 1:nops
         type = types {k2}  ;
         unop = [op '.' type] ;
         try
-            ok = gbunopinfo (unop) ;
+            ok = gbmex_unopinfo (unop) ;
             nunops = nunops + 1 ;
             if (nargout > 0)
                 result = [result ; unop] ; %#ok<AGROW>
@@ -123,5 +123,4 @@ end
 if (nargout == 0)
     fprintf ('Total number of available unary ops: %d\n', nunops) ;
 end
-
 

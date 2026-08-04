@@ -12,8 +12,8 @@
 void GB_memoryUsage         // count # allocated blocks and their sizes
 (
     int64_t *nallocs,       // # of allocated memory blocks
-    size_t *mem_deep,       // # of bytes in blocks owned by this matrix
-    size_t *mem_shallow,    // # of bytes in blocks owned by another matrix
+    uint64_t *mem_deep,     // # of bytes in blocks owned by this matrix
+    uint64_t *mem_shallow,  // # of bytes in blocks owned by another matrix
     const GrB_Matrix A,     // matrix to query
     bool count_hyper_hash   // if true, include A->Y
 )
@@ -45,22 +45,19 @@ void GB_memoryUsage         // count # allocated blocks and their sizes
 
     GB_Pending Pending = A->Pending ;
 
-    if (!(A->header_size == 0))
-    { 
-        (*nallocs)++ ;
-        (*mem_deep) += A->header_size ;
-    }
+    (*nallocs)++ ;
+    (*mem_deep) += GB_memsize (A->header_mem) ;
 
     if (A->p != NULL)
     {
         if (A->p_shallow)
         { 
-            (*mem_shallow) += A->p_size ;
+            (*mem_shallow) += GB_memsize (A->p_mem) ;
         }
         else
         { 
             (*nallocs)++ ;
-            (*mem_deep) += A->p_size ;
+            (*mem_deep) += GB_memsize (A->p_mem) ;
         }
     }
 
@@ -68,12 +65,12 @@ void GB_memoryUsage         // count # allocated blocks and their sizes
     {
         if (A->h_shallow)
         { 
-            (*mem_shallow) += A->h_size ;
+            (*mem_shallow) += GB_memsize (A->h_mem) ;
         }
         else
         { 
             (*nallocs)++ ;
-            (*mem_deep) += A->h_size ;
+            (*mem_deep) += GB_memsize (A->h_mem) ;
         }
     }
 
@@ -81,12 +78,12 @@ void GB_memoryUsage         // count # allocated blocks and their sizes
     {
         if (A->b_shallow)
         { 
-            (*mem_shallow) += A->b_size ;
+            (*mem_shallow) += GB_memsize (A->b_mem) ;
         }
         else
         { 
             (*nallocs)++ ;
-            (*mem_deep) += A->b_size ;
+            (*mem_deep) += GB_memsize (A->b_mem) ;
         }
     }
 
@@ -94,12 +91,12 @@ void GB_memoryUsage         // count # allocated blocks and their sizes
     {
         if (A->i_shallow)
         { 
-            (*mem_shallow) += A->i_size ;
+            (*mem_shallow) += GB_memsize (A->i_mem) ;
         }
         else
         { 
             (*nallocs)++ ;
-            (*mem_deep) += A->i_size ;
+            (*mem_deep) += GB_memsize (A->i_mem) ;
         }
     }
 
@@ -107,44 +104,44 @@ void GB_memoryUsage         // count # allocated blocks and their sizes
     {
         if (A->x_shallow)
         { 
-            (*mem_shallow) += A->x_size ;
+            (*mem_shallow) += GB_memsize (A->x_mem) ;
         }
         else
         { 
             (*nallocs)++ ;
-            (*mem_deep) += A->x_size ;
+            (*mem_deep) += GB_memsize (A->x_mem) ;
         }
     }
 
     if (Pending != NULL)
     { 
         (*nallocs)++ ;
-        (*mem_deep) += Pending->header_size ;
+        (*mem_deep) += GB_memsize (Pending->header_mem) ;
     }
 
     if (Pending != NULL && Pending->i != NULL)
     { 
         (*nallocs)++ ;
-        (*mem_deep) += Pending->i_size ;
+        (*mem_deep) += GB_memsize (Pending->i_mem) ;
     }
 
     if (Pending != NULL && Pending->j != NULL)
     { 
         (*nallocs)++ ;
-        (*mem_deep) += Pending->j_size ;
+        (*mem_deep) += GB_memsize (Pending->j_mem) ;
     }
 
     if (Pending != NULL && Pending->x != NULL)
     { 
         (*nallocs)++ ;
-        (*mem_deep) += Pending->x_size ;
+        (*mem_deep) += GB_memsize (Pending->x_mem) ;
     }
 
     if (count_hyper_hash && A->Y != NULL)
     {
         int64_t Y_nallocs = 0 ;
-        size_t Y_mem_deep = 0 ;
-        size_t Y_mem_shallow = 0 ;
+        uint64_t Y_mem_deep = 0 ;
+        uint64_t Y_mem_shallow = 0 ;
         GB_memoryUsage (&Y_nallocs, &Y_mem_deep, &Y_mem_shallow, A->Y, false) ;
         if (A->Y_shallow)
         { 

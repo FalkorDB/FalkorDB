@@ -698,3 +698,27 @@ class testQueryValidationFlow(FlowTestsBase):
 
         q = "OPTIONAL MATCH (a) RETURN a UNION MATCH (a) RETURN a"
         self.graph.query(q)
+
+    # Duplicate inline property assignments should fail at validation time.
+    def test46_merge_duplicate_property_keys_on_match_set(self):
+        self.graph.query("CREATE (), ()")
+
+        queries = [
+            """MATCH () MERGE (b{x:1,x:2})""",
+            """MATCH () MERGE (b{x:1,x:2}) ON MATCH SET b.id=3""",
+            """OPTIONAL MATCH (a)
+                MERGE(b{x:1,x:2})<-[:S]-(c)
+                ON MATCH SET a:L""",
+        ]
+
+        for q in queries:
+            try:
+                self.graph.query(q)
+                self.env.assertTrue(False)
+            except redis.exceptions.ResponseError as e:
+                self.env.assertContains("Duplicate property key 'x' in inline property map", str(e))
+
+        # Server should remain responsive after all failed queries.
+        res = self.graph.query("RETURN 1")
+        self.env.assertEquals(res.result_set, [[1]])
+

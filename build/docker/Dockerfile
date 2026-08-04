@@ -35,7 +35,11 @@ RUN ln -s ${FALKORDB_BIN_PATH} /FalkorDB/build/docker && \
     ln -s ${FALKORDB_DATA_PATH} /data
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends libgomp1 ca-certificates bash && \
+    apt-get install -y --no-install-recommends libgomp1 ca-certificates bash gosu uidmap && \
+    ln -sf "$(command -v gosu)" /usr/local/bin/su-exec && \
+    # Create nextjs user for running the browser (before passwd/login are purged below)
+    groupadd -g 1001 nodejs && \
+    useradd -r -u 1001 -g nodejs nextjs && \
     apt-get dist-upgrade -y && \
     # Remove packages not needed at runtime to reduce CVE surface
     (apt-get purge -y python3.13 python3.13-minimal libpython3.13-minimal libpython3.13-stdlib || true) && \
@@ -65,6 +69,11 @@ COPY --from=compiler /FalkorDB/bin/linux*/falkordb.so ${FALKORDB_BIN_PATH}/falko
 COPY --from=browser /app ${FALKORDB_BROWSER_PATH}
 
 COPY --from=browser /usr/local/bin/docker-entrypoint.sh ${FALKORDB_BROWSER_PATH}
+
+# set ownership for the nextjs user
+RUN chown -R 1001:1001 ${FALKORDB_BROWSER_PATH} && \
+    mkdir -p /app/.data && \
+    chown -R 1001:1001 /app/.data
 
 ENV ARCH=${TARGETPLATFORM}
 

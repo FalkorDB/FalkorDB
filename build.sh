@@ -1194,6 +1194,10 @@ prepare_cmake_arguments() {
     # Sanitizer
     if [[ -n "$SAN" ]]; then
         CMAKE_ARGS+=(-DSAN="$SAN")
+        # A Rust sanitizer build needs nightly's -Zbuild-std (to rebuild
+        # std with the sanitizer), so request nightly whenever SAN is set;
+        # redisearch_rs's CMakeLists.txt accepts +<toolchain> via this var.
+        CMAKE_ARGS+=(-DRUST_TOOLCHAIN_MODIFIER=+nightly)
     fi
 
     # Memory checking

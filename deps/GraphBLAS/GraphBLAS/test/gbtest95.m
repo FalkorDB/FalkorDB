@@ -1,16 +1,21 @@
-function gbtest95
+function gbtest95 (ghb)
 %GBTEST95 test indexing
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
+
 have_octave = gb_octave ;
-G = GrB.empty (GrB ([0 2])) ;
+G = gtb_empty (ghb, gtb (ghb, [0 2])) ;
 assert (isequal (size (G), [0 2])) ;
 
 A = magic (4) ;
-I = GrB ([1 2]) ;
-G = GrB (A) ;
+I = gtb (ghb, [1 2]) ;
+G = gtb (ghb, A) ;
 X = G (:,1) ;
 Y = G (:,1) ;
 C1 = X (I) ;
@@ -23,22 +28,22 @@ assert (isequal (C1, C2)) ;
 C1 = G ({ }, { })  ;
 assert (isequal (C1, G)) ;
 
-H = GrB (2^59, 2^60) ;
+H = gtb (ghb, 2^59, 2^60) ;
 [m, n] = size (H) ;
-s = GrB.isfull (H) ;
+s = gtb_isfull (ghb, H) ;
 assert (~s) ;
 assert (isequal ([m n], [2^59 2^60])) ;
 assert (isa ([m n], 'int64')) ;
 
-H = GrB.random (3, 4, inf, 'range', GrB ([2 4], 'int8')) ;
-assert (GrB.isfull (H)) ;
-assert (isequal (GrB.type (H), 'int8')) ;
+H = gtb_random (ghb, 3, 4, inf, 'range', gtb (ghb, [2 4], 'int8')) ;
+assert (gtb_isfull (ghb, H)) ;
+assert (isequal (gtb_type (ghb, H), 'int8')) ;
 
-H = GrB.random (H, 'range', GrB ([3 4], 'uint32')) ;
-assert (GrB.isfull (H)) ;
-assert (isequal (GrB.type (H), 'uint32')) ;
+H = gtb_random (ghb, H, 'range', gtb (ghb, [3 4], 'uint32')) ;
+assert (gtb_isfull (ghb, H)) ;
+assert (isequal (gtb_type (ghb, H), 'uint32')) ;
 
-C = tril (H, GrB (1,1)) ;
+C = tril (H, gtb (ghb, 1,1)) ;
 assert (istril (C)) ;
 
 types = gbtest_types ;
@@ -47,7 +52,7 @@ for k = 1:length (types)
     if (gb_contains (type, 'complex') || isequal (type, 'logical'))
         continue ;
     end
-    I = GrB ([1 2], type) ;
+    I = gtb (ghb, [1 2], type) ;
     if (have_octave)
         % octave: indices into built-in matrices cannot be objects
         I = int64 (I) ;
@@ -64,10 +69,10 @@ end
 if (~have_octave)
     % octave: indices into built-in matrices cannot be objects
     I1 = [1 2 ; 3 4] ;
-    I2 = GrB (I1) ;
+    I2 = gtb (ghb, I1) ;
     C1 = A (I1,I1) ;
     C2 = A (I2,I2) ;
-    H = GrB (2^60, 2^60) ;
+    H = gtb (ghb, 2^60, 2^60) ;
     H (1:2,1:2) = I1 ;
     C3 = A (H,H) ;
     assert (isequal (C1, C2))
@@ -77,9 +82,9 @@ end
 A = [-1 2] ;
 B = [2 0.5] ;
 C1 = A.^B ;
-C2 = GrB (A).^B ;
+C2 = gtb (ghb, A).^B ;
 assert (isequal (C1, C2))
 assert (isreal (C2)) 
 
-fprintf ('gbtest95: all tests passed\n') ;
+fprintf ('gbtest95 (%d): all tests passed\n', ghb) ;
 

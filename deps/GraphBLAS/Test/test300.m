@@ -5,5 +5,6 @@ function test300
 % SPDX-License-Identifier: Apache-2.0
 
 GB_mex_test43 ;
+GB_mex_burble (0) ;
 fprintf ('\ntest300: all tests passed\n') ;
 

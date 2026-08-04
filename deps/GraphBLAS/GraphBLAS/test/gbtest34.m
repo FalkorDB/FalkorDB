@@ -1,10 +1,13 @@
-function gbtest34
+function gbtest34 (ghb)
 %GBTEST34 test repmat
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-rng ('default') ;
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
 for m1 = 0:5
     for n1 = 0:5
@@ -13,7 +16,7 @@ for m1 = 0:5
             for n2 = 0:5
                 A = rand (m1, n1) ;
                 C = repmat (A, m2, n2) ;
-                G = GrB (A) ;
+                G = gtb (ghb, A) ;
                 H = repmat (G, m2, n2) ;
                 assert (gbtest_eq (C, H)) ;
 
@@ -25,5 +28,5 @@ for m1 = 0:5
     end
 end
 
-fprintf ('\ngbtest34: all tests passed\n') ;
+fprintf ('\ngbtest34 (%d): all tests passed\n', ghb) ;
 

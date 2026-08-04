@@ -18,7 +18,7 @@ typedef Delta_Matrix Tensor;
 #define SCALAR_ENTRY(x) !((x) & MSB_MASK)
 
 // clear MSB and cast to GrB_Vector
-#define AS_VECTOR(x) (GrB_Vector)(CLEAR_MSB(x));
+#define AS_VECTOR(x) ((GrB_Vector)(CLEAR_MSB(x)))
 
 // init new tensor
 Tensor Tensor_new
@@ -128,6 +128,7 @@ struct TensorIterator {
 	Delta_MatrixTupleIter a_it;      // vectors iterator
 	struct GB_Iterator_opaque v_it;  // vector iterator
 	bool vec;                        // iterate using v_it
+	bool transpose;                  // attached to T's transpose
 	uint64_t x;                      // current entry value
 	GrB_Index row;                   // current row
 	GrB_Index col;                   // current col
@@ -154,6 +155,25 @@ void TensorIterator_ScanRange
 	bool transpose       // scan transposed of T
 );
 
+// attach iterator to a tensor (or its transpose) without restricting it to a
+// row range, for callers that will repeatedly reseek the same iterator via
+// TensorIterator_IterateRow rather than re-attach on every query. avoids the
+// cost of re-deriving the underlying matrices' sparsity/format on every scan
+void TensorIterator_Attach
+(
+	TensorIterator *it,  // iterator
+	Tensor T,            // tensor
+	bool transpose       // attach to transpose of T
+);
+
+// reseek an already-attached iterator (see TensorIterator_Attach) to a
+// single row, without re-attaching the underlying row iterators
+void TensorIterator_IterateRow
+(
+	TensorIterator *it,  // iterator, must already be attached
+	GrB_Index row        // row to iterate
+);
+
 // advance iterator
 bool TensorIterator_next
 (
@@ -169,5 +189,12 @@ bool TensorIterator_is_attached
 (
 	const TensorIterator *it,  // iterator
 	const Tensor T             // tensor
+);
+
+// return # of bytes used for a tensor
+GrB_Info Tensor_memoryUsage
+(
+    size_t *size,   // # of bytes used by the Tensor A
+    const Tensor A  // Tensor to query
 );
 

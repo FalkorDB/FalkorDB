@@ -24,7 +24,7 @@ bool GB_cuda_warmup (int device)
         return (false) ;
     }
 
-    // FIXME: why do we need this?
+    // fixme: why do we need this?
     double gpu_memory_size = GB_Global_gpu_memorysize_get (device) ;
 
     //--------------------------------------------------------------------------

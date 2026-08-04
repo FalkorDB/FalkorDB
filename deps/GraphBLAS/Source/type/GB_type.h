@@ -25,7 +25,7 @@ GrB_Info GB_matvec_type_name  // return the name of the type of a matrix
     GB_Werk Werk
 ) ;
 
-size_t GB_code_size             // return the size of a type, given its code
+size_t GB_code_typesize         // return the size of a type, given its code
 (
     const GB_Type_code code,    // input code of the type to find the size of
     const size_t usize          // known size of user-defined type

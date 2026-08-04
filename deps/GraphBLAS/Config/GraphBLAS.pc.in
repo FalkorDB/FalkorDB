@@ -10,7 +10,7 @@ includedir=@includedir@
 Name: GraphBLAS
 URL: https://github.com/DrTimothyAldenDavis/SuiteSparse
 Description: Complete implementation of the GraphBLAS standard in SuiteSparse
-Version: @GraphBLAS_VERSION_MAJOR@.@GraphBLAS_VERSION_MINOR@.@GraphBLAS_VERSION_SUB@
+Version: @GraphBLAS_VER_MAJOR@.@GraphBLAS_VER_MINOR@.@GraphBLAS_VER_SUB@
 Requires.private: @GRAPHBLAS_STATIC_MODULES@
 Libs: -L${libdir} -l@SUITESPARSE_LIB_BASE_NAME@
 Libs.private: @GRAPHBLAS_STATIC_LIBS@

@@ -269,9 +269,11 @@ class testOptionalFlow(FlowTestsBase):
         self.graph.delete()
         self.graph.query("CREATE ()-[:A]->()")
         query = """OPTIONAL MATCH (), ({x:0, x:1}) RETURN 0"""
-        actual_result = self.graph.query(query)
-        expected_result = [[0]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        try:
+            self.graph.query(query)
+            self.env.assertTrue(False)
+        except redis.exceptions.ResponseError as e:
+            self.env.assertContains("Duplicate property key 'x' in inline property map", str(e))
 
     def test24_optional_no_matchings(self):
         # due to delayed init within the Apply op this used to crash the server

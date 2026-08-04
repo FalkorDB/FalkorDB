@@ -10,9 +10,27 @@
 #include "repository.h"
 #include "../query_ctx.h"
 #include "../arithmetic/func_desc.h"
+#include "../util/identifier_limits.h"
 
 // global UDF library name used when registering functions globally
 extern const char *UDF_LIB ;
+
+// returns true if the function and library name will fit in the character limit
+static inline bool _ValidateUDFNameLength
+(
+	JSContext *js_ctx,
+	const char *lib_name,
+	const char *func_name
+) {
+	if (lib_name == NULL || func_name == NULL) {
+		return false ;
+	}
+
+	size_t lib_len  = strnlen (lib_name,  MAX_IDENTIFIER_LEN) ;
+	size_t func_len = strnlen (func_name, MAX_IDENTIFIER_LEN) ;
+
+	return (lib_len + 1 + func_len) <= MAX_IDENTIFIER_LEN ;
+}
 
 //------------------------------------------------------------------------------
 // falkor.register implementations
@@ -47,7 +65,18 @@ static JSValue validate_register_udf
 	}
 
 	JSValue res;
+	char *fullname = NULL ;
 	const char *func_name = JS_ToCString(js_ctx, argv[0]) ;
+
+	if(func_name == NULL) {
+		return JS_ThrowInternalError(js_ctx, "failed to read function name");
+	}
+
+	if(!_ValidateUDFNameLength(js_ctx, UDF_LIB, func_name)) {
+		res = JS_ThrowTypeError (js_ctx, "function name '%s.%s' is too long",
+				UDF_LIB, func_name) ;
+		goto cleanup;
+	}
 
 	//--------------------------------------------------------------------------
 	// fail if UDF is a registered function
@@ -57,11 +86,9 @@ static JSValue validate_register_udf
 	if (UDF_RepoContainsFunc (UDF_LIB, func_name)) {
 		res = JS_ThrowTypeError (js_ctx, "function: '%s.%s' already registered",
 				UDF_LIB, func_name) ;
-
-		goto cleanup ;
+		goto cleanup;
 	}
 
-	char *fullname = NULL ;
 	asprintf (&fullname, "%s.%s", UDF_LIB, func_name) ;
 	if (AR_FuncExists (fullname)) {
 		res = JS_ThrowTypeError (js_ctx, "function: '%s' already registered",
@@ -104,17 +131,15 @@ static JSValue local_register_udf
 	}
 
 	const char *func_name = JS_ToCString(js_ctx, argv[0]) ;
+	ASSERT (func_name != NULL) ;
 
-	JSValueConst func = argv[1] ;
-	if (!JS_IsFunction (js_ctx, func)) {
-		return JS_ThrowTypeError (js_ctx,
-				"second argument must be a function") ;
-	}
+	JSValueConst func = argv [1] ;
+	ASSERT (JS_IsFunction (js_ctx, func)) ;
 
 	// register function in TLS UDF context
-	UDFCtx_RegisterFunction (JS_DupValue (js_ctx, func), func_name) ;
+	JSValue dup = JS_DupValue (js_ctx, func) ;
+	UDFCtx_RegisterFunction (dup, func_name) ;
 
-cleanup:
 	JS_FreeCString (js_ctx, func_name) ;
 
 	return JS_NewBool (js_ctx, true) ;

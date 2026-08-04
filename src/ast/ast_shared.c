@@ -99,8 +99,6 @@ PropertyMap *PropertyMap_New
 	//--------------------------------------------------------------------------
 
 	for (uint prop_idx = 0; prop_idx < prop_count; prop_idx++) {
-		uint insert_idx = prop_idx;
-
 		const cypher_astnode_t *ast_key =
 			cypher_ast_map_get_key (props, prop_idx) ;
 
@@ -113,29 +111,9 @@ PropertyMap *PropertyMap_New
 		AR_ExpNode *exp =
 			AR_EXP_FromASTNode (ast_value) ;
 
-		//----------------------------------------------------------------------
-		// handle duplicates
-		//----------------------------------------------------------------------
-
-		uint count = arr_len (m->keys) ;
-		for (uint i = 0; i < count; i++) {
-			if (strcmp (attr, m->keys[i]) == 0) {
-				// duplicate!
-				insert_idx = i ;
-				break ;
-			}
-		}
-
-		if (insert_idx == prop_idx) {
-			// new entry
-			arr_append (m->keys, attr) ;
-			arr_append (m->values, exp) ;
-			arr_append (m->attr_ids, GraphContext_GetAttributeID (gc, attr)) ;
-		} else {
-			// replace duplicate
-			AR_EXP_Free (m->values[insert_idx]) ;
-			m->values[insert_idx] = exp ;
-		}
+		arr_append (m->keys, attr) ;
+		arr_append (m->values, exp) ;
+		arr_append (m->attr_ids, GraphContext_GetAttributeID (gc, attr)) ;
 	}
 
 	return m ;

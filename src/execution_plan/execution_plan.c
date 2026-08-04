@@ -21,7 +21,9 @@
 
 // allocate a new ExecutionPlan segment
 inline ExecutionPlan *ExecutionPlan_NewEmptyExecutionPlan(void) {
-	return rm_calloc(1, sizeof(ExecutionPlan));
+	ExecutionPlan *plan = rm_calloc (1, sizeof (ExecutionPlan)) ;
+	atomic_init (&plan->drained, false) ;
+	return plan ;
 }
 
 void ExecutionPlan_PopulateExecutionPlan
@@ -53,33 +55,56 @@ void ExecutionPlan_PopulateExecutionPlan
 	}
 }
 
-static ExecutionPlan *_ExecutionPlan_UnionPlans(AST *ast) {
-	uint end_offset = 0;
-	uint start_offset = 0;
-	uint clause_count = cypher_ast_query_nclauses(ast->root);
-	uint *union_indices = AST_GetClauseIndices(ast, CYPHER_AST_UNION);
-	arr_append(union_indices, clause_count);
-	int union_count = arr_len(union_indices);
-	ASSERT(union_count > 1);
+static ExecutionPlan *_ExecutionPlan_UnionPlans
+(
+	AST *ast
+) {
+	uint end_offset   = 0 ;
+	uint start_offset = 0 ;
+	uint clause_count = cypher_ast_query_nclauses (ast->root) ;
+	uint *union_indices = AST_GetClauseIndices (ast, CYPHER_AST_UNION) ;
+	arr_append (union_indices, clause_count) ;
+	int union_count = arr_len (union_indices) ;
+	ASSERT (union_count > 1) ;
 
 	// Placeholder for each execution plan, these all will be joined
 	// via a single UNION operation
-	ExecutionPlan *plans[union_count];
+	ExecutionPlan *plans [union_count] ;
 
-	for(int i = 0; i < union_count; i++) {
+	int i = 0 ;
+	for (; i < union_count ; i++) {
 		// Create an AST segment from which we will build an execution plan.
-		end_offset = union_indices[i];
-		AST *ast_segment = AST_NewSegment(ast, start_offset, end_offset);
-		plans[i] = ExecutionPlan_FromTLS_AST();
-		AST_Free(ast_segment); // Free the AST segment.
+		end_offset = union_indices [i] ;
+		AST *ast_segment = AST_NewSegment (ast, start_offset, end_offset) ;
+		plans [i] = ExecutionPlan_FromTLS_AST () ;
+		AST_Free (ast_segment) ; // free the AST segment
 
-		// Next segment starts where this one ends.
-		start_offset = union_indices[i] + 1;
+		// check if the sub query triggered an error
+		// if so clean up and return
+		if (ErrorCtx_EncounteredError ()) {
+			break ;
+		}
+
+		// next segment starts where this one ends
+		start_offset = union_indices [i] + 1 ;
 	}
 
-	QueryCtx_SetAST(ast); // AST segments have been freed, set master AST in QueryCtx.
+	QueryCtx_SetAST (ast); // AST segments have been freed, set master AST in QueryCtx
 
-	arr_free(union_indices);
+	arr_free (union_indices) ;
+
+	if (ErrorCtx_EncounteredError ()) {
+		ExecutionPlan *err_plan = plans [i] ;
+		i-- ;
+
+		// clean up
+		while (i >= 0) {
+			ExecutionPlan_Free (plans [i]) ;
+			i-- ;
+		}
+
+		return err_plan ;
+	}
 
 	/* Join streams:
 	 * MATCH (a) RETURN a UNION MATCH (a) RETURN a ....
@@ -97,7 +122,7 @@ static ExecutionPlan *_ExecutionPlan_UnionPlans(AST *ast) {
 	OpBase *parent = results_op;
 	ExecutionPlan_UpdateRoot(plan, results_op);
 
-	// Introduce distinct only if `ALL` isn't specified.
+	// introduce distinct only if `ALL` isn't specified
 	const cypher_astnode_t *union_clause = AST_GetClause(ast, CYPHER_AST_UNION,
 														 NULL);
 	if(!cypher_ast_union_has_all(union_clause)) {
@@ -137,7 +162,7 @@ static ExecutionPlan *_ExecutionPlan_UnionPlans(AST *ast) {
 		ExecutionPlan_AddOp(join_op, sub_plan->root);
 	}
 
-	return plan;
+	return plan ;
 }
 
 static ExecutionPlan *_process_segment
@@ -549,30 +574,46 @@ ResultSet *ExecutionPlan_Execute(ExecutionPlan *plan) {
 //------------------------------------------------------------------------------
 
 // NOP operation consume routine for immediately terminating execution.
-static Record deplete_consume(struct OpBase *op) {
-	return NULL;
+static Record deplete_consume
+(
+	struct OpBase *op
+) {
+	return NULL ;
 }
 
 // return true if execution plan been drained
 // false otherwise
-bool ExecutionPlan_Drained(ExecutionPlan *plan) {
-	ASSERT(plan != NULL);
-	ASSERT(plan->root != NULL);
-	return (plan->root->consume == deplete_consume);
+bool ExecutionPlan_Drained
+(
+	ExecutionPlan *plan
+) {
+	ASSERT (plan != NULL) ;
+	return atomic_load (&plan->drained) ;
 }
 
-static void _ExecutionPlan_Drain(OpBase *root) {
-	root->consume = deplete_consume;
-	for(int i = 0; i < root->childCount; i++) {
-		_ExecutionPlan_Drain(root->children[i]);
+static void _ExecutionPlan_Drain
+(
+	OpBase *root
+) {
+	root->consume = deplete_consume ;
+	for (int i = 0; i < root->childCount; i++) {
+		_ExecutionPlan_Drain (root->children [i]) ;
 	}
 }
 
-// Resets each operation consume function to simply return NULL
-// this will cause the execution-plan to quickly deplete
-void ExecutionPlan_Drain(ExecutionPlan *plan) {
-	ASSERT(plan && plan->root);
-	_ExecutionPlan_Drain(plan->root);
+// mark execution-plan as drained
+// consumers check this flag and stop execution
+void ExecutionPlan_Drain
+(
+	ExecutionPlan *plan
+) {
+	ASSERT (plan != NULL) ;
+
+	atomic_store (&plan->drained, true) ;
+
+	if (plan->root != NULL) {
+		_ExecutionPlan_Drain (plan->root) ;
+	}
 }
 
 //------------------------------------------------------------------------------
@@ -701,6 +742,7 @@ void ExecutionPlan_Free
 	OpBase **to_visit = arr_new (OpBase *, 1) ;
 
 	OpBase *op = plan->root ;
+	plan->root = NULL ;
 	arr_append (to_visit, op) ;
 
 	while (arr_len(to_visit) > 0) {

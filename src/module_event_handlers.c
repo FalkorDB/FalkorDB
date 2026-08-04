@@ -5,17 +5,17 @@
  */
 
 #include "RG.h"
-#include "module_event_handlers.h"
 #include "LAGraph.h"
 #include "globals.h"
 #include "util/uuid.h"
 #include "cron/cron.h"
 #include "index/indexer.h"
-#include "bolt/bolt_api.h"
 #include "util/thpool/pool.h"
 #include "util/redis_version.h"
 #include "graph/graphcontext.h"
 #include "configuration/config.h"
+#include "module_event_handlers.h"
+#include "graph/graph_load_queue.h"
 #include "serializers/graphmeta_type.h"
 #include "serializers/graphcontext_type.h"
 
@@ -359,6 +359,9 @@ static void _ShutdownEventHandler
 		return; 
 	}
 
+	// drain any graph loads still parked waiting on another thread's load
+	GraphLoadQueue_Free () ;
+
 	// stop cron
 	Cron_Stop () ;
 
@@ -370,8 +373,6 @@ static void _ShutdownEventHandler
 
 	// server is shutting down, finalize GraphBLAS
 	LAGraph_Finalize (NULL) ;
-
-	BoltApi_Unregister () ;
 
 	// free global variables
 	Globals_Free () ;
@@ -468,22 +469,11 @@ static void _ForkPrepare() {
 	double tic [2] ;
 	simple_tic (tic) ;
 
-	uint32_t n = Globals_GraphsCount () ;
+	uint n = 0 ;
+	GraphContext **graphs = Globals_CollectGraphs (&n) ;
 
 	ASSERT (locked == NULL) ;
 	locked = rm_calloc (n, sizeof (atomic_bool)) ;
-	GraphContext **graphs = rm_malloc (sizeof (GraphContext*) * n) ;
-
-	// scan through each graph in the keyspace
-	KeySpaceGraphIterator it ;
-	Globals_ScanGraphs (&it) ;
-
-	// collect graphs
-	for (uint32_t i = 0 ; i < n ; i++) {
-		graphs [i] = GraphIterator_Next (&it) ;
-		ASSERT (graphs [i] != NULL) ;
-	}
-	ASSERT (GraphIterator_Next (&it) == NULL) ;
 
 	// sync each graph's matrices in parallel
 	// each iteration is independent — different graph, different locks
@@ -563,14 +553,14 @@ static void _AfterForkParent(void) {
 	ASSERT (locked != NULL) ;
 
 	// the child process forked, release all acquired locks
-	GraphContext *gc = NULL ;
-	KeySpaceGraphIterator it ;
-	Globals_ScanGraphs (&it) ;
+	uint n = 0 ;
+	GraphContext **graphs = Globals_CollectGraphs (&n) ;
 
-	int i = 0 ;
-	while ((gc = GraphIterator_Next (&it)) != NULL) {
+	for (uint i = 0 ; i < n ; i++) {
+		GraphContext *gc = graphs [i] ;
+
 		// release read lock
-		if (locked [i++]) {
+		if (locked [i]) {
 			GraphContext_ReleaseLock (gc) ;
 		}
 
@@ -580,6 +570,7 @@ static void _AfterForkParent(void) {
 
 	// free locked array
 	rm_free (locked) ;
+	rm_free (graphs) ;
 	locked = NULL ;
 }
 

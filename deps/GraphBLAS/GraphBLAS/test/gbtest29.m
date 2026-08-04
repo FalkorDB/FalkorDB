@@ -1,10 +1,14 @@
-function gbtest29
+function gbtest29 (ghb)
 %GBTEST29 test subsref and subsasgn with logical indexing
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-rng ('default') ;
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
+
 have_octave = gb_octave ;
 
 types = gbtest_types ;
@@ -14,7 +18,7 @@ for k = 1:length (types)
     M = logical (C > 3) ;
     A = gbtest_cast (2 * magic (3), type) ;
     C (M) = A (M) ;
-    G = GrB (magic (3), type) ;
+    G = gtb (ghb, magic (3), type) ;
     G (M) = A (M) ;
     assert (gbtest_err (G, C) == 0) ;
     if (isreal (C) && isreal (G))
@@ -24,20 +28,20 @@ for k = 1:length (types)
         assert (gbtest_eq (imag (G), imag (C))) ;
     end
 
-    C0 = GrB.random (3, 3, inf, 'range', GrB ([0 1], type)) ;
+    C0 = gtb_random (ghb, 3, 3, inf, 'range', gtb (ghb, [0 1], type)) ;
     M = true (3) ;
-    A = GrB (1:9, type) ;
+    A = gtb (ghb, 1:9, type) ;
     C1 = C0 ;
     C1 (M) = A ;
     C2 = double (C0) ;
     C2 (M) = double (A) ;
     assert (isequal (double (C1), C2)) ;
 
-    A = GrB (A, 'by row') ;
+    A = gtb (ghb, A, 'by row') ;
     C1 = C0 ;
     C1 (M) = A ;
     assert (isequal (double (C1), C2)) ;
-    A = GrB (A', 'by row') ;
+    A = gtb (ghb, A', 'by row') ;
     C1 = C0 ;
     C1 (M) = A ;
     assert (isequal (double (C1), C2)) ;
@@ -50,7 +54,7 @@ for trial = 1:40
             A = sprand (m, n, 0.5) ;
             C = sprand (m, n, 0.5) ;
             M = sprand (m, n, 0.5) ~= 0 ;
-            G = GrB (A) ;
+            G = gtb (ghb, A) ;
 
             x1 = A (M) ; %#ok<*NASGU>
             x2 = G (M) ;
@@ -61,11 +65,11 @@ for trial = 1:40
             C1 = C ;
             C1 (M) = A (M) ;%#ok<*SPRIX> % C1(M) builtin, A(M) is built-in
 
-            C2 = GrB (C) ;
-            C2 (M) = A (M) ;        % C2(M) is GrB, A(M) is built-in
+            C2 = gtb (ghb, C) ;
+            C2 (M) = A (M) ;        % C2(M) is GrB/GhB, A(M) is built-in
 
-            C3 = GrB (C) ;
-            C3 (M) = G (M) ;        % C3(M) is GrB, and G(M) is GrB
+            C3 = gtb (ghb, C) ;
+            C3 (M) = G (M) ;        % C3(M) is GrB/GhB, and G(M) is GrB/GhB
             assert (gbtest_eq (C1, C2)) ;
             assert (gbtest_eq (C1, C3)) ;
 
@@ -76,25 +80,25 @@ for trial = 1:40
                 C4 (M) = double (G (M)) ;
             else
                 % This uses the built-in subsasgn, after typecasting G(M) from
-                % class GrB to class double, using GrB/double.  MATLAB does the
-                % automatic typecasting of G(M), since it sees that GrB has a
-                % "double" method.
+                % class GrB/GhB to class double, using GrB/double or GhB/double.
+                % MATLAB does the automatic typecasting of G(M), since it sees
+                % that GrB has a "double" method.
                 C4 (M) = G (M) ;
             end
             assert (gbtest_eq (C1, C4)) ;
 
             % test assignment with A iso 
-            G = spones (GrB (A)) ;
+            G = spones (gtb (ghb, A)) ;
             A = double (G) ;
             C1 = C ;
             C1 (M) = A (M) ;%#ok<*SPRIX> % C1(M) builtin, A(M) is built-in
-            C2 = GrB (C) ;
+            C2 = gtb (ghb, C) ;
             C2 (M) = G (M) ;
             assert (gbtest_eq (C1, C2)) ;
 
-            % also try with a GrB mask matrix M
-            M = GrB (M) ;
-            C5 = GrB (C) ;
+            % also try with a GrB/GhB mask matrix M
+            M = gtb (ghb, M) ;
+            C5 = gtb (ghb, C) ;
             C5 (M) = G (M) ;
             assert (gbtest_eq (C1, C5)) ;
 
@@ -102,12 +106,12 @@ for trial = 1:40
             K = logical (M) ;
             C1 (K) = pi ;
             C2 (M) = pi ;
-            C3 (M) = GrB (pi) ;
+            C3 (M) = gtb (ghb, pi) ;
             if (have_octave)
                 % See above for the Octave vs MATLAB difference in casting.
-                C4 (K) = double (GrB (pi)) ;
+                C4 (K) = double (gtb (ghb, pi)) ;
             else
-                C4 (K) = GrB (pi) ;
+                C4 (K) = gtb (ghb, pi) ;
             end
             assert (gbtest_eq (C1, C4)) ;
             C5 (M) = pi ;
@@ -118,5 +122,5 @@ for trial = 1:40
     end
 end
 
-fprintf ('\ngbtest29: all tests passed\n') ;
+fprintf ('\ngbtest29 (%d): all tests passed\n', ghb) ;
 

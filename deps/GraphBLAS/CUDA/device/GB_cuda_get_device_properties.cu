@@ -102,7 +102,7 @@ bool GB_cuda_get_device_properties  // true if OK, false if failure
     prop->compute_capability_major = compute_capability_major ;
     prop->compute_capability_minor = compute_capability_minor ;
 
-    // FIXME: remove this printf
+    // fixme: remove this printf
     printf ("\nDevice: %d: memory: %ld SMs: %d compute: %d.%d\n",
         device, prop->total_global_memory, prop->number_of_sms,
         prop->compute_capability_major, prop->compute_capability_minor) ;

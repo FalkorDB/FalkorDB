@@ -2,7 +2,7 @@
 # GraphBLAS/GraphBLAS/CMakeLists.txt:  build GraphBLAS for use in MATLAB
 #-------------------------------------------------------------------------------
 
-# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0.
 
 # CMakeLists.txt: instructions for cmake to build GraphBLAS for use in MATLAB.
@@ -13,7 +13,7 @@
 # get the version
 #-------------------------------------------------------------------------------
 
-cmake_minimum_required ( VERSION 3.20 ) # GraphBLAS can be built stand-alone
+cmake_minimum_required ( VERSION 3.23 )
 
 set ( CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH}
     ${CMAKE_SOURCE_DIR}/../cmake_modules )
@@ -25,7 +25,7 @@ include ( GraphBLAS_version )
 #-------------------------------------------------------------------------------
 
 project ( graphblas_matlab
-    VERSION "${GraphBLAS_VERSION_MAJOR}.${GraphBLAS_VERSION_MINOR}.${GraphBLAS_VERSION_SUB}" LANGUAGES C )
+    VERSION "${GraphBLAS_VER_MAJOR}.${GraphBLAS_VER_MINOR}.${GraphBLAS_VER_SUB}" LANGUAGES C )
 
 #-------------------------------------------------------------------------------
 # SuiteSparse policies
@@ -171,6 +171,7 @@ include_directories ( ${PROJECT_SOURCE_DIR}/../ ../Source ../Include Config
     # include all Source/* folders that have include/ or template/ subfolders:
     ../Source/add
     ../Source/apply
+    ../Source/arena
     ../Source/assign
     ../Source/builder
     ../Source/builtin
@@ -243,8 +244,8 @@ endif ( )
 
 add_library ( graphblas_matlab SHARED ${GRAPHBLAS_SOURCES} )
 set_target_properties ( graphblas_matlab PROPERTIES
-    VERSION ${GraphBLAS_VERSION_MAJOR}.${GraphBLAS_VERSION_MINOR}.${GraphBLAS_VERSION_SUB}
-    SOVERSION ${GraphBLAS_VERSION_MAJOR}
+    VERSION ${GraphBLAS_VER_MAJOR}.${GraphBLAS_VER_MINOR}.${GraphBLAS_VER_SUB}
+    SOVERSION ${GraphBLAS_VER_MAJOR}
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
     PUBLIC_HEADER "../Include/GraphBLAS.h" )
