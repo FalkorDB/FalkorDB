@@ -103,7 +103,7 @@ static Record IndexScanConsumeFromChild
 (
 	OpBase *opBase
 ) {
-	const char *doc_key = NULL;
+	const unsigned char *doc_key = NULL;
 	size_t len = 0;
 	IndexScan *op  = (IndexScan *)opBase;
 	RSIndex *rsIdx = op->rsIdx;
@@ -215,7 +215,7 @@ static Record IndexScanConsume(OpBase *opBase) {
 		op->iter = RediSearch_GetResultsIterator(rs_query_node, rsIdx);
 	}
 
-	const char *doc_key = NULL;
+	const unsigned char *doc_key = NULL;
 	size_t len = 0;
 
 	// populate the Record with the actual node

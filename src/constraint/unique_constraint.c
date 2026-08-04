@@ -125,8 +125,8 @@ bool EnforceUniqueEntity
 	if(Constraint_GetEntityType(c) == GETYPE_NODE) {
 		// first call, expecting to find 'e' in the index
 		size_t len = 0;
-		const char *doc_key =
-			(const char *)RediSearch_ResultsIteratorNext(iter, rs_idx, &len);
+		const unsigned char *doc_key =
+			(const unsigned char *)RediSearch_ResultsIteratorNext(iter, rs_idx, &len);
 
 		// no match: refuse the entity (consistent with the second-call branch)
 		if(doc_key == NULL) {
@@ -147,8 +147,8 @@ bool EnforceUniqueEntity
 	} else {
 		// first call, expecting to find 'e' in the index
 		size_t len = 0;
-		const char *doc_key =
-			(const char *)RediSearch_ResultsIteratorNext(iter, rs_idx, &len);
+		const unsigned char *doc_key =
+			(const unsigned char *)RediSearch_ResultsIteratorNext(iter, rs_idx, &len);
 
 		// see node branch above
 		if(doc_key == NULL) {

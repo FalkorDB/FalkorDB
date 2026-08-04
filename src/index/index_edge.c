@@ -32,7 +32,7 @@ void Index_IndexEdge
 	EntityID edge_id = ENTITY_GET_ID(e);
 
 	EdgeIndexKey key = {.src_id = src_id, .dest_id = dest_id, .edge_id = edge_id};
-	char doc_key[EDGE_DOC_KEY_BUF_SIZE];
+	unsigned char doc_key[EDGE_DOC_KEY_BUF_SIZE];
 	IndexDocKey_EncodeEdge(&key, doc_key);
 
 	uint doc_field_count = 0;
@@ -78,7 +78,7 @@ void Index_RemoveEdge
 		.dest_id = Edge_GetDestNodeID(e),
 		.edge_id = ENTITY_GET_ID(e),
 	};
-	char doc_key[EDGE_DOC_KEY_BUF_SIZE];
+	unsigned char doc_key[EDGE_DOC_KEY_BUF_SIZE];
 	IndexDocKey_EncodeEdge(&key, doc_key);
 	RediSearch_DeleteDocument(rsIdx, doc_key, EDGE_DOC_KEY_LEN);
 

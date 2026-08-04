@@ -219,7 +219,7 @@ static Record EdgeIndexScanConsumeFromChild
 ) {
 	OpEdgeIndexScan	*op = (OpEdgeIndexScan*) opBase ;
 	RSIndex *rsIdx = op->rsIdx ;
-	const char *doc_key = NULL ;
+	const unsigned char *doc_key = NULL ;
 	size_t     len      = 0 ;
 
 pull_index:
@@ -355,7 +355,7 @@ static Record EdgeIndexScanConsume
 		op->iter = RediSearch_GetResultsIterator(rs_query_node, rsIdx);
 	}
 
-	const char *doc_key = NULL;
+	const unsigned char *doc_key = NULL;
 	size_t len = 0;
 
 	// populate the Record with the actual edge

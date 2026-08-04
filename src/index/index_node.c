@@ -28,7 +28,7 @@ void Index_IndexNode
 	RSIndex *rsIdx = Index_AcquireRSIndex(idx);
 	if(rsIdx == NULL) return;
 
-	char     doc_key[NODE_DOC_KEY_BUF_SIZE];
+	unsigned char     doc_key[NODE_DOC_KEY_BUF_SIZE];
 	RSDoc    *doc            = NULL;
 	uint     doc_field_count = 0;
 
@@ -67,7 +67,7 @@ void Index_RemoveNode
 	RSIndex *rsIdx = Index_AcquireRSIndex(idx);
 	if(rsIdx == NULL) return;
 
-	char doc_key[NODE_DOC_KEY_BUF_SIZE];
+	unsigned char doc_key[NODE_DOC_KEY_BUF_SIZE];
 	IndexDocKey_EncodeNode(ENTITY_GET_ID(n), doc_key);
 	RediSearch_DeleteDocument(rsIdx, doc_key, NODE_DOC_KEY_LEN);
 

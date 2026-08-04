@@ -23,7 +23,7 @@ static inline uint8_t _hex_value(uint8_t c) {
 	return 0xFF;
 }
 
-static inline void _encode(const uint8_t *src, size_t src_len, char *out) {
+static inline void _encode(const uint8_t *src, size_t src_len, unsigned char *out) {
 	for(size_t i = 0; i < src_len; i++) {
 		out[i * 2]     = _hex_digits[(src[i] >> 4) & 0xf];
 		out[i * 2 + 1] = _hex_digits[src[i] & 0xf];
@@ -31,7 +31,7 @@ static inline void _encode(const uint8_t *src, size_t src_len, char *out) {
 	out[src_len * 2] = '\0';
 }
 
-static inline bool _decode(const char *in, uint8_t *out, size_t out_len) {
+static inline bool _decode(const unsigned char *in, uint8_t *out, size_t out_len) {
 	for(size_t i = 0; i < out_len; i++) {
 		uint8_t hi = _hex_value((uint8_t)in[i * 2]);
 		uint8_t lo = _hex_value((uint8_t)in[i * 2 + 1]);
@@ -50,14 +50,14 @@ static inline bool _decode(const char *in, uint8_t *out, size_t out_len) {
 void IndexDocKey_EncodeNode
 (
 	EntityID id,
-	char out[NODE_DOC_KEY_BUF_SIZE]
+	unsigned char out[NODE_DOC_KEY_BUF_SIZE]
 ) {
 	_encode((const uint8_t *)&id, sizeof(EntityID), out);
 }
 
 bool IndexDocKey_DecodeNode
 (
-	const char *in,
+	const unsigned char *in,
 	size_t in_len,
 	EntityID *out
 ) {
@@ -73,7 +73,7 @@ bool IndexDocKey_DecodeNode
 void IndexDocKey_EncodeEdge
 (
 	const EdgeIndexKey *key,
-	char out[EDGE_DOC_KEY_BUF_SIZE]
+	unsigned char out[EDGE_DOC_KEY_BUF_SIZE]
 ) {
 	ASSERT(key != NULL);
 	_encode((const uint8_t *)key, sizeof(EdgeIndexKey), out);
@@ -81,7 +81,7 @@ void IndexDocKey_EncodeEdge
 
 bool IndexDocKey_DecodeEdge
 (
-	const char *in,
+	const unsigned char *in,
 	size_t in_len,
 	EdgeIndexKey *out
 ) {

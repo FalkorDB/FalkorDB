@@ -127,7 +127,7 @@ SIValue *Proc_FulltextQueryNodeStep
 	// try to get a result out of the iterator
 	// NULL is returned if iterator id depleted
 	size_t len = 0;
-	const char *doc_key = (const char *)RediSearch_ResultsIteratorNext(pdata->iter,
+	const unsigned char *doc_key = (const unsigned char *)RediSearch_ResultsIteratorNext(pdata->iter,
 			pdata->rsIdx, &len);
 
 	// depleted
