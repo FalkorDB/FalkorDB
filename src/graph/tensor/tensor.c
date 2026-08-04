@@ -21,7 +21,7 @@
 
 // free vector entries of a tensor
 JIT_STR (
-static void _free_vectors
+void _free_vectors
 (
 	void *z,           // [ignored] new value
 	const uint64_t *x  // current entry
@@ -36,7 +36,7 @@ static void _free_vectors
 
 // locate tensors within a matrix
 JIT_STR(
-static void locate_tensors
+void locate_tensors
 (
     bool *z,            // output value z, of type ztype
     const uint64_t *x,  // input value x of type xtype; value of v(i) or A(i,j)
