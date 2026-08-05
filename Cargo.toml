@@ -49,7 +49,7 @@ lto = true
 
 # Release performance (LTO on, so it mirrors the shipped build) plus full
 # DWARF debuginfo so `perf --call-graph dwarf` can unwind + symbolize (incl.
-# inlined frames) for flame graphs. Not stripped. Used by profile.sh.
+# inlined frames) for flame graphs. Not stripped. Used by `bench profile`.
 [profile.profiling]
 inherits = "release"
 debug = true

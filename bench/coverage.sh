@@ -25,9 +25,13 @@ fi
 echo "== instrumented debug build =="
 RUSTFLAGS="$COV_RUSTFLAGS" cargo build
 
+# `bench measure --once` runs every query (and every expected-error query) a
+# single time and exits non-zero if any of them stops working, so this doubles as
+# validation of the query set. Note it is a *validator*, not a coverage gate:
+# nothing below enforces a minimum percentage.
 echo "== running query set once each =="
 LLVM_PROFILE_FILE="$PWD/$COVDIR/cov-%p.profraw" \
-  python3 bench/run_bench.py --once --port 6401 \
+  uv run --project bench --frozen bench measure --once --port 6401 \
   --module "$PWD/target/debug/libfalkordb.$EXT"
 
 TOOLS=$(dirname "$(find ~/.rustup/toolchains -name llvm-profdata | head -1)")

@@ -1,0 +1,5 @@
+query,instr
+RETURN 1,90512
+arithmetic,1465420
+reduce,4788178
+two-hop,3492183

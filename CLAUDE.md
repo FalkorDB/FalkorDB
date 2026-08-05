@@ -10,9 +10,17 @@ FalkorDB-rs is a Rust implementation of FalkorDB, a graph database that runs as 
 
 The C implementation is the reference. It lives on the `master` branch of this
 same repository; the easiest way to get a loadable C module is the published
-image `docker.io/falkordb/falkordb-server:edge`, whose module sits at
-`/var/lib/falkordb/bin/falkordb.so` (that is what `benchmark-cov.yml` measures
-against). A local `master` build puts one under `bin/`.
+image `docker.io/falkordb/falkordb-server:edge-c`, whose module sits at
+`/var/lib/falkordb/bin/falkordb.so`. Note the tag: **`:edge-c`, not `:edge`** —
+`:edge` now resolves to the Rust engine and shares a digest with `:edge-rs`, so
+anything pointed at `:edge` expecting C is silently measuring Rust.
+
+Extracting the `.so` from that image is the deliberate default rather than a
+shortcut: `benchmark-cov.yml` compiles no engine at all, and measures published
+images for all three sides (PR, base, C) so that what is measured is what was
+shipped. A local `master` build is the alternative and puts a module under
+`bin/` — use it when you need a C module on macOS, where the published image is
+Linux-only.
 
 Success criterion for performance work: p99 latency of all benchmark queries must be the same or better than C, and memory usage must match C with no per-entity overhead. Always benchmark against the C module and report real numbers.
 
