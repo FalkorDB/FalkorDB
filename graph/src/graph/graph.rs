@@ -3330,64 +3330,61 @@ impl Graph {
         self.falkordb_index.building_columns()
     }
 
-    /// Read the `(value, doc)` entries for one building column from *this snapshot* — the base the
-    /// background job builds off-thread, then installs in batch-size chunks.
+    /// Build BASE for one building column from *this snapshot*, already encoded — everything the
+    /// install needs, computed off the write thread. Shared-borrow only and lock-free: the snapshot
+    /// is immutable, so writes committing after it are invisible to the scan by construction and
+    /// there is no scan-vs-write race to reason about.
+    ///
+    /// `None` if the column no longer exists (dropped mid-build).
     #[cfg(feature = "index-falkordb")]
     #[must_use]
-    pub fn collect_index_entries(
+    pub fn collect_index_base_encoded(
         &self,
         entity: EntityType,
         label: &Arc<String>,
         attr: &Arc<String>,
-    ) -> Vec<(Value, u64)> {
-        match entity {
+    ) -> Option<Vec<(u64, u64)>> {
+        let entries = match entity {
             EntityType::Node => self.collect_node_index_entries(label, attr),
             EntityType::Relationship => self.collect_edge_index_entries(label, attr),
-        }
+        };
+        self.falkordb_index
+            .encode_for_column(entity, label, attr, entries)
     }
 
-    /// Install one batch-size chunk of the background-built base (dropping ids already written since
-    /// `CREATE INDEX`). Called by the controller under the write serialization via `commit_index_build`.
+    /// Install a background-built BASE and flip the column to `Ready` — **one commit**.
+    /// Returns whether it installed; `false` means the column is gone, already `Ready`, or on a
+    /// different epoch (dropped and re-created since the job started), and the caller should not
+    /// commit.
+    ///
+    /// `base` arrives already encoded, from [`collect_index_base_encoded`](Self::collect_index_base_encoded)
+    /// running off the write thread — the commit pays only the tree build and the TOMB/DELTA merge.
+    ///
+    /// The `deleted_*` filter here is a cheap backstop, not the real defence: those bitmaps are a
+    /// free list and are cleared when an id is reused, so an id recycled during the build is no
+    /// longer marked. TOMB is what actually makes the stale BASE safe; this just drops the easy
+    /// cases before the tree build.
     #[cfg(feature = "index-falkordb")]
-    pub fn install_index_base_chunk(
+    pub fn install_index_base(
         &mut self,
         entity: EntityType,
         label: &Arc<String>,
         attr: &Arc<String>,
         epoch: u64,
-        chunk: Vec<(Value, u64)>,
-    ) {
-        // Authoritative delete backstop (O(1)/entry): drop base entries for entities deleted since
-        // the snapshot, via the graph's correctly-versioned `deleted_nodes`/`deleted_relationships`
-        // bitmaps (the writer's fork sees every committed delete). `install_base_chunk` then drops the
-        // per-column `dirty` ids (updated/created since create — the live delta holds their current
-        // state). Both are cheap bitmap checks, so the write-guarded window stays short — no re-scan,
-        // no GraphBLAS extract, no attribute reads.
-        let survivors: Vec<(Value, u64)> = match entity {
-            EntityType::Node => chunk
+        base: Vec<(u64, u64)>,
+    ) -> bool {
+        let survivors: Vec<(u64, u64)> = match entity {
+            EntityType::Node => base
                 .into_iter()
                 .filter(|(_, id)| !self.is_node_deleted(NodeId(*id)))
                 .collect(),
-            EntityType::Relationship => chunk
+            EntityType::Relationship => base
                 .into_iter()
                 .filter(|(_, id)| !self.is_relationship_deleted(RelationshipId(*id)))
                 .collect(),
         };
         self.falkordb_index
-            .install_base_chunk(entity, label, attr, epoch, survivors);
-    }
-
-    /// Flip a building column to `Ready` after its last chunk installs (only if `epoch` still matches
-    /// — a drop + re-create since the build started makes this a no-op; the fresh column is built anew).
-    #[cfg(feature = "index-falkordb")]
-    pub fn finish_index_build(
-        &mut self,
-        entity: EntityType,
-        label: &Arc<String>,
-        attr: &Arc<String>,
-        epoch: u64,
-    ) {
-        self.falkordb_index.finish_build(entity, label, attr, epoch);
+            .install_base(entity, label, attr, epoch, survivors)
     }
 
     /// Stage `(value, edge_id)` into the index column `(type, attr)` for the edge `id`'s single type,
@@ -4819,7 +4816,9 @@ mod falkordb_index_mvcc_tests {
         let epoch = g
             .falkordb_index_mut()
             .create_building(EntityType::Node, &label, &attr);
-        let base = g.collect_index_entries(EntityType::Node, &label, &attr);
+        let base = g
+            .collect_index_base_encoded(EntityType::Node, &label, &attr)
+            .expect("column exists");
         assert_eq!(base.len(), 6);
 
         // Writes that land DURING the build (before the base installs): delete id1(20) & id3(40),
@@ -4830,9 +4829,9 @@ mod falkordb_index_mvcc_tests {
         g.delete_nodes(&del, &mut FxHashMap::default()).unwrap();
         set_attr(&mut g, ids[4], &attr, Value::Int(55));
 
-        // Install the (now-stale) base, then finish. Validate-at-install drops the dead entries.
-        g.install_index_base_chunk(EntityType::Node, &label, &attr, epoch, base);
-        g.finish_index_build(EntityType::Node, &label, &attr, epoch);
+        // One install commit. TOMB (the removes staged by the hooks above) is subtracted from the
+        // stale base before DELTA is replayed, so the dead entries never reach the column.
+        assert!(g.install_index_base(EntityType::Node, &label, &attr, epoch, base));
 
         // Survivors, value-ordered: id0(10), id2(30), id4(55), id5(60).
         let all: Vec<u64> = g
@@ -4891,7 +4890,9 @@ mod falkordb_index_mvcc_tests {
         let epoch = g
             .falkordb_index_mut()
             .create_building(EntityType::Relationship, &ty, &attr);
-        let base = g.collect_index_entries(EntityType::Relationship, &ty, &attr);
+        let base = g
+            .collect_index_base_encoded(EntityType::Relationship, &ty, &attr)
+            .expect("column exists");
         assert_eq!(base.len(), 6);
 
         // Writes that land DURING the build (before the base installs): delete id1(20) & id3(40),
@@ -4908,8 +4909,7 @@ mod falkordb_index_mvcc_tests {
             .unwrap();
 
         // Install the (now-stale) base, then finish. Reconciliation drops the dead/updated entries.
-        g.install_index_base_chunk(EntityType::Relationship, &ty, &attr, epoch, base);
-        g.finish_index_build(EntityType::Relationship, &ty, &attr, epoch);
+        assert!(g.install_index_base(EntityType::Relationship, &ty, &attr, epoch, base));
 
         // Survivors, value-ordered: id0(10), id2(30), id4(55), id5(60).
         let all: Vec<u64> = g
