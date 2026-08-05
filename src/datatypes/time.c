@@ -231,10 +231,17 @@ void Time_toString
 		*buf = rm_realloc(*buf, sizeof(char) * *bufferLen);
 	}
 
-	// get a tm object from time_t
+	// get a tm object from time_t.
+	// gmtime_r outside assert(): assert() is a no-op under NDEBUG (Release),
+	// which would drop the call and leave `t` uninitialized.
 	struct tm t;
 	time_t rawtime = time->datetimeval;
-	assert(gmtime_r(&rawtime, &t) != NULL);
+	if (gmtime_r(&rawtime, &t) == NULL) {
+		// unrepresentable year (see date.c): catch in debug, empty in release.
+		ASSERT(false);
+		(*buf)[*bytesWritten] = '\0';
+		return;
+	}
 
 	// format the time up to seconds: 06:08:21
 	*bytesWritten += strftime(*buf + *bytesWritten, *bufferLen, "%H:%M:%S", &t);
