@@ -1,6 +1,17 @@
-//! The native FalkorDB index (the in-repo replacement for RediSearch).
+//! The FalkorDB index (the in-repo replacement for RediSearch).
 //!
-//! Currently this holds only the standalone [`data_structures`]; the index trait, encoders, and
-//! runtime wiring land in subsequent changes.
+//! [`data_structures`] is the always-compiled substrate (the CoW B⁺-tree). The
+//! index proper — the numeric key [`encode`]r, the tree-backed index, and its
+//! runtime wiring — lives behind the `index-falkordb` feature and lands across
+//! PR2.
 
 pub mod data_structures;
+
+#[cfg(feature = "index-falkordb")]
+pub mod encode;
+
+#[cfg(feature = "index-falkordb")]
+pub mod falkordb_index;
+
+#[cfg(feature = "index-falkordb")]
+pub mod numeric;
