@@ -21,7 +21,9 @@ prejit_harvest = []
 # Native FalkorDB numeric index (the in-repo replacement for RediSearch). Gates
 # `index::falkordb` — the encoder, the cow_btree-backed index, and its runtime
 # wiring. Off by default: the shipped build is byte-for-byte unchanged until this
-# is switched on. No RediSearch fallback lives under this flag.
+# is switched on. The native index does not yet replace RediSearch: a numeric
+# Equal/Range predicate is served natively and everything else — strings, geo,
+# composite predicates, missing columns — still falls through to RediSearch.
 index-falkordb = []
 
 
