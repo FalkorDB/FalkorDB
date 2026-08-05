@@ -61,7 +61,6 @@ from __future__ import annotations
 
 import glob
 import math
-import os
 import shutil
 import subprocess
 import time
@@ -389,13 +388,3 @@ def resolve_module(module: str | None, bare: bool) -> Path | None:
     return path
 
 
-def env_thread_pinning() -> dict[str, str]:
-    """OMP_NUM_THREADS=1, the environment half of the thread pinning.
-
-    Thread count is what makes these counts reproducible or not: the C engine
-    otherwise sizes its pool to the host and sets OpenMP to match, and valgrind
-    schedules threads nondeterministically — the same C module measured twice
-    disagreed by up to 10x on one query before this was pinned. The other half
-    is `--module-args THREAD_COUNT 1`.
-    """
-    return {**os.environ, "OMP_NUM_THREADS": "1"}

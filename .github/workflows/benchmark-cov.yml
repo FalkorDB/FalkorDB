@@ -92,10 +92,10 @@ env:
   TOOLCHAIN: ghcr.io/falkordb/falkordb-build:latest
   MODULE_PATH: /var/lib/falkordb/bin/falkordb.so
   # The callgrind subset is spread over this many parallel jobs per engine.
-  # Defined ONCE: preflight turns it into both the matrix and the `--shard I/N`
-  # denominator, so the two cannot disagree. They used to, as a literal `/6`
-  # beside a six-element matrix — change the matrix alone and a fraction of the
-  # subset silently goes unmeasured.
+  # Defined ONCE, and preflight expands it into BOTH the matrix and the
+  # `--shard I/N` denominator — that shared origin is what prevents them
+  # disagreeing. Previously a literal `/6` sat beside a six-element matrix, so
+  # editing the matrix alone left a fraction of the subset unmeasured.
   SHARD_COUNT: 6
 
 jobs:
@@ -230,7 +230,7 @@ jobs:
           echo "c_digest=$C_DIGEST" >> "$GITHUB_OUTPUT"
 
       # One image, built once, reused by all 15 measurement jobs. Tagged by
-      # content — the C image's digest plus the harness lockfile and Dockerfile —
+      # content — the C image's digest plus every file the build reads —
       # so a PR that changes dependencies gets its own image and cannot measure
       # with a stale dependency set, and a republished `edge-c` rebuilds
       # automatically. Almost every run is a cache hit and just resolves the tag.
@@ -240,7 +240,8 @@ jobs:
           C_DIGEST: ${{ steps.images.outputs.c_digest }}
         run: |
           set -euo pipefail
-          key=$( { printf '%s' "$C_DIGEST"; cat bench/uv.lock bench/Dockerfile; } \
+          key=$( { printf '%s' "$C_DIGEST"; \
+                   cat bench/pyproject.toml bench/uv.lock bench/Dockerfile; } \
                  | sha256sum | cut -c1-16 )
           image="ghcr.io/falkordb/falkordb-bench:$key"
           echo "bench_image=$image" >> "$GITHUB_OUTPUT"
@@ -396,17 +397,23 @@ jobs:
           SIDE: ${{ matrix.side }}
         run: |
           set -euo pipefail
-          # THREAD_COUNT 1 plus the image's OMP_NUM_THREADS=1: thread count is what
+          # THREAD_COUNT 1 plus OMP_NUM_THREADS=1: thread count is what
           # makes these counts reproducible or not. The engine otherwise sizes its
           # pool to the host and sets OpenMP to match, and valgrind schedules
           # threads nondeterministically — the same module measured twice
           # disagreed by up to 10x on one query before this was pinned.
           #
-          # --job-total makes the harness reject a shard denominator that does not
-          # match the matrix, rather than quietly measuring a fraction of the set.
-          docker run --rm -v "$PWD:/w" -w /w "$BENCH_IMAGE" \
+          # No --job-total here: it would compare $SHARD_TOTAL against itself. The
+          # matrix and this denominator both derive from preflight's single
+          # shard_count output, which is what actually prevents them disagreeing;
+          # the flag exists for humans sharding by hand against a known matrix.
+          # OMP_NUM_THREADS is set here rather than in the image: it is half of
+          # the callgrind pinning, and the `measure` job must NOT inherit it (that
+          # job pins no THREAD_COUNT, so it would measure with a host-sized engine
+          # pool against single-threaded OpenMP).
+          docker run --rm -e OMP_NUM_THREADS=1 -v "$PWD:/w" -w /w "$BENCH_IMAGE" \
             bench callgrind --module /w/module.so \
-              --shard "$SHARD/$SHARD_TOTAL" --job-total "$SHARD_TOTAL" \
+              --shard "$SHARD/$SHARD_TOTAL" \
               --module-args THREAD_COUNT --module-args 1 \
               --out "/w/cg-$SIDE-$SHARD.csv"
 
@@ -441,10 +448,11 @@ jobs:
       - name: Fetch uv for the toolchain image
         run: |
           set -euo pipefail
-          cid=$(docker create ghcr.io/astral-sh/uv:latest)
-          docker cp "$cid:/uv" ./uv
+          mkdir -p .bin
+          cid=$(docker create ghcr.io/astral-sh/uv:0.9.29)
+          docker cp "$cid:/uv" .bin/uv
           docker rm -f "$cid" >/dev/null
-          chmod +x ./uv
+          chmod +x .bin/uv
 
       - name: Instrumented build + run the query set once
         run: |
@@ -454,7 +462,9 @@ jobs:
           # cargo to run".
           docker run --rm -e CXX=clang++ -v "$PWD:/w" -w /w "$TOOLCHAIN" bash -c '
             set -e
-            export PATH="/w:$PATH"
+            # /w/.bin, not /w: prepending the checkout root would put every
+            # root-level script ahead of /usr/bin for cargo and all its children.
+            export PATH="/w/.bin:$PATH"
             rustup default stable >/dev/null
             rustup component add llvm-tools-preview >/dev/null
             bash bench/coverage.sh
@@ -556,6 +566,13 @@ jobs:
           BENCH_IMAGE: ${{ needs.preflight.outputs.bench_image }}
         run: |
           set -euo pipefail
+          # Distinguish "the render itself blew up" from "a required side was
+          # missing". Both make the run fail, but conflating them told the operator
+          # a side was missing when the real cause was a crash in the reporter.
+          if [ "${{ steps.build.outputs.render_rc }}" != "0" ]; then
+            echo "::error::building the comment failed (exit ${{ steps.build.outputs.render_rc }}) — this is a reporter or artifact-download failure, not a missing measurement. See this job's log."
+            exit 1
+          fi
           rc=0
           docker run --rm -v "$PWD:/w" -w /w "$BENCH_IMAGE" \
             bench report --strict \

@@ -20,10 +20,11 @@
 # it and `:edge-rs` share a digest — so anything relying on `:edge` being the C
 # engine is silently measuring Rust against Rust.
 #
-# That is also why redis-tools is installed explicitly instead of relied upon.
-# The harness needs `redis-benchmark`, which the C image happened to ship and the
-# Rust images do not; "happened to ship" is what made the tag change invisible.
-# apt is a no-op when the base already has it, and correct when it does not.
+# The harness needs `redis-benchmark`, which the C image ships and the Rust images
+# do not — and "happens to ship" is what made the tag change invisible. So the
+# requirement is asserted at build time (below) rather than assumed, and rather
+# than papered over by installing Debian's redis-tools, which would leave two
+# different redis-benchmark builds in the image resolved only by PATH order.
 ARG C_IMAGE=docker.io/falkordb/falkordb-server:edge-c
 FROM ${C_IMAGE}
 
@@ -35,13 +36,28 @@ RUN rm -f /etc/apt/apt.conf.d/70debconf \
  && apt-get update -qq \
  && apt-get install -y -qq --no-install-recommends \
       valgrind \
-      redis-tools \
       ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
+# Assert the redis tooling is present instead of installing Debian's.
+#
+# The base image's redis 8.6.3 lives in /usr/local/bin and is NOT a dpkg package,
+# so `apt-get install redis-tools` does not no-op as first assumed — it installs
+# Debian's build into /usr/bin, leaving two redis-benchmark versions in the image.
+# PATH order means /usr/local/bin still wins today, so the measurement was
+# unaffected; but "which redis-benchmark is the load generator" should not rest on
+# PATH order. Failing the build if the base ever stops shipping them is the
+# explicitness that was wanted, without the shadowing.
+RUN for t in redis-server redis-cli redis-benchmark; do \
+      command -v "$t" >/dev/null || { echo "FATAL: $t missing from base image" >&2; exit 1; }; \
+    done \
+ && redis-benchmark --version
+
 # uv brings its own pinned interpreter, so there is no `apt-get install python3`
-# and no PEP 668 externally-managed-environment refusal to work around.
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+# and no PEP 668 externally-managed-environment refusal to work around. Pinned,
+# not :latest — the image tag is part of the content hash's inputs, so a floating
+# uv would let two rebuilds of the same key differ.
+COPY --from=ghcr.io/astral-sh/uv:0.9.29 /uv /uvx /usr/local/bin/
 
 # Only the dependency set is baked, from the lockfile, so a measurement job does
 # no network I/O at all. `--no-install-project` is the important flag: the
@@ -69,10 +85,15 @@ RUN printf '%s\n' \
 # have to know.
 ENTRYPOINT []
 
-# THREAD_COUNT is pinned per-invocation via --module-args; OMP_NUM_THREADS is the
-# environment half of the same pinning, and it belongs to every job in here
-# because thread count is what makes callgrind counts reproducible or not.
-ENV PYTHONPATH=/w/bench/src \
-    OMP_NUM_THREADS=1
+# OMP_NUM_THREADS is deliberately NOT set here.
+#
+# It belongs to callgrind only, and the callgrind step passes it per-invocation
+# alongside `--module-args THREAD_COUNT 1` — the two halves of the same pinning.
+# Setting it image-wide looked tidier but changed what the `measure` job
+# measures: that job passes no THREAD_COUNT, so it would have run with the engine
+# pool sized to the host while OpenMP was pinned to one thread — a configuration
+# matching neither production nor a local `bench measure`, and the one that
+# carries the vs-C allocation table.
+ENV PYTHONPATH=/w/bench/src
 
 WORKDIR /w
