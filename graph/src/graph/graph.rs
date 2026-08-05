@@ -1431,10 +1431,42 @@ impl Graph {
 
     /// Import pre-resolved node attributes directly into the cache.
     /// Used by bulk insert to avoid per-node OrderMap allocations.
+    ///
+    /// Marks the imported nodes for (re)indexing, as
+    /// [`import_node_attrs`](Self::import_node_attrs) does. `label_ids` is the label set the
+    /// caller is applying to every node in `data` — a bulk token carries one label set for
+    /// all its rows, so it is passed once instead of looked up per node.
+    ///
+    /// Keeping the tracking here rather than at the call site matters: the alternative is an
+    /// unwritten rule that attributes must be imported before labels are set, and the natural
+    /// order (the one [`Pending::commit`] uses) is the opposite, so a future refactor would
+    /// silently stop indexing bulk-loaded rows.
+    ///
+    /// Tracking runs **before** the import because `import_attrs_resolved` drains `data`.
     pub fn import_node_attrs_resolved(
         &mut self,
         data: &mut Vec<(u64, Vec<(u16, Value)>)>,
+        label_ids: &[LabelId],
+        index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) -> usize {
+        if self.node_indexer.has_indices() {
+            for (id, attrs) in data.iter() {
+                for label_id in label_ids {
+                    let label = &self.node_labels[label_id.0];
+                    for (attr_id, _) in attrs {
+                        let Some(key) = self.node_attrs.attrs_name.get(*attr_id as usize) else {
+                            continue;
+                        };
+                        if self.node_indexer.has_indexed_attr(label, key) {
+                            index_add_docs
+                                .entry(label_id.0 as u64)
+                                .or_default()
+                                .insert(*id);
+                        }
+                    }
+                }
+            }
+        }
         self.node_attrs.import_attrs_resolved(data)
     }
 
@@ -1492,10 +1524,22 @@ impl Graph {
     }
 
     /// Import pre-resolved relationship attributes directly into the cache.
+    ///
+    /// Marks the imported edges for (re)indexing, exactly as
+    /// [`import_relationship_attrs`](Self::import_relationship_attrs) does; the caller
+    /// publishes them with [`commit_edge_index`](Self::commit_edge_index). Tracking runs
+    /// **before** the import because `import_attrs_resolved` drains `data`.
     pub fn import_relationship_attrs_resolved(
         &mut self,
         data: &mut Vec<(u64, Vec<(u16, Value)>)>,
+        type_id: TypeId,
+        index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) -> usize {
+        self.track_edge_index_updates_of_type(
+            type_id,
+            data.iter().map(|(id, attrs)| (id, attrs)),
+            index_add_edge_docs,
+        );
         self.relationship_attrs.import_attrs_resolved(data)
     }
 
@@ -1520,9 +1564,41 @@ impl Graph {
     /// Mark every `(type_id, edge_id)` whose changed attributes are
     /// indexed so the next `commit_edge_index` pass rebuilds their
     /// documents. Shared by the import and set paths.
-    fn track_edge_index_updates(
+    /// As [`track_edge_index_updates`](Self::track_edge_index_updates), for a caller that
+    /// already knows the type every edge in `attrs` carries — a bulk token has exactly one.
+    ///
+    /// `get_relationship_type_id` iterates `relationship_type_matrix`, and `iter` waits on the
+    /// matrix, forcing a pending-delta merge. Doing that once per edge right after
+    /// `create_relationships_bulk` enqueued a large delta is the per-entity overhead the bulk
+    /// path exists to avoid, so the type is resolved once by the caller instead.
+    fn track_edge_index_updates_of_type<'a>(
         &self,
-        attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
+        type_id: TypeId,
+        attrs: impl IntoIterator<Item = (&'a u64, &'a Vec<(u16, Value)>)>,
+        index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
+    ) {
+        if !self.edge_indexer.has_indices() {
+            return;
+        }
+        let type_name = &self.relationship_types[type_id.0];
+        for (id, attrs) in attrs {
+            for (attr_id, _) in attrs {
+                let Some(key) = self.relationship_attrs.attrs_name.get(*attr_id as usize) else {
+                    continue;
+                };
+                if self.edge_indexer.has_indexed_attr(type_name, key) {
+                    index_add_edge_docs
+                        .entry(type_id.0 as u64)
+                        .or_default()
+                        .insert(*id);
+                }
+            }
+        }
+    }
+
+    fn track_edge_index_updates<'a>(
+        &self,
+        attrs: impl IntoIterator<Item = (&'a u64, &'a Vec<(u16, Value)>)>,
         index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) {
         if !self.edge_indexer.has_indices() {
