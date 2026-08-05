@@ -1,89 +1,98 @@
-"""The CSV format is a wire format, so it gets a golden test.
+"""The CSV layout is a wire format, so it is asserted rather than assumed.
 
-CI artifacts, local baselines and the reporter's globs all read these files, and
-the pre-refactor harness is what produced the ones already in flight. The header,
-the column order, and — critically — the empty-cell-means-absent convention must
-not drift.
+CI artifacts, local baselines and the reporter's globs all read these files, so
+the column order and the empty-cell-means-absent convention cannot drift.
 
-`LEGACY_MEASURE` below is **verbatim output from the pre-refactor
-`bench/run_bench.py`**, captured on an M3 Pro (hence populated instr/cycles and
-empty allocation columns: Homebrew redis links libc malloc, not jemalloc). It is
-inlined rather than kept as a fixture file so the bytes under test sit next to
-the assertion about them.
+Each property is stated directly. An earlier version of this file pasted in a
+captured CSV from the pre-refactor harness and round-tripped it, which sounded
+like stronger evidence than it was: those bytes only exercised the same code
+paths the one-row cases below do, and the header assertion merely checked that
+the paste matched `CSV_FIELDS`.
 """
 
 from falkorbench import metrics
 from falkorbench.metrics import Row
 from falkorbench.model import CSV_FIELDS
 
-LEGACY_MEASURE = (
-    "query,instr,cycles,branches,br_miss,l1d_miss,alloc_bytes,dealloc_bytes,ms\n"
-    "RETURN 1,341338.41717068205,153989.93832491103,,,,,,0.34755706787109375\n"
-    "arithmetic,1759305.5396216155,366965.332761427,,,,,,0.09987616539001465\n"
-    "two-hop,16802398.42278204,2531877.3572816886,,,,,,0.6198580265045166\n"
-    "agg count,5132906.819137941,827752.041357211,,,,,,0.20900797843933105\n"
-    "shortestPath,491121.6225908206,173781.81119624345,,,,,,0.06075310707092285\n"
-    "CREATE + DELETE,14502555.943684824,2349116.585262806,,,,,,0.5756368637084961\n"
-    "algo.pageRank,17477716.059407204,3621296.187948728,,,,,,0.8758740425109863\n"
-    "write 100,22562801.277057037,3575944.67291875,,,,,,0.8788762092590332\n"
+# Spelled out, not derived. Deriving it from the code under test would assert
+# nothing; this fails if a column is renamed, reordered, added or dropped — the
+# change that silently breaks a stored baseline, or an artifact produced by the
+# other side of a comparison.
+WIRE_FORMAT = (
+    "query",
+    "instr",
+    "cycles",
+    "branches",
+    "br_miss",
+    "l1d_miss",
+    "alloc_bytes",
+    "dealloc_bytes",
+    "ms",
 )
 
-# The pre-refactor callgrind writer emitted whole integers via "%.0f" — the
-# reporter parses this with float(), but the artifact must keep the integer
-# spelling so a diff of two runs stays readable.
-LEGACY_CALLGRIND = "query,instr\nRETURN 1,90512\narithmetic,1465420\n"
+
+def test_column_order_is_the_wire_format():
+    assert CSV_FIELDS == WIRE_FORMAT
 
 
-def write(tmp_path, name, body):
-    p = tmp_path / name
-    p.write_text(body)
-    return str(p)
+def test_a_full_row_round_trips_byte_for_byte(tmp_path):
+    """Reading then writing must reproduce the input exactly.
 
-
-def test_header_matches_the_legacy_layout():
-    assert LEGACY_MEASURE.splitlines()[0] == ",".join(CSV_FIELDS)
-
-
-def test_legacy_output_round_trips_byte_for_byte(tmp_path):
-    """Read real pre-refactor output, write it back, get the same bytes.
-
-    The whole invariant in one assertion: same columns, same order, same empty
-    cells, same numeric formatting.
+    One row carrying every shape that appears in practice: a full-precision float
+    repr (these are raw measurements, so no rounding may creep in), a zero, and
+    the empty cells a host with no PMU or a libc-malloc redis produces.
     """
-    src = write(tmp_path, "legacy.csv", LEGACY_MEASURE)
-    rows = metrics.read_rows(src)
+    src = (
+        "query,instr,cycles,branches,br_miss,l1d_miss,alloc_bytes,dealloc_bytes,ms\n"
+        "RETURN 1,341338.41717068205,0.0,,,,65536.0,32768.0,0.34755706787109375\n"
+    )
+    path = tmp_path / "measure.csv"
+    path.write_text(src)
+
     out = tmp_path / "again.csv"
-    metrics.write_rows(str(out), rows.items(), CSV_FIELDS)
-    assert out.read_text() == LEGACY_MEASURE
+    metrics.write_rows(str(out), metrics.read_rows(str(path)).items(), CSV_FIELDS)
+    assert out.read_text() == src
 
 
-def test_callgrind_output_round_trips_byte_for_byte(tmp_path):
-    """Including the integer spelling — writing 90512.0 would be a format change
-    to an artifact other jobs consume."""
-    src = write(tmp_path, "cg.csv", LEGACY_CALLGRIND)
-    rows = metrics.read_rows(src)
-    # Same rounding the callgrind command applies before writing.
+def test_the_callgrind_form_keeps_its_integer_spelling(tmp_path):
+    """The callgrind jobs write only query,instr, as whole numbers. Emitting
+    90512.0 instead of 90512 would change an artifact the reporter parses and a
+    human diffs, even though float() reads both.
+    """
+    src = "query,instr\nRETURN 1,90512\narithmetic,1465420\n"
+    path = tmp_path / "cg.csv"
+    path.write_text(src)
+
+    rows = metrics.read_rows(str(path))
+    # The same rounding the callgrind command applies before writing.
     rounded = [(q, Row(instr=round(r["instr"]))) for q, r in rows.items()]
     out = tmp_path / "cg-again.csv"
     metrics.write_rows(str(out), rounded, ("query", "instr"))
-    assert out.read_text() == LEGACY_CALLGRIND
+    assert out.read_text() == src
 
 
-def test_absent_metrics_are_written_as_empty_not_zero(tmp_path):
-    """Writing 0 for an absent metric would make it read as a real measurement
-    and flag every comparison against it as an infinite change."""
+def test_absent_is_written_empty_not_zero(tmp_path):
+    """Writing 0 for an absent metric makes it read back as a real measurement,
+    and every comparison against it becomes an infinite change."""
     out = tmp_path / "a.csv"
     metrics.write_rows(str(out), [("q", Row(instr=None, ms=1.0))], ("query", "instr", "ms"))
     assert out.read_text().splitlines()[1] == "q,,1.0"
 
 
-def test_a_populated_metric_survives_the_round_trip(tmp_path):
-    out = tmp_path / "a.csv"
-    metrics.write_rows(str(out), [("q", Row(instr=123.5))], ("query", "instr"))
-    assert metrics.read_rows(str(out))["q"]["instr"] == 123.5
-
-
-def test_zero_survives_as_zero(tmp_path):
+def test_zero_is_written_and_read_as_zero(tmp_path):
+    """The other half of the same contract: zero is a legitimate measurement and
+    must stay distinguishable from absent."""
     out = tmp_path / "a.csv"
     metrics.write_rows(str(out), [("q", Row(instr=0.0))], ("query", "instr"))
+    assert out.read_text().splitlines()[1] == "q,0.0"
     assert metrics.read_rows(str(out))["q"]["instr"] == 0.0
+
+
+def test_a_column_missing_from_the_file_reads_as_absent(tmp_path):
+    """A CSV written by a harness lacking a column must not raise; that metric is
+    simply unavailable."""
+    out = tmp_path / "a.csv"
+    out.write_text("query,instr\nq,5\n")
+    row = metrics.read_rows(str(out))["q"]
+    assert row["instr"] == 5.0
+    assert row.get("alloc_bytes") is None
