@@ -485,6 +485,10 @@ unsafe extern "C" fn on_shutdown(
     // thread-safe context, which races with Redis tearing down server state
     // and produces a SIGSEGV under ASAN if left running.
     telemetry::shutdown_flusher_thread();
+    // Stop the index-build sweep before the pool: otherwise it keeps handing jobs to a pool that
+    // is dropping (and logging) each one, while GraphBLAS is torn down under it.
+    #[cfg(feature = "index-falkordb")]
+    crate::graph_core::stop_index_build_sweep();
     threadpool::shutdown();
     graph::graph::graphblas::matrix::shutdown();
     unsafe { RediSearch_CleanupModule() };
