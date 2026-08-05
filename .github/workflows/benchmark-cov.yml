@@ -429,6 +429,23 @@ jobs:
         with:
           persist-credentials: false
 
+      # coverage is the one job that cannot use the prebaked measurement image: it
+      # needs cargo and llvm-tools to build an instrumented module, which only the
+      # toolchain image has. But that image has no uv, and bench/coverage.sh drives
+      # the harness through `uv run` so it gets the locked dependency set rather
+      # than whatever the image's python3 happens to carry.
+      #
+      # Copied out of the official image rather than curl'd, for the same reason
+      # bench/Dockerfile does it that way: it needs no network inside the container
+      # and no assumption about which download tool the base image ships.
+      - name: Fetch uv for the toolchain image
+        run: |
+          set -euo pipefail
+          cid=$(docker create ghcr.io/astral-sh/uv:latest)
+          docker cp "$cid:/uv" ./uv
+          docker rm -f "$cid" >/dev/null
+          chmod +x ./uv
+
       - name: Instrumented build + run the query set once
         run: |
           set -euo pipefail
@@ -437,6 +454,7 @@ jobs:
           # cargo to run".
           docker run --rm -e CXX=clang++ -v "$PWD:/w" -w /w "$TOOLCHAIN" bash -c '
             set -e
+            export PATH="/w:$PATH"
             rustup default stable >/dev/null
             rustup component add llvm-tools-preview >/dev/null
             bash bench/coverage.sh
