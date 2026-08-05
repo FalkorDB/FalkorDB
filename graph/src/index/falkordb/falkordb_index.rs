@@ -12,6 +12,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use roaring::RoaringTreemap;
+
 use crate::entity_type::EntityType;
 use crate::index::IndexQuery;
 use crate::runtime::value::Value;
@@ -95,17 +97,60 @@ impl IndexColumn {
     }
 }
 
-/// One column's index.
+/// Build state of a column, for online (background) index build.
+///
+/// `CREATE INDEX` on existing data returns immediately with the column in
+/// [`Building`](Self::Building); a background job builds the pre-existing snapshot
+/// off-thread and the writer installs it in chunks, flipping to [`Ready`](Self::Ready).
+/// While `Building` the read path returns `None` (falls back to a scan). Live writes
+/// maintain the column normally (the "delta" for post-snapshot creates/updates).
+///
+/// **Reconciliation** (so a concurrently deleted/updated entity's stale snapshot entry
+/// never resurrects) is by cheap `O(1)` bitmap checks at install, not a re-scan:
+/// - `dirty` — ids written (created / updated / deleted) since `CREATE INDEX`, recorded
+///   by the write path. A base entry for a dirty id is skipped: the live delta already
+///   holds that entity's current state (or it's gone).
+/// - **plus** the graph's authoritative `deleted_nodes` / `deleted_relationships` bitmaps
+///   as the delete backstop ([`Graph::install_index_base_chunk`](crate::graph::Graph)) —
+///   correctly versioned core state, so deletes are dropped even if `dirty` ever missed one.
+#[derive(Clone)]
+pub enum ColumnState {
+    /// Base not yet fully installed — reads scan-fall-back. `dirty` = ids written since create.
+    ///
+    /// `epoch` is the build's identity: a monotonic token assigned at `create_building` and carried
+    /// by the background job. `install_base_chunk` / `finish_build` no-op unless the column's current
+    /// epoch matches the job's — so if the column is dropped and re-created mid-build, the stale job
+    /// installs nothing into the new column (which has a fresh epoch) and a new job builds it instead.
+    Building { dirty: RoaringTreemap, epoch: u64 },
+    /// Base installed (or the graph was empty at create) — the column serves reads.
+    Ready,
+}
+
+/// One column's index plus its build state.
 #[derive(Clone)]
 struct ColumnEntry {
     column: IndexColumn,
+    state: ColumnState,
 }
 
 impl ColumnEntry {
     /// A column that already holds all its data and serves reads immediately —
-    /// the synchronous populate path.
+    /// the synchronous populate / bulk-build path.
     fn ready(column: IndexColumn) -> Self {
-        Self { column }
+        Self {
+            column,
+            state: ColumnState::Ready,
+        }
+    }
+
+    /// Record the ids in `entries` as written-since-create, but only while `Building`.
+    fn note_dirty(
+        &mut self,
+        entries: &[(Value, u64)],
+    ) {
+        if let ColumnState::Building { dirty, .. } = &mut self.state {
+            dirty.extend(entries.iter().map(|(_, id)| *id));
+        }
     }
 }
 
@@ -125,6 +170,11 @@ impl ColumnEntry {
 pub struct FalkorDbIndex {
     node_columns: HashMap<IndexKey, ColumnEntry>,
     edge_columns: HashMap<IndexKey, ColumnEntry>,
+    /// Monotonic build-epoch source (see [`ColumnState::Building`]). Bumped by `create_building`,
+    /// which only runs under the serialized write path (forked from the latest committed version),
+    /// so it increases monotonically across the committed lineage — every online build gets a
+    /// process-unique id. `0` is never a live building epoch (the counter pre-increments).
+    next_build_epoch: u64,
 }
 
 impl FalkorDbIndex {
@@ -184,6 +234,33 @@ impl FalkorDbIndex {
         );
     }
 
+    /// Create an empty numeric column in the `Building` state — the online-build
+    /// path. Returns immediately; live writes maintain it (recording `touched`) and
+    /// reads fall back to a scan until [`install_base_chunk`](Self::install_base_chunk)
+    /// / [`finish_build`](Self::finish_build) install the pre-existing snapshot and
+    /// flip it to `Ready`. Returns the build **epoch** the background job must carry
+    /// (see [`ColumnState::Building`]); replaces any existing column with a fresh epoch.
+    pub fn create_building(
+        &mut self,
+        entity: EntityType,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+    ) -> u64 {
+        self.next_build_epoch += 1;
+        let epoch = self.next_build_epoch;
+        self.columns_mut(entity).insert(
+            (label.clone(), attr.clone()),
+            ColumnEntry {
+                column: IndexColumn::Numeric(NumericIndex::new()),
+                state: ColumnState::Building {
+                    dirty: RoaringTreemap::new(),
+                    epoch,
+                },
+            },
+        );
+        epoch
+    }
+
     /// Build (or rebuild) the numeric column for `(entity, label, attr)` from
     /// `entries` (any order) in the `Ready` state, replacing any existing one — the
     /// bulk populate path. `NumericIndex::from_entries` bottom-up-loads the sorted
@@ -215,7 +292,7 @@ impl FalkorDbIndex {
     }
 
     /// The numeric column for `(entity, label, attr)`, if one exists and is numeric.
-    /// Used by the
+    /// State-agnostic (inspects a `Building` or `Ready` column alike) — used by the
     /// populate path and tests, not the read path (which gates on state).
     #[must_use]
     pub fn numeric(
@@ -283,20 +360,96 @@ impl FalkorDbIndex {
         let columns = self.columns_mut(entity);
         for (key, entries) in removes {
             if let Some(entry) = columns.get_mut(&key) {
+                entry.note_dirty(&entries);
                 entry.column.remove_batch(entries);
             }
         }
         for (key, entries) in adds {
             if let Some(entry) = columns.get_mut(&key) {
+                entry.note_dirty(&entries);
                 entry.column.add_batch(entries);
             }
         }
     }
 
+    /// Add one chunk of the background-built base to a `Building` column, skipping any entry whose
+    /// id was written since `CREATE INDEX` (`dirty`) — that entity's current state is already in the
+    /// live delta (or it's deleted). The caller ([`Graph::install_index_base_chunk`](crate::graph::Graph))
+    /// has already applied the authoritative `deleted_nodes`/`deleted_relationships` backstop, so both
+    /// filters are cheap `O(1)`-per-entry bitmap checks. No-op if the column is missing or already
+    /// `Ready`; `finish_build` flips to `Ready` after the last chunk.
+    pub fn install_base_chunk(
+        &mut self,
+        entity: EntityType,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+        epoch: u64,
+        chunk: impl IntoIterator<Item = (Value, u64)>,
+    ) {
+        let Some(entry) = self
+            .columns_mut(entity)
+            .get_mut(&(label.clone(), attr.clone()))
+        else {
+            return;
+        };
+        // No-op unless this is still the same build: a mismatched epoch means the column was dropped
+        // and re-created since the job started, so this chunk is stale (the fresh column is built by
+        // a new job). A `Ready` column also falls through here.
+        let ColumnState::Building { dirty, epoch: e } = &entry.state else {
+            return;
+        };
+        if *e != epoch {
+            return;
+        }
+        let survivors: Vec<(Value, u64)> = chunk
+            .into_iter()
+            .filter(|(_, id)| !dirty.contains(*id))
+            .collect();
+        entry.column.add_batch(survivors);
+    }
+
+    /// Flip a `Building` column to `Ready` (base fully installed) — but only if `epoch` still matches
+    /// (the same drop/re-create guard as [`install_base_chunk`](Self::install_base_chunk)), so a stale
+    /// job can never publish a freshly re-created column. After this, the read path serves the column.
+    pub fn finish_build(
+        &mut self,
+        entity: EntityType,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+        epoch: u64,
+    ) {
+        if let Some(entry) = self
+            .columns_mut(entity)
+            .get_mut(&(label.clone(), attr.clone()))
+            && matches!(&entry.state, ColumnState::Building { epoch: e, .. } if *e == epoch)
+        {
+            entry.state = ColumnState::Ready;
+        }
+    }
+
+    /// Every `(entity, label, attr, epoch)` column currently in the `Building` state —
+    /// the work list the background-build controller spawns jobs for. The epoch identifies
+    /// the build so a stale job can't publish a re-created column.
+    #[must_use]
+    pub fn building_columns(&self) -> Vec<(EntityType, Arc<String>, Arc<String>, u64)> {
+        let mut out = Vec::new();
+        for (entity, columns) in [
+            (EntityType::Node, &self.node_columns),
+            (EntityType::Relationship, &self.edge_columns),
+        ] {
+            for ((label, attr), entry) in columns {
+                if let ColumnState::Building { epoch, .. } = &entry.state {
+                    out.push((entity, label.clone(), attr.clone(), *epoch));
+                }
+            }
+        }
+        out
+    }
+
     /// Answer an index query for `(entity, label)` from the numeric column — but ONLY a **numeric**
-    /// `Equal`/`Range` leaf. A Range index also holds strings and geo (served by
-    /// RediSearch), so a non-numeric or composite predicate returns `None` to fall through, as does a
-    /// missing column (the read
+    /// `Equal`/`Range` leaf on a `Ready` column. A Range index also holds strings and geo (served by
+    /// RediSearch), so a non-numeric or composite predicate returns `None` to fall through; so does a
+    /// missing column, and so does a `Building` column (its base isn't installed yet, so the read
     /// falls back to a scan — today's `UNDER CONSTRUCTION` behavior). Yields docs — node ids for a node
     /// column, `edge_id`s for an edge column. The read path routes here and falls back on `None`.
     #[must_use]
@@ -320,6 +473,9 @@ impl FalkorDbIndex {
             return None; // string / geo on a Range index — RediSearch owns those entries
         }
         let entry = self.columns(entity).get(&(label.clone(), key.clone()))?;
+        if !matches!(entry.state, ColumnState::Ready) {
+            return None; // Building — base not installed yet, fall back to a scan
+        }
         match &entry.column {
             IndexColumn::Numeric(idx) => idx.query(query),
         }
@@ -335,6 +491,73 @@ mod tests {
         Arc::new(s.to_string())
     }
 
+    /// Stage a single-column `(value, id)` batch (the shape the write path passes to `merge`).
+    /// Online-build state machine at the column level: a `Building` column gates reads (returns
+    /// `None` → scan fallback) even after chunks are installed, until `finish_build` flips it `Ready`;
+    /// then it serves. (Reconciliation of concurrent writes is validated at the graph level, where
+    /// `Graph::install_index_base_chunk` re-checks each entry against live state — see
+    /// `falkordb_index_mvcc_tests`.)
+    #[test]
+    fn building_column_gates_reads_until_finished() {
+        let (label, attr) = (arc("Person"), arc("age"));
+        let eq = |v: i64| IndexQuery::Equal {
+            key: attr.clone(),
+            value: Value::Int(v),
+        };
+
+        let mut idx = FalkorDbIndex::new();
+        let epoch = idx.create_building(Node, &label, &attr);
+        assert!(
+            idx.query_numeric(Node, &label, &eq(10)).is_none(),
+            "empty Building → None"
+        );
+
+        // Install a (pre-validated) base chunk — reads still gated while Building.
+        idx.install_base_chunk(
+            Node,
+            &label,
+            &attr,
+            epoch,
+            [(Value::Int(10), 0u64), (Value::Int(20), 1)],
+        );
+        assert!(
+            idx.query_numeric(Node, &label, &eq(10)).is_none(),
+            "installed but Building → None"
+        );
+        assert_eq!(idx.building_columns().len(), 1);
+
+        // A stale epoch (as if the column had been dropped + re-created) installs nothing and
+        // must NOT flip the column `Ready` — the drop/re-create guard.
+        idx.install_base_chunk(Node, &label, &attr, epoch + 1, [(Value::Int(99), 9u64)]);
+        idx.finish_build(Node, &label, &attr, epoch + 1);
+        assert!(
+            idx.query_numeric(Node, &label, &eq(10)).is_none(),
+            "stale epoch cannot publish"
+        );
+        assert_eq!(
+            idx.building_columns().len(),
+            1,
+            "still Building after stale finish"
+        );
+
+        // Finish with the right epoch → serves; the stale value never landed.
+        idx.finish_build(Node, &label, &attr, epoch);
+        assert_eq!(
+            idx.query_numeric(Node, &label, &eq(10))
+                .map_or_else(Vec::new, |it| it.collect()),
+            vec![0],
+        );
+        assert!(
+            idx.query_numeric(Node, &label, &eq(99))
+                .map_or_else(Vec::new, |it| it.collect())
+                .is_empty(),
+            "stale entry absent"
+        );
+        assert!(idx.building_columns().is_empty(), "no longer building");
+    }
+
+    /// Forking a new version (what `Graph::new_version` does) and mutating it
+    /// leaves the prior version — the snapshot a reader may still hold — untouched.
     #[test]
     fn new_version_is_copy_on_write() {
         let (label, attr) = (arc("Person"), arc("age"));
