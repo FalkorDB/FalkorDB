@@ -884,13 +884,30 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         buf.wait_pool()
 
         # An index-served count must equal the full-scan count; `+ 0` defeats index selection.
-        idx_n = graph.query("MATCH (n:N) WHERE n.v >= 0 RETURN count(n)").result_set[0][0]
-        scan_n = graph.query("MATCH (n:N) WHERE n.v + 0 >= 0 RETURN count(n)").result_set[0][0]
+        # Compare an index-served count against a full-scan count of the same rows: the
+        # `+ 0` defeats index selection, so the two agree only if the bulk-loaded rows
+        # actually reached the index.
+        #
+        # Pin that premise first. Without these two assertions the comparison silently
+        # degrades to scan-vs-scan the day the planner stops picking the index here, and
+        # the test would then pass with the fix reverted.
+        idx_n_query = "MATCH (n:N) WHERE n.v >= 0 RETURN count(n)"
+        scan_n_query = "MATCH (n:N) WHERE n.v + 0 >= 0 RETURN count(n)"
+        self.env.assertContains('Node By Index Scan', str(graph.explain(idx_n_query)))
+        self.env.assertNotContains('Node By Index Scan', str(graph.explain(scan_n_query)))
+
+        idx_n = graph.query(idx_n_query).result_set[0][0]
+        scan_n = graph.query(scan_n_query).result_set[0][0]
         self.env.assertEqual(scan_n, 100)
         self.env.assertEqual(idx_n, scan_n)
 
-        idx_e = graph.query("MATCH ()-[r:R]->() WHERE r.w >= 0 RETURN count(r)").result_set[0][0]
-        scan_e = graph.query("MATCH ()-[r:R]->() WHERE r.w + 0 >= 0 RETURN count(r)").result_set[0][0]
+        idx_e_query = "MATCH ()-[r:R]->() WHERE r.w >= 0 RETURN count(r)"
+        scan_e_query = "MATCH ()-[r:R]->() WHERE r.w + 0 >= 0 RETURN count(r)"
+        self.env.assertContains('Edge By Index Scan', str(graph.explain(idx_e_query)))
+        self.env.assertNotContains('Edge By Index Scan', str(graph.explain(scan_e_query)))
+
+        idx_e = graph.query(idx_e_query).result_set[0][0]
+        scan_e = graph.query(scan_e_query).result_set[0][0]
         self.env.assertEqual(scan_e, 99)
         self.env.assertEqual(idx_e, scan_e)
 

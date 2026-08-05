@@ -317,20 +317,21 @@ fn process_node_token(
     g.create_nodes(&nodes_bitmap);
     unsafe { maybe_yield(raw_ctx) };
 
-    // Attributes must land BEFORE the labels. `set_nodes_labels_bulk` decides which nodes
-    // need (re)indexing with `has_attributes(id)`; running it first meant that test was
-    // always false here, so `index_add_docs` came back empty and rows bulk-loaded into a
-    // graph that already had an index were never indexed.
-    if !resolved_attrs.is_empty() {
-        g.import_node_attrs_resolved(&mut resolved_attrs);
-        unsafe { maybe_yield(raw_ctx) };
-    }
-
-    // Collect into the insert-wide accumulator; `BulkIndexDocs::publish` flushes it once
-    // every token has succeeded. Nothing else on this path would: GRAPH.BULK does not run
-    // the post-load `populate_indexes_sync` rebuild (that is the RDB / replica path).
     g.set_nodes_labels_bulk(&label_rows, &label_cols, &mut docs.nodes);
     unsafe { maybe_yield(raw_ctx) };
+
+    // `import_node_attrs_resolved` marks these nodes for indexing, collecting into the
+    // insert-wide accumulator that `BulkIndexDocs::publish` flushes once every token has
+    // succeeded. Nothing else on this path would: GRAPH.BULK does not run the post-load
+    // `populate_indexes_sync` rebuild (that is the RDB / replica path).
+    //
+    // `set_nodes_labels_bulk` above also collects, but only for nodes that already have
+    // attributes — none do at this point — so it contributes nothing here and the two do
+    // not double up.
+    if !resolved_attrs.is_empty() {
+        g.import_node_attrs_resolved(&mut resolved_attrs, &label_ids, &mut docs.nodes);
+        unsafe { maybe_yield(raw_ctx) };
+    }
 
     Ok(())
 }
@@ -353,7 +354,7 @@ fn process_edge_token(
         ));
     }
     let type_name = Arc::new(type_names[0].clone());
-    g.get_type_id_mut(&type_name);
+    let type_id = g.get_type_id_mut(&type_name);
 
     let attr_ids: Vec<u16> = prop_names
         .iter()
@@ -403,7 +404,7 @@ fn process_edge_token(
 
     if !resolved_rel_attrs.is_empty() {
         // Same as the node path: collect now, publish once the whole insert has succeeded.
-        g.import_relationship_attrs_resolved(&mut resolved_rel_attrs, &mut docs.edges);
+        g.import_relationship_attrs_resolved(&mut resolved_rel_attrs, type_id, &mut docs.edges);
         unsafe { maybe_yield(raw_ctx) };
     }
 
