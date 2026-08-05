@@ -51,6 +51,8 @@
 #![allow(clippy::pub_underscore_fields)]
 #![allow(clippy::derive_partial_eq_without_eq)]
 
+#[cfg(test)]
+mod fold_cost_bench;
 pub mod lagraph_bindings;
 pub mod lagraphx_bindings;
 pub mod matrix;

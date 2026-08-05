@@ -90,15 +90,15 @@ use super::{
     GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_removeElement,
     GrB_Matrix_resize, GrB_Matrix_set_INT32, GrB_Matrix_setElement_BOOL,
     GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode, GrB_Orientation, GrB_SECOND_UINT64,
-    GrB_Type, GrB_UINT64, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL,
-    GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64, GxB_Container_free, GxB_Container_new,
-    GxB_Global_Option_set_INT32, GxB_HYPERSPARSE, GxB_Iterator, GxB_Iterator_free,
-    GxB_Iterator_get_UINT64, GxB_Iterator_new, GxB_JIT_Control, GxB_Matrix_fprint,
-    GxB_Matrix_isStoredElement, GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_NTHREADS,
-    GxB_ONE_BOOL, GxB_Option_Field, GxB_Print_Level, GxB_SPARSE, GxB_init,
-    GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
-    GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol, GxB_rowIterator_nextRow,
-    GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
+    GrB_Scalar, GrB_Scalar_free, GrB_Scalar_new, GrB_Scalar_setElement_BOOL, GrB_Type, GrB_UINT64,
+    GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL,
+    GxB_ANY_UINT64, GxB_Container_free, GxB_Container_new, GxB_Global_Option_set_INT32,
+    GxB_HYPERSPARSE, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_get_UINT64, GxB_Iterator_new,
+    GxB_JIT_Control, GxB_Matrix_build_Scalar, GxB_Matrix_fprint, GxB_Matrix_isStoredElement,
+    GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_NTHREADS, GxB_ONE_BOOL, GxB_Option_Field,
+    GxB_Print_Level, GxB_SPARSE, GxB_init, GxB_load_Matrix_from_Container, GxB_rowIterator_attach,
+    GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol,
+    GxB_rowIterator_nextRow, GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
 };
 
 /// Initializes the GraphBLAS library in non-blocking mode.
@@ -492,11 +492,12 @@ impl<T> Encode<19> for Matrix<T> {
 impl<T> Matrix<T> {
     /// Pin this matrix to hypersparse storage and return it (builder-style,
     /// for delta matrices at construction). Deltas inherit the base's
-    /// dimensions but stay small; in plain sparse format every `GB_wait` /
-    /// zombie-select on them pays `O(nrows)` row-pointer work (measured on
-    /// 100-node creates after a bulk write inflated capacity to 1m rows).
-    /// Hypersparse makes those ops `O(nvec)`. The C implementation pins its
-    /// delta matrices hypersparse for the same reason.
+    /// dimensions but the fold policy keeps their nvals small; in plain
+    /// sparse format every `GB_wait` / zombie-select on them pays `O(nrows)`
+    /// row-pointer work (measured 18x on 100-node creates after a bulk write
+    /// inflated capacity to 1m rows). Hypersparse makes those ops `O(nvec)`.
+    /// The C implementation pins its delta matrices hypersparse for the same
+    /// reason.
     #[must_use]
     pub(super) fn into_hyper(self) -> Self {
         unsafe {
@@ -963,23 +964,27 @@ impl Matrix<u64> {
         self.has_pending.store(true, Ordering::Relaxed);
     }
 
-    /// `self = self ⊕ b`, value-preserving: on intersecting entries `b`'s
-    /// value wins (`SECOND`). Unlike the bool-semiring [`Self::element_wise_add`],
-    /// this keeps u64 values intact, so a delta-plus layer that shadows its
-    /// base can be merged with the live (`dp`) value taking precedence.
+    /// `self<mask> = a ⊕ b` (`a` defaults to `self`), value-preserving: on
+    /// intersecting entries `b`'s value wins (`SECOND`). Unlike the
+    /// bool-semiring [`Self::element_wise_add`], this keeps u64 values
+    /// intact, so a delta-plus layer that shadows its base can be merged
+    /// with the live (`dp`) value taking precedence.
     pub fn element_wise_add_second(
         &mut self,
+        mask: Option<&Matrix<bool>>,
+        a: Option<&Self>,
         b: &Self,
+        descriptor: Option<Descriptor>,
     ) {
         unsafe {
             let info = GrB_Matrix_eWiseAdd_BinaryOp(
                 *self.m,
-                null_mut(),
+                mask.map_or(null_mut(), |m| *m.m),
                 null_mut(),
                 GrB_SECOND_UINT64,
-                *self.m,
+                a.map_or(*self.m, |a| *a.m),
                 *b.m,
-                null_mut(),
+                descriptor.map_or(null_mut(), std::convert::Into::into),
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
@@ -1108,7 +1113,9 @@ impl Matrix<bool> {
     }
 
     /// Bulk-insert entries from (row, col) arrays. Matrix must be empty.
-    /// Uses a single GraphBLAS FFI call instead of N individual setElement calls.
+    /// Uses a single GraphBLAS FFI call instead of N individual setElement
+    /// calls; the scalar variant needs no values array and produces an iso
+    /// matrix (pattern only, one shared value).
     pub fn build(
         &mut self,
         rows: &[u64],
@@ -1119,16 +1126,15 @@ impl Matrix<bool> {
             return;
         }
         let nvals = rows.len() as u64;
-        let vals = vec![true; rows.len()];
         unsafe {
-            let info = GrB_Matrix_build_BOOL(
-                *self.m,
-                rows.as_ptr(),
-                cols.as_ptr(),
-                vals.as_ptr(),
-                nvals,
-                GxB_ANY_BOOL,
-            );
+            let mut scalar: GrB_Scalar = null_mut();
+            let mut info = GrB_Scalar_new(&raw mut scalar, GrB_BOOL);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            info = GrB_Scalar_setElement_BOOL(scalar, true);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            info = GxB_Matrix_build_Scalar(*self.m, rows.as_ptr(), cols.as_ptr(), scalar, nvals);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            info = GrB_Scalar_free(&raw mut scalar);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
         self.has_pending.store(true, Ordering::Relaxed);
@@ -1152,6 +1158,13 @@ impl Matrix<bool> {
         dp: &Matrix<TV>,
         dm: &Matrix<bool>,
     ) {
+        // The delta layers arrive raw from a shared snapshot and may hold
+        // pending work; a GrB op would finish it internally (a mutation),
+        // racing other readers on the same handles. Materialize through the
+        // mutex-guarded wait first — a no-op (one atomic load) when synced.
+        // `m` needs no wait: committed bases are synced at MVCC commit.
+        dp.wait();
+        dm.wait();
         let dp_nvals = dp.nvals();
         let dm_nvals = dm.nvals();
 

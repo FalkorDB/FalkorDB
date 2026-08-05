@@ -121,6 +121,7 @@
 
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::graph::{
     cow::Cow,
@@ -128,15 +129,38 @@ use crate::graph::{
 };
 
 use super::{
-    matrix::{Dup, Matrix},
+    matrix::{Descriptor, Dup, Matrix},
     serialization::{Decode, Encode, Reader, Writer},
     vector::Vector,
-    versioned_matrix::{self, VersionedMatrix},
+    versioned_matrix::{self, VersionedMatrix, should_fold, should_fold_read},
 };
 
 /// Maximum GraphBLAS index value (2^60 - 1).
 #[allow(non_upper_case_globals)]
 pub const GrB_INDEX_MAX: u64 = (1u64 << 60) - 1;
+
+/// Copy every entry of `src` into `dst` via a row iterator.
+///
+/// Used by the grow path of [`Tensor::resize`] to re-emit a layer at larger
+/// dims. The iterator yields `(row, col, value)` in row-major order, which is
+/// the sorted order [`Matrix::build`] requires, so the vectors are filled once
+/// and handed straight over. `src` must already be waited: iterating a pending
+/// matrix materializes it, which is a mutation on a possibly-shared layer.
+fn rebuild_u64(
+    src: &Matrix<u64>,
+    dst: &mut Matrix<u64>,
+) {
+    let n = src.nvals() as usize;
+    let mut rows = Vec::with_capacity(n);
+    let mut cols = Vec::with_capacity(n);
+    let mut vals = Vec::with_capacity(n);
+    for (r, c, v) in src.iter(0, u64::MAX) {
+        rows.push(r);
+        cols.push(c);
+        vals.push(v);
+    }
+    dst.build(&rows, &cols, &vals);
+}
 
 /// Pack a `(src, dst)` node-id pair into the compound row key used by the
 /// edge-id matrix `me`.
@@ -194,6 +218,24 @@ pub struct Tensor {
     me: VersionedMatrix<bool>,
     /// Number of pairs whose effective inline value is [`MULTI_EDGE`].
     multi_count: u64,
+    /// Approximate `dp.nvals()`, maintained by the mutation methods without
+    /// GraphBLAS calls (reading `nvals` on a delta would force its pending
+    /// tuples to merge); `wait_fwd` resyncs it exactly. Same mechanism as
+    /// `VersionedMatrix`.
+    dp_count: AtomicU64,
+    /// Same as `dp_count`, for `dm`.
+    dm_count: AtomicU64,
+    /// `dp_count` when this MVCC version was created (or after the last
+    /// fold); `dp_count - dp_tx_nvals` is what the current transaction has
+    /// added (see the fold policy in `should_fold`).
+    dp_tx_nvals: u64,
+    /// Same as `dp_tx_nvals`, for `dm`.
+    dm_tx_nvals: u64,
+    /// Fold decisions latched by `wait_fwd` for the next `flush` (same
+    /// mechanism as `VersionedMatrix`).
+    fold_dp: AtomicBool,
+    fold_dm: AtomicBool,
+    needs_flush: AtomicBool,
 }
 
 /// Sentinel stored as the inline forward value of a pair with more than one
@@ -213,6 +255,13 @@ impl Clone for Tensor {
             mt: self.mt.clone(),
             me: self.me.clone(),
             multi_count: self.multi_count,
+            dp_count: AtomicU64::new(self.dp_count.load(Ordering::Relaxed)),
+            dm_count: AtomicU64::new(self.dm_count.load(Ordering::Relaxed)),
+            dp_tx_nvals: self.dp_tx_nvals,
+            dm_tx_nvals: self.dm_tx_nvals,
+            fold_dp: AtomicBool::new(self.fold_dp.load(Ordering::Relaxed)),
+            fold_dm: AtomicBool::new(self.fold_dm.load(Ordering::Relaxed)),
+            needs_flush: AtomicBool::new(self.needs_flush.load(Ordering::Relaxed)),
         }
     }
 }
@@ -230,16 +279,47 @@ impl Tensor {
             mt: VersionedMatrix::<bool>::new(ncols, nrows),
             me: VersionedMatrix::<bool>::new(GrB_INDEX_MAX, GrB_INDEX_MAX),
             multi_count: 0,
+            dp_count: AtomicU64::new(0),
+            dm_count: AtomicU64::new(0),
+            dp_tx_nvals: 0,
+            dm_tx_nvals: 0,
+            fold_dp: AtomicBool::new(false),
+            fold_dm: AtomicBool::new(false),
+            needs_flush: AtomicBool::new(false),
         }
     }
 
     /// Wait pending GraphBLAS work on the forward delta layers. The committed
-    /// base `m` is never written to inside a transaction, so it can't be
-    /// pending (same invariant as `VersionedMatrix::wait`).
-    fn wait_fwd(&self) {
-        debug_assert!(!self.m.pending());
+    /// base `m` never holds real pending work: it is only mutated by `flush`
+    /// (which waits) and `resize` (GrB_Matrix_resize waits internally), so it
+    /// is never waited here (same invariant as `VersionedMatrix::wait`). Note
+    /// `GxB_WILL_WAIT` can still report true on `m` after a grow-resize — the
+    /// hyper hash was freed — but GraphBLAS rebuilds it on demand.
+    pub(crate) fn wait_fwd(&self) {
+        // nvals only changes through ops that mark the matrix pending, so the
+        // flag can only be stale when there is pending work — skip the nvals
+        // FFI calls on the hot read path otherwise.
+        if self.dp.is_synced() && self.dm.is_synced() {
+            return;
+        }
         self.dp.wait();
         self.dm.wait();
+        let base = self.m.nvals();
+        let dp_nvals = self.dp.nvals();
+        let dm_nvals = self.dm.nvals();
+        // The deltas are materialized now — resync the approximate counters
+        // to the exact counts, bounding any drift they accumulated.
+        self.dp_count.store(dp_nvals, Ordering::Relaxed);
+        self.dm_count.store(dm_nvals, Ordering::Relaxed);
+        let fold_dp = self.fold_dp.load(Ordering::Relaxed)
+            || should_fold_read(dp_nvals, dp_nvals.saturating_sub(self.dp_tx_nvals), base);
+        let fold_dm = self.fold_dm.load(Ordering::Relaxed)
+            || should_fold_read(dm_nvals, dm_nvals.saturating_sub(self.dm_tx_nvals), base);
+        self.fold_dp.store(fold_dp, Ordering::Relaxed);
+        self.fold_dm.store(fold_dm, Ordering::Relaxed);
+        // Not setting needs_flush: see `VersionedMatrix::wait` — mid-tx fold
+        // execution is pathological for create+delete transactions; `dup`
+        // carries the latched decision into the next version instead.
     }
 
     /// Effective first-edge id at `(src, dest)`: `dp` wins, then `m` unless
@@ -303,7 +383,13 @@ impl Tensor {
             return;
         }
 
-        self.wait_fwd();
+        self.flush();
+        // `flush` no-ops unless a fold was latched; materialize the deltas
+        // explicitly (single atomic load each when already synced) so the
+        // read phase's per-edge lookups never trigger implicit GraphBLAS
+        // waits. `m` is never pending (see `wait_fwd`).
+        self.dp.wait();
+        self.dm.wait();
         let dm_empty = self.dm.nvals() == 0;
 
         // Read phase: decide each edge's placement. `batch` maps a pair to
@@ -391,15 +477,20 @@ impl Tensor {
             self.mt.set(d, s, true);
             if let Some(committed) = m_masked[i] {
                 self.dm.remove(s, d);
+                let dm_count = self.dm_count.get_mut();
+                *dm_count = dm_count.saturating_sub(1);
                 if committed == id {
                     // Cancel to clean: committed value restored. Drop any dp
                     // shadow (re-promotion of a demoted committed-multi pair;
                     // both removes are no-ops when the entry is absent).
                     self.dp.remove(s, d);
+                    let dp_count = self.dp_count.get_mut();
+                    *dp_count = dp_count.saturating_sub(1);
                     continue;
                 }
             }
             self.dp.set(s, d, id);
+            *self.dp_count.get_mut() += 1;
         }
     }
 
@@ -415,6 +506,7 @@ impl Tensor {
         if rels.is_empty() {
             return Vec::new();
         }
+        self.flush();
 
         // Fast path: no multi-edge pairs exist, so every edge is the inline
         // value of its pair. Bulk-update the delta layers in a few GraphBLAS
@@ -448,6 +540,10 @@ impl Tensor {
                 .element_wise_multiply(Some(&m_mask), Some(&m_mask), Some(&*self.m), None);
             self.dp.remove_all(&m_mask);
             self.mt.remove_mask(&mt_mask);
+            // Bulk GraphBLAS ops leave both deltas materialized — resync the
+            // approximate counters exactly (nvals is a field read here).
+            *self.dm_count.get_mut() = self.dm.nvals();
+            *self.dp_count.get_mut() = self.dp.nvals();
             return rels.iter().map(|&(_, src, dst)| (src, dst)).collect();
         }
 
@@ -477,15 +573,21 @@ impl Tensor {
                         self.me.remove(key, last);
                         if self.m.get(src, dst) == Some(last) {
                             self.dp.remove(src, dst);
+                            let dp_count = self.dp_count.get_mut();
+                            *dp_count = dp_count.saturating_sub(1);
                         } else {
                             self.dp.set(src, dst, last);
+                            *self.dp_count.get_mut() += 1;
                         }
                         // mt structure already has (dst, src); the pair survives.
                     } else {
                         // All ids removed at once; the pair is gone.
                         self.dp.remove(src, dst);
+                        let dp_count = self.dp_count.get_mut();
+                        *dp_count = dp_count.saturating_sub(1);
                         if self.m.contains(src, dst) {
                             self.dm.set(src, dst, true);
+                            *self.dm_count.get_mut() += 1;
                         }
                         self.mt.remove(dst, src);
                         emptied.push((src, dst));
@@ -493,8 +595,11 @@ impl Tensor {
                 }
                 Some(inline_id) if inline_id == id => {
                     self.dp.remove(src, dst);
+                    let dp_count = self.dp_count.get_mut();
+                    *dp_count = dp_count.saturating_sub(1);
                     if self.m.contains(src, dst) {
                         self.dm.set(src, dst, true);
+                        *self.dm_count.get_mut() += 1;
                     }
                     self.mt.remove(dst, src);
                     emptied.push((src, dst));
@@ -511,37 +616,142 @@ impl Tensor {
         nrows: u64,
         ncols: u64,
     ) {
-        self.wait_fwd();
-        self.m.resize(nrows, ncols);
-        // `GrB_Matrix_resize` can leave pending work on the base, which breaks
-        // the invariant `wait_fwd` asserts — see the note in
-        // `VersionedMatrix::resize`, which had the same hole. Resize only runs
-        // on capacity growth, so materializing here is off the hot paths.
+        if nrows < self.m.nrows() || ncols < self.m.ncols() {
+            // Shrinking can drop entries; keep the straightforward path.
+            self.flush();
+            // GrB_Matrix_resize waits internally, so `m` holds no real pending
+            // work afterwards — waiting here would rebuild the freed hyper hash
+            // on every capacity grow (measured 1.4-5.7x write regressions).
+            self.m.resize(nrows, ncols);
+            self.dp.resize(nrows, ncols);
+            self.dm.resize(nrows, ncols);
+            self.mt.resize(ncols, nrows);
+            return;
+        }
+        // Growing: the base is always COW-shared with the committed snapshot,
+        // so resizing through the Cow would deep-copy the full matrix first.
+        // Instead rebuild each layer at the target dims from its tuples and
+        // swap it in; contents (and therefore all delta invariants, counters
+        // and fold latches) are unchanged.
+        //
+        // The layers may be shared with the committed snapshot AND carry
+        // pending work (commit does not wait). extractTuples/nvals
+        // materialize it — a mutation — so wait first under the readers'
+        // lock or this races concurrent readers (GrB_INVALID_OBJECT / heap
+        // corruption under stress).
         self.m.wait();
-        self.dp.resize(nrows, ncols);
-        self.dm.resize(nrows, ncols);
+        self.dp.wait();
+        self.dm.wait();
+        // Row iterators rather than `extract_tuples`: each layer is copied
+        // straight to the new dims with no merge, so unlike
+        // `VersionedMatrix::resize` this is allocation-neutral — one output
+        // triple either way. It keeps both grow paths on one traversal API and
+        // drops the last `extract_tuples` callers.
+        let mut new_m = Matrix::<u64>::new(nrows, ncols);
+        rebuild_u64(&self.m, &mut new_m);
+        new_m.wait();
+        self.m.replace(new_m);
+        let mut new_dp = Matrix::<u64>::new(nrows, ncols);
+        if self.dp.nvals() > 0 {
+            rebuild_u64(&self.dp, &mut new_dp);
+        }
+        self.dp.replace(new_dp.into_hyper());
+        let mut new_dm = Matrix::<bool>::new(nrows, ncols);
+        if self.dm.nvals() > 0 {
+            let mut qi = Vec::with_capacity(self.dm.nvals() as usize);
+            let mut qj = Vec::with_capacity(qi.capacity());
+            for (r, c) in self.dm.iter(0, u64::MAX) {
+                qi.push(r);
+                qj.push(c);
+            }
+            new_dm.build(&qi, &qj);
+        }
+        self.dm.replace(new_dm.into_hyper());
         self.mt.resize(ncols, nrows);
     }
 
-    /// Merge oversized deltas into the committed base (same policy as
-    /// [`VersionedMatrix::flush`]): when `dp` exceeds 10,000 entries it is
-    /// folded into `m` via a value-preserving eWiseAdd (`SECOND`, so `dp`
-    /// wins on shadowed pairs) and cleared; when `dm` exceeds 10,000 entries
-    /// its masked entries are removed from `m` and it is cleared. `dp ∩ dm =
-    /// ∅`, so the two merges are order-independent and all invariants are
-    /// preserved. `mt` and `me` flush themselves.
+    /// Merge oversized deltas into the committed base (same fold policy as
+    /// [`VersionedMatrix::flush`], see `should_fold`): `dp` is folded into
+    /// `m` via a value-preserving eWiseAdd (`SECOND`, so `dp` wins on
+    /// shadowed pairs) and cleared; `dm`'s masked entries are removed from
+    /// `m` and it is cleared. `dp ∩ dm = ∅`, so the two merges are
+    /// order-independent and all invariants are preserved. `mt` and `me`
+    /// flush themselves.
+    ///
+    /// Gated on the `needs_flush` flag, which is set by `dup` (carrying the
+    /// decision `wait_fwd` latched) or by `fold_latched`, so calling this on
+    /// every write is a single atomic load in the common case.
     pub fn flush(&mut self) {
-        self.wait_fwd();
-        if self.dp.nvals() >= 10000 {
-            self.m.element_wise_add_second(&self.dp);
-            self.dp.clear();
-        }
-        if self.dm.nvals() >= 10000 {
-            self.m.remove_all(&self.dm);
-            self.dm.clear();
+        if self.needs_flush.load(Ordering::Relaxed) {
+            // The layers may be shared with the committed snapshot and carry
+            // pending work; nvals/eWiseAdd/select below materialize it (a
+            // mutation), so wait first under the readers' lock.
+            self.m.wait();
+            self.dp.wait();
+            self.dm.wait();
+            let fold_dp = self.fold_dp.swap(false, Ordering::Relaxed) && self.dp.nvals() > 0;
+            let fold_dm = self.fold_dm.swap(false, Ordering::Relaxed) && self.dm.nvals() > 0;
+            if fold_dp || fold_dm {
+                let nrows = self.m.nrows();
+                let ncols = self.m.ncols();
+                // Always build the folded base into a fresh matrix and swap
+                // it in. When `m` is shared with the committed snapshot an
+                // in-place fold would deep-copy it (a full O(|m|) memcpy)
+                // first; when it is not, GraphBLAS materializes the eWiseAdd
+                // result in a temporary anyway, so the fresh build costs the
+                // same — and under full MVCC the base is always shared.
+                let mut new_m = Matrix::<u64>::new(nrows, ncols);
+                match (fold_dp, fold_dm) {
+                    // new_m<!dm, replace> = m ⊕ dp (dp wins on shadowed
+                    // pairs); dp ∩ dm = ∅, so no pending add is lost.
+                    (true, true) => new_m.element_wise_add_second(
+                        Some(&self.dm),
+                        Some(&self.m),
+                        &self.dp,
+                        Some(Descriptor::RC),
+                    ),
+                    (true, false) => {
+                        new_m.element_wise_add_second(None, Some(&self.m), &self.dp, None);
+                    }
+                    // new_m<!dm, replace> = m
+                    (false, true) => new_m.select(&self.dm, &self.m),
+                    (false, false) => unreachable!(),
+                }
+                new_m.wait();
+                self.m.replace(new_m);
+                // Clearing through the Cow would deep-copy a still-shared
+                // delta just to empty it; swap in a fresh empty matrix.
+                if fold_dp {
+                    self.dp
+                        .replace(Matrix::<u64>::new(nrows, ncols).into_hyper());
+                    *self.dp_count.get_mut() = 0;
+                    self.dp_tx_nvals = 0;
+                }
+                if fold_dm {
+                    self.dm
+                        .replace(Matrix::<bool>::new(nrows, ncols).into_hyper());
+                    *self.dm_count.get_mut() = 0;
+                    self.dm_tx_nvals = 0;
+                }
+            }
+            self.needs_flush.store(false, Ordering::Relaxed);
         }
         self.mt.flush();
         self.me.flush();
+    }
+
+    /// Latch the fold decision from the current (materialized) delta sizes
+    /// and execute it immediately, on the forward layers and on `mt`/`me`.
+    /// Only safe once a transaction has finished mutating — e.g. the end of
+    /// a GRAPH.BULK command; see [`VersionedMatrix::fold_latched`].
+    pub fn fold_latched(&mut self) {
+        self.wait_fwd();
+        if self.fold_dp.load(Ordering::Relaxed) || self.fold_dm.load(Ordering::Relaxed) {
+            self.needs_flush.store(true, Ordering::Relaxed);
+            self.flush();
+        }
+        self.mt.fold_latched();
+        self.me.fold_latched();
     }
 
     /// Materialize the effective forward structure as a `bool` matrix:
@@ -573,8 +783,21 @@ impl Tensor {
         self.mt = VersionedMatrix::from_matrix(self.extract().transpose());
     }
 
+    /// See `VersionedMatrix::dup`: version creation is the pre-mutation hook
+    /// where the fold decision is made (using the finished transaction's
+    /// contribution as the next one's predictor) and latched for `flush`.
+    /// Delta sizes come from the approximate counters — reading `nvals` here
+    /// would force each mutated delta's pending tuples to merge on every
+    /// write transaction.
     #[must_use]
     pub fn dup(&self) -> Self {
+        let base = self.m.nvals();
+        let dp_count = self.dp_count.load(Ordering::Relaxed);
+        let dm_count = self.dm_count.load(Ordering::Relaxed);
+        let fold_dp = self.fold_dp.load(Ordering::Relaxed)
+            || should_fold(dp_count, dp_count.saturating_sub(self.dp_tx_nvals), base);
+        let fold_dm = self.fold_dm.load(Ordering::Relaxed)
+            || should_fold(dm_count, dm_count.saturating_sub(self.dm_tx_nvals), base);
         Self {
             m: self.m.new_version(),
             dp: self.dp.new_version(),
@@ -582,6 +805,13 @@ impl Tensor {
             mt: self.mt.dup(),
             me: self.me.dup(),
             multi_count: self.multi_count,
+            dp_count: AtomicU64::new(dp_count),
+            dm_count: AtomicU64::new(dm_count),
+            dp_tx_nvals: dp_count,
+            dm_tx_nvals: dm_count,
+            fold_dp: AtomicBool::new(fold_dp),
+            fold_dm: AtomicBool::new(fold_dm),
+            needs_flush: AtomicBool::new(fold_dp || fold_dm),
         }
     }
 
@@ -703,6 +933,15 @@ impl Tensor {
         self.wait_fwd();
         self.mt.wait();
         self.me.wait();
+    }
+
+    /// Materialize only the committed base layers (`m`, `mt.m`, `me.m`).
+    /// See [`VersionedMatrix::wait_base`] for why bases must be synced at
+    /// MVCC commit while dp/dm may stay lazy.
+    pub fn wait_base(&self) {
+        self.m.wait();
+        self.mt.wait_base();
+        self.me.wait_base();
     }
 
     /// Wait on all matrices for fork safety (takes &self, not &mut self).
@@ -890,6 +1129,13 @@ impl Decode<19> for Tensor {
             mt: VersionedMatrix::<bool>::new(0, 0),
             me,
             multi_count,
+            dp_count: AtomicU64::new(0),
+            dm_count: AtomicU64::new(0),
+            dp_tx_nvals: 0,
+            dm_tx_nvals: 0,
+            fold_dp: AtomicBool::new(false),
+            fold_dm: AtomicBool::new(false),
+            needs_flush: AtomicBool::new(false),
         })
     }
 }
@@ -1027,8 +1273,10 @@ mod tests {
         let ids: Vec<u64> = (0..N).collect();
         t.set_all_from_slices(&srcs, &dsts, &ids);
         // Fold the pending adds into the committed base so edge id 0 lives
-        // in the u64 base matrix. `flush` folds via a (possibly pending)
-        // eWiseAdd, so materialize before the structural probe.
+        // in the u64 base matrix. The fold decision is latched at version
+        // creation (`dup`) and executed by the next `flush`, which folds via
+        // a (possibly pending) eWiseAdd — materialize before the probe.
+        let mut t = t.dup();
         t.flush();
         t.fwd_m().wait();
         assert!(t.fwd_m().contains(0, 1), "edge id 0 not folded into base");

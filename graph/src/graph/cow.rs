@@ -58,6 +58,25 @@ impl<T: Dup<T> + Clone> Cow<T> {
             dup: true,
         }
     }
+
+    /// Replace the inner value outright, skipping the copy-on-write dup.
+    /// For when the new content is computed from scratch (e.g. a delta fold
+    /// building the merged base into a fresh matrix), where deep-copying the
+    /// shared inner first would be pure waste.
+    pub fn replace(
+        &mut self,
+        inner: T,
+    ) {
+        self.inner = inner;
+        self.dup = false;
+    }
+
+    /// True while the inner value may still be shared with another version
+    /// (i.e. the next mutable access would duplicate it).
+    #[must_use]
+    pub const fn is_shared(&self) -> bool {
+        self.dup
+    }
 }
 
 impl<T: Dup<T> + Clone> Deref for Cow<T> {
