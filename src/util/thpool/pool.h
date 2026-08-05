@@ -53,6 +53,9 @@ void **ThreadPool_GetTasksByHandler
 	uint32_t *n               // number of tasks returned
 );
 
-// destroies threadpool, allows threads to exit gracefully
+// Block until all queued tasks have run and all workers are idle.
+void ThreadPool_Wait(void);
+
+// destroys threadpool, allows threads to exit gracefully
 void ThreadPool_Destroy(void);
 

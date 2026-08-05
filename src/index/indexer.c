@@ -77,9 +77,57 @@ static void _indexer_PopTask(IndexerTask *task);
 
 static Indexer *indexer = NULL;
 
+// release all bookkeeping a queued task was holding without running it
+//
+// every Indexer_* enqueue path bumps GraphContext_IncreaseRefCount and
+// hands ownership of the malloc'd ctx (and, for CONSTRAINT_DROP, of an
+// embedded Constraint) over to the task. The normal worker handlers
+// release those before rm_free(ctx). Dropping the task without running
+// the handler — which is what we do under shutdown — leaks the GC
+// ref and the ctx allocation; a stuck GC ref keeps every Index
+// (and its RediSearch IndexSpec / RefManager / logCtx tree) alive
+// past _ShutdownEventHandler's decref, so LSan reports them as
+// real leaks. Mirror the handler cleanup here.
+static void _Indexer_DiscardTask(IndexerTask *task) {
+	switch (task->op) {
+		case INDEXER_IDX_POPULATE: {
+			IndexPopulateCtx *ctx = task->pdata;
+			GraphContext_DecreaseRefCount(ctx->gc);
+			rm_free(ctx);
+			break;
+		}
+		case INDEXER_IDX_DROP: {
+			IndexDropCtx *ctx = task->pdata;
+			GraphContext_DecreaseRefCount(ctx->gc);
+			rm_free(ctx);
+			break;
+		}
+		case INDEXER_CONSTRAINT_ENFORCE: {
+			ConstraintEnforceCtx *ctx = task->pdata;
+			GraphContext_DecreaseRefCount(ctx->gc);
+			rm_free(ctx);
+			break;
+		}
+		case INDEXER_CONSTRAINT_DROP: {
+			ConstraintDropCtx *ctx = task->pdata;
+			Constraint_Free(&ctx->c);
+			GraphContext_DecreaseRefCount(ctx->gc);
+			rm_free(ctx);
+			break;
+		}
+		case INDEXER_EXIT:
+			// EXIT carries no pdata
+			break;
+	}
+}
+
 // clear indexer's tasks
 static void _Indexer_ClearTasks(void) {
 	INDEXER_LOCK_QUEUE () ;
+	uint32_t n = arr_len (indexer->q) ;
+	for (uint32_t i = 0 ; i < n ; i++) {
+		_Indexer_DiscardTask (&indexer->q[i]) ;
+	}
 	arr_clear (indexer->q) ;
 	INDEXER_UNLOCK_QUEUE () ;
 }
