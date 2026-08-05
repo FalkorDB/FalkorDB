@@ -353,6 +353,20 @@ endif()
 add_dependencies(falkordb redisearch)
 
 target_link_options(falkordb PRIVATE ${CMAKE_LD_FLAGS_LIST} ${CMAKE_SO_LD_FLAGS_LIST})
+
+# Drop unreferenced DT_NEEDED entries so falkordb.so does not hard-require shared
+# libraries it never calls. A dependency's link flags put a stray -lcrypt on the
+# link line that nothing references; RHEL-family gcc (amazonlinux2023, rhel9)
+# keeps the resulting libcrypt.so.2 DT_NEEDED, whereas the Debian/Ubuntu gcc
+# default drops it. The module is packaged into the Debian-based runtime image
+# (redis:8.6.3), which ships libcrypt.so.1 rather than the RHEL libcrypt.so.2
+# SONAME, so the kept dependency makes the module fail to load there. --as-needed
+# drops unreferenced libs (matching the Debian/Ubuntu default); libssl, libcrypto,
+# libgomp and the rest are referenced and retained. Not on Apple: ld64 lacks the flag.
+if(NOT APPLE)
+    target_link_options(falkordb PRIVATE "LINKER:--as-needed")
+endif()
+
 target_link_libraries(falkordb PRIVATE ${FALKORDB_LIBS} ${CMAKE_LD_LIBS})
 
 # On macOS, when building with Homebrew LLVM clang++ (required for OpenMP),
