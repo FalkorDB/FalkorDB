@@ -12,8 +12,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use roaring::RoaringTreemap;
-
 use crate::entity_type::EntityType;
 use crate::index::IndexQuery;
 use crate::runtime::value::Value;
@@ -88,6 +86,62 @@ impl IndexColumn {
         }
     }
 
+    /// Encode `(value, id)` entries under *this* column's kind, dropping whatever the kind
+    /// does not index (numeric drops non-numeric and `NaN`). Lets the background job encode
+    /// BASE off-thread, so the install commit pays only the tree build.
+    #[must_use]
+    pub fn encode_entries(
+        &self,
+        entries: Vec<(Value, u64)>,
+    ) -> Vec<(u64, u64)> {
+        match self {
+            Self::Numeric(_) => NumericIndex::encode_entries(entries),
+        }
+    }
+
+    /// A new column of *this* column's kind, built from already-encoded tuples — how the
+    /// install adopts BASE without hard-coding a kind at the call site.
+    #[must_use]
+    pub fn new_like_from_encoded(
+        &self,
+        pairs: Vec<(u64, u64)>,
+    ) -> Self {
+        match self {
+            Self::Numeric(_) => Self::Numeric(NumericIndex::from_encoded(pairs)),
+        }
+    }
+
+    /// Every `(key, doc)` tuple this column holds, encoded — the install's DELTA/TOMB
+    /// enumeration. Encoded, not `Value`s: TOMB must use the same equivalence relation as
+    /// the column it will be subtracted from, and decoding to re-encode would be a second
+    /// trip through a many-to-one map.
+    #[must_use]
+    pub fn encoded_tuples(&self) -> Vec<(u64, u64)> {
+        match self {
+            Self::Numeric(idx) => idx.encoded_tuples(),
+        }
+    }
+
+    /// Add already-encoded tuples (install: replay DELTA onto BASE).
+    pub fn add_encoded(
+        &mut self,
+        pairs: &mut Vec<(u64, u64)>,
+    ) {
+        match self {
+            Self::Numeric(idx) => idx.add_encoded(pairs),
+        }
+    }
+
+    /// Remove already-encoded tuples (install: subtract TOMB from BASE).
+    pub fn remove_encoded(
+        &mut self,
+        pairs: &mut Vec<(u64, u64)>,
+    ) {
+        match self {
+            Self::Numeric(idx) => idx.remove_encoded(pairs),
+        }
+    }
+
     /// Whether this column holds no entries.
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -115,13 +169,22 @@ impl IndexColumn {
 ///   correctly versioned core state, so deletes are dropped even if `dirty` ever missed one.
 #[derive(Clone)]
 pub enum ColumnState {
-    /// Base not yet fully installed — reads scan-fall-back. `dirty` = ids written since create.
+    /// Base not yet installed — reads scan-fall-back.
+    ///
+    /// `tomb` is the catch-up log of tuples *destroyed* since `CREATE INDEX`. It is the same CoW
+    /// tuple tree as the column, for two reasons: it forks in `O(1)` with the version (a
+    /// `RoaringTreemap` deep-clones, which is `O(writes²)` across a build), and it dedups under
+    /// the column's own equivalence relation, which a set of raw values would not.
+    ///
+    /// Adds are *not* recorded here — they go straight into the column tree, which is the DELTA.
+    /// Only removes are deferred, because a remove may target a row that still lives only in the
+    /// not-yet-installed BASE, where no version can name it yet.
     ///
     /// `epoch` is the build's identity: a monotonic token assigned at `create_building` and carried
-    /// by the background job. `install_base_chunk` / `finish_build` no-op unless the column's current
-    /// epoch matches the job's — so if the column is dropped and re-created mid-build, the stale job
-    /// installs nothing into the new column (which has a fresh epoch) and a new job builds it instead.
-    Building { dirty: RoaringTreemap, epoch: u64 },
+    /// by the background job. `install_base` no-ops unless the column's current epoch matches the
+    /// job's — so if the column is dropped and re-created mid-build, the stale job installs nothing
+    /// into the new column (which has a fresh epoch) and a new job builds it instead.
+    Building { tomb: IndexColumn, epoch: u64 },
     /// Base installed (or the graph was empty at create) — the column serves reads.
     Ready,
 }
@@ -143,13 +206,15 @@ impl ColumnEntry {
         }
     }
 
-    /// Record the ids in `entries` as written-since-create, but only while `Building`.
-    fn note_dirty(
+    /// Defer these *destroyed* tuples into TOMB, so the install can subtract them from a BASE
+    /// that was scanned before they died. A no-op once `Ready` — after install there is no stale
+    /// BASE left to correct.
+    fn note_tomb(
         &mut self,
-        entries: &[(Value, u64)],
+        removed: &[(Value, u64)],
     ) {
-        if let ColumnState::Building { dirty, .. } = &mut self.state {
-            dirty.extend(entries.iter().map(|(_, id)| *id));
+        if let ColumnState::Building { tomb, .. } = &mut self.state {
+            tomb.add_batch(removed.iter().cloned());
         }
     }
 }
@@ -253,7 +318,7 @@ impl FalkorDbIndex {
             ColumnEntry {
                 column: IndexColumn::Numeric(NumericIndex::new()),
                 state: ColumnState::Building {
-                    dirty: RoaringTreemap::new(),
+                    tomb: IndexColumn::Numeric(NumericIndex::new()),
                     epoch,
                 },
             },
@@ -360,71 +425,84 @@ impl FalkorDbIndex {
         let columns = self.columns_mut(entity);
         for (key, entries) in removes {
             if let Some(entry) = columns.get_mut(&key) {
-                entry.note_dirty(&entries);
+                // TOMB for the install's BASE subtraction, *and* the column tree itself: I-W4'
+                // requires DELTA to hold each touched entity's final state, not an append-only
+                // add-log. Skipping the tree here would install two rows for `v0 -> v1 -> v2`.
+                entry.note_tomb(&entries);
                 entry.column.remove_batch(entries);
             }
         }
         for (key, entries) in adds {
             if let Some(entry) = columns.get_mut(&key) {
-                entry.note_dirty(&entries);
                 entry.column.add_batch(entries);
             }
         }
     }
 
-    /// Add one chunk of the background-built base to a `Building` column, skipping any entry whose
-    /// id was written since `CREATE INDEX` (`dirty`) — that entity's current state is already in the
-    /// live delta (or it's deleted). The caller ([`Graph::install_index_base_chunk`](crate::graph::Graph))
-    /// has already applied the authoritative `deleted_nodes`/`deleted_relationships` backstop, so both
-    /// filters are cheap `O(1)`-per-entry bitmap checks. No-op if the column is missing or already
-    /// `Ready`; `finish_build` flips to `Ready` after the last chunk.
-    pub fn install_base_chunk(
+    /// Install a background-built BASE and flip the column to `Ready` — **one commit**, per
+    /// I-B3. No-op (returning `false`) if the column is gone, already `Ready`, or carries a
+    /// different epoch, which is how a drop-and-recreate mid-build makes the stale job inert.
+    ///
+    /// ```text
+    /// new := BASE                 (adopted wholesale — the job already built the tree)
+    /// new.remove(TOMB)            (removes strictly first)
+    /// new.add(DELTA)              (then adds)
+    /// column := new, state := Ready
+    /// ```
+    ///
+    /// **Order is load-bearing.** Install starts *from* BASE, so every snapshot-era tuple is
+    /// present and the only question is TOMB-vs-DELTA. Applying DELTA first would then delete
+    /// exactly `TOMB ∩ DELTA` — every tuple destroyed and recreated during the build, e.g.
+    /// `v0 -> v1 -> v0` or an id reused with the same value. By I-W4' no DELTA tuple is invalid
+    /// at the version being installed into, so TOMB never needs to fire after DELTA.
+    ///
+    /// Chunking this would be wrong as well as slow: a partially-subtracted BASE is not a valid
+    /// index at any version, and `MvccGraph::commit` pays an `O(attribute-store)`
+    /// `trim_attr_stores()` per commit, so N/1024 commits multiply a cost the single install pays
+    /// once.
+    pub fn install_base(
         &mut self,
         entity: EntityType,
         label: &Arc<String>,
         attr: &Arc<String>,
         epoch: u64,
-        chunk: impl IntoIterator<Item = (Value, u64)>,
-    ) {
+        base: Vec<(u64, u64)>,
+    ) -> bool {
         let Some(entry) = self
             .columns_mut(entity)
             .get_mut(&(label.clone(), attr.clone()))
         else {
-            return;
+            return false;
         };
-        // No-op unless this is still the same build: a mismatched epoch means the column was dropped
-        // and re-created since the job started, so this chunk is stale (the fresh column is built by
-        // a new job). A `Ready` column also falls through here.
-        let ColumnState::Building { dirty, epoch: e } = &entry.state else {
-            return;
+        let ColumnState::Building { tomb, epoch: e } = &entry.state else {
+            return false; // already Ready — nothing to install into
         };
         if *e != epoch {
-            return;
+            return false; // stale job: the column was dropped and re-created since it started
         }
-        let survivors: Vec<(Value, u64)> = chunk
-            .into_iter()
-            .filter(|(_, id)| !dirty.contains(*id))
-            .collect();
-        entry.column.add_batch(survivors);
+        let mut new = entry.column.new_like_from_encoded(base);
+        let mut tomb_tuples = tomb.encoded_tuples();
+        new.remove_encoded(&mut tomb_tuples);
+        let mut delta = entry.column.encoded_tuples();
+        new.add_encoded(&mut delta);
+        entry.column = new;
+        entry.state = ColumnState::Ready;
+        true
     }
 
-    /// Flip a `Building` column to `Ready` (base fully installed) — but only if `epoch` still matches
-    /// (the same drop/re-create guard as [`install_base_chunk`](Self::install_base_chunk)), so a stale
-    /// job can never publish a freshly re-created column. After this, the read path serves the column.
-    pub fn finish_build(
-        &mut self,
+    /// Encode `entries` under the kind of the column `(entity, label, attr)`, if it exists.
+    /// `None` when there is no such column — the build was for a column since dropped.
+    #[must_use]
+    pub fn encode_for_column(
+        &self,
         entity: EntityType,
         label: &Arc<String>,
         attr: &Arc<String>,
-        epoch: u64,
-    ) {
-        if let Some(entry) = self
-            .columns_mut(entity)
-            .get_mut(&(label.clone(), attr.clone()))
-            && matches!(&entry.state, ColumnState::Building { epoch: e, .. } if *e == epoch)
-        {
-            entry.state = ColumnState::Ready;
-        }
+        entries: Vec<(Value, u64)>,
+    ) -> Option<Vec<(u64, u64)>> {
+        self.columns(entity)
+            .get(&(label.clone(), attr.clone()))
+            .map(|entry| entry.column.encode_entries(entries))
     }
 
     /// Every `(entity, label, attr, epoch)` column currently in the `Building` state —
@@ -484,6 +562,7 @@ impl FalkorDbIndex {
 
 #[cfg(test)]
 mod tests {
+    use super::super::encode::encode_numeric;
     use super::*;
     use crate::entity_type::EntityType::{Node, Relationship};
 
@@ -491,12 +570,9 @@ mod tests {
         Arc::new(s.to_string())
     }
 
-    /// Stage a single-column `(value, id)` batch (the shape the write path passes to `merge`).
-    /// Online-build state machine at the column level: a `Building` column gates reads (returns
-    /// `None` → scan fallback) even after chunks are installed, until `finish_build` flips it `Ready`;
-    /// then it serves. (Reconciliation of concurrent writes is validated at the graph level, where
-    /// `Graph::install_index_base_chunk` re-checks each entry against live state — see
-    /// `falkordb_index_mvcc_tests`.)
+    /// The online-build state machine at the column level: a `Building` column gates reads
+    /// (returns `None`, so the caller scan-falls-back), a stale epoch cannot publish, and the
+    /// single install commit subtracts TOMB from the stale BASE before replaying DELTA.
     #[test]
     fn building_column_gates_reads_until_finished() {
         let (label, attr) = (arc("Person"), arc("age"));
@@ -504,56 +580,58 @@ mod tests {
             key: attr.clone(),
             value: Value::Int(v),
         };
+        let staged = |v: i64, id: u64| {
+            let mut m: StagedColumns = HashMap::default();
+            m.insert((label.clone(), attr.clone()), vec![(Value::Int(v), id)]);
+            m
+        };
+        let key = |v: i64| encode_numeric(&Value::Int(v)).unwrap();
+        let hits = |idx: &FalkorDbIndex, v: i64| -> Vec<u64> {
+            idx.query_numeric(Node, &label, &eq(v))
+                .map_or_else(Vec::new, Iterator::collect)
+        };
 
         let mut idx = FalkorDbIndex::new();
         let epoch = idx.create_building(Node, &label, &attr);
-        assert!(
-            idx.query_numeric(Node, &label, &eq(10)).is_none(),
-            "empty Building → None"
-        );
+        assert!(hits(&idx, 10).is_empty(), "empty Building → None");
 
-        // Install a (pre-validated) base chunk — reads still gated while Building.
-        idx.install_base_chunk(
-            Node,
-            &label,
-            &attr,
-            epoch,
-            [(Value::Int(10), 0u64), (Value::Int(20), 1)],
-        );
+        // Writes landing during the build. 30 is created (DELTA); 20 is destroyed, which goes to
+        // TOMB *and* to the column tree — the pair that stops the stale base resurrecting it.
+        idx.merge(Node, staged(30, 2), HashMap::default());
+        idx.merge(Node, HashMap::default(), staged(20, 1));
         assert!(
-            idx.query_numeric(Node, &label, &eq(10)).is_none(),
-            "installed but Building → None"
+            hits(&idx, 30).is_empty(),
+            "still Building → None even with a live delta"
         );
         assert_eq!(idx.building_columns().len(), 1);
 
-        // A stale epoch (as if the column had been dropped + re-created) installs nothing and
-        // must NOT flip the column `Ready` — the drop/re-create guard.
-        idx.install_base_chunk(Node, &label, &attr, epoch + 1, [(Value::Int(99), 9u64)]);
-        idx.finish_build(Node, &label, &attr, epoch + 1);
+        // A stale epoch — as if the column had been dropped and re-created — installs nothing and
+        // must not flip the column `Ready`.
         assert!(
-            idx.query_numeric(Node, &label, &eq(10)).is_none(),
-            "stale epoch cannot publish"
+            !idx.install_base(Node, &label, &attr, epoch + 1, vec![(key(99), 9)]),
+            "stale epoch cannot install"
         );
+        assert!(hits(&idx, 99).is_empty(), "stale epoch cannot publish");
         assert_eq!(
             idx.building_columns().len(),
             1,
-            "still Building after stale finish"
+            "still Building after a stale install"
         );
 
-        // Finish with the right epoch → serves; the stale value never landed.
-        idx.finish_build(Node, &label, &attr, epoch);
-        assert_eq!(
-            idx.query_numeric(Node, &label, &eq(10))
-                .map_or_else(Vec::new, |it| it.collect()),
-            vec![0],
-        );
-        assert!(
-            idx.query_numeric(Node, &label, &eq(99))
-                .map_or_else(Vec::new, |it| it.collect())
-                .is_empty(),
-            "stale entry absent"
-        );
+        // The real install, one commit: BASE holds the snapshot-era rows 10 and 20.
+        assert!(idx.install_base(Node, &label, &attr, epoch, vec![(key(10), 0), (key(20), 1)]));
         assert!(idx.building_columns().is_empty(), "no longer building");
+        assert_eq!(hits(&idx, 10), vec![0], "untouched base row survives");
+        assert!(
+            hits(&idx, 20).is_empty(),
+            "TOMB must stop the deleted row resurrecting from the stale base"
+        );
+        assert_eq!(
+            hits(&idx, 30),
+            vec![2],
+            "DELTA row preserved by the install"
+        );
+        assert!(hits(&idx, 99).is_empty(), "stale-epoch value never landed");
     }
 
     /// Forking a new version (what `Graph::new_version` does) and mutating it
@@ -583,7 +661,6 @@ mod tests {
         assert_eq!(all(&v2), vec![1, 2]); // new version sees the write
     }
 
-    /// `create_numeric` installs a column; before it, the key is absent.
     #[test]
     fn create_then_lookup() {
         let (label, attr) = (arc("Person"), arc("age"));

@@ -453,6 +453,12 @@ pub fn graph_init(
         }
     }
 
+    // Liveness for online index builds. Dispatch-on-client-write covers only one of the write
+    // paths, so a `CREATE INDEX` through MULTI/EXEC or a replica effect — or one that is simply the
+    // last write the server sees — would otherwise leave its column `Building` forever.
+    #[cfg(feature = "index-falkordb")]
+    crate::graph_core::spawn_index_build_sweep();
+
     Status::Ok
 }
 
