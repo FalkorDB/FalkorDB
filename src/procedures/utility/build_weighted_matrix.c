@@ -4,6 +4,7 @@
  */
 
 #include "./internal.h"
+#include <pthread.h>
 
 // the ith relationID is i if no relation is given, and rels[i] if it is.
 #define GETRELATIONID(i) ((rels) ? rels[i] : i)
@@ -14,12 +15,7 @@
 	if (weight != ATTRIBUTE_ID_NONE) GrB_BinaryOp_free(&minID);  \
 	GrB_Vector_free(&_N);                                        \
 	GrB_Scalar_free(&theta);                                     \
-	GrB_Type_free(&contx_type);                                  \
 	GrB_Descriptor_free(&desc);                                  \
-	GrB_UnaryOp_free(&toMatrix);                                 \
-	GrB_BinaryOp_free(&weightOp);                                \
-	GrB_BinaryOp_free(&toMatrixMin);                             \
-	GxB_IndexBinaryOp_free(&minID_indexOP);                      \
 }
 
 #define COMPARE_AND_CHANGE_MINID                                 \
@@ -212,6 +208,49 @@ static void _pickBinary
 	*z = minID;
 }
 
+//------------------------------------------------------------------------------
+// Create GrB_Ops once, for the lifetime of the process
+//------------------------------------------------------------------------------
+static GrB_Type bwm_compare_ctx_type = NULL;
+static GrB_UnaryOp bwm_reduce_to_matrix_any = NULL;
+static GrB_BinaryOp bwm_weight_op = NULL;
+static GrB_BinaryOp bwm_reduce_to_matrix_min = NULL;
+static GxB_IndexBinaryOp bwm_pick_binary_indexop = NULL;
+static pthread_once_t bwm_ops_once = PTHREAD_ONCE_INIT;
+
+static void _init_bwm_ops
+(
+	void
+) {
+	GrB_OK (GrB_Type_new(&bwm_compare_ctx_type, sizeof(compareContext)));
+
+	GrB_OK (GrB_UnaryOp_new(&bwm_reduce_to_matrix_any,
+			(GxB_unary_function) _reduceToMatrixAny, GrB_UINT64, GrB_UINT64));
+
+	GrB_OK (GrB_BinaryOp_new(&bwm_weight_op, (GxB_binary_function) _getAttFromID,
+			GrB_FP64, GrB_UINT64, bwm_compare_ctx_type));
+
+	GrB_OK (GrB_BinaryOp_new(&bwm_reduce_to_matrix_min,
+			(GxB_binary_function) _reduceToMatrix, GrB_UINT64, GrB_UINT64,
+			bwm_compare_ctx_type));
+
+	GrB_OK (GxB_IndexBinaryOp_new(&bwm_pick_binary_indexop,
+			(GxB_index_binary_function) _pickBinary, GrB_UINT64, GrB_UINT64,
+			GrB_UINT64, bwm_compare_ctx_type, NULL, NULL));
+}
+
+static inline void _ensure_bwm_ops
+(
+	void
+) {
+	pthread_once(&bwm_ops_once, _init_bwm_ops);
+	ASSERT(bwm_compare_ctx_type != NULL);
+	ASSERT(bwm_reduce_to_matrix_any != NULL);
+	ASSERT(bwm_weight_op != NULL);
+	ASSERT(bwm_reduce_to_matrix_min != NULL);
+	ASSERT(bwm_pick_binary_indexop != NULL);
+}
+
 // compose multiple label & relation matrices into a single matrix
 // L = L0 U L1 U ... Lm
 // A = (R0 + R1 + ... Rn) (compressed to only include the rows/cols from L)
@@ -241,6 +280,7 @@ GrB_Info get_sub_weight_matrix
 	ASSERT(A != NULL);
 	ASSERT((lbls != NULL && n_lbls > 0) || (lbls == NULL && n_lbls == 0));
 	ASSERT((rels != NULL && n_rels > 0) || (rels == NULL && n_rels == 0));
+	_ensure_bwm_ops();
 
 	// context for GrB operations
 	compareContext ctx = {
@@ -253,38 +293,24 @@ GrB_Info get_sub_weight_matrix
 	GrB_Scalar        theta         = NULL;  // scalar containing the context
 	GrB_UnaryOp       toMatrix      = NULL;  // get any ID from vector entry
 	GrB_BinaryOp      weightOp      = NULL;  // get weight from edgeID
-	GrB_Type          contx_type    = NULL;  // GB equivalent of compareContext
 	GrB_BinaryOp      toMatrixMin   = NULL;  // get min weight ID from vectors
 	GxB_IndexBinaryOp minID_indexOP = NULL;  // minID's underlying index op 
 	size_t            n             = Graph_UncompactedNodeCount(g);
 
-	GrB_Type_new(&contx_type, sizeof(compareContext));
-
 	if(weight == ATTRIBUTE_ID_NONE) {
 		// weight attribute wasn't specified, use a dummy weight with value: 0
 		minID = GrB_SECOND_UINT64;
-		GrB_UnaryOp_new (
-			&toMatrix, (GxB_unary_function) _reduceToMatrixAny, GrB_UINT64, 
-			GrB_UINT64
-		) ;
+		toMatrix = bwm_reduce_to_matrix_any;
 	} else {
-		GrB_Scalar_new(&theta, contx_type);
+		GrB_Scalar_new(&theta, bwm_compare_ctx_type);
 		GrB_Scalar_setElement_UDT(theta, (void *) &ctx);
-		GrB_BinaryOp_new(
-			&weightOp, (GxB_binary_function) _getAttFromID, 
-			GrB_FP64, GrB_UINT64, contx_type
-		) ;
+		weightOp = bwm_weight_op;
 
 		// reduce a matrix to its minimum (or maximum) valued edge
-		GrB_BinaryOp_new(
-			&toMatrixMin, (GxB_binary_function) _reduceToMatrix, 
-			GrB_UINT64, GrB_UINT64, contx_type
-		) ;
+		toMatrixMin = bwm_reduce_to_matrix_min;
 
 		// pick the minimum (or maximum) valued edge from the two matricies
-		GxB_IndexBinaryOp_new(&minID_indexOP,
-				(GxB_index_binary_function) _pickBinary, GrB_UINT64,
-				GrB_UINT64, GrB_UINT64, contx_type, NULL, NULL);
+		minID_indexOP = bwm_pick_binary_indexop;
 
 		GxB_BinaryOp_new_IndexOp(&minID, minID_indexOP, theta);
 	}
