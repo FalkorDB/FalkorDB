@@ -132,7 +132,9 @@ use super::{
     matrix::{Descriptor, Dup, Matrix},
     serialization::{Decode, Encode, Reader, Writer},
     vector::Vector,
-    versioned_matrix::{self, VersionedMatrix, should_fold, should_fold_read},
+    versioned_matrix::{
+        self, VersionedMatrix, delta_dominates_base, should_fold, should_fold_read,
+    },
 };
 
 /// Maximum GraphBLAS index value (2^60 - 1).
@@ -754,6 +756,26 @@ impl Tensor {
         self.me.fold_latched();
     }
 
+    /// Fold forward-layer deltas that have grown comparable to the base, plus
+    /// the backward and multi-edge matrices' own; see
+    /// [`VersionedMatrix::fold_oversized`] for why commit is where this
+    /// happens. A delete-everything is the case that needs it: every deleted
+    /// edge leaves a `dm` tombstone shadowing a base entry, so the tensor
+    /// holds both copies until the next transaction touching it.
+    pub fn fold_oversized(&mut self) {
+        let base = self.m.nvals();
+        let fold_dp = delta_dominates_base(self.dp_count.load(Ordering::Relaxed), base);
+        let fold_dm = delta_dominates_base(self.dm_count.load(Ordering::Relaxed), base);
+        if fold_dp || fold_dm {
+            self.fold_dp.fetch_or(fold_dp, Ordering::Relaxed);
+            self.fold_dm.fetch_or(fold_dm, Ordering::Relaxed);
+            self.needs_flush.store(true, Ordering::Relaxed);
+            self.flush();
+        }
+        self.mt.fold_oversized();
+        self.me.fold_oversized();
+    }
+
     /// Materialize the effective forward structure as a `bool` matrix:
     /// `(m ∖ dm) ∪ dp`, values discarded. Shadowed pairs (`dp ∩ m`) collapse
     /// in the bool union; `dm ⊆ m` is disjoint from `dp`, so order is safe.
@@ -1336,5 +1358,39 @@ mod tests {
         t.wait_fwd();
         // And a read must still see the data.
         assert!(t.get(0, 1).next().is_some(), "edge lost across resize");
+    }
+
+    /// Deleting everything must not leave the base *and* a base-sized `dm`
+    /// resident. The fold is latched by the delete, but `flush` only runs on
+    /// the next mutation of this same tensor — which for a delete-everything
+    /// may never come — so `fold_oversized` (MVCC commit) has to apply it.
+    /// Measured before the fix: `MATCH (n) DELETE n` over 250k nodes / 500k
+    /// edges reported 41 MB of graph memory against 25 MB before the delete.
+    #[test]
+    fn deleting_everything_folds_the_tombstones_away() {
+        ensure_init();
+        const N: u64 = 10_000;
+        let mut t = Tensor::new(N + 1, N + 1);
+        let srcs: Vec<u64> = (0..N).collect();
+        let dsts: Vec<u64> = (0..N).map(|i| i + 1).collect();
+        let ids: Vec<u64> = (0..N).collect();
+        t.set_all_from_slices(&srcs, &dsts, &ids);
+
+        // Next version: the adds fold into the base, as they do in the graph
+        // when a later transaction mutates the tensor.
+        let mut t = t.dup();
+        t.flush();
+        t.wait_fwd();
+        assert_eq!(t.fwd_m().nvals(), N, "adds did not fold into the base");
+
+        // Delete every edge, then commit.
+        let mut t = t.dup();
+        t.remove_all(&(0..N).map(|i| (i, i, i + 1)).collect::<Vec<_>>());
+        t.fold_oversized();
+
+        t.wait_fwd();
+        assert_eq!(t.fwd_m().nvals(), 0, "base kept its deleted entries");
+        assert_eq!(t.fwd_dm().nvals(), 0, "tombstones kept alongside the base");
+        assert!(t.get(0, 1).next().is_none(), "deleted edge still readable");
     }
 }

@@ -162,6 +162,14 @@ impl MvccGraph {
 
         new_graph.borrow_mut().trim_attr_stores();
 
+        // Fold away any delta that has grown comparable to its base. The
+        // transaction is done mutating and the write lock is still held, so
+        // this is the last point at which a delete-everything's tombstones
+        // can be applied — otherwise both the base and a base-sized `dm`
+        // stay resident until some later transaction happens to touch the
+        // same matrix.
+        new_graph.borrow_mut().fold_oversized_deltas();
+
         // Materialize the committed base (`m`) layer of every matrix before
         // publishing. Readers reach bases lock-free (`m()`, raw `m.nvals()`),
         // and any GrB call on a pending matrix finishes that work internally

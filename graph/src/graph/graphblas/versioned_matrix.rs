@@ -182,8 +182,20 @@ fn fold_balance(
 ) -> bool {
     tx_added > 0
         && delta_nvals >= MIN_FOLD_DELTA
-        && (delta_nvals.saturating_mul(2) >= base_nvals
+        && (delta_dominates_base(delta_nvals, base_nvals)
             || delta_nvals.saturating_mul(delta_nvals) >= k.saturating_mul(tx_added))
+}
+
+/// The escape hatch of [`fold_balance`] on its own: a delta comparable to the
+/// base folds whatever the balance point says, because the fold then costs the
+/// same order as a single delta touch — and because the delta is holding as
+/// much memory as the base it shadows. Evaluated on the approximate counters,
+/// so it never forces a delta's pending tuples to merge.
+pub(super) fn delta_dominates_base(
+    delta_nvals: u64,
+    base_nvals: u64,
+) -> bool {
+    delta_nvals >= MIN_FOLD_DELTA && delta_nvals.saturating_mul(2) >= base_nvals
 }
 
 /// A matrix with MVCC delta tracking for snapshot isolation.
@@ -721,6 +733,34 @@ impl VersionedMatrix<bool> {
     pub fn fold_latched(&mut self) {
         self.wait();
         if self.fold_dp.load(Ordering::Relaxed) || self.fold_dm.load(Ordering::Relaxed) {
+            self.needs_flush.store(true, Ordering::Relaxed);
+            self.flush();
+        }
+    }
+
+    /// Fold a delta that has grown comparable to the base
+    /// ([`delta_dominates_base`]), at MVCC commit: after the transaction's
+    /// last mutation, while the writer still holds the write lock and before
+    /// the new version is published.
+    ///
+    /// Deferring *this* fold to the next mutation's `flush` — where the fold
+    /// usefully replaces a COW dup — keeps both the base and a base-sized
+    /// delta resident until some later transaction happens to touch the same
+    /// matrix, which for a delete-everything is unbounded: `MATCH (n) DELETE
+    /// n` over 250k nodes / 500k edges left the relationship tensor holding
+    /// `m = 499_998` alongside `dm = 499_998` (GRAPH.MEMORY USAGE 41 MB after
+    /// the delete against 25 MB before it).
+    ///
+    /// Sub-hatch deltas stay lazy. The sqrt balance point is a throughput
+    /// decision whose whole value is landing on the `dup`, and those deltas
+    /// are by definition small next to the base they shadow.
+    pub fn fold_oversized(&mut self) {
+        let base = self.m.nvals();
+        let fold_dp = delta_dominates_base(self.dp_count.load(Ordering::Relaxed), base);
+        let fold_dm = delta_dominates_base(self.dm_count.load(Ordering::Relaxed), base);
+        if fold_dp || fold_dm {
+            self.fold_dp.fetch_or(fold_dp, Ordering::Relaxed);
+            self.fold_dm.fetch_or(fold_dm, Ordering::Relaxed);
             self.needs_flush.store(true, Ordering::Relaxed);
             self.flush();
         }

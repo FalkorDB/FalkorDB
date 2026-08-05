@@ -2114,6 +2114,23 @@ impl Graph {
         }
     }
 
+    /// Fold every delta that has grown comparable to its base into that base,
+    /// bounding a committed version's delta memory. Called at MVCC commit,
+    /// before `wait_bases`; see [`VersionedMatrix::fold_oversized`] for why
+    /// the sub-hatch deltas are deliberately left for the next `flush`.
+    pub fn fold_oversized_deltas(&mut self) {
+        self.adjacancy_matrix.fold_oversized();
+        self.node_labels_matrix.fold_oversized();
+        self.relationship_type_matrix.fold_oversized();
+        self.all_nodes_matrix.fold_oversized();
+        for m in &mut self.labels_matices {
+            m.fold_oversized();
+        }
+        for t in &mut self.relationship_matrices {
+            t.fold_oversized();
+        }
+    }
+
     /// Materialize only the committed base (`m`) layer of every versioned
     /// matrix and tensor. Called at MVCC commit before publishing: readers
     /// reach bases lock-free (dp/dm reads go through the mutex-guarded
