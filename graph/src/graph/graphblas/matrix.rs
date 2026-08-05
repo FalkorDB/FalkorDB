@@ -77,18 +77,17 @@ const CONTAINER_STRUCT_SIZE: usize = std::mem::size_of::<super::GxB_Container_st
 
 use super::vector::Vector;
 use super::{
-    GrB_BOOL, GrB_DESC_C, GrB_DESC_CT0, GrB_DESC_CT0T1, GrB_DESC_CT1, GrB_DESC_R, GrB_DESC_RC,
-    GrB_DESC_RCT0, GrB_DESC_RCT0T1, GrB_DESC_RCT1, GrB_DESC_RS, GrB_DESC_RSC, GrB_DESC_RSCT0,
-    GrB_DESC_RSCT0T1, GrB_DESC_RSCT1, GrB_DESC_RST0, GrB_DESC_RST0T1, GrB_DESC_RST1, GrB_DESC_RT0,
-    GrB_DESC_RT0T1, GrB_DESC_RT1, GrB_DESC_S, GrB_DESC_SC, GrB_DESC_SCT0, GrB_DESC_SCT0T1,
-    GrB_DESC_SCT1, GrB_DESC_ST0, GrB_DESC_ST0T1, GrB_DESC_ST1, GrB_DESC_T0, GrB_DESC_T0T1,
-    GrB_DESC_T1, GrB_Descriptor, GrB_GLOBAL, GrB_Global_set_INT32, GrB_Info, GrB_Matrix,
-    GrB_Matrix_apply, GrB_Matrix_build_BOOL, GrB_Matrix_build_UINT64, GrB_Matrix_clear,
-    GrB_Matrix_dup, GrB_Matrix_eWiseAdd_BinaryOp, GrB_Matrix_eWiseAdd_Semiring,
-    GrB_Matrix_eWiseMult_Semiring, GrB_Matrix_extractElement_BOOL,
-    GrB_Matrix_extractElement_UINT64, GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols,
-    GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_removeElement,
-    GrB_Matrix_resize, GrB_Matrix_set_INT32, GrB_Matrix_setElement_BOOL,
+    GrB_BOOL, GrB_BinaryOp, GrB_DESC_C, GrB_DESC_CT0, GrB_DESC_CT0T1, GrB_DESC_CT1, GrB_DESC_R,
+    GrB_DESC_RC, GrB_DESC_RCT0, GrB_DESC_RCT0T1, GrB_DESC_RCT1, GrB_DESC_RS, GrB_DESC_RSC,
+    GrB_DESC_RSCT0, GrB_DESC_RSCT0T1, GrB_DESC_RSCT1, GrB_DESC_RST0, GrB_DESC_RST0T1,
+    GrB_DESC_RST1, GrB_DESC_RT0, GrB_DESC_RT0T1, GrB_DESC_RT1, GrB_DESC_S, GrB_DESC_SC,
+    GrB_DESC_SCT0, GrB_DESC_SCT0T1, GrB_DESC_SCT1, GrB_DESC_ST0, GrB_DESC_ST0T1, GrB_DESC_ST1,
+    GrB_DESC_T0, GrB_DESC_T0T1, GrB_DESC_T1, GrB_Descriptor, GrB_GLOBAL, GrB_Global_set_INT32,
+    GrB_Info, GrB_Matrix, GrB_Matrix_apply, GrB_Matrix_build_BOOL, GrB_Matrix_build_UINT64,
+    GrB_Matrix_clear, GrB_Matrix_dup, GrB_Matrix_eWiseAdd_BinaryOp, GrB_Matrix_eWiseMult_Semiring,
+    GrB_Matrix_extractElement_BOOL, GrB_Matrix_extractElement_UINT64, GrB_Matrix_free,
+    GrB_Matrix_get_INT32, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals,
+    GrB_Matrix_removeElement, GrB_Matrix_resize, GrB_Matrix_set_INT32, GrB_Matrix_setElement_BOOL,
     GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode, GrB_Orientation, GrB_SECOND_UINT64,
     GrB_Scalar, GrB_Scalar_free, GrB_Scalar_new, GrB_Scalar_setElement_BOOL, GrB_Type, GrB_UINT64,
     GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL,
@@ -252,6 +251,32 @@ pub enum Descriptor {
     RSCT0,
     RSCT1,
     RSCT0T1,
+}
+
+/// The `⊕` [`Matrix::element_wise_add`] folds intersecting entries with,
+/// selected by the matrix's element type.
+///
+/// The operator is a property of what the values *mean*, which is fixed by the
+/// element type, so there is nothing for a caller to choose: a `bool` matrix
+/// carries only a sparsity pattern, where either of the two `true`s will do; a
+/// `u64` matrix carries edge ids, where `b` is the delta layer whose value
+/// shadows the base's on a pair present in both.
+pub trait EWiseAdd {
+    fn add_op() -> GrB_BinaryOp;
+}
+
+impl EWiseAdd for bool {
+    fn add_op() -> GrB_BinaryOp {
+        // The additive monoid of `GxB_ANY_PAIR_BOOL`, which is what the
+        // eWiseAdd-by-semiring form this replaced resolved to.
+        unsafe { GxB_ANY_BOOL }
+    }
+}
+
+impl EWiseAdd for u64 {
+    fn add_op() -> GrB_BinaryOp {
+        unsafe { GrB_SECOND_UINT64 }
+    }
 }
 
 impl From<Descriptor> for GrB_Descriptor {
@@ -685,19 +710,26 @@ impl<T> Matrix<T> {
         self.has_pending.store(true, Ordering::Relaxed);
     }
 
+    /// `self<mask> = a ⊕ b`, with `a` and `b` defaulting to `self`.
+    ///
+    /// The `⊕` comes from the output's element type via [`EWiseAdd`]: pattern
+    /// union for `bool`, value-preserving `SECOND` for `u64`, so a delta layer
+    /// merged into its base keeps the delta's (live) value on a shadowed pair.
     pub fn element_wise_add<TB>(
         &mut self,
         mask: Option<&Matrix<bool>>,
-        a: Option<&Matrix<bool>>,
+        a: Option<&Self>,
         b: Option<&Matrix<TB>>,
         descriptor: Option<Descriptor>,
-    ) {
+    ) where
+        T: EWiseAdd,
+    {
         unsafe {
-            let info = GrB_Matrix_eWiseAdd_Semiring(
+            let info = GrB_Matrix_eWiseAdd_BinaryOp(
                 *self.m,
                 mask.map_or(null_mut(), |m| *m.m),
-                GxB_ANY_BOOL,
-                GxB_ANY_PAIR_BOOL,
+                null_mut(),
+                T::add_op(),
                 a.map_or(*self.m, |a| *a.m),
                 b.map_or(*self.m, |b| *b.m),
                 descriptor.map_or(null_mut(), std::convert::Into::into),
@@ -959,33 +991,6 @@ impl Matrix<u64> {
     ) {
         unsafe {
             let info = GrB_Matrix_setElement_UINT64(*self.m, value, i, j);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-        }
-        self.has_pending.store(true, Ordering::Relaxed);
-    }
-
-    /// `self<mask> = a ⊕ b` (`a` defaults to `self`), value-preserving: on
-    /// intersecting entries `b`'s value wins (`SECOND`). Unlike the
-    /// bool-semiring [`Self::element_wise_add`], this keeps u64 values
-    /// intact, so a delta-plus layer that shadows its base can be merged
-    /// with the live (`dp`) value taking precedence.
-    pub fn element_wise_add_second(
-        &mut self,
-        mask: Option<&Matrix<bool>>,
-        a: Option<&Self>,
-        b: &Self,
-        descriptor: Option<Descriptor>,
-    ) {
-        unsafe {
-            let info = GrB_Matrix_eWiseAdd_BinaryOp(
-                *self.m,
-                mask.map_or(null_mut(), |m| *m.m),
-                null_mut(),
-                GrB_SECOND_UINT64,
-                a.map_or(*self.m, |a| *a.m),
-                *b.m,
-                descriptor.map_or(null_mut(), std::convert::Into::into),
-            );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
         self.has_pending.store(true, Ordering::Relaxed);

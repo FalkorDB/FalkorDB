@@ -706,14 +706,14 @@ impl Tensor {
                 match (fold_dp, fold_dm) {
                     // new_m<!dm, replace> = m ⊕ dp (dp wins on shadowed
                     // pairs); dp ∩ dm = ∅, so no pending add is lost.
-                    (true, true) => new_m.element_wise_add_second(
+                    (true, true) => new_m.element_wise_add(
                         Some(&self.dm),
                         Some(&self.m),
-                        &self.dp,
+                        Some(&*self.dp),
                         Some(Descriptor::RC),
                     ),
                     (true, false) => {
-                        new_m.element_wise_add_second(None, Some(&self.m), &self.dp, None);
+                        new_m.element_wise_add(None, Some(&self.m), Some(&*self.dp), None);
                     }
                     // new_m<!dm, replace> = m
                     (false, true) => new_m.select(&self.dm, &self.m),
