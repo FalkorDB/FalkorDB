@@ -3169,6 +3169,14 @@ impl Graph {
 
     /// Create an index and populate it synchronously (for RDB load).
     /// Unlike `create_index`, this doesn't spawn async tasks.
+    ///
+    /// **The caller must reach `populate_indexes_sync` before publishing this version.** This
+    /// leaves the native column created but *empty*, and an empty column is indistinguishable
+    /// from one that legitimately matches nothing — a query reaching it would return no rows
+    /// rather than falling back. Every caller pairs the two inside one unpublished fork today
+    /// (`rebuild_indexes` + `populate_indexes_sync` in the decoder, and the `has_index_ops` arm
+    /// of `apply_effects`), so no reader can observe the gap; a new caller that skips the
+    /// populate would silently serve empty results.
     pub fn create_index_sync(
         &mut self,
         index_type: &IndexType,
@@ -3225,12 +3233,6 @@ impl Graph {
         Ok(())
     }
 
-    /// Bulk-build the index for each of `attrs` on `label` from
-    /// the current live nodes, on the write thread. The folded index lives on
-    /// this graph version, so it MUST be filled here (with `&mut Graph`) and
-    /// never via the async RediSearch populate, which reads through the
-    /// `Indexer -> Graph` back-pointer this design rejects. A `(label, attr)`
-    /// with no live nodes or no numeric values yields an empty column.
     /// Collect the `(value, node_id)` entries for one node index column `(label, attr)` from the
     /// current live nodes — shared-borrow only (label matrix + attribute store are `&self`).
     #[cfg(feature = "index-falkordb")]
@@ -3254,6 +3256,12 @@ impl Graph {
         pairs
     }
 
+    /// Bulk-build the index for each of `attrs` on `label` from
+    /// the current live nodes, on the write thread. The folded index lives on
+    /// this graph version, so it MUST be filled here (with `&mut Graph`) and
+    /// never via the async RediSearch populate, which reads through the
+    /// `Indexer -> Graph` back-pointer this design rejects. A `(label, attr)`
+    /// with no live nodes or no numeric values yields an empty column.
     #[cfg(feature = "index-falkordb")]
     fn populate_index_node(
         &mut self,
@@ -3333,12 +3341,8 @@ impl Graph {
     // edges; a mutation that bypasses these hooks would leak a stale tuple that surfaces once the
     // edge_id is reused. Add the stage/apply hook to any new indexed-edge-attr write path.
 
-    /// Bulk-build the edge index for each of `attrs` on `type_name` from the type's
-    /// live edges, on the write thread. Mirrors [`populate_index_node`] for edges.
-    #[cfg(feature = "index-falkordb")]
     /// Collect the `(value, edge_id)` entries for one edge index column `(type, attr)` from the
-    /// type's live edges — shared-borrow only. Reused by the synchronous populate and the background
-    /// build.
+    /// type's live edges — shared-borrow only.
     #[cfg(feature = "index-falkordb")]
     fn collect_edge_index_entries(
         &self,
@@ -3363,6 +3367,8 @@ impl Graph {
             .collect()
     }
 
+    /// Bulk-build the edge index for each of `attrs` on `type_name` from the type's
+    /// live edges, on the write thread. Mirrors [`populate_index_node`] for edges.
     #[cfg(feature = "index-falkordb")]
     fn populate_index_edge(
         &mut self,
@@ -3759,23 +3765,6 @@ impl Graph {
             }
         }
 
-        // Index: drop the column(s) in O(1) (releases the tree Arc). P4b (node) / #51 (edge).
-        #[cfg(feature = "index-falkordb")]
-        if *index_type == IndexType::Range {
-            for attr in &effective_attrs {
-                match entity_type {
-                    EntityType::Node => {
-                        self.falkordb_index
-                            .drop_column(EntityType::Node, label, attr)
-                    }
-                    EntityType::Relationship => {
-                        self.falkordb_index
-                            .drop_column(EntityType::Relationship, label, attr)
-                    }
-                }
-            }
-        }
-
         let (indexer, total, kind) = match entity_type {
             EntityType::Node => {
                 let total = self.get_label_matrix(label).map_or(
@@ -3799,6 +3788,16 @@ impl Graph {
 
         match reindex {
             Some((dropped, remaining)) if dropped > 0 => {
+                // Drop the native column(s) only now, after the indexer confirmed the drop.
+                // Doing it earlier meant the `no such index` arm below could leave RediSearch
+                // holding the index while the native columns were already gone — DROP INDEX
+                // reports failure but half the state is destroyed. O(1) each: releases the tree Arc.
+                #[cfg(feature = "index-falkordb")]
+                if *index_type == IndexType::Range {
+                    for attr in &effective_attrs {
+                        self.falkordb_index.drop_column(*entity_type, label, attr);
+                    }
+                }
                 if remaining > 0 {
                     indexer.recreate_index(label)?;
                     populate_index(kind, label.clone(), indexer.clone());
@@ -3871,13 +3870,24 @@ impl Graph {
         let iter =
             self.falkordb_index()
                 .query_numeric(EntityType::Relationship, type_name, query)?;
-        let resolved: Vec<(NodeId, NodeId, RelationshipId)> = iter
-            .filter_map(|eid| {
-                self.endpoints_for_edge(eid)
-                    .map(|(src, dst)| (NodeId(src), NodeId(dst), RelationshipId(eid)))
-            })
-            .collect();
-        Some(resolved.into_iter())
+        // Own the reverse index rather than borrowing `self`, so the iterator stays lazy: the
+        // signature is `+ use<>` (captures no lifetime), which is why this used to `collect()`
+        // into a Vec. `edge_endpoints` is an `Arc`, so cloning is a refcount bump and the decode
+        // is the same shift/mask `endpoints_for_edge` does. Laziness matters here — a range scan
+        // under a LIMIT should stop at the limit, not materialize every match first.
+        let endpoints = Arc::clone(&self.edge_endpoints);
+        Some(iter.filter_map(move |eid| {
+            endpoints
+                .get(eid as usize)
+                .filter(|&&key| key != EDGE_NO_ENDPOINT)
+                .map(|&key| {
+                    (
+                        NodeId(key >> 32),
+                        NodeId(key & 0xFFFF_FFFF),
+                        RelationshipId(eid),
+                    )
+                })
+        }))
     }
 
     #[must_use]
