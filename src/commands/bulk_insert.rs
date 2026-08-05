@@ -226,12 +226,43 @@ unsafe fn maybe_yield(raw_ctx: *mut raw::RedisModuleCtx) {
     }
 }
 
+/// Index documents collected while processing bulk tokens.
+///
+/// RediSearch is not versioned, so anything published into it cannot be undone by the
+/// MVCC rollback that a later failing token triggers. Accumulate across the whole insert
+/// and publish once, on the success path only — otherwise a batch that fails midway
+/// leaves documents behind for entities that were never committed (and whose ids may be
+/// handed to different entities later).
+#[derive(Default)]
+struct BulkIndexDocs {
+    nodes: FxHashMap<u64, RoaringTreemap>,
+    edges: FxHashMap<u64, RoaringTreemap>,
+}
+
+impl BulkIndexDocs {
+    /// Publish into the indexes. Call only once every token has succeeded, and while
+    /// `g` is still the un-published fork — a committed version may be borrowed by
+    /// concurrent readers.
+    fn publish(
+        &mut self,
+        g: &mut Graph,
+    ) {
+        if !self.nodes.is_empty() {
+            g.commit_index(&mut self.nodes, &mut FxHashMap::default());
+        }
+        if !self.edges.is_empty() {
+            g.commit_edge_index(&mut self.edges, &mut FxHashMap::default());
+        }
+    }
+}
+
 fn process_node_token(
     g: &mut Graph,
     data: &[u8],
     node_ids: &[NodeId],
     node_id_cursor: &mut usize,
     raw_ctx: *mut raw::RedisModuleCtx,
+    docs: &mut BulkIndexDocs,
 ) -> Result<(), String> {
     let mut idx = 0;
     let (labels, prop_names) = parse_header(data, &mut idx, "Label name")?;
@@ -286,12 +317,19 @@ fn process_node_token(
     g.create_nodes(&nodes_bitmap);
     unsafe { maybe_yield(raw_ctx) };
 
-    let mut index_add_docs: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
-    g.set_nodes_labels_bulk(&label_rows, &label_cols, &mut index_add_docs);
+    g.set_nodes_labels_bulk(&label_rows, &label_cols, &mut docs.nodes);
     unsafe { maybe_yield(raw_ctx) };
 
+    // `import_node_attrs_resolved` marks these nodes for indexing, collecting into the
+    // insert-wide accumulator that `BulkIndexDocs::publish` flushes once every token has
+    // succeeded. Nothing else on this path would: GRAPH.BULK does not run the post-load
+    // `populate_indexes_sync` rebuild (that is the RDB / replica path).
+    //
+    // `set_nodes_labels_bulk` above also collects, but only for nodes that already have
+    // attributes — none do at this point — so it contributes nothing here and the two do
+    // not double up.
     if !resolved_attrs.is_empty() {
-        g.import_node_attrs_resolved(&mut resolved_attrs);
+        g.import_node_attrs_resolved(&mut resolved_attrs, &label_ids, &mut docs.nodes);
         unsafe { maybe_yield(raw_ctx) };
     }
 
@@ -304,6 +342,7 @@ fn process_edge_token(
     rel_ids: &[RelationshipId],
     rel_id_cursor: &mut usize,
     raw_ctx: *mut raw::RedisModuleCtx,
+    docs: &mut BulkIndexDocs,
 ) -> Result<(), String> {
     let mut idx = 0;
     let (type_names, prop_names) = parse_header(data, &mut idx, "Relationship type")?;
@@ -315,7 +354,7 @@ fn process_edge_token(
         ));
     }
     let type_name = Arc::new(type_names[0].clone());
-    g.get_type_id_mut(&type_name);
+    let type_id = g.get_type_id_mut(&type_name);
 
     let attr_ids: Vec<u16> = prop_names
         .iter()
@@ -364,7 +403,8 @@ fn process_edge_token(
     unsafe { maybe_yield(raw_ctx) };
 
     if !resolved_rel_attrs.is_empty() {
-        g.import_relationship_attrs_resolved(&mut resolved_rel_attrs);
+        // Same as the node path: collect now, publish once the whole insert has succeeded.
+        g.import_relationship_attrs_resolved(&mut resolved_rel_attrs, type_id, &mut docs.edges);
         unsafe { maybe_yield(raw_ctx) };
     }
 
@@ -379,6 +419,7 @@ fn bulk_insert_sync(
     edge_count: usize,
     node_token_count: usize,
     rel_token_count: usize,
+    docs: &mut BulkIndexDocs,
 ) -> Result<(), String> {
     let node_ids = g.reserve_nodes(node_count);
     let rel_ids = g.reserve_relationships(edge_count);
@@ -387,11 +428,11 @@ fn bulk_insert_sync(
 
     let null_ctx = std::ptr::null_mut();
     for token in tokens.iter().take(node_token_count) {
-        process_node_token(g, token, &node_ids, &mut node_id_cursor, null_ctx)?;
+        process_node_token(g, token, &node_ids, &mut node_id_cursor, null_ctx, docs)?;
     }
 
     for token in tokens.iter().skip(node_token_count).take(rel_token_count) {
-        process_edge_token(g, token, &rel_ids, &mut rel_id_cursor, null_ctx)?;
+        process_edge_token(g, token, &rel_ids, &mut rel_id_cursor, null_ctx, docs)?;
     }
 
     // Flush delta-plus into base to prevent large dp from slowing subsequent commands
@@ -408,6 +449,7 @@ fn bulk_insert_sync_yield(
     node_token_count: usize,
     rel_token_count: usize,
     raw_ctx: *mut raw::RedisModuleCtx,
+    docs: &mut BulkIndexDocs,
 ) -> Result<(), String> {
     let node_ids = g.reserve_nodes(node_count);
     let rel_ids = g.reserve_relationships(edge_count);
@@ -415,13 +457,13 @@ fn bulk_insert_sync_yield(
     let mut rel_id_cursor = 0usize;
 
     for token in tokens.iter().take(node_token_count) {
-        process_node_token(g, token, &node_ids, &mut node_id_cursor, raw_ctx)?;
+        process_node_token(g, token, &node_ids, &mut node_id_cursor, raw_ctx, docs)?;
         // Yield to let Redis process PING from other clients
         unsafe { maybe_yield(raw_ctx) };
     }
 
     for token in tokens.iter().skip(node_token_count).take(rel_token_count) {
-        process_edge_token(g, token, &rel_ids, &mut rel_id_cursor, raw_ctx)?;
+        process_edge_token(g, token, &rel_ids, &mut rel_id_cursor, raw_ctx, docs)?;
         unsafe { maybe_yield(raw_ctx) };
     }
 
@@ -517,6 +559,7 @@ pub fn graph_bulk_insert(
                 "ERR another write is in progress, retry the query".to_string(),
             ));
         };
+        let mut docs = BulkIndexDocs::default();
         let result = {
             let mut g = g_arc.borrow_mut();
             bulk_insert_sync_yield(
@@ -527,10 +570,16 @@ pub fn graph_bulk_insert(
                 node_token_count,
                 rel_token_count,
                 ctx.ctx,
+                &mut docs,
             )
         };
         return match result {
             Ok(()) => {
+                // Every token succeeded, so the index documents are safe to publish. Do it
+                // while `g_arc` is still the un-published fork: after the swap it may be
+                // borrowed by concurrent readers, and on the error arm below it is thrown
+                // away — which is precisely what must happen to the documents too.
+                docs.publish(&mut g_arc.borrow_mut());
                 tg.graph.commit(g_arc);
                 ctx.replicate_verbatim();
                 let reply = format!("{node_count} nodes created, {edge_count} relations created");
@@ -575,6 +624,7 @@ pub fn graph_bulk_insert(
                         "ERR another write is in progress, retry the query".to_string()
                     );
                 };
+                let mut docs = BulkIndexDocs::default();
                 let inserted = {
                     let mut g = g_arc.borrow_mut();
                     let tokens: Vec<&[u8]> =
@@ -586,6 +636,7 @@ pub fn graph_bulk_insert(
                         edge_count,
                         node_token_count,
                         rel_token_count,
+                        &mut docs,
                     )
                 };
                 if let Err(e) = inserted {
@@ -602,6 +653,18 @@ pub fn graph_bulk_insert(
                     session.with_graph(|tg| tg.graph.rollback());
                     break 'phase Err(e);
                 }
+                // Publish the index documents inside the writer scope, matching
+                // `CommitOp`: the index is not MVCC, so readers must be excluded while
+                // it is mutated, and a read query holds L1-read for its whole session.
+                // Published in phase 1 instead, a concurrent reader could see documents
+                // for entities that exist only in this uncommitted fork and get ids it
+                // cannot resolve against its own snapshot.
+                //
+                // Every token has succeeded by now, so nothing reaches the index for an
+                // insert that later rolls back. The cost is a GIL hold proportional to
+                // the number of indexed rows — paid only when the graph actually has an
+                // index, since `docs` is otherwise empty.
+                docs.publish(&mut g_arc.borrow_mut());
                 session
                     .with_graph_mut(|tg| tg.graph.commit(g_arc))
                     .expect("writer mode after upgrade_to_write");
