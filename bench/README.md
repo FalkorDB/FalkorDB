@@ -1,68 +1,154 @@
 # bench — per-query performance & coverage loop
 
-Measures per-query **instructions and cycles of the redis-server process**
-(macOS `proc_pid_rusage`, no root) plus optional system-wide **branches,
-branch-misses, L1D-misses** (Apple Silicon PMU via `pmc_tool`, needs root)
-and per-query **jemalloc allocated/deallocated bytes** (`MEMORY MALLOC-STATS`
-merged-arena deltas, works on any jemalloc-built redis, i.e. stock).
-Includes a regression gate against a stored baseline and a coverage check
-that the query set exercises most of the `graph` crate.
+Measures, per query:
+
+- **instructions and cycles** of the redis-server process (macOS
+  `proc_pid_rusage`, no root; Linux `perf stat -p`, needs PMU access)
+- **allocated / deallocated bytes** from `MEMORY MALLOC-STATS` merged-arena
+  deltas — works on any jemalloc-built redis, i.e. stock
+- **branches, branch-misses, L1D-misses** on Apple Silicon, if `pmc_tool` has
+  been built (optional, needs root)
+- **wall-clock**, with the caveats in "Reading the output" below
+
+plus deterministic **instruction counts under callgrind** for a curated subset,
+and a coverage check that the query set still exercises most of the `graph`
+crate.
+
+## Setup
+
+The harness is a [uv](https://docs.astral.sh/uv/) project, separate from the
+`tests/` virtualenv, because it also has to run inside a container that ships
+nothing but the engine.
+
+```bash
+uv sync --project bench          # once
+```
+
+Every command below can be run as `uv run --project bench bench …`. From inside
+`bench/` it is just `uv run bench …`.
 
 ## The loop
 
 ```bash
-cargo build --release                      # 1. build
-python3 bench/run_bench.py                 # 2. measure -> bench/results/current.csv
-python3 bench/compare.py                   # 3. gate vs bench/baseline/rust.csv (exit 1 on any metric regression)
-python3 bench/compare.py bench/results/current.csv bench/baseline/c.csv   # vs legacy C engine
-bench/coverage.sh                          # 4. verify query set still covers the code
-bench/profile.sh case "MATCH (p:Person) RETURN sum(CASE WHEN p.id % 3 = 0 THEN 1 ELSE 3 END)"   # 5. drill into a hot query
-# ...optimize, goto 1. After a confirmed improvement:
-cp bench/results/current.csv bench/baseline/rust.csv   # local only; baseline/ is git-ignored
+cargo build --release                                   # 1. build
+uv run --project bench bench measure                    # 2. measure -> bench/results/current.csv
+uv run --project bench bench compare                    # 3. gate vs your baseline (exit 1 on a regression)
+uv run --project bench bench coverage                   # 4. verify the query set still covers the code
+uv run --project bench bench profile "CASE"             # 5. drill into a hot query
 ```
 
-`run_bench.py` accepts query names to re-run a subset (rows are merged into
-the existing CSV): `python3 bench/run_bench.py "CASE" "WITH pipeline"`.
-`--keep-server` leaves the server + graph up for `profile.sh`.
-`--c-compat` is required when the module is the C FalkorDB: it skips the
-composite unique constraint in setup (its async validation crashes the C
-server) and skips queries whose warmup reply errors.
-
-## Flow-test benchmarking (C vs Rust per flow file)
+After a confirmed improvement, promote the numbers:
 
 ```bash
-python3 bench/flow_bench.py --out bench/results/flow_rust.csv
-# The C module: build the `master` branch of this repo (lands under bin/), or
-# pull it out of the published image:
-#   docker create --name c falkordb/falkordb-server:edge
-#   docker cp c:/var/lib/falkordb/bin/falkordb.so /tmp/falkordb-c.so && docker rm c
-# (that copy is Linux — on macOS you need a local `master` build)
-python3 bench/flow_bench.py --module bin/macos-arm64v8-release/falkordb.so \
-    --out bench/results/flow_c.csv
-python3 bench/flow_bench.py --compare bench/results/flow_c.csv --current bench/results/flow_rust.csv
+cp bench/results/current.csv bench/baseline/rust.csv    # local only; baseline/ is git-ignored
 ```
 
-Runs each file in `flow_tests_done.txt` through `./flow.sh` (RLTest,
-parallelism 1). RLTest spawns transient redis-servers and macOS `wait4`
-rusage does not fold grandchildren, so a poller thread samples every
-redis-server pid that appears during the run; each row is the **sum of
-server-side instructions / cycles / lifetime-peak memory** over the servers
-that file spawned, plus wall time and pass/fail counts. Tests may
-legitimately fail on C (Rust-specific behaviors) — the compare table shows
-both failure counts.
+Two things to know about that baseline before trusting a verdict:
 
-## Files
+- **It is a single file, and switching branches does not change it.** After a
+  checkout you are comparing against numbers measured on some other commit,
+  silently. Re-measure a baseline when you switch.
+- **A baseline from another machine is not comparable at all.** Per-host speed
+  differences alone measured 1.46x on byte-identical engines.
+
+Automating both (commit-keyed baselines with recorded provenance) is deliberately
+not done yet.
+
+### Subsets and drilling in
+
+```bash
+uv run --project bench bench measure "CASE" "WITH pipeline"   # merges into the existing CSV
+uv run --project bench bench measure --keep-server "RETURN 1" # leave the server up
+uv run --project bench bench profile --reuse "CASE"           # profile against that server
+```
+
+`bench measure --c-compat` is required when the module is the C engine: it skips
+the setup commands the C engine cannot take (its async validation of a composite
+unique constraint crashes it; its RDB round-trip drops numeric 0 from a range
+index; UDFs are Rust-only) and skips queries whose warmup reply errors.
+
+### vs the C engine, locally
+
+The C engine is `:edge-c`. **Not `:edge`** — that now resolves to the Rust
+engine; `:edge` and `:edge-rs` share a digest.
+
+```bash
+docker create --name c falkordb/falkordb-server:edge-c
+docker cp c:/var/lib/falkordb/bin/falkordb.so /tmp/falkordb-c.so && docker rm c
+# (that copy is Linux — on macOS you need a local `master` build, which lands in bin/)
+
+uv run --project bench bench measure --out /tmp/rust.csv
+uv run --project bench bench measure --c-compat --module /tmp/falkordb-c.so --out /tmp/c.csv
+uv run --project bench bench compare /tmp/rust.csv /tmp/c.csv
+```
+
+### Instruction counts under callgrind
+
+```bash
+uv run --project bench bench callgrind --module target/release/libfalkordb.so \
+    --module-args THREAD_COUNT --module-args 1
+```
+
+Linux-only in practice: valgrind has no Apple-silicon support, and even on Linux
+arm64 it cannot execute this module (an ARMv8.1 LSE atomic in RediSearch). Use
+`--bare` there to validate the differencing arithmetic against a plain
+redis-server with no module loaded.
+
+### Flow-test benchmarking (C vs Rust per flow file)
+
+```bash
+uv run --project bench bench flow --out bench/results/flow_rust.csv
+uv run --project bench bench flow --module /tmp/falkordb-c.so --out bench/results/flow_c.csv
+uv run --project bench bench flow --compare bench/results/flow_c.csv --current bench/results/flow_rust.csv
+```
+
+Runs each file in `flow_tests_done.txt` through `./flow.sh` (RLTest, parallelism
+1). RLTest spawns transient redis-servers and macOS `wait4` rusage does not fold
+grandchildren, so a poller samples every redis-server pid that appears; each row
+is the **sum** over the servers that file spawned. Tests may legitimately fail on
+C (Rust-specific behaviours), so the compare table shows both failure counts.
+macOS-only.
+
+## CI
+
+Labelling a PR **`benchmark-cov`** measures the PR, its base and the C engine and
+posts one comparison comment. Nothing is compiled: all three modules come from
+prebuilt images (`rc-pr-<N>`, `edge-rs`, `edge-c`), each measured on its own
+runner in parallel inside one image built from the C engine's. Two readings per
+side — the full 317-query set on allocated bytes, and a 93-query subset with exact
+callgrind instruction counts, sharded so it finishes in the same wall-clock as the
+full set.
+
+The callgrind table is **PR-vs-base only**. The C engine cannot be measured that
+way: it busy-waits on a worker thread that valgrind schedules arbitrarily, which
+showed up as 331,579,187 instructions of drift between two identical runs (this
+module: ~100k) and rows that cost *more* on the run doing *fewer* queries. vs-C
+is on allocated bytes, which thread scheduling does not affect.
+
+Its one caveat: the base side is the `edge-rs` image, i.e. the tip of the trunk
+when it was last built, not the PR's merge base. For a borderline row, confirm
+locally against a real base build.
+
+## Layout
 
 | file | purpose |
 |---|---|
-| `queries.py` | canonical 317-query set + graph SETUP (10k Person ring, 10k KNOWS, index on id) |
-| `run_bench.py` | start server, build graph, measure, write CSV (`--once` for coverage) |
-| `compare.py` | ratio table + regression gate on every metric (cycles/instr/branches/alloc/dealloc +10%, br_miss/l1d_miss/ms +25%); `--threshold` overrides all, `--metrics` restricts the set |
-| `flow_bench.py` | per-flow-test-file server instr/cycles/peak-mem, C vs Rust compare |
-| `coverage.sh` | instrumented build, run set once, report graph-crate line coverage |
-| `profile.sh` | `sample`-based hot-stack profile of one query |
-| `pmc_tool.c` | PMU counter tool (kperf/kperfdata private frameworks) |
-| `baseline/` | your own baselines, git-ignored — see below |
+| `src/falkorbench/model.py` | `Query`, `Metric` — the value types |
+| `src/falkorbench/queries.py` | the canonical 317-query set + graph SETUP (10k Person ring, 10k KNOWS, indexes, constraints, UDFs); `cg=True` marks the callgrind subset |
+| `src/falkorbench/metrics.py` | CSV parsing, ratios, thresholds, control-row normalisation — shared by compare and report |
+| `src/falkorbench/client.py` | server lifecycle and control plane, over falkordb-py |
+| `src/falkorbench/counters.py` | instruction/cycle backends (rusage / perf / none) + `pmc_tool` |
+| `src/falkorbench/measure.py` | the full-set measurement loop |
+| `src/falkorbench/callgrind.py` | deterministic counts by differencing two instrumented runs |
+| `src/falkorbench/compare.py` | local regression gate |
+| `src/falkorbench/report.py` | the CI comment, and the run's pass/fail decision |
+| `src/falkorbench/profile.py` | samply profile of one query |
+| `src/falkorbench/flow.py` | per-flow-test-file measurement |
+| `src/falkorbench/cli.py` | the `bench` command |
+| `src/falkorbench/coverage.py` | instrumented build, run the set once, report graph-crate line coverage |
+| `Dockerfile` | the CI measurement image, `FROM …:edge-c` |
+| `pmc_tool.c` | Apple Silicon PMU counters (kperf/kperfdata private frameworks) |
+| `tests/` | the guards above, over CSV fixtures |
 
 ## pmc_tool (optional, for branch/L1D columns)
 
@@ -72,66 +158,89 @@ clang -O2 -o bench/pmc_tool bench/pmc_tool.c \
 sudo chown root:wheel bench/pmc_tool && sudo chmod u+s bench/pmc_tool
 ```
 
-Without it, `run_bench.py` still measures instructions/cycles/latency
-(those are the regression-gate columns). PMU numbers are system-wide and
-include the redis-benchmark client; treat values under ~1K/query as noise.
+Without it, instructions/cycles/latency are still measured — those are the
+gating columns. PMU numbers are system-wide and include the `redis-benchmark`
+client; treat values under ~1K/query as noise.
 
-`pmc_tool window` opens a counter window, prints `READY`, and waits on stdin;
-the harness runs the measured command itself in that gap and then closes the
-window. It deliberately does not run the command for you — it is installed
-setuid-root, and a setuid binary that execs a caller-supplied command is a
-local privilege escalation (put your own `redis-benchmark` earlier in `$PATH`
-and you have root). Not exec'ing at all removes the whole class of bug, and
-the counters are system-wide so bracketing in time is all that was needed.
+`pmc_tool window` opens a counter window, prints `READY`, and waits on stdin; the
+harness runs the measured command itself in that gap and then closes the window.
+It deliberately does not run the command for you — it is installed setuid-root,
+and a setuid binary that execs a caller-supplied command is a local privilege
+escalation (put your own `redis-benchmark` earlier in `$PATH` and you have root).
+Not exec'ing at all removes the whole class of bug, and the counters are
+system-wide so bracketing in time is all that was needed.
 
-## Findings (2026-07-26 baseline, M3 Pro)
+## Reading the output
 
-Query set restructured for issue isolation (single feature per query first,
-mixed clauses after; create and delete measured separately). Both baselines
-re-measured full-set in identical order — ratios are only apples-to-apples
-when both engines see the same capacity/ordering context.
+- **Trust the instructions column.** Cycles and wall-clock move 10-60% with
+  machine load; on a shared or virtualised host they will invent regressions.
+  Always include `RETURN 1` in an isolated batch: it is the fixed per-query
+  floor, so if it moves, the whole run's cycle column is load-inflated and every
+  other cycle flag in it is void.
+- **Micro-queries need 3 reps per build.** Rows near the ~330k instruction floor
+  read 1.07x on one shot and ~1.00x over three. The error is *absolute*, so a
+  fixed percentage tolerance is simultaneously too strict for expensive queries
+  and too lax for cheap ones.
+- **Ignore rows where C's instruction count is ~500-2500** — those are rows the C
+  engine errors on (regex, week/ordinal dates, `LOAD CSV*`, toJSON scalars), so
+  the ratio is meaningless. `--c-compat` skips the ones whose warmup reply errors.
+- **Watch for near-zero ratios in Rust's favour.** `cross product filter` and
+  `untyped shortestPath` have C burning 1.8B and 3.8B instructions against ~400k
+  — a regression there would be invisible as a ratio and obvious in absolute
+  terms.
+- **id-0 rows against C are suspect**: C's `DEBUG RELOAD` drops id 0 from the
+  range index. Re-measure on a fresh C server before believing one.
 
-The isolation restructure immediately found three delta-scaling bugs:
-- Aggregations without a registered `batch_agg` (percentileDisc/Cont,
-  stDev/P) deep-cloned their collected-values accumulator every row.
-  Fixed by registering batch fns: percentileDisc 194x→2.0x, percentileCont
-  192x→2.0x, stDev 207x→**0.66x**, stDevP 213x→**0.69x** vs C cycles.
-- The small-delete path in `Graph::delete_nodes` interleaved
-  `node_labels_matrix.iter()` (which waits on the pending delta) with
-  `remove()` per node — a GraphBLAS pending-tuple merge per node,
-  O(deleted × |delta|). Fixed with a read-phase/write-phase split:
-  delete 100 49.9x→**1.71x**, write 100 1.74x→**0.95x**,
-  write 10 1.08x→**0.92x**.
-- `import_node_attrs` re-read `node_labels_matrix` per created node when
-  any index exists; the first `iter` per query forced the pending-delta
-  merge. Fixed by passing labels from `Pending::set_labels`:
-  create 100 7.7x→**4.79x**, create 10k 6.1x→**2.99x**,
-  create node 3.1x→**2.48x**, write 100 →**0.85x**, write 1k →1.21x.
+### How this relates to the team performance toolbox
 
-One known structural gap is worth recording because fixing it needs a design
-decision rather than a patch: the MVCC COW `GrB_Matrix_dup` of delta matrices
-in `create_nodes` / `set_nodes_labels_bulk` waits on pending work first, so it
-scales with the accumulated delta (up to the 10k flush threshold, avg ~5k) per
-query, independent of batch size. C never merges pending tuples on the write
-path. That is what keeps the create/delete rows above 1.0x.
+The [performance toolbox](https://aviavni.github.io/database-learning-path/topics/00-performance-toolbox/index.html)
+prescribes criterion for microbenchmarks, samply for profiling, `dhat-rs` for
+allocations, and confidence intervals over point estimates. Where this harness
+agrees, it agrees for the same reasons: "single-shot timing is fiction" is why
+wall-clock never gates here; the idle-rate calibration is "keep the machine
+idle"; and the callgrind path **drops** any row it cannot resolve to better than
+2% rather than print it, which is that confidence-interval discipline applied to
+instruction counts.
 
-**A ranked Rust-vs-C table is deliberately NOT kept here.** It goes stale the
-moment anything merges, and a stale ranking is worse than none — it sends
-people to work on rows that are already fixed. Generate it from a live run:
+Three deliberate deviations:
 
-```bash
-python3 bench/run_bench.py --out /tmp/rust.csv
-python3 bench/run_bench.py --c-compat --module <c-module> --out /tmp/c.csv
-python3 bench/compare.py /tmp/rust.csv /tmp/c.csv | sort -k4 -rn | head -20
-```
+1. **No criterion.** criterion measures in-process Rust functions; this measures
+   whole-query cost through the redis protocol, which criterion cannot reach.
+   They are complementary — criterion belongs on `graph`-crate internals, and
+   there is no criterion suite in this repo yet.
+2. **Allocations from jemalloc merged-arena deltas, not `dhat-rs`.** No
+   instrumented build needed, works on any stock jemalloc redis, and measures the
+   real server process — which is what makes the vs-C comparison possible.
+3. **`ms` is subject to coordinated omission, by construction.**
+   `redis-benchmark -c 1` is a closed-loop generator: send, await reply, send
+   next. A stall backs up the generator and disappears from the data, exactly as
+   the toolbox warns. It does not touch the instruction or allocation columns — a
+   stall cannot hide an instruction — and it is acceptable *only* because `ms` is
+   never the gate, just a coarse outlier net.
 
-See `.claude/skills/bench/SKILL.md` for how to read that output — which columns
-to trust, and which C rows are artifacts rather than measurements.
+`ms` is also a **mean**, not a percentile, while the project's stated bar (see
+CLAUDE.md) is p99 latency. `redis-benchmark` computes a latency distribution and
+this harness currently discards it, so the p99 bar is not measured here yet.
 
-**Coverage**: the pre-restructure set covered **44.0%** of graph-crate lines
-(excluding the generated GraphBLAS.rs FFI). The remaining 0%-coverage areas
-need infrastructure a Cypher query can't reach from this graph: fulltext /
-vector index scans, `load_csv`, JS UDFs (`udf/*`), constraints, `cow_btree`
-(~750 lines, appears unwired), `string_pool`, `vec_distance`, and ~97% of
-`algo_procedures.rs` (only pageRank/BFS/WCC are called). For the hot paths
+## Known gaps
+
+One structural gap is worth recording because closing it needs a design decision
+rather than a patch: the MVCC copy-on-write `GrB_Matrix_dup` of delta matrices in
+`create_nodes` / `set_nodes_labels_bulk` waits on pending work first, so it scales
+with the accumulated delta (up to the 10k flush threshold, avg ~5k) per query,
+independent of batch size. C never merges pending tuples on the write path. That
+is what keeps the create/delete rows above 1.0x against C.
+
+**A ranked Rust-vs-C table is deliberately not kept here.** It goes stale the
+moment anything merges, and a stale ranking is worse than none — it sends people
+to work on rows that are already fixed. Generate it from a live run using the
+recipe above.
+
+**Coverage**: the query set covers **74.8%** of graph-crate lines
+(28,869/38,573, excluding the generated `GraphBLAS.rs` FFI; measured in CI on
+2026-08-05). The 0%-coverage areas need infrastructure a Cypher
+query cannot reach from this graph: `cow_btree` (~750 lines, appears unwired),
+`string_pool`, `vec_distance`, and most of `algo_procedures.rs`. For the hot paths
 this set targets (runtime, expressions, planner, matrices), coverage is high.
+`bench coverage` reports the number but does not enforce a floor — it is a
+validator of the query set, not a coverage gate.

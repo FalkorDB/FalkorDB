@@ -31,23 +31,25 @@ loop and `bench/README.md` for the details. In short:
 
 ```bash
 cargo build --release
-python3 bench/run_bench.py     # 317 queries -> bench/results/current.csv
-python3 bench/compare.py       # regression gate vs your own baseline
+uv sync --project bench                        # once
+uv run --project bench bench measure           # 317 queries -> bench/results/current.csv
+uv run --project bench bench compare           # regression gate vs your own baseline
 ```
+
+To profile one benchmark query rather than a workload you drive by hand,
+`bench profile "<query name>"` records the server with samply while that query
+runs in a loop — it reuses the harness's own server, so you name the query once.
 
 In CI, labelling a PR **`benchmark-cov`** runs the same harness against the PR
 and its base and posts a per-query comparison, plus deterministic callgrind
-instruction counts against the production C engine
-(`.github/workflows/benchmark-cov.yml`). It is on-demand only — there is no
-trend history, so a suspected regression is compared against the PR base
-rather than against a stored series.
+instruction counts (`.github/workflows/benchmark-cov.yml`). Those counts are
+PR-vs-base only — the C engine cannot be measured under callgrind, because it
+busy-waits on a worker thread valgrind schedules arbitrarily; the vs-C comparison
+runs on allocated bytes instead. It is on-demand only, so a suspected regression
+is compared against the PR base rather than against a stored series.
 
-The macro throughput/latency A/B pipeline and its `gh-pages` dashboards were
-removed (they depended on a `gh-pages` branch and GCE-runner variables that do
-not exist here). For a macro reading, run
-[`FalkorDB/benchmark`](https://github.com/FalkorDB/benchmark) locally against
-two containers. Treat samply flamegraphs above as the primary tool for
-*locating* a bottleneck and `bench/` for *quantifying* it.
+Treat samply flamegraphs above as the primary tool for *locating* a bottleneck
+and `bench/` for *quantifying* it.
 
 ## Notes
 

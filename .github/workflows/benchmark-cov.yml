@@ -1,74 +1,74 @@
 # Per-query benchmark + query-set coverage, on demand.
 #
-# Runs `bench/` — the per-query harness (317 queries) — for this PR, its base
-# and the production C engine, and reports per-query deltas plus how much of
-# the `graph` crate the query set covers.
+# Runs `bench/` — the per-query harness (317 queries) — for this PR, its base and
+# the production C engine, and reports per-query deltas plus how much of the
+# `graph` crate the query set covers.
 #
 # Trigger: add the `benchmark-cov` label to a PR. Only on the `labeled` event,
 # never on later pushes while the label happens to sit there. To re-run, remove
 # and re-add the label. Skipped for fork PRs (read-only GITHUB_TOKEN, cannot
-# comment) and for PRs that do not target a trunk. TRUNK is `main` or `main-rs`
-# — the same pair rust-push.yml gates channel promotion on, since #2279 migrated
-# the default development branch to `main` while `main-rs` still carries the
-# tree. The C engine keeps `master`, which has no Cargo workspace to build, so a
-# PR targeting it is skipped rather than failed.
+# comment) and for PRs that do not target a trunk. TRUNK is `main` or `main-rs` —
+# the same pair rust-push.yml gates channel promotion on, since #2279 migrated the
+# default development branch to `main` while `main-rs` still carries the tree. The
+# C engine keeps `master`, which has no Cargo workspace to build, so a PR
+# targeting it is skipped rather than failed.
 #
 # ## Everything measured is a prebuilt image
 #
-# Nothing here compiles the engine. The three modules come from images that
-# other workflows already published:
+# Nothing here compiles the engine. The three modules come from images that other
+# workflows already published:
 #
 #   pr    ghcr.io/falkordb/falkordb-server:rc-pr-<N>   (rust-pr.yml)
 #   base  falkordb/falkordb-server:edge-rs             (rust-push.yml, trunk)
-#   c     falkordb/falkordb-server:edge                (the C engine)
+#   c     falkordb/falkordb-server:edge-c              (the C engine)
+#
+# The C side is `:edge-c`, NOT `:edge`. `:edge` now resolves to the Rust engine —
+# it and `:edge-rs` share a digest — so pointing the C side at `:edge` silently
+# compares Rust against Rust. `preflight` asserts the two digests differ so that
+# cannot recur silently.
 #
 # The cost: `edge-rs` is the tip of the trunk when it was last built, not this
 # PR's merge base, so the base side can be off by whatever landed in between.
-# That is stated in the posted comment. Building both sides from source instead
-# is exact and costs ~10 minutes of compile per side — worth it for a
-# borderline row, which is what the local recipe in the bench skill is for.
+# That is stated in the posted comment.
 #
 # ## One environment, every module
 #
-# All measurement runs inside the C engine's image, whichever module is being
-# measured. A module copied out of an image needs that image's library
-# environment (an earlier attempt that copied modules onto the bare runner
-# failed with "server did not start"), and only the C image carries
-# `redis-benchmark` — the Rust images ship redis-server and redis-cli but not
-# it. Verified: the C image is Debian 13, redis 8.6.3 with jemalloc, and loads
-# the C module and both Rust modules. Same redis, same allocator, three
-# modules, no cross-environment difference to explain away.
+# All measurement runs inside one image built from the C engine's, with its tools
+# installed explicitly rather than inherited — see bench/Dockerfile. Same redis,
+# same allocator, three modules, no cross-environment difference to explain away.
 #
 # ## Why every side is its own job
 #
-# The first version did all of this in two jobs, serially: 32 minutes
-# wall-clock. The sides are independent, so they are now a matrix — 3 measure
-# jobs, 12 callgrind jobs (2 engines x 6 shards) and coverage all run at once
-# and `report` fans them in. Each job's CSV is an artifact, so one side failing
-# costs that side's column and nothing else.
+# The first version did all of this in two jobs, serially: 32 minutes wall-clock.
+# The sides are independent, so they are a matrix — 3 measure jobs, 12 callgrind
+# jobs (2 engines x 6 shards) and coverage all run at once and `report` fans them
+# in. Each job's CSV is an artifact, so one side failing costs that side's column
+# and nothing else.
 #
 # ## What each metric is good for
 #
-# Instructions (callgrind) gate PR-vs-base: reproducible to ~0.2% once the
-# span is chosen from measured drift, so a real change is visible. They are NOT
-# used against the C engine — see the note on the callgrind matrix below.
+# Instructions (callgrind) gate PR-vs-base: reproducible to ~0.2% once the span is
+# chosen from measured drift. They are NOT used against the C engine — see the
+# note on the callgrind matrix below.
 #
 # Allocated bytes (jemalloc merged-arena deltas, in `measure`) carry the vs-C
-# comparison. They are deterministic, unaffected by thread scheduling, and
-# cover all 317 queries rather than the callgrind subset.
-#
-# ## Why not macOS, and why not wall-clock
-#
-# A hosted macOS runner produced neither metric: `proc_pid_rusage` reported 0
-# instructions (it is a VM), and Homebrew's redis is built against libc malloc
-# rather than jemalloc, so the allocation columns were empty too — 19 minutes
-# for "No comparable rows", at the 10x macOS billing rate. Linux hosted runners
-# have no PMU either, but stock redis there *is* jemalloc-built, so allocated
-# bytes is a real deterministic signal, and callgrind counts instructions in
-# software regardless of the host.
+# comparison. They are deterministic, unaffected by thread scheduling, and cover
+# all 317 queries rather than the callgrind subset.
 #
 # Wall-clock is never substituted for instructions. A time-based stand-in would
 # turn the gate into a noise detector while still looking like a measurement.
+#
+# ## Why not a bigger runner
+#
+# Asked and answered, so it is not re-asked: bigger is the wrong axis. The
+# measured workload is `redis-benchmark -c 1`, strictly sequential, so extra cores
+# do nothing — and they can hurt, because the C engine sizes its thread pool to
+# the host and callgrind reproducibility required pinning it to one thread.
+# Larger *hosted* runners are still VMs with no vPMU, so hardware instruction
+# counters stay unavailable at any size; only a bare-metal or self-hosted runner
+# with `kernel.perf_event_paranoid <= 0` would restore them, which would also let
+# `perf` replace callgrind and retire 12 of these 18 jobs. The one job that would
+# genuinely benefit from more cores is `coverage`, the only one that compiles.
 name: Benchmark + coverage
 
 on:
@@ -78,21 +78,28 @@ on:
 permissions:
   contents: read
   pull-requests: write
-  packages: read
+  # write, not read: preflight bakes and pushes the measurement image.
+  packages: write
 
 concurrency:
   group: benchmark-cov-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 env:
-  C_IMAGE: docker.io/falkordb/falkordb-server:edge
+  C_IMAGE: docker.io/falkordb/falkordb-server:edge-c
   BASE_IMAGE: docker.io/falkordb/falkordb-server:edge-rs
   PR_IMAGE: ghcr.io/falkordb/falkordb-server:rc-pr-${{ github.event.pull_request.number }}
   TOOLCHAIN: ghcr.io/falkordb/falkordb-build:latest
   MODULE_PATH: /var/lib/falkordb/bin/falkordb.so
+  # The callgrind subset is spread over this many parallel jobs per engine.
+  # Defined ONCE, and preflight expands it into BOTH the matrix and the
+  # `--shard I/N` denominator — that shared origin is what prevents them
+  # disagreeing. Previously a literal `/6` sat beside a six-element matrix, so
+  # editing the matrix alone left a fraction of the subset unmeasured.
+  SHARD_COUNT: 6
 
 jobs:
-  # Fail fast and cheaply. Seven jobs are about to pull these tags; if the PR
+  # Fail fast and cheaply. Fifteen jobs are about to pull these tags; if the PR
   # image is not published yet (rust-pr.yml still running, or it never ran for
   # this PR) they would each fail several minutes in with a bare docker error.
   preflight:
@@ -101,8 +108,16 @@ jobs:
       contains(fromJSON('["main","main-rs"]'), github.event.pull_request.base.ref) &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
+    outputs:
+      bench_image: ${{ steps.bake.outputs.bench_image }}
+      shards: ${{ steps.shards.outputs.list }}
+      shard_count: ${{ steps.shards.outputs.count }}
     steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
       - name: Acknowledge the request
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -116,13 +131,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Expand the shard count into a matrix
+        id: shards
+        run: |
+          set -euo pipefail
+          list=$(seq 1 "$SHARD_COUNT" | paste -sd, - | sed 's/^/[/; s/$/]/')
+          echo "list=$list" >> "$GITHUB_OUTPUT"
+          echo "count=$SHARD_COUNT" >> "$GITHUB_OUTPUT"
+          echo "callgrind shards: $list"
+
       # Without this the run silently measures whatever `rc-pr-<N>` happens to
       # point at. Observed: a labelled run measured an image built two commits
-      # earlier because rust-pr.yml was still building the current head — the
-      # tag existed, so nothing complained, and the comment attributed someone
-      # else's code to this PR. The tag carries no digest or commit label, so
-      # freshness has to come from the Actions API: find rust-pr.yml's run for
-      # this exact head SHA and wait for its build-rc-image jobs.
+      # earlier because rust-pr.yml was still building the current head — the tag
+      # existed, so nothing complained, and the comment attributed someone else's
+      # code to this PR. The tag carries no digest or commit label, so freshness
+      # has to come from the Actions API.
       - name: Wait for the PR image to be built from this commit
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -130,14 +153,14 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          deadline=$(( SECONDS + 45 * 60 ))
+          deadline=$(( SECONDS + 15 * 60 ))
           while :; do
             RUN=$(gh api "repos/$REPO/actions/runs?head_sha=$HEAD_SHA&per_page=100" \
                     --jq '[.workflow_runs[] | select(.path == ".github/workflows/rust-pr.yml")]
                           | sort_by(.run_number) | last | .id // empty')
             if [ -n "$RUN" ]; then
-              # `build-rc-image` calls a reusable workflow, so its jobs surface
-              # as "build-rc-image / build (...)" — match on the prefix.
+              # `build-rc-image` calls a reusable workflow, so its jobs surface as
+              # "build-rc-image / build (...)" — match on the prefix.
               STATES=$(gh api "repos/$REPO/actions/runs/$RUN/jobs?per_page=100" --paginate \
                          --jq '[.jobs[] | select(.name | startswith("build-rc-image"))
                                 | .conclusion // "pending"] | join(",")')
@@ -155,13 +178,14 @@ jobs:
               echo "no rust-pr.yml run for $HEAD_SHA yet"
             fi
             if [ "$SECONDS" -ge "$deadline" ]; then
-              echo "::error::timed out waiting for rust-pr.yml to publish an image for $HEAD_SHA."
+              echo "::error::timed out waiting for rust-pr.yml to publish an image for $HEAD_SHA. Re-apply the label once that workflow finishes."
               exit 1
             fi
             sleep 30
           done
 
       - name: Resolve the three images
+        id: images
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
@@ -191,14 +215,64 @@ jobs:
           PY
           cat provenance.json
 
+          # Canary. The C and base sides must not be the same image. They are
+          # exactly when someone has pointed both at the same channel — which is
+          # what happened when `:edge` was promoted to the Rust engine while this
+          # workflow still named it as the C side, quietly turning the whole vs-C
+          # table into Rust-vs-Rust. A tag resolving is not evidence it is the
+          # engine you think it is.
+          C_DIGEST=$(python3 -c 'import json;print(json.load(open("provenance.json"))["c"]["digest"])')
+          BASE_DIGEST=$(python3 -c 'import json;print(json.load(open("provenance.json"))["base"]["digest"])')
+          if [ "$C_DIGEST" = "$BASE_DIGEST" ]; then
+            echo "::error::C_IMAGE ($C_IMAGE) and BASE_IMAGE ($BASE_IMAGE) resolve to the same digest ($C_DIGEST). The vs-C comparison would compare an engine against itself. Check whether a channel tag has been repointed."
+            exit 1
+          fi
+          echo "c_digest=$C_DIGEST" >> "$GITHUB_OUTPUT"
+
+      # One image, built once, reused by all 15 measurement jobs. Tagged by
+      # content — the C image's digest plus every file the build reads —
+      # so a PR that changes dependencies gets its own image and cannot measure
+      # with a stale dependency set, and a republished `edge-c` rebuilds
+      # automatically. Almost every run is a cache hit and just resolves the tag.
+      - name: Bake the measurement image
+        id: bake
+        env:
+          C_DIGEST: ${{ steps.images.outputs.c_digest }}
+        run: |
+          set -euo pipefail
+          key=$( { printf '%s' "$C_DIGEST"; \
+                   cat bench/pyproject.toml bench/uv.lock bench/Dockerfile; } \
+                 | sha256sum | cut -c1-16 )
+          image="ghcr.io/falkordb/falkordb-bench:$key"
+          echo "bench_image=$image" >> "$GITHUB_OUTPUT"
+          if docker manifest inspect "$image" >/dev/null 2>&1; then
+            echo "cache hit: $image"
+            exit 0
+          fi
+          echo "building $image"
+          docker build --build-arg "C_IMAGE=$C_IMAGE" -t "$image" -f bench/Dockerfile .
+          docker push "$image"
+
+      - name: Record the measurement image in provenance
+        env:
+          BENCH_IMAGE: ${{ steps.bake.outputs.bench_image }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os
+          p = "provenance.json"
+          d = json.load(open(p))
+          d["_bench_image"] = os.environ["BENCH_IMAGE"]
+          json.dump(d, open(p, "w"), indent=2)
+          PY
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: provenance
           path: provenance.json
           retention-days: 7
 
-  # Full 317-query set, one runner per side, all three at once. ~7 min each;
-  # they were 14.5 min back to back before.
+  # Full 317-query set, one runner per side, all three at once.
   measure:
     needs: preflight
     runs-on: ubuntu-latest
@@ -213,52 +287,40 @@ jobs:
           persist-credentials: false
 
       - uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
-        if: matrix.side == 'pr'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract the ${{ matrix.side }} module
-        id: mod
+      - name: Resolve this side's image
+        id: side
         run: |
           set -euo pipefail
           case "${{ matrix.side }}" in
-            pr)   SRC="$PR_IMAGE" ;;
-            base) SRC="$BASE_IMAGE" ;;
-            c)    SRC="$C_IMAGE" ;;
+            pr)   echo "image=$PR_IMAGE" >> "$GITHUB_OUTPUT" ;;
+            base) echo "image=$BASE_IMAGE" >> "$GITHUB_OUTPUT" ;;
+            c)    echo "image=$C_IMAGE" >> "$GITHUB_OUTPUT" ;;
           esac
-          docker pull -q "$SRC"
-          cid=$(docker create "$SRC")
-          docker cp "$cid:$MODULE_PATH" ./module.so
-          docker rm -f "$cid" >/dev/null
-          ls -l module.so
+
+      - uses: ./.github/actions/extract-module
+        with:
+          image: ${{ steps.side.outputs.image }}
+          module-path: ${{ env.MODULE_PATH }}
 
       - name: Measure
+        env:
+          BENCH_IMAGE: ${{ needs.preflight.outputs.bench_image }}
+          SIDE: ${{ matrix.side }}
         run: |
           set -euo pipefail
-          # --c-compat for the C side: it skips the setup commands and queries
-          # the C engine does not implement (UDFs are Rust-only) instead of
-          # aborting the run.
-          # Spelled as an `if` rather than `[ ] && VAR=...`: the latter is fine
-          # under `set -e` today but reads like the classic footgun, and this
-          # step is the one nobody wants to debug from a CI log.
+          # --c-compat for the C side: it skips the setup commands and queries the
+          # C engine does not implement (UDFs are Rust-only) instead of aborting.
           COMPAT=""
-          if [ "${{ matrix.side }}" = c ]; then COMPAT="--c-compat"; fi
-          docker run --rm -v "$PWD:/w" -w /w --entrypoint bash "$C_IMAGE" -c "
-            set -e
-            # The image hooks DPkg::Pre-Install-Pkgs to a dpkg-preconfigure
-            # binary it does not contain, so every apt call prints
-            # '/usr/sbin/dpkg-preconfigure: not found' and carries on.
-            # DEBIAN_FRONTEND does not suppress it (it is a hook, not a
-            # frontend); removing the hook file does.
-            rm -f /etc/apt/apt.conf.d/70debconf
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends python3 >/dev/null
-            python3 bench/run_bench.py $COMPAT --module /w/module.so \
-              --out /w/full-${{ matrix.side }}.csv
-          " 2>&1 | tee "measure-${{ matrix.side }}.log" | tail -30
-          grep -c SKIPPED "measure-${{ matrix.side }}.log" \
+          if [ "$SIDE" = c ]; then COMPAT="--c-compat"; fi
+          docker run --rm -v "$PWD:/w" -w /w "$BENCH_IMAGE" \
+            bench measure $COMPAT --module /w/module.so --out "/w/full-$SIDE.csv" \
+            2>&1 | tee "measure-$SIDE.log" | tail -30
+          grep -c SKIPPED "measure-$SIDE.log" \
             | sed 's/^/queries the engine skipped: /' || true
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -270,89 +332,90 @@ jobs:
             measure-${{ matrix.side }}.log
           retention-days: 7
 
-  # Deterministic instruction counts. `c` is measured twice: its
-  # reproducibility has to be demonstrated before the PR/C column means
-  # anything, and the second pass is what demonstrates it — the report
-  # collapses the column to a range when the two disagree.
+  # Deterministic instruction counts, PR vs base.
+  #
+  # The C engine is deliberately NOT measured here. It cannot be: callgrind needs
+  # the process to be deterministic, and the C engine busy-waits on a worker
+  # thread that valgrind schedules arbitrarily. Measured, with everything pinned
+  # (THREAD_COUNT 1, OMP_NUM_THREADS=1): 331,579,187 instructions of drift between
+  # two *identical* runs of `list ops`, against ~100k for this module — four orders
+  # of magnitude. Rows came back anti-correlated with work (`allShortestPaths` cost
+  # 679M more on the run doing 3,980 *fewer* queries), which is a spin-wait, not
+  # drift. The honest guards then dropped or n/a'd most C rows, so 12 jobs ran for
+  # 20-44 minutes each to produce almost nothing.
+  #
+  # vs-C lives on allocated bytes in the `measure` job instead: jemalloc
+  # merged-arena deltas are unaffected by thread scheduling, and that comparison
+  # covers all 317 queries rather than 93.
+  #
+  # 93 queries at ~21s each (three runs per query, since the drift replicate) is
+  # ~33 min per side. Sharded SHARD_COUNT ways that is a few minutes of
+  # wall-clock, matching the full-set `measure` job, so callgrind stays off the
+  # critical path. 2 sides x 6 shards = 12 jobs.
   callgrind:
     needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      # Two real dimensions, 4x4 = 16 jobs. Deliberately NOT `include:` to pair
-      # side with source — an include entry that names no matrix key is applied
-      # to every combination, so the four of them would overwrite each other
-      # rather than fan out. `c2` maps to the `c` module in the step below.
-      #
-      # The C engine is deliberately NOT measured here any more.
-      #
-      # It cannot be: callgrind needs the process to be deterministic, and the
-      # C engine busy-waits on a worker thread that valgrind schedules
-      # arbitrarily. Measured, with everything pinned (THREAD_COUNT 1,
-      # OMP_NUM_THREADS=1): 331,579,187 instructions of drift between two
-      # *identical* runs of `list ops`, against ~100k for this module — four
-      # orders of magnitude. Rows came back anti-correlated with work
-      # (`allShortestPaths` cost 679M more on the run doing 3,980 *fewer*
-      # queries), which is a spin-wait, not drift. The honest guards then
-      # dropped or n/a'd most C rows, so 12 jobs ran for 20-44 minutes each to
-      # produce almost nothing.
-      #
-      # vs-C lives on allocated bytes in the `measure` job instead: jemalloc
-      # merged-arena deltas are unaffected by thread scheduling, and that
-      # comparison covers all 317 queries rather than 93.
-      #
-      # 93 queries at ~21s each (three runs per query since the drift replicate
-      # was added) is ~33 min per side. Sharded 6 ways that is ~5.5 min of
-      # wall-clock, matching the full-set `measure` job, so callgrind stays off
-      # the critical path.
+      # Two real dimensions. Deliberately NOT `include:` to pair side with source
+      # — an include entry that names no matrix key is applied to every
+      # combination, so entries would overwrite each other rather than fan out.
       matrix:
         side: [pr, base]
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: ${{ fromJSON(needs.preflight.outputs.shards) }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
       - uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
-        if: matrix.side == 'pr'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract the ${{ matrix.side }} module
+      - name: Resolve this side's image
+        id: side
         run: |
           set -euo pipefail
           case "${{ matrix.side }}" in
-            pr)   SRC="$PR_IMAGE" ;;
-            base) SRC="$BASE_IMAGE" ;;
+            pr)   echo "image=$PR_IMAGE" >> "$GITHUB_OUTPUT" ;;
+            base) echo "image=$BASE_IMAGE" >> "$GITHUB_OUTPUT" ;;
           esac
-          docker pull -q "$SRC"
-          cid=$(docker create "$SRC")
-          docker cp "$cid:$MODULE_PATH" ./module.so
-          docker rm -f "$cid" >/dev/null
+
+      - uses: ./.github/actions/extract-module
+        with:
+          image: ${{ steps.side.outputs.image }}
+          module-path: ${{ env.MODULE_PATH }}
 
       - name: Count instructions under callgrind
+        env:
+          BENCH_IMAGE: ${{ needs.preflight.outputs.bench_image }}
+          SHARD: ${{ matrix.shard }}
+          SHARD_TOTAL: ${{ needs.preflight.outputs.shard_count }}
+          SIDE: ${{ matrix.side }}
         run: |
           set -euo pipefail
-          # OMP_NUM_THREADS=1 plus THREAD_COUNT 1: thread count is what makes
-          # these counts reproducible or not. The C engine otherwise sizes its
+          # THREAD_COUNT 1 plus OMP_NUM_THREADS=1: thread count is what
+          # makes these counts reproducible or not. The engine otherwise sizes its
           # pool to the host and sets OpenMP to match, and valgrind schedules
-          # threads nondeterministically — the same C module measured twice
+          # threads nondeterministically — the same module measured twice
           # disagreed by up to 10x on one query before this was pinned.
-          docker run --rm -e OMP_NUM_THREADS=1 -v "$PWD:/w" -w /w \
-            --entrypoint bash "$C_IMAGE" -c '
-            set -e
-            rm -f /etc/apt/apt.conf.d/70debconf
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends valgrind python3 >/dev/null
-            valgrind --version
-            python3 bench/cachegrind.py --module /w/module.so \
-              --shard ${{ matrix.shard }}/6 \
-              --out /w/cg-${{ matrix.side }}-${{ matrix.shard }}.csv \
-              --module-args THREAD_COUNT 1
-          '
+          #
+          # No --job-total here: it would compare $SHARD_TOTAL against itself. The
+          # matrix and this denominator both derive from preflight's single
+          # shard_count output, which is what actually prevents them disagreeing;
+          # the flag exists for humans sharding by hand against a known matrix.
+          # OMP_NUM_THREADS is set here rather than in the image: it is half of
+          # the callgrind pinning, and the `measure` job must NOT inherit it (that
+          # job pins no THREAD_COUNT, so it would measure with a host-sized engine
+          # pool against single-threaded OpenMP).
+          docker run --rm -e OMP_NUM_THREADS=1 -v "$PWD:/w" -w /w "$BENCH_IMAGE" \
+            bench callgrind --module /w/module.so \
+              --shard "$SHARD/$SHARD_TOTAL" \
+              --module-args THREAD_COUNT --module-args 1 \
+              --out "/w/cg-$SIDE-$SHARD.csv"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ !cancelled() }}
@@ -362,8 +425,8 @@ jobs:
           retention-days: 7
 
   # The one job that must build from source: coverage needs an instrumented
-  # module, which no published image carries. Runs alongside the measurement
-  # jobs, so it costs no extra wall-clock.
+  # module, which no published image carries. Runs alongside the measurement jobs,
+  # so it costs no extra wall-clock.
   coverage:
     needs: preflight
     runs-on: ubuntu-latest
@@ -373,6 +436,23 @@ jobs:
         with:
           persist-credentials: false
 
+      # coverage is the one job that cannot use the prebaked measurement image: it
+      # needs cargo and llvm-tools to build an instrumented module, which only the
+      # toolchain image has. But that image has no uv, and `bench coverage` needs
+      # the locked dependency set rather than whatever the image's python3 carries.
+      #
+      # Copied out of the official image rather than curl'd, for the same reason
+      # bench/Dockerfile does it that way: it needs no network inside the container
+      # and no assumption about which download tool the base image ships.
+      - name: Fetch uv for the toolchain image
+        run: |
+          set -euo pipefail
+          mkdir -p .bin
+          cid=$(docker create ghcr.io/astral-sh/uv:0.9.29)
+          docker cp "$cid:/uv" .bin/uv
+          docker rm -f "$cid" >/dev/null
+          chmod +x .bin/uv
+
       - name: Instrumented build + run the query set once
         run: |
           set -euo pipefail
@@ -381,9 +461,12 @@ jobs:
           # cargo to run".
           docker run --rm -e CXX=clang++ -v "$PWD:/w" -w /w "$TOOLCHAIN" bash -c '
             set -e
+            # /w/.bin, not /w: prepending the checkout root would put every
+            # root-level script ahead of /usr/bin for cargo and all its children.
+            export PATH="/w/.bin:$PATH"
             rustup default stable >/dev/null
             rustup component add llvm-tools-preview >/dev/null
-            bash bench/coverage.sh
+            uv run --project bench --frozen bench coverage
           ' 2>&1 | tee coverage.txt | tail -30
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -393,9 +476,16 @@ jobs:
           path: coverage.txt
           retention-days: 7
 
-  # Fan-in. `!cancelled()` rather than `success()`: a side that failed should
-  # cost its own column and nothing else, and the report is built from whatever
-  # CSVs actually arrived.
+  # Fan-in. `!cancelled()` rather than `success()`: a side that failed should cost
+  # its own column and nothing else, and the report is built from whatever CSVs
+  # actually arrived.
+  #
+  # Note what this job does NOT do: gate on `needs.measure.result`. GitHub
+  # collapses a matrix into a single result, so such a gate cannot tell "the C
+  # side failed" (a lost column, and `:edge-c` is a moving third-party tag so this
+  # will happen on unrelated PRs) from "the base side failed" (a lost reading).
+  # `bench report --strict` decides instead, because it knows exactly which sides
+  # arrived.
   report:
     needs: [preflight, measure, callgrind, coverage]
     if: ${{ !cancelled() && needs.preflight.result == 'success' }}
@@ -406,28 +496,49 @@ jobs:
         with:
           persist-credentials: false
 
+      - uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: art
           merge-multiple: true
 
       - name: Build the comment
+        id: build
+        env:
+          BENCH_IMAGE: ${{ needs.preflight.outputs.bench_image }}
         run: |
           set -euo pipefail
           ls -R art || true
-          # Quoted: the callgrind values are globs for report.py to expand over
-          # the four shards, not for the shell to expand here.
-          python3 bench/report.py \
-            --measure pr=art/full-pr.csv base=art/full-base.csv c=art/full-c.csv \
-            --callgrind 'pr=art/cg-pr-*.csv' 'base=art/cg-base-*.csv' \
-            --coverage art/coverage.txt \
-            --provenance art/provenance.json \
-            > comment.md
+          # Rendered in the measurement image so it runs the same code the jobs
+          # did, with no dependency resolution on the runner. Quoted globs are for
+          # the harness to expand over the shards, not the shell.
+          #
+          # --no-strict here, then the exit code is checked separately below: the
+          # comment must be posted even when a required side is missing, since the
+          # comment is how anyone finds out which side that was.
+          set +e
+          docker run --rm -v "$PWD:/w" -w /w "$BENCH_IMAGE" \
+            bench report --no-strict \
+              --measure pr=art/full-pr.csv \
+              --measure base=art/full-base.csv \
+              --measure c=art/full-c.csv \
+              --callgrind 'pr=art/cg-pr-*.csv' \
+              --callgrind 'base=art/cg-base-*.csv' \
+              --coverage art/coverage.txt \
+              --provenance art/provenance.json \
+              > comment.md
+          echo "render_rc=$?" >> "$GITHUB_OUTPUT"
+          set -e
           cat comment.md
 
-      # Upsert, so re-running replaces the previous report instead of burying
-      # the PR in near-identical comments. Paginated: a PR with more than one
-      # page of comments would miss the marker and post a duplicate every run.
+      # Upsert, so re-running replaces the previous report instead of burying the
+      # PR in near-identical comments. Paginated: a PR with more than one page of
+      # comments would miss the marker and post a duplicate every run.
       - name: Post or update the PR comment
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -444,17 +555,36 @@ jobs:
             gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@comment.md
           fi
 
-      # Report first, then fail. Two different things are being caught here:
-      # coverage failing means the query set no longer runs clean, and a
-      # measure/callgrind job failing means the comment above is missing rows.
-      # Neither may be reported as success. Note this gates on jobs *crashing*,
-      # never on a delta — deciding whether a ratio is acceptable belongs to
-      # whoever reads the comment.
-      - name: Fail if a measurement or coverage job did not run clean
-        if: >-
-          needs.coverage.result != 'success' ||
-          needs.measure.result != 'success' ||
-          needs.callgrind.result != 'success'
+      # Report first, then fail. Two different things are caught here: coverage
+      # failing means the query set no longer runs clean, and a missing pr/base
+      # reading means the comment above has no gate in it. A missing C column is
+      # deliberately NOT a failure. Neither of these gates on a delta — deciding
+      # whether a ratio is acceptable belongs to whoever reads the comment.
+      - name: Fail if the reading or coverage did not come through
+        env:
+          BENCH_IMAGE: ${{ needs.preflight.outputs.bench_image }}
         run: |
-          echo "::error::coverage=${{ needs.coverage.result }} measure=${{ needs.measure.result }} callgrind=${{ needs.callgrind.result }} — see the comment and the job logs."
-          exit 1
+          set -euo pipefail
+          # Distinguish "the render itself blew up" from "a required side was
+          # missing". Both make the run fail, but conflating them told the operator
+          # a side was missing when the real cause was a crash in the reporter.
+          if [ "${{ steps.build.outputs.render_rc }}" != "0" ]; then
+            echo "::error::building the comment failed (exit ${{ steps.build.outputs.render_rc }}) — this is a reporter or artifact-download failure, not a missing measurement. See this job's log."
+            exit 1
+          fi
+          rc=0
+          docker run --rm -v "$PWD:/w" -w /w "$BENCH_IMAGE" \
+            bench report --strict \
+              --measure pr=art/full-pr.csv \
+              --measure base=art/full-base.csv \
+              --callgrind 'pr=art/cg-pr-*.csv' \
+              --callgrind 'base=art/cg-base-*.csv' \
+              >/dev/null || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::a side required for the PR-vs-base reading is missing — see the comment and the measure/callgrind job logs."
+            exit 1
+          fi
+          if [ "${{ needs.coverage.result }}" != "success" ]; then
+            echo "::error::coverage=${{ needs.coverage.result }} — the query set no longer runs clean."
+            exit 1
+          fi

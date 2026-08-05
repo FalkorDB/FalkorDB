@@ -1,133 +1,134 @@
 # Bench loop
 
-Repeatable per-query performance + regression + coverage loop. All scripts
-live in `bench/` (see `bench/README.md` for findings and details).
+Repeatable per-query performance + regression + coverage loop. The harness is a
+uv project under `bench/` — see `bench/README.md` for details.
 
 ## Full loop (run in this order)
 
 ```bash
+# 0. once: install the harness's dependencies
+uv sync --project bench
+
 # 1. build the release module
 cargo build --release
 
-# 2. measure all 317 queries -> bench/results/current.csv (~10 min)
-python3 bench/run_bench.py
+# 2. measure all 317 queries -> bench/results/current.csv (~2 min)
+uv run --project bench bench measure
 
-# 3. regression gate vs baseline — every metric (cycles/instr/branches/alloc_bytes/
-#    dealloc_bytes at +10%, br_miss/l1d_miss/ms at +25%); exit 1 on any breach.
-#    --threshold X overrides all metrics, --metrics cycles restricts the gate.
-python3 bench/compare.py
+# 3. regression gate vs your baseline; exits 1 on a breach
+uv run --project bench bench compare
 
-# 4. optional: compare against the legacy C engine baseline
-python3 bench/compare.py bench/results/current.csv bench/baseline/c.csv
-
-# 5. coverage check: query set should stay ~70% of graph-crate lines
-bash bench/coverage.sh
+# 4. coverage check: reports graph-crate line coverage, and fails if any query
+#    stopped working (it runs the whole set once, so it doubles as validation)
+uv run --project bench bench coverage
 ```
 
-After a confirmed improvement, promote the new numbers:
+The gate's thresholds live in `bench/src/falkorbench/metrics.py` (`THRESHOLDS`):
+the deterministic counters — instructions, cycles, branches, allocated and
+deallocated bytes — are gated at +10%, the noisy miss counters at +25%. Wall-clock
+is handled separately: it is first divided by the `RETURN 1` control row to cancel
+the per-host speed difference, and only flagged past ±50%, because across two
+machines a raw `ms` ratio is a noise detector rather than a measurement.
+`--threshold X` overrides every metric; `--metrics instr,cycles` narrows the gate.
+
+After a confirmed improvement, promote the numbers:
 
 ```bash
-cp bench/results/current.csv bench/baseline/rust.csv   # local only
+cp bench/results/current.csv bench/baseline/rust.csv   # local only, baseline/ is git-ignored
 ```
+
+Two traps in that baseline, neither currently automated away:
+
+- It is one file and a branch switch does not change it, so after a checkout you
+  compare against numbers from some other commit — silently.
+- A baseline from a different machine is not comparable at all; per-host speed
+  differences alone measured 1.46x on byte-identical engines.
 
 ## Drilling into one query
 
 ```bash
-# re-measure a subset (rows merge into existing CSV by query name)
-python3 bench/run_bench.py "CASE" "WITH pipeline"
+# re-measure a subset (rows merge into the existing CSV by query name)
+uv run --project bench bench measure "CASE" "WITH pipeline"
 
-# keep the server + graph up, then sample-profile a query
-python3 bench/run_bench.py --keep-server "RETURN 1"
-bash bench/profile.sh case "MATCH (p:Person) RETURN sum(CASE WHEN p.id % 3 = 0 THEN 1 ELSE 3 END)"
+# keep the server + graph up, then profile a query against it
+uv run --project bench bench measure --keep-server "RETURN 1"
+uv run --project bench bench profile --reuse "CASE"
 ```
 
-`profile.sh` args: `<out-name> "<cypher>" [GRAPH.QUERY|GRAPH.RO_QUERY] [port]`.
-Output lands in `bench/results/sample_<name>.txt`; the "Sort by top of stack"
-section lists the hot leaves.
+`bench profile` records with samply and writes
+`bench/results/profile_<name>.json.gz`; `--open-ui` opens the Firefox Profiler
+instead of only saving. It names the query once — it reuses the harness's own
+server, pid and query text.
 
 ## Operational notes
 
-- `run_bench.py` starts its own redis-server on :6399 and builds the graph
-  (10k Person ring + KNOWS edges, index on id). If a server is already up
-  with the graph, pass `--reuse --port <p>`. It refuses to start if the port
-  is busy.
-- Instructions/cycles come from `proc_pid_rusage` (per-process, no root) —
-  these are the regression-gate columns. Branch/L1D columns need
-  `bench/pmc_tool` (setuid root); without it they're left empty and that's
-  fine. Rebuild it with:
-  ```bash
-  clang -O2 -o bench/pmc_tool bench/pmc_tool.c \
-    -F /System/Library/PrivateFrameworks -framework kperf -framework kperfdata
-  sudo chown root:wheel bench/pmc_tool && sudo chmod u+s bench/pmc_tool
-  ```
-- PMU numbers are system-wide and include the redis-benchmark client; use
-  the RETURN 1 row as the client floor, treat <1K/query as noise.
-- `coverage.sh` uses port 6401 and an instrumented debug build; it exits
-  non-zero if any query errors, so it doubles as query validation.
-- Queries and graph setup are canonical in `bench/queries.py`; add new
-  queries there and they flow to benchmark, compare, and coverage. The
-  sized "write N" queries must stay LAST in the list — they inflate node
-  capacity / matrix dimension to max(N) and would slow every full-graph
-  query measured after them (algo.pageRank went 150x when they ran first).
-- Run-to-run noise is ~1-2% on cycles but micro-queries (<200k cycles) can
-  flag ±15% on cycles; the instruction ratio is the stable signal — trust
-  it over a cycles-only flag. Adjust the gate with `--threshold`.
+- `bench measure` starts its own redis-server on :6399 and builds the graph (10k
+  Person ring + KNOWS edges, indexes, constraints, UDFs). If a server is already
+  up with the graph, pass `--reuse --port <p>`. It refuses to start if the port is
+  busy. `--reuse` does not skip the graph build unless you also pass `--no-setup`
+  — otherwise it would measure an empty database and report numbers that look
+  real.
+- Instructions/cycles come from `proc_pid_rusage` on macOS and `perf stat -p` on
+  Linux. Neither works on a virtualised host with no PMU, in which case those
+  columns are left **empty rather than zero** — a zero would read as a real
+  measurement. Branch/L1D columns additionally need `bench/pmc_tool` (setuid
+  root); without it they stay empty and that is fine.
+- `bench coverage` uses port 6401 and an instrumented debug build. It reports a
+  percentage but does not enforce a floor — it is a validator of the query set,
+  not a coverage gate.
+- Queries and graph setup are canonical in `bench/src/falkorbench/queries.py`; add
+  queries there and they flow to measurement, comparison and coverage. Set
+  `cg=True` to include one in the callgrind subset — that means it must run on the
+  reduced CG_SETUP graph (1,000 :Person, a :KNOWS ring, 5,000 :Tmp) and must not
+  drain a pool faster than it is refilled. `bench/tests/test_queries.py` enforces
+  both, plus the rule that the sized "write N" queries stay LAST in the list —
+  they inflate node capacity / matrix dimension to max(N) and would slow every
+  full-graph query measured after them (algo.pageRank went 150x when they ran
+  first).
+- Run-to-run noise is ~1-2% on instructions and wider on cycles; micro-queries
+  (<400k instr) can read 1.07x on a single shot. The instruction ratio over three
+  reps is the stable signal.
 
 ## Finding the current improvement targets
 
-Deliberately not listed here. This section previously carried a ranked
-Rust-vs-C table and it was wrong twice in one day — it still named MERGE bound
-pattern after #777 fixed it, and it predated `arithmetic` and `CASE` overtaking
-C. A hardcoded ranking in a doc is stale the moment anything merges, and a
-stale ranking is worse than none: it sends people to work on rows that are
-already fixed.
+Generate them from a live run — a hardcoded ranking in a doc is stale the moment
+anything merges, and a stale ranking sends people to work on rows that are already
+fixed.
 
-Generate it from a live run instead. Labelling a PR `benchmark-cov` measures
-the PR, its base and the C engine and posts one comparison comment. Nothing is
-compiled: all three modules come from prebuilt images (`rc-pr-<N>`, `edge-rs`
-and `edge`), each measured on its own runner in parallel inside the C engine's
-image. Two readings per side — the full 317-query set on allocated bytes, and a
-93-query subset with exact callgrind instruction counts, sharded 6 ways so it
-finishes in the same wall-clock as the full set.
+Labelling a PR `benchmark-cov` measures the PR, its base and the C engine and
+posts one comparison comment. Nothing is compiled: all three modules come from
+prebuilt images (`rc-pr-<N>`, `edge-rs` and `edge-c`), each measured on its own
+runner in parallel inside one image built from the C engine's. Two readings per
+side — the full 317-query set on allocated bytes, and a 93-query subset with exact
+callgrind instruction counts.
 
-The callgrind table is **PR-vs-base only**. The C engine cannot be measured
-that way: it busy-waits on a worker thread that valgrind schedules arbitrarily,
-which showed up as 331,579,187 instructions of drift between two identical runs
-(this module: ~100k) and rows that cost *more* on the run doing *fewer*
-queries. vs-C is on allocated bytes, which thread scheduling does not affect.
+The callgrind table is **PR-vs-base only**. The C engine cannot be measured that
+way: it busy-waits on a worker thread that valgrind schedules arbitrarily, which
+showed up as 331,579,187 instructions of drift between two identical runs (this
+module: ~100k) and rows that cost *more* on the run doing *fewer* queries. vs-C is
+on allocated bytes, which thread scheduling does not affect.
 
-Its one caveat: the base side is the `edge-rs` image, i.e. the tip of the
-trunk when it was last built, not the PR's merge base. For a borderline row, confirm
+Its one caveat: the base side is the `edge-rs` image, i.e. the tip of the trunk
+when it was last built, not the PR's merge base. For a borderline row, confirm
 locally against a real base build before acting on it.
 
-For a vs-C reading locally, you need a C module. Build the `master` branch of
-this repo (it lands under `bin/`), or on Linux copy one out of the image:
+For a vs-C reading locally you need a C module. The C engine is **`:edge-c`**, not
+`:edge` — `:edge` now resolves to the Rust engine, sharing a digest with
+`:edge-rs`. Build the `master` branch of this repo (it lands under `bin/`), or on
+Linux copy one out of the image:
 
 ```bash
-docker create --name c falkordb/falkordb-server:edge
+docker create --name c falkordb/falkordb-server:edge-c
 docker cp c:/var/lib/falkordb/bin/falkordb.so /tmp/falkordb-c.so && docker rm c
 
-python3 bench/run_bench.py --out /tmp/rust.csv                     # this build
-python3 bench/run_bench.py --c-compat --module /tmp/falkordb-c.so --out /tmp/c.csv
-python3 bench/compare.py /tmp/rust.csv /tmp/c.csv | sort -k4 -rn | head -20
+uv run --project bench bench measure --out /tmp/rust.csv
+uv run --project bench bench measure --c-compat --module /tmp/falkordb-c.so --out /tmp/c.csv
+uv run --project bench bench compare /tmp/rust.csv /tmp/c.csv
 ```
 
 ### Reading the output
 
-- **Trust the instructions column.** Cycles and wall-clock move 10-60% with
-  machine load; on a shared or virtualised host they will invent regressions.
-  Always include `RETURN 1` in an isolated batch: it is the fixed per-query
-  floor, so if it moves, the whole run's cycle column is load-inflated and
-  every other cycle flag in it is void.
-- **Micro-queries need 3 reps per build.** Rows near the ~240k instr floor read
-  1.04x on one shot and 1.00x over three.
-- **Ignore rows where C's instruction count is ~500-2500** — those are rows the
-  C engine errors on (regex, week/ordinal dates, `LOAD CSV*`, toJSON scalars),
-  so the ratio is meaningless. `--c-compat` skips the ones whose warmup reply
-  errors.
-- **Watch for near-zero ratios in Rust's favour.** `cross product filter` and
-  `untyped shortestPath` have C burning 1.8B and 3.8B instructions against
-  ~400k — a regression there would be invisible as a ratio and obvious in
-  absolute terms.
-- **id-0 rows against C are suspect**: C's `DEBUG RELOAD` drops id 0 from the
-  range index. Re-measure on a fresh C server before believing one.
+See the "Reading the output" section of `bench/README.md` — which columns to
+trust, which C rows are artifacts rather than measurements, and how this harness
+relates to (and deliberately deviates from) the team performance-toolbox
+guidance. That is the single place it is written down.
