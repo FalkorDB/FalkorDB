@@ -154,19 +154,17 @@ impl IndexColumn {
 /// Build state of a column, for online (background) index build.
 ///
 /// `CREATE INDEX` on existing data returns immediately with the column in
-/// [`Building`](Self::Building); a background job builds the pre-existing snapshot
-/// off-thread and the writer installs it in chunks, flipping to [`Ready`](Self::Ready).
+/// [`Building`](Self::Building); a background job scans the pre-existing snapshot (BASE)
+/// off-thread and one install commit adopts it, flipping to [`Ready`](Self::Ready).
 /// While `Building` the read path returns `None` (falls back to a scan). Live writes
-/// maintain the column normally (the "delta" for post-snapshot creates/updates).
+/// maintain the column normally — the column's own tree *is* the DELTA.
 ///
-/// **Reconciliation** (so a concurrently deleted/updated entity's stale snapshot entry
-/// never resurrects) is by cheap `O(1)` bitmap checks at install, not a re-scan:
-/// - `dirty` — ids written (created / updated / deleted) since `CREATE INDEX`, recorded
-///   by the write path. A base entry for a dirty id is skipped: the live delta already
-///   holds that entity's current state (or it's gone).
-/// - **plus** the graph's authoritative `deleted_nodes` / `deleted_relationships` bitmaps
-///   as the delete backstop ([`Graph::install_index_base_chunk`](crate::graph::Graph)) —
-///   correctly versioned core state, so deletes are dropped even if `dirty` ever missed one.
+/// **Reconciliation**, so a concurrently deleted or updated entity's stale snapshot entry
+/// never resurrects, is by TOMB: the tuples destroyed since `CREATE INDEX`, subtracted from
+/// BASE before DELTA is replayed. The graph's `deleted_nodes` / `deleted_relationships`
+/// bitmaps are applied first as a cheap backstop
+/// ([`Graph::install_index_base`](crate::graph::Graph)), but they are only that — the
+/// bitmaps are a free list and are cleared on id reuse, so TOMB is the real defence.
 #[derive(Clone)]
 pub enum ColumnState {
     /// Base not yet installed — reads scan-fall-back.
@@ -299,12 +297,12 @@ impl FalkorDbIndex {
         );
     }
 
-    /// Create an empty numeric column in the `Building` state — the online-build
-    /// path. Returns immediately; live writes maintain it (recording `touched`) and
-    /// reads fall back to a scan until [`install_base_chunk`](Self::install_base_chunk)
-    /// / [`finish_build`](Self::finish_build) install the pre-existing snapshot and
-    /// flip it to `Ready`. Returns the build **epoch** the background job must carry
-    /// (see [`ColumnState::Building`]); replaces any existing column with a fresh epoch.
+    /// Create an empty numeric column in the `Building` state — the online-build path.
+    /// Returns immediately; live writes maintain the column (adds into it, removes also into
+    /// TOMB) and reads fall back to a scan until [`install_base`](Self::install_base) adopts
+    /// the pre-existing snapshot and flips it `Ready`. Returns the build **epoch** the
+    /// background job must carry (see [`ColumnState::Building`]); replaces any existing column
+    /// with a fresh epoch.
     pub fn create_building(
         &mut self,
         entity: EntityType,
