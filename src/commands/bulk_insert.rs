@@ -642,19 +642,6 @@ pub fn graph_bulk_insert(
                     session.with_graph(|tg| tg.graph.rollback());
                     break 'phase Err(format!("ERR bulk insert failed: {e}"));
                 }
-                // Every token succeeded, so the index documents are safe to publish —
-                // and this must happen while still in phase 1, GIL-free. A bulk load
-                // can carry millions of documents, and phase 2 below holds the GIL, so
-                // publishing there would stall the whole server for the duration.
-                // `commit_index` takes the indexer's own write lock, so it needs no
-                // help from L1.
-                //
-                // The only failure left after this point is `upgrade_to_write`
-                // reporting that the graph was deleted or replaced — in which case the
-                // indexer these documents went into departs with it, so they are
-                // unreachable rather than stale.
-                docs.publish(&mut g_arc.borrow_mut());
-
                 // Phase 2: commit + replicate as a writer, so the commit Arc-swap
                 // happens under the GIL and stays fork-safe (#452). Escalation takes
                 // the global lock before the write lock, never the reverse (#726).
@@ -665,6 +652,18 @@ pub fn graph_bulk_insert(
                     session.with_graph(|tg| tg.graph.rollback());
                     break 'phase Err(e);
                 }
+                // Publish the index documents inside the writer scope, matching
+                // `CommitOp`: the index is not MVCC, so readers must be excluded while
+                // it is mutated, and a read query holds L1-read for its whole session.
+                // Published in phase 1 instead, a concurrent reader could see documents
+                // for entities that exist only in this uncommitted fork and get ids it
+                // cannot resolve against its own snapshot.
+                //
+                // Every token has succeeded by now, so nothing reaches the index for an
+                // insert that later rolls back. The cost is a GIL hold proportional to
+                // the number of indexed rows — paid only when the graph actually has an
+                // index, since `docs` is otherwise empty.
+                docs.publish(&mut g_arc.borrow_mut());
                 session
                     .with_graph_mut(|tg| tg.graph.commit(g_arc))
                     .expect("writer mode after upgrade_to_write");
