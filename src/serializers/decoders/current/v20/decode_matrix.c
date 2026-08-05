@@ -96,7 +96,11 @@ static GrB_Matrix _Decode_GrB_Matrix
 	container = SerializerIO_ReadBuffer (rdb, &n) ;
 	ASSERT (n == sizeof(struct GxB_Container_struct)) ;
 
-	// nullify container's vectors
+	// Nullify container's vector pointers before loading. The RDB blob contains
+	// a serialized GraphBLAS container struct with stale pointer values from the
+	// original machine. We must zero these before calling _decode_and_load_vector
+	// to avoid dangling pointers during deserialization. The vectors are then
+	// populated from the RDB stream via _decode_and_load_vector.
     container->p = NULL ;
     container->h = NULL ;
     container->b = NULL ;
