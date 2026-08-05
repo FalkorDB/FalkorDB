@@ -438,9 +438,8 @@ jobs:
 
       # coverage is the one job that cannot use the prebaked measurement image: it
       # needs cargo and llvm-tools to build an instrumented module, which only the
-      # toolchain image has. But that image has no uv, and bench/coverage.sh drives
-      # the harness through `uv run` so it gets the locked dependency set rather
-      # than whatever the image's python3 happens to carry.
+      # toolchain image has. But that image has no uv, and `bench coverage` needs
+      # the locked dependency set rather than whatever the image's python3 carries.
       #
       # Copied out of the official image rather than curl'd, for the same reason
       # bench/Dockerfile does it that way: it needs no network inside the container
@@ -467,7 +466,7 @@ jobs:
             export PATH="/w/.bin:$PATH"
             rustup default stable >/dev/null
             rustup component add llvm-tools-preview >/dev/null
-            bash bench/coverage.sh
+            uv run --project bench --frozen bench coverage
           ' 2>&1 | tee coverage.txt | tail -30
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

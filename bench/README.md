@@ -33,7 +33,7 @@ Every command below can be run as `uv run --project bench bench …`. From insid
 cargo build --release                                   # 1. build
 uv run --project bench bench measure                    # 2. measure -> bench/results/current.csv
 uv run --project bench bench compare                    # 3. gate vs your baseline (exit 1 on a regression)
-bash bench/coverage.sh                                  # 4. verify the query set still covers the code
+uv run --project bench bench coverage                   # 4. verify the query set still covers the code
 uv run --project bench bench profile "CASE"             # 5. drill into a hot query
 ```
 
@@ -145,7 +145,7 @@ locally against a real base build.
 | `src/falkorbench/profile.py` | samply profile of one query |
 | `src/falkorbench/flow.py` | per-flow-test-file measurement |
 | `src/falkorbench/cli.py` | the `bench` command |
-| `coverage.sh` | instrumented build, run the set once, report graph-crate line coverage |
+| `src/falkorbench/coverage.py` | instrumented build, run the set once, report graph-crate line coverage |
 | `Dockerfile` | the CI measurement image, `FROM …:edge-c` |
 | `pmc_tool.c` | Apple Silicon PMU counters (kperf/kperfdata private frameworks) |
 | `tests/` | the guards above, over CSV fixtures |
@@ -236,10 +236,11 @@ moment anything merges, and a stale ranking is worse than none — it sends peop
 to work on rows that are already fixed. Generate it from a live run using the
 recipe above.
 
-**Coverage**: the query set covers ~44% of graph-crate lines (excluding the
-generated `GraphBLAS.rs` FFI). The 0%-coverage areas need infrastructure a Cypher
+**Coverage**: the query set covers **74.8%** of graph-crate lines
+(28,869/38,573, excluding the generated `GraphBLAS.rs` FFI; measured in CI on
+2026-08-05). The 0%-coverage areas need infrastructure a Cypher
 query cannot reach from this graph: `cow_btree` (~750 lines, appears unwired),
 `string_pool`, `vec_distance`, and most of `algo_procedures.rs`. For the hot paths
 this set targets (runtime, expressions, planner, matrices), coverage is high.
-`coverage.sh` reports the number but does not enforce a floor — it is a validator
-of the query set, not a coverage gate.
+`bench coverage` reports the number but does not enforce a floor — it is a
+validator of the query set, not a coverage gate.

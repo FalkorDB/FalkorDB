@@ -7,6 +7,7 @@ have been run first. The shared options are defined once, in `common_options`.
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -15,6 +16,7 @@ import click
 from falkorbench import callgrind as cg
 from falkorbench import client as client_mod
 from falkorbench import compare as compare_mod
+from falkorbench import coverage as coverage_mod
 from falkorbench import flow as flow_mod
 from falkorbench import measure as measure_mod
 from falkorbench import metrics
@@ -336,6 +338,23 @@ def report(measure_specs, cg_specs, provenance, coverage, strict):
         for reason in rep.fatal:
             click.echo(f"::error::{reason}", err=True)
         raise SystemExit(1)
+
+
+# --- coverage ----------------------------------------------------------------
+
+
+@cli.command()
+@click.option("--port", default=6401, show_default=True, type=int)
+def coverage(port):
+    """Instrumented build, one pass over the query set, graph-crate line coverage.
+
+    Reports a percentage and enforces no floor — it is a validator of the query
+    set, not a coverage gate. It does fail if any query stopped working.
+    """
+    try:
+        coverage_mod.run(REPO_ROOT, BENCH_DIR, port=port, echo=click.echo)
+    except (RuntimeError, subprocess.CalledProcessError) as e:
+        raise click.ClickException(str(e)) from e
 
 
 # --- profile -----------------------------------------------------------------

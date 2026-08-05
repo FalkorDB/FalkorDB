@@ -386,5 +386,3 @@ def resolve_module(module: str | None, bare: bool) -> Path | None:
     if not path.exists():
         raise RuntimeError(f"module not found: {path}")
     return path
-
-

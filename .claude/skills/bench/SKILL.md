@@ -20,7 +20,7 @@ uv run --project bench bench compare
 
 # 4. coverage check: reports graph-crate line coverage, and fails if any query
 #    stopped working (it runs the whole set once, so it doubles as validation)
-bash bench/coverage.sh
+uv run --project bench bench coverage
 ```
 
 The gate's thresholds live in `bench/src/falkorbench/metrics.py` (`THRESHOLDS`):
@@ -73,7 +73,7 @@ server, pid and query text.
   columns are left **empty rather than zero** — a zero would read as a real
   measurement. Branch/L1D columns additionally need `bench/pmc_tool` (setuid
   root); without it they stay empty and that is fine.
-- `coverage.sh` uses port 6401 and an instrumented debug build. It reports a
+- `bench coverage` uses port 6401 and an instrumented debug build. It reports a
   percentage but does not enforce a floor — it is a validator of the query set,
   not a coverage gate.
 - Queries and graph setup are canonical in `bench/src/falkorbench/queries.py`; add
