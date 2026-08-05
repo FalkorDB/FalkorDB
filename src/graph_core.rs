@@ -1405,8 +1405,6 @@ pub(crate) fn commit_and_replicate(
 /// Batch size for the chunked base install — mirrors the runtime batch-emitter grain. Small chunks keep
 /// each write-guard hold short so client writes interleave with the build.
 #[cfg(feature = "index-falkordb")]
-const INDEX_BUILD_BATCH: usize = 1024;
-
 /// One in-flight background build, identified by graph name + column + build epoch.
 #[cfg(feature = "index-falkordb")]
 type BuildKey = (String, graph::entity_type::EntityType, String, String, u64);
@@ -1445,6 +1443,40 @@ fn collect_pending_index_builds(tg: &Arc<RwLock<ThreadedGraph>>) -> Vec<BuildKey
         .collect()
 }
 
+/// How often the sweep looks for `Building` columns that nobody is building.
+#[cfg(feature = "index-falkordb")]
+const INDEX_BUILD_SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Periodically dispatch every `Building` column across the registry.
+///
+/// Dispatching only when a client write commits is not enough: that hook sits on **one** of the
+/// write paths, so a `CREATE INDEX` arriving through MULTI/EXEC or a replica effect — or simply
+/// being the last write the server sees — leaves the column `Building` with nothing to finish it.
+/// It also cannot recover a build that a shutting-down pool dropped, that panicked, or that bailed
+/// on fork contention. One sweep over the registry subsumes all of those and needs no per-path
+/// wiring.
+///
+/// Dispatch is idempotent under the in-flight set, so a sweep that finds nothing new costs one
+/// registry lock plus one snapshot read per graph.
+#[cfg(feature = "index-falkordb")]
+pub fn spawn_index_build_sweep() {
+    std::thread::Builder::new()
+        .name("falkordb-index-sweep".into())
+        .spawn(|| {
+            loop {
+                std::thread::sleep(INDEX_BUILD_SWEEP_INTERVAL);
+                // Clone the Arcs out under the registry lock, then release it before dispatching:
+                // `spawn` blocks on a full pool queue, and blocking while holding the registry
+                // would stall every other registry user.
+                let graphs: Vec<Arc<RwLock<ThreadedGraph>>> =
+                    GRAPH_REGISTRY.lock().values().map(Arc::clone).collect();
+                for tg in graphs {
+                    dispatch_index_builds(&tg, collect_pending_index_builds(&tg));
+                }
+            }
+        })
+        .expect("spawn index-build sweep thread");
+}
 /// Spawn a background build for each column not already being built. **MUST be called with NO graph
 /// write lock held**: `spawn` does a blocking send on the bounded thread-pool queue, and holding the
 /// write lock across a full-queue block deadlocks the server (workers park on the read lock this
@@ -1501,35 +1533,37 @@ fn run_index_build(
         }
     }
     // Arm cleanup BEFORE any fallible work: the in-flight marker was inserted by the dispatcher, so it
-    // must be cleared even if `collect_index_entries` below panics.
+    // must be cleared even if the scan below panics.
     let _cleanup = BuildCleanup {
         key: (name, entity, label.to_string(), attr.to_string(), epoch),
     };
 
-    // 1. Build the base off-thread from a committed snapshot (shared read, no write contention).
-    let base = {
+    // 1. Scan BASE off-thread from a committed snapshot, already encoded. No locks are held for the
+    //    scan's duration beyond the snapshot Arc: the version is immutable, so writes committing
+    //    after it are invisible by construction and there is no scan-vs-write race. Encoding here
+    //    rather than at install keeps that cost off the write thread too.
+    let Some(base) = ({
         let arc = tg.read().graph.read();
-        let entries = arc.borrow().collect_index_entries(entity, &label, &attr);
-        entries
+        let b = arc
+            .borrow()
+            .collect_index_base_encoded(entity, &label, &attr);
+        b
+    }) else {
+        return; // column dropped while we were dispatched — nothing to build
     };
 
-    // 2. Install in batch-size chunks; each chunk is one short write-guarded, GIL-protected commit
-    //    (`commit_index_build` takes the module GIL via `hold_gil`). The `epoch` makes each
-    //    install/finish a no-op if the column was dropped + re-created since this job started, so a
-    //    stale job can never publish into the fresh column.
-    let mut alive = true;
-    for chunk in base.chunks(INDEX_BUILD_BATCH) {
-        let chunk = chunk.to_vec();
-        alive = commit_index_build(&tg, |g| {
-            g.install_index_base_chunk(entity, &label, &attr, epoch, chunk);
-        });
-        if !alive {
-            break;
-        }
-    }
-    if alive {
-        commit_index_build(&tg, |g| g.finish_index_build(entity, &label, &attr, epoch));
-    }
+    // 2. Install in ONE commit. Chunking would be wrong as well as slow: a partially-subtracted
+    //    BASE is not a valid index at any version, and `MvccGraph::commit` pays an
+    //    O(attribute-store) `trim_attr_stores()` every time, so N/1024 commits multiply a cost the
+    //    single install pays once. The `epoch` makes the install a no-op if the column was dropped
+    //    and re-created since this job started, so a stale job cannot publish into the fresh one.
+    //
+    //    On fork contention `commit_index_build` returns false without installing; the sweep
+    //    re-dispatches. A background job can retry — a client cannot, which is why the slot is
+    //    try-acquired rather than blocked on.
+    commit_index_build(&tg, |g| {
+        g.install_index_base(entity, &label, &attr, epoch, base);
+    });
     // `_cleanup` drops here (or on unwind): clears the in-flight marker.
 }
 
