@@ -1,3 +1,4 @@
+import random
 from common import *
 from random_graph import create_random_graph
 from random import randint
@@ -475,8 +476,13 @@ class testMSF(FlowTestsBase):
 
     def test_msf_rand_forest_no_weight(self):
         """ Test that MSF correctly identifies and groups multiple trees """
+        # seed for reproducibility: this test previously failed
+        # intermittently in CI (arm runners) with an unseeded graph, and an
+        # unseeded failure can't be reproduced or debugged later
+        random.seed(1234)
+
         # create the forest
-        nodes =[{"count": randint(5,40), "properties": 3, "labels": [l]} 
+        nodes =[{"count": randint(5,40), "properties": 3, "labels": [l]}
             for l in "ABCDEFGHIJK"]
 
         # add many edges between nodes of the same label
