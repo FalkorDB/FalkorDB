@@ -8,7 +8,7 @@
 //------------------------------------------------------------------------------
 
 // This file is configured by cmake from Config/GB_prejit.c.in, which has
-// indexed the following 202 kernels in GraphBLAS/PreJIT:
+// indexed the following 206 kernels in GraphBLAS/PreJIT:
 
 #include "GB.h"
 #include "jitifyer/GB_jitifyer.h"
@@ -75,6 +75,8 @@ JIT_AP0  (GB_jit__apply_unop__004005bb0bbe)
 JIT_AP0  (GB_jit__apply_unop__004007aa0aaf)
 JIT_AP0  (GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractJ32)
 JIT_AP0  (GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractYJ32)
+JIT_AP0  (GB_jit__apply_unop__03c00099099c___free_vectors)
+JIT_AP0  (GB_jit__apply_unop__03c00099099d___free_vectors)
 JIT_AP0  (GB_jit__apply_unop__03c000be0bec__LG_MF_ExtractMatrixFlow)
 JIT_AP0  (GB_jit__apply_unop__03c000be0bec__LG_MF_GetResidual)
 JIT_AP0  (GB_jit__apply_unop__03c000be0bed__LG_MF_ResidualFlow32)
@@ -139,11 +141,13 @@ JIT_SELB (GB_jit__select_bitmap__00331beba__LG_MSF_selectEdge_double)
 JIT_SELB (GB_jit__select_bitmap__00f31beba__LG_MSF_removeEdge_double)
 JIT_SELB (GB_jit__select_bitmap__00f31beba__LG_MSF_selectEdge_double)
 JIT_SEL1 (GB_jit__select_phase1__3f131e1e5__LG_MF_Prune32)
+JIT_SEL1 (GB_jit__select_phase1__3f3319190__locate_tensors)
 JIT_SEL1 (GB_jit__select_phase1__3f331beb5__LG_MSF_removeEdge_double)
 JIT_SEL1 (GB_jit__select_phase1__3f331beb5__LG_MSF_selectEdge_double)
 JIT_SEL1 (GB_jit__select_phase1__3ff31beb5__LG_MSF_removeEdge_double)
 JIT_SEL1 (GB_jit__select_phase1__3ff31beb5__LG_MSF_selectEdge_double)
 JIT_SEL2 (GB_jit__select_phase2__3f131e1e5__LG_MF_Prune32)
+JIT_SEL2 (GB_jit__select_phase2__3f3319190__locate_tensors)
 JIT_SEL2 (GB_jit__select_phase2__3f331beb5__LG_MSF_removeEdge_double)
 JIT_SEL2 (GB_jit__select_phase2__3f331beb5__LG_MSF_selectEdge_double)
 JIT_SEL2 (GB_jit__select_phase2__3ff31beb5__LG_MSF_removeEdge_double)
@@ -283,6 +287,8 @@ JIT_Q (GB_jit__apply_unop__004005bb0bbe_query)
 JIT_Q (GB_jit__apply_unop__004007aa0aaf_query)
 JIT_Q (GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractJ32_query)
 JIT_Q (GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractYJ32_query)
+JIT_Q (GB_jit__apply_unop__03c00099099c___free_vectors_query)
+JIT_Q (GB_jit__apply_unop__03c00099099d___free_vectors_query)
 JIT_Q (GB_jit__apply_unop__03c000be0bec__LG_MF_ExtractMatrixFlow_query)
 JIT_Q (GB_jit__apply_unop__03c000be0bec__LG_MF_GetResidual_query)
 JIT_Q (GB_jit__apply_unop__03c000be0bed__LG_MF_ResidualFlow32_query)
@@ -347,11 +353,13 @@ JIT_Q (GB_jit__select_bitmap__00331beba__LG_MSF_selectEdge_double_query)
 JIT_Q (GB_jit__select_bitmap__00f31beba__LG_MSF_removeEdge_double_query)
 JIT_Q (GB_jit__select_bitmap__00f31beba__LG_MSF_selectEdge_double_query)
 JIT_Q (GB_jit__select_phase1__3f131e1e5__LG_MF_Prune32_query)
+JIT_Q (GB_jit__select_phase1__3f3319190__locate_tensors_query)
 JIT_Q (GB_jit__select_phase1__3f331beb5__LG_MSF_removeEdge_double_query)
 JIT_Q (GB_jit__select_phase1__3f331beb5__LG_MSF_selectEdge_double_query)
 JIT_Q (GB_jit__select_phase1__3ff31beb5__LG_MSF_removeEdge_double_query)
 JIT_Q (GB_jit__select_phase1__3ff31beb5__LG_MSF_selectEdge_double_query)
 JIT_Q (GB_jit__select_phase2__3f131e1e5__LG_MF_Prune32_query)
+JIT_Q (GB_jit__select_phase2__3f3319190__locate_tensors_query)
 JIT_Q (GB_jit__select_phase2__3f331beb5__LG_MSF_removeEdge_double_query)
 JIT_Q (GB_jit__select_phase2__3f331beb5__LG_MSF_selectEdge_double_query)
 JIT_Q (GB_jit__select_phase2__3ff31beb5__LG_MSF_removeEdge_double_query)
@@ -435,8 +443,8 @@ JIT_Q (GB_jit__union__e3f312bbb0bbb00_query)
 // GB_prejit_kernels: a list of function pointers to PreJIT kernels
 //------------------------------------------------------------------------------
 
-#if ( 202 > 0 )
-static void *GB_prejit_kernels [202] =
+#if ( 206 > 0 )
+static void *GB_prejit_kernels [206] =
 {
 GB_jit__AxB_dot2__0000000eb94eb9bb__LG_MSF_tupleMin_double_LG_MSF_combine_double,
 GB_jit__AxB_dot2__0000400eb94eb9bb__LG_MSF_tupleMin_double_LG_MSF_combine_double,
@@ -494,6 +502,8 @@ GB_jit__apply_unop__004005bb0bbe,
 GB_jit__apply_unop__004007aa0aaf,
 GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractJ32,
 GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractYJ32,
+GB_jit__apply_unop__03c00099099c___free_vectors,
+GB_jit__apply_unop__03c00099099d___free_vectors,
 GB_jit__apply_unop__03c000be0bec__LG_MF_ExtractMatrixFlow,
 GB_jit__apply_unop__03c000be0bec__LG_MF_GetResidual,
 GB_jit__apply_unop__03c000be0bed__LG_MF_ResidualFlow32,
@@ -558,11 +568,13 @@ GB_jit__select_bitmap__00331beba__LG_MSF_selectEdge_double,
 GB_jit__select_bitmap__00f31beba__LG_MSF_removeEdge_double,
 GB_jit__select_bitmap__00f31beba__LG_MSF_selectEdge_double,
 GB_jit__select_phase1__3f131e1e5__LG_MF_Prune32,
+GB_jit__select_phase1__3f3319190__locate_tensors,
 GB_jit__select_phase1__3f331beb5__LG_MSF_removeEdge_double,
 GB_jit__select_phase1__3f331beb5__LG_MSF_selectEdge_double,
 GB_jit__select_phase1__3ff31beb5__LG_MSF_removeEdge_double,
 GB_jit__select_phase1__3ff31beb5__LG_MSF_selectEdge_double,
 GB_jit__select_phase2__3f131e1e5__LG_MF_Prune32,
+GB_jit__select_phase2__3f3319190__locate_tensors,
 GB_jit__select_phase2__3f331beb5__LG_MSF_removeEdge_double,
 GB_jit__select_phase2__3f331beb5__LG_MSF_selectEdge_double,
 GB_jit__select_phase2__3ff31beb5__LG_MSF_removeEdge_double,
@@ -647,8 +659,8 @@ GB_jit__union__e3f312bbb0bbb00
 // GB_prejit_queries: a list of function pointers to PreJIT query kernels
 //------------------------------------------------------------------------------
 
-#if ( 202 > 0 )
-static void *GB_prejit_queries [202] =
+#if ( 206 > 0 )
+static void *GB_prejit_queries [206] =
 {
 GB_jit__AxB_dot2__0000000eb94eb9bb__LG_MSF_tupleMin_double_LG_MSF_combine_double_query,
 GB_jit__AxB_dot2__0000400eb94eb9bb__LG_MSF_tupleMin_double_LG_MSF_combine_double_query,
@@ -706,6 +718,8 @@ GB_jit__apply_unop__004005bb0bbe_query,
 GB_jit__apply_unop__004007aa0aaf_query,
 GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractJ32_query,
 GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractYJ32_query,
+GB_jit__apply_unop__03c00099099c___free_vectors_query,
+GB_jit__apply_unop__03c00099099d___free_vectors_query,
 GB_jit__apply_unop__03c000be0bec__LG_MF_ExtractMatrixFlow_query,
 GB_jit__apply_unop__03c000be0bec__LG_MF_GetResidual_query,
 GB_jit__apply_unop__03c000be0bed__LG_MF_ResidualFlow32_query,
@@ -770,11 +784,13 @@ GB_jit__select_bitmap__00331beba__LG_MSF_selectEdge_double_query,
 GB_jit__select_bitmap__00f31beba__LG_MSF_removeEdge_double_query,
 GB_jit__select_bitmap__00f31beba__LG_MSF_selectEdge_double_query,
 GB_jit__select_phase1__3f131e1e5__LG_MF_Prune32_query,
+GB_jit__select_phase1__3f3319190__locate_tensors_query,
 GB_jit__select_phase1__3f331beb5__LG_MSF_removeEdge_double_query,
 GB_jit__select_phase1__3f331beb5__LG_MSF_selectEdge_double_query,
 GB_jit__select_phase1__3ff31beb5__LG_MSF_removeEdge_double_query,
 GB_jit__select_phase1__3ff31beb5__LG_MSF_selectEdge_double_query,
 GB_jit__select_phase2__3f131e1e5__LG_MF_Prune32_query,
+GB_jit__select_phase2__3f3319190__locate_tensors_query,
 GB_jit__select_phase2__3f331beb5__LG_MSF_removeEdge_double_query,
 GB_jit__select_phase2__3f331beb5__LG_MSF_selectEdge_double_query,
 GB_jit__select_phase2__3ff31beb5__LG_MSF_removeEdge_double_query,
@@ -859,8 +875,8 @@ GB_jit__union__e3f312bbb0bbb00_query
 // GB_prejit_names: a list of names of PreJIT kernels
 //------------------------------------------------------------------------------
 
-#if ( 202 > 0 )
-static char *GB_prejit_names [202] =
+#if ( 206 > 0 )
+static char *GB_prejit_names [206] =
 {
 "GB_jit__AxB_dot2__0000000eb94eb9bb__LG_MSF_tupleMin_double_LG_MSF_combine_double",
 "GB_jit__AxB_dot2__0000400eb94eb9bb__LG_MSF_tupleMin_double_LG_MSF_combine_double",
@@ -918,6 +934,8 @@ static char *GB_prejit_names [202] =
 "GB_jit__apply_unop__004007aa0aaf",
 "GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractJ32",
 "GB_jit__apply_unop__03c0006e06ed__LG_MF_ExtractYJ32",
+"GB_jit__apply_unop__03c00099099c___free_vectors",
+"GB_jit__apply_unop__03c00099099d___free_vectors",
 "GB_jit__apply_unop__03c000be0bec__LG_MF_ExtractMatrixFlow",
 "GB_jit__apply_unop__03c000be0bec__LG_MF_GetResidual",
 "GB_jit__apply_unop__03c000be0bed__LG_MF_ResidualFlow32",
@@ -982,11 +1000,13 @@ static char *GB_prejit_names [202] =
 "GB_jit__select_bitmap__00f31beba__LG_MSF_removeEdge_double",
 "GB_jit__select_bitmap__00f31beba__LG_MSF_selectEdge_double",
 "GB_jit__select_phase1__3f131e1e5__LG_MF_Prune32",
+"GB_jit__select_phase1__3f3319190__locate_tensors",
 "GB_jit__select_phase1__3f331beb5__LG_MSF_removeEdge_double",
 "GB_jit__select_phase1__3f331beb5__LG_MSF_selectEdge_double",
 "GB_jit__select_phase1__3ff31beb5__LG_MSF_removeEdge_double",
 "GB_jit__select_phase1__3ff31beb5__LG_MSF_selectEdge_double",
 "GB_jit__select_phase2__3f131e1e5__LG_MF_Prune32",
+"GB_jit__select_phase2__3f3319190__locate_tensors",
 "GB_jit__select_phase2__3f331beb5__LG_MSF_removeEdge_double",
 "GB_jit__select_phase2__3f331beb5__LG_MSF_selectEdge_double",
 "GB_jit__select_phase2__3ff31beb5__LG_MSF_removeEdge_double",
@@ -1079,8 +1099,8 @@ void GB_prejit
     char ***Name_handle     // return list of kernel names
 )
 {
-    (*nkernels) = 202 ;
-    #if ( 202 == 0 )
+    (*nkernels) = 206 ;
+    #if ( 206 == 0 )
     (*Kernel_handle) = NULL ;
     (*Query_handle) = NULL ;
     (*Name_handle) = NULL ;
