@@ -1338,6 +1338,185 @@ pub(crate) fn commit_and_replicate(
     }
 }
 
+// ---- Background (online) FalkorDB index build controller (feature: index-falkordb) ----
+//
+// `CREATE INDEX` on existing data leaves the native column `Building` and returns immediately; the
+// pre-existing snapshot is built off the write thread and installed here in batch-size chunks through
+// the one audited committer (`commit_index_build`). Reads on a `Building` column scan-fall-back until
+// it flips `Ready`.
+
+/// Batch size for the chunked base install — mirrors the runtime batch-emitter grain. Small chunks keep
+/// each write-guard hold short so client writes interleave with the build.
+#[cfg(feature = "index-falkordb")]
+const INDEX_BUILD_BATCH: usize = 1024;
+
+/// One in-flight background build, identified by graph name + column + build epoch.
+#[cfg(feature = "index-falkordb")]
+type BuildKey = (String, graph::entity_type::EntityType, String, String, u64);
+
+/// Columns whose background build is already spawned — dedups re-spawn across subsequent writes.
+/// Keyed including the build **epoch**, so a dropped-and-re-created column (fresh epoch) spawns a new
+/// job rather than being suppressed by the old job's lingering marker. Removed when the job ends
+/// (finish / bail / panic — via the job's RAII cleanup), never under the graph write lock.
+#[cfg(feature = "index-falkordb")]
+static INDEX_BUILDS_IN_FLIGHT: std::sync::LazyLock<
+    parking_lot::Mutex<std::collections::HashSet<BuildKey>>,
+> = std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashSet::new()));
+
+/// The `Building` columns of the just-committed graph — the online-build work list. Pure read
+/// (reads the committed version via `MvccGraph::read`, an `Arc` clone, no RwLock), so it is safe to
+/// call under the writer's held write guard (`committed` is that guard's `ThreadedGraph`). It does
+/// NOT spawn — dispatch is deliberately split out (see [`dispatch_index_builds`]) so the blocking
+/// `spawn` never runs while the write lock is held.
+#[cfg(feature = "index-falkordb")]
+fn collect_pending_index_builds(tg: &Arc<RwLock<ThreadedGraph>>) -> Vec<BuildKey> {
+    let bind = tg.read();
+    let arc = bind.graph.read();
+    let g = arc.borrow();
+    let name = g.name().to_string();
+    g.building_index_columns()
+        .into_iter()
+        .map(|(entity, label, attr, epoch)| {
+            (name.clone(), entity, label.to_string(), attr.to_string(), epoch)
+        })
+        .collect()
+}
+
+/// Spawn a background build for each column not already being built. **MUST be called with NO graph
+/// write lock held**: `spawn` does a blocking send on the bounded thread-pool queue, and holding the
+/// write lock across a full-queue block deadlocks the server (workers park on the read lock this
+/// writer holds, so the queue never drains). The in-flight lock is likewise released before spawning.
+#[cfg(feature = "index-falkordb")]
+fn dispatch_index_builds(
+    tg: &Arc<RwLock<ThreadedGraph>>,
+    builds: Vec<BuildKey>,
+) {
+    if builds.is_empty() {
+        return;
+    }
+    // Claim the not-yet-building keys under the in-flight lock, then release it before spawning.
+    let to_spawn: Vec<BuildKey> = {
+        let mut in_flight = INDEX_BUILDS_IN_FLIGHT.lock();
+        builds
+            .into_iter()
+            .filter(|key| in_flight.insert(key.clone()))
+            .collect()
+    };
+    for (name, entity, label, attr, epoch) in to_spawn {
+        let tg = Arc::clone(tg);
+        spawn(
+            move || run_index_build(tg, name, entity, Arc::new(label), Arc::new(attr), epoch),
+            None,
+        );
+    }
+}
+
+/// Background build job (thread pool): read the base from a committed snapshot off the write thread,
+/// install it in batch-size chunks via `commit_index_build` under the matching `epoch`, flip the column
+/// `Ready`. Holds an `Arc` to the graph, so a graph deleted mid-build stays alive until this returns
+/// (no use-after-free); if a fork can't be taken the job bails and the column stays `Building` (a later
+/// write re-spawns it). A [`BuildCleanup`] guard frees the detached context and clears the in-flight
+/// marker on EVERY exit — normal, bail, or panic (the pool wraps jobs in `catch_unwind`) — so a panic
+/// can never leak the context or wedge the column `Building` forever.
+#[cfg(feature = "index-falkordb")]
+fn run_index_build(
+    tg: Arc<RwLock<ThreadedGraph>>,
+    name: String,
+    entity: graph::entity_type::EntityType,
+    label: Arc<String>,
+    attr: Arc<String>,
+    epoch: u64,
+) {
+    /// Clears the in-flight marker on drop (incl. unwind), so a panic can never wedge the column
+    /// `Building` forever. (The GIL context is owned per-commit by `hold_gil`, not by this job.)
+    struct BuildCleanup {
+        key: BuildKey,
+    }
+    impl Drop for BuildCleanup {
+        fn drop(&mut self) {
+            INDEX_BUILDS_IN_FLIGHT.lock().remove(&self.key);
+        }
+    }
+    // Arm cleanup BEFORE any fallible work: the in-flight marker was inserted by the dispatcher, so it
+    // must be cleared even if `collect_index_entries` below panics.
+    let _cleanup = BuildCleanup {
+        key: (name, entity, label.to_string(), attr.to_string(), epoch),
+    };
+
+    // 1. Build the base off-thread from a committed snapshot (shared read, no write contention).
+    let base = {
+        let arc = tg.read().graph.read();
+        let entries = arc.borrow().collect_index_entries(entity, &label, &attr);
+        entries
+    };
+
+    // 2. Install in batch-size chunks; each chunk is one short write-guarded, GIL-protected commit
+    //    (`commit_index_build` takes the module GIL via `hold_gil`). The `epoch` makes each
+    //    install/finish a no-op if the column was dropped + re-created since this job started, so a
+    //    stale job can never publish into the fresh column.
+    let mut alive = true;
+    for chunk in base.chunks(INDEX_BUILD_BATCH) {
+        let chunk = chunk.to_vec();
+        alive = commit_index_build(&tg, |g| {
+            g.install_index_base_chunk(entity, &label, &attr, epoch, chunk);
+        });
+        if !alive {
+            break;
+        }
+    }
+    if alive {
+        commit_index_build(&tg, |g| g.finish_index_build(entity, &label, &attr, epoch));
+    }
+    // `_cleanup` drops here (or on unwind): clears the in-flight marker.
+}
+
+/// The one audited committer for a background install step: take the writer's exclusion (RwLock write
+/// guard), fork the CURRENT committed version (so it sees the latest writes — `dirty` reconciles the
+/// stale base), run `install` on the fork, then swap it in under the GIL (BGSAVE fork-safety, #452).
+/// This is the **same lock discipline as the client write path** (RwLock-write → GIL → commit → release
+/// — see `process_write_queued_query`), reused deliberately; it does not introduce a new lock-order
+/// edge. Returns false if no version could be forked (graph tearing down) — the caller bails.
+#[cfg(feature = "index-falkordb")]
+fn commit_index_build(
+    tg: &Arc<RwLock<ThreadedGraph>>,
+    install: impl FnOnce(&mut Graph),
+) -> bool {
+    // GIL BEFORE the write lock. Every other writer takes them in that order —
+    // `QuerySession::begin_writer` and `escalate` both `Gil::acquire()` then `write_arc`, and an
+    // inline command already holds the GIL when it reaches `graph.write()`. Taking the write lock
+    // first (as this function used to) inverts against them: this thread would hold L1 waiting for
+    // the GIL while the main thread holds the GIL waiting for L1, wedging the server.
+    //
+    // L1-write is unavoidable here despite the native index being MVCC: `MvccGraph::commit` takes
+    // `&mut self`, so publishing a version needs exclusive access to the `ThreadedGraph`.
+    let _gil = crate::query_session::hold_gil();
+    let mut g = tg.write();
+
+    // TRY-acquire the version slot, never block on it. A client can hold the slot while waiting for
+    // the GIL during escalation, so blocking here would deadlock; a background build can simply back
+    // off and be re-dispatched later.
+    let Some(fork) = g.graph.write() else {
+        return false;
+    };
+
+    // `MvccGraph::write` latches a flag that only `commit` or `rollback` clears — an unwind past
+    // this point would leave it latched forever and every subsequent write in the process would
+    // fail with "another write is in progress". The pool's own `catch_unwind` would hide that, so
+    // catch here and roll back explicitly.
+    let installed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        install(&mut fork.borrow_mut());
+    }));
+    if installed.is_err() {
+        g.graph.rollback();
+        eprintln!("index build: install panicked; version slot released, build abandoned");
+        return false;
+    }
+
+    g.graph.commit(fork);
+    true
+    // Drop order is the reverse of acquisition: `g` (L1) then `_gil`.
+}
+
 pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
     if graph
         .read()
@@ -1426,6 +1605,12 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
         match res {
             Ok((params_offset, exec_ms)) => {
                 unsafe { ffi::free_thread_safe_context(ctx.ctx) };
+                // If this write left native index columns `Building`, spawn their background builds
+                // now. No write lock is held here (the query session released it before returning),
+                // so the blocking spawn is safe — the C1 deadlock only arises when spawning under the
+                // write guard, which this path no longer does.
+                #[cfg(feature = "index-falkordb")]
+                dispatch_index_builds(graph, collect_pending_index_builds(graph));
                 let query_text = &query[params_offset..];
                 let params_text = &query[..params_offset];
                 let report_ms = (write_wall_ms - exec_ms).max(0.0);
