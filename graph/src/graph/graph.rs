@@ -1492,10 +1492,20 @@ impl Graph {
     }
 
     /// Import pre-resolved relationship attributes directly into the cache.
+    ///
+    /// Marks the imported edges for (re)indexing, exactly as
+    /// [`import_relationship_attrs`](Self::import_relationship_attrs) does; the caller
+    /// publishes them with [`commit_edge_index`](Self::commit_edge_index). Tracking runs
+    /// **before** the import because `import_attrs_resolved` drains `data`.
     pub fn import_relationship_attrs_resolved(
         &mut self,
         data: &mut Vec<(u64, Vec<(u16, Value)>)>,
+        index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) -> usize {
+        self.track_edge_index_updates(
+            data.iter().map(|(id, attrs)| (id, attrs)),
+            index_add_edge_docs,
+        );
         self.relationship_attrs.import_attrs_resolved(data)
     }
 
@@ -1520,9 +1530,9 @@ impl Graph {
     /// Mark every `(type_id, edge_id)` whose changed attributes are
     /// indexed so the next `commit_edge_index` pass rebuilds their
     /// documents. Shared by the import and set paths.
-    fn track_edge_index_updates(
+    fn track_edge_index_updates<'a>(
         &self,
-        attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
+        attrs: impl IntoIterator<Item = (&'a u64, &'a Vec<(u16, Value)>)>,
         index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) {
         if !self.edge_indexer.has_indices() {

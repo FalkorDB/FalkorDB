@@ -286,12 +286,24 @@ fn process_node_token(
     g.create_nodes(&nodes_bitmap);
     unsafe { maybe_yield(raw_ctx) };
 
+    // Attributes must land BEFORE the labels. `set_nodes_labels_bulk` decides which nodes
+    // need (re)indexing with `has_attributes(id)`; running it first meant that test was
+    // always false here, so `index_add_docs` came back empty and rows bulk-loaded into a
+    // graph that already had an index were never indexed.
+    if !resolved_attrs.is_empty() {
+        g.import_node_attrs_resolved(&mut resolved_attrs);
+        unsafe { maybe_yield(raw_ctx) };
+    }
+
     let mut index_add_docs: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
     g.set_nodes_labels_bulk(&label_rows, &label_cols, &mut index_add_docs);
     unsafe { maybe_yield(raw_ctx) };
 
-    if !resolved_attrs.is_empty() {
-        g.import_node_attrs_resolved(&mut resolved_attrs);
+    // Publish what `set_nodes_labels_bulk` collected. Nothing else on this path flushes it:
+    // GRAPH.BULK does not run the post-load `populate_indexes_sync` rebuild (that is the
+    // RDB / replica path), so without this the documents are simply dropped.
+    if !index_add_docs.is_empty() {
+        g.commit_index(&mut index_add_docs, &mut FxHashMap::default());
         unsafe { maybe_yield(raw_ctx) };
     }
 
@@ -364,8 +376,15 @@ fn process_edge_token(
     unsafe { maybe_yield(raw_ctx) };
 
     if !resolved_rel_attrs.is_empty() {
-        g.import_relationship_attrs_resolved(&mut resolved_rel_attrs);
+        let mut index_add_edge_docs: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
+        g.import_relationship_attrs_resolved(&mut resolved_rel_attrs, &mut index_add_edge_docs);
         unsafe { maybe_yield(raw_ctx) };
+
+        // Same as the node path: nothing else flushes these on a bulk load.
+        if !index_add_edge_docs.is_empty() {
+            g.commit_edge_index(&mut index_add_edge_docs, &mut FxHashMap::default());
+            unsafe { maybe_yield(raw_ctx) };
+        }
     }
 
     Ok(())
