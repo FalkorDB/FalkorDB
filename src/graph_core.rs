@@ -1548,7 +1548,13 @@ fn collect_pending_index_builds(tg: &Arc<RwLock<ThreadedGraph>>) -> Vec<BuildKey
     g.building_index_columns()
         .into_iter()
         .map(|(entity, label, attr, epoch)| {
-            (name.clone(), entity, label.to_string(), attr.to_string(), epoch)
+            (
+                name.clone(),
+                entity,
+                label.to_string(),
+                attr.to_string(),
+                epoch,
+            )
         })
         .collect()
 }
