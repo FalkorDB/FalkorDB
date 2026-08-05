@@ -32,8 +32,11 @@ typedef enum {
 // effects API
 //------------------------------------------------------------------------------
 
-// applys effects encoded in buffer
-void Effects_Apply
+// applies effects encoded in buffer
+// returns false if the replica has diverged from the master and the effects
+// could not be applied in full; on false the caller must not propagate the
+// effects any further down a replication sub-chain
+bool Effects_Apply
 (
 	GraphContext *gc,          // graph to operate on
 	const char *effects_buff,  // encoded effects

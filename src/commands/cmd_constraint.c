@@ -47,6 +47,7 @@
 #include "util/strutil.h"
 #include "../query_ctx.h"
 #include "../index/indexer.h"
+#include "../errors/errors.h"
 #include "../graph/graph_hub.h"
 #include "../util/thpool/pool.h"
 #include "../errors/error_msgs.h"
@@ -574,6 +575,13 @@ static void Constraint_Op
 	RedisModuleCtx *rm_ctx,
 	GraphConstraintCtx *ctx
 ) {
+	ASSERT (ctx    != NULL) ;
+  ASSERT (rm_ctx != NULL) ;
+
+	// clear any stale error left in this TLS by
+	// whatever job (query, constraint, ...) previously ran on it
+	ErrorCtx_Clear () ;
+
 	// build working props array — _Constraint_Create may overwrite elements
 	// with GraphContext-internal pointers, so keep ctx->props for cleanup
 	const char *props [ctx->prop_count] ;
@@ -616,6 +624,9 @@ static void Async_Constraint_Op
 
 	// unblock client
 	RedisModule_UnblockClient (bc, NULL) ;
+
+	// clear any error this job may have set before freeing the context
+	ErrorCtx_Clear () ;
 
 	// free thread-safe context
 	RedisModule_FreeThreadSafeContext (rm_ctx) ;
