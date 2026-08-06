@@ -377,6 +377,46 @@ struct ColumnBuilder {
     any_bound: bool,
 }
 
+impl ColumnBuilder {
+    /// Appends `v` as a bound value.
+    #[inline]
+    fn push_bound(
+        &mut self,
+        v: Value,
+    ) {
+        self.values.push(v);
+        self.present = true;
+        self.any_bound = true;
+    }
+
+    /// Appends slot `id` of `base[base_row]`, preserving `base`'s `value_only`
+    /// semantics (a value-present-but-unbound slot stays unbound) and treating an
+    /// absent or unbound column as `Null`. The merge paths' base-row fallback.
+    #[inline]
+    fn push_left_of(
+        &mut self,
+        base: &Batch,
+        id: usize,
+        base_row: usize,
+    ) {
+        match base.columns.get(id) {
+            Some(c) if !matches!(c, Column::Unbound) => {
+                let v = c.get(base_row);
+                if base.value_only.test(id) {
+                    let is_null = matches!(v, Value::Null);
+                    self.values.push(v);
+                    if !is_null {
+                        self.present = true;
+                    }
+                } else {
+                    self.push_bound(v);
+                }
+            }
+            _ => self.values.push(Value::Null),
+        }
+    }
+}
+
 /// Builds a columnar [`Batch`] incrementally, one row at a time, transposing
 /// row-shaped bindings into per-variable columns.
 ///
@@ -520,8 +560,60 @@ impl BatchBuilder {
         right_row: usize,
         origin: u32,
     ) {
+        self.grow_cols(left.columns.len().max(right.columns.len()));
+        for (id, col) in self.cols.iter_mut().enumerate() {
+            let vid = id as u32;
+            if right.is_bound_at(vid, right_row) {
+                col.push_bound(right.value_at(vid, right_row).unwrap_or(Value::Null));
+            } else {
+                // Right not bound here: fall back to the left base row.
+                col.push_left_of(left, id, left_row);
+            }
+        }
+        self.finish_row(origin);
+    }
+
+    /// N-way [`push_merged`](Self::push_merged): appends one row formed by
+    /// overlaying every `(batch, row)` in `rights` — in slice order, so a later
+    /// entry wins where it is bound — on top of `left[left_row]`.
+    ///
+    /// Equivalent to chaining `push_merged` through intermediate batches, but
+    /// without building them: an N-branch cross product emits its rows one at a
+    /// time from N cursors instead of materializing the intermediate products.
+    pub fn push_merged_many(
+        &mut self,
+        left: &Batch,
+        left_row: usize,
+        rights: &[(&Batch, usize)],
+        origin: u32,
+    ) {
+        self.grow_cols(
+            rights
+                .iter()
+                .map(|(b, _)| b.columns.len())
+                .fold(left.columns.len(), usize::max),
+        );
+        'cols: for (id, col) in self.cols.iter_mut().enumerate() {
+            let vid = id as u32;
+            for &(right, right_row) in rights.iter().rev() {
+                if right.is_bound_at(vid, right_row) {
+                    col.push_bound(right.value_at(vid, right_row).unwrap_or(Value::Null));
+                    continue 'cols;
+                }
+            }
+            // No right binds this slot: fall back to the left base row.
+            col.push_left_of(left, id, left_row);
+        }
+        self.finish_row(origin);
+    }
+
+    /// Ensures a column builder exists for every slot below `n`, back-filling
+    /// the rows already pushed with nulls.
+    fn grow_cols(
+        &mut self,
+        n: usize,
+    ) {
         let r = self.rows;
-        let n = left.columns.len().max(right.columns.len());
         while self.cols.len() < n {
             self.cols.push(ColumnBuilder {
                 values: vec![Value::Null; r],
@@ -529,34 +621,13 @@ impl BatchBuilder {
                 any_bound: false,
             });
         }
-        for (id, col) in self.cols.iter_mut().enumerate() {
-            let vid = id as u32;
-            if right.is_bound_at(vid, right_row) {
-                col.values
-                    .push(right.value_at(vid, right_row).unwrap_or(Value::Null));
-                col.present = true;
-                col.any_bound = true;
-                continue;
-            }
-            // Right not bound here: fall back to the left base row.
-            match left.columns.get(id) {
-                Some(c) if !matches!(c, Column::Unbound) => {
-                    let v = c.get(left_row);
-                    if left.value_only.test(id) {
-                        let is_null = matches!(v, Value::Null);
-                        col.values.push(v);
-                        if !is_null {
-                            col.present = true;
-                        }
-                    } else {
-                        col.values.push(v);
-                        col.present = true;
-                        col.any_bound = true;
-                    }
-                }
-                _ => col.values.push(Value::Null),
-            }
-        }
+    }
+
+    /// Closes the row whose values were just pushed into every column.
+    fn finish_row(
+        &mut self,
+        origin: u32,
+    ) {
         if origin != 0 {
             self.any_origin = true;
         }

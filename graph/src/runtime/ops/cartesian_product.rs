@@ -21,9 +21,11 @@
 //!                  └───────────────┘
 //! ```
 //!
-//! With multiple right children, each branch is materialized independently
-//! and their cross-product is computed into a single flat vector before
-//! joining with left rows.
+//! With multiple right children, each branch is materialized independently and
+//! the branches are then walked as an odometer: memory is the *sum* of the
+//! branch sizes, never their product, and rows leave the operator
+//! [`BATCH_SIZE`] at a time so timeout and memory-capacity checks get a chance
+//! to fire.
 
 use crate::planner::IR;
 use crate::runtime::{
@@ -38,14 +40,32 @@ pub struct CartesianProductOp<'a> {
     /// Pre-built right branch operators, seeded via set_argument_batch.
     pub(crate) right_children: Vec<BatchOp<'a>>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
-    /// Lazily materialized right-side rows. `None` means not yet computed.
-    materialized_right: Option<Batch<'a>>,
+    /// Lazily materialized right-side rows, one dense batch per right branch.
+    /// `None` means not yet computed.
+    materialized_right: Option<Vec<Batch<'a>>>,
     /// Current block of left-side rows being cross-joined.
     left_batch: Option<Batch<'a>>,
     /// Current position within `left_batch`.
     left_pos: usize,
-    /// Current position within `materialized_right`.
-    right_pos: usize,
+    /// Odometer position within each materialized right branch.
+    right_pos: Vec<usize>,
+}
+
+/// Advances `pos` to the next combination of right-branch rows, rightmost digit
+/// first. Returns `false` once it wraps back to all-zeros, i.e. the current left
+/// row has been cross-joined against every combination.
+fn advance(
+    pos: &mut [usize],
+    rights: &[Batch],
+) -> bool {
+    for (p, branch) in pos.iter_mut().zip(rights).rev() {
+        *p += 1;
+        if *p < branch.len() {
+            return true;
+        }
+        *p = 0;
+    }
+    false
 }
 
 impl<'a> CartesianProductOp<'a> {
@@ -63,16 +83,15 @@ impl<'a> CartesianProductOp<'a> {
             materialized_right: None,
             left_batch: None,
             left_pos: 0,
-            right_pos: 0,
+            right_pos: Vec::new(),
         }
     }
 
-    /// Materializes all right sub-plans into a single columnar [`Batch`].
-    ///
-    /// For a single right child, runs the sub-plan once and concatenates all
-    /// rows. For multiple right children, materializes each independently and
-    /// computes their cross-product into a single flat batch.
-    fn materialize_right(&mut self) -> Result<Batch<'a>, String> {
+    /// Runs each right sub-plan once, collecting its rows into one dense
+    /// [`Batch`] per branch. The branches are *not* cross-joined here — that is
+    /// streamed row by row in [`Iterator::next`] — so the memory held is the sum
+    /// of the branch sizes rather than their product.
+    fn materialize_right(&mut self) -> Result<Vec<Batch<'a>>, String> {
         let mut branch_results: Vec<Batch<'a>> = Vec::with_capacity(self.right_children.len());
 
         for child in &mut self.right_children {
@@ -83,28 +102,7 @@ impl<'a> CartesianProductOp<'a> {
             branch_results.push(Batch::concat(&batches));
         }
 
-        // Single branch: no cross-product needed.
-        if branch_results.len() == 1 {
-            return Ok(branch_results.pop().unwrap());
-        }
-
-        // Multi-branch: iteratively cross-product all branches.
-        let mut accumulated = branch_results.remove(0);
-        for branch in branch_results {
-            if accumulated.is_empty() || branch.is_empty() {
-                return Ok(BatchBuilder::new().finish());
-            }
-            let mut builder = BatchBuilder::new();
-            for left in accumulated.active_indices() {
-                let origin = accumulated.origin_row(left);
-                for right in branch.active_indices() {
-                    builder.push_merged(&accumulated, left, &branch, right, origin);
-                }
-            }
-            accumulated = builder.finish();
-        }
-
-        Ok(accumulated)
+        Ok(branch_results)
     }
 }
 
@@ -115,33 +113,55 @@ impl<'a> Iterator for CartesianProductOp<'a> {
         // Lazy materialization of right side (runs once).
         if self.materialized_right.is_none() {
             match self.materialize_right() {
-                Ok(right) => {
-                    if right.is_empty() {
+                Ok(rights) => {
+                    // An empty branch makes the whole cross-product empty.
+                    if rights.iter().any(Batch::is_empty) {
                         return None;
                     }
-                    self.materialized_right = Some(right);
+                    self.right_pos = vec![0; rights.len()];
+                    self.materialized_right = Some(rights);
                 }
                 Err(e) => return Some(Err(e)),
             }
         }
 
-        let right_len = self.materialized_right.as_ref().unwrap().len();
+        let rights = self.materialized_right.as_ref().unwrap();
+        let mut cursor: Vec<(&Batch<'a>, usize)> = Vec::with_capacity(rights.len());
         let mut builder = BatchBuilder::new();
 
         loop {
             // Produce cross-product rows from current (left_pos, right_pos).
             let left_len = self.left_batch.as_ref().map_or(0, Batch::len);
-            while builder.len() < BATCH_SIZE && self.left_pos < left_len {
-                while builder.len() < BATCH_SIZE && self.right_pos < right_len {
+            if let [right] = rights.as_slice() {
+                // Single branch — the overwhelmingly common shape. One cursor
+                // means no odometer: scan the branch's rows in a tight loop with
+                // the position held in a local.
+                let right_len = right.len();
+                let mut pos = self.right_pos[0];
+                while builder.len() < BATCH_SIZE && self.left_pos < left_len {
                     let left = self.left_batch.as_ref().unwrap();
-                    let right = self.materialized_right.as_ref().unwrap();
                     let origin = left.origin_row(self.left_pos);
-                    builder.push_merged(left, self.left_pos, right, self.right_pos, origin);
-                    self.right_pos += 1;
+                    while builder.len() < BATCH_SIZE && pos < right_len {
+                        builder.push_merged(left, self.left_pos, right, pos, origin);
+                        pos += 1;
+                    }
+                    if pos >= right_len {
+                        self.left_pos += 1;
+                        pos = 0;
+                    }
                 }
-                if self.right_pos >= right_len {
-                    self.left_pos += 1;
-                    self.right_pos = 0;
+                self.right_pos[0] = pos;
+            } else {
+                while builder.len() < BATCH_SIZE && self.left_pos < left_len {
+                    let left = self.left_batch.as_ref().unwrap();
+                    let origin = left.origin_row(self.left_pos);
+                    cursor.clear();
+                    cursor.extend(rights.iter().zip(self.right_pos.iter().copied()));
+                    builder.push_merged_many(left, self.left_pos, &cursor, origin);
+                    if !advance(&mut self.right_pos, rights) {
+                        // Odometer wrapped: this left row is fully cross-joined.
+                        self.left_pos += 1;
+                    }
                 }
             }
 
@@ -153,7 +173,7 @@ impl<'a> Iterator for CartesianProductOp<'a> {
             // Current left block exhausted. Load next batch from left child.
             self.left_batch = None;
             self.left_pos = 0;
-            self.right_pos = 0;
+            self.right_pos.fill(0);
 
             match self.child.next() {
                 Some(Ok(batch)) => {
