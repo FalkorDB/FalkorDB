@@ -157,7 +157,11 @@ static bool _FilterTreeToMultiValQueryNode
 	bool attribute = AR_EXP_IsAttribute(AR_EXP_getChild(inOp, 0), &attr);
 	ASSERT(attribute == true);
 
-	SIValue list  = AR_EXP_getChild(inOp, 1)->operand.constant;
+	SIValue list = AR_EXP_Evaluate(AR_EXP_getChild(inOp, 1) , NULL);
+	if(SI_TYPE(list) != T_ARRAY) {
+		return false;
+	}
+
 	uint list_len = SIArray_Length(list);
 
 	if(list_len == 0) {
