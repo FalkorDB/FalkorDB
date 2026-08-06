@@ -123,7 +123,10 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
         # materializing the branches took over two minutes.
         self.env.assertLess(time.time() - start, 10)
 
-        # Nor may LIMIT pay for the whole product before emitting a row.
+        # Nor may LIMIT pay for the product before emitting a row. Each branch is
+        # still materialized in full (3 x 1001 rows), but only the combinations
+        # actually consumed are ever merged, so one row costs one merge instead
+        # of 1001^3 of them.
         start = time.time()
         res = g.query(q + " LIMIT 1")
         self.env.assertEqual(len(res.result_set), 1)
