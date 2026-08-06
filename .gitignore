@@ -76,3 +76,7 @@ redis.conf
 
 # ctags
 tags
+
+# Local Redis dump produced when running redis-server
+dump.rdb
+

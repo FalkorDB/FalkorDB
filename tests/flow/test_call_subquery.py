@@ -2884,3 +2884,48 @@ updating clause.")
         res = self.graph.query(q).result_set
         self.env.assertEquals(res[0][0], 2) # avgX
 
+    def test_54_per_row_merge_preserves_outer_rows(self):
+        """Tests that a CALL { ... MERGE ... RETURN } subquery preserves
+        every input row when invoked once per outer binding (regression
+        test for falkordb_call_subquery_merge_may_drop_rows)."""
+
+        self.graph.delete()
+
+        # graph: (John)-[:KNOWS]->(Anna), (John)-[:VISITED]->(Germany)
+        self.graph.query("""
+            CREATE (j:Person {name: 'John'}),
+                   (a:Person {name: 'Anna'}),
+                   (g:Country {name: 'Germany'}),
+                   (j)-[:KNOWS]->(a),
+                   (j)-[:VISITED]->(g)
+        """)
+
+        q = """MATCH (:Person {name: 'John'})--(m)
+               CALL {
+                   WITH m
+                   MERGE (m)-[:LOCATED_IN]->(:City {name: 'Paris'})
+                   RETURN m.name AS connected_name
+               }
+               RETURN connected_name
+               ORDER BY connected_name"""
+
+        res = self.graph.query(q)
+
+        # both outer bindings must be preserved
+        self.env.assertEquals(len(res.result_set), 2)
+        self.env.assertEquals(res.result_set[0][0], 'Anna')
+        self.env.assertEquals(res.result_set[1][0], 'Germany')
+
+        # one LOCATED_IN edge and one (:City {name:'Paris'}) per outer row
+        self.env.assertEquals(res.relationships_created, 2)
+        self.env.assertEquals(res.nodes_created, 2)
+
+        # subsequent invocations should reuse the previously created Paris
+        # city nodes through MERGE's match phase
+        res = self.graph.query(q)
+        self.env.assertEquals(len(res.result_set), 2)
+        self.env.assertEquals(res.result_set[0][0], 'Anna')
+        self.env.assertEquals(res.result_set[1][0], 'Germany')
+        self.env.assertEquals(res.relationships_created, 0)
+        self.env.assertEquals(res.nodes_created, 0)
+
