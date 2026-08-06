@@ -94,7 +94,11 @@ uint64_t unix_timestamp    // returns UNIX timestamp
 )
 {
 	struct timespec timestamp;
-	assert(clock_gettime(CLOCK_REALTIME, &timestamp) == 0);
+	// Not inside assert(): under NDEBUG (Release) assert() is a no-op, which
+	// would drop the call and leave timestamp uninitialized.
+	if (clock_gettime(CLOCK_REALTIME, &timestamp) != 0) {
+		return 0;
+	}
 
 	return timestamp.tv_sec;
 }

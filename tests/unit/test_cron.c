@@ -164,7 +164,11 @@ static void _AddTaskData_WaitUntilSignalisedValue
 		// data.
 		TEST_ASSERT(FD_ISSET(data.pipe_read_fd, &read_fds));
 		// Wait until the signal expected is received.
-		assert(read(data.pipe_read_fd, (void *)&read_signal_data, 1) == 1);
+		// read() must run unconditionally and be validated — not inside
+		// assert(), which is a no-op under NDEBUG (Release).
+		const ssize_t bytes_read =
+			read(data.pipe_read_fd, (void *)&read_signal_data, 1);
+		TEST_ASSERT(bytes_read == 1);
 	}
 }
 

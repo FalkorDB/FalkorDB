@@ -79,6 +79,11 @@ void Globals_ClearGraphs(
 	RedisModuleCtx *ctx
 );
 
+// drop the registration reference each tracked graph holds (taken by
+// Globals_AddGraph) so GraphContexts -- and the RediSearch indexes they own --
+// are freed rather than leaked. Intended for module shutdown.
+void Globals_DrainGraphs(void);
+
 //------------------------------------------------------------------------------
 // Command context tracking
 //------------------------------------------------------------------------------

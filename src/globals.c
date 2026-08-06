@@ -259,6 +259,33 @@ void Globals_ClearGraphs
 	Globals_Unlock () ;
 }
 
+void Globals_DrainGraphs
+(
+	void
+) {
+	// snapshot the tracked graphs under the read lock; the decref must run
+	// outside the lock because the key-deletion free path re-enters the
+	// globals write lock via Globals_RemoveGraph (deadlock otherwise).
+	Globals_ReadLock () ;
+
+	uint n = arr_len (_globals.graphs_in_keyspace) ;
+	GraphContext **snapshot = NULL ;
+	if (n > 0) {
+		snapshot = rm_malloc (sizeof (GraphContext *) * n) ;
+		for (uint i = 0 ; i < n ; i++) {
+			snapshot [i] = _globals.graphs_in_keyspace [i] ;
+		}
+	}
+
+	Globals_Unlock () ;
+
+	// drop the registration reference Globals_AddGraph took on each graph
+	for (uint i = 0 ; i < n ; i++) {
+		GraphContext_DecreaseRefCount (snapshot [i]) ;
+	}
+	rm_free (snapshot) ;
+}
+
 //------------------------------------------------------------------------------
 // Command context tracking
 //------------------------------------------------------------------------------
