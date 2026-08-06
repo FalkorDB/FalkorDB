@@ -255,16 +255,6 @@ pub struct MemoryUsageReport {
 /// reachable in practice, since the tensor compound key caps node ids at u32.
 const EDGE_NO_ENDPOINT: u64 = u64::MAX;
 
-/// What one row seek costs `delete_nodes`, expressed in scanned entries.
-///
-/// It chooses between seeking to each deleted node's row and scanning the whole
-/// `node_labels_matrix` with a bitmap test per entry. A seek re-seeks three
-/// layer iterators (base, delta-plus, delta-minus); a scanned entry is a merge
-/// step plus a roaring `contains`. Measured break-even sat near 8, so this is
-/// deliberately above it: the scan is the strategy that was already there, and
-/// the seek path only takes over where it wins clearly.
-const SEEK_COST_IN_SCANNED_ENTRIES: u64 = 16;
-
 pub struct Graph {
     /// Graph name (Redis key name)
     name: String,
@@ -1689,63 +1679,50 @@ impl Graph {
         self.deleted_nodes |= deleted_nodes;
         self.node_count -= deleted_nodes.len();
 
-        // Build a diagonal mask matrix from all deleted node IDs
-        let n = self.node_cap;
-        let mut diag_mask = Matrix::<bool>::new(n, n);
+        // Every removal below is a per-entity tombstone, and every lookup below
+        // is a row seek. Nothing here touches an entry that does not belong to a
+        // deleted node, so the cost is O(|deleted|) rather than O(graph).
+        //
+        // It used to build diagonal mask matrices and hand them to `remove_mask`,
+        // whose `element_wise_multiply` takes `m` as an operand: GraphBLAS then
+        // walks the base matrix's vectors, so a delete of any size cost O(graph).
+        // Deleting one node from a 200,000-node graph spent ~240M instructions,
+        // against ~564k in the C implementation, which is flat in graph size.
+        // `VersionedMatrix::remove` marks the same tombstone one entry at a time
+        // (`dm[i,j] = true` when `m` holds the pair, else drop it from `dp`),
+        // which is what `remove_nodes_labels` already does for label removal.
+        //
+        // The two are equivalent because `dp ∩ m = ∅` holds for
+        // `VersionedMatrix<bool>`: its `set` clears the `dm` tombstone when `m`
+        // already holds the pair instead of writing a shadowing `dp` entry, and
+        // asserts as much. So `remove_mask`'s two effects — tombstone `mask ∩ m`,
+        // drop `mask ∩ dp` — can never both apply to one entry, which is exactly
+        // the choice `remove` makes per entry. (The valued matrices *do* allow
+        // `dp` to shadow `m`; `remove` is defined only on the boolean ones.)
         for id in deleted_nodes {
-            diag_mask.set(id, id, true);
+            self.all_nodes_matrix.remove(id, id);
         }
 
-        // Bulk-remove from all_nodes_matrix
-        self.all_nodes_matrix.remove_mask(&diag_mask);
-
-        // Build per-label masks and nlm_mask from the deleted nodes' label
-        // entries.
-        let num_labels = self.labels_matices.len();
-        let mut label_masks: Vec<Option<Matrix<bool>>> = vec![None; num_labels];
-        let mut nlm_mask = Matrix::<bool>::new(
-            self.node_labels_matrix.nrows().max(1),
-            self.node_labels_matrix
-                .ncols()
-                .max(num_labels as u64)
-                .max(1),
-        );
-
-        // Collecting the pairs first keeps the two traversal strategies below
-        // from having to duplicate the body. It is bounded by the delete set,
-        // and the masks this loop fills are already O(|deleted|).
+        // Which labels each deleted node carries. Collected first because the
+        // iterator borrows `node_labels_matrix` for the duration and the removals
+        // below need it mutably.
+        //
+        // `seek` is a row jump (`GxB_rowIterator_seekRow`), so one iterator
+        // re-seeked per deleted row replaces both the previous full scan and the
+        // per-node iterator construction that the full scan had replaced. There
+        // is no size threshold: this is O(|deleted|) for every delete, so there
+        // is no shape of input the old whole-matrix scan would win.
         let mut pairs: Vec<(u64, u64)> = Vec::with_capacity(deleted_nodes.len() as usize);
-        if deleted_nodes
-            .len()
-            .saturating_mul(SEEK_COST_IN_SCANNED_ENTRIES)
-            < self.node_count
         {
-            // Small delete against a large graph: seek straight to each deleted
-            // node's row. `GxB_rowIterator_seekRow` is a row jump, so this is
-            // O(|deleted|) and touches nothing else.
-            //
-            // One iterator, re-seeked, rather than one per node: constructing a
-            // `GxB_Iterator` per node is what made the original per-node version
-            // slow enough to be replaced by the full scan below.
-            let mut it = self.node_labels_matrix.iter(0, n);
+            let mut it = self.node_labels_matrix.iter(0, self.node_cap);
             for node_id in deleted_nodes {
                 it.seek(node_id, node_id);
                 pairs.extend(it.by_ref());
             }
-        } else {
-            // Most of the graph is going away, so one pass over every entry with
-            // a cheap bitmap test beats |deleted| seeks.
-            pairs.extend(
-                self.node_labels_matrix
-                    .iter(0, n)
-                    .filter(|&(node_id, _)| deleted_nodes.contains(node_id)),
-            );
         }
 
         for (node_id, label_id) in pairs {
             let lid = label_id as usize;
-            let lm = label_masks[lid].get_or_insert_with(|| Matrix::<bool>::new(n, n));
-            lm.set(node_id, node_id, true);
 
             let label = &self.node_labels[lid];
             if self.node_indexer.has_index(label) {
@@ -1757,19 +1734,8 @@ impl Graph {
                 }
             }
 
-            nlm_mask.set(node_id, label_id, true);
-        }
-
-        // Bulk-remove from per-label matrices
-        for (lid, mask_opt) in label_masks.into_iter().enumerate() {
-            if let Some(mask) = mask_opt {
-                self.labels_matices[lid].remove_mask(&mask);
-            }
-        }
-
-        // Bulk-remove from node_labels_matrix
-        if nlm_mask.nvals() > 0 {
-            self.node_labels_matrix.remove_mask(&nlm_mask);
+            self.labels_matices[lid].remove(node_id, node_id);
+            self.node_labels_matrix.remove(node_id, label_id);
         }
 
         self.node_attrs.remove_all(deleted_nodes);
