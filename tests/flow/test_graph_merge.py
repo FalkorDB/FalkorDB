@@ -777,3 +777,115 @@ class testGraphMergeFlow():
         self.env.assertEquals(edge.properties['created'], True)
         self.env.assertEquals(edge.properties['matched'], True)
 
+
+    def test38_call_subquery_merge_preserves_rows(self):
+        """
+        regression test for issue #1846:
+        CALL { WITH m MERGE ... } must preserve every outer binding.
+        previously, Merge/MergeCreate lacked a reset callback so the second
+        outer row was silently dropped.
+        """
+
+        # start with a clean graph
+        self.graph.delete()
+
+        # setup: John connected to Anna and Germany
+        self.graph.query(
+            """CREATE (j:Person {name: 'John'}),
+                      (a:Person {name: 'Anna'}),
+                      (g:Country {name: 'Germany'}),
+                      (j)-[:KNOWS]->(a),
+                      (j)-[:VISITED]->(g)"""
+        )
+
+        # first invocation: creates City nodes + LOCATED_IN edges
+        q = """MATCH (:Person {name: 'John'})--(m)
+               CALL {
+                 WITH m
+                 MERGE (m)-[:LOCATED_IN]->(:City {name: 'Paris'})
+                 RETURN m.name AS connected_name
+               }
+               RETURN connected_name
+               ORDER BY connected_name"""
+
+        result = self.graph.query(q)
+        self.env.assertEquals(len(result.result_set), 2)
+        self.env.assertEquals(result.result_set[0][0], 'Anna')
+        self.env.assertEquals(result.result_set[1][0], 'Germany')
+
+        # second invocation (cached): merge matches existing entities
+        result = self.graph.query(q)
+        self.env.assertEquals(len(result.result_set), 2)
+        self.env.assertEquals(result.result_set[0][0], 'Anna')
+        self.env.assertEquals(result.result_set[1][0], 'Germany')
+
+    def test39_unwind_call_subquery_merge(self):
+        """
+        verify UNWIND + CALL { MERGE } returns all rows,
+        both when creating and when matching existing nodes.
+        """
+
+        self.graph.delete()
+
+        # first run: all three nodes are created
+        q = """UNWIND [1, 2, 3] AS id
+               CALL {
+                 WITH id
+                 MERGE (n:Num {val: id})
+                 RETURN n.val AS v
+               }
+               RETURN v
+               ORDER BY v"""
+
+        result = self.graph.query(q)
+        self.env.assertEquals(len(result.result_set), 3)
+        self.env.assertEquals(result.result_set[0][0], 1)
+        self.env.assertEquals(result.result_set[1][0], 2)
+        self.env.assertEquals(result.result_set[2][0], 3)
+        self.env.assertEquals(result.nodes_created, 3)
+
+        # second run: all three match, nothing created
+        result = self.graph.query(q)
+        self.env.assertEquals(len(result.result_set), 3)
+        self.env.assertEquals(result.result_set[0][0], 1)
+        self.env.assertEquals(result.result_set[1][0], 2)
+        self.env.assertEquals(result.result_set[2][0], 3)
+        self.env.assertEquals(result.nodes_created, 0)
+
+    def test40_call_subquery_merge_edge_with_properties(self):
+        """
+        verify CALL { MERGE } with edge properties preserves all rows
+        and does not leak edge attribute sets across resets.
+        """
+
+        self.graph.delete()
+
+        self.graph.query(
+            """CREATE (:Person {name: 'Alice'}),
+                      (:Person {name: 'Bob'}),
+                      (:Person {name: 'Carol'})"""
+        )
+
+        q = """MATCH (p:Person)
+               CALL {
+                 WITH p
+                 MERGE (p)-[:HAS_TAG {tagged_by: 'system', priority: 1}]->(:Tag {name: 'active'})
+                 RETURN p.name AS who
+               }
+               RETURN who
+               ORDER BY who"""
+
+        # first run: creates Tag nodes and HAS_TAG edges with properties
+        result = self.graph.query(q)
+        self.env.assertEquals(len(result.result_set), 3)
+        self.env.assertEquals(result.result_set[0][0], 'Alice')
+        self.env.assertEquals(result.result_set[1][0], 'Bob')
+        self.env.assertEquals(result.result_set[2][0], 'Carol')
+
+        # second run (cached): matches existing, no new creations
+        result = self.graph.query(q)
+        self.env.assertEquals(len(result.result_set), 3)
+        self.env.assertEquals(result.result_set[0][0], 'Alice')
+        self.env.assertEquals(result.result_set[1][0], 'Bob')
+        self.env.assertEquals(result.result_set[2][0], 'Carol')
+        self.env.assertEquals(result.nodes_created, 0)
