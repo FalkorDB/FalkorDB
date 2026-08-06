@@ -78,6 +78,52 @@ static void _NegateExpression
 	*exp = root;
 }
 
+// returns the boolean function name corresponding to a comparison operator
+static const char *_OrderOpFuncName
+(
+	AST_Operator op
+) {
+	switch(op) {
+		case OP_LT: return "lt";
+		case OP_LE: return "le";
+		case OP_GT: return "gt";
+		case OP_GE: return "ge";
+		default:
+			ASSERT(false);
+			return NULL;
+	}
+}
+
+// converts an ordering predicate node into an expression node that
+// wraps the corresponding boolean comparison function with a NOT.
+// this is required because logical NOT cannot be expressed by simply
+// flipping the comparison operator when NaN values are involved:
+// for example, NaN <= x evaluates to FALSE, so NOT(NaN <= x) is TRUE,
+// while the swapped form NaN > x also evaluates to FALSE, which would
+// incorrectly drop the row from the result.
+static void _NegateOrderPredicate
+(
+	FT_FilterNode *node
+) {
+	ASSERT(node != NULL && node->t == FT_N_PRED);
+	AST_Operator op = node->pred.op;
+	const char *fname = _OrderOpFuncName(op);
+	// defense-in-depth: ASSERT compiles out in release builds, so guard
+	// against an unexpected operator producing a NULL function name and
+	// crashing AR_EXP_NewOpNode. Leave the node untouched in that case;
+	// the caller has already filtered to LT/LE/GT/GE so this is unreachable
+	// in practice.
+	if(fname == NULL) return;
+	AR_ExpNode *cmp = AR_EXP_NewOpNode(fname, true, 2);
+	cmp->op.children[0] = node->pred.lhs;
+	cmp->op.children[1] = node->pred.rhs;
+	AR_ExpNode *not_exp = AR_EXP_NewOpNode("not", true, 1);
+	not_exp->op.children[0] = cmp;
+	// in-place transform the predicate node into an expression node
+	node->t = FT_N_EXP;
+	node->exp.exp = not_exp;
+}
+
 int IsNodePredicate
 (
 	const FT_FilterNode *node
@@ -685,7 +731,18 @@ void _FilterTree_ApplyNegate
 			break;
 		case FT_N_PRED:
 			if(negate_count % 2 == 1) {
-				(*root)->pred.op = _NegateOperator((*root)->cond.op);
+				AST_Operator op = (*root)->pred.op;
+				if(op == OP_LT || op == OP_LE ||
+				   op == OP_GT || op == OP_GE) {
+					// NaN-safe negation for ordering predicates:
+					// flipping `<=` to `>` is incorrect when comparing
+					// NaN values, since both forms evaluate to FALSE.
+					// Wrap the comparison in a NOT expression instead so
+					// the negation is evaluated correctly at runtime.
+					_NegateOrderPredicate(*root);
+				} else {
+					(*root)->pred.op = _NegateOperator(op);
+				}
 			}
 			break;
 		case FT_N_COND:
