@@ -219,6 +219,25 @@ QUERIES = [
     Q("EXISTS pattern",      False, "MATCH (p:Person) WHERE p.id < 100 AND (p)-[:KNOWS]->() RETURN count(p)", cg=True),
     Q("pattern OR filter",   False, "MATCH (p:Person) WHERE (p)-[:KNOWS]->(:Person {id: 1}) OR p.id = 0 RETURN count(p)", cg=True),
     Q("hash join",           False, "MATCH (a:Person), (b:Person) WHERE a.id = 9999 - b.id RETURN count(*)", cg=True),
+
+    # ---- cartesian product, by right-branch count --------------------------
+    # Nothing above reaches the operator with more than one row a side: every
+    # other multi-component `MATCH (a), (b)` here is an id-seek pair, or the
+    # `hash join` row, which is the ValueHashJoin rewrite of exactly this shape.
+    # A regression in the product itself was therefore invisible to this set.
+    #
+    # Cost is per output row and the row count is the *product* of the branches,
+    # so these are sized by product (~1-2M rows) rather than by node count, and
+    # each branch takes a different label so every output column has a distinct
+    # owner. `reps` is capped for the same reason the sized writes cap theirs: at
+    # the default 1000 a 10 ms query would outweigh the rest of the set.
+    # Person x Doc = 10,000 x 100.
+    Q("cartesian 1 branch", False, "MATCH (a:Person), (b:Doc) RETURN count(*)", 50),
+    # Doc x CIdx x Geo = 100^3.
+    Q("cartesian 2 branches", False, "MATCH (a:Doc), (b:CIdx), (c:Geo) RETURN count(*)", 50),
+    # Doc x CIdx x Geo x MEnd = 100^3 x 2 — the 2-row innermost branch wraps the
+    # odometer's fastest digit on every other row.
+    Q("cartesian 3 branches", False, "MATCH (a:Doc), (b:CIdx), (c:Geo), (d:MEnd) RETURN count(*)", 50),
     Q("shortestPath",        False, "MATCH (a:Person {id: 0}), (b:Person {id: 3}) RETURN length(shortestPath((a)-[:KNOWS*..5]->(b)))", cg=True),
     Q("allShortestPaths",    False, "MATCH (a:Person {id: 0}), (b:Person {id: 3}) WITH a, b MATCH p = allShortestPaths((a)-[:KNOWS*..5]->(b)) RETURN count(p)", cg=True),
     Q("CALL procedure",      False, "CALL db.labels() YIELD label RETURN label", cg=True),

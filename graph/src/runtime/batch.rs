@@ -377,6 +377,104 @@ struct ColumnBuilder {
     any_bound: bool,
 }
 
+impl ColumnBuilder {
+    /// Appends `v` as a bound value.
+    #[inline]
+    fn push_bound(
+        &mut self,
+        v: Value,
+    ) {
+        self.values.push(v);
+        self.present = true;
+        self.any_bound = true;
+    }
+
+    /// Appends slot `id` of `base[base_row]`, preserving `base`'s `value_only`
+    /// semantics (a value-present-but-unbound slot stays unbound) and treating an
+    /// absent or unbound column as `Null`. The merge paths' base-row fallback.
+    #[inline]
+    fn push_left_of(
+        &mut self,
+        base: &Batch,
+        id: usize,
+        base_row: usize,
+    ) {
+        match base.columns.get(id) {
+            Some(c) if !matches!(c, Column::Unbound) => {
+                let v = c.get(base_row);
+                if base.value_only.test(id) {
+                    let is_null = matches!(v, Value::Null);
+                    self.values.push(v);
+                    if !is_null {
+                        self.present = true;
+                    }
+                } else {
+                    self.push_bound(v);
+                }
+            }
+            _ => self.values.push(Value::Null),
+        }
+    }
+}
+
+/// Where a merged row's column comes from: one of the right-hand batches, or
+/// the left base row.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum MergeSource {
+    /// Take the slot from `rights[i]`, at that batch's cursor row.
+    Right(u32),
+    /// No right-hand batch binds the slot: fall back to the left base row.
+    Left,
+}
+
+/// The resolved per-column owner map for an N-way merge, consumed by
+/// [`BatchBuilder::push_planned`].
+///
+/// [`Batch::is_bound_at`] is a *column*-level predicate — it ignores its `row`
+/// argument, and so does the `value_only` flag it consults — so for a fixed set
+/// of right-hand batches, "which batch binds column `id`?" has the same answer
+/// for every row of the merge. Resolving it once collapses the per-row merge
+/// from a scan over every right batch per column into a single indexed read,
+/// which is what makes an N-way cross product cheap: its branches are fixed for
+/// the whole operator, so the plan is built once and reused for every row.
+pub struct MergePlan {
+    /// One entry per column slot the rights cover, indexed by var id. Slots at
+    /// or beyond `sources.len()` come from the left base row.
+    sources: Vec<MergeSource>,
+}
+
+impl MergePlan {
+    /// Resolves the owner of every column for a merge of some left base row with
+    /// `rights`. A later entry of `rights` wins where it is bound, matching
+    /// [`push_merged`](BatchBuilder::push_merged) chained through the slice in
+    /// order.
+    #[must_use]
+    pub fn for_rights(rights: &[Batch]) -> Self {
+        let width = rights.iter().map(Batch::num_columns).max().unwrap_or(0);
+        let sources = (0..width)
+            .map(|id| {
+                let vid = id as u32;
+                rights
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    // The row passed to `is_bound_at` is immaterial (the
+                    // predicate is column-level), so `0` is safe even for an
+                    // empty batch.
+                    .find(|(_, r)| r.is_bound_at(vid, 0))
+                    .map_or(MergeSource::Left, |(i, _)| MergeSource::Right(i as u32))
+            })
+            .collect();
+        Self { sources }
+    }
+
+    /// Number of column slots the right-hand batches cover.
+    #[must_use]
+    pub const fn width(&self) -> usize {
+        self.sources.len()
+    }
+}
+
 /// Builds a columnar [`Batch`] incrementally, one row at a time, transposing
 /// row-shaped bindings into per-variable columns.
 ///
@@ -520,8 +618,65 @@ impl BatchBuilder {
         right_row: usize,
         origin: u32,
     ) {
+        self.grow_cols(left.columns.len().max(right.columns.len()));
+        for (id, col) in self.cols.iter_mut().enumerate() {
+            let vid = id as u32;
+            if right.is_bound_at(vid, right_row) {
+                col.push_bound(right.value_at(vid, right_row).unwrap_or(Value::Null));
+            } else {
+                // Right not bound here: fall back to the left base row.
+                col.push_left_of(left, id, left_row);
+            }
+        }
+        self.finish_row(origin);
+    }
+
+    /// N-way [`push_merged`](Self::push_merged): appends one row formed by
+    /// overlaying every right-hand batch — `rights[i]` read at row `cursor[i]`,
+    /// in slice order, so a later entry wins where it is bound — on top of
+    /// `left[left_row]`.
+    ///
+    /// Row-for-row identical to chaining `push_merged` through the rights, but
+    /// without building the intermediate batches, and with the per-column source
+    /// search hoisted out of the row loop into `plan`: an N-branch cross product
+    /// emits its rows straight from N cursors, paying one indexed read per
+    /// output column rather than a scan over every branch.
+    ///
+    /// `plan` must be the [`MergePlan::for_rights`] of this exact `rights`
+    /// slice, and `cursor` must be one in-bounds row index per right batch.
+    pub fn push_planned(
+        &mut self,
+        left: &Batch,
+        left_row: usize,
+        rights: &[Batch],
+        cursor: &[usize],
+        plan: &MergePlan,
+        origin: u32,
+    ) {
+        debug_assert_eq!(cursor.len(), rights.len());
+        self.grow_cols(plan.width().max(left.columns.len()));
+        for (id, col) in self.cols.iter_mut().enumerate() {
+            // `plan` covers only the slots the rights bind; every other slot —
+            // and any slot no right binds — falls back to the left base row.
+            if let Some(&MergeSource::Right(i)) = plan.sources.get(id) {
+                let i = i as usize;
+                // The plan proved this column bound, so it is neither absent nor
+                // `Unbound`: reading it is the `value_at(..).unwrap()` case.
+                col.push_bound(rights[i].column(id as u32).get(cursor[i]));
+            } else {
+                col.push_left_of(left, id, left_row);
+            }
+        }
+        self.finish_row(origin);
+    }
+
+    /// Ensures a column builder exists for every slot below `n`, back-filling
+    /// the rows already pushed with nulls.
+    fn grow_cols(
+        &mut self,
+        n: usize,
+    ) {
         let r = self.rows;
-        let n = left.columns.len().max(right.columns.len());
         while self.cols.len() < n {
             self.cols.push(ColumnBuilder {
                 values: vec![Value::Null; r],
@@ -529,34 +684,13 @@ impl BatchBuilder {
                 any_bound: false,
             });
         }
-        for (id, col) in self.cols.iter_mut().enumerate() {
-            let vid = id as u32;
-            if right.is_bound_at(vid, right_row) {
-                col.values
-                    .push(right.value_at(vid, right_row).unwrap_or(Value::Null));
-                col.present = true;
-                col.any_bound = true;
-                continue;
-            }
-            // Right not bound here: fall back to the left base row.
-            match left.columns.get(id) {
-                Some(c) if !matches!(c, Column::Unbound) => {
-                    let v = c.get(left_row);
-                    if left.value_only.test(id) {
-                        let is_null = matches!(v, Value::Null);
-                        col.values.push(v);
-                        if !is_null {
-                            col.present = true;
-                        }
-                    } else {
-                        col.values.push(v);
-                        col.present = true;
-                        col.any_bound = true;
-                    }
-                }
-                _ => col.values.push(Value::Null),
-            }
-        }
+    }
+
+    /// Closes the row whose values were just pushed into every column.
+    fn finish_row(
+        &mut self,
+        origin: u32,
+    ) {
         if origin != 0 {
             self.any_origin = true;
         }
