@@ -490,7 +490,7 @@ bool QueryCtx_AcquireWriteLock (void) {
 			goto clean_up ;
 		}
 
-		if (!(ctx_flags & REDISMODULE_CTX_FLAGS_MASTER)) {
+		if (ctx_flags & REDISMODULE_CTX_FLAGS_READONLY) {
 			ErrorCtx_SetError (EMSG_NOT_MASTER) ;
 			goto clean_up ;
 		}
