@@ -51,19 +51,19 @@ const cypher_operator_t *CYPHER_OP_NEQUAL = &_CYPHER_OP_NEQUAL;
 
 // `l < r`
 static const cypher_operator_t _CYPHER_OP_LT =
-    { .precedence = 6, .associativity = LEFT_ASSOC, .str = "<" };
+    { .precedence = 5, .associativity = LEFT_ASSOC, .str = "<" };
 const cypher_operator_t *CYPHER_OP_LT = &_CYPHER_OP_LT;
 // `l > r`
 static const cypher_operator_t _CYPHER_OP_GT =
-    { .precedence = 6, .associativity = LEFT_ASSOC, .str = ">" };
+    { .precedence = 5, .associativity = LEFT_ASSOC, .str = ">" };
 const cypher_operator_t *CYPHER_OP_GT = &_CYPHER_OP_GT;
 // `l <= r`
 static const cypher_operator_t _CYPHER_OP_LTE =
-    { .precedence = 6, .associativity = LEFT_ASSOC, .str = "<=" };
+    { .precedence = 5, .associativity = LEFT_ASSOC, .str = "<=" };
 const cypher_operator_t *CYPHER_OP_LTE = &_CYPHER_OP_LTE;
 // `l >= r`
 static const cypher_operator_t _CYPHER_OP_GTE =
-    { .precedence = 6, .associativity = LEFT_ASSOC, .str = ">=" };
+    { .precedence = 5, .associativity = LEFT_ASSOC, .str = ">=" };
 const cypher_operator_t *CYPHER_OP_GTE = &_CYPHER_OP_GTE;
 
 // `l + r`
