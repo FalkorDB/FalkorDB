@@ -417,6 +417,64 @@ impl ColumnBuilder {
     }
 }
 
+/// Where a merged row's column comes from: one of the right-hand batches, or
+/// the left base row.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum MergeSource {
+    /// Take the slot from `rights[i]`, at that batch's cursor row.
+    Right(u32),
+    /// No right-hand batch binds the slot: fall back to the left base row.
+    Left,
+}
+
+/// The resolved per-column owner map for an N-way merge, consumed by
+/// [`BatchBuilder::push_planned`].
+///
+/// [`Batch::is_bound_at`] is a *column*-level predicate — it ignores its `row`
+/// argument, and so does the `value_only` flag it consults — so for a fixed set
+/// of right-hand batches, "which batch binds column `id`?" has the same answer
+/// for every row of the merge. Resolving it once collapses the per-row merge
+/// from a scan over every right batch per column into a single indexed read,
+/// which is what makes an N-way cross product cheap: its branches are fixed for
+/// the whole operator, so the plan is built once and reused for every row.
+pub struct MergePlan {
+    /// One entry per column slot the rights cover, indexed by var id. Slots at
+    /// or beyond `sources.len()` come from the left base row.
+    sources: Vec<MergeSource>,
+}
+
+impl MergePlan {
+    /// Resolves the owner of every column for a merge of some left base row with
+    /// `rights`. A later entry of `rights` wins where it is bound, matching
+    /// [`push_merged`](BatchBuilder::push_merged) chained through the slice in
+    /// order.
+    #[must_use]
+    pub fn for_rights(rights: &[Batch]) -> Self {
+        let width = rights.iter().map(Batch::num_columns).max().unwrap_or(0);
+        let sources = (0..width)
+            .map(|id| {
+                let vid = id as u32;
+                rights
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    // The row passed to `is_bound_at` is immaterial (the
+                    // predicate is column-level), so `0` is safe even for an
+                    // empty batch.
+                    .find(|(_, r)| r.is_bound_at(vid, 0))
+                    .map_or(MergeSource::Left, |(i, _)| MergeSource::Right(i as u32))
+            })
+            .collect();
+        Self { sources }
+    }
+
+    /// Number of column slots the right-hand batches cover.
+    #[must_use]
+    pub const fn width(&self) -> usize {
+        self.sources.len()
+    }
+}
+
 /// Builds a columnar [`Batch`] incrementally, one row at a time, transposing
 /// row-shaped bindings into per-variable columns.
 ///
@@ -574,35 +632,40 @@ impl BatchBuilder {
     }
 
     /// N-way [`push_merged`](Self::push_merged): appends one row formed by
-    /// overlaying every `(batch, row)` in `rights` — in slice order, so a later
-    /// entry wins where it is bound — on top of `left[left_row]`.
+    /// overlaying every right-hand batch — `rights[i]` read at row `cursor[i]`,
+    /// in slice order, so a later entry wins where it is bound — on top of
+    /// `left[left_row]`.
     ///
-    /// Equivalent to chaining `push_merged` through intermediate batches, but
-    /// without building them: an N-branch cross product emits its rows one at a
-    /// time from N cursors instead of materializing the intermediate products.
-    pub fn push_merged_many(
+    /// Row-for-row identical to chaining `push_merged` through the rights, but
+    /// without building the intermediate batches, and with the per-column source
+    /// search hoisted out of the row loop into `plan`: an N-branch cross product
+    /// emits its rows straight from N cursors, paying one indexed read per
+    /// output column rather than a scan over every branch.
+    ///
+    /// `plan` must be the [`MergePlan::for_rights`] of this exact `rights`
+    /// slice, and `cursor` must be one in-bounds row index per right batch.
+    pub fn push_planned(
         &mut self,
         left: &Batch,
         left_row: usize,
-        rights: &[(&Batch, usize)],
+        rights: &[Batch],
+        cursor: &[usize],
+        plan: &MergePlan,
         origin: u32,
     ) {
-        self.grow_cols(
-            rights
-                .iter()
-                .map(|(b, _)| b.columns.len())
-                .fold(left.columns.len(), usize::max),
-        );
-        'cols: for (id, col) in self.cols.iter_mut().enumerate() {
-            let vid = id as u32;
-            for &(right, right_row) in rights.iter().rev() {
-                if right.is_bound_at(vid, right_row) {
-                    col.push_bound(right.value_at(vid, right_row).unwrap_or(Value::Null));
-                    continue 'cols;
-                }
+        debug_assert_eq!(cursor.len(), rights.len());
+        self.grow_cols(plan.width().max(left.columns.len()));
+        for (id, col) in self.cols.iter_mut().enumerate() {
+            // `plan` covers only the slots the rights bind; every other slot —
+            // and any slot no right binds — falls back to the left base row.
+            if let Some(&MergeSource::Right(i)) = plan.sources.get(id) {
+                let i = i as usize;
+                // The plan proved this column bound, so it is neither absent nor
+                // `Unbound`: reading it is the `value_at(..).unwrap()` case.
+                col.push_bound(rights[i].column(id as u32).get(cursor[i]));
+            } else {
+                col.push_left_of(left, id, left_row);
             }
-            // No right binds this slot: fall back to the left base row.
-            col.push_left_of(left, id, left_row);
         }
         self.finish_row(origin);
     }
