@@ -1911,7 +1911,7 @@ static VISITOR_STRATEGY _Validate_CREATE_Clause
 	uint l = arr_len(new_identifiers);
 	for(uint i = 0; i < l; i+=2) {
 		const char *alias = new_identifiers[i];
-		SIType t = (SIType)new_identifiers[i+1];
+		SIType t = (SIType)(intptr_t)new_identifiers[i+1];
 
 		// fail on duplicate identifier
 		if(_IdentifierAdd(vctx, alias, (void*)t) == 0 && t == T_EDGE) {

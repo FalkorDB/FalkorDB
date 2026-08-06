@@ -296,6 +296,7 @@ inline int roaring_leading_zeroes(unsigned long long input_num) {
 }
 #endif
 
+#ifndef ALIGNED
 #if CROARING_REGULAR_VISUAL_STUDIO
 #define ALIGNED(x) __declspec(align(x))
 #elif defined(__GNUC__) || defined(__clang__)
@@ -303,6 +304,7 @@ inline int roaring_leading_zeroes(unsigned long long input_num) {
 #else
 #warning "Warning. Unrecognized compiler."
 #define ALIGNED(x)
+#endif
 #endif
 
 #if defined(__GNUC__) || defined(__clang__)

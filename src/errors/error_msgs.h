@@ -13,6 +13,8 @@
 #define EMSG_EMPTY_KEY "Encountered an empty key when opened key %s"
 #define EMSG_NON_GRAPH_KEY "Encountered a non-graph value type when opened key %s"
 #define EMSG_DIFFERENT_VALUE "Encountered different graph value when opened key %s"
+#define EMSG_REPLICA_TRAFFIC_PAUSED "Write query aborted: replica traffic is currently paused"
+#define EMSG_NOT_MASTER "Write query aborted: this instance is not a master"
 #define EMSG_ACCESS_VAR "Attempted to access variable before it has been defined"
 #define EMSG_INVALID_NUMERIC "Invalid numeric value '%s'"
 #define EMSG_INTEGER_OVERFLOW "Integer overflow '%s'"
