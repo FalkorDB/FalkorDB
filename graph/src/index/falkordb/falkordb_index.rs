@@ -535,18 +535,48 @@ impl FalkorDbIndex {
         label: &Arc<String>,
         query: &IndexQuery<Value>,
     ) -> Option<DocIter> {
-        let (key, numeric) = match query {
+        let (key, servable) = match query {
             IndexQuery::Equal { key, value } => (key, encode_numeric(value).is_some()),
             IndexQuery::Range { key, min, max, .. } => (
                 key,
                 min.as_ref().is_none_or(|v| encode_numeric(v).is_some())
                     && max.as_ref().is_none_or(|v| encode_numeric(v).is_some()),
             ),
-            // And / Or / Point (geo) / InList / ArrayContains → not a numeric leaf.
+            // A union of `Equal`s — what `n.a IN [...]` becomes before it reaches the index.
+            // Every member must target this same attribute and encode numerically; a mixed or
+            // empty list is declined whole, because answering with only the numeric members
+            // would drop rows another kind still holds. `NumericIndex::union` re-checks the
+            // encodability, so this only has to agree on the key.
+            IndexQuery::Or(children) if !children.is_empty() => {
+                // Flatten nested unions: `a IN [..] OR a IN [..]` arrives as an `Or` of `Or`s.
+                fn keys_of<'a>(
+                    children: &'a [IndexQuery<Value>],
+                    out: &mut Vec<&'a Arc<String>>,
+                ) -> bool {
+                    children.iter().all(|c| match c {
+                        IndexQuery::Equal { key, .. } => {
+                            out.push(key);
+                            true
+                        }
+                        IndexQuery::Or(nested) => !nested.is_empty() && keys_of(nested, out),
+                        _ => false,
+                    })
+                }
+                let mut member_keys = Vec::new();
+                if !keys_of(children, &mut member_keys) || member_keys.is_empty() {
+                    return None;
+                }
+                let first_key = member_keys[0];
+                let same_key = member_keys.iter().all(|k| *k == first_key);
+                (first_key, same_key)
+            }
+            // And / Point (geo) / InList / ArrayContains → not a numeric leaf.
             _ => return None,
         };
-        if !numeric {
-            return None; // string / geo on a Range index — RediSearch owns those entries
+        if !servable {
+            // A string/geo leaf on a Range index (RediSearch owns those entries), or a union
+            // whose members do not all target this attribute.
+            return None;
         }
         let entry = self.columns(entity).get(&(label.clone(), key.clone()))?;
         if !matches!(entry.state, ColumnState::Ready) {
