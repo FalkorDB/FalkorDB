@@ -60,6 +60,7 @@ typedef enum {
 	OPType_ANTI_SEMI_APPLY,
 	OPType_OR_APPLY_MULTIPLEXER,
 	OPType_AND_APPLY_MULTIPLEXER,
+	OPType_XOR_APPLY_MULTIPLEXER,
 	OPType_OPTIONAL,
 	OPType_LOAD_CSV,
 	OPType_SUBQUERY_FOREACH,
@@ -75,7 +76,7 @@ typedef enum {
 } OpResult;
 
 // Macro for checking whether an operation is an Apply variant.
-#define OP_IS_APPLY(op) ((op)->type == OPType_OR_APPLY_MULTIPLEXER || (op)->type == OPType_AND_APPLY_MULTIPLEXER || (op)->type == OPType_SEMI_APPLY || (op)->type == OPType_ANTI_SEMI_APPLY)
+#define OP_IS_APPLY(op) ((op)->type == OPType_OR_APPLY_MULTIPLEXER || (op)->type == OPType_AND_APPLY_MULTIPLEXER || (op)->type == OPType_XOR_APPLY_MULTIPLEXER || (op)->type == OPType_SEMI_APPLY || (op)->type == OPType_ANTI_SEMI_APPLY)
 
 #define PROJECT_OP_COUNT 2
 static const OPType PROJECT_OPS[] = {
