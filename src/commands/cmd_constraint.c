@@ -207,7 +207,8 @@ static bool _Constraint_Drop
 	GraphEntityType et,     // entity type
 	const char *lbl,        // label / rel-type
 	uint8_t n,              // properties count
-	const char **props      // properties
+	const char **props,     // properties
+	bool main_thread        // running on Redis main thread
 ) {
 	bool res = true ;  // optimistic
 	AttributeID attrs [n] ;
@@ -225,7 +226,11 @@ static bool _Constraint_Drop
 	}
 
 	// acquire graph write lock
-	RedisModule_ThreadSafeContextLock (ctx) ;
+	// acquire the GIL only when running off the main thread; on the main
+	// thread (AOF/RDB load, MULTI, LUA, replicated) the GIL is already held
+	if (!main_thread) {
+		RedisModule_ThreadSafeContextLock (ctx) ;
+	}
 	GraphContext_AcquireWriteLock (gc) ;
 
 	//--------------------------------------------------------------------------
@@ -306,7 +311,9 @@ static bool _Constraint_Drop
 cleanup:
 	// release graph R/W lock
 	GraphContext_ReleaseLock (gc) ;
-	RedisModule_ThreadSafeContextUnlock (ctx) ;
+	if (!main_thread) {
+		RedisModule_ThreadSafeContextUnlock (ctx) ;
+	}
 
 	if (res == false) {
 		RedisModule_ReplyWithError (ctx,
@@ -328,7 +335,8 @@ static bool _Constraint_Create
 	GraphEntityType et,     // entity type
 	const char *lbl,        // label / rel-type
 	uint8_t n,              // properties count
-	const char **props      // properties
+	const char **props,     // properties
+	bool main_thread        // running on Redis main thread
 ) {
 	bool res = true;
 	const char *error_msg = "Constraint creation failed";
@@ -346,7 +354,11 @@ static bool _Constraint_Create
 	QueryCtx_SetGraphCtx (gc) ;
 
 	// acquire graph write lock
-	RedisModule_ThreadSafeContextLock (ctx) ;
+	// acquire the GIL only when running off the main thread; on the main
+	// thread (AOF/RDB load, MULTI, LUA, replicated) the GIL is already held
+	if (!main_thread) {
+		RedisModule_ThreadSafeContextLock (ctx) ;
+	}
 	GraphContext_AcquireWriteLock (gc) ;
 
 	//--------------------------------------------------------------------------
@@ -451,7 +463,9 @@ cleanup:
 
 	// release graph R/W lock
 	GraphContext_ReleaseLock (gc) ;
-	RedisModule_ThreadSafeContextUnlock (ctx) ;
+	if (!main_thread) {
+		RedisModule_ThreadSafeContextUnlock (ctx) ;
+	}
 
 	// constraint already exists
 	if (res == false) {
@@ -470,6 +484,40 @@ cleanup:
 	return res ;
 }
 
+// execute the constraint operation
+// runs either on a worker thread (blocked client) or synchronously on the
+// Redis main thread (AOF/RDB load, MULTI/EXEC, LUA or replicated context)
+static void _Graph_Constraint_Exec
+(
+	RedisModuleCtx     *rm_ctx,      // module context
+	GraphConstraintCtx *ctx,         // command context
+	bool                main_thread  // running on Redis main thread
+) {
+	// build working props array — _Constraint_Create may overwrite elements
+	// with GraphContext-internal pointers, so keep ctx->props for cleanup
+	const char *props [ctx->prop_count] ;
+	for (uint8_t i = 0; i < ctx->prop_count; i++) {
+		props[i] = ctx->props [i] ;
+	}
+
+	bool success = false ;
+
+	if(ctx->op == CT_CREATE) {
+		success = _Constraint_Create (rm_ctx, ctx->graph_id, ctx->ct,
+				ctx->entity_type, ctx->label, ctx->prop_count, props,
+				main_thread) ;
+	} else {
+		success = _Constraint_Drop (rm_ctx, ctx->graph_id, ctx->ct,
+				ctx->entity_type, ctx->label, ctx->prop_count, props,
+				main_thread) ;
+	}
+
+	if (success) {
+		RedisModule_ReplyWithSimpleString (rm_ctx,
+				ctx->op == CT_CREATE ? "PENDING" : "OK") ;
+	}
+}
+
 // GRAPH.CONSTRAINT internal command handler
 // executed on a worker thread to avoid blocking the main thread
 static void _Graph_Constraint
@@ -486,27 +534,8 @@ static void _Graph_Constraint
 	RedisModuleBlockedClient *bc     = ctx->bc ;
 	RedisModuleCtx           *rm_ctx = RedisModule_GetThreadSafeContext (bc) ;
 
-	// build working props array — _Constraint_Create may overwrite elements
-	// with GraphContext-internal pointers, so keep ctx->props for cleanup
-	const char *props [ctx->prop_count] ;
-	for (uint8_t i = 0; i < ctx->prop_count; i++) {
-		props[i] = ctx->props [i] ;
-	}
-
-	bool success = false ;
-
-	if(ctx->op == CT_CREATE) {
-		success = _Constraint_Create (rm_ctx, ctx->graph_id, ctx->ct,
-				ctx->entity_type, ctx->label, ctx->prop_count, props) ;
-	} else {
-		success = _Constraint_Drop (rm_ctx, ctx->graph_id, ctx->ct,
-				ctx->entity_type, ctx->label, ctx->prop_count, props) ;
-	}
-
-	if (success) {
-		RedisModule_ReplyWithSimpleString (rm_ctx,
-				ctx->op == CT_CREATE ? "PENDING" : "OK") ;
-	}
+	// running on a worker thread -> acquire the GIL inside the operation
+	_Graph_Constraint_Exec (rm_ctx, ctx, false) ;
 
 	// cleanup
 	GraphConstraintCtx_Free (rm_ctx, &ctx) ;
@@ -591,10 +620,26 @@ int Graph_Constraint
 	RedisModule_RetainString (ctx, key_name) ;
 	cmd_ctx->graph_id = key_name ;
 
-	// block client and dispatch to thread pool
-	cmd_ctx->bc = RedisModule_BlockClient (ctx, NULL, NULL, NULL, 0) ;
+	// determine execution context:
+	// when loading (AOF/RDB), within MULTI/EXEC or a LUA script, or when the
+	// command is replicated, the command must run synchronously on the Redis
+	// main thread
+	int flags = RedisModule_GetContextFlags (ctx) ;
+	bool main_thread = (flags & (REDISMODULE_CTX_FLAGS_REPLICATED |
+			REDISMODULE_CTX_FLAGS_LUA                             |
+			REDISMODULE_CTX_FLAGS_MULTI                           |
+			REDISMODULE_CTX_FLAGS_DENY_BLOCKING                   |
+			REDISMODULE_CTX_FLAGS_LOADING)) != 0 ;
 
-	ThreadPool_AddWork (_Graph_Constraint, cmd_ctx, true) ;
+	if (main_thread) {
+		// run synchronously on the main thread, do not block the client
+		_Graph_Constraint_Exec (ctx, cmd_ctx, true) ;
+		GraphConstraintCtx_Free (ctx, &cmd_ctx) ;
+	} else {
+		// block client and dispatch to thread pool
+		cmd_ctx->bc = RedisModule_BlockClient (ctx, NULL, NULL, NULL, 0) ;
+		ThreadPool_AddWork (_Graph_Constraint, cmd_ctx, true) ;
+	}
 
 	return REDISMODULE_OK;
 }

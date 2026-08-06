@@ -998,6 +998,36 @@ class testConstraintEdges():
         except ResponseError as e:
             self.env.assertContains("unique constraint violation, on edge of relationship-type Artist", str(e))
 
+class testConstraintPersistence():
+    def __init__(self):
+        self.env, self.db = Env(useAof=True)
+        self.con = self.env.getConnection()
+        self.g = self.db.select_graph("constraints_persistency")
+        self.con.delete(self.g.name)
+
+    def test01_constraint_aof_reload(self):
+        create_unique_node_constraint(self.g, "Person", "id", sync=True)
+        self.con.save()
+        if SANITIZER:
+            self.env.dumpAndReload()
+        else:
+            self.env.restart_and_reload()
+
+        constraints = list_constraints(self.g)
+        self.env.assertEqual(len(constraints), 1)
+        self.env.assertEqual(constraints[0].type, "UNIQUE")
+        self.env.assertEqual(constraints[0].entity_type, "NODE")
+        self.env.assertEqual(constraints[0].label, "Person")
+        self.env.assertEqual(constraints[0].attributes, ["id"])
+        self.env.assertEqual(constraints[0].status, "OPERATIONAL")
+
+        self.g.query("CREATE (:Person {id: 1})")
+        try:
+            self.g.query("CREATE (:Person {id: 1})")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("unique constraint violation on node of type Person", str(e))
+
 MONITOR_ATTACHED = False
 
 class testConstraintReplication():
