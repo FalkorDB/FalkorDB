@@ -69,6 +69,16 @@ docker run -p 6379:6379 -p 3000:3000 -it --rm -v ./data:/var/lib/falkordb/data f
 
 Then, open your browser and navigate to `http://localhost:3000`.
 
+### Bleeding edge
+
+Developers who want to try the latest, unreleased build can use the `edge` tag:
+
+```
+docker run -p 6379:6379 -p 3000:3000 --rm falkordb/falkordb:edge
+```
+
+> Note: the `edge` image is built from the latest `master` branch and is not intended for production use.
+
 
 You can also interact with FalkorDB using any of the supported [Client Libraries](https://docs.falkordb.com/clients.html)
 
