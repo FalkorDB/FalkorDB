@@ -159,52 +159,62 @@ static AlgebraicExpression **_AlgebraicExpression_IsolateVariableLenExps
 		// expression contains a variable length edge
 		QGNode *src = QueryGraph_GetNodeByAlias(qg,
 				AlgebraicExpression_Src(exp));
+		QGNode *dest = QueryGraph_GetNodeByAlias(qg,
+				AlgebraicExpression_Dest(exp));
+		bool self_ref = src == dest;
 
 		// a variable length expression with a labeled source node
 		// we only care about the source label matrix, when it comes to
 		// the first expression, as in the following expressions
 		// src is the destination of the previous expression
-		AlgebraicExpression *op = NULL;
+		AlgebraicExpression *src_op = NULL;
 		if(QGNode_Labeled(src)) {
 			// remove src node matrix from expression
-			op = AlgebraicExpression_RemoveSource(&exp);
+			src_op = AlgebraicExpression_RemoveSource(&exp);
 		}
-
-		if(op != NULL) {
-			if(expIdx == 0) {
-				arr_append(res, op);
-			} else {
-				AlgebraicExpression_Free(op);
-			}
-		}
-
-		arr_append(res, exp);
-
-		// if the expression has a labeled destination,
-		// separate it into its own expression
-		op = NULL;
 
 		//----------------------------------------------------------------------
 		// handle destination
 		//----------------------------------------------------------------------
 
-		QGNode *dest = QueryGraph_GetNodeByAlias(qg,
-				AlgebraicExpression_Dest(exp));
-
+		AlgebraicExpression *dest_op = NULL;
 		if(QGNode_Labeled(dest)) {
 			// remove dest node matrix from expression
-			op = AlgebraicExpression_RemoveDest(&exp);
+			dest_op = AlgebraicExpression_RemoveDest(&exp);
 		}
 
-		if(op != NULL) {
+		// For self-referential variable-length traversals, destination labels
+		// constrain the already-bound endpoint. Apply them before the traversal
+		// so the var-len op does not have to resolve a multi-labeled node.
+		if(self_ref && dest_op != NULL) {
+			if(src_op != NULL && expIdx == 0) {
+				src_op = _AlgebraicExpression_MultiplyToTheRight(src_op,
+						dest_op);
+			} else {
+				arr_append(res, dest_op);
+			}
+			dest_op = NULL;
+		}
+
+		if(src_op != NULL) {
+			if(expIdx == 0) {
+				arr_append(res, src_op);
+			} else {
+				AlgebraicExpression_Free(src_op);
+			}
+		}
+
+		arr_append(res, exp);
+
+		if(dest_op != NULL) {
 			// remove destination if following expression isn't a
 			// variable length edge (src/dest sharing) otherwise introduce a new
 			// label expression
 			if(expIdx < expCount - 1 &&
 			   !_AlgebraicExpression_ContainsVariableLengthEdge(qg, expressions[expIdx + 1])) {
-				AlgebraicExpression_Free(op);
+				AlgebraicExpression_Free(dest_op);
 			} else {
-				arr_append(res, op);
+				arr_append(res, dest_op);
 			}
 		}
 	}
