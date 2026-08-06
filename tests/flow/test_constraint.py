@@ -76,14 +76,14 @@ class testConstraintNodes():
             self.env.assertContains("mandatory constraint violation: node with label Person missing property height", str(e))
 
         #-----------------------------------------------------------------------
-        # create a node that violates the unique constraint on point data ignored
+        # create a node that violates the unique constraint on point data
         #-----------------------------------------------------------------------
 
         try:
             g.query("MATCH (p:Person) CREATE (n:Person{height:p.height + 1, loc: p.loc}) DELETE n")
-            self.env.assertTrue(True)
-        except ResponseError as e:
             self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("unique constraint violation on node of type Person", str(e))
 
         #-----------------------------------------------------------------------
         # create a node that violates the unique constraint
@@ -1069,3 +1069,52 @@ class testConstraintReplication():
             elapsed -= 0.2
 
         self.env.assertEqual(len(self.monitor), 12)
+
+# Dedicated coverage for unique constraints on point properties.
+class testConstraintPoints(FlowTestsBase):
+    def __init__(self):
+        self.env, self.db = Env()
+        self.g = self.db.select_graph("constraint_points")
+        self.g.delete()
+        self.g.query("CREATE (:Place {name: 'A', loc: point({latitude: 10, longitude: 20})})")
+        self.g.query("CREATE (:Place {name: 'B', loc: point({latitude: 11, longitude: 21})})")
+        create_unique_node_constraint(self.g, 'Place', 'loc', sync=True)
+
+    def test01_duplicate_point_create_rejected(self):
+        try:
+            self.g.query(
+                "CREATE (:Place {name: 'C', loc: point({latitude: 10, longitude: 20})})"
+            )
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains(
+                "unique constraint violation on node of type Place", str(e)
+            )
+
+    def test02_distinct_point_create_allowed(self):
+        res = self.g.query(
+            "CREATE (:Place {name: 'D', loc: point({latitude: 12, longitude: 22})}) RETURN 1"
+        )
+        self.env.assertEquals(res.result_set[0][0], 1)
+
+    def test03_duplicate_point_set_rejected(self):
+        try:
+            self.g.query(
+                "MATCH (p:Place {name: 'B'}) SET p.loc = point({latitude: 10, longitude: 20})"
+            )
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains(
+                "unique constraint violation on node of type Place", str(e)
+            )
+
+    def test04_duplicate_point_merge_rejected(self):
+        try:
+            self.g.query(
+                "MERGE (:Place {name: 'E', loc: point({latitude: 10, longitude: 20})})"
+            )
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains(
+                "unique constraint violation on node of type Place", str(e)
+            )

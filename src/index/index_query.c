@@ -893,7 +893,7 @@ RSQNode *Index_BuildUniqueConstraintQuery
 
 		// create RediSearch query node according to entity attr type
 		SIType t = SI_TYPE (v) ;
-		ASSERT (t & (T_STRING | SI_NUMERIC | T_BOOL)) ;
+		ASSERT (t & (T_STRING | SI_NUMERIC | T_BOOL | T_POINT)) ;
 
 		if (t & T_STRING) {
 			node =
@@ -907,6 +907,10 @@ RSQNode *Index_BuildUniqueConstraintQuery
 			rm_free(encoded);
 
 			RediSearch_QueryNodeAddChild (node, child) ;
+		} else if (t & T_POINT) {
+			// exact geo match — zero-radius query around the point
+			node = RediSearch_CreateGeoNode (rsIdx, field,
+					Point_lat (v), Point_lon (v), 0, RS_GEO_DISTANCE_M) ;
 		} else {
 			double d = SI_GET_NUMERIC (v) ;
 			node =

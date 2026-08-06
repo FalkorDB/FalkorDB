@@ -95,9 +95,10 @@ bool EnforceUniqueEntity
 
 		// validate attribute type
 		SIType t = SI_TYPE (attrs[i]) ;
-		if (t & ~(T_STRING | T_BOOL | SI_NUMERIC)) {
+		if (t & ~(T_STRING | T_BOOL | SI_NUMERIC | T_POINT)) {
+			// arrays and other multi-value types are not yet enforceable via
+			// the supporting range index; treat as vacuous hold
 			// TODO: see RediSearch MULTI-VALUE index
-			// TODO: RediSearch exact match for point
 			return true ;
 		}
 	}
