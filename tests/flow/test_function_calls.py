@@ -2503,9 +2503,11 @@ class testFunctionCallsFlow(FlowTestsBase):
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         # join overflow
-        q = """UNWIND RANGE(0, 10000000) as x
-               WITH collect('looooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong string') as list
-               RETURN string.join(list, 'loooooooooooooooooooooooooooooooooooooooooonggggggggggggggggggggggggggggggggggggggggggggggggggggg delimiterrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr')
+        long_str = 'a' * 860
+        long_delim = 'b' * 1490
+        q = f"""UNWIND RANGE(0, 999999) as x
+               WITH collect('{long_str}') as list
+               RETURN string.join(list, '{long_delim}')
                """
         try:
             result = self.graph.query(q)
