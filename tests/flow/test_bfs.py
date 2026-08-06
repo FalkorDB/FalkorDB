@@ -45,15 +45,13 @@ class testBFS(FlowTestsBase):
             """MATCH (a {v: 'a'}) CALL algo.bfs('invalid') YIELD nodes""",
 
             # integer values in relationshipType
-            # FIXME should throw error but does not:
-            # """MATCH (a {v: 'a'}) CALL algo.bfs(a, -1, 0) YIELD nodes""",
+            """MATCH (a {v: 'a'}) CALL algo.bfs(a, -1, 0) YIELD nodes""",
 
             # non-existent yield field
             """MATCH (a {v: 'a'}) CALL algo.bfs(null) YIELD nodes, invalidField""",
 
             # max depth is expected to an integer
-            # FIXME should throw error but does not:
-            # """MATCH (a {v: 'a'}) CALL algo.bfs(a, 'hello', NULL)""",
+            """MATCH (a {v: 'a'}) CALL algo.bfs(a, 'hello', NULL)""",
         ]
 
         for q in invalid_queries:

@@ -137,8 +137,16 @@ ProcedureResult Proc_FulltextQueryRelationshipInvoke
 	const SIValue *args,  // arguments
 	const char **yield    // output names
 ) {
-	if(arr_len((SIValue *)args) != 2) return PROCEDURE_ERR;
-	if(!(SI_TYPE(args[0]) & SI_TYPE(args[1]) & T_STRING)) return PROCEDURE_ERR;
+	if(arr_len((SIValue *)args) != 2) {
+		ErrorCtx_SetError(EMSG_PROC_INVALID_ARGUMENTS,
+				"db.idx.fulltext.queryRelationships");
+		return PROCEDURE_ERR;
+	}
+	if(!(SI_TYPE(args[0]) & SI_TYPE(args[1]) & T_STRING)) {
+		ErrorCtx_SetError(EMSG_PROC_INVALID_ARGUMENTS,
+				"db.idx.fulltext.queryRelationships");
+		return PROCEDURE_ERR;
+	}
 
 	ctx->privateData = NULL;
 	GraphContext *gc = QueryCtx_GetGraphCtx();
@@ -153,11 +161,15 @@ ProcedureResult Proc_FulltextQueryRelationshipInvoke
 			SCHEMA_EDGE);
 
 	if(idx == NULL) {
-		return PROCEDURE_ERR; // TODO: this should cause an error to be emitted
+		ErrorCtx_SetError(EMSG_FULLTEXT_INDEX_NOT_FOUND, "relationship-type",
+				relation);
+		return PROCEDURE_ERR;
 	}
 
     Schema *s = GraphContext_GetSchema(gc, relation, SCHEMA_EDGE);
 	if(s == NULL) {
+		ErrorCtx_SetError(EMSG_FULLTEXT_INDEX_NOT_FOUND, "relationship-type",
+				relation);
 		return PROCEDURE_ERR;
 	}
 

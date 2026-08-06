@@ -122,6 +122,8 @@
 #define EMSG_QUERY_MEM_CONSUMPTION "Query's mem consumption exceeded capacity"
 #define EMSG_VECTOR_TYPE_ERROR "vectorf%d expects an array of numbers"
 #define EMSG_PROC_INVALID_ARGUMENTS "Invalid arguments for procedure '%s'"
+#define EMSG_FULLTEXT_INDEX_NOT_FOUND "Unable to perform fulltext query: no fulltext index on %s '%s'"
+#define EMSG_VECTOR_INDEX_NOT_FOUND "Unable to perform vector query: no vector index on %s '%s' attribute '%s'"
 #define EMSG_FULLTEXT_DROP_INDEX "ERR Unable to drop index on :%s: no such index."
 #define EMSG_UNABLE_TO_DROP_INDEX "ERR Unable to drop index on :%s(%s): no such index."
 #define EMSG_INDEX_SUPPORT_CONSTRAINTS "Index supports constraint"

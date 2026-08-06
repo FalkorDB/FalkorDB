@@ -101,17 +101,20 @@ class testOptionalFlow(FlowTestsBase):
                            ['v1', 'v4', None]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
-    # TODO ExpandInto doesn't evaluate bidirectionally properly
     # Optional MATCH clause with endpoints resolved by the mandatory MATCH pattern and a bidirectional optional pattern.
-    #  def test08_optional_expand_into_bidirectional(self):
-        #  query = """MATCH (a), (b {v: 'v2'}) OPTIONAL MATCH (a)-[e]-(b) RETURN a.v, b.v, TYPE(e) ORDER BY a.v, b.v"""
-        #  actual_result = self.graph.query(query)
-        #  # All nodes are represented, but only edges with (v2) as an endpoint match.
-        #  expected_result = [['v1', 'v2', 'E1'],
-                           #  ['v2', 'v2', None],
-                           #  ['v3', 'v2', 'E2'],
-                           #  ['v3', 'v2', None]]
-        #  self.env.assertEquals(actual_result.result_set, expected_result)
+    def test08_optional_expand_into_bidirectional(self):
+        query = """MATCH (a), (b {v: 'v2'}) OPTIONAL MATCH (a)-[e]-(b) RETURN a.v, b.v, TYPE(e) ORDER BY a.v, b.v"""
+        actual_result = self.graph.query(query)
+        # All nodes are represented; undirected ExpandInto finds both outgoing and incoming edges.
+        expected_result = [['v1', 'v2', 'E1'],
+                           ['v2', 'v2', None],
+                           ['v3', 'v2', 'E2'],
+                           ['v4', 'v2', None]]
+        self.env.assertEquals(actual_result.result_set, expected_result)
+
+        # Plan must use Expand Into for the already-bound endpoints.
+        plan = str(self.graph.explain(query))
+        self.env.assertIn("Expand Into", plan)
 
     # Optional MATCH clause with variable-length traversal and some results match.
     def test09_optional_variable_length(self):

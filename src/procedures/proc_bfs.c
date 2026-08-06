@@ -13,6 +13,7 @@
 #include "../util/rmalloc.h"
 #include "../datatypes/array.h"
 #include "./utility/internal.h"
+#include "../errors/errors.h"
 #include "../graph/graphcontext.h"
 #include "../configuration/config.h"
 
@@ -75,13 +76,16 @@ static ProcedureResult Proc_BFS_Invoke
 	ASSERT(args != NULL);
 
 	if(arr_len((SIValue *)args) != 3) {
+		ErrorCtx_SetError(EMSG_PROC_INVALID_ARGUMENTS, "algo.BFS");
 		return PROCEDURE_ERR;
 	}
 
 	if(SI_TYPE(args[0]) != T_NODE                 ||  // source node
 	   SI_TYPE(args[1]) != T_INT64                ||  // max level to iterate to, unlimited if 0
-	   !(SI_TYPE(args[2]) & (T_NULL | T_STRING)))     // relationship type to traverse if not NULL
+	   !(SI_TYPE(args[2]) & (T_NULL | T_STRING))) {   // relationship type to traverse if not NULL
+		ErrorCtx_SetError(EMSG_PROC_INVALID_ARGUMENTS, "algo.BFS");
 		return PROCEDURE_ERR;
+	}
 
 	BFSCtx *bfs_ctx = ctx->privateData;
 	ASSERT(bfs_ctx != NULL);

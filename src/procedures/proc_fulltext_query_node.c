@@ -62,8 +62,14 @@ ProcedureResult Proc_FulltextQueryNodeInvoke
 	const SIValue *args,
 	const char **yield
 ) {
-	if(arr_len((SIValue *)args) != 2) return PROCEDURE_ERR;
-	if(!(SI_TYPE(args[0]) & SI_TYPE(args[1]) & T_STRING)) return PROCEDURE_ERR;
+	if(arr_len((SIValue *)args) != 2) {
+		ErrorCtx_SetError(EMSG_PROC_INVALID_ARGUMENTS, "db.idx.fulltext.queryNodes");
+		return PROCEDURE_ERR;
+	}
+	if(!(SI_TYPE(args[0]) & SI_TYPE(args[1]) & T_STRING)) {
+		ErrorCtx_SetError(EMSG_PROC_INVALID_ARGUMENTS, "db.idx.fulltext.queryNodes");
+		return PROCEDURE_ERR;
+	}
 
 	ctx->privateData = NULL;
 	GraphContext *gc = QueryCtx_GetGraphCtx();
@@ -76,7 +82,10 @@ ProcedureResult Proc_FulltextQueryNodeInvoke
 	// get full-text index from schema
 	Index idx = GraphContext_GetIndex(gc, label, NULL, 0, INDEX_FLD_ANY,
 			SCHEMA_NODE);
-	if(!idx) return PROCEDURE_ERR; // TODO: this should cause an error to be emitted
+	if(!idx) {
+		ErrorCtx_SetError(EMSG_FULLTEXT_INDEX_NOT_FOUND, "label", label);
+		return PROCEDURE_ERR;
+	}
 
 	ctx->privateData = rm_malloc(sizeof(QueryNodeContext));
 	QueryNodeContext *pdata = ctx->privateData;
