@@ -1420,3 +1420,40 @@ class testList(FlowTestsBase):
         query = """RETURN list.dedup([3,[1,2],3,[1],[1,2]])"""
         actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
+
+    # Regression test for https://github.com/FalkorDB/FalkorDB/issues/1410
+    # range() must reject arguments that would produce a list exceeding the
+    # maximum allowed size, instead of attempting an uncontrolled allocation.
+    def test14_range_size_limit(self):
+        # Ascending range with INT64_MAX as end — the original crash case.
+        try:
+            self.graph.query("RETURN range(1, 9223372036854775807)")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("ArgumentError", str(e))
+
+        # Descending range with INT64_MIN as end and step -1.
+        try:
+            self.graph.query("RETURN range(0, -9223372036854775808, -1)")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("ArgumentError", str(e))
+
+        # Large ascending range using an explicit step that still exceeds the limit.
+        try:
+            self.graph.query("RETURN range(0, 9223372036854775807, 2)")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("ArgumentError", str(e))
+
+        # A range at exactly the limit boundary should succeed.
+        # range(0, 9999999) produces exactly 10 000 000 elements (0..9 999 999).
+        actual_result = self.graph.query("RETURN size(range(0, 9999999))")
+        self.env.assertEquals(actual_result.result_set, [[10000000]])
+
+        # A range one element over the limit must be rejected.
+        try:
+            self.graph.query("RETURN range(0, 10000000)")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("ArgumentError", str(e))
