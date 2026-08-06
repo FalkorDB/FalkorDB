@@ -155,8 +155,41 @@ class testTemporalDate(FlowTestsBase):
         self.env.assertEquals(week, 42)
         self.env.assertEquals(day, 21)
         self.env.assertEquals(dayOfWeek, 0)
-        self.env.assertEquals(dayOfQuarter, 23)
+        self.env.assertEquals(dayOfQuarter, 21)
         self.env.assertEquals(ordinalDay, 295)
+
+        # validate dayOfQuarter for non-leap years across all quarters
+        # (exercises the non-leap row of the quarter offset table)
+        non_leap_cases = [
+            # (year, month, day, expected_quarter, expected_dayOfQuarter)
+            (1985,  1, 21, 1, 21),  # Q1
+            (1985,  4, 21, 2, 21),  # Q2
+            (1985,  7, 21, 3, 21),  # Q3
+            (1985, 10, 21, 4, 21),  # Q4
+        ]
+        for year, month, day, exp_q, exp_doq in non_leap_cases:
+            q = """WITH date({year: $y, month: $m, day: $d}) AS d
+                   RETURN d.quarter, d.dayOfQuarter"""
+            res = self.graph.query(q,
+                {'y': year, 'm': month, 'd': day}).result_set
+            self.env.assertEquals(res[0][0], exp_q)
+            self.env.assertEquals(res[0][1], exp_doq)
+
+        # validate dayOfQuarter for leap years across all quarters
+        # (exercises the leap row of the quarter offset table)
+        leap_cases = [
+            (1984,  1, 21, 1, 21),  # Q1
+            (1984,  4, 21, 2, 21),  # Q2
+            (1984,  7, 21, 3, 21),  # Q3
+            (1984, 10, 21, 4, 21),  # Q4
+        ]
+        for year, month, day, exp_q, exp_doq in leap_cases:
+            q = """WITH date({year: $y, month: $m, day: $d}) AS d
+                   RETURN d.quarter, d.dayOfQuarter"""
+            res = self.graph.query(q,
+                {'y': year, 'm': month, 'd': day}).result_set
+            self.env.assertEquals(res[0][0], exp_q)
+            self.env.assertEquals(res[0][1], exp_doq)
 
     def test_date_to_from_string(self):
         test_cases = [

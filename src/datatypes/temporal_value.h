@@ -6,6 +6,15 @@
 
 #pragma once
 #include <stdint.h>
+#include <stdbool.h>
+
+// returns true if year is a leap year (ISO 8601 / Gregorian calendar)
+static inline bool is_leap_year
+(
+	int year
+) {
+	return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+}
 
 // new temporal values
 /* Create a new timestamp - millis from epoch */
