@@ -174,6 +174,9 @@ static Record CreateConsume
 	GraphContext *gc    = QueryCtx_GetGraphCtx () ;
 
 	PendingCreations_CreateMissingSchemas (gc, &op->pending) ;
+	if (unlikely (ErrorCtx_EncounteredError ())) {
+		return NULL ;
+	}
 
 	if (op->op.childCount == 0) {
 		// no child operation to call

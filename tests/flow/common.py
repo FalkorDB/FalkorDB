@@ -78,6 +78,7 @@ def Env(
     useSlaves=False,
     enableDebugCommand=False,
     shardsCount=None,
+    useAof=False,
 ):
     env = Environment(
         decodeResponses=True,
@@ -86,6 +87,7 @@ def Env(
         useSlaves=useSlaves,
         enableDebugCommand=enableDebugCommand,
         shardsCount=shardsCount,
+        useAof=useAof,
     )
     # Use envRunner.port to get the actual running port (may differ from Defaults.port
     # when using --randomize-ports or parallel execution)

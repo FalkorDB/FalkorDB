@@ -4,6 +4,45 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+//------------------------------------------------------------------------------
+// GRAPH.CONSTRAINT command
+//------------------------------------------------------------------------------
+//
+// implements the GRAPH.CONSTRAINT command, which creates and drops UNIQUE and
+// MANDATORY constraints over a node label or relationship-type:
+//
+//   GRAPH.CONSTRAINT CREATE <key> UNIQUE|MANDATORY NODE|RELATIONSHIP <label>
+//                    PROPERTIES <prop_count> <prop0> [prop1 ...]
+//   GRAPH.CONSTRAINT DROP   <key> UNIQUE|MANDATORY NODE|RELATIONSHIP <label>
+//                    PROPERTIES <prop_count> <prop0> [prop1 ...]
+//
+// execution model
+// ----------------
+// creating (or dropping) a constraint may require scanning every existing
+// entity of the given label/relationship-type, so a regular client command
+// is never executed inline on the main thread: the client is blocked
+// (RedisModule_BlockClient) and the actual work (Constraint_Op, which calls
+// into _Constraint_Create / _Constraint_Drop) is dispatched to the module's
+// worker thread pool (Async_Constraint_Op), keeping Redis free to serve
+// other clients in the meantime.
+//
+// that scheme doesn't apply when the command is itself being replayed from
+// the AOF or arrives over the replication link
+// (REDISMODULE_CTX_FLAGS_LOADING / REDISMODULE_CTX_FLAGS_REPLICATED):
+// there's no client to block in that case, and AOF/replication-stream
+// commands must be applied in order on the main thread. Graph_Constraint
+// detects this and runs Constraint_Op synchronously, inline, on the calling
+// (main) thread instead.
+//
+// constraint creation is asynchronous on top of the above: CREATE replies
+// "PENDING" as soon as the constraint is registered on the schema, while
+// enforcement (validating it against every existing entity) is carried out
+// in the background by the Indexer thread pool (see indexer.c). once
+// enforcement completes the constraint is re-replicated (Constraint_Replicate)
+// so that replicas which raced ahead via an RDB snapshot - which only
+// encodes already-active constraints - still learn about it.
+//------------------------------------------------------------------------------
+
 #include "RG.h"
 #include "util/strutil.h"
 #include "../query_ctx.h"
@@ -12,11 +51,13 @@
 #include "../graph/graph_hub.h"
 #include "../util/thpool/pool.h"
 #include "../errors/error_msgs.h"
-#include "../graph/graphcontext.h"
 #include "constraint/constraint.h"
 #include "../util/identifier_limits.h"
+#include "../graph/graphcontext_retrieve.h"
 
 #define PROPERTY_NAME_PATTERN "[a-zA-Z_][a-zA-Z0-9_$]*"
+
+extern pthread_t MAIN_THREAD_ID;  // redis main thread ID
 
 // constraint operation
 typedef enum {
@@ -26,14 +67,15 @@ typedef enum {
 
 // GRAPH.CONSTRAINT command context
 typedef struct {
-	RedisModuleBlockedClient *bc;           // blocked client
-	RedisModuleString        *graph_id;     // graph name
-	ConstraintOp              op;           // CREATE or DROP
-	ConstraintType            ct;           // UNIQUE or MANDATORY
-	GraphEntityType           entity_type;  // NODE or RELATIONSHIP
-	char                     *label;        // label / rel-type (owned copy)
-	uint8_t                   prop_count;   // number of properties
-	char                    **props;        // prop_count owned property name copies
+	// blocked client, NULL when run synchronously on the main thread
+	RedisModuleBlockedClient *bc;
+	RedisModuleString *graph_id;  // graph name
+	ConstraintOp op;              // CREATE or DROP
+	ConstraintType ct;            // UNIQUE or MANDATORY
+	GraphEntityType entity_type;  // NODE or RELATIONSHIP
+	char *label;                  // label / rel-type (owned copy)
+	uint8_t prop_count;           // number of properties
+	char **props;                 // owned property name copies
 } GraphConstraintCtx;
 
 static GraphConstraintCtx *GraphConstraintCtx_New
@@ -88,7 +130,11 @@ static inline int _cmp_AttributeID
 	return *_a - *_b;
 }
 
-// parse command arguments
+// parse command arguments, expecting:
+// CREATE/DROP <graph_name> UNIQUE/MANDATORY NODE/RELATIONSHIP <label>
+// PROPERTIES <prop_count> <prop0> [prop1 ...]
+// (argv/argc are expected to already have the GRAPH.CONSTRAINT command name
+// stripped off, see Graph_Constraint)
 static int Constraint_Parse
 (
 	RedisModuleCtx *ctx,
@@ -198,7 +244,8 @@ static int Constraint_Parse
 	return REDISMODULE_OK;
 }
 
-// GRAPH.CONSTRAIN <key> DROP UNIQUE/MANDATORY [NODE label / RELATIONSHIP type] PROPERTIES prop_count prop0, prop1...
+// GRAPH.CONSTRAINT <key> DROP UNIQUE/MANDATORY [NODE label / RELATIONSHIP
+// type] PROPERTIES prop_count prop0, prop1...
 static bool _Constraint_Drop
 (
 	RedisModuleCtx *ctx,    // redis module context
@@ -209,6 +256,8 @@ static bool _Constraint_Drop
 	uint8_t n,              // properties count
 	const char **props      // properties
 ) {
+	RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_DEBUG, "drop constraint") ;
+
 	bool res = true ;  // optimistic
 	AttributeID attrs [n] ;
 	RedisModuleString *prop_strs [n] ;
@@ -218,14 +267,32 @@ static bool _Constraint_Drop
 	//--------------------------------------------------------------------------
 
 	GraphContext *gc = NULL ;
-	if (GraphContext_Retrieve (ctx, key, false, false, true, &gc)
-			!= GraphRetrieve_RETRIEVED) {
+
+	// force retrieve if this command is part of either the replication stream
+	// or part of an AOF stream
+	bool force_retrieve = ((RedisModule_GetContextFlags (ctx) &
+		(REDISMODULE_CTX_FLAGS_LOADING | REDISMODULE_CTX_FLAGS_REPLICATED)) != 0) ;
+
+	if (force_retrieve) {
+		GraphContext_RetrieveOrForce (ctx, key, false, false, &gc) ;
+		// if gc is NULL, we should either crash to perform full sync (we crash)
+		RELEASE_ASSERT (gc != NULL) ;
+	} else {
+		GraphContext_Retrieve (ctx, key, false, false, true, &gc) ;
+	}
+
+	if (gc == NULL) {
 		// graph doesn't exists
 		return false ;
 	}
 
+	bool from_thread = (pthread_equal (pthread_self(), MAIN_THREAD_ID) == 0) ;
+
 	// acquire graph write lock
-	RedisModule_ThreadSafeContextLock (ctx) ;
+	if (from_thread) {
+		RedisModule_ThreadSafeContextLock (ctx) ;
+	}
+
 	GraphContext_AcquireWriteLock (gc) ;
 
 	//--------------------------------------------------------------------------
@@ -306,7 +373,10 @@ static bool _Constraint_Drop
 cleanup:
 	// release graph R/W lock
 	GraphContext_ReleaseLock (gc) ;
-	RedisModule_ThreadSafeContextUnlock (ctx) ;
+
+	if (from_thread) {
+		RedisModule_ThreadSafeContextUnlock (ctx) ;
+	}
 
 	if (res == false) {
 		RedisModule_ReplyWithError (ctx,
@@ -319,7 +389,8 @@ cleanup:
 	return res ;
 }
 
-// GRAPH.CONSTRAIN <key> CREATE UNIQUE/MANDATORY [NODE label / RELATIONSHIP type] PROPERTIES prop_count prop0, prop1...
+// GRAPH.CONSTRAINT <key> CREATE UNIQUE/MANDATORY [NODE label / RELATIONSHIP
+// type] PROPERTIES prop_count prop0, prop1...
 static bool _Constraint_Create
 (
 	RedisModuleCtx *ctx,    // redis module context
@@ -330,13 +401,26 @@ static bool _Constraint_Create
 	uint8_t n,              // properties count
 	const char **props      // properties
 ) {
+	RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_DEBUG, "create constraint") ;
+
 	bool res = true;
 	const char *error_msg = "Constraint creation failed";
 
 	// get or create graph
 	GraphContext *gc = NULL ;
-	if (GraphContext_Retrieve (ctx, key, false, true, true, &gc)
-			!= GraphRetrieve_RETRIEVED) {
+	bool force_retrieve = ((RedisModule_GetContextFlags (ctx) &
+		(REDISMODULE_CTX_FLAGS_LOADING | REDISMODULE_CTX_FLAGS_REPLICATED)) != 0) ;
+
+	if (force_retrieve) {
+		GraphContext_RetrieveOrForce (ctx, key, false, true, &gc) ;
+		// if gc is NULL, we should either crash to perform full sync (we crash)
+		RELEASE_ASSERT (gc != NULL) ;
+	} else {
+		GraphContext_Retrieve (ctx, key, false, true, true, &gc) ;
+	}
+
+	if (gc == NULL) {
+		// graph doesn't exists
 		return false ;
 	}
 
@@ -346,7 +430,12 @@ static bool _Constraint_Create
 	QueryCtx_SetGraphCtx (gc) ;
 
 	// acquire graph write lock
-	RedisModule_ThreadSafeContextLock (ctx) ;
+	bool from_thread = (pthread_equal (pthread_self(), MAIN_THREAD_ID) == 0) ;
+
+	if (from_thread) {
+		RedisModule_ThreadSafeContextLock (ctx) ;
+	}
+
 	GraphContext_AcquireWriteLock (gc) ;
 
 	//--------------------------------------------------------------------------
@@ -356,6 +445,11 @@ static bool _Constraint_Create
 	AttributeID attr_ids [n] ;
 	for (uint i = 0 ; i < n ; i++) {
 		attr_ids [i] = GraphHub_FindOrAddAttribute (gc, props [i], true) ;
+		if (attr_ids [i] == ATTRIBUTE_ID_NONE) {
+			error_msg = "Max number of attributes exceeded" ;
+			res = false ;
+			goto cleanup ;
+		}
 	}
 
 	//--------------------------------------------------------------------------
@@ -451,7 +545,9 @@ cleanup:
 
 	// release graph R/W lock
 	GraphContext_ReleaseLock (gc) ;
-	RedisModule_ThreadSafeContextUnlock (ctx) ;
+	if (from_thread) {
+		RedisModule_ThreadSafeContextUnlock (ctx) ;
+	}
 
 	// constraint already exists
 	if (res == false) {
@@ -462,7 +558,8 @@ cleanup:
 		Constraint_Enforce (c, (struct GraphContext*)gc) ;
 	}
 
-	QueryCtx_Free () ;
+	QueryCtx_Free  () ;
+	ErrorCtx_Clear () ;
 
 	// decrease graph reference count
 	GraphContext_DecreaseRefCount (gc) ;
@@ -470,27 +567,26 @@ cleanup:
 	return res ;
 }
 
-// GRAPH.CONSTRAINT internal command handler
-// executed on a worker thread to avoid blocking the main thread
-static void _Graph_Constraint
+// GRAPH.CONSTRAINT create/drop logic, shared by both the synchronous
+// (AOF load / replicated command, runs on the main thread) and asynchronous
+// (regular client command, runs on a worker thread) execution paths
+static void Constraint_Op
 (
-	void *_ctx  // command context
+	RedisModuleCtx *rm_ctx,
+	GraphConstraintCtx *ctx
 ) {
-	ASSERT(_ctx != NULL);
+	ASSERT (ctx    != NULL) ;
+  ASSERT (rm_ctx != NULL) ;
 
-	// clear any stale error left in this pooled thread's TLS by
+	// clear any stale error left in this TLS by
 	// whatever job (query, constraint, ...) previously ran on it
 	ErrorCtx_Clear () ;
-
-	GraphConstraintCtx       *ctx    = (GraphConstraintCtx *)_ctx ;
-	RedisModuleBlockedClient *bc     = ctx->bc ;
-	RedisModuleCtx           *rm_ctx = RedisModule_GetThreadSafeContext (bc) ;
 
 	// build working props array — _Constraint_Create may overwrite elements
 	// with GraphContext-internal pointers, so keep ctx->props for cleanup
 	const char *props [ctx->prop_count] ;
 	for (uint8_t i = 0; i < ctx->prop_count; i++) {
-		props[i] = ctx->props [i] ;
+		props [i] = ctx->props [i] ;
 	}
 
 	bool success = false ;
@@ -510,6 +606,21 @@ static void _Graph_Constraint
 
 	// cleanup
 	GraphConstraintCtx_Free (rm_ctx, &ctx) ;
+}
+
+// GRAPH.CONSTRAINT internal command handler
+// executed on a worker thread to avoid blocking the main thread
+static void Async_Constraint_Op
+(
+	void *_ctx  // command context
+) {
+	ASSERT (_ctx != NULL) ;
+
+	GraphConstraintCtx       *ctx    = (GraphConstraintCtx *)_ctx ;
+	RedisModuleBlockedClient *bc     = ctx->bc ;
+	RedisModuleCtx           *rm_ctx = RedisModule_GetThreadSafeContext (bc) ;
+
+	Constraint_Op (rm_ctx, ctx) ;
 
 	// unblock client
 	RedisModule_UnblockClient (bc, NULL) ;
@@ -522,8 +633,10 @@ static void _Graph_Constraint
 }
 
 // command handler for GRAPH.CONSTRAINT command
-// GRAPH.CONSTRAINT CREATE <key> UNIQUE/MANDATORY [NODE label / RELATIONSHIP type] PROPERTIES prop_count prop0, prop1...
-// GRAPH.CONSTRAINT DROP <key> UNIQUE/MANDATORY [NODE label / RELATIONSHIP type] PROPERTIES prop_count prop0, prop1...
+// GRAPH.CONSTRAINT CREATE <key> UNIQUE/MANDATORY [NODE label /
+// RELATIONSHIP type] PROPERTIES prop_count prop0, prop1...
+// GRAPH.CONSTRAINT DROP <key> UNIQUE/MANDATORY [NODE label /
+// RELATIONSHIP type] PROPERTIES prop_count prop0, prop1...
 int Graph_Constraint
 (
 	RedisModuleCtx *ctx,
@@ -576,7 +689,7 @@ int Graph_Constraint
 		}
 	}
 
-	// build context for worker thread
+	// build the command context, shared by the sync and async paths below
 	GraphConstraintCtx *cmd_ctx =
 		GraphConstraintCtx_New (op, ct, label, prop_count, entity_type) ;
 
@@ -587,15 +700,24 @@ int Graph_Constraint
 		cmd_ctx->props [i] = rm_strdup (props_cstr [i]) ;
 	}
 
-	// retain graph name for use on the worker thread
+	// retain graph name for use after this function returns
 	RedisModule_RetainString (ctx, key_name) ;
 	cmd_ctx->graph_id = key_name ;
 
-	// block client and dispatch to thread pool
-	cmd_ctx->bc = RedisModule_BlockClient (ctx, NULL, NULL, NULL, 0) ;
+	// continue on main thread if this command is either replicated
+	// or part of AOF stream
+	bool sync = ((RedisModule_GetContextFlags (ctx) &
+			(REDISMODULE_CTX_FLAGS_LOADING | REDISMODULE_CTX_FLAGS_REPLICATED))
+			!= 0) ;
 
-	ThreadPool_AddWork (_Graph_Constraint, cmd_ctx, true) ;
+	if (sync) {
+		Constraint_Op (ctx, cmd_ctx) ;
+	} else {
+		// block client and dispatch to thread pool
+		cmd_ctx->bc = RedisModule_BlockClient (ctx, NULL, NULL, NULL, 0) ;
+		ThreadPool_AddWork (Async_Constraint_Op, cmd_ctx, true) ;
+	}
 
-	return REDISMODULE_OK;
+	return REDISMODULE_OK ;
 }
 
