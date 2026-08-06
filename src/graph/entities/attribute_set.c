@@ -620,20 +620,27 @@ void AttributeSet_Update
 	// in _set is null there's nothing to update / remove
 	// treat this update as an addition
 	bool only_additions = ATTRIBUTE_SET_EMPTY (_set) ;
-	// TODO: remove any redundant update expressions
-	// e.g. SET n.v = 2, n.v = null ->
-	// -> SET n.v = null
 	if (only_additions) {
 		uint16_t    m = 0 ;     // number of attributes to add
 		SIValue     _vals[n] ;  // attribute values
 		AttributeID _ids [n] ;  // attribute ids
 
-		// discard NULLs
+		// discard NULLs; enforce last-write-wins for duplicate attr_ids
 		for (uint16_t i = 0; i < n; i++) {
 			SIValue     v       = vals[i] ;
 			AttributeID attr_id = ids [i] ;
 
 			ASSERT (SI_TYPE (v) & t) ;
+
+			// skip if a later entry supersedes this one
+			bool superseded = false ;
+			for (uint16_t j = i + 1 ; j < n ; j++) {
+				if (ids[j] == attr_id) { superseded = true ; break ; }
+			}
+			if (superseded) {
+				if (change) change[i] = CT_NONE ;
+				continue ;
+			}
 
 			if (SIValue_IsNull (v)) {
 				// can't add nulls, skip
@@ -674,6 +681,23 @@ void AttributeSet_Update
 		AttributeID attr_id = ids [i] ;
 
 		ASSERT (SI_TYPE (v) & t) ;
+
+		// last-write-wins: if the same attr_id appears later in this batch,
+		// skip the current entry — the later one supersedes it.
+		// Without this check, two NULLs for the same id would push the same
+		// slot index into remove_idx[] twice, causing a double-free in
+		// AttributeSet_RemoveIdx.
+		bool superseded = false ;
+		for (uint16_t j = i + 1 ; j < n ; j++) {
+			if (ids[j] == attr_id) {
+				superseded = true ;
+				break ;
+			}
+		}
+		if (superseded) {
+			if (change) change[i] = CT_NONE ;
+			continue ;
+		}
 
 		bool remove   = SIValue_IsNull (v) ;
 		bool contains = AttributeSet_Contains (_set, attr_id, &idx) ;
