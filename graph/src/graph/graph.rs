@@ -255,6 +255,16 @@ pub struct MemoryUsageReport {
 /// reachable in practice, since the tensor compound key caps node ids at u32.
 const EDGE_NO_ENDPOINT: u64 = u64::MAX;
 
+/// What one row seek costs `delete_nodes`, expressed in scanned entries.
+///
+/// It chooses between seeking to each deleted node's row and scanning the whole
+/// `node_labels_matrix` with a bitmap test per entry. A seek re-seeks three
+/// layer iterators (base, delta-plus, delta-minus); a scanned entry is a merge
+/// step plus a roaring `contains`. Measured break-even sat near 8, so this is
+/// deliberately above it: the scan is the strategy that was already there, and
+/// the seek path only takes over where it wins clearly.
+const SEEK_COST_IN_SCANNED_ENTRIES: u64 = 16;
+
 pub struct Graph {
     /// Graph name (Redis key name)
     name: String,
@@ -1689,8 +1699,8 @@ impl Graph {
         // Bulk-remove from all_nodes_matrix
         self.all_nodes_matrix.remove_mask(&diag_mask);
 
-        // Build per-label masks and nlm_mask using a single scan of the
-        // node_labels_matrix instead of one iterator per deleted node.
+        // Build per-label masks and nlm_mask from the deleted nodes' label
+        // entries.
         let num_labels = self.labels_matices.len();
         let mut label_masks: Vec<Option<Matrix<bool>>> = vec![None; num_labels];
         let mut nlm_mask = Matrix::<bool>::new(
@@ -1701,12 +1711,38 @@ impl Graph {
                 .max(1),
         );
 
-        // Single scan: iterate all entries in node_labels_matrix and filter
-        // by deleted_nodes membership (O(1) bitmap check per entry).
-        for (node_id, label_id) in self.node_labels_matrix.iter(0, n) {
-            if !deleted_nodes.contains(node_id) {
-                continue;
+        // Collecting the pairs first keeps the two traversal strategies below
+        // from having to duplicate the body. It is bounded by the delete set,
+        // and the masks this loop fills are already O(|deleted|).
+        let mut pairs: Vec<(u64, u64)> = Vec::with_capacity(deleted_nodes.len() as usize);
+        if deleted_nodes
+            .len()
+            .saturating_mul(SEEK_COST_IN_SCANNED_ENTRIES)
+            < self.node_count
+        {
+            // Small delete against a large graph: seek straight to each deleted
+            // node's row. `GxB_rowIterator_seekRow` is a row jump, so this is
+            // O(|deleted|) and touches nothing else.
+            //
+            // One iterator, re-seeked, rather than one per node: constructing a
+            // `GxB_Iterator` per node is what made the original per-node version
+            // slow enough to be replaced by the full scan below.
+            let mut it = self.node_labels_matrix.iter(0, n);
+            for node_id in deleted_nodes {
+                it.seek(node_id, node_id);
+                pairs.extend(it.by_ref());
             }
+        } else {
+            // Most of the graph is going away, so one pass over every entry with
+            // a cheap bitmap test beats |deleted| seeks.
+            pairs.extend(
+                self.node_labels_matrix
+                    .iter(0, n)
+                    .filter(|&(node_id, _)| deleted_nodes.contains(node_id)),
+            );
+        }
+
+        for (node_id, label_id) in pairs {
             let lid = label_id as usize;
             let lm = label_masks[lid].get_or_insert_with(|| Matrix::<bool>::new(n, n));
             lm.set(node_id, node_id, true);
