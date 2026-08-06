@@ -25,7 +25,33 @@ const DOC_BYTES: usize = 8;
 type Tree = CowBTree<LEAF_MAX, BRANCH_MAX, DOC_BYTES>;
 
 /// Lazy iterator of matching entity ids, yielded in `(value, id)` order.
-pub type DocIter = RangeIter<LEAF_MAX, BRANCH_MAX, DOC_BYTES>;
+type TreeIter = RangeIter<LEAF_MAX, BRANCH_MAX, DOC_BYTES>;
+
+/// Lazy iterator of matching entity ids.
+///
+/// `One` is a single cursor over a contiguous key range. `Many` chains several — the shape an
+/// `IN [...]` union takes, one cursor per distinct member. An enum rather than a boxed trait
+/// object because the scan op already boxes the result once; a second layer of dynamic dispatch
+/// per id would be pure overhead.
+///
+/// The chain is *not* merged into id order. Order is deliberately unspecified here: Cypher
+/// guarantees none without `ORDER BY`, and a merge would cost a comparison per id and force every
+/// branch to stay live. Nothing downstream may assume sortedness.
+pub enum DocIter {
+    One(TreeIter),
+    Many(std::iter::Flatten<std::vec::IntoIter<TreeIter>>),
+}
+
+impl Iterator for DocIter {
+    type Item = u64;
+
+    fn next(&mut self) -> Option<u64> {
+        match self {
+            Self::One(it) => it.next(),
+            Self::Many(it) => it.next(),
+        }
+    }
+}
 
 /// A numeric property index over one `(label, attribute)`: entity ids keyed by
 /// the order-preserving encoding of their value, so `n.x <predicate> v` is a
@@ -180,7 +206,7 @@ impl NumericIndex {
         value: &Value,
     ) -> DocIter {
         match encode_numeric(value) {
-            Some(k) => self.tree.point(k),
+            Some(k) => DocIter::One(self.tree.point(k)),
             None => self.empty(),
         }
     }
@@ -235,7 +261,7 @@ impl NumericIndex {
         if lo > hi {
             return self.empty();
         }
-        self.tree.range(lo, hi)
+        DocIter::One(self.tree.range(lo, hi))
     }
 
     /// Dispatch the numeric *leaf* predicates. `Equal` → [`point`](Self::point),
@@ -255,13 +281,53 @@ impl NumericIndex {
                 include_max,
                 ..
             } => Some(self.range(min.as_ref(), max.as_ref(), *include_min, *include_max)),
+            IndexQuery::Or(children) => self.union(children),
             _ => None,
         }
     }
 
+    /// A union of `Equal` leaves — what `n.a IN [...]` desugars to before it reaches the index.
+    ///
+    /// Returns `None` unless **every** member encodes to a numeric key. Serving only the numeric
+    /// subset would silently drop rows: a member the numeric column cannot represent (a string,
+    /// say) may still match entities held by another kind, and answering without them is a wrong
+    /// answer rather than a slower one. Declining hands the whole query back to the caller intact.
+    ///
+    /// Members are deduplicated by encoded key, so `IN [1,1,2]` yields each entity once. That is
+    /// sufficient for uniqueness overall: a doc appears under one key per column (the encoder
+    /// rejects lists, so an array-valued property is not in this column at all), so distinct keys
+    /// cannot both hold the same doc.
+    fn union(
+        &self,
+        children: &[IndexQuery<Value>],
+    ) -> Option<DocIter> {
+        // Flatten nested unions. `a IN [..] OR a IN [..]` arrives as an `Or` of `Or`s, and each
+        // level is still a union of the same column, so the nesting carries no meaning here.
+        fn collect(
+            children: &[IndexQuery<Value>],
+            keys: &mut Vec<u64>,
+        ) -> Option<()> {
+            for child in children {
+                match child {
+                    IndexQuery::Equal { value, .. } => keys.push(encode_numeric(value)?),
+                    IndexQuery::Or(nested) => collect(nested, keys)?,
+                    // A range or other combinator inside the union — not this shape.
+                    _ => return None,
+                }
+            }
+            Some(())
+        }
+        let mut keys = Vec::with_capacity(children.len());
+        collect(children, &mut keys)?;
+        keys.sort_unstable();
+        keys.dedup();
+        let cursors: Vec<TreeIter> = keys.into_iter().map(|k| self.tree.point(k)).collect();
+        Some(DocIter::Many(cursors.into_iter().flatten()))
+    }
+
     /// An iterator over no entries (`lo > hi` yields nothing).
     fn empty(&self) -> DocIter {
-        self.tree.range(1, 0)
+        DocIter::One(self.tree.range(1, 0))
     }
 }
 
@@ -444,5 +510,91 @@ mod tests {
             singly.remove(v, *id);
         }
         assert_eq!(all(&batched), all(&singly));
+    }
+
+    /// `IN [...]` reaches the index as a union of `Equal`s. It is served natively only when every
+    /// member is numeric — a mixed list must be declined whole, not answered from the numeric
+    /// members alone, or rows another kind holds would silently vanish.
+    #[test]
+    fn union_serves_all_numeric_and_declines_mixed() {
+        let attr = Arc::new("v".to_string());
+        let eq = |v: Value| IndexQuery::Equal {
+            key: attr.clone(),
+            value: v,
+        };
+        let idx = NumericIndex::from_entries(
+            [
+                (&Value::Int(10), 0u64),
+                (&Value::Int(20), 1),
+                (&Value::Int(30), 2),
+            ]
+            .into_iter(),
+        );
+
+        // all-numeric union -> every matching id, once each
+        let mut got = ids(idx
+            .query(&IndexQuery::Or(vec![
+                eq(Value::Int(10)),
+                eq(Value::Int(30)),
+            ]))
+            .expect("all-numeric union is servable"));
+        got.sort_unstable();
+        assert_eq!(got, vec![0, 2]);
+
+        // duplicate members must not yield an id twice
+        let mut dup = ids(idx
+            .query(&IndexQuery::Or(vec![
+                eq(Value::Int(20)),
+                eq(Value::Int(20)),
+            ]))
+            .expect("servable"));
+        dup.sort_unstable();
+        assert_eq!(dup, vec![1], "duplicate members must dedup");
+
+        // a non-numeric member declines the WHOLE union — not "just the numeric part"
+        assert!(
+            idx.query(&IndexQuery::Or(vec![
+                eq(Value::Int(10)),
+                eq(Value::String(Arc::new("a".to_string()))),
+            ]))
+            .is_none(),
+            "a mixed list must fall back rather than drop the non-numeric member"
+        );
+
+        // `a IN [..] OR a IN [..]` reaches the index as an Or of Ors — the nesting carries no
+        // meaning for a single column, so it must flatten rather than decline.
+        let mut nested = ids(idx
+            .query(&IndexQuery::Or(vec![
+                IndexQuery::Or(vec![eq(Value::Int(10)), eq(Value::Int(20))]),
+                IndexQuery::Or(vec![eq(Value::Int(30))]),
+            ]))
+            .expect("nested unions flatten"));
+        nested.sort_unstable();
+        assert_eq!(nested, vec![0, 1, 2]);
+
+        // a non-numeric member nested one level down still declines the whole union
+        assert!(
+            idx.query(&IndexQuery::Or(vec![
+                eq(Value::Int(10)),
+                IndexQuery::Or(vec![eq(Value::String(Arc::new("a".to_string())))]),
+            ]))
+            .is_none(),
+            "a nested non-numeric member must decline the whole union"
+        );
+
+        // a member that is not a plain Equal (a nested range) is likewise declined
+        assert!(
+            idx.query(&IndexQuery::Or(vec![
+                eq(Value::Int(10)),
+                IndexQuery::Range {
+                    key: attr.clone(),
+                    min: Some(Value::Int(0)),
+                    max: None,
+                    include_min: true,
+                    include_max: true,
+                },
+            ]))
+            .is_none()
+        );
     }
 }
