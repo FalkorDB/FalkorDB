@@ -514,24 +514,24 @@ class testQueryValidationFlow(FlowTestsBase):
                 # the original report: 'child1' is referenced from within an
                 # any() predicate, and the inner comprehension variable 'root'
                 # shadows the node created by the same clause
-                """CREATE (root:Root {name: 'x'}),
-                          (child1:TextNode {var: floor(any(v4 IN [2] WHERE child1 = [root IN keys(root)]))}),
-                          (child2:IntNode {v0: 0})""",
+                ("""CREATE (root:Root {name: 'x'}),
+                           (child1:TextNode {var: floor(any(v4 IN [2] WHERE child1 = [root IN keys(root)]))}),
+                           (child2:IntNode {v0: 0})""", "'child1' not defined"),
                 # minimal forms of the same thing
-                """CREATE (a:L {v: keys(a)})""",
-                """CREATE (a:L {v: properties(a)})""",
-                """CREATE (a:L {v: [x IN keys(a) | x]})""",
-                """CREATE (a:L {v: any(x IN [1] WHERE a.q = 1)})""",
+                ("""CREATE (a:L {v: keys(a)})""", "'a' not defined"),
+                ("""CREATE (a:L {v: properties(a)})""", "'a' not defined"),
+                ("""CREATE (a:L {v: [x IN keys(a) | x]})""", "'a' not defined"),
+                ("""CREATE (a:L {v: any(x IN [1] WHERE a.q = 1)})""", "'a' not defined"),
                 # the same holds for a relationship reading itself
-                """CREATE (a:L)-[r:R {v: keys(r)}]->(b:L)""",
-                """CREATE (a:L)-[r:R {v: properties(r)}]->(b:L)"""]
+                ("""CREATE (a:L)-[r:R {v: keys(r)}]->(b:L)""", "'r' not defined"),
+                ("""CREATE (a:L)-[r:R {v: properties(r)}]->(b:L)""", "'r' not defined")]
 
-        for query in queries:
+        for query, expected in queries:
             try:
                 self.graph.query(query)
                 assert(False)
             except redis.ResponseError as e:
-                self.env.assertContains("not defined", str(e))
+                self.env.assertContains(expected, str(e))
 
         # the rejected CREATEs must not have partially applied
         self.env.assertEqual(
