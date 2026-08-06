@@ -36,14 +36,16 @@ pub fn graph_ro_query(
     let mut version_check: Option<u64> = None;
     let mut timeout: Option<i64> = None;
     while let Ok(arg) = args.next_str() {
-        if arg == "--compact" {
+        // Matched case-insensitively, as the C dispatcher does with strcasecmp:
+        // `TIMEOUT` is the documented spelling.
+        if arg.eq_ignore_ascii_case("--compact") {
             compact = true;
-        } else if arg == "--track-memory" {
+        } else if arg.eq_ignore_ascii_case("--track-memory") {
             track_memory = true;
-        } else if arg == "version" {
+        } else if arg.eq_ignore_ascii_case("version") {
             let ver_str = args.next_str()?;
             version_check = Some(ver_str.parse::<u64>()?);
-        } else if arg == "timeout"
+        } else if arg.eq_ignore_ascii_case("timeout")
             && let Ok(t_str) = args.next_str()
         {
             timeout = t_str.parse::<i64>().ok();
