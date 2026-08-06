@@ -349,3 +349,55 @@ class testPathFilter(FlowTestsBase):
         # clean up
         self.graph.query ("MATCH (s:Service) DELETE s")
 
+    def test_exists_pattern_predicate_in_projection(self):
+        # test that EXISTS over a pattern path is evaluated against the
+        # currently bound node, not a non-empty collected array.
+        # see https://github.com/FalkorDB/FalkorDB issue: Pattern EXISTS
+        # on an isolated or unrelated node may return true.
+
+        # graph with three isolated nodes, no edges
+        self.graph.query("CREATE (:Person {id: 1}), (:Person {id: 2}), (:Person {id: 3})")
+
+        # without any edges, EXISTS((n)-[:KNOWS]->()) must be false for all
+        query = ("MATCH (n:Person) "
+                 "RETURN n.id AS id, EXISTS((n)-[:KNOWS]->()) AS has "
+                 "ORDER BY id")
+        res = self.graph.query(query).result_set
+        self.env.assertEqual(res, [[1, False], [2, False], [3, False]])
+
+        # add a single (1)-[:KNOWS]->(2) edge
+        self.graph.query("MATCH (a:Person {id:1}), (b:Person {id:2}) "
+                         "CREATE (a)-[:KNOWS]->(b)")
+
+        # only id=1 has an outgoing :KNOWS edge
+        query = ("MATCH (n:Person) "
+                 "RETURN n.id AS id, EXISTS((n)-[:KNOWS]->()) AS has2 "
+                 "ORDER BY id")
+        res = self.graph.query(query).result_set
+        self.env.assertEqual(res, [[1, True], [2, False], [3, False]])
+
+        # NOT EXISTS over a pattern path - inverse logic
+        query = ("MATCH (n:Person) "
+                 "RETURN n.id AS id, NOT EXISTS((n)-[:KNOWS]->()) AS missing "
+                 "ORDER BY id")
+        res = self.graph.query(query).result_set
+        self.env.assertEqual(res, [[1, False], [2, True], [3, True]])
+
+        # EXISTS over property still works (not a pattern path)
+        query = ("MATCH (n:Person) "
+                 "RETURN n.id AS id, EXISTS(n.id) AS has_id, "
+                 "EXISTS(n.missing) AS has_missing ORDER BY id")
+        res = self.graph.query(query).result_set
+        self.env.assertEqual(res, [[1, True, False],
+                                   [2, True, False],
+                                   [3, True, False]])
+
+        # WITH projection also produces correct results
+        query = ("MATCH (n:Person) "
+                 "WITH n.id AS id, EXISTS((n)-[:KNOWS]->()) AS has3 "
+                 "RETURN id, has3 ORDER BY id")
+        res = self.graph.query(query).result_set
+        self.env.assertEqual(res, [[1, True], [2, False], [3, False]])
+
+        # clean up
+        self.graph.query("MATCH (n:Person) DETACH DELETE n")
