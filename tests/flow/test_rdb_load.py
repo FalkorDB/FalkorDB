@@ -118,5 +118,19 @@ class testRdbLoad():
 
         self.env.assertEqual(src.query(q).result_set, [[1, 2, 3]])
         self.env.assertEqual(dst.query(q).result_set, [[1, 2, 3]])
+
+        # each graph kept its own write, and only its own
+        self.env.assertEqual(src.query(count % "ONLY_IN_SRC").result_set, [[1]])
+        self.env.assertEqual(dst.query(count % "ONLY_IN_DST").result_set, [[1]])
         self.env.assertEqual(src.query(count % "ONLY_IN_DST").result_set, [[0]])
         self.env.assertEqual(dst.query(count % "ONLY_IN_SRC").result_set, [[0]])
+
+        # a write issued after the reload must still not leak across keys: a
+        # decoder that re-created the alias would only show up on mutation
+        dst.query("CREATE (:AFTER_RELOAD_DST)")
+        src.query("CREATE (:AFTER_RELOAD_SRC)")
+
+        self.env.assertEqual(src.query(count % "AFTER_RELOAD_SRC").result_set, [[1]])
+        self.env.assertEqual(dst.query(count % "AFTER_RELOAD_DST").result_set, [[1]])
+        self.env.assertEqual(src.query(count % "AFTER_RELOAD_DST").result_set, [[0]])
+        self.env.assertEqual(dst.query(count % "AFTER_RELOAD_SRC").result_set, [[0]])
