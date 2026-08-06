@@ -193,11 +193,16 @@ void StringPool_return
 	dictEntry *de;
 	dict *ht = pool->ht;
 
-	// access entry
-	pthread_mutex_lock (&pool->lock) ;
+	// access entry under lock
+	pthread_mutex_lock (&pool->lock);
 
-	de = HashTableFind (ht, str) ;
-	ASSERT(de != NULL);
+	de = HashTableFind (ht, str);
+
+	// Already deleted by another concurrent thread - nothing to do
+	if (de == NULL) {
+		pthread_mutex_unlock (&pool->lock);
+		return;
+	}
 
 	// decrease reference count
 	uint32_t *count = (uint32_t*)HashTableEntryMetadata(de);
@@ -205,15 +210,14 @@ void StringPool_return
 
 	// if this was the last reference, delete the entry
 	if (old_count == 1) {
-		int res = HashTableDelete (ht, (const void *)str) ;
+		int res = HashTableDelete (ht, (const void *)str);
 		ASSERT(res == DICT_OK);
 	}
 
-	// release lock
-	pthread_mutex_unlock (&pool->lock) ;
-
 	// update total reference count
 	__atomic_fetch_sub(&pool->total_ref_count, 1, __ATOMIC_RELAXED);
+
+	pthread_mutex_unlock (&pool->lock);
 }
 
 // get string pool statistics
@@ -227,16 +231,18 @@ StringPoolStats StringPool_stats
 	uint64_t total_refs    = 0;
 	double   avg_ref_count = 0;
 
-	// get hash table entry count under lock
-	pthread_mutex_lock (&pool->lock) ;
-	n_entries = HashTableElemCount (pool->ht) ;
-	pthread_mutex_unlock (&pool->lock) ;
+	// read both n_entries and total_refs under the same lock
+	// this guarantees consistent statistics even with concurrent modifications
+	pthread_mutex_lock (&pool->lock);
+	n_entries = HashTableElemCount (pool->ht);
 
 	if(n_entries > 0) {
-		// read total_ref_count atomically to avoid stale values
+		// read total_ref_count atomically now that we hold the lock
 		total_refs = __atomic_load_n(&pool->total_ref_count, __ATOMIC_RELAXED);
         avg_ref_count = (double)total_refs / n_entries;
     }
+
+	pthread_mutex_unlock (&pool->lock);
 
 	StringPoolStats stats = {0};  // statistics object to populate
 	stats.n_entries     = n_entries;
@@ -263,4 +269,3 @@ void StringPool_free
 	rm_free (*pool) ;
 	*pool = NULL;
 }
-
