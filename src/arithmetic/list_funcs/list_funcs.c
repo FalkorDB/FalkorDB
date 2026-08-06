@@ -12,6 +12,7 @@
 #include "../../util/dict.h"
 #include "../../util/strutil.h"
 #include "../../errors/errors.h"
+#include "../../datatypes/map.h"
 #include "../../datatypes/array.h"
 #include "../../util/rax_extensions.h"
 #include "../string_funcs/string_funcs.h"
@@ -397,9 +398,11 @@ SIValue AR_IN(SIValue *argv, int argc, void *private_data) {
 	return comparedNull ? SI_NullVal() : SI_BoolVal(false);
 }
 
-/* Return a list/string/map/path size.
+/* Return a list/string/map size.
    "RETURN size([1, 2, 3])" will return 3
-   TODO: when map and path are implemented, add their functionality */
+   "RETURN size({a: 1, b: 2})" will return 2
+   Paths and other unsupported types raise a type mismatch via argument
+   validation; the default branch is defensive. */
 SIValue AR_SIZE(SIValue *argv, int argc, void *private_data) {
 	ASSERT(argc == 1);
 	SIValue value = argv[0];
@@ -409,10 +412,13 @@ SIValue AR_SIZE(SIValue *argv, int argc, void *private_data) {
 		case T_STRING:
 		case T_INTERN_STRING:
 			return SI_LongVal(str_length(value.stringval));
+		case T_MAP:
+			return SI_LongVal(Map_KeyCount(value));
 		case T_NULL:
 			return SI_NullVal();
 		default:
-			ASSERT(false);
+			// defensive: type validation should reject unsupported inputs
+			Error_SITypeMismatch(value, T_STRING | T_ARRAY | T_MAP | T_NULL);
 			return SI_NullVal();
 	}
 }

@@ -2526,10 +2526,32 @@ class testFunctionCallsFlow(FlowTestsBase):
         query_to_expected_result = {
             "RETURN size(NULL)" : [[None]],
             "RETURN size('abcd')" : [[4]],
-            "RETURN size('丁丂七丄丅丆万丈三上')" : [[10]]
+            "RETURN size('丁丂七丄丅丆万丈三上')" : [[10]],
+            "RETURN size([])" : [[0]],
+            "RETURN size([1, 2, 3])" : [[3]],
+            "RETURN size({})" : [[0]],
+            "RETURN size({a: 1})" : [[1]],
+            "RETURN size({a: 1, b: 2, c: 3})" : [[3]],
+            "RETURN size({x: [1, 2], y: {z: 3}})" : [[2]],
         }
         for query, expected_result in query_to_expected_result.items():
             self.get_res_and_assertEquals(query, expected_result)
+
+        # size() on unsupported types must raise a clear type mismatch
+        # (paths use length(); maps are supported above)
+        invalid_queries = [
+            "MATCH p = ()-[]-() RETURN size(p) LIMIT 1",
+            "MATCH (n) RETURN size(n) LIMIT 1",
+            "RETURN size(1)",
+            "RETURN size(true)",
+            "RETURN size(point({latitude:1, longitude:2}))",
+        ]
+        for q in invalid_queries:
+            try:
+                self.graph.query(q)
+                self.env.assertTrue(False)
+            except ResponseError as e:
+                self.env.assertContains("Type mismatch", str(e))
 
     def test91_MATCHREGEX(self):
         # NULL input should return empty list
