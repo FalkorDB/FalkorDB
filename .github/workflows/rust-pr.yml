@@ -169,18 +169,37 @@ jobs:
         credentials:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+        ports: ["6379:6379"]
+        env:
+          FALKORDB_ARGS: ""
+    # Without these, flow.sh takes its local-dev branch and looks for a module this job never
+    # builds — the service container would be started and never contacted. They also force
+    # --parallelism 1, which the ledger parser needs: parallel classes interleave the per-test
+    # lines it reads.
+    env:
+      FALKORDB_TEST_IMAGE: ghcr.io/falkordb/falkordb-server:rc-pr-${{ github.event.pull_request.number }}-nextgen
+      FALKORDB_USE_SERVICE: "1"
+      FALKORDB_HOST: falkordb
+      FALKORDB_PORT: "6379"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Run the index flow suites against the native-index image
-        # Never fail here: a failing suite is expected while gaps remain. The ledger check below
-        # is the gate, and it needs this output whatever the exit status.
-        continue-on-error: true
+        # A failing suite is expected while gaps remain, so this step must not fail the job — the
+        # ledger check below is the gate. But each suite's exit status is recorded: a suite that
+        # dies without running its tests would otherwise let its ledger entries reconcile
+        # silently, and the check cannot tell "did not run" from "passed" on its own.
         run: |
           . /data/venv/bin/activate
-          for t in test_index_create test_index_scans test_index_updates \
-                   test_index_delete test_edge_index_scans test_edge_index_updates; do
-            TEST="$t" RELEASE=1 ./flow.sh 2>&1 | tee -a /tmp/nextgen_flow.log || true
+          rc=0
+          for t in tests/flow/test_index_create tests/flow/test_index_scans \
+                   tests/flow/test_index_updates tests/flow/test_index_delete \
+                   tests/flow/test_edge_index_scans tests/flow/test_edge_index_updates; do
+            TEST="$t" RELEASE=1 ./flow.sh 2>&1 | tee -a /tmp/nextgen_flow.log
+            status=${PIPESTATUS[0]}
+            echo "SUITE_EXIT $t $status" | tee -a /tmp/nextgen_flow.log
+            if [ "$status" -gt 1 ]; then rc=1; fi   # >1 = harness died, not just test failures
           done
+          exit $rc
       - name: Reconcile against the xfail ledger
         run: |
           . /data/venv/bin/activate
