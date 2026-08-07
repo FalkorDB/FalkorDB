@@ -49,8 +49,27 @@ pub fn unsupported_by_native_index(
 fn describe_predicate(query: &crate::index::IndexQuery<crate::runtime::value::Value>) -> String {
     use crate::index::IndexQuery as Q;
     match query {
-        Q::Equal { key, .. } => format!("equality on `{key}` with a non-numeric value"),
-        Q::Range { key, .. } => format!("range on `{key}` with a non-numeric bound"),
+        // Test encodability rather than assuming it. At top level a declined `Equal` is
+        // necessarily non-numeric, but the same arm is reached through `And`/`Or`, where the
+        // child may be perfectly servable and the *combination* is what is not — reporting it as
+        // "non-numeric" there sends the reader after a missing value kind that is not the problem.
+        Q::Equal { key, value } => {
+            if encode::encode_numeric(value).is_some() {
+                format!("equality on `{key}`")
+            } else {
+                format!("equality on `{key}` with a non-numeric value")
+            }
+        }
+        Q::Range { key, min, max, .. } => {
+            let encodable = |v: &Option<crate::runtime::value::Value>| {
+                v.as_ref().is_none_or(|v| encode::encode_numeric(v).is_some())
+            };
+            if encodable(min) && encodable(max) {
+                format!("range on `{key}`")
+            } else {
+                format!("range on `{key}` with a non-numeric bound")
+            }
+        }
         // Two reasons a union is declined, and naming the wrong one sends whoever reads the
         // ledger entry looking for a missing value kind that isn't the problem. A union spanning
         // attributes needs a real cross-column intersection/merge; one with a non-numeric member
@@ -67,7 +86,19 @@ fn describe_predicate(query: &crate::index::IndexQuery<crate::runtime::value::Va
                 format!("a union of {n} member{plural} spanning more than one attribute")
             }
         }
-        Q::And(children) => format!("a conjunction of {} predicates", children.len()),
+        // Name the children, not just the count. "a conjunction of 2 predicates" cannot
+        // distinguish two ranges on one key (which wants an arithmetic collapse) from two
+        // predicates on different keys (which wants a real intersection) — and it hides the case
+        // where the two are the *same* predicate twice, which wants neither.
+        Q::And(children) => format!(
+            "a conjunction of {} predicates [{}]",
+            children.len(),
+            children
+                .iter()
+                .map(describe_predicate)
+                .collect::<Vec<_>>()
+                .join("; ")
+        ),
         Q::InList { key, .. } => format!("an IN list on `{key}`"),
         Q::Point { key, .. } => format!("a geo predicate on `{key}`"),
         Q::ArrayContains { key, .. } => format!("an array-contains on `{key}`"),
