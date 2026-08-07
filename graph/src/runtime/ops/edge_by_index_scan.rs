@@ -332,21 +332,18 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                         // string/geo/composite or a missing column falls through to RediSearch during
                         // the dark-launch. #51, mirrors `NodeByIndexScanOp`.
                         #[cfg(feature = "index-falkordb")]
-                        let it: Option<Box<dyn Iterator<Item = EdgeRow>>> =
-                            match g.query_index_numeric_edges(label, &q) {
-                                Some(NumericAnswer::Rows(rows)) => Some(Box::new(rows)),
-                                // Still building — scan, do not error.
-                                Some(NumericAnswer::NotReady) => None,
-                                None => {
-                                    // See node_by_index_scan: native is the only index under this
-                                    // flag, so an unserviceable predicate is a loud error.
-                                    return Err(unsupported_by_native_index(
-                                        "relationship",
-                                        label,
-                                        &q,
-                                    ));
-                                }
-                            };
+                        let it: Option<Box<dyn Iterator<Item = EdgeRow>>> = match g
+                            .query_index_numeric_edges(label, &q)
+                        {
+                            Some(NumericAnswer::Rows(rows)) => Some(Box::new(rows)),
+                            // Still building — scan, do not error.
+                            Some(NumericAnswer::NotReady) => None,
+                            None => {
+                                // See node_by_index_scan: native is the only index under this
+                                // flag, so an unserviceable predicate is a loud error.
+                                return Err(unsupported_by_native_index("relationship", label, &q));
+                            }
+                        };
                         #[cfg(not(feature = "index-falkordb"))]
                         let it: Option<Box<dyn Iterator<Item = EdgeRow>>> =
                             Some(Box::new(g.get_indexed_edges(label, q)));
