@@ -46,6 +46,11 @@ on:
         description: "JSON array of build cells — see header for shape"
         required: true
         type: string
+      cargo_features:
+        description: "Cargo features to build with (e.g. index-falkordb). Empty = default build."
+        required: false
+        type: string
+        default: ""
       dockerfile:
         description: "Dockerfile path"
         required: false
