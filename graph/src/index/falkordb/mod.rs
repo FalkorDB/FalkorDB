@@ -62,7 +62,8 @@ fn describe_predicate(query: &crate::index::IndexQuery<crate::runtime::value::Va
         }
         Q::Range { key, min, max, .. } => {
             let encodable = |v: &Option<crate::runtime::value::Value>| {
-                v.as_ref().is_none_or(|v| encode::encode_numeric(v).is_some())
+                v.as_ref()
+                    .is_none_or(|v| encode::encode_numeric(v).is_some())
             };
             if encodable(min) && encodable(max) {
                 format!("range on `{key}`")
@@ -81,7 +82,10 @@ fn describe_predicate(query: &crate::index::IndexQuery<crate::runtime::value::Va
             let n = children.len();
             let plural = if n == 1 { "" } else { "s" };
             if all_same_key {
-                format!("a union of {n} member{plural} on `{}` that is not all-numeric", keys[0])
+                format!(
+                    "a union of {n} member{plural} on `{}` that is not all-numeric",
+                    keys[0]
+                )
             } else {
                 format!("a union of {n} member{plural} spanning more than one attribute")
             }
