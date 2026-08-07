@@ -325,7 +325,7 @@ pub fn subtree_contains(
 }
 
 /// Returns true if a QueryExpr tree contains any non-deterministic function call.
-fn expr_has_non_deterministic(expr: &DynTree<ExprIR<Variable>>) -> bool {
+pub(super) fn expr_has_non_deterministic(expr: &DynTree<ExprIR<Variable>>) -> bool {
     expr.root()
         .walk_with(&mut Traversal.bfs().over_nodes())
         .any(|n| matches!(n.data(), ExprIR::FuncInvocation(func) if func.non_deterministic))

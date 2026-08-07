@@ -66,7 +66,7 @@
 use std::{collections::HashSet, fmt::Display, hash::Hash, sync::Arc};
 
 use itertools::Itertools;
-use orx_tree::{Dfs, DynTree, NodeRef};
+use orx_tree::{Dfs, Dyn, DynTree, NodeIdx, NodeRef};
 
 use crate::{
     entity_type::EntityType,
@@ -413,6 +413,53 @@ impl Display for QuantifierType {
     }
 }
 
+/// Structural comparison of two expression trees.
+///
+/// Separate from [`SupportAggregation`] because it answers a different question, and separate
+/// from `PartialEq` on purpose — see [`StructuralEq::structurally_eq`].
+pub trait StructuralEq {
+    /// Whether two expression trees have the same shape and the same node data throughout.
+    ///
+    /// Deliberately **not** `PartialEq`. Callers use this to decide whether two expressions may
+    /// be treated as one, and that decision has asymmetric risk: a false negative costs a missed
+    /// simplification, a false positive silently changes what a query returns. An inherent trait
+    /// method with a documented conservative contract makes that visible at the call site; an
+    /// `==` operator would invite casual use that quietly inherits the risk.
+    ///
+    /// Conservative throughout: any node whose identity [`ExprIR::node_eq`] cannot fully
+    /// establish compares unequal, so unfamiliar constructs are never merged.
+    ///
+    /// This is *structural* identity only. Whether two structurally identical expressions may be
+    /// **collapsed into one** is a further question the caller must answer for itself —
+    /// `rand() < 0.5 AND rand() < 0.5` is two independent draws, so the answer there is no.
+    fn structurally_eq(
+        &self,
+        other: &Self,
+    ) -> bool;
+}
+
+impl StructuralEq for DynTree<ExprIR<Variable>> {
+    fn structurally_eq(
+        &self,
+        other: &Self,
+    ) -> bool {
+        fn nodes_eq(
+            a: &DynTree<ExprIR<Variable>>,
+            a_idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+            b: &DynTree<ExprIR<Variable>>,
+            b_idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+        ) -> bool {
+            let (an, bn) = (a.node(a_idx), b.node(b_idx));
+            an.num_children() == bn.num_children()
+                && an.data().node_eq(bn.data())
+                && (0..an.num_children())
+                    .all(|i| nodes_eq(a, an.child(i).idx(), b, bn.child(i).idx()))
+        }
+
+        nodes_eq(self, self.root().idx(), other, other.root().idx())
+    }
+}
+
 /// Trait for checking if an expression contains aggregation functions.
 pub trait SupportAggregation {
     /// Returns true if this expression tree contains any aggregation function
@@ -439,6 +486,105 @@ impl SupportAggregation for DynTree<ExprIR<Arc<String>>> {
                 ExprIR::FuncInvocation(func) if func.is_aggregate()
             )
         })
+    }
+}
+
+impl ExprIR<Variable> {
+    /// Structural equality of **this node's own data**, ignoring children — the caller walks the
+    /// tree and compares children itself.
+    ///
+    /// Deliberately *not* `PartialEq`. Callers use this to decide whether two expressions may be
+    /// collapsed into one, and that decision is asymmetric in its risk: a false negative costs a
+    /// missed simplification, a false positive silently changes what a query returns. So this is
+    /// an inherent method with a documented conservative contract rather than an operator that
+    /// invites casual use.
+    ///
+    /// Note that this answers *structural* identity only. Whether two structurally identical
+    /// expressions may be collapsed is a separate question the caller must also answer — see
+    /// [`expr_has_non_deterministic`](crate::planner::expr_has_non_deterministic), because
+    /// `rand() = rand()` is two independent draws even though both nodes are identical here.
+    #[must_use]
+    pub fn node_eq(
+        &self,
+        other: &Self,
+    ) -> bool {
+        use ExprIR as E;
+        match (self, other) {
+            // `Value`'s `PartialEq` is Cypher value equality, so `1` and `1.0` compare equal —
+            // correct here: as predicates they accept exactly the same rows.
+            (E::Constant(a), E::Constant(b)) => a == b,
+            // Identity is `(id, scope_id)`. `name` is cosmetic and `ty` is derived from them.
+            (E::Variable(a), E::Variable(b)) => a.id == b.id && a.scope_id == b.scope_id,
+            (E::Parameter(a), E::Parameter(b)) => a == b,
+            (E::Property(a), E::Property(b)) => a == b,
+            (E::FuncInvocation(a), E::FuncInvocation(b)) => a.name == b.name,
+            // Same variant, nothing else to compare. Safe *because* it is guarded by
+            // `carries_unexamined_state`: unguarded discriminant equality would report two
+            // different `Case` or `Pattern` nodes as identical.
+            _ => {
+                std::mem::discriminant(self) == std::mem::discriminant(other)
+                    && !self.carries_unexamined_state()
+            }
+        }
+    }
+
+    /// Whether this variant holds data that [`node_eq`](Self::node_eq) does not compare, making a
+    /// discriminant match insufficient to establish identity.
+    ///
+    /// **Exhaustive on purpose — no wildcard arm.** Adding an `ExprIR` variant stops this
+    /// function compiling until someone classifies it. That friction is the point: a new variant
+    /// that silently defaulted to "comparable" could collapse two different expressions into one,
+    /// and one that silently defaulted to "not comparable" would quietly lose simplifications
+    /// nobody would ever notice were missing.
+    fn carries_unexamined_state(&self) -> bool {
+        use ExprIR as E;
+        match self {
+            // Compared field by field in `node_eq`; reaching here means they already matched.
+            E::Constant(_)
+            | E::Variable(_)
+            | E::Parameter(_)
+            | E::Property(_)
+            | E::FuncInvocation(_) => false,
+            // Operators carrying nothing: the variant *is* the node, operands are its children.
+            E::List
+            | E::Map
+            | E::Length
+            | E::GetElement
+            | E::GetElements
+            | E::IsNode
+            | E::IsRelationship
+            | E::Or
+            | E::Xor
+            | E::And
+            | E::Not
+            | E::Negate
+            | E::Eq
+            | E::Neq
+            | E::Lt
+            | E::Gt
+            | E::Le
+            | E::Ge
+            | E::In
+            | E::Add
+            | E::Sub
+            | E::Mul
+            | E::Div
+            | E::Pow
+            | E::Modulo
+            | E::Distinct
+            | E::Paren
+            | E::MapProjection => false,
+            // Carries state `node_eq` does not inspect: bound variables, sub-patterns, compiled
+            // regexes, path specifications. Two of these are never treated as identical.
+            E::Case { .. }
+            | E::Quantifier { .. }
+            | E::ListComprehension(_)
+            | E::Reduce(_)
+            | E::PatternComprehension(_)
+            | E::Pattern(_)
+            | E::ShortestPath(_)
+            | E::CompiledRegex(_) => true,
+        }
     }
 }
 
