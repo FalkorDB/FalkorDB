@@ -1877,7 +1877,25 @@ class testFunctionCallsFlow(FlowTestsBase):
         }
         for query, expected_result in query_to_expected_result.items():
             self.get_res_and_assertEquals(query, expected_result)
-    
+
+    def test67a_Exists_Path(self):
+        # Test EXISTS with path patterns
+        # Create a node without any relationships
+        self.graph.query("CREATE (user:User {name: 'test'})")
+
+        # Test EXISTS with non-existing path - should return false
+        query = "MATCH (user:User {name: 'test'}) RETURN EXISTS((user)<-[:AUTHENTICATES]-(:Identity))"
+        actual_result = self.graph.query(query)
+        expected_result = [[False]]
+        self.env.assertEquals(actual_result.result_set, expected_result)
+
+        # Test EXISTS with existing path - should return true
+        self.graph.query("CREATE (user:User {name: 'test'})<-[:AUTHENTICATES]-(:Identity)")
+        query = "MATCH (user:User {name: 'test'}) RETURN EXISTS((user)<-[:AUTHENTICATES]-(:Identity))"
+        actual_result = self.graph.query(query)
+        expected_result = [[True]]
+        self.env.assertEquals(actual_result.result_set, expected_result)
+
     def test68_Case(self):
         query_to_expected_result = {
             "RETURN CASE 'brown' WHEN 'blue' THEN 1+0 WHEN 'brown' THEN 2-0 ELSE 3*1 END": [[2]],
