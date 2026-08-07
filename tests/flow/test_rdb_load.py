@@ -3,7 +3,8 @@ from common import *
 
 class testRdbLoad():
     def __init__(self):
-        self.env, self.db = Env(moduleArgs='VKEY_MAX_ENTITY_COUNT 10')
+        self.env, self.db = Env(moduleArgs='VKEY_MAX_ENTITY_COUNT 10',
+                                enableDebugCommand=True)
         self.conn = self.env.getConnection()
 
     # assert that |keyspace| == `n`
@@ -76,3 +77,60 @@ class testRdbLoad():
 
         # Verify save works after load
         self.conn.save()
+
+    def test_restore_under_a_different_key(self):
+        # Restoring a graph DUMP under a key name other than the one it was
+        # dumped from used to alias the two keys: only the original showed up
+        # in GRAPH.LIST, writes to the restored key mutated the original, and
+        # the server segfaulted while loading the resulting RDB.
+        # See https://github.com/FalkorDB/FalkorDB/issues/2048
+        self.conn.flushall()
+
+        src = self.db.select_graph("src")
+        src.query("CREATE (:A {v: 1})-[:R {w: 2}]->(:B {v: 3})")
+
+        self.conn.restore("dst", 0, self.conn.dump("src"))
+
+        # both graphs are listed, and both hold the same data
+        graphs = [g.decode() if isinstance(g, bytes) else g
+                  for g in self.conn.execute_command("GRAPH.LIST")]
+        self.env.assertIn("src", graphs)
+        self.env.assertIn("dst", graphs)
+
+        dst = self.db.select_graph("dst")
+        q = "MATCH (a:A)-[e:R]->(b:B) RETURN a.v, e.w, b.v"
+        self.env.assertEqual(src.query(q).result_set, [[1, 2, 3]])
+        self.env.assertEqual(dst.query(q).result_set, [[1, 2, 3]])
+
+        # the two graphs are independent: a write to one is not visible in the
+        # other, in either direction
+        dst.query("CREATE (:ONLY_IN_DST)")
+        src.query("CREATE (:ONLY_IN_SRC)")
+
+        count = "MATCH (n:%s) RETURN count(n)"
+        self.env.assertEqual(src.query(count % "ONLY_IN_DST").result_set, [[0]])
+        self.env.assertEqual(dst.query(count % "ONLY_IN_SRC").result_set, [[0]])
+        self.env.assertEqual(src.query(count % "ONLY_IN_SRC").result_set, [[1]])
+        self.env.assertEqual(dst.query(count % "ONLY_IN_DST").result_set, [[1]])
+
+        # the restored graph must survive an RDB round trip
+        self.conn.execute_command("DEBUG", "RELOAD")
+
+        self.env.assertEqual(src.query(q).result_set, [[1, 2, 3]])
+        self.env.assertEqual(dst.query(q).result_set, [[1, 2, 3]])
+
+        # each graph kept its own write, and only its own
+        self.env.assertEqual(src.query(count % "ONLY_IN_SRC").result_set, [[1]])
+        self.env.assertEqual(dst.query(count % "ONLY_IN_DST").result_set, [[1]])
+        self.env.assertEqual(src.query(count % "ONLY_IN_DST").result_set, [[0]])
+        self.env.assertEqual(dst.query(count % "ONLY_IN_SRC").result_set, [[0]])
+
+        # a write issued after the reload must still not leak across keys: a
+        # decoder that re-created the alias would only show up on mutation
+        dst.query("CREATE (:AFTER_RELOAD_DST)")
+        src.query("CREATE (:AFTER_RELOAD_SRC)")
+
+        self.env.assertEqual(src.query(count % "AFTER_RELOAD_SRC").result_set, [[1]])
+        self.env.assertEqual(dst.query(count % "AFTER_RELOAD_DST").result_set, [[1]])
+        self.env.assertEqual(src.query(count % "AFTER_RELOAD_DST").result_set, [[0]])
+        self.env.assertEqual(dst.query(count % "AFTER_RELOAD_SRC").result_set, [[0]])
