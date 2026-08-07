@@ -19,10 +19,14 @@ FROM chef AS builder
 # compiler via `--build-arg CXX=<their clang++>` — keeping one build path /
 # one self-containment contract for every platform (see build/Dockerfile.<os>).
 ARG CXX=clang++-22
+# Optional cargo features for this flavour. Empty by default, so every existing flavour builds
+# exactly as before; the nextgen flavour passes `index-falkordb`. A build-arg rather than another
+# Dockerfile because the flavour Dockerfiles are near-copies of this one and a fourth would rot.
+ARG CARGO_FEATURES=""
 COPY --from=planner /src/recipe.json recipe.json
-RUN CXX="$CXX" cargo chef cook --release --recipe-path recipe.json
+RUN CXX="$CXX" cargo chef cook --release --recipe-path recipe.json ${CARGO_FEATURES:+--features "$CARGO_FEATURES"}
 COPY . .
-RUN CXX="$CXX" cargo build --release && \
+RUN CXX="$CXX" cargo build --release ${CARGO_FEATURES:+--features "$CARGO_FEATURES"} && \
     mkdir -p /out && cp target/release/libfalkordb.so /out/falkordb.so && \
     echo "=== verify single-.so contract on libfalkordb.so ===" && \
     deps="$(ldd /out/falkordb.so | awk '{print $1}' | sort -u)" && \
