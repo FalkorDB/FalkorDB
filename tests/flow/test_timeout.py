@@ -291,7 +291,32 @@ class testQueryTimeout():
         res = self.graph.query("RETURN 1")
         self.env.assertEqual(res.result_set[0][0], 1)
 
-    def test12_concurrent_timeout(self):
+    # Command arguments are matched case-insensitively, as the C dispatcher does
+    # with strcasecmp. Every test above goes through the Python client, which
+    # only ever sends `timeout` in lower case — so a case-sensitive match let the
+    # documented `TIMEOUT` spelling be silently dropped, and the query then ran
+    # with no deadline at all. Issue both spellings as raw commands.
+    def test12_timeout_argument_is_case_insensitive(self):
+        self.env.stop()
+        self.env, self.db = Env()
+        self.graph = self.db.select_graph(GRAPH_ID)
+
+        query = "UNWIND range(0, 1000000) AS x WITH x AS x WHERE x = 10000 RETURN x"
+        conn = self.env.getConnection()
+
+        for spelling in ("TIMEOUT", "timeout", "TimeOut"):
+            try:
+                # The query is expected to timeout
+                conn.execute_command("GRAPH.QUERY", GRAPH_ID, query, spelling, 1)
+                self.env.assertTrue(False)
+            except ResponseError as error:
+                self.env.assertContains("Query timed out", str(error))
+
+            # ...and to succeed given room to finish
+            res = conn.execute_command("GRAPH.QUERY", GRAPH_ID, query, spelling, 5000)
+            self.env.assertIsNotNone(res)
+
+    def test13_concurrent_timeout(self):
         self.env.stop()
         self.env, self.db = Env()
         self.graph = self.db.select_graph(GRAPH_ID)
