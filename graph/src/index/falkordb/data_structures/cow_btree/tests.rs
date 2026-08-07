@@ -95,6 +95,43 @@ fn assert_first_doc_matches<const L: usize, const B: usize, const D: usize>(
     );
 }
 
+/// A branch separator is a *routing* boundary, not a live `min(right child)`. Remove a child's
+/// minimum without underflowing it and the separator keeps naming the removed tuple — so a lookup
+/// that reads a doc straight out of the separator returns an entry that is no longer in the tree.
+///
+/// Two full leaves, separator `(1, 1)`. Removing `(1, 1)` leaves the right leaf with three entries,
+/// which is above `min_fill`, so nothing rebalances and nothing rewrites the separator.
+#[test]
+fn first_doc_does_not_return_a_removed_separator() {
+    let mut t = CowBTree::<4, 4, 8>::from_sorted(&[
+        (0, 0),
+        (0, 1),
+        (0, 2),
+        (0, 3),
+        (1, 1),
+        (1, 2),
+        (1, 3),
+        (1, 4),
+    ]);
+    assert_eq!(t.first_doc(1), Some(1));
+
+    t.remove(1, 1);
+    assert_eq!(
+        t.first_doc(1),
+        Some(2),
+        "first_doc must not hand back the doc named by a stale separator"
+    );
+    assert_eq!(t.first_doc(1), t.point(1).next(), "vs the cursor");
+    assert!(t.contains_key(1));
+
+    // And the same key going empty must report absent, not the last separator standing.
+    for doc in [2, 3, 4] {
+        t.remove(1, doc);
+    }
+    assert_eq!(t.first_doc(1), None);
+    assert!(!t.contains_key(1));
+}
+
 #[test]
 fn first_doc_matches_reference_across_configs() {
     // Empty + single-entry edge cases.
@@ -1246,12 +1283,23 @@ fn differential<const L: usize, const B: usize, const DOC_BYTES: usize>(
         let mut pt: Vec<u64> = tree.point(k).collect();
         pt.sort_unstable();
         assert_eq!(pt, ref_range(&oracle, k, k), "point {k} diverged");
+        // `first_doc` takes a *different* path to the same answer — a stackless reference descent
+        // rather than the cursor — so it needs its own parity check under removal. Reusing the
+        // point query's key and oracle makes it free.
+        assert_eq!(
+            tree.first_doc(k),
+            pt.first().copied(),
+            "first_doc {k} diverged"
+        );
     }
     assert_eq!(
         tree_range(&tree, 0, u64::MAX),
         ref_range(&oracle, 0, u64::MAX),
         "range scan diverged"
     );
+    // Every key, its absent neighbours, and the sentinel — after a run of interleaved
+    // inserts and removes, which is the state the per-op sampling may not have landed on.
+    assert_first_doc_matches(&tree, &oracle);
 }
 
 #[test]

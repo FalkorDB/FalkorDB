@@ -156,7 +156,11 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
     Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>
 {
     /// The minimum `(key, doc)` in this subtree — walk the left spine down to its first leaf.
-    fn min(&self) -> (u64, u64) {
+    ///
+    /// Panics on an empty subtree. That is the tree's invariant, not an assumption: `strip_empty`
+    /// drops emptied children along with their separator, so only a whole-tree root leaf is ever
+    /// empty, and a root leaf is never reached through a branch.
+    pub(super) fn min(&self) -> (u64, u64) {
         let mut node = self;
         loop {
             match node {
