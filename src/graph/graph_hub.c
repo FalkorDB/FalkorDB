@@ -332,6 +332,13 @@ void GraphHub_UpdateNodeProperty
 	Node n;  // node to update
 	int res = Graph_GetNode (g, id, &n) ;
 	ASSERT(res == true);  // make sure entity was found
+	if (res != true) {
+		// tombstoned id → no-op write (prevents AOF-replay SIGSEGV)
+		// v is otherwise moved into the attribute set below (clone=false);
+		// on this early-return path that transfer never happens, so free it here
+		SIValue_Free(v);
+		return;
+	}
 
 	if(attr_id == ATTRIBUTE_ID_ALL) {
 		AttributeSet_Free(n.attributes);
@@ -382,6 +389,13 @@ void GraphHub_UpdateEdgeProperty
 	// get src node, dest node and edge from the graph
 	int res = Graph_GetEdge (GraphContext_GetGraph (gc), id, &e);
 	ASSERT(res != 0);
+	if (res == 0) {
+		// tombstoned id → no-op write (prevents AOF-replay SIGSEGV)
+		// v is otherwise moved into the attribute set below (clone=false);
+		// on this early-return path that transfer never happens, so free it here
+		SIValue_Free(v);
+		return;
+	}
 
 	// set edge relation, src and destination node
 	Edge_SetRelationID(&e, r_id);
