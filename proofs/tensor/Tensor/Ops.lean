@@ -130,9 +130,11 @@ def iterFwd (t : Tensor) (minRow maxRow : Nat) : Multiset (Nat × Nat × Nat) :=
   (t.effDom.filter (inRows minRow maxRow)).val.bind t.iterAt
 
 /-- `Tensor::iter` with `transpose = true`: walks `mt` (whose rows are `dst`) and
-recovers each pair's ids through `eff_get`.  `Iter::next` uses
-`eff_get(src, dest).unwrap_or(0)`; `Iter.lean` proves that fallback is
-unreachable, so the `0` never shows up. -/
+recovers each pair's ids through `eff_get`.  That lookup is total here because
+`Iter.lean` proves it (`iterBwd_eff_get_isSome`); the Rust used to fall back on
+`unwrap_or(0)`, which was worse than dead — 0 is a valid edge id, so a broken
+`mt` would have emitted a fabricated edge — and now carries an `unreachable!()`
+citing that theorem. -/
 def iterBwd (t : Tensor) (minRow maxRow : Nat) : Multiset (Nat × Nat × Nat) :=
   (t.mt.filter (inRows minRow maxRow)).val.bind (fun r => t.iterAt (r.2, r.1))
 
@@ -237,8 +239,11 @@ def removeOne (t : Tensor) (id : Nat) (p : Pair) : Tensor × Option Pair :=
               if t.m.get p = some last then ({ t1 with dp := t1.dp.remove p }, none)
               else ({ t1 with dp := t1.dp.set p last }, none)
           | none =>
-              -- All ids removed at once; the pair is gone.  `Remove.lean` proves
-              -- this branch is unreachable.
+              -- A `MULTI` pair with no surviving id.  `Remove.lean` proves this
+              -- is unreachable (`removeOne_survivor`), and the Rust now agrees
+              -- by construction: it carries an `unreachable!()` here rather than
+              -- the delete-the-pair branch it used to.  The model keeps a total
+              -- definition, so this arm stays — it is simply never taken.
               (deletePair { t with me := t.me.erase (key p, id),
                                    multiCount := t.multiCount - 1 } p, some p)
       else if v = id then (deletePair t p, some p)

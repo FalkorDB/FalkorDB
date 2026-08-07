@@ -53,14 +53,23 @@ it **preserves `Inv`**, and it **acts on `edgesAt` the way its doc comment says*
 | `encode` / `decode` | `edgesAt_decode_encode`, `invCore_decode_encode`, `inv_decode_encode`, `edgeCount_roundTrip`, plus `msb_or` / `msb_and_eq_zero` / `msb_and_ne_zero` for the MSB tag | `Codec.lean` |
 | per-pair state diagram | 9 arrows of the documented `A`–`J` diagram, on the raw layers: `trans_A_add`, `trans_B_add`, `trans_D_add`, `trans_G_add_cancel`, `trans_G_add_other`, `trans_I_add_cancel`, `trans_D_del`, `trans_E_del`, `trans_F_del_cancel` | `States.lean` |
 
-Two facts the proofs turned up that the code does not state:
+Two facts the proofs turned up that the code did not state — and, since they were
+found, no longer contains:
 
-* **`remove_all` has a dead branch.** In the `MULTI` case, "all ids removed at
+* **`remove_all` had a dead branch.** In the `MULTI` case, "all ids removed at
   once; the pair is gone" is unreachable: a `MULTI` pair holds ≥ 2 ids, so
-  erasing one always leaves a survivor (`removeOne_survivor`).
-* **`Iter`'s backward `unwrap_or(0)` is dead.** `mt` never holds a pair the
+  erasing one always leaves a survivor (`removeOne_survivor`). The Rust now
+  carries an `unreachable!()` there instead, which also flattened the demote path
+  and dropped an `emptied.push` that could never fire.
+* **`Iter`'s backward `unwrap_or(0)` was dead.** `mt` never holds a pair the
   forward matrix has lost, so `eff_get` there is always `some`
-  (`iterBwd_eff_get_isSome`).
+  (`iterBwd_eff_get_isSome`). That fallback was worse than merely dead: 0 is a
+  *valid* edge id, so had the invariant broken, the iterator would have quietly
+  emitted a fabricated edge instead of failing. It now says so.
+
+The models keep both branches, because a Lean definition must be total; they are
+simply never taken. That asymmetry is the point — the proof is what licensed
+removing them from the code.
 
 ## Preconditions the theorems assume
 
@@ -80,10 +89,16 @@ than assumed silently.
 
 * `mt` and `me` are `VersionedMatrix` values in Rust; here they are the sets of
   their effective entries, which is the whole interface `tensor.rs` uses
-  (`set` / `remove` / `remove_mask` / `iter` / `nvals`). Their own three-layer
-  algebra belongs to a proof of `versioned_matrix.rs`. The three *forward* layers
+  (`set` / `remove` / `remove_mask` / `iter` / `nvals`). The three *forward* layers
   (`m`, `dp`, `dm`) are modelled explicitly, since `tensor.rs` manipulates them
   directly and that is where the delicate invariants live.
+
+  **This boundary is now discharged**, not left on trust: the `VersionedMatrix`
+  library in this same project (`VERSIONED_MATRIX.md`, `lake build
+  VersionedMatrix`) proves `VersionedMatrix<bool>` against that exact interface —
+  `eff_set`, `eff_remove`, `eff_removeMask`, `nvals_eq_card`. The two developments
+  together cover the path from Cypher-visible behaviour down to the GraphBLAS
+  calls with no hand-waved layer in between.
 * GraphBLAS pending work (`wait`, `wait_all`, `wait_base`, `is_synced`,
   `pending`) has no denotational content: every operation here behaves as if the
   layers were materialized, which is what `tensor.rs` guarantees by waiting on
