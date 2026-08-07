@@ -3,6 +3,7 @@
 
 use super::Graph;
 use crate::entity_type::EntityType;
+use crate::index::falkordb::falkordb_index::NumericAnswer;
 use crate::index::falkordb::graph_writes;
 use crate::index::index_docs::IndexDocs;
 use crate::index::{IndexQuery, IndexType};
@@ -166,10 +167,12 @@ fn create_index_builds_the_column_from_live_nodes() {
     );
     let (epoch, base) = begin_build(&g, EntityType::Node, &label, &attr);
     assert!(
-        g.falkordb_index
-            .query_numeric(EntityType::Node, &label, &eq(&attr, 20))
-            .is_none(),
-        "a Building column serves no reads"
+        matches!(
+            g.falkordb_index
+                .query_numeric(EntityType::Node, &label, &eq(&attr, 20)),
+            Some(NumericAnswer::NotReady)
+        ),
+        "a Building column answers NotReady, so the read scans instead"
     );
 
     // The background job's install builds the column from the live nodes and flips it `Ready`.
