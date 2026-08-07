@@ -68,6 +68,7 @@
 //! position), producing the effective state — sorted by `(row, col)` —
 //! without materializing a merged matrix or issuing per-entry point lookups.
 
+use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use super::{
@@ -198,6 +199,235 @@ pub(super) fn delta_dominates_base(
     delta_nvals >= MIN_FOLD_DELTA && delta_nvals.saturating_mul(2) >= base_nvals
 }
 
+/// One delta layer plus the bookkeeping the fold policy reads about it.
+///
+/// Both deltas need the same three pieces of state, so they live next to the
+/// layer they describe rather than as `dp_`/`dm_`-prefixed pairs on the owner:
+/// every method that touches a delta would otherwise spell its bookkeeping out
+/// twice.
+///
+/// [`Deref`] gives read access to the layer (`nvals`, `get`, `wait`, `iter`),
+/// but there is deliberately **no** `DerefMut`: a mutation that does not move
+/// `count` leaves the fold policy reading a delta size that never happened, so
+/// writes go through the counted [`Self::insert`] / [`Self::erase`], or through
+/// [`Self::layer_mut`] for callers that resync the count themselves.
+pub(super) struct Delta<T> {
+    layer: Cow<Matrix<T>>,
+    /// Approximate `layer.nvals()`, maintained by the mutation methods without
+    /// GraphBLAS calls. `GrB_Matrix_nvals` on a delta forces its pending
+    /// tuples to merge (an `O(|delta|)` sort/merge), so the fold policy reads
+    /// this counter instead and [`Self::resync`] pins it to the exact value
+    /// whenever something materializes the layer anyway.
+    ///
+    /// Atomic only because the read path latches fold decisions from `&self`.
+    count: AtomicU64,
+    /// `count` when this MVCC version was created ([`Self::new_version`]), or
+    /// after the last fold: `count - tx_nvals` is what the current transaction
+    /// has added — the batch size the fold policy weighs the fold cost
+    /// against.
+    tx_nvals: u64,
+    /// Fold decision, latched here by `dup` / `wait` / `fold_*` and executed
+    /// later by `flush` — which runs *before* the next mutation, the ideal
+    /// moment, since folding there replaces the COW dup of both the delta and
+    /// the base. The flag carries the decision across that gap (and across
+    /// versions, via `new_version`).
+    fold: AtomicBool,
+}
+
+// Manual `Clone` so it holds for every `T` without a `T: Clone` bound (see the
+// note on `Matrix`'s manual `Clone`). Shares the layer's GraphBLAS handle; use
+// [`Delta::new_version`] to start a new MVCC version instead.
+impl<T> Clone for Delta<T> {
+    fn clone(&self) -> Self {
+        self.relayer(self.layer.clone())
+    }
+}
+
+impl<T> Deref for Delta<T> {
+    type Target = Matrix<T>;
+
+    fn deref(&self) -> &Matrix<T> {
+        &self.layer
+    }
+}
+
+impl<T> Delta<T> {
+    /// Wrap a layer whose size is exactly known — a fresh empty matrix, or one
+    /// just decoded. Pins it hypersparse, as every delta is.
+    pub(super) fn new(layer: Matrix<T>) -> Self {
+        Self {
+            count: AtomicU64::new(layer.nvals()),
+            layer: Cow::new(layer.into_hyper()),
+            tx_nvals: 0,
+            fold: AtomicBool::new(false),
+        }
+    }
+
+    /// This delta's bookkeeping over a different layer of the same size (a
+    /// clone, a transpose).
+    fn relayer(
+        &self,
+        layer: Cow<Matrix<T>>,
+    ) -> Self {
+        Self {
+            layer,
+            count: AtomicU64::new(self.count()),
+            tx_nvals: self.tx_nvals,
+            fold: AtomicBool::new(self.fold.load(Ordering::Relaxed)),
+        }
+    }
+
+    /// Next MVCC version: the layer stays COW-shared, and the count so far
+    /// becomes the new transaction's baseline, so `tx_added` measures only what
+    /// that transaction goes on to add.
+    pub(super) fn new_version(
+        &self,
+        fold: bool,
+    ) -> Self {
+        let count = self.count();
+        Self {
+            layer: self.layer.new_version(),
+            count: AtomicU64::new(count),
+            tx_nvals: count,
+            fold: AtomicBool::new(fold),
+        }
+    }
+
+    /// The approximate entry count the fold policy reads.
+    pub(super) fn count(&self) -> u64 {
+        self.count.load(Ordering::Relaxed)
+    }
+
+    /// Materialize the layer and pin `count` to its exact size, bounding the
+    /// drift the approximate counter has accumulated.
+    pub(super) fn resync(&self) {
+        self.layer.wait();
+        self.count.store(self.layer.nvals(), Ordering::Relaxed);
+    }
+
+    /// Latch a fold decision on top of any already latched; returns the
+    /// resulting state.
+    pub(super) fn latch(
+        &self,
+        decision: bool,
+    ) -> bool {
+        self.fold.fetch_or(decision, Ordering::Relaxed) || decision
+    }
+
+    /// What `policy` ([`should_fold`] or [`should_fold_read`]) decides for this
+    /// layer against `base`, or-ed with any decision already latched. Reads the
+    /// approximate counter — exact after a [`Self::resync`]. Pure: `dup`
+    /// decides for the *next* version without disturbing this one.
+    pub(super) fn fold_decision(
+        &self,
+        policy: fn(u64, u64, u64) -> bool,
+        base: u64,
+    ) -> bool {
+        let count = self.count();
+        self.fold.load(Ordering::Relaxed)
+            || policy(count, count.saturating_sub(self.tx_nvals), base)
+    }
+
+    /// [`Self::fold_decision`], latched onto this layer for a later `flush`.
+    pub(super) fn latch_policy(
+        &self,
+        policy: fn(u64, u64, u64) -> bool,
+        base: u64,
+    ) -> bool {
+        self.latch(self.fold_decision(policy, base))
+    }
+
+    /// Whether a fold is currently latched — i.e. whether a `flush` armed now
+    /// would have work to do on this layer.
+    pub(super) fn folding(&self) -> bool {
+        self.fold.load(Ordering::Relaxed)
+    }
+
+    /// Consume the latched decision: true when this layer must fold *and* has
+    /// something to fold.
+    pub(super) fn take_fold(&mut self) -> bool {
+        self.fold.swap(false, Ordering::Relaxed) && self.layer.nvals() > 0
+    }
+
+    /// Swap in a fresh empty layer and zero the bookkeeping — after a fold, or
+    /// at a dimension change. Emptying through the `Cow` instead would
+    /// deep-copy a still-shared delta just to clear it.
+    pub(super) fn clear(
+        &mut self,
+        empty: Matrix<T>,
+    ) {
+        self.layer.replace(empty.into_hyper());
+        *self.count.get_mut() = 0;
+        self.tx_nvals = 0;
+        *self.fold.get_mut() = false;
+    }
+
+    /// Swap in a layer holding the same entries at different dimensions (a
+    /// grow), keeping the bookkeeping: a re-emit changes neither the entry count
+    /// nor whether a fold is due.
+    pub(super) fn regrow(
+        &mut self,
+        layer: Matrix<T>,
+    ) {
+        self.layer.replace(layer.into_hyper());
+    }
+
+    /// The layer, mutably, *without* counting the mutation. For bulk callers
+    /// that resync `count` themselves (`remove_mask`) or that cannot change the
+    /// entry count at all (`resize`).
+    pub(super) fn layer_mut(&mut self) -> &mut Matrix<T> {
+        &mut self.layer
+    }
+
+    /// Drop `(i, j)` and un-count it. Saturates: the caller may not know
+    /// whether the entry was there, and probing a shared, possibly-pending
+    /// delta to find out is the mutation this whole counter exists to avoid.
+    pub(super) fn erase(
+        &mut self,
+        i: u64,
+        j: u64,
+    ) {
+        self.layer_mut().remove(i, j);
+        let count = self.count.get_mut();
+        *count = count.saturating_sub(1);
+    }
+}
+
+// `Matrix::set` is element-typed (`impl Matrix<bool>` / `impl Matrix<u64>`),
+// so the counted insert is too.
+impl Delta<bool> {
+    /// Add `(i, j)` and count it.
+    pub(super) fn insert(
+        &mut self,
+        i: u64,
+        j: u64,
+        value: bool,
+    ) {
+        self.layer_mut().set(i, j, value);
+        *self.count.get_mut() += 1;
+    }
+}
+
+impl Delta<u64> {
+    /// Write `value` at `(i, j)` and count it.
+    ///
+    /// On a valued layer this doubles as the in-place *update* of a committed
+    /// entry — the write *shadows* the live `m` entry with no `dm` mask (see the
+    /// module docs) — so the count may overshoot by one per shadowed pair until
+    /// the next [`Delta::resync`]. That is the drift the counter is allowed:
+    /// the fold policy only needs the delta's order of magnitude, and probing
+    /// the layer to tell an update from an insert would materialize it.
+    pub(super) fn insert(
+        &mut self,
+        i: u64,
+        j: u64,
+        value: u64,
+    ) {
+        self.layer_mut().set(i, j, value);
+        *self.count.get_mut() += 1;
+    }
+}
+
 /// A matrix with MVCC delta tracking for snapshot isolation.
 ///
 /// Wraps a base matrix with separate matrices for tracking additions
@@ -211,32 +441,13 @@ pub struct VersionedMatrix<T> {
     /// Base committed matrix
     m: Cow<Matrix<T>>,
     /// Delta-plus: edges added in current transaction
-    dp: Cow<Matrix<T>>,
+    dp: Delta<T>,
     /// Delta-minus: edges removed in current transaction (always a bool mask)
-    dm: Cow<Matrix<bool>>,
-    /// Approximate `dp.nvals()`, maintained by the mutation methods without
-    /// GraphBLAS calls. `GrB_Matrix_nvals` on a delta forces its pending
-    /// tuples to merge (an `O(|delta|)` sort/merge), so the fold policy reads
-    /// these counters instead and [`wait`](Self::wait) resyncs them to the
-    /// exact values whenever it materializes the deltas anyway.
-    dp_count: AtomicU64,
-    /// Same as `dp_count`, for `dm`.
-    dm_count: AtomicU64,
-    /// `dp_count` when this MVCC version was created (`dup`), or after the
-    /// last fold: `dp_count - dp_tx_nvals` is what the current transaction
-    /// has added — the batch size the fold policy weighs the fold cost
-    /// against.
-    dp_tx_nvals: u64,
-    /// Same as `dp_tx_nvals`, for `dm`.
-    dm_tx_nvals: u64,
-    /// Fold decisions are made in `dup` (version creation, pre-mutation) and
-    /// `wait` (post-mutation, when the transaction's contribution is known)
-    /// but executed by `flush`, which runs *before* the next mutation — the
-    /// ideal moment, since folding there replaces the COW dup of both the
-    /// delta and the base. The flags latch the decision across that gap (and
-    /// across versions, via `dup`).
-    fold_dp: AtomicBool,
-    fold_dm: AtomicBool,
+    dm: Delta<bool>,
+    /// Whether the fold decisions latched on the deltas are executable *now*.
+    /// Not derivable from those flags: [`wait`](Self::wait) deliberately
+    /// latches a decision without arming it, so this is the bit that separates
+    /// "decided" from "run it at the next mutation".
     needs_flush: AtomicBool,
 }
 
@@ -248,12 +459,6 @@ impl<T> Clone for VersionedMatrix<T> {
             m: self.m.clone(),
             dp: self.dp.clone(),
             dm: self.dm.clone(),
-            dp_count: AtomicU64::new(self.dp_count.load(Ordering::Relaxed)),
-            dm_count: AtomicU64::new(self.dm_count.load(Ordering::Relaxed)),
-            dp_tx_nvals: self.dp_tx_nvals,
-            dm_tx_nvals: self.dm_tx_nvals,
-            fold_dp: AtomicBool::new(self.fold_dp.load(Ordering::Relaxed)),
-            fold_dm: AtomicBool::new(self.fold_dm.load(Ordering::Relaxed)),
             needs_flush: AtomicBool::new(self.needs_flush.load(Ordering::Relaxed)),
         }
     }
@@ -304,21 +509,15 @@ impl<T> VersionedMatrix<T> {
         if self.dp.is_synced() && self.dm.is_synced() {
             return;
         }
-        self.dp.wait();
-        self.dm.wait();
+        // `resync` materializes each delta and pins its approximate counter to
+        // the exact count, bounding any drift it accumulated — so the policy
+        // below weighs exact sizes rather than the counters `dup` has to
+        // settle for.
+        self.dp.resync();
+        self.dm.resync();
         let base = self.m.nvals();
-        let dp_nvals = self.dp.nvals();
-        let dm_nvals = self.dm.nvals();
-        // The deltas are materialized now — resync the approximate counters
-        // to the exact counts, bounding any drift they accumulated.
-        self.dp_count.store(dp_nvals, Ordering::Relaxed);
-        self.dm_count.store(dm_nvals, Ordering::Relaxed);
-        let fold_dp = self.fold_dp.load(Ordering::Relaxed)
-            || should_fold_read(dp_nvals, dp_nvals.saturating_sub(self.dp_tx_nvals), base);
-        let fold_dm = self.fold_dm.load(Ordering::Relaxed)
-            || should_fold_read(dm_nvals, dm_nvals.saturating_sub(self.dm_tx_nvals), base);
-        self.fold_dp.store(fold_dp, Ordering::Relaxed);
-        self.fold_dm.store(fold_dm, Ordering::Relaxed);
+        self.dp.latch_policy(should_fold_read, base);
+        self.dm.latch_policy(should_fold_read, base);
         // Deliberately NOT setting needs_flush: executing a fold mid-tx is
         // pathological — a create+delete transaction folds its own pending
         // adds into the base right before deleting them, leaving the base
@@ -427,8 +626,11 @@ impl VersionedMatrix<bool> {
             // hyper hash on every capacity change (measured 1.4-5.7x write
             // regressions).
             self.m.resize(nrows, ncols);
-            self.dp.resize(nrows, ncols);
-            self.dm.resize(nrows, ncols);
+            // A resize moves no entries between layers, so the delta counters
+            // stand (a shrink that drops entries only adds to the drift
+            // `resync` bounds).
+            self.dp.layer_mut().resize(nrows, ncols);
+            self.dm.layer_mut().resize(nrows, ncols);
             return;
         }
         // Growing: the base is COW-shared with the committed snapshot, so an
@@ -453,14 +655,10 @@ impl VersionedMatrix<bool> {
             let new_m = self.m.grown(nrows, ncols);
             new_m.wait();
             self.m.replace(new_m);
-            self.dp
-                .replace(Matrix::<bool>::new(nrows, ncols).into_hyper());
-            self.dm
-                .replace(Matrix::<bool>::new(nrows, ncols).into_hyper());
             // The counters are approximate and may have drifted; both deltas
-            // are provably empty here, so pin them to the truth rather than
-            // leave a phantom delta driving the fold policy.
-            self.reset_delta_bookkeeping();
+            // are provably empty here, so `clear` pins them to the truth
+            // rather than leaving a phantom delta driving the fold policy.
+            self.clear_deltas(nrows, ncols);
             return;
         }
         // Streamed with row iterators rather than `extract_tuples` per layer:
@@ -512,24 +710,20 @@ impl VersionedMatrix<bool> {
         new_m.build(&ri, &rj);
         new_m.wait();
         self.m.replace(new_m);
-        // Deltas are folded in; swap in fresh empty ones at the new dims
-        // (resizing through the Cow would deep-copy a still-shared delta).
-        self.dp
-            .replace(Matrix::<bool>::new(nrows, ncols).into_hyper());
-        self.dm
-            .replace(Matrix::<bool>::new(nrows, ncols).into_hyper());
-        self.reset_delta_bookkeeping();
+        // Both deltas are folded into the new base above.
+        self.clear_deltas(nrows, ncols);
     }
 
-    /// Both deltas are known empty: zero the approximate counters and drop the
-    /// latched fold decisions, so nothing downstream believes a delta is there.
-    fn reset_delta_bookkeeping(&mut self) {
-        *self.dp_count.get_mut() = 0;
-        *self.dm_count.get_mut() = 0;
-        self.dp_tx_nvals = 0;
-        self.dm_tx_nvals = 0;
-        self.fold_dp.store(false, Ordering::Relaxed);
-        self.fold_dm.store(false, Ordering::Relaxed);
+    /// Swap in fresh empty deltas at the given dims and drop all their
+    /// bookkeeping — for the grow paths, which have just folded (or proved
+    /// empty) both layers.
+    fn clear_deltas(
+        &mut self,
+        nrows: u64,
+        ncols: u64,
+    ) {
+        self.dp.clear(Matrix::<bool>::new(nrows, ncols));
+        self.dm.clear(Matrix::<bool>::new(nrows, ncols));
         self.needs_flush.store(false, Ordering::Relaxed);
     }
 
@@ -549,12 +743,9 @@ impl VersionedMatrix<bool> {
     ) {
         self.flush();
         if self.m.get(i, j).is_some() {
-            self.dm.set(i, j, true);
-            *self.dm_count.get_mut() += 1;
+            self.dm.insert(i, j, true);
         } else {
-            self.dp.remove(i, j);
-            let dp_count = self.dp_count.get_mut();
-            *dp_count = dp_count.saturating_sub(1);
+            self.dp.erase(i, j);
         }
     }
 
@@ -579,20 +770,19 @@ impl VersionedMatrix<bool> {
         // Existing dm entries survive: outside the mask they are untouched,
         // and inside the mask dm ⊆ m guarantees they are in the intersection.
         self.dm
+            .layer_mut()
             .element_wise_multiply(Some(mask), Some(mask), Some(&*self.m), None);
         // dp &= ~mask: remove entries from dp that exist in mask
-        self.dp.remove_all(mask);
+        self.dp.layer_mut().remove_all(mask);
         // Resync the approximate counters to the exact counts. `nvals` would
         // report them correctly on its own — `GrB_Matrix_nvals` completes any
         // pending work internally — but the eWiseMult/remove_all above leave
-        // the wrapper's `has_pending` flag set, so without waiting first the
-        // flag stays a lie: `is_synced()` keeps reporting false and every
-        // later read path pays a redundant `wait()`. Waiting here is a single
-        // early-returning atomic load per layer once already synced.
-        self.dm.wait();
-        self.dp.wait();
-        *self.dm_count.get_mut() = self.dm.nvals();
-        *self.dp_count.get_mut() = self.dp.nvals();
+        // the wrapper's `has_pending` flag set, so without the wait inside
+        // `resync` the flag stays a lie: `is_synced()` keeps reporting false
+        // and every later read path pays a redundant `wait()`. That wait is a
+        // single early-returning atomic load per layer once already synced.
+        self.dm.resync();
+        self.dp.resync();
     }
 
     #[must_use]
@@ -629,12 +819,9 @@ impl VersionedMatrix<bool> {
     ) {
         self.flush();
         if self.m.get(i, j).is_some() {
-            self.dm.remove(i, j);
-            let dm_count = self.dm_count.get_mut();
-            *dm_count = dm_count.saturating_sub(1);
+            self.dm.erase(i, j);
         } else {
-            self.dp.set(i, j, value);
-            *self.dp_count.get_mut() += 1;
+            self.dp.insert(i, j, value);
         }
     }
 
@@ -645,14 +832,8 @@ impl VersionedMatrix<bool> {
     ) -> Self {
         Self {
             m: Cow::new(Matrix::<bool>::new(nrows, ncols)),
-            dp: Cow::new(Matrix::<bool>::new(nrows, ncols).into_hyper()),
-            dm: Cow::new(Matrix::<bool>::new(nrows, ncols).into_hyper()),
-            dp_count: AtomicU64::new(0),
-            dm_count: AtomicU64::new(0),
-            dp_tx_nvals: 0,
-            dm_tx_nvals: 0,
-            fold_dp: AtomicBool::new(false),
-            fold_dm: AtomicBool::new(false),
+            dp: Delta::new(Matrix::<bool>::new(nrows, ncols)),
+            dm: Delta::new(Matrix::<bool>::new(nrows, ncols)),
             needs_flush: AtomicBool::new(false),
         }
     }
@@ -671,14 +852,8 @@ impl VersionedMatrix<bool> {
         let ncols = m.ncols();
         Self {
             m: Cow::new(m),
-            dp: Cow::new(Matrix::<bool>::new(nrows, ncols).into_hyper()),
-            dm: Cow::new(Matrix::<bool>::new(nrows, ncols).into_hyper()),
-            dp_count: AtomicU64::new(0),
-            dm_count: AtomicU64::new(0),
-            dp_tx_nvals: 0,
-            dm_tx_nvals: 0,
-            fold_dp: AtomicBool::new(false),
-            fold_dm: AtomicBool::new(false),
+            dp: Delta::new(Matrix::<bool>::new(nrows, ncols)),
+            dm: Delta::new(Matrix::<bool>::new(nrows, ncols)),
             needs_flush: AtomicBool::new(false),
         }
     }
@@ -689,8 +864,8 @@ impl VersionedMatrix<bool> {
             // pending work; nvals/eWiseAdd/select below materialize it (a
             // mutation), so wait first under the readers' lock.
             self.wait_all();
-            let fold_dp = self.fold_dp.swap(false, Ordering::Relaxed) && self.dp.nvals() > 0;
-            let fold_dm = self.fold_dm.swap(false, Ordering::Relaxed) && self.dm.nvals() > 0;
+            let fold_dp = self.dp.take_fold();
+            let fold_dm = self.dm.take_fold();
             if fold_dp || fold_dm {
                 let nrows = self.m.nrows();
                 let ncols = self.m.ncols();
@@ -720,19 +895,11 @@ impl VersionedMatrix<bool> {
                 }
                 new_m.wait();
                 self.m.replace(new_m);
-                // Clearing through the Cow would deep-copy a still-shared
-                // delta just to empty it; swap in a fresh empty matrix.
                 if fold_dp {
-                    self.dp
-                        .replace(Matrix::<bool>::new(nrows, ncols).into_hyper());
-                    *self.dp_count.get_mut() = 0;
-                    self.dp_tx_nvals = 0;
+                    self.dp.clear(Matrix::<bool>::new(nrows, ncols));
                 }
                 if fold_dm {
-                    self.dm
-                        .replace(Matrix::<bool>::new(nrows, ncols).into_hyper());
-                    *self.dm_count.get_mut() = 0;
-                    self.dm_tx_nvals = 0;
+                    self.dm.clear(Matrix::<bool>::new(nrows, ncols));
                 }
             }
             self.needs_flush.store(false, Ordering::Relaxed);
@@ -749,7 +916,7 @@ impl VersionedMatrix<bool> {
     /// deltas would stay unfolded.
     pub fn fold_latched(&mut self) {
         self.wait();
-        if self.fold_dp.load(Ordering::Relaxed) || self.fold_dm.load(Ordering::Relaxed) {
+        if *self.dp.fold.get_mut() || *self.dm.fold.get_mut() {
             self.needs_flush.store(true, Ordering::Relaxed);
             self.flush();
         }
@@ -773,11 +940,15 @@ impl VersionedMatrix<bool> {
     /// are by definition small next to the base they shadow.
     pub fn fold_oversized(&mut self) {
         let base = self.m.nvals();
-        let fold_dp = delta_dominates_base(self.dp_count.load(Ordering::Relaxed), base);
-        let fold_dm = delta_dominates_base(self.dm_count.load(Ordering::Relaxed), base);
-        if fold_dp || fold_dm {
-            self.fold_dp.fetch_or(fold_dp, Ordering::Relaxed);
-            self.fold_dm.fetch_or(fold_dm, Ordering::Relaxed);
+        // Only the escape hatch arms the flush here. Latching alone must not:
+        // a decision `wait` left latched is deliberately deferred to the next
+        // version, and executing it here would be the mid-tx fold that
+        // deferral exists to prevent.
+        let oversized_dp = delta_dominates_base(self.dp.count(), base);
+        let oversized_dm = delta_dominates_base(self.dm.count(), base);
+        if oversized_dp || oversized_dm {
+            self.dp.latch(oversized_dp);
+            self.dm.latch(oversized_dm);
             self.needs_flush.store(true, Ordering::Relaxed);
             self.flush();
         }
@@ -795,26 +966,7 @@ impl VersionedMatrix<bool> {
         &mut self,
         entries: impl Iterator<Item = (u64, u64)>,
     ) {
-        self.flush();
-        // The nvals below reads the shared dm raw; nvals on a pending matrix
-        // merges its pending tuples internally (a mutation), racing
-        // concurrent readers on the committed snapshot. Materialize through
-        // the mutex-guarded wait first — an atomic load when already synced.
-        self.dm.wait();
-        if self.dm.nvals() == 0 {
-            let mut n = 0u64;
-            for (i, j) in entries {
-                if self.m.get(i, j).is_none() {
-                    self.dp.set(i, j, true);
-                    n += 1;
-                }
-            }
-            *self.dp_count.get_mut() += n;
-        } else {
-            for (i, j) in entries {
-                self.set(i, j, true);
-            }
-        }
+        self.set_all_inner::<true>(entries);
     }
 
     /// [`Self::set_all`] for entries the caller guarantees are new — never
@@ -828,17 +980,42 @@ impl VersionedMatrix<bool> {
         &mut self,
         entries: impl Iterator<Item = (u64, u64)>,
     ) {
+        self.set_all_inner::<false>(entries);
+    }
+
+    /// Shared body of [`Self::set_all`] and [`Self::set_all_new`], which differ
+    /// only by `PROBE_BASE`: the per-entry `m` lookup that keeps
+    /// `dp ∩ m = ∅`, which the `_new` caller's freshness guarantee lets it
+    /// skip. Probing `m` is safe from either (unlike a delta, `m` is never
+    /// pending — see [`Self::wait`]), so the skipped check survives as a
+    /// `debug_assert` rather than being dropped for the reasons
+    /// [`Self::remove`] documents.
+    fn set_all_inner<const PROBE_BASE: bool>(
+        &mut self,
+        entries: impl Iterator<Item = (u64, u64)>,
+    ) {
         self.flush();
-        // See `set_all`: the nvals below reads the shared dm raw.
+        // `flush` is a no-op unless a fold was latched, so it guarantees
+        // nothing on return. The nvals below reads the shared dm raw, and
+        // nvals on a pending matrix merges its pending tuples internally (a
+        // mutation), racing concurrent readers on the committed snapshot.
+        // Materialize through the mutex-guarded wait first — an atomic load
+        // when already synced.
         self.dm.wait();
         if self.dm.nvals() == 0 {
-            let mut n = 0u64;
             for (i, j) in entries {
-                debug_assert!(self.m.get(i, j).is_none());
-                self.dp.set(i, j, true);
-                n += 1;
+                if PROBE_BASE {
+                    if self.m.get(i, j).is_some() {
+                        continue;
+                    }
+                } else {
+                    debug_assert!(
+                        self.m.get(i, j).is_none(),
+                        "set_all_new on ({i}, {j}), which is live in the committed base"
+                    );
+                }
+                self.dp.insert(i, j, true);
             }
-            *self.dp_count.get_mut() += n;
         } else {
             for (i, j) in entries {
                 self.set(i, j, true);
@@ -862,22 +1039,12 @@ impl<T> Dup<Self> for VersionedMatrix<T> {
     /// `nvals` is a cheap field read.
     fn dup(&self) -> Self {
         let base = self.m.nvals();
-        let dp_count = self.dp_count.load(Ordering::Relaxed);
-        let dm_count = self.dm_count.load(Ordering::Relaxed);
-        let fold_dp = self.fold_dp.load(Ordering::Relaxed)
-            || should_fold(dp_count, dp_count.saturating_sub(self.dp_tx_nvals), base);
-        let fold_dm = self.fold_dm.load(Ordering::Relaxed)
-            || should_fold(dm_count, dm_count.saturating_sub(self.dm_tx_nvals), base);
+        let fold_dp = self.dp.fold_decision(should_fold, base);
+        let fold_dm = self.dm.fold_decision(should_fold, base);
         Self {
             m: self.m.new_version(),
-            dp: self.dp.new_version(),
-            dm: self.dm.new_version(),
-            dp_count: AtomicU64::new(dp_count),
-            dm_count: AtomicU64::new(dm_count),
-            dp_tx_nvals: dp_count,
-            dm_tx_nvals: dm_count,
-            fold_dp: AtomicBool::new(fold_dp),
-            fold_dm: AtomicBool::new(fold_dm),
+            dp: self.dp.new_version(fold_dp),
+            dm: self.dm.new_version(fold_dm),
             needs_flush: AtomicBool::new(fold_dp || fold_dm),
         }
     }
@@ -892,14 +1059,10 @@ impl VersionedMatrix<bool> {
     pub fn transpose(&self) -> Self {
         Self {
             m: Cow::new(self.m.transpose()),
-            dp: Cow::new(self.dp.transpose().into_hyper()),
-            dm: Cow::new(self.dm.transpose().into_hyper()),
-            dp_count: AtomicU64::new(self.dp_count.load(Ordering::Relaxed)),
-            dm_count: AtomicU64::new(self.dm_count.load(Ordering::Relaxed)),
-            dp_tx_nvals: self.dp_tx_nvals,
-            dm_tx_nvals: self.dm_tx_nvals,
-            fold_dp: AtomicBool::new(self.fold_dp.load(Ordering::Relaxed)),
-            fold_dm: AtomicBool::new(self.fold_dm.load(Ordering::Relaxed)),
+            // A transpose moves no entries, so each delta keeps its
+            // bookkeeping verbatim over the transposed layer.
+            dp: self.dp.relayer(Cow::new(self.dp.transpose().into_hyper())),
+            dm: self.dm.relayer(Cow::new(self.dm.transpose().into_hyper())),
             needs_flush: AtomicBool::new(self.needs_flush.load(Ordering::Relaxed)),
         }
     }
@@ -921,20 +1084,18 @@ impl<V> Decode<19> for VersionedMatrix<V> {
         let m = Matrix::<V>::decode(r)?;
         let dp = Matrix::<V>::decode(r)?;
         let dm = Matrix::<bool>::decode(r)?;
-        // Decoded deltas have no owning transaction; treat the whole delta as
-        // freshly added so the fold policy sees it on the first flush.
-        let fold_dp = should_fold(dp.nvals(), dp.nvals(), m.nvals());
-        let fold_dm = should_fold(dm.nvals(), dm.nvals(), m.nvals());
+        // Decoded deltas have no owning transaction; `tx_nvals` starts at 0, so
+        // the fold policy treats the whole delta as freshly added and sees it
+        // on the first flush.
+        let base = m.nvals();
+        let dp = Delta::new(dp);
+        let dm = Delta::new(dm);
+        let fold_dp = dp.latch_policy(should_fold, base);
+        let fold_dm = dm.latch_policy(should_fold, base);
         Ok(Self {
-            dp_count: AtomicU64::new(dp.nvals()),
-            dm_count: AtomicU64::new(dm.nvals()),
             m: Cow::new(m),
-            dp: Cow::new(dp.into_hyper()),
-            dm: Cow::new(dm.into_hyper()),
-            dp_tx_nvals: 0,
-            dm_tx_nvals: 0,
-            fold_dp: AtomicBool::new(fold_dp),
-            fold_dm: AtomicBool::new(fold_dm),
+            dp,
+            dm,
             needs_flush: AtomicBool::new(fold_dp || fold_dm),
         })
     }
@@ -983,14 +1144,14 @@ impl<E: IterExtract> Iter<E> {
     pub(crate) fn from_layers<V>(
         m: &Matrix<V>,
         dp: &Matrix<V>,
-        dm: &Cow<Matrix<bool>>,
+        dm: &Matrix<bool>,
         min_row: u64,
         max_row: u64,
     ) -> Self {
         let mut dmit = if dm.nvals() == 0 {
             None
         } else {
-            Some(matrix::Iter::<BoolExtract>::new(&**dm, min_row, max_row))
+            Some(matrix::Iter::<BoolExtract>::new(dm, min_row, max_row))
         };
         let dm_next = dmit.as_mut().and_then(Iterator::next);
         Self {

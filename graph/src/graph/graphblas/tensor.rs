@@ -121,7 +121,7 @@
 
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::graph::{
     cow::Cow,
@@ -133,7 +133,7 @@ use super::{
     serialization::{Decode, Encode, Reader, Writer},
     vector::Vector,
     versioned_matrix::{
-        self, VersionedMatrix, delta_dominates_base, should_fold, should_fold_read,
+        self, Delta, VersionedMatrix, delta_dominates_base, should_fold, should_fold_read,
     },
 };
 
@@ -184,9 +184,9 @@ pub struct Tensor {
     /// Base committed matrix
     m: Cow<Matrix<u64>>,
     /// Delta-plus: edges added in current transaction
-    dp: Cow<Matrix<u64>>,
+    dp: Delta<u64>,
     /// Delta-minus: edges removed in current transaction (always a bool mask)
-    dm: Cow<Matrix<bool>>,
+    dm: Delta<bool>,
     /// Backward adjacency (dst → src), BOOL structure only. Edge ids are never
     /// stored here — they are recovered from `m` (and `me`) when iterating
     /// incoming edges, avoiding a redundant copy of every id.
@@ -197,23 +197,8 @@ pub struct Tensor {
     me: VersionedMatrix<bool>,
     /// Number of pairs whose effective inline value is [`MULTI_EDGE`].
     multi_count: u64,
-    /// Approximate `dp.nvals()`, maintained by the mutation methods without
-    /// GraphBLAS calls (reading `nvals` on a delta would force its pending
-    /// tuples to merge); `wait_fwd` resyncs it exactly. Same mechanism as
-    /// `VersionedMatrix`.
-    dp_count: AtomicU64,
-    /// Same as `dp_count`, for `dm`.
-    dm_count: AtomicU64,
-    /// `dp_count` when this MVCC version was created (or after the last
-    /// fold); `dp_count - dp_tx_nvals` is what the current transaction has
-    /// added (see the fold policy in `should_fold`).
-    dp_tx_nvals: u64,
-    /// Same as `dp_tx_nvals`, for `dm`.
-    dm_tx_nvals: u64,
-    /// Fold decisions latched by `wait_fwd` for the next `flush` (same
-    /// mechanism as `VersionedMatrix`).
-    fold_dp: AtomicBool,
-    fold_dm: AtomicBool,
+    /// Whether the fold decisions latched on `dp`/`dm` are executable now; see
+    /// `VersionedMatrix`'s field of the same name.
     needs_flush: AtomicBool,
 }
 
@@ -234,12 +219,6 @@ impl Clone for Tensor {
             mt: self.mt.clone(),
             me: self.me.clone(),
             multi_count: self.multi_count,
-            dp_count: AtomicU64::new(self.dp_count.load(Ordering::Relaxed)),
-            dm_count: AtomicU64::new(self.dm_count.load(Ordering::Relaxed)),
-            dp_tx_nvals: self.dp_tx_nvals,
-            dm_tx_nvals: self.dm_tx_nvals,
-            fold_dp: AtomicBool::new(self.fold_dp.load(Ordering::Relaxed)),
-            fold_dm: AtomicBool::new(self.fold_dm.load(Ordering::Relaxed)),
             needs_flush: AtomicBool::new(self.needs_flush.load(Ordering::Relaxed)),
         }
     }
@@ -253,17 +232,11 @@ impl Tensor {
     ) -> Self {
         Self {
             m: Cow::new(Matrix::<u64>::new(nrows, ncols)),
-            dp: Cow::new(Matrix::<u64>::new(nrows, ncols).into_hyper()),
-            dm: Cow::new(Matrix::<bool>::new(nrows, ncols).into_hyper()),
+            dp: Delta::new(Matrix::<u64>::new(nrows, ncols)),
+            dm: Delta::new(Matrix::<bool>::new(nrows, ncols)),
             mt: VersionedMatrix::<bool>::new(ncols, nrows),
             me: VersionedMatrix::<bool>::new(GrB_INDEX_MAX, GrB_INDEX_MAX),
             multi_count: 0,
-            dp_count: AtomicU64::new(0),
-            dm_count: AtomicU64::new(0),
-            dp_tx_nvals: 0,
-            dm_tx_nvals: 0,
-            fold_dp: AtomicBool::new(false),
-            fold_dm: AtomicBool::new(false),
             needs_flush: AtomicBool::new(false),
         }
     }
@@ -281,21 +254,13 @@ impl Tensor {
         if self.dp.is_synced() && self.dm.is_synced() {
             return;
         }
-        self.dp.wait();
-        self.dm.wait();
+        // `resync` materializes each delta and pins its approximate counter to
+        // the exact count, so the policy below weighs exact sizes.
+        self.dp.resync();
+        self.dm.resync();
         let base = self.m.nvals();
-        let dp_nvals = self.dp.nvals();
-        let dm_nvals = self.dm.nvals();
-        // The deltas are materialized now — resync the approximate counters
-        // to the exact counts, bounding any drift they accumulated.
-        self.dp_count.store(dp_nvals, Ordering::Relaxed);
-        self.dm_count.store(dm_nvals, Ordering::Relaxed);
-        let fold_dp = self.fold_dp.load(Ordering::Relaxed)
-            || should_fold_read(dp_nvals, dp_nvals.saturating_sub(self.dp_tx_nvals), base);
-        let fold_dm = self.fold_dm.load(Ordering::Relaxed)
-            || should_fold_read(dm_nvals, dm_nvals.saturating_sub(self.dm_tx_nvals), base);
-        self.fold_dp.store(fold_dp, Ordering::Relaxed);
-        self.fold_dm.store(fold_dm, Ordering::Relaxed);
+        self.dp.latch_policy(should_fold_read, base);
+        self.dm.latch_policy(should_fold_read, base);
         // Not setting needs_flush: see `VersionedMatrix::wait` — mid-tx fold
         // execution is pathological for create+delete transactions; `dup`
         // carries the latched decision into the next version instead.
@@ -455,21 +420,16 @@ impl Tensor {
         {
             self.mt.set(d, s, true);
             if let Some(committed) = m_masked[i] {
-                self.dm.remove(s, d);
-                let dm_count = self.dm_count.get_mut();
-                *dm_count = dm_count.saturating_sub(1);
+                self.dm.erase(s, d);
                 if committed == id {
                     // Cancel to clean: committed value restored. Drop any dp
                     // shadow (re-promotion of a demoted committed-multi pair;
-                    // both removes are no-ops when the entry is absent).
-                    self.dp.remove(s, d);
-                    let dp_count = self.dp_count.get_mut();
-                    *dp_count = dp_count.saturating_sub(1);
+                    // both erases are no-ops when the entry is absent).
+                    self.dp.erase(s, d);
                     continue;
                 }
             }
-            self.dp.set(s, d, id);
-            *self.dp_count.get_mut() += 1;
+            self.dp.insert(s, d, id);
         }
     }
 
@@ -515,14 +475,22 @@ impl Tensor {
             // masks then skip); dp &= ¬mask: drop pending adds (including the
             // shadow value of any in-place-updated pair, whose committed entry
             // the dm update just masked — keeping `dp ∩ dm = ∅`).
-            self.dm
-                .element_wise_multiply(Some(&m_mask), Some(&m_mask), Some(&*self.m), None);
-            self.dp.remove_all(&m_mask);
+            self.dm.layer_mut().element_wise_multiply(
+                Some(&m_mask),
+                Some(&m_mask),
+                Some(&*self.m),
+                None,
+            );
+            self.dp.layer_mut().remove_all(&m_mask);
             self.mt.remove_mask(&mt_mask);
-            // Bulk GraphBLAS ops leave both deltas materialized — resync the
-            // approximate counters exactly (nvals is a field read here).
-            *self.dm_count.get_mut() = self.dm.nvals();
-            *self.dp_count.get_mut() = self.dp.nvals();
+            // Resync the approximate counters to the exact counts. The
+            // eWiseMult/remove_all above leave the wrapper's `has_pending` flag
+            // set, so `resync`'s wait is what stops that flag being a lie —
+            // otherwise `is_synced()` keeps reporting false and every later read
+            // path pays a redundant `wait()` (same reasoning as
+            // `VersionedMatrix::remove_mask`).
+            self.dm.resync();
+            self.dp.resync();
             return rels.iter().map(|&(_, src, dst)| (src, dst)).collect();
         }
 
@@ -551,34 +519,25 @@ impl Tensor {
                         // live value (no `dm` mask).
                         self.me.remove(key, last);
                         if self.m.get(src, dst) == Some(last) {
-                            self.dp.remove(src, dst);
-                            let dp_count = self.dp_count.get_mut();
-                            *dp_count = dp_count.saturating_sub(1);
+                            self.dp.erase(src, dst);
                         } else {
-                            self.dp.set(src, dst, last);
-                            *self.dp_count.get_mut() += 1;
+                            self.dp.insert(src, dst, last);
                         }
                         // mt structure already has (dst, src); the pair survives.
                     } else {
                         // All ids removed at once; the pair is gone.
-                        self.dp.remove(src, dst);
-                        let dp_count = self.dp_count.get_mut();
-                        *dp_count = dp_count.saturating_sub(1);
+                        self.dp.erase(src, dst);
                         if self.m.contains(src, dst) {
-                            self.dm.set(src, dst, true);
-                            *self.dm_count.get_mut() += 1;
+                            self.dm.insert(src, dst, true);
                         }
                         self.mt.remove(dst, src);
                         emptied.push((src, dst));
                     }
                 }
                 Some(inline_id) if inline_id == id => {
-                    self.dp.remove(src, dst);
-                    let dp_count = self.dp_count.get_mut();
-                    *dp_count = dp_count.saturating_sub(1);
+                    self.dp.erase(src, dst);
                     if self.m.contains(src, dst) {
-                        self.dm.set(src, dst, true);
-                        *self.dm_count.get_mut() += 1;
+                        self.dm.insert(src, dst, true);
                     }
                     self.mt.remove(dst, src);
                     emptied.push((src, dst));
@@ -602,8 +561,11 @@ impl Tensor {
             // work afterwards — waiting here would rebuild the freed hyper hash
             // on every capacity grow (measured 1.4-5.7x write regressions).
             self.m.resize(nrows, ncols);
-            self.dp.resize(nrows, ncols);
-            self.dm.resize(nrows, ncols);
+            // A resize moves no entries between layers, so the delta counters
+            // stand (a shrink that drops entries only adds to the drift
+            // `resync` bounds).
+            self.dp.layer_mut().resize(nrows, ncols);
+            self.dm.layer_mut().resize(nrows, ncols);
             self.mt.resize(ncols, nrows);
             return;
         }
@@ -646,13 +608,13 @@ impl Tensor {
         } else {
             Matrix::<u64>::new(nrows, ncols)
         };
-        self.dp.replace(new_dp.into_hyper());
+        self.dp.regrow(new_dp);
         let new_dm = if self.dm.nvals() > 0 {
             self.dm.grown(nrows, ncols)
         } else {
             Matrix::<bool>::new(nrows, ncols)
         };
-        self.dm.replace(new_dm.into_hyper());
+        self.dm.regrow(new_dm);
         self.mt.resize(ncols, nrows);
     }
 
@@ -675,8 +637,8 @@ impl Tensor {
             self.m.wait();
             self.dp.wait();
             self.dm.wait();
-            let fold_dp = self.fold_dp.swap(false, Ordering::Relaxed) && self.dp.nvals() > 0;
-            let fold_dm = self.fold_dm.swap(false, Ordering::Relaxed) && self.dm.nvals() > 0;
+            let fold_dp = self.dp.take_fold();
+            let fold_dm = self.dm.take_fold();
             if fold_dp || fold_dm {
                 let nrows = self.m.nrows();
                 let ncols = self.m.ncols();
@@ -705,19 +667,11 @@ impl Tensor {
                 }
                 new_m.wait();
                 self.m.replace(new_m);
-                // Clearing through the Cow would deep-copy a still-shared
-                // delta just to empty it; swap in a fresh empty matrix.
                 if fold_dp {
-                    self.dp
-                        .replace(Matrix::<u64>::new(nrows, ncols).into_hyper());
-                    *self.dp_count.get_mut() = 0;
-                    self.dp_tx_nvals = 0;
+                    self.dp.clear(Matrix::<u64>::new(nrows, ncols));
                 }
                 if fold_dm {
-                    self.dm
-                        .replace(Matrix::<bool>::new(nrows, ncols).into_hyper());
-                    *self.dm_count.get_mut() = 0;
-                    self.dm_tx_nvals = 0;
+                    self.dm.clear(Matrix::<bool>::new(nrows, ncols));
                 }
             }
             self.needs_flush.store(false, Ordering::Relaxed);
@@ -732,7 +686,7 @@ impl Tensor {
     /// a GRAPH.BULK command; see [`VersionedMatrix::fold_latched`].
     pub fn fold_latched(&mut self) {
         self.wait_fwd();
-        if self.fold_dp.load(Ordering::Relaxed) || self.fold_dm.load(Ordering::Relaxed) {
+        if self.dp.folding() || self.dm.folding() {
             self.needs_flush.store(true, Ordering::Relaxed);
             self.flush();
         }
@@ -748,11 +702,13 @@ impl Tensor {
     /// holds both copies until the next transaction touching it.
     pub fn fold_oversized(&mut self) {
         let base = self.m.nvals();
-        let fold_dp = delta_dominates_base(self.dp_count.load(Ordering::Relaxed), base);
-        let fold_dm = delta_dominates_base(self.dm_count.load(Ordering::Relaxed), base);
-        if fold_dp || fold_dm {
-            self.fold_dp.fetch_or(fold_dp, Ordering::Relaxed);
-            self.fold_dm.fetch_or(fold_dm, Ordering::Relaxed);
+        // Only the escape hatch arms the flush; a decision `wait_fwd` left
+        // latched stays deferred (see `VersionedMatrix::fold_oversized`).
+        let oversized_dp = delta_dominates_base(self.dp.count(), base);
+        let oversized_dm = delta_dominates_base(self.dm.count(), base);
+        if oversized_dp || oversized_dm {
+            self.dp.latch(oversized_dp);
+            self.dm.latch(oversized_dm);
             self.needs_flush.store(true, Ordering::Relaxed);
             self.flush();
         }
@@ -798,25 +754,15 @@ impl Tensor {
     #[must_use]
     pub fn dup(&self) -> Self {
         let base = self.m.nvals();
-        let dp_count = self.dp_count.load(Ordering::Relaxed);
-        let dm_count = self.dm_count.load(Ordering::Relaxed);
-        let fold_dp = self.fold_dp.load(Ordering::Relaxed)
-            || should_fold(dp_count, dp_count.saturating_sub(self.dp_tx_nvals), base);
-        let fold_dm = self.fold_dm.load(Ordering::Relaxed)
-            || should_fold(dm_count, dm_count.saturating_sub(self.dm_tx_nvals), base);
+        let fold_dp = self.dp.fold_decision(should_fold, base);
+        let fold_dm = self.dm.fold_decision(should_fold, base);
         Self {
             m: self.m.new_version(),
-            dp: self.dp.new_version(),
-            dm: self.dm.new_version(),
+            dp: self.dp.new_version(fold_dp),
+            dm: self.dm.new_version(fold_dm),
             mt: self.mt.dup(),
             me: self.me.dup(),
             multi_count: self.multi_count,
-            dp_count: AtomicU64::new(dp_count),
-            dm_count: AtomicU64::new(dm_count),
-            dp_tx_nvals: dp_count,
-            dm_tx_nvals: dm_count,
-            fold_dp: AtomicBool::new(fold_dp),
-            fold_dm: AtomicBool::new(fold_dm),
             needs_flush: AtomicBool::new(fold_dp || fold_dm),
         }
     }
@@ -1130,17 +1076,11 @@ impl Decode<19> for Tensor {
         // decode, so leave it empty here.
         Ok(Self {
             m: Cow::new(m),
-            dp: Cow::new(Matrix::<u64>::new(nrows, ncols).into_hyper()),
-            dm: Cow::new(Matrix::<bool>::new(nrows, ncols).into_hyper()),
+            dp: Delta::new(Matrix::<u64>::new(nrows, ncols)),
+            dm: Delta::new(Matrix::<bool>::new(nrows, ncols)),
             mt: VersionedMatrix::<bool>::new(0, 0),
             me,
             multi_count,
-            dp_count: AtomicU64::new(0),
-            dm_count: AtomicU64::new(0),
-            dp_tx_nvals: 0,
-            dm_tx_nvals: 0,
-            fold_dp: AtomicBool::new(false),
-            fold_dm: AtomicBool::new(false),
             needs_flush: AtomicBool::new(false),
         })
     }
