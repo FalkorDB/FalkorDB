@@ -444,6 +444,25 @@ impl VersionedMatrix<bool> {
         // lock-coordinated wait() first or it races concurrent readers
         // (observed as GrB_INVALID_OBJECT / heap corruption under stress).
         self.wait_all();
+        // With nothing to fold there is no merge to do, only a copy of `m` at
+        // the new dims — which `GxB_Matrix_concat` does as one bulk block copy
+        // instead of a tuple round-trip (`grow_cost_concat_vs_rebuild`: 1.2 ms
+        // vs 7.6-8.4 ms at 1m entries). This is the common shape, since a grow
+        // typically follows a commit that already folded.
+        if self.dp.nvals() == 0 && self.dm.nvals() == 0 {
+            let new_m = self.m.grown(nrows, ncols);
+            new_m.wait();
+            self.m.replace(new_m);
+            self.dp
+                .replace(Matrix::<bool>::new(nrows, ncols).into_hyper());
+            self.dm
+                .replace(Matrix::<bool>::new(nrows, ncols).into_hyper());
+            // The counters are approximate and may have drifted; both deltas
+            // are provably empty here, so pin them to the truth rather than
+            // leave a phantom delta driving the fold policy.
+            self.reset_delta_bookkeeping();
+            return;
+        }
         // Streamed with row iterators rather than `extract_tuples` per layer:
         // all three layers yield `(row, col)` in row-major order, which is
         // already the sorted order `build` wants, so the merge needs no
@@ -499,6 +518,12 @@ impl VersionedMatrix<bool> {
             .replace(Matrix::<bool>::new(nrows, ncols).into_hyper());
         self.dm
             .replace(Matrix::<bool>::new(nrows, ncols).into_hyper());
+        self.reset_delta_bookkeeping();
+    }
+
+    /// Both deltas are known empty: zero the approximate counters and drop the
+    /// latched fold decisions, so nothing downstream believes a delta is there.
+    fn reset_delta_bookkeeping(&mut self) {
         *self.dp_count.get_mut() = 0;
         *self.dm_count.get_mut() = 0;
         self.dp_tx_nvals = 0;
@@ -508,19 +533,22 @@ impl VersionedMatrix<bool> {
         self.needs_flush.store(false, Ordering::Relaxed);
     }
 
+    /// Mark `(i, j)` deleted, or undo a pending add.
+    ///
+    /// Reads only the committed base — never the deltas. `dp ∩ m = ∅` is what
+    /// makes that sound: a pair live in `m` cannot also sit in `dp`, so the
+    /// `m` branch needs no `dp` probe. The invariant is covered by
+    /// `delta_invariants_hold_across_mutation_sequences` rather than a
+    /// `debug_assert`, which would have to materialize the (possibly shared,
+    /// possibly pending) `dp` to read it — making debug builds wait where
+    /// release does not.
     pub fn remove(
         &mut self,
         i: u64,
         j: u64,
     ) {
         self.flush();
-        // See `set`: the debug_assert reads dp raw; only wait while shared.
-        #[cfg(debug_assertions)]
-        if self.dp.is_shared() {
-            self.dp.wait();
-        }
         if self.m.get(i, j).is_some() {
-            debug_assert!(self.dp.get(i, j).is_none());
             self.dm.set(i, j, true);
             *self.dm_count.get_mut() += 1;
         } else {
@@ -586,6 +614,13 @@ impl VersionedMatrix<bool> {
         )
     }
 
+    /// Add `(i, j)`, or undo a pending delete.
+    ///
+    /// Like [`Self::remove`], reads only the committed base: `dp ∩ m = ∅`
+    /// covers the `m` branch and `dm ⊆ m` the other. Both are covered by
+    /// `delta_invariants_hold_across_mutation_sequences`, not by
+    /// `debug_assert`s — see [`Self::remove`] for why probing the deltas here
+    /// would diverge debug from release.
     pub fn set(
         &mut self,
         i: u64,
@@ -593,29 +628,11 @@ impl VersionedMatrix<bool> {
         value: bool,
     ) {
         self.flush();
-        // The debug_asserts below read the deltas raw; a get on a pending
-        // matrix finishes that work internally (a mutation), racing
-        // concurrent readers when the layer is still shared with the
-        // committed snapshot. Only wait while shared — once dup'd the layer
-        // is writer-local and raw gets are single-threaded, and waiting
-        // unconditionally re-merges pending tuples per element (quadratic
-        // bulk mutation in debug builds).
-        #[cfg(debug_assertions)]
-        {
-            if self.dp.is_shared() {
-                self.dp.wait();
-            }
-            if self.dm.is_shared() {
-                self.dm.wait();
-            }
-        }
         if self.m.get(i, j).is_some() {
-            debug_assert!(self.dp.get(i, j).is_none());
             self.dm.remove(i, j);
             let dm_count = self.dm_count.get_mut();
             *dm_count = dm_count.saturating_sub(1);
         } else {
-            debug_assert!(self.dm.get(i, j).is_none());
             self.dp.set(i, j, value);
             *self.dp_count.get_mut() += 1;
         }
@@ -1064,7 +1081,13 @@ impl<E: IterExtract> Iterator for Iter<E> {
 
 #[cfg(test)]
 mod tests {
-    use super::{MIN_FOLD_DELTA, READ_FOLD_K, WRITE_FOLD_K, should_fold, should_fold_read};
+    use std::collections::BTreeSet;
+
+    use super::super::matrix::{Dup, Matrix};
+    use super::super::test_init::ensure_init;
+    use super::{
+        MIN_FOLD_DELTA, READ_FOLD_K, VersionedMatrix, WRITE_FOLD_K, should_fold, should_fold_read,
+    };
 
     /// Smallest delta that satisfies the sqrt rule, i.e. `ceil(sqrt(k · tx))`.
     fn threshold(
@@ -1131,5 +1154,198 @@ mod tests {
         // `tx_added == 0` is a transaction that added nothing to this layer.
         assert!(!should_fold(u64::MAX, 0, 1_024));
         assert!(!should_fold_read(u64::MAX, 0, 1_024));
+    }
+
+    const DIM: u64 = 512;
+
+    /// Check the two delta invariants `set`/`remove` rely on, plus the derived
+    /// state that breaks when they don't hold.
+    ///
+    /// `set`/`remove` branch on the committed base alone and never probe the
+    /// deltas, which is only sound while:
+    ///
+    /// * `dp ∩ m = ∅` — nothing lives in both the base and the pending adds,
+    ///   so the `m` branch cannot be shadowing a `dp` entry it fails to clear;
+    /// * `dm ⊆ m` — a tombstone only ever masks a committed entry, so the
+    ///   `dp` branch cannot be adding a pair that a tombstone still hides.
+    ///
+    /// Together they are what makes `nvals`'s `|m| + |dp| − |dm|` arithmetic
+    /// and `Iter`'s three-way merge correct, so both are asserted too: a
+    /// violation that the raw layer checks somehow miss still surfaces as a
+    /// wrong count or a wrong effective state.
+    fn assert_invariants(
+        v: &VersionedMatrix<bool>,
+        model: &BTreeSet<(u64, u64)>,
+    ) {
+        // Reading the layers raw materializes them; the production write paths
+        // deliberately avoid doing so, which is why this lives in a test.
+        v.wait_all();
+        for (i, j) in v.dp().iter(0, u64::MAX) {
+            assert!(
+                v.m().get(i, j).is_none(),
+                "dp ∩ m ≠ ∅ at ({i}, {j}): the `m` branch of set/remove would miss the dp entry"
+            );
+            assert!(v.dm().get(i, j).is_none(), "dp ∩ dm ≠ ∅ at ({i}, {j})");
+        }
+        for (i, j) in v.dm().iter(0, u64::MAX) {
+            assert!(
+                v.m().get(i, j).is_some(),
+                "dm ⊄ m at ({i}, {j}): a tombstone with no committed entry to mask"
+            );
+        }
+        assert_eq!(
+            v.nvals(),
+            model.len() as u64,
+            "|m| + |dp| - |dm| disagrees with the effective entry count"
+        );
+        let effective: BTreeSet<(u64, u64)> = v.iter(0, u64::MAX).collect();
+        assert_eq!(&effective, model, "effective state diverged from the model");
+    }
+
+    /// Deterministic LCG — the sequence must be reproducible so a failure is
+    /// replayable.
+    fn next_rand(state: &mut u64) -> u64 {
+        *state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        *state >> 33
+    }
+
+    /// Drive `set`/`remove`/`set_all`/`remove_mask` through every state
+    /// transition — including the ones only reachable after a fold has moved
+    /// pending adds into the committed base — and check the invariants after
+    /// each step.
+    ///
+    /// This replaces the `debug_assert!`s that used to sit in the `set`/
+    /// `remove` branches. Those could only be evaluated by probing `dp`/`dm`,
+    /// and probing a possibly-shared, possibly-pending delta materializes it —
+    /// a mutation racing lock-free readers. Guarding them with
+    /// `#[cfg(debug_assertions)] if is_shared() { wait() }` made debug builds
+    /// wait where release builds don't, so the write path being tested was not
+    /// the write path being shipped.
+    #[test]
+    fn delta_invariants_hold_across_mutation_sequences() {
+        ensure_init();
+        let mut v = VersionedMatrix::<bool>::new(DIM, DIM);
+        let mut model = BTreeSet::new();
+        let mut rng = 0x5eed_1234_u64;
+        // A keyspace far smaller than the matrix, so set-after-set,
+        // remove-after-remove and set-after-remove on the same pair are the
+        // common case rather than a rarity.
+        let key = |r: u64| ((r % 24) * 7, (r / 24 % 24) * 11);
+
+        for step in 0..4_000 {
+            match next_rand(&mut rng) % 16 {
+                // Bulk add: `set_all` routes through `set` once `dm` is
+                // non-empty and takes its own fast path otherwise, so both
+                // arms need covering.
+                0 => {
+                    let batch: Vec<(u64, u64)> =
+                        (0..16).map(|_| key(next_rand(&mut rng))).collect();
+                    v.set_all(batch.iter().copied());
+                    model.extend(batch);
+                }
+                // Bulk delete through the two-GraphBLAS-op mask path.
+                1 => {
+                    let batch: BTreeSet<(u64, u64)> =
+                        (0..16).map(|_| key(next_rand(&mut rng))).collect();
+                    let rows: Vec<u64> = batch.iter().map(|&(i, _)| i).collect();
+                    let cols: Vec<u64> = batch.iter().map(|&(_, j)| j).collect();
+                    let mut mask = Matrix::<bool>::new(DIM, DIM);
+                    mask.build(&rows, &cols);
+                    mask.wait();
+                    v.remove_mask(&mask);
+                    for k in &batch {
+                        model.remove(k);
+                    }
+                }
+                // Version boundary: latches the fold decision, which the next
+                // mutation's `flush` executes — moving `dp` into `m` and
+                // clearing `dm`, the transition the `m` branches exist for.
+                2 => v = v.dup(),
+                // Read path: resyncs the counters and latches the read-path
+                // fold decision.
+                3 => {
+                    v.wait();
+                }
+                4 => v.fold_oversized(),
+                // Deletes, biased to roughly a third of single-entry ops so
+                // the base keeps growing and `dm` keeps getting exercised.
+                5..=8 => {
+                    let k = key(next_rand(&mut rng));
+                    v.remove(k.0, k.1);
+                    model.remove(&k);
+                }
+                _ => {
+                    let k = key(next_rand(&mut rng));
+                    v.set(k.0, k.1, true);
+                    model.insert(k);
+                }
+            }
+            // The full check materializes the layers, so run it on a stride
+            // rather than every step; the boundary steps are covered by the
+            // final check below.
+            if step % 37 == 0 {
+                assert_invariants(&v, &model);
+            }
+        }
+        assert_invariants(&v, &model);
+        // The sequence has to have actually reached the post-fold states, or
+        // it only proved the invariants for a base-empty matrix.
+        assert!(
+            v.m().nvals() > 0,
+            "no fold ever happened: the `m` branches of set/remove were never taken"
+        );
+    }
+
+    /// The tightest form of the same thing: an entry that is added, folded into
+    /// the committed base, deleted and re-added must round-trip through the
+    /// `dm` branches without ever landing in `dp` alongside its `m` entry.
+    ///
+    /// Reaching a fold needs a delta above `MIN_FOLD_DELTA` (`delta_dominates_
+    /// base` then fires against the empty base), so the probe pair rides along
+    /// with enough filler to trip the policy.
+    #[test]
+    fn folded_entry_deleted_and_re_added_stays_out_of_dp() {
+        ensure_init();
+        let filler = 4 * MIN_FOLD_DELTA;
+        let mut v = VersionedMatrix::<bool>::new(DIM, DIM);
+        v.set_all((0..filler).map(|i| (i % DIM, (i / DIM + 1) % DIM)));
+        let probe = (7, 11);
+        v.set(probe.0, probe.1, true);
+
+        // New version + a mutation: the latched fold runs in `flush`. The
+        // trigger pair must be outside the filler (cols 1 and 2) so the final
+        // `nvals` check counts it once.
+        let mut v = v.dup();
+        v.set(300, 301, true);
+        v.wait_all();
+        assert!(
+            v.m().get(probe.0, probe.1).is_some(),
+            "the fold did not move the probe into the committed base"
+        );
+        assert!(v.dp().get(probe.0, probe.1).is_none());
+
+        // Delete: must become a tombstone, not a `dp` removal.
+        v.remove(probe.0, probe.1);
+        v.wait_all();
+        assert!(v.dm().get(probe.0, probe.1).is_some(), "no tombstone");
+        assert!(v.m().get(probe.0, probe.1).is_some(), "base entry vanished");
+        assert!(v.get(probe.0, probe.1).is_none(), "deleted entry readable");
+
+        // Re-add: must clear the tombstone, not push a duplicate into `dp` —
+        // which would leave `dp ∩ m ≠ ∅` and double-count in `nvals`.
+        v.set(probe.0, probe.1, true);
+        v.wait_all();
+        assert!(
+            v.dm().get(probe.0, probe.1).is_none(),
+            "tombstone survived the re-add"
+        );
+        assert!(
+            v.dp().get(probe.0, probe.1).is_none(),
+            "re-add duplicated the committed entry into dp"
+        );
+        assert_eq!(v.get(probe.0, probe.1), Some(true));
+        assert_eq!(v.nvals(), filler + 2, "nvals double-counted the re-add");
     }
 }

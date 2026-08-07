@@ -70,13 +70,6 @@ impl<T: Dup<T> + Clone> Cow<T> {
         self.inner = inner;
         self.dup = false;
     }
-
-    /// True while the inner value may still be shared with another version
-    /// (i.e. the next mutable access would duplicate it).
-    #[must_use]
-    pub const fn is_shared(&self) -> bool {
-        self.dup
-    }
 }
 
 impl<T: Dup<T> + Clone> Deref for Cow<T> {

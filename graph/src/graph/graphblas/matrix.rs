@@ -93,11 +93,12 @@ use super::{
     GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL,
     GxB_ANY_UINT64, GxB_Container_free, GxB_Container_new, GxB_Global_Option_set_INT32,
     GxB_HYPERSPARSE, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_get_UINT64, GxB_Iterator_new,
-    GxB_JIT_Control, GxB_Matrix_build_Scalar, GxB_Matrix_fprint, GxB_Matrix_isStoredElement,
-    GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_NTHREADS, GxB_ONE_BOOL, GxB_Option_Field,
-    GxB_Print_Level, GxB_SPARSE, GxB_init, GxB_load_Matrix_from_Container, GxB_rowIterator_attach,
-    GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol,
-    GxB_rowIterator_nextRow, GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
+    GxB_JIT_Control, GxB_Matrix_build_Scalar, GxB_Matrix_concat, GxB_Matrix_fprint,
+    GxB_Matrix_isStoredElement, GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_NTHREADS,
+    GxB_ONE_BOOL, GxB_Option_Field, GxB_Print_Level, GxB_SPARSE, GxB_init,
+    GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
+    GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol, GxB_rowIterator_nextRow,
+    GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
 };
 
 /// Initializes the GraphBLAS library in non-blocking mode.
@@ -577,6 +578,109 @@ impl<T> Matrix<T> {
             let info = GrB_transpose(*transpose.m, null_mut(), null_mut(), *self.m, null_mut());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             transpose
+        }
+    }
+
+    /// A copy of `self` at larger dimensions, its entries at the same
+    /// coordinates (i.e. blocked into the top-left corner).
+    ///
+    /// This is the grow-resize primitive GraphBLAS does not offer directly.
+    /// `GrB_Matrix_dup` copies only at the source's dimensions and `GrB_apply`
+    /// requires matching dimensions, so the dup-based route is
+    /// dup-then-`GrB_Matrix_resize`: a deep copy at the *old* dims that is then
+    /// mutated, leaving `has_pending` set for a later `wait` to clear.
+    /// `GxB_Matrix_concat` instead writes straight into a fresh matrix at the
+    /// target dims, padding with empty tiles — one bulk copy, no intermediate.
+    ///
+    /// Shrinking is not expressible this way (it would drop entries), so both
+    /// dimensions must be `>=` the current ones.
+    ///
+    /// `self` must already be waited: `concat` reads it, and any GraphBLAS call
+    /// on a pending matrix finishes that work internally — a mutation, which is
+    /// unsound on a layer still shared with a published snapshot.
+    #[must_use]
+    pub fn grown(
+        &self,
+        nrows: u64,
+        ncols: u64,
+    ) -> Self {
+        let (r0, c0) = (self.nrows(), self.ncols());
+        assert!(
+            nrows >= r0 && ncols >= c0,
+            "grown must not shrink: {r0}x{c0} -> {nrows}x{ncols}"
+        );
+        unsafe {
+            let mut type_: MaybeUninit<GrB_Type> = MaybeUninit::uninit();
+            let info = GxB_Matrix_type(type_.as_mut_ptr(), *self.m);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            let type_ = type_.assume_init();
+
+            // Padding tiles are pinned exactly like every other matrix here.
+            // Left on the default sparsity control they may be bitmap or
+            // column-major, and `concat` then matches its output to the tiles —
+            // a bitmap tile at capacity dims is `nrows · ncols` bits, and a
+            // column-major one forces a transposed copy. Both showed up as
+            // large allocation churn in `bench measure`.
+            let mut new_empty = |r: u64, c: u64| {
+                let mut t: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
+                let info = GrB_Matrix_new(t.as_mut_ptr(), type_, r, c);
+                assert_eq!(
+                    info,
+                    GrB_Info::GrB_SUCCESS,
+                    "GrB_Matrix_new failed: {info:?}"
+                );
+                let t = t.assume_init();
+                pin_sparse(t);
+                t
+            };
+
+            // Tile grid, row-major, with `self` at (0, 0) and empty padding
+            // filling the rest. A dimension that does not grow contributes no
+            // row/column of tiles, so an unchanged-size call degenerates to a
+            // 1x1 concat, i.e. a plain copy.
+            let (dr, dc) = (nrows - r0, ncols - c0);
+            let mut tiles: Vec<GrB_Matrix> = vec![*self.m];
+            if dc > 0 {
+                tiles.push(new_empty(r0, dc));
+            }
+            if dr > 0 {
+                tiles.push(new_empty(dr, c0));
+                if dc > 0 {
+                    tiles.push(new_empty(dr, dc));
+                }
+            }
+            let grid_rows = if dr > 0 { 2 } else { 1 };
+            let grid_cols = if dc > 0 { 2 } else { 1 };
+
+            let mut c: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
+            let info = GrB_Matrix_new(c.as_mut_ptr(), type_, nrows, ncols);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GrB_Matrix_new failed: {info:?}"
+            );
+            let c = c.assume_init();
+            pin_sparse(c);
+            let info = GxB_Matrix_concat(c, tiles.as_ptr(), grid_rows, grid_cols, null_mut());
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+
+            // Free only the padding — tiles[0] is borrowed from `self`.
+            for t in &mut tiles[1..] {
+                let info = GrB_Matrix_free(t);
+                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            }
+
+            Self {
+                m: Arc::new(c),
+                lock: Arc::new(Mutex::new(())),
+                // `concat` assembles its output, so nothing is queued. Claim
+                // pending anyway: `has_pending` is the flag `wait` gates on,
+                // and a false negative would be unsound if that ever changed,
+                // while a false positive costs one `GrB_Matrix_wait` on an
+                // already-materialized matrix.
+                has_pending: Arc::new(AtomicBool::new(true)),
+                phantom: PhantomData,
+            }
         }
     }
 
@@ -1444,5 +1548,81 @@ impl<E: IterExtract> Iterator for Iter<E> {
             }
             Some(item)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::super::test_init::ensure_init;
+    use super::Matrix;
+
+    /// `grown` must place every entry at its original coordinate, at the new
+    /// dims, for every growth shape — including the degenerate no-growth call
+    /// and growth in one dimension only, which change the concat tile grid.
+    #[test]
+    fn grown_preserves_entries_at_every_growth_shape() {
+        ensure_init();
+        let (r0, c0) = (64u64, 48u64);
+        let coords: BTreeSet<(u64, u64)> = (0..r0)
+            .flat_map(|i| [(i, (i * 7) % c0), (i, (i * 11 + 3) % c0)])
+            .collect();
+        let rows: Vec<u64> = coords.iter().map(|&(i, _)| i).collect();
+        let cols: Vec<u64> = coords.iter().map(|&(_, j)| j).collect();
+        let vals: Vec<u64> = (0..coords.len() as u64).collect();
+
+        let mut src = Matrix::<u64>::new(r0, c0);
+        src.build(&rows, &cols, &vals);
+        src.wait();
+
+        for (nrows, ncols) in [
+            (r0, c0),           // 1x1 grid: a plain copy
+            (r0 * 4, c0),       // 2x1 grid: rows only
+            (r0, c0 * 4),       // 1x2 grid: cols only
+            (r0 * 4, c0 * 4),   // 2x2 grid: both
+            (100_000, 100_000), // the capacity-grow shape, sparse -> hyper
+        ] {
+            let g = src.grown(nrows, ncols);
+            g.wait();
+            assert_eq!((g.nrows(), g.ncols()), (nrows, ncols));
+            assert_eq!(g.nvals(), src.nvals(), "{nrows}x{ncols}: nvals changed");
+            let got: BTreeSet<(u64, u64, u64)> = g.iter(0, u64::MAX).collect();
+            let want: BTreeSet<(u64, u64, u64)> = rows
+                .iter()
+                .zip(&cols)
+                .zip(&vals)
+                .map(|((&i, &j), &v)| (i, j, v))
+                .collect();
+            assert_eq!(got, want, "{nrows}x{ncols}: entries moved or values lost");
+        }
+        // The source must be untouched — it is still shared with the snapshot.
+        assert_eq!((src.nrows(), src.ncols()), (r0, c0));
+        assert_eq!(src.nvals(), coords.len() as u64);
+    }
+
+    /// Growing a `bool` layer must keep it a pure pattern: a `u64`-typed concat
+    /// output would typecast, and a `false` value reads as absent to the valued
+    /// masks the delta layers are used with.
+    #[test]
+    fn grown_keeps_bool_layers_a_pattern() {
+        ensure_init();
+        let mut src = Matrix::<bool>::new(32, 32);
+        src.build(&[0, 5, 31], &[0, 7, 31]);
+        src.wait();
+        let g = src.grown(4_096, 4_096);
+        g.wait();
+        assert_eq!(g.nvals(), 3);
+        for (i, j) in [(0u64, 0u64), (5, 7), (31, 31)] {
+            assert_eq!(g.get(i, j), Some(true), "({i}, {j}) lost or turned false");
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "grown must not shrink")]
+    fn grown_rejects_shrinking() {
+        ensure_init();
+        let src = Matrix::<bool>::new(64, 64);
+        let _ = src.grown(32, 64);
     }
 }

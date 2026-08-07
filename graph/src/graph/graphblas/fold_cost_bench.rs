@@ -295,3 +295,195 @@ fn fold_cost_write_cycle() {
         }
     }
 }
+
+fn assembled_u64(n: u64) -> Matrix<u64> {
+    let mut m = Matrix::<u64>::new(CAP, CAP);
+    let (rows, cols) = scatter(n);
+    let vals: Vec<u64> = (0..n).collect();
+    m.build(&rows, &cols, &vals);
+    m.wait();
+    m
+}
+
+/// `Tensor::resize`'s current grow strategy, inlined so the bench measures it
+/// without depending on tensor internals.
+fn rebuild(
+    src: &Matrix<u64>,
+    nrows: u64,
+    ncols: u64,
+) -> Matrix<u64> {
+    let n = src.nvals() as usize;
+    let mut rows = Vec::with_capacity(n);
+    let mut cols = Vec::with_capacity(n);
+    let mut vals = Vec::with_capacity(n);
+    for (r, c, v) in src.iter(0, u64::MAX) {
+        rows.push(r);
+        cols.push(c);
+        vals.push(v);
+    }
+    let mut dst = Matrix::<u64>::new(nrows, ncols);
+    dst.build(&rows, &cols, &vals);
+    dst.wait();
+    dst
+}
+
+/// Grow-resize strategies for a COW-shared layer, which cannot be resized in
+/// place. All three produce the same matrix at larger dims; they differ in how
+/// much work they throw away getting there.
+///
+/// * `rebuild` — row-iterate the source and `GrB_Matrix_build` into a fresh
+///   matrix at the target dims. Today's `Tensor::resize` grow path.
+/// * `concat` — `GxB_Matrix_concat` the source into the top-left of a fresh
+///   matrix, padded with empty tiles. One bulk block copy, no tuple arrays.
+/// * `dup+resize` — the baseline the current code replaced: deep-copy at the
+///   old dims (what `Cow::deref_mut` does on a shared layer), then
+///   `GrB_Matrix_resize`. The trailing `wait` is charged because
+///   `GrB_Matrix_resize` leaves the wrapper's `has_pending` set, so the next
+///   reader pays it.
+///
+/// Growth factor is 1.14x, matching the capacity-grow pattern that produced
+/// the original 2.4-9.8 ms spikes (100,000 nodes -> 114,688 capacity).
+///
+/// What it found (macOS, two runs): concat beats rebuild by ~7x at 1m entries
+/// (1.2 ms vs 7.6-8.4 ms) and ~3x at 262k, they are par at 16k, and rebuild
+/// wins below that — hence the empty-delta short-circuits at the call sites.
+///
+/// **`dup+resize` measured faster still** — 0.8 ms at 1m, and 0.7 µs on a
+/// hypersparse 1k-entry delta where both others cost 20 µs — and
+/// `grow_cost_post_grow_usage` found no deferred penalty: iteration, point
+/// lookups, a follow-up mutation and `memory_usage` are identical across all
+/// three. It is *not* adopted here, and the reason is not the copy cost the
+/// original commit message gives (both strategies copy). It is that
+/// `GrB_Matrix_resize` frees the hyper hash and leaves the wrapper's
+/// `has_pending` set, so the layer needs a `wait` that rebuilds it — the effect
+/// behind the "1.4-5.7x write regressions" note on the shrink path, and behind
+/// `tensor::tests::resize_leaves_base_materialized`. Anyone revisiting this
+/// should measure that end to end rather than trusting the microbench: the
+/// `dup+resize` column here charges the `wait` but not what the *next*
+/// transaction pays for a rebuilt hash.
+#[test]
+#[ignore = "measurement, not a correctness check"]
+fn grow_cost_concat_vs_rebuild() {
+    ensure_init();
+    println!("\n=== grow-resize cost by strategy (uint64 layer, 1.14x dims) ===");
+    println!(
+        "{:>10}  {:>12}  {:>12}  {:>12}  {:>10}",
+        "nvals", "rebuild us", "concat us", "dup+resize us", "concat/rebuild"
+    );
+    let (nrows, ncols) = (CAP + CAP * 14 / 100, CAP + CAP * 14 / 100);
+    for &n in &[0u64, 1_024, 16_384, 262_144, 1_048_576] {
+        let reps: u32 = if n <= 16_384 { 50 } else { 10 };
+        let src = assembled_u64(n);
+
+        let rebuild_us = time_us(reps, || {
+            let g = rebuild(&src, nrows, ncols);
+            std::hint::black_box(&g);
+        });
+        let concat_us = time_us(reps, || {
+            let g = src.grown(nrows, ncols);
+            g.wait();
+            std::hint::black_box(&g);
+        });
+        // dup per rep: resize mutates, so a reused copy would be measured
+        // already-grown on every rep after the first.
+        let mut dup_resize_us = 0.0;
+        for _ in 0..reps {
+            let t = Instant::now();
+            let mut g = src.dup();
+            g.resize(nrows, ncols);
+            g.wait();
+            dup_resize_us += t.elapsed().as_secs_f64() * 1e6;
+            std::hint::black_box(&g);
+        }
+        dup_resize_us /= f64::from(reps);
+
+        println!(
+            "{:>10}  {:>12.1}  {:>12.1}  {:>12.1}  {:>10.2}",
+            n,
+            rebuild_us,
+            concat_us,
+            dup_resize_us,
+            concat_us / rebuild_us.max(f64::EPSILON)
+        );
+    }
+}
+
+/// What the grown matrix costs to *use*, and how much memory it holds.
+///
+/// The grow itself is only half the question: `dup+resize` keeps the source's
+/// internal representation (and drops its hyper hash, which the next lookup
+/// rebuilds), while `rebuild`/`concat` hand back a freshly assembled matrix. A
+/// strategy that wins the copy and loses the follow-up is not a win — the
+/// follow-up is what every read after a capacity grow pays.
+#[test]
+#[ignore = "measurement, not a correctness check"]
+fn grow_cost_post_grow_usage() {
+    ensure_init();
+    println!("\n=== cost of using the grown matrix, and its footprint ===");
+    println!(
+        "{:>10}  {:>12}  {:>10}  {:>10}  {:>10}  {:>10}",
+        "nvals", "strategy", "iter us", "probe us", "set+wait us", "mem MB"
+    );
+    let (nrows, ncols) = (CAP + CAP * 14 / 100, CAP + CAP * 14 / 100);
+    for &n in &[16_384u64, 262_144, 1_048_576] {
+        let src = assembled_u64(n);
+        let (probe_rows, probe_cols) = scatter(n);
+        for strategy in ["rebuild", "concat", "dup+resize"] {
+            let reps: u32 = if n <= 16_384 { 20 } else { 5 };
+            let (mut iter_us, mut probe_us, mut set_us) = (0.0, 0.0, 0.0);
+            let mut mem = 0usize;
+            for _ in 0..reps {
+                let mut g = match strategy {
+                    "rebuild" => rebuild(&src, nrows, ncols),
+                    "concat" => {
+                        let g = src.grown(nrows, ncols);
+                        g.wait();
+                        g
+                    }
+                    _ => {
+                        let mut g = src.dup();
+                        g.resize(nrows, ncols);
+                        g.wait();
+                        g
+                    }
+                };
+
+                let t = Instant::now();
+                let mut seen = 0u64;
+                for (_, _, v) in g.iter(0, u64::MAX) {
+                    seen += v;
+                }
+                iter_us += t.elapsed().as_secs_f64() * 1e6;
+                std::hint::black_box(seen);
+
+                // Point lookups: what a hypersparse layer needs the hyper hash
+                // for, and what `resize` freeing it would show up in.
+                let t = Instant::now();
+                let mut hits = 0u32;
+                for k in (0..probe_rows.len()).step_by(probe_rows.len() / 1_000 + 1) {
+                    hits += u32::from(g.contains(probe_rows[k], probe_cols[k]));
+                }
+                probe_us += t.elapsed().as_secs_f64() * 1e6;
+                std::hint::black_box(hits);
+
+                // One more mutation, materialized: the next transaction.
+                let t = Instant::now();
+                g.set(nrows - 1, ncols - 1, 7);
+                g.wait();
+                set_us += t.elapsed().as_secs_f64() * 1e6;
+
+                mem = g.memory_usage();
+            }
+            let r = f64::from(reps);
+            println!(
+                "{:>10}  {:>12}  {:>10.1}  {:>10.1}  {:>10.1}  {:>10.2}",
+                n,
+                strategy,
+                iter_us / r,
+                probe_us / r,
+                set_us / r,
+                mem as f64 / (1024.0 * 1024.0),
+            );
+        }
+    }
+}
