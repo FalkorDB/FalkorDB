@@ -121,6 +121,80 @@ jobs:
       # push_to_dockerhub left at default false — PR RC builds stay on GHCR.
       # create_manifest defaults true (release is multi-arch).
 
+  # Build the runtime image with the native index compiled in (`index-falkordb`).
+  # Single amd64 cell: this gate is about whether the native index can serve the index
+  # suites, not about per-arch packaging, so a second arch would double the cost for no
+  # extra signal. Uses the shared Dockerfile with a cargo-features build-arg rather than
+  # its own file — the flavour Dockerfiles are near-copies and a fourth would drift.
+  build-rc-nextgen-image:
+    needs: [check-files, docker]
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
+    uses: ./.github/workflows/_build-flavour.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      flavour: nextgen
+      tag: rc-pr-${{ github.event.pull_request.number }}-nextgen
+      commit_sha: ${{ github.event.pull_request.head.sha }}
+      cargo_features: index-falkordb
+      cells: '[{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"server","repo":"falkordb-server"}]'
+      build_image: ${{ needs.check-files.outputs.file_changed == 'true' && format('ghcr.io/falkordb/falkordb-build:pr-{0}', github.event.pull_request.number) || 'ghcr.io/falkordb/falkordb-build:latest' }}
+      create_manifest: false
+
+  # Reconcile the index flow suites against the xfail ledger.
+  #
+  # Not a pass/fail gate on the suites themselves: with no RediSearch fallback the native index
+  # cannot yet serve every predicate, and those gaps are recorded in
+  # tests/flow/nextgen_index_xfail.txt. The gate is that the run MATCHES the ledger — an
+  # unrecorded failure or a ledgered test that started passing both fail the build. That is what
+  # keeps the ledger describing reality instead of decaying into a list of stale excuses.
+  #
+  # Runs the suites in one job rather than through the flow matrix because the check needs the
+  # combined output of all of them; a per-file matrix would need cross-cell collection to say
+  # anything.
+  nextgen-index-ledger:
+    needs: [check-files, docker, build-rc-nextgen-image]
+    if: ${{ !cancelled() && needs.build-rc-nextgen-image.result == 'success' }}
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ needs.check-files.outputs.file_changed == 'true' && format('ghcr.io/falkordb/falkordb-build:pr-{0}', github.event.pull_request.number) || 'ghcr.io/falkordb/falkordb-build:latest' }}
+      options: --volume /var/run/docker.sock:/var/run/docker.sock
+    permissions:
+      contents: read
+      packages: read
+    services:
+      falkordb:
+        image: ghcr.io/falkordb/falkordb-server:rc-pr-${{ github.event.pull_request.number }}-nextgen
+        credentials:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run the index flow suites against the native-index image
+        # Never fail here: a failing suite is expected while gaps remain. The ledger check below
+        # is the gate, and it needs this output whatever the exit status.
+        continue-on-error: true
+        run: |
+          . /data/venv/bin/activate
+          for t in test_index_create test_index_scans test_index_updates \
+                   test_index_delete test_edge_index_scans test_edge_index_updates; do
+            TEST="$t" RELEASE=1 ./flow.sh 2>&1 | tee -a /tmp/nextgen_flow.log || true
+          done
+      - name: Reconcile against the xfail ledger
+        run: |
+          . /data/venv/bin/activate
+          python3 tests/flow/check_xfail_ledger.py \
+            --ledger tests/flow/nextgen_index_xfail.txt \
+            --results /tmp/nextgen_flow.log
+      - name: Upload flow log
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nextgen-index-flow-log
+          path: /tmp/nextgen_flow.log
+          retention-days: 7
+
   # Build the asan instrumented runtime image (amd64-only). Single cell,
   # no manifest needed (push directly to the bare tag).
   build-rc-asan-image:

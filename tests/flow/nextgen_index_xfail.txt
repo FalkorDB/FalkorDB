@@ -1,0 +1,67 @@
+# Flow tests that fail with `--features index-falkordb`.
+#
+# Under that flag the native index is the ONLY index: a predicate it cannot serve raises an
+# error instead of quietly reaching RediSearch, so every gap is visible here rather than masked
+# by a correct-looking result. This file is the inventory of those gaps.
+#
+# Format: one `<file>:<Class>.<test>` per line. `#` comments and blank lines are ignored.
+#
+# The check is BIDIRECTIONAL and both directions fail the build:
+#   * a failure not listed here    -> a regression, or a gap nobody recorded
+#   * a listed test that now passes -> delete the line in the PR that fixed it
+# The second direction is what stops this file rotting into a list of things that quietly
+# started working. It also means closing a gap is a two-line change: the fix, and the deletion.
+#
+# Add an entry only with a reason. "It fails" is not a reason — the grouping below is the point.
+
+# ---------------------------------------------------------------------------
+# Array-valued properties. `ArrayContains`, and Range indexes over list values.
+# The numeric encoder rejects lists outright, so an array-valued property is not in the numeric
+# column at all — there is nothing for the native index to answer from. Needs an array/list kind.
+# ---------------------------------------------------------------------------
+test_index_scans:testIndexScanFlow.test14_index_scan_utilize_array
+test_index_scans:testIndexScanFlow.test_28_array_index
+test_index_scans:testIndexScanFlow.test_29_array_index
+test_index_scans:testIndexScanFlow.test_30_update_array_index
+test_index_scans:testIndexScanFlow.test_31_remove_array_index
+test_index_scans:testIndexScanFlow.test_32_multiple_array_indexed_entities
+
+# ---------------------------------------------------------------------------
+# String and text predicates on a Range index — tags, stopwords, escaping, mixed-type columns.
+# RediSearch owns strings today; there is no native text kind yet (docs 10-13).
+# ---------------------------------------------------------------------------
+test_index_scans:testIndexScanFlow.test05_test_in_operator_string_props
+test_index_scans:testIndexScanFlow.test06_tag_separator
+test_index_scans:testIndexScanFlow.test20_index_scan_stopwords
+test_index_scans:testIndexScanFlow.test_24_multitype_index
+test_index_scans:testIndexScanFlow.test_25_unescaped_string
+test_index_delete:testNodeIndexDeletionFlow.test_07_reset_order
+test_index_updates:testIndexUpdatesFlow.test04_node_deletion
+test_edge_index_updates:testEdgeIndexUpdatesFlow.test04_edge_deletion
+
+# ---------------------------------------------------------------------------
+# Conjunctions — `And` of two predicates the planner could not fold at plan time.
+# The common shape is two ranges on the SAME key whose bounds are only known at runtime; that
+# wants an arithmetic collapse (tighter min, tighter max, one cursor), not a doc-stream
+# intersection. The cross-key case needs a real intersection and is rarer.
+# ---------------------------------------------------------------------------
+test_index_scans:testIndexScanFlow.test02_cartesian_product_index_scans_only
+test_index_scans:testIndexScanFlow.test03_cartesian_product_reused_index
+test_edge_index_scans:testEdgeByIndexScanRegressionsFlow.test28_post_filter_keeps_pushed_conjuncts
+
+# ---------------------------------------------------------------------------
+# Not yet diagnosed. These surface through the same no-fallback error but the predicate shape
+# behind them has not been identified — they are listed so the build is honest, not because the
+# cause is understood. Each needs triage before it can move into a group above.
+# ---------------------------------------------------------------------------
+test_edge_index_scans:testEdgeByIndexScanFlow.test15_chained_optional_match_indexed_edge
+test_edge_index_scans:testEdgeByIndexScanRegressionsFlow.test17_child_var_reference_safety
+test_index_updates:testIndexUpdatesFlow.test11_failed_write_during_index_population
+
+# ---------------------------------------------------------------------------
+# NOT a native-index gap — do not remove by "fixing" the index.
+# Fails identically with the flag off and on pristine main; macOS-only, CI is green on Linux.
+# Listed so a developer's local run reconciles. If CI on Linux reports this as an unexpected
+# PASS, delete this line: that is the check working as designed.
+# ---------------------------------------------------------------------------
+test_index_create:testIndexCreationFlow.test05_index_delete
