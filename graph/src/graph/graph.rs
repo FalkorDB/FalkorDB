@@ -1451,16 +1451,24 @@ impl Graph {
             let mut removes: HashMap<(Arc<String>, Arc<String>), Vec<(Value, u64)>> =
                 HashMap::new();
             let mut adds: HashMap<(Arc<String>, Arc<String>), Vec<(Value, u64)>> = HashMap::new();
+            let mut labels: Vec<u64> = Vec::new();
             for (id, m) in attrs {
+                // Once per node — see `node_label_ids_into`. The old-value read is hoisted out of
+                // the label loop for the same reason: it does not vary with the label.
+                self.node_label_ids_into(*id, &mut labels);
                 for (attr_id, new_value) in m.iter() {
                     // main now passes pre-resolved u16 attr ids; the index keys columns by name.
                     let Some(attr) = self.node_attr_name(*attr_id) else {
                         continue;
                     };
-                    if let Some(old) = self.get_node_attribute_by_idx(NodeId(*id), *attr_id) {
-                        self.stage_index_node(*id, &attr, &old, &mut removes);
+                    let old = self.get_node_attribute_by_idx(NodeId(*id), *attr_id);
+                    for &label_id in &labels {
+                        let label = &self.node_labels[label_id as usize];
+                        if let Some(old) = &old {
+                            self.stage_index_column(label, &attr, old, *id, &mut removes);
+                        }
+                        self.stage_index_column(label, &attr, new_value, *id, &mut adds);
                     }
-                    self.stage_index_node(*id, &attr, new_value, &mut adds);
                 }
             }
             (removes, adds)
@@ -1510,9 +1518,20 @@ impl Graph {
         if !self.falkordb_index.is_empty() {
             let mut adds: HashMap<(Arc<String>, Arc<String>), Vec<(Value, u64)>> = HashMap::new();
             for (id, m) in attrs {
+                // Labels come from `new_labels`, never from the matrix — that is the whole reason
+                // this function takes them. The index staging used to reach for
+                // `node_labels_matrix.iter` once per (node, attribute), reintroducing exactly the
+                // `wait`-forced delta merge the doc comment above says this path avoids.
+                let Some(label_ids) = new_labels.get(id) else {
+                    continue; // no labels this transaction — nothing routes to a column
+                };
                 for (attr_id, value) in m.iter() {
-                    if let Some(attr) = self.node_attr_name(*attr_id) {
-                        self.stage_index_node(*id, &attr, value, &mut adds);
+                    let Some(attr) = self.node_attr_name(*attr_id) else {
+                        continue;
+                    };
+                    for &label_id in label_ids {
+                        let label = &self.node_labels[label_id as usize];
+                        self.stage_index_column(label, &attr, value, *id, &mut adds);
                     }
                 }
             }
@@ -1849,9 +1868,14 @@ impl Graph {
         if !self.falkordb_index.is_empty() {
             let mut removes: HashMap<(Arc<String>, Arc<String>), Vec<(Value, u64)>> =
                 HashMap::new();
+            let mut labels: Vec<u64> = Vec::new();
             for id in deleted_nodes {
+                self.node_label_ids_into(id, &mut labels); // once per node, not per attribute
                 for (attr, value) in self.get_node_all_attrs(NodeId(id)) {
-                    self.stage_index_node(id, &attr, &value, &mut removes);
+                    for &label_id in &labels {
+                        let label = &self.node_labels[label_id as usize];
+                        self.stage_index_column(label, &attr, &value, id, &mut removes);
+                    }
                 }
             }
             self.falkordb_index
@@ -3286,24 +3310,40 @@ impl Graph {
     /// Stage `(value, id)` into every index column `(label, attr)` the node `id` belongs to (a node
     /// may carry several labels). Shared-borrow only — the caller applies the staged columns after.
     #[cfg(feature = "index-falkordb")]
-    fn stage_index_node(
+    fn stage_index_column(
         &self,
-        id: u64,
+        label: &Arc<String>,
         attr: &Arc<String>,
         value: &Value,
+        id: u64,
         out: &mut HashMap<(Arc<String>, Arc<String>), Vec<(Value, u64)>>,
     ) {
-        for (_, label_id) in self.node_labels_matrix.iter(id, id) {
-            let label = &self.node_labels[label_id as usize];
-            if self
-                .falkordb_index
-                .has_column(EntityType::Node, label, attr)
-            {
-                out.entry((label.clone(), attr.clone()))
-                    .or_default()
-                    .push((value.clone(), id));
-            }
+        if self
+            .falkordb_index
+            .has_column(EntityType::Node, label, attr)
+        {
+            out.entry((label.clone(), attr.clone()))
+                .or_default()
+                .push((value.clone(), id));
         }
+    }
+
+    /// The node's label ids, reusing `out`'s allocation across nodes.
+    ///
+    /// Exists so callers resolve labels **once per node**. `node_labels_matrix.iter` carries a
+    /// `wait` that forces a pending-delta merge — O(accumulated delta) — and a node's label set
+    /// does not depend on which attribute is being written, so folding this into a per-attribute
+    /// helper multiplied that cost for nothing. Same defect, and same fix, as the edge path in
+    /// #2344. A caller that already knows the labels (`import_node_attrs` has them in
+    /// `new_labels`) must not call this at all.
+    #[cfg(feature = "index-falkordb")]
+    fn node_label_ids_into(
+        &self,
+        id: u64,
+        out: &mut Vec<u64>,
+    ) {
+        out.clear();
+        out.extend(self.node_labels_matrix.iter(id, id).map(|(_, l)| l));
     }
 
     /// Stage every indexed `(value, id)` the node `id` carries **under the single label `label_id`** —
