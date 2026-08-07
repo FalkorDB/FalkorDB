@@ -151,6 +151,39 @@ impl IndexColumn {
     }
 }
 
+/// What the native index has to say about a query.
+///
+/// The three cases are deliberately distinct, because the no-fallback build treats them
+/// differently and collapsing any two of them is a bug:
+///
+/// * `Some(Rows(..))` — served natively.
+/// * `Some(NotReady)` — the column exists and will serve this, but its background build has not
+///   installed the base yet. The caller must fall back to a scan. This is a *timing* state, not
+///   a capability gap, so it must never surface as an error.
+/// * `None` — the native index cannot serve this predicate at all. Under `index-falkordb` that
+///   is a hard error, because there is no other index to answer it.
+///
+/// Generic in the row iterator so the read path can retype the rows — raw docs to `NodeId`, or to
+/// `(src, dst, edge_id)` — without flattening the three cases back into an `Option` on the way.
+pub enum NumericAnswer<I = DocIter> {
+    Rows(I),
+    NotReady,
+}
+
+impl<I> NumericAnswer<I> {
+    /// Map the rows, leaving `NotReady` alone. `f` runs only when there are rows, so a caller may
+    /// move setup into it that would be wasted on a not-ready column.
+    pub fn map_rows<J>(
+        self,
+        f: impl FnOnce(I) -> J,
+    ) -> NumericAnswer<J> {
+        match self {
+            Self::Rows(rows) => NumericAnswer::Rows(f(rows)),
+            Self::NotReady => NumericAnswer::NotReady,
+        }
+    }
+}
+
 /// Build state of a column, for online (background) index build.
 ///
 /// `CREATE INDEX` on existing data returns immediately with the column in
@@ -523,18 +556,24 @@ impl FalkorDbIndex {
     }
 
     /// Answer an index query for `(entity, label)` from the numeric column — but ONLY a **numeric**
-    /// `Equal`/`Range` leaf on a `Ready` column. A Range index also holds strings and geo (served by
-    /// RediSearch), so a non-numeric or composite predicate returns `None` to fall through; so does a
-    /// missing column, and so does a `Building` column (its base isn't installed yet, so the read
-    /// falls back to a scan — today's `UNDER CONSTRUCTION` behavior). Yields docs — node ids for a node
-    /// column, `edge_id`s for an edge column. The read path routes here and falls back on `None`.
+    /// `Equal`/`Range`/union leaf. Yields docs — node ids for a node column, `edge_id`s for an edge
+    /// column.
+    ///
+    /// Three outcomes, and the caller must keep them apart (see [`NumericAnswer`]):
+    ///
+    /// * [`Rows`](NumericAnswer::Rows) — served here.
+    /// * [`NotReady`](NumericAnswer::NotReady) — the column exists but is still `Building`, so its
+    ///   base is not installed. The caller scans; this is a timing state, never an error.
+    /// * `None` — not a numeric leaf, or no such column. A Range index also holds strings and geo
+    ///   (RediSearch's, in the dark-launch build), so those land here too. Under `index-falkordb`
+    ///   there is no other index, and the caller turns this into an error.
     #[must_use]
     pub fn query_numeric(
         &self,
         entity: EntityType,
         label: &Arc<String>,
         query: &IndexQuery<Value>,
-    ) -> Option<DocIter> {
+    ) -> Option<NumericAnswer> {
         let (key, servable) = match query {
             IndexQuery::Equal { key, value } => (key, encode_numeric(value).is_some()),
             IndexQuery::Range { key, min, max, .. } => (
@@ -580,10 +619,14 @@ impl FalkorDbIndex {
         }
         let entry = self.columns(entity).get(&(label.clone(), key.clone()))?;
         if !matches!(entry.state, ColumnState::Ready) {
-            return None; // Building — base not installed yet, fall back to a scan
+            // Building: the base is not installed yet. This is NOT an unsupported predicate —
+            // the column will serve it once the build finishes — so the caller must scan rather
+            // than error. `NotReady` keeps that distinct from `None`, which under the
+            // no-fallback build is a hard failure.
+            return Some(NumericAnswer::NotReady);
         }
         match &entry.column {
-            IndexColumn::Numeric(idx) => idx.query(query),
+            IndexColumn::Numeric(idx) => idx.query(query).map(NumericAnswer::Rows),
         }
     }
 }
@@ -598,9 +641,21 @@ mod tests {
         Arc::new(s.to_string())
     }
 
+    /// Rows of an answer that must be `Rows`. Panics on the other two, rather than reporting them
+    /// as "no rows" — a test that expected rows and got `NotReady` or `None` has found a bug, and
+    /// collapsing all three into an empty `Vec` is exactly what hid one.
+    fn rows(answer: Option<NumericAnswer>) -> Vec<u64> {
+        match answer {
+            Some(NumericAnswer::Rows(it)) => it.collect(),
+            Some(NumericAnswer::NotReady) => panic!("column is still Building"),
+            None => panic!("predicate is not servable by the numeric index"),
+        }
+    }
+
     /// The online-build state machine at the column level: a `Building` column gates reads
-    /// (returns `None`, so the caller scan-falls-back), a stale epoch cannot publish, and the
-    /// single install commit subtracts TOMB from the stale BASE before replaying DELTA.
+    /// (answers `NotReady`, so the caller scan-falls-back rather than erroring), a stale epoch
+    /// cannot publish, and the single install commit subtracts TOMB from the stale BASE before
+    /// replaying DELTA.
     #[test]
     fn building_column_gates_reads_until_finished() {
         let (label, attr) = (arc("Person"), arc("age"));
@@ -615,21 +670,29 @@ mod tests {
         };
         let key = |v: i64| encode_numeric(&Value::Int(v)).unwrap();
         let hits = |idx: &FalkorDbIndex, v: i64| -> Vec<u64> {
-            idx.query_numeric(Node, &label, &eq(v))
-                .map_or_else(Vec::new, Iterator::collect)
+            rows(idx.query_numeric(Node, &label, &eq(v)))
+        };
+        // `NotReady`, specifically — not `None`. A `Building` column is a timing state and the
+        // caller scans; `None` means unservable, which the no-fallback build turns into a query
+        // error. Collapsing the two errored every read against a still-building index.
+        let building = |idx: &FalkorDbIndex, v: i64| {
+            matches!(
+                idx.query_numeric(Node, &label, &eq(v)),
+                Some(NumericAnswer::NotReady)
+            )
         };
 
         let mut idx = FalkorDbIndex::new();
         let epoch = idx.create_building(Node, &label, &attr);
-        assert!(hits(&idx, 10).is_empty(), "empty Building → None");
+        assert!(building(&idx, 10), "empty Building → NotReady");
 
         // Writes landing during the build. 30 is created (DELTA); 20 is destroyed, which goes to
         // TOMB *and* to the column tree — the pair that stops the stale base resurrecting it.
         idx.merge(Node, staged(30, 2), HashMap::default());
         idx.merge(Node, HashMap::default(), staged(20, 1));
         assert!(
-            hits(&idx, 30).is_empty(),
-            "still Building → None even with a live delta"
+            building(&idx, 30),
+            "still Building → NotReady even with a live delta"
         );
         assert_eq!(idx.building_columns().len(), 1);
 
@@ -639,7 +702,7 @@ mod tests {
             !idx.install_base(Node, &label, &attr, epoch + 1, vec![(key(99), 9)]),
             "stale epoch cannot install"
         );
-        assert!(hits(&idx, 99).is_empty(), "stale epoch cannot publish");
+        assert!(building(&idx, 99), "stale epoch cannot publish");
         assert_eq!(
             idx.building_columns().len(),
             1,
@@ -781,8 +844,7 @@ mod tests {
             key: key.clone(),
             value: Value::Int(30),
         };
-        let hit: Vec<u64> = idx.query_numeric(Node, &label, &eq).unwrap().collect();
-        assert_eq!(hit, vec![1]);
+        assert_eq!(rows(idx.query_numeric(Node, &label, &eq)), vec![1]);
         let rg = IndexQuery::Range {
             key: key.clone(),
             min: Some(Value::Int(10)),
