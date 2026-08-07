@@ -723,11 +723,16 @@ shadow rule.}
 \end{figure}
 
 Reading the diagram: the three horizontal bands are the pair's committed
-status, which a transaction cannot change (only a fold can), so no transition
-crosses bands. Within a band, adding and removing identifiers moves left and
-right, and every cycle returns to the canonical state --- $\mathbf{D}
+status, which a transaction cannot change, so no transition here crosses bands.
+Within a band, adding and removing identifiers moves left and right, and every
+cycle returns to the canonical state --- $\mathbf{D}
 \xrightarrow{\text{add}} \mathbf{F} \xrightarrow{\text{del}} \mathbf{D}$
 leaves no residue, which is exactly what Invariant~\ref{inv:cancel} demands.
+
+The one operation that \emph{does} change committed status is folding, and it is
+therefore the only thing that moves a pair between bands. It is left out of this
+figure on purpose --- it is not a mutation, and no query can observe it --- and
+drawn on its own in Figure~\ref{fig:fold}, discussed in \S\ref{sec:folding}.
 
 % =====================================================================
 \section{Algorithms}
@@ -1064,11 +1069,86 @@ effective state pointwise, so no choice of constants and no drift in the
 counters can change what the tensor denotes. \S\ref{sec:mechanised} states
 that as a theorem.
 
-Note what folding does to the automaton: it collapses the shadowed states.
-$\mathbf{F} \to \mathbf{E}$, $\mathbf{I} \to \mathbf{D}$, $\mathbf{H} \to
-\mathbf{D}$, and $\mathbf{G},\mathbf{J} \to \mathbf{A}$. The ten states are a
-transaction-local phenomenon; a quiescent tensor occupies only
-$\{\mathbf{A}, \mathbf{D}, \mathbf{E}\}$.
+\paragraph{What folding does to the automaton.} Folding is the only transition
+that moves a pair between the three bands of Figure~\ref{fig:automaton}, because
+it is the only operation that changes a pair's \emph{committed} status. It is
+also the only transition that is not a mutation: it is invisible to readers
+(\S\ref{sec:mechanised}), so it is drawn separately, in
+Figure~\ref{fig:fold}.
+
+Folding $dp$ commits whatever the pending layer holds --- promoting the two
+uncommitted states and collapsing all three shadowed ones:
+\[
+  \mathbf{B} \to \mathbf{D}, \quad
+  \mathbf{C} \to \mathbf{E}, \quad
+  \mathbf{H} \to \mathbf{D}, \quad
+  \mathbf{F} \to \mathbf{E}, \quad
+  \mathbf{I} \to \mathbf{D} .
+\]
+Folding $dm$ applies the tombstones, which removes the pair outright:
+$\mathbf{G} \to \mathbf{A}$ and $\mathbf{J} \to \mathbf{A}$. On
+$\{\mathbf{A}, \mathbf{D}, \mathbf{E}\}$ both folds are the identity, since
+those are exactly the states with no deltas to fold.
+
+Two things are worth reading off that. First, the map is total and its image is
+$\{\mathbf{A}, \mathbf{D}, \mathbf{E}\}$ --- so the ten states are a
+transaction-local phenomenon and a quiescent tensor occupies only three of them.
+Note this needs $\mathbf{B} \to \mathbf{D}$ and $\mathbf{C} \to \mathbf{E}$: a
+pair whose edges were all created in the current transaction is uncommitted, not
+shadowed, and it is folding $dp$ that makes it committed. Second, the shadowed
+states $\mathbf{F}, \mathbf{H}, \mathbf{I}$ have no preimage under the map, which
+is another way of saying that shadowing is something only a live transaction can
+produce.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  font=\small,
+  st/.style={draw,circle,minimum size=8.5mm,inner sep=1pt,fill=blue!4},
+  sh/.style={st,fill=orange!12},
+  >={Stealth[length=2mm]},
+  fd/.style={->,shorten >=1pt,shorten <=1pt,black!70},
+  lbl/.style={font=\scriptsize,inner sep=1.5pt,fill=white}
+]
+% sources, grouped over their image
+\node[st] (G) at (-0.9,0)  {G};
+\node[st] (J) at (0.9,0)   {J};
+\node[st] (B) at (3.3,0)   {B};
+\node[sh] (H) at (4.8,0)   {H};
+\node[sh] (I) at (6.3,0)   {I};
+\node[st] (C) at (8.7,0)   {C};
+\node[sh] (F) at (10.2,0)  {F};
+% images
+\node[st] (A) at (0,-2.1)    {A};
+\node[st] (D) at (4.8,-2.1)  {D};
+\node[st] (E) at (9.45,-2.1) {E};
+% fold dm: apply the tombstones
+\draw[fd] (G) -- (A);
+\draw[fd] (J) -- (A);
+% fold dp: commit the pending layer
+\draw[fd] (B) -- (D);
+\draw[fd] (H) -- (D);
+\draw[fd] (I) -- (D);
+\draw[fd] (C) -- (E);
+\draw[fd] (F) -- (E);
+% identity on the quiescent states
+\draw[fd] (A) to[loop below,looseness=5] (A);
+\draw[fd] (D) to[loop below,looseness=5] (D);
+\draw[fd] (E) to[loop below,looseness=5] (E);
+% band labels
+\node[font=\scriptsize\itshape,black!70,anchor=north] at (0,-3.1)    {fold $dm$};
+\node[font=\scriptsize\itshape,black!70,anchor=north] at (4.8,-3.1)  {fold $dp$};
+\node[font=\scriptsize\itshape,black!70,anchor=north] at (9.45,-3.1) {fold $dp$};
+\end{tikzpicture}
+\caption{The fold map, which Figure~\ref{fig:automaton} deliberately omits
+because it is not a mutation and is the only transition that crosses that
+figure's bands. It is total, idempotent, and its image is
+$\{\mathbf{A},\mathbf{D},\mathbf{E}\}$ --- the three states with no deltas, on
+which it acts as the identity (self-loops). The shaded states are the shadowed
+ones; that none of them is in the image is exactly the statement that only a
+live transaction can produce a shadow.}
+\label{fig:fold}
+\end{figure}
 
 \subsection{Rebuilding the transpose}
 
@@ -1835,6 +1915,17 @@ E & del 1,2      & J & \\
 J & add 3,4      & E & \emph{cancel}, $me=\{3,4\}$ \\
 I & del 1        & J & \\
 J & add 3        & I & \\
+\midrule
+\multicolumn{4}{@{}l@{}}{\emph{Folding --- the only band-crossing transition,
+and the only one no query can observe (Fig.~\ref{fig:fold}):}} \\
+B & fold $dp$    & D & commit a pending single \\
+C & fold $dp$    & E & commit a pending multi, $me$ unchanged \\
+H & fold $dp$    & D & the shadowing value becomes the committed one \\
+F & fold $dp$    & E & \\
+I & fold $dp$    & D & \\
+G & fold $dm$    & A & apply the tombstone; the pair is gone \\
+J & fold $dm$    & A & \\
+A, D, E & fold   & --- & no deltas to fold; the identity \\
 \bottomrule
 \end{tabular}
 \end{center}
