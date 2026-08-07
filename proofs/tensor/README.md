@@ -6,7 +6,7 @@ theorem for every operation of `tensor.rs`.
 * No `sorry`, no `admit`, no custom `axiom`. Every top-level theorem depends only
   on Lean's three standard axioms (`propext`, `Classical.choice`, `Quot.sound`) —
   verify with `#print axioms`.
-* ~3 800 lines, ~270 theorems; a clean rebuild of all 12 files takes ~10 s once the
+* ~3 950 lines, ~290 theorems; a clean rebuild of all 12 files takes ~15 s once the
   mathlib cache is in place.
 
 ## Build
@@ -38,7 +38,9 @@ it **preserves `Inv`**, and it **acts on `edgesAt` the way its doc comment says*
 | `remove_all` (fast path) | `inv_removeFast`, `edgesAt_removeFast_mem/_not_mem` | `Remove.lean` |
 | `remove_all` (slow path) | `removeOne_spec` (invariants + `edgesAt' p = (edgesAt p).erase id` + other pairs untouched), `removeOne_emptied` (a pair is reported iff that removal took its last edge), `removeSlow_spec`, `removeAll_spec` | `Remove.lean` |
 | `resize` | `inv_resize` (growth keeps every entry in range), `edgesAt_resize` | `Reads.lean` |
-| `flush` | `flush_effGet`, `inv_flush`, `edgesAt_flush`, `edgeCount_flush` | `Flush.lean` |
+| `flush` | `flush_effGet`, `inv_flush`, `edgesAt_flush`, `edgeCount_flush` — for an *arbitrary* fold decision, plus `edgesAt_flush_decision_irrelevant` | `Flush.lean` |
+| `fold_latched`, `fold_oversized`, the `dup`→`flush` path | no separate model: they differ only in when they fire and which policy latches the decision, then run the same fold, so the `flush` theorems cover them | `Flush.lean` |
+| the entry `self.flush()` of `set_all_from_slices` / `remove_all` | `edgesAt_setAll_after_flush`, `inv_setAll_after_flush`, `removeAll_after_flush_spec` (+ `writableBatch_flush`, `freshBatch_flush`) — a fold before the batch cannot change its result | `Flush.lean` |
 | `extract` | `extract_eq_effDom`, `mem_extract_iff` | `Reads.lean` |
 | `rebuild_backward` | `inv_rebuildBackward` — *establishes* the `mt` invariant from `InvCore` | `Flush.lean` |
 | `dup` / `Clone` | `inv_dup`, `edgesAt_dup` | `Reads.lean` |
@@ -82,10 +84,27 @@ than assumed silently.
   algebra belongs to a proof of `versioned_matrix.rs`. The three *forward* layers
   (`m`, `dp`, `dm`) are modelled explicitly, since `tensor.rs` manipulates them
   directly and that is where the delicate invariants live.
-* GraphBLAS pending work (`wait`, `wait_all`, `is_synced`, `pending`) has no
-  denotational content: every operation here behaves as if `wait_fwd()` had run,
-  which is what `tensor.rs` guarantees by calling it on entry. `memory_usage` is
-  likewise outside the model.
+* GraphBLAS pending work (`wait`, `wait_all`, `wait_base`, `is_synced`,
+  `pending`) has no denotational content: every operation here behaves as if the
+  layers were materialized, which is what `tensor.rs` guarantees by waiting on
+  entry. `memory_usage` is likewise outside the model.
+
+* **The fold policy is a parameter, not a formula.** When a delta folds is decided
+  by `should_fold` / `should_fold_read` / `delta_dominates_base` in
+  `versioned_matrix.rs` — a cost model whose constants (`WRITE_FOLD_K`,
+  `READ_FOLD_K`, `MIN_FOLD_DELTA`) are *measured*, and which is evaluated on
+  deliberately approximate counters (`Delta::count` overcounts a shadowing
+  `insert`, and `erase` saturates rather than probe a shared layer). Encoding any
+  of that here would freeze one tuning decision into the proofs and make them
+  stale on the next measurement.
+
+  So `flush` takes the decision as two `Bool`s and every theorem is proved for all
+  four combinations. That is strictly stronger than modelling the policy: it says
+  no choice of constants, and no drift in the counters that feed them, can change
+  what the tensor denotes — `edgesAt_flush_decision_irrelevant` states exactly
+  that. The policy's *own* correctness claim is about throughput and memory, which
+  is a measurement question (`fold_cost_bench.rs`, and the benchmark numbers in
+  the PR), not a theorem.
 * Indices are `Nat`, not `u64`/`u32`. Where width matters the bound is proved
   rather than assumed: `key_lt` (the compound key fits a `u64`),
   `edgeCount_no_underflow` (the unsigned subtraction chain), `msb_*` (the

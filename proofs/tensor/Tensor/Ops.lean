@@ -10,10 +10,13 @@ statement, using the `Layer`/`Finset` model of the GraphBLAS calls:
 | `GrB_Matrix_removeElement`              | `Layer.remove`                                             |
 | `Matrix::remove_all(mask)`              | `Layer.removeAll` (`dom \ mask`)                           |
 | `dm<mask> = mask ∩ m` (`eWiseMult`)     | `(dm \ mask) ∪ (mask ∩ m.dom)` — masked assign, no replace |
-| `m ⊕= dp` with `SECOND` (`eWiseAdd`)    | union with `dp` winning (`Layer.mergeSecond`)              |
+| `new_m = m ⊕ dp` (`eWiseAdd`, `SECOND`) | union with `dp` winning (`Layer.mergeSecond`)              |
+| `new_m<!dm, replace> = m` (`select`)     | `Layer.removeAll` (`dom \ dm`)                             |
+| `Matrix::grown` (`GxB_Matrix_concat`)   | unchanged entries at new bounds (`resize`)                  |
 | `set_pattern`                           | pattern union into a `bool` matrix                         |
 | `intersection_nvals`                    | `(dp.dom ∩ m.dom).card`                                    |
 | `VersionedMatrix<bool>` (`mt`, `me`)    | its effective entry set (`Finset`)                         |
+| `Delta::count` / fold latches           | *not modelled* — see `flush`, whose decision is a parameter |
 -/
 import Tensor.Key
 
@@ -54,8 +57,13 @@ def new (nrows ncols : Nat) : Tensor where
   nrows := nrows
   ncols := ncols
 
-/-- `Tensor::dup` — a new MVCC version; and `Clone`, a handle copy.  Both keep
-every layer and counter, so on the abstract state they are the identity. -/
+/-- `Tensor::dup` — a new MVCC version; and `Clone`, a handle copy. Both carry
+every layer over unchanged, so on the abstract state they are the identity.
+
+`dup` is also where the write path's fold decision is *made* (from the finished
+transaction's contribution, `count - tx_nvals`) and latched for the next `flush`
+to execute — but it folds nothing itself, and the decision is a `flush` parameter
+here, so none of that reaches the abstract state. -/
 def dup (t : Tensor) : Tensor := t
 
 /-! ## Reads -/
@@ -135,12 +143,16 @@ The write phase of `set_all_from_slices`, for one queued inline value:
 ```rust
 self.mt.set(d, s, true);
 if let Some(committed) = m_masked[i] {
-    self.dm.remove(s, d);
-    if committed == id { self.dp.remove(s, d); continue; }
+    self.dm.erase(s, d);
+    if committed == id { self.dp.erase(s, d); continue; }
 }
-self.dp.set(s, d, id);
+self.dp.insert(s, d, id);
 ```
--/
+
+`Delta::insert` / `Delta::erase` are the counted wrappers over
+`Matrix::set` / `Matrix::remove`: they move the approximate counter that feeds the
+fold policy alongside the layer write. The layer effect — all this model sees — is
+the bare `set` / `remove`; see `flush` on why the counter is not modelled. -/
 def writeInline (t : Tensor) (p : Pair) (id : Nat) (mMasked : Option Nat) : Tensor :=
   match mMasked with
   | some committed =>
@@ -252,21 +264,61 @@ def removeAll (t : Tensor) (rels : List (Nat × Pair)) : Tensor × List Pair :=
 
 /-! ## Maintenance -/
 
-/-- `Tensor::resize` (capacity growth only). -/
+/-- `Tensor::resize`, capacity growth only — the shrink branch drops entries and
+is out of scope (the callers `resize` upwards).
+
+The Rust re-emits each layer at the target dimensions with `Matrix::grown`
+(`GxB_Matrix_concat`, blocking the layer into the top-left of a fresh matrix)
+instead of resizing through the `Cow`. Both place every entry at its original
+coordinate, so the denotation is just the new bounds. -/
 def resize (t : Tensor) (nrows ncols : Nat) : Tensor :=
   { t with nrows := nrows, ncols := ncols }
 
-/-- `m.element_wise_add_second(&dp); dp.clear()` -/
+/-- One half of the fold: `dp` merged into the base with `SECOND` — so a `dp`
+value *shadowing* a committed pair wins — then cleared.
+
+In the Rust this is `new_m.element_wise_add(.., Some(&m), Some(&dp), ..)` built
+into a fresh matrix that replaces `m`, rather than an in-place update. That is a
+copy-on-write choice (the base is shared with the committed snapshot, so an
+in-place fold would deep-copy it first) with no denotational content. -/
 def foldDp (t : Tensor) : Tensor := { t with m := t.m.mergeSecond t.dp, dp := t.dp.clear }
 
-/-- `m.remove_all(&dm); dm.clear()` -/
+/-- The other half: the tombstones applied to the base, then cleared. In the Rust
+this is the complemented `dm` mask with `REPLACE` — `new_m<!dm, replace> = m`,
+i.e. `Matrix::select` — which on a pattern is exactly `m.dom \ dm`. -/
 def foldDm (t : Tensor) : Tensor := { t with m := t.m.removeAll t.dm, dm := ∅ }
 
-/-- `Tensor::flush`: fold oversized deltas into the committed base. -/
-def flush (t : Tensor) : Tensor :=
-  if 10000 ≤ t.dp.nvals then
-    (if 10000 ≤ (foldDp t).dm.card then foldDm (foldDp t) else foldDp t)
-  else (if 10000 ≤ t.dm.card then foldDm t else t)
+/-- `Tensor::flush`.
+
+`fdp`/`fdm` are the *latched fold decisions*, taken as parameters rather than
+computed. The policy behind them — `should_fold` / `should_fold_read` /
+`delta_dominates_base` in `versioned_matrix.rs`, latched in `dup` / `wait_fwd` /
+`fold_oversized` / `fold_latched` and executed here — is a cost heuristic
+evaluated on deliberately *approximate* counters (`Delta::count`, which
+overcounts a shadowing `insert` and saturates on `erase`). Pinning a formula into
+the model would freeze one tuning decision and make the proofs stale on the next
+measurement. Quantifying over the decision instead proves the stronger and more
+useful statement: *every* decision preserves the denotation, so no change to the
+constants — and no drift in the counters that feed them — can affect what the
+tensor means. See `edgesAt_flush_decision_irrelevant`.
+
+The Rust decides both layers first and emits one matrix for the pair: `(true,
+true)` is a single masked `eWiseAdd`, not two passes. `foldDm (foldDp t)` denotes
+the same thing — `(m ⊕ dp) \ dm` either way, because `dp ∩ dm = ∅` — which is
+what `flush_effGet` checks. `(false, false)` is guarded out in the Rust by
+`if fold_dp || fold_dm`; here it is the identity, the only total completion.
+
+`fold_latched` (end of a `GRAPH.BULK` command) and `fold_oversized` (MVCC commit)
+differ from the `dup`-driven path only in when they fire and which policy
+computes the decision, then run this same fold — so they need no separate model,
+and the theorems below cover them. `wait_fwd` / `wait_base` / `is_synced` remain
+outside the model: they only settle GraphBLAS pending work and latch decisions. -/
+def flush (t : Tensor) (fdp fdm : Bool) : Tensor :=
+  match fdp, fdm with
+  | true,  true  => foldDm (foldDp t)
+  | true,  false => foldDp t
+  | false, true  => foldDm t
+  | false, false => t
 
 /-- `Tensor::rebuild_backward`: `mt := transpose (extract t)`. -/
 def rebuildBackward (t : Tensor) : Tensor :=

@@ -1,24 +1,43 @@
 /-
 # `flush` and `rebuild_backward`
 
-`flush` folds oversized deltas into the committed base:
+`flush` folds a delta into the committed base once the policy says it earns the
+rewrite:
 
 ```rust
-if self.dp.nvals() >= 10000 { self.m.element_wise_add_second(&self.dp); self.dp.clear(); }
-if self.dm.nvals() >= 10000 { self.m.remove_all(&self.dm); self.dm.clear(); }
+let fold_dp = self.dp.take_fold();
+let fold_dm = self.dm.take_fold();
+match (fold_dp, fold_dm) {
+    (true,  true)  => new_m.element_wise_add(Some(&self.dm), Some(&self.m),
+                                             Some(&*self.dp), Some(Descriptor::RC)),
+    (true,  false) => new_m.element_wise_add(None, Some(&self.m), Some(&*self.dp), None),
+    (false, true)  => new_m.select(&self.dm, &self.m),
+    (false, false) => unreachable!(),
+}
 ```
 
 Proved: each fold leaves `eff_get` — hence the denotation and `edge_count` —
 untouched, and re-establishes the delta invariants (afterwards the folded delta
-is empty, so `dp ∩ dm = ∅` and cancel-to-clean hold trivially).  The doc comment's
+is empty, so `dp ∩ dm = ∅` and cancel-to-clean hold trivially). The doc comment's
 claim that "the two merges are order-independent" is witnessed by the fact that
 each one separately preserves `eff_get` pointwise.
+
+Everything here is proved for an **arbitrary** fold decision, never for the
+policy that produces one. That is deliberate, and it is the theorem worth having:
+the decision comes from a cost heuristic over approximate counters, so what needs
+proving is that the heuristic *cannot matter*. `edgesAt_flush_decision_irrelevant`
+states it directly, and `edgesAt_setAll_after_flush` /
+`removeAll_after_flush_spec` discharge the consequence — that the `self.flush()`
+now opening `set_all_from_slices` and `remove_all` cannot perturb their specs.
 
 `rebuild_backward` recomputes `mt` from the effective forward pattern; it is the
 step that *establishes* the `mt` invariant (used after `decode`, which leaves `mt`
 empty).
 -/
 import Tensor.Count
+-- `Tensor.Remove` (and `Tensor.Add` through it) for the entry-point absorption
+-- corollaries at the end of this file.
+import Tensor.Remove
 
 namespace FalkorDB
 namespace Tensor
@@ -85,43 +104,56 @@ theorem inv_foldDm (h : Inv t) : Inv (foldDm t) := by
 
 /-! ## `flush` -/
 
-theorem flush_effGet (h : Inv t) (q : Pair) : (flush t).effGet q = t.effGet q := by
-  unfold flush
-  split
-  · split
-    · rw [foldDm_effGet, foldDp_effGet h]
-    · exact foldDp_effGet h q
-  · split
-    · exact foldDm_effGet q
-    · rfl
+theorem flush_effGet (h : Inv t) (fdp fdm : Bool) (q : Pair) :
+    (flush t fdp fdm).effGet q = t.effGet q := by
+  cases fdp <;> cases fdm
+  · rfl
+  · exact foldDm_effGet q
+  · exact foldDp_effGet h q
+  · exact (foldDm_effGet q).trans (foldDp_effGet h q)
 
-/-- **`flush` preserves every invariant.** -/
-theorem inv_flush (h : Inv t) : Inv (flush t) := by
-  unfold flush
-  split
-  · split
-    · exact inv_foldDm (inv_foldDp h)
-    · exact inv_foldDp h
-  · split
-    · exact inv_foldDm h
-    · exact h
+/-- **`flush` preserves every invariant**, whichever layers it folds. -/
+theorem inv_flush (h : Inv t) (fdp fdm : Bool) : Inv (flush t fdp fdm) := by
+  cases fdp <;> cases fdm
+  · exact h
+  · exact inv_foldDm h
+  · exact inv_foldDp h
+  · exact inv_foldDm (inv_foldDp h)
 
 /-- **`flush` is invisible to readers**: same edges at every pair. -/
-theorem edgesAt_flush (h : Inv t) (q : Pair) : (flush t).edgesAt q = t.edgesAt q := by
-  refine edgesAt_congr_at (flush_effGet h q) ?_
+theorem edgesAt_flush (h : Inv t) (fdp fdm : Bool) (q : Pair) :
+    (flush t fdp fdm).edgesAt q = t.edgesAt q := by
+  refine edgesAt_congr_at (flush_effGet h fdp fdm q) ?_
   rw [meRow, meRow]
   congr 1
-  unfold flush
-  split <;> split <;> rfl
+  cases fdp <;> cases fdm <;> rfl
 
 /-- …and to `edge_count`, even though the formula's inputs all changed. -/
-theorem edgeCount_flush (h : Inv t) : edgeCount (flush t) = edgeCount t := by
-  rw [edgeCount_eq_sum (inv_flush h), edgeCount_eq_sum h, totalEdges, totalEdges]
-  have hdom : (flush t).effDom = t.effDom := by
+theorem edgeCount_flush (h : Inv t) (fdp fdm : Bool) :
+    edgeCount (flush t fdp fdm) = edgeCount t := by
+  rw [edgeCount_eq_sum (inv_flush h fdp fdm), edgeCount_eq_sum h, totalEdges, totalEdges]
+  have hdom : (flush t fdp fdm).effDom = t.effDom := by
     ext q
-    rw [mem_effDom_iff_isSome, mem_effDom_iff_isSome, flush_effGet h q]
+    rw [mem_effDom_iff_isSome, mem_effDom_iff_isSome, flush_effGet h fdp fdm q]
   rw [hdom]
-  exact Finset.sum_congr rfl (fun q _ => by rw [edgesAt_flush h q])
+  exact Finset.sum_congr rfl (fun q _ => by rw [edgesAt_flush h fdp fdm q])
+
+/-- **The fold decision is denotationally invisible.** Any two decisions leave the
+same edges at every pair, so the whole fold policy — `WRITE_FOLD_K`,
+`READ_FOLD_K`, `MIN_FOLD_DELTA`, the `delta_dominates_base` escape hatch, and the
+approximate counters they are evaluated on — is a pure throughput concern that
+cannot affect what the tensor denotes. Re-tuning any of it leaves every theorem in
+this development standing. -/
+theorem edgesAt_flush_decision_irrelevant (h : Inv t) (a b c d : Bool) (q : Pair) :
+    (flush t a b).edgesAt q = (flush t c d).edgesAt q := by
+  rw [edgesAt_flush h a b, edgesAt_flush h c d]
+
+/-- `flush` keeps the bounds, so an `InBounds` precondition survives a fold. -/
+@[simp] theorem flush_nrows (fdp fdm : Bool) : (flush t fdp fdm).nrows = t.nrows := by
+  cases fdp <;> cases fdm <;> rfl
+
+@[simp] theorem flush_ncols (fdp fdm : Bool) : (flush t fdp fdm).ncols = t.ncols := by
+  cases fdp <;> cases fdm <;> rfl
 
 /-! ## `rebuild_backward` -/
 
@@ -142,6 +174,59 @@ theorem inv_rebuildBackward (h : InvCore t) : Inv (rebuildBackward t) := by
     (rebuildBackward t).edgesAt q = t.edgesAt q := rfl
 
 @[simp] theorem edgeCount_rebuildBackward : edgeCount (rebuildBackward t) = edgeCount t := rfl
+
+/-! ## The entry-point fold is absorbed
+
+`set_all_from_slices` and `remove_all` both now open with `self.flush()`, so the
+state their specs are proved about is a *possibly just-folded* tensor rather than
+the caller's. Those specs are stated over an arbitrary `Inv` tensor and phrased in
+`edgesAt`, and a fold lands back in that class with the same `edgesAt` and the
+same bounds — so they transfer. Rather than assert that, the two corollaries below
+check it. -/
+
+/-- The batch preconditions are `edgesAt`- and bounds-level, so a fold preserves
+them. -/
+theorem writableBatch_flush {l : List (Pair × Nat)} (fdp fdm : Bool)
+    (hb : WritableBatch t l) : WritableBatch (flush t fdp fdm) l := by
+  intro e he
+  obtain ⟨⟨hbd, hr, hc⟩, hid⟩ := hb e he
+  exact ⟨⟨hbd, by simpa using hr, by simpa using hc⟩, hid⟩
+
+theorem freshBatch_flush {l : List (Pair × Nat)} (h : Inv t) (fdp fdm : Bool)
+    (hf : FreshBatch t l) : FreshBatch (flush t fdp fdm) l := by
+  refine ⟨hf.1, fun e he q => ?_⟩
+  rw [edgesAt_flush h fdp fdm q]
+  exact hf.2 e he q
+
+/-- **`set_all_from_slices`' entry `flush()` cannot change its result.** A batch
+applied after a fold lands on the same edges as the same batch applied before it. -/
+theorem edgesAt_setAll_after_flush {l : List (Pair × Nat)} (h : Inv t)
+    (hb : WritableBatch t l) (hf : FreshBatch t l) (fdp fdm : Bool) (q : Pair) :
+    (setAll (flush t fdp fdm) l).edgesAt q = t.edgesAt q ∪ batchIds l q := by
+  rw [edgesAt_setAll (inv_flush h fdp fdm) (writableBatch_flush fdp fdm hb)
+    (freshBatch_flush h fdp fdm hf) q, edgesAt_flush h fdp fdm q]
+
+theorem inv_setAll_after_flush {l : List (Pair × Nat)} (h : Inv t)
+    (hb : WritableBatch t l) (hf : FreshBatch t l) (fdp fdm : Bool) :
+    Inv (setAll (flush t fdp fdm) l) :=
+  inv_setAll (inv_flush h fdp fdm) (writableBatch_flush fdp fdm hb)
+    (freshBatch_flush h fdp fdm hf)
+
+/-- **`remove_all`'s entry `flush()` cannot change its result** either: the same
+edges are removed, the same pairs reported emptied, and the invariants hold. -/
+theorem removeAll_after_flush_spec {rels : List (Nat × Pair)} (h : Inv t)
+    (hb : ∀ r ∈ rels, Bounded r.2) (hex : ∀ r ∈ rels, r.1 ∈ t.edgesAt r.2)
+    (fdp fdm : Bool) :
+    Inv (removeAll (flush t fdp fdm) rels).1 ∧
+      (∀ q, (removeAll (flush t fdp fdm) rels).1.edgesAt q
+              = t.edgesAt q \ removedIds rels q) ∧
+      ∀ q ∈ (removeAll (flush t fdp fdm) rels).2,
+        (removeAll (flush t fdp fdm) rels).1.edgesAt q = ∅ := by
+  obtain ⟨hinv, hedges, hemptied⟩ :=
+    removeAll_spec (inv_flush h fdp fdm) hb
+      (fun r hr => by rw [edgesAt_flush h fdp fdm r.2]; exact hex r hr)
+  refine ⟨hinv, fun q => ?_, hemptied⟩
+  rw [hedges q, edgesAt_flush h fdp fdm q]
 
 end Tensor
 end FalkorDB
