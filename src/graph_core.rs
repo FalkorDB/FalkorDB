@@ -43,6 +43,8 @@ use crossfire::{
     MTx, Rx,
     mpsc::{Array, bounded_blocking},
 };
+#[cfg(feature = "index-falkordb")]
+use graph::index::falkordb::build_registry::{BuildKey, BuildRegistry};
 use graph::{
     graph::{
         graph::{Graph, Plan},
@@ -1403,19 +1405,16 @@ pub(crate) fn commit_and_replicate(
 // replays DELTA before flipping the column `Ready`. Reads on a `Building` column scan-fall-back
 // until that flip.
 
-/// One in-flight background build, identified by graph name + column + build epoch.
+/// Columns whose background build is already spawned — dedups re-spawn across subsequent writes —
+/// plus the retry backoff of those that failed to install.
+///
+/// Maintained by the [`BuildCleanup`] guard the dispatcher hands to the job — on completion, panic,
+/// or the job being dropped undispatched — never under the graph write lock. The bookkeeping itself
+/// lives in `graph` so it can be unit-tested; this crate installs Redis's allocator and its test
+/// binary aborts before `main`.
 #[cfg(feature = "index-falkordb")]
-type BuildKey = (String, graph::entity_type::EntityType, String, String, u64);
-
-/// Columns whose background build is already spawned — dedups re-spawn across subsequent writes.
-/// Keyed including the build **epoch**, so a dropped-and-re-created column (fresh epoch) spawns a new
-/// job rather than being suppressed by the old job's lingering marker. Cleared by the
-/// [`BuildCleanup`] guard the dispatcher hands to the job — on completion, panic, or the job being
-/// dropped undispatched — never under the graph write lock.
-#[cfg(feature = "index-falkordb")]
-static INDEX_BUILDS_IN_FLIGHT: std::sync::LazyLock<
-    parking_lot::Mutex<std::collections::HashSet<BuildKey>>,
-> = std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashSet::new()));
+static INDEX_BUILDS_IN_FLIGHT: std::sync::LazyLock<BuildRegistry> =
+    std::sync::LazyLock::new(|| BuildRegistry::new(INDEX_BUILD_SWEEP_INTERVAL));
 
 /// The `Building` columns of the just-committed graph — the online-build work list. Pure read
 /// (reads the committed version via `MvccGraph::read`, an `Arc` clone, no RwLock), so it is safe to
@@ -1457,25 +1456,51 @@ const INDEX_BUILD_SWEEP_INTERVAL: std::time::Duration = std::time::Duration::fro
 ///
 /// Dispatch is idempotent under the in-flight set, so a sweep that finds nothing new costs one
 /// registry lock plus one snapshot read per graph.
+/// The running sweep thread, so [`stop_index_build_sweep`] can join it and
+/// [`spawn_index_build_sweep`] can tell "already running" from "never started".
 #[cfg(feature = "index-falkordb")]
-static INDEX_SWEEP_STARTED: std::sync::Once = std::sync::Once::new();
+static INDEX_SWEEP: std::sync::LazyLock<parking_lot::Mutex<Option<std::thread::JoinHandle<()>>>> =
+    std::sync::LazyLock::new(|| parking_lot::Mutex::new(None));
 
 #[cfg(feature = "index-falkordb")]
 static INDEX_SWEEP_STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Ask the sweep to exit. Called from the shutdown handler *before* `threadpool::shutdown()`, so
-/// the sweep cannot keep handing jobs to a pool that is dropping them (and logging each one) while
-/// GraphBLAS is being torn down underneath it.
+/// Stop the sweep and wait for it to exit. Called from the shutdown handler *before*
+/// `threadpool::shutdown()`, so the sweep cannot keep handing jobs to a pool that is dropping them
+/// (and logging each one) while GraphBLAS is being torn down underneath it.
+///
+/// The **join** is the point, not just the flag. `on_shutdown` tears down the threadpool, GraphBLAS
+/// and RediSearch as soon as this returns, and the sweep can be inside `collect_pending_index_builds`
+/// touching a `Graph` at that moment. Signalling without joining leaves that window open — the same
+/// class of bug `telemetry::shutdown_flusher_thread` joins to prevent.
 #[cfg(feature = "index-falkordb")]
 pub fn stop_index_build_sweep() {
     INDEX_SWEEP_STOP.store(true, Ordering::Relaxed);
+    // Take the handle out before joining: holding the lock across the join would make a concurrent
+    // `spawn_index_build_sweep` wait on a thread that is only exiting because we asked it to.
+    let handle = INDEX_SWEEP.lock().take();
+    if let Some(handle) = handle {
+        // The sweep polls the stop flag every 50ms, so this waits at most that plus one dispatch
+        // pass. A panicked sweep gives `Err` here, which is nothing to act on during shutdown.
+        drop(handle.join());
+    }
 }
 
 #[cfg(feature = "index-falkordb")]
 pub fn spawn_index_build_sweep() {
+    let mut slot = INDEX_SWEEP.lock();
     // Idempotent: module init can run more than once in-process (tests, repeated load), and each
-    // extra call would otherwise add another unstoppable sweep thread duplicating dispatch work.
-    INDEX_SWEEP_STARTED.call_once(|| {
+    // extra call would otherwise add another sweep thread duplicating dispatch work.
+    if slot.is_some() {
+        return;
+    }
+    // Clear the stop flag HERE rather than at shutdown. `stop_index_build_sweep` latches it, and
+    // init can follow a shutdown in the same process; a latched flag meant the reloaded module ran
+    // with no sweep at all, so every later `CREATE INDEX` sat `Building` forever and every indexed
+    // read silently degraded to a scan. Clearing under the same lock that owns the handle keeps
+    // "flag says run" and "thread exists" from disagreeing.
+    INDEX_SWEEP_STOP.store(false, Ordering::Relaxed);
+    *slot = Some(
         std::thread::Builder::new()
             .name("falkordb-index-sweep".into())
             .spawn(|| {
@@ -1499,13 +1524,19 @@ pub fn spawn_index_build_sweep() {
                     // would stall every other registry user.
                     let graphs: Vec<Arc<RwLock<ThreadedGraph>>> =
                         GRAPH_REGISTRY.lock().values().map(Arc::clone).collect();
+                    let mut pending = std::collections::HashSet::new();
                     for tg in graphs {
-                        dispatch_index_builds(&tg, collect_pending_index_builds(&tg));
+                        let builds = collect_pending_index_builds(&tg);
+                        pending.extend(builds.iter().cloned());
+                        dispatch_index_builds(&tg, builds);
                     }
+                    // The sweep is the only place that sees every graph at once, so it is where
+                    // stale backoff entries are reclaimed.
+                    INDEX_BUILDS_IN_FLIGHT.prune(&pending);
                 }
             })
-            .expect("spawn index-build sweep thread");
-    });
+            .expect("spawn index-build sweep thread"),
+    );
 }
 /// Clears a column's in-flight marker on drop — including when the job is never run.
 ///
@@ -1518,12 +1549,16 @@ pub fn spawn_index_build_sweep() {
 #[cfg(feature = "index-falkordb")]
 struct BuildCleanup {
     key: BuildKey,
+    /// Set by the job only when the base actually landed. Every other exit — bail, stale epoch,
+    /// lost version slot, panic, or the job never running — leaves it `false`, which is what arms
+    /// the retry backoff.
+    installed: bool,
 }
 
 #[cfg(feature = "index-falkordb")]
 impl Drop for BuildCleanup {
     fn drop(&mut self) {
-        INDEX_BUILDS_IN_FLIGHT.lock().remove(&self.key);
+        INDEX_BUILDS_IN_FLIGHT.release(&self.key, self.installed, std::time::Instant::now());
     }
 }
 
@@ -1539,24 +1574,23 @@ fn dispatch_index_builds(
     if builds.is_empty() {
         return;
     }
-    // Claim the not-yet-building keys under the in-flight lock, then release it before spawning.
-    let to_spawn: Vec<BuildKey> = {
-        let mut in_flight = INDEX_BUILDS_IN_FLIGHT.lock();
-        builds
-            .into_iter()
-            .filter(|key| in_flight.insert(key.clone()))
-            .collect()
-    };
+    // Claim the not-yet-building keys, then spawn with the registry lock released — `spawn` blocks
+    // on a full queue. A key still inside its retry backoff is not claimed.
+    let to_spawn = INDEX_BUILDS_IN_FLIGHT.claim(builds, std::time::Instant::now());
     for key in to_spawn {
         let (_name, entity, label, attr, epoch) = key.clone();
         // The guard rides *with* the job. If `spawn` drops it (pool shutting down), dropping the
         // closure drops the guard and releases the key; otherwise it lives until the job ends.
-        let cleanup = BuildCleanup { key };
+        let mut cleanup = BuildCleanup {
+            key,
+            installed: false,
+        };
         let tg = Arc::clone(tg);
         spawn(
             move || {
-                let _cleanup = cleanup;
-                run_index_build(tg, entity, Arc::new(label), Arc::new(attr), epoch);
+                cleanup.installed =
+                    run_index_build(tg, entity, Arc::new(label), Arc::new(attr), epoch);
+                drop(cleanup);
             },
             None,
         );
@@ -1577,7 +1611,7 @@ fn run_index_build(
     label: Arc<String>,
     attr: Arc<String>,
     epoch: u64,
-) {
+) -> bool {
     // 1. Scan BASE off-thread from a committed snapshot, already encoded. No locks are held for the
     //    scan's duration beyond the snapshot Arc: the version is immutable, so writes committing
     //    after it are invisible by construction and there is no scan-vs-write race. Encoding here
@@ -1589,7 +1623,7 @@ fn run_index_build(
             .collect_index_base_encoded(entity, &label, &attr);
         b
     }) else {
-        return; // column dropped while we were dispatched — nothing to build
+        return false; // column dropped while we were dispatched — nothing to build
     };
 
     // 2. Install in ONE commit. Chunking would be wrong as well as slow: a partially-subtracted
@@ -1599,12 +1633,12 @@ fn run_index_build(
     //    and re-created since this job started, so a stale job cannot publish into the fresh one.
     //
     //    On fork contention `commit_index_build` returns false without installing; the sweep
-    //    re-dispatches. A background job can retry — a client cannot, which is why the slot is
-    //    try-acquired rather than blocked on.
+    //    re-dispatches, after the caller's backoff. A background job can retry — a client cannot,
+    //    which is why the slot is try-acquired rather than blocked on.
     commit_index_build(&tg, |g| {
         g.install_index_base(entity, &label, &attr, epoch, base)
-    });
-    // `_cleanup` drops here (or on unwind): clears the in-flight marker.
+    })
+    // The caller's `BuildCleanup` reads this: installed → release the key, otherwise → back off.
 }
 
 /// The one audited committer for a background install step: take the writer's exclusion (RwLock write
