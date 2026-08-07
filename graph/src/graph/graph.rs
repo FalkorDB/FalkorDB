@@ -1349,7 +1349,7 @@ impl Graph {
         self.resize();
 
         self.all_nodes_matrix
-            .set_all(nodes.iter().map(|id| (id, id)));
+            .set_all_new(nodes.iter().map(|id| (id, id)));
     }
 
     #[must_use]
@@ -1622,11 +1622,17 @@ impl Graph {
     }
 
     /// Bulk set node labels using parallel row/col slices (2 FFI calls per matrix).
+    ///
+    /// `all_new` asserts every `(node, label)` pair is fresh — the node was
+    /// created in this transaction — allowing the unchecked delta insert.
+    /// `SET n:Label` on pre-existing nodes may re-add a committed pair, which
+    /// must go through the checked path to keep `dp ∩ m = ∅`.
     pub fn set_nodes_labels_bulk(
         &mut self,
         label_rows: &[u64],
         label_cols: &[u64],
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        all_new: bool,
     ) {
         self.resize();
 
@@ -1643,12 +1649,21 @@ impl Graph {
             }
         }
 
-        self.node_labels_matrix
-            .set_all(label_rows.iter().copied().zip(label_cols.iter().copied()));
+        let pairs = label_rows.iter().copied().zip(label_cols.iter().copied());
+        if all_new {
+            self.node_labels_matrix.set_all_new(pairs);
+        } else {
+            self.node_labels_matrix.set_all(pairs);
+        }
 
         for (lid, ids) in by_label.into_iter().enumerate() {
             if !ids.is_empty() {
-                self.labels_matices[lid].set_all(ids.iter().map(|&id| (id, id)));
+                let diag = ids.iter().map(|&id| (id, id));
+                if all_new {
+                    self.labels_matices[lid].set_all_new(diag);
+                } else {
+                    self.labels_matices[lid].set_all(diag);
+                }
             }
         }
     }
@@ -1694,11 +1709,16 @@ impl Graph {
         //
         // The two are equivalent because `dp ∩ m = ∅` holds for
         // `VersionedMatrix<bool>`: its `set` clears the `dm` tombstone when `m`
-        // already holds the pair instead of writing a shadowing `dp` entry, and
-        // asserts as much. So `remove_mask`'s two effects — tombstone `mask ∩ m`,
-        // drop `mask ∩ dp` — can never both apply to one entry, which is exactly
-        // the choice `remove` makes per entry. (The valued matrices *do* allow
-        // `dp` to shadow `m`; `remove` is defined only on the boolean ones.)
+        // already holds the pair instead of writing a shadowing `dp` entry. So
+        // `remove_mask`'s two effects — tombstone `mask ∩ m`, drop `mask ∩ dp` —
+        // can never both apply to one entry, which is exactly the choice `remove`
+        // makes per entry. (The valued matrices *do* allow `dp` to shadow `m`;
+        // `remove` is defined only on the boolean ones.)
+        //
+        // That invariant is covered by
+        // `delta_invariants_hold_across_mutation_sequences`, and this specific
+        // substitution is machine-checked as
+        // `eff_removeMask_eq_foldl_remove` in `proofs/versioned_matrix`.
         for id in deleted_nodes {
             self.all_nodes_matrix.remove(id, id);
         }
@@ -2079,21 +2099,61 @@ impl Graph {
         let type_id = type_idx as u64;
         let type_ids: Vec<u64> = vec![type_id; rel_ids.len()];
         self.relationship_type_matrix
-            .set_all(rel_ids.iter().copied().zip(type_ids.iter().copied()));
+            .set_all_new(rel_ids.iter().copied().zip(type_ids.iter().copied()));
     }
 
-    /// Flush delta-plus into base for all shared matrices.
-    /// Reduces dp accumulation across multiple GRAPH.BULK commands.
+    /// Fold oversized delta-plus into the base for all shared matrices at
+    /// the end of a GRAPH.BULK command, preventing dp accumulation across
+    /// commands. `fold_latched` latches the fold decision (via `wait`) and
+    /// executes it immediately — mutations are done here, so the mid-tx
+    /// fold pathology cannot occur, and deferring to the next version's
+    /// `dup`/`flush` would leave the final command's deltas unfolded.
     pub fn flush_for_bulk(&mut self) {
-        self.all_nodes_matrix.flush();
-        self.node_labels_matrix.flush();
+        self.all_nodes_matrix.fold_latched();
+        self.node_labels_matrix.fold_latched();
         for m in &mut self.labels_matices {
-            m.flush();
+            m.fold_latched();
         }
-        self.adjacancy_matrix.flush();
-        self.relationship_type_matrix.flush();
+        self.adjacancy_matrix.fold_latched();
+        self.relationship_type_matrix.fold_latched();
         for t in &mut self.relationship_matrices {
-            t.flush();
+            t.fold_latched();
+        }
+    }
+
+    /// Fold every delta that has grown comparable to its base into that base,
+    /// bounding a committed version's delta memory. Called at MVCC commit,
+    /// before `wait_bases`; see [`VersionedMatrix::fold_oversized`] for why
+    /// the sub-hatch deltas are deliberately left for the next `flush`.
+    pub fn fold_oversized_deltas(&mut self) {
+        self.adjacancy_matrix.fold_oversized();
+        self.node_labels_matrix.fold_oversized();
+        self.relationship_type_matrix.fold_oversized();
+        self.all_nodes_matrix.fold_oversized();
+        for m in &mut self.labels_matices {
+            m.fold_oversized();
+        }
+        for t in &mut self.relationship_matrices {
+            t.fold_oversized();
+        }
+    }
+
+    /// Materialize only the committed base (`m`) layer of every versioned
+    /// matrix and tensor. Called at MVCC commit before publishing: readers
+    /// reach bases lock-free (dp/dm reads go through the mutex-guarded
+    /// `Matrix::wait`), so a pending base in a visible snapshot lets
+    /// concurrent readers corrupt GrB state. No-op per matrix when synced.
+    pub fn wait_bases(&self) {
+        self.zero_matrix.wait_base();
+        self.adjacancy_matrix.wait_base();
+        self.node_labels_matrix.wait_base();
+        self.relationship_type_matrix.wait_base();
+        self.all_nodes_matrix.wait_base();
+        for m in &self.labels_matices {
+            m.wait_base();
+        }
+        for t in &self.relationship_matrices {
+            t.wait_base();
         }
     }
 
@@ -2459,6 +2519,10 @@ impl Graph {
             super::graphblas::tensor::Tensor::extract,
         );
         for relationship_matrix in iter {
+            // The raw fwd layers may hold pending work; set_pattern's GrB ops
+            // would finish it internally, racing other readers on the shared
+            // handles. No-op when already synced.
+            relationship_matrix.wait_fwd();
             m.set_pattern(
                 Some(relationship_matrix.fwd_dm()),
                 relationship_matrix.fwd_m(),
@@ -3751,6 +3815,13 @@ impl Graph {
     ) -> Matrix<bool> {
         if rel_types.is_empty() {
             self.adjacancy_matrix.extract()
+        } else if let [rel_type] = rel_types {
+            // Single type: the extract already materializes an owned bool
+            // matrix; skip the extra new + eWiseAdd pass.
+            self.get_type_id(rel_type).map_or_else(
+                || Matrix::<bool>::new(self.node_cap, self.node_cap),
+                |type_id| self.relationship_matrices[usize::from(type_id)].extract(),
+            )
         } else {
             let mut result = Matrix::<bool>::new(self.node_cap, self.node_cap);
             for rel_type in rel_types {
