@@ -15,29 +15,30 @@
 //------------------------------------------------------------------------------
 
 // The 8-byte mem (p_mem when refering to an object p) of a malloc'd object
-// contains the arena in the high order byte, and the memsize in the lower 7
-// bytes.
-
-#define GB_ARENA_RMM 0          /* fixme for CUDA: Rapids will be on arena 1 */
+// contains the arena in the high order 12 bits, and the memsize in the lower
+// 52 bits.
 
 GB_STATIC_INLINE_BOTH int GB_arena (uint64_t mem)
 {
-    // return the high order byte, containing the arena
-    int arena = (mem >> 56) ;
+    // return the high order 12 bits, containing the arena
+//  int arena = (mem >> 56) ;           // for 8 bit arena 
+    int arena = (int) (mem >> 52) ;     // for 12 bit arena
     return (arena) ;
 }
 
 GB_STATIC_INLINE_BOTH uint64_t GB_memsize (uint64_t mem)
 {
-    // return the 7 low order bytes, containing the memsize
-    uint64_t memsize = mem & ((uint64_t) 0x00ffffffffffffffL) ;
+    // return the 52 low order bits, containing the memsize
+//  uint64_t memsize = mem & ((uint64_t) 0x00ffffffffffffffL) ; // 8 bit arena
+    uint64_t memsize = mem & ((uint64_t) 0x000fffffffffffffL) ; // 12 bit arena
     return (memsize) ;
 }
 
 GB_STATIC_INLINE_BOTH uint64_t GB_mem (int arena, uint64_t memsize)
 {
     // combine the arena and memsize into the _mem state
-    uint64_t mem = ((uint64_t) arena) << 56 | memsize ;
+//  uint64_t mem = ((uint64_t) arena) << 56 | memsize ; // for 8 bit arena
+    uint64_t mem = ((uint64_t) arena) << 52 | memsize ; // for 12 bit arena
     return (mem) ;
 }
 

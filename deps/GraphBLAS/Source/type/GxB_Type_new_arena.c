@@ -36,6 +36,8 @@
 #include "GB.h"
 #include "jitifyer/GB_stringify.h"
 
+#define GB_FREE_ALL ;
+
 GrB_Info GxB_Type_new_arena
 (
     GrB_Type *type,             // handle of user type to create
@@ -50,14 +52,13 @@ GrB_Info GxB_Type_new_arena
     // check inputs
     //--------------------------------------------------------------------------
 
+    GrB_Info info ;
     GB_CHECK_INIT ;
     GB_RETURN_IF_NULL (type) ;
-    GB_BURBLE_START ("GxB_Type_new") ;
+    (*type) = NULL ;
+    GB_OK (GB_check_arena (header_arena)) ;
 
     uint64_t mem = GB_mem (header_arena, 0) ;
-
-    GrB_Info info ;
-    (*type) = NULL ;
 
     if (sizeof_type == 0 && (type_defn == NULL || type_name == NULL))
     { 
@@ -65,6 +66,8 @@ GrB_Info GxB_Type_new_arena
         // requires two valid strings: the type name and the type definition
         return (GrB_INVALID_VALUE) ;
     }
+
+    GB_BURBLE_START ("GxB_Type_new") ;
 
     //--------------------------------------------------------------------------
     // create the type

@@ -44,6 +44,7 @@ GrB_Info GB_cuda_AxB_dot3           // C<M> = A'*B using dot product method
     //--------------------------------------------------------------------------
 
     GpuTimer kernel_timer;  // fixme: delete this?
+    int data_arena = GrB_DEFAULT ;  // FIXME: will depend on device id
 
     //--------------------------------------------------------------------------
     // check inputs
@@ -142,7 +143,7 @@ GrB_Info GB_cuda_AxB_dot3           // C<M> = A'*B using dot product method
         cnz+1,  // add one to cnz for cumsum of Cwork
         /* numeric: */ true, /* iso: */ C_iso,
         /* C pji_is_32: */ M->p_is_32, M->j_is_32, M->i_is_32,
-        GB_ARENA_RMM, GB_ARENA_RMM)) ;
+        data_arena, data_arena)) ;
 
     //--------------------------------------------------------------------------
     // Pre-fetch arrays that will be used on the device

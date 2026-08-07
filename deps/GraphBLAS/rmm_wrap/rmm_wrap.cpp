@@ -44,6 +44,7 @@
 cudaStream_t rmm_wrap_global_stream = nullptr ;
 
 rmm::mr::managed_memory_resource cuda_mr_default ;
+rmm::mr::pool_memory_resource    cuda_pool_default (cuda_mr_default, 0) ;
 
 typedef struct RMM_Wrap_Handle_struct
 {
@@ -239,6 +240,7 @@ int rmm_wrap_initialize     // returns -1 on error, 0 on success
         // Construct a resource that uses a coalescing best-fit pool allocator
         //----------------------------------------------------------------------
 
+#if 0
         if (mode == rmm_wrap_host )
         {
             // rmm_wrap_context->host_resource =
@@ -258,10 +260,12 @@ int rmm_wrap_initialize     // returns -1 on error, 0 on success
 //          rmm_wrap_context[device_id]->resource =
 //              make_and_set_device_pool( init_pool_memsize, max_pool_memsize) ;
         }
-        else if ( mode == rmm_wrap_managed )
+        else 
+#endif
+        if ( mode == rmm_wrap_managed )
         {
             // std::cout << "Seting managed pool" << std::endl;
-            rmm_wrap_context[device_id]->resource = make_and_set_managed_pool( init_pool_memsize, max_pool_memsize);
+//          rmm_wrap_context[device_id]->resource = make_and_set_managed_pool( init_pool_memsize, max_pool_memsize);
         }
         else
         {
@@ -453,12 +457,13 @@ void *rmm_wrap_allocate( std::size_t *size)
             rmm::mr::get_current_device_resource_ref() ;
         p = memoryresource->allocate( *size ) ;
         #endif
-
     
+#if 1
 // segfault:
-//      p = (rmm_wrap_context [device_id]->resource).allocate( rmm_wrap_global_stream, *size , 256) ;
-
-        p = cuda_mr_default.allocate( rmm_wrap_global_stream, *size , 256) ;
+        p = (rmm_wrap_context [device_id]->resource).allocate( rmm_wrap_global_stream, *size , 256) ;
+#else
+        p = cuda_pool_default.allocate( rmm_wrap_global_stream, *size , 256) ;
+#endif
 
         if (p == NULL)
         {
@@ -554,7 +559,7 @@ void rmm_wrap_deallocate( void *p, std::size_t size)
 //      rmm::mr::pool_memory_resource memoryresource =
 //          rmm::mr::get_current_device_resource_ref() ;
 //      memoryresource->deallocate( p, actual_size ) ;
-        cuda_mr_default.deallocate( rmm_wrap_global_stream, p, actual_size , 256 ) ;
+        cuda_pool_default.deallocate( rmm_wrap_global_stream, p, actual_size , 256 ) ;
 
 
     }

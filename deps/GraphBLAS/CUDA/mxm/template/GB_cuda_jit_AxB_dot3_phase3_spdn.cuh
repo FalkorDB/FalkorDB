@@ -283,7 +283,6 @@ __global__ void GB_cuda_AxB_dot3_phase3_spdn_kernel
                 Ci [pair_id] = GB_ZOMBIE (i) ;
             }
         }
-        //__syncthreads(); 
     }
 
     //--------------------------------------------------------------------------

@@ -60,8 +60,8 @@
 #include "../redismodule.h"
 #include "../graph/graphcontext.h"
 #include "../serializers/serializer_io.h"
-#include "../serializers/encoder/v19/encode_v19.h"
-#include "../serializers/decoders/current/v19/decode_v19.h"
+#include "../serializers/encoder/v20/encode_v20.h"
+#include "../serializers/decoders/current/v20/decode_v20.h"
 
 #include <stdio.h>
 #include <fcntl.h>
@@ -301,7 +301,7 @@ static void LoadGraphFromFile
 	RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
 			"Decoding graph: %s from: %s", copy_ctx->dest, copy_ctx->path);
 
-	GraphContext *gc = RdbLoadGraphContext_latest (io, copy_ctx->rm_dest, false) ;
+	GraphContext *gc = RdbLoadGraphContext_latest (io, copy_ctx->rm_dest) ;
 	ASSERT (gc != NULL) ;
 
 	//--------------------------------------------------------------------------

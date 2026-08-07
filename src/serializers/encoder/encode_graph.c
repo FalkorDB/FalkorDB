@@ -4,7 +4,7 @@
  */
 
 #include "encode_graph.h"
-#include "v19/encode_v19.h"
+#include "v20/encode_v20.h"
 #include "../serializer_io.h"
 
 void RdbSaveGraph

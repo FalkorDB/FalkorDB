@@ -1258,7 +1258,7 @@ void Graph_GetEdgesConnectingNodes
 bool Graph_LookupEdgeRelationID
 (
 	const Graph *g,          // graph to get edges from
-	Edge *edge,    	         // edge to check
+	Edge *edge,              // edge to check
 	const RelationID *rels,  // relationships (can't contain unknown relations)
 	int n_rels               // the number of relations
 ) {
@@ -1297,7 +1297,7 @@ bool Graph_LookupEdgeRelationID
 		ASSERT(info == GrB_SUCCESS);
 
 		// try to find the edge id within the matrix entry
-		if (SCALAR_ENTRY(x)) {
+		if (IS_SCALAR_ENTRY(x)) {
 			found = ((EntityID) x == id);
 		} else {
 			// multi-edge

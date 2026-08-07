@@ -45,7 +45,7 @@ static void _reduceToMatrix
 	const uint64_t *x,         // [input]  possible vectoor entry
 	const compareContext *ctx  // context
 ) {
-	if(SCALAR_ENTRY(*x)) {
+	if(IS_SCALAR_ENTRY(*x)) {
 		*z = *x;
 	} else { // find the minimum weighted edge in the vector
 		GrB_Vector _v = AS_VECTOR(*x);
@@ -96,7 +96,7 @@ void _getAttFromID
 	const compareContext *ctx  // theta
 ) {
 	Edge e;
-	ASSERT(SCALAR_ENTRY(*x));
+	ASSERT(IS_SCALAR_ENTRY(*x));
 	bool found = Graph_GetEdge(ctx->g, (EdgeID) (*x), &e);
 	ASSERT(found == true);
 
@@ -118,7 +118,7 @@ static void _reduceToMatrixAny
 	uint64_t *z,       // [output] single Edge ID
 	const uint64_t *x  // possibly a vector entry
 ) {
-	if(SCALAR_ENTRY(*x)) {
+	if(IS_SCALAR_ENTRY(*x)) {
 		*z = *x;
 	} else {
 		GrB_Vector _v = AS_VECTOR(*x);
@@ -175,7 +175,7 @@ static void _pickBinary
 	for (int k = 0; k < 2; k++) {
 		_x = operands[k];
 
-		if (SCALAR_ENTRY(_x)) {
+		if (IS_SCALAR_ENTRY(_x)) {
 			currID = (EdgeID) _x;
 			COMPARE_AND_CHANGE_MINID;
 		} else {

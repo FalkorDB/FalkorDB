@@ -99,17 +99,14 @@ void GxB_atfork_child (void)
     // wipe all OpenMP locks; ensures omp_lock_set/unset will not be called
     GB_Global_lock_wipe ( ) ;
 
-    // use the new malloc/free, defined above
-    GB_Global_malloc_function_set (GB_child_malloc, 0) ;
-    GB_Global_malloc_function_set (GB_child_malloc, 1) ;
-    GB_Global_free_function_set (GB_child_free, 0) ;
-    GB_Global_free_function_set (GB_child_free, 1) ;
-
-    // calloc and realloc can be NULL; GraphBLAS will call malloc instead
-    GB_Global_realloc_function_set ((GB_realloc_function_t) NULL, 0) ;
-    GB_Global_realloc_function_set ((GB_realloc_function_t) NULL, 1) ;
-    GB_Global_calloc_function_set  ((GB_calloc_function_t ) NULL, 0) ;
-    GB_Global_calloc_function_set  ((GB_calloc_function_t ) NULL, 1) ;
+    for (int arena = 0 ; arena < GxB_NARENAS ; arena++)
+    {
+        // use the new malloc/free, defined above
+        GB_Global_malloc_function_set  (GB_child_malloc, arena) ;
+        GB_Global_free_function_set    (GB_child_free, arena) ;
+        GB_Global_realloc_function_set ((GB_realloc_function_t) NULL, arena) ;
+        GB_Global_calloc_function_set  ((GB_calloc_function_t ) NULL, arena) ;
+    }
 
     // turn off any malloc debugging
     GB_Global_malloc_tracking_set (false) ;

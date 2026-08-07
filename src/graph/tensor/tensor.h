@@ -14,8 +14,14 @@
 // Tensor is a 3D Delta Matrix
 typedef Delta_Matrix Tensor;
 
-// checks if x represents scalar entry, if not x is a vector
-#define SCALAR_ENTRY(x) !((x) & MSB_MASK)
+// checks if x represents scalar entry
+#define IS_SCALAR_ENTRY(x) (x < MSB_MASK)
+
+// checks if x is a vector entry
+#define IS_VECTOR_ENTRY(x) (x > MSB_MASK)
+
+// checks if x is a zombie
+#define IS_ZOMBIE_ENTRY(x) (x == MSB_MASK)
 
 // clear MSB and cast to GrB_Vector
 #define AS_VECTOR(x) ((GrB_Vector)(CLEAR_MSB(x)))

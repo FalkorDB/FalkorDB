@@ -623,7 +623,8 @@ GB_JIT_CUDA_KERNEL_SELECT_SPARSE_PROTO (GB_jit_kernel)
 
     GrB_Info info ;
 
-    uint64_t mem = GB_mem (GB_ARENA_RMM, 0) ;
+    int data_arena = GrB_DEFAULT ;  // FIXME: will depend on device id
+    uint64_t mem = GB_mem (data_arena, 0) ;
 
     // workspaces of size anz+2
     void *W_0 = NULL ; uint64_t W_0_mem = mem ;

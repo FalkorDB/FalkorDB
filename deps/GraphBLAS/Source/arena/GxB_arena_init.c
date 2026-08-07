@@ -15,7 +15,7 @@
 GrB_Info GxB_arena_init
 (
     // input
-    int arena,              // 2 to GxB_NARENAS-1
+    int arena,              // 1 to GxB_NARENAS-1
     // pointers to memory management functions
     void * (* user_malloc_function  ) (size_t),         // required
     void * (* user_calloc_function  ) (size_t, size_t), // not used
@@ -31,6 +31,7 @@ GrB_Info GxB_arena_init
     GB_CHECK_INIT ;
     if (user_malloc_function == NULL || user_free_function == NULL)
     { 
+        // malloc and free are required; realloc and calloc are optional
         return (GrB_NULL_POINTER) ;
     }
 

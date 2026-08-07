@@ -9,7 +9,7 @@
 
 // C = A, making a deep copy
 
-// The arenas for C are given by input parameters.
+// The arenas for C are given by input parameters (checked by GB_dup)
 
 #include "GB.h"
 

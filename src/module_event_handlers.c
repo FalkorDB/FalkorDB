@@ -18,6 +18,7 @@
 #include "graph/graph_load_queue.h"
 #include "serializers/graphmeta_type.h"
 #include "serializers/graphcontext_type.h"
+#include "serializers/encoder/container_workspace.h"
 
 #include <pthread.h>
 #include <stdbool.h>
@@ -476,6 +477,13 @@ static const double fork_prep_interval_ms = 80    ;  // 80ms TODO: get redis con
 
 // before fork at parent
 static void _ForkPrepare() {
+	// notify GraphBLAS that a fork is about to occur.
+	GxB_atfork_prepare();
+
+	// pre-allocate encoder container workspace before any fork path that may
+	// serialize graphs (BGSAVE / GRAPH.COPY).
+	EncoderContainerWorkspace_Init();
+
 	// at this point, fork been issued, we assume that this is due to BGSAVE
 	// or RedisSearch GC
 	//
@@ -576,6 +584,9 @@ static void _ForkPrepare() {
 
 // after fork at parent
 static void _AfterForkParent(void) {
+	// notify GraphBLAS the parent side of fork completed.
+	GxB_atfork_parent();
+
 	bool release_graphs_after_fork =
 		pthread_equal (pthread_self (), redis_main_thread_id) &&
 		!INTERMEDIATE_GRAPHS ;
@@ -615,15 +626,8 @@ static void _AfterForkChild() {
 	// attempt invalid accesses of POSIX primitives it doesn't own
 	Globals_Set_ProcessIsChild (true) ;
 
-	// restrict GraphBLAS to use a single thread this is done for 2 reasons:
-	// 1. save resources
-	// 2. avoid a bug in GNU OpenMP which hangs when performing parallel loop
-	// in forked process
-	// FIXME: this uses a historical method to bypass the graphblas global lock,
-	// which will cause sanitizer to fail. Set before forking, or use the new
-	// GraphBLAS function for forking.
-	GxB_set (GxB_NTHREADS, 1) ;
-	// GrB_set (GrB_GLOBAL, (int32_t) 1, GxB_NTHREADS) ;
+	// notify GraphBLAS the child is forked so it can switch to fork-safe mode.
+	GxB_atfork_child();
 
 	// the graph sync validation only applies to BGSAVE forks (main thread)
 	// GRAPH.COPY forks from a cron thread and only syncs the source graph

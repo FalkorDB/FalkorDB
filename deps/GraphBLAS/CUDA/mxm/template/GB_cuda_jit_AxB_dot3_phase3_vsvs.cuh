@@ -151,9 +151,6 @@ __global__ void GB_cuda_AxB_dot3_phase3_vsvs_kernel
 
         GB_CIJ_EXIST_POSTCHECK ;
 
-// HACK
-// cij_exists = false ;
-
         if (cij_exists)
         {
             GB_PUTC (cij, Cx, pair_id) ;    // Cx [pair_id] = (GB_C_TYPE) cij

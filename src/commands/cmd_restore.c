@@ -6,7 +6,7 @@
 #include "RG.h"
 #include "../graph/graphcontext.h"
 #include "../serializers/serializer_io.h"
-#include "../serializers/decoders/current/v19/decode_v19.h"
+#include "../serializers/decoders/current/v20/decode_v20.h"
 
 extern RedisModuleType *GraphContextRedisModuleType;
 
@@ -66,7 +66,7 @@ int Graph_Restore
 	SerializerIO io = SerializerIO_FromStream(stream, false);
 
 	// decode graph
-	GraphContext *gc = RdbLoadGraphContext_latest (io, argv[1], false) ;
+	GraphContext *gc = RdbLoadGraphContext_latest (io, argv[1]) ;
 	ASSERT (gc != NULL) ;
 
 	// add graph to keyspace
